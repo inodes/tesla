@@ -18,6 +18,7 @@ fi
 
 STATUS_MODE=0
 TIMELINE_MODE=0 # 0=summary table only, 1=daily, 2=full expanded
+CHECK_DEPS_MODE=0
 
 # Purge controls
 PURGE_MODE=""       # "wizard", "recent", "all_recent", "days", "capacity", "force"
@@ -28,8 +29,120 @@ DRY_RUN=0
 ASSUME_YES=0
 FORCE_MODE=0
 
+# ==============================================================================
+# REQUIREMENT & DEPENDENCY CHECKER
+# ==============================================================================
+check_system_requirements() {
+  local is_explicit="${1:-0}"
+  local has_issues=0
+  local has_warnings=0
+  local brew_path=""
+
+  if command -v brew >/dev/null 2>&1; then
+    brew_path="$(command -v brew)"
+  elif [[ -x "/opt/homebrew/bin/brew" ]]; then
+    brew_path="/opt/homebrew/bin/brew"
+  elif [[ -x "/usr/local/bin/brew" ]]; then
+    brew_path="/usr/local/bin/brew"
+  fi
+
+  if (( is_explicit == 1 )); then
+    echo "=========================================================================="
+    echo "                 TeslaCam Suite System Dependency Audit                   "
+    echo "=========================================================================="
+  fi
+
+  # 1. Check Python 3
+  local py_ver=""
+  if command -v python3 >/dev/null 2>&1; then
+    py_ver="$(python3 -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}")' 2>/dev/null || echo "detected")"
+    if (( is_explicit == 1 )); then
+      echo "  ✔ python3  : v${py_ver} ($(which python3))"
+    fi
+  else
+    echo "  ❌ python3  : Not found (Required for JSON metadata & timeline processing)"
+    has_issues=1
+  fi
+
+  # 2. Check Rsync
+  local rsync_ver=""
+  local rsync_major=0
+  if [[ -x "$RSYNC_BIN" ]]; then
+    rsync_ver="$("$RSYNC_BIN" --version 2>/dev/null | head -n 1 | awk '{print $3}')"
+    rsync_major="$(echo "$rsync_ver" | awk -F'.' '{print $1}')"
+    if (( rsync_major >= 3 )); then
+      if (( is_explicit == 1 )); then
+        echo "  ✔ rsync    : v${rsync_ver} (${RSYNC_BIN}) [Modern High-Performance]"
+      fi
+    else
+      if (( is_explicit == 1 )); then
+        echo "  ⚠️ rsync    : v${rsync_ver} (${RSYNC_BIN}) [Legacy macOS 2006 BSD version]"
+        echo "               (Recommended: upgrade to rsync 3.x+ for faster transfers & stats)"
+      fi
+      has_warnings=1
+    fi
+  else
+    echo "  ❌ rsync    : Not found (Required for multi-drive file sync)"
+    has_issues=1
+  fi
+
+  # 3. Check Homebrew
+  if (( is_explicit == 1 )); then
+    if [[ -n "$brew_path" ]]; then
+      local brew_ver="$("$brew_path" --version 2>/dev/null | head -n 1)"
+      echo "  ✔ brew     : ${brew_ver} (${brew_path})"
+    else
+      echo "  ℹ brew     : Not installed (https://brew.sh/)"
+    fi
+
+    # 4. Check Docker (for ExportDash player/stitcher)
+    local docker_bin=""
+    if command -v docker >/dev/null 2>&1; then
+      docker_bin="$(command -v docker)"
+    elif [[ -x "/Applications/Docker.app/Contents/Resources/bin/docker" ]]; then
+      docker_bin="/Applications/Docker.app/Contents/Resources/bin/docker"
+    elif [[ -x "$HOME/.orbstack/bin/docker" ]]; then
+      docker_bin="$HOME/.orbstack/bin/docker"
+    fi
+
+    if [[ -n "$docker_bin" ]]; then
+      local d_ver="$("$docker_bin" --version 2>/dev/null || echo "detected")"
+      echo "  ✔ docker   : ${d_ver} (${docker_bin}) [For ExportDash & Stitcher]"
+    else
+      echo "  ℹ docker   : Optional (Used for run_exportdash.sh web viewer & stitcher)"
+    fi
+    echo "=========================================================================="
+  fi
+
+  # Guide user if requirements are missing or warnings exist in doctor mode
+  if [[ "$has_issues" -eq 1 ]] || [[ "$is_explicit" -eq 1 && ( "$has_warnings" -eq 1 || -z "$brew_path" ) ]]; then
+    echo ""
+    echo "📦 Package Installation & Upgrade Guide:"
+    if [[ -z "$brew_path" ]]; then
+      echo "  1. Install Homebrew (macOS Package Manager):"
+      echo '     /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"'
+      echo "     More info: https://brew.sh/"
+      echo ""
+    fi
+    echo "  2. Install required & recommended utilities via Homebrew:"
+    echo "     brew install rsync python"
+    echo ""
+    echo "  3. Optional (for web player & 4-camera video stitching):"
+    echo "     brew install --cask docker"
+    echo "=========================================================================="
+  fi
+
+  if (( has_issues == 1 )); then
+    exit 1
+  fi
+}
+
 while [[ $# -gt 0 ]]; do
   case "$1" in
+    --check-deps|--doctor|--requirements)
+      CHECK_DEPS_MODE=1
+      shift
+      ;;
     --status|-s|--summary)
       STATUS_MODE=1
       TIMELINE_MODE=0
@@ -112,6 +225,9 @@ CLI Purge Controls (Default: Requires 2TB Archive Connected):
   -n,  --dry-run             Simulate purge and report reclaimable space without deleting
   -y,  --yes                 Skip standard confirmation prompts
 
+System Diagnostics:
+  --check-deps, --doctor     Audit all tool dependencies, versions, and installation guide
+
 Sync & Auto Maintenance (No flags):
   Performs complete multi-drive backup sync, verified age retention prune (5 days on USB),
   and capacity target purge (80% -> 60% on Jowua).
@@ -123,6 +239,14 @@ HELP_EOF
       ;;
   esac
 done
+
+# Run dependency check
+if (( CHECK_DEPS_MODE == 1 )); then
+  check_system_requirements 1
+  exit 0
+else
+  check_system_requirements 0
+fi
 
 # ==============================================================================
 # 1. VOLUME DISCOVERY & CLASSIFICATION (Markers + Capacity Fallback)

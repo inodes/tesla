@@ -4,15 +4,64 @@ An automated toolset for managing Tesla dashcam, Sentry, and continuous driving 
 
 ---
 
+## 📋 System Prerequisites & Installation
+
+The suite requires modern command-line utilities for high-performance rsync transfers and JSON metadata extraction.
+
+### 1. Package Manager: Homebrew (macOS)
+If you don't already have [Homebrew](https://brew.sh/) installed, open Terminal and run:
+
+```bash
+/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+```
+
+### 2. Core Dependencies (Required)
+
+Install the required tools using Homebrew:
+
+```bash
+brew install rsync python
+```
+
+> **Why modern rsync?** macOS ships with an ancient BSD rsync (v2.6.9 from 2006) which lacks delta-transfer optimisations, progress stats, and timestamp resolution required for reliable multi-gigabyte TeslaCam synchronization. Homebrew provides modern **rsync 3.x+**.
+
+### 3. Optional Dependencies (For Web Player & Video Stitcher)
+
+To run the local browser-based 4-camera web player and 4-way 2x2 grid batch video stitcher:
+
+```bash
+# Docker Desktop or OrbStack
+brew install --cask docker
+# or
+brew install --cask orbstack
+
+# Standalone FFmpeg (if not using Docker)
+brew install ffmpeg
+```
+
+---
+
+## 🩺 System Dependency Doctor
+
+You can audit your environment at any time to verify all utilities and versions:
+
+```bash
+./tesla_sync.sh --check-deps
+# or
+./tesla_sync.sh --doctor
+```
+
+---
+
 ## 🌟 Key Features
 
 1. **Multi-Drive Auto-Topology Detection**
    - Automatically identifies connected drives via root identity markers (`ARCHIVE_2TB`, `JOWUA_1TB`, `TESLA_USB_128GB`) or partition capacity heuristics.
-   - Synchronizes footage across drives with rsync.
+   - Synchronizes footage across drives in parallel with real-time transfer stats.
 
 2. **Strict Archive Verification & Zero Data Loss Guarantee**
    - No video clip is ever pruned or deleted from recording drives unless it is **strictly verified** to exist and be complete on the 2TB Master Archive SSD first.
-   - Blocks all automatic deletion if the 2TB Archive SSD is disconnected.
+   - Automatically halts all deletion if the 2TB Archive SSD is disconnected.
    - Includes interactive **Force Purge** (`--force-purge`) requiring typing `FORCE` to override for emergency drive clearing.
 
 3. **Continuous Driving Ring Buffer Retention (`RecentClips`)**
@@ -55,7 +104,7 @@ An automated toolset for managing Tesla dashcam, Sentry, and continuous driving 
 # Purge ALL verified RecentClips from Jowua (reclaims 200+ GB immediately)
 ./tesla_sync.sh --purge-all-recent --target jowua
 
-# Dry-run preview of reclaimable space
+# Dry-run preview of reclaimable space without deleting
 ./tesla_sync.sh --purge-all-recent --target jowua --dry-run
 ```
 
@@ -73,6 +122,6 @@ An automated toolset for managing Tesla dashcam, Sentry, and continuous driving 
 
 ## 📁 Repository Structure
 
-- `tesla_sync.sh` — Multi-drive sync, daily timeline analyzer, and verified purge engine.
-- `run_exportdash.sh` — Zero-to-standup Docker runner for ExportDash web player & video stitcher.
-- `exportdash.cam/` — Next.js + Tailwind + FFmpeg web UI and batch 2x2 video compositor.
+- [`tesla_sync.sh`](tesla_sync.sh) — Multi-drive sync, daily timeline analyzer, dependency doctor, and verified purge engine.
+- [`run_exportdash.sh`](run_exportdash.sh) — Zero-to-standup Docker runner for ExportDash web player & video stitcher.
+- [`exportdash.cam/`](exportdash.cam/) — Next.js + Tailwind + FFmpeg web UI and batch 2x2 video compositor.
