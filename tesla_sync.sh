@@ -1,5 +1,12 @@
 #!/bin/zsh
 
+# Resolve absolute path to this running script
+SCRIPT_SELF="${(%):-%N}"
+if [[ -z "$SCRIPT_SELF" || ! -f "$SCRIPT_SELF" ]]; then
+  SCRIPT_SELF="${BASH_SOURCE[0]:-$0}"
+fi
+SCRIPT_PATH="$(cd "$(dirname "$SCRIPT_SELF")" 2>/dev/null && pwd)/$(basename "$SCRIPT_SELF")"
+
 STATE_DIR="/tmp/teslacam_sync"
 PID_FILE="${STATE_DIR}/sync.pid"
 LOG_FILE="${STATE_DIR}/rsync.log"
@@ -19,6 +26,8 @@ fi
 STATUS_MODE=0
 TIMELINE_MODE=0 # 0=summary table only, 1=daily, 2=full expanded
 CHECK_DEPS_MODE=0
+INSTALL_TOOLS_MODE=0
+INSTALL_BIN_DIR=""
 
 # Sync destination override (Local directory / NAS alternative to 2TB SSD)
 LOCAL_SYNC_DIR=""
@@ -150,8 +159,71 @@ check_system_requirements() {
   fi
 }
 
+# ==============================================================================
+# SCRIPT INSTALLER & DRIVE SYNC
+# ==============================================================================
+install_tools_to_drives() {
+  echo "=========================================================================="
+  echo "                 🚗 Installing Tools to Connected Drives                  "
+  echo "=========================================================================="
+  echo "Source Script: $SCRIPT_PATH"
+  echo ""
+  local count=0
+
+  for vol in /Volumes/*; do
+    [[ -d "$vol" ]] || continue
+    if [[ -d "$vol/TeslaCam" || -d "$vol/ARCHIVE_2TB" || -d "$vol/JOWUA_1TB" || -d "$vol/TESLA_USB_128GB" || -d "$vol/TESLA_USB_256GB" || -d "$vol/TESLA_USB" || "$(basename "$vol")" =~ ^TESLADRIVE ]]; then
+      local tools_dir="$vol/Tools"
+      mkdir -p "$tools_dir"
+      cp "$SCRIPT_PATH" "$tools_dir/tesla_sync.sh"
+      chmod +x "$tools_dir/tesla_sync.sh"
+      echo "  ✔ Updated: $tools_dir/tesla_sync.sh"
+      ((count++))
+    fi
+  done
+
+  if (( count == 0 )); then
+    echo "  ⚠️ No mounted Tesla volumes detected under /Volumes/."
+  else
+    echo ""
+    echo "=========================================================================="
+    echo "Successfully updated tesla_sync.sh on $count drive(s)."
+    echo "=========================================================================="
+  fi
+  exit 0
+}
+
+install_to_bin() {
+  local target_dir="${1:-/usr/local/bin}"
+  target_dir="${target_dir/#\~/$HOME}"
+  mkdir -p "$target_dir" 2>/dev/null || sudo mkdir -p "$target_dir"
+  if [[ -w "$target_dir" ]]; then
+    cp "$SCRIPT_PATH" "$target_dir/tesla_sync"
+    chmod +x "$target_dir/tesla_sync"
+  else
+    sudo cp "$SCRIPT_PATH" "$target_dir/tesla_sync"
+    sudo chmod +x "$target_dir/tesla_sync"
+  fi
+  echo "✔ Installed global binary: $target_dir/tesla_sync"
+  echo "You can now run 'tesla_sync' from any directory in Terminal."
+  exit 0
+}
+
 while [[ $# -gt 0 ]]; do
   case "$1" in
+    --install-tools|--update-drives|--sync-tools)
+      INSTALL_TOOLS_MODE=1
+      shift
+      ;;
+    --install-bin|--install-global)
+      INSTALL_BIN_DIR="${2:-/usr/local/bin}"
+      if [[ -n "$2" && "$2" != -* ]]; then
+        shift 2
+      else
+        shift
+      fi
+      install_to_bin "$INSTALL_BIN_DIR"
+      ;;
     --check-deps|--doctor|--requirements)
       CHECK_DEPS_MODE=1
       shift
@@ -228,12 +300,15 @@ while [[ $# -gt 0 ]]; do
       cat << 'HELP_EOF'
 Usage: tesla_sync.sh [options]
 
-Note on Drive Discovery:
-  By default, tesla_sync.sh automatically discovers connected Tesla USBs, SSDs,
-  and Archive drives mounted under /Volumes with typical names like 'TESLADRIVE',
-  'TESLADRIVE 1', etc.
-  If your drives have custom volume names or you want to archive to internal
-  storage / NAS, you can optionally provide --source and/or --localsync.
+Note on Execution & Drive Discovery:
+  tesla_sync.sh can be run from ANY directory (e.g. ~/iCloud/repos/tesla,
+  /Volumes/TESLADRIVE 1/Tools, or installed to /usr/local/bin).
+  By default, it automatically discovers connected Tesla USBs, SSDs, and Archive
+  drives mounted under /Volumes.
+
+Installation & Drive Sync:
+  --install-tools            Copy/update this script into <Drive>/Tools on each connected volume
+  --install-bin [DIR]        Install as a global command (default: /usr/local/bin/tesla_sync)
 
 Status & Summary:
   -s,  --status, --summary   Show structured storage table with % of drive & archive status
@@ -271,6 +346,11 @@ HELP_EOF
       ;;
   esac
 done
+
+# Run tool installation if requested
+if (( INSTALL_TOOLS_MODE == 1 )); then
+  install_tools_to_drives
+fi
 
 # Run dependency check
 if (( CHECK_DEPS_MODE == 1 )); then

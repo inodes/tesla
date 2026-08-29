@@ -20,8 +20,16 @@ Tesla vehicles format and name USB recording drives as **`TESLADRIVE`** by defau
 └───────────────────────┴────────────────────────────┴────────────────────────┘
 ```
 
-### Automatic Discovery (Zero Configuration)
-- By default, `tesla_sync.sh` requires **no arguments**. It automatically scans `/Volumes` for any drives named `TESLADRIVE*` or tagged with identity markers (`ARCHIVE_2TB`, `JOWUA_1TB`, `TESLA_USB_128GB`), categorizes their storage tier, and executes synchronization and verified pruning.
+### Run From Anywhere & Automatic Discovery
+- `tesla_sync.sh` can be executed from **any location** (e.g. your cloned git repository, home directory, or from the drive itself).
+- It automatically scans `/Volumes` for any drives named `TESLADRIVE*` or tagged with identity markers (`ARCHIVE_2TB`, `JOWUA_1TB`, `TESLA_USB_128GB`), categorizes their storage tier, and executes synchronization and verified pruning.
+
+### Install & Update Tools Across Drives
+To copy or update the latest version of `tesla_sync.sh` into `<Drive>/Tools` on all connected Tesla drives:
+
+```bash
+./tesla_sync.sh --install-tools
+```
 
 ### Optional Overrides (`--source` and `--localsync`)
 If your drives have custom volume names (not named `TESLADRIVE`), or if you prefer to sync footage to an internal Mac folder or network share:
@@ -118,11 +126,14 @@ You can audit your environment at any time to verify all utilities, versions, an
 
 ## 🛠️ CLI Usage Reference
 
-### 🔄 Multi-Drive Synchronization
+### 🔄 Multi-Drive Synchronization & Installation
 
 ```bash
 # Default: Auto-detects connected TESLADRIVE volumes & syncs to 2TB Master SSD
 ./tesla_sync.sh
+
+# Install / update the latest tesla_sync.sh onto all connected drives under <Drive>/Tools/
+./tesla_sync.sh --install-tools
 
 # Alternative: Sync directly to a local folder or NAS directory
 ./tesla_sync.sh --localsync ~/TeslaArchive
