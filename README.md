@@ -8,28 +8,19 @@ A modular toolset for managing, backing up, analyzing, and viewing Tesla dashcam
 
 This repository consists of two separate, independent components:
 
-```text
-┌─────────────────────────────────────────────────────────────────────────────┐
-│ 1. tesla_sync.sh (Core Sync & Archive Engine)                                │
-│    - Pure shell + Python script (NO Docker needed)                          │
-│    - Backs up USB / Jowua / SSDs to Master 2TB SSD or Local Folder/NAS      │
-│    - Daily timeline reports & verified 100% safe retention pruning           │
-├─────────────────────────────────────────────────────────────────────────────┤
-│ 2. run_exportdash.sh (Optional Local Web Player & 4-Way Video Stitcher)      │
-│    - Optional local container wrapper for ExportDash                        │
-│    - Credits & Source: https://github.com/nobig-deals/exportdash.cam        │
-│    - Requires Docker / OrbStack ONLY if running this offline local wrapper   │
-└─────────────────────────────────────────────────────────────────────────────┘
-```
+| Component | Purpose | Dependencies |
+| :--- | :--- | :--- |
+| **`tesla_sync.sh`** | **Core Sync & Archive Engine**<br>• Backs up USB, Jowua, or SSDs to 2TB Master SSD or Local Directory/NAS<br>• Daily driving timeline reports & verified 100% safe retention pruning | Lightweight standalone tool.<br>Requires only standard **`rsync`** and **`python3`**.<br>*(Docker is NOT needed)* |
+| **`run_exportdash.sh`** | **Optional Local Web Player & 4-Way Stitcher**<br>• Local offline container wrapper for [ExportDash](https://exportdash.cam/)<br>• Browser-based 4-camera sync playback & 2x2 grid video rendering | **Optional**.<br>Requires **OrbStack** or **Docker** only if you want to run the web UI offline on your own machine. |
 
 ### Component 1: `tesla_sync.sh` (Core Sync & Backup)
 - **What it does:** Automatically discovers connected Tesla USBs, Jowua hubs, or SSDs and syncs footage to your Master Archive (either an external 2TB SSD or a local Mac folder via `--localsync`).
 - **Safety Guarantee:** Verified zero-data-loss pruning engine (never deletes footage from recording drives unless confirmed present in the master archive).
-- **Requirements:** Lightweight standalone tool requiring only `rsync` and `python3`. **Docker is NOT required.**
+- **Requirements:** Standalone script requiring only `rsync` and `python3`. **Docker is NOT required.**
 
 ### Component 2: `run_exportdash.sh` (Optional Local Web Player & Stitcher)
-- **What it does:** A zero-configuration local Docker wrapper that runs the **ExportDash** multi-camera web player on `http://localhost:3000` and batch-renders 4-camera recordings into 2x2 grid MP4 videos (`tesla-stitch`).
-- **Attribution & Upstream Project:** This component is based on the fantastic open-source project **[exportdash.cam](https://github.com/nobig-deals/exportdash.cam)** created by **[nobig-deals](https://github.com/nobig-deals)**.
+- **What it does:** A local Docker wrapper that runs the **ExportDash** multi-camera web player on `http://localhost:3000` and batch-renders 4-camera recordings into 2x2 grid MP4 videos (`tesla-stitch`).
+- **Attribution & Upstream Project:** This component is based on the open-source project **[exportdash.cam](https://github.com/nobig-deals/exportdash.cam)** created by **[nobig-deals](https://github.com/nobig-deals)**.
 - **Hosted Version Available:** You can use **[https://exportdash.cam/](https://exportdash.cam/)** directly in any web browser without running Docker or installing anything locally.
 - **Docker Requirement:** A container engine (such as [OrbStack](https://orbstack.dev/) or Docker Desktop) is **strictly only required if you choose to run this local offline wrapper**.
 
@@ -39,17 +30,13 @@ This repository consists of two separate, independent components:
 
 Tesla vehicles format and name USB recording drives as **`TESLADRIVE`** by default. When multiple Tesla drives are connected simultaneously to macOS, the operating system mounts them under `/Volumes` with sequential naming (e.g. `/Volumes/TESLADRIVE`, `/Volumes/TESLADRIVE 1`, `/Volumes/TESLADRIVE 2`).
 
-```text
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                             STORAGE TIERS                                   │
-├───────────────────────┬────────────────────────────┬────────────────────────┤
-│ Drive Type            │ Typical Capacity           │ Role & Purpose         │
-├───────────────────────┼────────────────────────────┼────────────────────────┤
-│ Factory Glovebox USB  │ 128 GB / 256 GB / 512 GB   │ Everyday Sentry/Honks  │
-│ High-Capacity Car SSD │ 1 TB / 2 TB (e.g. Jowua)   │ 24h–60h Driving Buffer │
-│ Master Archive Target │ 2 TB+ SSD or Local Folder  │ Permanent Long-Term    │
-└───────────────────────┴────────────────────────────┴────────────────────────┘
-```
+### Storage Tiers
+
+| Drive Type | Typical Capacity | Role & Retention Characteristics |
+| :--- | :--- | :--- |
+| **Factory Glovebox USB** | 128 GB / 256 GB / 512 GB | **Everyday Sentry & Saved Clips.**<br>Good for standard alerts, but Tesla purges older continuous driving clips (`RecentClips`) after ~1 hour to prevent disk full errors. |
+| **High-Capacity Car SSD** | 1 TB / 2 TB (e.g. Jowua, Samsung T7) | **Extended 24h–60h Continuous Driving Buffer.**<br>Retains **24 to 60+ continuous driving hours** (~13.6 GB/hr across 4 cameras), preserving weeks of driving history to ensure you never miss unsaved damage. |
+| **Master Archive Target** | 2 TB+ SSD or Local Folder / NAS | **Permanent Long-Term Archive.**<br>Master copy of all driving and Sentry events. All pruning operations strictly verify against this archive before deleting from in-car drives. |
 
 ### Run From Anywhere & Automatic Discovery
 - `tesla_sync.sh` can be executed from **any directory** (e.g. your cloned repository, home folder, or from the drive itself).
@@ -111,17 +98,6 @@ You can audit your environment at any time to verify all utilities, versions, an
 ./tesla_sync.sh --check-deps
 # or
 ./tesla_sync.sh --doctor
-```
-
-```text
-==========================================================================
-                 TeslaCam Suite System Dependency Audit                   
-==========================================================================
-  ✔ python3  : v3.14.3 (/usr/bin/python3)
-  ✔ rsync    : v3.5.0 (/usr/local/bin/rsync) [Modern High-Performance]
-  ✔ brew     : Homebrew 6.0.19 (/usr/local/bin/brew)
-  ✔ container: Docker v29.4.0 (Powered by OrbStack) [For ExportDash & Stitcher]
-==========================================================================
 ```
 
 ---
