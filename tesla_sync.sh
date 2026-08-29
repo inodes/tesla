@@ -95,21 +95,30 @@ check_system_requirements() {
       echo "  ℹ brew     : Not installed (https://brew.sh/)"
     fi
 
-    # 4. Check Docker (for ExportDash player/stitcher)
+    # 4. Check Container Engine (OrbStack / Docker for ExportDash player/stitcher)
     local docker_bin=""
+    local engine_type="Docker"
+    if [[ -d "/Applications/OrbStack.app" ]] || [[ -d "$HOME/.orbstack" ]]; then
+      engine_type="OrbStack"
+    fi
+
     if command -v docker >/dev/null 2>&1; then
       docker_bin="$(command -v docker)"
-    elif [[ -x "/Applications/Docker.app/Contents/Resources/bin/docker" ]]; then
-      docker_bin="/Applications/Docker.app/Contents/Resources/bin/docker"
     elif [[ -x "$HOME/.orbstack/bin/docker" ]]; then
       docker_bin="$HOME/.orbstack/bin/docker"
+    elif [[ -x "/Applications/Docker.app/Contents/Resources/bin/docker" ]]; then
+      docker_bin="/Applications/Docker.app/Contents/Resources/bin/docker"
     fi
 
     if [[ -n "$docker_bin" ]]; then
-      local d_ver="$("$docker_bin" --version 2>/dev/null || echo "detected")"
-      echo "  ✔ docker   : ${d_ver} (${docker_bin}) [For ExportDash & Stitcher]"
+      local d_ver="$("$docker_bin" --version 2>/dev/null | awk '{print $3}' | tr -d ',')"
+      if [[ "$engine_type" == "OrbStack" ]]; then
+        echo "  ✔ container: Docker v${d_ver} (Powered by OrbStack) [For ExportDash & Stitcher]"
+      else
+        echo "  ✔ container: Docker v${d_ver} (${docker_bin}) [For ExportDash & Stitcher]"
+      fi
     else
-      echo "  ℹ docker   : Optional (Used for run_exportdash.sh web viewer & stitcher)"
+      echo "  ℹ container: Optional (Install OrbStack: brew install --cask orbstack)"
     fi
     echo "=========================================================================="
   fi
@@ -124,11 +133,11 @@ check_system_requirements() {
       echo "     More info: https://brew.sh/"
       echo ""
     fi
-    echo "  2. Install required & recommended utilities via Homebrew:"
+    echo "  2. Install required utilities via Homebrew:"
     echo "     brew install rsync python"
     echo ""
     echo "  3. Optional (for web player & 4-camera video stitching):"
-    echo "     brew install --cask docker"
+    echo "     brew install --cask orbstack"
     echo "=========================================================================="
   fi
 

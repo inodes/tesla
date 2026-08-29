@@ -17,7 +17,7 @@ If you don't already have [Homebrew](https://brew.sh/) installed, open Terminal 
 
 ### 2. Core Dependencies (Required)
 
-Install the required tools using Homebrew:
+Install the required utilities via Homebrew:
 
 ```bash
 brew install rsync python
@@ -25,17 +25,18 @@ brew install rsync python
 
 > **Why modern rsync?** macOS ships with an ancient BSD rsync (v2.6.9 from 2006) which lacks delta-transfer optimisations, progress stats, and timestamp resolution required for reliable multi-gigabyte TeslaCam synchronization. Homebrew provides modern **rsync 3.x+**.
 
-### 3. Optional Dependencies (For Web Player & Video Stitcher)
+### 3. Container Engine (Recommended: OrbStack)
 
-To run the local browser-based 4-camera web player and 4-way 2x2 grid batch video stitcher:
+For running the browser-based 4-camera web player and 4-way 2x2 grid batch video stitcher, [OrbStack](https://orbstack.dev/) is the recommended fast, lightweight container engine:
 
 ```bash
-# Docker Desktop or OrbStack
-brew install --cask docker
-# or
+# Install OrbStack (Fast & Lightweight)
 brew install --cask orbstack
 
-# Standalone FFmpeg (if not using Docker)
+# Or standard Docker Desktop
+brew install --cask docker
+
+# Optional standalone FFmpeg
 brew install ffmpeg
 ```
 
@@ -43,12 +44,23 @@ brew install ffmpeg
 
 ## 🩺 System Dependency Doctor
 
-You can audit your environment at any time to verify all utilities and versions:
+You can audit your environment at any time to verify all utilities, versions, and active container engine:
 
 ```bash
 ./tesla_sync.sh --check-deps
 # or
 ./tesla_sync.sh --doctor
+```
+
+```text
+==========================================================================
+                 TeslaCam Suite System Dependency Audit                   
+==========================================================================
+  ✔ python3  : v3.14.3 (/usr/bin/python3)
+  ✔ rsync    : v3.5.0 (/usr/local/bin/rsync) [Modern High-Performance]
+  ✔ brew     : Homebrew 6.0.19 (/usr/local/bin/brew)
+  ✔ container: Docker v29.4.0 (Powered by OrbStack) [For ExportDash & Stitcher]
+==========================================================================
 ```
 
 ---
@@ -72,7 +84,7 @@ You can audit your environment at any time to verify all utilities and versions:
    - Parses `event.json` metadata to display trigger reasons (e.g. `honk`, `dashcam_tapped`, `object_detection`) alongside reverse-geocoded street names and GPS coordinates.
 
 5. **Multi-Camera Web Viewer & Batch Stitcher (`ExportDash`)**
-   - Zero-to-standup Docker container providing browser-based 4-way synchronized playback (`http://localhost:3000`).
+   - Zero-to-standup container providing browser-based 4-way synchronized playback (`http://localhost:3000`).
    - Batch CLI stitching utility (`tesla-stitch`) to render 4-camera recordings into synchronized 2x2 grid MP4 videos.
 
 ---
@@ -123,5 +135,5 @@ You can audit your environment at any time to verify all utilities and versions:
 ## 📁 Repository Structure
 
 - [`tesla_sync.sh`](tesla_sync.sh) — Multi-drive sync, daily timeline analyzer, dependency doctor, and verified purge engine.
-- [`run_exportdash.sh`](run_exportdash.sh) — Zero-to-standup Docker runner for ExportDash web player & video stitcher.
+- [`run_exportdash.sh`](run_exportdash.sh) — Zero-to-standup Docker/OrbStack runner for ExportDash web player & video stitcher.
 - [`exportdash.cam/`](exportdash.cam/) — Next.js + Tailwind + FFmpeg web UI and batch 2x2 video compositor.
