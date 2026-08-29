@@ -233,9 +233,9 @@ Status & Summary:
   -t,  --timeline            Show storage table + daily grouped timeline (YYYY-MM-DD)
   -tf, --timeline-full       Show storage table + full expanded events under each day
 
-Alternative Sync Targets:
+Alternative Sync Targets & Custom Sources:
   -ls, --localsync <DIR>     Sync footage to a local folder or NAS directory (e.g. ~/TeslaArchive)
-  -src,--source <DRIVE>      Explicitly select source drive (usb, jowua, or custom path)
+  -src,--source <PATH|DRIVE> Explicitly specify source path containing 'TeslaCam' (e.g. /Volumes/USB)
 
 Interactive Purge:
   -p,  --purge               Launch interactive purge wizard (select drive & rate interactively)
@@ -280,56 +280,106 @@ VOL_TESLA_USB=""
 VOL_JOWUA=""
 VOL_2TB=""
 
-# Expand local sync directory if provided
+# 1. Resolve Local Sync Destination Override with New Directory Confirmation
 if [[ -n "$LOCAL_SYNC_DIR" ]]; then
   LOCAL_SYNC_DIR="${LOCAL_SYNC_DIR/#\~/$HOME}"
-  mkdir -p "$LOCAL_SYNC_DIR/TeslaCam"
+  if [[ ! -d "$LOCAL_SYNC_DIR/TeslaCam" ]]; then
+    echo "======================================================"
+    echo "             📁 Local Archive Destination             "
+    echo "======================================================"
+    echo "Target Directory: $LOCAL_SYNC_DIR"
+    echo "Status: Destination appears new (TeslaCam directory not found)."
+    echo "======================================================"
+    if (( ASSUME_YES == 0 && STATUS_MODE == 0 )); then
+      printf "Confirm initializing archive and syncing to '%s'? [y/N]: " "$LOCAL_SYNC_DIR"
+      read -r confirm_dest
+      if [[ "$confirm_dest" != [yY] && "$confirm_dest" != [yY][eE][sS] ]]; then
+        echo "Sync cancelled by user."
+        exit 0
+      fi
+    fi
+    mkdir -p "$LOCAL_SYNC_DIR/TeslaCam"
+  fi
   VOL_2TB="$LOCAL_SYNC_DIR"
 fi
 
+# 2. Resolve Custom Source Path / Drive Override
+if [[ -n "$CUSTOM_SOURCE" ]]; then
+  CUSTOM_SOURCE="${CUSTOM_SOURCE/#\~/$HOME}"
+  case "$CUSTOM_SOURCE" in
+    usb|128gb|256gb)
+      # Search mounted volumes for Tesla USB
+      for vol in /Volumes/*; do
+        [[ -d "$vol/TeslaCam" ]] || continue
+        if [[ -d "$vol/TESLA_USB_128GB" || -d "$vol/TESLA_USB_256GB" || -d "$vol/TESLA_USB" ]]; then
+          VOL_TESLA_USB="$vol"
+          break
+        fi
+        TOTAL_GB=$(df -g "$vol" 2>/dev/null | awk 'NR==2 {print $2}' || echo 0)
+        if (( TOTAL_GB > 30 && TOTAL_GB <= 600 )); then
+          VOL_TESLA_USB="$vol"
+          break
+        fi
+      done
+      ;;
+    jowua|1tb)
+      for vol in /Volumes/*; do
+        [[ -d "$vol/TeslaCam" ]] || continue
+        if [[ -d "$vol/JOWUA_1TB" ]]; then
+          VOL_JOWUA="$vol"
+          break
+        fi
+        TOTAL_GB=$(df -g "$vol" 2>/dev/null | awk 'NR==2 {print $2}' || echo 0)
+        if (( TOTAL_GB >= 700 && TOTAL_GB <= 1600 )); then
+          VOL_JOWUA="$vol"
+          break
+        fi
+      done
+      ;;
+    *)
+      # Path provided
+      SRC_PATH="$CUSTOM_SOURCE"
+      if [[ -d "$SRC_PATH/TeslaCam" ]]; then
+        VOL_TESLA_USB="$SRC_PATH"
+      elif [[ "$(basename "$SRC_PATH")" == "TeslaCam" && -d "$SRC_PATH" ]]; then
+        VOL_TESLA_USB="$(dirname "$SRC_PATH")"
+      elif [[ -d "/Volumes/$SRC_PATH/TeslaCam" ]]; then
+        VOL_TESLA_USB="/Volumes/$SRC_PATH"
+      else
+        echo "ERROR: Source '$CUSTOM_SOURCE' does not contain a 'TeslaCam' directory." >&2
+        echo "       Please provide a path or drive with an active TeslaCam folder." >&2
+        exit 1
+      fi
+      ;;
+  esac
+fi
+
+# 3. Auto-discover Connected Volumes if not explicitly set
 for vol in /Volumes/*; do
   [[ -d "$vol" && -d "$vol/TeslaCam" ]] || continue
 
   # Prevent macOS Spotlight from indexing and locking Tesla drives during unmounts
   touch "$vol/.metadata_never_index" 2>/dev/null || true
 
-  # 1. Primary identification via root identity markers
-  if [[ -z "$LOCAL_SYNC_DIR" && -d "$vol/ARCHIVE_2TB" ]]; then
+  # Primary identification via root identity markers
+  if [[ -z "$VOL_2TB" && -d "$vol/ARCHIVE_2TB" ]]; then
     VOL_2TB="$vol"
-  elif [[ -d "$vol/JOWUA_1TB" ]]; then
+  elif [[ -z "$VOL_JOWUA" && -d "$vol/JOWUA_1TB" ]]; then
     VOL_JOWUA="$vol"
-  elif [[ -d "$vol/TESLA_USB_128GB" || -d "$vol/TESLA_USB_256GB" || -d "$vol/TESLA_USB" ]]; then
+  elif [[ -z "$VOL_TESLA_USB" && ( -d "$vol/TESLA_USB_128GB" || -d "$vol/TESLA_USB_256GB" || -d "$vol/TESLA_USB" ) ]]; then
     VOL_TESLA_USB="$vol"
   else
-    # 2. Fallback to partition capacity heuristics (128GB/256GB/512GB vs 1TB vs 2TB+)
+    # Fallback to partition capacity heuristics
     TOTAL_GB=$(df -g "$vol" 2>/dev/null | awk 'NR==2 {print $2}' || echo 0)
     if (( TOTAL_GB > 30 && TOTAL_GB <= 600 )) && [[ -z "$VOL_TESLA_USB" ]]; then
       VOL_TESLA_USB="$vol"
     elif (( TOTAL_GB >= 700 && TOTAL_GB <= 1600 )) && [[ -z "$VOL_JOWUA" ]]; then
       VOL_JOWUA="$vol"
-    elif (( TOTAL_GB > 1600 )) && [[ -z "$VOL_2TB" && -z "$LOCAL_SYNC_DIR" ]]; then
+    elif (( TOTAL_GB > 1600 )) && [[ -z "$VOL_2TB" ]]; then
       VOL_2TB="$vol"
     fi
   fi
 done
-
-# Custom source override if provided
-if [[ -n "$CUSTOM_SOURCE" ]]; then
-  case "$CUSTOM_SOURCE" in
-    usb|128gb|256gb)
-      [[ -n "$VOL_TESLA_USB" ]] && VOL_JOWUA=""
-      ;;
-    jowua|1tb)
-      [[ -n "$VOL_JOWUA" ]] && VOL_TESLA_USB=""
-      ;;
-    *)
-      if [[ -d "$CUSTOM_SOURCE" && -d "$CUSTOM_SOURCE/TeslaCam" ]]; then
-        VOL_TESLA_USB="$CUSTOM_SOURCE"
-        VOL_JOWUA=""
-      fi
-      ;;
-  esac
-fi
 
 # ==============================================================================
 # HELPER: STORAGE TABLE & DAILY TIMELINE ANALYZER
@@ -1218,7 +1268,7 @@ fi
 # 4. TOPOLOGY & MATRIX VALIDATION (Standard Sync Mode)
 # ==============================================================================
 if [[ -z "$VOL_TESLA_USB" && -z "$VOL_JOWUA" ]]; then
-  echo "ERROR: Either a Tesla USB or the JOWUA hub drive must be connected." >&2
+  echo "ERROR: Either a Tesla USB, JOWUA hub drive, or --source path must be connected." >&2
   exit 1
 fi
 

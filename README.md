@@ -33,6 +33,7 @@ Tesla vehicles generate continuous multi-camera video footage across 4+ camera a
 ### 3. Master Archive Options (External 2TB SSD or Local Folder / NAS)
 - **Option A: Dedicated External 2TB+ SSD** — Plug in alongside your car drives for full automatic sync.
 - **Option B: Local Directory / NAS (`--localsync /path`)** — If you don't use a second external SSD, you can sync directly into your Mac's internal drive, an external folder, or a network share (e.g. `~/TeslaArchive`).
+  - *Safety check:* If the destination is new or lacks a `TeslaCam` directory, the script will prompt for confirmation before initializing.
 
 ---
 
@@ -132,8 +133,8 @@ You can audit your environment at any time to verify all utilities, versions, an
 # Alternative: Sync directly to a local folder or NAS directory
 ./tesla_sync.sh --localsync ~/TeslaArchive
 
-# Sync from a specific USB drive to a local directory
-./tesla_sync.sh --source usb --localsync /Volumes/Storage/TeslaArchive
+# Sync from a specific source drive path to a local directory
+./tesla_sync.sh --source /Volumes/TESLADRIVE --localsync /Volumes/Storage/TeslaArchive
 ```
 
 ### 📊 Storage Status & Timeline
