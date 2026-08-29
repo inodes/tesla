@@ -20,6 +20,10 @@ STATUS_MODE=0
 TIMELINE_MODE=0 # 0=summary table only, 1=daily, 2=full expanded
 CHECK_DEPS_MODE=0
 
+# Sync destination override (Local directory / NAS alternative to 2TB SSD)
+LOCAL_SYNC_DIR=""
+CUSTOM_SOURCE=""
+
 # Purge controls
 PURGE_MODE=""       # "wizard", "recent", "all_recent", "days", "capacity", "force"
 PURGE_DAYS=""
@@ -152,6 +156,14 @@ while [[ $# -gt 0 ]]; do
       CHECK_DEPS_MODE=1
       shift
       ;;
+    --localsync|--local-sync|--dest|--archive-dir|-ls)
+      LOCAL_SYNC_DIR="$2"
+      shift 2
+      ;;
+    --source|-src)
+      CUSTOM_SOURCE="$2"
+      shift 2
+      ;;
     --status|-s|--summary)
       STATUS_MODE=1
       TIMELINE_MODE=0
@@ -217,15 +229,19 @@ while [[ $# -gt 0 ]]; do
 Usage: tesla_sync.sh [options]
 
 Status & Summary:
-  -s,  --status, --summary   Show structured storage table with % of drive & 2TB archive status
+  -s,  --status, --summary   Show structured storage table with % of drive & archive status
   -t,  --timeline            Show storage table + daily grouped timeline (YYYY-MM-DD)
   -tf, --timeline-full       Show storage table + full expanded events under each day
 
+Alternative Sync Targets:
+  -ls, --localsync <DIR>     Sync footage to a local folder or NAS directory (e.g. ~/TeslaArchive)
+  -src,--source <DRIVE>      Explicitly select source drive (usb, jowua, or custom path)
+
 Interactive Purge:
   -p,  --purge               Launch interactive purge wizard (select drive & rate interactively)
-  -pf, --force-purge         Launch interactive FORCE purge (delete without 2TB verification)
+  -pf, --force-purge         Launch interactive FORCE purge (delete without archive verification)
 
-CLI Purge Controls (Default: Requires 2TB Archive Connected):
+CLI Purge Controls (Default: Requires Archive Drive/Folder Connected):
   -pr, --purge-recent [DAYS] Purge verified RecentClips older than DAYS (default: 2 days)
        --purge-all-recent    Purge ALL verified RecentClips from recording drive
   -pd, --purge-days <DAYS>   Purge verified footage across all folders older than DAYS
@@ -238,8 +254,8 @@ System Diagnostics:
   --check-deps, --doctor     Audit all tool dependencies, versions, and installation guide
 
 Sync & Auto Maintenance (No flags):
-  Performs complete multi-drive backup sync, verified age retention prune (5 days on USB),
-  and capacity target purge (80% -> 60% on Jowua).
+  Performs complete multi-drive backup sync to archive SSD (or --localsync directory),
+  verified age retention prune (5 days on USB), and capacity target purge (80% -> 60% on Jowua).
 HELP_EOF
       exit 0
       ;;
@@ -258,11 +274,18 @@ else
 fi
 
 # ==============================================================================
-# 1. VOLUME DISCOVERY & CLASSIFICATION (Markers + Capacity Fallback)
+# 1. VOLUME DISCOVERY & CLASSIFICATION (Markers + Capacity Fallback + LocalSync)
 # ==============================================================================
 VOL_TESLA_USB=""
 VOL_JOWUA=""
 VOL_2TB=""
+
+# Expand local sync directory if provided
+if [[ -n "$LOCAL_SYNC_DIR" ]]; then
+  LOCAL_SYNC_DIR="${LOCAL_SYNC_DIR/#\~/$HOME}"
+  mkdir -p "$LOCAL_SYNC_DIR/TeslaCam"
+  VOL_2TB="$LOCAL_SYNC_DIR"
+fi
 
 for vol in /Volumes/*; do
   [[ -d "$vol" && -d "$vol/TeslaCam" ]] || continue
@@ -271,24 +294,42 @@ for vol in /Volumes/*; do
   touch "$vol/.metadata_never_index" 2>/dev/null || true
 
   # 1. Primary identification via root identity markers
-  if [[ -d "$vol/ARCHIVE_2TB" ]]; then
+  if [[ -z "$LOCAL_SYNC_DIR" && -d "$vol/ARCHIVE_2TB" ]]; then
     VOL_2TB="$vol"
   elif [[ -d "$vol/JOWUA_1TB" ]]; then
     VOL_JOWUA="$vol"
-  elif [[ -d "$vol/TESLA_USB_128GB" ]]; then
+  elif [[ -d "$vol/TESLA_USB_128GB" || -d "$vol/TESLA_USB_256GB" || -d "$vol/TESLA_USB" ]]; then
     VOL_TESLA_USB="$vol"
   else
-    # 2. Fallback to partition capacity heuristics
+    # 2. Fallback to partition capacity heuristics (128GB/256GB/512GB vs 1TB vs 2TB+)
     TOTAL_GB=$(df -g "$vol" 2>/dev/null | awk 'NR==2 {print $2}' || echo 0)
-    if (( TOTAL_GB > 50 && TOTAL_GB < 350 )) && [[ -z "$VOL_TESLA_USB" ]]; then
+    if (( TOTAL_GB > 30 && TOTAL_GB <= 600 )) && [[ -z "$VOL_TESLA_USB" ]]; then
       VOL_TESLA_USB="$vol"
-    elif (( TOTAL_GB >= 800 && TOTAL_GB <= 1300 )) && [[ -z "$VOL_JOWUA" ]]; then
+    elif (( TOTAL_GB >= 700 && TOTAL_GB <= 1600 )) && [[ -z "$VOL_JOWUA" ]]; then
       VOL_JOWUA="$vol"
-    elif (( TOTAL_GB > 1500 )) && [[ -z "$VOL_2TB" ]]; then
+    elif (( TOTAL_GB > 1600 )) && [[ -z "$VOL_2TB" && -z "$LOCAL_SYNC_DIR" ]]; then
       VOL_2TB="$vol"
     fi
   fi
 done
+
+# Custom source override if provided
+if [[ -n "$CUSTOM_SOURCE" ]]; then
+  case "$CUSTOM_SOURCE" in
+    usb|128gb|256gb)
+      [[ -n "$VOL_TESLA_USB" ]] && VOL_JOWUA=""
+      ;;
+    jowua|1tb)
+      [[ -n "$VOL_JOWUA" ]] && VOL_TESLA_USB=""
+      ;;
+    *)
+      if [[ -d "$CUSTOM_SOURCE" && -d "$CUSTOM_SOURCE/TeslaCam" ]]; then
+        VOL_TESLA_USB="$CUSTOM_SOURCE"
+        VOL_JOWUA=""
+      fi
+      ;;
+  esac
+fi
 
 # ==============================================================================
 # HELPER: STORAGE TABLE & DAILY TIMELINE ANALYZER
@@ -483,14 +524,14 @@ for cat, desc in categories:
         sz, v_sz = get_dir_stats(src_cat_p, dst_cat_p)
         cat_data.append((cat, desc, sz, v_sz))
 
-drive_label = "1TB Jowua Hub" if os.path.exists(os.path.join(src_dir, "JOWUA_1TB")) or "JOWUA" in src_dir else ("2TB Archive SSD" if os.path.exists(os.path.join(src_dir, "ARCHIVE_2TB")) else ("Tesla USB 128GB" if os.path.exists(os.path.join(src_dir, "TESLA_USB_128GB")) else os.path.basename(src_dir)))
+drive_label = "1TB Jowua Hub" if os.path.exists(os.path.join(src_dir, "JOWUA_1TB")) or "JOWUA" in src_dir else ("2TB Archive SSD" if os.path.exists(os.path.join(src_dir, "ARCHIVE_2TB")) else ("Tesla USB" if os.path.exists(os.path.join(src_dir, "TESLA_USB_128GB")) or "TESLADRIVE" in src_dir else os.path.basename(src_dir)))
 
 # 2. Print Perfectly Aligned Structured Table (82 Characters Total Width)
 print(f"┌{'─'*80}┐")
 hdr_text = f" Storage Breakdown: {drive_label}"
 print(f"│{hdr_text:<80}│")
 print(f"├{'─'*32}┬{'─'*12}┬{'─'*11}┬{'─'*22}┤")
-print(f"│ {'Category':<30} │ {'Size':<10} │ {'% Drive':<9} │ {'Status on 2TB SSD':<20} │")
+print(f"│ {'Category':<30} │ {'Size':<10} │ {'% Drive':<9} │ {'Archive Status':<20} │")
 print(f"├{'─'*32}┼{'─'*12}┼{'─'*11}┼{'─'*22}┤")
 
 for cat, desc, sz, v_sz in cat_data:
@@ -509,7 +550,7 @@ for cat, desc, sz, v_sz in cat_data:
     if dst_dir and src_dir == dst_dir:
         archive_status = "Primary Archive"
     elif not dst_dir:
-        archive_status = "2TB Not Connected"
+        archive_status = "Archive Disconnected"
     elif sz == 0:
         archive_status = "Empty"
     elif v_sz >= sz:
@@ -622,20 +663,20 @@ execute_safe_or_force_purge() {
     src_label="2TB Archive SSD"
   elif [[ -d "$src/JOWUA_1TB" ]]; then
     src_label="1TB Jowua Hub"
-  elif [[ -d "$src/TESLA_USB_128GB" ]]; then
-    src_label="Tesla USB 128GB"
+  elif [[ -d "$src/TESLA_USB_128GB" || -d "$src/TESLA_USB_256GB" || -d "$src/TESLA_USB" ]]; then
+    src_label="Tesla USB"
   fi
 
-  # If purging the 2TB drive itself, force mode is mandatory
+  # If purging the destination archive drive/folder itself, force mode is mandatory
   if [[ -n "$VOL_2TB" && "$src" == "$VOL_2TB" ]]; then
     is_force=1
   fi
 
-  # If 2TB Archive is missing and force is NOT set, block execution
+  # If Archive Destination is missing and force is NOT set, block execution
   if (( is_force == 0 )) && [[ -z "$dst" || ! -d "$dst/TeslaCam" ]]; then
-    echo "SAFETY BLOCK: 2TB Archive SSD is NOT connected."
+    echo "SAFETY BLOCK: Master Archive Destination is NOT connected or configured."
     echo "              Nothing will be purged from $src_label."
-    echo "              (To delete without 2TB verification, use interactive Force Purge: -pf)"
+    echo "              (To delete without archive verification, use interactive Force Purge: -pf)"
     return 0
   fi
 
@@ -756,7 +797,7 @@ PY_EOF
     echo ">>> Purge Check: $src_label"
     echo "    Status: 0 clips eligible for purge."
     if (( unverified > 0 )); then
-      echo "    Notice: $unverified clips protected (not yet archived to 2TB)."
+      echo "    Notice: $unverified clips protected (not yet verified in master archive)."
     fi
     return 0
   fi
@@ -771,13 +812,13 @@ PY_EOF
     echo "Eligible     : $count clips ($gb GB)"
     echo ""
     echo "CAUTION: This will PERMANENTLY DELETE footage from this device"
-    echo "         WITHOUT requiring 2TB Archive verification!"
+    echo "         WITHOUT requiring archive verification!"
     echo "======================================================"
   else
     echo ">>> Verified Purge Scan: $src_label"
-    echo "    2TB Archive Verified  : $count clips ($gb GB) confirmed on 2TB"
+    echo "    Archive Verified      : $count clips ($gb GB) confirmed in archive"
     if (( unverified > 0 )); then
-      echo "    Protected (Unverified): $unverified clips (preserved because NOT on 2TB)"
+      echo "    Protected (Unverified): $unverified clips (preserved because NOT yet archived)"
     fi
   fi
 
@@ -939,9 +980,9 @@ run_interactive_purge_wizard() {
   echo "======================================================"
   
   if [[ -n "$VOL_2TB" ]]; then
-    echo "Archive Status: 2TB Archive SSD Connected [${VOL_2TB}]"
+    echo "Archive Status: Master Archive Active [${VOL_2TB}]"
   else
-    echo "Archive Status: ⚠️  2TB Archive SSD is NOT connected (Force mode only)"
+    echo "Archive Status: ⚠️  Master Archive is NOT connected (Force mode only)"
     force_flag=1
   fi
   echo "------------------------------------------------------"
@@ -958,12 +999,12 @@ run_interactive_purge_wizard() {
 
   if [[ -n "$VOL_TESLA_USB" ]]; then
     local u_usage=$(df -h "$VOL_TESLA_USB" | awk 'NR==2 {print $3 " used / " $4 " free"}')
-    echo "  [$opt_idx] Tesla USB 128GB [$u_usage]"
+    echo "  [$opt_idx] Tesla USB       [$u_usage]"
     options+=("usb")
     ((opt_idx++))
   fi
 
-  if [[ -n "$VOL_2TB" ]]; then
+  if [[ -n "$VOL_2TB" && -d "$VOL_2TB/ARCHIVE_2TB" ]]; then
     local a_usage=$(df -h "$VOL_2TB" | awk 'NR==2 {print $3 " used / " $4 " free"}')
     echo "  [$opt_idx] 2TB Archive SSD [$a_usage] (Requires Force Confirmation)"
     options+=("2tb")
@@ -1018,7 +1059,7 @@ run_interactive_purge_wizard() {
     if [[ "$d_vol" == "$VOL_JOWUA" ]]; then
       d_name="1TB Jowua Hub"
     elif [[ "$d_vol" == "$VOL_TESLA_USB" ]]; then
-      d_name="Tesla USB 128GB"
+      d_name="Tesla USB"
     elif [[ "$d_vol" == "$VOL_2TB" ]]; then
       d_name="2TB Archive SSD"
       cur_drive_force=1
@@ -1030,7 +1071,7 @@ run_interactive_purge_wizard() {
     if (( cur_drive_force == 1 )); then
       echo "Mode: ⚠️  FORCE PURGE (Bypasses archive verification)"
     else
-      echo "Mode: 🔒 Safe Verified Purge (Guaranteed by 2TB Archive)"
+      echo "Mode: 🔒 Safe Verified Purge (Guaranteed by Master Archive)"
     fi
     echo "------------------------------------------------------"
     echo "  [1] Purge RecentClips older than N days (Default: 2 days)"
@@ -1104,8 +1145,11 @@ if [[ "$STATUS_MODE" -eq 1 && -z "$PURGE_MODE" ]]; then
     echo ""
   fi
 
-  if [[ -n "$VOL_2TB" ]]; then
+  if [[ -n "$VOL_2TB" && -d "$VOL_2TB/ARCHIVE_2TB" ]]; then
     print_drive_summary_and_timeline "$VOL_2TB" "$VOL_2TB" "$TIMELINE_MODE"
+    echo ""
+  elif [[ -n "$LOCAL_SYNC_DIR" ]]; then
+    print_drive_summary_and_timeline "$LOCAL_SYNC_DIR" "$LOCAL_SYNC_DIR" "$TIMELINE_MODE"
     echo ""
   fi
   exit 0
@@ -1124,7 +1168,7 @@ if [[ -n "$PURGE_MODE" ]]; then
     jowua|1tb)
       [[ -n "$VOL_JOWUA" ]] && TARGETS+=("$VOL_JOWUA")
       ;;
-    usb|128gb)
+    usb|128gb|256gb)
       [[ -n "$VOL_TESLA_USB" ]] && TARGETS+=("$VOL_TESLA_USB")
       ;;
     2tb|archive)
@@ -1174,7 +1218,7 @@ fi
 # 4. TOPOLOGY & MATRIX VALIDATION (Standard Sync Mode)
 # ==============================================================================
 if [[ -z "$VOL_TESLA_USB" && -z "$VOL_JOWUA" ]]; then
-  echo "ERROR: Either the Tesla USB or the 1TB JOWUA drive must be connected." >&2
+  echo "ERROR: Either a Tesla USB or the JOWUA hub drive must be connected." >&2
   exit 1
 fi
 
@@ -1281,9 +1325,24 @@ echo "======================================================"
 echo "          TeslaCam Multi-Drive Sync & Prune           "
 echo "======================================================"
 
-# All 3 Connected (Tesla USB + JOWUA + 2TB)
-if [[ -n "$VOL_TESLA_USB" && -n "$VOL_JOWUA" && -n "$VOL_2TB" ]]; then
-  echo "[Detected] Tesla USB + JOWUA + 2TB Archive detected."
+# Target: Local directory (--localsync)
+if [[ -n "$LOCAL_SYNC_DIR" ]]; then
+  echo "[Target: Local Directory] ${LOCAL_SYNC_DIR}"
+  echo ""
+  if [[ -n "$VOL_TESLA_USB" ]]; then
+    sync_volumes "$VOL_TESLA_USB" "$LOCAL_SYNC_DIR" "Tesla USB -> Local Archive"
+    echo ""
+    execute_safe_or_force_purge "$VOL_TESLA_USB" "$LOCAL_SYNC_DIR" "all_folders" 5 0 0 1
+  fi
+  if [[ -n "$VOL_JOWUA" ]]; then
+    sync_volumes "$VOL_JOWUA" "$LOCAL_SYNC_DIR" "JOWUA Hub -> Local Archive"
+    echo ""
+    execute_safe_or_force_purge "$VOL_JOWUA" "$LOCAL_SYNC_DIR" "capacity" 60 0 0 1
+  fi
+
+# All 3 Connected (Tesla USB + JOWUA + 2TB Archive SSD)
+elif [[ -n "$VOL_TESLA_USB" && -n "$VOL_JOWUA" && -n "$VOL_2TB" ]]; then
+  echo "[Detected] Tesla USB + JOWUA + 2TB Archive SSD detected."
   echo ""
   sync_volumes "$VOL_TESLA_USB" "$VOL_2TB" "Tesla USB -> 2TB Archive"
   echo ""
@@ -1295,30 +1354,30 @@ if [[ -n "$VOL_TESLA_USB" && -n "$VOL_JOWUA" && -n "$VOL_2TB" ]]; then
   echo ""
   execute_safe_or_force_purge "$VOL_JOWUA" "$VOL_2TB" "capacity" 60 0 0 1
 
-# JOWUA + 2TB
+# JOWUA + 2TB Archive SSD
 elif [[ -n "$VOL_JOWUA" && -n "$VOL_2TB" ]]; then
-  echo "[Detected] JOWUA + 2TB Archive detected."
+  echo "[Detected] JOWUA + 2TB Archive SSD detected."
   echo ""
   sync_volumes "$VOL_JOWUA" "$VOL_2TB" "JOWUA 1TB -> 2TB Archive"
   echo ""
   execute_safe_or_force_purge "$VOL_JOWUA" "$VOL_2TB" "capacity" 60 0 0 1
 
-# Tesla USB + 2TB
+# Tesla USB + 2TB Archive SSD
 elif [[ -n "$VOL_TESLA_USB" && -n "$VOL_2TB" ]]; then
-  echo "[Detected] Tesla USB + 2TB Archive detected."
+  echo "[Detected] Tesla USB + 2TB Archive SSD detected."
   echo ""
   sync_volumes "$VOL_TESLA_USB" "$VOL_2TB" "Tesla USB -> 2TB Archive"
   echo ""
   execute_safe_or_force_purge "$VOL_TESLA_USB" "$VOL_2TB" "all_folders" 5 0 0 1
 
-# JOWUA + Tesla USB (2TB Archive SSD NOT present)
+# JOWUA + Tesla USB (Archive Destination NOT present)
 elif [[ -n "$VOL_JOWUA" && -n "$VOL_TESLA_USB" ]]; then
-  echo "[Detected] Tesla USB + JOWUA detected (2TB Archive is not connected)."
+  echo "[Detected] Tesla USB + JOWUA detected (Master Archive is not connected)."
   echo ""
   sync_volumes "$VOL_TESLA_USB" "$VOL_JOWUA" "Tesla USB -> JOWUA 1TB"
   echo ""
-  echo ">>> Purge Notice: 2TB Archive SSD is not connected."
-  echo "    Skipping all pruning to guarantee footage is ONLY deleted after being archived to 2TB."
+  echo ">>> Purge Notice: Master Archive is not connected."
+  echo "    Skipping all pruning to guarantee footage is ONLY deleted after being archived."
 fi
 
 echo ""

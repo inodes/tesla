@@ -4,12 +4,44 @@ An automated toolset for managing Tesla dashcam, Sentry, and continuous driving 
 
 ---
 
+## 💾 Understanding Drive Types & Topologies
+
+Tesla vehicles generate continuous multi-camera video footage across 4+ camera angles (`front`, `back`, `left_repeater`, `right_repeater`, `left_pillar`, `right_pillar`), burning approximately **~13.6 GB per driving hour**.
+
+```text
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                             STORAGE TIERS                                   │
+├───────────────────────┬────────────────────────────┬────────────────────────┤
+│ Drive Type            │ Typical Capacity           │ Role & Purpose         │
+├───────────────────────┼────────────────────────────┼────────────────────────┤
+│ Factory Glovebox USB  │ 128 GB / 256 GB / 512 GB   │ Everyday Sentry/Honks  │
+│ High-Capacity Car SSD │ 1 TB / 2 TB (e.g. Jowua)   │ 24h–60h Driving Buffer │
+│ Master Archive Target │ 2 TB+ SSD or Local Folder  │ Permanent Long-Term    │
+└───────────────────────┴────────────────────────────┴────────────────────────┘
+```
+
+### 1. Factory / Standard Glovebox USB (128GB / 256GB / 512GB)
+- **Primary Role:** Standard glovebox recording drive.
+- **Characteristics:** Excellent for everyday Sentry events and manual honk/screen-tap clips.
+- **Limitation:** On smaller drives, Tesla aggressively wipes older rolling driving footage after ~1 hour to avoid filling up the partition.
+
+### 2. High-Capacity In-Car SSD / Hub (1TB+ e.g. JOWUA Hub, Samsung T7)
+- **Primary Role:** Extended driving loop buffer in the car.
+- **The 24+ Hour Advantage:** Because large drives have hundreds of gigabytes of free space, Tesla does not aggressively delete older `RecentClips`. It accumulates **24 to 60+ hours of continuous multi-camera driving history** (spanning weeks of normal commutes).
+- **Why it matters:** If you notice a dent, scrape, or incident days later that Sentry didn't trigger on, the footage is still intact on the drive.
+
+### 3. Master Archive Options (External 2TB SSD or Local Folder / NAS)
+- **Option A: Dedicated External 2TB+ SSD** — Plug in alongside your car drives for full automatic sync.
+- **Option B: Local Directory / NAS (`--localsync /path`)** — If you don't use a second external SSD, you can sync directly into your Mac's internal drive, an external folder, or a network share (e.g. `~/TeslaArchive`).
+
+---
+
 ## 📋 System Prerequisites & Installation
 
 The suite requires modern command-line utilities for high-performance rsync transfers and JSON metadata extraction.
 
 ### 1. Package Manager: Homebrew (macOS)
-If you don't already have [Homebrew](https://brew.sh/) installed, open Terminal and run:
+If you don't already have [Homebrew](https://brew.sh/) installed, run:
 
 ```bash
 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
@@ -17,7 +49,7 @@ If you don't already have [Homebrew](https://brew.sh/) installed, open Terminal 
 
 ### 2. Core Dependencies (Required)
 
-Install the required utilities via Homebrew:
+Install the required tools via Homebrew:
 
 ```bash
 brew install rsync python
@@ -68,12 +100,12 @@ You can audit your environment at any time to verify all utilities, versions, an
 ## 🌟 Key Features
 
 1. **Multi-Drive Auto-Topology Detection**
-   - Automatically identifies connected drives via root identity markers (`ARCHIVE_2TB`, `JOWUA_1TB`, `TESLA_USB_128GB`) or partition capacity heuristics.
+   - Automatically identifies connected drives via root identity markers (`ARCHIVE_2TB`, `JOWUA_1TB`, `TESLA_USB_128GB`, `TESLA_USB_256GB`) or partition capacity heuristics.
    - Synchronizes footage across drives in parallel with real-time transfer stats.
 
 2. **Strict Archive Verification & Zero Data Loss Guarantee**
-   - No video clip is ever pruned or deleted from recording drives unless it is **strictly verified** to exist and be complete on the 2TB Master Archive SSD first.
-   - Automatically halts all deletion if the 2TB Archive SSD is disconnected.
+   - No video clip is ever pruned or deleted from recording drives unless it is **strictly verified** to exist and be complete in the archive destination first.
+   - Automatically halts all deletion if the archive destination is disconnected.
    - Includes interactive **Force Purge** (`--force-purge`) requiring typing `FORCE` to override for emergency drive clearing.
 
 3. **Continuous Driving Ring Buffer Retention (`RecentClips`)**
@@ -91,11 +123,27 @@ You can audit your environment at any time to verify all utilities, versions, an
 
 ## 🛠️ CLI Usage Reference
 
+### 🔄 Multi-Drive Synchronization
+
+```bash
+# Default: Auto-detects connected car drives & syncs to 2TB Archive SSD
+./tesla_sync.sh
+
+# Alternative: Sync directly to a local folder or NAS directory
+./tesla_sync.sh --localsync ~/TeslaArchive
+
+# Sync from a specific USB drive to a local directory
+./tesla_sync.sh --source usb --localsync /Volumes/Storage/TeslaArchive
+```
+
 ### 📊 Storage Status & Timeline
 
 ```bash
 # Display structured storage breakdown with % of drive capacity & archive status
 ./tesla_sync.sh --status
+
+# Status checked against a local sync archive folder
+./tesla_sync.sh --status --localsync ~/TeslaArchive
 
 # Display storage table + daily grouped timeline (YYYY-MM-DD)
 ./tesla_sync.sh --timeline
@@ -134,6 +182,6 @@ You can audit your environment at any time to verify all utilities, versions, an
 
 ## 📁 Repository Structure
 
-- [`tesla_sync.sh`](tesla_sync.sh) — Multi-drive sync, daily timeline analyzer, dependency doctor, and verified purge engine.
+- [`tesla_sync.sh`](tesla_sync.sh) — Multi-drive sync, local sync directory support, daily timeline analyzer, dependency doctor, and verified purge engine.
 - [`run_exportdash.sh`](run_exportdash.sh) — Zero-to-standup Docker/OrbStack runner for ExportDash web player & video stitcher.
 - [`exportdash.cam/`](exportdash.cam/) — Next.js + Tailwind + FFmpeg web UI and batch 2x2 video compositor.
