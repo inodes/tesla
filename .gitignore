@@ -1,0 +1,12 @@
+.DS_Store
+._*
+.Spotlight-V100
+.Trashes
+.fseventsd
+System Volume Information
+node_modules/
+.next/
+out/
+*.log
+*.pid
+TeslaCam_Exports/
