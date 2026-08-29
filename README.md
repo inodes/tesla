@@ -4,9 +4,9 @@ An automated toolset for managing Tesla dashcam, Sentry, and continuous driving 
 
 ---
 
-## 💾 Understanding Drive Types & Topologies
+## 💾 Understanding Drive Types & Volume Discovery
 
-Tesla vehicles generate continuous multi-camera video footage across 4+ camera angles (`front`, `back`, `left_repeater`, `right_repeater`, `left_pillar`, `right_pillar`), burning approximately **~13.6 GB per driving hour**.
+Tesla vehicles format and name USB recording drives as **`TESLADRIVE`** by default. When multiple Tesla drives are connected simultaneously to macOS, the operating system mounts them under `/Volumes` with sequential naming (e.g. `/Volumes/TESLADRIVE`, `/Volumes/TESLADRIVE 1`, `/Volumes/TESLADRIVE 2`).
 
 ```text
 ┌─────────────────────────────────────────────────────────────────────────────┐
@@ -20,20 +20,14 @@ Tesla vehicles generate continuous multi-camera video footage across 4+ camera a
 └───────────────────────┴────────────────────────────┴────────────────────────┘
 ```
 
-### 1. Factory / Standard Glovebox USB (128GB / 256GB / 512GB)
-- **Primary Role:** Standard glovebox recording drive.
-- **Characteristics:** Excellent for everyday Sentry events and manual honk/screen-tap clips.
-- **Limitation:** On smaller drives, Tesla aggressively wipes older rolling driving footage after ~1 hour to avoid filling up the partition.
+### Automatic Discovery (Zero Configuration)
+- By default, `tesla_sync.sh` requires **no arguments**. It automatically scans `/Volumes` for any drives named `TESLADRIVE*` or tagged with identity markers (`ARCHIVE_2TB`, `JOWUA_1TB`, `TESLA_USB_128GB`), categorizes their storage tier, and executes synchronization and verified pruning.
 
-### 2. High-Capacity In-Car SSD / Hub (1TB+ e.g. JOWUA Hub, Samsung T7)
-- **Primary Role:** Extended driving loop buffer in the car.
-- **The 24+ Hour Advantage:** Because large drives have hundreds of gigabytes of free space, Tesla does not aggressively delete older `RecentClips`. It accumulates **24 to 60+ hours of continuous multi-camera driving history** (spanning weeks of normal commutes).
-- **Why it matters:** If you notice a dent, scrape, or incident days later that Sentry didn't trigger on, the footage is still intact on the drive.
-
-### 3. Master Archive Options (External 2TB SSD or Local Folder / NAS)
-- **Option A: Dedicated External 2TB+ SSD** — Plug in alongside your car drives for full automatic sync.
-- **Option B: Local Directory / NAS (`--localsync /path`)** — If you don't use a second external SSD, you can sync directly into your Mac's internal drive, an external folder, or a network share (e.g. `~/TeslaArchive`).
-  - *Safety check:* If the destination is new or lacks a `TeslaCam` directory, the script will prompt for confirmation before initializing.
+### Optional Overrides (`--source` and `--localsync`)
+If your drives have custom volume names (not named `TESLADRIVE`), or if you prefer to sync footage to an internal Mac folder or network share:
+- **`--source <PATH>`** *(Optional)* — Manually points to any drive or directory containing a `TeslaCam` folder.
+- **`--localsync <DIR>`** *(Optional)* — Sets a local Mac directory or NAS folder as the master archive destination instead of an external 2TB SSD.
+- **Interactive Fallback:** If standard `TESLADRIVE` volumes are not detected when running interactively in Terminal, the script will prompt you directly for the source path or local archive folder.
 
 ---
 
@@ -105,7 +99,7 @@ You can audit your environment at any time to verify all utilities, versions, an
    - Synchronizes footage across drives in parallel with real-time transfer stats.
 
 2. **Strict Archive Verification & Zero Data Loss Guarantee**
-   - No video clip is ever pruned or deleted from recording drives unless it is **strictly verified** to exist and be complete in the archive destination first.
+   - No video clip is ever pruned or deleted from recording drives unless it is **strictly verified** to exist and be complete in the master archive destination first.
    - Automatically halts all deletion if the archive destination is disconnected.
    - Includes interactive **Force Purge** (`--force-purge`) requiring typing `FORCE` to override for emergency drive clearing.
 
@@ -127,14 +121,14 @@ You can audit your environment at any time to verify all utilities, versions, an
 ### 🔄 Multi-Drive Synchronization
 
 ```bash
-# Default: Auto-detects connected car drives & syncs to 2TB Archive SSD
+# Default: Auto-detects connected TESLADRIVE volumes & syncs to 2TB Master SSD
 ./tesla_sync.sh
 
 # Alternative: Sync directly to a local folder or NAS directory
 ./tesla_sync.sh --localsync ~/TeslaArchive
 
-# Sync from a specific source drive path to a local directory
-./tesla_sync.sh --source /Volumes/TESLADRIVE --localsync /Volumes/Storage/TeslaArchive
+# Explicitly specify a custom source drive path
+./tesla_sync.sh --source /Volumes/MyCustomDrive --localsync ~/TeslaArchive
 ```
 
 ### 📊 Storage Status & Timeline

@@ -228,12 +228,19 @@ while [[ $# -gt 0 ]]; do
       cat << 'HELP_EOF'
 Usage: tesla_sync.sh [options]
 
+Note on Drive Discovery:
+  By default, tesla_sync.sh automatically discovers connected Tesla USBs, SSDs,
+  and Archive drives mounted under /Volumes with typical names like 'TESLADRIVE',
+  'TESLADRIVE 1', etc.
+  If your drives have custom volume names or you want to archive to internal
+  storage / NAS, you can optionally provide --source and/or --localsync.
+
 Status & Summary:
   -s,  --status, --summary   Show structured storage table with % of drive & archive status
   -t,  --timeline            Show storage table + daily grouped timeline (YYYY-MM-DD)
   -tf, --timeline-full       Show storage table + full expanded events under each day
 
-Alternative Sync Targets & Custom Sources:
+Optional Source & Archive Target Overrides:
   -ls, --localsync <DIR>     Sync footage to a local folder or NAS directory (e.g. ~/TeslaArchive)
   -src,--source <PATH|DRIVE> Explicitly specify source path containing 'TeslaCam' (e.g. /Volumes/USB)
 
@@ -308,7 +315,6 @@ if [[ -n "$CUSTOM_SOURCE" ]]; then
   CUSTOM_SOURCE="${CUSTOM_SOURCE/#\~/$HOME}"
   case "$CUSTOM_SOURCE" in
     usb|128gb|256gb)
-      # Search mounted volumes for Tesla USB
       for vol in /Volumes/*; do
         [[ -d "$vol/TeslaCam" ]] || continue
         if [[ -d "$vol/TESLA_USB_128GB" || -d "$vol/TESLA_USB_256GB" || -d "$vol/TESLA_USB" ]]; then
@@ -337,7 +343,6 @@ if [[ -n "$CUSTOM_SOURCE" ]]; then
       done
       ;;
     *)
-      # Path provided
       SRC_PATH="$CUSTOM_SOURCE"
       if [[ -d "$SRC_PATH/TeslaCam" ]]; then
         VOL_TESLA_USB="$SRC_PATH"
@@ -380,6 +385,32 @@ for vol in /Volumes/*; do
     fi
   fi
 done
+
+# 4. Interactive fallback if standard TESLADRIVE volumes are NOT auto-detected
+if [[ -z "$VOL_TESLA_USB" && -z "$VOL_JOWUA" && -z "$VOL_2TB" && -t 0 && ASSUME_YES == 0 ]]; then
+  echo "=========================================================================="
+  echo "                🔍 No 'TESLADRIVE' Volumes Auto-Detected                 "
+  echo "=========================================================================="
+  echo "Tesla recording drives typically mount under /Volumes as 'TESLADRIVE'."
+  echo "If your drive has a custom volume name or is on a local/network path,"
+  echo "you can specify it below (or use --source and --localsync)."
+  echo "--------------------------------------------------------------------------"
+  printf "Enter path to source TeslaCam drive/folder [or press Enter to exit]: "
+  read -r prompt_src
+  if [[ -n "$prompt_src" ]]; then
+    prompt_src="${prompt_src/#\~/$HOME}"
+    if [[ -d "$prompt_src/TeslaCam" ]]; then
+      VOL_TESLA_USB="$prompt_src"
+    elif [[ "$(basename "$prompt_src")" == "TeslaCam" && -d "$prompt_src" ]]; then
+      VOL_TESLA_USB="$(dirname "$prompt_src")"
+    elif [[ -d "/Volumes/$prompt_src/TeslaCam" ]]; then
+      VOL_TESLA_USB="/Volumes/$prompt_src"
+    else
+      echo "ERROR: Directory '$prompt_src' does not contain a 'TeslaCam' folder." >&2
+      exit 1
+    fi
+  fi
+fi
 
 # ==============================================================================
 # HELPER: STORAGE TABLE & DAILY TIMELINE ANALYZER
@@ -1175,6 +1206,13 @@ run_interactive_purge_wizard() {
 # 2. STATUS / TIMELINE CHECK MODE (--status / --summary / --timeline / --timeline-full)
 # ==============================================================================
 if [[ "$STATUS_MODE" -eq 1 && -z "$PURGE_MODE" ]]; then
+  if [[ -z "$VOL_TESLA_USB" && -z "$VOL_JOWUA" && -z "$VOL_2TB" ]]; then
+    echo "ERROR: No active TeslaCam volumes or archive directories detected." >&2
+    echo "       Tesla drives typically mount under /Volumes as 'TESLADRIVE'." >&2
+    echo "       To specify a custom path, use: ./tesla_sync.sh --status --source /path/to/drive" >&2
+    exit 1
+  fi
+
   echo "=================================================================================="
   echo "                       TeslaCam Storage & Archive Status                          "
   if (( TIMELINE_MODE == 1 )); then
@@ -1233,8 +1271,10 @@ if [[ -n "$PURGE_MODE" ]]; then
         TARGETS+=("$VOL_JOWUA")
       elif [[ -n "$VOL_TESLA_USB" && -z "$VOL_JOWUA" ]]; then
         TARGETS+=("$VOL_TESLA_USB")
-      else
+      elif [[ -n "$VOL_JOWUA" && -n "$VOL_TESLA_USB" ]]; then
         TARGETS+=("$VOL_JOWUA" "$VOL_TESLA_USB")
+      elif [[ -n "$VOL_2TB" ]]; then
+        TARGETS+=("$VOL_2TB")
       fi
       ;;
   esac
@@ -1268,8 +1308,31 @@ fi
 # 4. TOPOLOGY & MATRIX VALIDATION (Standard Sync Mode)
 # ==============================================================================
 if [[ -z "$VOL_TESLA_USB" && -z "$VOL_JOWUA" ]]; then
-  echo "ERROR: Either a Tesla USB, JOWUA hub drive, or --source path must be connected." >&2
+  echo "ERROR: No active TeslaCam recording drive detected." >&2
+  echo "       Tesla drives typically mount under /Volumes as 'TESLADRIVE'." >&2
+  echo "       If using custom mount paths, provide: --source /path/to/drive" >&2
   exit 1
+fi
+
+# If in Sync mode and no archive destination is detected, prompt for --localsync in interactive terminal
+if [[ -z "$VOL_2TB" && -t 0 && ASSUME_YES == 0 ]]; then
+  echo "=========================================================================="
+  echo "                📁 Master Archive Destination Notice                      "
+  echo "=========================================================================="
+  echo "No standard 2TB Master Archive SSD was detected under /Volumes."
+  echo "You can sync directly to a local folder or NAS directory on this computer."
+  echo "--------------------------------------------------------------------------"
+  printf "Enter local archive path [e.g. ~/TeslaArchive, or Enter to cancel]: "
+  read -r prompt_local_sync
+  if [[ -n "$prompt_local_sync" ]]; then
+    prompt_local_sync="${prompt_local_sync/#\~/$HOME}"
+    mkdir -p "$prompt_local_sync/TeslaCam"
+    VOL_2TB="$prompt_local_sync"
+    LOCAL_SYNC_DIR="$prompt_local_sync"
+  else
+    echo "No archive destination specified. Sync cancelled."
+    exit 0
+  fi
 fi
 
 # ==============================================================================
