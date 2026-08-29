@@ -1,6 +1,37 @@
 # TeslaCam Multi-Drive Suite
 
-An automated toolset for managing Tesla dashcam, Sentry, and continuous driving (`RecentClips`) footage across multiple storage drives on macOS and Linux.
+A modular toolset for managing, backing up, analyzing, and viewing Tesla dashcam, Sentry, and continuous driving (`RecentClips`) footage across multiple storage devices on macOS and Linux.
+
+---
+
+## 🧩 Two Distinct Components
+
+This repository consists of two separate, independent components:
+
+```text
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ 1. tesla_sync.sh (Core Sync & Archive Engine)                                │
+│    - Pure shell + Python script (NO Docker needed)                          │
+│    - Backs up USB / Jowua / SSDs to Master 2TB SSD or Local Folder/NAS      │
+│    - Daily timeline reports & verified 100% safe retention pruning           │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ 2. run_exportdash.sh (Optional Local Web Player & 4-Way Video Stitcher)      │
+│    - Optional local container wrapper for ExportDash                        │
+│    - Credits & Source: https://github.com/nobig-deals/exportdash.cam        │
+│    - Requires Docker / OrbStack ONLY if running this offline local wrapper   │
+└─────────────────────────────────────────────────────────────────────────────┘
+```
+
+### Component 1: `tesla_sync.sh` (Core Sync & Backup)
+- **What it does:** Automatically discovers connected Tesla USBs, Jowua hubs, or SSDs and syncs footage to your Master Archive (either an external 2TB SSD or a local Mac folder via `--localsync`).
+- **Safety Guarantee:** Verified zero-data-loss pruning engine (never deletes footage from recording drives unless confirmed present in the master archive).
+- **Requirements:** Lightweight standalone tool requiring only `rsync` and `python3`. **Docker is NOT required.**
+
+### Component 2: `run_exportdash.sh` (Optional Local Web Player & Stitcher)
+- **What it does:** A zero-configuration local Docker wrapper that runs the **ExportDash** multi-camera web player on `http://localhost:3000` and batch-renders 4-camera recordings into 2x2 grid MP4 videos (`tesla-stitch`).
+- **Attribution & Upstream Project:** This component is based on the fantastic open-source project **[exportdash.cam](https://github.com/nobig-deals/exportdash.cam)** created by **[nobig-deals](https://github.com/nobig-deals)**.
+- **Hosted Version Available:** You can use **[https://exportdash.cam/](https://exportdash.cam/)** directly in any web browser without running Docker or installing anything locally.
+- **Docker Requirement:** A container engine (such as [OrbStack](https://orbstack.dev/) or Docker Desktop) is **strictly only required if you choose to run this local offline wrapper**.
 
 ---
 
@@ -21,7 +52,7 @@ Tesla vehicles format and name USB recording drives as **`TESLADRIVE`** by defau
 ```
 
 ### Run From Anywhere & Automatic Discovery
-- `tesla_sync.sh` can be executed from **any location** (e.g. your cloned git repository, home directory, or from the drive itself).
+- `tesla_sync.sh` can be executed from **any directory** (e.g. your cloned repository, home folder, or from the drive itself).
 - It automatically scans `/Volumes` for any drives named `TESLADRIVE*` or tagged with identity markers (`ARCHIVE_2TB`, `JOWUA_1TB`, `TESLA_USB_128GB`), categorizes their storage tier, and executes synchronization and verified pruning.
 
 ### Install & Update Tools Across Drives
@@ -41,8 +72,6 @@ If your drives have custom volume names (not named `TESLADRIVE`), or if you pref
 
 ## 📋 System Prerequisites & Installation
 
-The suite requires modern command-line utilities for high-performance rsync transfers and JSON metadata extraction.
-
 ### 1. Package Manager: Homebrew (macOS)
 If you don't already have [Homebrew](https://brew.sh/) installed, run:
 
@@ -50,9 +79,9 @@ If you don't already have [Homebrew](https://brew.sh/) installed, run:
 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
 ```
 
-### 2. Core Dependencies (Required)
+### 2. Core Dependencies (Required for `tesla_sync.sh`)
 
-Install the required tools via Homebrew:
+Install the required utilities via Homebrew:
 
 ```bash
 brew install rsync python
@@ -60,19 +89,16 @@ brew install rsync python
 
 > **Why modern rsync?** macOS ships with an ancient BSD rsync (v2.6.9 from 2006) which lacks delta-transfer optimisations, progress stats, and timestamp resolution required for reliable multi-gigabyte TeslaCam synchronization. Homebrew provides modern **rsync 3.x+**.
 
-### 3. Container Engine (Recommended: OrbStack)
+### 3. Container Engine (Optional — Strictly for `run_exportdash.sh`)
 
-For running the browser-based 4-camera web player and 4-way 2x2 grid batch video stitcher, [OrbStack](https://orbstack.dev/) is the recommended fast, lightweight container engine:
+If you wish to run the local **ExportDash** web player and 4-camera video stitcher on your own machine instead of using [https://exportdash.cam/](https://exportdash.cam/):
 
 ```bash
-# Install OrbStack (Fast & Lightweight)
+# Recommended: OrbStack (Fast & Lightweight)
 brew install --cask orbstack
 
 # Or standard Docker Desktop
 brew install --cask docker
-
-# Optional standalone FFmpeg
-brew install ffmpeg
 ```
 
 ---
@@ -117,10 +143,6 @@ You can audit your environment at any time to verify all utilities, versions, an
 
 4. **Event Location & Trigger Parsing**
    - Parses `event.json` metadata to display trigger reasons (e.g. `honk`, `dashcam_tapped`, `object_detection`) alongside reverse-geocoded street names and GPS coordinates.
-
-5. **Multi-Camera Web Viewer & Batch Stitcher (`ExportDash`)**
-   - Zero-to-standup container providing browser-based 4-way synchronized playback (`http://localhost:3000`).
-   - Batch CLI stitching utility (`tesla-stitch`) to render 4-camera recordings into synchronized 2x2 grid MP4 videos.
 
 ---
 
@@ -174,10 +196,12 @@ You can audit your environment at any time to verify all utilities, versions, an
 ./tesla_sync.sh --purge-all-recent --target jowua --dry-run
 ```
 
-### 🎬 Web Viewer & 4-Camera Stitching
+### 🎬 Optional: Local Web Viewer & 4-Camera Stitching
+
+*(Requires OrbStack or Docker)*
 
 ```bash
-# Launch multi-camera web player on http://localhost:3000
+# Launch local 4-camera web player on http://localhost:3000
 ./run_exportdash.sh
 
 # Render 4-camera composite 2x2 grid video for a specific event folder
@@ -186,8 +210,17 @@ You can audit your environment at any time to verify all utilities, versions, an
 
 ---
 
+## 🙏 Credits & Acknowledgments
+
+- **ExportDash:** The web viewer and multi-camera compositing UI is built upon the open-source project by **[nobig-deals](https://github.com/nobig-deals)**:
+  - Repository: [https://github.com/nobig-deals/exportdash.cam](https://github.com/nobig-deals/exportdash.cam)
+  - Hosted Web Application: [https://exportdash.cam/](https://exportdash.cam/)
+- **TeslaCam Suite:** Backup orchestration, multi-drive sync topology, daily driving timeline aggregation, and verified retention pruning by [inodes](https://github.com/inodes).
+
+---
+
 ## 📁 Repository Structure
 
-- [`tesla_sync.sh`](tesla_sync.sh) — Multi-drive sync, local sync directory support, daily timeline analyzer, dependency doctor, and verified purge engine.
-- [`run_exportdash.sh`](run_exportdash.sh) — Zero-to-standup Docker/OrbStack runner for ExportDash web player & video stitcher.
-- [`exportdash.cam/`](exportdash.cam/) — Next.js + Tailwind + FFmpeg web UI and batch 2x2 video compositor.
+- [`tesla_sync.sh`](tesla_sync.sh) — Core standalone backup engine, timeline analyzer, dependency doctor, and verified purge manager.
+- [`run_exportdash.sh`](run_exportdash.sh) — Optional local Docker/OrbStack runner for ExportDash web player & video stitcher.
+- [`exportdash.cam/`](exportdash.cam/) — ExportDash web UI and batch 2x2 video compositor (credit: [nobig-deals/exportdash.cam](https://github.com/nobig-deals/exportdash.cam)).
