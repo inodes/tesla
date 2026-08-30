@@ -1462,9 +1462,10 @@ sync_volumes() {
   local initial_dst_kb=$(df -k "$dst" | awk 'NR==2 {print $3}')
   local prev_dst_kb=$initial_dst_kb
 
-  # 2. Launch Rsync in background
+  # 2. Launch Rsync in background with --stats
   "$RSYNC_BIN" -a \
     --modify-window=2 \
+    --stats \
     --exclude=".Spotlight-V100" \
     --exclude=".Trashes" \
     --exclude="System Volume Information" \
@@ -1515,8 +1516,18 @@ sync_volumes() {
   wait $rsync_pid
   local exit_code=$?
 
+  local actual_bytes=$(awk '/Total transferred file size:/ {print $5}' "$LOG_FILE" 2>/dev/null | tr -d ',')
+  local actual_gb="0.00"
+  if [[ -n "$actual_bytes" && "$actual_bytes" -gt 0 ]]; then
+    actual_gb=$(printf "%.2f" "$(( actual_bytes / (1024.0 * 1048576.0) ))")
+  fi
+
   if (( exit_code == 0 )); then
-    printf "\r\033[K    Transfer: 100.0%% (%s GB / %s GB) | Complete.\n" "$to_transfer_gb" "$to_transfer_gb"
+    if (( $(echo "$actual_gb > 0" | bc -l 2>/dev/null || echo 0) )); then
+      printf "\r\033[K    Transfer: 100.0%% (%s GB transferred) | Complete.\n" "$actual_gb"
+    else
+      printf "\r\033[K    Transfer: 100.0%% (0.00 GB transferred) | Up-to-date.\n"
+    fi
   else
     printf "\r\033[K    Transfer encountered an issue. Check %s\n" "$LOG_FILE"
   fi
