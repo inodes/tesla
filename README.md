@@ -1,5 +1,10 @@
 # TeslaCam Multi-Drive Suite
 
+[![CI](https://github.com/inodes/tesla/actions/workflows/ci.yml/badge.svg)](https://github.com/inodes/tesla/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/inodes/tesla?color=green)](https://github.com/inodes/tesla/releases)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+
+
 A modular toolset for managing, backing up, analyzing, and viewing Tesla dashcam, Sentry, and continuous driving (`RecentClips`) footage across multiple storage devices on macOS and Linux.
 
 ---
