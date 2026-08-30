@@ -186,6 +186,18 @@ You can audit your environment at any time to verify all utilities, versions, an
 
 ---
 
+---
+
+## 🤝 Contributing & Pull Requests
+
+Contributions and Pull Requests are warmly welcomed!
+
+- Feel free to submit a **[Pull Request](https://github.com/inodes/tesla/pulls)** for bug fixes, new features, or documentation updates.
+- Please review our **[Contributing Guidelines](CONTRIBUTING.md)** and **[Code of Conduct](CODE_OF_CONDUCT.md)** before opening a PR.
+- For feature discussions or issues, please open an **[Issue](https://github.com/inodes/tesla/issues)**.
+
+---
+
 ## 🙏 Credits & Acknowledgments
 
 - **ExportDash:** The web viewer and multi-camera compositing UI is built upon the open-source project by **[nobig-deals](https://github.com/nobig-deals)**:
