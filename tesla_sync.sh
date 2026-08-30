@@ -337,7 +337,7 @@ System Diagnostics:
 
 Sync & Auto Maintenance (No flags):
   Performs complete multi-drive backup sync to archive SSD (or --localsync directory),
-  verified age retention prune (5 days on USB), and capacity target purge (80% -> 60% on Jowua).
+  verified RecentClips retention prune (2 days on USB), and capacity target purge (80% -> 60% on Jowua).
 HELP_EOF
       exit 0
       ;;
@@ -1427,15 +1427,21 @@ sync_volumes() {
   echo "    Source: $src/TeslaCam/"
   echo "    Target: $dst/TeslaCam/"
 
-  # 1. Calculate bytes to transfer via dry-run
+  # 1. Calculate bytes to transfer via dry-run (strictly matching execution flags)
   printf "    Calculating transfer payload..."
   local dry_run_out
   dry_run_out=$("$RSYNC_BIN" -a --dry-run --stats \
+    --modify-window=2 \
     --exclude=".Spotlight-V100" \
     --exclude=".Trashes" \
     --exclude="System Volume Information" \
     --exclude=".fseventsd" \
+    --exclude=".*" \
     --exclude="._*" \
+    --exclude="Tools" \
+    --exclude="Icons" \
+    --exclude="TeslaCam_Exports" \
+    --exclude="TeslaCam_Archive" \
     "$src/TeslaCam/" "$dst/TeslaCam/" 2>/dev/null)
 
   local to_transfer_bytes
@@ -1463,7 +1469,12 @@ sync_volumes() {
     --exclude=".Trashes" \
     --exclude="System Volume Information" \
     --exclude=".fseventsd" \
+    --exclude=".*" \
     --exclude="._*" \
+    --exclude="Tools" \
+    --exclude="Icons" \
+    --exclude="TeslaCam_Exports" \
+    --exclude="TeslaCam_Archive" \
     "$src/TeslaCam/" "$dst/TeslaCam/" > "$LOG_FILE" 2>&1 &
   local rsync_pid=$!
 
@@ -1525,7 +1536,7 @@ if [[ -n "$LOCAL_SYNC_DIR" ]]; then
   if [[ -n "$VOL_TESLA_USB" ]]; then
     sync_volumes "$VOL_TESLA_USB" "$LOCAL_SYNC_DIR" "Tesla USB -> Local Archive"
     echo ""
-    execute_safe_or_force_purge "$VOL_TESLA_USB" "$LOCAL_SYNC_DIR" "all_folders" 5 0 0 1
+    execute_safe_or_force_purge "$VOL_TESLA_USB" "$LOCAL_SYNC_DIR" "recent_only" 2 0 0 1
   fi
   if [[ -n "$VOL_JOWUA" ]]; then
     sync_volumes "$VOL_JOWUA" "$LOCAL_SYNC_DIR" "JOWUA Hub -> Local Archive"
@@ -1543,7 +1554,7 @@ elif [[ -n "$VOL_TESLA_USB" && -n "$VOL_JOWUA" && -n "$VOL_2TB" ]]; then
   echo ""
   sync_volumes "$VOL_JOWUA" "$VOL_2TB" "JOWUA 1TB -> 2TB Archive"
   echo ""
-  execute_safe_or_force_purge "$VOL_TESLA_USB" "$VOL_2TB" "all_folders" 5 0 0 1
+  execute_safe_or_force_purge "$VOL_TESLA_USB" "$VOL_2TB" "recent_only" 2 0 0 1
   echo ""
   execute_safe_or_force_purge "$VOL_JOWUA" "$VOL_2TB" "capacity" 60 0 0 1
 
@@ -1561,7 +1572,7 @@ elif [[ -n "$VOL_TESLA_USB" && -n "$VOL_2TB" ]]; then
   echo ""
   sync_volumes "$VOL_TESLA_USB" "$VOL_2TB" "Tesla USB -> 2TB Archive"
   echo ""
-  execute_safe_or_force_purge "$VOL_TESLA_USB" "$VOL_2TB" "all_folders" 5 0 0 1
+  execute_safe_or_force_purge "$VOL_TESLA_USB" "$VOL_2TB" "recent_only" 2 0 0 1
 
 # JOWUA + Tesla USB (Archive Destination NOT present)
 elif [[ -n "$VOL_JOWUA" && -n "$VOL_TESLA_USB" ]]; then
