@@ -1,0 +1,5 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Upstream ExportDash Web Player
+    url: https://github.com/nobig-deals/exportdash.cam
+    about: For questions/issues specifically concerning the upstream ExportDash web UI player and video compositor.
