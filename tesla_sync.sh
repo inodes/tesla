@@ -687,13 +687,13 @@ for cat, desc in categories:
 
 drive_label = "1TB Jowua Hub" if os.path.exists(os.path.join(src_dir, "JOWUA_1TB")) or "JOWUA" in src_dir else ("2TB Archive SSD" if os.path.exists(os.path.join(src_dir, "ARCHIVE_2TB")) else ("Tesla USB" if os.path.exists(os.path.join(src_dir, "TESLA_USB_128GB")) or "TESLADRIVE" in src_dir else os.path.basename(src_dir)))
 
-# 2. Print Perfectly Aligned Structured Table (82 Characters Total Width)
-print(f"┌{'─'*80}┐")
+# 2. Print Perfectly Aligned Structured Table (Max 78 Characters Total Width)
+print(f"┌{'─'*76}┐")
 hdr_text = f" Storage Breakdown: {drive_label}"
-print(f"│{hdr_text:<80}│")
-print(f"├{'─'*32}┬{'─'*12}┬{'─'*11}┬{'─'*22}┤")
-print(f"│ {'Category':<30} │ {'Size':<10} │ {'% Drive':<9} │ {'Archive Status':<20} │")
-print(f"├{'─'*32}┼{'─'*12}┼{'─'*11}┼{'─'*22}┤")
+print(f"│{hdr_text:<76}│")
+print(f"├{'─'*29}┬{'─'*11}┬{'─'*10}┬{'─'*23}┤")
+print(f"│ {'Category':<27} │ {'Size':<9} │ {'% Drive':<8} │ {'Archive Status':<21} │")
+print(f"├{'─'*29}┼{'─'*11}┼{'─'*10}┼{'─'*23}┤")
 
 for cat, desc, sz, v_sz in cat_data:
     pct_val = (sz * 100.0) / total_disk_b if total_disk_b > 0 else 0.0
@@ -705,8 +705,8 @@ for cat, desc, sz, v_sz in cat_data:
         pct_str = "<0.1%"
         
     label_full = f"{cat} ({desc})"
-    if len(label_full) > 30:
-        label_full = label_full[:30]
+    if len(label_full) > 27:
+        label_full = label_full[:27]
     
     if dst_dir and src_dir == dst_dir:
         archive_status = "Primary Archive"
@@ -720,16 +720,16 @@ for cat, desc, sz, v_sz in cat_data:
         v_pct = (v_sz * 100.0) / sz
         archive_status = f"✔ {v_pct:.0f}% Archived"
         
-    print(f"│ {label_full:<30} │ {format_size(sz):>10} │ {pct_str:>9} │ {archive_status:<20} │")
+    print(f"│ {label_full:<27} │ {format_size(sz):>9} │ {pct_str:>8} │ {archive_status:<21} │")
 
-print(f"├{'─'*32}┴{'─'*12}┴{'─'*11}┴{'─'*22}┤")
+print(f"├{'─'*29}┴{'─'*11}┴{'─'*10}┴{'─'*23}┤")
 used_str = format_size(used_disk_b)
 free_str = format_size(free_disk_b)
 total_disk_str = format_size(total_disk_b)
 pct_disk = f"{(used_disk_b * 100.0) / total_disk_b:.0f}%"
 tot_text = f" Total Partition: {used_str} used / {free_str} free ({pct_disk} full of {total_disk_str})"
-print(f"│{tot_text:<80}│")
-print(f"└{'─'*80}┘")
+print(f"│{tot_text:<76}│")
+print(f"└{'─'*76}┘")
 
 # 3. Print Daily Timeline if mode > 0
 if mode > 0:
@@ -1293,14 +1293,14 @@ if [[ "$STATUS_MODE" -eq 1 && -z "$PURGE_MODE" ]]; then
     exit 1
   fi
 
-  echo "=================================================================================="
+  echo "============================================================================"
   echo "                       TeslaCam Storage & Archive Status                          "
   if (( TIMELINE_MODE == 1 )); then
     echo "                          (Daily Timeline Included)                               "
   elif (( TIMELINE_MODE == 2 )); then
     echo "                     (Full Expanded Events Included)                              "
   fi
-  echo "=================================================================================="
+  echo "============================================================================"
   echo ""
 
   if [[ -n "$VOL_TESLA_USB" ]]; then
