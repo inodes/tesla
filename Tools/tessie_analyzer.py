@@ -407,7 +407,7 @@ class TessieAnalyzer:
                     "end_dt": d_start,
                     "time_str": f"{s_str} - {e_str}",
                     "location": current_location,
-                    "activity": f"🅿️ Parked at {current_location} ({dur_str})",
+                    "activity": f"🅿️ {current_location} ({dur_str})",
                     "drive": None
                 })
                 event_idx += 1
@@ -444,7 +444,7 @@ class TessieAnalyzer:
                 "end_dt": day_end,
                 "time_str": f"{s_str} - 00:00",
                 "location": current_location,
-                "activity": f"🅿️ Parked at {current_location} ({dur_str})",
+                "activity": f"🅿️ {current_location} ({dur_str})",
                 "drive": None
             })
             event_idx += 1
