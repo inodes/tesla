@@ -840,7 +840,7 @@ def main():
     parser.add_argument("--yesterday", action="store_true", help="Inspect only yesterday's drives")
     parser.add_argument("--since", help="Filter drives since date or day name (e.g. 'wednesday', '2026-09-02')")
     parser.add_argument("--days", type=int, help="Filter drives from past N days")
-    parser.add_argument("--place", help="Filter drives by place nickname (e.g. 'School', 'Swimming', 'Activity')")
+    parser.add_argument("--place", help="Filter drives by place nickname (e.g. 'School', 'Work', 'Gym')")
     parser.add_argument("--tessie-dir", help="Custom path to directory containing Tessie CSV exports")
     
     args = parser.parse_args()
