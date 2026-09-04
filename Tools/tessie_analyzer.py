@@ -237,75 +237,127 @@ class TessieAnalyzer:
             except Exception:
                 pass
         
-        self.places = self.load_places()
+        self.places = {}
+        self.charging_places = {}
+        self.supercharger_places = {}
+        self.load_places()
         self.drives = []
         self.footage_db = []
         self._indexed = False
 
     def load_places(self):
-        places = {}
+        self.places = {}
+        self.charging_places = {}
+        self.supercharger_places = {}
         for td in self.tessie_dirs:
-            for fname in ["places.json", "charging.json", "superchargers.json"]:
+            for fname, target_dict in [
+                ("places.json", self.places),
+                ("charging.json", self.charging_places),
+                ("superchargers.json", self.supercharger_places)
+            ]:
                 try:
                     pf = os.path.join(td, fname)
                     if os.path.isfile(pf):
                         with open(pf, "r", encoding="utf-8") as f:
                             data = json.load(f)
                             if isinstance(data, dict):
-                                places.update(data)
+                                target_dict.update(data)
                 except Exception:
                     pass
-        return places
+        return self.places
 
     def resolve_place(self, address, saved_loc="", lat=None, lon=None):
+        # 1. Saved Location exact or keyword match
         if saved_loc and saved_loc.strip():
             s_clean = saved_loc.strip()
-            # 1. Exact match in places
             if s_clean in self.places:
-                p = self.places[s_clean]
-                if isinstance(p, dict):
-                    return p.get("tesla_metadata", {}).get("short_name") or p.get("location_name") or p.get("nickname") or s_clean
                 return s_clean
-            # 2. Check if saved_loc matches a known place keyword (e.g. '1108 Victoria Rd' -> 'Home')
             for place_name, p_info in self.places.items():
                 if not isinstance(p_info, dict):
                     continue
-                kws = p_info.get("keywords") or p_info.get("tesla_metadata", {}).get("keywords") or []
-                short_name = p_info.get("tesla_metadata", {}).get("short_name") or p_info.get("location_name") or p_info.get("nickname") or place_name
+                kws = p_info.get("keywords") or []
                 if s_clean.lower() == place_name.lower():
-                    return short_name
+                    return place_name
                 for kw in kws:
-                    if kw.lower() in s_clean.lower():
-                        return short_name
+                    if kw and isinstance(kw, str) and kw.strip() and kw.strip().lower() in s_clean.lower():
+                        return place_name
             return s_clean
 
-        addr_clean = address.lower()
-        
-        # 1. Keyword matching on address
-        for place_name, p_info in self.places.items():
-            if not isinstance(p_info, dict):
-                continue
-            kws = p_info.get("keywords") or p_info.get("tesla_metadata", {}).get("keywords") or []
-            short_name = p_info.get("tesla_metadata", {}).get("short_name") or p_info.get("location_name") or p_info.get("nickname") or place_name
-            for kw in kws:
-                if kw.lower() in addr_clean:
-                    return short_name
+        addr_clean = address.lower() if address else ""
 
-        # 2. Geofence / Lat-Lon Haversine matching
+        # 2. GPS Geofence matching on known places (Highest Accuracy!)
         if lat is not None and lon is not None:
+            best_place = None
+            min_dist = float("inf")
             for place_name, p_info in self.places.items():
                 if not isinstance(p_info, dict):
                     continue
                 loc = p_info.get("location", {})
-                p_lat = p_info.get("lat") or loc.get("lat")
-                p_lon = p_info.get("lon") or loc.get("lon")
-                p_rad = p_info.get("radius_m") or loc.get("radius_m", 250)
-                short_name = p_info.get("tesla_metadata", {}).get("short_name") or p_info.get("location_name") or p_info.get("nickname") or place_name
+                p_lat = p_info.get("lat") if p_info.get("lat") is not None else loc.get("lat")
+                p_lon = p_info.get("lon") if p_info.get("lon") is not None else loc.get("lon")
+                p_rad = p_info.get("radius_m") if p_info.get("radius_m") is not None else loc.get("radius_m", 250)
                 if p_lat is not None and p_lon is not None:
                     dist = haversine_distance_m(lat, lon, p_lat, p_lon)
-                    if dist <= p_rad:
-                        return short_name
+                    if dist <= p_rad and dist < min_dist:
+                        min_dist = dist
+                        best_place = p_info.get("tesla_metadata", {}).get("short_name") or p_info.get("location_name") or p_info.get("nickname") or place_name
+            if best_place:
+                return best_place
 
+        # 3. GPS Geofence matching on charging profiles
+        if lat is not None and lon is not None:
+            best_charge = None
+            min_dist = float("inf")
+            for c_name, c_info in self.charging_places.items():
+                if not isinstance(c_info, dict):
+                    continue
+                loc = c_info.get("location", {})
+                p_lat = c_info.get("lat") if c_info.get("lat") is not None else loc.get("lat")
+                p_lon = c_info.get("lon") if c_info.get("lon") is not None else loc.get("lon")
+                p_rad = c_info.get("radius_m") if c_info.get("radius_m") is not None else loc.get("radius_m", 250)
+                if p_lat is not None and p_lon is not None:
+                    dist = haversine_distance_m(lat, lon, p_lat, p_lon)
+                    if dist <= p_rad and dist < min_dist:
+                        min_dist = dist
+                        best_charge = c_info.get("tesla_metadata", {}).get("short_name") or c_info.get("location_name") or c_name
+            if best_charge:
+                return best_charge
+
+        # 4. GPS Geofence matching on Superchargers
+        if lat is not None and lon is not None:
+            best_sc = None
+            min_dist = float("inf")
+            for sc_name, sc_info in self.supercharger_places.items():
+                if not isinstance(sc_info, dict):
+                    continue
+                loc = sc_info.get("location", {})
+                p_lat = sc_info.get("lat") if sc_info.get("lat") is not None else loc.get("lat")
+                p_lon = sc_info.get("lon") if sc_info.get("lon") is not None else loc.get("lon")
+                p_rad = sc_info.get("radius_m") if sc_info.get("radius_m") is not None else loc.get("radius_m", 250)
+                if p_lat is not None and p_lon is not None:
+                    dist = haversine_distance_m(lat, lon, p_lat, p_lon)
+                    if dist <= p_rad and dist < min_dist:
+                        min_dist = dist
+                        best_sc = sc_info.get("tesla_metadata", {}).get("short_name") or sc_info.get("location_name") or sc_name
+            if best_sc:
+                return best_sc
+
+        # 5. Strict Keyword matching on known places (sorted by length descending)
+        all_kws = []
+        for place_name, p_info in self.places.items():
+            if not isinstance(p_info, dict):
+                continue
+            kws = p_info.get("keywords") or p_info.get("tesla_metadata", {}).get("keywords") or []
+            target_name = p_info.get("tesla_metadata", {}).get("short_name") or p_info.get("location_name") or p_info.get("nickname") or place_name
+            for kw in kws:
+                if kw and isinstance(kw, str) and kw.strip() and len(kw.strip()) >= 3:
+                    all_kws.append((len(kw.strip()), kw.strip().lower(), target_name))
+        all_kws.sort(key=lambda x: x[0], reverse=True)
+        for _, kw_clean, target_name in all_kws:
+            if kw_clean in addr_clean:
+                return target_name
+
+        # 6. Fallback: first part of street address
         parts = address.split(",")
         return parts[0].strip() if parts else address
 
