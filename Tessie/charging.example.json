@@ -2,13 +2,28 @@
   "Home": {
     "name": "Home",
     "type": "home",
-    "address": "123 Example Street, Suburb NSW 2000",
-    "lat": -33.8000,
-    "lon": 151.0000,
+    "network": "Tesla Wall Connector",
+    "address": "1108 Victoria Road, West Ryde NSW 2114",
+    "lat": -33.80654,
+    "lon": 151.07962,
     "radius_m": 100,
     "keywords": [
-      "Example Street"
+      "1108 Victoria",
+      "1106 Victoria",
+      "1104 Victoria",
+      "1102 Victoria",
+      "Hay Street"
     ],
+    "hardware": {
+      "charger_type": "AC Level 2",
+      "max_power_kw": 11.0,
+      "connector_types": ["Type 2"]
+    },
+    "compatibility": {
+      "open_to_non_tesla": true,
+      "tesla_only": false,
+      "access": "Private Residential"
+    },
     "costs": {
       "currency": "AUD",
       "timezone": "Australia/Sydney",
@@ -42,6 +57,161 @@
           "months": ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
         }
       ]
+    }
+  },
+  "Bunnings Gladesville": {
+    "name": "Bunnings Gladesville (Chargefox)",
+    "type": "dc_fast",
+    "network": "Chargefox",
+    "operator": "Chargefox",
+    "address": "41a College Street, Gladesville NSW 2111",
+    "lat": -33.82035,
+    "lon": 151.12115,
+    "radius_m": 200,
+    "keywords": [
+      "College Street",
+      "Bunnings Gladesville"
+    ],
+    "hardware": {
+      "stalls": 2,
+      "max_power_kw": 50,
+      "charger_type": "DC Fast",
+      "connector_types": ["CCS2", "CHAdeMO"]
+    },
+    "compatibility": {
+      "open_to_non_tesla": true,
+      "tesla_only": false,
+      "access": "Public"
+    },
+    "costs": {
+      "currency": "AUD",
+      "pricing_model": "flat",
+      "flat_per_kwh": 0.60,
+      "per_minute": 0.00,
+      "per_session": 0.00,
+      "app_payment": "Chargefox App / RFID Card"
+    },
+    "amenities": {
+      "restrooms": true,
+      "dining": true,
+      "shopping": true,
+      "coffee": true,
+      "parking": true
+    }
+  },
+  "BP Pulse West Ryde": {
+    "name": "BP Pulse - West Ryde",
+    "type": "dc_fast",
+    "network": "BP Pulse",
+    "operator": "BP",
+    "address": "1014 Victoria Road, West Ryde NSW 2114",
+    "lat": -33.80710,
+    "lon": 151.08250,
+    "radius_m": 150,
+    "keywords": [
+      "1014 Victoria",
+      "BP West Ryde",
+      "BP Pulse West Ryde"
+    ],
+    "hardware": {
+      "stalls": 2,
+      "max_power_kw": 75,
+      "charger_type": "DC Fast",
+      "connector_types": ["CCS2", "CHAdeMO"]
+    },
+    "compatibility": {
+      "open_to_non_tesla": true,
+      "tesla_only": false,
+      "access": "Public 24/7"
+    },
+    "costs": {
+      "currency": "AUD",
+      "pricing_model": "flat",
+      "flat_per_kwh": 0.65,
+      "per_minute": 0.00,
+      "per_session": 0.00,
+      "app_payment": "BP Pulse App / Credit Card Tap"
+    },
+    "amenities": {
+      "restrooms": true,
+      "dining": true,
+      "coffee": true,
+      "parking": true
+    }
+  },
+  "Evie Top Ryde Shopping Centre": {
+    "name": "Evie - Top Ryde City",
+    "type": "dc_fast",
+    "network": "Evie Networks",
+    "operator": "Evie",
+    "address": "Devlin Street & Blaxland Road, Ryde NSW 2112",
+    "lat": -33.81228,
+    "lon": 151.10611,
+    "radius_m": 250,
+    "keywords": [
+      "Evie Top Ryde",
+      "Top Ryde EV Charging"
+    ],
+    "hardware": {
+      "stalls": 4,
+      "max_power_kw": 50,
+      "charger_type": "DC Fast",
+      "connector_types": ["CCS2", "CHAdeMO"]
+    },
+    "compatibility": {
+      "open_to_non_tesla": true,
+      "tesla_only": false,
+      "access": "Public (Shopping Centre Hours)"
+    },
+    "costs": {
+      "currency": "AUD",
+      "pricing_model": "flat",
+      "flat_per_kwh": 0.58,
+      "per_minute": 0.00,
+      "per_session": 0.00,
+      "app_payment": "Evie App / Autocharge / RFID"
+    },
+    "amenities": {
+      "restrooms": true,
+      "dining": true,
+      "shopping": true,
+      "coffee": true,
+      "parking": true
+    }
+  },
+  "Jolt Meadowbank": {
+    "name": "Jolt - Meadowbank",
+    "type": "dc_fast",
+    "network": "Jolt",
+    "operator": "Jolt Charge",
+    "address": "Railway Road, Meadowbank NSW 2114",
+    "lat": -33.81650,
+    "lon": 151.08800,
+    "radius_m": 150,
+    "keywords": [
+      "Jolt Meadowbank",
+      "Jolt Charging"
+    ],
+    "hardware": {
+      "stalls": 1,
+      "max_power_kw": 50,
+      "charger_type": "DC Fast",
+      "connector_types": ["CCS2"]
+    },
+    "compatibility": {
+      "open_to_non_tesla": true,
+      "tesla_only": false,
+      "access": "Public 24/7"
+    },
+    "costs": {
+      "currency": "AUD",
+      "pricing_model": "freemium",
+      "free_daily_kwh": 7.0,
+      "flat_per_kwh": 0.52,
+      "app_payment": "Jolt App"
+    },
+    "amenities": {
+      "parking": true
     }
   }
 }
