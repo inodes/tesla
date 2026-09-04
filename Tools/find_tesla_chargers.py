@@ -30,8 +30,10 @@ for _py_candidate in [
             os.execv(_py_candidate, [_py_candidate] + sys.argv)
 
 import re
+import time
 import json
 import math
+import random
 import shutil
 import argparse
 import unicodedata
@@ -444,49 +446,65 @@ class TeslaChargerExplorer:
         print(f"{C_GREEN}✔ Discovered {len(stations)} {type_label} in {country_slug.replace('+', ' ')}.{C_RESET}\n")
         return stations
 
-    def _scrape_page_payload(self, page, target_url: str) -> tuple:
-        """Navigates page to target_url and captures XHR/Fetch API responses + SSR __NEXT_DATA__."""
-        captured_api_data = {}
-        next_data_payload = None
+    def _scrape_page_payload(self, page, target_url: str, timeout_ms: int = 35000, max_retries: int = 3, base_retry_delay: float = 2.0) -> tuple:
+        """
+        Navigates page to target_url and captures XHR/Fetch API responses + SSR __NEXT_DATA__.
+        Includes exponential backoff with jitter on timeouts or transient network errors.
+        """
+        for attempt in range(1, max_retries + 1):
+            captured_api_data = {}
+            next_data_payload = None
 
-        def handle_response(resp):
-            if "get-charger-details" in resp.url or "get-location-details" in resp.url:
+            def handle_response(resp):
+                if "get-charger-details" in resp.url or "get-location-details" in resp.url:
+                    try:
+                        captured_api_data[resp.url] = resp.json()
+                    except Exception:
+                        pass
+
+            page.on("response", handle_response)
+            err_msg = None
+            try:
+                page.goto(target_url, wait_until="networkidle", timeout=timeout_ms)
+                page.wait_for_timeout(800)
+            except Exception as e:
+                err_msg = str(e)
+
+            # Expand accordions if present
+            for accordion_label in ["Pricing for Tesla & Members", "Pricing for Non-Tesla"]:
                 try:
-                    captured_api_data[resp.url] = resp.json()
+                    btn = page.locator(f"button:has-text('{accordion_label}'), [role='button']:has-text('{accordion_label}')").first
+                    if btn.count() > 0 and btn.is_visible():
+                        btn.click()
+                        page.wait_for_timeout(250)
                 except Exception:
                     pass
 
-        page.on("response", handle_response)
-        try:
-            page.goto(target_url, wait_until="networkidle", timeout=35000)
-            page.wait_for_timeout(1000)
-        except Exception:
-            pass
-
-        # Expand accordions if present
-        for accordion_label in ["Pricing for Tesla & Members", "Pricing for Non-Tesla"]:
+            # Extract __NEXT_DATA__ SSR props
             try:
-                btn = page.locator(f"button:has-text('{accordion_label}'), [role='button']:has-text('{accordion_label}')").first
-                if btn.count() > 0 and btn.is_visible():
-                    btn.click()
-                    page.wait_for_timeout(300)
+                raw_next = page.eval_on_selector("#__NEXT_DATA__", "e => e.textContent")
+                if raw_next:
+                    next_data_payload = json.loads(raw_next)
             except Exception:
                 pass
 
-        # Extract __NEXT_DATA__ SSR props
-        try:
-            raw_next = page.eval_on_selector("#__NEXT_DATA__", "e => e.textContent")
-            if raw_next:
-                next_data_payload = json.loads(raw_next)
-        except Exception:
-            pass
+            try:
+                page.remove_listener("response", handle_response)
+            except Exception:
+                pass
 
-        try:
-            page.remove_listener("response", handle_response)
-        except Exception:
-            pass
+            # If valid data captured, return immediately
+            if next_data_payload or captured_api_data:
+                return captured_api_data, next_data_payload
 
-        return captured_api_data, next_data_payload
+            # Exponential backoff with jitter on transient error / timeout
+            if attempt < max_retries:
+                backoff = base_retry_delay * (2 ** (attempt - 1)) + random.uniform(0.3, 1.0)
+                reason = f" ({err_msg[:60]}...)" if err_msg else ""
+                print(f"  {C_YELLOW}⚠ Attempt {attempt}/{max_retries} failed{reason}. Backing off {backoff:.1f}s before retry...{C_RESET}")
+                time.sleep(backoff)
+
+        return {}, None
 
     def _parse_scraped_data(self, target_url: str, captured_api_data: dict, next_data_payload: dict, charger_type: str = "supercharger") -> tuple:
         """Parses raw intercepted payloads and SSR props into structured station dictionary."""
@@ -871,8 +889,8 @@ class TeslaChargerExplorer:
         except Exception:
             return "STALE"
 
-    def scrape_all_stations(self, stations: list, sync_external: bool = False, force: bool = False):
-        """Batch scrapes and updates all stations in the list using a persistent browser instance."""
+    def scrape_all_stations(self, stations: list, sync_external: bool = False, force: bool = False, pacing_delay: float = 0.5, timeout_sec: int = 35, max_retries: int = 3):
+        """Batch scrapes and updates all stations in the list with adaptive pacing, backoffs, and retries."""
         try:
             from playwright.sync_api import sync_playwright
         except ImportError:
@@ -886,11 +904,14 @@ class TeslaChargerExplorer:
 
         print(f"\n{C_BOLD}{'='*80}{C_RESET}")
         print(f"  ⚡ {C_CYAN}{C_BOLD}STARTING BATCH SCRAPER FOR {total} STATIONS{C_RESET}")
+        print(f"  {C_DIM}Pacing: {pacing_delay:.1f}s | Timeout: {timeout_sec}s | Max Retries: {max_retries}{C_RESET}")
         print(f"{C_BOLD}{'='*80}{C_RESET}\n")
 
         sc_reg, dc_reg = self.load_active_registries()
         success_count = 0
-        error_count = 0
+        failed_stations = []
+        consecutive_failures = 0
+        t0 = time.time()
 
         with sync_playwright() as p:
             browser = p.webkit.launch(headless=self.headless)
@@ -913,7 +934,9 @@ class TeslaChargerExplorer:
                 print(f"[{idx:3d}/{total:3d}] ⚡ Scraping {st_title} {status_tag}...")
 
                 try:
-                    captured_api_data, next_data_payload = self._scrape_page_payload(page, st_url)
+                    captured_api_data, next_data_payload = self._scrape_page_payload(
+                        page, st_url, timeout_ms=timeout_sec * 1000, max_retries=max_retries
+                    )
                     station_key, record = self._parse_scraped_data(st_url, captured_api_data, next_data_payload, charger_type=st_type)
                     if record:
                         self.update_registry(station_key, record, sync_external=False)
@@ -922,17 +945,33 @@ class TeslaChargerExplorer:
                         else:
                             dc_reg[station_key] = record
                         success_count += 1
+                        consecutive_failures = 0
                     else:
                         print(f"  {C_RED}❌ Failed parsing record for {st_title}{C_RESET}")
-                        error_count += 1
+                        failed_stations.append(st_title)
+                        consecutive_failures += 1
                 except Exception as e:
                     print(f"  {C_RED}❌ Error scraping {st_title}: {e}{C_RESET}")
-                    error_count += 1
+                    failed_stations.append(st_title)
+                    consecutive_failures += 1
+
+                # Circuit breaker cooldown if 3 consecutive failures occur
+                if consecutive_failures >= 3:
+                    print(f"\n  {C_YELLOW}⚠ 3 consecutive failures encountered. Pausing 10s cooldown before continuing...{C_RESET}\n")
+                    time.sleep(10)
+                    consecutive_failures = 0
+
+                # Adaptive pacing delay between requests (with minor jitter)
+                if idx < total and pacing_delay > 0:
+                    time.sleep(pacing_delay + random.uniform(0.1, 0.3))
 
             browser.close()
 
+        elapsed = time.time() - t0
         print(f"\n{C_BOLD}{'='*80}{C_RESET}")
-        print(f"  {C_GREEN}✔ Batch scraping completed: {success_count} processed, {error_count} failed.{C_RESET}")
+        print(f"  {C_GREEN}✔ Batch scraping completed in {elapsed:.1f}s:{C_RESET} {success_count}/{total} processed ({len(failed_stations)} failed).")
+        if failed_stations:
+            print(f"  {C_RED}Failed stations:{C_RESET} {', '.join(failed_stations[:10])}{' ...' if len(failed_stations) > 10 else ''}")
         print(f"{C_BOLD}{'='*80}{C_RESET}\n")
 
         if sync_external:
@@ -1388,6 +1427,9 @@ Examples:
     parser.add_argument("--scrape", "--inspect", help="Scrape live station details by Location ID, Slug, or URL")
     parser.add_argument("--url", help="Direct Tesla Find Us location URL to scrape")
     parser.add_argument("--all", action="store_true", help="Batch scrape and update all matching stations")
+    parser.add_argument("--delay", type=float, default=0.5, help="Pacing delay in seconds between station requests in batch mode (default: 0.5)")
+    parser.add_argument("--timeout", type=int, default=35, help="Network timeout in seconds per page load (default: 35)")
+    parser.add_argument("--retries", type=int, default=3, help="Max retry attempts per station with exponential backoff (default: 3)")
     parser.add_argument("--save", "--update", action="store_true", help="Save / update scraped entry in superchargers.json or charging.json")
     parser.add_argument("--sync", action="store_true", help="Sync updated registry across all mounted TESLADRIVE external volumes")
     parser.add_argument("--json", action="store_true", help="Output raw JSON payload to stdout")
@@ -1443,7 +1485,13 @@ Examples:
             filtered = [s for s in filtered if q_lower in s["title"].lower() or q_lower in s["short_name"].lower()]
 
         if args.all:
-            explorer.scrape_all_stations(filtered, sync_external=args.sync)
+            explorer.scrape_all_stations(
+                filtered,
+                sync_external=args.sync,
+                pacing_delay=args.delay,
+                timeout_sec=args.timeout,
+                max_retries=args.retries
+            )
             return
 
         sc_reg, dc_reg = explorer.load_active_registries()
