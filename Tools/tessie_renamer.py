@@ -2,8 +2,11 @@
 """
 Tessie CSV File Classifier & Renamer
 ===================================
-Inspects Tessie CSV exports, detects data schemas, extracts actual date spans,
-and renames files into clear, standardized names for review and archiving.
+Automatically differentiates:
+1. Multi-Drive Summaries vs. Individual Drive Deep Dives
+2. Multi-Charge Summaries vs. Individual Charge Deep Dives
+3. Multi-Day Continuous Telemetry Streams
+4. Parking Idles, Battery Health, Tire Pressures & Firmware Alerts
 """
 
 import os
@@ -21,15 +24,16 @@ def analyze_file(filepath):
         if not header:
             return {
                 "type": "empty",
-                "desc": "Empty File",
+                "category": "Empty",
+                "desc": "Empty File (0 bytes)",
                 "proposed": filename,
                 "rows": 0
             }
 
         header_set = set(h.strip() for h in header)
         
-        # 1. Drives Summary (Format A)
-        if "Started At (AEST)" in header_set and "Starting Location" in header_set:
+        # 1. DRIVES SUMMARY (Format A: Multi-Trip Catalog)
+        if "Starting Location" in header_set and "Distance (km)" in header_set:
             dates = []
             for row in reader:
                 if row and row[0]:
@@ -43,49 +47,47 @@ def analyze_file(filepath):
                 min_d = min(dates).strftime("%Y-%m-%d")
                 max_d = max(dates).strftime("%Y-%m-%d")
                 name = f"drives_summary_{min_d}_to_{max_d}.csv"
-                desc = f"Trip Summaries ({rows} drives: {min_d} ➔ {max_d})"
+                desc = f"Multi-Trip Summary Catalog ({rows} trips: {min_d} ➔ {max_d})"
             else:
                 name = "drives_summary.csv"
-                desc = f"Trip Summaries ({rows} drives)"
+                desc = f"Multi-Trip Summary Catalog ({rows} trips)"
             return {
                 "type": "drives_summary",
+                "category": "Drives Summary",
                 "desc": desc,
                 "proposed": name,
                 "rows": rows
             }
 
-        # 2. Telemetry Traces (Format B)
-        elif "Timestamp (AEST)" in header_set and "Speed (km/h)" in header_set and "Power (kW)" in header_set:
-            timestamps = []
+        # 2. CHARGES SUMMARY (Format A: Multi-Charge Catalog)
+        elif "Supercharger" in header_set and ("Energy Added (kWh)" in header_set or "Location" in header_set):
+            dates = []
             for row in reader:
                 if row and row[0]:
                     try:
-                        dt = datetime.strptime(row[0].strip()[:19], "%Y-%m-%d %H:%M:%S")
-                        timestamps.append(dt)
+                        dt = datetime.strptime(row[0].strip()[:16], "%Y-%m-%d %H:%M")
+                        dates.append(dt)
                     except ValueError:
                         pass
-            rows = len(timestamps)
-            if timestamps:
-                min_ts = min(timestamps)
-                max_ts = max(timestamps)
-                if (max_ts - min_ts).total_seconds() <= 7200:
-                    name = f"drive_telemetry_{min_ts.strftime('%Y-%m-%d_%H-%M')}.csv"
-                    desc = f"Single Drive Telemetry ({rows} pts on {min_ts.strftime('%Y-%m-%d %H:%M')})"
-                else:
-                    name = f"telemetry_stream_{min_ts.strftime('%Y-%m-%d')}_to_{max_ts.strftime('%Y-%m-%d')}.csv"
-                    desc = f"Continuous Telemetry Stream ({rows} pts: {min_ts.strftime('%Y-%m-%d')} ➔ {max_ts.strftime('%Y-%m-%d')})"
+            rows = len(dates)
+            if dates:
+                min_d = min(dates).strftime("%Y-%m-%d")
+                max_d = max(dates).strftime("%Y-%m-%d")
+                name = f"charges_summary_{min_d}_to_{max_d}.csv"
+                desc = f"Multi-Charge Summary Catalog ({rows} charges: {min_d} ➔ {max_d})"
             else:
-                name = "drive_telemetry.csv"
-                desc = "Drive Telemetry Trace"
+                name = "charges_summary.csv"
+                desc = f"Multi-Charge Summary Catalog ({rows} charges)"
             return {
-                "type": "telemetry",
+                "type": "charges_summary",
+                "category": "Charges Summary",
                 "desc": desc,
                 "proposed": name,
                 "rows": rows
             }
 
-        # 3. Charging Sessions
-        elif "Supercharging (kWh)" in header_set or ("Started At (AEST)" in header_set and "Energy Added (kWh)" in header_set):
+        # 3. PARKING & IDLES SUMMARY
+        elif "Location" in header_set and "Starting Battery (%)" in header_set:
             dates = []
             for row in reader:
                 if row and row[0]:
@@ -97,36 +99,16 @@ def analyze_file(filepath):
             rows = len(dates)
             min_d = min(dates).strftime("%Y-%m-%d") if dates else ""
             max_d = max(dates).strftime("%Y-%m-%d") if dates else ""
-            name = f"charges_{min_d}_to_{max_d}.csv" if dates else "charges_history.csv"
+            name = f"idles_summary_{min_d}_to_{max_d}.csv" if dates else "idles_summary.csv"
             return {
-                "type": "charges",
-                "desc": f"Charging Sessions ({rows} charges: {min_d} ➔ {max_d})",
-                "proposed": name,
-                "rows": rows
-            }
-
-        # 4. Parking & Idles
-        elif "Started At (AEST)" in header_set and "Location" in header_set and "Duration (Minutes)" in header_set and "Starting Battery (%)" in header_set:
-            dates = []
-            for row in reader:
-                if row and row[0]:
-                    try:
-                        dt = datetime.strptime(row[0].strip()[:16], "%Y-%m-%d %H:%M")
-                        dates.append(dt)
-                    except ValueError:
-                        pass
-            rows = len(dates)
-            min_d = min(dates).strftime("%Y-%m-%d") if dates else ""
-            max_d = max(dates).strftime("%Y-%m-%d") if dates else ""
-            name = f"idles_parking_{min_d}_to_{max_d}.csv" if dates else "idles_parking_history.csv"
-            return {
-                "type": "idles",
+                "type": "idles_summary",
+                "category": "Idles / Parking",
                 "desc": f"Parking & Idle Periods ({rows} sessions: {min_d} ➔ {max_d})",
                 "proposed": name,
                 "rows": rows
             }
 
-        # 5. Battery Health
+        # 4. BATTERY HEALTH & CAPACITY
         elif "Max Range (km)" in header_set and "Usable Capacity (kWh)" in header_set:
             dates = []
             for row in reader:
@@ -142,40 +124,109 @@ def analyze_file(filepath):
             name = f"battery_health_{min_d}_to_{max_d}.csv" if dates else "battery_health_history.csv"
             return {
                 "type": "battery",
-                "desc": f"Battery Health & Capacity ({rows} readings: {min_d} ➔ {max_d})",
+                "category": "Battery Health",
+                "desc": f"Battery Capacity & Max Range ({rows} readings: {min_d} ➔ {max_d})",
                 "proposed": name,
                 "rows": rows
             }
 
-        # 6. Tire Pressure
+        # 5. TIRE PRESSURE TELEMETRY
         elif "Tire" in header_set and "Pressure (psi)" in header_set:
             rows = sum(1 for _ in reader)
             return {
                 "type": "tires",
+                "category": "Tire Pressure",
                 "desc": f"Tire Pressure Telemetry ({rows} PSI readings)",
                 "proposed": "tire_pressure_history.csv",
                 "rows": rows
             }
 
-        # 7. Firmware Alerts
+        # 6. FIRMWARE ALERTS / DIAGNOSTICS
         elif "Customer Facing Message 1" in header_set or "Clear Condition" in header_set:
             rows = sum(1 for _ in reader)
             return {
                 "type": "alerts",
-                "desc": f"Vehicle Firmware Diagnostics ({rows} DTC alerts)",
+                "category": "Firmware Alerts",
+                "desc": f"Vehicle Diagnostics & Trouble Codes ({rows} DTC alerts)",
                 "proposed": "firmware_alerts_history.csv",
+                "rows": rows
+            }
+
+        # 7. HIGH-FREQUENCY TELEMETRY (Deep Dives vs Continuous Stream)
+        elif "Timestamp (AEST)" in header_set or "Timestamp" in header_set:
+            # Re-read rows with DictReader to inspect values
+            with open(filepath, "r", encoding="utf-8-sig") as fh_dict:
+                d_reader = csv.DictReader(fh_dict)
+                rows_list = list(d_reader)
+
+            timestamps = []
+            is_charging = False
+            is_driving = False
+
+            for r in rows_list:
+                ts_str = r.get("Timestamp (AEST)") or r.get("Timestamp")
+                if ts_str:
+                    try:
+                        dt = datetime.strptime(ts_str.strip()[:19], "%Y-%m-%d %H:%M:%S")
+                        timestamps.append(dt)
+                    except ValueError:
+                        pass
+
+                c_state = (r.get("Charging State") or "").lower()
+                s_state = (r.get("Shift State") or "").upper()
+                spd = float(r.get("Speed (km/h)") or 0)
+                chg_pwr = float(r.get("Charger Power (kW)") or 0)
+
+                if c_state in ["charging", "complete"] or chg_pwr > 0:
+                    is_charging = True
+                if s_state in ["D", "R"] or spd > 0:
+                    is_driving = True
+
+            rows = len(timestamps)
+            if timestamps:
+                min_ts = min(timestamps)
+                max_ts = max(timestamps)
+                span_sec = (max_ts - min_ts).total_seconds()
+
+                if span_sec > 7200:  # > 2 hours -> Multi-day Continuous Telemetry Stream
+                    name = f"telemetry_stream_{min_ts.strftime('%Y-%m-%d')}_to_{max_ts.strftime('%Y-%m-%d')}.csv"
+                    desc = f"Continuous Telemetry Stream ({rows} samples: {min_ts.strftime('%Y-%m-%d')} ➔ {max_ts.strftime('%Y-%m-%d')})"
+                    cat = "Telemetry Stream"
+                    typ = "telemetry_stream"
+                elif is_driving or not is_charging:  # Single Drive Deep Dive
+                    name = f"drive_deepdive_{min_ts.strftime('%Y-%m-%d_%H-%M')}.csv"
+                    desc = f"Single Drive Deep Dive ({rows} GPS/speed/power samples on {min_ts.strftime('%Y-%m-%d %H:%M')})"
+                    cat = "Drive Deep Dive"
+                    typ = "drive_deepdive"
+                else:  # Single Charge Deep Dive
+                    name = f"charge_deepdive_{min_ts.strftime('%Y-%m-%d_%H-%M')}.csv"
+                    desc = f"Single Charge Deep Dive ({rows} telemetry samples on {min_ts.strftime('%Y-%m-%d %H:%M')})"
+                    cat = "Charge Deep Dive"
+                    typ = "charge_deepdive"
+            else:
+                name = "telemetry.csv"
+                desc = "Telemetry Trace"
+                cat = "Telemetry"
+                typ = "telemetry"
+
+            return {
+                "type": typ,
+                "category": cat,
+                "desc": desc,
+                "proposed": name,
                 "rows": rows
             }
 
         return {
             "type": "unknown",
-            "desc": "Generic CSV",
+            "category": "Unknown CSV",
+            "desc": "Generic CSV Dataset",
             "proposed": filename,
             "rows": sum(1 for _ in reader)
         }
 
 def main():
-    parser = argparse.ArgumentParser(description="Tessie CSV File Classifier & Renamer")
+    parser = argparse.ArgumentParser(description="Tessie CSV Classifier & Renamer")
     parser.add_argument("--source", help="Source directory containing raw Tessie CSV files")
     parser.add_argument("--copy-to", help="Copy and rename files to target directory (leaves source intact)")
     parser.add_argument("--in-place", action="store_true", help="Rename files directly in place in source directory")
@@ -212,7 +263,7 @@ def main():
         plan.append((f, fp, info, sz_kb))
         
         print(f"📁 {f} ({sz_kb:.1f} KB)")
-        print(f"   Category : [{info['type']}] - {info['desc']}")
+        print(f"   Category : [{info['category']}] - {info['desc']}")
         print(f"   ➔ Rename : {info['proposed']}\n")
 
     print("==========================================================================")
@@ -221,7 +272,6 @@ def main():
         print("Dry run mode: No changes made.")
         return
 
-    # Determine default destination if neither --in-place nor --copy-to is set
     dest_dir = args.copy_to
     if not args.in_place and not dest_dir:
         dest_dir = (
@@ -242,7 +292,6 @@ def main():
             print("\nCancelled.")
             return
 
-    # Execute Copy or In-place rename
     if dest_dir:
         os.makedirs(dest_dir, exist_ok=True)
         for orig_name, src_path, info, sz in plan:
