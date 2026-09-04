@@ -1837,6 +1837,121 @@ def print_charging_stations_table(stations: list, ref_lat: float = None, ref_lon
     print(bot_b)
 
 # -----------------------------------------------------------------------------
+# Interactive Station Selection Loop (Table Menu Selection)
+# -----------------------------------------------------------------------------
+
+def interactive_station_selector_loop(stations: list, explorer: TeslaChargerExplorer, re_render_cb=None):
+    """
+    Interactive selection loop following a station listing table.
+    Allows the user to select any station by number [1-N] to inspect details,
+    re-scrape live pricing, open in web browser / Google Maps, or re-render the list.
+    """
+    if not stations:
+        return
+
+    while True:
+        print(f"\n{C_BOLD}Options:{C_RESET} Enter station number [{C_GREEN}1-{len(stations)}{C_RESET}] to inspect, {C_CYAN}'s <#>' {C_RESET}to scrape, or {C_YELLOW}Enter{C_RESET}/'q' to quit.")
+        try:
+            choice = input(f"Select Station [1-{len(stations)}], [q]uit: ").strip().lower()
+        except (EOFError, KeyboardInterrupt):
+            print()
+            break
+
+        if not choice or choice in ("q", "quit", "exit"):
+            break
+
+        if choice in ("r", "list", "table") and re_render_cb:
+            re_render_cb()
+            continue
+
+        is_direct_scrape = False
+        target_num = None
+        if choice.startswith("s ") or choice.startswith("scrape "):
+            parts = choice.split()
+            if len(parts) > 1 and parts[1].isdigit():
+                target_num = int(parts[1])
+                is_direct_scrape = True
+        elif choice.isdigit():
+            target_num = int(choice)
+
+        if target_num is None or target_num < 1 or target_num > len(stations):
+            print(f"{C_RED}❌ Invalid selection. Please enter a number between 1 and {len(stations)}.{C_RESET}\n")
+            continue
+
+        selected_st = stations[target_num - 1]
+        station_title = selected_st.get("title", "")
+        station_url = selected_st.get("url", "")
+        station_type = selected_st.get("type", "supercharger")
+
+        sc_reg, dc_reg = explorer.load_active_registries()
+        cached_key, cached_record, _ = explorer.get_station_record(selected_st, sc_reg=sc_reg, dc_reg=dc_reg)
+
+        if is_direct_scrape or not cached_record:
+            print(f"\n{C_CYAN}⚡ Fetching live details for [{target_num}] {station_title}...{C_RESET}")
+            key, record = explorer.scrape_station_details(station_url or station_title, charger_type=station_type)
+            if record:
+                explorer.display_preview(key, record, from_cache=False)
+                try:
+                    save_in = input("Save / update this station into JSON registry? [Y/n]: ").strip().lower()
+                    if save_in != "n":
+                        sync_in = input("Sync to mounted TESLADRIVE external volumes? [Y/n]: ").strip().lower()
+                        explorer.update_registry(key, record, sync_external=(sync_in != "n"))
+                except (EOFError, KeyboardInterrupt):
+                    pass
+        else:
+            explorer.display_preview(cached_key, cached_record, from_cache=True)
+            
+            print(f"{C_BOLD}Actions for {station_title}:{C_RESET}")
+            print(f"  [{C_GREEN}1{C_RESET}] Re-scrape live pricing from Tesla Find Us (WebKit)")
+            print(f"  [{C_GREEN}2{C_RESET}] Open Find Us URL in default web browser")
+            print(f"  [{C_GREEN}3{C_RESET}] Open in Google Maps (navigation / coordinates)")
+            print(f"  [{C_GREEN}b{C_RESET}] Back to station list")
+            print(f"  [{C_GREEN}q{C_RESET}] Quit")
+            print()
+
+            try:
+                act = input(f"Action [1-3, b, q, default: b]: ").strip().lower()
+            except (EOFError, KeyboardInterrupt):
+                break
+
+            if act in ("q", "quit"):
+                break
+            elif act == "1":
+                target_url = station_url or cached_record.get("tesla_metadata", {}).get("findus_url", station_title)
+                key, record = explorer.scrape_station_details(target_url, charger_type=station_type)
+                if record:
+                    explorer.display_preview(key, record, from_cache=False)
+                    try:
+                        save_in = input("Save / update this station into JSON registry? [Y/n]: ").strip().lower()
+                        if save_in != "n":
+                            sync_in = input("Sync to mounted TESLADRIVE external volumes? [Y/n]: ").strip().lower()
+                            explorer.update_registry(key, record, sync_external=(sync_in != "n"))
+                    except (EOFError, KeyboardInterrupt):
+                        pass
+            elif act == "2":
+                url_to_open = station_url or cached_record.get("tesla_metadata", {}).get("findus_url")
+                if url_to_open:
+                    print(f"🌐 Opening {url_to_open}...")
+                    import subprocess
+                    subprocess.run(["open", url_to_open] if sys.platform == "darwin" else ["xdg-open", url_to_open], check=False)
+                else:
+                    print(f"{C_RED}❌ No Find Us URL found for this station.{C_RESET}")
+            elif act == "3":
+                loc_data = cached_record.get("location", {})
+                lat_val = loc_data.get("lat")
+                lon_val = loc_data.get("lon")
+                if lat_val is not None and lon_val is not None:
+                    maps_url = f"https://www.google.com/maps/search/?api=1&query={lat_val},{lon_val}"
+                    print(f"🗺️ Opening Google Maps: {maps_url}...")
+                    import subprocess
+                    subprocess.run(["open", maps_url] if sys.platform == "darwin" else ["xdg-open", maps_url], check=False)
+                else:
+                    print(f"{C_RED}❌ GPS coordinates missing for this station.{C_RESET}")
+            elif act in ("b", "back", ""):
+                pass
+            print()
+
+# -----------------------------------------------------------------------------
 # Interactive Drill-Down Navigation Menu
 # -----------------------------------------------------------------------------
 
@@ -2074,15 +2189,19 @@ def interactive_drilldown(explorer: TeslaChargerExplorer):
                 s["_eff_label"] = eff_lbl
                 s["_eff_window"] = eff_win
 
-            print_charging_stations_table(
-                top_near,
-                ref_lat=geo_lat,
-                ref_lon=geo_lon,
-                ref_label=geo_label,
-                active_radius=50.0,
-                eval_time_label="Current Local Time",
-                sort_mode="Distance (Closest First)"
-            )
+            def render_near_cb():
+                print_charging_stations_table(
+                    top_near,
+                    ref_lat=geo_lat,
+                    ref_lon=geo_lon,
+                    ref_label=geo_label,
+                    active_radius=50.0,
+                    eval_time_label="Current Local Time",
+                    sort_mode="Distance (Closest First)"
+                )
+
+            render_near_cb()
+            interactive_station_selector_loop(top_near, explorer, re_render_cb=render_near_cb)
             return
 
         if pick.lower() in ["all", "a"]:
@@ -2461,18 +2580,24 @@ Query & Proximity Examples:
 
         eval_time_label = f"Target Time: {args.time}" if args.time else "Current Local Time"
 
-        print_charging_stations_table(
-            filtered,
-            ref_lat=ref_lat,
-            ref_lon=ref_lon,
-            ref_label=ref_label,
-            active_radius=active_radius,
-            eval_time_label=eval_time_label,
-            sort_mode=sort_mode_desc
-        )
+        def render_table_cb():
+            print_charging_stations_table(
+                filtered,
+                ref_lat=ref_lat,
+                ref_lon=ref_lon,
+                ref_label=ref_label,
+                active_radius=active_radius,
+                eval_time_label=eval_time_label,
+                sort_mode=sort_mode_desc
+            )
 
-        print(f"\n{C_DIM}To inspect details:     ./Tools/find_tesla_chargers.py --inspect <ID_or_Name_or_URL>{C_RESET}")
-        print(f"{C_DIM}To batch update:        ./Tools/find_tesla_chargers.py --sc --new --all --sync{C_RESET}\n")
+        render_table_cb()
+
+        if sys.stdin.isatty():
+            interactive_station_selector_loop(filtered, explorer, re_render_cb=render_table_cb)
+        else:
+            print(f"\n{C_DIM}To inspect details:     ./Tools/find_tesla_chargers.py --inspect <ID_or_Name_or_URL>{C_RESET}")
+            print(f"{C_DIM}To batch update:        ./Tools/find_tesla_chargers.py --sc --new --all --sync{C_RESET}\n")
         return
 
     # 4. Interactive Mode Fallback
