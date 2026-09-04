@@ -7,8 +7,11 @@
 # Private Data & Datasets (Never committed to Git)
 *.csv
 *.xlsx
+*.pdf
 Tessie/*.csv
 Tessie/*.json
+Tessie/invoices/*
+!Tessie/invoices/.gitkeep
 !Tessie/places.example.json
 !Tessie/charging.example.json
 !Tessie/superchargers.example.json
@@ -20,3 +23,4 @@ __pycache__/
 .env
 *.log
 scratch/
+

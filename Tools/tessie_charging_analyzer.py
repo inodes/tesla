@@ -1,0 +1,1441 @@
+#!/usr/bin/env python3
+"""
+Tessie Charging & Supercharger Reconciliation Engine
+=====================================================
+- Multi-Registry Place & Charger Resolver (superchargers.json, charging.json, places.json)
+- Tesla Supercharger PDF & CSV Tax Invoice Parser (Zero external dependencies)
+- 3rd-Party Fast/AC Charging Parser & Network Identifier (Chargefox, Evie, BP Pulse, Jolt, etc.)
+- Dispenser Meter vs Battery BMS Charging Efficiency Loss Calculator
+- Time-of-Use (TOU) Rate Schedule & GST Auditor
+- Charges Master Consolidator (charges_master.csv)
+- Multi-Level Rich Terminal Reporting & Deep-Dive Session Inspector
+- Export Reconciled Reports to CSV / JSON
+"""
+
+import os
+import sys
+import re
+import csv
+import json
+import math
+import zlib
+import shutil
+import argparse
+import unicodedata
+from datetime import datetime, timedelta
+from collections import defaultdict
+
+# -----------------------------------------------------------------------------
+# Terminal Formatting & Unicode Helpers (wcwidth compatible)
+# -----------------------------------------------------------------------------
+
+try:
+    import ctypes
+    libc = ctypes.CDLL("libc.dylib" if sys.platform == "darwin" else "libc.so.6")
+    _libc_wcwidth = libc.wcwidth
+    _libc_wcwidth.argtypes = [ctypes.c_wchar]
+    _libc_wcwidth.restype = ctypes.c_int
+
+    def char_width(c):
+        if c in ('\ufe0f', '\ufe0e'):
+            return 0
+        w = _libc_wcwidth(c)
+        return max(0, w) if w >= 0 else 1
+except Exception:
+    def char_width(c):
+        if c in ('\ufe0f', '\ufe0e'):
+            return 0
+        if c in ('🔴', '⚡', '🔌', '🏠', '🅿️', '✅', '⚠️', '❌', '❓', '📄', '💾', '📊', '🚗', '🕒', '📍', '💰'):
+            return 2
+        w = unicodedata.east_asian_width(c)
+        if w in ('W', 'F'):
+            return 2
+        return 1
+
+def display_len(s):
+    clean = re.sub(r"\033\[[0-9;]*m", "", s)
+    return sum(char_width(c) for c in clean)
+
+def pad_display(s, target_width, align="left"):
+    d_len = display_len(s)
+    pad_len = max(0, target_width - d_len)
+    if align == "right":
+        return " " * pad_len + s
+    elif align == "center":
+        left = pad_len // 2
+        right = pad_len - left
+        return " " * left + s + " " * right
+    else:
+        return s + " " * pad_len
+
+def wrap_text_display(s, max_width):
+    clean = re.sub(r"\033\[[0-9;]*m", "", s)
+    if display_len(clean) <= max_width:
+        return [s]
+    words = s.split(" ")
+    lines = []
+    current = ""
+    for w in words:
+        candidate = f"{current} {w}".strip() if current else w
+        if display_len(candidate) <= max_width:
+            current = candidate
+        else:
+            if current:
+                lines.append(current)
+            current = w
+    if current:
+        lines.append(current)
+    return lines or [s]
+
+# ANSI Colors
+C_RESET   = "\033[0m"
+C_BOLD    = "\033[1m"
+C_DIM     = "\033[2m"
+C_RED     = "\033[91m"
+C_GREEN   = "\033[92m"
+C_YELLOW  = "\033[93m"
+C_BLUE    = "\033[94m"
+C_MAGENTA = "\033[95m"
+C_CYAN    = "\033[96m"
+C_WHITE   = "\033[97m"
+
+def haversine_distance_m(lat1, lon1, lat2, lon2):
+    if lat1 is None or lon1 is None or lat2 is None or lon2 is None:
+        return float("inf")
+    R = 6371000.0
+    phi1 = math.radians(lat1)
+    phi2 = math.radians(lat2)
+    delta_phi = math.radians(lat2 - lat1)
+    delta_lambda = math.radians(lon2 - lon1)
+    a = math.sin(delta_phi / 2.0)**2 + math.cos(phi1) * math.cos(phi2) * math.sin(delta_lambda / 2.0)**2
+    return R * 2.0 * math.atan2(math.sqrt(a), math.sqrt(1.0 - a))
+
+DATE_FORMATS = [
+    "%Y-%m-%d %H:%M:%S",
+    "%Y-%m-%d %H:%M",
+    "%Y-%m-%d",
+    "%d/%m/%Y %H:%M:%S",
+    "%d/%m/%Y %H:%M",
+    "%d/%m/%Y",
+    "%d-%m-%Y %H:%M",
+    "%d-%m-%Y",
+    "%Y%m%d",
+    "%d %b %Y %H:%M",
+    "%d %b %Y",
+    "%d %B %Y %H:%M",
+    "%d %B %Y"
+]
+
+def parse_flexible_date(date_str):
+    if not date_str:
+        return None
+    d_clean = str(date_str).strip()
+    d_lower = d_clean.lower()
+    now = datetime.now()
+    
+    if d_lower == "today":
+        return datetime(now.year, now.month, now.day)
+    elif d_lower == "yesterday":
+        y = now - timedelta(days=1)
+        return datetime(y.year, y.month, y.day)
+    
+    days_of_week = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"]
+    if d_lower in days_of_week:
+        target_weekday = days_of_week.index(d_lower)
+        curr_weekday = now.weekday()
+        days_ago = (curr_weekday - target_weekday) % 7
+        if days_ago == 0:
+            days_ago = 7
+        target_date = now - timedelta(days=days_ago)
+        return datetime(target_date.year, target_date.month, target_date.day)
+
+    d_clean = re.sub(r"\s+(?:AEST|AEDT|UTC|GMT|[A-Z]{3,4})$", "", d_clean, flags=re.IGNORECASE).strip()
+
+    for fmt in DATE_FORMATS:
+        try:
+            return datetime.strptime(d_clean, fmt)
+        except ValueError:
+            pass
+    return None
+
+def clean_tokens(s):
+    return set(re.findall(r"\w+", (s or "").lower()))
+
+# -----------------------------------------------------------------------------
+# Pure Python PDF & CSV Invoice Parser
+# -----------------------------------------------------------------------------
+
+class TeslaInvoiceParser:
+    @staticmethod
+    def extract_text_from_pdf(pdf_path):
+        try:
+            import pypdf
+            reader = pypdf.PdfReader(pdf_path)
+            text = "\n".join([page.extract_text() or "" for page in reader.pages])
+            if text.strip():
+                return text
+        except Exception:
+            pass
+
+        try:
+            import pdfplumber
+            with pdfplumber.open(pdf_path) as pdf:
+                text = "\n".join([page.extract_text() or "" for page in pdf.pages])
+                if text.strip():
+                    return text
+        except Exception:
+            pass
+
+        try:
+            with open(pdf_path, "rb") as f:
+                content = f.read()
+
+            extracted_strings = []
+            stream_regex = re.compile(rb"stream\r?\n(.*?)\r?\nendstream", re.DOTALL)
+            for match in stream_regex.finditer(content):
+                stream_bytes = match.group(1)
+                start_pos = max(0, match.start() - 200)
+                dict_snippet = content[start_pos:match.start()]
+                
+                decompressed = None
+                if b"FlateDecode" in dict_snippet:
+                    try:
+                        decompressed = zlib.decompress(stream_bytes)
+                    except Exception:
+                        try:
+                            decompressed = zlib.decompress(stream_bytes, -zlib.MAX_WBITS)
+                        except Exception:
+                            pass
+                else:
+                    decompressed = stream_bytes
+                
+                if decompressed:
+                    tj_matches = re.findall(rb"\((.*?)\)\s*Tj", decompressed)
+                    for s in tj_matches:
+                        try:
+                            extracted_strings.append(s.decode("utf-8", errors="ignore"))
+                        except Exception:
+                            pass
+
+                    array_matches = re.findall(rb"\[(.*?)\]\s*TJ", decompressed, re.DOTALL)
+                    for arr in array_matches:
+                        inner_strs = re.findall(rb"\((.*?)\)", arr)
+                        joined = "".join([s.decode("utf-8", errors="ignore") for s in inner_strs])
+                        if joined:
+                            extracted_strings.append(joined)
+
+                    plain_text = decompressed.decode("utf-8", errors="ignore")
+                    for line in plain_text.splitlines():
+                        if any(k in line for k in ["Supercharging", "Tesla", "Invoice", "kWh", "AUD", "GST", "Total", "Date:"]):
+                            extracted_strings.append(line.strip())
+
+            raw_text = content.decode("latin1", errors="ignore")
+            for line in raw_text.splitlines():
+                if any(k in line for k in ["INV-", "TSLA-", "Supercharging", "Macquarie", "Gosford", "Miranda"]):
+                    extracted_strings.append(line.strip())
+
+            return "\n".join(extracted_strings)
+        except Exception:
+            return ""
+
+    @classmethod
+    def parse_invoice_file(cls, file_path):
+        ext = os.path.splitext(file_path)[1].lower()
+        if ext == ".pdf":
+            text = cls.extract_text_from_pdf(file_path)
+            return cls.parse_invoice_text(text, source_file=file_path)
+        elif ext in [".csv", ".tsv", ".txt"]:
+            return cls.parse_invoice_csv_or_text(file_path)
+        return None
+
+    @classmethod
+    def parse_invoice_text(cls, text, source_file=""):
+        if not text:
+            return None
+
+        text_clean = text.replace("\r", "\n")
+        
+        # 1. Invoice Number
+        inv_match = re.search(r"(?:Invoice|Tax Invoice|INV|Receipt)\s*(?:Number|No\.?|#)?[:\s]*([A-Z0-9-]{5,30})", text_clean, re.IGNORECASE)
+        inv_number = inv_match.group(1).strip() if inv_match else ""
+        if not inv_number:
+            tsla_match = re.search(r"(TSLA-[A-Z0-9-]+|INV-[A-Z0-9-]+)", text_clean)
+            if tsla_match:
+                inv_number = tsla_match.group(1).strip()
+            else:
+                inv_number = os.path.splitext(os.path.basename(source_file))[0] if source_file else "INV-UNKNOWN"
+
+        # 2. Date & Time
+        charge_dt = None
+        date_pref_m = re.search(r"(?:Date|Time|Started At|Charge Date|Session Time)[:\s]*([0-9A-Za-z\/\-\.\s:]+?)(?:\s+AEST|\s+AEDT|\s+UTC|\n|$)", text_clean, re.IGNORECASE)
+        if date_pref_m:
+            charge_dt = parse_flexible_date(date_pref_m.group(1).strip())
+        
+        if not charge_dt:
+            patterns = [
+                r"\b(\d{1,2}[\/\-]\d{1,2}[\/\-]\d{4}(?:\s+\d{1,2}:\d{2}(?::\d{2})?(?:\s*[APap][Mm])?)?)\b",
+                r"\b(\d{4}[\/\-]\d{1,2}[\/\-]\d{1,2}(?:\s+\d{1,2}:\d{2}(?::\d{2})?(?:\s*[APap][Mm])?)?)\b",
+                r"\b(\d{1,2}\s+(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s+\d{4}(?:\s+\d{1,2}:\d{2}(?::\d{2})?(?:\s*[APap][Mm])?)?)\b"
+            ]
+            for pat in patterns:
+                for m in re.finditer(pat, text_clean, re.IGNORECASE):
+                    parsed = parse_flexible_date(m.group(1).strip())
+                    if parsed and 2015 <= parsed.year <= 2035:
+                        charge_dt = parsed
+                        break
+                if charge_dt:
+                    break
+
+        # 3. Location / Station Name
+        location_name = ""
+        loc_match = re.search(r"Supercharging\s*[-–:]\s*([^\n\r]+)", text_clean, re.IGNORECASE)
+        if loc_match:
+            location_name = loc_match.group(1).strip()
+        else:
+            for kw in ["Macquarie", "West Gosford", "Miranda", "Broadway", "Campbelltown", "Kirrawee", "St Leonards"]:
+                if kw.lower() in text_clean.lower():
+                    location_name = kw
+                    break
+
+        # 4. Energy Delivered (kWh)
+        kwh_match = re.search(r"(\d+\.?\d*)\s*kWh", text_clean, re.IGNORECASE)
+        energy_kwh = float(kwh_match.group(1)) if kwh_match else None
+
+        # 5. Total Cost, Subtotal, GST
+        total_match = re.search(r"(?<!sub)(?:Total\s+Amount|Total\s+AUD|Total\s+Due|Total(?!\s*excl))[:\s]*\$?(\d+\.\d{2})", text_clean, re.IGNORECASE)
+        total_cost = float(total_match.group(1)) if total_match else None
+
+        gst_match = re.search(r"GST(?:\s*\(?10%\)?)?[:\s]*\$?(\d+\.\d{2})", text_clean, re.IGNORECASE)
+        gst = float(gst_match.group(1)) if gst_match else None
+
+        rate_match = re.search(r"@?\s*\$?(\d+\.\d{2,4})\s*(?:\/\s*kWh|per\s*kWh)", text_clean, re.IGNORECASE)
+        unit_rate = float(rate_match.group(1)) if rate_match else None
+
+        if total_cost is not None and energy_kwh and energy_kwh > 0 and unit_rate is None:
+            unit_rate = round(total_cost / energy_kwh, 4)
+
+        # 6. VIN
+        vin_match = re.search(r"VIN[:\s]*([A-HJ-NPR-Z0-9]{17})", text_clean)
+        vin = vin_match.group(1).strip() if vin_match else ""
+
+        if not charge_dt and total_cost is None and energy_kwh is None:
+            return None
+
+        network = "Tesla Supercharger"
+        emoji = "🔴⚡"
+        if "chargefox" in (source_file + text_clean).lower() or inv_number.startswith("CF-"):
+            network = "Chargefox"
+            emoji = "🔌"
+        elif "evie" in (source_file + text_clean).lower() or inv_number.startswith("EV-"):
+            network = "Evie"
+            emoji = "🔌"
+        elif "bp pulse" in (source_file + text_clean).lower() or "bp" in (source_file + text_clean).lower():
+            network = "BP Pulse"
+            emoji = "🔌"
+        elif "jolt" in (source_file + text_clean).lower():
+            network = "Jolt"
+            emoji = "🔌"
+
+        return {
+            "invoice_number": inv_number,
+            "source_file": os.path.basename(source_file),
+            "source_path": source_file,
+            "date": charge_dt,
+            "location_raw": location_name,
+            "network": network,
+            "emoji": emoji,
+            "energy_kwh": energy_kwh,
+            "unit_rate": unit_rate,
+            "total_cost": total_cost,
+            "gst": gst,
+            "vin": vin,
+            "raw_text_snippet": text_clean[:300].strip()
+        }
+
+    @classmethod
+    def parse_invoice_csv_or_text(cls, file_path):
+        records = []
+        try:
+            with open(file_path, "r", encoding="utf-8", errors="ignore") as f:
+                sample = f.read(2048)
+                f.seek(0)
+                delim = "\t" if "\t" in sample and "," not in sample else ","
+                reader = csv.DictReader(f, delimiter=delim)
+                for row in reader:
+                    date_val = None
+                    for k in ["Date", "Started At", "Start Time", "Charge Date", "Timestamp", "DateTime", "Started"]:
+                        if k in row and row[k]:
+                            date_val = parse_flexible_date(row[k])
+                            if date_val:
+                                break
+                    
+                    energy_val = None
+                    for k in ["Energy (kWh)", "kWh", "Energy Used", "Energy Delivered", "Volume", "Energy"]:
+                        if k in row and row[k]:
+                            try:
+                                energy_val = float(re.sub(r"[^\d.]", "", row[k]))
+                                break
+                            except Exception:
+                                pass
+                    
+                    cost_val = None
+                    for k in ["Cost", "Total", "Amount", "Total Cost", "Total Amount ($)", "AUD", "Price"]:
+                        if k in row and row[k]:
+                            try:
+                                cost_val = float(re.sub(r"[^\d.]", "", row[k]))
+                                break
+                            except Exception:
+                                pass
+
+                    rate_val = None
+                    for k in ["Rate", "Cost Per kWh", "Price Per kWh", "Unit Price"]:
+                        if k in row and row[k]:
+                            try:
+                                rate_val = float(re.sub(r"[^\d.]", "", row[k]))
+                                break
+                            except Exception:
+                                pass
+                    
+                    loc_val = row.get("Location") or row.get("Station") or row.get("Site") or row.get("Charger") or ""
+                    inv_val = row.get("Invoice") or row.get("Invoice Number") or row.get("Receipt #") or os.path.basename(file_path)
+
+                    if not date_val and energy_val is None and cost_val is None:
+                        continue
+
+                    fname_lower = os.path.basename(file_path).lower()
+                    network = "Tesla Supercharger"
+                    emoji = "🔴⚡"
+                    if "chargefox" in fname_lower or str(inv_val).startswith("CF-") or "chargefox" in loc_val.lower():
+                        network = "Chargefox"
+                        emoji = "🔌"
+                    elif "evie" in fname_lower or str(inv_val).startswith("EV-") or "evie" in loc_val.lower():
+                        network = "Evie"
+                        emoji = "🔌"
+                    elif "bp pulse" in fname_lower or "bp" in fname_lower:
+                        network = "BP Pulse"
+                        emoji = "🔌"
+                    elif "jolt" in fname_lower:
+                        network = "Jolt"
+                        emoji = "🔌"
+
+                    records.append({
+                        "invoice_number": inv_val,
+                        "source_file": os.path.basename(file_path),
+                        "source_path": file_path,
+                        "date": date_val,
+                        "location_raw": loc_val,
+                        "network": network,
+                        "emoji": emoji,
+                        "energy_kwh": energy_val,
+                        "unit_rate": rate_val or (round(cost_val / energy_val, 4) if cost_val and energy_val else None),
+                        "total_cost": cost_val,
+                        "gst": (round(cost_val / 11.0, 2) if cost_val else None),
+                        "vin": row.get("VIN", ""),
+                        "raw_text_snippet": str(row)
+                    })
+        except Exception:
+            pass
+        return records
+
+# -----------------------------------------------------------------------------
+# Main Charging Analyzer & Reconciliation Engine
+# -----------------------------------------------------------------------------
+
+class TessieChargingAnalyzer:
+    def __init__(self, tessie_dir=None, invoices_dir=None, tolerance_mins=45, tolerance_kwh=5.0):
+        self.script_dir = os.path.dirname(os.path.abspath(__file__))
+        self.repo_root = os.path.dirname(self.script_dir)
+        self.icloud_dir = os.path.expanduser("~/Library/Mobile Documents/com~apple~CloudDocs/Tesla/Tessie")
+        self.tolerance_mins = tolerance_mins
+        self.tolerance_kwh = tolerance_kwh
+        
+        self.tessie_dirs = []
+        candidates_tessie = [
+            tessie_dir,
+            "/Volumes/TESLADRIVE 1/Tessie",
+            "/Volumes/TESLADRIVE/Tessie",
+            os.path.join(self.repo_root, "Tessie"),
+            os.path.join(self.script_dir, "Tessie"),
+            os.path.expanduser("~/iCloud/repos/tesla/Tessie"),
+            self.icloud_dir
+        ]
+        for d in candidates_tessie:
+            try:
+                if d and os.path.isdir(d) and d not in self.tessie_dirs:
+                    self.tessie_dirs.append(d)
+            except Exception:
+                pass
+
+        self.invoice_dirs = []
+        candidates_invoices = [
+            invoices_dir,
+            os.path.join(self.repo_root, "Tessie", "invoices"),
+            "/Volumes/TESLADRIVE 1/Tessie/invoices",
+            os.path.join(self.icloud_dir, "invoices"),
+            os.path.expanduser("~/Downloads/Tesla Invoices"),
+            os.path.expanduser("~/Downloads/Invoices")
+        ]
+        for d in candidates_invoices:
+            try:
+                if d and os.path.isdir(d) and d not in self.invoice_dirs:
+                    self.invoice_dirs.append(d)
+            except Exception:
+                pass
+
+        self.superchargers = self.load_json_registry("superchargers.json")
+        self.charging_stations = self.load_json_registry("charging.json")
+        self.places = self.load_json_registry("places.json")
+        
+        self.charges = []
+        self.invoices = []
+        self.reconciled_sessions = []
+        self._loaded = False
+
+    def load_json_registry(self, filename):
+        data = {}
+        for td in self.tessie_dirs:
+            p = os.path.join(td, filename)
+            if os.path.isfile(p):
+                try:
+                    with open(p, "r", encoding="utf-8") as f:
+                        loaded = json.load(f)
+                        if isinstance(loaded, dict):
+                            data.update(loaded)
+                except Exception:
+                    pass
+        return data
+
+    def resolve_location(self, address, saved_loc="", lat=None, lon=None, is_supercharger=False, is_fast=False):
+        addr_clean = (address or "").lower()
+        saved_clean = (saved_loc or "").strip()
+
+        # 1. Superchargers Registry
+        for sc_name, sc_data in self.superchargers.items():
+            meta = sc_data.get("tesla_metadata", {})
+            loc = sc_data.get("location", {})
+            short_name = meta.get("short_name") or meta.get("location_name") or sc_name
+            kws = meta.get("keywords") or []
+            
+            if saved_clean and (saved_clean.lower() == sc_name.lower() or any(k.lower() in saved_clean.lower() for k in kws)):
+                return (short_name, "Tesla Supercharger", "🔴⚡", sc_data)
+            
+            sc_lat = loc.get("lat")
+            sc_lon = loc.get("lon")
+            sc_rad = loc.get("radius_m", 250)
+            if lat is not None and lon is not None and sc_lat is not None and sc_lon is not None:
+                if haversine_distance_m(lat, lon, sc_lat, sc_lon) <= sc_rad:
+                    return (short_name, "Tesla Supercharger", "🔴⚡", sc_data)
+            
+            for kw in kws:
+                if kw.lower() in addr_clean:
+                    return (short_name, "Tesla Supercharger", "🔴⚡", sc_data)
+
+        # 2. 3rd-Party & Home Charging Registry
+        for st_name, st_data in self.charging_stations.items():
+            st_type = st_data.get("type", "ac")
+            network = st_data.get("network") or st_data.get("operator") or ("Tesla Wall Connector" if st_type == "home" else "3rd-Party")
+            short_name = st_data.get("name") or st_name
+            kws = st_data.get("keywords") or []
+            st_lat = st_data.get("lat")
+            st_lon = st_data.get("lon")
+            st_rad = st_data.get("radius_m", 150)
+            emoji = "🏠⚡" if st_type == "home" else ("🔌" if st_type == "dc_fast" else "🅿️")
+
+            if saved_clean and (saved_clean.lower() == st_name.lower() or any(k.lower() in saved_clean.lower() for k in kws)):
+                return (short_name, network, emoji, st_data)
+
+            if lat is not None and lon is not None and st_lat is not None and st_lon is not None:
+                if haversine_distance_m(lat, lon, st_lat, st_lon) <= st_rad:
+                    return (short_name, network, emoji, st_data)
+
+            for kw in kws:
+                if kw.lower() in addr_clean:
+                    return (short_name, network, emoji, st_data)
+
+        # 3. Places Registry
+        for p_name, p_data in self.places.items():
+            nickname = p_data.get("nickname") or p_name
+            kws = p_data.get("keywords") or []
+            p_lat = p_data.get("lat")
+            p_lon = p_data.get("lon")
+            p_rad = p_data.get("radius_m", 150)
+
+            if saved_clean and (saved_clean.lower() == p_name.lower() or any(k.lower() in saved_clean.lower() for k in kws)):
+                emoji = "🔴⚡" if is_supercharger else ("🔌" if is_fast else "🅿️")
+                net = "Tesla Supercharger" if is_supercharger else ("DC Fast" if is_fast else "Destination AC")
+                return (nickname, net, emoji, p_data)
+
+            if lat is not None and lon is not None and p_lat is not None and p_lon is not None:
+                if haversine_distance_m(lat, lon, p_lat, p_lon) <= p_rad:
+                    emoji = "🔴⚡" if is_supercharger else ("🔌" if is_fast else "🅿️")
+                    net = "Tesla Supercharger" if is_supercharger else ("DC Fast" if is_fast else "Destination AC")
+                    return (nickname, net, emoji, p_data)
+
+            for kw in kws:
+                if kw.lower() in addr_clean:
+                    emoji = "🔴⚡" if is_supercharger else ("🔌" if is_fast else "🅿️")
+                    net = "Tesla Supercharger" if is_supercharger else ("DC Fast" if is_fast else "Destination AC")
+                    return (nickname, net, emoji, p_data)
+
+        display = saved_clean or (address.split(",")[0].strip() if address else "Unknown Location")
+        if is_supercharger:
+            return (display, "Tesla Supercharger", "🔴⚡", {})
+        elif is_fast:
+            return (display, "3rd-Party Fast", "🔌", {})
+        else:
+            return (display, "AC Charger", "🅿️", {})
+
+    def get_expected_tariff_rate(self, registry_obj, dt):
+        if not registry_obj or not dt:
+            return None
+        
+        cost_cfg = registry_obj.get("tessie_cost_config") or registry_obj.get("costs") or {}
+        pricing_model = cost_cfg.get("pricing_model", "flat")
+        
+        if pricing_model == "flat":
+            return cost_cfg.get("per_kwh_flat") or cost_cfg.get("flat_per_kwh")
+        
+        schedules = cost_cfg.get("rate_schedules") or []
+        day_str = dt.strftime("%a")
+        time_str = dt.strftime("%H:%M")
+        month_str = dt.strftime("%b")
+
+        for sched in schedules:
+            days = sched.get("days", [])
+            months = sched.get("months", [])
+            s_time = sched.get("start_time", "00:00")
+            e_time = sched.get("end_time", "24:00")
+            rate = sched.get("rate_per_kwh")
+
+            if days and day_str not in days:
+                continue
+            if months and month_str not in months:
+                continue
+            
+            if s_time <= e_time:
+                if s_time <= time_str < e_time:
+                    return rate
+            else:
+                if time_str >= s_time or time_str < e_time:
+                    return rate
+                    
+        return cost_cfg.get("per_kwh_flat") or cost_cfg.get("flat_per_kwh")
+
+    def load_charges(self):
+        raw_charges = []
+        seen_keys = set()
+        
+        for td in self.tessie_dirs:
+            if not os.path.isdir(td):
+                continue
+            for fname in os.listdir(td):
+                if fname.startswith("charges_summary") and fname.endswith(".csv"):
+                    fpath = os.path.join(td, fname)
+                    try:
+                        with open(fpath, "r", encoding="utf-8", errors="ignore") as f:
+                            reader = csv.DictReader(f)
+                            for row in reader:
+                                s_at = row.get("Started At (AEST)") or row.get("Started At")
+                                if not s_at:
+                                    continue
+                                loc = row.get("Location", "")
+                                added = row.get("Energy Added (kWh)", "")
+                                key = (s_at.strip(), loc.strip(), added.strip())
+                                if key in seen_keys:
+                                    continue
+                                seen_keys.add(key)
+                                
+                                s_dt = parse_flexible_date(s_at)
+                                e_at = row.get("Ended At (AEST)") or row.get("Ended At")
+                                e_dt = parse_flexible_date(e_at) if e_at else None
+                                
+                                is_super = str(row.get("Supercharger", "")).strip().lower() == "true"
+                                is_fast = str(row.get("Fast Charger", "")).strip().lower() == "true"
+                                
+                                try:
+                                    lat = float(row.get("Latitude", 0)) if row.get("Latitude") else None
+                                    lon = float(row.get("Longitude", 0)) if row.get("Longitude") else None
+                                except Exception:
+                                    lat, lon = None, None
+
+                                try:
+                                    dur = float(row.get("Duration (Minutes)", 0))
+                                except Exception:
+                                    dur = 0.0
+
+                                try:
+                                    kwh_added = float(row.get("Energy Added (kWh)", 0))
+                                except Exception:
+                                    kwh_added = 0.0
+
+                                try:
+                                    kwh_used = float(row.get("Energy Used (kWh)", 0))
+                                except Exception:
+                                    kwh_used = 0.0
+
+                                try:
+                                    cost = float(row.get("Cost", 0))
+                                except Exception:
+                                    cost = 0.0
+
+                                try:
+                                    cost_per_kwh = float(row.get("Cost Per kWh", 0))
+                                except Exception:
+                                    cost_per_kwh = 0.0
+
+                                try:
+                                    start_soc = int(float(row.get("Starting Battery (%)", 0)))
+                                    end_soc = int(float(row.get("Ending Battery (%)", 0)))
+                                except Exception:
+                                    start_soc, end_soc = 0, 0
+
+                                try:
+                                    range_added = float(row.get("Rated Range Added (km)", 0))
+                                except Exception:
+                                    range_added = 0.0
+
+                                try:
+                                    odometer = float(row.get("Odometer (km)", 0))
+                                except Exception:
+                                    odometer = 0.0
+
+                                place_name, network, emoji, reg_obj = self.resolve_location(
+                                    loc, row.get("Saved Location", ""), lat, lon, is_super, is_fast
+                                )
+
+                                raw_charges.append({
+                                    "started_at": s_dt,
+                                    "started_at_str": s_at,
+                                    "ended_at": e_dt,
+                                    "ended_at_str": e_at,
+                                    "duration_mins": dur,
+                                    "location_raw": loc,
+                                    "saved_location": row.get("Saved Location", ""),
+                                    "place_name": place_name,
+                                    "network": network,
+                                    "emoji": emoji,
+                                    "registry_obj": reg_obj,
+                                    "latitude": lat,
+                                    "longitude": lon,
+                                    "is_supercharger": is_super,
+                                    "is_fast_charger": is_fast,
+                                    "energy_added_kwh": kwh_added,
+                                    "energy_used_kwh": kwh_used,
+                                    "cost": cost,
+                                    "cost_per_kwh": cost_per_kwh,
+                                    "start_soc": start_soc,
+                                    "end_soc": end_soc,
+                                    "range_added_km": range_added,
+                                    "odometer_km": odometer
+                                })
+                    except Exception:
+                        pass
+                        
+        raw_charges.sort(key=lambda x: x["started_at"] or datetime.min)
+        self.charges = raw_charges
+        return self.charges
+
+    def load_invoices(self):
+        invoices = []
+        for inv_dir in self.invoice_dirs:
+            if not os.path.isdir(inv_dir):
+                continue
+            for root, _, files in os.walk(inv_dir):
+                for f in sorted(files):
+                    if f.startswith("."):
+                        continue
+                    ext = os.path.splitext(f)[1].lower()
+                    if ext in [".pdf", ".csv", ".tsv", ".txt"]:
+                        fpath = os.path.join(root, f)
+                        res = TeslaInvoiceParser.parse_invoice_file(fpath)
+                        if isinstance(res, list):
+                            for r in res:
+                                if r and (r.get("date") or r.get("energy_kwh") or r.get("total_cost")):
+                                    invoices.append(r)
+                        elif isinstance(res, dict):
+                            if res.get("date") or res.get("energy_kwh") or res.get("total_cost"):
+                                invoices.append(res)
+        self.invoices = invoices
+        return self.invoices
+
+    def match_location(self, inv_loc, inv_net, charge):
+        if not inv_loc:
+            if charge["is_supercharger"] and inv_net == "Tesla Supercharger":
+                return True
+            return True
+
+        inv_toks = clean_tokens(inv_loc)
+        ch_toks = clean_tokens(charge["location_raw"])
+        place_toks = clean_tokens(charge["place_name"])
+        saved_toks = clean_tokens(charge.get("saved_location", ""))
+        all_ch_toks = ch_toks | place_toks | saved_toks
+
+        meaningful_common = {t for t in inv_toks.intersection(all_ch_toks) if len(t) >= 3 and t not in ["street", "road", "avenue", "highway", "south", "wales", "nsw", "australia"]}
+        if meaningful_common:
+            return True
+
+        inv_lower = inv_loc.lower()
+        if inv_lower in charge["location_raw"].lower() or inv_lower in charge["place_name"].lower():
+            return True
+
+        if charge["is_supercharger"] and any(sc in inv_lower for sc in ["supercharg", "tesla"]):
+            return True
+
+        return False
+
+    def reconcile(self):
+        if not self._loaded:
+            self.load_charges()
+            self.load_invoices()
+            self._loaded = True
+
+        reconciled = []
+        matched_invoice_indices = set()
+
+        for c_idx, charge in enumerate(self.charges):
+            dt = charge["started_at"]
+            best_inv_idx = None
+            best_inv = None
+            min_time_diff = float("inf")
+
+            for i_idx, inv in enumerate(self.invoices):
+                if i_idx in matched_invoice_indices:
+                    continue
+                inv_dt = inv.get("date")
+                if not inv_dt or not dt:
+                    continue
+                
+                time_diff = abs((dt - inv_dt).total_seconds()) / 60.0
+                if time_diff <= self.tolerance_mins:
+                    if self.match_location(inv.get("location_raw"), inv.get("network"), charge):
+                        if time_diff < min_time_diff:
+                            min_time_diff = time_diff
+                            best_inv_idx = i_idx
+                            best_inv = inv
+
+            dispenser_kwh = charge["energy_used_kwh"]
+            battery_kwh = charge["energy_added_kwh"]
+            tessie_cost = charge["cost"]
+            invoice_cost = None
+            invoice_rate = None
+            inv_num = None
+            status = "HOME / AC 🏠" if charge["emoji"] == "🏠⚡" else ("UNRECONCILED ❓" if (charge["is_supercharger"] or charge["is_fast_charger"]) else "AC UNBILLED 🅿️")
+
+            if best_inv:
+                matched_invoice_indices.add(best_inv_idx)
+                inv_num = best_inv.get("invoice_number")
+                if best_inv.get("energy_kwh"):
+                    dispenser_kwh = best_inv["energy_kwh"]
+                if best_inv.get("total_cost") is not None:
+                    invoice_cost = best_inv["total_cost"]
+                if best_inv.get("unit_rate") is not None:
+                    invoice_rate = best_inv["unit_rate"]
+
+                cost_diff = abs((invoice_cost or 0) - tessie_cost)
+                if cost_diff >= 0.50:
+                    status = "RATE MISMATCH ⚠️"
+                else:
+                    status = "MATCHED ✅"
+
+            loss_kwh = max(0.0, dispenser_kwh - battery_kwh) if dispenser_kwh > 0 else 0.0
+            efficiency_pct = (battery_kwh / dispenser_kwh * 100.0) if dispenser_kwh > 0 else 100.0
+            expected_rate = self.get_expected_tariff_rate(charge["registry_obj"], dt)
+
+            reconciled.append({
+                "charge_index": c_idx + 1,
+                "datetime": dt,
+                "datetime_str": charge["started_at_str"],
+                "duration_mins": charge["duration_mins"],
+                "place_name": charge["place_name"],
+                "network": charge["network"],
+                "emoji": charge["emoji"],
+                "is_supercharger": charge["is_supercharger"],
+                "is_fast_charger": charge["is_fast_charger"],
+                "start_soc": charge["start_soc"],
+                "end_soc": charge["end_soc"],
+                "range_added_km": charge["range_added_km"],
+                "odometer_km": charge["odometer_km"],
+                "dispenser_kwh": dispenser_kwh,
+                "battery_kwh": battery_kwh,
+                "loss_kwh": loss_kwh,
+                "efficiency_pct": efficiency_pct,
+                "tessie_cost": tessie_cost,
+                "tessie_rate": charge["cost_per_kwh"],
+                "invoice_cost": invoice_cost,
+                "invoice_rate": invoice_rate,
+                "invoice_number": inv_num,
+                "expected_rate": expected_rate,
+                "status": status,
+                "matched_invoice": best_inv,
+                "raw_charge": charge
+            })
+
+        for i_idx, inv in enumerate(self.invoices):
+            if i_idx not in matched_invoice_indices:
+                inv_dt = inv.get("date")
+                reconciled.append({
+                    "charge_index": None,
+                    "datetime": inv_dt,
+                    "datetime_str": inv_dt.strftime("%Y-%m-%d %H:%M") if inv_dt else "Unknown Date",
+                    "duration_mins": 0,
+                    "place_name": inv.get("location_raw") or "Unknown Station",
+                    "network": inv.get("network", "3rd-Party"),
+                    "emoji": inv.get("emoji", "🔌"),
+                    "is_supercharger": (inv.get("network") == "Tesla Supercharger"),
+                    "is_fast_charger": True,
+                    "start_soc": 0,
+                    "end_soc": 0,
+                    "range_added_km": 0.0,
+                    "odometer_km": 0.0,
+                    "dispenser_kwh": inv.get("energy_kwh") or 0.0,
+                    "battery_kwh": 0.0,
+                    "loss_kwh": 0.0,
+                    "efficiency_pct": 0.0,
+                    "tessie_cost": 0.0,
+                    "tessie_rate": 0.0,
+                    "invoice_cost": inv.get("total_cost"),
+                    "invoice_rate": inv.get("unit_rate"),
+                    "invoice_number": inv.get("invoice_number"),
+                    "expected_rate": None,
+                    "status": "INVOICE ONLY 📄",
+                    "matched_invoice": inv,
+                    "raw_charge": None
+                })
+
+        reconciled.sort(key=lambda x: x["datetime"] or datetime.min)
+        self.reconciled_sessions = reconciled
+        return self.reconciled_sessions
+
+    def consolidate_charges_master(self, output_dir=None):
+        dest_dir = output_dir or (
+            "/Volumes/TESLADRIVE 1/Tessie" if os.path.isdir("/Volumes/TESLADRIVE 1/Tessie")
+            else self.tessie_dirs[0] if self.tessie_dirs else "."
+        )
+        os.makedirs(dest_dir, exist_ok=True)
+        master_file = os.path.join(dest_dir, "charges_master.csv")
+
+        charges = self.load_charges()
+        if not charges:
+            print(f"{C_YELLOW}No charges found to consolidate.{C_RESET}")
+            return
+
+        fieldnames = [
+            "Started At (AEST)", "Ended At (AEST)", "Duration (Minutes)", "Location", "Saved Location",
+            "Latitude", "Longitude", "Supercharger", "Fast Charger", "Odometer (km)",
+            "Energy Added (kWh)", "Energy Used (kWh)", "Rated Range Added (km)", "Starting Battery (%)",
+            "Ending Battery (%)", "Cost", "Cost Per kWh"
+        ]
+
+        with open(master_file, "w", newline="", encoding="utf-8") as f:
+            writer = csv.DictWriter(f, fieldnames=fieldnames)
+            writer.writeheader()
+            for c in charges:
+                writer.writerow({
+                    "Started At (AEST)": c["started_at_str"],
+                    "Ended At (AEST)": c["ended_at_str"],
+                    "Duration (Minutes)": f"{c['duration_mins']:.0f}",
+                    "Location": c["location_raw"],
+                    "Saved Location": c["saved_location"],
+                    "Latitude": f"{c['latitude']:.6f}" if c["latitude"] is not None else "",
+                    "Longitude": f"{c['longitude']:.6f}" if c["longitude"] is not None else "",
+                    "Supercharger": "true" if c["is_supercharger"] else "false",
+                    "Fast Charger": "true" if c["is_fast_charger"] else "false",
+                    "Odometer (km)": f"{c['odometer_km']:.2f}",
+                    "Energy Added (kWh)": f"{c['energy_added_kwh']:.2f}",
+                    "Energy Used (kWh)": f"{c['energy_used_kwh']:.2f}",
+                    "Rated Range Added (km)": f"{c['range_added_km']:.2f}",
+                    "Starting Battery (%)": str(c["start_soc"]),
+                    "Ending Battery (%)": str(c["end_soc"]),
+                    "Cost": f"{c['cost']:.2f}",
+                    "Cost Per kWh": f"{c['cost_per_kwh']:.2f}"
+                })
+
+        print(f"{C_GREEN}Successfully consolidated {len(charges)} charges to:{C_RESET} {master_file}")
+
+    # -------------------------------------------------------------------------
+    # Visual Terminal Presentation (Level 1, Level 2, Level 3)
+    # -------------------------------------------------------------------------
+
+    def print_summary(self, filtered_sessions=None):
+        sessions = filtered_sessions if filtered_sessions is not None else self.reconciled_sessions
+        if not sessions:
+            print(f"{C_YELLOW}No charging sessions matching the selected criteria.{C_RESET}")
+            return
+
+        total_sessions = len(sessions)
+        sc_sessions = [s for s in sessions if s["is_supercharger"]]
+        fast_sessions = [s for s in sessions if s["is_fast_charger"] and not s["is_supercharger"]]
+        home_sessions = [s for s in sessions if s["emoji"] == "🏠⚡"]
+        ac_dest_sessions = [s for s in sessions if not s["is_supercharger"] and not s["is_fast_charger"] and s["emoji"] != "🏠⚡"]
+
+        total_dispenser_kwh = sum(s["dispenser_kwh"] for s in sessions)
+        total_battery_kwh = sum(s["battery_kwh"] for s in sessions)
+        total_loss_kwh = max(0.0, total_dispenser_kwh - total_battery_kwh)
+        overall_eff_pct = (total_battery_kwh / total_dispenser_kwh * 100.0) if total_dispenser_kwh > 0 else 100.0
+        
+        total_spend = sum((s["invoice_cost"] if s["invoice_cost"] is not None else s["tessie_cost"]) for s in sessions)
+        avg_cost_kwh = (total_spend / total_dispenser_kwh) if total_dispenser_kwh > 0 else 0.0
+
+        total_km_added = sum(s["range_added_km"] for s in sessions)
+        petrol_equiv_spend = (total_km_added / 100.0) * 9.5 * 1.95 if total_km_added > 0 else (total_battery_kwh / 0.15 / 100.0) * 9.5 * 1.95
+        savings = max(0.0, petrol_equiv_spend - total_spend)
+
+        reconciled_fast = sum(1 for s in sessions if (s["is_supercharger"] or s["is_fast_charger"]) and s["status"] in ["MATCHED ✅", "RATE MISMATCH ⚠️"])
+        total_fast_count = len(sc_sessions) + len(fast_sessions)
+
+        print()
+        print(f"{C_BOLD}{C_CYAN}╔═══════════════════════════════════════════════════════════════════════════════════════════╗{C_RESET}")
+        print(f"{C_BOLD}{C_CYAN}║                    ⚡ TESLA CHARGING & INVOICE RECONCILIATION SUMMARY ⚡                  ║{C_RESET}")
+        print(f"{C_BOLD}{C_CYAN}╚═══════════════════════════════════════════════════════════════════════════════════════════╝{C_RESET}")
+        print()
+
+        box_w = 91
+        print(f"┌{'─' * (box_w - 2)}┐")
+        
+        kpi_l1 = f"  {C_BOLD}Total Charging Sessions:{C_RESET} {total_sessions} ({len(sc_sessions)} Supercharger, {len(fast_sessions)} DC Fast, {len(home_sessions)} Home AC, {len(ac_dest_sessions)} Dest AC)"
+        print(f"│{pad_display(kpi_l1, box_w - 2)}│")
+        
+        kpi_l2 = f"  {C_BOLD}Energy Delivered (Dispenser):{C_RESET} {total_dispenser_kwh:,.2f} kWh  │  {C_BOLD}Energy Added (Battery):{C_RESET} {total_battery_kwh:,.2f} kWh"
+        print(f"│{pad_display(kpi_l2, box_w - 2)}│")
+        
+        eff_color = C_GREEN if overall_eff_pct >= 85.0 else (C_YELLOW if overall_eff_pct >= 75.0 else C_RED)
+        kpi_l3 = f"  {C_BOLD}Charging Efficiency Loss:{C_RESET} {total_loss_kwh:,.2f} kWh  ({eff_color}{overall_eff_pct:.1f}% Dispenser-to-Battery{C_RESET})"
+        print(f"│{pad_display(kpi_l3, box_w - 2)}│")
+
+        kpi_l4 = f"  {C_BOLD}Total Electricity Spend:{C_RESET} ${total_spend:,.2f} AUD  │  {C_BOLD}Average Cost:{C_RESET} ${avg_cost_kwh:.4f}/kWh"
+        print(f"│{pad_display(kpi_l4, box_w - 2)}│")
+
+        kpi_l5 = f"  {C_BOLD}Estimated Petrol Equivalent:{C_RESET} ${petrol_equiv_spend:,.2f}  │  {C_GREEN}{C_BOLD}Net Fuel Savings:{C_RESET} ${savings:,.2f} AUD"
+        print(f"│{pad_display(kpi_l5, box_w - 2)}│")
+
+        fast_status_color = C_GREEN if (reconciled_fast == total_fast_count and total_fast_count > 0) else C_YELLOW
+        kpi_l6 = f"  {C_BOLD}Invoice Reconciliation:{C_RESET} {fast_status_color}{reconciled_fast}/{total_fast_count} Fast Sessions Reconciled{C_RESET} ({len(self.invoices)} Total Invoices Loaded)"
+        print(f"│{pad_display(kpi_l6, box_w - 2)}│")
+        
+        print(f"└{'─' * (box_w - 2)}┘")
+        print()
+
+        network_groups = defaultdict(list)
+        for s in sessions:
+            network_groups[s["network"]].append(s)
+
+        headers = ["Network / Location", "Type", "Sessions", "Dispenser kWh", "Battery kWh", "Eff %", "Total Spend", "Avg $/kWh"]
+        widths = [26, 10, 10, 15, 14, 9, 13, 11]
+
+        top_b = "┌" + "┬".join("─" * w for w in widths) + "┐"
+        print(top_b)
+        
+        h_row = "│" + "│".join(pad_display(f"{C_BOLD}{h}{C_RESET}", w, "center") for h, w in zip(headers, widths)) + "│"
+        print(h_row)
+
+        mid_b = "├" + "┼".join("─" * w for w in widths) + "┤"
+        print(mid_b)
+
+        for net_name, net_sessions in sorted(network_groups.items(), key=lambda x: len(x[1]), reverse=True):
+            emoji = net_sessions[0]["emoji"]
+            n_disp = sum(s["dispenser_kwh"] for s in net_sessions)
+            n_bat = sum(s["battery_kwh"] for s in net_sessions)
+            n_eff = (n_bat / n_disp * 100.0) if n_disp > 0 else 100.0
+            n_cost = sum((s["invoice_cost"] if s["invoice_cost"] is not None else s["tessie_cost"]) for s in net_sessions)
+            n_avg_rate = (n_cost / n_disp) if n_disp > 0 else 0.0
+            
+            type_label = "DC Fast" if net_sessions[0]["is_fast_charger"] else ("Home AC" if emoji == "🏠⚡" else "AC Public")
+            name_str = f"{emoji} {net_name}"
+
+            row_str = "│" + "│".join([
+                pad_display(name_str, widths[0], "left"),
+                pad_display(type_label, widths[1], "center"),
+                pad_display(str(len(net_sessions)), widths[2], "center"),
+                pad_display(f"{n_disp:,.1f} kWh", widths[3], "right"),
+                pad_display(f"{n_bat:,.1f} kWh", widths[4], "right"),
+                pad_display(f"{n_eff:.1f}%", widths[5], "center"),
+                pad_display(f"${n_cost:,.2f}", widths[6], "right"),
+                pad_display(f"${n_avg_rate:.3f}", widths[7], "right")
+            ]) + "│"
+            print(row_str)
+
+        bot_b = "└" + "┴".join("─" * w for w in widths) + "┘"
+        print(bot_b)
+        print()
+
+    def print_sessions_table(self, filtered_sessions=None):
+        sessions = filtered_sessions if filtered_sessions is not None else self.reconciled_sessions
+        if not sessions:
+            return
+
+        headers = [
+            "#", "Date / Time", "Place / Station", "Network", "SoC %", "Dur", "Disp kWh", "Bat kWh", "Eff %", "Rate", "Cost", "Invoice", "Status"
+        ]
+        widths = [
+            4, 17, 20, 16, 8, 6, 10, 9, 8, 9, 8, 14, 18
+        ]
+
+        top_b = "┌" + "┬".join("─" * w for w in widths) + "┐"
+        print(top_b)
+        
+        h_row = "│" + "│".join(pad_display(f"{C_BOLD}{h}{C_RESET}", w, "center") for h, w in zip(headers, widths)) + "│"
+        print(h_row)
+
+        mid_b = "├" + "┼".join("─" * w for w in widths) + "┤"
+        print(mid_b)
+
+        for s in sessions:
+            idx_str = str(s["charge_index"]) if s["charge_index"] is not None else "-"
+            dt_str = s["datetime_str"][:16] if s["datetime_str"] else "-"
+            place_str = f"{s['emoji']} {s['place_name']}"
+            net_str = s["network"]
+            soc_str = f"{s['start_soc']}%➔{s['end_soc']}%" if (s["start_soc"] or s["end_soc"]) else "-"
+            dur_str = f"{int(s['duration_mins'])}m" if s["duration_mins"] > 0 else "-"
+            disp_str = f"{s['dispenser_kwh']:.2f}"
+            bat_str = f"{s['battery_kwh']:.2f}"
+            eff_str = f"{s['efficiency_pct']:.1f}%"
+            
+            effective_rate = s["invoice_rate"] if s["invoice_rate"] is not None else s["tessie_rate"]
+            rate_str = f"${effective_rate:.2f}" if effective_rate else "-"
+
+            cost_val = s["invoice_cost"] if s["invoice_cost"] is not None else s["tessie_cost"]
+            cost_str = f"${cost_val:.2f}" if cost_val is not None else "$0.00"
+
+            inv_str = s["invoice_number"] or "-"
+            if len(inv_str) > 13:
+                inv_str = inv_str[:12] + "…"
+
+            stat = s["status"]
+            if "MATCHED" in stat:
+                stat_styled = f"{C_GREEN}{stat}{C_RESET}"
+            elif "RATE MISMATCH" in stat:
+                stat_styled = f"{C_YELLOW}{stat}{C_RESET}"
+            elif "UNRECONCILED" in stat:
+                stat_styled = f"{C_RED}{stat}{C_RESET}"
+            elif "INVOICE ONLY" in stat:
+                stat_styled = f"{C_BLUE}{stat}{C_RESET}"
+            else:
+                stat_styled = f"{C_DIM}{stat}{C_RESET}"
+
+            row_str = "│" + "│".join([
+                pad_display(idx_str, widths[0], "center"),
+                pad_display(dt_str, widths[1], "center"),
+                pad_display(place_str, widths[2], "left"),
+                pad_display(net_str, widths[3], "left"),
+                pad_display(soc_str, widths[4], "center"),
+                pad_display(dur_str, widths[5], "center"),
+                pad_display(disp_str, widths[6], "right"),
+                pad_display(bat_str, widths[7], "right"),
+                pad_display(eff_str, widths[8], "center"),
+                pad_display(rate_str, widths[9], "right"),
+                pad_display(cost_str, widths[10], "right"),
+                pad_display(inv_str, widths[11], "center"),
+                pad_display(stat_styled, widths[12], "left")
+            ]) + "│"
+            print(row_str)
+
+        bot_b = "└" + "┴".join("─" * w for w in widths) + "┘"
+        print(bot_b)
+        print()
+
+    def inspect_session(self, target):
+        if not self.reconciled_sessions:
+            self.reconcile()
+
+        target_session = None
+        try:
+            target_idx = int(target)
+            for s in self.reconciled_sessions:
+                if s["charge_index"] == target_idx:
+                    target_session = s
+                    break
+        except ValueError:
+            t_dt = parse_flexible_date(target)
+            if t_dt:
+                for s in self.reconciled_sessions:
+                    if s["datetime"] and abs((s["datetime"] - t_dt).total_seconds()) < 7200:
+                        target_session = s
+                        break
+
+        if not target_session:
+            print(f"{C_RED}Could not find charging session matching:{C_RESET} {target}")
+            return
+
+        s = target_session
+        box_w = 88
+        idx_label = f"#{s['charge_index']}" if s["charge_index"] is not None else "-"
+        header_title = f"⚡ DEEP-DIVE CHARGING INSPECTION: {idx_label} {s['place_name']}"
+        print()
+        print(f"{C_BOLD}{C_CYAN}╔{'═' * (box_w - 2)}╗{C_RESET}")
+        print(f"{C_BOLD}{C_CYAN}║ {pad_display(header_title, box_w - 4, 'center')} ║{C_RESET}")
+        print(f"{C_BOLD}{C_CYAN}╚{'═' * (box_w - 2)}╝{C_RESET}")
+        print()
+
+        print(f"┌{'─' * (box_w - 2)}┐")
+        
+        l1 = f"  {C_BOLD}Location / Station:{C_RESET}   {s['emoji']} {s['place_name']} ({s['network']})"
+        print(f"│{pad_display(l1, box_w - 2)}│")
+        
+        loc_raw = s["raw_charge"]["location_raw"] if s["raw_charge"] else "-"
+        l2 = f"  {C_BOLD}Raw Address:{C_RESET}          {loc_raw}"
+        print(f"│{pad_display(l2, box_w - 2)}│")
+        
+        l3 = f"  {C_BOLD}Started At (AEST):{C_RESET}    {s['datetime_str']} (Duration: {s['duration_mins']:.0f} mins)"
+        print(f"│{pad_display(l3, box_w - 2)}│")
+
+        l4 = f"  {C_BOLD}Battery SoC Range:{C_RESET}    {s['start_soc']}% ➔ {s['end_soc']}% (+{s['end_soc'] - s['start_soc']}%)"
+        print(f"│{pad_display(l4, box_w - 2)}│")
+
+        l5 = f"  {C_BOLD}Rated Range Added:{C_RESET}    +{s['range_added_km']:.1f} km  │  {C_BOLD}Odometer:{C_RESET} {s['odometer_km']:,.2f} km"
+        print(f"│{pad_display(l5, box_w - 2)}│")
+
+        print(f"├{'─' * (box_w - 2)}┤")
+        
+        e_title = f"  {C_BOLD}{C_MAGENTA}⚡ ENERGY & EFFICIENCY TELEMETRY (Dispenser vs Battery BMS):{C_RESET}"
+        print(f"│{pad_display(e_title, box_w - 2)}│")
+
+        l6 = f"    • {C_BOLD}Energy Delivered (Meter):{C_RESET}   {s['dispenser_kwh']:.2f} kWh (Dispenser Output)"
+        print(f"│{pad_display(l6, box_w - 2)}│")
+
+        l7 = f"    • {C_BOLD}Energy Added (Battery):{C_RESET}     {s['battery_kwh']:.2f} kWh (Net Battery Pack Chemical Storage)"
+        print(f"│{pad_display(l7, box_w - 2)}│")
+
+        eff_color = C_GREEN if s["efficiency_pct"] >= 85.0 else (C_YELLOW if s["efficiency_pct"] >= 75.0 else C_RED)
+        l8 = f"    • {C_BOLD}Thermal & Conversion Loss:{C_RESET}  {s['loss_kwh']:.2f} kWh  ({eff_color}{s['efficiency_pct']:.1f}% Efficiency{C_RESET})"
+        print(f"│{pad_display(l8, box_w - 2)}│")
+
+        print(f"├{'─' * (box_w - 2)}┤")
+        
+        c_title = f"  {C_BOLD}{C_GREEN}💰 FINANCIAL & TARIFF AUDIT:{C_RESET}"
+        print(f"│{pad_display(c_title, box_w - 2)}│")
+
+        l9 = f"    • {C_BOLD}Tessie Logged Cost:{C_RESET}        ${s['tessie_cost']:.2f} AUD (@ ${s['tessie_rate']:.3f}/kWh)"
+        print(f"│{pad_display(l9, box_w - 2)}│")
+
+        if s["invoice_number"]:
+            inv_type_label = "Tesla Tax Invoice" if s["is_supercharger"] else f"{s['network']} Receipt"
+            l10 = f"    • {C_BOLD}{inv_type_label}:{C_RESET}         ${s['invoice_cost']:.2f} AUD (Inv #{s['invoice_number']} @ ${s['invoice_rate']:.3f}/kWh)"
+            print(f"│{pad_display(l10, box_w - 2)}│")
+            
+            delta_cost = (s["invoice_cost"] or 0) - s["tessie_cost"]
+            d_color = C_GREEN if abs(delta_cost) < 0.10 else (C_YELLOW if abs(delta_cost) < 1.0 else C_RED)
+            l11 = f"    • {C_BOLD}Cost Reconciliation Delta:{C_RESET} {d_color}${delta_cost:+.2f} AUD{C_RESET}"
+            print(f"│{pad_display(l11, box_w - 2)}│")
+        else:
+            l10 = f"    • {C_BOLD}Tax Invoice / Receipt:{C_RESET}     {C_YELLOW}No matching invoice file found in Tessie/invoices/{C_RESET}"
+            print(f"│{pad_display(l10, box_w - 2)}│")
+
+        if s["expected_rate"] is not None:
+            l12 = f"    • {C_BOLD}Configured Tariff Rate:{C_RESET}    ${s['expected_rate']:.3f}/kWh (from registry TOU schedule)"
+            print(f"│{pad_display(l12, box_w - 2)}│")
+
+        l13 = f"    • {C_BOLD}Reconciliation Status:{C_RESET}     {s['status']}"
+        print(f"│{pad_display(l13, box_w - 2)}│")
+
+        print(f"└{'─' * (box_w - 2)}┘")
+        print()
+
+    def list_chargers(self):
+        print()
+        print(f"{C_BOLD}{C_CYAN}⚡ REGISTERED TESLA SUPERCHARGERS ({len(self.superchargers)} Stations):{C_RESET}")
+        print()
+        
+        for name, data in self.superchargers.items():
+            meta = data.get("tesla_metadata", {})
+            loc = data.get("location", {})
+            hw = data.get("hardware", {})
+            comp = data.get("compatibility", {})
+            cost = data.get("tessie_cost_config", {})
+            non_tesla = data.get("non_tesla_pricing", {})
+            
+            schedules = cost.get("rate_schedules", [])
+            sched_str = ", ".join([f"{sc.get('name')}: ${sc.get('rate_per_kwh')}/kWh ({sc.get('start_time')}-{sc.get('end_time')})" for sc in schedules]) if schedules else f"${cost.get('per_kwh_flat', 0):.2f}/kWh flat"
+
+            non_t_str = f"Yes (Member: ${non_tesla.get('member_rate_per_kwh')}/kWh, Non-Member: ${non_tesla.get('non_member_rate_per_kwh')}/kWh)" if comp.get("open_to_non_tesla") else "No (Tesla Only)"
+
+            print(f"  {C_BOLD}🔴⚡ {name}{C_RESET} ({meta.get('short_name')})")
+            print(f"     📍 Address:      {loc.get('address')} ({loc.get('lat')}, {loc.get('lon')})")
+            print(f"     🔌 Hardware:     {hw.get('stalls')} Stalls | {hw.get('max_power_kw')} kW ({hw.get('tier')})")
+            print(f"     🚗 Non-Tesla:    {non_t_str}")
+            print(f"     💰 Rates (AUD):  {sched_str}")
+            print(f"     🕒 Hours:        {data.get('access', {}).get('hours', '24/7')}")
+            print()
+
+        print(f"{C_BOLD}{C_CYAN}🔌 REGISTERED 3RD-PARTY & HOME CHARGERS ({len(self.charging_stations)} Stations):{C_RESET}")
+        print()
+        for name, data in self.charging_stations.items():
+            st_type = data.get("type", "ac")
+            emoji = "🏠⚡" if st_type == "home" else ("🔌" if st_type == "dc_fast" else "🅿️")
+            hw = data.get("hardware", {})
+            costs = data.get("costs", {})
+            print(f"  {C_BOLD}{emoji} {name}{C_RESET} ({data.get('network', '3rd-Party')})")
+            print(f"     📍 Address:      {data.get('address')} ({data.get('lat')}, {data.get('lon')})")
+            print(f"     🔌 Hardware:     {hw.get('charger_type')} | {hw.get('max_power_kw')} kW")
+            if "rate_schedules" in costs:
+                sched_str = ", ".join([f"{sc.get('name')}: ${sc.get('rate_per_kwh')}/kWh" for sc in costs.get("rate_schedules", [])])
+                print(f"     💰 Rates (AUD):  {sched_str}")
+            else:
+                print(f"     💰 Rates (AUD):  ${costs.get('flat_per_kwh', 0):.2f}/kWh flat")
+            print()
+
+    def export_reconciliation(self, filepath):
+        if not self.reconciled_sessions:
+            self.reconcile()
+
+        ext = os.path.splitext(filepath)[1].lower()
+        if ext == ".json":
+            with open(filepath, "w", encoding="utf-8") as f:
+                json_data = []
+                for s in self.reconciled_sessions:
+                    item = dict(s)
+                    item["datetime"] = s["datetime"].isoformat() if s["datetime"] else None
+                    item.pop("raw_charge", None)
+                    item.pop("matched_invoice", None)
+                    json_data.append(item)
+                json.dump(json_data, f, indent=2)
+        else:
+            with open(filepath, "w", newline="", encoding="utf-8") as f:
+                fieldnames = [
+                    "Charge Index", "Started At", "Place", "Network", "Start SoC (%)", "End SoC (%)",
+                    "Duration (Mins)", "Dispenser Energy (kWh)", "Battery Energy (kWh)", "Loss (kWh)",
+                    "Efficiency (%)", "Tessie Cost ($)", "Tessie Rate ($/kWh)", "Invoice Cost ($)",
+                    "Invoice Rate ($/kWh)", "Invoice Number", "Status"
+                ]
+                writer = csv.DictWriter(f, fieldnames=fieldnames)
+                writer.writeheader()
+                for s in self.reconciled_sessions:
+                    writer.writerow({
+                        "Charge Index": s["charge_index"] or "",
+                        "Started At": s["datetime_str"],
+                        "Place": s["place_name"],
+                        "Network": s["network"],
+                        "Start SoC (%)": s["start_soc"],
+                        "End SoC (%)": s["end_soc"],
+                        "Duration (Mins)": f"{s['duration_mins']:.0f}",
+                        "Dispenser Energy (kWh)": f"{s['dispenser_kwh']:.2f}",
+                        "Battery Energy (kWh)": f"{s['battery_kwh']:.2f}",
+                        "Loss (kWh)": f"{s['loss_kwh']:.2f}",
+                        "Efficiency (%)": f"{s['efficiency_pct']:.1f}",
+                        "Tessie Cost ($)": f"{s['tessie_cost']:.2f}",
+                        "Tessie Rate ($/kWh)": f"{s['tessie_rate']:.3f}",
+                        "Invoice Cost ($)": f"{s['invoice_cost']:.2f}" if s["invoice_cost"] is not None else "",
+                        "Invoice Rate ($/kWh)": f"{s['invoice_rate']:.3f}" if s["invoice_rate"] is not None else "",
+                        "Invoice Number": s["invoice_number"] or "",
+                        "Status": s["status"]
+                    })
+        print(f"{C_GREEN}Successfully exported {len(self.reconciled_sessions)} reconciled records to:{C_RESET} {filepath}")
+
+    def sync_to_external_drive(self):
+        ext_drive = "/Volumes/TESLADRIVE 1"
+        if not os.path.isdir(ext_drive):
+            print(f"{C_YELLOW}External drive not mounted at {ext_drive}. Skipping sync.{C_RESET}")
+            return
+
+        print(f"{C_CYAN}Synchronizing Tools and Tessie files to {ext_drive}...{C_RESET}")
+        
+        src_script = os.path.join(self.script_dir, "tessie_charging_analyzer.py")
+        dst_script = os.path.join(ext_drive, "Tools", "tessie_charging_analyzer.py")
+        try:
+            os.makedirs(os.path.join(ext_drive, "Tools"), exist_ok=True)
+            if os.path.abspath(src_script) != os.path.abspath(dst_script):
+                with open(src_script, "rb") as fsrc, open(dst_script, "wb") as fdst:
+                    fdst.write(fsrc.read())
+                print(f"  {C_GREEN}✔ Copied{C_RESET} tessie_charging_analyzer.py ➔ {dst_script}")
+            else:
+                print(f"  {C_GREEN}✔ Script already on external drive.{C_RESET}")
+        except Exception as e:
+            print(f"  {C_RED}❌ Failed to copy script:{C_RESET} {e}")
+
+        for fname in ["superchargers.json", "charging.json", "places.json"]:
+            src_f = os.path.join(self.repo_root, "Tessie", fname)
+            if os.path.isfile(src_f):
+                dst_f = os.path.join(ext_drive, "Tessie", fname)
+                try:
+                    os.makedirs(os.path.join(ext_drive, "Tessie"), exist_ok=True)
+                    if os.path.abspath(src_f) != os.path.abspath(dst_f):
+                        with open(src_f, "rb") as fsrc, open(dst_f, "wb") as fdst:
+                            fdst.write(fsrc.read())
+                        print(f"  {C_GREEN}✔ Copied{C_RESET} {fname} ➔ {dst_f}")
+                    else:
+                        print(f"  {C_GREEN}✔ {fname} already on external drive.{C_RESET}")
+                except Exception as e:
+                    print(f"  {C_RED}❌ Failed to copy {fname}:{C_RESET} {e}")
+
+# -----------------------------------------------------------------------------
+# CLI Entrypoint
+# -----------------------------------------------------------------------------
+
+def main():
+    parser = argparse.ArgumentParser(
+        description="Tessie Charging & Supercharger Reconciliation Engine",
+        formatter_class=argparse.RawDescriptionHelpFormatter
+    )
+    parser.add_argument("--tessie-dir", "-d", help="Path to Tessie directory containing CSVs and JSONs")
+    parser.add_argument("--invoices-dir", "-i", help="Path to directory containing invoice PDFs / CSV receipts")
+    
+    parser.add_argument("--superchargers", "-s", action="store_true", help="Filter for Tesla Supercharger sessions only")
+    parser.add_argument("--third-party", "-t", action="store_true", help="Filter for 3rd-Party Fast/AC charging sessions only")
+    parser.add_argument("--home", "-H", action="store_true", help="Filter for Home AC charging sessions only")
+    parser.add_argument("--unreconciled", "-u", action="store_true", help="Filter for unreconciled sessions or rate mismatches")
+    parser.add_argument("--since", help="Filter sessions on or after date (YYYY-MM-DD or relative: today, yesterday, monday)")
+    parser.add_argument("--until", help="Filter sessions on or before date (YYYY-MM-DD)")
+    
+    parser.add_argument("--inspect", help="Deep-dive inspect a specific session by Charge # or Date")
+    parser.add_argument("--list-chargers", action="store_true", help="List all registered Superchargers and 3rd-Party charging stations")
+    parser.add_argument("--consolidate", action="store_true", help="Consolidate all charges into charges_master.csv")
+    parser.add_argument("--export", help="Export reconciled results to a CSV or JSON file")
+    parser.add_argument("--sync", action="store_true", help="Sync tools and registries to /Volumes/TESLADRIVE 1/")
+    parser.add_argument("--tolerance-mins", type=int, default=45, help="Invoice matching time tolerance in minutes (default: 45)")
+
+    args = parser.parse_args()
+
+    analyzer = TessieChargingAnalyzer(
+        tessie_dir=args.tessie_dir,
+        invoices_dir=args.invoices_dir,
+        tolerance_mins=args.tolerance_mins
+    )
+
+    if args.list_chargers:
+        analyzer.list_chargers()
+        return
+
+    if args.consolidate:
+        analyzer.consolidate_charges_master()
+        return
+
+    if args.sync:
+        analyzer.sync_to_external_drive()
+        return
+
+    reconciled = analyzer.reconcile()
+
+    if args.inspect:
+        analyzer.inspect_session(args.inspect)
+        return
+
+    filtered = reconciled
+    if args.superchargers:
+        filtered = [s for s in filtered if s["is_supercharger"]]
+    elif args.third_party:
+        filtered = [s for s in filtered if s["is_fast_charger"] and not s["is_supercharger"]]
+    elif args.home:
+        filtered = [s for s in filtered if s["emoji"] == "🏠⚡"]
+
+    if args.unreconciled:
+        filtered = [s for s in filtered if s["status"] in ["UNRECONCILED ❓", "RATE MISMATCH ⚠️", "INVOICE ONLY 📄"]]
+
+    if args.since:
+        s_dt = parse_flexible_date(args.since)
+        if s_dt:
+            filtered = [s for s in filtered if s["datetime"] and s["datetime"] >= s_dt]
+
+    if args.until:
+        u_dt = parse_flexible_date(args.until)
+        if u_dt:
+            u_dt_end = u_dt + timedelta(days=1)
+            filtered = [s for s in filtered if s["datetime"] and s["datetime"] <= u_dt_end]
+
+    analyzer.print_summary(filtered)
+    analyzer.print_sessions_table(filtered)
+
+    if args.export:
+        analyzer.export_reconciliation(args.export)
+
+
+if __name__ == "__main__":
+    main()
