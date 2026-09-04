@@ -23,18 +23,20 @@ jobs:
 
       - name: Validate Shell Script Syntax
         run: |
-          echo "Checking syntax of run_exportdash.sh..."
-          bash -n run_exportdash.sh
+          echo "Checking syntax of Tools/run_exportdash.sh..."
+          bash -n Tools/run_exportdash.sh
           
-          echo "Checking syntax of tesla_sync.sh..."
-          zsh -n tesla_sync.sh
+          echo "Checking syntax of Tools/tesla_sync.sh..."
+          zsh -n Tools/tesla_sync.sh
 
       - name: Verify CLI Help & Flags
         run: |
-          chmod +x tesla_sync.sh run_exportdash.sh
-          ./tesla_sync.sh --help
-          ./tesla_sync.sh --doctor || true
-          ./run_exportdash.sh --help
+          chmod +x Tools/tesla_sync.sh Tools/run_exportdash.sh Tools/tessie_analyzer.py Tools/tessie_renamer.py
+          ./Tools/tesla_sync.sh --help
+          ./Tools/tesla_sync.sh --doctor || true
+          ./Tools/run_exportdash.sh --help
+          ./Tools/tessie_analyzer.py --help
+          ./Tools/tessie_renamer.py --help
 
       - name: Verify Embedded Python Scripts
         run: |
