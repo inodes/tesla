@@ -1,0 +1,26 @@
+{
+  "Macquarie Centre": {
+    "name": "Tesla Supercharger - Macquarie Centre",
+    "short_name": "Macquarie Centre",
+    "type": "supercharger",
+    "address": "Banda Road, Macquarie Park NSW 2113",
+    "lat": -33.778008,
+    "lon": 151.122600,
+    "radius_m": 250,
+    "keywords": [
+      "Banda Road",
+      "Macquarie Centre",
+      "Macquarie Park"
+    ],
+    "stalls": 6,
+    "max_power_kw": 250,
+    "tier": "V3",
+    "costs": {
+      "currency": "AUD",
+      "pricing_model": "dynamic",
+      "average_per_kwh": 0.64,
+      "idle_fee_per_min": 1.00
+    },
+    "amenities": ["Shopping", "Restrooms", "Dining", "WiFi"]
+  }
+}
