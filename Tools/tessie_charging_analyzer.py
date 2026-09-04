@@ -2032,7 +2032,7 @@ class TessieChargingAnalyzer:
         for ext_drive in ext_drives:
             print(f"{C_CYAN}Synchronizing Tools and Tessie files to {ext_drive}...{C_RESET}")
             
-            tool_scripts = ["find_tesla_chargers.py", "tessie_analyzer.py", "tessie_charging_analyzer.py", "tessie_renamer.py"]
+            tool_scripts = ["find_tesla_chargers.py", "tessie_analyzer.py", "tessie_charging_analyzer.py", "tessie_renamer.py", "tessie_places.py"]
             for script_name in tool_scripts:
                 src_script = os.path.join(self.script_dir, script_name)
                 if os.path.isfile(src_script):

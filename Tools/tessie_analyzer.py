@@ -1158,7 +1158,7 @@ def display_timeline_event_details(event, analyzer):
                             f_name = os.path.basename(f_src)
                             dst_file = os.path.join(sub_dest, f_name)
                             try:
-                                shutil.copy2(f_src, dst_file)
+                                shutil.copyfile(f_src, dst_file)
                                 copied_count += 1
                                 copied_bytes += os.path.getsize(dst_file)
                             except Exception as e:
@@ -1171,7 +1171,7 @@ def display_timeline_event_details(event, analyzer):
                             f_name = os.path.basename(f_src)
                             dst_file = os.path.join(sub_dest, f_name)
                             try:
-                                shutil.copy2(f_src, dst_file)
+                                shutil.copyfile(f_src, dst_file)
                                 copied_count += 1
                                 copied_bytes += os.path.getsize(dst_file)
                             except Exception as e:
