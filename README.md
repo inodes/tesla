@@ -57,7 +57,7 @@ tesla/
 # Analyze trips and link entry/exit times to TeslaCam video clips
 ./Tools/tessie_analyzer.py --since 2026-09-01
 ```
-👉 *See [Tessie/README.md](Tessie/README.md) for full documentation on spatial geofencing and custom nicknames.*
+👉 *See [Tessie/README.md](Tessie/README.md) for full documentation on spatial geofencing, custom nicknames, and [Tessie referral bonuses (free trial & discounts)](https://share.tessie.com/bGRu5q9S2kB).*
 
 ### 3. Deploy Scripts to External Drives
 ```bash

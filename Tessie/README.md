@@ -1,6 +1,21 @@
 # 🗺️ Tessie Suite: Drive Analysis, Geofencing & CSV Classifier
 
-A suite of tools for processing, classifying, and analyzing [Tessie](https://tessie.com/) telemetry exports and cross-referencing trip timelines with TeslaCam dashcam footage.
+A suite of tools for processing, classifying, and analyzing [Tessie](https://share.tessie.com/bGRu5q9S2kB) telemetry exports and cross-referencing trip timelines with TeslaCam dashcam footage.
+
+---
+
+## ⚡ What is Tessie?
+
+[Tessie](https://share.tessie.com/bGRu5q9S2kB) is the premier telemetry, analytics, and automation platform built for Tesla vehicles. It acts as an automated flight recorder and intelligence hub for your car:
+
+- 📊 **Continuous Telemetry & Trip Logging:** Automatically records every drive, speed, power consumption, elevation, and parking idle without battery drain.
+- 🔋 **Battery Health & Degradation Curves:** Benchmarks real-time battery capacity, usable kWh, and health degradation against thousands of fleet vehicles over time.
+- ⚡ **Charging Cost Tracking:** Auto-logs charging sessions (AC & Superchargers), tracks electricity rates, and calculates lifetime fuel savings.
+- ⌚ **Smartwatch & Voice Control:** Native Apple Watch app, iOS Lock Screen widgets, Siri Shortcuts, and Home Assistant / API integration.
+- 📥 **Direct Data Export:** Allows exporting full high-resolution CSV records of your drives, telemetry streams, charges, tire pressure, and firmware alerts—powering the analyzers in this suite.
+
+> 🎁 **Get Started with Tessie:**  
+> Use the referral link for an extended free trial and discounts: **[https://share.tessie.com/bGRu5q9S2kB](https://share.tessie.com/bGRu5q9S2kB)**
 
 ---
 
