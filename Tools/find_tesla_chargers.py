@@ -724,8 +724,7 @@ class TeslaChargerExplorer:
                 "country_code": country_code,
                 "lat": lat,
                 "lon": lon,
-                "radius_m": 250,
-                "timezone": tz_name
+                "radius_m": 250
             },
             "hardware": {
                 "stalls": stalls,
@@ -765,7 +764,6 @@ class TeslaChargerExplorer:
                 "congestion_fee_per_min": congestion_fee,
                 "rate_schedules": tessie_cost_schedules
             },
-            "timezone": tz_name,
             "first_seen": now_utc,
             "last_updated": now_utc,
             "last_verified": now_utc,
@@ -843,7 +841,7 @@ class TeslaChargerExplorer:
         hw = data.get("hardware", {})
         comp = data.get("compatibility", {})
         tariffs = data.get("tariffs", {})
-        tz_name = data.get("timezone") or loc.get("timezone", "Australia/Sydney")
+        tz_name = resolve_location_timezone(state=loc.get("state"), country=loc.get("country"), lat=loc.get("lat"), lon=loc.get("lon"))
 
         box_width = 86
         title_content = f"LIVE SCRAPED CHARGER: {station_key}"
