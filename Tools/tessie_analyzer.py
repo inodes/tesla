@@ -208,15 +208,19 @@ class TessieAnalyzer:
         self._indexed = False
 
     def load_places(self):
+        places = {}
         for td in self.tessie_dirs:
-            try:
-                pf = os.path.join(td, "places.json")
-                if os.path.isfile(pf):
-                    with open(pf, "r", encoding="utf-8") as f:
-                        return json.load(f)
-            except Exception:
-                pass
-        return {}
+            for fname in ["places.json", "charging.json", "superchargers.json"]:
+                try:
+                    pf = os.path.join(td, fname)
+                    if os.path.isfile(pf):
+                        with open(pf, "r", encoding="utf-8") as f:
+                            data = json.load(f)
+                            if isinstance(data, dict):
+                                places.update(data)
+                except Exception:
+                    pass
+        return places
 
     def resolve_place(self, address, saved_loc="", lat=None, lon=None):
         if saved_loc and saved_loc.strip():
