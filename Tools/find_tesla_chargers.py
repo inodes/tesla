@@ -374,10 +374,6 @@ class TeslaChargerExplorer:
         self.superchargers_archived_path = os.path.join(self.repo_root, "Tessie", "superchargers_archived.json")
         self.charging_path = os.path.join(self.repo_root, "Tessie", "charging.json")
         self.charging_archived_path = os.path.join(self.repo_root, "Tessie", "charging_archived.json")
-        self.example_sc_path = os.path.join(self.repo_root, "Tessie", "superchargers.example.json")
-        self.example_sc_archived_path = os.path.join(self.repo_root, "Tessie", "superchargers_archived.example.json")
-        self.example_dc_path = os.path.join(self.repo_root, "Tessie", "charging.example.json")
-        self.example_dc_archived_path = os.path.join(self.repo_root, "Tessie", "charging_archived.example.json")
 
     def fetch_station_list(self, country: str = "Australia", charger_type: str = "superchargers") -> list:
         """
@@ -1115,8 +1111,6 @@ class TeslaChargerExplorer:
         is_sc = data.get("tesla_metadata", {}).get("type") == "supercharger"
         target_fpath = self.superchargers_path if is_sc else self.charging_path
         archive_fpath = self.superchargers_archived_path if is_sc else self.charging_archived_path
-        example_fpath = self.example_sc_path if is_sc else self.example_dc_path
-        example_arch_fpath = self.example_sc_archived_path if is_sc else self.example_dc_archived_path
         reg_name = "superchargers.json" if is_sc else "charging.json"
         arch_name = "superchargers_archived.json" if is_sc else "charging_archived.json"
         now_utc = get_utc_now_iso()
@@ -1179,24 +1173,21 @@ class TeslaChargerExplorer:
         active_reg[station_key] = new_entry
 
         # Write active registry
-        for fpath in [target_fpath, example_fpath]:
-            if os.path.isfile(fpath) or fpath == target_fpath:
-                try:
-                    with open(fpath, "w", encoding="utf-8") as f:
-                        json.dump(active_reg, f, indent=2, ensure_ascii=False)
-                    print(f"  {C_GREEN}✔ Saved active registry entry in:{C_RESET} {fpath}")
-                except Exception as e:
-                    print(f"  {C_RED}❌ Failed writing {fpath}:{C_RESET} {e}")
+        try:
+            with open(target_fpath, "w", encoding="utf-8") as f:
+                json.dump(active_reg, f, indent=2, ensure_ascii=False)
+            print(f"  {C_GREEN}✔ Saved active registry entry in:{C_RESET} {target_fpath}")
+        except Exception as e:
+            print(f"  {C_RED}❌ Failed writing {target_fpath}:{C_RESET} {e}")
 
         # Write archive registry if changes occurred
         if changes_detected:
-            for fpath in [archive_fpath, example_arch_fpath]:
-                try:
-                    with open(fpath, "w", encoding="utf-8") as f:
-                        json.dump(archive_reg, f, indent=2, ensure_ascii=False)
-                    print(f"  {C_GREEN}✔ Updated historical archive in:{C_RESET} {fpath}")
-                except Exception as e:
-                    print(f"  {C_RED}❌ Failed writing archive {fpath}:{C_RESET} {e}")
+            try:
+                with open(archive_fpath, "w", encoding="utf-8") as f:
+                    json.dump(archive_reg, f, indent=2, ensure_ascii=False)
+                print(f"  {C_GREEN}✔ Updated historical archive in:{C_RESET} {archive_fpath}")
+            except Exception as e:
+                print(f"  {C_RED}❌ Failed writing archive {archive_fpath}:{C_RESET} {e}")
 
         if sync_external:
             ext_drives = find_mounted_tesla_volumes()
