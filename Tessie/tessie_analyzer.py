@@ -637,6 +637,7 @@ def display_timeline_event_details(event, analyzer):
 def display_timeline(target_date, analyzer, compact=False):
     """24-Hour Event Timeline: Vehicle state & footage breakdown across parked/driving events."""
     curr_date = target_date
+    w_idx = 5
     w_time = 15
     w_rec = 6
     w_sav = 6
@@ -647,8 +648,8 @@ def display_timeline(target_date, analyzer, compact=False):
         
         # Expand w_act dynamically so that no route or location line gets truncated or broken
         max_act_len = max((display_len(ev["activity"]) for ev in events), default=50)
-        w_act = max(65, max_act_len + 3)
-        total_inner = w_time + w_rec + w_sav + w_sen + w_act + 4
+        w_act = max(60, max_act_len + 3)
+        total_inner = w_idx + w_time + w_rec + w_sav + w_sen + w_act + 5
         
         total_recent_mins = sum(ev["recent_mins"] for ev in events)
         total_saved_mins = sum(ev["saved_mins"] for ev in events)
@@ -657,6 +658,7 @@ def display_timeline(target_date, analyzer, compact=False):
         
         title = f" 24-Hour Event Timeline: {day_start.strftime('%A, %d %B %Y')}"
         
+        h_idx = f" {'#':^3} "
         h_time = f" {'Time Window':<13} "
         h_rec = pad_display("🔄", w_rec, "center")
         h_sav = pad_display("💾", w_sav, "center")
@@ -665,15 +667,16 @@ def display_timeline(target_date, analyzer, compact=False):
 
         print(f"┌{'─'*total_inner}┐")
         print(f"│{title:<{total_inner}}│")
-        print(f"├{'─'*w_time}┬{'─'*w_rec}┬{'─'*w_sav}┬{'─'*w_sen}┬{'─'*w_act}┤")
-        print(f"│{h_time}│{h_rec}│{h_sav}│{h_sen}│{h_act}│")
-        print(f"├{'─'*w_time}┼{'─'*w_rec}┼{'─'*w_sav}┼{'─'*w_sen}┼{'─'*w_act}┤")
+        print(f"├{'─'*w_idx}┬{'─'*w_time}┬{'─'*w_rec}┬{'─'*w_sav}┬{'─'*w_sen}┬{'─'*w_act}┤")
+        print(f"│{h_idx}│{h_time}│{h_rec}│{h_sav}│{h_sen}│{h_act}│")
+        print(f"├{'─'*w_idx}┼{'─'*w_time}┼{'─'*w_rec}┼{'─'*w_sav}┼{'─'*w_sen}┼{'─'*w_act}┤")
         
         for ev in events:
             r_str = format_duration_short(ev['recent_mins'])
             s_str = format_duration_short(ev['saved_mins'])
             sn_str = format_duration_short(ev['sentry_mins'])
             
+            c_idx = f" [{ev['event_idx']:>2}]"
             c_time = f" {ev['time_str']:<13} "
             c_rec = f"{r_str:^6}"
             c_sav = f"{s_str:^6}"
@@ -681,17 +684,18 @@ def display_timeline(target_date, analyzer, compact=False):
             
             act_lines = wrap_text_display(ev["activity"].strip(), w_act - 2)
             first_act = pad_display(" " + act_lines[0], w_act, "left")
-            print(f"│{c_time}│{c_rec}│{c_sav}│{c_sen}│{first_act}│")
+            print(f"│{c_idx}│{c_time}│{c_rec}│{c_sav}│{c_sen}│{first_act}│")
             
             for extra in act_lines[1:]:
+                e_idx = " " * w_idx
                 e_time = " " * w_time
                 e_rec = " " * w_rec
                 e_sav = " " * w_sav
                 e_sen = " " * w_sen
                 e_act = pad_display("   " + extra, w_act, "left")
-                print(f"│{e_time}│{e_rec}│{e_sav}│{e_sen}│{e_act}│")
+                print(f"│{e_idx}│{e_time}│{e_rec}│{e_sav}│{e_sen}│{e_act}│")
             
-        print(f"├{'─'*w_time}┴{'─'*w_rec}┴{'─'*w_sav}┴{'─'*w_sen}┴{'─'*w_act}┤")
+        print(f"├{'─'*w_idx}┴{'─'*w_time}┴{'─'*w_rec}┴{'─'*w_sav}┴{'─'*w_sen}┴{'─'*w_act}┤")
         if not has_any_footage:
             foot_msg = " No local footage on archive SSD. Run 'tesla_sync.sh' to backup from car."
             print(f"│{foot_msg:<{total_inner}}│")
