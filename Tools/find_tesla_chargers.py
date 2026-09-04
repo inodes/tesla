@@ -1706,6 +1706,135 @@ class TeslaChargerExplorer:
         return result_status
 
 # -----------------------------------------------------------------------------
+# Rich Unicode Table Renderer
+# -----------------------------------------------------------------------------
+
+def print_charging_stations_table(stations: list, ref_lat: float = None, ref_lon: float = None, ref_label: str = None, 
+                                 active_radius: float = None, eval_time_label: str = None, sort_mode: str = None):
+    """
+    Renders charging stations in a clean Unicode box-drawing table with exact column alignment.
+    """
+    if not stations:
+        print(f"{C_YELLOW}No matching charging stations found.{C_RESET}")
+        return
+
+    has_dist = ref_lat is not None and ref_lon is not None
+    
+    # Calculate column widths dynamically
+    max_title_len = max((display_len(s.get("title", "")) for s in stations), default=20)
+    title_col_w = max(max_title_len + 2, 26)
+    
+    max_suburb_len = max((display_len(s.get("location", {}).get("suburb") or s.get("short_name", "")) for s in stations), default=12)
+    suburb_col_w = max(max_suburb_len + 2, 19)
+
+    headers = ["#", "Type", "State", "Station Name", "Tier", "Stalls", "Access", "Rate (Now)", "Period / Window"]
+    widths = [6, 8, 7, title_col_w, 6, 9, 13, 12, 30]
+
+    if has_dist:
+        headers.append("Dist (km)")
+        widths.append(11)
+
+    headers.append("Location / Suburb")
+    widths.append(suburb_col_w)
+
+    total_inner_w = sum(widths) + len(widths) - 1
+
+    # Header Box Banner
+    print(f"\n┌{'─' * total_inner_w}┐")
+    title_line = f" ⚡ {C_BOLD}MATCHING CHARGING STATIONS ({len(stations)} found){C_RESET}"
+    print(f"│{pad_display(title_line, total_inner_w, 'left')}│")
+    
+    if ref_label:
+        radius_note = f" [within {active_radius:.0f} km]" if (active_radius and active_radius > 0) else ""
+        sort_str = f" [Sorted by: {sort_mode}]" if sort_mode else ""
+        orig_line = f" 📍 {C_CYAN}Proximity Origin:{C_RESET} {ref_label} ({ref_lat:.4f}, {ref_lon:.4f}){radius_note}{sort_str}"
+        print(f"│{pad_display(orig_line, total_inner_w, 'left')}│")
+    elif sort_mode:
+        sort_line = f" 📊 {C_BOLD}Sort Order:{C_RESET} {sort_mode}"
+        print(f"│{pad_display(sort_line, total_inner_w, 'left')}│")
+
+    eval_label = eval_time_label or "Current Local Time"
+    time_line = f" ⏰ {C_BOLD}Pricing Evaluation:{C_RESET} {eval_label}"
+    print(f"│{pad_display(time_line, total_inner_w, 'left')}│")
+    
+    legend_line = f" 📊 {C_BOLD}Status Legend:{C_RESET} [{C_GREEN} 1 {C_RESET}] Up to Date (<=3mo)  |  [{C_BLUE} 2 {C_RESET}] Stale (>3mo)  |  [{C_ORANGE} 3 {C_RESET}] Not in JSON"
+    print(f"│{pad_display(legend_line, total_inner_w, 'left')}│")
+    
+    # Table Top Line & Header
+    top_b = "├" + "┬".join("─" * w for w in widths) + "┤"
+    print(top_b)
+    
+    h_cells = [pad_display(f"{C_BOLD}{h}{C_RESET}", w, "center") for h, w in zip(headers, widths)]
+    print("│" + "│".join(h_cells) + "│")
+    
+    mid_b = "├" + "┼".join("─" * w for w in widths) + "┤"
+    print(mid_b)
+
+    for idx, s in enumerate(stations, 1):
+        status = s.get("_status", "NOT_IN_JSON")
+        color = C_GREEN if status == "UP_TO_DATE" else (C_BLUE if status == "STALE" else C_ORANGE)
+        num_str = f"[{color}{idx:2d}{C_RESET}]"
+        t_icon = "🔴 SC" if s.get("type") == "supercharger" else "🔌 DC"
+
+        hw = s.get("hardware", {})
+        tier_str = hw.get("tier", "-") or "-"
+        stalls_str = f"{hw.get('stalls')} bays" if hw.get("stalls") else "-"
+        
+        comp = s.get("compatibility", {})
+        if comp.get("open_to_non_tesla"):
+            access_str = f"{C_GREEN}CCS2 All{C_RESET}"
+        elif comp.get("tesla_only") is not None:
+            access_str = f"{C_CYAN}Tesla Only{C_RESET}"
+        else:
+            access_str = "-"
+
+        eff_rate = s.get("_eff_rate")
+        eff_lbl = s.get("_eff_label", "Rate")
+        eff_win = s.get("_eff_window", "")
+        
+        if eff_rate is not None:
+            rate_str = f"${eff_rate:.2f}/kWh"
+            period_str = f"{eff_lbl} ({eff_win})" if eff_win else eff_lbl
+        else:
+            tariffs = s.get("tariffs", {})
+            scheds = tariffs.get("tesla_members", {}).get("rate_schedules", [])
+            rates = [float(sc.get("rate_per_kwh", 0)) for sc in scheds if sc.get("rate_per_kwh") is not None]
+            if rates:
+                min_r, max_r = min(rates), max(rates)
+                rate_str = f"${min_r:.2f}" if min_r == max_r else f"${min_r:.2f}-${max_r:.2f}"
+                period_str = "Time-of-Use"
+            else:
+                rate_str = "-"
+                period_str = "-"
+
+        suburb_str = s.get("location", {}).get("suburb") or s.get("short_name", "")
+
+        row_cells = [
+            pad_display(num_str, widths[0], "center"),
+            pad_display(t_icon, widths[1], "center"),
+            pad_display(s.get("state", ""), widths[2], "center"),
+            pad_display(" " + s.get("title", ""), widths[3], "left"),
+            pad_display(tier_str, widths[4], "center"),
+            pad_display(stalls_str, widths[5], "center"),
+            pad_display(access_str, widths[6], "center"),
+            pad_display(rate_str + " ", widths[7], "right"),
+            pad_display(" " + period_str, widths[8], "left"),
+        ]
+        
+        if has_dist:
+            dist_val = s.get("_distance_km", float("inf"))
+            dist_text = f"{dist_val:.1f} km " if dist_val != float("inf") else "-- "
+            row_cells.append(pad_display(dist_text, widths[9], "right"))
+            row_cells.append(pad_display(f" {C_DIM}{suburb_str}{C_RESET}", widths[10], "left"))
+        else:
+            row_cells.append(pad_display(f" {C_DIM}{suburb_str}{C_RESET}", widths[9], "left"))
+
+        print("│" + "│".join(row_cells) + "│")
+
+    bot_b = "└" + "┴".join("─" * w for w in widths) + "┘"
+    print(bot_b)
+
+# -----------------------------------------------------------------------------
 # Interactive Drill-Down Navigation Menu
 # -----------------------------------------------------------------------------
 
@@ -1937,39 +2066,21 @@ def interactive_drilldown(explorer: TeslaChargerExplorer):
             near_list.sort(key=lambda s: s.get("_distance_km", float("inf")))
             top_near = near_list[:20]
 
-            max_title_len = max((display_len(s["title"]) for s in top_near), default=26)
-            col_w = max(max_title_len + 2, 28)
-
-            print(f"  {'#':>5}  {'Type':<6} {'State':<5} {pad_display('Station Name', col_w)} {'Tier':<5} {'Stalls':<7} {'Access':<11} {'Rate (Now)':<11} {'Period / Window':<24} {'Dist (km)':>9}")
-            print(f"  {'-'*5}  {'-'*6} {'-'*5} {pad_display('-'*col_w, col_w)} {'-'*5} {'-'*7} {'-'*11} {'-'*11} {'-'*24} {'-'*9}")
-
-            for idx, s in enumerate(top_near, 1):
-                status = s.get("_status", "NOT_IN_JSON")
-                color = C_GREEN if status == "UP_TO_DATE" else (C_BLUE if status == "STALE" else C_ORANGE)
-                num_str = f"[{color}{idx:3d}{C_RESET}]"
-                t_icon = "🔴 SC" if s["type"] == "supercharger" else "🔌 DC"
-                hw = s.get("hardware", {})
-                tier_str = hw.get("tier", "-") or "-"
-                stalls_str = f"{hw.get('stalls')} bays" if hw.get("stalls") else "-"
-
-                comp = s.get("compatibility", {})
-                if comp.get("open_to_non_tesla"):
-                    access_str = f"{C_GREEN}CCS2 All{C_RESET}"
-                elif comp.get("tesla_only") is not None:
-                    access_str = f"{C_CYAN}Tesla Only{C_RESET}"
-                else:
-                    access_str = "-"
-
+            for s in top_near:
                 eff_rate, eff_lbl, eff_win, _ = get_effective_rate_at_time(s, now_dt)
-                rate_str = f"${eff_rate:.2f}/kWh" if eff_rate is not None else "-"
-                period_str = f"{eff_lbl} ({eff_win})" if eff_rate is not None else "-"
+                s["_eff_rate"] = eff_rate
+                s["_eff_label"] = eff_lbl
+                s["_eff_window"] = eff_win
 
-                dist_val = s.get("_distance_km", float("inf"))
-                dist_str = f"{dist_val:7.1f} km" if dist_val != float("inf") else "--"
-
-                print(f"  {num_str}  {t_icon:<6} {s['state']:<5} {pad_display(s['title'], col_w)} {tier_str:<5} {stalls_str:<7} {pad_display(access_str, 11)} {rate_str:<11} {pad_display(period_str, 24)} {dist_str:>9}")
-
-            print()
+            print_charging_stations_table(
+                top_near,
+                ref_lat=geo_lat,
+                ref_lon=geo_lon,
+                ref_label=geo_label,
+                active_radius=50.0,
+                eval_time_label="Current Local Time",
+                sort_mode="Distance (Closest First)"
+            )
             return
 
         if pick.lower() in ["all", "a"]:
@@ -2335,69 +2446,28 @@ Query & Proximity Examples:
             print(json.dumps(filtered, indent=2, ensure_ascii=False))
             return
 
-        # Display Rich Formatted Table
-        max_title_len = max((display_len(s["title"]) for s in filtered), default=24)
-        name_col_width = max(max_title_len + 2, 26)
+        # Determine human-friendly sort mode description
+        sort_mode_desc = None
+        if args.sort == "dist" or (args.sort is None and ref_lat is not None and ref_lon is not None):
+            sort_mode_desc = "Distance (Closest First)"
+        elif args.sort == "price":
+            sort_mode_desc = "Price (Lowest First, Closest Distance Tie-Break)"
+        elif args.sort == "power":
+            sort_mode_desc = "Max Power (kW, Highest First)"
+        elif args.sort == "stalls":
+            sort_mode_desc = "Stall Count (Highest First)"
 
-        print(f"\n{C_BOLD}{'='*104}{C_RESET}")
-        print(f"  ⚡ {C_BOLD}MATCHING CHARGING STATIONS ({len(filtered)} found){C_RESET}")
-        if ref_label:
-            radius_note = f" [within {active_radius:.0f} km]" if (active_radius and active_radius > 0) else ""
-            print(f"  📍 {C_CYAN}Proximity Origin:{C_RESET} {ref_label} ({ref_lat:.4f}, {ref_lon:.4f}){radius_note}")
-        
         eval_time_label = f"Target Time: {args.time}" if args.time else "Current Local Time"
-        print(f"  ⏰ {C_BOLD}Pricing Evaluation:{C_RESET} {eval_time_label}")
-        print(f"  {C_BOLD}📊 Status Legend:{C_RESET} [{C_GREEN} 1 {C_RESET}] Up to Date (<=3mo)  |  [{C_BLUE} 2 {C_RESET}] Stale (>3mo)  |  [{C_ORANGE} 3 {C_RESET}] Not in JSON")
-        print(f"{C_BOLD}{'='*104}{C_RESET}\n")
 
-        has_dist = ref_lat is not None and ref_lon is not None
-        dist_header = f"{'Dist (km)':>9} " if has_dist else ""
-
-        print(f"  {'#':>5}  {'Type':<6} {'State':<5} {pad_display('Station Name', name_col_width)} {'Tier':<5} {'Stalls':<7} {'Access':<11} {'Rate (Now)':<11} {'Period / Window':<24} {dist_header}{'Location / Suburb'}")
-        print(f"  {'-'*5}  {'-'*6} {'-'*5} {'-'*name_col_width} {'-'*5} {'-'*7} {'-'*11} {'-'*11} {'-'*24} {'-'*9 + ' ' if has_dist else ''}{'-'*20}")
-
-        for idx, s in enumerate(filtered, 1):
-            status = s.get("_status", "NOT_IN_JSON")
-            color = C_GREEN if status == "UP_TO_DATE" else (C_BLUE if status == "STALE" else C_ORANGE)
-            num_str = f"[{color}{idx:3d}{C_RESET}]"
-            t_icon = "🔴 SC" if s["type"] == "supercharger" else "🔌 DC"
-
-            hw = s.get("hardware", {})
-            tier_str = hw.get("tier", "-") or "-"
-            stalls_str = f"{hw.get('stalls')} bays" if hw.get("stalls") else "-"
-            
-            comp = s.get("compatibility", {})
-            if comp.get("open_to_non_tesla"):
-                access_str = f"{C_GREEN}CCS2 All{C_RESET}"
-            elif comp.get("tesla_only") is not None:
-                access_str = f"{C_CYAN}Tesla Only{C_RESET}"
-            else:
-                access_str = "-"
-
-            eff_rate = s.get("_eff_rate")
-            eff_lbl = s.get("_eff_label", "Rate")
-            eff_win = s.get("_eff_window", "")
-            
-            if eff_rate is not None:
-                rate_str = f"${eff_rate:.2f}/kWh"
-                period_str = f"{eff_lbl} ({eff_win})" if eff_win else eff_lbl
-            else:
-                tariffs = s.get("tariffs", {})
-                scheds = tariffs.get("tesla_members", {}).get("rate_schedules", [])
-                rates = [float(sc.get("rate_per_kwh", 0)) for sc in scheds if sc.get("rate_per_kwh") is not None]
-                if rates:
-                    min_r, max_r = min(rates), max(rates)
-                    rate_str = f"${min_r:.2f}" if min_r == max_r else f"${min_r:.2f}-${max_r:.2f}"
-                    period_str = "Time-of-Use"
-                else:
-                    rate_str = "-"
-                    period_str = "-"
-
-            dist_val = s.get("_distance_km", float("inf"))
-            dist_str = f"{dist_val:7.1f} km " if (has_dist and dist_val != float("inf")) else (f"{'--':>9} " if has_dist else "")
-
-            suburb_str = s.get("location", {}).get("suburb") or s.get("short_name", "")
-            print(f"  {num_str}  {t_icon:<6} {s['state']:<5} {pad_display(s['title'], name_col_width)} {tier_str:<5} {stalls_str:<7} {pad_display(access_str, 11)} {rate_str:<11} {pad_display(period_str, 24)} {dist_str}{C_DIM}{suburb_str}{C_RESET}")
+        print_charging_stations_table(
+            filtered,
+            ref_lat=ref_lat,
+            ref_lon=ref_lon,
+            ref_label=ref_label,
+            active_radius=active_radius,
+            eval_time_label=eval_time_label,
+            sort_mode=sort_mode_desc
+        )
 
         print(f"\n{C_DIM}To inspect details:     ./Tools/find_tesla_chargers.py --inspect <ID_or_Name_or_URL>{C_RESET}")
         print(f"{C_DIM}To batch update:        ./Tools/find_tesla_chargers.py --sc --new --all --sync{C_RESET}\n")
