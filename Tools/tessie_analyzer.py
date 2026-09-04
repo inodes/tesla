@@ -166,6 +166,33 @@ def parse_relative_date(date_str):
             pass
     return None
 
+def find_mounted_tesla_volumes(subdir=None):
+    """
+    Dynamically discovers all mounted volumes matching TESLADRIVE* under /Volumes.
+    If subdir is provided (e.g., 'TeslaCam', 'Tessie', 'Tools', 'invoices'),
+    returns existing subdirectories within those volumes.
+    """
+    volumes_root = "/Volumes"
+    if not os.path.isdir(volumes_root):
+        return []
+    discovered = []
+    seen = set()
+    try:
+        entries = sorted(os.listdir(volumes_root))
+    except Exception:
+        entries = []
+    for entry in entries:
+        if entry.upper().startswith("TESLADRIVE"):
+            vol_path = os.path.join(volumes_root, entry)
+            if os.path.isdir(vol_path):
+                target = os.path.join(vol_path, subdir) if subdir else vol_path
+                if os.path.isdir(target):
+                    real_p = os.path.abspath(os.path.realpath(target))
+                    if real_p not in seen:
+                        seen.add(real_p)
+                        discovered.append(real_p)
+    return discovered
+
 class TessieAnalyzer:
     def __init__(self, tessie_dir=None, teslacam_dirs=None):
         self.script_dir = os.path.dirname(os.path.abspath(__file__))
@@ -175,30 +202,36 @@ class TessieAnalyzer:
         self.tessie_dirs = []
         candidates = [
             tessie_dir,
-            "/Volumes/TESLADRIVE 1/Tessie",
-            "/Volumes/TESLADRIVE/Tessie",
             os.path.join(parent_dir, "Tessie"),
             os.path.join(self.script_dir, "Tessie"),
             os.path.expanduser("~/iCloud/repos/tesla/Tessie"),
             self.icloud_dir
-        ]
+        ] + find_mounted_tesla_volumes("Tessie")
+        seen_tessie = set()
         for d in candidates:
             try:
                 if d and os.path.isdir(d):
-                    self.tessie_dirs.append(d)
+                    real_d = os.path.abspath(os.path.realpath(d))
+                    if real_d not in seen_tessie:
+                        seen_tessie.add(real_d)
+                        self.tessie_dirs.append(real_d)
             except Exception:
                 pass
         
         self.teslacam_dirs = []
-        candidates_tc = teslacam_dirs or [
-            "/Volumes/TESLADRIVE 1/TeslaCam",
-            "/Volumes/TESLADRIVE/TeslaCam",
-            "/Volumes/TESLADRIVE 2/TeslaCam"
-        ]
+        if teslacam_dirs:
+            candidates_tc = teslacam_dirs if isinstance(teslacam_dirs, list) else [teslacam_dirs]
+        else:
+            candidates_tc = find_mounted_tesla_volumes("TeslaCam")
+            
+        seen_tc = set()
         for d in candidates_tc:
             try:
                 if d and os.path.isdir(d):
-                    self.teslacam_dirs.append(d)
+                    real_d = os.path.abspath(os.path.realpath(d))
+                    if real_d not in seen_tc:
+                        seen_tc.add(real_d)
+                        self.teslacam_dirs.append(real_d)
             except Exception:
                 pass
         
@@ -275,8 +308,9 @@ class TessieAnalyzer:
         return parts[0].strip() if parts else address
 
     def consolidate_drives(self, master_dir=None):
+        external_tessie = find_mounted_tesla_volumes("Tessie")
         dest_dir = master_dir or (
-            "/Volumes/TESLADRIVE 1/Tessie" if os.path.isdir("/Volumes/TESLADRIVE 1/Tessie")
+            external_tessie[0] if external_tessie
             else os.path.expanduser("~/iCloud/repos/tesla/Tessie")
         )
         try:

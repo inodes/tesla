@@ -314,7 +314,7 @@ Usage: tesla_sync.sh [options]
 
 Note on Execution & Drive Discovery:
   tesla_sync.sh can be run from ANY directory (e.g. ~/iCloud/repos/tesla,
-  /Volumes/TESLADRIVE 1/Tools, or installed to /usr/local/bin).
+  /Volumes/TESLADRIVE*/Tools, or installed to /usr/local/bin).
   By default, it automatically discovers connected Tesla USBs, SSDs, and Archive
   drives mounted under /Volumes.
 
