@@ -1113,11 +1113,13 @@ class TeslaChargerExplorer:
                 "type": "supercharger" if charger_type == "supercharger" else "destination_charger",
                 "findus_url": target_url,
                 "keywords": [
-                    street_full,
-                    street_name,
-                    general_location,
-                    f"{suburb}, {state_code}",
-                    suburb
+                    k for k in dict.fromkeys([
+                        street_full,
+                        street_name,
+                        general_location,
+                        f"{suburb}, {state_code}".strip(", "),
+                        suburb
+                    ]) if k and k.strip()
                 ]
             },
             "location": {
