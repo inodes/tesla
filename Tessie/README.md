@@ -22,6 +22,7 @@ A suite of tools for processing, classifying, and analyzing [Tessie](https://sha
 | Tool | Purpose | Primary Commands |
 | :--- | :--- | :--- |
 | **`tessie_analyzer.py`** | High-level drives summary, interactive period selector, location geofencing, and TeslaCam video linking. | `./Tools/tessie_analyzer.py --drives`<br>`./Tools/tessie_analyzer.py --today`<br>`./Tools/tessie_analyzer.py --place "School"` |
+| **`tessie_charging_analyzer.py`** | Reconciles Tesla Supercharger & 3rd-party invoices against Tessie telemetry, calculates dispenser vs battery loss, verifies TOU rates, and audits charging costs. | `./Tools/tessie_charging_analyzer.py --superchargers`<br>`./Tools/tessie_charging_analyzer.py --inspect 1`<br>`./Tools/tessie_charging_analyzer.py --consolidate` |
 | **`tessie_renamer.py`** | Inspects, categorizes, and standardizes all raw Tessie CSV files (drives, telemetry traces, charges, idles, battery, tires, alerts). | `./Tools/tessie_renamer.py --dry-run`<br>`./Tools/tessie_renamer.py --copy-to /path/to/dir`<br>`./Tools/tessie_renamer.py --in-place` |
 
 ---
@@ -65,11 +66,33 @@ A suite of tools for processing, classifying, and analyzing [Tessie](https://sha
 # Filter trips since a specific date or weekday
 ./Tools/tessie_analyzer.py --since wednesday
 
-# Filter trips by location nickname
-./Tools/tessie_analyzer.py --place "School"
+### 3. Charging & Supercharger Invoice Reconciliation
+```bash
+# High-level charging summary & network breakdown (Home AC, Superchargers, 3rd-Party Fast)
+./Tools/tessie_charging_analyzer.py
+
+# Reconcile Superchargers only and inspect invoice matching
+./Tools/tessie_charging_analyzer.py --superchargers
+
+# Deep-dive inspect session #142 (Macquarie Centre) or by date
+./Tools/tessie_charging_analyzer.py --inspect 142
+./Tools/tessie_charging_analyzer.py --inspect 2026-08-14
+
+# Reconcile 3rd-Party Fast chargers (Chargefox, Evie, BP Pulse, Jolt)
+./Tools/tessie_charging_analyzer.py --third-party
+
+# List all registered Superchargers and Time-of-Use tariffs
+./Tools/tessie_charging_analyzer.py --list-chargers
+
+# Consolidate all charges into charges_master.csv
+./Tools/tessie_charging_analyzer.py --consolidate
+
+# Synchronize tools and registries to /Volumes/TESLADRIVE 1/
+./Tools/tessie_charging_analyzer.py --sync
 ```
 
 ---
 
 ## 🔒 Privacy Note
+
 All personal datasets (`*.csv`) and custom coordinates (`places.json`) are strictly excluded from Git. Only generic templates (`places.example.json`) are tracked in the public repository.
