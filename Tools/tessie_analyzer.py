@@ -197,13 +197,13 @@ class TessieAnalyzer:
 
     def load_places(self):
         for td in self.tessie_dirs:
-            pf = os.path.join(td, "places.json")
-            if os.path.isfile(pf):
-                try:
+            try:
+                pf = os.path.join(td, "places.json")
+                if os.path.isfile(pf):
                     with open(pf, "r", encoding="utf-8") as f:
                         return json.load(f)
-                except Exception:
-                    pass
+            except Exception:
+                pass
         return {}
 
     def resolve_place(self, address, saved_loc="", lat=None, lon=None):
@@ -237,7 +237,10 @@ class TessieAnalyzer:
             "/Volumes/TESLADRIVE 1/Tessie" if os.path.isdir("/Volumes/TESLADRIVE 1/Tessie")
             else os.path.expanduser("~/iCloud/repos/tesla/Tessie")
         )
-        os.makedirs(dest_dir, exist_ok=True)
+        try:
+            os.makedirs(dest_dir, exist_ok=True)
+        except Exception:
+            pass
         master_file = os.path.join(dest_dir, "drives_master.csv")
 
         raw_rows = []
@@ -246,9 +249,13 @@ class TessieAnalyzer:
 
         all_csvs = []
         for td in self.tessie_dirs:
-            for f in os.listdir(td):
-                if f.endswith(".csv"):
-                    all_csvs.append(os.path.join(td, f))
+            try:
+                if os.path.isdir(td):
+                    for f in os.listdir(td):
+                        if f.endswith(".csv"):
+                            all_csvs.append(os.path.join(td, f))
+            except Exception:
+                pass
 
         for csv_path in all_csvs:
             try:
@@ -277,10 +284,13 @@ class TessieAnalyzer:
 
         raw_rows.sort(key=lambda x: (x.get("Started At (AEST)") or x.get("Started At") or x.get("Started") or ""))
 
-        with open(master_file, "w", encoding="utf-8", newline="") as f:
-            writer = csv.DictWriter(f, fieldnames=fieldnames)
-            writer.writeheader()
-            writer.writerows(raw_rows)
+        try:
+            with open(master_file, "w", encoding="utf-8", newline="") as f:
+                writer = csv.DictWriter(f, fieldnames=fieldnames)
+                writer.writeheader()
+                writer.writerows(raw_rows)
+        except Exception:
+            pass
 
         return len(raw_rows)
 
@@ -288,10 +298,13 @@ class TessieAnalyzer:
         self.consolidate_drives()
         master_file = None
         for td in self.tessie_dirs:
-            mf = os.path.join(td, "drives_master.csv")
-            if os.path.isfile(mf):
-                master_file = mf
-                break
+            try:
+                mf = os.path.join(td, "drives_master.csv")
+                if os.path.isfile(mf):
+                    master_file = mf
+                    break
+            except Exception:
+                pass
 
         if not master_file:
             return []
@@ -403,9 +416,22 @@ class TessieAnalyzer:
     def get_timeline_data(self, target_date):
         """Build event-driven timeline for target_date alternating seamlessly between parked and driving states."""
         self.index_footage()
+        now = datetime.now()
         day_start = datetime(target_date.year, target_date.month, target_date.day, 0, 0, 0)
         day_end = day_start + timedelta(days=1)
         
+        # 1. Check if date is in the future
+        if day_start.date() > now.date():
+            return [], day_start, "Future date — no telemetry or drive data recorded."
+            
+        # 2. Check if date is before earliest recorded drive
+        if self.drives and day_end <= self.drives[0]["start_dt"]:
+            first_drive_str = self.drives[0]["start_dt"].strftime("%Y-%m-%d")
+            return [], day_start, f"No drive data recorded prior to earliest record ({first_drive_str})."
+
+        is_today = (day_start.date() == now.date())
+        effective_end = min(day_end, now) if is_today else day_end
+
         # Drives on target date (including any overlapping start/end)
         day_drives = [
             d for d in self.drives
@@ -448,7 +474,7 @@ class TessieAnalyzer:
             dur_str = format_duration_short(drive_dur_mins) if drive_dur_mins > 0 else "<1m"
             dist_str = f"{d['dist_km']:.1f} km"
             s_str = d_start.strftime("%H:%M")
-            e_str = "00:00" if d_end == day_end else d_end.strftime("%H:%M")
+            e_str = "24:00" if d_end == day_end else d_end.strftime("%H:%M")
             events.append({
                 "event_idx": event_idx,
                 "type": "drive",
@@ -463,19 +489,32 @@ class TessieAnalyzer:
             current_location = d["end_place"]
             cursor_time = d_end
             
-        # 3. Final parked period until 24:00 (if cursor_time < day_end)
-        if cursor_time < day_end:
-            park_dur_mins = int((day_end - cursor_time).total_seconds() / 60)
+        # 3. Final parked period (or entire day if no drives)
+        if cursor_time < effective_end:
+            park_dur_mins = int((effective_end - cursor_time).total_seconds() / 60)
             dur_str = format_duration_short(park_dur_mins) if park_dur_mins > 0 else "<1m"
             s_str = cursor_time.strftime("%H:%M")
+            
+            if is_today:
+                e_str = "Now"
+                time_str = f"{s_str} - {e_str}"
+                act_str = f"🅿  {current_location} ({dur_str})"
+            elif not day_drives:
+                time_str = "00:00 - 24:00"
+                act_str = f"🅿  {current_location} (Stationary all day - 24h)"
+            else:
+                e_str = "24:00"
+                time_str = f"{s_str} - {e_str}"
+                act_str = f"🅿  {current_location} ({dur_str})"
+
             events.append({
                 "event_idx": event_idx,
                 "type": "parked",
                 "start_dt": cursor_time,
-                "end_dt": day_end,
-                "time_str": f"{s_str} - 00:00",
+                "end_dt": effective_end,
+                "time_str": time_str,
                 "location": current_location,
-                "activity": f"🅿  {current_location} ({dur_str})",
+                "activity": act_str,
                 "drive": None
             })
             event_idx += 1
@@ -490,7 +529,7 @@ class TessieAnalyzer:
             ev["sentry_mins"] = len(set(c["dt"] for c in clips if c["cat"] == "Sentry"))
             ev["clips"] = clips
             
-        return events, day_start
+        return events, day_start, None
 
 def display_footage_details(trip, analyzer):
     """Level 3: Deep listing of exact video files by camera angle for a single drive."""
@@ -686,8 +725,37 @@ def display_timeline(target_date, analyzer, compact=False):
     w_sen = 6
 
     while True:
-        events, day_start = analyzer.get_timeline_data(curr_date)
+        events, day_start, status_msg = analyzer.get_timeline_data(curr_date)
+        title = f" 24-Hour Event Timeline: {day_start.strftime('%A, %d %B %Y')}"
         
+        if not events:
+            total_inner = 70
+            msg = status_msg or "No telemetry or footage records found for this date."
+            print(f"┌{'─'*total_inner}┐")
+            print(f"│{title:<{total_inner}}│")
+            print(f"├{'─'*total_inner}┤")
+            print(f"│ {msg:<{total_inner-1}}│")
+            print(f"└{'─'*total_inner}┘")
+            
+            if not sys.stdin.isatty():
+                break
+                
+            try:
+                choice = input("Navigation: [p]rev day, [n]ext day, [b]ack, [q]uit: ").strip().lower()
+                if choice == "q":
+                    sys.exit(0)
+                elif choice in ["b", "back"]:
+                    break
+                elif choice in ["p", "prev"]:
+                    curr_date = curr_date - timedelta(days=1)
+                elif choice in ["n", "next"]:
+                    curr_date = curr_date + timedelta(days=1)
+                else:
+                    print("Invalid choice.")
+                continue
+            except (KeyboardInterrupt, EOFError):
+                break
+
         # Expand w_act dynamically so that no route or location line gets truncated or broken
         max_act_len = max((display_len(ev["activity"]) for ev in events), default=50)
         w_act = max(60, max_act_len + 3)
@@ -697,8 +765,6 @@ def display_timeline(target_date, analyzer, compact=False):
         total_saved_mins = sum(ev["saved_mins"] for ev in events)
         total_sentry_mins = sum(ev["sentry_mins"] for ev in events)
         has_any_footage = (total_recent_mins + total_saved_mins + total_sentry_mins) > 0
-        
-        title = f" 24-Hour Event Timeline: {day_start.strftime('%A, %d %B %Y')}"
         
         h_idx = f" {'#':^3} "
         h_time = f" {'Time Window':<13} "
