@@ -38,6 +38,7 @@ import shutil
 import argparse
 import unicodedata
 from zoneinfo import ZoneInfo
+import urllib.request
 from urllib.parse import urlparse, parse_qs, quote, unquote
 from datetime import datetime, timezone
 
@@ -334,25 +335,185 @@ def extract_au_state_from_text(title: str, address_str: str = "") -> str:
             
     return "Other"
 
-def state_from_coords(lat: float, lon: float) -> str:
-    """Determines Australian state/territory from GPS coordinates using bounding boxes.
-    Returns state code (e.g. 'NSW') or None if coordinates are outside Australia."""
-    if lat is None or lon is None:
+def load_state_boundaries(repo_root: str = None) -> dict:
+    """Loads state_boundaries.json containing corner polygons, safe bounding boxes, and border lines."""
+    if not repo_root:
+        repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    b_path = os.path.join(repo_root, "Tessie", "state_boundaries.json")
+    if os.path.isfile(b_path):
+        try:
+            with open(b_path, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except Exception:
+            pass
+    return {}
+
+def load_geo_cache(repo_root: str = None) -> dict:
+    """Loads persistent geocoding cache from Tessie/geo_cache.json."""
+    if not repo_root:
+        repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    c_path = os.path.join(repo_root, "Tessie", "geo_cache.json")
+    if os.path.isfile(c_path):
+        try:
+            with open(c_path, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except Exception:
+            pass
+    return {}
+
+def save_geo_cache(cache: dict, repo_root: str = None):
+    """Saves persistent geocoding cache to Tessie/geo_cache.json."""
+    if not repo_root:
+        repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    c_path = os.path.join(repo_root, "Tessie", "geo_cache.json")
+    try:
+        os.makedirs(os.path.dirname(c_path), exist_ok=True)
+        with open(c_path, "w", encoding="utf-8") as f:
+            json.dump(cache, f, indent=2)
+    except Exception:
+        pass
+
+def reverse_geocode_osm(lat: float, lon: float) -> dict:
+    """Reverse geocodes a coordinate via OpenStreetMap Nominatim, respecting rate limits."""
+    url = f"https://nominatim.openstreetmap.org/reverse?lat={lat}&lon={lon}&format=json&addressdetails=1"
+    req = urllib.request.Request(url, headers={"User-Agent": "TeslaChargersEngine/1.0 (Australia-GeoResolver)"})
+    try:
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+            addr = data.get("address", {})
+            st_full = (addr.get("state") or "").lower().strip()
+            state_code = AU_STATE_REVERSE_MAP.get(st_full, "Other")
+            suburb = addr.get("suburb") or addr.get("town") or addr.get("city") or addr.get("village") or ""
+            postcode = addr.get("postcode") or ""
+            return {
+                "state": state_code,
+                "state_full": addr.get("state", ""),
+                "suburb": suburb,
+                "postcode": postcode,
+                "source": "osm_nominatim"
+            }
+    except Exception:
         return None
+
+def _dist_to_segment_km(px: float, py: float, x1: float, y1: float, x2: float, y2: float) -> float:
+    """Computes minimum distance in kilometers from point (px=lon, py=lat) to line segment (x1,y1)-(x2,y2)."""
+    dx = (x2 - x1) * 111.0 * math.cos(math.radians(py))
+    dy = (y2 - y1) * 111.0
+    seg_len_sq = dx * dx + dy * dy
+    if seg_len_sq == 0:
+        return math.hypot((px - x1) * 111.0 * math.cos(math.radians(py)), (py - y1) * 111.0)
+    t = max(0.0, min(1.0, ((px - x1) * 111.0 * math.cos(math.radians(py)) * dx + (py - y1) * 111.0 * dy) / seg_len_sq))
+    proj_x = x1 + t * (x2 - x1)
+    proj_y = y1 + t * (y2 - y1)
+    return math.hypot((px - proj_x) * 111.0 * math.cos(math.radians(py)), (py - proj_y) * 111.0)
+
+def state_from_coords(lat: float, lon: float, repo_root: str = None) -> tuple:
+    """
+    Determines Australian state/territory from GPS coordinates using a hybrid guide approach:
+    1. Instant rejection if coordinates are outside Australia (e.g. New Zealand, Pacific, etc.).
+    2. Instant check against safe_bounds in state_boundaries.json (0 network calls).
+    3. If within border_threshold_km of a state boundary, checks persistent geo_cache.json
+       or performs an OSM Nominatim reverse lookup and caches the result.
+    4. Otherwise interpolates geometric state boundary lines (e.g. Murray River).
+    Returns: (state_code: str or None, suburb: str or None)
+    """
+    if lat is None or lon is None:
+        return None, None
     try:
         lat, lon = float(lat), float(lon)
     except (ValueError, TypeError):
-        return None
-    # Check ACT first — it sits inside NSW's bounding box
-    acb = AU_STATE_BOUNDS["ACT"]
-    if acb["lat"][0] <= lat <= acb["lat"][1] and acb["lon"][0] <= lon <= acb["lon"][1]:
-        return "ACT"
-    for state, bounds in AU_STATE_BOUNDS.items():
-        if state == "ACT":
-            continue
-        if bounds["lat"][0] <= lat <= bounds["lat"][1] and bounds["lon"][0] <= lon <= bounds["lon"][1]:
-            return state
-    return None
+        return None, None
+
+    # Foreign coordinate rejection: outside Australian continental and territorial bounds
+    if lat > -10.0 or lat < -44.5 or lon < 112.0 or lon > 154.5:
+        return None, None
+
+    boundaries = load_state_boundaries(repo_root=repo_root)
+    threshold_km = boundaries.get("border_threshold_km", 15.0)
+
+    # 1. Fast path: check safe interior bounds (definitively inside state, far from any border)
+    for st, data in boundaries.get("states", {}).items():
+        sb = data.get("safe_bounds")
+        if sb and len(sb) == 4:
+            if sb[0] <= lat <= sb[2] and sb[1] <= lon <= sb[3]:
+                return st, None
+
+    # 2. Border proximity detection
+    near_border = False
+    for b_name, b_pts in boundaries.get("borders", {}).items():
+        min_b_lon = min(p[0] for p in b_pts) - 0.5
+        max_b_lon = max(p[0] for p in b_pts) + 0.5
+        min_b_lat = min(p[1] for p in b_pts) - 0.5
+        max_b_lat = max(p[1] for p in b_pts) + 0.5
+        if min_b_lon <= lon <= max_b_lon and min_b_lat <= lat <= max_b_lat:
+            for i in range(len(b_pts) - 1):
+                d = _dist_to_segment_km(lon, lat, b_pts[i][0], b_pts[i][1], b_pts[i+1][0], b_pts[i+1][1])
+                if d <= threshold_km:
+                    near_border = True
+                    break
+        if near_border:
+            break
+
+    # 3. If near border, check local cache or reverse geocode
+    if near_border:
+        cache = load_geo_cache(repo_root=repo_root)
+        ckey = f"{lat:.4f},{lon:.4f}"
+        if ckey in cache:
+            entry = cache[ckey]
+            return entry.get("state", "Other"), entry.get("suburb")
+
+        # Network lookup with cache write
+        geo = reverse_geocode_osm(lat, lon)
+        if geo:
+            cache[ckey] = geo
+            save_geo_cache(cache, repo_root=repo_root)
+            time.sleep(1.0)
+            return geo.get("state", "Other"), geo.get("suburb")
+
+    # 4. Geometric boundary interpolation (for interior areas not covered by safe boxes)
+    act_data = boundaries.get("states", {}).get("ACT", {})
+    act_bb = act_data.get("bbox", [-35.92, 148.76, -35.12, 149.40])
+    if act_bb[0] <= lat <= act_bb[2] and act_bb[1] <= lon <= act_bb[3]:
+        return "ACT", None
+
+    # WA
+    if lon < 129.0:
+        return "WA", None
+    # NT vs SA
+    if 129.0 <= lon < 138.0:
+        return "NT" if lat > -26.0 else "SA", None
+    # SA vs QLD/NSW
+    if 138.0 <= lon < 141.0:
+        if lat > -26.0: return "QLD", None
+        return "SA", None
+
+    # NSW vs VIC (Murray River & Black-Allan Line)
+    nsw_vic = boundaries.get("borders", {}).get("NSW_VIC", [])
+    if nsw_vic:
+        for i in range(len(nsw_vic) - 1):
+            x1, y1 = nsw_vic[i]
+            x2, y2 = nsw_vic[i+1]
+            if min(x1, x2) <= lon <= max(x1, x2):
+                border_lat = y1 + (y2 - y1) * (lon - x1) / (x2 - x1)
+                if lat < border_lat:
+                    return "VIC", None
+                break
+
+    # QLD vs NSW
+    qld_nsw = boundaries.get("borders", {}).get("QLD_NSW", [])
+    if qld_nsw:
+        for i in range(len(qld_nsw) - 1):
+            x1, y1 = qld_nsw[i]
+            x2, y2 = qld_nsw[i+1]
+            if min(x1, x2) <= lon <= max(x1, x2):
+                border_lat = y1 + (y2 - y1) * (lon - x1) / (x2 - x1)
+                if lat > border_lat:
+                    return "QLD", None
+                break
+
+    if lat < -37.5:
+        return "TAS" if lat < -39.5 else "VIC", None
+    return "NSW", None
 
 def merge_tou_intervals(intervals: list) -> list:
     """Merges consecutive TOU rate periods with identical pricing into clean 24h intervals."""
@@ -896,16 +1057,18 @@ class TeslaChargerExplorer:
                 if not title:
                     continue
 
-                # Determine state: text-based first, then coordinate fallback
+                # Determine state: text-based first, then coordinate/border fallback
                 state = extract_au_state_from_text(title)
-                if state == "Other" and lat is not None and lon is not None:
-                    coord_state = state_from_coords(lat, lon)
-                    if coord_state:
-                        state = coord_state
-                    elif is_au:
-                        # Coordinates outside AU bounding boxes — likely foreign entry (e.g. NZ)
-                        skipped_foreign += 1
-                        continue
+                resolved_suburb = None
+                if lat is not None and lon is not None:
+                    if state == "Other" or not state:
+                        coord_state, resolved_suburb = state_from_coords(lat, lon, repo_root=self.repo_root)
+                        if coord_state:
+                            state = coord_state
+                        elif is_au:
+                            # Coordinates outside AU bounding boxes — foreign entry (e.g. NZ)
+                            skipped_foreign += 1
+                            continue
 
                 short_name = clean_station_short_name(title)
                 loc_type = charger_type.rstrip("s")  # 'superchargers' -> 'supercharger'
@@ -914,7 +1077,7 @@ class TeslaChargerExplorer:
 
                 url = f"https://www.tesla.com/en_AU/findus/location/{loc_type.replace('destination_', '')}/{slug}"
 
-                stations.append({
+                st_dict = {
                     "index": len(stations) + 1,
                     "title": title,
                     "short_name": short_name,
@@ -925,7 +1088,12 @@ class TeslaChargerExplorer:
                     "url": url,
                     "_lat": lat,
                     "_lon": lon,
-                })
+                }
+                if resolved_suburb:
+                    st_dict["suburb"] = resolved_suburb
+                    st_dict["location"] = {"suburb": resolved_suburb}
+
+                stations.append(st_dict)
 
             if skipped_foreign:
                 print(f"{C_DIM}   (Skipped {skipped_foreign} non-{country_slug.replace('+', ' ')} entry/entries){C_RESET}")
