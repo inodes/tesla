@@ -1506,7 +1506,16 @@ class TessieChargingAnalyzer:
             schedules = cost.get("rate_schedules", [])
             sched_str = ", ".join([f"{sc.get('name')}: ${sc.get('rate_per_kwh')}/kWh ({sc.get('start_time')}-{sc.get('end_time')})" for sc in schedules]) if schedules else f"${cost.get('per_kwh_flat', 0):.2f}/kWh flat"
 
-            non_t_str = f"Yes (Member: ${non_tesla.get('member_rate_per_kwh')}/kWh, Non-Member: ${non_tesla.get('non_member_rate_per_kwh')}/kWh)" if comp.get("open_to_non_tesla") else "No (Tesla Only)"
+            if comp.get("open_to_non_tesla"):
+                if "rate_schedules" in non_tesla and non_tesla.get("rate_schedules"):
+                    nt_scheds = ", ".join([f"{sc.get('name')}: ${sc.get('rate_per_kwh')}/kWh ({sc.get('start_time')}-{sc.get('end_time')})" for sc in non_tesla.get("rate_schedules", [])])
+                    non_t_str = f"Yes (TOU: {nt_scheds})"
+                elif non_tesla.get("non_member_rate_per_kwh"):
+                    non_t_str = f"Yes (Member: ${non_tesla.get('member_rate_per_kwh')}/kWh, Non-Member: ${non_tesla.get('non_member_rate_per_kwh')}/kWh)"
+                else:
+                    non_t_str = "Yes (Open to all CCS2 EVs)"
+            else:
+                non_t_str = "No (Tesla Only)"
 
             print(f"  {C_BOLD}🔴⚡ {name}{C_RESET} ({meta.get('short_name')})")
             print(f"     📍 Address:      {loc.get('address')} ({loc.get('lat')}, {loc.get('lon')})")
