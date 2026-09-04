@@ -14,7 +14,9 @@ Tessie/invoices/*
 !Tessie/invoices/.gitkeep
 !Tessie/places.example.json
 !Tessie/charging.example.json
+!Tessie/charging_archived.example.json
 !Tessie/superchargers.example.json
+!Tessie/superchargers_archived.example.json
 !Tessie/config.example.json
 !config.example.json
 config.json

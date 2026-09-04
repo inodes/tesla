@@ -25,7 +25,8 @@
       "country_code": "AU",
       "lat": -33.777977,
       "lon": 151.1226,
-      "radius_m": 250
+      "radius_m": 250,
+      "timezone": "Australia/Sydney"
     },
     "hardware": {
       "stalls": 10,
@@ -188,6 +189,114 @@
       "wifi": false,
       "lodging": false,
       "parking": true
+    },
+    "timezone": "Australia/Sydney",
+    "first_seen": "2026-06-01T00:00:00Z",
+    "last_updated": "2026-06-01T00:00:00Z",
+    "last_verified": "2026-09-04T12:00:00Z",
+    "valid_from": "2026-06-01T00:00:00Z",
+    "tariffs": {
+      "currency": "AUD",
+      "idle_fee_per_min": 1.0,
+      "congestion_fee_per_min": 0.5,
+      "has_tou_pricing": true,
+      "tesla_members": {
+        "pricing_model": "time_of_use",
+        "rate_schedules": [
+          {
+            "name": "Off-Peak Night",
+            "rate_per_kwh": 0.35,
+            "start_time": "00:00",
+            "end_time": "08:00",
+            "days": [
+              "Mon",
+              "Tue",
+              "Wed",
+              "Thu",
+              "Fri",
+              "Sat",
+              "Sun"
+            ],
+            "months": [
+              "Jan",
+              "Feb",
+              "Mar",
+              "Apr",
+              "May",
+              "Jun",
+              "Jul",
+              "Aug",
+              "Sep",
+              "Oct",
+              "Nov",
+              "Dec"
+            ]
+          },
+          {
+            "name": "Peak Day",
+            "rate_per_kwh": 0.59,
+            "start_time": "08:00",
+            "end_time": "20:00",
+            "days": [
+              "Mon",
+              "Tue",
+              "Wed",
+              "Thu",
+              "Fri",
+              "Sat",
+              "Sun"
+            ],
+            "months": [
+              "Jan",
+              "Feb",
+              "Mar",
+              "Apr",
+              "May",
+              "Jun",
+              "Jul",
+              "Aug",
+              "Sep",
+              "Oct",
+              "Nov",
+              "Dec"
+            ]
+          },
+          {
+            "name": "Off-Peak Evening",
+            "rate_per_kwh": 0.35,
+            "start_time": "20:00",
+            "end_time": "24:00",
+            "days": [
+              "Mon",
+              "Tue",
+              "Wed",
+              "Thu",
+              "Fri",
+              "Sat",
+              "Sun"
+            ],
+            "months": [
+              "Jan",
+              "Feb",
+              "Mar",
+              "Apr",
+              "May",
+              "Jun",
+              "Jul",
+              "Aug",
+              "Sep",
+              "Oct",
+              "Nov",
+              "Dec"
+            ]
+          }
+        ]
+      },
+      "non_tesla": {
+        "supported": false,
+        "pricing_model": "none",
+        "rate_schedules": []
+      }
     }
   },
   "West Gosford, NSW": {
@@ -217,7 +326,8 @@
       "country_code": "AU",
       "lat": -33.425156,
       "lon": 151.32004,
-      "radius_m": 250
+      "radius_m": 250,
+      "timezone": "Australia/Sydney"
     },
     "hardware": {
       "stalls": 6,
@@ -375,6 +485,114 @@
       "wifi": false,
       "lodging": false,
       "parking": true
+    },
+    "timezone": "Australia/Sydney",
+    "first_seen": "2026-06-01T00:00:00Z",
+    "last_updated": "2026-06-01T00:00:00Z",
+    "last_verified": "2026-09-04T12:00:00Z",
+    "valid_from": "2026-06-01T00:00:00Z",
+    "tariffs": {
+      "currency": "AUD",
+      "idle_fee_per_min": 1.0,
+      "congestion_fee_per_min": 0.5,
+      "has_tou_pricing": true,
+      "tesla_members": {
+        "pricing_model": "time_of_use",
+        "rate_schedules": [
+          {
+            "name": "Off-Peak Night",
+            "rate_per_kwh": 0.35,
+            "start_time": "00:00",
+            "end_time": "08:00",
+            "days": [
+              "Mon",
+              "Tue",
+              "Wed",
+              "Thu",
+              "Fri",
+              "Sat",
+              "Sun"
+            ],
+            "months": [
+              "Jan",
+              "Feb",
+              "Mar",
+              "Apr",
+              "May",
+              "Jun",
+              "Jul",
+              "Aug",
+              "Sep",
+              "Oct",
+              "Nov",
+              "Dec"
+            ]
+          },
+          {
+            "name": "Peak Day",
+            "rate_per_kwh": 0.52,
+            "start_time": "08:00",
+            "end_time": "20:00",
+            "days": [
+              "Mon",
+              "Tue",
+              "Wed",
+              "Thu",
+              "Fri",
+              "Sat",
+              "Sun"
+            ],
+            "months": [
+              "Jan",
+              "Feb",
+              "Mar",
+              "Apr",
+              "May",
+              "Jun",
+              "Jul",
+              "Aug",
+              "Sep",
+              "Oct",
+              "Nov",
+              "Dec"
+            ]
+          },
+          {
+            "name": "Off-Peak Evening",
+            "rate_per_kwh": 0.35,
+            "start_time": "20:00",
+            "end_time": "24:00",
+            "days": [
+              "Mon",
+              "Tue",
+              "Wed",
+              "Thu",
+              "Fri",
+              "Sat",
+              "Sun"
+            ],
+            "months": [
+              "Jan",
+              "Feb",
+              "Mar",
+              "Apr",
+              "May",
+              "Jun",
+              "Jul",
+              "Aug",
+              "Sep",
+              "Oct",
+              "Nov",
+              "Dec"
+            ]
+          }
+        ]
+      },
+      "non_tesla": {
+        "supported": true,
+        "pricing_model": "flat",
+        "rate_schedules": []
+      }
     }
   },
   "Campbelltown, NSW": {
@@ -401,7 +619,8 @@
       "country_code": "AU",
       "lat": -34.0725,
       "lon": 150.8172,
-      "radius_m": 250
+      "radius_m": 250,
+      "timezone": "Australia/Sydney"
     },
     "hardware": {
       "stalls": 6,
@@ -485,6 +704,45 @@
       "shopping": true,
       "coffee": true,
       "parking": true
+    },
+    "timezone": "Australia/Sydney",
+    "first_seen": "2026-06-01T00:00:00Z",
+    "last_updated": "2026-06-01T00:00:00Z",
+    "last_verified": "2026-09-04T12:00:00Z",
+    "valid_from": "2026-06-01T00:00:00Z",
+    "tariffs": {
+      "currency": "AUD",
+      "idle_fee_per_min": 1.0,
+      "congestion_fee_per_min": 0.5,
+      "has_tou_pricing": true,
+      "tesla_members": {
+        "pricing_model": "time_of_use",
+        "rate_schedules": [
+          {
+            "name": "Off-Peak Night",
+            "rate_per_kwh": 0.35,
+            "start_time": "00:00",
+            "end_time": "08:00"
+          },
+          {
+            "name": "Peak Day",
+            "rate_per_kwh": 0.52,
+            "start_time": "08:00",
+            "end_time": "20:00"
+          },
+          {
+            "name": "Off-Peak Evening",
+            "rate_per_kwh": 0.35,
+            "start_time": "20:00",
+            "end_time": "24:00"
+          }
+        ]
+      },
+      "non_tesla": {
+        "supported": true,
+        "pricing_model": "flat",
+        "rate_schedules": []
+      }
     }
   },
   "Miranda, NSW - Parraweena Rd": {
@@ -494,25 +752,27 @@
       "location_name": "Tesla Center",
       "short_name": "Miranda_NSW_Parraweena_Rd",
       "type": "supercharger",
+      "findus_url": "https://www.tesla.com/en_AU/findus/location/supercharger/19258",
       "keywords": [
         "100-104 Parraweena Rd",
-        "Parraweena Rd",
+        "",
         "Tesla Center",
         "Miranda, NSW",
         "Miranda"
       ]
     },
     "location": {
-      "address": "100-104 Parraweena Rd, Miranda, New South Wales 2228",
+      "address": "100-104 Parraweena Rd, Miranda, New South Wales",
       "street": "100-104 Parraweena Rd",
       "suburb": "Miranda",
       "state": "NSW",
-      "postcode": "2228",
+      "postcode": "",
       "country": "Australia",
       "country_code": "AU",
-      "lat": -34.02701,
-      "lon": 151.11881,
-      "radius_m": 250
+      "lat": -34.026792,
+      "lon": 151.118868,
+      "radius_m": 250,
+      "timezone": "Australia/Sydney"
     },
     "hardware": {
       "stalls": 8,
@@ -529,39 +789,64 @@
     "access": {
       "hours": "Available 24/7"
     },
-    "traffic_and_occupancy": {
-      "hourly_busyness_histogram": [
-        {
-          "hour": "00:00",
-          "avg_occupancy_pct": 5,
-          "level": "low"
-        },
-        {
-          "hour": "04:00",
-          "avg_occupancy_pct": 10,
-          "level": "low"
-        },
-        {
-          "hour": "08:00",
-          "avg_occupancy_pct": 35,
-          "level": "medium"
-        },
-        {
-          "hour": "12:00",
-          "avg_occupancy_pct": 70,
-          "level": "high"
-        },
-        {
-          "hour": "16:00",
-          "avg_occupancy_pct": 80,
-          "level": "high"
-        },
-        {
-          "hour": "20:00",
-          "avg_occupancy_pct": 30,
-          "level": "low"
-        }
-      ]
+    "tariffs": {
+      "currency": "AUD",
+      "idle_fee_per_min": 1.0,
+      "congestion_fee_per_min": 0.5,
+      "has_tou_pricing": true,
+      "tesla_members": {
+        "pricing_model": "time_of_use",
+        "rate_schedules": [
+          {
+            "start_time": "00:00",
+            "end_time": "08:00",
+            "rate_per_kwh": 0.37,
+            "is_non_tesla": false,
+            "label": "Off-Peak Night"
+          },
+          {
+            "start_time": "08:00",
+            "end_time": "23:00",
+            "rate_per_kwh": 0.45,
+            "is_non_tesla": false,
+            "label": "Peak Day"
+          },
+          {
+            "start_time": "23:00",
+            "end_time": "24:00",
+            "rate_per_kwh": 0.37,
+            "is_non_tesla": false,
+            "label": "Off-Peak Night"
+          }
+        ]
+      },
+      "non_tesla": {
+        "supported": true,
+        "pricing_model": "time_of_use",
+        "rate_schedules": [
+          {
+            "start_time": "00:00",
+            "end_time": "08:00",
+            "rate_per_kwh": 0.49,
+            "is_non_tesla": true,
+            "label": "Non-Tesla Off-Peak Night"
+          },
+          {
+            "start_time": "08:00",
+            "end_time": "23:00",
+            "rate_per_kwh": 0.59,
+            "is_non_tesla": true,
+            "label": "Non-Tesla Peak Day"
+          },
+          {
+            "start_time": "23:00",
+            "end_time": "24:00",
+            "rate_per_kwh": 0.49,
+            "is_non_tesla": true,
+            "label": "Non-Tesla Off-Peak Night"
+          }
+        ]
+      }
     },
     "tessie_cost_config": {
       "currency": "AUD",
@@ -573,105 +858,10 @@
       "congestion_fee_per_min": 0.5,
       "rate_schedules": [
         {
-          "start_time": "00:00",
-          "end_time": "08:00",
-          "rate_per_kwh": 0.37,
           "name": "Off-Peak Night",
-          "days": [
-            "Mon",
-            "Tue",
-            "Wed",
-            "Thu",
-            "Fri",
-            "Sat",
-            "Sun"
-          ],
-          "months": [
-            "Jan",
-            "Feb",
-            "Mar",
-            "Apr",
-            "May",
-            "Jun",
-            "Jul",
-            "Aug",
-            "Sep",
-            "Oct",
-            "Nov",
-            "Dec"
-          ]
-        },
-        {
-          "start_time": "08:00",
-          "end_time": "23:00",
-          "rate_per_kwh": 0.45,
-          "name": "Peak Day",
-          "days": [
-            "Mon",
-            "Tue",
-            "Wed",
-            "Thu",
-            "Fri",
-            "Sat",
-            "Sun"
-          ],
-          "months": [
-            "Jan",
-            "Feb",
-            "Mar",
-            "Apr",
-            "May",
-            "Jun",
-            "Jul",
-            "Aug",
-            "Sep",
-            "Oct",
-            "Nov",
-            "Dec"
-          ]
-        },
-        {
-          "start_time": "23:00",
-          "end_time": "24:00",
           "rate_per_kwh": 0.37,
-          "name": "Off-Peak Late",
-          "days": [
-            "Mon",
-            "Tue",
-            "Wed",
-            "Thu",
-            "Fri",
-            "Sat",
-            "Sun"
-          ],
-          "months": [
-            "Jan",
-            "Feb",
-            "Mar",
-            "Apr",
-            "May",
-            "Jun",
-            "Jul",
-            "Aug",
-            "Sep",
-            "Oct",
-            "Nov",
-            "Dec"
-          ]
-        }
-      ]
-    },
-    "non_tesla_pricing": {
-      "available": true,
-      "pricing_model": "time_of_use",
-      "congestion_fee_per_min": 0.5,
-      "idle_fee_per_min": 1.0,
-      "rate_schedules": [
-        {
           "start_time": "00:00",
           "end_time": "08:00",
-          "rate_per_kwh": 0.49,
-          "name": "Non-Tesla Off-Peak Night",
           "days": [
             "Mon",
             "Tue",
@@ -697,10 +887,10 @@
           ]
         },
         {
+          "name": "Peak Day",
+          "rate_per_kwh": 0.45,
           "start_time": "08:00",
           "end_time": "23:00",
-          "rate_per_kwh": 0.59,
-          "name": "Non-Tesla Peak Day",
           "days": [
             "Mon",
             "Tue",
@@ -726,10 +916,10 @@
           ]
         },
         {
+          "name": "Off-Peak Night",
+          "rate_per_kwh": 0.37,
           "start_time": "23:00",
           "end_time": "24:00",
-          "rate_per_kwh": 0.49,
-          "name": "Non-Tesla Off-Peak Late",
           "days": [
             "Mon",
             "Tue",
@@ -756,15 +946,11 @@
         }
       ]
     },
-    "amenities": {
-      "restrooms": true,
-      "dining": true,
-      "shopping": true,
-      "coffee": true,
-      "wifi": false,
-      "lodging": false,
-      "parking": true
-    }
+    "timezone": "Australia/Sydney",
+    "first_seen": "2026-06-01T00:00:00Z",
+    "last_updated": "2026-06-01T00:00:00Z",
+    "last_verified": "2026-09-04T13:49:36Z",
+    "valid_from": "2026-06-01T00:00:00Z"
   },
   "Broadway, NSW": {
     "tesla_metadata": {
@@ -790,7 +976,8 @@
       "country_code": "AU",
       "lat": -33.8837,
       "lon": 151.1945,
-      "radius_m": 250
+      "radius_m": 250,
+      "timezone": "Australia/Sydney"
     },
     "hardware": {
       "stalls": 6,
@@ -846,6 +1033,45 @@
       "coffee": true,
       "wifi": true,
       "parking": true
+    },
+    "timezone": "Australia/Sydney",
+    "first_seen": "2026-06-01T00:00:00Z",
+    "last_updated": "2026-06-01T00:00:00Z",
+    "last_verified": "2026-09-04T12:00:00Z",
+    "valid_from": "2026-06-01T00:00:00Z",
+    "tariffs": {
+      "currency": "AUD",
+      "idle_fee_per_min": 1.0,
+      "congestion_fee_per_min": 0.5,
+      "has_tou_pricing": true,
+      "tesla_members": {
+        "pricing_model": "time_of_use",
+        "rate_schedules": [
+          {
+            "name": "Off-Peak Night",
+            "rate_per_kwh": 0.38,
+            "start_time": "00:00",
+            "end_time": "08:00"
+          },
+          {
+            "name": "Peak Day",
+            "rate_per_kwh": 0.65,
+            "start_time": "08:00",
+            "end_time": "20:00"
+          },
+          {
+            "name": "Off-Peak Evening",
+            "rate_per_kwh": 0.38,
+            "start_time": "20:00",
+            "end_time": "24:00"
+          }
+        ]
+      },
+      "non_tesla": {
+        "supported": false,
+        "pricing_model": "none",
+        "rate_schedules": []
+      }
     }
   },
   "Kirrawee, NSW": {
@@ -872,7 +1098,8 @@
       "country_code": "AU",
       "lat": -34.0305,
       "lon": 151.0694,
-      "radius_m": 250
+      "radius_m": 250,
+      "timezone": "Australia/Sydney"
     },
     "hardware": {
       "stalls": 6,
@@ -927,6 +1154,45 @@
       "shopping": true,
       "coffee": true,
       "parking": true
+    },
+    "timezone": "Australia/Sydney",
+    "first_seen": "2026-06-01T00:00:00Z",
+    "last_updated": "2026-06-01T00:00:00Z",
+    "last_verified": "2026-09-04T12:00:00Z",
+    "valid_from": "2026-06-01T00:00:00Z",
+    "tariffs": {
+      "currency": "AUD",
+      "idle_fee_per_min": 1.0,
+      "congestion_fee_per_min": 0.5,
+      "has_tou_pricing": true,
+      "tesla_members": {
+        "pricing_model": "time_of_use",
+        "rate_schedules": [
+          {
+            "name": "Off-Peak Night",
+            "rate_per_kwh": 0.35,
+            "start_time": "00:00",
+            "end_time": "08:00"
+          },
+          {
+            "name": "Peak Day",
+            "rate_per_kwh": 0.58,
+            "start_time": "08:00",
+            "end_time": "20:00"
+          },
+          {
+            "name": "Off-Peak Evening",
+            "rate_per_kwh": 0.35,
+            "start_time": "20:00",
+            "end_time": "24:00"
+          }
+        ]
+      },
+      "non_tesla": {
+        "supported": false,
+        "pricing_model": "none",
+        "rate_schedules": []
+      }
     }
   },
   "St Leonards, NSW": {
@@ -953,7 +1219,8 @@
       "country_code": "AU",
       "lat": -33.8242,
       "lon": 151.1915,
-      "radius_m": 250
+      "radius_m": 250,
+      "timezone": "Australia/Sydney"
     },
     "hardware": {
       "stalls": 6,
@@ -1009,6 +1276,45 @@
       "coffee": true,
       "wifi": true,
       "parking": true
+    },
+    "timezone": "Australia/Sydney",
+    "first_seen": "2026-06-01T00:00:00Z",
+    "last_updated": "2026-06-01T00:00:00Z",
+    "last_verified": "2026-09-04T12:00:00Z",
+    "valid_from": "2026-06-01T00:00:00Z",
+    "tariffs": {
+      "currency": "AUD",
+      "idle_fee_per_min": 1.0,
+      "congestion_fee_per_min": 0.5,
+      "has_tou_pricing": true,
+      "tesla_members": {
+        "pricing_model": "time_of_use",
+        "rate_schedules": [
+          {
+            "name": "Off-Peak Night",
+            "rate_per_kwh": 0.38,
+            "start_time": "00:00",
+            "end_time": "08:00"
+          },
+          {
+            "name": "Peak Day",
+            "rate_per_kwh": 0.65,
+            "start_time": "08:00",
+            "end_time": "20:00"
+          },
+          {
+            "name": "Off-Peak Evening",
+            "rate_per_kwh": 0.38,
+            "start_time": "20:00",
+            "end_time": "24:00"
+          }
+        ]
+      },
+      "non_tesla": {
+        "supported": false,
+        "pricing_model": "none",
+        "rate_schedules": []
+      }
     }
   }
 }

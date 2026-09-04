@@ -1,0 +1,19 @@
+{
+  "Bunnings Gladesville": [
+    {
+      "archived_at": "2026-08-01T00:00:00Z",
+      "valid_from": "2026-01-01T00:00:00Z",
+      "valid_to": "2026-08-01T00:00:00Z",
+      "hardware": {
+        "stalls": 2,
+        "max_power_kw": 50,
+        "charger_type": "DC Fast"
+      },
+      "costs": {
+        "currency": "AUD",
+        "pricing_model": "flat",
+        "flat_per_kwh": 0.55
+      }
+    }
+  ]
+}
