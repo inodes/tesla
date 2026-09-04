@@ -456,12 +456,16 @@ class TeslaSuperchargerScraper:
                     print(f"  {C_RED}❌ Failed to sync to external drive {ext_drive}:{C_RESET} {e}")
 
 
+AUSTRALIA_FINDUS_URL = "https://www.tesla.com/en_au/findus?bounds=0.8899734762032733%2C167.78880787500003%2C-46.85259844827253%2C99.76146412500003"
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="Scrape Tesla Supercharger pricing and technical metadata directly from tesla.com using Playwright WebKit.",
         formatter_class=argparse.RawTextHelpFormatter
     )
-    parser.add_argument("--url", help="Direct Tesla Find Us URL to scrape")
+    parser.add_argument("--url", help="Direct Tesla Find Us URL to scrape (e.g. https://www.tesla.com/en_au/findus?location=19258&functionType=party)")
+    parser.add_argument("--location", "--loc", help="Tesla Find Us Location ID (e.g. 19258 for Miranda, NSW)")
     parser.add_argument("--headful", "--visible", action="store_true", help="Launch browser in visible mode (default is headless)")
     parser.add_argument("--save", "--update", action="store_true", help="Save / update scraped entry in superchargers.json")
     parser.add_argument("--sync", action="store_true", help="Sync updated registry to mounted TESLADRIVE external volume(s)")
@@ -469,8 +473,18 @@ def main():
 
     args = parser.parse_args()
 
-    default_url = "https://www.tesla.com/en_au/findus?bounds=-34.02154137973557%2C151.12711411911013%2C-34.0324782678661%2C151.11050588088992&search=Miranda%20NSW%202228&location=19258&functionType=party"
-    target_url = args.url or default_url
+    if args.url:
+        target_url = args.url
+    elif args.location:
+        target_url = f"https://www.tesla.com/en_au/findus?location={args.location}&functionType=party"
+    else:
+        print(f"\n{C_CYAN}⚡ Tesla Supercharger Scraper (Australia) ⚡{C_RESET}")
+        print(f"Base Map: {C_DIM}{AUSTRALIA_FINDUS_URL}{C_RESET}\n")
+        print(f"{C_YELLOW}Please specify a Supercharger location to scrape pricing and hardware specs:{C_RESET}")
+        print(f"  • By Location ID:   {C_GREEN}./Tools/scrape_tesla_superchargers.py --location 19258{C_RESET}")
+        print(f"  • By Direct URL:    {C_GREEN}./Tools/scrape_tesla_superchargers.py --url 'https://www.tesla.com/en_au/findus?location=19258&functionType=party'{C_RESET}")
+        print(f"  • Save to Registry: {C_GREEN}./Tools/scrape_tesla_superchargers.py --location 19258 --update --sync{C_RESET}\n")
+        return
 
     scraper = TeslaSuperchargerScraper(headless=not args.headful)
     result = scraper.scrape_location(target_url)
