@@ -66,11 +66,11 @@
               ],
               "corners": [
                 [
-                  -29.0,
-                  141.0
+                  -28.999087,
+                  140.999272
                 ],
                 [
-                  -29.0,
+                  -28.999087,
                   149.0
                 ],
                 [
@@ -86,8 +86,8 @@
                   148.2
                 ],
                 [
-                  -34.0,
-                  140.96
+                  -34.022524,
+                  141.002964
                 ]
               ],
               "safe_bounds": [
@@ -107,8 +107,8 @@
               ],
               "corners": [
                 [
-                  -34.0,
-                  140.96
+                  -34.022524,
+                  141.002964
                 ],
                 [
                   -36.8,
@@ -160,20 +160,20 @@
                   153.55
                 ],
                 [
-                  -29.0,
+                  -28.999087,
                   149.0
                 ],
                 [
-                  -29.0,
-                  141.0
+                  -28.999087,
+                  140.999272
                 ],
                 [
-                  -26.0,
-                  141.0
+                  -25.996378,
+                  140.999396
                 ],
                 [
-                  -26.0,
-                  138.0
+                  -25.996849,
+                  137.999061
                 ],
                 [
                   -16.5,
@@ -197,16 +197,24 @@
               ],
               "corners": [
                 [
-                  -26.0,
-                  129.0
+                  -25.998592,
+                  129.001847
                 ],
                 [
-                  -26.0,
-                  141.0
+                  -25.996849,
+                  137.999061
                 ],
                 [
-                  -34.0,
-                  141.0
+                  -25.996378,
+                  140.999396
+                ],
+                [
+                  -28.999087,
+                  140.999272
+                ],
+                [
+                  -34.022524,
+                  141.002964
                 ],
                 [
                   -38.06,
@@ -244,6 +252,10 @@
                 [
                   -14.5,
                   129.0
+                ],
+                [
+                  -25.998592,
+                  129.001847
                 ],
                 [
                   -31.7,
@@ -328,12 +340,12 @@
                   138.0
                 ],
                 [
-                  -26.0,
-                  138.0
+                  -25.996849,
+                  137.999061
                 ],
                 [
-                  -26.0,
-                  129.0
+                  -25.998592,
+                  129.001847
                 ],
                 [
                   -14.5,
@@ -351,8 +363,8 @@
           "borders": {
             "NSW_VIC": [
               [
-                140.96,
-                -33.98
+                141.002964,
+                -34.022524
               ],
               [
                 141.92,
@@ -405,20 +417,20 @@
             ],
             "QLD_NSW": [
               [
-                138.0,
-                -26.0
+                137.999061,
+                -25.996849
               ],
               [
-                141.0,
-                -26.0
+                140.999396,
+                -25.996378
               ],
               [
-                141.0,
-                -29.0
+                140.999272,
+                -28.999087
               ],
               [
                 149.0,
-                -29.0
+                -28.999087
               ],
               [
                 150.3,
@@ -437,6 +449,70 @@
                 -28.16
               ]
             ]
+          },
+          "official_corner_markers": {
+            "source": "https://digital.atlas.gov.au/datasets/land-borders-corner-markers/about",
+            "description": "Australian Government Land Borders - Corner Markers (survey ground truth)",
+            "markers": {
+              "MacCabe Corner": {
+                "jurisdictions": [
+                  "VIC",
+                  "NSW",
+                  "SA"
+                ],
+                "lat": -34.022524,
+                "lon": 141.002964,
+                "description": "Intersection of VIC, NSW, and SA borders near southern bank of Murray River"
+              },
+              "Cameron Corner": {
+                "jurisdictions": [
+                  "SA",
+                  "QLD",
+                  "NSW"
+                ],
+                "lat": -28.999087,
+                "lon": 140.999272,
+                "description": "Tripoint intersection of SA, QLD, and NSW (29th parallel S, 141st meridian E)"
+              },
+              "Haddon Corner": {
+                "jurisdictions": [
+                  "SA",
+                  "QLD"
+                ],
+                "lat": -25.996378,
+                "lon": 140.999396,
+                "description": "North-eastern corner step of SA with QLD (26th parallel S, 141st meridian E)"
+              },
+              "Poeppel Corner": {
+                "jurisdictions": [
+                  "NT",
+                  "SA",
+                  "QLD"
+                ],
+                "lat": -25.996849,
+                "lon": 137.999061,
+                "description": "Tripoint intersection of NT, SA, and QLD (26th parallel S, 138th meridian E)"
+              },
+              "Surveyor Generals Corner (SA/NT/WA)": {
+                "jurisdictions": [
+                  "WA",
+                  "NT",
+                  "SA"
+                ],
+                "lat": -25.998592,
+                "lon": 129.001847,
+                "description": "Tripoint intersection of WA, NT, and SA (26th parallel S, 129th meridian E)"
+              },
+              "Surveyor Generals Corner (WA/NT)": {
+                "jurisdictions": [
+                  "WA",
+                  "NT"
+                ],
+                "lat": -25.998592,
+                "lon": 129.000579,
+                "description": "Western Australia and Northern Territory corner marker"
+              }
+            }
           }
         },
         "New Zealand": {
