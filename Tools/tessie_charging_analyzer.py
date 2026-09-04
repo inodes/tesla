@@ -635,11 +635,11 @@ class TessieChargingAnalyzer:
         candidates_tessie = [
             tessie_dir,
             cfg_tessie_dir,
-            "/Volumes/TESLADRIVE 1/Tessie",
-            "/Volumes/TESLADRIVE/Tessie",
             os.path.join(self.repo_root, "Tessie"),
             os.path.join(self.script_dir, "Tessie"),
             os.path.expanduser("~/iCloud/repos/tesla/Tessie"),
+            "/Volumes/TESLADRIVE 1/Tessie",
+            "/Volumes/TESLADRIVE/Tessie",
             self.icloud_dir
         ]
         seen_tessie_dirs = set()
@@ -725,7 +725,9 @@ class TessieChargingAnalyzer:
                     with open(p, "r", encoding="utf-8") as f:
                         loaded = json.load(f)
                         if isinstance(loaded, dict):
-                            data.update(loaded)
+                            for k, v in loaded.items():
+                                if k not in data:
+                                    data[k] = v
                 except Exception:
                     pass
         return data
@@ -738,22 +740,22 @@ class TessieChargingAnalyzer:
         for sc_name, sc_data in self.superchargers.items():
             meta = sc_data.get("tesla_metadata", {})
             loc = sc_data.get("location", {})
-            short_name = meta.get("short_name") or meta.get("location_name") or sc_name
+            display_name = meta.get("general_location") or meta.get("location_name") or sc_name
             kws = meta.get("keywords") or []
             
             if saved_clean and (saved_clean.lower() == sc_name.lower() or any(k.lower() in saved_clean.lower() for k in kws)):
-                return (short_name, "Tesla Supercharger", "🔴⚡", sc_data)
+                return (display_name, "Tesla Supercharger", "🔴⚡", sc_data)
             
             sc_lat = loc.get("lat")
             sc_lon = loc.get("lon")
             sc_rad = loc.get("radius_m", 250)
             if lat is not None and lon is not None and sc_lat is not None and sc_lon is not None:
                 if haversine_distance_m(lat, lon, sc_lat, sc_lon) <= sc_rad:
-                    return (short_name, "Tesla Supercharger", "🔴⚡", sc_data)
+                    return (display_name, "Tesla Supercharger", "🔴⚡", sc_data)
             
             for kw in kws:
                 if kw.lower() in addr_clean:
-                    return (short_name, "Tesla Supercharger", "🔴⚡", sc_data)
+                    return (display_name, "Tesla Supercharger", "🔴⚡", sc_data)
 
         # 2. 3rd-Party & Home Charging Registry
         for st_name, st_data in self.charging_stations.items():
@@ -1586,7 +1588,7 @@ class TessieChargingAnalyzer:
             self.load_invoices()
             self.reconcile()
 
-        widths = [4, 48, 78, 14, 18, 16]
+        widths = [4, 48, 80, 14, 18, 16]
         box_w = sum(widths) + len(widths) + 1
 
         print()
@@ -1653,16 +1655,27 @@ class TessieChargingAnalyzer:
             else:
                 dt_str = datetime.now().strftime("%Y%m%d0000")
 
-            # Clean location string
-            loc_str = ""
-            if matched_session and matched_session.get("place_name"):
-                loc_str = matched_session["place_name"]
-            elif inv_loc:
-                loc_str = inv_loc
+            # Clean location string / short_name
+            clean_loc = ""
+            reg_obj = matched_session.get("registry_obj") if matched_session else None
+            if reg_obj and isinstance(reg_obj, dict):
+                clean_loc = reg_obj.get("tesla_metadata", {}).get("short_name", "")
 
-            clean_loc = loc_str.split(",")[0].strip()
-            clean_loc = clean_loc.split(" - ")[0].strip()
-            clean_loc = re.sub(r"[^A-Za-z0-9]+", "_", clean_loc).strip("_")
+            if not clean_loc and inv_loc:
+                inv_clean_lower = inv_loc.lower().strip()
+                for sc_k, sc_v in self.superchargers.items():
+                    sc_meta = sc_v.get("tesla_metadata", {})
+                    sc_name_clean = sc_k.lower().strip()
+                    kws = [k.lower() for k in sc_meta.get("keywords", [])]
+                    if inv_clean_lower == sc_name_clean or any(k in inv_clean_lower for k in kws) or sc_name_clean in inv_clean_lower:
+                        clean_loc = sc_meta.get("short_name", "")
+                        break
+
+            if not clean_loc:
+                loc_source = inv_loc or (matched_session.get("place_name") if matched_session else "")
+                clean_loc = re.sub(r"[^A-Za-z0-9]+", "_", loc_source).strip("_")
+                clean_loc = re.sub(r"_+", "_", clean_loc)
+
             if not clean_loc:
                 clean_loc = "Supercharger"
 
@@ -1698,7 +1711,7 @@ class TessieChargingAnalyzer:
             })
 
         # Print preview table
-        widths = [4, 48, 70, 14, 18, 16]
+        widths = [4, 48, 80, 14, 18, 16]
         top_b = "┌" + "┬".join("─" * w for w in widths) + "┐"
         print(top_b)
         h = "│" + "│".join([

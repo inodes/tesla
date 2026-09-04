@@ -2,8 +2,9 @@
   "Macquarie, NSW": {
     "tesla_metadata": {
       "name": "Tesla Supercharger - Macquarie, NSW",
+      "general_location": "Macquarie Centre",
       "location_name": "Macquarie Centre",
-      "short_name": "Macquarie Centre",
+      "short_name": "Macquarie_NSW",
       "type": "supercharger",
       "keywords": [
         "Banda Road",
@@ -103,13 +104,18 @@
   "West Gosford, NSW": {
     "tesla_metadata": {
       "name": "Tesla Supercharger - West Gosford, NSW",
+      "general_location": "West Gosford",
       "location_name": "West Gosford",
-      "short_name": "West Gosford",
+      "short_name": "West_Gosford_NSW",
       "type": "supercharger",
       "keywords": [
         "3 Oak Haven Close",
         "Oak Haven Close",
-        "West Gosford"
+        "West Gosford",
+        "Gosford, NSW",
+        "Gosford",
+        "392 Manns Rd",
+        "Manns Rd 392"
       ]
     },
     "location": {
@@ -200,8 +206,9 @@
   "Campbelltown, NSW": {
     "tesla_metadata": {
       "name": "Tesla Supercharger - Campbelltown, NSW",
+      "general_location": "Campbelltown Mall",
       "location_name": "Campbelltown Mall",
-      "short_name": "Campbelltown",
+      "short_name": "Campbelltown_NSW",
       "type": "supercharger",
       "keywords": [
         "271 Queen Street",
@@ -269,16 +276,20 @@
       "parking": true
     }
   },
-  "Miranda, NSW": {
+  "Miranda, NSW - Parraweena Rd": {
     "tesla_metadata": {
-      "name": "Tesla Supercharger - Miranda, NSW",
-      "location_name": "HomeCo Miranda",
-      "short_name": "Miranda",
+      "name": "Tesla Supercharger - Miranda, NSW - Parraweena Rd",
+      "general_location": "Tesla Center",
+      "location_name": "Tesla Center",
+      "short_name": "Miranda_NSW_Parraweena_Rd",
       "type": "supercharger",
       "keywords": [
         "100-104 Parraweena",
         "Parraweena Road",
+        "Parraweena Rd",
+        "Tesla Center",
         "HomeCo Miranda",
+        "Miranda, NSW",
         "Miranda"
       ]
     },
@@ -344,8 +355,9 @@
   "Broadway, NSW": {
     "tesla_metadata": {
       "name": "Tesla Supercharger - Broadway, NSW",
+      "general_location": "Broadway Sydney",
       "location_name": "Broadway Sydney",
-      "short_name": "Broadway Sydney",
+      "short_name": "Broadway_NSW",
       "type": "supercharger",
       "keywords": [
         "1 Bay Street",
@@ -408,8 +420,9 @@
   "Kirrawee, NSW": {
     "tesla_metadata": {
       "name": "Tesla Supercharger - Kirrawee, NSW",
+      "general_location": "South Village Kirrawee",
       "location_name": "South Village Kirrawee",
-      "short_name": "Kirrawee",
+      "short_name": "Kirrawee_NSW",
       "type": "supercharger",
       "keywords": [
         "580 Princes Highway",
@@ -471,8 +484,9 @@
   "St Leonards, NSW": {
     "tesla_metadata": {
       "name": "Tesla Supercharger - St Leonards, NSW",
+      "general_location": "Mall 88 St Leonards",
       "location_name": "Mall 88 St Leonards",
-      "short_name": "St Leonards",
+      "short_name": "St_Leonards_NSW",
       "type": "supercharger",
       "keywords": [
         "88 Christie Street",
