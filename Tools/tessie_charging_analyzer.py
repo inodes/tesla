@@ -3,6 +3,8 @@
 Tessie Charging & Supercharger Reconciliation Engine
 =====================================================
 - Multi-Registry Place & Charger Resolver (superchargers.json, charging.json, places.json)
+- Config File Support (config.json / Tessie/config.json / ~/.config/tesla/config.json)
+- Custom Local Invoices Directory (Kept private outside repo)
 - Tesla Supercharger PDF & CSV Tax Invoice Parser (Zero external dependencies)
 - 3rd-Party Fast/AC Charging Parser & Network Identifier (Chargefox, Evie, BP Pulse, Jolt, etc.)
 - Dispenser Meter vs Battery BMS Charging Efficiency Loss Calculator
@@ -45,7 +47,7 @@ except Exception:
     def char_width(c):
         if c in ('\ufe0f', '\ufe0e'):
             return 0
-        if c in ('🔴', '⚡', '🔌', '🏠', '🅿️', '✅', '⚠️', '❌', '❓', '📄', '💾', '📊', '🚗', '🕒', '📍', '💰'):
+        if c in ('🔴', '⚡', '🔌', '🏠', '🅿️', '✅', '⚠️', '❌', '❓', '📄', '💾', '📊', '🚗', '🕒', '📍', '💰', '⚙️'):
             return 2
         w = unicodedata.east_asian_width(c)
         if w in ('W', 'F'):
@@ -442,16 +444,28 @@ class TeslaInvoiceParser:
 # -----------------------------------------------------------------------------
 
 class TessieChargingAnalyzer:
-    def __init__(self, tessie_dir=None, invoices_dir=None, tolerance_mins=45, tolerance_kwh=5.0):
+    def __init__(self, config_path=None, tessie_dir=None, invoices_dir=None, tolerance_mins=None, tolerance_kwh=None):
         self.script_dir = os.path.dirname(os.path.abspath(__file__))
         self.repo_root = os.path.dirname(self.script_dir)
         self.icloud_dir = os.path.expanduser("~/Library/Mobile Documents/com~apple~CloudDocs/Tesla/Tessie")
-        self.tolerance_mins = tolerance_mins
-        self.tolerance_kwh = tolerance_kwh
         
+        # 1. Load configuration from config.json if available
+        self.config_file = None
+        self.config = self.load_config(config_path)
+
+        cfg_reconcile = self.config.get("reconciliation", {}) if isinstance(self.config.get("reconciliation"), dict) else {}
+        self.tolerance_mins = tolerance_mins if tolerance_mins is not None else cfg_reconcile.get("tolerance_mins", 45)
+        self.tolerance_kwh = tolerance_kwh if tolerance_kwh is not None else cfg_reconcile.get("tolerance_kwh", 5.0)
+
+        # 2. Discover Tessie directories (CLI > config.json > auto-discovery)
+        cfg_tessie_dir = self.config.get("tessie_directory") or self.config.get("tessie_dir")
+        if cfg_tessie_dir:
+            cfg_tessie_dir = os.path.expanduser(cfg_tessie_dir)
+
         self.tessie_dirs = []
         candidates_tessie = [
             tessie_dir,
+            cfg_tessie_dir,
             "/Volumes/TESLADRIVE 1/Tessie",
             "/Volumes/TESLADRIVE/Tessie",
             os.path.join(self.repo_root, "Tessie"),
@@ -459,29 +473,45 @@ class TessieChargingAnalyzer:
             os.path.expanduser("~/iCloud/repos/tesla/Tessie"),
             self.icloud_dir
         ]
+        seen_tessie_dirs = set()
         for d in candidates_tessie:
             try:
-                if d and os.path.isdir(d) and d not in self.tessie_dirs:
-                    self.tessie_dirs.append(d)
+                if d and os.path.isdir(d):
+                    real_d = os.path.abspath(os.path.realpath(d))
+                    if real_d not in seen_tessie_dirs:
+                        seen_tessie_dirs.add(real_d)
+                        self.tessie_dirs.append(real_d)
             except Exception:
                 pass
+
+        # 3. Discover Invoices directories (CLI > config.json > local folders)
+        cfg_inv_dir = self.config.get("invoices_directory") or self.config.get("invoices_dir")
+        if cfg_inv_dir:
+            cfg_inv_dir = os.path.expanduser(cfg_inv_dir)
 
         self.invoice_dirs = []
         candidates_invoices = [
             invoices_dir,
+            cfg_inv_dir,
             os.path.join(self.repo_root, "Tessie", "invoices"),
             "/Volumes/TESLADRIVE 1/Tessie/invoices",
             os.path.join(self.icloud_dir, "invoices"),
+            os.path.expanduser("~/Documents/Tesla/Invoices"),
             os.path.expanduser("~/Downloads/Tesla Invoices"),
             os.path.expanduser("~/Downloads/Invoices")
         ]
+        seen_inv_dirs = set()
         for d in candidates_invoices:
             try:
-                if d and os.path.isdir(d) and d not in self.invoice_dirs:
-                    self.invoice_dirs.append(d)
+                if d and os.path.isdir(d):
+                    real_d = os.path.abspath(os.path.realpath(d))
+                    if real_d not in seen_inv_dirs:
+                        seen_inv_dirs.add(real_d)
+                        self.invoice_dirs.append(real_d)
             except Exception:
                 pass
 
+        # 4. Load Registries
         self.superchargers = self.load_json_registry("superchargers.json")
         self.charging_stations = self.load_json_registry("charging.json")
         self.places = self.load_json_registry("places.json")
@@ -490,6 +520,27 @@ class TessieChargingAnalyzer:
         self.invoices = []
         self.reconciled_sessions = []
         self._loaded = False
+
+    def load_config(self, explicit_config_path=None):
+        config_candidates = [
+            explicit_config_path,
+            os.path.join(self.repo_root, "Tessie", "config.json"),
+            os.path.join(self.repo_root, "config.json"),
+            os.path.expanduser("~/.config/tesla/config.json"),
+            os.path.join(self.icloud_dir, "config.json"),
+            "/Volumes/TESLADRIVE 1/Tessie/config.json"
+        ]
+        for cp in config_candidates:
+            if cp and os.path.isfile(cp):
+                try:
+                    with open(cp, "r", encoding="utf-8") as f:
+                        cfg = json.load(f)
+                        if isinstance(cfg, dict):
+                            self.config_file = os.path.abspath(cp)
+                            return cfg
+                except Exception:
+                    pass
+        return {}
 
     def load_json_registry(self, filename):
         data = {}
@@ -755,7 +806,18 @@ class TessieChargingAnalyzer:
                         elif isinstance(res, dict):
                             if res.get("date") or res.get("energy_kwh") or res.get("total_cost"):
                                 invoices.append(res)
-        self.invoices = invoices
+        
+        # Deduplicate invoices
+        seen_invoices = set()
+        unique_invoices = []
+        for inv in invoices:
+            inv_key = (inv.get("invoice_number"), inv.get("date"), inv.get("energy_kwh"), inv.get("total_cost"))
+            if inv_key in seen_invoices:
+                continue
+            seen_invoices.add(inv_key)
+            unique_invoices.append(inv)
+
+        self.invoices = unique_invoices
         return self.invoices
 
     def match_location(self, inv_loc, inv_net, charge):
@@ -1009,8 +1071,14 @@ class TessieChargingAnalyzer:
         print(f"│{pad_display(kpi_l5, box_w - 2)}│")
 
         fast_status_color = C_GREEN if (reconciled_fast == total_fast_count and total_fast_count > 0) else C_YELLOW
-        kpi_l6 = f"  {C_BOLD}Invoice Reconciliation:{C_RESET} {fast_status_color}{reconciled_fast}/{total_fast_count} Fast Sessions Reconciled{C_RESET} ({len(self.invoices)} Total Invoices Loaded)"
+        inv_src_info = f"({len(self.invoices)} Invoices Loaded from {len(self.invoice_dirs)} directories)"
+        kpi_l6 = f"  {C_BOLD}Invoice Reconciliation:{C_RESET} {fast_status_color}{reconciled_fast}/{total_fast_count} Fast Sessions Reconciled{C_RESET} {inv_src_info}"
         print(f"│{pad_display(kpi_l6, box_w - 2)}│")
+
+        if self.config_file:
+            inv_dir_display = self.config.get("invoices_directory") or (self.invoice_dirs[0] if self.invoice_dirs else "None")
+            kpi_l7 = f"  {C_BOLD}Config Loaded:{C_RESET} {self.config_file} (Invoices: {inv_dir_display})"
+            print(f"│{pad_display(kpi_l7, box_w - 2)}│")
         
         print(f"└{'─' * (box_w - 2)}┘")
         print()
@@ -1217,7 +1285,7 @@ class TessieChargingAnalyzer:
             l11 = f"    • {C_BOLD}Cost Reconciliation Delta:{C_RESET} {d_color}${delta_cost:+.2f} AUD{C_RESET}"
             print(f"│{pad_display(l11, box_w - 2)}│")
         else:
-            l10 = f"    • {C_BOLD}Tax Invoice / Receipt:{C_RESET}     {C_YELLOW}No matching invoice file found in Tessie/invoices/{C_RESET}"
+            l10 = f"    • {C_BOLD}Tax Invoice / Receipt:{C_RESET}     {C_YELLOW}No matching invoice file found in configured invoices directory{C_RESET}"
             print(f"│{pad_display(l10, box_w - 2)}│")
 
         if s["expected_rate"] is not None:
@@ -1273,15 +1341,17 @@ class TessieChargingAnalyzer:
                 print(f"     💰 Rates (AUD):  ${costs.get('flat_per_kwh', 0):.2f}/kWh flat")
             print()
 
-    def export_reconciliation(self, filepath):
+    def export_reconciliation(self, filepath, filtered_sessions=None):
         if not self.reconciled_sessions:
             self.reconcile()
+
+        sessions = filtered_sessions if filtered_sessions is not None else self.reconciled_sessions
 
         ext = os.path.splitext(filepath)[1].lower()
         if ext == ".json":
             with open(filepath, "w", encoding="utf-8") as f:
                 json_data = []
-                for s in self.reconciled_sessions:
+                for s in sessions:
                     item = dict(s)
                     item["datetime"] = s["datetime"].isoformat() if s["datetime"] else None
                     item.pop("raw_charge", None)
@@ -1298,7 +1368,7 @@ class TessieChargingAnalyzer:
                 ]
                 writer = csv.DictWriter(f, fieldnames=fieldnames)
                 writer.writeheader()
-                for s in self.reconciled_sessions:
+                for s in sessions:
                     writer.writerow({
                         "Charge Index": s["charge_index"] or "",
                         "Started At": s["datetime_str"],
@@ -1318,10 +1388,10 @@ class TessieChargingAnalyzer:
                         "Invoice Number": s["invoice_number"] or "",
                         "Status": s["status"]
                     })
-        print(f"{C_GREEN}Successfully exported {len(self.reconciled_sessions)} reconciled records to:{C_RESET} {filepath}")
+        print(f"{C_GREEN}Successfully exported {len(sessions)} reconciled records to:{C_RESET} {filepath}")
 
     def sync_to_external_drive(self):
-        ext_drive = "/Volumes/TESLADRIVE 1"
+        ext_drive = self.config.get("external_drive_path") or "/Volumes/TESLADRIVE 1"
         if not os.path.isdir(ext_drive):
             print(f"{C_YELLOW}External drive not mounted at {ext_drive}. Skipping sync.{C_RESET}")
             return
@@ -1341,7 +1411,7 @@ class TessieChargingAnalyzer:
         except Exception as e:
             print(f"  {C_RED}❌ Failed to copy script:{C_RESET} {e}")
 
-        for fname in ["superchargers.json", "charging.json", "places.json"]:
+        for fname in ["superchargers.json", "charging.json", "places.json", "config.example.json"]:
             src_f = os.path.join(self.repo_root, "Tessie", fname)
             if os.path.isfile(src_f):
                 dst_f = os.path.join(ext_drive, "Tessie", fname)
@@ -1365,6 +1435,7 @@ def main():
         description="Tessie Charging & Supercharger Reconciliation Engine",
         formatter_class=argparse.RawDescriptionHelpFormatter
     )
+    parser.add_argument("--config", "-c", help="Path to custom config.json file")
     parser.add_argument("--tessie-dir", "-d", help="Path to Tessie directory containing CSVs and JSONs")
     parser.add_argument("--invoices-dir", "-i", help="Path to directory containing invoice PDFs / CSV receipts")
     
@@ -1379,12 +1450,13 @@ def main():
     parser.add_argument("--list-chargers", action="store_true", help="List all registered Superchargers and 3rd-Party charging stations")
     parser.add_argument("--consolidate", action="store_true", help="Consolidate all charges into charges_master.csv")
     parser.add_argument("--export", help="Export reconciled results to a CSV or JSON file")
-    parser.add_argument("--sync", action="store_true", help="Sync tools and registries to /Volumes/TESLADRIVE 1/")
-    parser.add_argument("--tolerance-mins", type=int, default=45, help="Invoice matching time tolerance in minutes (default: 45)")
+    parser.add_argument("--sync", action="store_true", help="Sync tools and registries to external drive")
+    parser.add_argument("--tolerance-mins", type=int, default=None, help="Invoice matching time tolerance in minutes (default: 45 or config)")
 
     args = parser.parse_args()
 
     analyzer = TessieChargingAnalyzer(
+        config_path=args.config,
         tessie_dir=args.tessie_dir,
         invoices_dir=args.invoices_dir,
         tolerance_mins=args.tolerance_mins
@@ -1434,7 +1506,7 @@ def main():
     analyzer.print_sessions_table(filtered)
 
     if args.export:
-        analyzer.export_reconciliation(args.export)
+        analyzer.export_reconciliation(args.export, filtered)
 
 
 if __name__ == "__main__":

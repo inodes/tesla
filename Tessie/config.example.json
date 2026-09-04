@@ -1,0 +1,14 @@
+{
+  "_comment": "Tesla Tools Suite Configuration - Copy this file to 'config.json' or 'Tessie/config.json' and customize your local paths.",
+  "invoices_directory": "~/Documents/Tesla/Invoices",
+  "tessie_directory": "~/Library/Mobile Documents/com~apple~CloudDocs/Tesla/Tessie",
+  "external_drive_path": "/Volumes/TESLADRIVE 1",
+  "reconciliation": {
+    "tolerance_mins": 45,
+    "tolerance_kwh": 5.0,
+    "auto_consolidate": false
+  },
+  "tariffs": {
+    "default_currency": "AUD"
+  }
+}
