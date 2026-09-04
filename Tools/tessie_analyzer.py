@@ -14,11 +14,13 @@ Tessie Drive Log Analyzer & Master Consolidator
 
 import os
 import sys
+import re
 import csv
 import glob
 import json
 import math
 import shutil
+import subprocess
 import argparse
 import unicodedata
 from datetime import datetime, timedelta
@@ -118,7 +120,7 @@ def clean_event_reason(reason):
     for p in prefixes:
         if r.startswith(p):
             r = r[len(p):]
-    return r
+    return r.replace("_", " ")
 
 def format_footage_tag(cats):
     if not cats:
@@ -437,6 +439,7 @@ class TessieAnalyzer:
         if self._indexed:
             return
         self.footage_db = []
+        seen_rel = set()
         for tc in self.teslacam_dirs:
             try:
                 if not os.path.isdir(tc):
@@ -454,6 +457,10 @@ class TessieAnalyzer:
 
                     for f in files:
                         if not f.startswith("._") and f.endswith(".mp4") and f != "event.mp4":
+                            rel_key = os.path.normpath(os.path.join(rel, f))
+                            if rel_key in seen_rel:
+                                continue
+                            seen_rel.add(rel_key)
                             base = f[:19]
                             try:
                                 dt = datetime.strptime(base, "%Y-%m-%d_%H-%M-%S")
@@ -772,27 +779,323 @@ def drill_down_day(day_str, day_trips, analyzer):
         except (KeyboardInterrupt, EOFError):
             break
 
-def display_timeline_event_details(event, analyzer):
-    """Level 3 for Timeline: Detailed listing of all footage within a specific event."""
-    t_start = event["start_dt"]
-    clips = event["clips"]
+def parse_selection_indices(input_str, max_idx):
+    """Parses selections like '1,5,8', '6-9', '3', 'all', 'a' into a sorted list of unique 1-based indices."""
+    if not input_str:
+        return []
+    s = input_str.strip().lower()
+    if s in ("all", "a", "*"):
+        return list(range(1, max_idx + 1))
     
-    print(f"\n==========================================================================")
-    print(f" 📹 TIMELINE FOOTAGE LISTING: {t_start.strftime('%a %d %b %Y')} ({event['time_str']})")
-    print(f"    Activity : {event['activity']}")
-    print(f"    Clips    : Recent: {event['recent_mins']}m | Saved: {event['saved_mins']}m | Sentry: {event['sentry_mins']}m")
-    print(f"==========================================================================")
-    
+    selected = set()
+    parts = s.split(",")
+    for part in parts:
+        part = part.strip()
+        if not part:
+            continue
+        if "-" in part:
+            sub = part.split("-")
+            if len(sub) == 2 and sub[0].strip().isdigit() and sub[1].strip().isdigit():
+                start_i = int(sub[0].strip())
+                end_i = int(sub[1].strip())
+                if start_i > end_i:
+                    start_i, end_i = end_i, start_i
+                for idx in range(start_i, end_i + 1):
+                    if 1 <= idx <= max_idx:
+                        selected.add(idx)
+        elif part.isdigit():
+            idx = int(part)
+            if 1 <= idx <= max_idx:
+                selected.add(idx)
+    return sorted(list(selected))
+
+def make_event_slug(ev):
+    """Generates a clean, filesystem-safe folder name for exporting an event's footage."""
+    dt_str = ev["start_dt"].strftime("%Y-%m-%d_%H-%M")
+    if ev.get("type") == "drive" and ev.get("drive"):
+        d = ev["drive"]
+        raw = f"{dt_str}_Drive_{d['start_place']}_to_{d['end_place']}"
+    else:
+        loc = ev.get("location", "Parked")
+        raw = f"{dt_str}_Parked_{loc}"
+    slug = re.sub(r"[^a-zA-Z0-9_-]", "_", raw)
+    slug = re.sub(r"_+", "_", slug).strip("_")
+    return slug
+
+def build_timeline_footage_packages(event):
+    """
+    Groups raw video clips in an event into distinct selectable packages:
+    - Saved / Sentry event folders (with event.json metadata, reason, trigger time)
+    - Recent 1-minute video blocks (grouped by timestamp dt)
+    """
+    clips = event.get("clips", [])
     if not clips:
-        print("\n⚠️ No local camera footage found for this event window.")
-        print("--------------------------------------------------------------------------")
-        return
+        return []
         
-    render_footage_listing(clips)
+    seen_rel = set()
+    unique_clips = []
+    for c in clips:
+        tc_root = c["folder"].split("TeslaCam")[0] + "TeslaCam" if "TeslaCam" in c["folder"] else c["folder"]
+        rel_tc = os.path.relpath(c["path"], tc_root)
+        if rel_tc not in seen_rel:
+            seen_rel.add(rel_tc)
+            unique_clips.append(c)
+
+    packages = []
+
+    # 1. Saved and Sentry folders
+    by_folder = defaultdict(list)
+    for c in unique_clips:
+        if c["cat"] in ("Saved", "Sentry"):
+            by_folder[(c["cat"], c["folder"])].append(c)
+
+    for (cat, folder), f_clips in sorted(by_folder.items()):
+        ev_json = os.path.join(folder, "event.json")
+        reason = "Event"
+        event_ts_str = None
+        event_dt = None
+        if os.path.exists(ev_json):
+            try:
+                with open(ev_json) as fp:
+                    d = json.load(fp)
+                    raw_reason = d.get("reason", "event")
+                    reason = clean_event_reason(raw_reason).title()
+                    ts = d.get("timestamp")
+                    if ts:
+                        event_dt = datetime.fromisoformat(ts.split("+")[0].split(".")[0])
+                        event_ts_str = event_dt.strftime("%H:%M:%S")
+            except Exception:
+                pass
+        unique_dts = sorted(list(set(c["dt"] for c in f_clips)))
+        if not event_dt and unique_dts:
+            event_dt = unique_dts[0]
+            event_ts_str = event_dt.strftime("%H:%M:%S")
+        
+        unique_cams = set(c["cam"] for c in f_clips)
+        tot_size = sum(os.path.getsize(c["path"]) for c in f_clips if os.path.exists(c["path"]))
+        folder_base = os.path.basename(folder)
+        dur_m = len(unique_dts)
+        
+        all_files = []
+        if os.path.exists(folder):
+            for fname in os.listdir(folder):
+                if not fname.startswith("."):
+                    all_files.append(os.path.join(folder, fname))
+        
+        packages.append({
+            "pkg_idx": None,
+            "dt": event_dt,
+            "cat": cat,
+            "time_str": event_ts_str or (unique_dts[0].strftime("%H:%M:%S") if unique_dts else "--:--:--"),
+            "reason": f"{reason} ({dur_m}m)",
+            "cams_count": len(unique_cams),
+            "files_count": len(f_clips),
+            "tot_size": tot_size,
+            "rel_path": f"{cat}Clips/{folder_base}/",
+            "folder": folder,
+            "files": all_files or [c["path"] for c in f_clips],
+            "is_folder": True
+        })
+
+    # 2. Recent clips (1-minute timestamp groups)
+    recent_by_dt = defaultdict(list)
+    for c in unique_clips:
+        if c["cat"] == "Recent":
+            recent_by_dt[c["dt"]].append(c)
+
+    for dt, r_clips in sorted(recent_by_dt.items()):
+        unique_cams = set(c["cam"] for c in r_clips)
+        tot_size = sum(os.path.getsize(c["path"]) for c in r_clips if os.path.exists(c["path"]))
+        ts_str = dt.strftime("%H:%M:%S")
+        f_pattern = dt.strftime("%Y-%m-%d_%H-%M-%S-*.mp4")
+        packages.append({
+            "pkg_idx": None,
+            "dt": dt,
+            "cat": "Recent",
+            "time_str": ts_str,
+            "reason": "Continuous Loop",
+            "cams_count": len(unique_cams),
+            "files_count": len(r_clips),
+            "tot_size": tot_size,
+            "rel_path": f"RecentClips/{f_pattern}",
+            "folder": r_clips[0]["folder"],
+            "files": [c["path"] for c in r_clips],
+            "is_folder": False
+        })
+
+    packages.sort(key=lambda x: (x["dt"] if x["dt"] else datetime.min))
+    for i, p in enumerate(packages, 1):
+        p["pkg_idx"] = i
+    return packages
+
+def render_timeline_footage_table(event, analyzer):
+    """Renders a structured Unicode box table of footage packages for an event."""
+    packages = build_timeline_footage_packages(event)
+    w_idx = 5
+    w_time = 10
+    w_type = 11
+    w_reason = 24
+    w_files = 20
+    w_path = 41
+    base_inner = w_idx + w_time + w_type + w_reason + w_files + w_path + 5
+    
+    t_start = event["start_dt"]
+    title = f" 📹 Event Footage: {t_start.strftime('%a %d %b %Y')} ({event['time_str']}) — {event['activity']}"
+    
+    t_len = display_len(title)
+    if t_len >= base_inner:
+        w_path += (t_len - base_inner) + 3
+    total_inner = w_idx + w_time + w_type + w_reason + w_files + w_path + 5
+    
+    if not packages:
+        print(f"┌{'─'*total_inner}┐")
+        print(f"│{pad_display(title, total_inner, 'left')}│")
+        print(f"├{'─'*total_inner}┤")
+        print(f"│{pad_display(' ⚠️  No local camera footage found on archive drives for this event.', total_inner, 'left')}│")
+        print(f"└{'─'*total_inner}┘")
+        return packages
+
+    h_idx = f" {'#':^3} "
+    h_time = f" {'Time':^8} "
+    h_type = pad_display(" Type", w_type, "left")
+    h_reason = pad_display(" Trigger / Reason", w_reason, "left")
+    h_files = pad_display(" Cameras & Files", w_files, "left")
+    h_path = pad_display(" TeslaCam Path / Target", w_path, "left")
+
+    print(f"┌{'─'*total_inner}┐")
+    print(f"│{pad_display(title, total_inner, 'left')}│")
+    print(f"├{'─'*w_idx}┬{'─'*w_time}┬{'─'*w_type}┬{'─'*w_reason}┬{'─'*w_files}┬{'─'*w_path}┤")
+    print(f"│{h_idx}│{h_time}│{h_type}│{h_reason}│{h_files}│{h_path}│")
+    print(f"├{'─'*w_idx}┼{'─'*w_time}┼{'─'*w_type}┼{'─'*w_reason}┼{'─'*w_files}┼{'─'*w_path}┤")
+
+    total_files = sum(p["files_count"] for p in packages)
+    total_bytes = sum(p["tot_size"] for p in packages)
+    total_mb = total_bytes / (1024 * 1024)
+    total_size_str = f"{total_mb/1024:.1f} GB" if total_mb >= 1024 else f"{total_mb:.0f} MB"
+
+    for p in packages:
+        icon = "🔄" if p["cat"] == "Recent" else ("💾" if p["cat"] == "Saved" else ("🔴" if p["cat"] == "Sentry" else "📁"))
+        type_label = f" {icon} {p['cat']}"
+        size_mb = p["tot_size"] / (1024 * 1024)
+        size_str = f"{size_mb/1024:.1f} GB" if size_mb >= 1024 else f"{size_mb:.0f} MB"
+        files_label = f" {p['files_count']} files ({size_str})"
+        
+        c_idx = f" [{p['pkg_idx']:>2}]"
+        c_time = f" {p['time_str']} "
+        c_type = pad_display(type_label, w_type, "left")
+        c_reason = pad_display(" " + p["reason"], w_reason, "left")
+        c_files = pad_display(files_label, w_files, "left")
+        c_path = pad_display(" " + p["rel_path"], w_path, "left")
+        
+        print(f"│{c_idx}│{c_time}│{c_type}│{c_reason}│{c_files}│{c_path}│")
+
+    print(f"├{'─'*w_idx}┴{'─'*w_time}┴{'─'*w_type}┴{'─'*w_reason}┴{'─'*w_files}┴{'─'*w_path}┤")
+    sum_msg = f" Summary: {len(packages)} footage items ({total_files} video files, {total_size_str})"
+    print(f"│{pad_display(sum_msg, total_inner, 'left')}│")
+    print(f"└{'─'*total_inner}┘")
+    return packages
+
+def display_timeline_event_details(event, analyzer):
+    """Level 3 for Timeline: Detailed listing & export menu for footage within a specific event."""
+    while True:
+        packages = render_timeline_footage_table(event, analyzer)
+        if not packages:
+            if not sys.stdin.isatty():
+                break
+            try:
+                c = input("Navigation: [b]ack, [q]uit: ").strip().lower()
+                if c == "q":
+                    sys.exit(0)
+                break
+            except (KeyboardInterrupt, EOFError):
+                break
+
+        if not sys.stdin.isatty():
+            break
+
+        try:
+            prompt_str = f"Select Footage [e.g. 1,5,8 or 6-9, 'all'] to copy, [o]pen folder, [b]ack, [q]uit: "
+            choice = input(prompt_str).strip().lower()
+            if choice == "q":
+                sys.exit(0)
+            elif choice in ["b", "back"]:
+                break
+            elif choice in ["o", "open"]:
+                folder_to_open = packages[0]["folder"] if packages else None
+                if folder_to_open and os.path.exists(folder_to_open):
+                    if sys.platform == "darwin":
+                        subprocess.run(["open", folder_to_open])
+                    print(f"📂 Opened in Finder: {folder_to_open}\n")
+                else:
+                    print("⚠️ Folder not accessible.\n")
+                continue
+
+            selected_indices = parse_selection_indices(choice, len(packages))
+            if not selected_indices:
+                print(f"Invalid choice. Please enter item numbers (e.g. 1, 6-9, 'all'), [o]pen, [b]ack, or [q]uit.\n")
+                continue
+
+            selected_pkgs = [p for p in packages if p["pkg_idx"] in selected_indices]
+            total_files = sum(p["files_count"] for p in selected_pkgs)
+            total_bytes = sum(p["tot_size"] for p in selected_pkgs)
+            total_mb = total_bytes / (1024 * 1024)
+            size_str = f"{total_mb/1024:.1f} GB" if total_mb >= 1024 else f"{total_mb:.0f} MB"
+
+            slug = make_event_slug(event)
+            default_dest = os.path.expanduser(f"~/Downloads/TeslaCam/{slug}")
             
-    print(f"\n💡 Quick Tips:")
-    print(f"   • Open first folder in Finder: open \"{clips[0]['folder']}\"")
-    print(f"--------------------------------------------------------------------------")
+            dest_input = input(f"📁 Export destination [Enter for '{default_dest}']: ").strip()
+            dest_dir = os.path.abspath(os.path.expanduser(dest_input)) if dest_input else default_dest
+            
+            os.makedirs(dest_dir, exist_ok=True)
+            print(f"\n📦 Exporting {len(selected_pkgs)} items ({total_files} files, {size_str}) to:\n   {dest_dir}")
+            
+            copied_count = 0
+            copied_bytes = 0
+            for p in selected_pkgs:
+                if p.get("is_folder"):
+                    folder_base = os.path.basename(p["folder"])
+                    sub_dest = os.path.join(dest_dir, f"{p['cat']}Clips", folder_base)
+                    os.makedirs(sub_dest, exist_ok=True)
+                    for f_src in p["files"]:
+                        if os.path.isfile(f_src):
+                            f_name = os.path.basename(f_src)
+                            dst_file = os.path.join(sub_dest, f_name)
+                            try:
+                                shutil.copy2(f_src, dst_file)
+                                copied_count += 1
+                                copied_bytes += os.path.getsize(dst_file)
+                            except Exception as e:
+                                print(f"   ⚠️ Error copying {f_name}: {e}")
+                else:
+                    sub_dest = os.path.join(dest_dir, "RecentClips")
+                    os.makedirs(sub_dest, exist_ok=True)
+                    for f_src in p["files"]:
+                        if os.path.isfile(f_src):
+                            f_name = os.path.basename(f_src)
+                            dst_file = os.path.join(sub_dest, f_name)
+                            try:
+                                shutil.copy2(f_src, dst_file)
+                                copied_count += 1
+                                copied_bytes += os.path.getsize(dst_file)
+                            except Exception as e:
+                                print(f"   ⚠️ Error copying {f_name}: {e}")
+
+            mb_done = copied_bytes / (1024 * 1024)
+            done_str = f"{mb_done/1024:.1f} GB" if mb_done >= 1024 else f"{mb_done:.0f} MB"
+            print(f"\n✔ Successfully exported {copied_count} files ({done_str}) to:\n   {dest_dir}\n")
+
+            if sys.platform == "darwin":
+                try:
+                    open_resp = input("🔍 Open exported folder in Finder? [Y/n]: ").strip().lower()
+                    if open_resp in ("", "y", "yes"):
+                        subprocess.run(["open", dest_dir])
+                        print(f"📂 Opened in Finder: {dest_dir}\n")
+                except (KeyboardInterrupt, EOFError):
+                    pass
+
+        except (KeyboardInterrupt, EOFError):
+            break
 
 def display_timeline(target_date, analyzer, compact=False):
     """24-Hour Event Timeline: Vehicle state & footage breakdown across parked/driving events."""
