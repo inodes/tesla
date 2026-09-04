@@ -362,16 +362,25 @@ class TessieAnalyzer:
         return parts[0].strip() if parts else address
 
     def consolidate_drives(self, master_dir=None):
-        external_tessie = find_mounted_tesla_volumes("Tessie")
-        dest_dir = master_dir or (
-            external_tessie[0] if external_tessie
-            else os.path.expanduser("~/iCloud/repos/tesla/Tessie")
-        )
-        try:
-            os.makedirs(dest_dir, exist_ok=True)
-        except Exception:
-            pass
-        master_file = os.path.join(dest_dir, "drives_master.csv")
+        dest_dirs = []
+        if master_dir:
+            dest_dirs.append(master_dir)
+        else:
+            if os.path.isdir(self.icloud_dir):
+                dest_dirs.append(self.icloud_dir)
+            for ext in find_mounted_tesla_volumes("Tessie"):
+                if ext not in dest_dirs:
+                    dest_dirs.append(ext)
+
+        if not dest_dirs:
+            return 0
+
+        master_files = [os.path.join(d, "drives_master.csv") for d in dest_dirs]
+        for d in dest_dirs:
+            try:
+                os.makedirs(d, exist_ok=True)
+            except Exception:
+                pass
 
         raw_rows = []
         seen_keys = set()
@@ -414,13 +423,14 @@ class TessieAnalyzer:
 
         raw_rows.sort(key=lambda x: (x.get("Started At (AEST)") or x.get("Started At") or x.get("Started") or ""))
 
-        try:
-            with open(master_file, "w", encoding="utf-8", newline="") as f:
-                writer = csv.DictWriter(f, fieldnames=fieldnames)
-                writer.writeheader()
-                writer.writerows(raw_rows)
-        except Exception:
-            pass
+        for mf in master_files:
+            try:
+                with open(mf, "w", encoding="utf-8", newline="") as f:
+                    writer = csv.DictWriter(f, fieldnames=fieldnames)
+                    writer.writeheader()
+                    writer.writerows(raw_rows)
+            except Exception:
+                pass
 
         return len(raw_rows)
 
@@ -1288,7 +1298,7 @@ def display_timeline(target_date, analyzer, compact=False):
             break
             
         try:
-            prompt_str = f"Select Event [1-{len(events)} or HH:MM] for footage, [p]rev day, [n]ext day, [b]ack, [q]uit: "
+            prompt_str = f"Select Event [1-{len(events)} or HH:MM] for footage, [t]ag <#>, [p]rev day, [n]ext day, [b]ack, [q]uit: "
             choice = input(prompt_str).strip().lower()
             if choice == "q":
                 sys.exit(0)
@@ -1298,6 +1308,51 @@ def display_timeline(target_date, analyzer, compact=False):
                 curr_date = curr_date - timedelta(days=1)
             elif choice in ["n", "next"]:
                 curr_date = curr_date + timedelta(days=1)
+            elif choice.startswith("t ") or choice.startswith("tag ") or choice == "t":
+                parts = choice.split()
+                tag_idx = int(parts[1]) if len(parts) > 1 and parts[1].isdigit() else None
+                if tag_idx is None:
+                    try:
+                        t_in = input(f"Enter Event # to tag [1-{len(events)}]: ").strip()
+                        tag_idx = int(t_in) if t_in.isdigit() else None
+                    except (KeyboardInterrupt, EOFError):
+                        continue
+                if tag_idx:
+                    matched_ev = next((ev for ev in events if ev["event_idx"] == tag_idx), None)
+                    if matched_ev:
+                        addr = ""
+                        lat, lon = None, None
+                        if matched_ev.get("drive"):
+                            d = matched_ev["drive"]
+                            addr = d.get("ending_address") or d.get("starting_address") or ""
+                            lat = d.get("ending_latitude") or d.get("starting_latitude")
+                            lon = d.get("ending_longitude") or d.get("starting_longitude")
+                        else:
+                            ev_idx = events.index(matched_ev)
+                            for prev_i in range(ev_idx - 1, -1, -1):
+                                if events[prev_i].get("drive"):
+                                    d = events[prev_i]["drive"]
+                                    addr = d.get("ending_address") or ""
+                                    lat = d.get("ending_latitude")
+                                    lon = d.get("ending_longitude")
+                                    break
+                            if lat is None:
+                                addr = matched_ev.get("location", "")
+                        try:
+                            from tessie_places import interactive_lookup_and_add
+                            saved = interactive_lookup_and_add(query_or_addr=addr, lat=lat, lon=lon)
+                            if saved:
+                                analyzer.load_places()
+                                for d in analyzer.drives:
+                                    d["start_place"] = analyzer.resolve_place(d.get("starting_address",""), d.get("saved_location",""), d.get("starting_latitude"), d.get("starting_longitude"))
+                                    d["end_place"] = analyzer.resolve_place(d.get("ending_address",""), d.get("saved_location",""), d.get("ending_latitude"), d.get("ending_longitude"))
+                                continue
+                        except Exception as e:
+                            print(f"⚠️ Error during tagging: {e}")
+                    else:
+                        print("Invalid event number.")
+                else:
+                    print("Invalid event number.")
             else:
                 matched_ev = None
                 if choice.isdigit():
