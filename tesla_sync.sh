@@ -166,9 +166,13 @@ install_tools_to_drives() {
   echo "=========================================================================="
   echo "                 🚗 Installing Tools to Connected Drives                  "
   echo "=========================================================================="
-  local src_dir="$(cd "$(dirname "$SCRIPT_PATH")" && pwd)"
-  local tools_src="$src_dir"
-  [[ -d "$src_dir/Tools" ]] && tools_src="$src_dir/Tools"
+  local script_dir="$(cd "$(dirname "$SCRIPT_PATH")" && pwd)"
+  local tools_src="$script_dir"
+  if [[ -d "$script_dir/../Tools" ]]; then
+    tools_src="$(cd "$script_dir/../Tools" && pwd)"
+  elif [[ -d "$script_dir/Tools" ]]; then
+    tools_src="$(cd "$script_dir/Tools" && pwd)"
+  fi
 
   echo "Source Directory: $tools_src"
   echo ""
@@ -195,7 +199,7 @@ install_tools_to_drives() {
   else
     echo ""
     echo "=========================================================================="
-    echo "Successfully updated tesla_sync.sh on $count drive(s)."
+    echo "Successfully updated tools on $count drive(s)."
     echo "=========================================================================="
   fi
   exit 0
