@@ -1893,8 +1893,8 @@ def interactive_drilldown(explorer: TeslaChargerExplorer):
             max_title_len = max((display_len(s["title"]) for s in top_near), default=26)
             col_w = max(max_title_len + 2, 28)
 
-            print(f"  {'#':>5}  {'Type':<6} {'State':<5} {pad_display('Station Name', col_w)} {'Tier':<5} {'Stalls':<7} {'Access':<11} {'Rate (Now)':<11} {'Period / Window':<22} {'Dist (km)':>9}")
-            print(f"  {'-'*5}  {'-'*6} {''-'*5'} {pad_display('-'*col_w, col_w)} {'-'*5} {'-'*7} {'-'*11} {'-'*11} {'-'*22} {'-'*9}")
+            print(f"  {'#':>5}  {'Type':<6} {'State':<5} {pad_display('Station Name', col_w)} {'Tier':<5} {'Stalls':<7} {'Access':<11} {'Rate (Now)':<11} {'Period / Window':<24} {'Dist (km)':>9}")
+            print(f"  {'-'*5}  {'-'*6} {'-'*5} {pad_display('-'*col_w, col_w)} {'-'*5} {'-'*7} {'-'*11} {'-'*11} {'-'*24} {'-'*9}")
 
             for idx, s in enumerate(top_near, 1):
                 status = s.get("_status", "NOT_IN_JSON")
@@ -1920,7 +1920,7 @@ def interactive_drilldown(explorer: TeslaChargerExplorer):
                 dist_val = s.get("_distance_km", float("inf"))
                 dist_str = f"{dist_val:7.1f} km" if dist_val != float("inf") else "--"
 
-                print(f"  {num_str}  {t_icon:<6} {s['state']:<5} {pad_display(s['title'], col_w)} {tier_str:<5} {stalls_str:<7} {pad_display(access_str, 11)} {rate_str:<11} {pad_display(period_str, 22)} {dist_str:>9}")
+                print(f"  {num_str}  {t_icon:<6} {s['state']:<5} {pad_display(s['title'], col_w)} {tier_str:<5} {stalls_str:<7} {pad_display(access_str, 11)} {rate_str:<11} {pad_display(period_str, 24)} {dist_str:>9}")
 
             print()
             return
@@ -1983,7 +1983,7 @@ Explore, list, search, filter, and scrape technical hardware specs, Time-of-Use
         epilog="""
 Query & Proximity Examples:
   # 1. List chargers ordered by distance from an arbitrary street address with live pricing:
-  ./Tools/find_tesla_chargers.py --address "100 George St, Sydney" --list
+  ./Tools/find_tesla_chargers.py --address "100 George St, Sydney" --limit 10 --list
   ./Tools/find_tesla_chargers.py --near "14 Parraweena Rd, Miranda" --limit 10 --list
   ./Tools/find_tesla_chargers.py --near "Ryde" --radius-km 25 --list
 
@@ -1991,8 +1991,9 @@ Query & Proximity Examples:
   ./Tools/find_tesla_chargers.py --near "Home" --time "14:00" --list
   ./Tools/find_tesla_chargers.py --near "Home" --time "23:30" --list
 
-  # 3. Sort chargers by lowest price at the evaluated time:
+  # 3. Sort chargers by lowest price near your location (defaults to 50km radius):
   ./Tools/find_tesla_chargers.py --near "Home" --sort price --limit 10 --list
+  ./Tools/find_tesla_chargers.py --near "Home" --sort price --radius-km 100 --list
 
   # 4. Filter all V3 Superchargers:
   ./Tools/find_tesla_chargers.py --sc --tier V3 --list
@@ -2028,7 +2029,7 @@ Query & Proximity Examples:
     parser.add_argument("-a", "--address", "--near", dest="near_address", help="Reference address, suburb, place name, or shortcut (e.g. 'Home', '100 George St, Sydney', 'Ryde')")
     parser.add_argument("--gps", action="store_true", help="Auto-discover current GPS location from vehicle telemetry / IP / Home")
     parser.add_argument("--coords", help="Direct reference coordinates in 'lat,lon' format (e.g. '-33.806,151.079')")
-    parser.add_argument("--radius-km", type=float, help="Filter stations within specified radius in kilometers")
+    parser.add_argument("--radius-km", type=float, help="Filter stations within specified radius in kilometers (default: 50km when sorting by price near a location; 0 for nationwide)")
     parser.add_argument("-t", "--time", help="Evaluation time for Time-of-Use pricing (e.g. '14:30', '2:00 PM', 'now'). Defaults to current local time.")
     parser.add_argument("-n", "--limit", type=int, help="Maximum number of stations to display")
     parser.add_argument("--sort", choices=["dist", "price", "power", "stalls"], help="Sort results by distance, price at time, max power, or stall count")
@@ -2205,8 +2206,13 @@ Query & Proximity Examples:
         if args.min_stalls is not None:
             filtered = [s for s in filtered if int(s.get("hardware", {}).get("stalls", 0) or 0) >= args.min_stalls]
 
-        if args.radius_km is not None and ref_lat is not None and ref_lon is not None:
-            filtered = [s for s in filtered if s.get("_distance_km", float("inf")) <= args.radius_km]
+        # Determine proximity radius filter (default to 50km if sorting by price near an address/place unless explicitly overridden)
+        active_radius = args.radius_km
+        if active_radius is None and ref_lat is not None and ref_lon is not None and args.sort == "price":
+            active_radius = 50.0
+
+        if active_radius is not None and active_radius > 0 and ref_lat is not None and ref_lon is not None:
+            filtered = [s for s in filtered if s.get("_distance_km", float("inf")) <= active_radius]
 
         if args.filter:
             filtered = [s for s in filtered if evaluate_station_filter(s, args.filter, target_time=args.time)]
@@ -2215,11 +2221,15 @@ Query & Proximity Examples:
         if args.sort == "dist" or (args.sort is None and ref_lat is not None and ref_lon is not None):
             filtered.sort(key=lambda s: s.get("_distance_km", float("inf")))
         elif args.sort == "price":
-            filtered.sort(key=lambda s: s.get("_eff_rate") if s.get("_eff_rate") is not None else float("inf"))
+            # Sort by lowest price first, tiebreak with closest distance
+            filtered.sort(key=lambda s: (
+                s.get("_eff_rate") if s.get("_eff_rate") is not None else float("inf"),
+                s.get("_distance_km", float("inf"))
+            ))
         elif args.sort == "power":
-            filtered.sort(key=lambda s: float(s.get("hardware", {}).get("max_power_kw", 0) or 0), reverse=True)
+            filtered.sort(key=lambda s: (float(s.get("hardware", {}).get("max_power_kw", 0) or 0), -s.get("_distance_km", float("inf"))), reverse=True)
         elif args.sort == "stalls":
-            filtered.sort(key=lambda s: int(s.get("hardware", {}).get("stalls", 0) or 0), reverse=True)
+            filtered.sort(key=lambda s: (int(s.get("hardware", {}).get("stalls", 0) or 0), -s.get("_distance_km", float("inf"))), reverse=True)
 
         # Apply limit if requested
         if args.limit and args.limit > 0:
@@ -2247,21 +2257,22 @@ Query & Proximity Examples:
         max_title_len = max((display_len(s["title"]) for s in filtered), default=24)
         name_col_width = max(max_title_len + 2, 26)
 
-        print(f"\n{C_BOLD}{'='*102}{C_RESET}")
+        print(f"\n{C_BOLD}{'='*104}{C_RESET}")
         print(f"  ⚡ {C_BOLD}MATCHING CHARGING STATIONS ({len(filtered)} found){C_RESET}")
         if ref_label:
-            print(f"  📍 {C_CYAN}Proximity Origin:{C_RESET} {ref_label} ({ref_lat:.4f}, {ref_lon:.4f})")
+            radius_note = f" [within {active_radius:.0f} km]" if (active_radius and active_radius > 0) else ""
+            print(f"  📍 {C_CYAN}Proximity Origin:{C_RESET} {ref_label} ({ref_lat:.4f}, {ref_lon:.4f}){radius_note}")
         
         eval_time_label = f"Target Time: {args.time}" if args.time else "Current Local Time"
         print(f"  ⏰ {C_BOLD}Pricing Evaluation:{C_RESET} {eval_time_label}")
         print(f"  {C_BOLD}📊 Status Legend:{C_RESET} [{C_GREEN} 1 {C_RESET}] Up to Date (<=3mo)  |  [{C_BLUE} 2 {C_RESET}] Stale (>3mo)  |  [{C_ORANGE} 3 {C_RESET}] Not in JSON")
-        print(f"{C_BOLD}{'='*102}{C_RESET}\n")
+        print(f"{C_BOLD}{'='*104}{C_RESET}\n")
 
         has_dist = ref_lat is not None and ref_lon is not None
         dist_header = f"{'Dist (km)':>9} " if has_dist else ""
 
-        print(f"  {'#':>5}  {'Type':<6} {'State':<5} {pad_display('Station Name', name_col_width)} {'Tier':<5} {'Stalls':<7} {'Access':<11} {'Rate (Now)':<11} {'Period / Window':<22} {dist_header}{'Location / Suburb'}")
-        print(f"  {'-'*5}  {'-'*6} {'-'*5} {'-'*name_col_width} {'-'*5} {'-'*7} {'-'*11} {'-'*11} {'-'*22} {'-'*9 if has_dist else ''}{'-'*20}")
+        print(f"  {'#':>5}  {'Type':<6} {'State':<5} {pad_display('Station Name', name_col_width)} {'Tier':<5} {'Stalls':<7} {'Access':<11} {'Rate (Now)':<11} {'Period / Window':<24} {dist_header}{'Location / Suburb'}")
+        print(f"  {'-'*5}  {'-'*6} {'-'*5} {'-'*name_col_width} {'-'*5} {'-'*7} {'-'*11} {'-'*11} {'-'*24} {'-'*9 + ' ' if has_dist else ''}{'-'*20}")
 
         for idx, s in enumerate(filtered, 1):
             status = s.get("_status", "NOT_IN_JSON")
@@ -2289,7 +2300,6 @@ Query & Proximity Examples:
                 rate_str = f"${eff_rate:.2f}/kWh"
                 period_str = f"{eff_lbl} ({eff_win})" if eff_win else eff_lbl
             else:
-                # Fallback to rate schedule summary if not scraped
                 tariffs = s.get("tariffs", {})
                 scheds = tariffs.get("tesla_members", {}).get("rate_schedules", [])
                 rates = [float(sc.get("rate_per_kwh", 0)) for sc in scheds if sc.get("rate_per_kwh") is not None]
@@ -2305,7 +2315,7 @@ Query & Proximity Examples:
             dist_str = f"{dist_val:7.1f} km " if (has_dist and dist_val != float("inf")) else (f"{'--':>9} " if has_dist else "")
 
             suburb_str = s.get("location", {}).get("suburb") or s.get("short_name", "")
-            print(f"  {num_str}  {t_icon:<6} {s['state']:<5} {pad_display(s['title'], name_col_width)} {tier_str:<5} {stalls_str:<7} {pad_display(access_str, 11)} {rate_str:<11} {pad_display(period_str, 22)} {dist_str}{C_DIM}{suburb_str}{C_RESET}")
+            print(f"  {num_str}  {t_icon:<6} {s['state']:<5} {pad_display(s['title'], name_col_width)} {tier_str:<5} {stalls_str:<7} {pad_display(access_str, 11)} {rate_str:<11} {pad_display(period_str, 24)} {dist_str}{C_DIM}{suburb_str}{C_RESET}")
 
         print(f"\n{C_DIM}To inspect details:     ./Tools/find_tesla_chargers.py --inspect <ID_or_Name_or_URL>{C_RESET}")
         print(f"{C_DIM}To batch update:        ./Tools/find_tesla_chargers.py --sc --new --all --sync{C_RESET}\n")
