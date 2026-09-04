@@ -1,0 +1,18 @@
+{
+  "Home": {
+    "keywords": ["123 Example Street", "My Suburb"],
+    "lat": -33.80000,
+    "lon": 151.00000,
+    "radius_m": 150,
+    "notes": "Home address"
+  },
+  "Work": {
+    "keywords": ["Office Road", "Tech Park"],
+    "lat": -33.81000,
+    "lon": 151.10000,
+    "radius_m": 250
+  },
+  "Supermarket": {
+    "keywords": ["Shopping Mall", "Loading Dock"]
+  }
+}

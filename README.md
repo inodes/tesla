@@ -127,6 +127,55 @@ You can audit your environment at any time to verify all utilities, versions, an
 
 ---
 
+---
+
+## 🗺️ Tessie Drive Log Analyzer & Known Places Matcher (`tessie_analyzer.py`)
+
+You can save your exported [Tessie](https://tessie.com/) drive history CSV files into the **`Tessie/`** directory on your Master Archive SSD or repository.
+
+`tessie_analyzer.py` automatically:
+1. **Resolves Known Places:** Translates raw street addresses or GPS coordinates into recognized labels (e.g. *Home*, *School / Daycare*, *Work*, *Bunnings*, *Shopping Centre*) via a customizable `Tessie/places.json`.
+2. **Calculates Dwell & Parking Windows:** Computes exact stop durations at each destination.
+3. **Links TeslaCam Video Files:** Pinpoints the exact passenger **Entry Window** (getting into the car) and **Exit Window** (arriving and unloading), directly referencing the corresponding `RecentClips` and `SentryClips` MP4 video files.
+
+### 📍 Customizing Known Places (`Tessie/places.json`)
+```json
+{
+  "Home": {
+    "keywords": ["123 Example Street", "124 Example Street", "My Suburb"],
+    "lat": -33.80000,
+    "lon": 151.00000,
+    "radius_m": 100
+  },
+  "School / Daycare": {
+    "keywords": ["Example Avenue", "Sample Street", "Main Street"]
+  },
+  "Work": {
+    "keywords": ["Office Road", "Tech Park", "Business Park"],
+    "lat": -33.81000,
+    "lon": 151.10000,
+    "radius_m": 250
+  }
+}
+```
+
+### 🔍 CLI Usage Examples
+```bash
+# Analyze all drives since Wednesday
+./tessie_analyzer.py --since 2026-09-02
+
+# Filter drives from the past 3 days
+./tessie_analyzer.py --days 3
+
+# Search for all trips involving 'School' or 'Daycare'
+./tessie_analyzer.py --place "School"
+
+# Pinpoint exact entry & exit times with camera file paths
+./tessie_analyzer.py --entry-exit
+```
+
+---
+
 ## 🛠️ CLI Usage Reference
 
 ### 🔄 Multi-Drive Synchronization & Installation

@@ -166,11 +166,7 @@ install_tools_to_drives() {
   echo "=========================================================================="
   echo "                 🚗 Installing Tools to Connected Drives                  "
   echo "=========================================================================="
-  local src_dir="$(cd "$(dirname "$SCRIPT_PATH")" && pwd)"
-  local tools_src="$src_dir"
-  [[ -d "$src_dir/Tools" ]] && tools_src="$src_dir/Tools"
-
-  echo "Source Directory: $tools_src"
+  echo "Source Script: $SCRIPT_PATH"
   echo ""
   local count=0
 
@@ -179,13 +175,9 @@ install_tools_to_drives() {
     if [[ -d "$vol/TeslaCam" || -d "$vol/ARCHIVE_2TB" || -d "$vol/JOWUA_1TB" || -d "$vol/TESLA_USB_128GB" || -d "$vol/TESLA_USB_256GB" || -d "$vol/TESLA_USB" || "$(basename "$vol")" =~ ^TESLADRIVE ]]; then
       local tools_dir="$vol/Tools"
       mkdir -p "$tools_dir"
-      for script in "$SCRIPT_PATH" "$tools_src"/*.py "$tools_src"/*.sh; do
-        [[ -f "$script" ]] || continue
-        local b_name="$(basename "$script")"
-        cp "$script" "$tools_dir/$b_name"
-        chmod +x "$tools_dir/$b_name"
-        echo "  ✔ Installed: $tools_dir/$b_name"
-      done
+      cp "$SCRIPT_PATH" "$tools_dir/tesla_sync.sh"
+      chmod +x "$tools_dir/tesla_sync.sh"
+      echo "  ✔ Updated: $tools_dir/tesla_sync.sh"
       ((count++))
     fi
   done
