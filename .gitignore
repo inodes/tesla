@@ -15,9 +15,13 @@ Tessie/invoices/*
 !Tessie/places.example.json
 !Tessie/charging.example.json
 !Tessie/superchargers.example.json
+!Tessie/config.example.json
+!config.example.json
+config.json
 places.json
 __pycache__/
 *.pyc
+
 
 # Local config & logs
 .env
