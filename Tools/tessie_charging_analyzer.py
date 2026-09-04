@@ -166,6 +166,33 @@ def parse_flexible_date(date_str):
 def clean_tokens(s):
     return set(re.findall(r"\w+", (s or "").lower()))
 
+def find_mounted_tesla_volumes(subdir=None):
+    """
+    Dynamically discovers all mounted volumes matching TESLADRIVE* under /Volumes.
+    If subdir is provided (e.g., 'TeslaCam', 'Tessie', 'Tools', 'invoices'),
+    returns existing subdirectories within those volumes.
+    """
+    volumes_root = "/Volumes"
+    if not os.path.isdir(volumes_root):
+        return []
+    discovered = []
+    seen = set()
+    try:
+        entries = sorted(os.listdir(volumes_root))
+    except Exception:
+        entries = []
+    for entry in entries:
+        if entry.upper().startswith("TESLADRIVE"):
+            vol_path = os.path.join(volumes_root, entry)
+            if os.path.isdir(vol_path):
+                target = os.path.join(vol_path, subdir) if subdir else vol_path
+                if os.path.isdir(target):
+                    real_p = os.path.abspath(os.path.realpath(target))
+                    if real_p not in seen:
+                        seen.add(real_p)
+                        discovered.append(real_p)
+    return discovered
+
 # -----------------------------------------------------------------------------
 # Pure Python PDF & CSV Invoice Parser
 # -----------------------------------------------------------------------------
@@ -638,10 +665,8 @@ class TessieChargingAnalyzer:
             os.path.join(self.repo_root, "Tessie"),
             os.path.join(self.script_dir, "Tessie"),
             os.path.expanduser("~/iCloud/repos/tesla/Tessie"),
-            "/Volumes/TESLADRIVE 1/Tessie",
-            "/Volumes/TESLADRIVE/Tessie",
             self.icloud_dir
-        ]
+        ] + find_mounted_tesla_volumes("Tessie")
         seen_tessie_dirs = set()
         for d in candidates_tessie:
             try:
@@ -668,12 +693,11 @@ class TessieChargingAnalyzer:
                 os.path.expanduser("~/iCloud/PDF/Tesla"),
                 os.path.expanduser("~/Library/Mobile Documents/com~apple~CloudDocs/PDF/Tesla"),
                 os.path.join(self.repo_root, "Tessie", "invoices"),
-                "/Volumes/TESLADRIVE 1/Tessie/invoices",
                 os.path.join(self.icloud_dir, "invoices"),
                 os.path.expanduser("~/Documents/Tesla/Invoices"),
                 os.path.expanduser("~/Downloads/Tesla Invoices"),
                 os.path.expanduser("~/Downloads/Invoices")
-            ]
+            ] + find_mounted_tesla_volumes("Tessie/invoices") + find_mounted_tesla_volumes("invoices")
             seen_inv_dirs = set()
             for d in candidates_invoices:
                 try:
@@ -701,9 +725,8 @@ class TessieChargingAnalyzer:
             os.path.join(self.repo_root, "Tessie", "config.json"),
             os.path.join(self.repo_root, "config.json"),
             os.path.expanduser("~/.config/tesla/config.json"),
-            os.path.join(self.icloud_dir, "config.json"),
-            "/Volumes/TESLADRIVE 1/Tessie/config.json"
-        ]
+            os.path.join(self.icloud_dir, "config.json")
+        ] + [os.path.join(v, "config.json") for v in find_mounted_tesla_volumes("Tessie")]
         for cp in config_candidates:
             if cp and os.path.isfile(cp):
                 try:
@@ -1161,8 +1184,9 @@ class TessieChargingAnalyzer:
         return self.reconciled_sessions
 
     def consolidate_charges_master(self, output_dir=None):
+        external_tessie = find_mounted_tesla_volumes("Tessie")
         dest_dir = output_dir or (
-            "/Volumes/TESLADRIVE 1/Tessie" if os.path.isdir("/Volumes/TESLADRIVE 1/Tessie")
+            external_tessie[0] if external_tessie
             else self.tessie_dirs[0] if self.tessie_dirs else "."
         )
         os.makedirs(dest_dir, exist_ok=True)
@@ -1794,40 +1818,42 @@ class TessieChargingAnalyzer:
         print(f"\n{C_GREEN}Successfully renamed {success_count}/{to_rename_count} invoice files!{C_RESET}\n")
 
     def sync_to_external_drive(self):
-        ext_drive = self.config.get("external_drive_path") or "/Volumes/TESLADRIVE 1"
-        if not os.path.isdir(ext_drive):
-            print(f"{C_YELLOW}External drive not mounted at {ext_drive}. Skipping sync.{C_RESET}")
+        cfg_drive = self.config.get("external_drive_path")
+        ext_drives = [cfg_drive] if cfg_drive and os.path.isdir(cfg_drive) else find_mounted_tesla_volumes()
+        if not ext_drives:
+            print(f"{C_YELLOW}No mounted TESLADRIVE external volumes detected under /Volumes. Skipping sync.{C_RESET}")
             return
 
-        print(f"{C_CYAN}Synchronizing Tools and Tessie files to {ext_drive}...{C_RESET}")
-        
-        src_script = os.path.join(self.script_dir, "tessie_charging_analyzer.py")
-        dst_script = os.path.join(ext_drive, "Tools", "tessie_charging_analyzer.py")
-        try:
-            os.makedirs(os.path.join(ext_drive, "Tools"), exist_ok=True)
-            if os.path.abspath(src_script) != os.path.abspath(dst_script):
-                with open(src_script, "rb") as fsrc, open(dst_script, "wb") as fdst:
-                    fdst.write(fsrc.read())
-                print(f"  {C_GREEN}✔ Copied{C_RESET} tessie_charging_analyzer.py ➔ {dst_script}")
-            else:
-                print(f"  {C_GREEN}✔ Script already on external drive.{C_RESET}")
-        except Exception as e:
-            print(f"  {C_RED}❌ Failed to copy script:{C_RESET} {e}")
+        for ext_drive in ext_drives:
+            print(f"{C_CYAN}Synchronizing Tools and Tessie files to {ext_drive}...{C_RESET}")
+            
+            src_script = os.path.join(self.script_dir, "tessie_charging_analyzer.py")
+            dst_script = os.path.join(ext_drive, "Tools", "tessie_charging_analyzer.py")
+            try:
+                os.makedirs(os.path.join(ext_drive, "Tools"), exist_ok=True)
+                if os.path.abspath(src_script) != os.path.abspath(dst_script):
+                    with open(src_script, "rb") as fsrc, open(dst_script, "wb") as fdst:
+                        fdst.write(fsrc.read())
+                    print(f"  {C_GREEN}✔ Copied{C_RESET} tessie_charging_analyzer.py ➔ {dst_script}")
+                else:
+                    print(f"  {C_GREEN}✔ Script already on external drive.{C_RESET}")
+            except Exception as e:
+                print(f"  {C_RED}❌ Failed to copy script to {ext_drive}:{C_RESET} {e}")
 
-        for fname in ["superchargers.json", "charging.json", "places.json", "config.example.json"]:
-            src_f = os.path.join(self.repo_root, "Tessie", fname)
-            if os.path.isfile(src_f):
-                dst_f = os.path.join(ext_drive, "Tessie", fname)
-                try:
-                    os.makedirs(os.path.join(ext_drive, "Tessie"), exist_ok=True)
-                    if os.path.abspath(src_f) != os.path.abspath(dst_f):
-                        with open(src_f, "rb") as fsrc, open(dst_f, "wb") as fdst:
-                            fdst.write(fsrc.read())
-                        print(f"  {C_GREEN}✔ Copied{C_RESET} {fname} ➔ {dst_f}")
-                    else:
-                        print(f"  {C_GREEN}✔ {fname} already on external drive.{C_RESET}")
-                except Exception as e:
-                    print(f"  {C_RED}❌ Failed to copy {fname}:{C_RESET} {e}")
+            for fname in ["superchargers.json", "charging.json", "places.json", "config.example.json"]:
+                src_f = os.path.join(self.repo_root, "Tessie", fname)
+                if os.path.isfile(src_f):
+                    dst_f = os.path.join(ext_drive, "Tessie", fname)
+                    try:
+                        os.makedirs(os.path.join(ext_drive, "Tessie"), exist_ok=True)
+                        if os.path.abspath(src_f) != os.path.abspath(dst_f):
+                            with open(src_f, "rb") as fsrc, open(dst_f, "wb") as fdst:
+                                fdst.write(fsrc.read())
+                            print(f"  {C_GREEN}✔ Copied{C_RESET} {fname} ➔ {dst_f}")
+                        else:
+                            print(f"  {C_GREEN}✔ {fname} already on external drive.{C_RESET}")
+                    except Exception as e:
+                        print(f"  {C_RED}❌ Failed to copy {fname} to {ext_drive}:{C_RESET} {e}")
 
 # -----------------------------------------------------------------------------
 # CLI Entrypoint
