@@ -994,10 +994,12 @@ class TeslaChargerExplorer:
         self.headless = headless
         self.script_dir = os.path.dirname(os.path.abspath(__file__))
         self.repo_root = os.path.dirname(self.script_dir)
-        self.superchargers_path = os.path.join(self.repo_root, "Tessie", "superchargers.json")
-        self.superchargers_archived_path = os.path.join(self.repo_root, "Tessie", "superchargers_archived.json")
-        self.destination_chargers_path = os.path.join(self.repo_root, "Tessie", "destination_chargers.json")
-        self.destination_chargers_archived_path = os.path.join(self.repo_root, "Tessie", "destination_chargers_archived.json")
+        self.superchargers_path = os.path.join(self.repo_root, "Tessie", "tesla_superchargers.json")
+        self.superchargers_archived_path = os.path.join(self.repo_root, "Tessie", "tesla_superchargers_archived.json")
+        self.destination_chargers_path = os.path.join(self.repo_root, "Tessie", "tesla_chargers.json")
+        self.destination_chargers_archived_path = os.path.join(self.repo_root, "Tessie", "tesla_chargers_archived.json")
+        self.legacy_superchargers_path = os.path.join(self.repo_root, "Tessie", "superchargers.json")
+        self.legacy_destination_chargers_path = os.path.join(self.repo_root, "Tessie", "charging.json")
 
     def fetch_station_list(self, country: str = "Australia", charger_type: str = "superchargers") -> list:
         """
@@ -1166,43 +1168,44 @@ class TeslaChargerExplorer:
                         pass
 
             page.on("response", handle_response)
-            err_msg = None
             try:
-                page.goto(target_url, wait_until="networkidle", timeout=timeout_ms)
-                page.wait_for_timeout(800)
-            except Exception as e:
-                err_msg = str(e)
-
-            # Expand accordions if present
-            for accordion_label in ["Pricing for Tesla & Members", "Pricing for Non-Tesla"]:
+                err_msg = None
                 try:
-                    btn = page.locator(f"button:has-text('{accordion_label}'), [role='button']:has-text('{accordion_label}')").first
-                    if btn.count() > 0 and btn.is_visible():
-                        btn.click()
-                        page.wait_for_timeout(250)
+                    page.goto(target_url, wait_until="networkidle", timeout=timeout_ms)
+                    page.wait_for_timeout(600)
+                except Exception as e:
+                    err_msg = str(e)
+
+                # Expand accordions if present
+                for accordion_label in ["Pricing for Tesla & Members", "Pricing for Non-Tesla"]:
+                    try:
+                        btn = page.locator(f"button:has-text('{accordion_label}'), [role='button']:has-text('{accordion_label}')").first
+                        if btn.count() > 0 and btn.is_visible():
+                            btn.click()
+                            page.wait_for_timeout(200)
+                    except Exception:
+                        pass
+
+                # Extract __NEXT_DATA__ SSR props
+                try:
+                    raw_next = page.eval_on_selector("#__NEXT_DATA__", "e => e.textContent")
+                    if raw_next:
+                        next_data_payload = json.loads(raw_next)
                 except Exception:
                     pass
 
-            # Extract __NEXT_DATA__ SSR props
-            try:
-                raw_next = page.eval_on_selector("#__NEXT_DATA__", "e => e.textContent")
-                if raw_next:
-                    next_data_payload = json.loads(raw_next)
-            except Exception:
-                pass
-
-            try:
-                page.remove_listener("response", handle_response)
-            except Exception:
-                pass
-
-            # If valid data captured, return immediately
-            if next_data_payload or captured_api_data:
-                return captured_api_data, next_data_payload
+                # If valid data captured, return immediately
+                if next_data_payload or captured_api_data:
+                    return captured_api_data, next_data_payload
+            finally:
+                try:
+                    page.remove_listener("response", handle_response)
+                except Exception:
+                    pass
 
             # Exponential backoff with jitter on transient error / timeout
             if attempt < max_retries:
-                backoff = base_retry_delay * (2 ** (attempt - 1)) + random.uniform(0.3, 1.0)
+                backoff = base_retry_delay * (2 ** (attempt - 1)) + random.uniform(0.5, 1.5)
                 reason = f" ({err_msg[:60]}...)" if err_msg else ""
                 print(f"  {C_YELLOW}⚠ Attempt {attempt}/{max_retries} failed{reason}. Backing off {backoff:.1f}s before retry...{C_RESET}")
                 time.sleep(backoff)
@@ -1554,21 +1557,32 @@ class TeslaChargerExplorer:
         return self._parse_scraped_data(target_url, captured_api_data, next_data_payload, charger_type=charger_type)
 
     def load_active_registries(self) -> tuple:
-        """Loads in-memory dictionaries of superchargers.json and destination_chargers.json."""
+        """Loads in-memory dictionaries of tesla_superchargers.json and tesla_chargers.json (with legacy fallbacks)."""
         sc_reg = {}
-        if os.path.isfile(self.superchargers_path):
+        sc_path = self.superchargers_path if os.path.isfile(self.superchargers_path) else self.legacy_superchargers_path
+        if os.path.isfile(sc_path):
             try:
-                with open(self.superchargers_path, "r", encoding="utf-8") as f:
+                with open(sc_path, "r", encoding="utf-8") as f:
                     sc_reg = json.load(f)
             except Exception:
                 sc_reg = {}
+
         dc_reg = {}
-        if os.path.isfile(self.destination_chargers_path):
-            try:
-                with open(self.destination_chargers_path, "r", encoding="utf-8") as f:
-                    dc_reg = json.load(f)
-            except Exception:
-                dc_reg = {}
+        dc_candidates = [
+            self.destination_chargers_path,
+            os.path.join(self.repo_root, "Tessie", "destination_chargers.json"),
+            self.legacy_destination_chargers_path
+        ]
+        for candidate in dc_candidates:
+            if os.path.isfile(candidate):
+                try:
+                    with open(candidate, "r", encoding="utf-8") as f:
+                        dc_reg = json.load(f)
+                        if dc_reg:
+                            break
+                except Exception:
+                    dc_reg = {}
+
         return sc_reg, dc_reg
 
     def get_station_record(self, station_or_query, sc_reg: dict = None, dc_reg: dict = None) -> tuple:
@@ -1758,8 +1772,8 @@ class TeslaChargerExplorer:
         except Exception:
             return "STALE"
 
-    def scrape_all_stations(self, stations: list, sync_external: bool = False, force: bool = False, pacing_delay: float = 0.5, timeout_sec: int = 35, max_retries: int = 3, subset_filter: str = None):
-        """Batch scrapes and updates stations with adaptive pacing, backoffs, retries, and granular change reporting."""
+    def scrape_all_stations(self, stations: list, sync_external: bool = False, force: bool = False, pacing_delay: float = 1.5, timeout_sec: int = 35, max_retries: int = 3, subset_filter: str = None):
+        """Batch scrapes and updates stations with periodic context recycling, backoffs, retries, and granular change reporting."""
         try:
             from playwright.sync_api import sync_playwright
         except ImportError:
@@ -1783,7 +1797,7 @@ class TeslaChargerExplorer:
         filter_label = f" ({subset_filter.upper()} ONLY)" if subset_filter else ""
         print(f"\n{C_BOLD}{'='*80}{C_RESET}")
         print(f"  ⚡ {C_CYAN}{C_BOLD}STARTING BATCH SCRAPER FOR {total} STATIONS{filter_label}{C_RESET}")
-        print(f"  {C_DIM}Pacing: {pacing_delay:.1f}s | Timeout: {timeout_sec}s | Max Retries: {max_retries}{C_RESET}")
+        print(f"  {C_DIM}Pacing: {pacing_delay:.1f}s (+jitter) | Timeout: {timeout_sec}s | Max Retries: {max_retries} | Context Recycling: Every 15 stations{C_RESET}")
         print(f"{C_BOLD}{'='*80}{C_RESET}\n")
 
         stats = {
@@ -1798,14 +1812,28 @@ class TeslaChargerExplorer:
 
         with sync_playwright() as p:
             browser = p.webkit.launch(headless=self.headless)
-            context = browser.new_context(
-                locale="en-AU",
-                timezone_id="Australia/Sydney",
-                user_agent="Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4 Safari/605.1.15"
-            )
-            page = context.new_page()
+
+            def create_fresh_session():
+                ctx = browser.new_context(
+                    locale="en-AU",
+                    timezone_id="Australia/Sydney",
+                    user_agent="Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4 Safari/605.1.15"
+                )
+                pg = ctx.new_page()
+                return ctx, pg
+
+            context, page = create_fresh_session()
 
             for idx, st in enumerate(target_stations, 1):
+                # Periodic context recycling every 15 stations: releases memory and resets connection pools
+                if idx > 1 and (idx - 1) % 15 == 0:
+                    try:
+                        page.close()
+                        context.close()
+                    except Exception:
+                        pass
+                    context, page = create_fresh_session()
+
                 st_title = st.get("title", "")
                 st_type = st.get("type", "supercharger")
                 st_url = st.get("url", "")
@@ -1839,17 +1867,35 @@ class TeslaChargerExplorer:
                     failed_stations.append(st_title)
                     stats["ERROR"] = stats.get("ERROR", 0) + 1
                     consecutive_failures += 1
+                    # Self-heal crashed context immediately
+                    try:
+                        page.close()
+                        context.close()
+                    except Exception:
+                        pass
+                    context, page = create_fresh_session()
 
                 # Circuit breaker cooldown if 3 consecutive failures occur
                 if consecutive_failures >= 3:
-                    print(f"\n  {C_YELLOW}⚠ 3 consecutive failures encountered. Pausing 10s cooldown before continuing...{C_RESET}\n")
+                    print(f"\n  {C_YELLOW}⚠ 3 consecutive failures encountered. Re-spawning session and cooling down 10s...{C_RESET}\n")
+                    try:
+                        page.close()
+                        context.close()
+                    except Exception:
+                        pass
                     time.sleep(10)
+                    context, page = create_fresh_session()
                     consecutive_failures = 0
 
-                # Adaptive pacing delay between requests (with minor jitter)
+                # Adaptive pacing delay between requests with randomized jitter
                 if idx < total and pacing_delay > 0:
-                    time.sleep(pacing_delay + random.uniform(0.1, 0.3))
+                    time.sleep(pacing_delay + random.uniform(0.3, 1.2))
 
+            try:
+                page.close()
+                context.close()
+            except Exception:
+                pass
             browser.close()
 
         elapsed = time.time() - t0
@@ -1872,7 +1918,13 @@ class TeslaChargerExplorer:
                 print(f"{C_CYAN}🔄 Syncing updated registries across {len(ext_drives)} mounted TESLADRIVE volume(s)...{C_RESET}")
                 for ext_drive in ext_drives:
                     try:
-                        for reg_file in ["superchargers.json", "superchargers_archived.json", "charging.json", "charging_archived.json"]:
+                        for reg_file in [
+                            "tesla_superchargers.json", "tesla_superchargers_archived.json",
+                            "tesla_chargers.json", "tesla_chargers_archived.json",
+                            "places.json", "state_boundaries.json",
+                            # Legacy fallbacks
+                            "superchargers.json", "superchargers_archived.json", "charging.json", "charging_archived.json"
+                        ]:
                             src = os.path.join(self.repo_root, "Tessie", reg_file)
                             if os.path.isfile(src):
                                 dst = os.path.join(ext_drive, "Tessie", reg_file)
@@ -1968,7 +2020,9 @@ class TeslaChargerExplorer:
         print(header_line)
         print(f"╚{'═' * (box_width - 2)}╝\n")
 
-        source_label = f"{C_GREEN}Local JSON Registry (Tessie/superchargers.json){C_RESET}" if from_cache else f"{C_CYAN}Live Scraped (Tesla Find Us WebKit API){C_RESET}"
+        is_sc = meta.get("type", "supercharger") == "supercharger"
+        reg_file = "tesla_superchargers.json" if is_sc else "tesla_chargers.json"
+        source_label = f"{C_GREEN}Local JSON Registry (Tessie/{reg_file}){C_RESET}" if from_cache else f"{C_CYAN}Live Scraped (Tesla Find Us WebKit API){C_RESET}"
 
         # Use pad_display for consistent column alignment regardless of emoji visual width
         lw = 22  # label column width (covers longest label + bold escape codes)
@@ -2040,8 +2094,8 @@ class TeslaChargerExplorer:
         is_sc = data.get("tesla_metadata", {}).get("type") == "supercharger"
         target_fpath = self.superchargers_path if is_sc else self.destination_chargers_path
         archive_fpath = self.superchargers_archived_path if is_sc else self.destination_chargers_archived_path
-        reg_name = "superchargers.json" if is_sc else "destination_chargers.json"
-        arch_name = "superchargers_archived.json" if is_sc else "destination_chargers_archived.json"
+        reg_name = os.path.basename(target_fpath)
+        arch_name = os.path.basename(archive_fpath)
         now_utc = get_utc_now_iso()
 
         # Load active registry
@@ -2830,7 +2884,19 @@ Query & Proximity Examples:
                 print(f"{C_DIM}To re-scrape live pricing: ./Tools/find_tesla_chargers.py --inspect '{target_inspect}' --live [--save] [--sync]{C_RESET}\n")
                 return
 
-        station_key, data = explorer.scrape_station_details(target_inspect, charger_type=target_type)
+        # If target_inspect is not a direct URL, resolve exact URL from station catalog
+        scrape_target = target_inspect
+        if not scrape_target.startswith("http"):
+            c_type = "chargers" if args.dc else "superchargers"
+            cat_stations = explorer.fetch_station_list(country=args.country, charger_type=c_type)
+            cat_matches = [s for s in cat_stations if target_inspect.lower() in s.get("title", "").lower() or target_inspect.lower() in s.get("slug", "").lower()]
+            if len(cat_matches) == 1:
+                scrape_target = cat_matches[0]["url"]
+            elif len(cat_matches) > 1:
+                exact = [s for s in cat_matches if s.get("title", "").lower() == target_inspect.lower()]
+                scrape_target = exact[0]["url"] if exact else cat_matches[0]["url"]
+
+        station_key, data = explorer.scrape_station_details(scrape_target, charger_type=target_type)
         if not data:
             sys.exit(1)
         if args.json:
