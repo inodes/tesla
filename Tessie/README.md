@@ -133,12 +133,17 @@ A suite of tools for processing, classifying, and analyzing [Tessie](https://sha
 ./Tools/tessie_places.py lookup "109 Blaxland Road, Ryde"
 ./Tools/tessie_places.py lookup -33.81228 151.10611
 
+# Interactively select, search, and edit saved places:
+./Tools/tessie_places.py edit
+./Tools/tessie_places.py edit "Top Ryde City Shopping Centre"
+
 # Scan drive history for unlabelled recurring stop clusters and interactively tag POIs:
 ./Tools/tessie_places.py review --min-stops 2
 
-# Add or update places directly from the CLI:
+# Add, update, or alias places directly from the CLI:
 ./Tools/tessie_places.py add "Top Ryde City Shopping Centre" --address "109 Blaxland Road, Ryde" --radius 200
 ./Tools/tessie_places.py update "Top Ryde City Shopping Centre" --add-keyword "Devlin Street"
+./Tools/tessie_places.py alias "Top Ryde City Shopping Centre" --address "1 Devlin Street" --expand-radius
 ./Tools/tessie_places.py remove "Old Place"
 ```
 
