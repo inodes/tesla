@@ -626,10 +626,14 @@ def display_timeline(target_date, analyzer, compact=False):
     w_rec = 6
     w_sav = 6
     w_sen = 6
-    w_act = 39
 
     while True:
         events, day_start = analyzer.get_timeline_data(curr_date)
+        
+        # Expand w_act dynamically so that no route or location line gets truncated or broken
+        max_act_len = max((display_len(ev["activity"]) for ev in events), default=50)
+        w_act = max(65, max_act_len + 3)
+        total_inner = w_time + w_rec + w_sav + w_sen + w_act + 4
         
         total_recent_mins = sum(ev["recent_mins"] for ev in events)
         total_saved_mins = sum(ev["saved_mins"] for ev in events)
@@ -642,10 +646,10 @@ def display_timeline(target_date, analyzer, compact=False):
         h_rec = pad_display("🔄", w_rec, "center")
         h_sav = pad_display("💾", w_sav, "center")
         h_sen = pad_display("🔴", w_sen, "center")
-        h_act = f" {'Vehicle State & Route / Location':<37} "
+        h_act = f" {'Vehicle State & Route / Location':<{w_act-2}} "
 
-        print(f"┌{'─'*76}┐")
-        print(f"│{title:<76}│")
+        print(f"┌{'─'*total_inner}┐")
+        print(f"│{title:<{total_inner}}│")
         print(f"├{'─'*w_time}┬{'─'*w_rec}┬{'─'*w_sav}┬{'─'*w_sen}┬{'─'*w_act}┤")
         print(f"│{h_time}│{h_rec}│{h_sav}│{h_sen}│{h_act}│")
         print(f"├{'─'*w_time}┼{'─'*w_rec}┼{'─'*w_sav}┼{'─'*w_sen}┼{'─'*w_act}┤")
@@ -675,15 +679,15 @@ def display_timeline(target_date, analyzer, compact=False):
         print(f"├{'─'*w_time}┴{'─'*w_rec}┴{'─'*w_sav}┴{'─'*w_sen}┴{'─'*w_act}┤")
         if not has_any_footage:
             foot_msg = " No local footage on archive SSD. Run 'tesla_sync.sh' to backup from car."
-            print(f"│{foot_msg:<76}│")
+            print(f"│{foot_msg:<{total_inner}}│")
         else:
             rec_tot = format_duration_short(total_recent_mins)
             sav_tot = format_duration_short(total_saved_mins)
             sen_tot = format_duration_short(total_sentry_mins)
             foot_msg = f" Footage Totals: 🔄 {rec_tot} | 💾 {sav_tot} | 🔴 {sen_tot}"
-            foot_pad = pad_display(foot_msg, 76, "left")
+            foot_pad = pad_display(foot_msg, total_inner, "left")
             print(f"│{foot_pad}│")
-        print(f"└{'─'*76}┘")
+        print(f"└{'─'*total_inner}┘")
             
         if not sys.stdin.isatty():
             break
