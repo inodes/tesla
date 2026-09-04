@@ -2232,8 +2232,10 @@ def interactive_drilldown(explorer: TeslaChargerExplorer):
             for st in all_stations:
                 st_c = dict(st)
                 st_c["_status"] = explorer.get_station_status(st, sc_reg=sc_reg, dc_reg=dc_reg)
-                _, cached_data, _ = explorer.get_station_record(st, sc_reg=sc_reg, dc_reg=dc_reg)
+                cached_key, cached_data, _ = explorer.get_station_record(st, sc_reg=sc_reg, dc_reg=dc_reg)
                 if cached_data:
+                    if cached_key:
+                        st_c["title"] = cached_key
                     st_c["hardware"] = cached_data.get("hardware", {})
                     st_c["compatibility"] = cached_data.get("compatibility", {})
                     st_c["tariffs"] = cached_data.get("tariffs", {})
@@ -2547,8 +2549,10 @@ Query & Proximity Examples:
             st_status = explorer.get_station_status(s, sc_reg=sc_reg, dc_reg=dc_reg)
             st_copy["_status"] = st_status
 
-            _, cached_data, _ = explorer.get_station_record(s, sc_reg=sc_reg, dc_reg=dc_reg)
+            cached_key, cached_data, _ = explorer.get_station_record(s, sc_reg=sc_reg, dc_reg=dc_reg)
             if cached_data:
+                if cached_key:
+                    st_copy["title"] = cached_key
                 st_copy["hardware"] = cached_data.get("hardware", {})
                 st_copy["compatibility"] = cached_data.get("compatibility", {})
                 st_copy["tariffs"] = cached_data.get("tariffs", {})
