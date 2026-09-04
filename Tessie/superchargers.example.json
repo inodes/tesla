@@ -1,26 +1,91 @@
 {
-  "Macquarie Centre": {
-    "name": "Tesla Supercharger - Macquarie Centre",
-    "short_name": "Macquarie Centre",
-    "type": "supercharger",
-    "address": "Banda Road, Macquarie Park NSW 2113",
-    "lat": -33.778008,
-    "lon": 151.122600,
-    "radius_m": 250,
-    "keywords": [
-      "Banda Road",
-      "Macquarie Centre",
-      "Macquarie Park"
-    ],
-    "stalls": 6,
-    "max_power_kw": 250,
-    "tier": "V3",
-    "costs": {
-      "currency": "AUD",
-      "pricing_model": "dynamic",
-      "average_per_kwh": 0.64,
-      "idle_fee_per_min": 1.00
+  "Macquarie, NSW": {
+    "tesla_metadata": {
+      "name": "Tesla Supercharger - Macquarie, NSW",
+      "location_name": "Macquarie Centre",
+      "short_name": "Macquarie Centre",
+      "type": "supercharger",
+      "keywords": [
+        "Banda Road",
+        "Macquarie Centre",
+        "Macquarie Park",
+        "North Ryde",
+        "Talavera Road"
+      ]
     },
-    "amenities": ["Shopping", "Restrooms", "Dining", "WiFi"]
+    "location": {
+      "address": "55-61 Talavera Road, North Ryde, New South Wales 2113",
+      "street": "55-61 Talavera Road",
+      "suburb": "North Ryde",
+      "state": "NSW",
+      "postcode": "2113",
+      "country": "Australia",
+      "country_code": "AU",
+      "lat": -33.777977,
+      "lon": 151.122600,
+      "radius_m": 250
+    },
+    "hardware": {
+      "stalls": 10,
+      "max_power_kw": 130,
+      "tier": "V2"
+    },
+    "access": {
+      "hours": "Available 24/7"
+    },
+    "traffic_and_occupancy": {
+      "hourly_busyness_histogram": [
+        { "hour": "00:00", "avg_occupancy_pct": 10, "level": "low" },
+        { "hour": "04:00", "avg_occupancy_pct": 5, "level": "low" },
+        { "hour": "08:00", "avg_occupancy_pct": 45, "level": "medium" },
+        { "hour": "12:00", "avg_occupancy_pct": 75, "level": "high" },
+        { "hour": "16:00", "avg_occupancy_pct": 90, "level": "high" },
+        { "hour": "20:00", "avg_occupancy_pct": 30, "level": "low" }
+      ]
+    },
+    "tessie_cost_config": {
+      "currency": "AUD",
+      "pricing_model": "time_of_use",
+      "per_kwh_flat": 0.00,
+      "per_minute": 0.00,
+      "per_session": 0.00,
+      "idle_fee_per_min": 1.00,
+      "congestion_fee_per_min": 0.50,
+      "rate_schedules": [
+        {
+          "name": "Off-Peak Night",
+          "rate_per_kwh": 0.35,
+          "start_time": "00:00",
+          "end_time": "08:00",
+          "days": ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"],
+          "months": ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
+        },
+        {
+          "name": "Peak Day",
+          "rate_per_kwh": 0.59,
+          "start_time": "08:00",
+          "end_time": "20:00",
+          "days": ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"],
+          "months": ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
+        },
+        {
+          "name": "Off-Peak Evening",
+          "rate_per_kwh": 0.35,
+          "start_time": "20:00",
+          "end_time": "24:00",
+          "days": ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"],
+          "months": ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
+        }
+      ]
+    },
+    "amenities": {
+      "restrooms": true,
+      "dining": true,
+      "shopping": true,
+      "coffee": true,
+      "wifi": false,
+      "lodging": false,
+      "parking": true
+    }
   }
 }
