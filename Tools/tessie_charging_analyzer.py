@@ -40,8 +40,62 @@ import zlib
 import shutil
 import argparse
 import unicodedata
+from zoneinfo import ZoneInfo
 from datetime import datetime, timedelta
 from collections import defaultdict
+
+def resolve_location_timezone(state: str = None, country: str = None, lat: float = None, lon: float = None) -> str:
+    """Deterministically resolves standard IANA timezone identifier for a station or place."""
+    c_clean = (country or "Australia").lower().replace("+", " ").strip()
+    st_clean = (state or "").upper().strip()
+
+    if c_clean in ["australia", "au"]:
+        if st_clean in ["NSW", "ACT"]:
+            return "Australia/Sydney"
+        elif st_clean == "VIC":
+            return "Australia/Melbourne"
+        elif st_clean == "QLD":
+            return "Australia/Brisbane"
+        elif st_clean == "SA":
+            return "Australia/Adelaide"
+        elif st_clean == "WA":
+            return "Australia/Perth"
+        elif st_clean == "TAS":
+            return "Australia/Hobart"
+        elif st_clean == "NT":
+            return "Australia/Darwin"
+        if lon is not None:
+            if lon < 129.0:
+                return "Australia/Perth"
+            elif lon < 141.0:
+                return "Australia/Adelaide"
+            elif lat is not None and lat > -28.0:
+                return "Australia/Brisbane"
+            else:
+                return "Australia/Sydney"
+        return "Australia/Sydney"
+    elif c_clean in ["new zealand", "nz"]:
+        return "Pacific/Auckland"
+    elif c_clean in ["japan", "jp"]:
+        return "Asia/Tokyo"
+    elif c_clean in ["hong kong", "hk"]:
+        return "Asia/Hong_Kong"
+    elif c_clean in ["singapore", "sg"]:
+        return "Asia/Singapore"
+    elif c_clean in ["united kingdom", "uk", "great britain"]:
+        return "Europe/London"
+    elif c_clean in ["united states", "usa", "us"]:
+        us_tz_map = {
+            "CA": "America/Los_Angeles", "WA": "America/Los_Angeles", "OR": "America/Los_Angeles", "NV": "America/Los_Angeles",
+            "NY": "America/New_York", "NJ": "America/New_York", "MA": "America/New_York", "FL": "America/New_York",
+            "TX": "America/Chicago", "IL": "America/Chicago", "CO": "America/Denver", "AZ": "America/Phoenix", "HI": "Pacific/Honolulu"
+        }
+        return us_tz_map.get(st_clean, "America/New_York")
+    elif c_clean in ["germany", "de"]:
+        return "Europe/Berlin"
+    elif c_clean in ["france", "fr"]:
+        return "Europe/Paris"
+    return "UTC"
 
 # -----------------------------------------------------------------------------
 # Terminal Formatting & Unicode Helpers (wcwidth compatible)
@@ -727,7 +781,9 @@ class TessieChargingAnalyzer:
 
         # 4. Load Registries
         self.superchargers = self.load_json_registry("superchargers.json")
+        self.superchargers_archived = self.load_json_registry("superchargers_archived.json")
         self.charging_stations = self.load_json_registry("charging.json")
+        self.charging_archived = self.load_json_registry("charging_archived.json")
         self.places = self.load_json_registry("places.json")
         
         self.charges = []
@@ -851,20 +907,101 @@ class TessieChargingAnalyzer:
         else:
             return (display, "AC Charger", "🅿️", {})
 
-    def get_expected_tariff_rate(self, registry_obj, dt):
-        if not registry_obj or not dt:
-            return None
+    def get_expected_tariff_rate(self, registry_obj, dt, place_name=None, is_non_tesla=False):
+        """
+        Determines the expected tariff rate ($/kWh), TOU schedule name, theoretical cost,
+        and whether historical archived rates were used for a charging session at datetime dt.
+        """
+        if not dt:
+            return {
+                "rate_per_kwh": None,
+                "schedule_name": None,
+                "theoretical_cost": None,
+                "theoretical_gst": None,
+                "is_archived": False,
+                "timezone": "UTC"
+            }
+
+        target_obj = registry_obj
+        is_archived = False
+
+        # Try to find historical archived version matching timestamp dt
+        lookup_name = place_name or (registry_obj.get("tesla_metadata", {}).get("name") if registry_obj else None)
+        if lookup_name:
+            candidates = self.superchargers_archived.get(lookup_name) or self.charging_archived.get(lookup_name)
+            if not candidates:
+                for k, v in self.superchargers_archived.items():
+                    if k.lower() in lookup_name.lower() or lookup_name.lower() in k.lower():
+                        candidates = v
+                        break
+            if candidates:
+                if isinstance(candidates, dict):
+                    candidates = [candidates]
+                for cand in candidates:
+                    v_from_str = cand.get("valid_from")
+                    v_to_str = cand.get("valid_to") or cand.get("archived_at")
+                    v_from = parse_flexible_date(v_from_str) if v_from_str else datetime.min
+                    v_to = parse_flexible_date(v_to_str) if v_to_str else datetime.max
+                    if v_from and v_from.tzinfo:
+                        v_from = v_from.replace(tzinfo=None)
+                    if v_to and v_to.tzinfo:
+                        v_to = v_to.replace(tzinfo=None)
+                    check_dt = dt.replace(tzinfo=None) if dt.tzinfo else dt
+                    if v_from <= check_dt <= v_to:
+                        target_obj = cand
+                        is_archived = True
+                        break
+
+        if not target_obj:
+            return {
+                "rate_per_kwh": None,
+                "schedule_name": None,
+                "theoretical_cost": None,
+                "theoretical_gst": None,
+                "is_archived": False,
+                "timezone": "UTC"
+            }
+
+        loc = target_obj.get("location", {})
+        tz_name = target_obj.get("timezone") or loc.get("timezone")
+        if not tz_name:
+            tz_name = resolve_location_timezone(
+                state=loc.get("state"),
+                country=loc.get("country"),
+                lat=loc.get("lat"),
+                lon=loc.get("lon")
+            )
+
+        local_dt = dt
+
+        tariffs = target_obj.get("tariffs", {})
+        cost_cfg = target_obj.get("tessie_cost_config") or target_obj.get("costs") or {}
         
-        cost_cfg = registry_obj.get("tessie_cost_config") or registry_obj.get("costs") or {}
-        pricing_model = cost_cfg.get("pricing_model", "flat")
-        
-        if pricing_model == "flat":
-            return cost_cfg.get("per_kwh_flat") or cost_cfg.get("flat_per_kwh")
-        
-        schedules = cost_cfg.get("rate_schedules") or []
-        day_str = dt.strftime("%a")
-        time_str = dt.strftime("%H:%M")
-        month_str = dt.strftime("%b")
+        if tariffs:
+            user_group = "non_tesla" if is_non_tesla else "tesla_members"
+            group_cfg = tariffs.get(user_group, {})
+            p_model = group_cfg.get("pricing_model", "time_of_use" if tariffs.get("has_tou_pricing") else "flat")
+            schedules = group_cfg.get("rate_schedules", [])
+            flat_rate = group_cfg.get("rate_per_kwh") or cost_cfg.get("per_kwh_flat") or cost_cfg.get("flat_per_kwh")
+        else:
+            p_model = cost_cfg.get("pricing_model", "flat")
+            schedules = cost_cfg.get("rate_schedules", [])
+            flat_rate = cost_cfg.get("per_kwh_flat") or cost_cfg.get("flat_per_kwh")
+
+        if p_model == "flat" or not schedules:
+            return {
+                "rate_per_kwh": flat_rate or 0.0,
+                "schedule_name": "Flat Rate",
+                "is_archived": is_archived,
+                "timezone": tz_name
+            }
+
+        day_str = local_dt.strftime("%a")
+        time_str = local_dt.strftime("%H:%M")
+        month_str = local_dt.strftime("%b")
+
+        matched_rate = None
+        matched_sched_name = "TOU Schedule"
 
         for sched in schedules:
             days = sched.get("days", [])
@@ -872,20 +1009,34 @@ class TessieChargingAnalyzer:
             s_time = sched.get("start_time", "00:00")
             e_time = sched.get("end_time", "24:00")
             rate = sched.get("rate_per_kwh")
+            s_name = sched.get("name") or sched.get("label") or "TOU Rate"
 
             if days and day_str not in days:
                 continue
             if months and month_str not in months:
                 continue
-            
+
             if s_time <= e_time:
                 if s_time <= time_str < e_time:
-                    return rate
+                    matched_rate = rate
+                    matched_sched_name = s_name
+                    break
             else:
                 if time_str >= s_time or time_str < e_time:
-                    return rate
-                    
-        return cost_cfg.get("per_kwh_flat") or cost_cfg.get("flat_per_kwh")
+                    matched_rate = rate
+                    matched_sched_name = s_name
+                    break
+
+        if matched_rate is None:
+            matched_rate = flat_rate
+            matched_sched_name = "Standard Rate"
+
+        return {
+            "rate_per_kwh": matched_rate,
+            "schedule_name": matched_sched_name,
+            "is_archived": is_archived,
+            "timezone": tz_name
+        }
 
     def load_charges(self):
         raw_charges = []
@@ -1132,7 +1283,20 @@ class TessieChargingAnalyzer:
 
             loss_kwh = max(0.0, dispenser_kwh - battery_kwh) if dispenser_kwh > 0 else 0.0
             efficiency_pct = (battery_kwh / dispenser_kwh * 100.0) if dispenser_kwh > 0 else 100.0
-            expected_rate = self.get_expected_tariff_rate(charge["registry_obj"], dt)
+            
+            exp_info = self.get_expected_tariff_rate(charge["registry_obj"], dt, place_name=charge["place_name"])
+            expected_rate = exp_info.get("rate_per_kwh")
+            expected_sched = exp_info.get("schedule_name")
+            is_archived_match = exp_info.get("is_archived", False)
+            tz_used = exp_info.get("timezone", "Australia/Sydney")
+
+            effective_kwh = dispenser_kwh if dispenser_kwh > 0 else battery_kwh
+            if expected_rate is not None and effective_kwh > 0:
+                theoretical_cost = effective_kwh * expected_rate
+                theoretical_gst = theoretical_cost / 11.0
+            else:
+                theoretical_cost = None
+                theoretical_gst = None
 
             reconciled.append({
                 "charge_index": c_idx + 1,
@@ -1158,6 +1322,11 @@ class TessieChargingAnalyzer:
                 "invoice_rate": invoice_rate,
                 "invoice_number": inv_num,
                 "expected_rate": expected_rate,
+                "expected_schedule_name": expected_sched,
+                "theoretical_cost": theoretical_cost,
+                "theoretical_gst": theoretical_gst,
+                "is_archived_tariff": is_archived_match,
+                "timezone": tz_used,
                 "status": status,
                 "matched_invoice": best_inv,
                 "raw_charge": charge
@@ -1166,6 +1335,15 @@ class TessieChargingAnalyzer:
         for i_idx, inv in enumerate(self.invoices):
             if i_idx not in matched_invoice_indices:
                 inv_dt = inv.get("date")
+                exp_inv_info = self.get_expected_tariff_rate(None, inv_dt, place_name=inv.get("location_raw"))
+                inv_expected_rate = exp_inv_info.get("rate_per_kwh")
+                inv_expected_sched = exp_inv_info.get("schedule_name")
+                inv_is_archived = exp_inv_info.get("is_archived", False)
+                inv_tz = exp_inv_info.get("timezone", "Australia/Sydney")
+                inv_kwh = inv.get("energy_kwh") or 0.0
+                inv_th_cost = (inv_kwh * inv_expected_rate) if (inv_expected_rate is not None and inv_kwh > 0) else None
+                inv_th_gst = (inv_th_cost / 11.0) if inv_th_cost is not None else None
+
                 reconciled.append({
                     "charge_index": None,
                     "datetime": inv_dt,
@@ -1189,7 +1367,12 @@ class TessieChargingAnalyzer:
                     "invoice_cost": inv.get("total_cost"),
                     "invoice_rate": inv.get("unit_rate"),
                     "invoice_number": inv.get("invoice_number"),
-                    "expected_rate": None,
+                    "expected_rate": inv_expected_rate,
+                    "expected_schedule_name": inv_expected_sched,
+                    "theoretical_cost": inv_th_cost,
+                    "theoretical_gst": inv_th_gst,
+                    "is_archived_tariff": inv_is_archived,
+                    "timezone": inv_tz,
                     "status": "INVOICE ONLY 📄",
                     "matched_invoice": inv,
                     "raw_charge": None
@@ -1520,9 +1703,17 @@ class TessieChargingAnalyzer:
             l10 = f"    • {C_BOLD}Tax Invoice / Receipt:{C_RESET}     {C_YELLOW}No matching invoice file found in configured invoices directory{C_RESET}"
             print(f"│{pad_display(l10, box_w - 2)}│")
 
-        if s["expected_rate"] is not None:
-            l12 = f"    • {C_BOLD}Configured Tariff Rate:{C_RESET}    ${s['expected_rate']:.3f}/kWh (from registry TOU schedule)"
+        if s.get("expected_rate") is not None:
+            arch_tag = f" {C_MAGENTA}[Historical Archive]{C_RESET}" if s.get("is_archived_tariff") else ""
+            sched_label = f" [{s.get('expected_schedule_name')}]" if s.get("expected_schedule_name") else ""
+            tz_label = f" (TZ: {s.get('timezone', 'Australia/Sydney')})"
+            l12 = f"    • {C_BOLD}Expected Tariff Rate:{C_RESET}      ${s['expected_rate']:.3f}/kWh{sched_label}{tz_label}{arch_tag}"
             print(f"│{pad_display(l12, box_w - 2)}│")
+
+            if s.get("theoretical_cost") is not None:
+                th_gst_str = f" (incl. ${s['theoretical_gst']:.2f} GST [10%])" if s.get("theoretical_gst") is not None else ""
+                l12b = f"    • {C_BOLD}Theoretical Tariff Cost:{C_RESET}   ${s['theoretical_cost']:.2f} AUD{th_gst_str}"
+                print(f"│{pad_display(l12b, box_w - 2)}│")
 
         l13 = f"    • {C_BOLD}Reconciliation Status:{C_RESET}     {s['status']}"
         print(f"│{pad_display(l13, box_w - 2)}│")

@@ -35,8 +35,73 @@ import math
 import shutil
 import argparse
 import unicodedata
+from zoneinfo import ZoneInfo
 from urllib.parse import urlparse, parse_qs, quote, unquote
-from datetime import datetime
+from datetime import datetime, timezone
+
+def get_utc_now_iso() -> str:
+    """Returns current UTC timestamp in ISO-8601 format (YYYY-MM-DDTHH:MM:SSZ)."""
+    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+def resolve_location_timezone(state: str = None, country: str = None, lat: float = None, lon: float = None) -> str:
+    """
+    Deterministically resolves standard IANA timezone identifier for a station or place.
+    Supports Australian states (NSW, VIC, QLD, WA, SA, TAS, ACT, NT), international, and coordinates.
+    """
+    c_clean = (country or "Australia").lower().replace("+", " ").strip()
+    st_clean = (state or "").upper().strip()
+
+    if c_clean in ["australia", "au"]:
+        if st_clean in ["NSW", "ACT"]:
+            return "Australia/Sydney"
+        elif st_clean == "VIC":
+            return "Australia/Melbourne"
+        elif st_clean == "QLD":
+            return "Australia/Brisbane"
+        elif st_clean == "SA":
+            return "Australia/Adelaide"
+        elif st_clean == "WA":
+            return "Australia/Perth"
+        elif st_clean == "TAS":
+            return "Australia/Hobart"
+        elif st_clean == "NT":
+            return "Australia/Darwin"
+        
+        # Coordinate-based fallback for Australia
+        if lon is not None:
+            if lon < 129.0:
+                return "Australia/Perth"
+            elif lon < 141.0:
+                return "Australia/Adelaide"
+            elif lat is not None and lat > -28.0:
+                return "Australia/Brisbane"
+            else:
+                return "Australia/Sydney"
+        return "Australia/Sydney"
+
+    elif c_clean in ["new zealand", "nz"]:
+        return "Pacific/Auckland"
+    elif c_clean in ["japan", "jp"]:
+        return "Asia/Tokyo"
+    elif c_clean in ["hong kong", "hk"]:
+        return "Asia/Hong_Kong"
+    elif c_clean in ["singapore", "sg"]:
+        return "Asia/Singapore"
+    elif c_clean in ["united kingdom", "uk", "great britain"]:
+        return "Europe/London"
+    elif c_clean in ["united states", "usa", "us"]:
+        us_tz_map = {
+            "CA": "America/Los_Angeles", "WA": "America/Los_Angeles", "OR": "America/Los_Angeles", "NV": "America/Los_Angeles",
+            "NY": "America/New_York", "NJ": "America/New_York", "MA": "America/New_York", "FL": "America/New_York",
+            "TX": "America/Chicago", "IL": "America/Chicago", "CO": "America/Denver", "AZ": "America/Phoenix", "HI": "Pacific/Honolulu"
+        }
+        return us_tz_map.get(st_clean, "America/New_York")
+    elif c_clean in ["germany", "de"]:
+        return "Europe/Berlin"
+    elif c_clean in ["france", "fr"]:
+        return "Europe/Paris"
+    
+    return "UTC"
 
 # -----------------------------------------------------------------------------
 # ANSI Color Codes & Unicode Helpers
@@ -302,9 +367,13 @@ class TeslaChargerExplorer:
         self.script_dir = os.path.dirname(os.path.abspath(__file__))
         self.repo_root = os.path.dirname(self.script_dir)
         self.superchargers_path = os.path.join(self.repo_root, "Tessie", "superchargers.json")
+        self.superchargers_archived_path = os.path.join(self.repo_root, "Tessie", "superchargers_archived.json")
         self.charging_path = os.path.join(self.repo_root, "Tessie", "charging.json")
+        self.charging_archived_path = os.path.join(self.repo_root, "Tessie", "charging_archived.json")
         self.example_sc_path = os.path.join(self.repo_root, "Tessie", "superchargers.example.json")
+        self.example_sc_archived_path = os.path.join(self.repo_root, "Tessie", "superchargers_archived.example.json")
         self.example_dc_path = os.path.join(self.repo_root, "Tessie", "charging.example.json")
+        self.example_dc_archived_path = os.path.join(self.repo_root, "Tessie", "charging_archived.example.json")
 
     def fetch_station_list(self, country: str = "Australia", charger_type: str = "superchargers") -> list:
         """
@@ -613,6 +682,21 @@ class TeslaChargerExplorer:
         tesla_rate_schedules = merge_tou_intervals(tesla_raw_tou)
         non_tesla_rate_schedules = merge_tou_intervals(non_tesla_raw_tou)
 
+        # Build backward-compatible tessie_cost_config for Tesla vehicles
+        tessie_cost_schedules = []
+        for s in tesla_rate_schedules:
+            tessie_cost_schedules.append({
+                "name": s.get("label", "Rate"),
+                "rate_per_kwh": s.get("rate_per_kwh"),
+                "start_time": s.get("start_time"),
+                "end_time": s.get("end_time"),
+                "days": s.get("days", ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]),
+                "months": s.get("months", ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"])
+            })
+
+        tz_name = resolve_location_timezone(state=state_code, country=country, lat=lat, lon=lon)
+        now_utc = get_utc_now_iso()
+
         # Construct Unified Station Record
         record = {
             "tesla_metadata": {
@@ -640,7 +724,8 @@ class TeslaChargerExplorer:
                 "country_code": country_code,
                 "lat": lat,
                 "lon": lon,
-                "radius_m": 250
+                "radius_m": 250,
+                "timezone": tz_name
             },
             "hardware": {
                 "stalls": stalls,
@@ -669,11 +754,87 @@ class TeslaChargerExplorer:
                     "pricing_model": "time_of_use" if non_tesla_rate_schedules else ("flat" if open_to_non_tesla else "none"),
                     "rate_schedules": non_tesla_rate_schedules
                 }
-            }
+            },
+            "tessie_cost_config": {
+                "currency": "AUD" if country_code == "AU" else "USD",
+                "pricing_model": "time_of_use" if tessie_cost_schedules else "flat",
+                "per_kwh_flat": 0.0,
+                "per_minute": 0.0,
+                "per_session": 0.0,
+                "idle_fee_per_min": idle_fee,
+                "congestion_fee_per_min": congestion_fee,
+                "rate_schedules": tessie_cost_schedules
+            },
+            "timezone": tz_name,
+            "first_seen": now_utc,
+            "last_updated": now_utc,
+            "last_verified": now_utc,
+            "valid_from": now_utc
         }
 
         station_key = station_name
         return station_key, record
+
+    def _detect_record_changes(self, existing: dict, new: dict) -> bool:
+        """Detects whether hardware, accessibility, or pricing/tariffs differ between existing and new records."""
+        if not existing or not new:
+            return False
+
+        # Compare hardware
+        ex_hw = existing.get("hardware", {})
+        new_hw = new.get("hardware", {})
+        if (ex_hw.get("stalls") != new_hw.get("stalls") or 
+            ex_hw.get("max_power_kw") != new_hw.get("max_power_kw") or
+            ex_hw.get("tier") != new_hw.get("tier")):
+            return True
+
+        # Compare compatibility & access
+        ex_comp = existing.get("compatibility", {})
+        new_comp = new.get("compatibility", {})
+        if ex_comp.get("open_to_non_tesla") != new_comp.get("open_to_non_tesla"):
+            return True
+
+        ex_acc = existing.get("access", {})
+        new_acc = new.get("access", {})
+        if ex_acc.get("hours") != new_acc.get("hours"):
+            return True
+
+        # Extract normalized tariffs from existing
+        ex_tariffs = existing.get("tariffs", {})
+        ex_t_scheds = ex_tariffs.get("tesla_members", {}).get("rate_schedules", [])
+        if not ex_t_scheds and "tessie_cost_config" in existing:
+            ex_t_scheds = existing.get("tessie_cost_config", {}).get("rate_schedules", [])
+
+        # Extract normalized tariffs from new
+        new_tariffs = new.get("tariffs", {})
+        new_t_scheds = new_tariffs.get("tesla_members", {}).get("rate_schedules", [])
+
+        def simplify_scheds(scheds):
+            return [(s.get("start_time"), s.get("end_time"), round(float(s.get("rate_per_kwh", 0)), 4)) for s in scheds]
+
+        if simplify_scheds(ex_t_scheds) != simplify_scheds(new_t_scheds):
+            return True
+
+        # Compare fees
+        ex_idle = ex_tariffs.get("idle_fee_per_min") or existing.get("tessie_cost_config", {}).get("idle_fee_per_min", 0)
+        new_idle = new_tariffs.get("idle_fee_per_min", 0)
+        if round(float(ex_idle or 0), 2) != round(float(new_idle or 0), 2):
+            return True
+
+        ex_cong = ex_tariffs.get("congestion_fee_per_min") or existing.get("tessie_cost_config", {}).get("congestion_fee_per_min", 0)
+        new_cong = new_tariffs.get("congestion_fee_per_min", 0)
+        if round(float(ex_cong or 0), 2) != round(float(new_cong or 0), 2):
+            return True
+
+        # Compare non-tesla schedules
+        ex_nt_scheds = ex_tariffs.get("non_tesla", {}).get("rate_schedules", [])
+        if not ex_nt_scheds and "non_tesla_pricing" in existing:
+            ex_nt_scheds = existing.get("non_tesla_pricing", {}).get("rate_schedules", [])
+        new_nt_scheds = new_tariffs.get("non_tesla", {}).get("rate_schedules", [])
+        if simplify_scheds(ex_nt_scheds) != simplify_scheds(new_nt_scheds):
+            return True
+
+        return False
 
     def display_preview(self, station_key: str, data: dict):
         """Renders an attractive terminal summary card for a scraped station."""
@@ -682,22 +843,34 @@ class TeslaChargerExplorer:
         hw = data.get("hardware", {})
         comp = data.get("compatibility", {})
         tariffs = data.get("tariffs", {})
+        tz_name = data.get("timezone") or loc.get("timezone", "Australia/Sydney")
 
-        print(f"\n╔{'═'*84}╗")
-        title_str = f"⚡ LIVE SCRAPED CHARGER: {station_key} ⚡"
-        print(f"║{pad_display(title_str, 84, align='center')}║")
-        print(f"╚{'═'*84}╝\n")
+        box_width = 86
+        title_content = f"LIVE SCRAPED CHARGER: {station_key}"
+        if len(title_content) > box_width - 4:
+            title_content = title_content[:box_width - 7] + "..."
+        pad_total = box_width - 2 - len(title_content)
+        pad_l = pad_total // 2
+        pad_r = pad_total - pad_l
+        header_line = f"║{' ' * pad_l}{title_content}{' ' * pad_r}║"
+
+        print(f"\n╔{'═' * (box_width - 2)}╗")
+        print(header_line)
+        print(f"╚{'═' * (box_width - 2)}╝\n")
 
         print(f"  📍 {C_BOLD}Station Key:{C_RESET}       {station_key}")
         print(f"  🏷️  {C_BOLD}Short Identifier:{C_RESET} {meta.get('short_name')}")
         print(f"  🏢 {C_BOLD}General Location:{C_RESET} {meta.get('general_location')}")
         print(f"  📮 {C_BOLD}Address:{C_RESET}          {loc.get('address')} ({loc.get('lat')}, {loc.get('lon')})")
+        print(f"  🌐 {C_BOLD}Timezone:{C_RESET}         {tz_name}")
         print(f"  🔗 {C_BOLD}Find Us URL:{C_RESET}      {meta.get('findus_url')}")
         print(f"  🔌 {C_BOLD}Hardware:{C_RESET}         {hw.get('stalls')} Stalls | Up to {hw.get('max_power_kw')} kW ({hw.get('tier')})")
         
         non_t_str = f"{C_GREEN}YES (Open to CCS2 EVs){C_RESET}" if comp.get("open_to_non_tesla") else f"{C_RED}NO (Tesla Only){C_RESET}"
         print(f"  🚗 {C_BOLD}Non-Tesla Access:{C_RESET} {non_t_str}")
         print(f"  ⏱️  {C_BOLD}Idle / Congestion:{C_RESET} ${tariffs.get('idle_fee_per_min', 0):.2f}/min Idle | ${tariffs.get('congestion_fee_per_min', 0):.2f}/min Congestion")
+        if data.get("valid_from"):
+            print(f"  🕒 {C_BOLD}Effective Date:{C_RESET}   {data.get('valid_from')} (Verified: {data.get('last_verified', 'N/A')})")
 
         curr = tariffs.get("currency", "AUD")
         t_scheds = tariffs.get("tesla_members", {}).get("rate_schedules", [])
@@ -721,26 +894,92 @@ class TeslaChargerExplorer:
         print()
 
     def update_registry(self, station_key: str, data: dict, sync_external: bool = False):
-        """Saves scraped station data into superchargers.json or charging.json and syncs to external drives."""
+        """Saves scraped station data into superchargers.json or charging.json, archives older versions if changed, and syncs to external drives."""
         is_sc = data.get("tesla_metadata", {}).get("type") == "supercharger"
         target_fpath = self.superchargers_path if is_sc else self.charging_path
+        archive_fpath = self.superchargers_archived_path if is_sc else self.charging_archived_path
         example_fpath = self.example_sc_path if is_sc else self.example_dc_path
+        example_arch_fpath = self.example_sc_archived_path if is_sc else self.example_dc_archived_path
         reg_name = "superchargers.json" if is_sc else "charging.json"
+        arch_name = "superchargers_archived.json" if is_sc else "charging_archived.json"
+        now_utc = get_utc_now_iso()
 
-        for fpath in [target_fpath, example_fpath]:
-            if not os.path.isfile(fpath):
-                continue
+        # Load active registry
+        active_reg = {}
+        if os.path.isfile(target_fpath):
             try:
-                with open(fpath, "r", encoding="utf-8") as f:
-                    reg = json.load(f)
+                with open(target_fpath, "r", encoding="utf-8") as f:
+                    active_reg = json.load(f)
             except Exception:
-                reg = {}
+                active_reg = {}
 
-            reg[station_key] = data
+        # Load archive registry
+        archive_reg = {}
+        if os.path.isfile(archive_fpath):
+            try:
+                with open(archive_fpath, "r", encoding="utf-8") as f:
+                    archive_reg = json.load(f)
+            except Exception:
+                archive_reg = {}
 
-            with open(fpath, "w", encoding="utf-8") as f:
-                json.dump(reg, f, indent=2, ensure_ascii=False)
-            print(f"  {C_GREEN}✔ Updated registry entry in:{C_RESET} {fpath}")
+        existing_entry = active_reg.get(station_key)
+        new_entry = dict(data)
+        changes_detected = False
+
+        if existing_entry:
+            orig_first_seen = existing_entry.get("first_seen") or existing_entry.get("created_at") or now_utc
+            new_entry["first_seen"] = orig_first_seen
+
+            if self._detect_record_changes(existing_entry, new_entry):
+                changes_detected = True
+                print(f"  {C_YELLOW}⚡ Detected changes in pricing/hardware for '{station_key}'. Archiving previous version...{C_RESET}")
+                archived_record = dict(existing_entry)
+                archived_record["archived_at"] = now_utc
+                archived_record["valid_to"] = now_utc
+                if "valid_from" not in archived_record:
+                    archived_record["valid_from"] = orig_first_seen
+
+                if station_key not in archive_reg:
+                    archive_reg[station_key] = []
+                elif isinstance(archive_reg[station_key], dict):
+                    archive_reg[station_key] = [archive_reg[station_key]]
+
+                archive_reg[station_key].append(archived_record)
+
+                new_entry["last_updated"] = now_utc
+                new_entry["last_verified"] = now_utc
+                new_entry["valid_from"] = now_utc
+            else:
+                new_entry["last_updated"] = existing_entry.get("last_updated", orig_first_seen)
+                new_entry["valid_from"] = existing_entry.get("valid_from", orig_first_seen)
+                new_entry["last_verified"] = now_utc
+        else:
+            new_entry["first_seen"] = now_utc
+            new_entry["last_updated"] = now_utc
+            new_entry["last_verified"] = now_utc
+            new_entry["valid_from"] = now_utc
+
+        active_reg[station_key] = new_entry
+
+        # Write active registry
+        for fpath in [target_fpath, example_fpath]:
+            if os.path.isfile(fpath) or fpath == target_fpath:
+                try:
+                    with open(fpath, "w", encoding="utf-8") as f:
+                        json.dump(active_reg, f, indent=2, ensure_ascii=False)
+                    print(f"  {C_GREEN}✔ Saved active registry entry in:{C_RESET} {fpath}")
+                except Exception as e:
+                    print(f"  {C_RED}❌ Failed writing {fpath}:{C_RESET} {e}")
+
+        # Write archive registry if changes occurred
+        if changes_detected:
+            for fpath in [archive_fpath, example_arch_fpath]:
+                try:
+                    with open(fpath, "w", encoding="utf-8") as f:
+                        json.dump(archive_reg, f, indent=2, ensure_ascii=False)
+                    print(f"  {C_GREEN}✔ Updated historical archive in:{C_RESET} {fpath}")
+                except Exception as e:
+                    print(f"  {C_RED}❌ Failed writing archive {fpath}:{C_RESET} {e}")
 
         if sync_external:
             ext_drives = find_mounted_tesla_volumes()
@@ -748,11 +987,15 @@ class TeslaChargerExplorer:
                 print(f"  {C_YELLOW}⚠ No mounted TESLADRIVE volumes detected under /Volumes. Skipping external sync.{C_RESET}")
             for ext_drive in ext_drives:
                 ext_sc = os.path.join(ext_drive, "Tessie", reg_name)
+                ext_arch = os.path.join(ext_drive, "Tessie", arch_name)
                 try:
                     os.makedirs(os.path.dirname(ext_sc), exist_ok=True)
                     with open(ext_sc, "w", encoding="utf-8") as f:
-                        json.dump(reg, f, indent=2, ensure_ascii=False)
-                    print(f"  {C_GREEN}✔ Synced updated registry to:{C_RESET} {ext_sc}")
+                        json.dump(active_reg, f, indent=2, ensure_ascii=False)
+                    if changes_detected:
+                        with open(ext_arch, "w", encoding="utf-8") as f:
+                            json.dump(archive_reg, f, indent=2, ensure_ascii=False)
+                    print(f"  {C_GREEN}✔ Synced updated registry & archives to:{C_RESET} {ext_drive}")
                 except Exception as e:
                     print(f"  {C_RED}❌ Failed to sync to external drive {ext_drive}:{C_RESET} {e}")
 
