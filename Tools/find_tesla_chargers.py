@@ -341,6 +341,8 @@ def merge_tou_intervals(intervals: list) -> list:
 
     # Assign descriptive label based on time range
     for entry in merged:
+        if entry.get("label"):
+            continue  # Preserve explicitly set labels (e.g. from flat-rate capture)
         st, et = entry["start_time"], entry["end_time"]
         is_nt = entry.get("is_non_tesla", False)
         prefix = "Non-Tesla " if is_nt else ""
@@ -348,7 +350,9 @@ def merge_tou_intervals(intervals: list) -> list:
         st_h = int(st.split(":")[0]) if ":" in st else 0
         et_h = int(et.split(":")[0]) if ":" in et else 24
         
-        if st_h >= 22 or et_h <= 8:
+        if st == "00:00" and et == "24:00" and len(merged) == 1:
+            entry["label"] = f"{prefix}Flat Rate"
+        elif st_h >= 22 or et_h <= 8:
             entry["label"] = f"{prefix}Off-Peak Night"
         elif st_h >= 8 and et_h <= 20:
             entry["label"] = f"{prefix}Peak Day"
@@ -1049,6 +1053,20 @@ class TeslaChargerExplorer:
                     elif v_type == "NTSLA":
                         entry["is_non_tesla"] = True
                         non_tesla_raw_tou.append(entry)
+                else:
+                    # Flat-rate (no time-of-use windows) — store as single 24/7 entry
+                    entry = {
+                        "start_time": "00:00",
+                        "end_time": "24:00",
+                        "rate_per_kwh": float(rate),
+                        "label": "Flat Rate"
+                    }
+                    if v_type == "TSLA":
+                        entry["is_non_tesla"] = False
+                        tesla_raw_tou.append(entry)
+                    elif v_type == "NTSLA":
+                        entry["is_non_tesla"] = True
+                        non_tesla_raw_tou.append(entry)
 
         # Fallback pricing parsing from fmt_data.chargerPricing
         if not tesla_raw_tou and fmt_data.get("chargerPricing"):
@@ -1084,9 +1102,27 @@ class TeslaChargerExplorer:
                             non_tesla_raw_tou.append(entry)
                         else:
                             tesla_raw_tou.append(entry)
+                    elif rate_val > 0:
+                        # Flat-rate entry (e.g. "Base Rate: A$0.48/kWh") — no time window
+                        entry = {
+                            "start_time": "00:00",
+                            "end_time": "24:00",
+                            "rate_per_kwh": rate_val,
+                            "label": lbl.strip() or "Flat Rate",
+                            "is_non_tesla": is_nt
+                        }
+                        if is_nt:
+                            non_tesla_raw_tou.append(entry)
+                        else:
+                            tesla_raw_tou.append(entry)
 
         tesla_rate_schedules = merge_tou_intervals(tesla_raw_tou)
         non_tesla_rate_schedules = merge_tou_intervals(non_tesla_raw_tou)
+
+        # Determine if pricing is genuinely TOU vs flat rate stored as a 24/7 schedule
+        is_tesla_tou = len(tesla_rate_schedules) > 1
+        is_non_tesla_tou = len(non_tesla_rate_schedules) > 1
+        tesla_flat_rate = tesla_rate_schedules[0]["rate_per_kwh"] if (tesla_rate_schedules and not is_tesla_tou) else 0.0
 
         # Build backward-compatible tessie_cost_config for Tesla vehicles
         tessie_cost_schedules = []
@@ -1151,21 +1187,22 @@ class TeslaChargerExplorer:
                 "currency": "AUD" if country_code == "AU" else "USD",
                 "idle_fee_per_min": idle_fee,
                 "congestion_fee_per_min": congestion_fee,
-                "has_tou_pricing": bool(tesla_rate_schedules),
+                "has_tou_pricing": is_tesla_tou,
+                "per_kwh_flat": tesla_flat_rate if not is_tesla_tou else None,
                 "tesla_members": {
-                    "pricing_model": "time_of_use" if tesla_rate_schedules else "flat",
+                    "pricing_model": "time_of_use" if is_tesla_tou else ("flat" if tesla_rate_schedules else "unknown"),
                     "rate_schedules": tesla_rate_schedules
                 },
                 "non_tesla": {
                     "supported": open_to_non_tesla,
-                    "pricing_model": "time_of_use" if non_tesla_rate_schedules else ("flat" if open_to_non_tesla else "none"),
+                    "pricing_model": "time_of_use" if is_non_tesla_tou else ("flat" if non_tesla_rate_schedules else ("none" if not open_to_non_tesla else "unknown")),
                     "rate_schedules": non_tesla_rate_schedules
                 }
             },
             "tessie_cost_config": {
                 "currency": "AUD" if country_code == "AU" else "USD",
-                "pricing_model": "time_of_use" if tessie_cost_schedules else "flat",
-                "per_kwh_flat": 0.0,
+                "pricing_model": "time_of_use" if is_tesla_tou else "flat",
+                "per_kwh_flat": tesla_flat_rate,
                 "per_minute": 0.0,
                 "per_session": 0.0,
                 "idle_fee_per_min": idle_fee,
@@ -1632,39 +1669,66 @@ class TeslaChargerExplorer:
         print(f"╚{'═' * (box_width - 2)}╝\n")
 
         source_label = f"{C_GREEN}Local JSON Registry (Tessie/superchargers.json){C_RESET}" if from_cache else f"{C_CYAN}Live Scraped (Tesla Find Us WebKit API){C_RESET}"
-        print(f"  📂 {C_BOLD}Data Source:{C_RESET}       {source_label}")
-        print(f"  📍 {C_BOLD}Station Key:{C_RESET}       {station_key}")
-        print(f"  🏷️  {C_BOLD}Short Identifier:{C_RESET} {meta.get('short_name')}")
-        print(f"  🏢 {C_BOLD}General Location:{C_RESET} {meta.get('general_location')}")
-        print(f"  📮 {C_BOLD}Address:{C_RESET}          {loc.get('address')} ({loc.get('lat')}, {loc.get('lon')})")
-        print(f"  🌐 {C_BOLD}Timezone:{C_RESET}         {tz_name}")
-        print(f"  🔗 {C_BOLD}Find Us URL:{C_RESET}      {meta.get('findus_url')}")
-        print(f"  🔌 {C_BOLD}Hardware:{C_RESET}         {hw.get('stalls')} Stalls | Up to {hw.get('max_power_kw')} kW ({hw.get('tier')})")
+
+        # Use pad_display for consistent column alignment regardless of emoji visual width
+        lw = 22  # label column width (covers longest label + bold escape codes)
+        def _field(icon, label, value):
+            styled_label = f"{C_BOLD}{label}:{C_RESET}"
+            print(f"  {icon} {pad_display(styled_label, lw)} {value}")
+
+        _field("📂", "Data Source", source_label)
+        _field("📍", "Station Key", station_key)
+        _field("🏷️ ", "Short ID", meta.get('short_name', '-'))
+        _field("🏢", "General Location", meta.get('general_location', '-'))
+        _field("📮", "Address", f"{loc.get('address')} ({loc.get('lat')}, {loc.get('lon')})")
+        _field("🌐", "Timezone", tz_name)
+        _field("🔗", "Find Us URL", meta.get('findus_url', '-'))
+        _field("🔌", "Hardware", f"{hw.get('stalls')} Stalls | Up to {hw.get('max_power_kw')} kW ({hw.get('tier')})")
         
         non_t_str = f"{C_GREEN}YES (Open to CCS2 EVs){C_RESET}" if comp.get("open_to_non_tesla") else f"{C_RED}NO (Tesla Only){C_RESET}"
-        print(f"  🚗 {C_BOLD}Non-Tesla Access:{C_RESET} {non_t_str}")
-        print(f"  ⏱️  {C_BOLD}Idle / Congestion:{C_RESET} ${tariffs.get('idle_fee_per_min', 0):.2f}/min Idle | ${tariffs.get('congestion_fee_per_min', 0):.2f}/min Congestion")
+        _field("🚗", "Non-Tesla Access", non_t_str)
+        _field("⏱️ ", "Idle / Congestion", f"${tariffs.get('idle_fee_per_min', 0):.2f}/min Idle | ${tariffs.get('congestion_fee_per_min', 0):.2f}/min Congestion")
         if data.get("valid_from"):
-            print(f"  🕒 {C_BOLD}Effective Date:{C_RESET}   {data.get('valid_from')} (Verified: {data.get('last_verified', 'N/A')})")
+            _field("🕒", "Effective Date", f"{data.get('valid_from')} (Verified: {data.get('last_verified', 'N/A')})")
 
         curr = tariffs.get("currency", "AUD")
         t_scheds = tariffs.get("tesla_members", {}).get("rate_schedules", [])
         if t_scheds:
-            print(f"\n  💰 {C_BOLD}Tesla & Members Time-of-Use Rates ({curr}):{C_RESET}")
+            is_tou = len(t_scheds) > 1
+            section_title = f"Tesla & Members {'Time-of-Use' if is_tou else 'Flat'} Rates ({curr})"
+            print(f"\n  💰 {C_BOLD}{section_title}:{C_RESET}")
             for sch in t_scheds:
                 lbl = sch.get("label", "Rate")
                 st, et = sch.get("start_time"), sch.get("end_time")
                 rate = sch.get("rate_per_kwh")
-                print(f"    • {pad_display(lbl, 24)} {st} – {et}: ${rate:.2f}/kWh")
+                if st == "00:00" and et == "24:00" and not is_tou:
+                    print(f"    • {C_GREEN}${rate:.2f}/kWh{C_RESET} (Flat Rate — 24/7)")
+                else:
+                    print(f"    • {pad_display(lbl, 24)} {st} – {et}: ${rate:.2f}/kWh")
+        else:
+            # Check for per_kwh_flat fallback
+            flat_rate = tariffs.get("per_kwh_flat")
+            if flat_rate and float(flat_rate) > 0:
+                print(f"\n  💰 {C_BOLD}Tesla & Members Flat Rate ({curr}):{C_RESET}")
+                print(f"    • {C_GREEN}${float(flat_rate):.2f}/kWh{C_RESET} (Flat Rate — 24/7)")
+            else:
+                print(f"\n  💰 {C_BOLD}Tesla Pricing:{C_RESET} {C_YELLOW}Not available (re-scrape to fetch){C_RESET}")
 
         nt_scheds = tariffs.get("non_tesla", {}).get("rate_schedules", [])
         if nt_scheds:
-            print(f"\n  🔌 {C_BOLD}Non-Tesla Time-of-Use Rates ({curr}):{C_RESET}")
+            is_nt_tou = len(nt_scheds) > 1
+            nt_title = f"Non-Tesla {'Time-of-Use' if is_nt_tou else 'Flat'} Rates ({curr})"
+            print(f"\n  🔌 {C_BOLD}{nt_title}:{C_RESET}")
             for sch in nt_scheds:
                 lbl = sch.get("label", "Non-Tesla Rate")
                 st, et = sch.get("start_time"), sch.get("end_time")
                 rate = sch.get("rate_per_kwh")
-                print(f"    • {pad_display(lbl, 24)} {st} – {et}: ${rate:.2f}/kWh")
+                if st == "00:00" and et == "24:00" and not is_nt_tou:
+                    print(f"    • {C_GREEN}${rate:.2f}/kWh{C_RESET} (Flat Rate — 24/7)")
+                else:
+                    print(f"    • {pad_display(lbl, 24)} {st} – {et}: ${rate:.2f}/kWh")
+        elif tariffs.get("non_tesla", {}).get("supported"):
+            print(f"\n  🔌 {C_BOLD}Non-Tesla Pricing:{C_RESET} {C_YELLOW}Not available (re-scrape to fetch){C_RESET}")
 
         print()
 
@@ -1822,7 +1886,8 @@ def print_charging_stations_table(stations: list, ref_lat: float = None, ref_lon
     if ref_label:
         radius_note = f" [within {active_radius:.0f} km]" if (active_radius and active_radius > 0) else ""
         sort_str = f" [Sorted by: {sort_mode}]" if sort_mode else ""
-        orig_line = f" 📍 {C_CYAN}Proximity Origin:{C_RESET} {ref_label} ({ref_lat:.4f}, {ref_lon:.4f}){radius_note}{sort_str}"
+        coords_str = f" ({ref_lat:.4f}, {ref_lon:.4f})" if (ref_lat is not None and ref_lon is not None) else ""
+        orig_line = f" 📍 {C_CYAN}Proximity Origin:{C_RESET} {ref_label}{coords_str}{radius_note}{sort_str}"
         print(f"│{pad_display(orig_line, total_inner_w, 'left')}│")
     elif sort_mode:
         sort_line = f" 📊 {C_BOLD}Sort Order:{C_RESET} {sort_mode}"
