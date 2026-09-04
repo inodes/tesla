@@ -3,11 +3,11 @@
 Tessie Drive Log Analyzer & Master Consolidator
 ===============================================
 - Multi-level drill-down: Place ➔ Days ➔ Trips ➔ Camera Footage
-- Differentiates footage sources:
-    1. Recent (Driving Loop)
-    2. Sentry (Sentry Alert Events)
-    3. Saved (Honks & Dashcam Taps)
-    4. No footage / In-Car only
+- Visual footage indicators:
+    🔄 Recent (Continuous Driving Loop)
+    💾 Saved (Honks & Dashcam Taps)
+    🔴 Sentry (Sentry Alert Events)
+    No local footage (Missing / not archived)
 - Consolidates & deduplicates raw Tessie CSVs into drives_master.csv
 - PII-safe Known Place nicknames
 """
@@ -20,8 +20,82 @@ import json
 import math
 import shutil
 import argparse
+import unicodedata
 from datetime import datetime, timedelta
 from collections import defaultdict, Counter
+
+EMOJI_MAP = {
+    "Recent": "🔄 Recent",
+    "Saved": "💾 Saved",
+    "Sentry": "🔴 Sentry"
+}
+
+def char_width(c):
+    if c in ('\ufe0f', '\ufe0e'):
+        return 0
+    if c in ('🔄', '💾', '🔴', '🅿', '🚗', '📹', '📂', '🚪', '⚠️', '✔', '❌', '🕒', '📅', '📍'):
+        return 2
+    w = unicodedata.east_asian_width(c)
+    if w in ('W', 'F'):
+        return 2
+    return 1
+
+def display_len(s):
+    return sum(char_width(c) for c in s)
+
+def pad_display(s, target_width, align="left"):
+    d_len = display_len(s)
+    pad_len = max(0, target_width - d_len)
+    if align == "right":
+        return " " * pad_len + s
+    elif align == "center":
+        left = pad_len // 2
+        right = pad_len - left
+        return " " * left + s + " " * right
+    else:
+        return s + " " * pad_len
+
+def wrap_text_display(s, max_width):
+    if display_len(s) <= max_width:
+        return [s]
+    if "; " in s:
+        parts = s.split("; ")
+        lines = []
+        for p in parts:
+            lines.extend(wrap_text_display(p, max_width))
+        return lines
+    words = s.split(" ")
+    lines = []
+    current = ""
+    for w in words:
+        candidate = f"{current} {w}".strip() if current else w
+        if display_len(candidate) <= max_width:
+            current = candidate
+        else:
+            if current:
+                lines.append(current)
+            current = w
+    if current:
+        lines.append(current)
+    return lines or [s]
+
+def format_duration_short(mins):
+    if not mins or mins == 0:
+        return "-"
+    if mins < 60:
+        return f"{mins}m"
+    h, m = divmod(mins, 60)
+    if m == 0:
+        return f"{h}h"
+    return f"{h}h {m}m"
+
+def format_footage_tag(cats):
+    if not cats:
+        return "No local footage"
+    # Order: Recent, Saved, Sentry
+    ordered_cats = [c for c in ["Recent", "Saved", "Sentry"] if c in cats]
+    parts = [EMOJI_MAP.get(c, c) for c in ordered_cats]
+    return " + ".join(parts) + " footage"
 
 def haversine_distance_m(lat1, lon1, lat2, lon2):
     R = 6371000.0
@@ -54,7 +128,7 @@ def parse_relative_date(date_str):
         target_date = now - timedelta(days=days_ago)
         return datetime(target_date.year, target_date.month, target_date.day)
 
-    for fmt in ["%Y-%m-%d", "%d/%m/%Y", "%Y-%m-%d %H:%M"]:
+    for fmt in ["%Y%m%d", "%Y-%m-%d", "%d/%m/%Y", "%d-%m-%Y", "%Y/%m/%d", "%Y-%m-%d %H:%M"]:
         try:
             return datetime.strptime(date_str.strip(), fmt)
         except ValueError:
@@ -285,16 +359,107 @@ class TessieAnalyzer:
         return matches
 
     def get_trip_footage_summary(self, trip):
-        """Returns a string tag describing footage availability (Recent, Sentry, Saved, or No footage)."""
+        """Returns formatted string tag and set of categories."""
         start_clips = self.find_footage(trip["start_dt"], 120)
         end_clips = self.find_footage(trip["end_dt"], 180)
         all_clips = start_clips + end_clips
         if not all_clips:
             return "No local footage", set()
         
-        cats = sorted(list(set(c["cat"] for c in all_clips)))
-        cat_str = " + ".join(cats)
-        return cat_str, set(cats)
+        cats = set(c["cat"] for c in all_clips)
+        return format_footage_tag(cats), cats
+
+    def get_timeline_data(self, target_date):
+        """Build event-driven timeline for target_date alternating seamlessly between parked and driving states."""
+        self.index_footage()
+        day_start = datetime(target_date.year, target_date.month, target_date.day, 0, 0, 0)
+        day_end = day_start + timedelta(days=1)
+        
+        # Drives on target date (including any overlapping start/end)
+        day_drives = [
+            d for d in self.drives
+            if d["start_dt"] < day_end and d["end_dt"] > day_start
+        ]
+        day_drives.sort(key=lambda x: x["start_dt"])
+        
+        # Determine initial location at 00:00
+        prev_drives = [d for d in self.drives if d["end_dt"] <= day_start]
+        current_location = prev_drives[-1]["end_place"] if prev_drives else (self.drives[0]["start_place"] if self.drives else "Unknown")
+        
+        events = []
+        cursor_time = day_start
+        event_idx = 1
+        
+        for d in day_drives:
+            d_start = max(d["start_dt"], day_start)
+            d_end = min(d["end_dt"], day_end)
+            
+            # 1. Parked period before this drive (if cursor_time < d_start)
+            if d_start > cursor_time:
+                park_dur_mins = int((d_start - cursor_time).total_seconds() / 60)
+                dur_str = format_duration_short(park_dur_mins) if park_dur_mins > 0 else "<1m"
+                s_str = cursor_time.strftime("%H:%M")
+                e_str = d_start.strftime("%H:%M")
+                events.append({
+                    "event_idx": event_idx,
+                    "type": "parked",
+                    "start_dt": cursor_time,
+                    "end_dt": d_start,
+                    "time_str": f"{s_str} - {e_str}",
+                    "location": current_location,
+                    "activity": f"🅿️ Parked at {current_location} ({dur_str})",
+                    "drive": None
+                })
+                event_idx += 1
+                
+            # 2. Driving period
+            drive_dur_mins = int((d_end - d_start).total_seconds() / 60)
+            dur_str = format_duration_short(drive_dur_mins) if drive_dur_mins > 0 else "<1m"
+            dist_str = f"{d['dist_km']:.1f} km"
+            s_str = d_start.strftime("%H:%M")
+            e_str = "00:00" if d_end == day_end else d_end.strftime("%H:%M")
+            events.append({
+                "event_idx": event_idx,
+                "type": "drive",
+                "start_dt": d_start,
+                "end_dt": d_end,
+                "time_str": f"{s_str} - {e_str}",
+                "location": d["end_place"],
+                "activity": f"🚗 {d['start_place']} ➔ {d['end_place']} ({dist_str}, {dur_str})",
+                "drive": d
+            })
+            event_idx += 1
+            current_location = d["end_place"]
+            cursor_time = d_end
+            
+        # 3. Final parked period until 24:00 (if cursor_time < day_end)
+        if cursor_time < day_end:
+            park_dur_mins = int((day_end - cursor_time).total_seconds() / 60)
+            dur_str = format_duration_short(park_dur_mins) if park_dur_mins > 0 else "<1m"
+            s_str = cursor_time.strftime("%H:%M")
+            events.append({
+                "event_idx": event_idx,
+                "type": "parked",
+                "start_dt": cursor_time,
+                "end_dt": day_end,
+                "time_str": f"{s_str} - 00:00",
+                "location": current_location,
+                "activity": f"🅿️ Parked at {current_location} ({dur_str})",
+                "drive": None
+            })
+            event_idx += 1
+            
+        # Attach footage to each event
+        for ev in events:
+            s_dt = ev["start_dt"]
+            e_dt = ev["end_dt"]
+            clips = [c for c in self.footage_db if s_dt <= c["dt"] < e_dt]
+            ev["recent_mins"] = len(set(c["dt"] for c in clips if c["cat"] == "Recent"))
+            ev["saved_mins"] = len(set(c["dt"] for c in clips if c["cat"] == "Saved"))
+            ev["sentry_mins"] = len(set(c["dt"] for c in clips if c["cat"] == "Sentry"))
+            ev["clips"] = clips
+            
+        return events, day_start
 
 def display_footage_details(trip, analyzer):
     """Level 3: Deep listing of exact video files by camera angle for a single drive."""
@@ -318,8 +483,8 @@ def display_footage_details(trip, analyzer):
             by_folder[(c['cat'], c['folder'])].append(c)
             
         for (cat, folder), clips in by_folder.items():
-            print(f"   [{cat}Clips] 📂 {folder}")
-            # Group by timestamp
+            icon = EMOJI_MAP.get(cat, "")
+            print(f"   [{icon}Clips] 📂 {folder}")
             by_ts = defaultdict(dict)
             for c in clips:
                 ts_str = c['dt'].strftime("%H:%M:%S")
@@ -339,7 +504,8 @@ def display_footage_details(trip, analyzer):
             by_folder[(c['cat'], c['folder'])].append(c)
             
         for (cat, folder), clips in by_folder.items():
-            print(f"   [{cat}Clips] 📂 {folder}")
+            icon = EMOJI_MAP.get(cat, "")
+            print(f"   [{icon}Clips] 📂 {folder}")
             by_ts = defaultdict(dict)
             for c in clips:
                 ts_str = c['dt'].strftime("%H:%M:%S")
@@ -395,17 +561,18 @@ def drill_down_day(day_str, day_trips, analyzer):
 
         print(f"--------------------------------------------------------------------------")
         if not sys.stdin.isatty():
-            # Non-interactive mode: print footage for all trips
             for t in day_trips:
                 display_footage_details(t, analyzer)
             break
             
         try:
-            choice = input(f"Select Trip [1-{len(day_trips)}] for exact footage, [a]ll, [b]ack, [q]uit: ").strip().lower()
+            choice = input(f"Select Trip [1-{len(day_trips)}] for footage, [t]imeline, [a]ll, [b]ack, [q]uit: ").strip().lower()
             if choice == "q":
                 sys.exit(0)
             elif choice in ["b", "back"]:
                 break
+            elif choice in ["t", "timeline"]:
+                display_timeline(dt_obj, analyzer)
             elif choice in ["a", "all"]:
                 for t in day_trips:
                     display_footage_details(t, analyzer)
@@ -413,6 +580,143 @@ def drill_down_day(day_str, day_trips, analyzer):
                 display_footage_details(day_trips[int(choice)-1], analyzer)
             else:
                 print("Invalid choice.")
+        except (KeyboardInterrupt, EOFError):
+            break
+
+def display_timeline_event_details(event, analyzer):
+    """Level 3 for Timeline: Detailed listing of all footage within a specific event."""
+    t_start = event["start_dt"]
+    clips = event["clips"]
+    
+    print(f"\n==========================================================================")
+    print(f" 📹 TIMELINE FOOTAGE LISTING: {t_start.strftime('%a %d %b %Y')} ({event['time_str']})")
+    print(f"    Activity : {event['activity']}")
+    print(f"    Clips    : Recent: {event['recent_mins']}m | Saved: {event['saved_mins']}m | Sentry: {event['sentry_mins']}m")
+    print(f"==========================================================================")
+    
+    if not clips:
+        print("\n⚠️ No local camera footage found for this event window.")
+        print("--------------------------------------------------------------------------")
+        return
+        
+    by_cat_and_folder = defaultdict(list)
+    for c in clips:
+        by_cat_and_folder[(c['cat'], c['folder'])].append(c)
+        
+    for (cat, folder), f_clips in sorted(by_cat_and_folder.items()):
+        icon = EMOJI_MAP.get(cat, "")
+        print(f"\n📂 [{icon}Clips] {folder}")
+        by_ts = defaultdict(dict)
+        for c in f_clips:
+            ts_str = c['dt'].strftime("%H:%M:%S")
+            by_ts[ts_str][c['cam']] = c['file']
+        for ts_str, cam_dict in sorted(by_ts.items()):
+            cams = ", ".join(sorted(cam_dict.keys()))
+            sample = cam_dict.get('left_repeater') or cam_dict.get('front') or list(cam_dict.values())[0]
+            print(f"   • {ts_str} ({cams}) ➔ {sample}")
+            
+    print(f"\n💡 Quick Tips:")
+    print(f"   • Open first folder in Finder: open \"{clips[0]['folder']}\"")
+    print(f"--------------------------------------------------------------------------")
+
+def display_timeline(target_date, analyzer, compact=False):
+    """24-Hour Event Timeline: Vehicle state & footage breakdown across parked/driving events."""
+    curr_date = target_date
+    w_time = 15
+    w_rec = 6
+    w_sav = 6
+    w_sen = 6
+    w_act = 39
+
+    while True:
+        events, day_start = analyzer.get_timeline_data(curr_date)
+        
+        total_recent_mins = sum(ev["recent_mins"] for ev in events)
+        total_saved_mins = sum(ev["saved_mins"] for ev in events)
+        total_sentry_mins = sum(ev["sentry_mins"] for ev in events)
+        has_any_footage = (total_recent_mins + total_saved_mins + total_sentry_mins) > 0
+        
+        title = f" 24-Hour Event Timeline: {day_start.strftime('%A, %d %B %Y')}"
+        
+        h_time = f" {'Time Window':<13} "
+        h_rec = pad_display("🔄", w_rec, "center")
+        h_sav = pad_display("💾", w_sav, "center")
+        h_sen = pad_display("🔴", w_sen, "center")
+        h_act = f" {'Vehicle State & Route / Location':<37} "
+
+        print(f"┌{'─'*76}┐")
+        print(f"│{title:<76}│")
+        print(f"├{'─'*w_time}┬{'─'*w_rec}┬{'─'*w_sav}┬{'─'*w_sen}┬{'─'*w_act}┤")
+        print(f"│{h_time}│{h_rec}│{h_sav}│{h_sen}│{h_act}│")
+        print(f"├{'─'*w_time}┼{'─'*w_rec}┼{'─'*w_sav}┼{'─'*w_sen}┼{'─'*w_act}┤")
+        
+        for ev in events:
+            r_str = format_duration_short(ev['recent_mins'])
+            s_str = format_duration_short(ev['saved_mins'])
+            sn_str = format_duration_short(ev['sentry_mins'])
+            
+            c_time = f" {ev['time_str']:<13} "
+            c_rec = f"{r_str:^6}"
+            c_sav = f"{s_str:^6}"
+            c_sen = f"{sn_str:^6}"
+            
+            act_lines = wrap_text_display(ev["activity"].strip(), w_act - 2)
+            first_act = pad_display(" " + act_lines[0], w_act, "left")
+            print(f"│{c_time}│{c_rec}│{c_sav}│{c_sen}│{first_act}│")
+            
+            for extra in act_lines[1:]:
+                e_time = " " * w_time
+                e_rec = " " * w_rec
+                e_sav = " " * w_sav
+                e_sen = " " * w_sen
+                e_act = pad_display("   " + extra, w_act, "left")
+                print(f"│{e_time}│{e_rec}│{e_sav}│{e_sen}│{e_act}│")
+            
+        print(f"├{'─'*w_time}┴{'─'*w_rec}┴{'─'*w_sav}┴{'─'*w_sen}┴{'─'*w_act}┤")
+        if not has_any_footage:
+            foot_msg = " No local footage on archive SSD. Run 'tesla_sync.sh' to backup from car."
+            print(f"│{foot_msg:<76}│")
+        else:
+            rec_tot = format_duration_short(total_recent_mins)
+            sav_tot = format_duration_short(total_saved_mins)
+            sen_tot = format_duration_short(total_sentry_mins)
+            foot_msg = f" Footage Totals: 🔄 {rec_tot} | 💾 {sav_tot} | 🔴 {sen_tot}"
+            foot_pad = pad_display(foot_msg, 76, "left")
+            print(f"│{foot_pad}│")
+        print(f"└{'─'*76}┘")
+            
+        if not sys.stdin.isatty():
+            break
+            
+        try:
+            prompt_str = f"Select Event [1-{len(events)} or HH:MM] for footage, [p]rev day, [n]ext day, [b]ack, [q]uit: "
+            choice = input(prompt_str).strip().lower()
+            if choice == "q":
+                sys.exit(0)
+            elif choice in ["b", "back"]:
+                break
+            elif choice in ["p", "prev"]:
+                curr_date = curr_date - timedelta(days=1)
+            elif choice in ["n", "next"]:
+                curr_date = curr_date + timedelta(days=1)
+            else:
+                matched_ev = None
+                if choice.isdigit():
+                    val = int(choice)
+                    for ev in events:
+                        if ev["event_idx"] == val:
+                            matched_ev = ev
+                            break
+                elif ":" in choice:
+                    time_part = choice.replace(".", ":")
+                    for ev in events:
+                        if ev["start_dt"].strftime("%H:%M") == time_part or time_part in ev["time_str"]:
+                            matched_ev = ev
+                            break
+                if matched_ev:
+                    display_timeline_event_details(matched_ev, analyzer)
+                else:
+                    print("Invalid choice.")
         except (KeyboardInterrupt, EOFError):
             break
 
@@ -434,22 +738,17 @@ def display_days_menu(days_dict, title, analyzer):
             hours, mins = divmod(total_mins, 60)
             time_str = f"{hours}h {mins:02d}m" if hours else f"{mins}m"
             
-            # Aggregate footage types across day
             day_cats = set()
             for t in day_trips:
                 _, cats = analyzer.get_trip_footage_summary(t)
                 day_cats.update(cats)
                 
-            if day_cats:
-                f_summary = "✔ " + " + ".join(sorted(list(day_cats))) + " footage"
-            else:
-                f_summary = "No local footage"
+            f_summary = format_footage_tag(day_cats)
                 
             print(f" [{idx+1:>2}] {dt_obj.strftime('%a %d %b %Y')}: {len(day_trips):>2} trip(s) ({time_str:>6}, {total_km:>5.1f} km) | {f_summary}")
 
         print(f"--------------------------------------------------------------------------")
         if not sys.stdin.isatty():
-            # In non-interactive mode, expand the most recent day or all
             drill_down_day(sorted_days[0], days_dict[sorted_days[0]], analyzer)
             break
             
@@ -471,6 +770,7 @@ def display_days_menu(days_dict, title, analyzer):
 def main():
     parser = argparse.ArgumentParser(description="Tessie Drive Log Analyzer & Master Consolidator")
     parser.add_argument("--drives", action="store_true", help="Analyze and inspect drives")
+    parser.add_argument("--timeline", nargs="?", const="today", default=None, help="Generate 24-hour event-driven vehicle & camera activity timeline for a date (e.g. today, yesterday, 2026-09-02, wednesday)")
     parser.add_argument("--today", action="store_true", help="Inspect only today's drives")
     parser.add_argument("--yesterday", action="store_true", help="Inspect only yesterday's drives")
     parser.add_argument("--since", help="Filter drives since date or day name (e.g. 'wednesday', '2026-09-02')")
@@ -487,7 +787,14 @@ def main():
         print("No Tessie drive records found. Please ensure CSVs exist in iCloud or Tessie/.")
         sys.exit(0)
 
-    # Date filter calculation
+    if args.timeline is not None:
+        target_date = parse_relative_date(args.timeline)
+        if not target_date:
+            print(f"Error: Could not parse date '{args.timeline}'. Supported formats: YYYYMMDD, YYYY-MM-DD, today, yesterday, weekday name.")
+            sys.exit(1)
+        display_timeline(target_date, analyzer)
+        return
+
     cutoff_dt = None
     end_dt = None
 
@@ -517,7 +824,6 @@ def main():
         print("No drives matched your filter criteria.")
         return
 
-    # Group by day
     days_dict = defaultdict(list)
     for d in filtered:
         d_key = d["start_dt"].strftime("%Y-%m-%d")

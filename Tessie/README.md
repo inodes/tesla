@@ -44,7 +44,12 @@ A suite of tools for processing, classifying, and analyzing [Tessie](https://tes
 # Interactive overview table and time period prompt
 ./Tools/tessie_analyzer.py --drives
 
-# View trips since a specific date or weekday
+# 24-hour 30-minute vehicle & camera activity timeline for a date
+./Tools/tessie_analyzer.py --timeline 20260904
+./Tools/tessie_analyzer.py --timeline 2026-09-02
+./Tools/tessie_analyzer.py --timeline yesterday
+
+# Filter trips since a specific date or weekday
 ./Tools/tessie_analyzer.py --since wednesday
 
 # Filter trips by location nickname
