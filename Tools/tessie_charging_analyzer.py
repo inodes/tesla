@@ -16,6 +16,22 @@ Tessie Charging & Supercharger Reconciliation Engine
 
 import os
 import sys
+
+# Auto re-exec inside local direnv/pyenv virtual environment if not already active
+_script_dir = os.path.dirname(os.path.abspath(__file__))
+_repo_root = os.path.dirname(_script_dir)
+for _py_candidate in [
+    os.path.join(_repo_root, ".direnv", "python-3.11", "bin", "python3"),
+    os.path.join(_repo_root, ".direnv", "python-3.11", "bin", "python"),
+    os.path.join(_repo_root, ".venv", "bin", "python3"),
+    os.path.join(_repo_root, ".venv", "bin", "python")
+]:
+    if os.path.isfile(_py_candidate) and os.path.abspath(sys.executable) != os.path.abspath(_py_candidate):
+        try:
+            import pypdf
+        except ImportError:
+            os.execv(_py_candidate, [_py_candidate] + sys.argv)
+
 import re
 import csv
 import json
