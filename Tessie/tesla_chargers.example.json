@@ -1,0 +1,135 @@
+{
+  "Home": {
+    "name": "Home",
+    "type": "home",
+    "network": "Tesla Wall Connector",
+    "address": "123 Example Street, Sydney NSW 2000",
+    "lat": -33.80000,
+    "lon": 151.00000,
+    "radius_m": 100,
+    "keywords": [
+      "123 Example",
+      "Home Wall Connector"
+    ],
+    "hardware": {
+      "charger_type": "AC Level 2",
+      "max_power_kw": 11.0,
+      "connector_types": ["Type 2"]
+    },
+    "compatibility": {
+      "open_to_non_tesla": true,
+      "tesla_only": false,
+      "access": "Private Residential"
+    },
+    "costs": {
+      "currency": "AUD",
+      "timezone": "Australia/Sydney",
+      "pricing_model": "time_of_use",
+      "flat_per_kwh": 0.00,
+      "per_minute": 0.00,
+      "per_session": 0.00,
+      "rate_schedules": [
+        {
+          "name": "Solar Sponge (Day Rate)",
+          "rate_per_kwh": 0.12,
+          "start_time": "07:00",
+          "end_time": "16:00",
+          "days": ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"],
+          "months": ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
+        },
+        {
+          "name": "Peak Rate",
+          "rate_per_kwh": 0.2852,
+          "start_time": "16:00",
+          "end_time": "22:00",
+          "days": ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"],
+          "months": ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
+        },
+        {
+          "name": "Overnight / Off-Peak Rate",
+          "rate_per_kwh": 0.2852,
+          "start_time": "22:00",
+          "end_time": "07:00",
+          "days": ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"],
+          "months": ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
+        }
+      ]
+    }
+  },
+  "Bunnings Gladesville": {
+    "name": "Bunnings Gladesville (Chargefox)",
+    "type": "dc_fast",
+    "network": "Chargefox",
+    "operator": "Chargefox",
+    "address": "41a College Street, Gladesville NSW 2111",
+    "lat": -33.82035,
+    "lon": 151.12115,
+    "radius_m": 200,
+    "keywords": [
+      "College Street",
+      "Bunnings Gladesville"
+    ],
+    "hardware": {
+      "stalls": 2,
+      "max_power_kw": 50,
+      "charger_type": "DC Fast",
+      "connector_types": ["CCS2", "CHAdeMO"]
+    },
+    "compatibility": {
+      "open_to_non_tesla": true,
+      "tesla_only": false,
+      "access": "Public"
+    },
+    "costs": {
+      "currency": "AUD",
+      "pricing_model": "flat",
+      "flat_per_kwh": 0.60,
+      "per_minute": 0.00,
+      "per_session": 0.00,
+      "app_payment": "Chargefox App / RFID Card"
+    },
+    "amenities": {
+      "restrooms": true,
+      "dining": true,
+      "shopping": true,
+      "coffee": true,
+      "parking": true
+    }
+  },
+  "ChargePoint Sample": {
+    "name": "ChargePoint Sample Station",
+    "type": "ac_destination",
+    "network": "ChargePoint",
+    "operator": "ChargePoint",
+    "address": "1 Commercial Road, Sydney NSW 2000",
+    "lat": -33.8688,
+    "lon": 151.2093,
+    "radius_m": 150,
+    "keywords": [
+      "Commercial Road",
+      "ChargePoint"
+    ],
+    "hardware": {
+      "stalls": 2,
+      "max_power_kw": 22,
+      "charger_type": "AC Destination",
+      "connector_types": ["Type 2"]
+    },
+    "compatibility": {
+      "open_to_non_tesla": true,
+      "tesla_only": false,
+      "access": "Public"
+    },
+    "costs": {
+      "currency": "AUD",
+      "pricing_model": "flat",
+      "flat_per_kwh": 0.40,
+      "per_minute": 0.00,
+      "per_session": 0.00,
+      "app_payment": "ChargePoint App"
+    },
+    "amenities": {
+      "parking": true
+    }
+  }
+}

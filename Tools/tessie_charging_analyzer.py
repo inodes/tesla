@@ -780,10 +780,10 @@ class TessieChargingAnalyzer:
                     pass
 
         # 4. Load Registries
-        self.superchargers = self.load_json_registry("superchargers.json")
-        self.superchargers_archived = self.load_json_registry("superchargers_archived.json")
-        self.charging_stations = self.load_json_registry("charging.json")
-        self.charging_archived = self.load_json_registry("charging_archived.json")
+        self.superchargers = self.load_json_registry("tesla_superchargers.json") or self.load_json_registry("superchargers.json")
+        self.superchargers_archived = self.load_json_registry("tesla_superchargers_archived.json") or self.load_json_registry("superchargers_archived.json")
+        self.charging_stations = self.load_json_registry("tesla_chargers.json") or self.load_json_registry("charging.json") or self.load_json_registry("destination_chargers.json")
+        self.charging_archived = self.load_json_registry("tesla_chargers_archived.json") or self.load_json_registry("charging_archived.json") or self.load_json_registry("destination_chargers_archived.json")
         self.places = self.load_json_registry("places.json")
         
         self.charges = []
@@ -2048,7 +2048,13 @@ class TessieChargingAnalyzer:
                     except Exception as e:
                         print(f"  {C_RED}❌ Failed to copy {script_name} to {ext_drive}:{C_RESET} {e}")
 
-            for fname in ["superchargers.json", "charging.json", "places.json", "config.example.json"]:
+            for fname in [
+                "tesla_superchargers.json", "tesla_superchargers_archived.json",
+                "tesla_chargers.json", "tesla_chargers_archived.json",
+                "places.json", "state_boundaries.json", "config.example.json",
+                # Legacy fallbacks
+                "superchargers.json", "charging.json"
+            ]:
                 src_f = os.path.join(self.repo_root, "Tessie", fname)
                 if os.path.isfile(src_f):
                     dst_f = os.path.join(ext_drive, "Tessie", fname)
