@@ -24,7 +24,7 @@
       "country": "Australia",
       "country_code": "AU",
       "lat": -33.777977,
-      "lon": 151.122600,
+      "lon": 151.1226,
       "radius_m": 250
     },
     "hardware": {
@@ -35,53 +35,142 @@
     "compatibility": {
       "open_to_non_tesla": false,
       "tesla_only": true,
-      "connector_types": ["Tesla Type 2 / CCS2 (Tesla Only)"]
+      "connector_types": [
+        "Tesla Type 2 / CCS2 (Tesla Only)"
+      ]
     },
     "access": {
       "hours": "Available 24/7"
     },
     "traffic_and_occupancy": {
       "hourly_busyness_histogram": [
-        { "hour": "00:00", "avg_occupancy_pct": 10, "level": "low" },
-        { "hour": "04:00", "avg_occupancy_pct": 5, "level": "low" },
-        { "hour": "08:00", "avg_occupancy_pct": 45, "level": "medium" },
-        { "hour": "12:00", "avg_occupancy_pct": 75, "level": "high" },
-        { "hour": "16:00", "avg_occupancy_pct": 90, "level": "high" },
-        { "hour": "20:00", "avg_occupancy_pct": 30, "level": "low" }
+        {
+          "hour": "00:00",
+          "avg_occupancy_pct": 10,
+          "level": "low"
+        },
+        {
+          "hour": "04:00",
+          "avg_occupancy_pct": 5,
+          "level": "low"
+        },
+        {
+          "hour": "08:00",
+          "avg_occupancy_pct": 45,
+          "level": "medium"
+        },
+        {
+          "hour": "12:00",
+          "avg_occupancy_pct": 75,
+          "level": "high"
+        },
+        {
+          "hour": "16:00",
+          "avg_occupancy_pct": 90,
+          "level": "high"
+        },
+        {
+          "hour": "20:00",
+          "avg_occupancy_pct": 30,
+          "level": "low"
+        }
       ]
     },
     "tessie_cost_config": {
       "currency": "AUD",
       "pricing_model": "time_of_use",
-      "per_kwh_flat": 0.00,
-      "per_minute": 0.00,
-      "per_session": 0.00,
-      "idle_fee_per_min": 1.00,
-      "congestion_fee_per_min": 0.50,
+      "per_kwh_flat": 0.0,
+      "per_minute": 0.0,
+      "per_session": 0.0,
+      "idle_fee_per_min": 1.0,
+      "congestion_fee_per_min": 0.5,
       "rate_schedules": [
         {
           "name": "Off-Peak Night",
           "rate_per_kwh": 0.35,
           "start_time": "00:00",
           "end_time": "08:00",
-          "days": ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"],
-          "months": ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
+          "days": [
+            "Mon",
+            "Tue",
+            "Wed",
+            "Thu",
+            "Fri",
+            "Sat",
+            "Sun"
+          ],
+          "months": [
+            "Jan",
+            "Feb",
+            "Mar",
+            "Apr",
+            "May",
+            "Jun",
+            "Jul",
+            "Aug",
+            "Sep",
+            "Oct",
+            "Nov",
+            "Dec"
+          ]
         },
         {
           "name": "Peak Day",
           "rate_per_kwh": 0.59,
           "start_time": "08:00",
           "end_time": "20:00",
-          "days": ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"],
-          "months": ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
+          "days": [
+            "Mon",
+            "Tue",
+            "Wed",
+            "Thu",
+            "Fri",
+            "Sat",
+            "Sun"
+          ],
+          "months": [
+            "Jan",
+            "Feb",
+            "Mar",
+            "Apr",
+            "May",
+            "Jun",
+            "Jul",
+            "Aug",
+            "Sep",
+            "Oct",
+            "Nov",
+            "Dec"
+          ]
         },
         {
           "name": "Off-Peak Evening",
           "rate_per_kwh": 0.35,
           "start_time": "20:00",
           "end_time": "24:00",
-          "days": ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"],
-          "months": ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
+          "days": [
+            "Mon",
+            "Tue",
+            "Wed",
+            "Thu",
+            "Fri",
+            "Sat",
+            "Sun"
+          ],
+          "months": [
+            "Jan",
+            "Feb",
+            "Mar",
+            "Apr",
+            "May",
+            "Jun",
+            "Jul",
+            "Aug",
+            "Sep",
+            "Oct",
+            "Nov",
+            "Dec"
+          ]
         }
       ]
     },
@@ -127,7 +216,7 @@
       "country": "Australia",
       "country_code": "AU",
       "lat": -33.425156,
-      "lon": 151.320040,
+      "lon": 151.32004,
       "radius_m": 250
     },
     "hardware": {
@@ -138,52 +227,137 @@
     "compatibility": {
       "open_to_non_tesla": true,
       "tesla_only": false,
-      "connector_types": ["CCS2"]
+      "connector_types": [
+        "CCS2"
+      ]
     },
     "access": {
       "hours": "Available 24/7"
     },
     "traffic_and_occupancy": {
       "hourly_busyness_histogram": [
-        { "hour": "00:00", "avg_occupancy_pct": 5, "level": "low" },
-        { "hour": "08:00", "avg_occupancy_pct": 30, "level": "low" },
-        { "hour": "12:00", "avg_occupancy_pct": 65, "level": "medium" },
-        { "hour": "16:00", "avg_occupancy_pct": 75, "level": "high" },
-        { "hour": "20:00", "avg_occupancy_pct": 25, "level": "low" }
+        {
+          "hour": "00:00",
+          "avg_occupancy_pct": 5,
+          "level": "low"
+        },
+        {
+          "hour": "08:00",
+          "avg_occupancy_pct": 30,
+          "level": "low"
+        },
+        {
+          "hour": "12:00",
+          "avg_occupancy_pct": 65,
+          "level": "medium"
+        },
+        {
+          "hour": "16:00",
+          "avg_occupancy_pct": 75,
+          "level": "high"
+        },
+        {
+          "hour": "20:00",
+          "avg_occupancy_pct": 25,
+          "level": "low"
+        }
       ]
     },
     "tessie_cost_config": {
       "currency": "AUD",
       "pricing_model": "time_of_use",
-      "per_kwh_flat": 0.00,
-      "per_minute": 0.00,
-      "per_session": 0.00,
-      "idle_fee_per_min": 1.00,
-      "congestion_fee_per_min": 0.50,
+      "per_kwh_flat": 0.0,
+      "per_minute": 0.0,
+      "per_session": 0.0,
+      "idle_fee_per_min": 1.0,
+      "congestion_fee_per_min": 0.5,
       "rate_schedules": [
         {
           "name": "Off-Peak Night",
           "rate_per_kwh": 0.35,
           "start_time": "00:00",
           "end_time": "08:00",
-          "days": ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"],
-          "months": ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
+          "days": [
+            "Mon",
+            "Tue",
+            "Wed",
+            "Thu",
+            "Fri",
+            "Sat",
+            "Sun"
+          ],
+          "months": [
+            "Jan",
+            "Feb",
+            "Mar",
+            "Apr",
+            "May",
+            "Jun",
+            "Jul",
+            "Aug",
+            "Sep",
+            "Oct",
+            "Nov",
+            "Dec"
+          ]
         },
         {
           "name": "Peak Day",
           "rate_per_kwh": 0.52,
           "start_time": "08:00",
           "end_time": "20:00",
-          "days": ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"],
-          "months": ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
+          "days": [
+            "Mon",
+            "Tue",
+            "Wed",
+            "Thu",
+            "Fri",
+            "Sat",
+            "Sun"
+          ],
+          "months": [
+            "Jan",
+            "Feb",
+            "Mar",
+            "Apr",
+            "May",
+            "Jun",
+            "Jul",
+            "Aug",
+            "Sep",
+            "Oct",
+            "Nov",
+            "Dec"
+          ]
         },
         {
           "name": "Off-Peak Evening",
           "rate_per_kwh": 0.35,
           "start_time": "20:00",
           "end_time": "24:00",
-          "days": ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"],
-          "months": ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
+          "days": [
+            "Mon",
+            "Tue",
+            "Wed",
+            "Thu",
+            "Fri",
+            "Sat",
+            "Sun"
+          ],
+          "months": [
+            "Jan",
+            "Feb",
+            "Mar",
+            "Apr",
+            "May",
+            "Jun",
+            "Jul",
+            "Aug",
+            "Sep",
+            "Oct",
+            "Nov",
+            "Dec"
+          ]
         }
       ]
     },
@@ -225,8 +399,8 @@
       "postcode": "2560",
       "country": "Australia",
       "country_code": "AU",
-      "lat": -34.072500,
-      "lon": 150.817200,
+      "lat": -34.0725,
+      "lon": 150.8172,
       "radius_m": 250
     },
     "hardware": {
@@ -237,29 +411,66 @@
     "compatibility": {
       "open_to_non_tesla": true,
       "tesla_only": false,
-      "connector_types": ["CCS2"]
+      "connector_types": [
+        "CCS2"
+      ]
     },
     "access": {
       "hours": "Available 24/7"
     },
     "traffic_and_occupancy": {
       "hourly_busyness_histogram": [
-        { "hour": "00:00", "avg_occupancy_pct": 5, "level": "low" },
-        { "hour": "08:00", "avg_occupancy_pct": 30, "level": "low" },
-        { "hour": "12:00", "avg_occupancy_pct": 70, "level": "high" },
-        { "hour": "16:00", "avg_occupancy_pct": 80, "level": "high" },
-        { "hour": "20:00", "avg_occupancy_pct": 30, "level": "low" }
+        {
+          "hour": "00:00",
+          "avg_occupancy_pct": 5,
+          "level": "low"
+        },
+        {
+          "hour": "08:00",
+          "avg_occupancy_pct": 30,
+          "level": "low"
+        },
+        {
+          "hour": "12:00",
+          "avg_occupancy_pct": 70,
+          "level": "high"
+        },
+        {
+          "hour": "16:00",
+          "avg_occupancy_pct": 80,
+          "level": "high"
+        },
+        {
+          "hour": "20:00",
+          "avg_occupancy_pct": 30,
+          "level": "low"
+        }
       ]
     },
     "tessie_cost_config": {
       "currency": "AUD",
       "pricing_model": "time_of_use",
-      "per_kwh_flat": 0.00,
-      "idle_fee_per_min": 1.00,
+      "per_kwh_flat": 0.0,
+      "idle_fee_per_min": 1.0,
       "rate_schedules": [
-        { "name": "Off-Peak Night", "rate_per_kwh": 0.35, "start_time": "00:00", "end_time": "08:00" },
-        { "name": "Peak Day", "rate_per_kwh": 0.52, "start_time": "08:00", "end_time": "20:00" },
-        { "name": "Off-Peak Evening", "rate_per_kwh": 0.35, "start_time": "20:00", "end_time": "24:00" }
+        {
+          "name": "Off-Peak Night",
+          "rate_per_kwh": 0.35,
+          "start_time": "00:00",
+          "end_time": "08:00"
+        },
+        {
+          "name": "Peak Day",
+          "rate_per_kwh": 0.52,
+          "start_time": "08:00",
+          "end_time": "20:00"
+        },
+        {
+          "name": "Off-Peak Evening",
+          "rate_per_kwh": 0.35,
+          "start_time": "20:00",
+          "end_time": "24:00"
+        }
       ]
     },
     "non_tesla_pricing": {
@@ -284,8 +495,7 @@
       "short_name": "Miranda_NSW_Parraweena_Rd",
       "type": "supercharger",
       "keywords": [
-        "100-104 Parraweena",
-        "Parraweena Road",
+        "100-104 Parraweena Rd",
         "Parraweena Rd",
         "Tesla Center",
         "Miranda, NSW",
@@ -293,15 +503,15 @@
       ]
     },
     "location": {
-      "address": "100-104 Parraweena Road, Miranda, New South Wales 2228",
-      "street": "100-104 Parraweena Road",
+      "address": "100-104 Parraweena Rd, Miranda, New South Wales 2228",
+      "street": "100-104 Parraweena Rd",
       "suburb": "Miranda",
       "state": "NSW",
       "postcode": "2228",
       "country": "Australia",
       "country_code": "AU",
-      "lat": -34.026969,
-      "lon": 151.118779,
+      "lat": -34.02701,
+      "lon": 151.11881,
       "radius_m": 250
     },
     "hardware": {
@@ -312,85 +522,237 @@
     "compatibility": {
       "open_to_non_tesla": true,
       "tesla_only": false,
-      "connector_types": ["CCS2"]
+      "connector_types": [
+        "CCS2"
+      ]
     },
     "access": {
       "hours": "Available 24/7"
     },
     "traffic_and_occupancy": {
       "hourly_busyness_histogram": [
-        { "hour": "00:00", "avg_occupancy_pct": 5, "level": "low" },
-        { "hour": "04:00", "avg_occupancy_pct": 10, "level": "low" },
-        { "hour": "08:00", "avg_occupancy_pct": 35, "level": "medium" },
-        { "hour": "12:00", "avg_occupancy_pct": 70, "level": "high" },
-        { "hour": "16:00", "avg_occupancy_pct": 80, "level": "high" },
-        { "hour": "20:00", "avg_occupancy_pct": 30, "level": "low" }
+        {
+          "hour": "00:00",
+          "avg_occupancy_pct": 5,
+          "level": "low"
+        },
+        {
+          "hour": "04:00",
+          "avg_occupancy_pct": 10,
+          "level": "low"
+        },
+        {
+          "hour": "08:00",
+          "avg_occupancy_pct": 35,
+          "level": "medium"
+        },
+        {
+          "hour": "12:00",
+          "avg_occupancy_pct": 70,
+          "level": "high"
+        },
+        {
+          "hour": "16:00",
+          "avg_occupancy_pct": 80,
+          "level": "high"
+        },
+        {
+          "hour": "20:00",
+          "avg_occupancy_pct": 30,
+          "level": "low"
+        }
       ]
     },
     "tessie_cost_config": {
       "currency": "AUD",
       "pricing_model": "time_of_use",
-      "per_kwh_flat": 0.00,
-      "per_minute": 0.00,
-      "per_session": 0.00,
-      "idle_fee_per_min": 1.00,
-      "congestion_fee_per_min": 0.50,
+      "per_kwh_flat": 0.0,
+      "per_minute": 0.0,
+      "per_session": 0.0,
+      "idle_fee_per_min": 1.0,
+      "congestion_fee_per_min": 0.5,
       "rate_schedules": [
         {
-          "name": "Off-Peak Night",
-          "rate_per_kwh": 0.37,
           "start_time": "00:00",
           "end_time": "08:00",
-          "days": ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"],
-          "months": ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
+          "rate_per_kwh": 0.37,
+          "name": "Off-Peak Night",
+          "days": [
+            "Mon",
+            "Tue",
+            "Wed",
+            "Thu",
+            "Fri",
+            "Sat",
+            "Sun"
+          ],
+          "months": [
+            "Jan",
+            "Feb",
+            "Mar",
+            "Apr",
+            "May",
+            "Jun",
+            "Jul",
+            "Aug",
+            "Sep",
+            "Oct",
+            "Nov",
+            "Dec"
+          ]
         },
         {
-          "name": "Peak Day",
-          "rate_per_kwh": 0.45,
           "start_time": "08:00",
           "end_time": "23:00",
-          "days": ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"],
-          "months": ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
+          "rate_per_kwh": 0.45,
+          "name": "Peak Day",
+          "days": [
+            "Mon",
+            "Tue",
+            "Wed",
+            "Thu",
+            "Fri",
+            "Sat",
+            "Sun"
+          ],
+          "months": [
+            "Jan",
+            "Feb",
+            "Mar",
+            "Apr",
+            "May",
+            "Jun",
+            "Jul",
+            "Aug",
+            "Sep",
+            "Oct",
+            "Nov",
+            "Dec"
+          ]
         },
         {
-          "name": "Off-Peak Late",
-          "rate_per_kwh": 0.37,
           "start_time": "23:00",
           "end_time": "24:00",
-          "days": ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"],
-          "months": ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
+          "rate_per_kwh": 0.37,
+          "name": "Off-Peak Late",
+          "days": [
+            "Mon",
+            "Tue",
+            "Wed",
+            "Thu",
+            "Fri",
+            "Sat",
+            "Sun"
+          ],
+          "months": [
+            "Jan",
+            "Feb",
+            "Mar",
+            "Apr",
+            "May",
+            "Jun",
+            "Jul",
+            "Aug",
+            "Sep",
+            "Oct",
+            "Nov",
+            "Dec"
+          ]
         }
       ]
     },
     "non_tesla_pricing": {
       "available": true,
       "pricing_model": "time_of_use",
-      "congestion_fee_per_min": 0.50,
-      "idle_fee_per_min": 1.00,
+      "congestion_fee_per_min": 0.5,
+      "idle_fee_per_min": 1.0,
       "rate_schedules": [
         {
-          "name": "Non-Tesla Off-Peak Night",
-          "rate_per_kwh": 0.49,
           "start_time": "00:00",
           "end_time": "08:00",
-          "days": ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"],
-          "months": ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
+          "rate_per_kwh": 0.49,
+          "name": "Non-Tesla Off-Peak Night",
+          "days": [
+            "Mon",
+            "Tue",
+            "Wed",
+            "Thu",
+            "Fri",
+            "Sat",
+            "Sun"
+          ],
+          "months": [
+            "Jan",
+            "Feb",
+            "Mar",
+            "Apr",
+            "May",
+            "Jun",
+            "Jul",
+            "Aug",
+            "Sep",
+            "Oct",
+            "Nov",
+            "Dec"
+          ]
         },
         {
-          "name": "Non-Tesla Peak Day",
-          "rate_per_kwh": 0.59,
           "start_time": "08:00",
           "end_time": "23:00",
-          "days": ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"],
-          "months": ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
+          "rate_per_kwh": 0.59,
+          "name": "Non-Tesla Peak Day",
+          "days": [
+            "Mon",
+            "Tue",
+            "Wed",
+            "Thu",
+            "Fri",
+            "Sat",
+            "Sun"
+          ],
+          "months": [
+            "Jan",
+            "Feb",
+            "Mar",
+            "Apr",
+            "May",
+            "Jun",
+            "Jul",
+            "Aug",
+            "Sep",
+            "Oct",
+            "Nov",
+            "Dec"
+          ]
         },
         {
-          "name": "Non-Tesla Off-Peak Late",
-          "rate_per_kwh": 0.49,
           "start_time": "23:00",
           "end_time": "24:00",
-          "days": ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"],
-          "months": ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
+          "rate_per_kwh": 0.49,
+          "name": "Non-Tesla Off-Peak Late",
+          "days": [
+            "Mon",
+            "Tue",
+            "Wed",
+            "Thu",
+            "Fri",
+            "Sat",
+            "Sun"
+          ],
+          "months": [
+            "Jan",
+            "Feb",
+            "Mar",
+            "Apr",
+            "May",
+            "Jun",
+            "Jul",
+            "Aug",
+            "Sep",
+            "Oct",
+            "Nov",
+            "Dec"
+          ]
         }
       ]
     },
@@ -426,8 +788,8 @@
       "postcode": "2007",
       "country": "Australia",
       "country_code": "AU",
-      "lat": -33.883700,
-      "lon": 151.194500,
+      "lat": -33.8837,
+      "lon": 151.1945,
       "radius_m": 250
     },
     "hardware": {
@@ -438,7 +800,9 @@
     "compatibility": {
       "open_to_non_tesla": false,
       "tesla_only": true,
-      "connector_types": ["CCS2 (Tesla Only)"]
+      "connector_types": [
+        "CCS2 (Tesla Only)"
+      ]
     },
     "access": {
       "hours": "06:00 - 00:00"
@@ -446,12 +810,27 @@
     "tessie_cost_config": {
       "currency": "AUD",
       "pricing_model": "time_of_use",
-      "per_kwh_flat": 0.00,
-      "idle_fee_per_min": 1.00,
+      "per_kwh_flat": 0.0,
+      "idle_fee_per_min": 1.0,
       "rate_schedules": [
-        { "name": "Off-Peak Night", "rate_per_kwh": 0.38, "start_time": "00:00", "end_time": "08:00" },
-        { "name": "Peak Day", "rate_per_kwh": 0.65, "start_time": "08:00", "end_time": "20:00" },
-        { "name": "Off-Peak Evening", "rate_per_kwh": 0.38, "start_time": "20:00", "end_time": "24:00" }
+        {
+          "name": "Off-Peak Night",
+          "rate_per_kwh": 0.38,
+          "start_time": "00:00",
+          "end_time": "08:00"
+        },
+        {
+          "name": "Peak Day",
+          "rate_per_kwh": 0.65,
+          "start_time": "08:00",
+          "end_time": "20:00"
+        },
+        {
+          "name": "Off-Peak Evening",
+          "rate_per_kwh": 0.38,
+          "start_time": "20:00",
+          "end_time": "24:00"
+        }
       ]
     },
     "non_tesla_pricing": {
@@ -491,8 +870,8 @@
       "postcode": "2232",
       "country": "Australia",
       "country_code": "AU",
-      "lat": -34.030500,
-      "lon": 151.069400,
+      "lat": -34.0305,
+      "lon": 151.0694,
       "radius_m": 250
     },
     "hardware": {
@@ -503,7 +882,9 @@
     "compatibility": {
       "open_to_non_tesla": false,
       "tesla_only": true,
-      "connector_types": ["CCS2 (Tesla Only)"]
+      "connector_types": [
+        "CCS2 (Tesla Only)"
+      ]
     },
     "access": {
       "hours": "Available 24/7"
@@ -511,12 +892,27 @@
     "tessie_cost_config": {
       "currency": "AUD",
       "pricing_model": "time_of_use",
-      "per_kwh_flat": 0.00,
-      "idle_fee_per_min": 1.00,
+      "per_kwh_flat": 0.0,
+      "idle_fee_per_min": 1.0,
       "rate_schedules": [
-        { "name": "Off-Peak Night", "rate_per_kwh": 0.35, "start_time": "00:00", "end_time": "08:00" },
-        { "name": "Peak Day", "rate_per_kwh": 0.58, "start_time": "08:00", "end_time": "20:00" },
-        { "name": "Off-Peak Evening", "rate_per_kwh": 0.35, "start_time": "20:00", "end_time": "24:00" }
+        {
+          "name": "Off-Peak Night",
+          "rate_per_kwh": 0.35,
+          "start_time": "00:00",
+          "end_time": "08:00"
+        },
+        {
+          "name": "Peak Day",
+          "rate_per_kwh": 0.58,
+          "start_time": "08:00",
+          "end_time": "20:00"
+        },
+        {
+          "name": "Off-Peak Evening",
+          "rate_per_kwh": 0.35,
+          "start_time": "20:00",
+          "end_time": "24:00"
+        }
       ]
     },
     "non_tesla_pricing": {
@@ -555,8 +951,8 @@
       "postcode": "2065",
       "country": "Australia",
       "country_code": "AU",
-      "lat": -33.824200,
-      "lon": 151.191500,
+      "lat": -33.8242,
+      "lon": 151.1915,
       "radius_m": 250
     },
     "hardware": {
@@ -567,7 +963,9 @@
     "compatibility": {
       "open_to_non_tesla": false,
       "tesla_only": true,
-      "connector_types": ["CCS2 (Tesla Only)"]
+      "connector_types": [
+        "CCS2 (Tesla Only)"
+      ]
     },
     "access": {
       "hours": "Available 24/7"
@@ -575,12 +973,27 @@
     "tessie_cost_config": {
       "currency": "AUD",
       "pricing_model": "time_of_use",
-      "per_kwh_flat": 0.00,
-      "idle_fee_per_min": 1.00,
+      "per_kwh_flat": 0.0,
+      "idle_fee_per_min": 1.0,
       "rate_schedules": [
-        { "name": "Off-Peak Night", "rate_per_kwh": 0.38, "start_time": "00:00", "end_time": "08:00" },
-        { "name": "Peak Day", "rate_per_kwh": 0.65, "start_time": "08:00", "end_time": "20:00" },
-        { "name": "Off-Peak Evening", "rate_per_kwh": 0.38, "start_time": "20:00", "end_time": "24:00" }
+        {
+          "name": "Off-Peak Night",
+          "rate_per_kwh": 0.38,
+          "start_time": "00:00",
+          "end_time": "08:00"
+        },
+        {
+          "name": "Peak Day",
+          "rate_per_kwh": 0.65,
+          "start_time": "08:00",
+          "end_time": "20:00"
+        },
+        {
+          "name": "Off-Peak Evening",
+          "rate_per_kwh": 0.38,
+          "start_time": "20:00",
+          "end_time": "24:00"
+        }
       ]
     },
     "non_tesla_pricing": {
