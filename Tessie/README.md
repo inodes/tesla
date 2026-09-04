@@ -24,6 +24,7 @@ A suite of tools for processing, classifying, and analyzing [Tessie](https://sha
 | **`tessie_analyzer.py`** | High-level drives summary, interactive period selector, location geofencing, and TeslaCam video linking. | `./Tools/tessie_analyzer.py --drives`<br>`./Tools/tessie_analyzer.py --today`<br>`./Tools/tessie_analyzer.py --place "School"` |
 | **`tessie_charging_analyzer.py`** | Reconciles Tesla Supercharger & 3rd-party invoices against Tessie telemetry, calculates dispenser vs battery loss, verifies TOU rates, and audits charging costs. | `./Tools/tessie_charging_analyzer.py --superchargers`<br>`./Tools/tessie_charging_analyzer.py --inspect 1`<br>`./Tools/tessie_charging_analyzer.py --consolidate` |
 | **`tessie_renamer.py`** | Inspects, categorizes, and standardizes all raw Tessie CSV files (drives, telemetry traces, charges, idles, battery, tires, alerts). | `./Tools/tessie_renamer.py --dry-run`<br>`./Tools/tessie_renamer.py --copy-to /path/to/dir`<br>`./Tools/tessie_renamer.py --in-place` |
+| **`find_tesla_chargers.py`** | Hierarchical discovery explorer and live scraper for Tesla Superchargers and Destination Chargers with state filtering, search, and registry sync. | `./Tools/find_tesla_chargers.py`<br>`./Tools/find_tesla_chargers.py --state NSW --sc --list`<br>`./Tools/find_tesla_chargers.py --scrape 19258 --update --sync` |
 
 ---
 
@@ -95,6 +96,28 @@ A suite of tools for processing, classifying, and analyzing [Tessie](https://sha
 
 # Synchronize tools and registries to all mounted TESLADRIVE volume(s)
 ./Tools/tessie_charging_analyzer.py --sync
+```
+
+### 4. Tesla Charger Discovery & Live Scraping
+```bash
+# Interactive hierarchical drill-down menu (Region ➔ Country ➔ Type ➔ State ➔ Station):
+./Tools/find_tesla_chargers.py
+
+# List all Superchargers in Australia grouped by state:
+./Tools/find_tesla_chargers.py --country Australia --sc --list
+
+# Filter NSW Superchargers:
+./Tools/find_tesla_chargers.py --country Australia --state NSW --sc --list
+
+# Search charging infrastructure by keyword (e.g. Miranda, Parramatta, Airport):
+./Tools/find_tesla_chargers.py --country Australia --search "Miranda"
+
+# Scrape live pricing and hardware specs by Location ID or Find Us URL:
+./Tools/find_tesla_chargers.py --scrape 19258
+./Tools/find_tesla_chargers.py --url "https://www.tesla.com/en_AU/findus/location/supercharger/19258"
+
+# Scrape, update superchargers.json registry, and sync to external TESLADRIVE:
+./Tools/find_tesla_chargers.py --scrape 19258 --update --sync
 ```
 
 ---
