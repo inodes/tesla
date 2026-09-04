@@ -1,0 +1,47 @@
+{
+  "Home": {
+    "name": "Home",
+    "type": "home",
+    "address": "123 Example Street, Suburb NSW 2000",
+    "lat": -33.8000,
+    "lon": 151.0000,
+    "radius_m": 100,
+    "keywords": [
+      "Example Street"
+    ],
+    "costs": {
+      "currency": "AUD",
+      "timezone": "Australia/Sydney",
+      "pricing_model": "time_of_use",
+      "flat_per_kwh": 0.00,
+      "per_minute": 0.00,
+      "per_session": 0.00,
+      "rate_schedules": [
+        {
+          "name": "Solar Sponge (Day Rate)",
+          "rate_per_kwh": 0.12,
+          "start_time": "07:00",
+          "end_time": "16:00",
+          "days": ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"],
+          "months": ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
+        },
+        {
+          "name": "Peak Rate",
+          "rate_per_kwh": 0.2852,
+          "start_time": "16:00",
+          "end_time": "22:00",
+          "days": ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"],
+          "months": ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
+        },
+        {
+          "name": "Overnight / Off-Peak Rate",
+          "rate_per_kwh": 0.2852,
+          "start_time": "22:00",
+          "end_time": "07:00",
+          "days": ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"],
+          "months": ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
+        }
+      ]
+    }
+  }
+}

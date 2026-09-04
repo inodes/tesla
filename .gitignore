@@ -10,6 +10,8 @@
 Tessie/*.csv
 Tessie/*.json
 !Tessie/places.example.json
+!Tessie/charging.example.json
+!Tessie/superchargers.example.json
 places.json
 __pycache__/
 *.pyc
