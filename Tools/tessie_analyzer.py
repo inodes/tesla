@@ -172,7 +172,8 @@ class TessieAnalyzer:
         parent_dir = os.path.dirname(self.script_dir)
         self.icloud_dir = os.path.expanduser("~/Library/Mobile Documents/com~apple~CloudDocs/Tesla/Tessie")
         
-        self.tessie_dirs = [
+        self.tessie_dirs = []
+        candidates = [
             tessie_dir,
             "/Volumes/TESLADRIVE 1/Tessie",
             "/Volumes/TESLADRIVE/Tessie",
@@ -181,14 +182,25 @@ class TessieAnalyzer:
             os.path.expanduser("~/iCloud/repos/tesla/Tessie"),
             self.icloud_dir
         ]
-        self.tessie_dirs = [d for d in self.tessie_dirs if d and os.path.isdir(d)]
+        for d in candidates:
+            try:
+                if d and os.path.isdir(d):
+                    self.tessie_dirs.append(d)
+            except Exception:
+                pass
         
-        self.teslacam_dirs = teslacam_dirs or [
+        self.teslacam_dirs = []
+        candidates_tc = teslacam_dirs or [
             "/Volumes/TESLADRIVE 1/TeslaCam",
             "/Volumes/TESLADRIVE/TeslaCam",
             "/Volumes/TESLADRIVE 2/TeslaCam"
         ]
-        self.teslacam_dirs = [d for d in self.teslacam_dirs if os.path.isdir(d)]
+        for d in candidates_tc:
+            try:
+                if d and os.path.isdir(d):
+                    self.teslacam_dirs.append(d)
+            except Exception:
+                pass
         
         self.places = self.load_places()
         self.drives = []
@@ -362,35 +374,38 @@ class TessieAnalyzer:
             return
         self.footage_db = []
         for tc in self.teslacam_dirs:
-            if not os.path.isdir(tc):
-                continue
-            for root, _, files in os.walk(tc):
-                rel = os.path.relpath(root, tc)
-                if "RecentClips" in rel:
-                    cat = "Recent"
-                elif "SentryClips" in rel:
-                    cat = "Sentry"
-                elif "SavedClips" in rel:
-                    cat = "Saved"
-                else:
-                    cat = "Other"
+            try:
+                if not os.path.isdir(tc):
+                    continue
+                for root, _, files in os.walk(tc):
+                    rel = os.path.relpath(root, tc)
+                    if "RecentClips" in rel:
+                        cat = "Recent"
+                    elif "SentryClips" in rel:
+                        cat = "Sentry"
+                    elif "SavedClips" in rel:
+                        cat = "Saved"
+                    else:
+                        cat = "Other"
 
-                for f in files:
-                    if not f.startswith("._") and f.endswith(".mp4") and f != "event.mp4":
-                        base = f[:19]
-                        try:
-                            dt = datetime.strptime(base, "%Y-%m-%d_%H-%M-%S")
-                            cam = f[20:-4] if len(f) > 24 else "front"
-                            self.footage_db.append({
-                                "dt": dt,
-                                "cat": cat,
-                                "path": os.path.join(root, f),
-                                "folder": root,
-                                "file": f,
-                                "cam": cam
-                            })
-                        except ValueError:
-                            pass
+                    for f in files:
+                        if not f.startswith("._") and f.endswith(".mp4") and f != "event.mp4":
+                            base = f[:19]
+                            try:
+                                dt = datetime.strptime(base, "%Y-%m-%d_%H-%M-%S")
+                                cam = f[20:-4] if len(f) > 24 else "front"
+                                self.footage_db.append({
+                                    "dt": dt,
+                                    "cat": cat,
+                                    "path": os.path.join(root, f),
+                                    "folder": root,
+                                    "file": f,
+                                    "cam": cam
+                                    })
+                            except ValueError:
+                                pass
+            except Exception:
+                pass
         self._indexed = True
 
     def find_footage(self, target_dt, window_seconds=180):
