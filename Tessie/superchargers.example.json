@@ -288,7 +288,6 @@
         "Parraweena Road",
         "Parraweena Rd",
         "Tesla Center",
-        "HomeCo Miranda",
         "Miranda, NSW",
         "Miranda"
       ]
@@ -301,19 +300,19 @@
       "postcode": "2228",
       "country": "Australia",
       "country_code": "AU",
-      "lat": -34.027260,
-      "lon": 151.118900,
+      "lat": -34.026969,
+      "lon": 151.118779,
       "radius_m": 250
     },
     "hardware": {
-      "stalls": 6,
-      "max_power_kw": 250,
-      "tier": "V3"
+      "stalls": 8,
+      "max_power_kw": 300,
+      "tier": "V4"
     },
     "compatibility": {
-      "open_to_non_tesla": false,
-      "tesla_only": true,
-      "connector_types": ["CCS2 (Tesla Only)"]
+      "open_to_non_tesla": true,
+      "tesla_only": false,
+      "connector_types": ["CCS2"]
     },
     "access": {
       "hours": "Available 24/7"
@@ -321,6 +320,7 @@
     "traffic_and_occupancy": {
       "hourly_busyness_histogram": [
         { "hour": "00:00", "avg_occupancy_pct": 5, "level": "low" },
+        { "hour": "04:00", "avg_occupancy_pct": 10, "level": "low" },
         { "hour": "08:00", "avg_occupancy_pct": 35, "level": "medium" },
         { "hour": "12:00", "avg_occupancy_pct": 70, "level": "high" },
         { "hour": "16:00", "avg_occupancy_pct": 80, "level": "high" },
@@ -331,24 +331,76 @@
       "currency": "AUD",
       "pricing_model": "time_of_use",
       "per_kwh_flat": 0.00,
+      "per_minute": 0.00,
+      "per_session": 0.00,
       "idle_fee_per_min": 1.00,
+      "congestion_fee_per_min": 0.50,
       "rate_schedules": [
-        { "name": "Off-Peak Night", "rate_per_kwh": 0.35, "start_time": "00:00", "end_time": "08:00" },
-        { "name": "Peak Day", "rate_per_kwh": 0.52, "start_time": "08:00", "end_time": "20:00" },
-        { "name": "Off-Peak Evening", "rate_per_kwh": 0.35, "start_time": "20:00", "end_time": "24:00" }
+        {
+          "name": "Off-Peak Night",
+          "rate_per_kwh": 0.37,
+          "start_time": "00:00",
+          "end_time": "08:00",
+          "days": ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"],
+          "months": ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
+        },
+        {
+          "name": "Peak Day",
+          "rate_per_kwh": 0.45,
+          "start_time": "08:00",
+          "end_time": "23:00",
+          "days": ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"],
+          "months": ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
+        },
+        {
+          "name": "Off-Peak Late",
+          "rate_per_kwh": 0.37,
+          "start_time": "23:00",
+          "end_time": "24:00",
+          "days": ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"],
+          "months": ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
+        }
       ]
     },
     "non_tesla_pricing": {
-      "available": false,
-      "non_member_rate_per_kwh": null,
-      "member_rate_per_kwh": null,
-      "membership_monthly_fee": null
+      "available": true,
+      "pricing_model": "time_of_use",
+      "congestion_fee_per_min": 0.50,
+      "idle_fee_per_min": 1.00,
+      "rate_schedules": [
+        {
+          "name": "Non-Tesla Off-Peak Night",
+          "rate_per_kwh": 0.49,
+          "start_time": "00:00",
+          "end_time": "08:00",
+          "days": ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"],
+          "months": ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
+        },
+        {
+          "name": "Non-Tesla Peak Day",
+          "rate_per_kwh": 0.59,
+          "start_time": "08:00",
+          "end_time": "23:00",
+          "days": ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"],
+          "months": ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
+        },
+        {
+          "name": "Non-Tesla Off-Peak Late",
+          "rate_per_kwh": 0.49,
+          "start_time": "23:00",
+          "end_time": "24:00",
+          "days": ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"],
+          "months": ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
+        }
+      ]
     },
     "amenities": {
       "restrooms": true,
       "dining": true,
       "shopping": true,
       "coffee": true,
+      "wifi": false,
+      "lodging": false,
       "parking": true
     }
   },
