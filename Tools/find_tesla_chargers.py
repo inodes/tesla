@@ -1467,7 +1467,7 @@ class TeslaChargerExplorer:
                             if os.path.isfile(src):
                                 dst = os.path.join(ext_drive, "Tessie", reg_file)
                                 os.makedirs(os.path.dirname(dst), exist_ok=True)
-                                shutil.copy2(src, dst)
+                                shutil.copyfile(src, dst)
                         print(f"  {C_GREEN}✔ Synced to:{C_RESET} {ext_drive}")
                     except Exception as e:
                         print(f"  {C_RED}❌ Failed syncing to {ext_drive}:{C_RESET} {e}")
