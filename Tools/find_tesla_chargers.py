@@ -1257,15 +1257,29 @@ class TeslaChargerExplorer:
                     return title, cur_reg[title], cur_type
                 if f"Tesla Supercharger - {title}" in cur_reg:
                     return f"Tesla Supercharger - {title}", cur_reg[f"Tesla Supercharger - {title}"], cur_type
-                # 2. Match by short_name / slug / url
+                # 2. Match by short_name / slug / url / keywords / entry name
+                title_lower = title.lower()
+                clean_title_norm = clean_station_short_name(title).lower()
                 for k, entry in cur_reg.items():
                     meta = entry.get("tesla_metadata", {})
                     if short_name and meta.get("short_name") == short_name:
+                        return k, entry, cur_type
+                    if clean_title_norm and clean_station_short_name(meta.get("short_name", "")).lower() == clean_title_norm:
                         return k, entry, cur_type
                     findus_url = meta.get("findus_url", "")
                     if url and findus_url == url:
                         return k, entry, cur_type
                     if slug and slug in findus_url.lower():
+                        return k, entry, cur_type
+                    # Keywords match
+                    keywords = [kw.lower() for kw in meta.get("keywords", [])]
+                    if title_lower in keywords:
+                        return k, entry, cur_type
+                    # Charging.json style matches
+                    entry_name = entry.get("name", "").lower()
+                    if entry_name and (entry_name == title_lower or entry_name == clean_title_norm):
+                        return k, entry, cur_type
+                    if title_lower in [kw.lower() for kw in entry.get("keywords", [])]:
                         return k, entry, cur_type
             return None, None, None
 
@@ -1786,6 +1800,40 @@ def interactive_drilldown(explorer: TeslaChargerExplorer):
     # Load registries for status checking
     sc_reg, dc_reg = explorer.load_active_registries()
 
+    # Include any custom/local registry stations not present in the web list
+    matched_registry_keys = set()
+    for s in all_stations:
+        k, rec, _ = explorer.get_station_record(s, sc_reg=sc_reg, dc_reg=dc_reg)
+        if k:
+            matched_registry_keys.add(k)
+
+    for reg_dict, reg_type in [(sc_reg, "supercharger"), (dc_reg, "destination_charger")]:
+        if (reg_type == "supercharger" and "superchargers" not in types_to_fetch) or \
+           (reg_type == "destination_charger" and "chargers" not in types_to_fetch):
+            continue
+        for k, entry in reg_dict.items():
+            if k not in matched_registry_keys:
+                meta = entry.get("tesla_metadata", {})
+                loc = entry.get("location", {})
+                st_entry = {
+                    "title": k,
+                    "short_name": meta.get("short_name", clean_station_short_name(k)),
+                    "state": loc.get("state") or extract_au_state_from_text(k),
+                    "country": loc.get("country", selected_country),
+                    "type": reg_type,
+                    "slug": "",
+                    "url": meta.get("findus_url", "")
+                }
+                all_stations.append(st_entry)
+
+    # Re-group Stations by State / Region
+    grouped = {}
+    for st in all_stations:
+        state_key = st["state"]
+        if state_key not in grouped:
+            grouped[state_key] = []
+        grouped[state_key].append(st)
+
     # Calculate status counts
     new_count = 0
     stale_count = 0
@@ -1878,7 +1926,11 @@ def interactive_drilldown(explorer: TeslaChargerExplorer):
                     st_c["tariffs"] = cached_data.get("tariffs", {})
                     st_c["location"] = cached_data.get("location", {})
                     c_lat = cached_data.get("location", {}).get("lat")
+                    if c_lat is None:
+                        c_lat = cached_data.get("lat")
                     c_lon = cached_data.get("location", {}).get("lon")
+                    if c_lon is None:
+                        c_lon = cached_data.get("lon")
                     if c_lat is not None and c_lon is not None:
                         st_c["_distance_km"] = haversine_distance_km(geo_lat, geo_lon, c_lat, c_lon)
                     else:
@@ -1887,6 +1939,7 @@ def interactive_drilldown(explorer: TeslaChargerExplorer):
                     st_c["_distance_km"] = float("inf")
                 near_list.append(st_c)
 
+            near_list = [s for s in near_list if s.get("_distance_km", float("inf")) <= 50.0]
             near_list.sort(key=lambda s: s.get("_distance_km", float("inf")))
             top_near = near_list[:20]
 
@@ -2125,6 +2178,32 @@ Query & Proximity Examples:
 
         sc_reg, dc_reg = explorer.load_active_registries()
 
+        # Include any custom/local registry stations not present in the web list
+        matched_registry_keys = set()
+        for s in all_stations:
+            k, rec, _ = explorer.get_station_record(s, sc_reg=sc_reg, dc_reg=dc_reg)
+            if k:
+                matched_registry_keys.add(k)
+
+        for reg_dict, reg_type in [(sc_reg, "supercharger"), (dc_reg, "destination_charger")]:
+            if (reg_type == "supercharger" and "superchargers" not in charger_types) or \
+               (reg_type == "destination_charger" and "chargers" not in charger_types):
+                continue
+            for k, entry in reg_dict.items():
+                if k not in matched_registry_keys:
+                    meta = entry.get("tesla_metadata", {})
+                    loc = entry.get("location", {})
+                    st_entry = {
+                        "title": k,
+                        "short_name": meta.get("short_name", clean_station_short_name(k)),
+                        "state": loc.get("state") or extract_au_state_from_text(k),
+                        "country": loc.get("country", "Australia"),
+                        "type": reg_type,
+                        "slug": "",
+                        "url": meta.get("findus_url", "")
+                    }
+                    all_stations.append(st_entry)
+
         # Attach registry status, cached hardware, proximity data, and effective rates
         enriched_stations = []
         for s in all_stations:
@@ -2142,7 +2221,12 @@ Query & Proximity Examples:
 
                 # Compute distance if reference coordinates available
                 c_lat = cached_data.get("location", {}).get("lat")
+                if c_lat is None:
+                    c_lat = cached_data.get("lat")
                 c_lon = cached_data.get("location", {}).get("lon")
+                if c_lon is None:
+                    c_lon = cached_data.get("lon")
+
                 if ref_lat is not None and ref_lon is not None and c_lat is not None and c_lon is not None:
                     st_copy["_distance_km"] = haversine_distance_km(ref_lat, ref_lon, c_lat, c_lon)
                 else:
