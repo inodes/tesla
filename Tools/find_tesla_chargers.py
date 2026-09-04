@@ -110,6 +110,8 @@ def resolve_location_timezone(state: str = None, country: str = None, lat: float
 C_CYAN = "\033[96m"
 C_GREEN = "\033[92m"
 C_YELLOW = "\033[93m"
+C_BLUE = "\033[38;5;39m"
+C_ORANGE = "\033[38;5;214m"
 C_RED = "\033[91m"
 C_MAGENTA = "\033[95m"
 C_BOLD = "\033[1m"
@@ -442,71 +444,55 @@ class TeslaChargerExplorer:
         print(f"{C_GREEN}✔ Discovered {len(stations)} {type_label} in {country_slug.replace('+', ' ')}.{C_RESET}\n")
         return stations
 
-    def scrape_station_details(self, url_or_id: str, charger_type: str = "supercharger") -> tuple:
-        """Scrapes full technical hardware, Time-of-Use pricebooks, and GPS coordinates for a station."""
-        try:
-            from playwright.sync_api import sync_playwright
-        except ImportError:
-            print(f"{C_RED}❌ Playwright is not installed in the active virtual environment.{C_RESET}")
-            sys.exit(1)
-
-        # Resolve target URL
-        if url_or_id.startswith("http"):
-            target_url = url_or_id
-        else:
-            type_slug = "supercharger" if charger_type == "supercharger" else "charger"
-            target_url = f"https://www.tesla.com/en_AU/findus/location/{type_slug}/{url_or_id}"
-
-        print(f"\n{C_CYAN}⚡ Deep-dive scraping station details with Playwright WebKit...{C_RESET}")
-        print(f"   {C_DIM}{target_url}{C_RESET}\n")
-
+    def _scrape_page_payload(self, page, target_url: str) -> tuple:
+        """Navigates page to target_url and captures XHR/Fetch API responses + SSR __NEXT_DATA__."""
         captured_api_data = {}
         next_data_payload = None
 
-        with sync_playwright() as p:
-            browser = p.webkit.launch(headless=self.headless)
-            context = browser.new_context(
-                locale="en-AU",
-                timezone_id="Australia/Sydney",
-                user_agent="Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4 Safari/605.1.15"
-            )
-            page = context.new_page()
-
-            def handle_response(resp):
-                if "get-charger-details" in resp.url or "get-location-details" in resp.url:
-                    try:
-                        captured_api_data[resp.url] = resp.json()
-                    except Exception:
-                        pass
-
-            page.on("response", handle_response)
-            page.goto(target_url, wait_until="networkidle", timeout=40000)
-            page.wait_for_timeout(1500)
-
-            # Expand accordions if present
-            for accordion_label in ["Pricing for Tesla & Members", "Pricing for Non-Tesla"]:
+        def handle_response(resp):
+            if "get-charger-details" in resp.url or "get-location-details" in resp.url:
                 try:
-                    btn = page.locator(f"button:has-text('{accordion_label}'), [role='button']:has-text('{accordion_label}')").first
-                    if btn.count() > 0 and btn.is_visible():
-                        btn.click()
-                        page.wait_for_timeout(400)
+                    captured_api_data[resp.url] = resp.json()
                 except Exception:
                     pass
 
-            # Extract __NEXT_DATA__ SSR props
+        page.on("response", handle_response)
+        try:
+            page.goto(target_url, wait_until="networkidle", timeout=35000)
+            page.wait_for_timeout(1000)
+        except Exception:
+            pass
+
+        # Expand accordions if present
+        for accordion_label in ["Pricing for Tesla & Members", "Pricing for Non-Tesla"]:
             try:
-                raw_next = page.eval_on_selector("#__NEXT_DATA__", "e => e.textContent")
-                if raw_next:
-                    next_data_payload = json.loads(raw_next)
+                btn = page.locator(f"button:has-text('{accordion_label}'), [role='button']:has-text('{accordion_label}')").first
+                if btn.count() > 0 and btn.is_visible():
+                    btn.click()
+                    page.wait_for_timeout(300)
             except Exception:
                 pass
 
-            browser.close()
+        # Extract __NEXT_DATA__ SSR props
+        try:
+            raw_next = page.eval_on_selector("#__NEXT_DATA__", "e => e.textContent")
+            if raw_next:
+                next_data_payload = json.loads(raw_next)
+        except Exception:
+            pass
 
-        # Parse data from API responses or Next.js pageProps
+        try:
+            page.remove_listener("response", handle_response)
+        except Exception:
+            pass
+
+        return captured_api_data, next_data_payload
+
+    def _parse_scraped_data(self, target_url: str, captured_api_data: dict, next_data_payload: dict, charger_type: str = "supercharger") -> tuple:
+        """Parses raw intercepted payloads and SSR props into structured station dictionary."""
         charger_payload = None
         location_payload = None
-        for req_url, res in captured_api_data.items():
+        for req_url, res in (captured_api_data or {}).items():
             if "get-charger-details" in req_url:
                 charger_payload = res.get("data", {}).get("data", {})
             elif "get-location-details" in req_url:
@@ -515,6 +501,9 @@ class TeslaChargerExplorer:
         page_props = (next_data_payload or {}).get("props", {}).get("pageProps", {})
         fmt_data = page_props.get("formattedData", {})
         loc_data = page_props.get("locationData", {})
+
+        if not charger_payload and not fmt_data and not loc_data:
+            return None, None
 
         # Extract Core Metadata
         station_name = (
@@ -772,6 +761,197 @@ class TeslaChargerExplorer:
 
         station_key = station_name
         return station_key, record
+
+    def scrape_station_details(self, url_or_id: str, charger_type: str = "supercharger", page=None) -> tuple:
+        """Scrapes full technical hardware, Time-of-Use pricebooks, and GPS coordinates for a station."""
+        try:
+            from playwright.sync_api import sync_playwright
+        except ImportError:
+            print(f"{C_RED}❌ Playwright is not installed in the active virtual environment.{C_RESET}")
+            sys.exit(1)
+
+        # Resolve target URL
+        if url_or_id.startswith("http"):
+            target_url = url_or_id
+        else:
+            type_slug = "supercharger" if charger_type == "supercharger" else "charger"
+            target_url = f"https://www.tesla.com/en_AU/findus/location/{type_slug}/{url_or_id}"
+
+        print(f"\n{C_CYAN}⚡ Deep-dive scraping station details with Playwright WebKit...{C_RESET}")
+        print(f"   {C_DIM}{target_url}{C_RESET}\n")
+
+        if page is not None:
+            captured_api_data, next_data_payload = self._scrape_page_payload(page, target_url)
+            return self._parse_scraped_data(target_url, captured_api_data, next_data_payload, charger_type=charger_type)
+
+        with sync_playwright() as p:
+            browser = p.webkit.launch(headless=self.headless)
+            context = browser.new_context(
+                locale="en-AU",
+                timezone_id="Australia/Sydney",
+                user_agent="Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4 Safari/605.1.15"
+            )
+            page_inst = context.new_page()
+            captured_api_data, next_data_payload = self._scrape_page_payload(page_inst, target_url)
+            browser.close()
+
+        return self._parse_scraped_data(target_url, captured_api_data, next_data_payload, charger_type=charger_type)
+
+    def load_active_registries(self) -> tuple:
+        """Loads in-memory dictionaries of superchargers.json and charging.json."""
+        sc_reg = {}
+        if os.path.isfile(self.superchargers_path):
+            try:
+                with open(self.superchargers_path, "r", encoding="utf-8") as f:
+                    sc_reg = json.load(f)
+            except Exception:
+                sc_reg = {}
+        dc_reg = {}
+        if os.path.isfile(self.charging_path):
+            try:
+                with open(self.charging_path, "r", encoding="utf-8") as f:
+                    dc_reg = json.load(f)
+            except Exception:
+                dc_reg = {}
+        return sc_reg, dc_reg
+
+    def get_station_status(self, station: dict, sc_reg: dict = None, dc_reg: dict = None, threshold_days: int = 90) -> str:
+        """
+        Determines the registry status of a station:
+        - 'UP_TO_DATE' (Green): Present in JSON registry and verified within threshold_days (<= 90 days / 3 months).
+        - 'STALE' (Blue): Present in JSON registry but last verification is older than threshold_days (> 90 days).
+        - 'NOT_IN_JSON' (Orange): Not present in JSON registry.
+        """
+        if sc_reg is None or dc_reg is None:
+            sc_reg, dc_reg = self.load_active_registries()
+
+        reg = sc_reg if station.get("type") == "supercharger" else dc_reg
+        title = station.get("title", "")
+        slug = str(station.get("slug", "")).lower()
+        url = station.get("url", "")
+        short_name = station.get("short_name", "")
+
+        matched_entry = None
+        # 1. Exact title key match
+        if title in reg:
+            matched_entry = reg[title]
+        elif f"Tesla Supercharger - {title}" in reg:
+            matched_entry = reg[f"Tesla Supercharger - {title}"]
+        else:
+            # 2. Match by slug / url / short_name
+            for k, entry in reg.items():
+                meta = entry.get("tesla_metadata", {})
+                if short_name and meta.get("short_name") == short_name:
+                    matched_entry = entry
+                    break
+                findus_url = meta.get("findus_url", "")
+                if url and findus_url == url:
+                    matched_entry = entry
+                    break
+                if slug and slug in findus_url.lower():
+                    matched_entry = entry
+                    break
+
+        if not matched_entry:
+            return "NOT_IN_JSON"
+
+        # Check last_verified timestamp
+        ver_str = matched_entry.get("last_verified") or matched_entry.get("last_updated") or matched_entry.get("first_seen")
+        if not ver_str:
+            return "STALE"
+
+        try:
+            dt = datetime.fromisoformat(ver_str.replace("Z", "+00:00"))
+            now = datetime.now(timezone.utc)
+            diff_days = (now - dt).days
+            if diff_days <= threshold_days:
+                return "UP_TO_DATE"
+            else:
+                return "STALE"
+        except Exception:
+            return "STALE"
+
+    def scrape_all_stations(self, stations: list, sync_external: bool = False, force: bool = False):
+        """Batch scrapes and updates all stations in the list using a persistent browser instance."""
+        try:
+            from playwright.sync_api import sync_playwright
+        except ImportError:
+            print(f"{C_RED}❌ Playwright is not installed in the active virtual environment.{C_RESET}")
+            sys.exit(1)
+
+        total = len(stations)
+        if total == 0:
+            print(f"{C_YELLOW}No stations to scrape.{C_RESET}")
+            return
+
+        print(f"\n{C_BOLD}{'='*80}{C_RESET}")
+        print(f"  ⚡ {C_CYAN}{C_BOLD}STARTING BATCH SCRAPER FOR {total} STATIONS{C_RESET}")
+        print(f"{C_BOLD}{'='*80}{C_RESET}\n")
+
+        sc_reg, dc_reg = self.load_active_registries()
+        success_count = 0
+        error_count = 0
+
+        with sync_playwright() as p:
+            browser = p.webkit.launch(headless=self.headless)
+            context = browser.new_context(
+                locale="en-AU",
+                timezone_id="Australia/Sydney",
+                user_agent="Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4 Safari/605.1.15"
+            )
+            page = context.new_page()
+
+            for idx, st in enumerate(stations, 1):
+                st_title = st.get("title", "")
+                st_type = st.get("type", "supercharger")
+                st_url = st.get("url", "")
+                
+                status = self.get_station_status(st, sc_reg=sc_reg, dc_reg=dc_reg)
+                status_color = C_GREEN if status == "UP_TO_DATE" else (C_BLUE if status == "STALE" else C_ORANGE)
+                status_tag = f"[{status_color}{status}{C_RESET}]"
+
+                print(f"[{idx:3d}/{total:3d}] ⚡ Scraping {st_title} {status_tag}...")
+
+                try:
+                    captured_api_data, next_data_payload = self._scrape_page_payload(page, st_url)
+                    station_key, record = self._parse_scraped_data(st_url, captured_api_data, next_data_payload, charger_type=st_type)
+                    if record:
+                        self.update_registry(station_key, record, sync_external=False)
+                        if st_type == "supercharger":
+                            sc_reg[station_key] = record
+                        else:
+                            dc_reg[station_key] = record
+                        success_count += 1
+                    else:
+                        print(f"  {C_RED}❌ Failed parsing record for {st_title}{C_RESET}")
+                        error_count += 1
+                except Exception as e:
+                    print(f"  {C_RED}❌ Error scraping {st_title}: {e}{C_RESET}")
+                    error_count += 1
+
+            browser.close()
+
+        print(f"\n{C_BOLD}{'='*80}{C_RESET}")
+        print(f"  {C_GREEN}✔ Batch scraping completed: {success_count} processed, {error_count} failed.{C_RESET}")
+        print(f"{C_BOLD}{'='*80}{C_RESET}\n")
+
+        if sync_external:
+            ext_drives = find_mounted_tesla_volumes()
+            if ext_drives:
+                print(f"{C_CYAN}🔄 Syncing updated registries across {len(ext_drives)} mounted TESLADRIVE volume(s)...{C_RESET}")
+                for ext_drive in ext_drives:
+                    try:
+                        for reg_file in ["superchargers.json", "superchargers_archived.json", "charging.json", "charging_archived.json"]:
+                            src = os.path.join(self.repo_root, "Tessie", reg_file)
+                            if os.path.isfile(src):
+                                dst = os.path.join(ext_drive, "Tessie", reg_file)
+                                os.makedirs(os.path.dirname(dst), exist_ok=True)
+                                shutil.copy2(src, dst)
+                        print(f"  {C_GREEN}✔ Synced to:{C_RESET} {ext_drive}")
+                    except Exception as e:
+                        print(f"  {C_RED}❌ Failed syncing to {ext_drive}:{C_RESET} {e}")
+            else:
+                print(f"{C_YELLOW}⚠ No mounted TESLADRIVE volumes detected under /Volumes. Registry saved locally.{C_RESET}")
 
     def _detect_record_changes(self, existing: dict, new: dict) -> bool:
         """Detects whether hardware, accessibility, or pricing/tariffs differ between existing and new records."""
@@ -1083,13 +1263,20 @@ def interactive_drilldown(explorer: TeslaChargerExplorer):
             grouped[state_key] = []
         grouped[state_key].append(st)
 
+    # Load registries for status checking
+    sc_reg, dc_reg = explorer.load_active_registries()
+
     # Display Stations Grouped by State
     print(f"\n{C_BOLD}{'='*80}{C_RESET}")
     print(f"  ⚡ {C_BOLD}{selected_country.upper()} CHARGING STATIONS ({len(all_stations)} total){C_RESET}")
+    print(f"  {C_BOLD}📊 Status Legend:{C_RESET} [{C_GREEN} 1 {C_RESET}] Up to Date (<=3mo)  |  [{C_BLUE} 2 {C_RESET}] Stale (>3mo)  |  [{C_ORANGE} 3 {C_RESET}] Not in JSON")
     print(f"{C_BOLD}{'='*80}{C_RESET}\n")
 
     station_lookup = {}
     st_counter = 1
+
+    max_title_len = max((display_len(s["title"]) for s in all_stations), default=30)
+    col_width = max(38, max_title_len + 12)
 
     sorted_states = sorted(grouped.keys())
     for st_name in sorted_states:
@@ -1097,18 +1284,21 @@ def interactive_drilldown(explorer: TeslaChargerExplorer):
         state_header = f"{AU_STATE_MAP.get(st_name, st_name)} ({st_name})" if st_name in AU_STATE_MAP else st_name
         print(f"{C_CYAN}{C_BOLD}📍 {state_header} [{len(st_list)} stations]:{C_RESET}")
         
-        col_width = 38
         for i in range(0, len(st_list), 2):
             left = st_list[i]
+            left_status = explorer.get_station_status(left, sc_reg=sc_reg, dc_reg=dc_reg)
+            left_color = C_GREEN if left_status == "UP_TO_DATE" else (C_BLUE if left_status == "STALE" else C_ORANGE)
             left_icon = "🔴" if left["type"] == "supercharger" else "🔌"
-            left_text = f" [{C_GREEN}{st_counter:3d}{C_RESET}] {left_icon} {left['title']}"
+            left_text = f" [{left_color}{st_counter:3d}{C_RESET}] {left_icon} {left['title']}"
             station_lookup[st_counter] = left
             st_counter += 1
 
             if i + 1 < len(st_list):
                 right = st_list[i+1]
+                right_status = explorer.get_station_status(right, sc_reg=sc_reg, dc_reg=dc_reg)
+                right_color = C_GREEN if right_status == "UP_TO_DATE" else (C_BLUE if right_status == "STALE" else C_ORANGE)
                 right_icon = "🔴" if right["type"] == "supercharger" else "🔌"
-                right_text = f" [{C_GREEN}{st_counter:3d}{C_RESET}] {right_icon} {right['title']}"
+                right_text = f" [{right_color}{st_counter:3d}{C_RESET}] {right_icon} {right['title']}"
                 station_lookup[st_counter] = right
                 st_counter += 1
                 print(f"{pad_display(left_text, col_width)} {right_text}")
@@ -1119,22 +1309,27 @@ def interactive_drilldown(explorer: TeslaChargerExplorer):
     # Step 5: Select Station to Scrape / Inspect
     print(f"{C_BOLD}Options:{C_RESET}")
     print(f"  • Enter a station number [1-{len(all_stations)}] to inspect and scrape live pricing")
-    print(f"  • Type {C_GREEN}'all'{C_RESET} to scrape and update all stations in selected country")
+    print(f"  • Type {C_GREEN}'all'{C_RESET} to batch scrape and update all {len(all_stations)} stations")
     print(f"  • Press {C_YELLOW}Enter{C_RESET} or Ctrl+C to exit")
     print()
 
     try:
-        pick = input("Select station number: ").strip()
+        pick = input("Select station number or 'all': ").strip()
         if not pick:
+            return
+        if pick.lower() in ["all", "a"]:
+            save_prompt = input(f"Scrape and save all {len(all_stations)} stations into registry? [y/N]: ").strip().lower()
+            if save_prompt == "y":
+                explorer.scrape_all_stations(all_stations, sync_external=True)
             return
         if pick.isdigit() and int(pick) in station_lookup:
             target_st = station_lookup[int(pick)]
             key, record = explorer.scrape_station_details(target_st["url"], charger_type=target_st["type"])
-            explorer.display_preview(key, record)
-            
-            save_prompt = input("Save & sync this station to local registry? [y/N]: ").strip().lower()
-            if save_prompt == "y":
-                explorer.update_registry(key, record, sync_external=True)
+            if record:
+                explorer.display_preview(key, record)
+                save_prompt = input("Save & sync this station to local registry? [y/N]: ").strip().lower()
+                if save_prompt == "y":
+                    explorer.update_registry(key, record, sync_external=True)
         else:
             print(f"{C_YELLOW}Invalid selection.{C_RESET}")
     except (KeyboardInterrupt, EOFError):
@@ -1173,6 +1368,9 @@ Examples:
 
   # 6. Scrape, save to superchargers.json, and sync across external TESLADRIVE volumes:
   ./Tools/find_tesla_chargers.py --scrape 19258 --update --sync
+
+  # 7. Batch scrape and populate all Australian Superchargers:
+  ./Tools/find_tesla_chargers.py --country Australia --sc --all --sync
 """
     )
     
@@ -1189,6 +1387,7 @@ Examples:
     # Scraping & Persistence Flags
     parser.add_argument("--scrape", "--inspect", help="Scrape live station details by Location ID, Slug, or URL")
     parser.add_argument("--url", help="Direct Tesla Find Us location URL to scrape")
+    parser.add_argument("--all", action="store_true", help="Batch scrape and update all matching stations")
     parser.add_argument("--save", "--update", action="store_true", help="Save / update scraped entry in superchargers.json or charging.json")
     parser.add_argument("--sync", action="store_true", help="Sync updated registry across all mounted TESLADRIVE external volumes")
     parser.add_argument("--json", action="store_true", help="Output raw JSON payload to stdout")
@@ -1214,8 +1413,8 @@ Examples:
             print(f"{C_DIM}Run with '--save' or '--update' to write changes into registry.{C_RESET}\n")
         return
 
-    # 2. Command-Line Listing / Search
-    if args.list or args.search or args.state or args.suburb or args.sc or args.dc:
+    # 2. Command-Line Listing / Search / Batch Scrape
+    if args.list or args.search or args.state or args.suburb or args.sc or args.dc or args.all:
         charger_types = []
         if args.sc and not args.dc:
             charger_types = ["superchargers"]
@@ -1243,19 +1442,32 @@ Examples:
             q_lower = args.search.lower()
             filtered = [s for s in filtered if q_lower in s["title"].lower() or q_lower in s["short_name"].lower()]
 
+        if args.all:
+            explorer.scrape_all_stations(filtered, sync_external=args.sync)
+            return
+
+        sc_reg, dc_reg = explorer.load_active_registries()
+        max_title_len = max((display_len(s["title"]) for s in filtered), default=28)
+        name_col_width = max(max_title_len + 2, 30)
+
         print(f"\n{C_BOLD}{'='*90}{C_RESET}")
         print(f"  ⚡ {C_BOLD}MATCHING CHARGING STATIONS ({len(filtered)} found){C_RESET}")
+        print(f"  {C_BOLD}📊 Status Legend:{C_RESET} [{C_GREEN} 1 {C_RESET}] Up to Date (<=3mo)  |  [{C_BLUE} 2 {C_RESET}] Stale (>3mo)  |  [{C_ORANGE} 3 {C_RESET}] Not in JSON")
         print(f"{C_BOLD}{'='*90}{C_RESET}\n")
 
-        print(f"  {'#':>3}  {'Type':<12} {'State':<5} {'Station Name':<42} {'Location ID / URL'}")
-        print(f"  {'-'*3}  {'-'*12} {'-'*5} {'-'*42} {'-'*24}")
+        print(f"  {'#':>5}  {'Type':<12} {'State':<5} {pad_display('Station Name', name_col_width)} {'Location ID / URL'}")
+        print(f"  {'-'*5}  {'-'*12} {'-'*5} {'-'*name_col_width} {'-'*24}")
 
         for idx, s in enumerate(filtered, 1):
+            status = explorer.get_station_status(s, sc_reg=sc_reg, dc_reg=dc_reg)
+            color = C_GREEN if status == "UP_TO_DATE" else (C_BLUE if status == "STALE" else C_ORANGE)
+            num_str = f"[{color}{idx:3d}{C_RESET}]"
             t_label = "Supercharger" if s["type"] == "supercharger" else "Destination"
             t_icon = "🔴" if s["type"] == "supercharger" else "🔌"
-            print(f"  {idx:3d}  {t_icon} {t_label:<9} {s['state']:<5} {pad_display(s['title'], 42)} {C_DIM}{s['url']}{C_RESET}")
+            print(f"  {num_str}  {t_icon} {t_label:<9} {s['state']:<5} {pad_display(s['title'], name_col_width)} {C_DIM}{s['url']}{C_RESET}")
 
-        print(f"\n{C_DIM}To scrape details: ./Tools/find_tesla_chargers.py --scrape <ID_or_URL> [--save] [--sync]{C_RESET}\n")
+        print(f"\n{C_DIM}To scrape details: ./Tools/find_tesla_chargers.py --scrape <ID_or_URL> [--save] [--sync]{C_RESET}")
+        print(f"{C_DIM}To batch scrape all: ./Tools/find_tesla_chargers.py {'--sc ' if args.sc else ''}{f'--state {args.state} ' if args.state else ''}--all [--sync]{C_RESET}\n")
         return
 
     # 3. Interactive Mode Fallback
