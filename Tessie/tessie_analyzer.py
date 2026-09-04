@@ -30,15 +30,30 @@ EMOJI_MAP = {
     "Sentry": "🔴 Sentry"
 }
 
-def char_width(c):
-    if c in ('\ufe0f', '\ufe0e'):
-        return 0
-    if c in ('🔄', '💾', '🔴', '🅿', '🚗', '📹', '📂', '🚪', '⚠️', '✔', '❌', '🕒', '📅', '📍'):
-        return 2
-    w = unicodedata.east_asian_width(c)
-    if w in ('W', 'F'):
-        return 2
-    return 1
+try:
+    import ctypes
+    libc = ctypes.CDLL("libc.dylib" if sys.platform == "darwin" else "libc.so.6")
+    _libc_wcwidth = libc.wcwidth
+    _libc_wcwidth.argtypes = [ctypes.c_wchar]
+    _libc_wcwidth.restype = ctypes.c_int
+
+    def char_width(c):
+        if c in ('\ufe0f', '\ufe0e'):
+            return 0
+        w = _libc_wcwidth(c)
+        return max(0, w) if w >= 0 else 1
+except Exception:
+    def char_width(c):
+        if c in ('\ufe0f', '\ufe0e'):
+            return 0
+        if c in ('🔄', '💾', '🔴', '🚗', '📹', '📂', '🚪', '⚠️', '✔', '❌', '🕒', '📅', '📍', '🛑'):
+            return 2
+        if c in ('🅿',):
+            return 1
+        w = unicodedata.east_asian_width(c)
+        if w in ('W', 'F'):
+            return 2
+        return 1
 
 def display_len(s):
     return sum(char_width(c) for c in s)
@@ -407,7 +422,7 @@ class TessieAnalyzer:
                     "end_dt": d_start,
                     "time_str": f"{s_str} - {e_str}",
                     "location": current_location,
-                    "activity": f"🅿️ {current_location} ({dur_str})",
+                    "activity": f"🅿  {current_location} ({dur_str})",
                     "drive": None
                 })
                 event_idx += 1
@@ -444,7 +459,7 @@ class TessieAnalyzer:
                 "end_dt": day_end,
                 "time_str": f"{s_str} - 00:00",
                 "location": current_location,
-                "activity": f"🅿️ {current_location} ({dur_str})",
+                "activity": f"🅿  {current_location} ({dur_str})",
                 "drive": None
             })
             event_idx += 1
