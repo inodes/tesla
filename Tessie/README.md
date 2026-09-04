@@ -1,73 +1,57 @@
-# 🗺️ Tessie Drive Log Analyzer & Known Places Matcher
+# 🗺️ Tessie Suite: Drive Analysis, Geofencing & CSV Classifier
 
-Analyze exported [Tessie](https://tessie.com/) drive telemetry, auto-import from iCloud, resolve GPS coordinates to friendly place nicknames, and link passenger entry/exit timestamps directly to TeslaCam dashcam footage.
-
----
-
-## 🌟 Key Features
-
-1. **Automatic iCloud Import (`--import-icloud`):**
-   - Discovers and categorizes files directly from `~/Library/Mobile Documents/com~apple~CloudDocs/Tesla/Tessie/`.
-   - Strips vehicle VIN prefixes and standardizes filenames with accurate date ranges.
-2. **Format Recognition:**
-   - **Format A (Trip Summary):** Parses departure/arrival times, distances, energy used, and odometer readings.
-   - **Format B (Telemetry Trace):** High-frequency point-by-point GPS, power (kW), and speed traces.
-   - **Specialized Logs:** Charges history, parking idle durations, battery health, tire pressure, and firmware alerts.
-3. **Spatial Geofencing & Location Nicknames:**
-   - Resolves street address variations (e.g. front driveway vs side street) and GPS coordinates into user-defined nicknames (e.g. *Home*, *School*, *Swimming*, *Supermarket*).
-   - Discover frequent clusters with `./Tools/tessie_analyzer.py --cluster`.
-4. **TeslaCam Video Linking:**
-   - Automatically cross-references trip departure and arrival times against connected `TeslaCam` drives.
-   - Identifies passenger **entry** (getting in) and **exit** (arriving & unloading) windows, highlighting `left_repeater`, `right_repeater`, and `back` camera MP4 files.
+A suite of tools for processing, classifying, and analyzing [Tessie](https://tessie.com/) telemetry exports and cross-referencing trip timelines with TeslaCam dashcam footage.
 
 ---
 
-## 📍 Configuring Known Places (`places.json`)
+## 🛠️ Tools Overview
 
-Place configurations are kept **strictly local** (excluded from Git for privacy). A generic template is provided in `places.example.json`:
-
-```json
-{
-  "Home": {
-    "keywords": ["123 Example Street", "Example Suburb"],
-    "lat": -33.80000,
-    "lon": 151.00000,
-    "radius_m": 150
-  },
-  "School": {
-    "keywords": ["School Road", "Education Lane"],
-    "lat": -33.80500,
-    "lon": 151.05000,
-    "radius_m": 250
-  },
-  "Work": {
-    "keywords": ["Business Park", "Corporate Blvd"],
-    "lat": -33.81000,
-    "lon": 151.10000,
-    "radius_m": 250
-  }
-}
-```
+| Tool | Purpose | Primary Commands |
+| :--- | :--- | :--- |
+| **`tessie_analyzer.py`** | High-level drives summary, interactive period selector, location geofencing, and TeslaCam video linking. | `./Tools/tessie_analyzer.py --drives`<br>`./Tools/tessie_analyzer.py --today`<br>`./Tools/tessie_analyzer.py --place "School"` |
+| **`tessie_renamer.py`** | Inspects, categorizes, and standardizes all raw Tessie CSV files (drives, telemetry traces, charges, idles, battery, tires, alerts). | `./Tools/tessie_renamer.py --dry-run`<br>`./Tools/tessie_renamer.py --copy-to /path/to/dir`<br>`./Tools/tessie_renamer.py --in-place` |
 
 ---
 
-## 🚀 Usage
+## 📋 Recognized Tessie File Types
 
-All tools can be run from the repository root or the `Tools/` directory:
+| Detected Category | Schema Indicators | Standardized Filename Pattern |
+| :--- | :--- | :--- |
+| **Trip Summaries** (Format A) | `Started At`, `Starting Location`, `Distance (km)` | `drives_summary_YYYY-MM-DD_to_YYYY-MM-DD.csv` |
+| **Single Drive Trace** (Format B) | `Timestamp`, `Speed`, `Power` ($\le 2\text{ hours}$) | `drive_telemetry_YYYY-MM-DD_HH-MM.csv` |
+| **Continuous Telemetry** | `Timestamp`, `Speed`, `Power` ($> 2\text{ hours}$) | `telemetry_stream_YYYY-MM-DD_to_YYYY-MM-DD.csv` |
+| **Charging Sessions** | `Supercharging (kWh)` / `Energy Added` | `charges_YYYY-MM-DD_to_YYYY-MM-DD.csv` |
+| **Parking & Idles** | `Duration`, `Location`, `Starting Battery` | `idles_parking_YYYY-MM-DD_to_YYYY-MM-DD.csv` |
+| **Battery Health** | `Max Range (km)`, `Usable Capacity (kWh)` | `battery_health_YYYY-MM-DD_to_YYYY-MM-DD.csv` |
+| **Tire Pressure** | `Tire`, `Pressure (psi)` | `tire_pressure_history.csv` |
+| **Firmware Alerts** | `Customer Facing Message`, `Clear Condition` | `firmware_alerts_history.csv` |
 
+---
+
+## 🚀 Quick Start Examples
+
+### 1. Review & Rename Raw Tessie Files
 ```bash
-# 1. Import and standardize latest files from iCloud
-./Tools/tessie_analyzer.py --import-icloud
+# Preview proposed standard names for files in iCloud folder
+./Tools/tessie_renamer.py --dry-run
 
-# 2. Discover frequent location clusters from drive history
-./Tools/tessie_analyzer.py --cluster
-
-# 3. Analyze all trips since a specific date
-./Tools/tessie_analyzer.py --since 2026-09-01
-
-# 4. Search trips for a specific place nickname
-./Tools/tessie_analyzer.py --place "School"
-
-# 5. Filter trips from the last N days
-./Tools/tessie_analyzer.py --days 3
+# Copy and standardize all files into /Volumes/TESLADRIVE 1/Tessie/
+./Tools/tessie_renamer.py --copy-to "/Volumes/TESLADRIVE 1/Tessie"
 ```
+
+### 2. Inspect Drive History & Match Places
+```bash
+# Interactive overview table and time period prompt
+./Tools/tessie_analyzer.py --drives
+
+# View trips since a specific date or weekday
+./Tools/tessie_analyzer.py --since wednesday
+
+# Filter trips by location nickname
+./Tools/tessie_analyzer.py --place "School"
+```
+
+---
+
+## 🔒 Privacy Note
+All personal datasets (`*.csv`) and custom coordinates (`places.json`) are strictly excluded from Git. Only generic templates (`places.example.json`) are tracked in the public repository.
