@@ -49,8 +49,8 @@ A suite of tools for processing, classifying, and analyzing [Tessie](https://sha
 # Preview proposed standard names for files in iCloud folder
 ./Tools/tessie_renamer.py --dry-run
 
-# Copy and standardize all files into /Volumes/TESLADRIVE 1/Tessie/
-./Tools/tessie_renamer.py --copy-to "/Volumes/TESLADRIVE 1/Tessie"
+# Copy and standardize all files into mounted TESLADRIVE external volume
+./Tools/tessie_renamer.py --copy-to "/Volumes/TESLADRIVE/Tessie"
 ```
 
 ### 2. Inspect Drive History & Match Places
@@ -93,7 +93,7 @@ A suite of tools for processing, classifying, and analyzing [Tessie](https://sha
 # Consolidate all charges into charges_master.csv
 ./Tools/tessie_charging_analyzer.py --consolidate
 
-# Synchronize tools and registries to /Volumes/TESLADRIVE 1/
+# Synchronize tools and registries to all mounted TESLADRIVE volume(s)
 ./Tools/tessie_charging_analyzer.py --sync
 ```
 
