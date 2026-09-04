@@ -826,7 +826,7 @@ def build_timeline_footage_packages(event):
     """
     Groups raw video clips in an event into distinct selectable packages:
     - Saved / Sentry event folders (with event.json metadata, reason, trigger time)
-    - Recent 1-minute video blocks (grouped by timestamp dt)
+    - Contiguous Recent clips merged into continuous time chunks separated by event triggers or gaps
     """
     clips = event.get("clips", [])
     if not clips:
@@ -841,14 +841,13 @@ def build_timeline_footage_packages(event):
             seen_rel.add(rel_tc)
             unique_clips.append(c)
 
-    packages = []
-
     # 1. Saved and Sentry folders
     by_folder = defaultdict(list)
     for c in unique_clips:
         if c["cat"] in ("Saved", "Sentry"):
             by_folder[(c["cat"], c["folder"])].append(c)
 
+    event_pkgs = []
     for (cat, folder), f_clips in sorted(by_folder.items()):
         ev_json = os.path.join(folder, "event.json")
         reason = "Event"
@@ -882,7 +881,7 @@ def build_timeline_footage_packages(event):
                 if not fname.startswith("."):
                     all_files.append(os.path.join(folder, fname))
         
-        packages.append({
+        event_pkgs.append({
             "pkg_idx": None,
             "dt": event_dt,
             "cat": cat,
@@ -897,29 +896,64 @@ def build_timeline_footage_packages(event):
             "is_folder": True
         })
 
-    # 2. Recent clips (1-minute timestamp groups)
+    # 2. Recent clips (grouped into continuous chunks)
+    recent_clips = [c for c in unique_clips if c["cat"] == "Recent"]
     recent_by_dt = defaultdict(list)
-    for c in unique_clips:
-        if c["cat"] == "Recent":
-            recent_by_dt[c["dt"]].append(c)
+    for c in recent_clips:
+        recent_by_dt[c["dt"]].append(c)
 
-    for dt, r_clips in sorted(recent_by_dt.items()):
-        unique_cams = set(c["cam"] for c in r_clips)
-        tot_size = sum(os.path.getsize(c["path"]) for c in r_clips if os.path.exists(c["path"]))
-        ts_str = dt.strftime("%H:%M:%S")
-        f_pattern = dt.strftime("%Y-%m-%d_%H-%M-%S-*.mp4")
+    sorted_recent_dts = sorted(recent_by_dt.keys())
+    recent_chunks = []
+    current_chunk = []
+
+    for dt in sorted_recent_dts:
+        if not current_chunk:
+            current_chunk.append(dt)
+        else:
+            prev_dt = current_chunk[-1]
+            delta_sec = (dt - prev_dt).total_seconds()
+            intervening_ev = any(prev_dt < ep["dt"] <= dt for ep in event_pkgs if ep["dt"])
+            if delta_sec <= 90 and not intervening_ev:
+                current_chunk.append(dt)
+            else:
+                recent_chunks.append(current_chunk)
+                current_chunk = [dt]
+
+    if current_chunk:
+        recent_chunks.append(current_chunk)
+
+    packages = list(event_pkgs)
+    for chunk in recent_chunks:
+        c_start = chunk[0]
+        c_end = chunk[-1]
+        mins = len(chunk)
+        all_chunk_clips = []
+        for dt in chunk:
+            all_chunk_clips.extend(recent_by_dt[dt])
+        unique_cams = set(c["cam"] for c in all_chunk_clips)
+        tot_size = sum(os.path.getsize(c["path"]) for c in all_chunk_clips if os.path.exists(c["path"]))
+        
+        if mins == 1:
+            time_label = c_start.strftime("%H:%M:%S")
+            reason_label = "Continuous Loop (1m)"
+            rel_pattern = f"RecentClips/{c_start.strftime('%Y-%m-%d_%H-%M-%S')}-*.mp4"
+        else:
+            time_label = f"{c_start.strftime('%H:%M')} - {c_end.strftime('%H:%M')}"
+            reason_label = f"Continuous Loop ({mins}m)"
+            rel_pattern = f"RecentClips/{c_start.strftime('%Y-%m-%d_%H-%M')} ➔ {c_end.strftime('%H-%M')}"
+
         packages.append({
             "pkg_idx": None,
-            "dt": dt,
+            "dt": c_start,
             "cat": "Recent",
-            "time_str": ts_str,
-            "reason": "Continuous Loop",
+            "time_str": time_label,
+            "reason": reason_label,
             "cams_count": len(unique_cams),
-            "files_count": len(r_clips),
+            "files_count": len(all_chunk_clips),
             "tot_size": tot_size,
-            "rel_path": f"RecentClips/{f_pattern}",
-            "folder": r_clips[0]["folder"],
-            "files": [c["path"] for c in r_clips],
+            "rel_path": rel_pattern,
+            "folder": all_chunk_clips[0]["folder"],
+            "files": [c["path"] for c in all_chunk_clips],
             "is_folder": False
         })
 
@@ -932,11 +966,11 @@ def render_timeline_footage_table(event, analyzer):
     """Renders a structured Unicode box table of footage packages for an event."""
     packages = build_timeline_footage_packages(event)
     w_idx = 5
-    w_time = 10
+    w_time = 15
     w_type = 11
-    w_reason = 24
-    w_files = 20
-    w_path = 41
+    w_reason = 25
+    w_files = 21
+    w_path = 44
     base_inner = w_idx + w_time + w_type + w_reason + w_files + w_path + 5
     
     t_start = event["start_dt"]
@@ -956,7 +990,7 @@ def render_timeline_footage_table(event, analyzer):
         return packages
 
     h_idx = f" {'#':^3} "
-    h_time = f" {'Time':^8} "
+    h_time = pad_display(" Time / Window", w_time, "left")
     h_type = pad_display(" Type", w_type, "left")
     h_reason = pad_display(" Trigger / Reason", w_reason, "left")
     h_files = pad_display(" Cameras & Files", w_files, "left")
@@ -981,7 +1015,7 @@ def render_timeline_footage_table(event, analyzer):
         files_label = f" {p['files_count']} files ({size_str})"
         
         c_idx = f" [{p['pkg_idx']:>2}]"
-        c_time = f" {p['time_str']} "
+        c_time = pad_display(" " + p["time_str"], w_time, "left")
         c_type = pad_display(type_label, w_type, "left")
         c_reason = pad_display(" " + p["reason"], w_reason, "left")
         c_files = pad_display(files_label, w_files, "left")
