@@ -13,9 +13,7 @@ A suite of tools for processing, classifying, and analyzing [Tessie](https://sha
 - ⚡ **Charging Cost Tracking:** Auto-logs charging sessions (AC & Superchargers), tracks electricity rates, and calculates lifetime fuel savings.
 - ⌚ **Smartwatch & Voice Control:** Native Apple Watch app, iOS Lock Screen widgets, Siri Shortcuts, and Home Assistant / API integration.
 - 📥 **Direct Data Export:** Allows exporting full high-resolution CSV records of your drives, telemetry streams, charges, tire pressure, and firmware alerts—powering the analyzers in this suite.
-
-> 🎁 **Get Started with Tessie:**  
-> Use the referral link for an extended free trial and discounts: **[https://share.tessie.com/bGRu5q9S2kB](https://share.tessie.com/bGRu5q9S2kB)**
+- 🎁 **Get Started with Tessie:**  Use the referral link for an extended free trial and discounts: **[https://share.tessie.com/bGRu5q9S2kB](https://share.tessie.com/bGRu5q9S2kB)**
 
 ---
 
