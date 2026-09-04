@@ -7,20 +7,45 @@ Automatically differentiates:
 2. Multi-Charge Summaries vs. Individual Charge Deep Dives
 3. Multi-Day Continuous Telemetry Streams
 4. Parking Idles, Battery Health, Tire Pressures & Firmware Alerts
+5. Ingestion pipeline: Landing Inbox (Downloads/Inbox) ➔ Standardized iCloud/SSD
 """
 
 import os
 import sys
 import csv
+import json
+import glob
 import shutil
 import argparse
 from datetime import datetime
 
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+REPO_ROOT = os.path.dirname(SCRIPT_DIR)
+CONFIG_JSON_PATH = os.path.join(REPO_ROOT, "Tessie", "config.json")
+
+def load_config():
+    """Loads configuration dictionary from config.json."""
+    default_config = {
+        "landing_directory": "~/Downloads",
+        "inbox_directory": "~/Library/Mobile Documents/com~apple~CloudDocs/Tesla/Tessie/Inbox",
+        "tessie_directory": "~/Library/Mobile Documents/com~apple~CloudDocs/Tesla/Tessie",
+        "invoices_directory": "~/iCloud/PDF/Tesla/Supercharging"
+    }
+    for cfg_p in [CONFIG_JSON_PATH, os.path.join(REPO_ROOT, "config.json")]:
+        if os.path.exists(cfg_p):
+            try:
+                with open(cfg_p, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                    if isinstance(data, dict):
+                        default_config.update(data)
+                        break
+            except Exception:
+                pass
+    return default_config
+
 def find_mounted_tesla_volumes(subdir=None):
     """
     Dynamically discovers all mounted volumes matching TESLADRIVE* under /Volumes.
-    If subdir is provided (e.g., 'TeslaCam', 'Tessie', 'Tools', 'invoices'),
-    returns existing subdirectories within those volumes.
     """
     volumes_root = "/Volumes"
     if not os.path.isdir(volumes_root):
@@ -181,7 +206,6 @@ def analyze_file(filepath):
 
         # 7. HIGH-FREQUENCY TELEMETRY (Deep Dives vs Continuous Stream)
         elif "Timestamp (AEST)" in header_set or "Timestamp" in header_set:
-            # Re-read rows with DictReader to inspect values
             with open(filepath, "r", encoding="utf-8-sig") as fh_dict:
                 d_reader = csv.DictReader(fh_dict)
                 rows_list = list(d_reader)
@@ -215,7 +239,7 @@ def analyze_file(filepath):
                 max_ts = max(timestamps)
                 span_sec = (max_ts - min_ts).total_seconds()
 
-                if span_sec > 7200:  # > 2 hours -> Multi-day Continuous Telemetry Stream
+                if span_sec > 7200:  # > 2 hours -> Continuous Telemetry Stream
                     name = f"telemetry_stream_{min_ts.strftime('%Y-%m-%d')}_to_{max_ts.strftime('%Y-%m-%d')}.csv"
                     desc = f"Continuous Telemetry Stream ({rows} samples: {min_ts.strftime('%Y-%m-%d')} ➔ {max_ts.strftime('%Y-%m-%d')})"
                     cat = "Telemetry Stream"
@@ -252,21 +276,106 @@ def analyze_file(filepath):
             "rows": sum(1 for _ in reader)
         }
 
+def find_inbox_tessie_files(inbox_dirs):
+    """Discovers raw Tessie CSV files in landing / inbox directories."""
+    candidates = []
+    for d in inbox_dirs:
+        exp_d = os.path.abspath(os.path.expanduser(d))
+        if os.path.isdir(exp_d):
+            for f in os.listdir(exp_d):
+                if f.endswith(".csv"):
+                    fp = os.path.join(exp_d, f)
+                    try:
+                        info = analyze_file(fp)
+                        if info["type"] != "unknown":
+                            candidates.append((fp, info))
+                    except Exception:
+                        pass
+    return candidates
+
 def main():
-    parser = argparse.ArgumentParser(description="Tessie CSV Classifier & Renamer")
+    parser = argparse.ArgumentParser(description="Tessie CSV Classifier, Renamer & Ingestion Engine")
     parser.add_argument("--source", help="Source directory containing raw Tessie CSV files")
+    parser.add_argument("--inbox", "--landing", action="store_true", help="Auto-ingest new downloads from landing inbox directories (~/Downloads, Inbox)")
     parser.add_argument("--copy-to", help="Copy and rename files to target directory (leaves source intact)")
+    parser.add_argument("--move-to", help="Move and rename files to target directory (removes from landing inbox)")
     parser.add_argument("--in-place", action="store_true", help="Rename files directly in place in source directory")
     parser.add_argument("--dry-run", action="store_true", help="Preview proposed names without renaming or copying")
     
     args = parser.parse_args()
+    config = load_config()
 
-    default_icloud = os.path.expanduser("~/Library/Mobile Documents/com~apple~CloudDocs/Tesla/Tessie")
-    src_dir = args.source or (
-        default_icloud if os.path.isdir(default_icloud)
-        else os.path.expanduser("~/iCloud/repos/tesla/Tessie")
-    )
+    target_tessie_dir = os.path.abspath(os.path.expanduser(config.get("tessie_directory", "~/Library/Mobile Documents/com~apple~CloudDocs/Tesla/Tessie")))
+    inbox_dir = os.path.abspath(os.path.expanduser(config.get("inbox_directory", "~/Library/Mobile Documents/com~apple~CloudDocs/Tesla/Tessie/Inbox")))
+    landing_dir = os.path.abspath(os.path.expanduser(config.get("landing_directory", "~/Downloads")))
 
+    is_inbox_mode = getattr(args, "inbox", False)
+
+    # 1. Ingestion / Inbox Mode
+    if is_inbox_mode:
+        inbox_dirs = [inbox_dir, landing_dir]
+        found = find_inbox_tessie_files(inbox_dirs)
+        if not found:
+            print(f"ℹ️  No new Tessie CSV downloads found in landing directories:")
+            print(f"   • {inbox_dir}")
+            print(f"   • {landing_dir}")
+            sys.exit(0)
+
+        print("==========================================================================")
+        print("          📥 Tessie Download Ingestion & Renaming Engine                  ")
+        print("==========================================================================")
+        print(f"Found {len(found)} new download(s) in landing area:\n")
+
+        plan = []
+        for fp, info in found:
+            sz_kb = os.path.getsize(fp) / 1024.0
+            plan.append((os.path.basename(fp), fp, info, sz_kb))
+            print(f"📁 {os.path.basename(fp)} ({sz_kb:.1f} KB)")
+            print(f"   Source   : {os.path.dirname(fp)}")
+            print(f"   Category : [{info['category']}] - {info['desc']}")
+            print(f"   ➔ Move To: {info['proposed']}\n")
+
+        print("==========================================================================")
+        if args.dry_run:
+            print("Dry run mode: No changes made.")
+            return
+
+        dest_dir = args.copy_to or args.move_to or target_tessie_dir
+        print(f"Target Directory: {dest_dir}")
+
+        if sys.stdin.isatty():
+            try:
+                confirm = input("Move and standardize into Tessie data directory? [y/N]: ").strip().lower()
+                if confirm != "y":
+                    print("Cancelled.")
+                    return
+            except (KeyboardInterrupt, EOFError):
+                print("\nCancelled.")
+                return
+
+        os.makedirs(dest_dir, exist_ok=True)
+        for orig_name, src_path, info, sz in plan:
+            dst_path = os.path.join(dest_dir, info["proposed"])
+            shutil.move(src_path, dst_path)
+            print(f"✔ Moved & Standardized: {info['proposed']}")
+
+        # Multi-drive sync
+        ext_volumes = find_mounted_tesla_volumes("Tessie")
+        if ext_volumes:
+            for v in ext_volumes:
+                for orig_name, src_path, info, sz in plan:
+                    v_dst = os.path.join(v, info["proposed"])
+                    try:
+                        shutil.copyfile(os.path.join(dest_dir, info["proposed"]), v_dst)
+                        print(f"✔ Synced to external SSD: {v_dst}")
+                    except Exception as e:
+                        print(f"⚠️ Failed to sync to {v_dst}: {e}")
+
+        print(f"\n🎉 Successfully ingested {len(plan)} file(s) into {dest_dir}!")
+        return
+
+    # 2. Standard Directory Processing Mode
+    src_dir = args.source or target_tessie_dir
     if not os.path.isdir(src_dir):
         print(f"Error: Source directory not found: {src_dir}")
         sys.exit(1)
@@ -277,7 +386,7 @@ def main():
         sys.exit(0)
 
     print("==========================================================================")
-    print(f"             📋 Tessie CSV Review & Renaming Engine                       ")
+    print("             📋 Tessie CSV Review & Renaming Engine                       ")
     print("==========================================================================")
     print(f"Source Directory: {src_dir}")
     print(f"Found {len(csv_files)} CSV file(s):\n")
@@ -299,15 +408,17 @@ def main():
         print("Dry run mode: No changes made.")
         return
 
-    dest_dir = args.copy_to
+    dest_dir = args.copy_to or args.move_to
     if not args.in_place and not dest_dir:
-        external_tessie = find_mounted_tesla_volumes("Tessie")
-        dest_dir = (
-            external_tessie[0] if external_tessie
-            else os.path.expanduser("~/iCloud/repos/tesla/Tessie")
-        )
+        dest_dir = target_tessie_dir
 
-    mode_label = f"Copying & standardizing files to: {dest_dir}" if dest_dir else "Renaming files directly in-place in source directory"
+    if args.in_place:
+        mode_label = "Renaming files directly in-place in source directory"
+    elif args.move_to:
+        mode_label = f"Moving & standardizing files to: {dest_dir}"
+    else:
+        mode_label = f"Copying & standardizing files to: {dest_dir}"
+
     print(f"Action: {mode_label}")
 
     if sys.stdin.isatty():
@@ -320,7 +431,21 @@ def main():
             print("\nCancelled.")
             return
 
-    if dest_dir:
+    if args.in_place:
+        for orig_name, src_path, info, sz in plan:
+            dst_path = os.path.join(src_dir, info["proposed"])
+            if src_path != dst_path:
+                os.rename(src_path, dst_path)
+                print(f"✔ Renamed: {orig_name} ➔ {info['proposed']}")
+        print(f"\nSuccessfully renamed {len(plan)} file(s) in place.")
+    elif args.move_to:
+        os.makedirs(dest_dir, exist_ok=True)
+        for orig_name, src_path, info, sz in plan:
+            dst_path = os.path.join(dest_dir, info["proposed"])
+            shutil.move(src_path, dst_path)
+            print(f"✔ Moved: {info['proposed']}")
+        print(f"\nSuccessfully moved {len(plan)} file(s) into: {dest_dir}")
+    else:
         os.makedirs(dest_dir, exist_ok=True)
         for orig_name, src_path, info, sz in plan:
             dst_path = os.path.join(dest_dir, info["proposed"])
@@ -328,13 +453,6 @@ def main():
                 shutil.copyfileobj(f_in, f_out)
             print(f"✔ Copied: {info['proposed']}")
         print(f"\nSuccessfully organized {len(plan)} file(s) into: {dest_dir}")
-    else:
-        for orig_name, src_path, info, sz in plan:
-            dst_path = os.path.join(src_dir, info["proposed"])
-            if src_path != dst_path:
-                os.rename(src_path, dst_path)
-                print(f"✔ Renamed: {orig_name} ➔ {info['proposed']}")
-        print(f"\nSuccessfully renamed {len(plan)} file(s) in place.")
 
 if __name__ == "__main__":
     main()
