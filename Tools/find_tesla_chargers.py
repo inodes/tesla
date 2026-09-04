@@ -407,10 +407,29 @@ def _dist_to_segment_km(px: float, py: float, x1: float, y1: float, x2: float, y
     proj_y = y1 + t * (y2 - y1)
     return math.hypot((px - proj_x) * 111.0 * math.cos(math.radians(py)), (py - proj_y) * 111.0)
 
-def state_from_coords(lat: float, lon: float, repo_root: str = None) -> tuple:
+def get_country_boundary_config(boundaries: dict, country: str = "Australia") -> dict:
+    """Extracts country boundary definition, searching under regions hierarchy (APAC, NA, EU, ME, SA) or top-level."""
+    if not boundaries:
+        return {}
+    c_clean = (country or "Australia").replace("+", " ").strip().lower()
+
+    # 1. Search under regions hierarchy
+    for r_key, r_data in boundaries.get("regions", {}).items():
+        for c_name, c_data in r_data.get("countries", {}).items():
+            if c_name.lower() == c_clean or str(c_data.get("country_code", "")).lower() == c_clean:
+                return c_data
+
+    # 2. Fallbacks
+    if country in boundaries:
+        return boundaries[country]
+    if "states" in boundaries:
+        return boundaries
+    return {}
+
+def state_from_coords(lat: float, lon: float, country: str = "Australia", repo_root: str = None) -> tuple:
     """
-    Determines Australian state/territory from GPS coordinates using a hybrid guide approach:
-    1. Instant rejection if coordinates are outside Australia (e.g. New Zealand, Pacific, etc.).
+    Determines state/territory from GPS coordinates using a hybrid guide approach:
+    1. Instant rejection if coordinates are outside the country's bounding box.
     2. Instant check against safe_bounds in state_boundaries.json (0 network calls).
     3. If within border_threshold_km of a state boundary, checks persistent geo_cache.json
        or performs an OSM Nominatim reverse lookup and caches the result.
@@ -424,15 +443,20 @@ def state_from_coords(lat: float, lon: float, repo_root: str = None) -> tuple:
     except (ValueError, TypeError):
         return None, None
 
-    # Foreign coordinate rejection: outside Australian continental and territorial bounds
-    if lat > -10.0 or lat < -44.5 or lon < 112.0 or lon > 154.5:
-        return None, None
-
     boundaries = load_state_boundaries(repo_root=repo_root)
-    threshold_km = boundaries.get("border_threshold_km", 15.0)
+    country_config = get_country_boundary_config(boundaries, country=country)
+
+    # Country bounding box rejection (e.g. Australia: lat [-44.5, -10.0], lon [112.0, 154.5])
+    c_bbox = country_config.get("bbox", [-44.5, 112.0, -10.0, 154.5])
+    if c_bbox and len(c_bbox) == 4:
+        min_lat, min_lon, max_lat, max_lon = c_bbox
+        if lat < min_lat or lat > max_lat or lon < min_lon or lon > max_lon:
+            return None, None
+
+    threshold_km = country_config.get("border_threshold_km", 15.0)
 
     # 1. Fast path: check safe interior bounds (definitively inside state, far from any border)
-    for st, data in boundaries.get("states", {}).items():
+    for st, data in country_config.get("states", {}).items():
         sb = data.get("safe_bounds")
         if sb and len(sb) == 4:
             if sb[0] <= lat <= sb[2] and sb[1] <= lon <= sb[3]:
@@ -440,7 +464,7 @@ def state_from_coords(lat: float, lon: float, repo_root: str = None) -> tuple:
 
     # 2. Border proximity detection
     near_border = False
-    for b_name, b_pts in boundaries.get("borders", {}).items():
+    for b_name, b_pts in country_config.get("borders", {}).items():
         min_b_lon = min(p[0] for p in b_pts) - 0.5
         max_b_lon = max(p[0] for p in b_pts) + 0.5
         min_b_lat = min(p[1] for p in b_pts) - 0.5
@@ -471,7 +495,7 @@ def state_from_coords(lat: float, lon: float, repo_root: str = None) -> tuple:
             return geo.get("state", "Other"), geo.get("suburb")
 
     # 4. Geometric boundary interpolation (for interior areas not covered by safe boxes)
-    act_data = boundaries.get("states", {}).get("ACT", {})
+    act_data = country_config.get("states", {}).get("ACT", {})
     act_bb = act_data.get("bbox", [-35.92, 148.76, -35.12, 149.40])
     if act_bb[0] <= lat <= act_bb[2] and act_bb[1] <= lon <= act_bb[3]:
         return "ACT", None
@@ -488,7 +512,7 @@ def state_from_coords(lat: float, lon: float, repo_root: str = None) -> tuple:
         return "SA", None
 
     # NSW vs VIC (Murray River & Black-Allan Line)
-    nsw_vic = boundaries.get("borders", {}).get("NSW_VIC", [])
+    nsw_vic = country_config.get("borders", {}).get("NSW_VIC", [])
     if nsw_vic:
         for i in range(len(nsw_vic) - 1):
             x1, y1 = nsw_vic[i]
@@ -500,7 +524,7 @@ def state_from_coords(lat: float, lon: float, repo_root: str = None) -> tuple:
                 break
 
     # QLD vs NSW
-    qld_nsw = boundaries.get("borders", {}).get("QLD_NSW", [])
+    qld_nsw = country_config.get("borders", {}).get("QLD_NSW", [])
     if qld_nsw:
         for i in range(len(qld_nsw) - 1):
             x1, y1 = qld_nsw[i]
@@ -1062,7 +1086,7 @@ class TeslaChargerExplorer:
                 resolved_suburb = None
                 if lat is not None and lon is not None:
                     if state == "Other" or not state:
-                        coord_state, resolved_suburb = state_from_coords(lat, lon, repo_root=self.repo_root)
+                        coord_state, resolved_suburb = state_from_coords(lat, lon, country=country_slug.replace("+", " "), repo_root=self.repo_root)
                         if coord_state:
                             state = coord_state
                         elif is_au:
