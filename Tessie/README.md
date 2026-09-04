@@ -22,6 +22,7 @@ A suite of tools for processing, classifying, and analyzing [Tessie](https://sha
 | Tool | Purpose | Primary Commands |
 | :--- | :--- | :--- |
 | **`tessie_analyzer.py`** | High-level drives summary, interactive period selector, location geofencing, and TeslaCam video linking. | `./Tools/tessie_analyzer.py --drives`<br>`./Tools/tessie_analyzer.py --today`<br>`./Tools/tessie_analyzer.py --place "School"` |
+| **`tessie_places.py`** | Location management, interactive POI lookup by address/GPS, frequent stop reviewer, and formatted place inspector (leaves chargers alone). | `./Tools/tessie_places.py list`<br>`./Tools/tessie_places.py lookup "109 Blaxland Rd, Ryde"`<br>`./Tools/tessie_places.py review` |
 | **`tessie_charging_analyzer.py`** | Reconciles Tesla Supercharger & 3rd-party invoices against Tessie telemetry, calculates dispenser vs battery loss, verifies TOU rates, and audits charging costs. | `./Tools/tessie_charging_analyzer.py --superchargers`<br>`./Tools/tessie_charging_analyzer.py --inspect 1`<br>`./Tools/tessie_charging_analyzer.py --consolidate` |
 | **`tessie_renamer.py`** | Inspects, categorizes, and standardizes all raw Tessie CSV files (drives, telemetry traces, charges, idles, battery, tires, alerts). | `./Tools/tessie_renamer.py --dry-run`<br>`./Tools/tessie_renamer.py --copy-to /path/to/dir`<br>`./Tools/tessie_renamer.py --in-place` |
 | **`find_tesla_chargers.py`** | Hierarchical discovery explorer and live scraper for Tesla Superchargers and Destination Chargers with state filtering, search, and registry sync. | `./Tools/find_tesla_chargers.py`<br>`./Tools/find_tesla_chargers.py --state NSW --sc --list`<br>`./Tools/find_tesla_chargers.py --scrape 19258 --update --sync` |
@@ -120,8 +121,30 @@ A suite of tools for processing, classifying, and analyzing [Tessie](https://sha
 ./Tools/find_tesla_chargers.py --scrape 19258 --update --sync
 ```
 
+### 5. Known Places & POI Lookup Engine
+```bash
+# List all stored locations in a formatted table sorted by proximity to a reference place:
+./Tools/tessie_places.py list --near "Home"
+
+# Search stored places by name or address keyword:
+./Tools/tessie_places.py list --search "Ryde"
+
+# Interactively look up an address or coordinates using OpenStreetMap / Overpass POI API:
+./Tools/tessie_places.py lookup "109 Blaxland Road, Ryde"
+./Tools/tessie_places.py lookup -33.81228 151.10611
+
+# Scan drive history for unlabelled recurring stop clusters and interactively tag POIs:
+./Tools/tessie_places.py review --min-stops 2
+
+# Add or update places directly from the CLI:
+./Tools/tessie_places.py add "Top Ryde City Shopping Centre" --address "109 Blaxland Road, Ryde" --radius 200
+./Tools/tessie_places.py update "Top Ryde City Shopping Centre" --add-keyword "Devlin Street"
+./Tools/tessie_places.py remove "Old Place"
+```
+
 ---
 
 ## 🔒 Privacy Note
 
 All personal datasets (`*.csv`) and custom coordinates (`places.json`) are strictly excluded from Git. Only generic templates (`places.example.json`) are tracked in the public repository.
+
