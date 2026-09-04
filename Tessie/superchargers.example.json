@@ -25,8 +25,7 @@
       "country_code": "AU",
       "lat": -33.777977,
       "lon": 151.1226,
-      "radius_m": 250,
-      "timezone": "Australia/Sydney"
+      "radius_m": 250
     },
     "hardware": {
       "stalls": 10,
@@ -190,7 +189,6 @@
       "lodging": false,
       "parking": true
     },
-    "timezone": "Australia/Sydney",
     "first_seen": "2026-06-01T00:00:00Z",
     "last_updated": "2026-06-01T00:00:00Z",
     "last_verified": "2026-09-04T12:00:00Z",
@@ -326,8 +324,7 @@
       "country_code": "AU",
       "lat": -33.425156,
       "lon": 151.32004,
-      "radius_m": 250,
-      "timezone": "Australia/Sydney"
+      "radius_m": 250
     },
     "hardware": {
       "stalls": 6,
@@ -486,7 +483,6 @@
       "lodging": false,
       "parking": true
     },
-    "timezone": "Australia/Sydney",
     "first_seen": "2026-06-01T00:00:00Z",
     "last_updated": "2026-06-01T00:00:00Z",
     "last_verified": "2026-09-04T12:00:00Z",
@@ -619,8 +615,7 @@
       "country_code": "AU",
       "lat": -34.0725,
       "lon": 150.8172,
-      "radius_m": 250,
-      "timezone": "Australia/Sydney"
+      "radius_m": 250
     },
     "hardware": {
       "stalls": 6,
@@ -705,7 +700,6 @@
       "coffee": true,
       "parking": true
     },
-    "timezone": "Australia/Sydney",
     "first_seen": "2026-06-01T00:00:00Z",
     "last_updated": "2026-06-01T00:00:00Z",
     "last_verified": "2026-09-04T12:00:00Z",
@@ -771,8 +765,7 @@
       "country_code": "AU",
       "lat": -34.026792,
       "lon": 151.118868,
-      "radius_m": 250,
-      "timezone": "Australia/Sydney"
+      "radius_m": 250
     },
     "hardware": {
       "stalls": 8,
@@ -946,7 +939,6 @@
         }
       ]
     },
-    "timezone": "Australia/Sydney",
     "first_seen": "2026-06-01T00:00:00Z",
     "last_updated": "2026-06-01T00:00:00Z",
     "last_verified": "2026-09-04T13:49:36Z",
@@ -976,8 +968,7 @@
       "country_code": "AU",
       "lat": -33.8837,
       "lon": 151.1945,
-      "radius_m": 250,
-      "timezone": "Australia/Sydney"
+      "radius_m": 250
     },
     "hardware": {
       "stalls": 6,
@@ -1034,7 +1025,6 @@
       "wifi": true,
       "parking": true
     },
-    "timezone": "Australia/Sydney",
     "first_seen": "2026-06-01T00:00:00Z",
     "last_updated": "2026-06-01T00:00:00Z",
     "last_verified": "2026-09-04T12:00:00Z",
@@ -1098,8 +1088,7 @@
       "country_code": "AU",
       "lat": -34.0305,
       "lon": 151.0694,
-      "radius_m": 250,
-      "timezone": "Australia/Sydney"
+      "radius_m": 250
     },
     "hardware": {
       "stalls": 6,
@@ -1155,7 +1144,6 @@
       "coffee": true,
       "parking": true
     },
-    "timezone": "Australia/Sydney",
     "first_seen": "2026-06-01T00:00:00Z",
     "last_updated": "2026-06-01T00:00:00Z",
     "last_verified": "2026-09-04T12:00:00Z",
@@ -1219,8 +1207,7 @@
       "country_code": "AU",
       "lat": -33.8242,
       "lon": 151.1915,
-      "radius_m": 250,
-      "timezone": "Australia/Sydney"
+      "radius_m": 250
     },
     "hardware": {
       "stalls": 6,
@@ -1277,7 +1264,6 @@
       "wifi": true,
       "parking": true
     },
-    "timezone": "Australia/Sydney",
     "first_seen": "2026-06-01T00:00:00Z",
     "last_updated": "2026-06-01T00:00:00Z",
     "last_verified": "2026-09-04T12:00:00Z",

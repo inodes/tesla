@@ -963,14 +963,12 @@ class TessieChargingAnalyzer:
             }
 
         loc = target_obj.get("location", {})
-        tz_name = target_obj.get("timezone") or loc.get("timezone")
-        if not tz_name:
-            tz_name = resolve_location_timezone(
-                state=loc.get("state"),
-                country=loc.get("country"),
-                lat=loc.get("lat"),
-                lon=loc.get("lon")
-            )
+        tz_name = resolve_location_timezone(
+            state=loc.get("state"),
+            country=loc.get("country"),
+            lat=loc.get("lat"),
+            lon=loc.get("lon")
+        )
 
         local_dt = dt
 
