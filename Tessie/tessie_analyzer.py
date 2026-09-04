@@ -290,7 +290,7 @@ class TessieAnalyzer:
         end_clips = self.find_footage(trip["end_dt"], 180)
         all_clips = start_clips + end_clips
         if not all_clips:
-            return "No footage (In-Car)", set()
+            return "No local footage", set()
         
         cats = sorted(list(set(c["cat"] for c in all_clips)))
         cat_str = " + ".join(cats)
@@ -329,7 +329,7 @@ def display_footage_details(trip, analyzer):
                 sample = cam_dict.get('left_repeater') or cam_dict.get('front') or list(cam_dict.values())[0]
                 print(f"     • {ts_str} ({cams}) ➔ {sample}")
     else:
-        print("   ⚠️ No matching entry clips found on connected drives.")
+        print("   ⚠️ No local footage found on archive drives.")
 
     # 2. Exit footage (arriving & unloading)
     print(f"\n🚪 2. EXIT WINDOW (Arrival ~{t_end.strftime('%H:%M:%S')}):")
@@ -349,7 +349,7 @@ def display_footage_details(trip, analyzer):
                 sample = cam_dict.get('left_repeater') or cam_dict.get('front') or list(cam_dict.values())[0]
                 print(f"     • {ts_str} ({cams}) ➔ {sample}")
     else:
-        print("   ⚠️ No matching exit clips found on connected drives.")
+        print("   ⚠️ No local footage found on archive drives.")
         
     print(f"\n💡 Quick Tips:")
     print(f"   • To view side doors (getting in/out): check *-left_repeater.mp4 or *-right_repeater.mp4")
@@ -443,7 +443,7 @@ def display_days_menu(days_dict, title, analyzer):
             if day_cats:
                 f_summary = "✔ " + " + ".join(sorted(list(day_cats))) + " footage"
             else:
-                f_summary = "🚗 In-Car / No local footage"
+                f_summary = "No local footage"
                 
             print(f" [{idx+1:>2}] {dt_obj.strftime('%a %d %b %Y')}: {len(day_trips):>2} trip(s) ({time_str:>6}, {total_km:>5.1f} km) | {f_summary}")
 
