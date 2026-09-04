@@ -18,6 +18,7 @@ Tessie/invoices/*
 !Tessie/superchargers.example.json
 !Tessie/superchargers_archived.example.json
 !Tessie/config.example.json
+!Tessie/state_boundaries.json
 !config.example.json
 config.json
 places.json
