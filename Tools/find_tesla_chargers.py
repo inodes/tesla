@@ -2399,9 +2399,9 @@ Query & Proximity Examples:
         if args.min_stalls is not None:
             filtered = [s for s in filtered if int(s.get("hardware", {}).get("stalls", 0) or 0) >= args.min_stalls]
 
-        # Determine proximity radius filter (default to 50km if sorting by price near an address/place unless explicitly overridden)
+        # Determine proximity radius filter (default to 50km when searching near an address/place unless explicitly overridden)
         active_radius = args.radius_km
-        if active_radius is None and ref_lat is not None and ref_lon is not None and args.sort == "price":
+        if active_radius is None and ref_lat is not None and ref_lon is not None:
             active_radius = 50.0
 
         if active_radius is not None and active_radius > 0 and ref_lat is not None and ref_lon is not None:
