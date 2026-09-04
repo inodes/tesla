@@ -221,8 +221,10 @@ class TessieAnalyzer:
     def resolve_place(self, address, saved_loc="", lat=None, lon=None):
         if saved_loc and saved_loc.strip():
             s_clean = saved_loc.strip()
+            # If places.json has an explicit entry/override, use that; otherwise use Tessie saved name directly
             if s_clean in self.places:
-                return s_clean
+                return self.places[s_clean].get("nickname", s_clean)
+            return s_clean
 
         addr_clean = address.lower()
         
