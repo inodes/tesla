@@ -775,8 +775,8 @@ class TeslaChargerExplorer:
         self.repo_root = os.path.dirname(self.script_dir)
         self.superchargers_path = os.path.join(self.repo_root, "Tessie", "superchargers.json")
         self.superchargers_archived_path = os.path.join(self.repo_root, "Tessie", "superchargers_archived.json")
-        self.charging_path = os.path.join(self.repo_root, "Tessie", "charging.json")
-        self.charging_archived_path = os.path.join(self.repo_root, "Tessie", "charging_archived.json")
+        self.destination_chargers_path = os.path.join(self.repo_root, "Tessie", "destination_chargers.json")
+        self.destination_chargers_archived_path = os.path.join(self.repo_root, "Tessie", "destination_chargers_archived.json")
 
     def fetch_station_list(self, country: str = "Australia", charger_type: str = "superchargers") -> list:
         """
@@ -1215,7 +1215,7 @@ class TeslaChargerExplorer:
         return self._parse_scraped_data(target_url, captured_api_data, next_data_payload, charger_type=charger_type)
 
     def load_active_registries(self) -> tuple:
-        """Loads in-memory dictionaries of superchargers.json and charging.json."""
+        """Loads in-memory dictionaries of superchargers.json and destination_chargers.json."""
         sc_reg = {}
         if os.path.isfile(self.superchargers_path):
             try:
@@ -1224,9 +1224,9 @@ class TeslaChargerExplorer:
             except Exception:
                 sc_reg = {}
         dc_reg = {}
-        if os.path.isfile(self.charging_path):
+        if os.path.isfile(self.destination_chargers_path):
             try:
-                with open(self.charging_path, "r", encoding="utf-8") as f:
+                with open(self.destination_chargers_path, "r", encoding="utf-8") as f:
                     dc_reg = json.load(f)
             except Exception:
                 dc_reg = {}
@@ -1234,7 +1234,7 @@ class TeslaChargerExplorer:
 
     def get_station_record(self, station_or_query, sc_reg: dict = None, dc_reg: dict = None) -> tuple:
         """
-        Finds a station in the local JSON registry (superchargers.json or charging.json).
+        Finds a station in the local JSON registry (superchargers.json or destination_chargers.json).
         Returns: (station_key, station_data, charger_type) if found, else (None, None, None).
         Accepts a station dict (from fetch_station_list), station name, URL, short_name, slug, or ID.
         """
@@ -1257,7 +1257,7 @@ class TeslaChargerExplorer:
                     return title, cur_reg[title], cur_type
                 if f"Tesla Supercharger - {title}" in cur_reg:
                     return f"Tesla Supercharger - {title}", cur_reg[f"Tesla Supercharger - {title}"], cur_type
-                # 2. Match by short_name / slug / url / keywords / entry name
+                # 2. Match by short_name / slug / url / keywords
                 title_lower = title.lower()
                 clean_title_norm = clean_station_short_name(title).lower()
                 for k, entry in cur_reg.items():
@@ -1274,12 +1274,6 @@ class TeslaChargerExplorer:
                     # Keywords match
                     keywords = [kw.lower() for kw in meta.get("keywords", [])]
                     if title_lower in keywords:
-                        return k, entry, cur_type
-                    # Charging.json style matches
-                    entry_name = entry.get("name", "").lower()
-                    if entry_name and (entry_name == title_lower or entry_name == clean_title_norm):
-                        return k, entry, cur_type
-                    if title_lower in [kw.lower() for kw in entry.get("keywords", [])]:
                         return k, entry, cur_type
             return None, None, None
 
@@ -1601,14 +1595,14 @@ class TeslaChargerExplorer:
 
     def update_registry(self, station_key: str, data: dict, sync_external: bool = False) -> str:
         """
-        Saves scraped station data into superchargers.json or charging.json, archives older versions if changed.
+        Saves scraped station data into superchargers.json or destination_chargers.json, archives older versions if changed.
         Returns: 'CREATED', 'ARCHIVED', 'VERIFIED', or 'ERROR'.
         """
         is_sc = data.get("tesla_metadata", {}).get("type") == "supercharger"
-        target_fpath = self.superchargers_path if is_sc else self.charging_path
-        archive_fpath = self.superchargers_archived_path if is_sc else self.charging_archived_path
-        reg_name = "superchargers.json" if is_sc else "charging.json"
-        arch_name = "superchargers_archived.json" if is_sc else "charging_archived.json"
+        target_fpath = self.superchargers_path if is_sc else self.destination_chargers_path
+        archive_fpath = self.superchargers_archived_path if is_sc else self.destination_chargers_archived_path
+        reg_name = "superchargers.json" if is_sc else "destination_chargers.json"
+        arch_name = "superchargers_archived.json" if is_sc else "destination_chargers_archived.json"
         now_utc = get_utc_now_iso()
 
         # Load active registry
@@ -2106,7 +2100,8 @@ Query & Proximity Examples:
     parser.add_argument("--delay", type=float, default=0.5, help="Pacing delay in seconds between station requests in batch mode (default: 0.5)")
     parser.add_argument("--timeout", type=int, default=35, help="Network timeout in seconds per page load (default: 35)")
     parser.add_argument("--retries", type=int, default=3, help="Max retry attempts per station with exponential backoff (default: 3)")
-    parser.add_argument("--save", "--update", action="store_true", help="Save / update scraped entry in superchargers.json or charging.json")
+    parser.add_argument("--all-types", action="store_true", help="Include both Superchargers and Destination Chargers")
+    parser.add_argument("--save", "--update", action="store_true", help="Save / update scraped entry in superchargers.json or destination_chargers.json")
     parser.add_argument("--sync", action="store_true", help="Sync updated registry across all mounted TESLADRIVE external volumes")
     parser.add_argument("--json", action="store_true", help="Output results in JSON format")
     parser.add_argument("--headful", "--visible", action="store_true", help="Run browser in visible mode (default is headless)")
@@ -2155,7 +2150,7 @@ Query & Proximity Examples:
     # 3. Command-Line Listing / Search / Batch Scrape / Filtering
     is_list_or_filter = (
         args.list or args.search or args.state or args.suburb or 
-        args.sc or args.dc or args.all or args.filter or args.tier or 
+        args.sc or args.dc or args.all_types or args.all or args.filter or args.tier or 
         args.tesla_only or args.non_tesla or args.max_price is not None or 
         args.min_stalls is not None or args.status or args.new or args.stale or
         args.gps or args.near_address or args.coords or args.radius_km is not None or
@@ -2168,8 +2163,11 @@ Query & Proximity Examples:
             charger_types = ["superchargers"]
         elif args.dc and not args.sc:
             charger_types = ["chargers"]
-        else:
+        elif args.all_types or (args.sc and args.dc):
             charger_types = ["superchargers", "chargers"]
+        else:
+            # Default to Superchargers only
+            charger_types = ["superchargers"]
 
         all_stations = []
         for c_type in charger_types:
