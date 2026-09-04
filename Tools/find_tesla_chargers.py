@@ -1317,6 +1317,79 @@ class TeslaChargerExplorer:
 
         return None, None, None
 
+    def find_all_matching_stations(self, query: str, sc_reg: dict = None, dc_reg: dict = None) -> list:
+        """
+        Finds all stations matching a query string across superchargers.json and destination_chargers.json.
+        Returns a list of dicts, each representing a matched station with full attributes and effective pricing.
+        """
+        if sc_reg is None or dc_reg is None:
+            sc_reg, dc_reg = self.load_active_registries()
+
+        clean_q = str(query).strip()
+        if not clean_q:
+            return []
+
+        clean_lower = clean_q.lower()
+        q_slug = clean_station_short_name(clean_q).lower()
+
+        matches = []
+        seen_keys = set()
+
+        for cur_reg, cur_type in [(sc_reg, "supercharger"), (dc_reg, "destination_charger")]:
+            for k, entry in cur_reg.items():
+                if k in seen_keys:
+                    continue
+                meta = entry.get("tesla_metadata", {})
+                loc = entry.get("location", {})
+                hw = entry.get("hardware", {})
+                name = meta.get("name", "").lower()
+                short_name = meta.get("short_name", "").lower()
+                gen_loc = meta.get("general_location", "").lower()
+                suburb = loc.get("suburb", "").lower()
+                addr = loc.get("address", "").lower()
+                findus_url = meta.get("findus_url", "").lower()
+                keywords = [kw.lower() for kw in meta.get("keywords", [])]
+
+                is_match = False
+                if (clean_lower == k.lower() or
+                    clean_lower == f"tesla supercharger - {k.lower()}" or
+                    (short_name and short_name == q_slug) or
+                    (findus_url and clean_lower in findus_url) or
+                    clean_lower in k.lower() or
+                    clean_lower in name or
+                    clean_lower in gen_loc or
+                    clean_lower in suburb or
+                    clean_lower in addr or
+                    any(clean_lower in kw for kw in keywords)):
+                    is_match = True
+
+                if is_match:
+                    seen_keys.add(k)
+                    st_entry = {
+                        "title": k,
+                        "short_name": meta.get("short_name", clean_station_short_name(k)),
+                        "state": loc.get("state") or extract_au_state_from_text(k),
+                        "country": loc.get("country", "Australia"),
+                        "type": cur_type,
+                        "slug": "",
+                        "url": meta.get("findus_url", ""),
+                        "_status": self.get_station_status({"title": k, "type": cur_type}, sc_reg=sc_reg, dc_reg=dc_reg),
+                        "hardware": hw,
+                        "compatibility": entry.get("compatibility", {}),
+                        "tariffs": entry.get("tariffs", {}),
+                        "location": loc,
+                        "tesla_metadata": meta,
+                        "_record": entry
+                    }
+                    eff_rate, eff_lbl, eff_win, loc_time = get_effective_rate_at_time(st_entry)
+                    st_entry["_eff_rate"] = eff_rate
+                    st_entry["_eff_label"] = eff_lbl
+                    st_entry["_eff_window"] = eff_win
+                    st_entry["_eval_time_display"] = loc_time
+                    matches.append(st_entry)
+
+        return matches
+
     def get_station_status(self, station: dict, sc_reg: dict = None, dc_reg: dict = None, threshold_days: int = 90) -> str:
         """
         Determines the registry status of a station:
@@ -2348,6 +2421,39 @@ Query & Proximity Examples:
         sc_reg, dc_reg = explorer.load_active_registries()
 
         if not args.live:
+            # Check for multiple matching stations across local registries
+            matches = explorer.find_all_matching_stations(target_inspect, sc_reg=sc_reg, dc_reg=dc_reg)
+            if len(matches) > 1:
+                if args.json:
+                    out_dict = {s["title"]: s["_record"] for s in matches}
+                    print(json.dumps(out_dict, indent=2, ensure_ascii=False))
+                    return
+
+                def render_inspect_matches_cb():
+                    print_charging_stations_table(
+                        matches,
+                        ref_label=f"Query: \"{target_inspect}\"",
+                        eval_time_label="Current Local Time"
+                    )
+
+                render_inspect_matches_cb()
+
+                if sys.stdin.isatty():
+                    interactive_station_selector_loop(matches, explorer, re_render_cb=render_inspect_matches_cb)
+                else:
+                    print(f"\n{C_DIM}Found {len(matches)} stations matching '{target_inspect}'. Specify exact name or URL to inspect.{C_RESET}\n")
+                return
+
+            elif len(matches) == 1:
+                single = matches[0]
+                if args.json:
+                    print(json.dumps({single["title"]: single["_record"]}, indent=2, ensure_ascii=False))
+                    return
+                explorer.display_preview(single["title"], single["_record"], from_cache=True)
+                print(f"{C_DIM}To re-scrape live pricing: ./Tools/find_tesla_chargers.py --inspect '{single['title']}' --live [--save] [--sync]{C_RESET}\n")
+                return
+
+            # Fallback to single lookup record getter
             cached_key, cached_record, cached_type = explorer.get_station_record(target_inspect, sc_reg=sc_reg, dc_reg=dc_reg)
             if cached_record:
                 if args.json:
