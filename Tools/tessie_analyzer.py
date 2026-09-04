@@ -104,6 +104,22 @@ def format_duration_short(mins):
         return f"{h}h"
     return f"{h}h {m}m"
 
+def clean_event_reason(reason):
+    if not reason:
+        return "event"
+    r = reason.strip()
+    prefixes = [
+        "sentry_aware_",
+        "user_interaction_dashcam_launcher_",
+        "user_interaction_dashcam_",
+        "user_interaction_",
+        "vehicle_"
+    ]
+    for p in prefixes:
+        if r.startswith(p):
+            r = r[len(p):]
+    return r
+
 def format_footage_tag(cats):
     if not cats:
         return "No local footage"
@@ -490,45 +506,85 @@ def display_footage_details(trip, analyzer):
     print(f"    Destination : {trip['end_place']} ({trip['end_addr'].split(',')[0]})")
     print(f"==========================================================================")
     
+def render_footage_listing(clips, indent=""):
+    by_cat = defaultdict(list)
+    for c in clips:
+        by_cat[c['cat']].append(c)
+        
+    for cat in ['Recent', 'Saved', 'Sentry', 'Other']:
+        if cat not in by_cat:
+            continue
+        cat_clips = by_cat[cat]
+        icon = '🔄' if cat == 'Recent' else ('💾' if cat == 'Saved' else ('🔴' if cat == 'Sentry' else '📁'))
+        
+        if cat == 'Recent':
+            folder_path = os.path.dirname(cat_clips[0]['path'])
+            print(f"\n{indent}📂 [{icon} RecentClips] {folder_path}")
+            by_ts = sorted(list(set(c['dt'] for c in cat_clips)))
+            for dt in by_ts:
+                ts_str = dt.strftime('%H:%M:%S')
+                f_pattern = dt.strftime('%Y-%m-%d_%H-%M-%S-*.mp4')
+                print(f"{indent}   • {ts_str} ➔ {f_pattern}")
+        else:
+            base_dir = os.path.dirname(os.path.dirname(cat_clips[0]['path']))
+            folder_cat_name = f"{cat}Clips"
+            print(f"\n{indent}📂 [{icon} {folder_cat_name}] {base_dir}")
+            
+            by_folder = defaultdict(list)
+            for c in cat_clips:
+                by_folder[c['folder']].append(c)
+                
+            for folder, f_clips in sorted(by_folder.items()):
+                folder_name = os.path.basename(folder)
+                ev_json = os.path.join(folder, 'event.json')
+                reason = 'event'
+                event_ts_str = None
+                if os.path.exists(ev_json):
+                    try:
+                        with open(ev_json) as fp:
+                            data = json.load(fp)
+                            reason = clean_event_reason(data.get('reason', 'event'))
+                            if 'timestamp' in data:
+                                event_ts_str = data['timestamp'].split('T')[-1]
+                    except Exception:
+                        pass
+                
+                unique_dts = sorted(list(set(c['dt'] for c in f_clips)))
+                num_clips = len(unique_dts)
+                dur_m = num_clips
+                
+                if not event_ts_str:
+                    event_ts_str = unique_dts[0].strftime('%H:%M:%S') if unique_dts else folder_name.split('_')[-1].replace('-', ':')
+                
+                date_prefix = unique_dts[0].strftime('%Y-%m-%d') if unique_dts else folder_name.split('_')[0]
+                events_word = "event" if num_clips == 1 else "events"
+                print(f"{indent}   • {event_ts_str} ({reason}) ➔ {folder_name}/{date_prefix}_*.mp4 ({num_clips} {events_word}, {dur_m}m)")
+
+def display_footage_details(trip, analyzer):
+    """Level 3: Deep listing of exact video files by camera angle for a single drive."""
+    start_clips = analyzer.find_footage(trip["start_dt"], 120)
+    end_clips = analyzer.find_footage(trip["end_dt"], 180)
+    
+    t_start = trip["start_dt"]
+    t_end = trip["end_dt"]
+    
+    print(f"\n==========================================================================")
+    print(f" 📹 CAMERA FOOTAGE LISTING: {t_start.strftime('%a %d %b %Y')} ({t_start.strftime('%H:%M')} ➔ {t_end.strftime('%H:%M')})")
+    print(f"    Origin      : {trip['start_place']} ({trip['start_addr'].split(',')[0]})")
+    print(f"    Destination : {trip['end_place']} ({trip['end_addr'].split(',')[0]})")
+    print(f"==========================================================================")
+    
     # 1. Entry footage (getting into car)
     print(f"\n🚪 1. ENTRY WINDOW (Departure ~{t_start.strftime('%H:%M:%S')}):")
     if start_clips:
-        by_folder = defaultdict(list)
-        for c in start_clips:
-            by_folder[(c['cat'], c['folder'])].append(c)
-            
-        for (cat, folder), clips in by_folder.items():
-            icon = EMOJI_MAP.get(cat, "")
-            print(f"   [{icon}Clips] 📂 {folder}")
-            by_ts = defaultdict(dict)
-            for c in clips:
-                ts_str = c['dt'].strftime("%H:%M:%S")
-                by_ts[ts_str][c['cam']] = c['file']
-            for ts_str, cam_dict in sorted(by_ts.items()):
-                cams = ", ".join(sorted(cam_dict.keys()))
-                sample = cam_dict.get('left_repeater') or cam_dict.get('front') or list(cam_dict.values())[0]
-                print(f"     • {ts_str} ({cams}) ➔ {sample}")
+        render_footage_listing(start_clips, indent="  ")
     else:
         print("   ⚠️ No local footage found on archive drives.")
 
     # 2. Exit footage (arriving & unloading)
     print(f"\n🚪 2. EXIT WINDOW (Arrival ~{t_end.strftime('%H:%M:%S')}):")
     if end_clips:
-        by_folder = defaultdict(list)
-        for c in end_clips:
-            by_folder[(c['cat'], c['folder'])].append(c)
-            
-        for (cat, folder), clips in by_folder.items():
-            icon = EMOJI_MAP.get(cat, "")
-            print(f"   [{icon}Clips] 📂 {folder}")
-            by_ts = defaultdict(dict)
-            for c in clips:
-                ts_str = c['dt'].strftime("%H:%M:%S")
-                by_ts[ts_str][c['cam']] = c['file']
-            for ts_str, cam_dict in sorted(by_ts.items()):
-                cams = ", ".join(sorted(cam_dict.keys()))
-                sample = cam_dict.get('left_repeater') or cam_dict.get('front') or list(cam_dict.values())[0]
-                print(f"     • {ts_str} ({cams}) ➔ {sample}")
+        render_footage_listing(end_clips, indent="  ")
     else:
         print("   ⚠️ No local footage found on archive drives.")
         
@@ -614,21 +670,7 @@ def display_timeline_event_details(event, analyzer):
         print("--------------------------------------------------------------------------")
         return
         
-    by_cat_and_folder = defaultdict(list)
-    for c in clips:
-        by_cat_and_folder[(c['cat'], c['folder'])].append(c)
-        
-    for (cat, folder), f_clips in sorted(by_cat_and_folder.items()):
-        icon = EMOJI_MAP.get(cat, "")
-        print(f"\n📂 [{icon}Clips] {folder}")
-        by_ts = defaultdict(dict)
-        for c in f_clips:
-            ts_str = c['dt'].strftime("%H:%M:%S")
-            by_ts[ts_str][c['cam']] = c['file']
-        for ts_str, cam_dict in sorted(by_ts.items()):
-            cams = ", ".join(sorted(cam_dict.keys()))
-            sample = cam_dict.get('left_repeater') or cam_dict.get('front') or list(cam_dict.values())[0]
-            print(f"   • {ts_str} ({cams}) ➔ {sample}")
+    render_footage_listing(clips)
             
     print(f"\n💡 Quick Tips:")
     print(f"   • Open first folder in Finder: open \"{clips[0]['folder']}\"")
