@@ -14,21 +14,19 @@ A modular suite of automation tools for Tesla owners on macOS:
 
 ```text
 tesla/
-├── dashcam/                      # 🎥 TeslaCam multi-drive sync & ExportDash viewer
-│   ├── tesla_sync.sh             # Multi-drive sync & prune engine
-│   ├── run_exportdash.sh         # Local web video player launcher
-│   ├── exportdash.cam/           # ExportDash web player components
+├── dashcam/                      # 🎥 ExportDash web player components & docs
+│   ├── exportdash.cam/           # Next.js 4-camera browser player
 │   └── README.md                 # Full Dashcam documentation
 │
-├── Tessie/                       # 🗺️ Tessie drive logs & places matching
-│   ├── tessie_analyzer.py        # Tessie log analyzer & iCloud importer
+├── Tessie/                       # 🗺️ Tessie documentation & examples
 │   ├── places.example.json       # Generic template for custom place nicknames
 │   └── README.md                 # Full Tessie documentation
 │
 ├── Tools/                        # 🛠️ Executable scripts for multi-drive deployment
-│   ├── tesla_sync.sh
-│   ├── tessie_analyzer.py
-│   └── run_exportdash.sh
+│   ├── tesla_sync.sh             # Multi-drive sync, audit & prune engine
+│   ├── tessie_analyzer.py        # Tessie drive analyzer & video linking
+│   ├── tessie_renamer.py         # Tessie raw CSV categorization utility
+│   └── run_exportdash.sh         # Local web player launcher
 │
 ├── .github/                      # GitHub Actions CI & community standards
 ├── LICENSE                       # MIT License
