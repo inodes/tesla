@@ -227,32 +227,49 @@ class TessieAnalyzer:
             s_clean = saved_loc.strip()
             # 1. Exact match in places
             if s_clean in self.places:
-                return self.places[s_clean].get("nickname", s_clean)
+                p = self.places[s_clean]
+                if isinstance(p, dict):
+                    return p.get("tesla_metadata", {}).get("short_name") or p.get("location_name") or p.get("nickname") or s_clean
+                return s_clean
             # 2. Check if saved_loc matches a known place keyword (e.g. '1108 Victoria Rd' -> 'Home')
             for place_name, p_info in self.places.items():
+                if not isinstance(p_info, dict):
+                    continue
+                kws = p_info.get("keywords") or p_info.get("tesla_metadata", {}).get("keywords") or []
+                short_name = p_info.get("tesla_metadata", {}).get("short_name") or p_info.get("location_name") or p_info.get("nickname") or place_name
                 if s_clean.lower() == place_name.lower():
-                    return place_name
-                for kw in p_info.get("keywords", []):
+                    return short_name
+                for kw in kws:
                     if kw.lower() in s_clean.lower():
-                        return place_name
+                        return short_name
             return s_clean
 
         addr_clean = address.lower()
         
+        # 1. Keyword matching on address
         for place_name, p_info in self.places.items():
-            for kw in p_info.get("keywords", []):
+            if not isinstance(p_info, dict):
+                continue
+            kws = p_info.get("keywords") or p_info.get("tesla_metadata", {}).get("keywords") or []
+            short_name = p_info.get("tesla_metadata", {}).get("short_name") or p_info.get("location_name") or p_info.get("nickname") or place_name
+            for kw in kws:
                 if kw.lower() in addr_clean:
-                    return place_name
+                    return short_name
 
+        # 2. Geofence / Lat-Lon Haversine matching
         if lat is not None and lon is not None:
             for place_name, p_info in self.places.items():
-                p_lat = p_info.get("lat")
-                p_lon = p_info.get("lon")
-                p_rad = p_info.get("radius_m", 250)
+                if not isinstance(p_info, dict):
+                    continue
+                loc = p_info.get("location", {})
+                p_lat = p_info.get("lat") or loc.get("lat")
+                p_lon = p_info.get("lon") or loc.get("lon")
+                p_rad = p_info.get("radius_m") or loc.get("radius_m", 250)
+                short_name = p_info.get("tesla_metadata", {}).get("short_name") or p_info.get("location_name") or p_info.get("nickname") or place_name
                 if p_lat is not None and p_lon is not None:
                     dist = haversine_distance_m(lat, lon, p_lat, p_lon)
                     if dist <= p_rad:
-                        return place_name
+                        return short_name
 
         parts = address.split(",")
         return parts[0].strip() if parts else address
