@@ -1217,6 +1217,400 @@ def cmd_alias(args):
             print(f"✔ Synced to {s}")
 
 # ---------------------------------------------------------------------------
+# CLI Command: Interactive Place Editor
+# ---------------------------------------------------------------------------
+def interactive_edit_place(name, places):
+    """
+    Interactive editing session for a single place in places.json.
+    Returns ('back', places), ('deleted', places), or ('quit', places).
+    """
+    curr_name = name
+    while True:
+        if curr_name not in places:
+            print(f"❌ Place \"{curr_name}\" not found in places.json.")
+            return "back", places
+
+        data = places[curr_name]
+        lat = data.get("lat")
+        lon = data.get("lon")
+        rad = data.get("radius_m", 150)
+        kws = data.get("keywords", [])
+        notes = data.get("notes", "")
+
+        coords_str = f"{lat:.5f}, {lon:.5f}" if (lat is not None and lon is not None) else "Not set"
+        kws_str = ", ".join(kws) if kws else "(None)"
+
+        print("\n" + "=" * 78)
+        print(f"📍 Editing Place: {curr_name}")
+        print("=" * 78)
+        print(f" • Name:     {curr_name}")
+        print(f" • GPS:      {coords_str}")
+        print(f" • Radius:   {rad}m")
+        print(f" • Keywords: {kws_str}")
+        print(f" • Notes:    {notes if notes else '(None)'}")
+        print("-" * 78)
+        print("Select field to edit:")
+        print(f"  [1] Rename / Edit Name      (current: \"{curr_name}\")")
+        print(f"  [2] Edit Radius             (current: {rad}m)")
+        print(f"  [3] Edit Coordinates (GPS)  (current: {coords_str})")
+        print(f"  [4] Add Keyword(s) / Alias")
+        print(f"  [5] Remove Keyword(s)")
+        print(f"  [6] Edit All Keywords       (replace list)")
+        print(f"  [7] Edit Notes              (current: \"{notes}\")")
+        print(f"  [8] Search Nearby POIs      (via OpenStreetMap / Overpass API)")
+        print(f"  [d] Delete Place permanently")
+        print(f"  [b] Back to Place List")
+        print(f"  [q] Quit")
+        print("-" * 78)
+
+        try:
+            choice = input("Choice [1-8, d, b, q]: ").strip().lower()
+        except (EOFError, KeyboardInterrupt):
+            return "back", places
+
+        if choice in ("b", "back", ""):
+            return "back", places
+        elif choice in ("q", "quit"):
+            return "quit", places
+        elif choice == "1":
+            try:
+                new_n = input(f"Enter new name [default: \"{curr_name}\"]: ").strip()
+                if new_n and new_n != curr_name:
+                    if new_n in places:
+                        print(f"❌ Place \"{new_n}\" already exists.")
+                    else:
+                        places[new_n] = places.pop(curr_name)
+                        curr_name = new_n
+                        synced = save_places(places)
+                        print(f"✔ Renamed to \"{curr_name}\"")
+                        if synced:
+                            for s in synced:
+                                print(f"✔ Synced to {s}")
+            except (EOFError, KeyboardInterrupt):
+                pass
+        elif choice == "2":
+            try:
+                r_in = input(f"Enter new radius in meters [current: {rad}m]: ").strip()
+                if r_in:
+                    try:
+                        new_r = int(r_in)
+                        if new_r > 0:
+                            data["radius_m"] = new_r
+                            places[curr_name] = data
+                            synced = save_places(places)
+                            print(f"✔ Radius updated to {new_r}m")
+                            if synced:
+                                for s in synced:
+                                    print(f"✔ Synced to {s}")
+                    except ValueError:
+                        print("❌ Invalid radius number.")
+            except (EOFError, KeyboardInterrupt):
+                pass
+        elif choice == "3":
+            try:
+                c_in = input(f"Enter new coordinates (lat, lon) or street address to geocode: ").strip()
+                if c_in:
+                    n_lat, n_lon, n_addr = parse_coords_or_address(c_in)
+                    if n_lat is not None and n_lon is not None:
+                        data["lat"] = round(n_lat, 5)
+                        data["lon"] = round(n_lon, 5)
+                        places[curr_name] = data
+                        synced = save_places(places)
+                        print(f"✔ Coordinates updated to: {data['lat']}, {data['lon']}")
+                        if n_addr:
+                            print(f"   Address: {n_addr}")
+                        if synced:
+                            for s in synced:
+                                print(f"✔ Synced to {s}")
+                    else:
+                        print("❌ Failed to parse coordinates or geocode address.")
+            except (EOFError, KeyboardInterrupt):
+                pass
+        elif choice == "4":
+            try:
+                k_in = input("Enter keyword(s) or street name to add (comma-separated): ").strip()
+                if k_in:
+                    new_kws = [k.strip() for k in k_in.split(",") if k.strip()]
+                    added = []
+                    for k in new_kws:
+                        if k not in data.get("keywords", []):
+                            data.setdefault("keywords", []).append(k)
+                            added.append(k)
+                    if added:
+                        places[curr_name] = data
+                        synced = save_places(places)
+                        print(f"✔ Added keyword(s): {', '.join(added)}")
+                        if synced:
+                            for s in synced:
+                                print(f"✔ Synced to {s}")
+                    else:
+                        print("ℹ️ All keywords already present.")
+            except (EOFError, KeyboardInterrupt):
+                pass
+        elif choice == "5":
+            if not kws:
+                print("ℹ️ No keywords to remove.")
+                continue
+            print("\nCurrent Keywords:")
+            for k_idx, kw in enumerate(kws, 1):
+                print(f"  [{k_idx}] {kw}")
+            try:
+                rem_in = input(f"Select keyword number(s) to remove (e.g. 1, 3) or [b]ack: ").strip().lower()
+                if rem_in and rem_in not in ("b", "back"):
+                    indices = []
+                    for part in rem_in.split(","):
+                        part = part.strip()
+                        if part.isdigit() and 1 <= int(part) <= len(kws):
+                            indices.append(int(part) - 1)
+                    if indices:
+                        removed = [kws[i] for i in sorted(indices, reverse=True)]
+                        new_kws = [kw for i, kw in enumerate(kws) if i not in indices]
+                        data["keywords"] = new_kws
+                        places[curr_name] = data
+                        synced = save_places(places)
+                        print(f"✔ Removed keyword(s): {', '.join(removed)}")
+                        if synced:
+                            for s in synced:
+                                print(f"✔ Synced to {s}")
+            except (EOFError, KeyboardInterrupt):
+                pass
+        elif choice == "6":
+            try:
+                all_k_in = input(f"Enter all keywords (comma-separated) [current: {kws_str}]: ").strip()
+                if all_k_in != "":
+                    new_kws = [k.strip() for k in all_k_in.split(",") if k.strip()]
+                    data["keywords"] = new_kws
+                    places[curr_name] = data
+                    synced = save_places(places)
+                    print(f"✔ Keywords updated: {', '.join(new_kws)}")
+                    if synced:
+                        for s in synced:
+                            print(f"✔ Synced to {s}")
+            except (EOFError, KeyboardInterrupt):
+                pass
+        elif choice == "7":
+            try:
+                note_in = input(f"Enter new notes [current: \"{notes}\"]: ").strip()
+                if note_in:
+                    data["notes"] = note_in
+                    places[curr_name] = data
+                    synced = save_places(places)
+                    print(f"✔ Notes updated to: \"{note_in}\"")
+                    if synced:
+                        for s in synced:
+                            print(f"✔ Synced to {s}")
+            except (EOFError, KeyboardInterrupt):
+                pass
+        elif choice == "8":
+            if lat is None or lon is None:
+                print("❌ Place coordinates are missing.")
+                continue
+            print(f"\n🌐 Querying nearby POIs around ({lat:.5f}, {lon:.5f})...")
+            pois = query_overpass_pois(lat, lon, radius_m=max(250, rad + 50))
+            if not pois:
+                print("ℹ️ No POIs found nearby.")
+                continue
+            print(f"\n🏢 Nearby POIs:")
+            for p_idx, p in enumerate(pois[:7], 1):
+                print(f"  [{p_idx}] {p['name']} ({p['category']}) [~{p['dist_m']}m | Center: {p['lat']:.5f}, {p['lon']:.5f}]")
+            print(f"  [b] Back")
+            try:
+                poi_c = input(f"Select POI [1-{min(len(pois), 7)}] to adopt center & name, or [b]ack: ").strip().lower()
+                if poi_c.isdigit() and 1 <= int(poi_c) <= min(len(pois), 7):
+                    selected_poi = pois[int(poi_c) - 1]
+                    data["lat"] = round(selected_poi["lat"], 5)
+                    data["lon"] = round(selected_poi["lon"], 5)
+                    adopt_name = input(f"Adopt POI name \"{selected_poi['name']}\"? [y/N]: ").strip().lower()
+                    if adopt_name == "y":
+                        if selected_poi["name"] != curr_name and selected_poi["name"] in places:
+                            print(f"⚠️ Place \"{selected_poi['name']}\" already exists.")
+                        elif selected_poi["name"] != curr_name:
+                            places[selected_poi["name"]] = places.pop(curr_name)
+                            curr_name = selected_poi["name"]
+                    places[curr_name] = data
+                    synced = save_places(places)
+                    print(f"✔ Updated coordinates to ({data['lat']}, {data['lon']})")
+                    if synced:
+                        for s in synced:
+                            print(f"✔ Synced to {s}")
+            except (EOFError, KeyboardInterrupt):
+                pass
+        elif choice == "d":
+            try:
+                confirm = input(f"⚠️ Are you sure you want to permanently delete \"{curr_name}\"? [y/N]: ").strip().lower()
+                if confirm == "y":
+                    del places[curr_name]
+                    synced = save_places(places)
+                    print(f"✔ Deleted \"{curr_name}\" from places.json.")
+                    if synced:
+                        for s in synced:
+                            print(f"✔ Synced to {s}")
+                    return "deleted", places
+            except (EOFError, KeyboardInterrupt):
+                pass
+        else:
+            print("Invalid choice.")
+
+def cmd_edit(args):
+    """Interactive place editor with table selection, search filtering, and live field editing."""
+    places = load_places()
+    if not places:
+        print("ℹ️ No places found in places.json. Use 'add' or 'lookup' to create one.")
+        return
+
+    # Direct name argument provided
+    if getattr(args, "name", None):
+        target_name = None
+        q = args.name.strip().lower()
+        for k in places:
+            if k.lower() == q:
+                target_name = k
+                break
+        if not target_name:
+            for k in places:
+                if q in k.lower():
+                    target_name = k
+                    break
+        if target_name:
+            res, places = interactive_edit_place(target_name, places)
+            return
+        else:
+            print(f"❌ Place matching \"{args.name}\" not found.")
+
+    search_filter = getattr(args, "search", "") or ""
+    ref_near = getattr(args, "near", None)
+
+    while True:
+        places = load_places()
+        if not places:
+            print("ℹ️ No places remaining.")
+            break
+
+        ref_lat, ref_lon = None, None
+        if ref_near:
+            if ref_near in places:
+                ref_lat = places[ref_near].get("lat")
+                ref_lon = places[ref_near].get("lon")
+            else:
+                geo = geocode_address(ref_near)
+                if geo:
+                    ref_lat, ref_lon = geo["lat"], geo["lon"]
+
+        items = list(places.items())
+        if ref_lat is not None and ref_lon is not None:
+            items.sort(key=lambda x: haversine_distance(ref_lat, ref_lon, x[1].get("lat", 0), x[1].get("lon", 0)))
+        else:
+            items.sort(key=lambda x: x[0].lower())
+
+        if search_filter:
+            q = search_filter.lower()
+            filtered = []
+            for name, data in items:
+                kws = " ".join(data.get("keywords", [])).lower()
+                notes = data.get("notes", "").lower()
+                if q in name.lower() or q in kws or q in notes:
+                    filtered.append((name, data))
+            items = filtered
+
+        if not items:
+            print(f"\nℹ️ No places matched search query: \"{search_filter}\"")
+            try:
+                reset = input("Press [Enter] to clear filter, [a]dd new, [q]uit: ").strip().lower()
+                if reset in ("q", "quit"):
+                    break
+                elif reset in ("a", "add"):
+                    interactive_lookup_and_add()
+                    continue
+                else:
+                    search_filter = ""
+                    continue
+            except (EOFError, KeyboardInterrupt):
+                break
+
+        # Render places table
+        w_num = 4
+        w_name = 30
+        w_coords = 23
+        w_rad = 8
+        w_kws = 36
+
+        header_cols = [
+            pad_display("#", w_num, "right"),
+            pad_display("Place Name", w_name),
+            pad_display("Coordinates (Lat, Lon)", w_coords),
+            pad_display("Radius", w_rad, "right"),
+            pad_display("Keywords / Aliases", w_kws)
+        ]
+        header = "  " + "  ".join(header_cols)
+        total_w = display_len(header) + 2
+        border = "─" * total_w
+
+        filter_label = f" [Filter: \"{search_filter}\"]" if search_filter else ""
+        title = f"📍 SAVED PLACES ({len(items)} places){filter_label}"
+
+        print("\n┌" + border[2:] + "┐")
+        print(f"│ {title}" + " " * max(0, total_w - display_len(title) - 4) + " │")
+        print("├" + border[2:] + "┤")
+        print("│" + header + " " * max(0, total_w - display_len(header) - 2) + "│")
+        print("├" + border[2:] + "┤")
+
+        for idx, (p_name, p_data) in enumerate(items, 1):
+            lat = p_data.get("lat")
+            lon = p_data.get("lon")
+            coords_str = f"{lat:.5f}, {lon:.5f}" if (lat is not None and lon is not None) else "N/A"
+            rad_str = f"{p_data.get('radius_m', 150)}m"
+            kws = ", ".join(p_data.get("keywords", []))
+            if len(kws) > w_kws:
+                kws = kws[:w_kws - 3] + "..."
+
+            row_cols = [
+                pad_display(f"[{idx:2d}]", w_num, "right"),
+                pad_display(p_name[:w_name], w_name),
+                pad_display(coords_str, w_coords),
+                pad_display(rad_str, w_rad, "right"),
+                pad_display(kws, w_kws)
+            ]
+            row_str = "  " + "  ".join(row_cols)
+            print("│" + row_str + " " * max(0, total_w - display_len(row_str) - 2) + "│")
+
+        print("└" + border[2:] + "┘\n")
+
+        prompt_str = f"Select Place to edit [1-{len(items)}], [s]earch <query>, [a]dd new, [q]uit: "
+        try:
+            choice = input(prompt_str).strip()
+        except (EOFError, KeyboardInterrupt):
+            break
+
+        c_lower = choice.lower()
+        if c_lower in ("q", "quit"):
+            break
+        elif c_lower in ("a", "add"):
+            interactive_lookup_and_add()
+            continue
+        elif c_lower.startswith("s ") or c_lower.startswith("/"):
+            query_part = choice.split(" ", 1)[1] if " " in choice else choice.lstrip("/")
+            search_filter = query_part.strip()
+            continue
+        elif c_lower == "s":
+            try:
+                s_in = input("Enter search keyword (or Enter to clear): ").strip()
+                search_filter = s_in
+                continue
+            except (EOFError, KeyboardInterrupt):
+                continue
+        elif choice.isdigit():
+            val = int(choice)
+            if 1 <= val <= len(items):
+                selected_place = items[val - 1][0]
+                action, places = interactive_edit_place(selected_place, places)
+                if action == "quit":
+                    break
+            else:
+                print("Invalid place number.")
+        else:
+            print("Invalid selection.")
+
+# ---------------------------------------------------------------------------
 # Main CLI Router
 # ---------------------------------------------------------------------------
 def main():
@@ -1231,6 +1625,12 @@ def main():
     p_list.add_argument("--near", type=str, help="Reference place name or coordinates to sort by proximity")
     p_list.add_argument("--search", type=str, help="Search query filter for name, keywords, or notes")
     p_list.add_argument("--sort", choices=["name", "radius", "dist"], default="name", help="Sort order")
+
+    # Subcommand: edit
+    p_edit = subparsers.add_parser("edit", help="Interactively select and edit stored places")
+    p_edit.add_argument("name", nargs="?", default=None, help="Optional place name to jump directly to editing")
+    p_edit.add_argument("--search", type=str, help="Initial search filter")
+    p_edit.add_argument("--near", type=str, help="Reference place name or coordinates to sort by proximity")
 
     # Subcommand: lookup
     p_lookup = subparsers.add_parser("lookup", help="Interactively look up an address or coordinates using Places/POI API")
@@ -1289,6 +1689,8 @@ def main():
 
     if args.command == "list":
         cmd_list(args)
+    elif args.command == "edit":
+        cmd_edit(args)
     elif args.command == "lookup":
         q = " ".join(args.query) if args.query else None
         interactive_lookup_and_add(query_or_addr=q, default_radius=args.radius)
