@@ -26,6 +26,34 @@ C_DIM = "\033[2m"
 C_RESET = "\033[0m"
 
 
+def find_mounted_tesla_volumes(subdir=None):
+    """
+    Dynamically discovers all mounted volumes matching TESLADRIVE* under /Volumes.
+    If subdir is provided (e.g., 'TeslaCam', 'Tessie', 'Tools', 'invoices'),
+    returns existing subdirectories within those volumes.
+    """
+    volumes_root = "/Volumes"
+    if not os.path.isdir(volumes_root):
+        return []
+    discovered = []
+    seen = set()
+    try:
+        entries = sorted(os.listdir(volumes_root))
+    except Exception:
+        entries = []
+    for entry in entries:
+        if entry.upper().startswith("TESLADRIVE"):
+            vol_path = os.path.join(volumes_root, entry)
+            if os.path.isdir(vol_path):
+                target = os.path.join(vol_path, subdir) if subdir else vol_path
+                if os.path.isdir(target):
+                    real_p = os.path.abspath(os.path.realpath(target))
+                    if real_p not in seen:
+                        seen.add(real_p)
+                        discovered.append(real_p)
+    return discovered
+
+
 def pad_display(s: str, width: int, align: str = "left") -> str:
     """Pad a string to display width."""
     text_len = len(s)
@@ -414,8 +442,10 @@ class TeslaSuperchargerScraper:
             print(f"  {C_GREEN}✔ Updated registry entry in:{C_RESET} {fpath}")
 
         if sync_external:
-            ext_drive = "/Volumes/TESLADRIVE 1"
-            if os.path.isdir(ext_drive):
+            ext_drives = find_mounted_tesla_volumes()
+            if not ext_drives:
+                print(f"  {C_YELLOW}⚠ No mounted TESLADRIVE volumes detected under /Volumes. Skipping external sync.{C_RESET}")
+            for ext_drive in ext_drives:
                 ext_sc = os.path.join(ext_drive, "Tessie", "superchargers.json")
                 try:
                     os.makedirs(os.path.dirname(ext_sc), exist_ok=True)
@@ -423,7 +453,7 @@ class TeslaSuperchargerScraper:
                         json.dump(reg, f, indent=2, ensure_ascii=False)
                     print(f"  {C_GREEN}✔ Synced updated registry to:{C_RESET} {ext_sc}")
                 except Exception as e:
-                    print(f"  {C_RED}❌ Failed to sync to external drive:{C_RESET} {e}")
+                    print(f"  {C_RED}❌ Failed to sync to external drive {ext_drive}:{C_RESET} {e}")
 
 
 def main():
@@ -434,7 +464,7 @@ def main():
     parser.add_argument("--url", help="Direct Tesla Find Us URL to scrape")
     parser.add_argument("--headful", "--visible", action="store_true", help="Launch browser in visible mode (default is headless)")
     parser.add_argument("--save", "--update", action="store_true", help="Save / update scraped entry in superchargers.json")
-    parser.add_argument("--sync", action="store_true", help="Sync updated registry to /Volumes/TESLADRIVE 1/")
+    parser.add_argument("--sync", action="store_true", help="Sync updated registry to mounted TESLADRIVE external volume(s)")
     parser.add_argument("--json", action="store_true", help="Output raw JSON to stdout")
 
     args = parser.parse_args()
