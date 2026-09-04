@@ -27,4 +27,6 @@ __pycache__/
 .env
 *.log
 scratch/
+.direnv/
+.venv/
 
