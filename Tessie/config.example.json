@@ -1,6 +1,6 @@
 {
   "_comment": "Tesla Tools Suite Configuration - Copy this file to 'config.json' or 'Tessie/config.json' and customize your local paths.",
-  "invoices_directory": "~/Documents/Tesla/Invoices",
+  "invoices_directory": "~/iCloud/PDF/Tesla/Supercharging",
   "tessie_directory": "~/Library/Mobile Documents/com~apple~CloudDocs/Tesla/Tessie",
   "external_drive_path": "/Volumes/TESLADRIVE 1",
   "reconciliation": {

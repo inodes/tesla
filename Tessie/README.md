@@ -74,6 +74,12 @@ A suite of tools for processing, classifying, and analyzing [Tessie](https://sha
 # Reconcile Superchargers only and inspect invoice matching
 ./Tools/tessie_charging_analyzer.py --superchargers
 
+# Preview renaming tax invoice PDFs (Tesla_Supercharging_YYYYMMDDHHMM_<invoice_num>_<Location>.pdf)
+./Tools/tessie_charging_analyzer.py --rename --dry-run
+
+# Execute batch renaming of invoice PDFs
+./Tools/tessie_charging_analyzer.py --rename
+
 # Deep-dive inspect session #142 (Macquarie Centre) or by date
 ./Tools/tessie_charging_analyzer.py --inspect 142
 ./Tools/tessie_charging_analyzer.py --inspect 2026-08-14

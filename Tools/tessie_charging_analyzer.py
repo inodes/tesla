@@ -116,6 +116,9 @@ DATE_FORMATS = [
     "%Y-%m-%d %H:%M:%S",
     "%Y-%m-%d %H:%M",
     "%Y-%m-%d",
+    "%Y/%m/%d %H:%M:%S",
+    "%Y/%m/%d %H:%M",
+    "%Y/%m/%d",
     "%d/%m/%Y %H:%M:%S",
     "%d/%m/%Y %H:%M",
     "%d/%m/%Y",
@@ -188,55 +191,131 @@ class TeslaInvoiceParser:
         except Exception:
             pass
 
+        # Pure Python zero-dependency parser with ToUnicode CMap & Chromium PDF support
         try:
             with open(pdf_path, "rb") as f:
                 content = f.read()
 
-            extracted_strings = []
-            stream_regex = re.compile(rb"stream\r?\n(.*?)\r?\nendstream", re.DOTALL)
-            for match in stream_regex.finditer(content):
-                stream_bytes = match.group(1)
-                start_pos = max(0, match.start() - 200)
-                dict_snippet = content[start_pos:match.start()]
-                
-                decompressed = None
-                if b"FlateDecode" in dict_snippet:
+            objects = {}
+            for m in re.finditer(rb"(\d+)\s+0\s+obj\s*(.*?)\s*endobj", content, re.DOTALL):
+                objects[int(m.group(1))] = m.group(2)
+
+            def get_stream(body):
+                m = re.search(rb"stream[\r\n]+(.*?)[\r\n]+endstream", body, re.DOTALL)
+                if not m:
+                    return b""
+                raw = m.group(1)
+                try:
+                    return zlib.decompress(raw)
+                except Exception:
                     try:
-                        decompressed = zlib.decompress(stream_bytes)
+                        return zlib.decompress(raw, -15)
                     except Exception:
-                        try:
-                            decompressed = zlib.decompress(stream_bytes, -zlib.MAX_WBITS)
-                        except Exception:
-                            pass
+                        return raw
+
+            # 1. Parse font CMaps
+            font_cmaps = {}
+            for oid, body in objects.items():
+                if b"/ToUnicode" in body:
+                    tu_m = re.search(rb"/ToUnicode\s+(\d+)\s+0\s+R", body)
+                    if tu_m:
+                        tu_id = int(tu_m.group(1))
+                        tu_stream = get_stream(objects.get(tu_id, b"")).decode("latin1", errors="replace")
+                        cmap = {}
+                        for block in re.findall(r"beginbfchar(.*?)endbfchar", tu_stream, re.DOTALL):
+                            for src, dst in re.findall(r"<([0-9a-fA-F]+)>\s+<([0-9a-fA-F]+)>", block):
+                                s_val = int(src, 16)
+                                dst_str = "".join(chr(int(dst[i:i+4], 16)) for i in range(0, len(dst), 4))
+                                cmap[s_val] = dst_str
+
+                        for block in re.findall(r"beginbfrange(.*?)endbfrange", tu_stream, re.DOTALL):
+                            for s_hex, e_hex, d_hex in re.findall(r"<([0-9a-fA-F]+)>\s+<([0-9a-fA-F]+)>\s+<([0-9a-fA-F]+)>", block):
+                                s_val = int(s_hex, 16)
+                                e_val = int(e_hex, 16)
+                                d_val = int(d_hex, 16)
+                                for i in range(e_val - s_val + 1):
+                                    cmap[s_val + i] = chr(d_val + i)
+                            for s_hex, e_hex, arr_str in re.findall(r"<([0-9a-fA-F]+)>\s+<([0-9a-fA-F]+)>\s*\[(.*?)\]", block, re.DOTALL):
+                                s_val = int(s_hex, 16)
+                                dests = re.findall(r"<([0-9a-fA-F]+)>", arr_str)
+                                for i, d_h in enumerate(dests):
+                                    d_str = "".join(chr(int(d_h[j:j+4], 16)) for j in range(0, len(d_h), 4))
+                                    cmap[s_val + i] = d_str
+                        font_cmaps[oid] = cmap
+
+            # 2. Map Font Resource names (/F1, /F7, etc.) to Font object IDs
+            res_fonts = {}
+            contents_obj_ids = []
+            for oid, body in objects.items():
+                if b"/Type /Page\n" in body or b"/Type /Page " in body or b"/Type /Page/" in body or b"/Type/Page" in body:
+                    f_dict_m = re.search(rb"/Font\s*<<([^>]+)>>", body)
+                    if f_dict_m:
+                        for fname, fid in re.findall(rb"/([A-Za-z0-9_]+)\s+(\d+)\s+0\s+R", f_dict_m.group(1)):
+                            res_fonts[fname.decode("latin1")] = int(fid)
+                    c_m = re.search(rb"/Contents\s+(\d+)\s+0\s+R", body)
+                    if c_m:
+                        contents_obj_ids.append(int(c_m.group(1)))
+                    c_arr_m = re.search(rb"/Contents\s*\[(.*?)\]", body)
+                    if c_arr_m:
+                        for cid in re.findall(rb"(\d+)\s+0\s+R", c_arr_m.group(1)):
+                            contents_obj_ids.append(int(cid))
+
+            if not contents_obj_ids:
+                for oid in objects:
+                    contents_obj_ids.append(oid)
+
+            extracted_lines = []
+            for cid in contents_obj_ids:
+                st_data = get_stream(objects.get(cid, b"")).decode("latin1", errors="replace")
+                if not st_data:
+                    continue
+                if "BT" in st_data:
+                    for bt in re.findall(r"BT(.*?)ET", st_data, re.DOTALL):
+                        curr_font = None
+                        chars = []
+                        tokens = re.findall(r"(/[A-Za-z0-9_]+\s+\d+(?:\.\d+)?\s+Tf|<[0-9a-fA-F]+>\s*Tj|\([^\)]*\)\s*Tj|\[.*?\]\s*TJ)", bt, re.DOTALL)
+                        for tok in tokens:
+                            tf_m = re.match(r"/([A-Za-z0-9_]+)\s+\d+", tok)
+                            if tf_m:
+                                curr_font = tf_m.group(1)
+                                continue
+                            tj_hex = re.match(r"<([0-9a-fA-F]+)>\s*Tj", tok)
+                            if tj_hex:
+                                hx = tj_hex.group(1)
+                                fid = res_fonts.get(curr_font)
+                                cmap = font_cmaps.get(fid, {})
+                                for i in range(0, len(hx), 4):
+                                    code = int(hx[i:i+4], 16)
+                                    chars.append(cmap.get(code, chr(code) if code < 128 else ""))
+                                continue
+                            tj_lit = re.match(r"\((.*?)\)\s*Tj", tok)
+                            if tj_lit:
+                                chars.append(tj_lit.group(1))
+                                continue
+                            if tok.startswith("[") and tok.endswith("TJ"):
+                                fid = res_fonts.get(curr_font)
+                                cmap = font_cmaps.get(fid, {})
+                                for hx, lit in re.findall(r"<([0-9a-fA-F]+)>|\((.*?)\)", tok):
+                                    if hx:
+                                        for i in range(0, len(hx), 4):
+                                            code = int(hx[i:i+4], 16)
+                                            chars.append(cmap.get(code, chr(code) if code < 128 else ""))
+                                    elif lit:
+                                        chars.append(lit)
+                        line = "".join(chars).strip()
+                        if line:
+                            extracted_lines.append(line)
                 else:
-                    decompressed = stream_bytes
-                
-                if decompressed:
-                    tj_matches = re.findall(rb"\((.*?)\)\s*Tj", decompressed)
-                    for s in tj_matches:
-                        try:
-                            extracted_strings.append(s.decode("utf-8", errors="ignore"))
-                        except Exception:
-                            pass
-
-                    array_matches = re.findall(rb"\[(.*?)\]\s*TJ", decompressed, re.DOTALL)
-                    for arr in array_matches:
-                        inner_strs = re.findall(rb"\((.*?)\)", arr)
-                        joined = "".join([s.decode("utf-8", errors="ignore") for s in inner_strs])
-                        if joined:
-                            extracted_strings.append(joined)
-
-                    plain_text = decompressed.decode("utf-8", errors="ignore")
-                    for line in plain_text.splitlines():
+                    for line in st_data.splitlines():
                         if any(k in line for k in ["Supercharging", "Tesla", "Invoice", "kWh", "AUD", "GST", "Total", "Date:"]):
-                            extracted_strings.append(line.strip())
+                            extracted_lines.append(line.strip())
 
             raw_text = content.decode("latin1", errors="ignore")
             for line in raw_text.splitlines():
                 if any(k in line for k in ["INV-", "TSLA-", "Supercharging", "Macquarie", "Gosford", "Miranda"]):
-                    extracted_strings.append(line.strip())
+                    extracted_lines.append(line.strip())
 
-            return "\n".join(extracted_strings)
+            return "\n".join(extracted_lines)
         except Exception:
             return ""
 
@@ -256,27 +335,49 @@ class TeslaInvoiceParser:
             return None
 
         text_clean = text.replace("\r", "\n")
+        lines = [l.strip() for l in text_clean.split("\n") if l.strip()]
         
         # 1. Invoice Number
-        inv_match = re.search(r"(?:Invoice|Tax Invoice|INV|Receipt)\s*(?:Number|No\.?|#)?[:\s]*([A-Z0-9-]{5,30})", text_clean, re.IGNORECASE)
-        inv_number = inv_match.group(1).strip() if inv_match else ""
+        inv_number = ""
+        inv_match = re.search(r"(?:TAX INVOICE[:\s]*|Invoice\s*(?:Number|No\.?|#)[:\s]*)\s*([A-Za-z0-9-]{5,30})", text_clean, re.IGNORECASE)
+        if inv_match and inv_match.group(1).lower() not in ["tesla", "number", "tax", "motors", "australia"]:
+            inv_number = inv_match.group(1).strip()
+        
         if not inv_number:
-            tsla_match = re.search(r"(TSLA-[A-Z0-9-]+|INV-[A-Z0-9-]+)", text_clean)
-            if tsla_match:
-                inv_number = tsla_match.group(1).strip()
+            for idx, line in enumerate(lines):
+                if line.lower() in ["invoice number", "tax invoice:", "tax invoice", "invoice no", "receipt #"]:
+                    if idx + 1 < len(lines):
+                        cand = lines[idx + 1].strip()
+                        if len(cand) >= 4 and not any(k in cand.lower() for k in ["date", "tesla", "reference"]):
+                            inv_number = cand
+                            break
+
+        if not inv_number:
+            m2 = re.search(r"\b(2010[A-Za-z0-9]{10,12}|TSLA-[A-Za-z0-9\-]+|INV-[A-Za-z0-9\-]+|CF-[0-9]+)\b", text_clean)
+            if m2:
+                inv_number = m2.group(1).strip()
             else:
                 inv_number = os.path.splitext(os.path.basename(source_file))[0] if source_file else "INV-UNKNOWN"
 
         # 2. Date & Time
         charge_dt = None
-        date_pref_m = re.search(r"(?:Date|Time|Started At|Charge Date|Session Time)[:\s]*([0-9A-Za-z\/\-\.\s:]+?)(?:\s+AEST|\s+AEDT|\s+UTC|\n|$)", text_clean, re.IGNORECASE)
-        if date_pref_m:
-            charge_dt = parse_flexible_date(date_pref_m.group(1).strip())
+        for idx, line in enumerate(lines):
+            if line.lower() in ["invoice date", "date of event", "date:", "date", "session time"]:
+                if idx + 1 < len(lines):
+                    d_cand = lines[idx + 1].strip()
+                    charge_dt = parse_flexible_date(d_cand)
+                    if charge_dt:
+                        break
+
+        if not charge_dt:
+            date_pref_m = re.search(r"(?:Date of Event|Invoice date|Date|Time|Started At|Charge Date|Session Time)[:\s]*([0-9A-Za-z\/\-\.\s:]+?)(?:\s+AEST|\s+AEDT|\s+UTC|\n|$)", text_clean, re.IGNORECASE)
+            if date_pref_m:
+                charge_dt = parse_flexible_date(date_pref_m.group(1).strip())
         
         if not charge_dt:
             patterns = [
-                r"\b(\d{1,2}[\/\-]\d{1,2}[\/\-]\d{4}(?:\s+\d{1,2}:\d{2}(?::\d{2})?(?:\s*[APap][Mm])?)?)\b",
                 r"\b(\d{4}[\/\-]\d{1,2}[\/\-]\d{1,2}(?:\s+\d{1,2}:\d{2}(?::\d{2})?(?:\s*[APap][Mm])?)?)\b",
+                r"\b(\d{1,2}[\/\-]\d{1,2}[\/\-]\d{4}(?:\s+\d{1,2}:\d{2}(?::\d{2})?(?:\s*[APap][Mm])?)?)\b",
                 r"\b(\d{1,2}\s+(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s+\d{4}(?:\s+\d{1,2}:\d{2}(?::\d{2})?(?:\s*[APap][Mm])?)?)\b"
             ]
             for pat in patterns:
@@ -290,35 +391,103 @@ class TeslaInvoiceParser:
 
         # 3. Location / Station Name
         location_name = ""
-        loc_match = re.search(r"Supercharging\s*[-–:]\s*([^\n\r]+)", text_clean, re.IGNORECASE)
-        if loc_match:
-            location_name = loc_match.group(1).strip()
-        else:
-            for kw in ["Macquarie", "West Gosford", "Miranda", "Broadway", "Campbelltown", "Kirrawee", "St Leonards"]:
-                if kw.lower() in text_clean.lower():
-                    location_name = kw
+        for idx, line in enumerate(lines):
+            if line.lower() in ["charging location", "location", "station", "site"]:
+                loc_parts = []
+                for j in range(idx + 1, min(idx + 4, len(lines))):
+                    if not lines[j].startswith(("S/N:", "Vehicle", "Date", "Description", "Sold To", "Energy", "Total")):
+                        loc_parts.append(lines[j])
+                if loc_parts:
+                    location_name = ", ".join(loc_parts)
                     break
 
+        if not location_name:
+            loc_match = re.search(r"(?:Description:\s*Supercharging\s*[-–:]\s*|Supercharging\s*[-–:]\s*)([^\n\r]+)", text_clean, re.IGNORECASE)
+            if loc_match:
+                location_name = loc_match.group(1).strip()
+            else:
+                for kw in ["Macquarie", "West Gosford", "Gosford", "Miranda", "Broadway", "Campbelltown", "Kirrawee", "St Leonards"]:
+                    if kw.lower() in text_clean.lower():
+                        location_name = kw
+                        break
+
         # 4. Energy Delivered (kWh)
-        kwh_match = re.search(r"(\d+\.?\d*)\s*kWh", text_clean, re.IGNORECASE)
-        energy_kwh = float(kwh_match.group(1)) if kwh_match else None
+        energy_kwh = None
+        for idx, line in enumerate(lines):
+            if "kwh" in line.lower() and "/" not in line and "per" not in line.lower():
+                val_m = re.search(r"(\d+\.?\d*)", line)
+                if val_m:
+                    try:
+                        v = float(val_m.group(1))
+                        if v > 0.5:
+                            energy_kwh = v
+                            break
+                    except Exception:
+                        pass
+        if energy_kwh is None:
+            kwh_matches = re.finditer(r"(\d+\.?\d*)\s*(?:\n\s*)?kWh", text_clean, re.IGNORECASE)
+            for km in kwh_matches:
+                m_str = km.group(1)
+                if not re.search(rf"{re.escape(m_str)}\s*(?:\/|per)\s*kWh", text_clean, re.IGNORECASE):
+                    try:
+                        v = float(m_str)
+                        if v > 0.5:
+                            energy_kwh = v
+                            break
+                    except Exception:
+                        pass
 
-        # 5. Total Cost, Subtotal, GST
-        total_match = re.search(r"(?<!sub)(?:Total\s+Amount|Total\s+AUD|Total\s+Due|Total(?!\s*excl))[:\s]*\$?(\d+\.\d{2})", text_clean, re.IGNORECASE)
-        total_cost = float(total_match.group(1)) if total_match else None
+        # 5. Total Cost
+        total_cost = None
+        for idx, line in enumerate(lines):
+            if any(k in line.lower() for k in ["total amount (aud)", "total amount", "total aud", "total due"]):
+                if idx + 1 < len(lines):
+                    val_s = re.sub(r"[^\d.]", "", lines[idx + 1])
+                    try:
+                        total_cost = float(val_s)
+                        break
+                    except Exception:
+                        pass
 
-        gst_match = re.search(r"GST(?:\s*\(?10%\)?)?[:\s]*\$?(\d+\.\d{2})", text_clean, re.IGNORECASE)
-        gst = float(gst_match.group(1)) if gst_match else None
+        if total_cost is None:
+            total_match = re.search(r"(?<!sub)(?:Total\s+Amount\s*\(AUD\)|Total\s+Amount|Total\s+AUD|Total\s+Due|Total(?!\s*excl))[:\s\$]*([\d\.]+)", text_clean, re.IGNORECASE)
+            total_cost = float(total_match.group(1)) if total_match else None
 
+        # 6. GST
+        gst = None
+        for idx, line in enumerate(lines):
+            if any(k in line.lower() for k in ["total gst", "gst (10%)", "gst:"]):
+                if idx + 1 < len(lines):
+                    val_s = re.sub(r"[^\d.]", "", lines[idx + 1])
+                    try:
+                        gst = float(val_s)
+                        break
+                    except Exception:
+                        pass
+        if gst is None:
+            gst_match = re.search(r"(?:Total GST|GST(?:\s*\(?10%\)?)?)[:\s\$]*([\d\.]+)", text_clean, re.IGNORECASE)
+            gst = float(gst_match.group(1)) if gst_match else None
+
+        # 7. Unit Rate
+        unit_rate = None
         rate_match = re.search(r"@?\s*\$?(\d+\.\d{2,4})\s*(?:\/\s*kWh|per\s*kWh)", text_clean, re.IGNORECASE)
         unit_rate = float(rate_match.group(1)) if rate_match else None
 
         if total_cost is not None and energy_kwh and energy_kwh > 0 and unit_rate is None:
             unit_rate = round(total_cost / energy_kwh, 4)
 
-        # 6. VIN
-        vin_match = re.search(r"VIN[:\s]*([A-HJ-NPR-Z0-9]{17})", text_clean)
-        vin = vin_match.group(1).strip() if vin_match else ""
+        # 8. VIN
+        vin = ""
+        for idx, line in enumerate(lines):
+            if any(k in line.lower() for k in ["vehicle identification number", "vin:"]):
+                if idx + 1 < len(lines):
+                    v_cand = re.sub(r"[^A-HJ-NPR-Z0-9]", "", lines[idx + 1].strip())
+                    if len(v_cand) == 17:
+                        vin = v_cand
+                        break
+        if not vin:
+            vin_match = re.search(r"(?:Vehicle Identification Number:?|VIN:?)[:\s]*([A-HJ-NPR-Z0-9]{17})", text_clean, re.IGNORECASE)
+            vin = vin_match.group(1).strip() if vin_match else ""
 
         if not charge_dt and total_cost is None and energy_kwh is None:
             return None
@@ -485,31 +654,36 @@ class TessieChargingAnalyzer:
                 pass
 
         # 3. Discover Invoices directories (CLI > config.json > local folders)
-        cfg_inv_dir = self.config.get("invoices_directory") or self.config.get("invoices_dir")
-        if cfg_inv_dir:
-            cfg_inv_dir = os.path.expanduser(cfg_inv_dir)
+        primary_inv_dir = invoices_dir or self.config.get("invoices_directory") or self.config.get("invoices_dir")
+        if primary_inv_dir:
+            primary_inv_dir = os.path.expanduser(primary_inv_dir)
 
         self.invoice_dirs = []
-        candidates_invoices = [
-            invoices_dir,
-            cfg_inv_dir,
-            os.path.join(self.repo_root, "Tessie", "invoices"),
-            "/Volumes/TESLADRIVE 1/Tessie/invoices",
-            os.path.join(self.icloud_dir, "invoices"),
-            os.path.expanduser("~/Documents/Tesla/Invoices"),
-            os.path.expanduser("~/Downloads/Tesla Invoices"),
-            os.path.expanduser("~/Downloads/Invoices")
-        ]
-        seen_inv_dirs = set()
-        for d in candidates_invoices:
-            try:
-                if d and os.path.isdir(d):
-                    real_d = os.path.abspath(os.path.realpath(d))
-                    if real_d not in seen_inv_dirs:
-                        seen_inv_dirs.add(real_d)
-                        self.invoice_dirs.append(real_d)
-            except Exception:
-                pass
+        if primary_inv_dir and os.path.isdir(primary_inv_dir):
+            self.invoice_dirs.append(os.path.abspath(os.path.realpath(primary_inv_dir)))
+        else:
+            candidates_invoices = [
+                os.path.expanduser("~/iCloud/PDF/Tesla/Supercharging"),
+                os.path.expanduser("~/Library/Mobile Documents/com~apple~CloudDocs/PDF/Tesla/Supercharging"),
+                os.path.expanduser("~/iCloud/PDF/Tesla"),
+                os.path.expanduser("~/Library/Mobile Documents/com~apple~CloudDocs/PDF/Tesla"),
+                os.path.join(self.repo_root, "Tessie", "invoices"),
+                "/Volumes/TESLADRIVE 1/Tessie/invoices",
+                os.path.join(self.icloud_dir, "invoices"),
+                os.path.expanduser("~/Documents/Tesla/Invoices"),
+                os.path.expanduser("~/Downloads/Tesla Invoices"),
+                os.path.expanduser("~/Downloads/Invoices")
+            ]
+            seen_inv_dirs = set()
+            for d in candidates_invoices:
+                try:
+                    if d and os.path.isdir(d):
+                        real_d = os.path.abspath(os.path.realpath(d))
+                        if real_d not in seen_inv_dirs:
+                            seen_inv_dirs.add(real_d)
+                            self.invoice_dirs.append(real_d)
+                except Exception:
+                    pass
 
         # 4. Load Registries
         self.superchargers = self.load_json_registry("superchargers.json")
@@ -788,6 +962,7 @@ class TessieChargingAnalyzer:
 
     def load_invoices(self):
         invoices = []
+        seen_file_paths = set()
         for inv_dir in self.invoice_dirs:
             if not os.path.isdir(inv_dir):
                 continue
@@ -798,6 +973,10 @@ class TessieChargingAnalyzer:
                     ext = os.path.splitext(f)[1].lower()
                     if ext in [".pdf", ".csv", ".tsv", ".txt"]:
                         fpath = os.path.join(root, f)
+                        real_fpath = os.path.realpath(fpath)
+                        if real_fpath in seen_file_paths:
+                            continue
+                        seen_file_paths.add(real_fpath)
                         res = TeslaInvoiceParser.parse_invoice_file(fpath)
                         if isinstance(res, list):
                             for r in res:
@@ -867,13 +1046,24 @@ class TessieChargingAnalyzer:
                 if not inv_dt or not dt:
                     continue
                 
-                time_diff = abs((dt - inv_dt).total_seconds()) / 60.0
-                if time_diff <= self.tolerance_mins:
-                    if self.match_location(inv.get("location_raw"), inv.get("network"), charge):
-                        if time_diff < min_time_diff:
-                            min_time_diff = time_diff
-                            best_inv_idx = i_idx
-                            best_inv = inv
+                has_exact_time = not (inv_dt.hour == 0 and inv_dt.minute == 0 and inv_dt.second == 0)
+                if has_exact_time:
+                    time_diff = abs((dt - inv_dt).total_seconds()) / 60.0
+                    if time_diff <= self.tolerance_mins:
+                        if self.match_location(inv.get("location_raw"), inv.get("network"), charge):
+                            if time_diff < min_time_diff:
+                                min_time_diff = time_diff
+                                best_inv_idx = i_idx
+                                best_inv = inv
+                else:
+                    # Invoice has calendar date only
+                    if dt.date() == inv_dt.date():
+                        if self.match_location(inv.get("location_raw"), inv.get("network"), charge):
+                            inv_cost = inv.get("total_cost")
+                            if inv_cost is None or abs(charge["cost"] - inv_cost) < 0.50:
+                                best_inv_idx = i_idx
+                                best_inv = inv
+                                break
 
             dispenser_kwh = charge["energy_used_kwh"]
             battery_kwh = charge["energy_added_kwh"]
@@ -1390,6 +1580,197 @@ class TessieChargingAnalyzer:
                     })
         print(f"{C_GREEN}Successfully exported {len(sessions)} reconciled records to:{C_RESET} {filepath}")
 
+    def rename_invoices(self, format_pattern=None, dry_run=False, auto_confirm=False):
+        if not self._loaded:
+            self.load_charges()
+            self.load_invoices()
+            self.reconcile()
+
+        widths = [4, 48, 78, 14, 18, 16]
+        box_w = sum(widths) + len(widths) + 1
+
+        print()
+        print(f"{C_BOLD}{C_CYAN}╔{'═' * (box_w - 2)}╗{C_RESET}")
+        print(f"{C_BOLD}{C_CYAN}║ {pad_display('⚡ TESLA SUPERCHARGER INVOICE RENAMER ⚡', box_w - 4, 'center')} ║{C_RESET}")
+        print(f"{C_BOLD}{C_CYAN}╚{'═' * (box_w - 2)}╝{C_RESET}")
+        print()
+
+        # Discover all PDF files in self.invoice_dirs with path deduplication
+        pdf_files = []
+        seen_pdf_paths = set()
+        for inv_dir in self.invoice_dirs:
+            if not os.path.isdir(inv_dir):
+                continue
+            for root, _, files in os.walk(inv_dir):
+                for f in sorted(files):
+                    if f.startswith(".") or not f.lower().endswith(".pdf"):
+                        continue
+                    full_p = os.path.join(root, f)
+                    real_p = os.path.realpath(full_p)
+                    if real_p in seen_pdf_paths:
+                        continue
+                    seen_pdf_paths.add(real_p)
+                    pdf_files.append(full_p)
+
+        if not pdf_files:
+            print(f"{C_YELLOW}No PDF invoice files found in configured directories.{C_RESET}\n")
+            return
+
+        rename_plan = []
+        for fpath in pdf_files:
+            fname = os.path.basename(fpath)
+            parsed = TeslaInvoiceParser.parse_invoice_file(fpath)
+            if not parsed or not isinstance(parsed, dict):
+                continue
+
+            inv_num = parsed.get("invoice_number") or "INV"
+            inv_date = parsed.get("date")
+            inv_cost = parsed.get("total_cost")
+            inv_loc = parsed.get("location_raw", "")
+
+            # Match against Tessie charging sessions
+            matched_session = None
+            for s in self.reconciled_sessions:
+                s_dt = s.get("datetime")
+                if not s_dt or not inv_date:
+                    continue
+                if s.get("invoice_number") and s.get("invoice_number") == inv_num:
+                    matched_session = s
+                    break
+                if s_dt.date() == inv_date.date():
+                    if inv_cost is None or abs(s.get("tessie_cost", 0) - inv_cost) < 0.10:
+                        matched_session = s
+                        break
+
+            # Format timestamp
+            if matched_session and matched_session.get("datetime"):
+                dt_str = matched_session["datetime"].strftime("%Y%m%d%H%M")
+            elif inv_date:
+                if inv_date.hour != 0 or inv_date.minute != 0:
+                    dt_str = inv_date.strftime("%Y%m%d%H%M")
+                else:
+                    dt_str = inv_date.strftime("%Y%m%d0000")
+            else:
+                dt_str = datetime.now().strftime("%Y%m%d0000")
+
+            # Clean location string
+            loc_str = ""
+            if matched_session and matched_session.get("place_name"):
+                loc_str = matched_session["place_name"]
+            elif inv_loc:
+                loc_str = inv_loc
+
+            clean_loc = loc_str.split(",")[0].strip()
+            clean_loc = clean_loc.split(" - ")[0].strip()
+            clean_loc = re.sub(r"[^A-Za-z0-9]+", "_", clean_loc).strip("_")
+            if not clean_loc:
+                clean_loc = "Supercharger"
+
+            # Apply naming pattern
+            if format_pattern:
+                target_fname = format_pattern.format(
+                    timestamp=dt_str,
+                    YYYYMMDDHHMM=dt_str,
+                    invoice_num=inv_num,
+                    invoice=inv_num,
+                    location=clean_loc,
+                    Location=clean_loc
+                )
+            else:
+                target_fname = f"Tesla_Supercharging_{dt_str}_{inv_num}_{clean_loc}.pdf"
+
+            if not target_fname.lower().endswith(".pdf"):
+                target_fname += ".pdf"
+
+            target_path = os.path.join(os.path.dirname(fpath), target_fname)
+            already_named = (fname == target_fname)
+
+            rename_plan.append({
+                "old_path": fpath,
+                "old_name": fname,
+                "new_path": target_path,
+                "new_name": target_fname,
+                "invoice_number": inv_num,
+                "date_str": dt_str,
+                "location": clean_loc,
+                "cost": inv_cost,
+                "already_named": already_named
+            })
+
+        # Print preview table
+        widths = [4, 48, 70, 14, 18, 16]
+        top_b = "┌" + "┬".join("─" * w for w in widths) + "┐"
+        print(top_b)
+        h = "│" + "│".join([
+            pad_display(" #", widths[0]),
+            pad_display(" Current Filename", widths[1]),
+            pad_display(" Proposed Target Filename", widths[2]),
+            pad_display(" Date / Time", widths[3]),
+            pad_display(" Invoice #", widths[4]),
+            pad_display(" Status", widths[5])
+        ]) + "│"
+        print(h)
+        mid_b = "├" + "┼".join("─" * w for w in widths) + "┤"
+        print(mid_b)
+
+        to_rename_count = 0
+        for idx, item in enumerate(rename_plan, 1):
+            if item["already_named"]:
+                st_badge = f"{C_GREEN}ALREADY NAMED{C_RESET}"
+            else:
+                st_badge = f"{C_CYAN}RENAME ➔{C_RESET}"
+                to_rename_count += 1
+
+            old_disp = item["old_name"] if len(item["old_name"]) <= widths[1] - 2 else item["old_name"][:widths[1] - 5] + "..."
+            new_disp = item["new_name"] if len(item["new_name"]) <= widths[2] - 2 else item["new_name"][:widths[2] - 5] + "..."
+            inv_disp = item["invoice_number"] if len(item["invoice_number"]) <= widths[4] - 2 else item["invoice_number"][:widths[4] - 5] + "..."
+
+            row_str = "│" + "│".join([
+                pad_display(f" {idx}", widths[0]),
+                pad_display(f" {old_disp}", widths[1]),
+                pad_display(f" {new_disp}", widths[2]),
+                pad_display(f" {item['date_str']}", widths[3]),
+                pad_display(f" {inv_disp}", widths[4]),
+                pad_display(f" {st_badge}", widths[5])
+            ]) + "│"
+            print(row_str)
+
+        bot_b = "└" + "┴".join("─" * w for w in widths) + "┘"
+        print(bot_b)
+        print()
+
+        if to_rename_count == 0:
+            print(f"{C_GREEN}All {len(rename_plan)} invoice files are already correctly named!{C_RESET}\n")
+            return
+
+        if dry_run:
+            print(f"{C_YELLOW}[DRY RUN]{C_RESET} {to_rename_count} files would be renamed. No files were modified.\n")
+            return
+
+        if not auto_confirm:
+            try:
+                resp = input(f"Proceed with renaming {to_rename_count} files? [y/N]: ").strip().lower()
+                if resp not in ["y", "yes"]:
+                    print(f"{C_YELLOW}Renaming cancelled by user.{C_RESET}\n")
+                    return
+            except (KeyboardInterrupt, EOFError):
+                print(f"\n{C_YELLOW}Renaming cancelled.{C_RESET}\n")
+                return
+
+        # Execute renaming
+        success_count = 0
+        for item in rename_plan:
+            if item["already_named"]:
+                continue
+            try:
+                os.rename(item["old_path"], item["new_path"])
+                print(f"  {C_GREEN}✔ Renamed:{C_RESET} {item['old_name']} ➔ {item['new_name']}")
+                success_count += 1
+            except Exception as e:
+                print(f"  {C_RED}❌ Failed to rename {item['old_name']}:{C_RESET} {e}")
+
+        print(f"\n{C_GREEN}Successfully renamed {success_count}/{to_rename_count} invoice files!{C_RESET}\n")
+
     def sync_to_external_drive(self):
         ext_drive = self.config.get("external_drive_path") or "/Volumes/TESLADRIVE 1"
         if not os.path.isdir(ext_drive):
@@ -1449,6 +1830,10 @@ def main():
     parser.add_argument("--inspect", help="Deep-dive inspect a specific session by Charge # or Date")
     parser.add_argument("--list-chargers", action="store_true", help="List all registered Superchargers and 3rd-Party charging stations")
     parser.add_argument("--consolidate", action="store_true", help="Consolidate all charges into charges_master.csv")
+    parser.add_argument("--rename-invoices", "--rename", action="store_true", help="Rename invoice PDFs to Tesla_Supercharging_YYYYMMDDHHMM_<invoice_num>_<Location>.pdf")
+    parser.add_argument("--rename-format", help="Custom renaming template (e.g. 'Tesla_Supercharging_{timestamp}_{invoice_num}_{location}.pdf')")
+    parser.add_argument("--dry-run", action="store_true", help="Preview renaming without modifying files on disk")
+    parser.add_argument("--yes", "-y", action="store_true", help="Automatically confirm renaming without interactive prompt")
     parser.add_argument("--export", help="Export reconciled results to a CSV or JSON file")
     parser.add_argument("--sync", action="store_true", help="Sync tools and registries to external drive")
     parser.add_argument("--tolerance-mins", type=int, default=None, help="Invoice matching time tolerance in minutes (default: 45 or config)")
@@ -1472,6 +1857,14 @@ def main():
 
     if args.sync:
         analyzer.sync_to_external_drive()
+        return
+
+    if args.rename_invoices:
+        analyzer.rename_invoices(
+            format_pattern=args.rename_format,
+            dry_run=args.dry_run,
+            auto_confirm=args.yes
+        )
         return
 
     reconciled = analyzer.reconcile()
