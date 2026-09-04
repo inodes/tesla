@@ -1827,18 +1827,21 @@ class TessieChargingAnalyzer:
         for ext_drive in ext_drives:
             print(f"{C_CYAN}Synchronizing Tools and Tessie files to {ext_drive}...{C_RESET}")
             
-            src_script = os.path.join(self.script_dir, "tessie_charging_analyzer.py")
-            dst_script = os.path.join(ext_drive, "Tools", "tessie_charging_analyzer.py")
-            try:
-                os.makedirs(os.path.join(ext_drive, "Tools"), exist_ok=True)
-                if os.path.abspath(src_script) != os.path.abspath(dst_script):
-                    with open(src_script, "rb") as fsrc, open(dst_script, "wb") as fdst:
-                        fdst.write(fsrc.read())
-                    print(f"  {C_GREEN}✔ Copied{C_RESET} tessie_charging_analyzer.py ➔ {dst_script}")
-                else:
-                    print(f"  {C_GREEN}✔ Script already on external drive.{C_RESET}")
-            except Exception as e:
-                print(f"  {C_RED}❌ Failed to copy script to {ext_drive}:{C_RESET} {e}")
+            tool_scripts = ["find_tesla_chargers.py", "tessie_analyzer.py", "tessie_charging_analyzer.py", "tessie_renamer.py"]
+            for script_name in tool_scripts:
+                src_script = os.path.join(self.script_dir, script_name)
+                if os.path.isfile(src_script):
+                    dst_script = os.path.join(ext_drive, "Tools", script_name)
+                    try:
+                        os.makedirs(os.path.join(ext_drive, "Tools"), exist_ok=True)
+                        if os.path.abspath(src_script) != os.path.abspath(dst_script):
+                            with open(src_script, "rb") as fsrc, open(dst_script, "wb") as fdst:
+                                fdst.write(fsrc.read())
+                            print(f"  {C_GREEN}✔ Copied{C_RESET} {script_name} ➔ {dst_script}")
+                        else:
+                            print(f"  {C_GREEN}✔ {script_name} already on external drive.{C_RESET}")
+                    except Exception as e:
+                        print(f"  {C_RED}❌ Failed to copy {script_name} to {ext_drive}:{C_RESET} {e}")
 
             for fname in ["superchargers.json", "charging.json", "places.json", "config.example.json"]:
                 src_f = os.path.join(self.repo_root, "Tessie", fname)
