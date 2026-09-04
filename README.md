@@ -25,6 +25,7 @@ tesla/
 ├── Tools/                        # 🛠️ Executable scripts for multi-drive deployment
 │   ├── tesla_sync.sh             # Multi-drive sync, audit & prune engine
 │   ├── tessie_analyzer.py        # Tessie drive analyzer & video linking
+│   ├── tessie_charging_analyzer.py # Charging reconciliation & invoice parser
 │   ├── tessie_renamer.py         # Tessie raw CSV categorization utility
 │   └── run_exportdash.sh         # Local web player launcher
 │
@@ -55,9 +56,21 @@ tesla/
 # Analyze trips and link entry/exit times to TeslaCam video clips
 ./Tools/tessie_analyzer.py --since 2026-09-01
 ```
-👉 *See [Tessie/README.md](Tessie/README.md) for full documentation on spatial geofencing, custom nicknames, and [Tessie referral bonuses (free trial & discounts)](https://share.tessie.com/bGRu5q9S2kB).*
+### 3. Charging & Supercharger Invoice Reconciliation
+```bash
+# Reconcile Supercharger invoices against Tessie charging sessions
+./Tools/tessie_charging_analyzer.py --superchargers
 
-### 3. Deploy Scripts to External Drives
+# Reconcile 3rd-Party Fast chargers (Chargefox, Evie, BP Pulse, Jolt)
+./Tools/tessie_charging_analyzer.py --third-party
+
+# Inspect charging efficiency loss and TOU tariff rate for a session
+./Tools/tessie_charging_analyzer.py --inspect 142
+```
+👉 *See [Tessie/README.md](Tessie/README.md) for full documentation on charging reconciliation, invoices, and tariffs.*
+
+### 4. Deploy Scripts to External Drives
+
 ```bash
 # Automatically install/update all tools to /Volumes/*/Tools/ across all mounted drives
 ./Tools/tesla_sync.sh --install-tools
