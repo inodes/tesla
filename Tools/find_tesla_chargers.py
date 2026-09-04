@@ -245,6 +245,18 @@ AU_STATE_MAP = {
 
 AU_STATE_REVERSE_MAP = {v.lower(): k for k, v in AU_STATE_MAP.items()}
 
+# Approximate bounding boxes for Australian state/territory coordinate lookup
+AU_STATE_BOUNDS = {
+    "ACT": {"lat": (-35.92, -35.12), "lon": (148.76, 149.40)},
+    "NSW": {"lat": (-37.51, -28.16), "lon": (140.99, 153.64)},
+    "VIC": {"lat": (-39.16, -33.98), "lon": (140.96, 149.98)},
+    "QLD": {"lat": (-29.18, -10.05), "lon": (137.99, 153.55)},
+    "SA":  {"lat": (-38.06, -25.99), "lon": (128.99, 141.01)},
+    "WA":  {"lat": (-35.13, -13.69), "lon": (112.92, 129.01)},
+    "TAS": {"lat": (-43.64, -39.57), "lon": (143.83, 148.51)},
+    "NT":  {"lat": (-26.01, -10.97), "lon": (128.99, 138.01)},
+}
+
 # -----------------------------------------------------------------------------
 # Normalization Helpers
 # -----------------------------------------------------------------------------
@@ -321,6 +333,26 @@ def extract_au_state_from_text(title: str, address_str: str = "") -> str:
             return "NT"
             
     return "Other"
+
+def state_from_coords(lat: float, lon: float) -> str:
+    """Determines Australian state/territory from GPS coordinates using bounding boxes.
+    Returns state code (e.g. 'NSW') or None if coordinates are outside Australia."""
+    if lat is None or lon is None:
+        return None
+    try:
+        lat, lon = float(lat), float(lon)
+    except (ValueError, TypeError):
+        return None
+    # Check ACT first — it sits inside NSW's bounding box
+    acb = AU_STATE_BOUNDS["ACT"]
+    if acb["lat"][0] <= lat <= acb["lat"][1] and acb["lon"][0] <= lon <= acb["lon"][1]:
+        return "ACT"
+    for state, bounds in AU_STATE_BOUNDS.items():
+        if state == "ACT":
+            continue
+        if bounds["lat"][0] <= lat <= bounds["lat"][1] and bounds["lon"][0] <= lon <= bounds["lon"][1]:
+            return state
+    return None
 
 def merge_tou_intervals(intervals: list) -> list:
     """Merges consecutive TOU rate periods with identical pricing into clean 24h intervals."""
@@ -802,6 +834,7 @@ class TeslaChargerExplorer:
         print(f"   {C_DIM}{target_url}{C_RESET}")
 
         stations = []
+        next_data_payload = None
         with sync_playwright() as p:
             browser = p.webkit.launch(headless=self.headless)
             context = browser.new_context(
@@ -815,36 +848,111 @@ class TeslaChargerExplorer:
             except Exception as e:
                 print(f"{C_YELLOW}⚠ Network timeout waiting for idle, parsing current DOM...{C_RESET}")
 
-            # Extract location links from page
-            links = page.eval_on_selector_all(
-                'a[href*="/findus/location/"]',
-                'elements => elements.map(e => ({title: e.textContent.trim(), href: e.href}))'
-            )
+            # Primary: extract structured data from __NEXT_DATA__ SSR payload
+            try:
+                raw_next = page.eval_on_selector("#__NEXT_DATA__", "e => e.textContent")
+                if raw_next:
+                    next_data_payload = json.loads(raw_next)
+            except Exception:
+                pass
+
+            # Fallback: extract location links from page DOM
+            links = []
+            if not next_data_payload:
+                links = page.eval_on_selector_all(
+                    'a[href*="/findus/location/"]',
+                    'elements => elements.map(e => ({title: e.textContent.trim(), href: e.href}))'
+                )
+
             browser.close()
 
-        seen_hrefs = set()
-        for idx, item in enumerate(links, 1):
-            title = item.get("title", "").strip()
-            href = item.get("href", "").strip()
-            if not title or not href or href in seen_hrefs:
-                continue
-            seen_hrefs.add(href)
-            
-            # Extract Location ID / Slug from URL
-            slug = href.split("/")[-1].split("?")[0]
-            state = extract_au_state_from_text(title)
-            short_name = clean_station_short_name(title)
-            
-            stations.append({
-                "index": len(stations) + 1,
-                "title": title,
-                "short_name": short_name,
-                "state": state,
-                "country": country_slug.replace("+", " "),
-                "type": "supercharger" if charger_type == "superchargers" else "destination_charger",
-                "slug": slug,
-                "url": href
-            })
+        # Parse __NEXT_DATA__ if available (richer data: lat/lon, display name, slug)
+        if next_data_payload:
+            nd_entries = next_data_payload.get("props", {}).get("pageProps", {}).get("data", [])
+            is_au = country_slug.replace("+", " ").lower() in ["australia"]
+            skipped_foreign = 0
+
+            for entry in nd_entries:
+                lat = entry.get("latitude")
+                lon = entry.get("longitude")
+                slug = entry.get("location_url_slug", "")
+                src = entry.get("_source", {})
+                mkt = src.get("marketing", {})
+
+                # Resolve display name: prefer en-AU translation, fall back to display_name
+                translations = mkt.get("translations", {})
+                name_trans = translations.get("customerFacingName", {})
+                title = name_trans.get("en-AU") or name_trans.get("en-US") or mkt.get("display_name", "")
+
+                # Also check function-level translations for a better en-AU name
+                for func in src.get("functions", []):
+                    func_trans = func.get("translations", {}).get("customerFacingName", {})
+                    en_au = func_trans.get("en-AU")
+                    if en_au:
+                        title = en_au
+                        break
+
+                title = title.strip().rstrip(" -")
+                if not title:
+                    continue
+
+                # Determine state: text-based first, then coordinate fallback
+                state = extract_au_state_from_text(title)
+                if state == "Other" and lat is not None and lon is not None:
+                    coord_state = state_from_coords(lat, lon)
+                    if coord_state:
+                        state = coord_state
+                    elif is_au:
+                        # Coordinates outside AU bounding boxes — likely foreign entry (e.g. NZ)
+                        skipped_foreign += 1
+                        continue
+
+                short_name = clean_station_short_name(title)
+                loc_type = charger_type.rstrip("s")  # 'superchargers' -> 'supercharger'
+                if loc_type == "charger":
+                    loc_type = "destination_charger"
+
+                url = f"https://www.tesla.com/en_AU/findus/location/{loc_type.replace('destination_', '')}/{slug}"
+
+                stations.append({
+                    "index": len(stations) + 1,
+                    "title": title,
+                    "short_name": short_name,
+                    "state": state,
+                    "country": country_slug.replace("+", " "),
+                    "type": loc_type,
+                    "slug": slug,
+                    "url": url,
+                    "_lat": lat,
+                    "_lon": lon,
+                })
+
+            if skipped_foreign:
+                print(f"{C_DIM}   (Skipped {skipped_foreign} non-{country_slug.replace('+', ' ')} entry/entries){C_RESET}")
+        else:
+            # Fallback: parse from DOM links (no lat/lon available)
+            seen_hrefs = set()
+            for idx, item in enumerate(links, 1):
+                title = item.get("title", "").strip()
+                href = item.get("href", "").strip()
+                if not title or not href or href in seen_hrefs:
+                    continue
+                seen_hrefs.add(href)
+
+                slug = href.split("/")[-1].split("?")[0]
+                state = extract_au_state_from_text(title)
+                short_name = clean_station_short_name(title)
+
+                stations.append({
+                    "index": len(stations) + 1,
+                    "title": title,
+                    "short_name": short_name,
+                    "state": state,
+                    "country": country_slug.replace("+", " "),
+                    "type": "supercharger" if charger_type == "superchargers" else "destination_charger",
+                    "slug": slug,
+                    "url": href
+                })
 
         print(f"{C_GREEN}✔ Discovered {len(stations)} {type_label} in {country_slug.replace('+', ' ')}.{C_RESET}\n")
         return stations
