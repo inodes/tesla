@@ -36,8 +36,8 @@ TESSIE_DIR = os.path.join(REPO_ROOT, "Tessie")
 PLACES_JSON_PATH = os.path.join(TESSIE_DIR, "places.json")
 CONFIG_JSON_PATH = os.path.join(TESSIE_DIR, "config.json")
 DRIVES_MASTER_PATH = os.path.join(TESSIE_DIR, "drives_master.csv")
-CHARGING_JSON_PATH = os.path.join(TESSIE_DIR, "charging.json")
-SUPERCHARGERS_JSON_PATH = os.path.join(TESSIE_DIR, "superchargers.json")
+CHARGING_JSON_PATH = os.path.join(TESSIE_DIR, "tesla_chargers.json") if os.path.isfile(os.path.join(TESSIE_DIR, "tesla_chargers.json")) else os.path.join(TESSIE_DIR, "charging.json")
+SUPERCHARGERS_JSON_PATH = os.path.join(TESSIE_DIR, "tesla_superchargers.json") if os.path.isfile(os.path.join(TESSIE_DIR, "tesla_superchargers.json")) else os.path.join(TESSIE_DIR, "superchargers.json")
 
 # ---------------------------------------------------------------------------
 # Unicode & Terminal Display Utilities
