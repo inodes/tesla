@@ -5,6 +5,7 @@
   "tessie_directory": "~/Library/Mobile Documents/com~apple~CloudDocs/Tesla/Tessie",
   "invoices_directory": "~/iCloud/PDF/Tesla/Supercharging",
   "external_drive_path": null,
+  "vin": "YOUR_VIN_HERE",
   "reconciliation": {
     "tolerance_mins": 45,
     "tolerance_kwh": 5.0,
