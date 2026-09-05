@@ -1926,29 +1926,7 @@ class TeslaChargerExplorer:
             print(f"     Failed stations:     {', '.join(failed_stations[:10])}{' ...' if len(failed_stations) > 10 else ''}")
         print(f"{C_BOLD}{'='*80}{C_RESET}\n")
 
-        if sync_external:
-            ext_drives = find_mounted_tesla_volumes()
-            if ext_drives:
-                print(f"{C_CYAN}🔄 Syncing updated registries across {len(ext_drives)} mounted TESLADRIVE volume(s)...{C_RESET}")
-                for ext_drive in ext_drives:
-                    try:
-                        for reg_file in [
-                            "tesla_superchargers.json", "tesla_superchargers_archived.json",
-                            "tesla_chargers.json", "tesla_chargers_archived.json",
-                            "places.json", "state_boundaries.json",
-                            # Legacy fallbacks
-                            "superchargers.json", "superchargers_archived.json", "charging.json", "charging_archived.json"
-                        ]:
-                            src = os.path.join(self.repo_root, "Tessie", reg_file)
-                            if os.path.isfile(src):
-                                dst = os.path.join(ext_drive, "Tessie", reg_file)
-                                os.makedirs(os.path.dirname(dst), exist_ok=True)
-                                shutil.copyfile(src, dst)
-                        print(f"  {C_GREEN}✔ Synced to:{C_RESET} {ext_drive}")
-                    except Exception as e:
-                        print(f"  {C_RED}❌ Failed syncing to {ext_drive}:{C_RESET} {e}")
-            else:
-                print(f"{C_YELLOW}⚠ No mounted TESLADRIVE volumes detected under /Volumes. Registry saved locally.{C_RESET}")
+        return
 
     def _detect_record_changes(self, existing: dict, new: dict) -> bool:
         """Detects whether hardware, accessibility, or pricing/tariffs differ between existing and new records."""
@@ -2209,24 +2187,6 @@ class TeslaChargerExplorer:
             except Exception as e:
                 print(f"  {C_RED}❌ Failed writing archive {archive_fpath}:{C_RESET} {e}")
                 return "ERROR"
-
-        if sync_external:
-            ext_drives = find_mounted_tesla_volumes()
-            if not ext_drives:
-                print(f"  {C_YELLOW}⚠ No mounted TESLADRIVE volumes detected under /Volumes. Skipping external sync.{C_RESET}")
-            for ext_drive in ext_drives:
-                ext_sc = os.path.join(ext_drive, "Tessie", reg_name)
-                ext_arch = os.path.join(ext_drive, "Tessie", arch_name)
-                try:
-                    os.makedirs(os.path.dirname(ext_sc), exist_ok=True)
-                    with open(ext_sc, "w", encoding="utf-8") as f:
-                        json.dump(active_reg, f, indent=2, ensure_ascii=False)
-                    if changes_detected:
-                        with open(ext_arch, "w", encoding="utf-8") as f:
-                            json.dump(archive_reg, f, indent=2, ensure_ascii=False)
-                    print(f"  {C_GREEN}✔ Synced updated registry & archives to:{C_RESET} {ext_drive}")
-                except Exception as e:
-                    print(f"  {C_RED}❌ Failed to sync to external drive {ext_drive}:{C_RESET} {e}")
 
         return result_status
 

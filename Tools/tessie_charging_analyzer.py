@@ -2594,51 +2594,7 @@ class TessieChargingAnalyzer:
         print(f"\n{C_GREEN}Successfully renamed {success_count}/{to_rename_count} invoice files!{C_RESET}\n")
 
     def sync_to_external_drive(self):
-        cfg_drive = self.config.get("external_drive_path")
-        ext_drives = [cfg_drive] if cfg_drive and os.path.isdir(cfg_drive) else find_mounted_tesla_volumes()
-        if not ext_drives:
-            print(f"{C_YELLOW}No mounted TESLADRIVE external volumes detected under /Volumes. Skipping sync.{C_RESET}")
-            return
-
-        for ext_drive in ext_drives:
-            print(f"{C_CYAN}Synchronizing Tools and Tessie files to {ext_drive}...{C_RESET}")
-            
-            tool_scripts = ["find_tesla_chargers.py", "tessie_analyzer.py", "tessie_charging_analyzer.py", "tessie_renamer.py", "tessie_places.py"]
-            for script_name in tool_scripts:
-                src_script = os.path.join(self.script_dir, script_name)
-                if os.path.isfile(src_script):
-                    dst_script = os.path.join(ext_drive, "Tools", script_name)
-                    try:
-                        os.makedirs(os.path.join(ext_drive, "Tools"), exist_ok=True)
-                        if os.path.abspath(src_script) != os.path.abspath(dst_script):
-                            with open(src_script, "rb") as fsrc, open(dst_script, "wb") as fdst:
-                                fdst.write(fsrc.read())
-                            print(f"  {C_GREEN}✔ Copied{C_RESET} {script_name} ➔ {dst_script}")
-                        else:
-                            print(f"  {C_GREEN}✔ {script_name} already on external drive.{C_RESET}")
-                    except Exception as e:
-                        print(f"  {C_RED}❌ Failed to copy {script_name} to {ext_drive}:{C_RESET} {e}")
-
-            for fname in [
-                "tesla_superchargers.json", "tesla_superchargers_archived.json",
-                "tesla_chargers.json", "tesla_chargers_archived.json",
-                "places.json", "state_boundaries.json", "config.example.json",
-                # Legacy fallbacks
-                "superchargers.json", "charging.json"
-            ]:
-                src_f = os.path.join(self.repo_root, "Tessie", fname)
-                if os.path.isfile(src_f):
-                    dst_f = os.path.join(ext_drive, "Tessie", fname)
-                    try:
-                        os.makedirs(os.path.join(ext_drive, "Tessie"), exist_ok=True)
-                        if os.path.abspath(src_f) != os.path.abspath(dst_f):
-                            with open(src_f, "rb") as fsrc, open(dst_f, "wb") as fdst:
-                                fdst.write(fsrc.read())
-                            print(f"  {C_GREEN}✔ Copied{C_RESET} {fname} ➔ {dst_f}")
-                        else:
-                            print(f"  {C_GREEN}✔ {fname} already on external drive.{C_RESET}")
-                    except Exception as e:
-                        print(f"  {C_RED}❌ Failed to copy {fname} to {ext_drive}:{C_RESET} {e}")
+        print(f"{C_YELLOW}ℹ️  Tessie data and charging tooling run directly from the repository and iCloud. Mounted TESLADRIVE volumes are reserved exclusively for dashcam/TeslaCam media.{C_RESET}")
 
 # -----------------------------------------------------------------------------
 # CLI Entrypoint
