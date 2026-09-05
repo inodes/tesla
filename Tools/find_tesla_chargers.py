@@ -2462,69 +2462,179 @@ def interactive_station_selector_loop(stations: list, explorer: TeslaChargerExpl
 # Interactive Drill-Down Navigation Menu
 # -----------------------------------------------------------------------------
 
-def interactive_drilldown(explorer: TeslaChargerExplorer):
+COUNTRY_ALIASES = {
+    "au": "Australia",
+    "aus": "Australia",
+    "australia": "Australia",
+    "nz": "New Zealand",
+    "new zealand": "New Zealand",
+    "us": "United States",
+    "usa": "United States",
+    "united states": "United States",
+    "uk": "United Kingdom",
+    "united kingdom": "United Kingdom",
+    "great britain": "United Kingdom",
+    "ca": "Canada",
+    "canada": "Canada",
+    "jp": "Japan",
+    "japan": "Japan",
+    "cn": "China Mainland",
+    "china": "China Mainland",
+    "hk": "Hong Kong",
+    "hong kong": "Hong Kong",
+    "de": "Germany",
+    "germany": "Germany",
+    "fr": "France",
+    "france": "France",
+    "it": "Italy",
+    "italy": "Italy",
+    "es": "Spain",
+    "spain": "Spain",
+    "nl": "Netherlands",
+    "netherlands": "Netherlands",
+    "no": "Norway",
+    "norway": "Norway",
+    "se": "Sweden",
+    "sweden": "Sweden",
+}
+
+def resolve_country_and_region(country_input: Optional[str] = None, region_input: Optional[str] = None) -> Tuple[Optional[str], Optional[str], Optional[dict]]:
+    """
+    Resolves canonical country name, region key, and region dict from inputs.
+    Returns: (resolved_country, resolved_region_key, region_dict)
+    """
+    resolved_country = None
+    resolved_region_key = None
+    resolved_region_dict = None
+
+    if country_input:
+        c_norm = country_input.strip().lower()
+        canonical_c = COUNTRY_ALIASES.get(c_norm)
+
+        found = False
+        for r_key, r_info in REGIONS_MAP.items():
+            for country in r_info["countries"]:
+                if canonical_c and country.lower() == canonical_c.lower():
+                    resolved_country = country
+                    resolved_region_key = r_key
+                    resolved_region_dict = r_info
+                    found = True
+                    break
+                elif not canonical_c and (country.lower() == c_norm or c_norm in country.lower()):
+                    resolved_country = country
+                    resolved_region_key = r_key
+                    resolved_region_dict = r_info
+                    found = True
+                    break
+            if found:
+                break
+
+        if not resolved_country:
+            resolved_country = canonical_c or country_input.strip()
+
+    if not resolved_region_dict and region_input:
+        r_norm = region_input.strip().lower()
+        for r_key, r_info in REGIONS_MAP.items():
+            if (r_key.lower() == r_norm or 
+                r_info["name"].lower() == r_norm or 
+                r_norm in r_info.get("aliases", [])):
+                resolved_region_key = r_key
+                resolved_region_dict = r_info
+                break
+
+    return resolved_country, resolved_region_key, resolved_region_dict
+
+def interactive_drilldown(
+    explorer: TeslaChargerExplorer,
+    default_region: Optional[str] = None,
+    default_country: Optional[str] = None,
+    default_type: Optional[str] = None,
+    default_state: Optional[str] = None,
+):
     """Provides interactive terminal navigation: Region ➔ Country ➔ Type ➔ State ➔ Station ➔ Scrape."""
     print(f"\n{C_BOLD}{'='*80}{C_RESET}")
     print(f"{C_CYAN}{C_BOLD}               ⚡ TESLA CHARGER HIERARCHICAL EXPLORER ⚡{C_RESET}")
     print(f"{C_BOLD}{'='*80}{C_RESET}\n")
 
-    # Step 1: Select Region
+    res_country, res_r_key, res_r_info = resolve_country_and_region(default_country, default_region)
+
+    # Step 1: Select Region (skip if resolved)
     region_keys = list(REGIONS_MAP.keys())
-    print(f"{C_BOLD}Select Geographic Region:{C_RESET}")
-    for idx, r_key in enumerate(region_keys, 1):
-        r_info = REGIONS_MAP[r_key]
-        print(f"  [{C_GREEN}{idx}{C_RESET}] {r_info['name']} ({len(r_info['countries'])} countries)")
-    print()
+    if res_r_info:
+        selected_region = res_r_info
+        print(f"📍 Geographic Region: {C_GREEN}{C_BOLD}{selected_region['name']}{C_RESET}")
+    else:
+        print(f"{C_BOLD}Select Geographic Region:{C_RESET}")
+        for idx, r_key in enumerate(region_keys, 1):
+            r_info = REGIONS_MAP[r_key]
+            print(f"  [{C_GREEN}{idx}{C_RESET}] {r_info['name']} ({len(r_info['countries'])} countries)")
+        print()
 
-    try:
-        r_choice = input(f"Enter region [1-{len(region_keys)}, default: 1 (Asia/Pacific)]: ").strip()
-        r_idx = int(r_choice) - 1 if r_choice else 0
-        if r_idx < 0 or r_idx >= len(region_keys):
-            r_idx = 0
-    except (ValueError, KeyboardInterrupt, EOFError):
-        print("\nExiting.")
-        return
+        try:
+            r_choice = input(f"Enter region [1-{len(region_keys)}, default: 1 (Asia/Pacific)]: ").strip()
+            r_idx = int(r_choice) - 1 if r_choice else 0
+            if r_idx < 0 or r_idx >= len(region_keys):
+                r_idx = 0
+        except (ValueError, KeyboardInterrupt, EOFError):
+            print("\nExiting.")
+            return
 
-    selected_region = REGIONS_MAP[region_keys[r_idx]]
-    countries = selected_region["countries"]
+        selected_region = REGIONS_MAP[region_keys[r_idx]]
 
-    # Step 2: Select Country
-    print(f"\n{C_BOLD}Select Country in {selected_region['name']}:{C_RESET}")
-    for idx, c_name in enumerate(countries, 1):
-        print(f"  [{C_GREEN}{idx:2d}{C_RESET}] {c_name}")
-    print()
+    countries = selected_region.get("countries", [])
 
-    try:
-        c_choice = input(f"Enter country [1-{len(countries)}, default: 1 ({countries[0]})]: ").strip()
-        c_idx = int(c_choice) - 1 if c_choice else 0
-        if c_idx < 0 or c_idx >= len(countries):
-            c_idx = 0
-    except (ValueError, KeyboardInterrupt, EOFError):
-        print("\nExiting.")
-        return
+    # Step 2: Select Country (skip if resolved)
+    if res_country:
+        selected_country = res_country
+        print(f"📍 Country:           {C_GREEN}{C_BOLD}{selected_country}{C_RESET}\n")
+    else:
+        print(f"\n{C_BOLD}Select Country in {selected_region['name']}:{C_RESET}")
+        for idx, c_name in enumerate(countries, 1):
+            print(f"  [{C_GREEN}{idx:2d}{C_RESET}] {c_name}")
+        print()
 
-    selected_country = countries[c_idx]
+        try:
+            c_choice = input(f"Enter country [1-{len(countries)}, default: 1 ({countries[0] if countries else 'Australia'})]: ").strip()
+            c_idx = int(c_choice) - 1 if c_choice else 0
+            if c_idx < 0 or c_idx >= len(countries):
+                c_idx = 0
+        except (ValueError, KeyboardInterrupt, EOFError):
+            print("\nExiting.")
+            return
+
+        selected_country = countries[c_idx] if countries else "Australia"
 
     # Step 3: Select Charger Type
-    print(f"\n{C_BOLD}Select Infrastructure Type:{C_RESET}")
-    print(f"  [{C_GREEN}1{C_RESET}] 🔴 Superchargers (V2/V3/V4 DC Fast Charging)")
-    print(f"  [{C_GREEN}2{C_RESET}] 🔌 Destination Charging (Hotels, Resorts, Malls AC)")
-    print(f"  [{C_GREEN}3{C_RESET}] ⚡ All Charging Stations")
-    print()
-
-    try:
-        t_choice = input("Enter option [1-3, default: 1]: ").strip() or "1"
-    except (KeyboardInterrupt, EOFError):
-        print("\nExiting.")
-        return
-
     types_to_fetch = []
-    if t_choice == "2":
-        types_to_fetch = ["chargers"]
-    elif t_choice == "3":
-        types_to_fetch = ["superchargers", "chargers"]
+    if default_type:
+        if default_type in ("superchargers", "sc", "1"):
+            types_to_fetch = ["superchargers"]
+            print(f"⚡ Charger Type:       {C_GREEN}🔴 Superchargers (V2/V3/V4 DC Fast Charging){C_RESET}\n")
+        elif default_type in ("chargers", "dc", "2"):
+            types_to_fetch = ["chargers"]
+            print(f"⚡ Charger Type:       {C_GREEN}🔌 Destination Charging (Hotels, Resorts, Malls AC){C_RESET}\n")
+        else:
+            types_to_fetch = ["superchargers", "chargers"]
+            print(f"⚡ Charger Type:       {C_GREEN}⚡ All Charging Stations{C_RESET}\n")
     else:
-        types_to_fetch = ["superchargers"]
+        print(f"{C_BOLD}Select Infrastructure Type:{C_RESET}")
+        print(f"  [{C_GREEN}1{C_RESET}] 🔴 Superchargers (V2/V3/V4 DC Fast Charging)")
+        print(f"  [{C_GREEN}2{C_RESET}] 🔌 Destination Charging (Hotels, Resorts, Malls AC)")
+        print(f"  [{C_GREEN}3{C_RESET}] ⚡ All Charging Stations")
+        print()
+
+        try:
+            t_choice = input("Enter option [1-3, default: 1]: ").strip() or "1"
+        except (KeyboardInterrupt, EOFError):
+            print("\nExiting.")
+            return
+
+        if t_choice == "2":
+            types_to_fetch = ["chargers"]
+        elif t_choice == "3":
+            types_to_fetch = ["superchargers", "chargers"]
+        else:
+            types_to_fetch = ["superchargers"]
 
     # Fetch Station Lists
     all_stations = []
@@ -2580,6 +2690,17 @@ def interactive_drilldown(explorer: TeslaChargerExplorer):
         if state_key not in grouped:
             grouped[state_key] = []
         grouped[state_key].append(st)
+
+    if default_state:
+        st_state_norm = default_state.strip().upper()
+        filtered_by_state = [
+            st for st in all_stations
+            if st.get("state", "").upper() == st_state_norm or
+               AU_STATE_REVERSE_MAP.get(st.get("state", "").lower()) == st_state_norm
+        ]
+        if filtered_by_state:
+            all_stations = filtered_by_state
+            grouped = {st_state_norm: all_stations}
 
     # Calculate status counts
     new_count = 0
@@ -2805,7 +2926,7 @@ Query & Proximity Examples:
     
     # Discovery & Geographic Flags
     parser.add_argument("--region", help="Geographic Region (e.g. 'Asia/Pacific', 'North America', 'Europe')")
-    parser.add_argument("--country", default="Australia", help="Country name (default: 'Australia')")
+    parser.add_argument("--country", default=None, help="Country name (default: 'Australia' in list mode; interactive mode allows choosing)")
     parser.add_argument("--state", help="State / Territory code (e.g. 'NSW', 'VIC', 'QLD', 'WA', 'SA', 'TAS', 'ACT', 'NT')")
     parser.add_argument("--suburb", help="Filter by suburb name")
     parser.add_argument("-q", "--search", "--query", help="Search term across station names, locations, and addresses")
@@ -2904,7 +3025,7 @@ Query & Proximity Examples:
         scrape_target = target_inspect
         if not scrape_target.startswith("http"):
             c_type = "chargers" if args.dc else "superchargers"
-            cat_stations = explorer.fetch_station_list(country=args.country, charger_type=c_type)
+            cat_stations = explorer.fetch_station_list(country=(args.country or "Australia"), charger_type=c_type)
             cat_matches = [s for s in cat_stations if target_inspect.lower() in s.get("title", "").lower() or target_inspect.lower() in s.get("slug", "").lower()]
             if len(cat_matches) == 1:
                 scrape_target = cat_matches[0]["url"]
@@ -2958,7 +3079,7 @@ Query & Proximity Examples:
 
         all_stations = []
         for c_type in charger_types:
-            st_list = explorer.fetch_station_list(country=args.country, charger_type=c_type)
+            st_list = explorer.fetch_station_list(country=(args.country or "Australia"), charger_type=c_type)
             all_stations.extend(st_list)
 
         sc_reg, dc_reg = explorer.load_active_registries()
@@ -3169,8 +3290,22 @@ Query & Proximity Examples:
         return
 
     # 4. Interactive Mode Fallback
-    if sys.stdin.isatty():
-        interactive_drilldown(explorer)
+    types_choice = None
+    if args.sc and not args.dc:
+        types_choice = "superchargers"
+    elif args.dc and not args.sc:
+        types_choice = "chargers"
+    elif args.all_types or (args.sc and args.dc):
+        types_choice = "all"
+
+    if sys.stdin.isatty() or args.country or args.region:
+        interactive_drilldown(
+            explorer,
+            default_region=args.region,
+            default_country=args.country,
+            default_type=types_choice,
+            default_state=args.state,
+        )
     else:
         parser.print_help()
 
