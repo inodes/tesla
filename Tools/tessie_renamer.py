@@ -39,7 +39,7 @@ def load_config():
         "landing_directory": "~/Downloads",
         "inbox_directory": "~/Library/Mobile Documents/com~apple~CloudDocs/Tesla/Tessie/Inbox",
         "tessie_directory": "~/Library/Mobile Documents/com~apple~CloudDocs/Tesla/Tessie",
-        "invoices_directory": "~/iCloud/PDF/Tesla/Supercharging"
+        "invoices_directory": "~/iCloud/PDF/Tesla/charging_invoices"
     }
     for cfg_p in [CONFIG_JSON_PATH, os.path.join(REPO_ROOT, "config.json")]:
         if os.path.exists(cfg_p):
