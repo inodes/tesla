@@ -242,19 +242,34 @@ def haversine_distance_m(lat1, lon1, lat2, lon2):
 DATE_FORMATS = [
     "%Y-%m-%d %H:%M:%S",
     "%Y-%m-%d %H:%M",
+    "%Y-%m-%d %I:%M:%S %p",
+    "%Y-%m-%d %I:%M %p",
     "%Y-%m-%d",
     "%Y/%m/%d %H:%M:%S",
     "%Y/%m/%d %H:%M",
+    "%Y/%m/%d %I:%M:%S %p",
+    "%Y/%m/%d %I:%M %p",
     "%Y/%m/%d",
     "%d/%m/%Y %H:%M:%S",
     "%d/%m/%Y %H:%M",
+    "%d/%m/%Y %I:%M:%S %p",
+    "%d/%m/%Y %I:%M %p",
     "%d/%m/%Y",
+    "%d-%m-%Y %H:%M:%S",
     "%d-%m-%Y %H:%M",
+    "%d-%m-%Y %I:%M:%S %p",
+    "%d-%m-%Y %I:%M %p",
     "%d-%m-%Y",
     "%Y%m%d",
+    "%d %b %Y %H:%M:%S",
     "%d %b %Y %H:%M",
+    "%d %b %Y %I:%M:%S %p",
+    "%d %b %Y %I:%M %p",
     "%d %b %Y",
+    "%d %B %Y %H:%M:%S",
     "%d %B %Y %H:%M",
+    "%d %B %Y %I:%M:%S %p",
+    "%d %B %Y %I:%M %p",
     "%d %B %Y"
 ]
 
@@ -493,13 +508,13 @@ class TeslaInvoiceParser:
         
         # 1. Invoice Number
         inv_number = ""
-        inv_match = re.search(r"(?:TAX INVOICE[:\s]*|Invoice\s*(?:Number|No\.?|#)[:\s]*)\s*([A-Za-z0-9-]{5,30})", text_clean, re.IGNORECASE)
+        inv_match = re.search(r"(?:TAX INVOICE[:\s]*|Invoice\s*(?:Number|No\.?|#)[:\s]*|Receipt\s*(?:Number|No\.?|#)[:\s]*)\s*([A-Za-z0-9-]{5,30})", text_clean, re.IGNORECASE)
         if inv_match and inv_match.group(1).lower() not in ["tesla", "number", "tax", "motors", "australia"]:
             inv_number = inv_match.group(1).strip()
         
         if not inv_number:
             for idx, line in enumerate(lines):
-                if line.lower() in ["invoice number", "tax invoice:", "tax invoice", "invoice no", "receipt #"]:
+                if line.lower() in ["invoice number", "tax invoice:", "tax invoice", "invoice no", "receipt #", "receipt no.", "receipt no", "receipt number"]:
                     if idx + 1 < len(lines):
                         cand = lines[idx + 1].strip()
                         if len(cand) >= 4 and not any(k in cand.lower() for k in ["date", "tesla", "reference"]):
@@ -515,8 +530,9 @@ class TeslaInvoiceParser:
 
         # 2. Date & Time
         charge_dt = None
+        # Check for Session started / Started at first (most accurate for charging)
         for idx, line in enumerate(lines):
-            if line.lower() in ["invoice date", "date of event", "date:", "date", "session time"]:
+            if line.lower() in ["session started", "started at", "start time", "charge start"]:
                 if idx + 1 < len(lines):
                     d_cand = lines[idx + 1].strip()
                     charge_dt = parse_flexible_date(d_cand)
@@ -524,7 +540,16 @@ class TeslaInvoiceParser:
                         break
 
         if not charge_dt:
-            date_pref_m = re.search(r"(?:Date of Event|Invoice date|Date|Time|Started At|Charge Date|Session Time)[:\s]*([0-9A-Za-z\/\-\.\s:]+?)(?:\s+AEST|\s+AEDT|\s+UTC|\n|$)", text_clean, re.IGNORECASE)
+            for idx, line in enumerate(lines):
+                if line.lower() in ["invoice date", "date of event", "date:", "date", "session time"]:
+                    if idx + 1 < len(lines):
+                        d_cand = lines[idx + 1].strip()
+                        charge_dt = parse_flexible_date(d_cand)
+                        if charge_dt:
+                            break
+
+        if not charge_dt:
+            date_pref_m = re.search(r"(?:Session started|Date of Event|Invoice date|Date|Time|Started At|Charge Date|Session Time)[:\s]*([0-9A-Za-z\/\-\.\s:]+?(?:AM|PM|am|pm)?)(?:\s+AEST|\s+AEDT|\s+UTC|\n|$)", text_clean, re.IGNORECASE)
             if date_pref_m:
                 charge_dt = parse_flexible_date(date_pref_m.group(1).strip())
         
@@ -549,7 +574,7 @@ class TeslaInvoiceParser:
             if line.lower() in ["charging location", "location", "station", "site"]:
                 loc_parts = []
                 for j in range(idx + 1, min(idx + 4, len(lines))):
-                    if not lines[j].startswith(("S/N:", "Vehicle", "Date", "Description", "Sold To", "Energy", "Total")):
+                    if not lines[j].startswith(("S/N:", "Vehicle", "Date", "Description", "Sold To", "Energy", "Total", "Charge Point", "Connector", "Session")):
                         loc_parts.append(lines[j])
                 if loc_parts:
                     location_name = ", ".join(loc_parts)
@@ -608,7 +633,7 @@ class TeslaInvoiceParser:
         # 5. Total Cost
         total_cost = None
         for idx, line in enumerate(lines):
-            if any(k in line.lower() for k in ["total amount (aud)", "total amount", "total aud", "total due"]):
+            if any(k in line.lower() for k in ["total amount (aud)", "total amount", "total aud", "total due", "total for payment", "total incl. tax", "total incl tax"]):
                 if idx + 1 < len(lines):
                     val_s = re.sub(r"[^\d.]", "", lines[idx + 1])
                     try:
@@ -618,13 +643,13 @@ class TeslaInvoiceParser:
                         pass
 
         if total_cost is None:
-            total_match = re.search(r"(?<!sub)(?:Total\s+Amount\s*\(AUD\)|Total\s+Amount|Total\s+AUD|Total\s+Due|Total(?!\s*excl))[:\s\$]*([\d\.]+)", text_clean, re.IGNORECASE)
+            total_match = re.search(r"(?<!sub)(?:Total\s+Amount\s*\(AUD\)|Total\s+Amount|Total\s+AUD|Total\s+Due|Total\s+for\s+payment|Total\s+incl\.?\s*Tax|Total(?!\s*excl))[:\s\$]*([\d\.]+)", text_clean, re.IGNORECASE)
             total_cost = float(total_match.group(1)) if total_match else None
 
         # 6. GST
         gst = None
         for idx, line in enumerate(lines):
-            if any(k in line.lower() for k in ["total gst", "gst (10%)", "gst:"]):
+            if any(k in line.lower() for k in ["total gst", "gst (10%)", "gst:", "tax 10%"]):
                 if idx + 1 < len(lines):
                     val_s = re.sub(r"[^\d.]", "", lines[idx + 1])
                     try:
@@ -633,7 +658,7 @@ class TeslaInvoiceParser:
                     except Exception:
                         pass
         if gst is None:
-            gst_match = re.search(r"(?:Total GST|GST(?:\s*\(?10%\)?)?)[:\s\$]*([\d\.]+)", text_clean, re.IGNORECASE)
+            gst_match = re.search(r"(?:Total GST|GST(?:\s*\(?10%\)?)?|Tax\s*10%)[:\s\$]*([\d\.]+)", text_clean, re.IGNORECASE)
             gst = float(gst_match.group(1)) if gst_match else None
 
         # 7. Unit Rate
@@ -662,17 +687,27 @@ class TeslaInvoiceParser:
 
         network = "Tesla Supercharger"
         emoji = "🔴⚡"
-        if "chargefox" in (source_file + text_clean).lower() or inv_number.startswith("CF-"):
+        lower_all = (source_file + " " + text_clean).lower()
+        if "exploren" in lower_all:
+            network = "Exploren"
+            emoji = "🔌"
+        elif "chargefox" in lower_all or inv_number.startswith("CF-"):
             network = "Chargefox"
             emoji = "🔌"
-        elif "evie" in (source_file + text_clean).lower() or inv_number.startswith("EV-"):
+        elif "evie" in lower_all or inv_number.startswith("EV-"):
             network = "Evie"
             emoji = "🔌"
-        elif "bp pulse" in (source_file + text_clean).lower() or "bp" in (source_file + text_clean).lower():
+        elif "bp pulse" in lower_all or ("bp" in lower_all and "pulse" in lower_all):
             network = "BP Pulse"
             emoji = "🔌"
-        elif "jolt" in (source_file + text_clean).lower():
+        elif "ampcharge" in lower_all or "ampol" in lower_all:
+            network = "AmpCharge"
+            emoji = "🔌"
+        elif "jolt" in lower_all:
             network = "Jolt"
+            emoji = "🔌"
+        elif "nrma" in lower_all:
+            network = "NRMA"
             emoji = "🔌"
 
         return {
@@ -776,6 +811,8 @@ class TeslaInvoiceParser:
             pass
         return records
 
+ChargingInvoiceParser = TeslaInvoiceParser
+
 # -----------------------------------------------------------------------------
 # Main Charging Analyzer & Reconciliation Engine
 # -----------------------------------------------------------------------------
@@ -829,11 +866,15 @@ class TessieChargingAnalyzer:
             self.invoice_dirs.append(os.path.abspath(os.path.realpath(primary_inv_dir)))
         else:
             candidates_invoices = [
+                os.path.expanduser("~/iCloud/PDF/Tesla/charging_invoices"),
+                os.path.expanduser("~/Library/Mobile Documents/com~apple~CloudDocs/PDF/Tesla/charging_invoices"),
                 os.path.expanduser("~/iCloud/PDF/Tesla/Supercharging"),
                 os.path.expanduser("~/Library/Mobile Documents/com~apple~CloudDocs/PDF/Tesla/Supercharging"),
                 os.path.expanduser("~/iCloud/PDF/Tesla"),
                 os.path.expanduser("~/Library/Mobile Documents/com~apple~CloudDocs/PDF/Tesla"),
+                os.path.join(self.repo_root, "Tessie", "charging_invoices"),
                 os.path.join(self.repo_root, "Tessie", "invoices"),
+                os.path.join(self.icloud_dir, "charging_invoices"),
                 os.path.join(self.icloud_dir, "invoices"),
                 os.path.expanduser("~/Documents/Tesla/Invoices"),
                 os.path.expanduser("~/Downloads/Tesla Invoices"),
@@ -2169,7 +2210,8 @@ class TessieChargingAnalyzer:
         print(f"│{pad_display(e_title, box_w - 2, truncate=True)}│")
 
         if s.get("invoice_disp_kwh"):
-            l6a = f"    • {C_BOLD}1. Invoice Meter (Dispenser):{C_RESET}   {s['invoice_disp_kwh']:.2f} kWh (Tesla Billed Dispenser Meter)"
+            inv_net = (s.get("matched_invoice", {}) or {}).get("network") or s.get("network") or "Dispenser"
+            l6a = f"    • {C_BOLD}1. Invoice Meter (Dispenser):{C_RESET}   {s['invoice_disp_kwh']:.2f} kWh ({inv_net} Billed Dispenser Meter)"
             print(f"│{pad_display(l6a, box_w - 2, truncate=True)}│")
         
         car_in = s.get("tessie_car_kwh", 0.0)
@@ -2230,7 +2272,9 @@ class TessieChargingAnalyzer:
         print(f"│{pad_display(l9, box_w - 2, truncate=True)}│")
 
         if s["invoice_number"]:
-            inv_type_label = "Tesla Tax Invoice" if s["is_supercharger"] else f"{s['network']} Receipt"
+            matched_inv = s.get("matched_invoice") if isinstance(s.get("matched_invoice"), dict) else {}
+            inv_net_name = matched_inv.get("network") or s["network"]
+            inv_type_label = "Tesla Tax Invoice" if (s["is_supercharger"] or "tesla" in inv_net_name.lower()) else f"{inv_net_name} Receipt"
             l10 = f"    • {C_BOLD}{inv_type_label}:{C_RESET}         ${s['invoice_cost']:.2f} AUD (Inv #{s['invoice_number']} @ ${s['invoice_rate']:.3f}/kWh)"
             print(f"│{pad_display(l10, box_w - 2, truncate=True)}│")
             
@@ -2449,22 +2493,48 @@ class TessieChargingAnalyzer:
                         matched_session = s
                         break
 
-            # Format timestamp
+            # Format timestamp (YYYYMMDD_HHMM for clean chronological sorting)
             if matched_session and matched_session.get("datetime"):
-                dt_str = matched_session["datetime"].strftime("%Y%m%d%H%M")
+                dt_str = matched_session["datetime"].strftime("%Y%m%d_%H%M")
             elif inv_date:
                 if inv_date.hour != 0 or inv_date.minute != 0:
-                    dt_str = inv_date.strftime("%Y%m%d%H%M")
+                    dt_str = inv_date.strftime("%Y%m%d_%H%M")
                 else:
-                    dt_str = inv_date.strftime("%Y%m%d0000")
+                    dt_str = inv_date.strftime("%Y%m%d_0000")
             else:
-                dt_str = datetime.now().strftime("%Y%m%d0000")
+                dt_str = datetime.now().strftime("%Y%m%d_0000")
+
+            # Determine network slug (Tesla, Exploren, Chargefox, Evie, etc.)
+            net_raw = parsed.get("network") or (matched_session.get("network") if matched_session else None) or "Tesla"
+            net_raw_lower = str(net_raw).lower()
+            if "supercharger" in net_raw_lower or "tesla" in net_raw_lower:
+                net_slug = "Tesla"
+            elif "exploren" in net_raw_lower:
+                net_slug = "Exploren"
+            elif "chargefox" in net_raw_lower:
+                net_slug = "Chargefox"
+            elif "evie" in net_raw_lower:
+                net_slug = "Evie"
+            elif "bp" in net_raw_lower:
+                net_slug = "BP_Pulse"
+            elif "ampcharge" in net_raw_lower or "ampol" in net_raw_lower:
+                net_slug = "AmpCharge"
+            elif "jolt" in net_raw_lower:
+                net_slug = "Jolt"
+            elif "nrma" in net_raw_lower:
+                net_slug = "NRMA"
+            else:
+                net_slug = re.sub(r"[^A-Za-z0-9]+", "_", net_raw).strip("_")
 
             # Clean location string / short_name
             clean_loc = ""
             reg_obj = matched_session.get("registry_obj") if matched_session else None
             if reg_obj and isinstance(reg_obj, dict):
                 clean_loc = reg_obj.get("tesla_metadata", {}).get("short_name", "")
+                if not clean_loc:
+                    nm = reg_obj.get("name", "")
+                    nm = re.sub(r"\s*\(.*?\)", "", nm).strip()
+                    clean_loc = re.sub(r"[^A-Za-z0-9]+", "_", nm).strip("_")
 
             if not clean_loc and inv_loc:
                 inv_clean_lower = inv_loc.lower().strip()
@@ -2476,26 +2546,42 @@ class TessieChargingAnalyzer:
                         clean_loc = sc_meta.get("short_name", "")
                         break
 
+            if not clean_loc and inv_loc:
+                inv_clean_lower = inv_loc.lower().strip()
+                for p_name, p_data in self.places.items():
+                    p_name_clean = p_name.lower().strip()
+                    kws = [k.lower() for k in p_data.get("keywords", [])]
+                    if inv_clean_lower == p_name_clean or any(k in inv_clean_lower for k in kws) or p_name_clean in inv_clean_lower:
+                        clean_loc = re.sub(r"[^A-Za-z0-9]+", "_", p_name).strip("_")
+                        break
+
             if not clean_loc:
-                loc_source = inv_loc or (matched_session.get("place_name") if matched_session else "")
+                loc_source = (matched_session.get("place_name") if matched_session else "") or inv_loc
+                loc_source = re.sub(r"\s*\(.*?\)", "", loc_source).strip()
                 clean_loc = re.sub(r"[^A-Za-z0-9]+", "_", loc_source).strip("_")
                 clean_loc = re.sub(r"_+", "_", clean_loc)
 
             if not clean_loc:
-                clean_loc = "Supercharger"
+                clean_loc = "Charging"
 
-            # Apply naming pattern
+            # Apply naming pattern: date/time network invoice_num place
             if format_pattern:
                 target_fname = format_pattern.format(
                     timestamp=dt_str,
-                    YYYYMMDDHHMM=dt_str,
+                    datetime=dt_str,
+                    date_time=dt_str,
+                    YYYYMMDD_HHMM=dt_str,
+                    network=net_slug,
+                    Network=net_slug,
                     invoice_num=inv_num,
                     invoice=inv_num,
                     location=clean_loc,
-                    Location=clean_loc
+                    Location=clean_loc,
+                    place=clean_loc,
+                    Place=clean_loc
                 )
             else:
-                target_fname = f"Tesla_Supercharging_{dt_str}_{inv_num}_{clean_loc}.pdf"
+                target_fname = f"{dt_str}_{net_slug}_{inv_num}_{clean_loc}.pdf"
 
             if not target_fname.lower().endswith(".pdf"):
                 target_fname += ".pdf"
@@ -2510,17 +2596,18 @@ class TessieChargingAnalyzer:
                 "new_name": target_fname,
                 "invoice_number": inv_num,
                 "date_str": dt_str,
+                "network": net_slug,
                 "location": clean_loc,
                 "cost": inv_cost,
                 "already_named": already_named
             })
 
         # Print preview table
-        widths = [4, 48, 80, 14, 18, 16]
+        widths = [4, 48, 80, 16, 18, 16]
         total_inner_w = sum(widths) + len(widths) - 1
 
         print(f"\n┌{'─' * total_inner_w}┐")
-        print(f"│{pad_display(f' ⚡ {C_BOLD}TESLA SUPERCHARGER INVOICE RENAMER ({len(rename_plan)} files){C_RESET}', total_inner_w, 'left')}│")
+        print(f"│{pad_display(f' ⚡ {C_BOLD}CHARGING INVOICE RENAMER ({len(rename_plan)} files){C_RESET}', total_inner_w, 'left')}│")
         top_b = "├" + "┬".join("─" * w for w in widths) + "┤"
         print(top_b)
         h = "│" + "│".join([
@@ -2620,8 +2707,8 @@ def main():
     parser.add_argument("--correlation", "--compare", action="store_true", help="Display 3-way correlation audit comparing Tessie summary, detailed telemetry CSV, and Invoices")
     parser.add_argument("--list-chargers", action="store_true", help="List all registered Superchargers and 3rd-Party charging stations")
     parser.add_argument("--consolidate", action="store_true", help="Consolidate all charges into charges_master.csv")
-    parser.add_argument("--rename-invoices", "--rename", action="store_true", help="Rename invoice PDFs to Tesla_Supercharging_YYYYMMDDHHMM_<invoice_num>_<Location>.pdf")
-    parser.add_argument("--rename-format", help="Custom renaming template (e.g. 'Tesla_Supercharging_{timestamp}_{invoice_num}_{location}.pdf')")
+    parser.add_argument("--rename-invoices", "--rename", action="store_true", help="Rename invoice PDFs to <date/time>_<network>_<invoice_num>_<place>.pdf")
+    parser.add_argument("--rename-format", help="Custom renaming template (e.g. '{datetime}_{network}_{invoice_num}_{place}.pdf')")
     parser.add_argument("--dry-run", action="store_true", help="Preview renaming without modifying files on disk")
     parser.add_argument("--yes", "-y", action="store_true", help="Automatically confirm renaming without interactive prompt")
     parser.add_argument("--export", help="Export reconciled results to a CSV or JSON file")
