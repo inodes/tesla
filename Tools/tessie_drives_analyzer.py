@@ -20,6 +20,7 @@ import glob
 import json
 import math
 import shutil
+import tempfile
 import subprocess
 import argparse
 import unicodedata
@@ -201,7 +202,25 @@ class TessieAnalyzer:
         parent_dir = os.path.dirname(self.script_dir)
         self.icloud_dir = os.path.expanduser("~/Library/Mobile Documents/com~apple~CloudDocs/Tesla/Tessie")
         self.repo_root = parent_dir
-        self.landing_dir = os.path.expanduser("~/Downloads")
+        self.config = {}
+        for cfg_p in [
+            os.path.join(parent_dir, "config.json"),
+            os.path.join(parent_dir, "Tessie", "config.json"),
+            os.path.join(self.script_dir, "config.json"),
+            os.path.join(self.script_dir, "Tessie", "config.json")
+        ]:
+            if os.path.exists(cfg_p):
+                try:
+                    with open(cfg_p, "r", encoding="utf-8") as f:
+                        data = json.load(f)
+                        if isinstance(data, dict):
+                            self.config = data
+                            break
+                except Exception:
+                    pass
+
+        cfg_landing = self.config.get("landing_directory") or self.config.get("landing_dir")
+        self.landing_dir = os.path.expanduser(cfg_landing) if cfg_landing else os.path.expanduser("~/Downloads")
         
         self.tessie_dirs = []
         candidates = [
@@ -221,6 +240,18 @@ class TessieAnalyzer:
                         self.tessie_dirs.append(real_d)
             except Exception:
                 pass
+
+        cfg_archive = self.config.get("archive_directory") or self.config.get("archive_dir")
+        if cfg_archive:
+            self.archive_dir = os.path.abspath(os.path.expanduser(cfg_archive))
+        elif self.tessie_dirs:
+            self.archive_dir = os.path.join(self.tessie_dirs[0], "archive")
+        else:
+            self.archive_dir = os.path.join(self.repo_root, "Tessie", "archive")
+        try:
+            os.makedirs(self.archive_dir, exist_ok=True)
+        except Exception:
+            pass
         
         self.teslacam_dirs = []
         if teslacam_dirs:
@@ -363,173 +394,175 @@ class TessieAnalyzer:
         parts = address.split(",")
         return parts[0].strip() if parts else address
 
-    def consolidate_drives(self, master_dir=None):
-        dest_dirs = []
-        if master_dir:
-            dest_dirs.append(master_dir)
-        else:
-            if os.path.isdir(self.icloud_dir):
-                dest_dirs.append(self.icloud_dir)
-
-        if not dest_dirs:
-            return 0
-
-        master_files = [os.path.join(d, "drives_master.csv") for d in dest_dirs]
-        for d in dest_dirs:
-            try:
-                os.makedirs(d, exist_ok=True)
-            except Exception:
-                pass
-
-        raw_rows = []
-        seen_keys = set()
-        fieldnames = None
-
-        all_csvs = []
-        for td in self.tessie_dirs:
-            try:
-                if os.path.isdir(td):
-                    for f in os.listdir(td):
-                        if f.endswith(".csv"):
-                            all_csvs.append(os.path.join(td, f))
-            except Exception:
-                pass
-
-        for csv_path in all_csvs:
-            try:
-                with open(csv_path, "r", encoding="utf-8-sig") as f:
-                    reader = csv.DictReader(f)
-                    if not reader.fieldnames or "Starting Location" not in reader.fieldnames:
-                        continue
-                    if not fieldnames:
-                        fieldnames = reader.fieldnames
-                    for r in reader:
-                        start_time = r.get("Started At (AEST)") or r.get("Started At") or r.get("Started")
-                        end_time = r.get("Ended At (AEST)") or r.get("Ended At") or r.get("Ended")
-                        dist = r.get("Distance (km)", "0")
-                        s_loc = r.get("Starting Location", "")
-                        if not start_time or not end_time:
-                            continue
-                        key = (start_time.strip(), end_time.strip(), dist.strip(), s_loc.strip())
-                        if key not in seen_keys:
-                            seen_keys.add(key)
-                            raw_rows.append(r)
-            except Exception:
-                pass
-
-        if not raw_rows:
-            return 0
-
-        raw_rows.sort(key=lambda x: (x.get("Started At (AEST)") or x.get("Started At") or x.get("Started") or ""))
-
-        for mf in master_files:
-            try:
-                with open(mf, "w", encoding="utf-8", newline="") as f:
-                    writer = csv.DictWriter(f, fieldnames=fieldnames)
-                    writer.writeheader()
-                    writer.writerows(raw_rows)
-            except Exception:
-                pass
-
-        return len(raw_rows)
-
-    def auto_ingest_from_landing(self):
-        landing = self.landing_dir
-        if not landing or not os.path.isdir(landing):
-            return
-        
-        archive_dir = os.path.join(self.repo_root, "Tessie", "archive")
-        os.makedirs(archive_dir, exist_ok=True)
-        
-        moved = 0
-        for f in os.listdir(landing):
-            if not f.endswith(".csv"):
-                continue
-            
-            fp = os.path.join(landing, f)
-            try:
-                with open(fp, "r", encoding="utf-8-sig") as csv_f:
-                    reader = csv.reader(csv_f)
-                    header = next(reader, None)
-                    if not header:
-                        continue
-                    hset = set(h.strip() for h in header)
-                    
-                    is_tessie = ("Starting Location" in hset and "Distance (km)" in hset) or \
-                                ("Location" in hset and "Energy Added (kWh)" in hset) or \
-                                ("Speed (km/h)" in hset or "Speed (mph)" in hset) or \
-                                ("Charger Power (kW)" in hset or "Charger Voltage (V)" in hset)
-                    
-                    if is_tessie:
-                        ts = datetime.datetime.now().strftime("%Y%m%d%H%M")
-                        dst_name = f"{f}.{ts}"
-                        shutil.move(fp, os.path.join(archive_dir, dst_name))
-                        print(f"\033[94m📥 Ingested & Archived:\033[0m {dst_name}")
-                        moved += 1
-            except Exception:
-                pass
-        if moved > 0:
-            print("")
-
-    def load_drives(self):
-        self.auto_ingest_from_landing()
-        self.consolidate_drives()
+    def ingest_and_archive_drives(self):
+        """
+        Loads drives_master.csv first as the definitive source of truth.
+        Scans landing_dir and tessie_dirs for incoming drive CSVs:
+          - Genuinely new drive sessions (not present in master) are appended to master.
+          - Existing/overlapping sessions are ignored so master's verified records are preserved.
+          - Ingested candidate CSV files are moved to the archive directory.
+        """
         master_file = None
         for td in self.tessie_dirs:
+            p = os.path.join(td, "drives_master.csv")
+            if os.path.isfile(p):
+                master_file = p
+                break
+        if not master_file:
+            target_dir = self.tessie_dirs[0] if self.tessie_dirs else os.path.join(self.repo_root, "Tessie")
+            master_file = os.path.join(target_dir, "drives_master.csv")
+
+        master_rows = []
+        master_keys = set()
+        master_fieldnames = None
+
+        if os.path.isfile(master_file):
             try:
-                mf = os.path.join(td, "drives_master.csv")
-                if os.path.isfile(mf):
-                    master_file = mf
-                    break
+                with open(master_file, "r", encoding="utf-8-sig", errors="ignore") as f:
+                    reader = csv.DictReader(f)
+                    master_fieldnames = list(reader.fieldnames or [])
+                    for row in reader:
+                        s_at = (row.get("Started At (AEST)") or row.get("Started At (AEDT)") or row.get("Started At") or row.get("Started") or "").strip()
+                        e_at = (row.get("Ended At (AEST)") or row.get("Ended At (AEDT)") or row.get("Ended At") or row.get("Ended") or "").strip()
+                        s_loc = (row.get("Starting Location") or "").strip()
+                        if s_at and e_at:
+                            master_keys.add((s_at, e_at, s_loc))
+                        master_rows.append(row)
             except Exception:
                 pass
 
-        if not master_file:
-            return []
+        search_dirs = []
+        if self.landing_dir and os.path.isdir(self.landing_dir):
+            search_dirs.append(self.landing_dir)
+        for td in self.tessie_dirs:
+            if td and os.path.isdir(td) and td not in search_dirs:
+                search_dirs.append(td)
 
-        parsed = []
-        with open(master_file, "r", encoding="utf-8-sig") as f:
-            reader = csv.DictReader(f)
-            for r in reader:
-                try:
-                    start_str = r.get("Started At (AEST)") or r.get("Started At") or r.get("Started")
-                    end_str = r.get("Ended At (AEST)") or r.get("Ended At") or r.get("Ended")
-                    dt_start = datetime.strptime(start_str.strip(), "%Y-%m-%d %H:%M")
-                    dt_end = datetime.strptime(end_str.strip(), "%Y-%m-%d %H:%M")
-                    
-                    dist_km = float(r.get("Distance (km)", 0))
-                    dur_min = int(float(r.get("Duration (Minutes)", 0)))
-                    
-                    s_addr = r.get("Starting Location", "")
-                    e_addr = r.get("Ending Location", "")
-                    s_saved = r.get("Starting Saved Location", "")
-                    e_saved = r.get("Ending Saved Location", "")
-                    
-                    s_lat = float(r.get("Starting Latitude", 0)) if r.get("Starting Latitude") else None
-                    s_lon = float(r.get("Starting Longitude", 0)) if r.get("Starting Longitude") else None
-                    e_lat = float(r.get("Ending Latitude", 0)) if r.get("Ending Latitude") else None
-                    e_lon = float(r.get("Ending Longitude", 0)) if r.get("Ending Longitude") else None
-                    
-                    s_place = self.resolve_place(s_addr, s_saved, s_lat, s_lon)
-                    e_place = self.resolve_place(e_addr, e_saved, e_lat, e_lon)
-                    
-                    parsed.append({
-                        "start_dt": dt_start,
-                        "end_dt": dt_end,
-                        "dur_min": dur_min,
-                        "dist_km": dist_km,
-                        "start_addr": s_addr,
-                        "end_addr": e_addr,
-                        "start_place": s_place,
-                        "end_place": e_place,
-                        "start_lat": s_lat,
-                        "start_lon": s_lon,
-                        "end_lat": e_lat,
-                        "end_lon": e_lon,
-                        "raw": r
-                    })
-                except Exception:
+        candidate_files = []
+        for s_dir in search_dirs:
+            try:
+                fnames = sorted(os.listdir(s_dir))
+            except Exception:
+                continue
+            for fn in fnames:
+                if not fn.endswith(".csv") or fn.startswith(".") or fn == "charges_master.csv" or fn == "drives_master.csv":
                     continue
+                if any(x in fn for x in ["telemetry_stream", "charge_deepdive", "drive_deepdive", "battery_health", "tire_pressure", "firmware_alerts", "idles_summary"]):
+                    continue
+                fp = os.path.join(s_dir, fn)
+                try:
+                    with open(fp, "r", encoding="utf-8-sig", errors="ignore") as test_f:
+                        first_line = test_f.readline()
+                        if "Starting Location" in first_line and "Distance (km)" in first_line:
+                            candidate_files.append(fp)
+                except Exception:
+                    pass
+
+        os.makedirs(self.archive_dir, exist_ok=True)
+        master_modified = False
+
+        for c_fp in candidate_files:
+            c_name = os.path.basename(c_fp)
+            try:
+                new_in_file = 0
+                ignored_in_file = 0
+                with open(c_fp, "r", encoding="utf-8-sig", errors="ignore") as in_f:
+                    reader = csv.DictReader(in_f)
+                    if not master_fieldnames and reader.fieldnames:
+                        master_fieldnames = list(reader.fieldnames)
+                    for r in reader:
+                        s_at = (r.get("Started At (AEST)") or r.get("Started At (AEDT)") or r.get("Started At") or r.get("Started") or "").strip()
+                        e_at = (r.get("Ended At (AEST)") or r.get("Ended At (AEDT)") or r.get("Ended At") or r.get("Ended") or "").strip()
+                        s_loc = (r.get("Starting Location") or "").strip()
+                        if not s_at or not e_at:
+                            continue
+                        key = (s_at, e_at, s_loc)
+                        if key in master_keys:
+                            ignored_in_file += 1
+                        else:
+                            master_keys.add(key)
+                            master_rows.append(r)
+                            new_in_file += 1
+                            master_modified = True
+
+                if new_in_file > 0:
+                    print(f"\033[94m📥 Ingested:\033[0m Added {new_in_file} new drive(s) from '{c_name}' into drives_master.csv (ignored {ignored_in_file} existing master records)")
+                else:
+                    print(f"\033[90mℹ️  [Ingest] '{c_name}' has {ignored_in_file} drives (all already present in drives_master.csv)\033[0m")
+
+                ts = datetime.now().strftime("%Y%m%d%H%M")
+                dst_name = f"{c_name}.{ts}"
+                dst_path = os.path.join(self.archive_dir, dst_name)
+                shutil.move(c_fp, dst_path)
+                print(f"\033[94m📦 Archived:\033[0m {c_name} ➔ archive/{dst_name}")
+
+            except Exception:
+                pass
+
+        if master_rows and (master_modified or not os.path.isfile(master_file)):
+            try:
+                master_rows.sort(key=lambda r: (r.get("Started At (AEST)") or r.get("Started At (AEDT)") or r.get("Started At") or r.get("Started") or ""))
+                temp_fd, temp_path = tempfile.mkstemp(dir=os.path.dirname(master_file), text=True)
+                with os.fdopen(temp_fd, "w", encoding="utf-8", newline="") as out_f:
+                    writer = csv.DictWriter(out_f, fieldnames=master_fieldnames or master_rows[0].keys())
+                    writer.writeheader()
+                    writer.writerows(master_rows)
+                os.replace(temp_path, master_file)
+                print(f"\033[92m✔ Updated {os.path.basename(master_file)} ({len(master_rows)} total records)\033[0m")
+            except Exception:
+                pass
+
+        return master_rows, master_file
+
+    def consolidate_drives(self, master_dir=None):
+        master_rows, _ = self.ingest_and_archive_drives()
+        return len(master_rows)
+
+    def load_drives(self):
+        master_rows, master_file = self.ingest_and_archive_drives()
+        parsed = []
+        for r in master_rows:
+            try:
+                start_str = r.get("Started At (AEST)") or r.get("Started At (AEDT)") or r.get("Started At") or r.get("Started")
+                end_str = r.get("Ended At (AEST)") or r.get("Ended At (AEDT)") or r.get("Ended At") or r.get("Ended")
+                if not start_str or not end_str:
+                    continue
+                dt_start = datetime.strptime(start_str.strip()[:16], "%Y-%m-%d %H:%M")
+                dt_end = datetime.strptime(end_str.strip()[:16], "%Y-%m-%d %H:%M")
+                
+                dist_km = float(r.get("Distance (km)", 0))
+                dur_min = int(float(r.get("Duration (Minutes)", 0)))
+                
+                s_addr = r.get("Starting Location", "")
+                e_addr = r.get("Ending Location", "")
+                s_saved = r.get("Starting Saved Location", "")
+                e_saved = r.get("Ending Saved Location", "")
+                
+                s_lat = float(r.get("Starting Latitude", 0)) if r.get("Starting Latitude") else None
+                s_lon = float(r.get("Starting Longitude", 0)) if r.get("Starting Longitude") else None
+                e_lat = float(r.get("Ending Latitude", 0)) if r.get("Ending Latitude") else None
+                e_lon = float(r.get("Ending Longitude", 0)) if r.get("Ending Longitude") else None
+                
+                s_place = self.resolve_place(s_addr, s_saved, s_lat, s_lon)
+                e_place = self.resolve_place(e_addr, e_saved, e_lat, e_lon)
+                
+                parsed.append({
+                    "start_dt": dt_start,
+                    "end_dt": dt_end,
+                    "dur_min": dur_min,
+                    "dist_km": dist_km,
+                    "start_addr": s_addr,
+                    "end_addr": e_addr,
+                    "start_place": s_place,
+                    "end_place": e_place,
+                    "start_lat": s_lat,
+                    "start_lon": s_lon,
+                    "end_lat": e_lat,
+                    "end_lon": e_lon,
+                    "raw": r
+                })
+            except Exception:
+                continue
 
         parsed.sort(key=lambda x: x["start_dt"])
         self.drives = parsed
