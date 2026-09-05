@@ -21,10 +21,9 @@ A suite of tools for processing, classifying, and analyzing [Tessie](https://sha
 
 | Tool | Purpose | Primary Commands |
 | :--- | :--- | :--- |
-| **`tessie_analyzer.py`** | High-level drives summary, interactive period selector, location geofencing, and TeslaCam video linking. | `./Tools/tessie_analyzer.py --drives`<br>`./Tools/tessie_analyzer.py --today`<br>`./Tools/tessie_analyzer.py --place "School"` |
+| **`tessie_drives_analyzer.py`** | High-level drives summary, interactive period selector, location geofencing, and TeslaCam video linking. Self-contained download ingestion. | `./Tools/tessie_drives_analyzer.py`<br>`./Tools/tessie_drives_analyzer.py --timeline 20260904`<br>`./Tools/tessie_drives_analyzer.py --since 2026-09-01` |
 | **`tessie_places.py`** | Location management, interactive POI lookup by address/GPS, frequent stop reviewer, and formatted place inspector (leaves chargers alone). | `./Tools/tessie_places.py list`<br>`./Tools/tessie_places.py lookup "109 Blaxland Rd, Ryde"`<br>`./Tools/tessie_places.py review` |
-| **`tessie_charging_analyzer.py`** | Reconciles Tesla Supercharger & 3rd-party invoices against Tessie telemetry, calculates dispenser vs battery loss, verifies TOU rates, and audits charging costs. | `./Tools/tessie_charging_analyzer.py --superchargers`<br>`./Tools/tessie_charging_analyzer.py --inspect 1`<br>`./Tools/tessie_charging_analyzer.py --consolidate` |
-| **`tessie_renamer.py`** | Inspects, categorizes, and standardizes all raw Tessie CSV files (drives, telemetry traces, charges, idles, battery, tires, alerts). | `./Tools/tessie_renamer.py --dry-run`<br>`./Tools/tessie_renamer.py --copy-to /path/to/dir`<br>`./Tools/tessie_renamer.py --in-place` |
+| **`tessie_charging_analyzer.py`** | Reconciles Tesla Supercharger & 3rd-party invoices against Tessie telemetry, calculates dispenser vs battery loss, verifies TOU rates, and audits charging costs. Self-contained download ingestion. | `./Tools/tessie_charging_analyzer.py --superchargers`<br>`./Tools/tessie_charging_analyzer.py --inspect 1`<br>`./Tools/tessie_charging_analyzer.py --consolidate` |
 | **`find_tesla_chargers.py`** | Hierarchical discovery explorer and live scraper for Tesla Superchargers and Destination Chargers with state filtering, search, and registry sync. | `./Tools/find_tesla_chargers.py`<br>`./Tools/find_tesla_chargers.py --state NSW --sc --list`<br>`./Tools/find_tesla_chargers.py --scrape 19258 --update --sync` |
 
 ---
@@ -46,27 +45,18 @@ A suite of tools for processing, classifying, and analyzing [Tessie](https://sha
 
 ## 🚀 Quick Start Examples
 
-### 1. Review & Rename Raw Tessie Files
+### 1. Ingest & Analyze Drive History
 ```bash
-# Preview proposed standard names for files in iCloud folder
-./Tools/tessie_renamer.py --dry-run
-
-# Copy and standardize all files into mounted TESLADRIVE external volume
-./Tools/tessie_renamer.py --copy-to "/Volumes/TESLADRIVE/Tessie"
-```
-
-### 2. Inspect Drive History & Match Places
-```bash
-# Interactive overview table and time period prompt
-./Tools/tessie_analyzer.py --drives
+# Auto-ingests new downloads from ~/Downloads and presents interactive drive summary
+./Tools/tessie_drives_analyzer.py
 
 # 24-hour 30-minute vehicle & camera activity timeline for a date
-./Tools/tessie_analyzer.py --timeline 20260904
-./Tools/tessie_analyzer.py --timeline 2026-09-02
-./Tools/tessie_analyzer.py --timeline yesterday
+./Tools/tessie_drives_analyzer.py --timeline 20260904
+./Tools/tessie_drives_analyzer.py --timeline 2026-09-02
+./Tools/tessie_drives_analyzer.py --timeline yesterday
 
 # Filter trips since a specific date or weekday
-./Tools/tessie_analyzer.py --since wednesday
+./Tools/tessie_drives_analyzer.py --since wednesday
 
 ### 3. Charging & Supercharger Invoice Reconciliation
 ```bash
