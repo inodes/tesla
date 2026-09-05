@@ -855,6 +855,11 @@ class TessieChargingAnalyzer:
         self.charging_archived = self.load_json_registry("tesla_chargers_archived.json") or self.load_json_registry("charging_archived.json") or self.load_json_registry("destination_chargers_archived.json")
         self.places = self.load_json_registry("places.json")
         
+        # 5. Detailed Telemetry CSVs
+        self.vin = self.config.get("vin")
+        self.landing_dir = os.path.expanduser(self.config.get("landing_directory", "~/Downloads"))
+        self.detailed_charges = []
+
         self.charges = []
         self.invoices = []
         self.reconciled_sessions = []
@@ -1258,6 +1263,207 @@ class TessieChargingAnalyzer:
         self.invoices = unique_invoices
         return self.invoices
 
+    def parse_detailed_charge_csv(self, filepath):
+        """
+        Parses high-frequency second-by-second telemetry CSV files exported from Tessie
+        (e.g., ~/Downloads/<VIN>-YYYY-MM-DD...csv or charge_deepdive_*.csv).
+        """
+        try:
+            with open(filepath, "r", encoding="utf-8-sig", errors="ignore") as f:
+                reader = list(csv.DictReader(f))
+                if not reader:
+                    return None
+                
+                header = set(reader[0].keys())
+                if not ("Charging State" in header or "Charger Power (kW)" in header):
+                    return None
+
+                timestamps = []
+                powers = []
+                temps_min = []
+                temps_max = []
+                has_heater = False
+                
+                rem_start = None
+                rem_end = None
+                soc_start = None
+                soc_end = None
+                outside_temp = None
+                inside_temp = None
+
+                for row in reader:
+                    ts_str = row.get("Timestamp (AEST)") or row.get("Timestamp")
+                    if ts_str:
+                        dt = parse_flexible_date(ts_str)
+                        if dt:
+                            timestamps.append(dt)
+                    
+                    p_val = row.get("Charger Power (kW)")
+                    if p_val:
+                        try:
+                            p_num = float(p_val)
+                            if p_num > 0:
+                                powers.append(p_num)
+                        except Exception:
+                            pass
+                    
+                    t_min = row.get("Min Battery Module Temp (°C)")
+                    if t_min:
+                        try:
+                            temps_min.append(float(t_min))
+                        except Exception:
+                            pass
+                    
+                    t_max = row.get("Max Battery Module Temp (°C)")
+                    if t_max:
+                        try:
+                            temps_max.append(float(t_max))
+                        except Exception:
+                            pass
+                    
+                    if str(row.get("Battery Heater", "")).strip() in ("1", "true", "True"):
+                        has_heater = True
+                    
+                    rem_val = row.get("Energy Remaining (kWh)")
+                    if rem_val:
+                        try:
+                            val_num = float(rem_val)
+                            if rem_start is None:
+                                rem_start = val_num
+                            rem_end = val_num
+                        except Exception:
+                            pass
+
+                    soc_val = row.get("Battery Level (%)")
+                    if soc_val:
+                        try:
+                            soc_num = int(float(soc_val))
+                            if soc_start is None:
+                                soc_start = soc_num
+                            soc_end = soc_num
+                        except Exception:
+                            pass
+                    
+                    if outside_temp is None and row.get("Outside Temp (°C)"):
+                        try:
+                            outside_temp = float(row.get("Outside Temp (°C)"))
+                        except Exception:
+                            pass
+                    if inside_temp is None and row.get("Inside Temp (°C)"):
+                        try:
+                            inside_temp = float(row.get("Inside Temp (°C)"))
+                        except Exception:
+                            pass
+
+                if not timestamps:
+                    return None
+
+                min_dt = min(timestamps)
+                max_dt = max(timestamps)
+                dur_mins = (max_dt - min_dt).total_seconds() / 60.0
+
+                # Numerical integration for energy
+                pack_energies_kwh = 0.0
+                charger_energies_kwh = 0.0
+                for i in range(len(reader) - 1):
+                    r0 = reader[i]
+                    r1 = reader[i+1]
+                    ts0 = r0.get("Timestamp (AEST)") or r0.get("Timestamp")
+                    ts1 = r1.get("Timestamp (AEST)") or r1.get("Timestamp")
+                    dt0 = parse_flexible_date(ts0)
+                    dt1 = parse_flexible_date(ts1)
+                    if dt0 and dt1 and dt1 > dt0:
+                        dt_hours = (dt1 - dt0).total_seconds() / 3600.0
+                        try:
+                            p0 = float(r0.get("Charger Power (kW)") or 0)
+                            p1 = float(r1.get("Charger Power (kW)") or 0)
+                            charger_energies_kwh += 0.5 * (p0 + p1) * dt_hours
+                        except Exception:
+                            pass
+                        try:
+                            i0 = float(r0.get("Pack Current (A)") or 0)
+                            v0 = float(r0.get("Pack Voltage (V)") or 0)
+                            i1 = float(r1.get("Pack Current (A)") or 0)
+                            v1 = float(r1.get("Pack Voltage (V)") or 0)
+                            pack_energies_kwh += 0.5 * ((i0 * v0 + i1 * v1) / 1000.0) * dt_hours
+                        except Exception:
+                            pass
+
+                delta_rem = (rem_end - rem_start) if (rem_start is not None and rem_end is not None) else None
+                peak_kw = max(powers) if powers else 0.0
+                avg_kw = (sum(powers) / len(powers)) if powers else 0.0
+
+                initial_batt_temp = temps_min[0] if temps_min else None
+                final_batt_temp = temps_max[-1] if temps_max else None
+                max_batt_temp = max(temps_max) if temps_max else None
+                temp_rise = (final_batt_temp - initial_batt_temp) if (initial_batt_temp is not None and final_batt_temp is not None) else None
+
+                return {
+                    "source_file": os.path.basename(filepath),
+                    "source_path": filepath,
+                    "start_datetime": min_dt,
+                    "end_datetime": max_dt,
+                    "duration_mins": dur_mins,
+                    "samples_count": len(reader),
+                    "soc_start": soc_start,
+                    "soc_end": soc_end,
+                    "energy_remaining_start": rem_start,
+                    "energy_remaining_end": rem_end,
+                    "delta_energy_remaining_kwh": delta_rem,
+                    "peak_power_kw": peak_kw,
+                    "avg_power_kw": avg_kw,
+                    "initial_batt_temp_c": initial_batt_temp,
+                    "final_batt_temp_c": final_batt_temp,
+                    "max_batt_temp_c": max_batt_temp,
+                    "temp_rise_c": temp_rise,
+                    "battery_heater": has_heater,
+                    "outside_temp_c": outside_temp,
+                    "inside_temp_c": inside_temp,
+                    "integrated_charger_kwh": charger_energies_kwh,
+                    "integrated_pack_kwh": pack_energies_kwh
+                }
+        except Exception:
+            return None
+
+    def load_detailed_charges(self):
+        detailed = []
+        seen_paths = set()
+        search_dirs = [self.landing_dir] + self.tessie_dirs
+
+        candidates = []
+        for s_dir in search_dirs:
+            if not s_dir or not os.path.isdir(s_dir):
+                continue
+            try:
+                for fname in os.listdir(s_dir):
+                    if not fname.endswith(".csv") or fname.startswith("."):
+                        continue
+                    is_match = False
+                    if self.vin and fname.startswith(self.vin):
+                        is_match = True
+                    elif fname.startswith("charge_deepdive_"):
+                        is_match = True
+                    elif re.match(r"^[A-HJ-NPR-Z0-9]{17}-\d{4}-\d{2}-\d{2}", fname):
+                        is_match = True
+
+                    if is_match:
+                        fpath = os.path.join(s_dir, fname)
+                        real_p = os.path.realpath(fpath)
+                        if real_p not in seen_paths:
+                            seen_paths.add(real_p)
+                            candidates.append(real_p)
+            except Exception:
+                pass
+
+        for cp in candidates:
+            parsed = self.parse_detailed_charge_csv(cp)
+            if parsed:
+                detailed.append(parsed)
+
+        detailed.sort(key=lambda x: x["start_datetime"] or datetime.min)
+        self.detailed_charges = detailed
+        return self.detailed_charges
+
     def match_location(self, inv_loc, inv_net, charge):
         if not inv_loc:
             if charge["is_supercharger"] and inv_net == "Tesla Supercharger":
@@ -1287,6 +1493,7 @@ class TessieChargingAnalyzer:
         if not self._loaded:
             self.load_charges()
             self.load_invoices()
+            self.load_detailed_charges()
             self._loaded = True
 
         reconciled = []
@@ -1324,8 +1531,24 @@ class TessieChargingAnalyzer:
                                 best_inv = inv
                                 break
 
-            dispenser_kwh = charge["energy_used_kwh"]
-            battery_kwh = charge["energy_added_kwh"]
+            # Detailed telemetry match
+            matched_detailed = None
+            for dt_rec in self.detailed_charges:
+                if dt_rec.get("start_datetime") and dt:
+                    time_diff = abs((dt_rec["start_datetime"] - dt).total_seconds())
+                    if time_diff <= 900:
+                        matched_detailed = dt_rec
+                        break
+                    if charge.get("ended_at") and (charge["started_at"] <= dt_rec["start_datetime"] <= charge["ended_at"]):
+                        matched_detailed = dt_rec
+                        break
+
+            tessie_bat_kwh = charge["energy_added_kwh"]
+            tessie_car_kwh = charge["energy_used_kwh"]
+            invoice_disp_kwh = None
+
+            dispenser_kwh = tessie_car_kwh if tessie_car_kwh > 0 else tessie_bat_kwh
+            battery_kwh = tessie_bat_kwh
             tessie_cost = charge["cost"]
             invoice_cost = None
             invoice_rate = None
@@ -1336,6 +1559,7 @@ class TessieChargingAnalyzer:
                 matched_invoice_indices.add(best_inv_idx)
                 inv_num = best_inv.get("invoice_number")
                 if best_inv.get("energy_kwh"):
+                    invoice_disp_kwh = best_inv["energy_kwh"]
                     dispenser_kwh = best_inv["energy_kwh"]
                 if best_inv.get("total_cost") is not None:
                     invoice_cost = best_inv["total_cost"]
@@ -1348,8 +1572,17 @@ class TessieChargingAnalyzer:
                 else:
                     status = "MATCHED ✅"
 
-            loss_kwh = max(0.0, dispenser_kwh - battery_kwh) if dispenser_kwh > 0 else 0.0
-            efficiency_pct = (battery_kwh / dispenser_kwh * 100.0) if dispenser_kwh > 0 else 100.0
+            if invoice_disp_kwh and invoice_disp_kwh > 0:
+                car_inlet = tessie_car_kwh if tessie_car_kwh > 0 else battery_kwh
+                cable_loss_kwh = max(0.0, invoice_disp_kwh - car_inlet)
+                car_loss_kwh = max(0.0, car_inlet - battery_kwh)
+                loss_kwh = max(0.0, invoice_disp_kwh - battery_kwh)
+                efficiency_pct = (battery_kwh / invoice_disp_kwh * 100.0)
+            else:
+                cable_loss_kwh = 0.0
+                car_loss_kwh = max(0.0, tessie_car_kwh - battery_kwh) if tessie_car_kwh > 0 else 0.0
+                loss_kwh = car_loss_kwh
+                efficiency_pct = (battery_kwh / dispenser_kwh * 100.0) if dispenser_kwh > 0 else 100.0
             
             exp_info = self.get_expected_tariff_rate(charge["registry_obj"], dt, place_name=charge["place_name"])
             expected_rate = exp_info.get("rate_per_kwh")
@@ -1379,6 +1612,12 @@ class TessieChargingAnalyzer:
                 "end_soc": charge["end_soc"],
                 "range_added_km": charge["range_added_km"],
                 "odometer_km": charge["odometer_km"],
+                "tessie_bat_kwh": tessie_bat_kwh,
+                "tessie_car_kwh": tessie_car_kwh,
+                "invoice_disp_kwh": invoice_disp_kwh,
+                "cable_loss_kwh": cable_loss_kwh,
+                "car_loss_kwh": car_loss_kwh,
+                "total_loss_kwh": loss_kwh,
                 "dispenser_kwh": dispenser_kwh,
                 "battery_kwh": battery_kwh,
                 "loss_kwh": loss_kwh,
@@ -1396,6 +1635,7 @@ class TessieChargingAnalyzer:
                 "timezone": tz_used,
                 "status": status,
                 "matched_invoice": best_inv,
+                "detailed_telemetry": matched_detailed,
                 "raw_charge": charge
             })
 
@@ -1695,6 +1935,147 @@ class TessieChargingAnalyzer:
         print(bot_b)
         print()
 
+    def print_correlation_table(self, filtered_sessions=None):
+        sessions = filtered_sessions if filtered_sessions is not None else self.reconciled_sessions
+        if not sessions:
+            print(f"{C_YELLOW}No charging sessions matching the selected criteria.{C_RESET}")
+            return
+
+        # Prioritize sessions with invoices, superchargers, or detailed telemetry
+        corr_sessions = [s for s in sessions if s.get("invoice_number") or s.get("is_supercharger") or s.get("detailed_telemetry")]
+        if not corr_sessions:
+            corr_sessions = sessions
+
+        headers = [
+            "#", "Date / Time", "Place / Station", "Tessie Bat", "Tessie Car", "Invoice Disp", "Cable Loss", "Car Loss", "Total Loss", "Eff %", "Cost Var", "Telemetry"
+        ]
+        widths = [
+            4, 17, 23, 11, 11, 13, 11, 10, 11, 8, 10, 14
+        ]
+        total_inner_w = sum(widths) + len(widths) - 1
+
+        print(f"┌{'─' * total_inner_w}┐")
+        title = f" 📊 {C_BOLD}THREE-WAY CHARGING CORRELATION & LOSS AUDIT ({len(corr_sessions)} sessions){C_RESET}"
+        print(f"│{pad_display(title, total_inner_w, 'left', truncate=True)}│")
+        top_b = "├" + "┬".join("─" * w for w in widths) + "┤"
+        print(top_b)
+        
+        h_row = "│" + "│".join(pad_display(f"{C_BOLD}{h}{C_RESET}", w, "center") for h, w in zip(headers, widths)) + "│"
+        print(h_row)
+
+        mid_b = "├" + "┼".join("─" * w for w in widths) + "┤"
+        print(mid_b)
+
+        tot_bat = 0.0
+        tot_car = 0.0
+        tot_inv = 0.0
+        tot_cable_loss = 0.0
+        tot_car_loss = 0.0
+        tot_loss = 0.0
+
+        for s in corr_sessions:
+            idx_str = str(s["charge_index"]) if s["charge_index"] is not None else "-"
+            dt_str = s["datetime_str"][:16] if s["datetime_str"] else "-"
+            
+            clean_place = s["place_name"]
+            if s.get("network"):
+                clean_place = re.sub(rf"\s*\({re.escape(s['network'])}\)", "", clean_place, flags=re.IGNORECASE)
+            place_str = f"{s['emoji']} {clean_place}".strip()
+
+            bat_kwh = s.get("tessie_bat_kwh", s["battery_kwh"])
+            car_kwh = s.get("tessie_car_kwh", s["dispenser_kwh"])
+            inv_kwh = s.get("invoice_disp_kwh")
+            
+            bat_str = f"{bat_kwh:.2f} kWh"
+            car_str = f"{car_kwh:.2f} kWh" if car_kwh > 0 else "-"
+            inv_str = f"{inv_kwh:.2f} kWh" if inv_kwh else "-"
+
+            cable_loss = s.get("cable_loss_kwh", 0.0)
+            car_loss = s.get("car_loss_kwh", 0.0)
+            t_loss = s.get("total_loss_kwh", s["loss_kwh"])
+
+            cable_str = f"{cable_loss:.2f} kWh" if inv_kwh else "-"
+            car_str_loss = f"{car_loss:.2f} kWh" if car_kwh > 0 else "-"
+            total_loss_str = f"{t_loss:.2f} kWh"
+            eff_str = f"{s['efficiency_pct']:.1f}%"
+
+            if s.get("invoice_cost") is not None and s.get("tessie_cost") is not None:
+                d_cost = s["invoice_cost"] - s["tessie_cost"]
+                cost_v = f"${d_cost:+.2f}"
+            else:
+                cost_v = "-"
+
+            dt_obj = s.get("detailed_telemetry")
+            if dt_obj:
+                p_kw = dt_obj.get("peak_power_kw", 0)
+                t_rise = dt_obj.get("temp_rise_c")
+                if p_kw > 0 and t_rise is not None:
+                    telem_str = f"{p_kw:.0f}kW/+{t_rise:.0f}°C"
+                elif p_kw > 0:
+                    telem_str = f"{p_kw:.0f} kW"
+                else:
+                    telem_str = f"{dt_obj.get('samples_count', 0)} pts"
+            else:
+                telem_str = "-"
+
+            tot_bat += bat_kwh
+            if car_kwh > 0:
+                tot_car += car_kwh
+            if inv_kwh:
+                tot_inv += inv_kwh
+                tot_cable_loss += cable_loss
+                tot_car_loss += car_loss
+                tot_loss += t_loss
+
+            row_str = "│" + "│".join([
+                pad_display(idx_str, widths[0], "center", truncate=True),
+                pad_display(dt_str, widths[1], "center", truncate=True),
+                pad_display(f" {place_str}", widths[2], "left", truncate=True),
+                pad_display(f"{bat_str} ", widths[3], "right", truncate=True),
+                pad_display(f"{car_str} ", widths[4], "right", truncate=True),
+                pad_display(f"{inv_str} ", widths[5], "right", truncate=True),
+                pad_display(f"{cable_str} ", widths[6], "right", truncate=True),
+                pad_display(f"{car_str_loss} ", widths[7], "right", truncate=True),
+                pad_display(f"{total_loss_str} ", widths[8], "right", truncate=True),
+                pad_display(eff_str, widths[9], "center", truncate=True),
+                pad_display(f"{cost_v} ", widths[10], "right", truncate=True),
+                pad_display(telem_str, widths[11], "center", truncate=True)
+            ]) + "│"
+            print(row_str)
+
+        bot_b = "└" + "┴".join("─" * w for w in widths) + "┘"
+        print(bot_b)
+
+        if tot_inv > 0:
+            box_w = 95
+            overall_eff = (tot_bat / tot_inv * 100.0)
+            eff_color = C_GREEN if overall_eff >= 85.0 else (C_YELLOW if overall_eff >= 75.0 else C_RED)
+            cable_eff = ((tot_inv - tot_cable_loss) / tot_inv * 100.0) if tot_inv > 0 else 100.0
+            car_eff = (tot_bat / tot_car * 100.0) if tot_car > 0 else 100.0
+            
+            print()
+            print(f"┌{'─' * (box_w - 2)}┐")
+            s_title = f" 🔍 {C_BOLD}CORRELATION LOSS ANALYSIS BREAKDOWN{C_RESET}"
+            print(f"│{pad_display(s_title, box_w - 2, 'left', truncate=True)}│")
+            print(f"├{'─' * (box_w - 2)}┤")
+            
+            cl1 = f"  {C_BOLD}1. Dispenser Meter Output (Tesla Billed):{C_RESET} {tot_inv:,.2f} kWh"
+            print(f"│{pad_display(cl1, box_w - 2, truncate=True)}│")
+            
+            cl2 = f"  {C_BOLD}2. Vehicle Gross Energy Intake:{C_RESET}           {tot_car:,.2f} kWh (Cable/Lead Loss: {tot_cable_loss:,.2f} kWh, {100-cable_eff:.1f}%)"
+            print(f"│{pad_display(cl2, box_w - 2, truncate=True)}│")
+            
+            cl3 = f"  {C_BOLD}3. Net Battery Chemical Storage:{C_RESET}          {tot_bat:,.2f} kWh (Vehicle BMS Loss: {tot_car_loss:,.2f} kWh, {100-car_eff:.1f}%)"
+            print(f"│{pad_display(cl3, box_w - 2, truncate=True)}│")
+            
+            cl4 = f"  {C_BOLD}Overall Efficiency & Total Loss:{C_RESET}          {eff_color}{overall_eff:.1f}% Net Efficiency{C_RESET} ({tot_loss:,.2f} kWh Total Loss)"
+            print(f"│{pad_display(cl4, box_w - 2, truncate=True)}│")
+            
+            telem_linked = sum(1 for s in corr_sessions if s.get("detailed_telemetry"))
+            cl5 = f"  {C_BOLD}High-Frequency Telemetry Files Linked:{C_RESET}    {telem_linked}/{len(corr_sessions)} sessions from {shorten_display_path(self.landing_dir)}"
+            print(f"│{pad_display(cl5, box_w - 2, truncate=True)}│")
+            print(f"└{'─' * (box_w - 2)}┘\n")
+
     def inspect_session(self, target):
         if not self.reconciled_sessions:
             self.reconcile()
@@ -1719,80 +2100,123 @@ class TessieChargingAnalyzer:
             return
 
         s = target_session
-        box_w = 90
+        box_w = 95
         idx_label = f"#{s['charge_index']}" if s["charge_index"] is not None else "-"
         header_title = f" ⚡ {C_BOLD}DEEP-DIVE CHARGING INSPECTION: {idx_label} {s['place_name']}{C_RESET}"
         print()
         print(f"┌{'─' * (box_w - 2)}┐")
-        print(f"│{pad_display(header_title, box_w - 2, 'left')}│")
+        print(f"│{pad_display(header_title, box_w - 2, 'left', truncate=True)}│")
         print(f"├{'─' * (box_w - 2)}┤")
         
         l1 = f"  {C_BOLD}Location / Station:{C_RESET}   {s['emoji']} {s['place_name']} ({s['network']})"
-        print(f"│{pad_display(l1, box_w - 2)}│")
+        print(f"│{pad_display(l1, box_w - 2, truncate=True)}│")
         
         loc_raw = s["raw_charge"]["location_raw"] if s["raw_charge"] else "-"
         l2 = f"  {C_BOLD}Raw Address:{C_RESET}          {loc_raw}"
-        print(f"│{pad_display(l2, box_w - 2)}│")
+        print(f"│{pad_display(l2, box_w - 2, truncate=True)}│")
         
         l3 = f"  {C_BOLD}Started At (AEST):{C_RESET}    {s['datetime_str']} (Duration: {s['duration_mins']:.0f} mins)"
-        print(f"│{pad_display(l3, box_w - 2)}│")
+        print(f"│{pad_display(l3, box_w - 2, truncate=True)}│")
 
         l4 = f"  {C_BOLD}Battery SoC Range:{C_RESET}    {s['start_soc']}% ➔ {s['end_soc']}% (+{s['end_soc'] - s['start_soc']}%)"
-        print(f"│{pad_display(l4, box_w - 2)}│")
+        print(f"│{pad_display(l4, box_w - 2, truncate=True)}│")
 
         l5 = f"  {C_BOLD}Rated Range Added:{C_RESET}    +{s['range_added_km']:.1f} km  │  {C_BOLD}Odometer:{C_RESET} {s['odometer_km']:,.2f} km"
-        print(f"│{pad_display(l5, box_w - 2)}│")
+        print(f"│{pad_display(l5, box_w - 2, truncate=True)}│")
 
         print(f"├{'─' * (box_w - 2)}┤")
         
-        e_title = f"  {C_BOLD}{C_MAGENTA}⚡ ENERGY & EFFICIENCY TELEMETRY (Dispenser vs Battery BMS):{C_RESET}"
-        print(f"│{pad_display(e_title, box_w - 2)}│")
+        e_title = f"  {C_BOLD}{C_MAGENTA}⚡ THREE-WAY ENERGY RECONCILIATION & LOSS AUDIT:{C_RESET}"
+        print(f"│{pad_display(e_title, box_w - 2, truncate=True)}│")
 
-        l6 = f"    • {C_BOLD}Energy Delivered (Meter):{C_RESET}   {s['dispenser_kwh']:.2f} kWh (Dispenser Output)"
-        print(f"│{pad_display(l6, box_w - 2)}│")
+        if s.get("invoice_disp_kwh"):
+            l6a = f"    • {C_BOLD}1. Invoice Meter (Dispenser):{C_RESET}   {s['invoice_disp_kwh']:.2f} kWh (Tesla Billed Dispenser Meter)"
+            print(f"│{pad_display(l6a, box_w - 2, truncate=True)}│")
+        
+        car_in = s.get("tessie_car_kwh", 0.0)
+        if car_in > 0:
+            l6b = f"    • {C_BOLD}2. Vehicle Gross Intake:{C_RESET}       {car_in:.2f} kWh (Electricity Consumed by Car)"
+            print(f"│{pad_display(l6b, box_w - 2, truncate=True)}│")
 
-        l7 = f"    • {C_BOLD}Energy Added (Battery):{C_RESET}     {s['battery_kwh']:.2f} kWh (Net Battery Pack Chemical Storage)"
-        print(f"│{pad_display(l7, box_w - 2)}│")
+        l7 = f"    • {C_BOLD}3. Net Battery Storage (BMS):{C_RESET}   {s['battery_kwh']:.2f} kWh (Net Battery Pack Chemical Storage)"
+        print(f"│{pad_display(l7, box_w - 2, truncate=True)}│")
+
+        if s.get("invoice_disp_kwh") and s.get("cable_loss_kwh") is not None:
+            l8a = f"    • {C_BOLD}Dispenser & Cable Loss:{C_RESET}        {s['cable_loss_kwh']:.2f} kWh (Stall electronics & cable resistance)"
+            print(f"│{pad_display(l8a, box_w - 2, truncate=True)}│")
+            l8b = f"    • {C_BOLD}Vehicle Conditioning Loss:{C_RESET}     {s['car_loss_kwh']:.2f} kWh (BMS, chiller pumps & heat dissipation)"
+            print(f"│{pad_display(l8b, box_w - 2, truncate=True)}│")
 
         eff_color = C_GREEN if s["efficiency_pct"] >= 85.0 else (C_YELLOW if s["efficiency_pct"] >= 75.0 else C_RED)
-        l8 = f"    • {C_BOLD}Thermal & Conversion Loss:{C_RESET}  {s['loss_kwh']:.2f} kWh  ({eff_color}{s['efficiency_pct']:.1f}% Efficiency{C_RESET})"
-        print(f"│{pad_display(l8, box_w - 2)}│")
+        l8 = f"    • {C_BOLD}Total Charging Loss:{C_RESET}           {s['loss_kwh']:.2f} kWh  ({eff_color}{s['efficiency_pct']:.1f}% Dispenser-to-Battery{C_RESET})"
+        print(f"│{pad_display(l8, box_w - 2, truncate=True)}│")
+
+        # Detailed high-frequency telemetry section if available
+        dt_rec = s.get("detailed_telemetry")
+        if dt_rec:
+            print(f"├{'─' * (box_w - 2)}┤")
+            short_src = shorten_display_path(dt_rec['source_file'], 50)
+            t_title = f"  {C_BOLD}{C_CYAN}🔋 HIGH-FREQUENCY TELEMETRY AUDIT ({short_src}):{C_RESET}"
+            print(f"│{pad_display(t_title, box_w - 2, truncate=True)}│")
+            
+            t1 = f"    • {C_BOLD}High-Res Telemetry Samples:{C_RESET} {dt_rec['samples_count']} readings over {dt_rec['duration_mins']:.1f} mins"
+            print(f"│{pad_display(t1, box_w - 2, truncate=True)}│")
+            
+            t2 = f"    • {C_BOLD}Charging Power Profile:{C_RESET}     Peak: {dt_rec['peak_power_kw']:.1f} kW  │  Average: {dt_rec['avg_power_kw']:.1f} kW"
+            print(f"│{pad_display(t2, box_w - 2, truncate=True)}│")
+            
+            if dt_rec.get("initial_batt_temp_c") is not None and dt_rec.get("final_batt_temp_c") is not None:
+                t3 = f"    • {C_BOLD}Battery Module Temp:{C_RESET}        {dt_rec['initial_batt_temp_c']:.1f}°C ➔ {dt_rec['final_batt_temp_c']:.1f}°C (Peak: {dt_rec['max_batt_temp_c']:.1f}°C, ΔT: +{dt_rec['temp_rise_c']:.1f}°C)"
+                print(f"│{pad_display(t3, box_w - 2, truncate=True)}│")
+                
+            heater_str = "ACTIVE (Preheating)" if dt_rec.get("battery_heater") else "Off (Active cooling loop)"
+            amb_str = f"{dt_rec['outside_temp_c']:.1f}°C" if dt_rec.get("outside_temp_c") is not None else "-"
+            t4 = f"    • {C_BOLD}Thermal Management:{C_RESET}         Heater: {heater_str}  │  Ambient Temp: {amb_str}"
+            print(f"│{pad_display(t4, box_w - 2, truncate=True)}│")
+            
+            if dt_rec.get("delta_energy_remaining_kwh") is not None:
+                t5 = f"    • {C_BOLD}Energy Remaining Delta:{C_RESET}     {dt_rec['energy_remaining_start']:.2f} kWh ➔ {dt_rec['energy_remaining_end']:.2f} kWh (+{dt_rec['delta_energy_remaining_kwh']:.2f} kWh)"
+                print(f"│{pad_display(t5, box_w - 2, truncate=True)}│")
+                
+            if dt_rec.get("integrated_charger_kwh", 0) > 0:
+                t6 = f"    • {C_BOLD}Integrated Telemetry Energy:{C_RESET} Port: {dt_rec['integrated_charger_kwh']:.2f} kWh  │  Battery Pack (V×I): {dt_rec['integrated_pack_kwh']:.2f} kWh"
+                print(f"│{pad_display(t6, box_w - 2, truncate=True)}│")
 
         print(f"├{'─' * (box_w - 2)}┤")
         
         c_title = f"  {C_BOLD}{C_GREEN}💰 FINANCIAL & TARIFF AUDIT:{C_RESET}"
-        print(f"│{pad_display(c_title, box_w - 2)}│")
+        print(f"│{pad_display(c_title, box_w - 2, truncate=True)}│")
 
         l9 = f"    • {C_BOLD}Tessie Logged Cost:{C_RESET}        ${s['tessie_cost']:.2f} AUD (@ ${s['tessie_rate']:.3f}/kWh)"
-        print(f"│{pad_display(l9, box_w - 2)}│")
+        print(f"│{pad_display(l9, box_w - 2, truncate=True)}│")
 
         if s["invoice_number"]:
             inv_type_label = "Tesla Tax Invoice" if s["is_supercharger"] else f"{s['network']} Receipt"
             l10 = f"    • {C_BOLD}{inv_type_label}:{C_RESET}         ${s['invoice_cost']:.2f} AUD (Inv #{s['invoice_number']} @ ${s['invoice_rate']:.3f}/kWh)"
-            print(f"│{pad_display(l10, box_w - 2)}│")
+            print(f"│{pad_display(l10, box_w - 2, truncate=True)}│")
             
             delta_cost = (s["invoice_cost"] or 0) - s["tessie_cost"]
             d_color = C_GREEN if abs(delta_cost) < 0.10 else (C_YELLOW if abs(delta_cost) < 1.0 else C_RED)
             l11 = f"    • {C_BOLD}Cost Reconciliation Delta:{C_RESET} {d_color}${delta_cost:+.2f} AUD{C_RESET}"
-            print(f"│{pad_display(l11, box_w - 2)}│")
+            print(f"│{pad_display(l11, box_w - 2, truncate=True)}│")
         else:
             l10 = f"    • {C_BOLD}Tax Invoice / Receipt:{C_RESET}     {C_YELLOW}No matching invoice file found in configured invoices directory{C_RESET}"
-            print(f"│{pad_display(l10, box_w - 2)}│")
+            print(f"│{pad_display(l10, box_w - 2, truncate=True)}│")
 
         if s.get("expected_rate") is not None:
             arch_tag = f" {C_MAGENTA}[Historical Archive]{C_RESET}" if s.get("is_archived_tariff") else ""
             sched_label = f" [{s.get('expected_schedule_name')}]" if s.get("expected_schedule_name") else ""
             tz_label = f" (TZ: {s.get('timezone', 'Australia/Sydney')})"
             l12 = f"    • {C_BOLD}Expected Tariff Rate:{C_RESET}      ${s['expected_rate']:.3f}/kWh{sched_label}{tz_label}{arch_tag}"
-            print(f"│{pad_display(l12, box_w - 2)}│")
+            print(f"│{pad_display(l12, box_w - 2, truncate=True)}│")
 
             if s.get("theoretical_cost") is not None:
                 th_gst_str = f" (incl. ${s['theoretical_gst']:.2f} GST [10%])" if s.get("theoretical_gst") is not None else ""
                 l12b = f"    • {C_BOLD}Theoretical Tariff Cost:{C_RESET}   ${s['theoretical_cost']:.2f} AUD{th_gst_str}"
-                print(f"│{pad_display(l12b, box_w - 2)}│")
+                print(f"│{pad_display(l12b, box_w - 2, truncate=True)}│")
 
         l13 = f"    • {C_BOLD}Reconciliation Status:{C_RESET}     {s['status']}"
-        print(f"│{pad_display(l13, box_w - 2)}│")
+        print(f"│{pad_display(l13, box_w - 2, truncate=True)}│")
         print(f"└{'─' * (box_w - 2)}┘\n")
 
     def list_chargers(self):
@@ -2198,6 +2622,7 @@ def main():
     parser.add_argument("--until", help="Filter sessions on or before date (YYYY-MM-DD)")
     
     parser.add_argument("--inspect", help="Deep-dive inspect a specific session by Charge # or Date")
+    parser.add_argument("--correlation", "--compare", action="store_true", help="Display 3-way correlation audit comparing Tessie summary, detailed telemetry CSV, and Invoices")
     parser.add_argument("--list-chargers", action="store_true", help="List all registered Superchargers and 3rd-Party charging stations")
     parser.add_argument("--consolidate", action="store_true", help="Consolidate all charges into charges_master.csv")
     parser.add_argument("--rename-invoices", "--rename", action="store_true", help="Rename invoice PDFs to Tesla_Supercharging_YYYYMMDDHHMM_<invoice_num>_<Location>.pdf")
@@ -2264,6 +2689,12 @@ def main():
         if u_dt:
             u_dt_end = u_dt + timedelta(days=1)
             filtered = [s for s in filtered if s["datetime"] and s["datetime"] <= u_dt_end]
+
+    if args.correlation:
+        analyzer.print_correlation_table(filtered)
+        if args.export:
+            analyzer.export_reconciliation(args.export, filtered)
+        return
 
     analyzer.print_summary(filtered)
     analyzer.print_sessions_table(filtered)
