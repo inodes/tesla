@@ -17,17 +17,27 @@ import sys
 # Auto re-exec inside local direnv/pyenv virtual environment if not already active
 _script_dir = os.path.dirname(os.path.abspath(__file__))
 _repo_root = os.path.dirname(_script_dir)
-for _py_candidate in [
-    os.path.join(_repo_root, ".direnv", "python-3.11", "bin", "python3"),
-    os.path.join(_repo_root, ".direnv", "python-3.11", "bin", "python"),
-    os.path.join(_repo_root, ".venv", "bin", "python3"),
-    os.path.join(_repo_root, ".venv", "bin", "python")
-]:
+_candidates = []
+if "VIRTUAL_ENV" in os.environ:
+    _candidates.extend([
+        os.path.join(os.environ["VIRTUAL_ENV"], "bin", "python3"),
+        os.path.join(os.environ["VIRTUAL_ENV"], "bin", "python")
+    ])
+import glob as _glob
+for _d in _glob.glob(os.path.join(_repo_root, ".direnv", "python*")):
+    _candidates.extend([os.path.join(_d, "bin", "python3"), os.path.join(_d, "bin", "python")])
+for _d in _glob.glob(os.path.join(_repo_root, ".venv*")):
+    _candidates.extend([os.path.join(_d, "bin", "python3"), os.path.join(_d, "bin", "python")])
+
+for _py_candidate in _candidates:
     if os.path.isfile(_py_candidate) and os.path.abspath(sys.executable) != os.path.abspath(_py_candidate):
         try:
             import playwright
         except ImportError:
-            os.execv(_py_candidate, [_py_candidate] + sys.argv)
+            try:
+                os.execv(_py_candidate, [_py_candidate] + sys.argv)
+            except Exception:
+                pass
 
 import re
 import time

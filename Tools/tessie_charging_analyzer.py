@@ -20,12 +20,19 @@ import sys
 # Auto re-exec inside local direnv/pyenv virtual environment if not already active
 _script_dir = os.path.dirname(os.path.abspath(__file__))
 _repo_root = os.path.dirname(_script_dir)
-for _py_candidate in [
-    os.path.join(_repo_root, ".direnv", "python-3.11", "bin", "python3"),
-    os.path.join(_repo_root, ".direnv", "python-3.11", "bin", "python"),
-    os.path.join(_repo_root, ".venv", "bin", "python3"),
-    os.path.join(_repo_root, ".venv", "bin", "python")
-]:
+_candidates = []
+if "VIRTUAL_ENV" in os.environ:
+    _candidates.extend([
+        os.path.join(os.environ["VIRTUAL_ENV"], "bin", "python3"),
+        os.path.join(os.environ["VIRTUAL_ENV"], "bin", "python")
+    ])
+import glob as _glob
+for _d in _glob.glob(os.path.join(_repo_root, ".direnv", "python*")):
+    _candidates.extend([os.path.join(_d, "bin", "python3"), os.path.join(_d, "bin", "python")])
+for _d in _glob.glob(os.path.join(_repo_root, ".venv*")):
+    _candidates.extend([os.path.join(_d, "bin", "python3"), os.path.join(_d, "bin", "python")])
+
+for _py_candidate in _candidates:
     if os.path.isfile(_py_candidate) and os.path.abspath(sys.executable) != os.path.abspath(_py_candidate):
         try:
             import pypdf
@@ -667,7 +674,7 @@ class TeslaInvoiceParser:
             unit_rate = float(rate_match.group(1)) if rate_match else None
 
         if total_cost is not None and energy_kwh and energy_kwh > 0 and unit_rate is None:
-            unit_rate = round(total_cost / energy_kwh, 4)
+            unit_rate = round(total_cost / energy_kwh, 2)
 
         # 8. VIN
         vin = ""
@@ -801,7 +808,7 @@ class TeslaInvoiceParser:
                         "network": network,
                         "emoji": emoji,
                         "energy_kwh": energy_val,
-                        "unit_rate": rate_val or (round(cost_val / energy_val, 4) if cost_val and energy_val else None),
+                        "unit_rate": rate_val or (round(cost_val / energy_val, 2) if cost_val and energy_val else None),
                         "total_cost": cost_val,
                         "gst": (round(cost_val / 11.0, 2) if cost_val else None),
                         "vin": row.get("VIN", ""),
@@ -905,6 +912,7 @@ class TessieChargingAnalyzer:
 
         self.charges = []
         self.invoices = []
+        self.discrepancies = []
         self.reconciled_sessions = []
         self._loaded = False
 
@@ -1155,7 +1163,46 @@ class TessieChargingAnalyzer:
             "timezone": tz_name
         }
 
+    def auto_ingest_from_landing(self):
+        landing = self.landing_dir
+        if not landing or not os.path.isdir(landing):
+            return
+        
+        archive_dir = os.path.join(self.repo_root, "Tessie", "archive")
+        os.makedirs(archive_dir, exist_ok=True)
+        
+        moved = 0
+        for f in os.listdir(landing):
+            if not f.endswith(".csv"):
+                continue
+            
+            fp = os.path.join(landing, f)
+            try:
+                with open(fp, "r", encoding="utf-8-sig") as csv_f:
+                    reader = csv.reader(csv_f)
+                    header = next(reader, None)
+                    if not header:
+                        continue
+                    hset = set(h.strip() for h in header)
+                    
+                    is_tessie = ("Starting Location" in hset and "Distance (km)" in hset) or \
+                                ("Location" in hset and "Energy Added (kWh)" in hset) or \
+                                ("Speed (km/h)" in hset or "Speed (mph)" in hset) or \
+                                ("Charger Power (kW)" in hset or "Charger Voltage (V)" in hset)
+                    
+                    if is_tessie:
+                        ts = datetime.datetime.now().strftime("%Y%m%d%H%M")
+                        dst_name = f"{f}.{ts}"
+                        shutil.move(fp, os.path.join(archive_dir, dst_name))
+                        print(f"\033[94m📥 Ingested & Archived:\033[0m {dst_name}")
+                        moved += 1
+            except Exception:
+                pass
+        if moved > 0:
+            print("")
+
     def load_charges(self):
+        self.auto_ingest_from_landing()
         raw_charges = []
         seen_keys = set()
         
@@ -1163,7 +1210,7 @@ class TessieChargingAnalyzer:
             if not os.path.isdir(td):
                 continue
             for fname in os.listdir(td):
-                if fname.startswith("charges_summary") and fname.endswith(".csv"):
+                if ("charges_summary" in fname or "-charges.csv" in fname) and not "telemetry" in fname:
                     fpath = os.path.join(td, fname)
                     try:
                         with open(fpath, "r", encoding="utf-8", errors="ignore") as f:
@@ -1180,7 +1227,8 @@ class TessieChargingAnalyzer:
                                 seen_keys.add(key)
                                 
                                 s_dt = parse_flexible_date(s_at)
-                                e_at = row.get("Ended At (AEST)") or row.get("Ended At")
+                                e_at_key = next((k for k in row.keys() if k and k.startswith("Ended At")), "Ended At")
+                                e_at = row.get(e_at_key, "")
                                 e_dt = parse_flexible_date(e_at) if e_at else None
                                 
                                 is_super = str(row.get("Supercharger", "")).strip().lower() == "true"
@@ -1260,7 +1308,8 @@ class TessieChargingAnalyzer:
                                     "start_soc": start_soc,
                                     "end_soc": end_soc,
                                     "range_added_km": range_added,
-                                    "odometer_km": odometer
+                                    "odometer_km": odometer,
+                                    "source_file": fpath
                                 })
                     except Exception:
                         pass
@@ -1475,7 +1524,7 @@ class TessieChargingAnalyzer:
         seen_paths = set()
         search_dirs = [self.landing_dir] + self.tessie_dirs
         for td in list(self.tessie_dirs):
-            for sub in ["charges", "telemetry", "Inbox"]:
+            for sub in ["charges", "telemetry", "archive"]:
                 sub_p = os.path.join(td, sub)
                 if os.path.isdir(sub_p):
                     search_dirs.append(sub_p)
@@ -1539,7 +1588,138 @@ class TessieChargingAnalyzer:
 
         return False
 
-    def reconcile(self):
+    
+    def interactive_discrepancy_menu(self):
+        """Displays all discrepancies in a menu and allows updating the underlying CSVs."""
+        if not self.discrepancies:
+            return
+            
+        print(f"\n\033[91m==========================================================================\033[0m")
+        print(f"\033[91m ⚠️  {len(self.discrepancies)} CHARGE COST DISCREPANCIES DETECTED (Net/Gross CSV issue)\033[0m")
+        print(f"\033[91m==========================================================================\033[0m")
+        
+        for i, d in enumerate(self.discrepancies):
+            s_at = d.get("started_at_str")
+            place = d.get("place_name")
+            bat_kwh = d.get("energy_added_kwh", 0)
+            t_cost = d.get("cost", 0)
+            
+            disc = d.get("_discrepancy", {})
+            i_cost = disc.get("invoice_cost", 0)
+            i_rate = disc.get("invoice_rate", 0)
+            i_kwh = disc.get("invoice_kwh", 0)
+            
+            print(f"\n\033[91m[{i+1}] {s_at} @ {place}\033[0m")
+            print(f"    Tessie Telemetry: {bat_kwh:.2f} kWh | Cost: ${t_cost:.2f}")
+            print(f"    Official Invoice: {i_kwh:.2f} kWh | Cost: ${i_cost:.2f} | Rate: ${i_rate:.2f}/kWh" if i_rate == round(i_rate, 2) else f"    Official Invoice: {i_kwh:.2f} kWh | Cost: ${i_cost:.2f} | Rate: ${i_rate:.2f}/kWh")
+            
+        print(f"\nOptions: [1-{len(self.discrepancies)}] to fix individually, [a]ll to fix all, [s]kip/continue")
+        
+        while True:
+            try:
+                choice = input("Select action: ").strip().lower()
+                if choice in ['s', 'skip', 'c', 'continue', 'q', 'quit']:
+                    break
+                
+                to_fix = []
+                if choice in ['a', 'all']:
+                    to_fix = self.discrepancies
+                elif choice.isdigit() and 1 <= int(choice) <= len(self.discrepancies):
+                    to_fix = [self.discrepancies[int(choice)-1]]
+                else:
+                    # Support comma separated
+                    parts = choice.split(",")
+                    valid = True
+                    for p in parts:
+                        p = p.strip()
+                        if p.isdigit() and 1 <= int(p) <= len(self.discrepancies):
+                            to_fix.append(self.discrepancies[int(p)-1])
+                        elif p:
+                            valid = False
+                    if not valid or not to_fix:
+                        print("Invalid selection.")
+                        continue
+                
+                # Fix the chosen discrepancies
+                import csv
+                import tempfile
+                
+                # Group by source file
+                by_file = {}
+                for charge in to_fix:
+                    sf = charge.get("source_file")
+                    if sf:
+                        by_file.setdefault(sf, []).append(charge)
+                
+                fixed_count = 0
+                for sf, charges in by_file.items():
+                    if not os.path.exists(sf):
+                        continue
+                        
+                    # Create lookup map based on Started At and Location
+                    lookup = {}
+                    for c in charges:
+                        s_at = c.get("started_at_str", "").strip()
+                        loc = c.get("location_raw", "").strip()
+                        added = f"{c.get('energy_added_kwh', 0):.2f}"
+                        # Try to match uniquely
+                        lookup[(s_at, loc)] = c
+                    
+                    temp_fd, temp_path = tempfile.mkstemp(dir=os.path.dirname(sf), text=True)
+                    try:
+                        with os.fdopen(temp_fd, "w", encoding="utf-8", newline="") as out_f:
+                            with open(sf, "r", encoding="utf-8", errors="ignore") as in_f:
+                                reader = csv.DictReader(in_f)
+                                fieldnames = reader.fieldnames
+                                writer = csv.DictWriter(out_f, fieldnames=fieldnames)
+                                writer.writeheader()
+                                
+                                for row in reader:
+                                    s_at = (row.get("Started At (AEST)") or row.get("Started At", "")).strip()
+                                    loc = row.get("Location", "").strip()
+                                    
+                                    key = (s_at, loc)
+                                    if key in lookup:
+                                        c = lookup[key]
+                                        disc = c.get("_discrepancy", {})
+                                        i_cost = disc.get("invoice_cost")
+                                        i_rate = disc.get("invoice_rate")
+                                        
+                                        if i_cost is not None and "Cost" in row:
+                                            row["Cost"] = str(i_cost)
+                                            c["cost"] = i_cost
+                                        if i_rate is not None and "Cost Per kWh" in row:
+                                            row["Cost Per kWh"] = str(i_rate)
+                                            c["cost_per_kwh"] = i_rate
+                                            
+                                        c["status"] = "MATCHED ✅"
+                                        
+                                        # Remove from self.discrepancies so it doesn't show again
+                                        if c in self.discrepancies:
+                                            self.discrepancies.remove(c)
+                                        fixed_count += 1
+                                        
+                                    writer.writerow(row)
+                        
+                        os.replace(temp_path, sf)
+                    except Exception as e:
+                        print(f"Error modifying {sf}: {e}")
+                        try:
+                            os.remove(temp_path)
+                        except:
+                            pass
+                
+                print(f"✅ Fixed {fixed_count} discrepancies.")
+                if not self.discrepancies:
+                    break
+                else:
+                    # Reprint remaining
+                    return self.interactive_discrepancy_menu()
+                    
+            except (KeyboardInterrupt, EOFError):
+                break
+
+    def reconcile(self, interactive=False):
         if not self._loaded:
             self.load_charges()
             self.load_invoices()
@@ -1618,7 +1798,13 @@ class TessieChargingAnalyzer:
 
                 cost_diff = abs((invoice_cost or 0) - tessie_cost)
                 if cost_diff >= 0.50:
-                    status = "RATE MISMATCH ⚠️"
+                    status = "TESSIE RATE WRONG ⚠️"
+                    charge["_discrepancy"] = {
+                        "invoice_cost": invoice_cost,
+                        "invoice_rate": invoice_rate,
+                        "invoice_kwh": invoice_disp_kwh
+                    }
+                    self.discrepancies.append(charge)
                 else:
                     status = "MATCHED ✅"
 
@@ -1739,6 +1925,35 @@ class TessieChargingAnalyzer:
         self.reconciled_sessions = reconciled
         return self.reconciled_sessions
 
+    def patch_tessie_csv_record(self, filepath, target_started_at, new_cost, new_rate):
+        import csv
+        if not filepath or not os.path.exists(filepath):
+            return False
+        rows = []
+        updated = False
+        try:
+            with open(filepath, 'r', encoding='utf-8') as f:
+                reader = csv.DictReader(f)
+                fieldnames = reader.fieldnames
+                for row in reader:
+                    s_at = row.get("Started At (AEST)") or row.get("Started At")
+                    if s_at and s_at.strip() == target_started_at.strip():
+                        row['Cost'] = f"{new_cost:.2f}"
+                        if 'Cost Per kWh' in row and new_rate is not None:
+                            row['Cost Per kWh'] = f"{new_rate:.2f}"
+                        updated = True
+                    rows.append(row)
+            
+            if updated:
+                with open(filepath, 'w', encoding='utf-8', newline='') as f:
+                    writer = csv.DictWriter(f, fieldnames=fieldnames)
+                    writer.writeheader()
+                    writer.writerows(rows)
+                return True
+        except Exception as e:
+            print(f"\033[31mFailed to patch CSV {filepath}: {e}\033[0m")
+        return False
+
     def consolidate_charges_master(self, output_dir=None):
         external_tessie = find_mounted_tesla_volumes("Tessie")
         dest_dir = output_dir or (
@@ -1748,47 +1963,88 @@ class TessieChargingAnalyzer:
         os.makedirs(dest_dir, exist_ok=True)
         master_file = os.path.join(dest_dir, "charges_master.csv")
 
-        charges = self.load_charges()
-        if not charges:
-            print(f"{C_YELLOW}No charges found to consolidate.{C_RESET}")
-            return
-
+        existing_records = []
+        existing_keys = set()
+        
         fieldnames = [
-            "Started At (AEST)", "Ended At (AEST)", "Duration (Minutes)", "Location", "Saved Location",
+            "Started At", "Ended At", "Duration (Minutes)", "Location", "Saved Location",
             "Latitude", "Longitude", "Supercharger", "Fast Charger", "Odometer (km)",
             "Energy Added (kWh)", "Energy Used (kWh)", "Rated Range Added (km)", "Starting Battery (%)",
             "Ending Battery (%)", "Cost", "Cost Per kWh"
         ]
+        
+        import csv
+        if os.path.exists(master_file):
+            try:
+                with open(master_file, "r", encoding="utf-8") as f:
+                    reader = csv.DictReader(f)
+                    # Dynamically detect Started At column to handle variable timezones
+                    s_at_key = next((k for k in reader.fieldnames if k and k.startswith("Started At")), "Started At")
+                    e_at_key = next((k for k in reader.fieldnames if k and k.startswith("Ended At")), "Ended At")
+                    
+                    # Update fieldnames to match the existing file's timezone formatting if it has one
+                    fieldnames[0] = s_at_key
+                    fieldnames[1] = e_at_key
+                    
+                    for row in reader:
+                        s_at = row.get(s_at_key, "").strip()
+                        loc = row.get("Location", "").strip()
+                        added = row.get("Energy Added (kWh)", "").strip()
+                        key = (s_at, loc, added)
+                        existing_keys.add(key)
+                        existing_records.append(row)
+            except Exception as e:
+                pass
+
+        if not self.reconciled_sessions:
+            self.reconcile()
+            
+        new_records = []
+        for c in self.reconciled_sessions:
+            if c["status"] == "INVOICE ONLY 📄":
+                continue 
+                
+            s_at = str(c.get("datetime_str", "")).strip()
+            loc = str(c.get("place_name") or c.get("location_raw", "")).strip()
+            added = f"{c['tessie_bat_kwh']:.2f}"
+            
+            raw = c.get("raw_charge") or {}
+            loc_key = str(raw.get("location_raw", loc)).strip()
+            
+            key = (s_at, loc_key, added)
+            if key not in existing_keys:
+                s_at_key = fieldnames[0]
+                e_at_key = fieldnames[1]
+                row = {
+                    s_at_key: s_at,
+                    e_at_key: raw.get("ended_at_str", ""),
+                    "Duration (Minutes)": f"{c.get('duration_mins', 0):.0f}",
+                    "Location": loc_key,
+                    "Saved Location": raw.get("saved_location", ""),
+                    "Latitude": f"{raw.get('latitude', 0):.6f}" if raw.get("latitude") is not None else "",
+                    "Longitude": f"{raw.get('longitude', 0):.6f}" if raw.get("longitude") is not None else "",
+                    "Supercharger": "true" if c.get("is_supercharger") else "false",
+                    "Fast Charger": "true" if c.get("is_fast_charger") else "false",
+                    "Odometer (km)": f"{c.get('odometer_km', 0):.2f}",
+                    "Energy Added (kWh)": added,
+                    "Energy Used (kWh)": f"{c.get('tessie_car_kwh', 0):.2f}",
+                    "Rated Range Added (km)": f"{c.get('range_added_km', 0):.2f}",
+                    "Starting Battery (%)": str(c.get("start_soc", "")),
+                    "Ending Battery (%)": str(c.get("end_soc", "")),
+                    "Cost": f"{c.get('tessie_cost', 0):.2f}",
+                    "Cost Per kWh": f"{c.get('tessie_rate', 0):.2f}"
+                }
+                new_records.append(row)
+                existing_keys.add(key)
+                
+        all_records = existing_records + new_records
 
         with open(master_file, "w", newline="", encoding="utf-8") as f:
             writer = csv.DictWriter(f, fieldnames=fieldnames)
             writer.writeheader()
-            for c in charges:
-                writer.writerow({
-                    "Started At (AEST)": c["started_at_str"],
-                    "Ended At (AEST)": c["ended_at_str"],
-                    "Duration (Minutes)": f"{c['duration_mins']:.0f}",
-                    "Location": c["location_raw"],
-                    "Saved Location": c["saved_location"],
-                    "Latitude": f"{c['latitude']:.6f}" if c["latitude"] is not None else "",
-                    "Longitude": f"{c['longitude']:.6f}" if c["longitude"] is not None else "",
-                    "Supercharger": "true" if c["is_supercharger"] else "false",
-                    "Fast Charger": "true" if c["is_fast_charger"] else "false",
-                    "Odometer (km)": f"{c['odometer_km']:.2f}",
-                    "Energy Added (kWh)": f"{c['energy_added_kwh']:.2f}",
-                    "Energy Used (kWh)": f"{c['energy_used_kwh']:.2f}",
-                    "Rated Range Added (km)": f"{c['range_added_km']:.2f}",
-                    "Starting Battery (%)": str(c["start_soc"]),
-                    "Ending Battery (%)": str(c["end_soc"]),
-                    "Cost": f"{c['cost']:.2f}",
-                    "Cost Per kWh": f"{c['cost_per_kwh']:.2f}"
-                })
+            writer.writerows(all_records)
 
-        print(f"{C_GREEN}Successfully consolidated {len(charges)} charges to:{C_RESET} {master_file}")
-
-    # -------------------------------------------------------------------------
-    # Visual Terminal Presentation (Level 1, Level 2, Level 3)
-    # -------------------------------------------------------------------------
+        print(f"\033[92mSuccessfully appended {len(new_records)} new charges (Total: {len(all_records)}) to:\033[0m {master_file}")
 
     def print_summary(self, filtered_sessions=None):
         sessions = filtered_sessions if filtered_sessions is not None else self.reconciled_sessions
@@ -1834,7 +2090,7 @@ class TessieChargingAnalyzer:
         kpi_l3 = f"  {C_BOLD}Charging Efficiency Loss:{C_RESET} {total_loss_kwh:,.2f} kWh  ({eff_color}{overall_eff_pct:.1f}% Dispenser-to-Battery{C_RESET})"
         print(f"│{pad_display(kpi_l3, box_w - 2)}│")
 
-        kpi_l4 = f"  {C_BOLD}Total Electricity Spend:{C_RESET} ${total_spend:,.2f} AUD  │  {C_BOLD}Average Cost:{C_RESET} ${avg_cost_kwh:.4f}/kWh"
+        kpi_l4 = f"  {C_BOLD}Total Electricity Spend:{C_RESET} ${total_spend:,.2f} AUD  │  {C_BOLD}Average Cost:{C_RESET} ${avg_cost_kwh:.2f}/kWh"
         print(f"│{pad_display(kpi_l4, box_w - 2)}│")
 
         kpi_l5 = f"  {C_BOLD}Estimated Petrol Equivalent:{C_RESET} ${petrol_equiv_spend:,.2f}  │  {C_GREEN}{C_BOLD}Net Fuel Savings:{C_RESET} ${savings:,.2f} AUD"
@@ -2268,14 +2524,14 @@ class TessieChargingAnalyzer:
         c_title = f"  {C_BOLD}{C_GREEN}💰 FINANCIAL & TARIFF AUDIT:{C_RESET}"
         print(f"│{pad_display(c_title, box_w - 2, truncate=True)}│")
 
-        l9 = f"    • {C_BOLD}Tessie Logged Cost:{C_RESET}        ${s['tessie_cost']:.2f} AUD (@ ${s['tessie_rate']:.3f}/kWh)"
+        l9 = f"    • {C_BOLD}Tessie Logged Cost:{C_RESET}        ${s['tessie_cost']:.2f} AUD (@ ${s['tessie_rate']:.2f}/kWh)"
         print(f"│{pad_display(l9, box_w - 2, truncate=True)}│")
 
         if s["invoice_number"]:
             matched_inv = s.get("matched_invoice") if isinstance(s.get("matched_invoice"), dict) else {}
             inv_net_name = matched_inv.get("network") or s["network"]
             inv_type_label = "Tesla Tax Invoice" if (s["is_supercharger"] or "tesla" in inv_net_name.lower()) else f"{inv_net_name} Receipt"
-            l10 = f"    • {C_BOLD}{inv_type_label}:{C_RESET}         ${s['invoice_cost']:.2f} AUD (Inv #{s['invoice_number']} @ ${s['invoice_rate']:.3f}/kWh)"
+            l10 = f"    • {C_BOLD}{inv_type_label}:{C_RESET}         ${s['invoice_cost']:.2f} AUD (Inv #{s['invoice_number']} @ ${s['invoice_rate']:.2f}/kWh)"
             print(f"│{pad_display(l10, box_w - 2, truncate=True)}│")
             
             delta_cost = (s["invoice_cost"] or 0) - s["tessie_cost"]
@@ -2290,7 +2546,7 @@ class TessieChargingAnalyzer:
             arch_tag = f" {C_MAGENTA}[Historical Archive]{C_RESET}" if s.get("is_archived_tariff") else ""
             sched_label = f" [{s.get('expected_schedule_name')}]" if s.get("expected_schedule_name") else ""
             tz_label = f" (TZ: {s.get('timezone', 'Australia/Sydney')})"
-            l12 = f"    • {C_BOLD}Expected Tariff Rate:{C_RESET}      ${s['expected_rate']:.3f}/kWh{sched_label}{tz_label}{arch_tag}"
+            l12 = f"    • {C_BOLD}Expected Tariff Rate:{C_RESET}      ${s['expected_rate']:.2f}/kWh{sched_label}{tz_label}{arch_tag}"
             print(f"│{pad_display(l12, box_w - 2, truncate=True)}│")
 
             if s.get("theoretical_cost") is not None:
@@ -2431,13 +2687,14 @@ class TessieChargingAnalyzer:
                         "Loss (kWh)": f"{s['loss_kwh']:.2f}",
                         "Efficiency (%)": f"{s['efficiency_pct']:.1f}",
                         "Tessie Cost ($)": f"{s['tessie_cost']:.2f}",
-                        "Tessie Rate ($/kWh)": f"{s['tessie_rate']:.3f}",
+                        "Tessie Rate ($/kWh)": f"{s['tessie_rate']:.2f}",
                         "Invoice Cost ($)": f"{s['invoice_cost']:.2f}" if s["invoice_cost"] is not None else "",
-                        "Invoice Rate ($/kWh)": f"{s['invoice_rate']:.3f}" if s["invoice_rate"] is not None else "",
+                        "Invoice Rate ($/kWh)": f"{s['invoice_rate']:.2f}" if s["invoice_rate"] is not None else "",
                         "Invoice Number": s["invoice_number"] or "",
                         "Status": s["status"]
                     })
         print(f"{C_GREEN}Successfully exported {len(sessions)} reconciled records to:{C_RESET} {filepath}")
+
 
     def rename_invoices(self, format_pattern=None, dry_run=False, auto_confirm=False):
         if not self._loaded:
@@ -2700,6 +2957,7 @@ def main():
     parser.add_argument("--third-party", "-t", action="store_true", help="Filter for 3rd-Party Fast/AC charging sessions only")
     parser.add_argument("--home", "-H", action="store_true", help="Filter for Home AC charging sessions only")
     parser.add_argument("--unreconciled", "-u", action="store_true", help="Filter for unreconciled sessions or rate mismatches")
+    parser.add_argument("--audit", action="store_true", help="List mismatches without interactive prompting")
     parser.add_argument("--since", help="Filter sessions on or after date (YYYY-MM-DD or relative: today, yesterday, monday)")
     parser.add_argument("--until", help="Filter sessions on or before date (YYYY-MM-DD)")
     
@@ -2744,7 +3002,9 @@ def main():
         )
         return
 
-    reconciled = analyzer.reconcile()
+    reconciled = analyzer.reconcile(interactive=False)
+    if sys.stdin.isatty() and not args.audit:
+        analyzer.interactive_discrepancy_menu()
 
     if args.inspect:
         analyzer.inspect_session(args.inspect)

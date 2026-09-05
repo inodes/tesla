@@ -24,9 +24,10 @@ tesla/
 │
 ├── Tools/                        # 🛠️ Executable scripts for multi-drive deployment
 │   ├── tesla_sync.sh             # Multi-drive sync, audit & prune engine
-│   ├── tessie_analyzer.py        # Tessie drive analyzer & video linking
 │   ├── tessie_charging_analyzer.py # Charging reconciliation & invoice parser
-│   ├── tessie_renamer.py         # Tessie raw CSV categorization utility
+│   ├── tessie_drives_analyzer.py # Drive log analyzer & video linking
+│   ├── tessie_places.py          # Location management & POI lookup engine
+│   ├── find_tesla_chargers.py    # Tesla charger explorer & scraper
 │   └── run_exportdash.sh         # Local web player launcher
 │
 ├── .github/                      # GitHub Actions CI & community standards
@@ -50,11 +51,11 @@ tesla/
 
 ### 2. Tessie Drive Log Analysis & Place Matching
 ```bash
-# Auto-import and standardize Tessie exports from iCloud
-./Tools/tessie_analyzer.py --import-icloud
-
 # Analyze trips and link entry/exit times to TeslaCam video clips
-./Tools/tessie_analyzer.py --since 2026-09-01
+./Tools/tessie_drives_analyzer.py
+
+# Filter trips since a specific date or weekday
+./Tools/tessie_drives_analyzer.py --since 2026-09-01
 ```
 ### 3. Charging & Supercharger Invoice Reconciliation
 ```bash
