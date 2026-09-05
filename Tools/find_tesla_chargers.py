@@ -272,10 +272,23 @@ AU_STATE_BOUNDS = {
 # Normalization Helpers
 # -----------------------------------------------------------------------------
 
-def clean_station_short_name(name: str) -> str:
-    """Replaces all non-alphanumeric characters with underscores and condenses multiple underscores."""
-    s = re.sub(r"[^a-zA-Z0-9]+", "_", name)
-    return s.strip("_")
+def clean_station_short_name(name: str, max_length: int = 80) -> str:
+    """
+    Normalizes station names into filesystem-safe, cross-platform identifiers:
+    - Transliterates Unicode accents (e.g. 'Café' -> 'Cafe')
+    - Strips or replaces non-alphanumeric characters with underscores
+    - Condenses consecutive underscores and strips leading/trailing underscores
+    - Enforces safe length limits and prevents empty string results
+    """
+    if not name:
+        return "Station"
+    s = unicodedata.normalize('NFKD', str(name))
+    s = s.encode('ascii', 'ignore').decode('ascii')
+    s = re.sub(r"[^a-zA-Z0-9]+", "_", s)
+    s = s.strip("_")
+    if max_length and len(s) > max_length:
+        s = s[:max_length].rstrip("_")
+    return s or "Station"
 
 def normalize_country_slug(country_name: str) -> str:
     """Normalizes country name to URL slug (e.g. 'Hong Kong' -> 'Hong+Kong', 'Australia' -> 'Australia')."""
