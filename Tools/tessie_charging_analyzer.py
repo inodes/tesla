@@ -30,7 +30,10 @@ for _py_candidate in [
         try:
             import pypdf
         except ImportError:
-            os.execv(_py_candidate, [_py_candidate] + sys.argv)
+            try:
+                os.execv(_py_candidate, [_py_candidate] + sys.argv)
+            except Exception:
+                pass
 
 import re
 import csv
@@ -142,12 +145,23 @@ def truncate_display(s, max_width, ellipsis="…"):
         return s
     el_w = display_len(ellipsis)
     target = max(1, max_width - el_w)
+    
+    tokens = re.split(r"(\033\[[0-9;]*m)", s)
     curr = ""
-    for c in s:
-        if display_len(curr + c) > target:
-            break
-        curr += c
-    return curr + ellipsis
+    curr_len = 0
+    for tok in tokens:
+        if not tok:
+            continue
+        if tok.startswith("\033["):
+            curr += tok
+            continue
+        for c in tok:
+            cw = char_width(c)
+            if curr_len + cw > target:
+                return curr + ellipsis + (C_RESET if "\033[" in s else "")
+            curr += c
+            curr_len += cw
+    return curr + ellipsis + (C_RESET if "\033[" in s else "")
 
 def pad_display(s, target_width, align="left", truncate=False):
     if truncate and display_len(s) > target_width:
@@ -162,6 +176,24 @@ def pad_display(s, target_width, align="left", truncate=False):
         return " " * left + s + " " * right
     else:
         return s + " " * pad_len
+
+def shorten_display_path(p, max_len=40):
+    if not p:
+        return ""
+    p_str = str(p)
+    try:
+        if p_str.startswith(_repo_root):
+            rel = os.path.relpath(p_str, _repo_root)
+            if not rel.startswith("..") and len(rel) < len(p_str):
+                p_str = rel
+    except Exception:
+        pass
+    home = os.path.expanduser("~")
+    if p_str.startswith(home):
+        p_str = "~" + p_str[len(home):]
+    if max_len and len(p_str) > max_len:
+        p_str = "…" + p_str[-(max_len - 1):]
+    return p_str
 
 def wrap_text_display(s, max_width):
     clean = re.sub(r"\033\[[0-9;]*m", "", s)
@@ -531,21 +563,35 @@ class TeslaInvoiceParser:
                         location_name = kw
                         break
 
-        # 4. Energy Delivered (kWh)
+        # 4. Energy Delivered (kWh) & Unit Rate
         energy_kwh = None
-        for idx, line in enumerate(lines):
-            if "kwh" in line.lower() and "/" not in line and "per" not in line.lower():
-                val_m = re.search(r"(\d+\.?\d*)", line)
-                if val_m:
-                    try:
-                        v = float(val_m.group(1))
-                        if v > 0.5:
-                            energy_kwh = v
-                            break
-                    except Exception:
-                        pass
+        unit_rate = None
+
+        # Priority 1: Direct Tesla invoice item line pattern
+        # e.g. "Energy fee 0.54 / kWh 27.8050" or "Energy fee 0.40 / kWh 14.1194 kWh 10 5.65"
+        ef_match = re.search(r"Energy\s+fee\s+([\d\.]+)\s*\/\s*kWh\s+([\d\.]+)", text_clean, re.IGNORECASE)
+        if ef_match:
+            try:
+                unit_rate = float(ef_match.group(1))
+                energy_kwh = float(ef_match.group(2))
+            except Exception:
+                pass
+
         if energy_kwh is None:
-            kwh_matches = re.finditer(r"(\d+\.?\d*)\s*(?:\n\s*)?kWh", text_clean, re.IGNORECASE)
+            for idx, line in enumerate(lines):
+                if "kwh" in line.lower() and "/" not in line and "per" not in line.lower():
+                    # Only match numbers with decimals to avoid capturing standalone "10" (GST %)
+                    val_m = re.search(r"(\d+\.\d+)", line)
+                    if val_m:
+                        try:
+                            v = float(val_m.group(1))
+                            if v > 0.5:
+                                energy_kwh = v
+                                break
+                        except Exception:
+                            pass
+        if energy_kwh is None:
+            kwh_matches = re.finditer(r"(\d+\.\d+)\s*(?:\n\s*)?kWh", text_clean, re.IGNORECASE)
             for km in kwh_matches:
                 m_str = km.group(1)
                 if not re.search(rf"{re.escape(m_str)}\s*(?:\/|per)\s*kWh", text_clean, re.IGNORECASE):
@@ -589,9 +635,9 @@ class TeslaInvoiceParser:
             gst = float(gst_match.group(1)) if gst_match else None
 
         # 7. Unit Rate
-        unit_rate = None
-        rate_match = re.search(r"@?\s*\$?(\d+\.\d{2,4})\s*(?:\/\s*kWh|per\s*kWh)", text_clean, re.IGNORECASE)
-        unit_rate = float(rate_match.group(1)) if rate_match else None
+        if unit_rate is None:
+            rate_match = re.search(r"@?\s*\$?(\d+\.\d{2,4})\s*(?:\/\s*kWh|per\s*kWh)", text_clean, re.IGNORECASE)
+            unit_rate = float(rate_match.group(1)) if rate_match else None
 
         if total_cost is not None and energy_kwh and energy_kwh > 0 and unit_rate is None:
             unit_rate = round(total_cost / energy_kwh, 4)
@@ -1510,9 +1556,11 @@ class TessieChargingAnalyzer:
         print(f"│{pad_display(kpi_l6, box_w - 2)}│")
 
         if self.config_file:
-            inv_dir_display = self.config.get("invoices_directory") or (self.invoice_dirs[0] if self.invoice_dirs else "None")
-            kpi_l7 = f"  {C_BOLD}Config Loaded:{C_RESET} {self.config_file} (Invoices: {inv_dir_display})"
-            print(f"│{pad_display(kpi_l7, box_w - 2)}│")
+            cfg_disp = shorten_display_path(self.config_file, 35)
+            inv_dir_val = self.config.get("invoices_directory") or (self.invoice_dirs[0] if self.invoice_dirs else "None")
+            inv_disp = shorten_display_path(inv_dir_val, 35)
+            kpi_l7 = f"  {C_BOLD}Config Loaded:{C_RESET} {cfg_disp} (Invoices: {inv_disp})"
+            print(f"│{pad_display(kpi_l7, box_w - 2, truncate=True)}│")
         
         print(f"└{'─' * (box_w - 2)}┘\n")
 
@@ -1526,7 +1574,7 @@ class TessieChargingAnalyzer:
 
         print(f"┌{'─' * net_inner_w}┐")
         net_title = f" 📊 {C_BOLD}CHARGING NETWORK & LOCATION BREAKDOWN{C_RESET}"
-        print(f"│{pad_display(net_title, net_inner_w, 'left')}│")
+        print(f"│{pad_display(net_title, net_inner_w, 'left', truncate=True)}│")
         top_b = "├" + "┬".join("─" * w for w in widths) + "┤"
         print(top_b)
         
@@ -1548,14 +1596,14 @@ class TessieChargingAnalyzer:
             name_str = f"{emoji} {net_name}"
 
             row_str = "│" + "│".join([
-                pad_display(f" {name_str}", widths[0], "left"),
-                pad_display(type_label, widths[1], "center"),
-                pad_display(str(len(net_sessions)), widths[2], "center"),
-                pad_display(f"{n_disp:,.1f} kWh ", widths[3], "right"),
-                pad_display(f"{n_bat:,.1f} kWh ", widths[4], "right"),
-                pad_display(f"{n_eff:.1f}%", widths[5], "center"),
-                pad_display(f"${n_cost:,.2f} ", widths[6], "right"),
-                pad_display(f"${n_avg_rate:.3f} ", widths[7], "right")
+                pad_display(f" {name_str}", widths[0], "left", truncate=True),
+                pad_display(type_label, widths[1], "center", truncate=True),
+                pad_display(str(len(net_sessions)), widths[2], "center", truncate=True),
+                pad_display(f"{n_disp:,.1f} kWh ", widths[3], "right", truncate=True),
+                pad_display(f"{n_bat:,.1f} kWh ", widths[4], "right", truncate=True),
+                pad_display(f"{n_eff:.1f}%", widths[5], "center", truncate=True),
+                pad_display(f"${n_cost:,.2f} ", widths[6], "right", truncate=True),
+                pad_display(f"${n_avg_rate:.3f} ", widths[7], "right", truncate=True)
             ]) + "│"
             print(row_str)
 
@@ -1572,13 +1620,13 @@ class TessieChargingAnalyzer:
             "#", "Date / Time", "Place / Station", "Network", "SoC %", "Dur", "Disp kWh", "Bat kWh", "Eff %", "Rate", "Cost", "Invoice", "Status"
         ]
         widths = [
-            4, 18, 25, 22, 9, 6, 10, 9, 8, 9, 8, 16, 16
+            4, 18, 25, 22, 9, 6, 10, 9, 8, 9, 8, 16, 18
         ]
         total_inner_w = sum(widths) + len(widths) - 1
 
         print(f"┌{'─' * total_inner_w}┐")
         sess_title = f" ⚡ {C_BOLD}RECONCILED CHARGING SESSIONS ({len(sessions)} sessions){C_RESET}"
-        print(f"│{pad_display(sess_title, total_inner_w, 'left')}│")
+        print(f"│{pad_display(sess_title, total_inner_w, 'left', truncate=True)}│")
         top_b = "├" + "┬".join("─" * w for w in widths) + "┤"
         print(top_b)
         
@@ -1591,7 +1639,12 @@ class TessieChargingAnalyzer:
         for s in sessions:
             idx_str = str(s["charge_index"]) if s["charge_index"] is not None else "-"
             dt_str = s["datetime_str"][:16] if s["datetime_str"] else "-"
-            place_str = f"{s['emoji']} {s['place_name']}"
+            
+            clean_place = s["place_name"]
+            if s.get("network"):
+                clean_place = re.sub(rf"\s*\({re.escape(s['network'])}\)", "", clean_place, flags=re.IGNORECASE)
+            place_str = f"{s['emoji']} {clean_place}".strip()
+
             net_str = s["network"]
             soc_str = f"{s['start_soc']}%➔{s['end_soc']}%" if (s["start_soc"] or s["end_soc"]) else "-"
             dur_str = f"{int(s['duration_mins'])}m" if s["duration_mins"] > 0 else "-"
@@ -1622,19 +1675,19 @@ class TessieChargingAnalyzer:
                 stat_styled = f"{C_DIM}{stat}{C_RESET}"
 
             row_str = "│" + "│".join([
-                pad_display(idx_str, widths[0], "center"),
-                pad_display(dt_str, widths[1], "center"),
-                pad_display(f" {place_str}", widths[2], "left"),
-                pad_display(f" {net_str}", widths[3], "left"),
-                pad_display(soc_str, widths[4], "center"),
-                pad_display(dur_str, widths[5], "center"),
-                pad_display(f"{disp_str} ", widths[6], "right"),
-                pad_display(f"{bat_str} ", widths[7], "right"),
-                pad_display(eff_str, widths[8], "center"),
-                pad_display(f"{rate_str} ", widths[9], "right"),
-                pad_display(f"{cost_str} ", widths[10], "right"),
-                pad_display(inv_str, widths[11], "center"),
-                pad_display(f" {stat_styled}", widths[12], "left")
+                pad_display(idx_str, widths[0], "center", truncate=True),
+                pad_display(dt_str, widths[1], "center", truncate=True),
+                pad_display(f" {place_str}", widths[2], "left", truncate=True),
+                pad_display(f" {net_str}", widths[3], "left", truncate=True),
+                pad_display(soc_str, widths[4], "center", truncate=True),
+                pad_display(dur_str, widths[5], "center", truncate=True),
+                pad_display(f"{disp_str} ", widths[6], "right", truncate=True),
+                pad_display(f"{bat_str} ", widths[7], "right", truncate=True),
+                pad_display(eff_str, widths[8], "center", truncate=True),
+                pad_display(f"{rate_str} ", widths[9], "right", truncate=True),
+                pad_display(f"{cost_str} ", widths[10], "right", truncate=True),
+                pad_display(inv_str, widths[11], "center", truncate=True),
+                pad_display(f" {stat_styled}", widths[12], "left", truncate=True)
             ]) + "│"
             print(row_str)
 
