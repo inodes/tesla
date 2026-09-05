@@ -1973,26 +1973,33 @@ class TeslaChargerExplorer:
         def simplify_scheds(scheds):
             return [(s.get("start_time"), s.get("end_time"), round(float(s.get("rate_per_kwh", 0)), 4)) for s in scheds]
 
-        if simplify_scheds(ex_t_scheds) != simplify_scheds(new_t_scheds):
+        ex_simple = simplify_scheds(ex_t_scheds)
+        new_simple = simplify_scheds(new_t_scheds)
+
+        # Treat empty price as missing data / bug: only archive if existing had pricing and it actually changed
+        if ex_simple and new_simple and ex_simple != new_simple:
             return True
 
-        # Compare fees
-        ex_idle = ex_tariffs.get("idle_fee_per_min") or existing.get("tessie_cost_config", {}).get("idle_fee_per_min", 0)
-        new_idle = new_tariffs.get("idle_fee_per_min", 0)
-        if round(float(ex_idle or 0), 2) != round(float(new_idle or 0), 2):
-            return True
+        # Compare fees only if existing had pricing
+        if ex_simple:
+            ex_idle = ex_tariffs.get("idle_fee_per_min") or existing.get("tessie_cost_config", {}).get("idle_fee_per_min", 0)
+            new_idle = new_tariffs.get("idle_fee_per_min", 0)
+            if round(float(ex_idle or 0), 2) != round(float(new_idle or 0), 2):
+                return True
 
-        ex_cong = ex_tariffs.get("congestion_fee_per_min") or existing.get("tessie_cost_config", {}).get("congestion_fee_per_min", 0)
-        new_cong = new_tariffs.get("congestion_fee_per_min", 0)
-        if round(float(ex_cong or 0), 2) != round(float(new_cong or 0), 2):
-            return True
+            ex_cong = ex_tariffs.get("congestion_fee_per_min") or existing.get("tessie_cost_config", {}).get("congestion_fee_per_min", 0)
+            new_cong = new_tariffs.get("congestion_fee_per_min", 0)
+            if round(float(ex_cong or 0), 2) != round(float(new_cong or 0), 2):
+                return True
 
         # Compare non-tesla schedules
         ex_nt_scheds = ex_tariffs.get("non_tesla", {}).get("rate_schedules", [])
         if not ex_nt_scheds and "non_tesla_pricing" in existing:
             ex_nt_scheds = existing.get("non_tesla_pricing", {}).get("rate_schedules", [])
         new_nt_scheds = new_tariffs.get("non_tesla", {}).get("rate_schedules", [])
-        if simplify_scheds(ex_nt_scheds) != simplify_scheds(new_nt_scheds):
+        ex_nt_simple = simplify_scheds(ex_nt_scheds)
+        new_nt_simple = simplify_scheds(new_nt_scheds)
+        if ex_nt_simple and new_nt_simple and ex_nt_simple != new_nt_simple:
             return True
 
         return False
@@ -2146,8 +2153,19 @@ class TeslaChargerExplorer:
                 new_entry["last_verified"] = now_utc
                 new_entry["valid_from"] = now_utc
             else:
-                result_status = "VERIFIED"
-                new_entry["last_updated"] = existing_entry.get("last_updated", orig_first_seen)
+                ex_t_scheds = existing_entry.get("tariffs", {}).get("tesla_members", {}).get("rate_schedules", [])
+                if not ex_t_scheds and "tessie_cost_config" in existing_entry:
+                    ex_t_scheds = existing_entry.get("tessie_cost_config", {}).get("rate_schedules", [])
+                new_t_scheds = new_entry.get("tariffs", {}).get("tesla_members", {}).get("rate_schedules", [])
+
+                if not ex_t_scheds and new_t_scheds:
+                    result_status = "UPDATED"
+                    print(f"  {C_CYAN}ℹ️  Populated initial pricing for '{station_key}'. Updated active record (valid from first seen).{C_RESET}")
+                    new_entry["last_updated"] = now_utc
+                else:
+                    result_status = "VERIFIED"
+                    new_entry["last_updated"] = existing_entry.get("last_updated", orig_first_seen)
+
                 new_entry["valid_from"] = existing_entry.get("valid_from", orig_first_seen)
                 new_entry["last_verified"] = now_utc
         else:
