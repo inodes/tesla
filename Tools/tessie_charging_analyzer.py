@@ -891,6 +891,18 @@ class TessieChargingAnalyzer:
             except Exception:
                 pass
 
+        cfg_archive_dir = self.config.get("archive_directory") or self.config.get("archive_dir")
+        if cfg_archive_dir:
+            self.archive_dir = os.path.abspath(os.path.expanduser(cfg_archive_dir))
+        elif self.tessie_dirs:
+            self.archive_dir = os.path.join(self.tessie_dirs[0], "archive")
+        else:
+            self.archive_dir = os.path.join(self.repo_root, "Tessie", "archive")
+        try:
+            os.makedirs(self.archive_dir, exist_ok=True)
+        except Exception:
+            pass
+
         # 3. Discover Invoices directories (CLI > config.json > local folders)
         primary_inv_dir = invoices_dir or self.config.get("invoices_directory") or self.config.get("invoices_dir")
         if primary_inv_dir:
@@ -1191,89 +1203,130 @@ class TessieChargingAnalyzer:
             "timezone": tz_name
         }
 
-    def auto_ingest_from_landing(self):
-        landing = self.landing_dir
-        if not landing or not os.path.isdir(landing):
-            return
-        
-        archive_dir = os.path.join(self.repo_root, "Tessie", "archive")
-        os.makedirs(archive_dir, exist_ok=True)
-        
-        # Collect existing known charge timestamps from all existing files
-        existing_charge_timestamps = set()
+    def ingest_and_archive_charges(self):
+        """
+        Loads charges_master.csv first as the definitive source of truth.
+        Scans landing_dir and tessie_dirs for incoming charge CSVs:
+          - Genuinely new charge sessions (not present in master) are appended to master.
+          - Existing/overlapping sessions are ignored so master's verified/patched rates are preserved.
+          - Ingested candidate CSV files are moved to the archive directory.
+        """
+        master_file = None
         for td in self.tessie_dirs:
-            if not os.path.isdir(td):
-                continue
+            p = os.path.join(td, "charges_master.csv")
+            if os.path.isfile(p):
+                master_file = p
+                break
+        if not master_file:
+            target_dir = self.tessie_dirs[0] if self.tessie_dirs else os.path.join(self.repo_root, "Tessie")
+            master_file = os.path.join(target_dir, "charges_master.csv")
+
+        master_rows = []
+        master_keys = set()
+        master_fieldnames = None
+
+        if os.path.isfile(master_file):
             try:
-                fnames = os.listdir(td)
-            except Exception:
-                continue
-            for fname in fnames:
-                if (fname == "charges_master.csv" or "charges_summary" in fname or "-charges.csv" in fname) and not "telemetry" in fname:
-                    try:
-                        with open(os.path.join(td, fname), "r", encoding="utf-8", errors="ignore") as f_ex:
-                            r_ex = csv.DictReader(f_ex)
-                            scol = next((c for c in (r_ex.fieldnames or []) if c and c.startswith("Started At")), None)
-                            if scol:
-                                for row in r_ex:
-                                    val = row.get(scol, "").strip()
-                                    if val:
-                                        existing_charge_timestamps.add(val)
-                    except Exception:
-                        pass
-
-        moved = 0
-        try:
-            landing_files = os.listdir(landing)
-        except Exception:
-            landing_files = []
-
-        for f in landing_files:
-            if not f.endswith(".csv"):
-                continue
-            
-            fp = os.path.join(landing, f)
-            try:
-                with open(fp, "r", encoding="utf-8-sig", errors="ignore") as csv_f:
-                    reader = csv.reader(csv_f)
-                    header = next(reader, None)
-                    if not header:
-                        continue
-                    hset = set(h.strip() for h in header)
-                    
-                    is_charge_csv = ("Location" in hset and "Energy Added (kWh)" in hset)
-                    is_tessie = ("Starting Location" in hset and "Distance (km)" in hset) or \
-                                is_charge_csv or \
-                                ("Speed (km/h)" in hset or "Speed (mph)" in hset) or \
-                                ("Charger Power (kW)" in hset or "Charger Voltage (V)" in hset)
-                    
-                    if not is_tessie:
-                        continue
-
-                    # If this is a charges CSV, check if all sessions in it are already known
-                    if is_charge_csv and existing_charge_timestamps:
-                        csv_f.seek(0)
-                        dict_r = csv.DictReader(csv_f)
-                        scol = next((c for c in (dict_r.fieldnames or []) if c and c.startswith("Started At")), None)
-                        if scol:
-                            file_timestamps = [r.get(scol, "").strip() for r in dict_r if r.get(scol, "").strip()]
-                            if file_timestamps and all(t in existing_charge_timestamps for t in file_timestamps):
-                                print(f"\033[93m⚠️  [Landing] Rejected '{f}': All {len(file_timestamps)} charging session(s) are for already known dates ({file_timestamps[0][:10]} to {file_timestamps[-1][:10]}). Invoice-locked data protected.\033[0m")
-                                continue
-
-                    ts = datetime.now().strftime("%Y%m%d%H%M")
-                    dst_name = f"{f}.{ts}"
-                    shutil.move(fp, os.path.join(archive_dir, dst_name))
-                    print(f"\033[94m📥 Ingested & Archived:\033[0m {dst_name}")
-                    moved += 1
+                with open(master_file, "r", encoding="utf-8-sig", errors="ignore") as f:
+                    reader = csv.DictReader(f)
+                    master_fieldnames = list(reader.fieldnames or [])
+                    started_col = next((c for c in master_fieldnames if c and c.startswith("Started At")), "Started At")
+                    for row in reader:
+                        s_at = (row.get(started_col) or "").strip()
+                        loc = (row.get("Location") or "").strip()
+                        if s_at:
+                            master_keys.add((s_at, loc))
+                        master_rows.append(row)
             except Exception:
                 pass
-        if moved > 0:
-            print("")
+
+        search_dirs = []
+        if self.landing_dir and os.path.isdir(self.landing_dir):
+            search_dirs.append(self.landing_dir)
+        for td in self.tessie_dirs:
+            if td and os.path.isdir(td) and td not in search_dirs:
+                search_dirs.append(td)
+
+        candidate_files = []
+        for s_dir in search_dirs:
+            try:
+                fnames = sorted(os.listdir(s_dir))
+            except Exception:
+                continue
+            for fn in fnames:
+                if not fn.endswith(".csv") or fn.startswith(".") or fn == "charges_master.csv" or fn == "drives_master.csv":
+                    continue
+                if any(x in fn for x in ["telemetry_stream", "charge_deepdive", "drive_deepdive", "battery_health", "tire_pressure", "firmware_alerts", "idles_summary"]):
+                    continue
+                fp = os.path.join(s_dir, fn)
+                try:
+                    with open(fp, "r", encoding="utf-8-sig", errors="ignore") as test_f:
+                        first_line = test_f.readline()
+                        if "Location" in first_line and "Energy Added (kWh)" in first_line:
+                            candidate_files.append(fp)
+                except Exception:
+                    pass
+
+        os.makedirs(self.archive_dir, exist_ok=True)
+        master_modified = False
+
+        for c_fp in candidate_files:
+            c_name = os.path.basename(c_fp)
+            try:
+                new_in_file = 0
+                ignored_in_file = 0
+                with open(c_fp, "r", encoding="utf-8-sig", errors="ignore") as in_f:
+                    reader = csv.DictReader(in_f)
+                    if not master_fieldnames and reader.fieldnames:
+                        master_fieldnames = list(reader.fieldnames)
+                    s_col = next((c for c in (reader.fieldnames or []) if c and c.startswith("Started At")), "Started At")
+                    for r in reader:
+                        s_at = (r.get(s_col) or "").strip()
+                        loc = (r.get("Location") or "").strip()
+                        if not s_at:
+                            continue
+                        key = (s_at, loc)
+                        if key in master_keys:
+                            ignored_in_file += 1
+                        else:
+                            master_keys.add(key)
+                            master_rows.append(r)
+                            new_in_file += 1
+                            master_modified = True
+
+                if new_in_file > 0:
+                    print(f"\033[94m📥 Ingested:\033[0m Added {new_in_file} new charge(s) from '{c_name}' into charges_master.csv (ignored {ignored_in_file} existing master records)")
+                else:
+                    print(f"\033[90mℹ️  [Ingest] '{c_name}' has {ignored_in_file} charges (all already present in charges_master.csv)\033[0m")
+
+                ts = datetime.now().strftime("%Y%m%d%H%M")
+                dst_name = f"{c_name}.{ts}"
+                dst_path = os.path.join(self.archive_dir, dst_name)
+                shutil.move(c_fp, dst_path)
+                print(f"\033[94m📦 Archived:\033[0m {c_name} ➔ archive/{dst_name}")
+            except Exception:
+                pass
+
+        if master_rows and (master_modified or not os.path.isfile(master_file)):
+            try:
+                started_col = next((c for c in (master_fieldnames or []) if c and c.startswith("Started At")), "Started At")
+                master_rows.sort(key=lambda x: parse_flexible_date(x.get(started_col, "")) or datetime.min)
+                
+                temp_fd, temp_path = tempfile.mkstemp(dir=os.path.dirname(master_file), text=True)
+                with os.fdopen(temp_fd, "w", encoding="utf-8", newline="") as out_f:
+                    writer = csv.DictWriter(out_f, fieldnames=master_fieldnames or master_rows[0].keys())
+                    writer.writeheader()
+                    writer.writerows(master_rows)
+                os.replace(temp_path, master_file)
+                print(f"\033[92m✔ Updated {os.path.basename(master_file)} ({len(master_rows)} total records)\033[0m")
+            except Exception:
+                pass
+
+        return master_rows, master_file
 
     def patch_charge_record(self, s_at_target, loc_target, new_cost, new_rate):
         """
-        Patches Cost and Cost Per kWh across charges_master.csv and all relevant Tessie charges CSVs,
+        Patches Cost and Cost Per kWh in charges_master.csv,
         strictly preserving Energy Added (kWh) telemetry.
         """
         s_at_clean = (s_at_target or "").strip()
@@ -1283,13 +1336,9 @@ class TessieChargingAnalyzer:
         for td in self.tessie_dirs:
             if not os.path.isdir(td):
                 continue
-            try:
-                fnames = os.listdir(td)
-            except Exception:
-                continue
-            for fname in fnames:
-                if (fname == "charges_master.csv" or "charges_summary" in fname or "-charges.csv" in fname) and not "telemetry" in fname:
-                    target_files.add(os.path.join(td, fname))
+            mf = os.path.join(td, "charges_master.csv")
+            if os.path.isfile(mf):
+                target_files.add(mf)
                     
         patched_files_count = 0
         for fp in sorted(target_files):
@@ -1331,131 +1380,101 @@ class TessieChargingAnalyzer:
         return patched_files_count
 
     def load_charges(self):
-        self.auto_ingest_from_landing()
+        master_rows, master_file = self.ingest_and_archive_charges()
         raw_charges = []
-        seen_keys = set()
         
-        for td in self.tessie_dirs:
-            if not os.path.isdir(td):
+        for row in master_rows:
+            started_col = next((col for col in row.keys() if col and col.startswith("Started At")), "Started At")
+            s_at = row.get(started_col)
+            if not s_at:
                 continue
+            loc = row.get("Location", "")
             
-            # Prioritize charges_master.csv first so invoice-locked records take precedence
-            candidates = []
-            master_file = os.path.join(td, "charges_master.csv")
-            if os.path.isfile(master_file):
-                candidates.append(master_file)
+            s_dt = parse_flexible_date(s_at)
+            e_at_key = next((k for k in row.keys() if k and k.startswith("Ended At")), "Ended At")
+            e_at = row.get(e_at_key, "")
+            e_dt = parse_flexible_date(e_at) if e_at else None
+            
+            is_super = str(row.get("Supercharger", "")).strip().lower() == "true"
+            is_fast = str(row.get("Fast Charger", "")).strip().lower() == "true"
+            
             try:
-                fnames = sorted(os.listdir(td))
+                lat = float(row.get("Latitude", 0)) if row.get("Latitude") else None
+                lon = float(row.get("Longitude", 0)) if row.get("Longitude") else None
             except Exception:
-                continue
-            for fname in fnames:
-                fp = os.path.join(td, fname)
-                if fp != master_file and ("charges_summary" in fname or "-charges.csv" in fname) and not "telemetry" in fname:
-                    candidates.append(fp)
+                lat, lon = None, None
 
-            for fpath in candidates:
-                try:
-                    with open(fpath, "r", encoding="utf-8", errors="ignore") as f:
-                        reader = csv.DictReader(f)
-                        started_col = next((col for col in (reader.fieldnames or []) if col and col.startswith("Started At")), "Started At")
-                        for row in reader:
-                            s_at = row.get(started_col)
-                            if not s_at:
-                                continue
-                            loc = row.get("Location", "")
-                            added = row.get("Energy Added (kWh)", "")
-                            key = (s_at.strip(), loc.strip(), added.strip())
-                            if key in seen_keys:
-                                continue
-                            seen_keys.add(key)
-                            
-                            s_dt = parse_flexible_date(s_at)
-                            e_at_key = next((k for k in row.keys() if k and k.startswith("Ended At")), "Ended At")
-                            e_at = row.get(e_at_key, "")
-                            e_dt = parse_flexible_date(e_at) if e_at else None
-                            
-                            is_super = str(row.get("Supercharger", "")).strip().lower() == "true"
-                            is_fast = str(row.get("Fast Charger", "")).strip().lower() == "true"
-                            
-                            try:
-                                lat = float(row.get("Latitude", 0)) if row.get("Latitude") else None
-                                lon = float(row.get("Longitude", 0)) if row.get("Longitude") else None
-                            except Exception:
-                                lat, lon = None, None
+            try:
+                dur = float(row.get("Duration (Minutes)", 0))
+            except Exception:
+                dur = 0.0
 
-                            try:
-                                dur = float(row.get("Duration (Minutes)", 0))
-                            except Exception:
-                                dur = 0.0
+            try:
+                kwh_added = float(row.get("Energy Added (kWh)", 0))
+            except Exception:
+                kwh_added = 0.0
 
-                            try:
-                                kwh_added = float(row.get("Energy Added (kWh)", 0))
-                            except Exception:
-                                kwh_added = 0.0
+            try:
+                kwh_used = float(row.get("Energy Used (kWh)", 0))
+            except Exception:
+                kwh_used = 0.0
 
-                            try:
-                                kwh_used = float(row.get("Energy Used (kWh)", 0))
-                            except Exception:
-                                kwh_used = 0.0
+            try:
+                cost = float(row.get("Cost", 0))
+            except Exception:
+                cost = 0.0
 
-                            try:
-                                cost = float(row.get("Cost", 0))
-                            except Exception:
-                                cost = 0.0
+            try:
+                cost_per_kwh = float(row.get("Cost Per kWh", 0))
+            except Exception:
+                cost_per_kwh = 0.0
 
-                            try:
-                                cost_per_kwh = float(row.get("Cost Per kWh", 0))
-                            except Exception:
-                                cost_per_kwh = 0.0
+            try:
+                start_soc = int(float(row.get("Starting Battery (%)", 0)))
+                end_soc = int(float(row.get("Ending Battery (%)", 0)))
+            except Exception:
+                start_soc, end_soc = 0, 0
 
-                            try:
-                                start_soc = int(float(row.get("Starting Battery (%)", 0)))
-                                end_soc = int(float(row.get("Ending Battery (%)", 0)))
-                            except Exception:
-                                start_soc, end_soc = 0, 0
+            try:
+                range_added = float(row.get("Rated Range Added (km)", 0))
+            except Exception:
+                range_added = 0.0
 
-                            try:
-                                range_added = float(row.get("Rated Range Added (km)", 0))
-                            except Exception:
-                                range_added = 0.0
+            try:
+                odometer = float(row.get("Odometer (km)", 0))
+            except Exception:
+                odometer = 0.0
 
-                            try:
-                                odometer = float(row.get("Odometer (km)", 0))
-                            except Exception:
-                                odometer = 0.0
+            place_name, network, emoji, reg_obj = self.resolve_location(
+                loc, row.get("Saved Location", ""), lat, lon, is_super, is_fast
+            )
 
-                            place_name, network, emoji, reg_obj = self.resolve_location(
-                                loc, row.get("Saved Location", ""), lat, lon, is_super, is_fast
-                            )
-
-                            raw_charges.append({
-                                "started_at": s_dt,
-                                "started_at_str": s_at,
-                                "ended_at": e_dt,
-                                "ended_at_str": e_at,
-                                "duration_mins": dur,
-                                "location_raw": loc,
-                                "saved_location": row.get("Saved Location", ""),
-                                "place_name": place_name,
-                                "network": network,
-                                "emoji": emoji,
-                                "registry_obj": reg_obj,
-                                "latitude": lat,
-                                "longitude": lon,
-                                "is_supercharger": is_super,
-                                "is_fast_charger": is_fast,
-                                "energy_added_kwh": kwh_added,
-                                "energy_used_kwh": kwh_used,
-                                "cost": cost,
-                                "cost_per_kwh": cost_per_kwh,
-                                "start_soc": start_soc,
-                                "end_soc": end_soc,
-                                "range_added_km": range_added,
-                                "odometer_km": odometer,
-                                "source_file": fpath
-                            })
-                except Exception:
-                    pass
+            raw_charges.append({
+                "started_at": s_dt,
+                "started_at_str": s_at,
+                "ended_at": e_dt,
+                "ended_at_str": e_at,
+                "duration_mins": dur,
+                "location_raw": loc,
+                "saved_location": row.get("Saved Location", ""),
+                "place_name": place_name,
+                "network": network,
+                "emoji": emoji,
+                "registry_obj": reg_obj,
+                "latitude": lat,
+                "longitude": lon,
+                "is_supercharger": is_super,
+                "is_fast_charger": is_fast,
+                "energy_added_kwh": kwh_added,
+                "energy_used_kwh": kwh_used,
+                "cost": cost,
+                "cost_per_kwh": cost_per_kwh,
+                "start_soc": start_soc,
+                "end_soc": end_soc,
+                "range_added_km": range_added,
+                "odometer_km": odometer,
+                "source_file": master_file
+            })
                         
         raw_charges.sort(key=lambda x: x["started_at"] or datetime.min)
         self.charges = raw_charges
