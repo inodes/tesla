@@ -21,6 +21,10 @@ jobs:
         with:
           python-version: '3.12'
 
+      - name: Install Python Dependencies
+        run: |
+          pip install -r requirements.txt
+
       - name: Validate Shell Script Syntax
         run: |
           echo "Checking syntax of Tools/run_exportdash.sh..."
@@ -31,12 +35,14 @@ jobs:
 
       - name: Verify CLI Help & Flags
         run: |
-          chmod +x Tools/tesla_sync.sh Tools/run_exportdash.sh Tools/tessie_analyzer.py Tools/tessie_renamer.py
+          chmod +x Tools/tesla_sync.sh Tools/run_exportdash.sh Tools/tessie_charging_analyzer.py Tools/tessie_drives_analyzer.py Tools/tessie_places.py Tools/find_tesla_chargers.py
           ./Tools/tesla_sync.sh --help
           ./Tools/tesla_sync.sh --doctor || true
           ./Tools/run_exportdash.sh --help
-          ./Tools/tessie_analyzer.py --help
-          ./Tools/tessie_renamer.py --help
+          ./Tools/tessie_charging_analyzer.py --help
+          ./Tools/tessie_drives_analyzer.py --help
+          ./Tools/tessie_places.py --help
+          ./Tools/find_tesla_chargers.py --help
 
       - name: Verify Embedded Python Scripts
         run: |

@@ -200,6 +200,8 @@ class TessieAnalyzer:
         self.script_dir = os.path.dirname(os.path.abspath(__file__))
         parent_dir = os.path.dirname(self.script_dir)
         self.icloud_dir = os.path.expanduser("~/Library/Mobile Documents/com~apple~CloudDocs/Tesla/Tessie")
+        self.repo_root = parent_dir
+        self.landing_dir = os.path.expanduser("~/Downloads")
         
         self.tessie_dirs = []
         candidates = [
@@ -431,7 +433,46 @@ class TessieAnalyzer:
 
         return len(raw_rows)
 
+    def auto_ingest_from_landing(self):
+        landing = self.landing_dir
+        if not landing or not os.path.isdir(landing):
+            return
+        
+        archive_dir = os.path.join(self.repo_root, "Tessie", "archive")
+        os.makedirs(archive_dir, exist_ok=True)
+        
+        moved = 0
+        for f in os.listdir(landing):
+            if not f.endswith(".csv"):
+                continue
+            
+            fp = os.path.join(landing, f)
+            try:
+                with open(fp, "r", encoding="utf-8-sig") as csv_f:
+                    reader = csv.reader(csv_f)
+                    header = next(reader, None)
+                    if not header:
+                        continue
+                    hset = set(h.strip() for h in header)
+                    
+                    is_tessie = ("Starting Location" in hset and "Distance (km)" in hset) or \
+                                ("Location" in hset and "Energy Added (kWh)" in hset) or \
+                                ("Speed (km/h)" in hset or "Speed (mph)" in hset) or \
+                                ("Charger Power (kW)" in hset or "Charger Voltage (V)" in hset)
+                    
+                    if is_tessie:
+                        ts = datetime.datetime.now().strftime("%Y%m%d%H%M")
+                        dst_name = f"{f}.{ts}"
+                        shutil.move(fp, os.path.join(archive_dir, dst_name))
+                        print(f"\033[94m📥 Ingested & Archived:\033[0m {dst_name}")
+                        moved += 1
+            except Exception:
+                pass
+        if moved > 0:
+            print("")
+
     def load_drives(self):
+        self.auto_ingest_from_landing()
         self.consolidate_drives()
         master_file = None
         for td in self.tessie_dirs:
@@ -684,11 +725,12 @@ def display_footage_details(trip, analyzer):
     t_start = trip["start_dt"]
     t_end = trip["end_dt"]
     
-    print(f"\n==========================================================================")
-    print(f" 📹 CAMERA FOOTAGE LISTING: {t_start.strftime('%a %d %b %Y')} ({t_start.strftime('%H:%M')} ➔ {t_end.strftime('%H:%M')})")
-    print(f"    Origin      : {trip['start_place']} ({trip['start_addr'].split(',')[0]})")
-    print(f"    Destination : {trip['end_place']} ({trip['end_addr'].split(',')[0]})")
-    print(f"==========================================================================")
+    print(f"\n┌────────────────────────────────────────────────────────────────────────┐")
+    print(f"│ 📹 CAMERA FOOTAGE: {t_start.strftime('%a %d %b %Y')} ({t_start.strftime('%H:%M')} ➔ {t_end.strftime('%H:%M')})".ljust(73) + "│")
+    print(f"├────────────────────────────────────────────────────────────────────────┤")
+    print(f"│    Origin      : {trip['start_place']} ({trip['start_addr'].split(',')[0]})".ljust(73) + "│")
+    print(f"│    Destination : {trip['end_place']} ({trip['end_addr'].split(',')[0]})".ljust(73) + "│")
+    print(f"└────────────────────────────────────────────────────────────────────────┘")
     
 def render_footage_listing(clips, indent=""):
     by_cat = defaultdict(list)
@@ -752,11 +794,12 @@ def display_footage_details(trip, analyzer):
     t_start = trip["start_dt"]
     t_end = trip["end_dt"]
     
-    print(f"\n==========================================================================")
-    print(f" 📹 CAMERA FOOTAGE LISTING: {t_start.strftime('%a %d %b %Y')} ({t_start.strftime('%H:%M')} ➔ {t_end.strftime('%H:%M')})")
-    print(f"    Origin      : {trip['start_place']} ({trip['start_addr'].split(',')[0]})")
-    print(f"    Destination : {trip['end_place']} ({trip['end_addr'].split(',')[0]})")
-    print(f"==========================================================================")
+    print(f"\n┌────────────────────────────────────────────────────────────────────────┐")
+    print(f"│ 📹 CAMERA FOOTAGE: {t_start.strftime('%a %d %b %Y')} ({t_start.strftime('%H:%M')} ➔ {t_end.strftime('%H:%M')})".ljust(73) + "│")
+    print(f"├────────────────────────────────────────────────────────────────────────┤")
+    print(f"│    Origin      : {trip['start_place']} ({trip['start_addr'].split(',')[0]})".ljust(73) + "│")
+    print(f"│    Destination : {trip['end_place']} ({trip['end_addr'].split(',')[0]})".ljust(73) + "│")
+    print(f"└────────────────────────────────────────────────────────────────────────┘")
     
     # 1. Entry footage (getting into car)
     print(f"\n🚪 1. ENTRY WINDOW (Departure ~{t_start.strftime('%H:%M:%S')}):")
@@ -778,7 +821,7 @@ def display_footage_details(trip, analyzer):
     if start_clips or end_clips:
         first_folder = (start_clips[0]['folder'] if start_clips else end_clips[0]['folder'])
         print(f"   • Open folder in Finder: open \"{first_folder}\"")
-    print(f"--------------------------------------------------------------------------")
+    print(f"└────────────────────────────────────────────────────────────────────────────┘")
 
 def drill_down_day(day_str, day_trips, analyzer):
     """Level 2: Display drives for a selected day and allow picking a trip for footage listing."""
@@ -789,9 +832,9 @@ def drill_down_day(day_str, day_trips, analyzer):
         hours, mins = divmod(total_mins, 60)
         time_str = f"{hours}h {mins:02d}m" if hours else f"{mins}m"
         
-        print(f"\n==========================================================================")
-        print(f" 📅 {dt_obj.strftime('%A, %d %B %Y')} — {len(day_trips)} Drives ({time_str}, {total_km:.1f} km)")
-        print(f"==========================================================================")
+        print(f"\n┌────────────────────────────────────────────────────────────────────────────┐")
+        print(f"│ 📅 {dt_obj.strftime('%A, %d %B %Y')} — {len(day_trips)} Drives ({time_str}, {total_km:.1f} km)".ljust(77) + "│")
+        print(f"├────────────────────────────────────────────────────────────────────────────┤")
         
         for i, t in enumerate(day_trips):
             t_start = t["start_dt"].strftime("%H:%M")
@@ -811,10 +854,16 @@ def drill_down_day(day_str, day_trips, analyzer):
                     
             f_tag, _ = analyzer.get_trip_footage_summary(t)
             
-            print(f" [{i+1}] {t_start} ➔ {t_end} ({dur}m, {dist:.1f} km): {s_place} ➔ {e_place}{dwell_str}")
-            print(f"     └─ Footage: {f_tag}")
+            # Add borders
+            from tessie_drives_analyzer import pad_display
+            
+            line1 = f" [{i+1}] {t_start} ➔ {t_end} ({dur}m, {dist:.1f} km): {s_place} ➔ {e_place}{dwell_str}"
+            line2 = f"     └─ Footage: {f_tag}"
+            
+            print(f"│{pad_display(line1, 76, 'left')}│")
+            print(f"│{pad_display(line2, 76, 'left')}│")
 
-        print(f"--------------------------------------------------------------------------")
+        print(f"└────────────────────────────────────────────────────────────────────────────┘")
         if not sys.stdin.isatty():
             for t in day_trips:
                 display_footage_details(t, analyzer)
@@ -1377,9 +1426,28 @@ def display_days_menu(days_dict, title, analyzer):
     
     while True:
         total_trips = sum(len(v) for v in days_dict.values())
-        print(f"\n==========================================================================")
-        print(f" 📍 {title} ({total_trips} Trips Across {len(sorted_days)} Days)")
-        print(f"==========================================================================")
+        
+        w_idx = 5
+        w_date = 18
+        w_trips = 9
+        w_time = 12
+        w_dist = 14
+        w_footage = 42
+        
+        total_inner = w_idx + w_date + w_trips + w_time + w_dist + w_footage + 5
+        border_top = "┌" + "─" * total_inner + "┐"
+        border_mid = "├" + "─" * w_idx + "┬" + "─" * w_date + "┬" + "─" * w_trips + "┬" + "─" * w_time + "┬" + "─" * w_dist + "┬" + "─" * w_footage + "┤"
+        border_bot = "└" + "─" * w_idx + "┴" + "─" * w_date + "┴" + "─" * w_trips + "┴" + "─" * w_time + "┴" + "─" * w_dist + "┴" + "─" * w_footage + "┘"
+        
+        print(f"\n{border_top}")
+        
+        title_str = f" 📍 {title} ({total_trips} Trips Across {len(sorted_days)} Days)"
+        print(f"│{pad_display(title_str, total_inner, 'left')}│")
+        print(border_mid)
+        
+        header = f"│{pad_display(' #', w_idx)}│{pad_display(' Date', w_date)}│{pad_display(' Trips', w_trips)}│{pad_display(' Time', w_time)}│{pad_display(' Distance', w_dist)}│{pad_display(' Footage', w_footage)}│"
+        print(header)
+        print(border_mid)
         
         for idx, d_str in enumerate(sorted_days):
             day_trips = days_dict[d_str]
@@ -1395,10 +1463,17 @@ def display_days_menu(days_dict, title, analyzer):
                 day_cats.update(cats)
                 
             f_summary = format_footage_tag(day_cats)
-                
-            print(f" [{idx+1:>2}] {dt_obj.strftime('%a %d %b %Y')}: {len(day_trips):>2} trip(s) ({time_str:>6}, {total_km:>5.1f} km) | {f_summary}")
+            
+            c_idx = pad_display(f" [{idx+1}]", w_idx)
+            c_date = pad_display(f" {dt_obj.strftime('%a %d %b %Y')}", w_date)
+            c_trips = pad_display(f" {len(day_trips)}", w_trips)
+            c_time = pad_display(f" {time_str}", w_time)
+            c_dist = pad_display(f" {total_km:.1f} km", w_dist)
+            c_foot = pad_display(f" {f_summary}", w_footage)
+            
+            print(f"│{c_idx}│{c_date}│{c_trips}│{c_time}│{c_dist}│{c_foot}│")
 
-        print(f"--------------------------------------------------------------------------")
+        print(border_bot)
         if not sys.stdin.isatty():
             drill_down_day(sorted_days[0], days_dict[sorted_days[0]], analyzer)
             break
