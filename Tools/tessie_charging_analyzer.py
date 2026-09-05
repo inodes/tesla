@@ -54,6 +54,24 @@ from zoneinfo import ZoneInfo
 from datetime import datetime, timedelta
 from collections import defaultdict
 
+def clean_station_short_name(name: str, max_length: int = 80) -> str:
+    """
+    Normalizes station names into filesystem-safe, cross-platform identifiers:
+    - Transliterates Unicode accents (e.g. 'Café' -> 'Cafe')
+    - Strips or replaces non-alphanumeric characters with underscores
+    - Condenses consecutive underscores and strips leading/trailing underscores
+    - Enforces safe length limits and prevents empty string results
+    """
+    if not name:
+        return "Station"
+    s = unicodedata.normalize('NFKD', str(name))
+    s = s.encode('ascii', 'ignore').decode('ascii')
+    s = re.sub(r"[^a-zA-Z0-9]+", "_", s)
+    s = s.strip("_")
+    if max_length and len(s) > max_length:
+        s = s[:max_length].rstrip("_")
+    return s or "Station"
+
 def resolve_location_timezone(state: str = None, country: str = None, lat: float = None, lon: float = None) -> str:
     """Deterministically resolves standard IANA timezone identifier for a station or place."""
     c_clean = (country or "Australia").lower().replace("+", " ").strip()
@@ -2785,7 +2803,7 @@ class TessieChargingAnalyzer:
             elif "nrma" in net_raw_lower:
                 net_slug = "NRMA"
             else:
-                net_slug = re.sub(r"[^A-Za-z0-9]+", "_", net_raw).strip("_")
+                net_slug = clean_station_short_name(net_raw, max_length=30)
 
             # Clean location string / short_name
             clean_loc = ""
@@ -2794,8 +2812,7 @@ class TessieChargingAnalyzer:
                 clean_loc = reg_obj.get("tesla_metadata", {}).get("short_name", "")
                 if not clean_loc:
                     nm = reg_obj.get("name", "")
-                    nm = re.sub(r"\s*\(.*?\)", "", nm).strip()
-                    clean_loc = re.sub(r"[^A-Za-z0-9]+", "_", nm).strip("_")
+                    clean_loc = clean_station_short_name(nm)
 
             if not clean_loc and inv_loc:
                 inv_clean_lower = inv_loc.lower().strip()
@@ -2813,14 +2830,12 @@ class TessieChargingAnalyzer:
                     p_name_clean = p_name.lower().strip()
                     kws = [k.lower() for k in p_data.get("keywords", [])]
                     if inv_clean_lower == p_name_clean or any(k in inv_clean_lower for k in kws) or p_name_clean in inv_clean_lower:
-                        clean_loc = re.sub(r"[^A-Za-z0-9]+", "_", p_name).strip("_")
+                        clean_loc = clean_station_short_name(p_name)
                         break
 
             if not clean_loc:
                 loc_source = (matched_session.get("place_name") if matched_session else "") or inv_loc
-                loc_source = re.sub(r"\s*\(.*?\)", "", loc_source).strip()
-                clean_loc = re.sub(r"[^A-Za-z0-9]+", "_", loc_source).strip("_")
-                clean_loc = re.sub(r"_+", "_", clean_loc)
+                clean_loc = clean_station_short_name(loc_source)
 
             if not clean_loc:
                 clean_loc = "Charging"
