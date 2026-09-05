@@ -1189,35 +1189,136 @@ class TessieChargingAnalyzer:
         archive_dir = os.path.join(self.repo_root, "Tessie", "archive")
         os.makedirs(archive_dir, exist_ok=True)
         
+        # Collect existing known charge timestamps from all existing files
+        existing_charge_timestamps = set()
+        for td in self.tessie_dirs:
+            if not os.path.isdir(td):
+                continue
+            try:
+                fnames = os.listdir(td)
+            except Exception:
+                continue
+            for fname in fnames:
+                if (fname == "charges_master.csv" or "charges_summary" in fname or "-charges.csv" in fname) and not "telemetry" in fname:
+                    try:
+                        with open(os.path.join(td, fname), "r", encoding="utf-8", errors="ignore") as f_ex:
+                            r_ex = csv.DictReader(f_ex)
+                            scol = next((c for c in (r_ex.fieldnames or []) if c and c.startswith("Started At")), None)
+                            if scol:
+                                for row in r_ex:
+                                    val = row.get(scol, "").strip()
+                                    if val:
+                                        existing_charge_timestamps.add(val)
+                    except Exception:
+                        pass
+
         moved = 0
-        for f in os.listdir(landing):
+        try:
+            landing_files = os.listdir(landing)
+        except Exception:
+            landing_files = []
+
+        for f in landing_files:
             if not f.endswith(".csv"):
                 continue
             
             fp = os.path.join(landing, f)
             try:
-                with open(fp, "r", encoding="utf-8-sig") as csv_f:
+                with open(fp, "r", encoding="utf-8-sig", errors="ignore") as csv_f:
                     reader = csv.reader(csv_f)
                     header = next(reader, None)
                     if not header:
                         continue
                     hset = set(h.strip() for h in header)
                     
+                    is_charge_csv = ("Location" in hset and "Energy Added (kWh)" in hset)
                     is_tessie = ("Starting Location" in hset and "Distance (km)" in hset) or \
-                                ("Location" in hset and "Energy Added (kWh)" in hset) or \
+                                is_charge_csv or \
                                 ("Speed (km/h)" in hset or "Speed (mph)" in hset) or \
                                 ("Charger Power (kW)" in hset or "Charger Voltage (V)" in hset)
                     
-                    if is_tessie:
-                        ts = datetime.datetime.now().strftime("%Y%m%d%H%M")
-                        dst_name = f"{f}.{ts}"
-                        shutil.move(fp, os.path.join(archive_dir, dst_name))
-                        print(f"\033[94m📥 Ingested & Archived:\033[0m {dst_name}")
-                        moved += 1
+                    if not is_tessie:
+                        continue
+
+                    # If this is a charges CSV, check if all sessions in it are already known
+                    if is_charge_csv and existing_charge_timestamps:
+                        csv_f.seek(0)
+                        dict_r = csv.DictReader(csv_f)
+                        scol = next((c for c in (dict_r.fieldnames or []) if c and c.startswith("Started At")), None)
+                        if scol:
+                            file_timestamps = [r.get(scol, "").strip() for r in dict_r if r.get(scol, "").strip()]
+                            if file_timestamps and all(t in existing_charge_timestamps for t in file_timestamps):
+                                print(f"\033[93m⚠️  [Landing] Rejected '{f}': All {len(file_timestamps)} charging session(s) are for already known dates ({file_timestamps[0][:10]} to {file_timestamps[-1][:10]}). Invoice-locked data protected.\033[0m")
+                                continue
+
+                    ts = datetime.now().strftime("%Y%m%d%H%M")
+                    dst_name = f"{f}.{ts}"
+                    shutil.move(fp, os.path.join(archive_dir, dst_name))
+                    print(f"\033[94m📥 Ingested & Archived:\033[0m {dst_name}")
+                    moved += 1
             except Exception:
                 pass
         if moved > 0:
             print("")
+
+    def patch_charge_record(self, s_at_target, loc_target, new_cost, new_rate):
+        """
+        Patches Cost and Cost Per kWh across charges_master.csv and all relevant Tessie charges CSVs,
+        strictly preserving Energy Added (kWh) telemetry.
+        """
+        s_at_clean = (s_at_target or "").strip()
+        loc_clean = (loc_target or "").strip()
+        
+        target_files = set()
+        for td in self.tessie_dirs:
+            if not os.path.isdir(td):
+                continue
+            try:
+                fnames = os.listdir(td)
+            except Exception:
+                continue
+            for fname in fnames:
+                if (fname == "charges_master.csv" or "charges_summary" in fname or "-charges.csv" in fname) and not "telemetry" in fname:
+                    target_files.add(os.path.join(td, fname))
+                    
+        patched_files_count = 0
+        for fp in sorted(target_files):
+            try:
+                temp_fd, temp_path = tempfile.mkstemp(dir=os.path.dirname(fp), text=True)
+                modified = False
+                with os.fdopen(temp_fd, "w", encoding="utf-8", newline="") as out_f:
+                    with open(fp, "r", encoding="utf-8", errors="ignore") as in_f:
+                        reader = csv.DictReader(in_f)
+                        fieldnames = reader.fieldnames
+                        writer = csv.DictWriter(out_f, fieldnames=fieldnames)
+                        writer.writeheader()
+                        
+                        for row in reader:
+                            started_col = next((col for col in row.keys() if col and col.startswith("Started At")), "Started At")
+                            row_s_at = row.get(started_col, "").strip()
+                            row_loc = row.get("Location", "").strip()
+                            
+                            # Match on started_at and location
+                            if row_s_at == s_at_clean and (not loc_clean or row_loc == loc_clean or loc_clean in row_loc or row_loc in loc_clean):
+                                if new_cost is not None and "Cost" in row:
+                                    row["Cost"] = f"{float(new_cost):.2f}"
+                                if new_rate is not None and "Cost Per kWh" in row:
+                                    row["Cost Per kWh"] = f"{float(new_rate):.2f}"
+                                modified = True
+                                
+                            writer.writerow(row)
+                if modified:
+                    os.replace(temp_path, fp)
+                    patched_files_count += 1
+                else:
+                    try:
+                        os.remove(temp_path)
+                    except Exception:
+                        pass
+            except Exception:
+                pass
+                
+        return patched_files_count
 
     def load_charges(self):
         self.auto_ingest_from_landing()
@@ -1227,110 +1328,124 @@ class TessieChargingAnalyzer:
         for td in self.tessie_dirs:
             if not os.path.isdir(td):
                 continue
-            for fname in os.listdir(td):
-                if ("charges_summary" in fname or "-charges.csv" in fname) and not "telemetry" in fname:
-                    fpath = os.path.join(td, fname)
-                    try:
-                        with open(fpath, "r", encoding="utf-8", errors="ignore") as f:
-                            reader = csv.DictReader(f)
-                            for row in reader:
-                                s_at = row.get("Started At (AEST)") or row.get("Started At")
-                                if not s_at:
-                                    continue
-                                loc = row.get("Location", "")
-                                added = row.get("Energy Added (kWh)", "")
-                                key = (s_at.strip(), loc.strip(), added.strip())
-                                if key in seen_keys:
-                                    continue
-                                seen_keys.add(key)
-                                
-                                s_dt = parse_flexible_date(s_at)
-                                e_at_key = next((k for k in row.keys() if k and k.startswith("Ended At")), "Ended At")
-                                e_at = row.get(e_at_key, "")
-                                e_dt = parse_flexible_date(e_at) if e_at else None
-                                
-                                is_super = str(row.get("Supercharger", "")).strip().lower() == "true"
-                                is_fast = str(row.get("Fast Charger", "")).strip().lower() == "true"
-                                
-                                try:
-                                    lat = float(row.get("Latitude", 0)) if row.get("Latitude") else None
-                                    lon = float(row.get("Longitude", 0)) if row.get("Longitude") else None
-                                except Exception:
-                                    lat, lon = None, None
+            
+            # Prioritize charges_master.csv first so invoice-locked records take precedence
+            candidates = []
+            master_file = os.path.join(td, "charges_master.csv")
+            if os.path.isfile(master_file):
+                candidates.append(master_file)
+            try:
+                fnames = sorted(os.listdir(td))
+            except Exception:
+                continue
+            for fname in fnames:
+                fp = os.path.join(td, fname)
+                if fp != master_file and ("charges_summary" in fname or "-charges.csv" in fname) and not "telemetry" in fname:
+                    candidates.append(fp)
 
-                                try:
-                                    dur = float(row.get("Duration (Minutes)", 0))
-                                except Exception:
-                                    dur = 0.0
+            for fpath in candidates:
+                try:
+                    with open(fpath, "r", encoding="utf-8", errors="ignore") as f:
+                        reader = csv.DictReader(f)
+                        started_col = next((col for col in (reader.fieldnames or []) if col and col.startswith("Started At")), "Started At")
+                        for row in reader:
+                            s_at = row.get(started_col)
+                            if not s_at:
+                                continue
+                            loc = row.get("Location", "")
+                            added = row.get("Energy Added (kWh)", "")
+                            key = (s_at.strip(), loc.strip(), added.strip())
+                            if key in seen_keys:
+                                continue
+                            seen_keys.add(key)
+                            
+                            s_dt = parse_flexible_date(s_at)
+                            e_at_key = next((k for k in row.keys() if k and k.startswith("Ended At")), "Ended At")
+                            e_at = row.get(e_at_key, "")
+                            e_dt = parse_flexible_date(e_at) if e_at else None
+                            
+                            is_super = str(row.get("Supercharger", "")).strip().lower() == "true"
+                            is_fast = str(row.get("Fast Charger", "")).strip().lower() == "true"
+                            
+                            try:
+                                lat = float(row.get("Latitude", 0)) if row.get("Latitude") else None
+                                lon = float(row.get("Longitude", 0)) if row.get("Longitude") else None
+                            except Exception:
+                                lat, lon = None, None
 
-                                try:
-                                    kwh_added = float(row.get("Energy Added (kWh)", 0))
-                                except Exception:
-                                    kwh_added = 0.0
+                            try:
+                                dur = float(row.get("Duration (Minutes)", 0))
+                            except Exception:
+                                dur = 0.0
 
-                                try:
-                                    kwh_used = float(row.get("Energy Used (kWh)", 0))
-                                except Exception:
-                                    kwh_used = 0.0
+                            try:
+                                kwh_added = float(row.get("Energy Added (kWh)", 0))
+                            except Exception:
+                                kwh_added = 0.0
 
-                                try:
-                                    cost = float(row.get("Cost", 0))
-                                except Exception:
-                                    cost = 0.0
+                            try:
+                                kwh_used = float(row.get("Energy Used (kWh)", 0))
+                            except Exception:
+                                kwh_used = 0.0
 
-                                try:
-                                    cost_per_kwh = float(row.get("Cost Per kWh", 0))
-                                except Exception:
-                                    cost_per_kwh = 0.0
+                            try:
+                                cost = float(row.get("Cost", 0))
+                            except Exception:
+                                cost = 0.0
 
-                                try:
-                                    start_soc = int(float(row.get("Starting Battery (%)", 0)))
-                                    end_soc = int(float(row.get("Ending Battery (%)", 0)))
-                                except Exception:
-                                    start_soc, end_soc = 0, 0
+                            try:
+                                cost_per_kwh = float(row.get("Cost Per kWh", 0))
+                            except Exception:
+                                cost_per_kwh = 0.0
 
-                                try:
-                                    range_added = float(row.get("Rated Range Added (km)", 0))
-                                except Exception:
-                                    range_added = 0.0
+                            try:
+                                start_soc = int(float(row.get("Starting Battery (%)", 0)))
+                                end_soc = int(float(row.get("Ending Battery (%)", 0)))
+                            except Exception:
+                                start_soc, end_soc = 0, 0
 
-                                try:
-                                    odometer = float(row.get("Odometer (km)", 0))
-                                except Exception:
-                                    odometer = 0.0
+                            try:
+                                range_added = float(row.get("Rated Range Added (km)", 0))
+                            except Exception:
+                                range_added = 0.0
 
-                                place_name, network, emoji, reg_obj = self.resolve_location(
-                                    loc, row.get("Saved Location", ""), lat, lon, is_super, is_fast
-                                )
+                            try:
+                                odometer = float(row.get("Odometer (km)", 0))
+                            except Exception:
+                                odometer = 0.0
 
-                                raw_charges.append({
-                                    "started_at": s_dt,
-                                    "started_at_str": s_at,
-                                    "ended_at": e_dt,
-                                    "ended_at_str": e_at,
-                                    "duration_mins": dur,
-                                    "location_raw": loc,
-                                    "saved_location": row.get("Saved Location", ""),
-                                    "place_name": place_name,
-                                    "network": network,
-                                    "emoji": emoji,
-                                    "registry_obj": reg_obj,
-                                    "latitude": lat,
-                                    "longitude": lon,
-                                    "is_supercharger": is_super,
-                                    "is_fast_charger": is_fast,
-                                    "energy_added_kwh": kwh_added,
-                                    "energy_used_kwh": kwh_used,
-                                    "cost": cost,
-                                    "cost_per_kwh": cost_per_kwh,
-                                    "start_soc": start_soc,
-                                    "end_soc": end_soc,
-                                    "range_added_km": range_added,
-                                    "odometer_km": odometer,
-                                    "source_file": fpath
-                                })
-                    except Exception:
-                        pass
+                            place_name, network, emoji, reg_obj = self.resolve_location(
+                                loc, row.get("Saved Location", ""), lat, lon, is_super, is_fast
+                            )
+
+                            raw_charges.append({
+                                "started_at": s_dt,
+                                "started_at_str": s_at,
+                                "ended_at": e_dt,
+                                "ended_at_str": e_at,
+                                "duration_mins": dur,
+                                "location_raw": loc,
+                                "saved_location": row.get("Saved Location", ""),
+                                "place_name": place_name,
+                                "network": network,
+                                "emoji": emoji,
+                                "registry_obj": reg_obj,
+                                "latitude": lat,
+                                "longitude": lon,
+                                "is_supercharger": is_super,
+                                "is_fast_charger": is_fast,
+                                "energy_added_kwh": kwh_added,
+                                "energy_used_kwh": kwh_used,
+                                "cost": cost,
+                                "cost_per_kwh": cost_per_kwh,
+                                "start_soc": start_soc,
+                                "end_soc": end_soc,
+                                "range_added_km": range_added,
+                                "odometer_km": odometer,
+                                "source_file": fpath
+                            })
+                except Exception:
+                    pass
                         
         raw_charges.sort(key=lambda x: x["started_at"] or datetime.min)
         self.charges = raw_charges
@@ -1342,25 +1457,28 @@ class TessieChargingAnalyzer:
         for inv_dir in self.invoice_dirs:
             if not os.path.isdir(inv_dir):
                 continue
-            for root, _, files in os.walk(inv_dir):
-                for f in sorted(files):
-                    if f.startswith("."):
-                        continue
-                    ext = os.path.splitext(f)[1].lower()
-                    if ext in [".pdf", ".csv", ".tsv", ".txt"]:
-                        fpath = os.path.join(root, f)
-                        real_fpath = os.path.realpath(fpath)
-                        if real_fpath in seen_file_paths:
+            try:
+                for root, _, files in os.walk(inv_dir):
+                    for f in sorted(files):
+                        if f.startswith("."):
                             continue
-                        seen_file_paths.add(real_fpath)
-                        res = TeslaInvoiceParser.parse_invoice_file(fpath)
-                        if isinstance(res, list):
-                            for r in res:
-                                if r and (r.get("date") or r.get("energy_kwh") or r.get("total_cost")):
-                                    invoices.append(r)
-                        elif isinstance(res, dict):
-                            if res.get("date") or res.get("energy_kwh") or res.get("total_cost"):
-                                invoices.append(res)
+                        ext = os.path.splitext(f)[1].lower()
+                        if ext in [".pdf", ".csv", ".tsv", ".txt"]:
+                            fpath = os.path.join(root, f)
+                            real_fpath = os.path.realpath(fpath)
+                            if real_fpath in seen_file_paths:
+                                continue
+                            seen_file_paths.add(real_fpath)
+                            res = TeslaInvoiceParser.parse_invoice_file(fpath)
+                            if isinstance(res, list):
+                                for r in res:
+                                    if r and (r.get("date") or r.get("energy_kwh") or r.get("total_cost")):
+                                        invoices.append(r)
+                            elif isinstance(res, dict):
+                                if res.get("date") or res.get("energy_kwh") or res.get("total_cost"):
+                                    invoices.append(res)
+            except Exception:
+                pass
         
         # Deduplicate invoices
         seen_invoices = set()
@@ -1662,79 +1780,32 @@ class TessieChargingAnalyzer:
                         print("Invalid selection.")
                         continue
                 
-                # Fix the chosen discrepancies
-                import csv
-                import tempfile
-                
-                # Group by source file
-                by_file = {}
-                for charge in to_fix:
-                    sf = charge.get("source_file")
-                    if sf:
-                        by_file.setdefault(sf, []).append(charge)
-                
+                # Fix the chosen discrepancies across charges_master and source CSVs
                 fixed_count = 0
-                for sf, charges in by_file.items():
-                    if not os.path.exists(sf):
-                        continue
-                        
-                    # Create lookup map based on Started At and Location
-                    lookup = {}
-                    for c in charges:
-                        s_at = c.get("started_at_str", "").strip()
-                        loc = c.get("location_raw", "").strip()
-                        lookup[(s_at, loc)] = c
+                for c in to_fix:
+                    disc = c.get("_discrepancy", {})
+                    i_cost = disc.get("invoice_cost")
+                    i_rate = disc.get("invoice_rate")
+                    s_at = c.get("started_at_str", "")
+                    loc = c.get("location_raw", "")
                     
-                    temp_fd, temp_path = tempfile.mkstemp(dir=os.path.dirname(sf), text=True)
-                    try:
-                        with os.fdopen(temp_fd, "w", encoding="utf-8", newline="") as out_f:
-                            with open(sf, "r", encoding="utf-8", errors="ignore") as in_f:
-                                reader = csv.DictReader(in_f)
-                                fieldnames = reader.fieldnames
-                                writer = csv.DictWriter(out_f, fieldnames=fieldnames)
-                                writer.writeheader()
-                                
-                                for row in reader:
-                                    started_col = next((col for col in row.keys() if col and col.startswith("Started At")), "Started At")
-                                    s_at = row.get(started_col, "").strip()
-                                    loc = row.get("Location", "").strip()
-                                    
-                                    key = (s_at, loc)
-                                    if key in lookup:
-                                        c = lookup[key]
-                                        disc = c.get("_discrepancy", {})
-                                        i_cost = disc.get("invoice_cost")
-                                        i_rate = disc.get("invoice_rate")
-                                        
-                                        if i_cost is not None and "Cost" in row:
-                                            row["Cost"] = f"{float(i_cost):.2f}"
-                                            c["cost"] = float(i_cost)
-                                        if i_rate is not None and "Cost Per kWh" in row:
-                                            row["Cost Per kWh"] = f"{float(i_rate):.2f}"
-                                            c["cost_per_kwh"] = float(i_rate)
-                                            
-                                        c["status"] = "MATCHED ✅"
-                                        
-                                        # Remove from self.discrepancies so it doesn't show again
-                                        if c in self.discrepancies:
-                                            self.discrepancies.remove(c)
-                                        fixed_count += 1
-                                        
-                                    writer.writerow(row)
-                        
-                        os.replace(temp_path, sf)
-                    except Exception as e:
-                        print(f"Error modifying {sf}: {e}")
-                        try:
-                            os.remove(temp_path)
-                        except:
-                            pass
+                    if i_cost is not None and i_rate is not None:
+                        self.patch_charge_record(s_at, loc, i_cost, i_rate)
+                        c["cost"] = float(i_cost)
+                        c["cost_per_kwh"] = float(i_rate)
+                        c["status"] = "MATCHED ✅"
+                        if c in self.discrepancies:
+                            self.discrepancies.remove(c)
+                        fixed_count += 1
                 
-                print(f"✅ Updated rate and gross cost for {fixed_count} charge(s). Energy telemetry kept intact.")
+                if fixed_count > 0:
+                    print(f"✅ Updated rate and gross cost for {fixed_count} charge(s). Energy telemetry kept intact.")
+                    self.load_charges()
+                    self.reconcile(interactive=False)
+
                 if not self.discrepancies:
                     break
                 else:
-                    # Reprint remaining
                     return self.interactive_discrepancy_menu()
 
                     
@@ -2210,7 +2281,10 @@ class TessieChargingAnalyzer:
         top_b = "├" + "┬".join("─" * w for w in widths) + "┤"
         print(top_b)
         
-        h_row = "│" + "│".join(pad_display(f"{C_BOLD}{h}{C_RESET}", w, "center") for h, w in zip(headers, widths)) + "│"
+        h_row = "│" + "│".join(
+            pad_display(f" {C_BOLD}{h}{C_RESET}" if h in ["Invoice", "Place / Station", "Network", "Status"] else f"{C_BOLD}{h}{C_RESET}", w, "left" if h in ["Place / Station", "Network", "Status", "Invoice"] else ("right" if h in ["Disp kWh", "Bat kWh", "Rate", "Cost"] else "center"))
+            for h, w in zip(headers, widths)
+        ) + "│"
         print(h_row)
 
         mid_b = "├" + "┼".join("─" * w for w in widths) + "┤"
@@ -2243,11 +2317,9 @@ class TessieChargingAnalyzer:
                 inv_str = inv_str[:12] + "…"
 
             stat = s["status"]
-            if "MATCHED" in stat:
+            if "MATCHED" in stat or "VERIFIED" in stat:
                 stat_styled = f"{C_GREEN}{stat}{C_RESET}"
-            elif "RATE MISMATCH" in stat:
-                stat_styled = f"{C_YELLOW}{stat}{C_RESET}"
-            elif "UNRECONCILED" in stat:
+            elif "TESSIE RATE WRONG" in stat or "UNRECONCILED" in stat or "RATE MISMATCH" in stat:
                 stat_styled = f"{C_RED}{stat}{C_RESET}"
             elif "INVOICE ONLY" in stat:
                 stat_styled = f"{C_BLUE}{stat}{C_RESET}"
@@ -2266,7 +2338,7 @@ class TessieChargingAnalyzer:
                 pad_display(eff_str, widths[8], "center", truncate=True),
                 pad_display(f"{rate_str} ", widths[9], "right", truncate=True),
                 pad_display(f"{cost_str} ", widths[10], "right", truncate=True),
-                pad_display(inv_str, widths[11], "center", truncate=True),
+                pad_display(f" {inv_str}", widths[11], "left", truncate=True),
                 pad_display(f" {stat_styled}", widths[12], "left", truncate=True)
             ]) + "│"
             print(row_str)
@@ -2561,7 +2633,7 @@ class TessieChargingAnalyzer:
             l11 = f"    • {C_BOLD}Cost Reconciliation Delta:{C_RESET} {d_color}${delta_cost:+.2f} AUD{C_RESET}"
             print(f"│{pad_display(l11, box_w - 2, truncate=True)}│")
         else:
-            l10 = f"    • {C_BOLD}Tax Invoice / Receipt:{C_RESET}     {C_YELLOW}No matching invoice file found in configured invoices directory{C_RESET}"
+            l10 = f"    • {C_BOLD}Tax Invoice / Receipt:{C_RESET}     {C_RED}No matching invoice file found in configured invoices directory{C_RESET}"
             print(f"│{pad_display(l10, box_w - 2, truncate=True)}│")
 
         if s.get("expected_rate") is not None:
@@ -2576,9 +2648,57 @@ class TessieChargingAnalyzer:
                 l12b = f"    • {C_BOLD}Theoretical Tariff Cost:{C_RESET}   ${s['theoretical_cost']:.2f} AUD{th_gst_str}"
                 print(f"│{pad_display(l12b, box_w - 2, truncate=True)}│")
 
-        l13 = f"    • {C_BOLD}Reconciliation Status:{C_RESET}     {s['status']}"
+        stat_color = C_GREEN if ("MATCHED" in s['status'] or "VERIFIED" in s['status']) else C_RED
+        l13 = f"    • {C_BOLD}Reconciliation Status:{C_RESET}     {stat_color}{s['status']}{C_RESET}"
         print(f"│{pad_display(l13, box_w - 2, truncate=True)}│")
         print(f"└{'─' * (box_w - 2)}┘\n")
+
+        if sys.stdin.isatty():
+            try:
+                act = input(f"{C_BOLD}Action:{C_RESET} [m]anually correct rate & cost, [Enter] to return: ").strip().lower()
+                if act in ['m', 'manual', 'e', 'edit']:
+                    self.prompt_manual_correction(s)
+            except (KeyboardInterrupt, EOFError):
+                print()
+
+    def prompt_manual_correction(self, s):
+        """Allows interactive manual correction of Cost Per kWh and Cost when no invoice is present."""
+        print(f"\n\033[93m────────────────────────────────────────────────────────────────────────\033[0m")
+        print(f"\033[93m✏️  MANUALLY CORRECT CHARGING SESSION #{s['charge_index']}\033[0m")
+        print(f"   Station:              {s['emoji']} {s['place_name']} ({s['datetime_str']})")
+        print(f"   Battery Energy Added: {s['battery_kwh']:.2f} kWh (Preserved telemetry)")
+        print(f"   Current Telemetry:    Rate: ${s['tessie_rate']:.2f}/kWh | Cost: ${s['tessie_cost']:.2f}")
+        print(f"\033[93m────────────────────────────────────────────────────────────────────────\033[0m")
+        
+        try:
+            rate_in = input(f"Enter Gross Rate ($/kWh) [press Enter to keep ${s['tessie_rate']:.2f}]: ").strip()
+            if rate_in:
+                new_rate = float(rate_in.replace("$", ""))
+            else:
+                new_rate = s['tessie_rate']
+
+            calc_cost = round(s['battery_kwh'] * new_rate, 2)
+            cost_in = input(f"Enter Gross Total Cost ($) [press Enter for ${calc_cost:.2f}]: ").strip()
+            if cost_in:
+                new_cost = float(cost_in.replace("$", ""))
+            else:
+                new_cost = calc_cost
+
+            confirm = input(f"Save Gross Rate: ${new_rate:.2f}/kWh and Gross Cost: ${new_cost:.2f}? [Y/n]: ").strip().lower()
+            if confirm not in ['n', 'no']:
+                raw = s.get("raw_charge") or {}
+                s_at = raw.get("started_at_str") or s.get("datetime_str")
+                loc = raw.get("location_raw") or s.get("place_name")
+                
+                count = self.patch_charge_record(s_at, loc, new_cost, new_rate)
+                print(f"\033[92m✔ Updated {count} file(s). Reloading charges...\033[0m\n")
+                self.load_charges()
+                self.reconcile(interactive=False)
+                
+                # Re-inspect to display updated card
+                self.inspect_session(s["charge_index"])
+        except (ValueError, KeyboardInterrupt, EOFError):
+            print("\nCorrection cancelled.")
 
     def list_chargers(self):
         sc_list = list(self.superchargers.items())
@@ -3024,6 +3144,7 @@ def main():
     reconciled = analyzer.reconcile(interactive=False)
     if sys.stdin.isatty() and not args.audit:
         analyzer.interactive_discrepancy_menu()
+        reconciled = analyzer.reconciled_sessions
 
     if args.inspect:
         analyzer.inspect_session(args.inspect)
@@ -3062,6 +3183,24 @@ def main():
 
     if args.export:
         analyzer.export_reconciliation(args.export, filtered)
+
+    # Interactive session selection loop: allows selecting session to inspect or manually correct rate/cost
+    if sys.stdin.isatty() and not args.inspect and not args.export and not args.audit:
+        while True:
+            try:
+                choice = input(f"{C_BOLD}Select [#] to inspect / manually correct, or [q]uit: {C_RESET}").strip().lower()
+                if not choice or choice in ['q', 'quit', 'exit']:
+                    break
+                if choice.isdigit():
+                    analyzer.inspect_session(int(choice))
+                    # Refresh filtered list and reprint summary and table
+                    filtered = [s for s in analyzer.reconciled_sessions if any(s["charge_index"] == orig["charge_index"] for orig in filtered)] or analyzer.reconciled_sessions
+                    analyzer.print_sessions_table(filtered)
+                else:
+                    print("Enter a session # or 'q' to quit.")
+            except (KeyboardInterrupt, EOFError):
+                print()
+                break
 
 
 if __name__ == "__main__":
