@@ -595,14 +595,24 @@ class TeslaInvoiceParser:
 
         # 3. Location / Station Name
         location_name = ""
+        stop_prefixes = (
+            "s/n", "vehicle", "date", "description", "sold to", "energy",
+            "total", "charge point", "connector", "session", "service",
+            "unit", "qty", "tax", "tariff", "subtotal", "payment", "customer", "supplier"
+        )
         for idx, line in enumerate(lines):
             if line.lower() in ["charging location", "location", "station", "site"]:
                 loc_parts = []
                 for j in range(idx + 1, min(idx + 4, len(lines))):
-                    if not lines[j].startswith(("S/N:", "Vehicle", "Date", "Description", "Sold To", "Energy", "Total", "Charge Point", "Connector", "Session")):
-                        loc_parts.append(lines[j])
+                    l_lower = lines[j].lower().strip()
+                    if any(l_lower.startswith(p) for p in stop_prefixes) or l_lower.rstrip(":") in stop_prefixes:
+                        break
+                    loc_parts.append(lines[j].strip())
                 if loc_parts:
-                    location_name = ", ".join(loc_parts)
+                    raw_loc = ", ".join(loc_parts)
+                    parts = [pt.strip() for pt in raw_loc.split(",") if pt.strip()]
+                    filtered = [pt for pt in parts if not any(pt.lower() != o.lower() and pt.lower() in o.lower() for o in parts)]
+                    location_name = ", ".join(filtered) if filtered else raw_loc
                     break
 
         if not location_name:
@@ -1971,7 +1981,19 @@ class TessieChargingAnalyzer:
         for i_idx, inv in enumerate(self.invoices):
             if i_idx not in matched_invoice_indices:
                 inv_dt = inv.get("date")
-                exp_inv_info = self.get_expected_tariff_rate(None, inv_dt, place_name=inv.get("location_raw"))
+                inv_loc_raw = inv.get("location_raw") or ""
+
+                is_sc = (inv.get("network") == "Tesla Supercharger")
+                resolved_place, resolved_net, resolved_emoji, reg_obj = self.resolve_location(
+                    inv_loc_raw,
+                    is_supercharger=is_sc,
+                    is_fast=(not is_sc)
+                )
+                place_name = resolved_place if resolved_place and resolved_place != inv_loc_raw else (inv_loc_raw or "Unknown Station")
+                network = inv.get("network") or resolved_net or "3rd-Party"
+                emoji = inv.get("emoji") or resolved_emoji or "🔌"
+
+                exp_inv_info = self.get_expected_tariff_rate(reg_obj, inv_dt, place_name=place_name)
                 inv_expected_rate = exp_inv_info.get("rate_per_kwh")
                 inv_expected_sched = exp_inv_info.get("schedule_name")
                 inv_is_archived = exp_inv_info.get("is_archived", False)
@@ -1985,10 +2007,10 @@ class TessieChargingAnalyzer:
                     "datetime": inv_dt,
                     "datetime_str": inv_dt.strftime("%Y-%m-%d %H:%M") if inv_dt else "Unknown Date",
                     "duration_mins": 0,
-                    "place_name": inv.get("location_raw") or "Unknown Station",
-                    "network": inv.get("network", "3rd-Party"),
-                    "emoji": inv.get("emoji", "🔌"),
-                    "is_supercharger": (inv.get("network") == "Tesla Supercharger"),
+                    "place_name": place_name,
+                    "network": network,
+                    "emoji": emoji,
+                    "is_supercharger": is_sc,
                     "is_fast_charger": True,
                     "start_soc": 0,
                     "end_soc": 0,
