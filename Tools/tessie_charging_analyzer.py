@@ -909,7 +909,7 @@ class TessieChargingAnalyzer:
         for sc_name, sc_data in self.superchargers.items():
             meta = sc_data.get("tesla_metadata", {})
             loc = sc_data.get("location", {})
-            display_name = meta.get("general_location") or meta.get("location_name") or sc_name
+            display_name = sc_name
             kws = meta.get("keywords") or []
             
             if saved_clean and (saved_clean.lower() == sc_name.lower() or any(k.lower() in saved_clean.lower() for k in kws)):
@@ -1856,11 +1856,23 @@ class TessieChargingAnalyzer:
         if not sessions:
             return
 
+        place_header_w = len("Place / Station")
+        max_place_w = place_header_w
+        for s in sessions:
+            clean_place = s["place_name"]
+            if s.get("network"):
+                clean_place = re.sub(rf"\s*\({re.escape(s['network'])}\)", "", clean_place, flags=re.IGNORECASE)
+            p_len = display_len(f" {s['emoji']} {clean_place}") + 1
+            if p_len > max_place_w:
+                max_place_w = p_len
+
+        place_col_width = max(25, max_place_w)
+
         headers = [
             "#", "Date / Time", "Place / Station", "Network", "SoC %", "Dur", "Disp kWh", "Bat kWh", "Eff %", "Rate", "Cost", "Invoice", "Status"
         ]
         widths = [
-            4, 18, 25, 22, 9, 6, 10, 9, 8, 9, 8, 16, 18
+            4, 18, place_col_width, 22, 9, 6, 10, 9, 8, 9, 8, 16, 18
         ]
         total_inner_w = sum(widths) + len(widths) - 1
 
@@ -1946,11 +1958,23 @@ class TessieChargingAnalyzer:
         if not corr_sessions:
             corr_sessions = sessions
 
+        place_header_w = len("Place / Station")
+        max_place_w = place_header_w
+        for s in corr_sessions:
+            clean_place = s["place_name"]
+            if s.get("network"):
+                clean_place = re.sub(rf"\s*\({re.escape(s['network'])}\)", "", clean_place, flags=re.IGNORECASE)
+            p_len = display_len(f" {s['emoji']} {clean_place}") + 1
+            if p_len > max_place_w:
+                max_place_w = p_len
+
+        place_col_width = max(23, max_place_w)
+
         headers = [
             "#", "Date / Time", "Place / Station", "Tessie Bat", "Tessie Car", "Invoice Disp", "Cable Loss", "Car Loss", "Total Loss", "Eff %", "Cost Var", "Telemetry"
         ]
         widths = [
-            4, 17, 23, 11, 11, 13, 11, 10, 11, 8, 10, 14
+            4, 17, place_col_width, 11, 11, 13, 11, 10, 11, 8, 10, 14
         ]
         total_inner_w = sum(widths) + len(widths) - 1
 
