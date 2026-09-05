@@ -368,9 +368,6 @@ class TessieAnalyzer:
         else:
             if os.path.isdir(self.icloud_dir):
                 dest_dirs.append(self.icloud_dir)
-            for ext in find_mounted_tesla_volumes("Tessie"):
-                if ext not in dest_dirs:
-                    dest_dirs.append(ext)
 
         if not dest_dirs:
             return 0

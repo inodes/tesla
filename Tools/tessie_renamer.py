@@ -407,18 +407,6 @@ def main():
             shutil.move(src_path, dst_path)
             print(f"✔ Moved & Standardized: {info['proposed']}")
 
-        # Multi-drive sync
-        ext_volumes = find_mounted_tesla_volumes("Tessie")
-        if ext_volumes:
-            for v in ext_volumes:
-                for orig_name, src_path, info, sz in plan:
-                    v_dst = os.path.join(v, info["proposed"])
-                    try:
-                        shutil.copyfile(os.path.join(dest_dir, info["proposed"]), v_dst)
-                        print(f"✔ Synced to external SSD: {v_dst}")
-                    except Exception as e:
-                        print(f"⚠️ Failed to sync to {v_dst}: {e}")
-
         print(f"\n🎉 Successfully ingested {len(plan)} file(s) into {dest_dir}!")
         return
 
