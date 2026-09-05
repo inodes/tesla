@@ -15,6 +15,8 @@ import sys
 import csv
 import json
 import glob
+import math
+import re
 import shutil
 import argparse
 from datetime import datetime
@@ -22,6 +24,14 @@ from datetime import datetime
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 REPO_ROOT = os.path.dirname(SCRIPT_DIR)
 CONFIG_JSON_PATH = os.path.join(REPO_ROOT, "Tessie", "config.json")
+SC_JSON_PATH = os.path.join(REPO_ROOT, "Tessie", "tesla_superchargers.json")
+
+def haversine_km(lat1, lon1, lat2, lon2):
+    R = 6371.0
+    dlat = math.radians(lat2 - lat1)
+    dlon = math.radians(lon2 - lon1)
+    a = math.sin(dlat / 2.0) ** 2 + math.cos(math.radians(lat1)) * math.cos(math.radians(lat2)) * math.sin(dlon / 2.0) ** 2
+    return 2.0 * R * math.asin(math.sqrt(a))
 
 def load_config():
     """Loads configuration dictionary from config.json."""
@@ -250,8 +260,45 @@ def analyze_file(filepath):
                     cat = "Drive Deep Dive"
                     typ = "drive_deepdive"
                 else:  # Single Charge Deep Dive
-                    name = f"charge_deepdive_{min_ts.strftime('%Y-%m-%d_%H-%M')}.csv"
-                    desc = f"Single Charge Deep Dive ({rows} telemetry samples on {min_ts.strftime('%Y-%m-%d %H:%M')})"
+                    fn_match = re.search(r"(\d{4}-\d{2}-\d{2})[ -](\d{2})[ -:](\d{2})", filename)
+                    if fn_match:
+                        ts_slug = f"{fn_match.group(1)}_{fn_match.group(2)}-{fn_match.group(3)}"
+                    else:
+                        ts_slug = min_ts.strftime('%Y-%m-%d_%H-%M')
+
+                    short_id = None
+                    try:
+                        lat, lon = None, None
+                        for r in rows_list:
+                            if r.get("Latitude") and r.get("Longitude"):
+                                lat = float(r["Latitude"])
+                                lon = float(r["Longitude"])
+                                break
+                        if lat is not None and lon is not None and os.path.exists(SC_JSON_PATH):
+                            with open(SC_JSON_PATH, "r", encoding="utf-8") as f_sc:
+                                sc_map = json.load(f_sc)
+                            min_dist = float("inf")
+                            best_short = None
+                            for sc_data in sc_map.values():
+                                loc = sc_data.get("location", {})
+                                sc_lat = loc.get("lat") or loc.get("latitude")
+                                sc_lon = loc.get("lon") or loc.get("longitude")
+                                if sc_lat is not None and sc_lon is not None:
+                                    d = haversine_km(lat, lon, sc_lat, sc_lon)
+                                    if d < min_dist:
+                                        min_dist = d
+                                        best_short = sc_data.get("tesla_metadata", {}).get("short_name")
+                            if min_dist <= 2.0 and best_short:
+                                short_id = best_short
+                    except Exception:
+                        pass
+
+                    if short_id:
+                        name = f"charge_deepdive_{ts_slug}_{short_id}.csv"
+                        desc = f"Single Charge Deep Dive at {short_id} ({rows} telemetry samples on {min_ts.strftime('%Y-%m-%d %H:%M')})"
+                    else:
+                        name = f"charge_deepdive_{ts_slug}.csv"
+                        desc = f"Single Charge Deep Dive ({rows} telemetry samples on {min_ts.strftime('%Y-%m-%d %H:%M')})"
                     cat = "Charge Deep Dive"
                     typ = "charge_deepdive"
             else:
@@ -301,6 +348,7 @@ def main():
     parser.add_argument("--move-to", help="Move and rename files to target directory (removes from landing inbox)")
     parser.add_argument("--in-place", action="store_true", help="Rename files directly in place in source directory")
     parser.add_argument("--dry-run", action="store_true", help="Preview proposed names without renaming or copying")
+    parser.add_argument("-y", "--yes", action="store_true", help="Automatically confirm without interactive prompt")
     
     args = parser.parse_args()
     config = load_config()
@@ -343,7 +391,7 @@ def main():
         dest_dir = args.copy_to or args.move_to or target_tessie_dir
         print(f"Target Directory: {dest_dir}")
 
-        if sys.stdin.isatty():
+        if not args.yes and sys.stdin.isatty():
             try:
                 confirm = input("Move and standardize into Tessie data directory? [y/N]: ").strip().lower()
                 if confirm != "y":
@@ -421,7 +469,7 @@ def main():
 
     print(f"Action: {mode_label}")
 
-    if sys.stdin.isatty():
+    if not args.yes and sys.stdin.isatty():
         try:
             confirm = input("Proceed? [y/N]: ").strip().lower()
             if confirm != "y":

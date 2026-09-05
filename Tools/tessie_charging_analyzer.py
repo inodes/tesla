@@ -191,6 +191,8 @@ def shorten_display_path(p, max_len=40):
     home = os.path.expanduser("~")
     if p_str.startswith(home):
         p_str = "~" + p_str[len(home):]
+    p_str = p_str.replace("~/Library/Mobile Documents/com~apple~CloudDocs/", "iCloud/")
+    p_str = p_str.replace("~/Library/Mobile Documents/com~apple~CloudDocs", "iCloud")
     if max_len and len(p_str) > max_len:
         p_str = "…" + p_str[-(max_len - 1):]
     return p_str
@@ -1014,8 +1016,10 @@ class TessieChargingAnalyzer:
                 for cand in candidates:
                     v_from_str = cand.get("valid_from")
                     v_to_str = cand.get("valid_to") or cand.get("archived_at")
-                    v_from = parse_flexible_date(v_from_str) if v_from_str else datetime.min
-                    v_to = parse_flexible_date(v_to_str) if v_to_str else datetime.max
+                    v_from_dt = parse_flexible_date(v_from_str) if v_from_str else None
+                    v_to_dt = parse_flexible_date(v_to_str) if v_to_str else None
+                    v_from = v_from_dt if v_from_dt is not None else datetime.min
+                    v_to = v_to_dt if v_to_dt is not None else datetime.max
                     if v_from and v_from.tzinfo:
                         v_from = v_from.replace(tzinfo=None)
                     if v_to and v_to.tzinfo:
@@ -1429,6 +1433,11 @@ class TessieChargingAnalyzer:
         detailed = []
         seen_paths = set()
         search_dirs = [self.landing_dir] + self.tessie_dirs
+        for td in list(self.tessie_dirs):
+            for sub in ["charges", "telemetry", "Inbox"]:
+                sub_p = os.path.join(td, sub)
+                if os.path.isdir(sub_p):
+                    search_dirs.append(sub_p)
 
         candidates = []
         for s_dir in search_dirs:
@@ -2096,7 +2105,13 @@ class TessieChargingAnalyzer:
             print(f"│{pad_display(cl4, box_w - 2, truncate=True)}│")
             
             telem_linked = sum(1 for s in corr_sessions if s.get("detailed_telemetry"))
-            cl5 = f"  {C_BOLD}High-Frequency Telemetry Files Linked:{C_RESET}    {telem_linked}/{len(corr_sessions)} sessions from {shorten_display_path(self.landing_dir)}"
+            telem_sources = set()
+            for s in corr_sessions:
+                dt_obj = s.get("detailed_telemetry")
+                if dt_obj and dt_obj.get("source_path"):
+                    telem_sources.add(shorten_display_path(os.path.dirname(dt_obj["source_path"])))
+            telem_loc_str = f" from {', '.join(sorted(telem_sources))}" if telem_sources else ""
+            cl5 = f"  {C_BOLD}High-Frequency Telemetry Files Linked:{C_RESET}    {telem_linked}/{len(corr_sessions)} sessions{telem_loc_str}"
             print(f"│{pad_display(cl5, box_w - 2, truncate=True)}│")
             print(f"└{'─' * (box_w - 2)}┘\n")
 
