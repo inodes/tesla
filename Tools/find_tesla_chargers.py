@@ -1782,12 +1782,25 @@ class TeslaChargerExplorer:
 
         sc_reg, dc_reg = self.load_active_registries()
 
-        # Apply subset filter if requested ('new' or 'stale')
+        # Apply subset filter if requested ('new', 'stale', or 'unpriced')
         target_stations = list(stations)
         if subset_filter == "new":
             target_stations = [s for s in target_stations if self.get_station_status(s, sc_reg=sc_reg, dc_reg=dc_reg) == "NOT_IN_JSON"]
         elif subset_filter == "stale":
             target_stations = [s for s in target_stations if self.get_station_status(s, sc_reg=sc_reg, dc_reg=dc_reg) == "STALE"]
+        elif subset_filter in ("unpriced", "missing_price", "missing_pricing"):
+            def is_unpriced_record(s):
+                k, rec, _ = self.get_station_record(s, sc_reg=sc_reg, dc_reg=dc_reg)
+                if not rec:
+                    return True
+                tariffs = rec.get("tariffs", {})
+                t_scheds = tariffs.get("tesla_members", {}).get("rate_schedules", [])
+                flat = tariffs.get("per_kwh_flat")
+                cost_cfg = rec.get("tessie_cost_config", {})
+                c_scheds = cost_cfg.get("rate_schedules", [])
+                c_flat = cost_cfg.get("per_kwh_flat", 0.0)
+                return not t_scheds and not c_scheds and not flat and (c_flat == 0.0 or c_flat is None)
+            target_stations = [s for s in target_stations if is_unpriced_record(s)]
 
         total = len(target_stations)
         if total == 0:
@@ -1899,14 +1912,15 @@ class TeslaChargerExplorer:
             browser.close()
 
         elapsed = time.time() - t0
-        processed_ok = stats["CREATED"] + stats["ARCHIVED"] + stats["VERIFIED"]
+        processed_ok = stats.get("CREATED", 0) + stats.get("ARCHIVED", 0) + stats.get("VERIFIED", 0) + stats.get("UPDATED", 0)
         print(f"\n{C_BOLD}{'='*80}{C_RESET}")
         print(f"  ⚡ {C_BOLD}BATCH SCRAPE & RE-VERIFICATION SUMMARY{C_RESET}")
         print(f"{C_BOLD}{'='*80}{C_RESET}")
         print(f"  ⏱️  Total Duration:      {elapsed:.1f}s ({total} stations evaluated)")
-        print(f"  🟢 Newly Created:       {stats['CREATED']} (added fresh to JSON registry)")
-        print(f"  🔵 Updated & Archived:  {stats['ARCHIVED']} (pricing/hardware changed, old rate card archived)")
-        print(f"  ⚪ Verified Unchanged:  {stats['VERIFIED']} (re-verified without changes)")
+        print(f"  🟢 Newly Created:       {stats.get('CREATED', 0)} (added fresh to JSON registry)")
+        print(f"  🟡 Initial Pricing Added: {stats.get('UPDATED', 0)} (populated missing pricing)")
+        print(f"  🔵 Rate Revisions:      {stats.get('ARCHIVED', 0)} (pricing/hardware changed, old rate card archived)")
+        print(f"  ⚪ Verified Unchanged:  {stats.get('VERIFIED', 0)} (re-verified without changes)")
         if stats["ERROR"] > 0:
             print(f"  🔴 Failed / Errors:     {stats['ERROR']}")
             print(f"     Failed stations:     {', '.join(failed_stations[:10])}{' ...' if len(failed_stations) > 10 else ''}")
@@ -2835,6 +2849,7 @@ Query & Proximity Examples:
     parser.add_argument("--status", choices=["UP_TO_DATE", "STALE", "NOT_IN_JSON", "up_to_date", "stale", "not_in_json"], help="Filter by registry status")
     parser.add_argument("--new", action="store_true", help="Filter only stations not present in JSON registry")
     parser.add_argument("--stale", action="store_true", help="Filter only stale stations (> 90 days since verification)")
+    parser.add_argument("--unpriced", "--missing-price", "--missing-pricing", action="store_true", help="Filter or batch refresh stations missing pricing in the JSON registry")
 
     # Inspection, Scraping & Persistence Flags
     parser.add_argument("--inspect", "--scrape", help="Inspect station details (defaults to fast offline JSON; use --live for web scrape)")
@@ -2941,7 +2956,7 @@ Query & Proximity Examples:
         args.list or args.search or args.state or args.suburb or 
         args.sc or args.dc or args.all_types or args.all or args.filter or args.tier or 
         args.tesla_only or args.non_tesla or args.max_price is not None or 
-        args.min_stalls is not None or args.status or args.new or args.stale or
+        args.min_stalls is not None or args.status or args.new or args.stale or args.unpriced or
         args.gps or args.near_address or args.coords or args.radius_km is not None or
         args.time is not None or args.limit is not None or args.sort is not None
     )
@@ -3087,6 +3102,17 @@ Query & Proximity Examples:
         if active_radius is not None and active_radius > 0 and ref_lat is not None and ref_lon is not None:
             filtered = [s for s in filtered if s.get("_distance_km", float("inf")) <= active_radius]
 
+        if args.unpriced:
+            def is_unpriced_filter(s):
+                tariffs = s.get("tariffs", {})
+                t_scheds = tariffs.get("tesla_members", {}).get("rate_schedules", [])
+                flat = tariffs.get("per_kwh_flat")
+                cost_cfg = s.get("tessie_cost_config", {})
+                c_scheds = cost_cfg.get("rate_schedules", [])
+                c_flat = cost_cfg.get("per_kwh_flat", 0.0)
+                return not t_scheds and not c_scheds and not flat and (c_flat == 0.0 or c_flat is None)
+            filtered = [s for s in filtered if is_unpriced_filter(s)]
+
         if args.filter:
             filtered = [s for s in filtered if evaluate_station_filter(s, args.filter, target_time=args.time)]
 
@@ -3110,7 +3136,7 @@ Query & Proximity Examples:
 
         # Batch scrape mode
         if args.all:
-            subset_mode = "new" if args.new else ("stale" if args.stale else None)
+            subset_mode = "unpriced" if args.unpriced else ("new" if args.new else ("stale" if args.stale else None))
             explorer.scrape_all_stations(
                 filtered,
                 sync_external=args.sync,
