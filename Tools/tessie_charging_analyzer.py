@@ -1595,7 +1595,8 @@ class TessieChargingAnalyzer:
             return
             
         print(f"\n\033[91m==========================================================================\033[0m")
-        print(f"\033[91m ⚠️  {len(self.discrepancies)} CHARGE COST DISCREPANCIES DETECTED (Net/Gross CSV issue)\033[0m")
+        print(f"\033[91m ⚠️  {len(self.discrepancies)} CHARGE TARIFF/COST DISCREPANCIES DETECTED (Net/Gross CSV issue)\033[0m")
+        print(f"\033[90m Note: Only 'Cost Per kWh' and 'Cost' are patched. Energy (kWh) is strictly preserved.\033[0m")
         print(f"\033[91m==========================================================================\033[0m")
         
         for i, d in enumerate(self.discrepancies):
@@ -1603,17 +1604,20 @@ class TessieChargingAnalyzer:
             place = d.get("place_name")
             bat_kwh = d.get("energy_added_kwh", 0)
             t_cost = d.get("cost", 0)
+            t_rate = d.get("cost_per_kwh")
+            if t_rate is None or t_rate == 0:
+                t_rate = (t_cost / bat_kwh) if bat_kwh > 0 else 0.0
             
             disc = d.get("_discrepancy", {})
             i_cost = disc.get("invoice_cost", 0)
             i_rate = disc.get("invoice_rate", 0)
-            i_kwh = disc.get("invoice_kwh", 0)
             
             print(f"\n\033[91m[{i+1}] {s_at} @ {place}\033[0m")
-            print(f"    Tessie Telemetry: {bat_kwh:.2f} kWh | Cost: ${t_cost:.2f}")
-            print(f"    Official Invoice: {i_kwh:.2f} kWh | Cost: ${i_cost:.2f} | Rate: ${i_rate:.2f}/kWh" if i_rate == round(i_rate, 2) else f"    Official Invoice: {i_kwh:.2f} kWh | Cost: ${i_cost:.2f} | Rate: ${i_rate:.2f}/kWh")
+            print(f"    Current CSV:       Rate: ${t_rate:.2f}/kWh  |  Total Cost: ${t_cost:.2f}")
+            print(f"    Invoice (Gross):   Rate: ${i_rate:.2f}/kWh  |  Total Cost: ${i_cost:.2f}")
+            print(f"    Car Telemetry:     {bat_kwh:.2f} kWh added (Kept intact - not modified)")
             
-        print(f"\nOptions: [1-{len(self.discrepancies)}] to fix individually, [a]ll to fix all, [s]kip/continue")
+        print(f"\nOptions: [1-{len(self.discrepancies)}] to update rate/cost, [a]ll to update all, [s]kip/continue")
         
         while True:
             try:
@@ -1661,8 +1665,6 @@ class TessieChargingAnalyzer:
                     for c in charges:
                         s_at = c.get("started_at_str", "").strip()
                         loc = c.get("location_raw", "").strip()
-                        added = f"{c.get('energy_added_kwh', 0):.2f}"
-                        # Try to match uniquely
                         lookup[(s_at, loc)] = c
                     
                     temp_fd, temp_path = tempfile.mkstemp(dir=os.path.dirname(sf), text=True)
@@ -1675,7 +1677,8 @@ class TessieChargingAnalyzer:
                                 writer.writeheader()
                                 
                                 for row in reader:
-                                    s_at = (row.get("Started At (AEST)") or row.get("Started At", "")).strip()
+                                    started_col = next((col for col in row.keys() if col and col.startswith("Started At")), "Started At")
+                                    s_at = row.get(started_col, "").strip()
                                     loc = row.get("Location", "").strip()
                                     
                                     key = (s_at, loc)
@@ -1686,11 +1689,11 @@ class TessieChargingAnalyzer:
                                         i_rate = disc.get("invoice_rate")
                                         
                                         if i_cost is not None and "Cost" in row:
-                                            row["Cost"] = str(i_cost)
-                                            c["cost"] = i_cost
+                                            row["Cost"] = f"{float(i_cost):.2f}"
+                                            c["cost"] = float(i_cost)
                                         if i_rate is not None and "Cost Per kWh" in row:
-                                            row["Cost Per kWh"] = str(i_rate)
-                                            c["cost_per_kwh"] = i_rate
+                                            row["Cost Per kWh"] = f"{float(i_rate):.2f}"
+                                            c["cost_per_kwh"] = float(i_rate)
                                             
                                         c["status"] = "MATCHED ✅"
                                         
@@ -1709,12 +1712,13 @@ class TessieChargingAnalyzer:
                         except:
                             pass
                 
-                print(f"✅ Fixed {fixed_count} discrepancies.")
+                print(f"✅ Updated rate and gross cost for {fixed_count} charge(s). Energy telemetry kept intact.")
                 if not self.discrepancies:
                     break
                 else:
                     # Reprint remaining
                     return self.interactive_discrepancy_menu()
+
                     
             except (KeyboardInterrupt, EOFError):
                 break
