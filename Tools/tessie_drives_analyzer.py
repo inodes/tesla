@@ -202,13 +202,37 @@ def parse_relative_date(date_str):
 
 def find_mounted_tesla_volumes(subdir=None):
     """
-    No-op retained for call-site compatibility. TESLADRIVE* volumes are
-    reserved exclusively for dashcam/TeslaCam media - Tessie CSV data is
-    never read from or written to them. Tessie tooling runs directly from
-    the repository and iCloud only. See tesla_sync.sh for actual TeslaCam
-    media handling on TESLADRIVE volumes.
+    Dynamically discovers all mounted volumes matching TESLADRIVE* under
+    /Volumes. If subdir is provided (e.g. 'TeslaCam'), returns existing
+    subdirectories within those volumes.
+
+    TESLADRIVE* volumes are reserved exclusively for dashcam/TeslaCam media
+    (see AGENTS.md) - this is what locates real footage on the drive for
+    the Saved/Sentry/Recent columns below. Tessie CSV/registry data is
+    never read from or written to TESLADRIVE (that tooling runs from the
+    repository and iCloud only, see tesla_sync.sh) - callers must not pass
+    a 'Tessie' subdir here.
     """
-    return []
+    volumes_root = "/Volumes"
+    if not os.path.isdir(volumes_root):
+        return []
+    discovered = []
+    seen = set()
+    try:
+        entries = sorted(os.listdir(volumes_root))
+    except Exception:
+        entries = []
+    for entry in entries:
+        if entry.upper().startswith("TESLADRIVE"):
+            vol_path = os.path.join(volumes_root, entry)
+            if os.path.isdir(vol_path):
+                target = os.path.join(vol_path, subdir) if subdir else vol_path
+                if os.path.isdir(target):
+                    real_p = os.path.abspath(os.path.realpath(target))
+                    if real_p not in seen:
+                        seen.add(real_p)
+                        discovered.append(real_p)
+    return discovered
 
 class TessieAnalyzer:
     def __init__(self, tessie_dir=None, teslacam_dirs=None):
@@ -225,7 +249,8 @@ class TessieAnalyzer:
             os.path.join(self.script_dir, "Tessie"),
             os.path.expanduser("~/iCloud/repos/tesla/Tessie"),
             self.icloud_dir
-        ] + find_mounted_tesla_volumes("Tessie")
+        ]  # Tessie CSV/registry data runs from the repo and iCloud only -
+           # TESLADRIVE is not scanned here (see find_mounted_tesla_volumes).
         seen_tessie = set()
         for d in candidates:
             try:
