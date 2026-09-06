@@ -114,3 +114,18 @@ Requests tables once closed out, and prune this list then.
   file's no-op gutting was correct as-is and needs no change.
   `find_plugshare_chargers.py` still defines the function but has zero call sites -
   also fine as-is. User confirmed on their real machine: footage is back.
+- **Days-menu `[a]ll` just re-showed one day (BUG-012, fixed)**: user's original ask
+  to Antigravity was "list drives by month then choose all," but `[a]ll` at the days
+  menu chained full per-day interactive sessions instead of showing everything at
+  once - looked exactly like selecting the first day and then getting stuck. Added
+  `drill_down_all_days()`: flattens every day in view into one combined table with a
+  Date column and a single prompt over the whole set. Verified offline with a
+  synthetic multi-day fixture (mocked analyzer, piped input) - correct alignment, no
+  exceptions.
+- **"Parked After" rename + missing in combined view (BUG-013, fixed)**: user found
+  this while comparing the new `drill_down_all_days()` (from BUG-012) against the
+  original single-day table. Renamed the header to "Parked Duration" (it shows a
+  duration, not a time) in `drill_down_day()`, and added the same column - with its
+  own gap-to-next-trip logic, careful to only compute a gap when the next trip in the
+  flattened list shares the same date, so it never bridges across a day boundary - to
+  `drill_down_all_days()`, which had omitted it entirely.
