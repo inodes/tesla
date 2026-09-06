@@ -1,3 +1,7 @@
+# Note for AI Agents:
+# Repository operating guidelines, active requests, TODOs, and bug tracking are maintained in AGENTS.md.
+# Read AGENTS.md upon startup and keep it updated.
+
 # macOS metadata
 .DS_Store
 ._*
@@ -19,6 +23,8 @@ Tessie/invoices/*
 !Tessie/superchargers_archived.example.json
 !Tessie/tesla_chargers.example.json
 !Tessie/tesla_chargers_archived.example.json
+!Tessie/plugshare_chargers.example.json
+!Tessie/plugshare_chargers_archived.example.json
 !Tessie/tesla_superchargers.example.json
 !Tessie/tesla_superchargers_archived.example.json
 !Tessie/config.example.json
