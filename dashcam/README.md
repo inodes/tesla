@@ -34,7 +34,7 @@ High-speed multi-drive sync, intelligent auto-pruning, storage auditing, and loc
 ./Tools/tesla_sync.sh
 
 # Perform dry run (preview payload without copying)
-./Tools/tesla_sync.sh --dryrun
+./Tools/tesla_sync.sh --dry-run
 
 # Check storage breakdown & archive status
 ./Tools/tesla_sync.sh --status
