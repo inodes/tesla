@@ -19,8 +19,18 @@ import re
 import unicodedata
 from typing import List, Optional, Union
 
-# ANSI escape sequence pattern
+# ANSI CSI escape sequence pattern (colors, cursor control, etc.)
 ANSI_REGEX = re.compile(r"\x1b\[[0-9;]*[a-zA-Z]|\033\[[0-9;]*[a-zA-Z]")
+
+# OSC 8 hyperlink escape sequence pattern (clickable terminal links) - shape is
+# ESC ] 8 ; params ; URI (ST|BEL) ...visible text... ESC ] 8 ; ; (ST|BEL)
+# The "close" marker is just the "open" marker with an empty URI, so this one
+# pattern matches both halves of the wrapper produced by hyperlink() below.
+OSC8_REGEX = re.compile(r"\x1b\]8;[^\x1b\x07]*(?:\x1b\\|\x07)")
+
+# Combined pattern for any invisible escape wrapper this module treats as
+# zero-width when measuring, padding, or truncating display text.
+ESCAPE_REGEX = re.compile(f"(?:{ANSI_REGEX.pattern})|(?:{OSC8_REGEX.pattern})")
 
 # Bind POSIX libc wcwidth when available (authoritative terminal character cell measurement on macOS)
 try:
@@ -118,10 +128,27 @@ CHAR_WIDTH_1_CODEPOINTS = {
 
 
 def strip_ansi(s: str) -> str:
-    """Removes all ANSI color and control codes from a string."""
+    """Removes all ANSI color/control codes and OSC 8 hyperlink wrappers from a string."""
     if not s:
         return ""
-    return ANSI_REGEX.sub("", str(s))
+    return ESCAPE_REGEX.sub("", str(s))
+
+
+def hyperlink(text: str, url: str) -> str:
+    """
+    Wraps text in an OSC 8 terminal hyperlink escape sequence pointing to url,
+    so it renders as clickable in terminals that support it (Terminal.app,
+    iTerm2, and most modern terminal emulators - unsupported terminals just
+    show the plain text, since the escape bytes carry no visible glyph).
+    display_len/pad_display/format_row/truncate_display all treat this
+    wrapper as zero-width, so it's safe to use directly as table cell content.
+
+    The visible text is also underlined/colored (cyan) so it's recognizable
+    as a link even in terminals where OSC 8 alone doesn't change appearance -
+    plain click support varies by terminal, but Cmd+Click (macOS Terminal.app
+    and iTerm2's convention for OSC 8 links) reliably opens it.
+    """
+    return f"\x1b]8;;{url}\x1b\\\x1b[4;36m{text}\x1b[0m\x1b]8;;\x1b\\"
 
 
 def char_width(c: str) -> int:
@@ -228,8 +255,8 @@ def truncate_display(s: str, max_width: int, ellipsis: str = "…") -> str:
     el_w = display_len(ellipsis)
     target_w = max(1, max_width - el_w)
     
-    # Split by ANSI escape sequences to preserve color styling
-    tokens = re.split(r"(\x1b\[[0-9;]*[a-zA-Z]|\033\[[0-9;]*[a-zA-Z])", str(s))
+    # Split by ANSI/OSC-8 escape sequences to preserve color styling and hyperlinks
+    tokens = re.split(f"({ESCAPE_REGEX.pattern})", str(s))
     res = []
     cur_w = 0
     has_ansi = False
@@ -237,7 +264,7 @@ def truncate_display(s: str, max_width: int, ellipsis: str = "…") -> str:
     for tok in tokens:
         if not tok:
             continue
-        if ANSI_REGEX.match(tok):
+        if ESCAPE_REGEX.match(tok):
             has_ansi = True
             res.append(tok)
             continue

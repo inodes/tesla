@@ -140,4 +140,54 @@ Requests tables once closed out, and prune this list then.
   - `review` now lists unlabelled stop clusters instead of erroring. Also dropped the
   dead `inbox_directory` key from `load_config()`'s default dict - nothing ever read
   it (only an unrelated self-test emoji label in `table_formatter.py` happens to
-  mention "Inbox").
+  mention "Inbox"). Their real `config.json` also had a second dead key
+  (`session_csvs_directory`) and a `tessie_directory` set to the long canonical
+  iCloud path instead of their preferred `~/iCloud` symlink shorthand - both fixed
+  directly in that personal file (gitignored, no commit involved). Also confirmed -
+  no code change needed - that the "drop raw CSVs in Downloads or the Tessie dir
+  root, they get sorted into drives/ or charges/ on consolidate" workflow the user
+  described already exists exactly as they wanted (REQ-004).
+- **Clickable Google Maps coordinates in `./tessie_places.py review` (REQ-020,
+  done)**: added `hyperlink(text, url)` to `table_formatter.py` (wraps text in an
+  OSC 8 terminal hyperlink escape sequence) plus a new `OSC8_REGEX` / `ESCAPE_REGEX`
+  so `strip_ansi`/`display_len`/`pad_display`/`format_row`/`truncate_display` all
+  correctly treat the wrapper as zero-width - verified this explicitly (hyperlinked
+  vs. plain text measure identically, padded/row output stays aligned). Wired into
+  both places `review` prints coordinates: the cluster-list table and
+  `review_single_cluster()`'s `GPS:` line. Only did the `review` flow since that's
+  what the user asked about - `TODO-007` in `AGENTS.md` notes the same helper could
+  be reused for other coordinate-printing spots if wanted later.
+- **OSC 8 links had no visible styling (BUG-014, fixed)**: user reported not being
+  able to see anything clickable for the REQ-020 coordinate links. `hyperlink()` now
+  also underlines/colors (cyan) the visible text so it's recognizable as a link even
+  where OSC 8 itself renders invisibly; told the user Cmd+Click is the reliable way
+  to open these in Terminal.app/iTerm2 on macOS.
+- **Ignore list for `review` (REQ-021, done)**: user wanted a way to permanently
+  dismiss a stop cluster whose address is fine as-is, instead of it reappearing on
+  every `review` run, plus a way to later browse dismissed clusters and either name
+  one for real or undo the dismissal. Added `Tessie/ignored_places.json` (gitignored
+  via the existing `Tessie/*.json` rule - no `.gitignore` change needed) - a flat
+  list of dismissed cluster dicts (same shape as a live cluster: address,
+  center_lat/lon, stops, plus radius_m and ignored_at), matched against live clusters
+  with the exact same haversine-distance-within-radius rule `places.json` already
+  uses, so it slots into `cmd_review_drives()`'s existing filter loop with one added
+  line. `review_single_cluster()` gained an `[i]gnore` action (behind a new
+  `allow_ignore` param, since the *reviewing an ignored entry* flow shouldn't offer
+  to ignore an already-ignored one). New `ignored` subcommand
+  (`cmd_review_ignored()`) lists dismissed clusters in the same table style as
+  `review`, and lets the user either pick one to name for real (reuses
+  `review_single_cluster()` directly on the stored entry, then removes it from the
+  ignore list on success) or `u <N>` to un-ignore outright. Verified the full round
+  trip live against the user's real data: ignored 2 real clusters, confirmed the
+  count dropped in `review` and both appeared in `ignored`, then un-ignored both via
+  `u 1`/`u 1` and confirmed `review` was back to the original 41 clusters - net zero
+  change to their actual places, but proof the whole thing works end to end.
+- **Committed - all of BUG-010 through BUG-014 and REQ-020/REQ-021 landed on `main`
+  across 4 commits this session** (footage regression fix; combined all-days view +
+  Parked Duration; drives_master.csv path fix + dead config keys; clickable Google
+  Maps links + ignore list). Still open: a real architecture concern the user raised
+  about `tessie_drives_analyzer.py`/`tessie_charging_analyzer.py` writing
+  drives_master.csv/charges_master.csv (and invoices) into the repo's own `Tessie/`
+  folder in addition to iCloud, duplicating personal data outside of git's view but
+  inside the working tree - user chose "iCloud only, stop writing to the repo" -
+  not yet implemented, see next session/turn.

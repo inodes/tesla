@@ -37,6 +37,7 @@ CONFIG_JSON_PATH = os.path.join(TESSIE_DIR, "config.json")
 DRIVES_MASTER_PATH = os.path.join(TESSIE_DIR, "drives", "drives_master.csv")
 CHARGING_JSON_PATH = os.path.join(TESSIE_DIR, "tesla_chargers.json") if os.path.isfile(os.path.join(TESSIE_DIR, "tesla_chargers.json")) else os.path.join(TESSIE_DIR, "charging.json")
 SUPERCHARGERS_JSON_PATH = os.path.join(TESSIE_DIR, "tesla_superchargers.json") if os.path.isfile(os.path.join(TESSIE_DIR, "tesla_superchargers.json")) else os.path.join(TESSIE_DIR, "superchargers.json")
+IGNORED_JSON_PATH = os.path.join(TESSIE_DIR, "ignored_places.json")
 
 # ---------------------------------------------------------------------------
 # Unicode & Terminal Display Utilities
@@ -53,7 +54,12 @@ from table_formatter import (
     format_row,
     format_title_line,
     format_box_line,
+    hyperlink,
 )
+
+def gmaps_url(lat, lon):
+    """Google Maps URL for a coordinate pair, opening its pin directly."""
+    return f"https://www.google.com/maps/search/?api=1&query={lat:.5f},{lon:.5f}"
 
 # ---------------------------------------------------------------------------
 # Geodesic Math
@@ -115,6 +121,47 @@ def save_places(places, path=PLACES_JSON_PATH):
 
     synced = sync_places_file(path)
     return synced
+
+# ---------------------------------------------------------------------------
+# Ignored Stop Clusters (clusters the user has decided aren't worth naming)
+# ---------------------------------------------------------------------------
+def load_ignored_places(path=IGNORED_JSON_PATH):
+    """Loads the list of previously-ignored stop clusters from ignored_places.json."""
+    if not os.path.exists(path):
+        return []
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+            return data if isinstance(data, list) else []
+    except Exception as e:
+        print(f"❌ Error loading {path}: {e}")
+        return []
+
+def save_ignored_places(entries, path=IGNORED_JSON_PATH):
+    """Atomically saves the list of ignored stop clusters to ignored_places.json."""
+    dir_name = os.path.dirname(os.path.abspath(path))
+    os.makedirs(dir_name, exist_ok=True)
+
+    temp_fd, temp_path = tempfile.mkstemp(dir=dir_name, prefix="ignored_", suffix=".json")
+    try:
+        with os.fdopen(temp_fd, "w", encoding="utf-8") as f:
+            json.dump(entries, f, indent=2, ensure_ascii=False)
+            f.write("\n")
+        os.replace(temp_path, path)
+    except Exception as e:
+        if os.path.exists(temp_path):
+            os.remove(temp_path)
+        raise e
+
+def is_cluster_ignored(cl, ignored_entries):
+    """True if cl's center falls within any ignored entry's radius (same distance-match rule as places.json)."""
+    for ig in ignored_entries:
+        ig_lat, ig_lon = ig.get("center_lat"), ig.get("center_lon")
+        ig_rad = ig.get("radius_m", 100)
+        if ig_lat is not None and ig_lon is not None:
+            if haversine_distance(cl["center_lat"], cl["center_lon"], ig_lat, ig_lon) <= ig_rad:
+                return True
+    return False
 
 # ---------------------------------------------------------------------------
 # Resolution Engine (Matches places, chargers; detects unlabelled stops)
@@ -654,12 +701,13 @@ def find_candidate_drive_logs():
                     summaries.append(f)
     return summaries
 
-def review_single_cluster(cl, places, total_clusters=1, cluster_num=1):
+def review_single_cluster(cl, places, total_clusters=1, cluster_num=1, allow_ignore=True):
     clean_addr = cl["address"] or f"{cl['center_lat']:.5f}, {cl['center_lon']:.5f}"
     print(f"\n==============================================================================")
     print(f"📍 Cluster [{cluster_num}/{total_clusters}]: {len(cl['stops'])} visits")
     print(f"Address: {clean_addr}")
-    print(f"GPS:     {cl['center_lat']:.5f}, {cl['center_lon']:.5f}")
+    gps_str = f"{cl['center_lat']:.5f}, {cl['center_lon']:.5f}"
+    print(f"GPS:     {hyperlink(gps_str, gmaps_url(cl['center_lat'], cl['center_lon']))}")
     print(f"==============================================================================")
 
     pois = query_overpass_pois(cl["center_lat"], cl["center_lon"], radius_m=250)
@@ -677,6 +725,8 @@ def review_single_cluster(cl, places, total_clusters=1, cluster_num=1):
         print(f"  [1-{len(candidates)}] Accept suggested POI (uses POI center & auto-adjusted radius)")
     print("  [c]   Enter custom name (uses parking stop coordinates)")
     print("  [g]   Provide custom GPS coordinates or address (set a precise center)")
+    if allow_ignore:
+        print("  [i]   Ignore permanently (address is fine as-is, not worth naming - won't be asked again)")
     print("  [b]   Back to cluster list (leave unlabelled for now)")
     print("  [q]   Quit review session")
 
@@ -689,6 +739,19 @@ def review_single_cluster(cl, places, total_clusters=1, cluster_num=1):
         return "quit"
     elif choice in ("b", "back", "s", "skip", ""):
         return False
+    elif allow_ignore and choice in ("i", "ignore"):
+        ignored = load_ignored_places()
+        ignored.append({
+            "address": clean_addr,
+            "center_lat": cl["center_lat"],
+            "center_lon": cl["center_lon"],
+            "radius_m": 100,
+            "stops": cl["stops"],
+            "ignored_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        })
+        save_ignored_places(ignored)
+        print(f"🙈 Ignored \"{clean_addr}\" - won't be asked about it again. Run `./tessie_places.py ignored` to review or un-ignore it later.")
+        return "ignored"
 
     selected_name = None
     final_lat = cl["center_lat"]
@@ -885,6 +948,7 @@ def cmd_review_drives(args):
     # Interactive Cluster Selection Menu Loop
     while True:
         places = load_places()
+        ignored_entries = load_ignored_places()
         remaining_clusters = []
         for cl in valid_clusters:
             matched = False
@@ -894,11 +958,15 @@ def cmd_review_drives(args):
                     if haversine_distance(cl["center_lat"], cl["center_lon"], p_lat, p_lon) <= p_rad:
                         matched = True
                         break
+            if not matched and is_cluster_ignored(cl, ignored_entries):
+                matched = True
             if not matched:
                 remaining_clusters.append(cl)
 
         if not remaining_clusters:
             print("\n🎉 All drive stop clusters are now tagged or resolved!")
+            if ignored_entries:
+                print(f"ℹ️  {len(ignored_entries)} previously-ignored cluster(s) - run `./tessie_places.py ignored` to review them.")
             break
 
         # Render cluster table
@@ -934,12 +1002,13 @@ def cmd_review_drives(args):
             if cl["stops"]:
                 last_date = cl["stops"][-1].get("timestamp", "")[:10]
             coords_str = f"{cl['center_lat']:.5f}, {cl['center_lon']:.5f}"
+            coords_link = hyperlink(coords_str, gmaps_url(cl['center_lat'], cl['center_lon']))
 
             row_cols = [
                 pad_display(f"[{idx:2d}]", w_num, "right"),
                 pad_display(f"{len(cl['stops']):2d} visits", w_visits, "right"),
                 pad_display(clean_addr, w_addr),
-                pad_display(coords_str, w_coords),
+                pad_display(coords_link, w_coords),
                 pad_display(last_date, w_date)
             ]
             row_str = "  " + "  ".join(row_cols)
@@ -968,6 +1037,103 @@ def cmd_review_drives(args):
                 res = review_single_cluster(cl, places, len(remaining_clusters), val)
                 if res == "quit":
                     return
+            else:
+                print("Invalid cluster number.")
+        else:
+            print("Invalid selection.")
+
+# ---------------------------------------------------------------------------
+# CLI Command: Review Previously-Ignored Stop Clusters
+# ---------------------------------------------------------------------------
+def cmd_review_ignored(args):
+    """
+    Lists stop clusters previously marked [i]gnore during `review`, and lets
+    the user either promote one to a real named place (same POI/naming flow
+    as review) or un-ignore it outright so it reappears in `review` again.
+    """
+    while True:
+        ignored_entries = load_ignored_places()
+        if not ignored_entries:
+            print("✔ No ignored places - nothing to review.")
+            return
+
+        w_num = 4
+        w_visits = 10
+        w_addr = 36
+        w_coords = 23
+        w_date = 12
+
+        header_cols = [
+            pad_display("#", w_num, "right"),
+            pad_display("Visits", w_visits, "right"),
+            pad_display("Approximate Address / Suburb", w_addr),
+            pad_display("Coordinates (Lat, Lon)", w_coords),
+            pad_display("Ignored On", w_date)
+        ]
+        header = "  " + "  ".join(header_cols)
+        total_w = display_len(header) + 2
+        border = "─" * total_w
+
+        title = f"🙈 IGNORED STOP CLUSTERS ({len(ignored_entries)})"
+        print("\n┌" + border[2:] + "┐")
+        print(f"│ {title}" + " " * max(0, total_w - display_len(title) - 4) + " │")
+        print("├" + border[2:] + "┤")
+        print("│" + header + " " * max(0, total_w - display_len(header) - 2) + "│")
+        print("├" + border[2:] + "┤")
+
+        for idx, ig in enumerate(ignored_entries, 1):
+            clean_addr = ig.get("address", "").split(",")[0].strip() if ig.get("address") else "Unknown Address"
+            if len(clean_addr) > w_addr:
+                clean_addr = clean_addr[:w_addr-3] + "..."
+            ignored_date = (ig.get("ignored_at") or "")[:10]
+            coords_str = f"{ig['center_lat']:.5f}, {ig['center_lon']:.5f}"
+            coords_link = hyperlink(coords_str, gmaps_url(ig['center_lat'], ig['center_lon']))
+
+            row_cols = [
+                pad_display(f"[{idx:2d}]", w_num, "right"),
+                pad_display(f"{len(ig.get('stops', [])):2d} visits", w_visits, "right"),
+                pad_display(clean_addr, w_addr),
+                pad_display(coords_link, w_coords),
+                pad_display(ignored_date, w_date)
+            ]
+            row_str = "  " + "  ".join(row_cols)
+            print("│" + row_str + " " * max(0, total_w - display_len(row_str) - 2) + "│")
+
+        print("└" + border[2:] + "┘\n")
+
+        prompt_msg = f"Select [1-{len(ignored_entries)}] to name it, [u]nignore <N> (e.g. 'u 2') to let it reappear in review, [q]uit: "
+        try:
+            choice = input(prompt_msg).strip().lower()
+        except (EOFError, KeyboardInterrupt):
+            break
+
+        if choice in ("q", "quit"):
+            break
+        elif choice.startswith("u"):
+            rest = choice[1:].strip()
+            if not rest.isdigit():
+                print("Usage: u <N>, e.g. 'u 2'")
+                continue
+            val = int(rest)
+            if 1 <= val <= len(ignored_entries):
+                removed = ignored_entries.pop(val - 1)
+                save_ignored_places(ignored_entries)
+                addr = removed.get("address", "that cluster")
+                print(f"↩️  Un-ignored \"{addr}\" - it'll show up in `review` again.")
+            else:
+                print("Invalid cluster number.")
+        elif choice.isdigit():
+            val = int(choice)
+            if 1 <= val <= len(ignored_entries):
+                places = load_places()
+                entry = ignored_entries[val - 1]
+                res = review_single_cluster(entry, places, len(ignored_entries), val, allow_ignore=False)
+                if res == "quit":
+                    return
+                if res is True:
+                    # Successfully named & saved to places.json - no longer needed here.
+                    ignored_entries.pop(val - 1)
+                    save_ignored_places(ignored_entries)
             else:
                 print("Invalid cluster number.")
         else:
@@ -1595,6 +1761,9 @@ def main():
     p_review = subparsers.add_parser("review", help="Scan drives_master.csv and interactively review unlabelled stop clusters (ignores chargers)")
     p_review.add_argument("--min-stops", type=int, default=2, help="Minimum visits required to flag a stop cluster (default: 2)")
 
+    # Subcommand: ignored
+    p_ignored = subparsers.add_parser("ignored", help="Review stop clusters previously marked [i]gnore during 'review' - promote one to a named place, or un-ignore it")
+
     # Subcommand: add
     p_add = subparsers.add_parser("add", help="Add a new place directly via CLI")
     p_add.add_argument("name", type=str, help="Place name / nickname")
@@ -1650,6 +1819,8 @@ def main():
         interactive_lookup_and_add(query_or_addr=q, default_radius=args.radius)
     elif args.command == "review":
         cmd_review_drives(args)
+    elif args.command == "ignored":
+        cmd_review_ignored(args)
     elif args.command == "add":
         cmd_add(args)
     elif args.command == "update":
