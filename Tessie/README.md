@@ -1,6 +1,6 @@
-# 🗺️ Tessie Suite: Drive Analysis, Geofencing & CSV Classifier
+# 🗺️ Tessie Suite: Drive Analysis, Charging Reconciliation & Charger Discovery
 
-A suite of tools for processing, classifying, and analyzing [Tessie](https://share.tessie.com/bGRu5q9S2kB) telemetry exports and cross-referencing trip timelines with TeslaCam dashcam footage.
+A suite of tools for analyzing [Tessie](https://share.tessie.com/bGRu5q9S2kB) telemetry exports, reconciling charging costs against invoices, managing known places/geofences, and discovering public Tesla and 3rd-party chargers.
 
 ---
 
@@ -21,54 +21,46 @@ A suite of tools for processing, classifying, and analyzing [Tessie](https://sha
 
 | Tool | Purpose | Primary Commands |
 | :--- | :--- | :--- |
-| **`tessie_analyzer.py`** | High-level drives summary, interactive period selector, location geofencing, and TeslaCam video linking. | `./Tools/tessie_analyzer.py --drives`<br>`./Tools/tessie_analyzer.py --today`<br>`./Tools/tessie_analyzer.py --place "School"` |
-| **`tessie_places.py`** | Location management, interactive POI lookup by address/GPS, frequent stop reviewer, and formatted place inspector (leaves chargers alone). | `./Tools/tessie_places.py list`<br>`./Tools/tessie_places.py lookup "109 Blaxland Rd, Ryde"`<br>`./Tools/tessie_places.py review` |
+| **`tessie_drives_analyzer.py`** | Consolidates raw Tessie drive CSV exports, high-level drives summary with monthly breakdown, interactive period/day drill-down, place geofencing, and TeslaCam video linking. | `./Tools/tessie_drives_analyzer.py --consolidate`<br>`./Tools/tessie_drives_analyzer.py --drives`<br>`./Tools/tessie_drives_analyzer.py --since wednesday` |
+| **`tessie_places.py`** | Location management, interactive POI lookup by address/GPS, frequent stop-cluster reviewer, and formatted place inspector (leaves chargers alone). | `./Tools/tessie_places.py list`<br>`./Tools/tessie_places.py lookup "109 Blaxland Rd, Ryde"`<br>`./Tools/tessie_places.py review` |
 | **`tessie_charging_analyzer.py`** | Reconciles Tesla Supercharger & 3rd-party invoices against Tessie telemetry, calculates dispenser vs battery loss, verifies TOU rates, and audits charging costs. | `./Tools/tessie_charging_analyzer.py --superchargers`<br>`./Tools/tessie_charging_analyzer.py --inspect 1`<br>`./Tools/tessie_charging_analyzer.py --consolidate` |
-| **`tessie_renamer.py`** | Inspects, categorizes, and standardizes all raw Tessie CSV files (drives, telemetry traces, charges, idles, battery, tires, alerts). | `./Tools/tessie_renamer.py --dry-run`<br>`./Tools/tessie_renamer.py --copy-to /path/to/dir`<br>`./Tools/tessie_renamer.py --in-place` |
-| **`find_tesla_chargers.py`** | Hierarchical discovery explorer and live scraper for Tesla Superchargers and Destination Chargers with state filtering, search, and registry sync. | `./Tools/find_tesla_chargers.py`<br>`./Tools/find_tesla_chargers.py --state NSW --sc --list`<br>`./Tools/find_tesla_chargers.py --scrape 19258 --update --sync` |
+| **`find_tesla_chargers.py`** | Hierarchical discovery explorer and live scraper for Tesla Superchargers and Destination Chargers with state filtering, search, TOU pricing, and registry sync. | `./Tools/find_tesla_chargers.py --interactive`<br>`./Tools/find_tesla_chargers.py --state NSW --sc --list`<br>`./Tools/find_tesla_chargers.py --inspect 19258 --save` |
+| **`find_plugshare_chargers.py`** | Discovers and registers public 3rd-party chargers (Chargefox, Evie, BP Pulse, JOLT, Exploren, AmpCharge, and more) listed on PlugShare, with gross-tariff pricing and hardware detail scraping. | `./Tools/find_plugshare_chargers.py --near Home --dc`<br>`./Tools/find_plugshare_chargers.py --plugshare 801149 --save`<br>`./Tools/find_plugshare_chargers.py --refresh-prices` |
 
 ---
 
-## 📋 Recognized Tessie File Types
+## 📋 Recognized Tessie CSV Export Types
 
-| Detected Category | Schema Indicators | Standardized Filename Pattern |
+`--consolidate` (in both `tessie_drives_analyzer.py` and `tessie_charging_analyzer.py`) detects and merges these export types by their column schema - just drop new exports in your Tessie directory or `~/Downloads` and run it:
+
+| Detected Category | Schema Indicators | Consolidates Into |
 | :--- | :--- | :--- |
-| **Trip Summaries** (Format A) | `Started At`, `Starting Location`, `Distance (km)` | `drives_summary_YYYY-MM-DD_to_YYYY-MM-DD.csv` |
-| **Single Drive Trace** (Format B) | `Timestamp`, `Speed`, `Power` ($\le 2\text{ hours}$) | `drive_telemetry_YYYY-MM-DD_HH-MM.csv` |
-| **Continuous Telemetry** | `Timestamp`, `Speed`, `Power` ($> 2\text{ hours}$) | `telemetry_stream_YYYY-MM-DD_to_YYYY-MM-DD.csv` |
-| **Charging Sessions** | `Supercharging (kWh)` / `Energy Added` | `charges_YYYY-MM-DD_to_YYYY-MM-DD.csv` |
-| **Parking & Idles** | `Duration`, `Location`, `Starting Battery` | `idles_parking_YYYY-MM-DD_to_YYYY-MM-DD.csv` |
-| **Battery Health** | `Max Range (km)`, `Usable Capacity (kWh)` | `battery_health_YYYY-MM-DD_to_YYYY-MM-DD.csv` |
-| **Tire Pressure** | `Tire`, `Pressure (psi)` | `tire_pressure_history.csv` |
-| **Firmware Alerts** | `Customer Facing Message`, `Clear Condition` | `firmware_alerts_history.csv` |
+| **Trip Summaries** | `Started At`, `Starting Location`, `Distance (km)` | `drives_master.csv` |
+| **Drive Telemetry** | `Timestamp`, `Speed`, `Power` (per-drive deep-dive traces) | archived alongside the matching drive, kept separate from `drives_master.csv` |
+| **Charging Sessions** | `Supercharging (kWh)` / `Energy Added` | `charges_master.csv` |
 
 ---
 
 ## 🚀 Quick Start Examples
 
-### 1. Review & Rename Raw Tessie Files
+### 1. Consolidate Raw Exports & Inspect Drive History
 ```bash
-# Preview proposed standard names for files in iCloud folder
-./Tools/tessie_renamer.py --dry-run
+# Scan the configured Tessie directory / ~/Downloads and merge new exports into drives_master.csv
+./Tools/tessie_drives_analyzer.py --consolidate
 
-# Copy and standardize all files into mounted TESLADRIVE external volume
-./Tools/tessie_renamer.py --copy-to "/Volumes/TESLADRIVE/Tessie"
+# Interactive overview table and time period prompt
+./Tools/tessie_drives_analyzer.py --drives
+
+# 24-hour vehicle & camera activity timeline for a date
+./Tools/tessie_drives_analyzer.py --timeline 2026-09-02
+./Tools/tessie_drives_analyzer.py --timeline yesterday
+
+# Filter trips since a specific date or weekday, or by place nickname
+./Tools/tessie_drives_analyzer.py --since wednesday
+./Tools/tessie_drives_analyzer.py --place "School"
 ```
 
-### 2. Inspect Drive History & Match Places
-```bash
-# Interactive overview table and time period prompt
-./Tools/tessie_analyzer.py --drives
-
-# 24-hour 30-minute vehicle & camera activity timeline for a date
-./Tools/tessie_analyzer.py --timeline 20260904
-./Tools/tessie_analyzer.py --timeline 2026-09-02
-./Tools/tessie_analyzer.py --timeline yesterday
-
-# Filter trips since a specific date or weekday
-./Tools/tessie_analyzer.py --since wednesday
-
-### 3. Charging & Supercharger Invoice Reconciliation
+### 2. Charging & Supercharger Invoice Reconciliation
 ```bash
 # High-level charging summary & network breakdown (Home AC, Superchargers, 3rd-Party Fast)
 ./Tools/tessie_charging_analyzer.py
@@ -76,11 +68,9 @@ A suite of tools for processing, classifying, and analyzing [Tessie](https://sha
 # Reconcile Superchargers only and inspect invoice matching
 ./Tools/tessie_charging_analyzer.py --superchargers
 
-# Preview renaming tax invoice PDFs (Tesla_Supercharging_YYYYMMDDHHMM_<invoice_num>_<Location>.pdf)
-./Tools/tessie_charging_analyzer.py --rename --dry-run
-
-# Execute batch renaming of invoice PDFs
-./Tools/tessie_charging_analyzer.py --rename
+# Preview renaming tax invoice PDFs, then execute
+./Tools/tessie_charging_analyzer.py --rename-invoices --dry-run
+./Tools/tessie_charging_analyzer.py --rename-invoices
 
 # Deep-dive inspect session #142 (Macquarie Centre) or by date
 ./Tools/tessie_charging_analyzer.py --inspect 142
@@ -89,20 +79,17 @@ A suite of tools for processing, classifying, and analyzing [Tessie](https://sha
 # Reconcile 3rd-Party Fast chargers (Chargefox, Evie, BP Pulse, Jolt)
 ./Tools/tessie_charging_analyzer.py --third-party
 
-# List all registered Superchargers and Time-of-Use tariffs
+# List all registered Superchargers and 3rd-Party charging stations
 ./Tools/tessie_charging_analyzer.py --list-chargers
 
 # Consolidate all charges into charges_master.csv
 ./Tools/tessie_charging_analyzer.py --consolidate
-
-# Synchronize tools and registries to all mounted TESLADRIVE volume(s)
-./Tools/tessie_charging_analyzer.py --sync
 ```
 
-### 4. Tesla Charger Discovery & Live Scraping
+### 3. Tesla Charger Discovery & Live Scraping
 ```bash
 # Interactive hierarchical drill-down menu (Region ➔ Country ➔ Type ➔ State ➔ Station):
-./Tools/find_tesla_chargers.py
+./Tools/find_tesla_chargers.py --interactive
 
 # List all Superchargers in Australia grouped by state:
 ./Tools/find_tesla_chargers.py --country Australia --sc --list
@@ -113,12 +100,28 @@ A suite of tools for processing, classifying, and analyzing [Tessie](https://sha
 # Search charging infrastructure by keyword (e.g. Miranda, Parramatta, Airport):
 ./Tools/find_tesla_chargers.py --country Australia --search "Miranda"
 
-# Scrape live pricing and hardware specs by Location ID or Find Us URL:
-./Tools/find_tesla_chargers.py --scrape 19258
-./Tools/find_tesla_chargers.py --url "https://www.tesla.com/en_AU/findus/location/supercharger/19258"
+# Inspect cached JSON details by Location ID, or force a live re-scrape:
+./Tools/find_tesla_chargers.py --inspect 19258
+./Tools/find_tesla_chargers.py --inspect 19258 --live --save
 
-# Scrape, update superchargers.json registry, and sync to external TESLADRIVE:
-./Tools/find_tesla_chargers.py --scrape 19258 --update --sync
+# Inspect directly by Find Us URL:
+./Tools/find_tesla_chargers.py --url "https://www.tesla.com/en_AU/findus/location/supercharger/19258"
+```
+
+### 4. PlugShare 3rd-Party Charger Discovery & Live Scraping
+```bash
+# DC fast chargers within 15km of a known place, sorted by state then station name:
+./Tools/find_plugshare_chargers.py --near Home --dc --radius 15
+
+# Search PlugShare by name/keyword:
+./Tools/find_plugshare_chargers.py --search "Bunnings"
+
+# Inspect a specific station by PlugShare location ID and save it into the registry:
+./Tools/find_plugshare_chargers.py --plugshare 801149 --save
+
+# Backfill pricing for every currently-listed station missing a rate
+# (bulk search doesn't return pricing - only the single-station detail lookup does):
+./Tools/find_plugshare_chargers.py --near Home --dc --radius 15 --refresh-prices
 ```
 
 ### 5. Known Places & POI Lookup Engine
@@ -151,5 +154,4 @@ A suite of tools for processing, classifying, and analyzing [Tessie](https://sha
 
 ## 🔒 Privacy Note
 
-All personal datasets (`*.csv`) and custom coordinates (`places.json`) are strictly excluded from Git. Only generic templates (`places.example.json`) are tracked in the public repository.
-
+All personal datasets (`*.csv`), custom coordinates (`places.json`), tariff/config data (`config.json`), and invoice PDFs are strictly excluded from Git. Only generic templates (`places.example.json`) and public charger data scraped from public directories (Tesla Find Us, PlugShare) are tracked in the repository.

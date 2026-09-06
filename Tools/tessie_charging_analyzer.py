@@ -3470,7 +3470,7 @@ def main():
     parser.add_argument("--dry-run", action="store_true", help="Preview renaming without modifying files on disk")
     parser.add_argument("--yes", "-y", action="store_true", help="Automatically confirm renaming without interactive prompt")
     parser.add_argument("--export", help="Export reconciled results to a CSV or JSON file")
-    parser.add_argument("--sync", action="store_true", help="Sync tools and registries to external drive")
+    parser.add_argument("--sync", action="store_true", help="Deprecated no-op: TESLADRIVE volumes are reserved for dashcam media only, Tessie data never syncs there")
     parser.add_argument("--tolerance-mins", type=int, default=None, help="Invoice matching time tolerance in minutes (default: 45 or config)")
 
     args = parser.parse_args()
