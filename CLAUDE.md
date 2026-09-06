@@ -93,9 +93,8 @@ Requests tables once closed out, and prune this list then.
   push the column wider on its own. Fixed by flooring on `max(header_width, data_width)`
   like `find_plugshare_chargers.py` already did correctly. Verified with a synthetic
   table built from the exact suburb list in the user's own pasted output.
-- **Commit grouping decision pending**: three logical changes are ready (table
-  alignment rules across all analyzers incl. a currency `.3f`→`.2f` fix; default
-  sort-by-state-then-name in the two charger explorers; TESLADRIVE-sync removal across
-  4 files, including a real PII-exposure fix in `tessie_places.py`'s
-  `sync_places_file()`). Awaiting user's call on committing as three, squashed into
-  one, or holding until Bunnings Gladesville is fully resolved.
+- **Committed — 4 commits landed on `main`** (`6b0e560` table alignment/formatting,
+  `9d121a2` PlugShare sort/collision/refresh-prices, `aee3a51` TESLADRIVE removal,
+  `ef260f6` README/CI doc audit). Nothing left pending from this session except the
+  user re-testing `--refresh-prices` for real (TODO-006 in `AGENTS.md`) and deciding
+  whether it needs the multi-invocation/`--limit`-slicing workaround.
