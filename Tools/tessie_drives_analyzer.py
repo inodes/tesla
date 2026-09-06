@@ -20,7 +20,6 @@ import glob
 import json
 import math
 import shutil
-import tempfile
 import subprocess
 import argparse
 import unicodedata
@@ -126,10 +125,68 @@ def clean_event_reason(reason):
 def format_footage_tag(cats):
     if not cats:
         return "No local footage"
-    # Order: Recent, Saved, Sentry
-    ordered_cats = [c for c in ["Recent", "Saved", "Sentry"] if c in cats]
-    parts = [EMOJI_MAP.get(c, c) for c in ordered_cats]
-    return " + ".join(parts) + " footage"
+    icons = {
+        "Saved": "📹 Saved",
+        "Sentry": "🛡️ Sentry",
+        "Recent": "🕒 Recent",
+        "Other": "📁 Clips"
+    }
+    order = ["Saved", "Sentry", "Recent", "Other"]
+    tags = [icons.get(c, c) for c in order if c in cats]
+    return ", ".join(tags) if tags else "No local footage"
+
+def clean_destination_display(p):
+    if not p:
+        return ""
+    p_clean = p.replace("🏠", "").replace("📍", "").strip()
+    p_lower = p_clean.lower()
+    if any(h in p_lower for h in ["1106 victoria", "1108 victoria", "west ryde"]):
+        return ""
+    if p_lower in ("home",):
+        return ""
+    if "echo point" in p_lower:
+        return "Echo Point"
+    if "scenic world" in p_lower:
+        return "Scenic World"
+    if "railway parade" in p_lower:
+        return "Leura (Railway Pde)"
+    if "cliff drive" in p_lower:
+        return "Katoomba (Cliff Dr)"
+    if "bunnings" in p_lower:
+        return "Bunnings"
+    if "hancott" in p_lower or "goulding" in p_lower:
+        return "Preschool"
+    if "," in p_clean:
+        return p_clean.split(",")[0].strip()
+    return p_clean
+
+def extract_notable_destinations(trips, max_places=3):
+    seen = set()
+    places = []
+    for t in trips:
+        for p in [t.get("end_place"), t.get("start_place")]:
+            if not p:
+                continue
+            cp = clean_destination_display(p)
+            if cp and cp not in seen:
+                seen.add(cp)
+                places.append(cp)
+    if not places:
+        return "Local (West Ryde)"
+    return ", ".join(places[:max_places])
+
+def shorten_display_path(p, max_len=40):
+    if not p:
+        return ""
+    p_str = str(p)
+    home = os.path.expanduser("~")
+    if p_str.startswith(home):
+        p_str = "~" + p_str[len(home):]
+    p_str = p_str.replace("~/Library/Mobile Documents/com~apple~CloudDocs/", "iCloud/")
+    p_str = p_str.replace("~/Library/Mobile Documents/com~apple~CloudDocs", "iCloud")
+    if max_len and len(p_str) > max_len:
+        p_str = "…" + p_str[-(max_len - 1):]
+    return p_str
 
 def haversine_distance_m(lat1, lon1, lat2, lon2):
     R = 6371000.0
@@ -202,25 +259,7 @@ class TessieAnalyzer:
         parent_dir = os.path.dirname(self.script_dir)
         self.icloud_dir = os.path.expanduser("~/Library/Mobile Documents/com~apple~CloudDocs/Tesla/Tessie")
         self.repo_root = parent_dir
-        self.config = {}
-        for cfg_p in [
-            os.path.join(parent_dir, "config.json"),
-            os.path.join(parent_dir, "Tessie", "config.json"),
-            os.path.join(self.script_dir, "config.json"),
-            os.path.join(self.script_dir, "Tessie", "config.json")
-        ]:
-            if os.path.exists(cfg_p):
-                try:
-                    with open(cfg_p, "r", encoding="utf-8") as f:
-                        data = json.load(f)
-                        if isinstance(data, dict):
-                            self.config = data
-                            break
-                except Exception:
-                    pass
-
-        cfg_landing = self.config.get("landing_directory") or self.config.get("landing_dir")
-        self.landing_dir = os.path.expanduser(cfg_landing) if cfg_landing else os.path.expanduser("~/Downloads")
+        self.landing_dir = os.path.expanduser("~/Downloads")
         
         self.tessie_dirs = []
         candidates = [
@@ -240,18 +279,17 @@ class TessieAnalyzer:
                         self.tessie_dirs.append(real_d)
             except Exception:
                 pass
-
-        cfg_archive = self.config.get("archive_directory") or self.config.get("archive_dir")
-        if cfg_archive:
-            self.archive_dir = os.path.abspath(os.path.expanduser(cfg_archive))
-        elif self.tessie_dirs:
-            self.archive_dir = os.path.join(self.tessie_dirs[0], "archive")
-        else:
-            self.archive_dir = os.path.join(self.repo_root, "Tessie", "archive")
-        try:
-            os.makedirs(self.archive_dir, exist_ok=True)
-        except Exception:
-            pass
+        
+        self.drives_dirs = []
+        for td in self.tessie_dirs:
+            dd = os.path.join(td, "drives")
+            try:
+                os.makedirs(dd, exist_ok=True)
+                os.makedirs(os.path.join(dd, "archive"), exist_ok=True)
+            except Exception:
+                pass
+            if dd not in self.drives_dirs:
+                self.drives_dirs.append(dd)
         
         self.teslacam_dirs = []
         if teslacam_dirs:
@@ -394,175 +432,287 @@ class TessieAnalyzer:
         parts = address.split(",")
         return parts[0].strip() if parts else address
 
-    def ingest_and_archive_drives(self):
-        """
-        Loads drives_master.csv first as the definitive source of truth.
-        Scans landing_dir and tessie_dirs for incoming drive CSVs:
-          - Genuinely new drive sessions (not present in master) are appended to master.
-          - Existing/overlapping sessions are ignored so master's verified records are preserved.
-          - Ingested candidate CSV files are moved to the archive directory.
-        """
-        master_file = None
-        for td in self.tessie_dirs:
-            p = os.path.join(td, "drives_master.csv")
-            if os.path.isfile(p):
-                master_file = p
-                break
-        if not master_file:
-            target_dir = self.tessie_dirs[0] if self.tessie_dirs else os.path.join(self.repo_root, "Tessie")
-            master_file = os.path.join(target_dir, "drives_master.csv")
+    def consolidate_drives(self, new_csv_path=None, master_dir=None, verbose=False):
+        dest_dirs = []
+        if master_dir:
+            dest_dirs.append(master_dir)
+        else:
+            for td in self.tessie_dirs:
+                dd = os.path.join(td, "drives")
+                if dd not in dest_dirs:
+                    dest_dirs.append(dd)
 
-        master_rows = []
-        master_keys = set()
-        master_fieldnames = None
+        if not dest_dirs:
+            return 0
 
-        if os.path.isfile(master_file):
+        master_files = [os.path.join(d, "drives_master.csv") for d in dest_dirs]
+        for d in dest_dirs:
             try:
-                with open(master_file, "r", encoding="utf-8-sig", errors="ignore") as f:
-                    reader = csv.DictReader(f)
-                    master_fieldnames = list(reader.fieldnames or [])
-                    for row in reader:
-                        s_at = (row.get("Started At (AEST)") or row.get("Started At (AEDT)") or row.get("Started At") or row.get("Started") or "").strip()
-                        e_at = (row.get("Ended At (AEST)") or row.get("Ended At (AEDT)") or row.get("Ended At") or row.get("Ended") or "").strip()
-                        s_loc = (row.get("Starting Location") or "").strip()
-                        if s_at and e_at:
-                            master_keys.add((s_at, e_at, s_loc))
-                        master_rows.append(row)
+                os.makedirs(d, exist_ok=True)
+                os.makedirs(os.path.join(d, "archive"), exist_ok=True)
             except Exception:
                 pass
 
-        search_dirs = []
-        if self.landing_dir and os.path.isdir(self.landing_dir):
-            search_dirs.append(self.landing_dir)
-        for td in self.tessie_dirs:
-            if td and os.path.isdir(td) and td not in search_dirs:
-                search_dirs.append(td)
-
+        # 1. Gather all candidate CSV files
         candidate_files = []
-        for s_dir in search_dirs:
-            try:
-                fnames = sorted(os.listdir(s_dir))
-            except Exception:
+        if new_csv_path and os.path.isfile(new_csv_path):
+            candidate_files.append((new_csv_path, False))
+
+        # Scan root directory of each Tessie dir for newly dropped/unrenamed drive files
+        for td in self.tessie_dirs:
+            if not os.path.isdir(td):
                 continue
-            for fn in fnames:
-                if not fn.endswith(".csv") or fn.startswith(".") or fn == "charges_master.csv" or fn == "drives_master.csv":
-                    continue
-                if any(x in fn for x in ["telemetry_stream", "charge_deepdive", "drive_deepdive", "battery_health", "tire_pressure", "firmware_alerts", "idles_summary"]):
-                    continue
-                fp = os.path.join(s_dir, fn)
+            try:
+                for f in os.listdir(td):
+                    fp = os.path.join(td, f)
+                    if os.path.isfile(fp) and f.endswith(".csv"):
+                        f_lower = f.lower()
+                        # Strictly target drive exports, ignoring system-wide logs and charging files
+                        ignored_stems = ["charges", "telemetry_stream", "firmware", "tire", "battery_health", "idles"]
+                        if ("drives" in f_lower or f.startswith("drive_deepdive_")) and not any(ign in f_lower for ign in ignored_stems):
+                            candidate_files.append((fp, True))
+            except Exception:
+                pass
+
+        # Scan existing drives/ subdirectories and their archives
+        for dd in dest_dirs:
+            if not os.path.isdir(dd):
+                continue
+            try:
+                for f in os.listdir(dd):
+                    fp = os.path.join(dd, f)
+                    if os.path.isfile(fp) and f.endswith(".csv"):
+                        is_raw = (f != "drives_master.csv" and not f.startswith("drive_deepdive_"))
+                        candidate_files.append((fp, is_raw))
+                arch = os.path.join(dd, "archive")
+                if os.path.isdir(arch):
+                    for f in os.listdir(arch):
+                        fp = os.path.join(arch, f)
+                        if os.path.isfile(fp) and f.endswith(".csv"):
+                            candidate_files.append((fp, False))
+            except Exception:
+                pass
+
+        # Files in self.landing_dir (e.g. ~/Downloads)
+        files_to_archive = []
+        if self.landing_dir and os.path.isdir(self.landing_dir):
+            try:
+                for f in os.listdir(self.landing_dir):
+                    if f.endswith(".csv"):
+                        fp = os.path.join(self.landing_dir, f)
+                        candidate_files.append((fp, True))
+            except Exception:
+                pass
+
+        # 2. Read and deduplicate records
+        raw_rows = []
+        seen_keys = set()
+        fieldnames = None
+        initial_master_count = 0
+
+        # Read existing master file first if present
+        for mf in master_files:
+            if os.path.isfile(mf):
                 try:
-                    with open(fp, "r", encoding="utf-8-sig", errors="ignore") as test_f:
-                        first_line = test_f.readline()
-                        if "Starting Location" in first_line and "Distance (km)" in first_line:
-                            candidate_files.append(fp)
+                    with open(mf, "r", encoding="utf-8-sig") as f:
+                        reader = csv.DictReader(f)
+                        if reader.fieldnames and "Starting Location" in reader.fieldnames:
+                            if not fieldnames:
+                                fieldnames = list(reader.fieldnames)
+                            for r in reader:
+                                start_time = r.get("Started At (AEST)") or r.get("Started At") or r.get("Started")
+                                end_time = r.get("Ended At (AEST)") or r.get("Ended At") or r.get("Ended")
+                                dist = r.get("Distance (km)", "0")
+                                s_loc = r.get("Starting Location", "")
+                                if not start_time or not end_time:
+                                    continue
+                                key = (start_time.strip(), end_time.strip(), dist.strip(), s_loc.strip())
+                                if key not in seen_keys:
+                                    seen_keys.add(key)
+                                    raw_rows.append(r)
+                            initial_master_count = len(raw_rows)
+                            break
                 except Exception:
                     pass
 
-        os.makedirs(self.archive_dir, exist_ok=True)
-        master_modified = False
-
-        for c_fp in candidate_files:
-            c_name = os.path.basename(c_fp)
+        # Read all other candidate files
+        seen_paths = set()
+        for fp, from_landing in candidate_files:
             try:
-                new_in_file = 0
-                ignored_in_file = 0
-                with open(c_fp, "r", encoding="utf-8-sig", errors="ignore") as in_f:
-                    reader = csv.DictReader(in_f)
-                    if not master_fieldnames and reader.fieldnames:
-                        master_fieldnames = list(reader.fieldnames)
+                real_fp = os.path.realpath(fp)
+            except Exception:
+                real_fp = fp
+            if real_fp in seen_paths or real_fp in [os.path.realpath(m) for m in master_files if os.path.exists(m)]:
+                continue
+            seen_paths.add(real_fp)
+
+            try:
+                with open(fp, "r", encoding="utf-8-sig") as f:
+                    reader = csv.DictReader(f)
+                    if not reader.fieldnames:
+                        continue
+                    
+                    # Check if this is a high-frequency Drive Deep Dive telemetry file
+                    is_drive_deepdive = ("Speed (km/h)" in reader.fieldnames or "Shift State" in reader.fieldnames) and "Starting Location" not in reader.fieldnames
+                    if is_drive_deepdive:
+                        # Full drive telemetry - keep strictly separate from summary master!
+                        if from_landing:
+                            try:
+                                first_row = next(reader, None)
+                                if first_row:
+                                    ts_raw = first_row.get("Timestamp (AEST)") or first_row.get("Timestamp") or ""
+                                    dt = parse_relative_date(ts_raw[:16]) or parse_flexible_date(ts_raw) if 'parse_flexible_date' in globals() else None
+                                    if not dt:
+                                        try:
+                                            dt = datetime.strptime(ts_raw[:16], "%Y-%m-%d %H:%M")
+                                        except Exception:
+                                            dt = None
+                                    if dt:
+                                        deepdive_name = f"drive_deepdive_{dt.strftime('%Y-%m-%d_%H-%M')}.csv"
+                                    else:
+                                        deepdive_name = f"drive_deepdive_{os.path.basename(fp)}"
+                                    
+                                    for dd in dest_dirs:
+                                        target_dd_path = os.path.join(dd, deepdive_name)
+                                        shutil.copy2(fp, target_dd_path)
+                                    # Archive source from landing or root
+                                    archive_dir = os.path.join(dest_dirs[0], "archive") if dest_dirs else os.path.join(self.repo_root, "Tessie", "drives", "archive")
+                                    os.makedirs(archive_dir, exist_ok=True)
+                                    ts_suffix = datetime.now().strftime("%Y%m%d%H%M")
+                                    shutil.move(fp, os.path.join(archive_dir, f"{os.path.basename(fp)}.{ts_suffix}"))
+                                    print(f"\033[94m⚡ Saved Drive Deep Dive Telemetry (Kept Separate):\033[0m {deepdive_name}")
+                            except Exception:
+                                pass
+                        continue
+
+                    # Otherwise, must be a trip summary file
+                    if "Starting Location" not in reader.fieldnames:
+                        continue
+
+                    if not fieldnames:
+                        fieldnames = list(reader.fieldnames)
+                    added_from_file = 0
                     for r in reader:
-                        s_at = (r.get("Started At (AEST)") or r.get("Started At (AEDT)") or r.get("Started At") or r.get("Started") or "").strip()
-                        e_at = (r.get("Ended At (AEST)") or r.get("Ended At (AEDT)") or r.get("Ended At") or r.get("Ended") or "").strip()
-                        s_loc = (r.get("Starting Location") or "").strip()
-                        if not s_at or not e_at:
+                        start_time = r.get("Started At (AEST)") or r.get("Started At") or r.get("Started")
+                        end_time = r.get("Ended At (AEST)") or r.get("Ended At") or r.get("Ended")
+                        dist = r.get("Distance (km)", "0")
+                        s_loc = r.get("Starting Location", "")
+                        if not start_time or not end_time:
                             continue
-                        key = (s_at, e_at, s_loc)
-                        if key in master_keys:
-                            ignored_in_file += 1
-                        else:
-                            master_keys.add(key)
-                            master_rows.append(r)
-                            new_in_file += 1
-                            master_modified = True
+                        key = (start_time.strip(), end_time.strip(), dist.strip(), s_loc.strip())
+                        if key not in seen_keys:
+                            seen_keys.add(key)
+                            raw_rows.append(r)
+                            added_from_file += 1
 
-                if new_in_file > 0:
-                    print(f"\033[94m📥 Ingested:\033[0m Added {new_in_file} new drive(s) from '{c_name}' into drives_master.csv (ignored {ignored_in_file} existing master records)")
-                else:
-                    print(f"\033[90mℹ️  [Ingest] '{c_name}' has {ignored_in_file} drives (all already present in drives_master.csv)\033[0m")
-
-                ts = datetime.now().strftime("%Y%m%d%H%M")
-                dst_name = f"{c_name}.{ts}"
-                dst_path = os.path.join(self.archive_dir, dst_name)
-                shutil.move(c_fp, dst_path)
-                print(f"\033[94m📦 Archived:\033[0m {c_name} ➔ archive/{dst_name}")
-
+                    if from_landing and ("Starting Location" in reader.fieldnames):
+                        files_to_archive.append(fp)
             except Exception:
                 pass
 
-        if master_rows and (master_modified or not os.path.isfile(master_file)):
+        if not raw_rows:
+            if verbose:
+                print("No drive records found to consolidate.")
+            return 0
+
+        # Sort chronologically by Started At
+        raw_rows.sort(key=lambda x: (x.get("Started At (AEST)") or x.get("Started At") or x.get("Started") or ""))
+
+        # Write to all master files
+        for mf in master_files:
             try:
-                master_rows.sort(key=lambda r: (r.get("Started At (AEST)") or r.get("Started At (AEDT)") or r.get("Started At") or r.get("Started") or ""))
-                temp_fd, temp_path = tempfile.mkstemp(dir=os.path.dirname(master_file), text=True)
-                with os.fdopen(temp_fd, "w", encoding="utf-8", newline="") as out_f:
-                    writer = csv.DictWriter(out_f, fieldnames=master_fieldnames or master_rows[0].keys())
+                with open(mf, "w", encoding="utf-8", newline="") as f:
+                    writer = csv.DictWriter(f, fieldnames=fieldnames)
                     writer.writeheader()
-                    writer.writerows(master_rows)
-                os.replace(temp_path, master_file)
-                print(f"\033[92m✔ Updated {os.path.basename(master_file)} ({len(master_rows)} total records)\033[0m")
+                    writer.writerows(raw_rows)
+            except Exception as e:
+                if verbose:
+                    print(f"Error writing master file {mf}: {e}")
+
+        # Archive processed raw files now that they've been merged into master
+        archive_dir = os.path.join(dest_dirs[0], "archive") if dest_dirs else os.path.join(self.repo_root, "Tessie", "drives", "archive")
+        os.makedirs(archive_dir, exist_ok=True)
+        for lp in files_to_archive:
+            try:
+                fname = os.path.basename(lp)
+                ts = datetime.now().strftime("%Y%m%d%H%M")
+                dst = os.path.join(archive_dir, f"{fname}.{ts}")
+                shutil.move(lp, dst)
+                print(f"\033[94m📥 Ingested & Archived:\033[0m {fname} ➔ drives/archive/{fname}.{ts}")
             except Exception:
                 pass
 
-        return master_rows, master_file
+        new_count = len(raw_rows) - initial_master_count
+        if verbose or new_count > 0:
+            dest_names = ", ".join(shorten_display_path(m, 35) for m in master_files)
+            print(f"\033[92m✔ Consolidated {len(raw_rows)} total drives (+{new_count} new) into drives_master.csv\033[0m ({dest_names})\n")
 
-    def consolidate_drives(self, master_dir=None):
-        master_rows, _ = self.ingest_and_archive_drives()
-        return len(master_rows)
+        return len(raw_rows)
 
     def load_drives(self):
-        master_rows, master_file = self.ingest_and_archive_drives()
+        self.consolidate_drives()
+        master_file = None
+        for td in self.tessie_dirs:
+            for candidate in [
+                os.path.join(td, "drives", "drives_master.csv"),
+                os.path.join(td, "drives_master.csv")
+            ]:
+                if os.path.isfile(candidate):
+                    master_file = candidate
+                    break
+            if master_file:
+                break
+
+        if not master_file:
+            return []
+
         parsed = []
-        for r in master_rows:
-            try:
-                start_str = r.get("Started At (AEST)") or r.get("Started At (AEDT)") or r.get("Started At") or r.get("Started")
-                end_str = r.get("Ended At (AEST)") or r.get("Ended At (AEDT)") or r.get("Ended At") or r.get("Ended")
-                if not start_str or not end_str:
+        with open(master_file, "r", encoding="utf-8-sig") as f:
+            reader = csv.DictReader(f)
+            for r in reader:
+                try:
+                    start_str = r.get("Started At (AEST)") or r.get("Started At") or r.get("Started")
+                    end_str = r.get("Ended At (AEST)") or r.get("Ended At") or r.get("Ended")
+                    dt_start = datetime.strptime(start_str.strip(), "%Y-%m-%d %H:%M")
+                    dt_end = datetime.strptime(end_str.strip(), "%Y-%m-%d %H:%M")
+                    
+                    dist_km = float(r.get("Distance (km)", 0))
+                    dur_min = int(float(r.get("Duration (Minutes)", 0)))
+                    
+                    s_addr = r.get("Starting Location", "")
+                    e_addr = r.get("Ending Location", "")
+                    s_saved = r.get("Starting Saved Location", "")
+                    e_saved = r.get("Ending Saved Location", "")
+                    
+                    s_lat = float(r.get("Starting Latitude", 0)) if r.get("Starting Latitude") else None
+                    s_lon = float(r.get("Starting Longitude", 0)) if r.get("Starting Longitude") else None
+                    e_lat = float(r.get("Ending Latitude", 0)) if r.get("Ending Latitude") else None
+                    e_lon = float(r.get("Ending Longitude", 0)) if r.get("Ending Longitude") else None
+                    
+                    s_place = self.resolve_place(s_addr, s_saved, s_lat, s_lon)
+                    e_place = self.resolve_place(e_addr, e_saved, e_lat, e_lon)
+                    
+                    parsed.append({
+                        "start_dt": dt_start,
+                        "end_dt": dt_end,
+                        "dur_min": dur_min,
+                        "dist_km": dist_km,
+                        "start_addr": s_addr,
+                        "end_addr": e_addr,
+                        "start_place": s_place,
+                        "end_place": e_place,
+                        "start_lat": s_lat,
+                        "start_lon": s_lon,
+                        "end_lat": e_lat,
+                        "end_lon": e_lon,
+                        "start_soc": (r.get("Starting Battery (%)") or "").strip(),
+                        "end_soc": (r.get("Ending Battery (%)") or "").strip(),
+                        "kwh_used": (r.get("Total Energy Used (kWh)") or "").strip(),
+                        "wh_km": (r.get("Average Energy Used (Wh/km)") or "").strip(),
+                        "raw": r
+                    })
+                except Exception:
                     continue
-                dt_start = datetime.strptime(start_str.strip()[:16], "%Y-%m-%d %H:%M")
-                dt_end = datetime.strptime(end_str.strip()[:16], "%Y-%m-%d %H:%M")
-                
-                dist_km = float(r.get("Distance (km)", 0))
-                dur_min = int(float(r.get("Duration (Minutes)", 0)))
-                
-                s_addr = r.get("Starting Location", "")
-                e_addr = r.get("Ending Location", "")
-                s_saved = r.get("Starting Saved Location", "")
-                e_saved = r.get("Ending Saved Location", "")
-                
-                s_lat = float(r.get("Starting Latitude", 0)) if r.get("Starting Latitude") else None
-                s_lon = float(r.get("Starting Longitude", 0)) if r.get("Starting Longitude") else None
-                e_lat = float(r.get("Ending Latitude", 0)) if r.get("Ending Latitude") else None
-                e_lon = float(r.get("Ending Longitude", 0)) if r.get("Ending Longitude") else None
-                
-                s_place = self.resolve_place(s_addr, s_saved, s_lat, s_lon)
-                e_place = self.resolve_place(e_addr, e_saved, e_lat, e_lon)
-                
-                parsed.append({
-                    "start_dt": dt_start,
-                    "end_dt": dt_end,
-                    "dur_min": dur_min,
-                    "dist_km": dist_km,
-                    "start_addr": s_addr,
-                    "end_addr": e_addr,
-                    "start_place": s_place,
-                    "end_place": e_place,
-                    "start_lat": s_lat,
-                    "start_lon": s_lon,
-                    "end_lat": e_lat,
-                    "end_lon": e_lon,
-                    "raw": r
-                })
-            except Exception:
-                continue
 
         parsed.sort(key=lambda x: x["start_dt"])
         self.drives = parsed
@@ -857,7 +1007,7 @@ def display_footage_details(trip, analyzer):
     print(f"└────────────────────────────────────────────────────────────────────────────┘")
 
 def drill_down_day(day_str, day_trips, analyzer):
-    """Level 2: Display drives for a selected day and allow picking a trip for footage listing."""
+    """Level 2: Display drives for a selected day in a structured table and allow picking a trip for footage listing."""
     while True:
         dt_obj = datetime.strptime(day_str, "%Y-%m-%d")
         total_km = sum(t["dist_km"] for t in day_trips)
@@ -865,45 +1015,102 @@ def drill_down_day(day_str, day_trips, analyzer):
         hours, mins = divmod(total_mins, 60)
         time_str = f"{hours}h {mins:02d}m" if hours else f"{mins}m"
         
-        print(f"\n┌────────────────────────────────────────────────────────────────────────────┐")
-        print(f"│ 📅 {dt_obj.strftime('%A, %d %B %Y')} — {len(day_trips)} Drives ({time_str}, {total_km:.1f} km)".ljust(77) + "│")
-        print(f"├────────────────────────────────────────────────────────────────────────────┤")
-        
+        # Precompute rows to dynamically measure max column width
+        rows_data = []
         for i, t in enumerate(day_trips):
             t_start = t["start_dt"].strftime("%H:%M")
             t_end = t["end_dt"].strftime("%H:%M")
-            dur = t["dur_min"]
-            dist = t["dist_km"]
-            s_place = t["start_place"]
-            e_place = t["end_place"]
+            time_w = f" {t_start} ➔ {t_end}"
+            dur_str = f" {format_duration_short(t['dur_min'])}"
+            dist_str = f" {t['dist_km']:.1f} km"
             
-            dwell_str = ""
+            raw = t.get("raw", {})
+            s_soc = t.get("start_soc") or raw.get("Starting Battery (%)", "-")
+            e_soc = t.get("end_soc") or raw.get("Ending Battery (%)", "-")
+            soc_str = f" {s_soc}%➔{e_soc}%" if s_soc and s_soc != "-" else " -"
+            
+            s_p = t.get("start_place") or "Start"
+            e_p = t.get("end_place") or "End"
+            if s_p.lower() == "home":
+                s_p = "🏠 Home"
+            if e_p.lower() == "home":
+                e_p = "🏠 Home"
+            route_str = f" {s_p} ➔ {e_p}"
+            
+            park_str = " —"
             if i < len(day_trips) - 1:
                 next_start = day_trips[i+1]["start_dt"]
                 d_mins = int((next_start - t["end_dt"]).total_seconds() / 60)
                 if d_mins >= 0:
-                    dh, dm = divmod(d_mins, 60)
-                    dwell_str = f" [Parked for {f'{dh}h ' if dh else ''}{dm}m until {next_start.strftime('%H:%M')}]"
-                    
+                    park_str = f" {format_duration_short(d_mins)}"
+            
             f_tag, _ = analyzer.get_trip_footage_summary(t)
+            f_str = f" {f_tag}"
             
-            # Add borders
-            from tessie_drives_analyzer import pad_display
-            
-            line1 = f" [{i+1}] {t_start} ➔ {t_end} ({dur}m, {dist:.1f} km): {s_place} ➔ {e_place}{dwell_str}"
-            line2 = f"     └─ Footage: {f_tag}"
-            
-            print(f"│{pad_display(line1, 76, 'left')}│")
-            print(f"│{pad_display(line2, 76, 'left')}│")
+            rows_data.append({
+                "idx": f" [{i+1}]",
+                "time": time_w,
+                "dur": dur_str,
+                "dist": dist_str,
+                "soc": soc_str,
+                "route": route_str,
+                "park": park_str,
+                "foot": f_str
+            })
 
-        print(f"└────────────────────────────────────────────────────────────────────────────┘")
-        if not sys.stdin.isatty():
-            for t in day_trips:
-                display_footage_details(t, analyzer)
-            break
+        w_idx = max(len(" # "), max((display_len(r["idx"]) + 1 for r in rows_data), default=5))
+        w_time = max(len(" Time Window "), max((display_len(r["time"]) + 1 for r in rows_data), default=15))
+        w_dur = max(len(" Dur "), max((display_len(r["dur"]) + 1 for r in rows_data), default=8))
+        w_dist = max(len(" Distance "), max((display_len(r["dist"]) + 1 for r in rows_data), default=11))
+        w_soc = max(len(" SoC % "), max((display_len(r["soc"]) + 1 for r in rows_data), default=10))
+        w_route = max(len(" Route (Origin ➔ Destination) "), max((display_len(r["route"]) + 1 for r in rows_data), default=30))
+        w_park = max(len(" Parked After "), max((display_len(r["park"]) + 1 for r in rows_data), default=14))
+        w_foot = max(len(" Footage "), max((display_len(r["foot"]) + 1 for r in rows_data), default=20))
+        
+        total_inner = w_idx + w_time + w_dur + w_dist + w_soc + w_route + w_park + w_foot + 7
+        title = f" 📅 {dt_obj.strftime('%A, %d %B %Y')} — {len(day_trips)} Drives (Total: {time_str}, {total_km:.1f} km)"
+        t_len = display_len(title)
+        if t_len + 2 > total_inner:
+            w_route += (t_len + 2 - total_inner)
+            total_inner = w_idx + w_time + w_dur + w_dist + w_soc + w_route + w_park + w_foot + 7
+
+        border_top = "┌" + "─" * total_inner + "┐"
+        border_mid = "├" + "─" * w_idx + "┬" + "─" * w_time + "┬" + "─" * w_dur + "┬" + "─" * w_dist + "┬" + "─" * w_soc + "┬" + "─" * w_route + "┬" + "─" * w_park + "┬" + "─" * w_foot + "┤"
+        border_bot = "└" + "─" * w_idx + "┴" + "─" * w_time + "┴" + "─" * w_dur + "┴" + "─" * w_dist + "┴" + "─" * w_soc + "┴" + "─" * w_route + "┴" + "─" * w_park + "┴" + "─" * w_foot + "┘"
+        
+        print(f"\n{border_top}")
+        print("│" + pad_display(title, total_inner) + "│")
+        print(border_mid)
+        
+        col_headers = [
+            pad_display(" #", w_idx),
+            pad_display(" Time Window", w_time),
+            pad_display(" Dur", w_dur),
+            pad_display(" Distance", w_dist),
+            pad_display(" SoC %", w_soc),
+            pad_display(" Route (Origin ➔ Destination)", w_route),
+            pad_display(" Parked After", w_park),
+            pad_display(" Footage", w_foot)
+        ]
+        print("│" + "│".join(col_headers) + "│")
+        print(border_mid)
+        
+        for r in rows_data:
+            row_cols = [
+                pad_display(r["idx"], w_idx),
+                pad_display(r["time"], w_time),
+                pad_display(r["dur"], w_dur),
+                pad_display(r["dist"], w_dist),
+                pad_display(r["soc"], w_soc),
+                pad_display(r["route"], w_route),
+                pad_display(r["park"], w_park),
+                pad_display(r["foot"], w_foot)
+            ]
+            print("│" + "│".join(row_cols) + "│")
             
+        print(border_bot)
         try:
-            choice = input(f"Select Trip [1-{len(day_trips)}] for footage, [t]imeline, [a]ll, [b]ack, [q]uit: ").strip().lower()
+            choice = input(f"Select Trip [1-{len(day_trips)}] for footage, [t]imeline, [a]ll, [b]ack to days, [q]uit: ").strip().lower()
             if choice == "q":
                 sys.exit(0)
             elif choice in ["b", "back"]:
@@ -1453,35 +1660,15 @@ def display_timeline(target_date, analyzer, compact=False):
         except (KeyboardInterrupt, EOFError):
             break
 
-def display_days_menu(days_dict, title, analyzer):
+def display_days_menu(days_dict, title, analyzer, can_go_back=False):
     """Level 1: Display days summary table and allow drilling down to any day."""
     sorted_days = sorted(days_dict.keys(), reverse=True)
     
     while True:
         total_trips = sum(len(v) for v in days_dict.values())
         
-        w_idx = 5
-        w_date = 18
-        w_trips = 9
-        w_time = 12
-        w_dist = 14
-        w_footage = 42
-        
-        total_inner = w_idx + w_date + w_trips + w_time + w_dist + w_footage + 5
-        border_top = "┌" + "─" * total_inner + "┐"
-        border_mid = "├" + "─" * w_idx + "┬" + "─" * w_date + "┬" + "─" * w_trips + "┬" + "─" * w_time + "┬" + "─" * w_dist + "┬" + "─" * w_footage + "┤"
-        border_bot = "└" + "─" * w_idx + "┴" + "─" * w_date + "┴" + "─" * w_trips + "┴" + "─" * w_time + "┴" + "─" * w_dist + "┴" + "─" * w_footage + "┘"
-        
-        print(f"\n{border_top}")
-        
-        title_str = f" 📍 {title} ({total_trips} Trips Across {len(sorted_days)} Days)"
-        print(f"│{pad_display(title_str, total_inner, 'left')}│")
-        print(border_mid)
-        
-        header = f"│{pad_display(' #', w_idx)}│{pad_display(' Date', w_date)}│{pad_display(' Trips', w_trips)}│{pad_display(' Time', w_time)}│{pad_display(' Distance', w_dist)}│{pad_display(' Footage', w_footage)}│"
-        print(header)
-        print(border_mid)
-        
+        # Precompute rows to dynamically measure max column widths
+        rows_data = []
         for idx, d_str in enumerate(sorted_days):
             day_trips = days_dict[d_str]
             dt_obj = datetime.strptime(d_str, "%Y-%m-%d")
@@ -1496,25 +1683,72 @@ def display_days_menu(days_dict, title, analyzer):
                 day_cats.update(cats)
                 
             f_summary = format_footage_tag(day_cats)
+            notable = extract_notable_destinations(day_trips, max_places=3)
             
-            c_idx = pad_display(f" [{idx+1}]", w_idx)
-            c_date = pad_display(f" {dt_obj.strftime('%a %d %b %Y')}", w_date)
-            c_trips = pad_display(f" {len(day_trips)}", w_trips)
-            c_time = pad_display(f" {time_str}", w_time)
-            c_dist = pad_display(f" {total_km:.1f} km", w_dist)
-            c_foot = pad_display(f" {f_summary}", w_footage)
+            rows_data.append({
+                "idx": f" [{idx+1}]",
+                "date": f" {dt_obj.strftime('%a %d %b %Y')}",
+                "trips": f" {len(day_trips)}",
+                "time": f" {time_str}",
+                "dist": f" {total_km:.1f} km",
+                "notable": f" {notable}",
+                "foot": f" {f_summary}"
+            })
+
+        w_idx = max(len(" # "), max((display_len(r["idx"]) + 1 for r in rows_data), default=5))
+        w_date = max(len(" Date "), max((display_len(r["date"]) + 1 for r in rows_data), default=18))
+        w_trips = max(len(" Trips "), max((display_len(r["trips"]) + 1 for r in rows_data), default=8))
+        w_time = max(len(" Time "), max((display_len(r["time"]) + 1 for r in rows_data), default=11))
+        w_dist = max(len(" Distance "), max((display_len(r["dist"]) + 1 for r in rows_data), default=13))
+        w_notable = max(len(" Notable Destinations "), max((display_len(r["notable"]) + 1 for r in rows_data), default=25))
+        w_footage = max(len(" Footage "), max((display_len(r["foot"]) + 1 for r in rows_data), default=20))
+        
+        total_inner = w_idx + w_date + w_trips + w_time + w_dist + w_notable + w_footage + 6
+        title_str = f" 📍 {title} ({total_trips} Trips Across {len(sorted_days)} Days)"
+        t_len = display_len(title_str)
+        if t_len + 2 > total_inner:
+            w_notable += (t_len + 2 - total_inner)
+            total_inner = w_idx + w_date + w_trips + w_time + w_dist + w_notable + w_footage + 6
+
+        border_top = "┌" + "─" * total_inner + "┐"
+        border_mid = "├" + "─" * w_idx + "┬" + "─" * w_date + "┬" + "─" * w_trips + "┬" + "─" * w_time + "┬" + "─" * w_dist + "┬" + "─" * w_notable + "┬" + "─" * w_footage + "┤"
+        border_bot = "└" + "─" * w_idx + "┴" + "─" * w_date + "┴" + "─" * w_trips + "┴" + "─" * w_time + "┴" + "─" * w_dist + "┴" + "─" * w_notable + "┴" + "─" * w_footage + "┘"
+        
+        print(f"\n{border_top}")
+        print("│" + pad_display(title_str, total_inner, "left") + "│")
+        print(border_mid)
+        
+        col_headers = [
+            pad_display(" #", w_idx),
+            pad_display(" Date", w_date),
+            pad_display(" Trips", w_trips),
+            pad_display(" Time", w_time),
+            pad_display(" Distance", w_dist),
+            pad_display(" Notable Destinations", w_notable),
+            pad_display(" Footage", w_footage)
+        ]
+        print("│" + "│".join(col_headers) + "│")
+        print(border_mid)
+        
+        for r in rows_data:
+            c_idx = pad_display(r["idx"], w_idx)
+            c_date = pad_display(r["date"], w_date)
+            c_trips = pad_display(r["trips"], w_trips)
+            c_time = pad_display(r["time"], w_time)
+            c_dist = pad_display(r["dist"], w_dist)
+            c_notable = pad_display(r["notable"], w_notable)
+            c_foot = pad_display(r["foot"], w_footage)
             
-            print(f"│{c_idx}│{c_date}│{c_trips}│{c_time}│{c_dist}│{c_foot}│")
+            print(f"│{c_idx}│{c_date}│{c_trips}│{c_time}│{c_dist}│{c_notable}│{c_foot}│")
 
         print(border_bot)
-        if not sys.stdin.isatty():
-            drill_down_day(sorted_days[0], days_dict[sorted_days[0]], analyzer)
-            break
-            
         try:
-            choice = input(f"Select Day [1-{len(sorted_days)}] to drill down, [a]ll, [q]uit: ").strip().lower()
+            back_prompt = ", [b]ack" if can_go_back else ""
+            choice = input(f"Select Day [1-{len(sorted_days)}] to drill down{back_prompt}, [a]ll, [q]uit: ").strip().lower()
             if choice == "q":
                 sys.exit(0)
+            elif choice in ["b", "back"] and can_go_back:
+                break
             elif choice in ["a", "all"]:
                 for d_str in sorted_days:
                     drill_down_day(d_str, days_dict[d_str], analyzer)
@@ -1526,20 +1760,141 @@ def display_days_menu(days_dict, title, analyzer):
         except (KeyboardInterrupt, EOFError):
             break
 
+def display_months_menu(days_dict, analyzer):
+    """Level 0: Display months overview table and allow picking a month to inspect."""
+    months_dict = defaultdict(dict)
+    for d_str, trips in days_dict.items():
+        m_key = d_str[:7]
+        months_dict[m_key][d_str] = trips
+    
+    sorted_months = sorted(months_dict.keys(), reverse=True)
+    if len(sorted_months) == 1:
+        m_key = sorted_months[0]
+        dt_m = datetime.strptime(m_key + "-01", "%Y-%m-%d")
+        display_days_menu(months_dict[m_key], dt_m.strftime("%B %Y"), analyzer, can_go_back=False)
+        return
+        
+    while True:
+        # Precompute rows to dynamically measure max column widths
+        rows_data = []
+        for idx, m_key in enumerate(sorted_months):
+            m_days = months_dict[m_key]
+            m_trips = [t for day_list in m_days.values() for t in day_list]
+            dt_m = datetime.strptime(m_key + "-01", "%Y-%m-%d")
+            total_km = sum(t["dist_km"] for t in m_trips)
+            total_mins = sum(t["dur_min"] for t in m_trips)
+            hours, mins = divmod(total_mins, 60)
+            time_str = f"{hours}h {mins:02d}m" if hours else f"{mins}m"
+            notable = extract_notable_destinations(m_trips, max_places=4)
+            
+            rows_data.append({
+                "idx": f" [{idx+1}]",
+                "month": f" {dt_m.strftime('%B %Y')}",
+                "days": f" {len(m_days)}",
+                "trips": f" {len(m_trips)}",
+                "time": f" {time_str}",
+                "dist": f" {total_km:,.1f} km",
+                "notable": f" {notable}"
+            })
+
+        w_idx = max(len(" # "), max((display_len(r["idx"]) + 1 for r in rows_data), default=5))
+        w_month = max(len(" Month "), max((display_len(r["month"]) + 1 for r in rows_data), default=18))
+        w_days = max(len(" Days "), max((display_len(r["days"]) + 1 for r in rows_data), default=8))
+        w_trips = max(len(" Trips "), max((display_len(r["trips"]) + 1 for r in rows_data), default=8))
+        w_time = max(len(" Time "), max((display_len(r["time"]) + 1 for r in rows_data), default=11))
+        w_dist = max(len(" Distance "), max((display_len(r["dist"]) + 1 for r in rows_data), default=13))
+        w_notable = max(len(" Notable Destinations "), max((display_len(r["notable"]) + 1 for r in rows_data), default=25))
+        
+        total_inner = w_idx + w_month + w_days + w_trips + w_time + w_dist + w_notable + 6
+        total_all_trips = sum(len(trips) for trips in days_dict.values())
+        title = f" 🗓️  TESSIE DRIVES BY MONTH ({total_all_trips:,} Trips Across {len(days_dict)} Days)"
+        t_len = display_len(title)
+        if t_len + 2 > total_inner:
+            w_notable += (t_len + 2 - total_inner)
+            total_inner = w_idx + w_month + w_days + w_trips + w_time + w_dist + w_notable + 6
+
+        border_top = "┌" + "─" * total_inner + "┐"
+        border_mid = "├" + "─" * w_idx + "┬" + "─" * w_month + "┬" + "─" * w_days + "┬" + "─" * w_trips + "┬" + "─" * w_time + "┬" + "─" * w_dist + "┬" + "─" * w_notable + "┤"
+        border_bot = "└" + "─" * w_idx + "┴" + "─" * w_month + "┴" + "─" * w_days + "┴" + "─" * w_trips + "┴" + "─" * w_time + "┴" + "─" * w_dist + "┴" + "─" * w_notable + "┘"
+        
+        print(f"\n{border_top}")
+        print("│" + pad_display(title, total_inner, "left") + "│")
+        print(border_mid)
+        
+        col_headers = [
+            pad_display(" #", w_idx),
+            pad_display(" Month", w_month),
+            pad_display(" Days", w_days),
+            pad_display(" Trips", w_trips),
+            pad_display(" Time", w_time),
+            pad_display(" Distance", w_dist),
+            pad_display(" Notable Destinations", w_notable)
+        ]
+        print("│" + "│".join(col_headers) + "│")
+        print(border_mid)
+        
+        for r in rows_data:
+            row_cols = [
+                pad_display(r["idx"], w_idx),
+                pad_display(r["month"], w_month),
+                pad_display(r["days"], w_days),
+                pad_display(r["trips"], w_trips),
+                pad_display(r["time"], w_time),
+                pad_display(r["dist"], w_dist),
+                pad_display(r["notable"], w_notable)
+            ]
+            print("│" + "│".join(row_cols) + "│")
+            
+        print(border_bot)
+        try:
+            prompt = f"Select Month [1-{len(sorted_months)}], [a]ll months, [t]oday, [y]esterday, [q]uit: "
+            choice = input(prompt).strip().lower()
+            if choice == "q":
+                sys.exit(0)
+            elif choice in ["a", "all"]:
+                display_days_menu(days_dict, "All Drive History", analyzer, can_go_back=True)
+            elif choice in ["t", "today"]:
+                today_str = datetime.now().strftime("%Y-%m-%d")
+                if today_str in days_dict:
+                    drill_down_day(today_str, days_dict[today_str], analyzer)
+                else:
+                    print("No drives recorded for today.")
+            elif choice in ["y", "yesterday"]:
+                y_str = (datetime.now() - timedelta(days=1)).strftime("%Y-%m-%d")
+                if y_str in days_dict:
+                    drill_down_day(y_str, days_dict[y_str], analyzer)
+                else:
+                    print("No drives recorded for yesterday.")
+            elif choice.isdigit() and 1 <= int(choice) <= len(sorted_months):
+                selected_m = sorted_months[int(choice)-1]
+                dt_m = datetime.strptime(selected_m + "-01", "%Y-%m-%d")
+                display_days_menu(months_dict[selected_m], dt_m.strftime("%B %Y"), analyzer, can_go_back=True)
+            else:
+                print("Invalid choice.")
+        except (KeyboardInterrupt, EOFError):
+            break
+
 def main():
     parser = argparse.ArgumentParser(description="Tessie Drive Log Analyzer & Master Consolidator")
     parser.add_argument("--drives", action="store_true", help="Analyze and inspect drives")
     parser.add_argument("--timeline", nargs="?", const="today", default=None, help="Generate 24-hour event-driven vehicle & camera activity timeline for a date (e.g. today, yesterday, 2026-09-02, wednesday)")
     parser.add_argument("--today", action="store_true", help="Inspect only today's drives")
     parser.add_argument("--yesterday", action="store_true", help="Inspect only yesterday's drives")
+    parser.add_argument("--month", help="Filter drives by month (e.g. '2026-09', 'september', 'aug')")
     parser.add_argument("--since", help="Filter drives since date or day name (e.g. 'wednesday', '2026-09-02')")
     parser.add_argument("--days", type=int, help="Filter drives from past N days")
     parser.add_argument("--place", help="Filter drives by place nickname (e.g. 'School', 'Work', 'Gym')")
+    parser.add_argument("--consolidate", nargs="?", const=True, help="Consolidate drives CSV(s) into drives_master.csv (optionally specify path to a new CSV)")
     parser.add_argument("--tessie-dir", help="Custom path to directory containing Tessie CSV exports")
     
     args = parser.parse_args()
 
     analyzer = TessieAnalyzer(tessie_dir=args.tessie_dir)
+    if args.consolidate:
+        path = args.consolidate if isinstance(args.consolidate, str) else None
+        analyzer.consolidate_drives(new_csv_path=path, verbose=True)
+        return
+
     drives = analyzer.load_drives()
 
     if not drives:
@@ -1573,6 +1928,12 @@ def main():
             continue
         if end_dt and d["start_dt"] >= end_dt:
             continue
+        if args.month:
+            m_target = args.month.strip().lower()
+            d_ym = d["start_dt"].strftime("%Y-%m")
+            d_month_name = d["start_dt"].strftime("%B").lower()
+            if m_target not in d_ym and not d_month_name.startswith(m_target):
+                continue
         if args.place:
             q = args.place.lower()
             if q not in d["start_place"].lower() and q not in d["end_place"].lower():
@@ -1588,8 +1949,23 @@ def main():
         d_key = d["start_dt"].strftime("%Y-%m-%d")
         days_dict[d_key].append(d)
 
+    # If specific day or single day filtered, go directly to day view
+    if args.today or args.yesterday:
+        selected_d = list(days_dict.keys())[0]
+        drill_down_day(selected_d, days_dict[selected_d], analyzer)
+        return
+
+    # If filtered to a specific month or single place/short range
+    unique_months = set(d_str[:7] for d_str in days_dict.keys())
+    if args.month or len(unique_months) == 1:
+        m_str = list(unique_months)[0]
+        dt_m = datetime.strptime(m_str + "-01", "%Y-%m-%d")
+        title = args.place if args.place else dt_m.strftime("%B %Y")
+        display_days_menu(days_dict, title, analyzer, can_go_back=False)
+        return
+
     title = args.place if args.place else ("Drives Since " + cutoff_dt.strftime('%Y-%m-%d') if cutoff_dt else "All Drive History")
-    display_days_menu(days_dict, title, analyzer)
+    display_months_menu(days_dict, analyzer)
 
 if __name__ == "__main__":
     main()

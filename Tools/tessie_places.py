@@ -651,7 +651,7 @@ def load_config():
     """Loads configuration dictionary from config.json."""
     default_config = {
         "landing_directory": "~/Downloads",
-        "archive_directory": "~/Library/Mobile Documents/com~apple~CloudDocs/Tesla/Tessie/archive",
+        "inbox_directory": "~/Library/Mobile Documents/com~apple~CloudDocs/Tesla/Tessie/Inbox",
         "tessie_directory": "~/Library/Mobile Documents/com~apple~CloudDocs/Tesla/Tessie",
         "invoices_directory": "~/iCloud/PDF/Tesla/charging_invoices"
     }
