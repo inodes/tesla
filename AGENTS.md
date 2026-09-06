@@ -97,6 +97,8 @@ tesla/
 | **REQ-011** | 2026-09-06 | Symlink iCloud path back to local repo; add commit approval, zero-PII, and token protection directives | ✅ Complete | `AGENTS.md`, `.gitignore` |
 | **REQ-012** | 2026-09-06 | Zero-PII sanitization of `AGENTS.md` (replace hardcoded user paths with `$HOME`, `~`, or `$USER`) | ✅ Complete | `AGENTS.md` |
 | **REQ-013** | 2026-09-06 | Redesign footage column into 2-tier header with 3 mini columns (`Saved`, `Sentry`, `Recent`) and emoji ticks | ✅ Complete | `Tools/tessie_drives_analyzer.py` |
+| **REQ-014** | 2026-09-06 | Establish unified `Tools/table_formatter.py` with emoji 1-vs-2 space handling and column/row width sanity checks across all tools | ✅ Complete | `Tools/table_formatter.py`, all `Tools/*.py` |
+| **REQ-015** | 2026-09-06 | Enforce column alignment rules across all terminal tables: text/sentences left; text-or-numbers-with-units right (currency always `.2f`); plain numbers right | ✅ Complete | `Tools/find_plugshare_chargers.py`, `Tools/find_tesla_chargers.py`, `Tools/tessie_charging_analyzer.py`, `Tools/tessie_drives_analyzer.py` |
 
 ---
 
@@ -108,6 +110,8 @@ tesla/
 | **BUG-002** | Charging Analyzer | Uneven spacing in `inspect_session` caused dollar figures and kWh amounts to misalign across rows. | Medium | **Resolved**: Enforced fixed-width label padding (`lw_fin = 27`, `lw_loss = 31`). |
 | **BUG-003** | Drives Analyzer | `Notable Destinations` and `Route` columns had hardcoded widths (e.g. 36/48), causing long names to push border pipes out and ruin table borders. | High | **Resolved**: Dynamically precompute all rows and calculate column widths using `max(display_len) + 1`. |
 | **BUG-004** | Drives Analyzer | Non-tty piped runs (`echo "q" \| ./script.py`) triggered automatic cascading down through all days into footage dumps. | Medium | **Resolved**: Removed hardcoded `if not sys.stdin.isatty():` drill-downs, allowing clean piped input and EOF termination. |
+| **BUG-005** | Table Formatter | Characters where macOS libc `wcwidth` is 1 cell (e.g. `🗓️`, `🛡️`, `⚙️`, `⚠️`) were measured as width 2, causing under-padded spaces and misaligned right table borders (`│`). | High | **Resolved**: Implemented macOS libc `wcwidth` ctypes integration, explicit `REPO_EMOJI_WIDTHS` mapping, and in-built visual emoji audit table self-test. |
+| **BUG-007** | `find_tesla_chargers.py` | `suburb_col_w` for the "Location / Suburb" column was floored at `max(max_suburb_len + 2, 14)` - 14 is narrower than the 18-cell header text itself, so whenever no suburb name in the result set was long enough to push the column past 14, the header overflowed its own cell and sat flush against the border with no padding. | Medium | **Resolved**: floor now also accounts for the header's own width (`max(display_len("Location / Suburb") + 2, ...)`), matching the rule in §2.1 above. Verified with a synthetic table of real suburb names from a live `--near Home` run. |
 
 ---
 
