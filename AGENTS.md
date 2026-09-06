@@ -9,8 +9,8 @@
 ## 1. Core Operating Directives
 
 1. **Primary Workspace & iCloud Symlink**:
-   - **Primary Workspace**: `/Users/glenn/repos/tesla` (Local filesystem clone).
-   - **iCloud Symlink**: `/Users/glenn/Library/Mobile Documents/com~apple~CloudDocs/repos/tesla` is a direct symlink back to `/Users/glenn/repos/tesla`.
+   - **Primary Workspace**: `$HOME/repos/tesla` (or `~/repos/tesla`, local filesystem clone).
+   - **iCloud Symlink**: `~/Library/Mobile Documents/com~apple~CloudDocs/repos/tesla` is a direct symlink back to `$HOME/repos/tesla`.
    - **Rationale**: Development must be done locally because (a) Antigravity cannot work directly in iCloud directories and (b) this is a Git repository.
    - **Rule on Upstream (iCloud) Changes**: If any external changes arrive via iCloud, anything newer or unique MUST be flagged and compared with the local clone, and local is updated only after the agent explains the new additions/changes to the user.
 
@@ -18,7 +18,8 @@
    - **Check with User Prior to Committing**: Prior to executing any git commit, the agent MUST check with the user, describing both:
      1. The changes made verbally in clear detail.
      2. The exact proposed commit message(s).
-   - **Zero-PII Commitment Rule**: NO Personally Identifiable Information (PII) is ever committed:
+   - **Zero-PII Commitment Rule**: NO Personally Identifiable Information (PII) is ever committed (including in documentation, commit messages, or `AGENTS.md` itself):
+     - Never include local usernames in documentation or scripts; always use `$USER`, `$HOME`, or `~`.
      - PII includes: Personal addresses, residential coordinates, trip/drive logs, or any CSV files (all Tessie CSVs are classified as PII).
      - Non-PII includes: Public JSON files scraped from public websites (such as Tesla chargers or PlugShare registries) and sanitized `.example.json` templates.
      - Never commit `places.json`, `config.json`, or `Tessie/invoices/*.pdf`.
@@ -26,7 +27,7 @@
    - **Cadence**: Regular `git status` checks and tidy, logical git commits should occur.
 
 3. **Terminal Execution & Permissions**:
-   - Commands touching `/Users/glenn/Library/Mobile Documents/` or `/Volumes/TESLADRIVE` require sandbox bypass (`BypassSandbox: true` or equivalent direct shell permissions) due to macOS privacy and volume mount restrictions.
+   - Commands touching `~/Library/Mobile Documents/` or `/Volumes/TESLADRIVE` require sandbox bypass (`BypassSandbox: true` or equivalent direct shell permissions) due to macOS privacy and volume mount restrictions.
    - Do NOT use `cd` in tool calls; always specify full absolute working directories (`Cwd`).
 
 4. **Continuous Maintenance of this Document**:
@@ -92,8 +93,10 @@ tesla/
 | **REQ-007** | 2026-09-06 | Transform day trips drill-down into a wide structured grid table with battery SoC % and dwell times | ✅ Complete | `Tools/tessie_drives_analyzer.py` |
 | **REQ-008** | 2026-09-06 | Dynamically measure max column widths for all tables so text like Notable Destinations never overflows borders | ✅ Complete | `Tools/tessie_drives_analyzer.py` |
 | **REQ-009** | 2026-09-06 | Establish `AGENTS.md` in repository root to track requests, TODOs, bugs, and agent rules | ✅ Complete | `AGENTS.md`, `.gitignore` |
-| **REQ-010** | 2026-09-06 | Primary workspace transitioned to `/Users/glenn/repos/tesla`; flag & explain iCloud additions before updating local | ✅ Complete | `AGENTS.md` |
+| **REQ-010** | 2026-09-06 | Primary workspace transitioned to `$HOME/repos/tesla`; flag & explain iCloud additions before updating local | ✅ Complete | `AGENTS.md` |
 | **REQ-011** | 2026-09-06 | Symlink iCloud path back to local repo; add commit approval, zero-PII, and token protection directives | ✅ Complete | `AGENTS.md`, `.gitignore` |
+| **REQ-012** | 2026-09-06 | Zero-PII sanitization of `AGENTS.md` (replace hardcoded user paths with `$HOME`, `~`, or `$USER`) | ✅ Complete | `AGENTS.md` |
+| **REQ-013** | 2026-09-06 | Redesign footage column into 2-tier header with 3 mini columns (`Saved`, `Sentry`, `Recent`) and emoji ticks | ✅ Complete | `Tools/tessie_drives_analyzer.py` |
 
 ---
 
@@ -122,5 +125,5 @@ tesla/
 Before completing any prompt or task, every agent must perform the following checklist:
 1. **Codebase Check**: Ensure all modified files run without syntax errors (`python3 -m py_compile <file>`).
 2. **Table Check**: If terminal tables were modified, verify borders with sample piped input or interactive test.
-3. **Sync Check**: Copy modified files from iCloud path to local `/Users/glenn/repos/tesla/`.
+3. **Sync Check**: Verify symlink from iCloud path points to local `$HOME/repos/tesla/`.
 4. **Docs Update**: If a request was fulfilled or a new bug/TODO was discovered, update Sections 4, 5, or 6 of this `AGENTS.md` file.

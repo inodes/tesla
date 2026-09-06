@@ -42,13 +42,15 @@ try:
     def char_width(c):
         if c in ('\ufe0f', '\ufe0e'):
             return 0
+        if c in ('🛡', '🔄', '💾', '🔴', '🚗', '📹', '📂', '🚪', '⚠️', '✔', '❌', '🕒', '📅', '📍', '🛑', '🏠', '⚡', '🔌'):
+            return 2
         w = _libc_wcwidth(c)
         return max(0, w) if w >= 0 else 1
 except Exception:
     def char_width(c):
         if c in ('\ufe0f', '\ufe0e'):
             return 0
-        if c in ('🔄', '💾', '🔴', '🚗', '📹', '📂', '🚪', '⚠️', '✔', '❌', '🕒', '📅', '📍', '🛑'):
+        if c in ('🛡', '🔄', '💾', '🔴', '🚗', '📹', '📂', '🚪', '⚠️', '✔', '❌', '🕒', '📅', '📍', '🛑', '🏠', '⚡', '🔌'):
             return 2
         if c in ('🅿',):
             return 1
@@ -1044,8 +1046,7 @@ def drill_down_day(day_str, day_trips, analyzer):
                 if d_mins >= 0:
                     park_str = f" {format_duration_short(d_mins)}"
             
-            f_tag, _ = analyzer.get_trip_footage_summary(t)
-            f_str = f" {f_tag}"
+            f_tag, f_cats = analyzer.get_trip_footage_summary(t)
             
             rows_data.append({
                 "idx": f" [{i+1}]",
@@ -1055,7 +1056,9 @@ def drill_down_day(day_str, day_trips, analyzer):
                 "soc": soc_str,
                 "route": route_str,
                 "park": park_str,
-                "foot": f_str
+                "sav": "📹" if "Saved" in f_cats else "·",
+                "sen": "🛡️" if "Sentry" in f_cats else "·",
+                "rec": "🕒" if "Recent" in f_cats else "·"
             })
 
         w_idx = max(len(" # "), max((display_len(r["idx"]) + 1 for r in rows_data), default=5))
@@ -1065,48 +1068,61 @@ def drill_down_day(day_str, day_trips, analyzer):
         w_soc = max(len(" SoC % "), max((display_len(r["soc"]) + 1 for r in rows_data), default=10))
         w_route = max(len(" Route (Origin ➔ Destination) "), max((display_len(r["route"]) + 1 for r in rows_data), default=30))
         w_park = max(len(" Parked After "), max((display_len(r["park"]) + 1 for r in rows_data), default=14))
-        w_foot = max(len(" Footage "), max((display_len(r["foot"]) + 1 for r in rows_data), default=20))
         
-        total_inner = w_idx + w_time + w_dur + w_dist + w_soc + w_route + w_park + w_foot + 7
+        w_sav = 7
+        w_sen = 8
+        w_rec = 8
+        w_foot_total = w_sav + w_sen + w_rec + 2  # 25
+
+        left_widths = [w_idx, w_time, w_dur, w_dist, w_soc, w_route, w_park]
+        left_headers = [" #", " Time Window", " Dur", " Distance", " SoC %", " Route (Origin ➔ Destination)", " Parked After"]
+
+        total_inner = sum(left_widths) + len(left_widths) + w_foot_total
         title = f" 📅 {dt_obj.strftime('%A, %d %B %Y')} — {len(day_trips)} Drives (Total: {time_str}, {total_km:.1f} km)"
         t_len = display_len(title)
         if t_len + 2 > total_inner:
             w_route += (t_len + 2 - total_inner)
-            total_inner = w_idx + w_time + w_dur + w_dist + w_soc + w_route + w_park + w_foot + 7
+            left_widths[5] = w_route
+            total_inner = sum(left_widths) + len(left_widths) + w_foot_total
 
         border_top = "┌" + "─" * total_inner + "┐"
-        border_mid = "├" + "─" * w_idx + "┬" + "─" * w_time + "┬" + "─" * w_dur + "┬" + "─" * w_dist + "┬" + "─" * w_soc + "┬" + "─" * w_route + "┬" + "─" * w_park + "┬" + "─" * w_foot + "┤"
-        border_bot = "└" + "─" * w_idx + "┴" + "─" * w_time + "┴" + "─" * w_dur + "┴" + "─" * w_dist + "┴" + "─" * w_soc + "┴" + "─" * w_route + "┴" + "─" * w_park + "┴" + "─" * w_foot + "┘"
+        border_top_header = "├" + "┬".join("─"*w for w in left_widths) + "┬" + "─"*w_foot_total + "┤"
+        border_sub = "│" + "│".join(" "*w for w in left_widths) + "├" + "─"*w_sav + "┬" + "─"*w_sen + "┬" + "─"*w_rec + "┤"
+        border_data = "├" + "┼".join("─"*w for w in left_widths) + "┼" + "─"*w_sav + "┼" + "─"*w_sen + "┼" + "─"*w_rec + "┤"
+        border_bot = "└" + "┴".join("─"*w for w in left_widths) + "┴" + "─"*w_sav + "┴" + "─"*w_sen + "┴" + "─"*w_rec + "┘"
         
         print(f"\n{border_top}")
         print("│" + pad_display(title, total_inner) + "│")
-        print(border_mid)
+        print(border_top_header)
         
-        col_headers = [
-            pad_display(" #", w_idx),
-            pad_display(" Time Window", w_time),
-            pad_display(" Dur", w_dur),
-            pad_display(" Distance", w_dist),
-            pad_display(" SoC %", w_soc),
-            pad_display(" Route (Origin ➔ Destination)", w_route),
-            pad_display(" Parked After", w_park),
-            pad_display(" Footage", w_foot)
+        row1_cols = [pad_display(h, w) for h, w in zip(left_headers, left_widths)] + [pad_display("Footage", w_foot_total, "center")]
+        print("│" + "│".join(row1_cols) + "│")
+        print(border_sub)
+        
+        row2_cols = [" "*w for w in left_widths] + [
+            pad_display("Saved", w_sav, "center"),
+            pad_display("Sentry", w_sen, "center"),
+            pad_display("Recent", w_rec, "center")
         ]
-        print("│" + "│".join(col_headers) + "│")
-        print(border_mid)
+        print("│" + "│".join(row2_cols) + "│")
+        print(border_data)
         
         for r in rows_data:
-            row_cols = [
+            left_cells = [
                 pad_display(r["idx"], w_idx),
                 pad_display(r["time"], w_time),
                 pad_display(r["dur"], w_dur),
                 pad_display(r["dist"], w_dist),
                 pad_display(r["soc"], w_soc),
                 pad_display(r["route"], w_route),
-                pad_display(r["park"], w_park),
-                pad_display(r["foot"], w_foot)
+                pad_display(r["park"], w_park)
             ]
-            print("│" + "│".join(row_cols) + "│")
+            foot_cells = [
+                pad_display(r["sav"], w_sav, "center"),
+                pad_display(r["sen"], w_sen, "center"),
+                pad_display(r["rec"], w_rec, "center")
+            ]
+            print("│" + "│".join(left_cells + foot_cells) + "│")
             
         print(border_bot)
         try:
@@ -1682,7 +1698,6 @@ def display_days_menu(days_dict, title, analyzer, can_go_back=False):
                 _, cats = analyzer.get_trip_footage_summary(t)
                 day_cats.update(cats)
                 
-            f_summary = format_footage_tag(day_cats)
             notable = extract_notable_destinations(day_trips, max_places=3)
             
             rows_data.append({
@@ -1692,7 +1707,9 @@ def display_days_menu(days_dict, title, analyzer, can_go_back=False):
                 "time": f" {time_str}",
                 "dist": f" {total_km:.1f} km",
                 "notable": f" {notable}",
-                "foot": f" {f_summary}"
+                "sav": "📹" if "Saved" in day_cats else "·",
+                "sen": "🛡️" if "Sentry" in day_cats else "·",
+                "rec": "🕒" if "Recent" in day_cats else "·"
             })
 
         w_idx = max(len(" # "), max((display_len(r["idx"]) + 1 for r in rows_data), default=5))
@@ -1701,45 +1718,60 @@ def display_days_menu(days_dict, title, analyzer, can_go_back=False):
         w_time = max(len(" Time "), max((display_len(r["time"]) + 1 for r in rows_data), default=11))
         w_dist = max(len(" Distance "), max((display_len(r["dist"]) + 1 for r in rows_data), default=13))
         w_notable = max(len(" Notable Destinations "), max((display_len(r["notable"]) + 1 for r in rows_data), default=25))
-        w_footage = max(len(" Footage "), max((display_len(r["foot"]) + 1 for r in rows_data), default=20))
-        
-        total_inner = w_idx + w_date + w_trips + w_time + w_dist + w_notable + w_footage + 6
+
+        w_sav = 7
+        w_sen = 8
+        w_rec = 8
+        w_foot_total = w_sav + w_sen + w_rec + 2  # 25
+
+        left_widths = [w_idx, w_date, w_trips, w_time, w_dist, w_notable]
+        left_headers = [" #", " Date", " Trips", " Time", " Distance", " Notable Destinations"]
+
+        total_inner = sum(left_widths) + len(left_widths) + w_foot_total
         title_str = f" 📍 {title} ({total_trips} Trips Across {len(sorted_days)} Days)"
         t_len = display_len(title_str)
         if t_len + 2 > total_inner:
             w_notable += (t_len + 2 - total_inner)
-            total_inner = w_idx + w_date + w_trips + w_time + w_dist + w_notable + w_footage + 6
+            left_widths[5] = w_notable
+            total_inner = sum(left_widths) + len(left_widths) + w_foot_total
 
         border_top = "┌" + "─" * total_inner + "┐"
-        border_mid = "├" + "─" * w_idx + "┬" + "─" * w_date + "┬" + "─" * w_trips + "┬" + "─" * w_time + "┬" + "─" * w_dist + "┬" + "─" * w_notable + "┬" + "─" * w_footage + "┤"
-        border_bot = "└" + "─" * w_idx + "┴" + "─" * w_date + "┴" + "─" * w_trips + "┴" + "─" * w_time + "┴" + "─" * w_dist + "┴" + "─" * w_notable + "┴" + "─" * w_footage + "┘"
+        border_top_header = "├" + "┬".join("─"*w for w in left_widths) + "┬" + "─"*w_foot_total + "┤"
+        border_sub = "│" + "│".join(" "*w for w in left_widths) + "├" + "─"*w_sav + "┬" + "─"*w_sen + "┬" + "─"*w_rec + "┤"
+        border_data = "├" + "┼".join("─"*w for w in left_widths) + "┼" + "─"*w_sav + "┼" + "─"*w_sen + "┼" + "─"*w_rec + "┤"
+        border_bot = "└" + "┴".join("─"*w for w in left_widths) + "┴" + "─"*w_sav + "┴" + "─"*w_sen + "┴" + "─"*w_rec + "┘"
         
         print(f"\n{border_top}")
         print("│" + pad_display(title_str, total_inner, "left") + "│")
-        print(border_mid)
+        print(border_top_header)
         
-        col_headers = [
-            pad_display(" #", w_idx),
-            pad_display(" Date", w_date),
-            pad_display(" Trips", w_trips),
-            pad_display(" Time", w_time),
-            pad_display(" Distance", w_dist),
-            pad_display(" Notable Destinations", w_notable),
-            pad_display(" Footage", w_footage)
+        row1_cols = [pad_display(h, w) for h, w in zip(left_headers, left_widths)] + [pad_display("Footage", w_foot_total, "center")]
+        print("│" + "│".join(row1_cols) + "│")
+        print(border_sub)
+        
+        row2_cols = [" "*w for w in left_widths] + [
+            pad_display("Saved", w_sav, "center"),
+            pad_display("Sentry", w_sen, "center"),
+            pad_display("Recent", w_rec, "center")
         ]
-        print("│" + "│".join(col_headers) + "│")
-        print(border_mid)
+        print("│" + "│".join(row2_cols) + "│")
+        print(border_data)
         
         for r in rows_data:
-            c_idx = pad_display(r["idx"], w_idx)
-            c_date = pad_display(r["date"], w_date)
-            c_trips = pad_display(r["trips"], w_trips)
-            c_time = pad_display(r["time"], w_time)
-            c_dist = pad_display(r["dist"], w_dist)
-            c_notable = pad_display(r["notable"], w_notable)
-            c_foot = pad_display(r["foot"], w_footage)
-            
-            print(f"│{c_idx}│{c_date}│{c_trips}│{c_time}│{c_dist}│{c_notable}│{c_foot}│")
+            left_cells = [
+                pad_display(r["idx"], w_idx),
+                pad_display(r["date"], w_date),
+                pad_display(r["trips"], w_trips),
+                pad_display(r["time"], w_time),
+                pad_display(r["dist"], w_dist),
+                pad_display(r["notable"], w_notable)
+            ]
+            foot_cells = [
+                pad_display(r["sav"], w_sav, "center"),
+                pad_display(r["sen"], w_sen, "center"),
+                pad_display(r["rec"], w_rec, "center")
+            ]
+            print("│" + "│".join(left_cells + foot_cells) + "│")
 
         print(border_bot)
         try:
