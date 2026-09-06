@@ -1047,7 +1047,7 @@ def drill_down_day(day_str, day_trips, analyzer):
         w_dist = max(len(" Distance "), max((display_len(r["dist"]) + 1 for r in rows_data), default=11))
         w_soc = max(len(" SoC % "), max((display_len(r["soc"]) + 1 for r in rows_data), default=10))
         w_route = max(len(" Route (Origin ➔ Destination) "), max((display_len(r["route"]) + 1 for r in rows_data), default=30))
-        w_park = max(len(" Parked After "), max((display_len(r["park"]) + 1 for r in rows_data), default=14))
+        w_park = max(len(" Parked Duration "), max((display_len(r["park"]) + 1 for r in rows_data), default=14))
         
         w_sav = 7
         w_sen = 8
@@ -1055,7 +1055,7 @@ def drill_down_day(day_str, day_trips, analyzer):
         w_foot_total = w_sav + w_sen + w_rec + 2  # 25
 
         left_widths = [w_idx, w_time, w_dur, w_dist, w_soc, w_route, w_park]
-        left_headers = [" #", " Time Window", " Dur", " Distance", " SoC %", " Route (Origin ➔ Destination)", " Parked After"]
+        left_headers = [" #", " Time Window", " Dur", " Distance", " SoC %", " Route (Origin ➔ Destination)", " Parked Duration"]
 
         total_inner = sum(left_widths) + len(left_widths) + w_foot_total
         title = f" 📅 {dt_obj.strftime('%A, %d %B %Y')} — {len(day_trips)} Drives (Total: {time_str}, {total_km:.1f} km)"
@@ -1112,6 +1112,144 @@ def drill_down_day(day_str, day_trips, analyzer):
                     display_footage_details(t, analyzer)
             elif choice.isdigit() and 1 <= int(choice) <= len(day_trips):
                 display_footage_details(day_trips[int(choice)-1], analyzer)
+            else:
+                print("Invalid choice.")
+        except (KeyboardInterrupt, EOFError):
+            break
+
+def drill_down_all_days(sorted_days, days_dict, analyzer, title):
+    """Level 2 (combined): flatten every day in the current view into one
+    chronologically-ordered trip table with a Date column, so [a]ll at the
+    days menu shows the whole period at a glance instead of chaining through
+    each day's own interactive drill-down one at a time."""
+    all_trips = [(d_str, t) for d_str in sorted_days for t in days_dict[d_str]]
+
+    while True:
+        total_km = sum(t["dist_km"] for _, t in all_trips)
+        total_mins = sum(t["dur_min"] for _, t in all_trips)
+        hours, mins = divmod(total_mins, 60)
+        time_str = f"{hours}h {mins:02d}m" if hours else f"{mins}m"
+
+        rows_data = []
+        for i, (d_str, t) in enumerate(all_trips):
+            dt_day = datetime.strptime(d_str, "%Y-%m-%d")
+            date_str = f" {dt_day.strftime('%a %d %b')}"
+            t_start = t["start_dt"].strftime("%H:%M")
+            t_end = t["end_dt"].strftime("%H:%M")
+            time_w = f" {t_start} ➔ {t_end}"
+            dur_str = f" {format_duration_short(t['dur_min'])}"
+            dist_str = f" {t['dist_km']:.1f} km"
+
+            raw = t.get("raw", {})
+            s_soc = t.get("start_soc") or raw.get("Starting Battery (%)", "-")
+            e_soc = t.get("end_soc") or raw.get("Ending Battery (%)", "-")
+            soc_str = f" {s_soc}%➔{e_soc}%" if s_soc and s_soc != "-" else " -"
+
+            s_p = t.get("start_place") or "Start"
+            e_p = t.get("end_place") or "End"
+            if s_p.lower() == "home":
+                s_p = "🏠 Home"
+            if e_p.lower() == "home":
+                e_p = "🏠 Home"
+            route_str = f" {s_p} ➔ {e_p}"
+
+            # Parked Duration is the gap to the next trip - only meaningful
+            # within the same day (the list crosses day boundaries, newest
+            # day first), so it's only computed when the next entry is
+            # chronologically later on the same date.
+            park_str = " —"
+            if i < len(all_trips) - 1 and all_trips[i+1][0] == d_str:
+                next_start = all_trips[i+1][1]["start_dt"]
+                d_mins = int((next_start - t["end_dt"]).total_seconds() / 60)
+                if d_mins >= 0:
+                    park_str = f" {format_duration_short(d_mins)}"
+
+            f_tag, f_cats = analyzer.get_trip_footage_summary(t)
+
+            rows_data.append({
+                "idx": f" [{i+1}]",
+                "date": date_str,
+                "time": time_w,
+                "dur": dur_str,
+                "dist": dist_str,
+                "soc": soc_str,
+                "route": route_str,
+                "park": park_str,
+                "sav": "📹" if "Saved" in f_cats else "·",
+                "sen": "🛡️" if "Sentry" in f_cats else "·",
+                "rec": "🕒" if "Recent" in f_cats else "·"
+            })
+
+        w_idx = max(len(" # "), max((display_len(r["idx"]) + 1 for r in rows_data), default=5))
+        w_date = max(len(" Date "), max((display_len(r["date"]) + 1 for r in rows_data), default=13))
+        w_time = max(len(" Time Window "), max((display_len(r["time"]) + 1 for r in rows_data), default=15))
+        w_dur = max(len(" Dur "), max((display_len(r["dur"]) + 1 for r in rows_data), default=8))
+        w_dist = max(len(" Distance "), max((display_len(r["dist"]) + 1 for r in rows_data), default=11))
+        w_soc = max(len(" SoC % "), max((display_len(r["soc"]) + 1 for r in rows_data), default=10))
+        w_route = max(len(" Route (Origin ➔ Destination) "), max((display_len(r["route"]) + 1 for r in rows_data), default=30))
+        w_park = max(len(" Parked Duration "), max((display_len(r["park"]) + 1 for r in rows_data), default=14))
+
+        w_sav = 7
+        w_sen = 8
+        w_rec = 8
+        w_foot_total = w_sav + w_sen + w_rec + 2  # 25
+
+        left_widths = [w_idx, w_date, w_time, w_dur, w_dist, w_soc, w_route, w_park]
+        left_headers = [" #", " Date", " Time Window", " Dur", " Distance", " SoC %", " Route (Origin ➔ Destination)", " Parked Duration"]
+
+        total_inner = sum(left_widths) + len(left_widths) + w_foot_total
+        title_str = f" 📋 {title} — All {len(all_trips)} Drives (Total: {time_str}, {total_km:.1f} km)"
+        t_len = display_len(title_str)
+        if t_len + 2 > total_inner:
+            w_route += (t_len + 2 - total_inner)
+            left_widths[6] = w_route
+            total_inner = sum(left_widths) + len(left_widths) + w_foot_total
+
+        border_top = "┌" + "─" * total_inner + "┐"
+        border_top_header = "├" + "┬".join("─"*w for w in left_widths) + "┬" + "─"*w_foot_total + "┤"
+        border_sub = "│" + "│".join(" "*w for w in left_widths) + "├" + "─"*w_sav + "┬" + "─"*w_sen + "┬" + "─"*w_rec + "┤"
+        border_data = "├" + "┼".join("─"*w for w in left_widths) + "┼" + "─"*w_sav + "┼" + "─"*w_sen + "┼" + "─"*w_rec + "┤"
+        border_bot = "└" + "┴".join("─"*w for w in left_widths) + "┴" + "─"*w_sav + "┴" + "─"*w_sen + "┴" + "─"*w_rec + "┘"
+
+        print(f"\n{border_top}")
+        print(format_title_line(title_str, total_inner, "left"))
+        print(border_top_header)
+
+        row1_cols = [pad_display(h, w) for h, w in zip(left_headers, left_widths)] + [pad_display("Footage", w_foot_total, "center")]
+        print("│" + "│".join(row1_cols) + "│")
+        print(border_sub)
+
+        row2_cols = [" "*w for w in left_widths] + [
+            pad_display("Saved", w_sav, "center"),
+            pad_display("Sentry", w_sen, "center"),
+            pad_display("Recent", w_rec, "center")
+        ]
+        print("│" + "│".join(row2_cols) + "│")
+        print(border_data)
+
+        all_widths = left_widths + [w_sav, w_sen, w_rec]
+        # idx/dur/dist/soc are numbers (with units, or plain for idx) -> right-aligned;
+        # date/time/route are free text -> left-aligned; footage icons stay centered.
+        all_aligns = ["right", "left", "left", "right", "right", "right", "left", "right", "center", "center", "center"]
+        for r in rows_data:
+            row_cells = [
+                r["idx"] + " ", r["date"], r["time"], r["dur"] + " ", r["dist"] + " ", r["soc"] + " ", r["route"], r["park"] + " ",
+                r["sav"], r["sen"], r["rec"]
+            ]
+            print(format_row(row_cells, all_widths, all_aligns))
+
+        print(border_bot)
+        try:
+            choice = input(f"Select Trip [1-{len(all_trips)}] for footage, [a]ll, [b]ack to days, [q]uit: ").strip().lower()
+            if choice == "q":
+                sys.exit(0)
+            elif choice in ["b", "back"]:
+                break
+            elif choice in ["a", "all"]:
+                for _, t in all_trips:
+                    display_footage_details(t, analyzer)
+            elif choice.isdigit() and 1 <= int(choice) <= len(all_trips):
+                display_footage_details(all_trips[int(choice)-1][1], analyzer)
             else:
                 print("Invalid choice.")
         except (KeyboardInterrupt, EOFError):
@@ -1751,8 +1889,7 @@ def display_days_menu(days_dict, title, analyzer, can_go_back=False):
             elif choice in ["b", "back"] and can_go_back:
                 break
             elif choice in ["a", "all"]:
-                for d_str in sorted_days:
-                    drill_down_day(d_str, days_dict[d_str], analyzer)
+                drill_down_all_days(sorted_days, days_dict, analyzer, title)
             elif choice.isdigit() and 1 <= int(choice) <= len(sorted_days):
                 selected_day = sorted_days[int(choice)-1]
                 drill_down_day(selected_day, days_dict[selected_day], analyzer)
