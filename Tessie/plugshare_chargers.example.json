@@ -1,0 +1,45 @@
+{
+  "Bunnings Gladesville": {
+    "name": "Bunnings Gladesville (Exploren)",
+    "type": "dc_fast",
+    "network": "Exploren",
+    "operator": "Exploren",
+    "address": "41a College Street, Gladesville NSW 2111",
+    "lat": -33.82035,
+    "lon": 151.12115,
+    "radius_m": 200,
+    "keywords": [
+      "College Street",
+      "Bunnings Gladesville"
+    ],
+    "hardware": {
+      "brand": "Schneider Electric",
+      "stalls": 2,
+      "max_power_kw": 120,
+      "charger_type": "DC Fast",
+      "connector_types": [
+        "CCS2"
+      ]
+    },
+    "compatibility": {
+      "open_to_non_tesla": true,
+      "tesla_only": false,
+      "access": "Public"
+    },
+    "costs": {
+      "currency": "AUD",
+      "pricing_model": "flat",
+      "flat_per_kwh": 0.6,
+      "per_minute": 0.0,
+      "per_session": 0.0,
+      "app_payment": "Exploren App / RFID Card / Credit Card"
+    },
+    "amenities": {
+      "restrooms": true,
+      "dining": true,
+      "shopping": true,
+      "coffee": true,
+      "parking": true
+    }
+  }
+}
