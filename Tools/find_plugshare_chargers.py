@@ -309,26 +309,39 @@ class PlugShareClient:
         }
         if headers:
             self.headers.update(headers)
+        # Set by _get() whenever it returns None, so callers that need to
+        # know *why* a request failed (rate-limited vs. genuine 404 vs.
+        # network error) can surface it instead of a bare "not found".
+        self.last_error = None
 
-    def _get(self, endpoint, params=None, timeout=15):
+    def _get(self, endpoint, params=None, timeout=15, retries=1, backoff=1.5):
         url = f"{self.BASE_URL}{endpoint}"
         if params:
             url += "?" + urllib.parse.urlencode(params)
-        req = urllib.request.Request(url, headers=self.headers)
-        try:
-            with urllib.request.urlopen(req, timeout=timeout) as resp:
-                return json.loads(resp.read().decode("utf-8"))
-        except urllib.error.HTTPError as e:
-            if e.code == 404:
-                return None
-            time.sleep(0.3)
+        self.last_error = None
+        attempt = 0
+        while True:
+            req = urllib.request.Request(url, headers=self.headers)
             try:
                 with urllib.request.urlopen(req, timeout=timeout) as resp:
                     return json.loads(resp.read().decode("utf-8"))
-            except Exception:
+            except urllib.error.HTTPError as e:
+                if e.code == 404:
+                    self.last_error = "HTTP 404 (not found)"
+                    return None
+                self.last_error = f"HTTP {e.code}" + (" (likely rate-limited/blocked)" if e.code in (403, 429) else "")
+            except urllib.error.URLError as e:
+                self.last_error = f"network error: {e.reason}"
+            except TimeoutError:
+                self.last_error = "request timed out"
+            except json.JSONDecodeError:
+                self.last_error = "non-JSON response (likely a rate-limit / bot-challenge page)"
+            except Exception as e:
+                self.last_error = f"{type(e).__name__}: {e}"
+            attempt += 1
+            if attempt > retries:
                 return None
-        except Exception:
-            return None
+            time.sleep(backoff * attempt + random.uniform(0, 0.5))
 
     def get_location_details(self, location_id):
         """Fetches complete station record including tariffs, hardware, hours, and amenities."""
@@ -641,20 +654,56 @@ class PlugShareRegistry:
             return False
 
     def find_existing_match(self, station_key, record, registry=None):
+        """
+        Decide whether `record` (freshly scraped, keyed by `station_key`) is the
+        same physical station as something already in the registry.
+
+        PlugShare IDs are the only fully reliable identity signal - two entirely
+        different real stations can (and do) share an identical display name,
+        e.g. two separate "Bunnings Gladesville" listings ~70m apart on PlugShare
+        (one a public Exploren DC unit, one a patron-only AC wall charger). Name
+        matching must never override an explicit PlugShare-ID mismatch, or the
+        second station silently overwrites the first under the shared key.
+        """
         if registry is None:
             registry = self.load()
-        if station_key in registry:
+        new_id = record.get("plugshare_metadata", {}).get("id")
+
+        # 1. PlugShare ID match is authoritative regardless of key/name -
+        #    catches the case where a station's display name/key has changed
+        #    since it was last saved.
+        if new_id:
+            for k, v in registry.items():
+                if v.get("plugshare_metadata", {}).get("id") == new_id:
+                    return k, v
+
+        def _id_conflicts(v):
+            existing_id = v.get("plugshare_metadata", {}).get("id")
+            return bool(existing_id) and bool(new_id) and existing_id != new_id
+
+        # 2. Exact key match - but only treat it as the same station if it
+        #    doesn't carry a *different*, known PlugShare ID. A name collision
+        #    with a conflicting ID means these are two distinct real stations
+        #    that happen to share a name; the caller must file the new one
+        #    under a disambiguated key instead of merging/overwriting here.
+        if station_key in registry and not _id_conflicts(registry[station_key]):
             return station_key, registry[station_key]
         for k, v in registry.items():
-            if k.lower() == station_key.lower():
+            if k.lower() == station_key.lower() and not _id_conflicts(v):
                 return k, v
-            if v.get("plugshare_metadata", {}).get("id") == record.get("plugshare_metadata", {}).get("id"):
-                return k, v
+
+        # 3. Proximity + name-token overlap fallback, for legacy/manual entries
+        #    that have no PlugShare ID recorded at all to compare against.
+        #    Skipped entirely for any entry with a conflicting ID - being
+        #    physically close (as the two Bunnings Gladesville stations are)
+        #    does not make them the same station.
         new_lat = record.get("location", {}).get("lat")
         new_lon = record.get("location", {}).get("lon")
         if new_lat is not None and new_lon is not None:
             new_name_tokens = set(re.findall(r"\w+", station_key.lower()))
             for k, v in registry.items():
+                if _id_conflicts(v):
+                    continue
                 ex_lat = v.get("location", {}).get("lat")
                 ex_lon = v.get("location", {}).get("lon")
                 if ex_lat is not None and ex_lon is not None:
@@ -667,6 +716,17 @@ class PlugShareRegistry:
         return None, None
 
     def add_or_update(self, station_key, record, sync_external=False):
+        # Defense-in-depth: never persist a record with no id, no name,
+        # and no location data at all - this is the shape of the broken
+        # "PlugShare Station None" stubs the /locations/{id} detail
+        # endpoint can return for a station it won't fully disclose.
+        meta = record.get("plugshare_metadata", {}) or {}
+        loc = record.get("location", {}) or {}
+        has_identity = bool(meta.get("id")) or bool(loc.get("address"))
+        has_coords = loc.get("lat") is not None or loc.get("lon") is not None
+        if not (has_identity or has_coords):
+            print(f"  {C_RED}❌ Refusing to save '{station_key}': no id, address, or coordinates were returned for this station.{C_RESET}")
+            return "REJECTED_EMPTY"
         registry = self.load()
         now_utc = get_utc_now_iso()
         existing_key, existing = self.find_existing_match(station_key, record, registry)
@@ -684,21 +744,36 @@ class PlugShareRegistry:
             result = "UPDATED"
             print(f"  {C_CYAN}🔄 Updated existing entry '{existing_key}' in:{C_RESET} {self.registry_path}")
         else:
+            final_key = station_key
+            if final_key in registry:
+                # A different, unrelated station already occupies this exact
+                # key (same display name, non-matching/unknown PlugShare ID -
+                # find_existing_match() already ruled out a real match above).
+                # Never overwrite it silently; file this one under a
+                # disambiguated key instead.
+                new_id = record.get("plugshare_metadata", {}).get("id")
+                network_hint = record.get("plugshare_metadata", {}).get("network") or ""
+                if network_hint and network_hint != "3rd-Party":
+                    candidate = f"{station_key} ({network_hint})"
+                elif new_id:
+                    candidate = f"{station_key} (PlugShare #{new_id})"
+                else:
+                    candidate = f"{station_key} (2)"
+                n = 2
+                while candidate in registry:
+                    candidate = f"{station_key} ({n})"
+                    n += 1
+                print(f"  {C_YELLOW}⚠️  '{station_key}' already exists as a different station (different PlugShare ID) - saving this one as '{candidate}' instead of overwriting it.{C_RESET}")
+                final_key = candidate
             record["first_seen"] = now_utc
             record["last_updated"] = now_utc
             record["last_verified"] = now_utc
-            registry[station_key] = record
+            registry[final_key] = record
             result = "CREATED"
-            print(f"  {C_GREEN}✅ Created new entry '{station_key}' in:{C_RESET} {self.registry_path}")
+            print(f"  {C_GREEN}✅ Created new entry '{final_key}' in:{C_RESET} {self.registry_path}")
         if self.save(registry):
             if sync_external:
-                for ext_dir in find_mounted_tesla_volumes("Tessie"):
-                    target = os.path.join(ext_dir, "plugshare_chargers.json")
-                    try:
-                        shutil.copy2(self.registry_path, target)
-                        print(f"  {C_GREEN}✔ Synced to: {target}{C_RESET}")
-                    except Exception as e:
-                        print(f"  {C_YELLOW}⚠️ Failed syncing to {target}: {e}{C_RESET}")
+                print(f"  {C_YELLOW}ℹ️  Tessie data and charging tooling run directly from the repository and iCloud. Mounted TESLADRIVE volumes are reserved exclusively for dashcam/TeslaCam media.{C_RESET}")
             return result
         return "ERROR"
 
@@ -1171,7 +1246,8 @@ def main():
     parser.add_argument("--plugshare", help="PlugShare location ID(s) to inspect/scrape (comma-separated)")
     parser.add_argument("--save", "--update", action="store_true", help="Save / update inspected station into JSON registry")
     parser.add_argument("--add-all", action="store_true", help="Auto-add all matching stations to registry")
-    parser.add_argument("--sync", action="store_true", help="Sync to mounted TESLADRIVE volumes")
+    parser.add_argument("--refresh-prices", action="store_true", help="Fetch live PlugShare detail for every listed station with no known rate and save the pricing found (makes one API call per station missing a price)")
+    parser.add_argument("--sync", action="store_true", help="Deprecated no-op: TESLADRIVE volumes are reserved for dashcam media only, Tessie data never syncs there")
     parser.add_argument("--from-history", action="store_true", help="Auto-discover from charges_master.csv")
     parser.add_argument("--json", action="store_true", help="Output results as raw JSON")
 
@@ -1192,6 +1268,20 @@ def main():
                 full_d = ps_client.get_location_details(item)
                 if not full_d:
                     print(f"  {C_RED}❌ Station {item} not found on PlugShare.{C_RESET}")
+                    continue
+                # Guard: the /locations/{id} detail endpoint can return a
+                # structurally valid but empty/near-empty payload (no id, no
+                # name, no coordinates) rather than a clean 404 - e.g. when
+                # the station requires auth PlugShare doesn't grant here, or
+                # the id is stale/invalid. Never build a registry record from
+                # that; it silently produced null "PlugShare Station None"
+                # stubs in the past.
+                has_identity = bool(full_d.get("id") or full_d.get("name"))
+                has_location = full_d.get("latitude") is not None or full_d.get("longitude") is not None or full_d.get("address")
+                if not (has_identity or has_location):
+                    print(f"  {C_RED}❌ Station {item} returned no usable data from PlugShare (empty/near-empty response).{C_RESET}")
+                    print(f"  {C_DIM}   Raw response keys: {sorted(full_d.keys()) if isinstance(full_d, dict) else type(full_d)}{C_RESET}")
+                    print(f"  {C_DIM}   Try locating it via --search \"<name>\" or --near instead - the bulk search/region API returns full records even when the direct detail endpoint doesn't.{C_RESET}")
                     continue
                 k, rec = plugshare_to_registry_record(full_d)
                 display_station_preview(k, rec, from_cache=False)
@@ -1474,10 +1564,70 @@ def main():
     elif args.sort == "name":
         filtered.sort(key=lambda s: s.get("title", "").lower())
         sort_mode_desc = "Station Name (Alphabetical)"
+    else:
+        # No explicit --sort and no proximity reference to sort by distance:
+        # default to State, then Station Name (alphabetical) instead of
+        # leaving results in arbitrary API/registry order.
+        filtered.sort(key=lambda s: (s.get("state", "-") or "-", s.get("title", "").lower()))
+        sort_mode_desc = "State, then Station Name (Alphabetical)"
 
     # 7. Limit
     if args.limit and args.limit > 0:
         filtered = filtered[:args.limit]
+
+    # 7b. Refresh Missing Prices
+    # The bulk/region discovery endpoint (used by --near/--state/--search) does
+    # not include pricing - only the single-station detail endpoint
+    # (get_location_details) does. Stations already saved in the registry with
+    # a known rate carry it forward automatically (see the merge in
+    # add_or_update()), but anything not yet individually scraped shows up
+    # with no rate ("-") until someone runs --plugshare/--inspect on it. This
+    # flag does that for every currently-listed station missing a rate, in
+    # one pass, and persists whatever it finds back into the registry.
+    if args.refresh_prices:
+        missing = [
+            st for st in filtered
+            if not (st.get("tariffs", {}).get("per_kwh_flat") or 0) > 0 and st.get("id")
+        ]
+        if not missing:
+            print(f"\n{C_GREEN}✅ Every listed station already has a known rate - nothing to refresh.{C_RESET}")
+        else:
+            print(f"\n{C_CYAN}💲 Refreshing live pricing for {len(missing)} station(s) with no known rate (one PlugShare request each, ~{len(missing) * 1.5:.0f}s+)...{C_RESET}")
+            refreshed = 0
+            failed = 0
+            for i, st in enumerate(missing, 1):
+                loc_id = st["id"]
+                print(f"  [{i}/{len(missing)}] {st.get('title', '?')}...", end=" ", flush=True)
+                full_d = ps_client.get_location_details(loc_id)
+                has_identity = isinstance(full_d, dict) and (full_d.get("id") or full_d.get("name") or full_d.get("latitude") is not None)
+                if not has_identity:
+                    reason = ps_client.last_error or "empty/unusable response"
+                    print(f"{C_RED}failed - {reason}{C_RESET}")
+                    failed += 1
+                    # A rate-limit/block response tends to persist for the rest of
+                    # the burst too - back off harder so the remaining requests in
+                    # this run have a real chance instead of failing in lock-step.
+                    if ps_client.last_error and ("rate-limited" in ps_client.last_error or "HTTP 429" in ps_client.last_error):
+                        time.sleep(5.0 + random.uniform(0, 2.0))
+                    else:
+                        time.sleep(1.5 + random.uniform(0, 1.0))
+                    continue
+                k, rec = plugshare_to_registry_record(st.get("_raw") or {}, full_detail=full_d)
+                new_rate = rec.get("tariffs", {}).get("per_kwh_flat", 0.0)
+                print(f"{C_GREEN}${new_rate:.2f}/kWh{C_RESET}" if new_rate > 0 else f"{C_DIM}still unlisted on PlugShare.{C_RESET}")
+                # Reflect it immediately in the table we're about to render...
+                st["tariffs"] = rec.get("tariffs", {})
+                st["_record"] = rec
+                # ...and persist it so future runs don't need to re-fetch it.
+                ex_k, _ = registry_obj.find_existing_match(k, rec, existing_registry)
+                res = registry_obj.add_or_update(ex_k or k, rec, sync_external=args.sync)
+                if res in ("CREATED", "UPDATED"):
+                    existing_registry[ex_k or k] = rec
+                    refreshed += 1
+                time.sleep(1.5 + random.uniform(0, 1.0))  # be polite to PlugShare's API - a tight loop of these looks like scraping and can get rate-limited
+            print(f"{C_GREEN}✅ Refreshed pricing for {refreshed}/{len(missing)} station(s) with a rate found.{C_RESET}")
+            if failed:
+                print(f"{C_YELLOW}⚠️  {failed}/{len(missing)} request(s) failed outright (see reasons above) - if most/all of them say the same thing, that's PlugShare rate-limiting the burst, not a real \"not found\". Re-run --refresh-prices again in a few minutes, or fall back to --plugshare <id> one at a time for the ones that still matter.{C_RESET}")
 
     # 8. Batch Add All Mode
     if args.add_all:

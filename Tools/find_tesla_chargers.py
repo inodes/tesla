@@ -3148,6 +3148,11 @@ Query & Proximity Examples:
             filtered.sort(key=lambda s: (float(s.get("hardware", {}).get("max_power_kw", 0) or 0), -s.get("_distance_km", float("inf"))), reverse=True)
         elif args.sort == "stalls":
             filtered.sort(key=lambda s: (int(s.get("hardware", {}).get("stalls", 0) or 0), -s.get("_distance_km", float("inf"))), reverse=True)
+        else:
+            # No explicit --sort and no proximity reference to sort by distance:
+            # default to State, then Station Name (alphabetical) instead of
+            # leaving results in arbitrary registry order.
+            filtered.sort(key=lambda s: (s.get("state", "-") or "-", s.get("title", "").lower()))
 
         # Apply limit if requested
         if args.limit and args.limit > 0:
@@ -3180,6 +3185,8 @@ Query & Proximity Examples:
             sort_mode_desc = "Max Power (kW, Highest First)"
         elif args.sort == "stalls":
             sort_mode_desc = "Stall Count (Highest First)"
+        else:
+            sort_mode_desc = "State, then Station Name (Alphabetical)"
 
         eval_time_label = f"Target Time: {args.time}" if args.time else "Current Local Time"
 
