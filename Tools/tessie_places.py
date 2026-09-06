@@ -42,44 +42,19 @@ SUPERCHARGERS_JSON_PATH = os.path.join(TESSIE_DIR, "tesla_superchargers.json") i
 # ---------------------------------------------------------------------------
 # Unicode & Terminal Display Utilities
 # ---------------------------------------------------------------------------
-try:
-    import ctypes
-    libc = ctypes.CDLL("libc.dylib" if sys.platform == "darwin" else "libc.so.6")
-    _libc_wcwidth = libc.wcwidth
-    _libc_wcwidth.argtypes = [ctypes.c_wchar]
-    _libc_wcwidth.restype = ctypes.c_int
+_tools_dir = os.path.dirname(os.path.abspath(__file__))
+if _tools_dir not in sys.path:
+    sys.path.insert(0, _tools_dir)
 
-    def char_width(c):
-        if c in ('\ufe0f', '\ufe0e'):
-            return 0
-        w = _libc_wcwidth(c)
-        return max(0, w) if w >= 0 else 1
-except Exception:
-    def char_width(c):
-        if c in ('\ufe0f', '\ufe0e'):
-            return 0
-        if c in ('🔄', '💾', '🔴', '🚗', '📹', '📂', '🚪', '⚠️', '✔', '❌', '🕒', '📅', '📍', '🛑', '⚡', '🏢', '🏷', '📫', '🎯', '🅿'):
-            return 2
-        w = unicodedata.east_asian_width(c)
-        if w in ('W', 'F'):
-            return 2
-        return 1
-
-def display_len(s):
-    clean = re.sub(r'\x1b\[[0-9;]*m', '', s)
-    return sum(char_width(c) for c in clean)
-
-def pad_display(s, target_width, align="left"):
-    d_len = display_len(s)
-    pad_len = max(0, target_width - d_len)
-    if align == "right":
-        return " " * pad_len + s
-    elif align == "center":
-        left = pad_len // 2
-        right = pad_len - left
-        return " " * left + s + " " * right
-    else:
-        return s + " " * pad_len
+from table_formatter import (
+    char_width,
+    display_len,
+    truncate_display,
+    pad_display,
+    format_row,
+    format_title_line,
+    format_box_line,
+)
 
 # ---------------------------------------------------------------------------
 # Geodesic Math

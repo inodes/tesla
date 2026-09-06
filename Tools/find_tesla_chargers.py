@@ -120,63 +120,20 @@ C_BOLD = "\033[1m"
 C_DIM = "\033[2m"
 C_RESET = "\033[0m"
 
-try:
-    import ctypes
-    libc = ctypes.CDLL("libc.dylib" if sys.platform == "darwin" else "libc.so.6")
-    _libc_wcwidth = libc.wcwidth
-    _libc_wcwidth.argtypes = [ctypes.c_wchar]
-    _libc_wcwidth.restype = ctypes.c_int
+_tools_dir = os.path.dirname(os.path.abspath(__file__))
+if _tools_dir not in sys.path:
+    sys.path.insert(0, _tools_dir)
 
-    def char_width(c):
-        if c in ('\ufe0f', '\ufe0e'):
-            return 0
-        w = _libc_wcwidth(c)
-        return max(0, w) if w >= 0 else 1
-except Exception:
-    def char_width(c):
-        if c in ('\ufe0f', '\ufe0e'):
-            return 0
-        if c in ('🔴', '⚡', '🔌', '🏠', '🅿️', '✅', '⚠️', '❌', '❓', '📄', '💾', '📊', '🚗', '🕒', '📍', '💰', '⚙️', '🗺️', '🇦🇺'):
-            return 2
-        w = unicodedata.east_asian_width(c)
-        if w in ('W', 'F'):
-            return 2
-        return 1
-
-def display_len(s):
-    clean = re.sub(r"\033\[[0-9;]*m", "", s)
-    return sum(char_width(c) for c in clean)
-
-def truncate_display(s, max_width):
-    """Truncates string to fit within max_width display cells, adding ellipsis if truncated."""
-    if display_len(s) <= max_width:
-        return s
-    clean = re.sub(r"\033\[[0-9;]*m", "", s)
-    if display_len(clean) <= max_width:
-        return s
-    res = []
-    cur_w = 0
-    target_w = max_width - 1
-    for c in clean:
-        cw = char_width(c)
-        if cur_w + cw > target_w:
-            break
-        res.append(c)
-        cur_w += cw
-    return "".join(res) + "…"
-
-def pad_display(s, target_width, align="left", truncate=False):
-    if truncate and display_len(s) > target_width:
-        s = truncate_display(s, target_width)
-    d_len = display_len(s)
-    pad_len = max(0, target_width - d_len)
-    if align == "right":
-        return " " * pad_len + s
-    elif align == "center":
-        left = pad_len // 2
-        right = pad_len - left
-        return " " * left + s + " " * right
-    return s + " " * pad_len
+from table_formatter import (
+    char_width,
+    display_len,
+    truncate_display,
+    pad_display,
+    format_row,
+    format_title_line,
+    format_box_line,
+    clean_station_name,
+)
 
 # -----------------------------------------------------------------------------
 # Regional & Geographic Constants
@@ -2238,7 +2195,11 @@ def print_charging_stations_table(stations: list, ref_lat: float = None, ref_lon
     title_col_w = min(max(max_title_len + 2, 24), 32)
     
     max_suburb_len = max((display_len(s.get("location", {}).get("suburb") or s.get("short_name", "")) for s in stations), default=12)
-    suburb_col_w = min(max(max_suburb_len + 2, 14), 20)
+    # Floor must cover the header text itself ("Location / Suburb" = 18 cells)
+    # plus 2 cells of padding, or the header overflows its own column and
+    # sits flush against the border - the 14-cell floor this used to have
+    # was narrower than the header, which is exactly what caused that.
+    suburb_col_w = max(display_len("Location / Suburb") + 2, min(max_suburb_len + 2, 24))
 
     headers = ["#", "Type", "State", "Station Name", "Tier", "Stalls", "Access", "Rate (Now)", "Period / Window"]
     widths = [6, 8, 7, title_col_w, 6, 9, 13, 12, 22]
@@ -2332,8 +2293,8 @@ def print_charging_stations_table(stations: list, ref_lat: float = None, ref_lon
             pad_display(s.get("state", ""), widths[2], "center"),
             pad_display(" " + title_disp, widths[3], "left"),
             pad_display(tier_str, widths[4], "center"),
-            pad_display(stalls_str, widths[5], "center"),
-            pad_display(access_str, widths[6], "center"),
+            pad_display(stalls_str + " ", widths[5], "right"),
+            pad_display(" " + access_str, widths[6], "left"),
             pad_display(rate_str + " ", widths[7], "right"),
             pad_display(" " + period_disp, widths[8], "left"),
         ]

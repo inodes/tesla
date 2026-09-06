@@ -12,7 +12,6 @@ into the dedicated registry Tessie/plugshare_chargers.json using PlugShare's nat
 - ⚡ Deep Hardware & Gross Pricing: Extracts kW power, connector types, stalls, and gross $/kWh tariffs
 - 📊 History Auto-Discovery: Scan charges_master.csv for unregistered charging sessions
 - 💾 Registry Integration: Populates Tessie/plugshare_chargers.json (mirrored schema style)
-- 🔄 Dynamic Sync: Auto-syncs updated registry to mounted TESLADRIVE* volumes
 """
 
 import os
@@ -54,63 +53,20 @@ C_BOLD = "\033[1m"
 C_DIM = "\033[2m"
 C_RESET = "\033[0m"
 
-try:
-    import ctypes
-    libc = ctypes.CDLL("libc.dylib" if sys.platform == "darwin" else "libc.so.6")
-    _libc_wcwidth = libc.wcwidth
-    _libc_wcwidth.argtypes = [ctypes.c_wchar]
-    _libc_wcwidth.restype = ctypes.c_int
+_tools_dir = os.path.dirname(os.path.abspath(__file__))
+if _tools_dir not in sys.path:
+    sys.path.insert(0, _tools_dir)
 
-    def char_width(c):
-        if c in ('\ufe0f', '\ufe0e'):
-            return 0
-        w = _libc_wcwidth(c)
-        return max(0, w) if w >= 0 else 1
-except Exception:
-    def char_width(c):
-        if c in ('\ufe0f', '\ufe0e'):
-            return 0
-        if c in ('🔴', '⚡', '🔌', '🏠', '🅿️', '✅', '⚠️', '❌', '❓', '📄', '💾', '📊', '🚗', '🕒', '📍', '💰', '⚙️', '🗺️', '🇦🇺'):
-            return 2
-        w = unicodedata.east_asian_width(c)
-        if w in ('W', 'F'):
-            return 2
-        return 1
-
-def display_len(s):
-    clean = re.sub(r"\033\[[0-9;]*m", "", s)
-    return sum(char_width(c) for c in clean)
-
-def truncate_display(s, max_width):
-    """Truncates string to fit within max_width display cells, adding ellipsis if truncated."""
-    if not s:
-        return ""
-    clean = re.sub(r"\033\[[0-9;]*m", "", s)
-    if display_len(clean) <= max_width:
-        return clean
-    res = []
-    cur_w = 0
-    target_w = max(1, max_width - 1)
-    for c in clean:
-        cw = char_width(c)
-        if cur_w + cw > target_w:
-            break
-        res.append(c)
-        cur_w += cw
-    return "".join(res) + "…"
-
-def pad_display(s, target_width, align="left", truncate=False):
-    if truncate and display_len(s) > target_width:
-        s = truncate_display(s, target_width)
-    d_len = display_len(s)
-    pad_len = max(0, target_width - d_len)
-    if align == "right":
-        return " " * pad_len + s
-    elif align == "center":
-        left = pad_len // 2
-        right = pad_len - left
-        return " " * left + s + " " * right
-    return s + " " * pad_len
+from table_formatter import (
+    char_width,
+    display_len,
+    truncate_display,
+    pad_display,
+    format_row,
+    format_title_line,
+    format_box_line,
+    clean_station_name,
+)
 
 # =============================================================================
 # Geodesic & Location Utilities

@@ -32,47 +32,19 @@ EMOJI_MAP = {
     "Sentry": "🔴 Sentry"
 }
 
-try:
-    import ctypes
-    libc = ctypes.CDLL("libc.dylib" if sys.platform == "darwin" else "libc.so.6")
-    _libc_wcwidth = libc.wcwidth
-    _libc_wcwidth.argtypes = [ctypes.c_wchar]
-    _libc_wcwidth.restype = ctypes.c_int
+_tools_dir = os.path.dirname(os.path.abspath(__file__))
+if _tools_dir not in sys.path:
+    sys.path.insert(0, _tools_dir)
 
-    def char_width(c):
-        if c in ('\ufe0f', '\ufe0e'):
-            return 0
-        if c in ('🛡', '🔄', '💾', '🔴', '🚗', '📹', '📂', '🚪', '⚠️', '✔', '❌', '🕒', '📅', '📍', '🛑', '🏠', '⚡', '🔌'):
-            return 2
-        w = _libc_wcwidth(c)
-        return max(0, w) if w >= 0 else 1
-except Exception:
-    def char_width(c):
-        if c in ('\ufe0f', '\ufe0e'):
-            return 0
-        if c in ('🛡', '🔄', '💾', '🔴', '🚗', '📹', '📂', '🚪', '⚠️', '✔', '❌', '🕒', '📅', '📍', '🛑', '🏠', '⚡', '🔌'):
-            return 2
-        if c in ('🅿',):
-            return 1
-        w = unicodedata.east_asian_width(c)
-        if w in ('W', 'F'):
-            return 2
-        return 1
-
-def display_len(s):
-    return sum(char_width(c) for c in s)
-
-def pad_display(s, target_width, align="left"):
-    d_len = display_len(s)
-    pad_len = max(0, target_width - d_len)
-    if align == "right":
-        return " " * pad_len + s
-    elif align == "center":
-        left = pad_len // 2
-        right = pad_len - left
-        return " " * left + s + " " * right
-    else:
-        return s + " " * pad_len
+from table_formatter import (
+    char_width,
+    display_len,
+    pad_display,
+    truncate_display,
+    format_row,
+    format_title_line,
+    format_box_line,
+)
 
 def wrap_text_display(s, max_width):
     if display_len(s) <= max_width:
@@ -1092,7 +1064,7 @@ def drill_down_day(day_str, day_trips, analyzer):
         border_bot = "└" + "┴".join("─"*w for w in left_widths) + "┴" + "─"*w_sav + "┴" + "─"*w_sen + "┴" + "─"*w_rec + "┘"
         
         print(f"\n{border_top}")
-        print("│" + pad_display(title, total_inner) + "│")
+        print(format_title_line(title, total_inner, "left"))
         print(border_top_header)
         
         row1_cols = [pad_display(h, w) for h, w in zip(left_headers, left_widths)] + [pad_display("Footage", w_foot_total, "center")]
@@ -1107,22 +1079,16 @@ def drill_down_day(day_str, day_trips, analyzer):
         print("│" + "│".join(row2_cols) + "│")
         print(border_data)
         
+        all_widths = left_widths + [w_sav, w_sen, w_rec]
+        # idx/dur/dist/soc/park are numbers (with units, or plain for idx) -> right-aligned;
+        # time and route are free text -> left-aligned; footage icons stay centered.
+        all_aligns = ["right", "left", "right", "right", "right", "left", "right", "center", "center", "center"]
         for r in rows_data:
-            left_cells = [
-                pad_display(r["idx"], w_idx),
-                pad_display(r["time"], w_time),
-                pad_display(r["dur"], w_dur),
-                pad_display(r["dist"], w_dist),
-                pad_display(r["soc"], w_soc),
-                pad_display(r["route"], w_route),
-                pad_display(r["park"], w_park)
+            row_cells = [
+                r["idx"] + " ", r["time"], r["dur"] + " ", r["dist"] + " ", r["soc"] + " ", r["route"], r["park"] + " ",
+                r["sav"], r["sen"], r["rec"]
             ]
-            foot_cells = [
-                pad_display(r["sav"], w_sav, "center"),
-                pad_display(r["sen"], w_sen, "center"),
-                pad_display(r["rec"], w_rec, "center")
-            ]
-            print("│" + "│".join(left_cells + foot_cells) + "│")
+            print(format_row(row_cells, all_widths, all_aligns))
             
         print(border_bot)
         try:
@@ -1742,7 +1708,7 @@ def display_days_menu(days_dict, title, analyzer, can_go_back=False):
         border_bot = "└" + "┴".join("─"*w for w in left_widths) + "┴" + "─"*w_sav + "┴" + "─"*w_sen + "┴" + "─"*w_rec + "┘"
         
         print(f"\n{border_top}")
-        print("│" + pad_display(title_str, total_inner, "left") + "│")
+        print(format_title_line(title_str, total_inner, "left"))
         print(border_top_header)
         
         row1_cols = [pad_display(h, w) for h, w in zip(left_headers, left_widths)] + [pad_display("Footage", w_foot_total, "center")]
@@ -1757,21 +1723,16 @@ def display_days_menu(days_dict, title, analyzer, can_go_back=False):
         print("│" + "│".join(row2_cols) + "│")
         print(border_data)
         
+        all_widths = left_widths + [w_sav, w_sen, w_rec]
+        # idx/trips/time/dist are numbers (with units, or plain for idx/trips) -> right-aligned;
+        # date and notable-destinations are free text -> left-aligned; footage icons stay centered.
+        all_aligns = ["right", "left", "right", "right", "right", "left", "center", "center", "center"]
         for r in rows_data:
-            left_cells = [
-                pad_display(r["idx"], w_idx),
-                pad_display(r["date"], w_date),
-                pad_display(r["trips"], w_trips),
-                pad_display(r["time"], w_time),
-                pad_display(r["dist"], w_dist),
-                pad_display(r["notable"], w_notable)
+            row_cells = [
+                r["idx"] + " ", r["date"], r["trips"] + " ", r["time"] + " ", r["dist"] + " ", r["notable"],
+                r["sav"], r["sen"], r["rec"]
             ]
-            foot_cells = [
-                pad_display(r["sav"], w_sav, "center"),
-                pad_display(r["sen"], w_sen, "center"),
-                pad_display(r["rec"], w_rec, "center")
-            ]
-            print("│" + "│".join(left_cells + foot_cells) + "│")
+            print(format_row(row_cells, all_widths, all_aligns))
 
         print(border_bot)
         try:
@@ -1845,37 +1806,26 @@ def display_months_menu(days_dict, analyzer):
             w_notable += (t_len + 2 - total_inner)
             total_inner = w_idx + w_month + w_days + w_trips + w_time + w_dist + w_notable + 6
 
-        border_top = "┌" + "─" * total_inner + "┐"
-        border_mid = "├" + "─" * w_idx + "┬" + "─" * w_month + "┬" + "─" * w_days + "┬" + "─" * w_trips + "┬" + "─" * w_time + "┬" + "─" * w_dist + "┬" + "─" * w_notable + "┤"
-        border_bot = "└" + "─" * w_idx + "┴" + "─" * w_month + "┴" + "─" * w_days + "┴" + "─" * w_trips + "┴" + "─" * w_time + "┴" + "─" * w_dist + "┴" + "─" * w_notable + "┘"
+        border_top = format_box_line("┌", "─", "┐", [total_inner])
+        border_top_header = format_box_line("├", "┬", "┤", [w_idx, w_month, w_days, w_trips, w_time, w_dist, w_notable])
+        border_data_divider = format_box_line("├", "┼", "┤", [w_idx, w_month, w_days, w_trips, w_time, w_dist, w_notable])
+        border_bot = format_box_line("└", "┴", "┘", [w_idx, w_month, w_days, w_trips, w_time, w_dist, w_notable])
         
         print(f"\n{border_top}")
-        print("│" + pad_display(title, total_inner, "left") + "│")
-        print(border_mid)
+        print(format_title_line(title, total_inner, "left"))
+        print(border_top_header)
         
-        col_headers = [
-            pad_display(" #", w_idx),
-            pad_display(" Month", w_month),
-            pad_display(" Days", w_days),
-            pad_display(" Trips", w_trips),
-            pad_display(" Time", w_time),
-            pad_display(" Distance", w_dist),
-            pad_display(" Notable Destinations", w_notable)
-        ]
-        print("│" + "│".join(col_headers) + "│")
-        print(border_mid)
+        m_widths = [w_idx, w_month, w_days, w_trips, w_time, w_dist, w_notable]
+        m_headers = [" #", " Month", " Days", " Trips", " Time", " Distance", " Notable Destinations"]
+        # idx/days/trips/time/dist are numbers (with units, or plain for idx/days/trips) -> right-aligned;
+        # month and notable-destinations are free text -> left-aligned.
+        m_aligns = ["right", "left", "right", "right", "right", "right", "left"]
+        print(format_row(m_headers, m_widths))
+        print(border_data_divider)
         
         for r in rows_data:
-            row_cols = [
-                pad_display(r["idx"], w_idx),
-                pad_display(r["month"], w_month),
-                pad_display(r["days"], w_days),
-                pad_display(r["trips"], w_trips),
-                pad_display(r["time"], w_time),
-                pad_display(r["dist"], w_dist),
-                pad_display(r["notable"], w_notable)
-            ]
-            print("│" + "│".join(row_cols) + "│")
+            m_cells = [r["idx"] + " ", r["month"], r["days"] + " ", r["trips"] + " ", r["time"] + " ", r["dist"] + " ", r["notable"]]
+            print(format_row(m_cells, m_widths, m_aligns))
             
         print(border_bot)
         try:
