@@ -129,3 +129,15 @@ Requests tables once closed out, and prune this list then.
   own gap-to-next-trip logic, careful to only compute a gap when the next trip in the
   flattened list shares the same date, so it never bridges across a day boundary - to
   `drill_down_all_days()`, which had omitted it entirely.
+- **`./tessie_places.py review` "No drive logs found" (BUG-011, fixed)**: unrelated
+  to the TESLADRIVE work above - a pre-existing path bug. `find_candidate_drive_logs()`
+  only checked for `drives_master.csv` directly in each Tessie dir, but
+  `consolidate_drives()` actually writes it under a `drives/` subdirectory (with the
+  flat layout only as its own fallback) - a mismatch dating back to when the
+  master-first ingestion pipeline introduced that subdirectory. Fixed by checking
+  `drives/` first then flat, matching `tessie_drives_analyzer.py`'s own fallback
+  order exactly. Verified live against the user's real `Tessie/drives/drives_master.csv`
+  - `review` now lists unlabelled stop clusters instead of erroring. Also dropped the
+  dead `inbox_directory` key from `load_config()`'s default dict - nothing ever read
+  it (only an unrelated self-test emoji label in `table_formatter.py` happens to
+  mention "Inbox").

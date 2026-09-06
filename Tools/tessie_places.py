@@ -34,7 +34,7 @@ REPO_ROOT = os.path.dirname(SCRIPT_DIR)
 TESSIE_DIR = os.path.join(REPO_ROOT, "Tessie")
 PLACES_JSON_PATH = os.path.join(TESSIE_DIR, "places.json")
 CONFIG_JSON_PATH = os.path.join(TESSIE_DIR, "config.json")
-DRIVES_MASTER_PATH = os.path.join(TESSIE_DIR, "drives_master.csv")
+DRIVES_MASTER_PATH = os.path.join(TESSIE_DIR, "drives", "drives_master.csv")
 CHARGING_JSON_PATH = os.path.join(TESSIE_DIR, "tesla_chargers.json") if os.path.isfile(os.path.join(TESSIE_DIR, "tesla_chargers.json")) else os.path.join(TESSIE_DIR, "charging.json")
 SUPERCHARGERS_JSON_PATH = os.path.join(TESSIE_DIR, "tesla_superchargers.json") if os.path.isfile(os.path.join(TESSIE_DIR, "tesla_superchargers.json")) else os.path.join(TESSIE_DIR, "superchargers.json")
 
@@ -610,7 +610,6 @@ def load_config():
     """Loads configuration dictionary from config.json."""
     default_config = {
         "landing_directory": "~/Downloads",
-        "inbox_directory": "~/Library/Mobile Documents/com~apple~CloudDocs/Tesla/Tessie/Inbox",
         "tessie_directory": "~/Library/Mobile Documents/com~apple~CloudDocs/Tesla/Tessie",
         "invoices_directory": "~/iCloud/PDF/Tesla/charging_invoices"
     }
@@ -637,18 +636,22 @@ def find_candidate_drive_logs():
     if TESSIE_DIR not in search_dirs:
         search_dirs.append(TESSIE_DIR)
 
-    # 1. Check for drives_master.csv first
+    # 1. Check for drives_master.csv first - tessie_drives_analyzer.py's
+    # consolidate_drives() writes it under a "drives" subdirectory of each
+    # Tessie dir (with an older flat layout as a fallback, same order it
+    # checks itself), so mirror both here.
     for d in search_dirs:
-        mf = os.path.join(d, "drives_master.csv")
-        if os.path.isfile(mf):
-            return [mf]
+        for mf in (os.path.join(d, "drives", "drives_master.csv"), os.path.join(d, "drives_master.csv")):
+            if os.path.isfile(mf):
+                return [mf]
 
-    # 2. Check for summary CSVs
+    # 2. Check for summary CSVs, same two locations
     summaries = []
     for d in search_dirs:
-        for f in glob.glob(os.path.join(d, "drives_summary_*.csv")):
-            if f not in summaries:
-                summaries.append(f)
+        for sub in ("drives", ""):
+            for f in glob.glob(os.path.join(d, sub, "drives_summary_*.csv")):
+                if f not in summaries:
+                    summaries.append(f)
     return summaries
 
 def review_single_cluster(cl, places, total_clusters=1, cluster_num=1):
