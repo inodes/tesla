@@ -289,30 +289,11 @@ def clean_tokens(s):
 
 def find_mounted_tesla_volumes(subdir=None):
     """
-    Dynamically discovers all mounted volumes matching TESLADRIVE* under /Volumes.
-    If subdir is provided (e.g., 'TeslaCam', 'Tessie', 'Tools', 'invoices'),
-    returns existing subdirectories within those volumes.
+    No-op retained for call-site compatibility. TESLADRIVE* volumes are
+    reserved exclusively for dashcam/TeslaCam media - Tessie data and
+    charging tooling run directly from the repository and iCloud only.
     """
-    volumes_root = "/Volumes"
-    if not os.path.isdir(volumes_root):
-        return []
-    discovered = []
-    seen = set()
-    try:
-        entries = sorted(os.listdir(volumes_root))
-    except Exception:
-        entries = []
-    for entry in entries:
-        if entry.upper().startswith("TESLADRIVE"):
-            vol_path = os.path.join(volumes_root, entry)
-            if os.path.isdir(vol_path):
-                target = os.path.join(vol_path, subdir) if subdir else vol_path
-                if os.path.isdir(target):
-                    real_p = os.path.abspath(os.path.realpath(target))
-                    if real_p not in seen:
-                        seen.add(real_p)
-                        discovered.append(real_p)
-    return discovered
+    return []
 
 # -----------------------------------------------------------------------------
 # Pure Python PDF & CSV Invoice Parser
