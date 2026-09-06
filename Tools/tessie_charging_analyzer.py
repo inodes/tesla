@@ -142,69 +142,19 @@ def resolve_location_timezone(state: str = None, country: str = None, lat: float
 # Terminal Formatting & Unicode Helpers (wcwidth compatible)
 # -----------------------------------------------------------------------------
 
-try:
-    import ctypes
-    libc = ctypes.CDLL("libc.dylib" if sys.platform == "darwin" else "libc.so.6")
-    _libc_wcwidth = libc.wcwidth
-    _libc_wcwidth.argtypes = [ctypes.c_wchar]
-    _libc_wcwidth.restype = ctypes.c_int
+_tools_dir = os.path.dirname(os.path.abspath(__file__))
+if _tools_dir not in sys.path:
+    sys.path.insert(0, _tools_dir)
 
-    def char_width(c):
-        if c in ('\ufe0f', '\ufe0e'):
-            return 0
-        w = _libc_wcwidth(c)
-        return max(0, w) if w >= 0 else 1
-except Exception:
-    def char_width(c):
-        if c in ('\ufe0f', '\ufe0e'):
-            return 0
-        if c in ('🔴', '⚡', '🔌', '🏠', '🅿️', '✅', '⚠️', '❌', '❓', '📄', '💾', '📊', '🚗', '🕒', '📍', '💰', '⚙️'):
-            return 2
-        w = unicodedata.east_asian_width(c)
-        if w in ('W', 'F'):
-            return 2
-        return 1
-
-def display_len(s):
-    clean = re.sub(r"\033\[[0-9;]*m", "", s)
-    return sum(char_width(c) for c in clean)
-
-def truncate_display(s, max_width, ellipsis="…"):
-    if display_len(s) <= max_width:
-        return s
-    el_w = display_len(ellipsis)
-    target = max(1, max_width - el_w)
-    
-    tokens = re.split(r"(\033\[[0-9;]*m)", s)
-    curr = ""
-    curr_len = 0
-    for tok in tokens:
-        if not tok:
-            continue
-        if tok.startswith("\033["):
-            curr += tok
-            continue
-        for c in tok:
-            cw = char_width(c)
-            if curr_len + cw > target:
-                return curr + ellipsis + (C_RESET if "\033[" in s else "")
-            curr += c
-            curr_len += cw
-    return curr + ellipsis + (C_RESET if "\033[" in s else "")
-
-def pad_display(s, target_width, align="left", truncate=False):
-    if truncate and display_len(s) > target_width:
-        s = truncate_display(s, target_width)
-    d_len = display_len(s)
-    pad_len = max(0, target_width - d_len)
-    if align == "right":
-        return " " * pad_len + s
-    elif align == "center":
-        left = pad_len // 2
-        right = pad_len - left
-        return " " * left + s + " " * right
-    else:
-        return s + " " * pad_len
+from table_formatter import (
+    char_width,
+    display_len,
+    truncate_display,
+    pad_display,
+    format_row,
+    format_title_line,
+    format_box_line,
+)
 
 def shorten_display_path(p, max_len=40):
     if not p:
@@ -2409,13 +2359,13 @@ class TessieChargingAnalyzer:
 
             row_str = "│" + "│".join([
                 pad_display(f" {name_str}", widths[0], "left", truncate=True),
-                pad_display(type_label, widths[1], "center", truncate=True),
-                pad_display(str(len(net_sessions)), widths[2], "center", truncate=True),
+                pad_display(" " + type_label, widths[1], "left", truncate=True),
+                pad_display(str(len(net_sessions)) + " ", widths[2], "right", truncate=True),
                 pad_display(f"{n_disp:,.1f} kWh ", widths[3], "right", truncate=True),
                 pad_display(f"{n_bat:,.1f} kWh ", widths[4], "right", truncate=True),
-                pad_display(f"{n_eff:.1f}%", widths[5], "center", truncate=True),
+                pad_display(f"{n_eff:.1f}% ", widths[5], "right", truncate=True),
                 pad_display(f"${n_cost:,.2f} ", widths[6], "right", truncate=True),
-                pad_display(f"${n_avg_rate:.3f} ", widths[7], "right", truncate=True)
+                pad_display(f"${n_avg_rate:.2f} ", widths[7], "right", truncate=True)
             ]) + "│"
             print(row_str)
 
@@ -2512,18 +2462,18 @@ class TessieChargingAnalyzer:
                 stat_styled = f"{C_DIM}{stat}{C_RESET}"
 
             row_str = "│" + "│".join([
-                pad_display(idx_str, widths[0], "center", truncate=True),
-                pad_display(dt_str, widths[1], "center", truncate=True),
+                pad_display(idx_str + " ", widths[0], "right", truncate=True),
+                pad_display(" " + dt_str, widths[1], "left", truncate=True),
                 pad_display(f" {place_str}", widths[2], "left", truncate=True),
                 pad_display(f" {net_str}", widths[3], "left", truncate=True),
-                pad_display(soc_str, widths[4], "center", truncate=True),
-                pad_display(dur_str, widths[5], "center", truncate=True),
+                pad_display(soc_str + " ", widths[4], "right", truncate=True),
+                pad_display(dur_str + " ", widths[5], "right", truncate=True),
                 pad_display(f"{disp_str} ", widths[6], "right", truncate=True),
                 pad_display(f"{bat_str} ", widths[7], "right", truncate=True),
-                pad_display(eff_str, widths[8], "center", truncate=True),
+                pad_display(eff_str + " ", widths[8], "right", truncate=True),
                 pad_display(f"{rate_str} ", widths[9], "right", truncate=True),
                 pad_display(f"{cost_str} ", widths[10], "right", truncate=True),
-                pad_display(inv_str, widths[11], "center", truncate=True),
+                pad_display(" " + inv_str, widths[11], "left", truncate=True),
                 pad_display(f" {stat_styled}", widths[12], "left", truncate=True)
             ]) + "│"
             print(row_str)
@@ -2645,8 +2595,8 @@ class TessieChargingAnalyzer:
                 tot_loss += t_loss
 
             row_str = "│" + "│".join([
-                pad_display(idx_str, widths[0], "center", truncate=True),
-                pad_display(dt_str, widths[1], "center", truncate=True),
+                pad_display(idx_str + " ", widths[0], "right", truncate=True),
+                pad_display(" " + dt_str, widths[1], "left", truncate=True),
                 pad_display(f" {place_str}", widths[2], "left", truncate=True),
                 pad_display(f"{bat_str} ", widths[3], "right", truncate=True),
                 pad_display(f"{car_str} ", widths[4], "right", truncate=True),
@@ -2654,9 +2604,9 @@ class TessieChargingAnalyzer:
                 pad_display(f"{cable_str} ", widths[6], "right", truncate=True),
                 pad_display(f"{car_str_loss} ", widths[7], "right", truncate=True),
                 pad_display(f"{total_loss_str} ", widths[8], "right", truncate=True),
-                pad_display(eff_str, widths[9], "center", truncate=True),
+                pad_display(eff_str + " ", widths[9], "right", truncate=True),
                 pad_display(f"{cost_v} ", widths[10], "right", truncate=True),
-                pad_display(telem_str, widths[11], "center", truncate=True)
+                pad_display(telem_str + " ", widths[11], "right", truncate=True)
             ]) + "│"
             print(row_str)
 
@@ -3155,13 +3105,13 @@ class TessieChargingAnalyzer:
             tier_str = hw.get("tier", "-") or "-"
 
             row_cells = [
-                pad_display(str(idx), widths[0], "center"),
+                pad_display(str(idx) + " ", widths[0], "right"),
                 pad_display(st_state, widths[1], "center"),
                 pad_display(f" {name}", widths[2], "left", truncate=True),
                 pad_display(f" {suburb}", widths[3], "left", truncate=True),
-                pad_display(stalls_str, widths[4], "center"),
+                pad_display(stalls_str + " ", widths[4], "right"),
                 pad_display(tier_str, widths[5], "center"),
-                pad_display(access_str, widths[6], "center"),
+                pad_display(" " + access_str, widths[6], "left"),
                 pad_display(f" {sched_str}", widths[7], "left", truncate=True)
             ]
             print("│" + "│".join(row_cells) + "│")
@@ -3202,13 +3152,13 @@ class TessieChargingAnalyzer:
             st_state = st_state or "-"
 
             row_cells = [
-                pad_display(str(idx), widths_oth[0], "center"),
+                pad_display(str(idx) + " ", widths_oth[0], "right"),
                 pad_display(st_state, widths_oth[1], "center"),
                 pad_display(f" {emoji} {name}", widths_oth[2], "left", truncate=True),
                 pad_display(f" {net}", widths_oth[3], "left", truncate=True),
-                pad_display(type_lbl, widths_oth[4], "center"),
-                pad_display(pwr, widths_oth[5], "center"),
-                pad_display(hw_type, widths_oth[6], "center"),
+                pad_display(" " + type_lbl, widths_oth[4], "left"),
+                pad_display(pwr + " ", widths_oth[5], "right"),
+                pad_display(" " + hw_type, widths_oth[6], "left"),
                 pad_display(f" {sched_str}", widths_oth[7], "left", truncate=True)
             ]
             print("│" + "│".join(row_cells) + "│")
