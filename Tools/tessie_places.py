@@ -7,7 +7,6 @@ Tesla / Tessie Location Management & POI Lookup Engine
 - Interactive POI lookup by street address or GPS coordinates via OpenStreetMap / Overpass
 - Drive stop clustering and interactive discovery from drives_master.csv (ignores charging stops)
 - Automatic POI center coordinate resolution and custom coordinate/address override
-- Multi-drive auto-synchronization across all mounted TESLADRIVE* volumes
 - Strict Zero-PII compliance across all documentation and examples
 """
 
@@ -74,28 +73,13 @@ def haversine_distance(lat1, lon1, lat2, lon2):
 # Drive Synchronization
 # ---------------------------------------------------------------------------
 def sync_places_file(source_path=PLACES_JSON_PATH):
-    """Synchronizes places.json to all mounted TESLADRIVE* volumes."""
-    synced = []
-    if not os.path.exists(source_path):
-        return synced
-    
-    volumes_dir = "/Volumes"
-    if os.path.exists(volumes_dir):
-        try:
-            for entry in os.listdir(volumes_dir):
-                if entry.startswith("TESLADRIVE"):
-                    vol_path = os.path.join(volumes_dir, entry)
-                    dest_tessie = os.path.join(vol_path, "Tessie")
-                    if os.path.isdir(dest_tessie):
-                        dest_file = os.path.join(dest_tessie, os.path.basename(source_path))
-                        try:
-                            shutil.copyfile(source_path, dest_file)
-                            synced.append(dest_file)
-                        except Exception as e:
-                            print(f"⚠️  Failed to sync to {dest_file}: {e}")
-        except Exception:
-            pass
-    return synced
+    """
+    No-op retained for call-site compatibility. TESLADRIVE* volumes are
+    reserved exclusively for dashcam/TeslaCam media - places.json (which
+    contains real personal addresses) is never copied there. Tessie data
+    and tooling run directly from the repository and iCloud only.
+    """
+    return []
 
 # ---------------------------------------------------------------------------
 # Places JSON Storage Manager (Only touches places.json, leaves chargers alone)
@@ -647,17 +631,9 @@ def find_candidate_drive_logs():
     config = load_config()
     tessie_dir = os.path.abspath(os.path.expanduser(config.get("tessie_directory", "~/Library/Mobile Documents/com~apple~CloudDocs/Tesla/Tessie")))
     
+    # TESLADRIVE* volumes are reserved exclusively for dashcam/TeslaCam media,
+    # not Tessie data - only the configured Tessie dir and repo dir are searched.
     search_dirs = [tessie_dir]
-    volumes_root = "/Volumes"
-    if os.path.isdir(volumes_root):
-        try:
-            for entry in os.listdir(volumes_root):
-                if entry.startswith("TESLADRIVE"):
-                    vol_tessie = os.path.join(volumes_root, entry, "Tessie")
-                    if os.path.isdir(vol_tessie) and vol_tessie not in search_dirs:
-                        search_dirs.append(vol_tessie)
-        except Exception:
-            pass
     if TESSIE_DIR not in search_dirs:
         search_dirs.append(TESSIE_DIR)
 

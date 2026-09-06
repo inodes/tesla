@@ -49,7 +49,18 @@ All terminal tools (such as `Tools/tessie_drives_analyzer.py` and `Tools/tessie_
    - Standard Python `len()` counts UTF-8 code points, which breaks alignment when emojis (e.g., 🏠, 🕒, 🛡️, 📹, ⚡, 🔴) or wide Asian characters are displayed.
    - Always calculate visual widths using `display_len()` and format cells with `pad_display(text, target_width, align="left"|"right"|"center")`.
 
-3. **Piped & Non-Interactive Execution Safety**:
+3. **Centralized Table & Display Standards (`Tools/table_formatter.py`)**:
+   - All tools MUST import formatting utilities from `Tools/table_formatter.py` (`char_width`, `display_len`, `pad_display`, `truncate_display`, `format_row`, `format_title_line`, `format_box_line`).
+   - **Emoji 0 vs 1 vs 2 Spaces Handling**:
+     - `0 spaces`: Variation selectors (`\ufe0f`, `\ufe0e`), zero-width joiners/spaces (`\u200d`, `\u200b`, `\u200c`), and combining marks.
+     - `1 space`: Standard ASCII, Latin, box drawing (`│`, `─`, `┌`, etc.), arrows (`➔`, `→`), bullets (`•`, `·`), standalone enclosed alphanumerics (`🅿`), and monospace emojis whose cursor advance in macOS Terminal libc is 1 cell (`🗓️`, `🛡️`, `⚙️`, `⚠️`, `⏱`, `🛠️`, `🏷️`, `🗺️`, `✔`, `🇦🇺`).
+     - `2 spaces`: East Asian Wide (`W`/`F`) characters and pictographs whose cursor advance in terminal fonts is 2 cells (`📹`, `🕒`, `🔴`, `🔵`, `🟡`, `🟢`, `⚪`, `🚗`, `🏠`, `⚡`, `🔌`, `🔋`, `💾`, `🔄`, `📍`, `💰`, `📅`, `📊`, `📋`, `📜`, `🏢`, `🌐`, `🔍`, `🔎`, `🔒`, `🔗`, `🚀`, `🚪`, `📦`, `📥`, `⏰`, `⏳`, `✨`, `⭐`, `💡`, `🎉`, `🎯`, `📁`, `📂`, `📄`, `📮`, `📲`, `✅`, `❌`, `❓`).
+   - **Column & Row Width Sanity Checks**:
+     - `pad_display()` automatically validates that `display_len(result) == target_width`. If an emoji or multibyte boundary produces an unexpected width, it self-corrects whitespace to guarantee exact visual alignment.
+     - `format_row()` sanity checks both each individual column width and the entire row width against `sum(col_widths) + len(col_widths) + 1` before rendering.
+     - `format_title_line()` verifies and balances table title banners against `total_inner + 2`.
+
+4. **Piped & Non-Interactive Execution Safety**:
    - Never auto-cascade through interactive drill-down menus or dump hundreds of lines of footage when `sys.stdin` is piped (e.g. `echo "q" | ./script.py`).
    - Allow `input()` to consume piped stdin cleanly, and catch `EOFError` / `KeyboardInterrupt` to exit gracefully.
 
@@ -100,6 +111,7 @@ tesla/
 | **REQ-014** | 2026-09-06 | Establish unified `Tools/table_formatter.py` with emoji 1-vs-2 space handling and column/row width sanity checks across all tools | ✅ Complete | `Tools/table_formatter.py`, all `Tools/*.py` |
 | **REQ-015** | 2026-09-06 | Enforce column alignment rules across all terminal tables: text/sentences left; text-or-numbers-with-units right (currency always `.2f`); plain numbers right | ✅ Complete | `Tools/find_plugshare_chargers.py`, `Tools/find_tesla_chargers.py`, `Tools/tessie_charging_analyzer.py`, `Tools/tessie_drives_analyzer.py` |
 | **REQ-016** | 2026-09-06 | Default sort for charger explorers (no explicit `--sort`, no proximity ref) should be State, then Station Name alphabetical, not arbitrary API order | ✅ Complete | `Tools/find_plugshare_chargers.py`, `Tools/find_tesla_chargers.py` |
+| **REQ-017** | 2026-09-06 | Remove all TESLADRIVE-sync code outside `tesla_sync.sh` (deprecated) - includes fixing a live PII-exposure bug where `places.json` (real home/school/work addresses) was actually copied to any mounted TESLADRIVE volume | ✅ Complete | `Tools/find_plugshare_chargers.py`, `Tools/tessie_charging_analyzer.py`, `Tools/tessie_drives_analyzer.py`, `Tools/tessie_places.py` |
 | **REQ-018** | 2026-09-06 | Add `--refresh-prices` to `find_plugshare_chargers.py` to backfill pricing for stations discovered via bulk/region search (which returns no tariff data) that don't already have a saved rate | ✅ Complete (rate-limited by PlugShare on large bursts - see BUG-008) | `Tools/find_plugshare_chargers.py` |
 
 ---

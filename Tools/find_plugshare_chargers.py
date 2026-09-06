@@ -207,25 +207,13 @@ def resolve_reference_coordinates(ref_str, repo_root=None):
     return None, None, None
 
 def find_mounted_tesla_volumes(subdir=None):
-    volumes_root = "/Volumes"
-    if not os.path.isdir(volumes_root):
-        return []
-    discovered, seen = [], set()
-    try:
-        entries = sorted(os.listdir(volumes_root))
-    except Exception:
-        entries = []
-    for entry in entries:
-        if entry.upper().startswith("TESLADRIVE"):
-            vol_path = os.path.join(volumes_root, entry)
-            if os.path.isdir(vol_path):
-                target = os.path.join(vol_path, subdir) if subdir else vol_path
-                if os.path.isdir(target):
-                    real_p = os.path.abspath(os.path.realpath(target))
-                    if real_p not in seen:
-                        seen.add(real_p)
-                        discovered.append(real_p)
-    return discovered
+    """
+    No-op retained for call-site compatibility. TESLADRIVE* volumes are
+    reserved exclusively for dashcam/TeslaCam media - the PlugShare
+    registry is never synced there. Tessie tooling runs directly from
+    the repository and iCloud only.
+    """
+    return []
 
 # =============================================================================
 # PlugShare API Client & Network Mapping
@@ -890,10 +878,10 @@ def print_plugshare_chargers_table(
             pad_display(s.get("state", "-"), widths[2], "center"),
             pad_display(" " + title_disp, widths[3], "left"),
             pad_display(" " + net_disp, widths[4], "left"),
-            pad_display(stalls_str, widths[5], "center"),
+            pad_display(stalls_str + " ", widths[5], "right"),
             pad_display(" " + access_disp, widths[6], "left"),
             pad_display(rate_str + " ", widths[7], "right"),
-            pad_display(power_str, widths[8], "center"),
+            pad_display(power_str + " ", widths[8], "right"),
         ]
 
         if has_dist:
