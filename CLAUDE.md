@@ -95,6 +95,22 @@ Requests tables once closed out, and prune this list then.
   table built from the exact suburb list in the user's own pasted output.
 - **Committed — 4 commits landed on `main`** (`6b0e560` table alignment/formatting,
   `9d121a2` PlugShare sort/collision/refresh-prices, `aee3a51` TESLADRIVE removal,
-  `ef260f6` README/CI doc audit). Nothing left pending from this session except the
-  user re-testing `--refresh-prices` for real (TODO-006 in `AGENTS.md`) and deciding
-  whether it needs the multi-invocation/`--limit`-slicing workaround.
+  `ef260f6` README/CI doc audit).
+- **Dashcam footage regression (BUG-010, fixed)**: the `aee3a51` TESLADRIVE-removal
+  commit above gutted `find_mounted_tesla_volumes()` in `tessie_drives_analyzer.py`
+  to an unconditional no-op. Correct for its `"Tessie"` call site (personal data must
+  never be read from TESLADRIVE), but that same function is the *only* thing that
+  populates `self.teslacam_dirs` (via `find_mounted_tesla_volumes("TeslaCam")` -
+  there's no CLI flag override), and locating real footage on mounted TESLADRIVE
+  volumes is TESLADRIVE's actual intended purpose. User reported it via a live paste:
+  every Saved/Sentry/Recent column showed `·` at every drill-down level (months →
+  days → per-trip). Fixed by restoring the real `/Volumes/TESLADRIVE*` scanning
+  implementation (verified via git history from before `aee3a51` - it only ever reads
+  directory listings, never writes anything, so restoring it doesn't reopen the PII
+  issue) and removing the `"Tessie"` candidate-list call site outright rather than
+  leaving it merely dead. `tessie_charging_analyzer.py`'s four
+  `find_mounted_tesla_volumes()` call sites were checked too - all four pass
+  `"Tessie"`/`"invoices"` subdirs (personal data), none are footage-related, so that
+  file's no-op gutting was correct as-is and needs no change.
+  `find_plugshare_chargers.py` still defines the function but has zero call sites -
+  also fine as-is. User confirmed on their real machine: footage is back.
