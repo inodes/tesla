@@ -320,25 +320,12 @@ class TessieAnalyzer:
         return self.places
 
     def resolve_place(self, address, saved_loc="", lat=None, lon=None):
-        # 1. Saved Location exact or keyword match
-        if saved_loc and saved_loc.strip():
-            s_clean = saved_loc.strip()
-            if s_clean in self.places:
-                return s_clean
-            for place_name, p_info in self.places.items():
-                if not isinstance(p_info, dict):
-                    continue
-                kws = p_info.get("keywords") or []
-                if s_clean.lower() == place_name.lower():
-                    return place_name
-                for kw in kws:
-                    if kw and isinstance(kw, str) and kw.strip() and kw.strip().lower() in s_clean.lower():
-                        return place_name
-            return s_clean
-
         addr_clean = address.lower() if address else ""
 
-        # 2. GPS Geofence matching on known places (Highest Accuracy!)
+        # 1. GPS Geofence matching on known places (Highest Accuracy! - checked
+        #    before Tessie's own Saved Location, which is manually entered in the
+        #    Tessie app and can be stale, generic, or missing charger-specific
+        #    detail our own registries already have - see AGENTS.md BUG-016.)
         if lat is not None and lon is not None:
             best_place = None
             min_dist = float("inf")
@@ -357,7 +344,7 @@ class TessieAnalyzer:
             if best_place:
                 return best_place
 
-        # 3. GPS Geofence matching on charging profiles
+        # 2. GPS Geofence matching on charging profiles
         if lat is not None and lon is not None:
             best_charge = None
             min_dist = float("inf")
@@ -376,7 +363,7 @@ class TessieAnalyzer:
             if best_charge:
                 return best_charge
 
-        # 4. GPS Geofence matching on Superchargers
+        # 3. GPS Geofence matching on Superchargers
         if lat is not None and lon is not None:
             best_sc = None
             min_dist = float("inf")
@@ -394,6 +381,24 @@ class TessieAnalyzer:
                         best_sc = sc_info.get("tesla_metadata", {}).get("short_name") or sc_info.get("location_name") or sc_name
             if best_sc:
                 return best_sc
+
+        # 4. Saved Location exact or keyword match (Tessie's own manually-entered
+        #    field - fallback only, since it's user-editable in the Tessie app and
+        #    not guaranteed to reflect our own registries or stay in sync with them)
+        if saved_loc and saved_loc.strip():
+            s_clean = saved_loc.strip()
+            if s_clean in self.places:
+                return s_clean
+            for place_name, p_info in self.places.items():
+                if not isinstance(p_info, dict):
+                    continue
+                kws = p_info.get("keywords") or []
+                if s_clean.lower() == place_name.lower():
+                    return place_name
+                for kw in kws:
+                    if kw and isinstance(kw, str) and kw.strip() and kw.strip().lower() in s_clean.lower():
+                        return place_name
+            return s_clean
 
         # 5. Strict Keyword matching on known places (sorted by length descending)
         all_kws = []
