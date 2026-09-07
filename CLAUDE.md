@@ -31,6 +31,33 @@
   PlugShare's site (JS-rendered SPA; `WebFetch` only returns unreliable
   og:meta tags). Treat both paths as unable to independently verify live PlugShare
   data — the user's own browser/terminal is the only reliable source for that.
+- “`~`-relative config paths do NOT resolve inside this VM (confirmed again, BUG-025,
+  2026-09-07)”: `device_bash`'s own `$HOME` is a session-specific sandbox home, not
+  `/Users/glenn`. Only the specific connected folders are bridged in, as `~/mnt/<name>`
+  (currently `tesla`, `Tessie`, `Downloads`, `charging_invoices`). `Tessie/config.json`'s
+  own settings (`tessie_directory: "~/iCloud/Tesla/Tessie"`, `invoices_directory`,
+  `landing_directory: "~/Downloads"`) all `os.path.expanduser()` to a non-existent path
+  INSIDE this VM even though they're correct on the user's real machine — confirmed live
+  by instantiating `TessieAnalyzer()` here and printing `self.tessie_data_home`, which
+  came back as `/sessions/<session-id>/iCloud/Tesla/Tessie` (`exists: False`). Running a
+  script's default/config-driven path from this shell is therefore **not** a valid test,
+  same lesson as BUG-020/BUG-023/BUG-024 — it either silently no-ops ("No drive records
+  found to consolidate") or, worse, could fall through to a wrong fallback if one still
+  existed anywhere in the code.
+  **The safe way to actually exercise a real write from this session**: pass the
+  script's own override parameter pointing STRAIGHT at the correctly-mounted alias,
+  bypassing config.json's `~/iCloud/...` string entirely — e.g.
+  `analyzer.consolidate_drives(master_dir=os.path.expanduser("~/mnt/Tessie/drives"), verbose=True)`
+  or `TessieChargingAnalyzer(...).consolidate_charges_master(output_dir=os.path.expanduser("~/mnt/Tessie/charges"))`.
+  `~/mnt/Tessie` is a real, live, bidirectional mount of the user's actual iCloud folder
+  (a different thing from the config path resolving inside the VM), so writes through it
+  are genuinely real and genuinely safe to verify — this is how BUG-025's dedup-key fix
+  was actually confirmed live from this session (self-healed 2113 rows with 1055 exact
+  duplicates back down to the true 1058 unique drives, then a second run confirmed fully
+  idempotent at "+0 new" with zero sanity issues). Still true, and unaffected by this:
+  never call a convenience method that takes NO override (`load_drives()`, `load_charges()`,
+  a bare CLI `--consolidate`) from this shell, since those always fall back to the
+  unresolvable config path with no way to redirect them.
 
 ## 2. Working conventions specific to this session
 
