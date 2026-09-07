@@ -48,10 +48,11 @@ pvoutput.org). Two equivalent auth styles, both officially documented:
 **Config key convention** (matching this repo's existing flat
 `Tessie/config.json` style — `vin`, `tessie_access_token`,
 `evnex_username`/`evnex_password` all already live there regardless of
-which domain they belong to): store as `"pvoutput_api_key"` and
-`"pvoutput_system_id"`. Both added as empty-string placeholders to
-`Tessie/config.json` and `Tessie/config.example.json` in REQ-038 — no real
-token exists yet, nothing has been requested from PVOutput.
+which domain they belong to): stored as `"pvoutput_api_key"` and
+`"pvoutput_system_id"`. Placeholders added to `Tessie/config.json` and
+`Tessie/config.example.json` in REQ-038; the user populated the real
+values afterwards, and both have now been exercised against the real
+account (see "Confirmed live against the real account" below).
 
 ## Rate limits — confirmed
 
@@ -192,6 +193,16 @@ Peak/Off-Peak/Shoulder/High-Shoulder Tariff, Import Daily Charge, all in
 cents), team memberships, donation count, extended-data (v7–v12) field
 config, and monthly generation estimates (kWh).
 
+**Confirmed real example** (`getsystem.jsp?donations=1` against the
+user's own account): 16 comma-separated fields — system name, size (W),
+postcode, panel count, panel power (W), panel brand, inverter count,
+inverter power (W), inverter brand, orientation, tilt, shade, install
+date, latitude, longitude, then a final semicolon-separated block
+`"5;;1"` = Status Interval (5 min) `;` Secondary array Status Interval
+(blank — no `array2`) `;` Donations (1 — confirms **donation-tier**,
+matching the 300 req/hour seen in the rate-limit headers below, not the
+free tier's 60).
+
 ## Error catalog — confirmed
 
 Common errors returned by the service:
@@ -236,23 +247,46 @@ Common errors returned by the service:
   AGL's own AEST/AEDT half-hourly rows the same way AGENTS.md TODO-009
   already handles for Tessie's own CSV timestamps.
 
-## What still needs verifying
+## Confirmed live against the real account (AGENTS.md TODO-016)
 
-Everything above is now sourced from the real, official API specification
-the user pasted directly (see AGENTS.md REQ-039) — not secondary guesses.
-What remains are genuinely account-specific facts that only a real API
-call against the user's own account can answer, not documentation:
+Everything above was already sourced from the real, official API
+specification the user pasted directly (see REQ-039) — not secondary
+guesses. The remaining account-specific facts have now been confirmed by
+a real `Tools/test_pvoutput_api.py --show-values` run against the user's
+own account (system `...1754`, 10.5kW / 30 panels):
 
-1. **Whether the user's account is free or donation-tier** — changes the
-   60 vs. 300 req/hour ceiling, the 12 vs. 60 req/hour Get Statistic
-   ceiling, and whether `ext=1` extended fields / `sid1` / `getextended.jsp`
-   are available at all.
-2. **The system's actual configured timezone** in its PVOutput account
-   settings, to confirm it lines up with how AGL's own half-hourly rows
-   are timestamped.
-3. A first real registration/API-key generation and one manual test call
-   (e.g. `getstatus.jsp?d=<yesterday>&h=1`) from the user's own real
-   network, the same pattern already used for Tessie (`test_tessie_api.py`,
-   REQ-022) and Evnex (`evnex_explore.py`, REQ-026) — this session has no
-   route to make a live authenticated call, so nothing here has been
-   exercised against the real account yet. Tracked as AGENTS.md TODO-016.
+1. **Account tier: donation-tier, confirmed.** The rate-limit header
+   came back `Limit=300` (not the free tier's 60), and `getsystem.jsp`'s
+   own Donations field read `1` — see the confirmed example above.
+2. **`getstatus.jsp?h=1` field order: confirmed exactly**, reading matches
+   the documented History-shape order field-for-field — e.g. a real
+   23:55 row's Energy Generation (36486 Wh) divided by the system's own
+   10500 W capacity lands exactly on that same row's Energy Efficiency
+   field (3.475 kWh/kW), and Energy Consumption correctly reset to 0 at
+   the first reading (00:00) of the next day.
+3. **Rate-limit header names: confirmed exactly** — `X-Rate-Limit-Remaining`,
+   `X-Rate-Limit-Limit`, `X-Rate-Limit-Reset` all came back as documented.
+   One bug caught in `Tools/pvoutput_common.py` along the way: the first
+   test run showed "no X-Rate-Limit-* headers in response" even though
+   they were actually present — `print_rate_limit()` was doing a
+   case-sensitive dict lookup against a plain `dict()` of the response
+   headers, and HTTP header names are case-insensitive. Fixed with a
+   lower-cased lookup; re-running then showed the real values
+   (`Remaining=297, Limit=300, Reset=1788825600`).
+4. **Rate-limit reset boundary: confirmed UTC**, not system-local — the
+   real `X-Rate-Limit-Reset` value (`1788825600`) decodes to exactly
+   `2026-09-08T00:00:00Z`, a clean UTC midnight.
+5. **System-local timezone for `d`/`df`/`dt` dates: still not fully
+   proven**, though circumstantially consistent with Australia/Sydney —
+   the account's own configured location (per `getsystem.jsp`'s postcode
+   and lat/lon fields, not repeated here - see AGENTS.md's Zero-PII rule)
+   is in Sydney, NSW, and the pulled day's readings show generation
+   dropping to near-zero by the evening hours as expected for that
+   timezone. A firmer check (comparing a reading's exact solar-noon peak time against
+   real local solar noon for that date) hasn't been done yet — low
+   priority unless a future half-hourly match against AGL's AEST/AEDT
+   rows (AGENTS.md TODO-009) shows an off-by-some-hours drift.
+6. **First real registration/test call: done.** `Tools/pvoutput_common.py`
+   + `Tools/test_pvoutput_api.py` now exist, mirroring the
+   `tessie_api_common.py`/`test_tessie_api.py` pattern, and have been run
+   twice successfully against the real account.
