@@ -877,6 +877,27 @@ class TessieChargingAnalyzer:
         self.charging_archived = self.load_json_registry("tesla_chargers_archived.json") or self.load_json_registry("charging_archived.json") or self.load_json_registry("destination_chargers_archived.json")
         self.places = self.load_json_registry("places.json")
 
+        # Invoice-number -> resolved location, written out beside the
+        # invoice files (BUG-022): once we know WHICH invoice matched a
+        # charge, the invoice's own printed station name is more
+        # authoritative than anything guessed from Tessie's own (often
+        # stale/manually-entered) saved_location or address text. This
+        # cache also lets a human hand-correct one entry (add
+        # "manual_override": true) and have it stick across future runs.
+        self.invoice_location_map_path = (
+            os.path.join(self.invoice_dirs[0], "invoice_locations.json") if self.invoice_dirs else None
+        )
+        self.invoice_location_map = {}
+        if self.invoice_location_map_path and os.path.isfile(self.invoice_location_map_path):
+            try:
+                with open(self.invoice_location_map_path, "r", encoding="utf-8") as f:
+                    loaded = json.load(f)
+                    if isinstance(loaded, dict):
+                        self.invoice_location_map = loaded
+            except Exception:
+                pass
+        self._invoice_location_map_dirty = False
+        
         # 5. Detailed Telemetry CSVs
         self.vin = self.config.get("vin")
         self.landing_dir = os.path.expanduser(self.config.get("landing_directory", "~/Downloads"))
@@ -952,16 +973,45 @@ class TessieChargingAnalyzer:
         # lists (scraped verbatim from PlugShare place names/addresses) and
         # used to let a random early match steal a session that a much
         # more specific, later entry (or plain GPS distance) would have
-        # gotten right - see BUG-021. Counting how many DISTINCT entries
-        # share each keyword lets us drop the ones with no discriminating
-        # power at all, without hand-maintaining a stoplist.
-        from collections import Counter
-        kw_counts = Counter()
+        # gotten right - see BUG-021.
+        #
+        # Uniqueness is counted by DISTINCT NORMALIZED DISPLAY NAME, not by
+        # raw registry-entry count (BUG-022 follow-up): the PlugShare scrape
+        # sometimes stores the SAME real station twice under two different
+        # dict keys (e.g. "Bunnings Gladesville" and "Bunnings Gladesville
+        # (PlugShare #1517863)" - a re-scrape that only differs by its
+        # trailing "(PlugShare #...)" suffix). A raw count of 2 wrongly
+        # disqualified "Bunnings Gladesville" as if it were ambiguous, even
+        # though both rows resolve to the exact same place - which sent a
+        # real Bunnings Gladesville invoice to the generic "Gladesville"
+        # fallback instead of matching it. Collapsing duplicate rows down to
+        # one normalized identity before counting fixes that while still
+        # correctly excluding genuinely shared words ("Bunnings" alone spans
+        # 6 different stores; "Gladesville" alone spans 3).
+        from collections import defaultdict
+        kw_display_names = defaultdict(set)
         for kind, name, data in candidates:
+            display_key = self._normalized_display_name(kind, name, data)
             for kw in self._candidate_keywords(kind, data):
-                kw_counts[kw.lower()] += 1
-        self._loc_kw_counts = kw_counts
+                kw_display_names[kw.lower()].add(display_key)
+        self._loc_kw_counts = {kw: len(names) for kw, names in kw_display_names.items()}
         return candidates
+
+    @staticmethod
+    def _normalized_display_name(kind, name, data):
+        """Collapses registry-key variants of the SAME physical place (see
+        the keyword-uniqueness comment above in _resolve_location_candidates)
+        down to one identity: takes the same display name resolve_location()
+        would show the user, then strips a trailing "(...)" parenthetical -
+        the shape PlugShare re-scrape duplicates differ by - and lowercases."""
+        if kind == "supercharger":
+            display = name
+        elif kind == "place":
+            display = data.get("nickname") or name
+        else:
+            display = data.get("name") or name
+        display = re.sub(r'\s*\([^)]*\)\s*$', '', str(display)).strip().lower()
+        return display
 
     @staticmethod
     def _candidate_keywords(kind, data):
@@ -1071,7 +1121,13 @@ class TessieChargingAnalyzer:
                     return self._candidate_result(kind, name, data, is_supercharger, is_fast)
 
         # 3. Keyword match - only keywords unique to ONE entry, long enough
-        #    to mean something.
+        #    to mean something, and matched on WORD BOUNDARIES - a plain
+        #    substring check let a short keyword like "Ville" (from "The
+        #    Ville Resort Casino") match merely because it's a fragment
+        #    inside an unrelated word ("gladesVILLE"), even though "Ville"
+        #    itself was unique across the registry (BUG-022 follow-up,
+        #    caught while re-testing this exact fix against a real
+        #    Bunnings Gladesville invoice).
         MIN_KEYWORD_LEN = 5
         kw_counts = self._loc_kw_counts
         saved_lower_full = saved_clean.lower()
@@ -1080,7 +1136,8 @@ class TessieChargingAnalyzer:
                 kwl = kw.lower()
                 if len(kwl) < MIN_KEYWORD_LEN or kw_counts.get(kwl, 0) != 1:
                     continue
-                if (kwl in saved_lower_full) or (kwl in addr_clean):
+                pattern = r'\b' + re.escape(kwl) + r'\b'
+                if (saved_lower_full and re.search(pattern, saved_lower_full)) or re.search(pattern, addr_clean):
                     return self._candidate_result(kind, name, data, is_supercharger, is_fast)
 
         display = saved_clean or (address.split(",")[0].strip() if address else "Unknown Location")
@@ -1090,6 +1147,93 @@ class TessieChargingAnalyzer:
             return (display, "3rd-Party Fast", "🔌", {})
         else:
             return (display, "AC Charger", "🅿️", {})
+
+    def resolve_invoice_location(self, invoice):
+        """The authoritative (place_name, network, emoji, registry_obj) for
+        a MATCHED invoice (BUG-022). Once we know which invoice paid for a
+        charge, the invoice's own printed station name/address is more
+        trustworthy than anything guessed beforehand from Tessie's own
+        saved_location (manually entered, sometimes stale/wrong - see
+        BUG-016/BUG-021) or from GPS-free address text. Priority:
+
+        1. A previously recorded entry in invoice_locations.json - always
+           wins if it has "manual_override": true (a human fixed it once,
+           it stays fixed); otherwise treated as a cached prior result.
+        2. Fresh resolution via resolve_location(), using ONLY the
+           invoice's own location text as the address/keyword-match input
+           and deliberately NOT Tessie's saved_location - so a wrong
+           saved_location can never override a correct invoice-derived
+           match. GPS is passed through if the invoice itself carries
+           coordinates (most don't; text-based matching is what wins the
+           common case, e.g. an Exploren receipt's own "Location" line).
+
+        Every fresh resolution is cached into invoice_location_map (queued
+        for a single save_invoice_location_map() call at the end of
+        reconcile()) so the mapping file beside the invoices stays a
+        readable, hand-correctable record of what each invoice number
+        actually paid for.
+        """
+        inv_num = invoice.get("invoice_number")
+        loc_raw = invoice.get("location_raw") or ""
+        cached = self.invoice_location_map.get(inv_num) if inv_num else None
+        if cached and cached.get("manual_override"):
+            return (cached.get("place_name") or loc_raw or "Unknown Station",
+                    cached.get("network") or invoice.get("network", "3rd-Party"),
+                    cached.get("emoji") or invoice.get("emoji", "🔌"),
+                    {})
+
+        is_super = invoice.get("network") == "Tesla Supercharger"
+        place_name, network, emoji, reg_obj = self.resolve_location(
+            loc_raw, saved_loc="", lat=invoice.get("latitude"), lon=invoice.get("longitude"),
+            is_supercharger=is_super, is_fast=not is_super,
+        )
+
+        # The invoice's own printed network (parsed from its supplier/
+        # network line, e.g. "Exploren") is the literal, correct identity
+        # for a third-party charge - resolve_location() can only ever GUESS
+        # a network, and when the GPS/keyword match lands on a plain
+        # "places" registry entry (added originally for drive-matching, no
+        # operator name of its own - see places.json), the best it can do
+        # is a generic placeholder like "DC Fast" instead of the real
+        # network the invoice names. Prefer the invoice's text whenever it
+        # has one, so e.g. a Bunnings Rydalmere/Exploren invoice shows
+        # "Exploren", not "DC Fast" (BUG-022 follow-up).
+        if invoice.get("network"):
+            network = invoice["network"]
+        if invoice.get("emoji"):
+            emoji = invoice["emoji"]
+
+        if inv_num:
+            entry = {
+                "place_name": place_name,
+                "network": network,
+                "emoji": emoji,
+                "location_raw": loc_raw,
+                "last_verified": datetime.now().isoformat(timespec="seconds"),
+            }
+            if cached:
+                entry["manual_override"] = cached.get("manual_override", False)
+            if self.invoice_location_map.get(inv_num) != entry:
+                self.invoice_location_map[inv_num] = entry
+                self._invoice_location_map_dirty = True
+
+        return (place_name, network, emoji, reg_obj)
+
+    def save_invoice_location_map(self):
+        """Persist invoice_location_map to invoice_locations.json beside
+        the invoice files, if anything changed this run. Read-only when
+        no invoice directory is configured or nothing changed."""
+        if not self._invoice_location_map_dirty or not self.invoice_location_map_path:
+            return
+        try:
+            os.makedirs(os.path.dirname(self.invoice_location_map_path), exist_ok=True)
+            tmp = self.invoice_location_map_path + ".tmp"
+            with open(tmp, "w", encoding="utf-8") as f:
+                json.dump(self.invoice_location_map, f, indent=2, sort_keys=True)
+            os.replace(tmp, self.invoice_location_map_path)
+            self._invoice_location_map_dirty = False
+        except Exception:
+            pass
 
     def get_expected_tariff_rate(self, registry_obj, dt, place_name=None, is_non_tesla=False):
         """
@@ -2005,9 +2149,22 @@ class TessieChargingAnalyzer:
             inv_num = None
             status = "HOME / AC 🏠" if charge["emoji"] == "🏠⚡" else ("UNRECONCILED ❓" if (charge["is_supercharger"] or charge["is_fast_charger"]) else "AC UNBILLED 🅿️")
 
+            # Defaults: the pre-invoice-match guess from Tessie's own
+            # location/saved_location/GPS. Overridden below once we know
+            # which invoice matched - the invoice's own printed station
+            # name is more trustworthy than that guess (BUG-022).
+            session_place_name = charge["place_name"]
+            session_network = charge["network"]
+            session_emoji = charge["emoji"]
+            session_registry_obj = charge["registry_obj"]
+
             if best_inv:
                 matched_invoice_indices.add(best_inv_idx)
                 inv_num = best_inv.get("invoice_number")
+                if best_inv.get("location_raw"):
+                    session_place_name, session_network, session_emoji, inv_reg_obj = self.resolve_invoice_location(best_inv)
+                    if inv_reg_obj:
+                        session_registry_obj = inv_reg_obj
                 if best_inv.get("energy_kwh"):
                     invoice_disp_kwh = best_inv["energy_kwh"]
                     dispenser_kwh = best_inv["energy_kwh"]
@@ -2067,7 +2224,7 @@ class TessieChargingAnalyzer:
                 loss_kwh = car_loss_kwh
                 efficiency_pct = (battery_kwh / dispenser_kwh * 100.0) if dispenser_kwh > 0 else 100.0
             
-            exp_info = self.get_expected_tariff_rate(charge["registry_obj"], dt, place_name=charge["place_name"])
+            exp_info = self.get_expected_tariff_rate(session_registry_obj, dt, place_name=session_place_name)
             expected_rate = exp_info.get("rate_per_kwh")
             expected_sched = exp_info.get("schedule_name")
             is_archived_match = exp_info.get("is_archived", False)
@@ -2086,9 +2243,9 @@ class TessieChargingAnalyzer:
                 "datetime": dt,
                 "datetime_str": charge["started_at_str"],
                 "duration_mins": charge["duration_mins"],
-                "place_name": charge["place_name"],
-                "network": charge["network"],
-                "emoji": charge["emoji"],
+                "place_name": session_place_name,
+                "network": session_network,
+                "emoji": session_emoji,
                 "is_supercharger": charge["is_supercharger"],
                 "is_fast_charger": charge["is_fast_charger"],
                 "start_soc": charge["start_soc"],
@@ -2126,6 +2283,11 @@ class TessieChargingAnalyzer:
         for i_idx, inv in enumerate(self.invoices):
             if i_idx not in matched_invoice_indices:
                 inv_dt = inv.get("date")
+                if inv.get("location_raw"):
+                    unmatched_place_name, unmatched_network, unmatched_emoji, _ = self.resolve_invoice_location(inv)
+                else:
+                    unmatched_place_name, unmatched_network, unmatched_emoji = (
+                        "Unknown Station", inv.get("network", "3rd-Party"), inv.get("emoji", "🔌"))
                 exp_inv_info = self.get_expected_tariff_rate(None, inv_dt, place_name=inv.get("location_raw"))
                 inv_expected_rate = exp_inv_info.get("rate_per_kwh")
                 inv_expected_sched = exp_inv_info.get("schedule_name")
@@ -2140,9 +2302,9 @@ class TessieChargingAnalyzer:
                     "datetime": inv_dt,
                     "datetime_str": inv_dt.strftime("%Y-%m-%d %H:%M") if inv_dt else "Unknown Date",
                     "duration_mins": 0,
-                    "place_name": self.resolve_location(inv.get("location_raw") or "", is_supercharger=(inv.get("network") == "Tesla Supercharger"), is_fast=True)[0] if inv.get("location_raw") else "Unknown Station",
-                    "network": inv.get("network", "3rd-Party"),
-                    "emoji": inv.get("emoji", "🔌"),
+                    "place_name": unmatched_place_name,
+                    "network": unmatched_network,
+                    "emoji": unmatched_emoji,
                     "is_supercharger": (inv.get("network") == "Tesla Supercharger"),
                     "is_fast_charger": True,
                     "start_soc": 0,
@@ -2174,6 +2336,7 @@ class TessieChargingAnalyzer:
         for i, session in enumerate(reconciled):
             session["charge_index"] = i + 1
         self.reconciled_sessions = reconciled
+        self.save_invoice_location_map()
         return self.reconciled_sessions
 
     def patch_tessie_csv_record(self, filepath, target_started_at, new_cost, new_rate):
