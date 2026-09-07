@@ -146,6 +146,8 @@ _tools_dir = os.path.dirname(os.path.abspath(__file__))
 if _tools_dir not in sys.path:
     sys.path.insert(0, _tools_dir)
 
+from archive_naming import next_archive_path
+
 from table_formatter import (
     char_width,
     display_len,
@@ -822,16 +824,46 @@ class TessieChargingAnalyzer:
             except Exception:
                 pass
 
-        self.charges_dirs = []
-        for td in self.tessie_dirs:
-            cd = os.path.join(td, "charges")
+        # The ONE authoritative home for charges_master.csv and its
+        # archive/ folder: config.json's own "tessie_directory" setting
+        # (already resolved above as cfg_tessie_dir) if present, else the
+        # default iCloud path, else (last resort - e.g. no config yet)
+        # the repo's own Tessie folder. Deliberately singular - this used
+        # to be written to EVERY discovered Tessie-like directory (repo
+        # AND iCloud via self.tessie_dirs, which stays plural above for
+        # registry/legacy-layout READING), which is why the repo ended up
+        # holding its own drifting copy of real charging data, including
+        # its own separate archive/ contents. User's explicit ask: nothing
+        # should be archived (or duplicated at all) in the repo folder.
+        if cfg_tessie_dir:
+            # Trust the user's own configured location UNCONDITIONALLY -
+            # do not silently fall back to the repo folder just because
+            # this particular process can't currently see that path (e.g.
+            # it doesn't exist yet, or a sandboxed/bridged shell resolves
+            # a "~"-relative path differently than the user's real
+            # machine does - see BUG-020's identical lesson). Only the
+            # ABSENCE of a configured value falls through below.
+            self.tessie_data_home = os.path.abspath(os.path.expanduser(cfg_tessie_dir))
+        elif os.path.isdir(self.icloud_dir):
+            self.tessie_data_home = os.path.abspath(os.path.realpath(self.icloud_dir))
+        else:
+            # Explicit user instruction: the repo folder is NEVER a valid
+            # home for real master data, not even as a last-resort
+            # fallback. If nothing is configured and the default iCloud
+            # folder doesn't exist either, there is no data home -
+            # consolidate_charges_master() below refuses to write rather
+            # than silently defaulting into the repo.
+            self.tessie_data_home = None
+
+        if self.tessie_data_home:
+            self.charges_dirs = [os.path.join(self.tessie_data_home, "charges")]
             try:
-                os.makedirs(cd, exist_ok=True)
-                os.makedirs(os.path.join(cd, "archive"), exist_ok=True)
+                os.makedirs(self.charges_dirs[0], exist_ok=True)
+                os.makedirs(os.path.join(self.charges_dirs[0], "archive"), exist_ok=True)
             except Exception:
                 pass
-            if cd not in self.charges_dirs:
-                self.charges_dirs.append(cd)
+        else:
+            self.charges_dirs = []
 
         # 3. Discover Invoices directories (CLI > config.json > local folders)
         primary_inv_dir = invoices_dir or self.config.get("invoices_directory") or self.config.get("invoices_dir")
@@ -1460,8 +1492,7 @@ class TessieChargingAnalyzer:
                                     deepdive_name = f"charge_deepdive_{f}"
                                 for cd in self.charges_dirs:
                                     shutil.copy2(fp, os.path.join(cd, deepdive_name))
-                                ts = datetime.now().strftime("%Y%m%d%H%M")
-                                shutil.move(fp, os.path.join(archive_dir, f"{f}.{ts}"))
+                                shutil.move(fp, next_archive_path(archive_dir, f))
                                 print(f"\033[94m⚡ Saved Charge Deep Dive Telemetry (Kept Separate):\033[0m {deepdive_name}")
                                 moved += 1
                             except Exception:
@@ -1471,10 +1502,9 @@ class TessieChargingAnalyzer:
                         # Check if Charge Summary
                         is_charge_summary = ("Location" in hset and "Energy Added (kWh)" in hset)
                         if is_charge_summary:
-                            ts = datetime.now().strftime("%Y%m%d%H%M")
-                            dst_name = f"{f}.{ts}"
-                            shutil.move(fp, os.path.join(archive_dir, dst_name))
-                            print(f"\033[94m📥 Ingested & Archived to charges/archive:\033[0m {dst_name}")
+                            dst = next_archive_path(archive_dir, f)
+                            shutil.move(fp, dst)
+                            print(f"\033[94m📥 Ingested & Archived to charges/archive:\033[0m {os.path.basename(dst)}")
                             moved += 1
                 except Exception:
                     pass
@@ -1816,7 +1846,7 @@ class TessieChargingAnalyzer:
 
                 # Numerical integration for energy
                 pack_energies_kwh = 0.0
-                charger_energies_kwh = 0.0
+                dispenser_energies_kwh = 0.0
                 for i in range(len(reader) - 1):
                     r0 = reader[i]
                     r1 = reader[i+1]
@@ -1829,7 +1859,7 @@ class TessieChargingAnalyzer:
                         try:
                             p0 = float(r0.get("Charger Power (kW)") or 0)
                             p1 = float(r1.get("Charger Power (kW)") or 0)
-                            charger_energies_kwh += 0.5 * (p0 + p1) * dt_hours
+                            dispenser_energies_kwh += 0.5 * (p0 + p1) * dt_hours
                         except Exception:
                             pass
                         try:
@@ -1871,7 +1901,7 @@ class TessieChargingAnalyzer:
                     "battery_heater": has_heater,
                     "outside_temp_c": outside_temp,
                     "inside_temp_c": inside_temp,
-                    "integrated_charger_kwh": charger_energies_kwh,
+                    "integrated_dispenser_kwh": dispenser_energies_kwh,
                     "integrated_pack_kwh": pack_energies_kwh
                 }
         except Exception:
@@ -2374,9 +2404,11 @@ class TessieChargingAnalyzer:
             dest_dirs.append(output_dir)
         else:
             dest_dirs = list(self.charges_dirs)
-            if not dest_dirs:
-                external_tessie = find_mounted_tesla_volumes("Tessie")
-                dest_dirs = [external_tessie[0] if external_tessie else self.tessie_dirs[0] if self.tessie_dirs else "."]
+
+        if not dest_dirs:
+            print("\033[31mNo Tessie data directory configured - set \"tessie_directory\" in Tessie/config.json "
+                  "(see Tessie/config.example.json). Refusing to write charges_master.csv into the repo folder.\033[0m")
+            return 0
 
         for d in dest_dirs:
             try:
@@ -2390,6 +2422,7 @@ class TessieChargingAnalyzer:
 
         existing_records = []
         existing_keys = set()
+        existing_disk_row_count = 0
         
         fieldnames = [
             "Started At", "Ended At", "Duration (Minutes)", "Location", "Saved Location",
@@ -2413,6 +2446,7 @@ class TessieChargingAnalyzer:
                         fieldnames[1] = e_at_key
                         
                         for row in reader:
+                            existing_disk_row_count += 1
                             s_at = row.get(s_at_key, "").strip()
                             loc = row.get("Location", "").strip()
                             added = row.get("Energy Added (kWh)", "").strip()
@@ -2467,6 +2501,23 @@ class TessieChargingAnalyzer:
                 
         all_records = existing_records + new_records
 
+        # Safety net (BUG-023/024/025 history), same as consolidate_drives():
+        # back up the master file's pre-change state whenever the row count
+        # is about to actually change - new charges landing, or stale
+        # duplicates found on disk being cleaned up - before overwriting it.
+        rows_changing = existing_disk_row_count != len(all_records)
+        duplicates_found_in_existing = max(0, existing_disk_row_count - len(existing_records))
+        if rows_changing:
+            backup_dir = os.path.join(dest_dirs[0], "archive") if dest_dirs else None
+            if backup_dir:
+                os.makedirs(backup_dir, exist_ok=True)
+                for mf in master_files:
+                    if os.path.isfile(mf):
+                        try:
+                            shutil.copy2(mf, next_archive_path(backup_dir, os.path.basename(mf)))
+                        except Exception:
+                            pass
+
         for mf in master_files:
             try:
                 with open(mf, "w", newline="", encoding="utf-8") as f:
@@ -2476,7 +2527,31 @@ class TessieChargingAnalyzer:
             except Exception:
                 pass
 
-        dest_names = ", ".join(shorten_display_path(m, 35) for m in master_files)
+        # Sanity-check what was actually written before reporting success.
+        sanity_issues = []
+        for mf in master_files:
+            try:
+                with open(mf, "r", encoding="utf-8-sig") as f:
+                    written_lines = [ln for ln in f.read().splitlines() if ln.strip()]
+                data_lines = written_lines[1:]
+                if len(data_lines) != len(all_records):
+                    sanity_issues.append(
+                        f"{os.path.basename(mf)}: wrote {len(all_records)} rows but file now has {len(data_lines)} data lines")
+                exact_dupes = len(data_lines) - len(set(data_lines))
+                if exact_dupes > 0:
+                    sanity_issues.append(
+                        f"{os.path.basename(mf)}: {exact_dupes} exact-duplicate line(s) still present after dedup")
+            except Exception as e:
+                sanity_issues.append(f"{os.path.basename(mf)}: could not verify after write - {e}")
+        if sanity_issues:
+            print("\033[31m⚠ Consolidate sanity check failed:\033[0m")
+            for issue in sanity_issues:
+                print(f"   - {issue}")
+
+        if duplicates_found_in_existing > 0:
+            print(f"\033[93m🧹 Flagged & auto-removed {duplicates_found_in_existing} duplicate row(s) found in the existing charges_master.csv "
+                  f"(pre-change backup saved to charges/archive/)\033[0m")
+        dest_names = ", ".join(shorten_display_path(m, 0) for m in master_files)
         print(f"\033[92mSuccessfully appended {len(new_records)} new charges (Total: {len(all_records)}) to:\033[0m {dest_names}")
 
     def print_summary(self, filtered_sessions=None):
@@ -2978,8 +3053,8 @@ class TessieChargingAnalyzer:
                 t5 = f"    • {C_BOLD}Energy Remaining Delta:{C_RESET}     {dt_rec['energy_remaining_start']:.2f} kWh ➔ {dt_rec['energy_remaining_end']:.2f} kWh (+{dt_rec['delta_energy_remaining_kwh']:.2f} kWh)"
                 print(f"│{pad_display(t5, box_w - 2, truncate=True)}│")
                 
-            if dt_rec.get("integrated_charger_kwh", 0) > 0:
-                t6 = f"    • {C_BOLD}Integrated Telemetry Energy:{C_RESET} Port: {dt_rec['integrated_charger_kwh']:.2f} kWh  │  Battery Pack (V×I): {dt_rec['integrated_pack_kwh']:.2f} kWh"
+            if dt_rec.get("integrated_dispenser_kwh", 0) > 0:
+                t6 = f"    • {C_BOLD}Integrated Telemetry Energy:{C_RESET} Port: {dt_rec['integrated_dispenser_kwh']:.2f} kWh  │  Battery Pack (V×I): {dt_rec['integrated_pack_kwh']:.2f} kWh"
                 print(f"│{pad_display(t6, box_w - 2, truncate=True)}│")
 
         print(f"├{'─' * (box_w - 2)}┤")
