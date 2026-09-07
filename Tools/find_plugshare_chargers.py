@@ -1204,7 +1204,7 @@ def main():
   ./Tools/find_plugshare_chargers.py --plugshare 801149 --save
 
   # 6. Auto-discovery from charging history:
-  ./Tools/find_plugshare_chargers.py --from-history --sync
+  ./Tools/find_plugshare_chargers.py --from-history --add-all
 """
     )
     # Discovery & Geographic Flags

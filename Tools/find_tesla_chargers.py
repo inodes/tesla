@@ -2622,7 +2622,11 @@ def interactive_drilldown(explorer: TeslaChargerExplorer, initial_region=None, i
 
     sorted_states = sorted(grouped.keys())
     for st_name in sorted_states:
-        st_list = grouped[st_name]
+        # REQ-016 already established "State, then Station Name (alphabetical)"
+        # as the default sort for the non-interactive query path - this
+        # interactive drill-down view was missed and left stations in
+        # whatever order Tesla's own station-list API returned them.
+        st_list = sorted(grouped[st_name], key=lambda s: s["title"])
         state_header = f"{AU_STATE_MAP.get(st_name, st_name)} ({st_name})" if st_name in AU_STATE_MAP else st_name
         print(f"{C_CYAN}{C_BOLD}📍 {state_header} [{len(st_list)} stations]:{C_RESET}")
         
@@ -2811,9 +2815,9 @@ Query & Proximity Examples:
   ./Tools/find_tesla_chargers.py --inspect "Macquarie"
   ./Tools/find_tesla_chargers.py --inspect "Miranda" --live
 
-  # 8. Batch scrape new or stale stations:
-  ./Tools/find_tesla_chargers.py --sc --new --all --sync
-  ./Tools/find_tesla_chargers.py --sc --stale --all --sync
+  # 8. Batch scrape new or stale stations (--all always saves - no --save/--sync needed):
+  ./Tools/find_tesla_chargers.py --sc --new --all
+  ./Tools/find_tesla_chargers.py --sc --stale --all
 """
     )
     
