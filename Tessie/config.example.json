@@ -1,5 +1,5 @@
 {
-  "_comment": "Tesla Tools Suite Configuration - Copy this file to 'config.json' or 'Tessie/config.json' and customize your local paths. If external_drive_path is null/omitted, drives matching /Volumes/TESLADRIVE* are auto-discovered.",
+  "_comment": "Tesla Tools Suite Configuration - Copy this file to 'config.json' or 'Tessie/config.json' and customize your local paths. If external_drive_path is null/omitted, drives matching /Volumes/TESLADRIVE* are auto-discovered. evnex_username/evnex_password are your normal Evnex app login (email + password) for the community-maintained `evnex` python library (https://github.com/hardbyte/python-evnex), which talks to Evnex's own consumer app API - Evnex only issues real API keys to Enterprise/CP-Link customers. Prefer the EVNEX_CLIENT_USERNAME/EVNEX_CLIENT_PASSWORD env vars over config.json if you'd rather not keep the password on disk at all.",
   "landing_directory": "~/Downloads",
   "inbox_directory": "~/Library/Mobile Documents/com~apple~CloudDocs/Tesla/Tessie/Inbox",
   "tessie_directory": "~/Library/Mobile Documents/com~apple~CloudDocs/Tesla/Tessie",
@@ -7,6 +7,8 @@
   "external_drive_path": null,
   "vin": "YOUR_VIN_HERE",
   "tessie_access_token": "YOUR_TESSIE_API_TOKEN_HERE",
+  "evnex_username": "YOUR_EVNEX_ACCOUNT_EMAIL_HERE",
+  "evnex_password": "YOUR_EVNEX_ACCOUNT_PASSWORD_HERE",
   "reconciliation": {
     "tolerance_mins": 45,
     "tolerance_kwh": 5.0,
