@@ -876,7 +876,7 @@ class TessieChargingAnalyzer:
         self.charging_stations = self.load_json_registry("tesla_chargers.json") or self.load_json_registry("charging.json") or self.load_json_registry("destination_chargers.json")
         self.charging_archived = self.load_json_registry("tesla_chargers_archived.json") or self.load_json_registry("charging_archived.json") or self.load_json_registry("destination_chargers_archived.json")
         self.places = self.load_json_registry("places.json")
-        
+
         # 5. Detailed Telemetry CSVs
         self.vin = self.config.get("vin")
         self.landing_dir = os.path.expanduser(self.config.get("landing_directory", "~/Downloads"))
@@ -924,84 +924,164 @@ class TessieChargingAnalyzer:
                     pass
         return data
 
+    def _resolve_location_candidates(self):
+        """One flat list of every registry entry this session knows about,
+        each as (kind, name, data) - built once and cached, so
+        resolve_location() can rank matches by GLOBAL priority (best signal
+        wins across every registry) instead of "whichever entry the loop
+        happened to reach first" (BUG-021 - see resolve_location's own
+        docstring below for what that used to get wrong)."""
+        if getattr(self, "_loc_candidates", None) is not None:
+            return self._loc_candidates
+        candidates = []
+        for sc_name, sc_data in self.superchargers.items():
+            candidates.append(("supercharger", sc_name, sc_data))
+        for reg, source_type in [(self.personal_chargers, "personal"),
+                                  (self.plugshare_chargers, "plugshare"),
+                                  (self.charging_stations, "destination")]:
+            for st_name, st_data in reg.items():
+                candidates.append((source_type, st_name, st_data))
+        for p_name, p_data in self.places.items():
+            candidates.append(("place", p_name, p_data))
+        self._loc_candidates = candidates
+
+        # Keyword usefulness for the last-resort keyword tier: a keyword is
+        # only trustworthy for a substring match if it's specific enough to
+        # actually identify ONE station. "Australia" or a bare brand name
+        # like "Bunnings" appears on many unrelated entries' own keyword
+        # lists (scraped verbatim from PlugShare place names/addresses) and
+        # used to let a random early match steal a session that a much
+        # more specific, later entry (or plain GPS distance) would have
+        # gotten right - see BUG-021. Counting how many DISTINCT entries
+        # share each keyword lets us drop the ones with no discriminating
+        # power at all, without hand-maintaining a stoplist.
+        from collections import Counter
+        kw_counts = Counter()
+        for kind, name, data in candidates:
+            for kw in self._candidate_keywords(kind, data):
+                kw_counts[kw.lower()] += 1
+        self._loc_kw_counts = kw_counts
+        return candidates
+
+    @staticmethod
+    def _candidate_keywords(kind, data):
+        if kind == "supercharger":
+            return data.get("tesla_metadata", {}).get("keywords") or []
+        if kind == "place":
+            return data.get("keywords") or []
+        return (data.get("keywords") or data.get("plugshare_metadata", {}).get("keywords")
+                or data.get("tesla_metadata", {}).get("keywords") or [])
+
+    @staticmethod
+    def _candidate_geo(kind, data):
+        """(lat, lon, radius_m) for one candidate, or (None, None, None)."""
+        if kind == "supercharger":
+            loc = data.get("location", {})
+            return loc.get("lat"), loc.get("lon"), loc.get("radius_m", 250)
+        if kind == "place":
+            return data.get("lat"), data.get("lon"), data.get("radius_m", 150)
+        loc = data.get("location", {})
+        return (data.get("lat") or loc.get("lat"),
+                data.get("lon") or loc.get("lon"),
+                data.get("radius_m") or loc.get("radius_m", 150))
+
+    def _candidate_result(self, kind, name, data, is_supercharger=False, is_fast=False):
+        """The (display_name, network, emoji, data) tuple for one matched
+        candidate - unchanged from the original per-registry logic, just
+        factored out so every match tier (GPS/exact-name/keyword) below can
+        share it."""
+        if kind == "supercharger":
+            return (name, "Tesla Supercharger", "🔴⚡", data)
+        if kind == "place":
+            nickname = data.get("nickname") or name
+            emoji = "🔴⚡" if is_supercharger else ("🔌" if is_fast else "🅿️")
+            net = "Tesla Supercharger" if is_supercharger else ("DC Fast" if is_fast else "Destination AC")
+            return (nickname, net, emoji, data)
+        # personal / plugshare / destination
+        st_type = data.get("type", "ac")
+        network = (data.get("network") or data.get("operator")
+                   or data.get("plugshare_metadata", {}).get("network")
+                   or ("Evnex" if st_type == "home" else "3rd-Party"))
+        short_name = data.get("name") or name
+        emoji = "🏠⚡" if st_type == "home" or kind == "personal" else ("🔌" if st_type == "dc_fast" or kind == "plugshare" else "🅿️")
+        return (short_name, network, emoji, data)
+
     def resolve_location(self, address, saved_loc="", lat=None, lon=None, is_supercharger=False, is_fast=False):
+        """Matches a charge/drive event to a known place across every
+        registry (Superchargers, personal, PlugShare, Tesla destination
+        chargers, and general places), by priority:
+
+        1. GPS radius - the single most reliable signal when we have real
+           coordinates, so it's checked GLOBALLY (nearest match across
+           every registry) before anything else, exactly like BUG-016's
+           "GPS wins" fix in the drives analyzer.
+        2. Exact saved-location name match, case-insensitive, also global.
+        3. Keyword substring match - last resort only, and restricted to
+           keywords that are actually specific to one station (BUG-021:
+           this used to also allow bare, widely-shared words like
+           "Australia" or "Bunnings" that matched dozens of unrelated
+           entries, silently attributing a session to the wrong charger
+           whenever a generic word happened to overlap and that entry was
+           reached before the real one).
+
+        Before this fix, all of the above ran per-entry with an immediate
+        return the moment ANY tier matched for THAT entry - so a bad
+        keyword hit on an early, unrelated entry could win outright over a
+        correct exact-GPS match sitting later in the same registry.
+        """
         addr_clean = (address or "").lower()
         saved_clean = (saved_loc or "").strip()
+        candidates = self._resolve_location_candidates()
 
-        # 1. Superchargers Registry
-        for sc_name, sc_data in self.superchargers.items():
-            meta = sc_data.get("tesla_metadata", {})
-            loc = sc_data.get("location", {})
-            display_name = sc_name
-            kws = meta.get("keywords") or []
-            
-            if saved_clean and (saved_clean.lower() == sc_name.lower() or any(k.lower() in saved_clean.lower() for k in kws)):
-                return (display_name, "Tesla Supercharger", "🔴⚡", sc_data)
-            
-            sc_lat = loc.get("lat")
-            sc_lon = loc.get("lon")
-            sc_rad = loc.get("radius_m", 250)
-            if lat is not None and lon is not None and sc_lat is not None and sc_lon is not None:
-                if haversine_distance_m(lat, lon, sc_lat, sc_lon) <= sc_rad:
-                    return (display_name, "Tesla Supercharger", "🔴⚡", sc_data)
-            
-            for kw in kws:
-                if kw.lower() in addr_clean:
-                    return (display_name, "Tesla Supercharger", "🔴⚡", sc_data)
+        # 1. GPS radius - nearest match wins, but a purpose-built charging
+        #    registry entry (supercharger/personal/plugshare/destination -
+        #    these carry a real network name/keywords) is preferred over a
+        #    same-location entry that only exists in the generic "places"
+        #    registry (added for drive-matching, not charging - no network
+        #    name of its own), even if "places" happens to be a few metres
+        #    closer. Only falls back to "places" when nothing more specific
+        #    is within radius at all.
+        if lat is not None and lon is not None:
+            best_specific, best_specific_dist = None, None
+            best_place, best_place_dist = None, None
+            for kind, name, data in candidates:
+                elat, elon, erad = self._candidate_geo(kind, data)
+                if elat is None or elon is None:
+                    continue
+                dist = haversine_distance_m(lat, lon, elat, elon)
+                if dist > erad:
+                    continue
+                if kind == "place":
+                    if best_place_dist is None or dist < best_place_dist:
+                        best_place, best_place_dist = (kind, name, data), dist
+                else:
+                    if best_specific_dist is None or dist < best_specific_dist:
+                        best_specific, best_specific_dist = (kind, name, data), dist
+            best = best_specific or best_place
+            if best:
+                kind, name, data = best
+                return self._candidate_result(kind, name, data, is_supercharger, is_fast)
 
-        # 2. Personal, Non-Tesla (PlugShare), & Tesla Destination Charging Registries
-        combined_charging_registries = [
-            (self.personal_chargers, "personal"),
-            (self.plugshare_chargers, "plugshare"),
-            (self.charging_stations, "destination")
-        ]
-        for reg, source_type in combined_charging_registries:
-            for st_name, st_data in reg.items():
-                st_type = st_data.get("type", "ac")
-                network = st_data.get("network") or st_data.get("operator") or st_data.get("plugshare_metadata", {}).get("network") or ("Evnex" if st_type == "home" else "3rd-Party")
-                short_name = st_data.get("name") or st_name
-                kws = st_data.get("keywords") or st_data.get("plugshare_metadata", {}).get("keywords") or st_data.get("tesla_metadata", {}).get("keywords") or []
-                loc = st_data.get("location", {})
-                st_lat = st_data.get("lat") or loc.get("lat")
-                st_lon = st_data.get("lon") or loc.get("lon")
-                st_rad = st_data.get("radius_m") or loc.get("radius_m", 150)
-                emoji = "🏠⚡" if st_type == "home" or source_type == "personal" else ("🔌" if st_type == "dc_fast" or source_type == "plugshare" else "🅿️")
+        # 2. Exact saved-location name match (case-insensitive), global.
+        if saved_clean:
+            saved_lower = saved_clean.lower()
+            for kind, name, data in candidates:
+                display = data.get("name") or data.get("nickname") or name
+                if saved_lower == name.lower() or saved_lower == str(display).lower():
+                    return self._candidate_result(kind, name, data, is_supercharger, is_fast)
 
-                if saved_clean and (saved_clean.lower() == st_name.lower() or any(k.lower() in saved_clean.lower() for k in kws)):
-                    return (short_name, network, emoji, st_data)
-
-                if lat is not None and lon is not None and st_lat is not None and st_lon is not None:
-                    if haversine_distance_m(lat, lon, st_lat, st_lon) <= st_rad:
-                        return (short_name, network, emoji, st_data)
-
-                for kw in kws:
-                    if kw.lower() in addr_clean:
-                        return (short_name, network, emoji, st_data)
-
-        # 3. Places Registry
-        for p_name, p_data in self.places.items():
-            nickname = p_data.get("nickname") or p_name
-            kws = p_data.get("keywords") or []
-            p_lat = p_data.get("lat")
-            p_lon = p_data.get("lon")
-            p_rad = p_data.get("radius_m", 150)
-
-            if saved_clean and (saved_clean.lower() == p_name.lower() or any(k.lower() in saved_clean.lower() for k in kws)):
-                emoji = "🔴⚡" if is_supercharger else ("🔌" if is_fast else "🅿️")
-                net = "Tesla Supercharger" if is_supercharger else ("DC Fast" if is_fast else "Destination AC")
-                return (nickname, net, emoji, p_data)
-
-            if lat is not None and lon is not None and p_lat is not None and p_lon is not None:
-                if haversine_distance_m(lat, lon, p_lat, p_lon) <= p_rad:
-                    emoji = "🔴⚡" if is_supercharger else ("🔌" if is_fast else "🅿️")
-                    net = "Tesla Supercharger" if is_supercharger else ("DC Fast" if is_fast else "Destination AC")
-                    return (nickname, net, emoji, p_data)
-
-            for kw in kws:
-                if kw.lower() in addr_clean:
-                    emoji = "🔴⚡" if is_supercharger else ("🔌" if is_fast else "🅿️")
-                    net = "Tesla Supercharger" if is_supercharger else ("DC Fast" if is_fast else "Destination AC")
-                    return (nickname, net, emoji, p_data)
+        # 3. Keyword match - only keywords unique to ONE entry, long enough
+        #    to mean something.
+        MIN_KEYWORD_LEN = 5
+        kw_counts = self._loc_kw_counts
+        saved_lower_full = saved_clean.lower()
+        for kind, name, data in candidates:
+            for kw in self._candidate_keywords(kind, data):
+                kwl = kw.lower()
+                if len(kwl) < MIN_KEYWORD_LEN or kw_counts.get(kwl, 0) != 1:
+                    continue
+                if (kwl in saved_lower_full) or (kwl in addr_clean):
+                    return self._candidate_result(kind, name, data, is_supercharger, is_fast)
 
         display = saved_clean or (address.split(",")[0].strip() if address else "Unknown Location")
         if is_supercharger:
