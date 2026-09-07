@@ -33,6 +33,13 @@ Tessie/invoices/*
 !config.example.json
 config.json
 places.json
+
+# AGL tariff rates - real account-specific plan/billing figures (REQ-034).
+# Lives in the AGL data home (agl_common.resolve_agl_data_home()), never in
+# this repo - this entry is defense-in-depth in case a real one ever lands
+# in Tools/ again by accident.
+Tools/agl_tariff_rates.json
+!Tools/agl_tariff_rates.example.json
 __pycache__/
 *.pyc
 
