@@ -14,6 +14,7 @@
 *.pdf
 Tessie/*.csv
 Tessie/*.json
+Tessie/api_cache/
 Tessie/invoices/*
 !Tessie/invoices/.gitkeep
 !Tessie/places.example.json
