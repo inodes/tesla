@@ -36,6 +36,8 @@ _tools_dir = os.path.dirname(os.path.abspath(__file__))
 if _tools_dir not in sys.path:
     sys.path.insert(0, _tools_dir)
 
+from archive_naming import next_archive_path
+
 from table_formatter import (
     char_width,
     display_len,
@@ -45,6 +47,61 @@ from table_formatter import (
     format_title_line,
     format_box_line,
 )
+import tessie_timezone as tztools
+
+
+def normalize_row_timezone(row, lat_key, lon_key, start_key_prefix):
+    """Ensures row[f"{start_key_prefix} (UTC)"]/(TZ)/(Local) are populated
+    (TODO-009). Idempotent: if the row already has a non-empty UTC value
+    (e.g. re-reading an already-migrated drives_master.csv), leaves it
+    alone. Otherwise derives true UTC from whichever legacy column is
+    present - Tessie's own CSV export always applies ONE fixed,
+    known offset (Australia/Sydney's, for whatever date the row is on -
+    this repo always requests timezone=Australia/Sydney), so that offset
+    is exactly reversible regardless of where the event really happened;
+    the row's own (unaffected) lat/lon then gives the TRUE zone via
+    resolve_timezone(). Self-healing: works identically whether the row
+    came from the existing master file or a freshly landed CSV, so a
+    normal --consolidate run upgrades old and new rows alike with no
+    separate migration step."""
+    utc_key = f"{start_key_prefix} (UTC)"
+    tz_key = f"{start_key_prefix} TZ"
+    local_key = f"{start_key_prefix} (Local)"
+    if row.get(utc_key):
+        return
+    legacy = (row.get(f"{start_key_prefix} (AEST)") or row.get(start_key_prefix)
+              or row.get(start_key_prefix.replace(" At", "")) or "").strip()
+    if not legacy:
+        row[utc_key] = ""
+        row[tz_key] = ""
+        row[local_key] = ""
+        return
+    try:
+        naive = datetime.strptime(legacy[:16], "%Y-%m-%d %H:%M")
+    except Exception:
+        row[utc_key] = ""
+        row[tz_key] = ""
+        row[local_key] = legacy
+        return
+    # naive.timestamp() would interpret the naive value in THIS machine's
+    # own local zone, which is wrong on any host not itself set to
+    # Sydney - compute purely arithmetically instead: treat the naive
+    # value as if it already were UTC (epoch_as_if_utc), then subtract
+    # the offset Tessie actually applied (Sydney's, for this date) to
+    # recover the true UTC instant.
+    sydney_offset = tztools.sydney_offset_seconds(naive)
+    epoch_as_if_utc = int((naive - datetime(1970, 1, 1)).total_seconds())
+    true_utc_epoch = epoch_as_if_utc - int(sydney_offset)
+
+    lat = row.get(lat_key)
+    lon = row.get(lon_key)
+    zone = tztools.resolve_timezone(lat, lon)
+    local_dt, abbr, offset_str = tztools.localize(true_utc_epoch, zone)
+
+    row[utc_key] = str(true_utc_epoch)
+    row[tz_key] = zone
+    row[local_key] = f"{local_dt.strftime('%Y-%m-%d %H:%M')} {abbr}" if local_dt else legacy
+
 
 def wrap_text_display(s, max_width):
     if display_len(s) <= max_width:
@@ -126,8 +183,6 @@ def clean_destination_display(p):
         return "Leura (Railway Pde)"
     if "cliff drive" in p_lower:
         return "Katoomba (Cliff Dr)"
-    if "bunnings" in p_lower:
-        return "Bunnings"
     if "hancott" in p_lower or "goulding" in p_lower:
         return "Preschool"
     if "," in p_clean:
@@ -241,7 +296,56 @@ class TessieAnalyzer:
         self.icloud_dir = os.path.expanduser("~/Library/Mobile Documents/com~apple~CloudDocs/Tesla/Tessie")
         self.repo_root = parent_dir
         self.landing_dir = os.path.expanduser("~/Downloads")
-        
+
+        # Read config.json directly (same file/convention as
+        # TessieChargingAnalyzer and tessie_api_common.load_config()) just
+        # for its "tessie_directory" setting - see self.tessie_data_home
+        # below for why.
+        _cfg_path = os.path.join(parent_dir, "Tessie", "config.json")
+        cfg_tessie_dir = None
+        if os.path.isfile(_cfg_path):
+            try:
+                with open(_cfg_path, "r", encoding="utf-8") as _f:
+                    cfg_tessie_dir = json.load(_f).get("tessie_directory")
+            except Exception:
+                cfg_tessie_dir = None
+        if cfg_tessie_dir:
+            cfg_tessie_dir = os.path.expanduser(cfg_tessie_dir)
+
+        # The ONE authoritative home for drives_master.csv and its
+        # archive/ folder: config.json's "tessie_directory" if present,
+        # else the default iCloud path, else (last resort - e.g. no
+        # config yet) the repo's own Tessie folder. Deliberately singular
+        # - this used to be written to EVERY discovered Tessie-like
+        # directory (repo AND iCloud via self.tessie_dirs, which stays
+        # plural below for registry/legacy-layout READING), which is why
+        # the repo ended up holding its own drifting copy of real drive
+        # data, including its own separate archive/ contents. User's
+        # explicit ask: nothing should be archived (or duplicated at all)
+        # in the repo folder.
+        if cfg_tessie_dir:
+            # Trust the user's own configured location UNCONDITIONALLY -
+            # do not silently fall back to the repo folder just because
+            # this particular process can't currently see that path (e.g.
+            # it doesn't exist yet, or a sandboxed/bridged shell resolves
+            # a "~"-relative path differently than the user's real
+            # machine does - see BUG-020's identical lesson, which is
+            # exactly what happened testing this very code from this
+            # session's own bridge: it silently fell through to this
+            # repo folder and re-corrupted drives_master.csv). Only the
+            # ABSENCE of a configured value falls through below.
+            self.tessie_data_home = os.path.abspath(os.path.expanduser(cfg_tessie_dir))
+        elif os.path.isdir(self.icloud_dir):
+            self.tessie_data_home = os.path.abspath(os.path.realpath(self.icloud_dir))
+        else:
+            # Explicit user instruction: the repo folder is NEVER a valid
+            # home for real master data, not even as a last-resort
+            # fallback. If nothing is configured and the default iCloud
+            # folder doesn't exist either, there is no data home -
+            # consolidate_drives() below refuses to write rather than
+            # silently defaulting into the repo.
+            self.tessie_data_home = None
+
         self.tessie_dirs = []
         candidates = [
             tessie_dir,
@@ -262,16 +366,15 @@ class TessieAnalyzer:
             except Exception:
                 pass
         
-        self.drives_dirs = []
-        for td in self.tessie_dirs:
-            dd = os.path.join(td, "drives")
+        if self.tessie_data_home:
+            self.drives_dirs = [os.path.join(self.tessie_data_home, "drives")]
             try:
-                os.makedirs(dd, exist_ok=True)
-                os.makedirs(os.path.join(dd, "archive"), exist_ok=True)
+                os.makedirs(self.drives_dirs[0], exist_ok=True)
+                os.makedirs(os.path.join(self.drives_dirs[0], "archive"), exist_ok=True)
             except Exception:
                 pass
-            if dd not in self.drives_dirs:
-                self.drives_dirs.append(dd)
+        else:
+            self.drives_dirs = []
         
         self.teslacam_dirs = []
         if teslacam_dirs:
@@ -424,12 +527,11 @@ class TessieAnalyzer:
         if master_dir:
             dest_dirs.append(master_dir)
         else:
-            for td in self.tessie_dirs:
-                dd = os.path.join(td, "drives")
-                if dd not in dest_dirs:
-                    dest_dirs.append(dd)
+            dest_dirs = list(self.drives_dirs)
 
         if not dest_dirs:
+            print("\033[31mNo Tessie data directory configured - set \"tessie_directory\" in Tessie/config.json "
+                  "(see Tessie/config.example.json). Refusing to write drives_master.csv into the repo folder.\033[0m")
             return 0
 
         master_files = [os.path.join(d, "drives_master.csv") for d in dest_dirs]
@@ -496,6 +598,7 @@ class TessieAnalyzer:
         seen_keys = set()
         fieldnames = None
         initial_master_count = 0
+        existing_disk_row_count = 0
 
         # Read existing master file first if present
         for mf in master_files:
@@ -507,8 +610,11 @@ class TessieAnalyzer:
                             if not fieldnames:
                                 fieldnames = list(reader.fieldnames)
                             for r in reader:
-                                start_time = r.get("Started At (AEST)") or r.get("Started At") or r.get("Started")
-                                end_time = r.get("Ended At (AEST)") or r.get("Ended At") or r.get("Ended")
+                                existing_disk_row_count += 1
+                                normalize_row_timezone(r, "Starting Latitude", "Starting Longitude", "Started At")
+                                normalize_row_timezone(r, "Ending Latitude", "Ending Longitude", "Ended At")
+                                start_time = r.get("Started At (UTC)") or r.get("Started At (AEST)") or r.get("Started At") or r.get("Started")
+                                end_time = r.get("Ended At (UTC)") or r.get("Ended At (AEST)") or r.get("Ended At") or r.get("Ended")
                                 dist = r.get("Distance (km)", "0")
                                 s_loc = r.get("Starting Location", "")
                                 if not start_time or not end_time:
@@ -560,13 +666,14 @@ class TessieAnalyzer:
                                         deepdive_name = f"drive_deepdive_{os.path.basename(fp)}"
                                     
                                     for dd in dest_dirs:
-                                        target_dd_path = os.path.join(dd, deepdive_name)
+                                        deepdive_dir = os.path.join(dd, "deepdive")
+                                        os.makedirs(deepdive_dir, exist_ok=True)
+                                        target_dd_path = os.path.join(deepdive_dir, deepdive_name)
                                         shutil.copy2(fp, target_dd_path)
                                     # Archive source from landing or root
                                     archive_dir = os.path.join(dest_dirs[0], "archive") if dest_dirs else os.path.join(self.repo_root, "Tessie", "drives", "archive")
                                     os.makedirs(archive_dir, exist_ok=True)
-                                    ts_suffix = datetime.now().strftime("%Y%m%d%H%M")
-                                    shutil.move(fp, os.path.join(archive_dir, f"{os.path.basename(fp)}.{ts_suffix}"))
+                                    shutil.move(fp, next_archive_path(archive_dir, os.path.basename(fp)))
                                     print(f"\033[94m⚡ Saved Drive Deep Dive Telemetry (Kept Separate):\033[0m {deepdive_name}")
                             except Exception:
                                 pass
@@ -580,8 +687,10 @@ class TessieAnalyzer:
                         fieldnames = list(reader.fieldnames)
                     added_from_file = 0
                     for r in reader:
-                        start_time = r.get("Started At (AEST)") or r.get("Started At") or r.get("Started")
-                        end_time = r.get("Ended At (AEST)") or r.get("Ended At") or r.get("Ended")
+                        normalize_row_timezone(r, "Starting Latitude", "Starting Longitude", "Started At")
+                        normalize_row_timezone(r, "Ending Latitude", "Ending Longitude", "Ended At")
+                        start_time = r.get("Started At (UTC)") or r.get("Started At (AEST)") or r.get("Started At") or r.get("Started")
+                        end_time = r.get("Ended At (UTC)") or r.get("Ended At (AEST)") or r.get("Ended At") or r.get("Ended")
                         dist = r.get("Distance (km)", "0")
                         s_loc = r.get("Starting Location", "")
                         if not start_time or not end_time:
@@ -602,19 +711,97 @@ class TessieAnalyzer:
                 print("No drive records found to consolidate.")
             return 0
 
-        # Sort chronologically by Started At
-        raw_rows.sort(key=lambda x: (x.get("Started At (AEST)") or x.get("Started At") or x.get("Started") or ""))
+        # TODO-009: self-healing UTC + real per-event timezone columns.
+        # Runs on every row every consolidate - old master rows and
+        # freshly-landed rows alike - so there is no separate one-time
+        # migration step; see normalize_row_timezone()'s own docstring.
+        for row in raw_rows:
+            normalize_row_timezone(row, "Starting Latitude", "Starting Longitude", "Started At")
+            normalize_row_timezone(row, "Ending Latitude", "Ending Longitude", "Ended At")
+        if fieldnames:
+            legacy_time_cols = {"Started At (AEST)", "Started At", "Ended At (AEST)", "Ended At"}
+            new_time_cols = ["Started At (UTC)", "Started At TZ", "Started At (Local)",
+                              "Ended At (UTC)", "Ended At TZ", "Ended At (Local)"]
+            if any(c in fieldnames for c in new_time_cols):
+                # Already migrated (idempotent re-run) - just drop any
+                # lingering legacy columns, new columns are already
+                # present in the right place.
+                fieldnames = [c for c in fieldnames if c not in legacy_time_cols]
+            else:
+                rebuilt = []
+                inserted = False
+                for col in fieldnames:
+                    if col in legacy_time_cols:
+                        if not inserted:
+                            rebuilt.extend(new_time_cols)
+                            inserted = True
+                        continue
+                    rebuilt.append(col)
+                if not inserted:
+                    rebuilt = new_time_cols + rebuilt
+                fieldnames = rebuilt
+
+        # Sort chronologically by true UTC (fixes DST fall-back's
+        # repeated hour and any future cross-timezone ordering issue -
+        # TODO-009), falling back to the legacy text for any row that
+        # somehow still lacks it.
+        raw_rows.sort(key=lambda x: (
+            int(x["Started At (UTC)"]) if x.get("Started At (UTC)") else 0,
+            x.get("Started At (AEST)") or x.get("Started At") or x.get("Started") or ""))
+
+        # Safety net (BUG-023/024/025 history): back up the master file's
+        # pre-change state before overwriting it, whenever the row count is
+        # about to actually change (new rows landing, or stale duplicates
+        # being cleaned up) - archived with the same anti-clobber XX_ scheme
+        # as everything else, so a real pre-change snapshot is always
+        # recoverable rather than reconstructed by hand after the fact.
+        rows_changing = existing_disk_row_count != len(raw_rows)
+        duplicates_found_in_existing = max(0, existing_disk_row_count - initial_master_count)
+        if rows_changing:
+            backup_dir = os.path.join(dest_dirs[0], "archive") if dest_dirs else None
+            if backup_dir:
+                os.makedirs(backup_dir, exist_ok=True)
+                for mf in master_files:
+                    if os.path.isfile(mf):
+                        try:
+                            shutil.copy2(mf, next_archive_path(backup_dir, os.path.basename(mf)))
+                        except Exception:
+                            pass
 
         # Write to all master files
         for mf in master_files:
             try:
                 with open(mf, "w", encoding="utf-8", newline="") as f:
-                    writer = csv.DictWriter(f, fieldnames=fieldnames)
+                    writer = csv.DictWriter(f, fieldnames=fieldnames, extrasaction="ignore", restval="")
                     writer.writeheader()
                     writer.writerows(raw_rows)
             except Exception as e:
                 if verbose:
                     print(f"Error writing master file {mf}: {e}")
+
+        # Sanity-check what was actually written before reporting success -
+        # catches a bad write (row-count mismatch) or a lingering exact-
+        # duplicate line the key-based dedup above should have already
+        # prevented, rather than silently trusting the write succeeded.
+        sanity_issues = []
+        for mf in master_files:
+            try:
+                with open(mf, "r", encoding="utf-8-sig") as f:
+                    written_lines = [ln for ln in f.read().splitlines() if ln.strip()]
+                data_lines = written_lines[1:]
+                if len(data_lines) != len(raw_rows):
+                    sanity_issues.append(
+                        f"{os.path.basename(mf)}: wrote {len(raw_rows)} rows but file now has {len(data_lines)} data lines")
+                exact_dupes = len(data_lines) - len(set(data_lines))
+                if exact_dupes > 0:
+                    sanity_issues.append(
+                        f"{os.path.basename(mf)}: {exact_dupes} exact-duplicate line(s) still present after dedup")
+            except Exception as e:
+                sanity_issues.append(f"{os.path.basename(mf)}: could not verify after write - {e}")
+        if sanity_issues:
+            print("\033[31m⚠ Consolidate sanity check failed:\033[0m")
+            for issue in sanity_issues:
+                print(f"   - {issue}")
 
         # Archive processed raw files now that they've been merged into master
         archive_dir = os.path.join(dest_dirs[0], "archive") if dest_dirs else os.path.join(self.repo_root, "Tessie", "drives", "archive")
@@ -622,16 +809,18 @@ class TessieAnalyzer:
         for lp in files_to_archive:
             try:
                 fname = os.path.basename(lp)
-                ts = datetime.now().strftime("%Y%m%d%H%M")
-                dst = os.path.join(archive_dir, f"{fname}.{ts}")
+                dst = next_archive_path(archive_dir, fname)
                 shutil.move(lp, dst)
-                print(f"\033[94m📥 Ingested & Archived:\033[0m {fname} ➔ drives/archive/{fname}.{ts}")
+                print(f"\033[94m📥 Ingested & Archived:\033[0m {fname} ➔ drives/archive/{os.path.basename(dst)}")
             except Exception:
                 pass
 
         new_count = len(raw_rows) - initial_master_count
-        if verbose or new_count > 0:
-            dest_names = ", ".join(shorten_display_path(m, 35) for m in master_files)
+        if duplicates_found_in_existing > 0:
+            print(f"\033[93m🧹 Flagged & auto-removed {duplicates_found_in_existing} duplicate row(s) found in the existing drives_master.csv "
+                  f"(pre-change backup saved to drives/archive/)\033[0m")
+        if verbose or new_count > 0 or duplicates_found_in_existing > 0:
+            dest_names = ", ".join(shorten_display_path(m, 0) for m in master_files)
             print(f"\033[92m✔ Consolidated {len(raw_rows)} total drives (+{new_count} new) into drives_master.csv\033[0m ({dest_names})\n")
 
         return len(raw_rows)
@@ -658,10 +847,35 @@ class TessieAnalyzer:
             reader = csv.DictReader(f)
             for r in reader:
                 try:
-                    start_str = r.get("Started At (AEST)") or r.get("Started At") or r.get("Started")
-                    end_str = r.get("Ended At (AEST)") or r.get("Ended At") or r.get("Ended")
-                    dt_start = datetime.strptime(start_str.strip(), "%Y-%m-%d %H:%M")
-                    dt_end = datetime.strptime(end_str.strip(), "%Y-%m-%d %H:%M")
+                    # TODO-009: prefer the self-healing UTC+TZ columns
+                    # (normalize_row_timezone() in consolidate_drives(),
+                    # which always runs first, above) over the legacy
+                    # single-fixed-zone text - dt_start/dt_end stay
+                    # naive LOCAL datetimes for every bit of downstream
+                    # display/day-grouping code that already expects
+                    # that, but are now correctly localized per-row
+                    # instead of blindly assumed Sydney; start_utc_epoch/
+                    # end_utc_epoch carry the true UTC instant for
+                    # sorting, so ordering is correct even across a
+                    # DST fall-back or a future interstate trip.
+                    start_utc_epoch = int(r["Started At (UTC)"]) if r.get("Started At (UTC)") else None
+                    end_utc_epoch = int(r["Ended At (UTC)"]) if r.get("Ended At (UTC)") else None
+                    start_tz = r.get("Started At TZ") or tztools.DEFAULT_TIMEZONE
+                    end_tz = r.get("Ended At TZ") or tztools.DEFAULT_TIMEZONE
+                    if start_utc_epoch is not None:
+                        local_dt, start_abbr, _ = tztools.localize(start_utc_epoch, start_tz)
+                        dt_start = local_dt.replace(tzinfo=None)
+                    else:
+                        start_abbr = None
+                        start_str = r.get("Started At (AEST)") or r.get("Started At") or r.get("Started")
+                        dt_start = datetime.strptime(start_str.strip()[:16], "%Y-%m-%d %H:%M")
+                    if end_utc_epoch is not None:
+                        local_dt, end_abbr, _ = tztools.localize(end_utc_epoch, end_tz)
+                        dt_end = local_dt.replace(tzinfo=None)
+                    else:
+                        end_abbr = None
+                        end_str = r.get("Ended At (AEST)") or r.get("Ended At") or r.get("Ended")
+                        dt_end = datetime.strptime(end_str.strip()[:16], "%Y-%m-%d %H:%M")
                     
                     dist_km = float(r.get("Distance (km)", 0))
                     dur_min = int(float(r.get("Duration (Minutes)", 0)))
@@ -682,6 +896,10 @@ class TessieAnalyzer:
                     parsed.append({
                         "start_dt": dt_start,
                         "end_dt": dt_end,
+                        "start_utc_epoch": start_utc_epoch,
+                        "end_utc_epoch": end_utc_epoch,
+                        "start_tz_abbr": start_abbr,
+                        "end_tz_abbr": end_abbr,
                         "dur_min": dur_min,
                         "dist_km": dist_km,
                         "start_addr": s_addr,
@@ -701,7 +919,10 @@ class TessieAnalyzer:
                 except Exception:
                     continue
 
-        parsed.sort(key=lambda x: x["start_dt"])
+        # TODO-009: sort by true UTC when available (correct across a
+        # DST fall-back or any future cross-timezone trip), falling
+        # back to local-naive for any legacy row without it.
+        parsed.sort(key=lambda x: x["start_utc_epoch"] if x["start_utc_epoch"] is not None else x["start_dt"].timestamp())
         self.drives = parsed
         return self.drives
 
