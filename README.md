@@ -30,6 +30,7 @@ tesla/
 │   ├── tessie_places.py            # Place tagging, geocoding, and stop-cluster review utility
 │   ├── find_tesla_chargers.py      # Tesla Supercharger / Destination Charger explorer & live scraper
 │   ├── find_plugshare_chargers.py  # PlugShare-listed 3rd-party charger explorer & registry
+│   ├── evnex_explore.py            # Read-only dump of home charger (Evnex) status/session data
 │   └── table_formatter.py          # Shared terminal table rendering helpers
 │
 ├── .github/                        # GitHub Actions CI & community standards
@@ -68,7 +69,7 @@ tesla/
 # Reconcile Supercharger invoices against Tessie charging sessions
 ./Tools/tessie_charging_analyzer.py --superchargers
 
-# Reconcile 3rd-Party Fast chargers (Chargefox, Evie, BP Pulse, Jolt)
+# Reconcile 3rd-party fast-charging sessions (Chargefox, Evie, BP Pulse, Jolt)
 ./Tools/tessie_charging_analyzer.py --third-party
 
 # Inspect charging efficiency loss and TOU tariff rate for a session
@@ -85,7 +86,18 @@ tesla/
 ```
 👉 *See [Tessie/README.md](Tessie/README.md) for full documentation on drives, charging reconciliation, invoices, tariffs, places, and charger discovery.*
 
-### 5. Deploy Scripts to External Drives
+### 5. Home Charger (Evnex) Exploration
+
+```bash
+# Dump everything the `evnex` library can see about your Evnex home charger
+# (status, energy meter, charging sessions) to a JSON file for inspection -
+# read-only, never issues a charge command. Credentials come from
+# Tessie/config.json or EVNEX_CLIENT_USERNAME/EVNEX_CLIENT_PASSWORD env vars
+# (see Tools/evnex_common.py).
+./Tools/evnex_explore.py
+```
+
+### 6. Deploy Scripts to External Drives
 
 ```bash
 # Automatically install/update tesla_sync.sh to /Volumes/*/Tools/ across all mounted drives
