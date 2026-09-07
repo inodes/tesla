@@ -597,3 +597,59 @@ Exploren, `0000545157` and `0000555286` -> Bunnings Gladesville /
 Exploren - and all 5 Supercharger sessions still resolve correctly with no
 regression. `invoice_locations.json` was written to the real invoices
 folder with the correct entries for all 8 loaded invoices.
+
+### `GET /{vin}/states` — per-session vehicle history (REQ-027, 2026-09-07)
+
+Confirmed via Tessie's own official reference (`developer.tessie.com`) -
+**not yet exercised live from this session** (same `api.tessie.com`
+network block as everything else here - see BUG-015/BUG-018). This is a
+real, separate endpoint from `/drives` and `/charges` - it wasn't found
+during the original REQ-022/023 evaluation because that only looked at
+the two bulk summary endpoints.
+
+**Purpose**: this is the automatable equivalent of the Tessie web app's
+manual single-record "download detailed telemetry" export that
+`tessie_drives_analyzer.py`/`tessie_charging_analyzer.py` already know how
+to detect and keep separate as "Deep Dive" files (see REQ-003) - except
+those have only ever been produced by hand, one record at a time, which
+is exactly what REQ-027 wants to stop doing.
+
+**Request**: `GET /{vin}/states`, same auth/base URL as `/drives`/`/charges`.
+
+| Param | Type | Notes |
+|---|---|---|
+| `from` / `to` | number | Unix timestamp seconds - the window to fetch |
+| `interval` | number | Seconds between points; `1` = every point available |
+| `condense` | boolean | Default `true` (arrays-per-field); `home_charge_deep_dive.py` passes `false` for one-object-per-sample, easier to reason about |
+| `timezone` | string | IANA name, default UTC |
+| `distance_format` / `temperature_format` | string | Same as `/drives`/`/charges` |
+| `format` | string | `json` (default) or `csv` |
+
+**Response**: `{"results": [...]}`, one object per sample when
+`condense=false`. Per the reference, every state includes (all nullable):
+`id`, `timestamp`; `state`, `charging_state`, `shift_state`, `locked`,
+`sentry_mode`; `battery_level`, `usable_battery_level`, `battery_range`,
+`ideal_battery_range`, `energy_remaining`; `latitude`, `longitude`,
+`elevation`; `speed`, `odometer`; `charge_rate`, `charger_actual_current`,
+`charger_power`, `charger_phases`, `charger_voltage`,
+`charge_energy_added`, `charge_miles_added_rated`,
+`charge_miles_added_ideal`; `inside_temp`, `outside_temp`,
+`is_climate_on`, `battery_heater_on`, `module_temp_min`,
+`module_temp_max`; `power`, `pack_current`, `pack_voltage`,
+`lifetime_energy_used`. The reference doesn't promise a fixed sampling
+interval when `interval` is omitted ("a sensible interval based on the
+timeframe") - `home_charge_deep_dive.py` always passes `interval=1`
+explicitly to get the finest grain available for a single charge/drive
+window rather than relying on that default.
+
+**Confirmed live** (2026-09-07, `home_charge_deep_dive.py --sample 3`
+against the real vehicle/account): the endpoint works exactly as
+documented above. A 207-minute home charge returned 318 samples (~1 every
+39s on average, not literally 1-second density even with `interval=1` -
+Tessie's backend still applies its own real sampling cadence rather than
+returning a point for every single requested second); shorter 7-9 minute
+sessions returned 37-40 samples. Still not yet checked: whether
+`charger_power`/`charger_voltage`/`charger_phases` are actually populated
+for home AC charging specifically (vs. only during Supercharger DC
+sessions) - worth inspecting one of the written
+`Tessie/home_charge_deep_dive/session_*.json` files directly.
