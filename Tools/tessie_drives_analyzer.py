@@ -37,6 +37,7 @@ if _tools_dir not in sys.path:
     sys.path.insert(0, _tools_dir)
 
 from archive_naming import next_archive_path
+from deepdive_charts import write_interactive_chart, try_open_in_browser
 
 from table_formatter import (
     char_width,
@@ -825,6 +826,398 @@ class TessieAnalyzer:
 
         return len(raw_rows)
 
+    @staticmethod
+    def _deepdive_ts(ts_str):
+        """Timestamp parser for drive_deepdive_*.csv rows - these are a
+        plain 'YYYY-MM-DD HH:MM:SS' local string with no timezone suffix
+        (unlike drives_master.csv's '(AEST)'-suffixed columns), so this
+        is deliberately its own small parser rather than reusing
+        tessie_charging_analyzer.py's parse_flexible_date() (a different
+        module, and overkill for a format this fixed)."""
+        if not ts_str:
+            return None
+        try:
+            return datetime.strptime(ts_str.strip(), "%Y-%m-%d %H:%M:%S")
+        except Exception:
+            return None
+
+    def parse_detailed_drive_csv(self, filepath):
+        """Parses high-frequency telemetry CSV files exported from the
+        Tesla app for a single drive (drive_deepdive_*.csv - same export
+        format as charging's charge_deepdive_*.csv, see AGENTS.md
+        REQ-035/036) - keeps the raw per-sample series (needed for
+        segment/grade analysis, not just a whole-trip aggregate) rather
+        than collapsing straight to summary numbers."""
+        try:
+            with open(filepath, "r", encoding="utf-8-sig", errors="ignore") as f:
+                reader = list(csv.DictReader(f))
+                if not reader:
+                    return None
+
+                header = set(reader[0].keys())
+                if "Speed (km/h)" not in header and "Shift State" not in header:
+                    return None
+
+                raw_ts, raw_elev, raw_speed, raw_power, raw_odo, raw_erem = [], [], [], [], [], []
+                timestamps = []
+
+                def to_float(v):
+                    try:
+                        return float(v) if v not in (None, "") else None
+                    except Exception:
+                        return None
+
+                for row in reader:
+                    ts_str = row.get("Timestamp (AEST)") or row.get("Timestamp")
+                    raw_ts.append(ts_str)
+                    dt = self._deepdive_ts(ts_str) if ts_str else None
+                    if dt:
+                        timestamps.append(dt)
+                    raw_elev.append(to_float(row.get("Elevation (m)")))
+                    raw_speed.append(to_float(row.get("Speed (km/h)")))
+                    raw_power.append(to_float(row.get("Power (kW)")))
+                    raw_odo.append(to_float(row.get("Odometer (km)")))
+                    raw_erem.append(to_float(row.get("Energy Remaining (kWh)")))
+
+                if not timestamps:
+                    return None
+
+                min_dt, max_dt = min(timestamps), max(timestamps)
+                dur_mins = (max_dt - min_dt).total_seconds() / 60.0
+                odo_vals = [v for v in raw_odo if v is not None]
+                distance_km = (max(odo_vals) - min(odo_vals)) if len(odo_vals) >= 2 else None
+
+                return {
+                    "source_file": os.path.basename(filepath),
+                    "source_path": filepath,
+                    "start_datetime": min_dt,
+                    "end_datetime": max_dt,
+                    "duration_mins": dur_mins,
+                    "samples_count": len(reader),
+                    "distance_km": distance_km,
+                    "raw_samples": {
+                        "timestamp": raw_ts,
+                        "elevation_m": raw_elev,
+                        "speed_kmh": raw_speed,
+                        "power_kw": raw_power,
+                        "odometer_km": raw_odo,
+                        "energy_remaining_kwh": raw_erem,
+                    },
+                }
+        except Exception:
+            return None
+
+    def load_detailed_drives(self):
+        """Mirrors load_detailed_charges() (tessie_charging_analyzer.py) -
+        find every drive_deepdive_*.csv this data home has (drives_dirs,
+        their archive/deepdive subfolders, the repo Tessie/ dirs, and the
+        landing dir), parse it, and keep the ones that actually contain
+        drive telemetry. A drive with no matching file simply has nothing
+        in self.detailed_drives for it - see match_detailed_drive() for
+        the optional, session-may-or-may-not-exist lookup this feeds."""
+        detailed = []
+        seen_paths = set()
+        search_dirs = [self.landing_dir] + list(self.drives_dirs) + list(self.tessie_dirs)
+        for dd in list(self.drives_dirs):
+            for sub in ["archive", "deepdive"]:
+                sub_p = os.path.join(dd, sub)
+                if os.path.isdir(sub_p) and sub_p not in search_dirs:
+                    search_dirs.append(sub_p)
+        for td in list(self.tessie_dirs):
+            for sub in ["drives", "archive"]:
+                sub_p = os.path.join(td, sub)
+                if os.path.isdir(sub_p) and sub_p not in search_dirs:
+                    search_dirs.append(sub_p)
+
+        candidates = []
+        for s_dir in search_dirs:
+            if not s_dir or not os.path.isdir(s_dir):
+                continue
+            try:
+                for fname in os.listdir(s_dir):
+                    if not fname.endswith(".csv") or fname.startswith("."):
+                        continue
+                    if fname.startswith("drive_deepdive_"):
+                        fpath = os.path.join(s_dir, fname)
+                        real_p = os.path.realpath(fpath)
+                        if real_p not in seen_paths:
+                            seen_paths.add(real_p)
+                            candidates.append(real_p)
+            except Exception:
+                pass
+
+        for cp in candidates:
+            parsed = self.parse_detailed_drive_csv(cp)
+            if parsed:
+                detailed.append(parsed)
+
+        detailed.sort(key=lambda x: x["start_datetime"] or datetime.min)
+        self.detailed_drives = detailed
+        return self.detailed_drives
+
+    def match_detailed_drive(self, drive_row):
+        """The detailed_drives entry (if any) whose telemetry window
+        overlaps this drives_master.csv row's start/end - same optional,
+        may-or-may-not-exist lookup pattern already used for charges'
+        dt_rec (self.detailed_charges), just keyed on drive start/end
+        instead of a fuzzy 15-minute window (a drive's own start/end is
+        already precise, no need to guess)."""
+        if not getattr(self, "detailed_drives", None):
+            return None
+        d_start = drive_row.get("start_dt")
+        d_end = drive_row.get("end_dt")
+        if not d_start:
+            return None
+        if not d_end:
+            d_end = d_start
+        # Small padding (Tesla's own start/stop detection and the app's
+        # detailed export don't always agree to the second).
+        pad = timedelta(minutes=2)
+        for rec in self.detailed_drives:
+            if rec["start_datetime"] <= d_end + pad and rec["end_datetime"] >= d_start - pad:
+                return rec
+        return None
+
+    def compute_drive_segments(self, raw_samples, grade_threshold_pct=2.0):
+        """Break a drive's raw telemetry into contiguous climbing/level/
+        descending segments (see AGENTS.md REQ-036) and compute per-segment
+        distance/duration/elevation-change/energy/efficiency - the actual
+        point being to answer "what was my efficiency going downhill",
+        which a whole-trip average can never show.
+
+        Grade is derived from consecutive samples' own Elevation (m) and
+        Odometer (km) - Delevation / (Ddistance * 1000) * 100 - never
+        assumed from speed or road type. Energy per interval is the
+        REAL delta in "Energy Remaining (kWh)" between consecutive
+        samples (e_rem[i] - e_rem[i+1]) - not a Power (kW) integration
+        (see AGENTS.md REQ-037: the user pointed out Power (kW) is
+        sometimes entirely empty in a real drive export, while Odometer
+        and Energy Remaining reliably vary, and that they're the more
+        trustworthy source for efficiency anyway). Positive means net
+        consumption (the battery's remaining energy went down); a
+        descending segment showing net-negative energy (i.e. net
+        regeneration - remaining energy went UP) is an expected,
+        physically real result here, not a bug, and is exactly the kind
+        of thing this is meant to reveal.
+
+        Intervals with no usable distance (Ddistance <= 0, e.g. a stopped
+        moment) are classified "stationary" rather than forced into a
+        grade bucket, and are still tracked as their own segment so a
+        red light doesn't get silently absorbed into whichever segment
+        happens to be adjacent."""
+        ts = raw_samples.get("timestamp") or []
+        elev = raw_samples.get("elevation_m") or []
+        odo = raw_samples.get("odometer_km") or []
+        erem = raw_samples.get("energy_remaining_kwh") or []
+        n = len(ts)
+
+        dts = [self._deepdive_ts(t) if t else None for t in ts]
+
+        intervals = []
+        for i in range(n - 1):
+            dt0, dt1 = dts[i], dts[i + 1]
+            e0, e1 = elev[i], elev[i + 1]
+            o0, o1 = odo[i], odo[i + 1]
+            r0 = erem[i] if i < len(erem) else None
+            r1 = erem[i + 1] if i + 1 < len(erem) else None
+            if not (dt0 and dt1 and dt1 > dt0):
+                continue
+            dt_hours = (dt1 - dt0).total_seconds() / 3600.0
+            ddist_km = (o1 - o0) if (o0 is not None and o1 is not None) else None
+            delev_m = (e1 - e0) if (e0 is not None and e1 is not None) else None
+            energy_kwh = (r0 - r1) if (r0 is not None and r1 is not None) else None
+
+            if ddist_km is not None and ddist_km > 0.01 and delev_m is not None:
+                grade_pct = (delev_m / (ddist_km * 1000.0)) * 100.0
+                if grade_pct >= grade_threshold_pct:
+                    cls = "climbing"
+                elif grade_pct <= -grade_threshold_pct:
+                    cls = "descending"
+                else:
+                    cls = "level"
+            else:
+                grade_pct = None
+                cls = "stationary"
+
+            intervals.append({
+                "start": dt0, "end": dt1, "dt_hours": dt_hours,
+                "distance_km": ddist_km or 0.0, "elevation_change_m": delev_m or 0.0,
+                "energy_kwh": energy_kwh, "grade_pct": grade_pct, "class": cls,
+            })
+
+        # Merge consecutive same-class intervals into segments.
+        segments = []
+        for iv in intervals:
+            if segments and segments[-1]["class"] == iv["class"]:
+                seg = segments[-1]
+                seg["end"] = iv["end"]
+                seg["distance_km"] += iv["distance_km"]
+                seg["elevation_change_m"] += iv["elevation_change_m"]
+                if iv["energy_kwh"] is not None:
+                    seg["energy_kwh"] = (seg["energy_kwh"] or 0.0) + iv["energy_kwh"]
+                seg["_interval_count"] += 1
+            else:
+                segments.append({
+                    "class": iv["class"], "start": iv["start"], "end": iv["end"],
+                    "distance_km": iv["distance_km"], "elevation_change_m": iv["elevation_change_m"],
+                    "energy_kwh": iv["energy_kwh"], "_interval_count": 1,
+                })
+
+        for seg in segments:
+            seg["duration_mins"] = (seg["end"] - seg["start"]).total_seconds() / 60.0
+            seg["avg_speed_kmh"] = (seg["distance_km"] / (seg["duration_mins"] / 60.0)
+                                     if seg["duration_mins"] > 0 else None)
+            if seg["distance_km"] > 0.15 and seg["energy_kwh"] is not None:
+                seg["efficiency_kwh_per_100km"] = (seg["energy_kwh"] / seg["distance_km"]) * 100.0
+            else:
+                seg["efficiency_kwh_per_100km"] = None
+            del seg["_interval_count"]
+
+        return segments
+
+    def generate_drive_profile_chart(self, dt_rec):
+        """Interactive elevation/efficiency profile for one drive's
+        deep-dive telemetry (AGENTS.md REQ-036/REQ-037) - Elevation (m) on
+        the left axis, Efficiency (kWh/100km) on the right, x-axis = time.
+        The efficiency series is each segment's own aggregate value
+        (compute_drive_segments()) broadcast across that segment's
+        samples as a step function, rather than a raw per-sample
+        instantaneous figure - the per-interval distance between two
+        ~15-30s samples is small enough (often under 50m) that dividing
+        a tiny real energy delta by it produces wild, meaningless swings;
+        the segment-level aggregate is the same number the segment
+        breakdown table already reports, so the chart and the table agree.
+        Mirrors generate_charging_curve_chart() in
+        tessie_charging_analyzer.py."""
+        raw = dt_rec.get("raw_samples")
+        if not raw or not raw.get("timestamp"):
+            return None
+        timestamps = raw["timestamp"]
+        n = len(timestamps)
+        x_labels = [ts[11:19] if ts and len(ts) >= 19 else (ts or "") for ts in timestamps]
+
+        segments = self.compute_drive_segments(raw)
+        dts = [self._deepdive_ts(t) if t else None for t in timestamps]
+        eff_series = [None] * n
+        seg_idx = 0
+        for i, dt in enumerate(dts):
+            if dt is None or not segments:
+                continue
+            while seg_idx < len(segments) - 1 and dt > segments[seg_idx]["end"]:
+                seg_idx += 1
+            if segments[seg_idx]["start"] <= dt <= segments[seg_idx]["end"]:
+                eff_series[i] = segments[seg_idx]["efficiency_kwh_per_100km"]
+
+        series = [
+            {"name": "Elevation", "unit": "m", "axis": "left", "color": "#16a34a",
+             "values": raw.get("elevation_m", [None] * n)},
+            {"name": "Efficiency", "unit": "kWh/100km", "axis": "right", "color": "#dc2626",
+             "values": eff_series},
+        ]
+
+        # No "plots" subfolder - sits right beside the CSV, alongside
+        # every other deep-dive artifact for this same drive.
+        src_dir = os.path.dirname(dt_rec.get("source_path") or "") or os.getcwd()
+        base = os.path.splitext(os.path.basename(dt_rec.get("source_file") or "drive"))[0]
+        out_path = os.path.join(src_dir, f"{base}_profile.html")
+
+        subtitle = (f"{dt_rec.get('samples_count', n)} samples over "
+                    f"{dt_rec.get('duration_mins', 0):.1f} min"
+                    + (f", {dt_rec['distance_km']:.1f} km" if dt_rec.get("distance_km") else ""))
+
+        write_interactive_chart(
+            out_path,
+            title=f"Drive Elevation/Efficiency Profile - {dt_rec.get('source_file', '')}",
+            x_values=x_labels,
+            x_label="Time",
+            series=series,
+            subtitle=subtitle,
+        )
+        return out_path
+
+    def inspect_drive(self, target):
+        """Deep-dive inspect a specific drive by 1-based index (in
+        start-time order, matching how drives are listed elsewhere) or by
+        date/datetime string (see AGENTS.md REQ-036) - prints the
+        climbing/level/descending segment breakdown (compute_drive_segments)
+        when a matching drive_deepdive_*.csv exists for it, and opens the
+        interactive elevation/power profile chart. Mirrors
+        tessie_charging_analyzer.py's inspect_session(), just keyed on a
+        drive instead of a charge."""
+        if not self.drives:
+            self.load_drives()
+        if not getattr(self, "detailed_drives", None):
+            self.load_detailed_drives()
+
+        target_drive = None
+        try:
+            idx = int(target)
+            sorted_drives = sorted(self.drives, key=lambda d: d["start_dt"])
+            if 1 <= idx <= len(sorted_drives):
+                target_drive = sorted_drives[idx - 1]
+        except ValueError:
+            t_dt = parse_relative_date(target)
+            if t_dt:
+                best, best_diff = None, None
+                for d in self.drives:
+                    diff = abs((d["start_dt"] - t_dt).total_seconds())
+                    if best_diff is None or diff < best_diff:
+                        best, best_diff = d, diff
+                if best is not None and best_diff <= 7200:
+                    target_drive = best
+
+        if not target_drive:
+            print(f"\033[91mCould not find drive matching:\033[0m {target}")
+            return
+
+        box_w = 106
+        header_title = (f" 🚗 DEEP-DIVE DRIVE INSPECTION: {target_drive['start_dt'].strftime('%Y-%m-%d %H:%M')} "
+                         f"{target_drive.get('start_place', '') or ''} ➔ {target_drive.get('end_place', '') or ''}")
+        print()
+        print(f"┌{'─' * (box_w - 2)}┐")
+        print(f"│{pad_display(header_title, box_w - 2, 'left', truncate=True)}│")
+        print(f"├{'─' * (box_w - 2)}┤")
+
+        dur_mins = (target_drive["end_dt"] - target_drive["start_dt"]).total_seconds() / 60.0
+        l1 = f"  \033[1mStarted:\033[0m {target_drive['start_dt'].strftime('%Y-%m-%d %H:%M:%S')}   \033[1mDuration:\033[0m {dur_mins:.0f} mins"
+        print(f"│{pad_display(l1, box_w - 2, truncate=True)}│")
+
+        dt_rec = self.match_detailed_drive(target_drive)
+        if not dt_rec:
+            l2 = "  \033[93mNo deep-dive telemetry (drive_deepdive_*.csv) found for this drive.\033[0m"
+            print(f"│{pad_display(l2, box_w - 2, truncate=True)}│")
+            print(f"└{'─' * (box_w - 2)}┘")
+            return
+
+        l3 = f"  \033[1mDeep-Dive File:\033[0m {dt_rec.get('source_file', '')}   ({dt_rec.get('samples_count', 0)} samples)"
+        print(f"│{pad_display(l3, box_w - 2, truncate=True)}│")
+        print(f"├{'─' * (box_w - 2)}┤")
+
+        seg_title = "  \033[1m\033[95m⛰  SEGMENT BREAKDOWN (climbing/level/descending/stationary):\033[0m"
+        print(f"│{pad_display(seg_title, box_w - 2, truncate=True)}│")
+
+        segments = self.compute_drive_segments(dt_rec["raw_samples"])
+        cls_icon = {"climbing": "⬆️ ", "descending": "⬇️ ", "level": "➡️ ", "stationary": "⏸ "}
+        for seg in segments:
+            icon = cls_icon.get(seg["class"], "  ")
+            eff = seg["efficiency_kwh_per_100km"]
+            eff_str = f"{eff:.1f} kWh/100km" if eff is not None else "-"
+            l = (f"    {icon}{seg['class']:<11} {seg['distance_km']:5.2f} km  {seg['duration_mins']:5.1f} min  "
+                 f"Δelev {seg['elevation_change_m']:+6.1f} m   eff: {eff_str}")
+            print(f"│{pad_display(l, box_w - 2, truncate=True)}│")
+
+        print(f"├{'─' * (box_w - 2)}┤")
+        try:
+            chart_path = self.generate_drive_profile_chart(dt_rec)
+        except Exception:
+            chart_path = None
+        if chart_path:
+            l4 = f"  \033[1mElevation/Efficiency Profile:\033[0m {chart_path}"
+            print(f"│{pad_display(l4, box_w - 2, truncate=True)}│")
+            try_open_in_browser(chart_path)
+        print(f"└{'─' * (box_w - 2)}┘")
+        print()
+
     def load_drives(self):
         self.consolidate_drives()
         master_file = None
@@ -1108,21 +1501,6 @@ class TessieAnalyzer:
             
         return events, day_start, None
 
-def display_footage_details(trip, analyzer):
-    """Level 3: Deep listing of exact video files by camera angle for a single drive."""
-    start_clips = analyzer.find_footage(trip["start_dt"], 120)
-    end_clips = analyzer.find_footage(trip["end_dt"], 180)
-    
-    t_start = trip["start_dt"]
-    t_end = trip["end_dt"]
-    
-    print(f"\n┌────────────────────────────────────────────────────────────────────────┐")
-    print(f"│ 📹 CAMERA FOOTAGE: {t_start.strftime('%a %d %b %Y')} ({t_start.strftime('%H:%M')} ➔ {t_end.strftime('%H:%M')})".ljust(73) + "│")
-    print(f"├────────────────────────────────────────────────────────────────────────┤")
-    print(f"│    Origin      : {trip['start_place']} ({trip['start_addr'].split(',')[0]})".ljust(73) + "│")
-    print(f"│    Destination : {trip['end_place']} ({trip['end_addr'].split(',')[0]})".ljust(73) + "│")
-    print(f"└────────────────────────────────────────────────────────────────────────┘")
-    
 def render_footage_listing(clips, indent=""):
     by_cat = defaultdict(list)
     for c in clips:
@@ -1185,12 +1563,14 @@ def display_footage_details(trip, analyzer):
     t_start = trip["start_dt"]
     t_end = trip["end_dt"]
     
-    print(f"\n┌────────────────────────────────────────────────────────────────────────┐")
-    print(f"│ 📹 CAMERA FOOTAGE: {t_start.strftime('%a %d %b %Y')} ({t_start.strftime('%H:%M')} ➔ {t_end.strftime('%H:%M')})".ljust(73) + "│")
-    print(f"├────────────────────────────────────────────────────────────────────────┤")
-    print(f"│    Origin      : {trip['start_place']} ({trip['start_addr'].split(',')[0]})".ljust(73) + "│")
-    print(f"│    Destination : {trip['end_place']} ({trip['end_addr'].split(',')[0]})".ljust(73) + "│")
-    print(f"└────────────────────────────────────────────────────────────────────────┘")
+    box_inner = 72
+    print()
+    print(format_box_line("┌", "─", "┐", [box_inner]))
+    print(format_title_line(f" 📹 CAMERA FOOTAGE: {t_start.strftime('%a %d %b %Y')} ({t_start.strftime('%H:%M')} ➔ {t_end.strftime('%H:%M')})", box_inner))
+    print(format_box_line("├", "─", "┤", [box_inner]))
+    print(format_title_line(f"    Origin      : {trip['start_place']} ({trip['start_addr'].split(',')[0]})", box_inner))
+    print(format_title_line(f"    Destination : {trip['end_place']} ({trip['end_addr'].split(',')[0]})", box_inner))
+    print(format_box_line("└", "─", "┘", [box_inner]))
     
     # 1. Entry footage (getting into car)
     print(f"\n🚪 1. ENTRY WINDOW (Departure ~{t_start.strftime('%H:%M:%S')}):")
@@ -1212,7 +1592,6 @@ def display_footage_details(trip, analyzer):
     if start_clips or end_clips:
         first_folder = (start_clips[0]['folder'] if start_clips else end_clips[0]['folder'])
         print(f"   • Open folder in Finder: open \"{first_folder}\"")
-    print(f"└────────────────────────────────────────────────────────────────────────────┘")
 
 def drill_down_day(day_str, day_trips, analyzer):
     """Level 2: Display drives for a selected day in a structured table and allow picking a trip for footage listing."""
@@ -2238,6 +2617,7 @@ def main():
     parser.add_argument("--days", type=int, help="Filter drives from past N days")
     parser.add_argument("--place", help="Filter drives by place nickname (e.g. 'School', 'Work', 'Gym')")
     parser.add_argument("--consolidate", nargs="?", const=True, help="Consolidate drives CSV(s) into drives_master.csv (optionally specify path to a new CSV)")
+    parser.add_argument("--inspect-drive", help="Deep-dive inspect a specific drive by 1-based index (start-time order) or date/datetime (e.g. '2026-08-30', '2026-08-30 21:01')")
     parser.add_argument("--tessie-dir", help="Custom path to directory containing Tessie CSV exports")
     
     args = parser.parse_args()
@@ -2253,6 +2633,10 @@ def main():
     if not drives:
         print("No Tessie drive records found. Please ensure CSVs exist in iCloud or Tessie/.")
         sys.exit(0)
+
+    if args.inspect_drive:
+        analyzer.inspect_drive(args.inspect_drive)
+        return
 
     if args.timeline is not None:
         target_date = parse_relative_date(args.timeline)
