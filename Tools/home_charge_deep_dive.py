@@ -48,22 +48,11 @@ from tessie_api_common import (  # noqa: E402
     get_token,
     get_vin,
     load_config,
+    resolve_tessie_data_home,
 )
 import tessie_timezone as tztools  # noqa: E402
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-
-
-def resolve_tessie_data_home():
-    """The ONE authoritative home for real Tessie data - config.json's own
-    "tessie_directory" (trusted unconditionally, same principle applied to
-    the analyzer classes - see AGENTS.md REQ-028/029: real data does not
-    belong inside the repo folder), falling back to the default iCloud
-    path only if nothing is configured. Never falls back to REPO_ROOT."""
-    cfg_dir = load_config().get("tessie_directory")
-    if cfg_dir:
-        return os.path.abspath(os.path.expanduser(cfg_dir))
-    return os.path.expanduser("~/Library/Mobile Documents/com~apple~CloudDocs/Tesla/Tessie")
 
 
 TESSIE_DATA_HOME = resolve_tessie_data_home()
