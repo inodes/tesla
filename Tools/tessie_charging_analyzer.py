@@ -147,6 +147,8 @@ if _tools_dir not in sys.path:
     sys.path.insert(0, _tools_dir)
 
 from archive_naming import next_archive_path
+from tessie_api_common import unique_stamped_path
+from deepdive_charts import write_interactive_chart, try_open_in_browser
 
 from table_formatter import (
     char_width,
@@ -1486,8 +1488,16 @@ class TessieChargingAnalyzer:
                                 if first_row and len(first_row) > 0:
                                     dt_str = first_row[0]
                                 dt = parse_flexible_date(dt_str) if dt_str else None
-                                if dt:
-                                    deepdive_name = f"charge_deepdive_{dt.strftime('%Y-%m-%d_%H%M')}.csv"
+                                if dt and self.charges_dirs:
+                                    # Numbered against the first charges dir only, then
+                                    # reused for every mirror dir below - so the same
+                                    # logical file gets the same name everywhere instead
+                                    # of risking a different "_NN" in each destination.
+                                    deepdive_name = os.path.basename(unique_stamped_path(
+                                        self.charges_dirs[0], "charge_deepdive",
+                                        dt.strftime('%Y-%m-%d_%H%M'), ext=".csv"))
+                                elif dt:
+                                    deepdive_name = f"charge_deepdive_{dt.strftime('%Y-%m-%d_%H%M')}_00.csv"
                                 else:
                                     deepdive_name = f"charge_deepdive_{f}"
                                 for cd in self.charges_dirs:
@@ -1765,6 +1775,13 @@ class TessieChargingAnalyzer:
                 temps_min = []
                 temps_max = []
                 has_heater = False
+                # Raw per-sample series for plotting a real charging curve
+                # (see AGENTS.md REQ-035) - everything above this point only
+                # ever kept aggregates (peak/avg), which is fine for the
+                # audit text but useless for a curve.
+                raw_ts = []
+                raw_power = []
+                raw_soc = []
                 
                 rem_start = None
                 rem_end = None
@@ -1826,6 +1843,16 @@ class TessieChargingAnalyzer:
                         except Exception:
                             pass
                     
+                    raw_ts.append(ts_str)
+                    try:
+                        raw_power.append(float(p_val) if p_val not in (None, "") else None)
+                    except Exception:
+                        raw_power.append(None)
+                    try:
+                        raw_soc.append(float(soc_val) if soc_val not in (None, "") else None)
+                    except Exception:
+                        raw_soc.append(None)
+
                     if outside_temp is None and row.get("Outside Temp (°C)"):
                         try:
                             outside_temp = float(row.get("Outside Temp (°C)"))
@@ -1902,7 +1929,12 @@ class TessieChargingAnalyzer:
                     "outside_temp_c": outside_temp,
                     "inside_temp_c": inside_temp,
                     "integrated_dispenser_kwh": dispenser_energies_kwh,
-                    "integrated_pack_kwh": pack_energies_kwh
+                    "integrated_pack_kwh": pack_energies_kwh,
+                    "raw_samples": {
+                        "timestamp": raw_ts,
+                        "charger_power_kw": raw_power,
+                        "battery_level_pct": raw_soc,
+                    },
                 }
         except Exception:
             return None
@@ -2242,14 +2274,43 @@ class TessieChargingAnalyzer:
                 else:
                     status = "MATCHED ✅"
 
-            if invoice_disp_kwh and invoice_disp_kwh > 0:
+            # An invoice-only entry (BUG-029): the session has no independent
+            # Tessie telemetry at all - append_charge_to_master() wrote the
+            # SAME single invoice kWh figure into both "Energy Added" and
+            # "Energy Used" (there was never a separate car-intake vs.
+            # battery-storage measurement), and duration/odometer/SoC are all
+            # blank/zero because Tessie never actually recorded this charge
+            # (e.g. an invoice from before Tessie API history began). Detected
+            # by duration/odometer both being zero - a real charge always has
+            # some nonzero duration and a nonzero odometer reading, so this
+            # combination is otherwise unreachable. Never compute a "loss"
+            # or "efficiency" from a single duplicated number.
+            is_invoice_only_entry = charge["duration_mins"] <= 0 and charge["odometer_km"] <= 0
+
+            if is_invoice_only_entry:
+                cable_loss_kwh = None
+                car_loss_kwh = None
+                loss_kwh = None
+                efficiency_pct = None
+                car_overshoot_kwh = 0.0
+            elif invoice_disp_kwh and invoice_disp_kwh > 0:
                 car_inlet = tessie_car_kwh if tessie_car_kwh > 0 else battery_kwh
-                cable_loss_kwh = max(0.0, invoice_disp_kwh - car_inlet)
+                # BUG-030: max(0.0, ...) here used to silently clamp a
+                # negative "cable loss" (car reporting MORE intake than the
+                # dispenser/invoice billed - physically backwards) to a
+                # falsely clean 0.00 kWh, hiding a real measurement
+                # disagreement rather than surfacing it. A >= 0.05 kWh
+                # overshoot (outside normal meter rounding) is now flagged
+                # explicitly instead of being absorbed into "0 loss".
+                raw_cable_delta = invoice_disp_kwh - car_inlet
+                cable_loss_kwh = max(0.0, raw_cable_delta)
+                car_overshoot_kwh = max(0.0, -raw_cable_delta) if raw_cable_delta < -0.05 else 0.0
                 car_loss_kwh = max(0.0, car_inlet - battery_kwh)
                 loss_kwh = max(0.0, invoice_disp_kwh - battery_kwh)
                 efficiency_pct = (battery_kwh / invoice_disp_kwh * 100.0)
             else:
                 cable_loss_kwh = 0.0
+                car_overshoot_kwh = 0.0
                 car_loss_kwh = max(0.0, tessie_car_kwh - battery_kwh) if tessie_car_kwh > 0 else 0.0
                 loss_kwh = car_loss_kwh
                 efficiency_pct = (battery_kwh / dispenser_kwh * 100.0) if dispenser_kwh > 0 else 100.0
@@ -2286,8 +2347,10 @@ class TessieChargingAnalyzer:
                 "tessie_car_kwh": tessie_car_kwh,
                 "invoice_disp_kwh": invoice_disp_kwh,
                 "cable_loss_kwh": cable_loss_kwh,
+                "car_overshoot_kwh": car_overshoot_kwh,
                 "car_loss_kwh": car_loss_kwh,
                 "total_loss_kwh": loss_kwh,
+                "is_invoice_only_entry": is_invoice_only_entry,
                 "dispenser_kwh": dispenser_kwh,
                 "battery_kwh": battery_kwh,
                 "loss_kwh": loss_kwh,
@@ -2728,7 +2791,7 @@ class TessieChargingAnalyzer:
             dur_str = f"{int(s['duration_mins'])}m" if s["duration_mins"] > 0 else "-"
             disp_str = f"{s['dispenser_kwh']:.2f}"
             bat_str = f"{s['battery_kwh']:.2f}"
-            eff_str = f"{s['efficiency_pct']:.1f}%"
+            eff_str = f"{s['efficiency_pct']:.1f}%" if s.get("efficiency_pct") is not None else "N/A"
             
             if s.get("status") == "INVOICE ONLY 📄":
                 rate_val = s.get("invoice_rate")
@@ -2838,6 +2901,7 @@ class TessieChargingAnalyzer:
         tot_cable_loss = 0.0
         tot_car_loss = 0.0
         tot_loss = 0.0
+        invoice_only_count = 0
 
         for s in corr_sessions:
             idx_str = str(s["charge_index"]) if s["charge_index"] is not None else "-"
@@ -2856,14 +2920,17 @@ class TessieChargingAnalyzer:
             car_str = f"{car_kwh:.2f} kWh" if car_kwh > 0 else "-"
             inv_str = f"{inv_kwh:.2f} kWh" if inv_kwh else "-"
 
-            cable_loss = s.get("cable_loss_kwh", 0.0)
-            car_loss = s.get("car_loss_kwh", 0.0)
-            t_loss = s.get("total_loss_kwh", s["loss_kwh"])
+            cable_loss = s.get("cable_loss_kwh")
+            car_loss = s.get("car_loss_kwh")
+            t_loss = s.get("total_loss_kwh")
+            no_telemetry = s.get("is_invoice_only_entry", False)
+            if no_telemetry:
+                invoice_only_count += 1
 
-            cable_str = f"{cable_loss:.2f} kWh" if inv_kwh else "-"
-            car_str_loss = f"{car_loss:.2f} kWh" if car_kwh > 0 else "-"
-            total_loss_str = f"{t_loss:.2f} kWh"
-            eff_str = f"{s['efficiency_pct']:.1f}%"
+            cable_str = f"{cable_loss:.2f} kWh" if (inv_kwh and cable_loss is not None) else "-"
+            car_str_loss = f"{car_loss:.2f} kWh" if (car_kwh > 0 and car_loss is not None) else "-"
+            total_loss_str = f"{t_loss:.2f} kWh" if t_loss is not None else "N/A*"
+            eff_str = f"{s['efficiency_pct']:.1f}%" if s.get("efficiency_pct") is not None else "N/A*"
 
             if s.get("invoice_cost") is not None and s.get("tessie_cost") is not None:
                 d_cost = s["invoice_cost"] - s["tessie_cost"]
@@ -2885,13 +2952,14 @@ class TessieChargingAnalyzer:
                 telem_str = "-"
 
             tot_bat += bat_kwh
-            if car_kwh > 0:
+            if car_kwh > 0 and not no_telemetry:
                 tot_car += car_kwh
             if inv_kwh:
                 tot_inv += inv_kwh
-                tot_cable_loss += cable_loss
-                tot_car_loss += car_loss
-                tot_loss += t_loss
+                if not no_telemetry:
+                    tot_cable_loss += cable_loss
+                    tot_car_loss += car_loss
+                    tot_loss += t_loss
 
             row_str = "│" + "│".join([
                 pad_display(idx_str + " ", widths[0], "right", truncate=True),
@@ -2911,6 +2979,8 @@ class TessieChargingAnalyzer:
 
         bot_b = "└" + "┴".join("─" * w for w in widths) + "┘"
         print(bot_b)
+        if invoice_only_count:
+            print(f"{C_DIM}  * N/A - {invoice_only_count} session(s) have no independent Tessie telemetry (invoice-only entries, appended from the invoice alone - see BUG-029); excluded from the loss/efficiency totals below.{C_RESET}")
 
         if tot_inv > 0:
             box_w = 95
@@ -2947,6 +3017,148 @@ class TessieChargingAnalyzer:
             cl5 = f"  {C_BOLD}High-Frequency Telemetry Files Linked:{C_RESET}    {telem_linked}/{len(corr_sessions)} sessions{telem_loc_str}"
             print(f"│{pad_display(cl5, box_w - 2, truncate=True)}│")
             print(f"└{'─' * (box_w - 2)}┘\n")
+
+    @staticmethod
+    def _estimate_20_80_time(timestamps, soc_values):
+        """Estimate how long this session spent going from 20% to 80%
+        SoC, interpolating between the two raw samples that bracket each
+        threshold rather than snapping to the nearest sample. Returns a
+        (minutes, note) tuple - note is None when both thresholds were
+        cleanly observed, or an explanatory string when the session
+        never actually reached one of them (started above 20%, or never
+        reached 80%) so the caller can say so rather than print a
+        confident-looking number for data that was never there."""
+        pairs = []
+        for ts, soc in zip(timestamps, soc_values):
+            if not ts or soc is None:
+                continue
+            try:
+                dt = datetime.strptime(ts.strip()[:19], "%Y-%m-%d %H:%M:%S")
+            except Exception:
+                continue
+            pairs.append((dt, soc))
+        if len(pairs) < 2:
+            return None, "not enough data"
+
+        def crossing_time(threshold):
+            if pairs[0][1] >= threshold:
+                return pairs[0][0], True  # already past it at the first sample
+            for (t0, s0), (t1, s1) in zip(pairs, pairs[1:]):
+                if s0 < threshold <= s1:
+                    frac = (threshold - s0) / (s1 - s0) if s1 != s0 else 0.0
+                    return t0 + (t1 - t0) * frac, False
+            return None, False
+
+        t20, snapped_20 = crossing_time(20.0)
+        t80, snapped_80 = crossing_time(80.0)
+        if t20 is None:
+            return None, f"never reached 20% (ended at {pairs[-1][1]:.0f}%)"
+        if t80 is None:
+            return None, f"never reached 80% (started at {pairs[0][1]:.0f}%, ended at {pairs[-1][1]:.0f}%)"
+        mins = (t80 - t20).total_seconds() / 60.0
+        note = None
+        if snapped_20:
+            note = f"session already at {pairs[0][1]:.0f}% at the first sample - 20% start is approximate"
+        return mins, note
+
+    def generate_charging_curve_chart(self, dt_rec, session=None):
+        """Build the interactive charging-curve HTML for one deep-dive
+        record (see AGENTS.md REQ-035/REQ-037) - Charger Power over time
+        on the left axis, Battery Level % on the right, from the raw
+        per-sample series parse_detailed_charge_csv() now keeps. `session`
+        (a reconciled_sessions entry, optional) supplies the human-readable
+        title (date + place/network) and subtitle lines (20-80% estimate,
+        cost) - without it this falls back to the bare filename-based
+        title, e.g. for a caller that only has the deep-dive dict. Returns
+        the output path, or None if there's nothing plottable (e.g. an
+        old-format deep-dive dict from before raw_samples existed)."""
+        raw = dt_rec.get("raw_samples")
+        if not raw or not raw.get("timestamp"):
+            return None
+
+        timestamps = raw["timestamp"]
+        n = len(timestamps)
+        # Use a short HH:MM:SS label for the x-axis rather than the full
+        # "Timestamp (AEST)" string - this is a single session, the date
+        # is already in the title, repeating it on every tick is just noise.
+        x_labels = []
+        for ts in timestamps:
+            if ts and len(ts) >= 19:
+                x_labels.append(ts[11:19])
+            else:
+                x_labels.append(ts or "")
+
+        series = [
+            {
+                "name": "Charger Power",
+                "unit": "kW",
+                "axis": "left",
+                "color": "#2563eb",
+                "values": raw.get("charger_power_kw", [None] * n),
+            },
+            {
+                "name": "Battery Level",
+                "unit": "%",
+                "axis": "right",
+                "color": "#f59e0b",
+                "values": raw.get("battery_level_pct", [None] * n),
+            },
+        ]
+
+        # No "plots" subfolder - the chart now sits right beside the CSV
+        # it was built from, alongside every other deep-dive artifact for
+        # this same session (see AGENTS.md REQ-037).
+        src_dir = os.path.dirname(dt_rec.get("source_path") or "") or os.getcwd()
+        base = os.path.splitext(os.path.basename(dt_rec.get("source_file") or "session"))[0]
+        out_path = os.path.join(src_dir, f"{base}_curve.html")
+
+        if session:
+            dt = session.get("datetime")
+            date_str = f"{dt.day} {dt.strftime('%b %Y')}" if dt else ""
+            place = session.get("place_name") or ""
+            network = session.get("network") or ""
+            net_part = f" ({network})" if network and network.lower() not in place.lower() else ""
+            title = f"{date_str} - {place}{net_part}".strip(" -")
+            if not title:
+                title = f"Charging Curve - {dt_rec.get('source_file', '')}"
+        else:
+            title = f"Charging Curve - {dt_rec.get('source_file', '')}"
+
+        subtitle_lines = [
+            f"{dt_rec.get('samples_count', n)} samples over "
+            f"{dt_rec.get('duration_mins', 0):.1f} min - peak "
+            f"{dt_rec.get('peak_power_kw', 0):.1f} kW, avg "
+            f"{dt_rec.get('avg_power_kw', 0):.1f} kW"
+        ]
+
+        mins_20_80, note_20_80 = self._estimate_20_80_time(timestamps, raw.get("battery_level_pct") or [])
+        if mins_20_80 is not None:
+            line = f"Est. 20% → 80%: {mins_20_80:.1f} min"
+            if note_20_80:
+                line += f" ({note_20_80})"
+            subtitle_lines.append(line)
+        elif note_20_80:
+            subtitle_lines.append(f"20% → 80%: {note_20_80}")
+
+        if session:
+            kwh = session.get("invoice_disp_kwh") or session.get("dispenser_kwh") or session.get("battery_kwh")
+            cost = session.get("invoice_cost") if session.get("invoice_cost") is not None else session.get("tessie_cost")
+            rate = session.get("invoice_rate") if session.get("invoice_rate") is not None else session.get("tessie_rate")
+            if kwh and cost is not None:
+                rate_part = f" (@ ${rate:.2f}/kWh)" if rate else ""
+                subtitle_lines.append(f"{kwh:.2f} kWh for ${cost:.2f} AUD{rate_part}")
+
+        subtitle = "<br>".join(subtitle_lines)
+
+        write_interactive_chart(
+            out_path,
+            title=title,
+            x_values=x_labels,
+            x_label="Time",
+            series=series,
+            subtitle=subtitle,
+        )
+        return out_path
 
     def inspect_session(self, target):
         if not self.reconciled_sessions:
@@ -3007,24 +3219,43 @@ class TessieChargingAnalyzer:
             inv_net = (s.get("matched_invoice", {}) or {}).get("network") or s.get("network") or "Dispenser"
             l6a = f"    • {C_BOLD}{'1. Invoice Meter (Dispenser):':<{lw_loss}}{C_RESET}{s['invoice_disp_kwh']:.2f} kWh ({inv_net} Billed Dispenser Meter)"
             print(f"│{pad_display(l6a, box_w - 2, truncate=True)}│")
-        
-        car_in = s.get("tessie_car_kwh", 0.0)
-        if car_in > 0:
-            l6b = f"    • {C_BOLD}{'2. Vehicle Gross Intake:':<{lw_loss}}{C_RESET}{car_in:.2f} kWh (Electricity Consumed by Car)"
-            print(f"│{pad_display(l6b, box_w - 2, truncate=True)}│")
 
-        l7 = f"    • {C_BOLD}{'3. Net Battery Storage (BMS):':<{lw_loss}}{C_RESET}{s['battery_kwh']:.2f} kWh (Net Battery Pack Chemical Storage)"
-        print(f"│{pad_display(l7, box_w - 2, truncate=True)}│")
+        if s.get("is_invoice_only_entry"):
+            # BUG-029: this session has no independent Tessie telemetry at
+            # all - "Energy Added"/"Energy Used" in the master CSV are both
+            # just the same invoice figure copied twice (see
+            # append_charge_to_master()), never separately measured. Showing
+            # a fabricated "2./3." breakdown here would imply a verified
+            # 3-way match that never happened.
+            l6c = f"    • {C_BOLD}{'2./3. Vehicle Intake / Battery Storage:':<{lw_loss}}{C_RESET}N/A"
+            print(f"│{pad_display(l6c, box_w - 2, truncate=True)}│")
+            l6d = f"    {C_YELLOW}⚠️  No independent Tessie measurement for this session - invoice-only entry (this charge predates Tessie API history and was appended from the invoice alone).{C_RESET}"
+            print(f"│{pad_display(l6d, box_w - 2, truncate=True)}│")
+        else:
+            car_in = s.get("tessie_car_kwh", 0.0)
+            if car_in > 0:
+                l6b = f"    • {C_BOLD}{'2. Vehicle Gross Intake:':<{lw_loss}}{C_RESET}{car_in:.2f} kWh (Electricity Consumed by Car)"
+                print(f"│{pad_display(l6b, box_w - 2, truncate=True)}│")
 
-        if s.get("invoice_disp_kwh") and s.get("cable_loss_kwh") is not None:
-            l8a = f"    • {C_BOLD}{'Dispenser & Cable Loss:':<{lw_loss}}{C_RESET}{s['cable_loss_kwh']:.2f} kWh (Stall electronics & cable resistance)"
-            print(f"│{pad_display(l8a, box_w - 2, truncate=True)}│")
-            l8b = f"    • {C_BOLD}{'Vehicle Conditioning Loss:':<{lw_loss}}{C_RESET}{s['car_loss_kwh']:.2f} kWh (BMS, chiller pumps & heat dissipation)"
-            print(f"│{pad_display(l8b, box_w - 2, truncate=True)}│")
+            l7 = f"    • {C_BOLD}{'3. Net Battery Storage (BMS):':<{lw_loss}}{C_RESET}{s['battery_kwh']:.2f} kWh (Net Battery Pack Chemical Storage)"
+            print(f"│{pad_display(l7, box_w - 2, truncate=True)}│")
 
-        eff_color = C_GREEN if s["efficiency_pct"] >= 85.0 else (C_YELLOW if s["efficiency_pct"] >= 75.0 else C_RED)
-        l8 = f"    • {C_BOLD}{'Total Charging Loss:':<{lw_loss}}{C_RESET}{s['loss_kwh']:.2f} kWh  ({eff_color}{s['efficiency_pct']:.1f}% Dispenser-to-Battery{C_RESET})"
-        print(f"│{pad_display(l8, box_w - 2, truncate=True)}│")
+            if s.get("invoice_disp_kwh") and s.get("cable_loss_kwh") is not None:
+                l8a = f"    • {C_BOLD}{'Dispenser & Cable Loss:':<{lw_loss}}{C_RESET}{s['cable_loss_kwh']:.2f} kWh (Stall electronics & cable resistance)"
+                print(f"│{pad_display(l8a, box_w - 2, truncate=True)}│")
+                l8b = f"    • {C_BOLD}{'Vehicle Conditioning Loss:':<{lw_loss}}{C_RESET}{s['car_loss_kwh']:.2f} kWh (BMS, chiller pumps & heat dissipation)"
+                print(f"│{pad_display(l8b, box_w - 2, truncate=True)}│")
+                if s.get("car_overshoot_kwh", 0.0) > 0:
+                    # BUG-030: the car's own reported intake exceeded what
+                    # the dispenser/invoice billed - a measurement
+                    # disagreement, not a real negative loss. Surfaced
+                    # explicitly instead of being silently clamped to 0.00.
+                    l8c = f"    {C_YELLOW}⚠️  Vehicle reported {s['car_overshoot_kwh']:.2f} kWh MORE intake than the dispenser billed - meter disagreement, not a real 0.00 kWh cable loss.{C_RESET}"
+                    print(f"│{pad_display(l8c, box_w - 2, truncate=True)}│")
+
+            eff_color = C_GREEN if s["efficiency_pct"] >= 85.0 else (C_YELLOW if s["efficiency_pct"] >= 75.0 else C_RED)
+            l8 = f"    • {C_BOLD}{'Total Charging Loss:':<{lw_loss}}{C_RESET}{s['loss_kwh']:.2f} kWh  ({eff_color}{s['efficiency_pct']:.1f}% Dispenser-to-Battery{C_RESET})"
+            print(f"│{pad_display(l8, box_w - 2, truncate=True)}│")
 
         # Detailed high-frequency telemetry section if available
         dt_rec = s.get("detailed_telemetry")
@@ -3056,6 +3287,20 @@ class TessieChargingAnalyzer:
             if dt_rec.get("integrated_dispenser_kwh", 0) > 0:
                 t6 = f"    • {C_BOLD}Integrated Telemetry Energy:{C_RESET} Port: {dt_rec['integrated_dispenser_kwh']:.2f} kWh  │  Battery Pack (V×I): {dt_rec['integrated_pack_kwh']:.2f} kWh"
                 print(f"│{pad_display(t6, box_w - 2, truncate=True)}│")
+
+            # REQ-035: an interactive charging-curve chart, built only when
+            # the deep-dive record actually has raw per-sample data (older
+            # dt_rec dicts / any parse failure mean raw_samples is absent -
+            # generate_charging_curve_chart() returns None in that case and
+            # this whole block is skipped, no error, no placeholder line).
+            try:
+                curve_path = self.generate_charging_curve_chart(dt_rec, session=s)
+            except Exception:
+                curve_path = None
+            if curve_path:
+                t7 = f"    • {C_BOLD}Charging Curve:{C_RESET}             {shorten_display_path(curve_path, 50)}"
+                print(f"│{pad_display(t7, box_w - 2, truncate=True)}│")
+                try_open_in_browser(curve_path)
 
         print(f"├{'─' * (box_w - 2)}┤")
         
@@ -3094,6 +3339,8 @@ class TessieChargingAnalyzer:
             arch_tag = f" {C_MAGENTA}[Historical Archive]{C_RESET}" if s.get("is_archived_tariff") else ""
             sched_label = f" [{s.get('expected_schedule_name')}]" if s.get("expected_schedule_name") else ""
             tz_label = f" (TZ: {s.get('timezone', 'Australia/Sydney')})"
+            note_l = f"    {C_DIM}(what our own registry's rate card says this SHOULD cost, for cross-checking against the real cost above - not what was actually billed){C_RESET}"
+            print(f"│{pad_display(note_l, box_w - 2, truncate=True)}│")
             l12 = f"    • {C_BOLD}{'Expected Tariff Rate:':<{lw_fin}}{C_RESET}${s['expected_rate']:.2f}/kWh{sched_label}{tz_label}{arch_tag}"
             print(f"│{pad_display(l12, box_w - 2, truncate=True)}│")
 
@@ -3101,6 +3348,13 @@ class TessieChargingAnalyzer:
                 th_gst_str = f" (incl. ${s['theoretical_gst']:.2f} GST [10%])" if s.get("theoretical_gst") is not None else ""
                 l12b = f"    • {C_BOLD}{'Theoretical Tariff Cost:':<{lw_fin}}{C_RESET}${s['theoretical_cost']:.2f} AUD{th_gst_str}"
                 print(f"│{pad_display(l12b, box_w - 2, truncate=True)}│")
+
+                real_cost = s.get("invoice_cost") if s.get("invoice_cost") is not None else s.get("tessie_cost")
+                if real_cost is not None:
+                    tariff_delta = s["theoretical_cost"] - real_cost
+                    if abs(tariff_delta) >= 1.0:
+                        l12c = f"    {C_RED}⚠️  Tariff Audit Delta: ${tariff_delta:+.2f} - the registry's rate card disagrees with what was actually billed by more than rounding; the registry data (not the real cost) is the more likely thing to be wrong here.{C_RESET}"
+                        print(f"│{pad_display(l12c, box_w - 2, truncate=True)}│")
         else:
             l12 = f"    • {C_BOLD}{'Expected Tariff Rate:':<{lw_fin}}{C_RESET}{C_YELLOW}No tariff rate configured in registry{C_RESET}"
             print(f"│{pad_display(l12, box_w - 2, truncate=True)}│")
@@ -3501,8 +3755,8 @@ class TessieChargingAnalyzer:
                         "Duration (Mins)": f"{s['duration_mins']:.0f}",
                         "Dispenser Energy (kWh)": f"{s['dispenser_kwh']:.2f}",
                         "Battery Energy (kWh)": f"{s['battery_kwh']:.2f}",
-                        "Loss (kWh)": f"{s['loss_kwh']:.2f}",
-                        "Efficiency (%)": f"{s['efficiency_pct']:.1f}",
+                        "Loss (kWh)": f"{s['loss_kwh']:.2f}" if s.get("loss_kwh") is not None else "N/A",
+                        "Efficiency (%)": f"{s['efficiency_pct']:.1f}" if s.get("efficiency_pct") is not None else "N/A",
                         "Tessie Cost ($)": f"{s['tessie_cost']:.2f}",
                         "Tessie Rate ($/kWh)": f"{s['tessie_rate']:.2f}",
                         "Invoice Cost ($)": f"{s['invoice_cost']:.2f}" if s["invoice_cost"] is not None else "",
