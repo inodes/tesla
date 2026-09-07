@@ -41,6 +41,55 @@ def load_config():
     return {}
 
 
+def resolve_tessie_data_home():
+    """The ONE authoritative home for real Tessie/Evnex data - config.json's
+    own "tessie_directory" (trusted unconditionally - see AGENTS.md
+    REQ-028/029: real data does not belong inside the repo folder), falling
+    back to the default iCloud path only if nothing is configured. Never
+    falls back to REPO_ROOT. Shared by every script that reads or writes
+    real data outside the repo (tessie_drives_analyzer.py/
+    tessie_charging_analyzer.py have their own copy of this same logic
+    baked into their classes; this is the standalone-script equivalent)."""
+    cfg_dir = load_config().get("tessie_directory")
+    if cfg_dir:
+        return os.path.abspath(os.path.expanduser(cfg_dir))
+    return os.path.expanduser("~/Library/Mobile Documents/com~apple~CloudDocs/Tesla/Tessie")
+
+
+def unique_stamped_path(directory, prefix, stamp, suffix="", ext=""):
+    """<prefix>_<stamp>_<NN><suffix><ext> inside `directory`, where NN is a
+    zero-padded 2-digit sequence number that is ALWAYS present - never
+    omitted just because this happens to be the only file for that
+    minute - and always starts at "00", incrementing only as far as
+    needed to avoid clobbering an existing file.
+
+    Replaces an earlier, inconsistent scheme where the first file for a
+    given stamp used a bare name and only the second one onward got an
+    ad-hoc "_2", "_3", ... suffix on an actual collision (see AGENTS.md
+    REQ-030 - two Evnex sessions landing in the same display minute
+    produced charge_deepdive_..._Evnex_Home.json and
+    charge_deepdive_..._Evnex_Home_2.json, which doesn't sort/pair
+    predictably and looks like an error). Every file sharing a `stamp`
+    now always carries its position - "00", "01", ... - so the name
+    alone tells you there could be siblings, instead of only the second
+    file onward looking unusual.
+
+    Distinct from archive_naming.next_archive_path() (an "XX_filename"
+    PREFIX scheme for archived raw CSVs, kept exactly as-is - that one
+    exists so Spotlight/Finder still recognise the original filename and
+    extension, a different problem than this one) and from
+    tessie_api_sync.py's unique_csv_path() (a different stamp format -
+    YYYYMMDD_HHMMSS with seconds - guarding against a documented,
+    unrelated re-fetch scenario, not a human-facing display name)."""
+    n = 0
+    while True:
+        name = f"{prefix}_{stamp}_{n:02d}{suffix}{ext}"
+        path = os.path.join(directory, name)
+        if not os.path.exists(path):
+            return path
+        n += 1
+
+
 def get_token(cli_token, config):
     return cli_token or os.environ.get("TESSIE_ACCESS_TOKEN") or config.get("tessie_access_token")
 
