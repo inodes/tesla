@@ -76,7 +76,7 @@ A suite of tools for analyzing [Tessie](https://share.tessie.com/bGRu5q9S2kB) te
 ./Tools/tessie_charging_analyzer.py --inspect 142
 ./Tools/tessie_charging_analyzer.py --inspect 2026-08-14
 
-# Reconcile 3rd-Party Fast chargers (Chargefox, Evie, BP Pulse, Jolt)
+# Reconcile 3rd-party fast-charging sessions (Chargefox, Evie, BP Pulse, Jolt)
 ./Tools/tessie_charging_analyzer.py --third-party
 
 # List all registered Superchargers and 3rd-Party charging stations
