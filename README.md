@@ -31,6 +31,13 @@ tesla/
 │   ├── find_tesla_chargers.py      # Tesla Supercharger / Destination Charger explorer & live scraper
 │   ├── find_plugshare_chargers.py  # PlugShare-listed 3rd-party charger explorer & registry
 │   ├── evnex_explore.py            # Read-only dump of home charger (Evnex) status/session data
+│   ├── evnex_api_sync.py           # Idempotent sync: new completed Evnex sessions -> charges/deepdive/*.json
+│   ├── agl_usage_sync.py           # Consolidate AGL half-hourly usage-export CSVs into agl_usage_master.csv
+│   ├── agl_demand_calculator.py    # Reproduce AGL's Ausgrid EA025 Residential Demand charge
+│   ├── agl_cost_calculator.py      # Full AGL Solar VIP bill reconstruction (usage + supply + solar credit + demand)
+│   ├── drives_sync_all.sh          # One command: Tessie drives, fetch + consolidate
+│   ├── charging_sync_all.sh        # One command: Tessie charges + Evnex + invoices + AGL usage, fetch + consolidate
+│   ├── chargers_sync_all.sh        # One command: fetch new Tesla + PlugShare chargers near Home
 │   └── table_formatter.py          # Shared terminal table rendering helpers
 │
 ├── .github/                        # GitHub Actions CI & community standards
@@ -57,6 +64,10 @@ tesla/
 # Consolidate newly-exported Tessie CSVs into drives_master.csv
 ./Tools/tessie_drives_analyzer.py --consolidate
 
+# ...or the one-command version: fetch new drives from the Tessie API and
+# consolidate in one step (requires Tessie/config.json's API token/VIN)
+./Tools/drives_sync_all.sh
+
 # Interactive drives overview and time-period selector
 ./Tools/tessie_drives_analyzer.py --drives
 
@@ -66,6 +77,15 @@ tesla/
 
 ### 3. Charging & Supercharger Invoice Reconciliation
 ```bash
+# The one command for the whole charging-sessions domain: fetch new Tessie
+# charges, pull new Evnex home-charger sessions, rename invoice PDFs and
+# correct any cost/rate mismatch against them (Tessie is the source for
+# which sessions exist; invoices are only the source of truth for cost/rate
+# specifically, when the two disagree), and consolidate any new AGL usage
+# export - see AGENTS.md REQ-033 for what's covered and what's still
+# manual (AGL invoices, Solaredge)
+./Tools/charging_sync_all.sh
+
 # Reconcile Supercharger invoices against Tessie charging sessions
 ./Tools/tessie_charging_analyzer.py --superchargers
 
@@ -78,6 +98,11 @@ tesla/
 
 ### 4. Charger Discovery
 ```bash
+# The one command to pull fresh charger data near Home (50km) for both
+# registries this repo tracks - see AGENTS.md REQ-033 for why it's scoped
+# to Home rather than state/nationwide (PlugShare rate-limiting, BUG-008)
+./Tools/chargers_sync_all.sh
+
 # Tesla Superchargers/Destination Chargers near a known place
 ./Tools/find_tesla_chargers.py --address Home --sc --list
 
@@ -96,6 +121,16 @@ tesla/
 # (see Tools/evnex_common.py).
 ./Tools/evnex_explore.py
 ```
+
+```bash
+# Turn any newly-completed Evnex session into its own deep-dive file
+# (charges/deepdive/charge_deepdive_<local-time>_NN_Evnex_Home.json,
+# NN a zero-padded position starting at "00") -
+# idempotent (safe to re-run; keyed on Evnex's own session id, never on
+# the filename), skips sessions still actively charging.
+./Tools/evnex_api_sync.py
+```
+👉 *This is also run as part of `./Tools/charging_sync_all.sh` (see section 3) - run it standalone only if you want just the Evnex step.*
 
 ### 6. Deploy Scripts to External Drives
 
