@@ -12,9 +12,47 @@ Rules enforced:
 4. Middle dots ('·'), arrows ('➔', '→'), and bullets ('•') are 1 space.
 5. pad_display and format_row enforce automatic column and row width sanity checks
    so table borders ('│') never misalign or overflow.
+
+Width measurement priority (AGENTS.md BUG-005 / BUG-036 / BUG-037 / BUG-038 /
+BUG-040): a handful of symbol+variation-selector pictographs (the calendar/
+shield/wrench/label/map/gear/warning glyphs) render at genuinely different
+cell widths across real terminal emulators - no static guess has held up:
+BUG-005 said width 1, BUG-036 "corrected" that to width 2 via Unicode
+block-range rules, and BUG-038 proved width 2 is ALSO wrong on the user's
+own real terminal (live-measured: 🗓️/🛡️ are actually width 1 there). There
+is no universally-correct static answer for these glyphs - real terminals
+disagree with each other, so char_width()/display_len() check, in order:
+(1) _PERSISTED_WIDTHS - a one-time, per-machine measurement of THIS real
+terminal (see below), (2) REPO_EMOJI_WIDTHS hand-curated overrides, (3)
+Unicode pictograph BLOCK-RANGE detection (checked before libc wcwidth on
+purpose - macOS's bundled wcwidth tables predate most of these blocks and
+return wrong non-negative answers instead of the -1 "unknown" that would
+let this block check run as a fallback), (4) wcwidth, (5) East-Asian-Width.
+
+BUG-037 first tried live-probing the terminal (print the glyph, read back
+its own ANSI cursor-position report) wired into EVERY char_width()/
+display_len() call. That made things WORSE (BUG-038): this module is used
+by interactive REPL menus (tessie_drives_analyzer.py etc.) that are
+themselves reading stdin for the user's own next keypress at the same
+time render calls happen, and the probe's raw-mode stdin read raced with
+that - observed live as a menu prompt hanging until Ctrl-C, and stray
+characters leaking into rendered output.
+
+BUG-040's fix keeps the same real measurement but separates MEASURING
+from USING. Measuring happens exactly once, deliberately, when the user
+runs `python3 table_formatter.py` directly - run_self_test() probes every
+known glyph and writes any that disagree with the static guess to
+~/.tesla_repo_terminal_widths.json (_PERSISTED_WIDTHS_PATH). Nothing else
+reads stdin at that moment, so there's nothing to race with. USING the
+result is just a plain file read, done ONCE at import time (_PERSISTED_-
+WIDTHS, loaded below) - zero terminal I/O, safe inside any interactive
+REPL's own render path. Re-run `python3 table_formatter.py` any time the
+terminal app, font, or profile changes.
 """
 
 import ctypes
+import json
+import os
 import re
 import unicodedata
 from typing import List, Optional, Union
@@ -40,6 +78,171 @@ try:
     _wcwidth_fn.restype = ctypes.c_int
 except Exception:
     _wcwidth_fn = None
+
+# =============================================================================
+# Persisted per-machine width calibration (AGENTS.md BUG-038/BUG-040)
+# =============================================================================
+# BUG-005 hardcoded these pictograph+variation-selector glyphs (calendar,
+# shield, wrench, label, map, ...) to width 1. BUG-036 "corrected" that to
+# width 2 via Unicode block-range rules. BUG-038 proved width 2 is ALSO
+# wrong - on the user's own real terminal, run_self_test()'s live probe
+# measured 🛡️ at width 1, not 2 - so neither static guess is authoritative;
+# real terminal emulators genuinely disagree on these glyphs and no amount
+# of table-editing fixes that. The one thing that IS authoritative is
+# asking THIS terminal directly (probe_glyph_widths(), below) - the
+# problem was only ever wiring that ask into the hot render path of an
+# interactive REPL (BUG-037/BUG-038's mistake).
+#
+# The fix: separate MEASURING from USING. Measuring happens exactly once,
+# deliberately, when the user runs `python3 table_formatter.py` directly
+# (run_self_test() probes every known glyph and writes the results to
+# _PERSISTED_WIDTHS_PATH) - nothing else reads stdin at that moment, so
+# there's nothing to race with. USING the result is just a plain file
+# read, done ONCE at import time here, with zero terminal I/O - safe to
+# happen inside any interactive REPL script's own render path. Re-run the
+# self-test any time the terminal app, font, or profile changes.
+_PERSISTED_WIDTHS_PATH = os.path.expanduser("~/.tesla_repo_terminal_widths.json")
+
+
+def _load_persisted_widths():
+    try:
+        with open(_PERSISTED_WIDTHS_PATH, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        if isinstance(data, dict):
+            return {str(k): int(v) for k, v in data.items() if isinstance(v, (int, float))}
+    except Exception:
+        pass
+    return {}
+
+
+_PERSISTED_WIDTHS = _load_persisted_widths()
+
+# =============================================================================
+# Live terminal cell-width probing - MANUAL DIAGNOSTIC ONLY (AGENTS.md BUG-037)
+# =============================================================================
+# This measures a glyph's real on-screen width by printing it and reading
+# back the terminal's own ANSI cursor-position report ("\x1b[6n") - an
+# actual measurement of THIS terminal, not a guess from a static table.
+# That sounds like the perfect fix for the recurring calendar/shield/etc.
+# width bug (BUG-005, then BUG-036, then back again), and an earlier version
+# of this fix wired it into char_width()/display_len() automatically. It was
+# reverted (still BUG-037): every caller of this module is a REPL-style menu
+# script that reads stdin for the user's own next keypress, and the probe
+# also reads raw bytes from that same stdin looking for the terminal's CPR
+# reply - the two raced, and it manifested live as the app hanging on a
+# keystroke (needing Ctrl-C to escape) and stray characters leaking into
+# rendered tables. Wiring live terminal I/O into a formatting helper that
+# has no idea whether something else is mid-read on the same fd is not
+# safe, however useful the measurement would be in isolation.
+#
+# So this stays available for exactly one use: run_self_test() calls it
+# once, directly, when this file is executed standalone
+# (`python3 table_formatter.py`) - nothing else is reading stdin at that
+# point, so there's nothing to race with. It must never be called from
+# char_width(), display_len(), or any other function that a REPL menu
+# script might call mid-render.
+#
+# Safety even in that one allowed use: only runs when stdin AND stdout are
+# both real interactive TTYs (never for output piped to a file, a cron job,
+# or this sandboxed shell). Every probe has its own short timeout and the
+# terminal's raw-mode settings are always restored in a `finally`, even on
+# an exception or an unresponsive terminal. Results are cached for the life
+# of the process (one round-trip per DISTINCT glyph).
+_PROBED_WIDTHS = {}          # {glyph_sequence: measured_width}
+_PROBE_TTY_AVAILABLE = None  # None = not yet checked; True/False after first check
+_PROBE_ATTEMPTED = set()     # glyphs already probed (successfully or not) this process
+
+
+def _terminal_probe_available():
+    global _PROBE_TTY_AVAILABLE
+    if _PROBE_TTY_AVAILABLE is None:
+        try:
+            import sys as _sys
+            _PROBE_TTY_AVAILABLE = bool(_sys.stdin.isatty() and _sys.stdout.isatty())
+        except Exception:
+            _PROBE_TTY_AVAILABLE = False
+    return _PROBE_TTY_AVAILABLE
+
+
+def probe_glyph_widths(glyphs, timeout=0.2):
+    """Measures the real terminal cell-width of each string in `glyphs`
+    (each normally one visible symbol - a bare emoji, or a base codepoint
+    plus its trailing variation selector, e.g. "\U0001F5D3️") by
+    printing it and reading back the terminal's own ANSI cursor-position
+    report. Returns {glyph: width} for whichever glyphs it could measure;
+    a glyph that can't be measured (already probed, no real TTY, no
+    response before `timeout`, or any error) is simply absent from the
+    result - callers keep the existing static char_width()/REPO_EMOJI_WIDTHS
+    answer for those, so this can never make a name resolve to "no width
+    at all". Never raises; never leaves the terminal in raw mode."""
+    new_glyphs = [g for g in dict.fromkeys(glyphs) if g not in _PROBE_ATTEMPTED]
+    if not new_glyphs or not _terminal_probe_available():
+        return {}
+    try:
+        import sys, os, select, termios, tty, time
+    except Exception:
+        # termios/tty are POSIX-only; on a platform without them (unlikely
+        # for this repo's macOS-only tooling, but never crash) just fall
+        # back to the static tables for every glyph, permanently.
+        _PROBE_ATTEMPTED.update(new_glyphs)
+        return {}
+
+    fd = sys.stdin.fileno()
+    try:
+        old_settings = termios.tcgetattr(fd)
+    except Exception:
+        _PROBE_ATTEMPTED.update(new_glyphs)
+        return {}
+
+    measured = {}
+    try:
+        tty.setcbreak(fd)
+        for glyph in new_glyphs:
+            _PROBE_ATTEMPTED.add(glyph)
+            try:
+                sys.stdout.write("\r" + glyph + "\x1b[6n")
+                sys.stdout.flush()
+                resp = ""
+                deadline = time.time() + timeout
+                while time.time() < deadline:
+                    remaining = deadline - time.time()
+                    r, _, _ = select.select([fd], [], [], max(0, remaining))
+                    if not r:
+                        break
+                    ch = os.read(fd, 1).decode("ascii", errors="ignore")
+                    resp += ch
+                    if ch == "R":
+                        break
+                # Response shape is ESC [ row ; col R - col-1 is exactly
+                # how many cells the glyph advanced the cursor from
+                # column 1 (where the leading "\r" put it).
+                m = re.search(r"\[(\d+);(\d+)R", resp)
+                # Erase the probe glyph so nothing leaks onto the real
+                # screen ahead of whatever the caller prints next.
+                sys.stdout.write("\r" + " " * 4 + "\r")
+                sys.stdout.flush()
+                if m:
+                    measured[glyph] = int(m.group(2)) - 1
+            except Exception:
+                continue
+    except Exception:
+        pass
+    finally:
+        try:
+            termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
+        except Exception:
+            pass
+
+    _PROBED_WIDTHS.update(measured)
+    return measured
+
+
+def _all_known_multi_cell_glyphs():
+    """Every glyph this module has ever needed a width opinion about
+    (REPO_EMOJI_WIDTHS' own keys). Used only by run_self_test()'s
+    deliberate, standalone probe - see the module docstring for why this
+    is never wired into char_width()/display_len()'s normal call path."""
+    return list(REPO_EMOJI_WIDTHS.keys())
 
 # =============================================================================
 # Definitive Explicit Widths for All Symbols & Emojis Used Across Codebase
@@ -161,7 +364,13 @@ def char_width(c: str) -> int:
     0 for combining marks and variation selectors.
     1 for standard ASCII, Latin, box drawing, and 1-width symbols.
     2 for East Asian Wide characters and emojis.
+
+    Checks _PERSISTED_WIDTHS first (a real measurement of THIS terminal,
+    if the user has run the calibration checker - see run_self_test())
+    before any static guess.
     """
+    if c in _PERSISTED_WIDTHS:
+        return _PERSISTED_WIDTHS[c]
     if c in REPO_EMOJI_WIDTHS:
         return REPO_EMOJI_WIDTHS[c]
 
@@ -230,13 +439,24 @@ def display_len(s: str) -> int:
     i = 0
     n = len(clean)
     while i < n:
-        # Check for 2-character sequences in REPO_EMOJI_WIDTHS (e.g. '🗓️', '🛡️', '🇦🇺')
-        if i + 1 < n and clean[i:i+2] in REPO_EMOJI_WIDTHS:
-            total += REPO_EMOJI_WIDTHS[clean[i:i+2]]
+        # Check for 2-character sequences (e.g. '🗓️', '🛡️', '🇦🇺') against the
+        # user's own persisted terminal calibration FIRST, then the static
+        # REPO_EMOJI_WIDTHS table.
+        two = clean[i:i+2]
+        if i + 1 < n and two in _PERSISTED_WIDTHS:
+            total += _PERSISTED_WIDTHS[two]
+            i += 2
+            continue
+        if i + 1 < n and two in REPO_EMOJI_WIDTHS:
+            total += REPO_EMOJI_WIDTHS[two]
             i += 2
             continue
 
         c = clean[i]
+        if c in _PERSISTED_WIDTHS:
+            total += _PERSISTED_WIDTHS[c]
+            i += 1
+            continue
         if c in REPO_EMOJI_WIDTHS:
             total += REPO_EMOJI_WIDTHS[c]
             i += 1
@@ -550,10 +770,60 @@ def run_self_test(verbose: bool = True) -> bool:
         print(format_row(["  #", " Glyph", " Codebase Usage / Description", " Codepoint(s)", " Width", " Test Box"], sym_widths, sym_aligns))
         print(format_box_line("├", "┼", "┤", sym_widths))
 
+        # Live calibration (AGENTS.md BUG-038/BUG-040) - this is a
+        # standalone, one-shot invocation (nothing else reads stdin while
+        # self-test runs), so it's safe here even though char_width()/
+        # display_len() themselves never probe automatically. Every glyph
+        # gets measured against THIS real terminal; any that disagrees
+        # with the static "expected" guess is saved to
+        # _PERSISTED_WIDTHS_PATH so every script's next run (including
+        # this one, immediately below) uses the real measurement instead
+        # of the guess - this is the calibration step, not just a report.
+        global _PERSISTED_WIDTHS
+        probe_glyph_widths([sym for sym, _, _ in all_symbols_meta])
+        newly_calibrated = {}
+        if verbose:
+            if _terminal_probe_available():
+                for sym, _, expected_w in all_symbols_meta:
+                    measured_w = _PROBED_WIDTHS.get(sym)
+                    if measured_w is not None and measured_w != expected_w:
+                        newly_calibrated[sym] = measured_w
+                if newly_calibrated:
+                    merged = dict(_load_persisted_widths())
+                    merged.update(newly_calibrated)
+                    try:
+                        with open(_PERSISTED_WIDTHS_PATH, "w", encoding="utf-8") as f:
+                            json.dump(merged, f, indent=2, ensure_ascii=False, sort_keys=True)
+                        _PERSISTED_WIDTHS = merged
+                        print(f"  (live terminal probe: {len(_PROBED_WIDTHS)} glyph(s) measured - "
+                              f"{len(newly_calibrated)} disagreed with the static table and were just "
+                              f"CALIBRATED for this terminal, saved to {_PERSISTED_WIDTHS_PATH})")
+                    except Exception as e:
+                        print(f"  (live terminal probe found {len(newly_calibrated)} disagreement(s) but "
+                              f"could not save calibration to {_PERSISTED_WIDTHS_PATH}: {e})")
+                else:
+                    print(f"  (live terminal probe: {len(_PROBED_WIDTHS)} glyph(s) measured - "
+                          f"this terminal agrees with the static table on all of them)")
+            else:
+                print("  (no interactive terminal to probe - diagnostic skipped; run this file directly in a real terminal to self-calibrate)")
+
         for idx, (sym, desc, expected_w) in enumerate(all_symbols_meta, 1):
             act_w = display_len(sym)
-            if act_w != expected_w:
+            # Bug (found live, same day): checking `sym in newly_calibrated`
+            # only catches a glyph calibrated in THIS run. On a later run
+            # where the terminal probe is unavailable (e.g. output piped
+            # somewhere, so isatty() is False) but a PERSISTED calibration
+            # from an earlier run is still active, act_w correctly comes
+            # from _PERSISTED_WIDTHS while newly_calibrated stays empty -
+            # so the "fix working as intended" case above got flagged as
+            # an error instead of suppressed. Check the actual active
+            # override dict, not just this run's fresh measurements.
+            was_calibrated = sym in _PERSISTED_WIDTHS
+            if act_w != expected_w and not was_calibrated:
                 errors.append(f"Emoji width mismatch for '{sym}': expected {expected_w}, got {act_w}")
+            # A calibrated glyph overriding the static "expected" guess
+            # isn't a bug - it's this real terminal's own measurement
+            # winning, exactly as intended.
 
             _sym_code = ord(sym) if len(sym) == 1 else None
             _sym_in_emoji_block = _sym_code is not None and (
@@ -563,7 +833,7 @@ def run_self_test(verbose: bool = True) -> bool:
                 0x1F900 <= _sym_code <= 0x1F9FF or 0x1FA00 <= _sym_code <= 0x1FAFF or
                 0x1F1E6 <= _sym_code <= 0x1F1FF
             )
-            if len(sym) == 1 and _wcwidth_fn is not None and not _sym_in_emoji_block:
+            if len(sym) == 1 and _wcwidth_fn is not None and not _sym_in_emoji_block and not was_calibrated:
                 wc = _wcwidth_fn(sym)
                 if wc >= 0 and wc != expected_w:
                     errors.append(f"POSIX libc wcwidth mismatch for '{sym}': expected {expected_w}, got {wc}")

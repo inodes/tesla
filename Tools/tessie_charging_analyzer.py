@@ -2137,6 +2137,66 @@ class TessieChargingAnalyzer:
             return True
         return (datetime.now() - ended_at).total_seconds() < self.CHARGE_FINALIZE_GRACE_SECONDS
 
+    _EVNEX_JSON_STAMP_RE = re.compile(r"^charge_deepdive_(\d{4}-\d{2}-\d{2}_\d{4})_\d{2}_Evnex_Home\.json$")
+
+    def _matching_evnex_json_stamp(self, start_dt, end_dt):
+        """Finds the existing charge_deepdive_..._Evnex_Home.json file
+        whose own charging window overlaps [start_dt, end_dt] - the same
+        window-overlap match get_energy_source_crosscheck() uses, via
+        ev_session_cost.load_evnex_deepdive_sessions() - and returns that
+        file's own "<date>_<HHMM>" stamp (the value unique_stamped_path()
+        was originally given when evnex_api_sync.py wrote it) rather than
+        a full path. fetch_charge_deepdive_from_api() re-runs that same
+        stamp through unique_stamped_path() itself, letting its own "_NN"
+        disambiguator claim the next free slot.
+
+        This two-step design (find the stamp, then let
+        unique_stamped_path() mint the actual name) matters because a
+        single Evnex plug-in session is not always one Tessie charge
+        record: solar diversion can cycle the car's charging current on
+        and off repeatedly as export rises and falls (or as the house's
+        own load eats into the export margin), and Tessie treats each
+        current-to-zero gap as the end of one charge and the start of
+        the next, so charges_master.csv can hold several records for
+        what Evnex itself logged as a single continuous session (AGENTS.md
+        REQ-050). Returning a ready-made full path here would collide
+        every one of those sub-sessions on the exact same filename, or
+        silently overwrite an earlier sub-session's telemetry; handing
+        back just the stamp and letting unique_stamped_path() run its
+        own NN-disambiguator lands them at .../<stamp>_00_Evnex_Home.csv,
+        _01, _02, ... - all still sharing the SAME date_time prefix as
+        their one parent JSON, so they keep sorting and reading together.
+        Returns None if no matching JSON is found; the caller falls back
+        to a fresh stamp of its own in that case."""
+        try:
+            import ev_session_cost as _evc
+        except Exception:
+            return None
+        pad = timedelta(minutes=2)
+        try:
+            evnex_sessions = _evc.load_evnex_deepdive_sessions()
+        except Exception:
+            return None
+        for es in evnex_sessions:
+            es_start_epoch = _evc.iso_to_epoch(es.get("charging_started_utc"))
+            if es_start_epoch is None:
+                continue
+            es_end_epoch = _evc.iso_to_epoch(es.get("charging_stopped_utc")) or es_start_epoch
+            try:
+                es_tz = ZoneInfo(es.get("timezone") or "Australia/Sydney")
+            except Exception:
+                es_tz = ZoneInfo("Australia/Sydney")
+            es_start_dt = datetime.fromtimestamp(es_start_epoch, tz=timezone.utc).astimezone(es_tz).replace(tzinfo=None)
+            es_end_dt = datetime.fromtimestamp(es_end_epoch, tz=timezone.utc).astimezone(es_tz).replace(tzinfo=None)
+            if es_start_dt <= end_dt + pad and es_end_dt >= start_dt - pad:
+                json_path = es.get("_file")
+                if not json_path:
+                    continue
+                m = self._EVNEX_JSON_STAMP_RE.match(os.path.basename(json_path))
+                if m:
+                    return m.group(1)
+        return None
+
     def fetch_charge_deepdive_from_api(self, session):
         """Mirrors tessie_drives_analyzer.py's TessieAnalyzer.fetch_drive_deepdive_from_api()
         almost exactly (AGENTS.md TODO-029's own "prerequisite" - this IS
@@ -2144,15 +2204,25 @@ class TessieChargingAnalyzer:
         detailed telemetry from Tessie's own GET /{vin}/states endpoint
         when no local charge_deepdive_*.csv already covers it, using the
         same format="csv" convention parse_detailed_charge_csv() already
-        expects.
+        expects. Covers every session Tessie itself sees regardless of
+        network (Superchargers, 3rd-party DC, AC destination, and home
+        Evnex) - not just Superchargers.
 
-        Deliberately scoped to non-Evnex sessions only (session["network"]
-        != "Evnex") - a home Evnex session already has its own dedicated,
-        richer deep-dive source (evnex_api_sync.py's own JSON, cost-split
-        data /states has no concept of), and fetching /states for it would
-        just produce a second, redundant, less useful file. This covers
-        every session Tessie itself sees regardless of network (Super-
-        chargers, 3rd-party DC, AC destination) - not just Superchargers.
+        Home Evnex sessions ARE included (AGENTS.md REQ-050 - an earlier
+        version of this method deliberately skipped them on the theory
+        that /states has nothing to add over evnex_api_sync.py's own
+        JSON; live-verified against a real Evnex session's own recorded
+        window that this was wrong - Tessie polls the car's own charge
+        state during ANY plugged-in session, home included, and this is
+        the only source that shows the CAR's real per-sample amperage/
+        voltage during that session, which the Evnex JSON's session-level
+        totals cannot: a flat, high, unwavering current is the user
+        overriding the charger with a fixed max-amp setting in the Tesla
+        app; a current that rides up and down with the sun is Evnex's own
+        solar-diversion controller doing its job. Evnex's own JSON
+        remains the richer source for anything Evnex itself measures
+        (tariff split, carbon mix) that the car has no visibility into -
+        this is additive, not a replacement.
 
         charges_master.csv's own started_at/ended_at are naive LOCAL
         datetimes with no stored UTC epoch (TODO-009's charges-side
@@ -2162,18 +2232,27 @@ class TessieChargingAnalyzer:
         adding a second, competing timezone-handling path ahead of that
         migration landing properly.
 
-        Writes into charges_dirs[0]/deepdive/ (TODO-023's canonical home),
-        named via the SAME unique_stamped_path()-based scheme
-        auto_ingest_from_landing() already uses for manually-exported
-        charge deep-dives, so both paths produce indistinguishable
-        filenames. Self-validates with parse_detailed_charge_csv() before
-        keeping it - a response that doesn't parse as charge telemetry is
-        deleted and this returns None, same fail-safe as the drives side.
-        Never called for a session still in progress - see
-        _charge_is_in_progress(). Returns the written file path on
-        success, else None."""
-        if session.get("network") == "Evnex":
-            return None
+        Writes into charges_dirs[0]/deepdive/ (TODO-023's canonical home).
+        For a non-Evnex session, named via the SAME unique_stamped_path()-
+        based scheme auto_ingest_from_landing() already uses for manually-
+        exported charge deep-dives, so both paths produce indistinguishable
+        filenames. For an Evnex session, named to match the EXISTING
+        charge_deepdive_..._Evnex_Home.json file's own stem (found by the
+        same charging-window-overlap match get_energy_source_crosscheck()
+        already uses, via ev_session_cost.load_evnex_deepdive_sessions())
+        rather than minting a fresh name - the whole point (AGENTS.md
+        REQ-050) is that the .json and .csv for one real session sort and
+        pair together by filename alone; a fresh unique_stamped_path() call
+        would tend to land on the same "_00" by coincidence for a single
+        session but silently mismatch it for any session that collided
+        with a sibling at JSON-write time. Falls back to a fresh
+        unique_stamped_path()-based name only if no matching JSON is
+        found (shouldn't happen for a real Evnex session, but never fatal).
+        Self-validates with parse_detailed_charge_csv() before keeping it -
+        a response that doesn't parse as charge telemetry is deleted and
+        this returns None, same fail-safe as the drives side. Never called
+        for a session still in progress - see _charge_is_in_progress().
+        Returns the written file path on success, else None."""
         start_dt = session.get("started_at")
         end_dt = session.get("ended_at")
         if not start_dt or not end_dt or not self.charges_dirs:
@@ -2219,7 +2298,14 @@ class TessieChargingAnalyzer:
         except Exception:
             return None
 
-        dest_path = unique_stamped_path(dest_dir, "charge_deepdive", start_dt.strftime("%Y-%m-%d_%H%M"), ext=".csv")
+        dest_path = None
+        if session.get("network") == "Evnex":
+            matched_stamp = self._matching_evnex_json_stamp(start_dt, end_dt)
+            if matched_stamp:
+                dest_path = unique_stamped_path(dest_dir, "charge_deepdive", matched_stamp, suffix="_Evnex_Home", ext=".csv")
+        if not dest_path:
+            suffix = "_Evnex_Home" if session.get("network") == "Evnex" else ""
+            dest_path = unique_stamped_path(dest_dir, "charge_deepdive", start_dt.strftime("%Y-%m-%d_%H%M"), suffix=suffix, ext=".csv")
 
         try:
             with open(dest_path, "wb") as f:
