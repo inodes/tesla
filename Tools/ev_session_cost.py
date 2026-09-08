@@ -17,9 +17,14 @@ Two cost figures are printed for every session:
      i.e. what it would have cost if 100% grid-imported. Always computed.
 
   2. "Evnex-adjusted" - splits the session's own kWh by Evnex's own
-     `distributionByTariff` (its configured solar-hours-vs-flat-hours
-     time-of-use split for that charge point, NOT a real household solar
-     sensor reading - see the caveat printed with every result), then
+     `distributionByTariff`. IMPORTANT (user-confirmed, AGENTS.md REQ-040):
+     this is NOT the charger's real CT-clamp solar reading - the Evnex
+     charger genuinely DOES have CT clamps and a real solar-aware charging
+     mode (only auto-starts once export passes a configured minimum, ~1.5kWh,
+     of solar export), but `distributionByTariff` itself comes from a
+     separate, simpler "tariff hours" schedule entered on Evnex's own
+     website (which hours count as "solar" vs "flat") - a configured
+     assumption, not that session's own real CT-clamp measurement. Then
      values the "solar" share as an OPPORTUNITY COST at that period's
      tier-1 feed-in rate rather than $0 - self-consuming that energy for
      charging meant not exporting it for a credit, so the true cost isn't
@@ -31,7 +36,14 @@ For every session this ALSO cross-checks Evnex's tariff-period claim
 against AGL's own real smart-meter half-hourly readings
 (agl_usage_master.csv) for the exact overlapping window(s) - real import
 kWh recorded during a session Evnex called mostly-solar is flagged as a
-conflict worth a second look, rather than silently trusted.
+conflict worth a second look, rather than silently trusted. One confirmed,
+plausible explanation for a flagged conflict (AGENTS.md REQ-040): the user
+can manually override the charger's own real solar-export-threshold
+auto-start feature and force a charge regardless of real solar export -
+"that's where the expensive charges come from" - which would show up here
+as real grid import during a window still labelled "solar" by the tariff-
+hours schedule. This tool doesn't (yet) distinguish an override from any
+other explanation; it just surfaces the mismatch.
 
 Deliberately NOT attempted here (left for a future PVOutput-based pass,
 per Tessie/PVOUTPUT_API.md's "Fit with existing AGL/solar work" section):
@@ -43,7 +55,7 @@ the household total for that window, not proof of what the EV alone
 drew - they're a plausibility check on Evnex's own claim, not a
 replacement measurement.
 
-Tier caveat: AGL's real solar credit is a POOLADED per-billing-period cap
+Tier caveat: AGL's real solar credit is a POOLED per-billing-period cap
 (10 kWh/day x days-in-period at the tier-1 rate, everything beyond that
 at a flat, lower tier-2 rate - see agl_cost_calculator.py's own
 docstring). Attributing a fair tier-1-vs-tier-2 split to one session
@@ -295,8 +307,10 @@ def print_session(r):
         ratio_pct = 100.0 * r["real_import_kwh"] / r["kwh_total"] if r["kwh_total"] else 0.0
         print(f"   ⚠️  CONFLICT: Evnex claims {r['solar_pct']:.1f}% solar but AGL's real meter shows "
               f"{r['real_import_kwh']:.3f} kWh of actual grid import in this window - {ratio_pct:.0f}% of this "
-              f"session's own kWh - worth a second look (remember: that's whole-household import, not proof "
-              f"the EV itself drew it, but it's too large relative to the session to be background noise).")
+              f"session's own kWh - worth a second look (that's whole-household import, not proof the EV "
+              f"itself drew it, but too large relative to the session to be background noise). Plausible "
+              f"explanation: a manual override of the charger's own solar-export-threshold auto-start "
+              f"(real CT-clamp based) forcing a charge regardless of actual solar that day.")
     print()
 
 
