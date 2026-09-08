@@ -3214,33 +3214,50 @@ class TessieChargingAnalyzer:
         s_dt = s.get("datetime")
         if not s_dt:
             return None
+        s_end = s_dt + timedelta(minutes=s.get("duration_mins", 0) or 0)
 
-        # Find this session's own Evnex deep-dive JSON by matching real
-        # start time - same +/-10min tolerance already used elsewhere
-        # for Evnex/Tessie session pairing (see reconcile()). Deliberately
-        # NOT datetime.fromtimestamp(es_start) (naive, uses whatever
-        # timezone the PROCESS happens to be running in - UTC on this
-        # session's own device-bridge shell, which silently produced a
-        # ~10-11hr-off match failure here during testing; caught live
-        # against the real #190 session before this shipped). Converts
-        # through the session's own recorded IANA zone instead, same
-        # pattern evaluate_session() below already uses - correct
-        # regardless of the running process's own local timezone.
+        # Find this session's own Evnex deep-dive JSON by WINDOW OVERLAP
+        # (Evnex's [charging_started_utc, charging_stopped_utc] vs this
+        # Tessie session's own [start, start+duration]), not by how close
+        # the two start times are - same interval-overlap pattern
+        # match_detailed_drive() already uses for pairing drive telemetry,
+        # and for the same real reason: Tessie logs each separate
+        # start/stop "charging" event of what is, physically, one longer
+        # plugged-in Evnex session (the charger pausing/resuming around
+        # its own solar-wait threshold) as its OWN short master-CSV row -
+        # a 4-7min, <1kWh Tessie blip can sit entirely INSIDE a much
+        # longer real Evnex session that started up to an hour earlier.
+        # An earlier version of this method matched on start-time
+        # proximity alone (a tight +/-10min window) and silently found
+        # NOTHING for exactly this shape of session - caught live against
+        # two real examples (#190, #195) that the user flagged as still
+        # showing only the old registry-estimate rate, with no obvious
+        # error - both turned out to overlap a real Evnex session
+        # starting 60-66 minutes earlier once checked by window instead
+        # of by start-time gap. Deliberately NOT datetime.fromtimestamp()
+        # (naive, silently uses whatever timezone the PROCESS happens to
+        # be running in - UTC on this session's own device-bridge shell,
+        # not Australia/Sydney) - converts through the session's own
+        # recorded IANA zone instead, same pattern evaluate_session()
+        # below already uses.
         try:
             evnex_sessions = _evc.load_evnex_deepdive_sessions()
         except Exception:
             evnex_sessions = []
+        pad = timedelta(minutes=2)
         matched = None
         for es in evnex_sessions:
-            es_start = _evc.iso_to_epoch(es.get("charging_started_utc"))
-            if es_start is None:
+            es_start_epoch = _evc.iso_to_epoch(es.get("charging_started_utc"))
+            if es_start_epoch is None:
                 continue
+            es_end_epoch = _evc.iso_to_epoch(es.get("charging_stopped_utc")) or es_start_epoch
             try:
                 es_tz = ZoneInfo(es.get("timezone") or "Australia/Sydney")
             except Exception:
                 es_tz = ZoneInfo("Australia/Sydney")
-            es_dt = datetime.fromtimestamp(es_start, tz=timezone.utc).astimezone(es_tz).replace(tzinfo=None)
-            if abs((es_dt - s_dt).total_seconds()) <= 600:
+            es_start_dt = datetime.fromtimestamp(es_start_epoch, tz=timezone.utc).astimezone(es_tz).replace(tzinfo=None)
+            es_end_dt = datetime.fromtimestamp(es_end_epoch, tz=timezone.utc).astimezone(es_tz).replace(tzinfo=None)
+            if es_start_dt <= s_end + pad and es_end_dt >= s_dt - pad:
                 matched = es
                 break
         if not matched:
