@@ -1,0 +1,38 @@
+{
+  "_comment": "Template for Tessie/vehicle_spec.json - real per-VIN specs the analyzer/profile scripts read (see tessie_api_common.py's load_vehicle_spec()). Copy this to Tessie/vehicle_spec.json (never committed - see .gitignore) and fill in real values from Tesla's own published spec sheet for your exact trim, plus your own curb weight/GVWR. Every field is optional - a missing section just means whatever reads it falls back to a generic default.",
+  "vehicle": {
+    "model": "",
+    "trim": "",
+    "model_code": "",
+    "model_year": 0
+  },
+  "battery": {
+    "chemistry": "",
+    "gross_kwh": 0.0,
+    "usable_kwh": 0.0
+  },
+  "mass": {
+    "curb_weight_kg": 0,
+    "gvwr_kg": 0,
+    "assumed_driving_mass_kg": 0,
+    "assumed_driving_mass_note": "Typically curb_weight_kg + ~150kg for a typical driver + everyday cargo. Edit directly if a different assumption fits your own usage better."
+  },
+  "aero": {
+    "drag_coefficient_cd": 0.0
+  },
+  "wltp": {
+    "range_km": 0,
+    "efficiency_kwh_per_100km": 0.0
+  },
+  "supercharging": {
+    "added_km_15min": 0,
+    "efficiency_kwh_per_100km_15min": 0.0
+  },
+  "gvg_reference": {
+    "real_world_efficiency_kwh_per_100km": 0.0,
+    "annual_running_cost_aud": 0,
+    "co2_g_per_km": 0
+  },
+  "source": "",
+  "last_updated": ""
+}

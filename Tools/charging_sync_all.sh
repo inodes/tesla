@@ -6,15 +6,20 @@
 #
 # Today that's:
 #   1. Tessie charges -> fetch, then --consolidate into charges_master.csv
-#   2. Evnex home-charger sessions -> charges/deepdive/*_Evnex_Home.json
-#   3. Invoice PDFs -> rename to the standard scheme, then check invoice
+#   2. Charge deep-dive telemetry backfill -> any Supercharger/3rd-party DC
+#      session missing a local charge_deepdive_*.csv gets one fetched from
+#      Tessie's own /states API (tessie_api_sync.py --backfill-deepdive).
+#      Evnex home sessions are deliberately excluded here - they get their
+#      own richer deep-dive via step 3 below, not a redundant /states pull.
+#   3. Evnex home-charger sessions -> charges/deepdive/*_Evnex_Home.json
+#   4. Invoice PDFs -> rename to the standard scheme, then check invoice
 #      cost/rate against what Tessie already wrote into charges_master.csv
 #      and correct ONLY where they disagree - which sessions exist comes
 #      entirely from Tessie (step 1), invoices are just the source of truth
 #      for cost/rate specifically when the two disagree, not for
 #      reconciliation in general (tessie_charging_analyzer.py
 #      --rename-invoices / --update-master)
-#   4. AGL usage export consolidation -> agl_usage_sync.py picks up any
+#   5. AGL usage export consolidation -> agl_usage_sync.py picks up any
 #      "*Usage*.csv" already sitting in the AGL invoices folder. AGL has no
 #      history API, so getting a fresh export there in the first place is
 #      still a manual step (see agl_usage_sync.py --help) - if nothing new
@@ -36,6 +41,10 @@ cd "$(dirname "$0")"
 
 echo "==> Tessie charges (fetch + consolidate)"
 ./tessie_api_sync.py --charges --yes
+
+echo
+echo "==> Charge deep-dive telemetry backfill (Superchargers/3rd-party DC - Evnex home sessions have their own sync below)"
+./tessie_api_sync.py --backfill-deepdive --charges --limit 0
 
 echo
 echo "==> Evnex home-charger sessions"

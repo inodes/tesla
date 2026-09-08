@@ -20,6 +20,7 @@ import urllib.request
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 REPO_ROOT = os.path.dirname(SCRIPT_DIR)
 CONFIG_PATH = os.path.join(REPO_ROOT, "Tessie", "config.json")
+VEHICLE_SPEC_PATH = os.path.join(REPO_ROOT, "Tessie", "vehicle_spec.json")
 API_BASE = "https://api.tessie.com"
 
 # Matches this repo's CSV convention (see Tessie/TESSIE_API.md) - the API
@@ -35,6 +36,32 @@ def load_config():
     if os.path.isfile(CONFIG_PATH):
         try:
             with open(CONFIG_PATH, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except Exception:
+            pass
+    return {}
+
+
+def load_vehicle_spec():
+    """This car's own real specs (curb weight, battery gross/usable
+    capacity, drag coefficient, WLTP/GVG reference efficiency figures) -
+    mirrors load_config() exactly, same "small settings file beside
+    config.json, gitignored, real values never committed" convention
+    (see Tessie/vehicle_spec.example.json for the schema/placeholder
+    values, and Section 1 of AGENTS.md for why real data doesn't live
+    in the repo tree at all beyond a small settings file like this).
+
+    Kept here rather than as hardcoded constants in any one script (its
+    first consumer was car_efficiency_profile.py's grade-corrected
+    efficiency estimate, which needs a real vehicle mass) specifically
+    so any future tool that wants this car's own real spec - a
+    different efficiency calculation, a range-vs-spec sanity check,
+    whatever - reads the same one file instead of a second drifting
+    copy of the same numbers. Returns {} if the file doesn't exist yet
+    or fails to parse, exactly like load_config()."""
+    if os.path.isfile(VEHICLE_SPEC_PATH):
+        try:
+            with open(VEHICLE_SPEC_PATH, "r", encoding="utf-8") as f:
                 return json.load(f)
         except Exception:
             pass

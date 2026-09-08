@@ -79,7 +79,7 @@ from datetime import datetime
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from tessie_api_common import (
     DEFAULT_UNIT_PARAMS, REPO_ROOT, SCRIPT_DIR, api_get, extract_json_records,
-    get_token, get_vin, load_config,
+    get_token, get_vin, load_config, resolve_tessie_data_home,
 )
 
 CACHE_DIR = os.path.join(REPO_ROOT, "Tessie", "api_cache")
@@ -294,6 +294,239 @@ def sync_one_type(type_name, spec, token, vin, since_days, dry_run, landing_dir,
     }
 
 
+def sync_battery_health(tessie_dir=None):
+    """Fetches Tessie's current GET /{vin}/battery_health - a live, current-
+    state SNAPSHOT (max_range, max_ideal_range, capacity), not a date-range
+    endpoint like drives/charges above - and appends a dated reading to
+    <tessie data home>/battery_health_log.json.
+
+    This exists so "current usable capacity" for anything that needs a
+    real range estimate (see car_efficiency_profile.py, AGENTS.md
+    TODO-031) can come from Tessie's own battery-health figure - which
+    reflects today's real degradation - rather than only a historical
+    average backed out of old drives_master.csv rows. Appending (never
+    overwriting) turns "pull this on a regular basis" into an actual
+    degradation-over-time history, confirmed live: capacity 85.25 kWh /
+    max_range 350.22 km / max_ideal_range 395.96 km on a real 2026 Model
+    YL (AWD Long Range - LG 5N/EF1 NMC pack, ~85.0 kWh usable per Tesla's
+    own published spec, so this live figure lines up almost exactly with
+    the nameplate value rather than showing meaningful degradation yet)."""
+    home = tessie_dir or resolve_tessie_data_home()
+    if not home:
+        print("❌ No Tessie data home configured - nothing to log to.")
+        return None
+
+    cfg = load_config()
+    token = get_token(None, cfg)
+    vin = get_vin(None, cfg)
+    if not token or not vin:
+        print("❌ No access token/VIN configured - see Tessie/config.json or TESSIE_ACCESS_TOKEN.")
+        return None
+
+    status, body = api_get("battery_health", vin, token, {})
+    if status != 200:
+        print(f"❌ battery_health fetch failed: HTTP {status}")
+        return None
+    try:
+        result = json.loads(body).get("result", {})
+    except Exception as e:
+        print(f"❌ Could not parse battery_health response: {e}")
+        return None
+
+    log_path = os.path.join(home, "battery_health_log.json")
+    log = []
+    if os.path.isfile(log_path):
+        try:
+            with open(log_path, "r", encoding="utf-8") as f:
+                log = json.load(f)
+            if not isinstance(log, list):
+                log = []
+        except Exception:
+            log = []
+
+    entry = {
+        "synced_at": datetime.now().isoformat(timespec="seconds"),
+        "capacity_kwh": result.get("capacity"),
+        "max_range_km": result.get("max_range"),
+        "max_ideal_range_km": result.get("max_ideal_range"),
+    }
+    log.append(entry)
+    tmp = log_path + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(log, f, indent=2)
+    os.replace(tmp, log_path)
+
+    print(f"✅ Battery health: {entry['capacity_kwh']} kWh usable capacity, "
+          f"{entry['max_range_km']} km max rated range, {entry['max_ideal_range_km']} km max ideal range.")
+    print(f"   Logged to {log_path} ({len(log)} reading(s) total).")
+    return entry
+
+
+def backfill_deepdive_telemetry(kinds, limit=None, pace_seconds=1.5, since_days=None, tessie_dir=None):
+    """Bulk-fetch deep-dive telemetry for every past drive and/or charging
+    session that doesn't already have a local drive_deepdive_*.csv /
+    charge_deepdive_*.csv, until the local store is caught up with what
+    Tessie's own history actually has. `kinds` is a list containing
+    "drives", "charges", or both.
+
+    This lives HERE, not as a flag on tessie_drives_analyzer.py's or
+    tessie_charging_analyzer.py's own CLI, on purpose: pulling data from
+    Tessie's API in bulk is exactly the "sync" shape of work this whole
+    module exists for (drives/charges fetch, above), not analysis or
+    display. Each analyzer script keeps exactly one narrow, pre-existing
+    exception to that split - a single-record, ON-DEMAND fetch behind an
+    interactive view (drives: get_drive_deepdive(); charges:
+    inspect_session() does not yet auto-fetch, only drives has this today)
+    - a fundamentally different shape of operation (tied to what's on
+    screen right now, one record at a time) from a bulk catch-up job over
+    the whole history.
+
+    This function is the one deliberate exception to this module's own
+    "never import the analyzer classes, only shell out to them for
+    --consolidate" rule stated in the module docstring above: it needs
+    each analyzer's own record-matching logic (match_detailed_drive()/
+    match_detailed_charge(), _drive_is_in_progress()/_charge_is_in_progress())
+    to know what's actually missing, and its already-shipped
+    fetch_drive_deepdive_from_api()/fetch_charge_deepdive_from_api() to do
+    the real pull - reimplementing either here would just be a second,
+    drifting copy of the same logic. This is a READ/MATCH-only
+    dependency; the --consolidate path above is completely unchanged and
+    still always shells out as a subprocess, never importing anything.
+
+    Returns {kind: (fetched, skipped_in_progress, already_had, failed)}.
+    """
+    sys.path.insert(0, SCRIPT_DIR)
+    results = {}
+    if "drives" in kinds:
+        results["drives"] = _backfill_drive_deepdive(limit, pace_seconds, since_days, tessie_dir)
+    if "charges" in kinds:
+        results["charges"] = _backfill_charge_deepdive(limit, pace_seconds, since_days, tessie_dir)
+    return results
+
+
+def _since_cutoff(since_days):
+    if since_days is None:
+        return None
+    from datetime import timedelta
+    return datetime.now() - timedelta(days=since_days)
+
+
+def _backfill_drive_deepdive(limit, pace_seconds, since_days, tessie_dir):
+    from tessie_drives_analyzer import TessieAnalyzer  # noqa: E402 (deliberate - see backfill_deepdive_telemetry docstring)
+
+    print("==> Drives deep-dive backfill")
+    analyzer = TessieAnalyzer(tessie_dir=tessie_dir)
+    drives = analyzer.load_drives()
+    if not drives:
+        print("   No local drives_master.csv found - nothing to backfill (run a normal --drives sync first).")
+        return 0, 0, 0, 0
+    analyzer.load_detailed_drives()
+    since_dt = _since_cutoff(since_days)
+
+    fetched, skipped_in_progress, already_had, failed = 0, 0, 0, 0
+    total_candidates = 0
+
+    for d in drives:
+        if since_dt and d["start_dt"] < since_dt:
+            continue
+        if analyzer.match_detailed_drive(d):
+            already_had += 1
+            continue
+        total_candidates += 1
+        if analyzer._drive_is_in_progress(d):
+            skipped_in_progress += 1
+            continue
+        if limit is not None and fetched >= limit:
+            break
+
+        label = f"{d['start_dt'].strftime('%Y-%m-%d %H:%M')} -> {d['end_dt'].strftime('%H:%M')} ({d['dist_km']:.1f} km)"
+        print(f"   [{fetched + failed + 1}] {label}")
+        path = analyzer.fetch_drive_deepdive_from_api(d)
+        if path:
+            fetched += 1
+            # Keep detailed_drives in sync so match_detailed_drive() doesn't
+            # re-fetch the same drive later in this same run - parse just
+            # the ONE new file and append it rather than re-running the
+            # full load_detailed_drives() rescan after every fetch, which
+            # made each successive fetch progressively slower (O(n^2) over
+            # a 1000+-drive run) when first tried this way.
+            parsed = analyzer.parse_detailed_drive_csv(path)
+            if parsed:
+                analyzer.detailed_drives.append(parsed)
+        else:
+            failed += 1
+        if pace_seconds:
+            time.sleep(pace_seconds)
+
+    since_note = f" starting {since_dt.date()}" if since_dt else ""
+    print(f"   Checked {len(drives)} total drive(s) in drives_master.csv{since_note}.")
+    print(f"   Drives: {fetched} fetched, {failed} failed, "
+          f"{skipped_in_progress} in-progress (skipped), {already_had} already had local telemetry.")
+    remaining = total_candidates - fetched - skipped_in_progress - failed
+    if limit is not None and remaining > 0:
+        print(f"   ({remaining} more drive(s) still missing telemetry - re-run to continue, or raise --limit.)")
+    return fetched, skipped_in_progress, already_had, failed
+
+
+def _backfill_charge_deepdive(limit, pace_seconds, since_days, tessie_dir):
+    from tessie_charging_analyzer import TessieChargingAnalyzer  # noqa: E402 (deliberate - see backfill_deepdive_telemetry docstring)
+
+    print("==> Charges deep-dive backfill")
+    analyzer = TessieChargingAnalyzer(tessie_dir=tessie_dir)
+    charges = analyzer.load_charges()
+    if not charges:
+        print("   No local charges_master.csv found - nothing to backfill (run a normal --charges sync first).")
+        return 0, 0, 0, 0
+    analyzer.load_detailed_charges()
+    since_dt = _since_cutoff(since_days)
+
+    fetched, skipped_in_progress, already_had, failed, skipped_evnex = 0, 0, 0, 0, 0
+    total_candidates = 0
+
+    for s in charges:
+        if since_dt and s.get("started_at") and s["started_at"] < since_dt:
+            continue
+        if analyzer.match_detailed_charge(s):
+            already_had += 1
+            continue
+        if s.get("network") == "Evnex":
+            # Home Evnex sessions have their own dedicated sync
+            # (evnex_api_sync.py) - see fetch_charge_deepdive_from_api()'s
+            # own docstring for why this isn't duplicated here.
+            skipped_evnex += 1
+            continue
+        total_candidates += 1
+        if analyzer._charge_is_in_progress(s):
+            skipped_in_progress += 1
+            continue
+        if limit is not None and fetched >= limit:
+            break
+
+        place = s.get("place_name") or s.get("location_raw") or "?"
+        start_label = s["started_at"].strftime("%Y-%m-%d %H:%M") if s.get("started_at") else "?"
+        label = f"{start_label} - {place} ({s.get('network', '?')})"
+        print(f"   [{fetched + failed + 1}] {label}")
+        path = analyzer.fetch_charge_deepdive_from_api(s)
+        if path:
+            fetched += 1
+            parsed = analyzer.parse_detailed_charge_csv(path)
+            if parsed:
+                analyzer.detailed_charges.append(parsed)
+        else:
+            failed += 1
+        if pace_seconds:
+            time.sleep(pace_seconds)
+
+    since_note = f" starting {since_dt.date()}" if since_dt else ""
+    print(f"   Checked {len(charges)} total charging session(s) in charges_master.csv{since_note}.")
+    print(f"   Charges: {fetched} fetched, {failed} failed, {skipped_in_progress} in-progress (skipped), "
+          f"{skipped_evnex} Evnex home session(s) skipped (own sync), {already_had} already had local telemetry.")
+    remaining = total_candidates - fetched - skipped_in_progress - failed
+    if limit is not None and remaining > 0:
+        print(f"   ({remaining} more session(s) still missing telemetry - re-run to continue, or raise --limit.)")
+    return fetched, skipped_in_progress, already_had, failed
+
+
 def run_consolidate(type_name, runner=subprocess.run):
     """Shell out to the existing analyzer script's own --consolidate flag -
     the exact same command a user would type by hand. Returns True on a
@@ -348,7 +581,27 @@ def main():
                               "CSV(s) are already sitting in the landing directory - e.g. to finish "
                               "consolidating from a previous sync without doing a new fetch. No "
                               "token/VIN needed for this mode.")
+    parser.add_argument("--backfill-deepdive", action="store_true",
+                         help="Bulk-fetch deep-dive telemetry from Tessie's /states API for every past "
+                              "drive and/or charging session that doesn't have a local "
+                              "drive_deepdive_*.csv / charge_deepdive_*.csv yet (uses the same "
+                              "--drives/--charges selectors as the sync above - both, if neither is "
+                              "given). Separate from the regular sync - re-run as many times as needed, "
+                              "it only ever fetches what's still missing.")
+    parser.add_argument("--limit", type=int, default=25,
+                         help="Max NEW deep-dive fetches per domain for --backfill-deepdive in this run (default 25 - re-run to continue). Use 0 for no cap.")
+    parser.add_argument("--pace", type=float, default=1.5,
+                         help="Seconds to wait between --backfill-deepdive API calls (default 1.5)")
+    parser.add_argument("--tessie-dir", help="Custom path to directory containing Tessie CSV exports (--backfill-deepdive only)")
+    parser.add_argument("--battery-health", action="store_true",
+                         help="Fetch Tessie's current battery health (usable capacity, max range) and "
+                              "append a dated reading to battery_health_log.json - run this on a "
+                              "regular basis to build a real degradation-over-time history.")
     args = parser.parse_args()
+
+    if args.battery_health:
+        sync_battery_health(tessie_dir=args.tessie_dir)
+        return
 
     if args.consolidate and args.no_consolidate:
         print("❌ --consolidate and --no-consolidate are mutually exclusive.")
@@ -357,8 +610,6 @@ def main():
         print("❌ --consolidate runs the real --consolidate subprocess directly - it can't be combined with --dry-run.")
         sys.exit(2)
 
-    config = load_config()
-
     selected = []
     if args.drives:
         selected.append("drives")
@@ -366,6 +617,17 @@ def main():
         selected.append("charges")
     if not selected:
         selected = list(DATA_TYPES.keys())  # "all things are fetched" when neither flag is given
+
+    if args.backfill_deepdive:
+        # Reuses the same --drives/--charges selectors as the regular sync
+        # above (both, when neither is given) - "which drives and which
+        # charges were pulled" should be exactly as explicit here as it is
+        # for a normal sync run.
+        limit = None if args.limit == 0 else args.limit
+        backfill_deepdive_telemetry(selected, limit=limit, pace_seconds=args.pace, since_days=args.since_days, tessie_dir=args.tessie_dir)
+        return
+
+    config = load_config()
 
     if args.consolidate:
         # Direct mode: no API call at all, so no token/VIN needed - just run
