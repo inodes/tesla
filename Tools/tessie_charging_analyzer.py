@@ -1940,13 +1940,20 @@ class TessieChargingAnalyzer:
             return None
 
     def load_detailed_charges(self):
+        # Mirrors load_detailed_drives() (tessie_drives_analyzer.py) - both
+        # charges_dirs and drives_dirs get an "archive" AND "deepdive"
+        # subfolder search (AGENTS.md TODO-023: charges/ was missing the
+        # deepdive/ leg, so charge_deepdive_*.csv files living there - e.g.
+        # the DC Supercharger sessions moved out of the charges/ root -
+        # would otherwise go missing from this scan).
         detailed = []
         seen_paths = set()
         search_dirs = [self.landing_dir] + list(self.charges_dirs) + list(self.tessie_dirs)
         for cd in list(self.charges_dirs):
-            arch_p = os.path.join(cd, "archive")
-            if os.path.isdir(arch_p) and arch_p not in search_dirs:
-                search_dirs.append(arch_p)
+            for sub in ["archive", "deepdive"]:
+                sub_p = os.path.join(cd, sub)
+                if os.path.isdir(sub_p) and sub_p not in search_dirs:
+                    search_dirs.append(sub_p)
         for td in list(self.tessie_dirs):
             for sub in ["charges", "telemetry", "archive"]:
                 sub_p = os.path.join(td, sub)
