@@ -726,8 +726,7 @@ def review_single_cluster(cl, places, total_clusters=1, cluster_num=1, allow_ign
         print(f"  [1-{len(candidates)}] Accept suggested POI (uses POI center & auto-adjusted radius)")
     print("  [c]   Enter custom name (uses parking stop coordinates)")
     print("  [g]   Provide custom GPS coordinates or address (set a precise center)")
-    print("  [m]   Open this location in your browser (Google Maps) - use this instead of clicking")
-    print("        the GPS line above, which most terminals won't treat as a real clickable link")
+    print("  [m]   Open this location in your browser (Google Maps)")
     if allow_ignore:
         print("  [i]   Ignore permanently (address is fine as-is, not worth naming - won't be asked again)")
     print("  [b]   Back to cluster list (leave unlabelled for now)")
