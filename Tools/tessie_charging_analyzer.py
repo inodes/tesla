@@ -650,7 +650,7 @@ class TeslaInvoiceParser:
             return None
 
         network = "Tesla Supercharger"
-        emoji = "🔴⚡"
+        emoji = "🔴"
         lower_all = (source_file + " " + text_clean).lower()
         if "exploren" in lower_all:
             network = "Exploren"
@@ -748,7 +748,7 @@ class TeslaInvoiceParser:
 
                     fname_lower = os.path.basename(file_path).lower()
                     network = "Tesla Supercharger"
-                    emoji = "🔴⚡"
+                    emoji = "🔴"
                     if "chargefox" in fname_lower or str(inv_val).startswith("CF-") or "chargefox" in loc_val.lower():
                         network = "Chargefox"
                         emoji = "🔌"
@@ -1075,10 +1075,10 @@ class TessieChargingAnalyzer:
         factored out so every match tier (GPS/exact-name/keyword) below can
         share it."""
         if kind == "supercharger":
-            return (name, "Tesla Supercharger", "🔴⚡", data)
+            return (name, "Tesla Supercharger", "🔴", data)
         if kind == "place":
             nickname = data.get("nickname") or name
-            emoji = "🔴⚡" if is_supercharger else ("🔌" if is_fast else "🅿️")
+            emoji = "🔴" if is_supercharger else ("🔌" if is_fast else "🅿️")
             net = "Tesla Supercharger" if is_supercharger else ("DC Fast" if is_fast else "Destination AC")
             return (nickname, net, emoji, data)
         # personal / plugshare / destination
@@ -1087,7 +1087,7 @@ class TessieChargingAnalyzer:
                    or data.get("plugshare_metadata", {}).get("network")
                    or ("Evnex" if st_type == "home" else "3rd-Party"))
         short_name = data.get("name") or name
-        emoji = "🏠⚡" if st_type == "home" or kind == "personal" else ("🔌" if st_type == "dc_fast" or kind == "plugshare" else "🅿️")
+        emoji = "🏠" if st_type == "home" or kind == "personal" else ("🔌" if st_type == "dc_fast" or kind == "plugshare" else "🅿️")
         return (short_name, network, emoji, data)
 
     def resolve_location(self, address, saved_loc="", lat=None, lon=None, is_supercharger=False, is_fast=False):
@@ -1176,7 +1176,7 @@ class TessieChargingAnalyzer:
 
         display = saved_clean or (address.split(",")[0].strip() if address else "Unknown Location")
         if is_supercharger:
-            return (display, "Tesla Supercharger", "🔴⚡", {})
+            return (display, "Tesla Supercharger", "🔴", {})
         elif is_fast:
             return (display, "3rd-Party Fast", "🔌", {})
         else:
@@ -2216,7 +2216,7 @@ class TessieChargingAnalyzer:
             invoice_rate = None
             invoice_net_rate = None
             inv_num = None
-            status = "HOME / AC 🏠" if charge["emoji"] == "🏠⚡" else ("UNRECONCILED ❓" if (charge["is_supercharger"] or charge["is_fast_charger"]) else "AC UNBILLED 🅿️")
+            status = "HOME / AC 🏠" if charge["emoji"] == "🏠" else ("UNRECONCILED ❓" if (charge["is_supercharger"] or charge["is_fast_charger"]) else "AC UNBILLED 🅿️")
 
             # Defaults: the pre-invoice-match guess from Tessie's own
             # location/saved_location/GPS. Overridden below once we know
@@ -2633,8 +2633,8 @@ class TessieChargingAnalyzer:
         total_sessions = len(sessions)
         sc_sessions = [s for s in sessions if s["is_supercharger"]]
         fast_sessions = [s for s in sessions if s["is_fast_charger"] and not s["is_supercharger"]]
-        home_sessions = [s for s in sessions if s["emoji"] == "🏠⚡"]
-        ac_dest_sessions = [s for s in sessions if not s["is_supercharger"] and not s["is_fast_charger"] and s["emoji"] != "🏠⚡"]
+        home_sessions = [s for s in sessions if s["emoji"] == "🏠"]
+        ac_dest_sessions = [s for s in sessions if not s["is_supercharger"] and not s["is_fast_charger"] and s["emoji"] != "🏠"]
 
         total_dispenser_kwh = sum(s["dispenser_kwh"] for s in sessions)
         total_battery_kwh = sum(s["battery_kwh"] for s in sessions)
@@ -2723,7 +2723,7 @@ class TessieChargingAnalyzer:
             n_cost = sum((s["invoice_cost"] if s["invoice_cost"] is not None else s["tessie_cost"]) for s in net_sessions)
             n_avg_rate = (n_cost / n_disp) if n_disp > 0 else 0.0
             
-            type_label = "DC Fast" if net_sessions[0]["is_fast_charger"] else ("Home AC" if emoji == "🏠⚡" else "AC Public")
+            type_label = "DC Fast" if net_sessions[0]["is_fast_charger"] else ("Home AC" if emoji == "🏠" else "AC Public")
             name_str = f"{emoji} {net_name}"
 
             row_str = "│" + "│".join([
@@ -3930,7 +3930,7 @@ class TessieChargingAnalyzer:
         total_w = sum(widths) + len(widths) - 1
 
         print(f"\n┌{'─' * total_w}┐")
-        sc_title = f" 🔴⚡ {C_BOLD}REGISTERED TESLA SUPERCHARGERS ({len(sc_list)} stations){C_RESET}"
+        sc_title = f" 🔴 {C_BOLD}REGISTERED TESLA SUPERCHARGERS ({len(sc_list)} stations){C_RESET}"
         print(f"│{pad_display(sc_title, total_w, 'left')}│")
         print("├" + "┬".join("─" * w for w in widths) + "┤")
         headers = ["#", "State", "Station Name", "General Location / Suburb", "Stalls", "Tier", "Access", "Rates (AUD)"]
@@ -3979,7 +3979,7 @@ class TessieChargingAnalyzer:
 
         for idx, (name, data) in enumerate(oth_list, 1):
             st_type = data.get("type", "ac")
-            emoji = "🏠⚡" if st_type == "home" else ("🔌" if st_type == "dc_fast" else "🅿️")
+            emoji = "🏠" if st_type == "home" else ("🔌" if st_type == "dc_fast" else "🅿️")
             hw = data.get("hardware", {})
             costs = data.get("costs", {})
             net = data.get("network") or data.get("operator") or ("Tesla Wall Connector" if st_type == "home" else "3rd-Party")
@@ -4547,7 +4547,7 @@ def main():
     elif args.third_party:
         filtered = [s for s in filtered if s["is_fast_charger"] and not s["is_supercharger"]]
     elif args.home:
-        filtered = [s for s in filtered if s["emoji"] == "🏠⚡"]
+        filtered = [s for s in filtered if s["emoji"] == "🏠"]
 
     # Exclude filters apply independently of (and after) the include filters
     # above, so e.g. --exclude-home alone means "show everything except home".
@@ -4556,7 +4556,7 @@ def main():
     if args.exclude_third_party:
         filtered = [s for s in filtered if not (s["is_fast_charger"] and not s["is_supercharger"])]
     if args.exclude_home:
-        filtered = [s for s in filtered if s["emoji"] != "🏠⚡"]
+        filtered = [s for s in filtered if s["emoji"] != "🏠"]
 
     if args.unreconciled:
         filtered = [s for s in filtered if s["status"] in ["UNRECONCILED ❓", "RATE MISMATCH ⚠️", "COST MISMATCH ⚠️", "TESSIE RATE WRONG ⚠️", "INVOICE ONLY 📄"]]
