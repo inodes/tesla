@@ -95,6 +95,7 @@ import os
 import sys
 import json
 import csv
+import glob
 import statistics
 from datetime import datetime
 
@@ -268,33 +269,127 @@ def estimate_usable_capacity_kwh(drives, min_pct_delta=5):
     return median_kwh, len(estimates), estimates[0], estimates[-1]
 
 
+def _safe_float(v):
+    """Best-effort float parse - returns None (never raises) for
+    blank/missing/non-numeric CSV cells."""
+    try:
+        return float(v)
+    except (TypeError, ValueError):
+        return None
+
+
+_BATTERY_CSV_REQUIRED_COLUMNS = {
+    "Timestamp (AEST)",
+    "Max Range (km)",
+    "Max Ideal Range (km)",
+    "Usable Capacity (kWh)",
+}
+
+
+def _parse_battery_health_csv(path):
+    """Normalizes one manually-exported battery-health-history CSV -
+    Tessie's own /battery export, seen under two different filenames
+    in the wild so far (battery_health_<start>_to_<end>.csv from an
+    older export, <VIN>-battery.csv from a newer one - AGENTS.md
+    TODO-011, still a manual download today, no automated
+    fetch+consolidate for this endpoint yet) - into the same shape
+    battery_health_log.json entries use, so every source merges into
+    one real trend regardless of which export naming produced it.
+    Returns a list of dicts (possibly empty) - a row that fails to
+    parse is just skipped, and a file that isn't actually a
+    battery-health export (wrong columns) is skipped entirely rather
+    than guessed at."""
+    try:
+        with open(path, "r", encoding="utf-8-sig") as f:
+            reader = csv.DictReader(f)
+            if not _BATTERY_CSV_REQUIRED_COLUMNS.issubset(set(reader.fieldnames or [])):
+                return []
+            entries = []
+            for r in reader:
+                ts_raw = (r.get("Timestamp (AEST)") or "").strip()
+                if not ts_raw:
+                    continue
+                try:
+                    dt = datetime.strptime(ts_raw[:19], "%Y-%m-%d %H:%M:%S")
+                except ValueError:
+                    continue
+                capacity = _safe_float(r.get("Usable Capacity (kWh)"))
+                if capacity is None:
+                    continue
+                entries.append({
+                    "synced_at": dt.isoformat(timespec="seconds"),
+                    "capacity_kwh": capacity,
+                    "max_range_km": _safe_float(r.get("Max Range (km)")),
+                    "max_ideal_range_km": _safe_float(r.get("Max Ideal Range (km)")),
+                    "odometer_km": _safe_float(r.get("Odometer (km)")),
+                    "source": f"csv:{os.path.basename(path)}",
+                })
+            return entries
+    except Exception:
+        return []
+
+
 def load_battery_health_history(tessie_dir_home):
-    """The FULL history of readings from battery_health_log.json
-    (written by tessie_api_sync.py --battery-health, AGENTS.md
-    TODO-031/REQ-045 - it appends one entry per sync, on whatever
-    regular cadence drives_sync_all.sh runs at, never overwrites) - the
-    whole point is to be able to see a real degradation TREND over
-    time, not just the latest single reading, per the user's own
-    request ("I would prefer a full list of all the entries... because
-    we want to see battery health trend"). Returns the raw list,
-    oldest-to-newest as the file itself stores them, or None if the log
-    doesn't exist yet/is empty/unreadable - callers needing "the
-    current capacity" should use history[-1] (the most recent real
-    reading) and fall back to the empirical estimate if this is None."""
+    """The FULL history of readings, merged from every source this repo
+    has for it: battery_health_log.json (written by tessie_api_sync.py
+    --battery-health, AGENTS.md TODO-031/REQ-045 - it appends one entry
+    per sync, on whatever regular cadence drives_sync_all.sh runs at,
+    never overwrites) PLUS any manually-exported battery-health-history
+    CSV sitting loose at the Tessie data home root (TODO-011 - naming
+    has already changed once in the wild, from
+    battery_health_<start>_to_<end>.csv to <VIN>-battery.csv, so every
+    *.csv found there is sniffed by its header rather than matched by
+    filename). The whole point is to be able to see a real degradation
+    TREND over time, not just the latest single reading, per the
+    user's own request ("I would prefer a full list of all the
+    entries... because we want to see battery health trend") - and
+    per the user's own correction after an earlier version of this
+    function only read battery_health_log.json ("This is not true.
+    Tessie has all entries."), it now merges in the real historical
+    exports too. Entries are deduplicated by exact synced_at timestamp
+    (a live JSON reading wins over a CSV row at the same instant, since
+    it's the more precise/authoritative source) and returned
+    oldest-to-newest. Returns None if nothing at all was found/readable
+    - callers needing "the current capacity" should use history[-1]
+    (the most recent real reading) and fall back to the empirical
+    estimate if this is None."""
     if not tessie_dir_home:
         return None
-    path = os.path.join(tessie_dir_home, "battery_health_log.json")
-    if not os.path.isfile(path):
-        return None
+
+    merged = {}
+
+    log_path = os.path.join(tessie_dir_home, "battery_health_log.json")
+    if os.path.isfile(log_path):
+        try:
+            with open(log_path, "r", encoding="utf-8") as f:
+                log = json.load(f)
+            if isinstance(log, list):
+                for e in log:
+                    if isinstance(e, dict) and e.get("capacity_kwh") is not None and e.get("synced_at"):
+                        e = dict(e)
+                        e.setdefault("source", "battery_health_log.json")
+                        merged[e["synced_at"]] = e
+        except Exception:
+            pass
+
     try:
-        with open(path, "r", encoding="utf-8") as f:
-            log = json.load(f)
-        if not isinstance(log, list) or not log:
-            return None
-        cleaned = [e for e in log if isinstance(e, dict) and e.get("capacity_kwh") is not None]
-        return cleaned or None
+        csv_paths = sorted(glob.glob(os.path.join(tessie_dir_home, "*.csv")))
     except Exception:
+        csv_paths = []
+    for csv_path in csv_paths:
+        for e in _parse_battery_health_csv(csv_path):
+            merged.setdefault(e["synced_at"], e)  # a live JSON reading at the exact same timestamp wins
+
+    if not merged:
         return None
+
+    def _sort_key(e):
+        try:
+            return datetime.fromisoformat(e["synced_at"])
+        except (ValueError, TypeError):
+            return datetime.min
+
+    return sorted(merged.values(), key=_sort_key)
 
 
 def battery_health_trend_summary(history):
@@ -513,12 +608,14 @@ def build_profile(tessie_dir=None, vehicle_mass_kg=None):
             "script after more drives get deep-dive telemetry "
             "(tessie_api_sync.py --backfill-deepdive --drives) to firm "
             "up any 'low'/'medium' bucket.",
-            "live_reading_history is the FULL battery_health_log.json "
-            "history (every --battery-health sync to date), not just the "
-            "latest reading - so a real degradation trend becomes visible "
-            "once enough regular syncs have accumulated (see "
-            "live_reading_trend for a first-vs-latest summary once there "
-            "are 2+ readings).",
+            "live_reading_history is the FULL merged history from every "
+            "source this repo has for it: battery_health_log.json (every "
+            "--battery-health sync to date) plus any manually-exported "
+            "battery-health-history CSV sitting loose at the Tessie data "
+            "home root (TODO-011), deduplicated by timestamp - so a real "
+            "degradation trend becomes visible across everything Tessie "
+            "has recorded, not just new syncs (see live_reading_trend for "
+            "a first-vs-latest summary once there are 2+ readings).",
         ],
         "vehicle_reference": vehicle_reference_from_spec(vehicle_spec),
         "source_data": {

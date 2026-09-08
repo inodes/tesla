@@ -49,14 +49,18 @@ REPO_EMOJI_WIDTHS = {
     # Width 1: Single-Cell Glyphs, Controls, & Terminal Monospace Emojis
     # (In macOS Terminal fonts such as Menlo and SF Mono, these occupy 1 cell)
     # -------------------------------------------------------------------------
-    "🗓️": 1, "🗓": 1,   # Spiral Calendar Pad (Month overview header)
-    "🛡️": 1, "🛡": 1,   # Shield (Sentry footage indicator)
+    # 🗓️/🛡️/🛠️/🏷️/🗺️ used to be hardcoded here at width 1 - proven WRONG
+    # (BUG, 2026-09-08: user's real terminal showed the "CHARGING SESSIONS
+    # BY MONTH" title misaligned) by this module's OWN auto-detection logic
+    # below, which already classifies these exact pictograph blocks as
+    # width 2 - the override was silently defeating the auto-calculation
+    # for these five specific emoji. Removed rather than corrected to "2"
+    # here, per the user's standing instruction that emoji sizing must be
+    # auto-calculated, not hand-curated - they now fall through to the
+    # block-range check in char_width() like any other pictograph.
     "⚙️": 1, "⚙": 1,   # Gear (Settings / Self-Test)
     "⚠️": 1, "⚠": 1,   # Warning Sign
     "⏱": 1,           # Stopwatch (Elapsed time)
-    "🛠️": 1, "🛠": 1,   # Hammer & Wrench (Tools / Maintenance)
-    "🏷️": 1, "🏷": 1,   # Label / Tag (Place tag)
-    "🗺️": 1, "🗺": 1,   # World Map (Geographic Bounds)
     "✔": 1,           # Heavy Check Mark
     "🅿": 1, "🅿️": 1,  # Parking Symbol
     "·": 1,           # Middle Dot (Absent footage indicator)
@@ -162,12 +166,35 @@ def char_width(c: str) -> int:
         return REPO_EMOJI_WIDTHS[c]
 
     code = ord(c)
-    
+
     # Zero-width: variation selectors, ZWJ, ZWSP, combining marks
     if code in (0xFE0F, 0xFE0E, 0x200D, 0x200B, 0x200C) or unicodedata.category(c) in ("Mn", "Me"):
         return 0
 
-    # Query OS libc wcwidth if available (authoritative for macOS terminal)
+    # Standard Unicode Emoji Blocks (all modern terminals display these as
+    # width 2) - checked BEFORE libc wcwidth on purpose (2026-09-08): macOS's
+    # bundled wcwidth tables predate most of these blocks and return wrong,
+    # non-negative answers (usually 1) for many real pictographs rather than
+    # the -1 "unknown" that would let this block-check run as a fallback -
+    # this is the actual root cause the "🗓️ renders 1 cell wide but should be
+    # 2" bug traced back to. Auto-detecting by Unicode block is the reliable
+    # source of truth for this specific codepoint family; wcwidth stays
+    # authoritative for everything else (CJK, box drawing, plain symbols).
+    if (
+        0x1F300 <= code <= 0x1F5FF or  # Misc Symbols and Pictographs (📹, 🕒, 📍, 🏠, 🚗, 💾, 🔄, 🔌, 💰, 🔴, 🗓, 🏷, 🗺)
+        0x1F600 <= code <= 0x1F64F or  # Emoticons
+        0x1F680 <= code <= 0x1F6FF or  # Transport and Map (🛡, 🛠)
+        0x1F700 <= code <= 0x1F77F or  # Alchemical Symbols
+        0x1F780 <= code <= 0x1F7FF or  # Geometric Shapes Extended
+        0x1F800 <= code <= 0x1F8FF or  # Supplemental Arrows-C
+        0x1F900 <= code <= 0x1F9FF or  # Supplemental Symbols and Pictographs
+        0x1FA00 <= code <= 0x1FAFF or  # Symbols and Pictographs Extended-A
+        0x1F1E6 <= code <= 0x1F1FF     # Regional Indicator symbols (Flags)
+    ):
+        return 2
+
+    # Query OS libc wcwidth if available (authoritative for macOS terminal,
+    # for everything NOT in the emoji blocks handled above)
     if _wcwidth_fn is not None:
         try:
             w = _wcwidth_fn(c)
@@ -183,20 +210,6 @@ def char_width(c: str) -> int:
     # East Asian Wide ('W') and Fullwidth ('F')
     eaw = unicodedata.east_asian_width(c)
     if eaw in ("W", "F"):
-        return 2
-
-    # Standard Unicode Emoji Blocks (all modern terminals display these as width 2)
-    if (
-        0x1F300 <= code <= 0x1F5FF or  # Misc Symbols and Pictographs (📹, 🕒, 📍, 🏠, 🚗, 💾, 🔄, 🔌, 💰, 🔴)
-        0x1F600 <= code <= 0x1F64F or  # Emoticons
-        0x1F680 <= code <= 0x1F6FF or  # Transport and Map
-        0x1F700 <= code <= 0x1F77F or  # Alchemical Symbols
-        0x1F780 <= code <= 0x1F7FF or  # Geometric Shapes Extended
-        0x1F800 <= code <= 0x1F8FF or  # Supplemental Arrows-C
-        0x1F900 <= code <= 0x1F9FF or  # Supplemental Symbols and Pictographs
-        0x1FA00 <= code <= 0x1FAFF or  # Symbols and Pictographs Extended-A
-        0x1F1E6 <= code <= 0x1F1FF     # Regional Indicator symbols (Flags)
-    ):
         return 2
 
     # Default single width
@@ -498,14 +511,14 @@ def run_self_test(verbose: bool = True) -> bool:
         ("❌", "Cross Mark (Mismatch / Error)", 2),
         ("❓", "Question Mark (Unknown / Missing)", 2),
         ("🇦🇺", "Australia Flag (Regional Indicator Pair)", 1),
-        ("🗓️", "Spiral Calendar Pad (Month Overview Header)", 1),
-        ("🛡️", "Shield (Sentry Footage Indicator)", 1),
+        ("🗓️", "Spiral Calendar Pad (Month Overview Header)", 2),  # corrected 2026-09-08, was wrongly 1
+        ("🛡️", "Shield (Sentry Footage Indicator)", 2),  # corrected 2026-09-08, was wrongly 1
         ("⚙️", "Gear (Configuration / Self-Test)", 1),
         ("⚠️", "Warning Sign (Alert / Discrepancy)", 1),
         ("⏱", "Stopwatch (Elapsed Duration)", 1),
-        ("🛠️", "Hammer and Wrench (Tools / Maintenance)", 1),
-        ("🏷️", "Label / Tag (Tagged Place Boundary)", 1),
-        ("🗺️", "World Map (Geographic Bounding Box)", 1),
+        ("🛠️", "Hammer and Wrench (Tools / Maintenance)", 2),  # corrected 2026-09-08, was wrongly 1
+        ("🏷️", "Label / Tag (Tagged Place Boundary)", 2),  # corrected 2026-09-08, was wrongly 1
+        ("🗺️", "World Map (Geographic Bounding Box)", 2),  # corrected 2026-09-08, was wrongly 1
         ("✔", "Heavy Check Mark (Clean Status)", 1),
         ("🅿", "Parking Symbol (Standalone)", 1),
         ("🅿️", "Parking Symbol (With Variation Selector)", 1),
@@ -542,7 +555,15 @@ def run_self_test(verbose: bool = True) -> bool:
             if act_w != expected_w:
                 errors.append(f"Emoji width mismatch for '{sym}': expected {expected_w}, got {act_w}")
 
-            if len(sym) == 1 and _wcwidth_fn is not None:
+            _sym_code = ord(sym) if len(sym) == 1 else None
+            _sym_in_emoji_block = _sym_code is not None and (
+                0x1F300 <= _sym_code <= 0x1F5FF or 0x1F600 <= _sym_code <= 0x1F64F or
+                0x1F680 <= _sym_code <= 0x1F6FF or 0x1F700 <= _sym_code <= 0x1F77F or
+                0x1F780 <= _sym_code <= 0x1F7FF or 0x1F800 <= _sym_code <= 0x1F8FF or
+                0x1F900 <= _sym_code <= 0x1F9FF or 0x1FA00 <= _sym_code <= 0x1FAFF or
+                0x1F1E6 <= _sym_code <= 0x1F1FF
+            )
+            if len(sym) == 1 and _wcwidth_fn is not None and not _sym_in_emoji_block:
                 wc = _wcwidth_fn(sym)
                 if wc >= 0 and wc != expected_w:
                     errors.append(f"POSIX libc wcwidth mismatch for '{sym}': expected {expected_w}, got {wc}")
@@ -606,7 +627,7 @@ def run_self_test(verbose: bool = True) -> bool:
     # -------------------------------------------------------------------------
     total_inner = sum(test_widths) + len(test_widths) - 1
     top_b = format_box_line("┌", "─", "┐", [total_inner])
-    title_line = format_title_line(" 🗓️  TESSIE DRIVES BY MONTH (1,055 Trips Across 98 Days)", total_inner, "left")
+    title_line = format_title_line(" 🗓️ TESSIE DRIVES BY MONTH (1,055 Trips Across 98 Days)", total_inner, "left")  # single space after emoji, corrected 2026-09-08 now that its width auto-calculates correctly
     mid_b = format_box_line("├", "┬", "┤", test_widths)
     bot_b = format_box_line("└", "┴", "┘", test_widths)
 

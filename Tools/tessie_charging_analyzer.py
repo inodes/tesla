@@ -4717,7 +4717,7 @@ def display_charging_months_menu(filtered_sessions, analyzer):
         w_avg = max(len(" Avg $/kWh "), max((display_len(r["avg"]) + 1 for r in width_rows), default=13))
 
         total_inner = w_idx + w_month + w_sessions + w_energy + w_spend + w_avg + 5
-        title = f" 🗓️  CHARGING SESSIONS BY MONTH ({len(filtered_sessions):,} Sessions Across {len(sorted_months)} Months)"
+        title = f" 🗓️ CHARGING SESSIONS BY MONTH ({len(filtered_sessions):,} Sessions Across {len(sorted_months)} Months)"
         t_len = display_len(title)
         if t_len + 2 > total_inner:
             w_avg += (t_len + 2 - total_inner)
