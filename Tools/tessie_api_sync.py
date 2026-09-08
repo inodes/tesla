@@ -81,6 +81,7 @@ from tessie_api_common import (
     DEFAULT_UNIT_PARAMS, REPO_ROOT, SCRIPT_DIR, api_get, extract_json_records,
     get_token, get_vin, load_config, resolve_tessie_data_home,
 )
+import tessie_timezone as tztools
 
 CACHE_DIR = os.path.join(REPO_ROOT, "Tessie", "api_cache")
 
@@ -296,35 +297,59 @@ def sync_one_type(type_name, spec, token, vin, since_days, dry_run, landing_dir,
 
 def _parse_battery_health_timestamp(ts):
     """Best-effort parse of one battery_health reading's own "timestamp"
-    field into a naive local-time datetime. BUG (2026-09-08, live on the
-    user's real Mac): this was originally assumed to always be Unix
-    seconds (an int/float) per a docs summary - the real API returned a
-    STRING instead (`TypeError: 'str' object cannot be interpreted as an
-    integer` from datetime.fromtimestamp(ts)), so this now handles every
-    shape actually seen or plausible rather than trusting one assumption:
-    a numeric string (still epoch seconds, just stringified), a real
-    Unix int/float, or an ISO-8601 string (with or without a trailing
-    "Z"/timezone offset - Tessie's other endpoints return local-time ISO
-    strings elsewhere in this repo, e.g. drives/charges). Returns None if
-    every attempt fails, rather than raising - callers fall back to
-    now() so a single unparseable reading never crashes the whole sync."""
+    field into a naive LOCAL-time datetime (matching this repo's own
+    convention elsewhere - drives/charges CSV timestamps are always
+    local, e.g. tessie_drives_analyzer.py's own tztools.localize() calls
+    - so this needs to actually convert, not just relabel).
+
+    BUG #1 (2026-09-08, live on the user's real Mac): this was originally
+    assumed to always be Unix seconds (an int/float) per a docs summary -
+    the real API returned a STRING instead (`TypeError: 'str' object
+    cannot be interpreted as an integer`), so every shape actually seen
+    or plausible is handled now: a numeric string (still epoch seconds,
+    stringified), a real Unix int/float, or an ISO-8601 string.
+
+    BUG #2 (found while building a scatterplot from this same data,
+    2026-09-08): the real API's ISO strings carry an explicit UTC "Z"
+    suffix (e.g. "2026-06-05T05:55:34.000Z") - the first fix's
+    `.replace(tzinfo=None)` kept the UTC clock numbers but silently
+    dropped the "this was UTC" fact, mislabeling them as if already
+    local. Confirmed live: that produced "synced_at": "2026-06-05T05:55:34"
+    for the exact same real reading (odometer 105, max_range 566.1) the
+    user's own CSV export recorded as local "2026-06-05 15:55:34" - a
+    10-hour (AEST) discrepancy that would have shown up as duplicate,
+    near-identical points 10 hours apart once merged/deduplicated by
+    timestamp string, e.g. on a scatterplot. Now explicit UTC info
+    (a "Z" suffix or a numeric +HH:MM/-HH:MM offset) is actually
+    converted to local time via tessie_timezone.localize() (this
+    endpoint carries no lat/lon of its own to resolve an exact zone, so
+    DEFAULT_TIMEZONE is used, same fallback convention as elsewhere in
+    this repo) rather than just having its offset stripped; a NAIVE ISO
+    string (no offset info at all) is trusted as already-local, since
+    there's no basis to assume otherwise. Returns None if every attempt
+    fails, rather than raising - callers fall back to now() so a single
+    unparseable reading never crashes the whole sync."""
     if ts is None:
         return None
     if isinstance(ts, (int, float)):
-        try:
-            return datetime.fromtimestamp(ts)
-        except (ValueError, OSError, OverflowError):
-            return None
+        local_dt, _abbr, _off = tztools.localize(ts, tztools.DEFAULT_TIMEZONE)
+        return local_dt.replace(tzinfo=None) if local_dt else None
     if isinstance(ts, str):
         s = ts.strip()
         try:
-            return datetime.fromtimestamp(float(s))
+            epoch = float(s)
+            local_dt, _abbr, _off = tztools.localize(epoch, tztools.DEFAULT_TIMEZONE)
+            return local_dt.replace(tzinfo=None) if local_dt else None
         except (ValueError, OSError, OverflowError):
             pass
         try:
-            return datetime.fromisoformat(s.replace("Z", "+00:00")).replace(tzinfo=None)
+            parsed = datetime.fromisoformat(s.replace("Z", "+00:00"))
         except ValueError:
-            pass
+            return None
+        if parsed.tzinfo is not None:
+            local_dt, _abbr, _off = tztools.localize(parsed.timestamp(), tztools.DEFAULT_TIMEZONE)
+            return local_dt.replace(tzinfo=None) if local_dt else None
+        return parsed  # naive string, no offset info - trust it as already-local
     return None
 
 
