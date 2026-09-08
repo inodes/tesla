@@ -1135,6 +1135,33 @@ class TessieAnalyzer:
         )
         return out_path
 
+    def get_drive_deepdive(self, target_drive):
+        """Looks up deep-dive telemetry for one drive, computes its segment
+        breakdown, and generates + auto-opens its elevation/efficiency
+        profile chart in the browser (if one exists) - the shared data/
+        side-effect logic behind BOTH inspect_drive() (the standalone
+        --inspect-drive flag) and display_footage_details() (AGENTS.md
+        TODO-019: folded into the ordinary trip drill-down so this shows up
+        automatically alongside footage, with no separate footage-vs-deep-
+        dive prompt - mirrors how tessie_charging_analyzer.py's
+        inspect_session() already handles its charging curve inline).
+        Returns None if no deep-dive telemetry exists for this drive;
+        otherwise (dt_rec, segments, chart_path_or_None). Callers are free
+        to format/print the result however fits their own display."""
+        if not getattr(self, "detailed_drives", None):
+            self.load_detailed_drives()
+        dt_rec = self.match_detailed_drive(target_drive)
+        if not dt_rec:
+            return None
+        segments = self.compute_drive_segments(dt_rec["raw_samples"])
+        try:
+            chart_path = self.generate_drive_profile_chart(dt_rec)
+        except Exception:
+            chart_path = None
+        if chart_path:
+            try_open_in_browser(chart_path)
+        return dt_rec, segments, chart_path
+
     def inspect_drive(self, target):
         """Deep-dive inspect a specific drive by 1-based index (in
         start-time order, matching how drives are listed elsewhere) or by
@@ -1182,12 +1209,13 @@ class TessieAnalyzer:
         l1 = f"  \033[1mStarted:\033[0m {target_drive['start_dt'].strftime('%Y-%m-%d %H:%M:%S')}   \033[1mDuration:\033[0m {dur_mins:.0f} mins"
         print(f"│{pad_display(l1, box_w - 2, truncate=True)}│")
 
-        dt_rec = self.match_detailed_drive(target_drive)
-        if not dt_rec:
+        result = self.get_drive_deepdive(target_drive)
+        if not result:
             l2 = "  \033[93mNo deep-dive telemetry (drive_deepdive_*.csv) found for this drive.\033[0m"
             print(f"│{pad_display(l2, box_w - 2, truncate=True)}│")
             print(f"└{'─' * (box_w - 2)}┘")
             return
+        dt_rec, segments, chart_path = result
 
         l3 = f"  \033[1mDeep-Dive File:\033[0m {dt_rec.get('source_file', '')}   ({dt_rec.get('samples_count', 0)} samples)"
         print(f"│{pad_display(l3, box_w - 2, truncate=True)}│")
@@ -1196,7 +1224,6 @@ class TessieAnalyzer:
         seg_title = "  \033[1m\033[95m⛰  SEGMENT BREAKDOWN (climbing/level/descending/stationary):\033[0m"
         print(f"│{pad_display(seg_title, box_w - 2, truncate=True)}│")
 
-        segments = self.compute_drive_segments(dt_rec["raw_samples"])
         cls_icon = {"climbing": "⬆️ ", "descending": "⬇️ ", "level": "➡️ ", "stationary": "⏸ "}
         for seg in segments:
             icon = cls_icon.get(seg["class"], "  ")
@@ -1207,14 +1234,9 @@ class TessieAnalyzer:
             print(f"│{pad_display(l, box_w - 2, truncate=True)}│")
 
         print(f"├{'─' * (box_w - 2)}┤")
-        try:
-            chart_path = self.generate_drive_profile_chart(dt_rec)
-        except Exception:
-            chart_path = None
         if chart_path:
             l4 = f"  \033[1mElevation/Efficiency Profile:\033[0m {chart_path}"
             print(f"│{pad_display(l4, box_w - 2, truncate=True)}│")
-            try_open_in_browser(chart_path)
         print(f"└{'─' * (box_w - 2)}┘")
         print()
 
@@ -1585,7 +1607,29 @@ def display_footage_details(trip, analyzer):
         render_footage_listing(end_clips, indent="  ")
     else:
         print("   ⚠️ No local footage found on archive drives.")
-        
+
+    # 3. Drive deep-dive telemetry (AGENTS.md TODO-019) - shown automatically
+    # alongside footage whenever it exists, no separate footage-vs-deep-dive
+    # prompt, mirroring how tessie_charging_analyzer.py's inspect_session()
+    # already shows its charging curve inline. get_drive_deepdive() also
+    # auto-opens the profile chart in the browser when one is generated.
+    print(f"\n📊 3. DRIVE TELEMETRY:")
+    deepdive_result = analyzer.get_drive_deepdive(trip)
+    if not deepdive_result:
+        print("   ℹ️  No deep-dive telemetry (drive_deepdive_*.csv) found for this drive.")
+    else:
+        dd_rec, dd_segments, dd_chart_path = deepdive_result
+        print(f"   Deep-Dive File: {dd_rec.get('source_file', '')} ({dd_rec.get('samples_count', 0)} samples)")
+        cls_icon = {"climbing": "⬆️ ", "descending": "⬇️ ", "level": "➡️ ", "stationary": "⏸ "}
+        for seg in dd_segments:
+            icon = cls_icon.get(seg["class"], "  ")
+            eff = seg["efficiency_kwh_per_100km"]
+            eff_str = f"{eff:.1f} kWh/100km" if eff is not None else "-"
+            print(f"     {icon}{seg['class']:<11} {seg['distance_km']:5.2f} km  {seg['duration_mins']:5.1f} min  "
+                  f"Δelev {seg['elevation_change_m']:+6.1f} m   eff: {eff_str}")
+        if dd_chart_path:
+            print(f"   Elevation/Efficiency Profile: {dd_chart_path}")
+
     print(f"\n💡 Quick Tips:")
     print(f"   • To view side doors (getting in/out): check *-left_repeater.mp4 or *-right_repeater.mp4")
     print(f"   • To view trunk/rear walking: check *-back.mp4")
