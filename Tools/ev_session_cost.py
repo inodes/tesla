@@ -250,16 +250,38 @@ def evaluate_session(session, periods, master_path=USAGE_MASTER):
     usage_rate = period["usage_rate_per_kwh"]
     solar_tier1_rate = period["solar_feed_in_tier1_rate_per_kwh"]
 
+    # GST treatment confirmed against real invoices elsewhere in this repo
+    # (agl_cost_calculator.py's reconstruct_bill(), agl_tariff_rates.
+    # example.json's own "_comment") - agl_tariff_rates.json's rates are
+    # ex GST, GST applies to usage/supply/demand CHARGES only, and the
+    # solar feed-in credit is GST-free and simply netted off afterward
+    # ("Total GST" on every real sampled invoice = 10% of charges, not
+    # 10% of the post-credit net). The "Evnex-adjusted" figure here
+    # values the solar-attributed share as that SAME kind of GST-free
+    # credit (an opportunity cost, not a real charge), so it gets the
+    # same treatment: GST on the grid-attributed share only, none on the
+    # solar-attributed share. Caught missing entirely in an earlier
+    # version (AGENTS.md TODO-027) when the user manually reproduced this
+    # calculation by hand and it didn't match a GST-inclusive figure
+    # shown right next to it in tessie_charging_analyzer.py's own
+    # inspect_session() box.
+    GST_MULTIPLIER = 1.10
+
     base_cost = kwh_total * usage_rate
+    base_cost_incl_gst = base_cost * GST_MULTIPLIER
 
     solar_pct, other_pct = solar_split(te.get("distributionByTariff"))
     if solar_pct is None:
         evnex_adjusted_cost = None
+        evnex_adjusted_cost_incl_gst = None
         solar_kwh = other_kwh = None
     else:
         solar_kwh = kwh_total * solar_pct / 100.0
         other_kwh = kwh_total * other_pct / 100.0
-        evnex_adjusted_cost = other_kwh * usage_rate + solar_kwh * solar_tier1_rate
+        grid_charge_ex_gst = other_kwh * usage_rate
+        solar_credit_component = solar_kwh * solar_tier1_rate  # GST-free
+        evnex_adjusted_cost = grid_charge_ex_gst + solar_credit_component
+        evnex_adjusted_cost_incl_gst = grid_charge_ex_gst * GST_MULTIPLIER + solar_credit_component
 
     import_kwh, export_kwh, buckets_found, buckets_missing = real_agl_overlap(master_path, local_start, local_end)
 
@@ -280,8 +302,10 @@ def evaluate_session(session, periods, master_path=USAGE_MASTER):
         "usage_rate": usage_rate,
         "solar_tier1_rate": solar_tier1_rate,
         "base_cost": base_cost,
+        "base_cost_incl_gst": base_cost_incl_gst,
         "solar_pct": solar_pct,
         "evnex_adjusted_cost": evnex_adjusted_cost,
+        "evnex_adjusted_cost_incl_gst": evnex_adjusted_cost_incl_gst,
         "real_import_kwh": import_kwh,
         "real_export_kwh": export_kwh,
         "buckets_found": buckets_found,
@@ -294,11 +318,13 @@ def print_session(r):
     ts = r["local_start"].strftime("%Y-%m-%d %H:%M")
     print(f"{ts}  dur {r['duration_min']:>5.1f}min  kWh {r['kwh_total']:.3f}  "
           f"(rate period from {r['period_effective_from']}, ${r['usage_rate']}/kWh)")
-    print(f"   base cost (100% grid)                 : ${r['base_cost']:.4f}")
+    print(f"   base cost (100% grid)                 : ${r['base_cost']:.4f} ex GST -> ${r['base_cost_incl_gst']:.4f} incl GST")
     if r["evnex_adjusted_cost"] is None:
         print(f"   Evnex-adjusted                         : n/a (no distributionByTariff on this session)")
     else:
-        print(f"   Evnex-adjusted (solar {r['solar_pct']:.1f}% @ ${r['solar_tier1_rate']}/kWh forgone credit) : ${r['evnex_adjusted_cost']:.4f}")
+        print(f"   Evnex-adjusted (solar {r['solar_pct']:.1f}% @ ${r['solar_tier1_rate']}/kWh forgone credit) : "
+              f"${r['evnex_adjusted_cost']:.4f} ex GST -> ${r['evnex_adjusted_cost_incl_gst']:.4f} incl GST "
+              f"(GST-free on the solar-attributed share, same as a real feed-in credit)")
     if r["buckets_missing"]:
         print(f"   real AGL meter: {r['buckets_found']} bucket(s) found, {r['buckets_missing']} bucket(s) with NO usage data for this window (outside an exported range)")
     else:
@@ -346,6 +372,7 @@ def main():
 
     total_kwh = sum(r["kwh_total"] for r in results)
     total_base = sum(r["base_cost"] for r in results)
+    total_base_incl_gst = sum(r["base_cost_incl_gst"] for r in results)
     n_adjusted = sum(1 for r in results if r["evnex_adjusted_cost"] is not None)
     # Blended total: Evnex-adjusted where a tariff split exists, plain base
     # cost for the sessions that have none - so this always covers every
@@ -354,13 +381,17 @@ def main():
         r["evnex_adjusted_cost"] if r["evnex_adjusted_cost"] is not None else r["base_cost"]
         for r in results
     )
+    total_blended_incl_gst = sum(
+        r["evnex_adjusted_cost_incl_gst"] if r["evnex_adjusted_cost_incl_gst"] is not None else r["base_cost_incl_gst"]
+        for r in results
+    )
     n_conflict = sum(1 for r in results if r["conflict"])
 
     print("=== Totals ===")
     print(f"  {len(results)} session(s), {total_kwh:.3f} kWh total")
-    print(f"  base cost (100% grid, every session)                         : ${total_base:.2f}")
+    print(f"  base cost (100% grid, every session)                         : ${total_base:.2f} ex GST -> ${total_base_incl_gst:.2f} incl GST")
     print(f"  blended best estimate (Evnex split where available, {n_adjusted}/{len(results)} sessions,")
-    print(f"                         base cost for the rest)               : ${total_blended:.2f}")
+    print(f"                         base cost for the rest)               : ${total_blended:.2f} ex GST -> ${total_blended_incl_gst:.2f} incl GST")
     if n_conflict:
         print(f"  ⚠️  {n_conflict} session(s) flagged with a solar-claim/real-import conflict - see above")
     return 0

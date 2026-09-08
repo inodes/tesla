@@ -3596,12 +3596,32 @@ class TessieChargingAnalyzer:
             x_title = f"  {C_BOLD}{C_CYAN}🔎 ENERGY SOURCE CROSS-CHECK (AGL + Evnex + PVOutput):{C_RESET}"
             print(f"│{pad_display(x_title, box_w - 2, truncate=True)}│")
             lw_x = 34
-            x1 = f"    • {C_BOLD}{'AGL Tariff Rate (real, dated):':<{lw_x}}{C_RESET}${xcheck['usage_rate']:.2f}/kWh (period from {xcheck['period_effective_from']})"
+            x1 = f"    • {C_BOLD}{'AGL Tariff Rate (real, dated):':<{lw_x}}{C_RESET}${xcheck['usage_rate']:.2f}/kWh ex GST (period from {xcheck['period_effective_from']})"
             print(f"│{pad_display(x1, box_w - 2, truncate=True)}│")
-            x2 = f"    • {C_BOLD}{'AGL Base Cost (100% grid):':<{lw_x}}{C_RESET}${xcheck['base_cost']:.4f} AUD"
+            # GST-inclusive, to match "Theoretical Tariff Cost" above (also
+            # GST-inclusive) - a real gap caught by the user manually
+            # reproducing this calculation by hand (AGENTS.md TODO-027):
+            # these two dollar figures used to sit right next to each
+            # other in this same box while being ex-GST and incl-GST
+            # respectively, with nothing saying so. .get() with a
+            # same-session fallback so an older cache file written before
+            # this fix (no *_incl_gst keys yet) still displays correctly
+            # rather than KeyError-ing.
+            base_cost_incl_gst = xcheck.get("base_cost_incl_gst")
+            if base_cost_incl_gst is None:
+                base_cost_incl_gst = xcheck["base_cost"] * 1.10
+            x2 = f"    • {C_BOLD}{'AGL Base Cost (100% grid):':<{lw_x}}{C_RESET}${base_cost_incl_gst:.4f} AUD incl GST"
             print(f"│{pad_display(x2, box_w - 2, truncate=True)}│")
             if xcheck.get("solar_pct") is not None:
-                x3 = f"    • {C_BOLD}{'Evnex Solar Split:':<{lw_x}}{C_RESET}{xcheck['solar_pct']:.1f}% solar / {100 - xcheck['solar_pct']:.1f}% grid -> ${xcheck['evnex_adjusted_cost']:.4f} AUD adjusted"
+                adj_incl_gst = xcheck.get("evnex_adjusted_cost_incl_gst")
+                if adj_incl_gst is None:
+                    # Pre-fix cache: same GST-free-on-solar-share treatment
+                    # evaluate_session() now applies, reconstructed here
+                    # from the ex-GST split this cache file does have.
+                    solar_frac = xcheck["solar_pct"] / 100.0
+                    grid_ex_gst = xcheck["evnex_adjusted_cost"] - xcheck["kwh_total"] * solar_frac * xcheck["solar_tier1_rate"]
+                    adj_incl_gst = grid_ex_gst * 1.10 + xcheck["kwh_total"] * solar_frac * xcheck["solar_tier1_rate"]
+                x3 = f"    • {C_BOLD}{'Evnex Solar Split:':<{lw_x}}{C_RESET}{xcheck['solar_pct']:.1f}% solar / {100 - xcheck['solar_pct']:.1f}% grid -> ${adj_incl_gst:.4f} AUD incl GST"
             else:
                 x3 = f"    • {C_BOLD}{'Evnex Solar Split:':<{lw_x}}{C_RESET}{C_YELLOW}n/a (no distributionByTariff on this session){C_RESET}"
             print(f"│{pad_display(x3, box_w - 2, truncate=True)}│")
