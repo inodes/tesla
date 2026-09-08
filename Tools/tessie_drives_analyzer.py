@@ -22,6 +22,7 @@ import math
 import shutil
 import subprocess
 import argparse
+import time
 import unicodedata
 from datetime import datetime, timedelta
 from collections import defaultdict, Counter
@@ -1135,6 +1136,123 @@ class TessieAnalyzer:
         )
         return out_path
 
+    DRIVE_FINALIZE_GRACE_SECONDS = 600  # see _drive_is_in_progress()
+
+    def _drive_is_in_progress(self, target_drive):
+        """True when this drive should be treated as still in progress -
+        and therefore NOT eligible for fetch_drive_deepdive_from_api()
+        below (user's own words: auto-fetch should have "the exception
+        being a drive in progress"). True when there's no recorded end
+        time at all, or the end time is suspiciously recent - Tessie's
+        own sync can take a few minutes to finalize a drive's summary row
+        after it actually ends, and fetching too early risks a truncated
+        /states window getting permanently cached as a wrong/incomplete
+        deep-dive file (there's no cheap way to tell "truncated because
+        still driving" apart from "truncated because the network hiccuped"
+        after the fact, so the safer fix is not to race the finalize at
+        all)."""
+        end_epoch = target_drive.get("end_utc_epoch")
+        if end_epoch is None:
+            end_dt = target_drive.get("end_dt")
+            if not end_dt:
+                return True
+            end_epoch = end_dt.timestamp()
+        return (time.time() - end_epoch) < self.DRIVE_FINALIZE_GRACE_SECONDS
+
+    def fetch_drive_deepdive_from_api(self, target_drive):
+        """Auto-fetches this drive's detailed telemetry from Tessie's own
+        GET /{vin}/states endpoint (AGENTS.md TODO-026) when no local
+        drive_deepdive_*.csv already covers it - the automated equivalent
+        of the Tesla app's manual "download detailed telemetry" export,
+        using the exact same endpoint/calling convention already proven
+        live by home_charge_deep_dive.py's fetch_tessie_states(). Deliberately
+        requests format="csv" (not json) so Tessie's own server does the
+        CSV formatting - the same convention the manual export already
+        produces, and the one parse_detailed_drive_csv() already expects -
+        rather than us guessing at the /states JSON response's exact
+        timestamp representation, which this session had no way to
+        confirm live (Tessie's API is unreachable from this session's own
+        sandboxed device-bridge shell - a tooling limitation, not a repo
+        issue; see AGENTS.md TODO-026 for the still-open follow-up to
+        verify this against a real drive).
+
+        Writes the result into drives_dirs[0]/deepdive/ (today's
+        canonical home for these files, matching charges/deepdive after
+        TODO-023) and self-validates it with parse_detailed_drive_csv()
+        before keeping it - a response that doesn't actually parse as
+        drive telemetry is deleted and this returns None, exactly as if
+        nothing had been fetched at all, so a format mismatch degrades
+        safely rather than caching junk. Never called for a drive still
+        in progress - see _drive_is_in_progress(). Returns the written
+        file path on success, else None (no vin/token configured,
+        network/auth failure, or a response that fails to parse)."""
+        start_epoch = target_drive.get("start_utc_epoch")
+        end_epoch = target_drive.get("end_utc_epoch")
+        if start_epoch is None or end_epoch is None or not self.drives_dirs:
+            return None
+
+        try:
+            from tessie_api_common import load_config, get_token, get_vin, api_get, DEFAULT_UNIT_PARAMS
+        except Exception:
+            return None
+
+        cfg = load_config()
+        token = get_token(None, cfg)
+        vin = get_vin(None, cfg)
+        if not token or not vin:
+            return None
+
+        # Same +/-2min padding match_detailed_drive() already allows for
+        # when matching an existing file - Tesla's own start/stop
+        # detection and the detailed export don't always agree to the
+        # second.
+        pad = 120
+        params = dict(DEFAULT_UNIT_PARAMS)
+        params.update({
+            "from": int(start_epoch) - pad,
+            "to": int(end_epoch) + pad,
+            "interval": 1,
+            "format": "csv",
+        })
+
+        print("   ℹ️  No local deep-dive file for this drive - fetching detailed telemetry from Tessie...")
+        status, body = api_get("states", vin, token, params)
+        if status != 200:
+            print(f"   ⚠️  Tessie /states fetch failed (HTTP {status}) - continuing without deep-dive telemetry.")
+            return None
+
+        dest_dir = os.path.join(self.drives_dirs[0], "deepdive")
+        try:
+            os.makedirs(dest_dir, exist_ok=True)
+        except Exception:
+            return None
+
+        start_dt = target_drive.get("start_dt") or datetime.fromtimestamp(start_epoch)
+        stamp = start_dt.strftime("%Y-%m-%d_%H-%M")
+        dest_path = os.path.join(dest_dir, f"drive_deepdive_{stamp}.csv")
+        n = 1
+        while os.path.exists(dest_path):
+            dest_path = os.path.join(dest_dir, f"drive_deepdive_{stamp}_{n:02d}.csv")
+            n += 1
+
+        try:
+            with open(dest_path, "wb") as f:
+                f.write(body)
+        except Exception:
+            return None
+
+        parsed = self.parse_detailed_drive_csv(dest_path)
+        if not parsed or not parsed.get("raw_samples", {}).get("timestamp"):
+            try:
+                os.remove(dest_path)
+            except Exception:
+                pass
+            print("   ⚠️  Tessie's response doesn't look like drive telemetry - continuing without deep-dive.")
+            return None
+
+        print(f"   ✅ Fetched and saved: {os.path.basename(dest_path)} ({parsed.get('samples_count', 0)} samples)")
+        return dest_path
+
     def get_drive_deepdive(self, target_drive):
         """Looks up deep-dive telemetry for one drive, computes its segment
         breakdown, and generates + auto-opens its elevation/efficiency
@@ -1145,12 +1263,23 @@ class TessieAnalyzer:
         automatically alongside footage, with no separate footage-vs-deep-
         dive prompt - mirrors how tessie_charging_analyzer.py's
         inspect_session() already handles its charging curve inline).
-        Returns None if no deep-dive telemetry exists for this drive;
-        otherwise (dt_rec, segments, chart_path_or_None). Callers are free
-        to format/print the result however fits their own display."""
+        When no local file covers this drive yet, auto-fetches one from
+        Tessie's /states API instead of giving up (AGENTS.md TODO-026) -
+        skipped for a drive still in progress (_drive_is_in_progress()),
+        and skipped/reverted silently on any fetch or parse failure, so
+        this never behaves worse than before the auto-fetch existed.
+        Returns None if no deep-dive telemetry exists (or could be
+        fetched) for this drive; otherwise (dt_rec, segments,
+        chart_path_or_None). Callers are free to format/print the result
+        however fits their own display."""
         if not getattr(self, "detailed_drives", None):
             self.load_detailed_drives()
         dt_rec = self.match_detailed_drive(target_drive)
+        if not dt_rec and not self._drive_is_in_progress(target_drive):
+            fetched_path = self.fetch_drive_deepdive_from_api(target_drive)
+            if fetched_path:
+                self.load_detailed_drives()
+                dt_rec = self.match_detailed_drive(target_drive)
         if not dt_rec:
             return None
         segments = self.compute_drive_segments(dt_rec["raw_samples"])
