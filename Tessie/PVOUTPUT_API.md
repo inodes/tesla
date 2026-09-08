@@ -26,6 +26,14 @@ metering means self-consumed solar never touches AGL's meter at all, so
 `generation − AGL export = actual self-consumption`, computed exactly
 instead of inferred).
 
+**Data provenance (user-confirmed, AGENTS.md REQ-040)**: this PVOutput
+account's real generation figures trace back to the home's Solaredge
+inverter's own CT clamps — a Solaredge-to-PVOutput upload integration the
+user set up years ago and never removed. The user can no longer access
+the Solaredge system's own portal/app directly, so PVOutput is now the
+only surviving route to that real generation data — a proxy, but a
+genuine hardware-sourced one, not a synthetic estimate.
+
 ## Auth — confirmed
 
 Every request needs both an **API key** and a **System ID** (generate/find
