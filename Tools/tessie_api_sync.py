@@ -638,7 +638,7 @@ def _backfill_charge_deepdive(limit, pace_seconds, since_days, tessie_dir):
     analyzer.load_detailed_charges()
     since_dt = _since_cutoff(since_days)
 
-    fetched, skipped_in_progress, already_had, failed, skipped_evnex = 0, 0, 0, 0, 0
+    fetched, skipped_in_progress, already_had, failed = 0, 0, 0, 0
     total_candidates = 0
 
     for s in charges:
@@ -647,12 +647,9 @@ def _backfill_charge_deepdive(limit, pace_seconds, since_days, tessie_dir):
         if analyzer.match_detailed_charge(s):
             already_had += 1
             continue
-        if s.get("network") == "Evnex":
-            # Home Evnex sessions have their own dedicated sync
-            # (evnex_api_sync.py) - see fetch_charge_deepdive_from_api()'s
-            # own docstring for why this isn't duplicated here.
-            skipped_evnex += 1
-            continue
+        # AGENTS.md REQ-050: home Evnex sessions are no longer skipped here
+        # - fetch_charge_deepdive_from_api() now covers them too (Tessie
+        # polls the car during ANY plugged-in session, home included).
         total_candidates += 1
         if analyzer._charge_is_in_progress(s):
             skipped_in_progress += 1
@@ -678,7 +675,7 @@ def _backfill_charge_deepdive(limit, pace_seconds, since_days, tessie_dir):
     since_note = f" starting {since_dt.date()}" if since_dt else ""
     print(f"   Checked {len(charges)} total charging session(s) in charges_master.csv{since_note}.")
     print(f"   Charges: {fetched} fetched, {failed} failed, {skipped_in_progress} in-progress (skipped), "
-          f"{skipped_evnex} Evnex home session(s) skipped (own sync), {already_had} already had local telemetry.")
+          f"{already_had} already had local telemetry.")
     remaining = total_candidates - fetched - skipped_in_progress - failed
     if limit is not None and remaining > 0:
         print(f"   ({remaining} more session(s) still missing telemetry - re-run to continue, or raise --limit.)")

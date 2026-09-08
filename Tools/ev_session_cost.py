@@ -42,8 +42,18 @@ can manually override the charger's own real solar-export-threshold
 auto-start feature and force a charge regardless of real solar export -
 "that's where the expensive charges come from" - which would show up here
 as real grid import during a window still labelled "solar" by the tariff-
-hours schedule. This tool doesn't (yet) distinguish an override from any
-other explanation; it just surfaces the mismatch.
+hours schedule. A second, non-deliberate explanation (AGENTS.md REQ-050):
+the Evnex app's own weekly schedule tags each time block as Charge/Don't
+charge/Solar diversion, and a Solar-diversion block still pulls from the
+grid whenever the HOUSE's own load eats into the export margin - no
+override needed, the car just gets less sun than the schedule assumed.
+Either way, a single Solar-diversion block's real current can cycle on
+and off as export rises and falls, which is also why Tessie's own charge
+log can show several short, separate charge records for what was really
+one continuous plug-in session (see charge_curve_chart.py / REQ-050 -
+that's the multi-cycle case its historical-pooling and filename-stem
+matching both have to account for). This tool doesn't (yet) distinguish
+an override from either of these; it just surfaces the mismatch.
 
 Deliberately NOT attempted here (left for a future PVOutput-based pass,
 per Tessie/PVOUTPUT_API.md's "Fit with existing AGL/solar work" section):
