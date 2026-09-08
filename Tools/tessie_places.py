@@ -337,16 +337,20 @@ def query_overpass_pois(lat, lon, radius_m=250):
             continue
     return []
 
-def search_places_by_name(query, near_lat=None, near_lon=None, limit=7):
+def search_places_by_name(query, near_lat=None, near_lon=None, limit=7, radius_km=15):
     """
     Forward name/text search via Nominatim (as opposed to query_overpass_pois()'s
     GPS-radius lookup) - for finding a place by what it's actually called (e.g.
     "Macquarie" -> "Macquarie Shopping Centre") rather than only whatever small
     tenant/shop happens to be tagged nearest the parking GPS point. When
-    near_lat/near_lon are given, results are biased (not strictly filtered) to
-    within ~15km of that point via Nominatim's viewbox, so a real local match
-    ranks above an unrelated same-named place elsewhere in the world, but a
-    genuine best match outside that box still comes back if nothing local fits.
+    near_lat/near_lon are given, results are HARD-FILTERED to within
+    ~radius_km of that point (Nominatim's viewbox with bounded=1) - a fuzzy
+    text match can otherwise easily outrank the real local place with an
+    unrelated same-named result on the other side of the country (seen live:
+    searching "Macquarie Shopping Centre" surfaced only "Glenquarie Shopping
+    Centre" 31km away with bounded=0's mere bias). There is no local point to
+    bound against when a raw "b" typo etc. leaves near_lat/near_lon unset -
+    a plain global search runs in that case only.
     Returns a list of dicts: name, category, lat, lon, dist_m (None if no
     near_lat/near_lon given), display_name.
     """
@@ -360,9 +364,9 @@ def search_places_by_name(query, near_lat=None, near_lon=None, limit=7):
         "limit": limit,
     }
     if near_lat is not None and near_lon is not None:
-        d = 0.15  # ~15km at these latitudes - a bias box, not a hard filter
+        d = radius_km / 111.0  # ~111km per degree of latitude
         params["viewbox"] = f"{near_lon - d},{near_lat + d},{near_lon + d},{near_lat - d}"
-        params["bounded"] = 0
+        params["bounded"] = 1
 
     url = f"https://nominatim.openstreetmap.org/search?{urllib.parse.urlencode(params)}"
     req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
@@ -821,7 +825,7 @@ def review_single_cluster(cl, places, total_clusters=1, cluster_num=1, allow_ign
                 continue
             s_results = search_places_by_name(s_in, near_lat=cl["center_lat"], near_lon=cl["center_lon"])
             if not s_results:
-                print(f"ℹ️  No results found for \"{s_in}\".")
+                print(f"ℹ️  No results found near this location for \"{s_in}\".")
                 continue
             print(f"\n🔎 Search results for \"{s_in}\":")
             for s_idx, r in enumerate(s_results, 1):
