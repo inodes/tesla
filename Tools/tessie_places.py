@@ -337,6 +337,65 @@ def query_overpass_pois(lat, lon, radius_m=250):
             continue
     return []
 
+def search_places_by_name(query, near_lat=None, near_lon=None, limit=7):
+    """
+    Forward name/text search via Nominatim (as opposed to query_overpass_pois()'s
+    GPS-radius lookup) - for finding a place by what it's actually called (e.g.
+    "Macquarie" -> "Macquarie Shopping Centre") rather than only whatever small
+    tenant/shop happens to be tagged nearest the parking GPS point. When
+    near_lat/near_lon are given, results are biased (not strictly filtered) to
+    within ~15km of that point via Nominatim's viewbox, so a real local match
+    ranks above an unrelated same-named place elsewhere in the world, but a
+    genuine best match outside that box still comes back if nothing local fits.
+    Returns a list of dicts: name, category, lat, lon, dist_m (None if no
+    near_lat/near_lon given), display_name.
+    """
+    if not query or not query.strip():
+        return []
+
+    params = {
+        "q": query.strip(),
+        "format": "json",
+        "addressdetails": 1,
+        "limit": limit,
+    }
+    if near_lat is not None and near_lon is not None:
+        d = 0.15  # ~15km at these latitudes - a bias box, not a hard filter
+        params["viewbox"] = f"{near_lon - d},{near_lat + d},{near_lon + d},{near_lat - d}"
+        params["bounded"] = 0
+
+    url = f"https://nominatim.openstreetmap.org/search?{urllib.parse.urlencode(params)}"
+    req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
+    try:
+        with urllib.request.urlopen(req, timeout=8) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+    except Exception:
+        return []
+
+    results = []
+    for item in data or []:
+        try:
+            p_lat = float(item.get("lat"))
+            p_lon = float(item.get("lon"))
+        except (TypeError, ValueError):
+            continue
+        display_name = item.get("display_name", "")
+        name = display_name.split(",")[0].strip() if display_name else query.strip()
+        category = (item.get("type") or item.get("class") or "").replace("_", " ").title()
+        dist_m = round(haversine_distance(near_lat, near_lon, p_lat, p_lon), 1) if near_lat is not None and near_lon is not None else None
+        results.append({
+            "name": name,
+            "category": category or "Place",
+            "lat": p_lat,
+            "lon": p_lon,
+            "dist_m": dist_m,
+            "display_name": display_name,
+        })
+
+    if any(r["dist_m"] is not None for r in results):
+        results.sort(key=lambda r: r["dist_m"] if r["dist_m"] is not None else float("inf"))
+    return results
+
 def suggest_keywords(address_str, poi_name=""):
     """Extracts clean street and address keywords from a raw address string."""
     keywords = []
@@ -726,6 +785,7 @@ def review_single_cluster(cl, places, total_clusters=1, cluster_num=1, allow_ign
         print(f"  [1-{len(candidates)}] Accept suggested POI (uses POI center & auto-adjusted radius)")
     print("  [c]   Enter custom name (uses parking stop coordinates)")
     print("  [g]   Provide custom GPS coordinates or address (set a precise center)")
+    print("  [s]   Search for a place by name (e.g. a shopping centre or landmark)")
     print("  [m]   Open this location in your browser (Google Maps)")
     if allow_ignore:
         print("  [i]   Ignore permanently (address is fine as-is, not worth naming - won't be asked again)")
@@ -750,6 +810,34 @@ def review_single_cluster(cl, places, total_clusters=1, cluster_num=1, allow_ign
             else:
                 print(f"⚠️  Couldn't open a browser automatically - copy this URL instead:\n   {map_url}")
             continue
+
+        if choice in ("s", "search"):
+            search_pick = None
+            try:
+                s_in = input("Search for (e.g. a shopping centre or landmark name): ").strip()
+            except (EOFError, KeyboardInterrupt):
+                return "quit"
+            if not s_in:
+                continue
+            s_results = search_places_by_name(s_in, near_lat=cl["center_lat"], near_lon=cl["center_lon"])
+            if not s_results:
+                print(f"ℹ️  No results found for \"{s_in}\".")
+                continue
+            print(f"\n🔎 Search results for \"{s_in}\":")
+            for s_idx, r in enumerate(s_results, 1):
+                dist_part = f" [~{r['dist_m']:.0f}m away]" if r["dist_m"] is not None else ""
+                print(f"  [{s_idx}] {r['name']} ({r['category']}){dist_part}")
+                print(f"        {r['display_name']}")
+            try:
+                s_choice = input(f"Select result [1-{len(s_results)}], or Enter to search again: ").strip()
+            except (EOFError, KeyboardInterrupt):
+                return "quit"
+            if s_choice.isdigit() and 1 <= int(s_choice) <= len(s_results):
+                search_pick = s_results[int(s_choice) - 1]
+            if search_pick is None:
+                continue
+            choice = "s_pick"
+            break
         break
 
     if choice in ("q", "quit"):
@@ -783,6 +871,15 @@ def review_single_cluster(cl, places, total_clusters=1, cluster_num=1, allow_ign
         recommended_radius = max(150, int(poi["dist_m"] + 60))
         print(f"\n📍 Using POI Center: {final_lat:.5f}, {final_lon:.5f} [{selected_name}]")
         print(f"   Parking offset: {poi['dist_m']}m ➔ Recommended Geofence Radius: {recommended_radius}m")
+
+    elif choice == "s_pick":
+        selected_name = search_pick["name"]
+        final_lat = search_pick["lat"]
+        final_lon = search_pick["lon"]
+        offset_d = search_pick["dist_m"] if search_pick["dist_m"] is not None else haversine_distance(cl["center_lat"], cl["center_lon"], final_lat, final_lon)
+        recommended_radius = max(150, int(offset_d + 60))
+        print(f"\n📍 Using Search Result: {final_lat:.5f}, {final_lon:.5f} [{selected_name}]")
+        print(f"   Parking offset: {offset_d:.0f}m ➔ Recommended Geofence Radius: {recommended_radius}m")
 
     elif choice == "g":
         try:
