@@ -35,6 +35,9 @@
    - Check the **Active Requests**, **TODOs**, and **Known Bugs** sections when starting any task.
    - Update the status of completed items and add newly identified requests, bugs, or architectural decisions before concluding.
 
+5. **CLI Help Text Stays User-Facing (No TODO/REQ/BUG/AGENTS.md References)** (added 2026-09-08, REQ-045):
+   - A script's own `--help`/argparse `help=` text is what a real user reads - it must NEVER reference this document's TODO-XXX/REQ-XXX/BUG-XXX IDs or say "AGENTS.md". Put that context in code comments/docstrings instead, which agents read but `--help` never surfaces. This rule applies to every script in the repo, not just the one it was first caught in.
+
 ---
 
 ## 2. Table Display & UI Formatting Standards

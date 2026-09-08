@@ -929,6 +929,18 @@ class TessieAnalyzer:
                 sub_p = os.path.join(td, sub)
                 if os.path.isdir(sub_p) and sub_p not in search_dirs:
                     search_dirs.append(sub_p)
+            # A --tessie-dir override (e.g. running against an alternate
+            # data location) deserves the SAME "drives/deepdive" and
+            # "drives/archive" treatment drives_dirs already gets above -
+            # without this, deep-dive telemetry sitting in <td>/drives/deepdive
+            # was silently invisible to this search whenever td came from
+            # --tessie-dir rather than tessie_data_home (found the hard way
+            # verifying --backfill-deepdive against a location that wasn't
+            # this process's config-resolved tessie_data_home).
+            for sub in ["drives/deepdive", "drives/archive"]:
+                sub_p = os.path.join(td, sub)
+                if os.path.isdir(sub_p) and sub_p not in search_dirs:
+                    search_dirs.append(sub_p)
 
         candidates = []
         for s_dir in search_dirs:
@@ -2747,7 +2759,7 @@ def main():
     parser.add_argument("--consolidate", nargs="?", const=True, help="Consolidate drives CSV(s) into drives_master.csv (optionally specify path to a new CSV)")
     parser.add_argument("--inspect-drive", help="Deep-dive inspect a specific drive by 1-based index (start-time order) or date/datetime (e.g. '2026-08-30', '2026-08-30 21:01')")
     parser.add_argument("--tessie-dir", help="Custom path to directory containing Tessie CSV exports")
-    
+
     args = parser.parse_args()
 
     analyzer = TessieAnalyzer(tessie_dir=args.tessie_dir)

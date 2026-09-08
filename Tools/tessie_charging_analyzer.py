@@ -16,6 +16,7 @@ Tessie Charging & Supercharger Reconciliation Engine
 
 import os
 import sys
+import time
 
 # Auto re-exec inside local direnv/pyenv virtual environment if not already active
 _script_dir = os.path.dirname(os.path.abspath(__file__))
@@ -1587,6 +1588,17 @@ class TessieChargingAnalyzer:
         seen_keys = set()
         
         search_dirs = list(self.charges_dirs) + list(self.tessie_dirs)
+        # A --tessie-dir override names the TESSIE ROOT (mirroring
+        # config.json's own "tessie_directory"), so charges_master.csv
+        # sitting under its "charges/" subfolder (post-TODO-023 layout)
+        # needs the same nested check tessie_drives_analyzer.py's
+        # load_drives() already does for "drives/drives_master.csv" -
+        # without this, a --tessie-dir override could only ever find a
+        # LEGACY flat-layout charges_master.csv, never today's real one.
+        for td in list(self.tessie_dirs):
+            nested = os.path.join(td, "charges")
+            if os.path.isdir(nested) and nested not in search_dirs:
+                search_dirs.append(nested)
         seen_dirs = set()
         for td in search_dirs:
             if not os.path.isdir(td):
@@ -1959,6 +1971,16 @@ class TessieChargingAnalyzer:
                 sub_p = os.path.join(td, sub)
                 if os.path.isdir(sub_p):
                     search_dirs.append(sub_p)
+            # Same "--tessie-dir override needs the deepdive/archive
+            # subfolder treatment too" gap found and fixed on the drives
+            # side (tessie_drives_analyzer.py's load_detailed_drives()) -
+            # without this, deep-dive telemetry sitting in
+            # <td>/charges/deepdive wasn't visible to this search whenever
+            # td came from --tessie-dir rather than tessie_data_home.
+            for sub in ["charges/deepdive", "charges/archive"]:
+                sub_p = os.path.join(td, sub)
+                if os.path.isdir(sub_p) and sub_p not in search_dirs:
+                    search_dirs.append(sub_p)
 
         candidates = []
         for s_dir in search_dirs:
@@ -1993,6 +2015,229 @@ class TessieChargingAnalyzer:
         detailed.sort(key=lambda x: x["start_datetime"] or datetime.min)
         self.detailed_charges = detailed
         return self.detailed_charges
+
+    def match_detailed_charge(self, charge):
+        """The detailed_charges entry (if any) whose telemetry window
+        covers this charging session - factored out of reconcile()'s own
+        former inline loop so a second caller (the deep-dive backfill,
+        AGENTS.md TODO-029/TODO-031) doesn't need a drifting second copy
+        of the same matching logic. Mirrors tessie_drives_analyzer.py's
+        match_detailed_drive() in spirit (same optional, may-or-may-not-
+        exist lookup pattern): a close start-time match (<=15min) OR the
+        detailed record's own start falling inside the session's
+        start/end window."""
+        if not getattr(self, "detailed_charges", None):
+            return None
+        dt = charge.get("started_at")
+        if not dt:
+            return None
+        for dt_rec in self.detailed_charges:
+            if dt_rec.get("start_datetime"):
+                time_diff = abs((dt_rec["start_datetime"] - dt).total_seconds())
+                if time_diff <= 900:
+                    return dt_rec
+                if charge.get("ended_at") and (charge["started_at"] <= dt_rec["start_datetime"] <= charge["ended_at"]):
+                    return dt_rec
+        return None
+
+    def _load_drive_totals_in_period(self, start_dt, end_dt):
+        """Real per-drive totals from drives_master.csv within
+        [start_dt, end_dt] (naive LOCAL datetimes, same convention
+        charge['started_at']/['datetime'] already use here) - both the
+        'Distance (km)' column AND the car's own reported
+        'Total Energy Used (kWh)' figure for each drive, so
+        print_summary's driving-efficiency figure is the same real
+        per-drive consumption Tessie/the car itself report (BUG - an
+        earlier version derived "efficiency" from charging energy ADDED
+        over the period divided by km driven, which is really a
+        charging-supply-vs-driving-demand ratio that only coincidentally
+        matches real efficiency when the battery's start/end SoC happen
+        to net to about the same level - the user caught this by
+        comparing against Tessie's own real 15.4 kWh/100km and asked for
+        pure driving efficiency, with charging losses reported as a
+        separate, additive figure instead of folded in).
+
+        This is a direct, read-only CSV read (mirrors the column names
+        and localize() handling tessie_drives_analyzer.py's own
+        load_drives() uses) rather than importing/instantiating
+        TessieAnalyzer - charges stay a self-contained domain (AGENTS.md's
+        sync/analysis split), this is just borrowing drives_master.csv's
+        own totals the same way tessie_api_sync.py's bulk-backfill
+        already borrows the analyzer classes for a narrow, documented
+        match-only purpose.
+
+        Returns None (not zeros) if drives_master.csv can't be found at
+        all, so callers can tell "no drive data available" apart from
+        "zero km/energy really were recorded in this window". A drive
+        row missing/unparseable 'Total Energy Used (kWh)' still counts
+        toward distance_km - it just doesn't contribute to
+        energy_used_kwh, same tolerant-per-field handling
+        estimate_usable_capacity_kwh() (car_efficiency_profile.py) uses."""
+        master_file = None
+        for td in self.tessie_dirs:
+            for candidate in [
+                os.path.join(td, "drives", "drives_master.csv"),
+                os.path.join(td, "drives_master.csv"),
+            ]:
+                if os.path.isfile(candidate):
+                    master_file = candidate
+                    break
+            if master_file:
+                break
+        if not master_file:
+            return None
+
+        try:
+            import tessie_timezone as _tztools
+        except Exception:
+            _tztools = None
+
+        total_km = 0.0
+        total_kwh_used = 0.0
+        found_any = False
+        with open(master_file, "r", encoding="utf-8-sig") as f:
+            reader = csv.DictReader(f)
+            for r in reader:
+                try:
+                    utc_epoch = int(r["Started At (UTC)"]) if r.get("Started At (UTC)") else None
+                    if utc_epoch is not None and _tztools is not None:
+                        tz_name = r.get("Started At TZ") or _tztools.DEFAULT_TIMEZONE
+                        local_dt, _abbr, _off = _tztools.localize(utc_epoch, tz_name)
+                        dt_start = local_dt.replace(tzinfo=None)
+                    else:
+                        start_str = r.get("Started At (AEST)") or r.get("Started At") or r.get("Started")
+                        if not start_str:
+                            continue
+                        dt_start = datetime.strptime(start_str.strip()[:16], "%Y-%m-%d %H:%M")
+                    dist_km = float(r.get("Distance (km)", 0) or 0)
+                except (ValueError, TypeError, KeyError):
+                    continue
+                if not (start_dt <= dt_start <= end_dt):
+                    continue
+                total_km += dist_km
+                found_any = True
+                try:
+                    total_kwh_used += float((r.get("Total Energy Used (kWh)") or "").strip())
+                except (ValueError, TypeError):
+                    pass
+        return {"distance_km": total_km, "energy_used_kwh": total_kwh_used} if found_any else None
+
+    CHARGE_FINALIZE_GRACE_SECONDS = 600  # mirrors tessie_drives_analyzer.py's DRIVE_FINALIZE_GRACE_SECONDS
+
+    def _charge_is_in_progress(self, session):
+        """Mirrors tessie_drives_analyzer.py's TessieAnalyzer._drive_is_in_progress()
+        for the same reason: don't fetch /states for a session that might
+        still be plugged in and charging - Tessie's own sync can take a
+        few minutes to finalize a session's summary row after it actually
+        ends, and fetching too early risks permanently caching a truncated
+        window. True when there's no recorded end time at all, or the end
+        time is within the grace window."""
+        ended_at = session.get("ended_at")
+        if not ended_at:
+            return True
+        return (datetime.now() - ended_at).total_seconds() < self.CHARGE_FINALIZE_GRACE_SECONDS
+
+    def fetch_charge_deepdive_from_api(self, session):
+        """Mirrors tessie_drives_analyzer.py's TessieAnalyzer.fetch_drive_deepdive_from_api()
+        almost exactly (AGENTS.md TODO-029's own "prerequisite" - this IS
+        that prerequisite, built here) - auto-fetches ONE session's
+        detailed telemetry from Tessie's own GET /{vin}/states endpoint
+        when no local charge_deepdive_*.csv already covers it, using the
+        same format="csv" convention parse_detailed_charge_csv() already
+        expects.
+
+        Deliberately scoped to non-Evnex sessions only (session["network"]
+        != "Evnex") - a home Evnex session already has its own dedicated,
+        richer deep-dive source (evnex_api_sync.py's own JSON, cost-split
+        data /states has no concept of), and fetching /states for it would
+        just produce a second, redundant, less useful file. This covers
+        every session Tessie itself sees regardless of network (Super-
+        chargers, 3rd-party DC, AC destination) - not just Superchargers.
+
+        charges_master.csv's own started_at/ended_at are naive LOCAL
+        datetimes with no stored UTC epoch (TODO-009's charges-side
+        migration is still open - see AGENTS.md) - converted to a real
+        UTC epoch here via the same fixed Australia/Sydney assumption
+        already documented as valid for all data to date, rather than
+        adding a second, competing timezone-handling path ahead of that
+        migration landing properly.
+
+        Writes into charges_dirs[0]/deepdive/ (TODO-023's canonical home),
+        named via the SAME unique_stamped_path()-based scheme
+        auto_ingest_from_landing() already uses for manually-exported
+        charge deep-dives, so both paths produce indistinguishable
+        filenames. Self-validates with parse_detailed_charge_csv() before
+        keeping it - a response that doesn't parse as charge telemetry is
+        deleted and this returns None, same fail-safe as the drives side.
+        Never called for a session still in progress - see
+        _charge_is_in_progress(). Returns the written file path on
+        success, else None."""
+        if session.get("network") == "Evnex":
+            return None
+        start_dt = session.get("started_at")
+        end_dt = session.get("ended_at")
+        if not start_dt or not end_dt or not self.charges_dirs:
+            return None
+
+        try:
+            from tessie_api_common import load_config, get_token, get_vin, api_get, DEFAULT_UNIT_PARAMS
+        except Exception:
+            return None
+
+        try:
+            import tessie_timezone as _tztools
+            local_tz = ZoneInfo(_tztools.DEFAULT_TIMEZONE)
+        except Exception:
+            local_tz = ZoneInfo("Australia/Sydney")
+        start_epoch = start_dt.replace(tzinfo=local_tz).timestamp()
+        end_epoch = end_dt.replace(tzinfo=local_tz).timestamp()
+
+        cfg = load_config()
+        token = get_token(None, cfg)
+        vin = get_vin(None, cfg)
+        if not token or not vin:
+            return None
+
+        pad = 120  # same +/-2min padding match_detailed_drive()/reconcile()'s own detailed-telemetry match already allows
+        params = dict(DEFAULT_UNIT_PARAMS)
+        params.update({
+            "from": int(start_epoch) - pad,
+            "to": int(end_epoch) + pad,
+            "interval": 1,
+            "format": "csv",
+        })
+
+        print("   ℹ️  No local deep-dive file for this charge - fetching detailed telemetry from Tessie...")
+        status, body = api_get("states", vin, token, params)
+        if status != 200:
+            print(f"   ⚠️  Tessie /states fetch failed (HTTP {status}) - continuing without deep-dive telemetry.")
+            return None
+
+        dest_dir = os.path.join(self.charges_dirs[0], "deepdive")
+        try:
+            os.makedirs(dest_dir, exist_ok=True)
+        except Exception:
+            return None
+
+        dest_path = unique_stamped_path(dest_dir, "charge_deepdive", start_dt.strftime("%Y-%m-%d_%H%M"), ext=".csv")
+
+        try:
+            with open(dest_path, "wb") as f:
+                f.write(body)
+        except Exception:
+            return None
+
+        parsed = self.parse_detailed_charge_csv(dest_path)
+        if not parsed or not parsed.get("raw_samples", {}).get("timestamp"):
+            try:
+                os.remove(dest_path)
+            except Exception:
+                pass
+            print("   ⚠️  Tessie's response doesn't look like charge telemetry - continuing without deep-dive.")
+            return None
+
+        print(f"   ✅ Fetched and saved: {os.path.basename(dest_path)} ({parsed.get('samples_count', 0)} samples)")
+        return dest_path
 
     def match_location(self, inv_loc, inv_net, charge):
         if not inv_loc:
@@ -2194,16 +2439,7 @@ class TessieChargingAnalyzer:
                                 break
 
             # Detailed telemetry match
-            matched_detailed = None
-            for dt_rec in self.detailed_charges:
-                if dt_rec.get("start_datetime") and dt:
-                    time_diff = abs((dt_rec["start_datetime"] - dt).total_seconds())
-                    if time_diff <= 900:
-                        matched_detailed = dt_rec
-                        break
-                    if charge.get("ended_at") and (charge["started_at"] <= dt_rec["start_datetime"] <= charge["ended_at"]):
-                        matched_detailed = dt_rec
-                        break
+            matched_detailed = self.match_detailed_charge(charge)
 
             tessie_bat_kwh = charge["energy_added_kwh"]
             tessie_car_kwh = charge["energy_used_kwh"]
@@ -2648,6 +2884,51 @@ class TessieChargingAnalyzer:
         petrol_equiv_spend = (total_km_added / 100.0) * 9.5 * 1.95 if total_km_added > 0 else (total_battery_kwh / 0.15 / 100.0) * 9.5 * 1.95
         savings = max(0.0, petrol_equiv_spend - total_spend)
 
+        # Real km travelled (from drives_master.csv, not the rated-range
+        # "added" figure above) over the exact same window these sessions
+        # cover, plus the derived cost/efficiency/annualized figures that
+        # only mean anything once anchored to real distance driven.
+        #
+        # Driving efficiency is deliberately taken from drives_master.csv's
+        # OWN "Total Energy Used (kWh)" per drive (the same real per-drive
+        # figure Tessie/the car report), NOT from how much energy was
+        # ADDED via charging over the period - those are two different
+        # things that only coincidentally match when the battery's
+        # start/end SoC happen to net out to about the same level over the
+        # window. Charging losses (dispenser->battery, already computed
+        # above as total_loss_kwh) are reported as their own SEPARATE,
+        # additive kWh/100km figure instead of being blended into "average
+        # efficiency" - the user caught the earlier blended version
+        # reading 19.3 kWh/100km against a real 15.4 kWh/100km from
+        # Tessie/the car directly, and asked for pure driving efficiency
+        # plus charging losses reported separately.
+        PETROL_L_PER_100KM = 9.5  # same assumption already used for petrol_equiv_spend above
+        PETROL_PRICE_PER_L = 1.95
+        session_dts = [s["datetime"] for s in sessions if s.get("datetime")]
+        km_travelled = None
+        period_days = None
+        driving_efficiency_kwh_per_100km = None
+        charging_loss_kwh_per_100km = None
+        cost_per_km = None
+        projected_annual_km = None
+        projected_annual_savings = None
+        if session_dts:
+            period_start = min(session_dts)
+            period_end = max(session_dts)
+            period_days = max((period_end - period_start).days, 1)
+            drive_totals = self._load_drive_totals_in_period(period_start, period_end)
+            km_travelled = drive_totals["distance_km"] if drive_totals else None
+            if km_travelled and km_travelled > 0:
+                real_kwh_used = drive_totals.get("energy_used_kwh") or 0.0
+                driving_efficiency_kwh_per_100km = (real_kwh_used / km_travelled) * 100.0 if real_kwh_used > 0 else None
+                charging_loss_kwh_per_100km = (total_loss_kwh / km_travelled) * 100.0
+                cost_per_km = total_spend / km_travelled
+                annualize_ratio = 365.25 / period_days
+                projected_annual_km = km_travelled * annualize_ratio
+                projected_annual_spend = total_spend * annualize_ratio
+                projected_annual_petrol_equiv = (projected_annual_km / 100.0) * PETROL_L_PER_100KM * PETROL_PRICE_PER_L
+                projected_annual_savings = max(0.0, projected_annual_petrol_equiv - projected_annual_spend)
+
         fully_matched_fast = sum(1 for s in sessions if (s["is_supercharger"] or s["is_fast_charger"]) and s["status"] == "MATCHED ✅")
         mismatched_fast = sum(1 for s in sessions if (s["is_supercharger"] or s["is_fast_charger"]) and "MISMATCH" in s["status"])
         total_fast_count = len(sc_sessions) + len(fast_sessions)
@@ -2685,6 +2966,29 @@ class TessieChargingAnalyzer:
         inv_src_info = f"({len(self.invoices)} Invoices Loaded)"
         kpi_l6 = f"  {C_BOLD}Invoice Reconciliation:{C_RESET} {fast_status_color}{recon_details}{C_RESET} {inv_src_info}"
         print(f"│{pad_display(kpi_l6, box_w - 2)}│")
+
+        if km_travelled and km_travelled > 0:
+            window_note = f"{period_days}-day window" if period_days and period_days < 300 else f"~{period_days}d"
+            eff_disp = f"{driving_efficiency_kwh_per_100km:.1f} kWh/100km" if driving_efficiency_kwh_per_100km is not None else "n/a"
+            kpi_l8 = (f"  {C_BOLD}Distance Travelled:{C_RESET} {km_travelled:,.1f} km ({window_note})  │  "
+                      f"{C_BOLD}Driving Efficiency (real):{C_RESET} {eff_disp}")
+            print(f"│{pad_display(kpi_l8, box_w - 2)}│")
+
+            kpi_l8b = (f"  {C_BOLD}Charging Losses (overhead):{C_RESET} {total_loss_kwh:,.2f} kWh total  │  "
+                       f"+{charging_loss_kwh_per_100km:.1f} kWh/100km")
+            print(f"│{pad_display(kpi_l8b, box_w - 2)}│")
+
+            kpi_l9 = (f"  {C_BOLD}Cost per km:{C_RESET} ${cost_per_km:.3f}/km  │  "
+                      f"{C_BOLD}Projected Annual Distance:{C_RESET} {projected_annual_km:,.0f} km/yr")
+            print(f"│{pad_display(kpi_l9, box_w - 2)}│")
+
+            annualize_caveat = " (short window - rough)" if period_days and period_days < 30 else ""
+            kpi_l10 = (f"  {C_GREEN}{C_BOLD}Projected Annual Savings vs Petrol:{C_RESET} "
+                       f"${projected_annual_savings:,.2f} AUD/yr{annualize_caveat}")
+            print(f"│{pad_display(kpi_l10, box_w - 2)}│")
+        else:
+            kpi_l8 = f"  {C_BOLD}Distance Travelled:{C_RESET} {C_YELLOW}no drives_master.csv found - run drives_sync_all.sh{C_RESET}"
+            print(f"│{pad_display(kpi_l8, box_w - 2)}│")
 
         if self.config_file:
             cfg_disp = shorten_display_path(self.config_file, 35)

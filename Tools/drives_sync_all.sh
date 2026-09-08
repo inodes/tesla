@@ -16,13 +16,21 @@
 # manual (no historical-pull API exists).
 #
 # This script is run manually for now (no scheduler wired up yet - see
-# AGENTS.md TODO-011). Exits non-zero if the fetch/consolidate step fails.
+# AGENTS.md TODO-011). Exits non-zero if any step fails.
 
 set -euo pipefail
 cd "$(dirname "$0")"
 
 echo "==> Tessie drives (fetch + consolidate)"
 ./tessie_api_sync.py --drives --yes
+
+echo
+echo "==> Drive deep-dive telemetry backfill"
+./tessie_api_sync.py --backfill-deepdive --drives --limit 0
+
+echo
+echo "==> Battery health (vehicle-wide, not drives-specific - lives here since this runs regularly)"
+./tessie_api_sync.py --battery-health
 
 echo
 echo "==> Done."
