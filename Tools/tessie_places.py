@@ -23,6 +23,7 @@ import argparse
 import unicodedata
 import urllib.request
 import urllib.parse
+import webbrowser
 from datetime import datetime
 from collections import defaultdict
 
@@ -725,15 +726,32 @@ def review_single_cluster(cl, places, total_clusters=1, cluster_num=1, allow_ign
         print(f"  [1-{len(candidates)}] Accept suggested POI (uses POI center & auto-adjusted radius)")
     print("  [c]   Enter custom name (uses parking stop coordinates)")
     print("  [g]   Provide custom GPS coordinates or address (set a precise center)")
+    print("  [m]   Open this location in your browser (Google Maps) - use this instead of clicking")
+    print("        the GPS line above, which most terminals won't treat as a real clickable link")
     if allow_ignore:
         print("  [i]   Ignore permanently (address is fine as-is, not worth naming - won't be asked again)")
     print("  [b]   Back to cluster list (leave unlabelled for now)")
     print("  [q]   Quit review session")
 
-    try:
-        choice = input("\nChoice: ").strip().lower()
-    except (EOFError, KeyboardInterrupt):
-        return "quit"
+    while True:
+        try:
+            choice = input("\nChoice: ").strip().lower()
+        except (EOFError, KeyboardInterrupt):
+            return "quit"
+
+        if choice in ("m", "map"):
+            map_url = gmaps_url(cl["center_lat"], cl["center_lon"])
+            opened = False
+            try:
+                opened = webbrowser.open(map_url)
+            except Exception:
+                opened = False
+            if opened:
+                print(f"🌐 Opened in your default browser: {map_url}")
+            else:
+                print(f"⚠️  Couldn't open a browser automatically - copy this URL instead:\n   {map_url}")
+            continue
+        break
 
     if choice in ("q", "quit"):
         return "quit"
@@ -888,8 +906,8 @@ def cmd_review_drives(args):
                     ).strip()
 
                     ts_s = (
-                        row.get("Ended At (AEST)") or row.get("Ended At") or
-                        row.get("Ended") or row.get("end_time") or ""
+                        row.get("Ended At (Local)") or row.get("Ended At (AEST)") or
+                        row.get("Ended At") or row.get("Ended") or row.get("end_time") or ""
                     ).strip()
                     
                     if not e_lat_s or not e_lon_s:
@@ -972,7 +990,7 @@ def cmd_review_drives(args):
         # Render cluster table
         w_num = 4
         w_visits = 10
-        w_addr = 36
+        w_addr = 46
         w_coords = 23
         w_date = 12
 
@@ -995,7 +1013,7 @@ def cmd_review_drives(args):
         print("├" + border[2:] + "┤")
 
         for idx, cl in enumerate(remaining_clusters, 1):
-            clean_addr = cl["address"].split(",")[0].strip() if cl["address"] else "Unknown Address"
+            clean_addr = ", ".join(p.strip() for p in cl["address"].split(",")[:2]) if cl["address"] else "Unknown Address"
             if len(clean_addr) > w_addr:
                 clean_addr = clean_addr[:w_addr-3] + "..."
             last_date = ""
@@ -1059,7 +1077,7 @@ def cmd_review_ignored(args):
 
         w_num = 4
         w_visits = 10
-        w_addr = 36
+        w_addr = 46
         w_coords = 23
         w_date = 12
 
@@ -1082,7 +1100,7 @@ def cmd_review_ignored(args):
         print("├" + border[2:] + "┤")
 
         for idx, ig in enumerate(ignored_entries, 1):
-            clean_addr = ig.get("address", "").split(",")[0].strip() if ig.get("address") else "Unknown Address"
+            clean_addr = ", ".join(p.strip() for p in ig.get("address", "").split(",")[:2]) if ig.get("address") else "Unknown Address"
             if len(clean_addr) > w_addr:
                 clean_addr = clean_addr[:w_addr-3] + "..."
             ignored_date = (ig.get("ignored_at") or "")[:10]
