@@ -73,7 +73,7 @@ try:
 except Exception:
     pass
 from zoneinfo import ZoneInfo
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from collections import defaultdict
 
 def resolve_location_timezone(state: str = None, country: str = None, lat: float = None, lon: float = None) -> str:
@@ -3167,6 +3167,206 @@ class TessieChargingAnalyzer:
         )
         return out_path
 
+    def get_energy_source_crosscheck(self, s, force_refresh=False):
+        """Cross-checks one Evnex home-charging session's tariff/cost
+        figures against AGL's real smart-meter data and PVOutput's real
+        solar generation (AGENTS.md TODO-027) - replacing
+        personal_chargers.json's static rate-card guess (what
+        get_expected_tariff_rate() above already returns) with the same
+        real-source computation TODO-013's ev_session_cost.py already
+        does in batch across all 139 Evnex sessions, just triggered live
+        here for the ONE session inspect_session() is showing, and
+        cached to disk afterward.
+
+        Only meaningful for a home Evnex session (s["network"] ==
+        "Evnex") - AGL/PVOutput are whole-household data sources, so a
+        public DC Supercharger session has nothing to cross-check
+        against and this returns None immediately for those.
+
+        Caching contract, per the user's own three-part ask: (a) fetch
+        on the fly if the sibling "<evnex .json stem>_sources.json"
+        cache file next to that session's own already-synced
+        charge_deepdive_*_Evnex_Home*.json (evnex_api_sync.py) doesn't
+        exist yet, (b) use it unchanged if it does, (c) force_refresh=True
+        re-fetches and only overwrites the cache once the new result
+        writes successfully - a backup of the OLD cache is kept until
+        the new write is confirmed, and restored if the write itself
+        fails, so a bad refresh falls back to the original file rather
+        than losing it (a failure merely deleting that backup afterward
+        is not treated as a write failure - only a failure to WRITE the
+        new file triggers the restore).
+
+        Returns a dict (cached or freshly computed), or None if this
+        isn't an Evnex session, no matching Evnex deep-dive JSON can be
+        found for it, or the real AGL tariff-rates file isn't present on
+        this machine (agl_demand_calculator.load_rate_periods() - a
+        real, gitignored, per-account file; its absence is a normal
+        "not configured on this machine" case, not an error)."""
+        if s.get("network") != "Evnex":
+            return None
+
+        try:
+            import ev_session_cost as _evc
+            from agl_demand_calculator import load_rate_periods
+        except Exception:
+            return None
+
+        s_dt = s.get("datetime")
+        if not s_dt:
+            return None
+
+        # Find this session's own Evnex deep-dive JSON by matching real
+        # start time - same +/-10min tolerance already used elsewhere
+        # for Evnex/Tessie session pairing (see reconcile()). Deliberately
+        # NOT datetime.fromtimestamp(es_start) (naive, uses whatever
+        # timezone the PROCESS happens to be running in - UTC on this
+        # session's own device-bridge shell, which silently produced a
+        # ~10-11hr-off match failure here during testing; caught live
+        # against the real #190 session before this shipped). Converts
+        # through the session's own recorded IANA zone instead, same
+        # pattern evaluate_session() below already uses - correct
+        # regardless of the running process's own local timezone.
+        try:
+            evnex_sessions = _evc.load_evnex_deepdive_sessions()
+        except Exception:
+            evnex_sessions = []
+        matched = None
+        for es in evnex_sessions:
+            es_start = _evc.iso_to_epoch(es.get("charging_started_utc"))
+            if es_start is None:
+                continue
+            try:
+                es_tz = ZoneInfo(es.get("timezone") or "Australia/Sydney")
+            except Exception:
+                es_tz = ZoneInfo("Australia/Sydney")
+            es_dt = datetime.fromtimestamp(es_start, tz=timezone.utc).astimezone(es_tz).replace(tzinfo=None)
+            if abs((es_dt - s_dt).total_seconds()) <= 600:
+                matched = es
+                break
+        if not matched:
+            return None
+
+        evnex_path = matched["_file"]
+        cache_path = evnex_path[:-5] + "_sources.json" if evnex_path.endswith(".json") else evnex_path + "_sources.json"
+
+        if os.path.isfile(cache_path) and not force_refresh:
+            try:
+                with open(cache_path, "r", encoding="utf-8") as f:
+                    cached = json.load(f)
+                cached["_from_cache"] = True
+                return cached
+            except Exception:
+                pass  # unreadable cache - fall through and recompute
+
+        try:
+            periods = load_rate_periods()
+        except Exception:
+            return None
+
+        try:
+            result = _evc.evaluate_session(matched, periods)
+        except Exception:
+            return None
+
+        # PVOutput cross-check - best-effort, never fatal to the
+        # AGL/Evnex figures above if it fails (missing credentials,
+        # network egress, rate limit, an unexpected response shape).
+        pv_generation_kwh = None
+        pv_self_consumed_kwh = None
+        pv_error = None
+        try:
+            from pvoutput_common import (
+                load_config as _pv_load_config,
+                get_api_key as _pv_get_api_key,
+                get_system_id as _pv_get_system_id,
+                api_get as _pv_api_get,
+                parse_status_rows as _pv_parse_status_rows,
+            )
+            pv_cfg = _pv_load_config()
+            pv_key = _pv_get_api_key(None, pv_cfg)
+            pv_sid = _pv_get_system_id(None, pv_cfg)
+            if not pv_key or not pv_sid:
+                pv_error = "no PVOutput credentials configured"
+            else:
+                date_str = result["local_start"].strftime("%Y%m%d")
+                status, body, _hdrs = _pv_api_get(
+                    "getstatus", pv_key, pv_sid, params={"d": date_str, "h": 1, "limit": 288}
+                )
+                if status != 200:
+                    pv_error = f"HTTP {status}"
+                else:
+                    rows = _pv_parse_status_rows(body)
+                    # Basic h=1 row shape: Date,Time,EnergyGen(Wh),
+                    # PowerGen(W),EnergyCons(Wh),PowerCons(W),
+                    # Normalised,Temp,Voltage (Tessie/PVOUTPUT_API.md) -
+                    # Energy Generation is a CUMULATIVE-for-the-day
+                    # figure, so this session's own share is the delta
+                    # between the last reading at/after local_end and
+                    # the last reading at/before local_start, not a sum.
+                    gen_readings = []
+                    for row in rows:
+                        if len(row) < 3:
+                            continue
+                        try:
+                            r_time = datetime.strptime(f"{row[0]} {row[1]}", "%Y%m%d %H:%M")
+                            r_gen_wh = float(row[2])
+                        except (ValueError, IndexError):
+                            continue
+                        gen_readings.append((r_time, r_gen_wh))
+                    gen_readings.sort()
+                    before = [g for t, g in gen_readings if t <= result["local_start"]]
+                    upto_end = [g for t, g in gen_readings if t <= result["local_end"]]
+                    if before and upto_end and upto_end[-1] >= before[-1]:
+                        pv_generation_kwh = (upto_end[-1] - before[-1]) / 1000.0
+                    elif gen_readings:
+                        pv_error = "not enough readings spanning this session's window"
+                    else:
+                        pv_error = "no readings returned for this date"
+                    if pv_generation_kwh is not None and result.get("real_export_kwh") is not None:
+                        pv_self_consumed_kwh = max(0.0, pv_generation_kwh - result["real_export_kwh"])
+        except Exception as e:
+            pv_error = str(e)
+
+        result_out = dict(result)
+        result_out["local_start"] = result["local_start"].isoformat()
+        result_out["local_end"] = result["local_end"].isoformat()
+        result_out["pv_generation_kwh"] = pv_generation_kwh
+        result_out["pv_self_consumed_kwh"] = pv_self_consumed_kwh
+        result_out["pv_error"] = pv_error
+        result_out["evnex_deepdive_file"] = os.path.basename(evnex_path)
+        result_out["computed_at"] = datetime.now().isoformat()
+        result_out["_from_cache"] = False
+
+        # Write-then-swap: a failed WRITE restores the previous cache
+        # unchanged; a failed cleanup of the backup afterward is just a
+        # harmless leftover .bak file, never a reason to roll back data
+        # that was already written successfully.
+        backup_path = cache_path + ".bak"
+        had_old = os.path.isfile(cache_path)
+        write_ok = False
+        try:
+            if had_old:
+                shutil.copy2(cache_path, backup_path)
+            with open(cache_path, "w", encoding="utf-8") as f:
+                json.dump(result_out, f, indent=2, default=str)
+            write_ok = True
+        except Exception:
+            write_ok = False
+
+        if write_ok:
+            if had_old and os.path.isfile(backup_path):
+                try:
+                    os.remove(backup_path)
+                except Exception:
+                    pass
+        elif had_old and os.path.isfile(backup_path):
+            try:
+                shutil.move(backup_path, cache_path)
+            except Exception:
+                pass
+
+        return result_out
+
     def inspect_session(self, target):
         if not self.reconciled_sessions:
             self.reconcile()
@@ -3366,6 +3566,45 @@ class TessieChargingAnalyzer:
             l12 = f"    • {C_BOLD}{'Expected Tariff Rate:':<{lw_fin}}{C_RESET}{C_YELLOW}No tariff rate configured in registry{C_RESET}"
             print(f"│{pad_display(l12, box_w - 2, truncate=True)}│")
 
+        # AGENTS.md TODO-027: for a home Evnex session, cross-check the
+        # figures above against AGL's real smart-meter data and
+        # PVOutput's real solar generation instead of relying only on
+        # personal_chargers.json's rough rate card. get_energy_source_
+        # crosscheck() returns None immediately for anything that isn't
+        # an Evnex session, so this section simply doesn't print for a
+        # DC/Supercharger inspection.
+        xcheck = self.get_energy_source_crosscheck(s) if s.get("network") == "Evnex" else None
+        if xcheck:
+            print(f"├{'─' * (box_w - 2)}┤")
+            x_title = f"  {C_BOLD}{C_CYAN}🔎 ENERGY SOURCE CROSS-CHECK (AGL + Evnex + PVOutput):{C_RESET}"
+            print(f"│{pad_display(x_title, box_w - 2, truncate=True)}│")
+            lw_x = 34
+            x1 = f"    • {C_BOLD}{'AGL Tariff Rate (real, dated):':<{lw_x}}{C_RESET}${xcheck['usage_rate']:.2f}/kWh (period from {xcheck['period_effective_from']})"
+            print(f"│{pad_display(x1, box_w - 2, truncate=True)}│")
+            x2 = f"    • {C_BOLD}{'AGL Base Cost (100% grid):':<{lw_x}}{C_RESET}${xcheck['base_cost']:.4f} AUD"
+            print(f"│{pad_display(x2, box_w - 2, truncate=True)}│")
+            if xcheck.get("solar_pct") is not None:
+                x3 = f"    • {C_BOLD}{'Evnex Solar Split:':<{lw_x}}{C_RESET}{xcheck['solar_pct']:.1f}% solar / {100 - xcheck['solar_pct']:.1f}% grid -> ${xcheck['evnex_adjusted_cost']:.4f} AUD adjusted"
+            else:
+                x3 = f"    • {C_BOLD}{'Evnex Solar Split:':<{lw_x}}{C_RESET}{C_YELLOW}n/a (no distributionByTariff on this session){C_RESET}"
+            print(f"│{pad_display(x3, box_w - 2, truncate=True)}│")
+            x4 = (f"    • {C_BOLD}{'Real AGL Import/Export (window):':<{lw_x}}{C_RESET}"
+                  f"{xcheck['real_import_kwh']:.2f} kWh import / {xcheck['real_export_kwh']:.2f} kWh export "
+                  f"({xcheck['buckets_found']}/{xcheck['buckets_found'] + xcheck['buckets_missing']} half-hour buckets found)")
+            print(f"│{pad_display(x4, box_w - 2, truncate=True)}│")
+            if xcheck.get("pv_generation_kwh") is not None:
+                x5 = (f"    • {C_BOLD}{'PVOutput Generation (window):':<{lw_x}}{C_RESET}"
+                      f"{xcheck['pv_generation_kwh']:.2f} kWh generated -> {xcheck['pv_self_consumed_kwh']:.2f} kWh self-consumed")
+            else:
+                x5 = f"    • {C_BOLD}{'PVOutput Generation (window):':<{lw_x}}{C_RESET}{C_YELLOW}unavailable ({xcheck.get('pv_error') or 'unknown reason'}){C_RESET}"
+            print(f"│{pad_display(x5, box_w - 2, truncate=True)}│")
+            if xcheck.get("conflict"):
+                x6 = f"    {C_RED}⚠️  Conflict: Evnex claims mostly-solar but real AGL grid import is large relative to this session's own kWh - see AGENTS.md TODO-013.{C_RESET}"
+                print(f"│{pad_display(x6, box_w - 2, truncate=True)}│")
+            cache_note = "cached - press [r] to refresh" if xcheck.get("_from_cache") else "freshly fetched just now"
+            x7 = f"    {C_DIM}({cache_note}){C_RESET}"
+            print(f"│{pad_display(x7, box_w - 2, truncate=True)}│")
+
         if "MATCHED" in s['status'] or "VERIFIED" in s['status']:
             stat_color = C_GREEN
         elif "RATE MISMATCH" in s['status']:
@@ -3383,13 +3622,25 @@ class TessieChargingAnalyzer:
 
         if sys.stdin.isatty():
             has_inv = bool(s.get("invoice_number") and s.get("invoice_cost") is not None)
+            has_xcheck = bool(xcheck)
             try:
-                prompt_actions = "[u]pdate master CSV from invoice, [m]anually correct, [Enter] to return: " if has_inv else "[m]anually correct rate & cost, [Enter] to return: "
+                actions = []
+                if has_inv:
+                    actions.append("[u]pdate master CSV from invoice")
+                actions.append("[m]anually correct")
+                if has_xcheck:
+                    actions.append("[r]efresh energy sources (AGL/Evnex/PVOutput)")
+                actions.append("[Enter] to return")
+                prompt_actions = ", ".join(actions) + ": "
                 act = input(f"{C_BOLD}Action:{C_RESET} {prompt_actions}").strip().lower()
                 if act in ['u', 'update', 'apply', 'sync'] and has_inv:
                     self.apply_invoice_to_session(s)
                 elif act in ['m', 'manual', 'e', 'edit']:
                     self.prompt_manual_correction(s)
+                elif act in ['r', 'refresh'] and has_xcheck:
+                    print(f"\n{C_DIM}Refreshing AGL/Evnex/PVOutput energy sources...{C_RESET}")
+                    self.get_energy_source_crosscheck(s, force_refresh=True)
+                    self.inspect_session(target)
             except (KeyboardInterrupt, EOFError):
                 print()
 
