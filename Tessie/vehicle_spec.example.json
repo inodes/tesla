@@ -9,7 +9,9 @@
   "battery": {
     "chemistry": "",
     "gross_kwh": 0.0,
-    "usable_kwh": 0.0
+    "usable_kwh": 0.0,
+    "original_capacity_kwh": 0.0,
+    "original_capacity_note": "What this pack's usable capacity was when new, per Tesla's own published spec or your own delivery paperwork - fill in if Tessie's battery_health API returns null for original_capacity on your account (car_profile.json's vehicle_reference falls back to this)."
   },
   "mass": {
     "curb_weight_kg": 0,

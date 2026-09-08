@@ -101,7 +101,7 @@ from datetime import datetime
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from tessie_drives_analyzer import TessieAnalyzer  # noqa: E402
-from tessie_api_common import load_vehicle_spec  # noqa: E402
+from tessie_api_common import load_vehicle_spec, load_config, get_vin  # noqa: E402
 
 # (lo, hi) km/h, half-open [lo, hi) except the last bucket.
 SPEED_BUCKETS_KMH = [
@@ -179,6 +179,7 @@ def vehicle_reference_from_spec(spec):
         "battery_chemistry": battery.get("chemistry"),
         "battery_gross_kwh": battery.get("gross_kwh"),
         "battery_usable_kwh": battery.get("usable_kwh"),
+        "battery_original_capacity_kwh": battery.get("original_capacity_kwh"),
         "curb_weight_kg": mass.get("curb_weight_kg"),
         "gvwr_kg": mass.get("gvwr_kg"),
         "drag_coefficient_cd": aero.get("drag_coefficient_cd"),
@@ -656,13 +657,42 @@ def build_profile(tessie_dir=None, vehicle_mass_kg=None):
     return profile
 
 
-def write_outputs(profile, out_dir):
+def write_outputs(profile, out_dir, vin=None):
+    """Writes car_profile.json (renamed from car_efficiency_profile.json,
+    2026-09-08, per the user's own suggestion once vehicle_spec.json/this
+    file's own vehicle_reference block made clear how much per-vehicle
+    reference data was accumulating here: "given it has so much
+    information - maybe call this car_profile.json instead and tie it to
+    VIN - so that car_profile.json can have multiple entries") and
+    car_profile.csv (same rename, unchanged shape).
+
+    car_profile.json's top level is now {"<vin>": {...this same profile
+    dict as before...}, ...} - keyed by VIN so more than one vehicle can
+    have its own entry in the same file without clobbering another car's
+    data. Any OTHER vin's entry already in the file is read back and
+    preserved before writing (this vin's own entry is always fully
+    replaced/regenerated, since it's a computed profile, not hand-edited
+    data) - if vin is None (couldn't be resolved from Tessie/config.json),
+    falls back to the literal key "unknown_vin" rather than silently
+    clobbering the whole file structure."""
     os.makedirs(out_dir, exist_ok=True)
-    json_path = os.path.join(out_dir, "car_efficiency_profile.json")
-    csv_path = os.path.join(out_dir, "car_efficiency_profile.csv")
+    json_path = os.path.join(out_dir, "car_profile.json")
+    csv_path = os.path.join(out_dir, "car_profile.csv")
+    vin_key = vin or "unknown_vin"
+
+    all_profiles = {}
+    if os.path.isfile(json_path):
+        try:
+            with open(json_path, "r", encoding="utf-8") as f:
+                existing = json.load(f)
+            if isinstance(existing, dict):
+                all_profiles = existing
+        except Exception:
+            pass
+    all_profiles[vin_key] = profile
 
     with open(json_path, "w", encoding="utf-8") as f:
-        json.dump(profile, f, indent=2)
+        json.dump(all_profiles, f, indent=2)
 
     corrected_by_range = {
         tuple(row["speed_range_kmh"]): row
@@ -699,7 +729,7 @@ def main():
     import argparse
     parser = argparse.ArgumentParser(description="Build the TODO-031 speed-vs-efficiency/range car profile from real deep-dive drive telemetry.")
     parser.add_argument("--tessie-dir", help="Custom path to directory containing Tessie CSV exports")
-    parser.add_argument("--out-dir", help="Where to write car_efficiency_profile.json/.csv (default: alongside drives_master.csv, i.e. the resolved Tessie data home - never the repo)")
+    parser.add_argument("--out-dir", help="Where to write car_profile.json/.csv (default: alongside drives_master.csv, i.e. the resolved Tessie data home - never the repo)")
     parser.add_argument("--vehicle-mass-kg", type=float, default=None,
                          help="Vehicle mass used for the grade-corrected efficiency estimate - "
                               "overrides Tessie/vehicle_spec.json's mass.assumed_driving_mass_kg "
@@ -711,7 +741,8 @@ def main():
     out_dir = args.out_dir or analyzer_probe.tessie_data_home or "."
 
     profile = build_profile(tessie_dir=args.tessie_dir, vehicle_mass_kg=args.vehicle_mass_kg)
-    json_path, csv_path = write_outputs(profile, out_dir)
+    vin = get_vin(None, load_config())
+    json_path, csv_path = write_outputs(profile, out_dir, vin=vin)
 
     src = profile["source_data"]
     print(f"Analyzed {src['drives_with_deepdive_telemetry']} of {src['total_drives_in_master_csv']} drives with deep-dive telemetry.")
