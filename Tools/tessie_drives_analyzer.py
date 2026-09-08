@@ -2690,7 +2690,7 @@ def display_months_menu(days_dict, analyzer):
         
         total_inner = w_idx + w_month + w_days + w_trips + w_time + w_dist + w_notable + 6
         total_all_trips = sum(len(trips) for trips in days_dict.values())
-        title = f" 🗓️  TESSIE DRIVES BY MONTH ({total_all_trips:,} Trips Across {len(days_dict)} Days)"
+        title = f" 🗓️ TESSIE DRIVES BY MONTH ({total_all_trips:,} Trips Across {len(days_dict)} Days)"
         t_len = display_len(title)
         if t_len + 2 > total_inner:
             w_notable += (t_len + 2 - total_inner)

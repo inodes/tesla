@@ -294,23 +294,135 @@ def sync_one_type(type_name, spec, token, vin, since_days, dry_run, landing_dir,
     }
 
 
-def sync_battery_health(tessie_dir=None):
-    """Fetches Tessie's current GET /{vin}/battery_health - a live, current-
-    state SNAPSHOT (max_range, max_ideal_range, capacity), not a date-range
-    endpoint like drives/charges above - and appends a dated reading to
-    <tessie data home>/battery_health_log.json.
+def _parse_battery_health_timestamp(ts):
+    """Best-effort parse of one battery_health reading's own "timestamp"
+    field into a naive local-time datetime. BUG (2026-09-08, live on the
+    user's real Mac): this was originally assumed to always be Unix
+    seconds (an int/float) per a docs summary - the real API returned a
+    STRING instead (`TypeError: 'str' object cannot be interpreted as an
+    integer` from datetime.fromtimestamp(ts)), so this now handles every
+    shape actually seen or plausible rather than trusting one assumption:
+    a numeric string (still epoch seconds, just stringified), a real
+    Unix int/float, or an ISO-8601 string (with or without a trailing
+    "Z"/timezone offset - Tessie's other endpoints return local-time ISO
+    strings elsewhere in this repo, e.g. drives/charges). Returns None if
+    every attempt fails, rather than raising - callers fall back to
+    now() so a single unparseable reading never crashes the whole sync."""
+    if ts is None:
+        return None
+    if isinstance(ts, (int, float)):
+        try:
+            return datetime.fromtimestamp(ts)
+        except (ValueError, OSError, OverflowError):
+            return None
+    if isinstance(ts, str):
+        s = ts.strip()
+        try:
+            return datetime.fromtimestamp(float(s))
+        except (ValueError, OSError, OverflowError):
+            pass
+        try:
+            return datetime.fromisoformat(s.replace("Z", "+00:00")).replace(tzinfo=None)
+        except ValueError:
+            pass
+    return None
 
-    This exists so "current usable capacity" for anything that needs a
-    real range estimate (see car_efficiency_profile.py, AGENTS.md
-    TODO-031) can come from Tessie's own battery-health figure - which
-    reflects today's real degradation - rather than only a historical
-    average backed out of old drives_master.csv rows. Appending (never
-    overwriting) turns "pull this on a regular basis" into an actual
-    degradation-over-time history, confirmed live: capacity 85.25 kWh /
-    max_range 350.22 km / max_ideal_range 395.96 km on a real 2026 Model
-    YL (AWD Long Range - LG 5N/EF1 NMC pack, ~85.0 kWh usable per Tesla's
-    own published spec, so this live figure lines up almost exactly with
-    the nameplate value rather than showing meaningful degradation yet)."""
+
+def _battery_health_reading_from_api(r):
+    """Normalizes one raw battery_health API reading (from either the
+    single "result" snapshot or one item of the historical "results"
+    array - same field shape either way) into this repo's log entry
+    format. The live "result" snapshot has no timestamp of its own, so
+    callers get now() for that one; a "results" array item's own
+    timestamp is parsed via _parse_battery_health_timestamp() (its own
+    docstring covers why this can't just assume Unix seconds)."""
+    parsed = _parse_battery_health_timestamp(r.get("timestamp"))
+    synced_at = (parsed or datetime.now()).isoformat(timespec="seconds")
+    return {
+        "synced_at": synced_at,
+        "capacity_kwh": r.get("capacity"),
+        "max_range_km": r.get("max_range"),
+        "max_ideal_range_km": r.get("max_ideal_range"),
+        "odometer_km": r.get("odometer"),
+        "original_capacity_kwh": r.get("original_capacity"),
+        "degradation_percent": r.get("degradation_percent"),
+        "health_percent": r.get("health_percent"),
+        "source": "api:battery_health",
+        "raw": r,
+    }
+
+
+def fetch_battery_health_chunked(vin, token, from_ts, to_ts, chunk_limit=500, api_get_fn=api_get):
+    """Fetch every historical battery_health reading in [from_ts, to_ts)
+    from Tessie's own API - the SAME GET /{vin}/battery_health endpoint
+    sync_battery_health() polls for a live snapshot, but Tessie returns a
+    "results" array of every real historical reading in range whenever
+    from/to are supplied (confirmed via Tessie's own developer docs, "Get
+    Battery Health Measurements" - a documented variant of this same
+    endpoint, not a separate path). This is the actual fix for "pull the
+    full history from Tessie yourself" - manually-exported CSVs are no
+    longer needed as the primary source once this runs.
+
+    Mirrors fetch_json_chunked()'s own recursive bisection-on-limit
+    pattern (no documented pagination cursor for this endpoint either),
+    but keyed by each reading's own "timestamp" instead of an "id" field
+    - battery_health readings don't have one."""
+    if to_ts <= from_ts:
+        return []
+    params = dict(DEFAULT_UNIT_PARAMS)
+    params.update({"from": from_ts, "to": to_ts})
+    status, body = api_get_fn("battery_health", vin, token, params=params)
+    if status != 200:
+        raise RuntimeError(f"battery_health history fetch failed for [{from_ts}, {to_ts}): HTTP {status} - {body[:200]!r}")
+    try:
+        data = json.loads(body)
+    except Exception as e:
+        raise RuntimeError(f"battery_health history response was not valid JSON: {e}") from e
+    records = data.get("results") if isinstance(data, dict) else None
+    if not isinstance(records, list):
+        raise RuntimeError(f"unexpected battery_health history response shape: {list(data.keys()) if isinstance(data, dict) else type(data).__name__}")
+    if len(records) < chunk_limit:
+        return records
+    if (to_ts - from_ts) <= MIN_CHUNK_SECONDS:
+        raise RuntimeError(
+            f"battery_health: got {len(records)} record(s) (>= limit {chunk_limit}) in a window that "
+            f"can't be split further ({from_ts}-{to_ts}, {to_ts - from_ts}s) - refusing to silently drop records."
+        )
+    mid = (from_ts + to_ts) // 2
+    left = fetch_battery_health_chunked(vin, token, from_ts, mid, chunk_limit, api_get_fn)
+    right = fetch_battery_health_chunked(vin, token, mid, to_ts, chunk_limit, api_get_fn)
+    combined = {r.get("timestamp"): r for r in left}
+    combined.update({r.get("timestamp"): r for r in right})
+    return list(combined.values())
+
+
+def sync_battery_health(tessie_dir=None, since_days=1095):
+    """Pulls the vehicle's FULL real battery_health history straight from
+    Tessie's API (fetch_battery_health_chunked(), from `since_days` ago
+    to now - default 1095/~3 years, comfortably covering "since delivery"
+    for any car without needing an exact date) PLUS one current-moment
+    snapshot (the plain, no-from/to GET this function used to be limited
+    to), and merges everything into
+    <tessie data home>/battery_health_log.json, deduplicated by
+    timestamp. This replaces relying on manually-exported CSVs
+    (car_efficiency_profile.py's load_battery_health_history() still
+    merges any of those it finds too, but only as a fallback/supplement -
+    the API pull here is the real, primary source per the user's own
+    request: "I wanted you to pull down full battery_health from tessie
+    yourself... tessie api scripts are meant to pull down the full
+    version" (2026-09-08), after an earlier version of this function only
+    ever logged one live snapshot per run).
+
+    BUG FIXED (2026-09-08): every earlier call here omitted
+    DEFAULT_UNIT_PARAMS entirely (unlike the drives/charges sync
+    functions, which always include it) - Tessie's API defaults to MILES
+    when distance_format isn't specified, so max_range_km/max_ideal_range_km
+    were silently being logged in miles under a "_km" name. Confirmed by
+    the numbers themselves: the first live sync recorded max_range 350.22
+    (labeled km) - 350.22 mi = 563.6 km, matching the ~564.67km "Max
+    Range" the user's own Tessie battery-health CSV export/chart showed
+    for the same car at essentially the same time almost exactly. Every
+    reading logged from now on explicitly requests distance_format=km."""
     home = tessie_dir or resolve_tessie_data_home()
     if not home:
         print("❌ No Tessie data home configured - nothing to log to.")
@@ -323,15 +435,25 @@ def sync_battery_health(tessie_dir=None):
         print("❌ No access token/VIN configured - see Tessie/config.json or TESSIE_ACCESS_TOKEN.")
         return None
 
-    status, body = api_get("battery_health", vin, token, {})
-    if status != 200:
-        print(f"❌ battery_health fetch failed: HTTP {status}")
-        return None
+    to_ts = int(time.time())
+    from_ts = to_ts - since_days * 86400
+
     try:
-        result = json.loads(body).get("result", {})
-    except Exception as e:
-        print(f"❌ Could not parse battery_health response: {e}")
-        return None
+        history_records = fetch_battery_health_chunked(vin, token, from_ts, to_ts)
+    except RuntimeError as e:
+        print(f"❌ battery_health history fetch failed: {e}")
+        history_records = []
+
+    params = dict(DEFAULT_UNIT_PARAMS)
+    status, body = api_get("battery_health", vin, token, params)
+    current_reading = None
+    if status == 200:
+        try:
+            current_reading = json.loads(body).get("result", {})
+        except Exception as e:
+            print(f"❌ Could not parse current battery_health snapshot: {e}")
+    else:
+        print(f"❌ Current battery_health snapshot fetch failed: HTTP {status}")
 
     log_path = os.path.join(home, "battery_health_log.json")
     log = []
@@ -344,22 +466,33 @@ def sync_battery_health(tessie_dir=None):
         except Exception:
             log = []
 
-    entry = {
-        "synced_at": datetime.now().isoformat(timespec="seconds"),
-        "capacity_kwh": result.get("capacity"),
-        "max_range_km": result.get("max_range"),
-        "max_ideal_range_km": result.get("max_ideal_range"),
-    }
-    log.append(entry)
+    merged = {e["synced_at"]: e for e in log if isinstance(e, dict) and e.get("synced_at")}
+    for r in history_records:
+        entry = _battery_health_reading_from_api(r)
+        merged[entry["synced_at"]] = entry
+    if current_reading:
+        entry = _battery_health_reading_from_api(current_reading)
+        merged[entry["synced_at"]] = entry
+
+    if not merged:
+        print("❌ Nothing fetched (both the history pull and the current snapshot failed) - nothing logged.")
+        return None
+
+    log = sorted(merged.values(), key=lambda e: e["synced_at"])
     tmp = log_path + ".tmp"
     with open(tmp, "w", encoding="utf-8") as f:
         json.dump(log, f, indent=2)
     os.replace(tmp, log_path)
 
-    print(f"✅ Battery health: {entry['capacity_kwh']} kWh usable capacity, "
-          f"{entry['max_range_km']} km max rated range, {entry['max_ideal_range_km']} km max ideal range.")
-    print(f"   Logged to {log_path} ({len(log)} reading(s) total).")
-    return entry
+    latest = log[-1]
+    print(f"✅ Battery health: {len(history_records)} historical reading(s) pulled from Tessie's API "
+          f"(since {datetime.fromtimestamp(from_ts).date()}), plus current snapshot.")
+    print(f"   Latest: {latest['capacity_kwh']} kWh usable capacity, {latest['max_range_km']} km max range "
+          f"(at current charge - NOT a rated figure), {latest['max_ideal_range_km']} km max ideal range.")
+    if latest.get("health_percent") is not None or latest.get("degradation_percent") is not None:
+        print(f"   Health: {latest['health_percent']}% / Degradation: {latest['degradation_percent']}%")
+    print(f"   Logged to {log_path} ({len(log)} reading(s) total, deduplicated by timestamp).")
+    return latest
 
 
 def backfill_deepdive_telemetry(kinds, limit=None, pace_seconds=1.5, since_days=None, tessie_dir=None):
@@ -594,13 +727,16 @@ def main():
                          help="Seconds to wait between --backfill-deepdive API calls (default 1.5)")
     parser.add_argument("--tessie-dir", help="Custom path to directory containing Tessie CSV exports (--backfill-deepdive only)")
     parser.add_argument("--battery-health", action="store_true",
-                         help="Fetch Tessie's current battery health (usable capacity, max range) and "
-                              "append a dated reading to battery_health_log.json - run this on a "
-                              "regular basis to build a real degradation-over-time history.")
+                         help="Pull the vehicle's full battery health history from Tessie's API (default "
+                              "3 years back) plus a current snapshot, and merge everything into "
+                              "battery_health_log.json, deduplicated by timestamp.")
+    parser.add_argument("--battery-health-since-days", type=int, default=1095,
+                         help="How far back to pull real battery_health history on --battery-health "
+                              "(default: 1095 / ~3 years).")
     args = parser.parse_args()
 
     if args.battery_health:
-        sync_battery_health(tessie_dir=args.tessie_dir)
+        sync_battery_health(tessie_dir=args.tessie_dir, since_days=args.battery_health_since_days)
         return
 
     if args.consolidate and args.no_consolidate:
