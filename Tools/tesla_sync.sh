@@ -41,6 +41,8 @@ PURGE_TARGET_DRIVE=""
 DRY_RUN=0
 ASSUME_YES=0
 FORCE_MODE=0
+TOMBSTONE_MODE=0
+TOMBSTONE_PURGE_MODE=0
 
 # ==============================================================================
 # REQUIREMENT & DEPENDENCY CHECKER
@@ -300,6 +302,14 @@ while [[ $# -gt 0 ]]; do
       PURGE_TARGET_DRIVE="$2"
       shift 2
       ;;
+    --tombstones|--list-tombstones)
+      TOMBSTONE_MODE=1
+      shift
+      ;;
+    --purge-tombstones)
+      TOMBSTONE_PURGE_MODE=1
+      shift
+      ;;
     --dry-run|-n)
       DRY_RUN=1
       shift
@@ -313,8 +323,7 @@ while [[ $# -gt 0 ]]; do
 Usage: tesla_sync.sh [options]
 
 Note on Execution & Drive Discovery:
-  tesla_sync.sh can be run from ANY directory (e.g. ~/iCloud/repos/tesla,
-  /Volumes/TESLADRIVE*/Tools, or installed to /usr/local/bin).
+  tesla_sync.sh can be run from any directory or installed globally to PATH.
   By default, it automatically discovers connected Tesla USBs, SSDs, and Archive
   drives mounted under /Volumes.
 
@@ -344,12 +353,17 @@ CLI Purge Controls (Default: Requires Archive Drive/Folder Connected):
   -n,  --dry-run             Simulate purge and report reclaimable space without deleting
   -y,  --yes                 Skip standard confirmation prompts
 
+Tombstone Registry & Multi-Volume Deletion:
+  --tombstones               List all permanently deleted dashcam events/clips in registry
+  --purge-tombstones         Purge tombstoned clips across connected drives (or clear registry)
+
 System Diagnostics:
   --check-deps, --doctor     Audit all tool dependencies, versions, and installation guide
 
-Sync & Auto Maintenance (No flags):
-  Performs complete multi-drive backup sync to archive SSD (or --localsync directory),
-  verified RecentClips retention prune (2 days on USB), and capacity target purge (80% -> 60% on Jowua).
+Sync & Backup (No flags):
+  Performs pre-sync tombstone reconciliation across drives, complete multi-drive backup sync
+  to archive SSD (or --localsync directory), and verified RecentClips retention prune (2 days on USB).
+  No footage is purged from JOWUA or Archive SSD unless explicitly requested.
 HELP_EOF
       exit 0
       ;;
@@ -1295,6 +1309,297 @@ run_interactive_purge_wizard() {
 }
 
 # ==============================================================================
+# TOMBSTONE REGISTRY: MULTI-VOLUME DELETION RECONCILIATION
+# ==============================================================================
+list_dashcam_tombstones() {
+  local script_dir="$(cd "$(dirname "$SCRIPT_PATH")" && pwd)"
+  local drives=("$@")
+  python3 - "$script_dir" "${drives[@]}" << 'PY_EOF'
+import os
+import sys
+import json
+
+script_dir = sys.argv[1]
+drive_dirs = [d for d in sys.argv[2:] if d and d != "none" and os.path.isdir(d)]
+sys.path.insert(0, script_dir)
+
+try:
+    from tessie_drives_analyzer import (
+        resolve_master_teslacam_dir,
+        load_tombstones,
+        save_tombstones,
+        load_catalog,
+        reconcile_archive_catalog_and_tombstones,
+        purge_flagged_tombstones_across_drives,
+        display_flagged_deletions_table
+    )
+    from table_formatter import pad_display, display_len
+except ImportError as e:
+    print(f"  ❌ Error loading dependencies: {e}")
+    sys.exit(1)
+
+master_dir = resolve_master_teslacam_dir(drive_dirs)
+if master_dir:
+    reconcile_archive_catalog_and_tombstones(master_dir, drive_dirs)
+
+print("==========================================================================")
+print("                 TeslaCam Master Archive Tombstones                       ")
+print("==========================================================================")
+
+class DummyAnalyzer:
+    def __init__(self, tdirs):
+        self.teslacam_dirs = tdirs
+        self.repo_root = os.path.dirname(script_dir)
+
+analyzer = DummyAnalyzer(drive_dirs)
+items = display_flagged_deletions_table(analyzer)
+
+if items and sys.stdin.isatty():
+    try:
+        ans = input("Would you like to purge / clear these tombstones now? [y/N]: ").strip().lower()
+        if ans in ("y", "yes"):
+            n_purged, b_freed, n_ret = purge_flagged_tombstones_across_drives(drive_dirs)
+            if n_purged > 0 or n_ret > 0:
+                mb = b_freed / (1024 * 1024)
+                sz_str = f"{mb/1024:.2f} GB" if mb >= 1024 else f"{mb:.1f} MB"
+                print(f"\n✔ Successfully purged {n_purged} file(s) ({sz_str}) from secondary drives.")
+                if n_ret > 0:
+                    print(f"✔ Retired and cleaned up {n_ret} tombstone(s) from .TeslaCam_tombstones.json.\n")
+            else:
+                data = load_tombstones(master_dir)
+                tombs = data.get("tombstones", {})
+                if tombs:
+                    all_pending = set()
+                    for t in tombs.values():
+                        all_pending.update(t.get("pending_drives", []))
+                    p_str = ", ".join(d.replace("VOL_", "") for d in sorted(all_pending)) if all_pending else "None"
+                    print(f"\n>>> No connected secondary drives have pending files to purge.")
+                    print(f"    ({len(tombs)} active tombstone(s) pending for disconnected drive(s): {p_str})")
+                    try:
+                        ans_c = input(f"Would you like to clear/retire these {len(tombs)} tombstone(s) from Master Archive now? [y/N]: ").strip().lower()
+                        if ans_c in ("y", "yes"):
+                            data["tombstones"] = {}
+                            save_tombstones(data, master_dir)
+                            print(f"\n✔ Cleared and retired {len(tombs)} active tombstone(s) from Master Archive.\n")
+                        else:
+                            print(">>> Kept tombstones in registry for automatic cleanup when drives connect.\n")
+                    except (KeyboardInterrupt, EOFError):
+                        print("\n>>> Kept tombstones in registry.\n")
+                else:
+                    print("\n>>> No pending files or tombstones found requiring purge.\n")
+    except (KeyboardInterrupt, EOFError):
+        print("\n")
+PY_EOF
+  exit 0
+}
+
+reconcile_tombstones_on_drives() {
+  local dry_run="${1:-0}"
+  local force_clear="${2:-0}"
+  shift 2
+  local script_dir="$(cd "$(dirname "$SCRIPT_PATH")" && pwd)"
+  local drives=("$@")
+  python3 - "$script_dir" "$dry_run" "$force_clear" "${drives[@]}" << 'PY_EOF'
+import os
+import sys
+import json
+
+script_dir = sys.argv[1]
+dry_run = sys.argv[2] == "1"
+force_clear = sys.argv[3] == "1"
+drive_dirs = [d for d in sys.argv[4:] if d and d != "none" and os.path.isdir(d)]
+sys.path.insert(0, script_dir)
+
+try:
+    from tessie_drives_analyzer import (
+        resolve_master_teslacam_dir,
+        reconcile_archive_catalog_and_tombstones,
+        purge_flagged_tombstones_across_drives,
+        load_tombstones,
+        save_tombstones
+    )
+except ImportError:
+    sys.exit(0)
+
+master_dir = resolve_master_teslacam_dir(drive_dirs)
+if not master_dir:
+    sys.exit(0)
+
+# 1. Catch any manual Finder deletions on Master Archive
+if not dry_run:
+    n_add, n_prom = reconcile_archive_catalog_and_tombstones(master_dir, drive_dirs)
+    if n_prom > 0:
+        print(f">>> Detected {n_prom} package(s) deleted from Master Archive in Finder (staged for cleanup).")
+
+# 2. Scrub secondary drives
+n_purged, b_freed, n_ret = purge_flagged_tombstones_across_drives(drive_dirs, dry_run=dry_run)
+if n_purged > 0 or n_ret > 0:
+    mb = b_freed / (1024 * 1024)
+    sz_str = f"{mb/1024:.2f} GB" if mb >= 1024 else f"{mb:.1f} MB"
+    if dry_run:
+        print(f">>> [DRY-RUN] Would purge {n_purged} file(s) ({sz_str}) from secondary drives.")
+        if n_ret > 0:
+            print(f">>> [DRY-RUN] Would retire {n_ret} tombstone(s) from .TeslaCam_tombstones.json.")
+    else:
+        print(f">>> Tombstone Cleanup Complete: Purged {n_purged} file(s) ({sz_str}) from secondary drives.")
+        if n_ret > 0:
+            print(f"    Retired and cleaned up {n_ret} tombstone(s) from .TeslaCam_tombstones.json.")
+else:
+    data = load_tombstones(master_dir)
+    tombs = data.get("tombstones", {})
+    if tombs:
+        all_pending = set()
+        for t in tombs.values():
+            all_pending.update(t.get("pending_drives", []))
+        p_str = ", ".join(d.replace("VOL_", "") for d in sorted(all_pending)) if all_pending else "None"
+        print(f">>> No connected secondary drives have pending files to purge.")
+        print(f"    ({len(tombs)} active tombstone(s) pending for disconnected drive(s): {p_str})")
+        if force_clear:
+            if not dry_run:
+                data["tombstones"] = {}
+                save_tombstones(data, master_dir)
+                print(f"✔ Cleared and retired {len(tombs)} active tombstone(s) from Master Archive.")
+            else:
+                print(f">>> [DRY-RUN] Would clear/retire {len(tombs)} active tombstone(s) from Master Archive.")
+        elif sys.stdin.isatty() and not dry_run:
+            try:
+                ans = input(f"Would you like to clear/retire these {len(tombs)} tombstone(s) from Master Archive now? [y/N]: ").strip().lower()
+                if ans in ("y", "yes"):
+                    data["tombstones"] = {}
+                    save_tombstones(data, master_dir)
+                    print(f"✔ Cleared and retired {len(tombs)} active tombstone(s) from Master Archive.")
+                else:
+                    print(">>> Kept tombstones in registry for automatic cleanup when drives connect.")
+            except (KeyboardInterrupt, EOFError):
+                print("\n>>> Kept tombstones in registry.")
+        else:
+            print(f"    These will be purged automatically when {p_str} is connected and synced.")
+    else:
+        print(">>> No pending files or tombstones found requiring purge.")
+PY_EOF
+}
+
+check_and_prompt_flagged_tombstones() {
+  local script_dir="$(cd "$(dirname "$SCRIPT_PATH")" && pwd)"
+  local drives=("$@")
+  
+  # Step 1: Reconcile and check if there are active tombstones
+  local flag_info
+  flag_info=$(python3 - "$script_dir" "${drives[@]}" << 'PY_EOF'
+import os
+import sys
+import json
+
+script_dir = sys.argv[1]
+drive_dirs = [d for d in sys.argv[2:] if d and d != "none" and os.path.isdir(d)]
+sys.path.insert(0, script_dir)
+
+try:
+    from tessie_drives_analyzer import (
+        resolve_master_teslacam_dir,
+        get_drive_identifier,
+        reconcile_archive_catalog_and_tombstones,
+        load_tombstones,
+        export_tombstone_rsync_excludes
+    )
+except ImportError:
+    sys.exit(0)
+
+master_dir = resolve_master_teslacam_dir(drive_dirs)
+if not master_dir:
+    sys.exit(0)
+
+# Reconcile manual Finder deletions first
+reconcile_archive_catalog_and_tombstones(master_dir, drive_dirs)
+
+# Export rsync exclude file to prevent resurrection of deleted clips
+export_tombstone_rsync_excludes(master_dir, "/tmp/teslacam_sync/tombstones_exclude.txt")
+
+data = load_tombstones(master_dir)
+tombs = data.get("tombstones", {})
+if not tombs:
+    sys.exit(0)
+
+tot_b = sum(v.get("est_bytes", 0) for v in tombs.values())
+tot_files = sum(v.get("files_count", len(v.get("files", []))) for v in tombs.values())
+mb = tot_b / (1024 * 1024)
+sz_str = f"{mb/1024:.1f} GB" if mb >= 1024 else f"{mb:.0f} MB"
+
+connected_pending_drives = set()
+for d in drive_dirs:
+    drv_id = get_drive_identifier(d, master_dir)
+    if drv_id != "MASTER":
+        for t in tombs.values():
+            p_list = t.get("pending_drives", [])
+            if not p_list or drv_id in p_list:
+                connected_pending_drives.add(drv_id)
+
+all_pending = set()
+for t in tombs.values():
+    all_pending.update(t.get("pending_drives", []))
+p_str = ", ".join(d.replace("VOL_", "") for d in sorted(all_pending)) if all_pending else "None"
+
+conn_count = len(connected_pending_drives)
+print(f"{len(tombs)}|{tot_files}|{sz_str}|{conn_count}|{p_str}")
+PY_EOF
+)
+
+  if [[ -z "$flag_info" ]]; then
+    return 0
+  fi
+
+  local f_pkgs f_files f_sz f_conn f_pstr
+  IFS='|' read -r f_pkgs f_files f_sz f_conn f_pstr <<< "$flag_info"
+
+  if [[ "$f_conn" -gt 0 ]]; then
+    echo ">>> Active Tombstones Detected (${f_pkgs} packages, ${f_files} files, ~${f_sz}):"
+    echo "    Deleted on Master Archive — pending cleanup from connected secondary drive(s)."
+    echo ""
+
+    # If assume-yes or tombstone-purge flag set
+    if [[ "$ASSUME_YES" -eq 1 || "$TOMBSTONE_PURGE_MODE" -eq 1 ]]; then
+      reconcile_tombstones_on_drives "$DRY_RUN" "$ASSUME_YES" "${drives[@]}"
+      return 0
+    fi
+
+    # Interactive prompt
+    if [[ -t 0 && "$DRY_RUN" -eq 0 ]]; then
+      local reply
+      printf "Would you like to scrub these deleted files now from connected secondary drive(s)? [Y/n]: "
+      read -r reply
+      echo ""
+      if [[ -z "$reply" || "$reply" =~ ^[Yy]([Ee][Ss])?$ ]]; then
+        reconcile_tombstones_on_drives "$DRY_RUN" "$ASSUME_YES" "${drives[@]}"
+      else
+        echo ">>> Skipping secondary drive scrub. Tombstones retained for future sync."
+      fi
+    else
+      echo ">>> Running non-interactive secondary drive scrub..."
+      reconcile_tombstones_on_drives "$DRY_RUN" "$ASSUME_YES" "${drives[@]}"
+    fi
+  else
+    echo ">>> Active Tombstones: ${f_pkgs} packages (~${f_sz}). Rsync exclusion active (pending cleanup on ${f_pstr} when connected)."
+  fi
+}
+
+# Tombstone list mode (--tombstones)
+if [[ "$TOMBSTONE_MODE" -eq 1 ]]; then
+  list_dashcam_tombstones "$VOL_TESLA_USB" "$VOL_JOWUA" "$VOL_2TB" "$LOCAL_SYNC_DIR"
+fi
+
+# Tombstone purge mode (--purge-tombstones)
+if [[ "$TOMBSTONE_PURGE_MODE" -eq 1 ]]; then
+  echo "======================================================"
+  echo "          TeslaCam Tombstone Purge Across Drives      "
+  echo "======================================================"
+  reconcile_tombstones_on_drives "$DRY_RUN" "$ASSUME_YES" "$VOL_TESLA_USB" "$VOL_JOWUA" "$VOL_2TB" "$LOCAL_SYNC_DIR"
+  echo "======================================================"
+  echo "Tombstone purge complete."
+  echo "======================================================"
+  exit 0
+fi
+
+# ==============================================================================
 # 2. STATUS / TIMELINE CHECK MODE (--status / --summary / --timeline / --timeline-full)
 # ==============================================================================
 if [[ "$STATUS_MODE" -eq 1 && -z "$PURGE_MODE" ]]; then
@@ -1439,11 +1744,18 @@ sync_volumes() {
   echo "    Source: $src/TeslaCam/"
   echo "    Target: $dst/TeslaCam/"
 
+  local tombstone_exclude_file="/tmp/teslacam_sync/tombstones_exclude.txt"
+  local extra_rsync_opts=()
+  if [[ -f "$tombstone_exclude_file" && -s "$tombstone_exclude_file" ]]; then
+    extra_rsync_opts+=("--exclude-from=$tombstone_exclude_file")
+  fi
+
   # 1. Calculate bytes to transfer via dry-run (strictly matching execution flags)
   printf "    Calculating transfer payload..."
   local dry_run_out
   dry_run_out=$("$RSYNC_BIN" -a --dry-run --stats \
     --modify-window=2 \
+    "${extra_rsync_opts[@]}" \
     --exclude=".Spotlight-V100" \
     --exclude=".Trashes" \
     --exclude="System Volume Information" \
@@ -1478,6 +1790,7 @@ sync_volumes() {
   "$RSYNC_BIN" -a \
     --modify-window=2 \
     --stats \
+    "${extra_rsync_opts[@]}" \
     --exclude=".Spotlight-V100" \
     --exclude=".Trashes" \
     --exclude="System Volume Information" \
@@ -1552,6 +1865,10 @@ echo "======================================================"
 echo "          TeslaCam Multi-Drive Sync & Prune           "
 echo "======================================================"
 
+# 1. Pre-sync flagged deletions check & prompt (Method B: On-Demand)
+check_and_prompt_flagged_tombstones "$VOL_TESLA_USB" "$VOL_JOWUA" "$VOL_2TB" "$LOCAL_SYNC_DIR"
+echo ""
+
 # Target: Local directory (--localsync)
 if [[ -n "$LOCAL_SYNC_DIR" ]]; then
   echo "[Target: Local Directory] ${LOCAL_SYNC_DIR}"
@@ -1563,8 +1880,6 @@ if [[ -n "$LOCAL_SYNC_DIR" ]]; then
   fi
   if [[ -n "$VOL_JOWUA" ]]; then
     sync_volumes "$VOL_JOWUA" "$LOCAL_SYNC_DIR" "JOWUA Hub -> Local Archive"
-    echo ""
-    execute_safe_or_force_purge "$VOL_JOWUA" "$LOCAL_SYNC_DIR" "capacity" 60 0 0 1
   fi
 
 # All 3 Connected (Tesla USB + JOWUA + 2TB Archive SSD)
@@ -1578,16 +1893,12 @@ elif [[ -n "$VOL_TESLA_USB" && -n "$VOL_JOWUA" && -n "$VOL_2TB" ]]; then
   sync_volumes "$VOL_JOWUA" "$VOL_2TB" "JOWUA 1TB -> 2TB Archive"
   echo ""
   execute_safe_or_force_purge "$VOL_TESLA_USB" "$VOL_2TB" "recent_only" 2 0 0 1
-  echo ""
-  execute_safe_or_force_purge "$VOL_JOWUA" "$VOL_2TB" "capacity" 60 0 0 1
 
 # JOWUA + 2TB Archive SSD
 elif [[ -n "$VOL_JOWUA" && -n "$VOL_2TB" ]]; then
   echo "[Detected] JOWUA + 2TB Archive SSD detected."
   echo ""
   sync_volumes "$VOL_JOWUA" "$VOL_2TB" "JOWUA 1TB -> 2TB Archive"
-  echo ""
-  execute_safe_or_force_purge "$VOL_JOWUA" "$VOL_2TB" "capacity" 60 0 0 1
 
 # Tesla USB + 2TB Archive SSD
 elif [[ -n "$VOL_TESLA_USB" && -n "$VOL_2TB" ]]; then

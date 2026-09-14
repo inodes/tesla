@@ -76,7 +76,7 @@ S2_ORANGE = "#eb6834"
 S3_AQUA = "#1baf7a"
 
 DEEPDIVE_FILENAME_RE = re.compile(
-    r"^charge_deepdive_\d{4}-\d{2}-\d{2}_\d{4}_(?:\d{2}_)?(?P<slug>.+)\.csv$"
+    r"^charge_deepdive_\d{4}-\d{2}-\d{2}_\d{4}(?:_(?:AEST|AEDT))?_(?:\d{2}_)?(?P<slug>.+)\.csv$"
 )
 # The "(?:\d{2}_)?" skips unique_stamped_path()'s "_NN" disambiguator when
 # present (every Evnex CSV, and any future multi-sub-session non-Evnex one -
@@ -769,8 +769,9 @@ function draw() {{
 
 canvas.addEventListener('mousemove', (ev) => {{
   const rect = canvas.getBoundingClientRect();
-  const mx = (ev.clientX - rect.left) * (canvas.width / rect.width);
-  if (mx < padL || mx > W - padR) {{ tooltip.style.display = 'none'; return; }}
+  const scaleX = canvas.width / rect.width, scaleY = canvas.height / rect.height;
+  const mx = (ev.clientX - rect.left) * scaleX;
+  if (mx < padL || mx > W - padR) {{ tooltip.style.display = 'none'; draw(); return; }}
   const xv = xLo + (mx - padL) / plotW * (xHi - xLo);
 
   draw();
@@ -782,6 +783,12 @@ canvas.addEventListener('mousemove', (ev) => {{
   let lines = [];
   SERIES.forEach(s => {{
     if (s.dash) return;
+    // Only read a value where this series actually has data - otherwise
+    // hovering past where a shorter series (e.g. a partial telemetry
+    // segment) ends would silently show its nearest stale endpoint as if
+    // it were a real reading at the cursor's x.
+    const sMin = Math.min(...s.x), sMax = Math.max(...s.x);
+    if (xv < sMin || xv > sMax) return;
     let best = null, bestDist = Infinity;
     for (let i = 0; i < s.x.length; i++) {{
       const d = Math.abs(s.x[i] - xv);
@@ -789,15 +796,37 @@ canvas.addEventListener('mousemove', (ev) => {{
     }}
     if (best !== null && s.y[best] !== null && s.y[best] !== undefined) {{
       lines.push(`${{s.name}}: ${{s.y[best].toFixed(2)}} ${{s.unit}}`);
+      // Pin a small marker at the exact sample this value comes from, so
+      // each tooltip line is visibly anchored to a real point on its own
+      // line, not just implied by the crosshair's position.
+      const px = xAt(s.x[best]), py = yAt(s.y[best], s.axis);
+      ctx.beginPath();
+      ctx.arc(px, py, 6, 0, Math.PI * 2);
+      ctx.lineWidth = 1.5;
+      ctx.strokeStyle = s.color;
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.arc(px, py, 3.5, 0, Math.PI * 2);
+      ctx.fillStyle = s.color;
+      ctx.fill();
     }}
   }});
-  tooltip.innerHTML = lines.join('<br>') || '-';
+  if (lines.length === 0) {{ tooltip.style.display = 'none'; return; }}
+  tooltip.innerHTML = lines.join('<br>');
   tooltip.style.display = 'block';
-  const my = (ev.clientY - rect.top) * (canvas.height / rect.height);
+  const my = (ev.clientY - rect.top) * scaleY;
   let left = mx + 12, top = my - 10;
   if (left > W - 220) left = mx - 12 - 200;
-  tooltip.style.left = left + 'px';
-  tooltip.style.top = Math.max(0, top) + 'px';
+  // Convert back from canvas-pixel space to CSS pixel space before
+  // positioning the tooltip DIV - the crosshair/markers above are drawn
+  // straight onto the canvas's own backing-pixel grid, but this tooltip
+  // is a separate absolutely-positioned element, so its coordinates need
+  // the inverse of the same scale factor whenever the canvas is
+  // displayed at a different CSS size than its backing resolution (the
+  // real reason a hover tooltip can drift away from the point it
+  // describes).
+  tooltip.style.left = (left / scaleX) + 'px';
+  tooltip.style.top = (Math.max(0, top) / scaleY) + 'px';
 }});
 canvas.addEventListener('mouseleave', () => {{ tooltip.style.display = 'none'; draw(); }});
 

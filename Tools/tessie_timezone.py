@@ -124,6 +124,35 @@ def localize(epoch_utc, iana_zone=None):
     return local_dt, abbr, offset_str
 
 
+def abbr_for_naive_local(dt_naive, iana_zone=None):
+    """Timezone abbreviation (e.g. "AEST"/"AEDT") for a naive local
+    wall-clock datetime, assumed to already be in `iana_zone` (defaults
+    to DEFAULT_TIMEZONE). Companion to localize() for call sites that
+    only have a parsed local datetime on hand (e.g. a CSV's own
+    first-row timestamp string) and no UTC epoch to convert from -
+    AGENTS.md TODO-033's filename-suffix and mtime-backfill work."""
+    zone_name = iana_zone or DEFAULT_TIMEZONE
+    try:
+        tz = ZoneInfo(zone_name)
+    except Exception:
+        tz = ZoneInfo(DEFAULT_TIMEZONE)
+    return dt_naive.replace(tzinfo=tz).tzname()
+
+
+def epoch_for_naive_local(dt_naive, iana_zone=None):
+    """UTC epoch seconds for a naive local wall-clock datetime, assumed
+    to already be in `iana_zone` (defaults to DEFAULT_TIMEZONE). Same
+    companion role as abbr_for_naive_local() above - lets a call site
+    that only has a parsed local datetime (not an epoch) still set a
+    file's real event mtime (AGENTS.md TODO-033)."""
+    zone_name = iana_zone or DEFAULT_TIMEZONE
+    try:
+        tz = ZoneInfo(zone_name)
+    except Exception:
+        tz = ZoneInfo(DEFAULT_TIMEZONE)
+    return dt_naive.replace(tzinfo=tz).timestamp()
+
+
 def sydney_offset_seconds(dt_naive):
     """The UTC offset (seconds) Australia/Sydney actually observed at
     this naive datetime - correctly toggling AEST(+10h)/AEDT(+11h) per

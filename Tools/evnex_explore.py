@@ -36,9 +36,15 @@ from datetime import datetime, timezone
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from evnex_common import get_authenticated_client, EvnexCredentialsError  # noqa: E402
+from tessie_api_common import resolve_tessie_data_home  # noqa: E402
 
-REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-DEFAULT_OUTPUT_DIR = os.path.join(REPO_ROOT, "Tessie")
+# Real Evnex diagnostic dumps (device IDs, real session/energy data)
+# resolve through the external tessie_directory home, not a path hardcoded
+# beside this script - per AGENTS.md's Zero-PII / "PII Never Lives in the
+# Repo Working Tree At All" rule (REQ-034). Fixed 2026-09-14 during the
+# real-data-in-tree audit; this used to default straight into the repo's
+# own Tessie/ folder.
+DEFAULT_OUTPUT_DIR = resolve_tessie_data_home()
 
 
 def to_jsonable(obj):

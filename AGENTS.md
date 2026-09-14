@@ -1,8 +1,10 @@
 # AGENTS.md — AI Agent Operating Instructions & Task Tracker
 
 > **Notice to AI Agents**:
-> This document is the primary instructions, standards, and state tracker for this repository.
+> This document is the primary instructions and standards reference for this repository - generic, shareable, and safe to commit (no personal specifics).
 > **Every agent working in this repository MUST read this file upon startup, verify its accuracy against the current codebase, and keep it up-to-date after completing work.**
+>
+> The real, detailed project journal - Active Requests, Known Bugs, and TODOs, with real specifics - lives in `AGENTS.local.md` (gitignored, never committed). **Every agent MUST also read `AGENTS.local.md` on startup** for the actual current state of the project, and update it (not this file) as work progresses.
 
 ---
 
@@ -74,7 +76,8 @@ All terminal tools (such as `Tools/tessie_drives_analyzer.py` and `Tools/tessie_
 
 ```
 tesla/
-├── AGENTS.md                  # This document (AI instructions, rules, requests, TODOs, bugs)
+├── AGENTS.md                  # This document (generic AI instructions & standards - committed)
+├── AGENTS.local.md            # Real project journal: Active Requests, Bugs, TODOs (gitignored, never committed)
 ├── README.md                  # Human-facing project overview
 ├── .gitignore                 # Git ignore rules (with pointer to AGENTS.md)
 ├── requirements.txt           # Python dependencies
@@ -101,4 +104,4 @@ Before completing any prompt or task, every agent must perform the following che
 1. **Codebase Check**: Ensure all modified files run without syntax errors (`python3 -m py_compile <file>`).
 2. **Table Check**: If terminal tables were modified, verify borders with sample piped input or interactive test.
 3. **Sync Check**: Verify symlink from iCloud path points to local `$HOME/repos/tesla/`.
-4. **Docs Update**: If a request was fulfilled or a new bug/TODO was discovered, update Sections 4, 5, or 6 of this `AGENTS.md` file.
+4. **Docs Update**: If a request was fulfilled or a new bug/TODO was discovered, update the Active Requests / Known Bugs / TODOs sections of `AGENTS.local.md` (not this file - this file stays generic and PII-free).

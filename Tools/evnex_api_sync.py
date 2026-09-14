@@ -48,7 +48,7 @@ import sys
 from datetime import datetime, timezone
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from evnex_common import get_authenticated_client, EvnexCredentialsError  # noqa: E402
+from evnex_common import get_authenticated_client, is_real_charging_session, EvnexCredentialsError  # noqa: E402
 from evnex_explore import to_jsonable  # noqa: E402
 from tessie_api_common import resolve_tessie_data_home, unique_stamped_path  # noqa: E402
 import tessie_timezone as tztools  # noqa: E402
@@ -164,7 +164,7 @@ async def run(dry_run, limit, log):
     pairs = await fetch_all_sessions(log)
     log(f"Evnex reports {len(pairs)} session(s) across all organisations/charge points")
 
-    written, skipped_seen, skipped_active, skipped_bad = 0, 0, 0, 0
+    written, skipped_seen, skipped_active, skipped_bad, written_blips = 0, 0, 0, 0, 0
     for session, location in pairs:
         sid = session.get("id")
         attrs = session.get("attributes") or {}
@@ -184,7 +184,12 @@ async def run(dry_run, limit, log):
         zone = resolve_home_zone(location)
         local_dt, abbr, offset_str = tztools.localize(start_epoch, zone)
         if local_dt:
-            local_label = local_dt.strftime("%Y-%m-%d_%H%M")
+            # AGENTS.md TODO-033: fold the real timezone abbreviation into
+            # the filename's time portion itself, not just the human-
+            # readable local_start_str below - every session recorded so
+            # far is AEST/AEDT (Australia/Sydney), but a bare "1327" gives
+            # no way to tell which without opening the file.
+            local_label = f"{local_dt.strftime('%Y-%m-%d_%H%M')}_{abbr}" if abbr else local_dt.strftime("%Y-%m-%d_%H%M")
             local_start_str = f"{local_dt.strftime('%Y-%m-%d %H:%M')} {abbr}"
         else:
             local_label = datetime.fromtimestamp(start_epoch, tz=timezone.utc).strftime("%Y-%m-%d_%H%M")
@@ -212,19 +217,44 @@ async def run(dry_run, limit, log):
             "session": session,
         }
 
+        # A session that delivered ~zero energy (totalEnergyUsage.total
+        # == 0.0, typically transaction.reason == "EVDisconnected") is a
+        # connection blip - pairing/testing a charger, a momentary
+        # plug/unplug - not a real charge. Found via a real report:
+        # swapping the home Evnex charger produced 5 of these within an
+        # hour of setup, and the same pattern already existed in 23 of
+        # the 144 real session files on disk, well predating that swap.
+        # Still written (never silently dropped - see
+        # is_real_charging_session()'s own docstring), just flagged so
+        # it's obvious at a glance rather than looking like a real charge
+        # that happened to log 0 kWh.
+        is_blip = not is_real_charging_session(attrs)
+        if is_blip:
+            written_blips += 1
+        blip_note = " (0 kWh - looks like a connection blip, not a real charge)" if is_blip else ""
+
         if dry_run:
-            log(f"  [dry-run] would write {base_name}")
+            log(f"  [dry-run] would write {base_name}{blip_note}")
         else:
             os.makedirs(ddir, exist_ok=True)
             with open(out_path, "w", encoding="utf-8") as f:
                 json.dump(record, f, indent=2, default=str)
-            log(f"  wrote {base_name}")
+            # AGENTS.md TODO-033: set this file's mtime to the real
+            # charge-start event, not whenever this sync happened to run,
+            # so `ls -alt` sorts deep-dive files in true chronological
+            # order regardless of when they were fetched.
+            try:
+                os.utime(out_path, (start_epoch, start_epoch))
+            except Exception:
+                pass
+            log(f"  wrote {base_name}{blip_note}")
         written += 1
         seen.add(sid)
 
     log(
-        f"\nDone: {written} new session(s) {'would be ' if dry_run else ''}written, "
-        f"{skipped_seen} already had a file, {skipped_active} still in progress, "
+        f"\nDone: {written} new session(s) {'would be ' if dry_run else ''}written"
+        + (f" ({written_blips} look like connection blips - 0 kWh, not real charges)" if written_blips else "")
+        + f", {skipped_seen} already had a file, {skipped_active} still in progress, "
         f"{skipped_bad} missing a usable start time."
     )
     return written

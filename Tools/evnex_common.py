@@ -96,3 +96,36 @@ async def get_authenticated_client(config=None):
         safe_msg = str(e).replace(password, "***REDACTED***") if password else str(e)
         raise RuntimeError(f"Evnex authentication failed: {safe_msg}") from e
     return Evnex(auth=auth)
+def session_energy_wh(attrs):
+    """Real energy delivered (Wh) for one Evnex session's own `attributes`
+    dict (the same dict evnex_api_sync.py writes as record["session"]
+    ["attributes"], and ev_session_cost.py reads back as session["session"]
+    ["attributes"]), or None if Evnex didn't report a totalEnergyUsage at
+    all for this session. Kept in one shared place so "did this session
+    actually deliver power" is judged identically everywhere that asks -
+    see is_real_charging_session() below."""
+    teu = attrs.get("totalEnergyUsage")
+    return teu.get("total") if isinstance(teu, dict) else None
+
+
+def is_real_charging_session(attrs, min_wh=1.0):
+    """False for a session that delivered ~zero energy - a connection
+    blip (pairing/testing a charger, a momentary plug/unplug, a start
+    that never actually drew power) rather than a real charge. Found via
+    a real user report: swapping the home Evnex charger produced 5 new
+    "sessions" within about an hour of setup, all totalEnergyUsage.total
+    == 0.0 and (where present) transaction.reason == "EVDisconnected" -
+    and the SAME pattern already existed in 23 of the 144 real Evnex
+    session files on disk at the time, well predating this charger swap
+    (one "reason": "Remote", the rest "EVDisconnected"; durations ranged
+    from 0 seconds to several minutes - a real duration with zero energy
+    is still not a charge, e.g. a plug-in that never actually started).
+
+    True whenever energy is unknown/missing (Evnex just didn't report a
+    figure) - absence of data is never treated as "not a real session",
+    only an explicit ~zero reading is. min_wh is a floor rather than an
+    exact-zero check only as a hedge against float noise; every real
+    example seen so far reported exactly 0.0, never a small-but-nonzero
+    residual."""
+    wh = session_energy_wh(attrs)
+    return wh is None or wh >= min_wh

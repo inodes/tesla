@@ -153,15 +153,20 @@ def iso_to_epoch(iso_str):
 
 
 def find_latest_evnex_dump():
-    tessie_dir = os.path.join(REPO_ROOT, "Tessie")
+    """Looks in the external tessie_directory home (TESSIE_DATA_HOME) for
+    the most recent evnex_explore.py dump - matches where evnex_explore.py
+    itself now writes them (fixed 2026-09-14, real-data-in-tree audit;
+    both used to default into the repo's own Tessie/ folder)."""
+    if not os.path.isdir(TESSIE_DATA_HOME):
+        return None
     candidates = [
-        f for f in os.listdir(tessie_dir)
+        f for f in os.listdir(TESSIE_DATA_HOME)
         if f.startswith("evnex_explore_") and f.endswith(".json")
     ]
     if not candidates:
         return None
     candidates.sort()
-    return os.path.join(tessie_dir, candidates[-1])
+    return os.path.join(TESSIE_DATA_HOME, candidates[-1])
 
 
 def load_evnex_sessions(evnex_dump_path):

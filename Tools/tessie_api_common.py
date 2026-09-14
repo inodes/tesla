@@ -20,7 +20,6 @@ import urllib.request
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 REPO_ROOT = os.path.dirname(SCRIPT_DIR)
 CONFIG_PATH = os.path.join(REPO_ROOT, "Tessie", "config.json")
-VEHICLE_SPEC_PATH = os.path.join(REPO_ROOT, "Tessie", "vehicle_spec.json")
 API_BASE = "https://api.tessie.com"
 
 # Matches this repo's CSV convention (see Tessie/TESSIE_API.md) - the API
@@ -44,12 +43,14 @@ def load_config():
 
 def load_vehicle_spec():
     """This car's own real specs (curb weight, battery gross/usable
-    capacity, drag coefficient, WLTP/GVG reference efficiency figures) -
-    mirrors load_config() exactly, same "small settings file beside
-    config.json, gitignored, real values never committed" convention
-    (see Tessie/vehicle_spec.example.json for the schema/placeholder
-    values, and Section 1 of AGENTS.md for why real data doesn't live
-    in the repo tree at all beyond a small settings file like this).
+    capacity, drag coefficient, WLTP/GVG reference efficiency figures).
+    Lives in the external tessie_directory home alongside every other
+    real-data file (see vehicle_spec.example.json for the schema/
+    placeholder values), resolved via resolve_tessie_data_home() - not
+    hardcoded beside this script - per AGENTS.md's Zero-PII / "PII Never
+    Lives in the Repo Working Tree At All" rule (REQ-034). An earlier
+    version of this function hardcoded the path beside config.json in
+    the repo tree; fixed 2026-09-14 during the real-data-in-tree audit.
 
     Kept here rather than as hardcoded constants in any one script (its
     first consumer was car_efficiency_profile.py's grade-corrected
@@ -59,9 +60,10 @@ def load_vehicle_spec():
     whatever - reads the same one file instead of a second drifting
     copy of the same numbers. Returns {} if the file doesn't exist yet
     or fails to parse, exactly like load_config()."""
-    if os.path.isfile(VEHICLE_SPEC_PATH):
+    path = os.path.join(resolve_tessie_data_home(), "vehicle_spec.json")
+    if os.path.isfile(path):
         try:
-            with open(VEHICLE_SPEC_PATH, "r", encoding="utf-8") as f:
+            with open(path, "r", encoding="utf-8") as f:
                 return json.load(f)
         except Exception:
             pass
