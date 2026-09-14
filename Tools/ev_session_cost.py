@@ -103,6 +103,7 @@ from datetime import datetime, timedelta, timezone
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from agl_common import resolve_agl_data_home  # noqa: E402
 from agl_demand_calculator import load_rate_periods, rate_for_date  # noqa: E402
+from evnex_common import is_real_charging_session  # noqa: E402
 from tessie_api_common import resolve_tessie_data_home  # noqa: E402
 from zoneinfo import ZoneInfo  # noqa: E402
 
@@ -368,6 +369,22 @@ def main():
         print("No matching Evnex deep-dive sessions found.")
         return 1
 
+    # A session that delivered ~zero energy is a connection blip (charger
+    # pairing/testing, a momentary plug/unplug, a start that never drew
+    # power) rather than a real charge - see evnex_common.
+    # is_real_charging_session()'s own docstring for how this was found
+    # (a real charger swap producing 5 of these, plus 23 more already on
+    # disk predating it). Excluded from every count/total below, but
+    # never silently - the excluded count is always reported.
+    def _attrs(s):
+        return (s.get("session", {}) or {}).get("attributes", {}) or {}
+
+    blips = [s for s in sessions if not is_real_charging_session(_attrs(s))]
+    sessions = [s for s in sessions if is_real_charging_session(_attrs(s))]
+    if not sessions:
+        print(f"All {len(blips)} matching session(s) look like connection blips (0 kWh) - nothing real to evaluate.")
+        return 0
+
     try:
         periods = load_rate_periods()
     except FileNotFoundError as e:
@@ -376,7 +393,8 @@ def main():
 
     results = [evaluate_session(s, periods, master_path=args.usage_master) for s in sessions]
 
-    print(f"=== {len(results)} home-charging session(s) ===\n")
+    blip_note = f" ({len(blips)} connection blip(s) excluded - 0 kWh, not real charges)" if blips else ""
+    print(f"=== {len(results)} home-charging session(s) ==={blip_note}\n")
     for r in results:
         print_session(r)
 
@@ -398,7 +416,7 @@ def main():
     n_conflict = sum(1 for r in results if r["conflict"])
 
     print("=== Totals ===")
-    print(f"  {len(results)} session(s), {total_kwh:.3f} kWh total")
+    print(f"  {len(results)} session(s), {total_kwh:.3f} kWh total{blip_note}")
     print(f"  base cost (100% grid, every session)                         : ${total_base:.2f} ex GST -> ${total_base_incl_gst:.2f} incl GST")
     print(f"  blended best estimate (Evnex split where available, {n_adjusted}/{len(results)} sessions,")
     print(f"                         base cost for the rest)               : ${total_blended:.2f} ex GST -> ${total_blended_incl_gst:.2f} incl GST")

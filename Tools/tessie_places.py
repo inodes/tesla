@@ -33,12 +33,25 @@ from collections import defaultdict
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 REPO_ROOT = os.path.dirname(SCRIPT_DIR)
 TESSIE_DIR = os.path.join(REPO_ROOT, "Tessie")
-PLACES_JSON_PATH = os.path.join(TESSIE_DIR, "places.json")
 CONFIG_JSON_PATH = os.path.join(TESSIE_DIR, "config.json")
 DRIVES_MASTER_PATH = os.path.join(TESSIE_DIR, "drives", "drives_master.csv")
 CHARGING_JSON_PATH = os.path.join(TESSIE_DIR, "tesla_chargers.json") if os.path.isfile(os.path.join(TESSIE_DIR, "tesla_chargers.json")) else os.path.join(TESSIE_DIR, "charging.json")
 SUPERCHARGERS_JSON_PATH = os.path.join(TESSIE_DIR, "tesla_superchargers.json") if os.path.isfile(os.path.join(TESSIE_DIR, "tesla_superchargers.json")) else os.path.join(TESSIE_DIR, "superchargers.json")
-IGNORED_JSON_PATH = os.path.join(TESSIE_DIR, "ignored_places.json")
+
+# places.json/ignored_places.json are real personal data (named places,
+# home/work coordinates) - per AGENTS.md's Zero-PII / "PII Never Lives in
+# the Repo Working Tree At All" rule (REQ-034), they resolve through the
+# same external tessie_directory home every other real-data script uses,
+# not a path hardcoded beside this script. sys.path[0] already has this
+# directory (Tools/) when run directly, matching find_chargers.py's own
+# use of this same import (added 2026-09-14, real-data-in-tree audit).
+try:
+    from tessie_api_common import resolve_tessie_data_home as _resolve_tessie_data_home
+    _REAL_TESSIE_DIR = _resolve_tessie_data_home()
+except Exception:
+    _REAL_TESSIE_DIR = TESSIE_DIR
+PLACES_JSON_PATH = os.path.join(_REAL_TESSIE_DIR, "places.json")
+IGNORED_JSON_PATH = os.path.join(_REAL_TESSIE_DIR, "ignored_places.json")
 
 # ---------------------------------------------------------------------------
 # Unicode & Terminal Display Utilities
@@ -77,17 +90,6 @@ def haversine_distance(lat1, lon1, lat2, lon2):
     return R * c
 
 # ---------------------------------------------------------------------------
-# Drive Synchronization
-# ---------------------------------------------------------------------------
-def sync_places_file(source_path=PLACES_JSON_PATH):
-    """
-    No-op retained for call-site compatibility. TESLADRIVE* volumes are
-    reserved exclusively for dashcam/TeslaCam media - places.json (which
-    contains real personal addresses) is never copied there. Tessie data
-    and tooling run directly from the repository and iCloud only.
-    """
-    return []
-
 # ---------------------------------------------------------------------------
 # Places JSON Storage Manager (Only touches places.json, leaves chargers alone)
 # ---------------------------------------------------------------------------
@@ -103,7 +105,7 @@ def load_places(path=PLACES_JSON_PATH):
         return {}
 
 def save_places(places, path=PLACES_JSON_PATH):
-    """Sorts keys and atomically saves places dictionary to places.json, then syncs to drives."""
+    """Sorts keys and atomically saves places dictionary to places.json."""
     sorted_places = dict(sorted(places.items(), key=lambda x: x[0].lower()))
     
     dir_name = os.path.dirname(os.path.abspath(path))
@@ -120,8 +122,7 @@ def save_places(places, path=PLACES_JSON_PATH):
             os.remove(temp_path)
         raise e
 
-    synced = sync_places_file(path)
-    return synced
+    return True
 
 # ---------------------------------------------------------------------------
 # Ignored Stop Clusters (clusters the user has decided aren't worth naming)
@@ -606,12 +607,8 @@ def interactive_lookup_and_add(query_or_addr=None, lat=None, lon=None, default_r
         "notes": notes
     }
 
-    synced = save_places(places)
+    save_places(places)
     print(f"\n✔ Successfully saved \"{selected_name}\" to places.json (Center: {final_lat:.5f}, {final_lon:.5f}, Radius: {radius_m}m)!")
-    if synced:
-        for s in synced:
-            print(f"✔ Synced to {s}")
-    
     return selected_name
 
 # ---------------------------------------------------------------------------
@@ -941,11 +938,8 @@ def review_single_cluster(cl, places, total_clusters=1, cluster_num=1, allow_ign
         "keywords": keywords,
         "notes": notes
     }
-    synced = save_places(places)
+    save_places(places)
     print(f"✔ Saved \"{selected_name}\" to places.json (Center: {final_lat:.5f}, {final_lon:.5f}, Radius: {radius_m}m)!")
-    if synced:
-        for s in synced:
-            print(f"✔ Synced to {s}")
     return True
 
 # ---------------------------------------------------------------------------
@@ -1296,11 +1290,8 @@ def cmd_add(args):
         "notes": notes
     }
 
-    synced = save_places(places)
+    save_places(places)
     print(f"✔ Successfully added \"{name}\" to places.json!")
-    if synced:
-        for s in synced:
-            print(f"✔ Synced to {s}")
 
 def cmd_remove(args):
     places = load_places()
@@ -1309,11 +1300,8 @@ def cmd_remove(args):
         print(f"❌ Place \"{name}\" not found in places.json.")
         return
     del places[name]
-    synced = save_places(places)
+    save_places(places)
     print(f"✔ Removed \"{name}\" from places.json.")
-    if synced:
-        for s in synced:
-            print(f"✔ Synced to {s}")
 
 def cmd_rename(args):
     places = load_places()
@@ -1327,11 +1315,8 @@ def cmd_rename(args):
         return
     data = places.pop(old_name)
     places[new_name] = data
-    synced = save_places(places)
+    save_places(places)
     print(f"✔ Renamed \"{old_name}\" to \"{new_name}\".")
-    if synced:
-        for s in synced:
-            print(f"✔ Synced to {s}")
 
 def cmd_update(args):
     places = load_places()
@@ -1398,11 +1383,8 @@ def cmd_update(args):
 
     if changed:
         places[target_key] = data
-        synced = save_places(places)
+        save_places(places)
         print(f"✔ Successfully updated \"{target_key}\" in places.json.")
-        if synced:
-            for s in synced:
-                print(f"✔ Synced to {s}")
     else:
         print("ℹ️ No changes specified.")
 
@@ -1448,11 +1430,8 @@ def cmd_alias(args):
 
     data["keywords"] = current_kws
     places[target_key] = data
-    synced = save_places(places)
+    save_places(places)
     print(f"✔ Aliased to \"{target_key}\": added {added_kws}")
-    if synced:
-        for s in synced:
-            print(f"✔ Synced to {s}")
 
 # ---------------------------------------------------------------------------
 # CLI Command: Interactive Place Editor
@@ -1519,11 +1498,8 @@ def interactive_edit_place(name, places):
                     else:
                         places[new_n] = places.pop(curr_name)
                         curr_name = new_n
-                        synced = save_places(places)
+                        save_places(places)
                         print(f"✔ Renamed to \"{curr_name}\"")
-                        if synced:
-                            for s in synced:
-                                print(f"✔ Synced to {s}")
             except (EOFError, KeyboardInterrupt):
                 pass
         elif choice == "2":
@@ -1535,11 +1511,8 @@ def interactive_edit_place(name, places):
                         if new_r > 0:
                             data["radius_m"] = new_r
                             places[curr_name] = data
-                            synced = save_places(places)
+                            save_places(places)
                             print(f"✔ Radius updated to {new_r}m")
-                            if synced:
-                                for s in synced:
-                                    print(f"✔ Synced to {s}")
                     except ValueError:
                         print("❌ Invalid radius number.")
             except (EOFError, KeyboardInterrupt):
@@ -1553,13 +1526,10 @@ def interactive_edit_place(name, places):
                         data["lat"] = round(n_lat, 5)
                         data["lon"] = round(n_lon, 5)
                         places[curr_name] = data
-                        synced = save_places(places)
+                        save_places(places)
                         print(f"✔ Coordinates updated to: {data['lat']}, {data['lon']}")
                         if n_addr:
                             print(f"   Address: {n_addr}")
-                        if synced:
-                            for s in synced:
-                                print(f"✔ Synced to {s}")
                     else:
                         print("❌ Failed to parse coordinates or geocode address.")
             except (EOFError, KeyboardInterrupt):
@@ -1576,11 +1546,8 @@ def interactive_edit_place(name, places):
                             added.append(k)
                     if added:
                         places[curr_name] = data
-                        synced = save_places(places)
+                        save_places(places)
                         print(f"✔ Added keyword(s): {', '.join(added)}")
-                        if synced:
-                            for s in synced:
-                                print(f"✔ Synced to {s}")
                     else:
                         print("ℹ️ All keywords already present.")
             except (EOFError, KeyboardInterrupt):
@@ -1605,11 +1572,8 @@ def interactive_edit_place(name, places):
                         new_kws = [kw for i, kw in enumerate(kws) if i not in indices]
                         data["keywords"] = new_kws
                         places[curr_name] = data
-                        synced = save_places(places)
+                        save_places(places)
                         print(f"✔ Removed keyword(s): {', '.join(removed)}")
-                        if synced:
-                            for s in synced:
-                                print(f"✔ Synced to {s}")
             except (EOFError, KeyboardInterrupt):
                 pass
         elif choice == "6":
@@ -1619,11 +1583,8 @@ def interactive_edit_place(name, places):
                     new_kws = [k.strip() for k in all_k_in.split(",") if k.strip()]
                     data["keywords"] = new_kws
                     places[curr_name] = data
-                    synced = save_places(places)
+                    save_places(places)
                     print(f"✔ Keywords updated: {', '.join(new_kws)}")
-                    if synced:
-                        for s in synced:
-                            print(f"✔ Synced to {s}")
             except (EOFError, KeyboardInterrupt):
                 pass
         elif choice == "7":
@@ -1632,11 +1593,8 @@ def interactive_edit_place(name, places):
                 if note_in:
                     data["notes"] = note_in
                     places[curr_name] = data
-                    synced = save_places(places)
+                    save_places(places)
                     print(f"✔ Notes updated to: \"{note_in}\"")
-                    if synced:
-                        for s in synced:
-                            print(f"✔ Synced to {s}")
             except (EOFError, KeyboardInterrupt):
                 pass
         elif choice == "8":
@@ -1666,11 +1624,8 @@ def interactive_edit_place(name, places):
                             places[selected_poi["name"]] = places.pop(curr_name)
                             curr_name = selected_poi["name"]
                     places[curr_name] = data
-                    synced = save_places(places)
+                    save_places(places)
                     print(f"✔ Updated coordinates to ({data['lat']}, {data['lon']})")
-                    if synced:
-                        for s in synced:
-                            print(f"✔ Synced to {s}")
             except (EOFError, KeyboardInterrupt):
                 pass
         elif choice == "d":
@@ -1678,11 +1633,8 @@ def interactive_edit_place(name, places):
                 confirm = input(f"⚠️ Are you sure you want to permanently delete \"{curr_name}\"? [y/N]: ").strip().lower()
                 if confirm == "y":
                     del places[curr_name]
-                    synced = save_places(places)
+                    save_places(places)
                     print(f"✔ Deleted \"{curr_name}\" from places.json.")
-                    if synced:
-                        for s in synced:
-                            print(f"✔ Synced to {s}")
                     return "deleted", places
             except (EOFError, KeyboardInterrupt):
                 pass

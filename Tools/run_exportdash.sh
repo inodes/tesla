@@ -204,13 +204,33 @@ if [[ -z "$DOCKER_BIN" ]]; then
     exit 1
 fi
 
-# Auto-start Docker Desktop daemon if inactive
+# Auto-start the matching engine's daemon if inactive.
+# Determine WHICH app to launch from the binary resolve_docker_binary() actually
+# chose above, not "Docker Desktop whenever it happens to be installed" - the
+# previous version always preferred Docker.app over OrbStack.app when both were
+# present, regardless of which docker CLI DOCKER_BIN pointed at, so an
+# OrbStack-resolved DOCKER_BIN still spun up Docker Desktop's own (much larger,
+# needs manual cleanup) VM disk image unnecessarily (BUG-069).
 if ! "$DOCKER_BIN" info >/dev/null 2>&1; then
-    echo "${YELLOW}⚙ Docker daemon not running. Launching Docker Desktop...${RESET}"
-    if [[ -d "/Applications/Docker.app" ]]; then
-        open -g -a Docker || true
+    RESOLVED_BIN="$(readlink -f "$DOCKER_BIN" 2>/dev/null || echo "$DOCKER_BIN")"
+    ENGINE_APP=""
+    if [[ "$RESOLVED_BIN" == *[Oo]rb[Ss]tack* || "$DOCKER_BIN" == *[Oo]rb[Ss]tack* ]]; then
+        ENGINE_APP="OrbStack"
+    elif [[ "$RESOLVED_BIN" == *"Docker.app"* || "$DOCKER_BIN" == *"Docker.app"* ]]; then
+        ENGINE_APP="Docker"
     elif [[ -d "/Applications/OrbStack.app" ]]; then
-        open -g -a OrbStack || true
+        # Ambiguous resolution (e.g. a generic /usr/local/bin/docker shim) with
+        # OrbStack installed - prefer it over Docker Desktop by default.
+        ENGINE_APP="OrbStack"
+    elif [[ -d "/Applications/Docker.app" ]]; then
+        ENGINE_APP="Docker"
+    fi
+
+    if [[ -n "$ENGINE_APP" ]]; then
+        echo "${YELLOW}⚙ Docker daemon not running. Launching ${ENGINE_APP}...${RESET}"
+        open -g -a "$ENGINE_APP" || true
+    else
+        echo "${YELLOW}⚙ Docker daemon not running, and no matching app (OrbStack/Docker Desktop) was found to auto-launch.${RESET}"
     fi
 
     printf "${DIM}Waiting for Docker daemon to become responsive...${RESET}"

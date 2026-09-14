@@ -639,6 +639,7 @@ def _backfill_charge_deepdive(limit, pace_seconds, since_days, tessie_dir):
     since_dt = _since_cutoff(since_days)
 
     fetched, skipped_in_progress, already_had, failed = 0, 0, 0, 0
+    skipped_invoice_only = 0
     total_candidates = 0
 
     for s in charges:
@@ -646,6 +647,9 @@ def _backfill_charge_deepdive(limit, pace_seconds, since_days, tessie_dir):
             continue
         if analyzer.match_detailed_charge(s):
             already_had += 1
+            continue
+        if getattr(analyzer, "is_invoice_only", lambda c: c.get("duration_mins", 0) <= 0 and c.get("odometer_km", 0) <= 0)(s):
+            skipped_invoice_only += 1
             continue
         # AGENTS.md REQ-050: home Evnex sessions are no longer skipped here
         # - fetch_charge_deepdive_from_api() now covers them too (Tessie
@@ -674,8 +678,9 @@ def _backfill_charge_deepdive(limit, pace_seconds, since_days, tessie_dir):
 
     since_note = f" starting {since_dt.date()}" if since_dt else ""
     print(f"   Checked {len(charges)} total charging session(s) in charges_master.csv{since_note}.")
+    inv_note = f", {skipped_invoice_only} invoice-only (no telemetry)" if skipped_invoice_only else ""
     print(f"   Charges: {fetched} fetched, {failed} failed, {skipped_in_progress} in-progress (skipped), "
-          f"{already_had} already had local telemetry.")
+          f"{already_had} already had local telemetry{inv_note}.")
     remaining = total_candidates - fetched - skipped_in_progress - failed
     if limit is not None and remaining > 0:
         print(f"   ({remaining} more session(s) still missing telemetry - re-run to continue, or raise --limit.)")

@@ -181,21 +181,25 @@ def shorten_display_path(p, max_len=40):
         p_str = "…" + p_str[-(max_len - 1):]
     return p_str
 
-def wrap_text_display(s, max_width):
+def wrap_text_display(s, max_width, indent="    "):
     clean = re.sub(r"\033\[[0-9;]*m", "", s)
     if display_len(clean) <= max_width:
         return [s]
-    words = s.split(" ")
+    words = [w for w in s.split(" ") if w]
     lines = []
     current = ""
     for w in words:
-        candidate = f"{current} {w}".strip() if current else w
+        if not current:
+            prefix = indent if lines else "    "
+            candidate = f"{prefix}{w}"
+        else:
+            candidate = f"{current} {w}"
         if display_len(candidate) <= max_width:
             current = candidate
         else:
             if current:
                 lines.append(current)
-            current = w
+            current = f"{indent}{w}"
     if current:
         lines.append(current)
     return lines or [s]
@@ -206,7 +210,8 @@ C_BOLD    = "\033[1m"
 C_DIM     = "\033[2m"
 C_RED     = "\033[91m"
 C_GREEN   = "\033[92m"
-C_YELLOW  = "\033[93m"
+C_ORANGE  = "\033[38;5;214m"
+C_YELLOW  = C_ORANGE
 C_BLUE    = "\033[94m"
 C_MAGENTA = "\033[95m"
 C_CYAN    = "\033[96m"
@@ -282,6 +287,13 @@ def parse_flexible_date(date_str):
 
     d_clean = re.sub(r"\s+(?:AEST|AEDT|UTC|GMT|[A-Z]{3,4})$", "", d_clean, flags=re.IGNORECASE).strip()
 
+    # Try ISO 8601 format (e.g. 2026-09-05T00:47:11Z)
+    try:
+        iso_clean = d_clean.replace("Z", "+00:00")
+        return datetime.fromisoformat(iso_clean)
+    except Exception:
+        pass
+
     for fmt in DATE_FORMATS:
         try:
             return datetime.strptime(d_clean, fmt)
@@ -291,14 +303,6 @@ def parse_flexible_date(date_str):
 
 def clean_tokens(s):
     return set(re.findall(r"\w+", (s or "").lower()))
-
-def find_mounted_tesla_volumes(subdir=None):
-    """
-    No-op retained for call-site compatibility. TESLADRIVE* volumes are
-    reserved exclusively for dashcam/TeslaCam media - Tessie data and
-    charging tooling run directly from the repository and iCloud only.
-    """
-    return []
 
 # -----------------------------------------------------------------------------
 # Pure Python PDF & CSV Invoice Parser
@@ -815,7 +819,7 @@ class TessieChargingAnalyzer:
             os.path.join(self.script_dir, "Tessie"),
             os.path.expanduser("~/iCloud/repos/tesla/Tessie"),
             self.icloud_dir
-        ] + find_mounted_tesla_volumes("Tessie")
+        ]
         seen_tessie_dirs = set()
         for d in candidates_tessie:
             try:
@@ -891,7 +895,7 @@ class TessieChargingAnalyzer:
                 os.path.expanduser("~/Documents/Tesla/Invoices"),
                 os.path.expanduser("~/Downloads/Tesla Invoices"),
                 os.path.expanduser("~/Downloads/Invoices")
-            ] + find_mounted_tesla_volumes("Tessie/invoices") + find_mounted_tesla_volumes("invoices")
+            ]
             seen_inv_dirs = set()
             for d in candidates_invoices:
                 try:
@@ -908,8 +912,19 @@ class TessieChargingAnalyzer:
         self.superchargers_archived = self.load_json_registry("tesla_superchargers_archived.json") or self.load_json_registry("superchargers_archived.json")
         self.personal_chargers = self.load_json_registry("personal_chargers.json")
         self.plugshare_chargers = self.load_json_registry("plugshare_chargers.json")
+        self.plugshare_archived = self.load_json_registry("plugshare_chargers_archived.json")
+        self.chargefox_chargers = self.load_json_registry("chargefox_chargers.json")
+        self.chargefox_archived = self.load_json_registry("chargefox_chargers_archived.json")
+        self.evie_chargers = self.load_json_registry("evie_chargers.json")
+        self.evie_archived = self.load_json_registry("evie_chargers_archived.json")
+        self.evx_chargers = self.load_json_registry("evx_chargers.json")
+        self.evx_archived = self.load_json_registry("evx_chargers_archived.json")
+        self.bppulse_chargers = self.load_json_registry("bppulse_chargers.json")
+        self.bppulse_archived = self.load_json_registry("bppulse_chargers_archived.json")
         self.charging_stations = self.load_json_registry("tesla_chargers.json") or self.load_json_registry("charging.json") or self.load_json_registry("destination_chargers.json")
         self.charging_archived = self.load_json_registry("tesla_chargers_archived.json") or self.load_json_registry("charging_archived.json") or self.load_json_registry("destination_chargers_archived.json")
+        self.consolidated_stations = self.load_json_registry("charging_stations.json")
+        self.consolidated_archived = self.load_json_registry("charging_stations_archived.json")
         self.places = self.load_json_registry("places.json")
 
         # Invoice-number -> resolved location, written out beside the
@@ -951,7 +966,7 @@ class TessieChargingAnalyzer:
             os.path.join(self.repo_root, "config.json"),
             os.path.expanduser("~/.config/tesla/config.json"),
             os.path.join(self.icloud_dir, "config.json")
-        ] + [os.path.join(v, "config.json") for v in find_mounted_tesla_volumes("Tessie")]
+        ]
         for cp in config_candidates:
             if cp and os.path.isfile(cp):
                 try:
@@ -965,6 +980,38 @@ class TessieChargingAnalyzer:
         return {}
 
     def load_json_registry(self, filename):
+        """Loads one Tessie/<filename> hardware/station registry, tolerant
+        of two on-disk shapes: the long-standing flat {name: {...station
+        dict...}} convention every consumer here expects, and a raw
+        scraper-output wrapper like {"version": ..., "updated_at": ...,
+        "station_count": N, "stations": [...]} - some provider scrapers
+        (e.g. find_chargers.py's Chargefox output, seen 2026-09-14) write
+        THIS shape directly into chargefox_chargers.json instead of the
+        normalized dict, with "stations" as a LIST of raw API objects, not
+        a dict. The pre-existing unwrap below only handled a dict-shaped
+        "stations" (the older "multi-view consolidated file" case); a
+        list-shaped one fell through untouched, so "version"/"updated_at"/
+        "station_count" got copied straight into the registry as if they
+        were station entries - each a bare str/int, not a dict - and every
+        later consumer (_resolve_location_candidates() etc, which assumes
+        every registry value has a real hardware dict's .get()) crashed
+        with "'str' object has no attribute 'get'" on the very first
+        resolve_location() call. Confirmed live 2026-09-14: this took down
+        charge/invoice reconciliation entirely (--unreconciled) the moment
+        a Chargefox re-scrape landed mid-session.
+
+        A list is now converted to a dict keyed by each entry's own
+        "name"/"id" (falling back to a positional key, de-duped), and any
+        entry that still isn't a dict after that - stray metadata scalars,
+        chiefly - is skipped rather than stored, so a future schema
+        surprise degrades (that one provider's stations are silently
+        thinner/missing) instead of crashing every registry consumer.
+        Note: a raw provider object's OWN fields (e.g. Chargefox's "lat"/
+        "lng", no "keywords", no "network") don't match the normalized
+        schema _candidate_geo()/_candidate_keywords()/_candidate_result()
+        expect either - full support needs that provider's own normalizer
+        (see Tools/providers/), not just this loader. This only guarantees
+        the loader itself never crashes the rest of the pipeline."""
         data = {}
         for td in self.tessie_dirs:
             p = os.path.join(td, filename)
@@ -973,9 +1020,47 @@ class TessieChargingAnalyzer:
                     with open(p, "r", encoding="utf-8") as f:
                         loaded = json.load(f)
                         if isinstance(loaded, dict):
+                            # Handle multi-view consolidated file schema where stations dictionary is wrapped in 'stations'
+                            if "stations" in loaded and isinstance(loaded["stations"], dict):
+                                loaded = loaded["stations"]
+                            elif "stations" in loaded and isinstance(loaded["stations"], list):
+                                converted = {}
+                                for i, item in enumerate(loaded["stations"]):
+                                    if not isinstance(item, dict):
+                                        continue
+                                    key = str(item.get("name") or item.get("id") or f"station_{i}")
+                                    if key in converted:
+                                        key = f"{key}_{i}"
+                                    converted[key] = item
+                                loaded = converted
                             for k, v in loaded.items():
-                                if k not in data:
-                                    data[k] = v
+                                # An *_archived.json entry legitimately
+                                # stores a LIST of historical snapshots once
+                                # a station has been re-verified with real
+                                # changes more than once (get_expected_
+                                # tariff_rate() already normalizes this via
+                                # "if isinstance(candidates, dict):
+                                # candidates = [candidates]" a few hundred
+                                # lines down) - this filter used to require
+                                # isinstance(v, dict) for EVERY value, which
+                                # silently dropped every list-shaped archive
+                                # entry entirely. Confirmed live 2026-09-14
+                                # (BUG-065, AGENTS.local.md): all 8 keys in
+                                # tesla_superchargers_archived.json are now
+                                # lists (multiple re-verifications this
+                                # session), so self.superchargers_archived
+                                # loaded EMPTY - silently breaking every
+                                # archived-tariff lookup in
+                                # get_expected_tariff_rate() and the new
+                                # resolve_effective_registry_entry(), not
+                                # just the invoice renamer that surfaced it.
+                                if isinstance(v, dict):
+                                    if k not in data:
+                                        data[k] = v
+                                elif isinstance(v, list):
+                                    valid_items = [item for item in v if isinstance(item, dict)]
+                                    if valid_items and k not in data:
+                                        data[k] = valid_items
                 except Exception:
                     pass
         return data
@@ -993,10 +1078,16 @@ class TessieChargingAnalyzer:
         for sc_name, sc_data in self.superchargers.items():
             candidates.append(("supercharger", sc_name, sc_data))
         for reg, source_type in [(self.personal_chargers, "personal"),
+                                  (self.charging_stations, "destination"),
+                                  (self.chargefox_chargers, "chargefox"),
+                                  (self.evie_chargers, "evie"),
+                                  (self.evx_chargers, "evx"),
+                                  (self.bppulse_chargers, "bppulse"),
                                   (self.plugshare_chargers, "plugshare"),
-                                  (self.charging_stations, "destination")]:
-            for st_name, st_data in reg.items():
-                candidates.append((source_type, st_name, st_data))
+                                  (self.consolidated_stations, "consolidated")]:
+            if reg:
+                for st_name, st_data in reg.items():
+                    candidates.append((source_type, st_name, st_data))
         for p_name, p_data in self.places.items():
             candidates.append(("place", p_name, p_data))
         self._loc_candidates = candidates
@@ -1080,15 +1171,21 @@ class TessieChargingAnalyzer:
         if kind == "place":
             nickname = data.get("nickname") or name
             emoji = "🔴" if is_supercharger else ("🔌" if is_fast else "🅿️")
-            net = "Tesla Supercharger" if is_supercharger else ("DC Fast" if is_fast else "Destination AC")
+            net = "Tesla Supercharger" if is_supercharger else ("DC Fast" if is_fast else "AC Public")
             return (nickname, net, emoji, data)
-        # personal / plugshare / destination
+        # personal / plugshare / destination / consolidated
         st_type = data.get("type", "ac")
         network = (data.get("network") or data.get("operator")
                    or data.get("plugshare_metadata", {}).get("network")
                    or ("Evnex" if st_type == "home" else "3rd-Party"))
         short_name = data.get("name") or name
-        emoji = "🏠" if st_type == "home" or kind == "personal" else ("🔌" if st_type == "dc_fast" or kind == "plugshare" else "🅿️")
+        is_dest = "destination" in str(short_name).lower() or "destination" in str(network).lower() or kind == "destination"
+        if st_type == "home" or kind == "personal":
+            emoji = "🏠"
+        elif is_dest:
+            emoji = "🅿️"
+        else:
+            emoji = "⚡" if (is_fast or st_type == "dc_fast" or "supercharger" in str(network).lower()) else "🔌"
         return (short_name, network, emoji, data)
 
     def resolve_location(self, address, saved_loc="", lat=None, lon=None, is_supercharger=False, is_fast=False):
@@ -1270,6 +1367,81 @@ class TessieChargingAnalyzer:
         except Exception:
             pass
 
+    def resolve_effective_registry_entry(self, registry_obj, dt, place_name=None):
+        """
+        Returns (target_obj, is_archived) - the registry entry that was
+        actually effective at datetime dt, consulting the archived
+        registries' own valid_from/valid_to windows when they cover dt
+        (falling back to the current registry_obj otherwise). Extracted
+        from get_expected_tariff_rate()'s existing archived-lookup block on
+        2026-09-14 (BUG-063, AGENTS.local.md) so callers other than tariff
+        calculation - starting with rename_invoices() - can look up the
+        name/short_name that was true at a given historic date instead of
+        always using whatever the CURRENT registry entry says.
+
+        rename_invoices() was using matched_session["registry_obj"]'s
+        CURRENT short_name unconditionally regardless of the invoice's own
+        date, so when West Gosford, NSW was renamed to Gosford, NSW on
+        2026-09-13, it silently "fixed" two already-correctly-named historic
+        invoices (2026-06-25, 2026-08-01 - both inside the archived West
+        Gosford window) to the wrong, current name. Those two files were
+        already renamed on disk before this fix landed and need a follow-up
+        run of the (now-fixed) renamer to put them back.
+        """
+        target_obj = registry_obj
+        is_archived = False
+        if not dt:
+            return target_obj, is_archived
+
+        lookup_name = place_name or (registry_obj.get("tesla_metadata", {}).get("name") if registry_obj else None) or (registry_obj.get("name") if registry_obj else None)
+        if not lookup_name:
+            return target_obj, is_archived
+
+        archived_sources = [
+            self.superchargers_archived,
+            self.charging_archived,
+            self.consolidated_archived,
+            self.chargefox_archived,
+            self.evie_archived,
+            self.evx_archived,
+            self.plugshare_archived
+        ]
+        candidates = None
+        for arch_dict in archived_sources:
+            if not arch_dict or not isinstance(arch_dict, dict):
+                continue
+            if lookup_name in arch_dict:
+                candidates = arch_dict[lookup_name]
+                break
+            for k, v in arch_dict.items():
+                if k.lower() == lookup_name.lower() or k.lower() in lookup_name.lower() or lookup_name.lower() in k.lower():
+                    candidates = v
+                    break
+            if candidates:
+                break
+
+        if candidates:
+            if isinstance(candidates, dict):
+                candidates = [candidates]
+            for cand in candidates:
+                v_from_str = cand.get("valid_from")
+                v_to_str = cand.get("valid_to") or cand.get("archived_at")
+                v_from_dt = parse_flexible_date(v_from_str) if v_from_str else None
+                v_to_dt = parse_flexible_date(v_to_str) if v_to_str else None
+                v_from = v_from_dt if v_from_dt is not None else datetime.min
+                v_to = v_to_dt if v_to_dt is not None else datetime.max
+                if v_from and v_from.tzinfo:
+                    v_from = v_from.replace(tzinfo=None)
+                if v_to and v_to.tzinfo:
+                    v_to = v_to.replace(tzinfo=None)
+                check_dt = dt.replace(tzinfo=None) if dt.tzinfo else dt
+                if v_from <= check_dt <= v_to:
+                    target_obj = cand
+                    is_archived = True
+                    break
+
+        return target_obj, is_archived
+
     def get_expected_tariff_rate(self, registry_obj, dt, place_name=None, is_non_tesla=False):
         """
         Determines the expected tariff rate ($/kWh), TOU schedule name, theoretical cost,
@@ -1289,14 +1461,31 @@ class TessieChargingAnalyzer:
         is_archived = False
 
         # Try to find historical archived version matching timestamp dt
-        lookup_name = place_name or (registry_obj.get("tesla_metadata", {}).get("name") if registry_obj else None)
+        lookup_name = place_name or (registry_obj.get("tesla_metadata", {}).get("name") if registry_obj else None) or (registry_obj.get("name") if registry_obj else None)
         if lookup_name:
-            candidates = self.superchargers_archived.get(lookup_name) or self.charging_archived.get(lookup_name)
-            if not candidates:
-                for k, v in self.superchargers_archived.items():
-                    if k.lower() in lookup_name.lower() or lookup_name.lower() in k.lower():
+            archived_sources = [
+                self.superchargers_archived,
+                self.charging_archived,
+                self.consolidated_archived,
+                self.chargefox_archived,
+                self.evie_archived,
+                self.evx_archived,
+                self.plugshare_archived
+            ]
+            candidates = None
+            for arch_dict in archived_sources:
+                if not arch_dict or not isinstance(arch_dict, dict):
+                    continue
+                if lookup_name in arch_dict:
+                    candidates = arch_dict[lookup_name]
+                    break
+                for k, v in arch_dict.items():
+                    if k.lower() == lookup_name.lower() or k.lower() in lookup_name.lower() or lookup_name.lower() in k.lower():
                         candidates = v
                         break
+                if candidates:
+                    break
+
             if candidates:
                 if isinstance(candidates, dict):
                     candidates = [candidates]
@@ -1321,7 +1510,16 @@ class TessieChargingAnalyzer:
         if not target_obj and lookup_name:
             ln_lower = lookup_name.lower().strip()
             for sc_k, sc_v in self.superchargers.items():
-                if sc_k.lower() == ln_lower or ln_lower in sc_k.lower() or sc_k.lower() in ln_lower:
+                meta = sc_v.get("tesla_metadata", {})
+                st_id = str(sc_v.get("id", "")).strip() or str(meta.get("findus_id", "")).strip()
+                aliases = [str(a).lower() for a in sc_v.get("aliases", [])]
+                addresses = [str(addr).lower() for addr in sc_v.get("addresses", [])]
+                keywords = [str(kw).lower() for kw in meta.get("keywords", [])]
+                if (sc_k.lower() == ln_lower or ln_lower in sc_k.lower() or sc_k.lower() in ln_lower or
+                    ln_lower == st_id or
+                    ln_lower in aliases or any(ln_lower in a or a in ln_lower for a in aliases) or
+                    any(ln_lower in addr or addr in ln_lower for addr in addresses) or
+                    any(ln_lower in kw or kw in ln_lower for kw in keywords)):
                     target_obj = sc_v
                     break
             if not target_obj:
@@ -1489,6 +1687,23 @@ class TessieChargingAnalyzer:
                                 if first_row and len(first_row) > 0:
                                     dt_str = first_row[0]
                                 dt = parse_flexible_date(dt_str) if dt_str else None
+                                # AGENTS.md TODO-033: fold the real AEST/AEDT
+                                # abbreviation into the stamp, and remember
+                                # this session's own UTC epoch so the copied
+                                # file's mtime can be set to the real
+                                # charge-start event below, not whenever this
+                                # manual ingest happened to run.
+                                dt_epoch = None
+                                stamp = dt.strftime('%Y-%m-%d_%H%M') if dt else None
+                                if dt:
+                                    try:
+                                        import tessie_timezone as _tztools
+                                        abbr = _tztools.abbr_for_naive_local(dt)
+                                        dt_epoch = _tztools.epoch_for_naive_local(dt)
+                                        if abbr:
+                                            stamp = f"{stamp}_{abbr}"
+                                    except Exception:
+                                        pass
                                 if dt and self.charges_dirs:
                                     # Numbered against the first charges dir only, then
                                     # reused for every mirror dir below - so the same
@@ -1496,13 +1711,19 @@ class TessieChargingAnalyzer:
                                     # of risking a different "_NN" in each destination.
                                     deepdive_name = os.path.basename(unique_stamped_path(
                                         self.charges_dirs[0], "charge_deepdive",
-                                        dt.strftime('%Y-%m-%d_%H%M'), ext=".csv"))
+                                        stamp, ext=".csv"))
                                 elif dt:
-                                    deepdive_name = f"charge_deepdive_{dt.strftime('%Y-%m-%d_%H%M')}_00.csv"
+                                    deepdive_name = f"charge_deepdive_{stamp}_00.csv"
                                 else:
                                     deepdive_name = f"charge_deepdive_{f}"
                                 for cd in self.charges_dirs:
-                                    shutil.copy2(fp, os.path.join(cd, deepdive_name))
+                                    dest_fp = os.path.join(cd, deepdive_name)
+                                    shutil.copy2(fp, dest_fp)
+                                    if dt_epoch is not None:
+                                        try:
+                                            os.utime(dest_fp, (dt_epoch, dt_epoch))
+                                        except Exception:
+                                            pass
                                 shutil.move(fp, next_archive_path(archive_dir, f))
                                 print(f"\033[94m⚡ Saved Charge Deep Dive Telemetry (Kept Separate):\033[0m {deepdive_name}")
                                 moved += 1
@@ -2137,7 +2358,7 @@ class TessieChargingAnalyzer:
             return True
         return (datetime.now() - ended_at).total_seconds() < self.CHARGE_FINALIZE_GRACE_SECONDS
 
-    _EVNEX_JSON_STAMP_RE = re.compile(r"^charge_deepdive_(\d{4}-\d{2}-\d{2}_\d{4})_\d{2}_Evnex_Home\.json$")
+    _EVNEX_JSON_STAMP_RE = re.compile(r"^charge_deepdive_(\d{4}-\d{2}-\d{2}_\d{4}(?:_(?:AEST|AEDT))?)_\d{2}_Evnex_Home\.json$")
 
     def _matching_evnex_json_stamp(self, start_dt, end_dt):
         """Finds the existing charge_deepdive_..._Evnex_Home.json file
@@ -2197,6 +2418,53 @@ class TessieChargingAnalyzer:
                     return m.group(1)
         return None
 
+    def is_invoice_only(self, session):
+        """Returns True if the charging session is an invoice-only record
+        (e.g., historical charge appended from an invoice that predates Tessie
+        API logging, with duration 0 and odometer 0) having no independent
+        vehicle telemetry in Tessie."""
+        return session.get("duration_mins", 0) <= 0 and session.get("odometer_km", 0) <= 0
+
+    def _deepdive_location_suffix(self, session):
+        """Builds the "_<Network>_<ShortName>" filename suffix that keeps
+        an API-backfilled deepdive CSV in the SAME naming convention every
+        manually-ingested/legacy deepdive file already uses (e.g.
+        "_Tesla_Macquarie_NSW", "_Exploren_Bunnings_Gladesville") -
+        charge_curve_chart.py's historical pooling keys entirely off that
+        slug (via tesla_superchargers.json's short_name, through
+        match_hardware()), so a session with no location in its filename
+        silently drops out of its own site's pooling. Reuses the
+        network/registry_obj/place_name resolve_location() already
+        attached to this session at load_charges() time - no fresh
+        lookup needed. Returns "_Evnex_Home" for a home session (the
+        caller never actually reaches here for one - see
+        fetch_charge_deepdive_from_api() - but this stays correct in
+        isolation), or "" only if there's truly no usable name at all
+        (never fatal - the file just falls back to a bare stamp)."""
+        if session.get("network") == "Evnex":
+            return "_Evnex_Home"
+
+        reg_obj = session.get("registry_obj")
+        short_name = ""
+        if isinstance(reg_obj, dict):
+            short_name = (reg_obj.get("tesla_metadata", {}) or {}).get("short_name", "") or ""
+        if not short_name:
+            loc_source = session.get("place_name") or session.get("location_raw") or ""
+            loc_source = re.sub(r"\s*\(.*?\)", "", loc_source).strip()
+            short_name = re.sub(r"[^A-Za-z0-9]+", "_", loc_source).strip("_")
+
+        net_raw = str(session.get("network") or "")
+        net_lower = net_raw.lower()
+        if "supercharger" in net_lower or "tesla" in net_lower:
+            net_slug = "Tesla"
+        elif net_raw:
+            net_slug = re.sub(r"[^A-Za-z0-9]+", "_", net_raw).strip("_")
+        else:
+            net_slug = ""
+
+        parts = [p for p in (net_slug, short_name) if p]
+        return ("_" + "_".join(parts)) if parts else ""
+
     def fetch_charge_deepdive_from_api(self, session):
         """Mirrors tessie_drives_analyzer.py's TessieAnalyzer.fetch_drive_deepdive_from_api()
         almost exactly (AGENTS.md TODO-029's own "prerequisite" - this IS
@@ -2255,7 +2523,7 @@ class TessieChargingAnalyzer:
         Returns the written file path on success, else None."""
         start_dt = session.get("started_at")
         end_dt = session.get("ended_at")
-        if not start_dt or not end_dt or not self.charges_dirs:
+        if not start_dt or not end_dt or not self.charges_dirs or self.is_invoice_only(session):
             return None
 
         try:
@@ -2304,14 +2572,54 @@ class TessieChargingAnalyzer:
             if matched_stamp:
                 dest_path = unique_stamped_path(dest_dir, "charge_deepdive", matched_stamp, suffix="_Evnex_Home", ext=".csv")
         if not dest_path:
-            suffix = "_Evnex_Home" if session.get("network") == "Evnex" else ""
-            dest_path = unique_stamped_path(dest_dir, "charge_deepdive", start_dt.strftime("%Y-%m-%d_%H%M"), suffix=suffix, ext=".csv")
+            # BUG (found 2026-09-14): this used to be
+            # `"_Evnex_Home" if session.get("network") == "Evnex" else ""`
+            # - every non-Evnex session got NO location in its filename at
+            # all (just the bare "_NN" disambiguator from
+            # unique_stamped_path()), unlike every manually-ingested/legacy
+            # deepdive CSV, which is always named "..._<Network>_<ShortName>"
+            # (e.g. "Tesla_Macquarie_NSW"). charge_curve_chart.py's historical
+            # pooling keys ENTIRELY off that slug (via tesla_superchargers
+            # .json's short_name) - a session named "..._00.csv" can never
+            # match its own site's history, so it silently got NO dashed
+            # line at all. Confirmed live: the 2026-09-09 22:27 Macquarie
+            # Supercharger session was the first non-Evnex charge ever
+            # auto-backfilled via THIS code path (every earlier Supercharger
+            # session already had a manually-exported CSV, which took the
+            # auto_ingest_from_landing() path instead) - its deepdive landed
+            # as "charge_deepdive_2026-09-09_2227_AEST_00.csv" with slug "00",
+            # invisible to every other Macquarie session's pooling.
+            # _deepdive_location_suffix() below reuses the same
+            # network/registry_obj/place_name resolve_location() already
+            # attached to this session at load_charges() time, so the
+            # result matches the existing naming convention exactly.
+            suffix = self._deepdive_location_suffix(session)
+            # AGENTS.md TODO-033: fold the real AEST/AEDT abbreviation into
+            # the stamp here too, matching evnex_api_sync.py's own writer -
+            # only reached when no existing Evnex JSON stamp was found to
+            # match against above (matched_stamp already carries its own
+            # tz suffix once present, via _EVNEX_JSON_STAMP_RE).
+            stamp = start_dt.strftime("%Y-%m-%d_%H%M")
+            try:
+                abbr = start_dt.replace(tzinfo=local_tz).tzname()
+                if abbr:
+                    stamp = f"{stamp}_{abbr}"
+            except Exception:
+                pass
+            dest_path = unique_stamped_path(dest_dir, "charge_deepdive", stamp, suffix=suffix, ext=".csv")
 
         try:
             with open(dest_path, "wb") as f:
                 f.write(body)
         except Exception:
             return None
+        # AGENTS.md TODO-033: set this file's mtime to the real charge-start
+        # event (start_epoch, already computed above), not whenever this
+        # auto-fetch happened to run.
+        try:
+            os.utime(dest_path, (start_epoch, start_epoch))
+        except Exception:
+            pass
 
         parsed = self.parse_detailed_charge_csv(dest_path)
         if not parsed or not parsed.get("raw_samples", {}).get("timestamp"):
@@ -2941,8 +3249,8 @@ class TessieChargingAnalyzer:
                 print(f"   - {issue}")
 
         if duplicates_found_in_existing > 0:
-            print(f"\033[93m🧹 Flagged & auto-removed {duplicates_found_in_existing} duplicate row(s) found in the existing charges_master.csv "
-                  f"(pre-change backup saved to charges/archive/)\033[0m")
+            print(f"{C_ORANGE}🧹 Flagged & auto-removed {duplicates_found_in_existing} duplicate row(s) found in the existing charges_master.csv "
+                  f"(pre-change backup saved to charges/archive/){C_RESET}")
         dest_names = ", ".join(shorten_display_path(m, 0) for m in master_files)
         print(f"\033[92mSuccessfully appended {len(new_records)} new charges (Total: {len(all_records)}) to:\033[0m {dest_names}")
 
@@ -3019,7 +3327,7 @@ class TessieChargingAnalyzer:
         mismatched_fast = sum(1 for s in sessions if (s["is_supercharger"] or s["is_fast_charger"]) and "MISMATCH" in s["status"])
         total_fast_count = len(sc_sessions) + len(fast_sessions)
 
-        box_w = 95
+        box_w = 145
         print()
         print(f"┌{'─' * (box_w - 2)}┐")
         summary_title = f" ⚡ {C_BOLD}TESLA CHARGING & INVOICE RECONCILIATION SUMMARY{C_RESET}"
@@ -3073,13 +3381,13 @@ class TessieChargingAnalyzer:
                        f"${projected_annual_savings:,.2f} AUD/yr{annualize_caveat}")
             print(f"│{pad_display(kpi_l10, box_w - 2)}│")
         else:
-            kpi_l8 = f"  {C_BOLD}Distance Travelled:{C_RESET} {C_YELLOW}no drives_master.csv found - run drives_sync_all.sh{C_RESET}"
+            kpi_l8 = f"  {C_BOLD}Distance Travelled:{C_RESET} {C_ORANGE}No Tessie measurement for this session{C_RESET}"
             print(f"│{pad_display(kpi_l8, box_w - 2)}│")
 
         if self.config_file:
-            cfg_disp = shorten_display_path(self.config_file, 35)
+            cfg_disp = shorten_display_path(self.config_file, 55)
             inv_dir_val = self.config.get("invoices_directory") or (self.invoice_dirs[0] if self.invoice_dirs else "None")
-            inv_disp = shorten_display_path(inv_dir_val, 35)
+            inv_disp = shorten_display_path(inv_dir_val, 55)
             kpi_l7 = f"  {C_BOLD}Config Loaded:{C_RESET} {cfg_disp} (Invoices: {inv_disp})"
             print(f"│{pad_display(kpi_l7, box_w - 2, truncate=True)}│")
         
@@ -3380,7 +3688,7 @@ class TessieChargingAnalyzer:
             print(f"{C_DIM}  * N/A - {invoice_only_count} session(s) have no independent Tessie telemetry (invoice-only entries, appended from the invoice alone - see BUG-029); excluded from the loss/efficiency totals below.{C_RESET}")
 
         if tot_inv > 0:
-            box_w = 95
+            box_w = 145
             overall_eff = (tot_bat / tot_inv * 100.0)
             eff_color = C_GREEN if overall_eff >= 85.0 else (C_YELLOW if overall_eff >= 75.0 else C_RED)
             cable_eff = ((tot_inv - tot_cable_loss) / tot_inv * 100.0) if tot_inv > 0 else 100.0
@@ -3798,7 +4106,7 @@ class TessieChargingAnalyzer:
             return
 
         s = target_session
-        box_w = 106
+        box_w = 145
         idx_label = f"#{s['charge_index']}" if s["charge_index"] is not None else "-"
         header_title = f" ⚡ {C_BOLD}DEEP-DIVE CHARGING INSPECTION: {idx_label} {s['place_name']}{C_RESET}"
         print()
@@ -3844,7 +4152,8 @@ class TessieChargingAnalyzer:
             l6c = f"    • {C_BOLD}{'2./3. Vehicle Intake / Battery Storage:':<{lw_loss}}{C_RESET}N/A"
             print(f"│{pad_display(l6c, box_w - 2, truncate=True)}│")
             l6d = f"    {C_YELLOW}⚠️  No independent Tessie measurement for this session - invoice-only entry (this charge predates Tessie API history and was appended from the invoice alone).{C_RESET}"
-            print(f"│{pad_display(l6d, box_w - 2, truncate=True)}│")
+            for w_line in wrap_text_display(l6d, box_w - 4):
+                print(f"│{pad_display(w_line, box_w - 2, truncate=True)}│")
         else:
             car_in = s.get("tessie_car_kwh", 0.0)
             if car_in > 0:
@@ -3865,41 +4174,44 @@ class TessieChargingAnalyzer:
                     # disagreement, not a real negative loss. Surfaced
                     # explicitly instead of being silently clamped to 0.00.
                     l8c = f"    {C_YELLOW}⚠️  Vehicle reported {s['car_overshoot_kwh']:.2f} kWh MORE intake than the dispenser billed - meter disagreement, not a real 0.00 kWh cable loss.{C_RESET}"
-                    print(f"│{pad_display(l8c, box_w - 2, truncate=True)}│")
+                    for w_line in wrap_text_display(l8c, box_w - 4):
+                        print(f"│{pad_display(w_line, box_w - 2, truncate=True)}│")
 
             eff_color = C_GREEN if s["efficiency_pct"] >= 85.0 else (C_YELLOW if s["efficiency_pct"] >= 75.0 else C_RED)
             l8 = f"    • {C_BOLD}{'Total Charging Loss:':<{lw_loss}}{C_RESET}{s['loss_kwh']:.2f} kWh  ({eff_color}{s['efficiency_pct']:.1f}% Dispenser-to-Battery{C_RESET})"
             print(f"│{pad_display(l8, box_w - 2, truncate=True)}│")
 
+        curve_path = None
         # Detailed high-frequency telemetry section if available
         dt_rec = s.get("detailed_telemetry")
         if dt_rec:
             print(f"├{'─' * (box_w - 2)}┤")
-            short_src = shorten_display_path(dt_rec['source_file'], 50)
+            short_src = shorten_display_path(dt_rec['source_file'], 85)
             t_title = f"  {C_BOLD}{C_CYAN}🔋 HIGH-FREQUENCY TELEMETRY AUDIT ({short_src}):{C_RESET}"
             print(f"│{pad_display(t_title, box_w - 2, truncate=True)}│")
             
-            t1 = f"    • {C_BOLD}High-Res Telemetry Samples:{C_RESET} {dt_rec['samples_count']} readings over {dt_rec['duration_mins']:.1f} mins"
+            lw_tele = 30
+            t1 = f"    • {C_BOLD}{'High-Res Telemetry Samples:':<{lw_tele}}{C_RESET}{dt_rec['samples_count']} readings over {dt_rec['duration_mins']:.1f} mins"
             print(f"│{pad_display(t1, box_w - 2, truncate=True)}│")
             
-            t2 = f"    • {C_BOLD}Charging Power Profile:{C_RESET}     Peak: {dt_rec['peak_power_kw']:.1f} kW  │  Average: {dt_rec['avg_power_kw']:.1f} kW"
+            t2 = f"    • {C_BOLD}{'Charging Power Profile:':<{lw_tele}}{C_RESET}Peak: {dt_rec['peak_power_kw']:.1f} kW  │  Average: {dt_rec['avg_power_kw']:.1f} kW"
             print(f"│{pad_display(t2, box_w - 2, truncate=True)}│")
             
             if dt_rec.get("initial_batt_temp_c") is not None and dt_rec.get("final_batt_temp_c") is not None:
-                t3 = f"    • {C_BOLD}Battery Module Temp:{C_RESET}        {dt_rec['initial_batt_temp_c']:.1f}°C ➔ {dt_rec['final_batt_temp_c']:.1f}°C (Peak: {dt_rec['max_batt_temp_c']:.1f}°C, ΔT: +{dt_rec['temp_rise_c']:.1f}°C)"
+                t3 = f"    • {C_BOLD}{'Battery Module Temp:':<{lw_tele}}{C_RESET}{dt_rec['initial_batt_temp_c']:.1f}°C ➔ {dt_rec['final_batt_temp_c']:.1f}°C (Peak: {dt_rec['max_batt_temp_c']:.1f}°C, ΔT: +{dt_rec['temp_rise_c']:.1f}°C)"
                 print(f"│{pad_display(t3, box_w - 2, truncate=True)}│")
                 
             heater_str = "ACTIVE (Preheating)" if dt_rec.get("battery_heater") else "Off (Active cooling loop)"
             amb_str = f"{dt_rec['outside_temp_c']:.1f}°C" if dt_rec.get("outside_temp_c") is not None else "-"
-            t4 = f"    • {C_BOLD}Thermal Management:{C_RESET}         Heater: {heater_str}  │  Ambient Temp: {amb_str}"
+            t4 = f"    • {C_BOLD}{'Thermal Management:':<{lw_tele}}{C_RESET}Heater: {heater_str}  │  Ambient Temp: {amb_str}"
             print(f"│{pad_display(t4, box_w - 2, truncate=True)}│")
             
             if dt_rec.get("delta_energy_remaining_kwh") is not None:
-                t5 = f"    • {C_BOLD}Energy Remaining Delta:{C_RESET}     {dt_rec['energy_remaining_start']:.2f} kWh ➔ {dt_rec['energy_remaining_end']:.2f} kWh (+{dt_rec['delta_energy_remaining_kwh']:.2f} kWh)"
+                t5 = f"    • {C_BOLD}{'Energy Remaining Delta:':<{lw_tele}}{C_RESET}{dt_rec['energy_remaining_start']:.2f} kWh ➔ {dt_rec['energy_remaining_end']:.2f} kWh (+{dt_rec['delta_energy_remaining_kwh']:.2f} kWh)"
                 print(f"│{pad_display(t5, box_w - 2, truncate=True)}│")
                 
             if dt_rec.get("integrated_dispenser_kwh", 0) > 0:
-                t6 = f"    • {C_BOLD}Integrated Telemetry Energy:{C_RESET} Port: {dt_rec['integrated_dispenser_kwh']:.2f} kWh  │  Battery Pack (V×I): {dt_rec['integrated_pack_kwh']:.2f} kWh"
+                t6 = f"    • {C_BOLD}{'Integrated Telemetry Energy:':<{lw_tele}}{C_RESET}Port: {dt_rec['integrated_dispenser_kwh']:.2f} kWh  │  Battery Pack (V×I): {dt_rec['integrated_pack_kwh']:.2f} kWh"
                 print(f"│{pad_display(t6, box_w - 2, truncate=True)}│")
 
             # REQ-035: an interactive charging-curve chart, built only when
@@ -3912,9 +4224,8 @@ class TessieChargingAnalyzer:
             except Exception:
                 curve_path = None
             if curve_path:
-                t7 = f"    • {C_BOLD}Charging Curve:{C_RESET}             {shorten_display_path(curve_path, 50)}"
+                t7 = f"    • {C_BOLD}{'Charging Curve:':<{lw_tele}}{C_RESET}{shorten_display_path(curve_path, 85)}"
                 print(f"│{pad_display(t7, box_w - 2, truncate=True)}│")
-                try_open_in_browser(curve_path)
 
         print(f"├{'─' * (box_w - 2)}┤")
         
@@ -3954,7 +4265,8 @@ class TessieChargingAnalyzer:
             sched_label = f" [{s.get('expected_schedule_name')}]" if s.get("expected_schedule_name") else ""
             tz_label = f" (TZ: {s.get('timezone', 'Australia/Sydney')})"
             note_l = f"    {C_DIM}(what our own registry's rate card says this SHOULD cost, for cross-checking against the real cost above - not what was actually billed){C_RESET}"
-            print(f"│{pad_display(note_l, box_w - 2, truncate=True)}│")
+            for w_line in wrap_text_display(note_l, box_w - 4):
+                print(f"│{pad_display(w_line, box_w - 2, truncate=True)}│")
             l12 = f"    • {C_BOLD}{'Expected Tariff Rate:':<{lw_fin}}{C_RESET}${s['expected_rate']:.2f}/kWh{sched_label}{tz_label}{arch_tag}"
             print(f"│{pad_display(l12, box_w - 2, truncate=True)}│")
 
@@ -3968,7 +4280,8 @@ class TessieChargingAnalyzer:
                     tariff_delta = s["theoretical_cost"] - real_cost
                     if abs(tariff_delta) >= 1.0:
                         l12c = f"    {C_RED}⚠️  Tariff Audit Delta: ${tariff_delta:+.2f} - the registry's rate card disagrees with what was actually billed by more than rounding; the registry data (not the real cost) is the more likely thing to be wrong here.{C_RESET}"
-                        print(f"│{pad_display(l12c, box_w - 2, truncate=True)}│")
+                        for w_line in wrap_text_display(l12c, box_w - 4):
+                            print(f"│{pad_display(w_line, box_w - 2, truncate=True)}│")
         else:
             l12 = f"    • {C_BOLD}{'Expected Tariff Rate:':<{lw_fin}}{C_RESET}{C_YELLOW}No tariff rate configured in registry{C_RESET}"
             print(f"│{pad_display(l12, box_w - 2, truncate=True)}│")
@@ -4027,7 +4340,8 @@ class TessieChargingAnalyzer:
             print(f"│{pad_display(x5, box_w - 2, truncate=True)}│")
             if xcheck.get("conflict"):
                 x6 = f"    {C_RED}⚠️  Conflict: Evnex claims mostly-solar but real AGL grid import is large relative to this session's own kWh - see AGENTS.md TODO-013.{C_RESET}"
-                print(f"│{pad_display(x6, box_w - 2, truncate=True)}│")
+                for w_line in wrap_text_display(x6, box_w - 4):
+                    print(f"│{pad_display(w_line, box_w - 2, truncate=True)}│")
             cache_note = "cached - press [r] to refresh" if xcheck.get("_from_cache") else "freshly fetched just now"
             x7 = f"    {C_DIM}({cache_note}){C_RESET}"
             print(f"│{pad_display(x7, box_w - 2, truncate=True)}│")
@@ -4050,8 +4364,11 @@ class TessieChargingAnalyzer:
         if sys.stdin.isatty():
             has_inv = bool(s.get("invoice_number") and s.get("invoice_cost") is not None)
             has_xcheck = bool(xcheck)
+            has_curve = bool(curve_path and os.path.exists(curve_path))
             try:
                 actions = []
+                if has_curve:
+                    actions.append("[o]pen chart in browser")
                 if has_inv:
                     actions.append("[u]pdate master CSV from invoice")
                 actions.append("[m]anually correct")
@@ -4060,7 +4377,10 @@ class TessieChargingAnalyzer:
                 actions.append("[Enter] to return")
                 prompt_actions = ", ".join(actions) + ": "
                 act = input(f"{C_BOLD}Action:{C_RESET} {prompt_actions}").strip().lower()
-                if act in ['u', 'update', 'apply', 'sync'] and has_inv:
+                if act in ['o', 'open', 'chart', 'c'] and has_curve:
+                    try_open_in_browser(curve_path)
+                    self.inspect_session(target)
+                elif act in ['u', 'update', 'apply', 'sync'] and has_inv:
                     self.apply_invoice_to_session(s)
                 elif act in ['m', 'manual', 'e', 'edit']:
                     self.prompt_manual_correction(s)
@@ -4080,10 +4400,10 @@ class TessieChargingAnalyzer:
         date_only = s_at_str.split()[0] if s_at_str else (s_dt.strftime("%Y-%m-%d") if s_dt else "")
         
         box_w = 78
-        print(f"\n\033[93m┌{'─' * (box_w - 2)}┐\033[0m")
+        print(f"\n{C_ORANGE}┌{'─' * (box_w - 2)}┐{C_RESET}")
         header = f" 📲 {C_BOLD}ACTION REQUIRED: UPDATE TESSIE TO MATCH THIS CHARGE{C_RESET}"
-        print(f"\033[93m│{pad_display(header, box_w - 2, 'left', truncate=True)}│\033[0m")
-        print(f"\033[93m├{'─' * (box_w - 2)}┤\033[0m")
+        print(f"{C_ORANGE}│{pad_display(header, box_w - 2, 'left', truncate=True)}│{C_RESET}")
+        print(f"{C_ORANGE}├{'─' * (box_w - 2)}┤{C_RESET}")
         l_info1 = "  Tessie stores costs in its cloud database. To sync Tessie:"
         print(f"│{pad_display(l_info1, box_w - 2, 'left')}│")
         print(f"│{' ' * (box_w - 2)}│")
@@ -4105,7 +4425,7 @@ class TessieChargingAnalyzer:
         print(f"│{pad_display(l_c, box_w - 2, 'left')}│")
         l_r = f"     • Unit Rate:    {C_GREEN}{C_BOLD}${rate:.2f}/kWh{C_RESET}"
         print(f"│{pad_display(l_r, box_w - 2, 'left')}│")
-        print(f"\033[93m└{'─' * (box_w - 2)}┘\033[0m\n")
+        print(f"{C_ORANGE}└{'─' * (box_w - 2)}┘{C_RESET}\n")
 
     def apply_invoice_to_session(self, s):
         """Updates master CSV and charges files with the matched official invoice cost and rate."""
@@ -4140,12 +4460,12 @@ class TessieChargingAnalyzer:
 
     def prompt_manual_correction(self, s):
         """Allows interactive manual correction of Cost Per kWh and Cost when no invoice is present."""
-        print(f"\n\033[93m────────────────────────────────────────────────────────────────────────\033[0m")
-        print(f"\033[93m✏️  MANUALLY CORRECT CHARGING SESSION #{s['charge_index']}\033[0m")
+        print(f"\n{C_ORANGE}────────────────────────────────────────────────────────────────────────{C_RESET}")
+        print(f"{C_ORANGE}✏️  MANUALLY CORRECT CHARGING SESSION #{s['charge_index']}{C_RESET}")
         print(f"   Station:              {s['emoji']} {s['place_name']} ({s['datetime_str']})")
         print(f"   Battery Energy Added: {s['battery_kwh']:.2f} kWh (Preserved telemetry)")
         print(f"   Current Telemetry:    Rate: ${s['tessie_rate']:.2f}/kWh | Cost: ${s['tessie_cost']:.2f}")
-        print(f"\033[93m────────────────────────────────────────────────────────────────────────\033[0m")
+        print(f"{C_ORANGE}────────────────────────────────────────────────────────────────────────{C_RESET}")
         
         try:
             rate_in = input(f"Enter Gross Rate ($/kWh) [press Enter to keep ${s['tessie_rate']:.2f}]: ").strip()
@@ -4297,10 +4617,10 @@ class TessieChargingAnalyzer:
         print(f"\n{C_GREEN}✔ Successfully {', and '.join(summary_parts)} in master charging records.{C_RESET}")
         
         box_w = 95
-        print(f"\n\033[93m┌{'─' * (box_w - 2)}┐\033[0m")
+        print(f"\n{C_ORANGE}┌{'─' * (box_w - 2)}┐{C_RESET}")
         head = f" 📲 {C_BOLD}ACTION REQUIRED: UPDATE CHARGES IN TESSIE TO MATCH OFFICIAL INVOICES{C_RESET}"
-        print(f"\033[93m│{pad_display(head, box_w - 2, 'left', truncate=True)}│\033[0m")
-        print(f"\033[93m├{'─' * (box_w - 2)}┤\033[0m")
+        print(f"{C_ORANGE}│{pad_display(head, box_w - 2, 'left', truncate=True)}│{C_RESET}")
+        print(f"{C_ORANGE}├{'─' * (box_w - 2)}┤{C_RESET}")
         print(f"│  Go to Tessie App -> Charges (or https://dash.tessie.com/charging) and update costs:       │")
         print(f"│                                                                                             │")
         for s, i_cost, i_rate in candidates:
@@ -4310,11 +4630,25 @@ class TessieChargingAnalyzer:
             pl = s.get("place_name") or ""
             line_str = f"  • Date: {dt_part:<10} │ {s_at} @ {pl[:24]:<24} │ Set: ${i_cost:.2f} (@ ${i_rate:.2f}/kWh)"
             print(f"│{pad_display(line_str, box_w - 2, 'left', truncate=True)}│")
-        print(f"\033[93m└{'─' * (box_w - 2)}┘\033[0m\n")
+        print(f"{C_ORANGE}└{'─' * (box_w - 2)}┘{C_RESET}\n")
         self.load_charges()
         self.reconcile(interactive=False)
 
     def list_chargers(self):
+        print(f"\n{C_YELLOW}┌────────────────────────────────────────────────────────────────────────────────────────┐{C_RESET}")
+        print(f"{C_YELLOW}│ ℹ️  CHARGER DISCOVERY & SEARCH NOTICE                                                    │{C_RESET}")
+        print(f"{C_YELLOW}├────────────────────────────────────────────────────────────────────────────────────────┤{C_RESET}")
+        print(f"│ Charger discovery, searching, pricing comparison, and TOU rate lookups have moved to  │")
+        print(f"│ the dedicated unified discovery tool: {C_BOLD}./Tools/find_chargers.py{C_RESET}                       │")
+        print(f"│                                                                                        │")
+        print(f"│ Usage Examples:                                                                        │")
+        print(f"│   • Search nearby:          ./Tools/find_chargers.py --near 'Ryde'                     │")
+        print(f"│   • Tesla Superchargers:    ./Tools/find_chargers.py --sc                              │")
+        print(f"│   • Specific network:       ./Tools/find_chargers.py --network chargefox               │")
+        print(f"│   • Sort by active price:   ./Tools/find_chargers.py --sort price                      │")
+        print(f"│   • Export master JSON:     ./Tools/find_chargers.py --export-consolidated             │")
+        print(f"{C_YELLOW}└────────────────────────────────────────────────────────────────────────────────────────┘{C_RESET}\n")
+
         sc_list = list(self.superchargers.items())
         widths = [4, 7, 28, 28, 8, 6, 12, 28]
         total_w = sum(widths) + len(widths) - 1
@@ -4339,7 +4673,7 @@ class TessieChargingAnalyzer:
             schedules = cost.get("rate_schedules", [])
             sched_str = f"{len(schedules)} TOU periods" if len(schedules) > 1 else (f"${schedules[0].get('rate_per_kwh')}/kWh" if schedules else f"${cost.get('per_kwh_flat', 0):.2f}/kWh flat")
             access_str = f"{C_GREEN}CCS2 All{C_RESET}" if comp.get("open_to_non_tesla") else "Tesla Only"
-            stalls_str = f"{hw.get('stalls')} bays" if hw.get("stalls") else "-"
+            stalls_str = f"{hw.get('stalls')} bays" if hw.get('stalls') else "-"
             tier_str = hw.get("tier", "-") or "-"
 
             row_cells = [
@@ -4360,7 +4694,7 @@ class TessieChargingAnalyzer:
         total_w_oth = sum(widths_oth) + len(widths_oth) - 1
 
         print(f"┌{'─' * total_w_oth}┐")
-        oth_title = f" 🔌 {C_BOLD}REGISTERED 3RD-PARTY & HOME CHARGERS ({len(oth_list)} stations){C_RESET}"
+        oth_title = f" 🏢 {C_BOLD}REGISTERED TESLA DESTINATION & HOME CHARGERS ({len(oth_list)} stations){C_RESET}"
         print(f"│{pad_display(oth_title, total_w_oth, 'left')}│")
         print("├" + "┬".join("─" * w for w in widths_oth) + "┤")
         headers_oth = ["#", "State", "Station / Location Name", "Network / Operator", "Type", "Power", "Hardware", "Rates (AUD)"]
@@ -4368,21 +4702,37 @@ class TessieChargingAnalyzer:
         print("├" + "┼".join("─" * w for w in widths_oth) + "┤")
 
         for idx, (name, data) in enumerate(oth_list, 1):
-            st_type = data.get("type", "ac")
-            emoji = "🏠" if st_type == "home" else ("🔌" if st_type == "dc_fast" else "🅿️")
+            st_type = data.get("type") or data.get("tesla_metadata", {}).get("type", "ac")
+            is_dest = "destination" in str(st_type).lower() or "destination" in name.lower()
+            emoji = "🏠" if st_type == "home" else ("🅿️" if is_dest else "🔌")
             hw = data.get("hardware", {})
-            costs = data.get("costs", {})
-            net = data.get("network") or data.get("operator") or ("Tesla Wall Connector" if st_type == "home" else "3rd-Party")
-            type_lbl = "Home AC" if st_type == "home" else ("DC Fast" if st_type == "dc_fast" else "Dest AC")
-            pwr = f"{hw.get('max_power_kw', 0):.0f} kW" if hw.get('max_power_kw') else "-"
-            hw_type = hw.get("charger_type") or "-"
-            sched_str = f"${costs.get('flat_per_kwh', 0):.2f}/kWh flat" if "flat_per_kwh" in costs else "TOU rates"
+            costs = data.get("costs", {}) or data.get("tessie_cost_config", {})
+            
+            if st_type == "home":
+                net = "Home AC"
+            elif is_dest:
+                net = "Tesla Destination"
+            else:
+                net = data.get("network") or data.get("operator") or "Tesla Destination"
 
-            st_state = data.get("state")
-            if (not st_state or st_state == "-") and data.get("lat") and data.get("lon"):
+            type_lbl = "Home AC" if st_type == "home" else ("Tesla Dest" if is_dest else "AC Public")
+            pwr_val = hw.get("max_power_kw") or hw.get("maxPowerKw") or 22.0
+            pwr = f"{float(pwr_val):.0f} kW" if pwr_val else "-"
+            hw_type = hw.get("tier") or hw.get("charger_type") or "Type 2"
+            
+            if "per_kwh_flat" in costs and costs.get("per_kwh_flat") is not None:
+                sched_str = f"${costs.get('per_kwh_flat', 0):.2f}/kWh flat" if costs.get("per_kwh_flat") > 0 else "Free"
+            elif "flat_per_kwh" in costs:
+                sched_str = f"${costs.get('flat_per_kwh', 0):.2f}/kWh flat" if costs.get('flat_per_kwh') > 0 else "Free"
+            else:
+                sched_str = "Free"
+
+            loc = data.get("location", {}) if isinstance(data.get("location"), dict) else {}
+            st_state = loc.get("state") or data.get("state")
+            if (not st_state or st_state == "-") and loc.get("lat") and loc.get("lon"):
                 try:
                     from find_tesla_chargers import state_from_coords
-                    resolved_st, _ = state_from_coords(data.get("lat"), data.get("lon"))
+                    resolved_st, _ = state_from_coords(loc.get("lat"), loc.get("lon"))
                     if resolved_st:
                         st_state = resolved_st
                 except Exception:
@@ -4401,6 +4751,55 @@ class TessieChargingAnalyzer:
             ]
             print("│" + "│".join(row_cells) + "│")
         print("└" + "┴".join("─" * w for w in widths_oth) + "┘\n")
+
+        # Table 3: PlugShare & 3rd-Party Multi-Network Registries
+        if self.plugshare_chargers:
+            ps_list = list(self.plugshare_chargers.items())
+            print(f"┌{'─' * total_w_oth}┐")
+            ps_title = f" 🌐 {C_BOLD}REGISTERED MULTI-NETWORK PUBLIC CHARGERS ({len(ps_list)} stations — Chargefox, Evie, Exploren, AmpCharge, BP Pulse, NRMA){C_RESET}"
+            print(f"│{pad_display(ps_title, total_w_oth, 'left')}│")
+            print("├" + "┬".join("─" * w for w in widths_oth) + "┤")
+            print("│" + "│".join(pad_display(f"{C_BOLD}{h}{C_RESET}", w, "center") for h, w in zip(headers_oth, widths_oth)) + "│")
+            print("├" + "┼".join("─" * w for w in widths_oth) + "┤")
+
+            for idx, (name, data) in enumerate(ps_list, 1):
+                ps_meta = data.get("plugshare_metadata", {}) if isinstance(data.get("plugshare_metadata"), dict) else {}
+                loc = data.get("location", {}) if isinstance(data.get("location"), dict) else {}
+                hw = data.get("hardware", {}) if isinstance(data.get("hardware"), dict) else {}
+                tariffs = data.get("tariffs", {}) if isinstance(data.get("tariffs"), dict) else {}
+                
+                net = ps_meta.get("network") or data.get("network") or "3rd-Party"
+                pwr_val = hw.get("max_power_kw") or data.get("max_power_kw") or 0.0
+                is_fast = float(pwr_val) >= 25.0
+                type_lbl = "DC Fast" if is_fast else "AC Public"
+                emoji = "⚡" if "tesla" in net.lower() or "nrma" in net.lower() or "exploren" in net.lower() else ("🦊" if "chargefox" in net.lower() else ("🔌" if "evie" in net.lower() else ("🟢" if "bp" in net.lower() else "🔴")))
+                
+                pwr = f"{float(pwr_val):.0f} kW" if pwr_val else "-"
+                conns = hw.get("connector_types") or []
+                hw_type = conns[0] if conns else (hw.get("tier") or "-")
+                
+                flat_rate = tariffs.get("per_kwh_flat") or tariffs.get("rate_per_kwh")
+                if flat_rate is not None and float(flat_rate) > 0:
+                    sched_str = f"${float(flat_rate):.2f}/kWh"
+                elif flat_rate == 0.0 or tariffs.get("pricing_model") == "free":
+                    sched_str = "Free"
+                else:
+                    sched_str = "-"
+
+                st_state = loc.get("state") or data.get("state") or "-"
+
+                row_cells = [
+                    pad_display(str(idx) + " ", widths_oth[0], "right"),
+                    pad_display(st_state, widths_oth[1], "center"),
+                    pad_display(f" {emoji} {name}", widths_oth[2], "left", truncate=True),
+                    pad_display(f" {net}", widths_oth[3], "left", truncate=True),
+                    pad_display(" " + type_lbl, widths_oth[4], "left"),
+                    pad_display(pwr + " ", widths_oth[5], "right"),
+                    pad_display(" " + hw_type, widths_oth[6], "left"),
+                    pad_display(f" {sched_str}", widths_oth[7], "left", truncate=True)
+                ]
+                print("│" + "│".join(row_cells) + "│")
+            print("└" + "┴".join("─" * w for w in widths_oth) + "┘\n")
 
     def export_reconciliation(self, filepath, filtered_sessions=None):
         if not self.reconciled_sessions:
@@ -4542,6 +4941,15 @@ class TessieChargingAnalyzer:
             # Clean location string / short_name
             clean_loc = ""
             reg_obj = matched_session.get("registry_obj") if matched_session else None
+            # Use the registry entry that was actually EFFECTIVE at the
+            # invoice's own date, not whichever one is current today - a
+            # station renamed since (e.g. West Gosford, NSW -> Gosford, NSW
+            # on 2026-09-13) must keep its old short_name on invoices from
+            # before that rename. Fixed 2026-09-14, BUG-063, AGENTS.local.md.
+            effective_dt = (matched_session.get("datetime") if matched_session else None) or inv_date
+            if reg_obj and isinstance(reg_obj, dict) and effective_dt:
+                place_name_for_lookup = matched_session.get("place_name") if matched_session else None
+                reg_obj, _ = self.resolve_effective_registry_entry(reg_obj, effective_dt, place_name=place_name_for_lookup)
             if reg_obj and isinstance(reg_obj, dict):
                 clean_loc = reg_obj.get("tesla_metadata", {}).get("short_name", "")
                 if not clean_loc:
@@ -4556,7 +4964,18 @@ class TessieChargingAnalyzer:
                     sc_name_clean = sc_k.lower().strip()
                     kws = [k.lower() for k in sc_meta.get("keywords", [])]
                     if inv_clean_lower == sc_name_clean or any(k in inv_clean_lower for k in kws) or sc_name_clean in inv_clean_lower:
-                        clean_loc = sc_meta.get("short_name", "")
+                        # Same effective-date resolution as the registry_obj
+                        # branch above, and for the same reason: this is the
+                        # path that was ACTUALLY firing for the West
+                        # Gosford, NSW invoices (matched_session's own
+                        # registry_obj was None for them, so execution fell
+                        # straight through to this current-registry keyword
+                        # match without ever consulting the archive). Fixed
+                        # 2026-09-14, BUG-063, AGENTS.local.md.
+                        effective_sc_v = sc_v
+                        if effective_dt:
+                            effective_sc_v, _ = self.resolve_effective_registry_entry(sc_v, effective_dt, place_name=sc_k)
+                        clean_loc = effective_sc_v.get("tesla_metadata", {}).get("short_name", "") or sc_meta.get("short_name", "")
                         break
 
             if not clean_loc and inv_loc:
@@ -4615,12 +5034,17 @@ class TessieChargingAnalyzer:
                 "already_named": already_named
             })
 
-        # Print preview table
-        widths = [4, 48, 80, 16, 18, 16]
+        to_rename_count = sum(1 for item in rename_plan if not item["already_named"])
+        if to_rename_count == 0:
+            print(f"{C_GREEN}✔ All {len(rename_plan)} invoice files are already correctly named!{C_RESET}\n")
+            return
+
+        # Print preview table with balanced widths for Current and Proposed Filenames
+        widths = [4, 65, 65, 16, 18, 16]
         total_inner_w = sum(widths) + len(widths) - 1
 
         print(f"\n┌{'─' * total_inner_w}┐")
-        print(f"│{pad_display(f' ⚡ {C_BOLD}CHARGING INVOICE RENAMER ({len(rename_plan)} files){C_RESET}', total_inner_w, 'left')}│")
+        print(f"│{pad_display(f' ⚡ {C_BOLD}CHARGING INVOICE RENAMER ({to_rename_count} file(s) to rename){C_RESET}', total_inner_w, 'left')}│")
         top_b = "├" + "┬".join("─" * w for w in widths) + "┤"
         print(top_b)
         h = "│" + "│".join([
@@ -4635,13 +5059,11 @@ class TessieChargingAnalyzer:
         mid_b = "├" + "┼".join("─" * w for w in widths) + "┤"
         print(mid_b)
 
-        to_rename_count = 0
         for idx, item in enumerate(rename_plan, 1):
             if item["already_named"]:
                 st_badge = f"{C_GREEN}ALREADY NAMED{C_RESET}"
             else:
                 st_badge = f"{C_CYAN}RENAME ➔{C_RESET}"
-                to_rename_count += 1
 
             old_disp = item["old_name"] if len(item["old_name"]) <= widths[1] - 2 else item["old_name"][:widths[1] - 5] + "..."
             new_disp = item["new_name"] if len(item["new_name"]) <= widths[2] - 2 else item["new_name"][:widths[2] - 5] + "..."
@@ -4660,10 +5082,6 @@ class TessieChargingAnalyzer:
         bot_b = "└" + "┴".join("─" * w for w in widths) + "┘"
         print(bot_b)
         print()
-
-        if to_rename_count == 0:
-            print(f"{C_GREEN}All {len(rename_plan)} invoice files are already correctly named!{C_RESET}\n")
-            return
 
         if dry_run:
             print(f"{C_YELLOW}[DRY RUN]{C_RESET} {to_rename_count} files would be renamed. No files were modified.\n")
@@ -4692,9 +5110,6 @@ class TessieChargingAnalyzer:
                 print(f"  {C_RED}❌ Failed to rename {item['old_name']}:{C_RESET} {e}")
 
         print(f"\n{C_GREEN}Successfully renamed {success_count}/{to_rename_count} invoice files!{C_RESET}\n")
-
-    def sync_to_external_drive(self):
-        print(f"{C_YELLOW}ℹ️  Tessie data and charging tooling run directly from the repository and iCloud. Mounted TESLADRIVE volumes are reserved exclusively for dashcam/TeslaCam media.{C_RESET}")
 
 # -----------------------------------------------------------------------------
 # CLI Entrypoint
@@ -4878,7 +5293,7 @@ def main():
     
     parser.add_argument("--inspect", help="Deep-dive inspect a specific session by Charge # or Date")
     parser.add_argument("--correlation", "--compare", action="store_true", help="Display 3-way correlation audit comparing Tessie summary, detailed telemetry CSV, and Invoices")
-    parser.add_argument("--list-chargers", action="store_true", help="List all registered Superchargers and 3rd-Party charging stations")
+    parser.add_argument("--list-chargers", action="store_true", help="(Deprecated) List registered stations. Prefer using ./Tools/find_chargers.py")
     parser.add_argument("--consolidate", action="store_true", help="Consolidate all charges into charges_master.csv")
     parser.add_argument("--update-master", "--update-all", "--fix-all", "--sync-invoices", action="store_true", help="Update charges_master.csv and individual charge files with official invoice costs/rates")
     parser.add_argument("--rename-invoices", "--rename", action="store_true", help="Rename invoice PDFs to <date/time>_<network>_<invoice_num>_<place>.pdf")
@@ -4886,7 +5301,6 @@ def main():
     parser.add_argument("--dry-run", action="store_true", help="Preview renaming without modifying files on disk")
     parser.add_argument("--yes", "-y", action="store_true", help="Automatically confirm renaming without interactive prompt")
     parser.add_argument("--export", help="Export reconciled results to a CSV or JSON file")
-    parser.add_argument("--sync", action="store_true", help="Deprecated no-op: TESLADRIVE volumes are reserved for dashcam media only, Tessie data never syncs there")
     parser.add_argument("--tolerance-mins", type=int, default=None, help="Invoice matching time tolerance in minutes (default: 45 or config)")
 
     args = parser.parse_args()
@@ -4908,10 +5322,6 @@ def main():
 
     if args.update_master:
         analyzer.update_master_from_invoices(auto_confirm=args.yes)
-        return
-
-    if args.sync:
-        analyzer.sync_to_external_drive()
         return
 
     if args.rename_invoices:

@@ -185,8 +185,7 @@ column value-for-value.
 **Why Saved Location differs (expected, not a bug)**: the master CSVs were
 last consolidated from a manual export taken at some point in the past;
 `Saved Location` values in that snapshot are already-stale Tessie-app
-labels frozen at export time (e.g. blank, or a raw street address like
-`"1108 Victoria Rd"`). The live API reflects Tessie's *current* saved-location
+labels frozen at export time (e.g. blank, or a raw street address). The live API reflects Tessie's *current* saved-location
 state (e.g. `"Home"`, `"Goulding Hill Preschool"`, `"REIN Garage"`) - names
 the user has since added/renamed in the Tessie app itself. This is exactly
 the BUG-016 concern in `AGENTS.md`: Tessie's saved-location text is mutable
@@ -422,7 +421,7 @@ with neither error printed).
 redundant. That was a false negative caused by a path-resolution trap, not
 a real result: in that shell, `~/Downloads` (`Tessie/config.json`'s
 `landing_directory`) expands to that shell's own home directory, which
-doesn't have a `Downloads` folder at all - the real `/Users/glenn/Downloads`
+doesn't have a `Downloads` folder at all - the real `/Users/<macos-username>/Downloads`
 is only reachable there via a `~/mnt/Downloads` mount alias that a
 subprocess launched from `tessie_api_sync.py` has no way to know about. So
 the analyzer scripts found zero landing files to ingest - "+0 new" meant
