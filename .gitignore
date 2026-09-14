@@ -2,6 +2,11 @@
 # Repository operating guidelines, active requests, TODOs, and bug tracking are maintained in AGENTS.md.
 # Read AGENTS.md upon startup and keep it updated.
 
+# AGENTS.local.md holds the REAL project journal (Active Requests / Known Bugs /
+# TODOs, with real specifics) - split out from AGENTS.md so the committed AGENTS.md
+# stays generic and shareable. Never committed.
+AGENTS.local.md
+
 # macOS metadata
 .DS_Store
 ._*
@@ -30,10 +35,21 @@ Tessie/invoices/*
 !Tessie/tesla_superchargers_archived.example.json
 !Tessie/config.example.json
 !Tessie/vehicle_spec.example.json
+!Tessie/personal_chargers.example.json
 !Tessie/state_boundaries.json
 !config.example.json
 config.json
 places.json
+
+# TeslaCam & Dashcam Metadata
+.catalog.json
+.tombstones.json
+.TeslaCam_catalog.json
+.TeslaCam_tombstones.json
+.*TeslaCam*.json
+dashcam/*.json
+!dashcam/*.example.json
+!dashcam/.*.example.json
 
 # AGL tariff rates - real account-specific plan/billing figures (REQ-034).
 # Lives in the AGL data home (agl_common.resolve_agl_data_home()), never in

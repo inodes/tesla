@@ -1,0 +1,62 @@
+{
+  "version": 1,
+  "drive_id": "VOL_JOWUA",
+  "updated_at": "2026-08-30T21:15:00+10:00",
+  "dirs_mtime": {
+    "RecentClips": 1789281200.0,
+    "SavedClips": 1789280000.0,
+    "SentryClips": 1789279500.0
+  },
+  "summary": {
+    "total_packages": 3,
+    "total_files": 186,
+    "total_bytes": 9927917568
+  },
+  "packages": {
+    "SavedClips/2026-08-30_21-01-34": {
+      "cat": "Saved",
+      "reason": "User Tapped",
+      "start_dt": "2026-08-30T21:01:34",
+      "end_dt": "2026-08-30T21:12:34",
+      "time_range": "21:01:34 ➔ 21:12:34 (11m)",
+      "files_count": 66,
+      "size_bytes": 2684354560,
+      "mtime": 1789280100.0,
+      "files": [
+        "2026-08-30_21-01-34-front.mp4",
+        "2026-08-30_21-01-34-back.mp4",
+        "2026-08-30_21-01-34-left_repeater.mp4",
+        "2026-08-30_21-01-34-right_repeater.mp4",
+        "event.json"
+      ]
+    },
+    "SentryClips/2026-08-30_14-22-10": {
+      "cat": "Sentry",
+      "reason": "Sentry Aware",
+      "start_dt": "2026-08-30T14:12:10",
+      "end_dt": "2026-08-30T14:22:10",
+      "time_range": "14:12:10 ➔ 14:22:10 (10m)",
+      "files_count": 60,
+      "size_bytes": 2411724800,
+      "mtime": 1789279600.0,
+      "files": [
+        "2026-08-30_14-22-10-front.mp4",
+        "event.json"
+      ]
+    },
+    "RecentClips/2026-08-30": {
+      "cat": "Recent",
+      "reason": "Continuous Driving Loop",
+      "start_dt": "2026-08-30T07:15:00",
+      "end_dt": "2026-08-30T22:30:00",
+      "time_range": "07:15:00 ➔ 22:30:00",
+      "files_count": 60,
+      "size_bytes": 4831838208,
+      "mtime": 1789281200.0,
+      "files": [
+        "2026-08-30_07-15-00-front.mp4",
+        "2026-08-30_07-15-00-back.mp4"
+      ]
+    }
+  }
+}
