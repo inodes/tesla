@@ -1,0 +1,126 @@
+{
+  "Home": {
+    "name": "Home",
+    "type": "home",
+    "network": "Evnex",
+    "operator": "Evnex",
+    "address": "123 Example Road, Sydney NSW 2000",
+    "lat": -33.86882,
+    "lon": 151.20930,
+    "radius_m": 100,
+    "keywords": [
+      "123 Example",
+      "Example Road"
+    ],
+    "hardware": {
+      "brand": "Evnex",
+      "charger_type": "AC Level 2",
+      "max_power_kw": 11.0,
+      "connector_types": [
+        "Type 2"
+      ]
+    },
+    "compatibility": {
+      "open_to_non_tesla": true,
+      "tesla_only": false,
+      "access": "Private Residential"
+    },
+    "costs": {
+      "currency": "AUD",
+      "timezone": "Australia/Sydney",
+      "pricing_model": "time_of_use",
+      "flat_per_kwh": 0.0,
+      "per_minute": 0.0,
+      "per_session": 0.0,
+      "rate_schedules": [
+        {
+          "name": "Solar Sponge (Day Rate)",
+          "start_time": "07:00",
+          "end_time": "16:00",
+          "days": [
+            "Mon",
+            "Tue",
+            "Wed",
+            "Thu",
+            "Fri",
+            "Sat",
+            "Sun"
+          ],
+          "months": [
+            "Jan",
+            "Feb",
+            "Mar",
+            "Apr",
+            "May",
+            "Jun",
+            "Jul",
+            "Aug",
+            "Sep",
+            "Oct",
+            "Nov",
+            "Dec"
+          ],
+          "rate_per_kwh": 0.12
+        },
+        {
+          "name": "Peak Rate",
+          "start_time": "16:00",
+          "end_time": "22:00",
+          "days": [
+            "Mon",
+            "Tue",
+            "Wed",
+            "Thu",
+            "Fri",
+            "Sat",
+            "Sun"
+          ],
+          "months": [
+            "Jan",
+            "Feb",
+            "Mar",
+            "Apr",
+            "May",
+            "Jun",
+            "Jul",
+            "Aug",
+            "Sep",
+            "Oct",
+            "Nov",
+            "Dec"
+          ],
+          "rate_per_kwh": 0.29
+        },
+        {
+          "name": "Overnight / Off-Peak Rate",
+          "start_time": "22:00",
+          "end_time": "07:00",
+          "days": [
+            "Mon",
+            "Tue",
+            "Wed",
+            "Thu",
+            "Fri",
+            "Sat",
+            "Sun"
+          ],
+          "months": [
+            "Jan",
+            "Feb",
+            "Mar",
+            "Apr",
+            "May",
+            "Jun",
+            "Jul",
+            "Aug",
+            "Sep",
+            "Oct",
+            "Nov",
+            "Dec"
+          ],
+          "rate_per_kwh": 0.29
+        }
+      ]
+    }
+  }
+}

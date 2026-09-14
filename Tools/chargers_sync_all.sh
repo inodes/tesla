@@ -37,8 +37,28 @@ echo "==> Tesla Destination Chargers (near Home, 50km)"
 ./find_tesla_chargers.py --dc --near Home --radius-km 50 --new --all
 
 echo
+echo "==> Chargefox & NRMA network (Australia)"
+./find_chargers.py --sync-chargefox
+
+echo
+echo "==> EVX Kerbside Polechargers (Australia)"
+./find_chargers.py --sync-evx
+
+echo
+echo "==> Evie Networks (Australia)"
+./find_chargers.py --sync-evie
+
+echo
+echo "==> bp pulse DC Fast Chargers (Australia)"
+./find_chargers.py --sync-bppulse
+
+echo
 echo "==> PlugShare 3rd-party chargers (near Home, 50km)"
-./find_plugshare_chargers.py --near Home --radius 50 --all-types --add-all
+./find_chargers.py --sync-plugshare --near Home --radius 50 --add-all
+
+echo
+echo "==> Multi-View Consolidated Registry Export"
+./find_chargers.py --export-consolidated
 
 echo
 echo "==> Done."

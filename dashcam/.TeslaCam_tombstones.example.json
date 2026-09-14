@@ -1,0 +1,20 @@
+{
+  "version": 1,
+  "updated_at": "2026-08-30T21:15:00+10:00",
+  "known_drives": [
+    "VOL_JOWUA",
+    "VOL_TESLA_USB"
+  ],
+  "tombstones": {
+    "SavedClips/2026-08-30_21-01-34": {
+      "deleted_at": "2026-08-30T21:15:00+10:00",
+      "reason": "Master Archive Deletion",
+      "pending_drives": [
+        "VOL_JOWUA",
+        "VOL_TESLA_USB"
+      ],
+      "files_count": 66,
+      "est_bytes": 2684354560
+    }
+  }
+}
