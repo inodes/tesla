@@ -6,6 +6,8 @@
 # TODOs, with real specifics) - split out from AGENTS.md so the committed AGENTS.md
 # stays generic and shareable. Never committed.
 AGENTS.local.md
+ANTIGRAVITY_FEEDBACK.md
+CLAUDE.md
 
 # macOS metadata
 .DS_Store
@@ -33,7 +35,6 @@ Tessie/invoices/*
 !Tessie/plugshare_chargers_archived.example.json
 !Tessie/tesla_superchargers.example.json
 !Tessie/tesla_superchargers_archived.example.json
-!Tessie/config.example.json
 !Tessie/vehicle_spec.example.json
 !Tessie/personal_chargers.example.json
 !Tessie/state_boundaries.json
@@ -53,10 +54,13 @@ dashcam/*.json
 
 # AGL tariff rates - real account-specific plan/billing figures (REQ-034).
 # Lives in the AGL data home (agl_common.resolve_agl_data_home()), never in
-# this repo - this entry is defense-in-depth in case a real one ever lands
-# in Tools/ again by accident.
+# this repo. AGL/ mirrors the Tessie/ pattern - only the sanitized template
+# is checked in, same as Tessie/*.example.json.
+AGL/*.json
+!AGL/agl_tariff_rates.example.json
+# Defense-in-depth: a real file must never land in Tools/ either (REQ-034's
+# original incident - it was found sitting there by accident).
 Tools/agl_tariff_rates.json
-!Tools/agl_tariff_rates.example.json
 __pycache__/
 *.pyc
 
