@@ -992,7 +992,7 @@ DESCRIPTION
     g_speed.add_argument("--min-kw", type=float, default=0.0, help="Minimum charging power in kW (e.g. --min-kw 150)")
 
     g_network = parser.add_argument_group("Network Filter")
-    g_network.add_argument("--network", "-n", type=str, help="Filter by network name (e.g. tesla, chargefox, nrma, evie, bp)")
+    g_network.add_argument("--network", "-n", type=str, help="Filter by network - free-text substring match against network/operator/station-name/source (case-insensitive). Known first-party networks: tesla, chargefox (covers NRMA, WA EV Network, Qld Electric Highway sub-brands), evx, evie, bppulse, ampcharge (covers Ampol Foodary). Use 'plugshare' to see only PlugShare-sourced listings, or any other text to match a PlugShare-aggregated sub-brand (e.g. Exploren).")
 
     g_sort = parser.add_argument_group("Sorting & Time of Use")
     g_sort.add_argument("--sort", "-s", choices=["distance", "price", "power", "stalls", "name", "state"], default="distance", help="Sort order (default: distance)")

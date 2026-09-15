@@ -94,14 +94,6 @@ def are_stations_co_located(s1: UnifiedStationRecord, s2: UnifiedStationRecord, 
     if dist_m <= 35.0:
         return True
 
-    # Token similarity on names and addresses
-    tok1 = _tokenize(f"{s1.name} {s1.address}")
-    tok2 = _tokenize(f"{s2.name} {s2.address}")
-    sim = _jaccard_similarity(tok1, tok2)
-
-    if dist_m <= 60.0 and sim >= 0.25:
-        return True
-
     # Check network match
     net1 = (s1.network or "").lower()
     net2 = (s2.network or "").lower()
@@ -115,7 +107,27 @@ def are_stations_co_located(s1: UnifiedStationRecord, s2: UnifiedStationRecord, 
                 ("evie" in net1 and "evie" in net2) or
                 (("ampcharge" in net1 or "ampol" in net1) and ("ampcharge" in net2 or "ampol" in net2)))
 
-    # Token similarity
+    # Two DIFFERENT Tier-1 (first-party authoritative) providers are never
+    # the same physical charger just because their names/addresses look
+    # similar - e.g. a genuine Chargefox install and a genuine AmpCharge
+    # install can both sit in the same shopping centre car park, ~100m
+    # apart, and both match "<Centre Name> Shopping Centre" on name tokens
+    # without being the same charger. Only the unconditional <=35m branch
+    # above, or an actual same-network match, may co-locate two Tier-1
+    # sources - the two fuzzy paths below are blocked for this case. A
+    # Tier-2 aggregator (PlugShare) fuzzy-matching a Tier-1 record by name
+    # is unaffected - that is its actual job.
+    cross_tier1_mismatch = (s1.tier == 1 and s2.tier == 1 and not same_net)
+
+    # Token similarity on names and addresses
+    tok1 = _tokenize(f"{s1.name} {s1.address}")
+    tok2 = _tokenize(f"{s2.name} {s2.address}")
+    sim = _jaccard_similarity(tok1, tok2)
+
+    if not cross_tier1_mismatch and dist_m <= 60.0 and sim >= 0.25:
+        return True
+
+    # Token similarity (name only)
     tok1 = _tokenize(s1.name)
     tok2 = _tokenize(s2.name)
     sim = _jaccard_similarity(tok1, tok2)
@@ -128,7 +140,7 @@ def are_stations_co_located(s1: UnifiedStationRecord, s2: UnifiedStationRecord, 
         if sim >= 0.20 or same_suburb or dist_m <= 100.0:
             return True
 
-    if sim >= 0.40 and (same_suburb or dist_m <= 80.0):
+    if not cross_tier1_mismatch and sim >= 0.40 and (same_suburb or dist_m <= 80.0):
         return True
 
     return False
