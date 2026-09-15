@@ -15,7 +15,7 @@ disable_charger, unlock_charger, set_charge_point_override,
 set_charger_load_profile, set_charge_point_schedule). It only queries
 status/history.
 
-Credentials come from evnex_common.py (Tessie/config.json or
+Credentials come from evnex_common.py (config.json or
 EVNEX_CLIENT_USERNAME/EVNEX_CLIENT_PASSWORD env vars) - see that module's
 docstring for why there's no --username/--password CLI flag. Nothing
 this script prints or writes includes your Evnex password.
@@ -35,8 +35,8 @@ import sys
 from datetime import datetime, timezone
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from evnex_common import get_authenticated_client, EvnexCredentialsError  # noqa: E402
-from tessie_api_common import resolve_tessie_data_home  # noqa: E402
+from lib.evnex_common import get_authenticated_client, EvnexCredentialsError  # noqa: E402
+from lib.tessie_api_common import resolve_tessie_data_home  # noqa: E402
 
 # Real Evnex diagnostic dumps (device IDs, real session/energy data)
 # resolve through the external tessie_directory home, not a path hardcoded
@@ -155,7 +155,27 @@ async def explore(days, log):
 
 
 def main():
-    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser = argparse.ArgumentParser(
+        usage="evnex_explore.py [--days N] [--output PATH] [--quiet]\n",
+        description="""
+NAME
+    evnex_explore.py - read-only dump of everything the evnex library can see
+
+DESCRIPTION
+    Read-only dump of everything the `evnex` library can see about your Evnex
+    home charger, for manual inspection. Never calls any control endpoint
+    (stop_charge_point, enable_charger, disable_charger, unlock_charger,
+    set_charge_point_override, set_charger_load_profile,
+    set_charge_point_schedule) - only queries status/history.
+""",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+EXAMPLES
+  evnex_explore.py
+  evnex_explore.py --days 30 --output evnex_dump.json
+  evnex_explore.py --quiet
+"""
+    )
     parser.add_argument("--days", type=int, default=7, help="Org-insight window in days (default: 7)")
     parser.add_argument("--output", default=None, help="Path for the full JSON dump (default: Tessie/evnex_explore_<timestamp>.json)")
     parser.add_argument("--quiet", action="store_true", help="Suppress per-call progress lines, print only the final summary")

@@ -3,7 +3,7 @@
 Tessie Charging & Supercharger Reconciliation Engine
 =====================================================
 - Multi-Registry Place & Charger Resolver (superchargers.json, charging.json, places.json)
-- Config File Support (config.json / Tessie/config.json / ~/.config/tesla/config.json)
+- Config File Support (config.json / config.json / ~/.config/tesla/config.json)
 - Custom Local Invoices Directory (Kept private outside repo)
 - Tesla Supercharger PDF & CSV Tax Invoice Parser (Zero external dependencies)
 - 3rd-Party Fast/AC Charging Parser & Network Identifier (Chargefox, Evie, BP Pulse, Jolt, etc.)
@@ -85,7 +85,7 @@ def resolve_location_timezone(state: str = None, country: str = None, lat: float
     if c_clean in ["australia", "au"]:
         if not st_clean and lat is not None and lon is not None:
             try:
-                from find_tesla_chargers import state_from_coords
+                from charger_find_tesla import state_from_coords
                 resolved_st, _ = state_from_coords(lat, lon, country=country)
                 if resolved_st:
                     st_clean = resolved_st.upper().strip()
@@ -147,11 +147,11 @@ _tools_dir = os.path.dirname(os.path.abspath(__file__))
 if _tools_dir not in sys.path:
     sys.path.insert(0, _tools_dir)
 
-from archive_naming import next_archive_path
-from tessie_api_common import unique_stamped_path
-from deepdive_charts import write_interactive_chart, try_open_in_browser
+from lib.archive_naming import next_archive_path
+from lib.tessie_api_common import unique_stamped_path
+from lib.analysis_deepdive_charts import write_interactive_chart, try_open_in_browser
 
-from table_formatter import (
+from lib.table_formatter import (
     char_width,
     display_len,
     truncate_display,
@@ -962,8 +962,8 @@ class TessieChargingAnalyzer:
     def load_config(self, explicit_config_path=None):
         config_candidates = [
             explicit_config_path,
-            os.path.join(self.repo_root, "Tessie", "config.json"),
-            os.path.join(self.repo_root, "config.json"),
+            os.path.join(self.repo_root, "config.json"),  # TODO-034: root is primary now
+            os.path.join(self.repo_root, "Tessie", "config.json"),  # legacy fallback
             os.path.expanduser("~/.config/tesla/config.json"),
             os.path.join(self.icloud_dir, "config.json")
         ]
@@ -985,7 +985,7 @@ class TessieChargingAnalyzer:
         dict...}} convention every consumer here expects, and a raw
         scraper-output wrapper like {"version": ..., "updated_at": ...,
         "station_count": N, "stations": [...]} - some provider scrapers
-        (e.g. find_chargers.py's Chargefox output, seen 2026-09-14) write
+        (e.g. charger_find.py's Chargefox output, seen 2026-09-14) write
         THIS shape directly into chargefox_chargers.json instead of the
         normalized dict, with "stations" as a LIST of raw API objects, not
         a dict. The pre-existing unwrap below only handled a dict-shaped
@@ -1697,7 +1697,7 @@ class TessieChargingAnalyzer:
                                 stamp = dt.strftime('%Y-%m-%d_%H%M') if dt else None
                                 if dt:
                                     try:
-                                        import tessie_timezone as _tztools
+                                        import lib.tessie_timezone as _tztools
                                         abbr = _tztools.abbr_for_naive_local(dt)
                                         dt_epoch = _tztools.epoch_for_naive_local(dt)
                                         if abbr:
@@ -2293,7 +2293,7 @@ class TessieChargingAnalyzer:
         row missing/unparseable 'Total Energy Used (kWh)' still counts
         toward distance_km - it just doesn't contribute to
         energy_used_kwh, same tolerant-per-field handling
-        estimate_usable_capacity_kwh() (car_efficiency_profile.py) uses."""
+        estimate_usable_capacity_kwh() (analysis_car_efficiency.py) uses."""
         master_file = None
         for td in self.tessie_dirs:
             for candidate in [
@@ -2309,7 +2309,7 @@ class TessieChargingAnalyzer:
             return None
 
         try:
-            import tessie_timezone as _tztools
+            import lib.tessie_timezone as _tztools
         except Exception:
             _tztools = None
 
@@ -2364,7 +2364,7 @@ class TessieChargingAnalyzer:
         """Finds the existing charge_deepdive_..._Evnex_Home.json file
         whose own charging window overlaps [start_dt, end_dt] - the same
         window-overlap match get_energy_source_crosscheck() uses, via
-        ev_session_cost.load_evnex_deepdive_sessions() - and returns that
+        analysis_ev_session_cost.load_evnex_deepdive_sessions() - and returns that
         file's own "<date>_<HHMM>" stamp (the value unique_stamped_path()
         was originally given when evnex_api_sync.py wrote it) rather than
         a full path. fetch_charge_deepdive_from_api() re-runs that same
@@ -2390,7 +2390,7 @@ class TessieChargingAnalyzer:
         Returns None if no matching JSON is found; the caller falls back
         to a fresh stamp of its own in that case."""
         try:
-            import ev_session_cost as _evc
+            import analysis_ev_session_cost as _evc
         except Exception:
             return None
         pad = timedelta(minutes=2)
@@ -2430,7 +2430,7 @@ class TessieChargingAnalyzer:
         an API-backfilled deepdive CSV in the SAME naming convention every
         manually-ingested/legacy deepdive file already uses (e.g.
         "_Tesla_Macquarie_NSW", "_Exploren_Bunnings_Gladesville") -
-        charge_curve_chart.py's historical pooling keys entirely off that
+        analysis_charge_curve.py's historical pooling keys entirely off that
         slug (via tesla_superchargers.json's short_name, through
         match_hardware()), so a session with no location in its filename
         silently drops out of its own site's pooling. Reuses the
@@ -2507,7 +2507,7 @@ class TessieChargingAnalyzer:
         filenames. For an Evnex session, named to match the EXISTING
         charge_deepdive_..._Evnex_Home.json file's own stem (found by the
         same charging-window-overlap match get_energy_source_crosscheck()
-        already uses, via ev_session_cost.load_evnex_deepdive_sessions())
+        already uses, via analysis_ev_session_cost.load_evnex_deepdive_sessions())
         rather than minting a fresh name - the whole point (AGENTS.md
         REQ-050) is that the .json and .csv for one real session sort and
         pair together by filename alone; a fresh unique_stamped_path() call
@@ -2527,12 +2527,12 @@ class TessieChargingAnalyzer:
             return None
 
         try:
-            from tessie_api_common import load_config, get_token, get_vin, api_get, DEFAULT_UNIT_PARAMS
+            from lib.tessie_api_common import load_config, get_token, get_vin, api_get, DEFAULT_UNIT_PARAMS
         except Exception:
             return None
 
         try:
-            import tessie_timezone as _tztools
+            import lib.tessie_timezone as _tztools
             local_tz = ZoneInfo(_tztools.DEFAULT_TIMEZONE)
         except Exception:
             local_tz = ZoneInfo("Australia/Sydney")
@@ -2578,7 +2578,7 @@ class TessieChargingAnalyzer:
             # all (just the bare "_NN" disambiguator from
             # unique_stamped_path()), unlike every manually-ingested/legacy
             # deepdive CSV, which is always named "..._<Network>_<ShortName>"
-            # (e.g. "Tesla_Macquarie_NSW"). charge_curve_chart.py's historical
+            # (e.g. "Tesla_Macquarie_NSW"). analysis_charge_curve.py's historical
             # pooling keys ENTIRELY off that slug (via tesla_superchargers
             # .json's short_name) - a session named "..._00.csv" can never
             # match its own site's history, so it silently got NO dashed
@@ -3106,7 +3106,7 @@ class TessieChargingAnalyzer:
             dest_dirs = list(self.charges_dirs)
 
         if not dest_dirs:
-            print("\033[31mNo Tessie data directory configured - set \"tessie_directory\" in Tessie/config.json "
+            print("\033[31mNo Tessie data directory configured - set \"tessie_directory\" in config.json "
                   "(see Tessie/config.example.json). Refusing to write charges_master.csv into the repo folder.\033[0m")
             return 0
 
@@ -3871,10 +3871,33 @@ class TessieChargingAnalyzer:
         solar generation (AGENTS.md TODO-027) - replacing
         personal_chargers.json's static rate-card guess (what
         get_expected_tariff_rate() above already returns) with the same
-        real-source computation TODO-013's ev_session_cost.py already
+        real-source computation TODO-013's analysis_ev_session_cost.py already
         does in batch across all 139 Evnex sessions, just triggered live
         here for the ONE session inspect_session() is showing, and
         cached to disk afterward.
+
+        REQ-071 (2026-09-15): PVOutput is now the PRIMARY driver of the
+        headline solar-vs-grid cost split (pv_adjusted_cost/
+        pv_adjusted_cost_incl_gst below), not just a secondary sanity
+        check on Evnex's own claim - see the user's own three-source
+        reasoning in AGENTS.local.md's REQ-071 entry: Evnex's solar% is
+        driven by a CONFIGURED tariff-hours schedule, not a live
+        measurement; AGL sees only import/export and is manual-sync;
+        PVOutput alone has two real CT clamps (generation AND
+        consumption, independently), so it can MEASURE - not infer -
+        real household self-consumption at 5-minute resolution
+        (lib/pvoutput_common.py's pv_window_split()). Evnex's
+        distributionByTariff-based evnex_adjusted_cost (still computed,
+        via evaluate_session() below) is now the FALLBACK for whenever
+        PVOutput data isn't available or doesn't cover the window well
+        (pv_coverage < 0.9 counts as "don't trust it" in the display
+        below, though the raw figures are still returned for
+        inspection). AGL's own real import/export for the window
+        (real_agl_overlap(), via evaluate_session()) is kept as ANOTHER
+        cross-check - now against PVOutput's own real import figure for
+        the same window (pv_agl_import_conflict), since both are
+        independent real meters that should roughly agree, rather than
+        (only) against Evnex's claim as before.
 
         Only meaningful for a home Evnex session (s["network"] ==
         "Evnex") - AGL/PVOutput are whole-household data sources, so a
@@ -3897,15 +3920,15 @@ class TessieChargingAnalyzer:
         Returns a dict (cached or freshly computed), or None if this
         isn't an Evnex session, no matching Evnex deep-dive JSON can be
         found for it, or the real AGL tariff-rates file isn't present on
-        this machine (agl_demand_calculator.load_rate_periods() - a
+        this machine (power_demand_calculator.load_rate_periods() - a
         real, gitignored, per-account file; its absence is a normal
         "not configured on this machine" case, not an error)."""
         if s.get("network") != "Evnex":
             return None
 
         try:
-            import ev_session_cost as _evc
-            from agl_demand_calculator import load_rate_periods
+            import analysis_ev_session_cost as _evc
+            from power_demand_calculator import load_rate_periods
         except Exception:
             return None
 
@@ -3983,71 +4006,109 @@ class TessieChargingAnalyzer:
         except Exception:
             return None
 
-        # PVOutput cross-check - best-effort, never fatal to the
-        # AGL/Evnex figures above if it fails (missing credentials,
-        # network egress, rate limit, an unexpected response shape).
-        pv_generation_kwh = None
-        pv_self_consumed_kwh = None
-        pv_error = None
+        # PVOutput cross-check - now the PRIMARY source (REQ-071) for
+        # this session's own solar-vs-grid cost split, using BOTH of
+        # PVOutput's real CT clamps (generation AND consumption) via
+        # pv_window_split()'s per-5-minute-interval self-consumption
+        # calc, rather than Evnex's own configured tariff-hours schedule
+        # (distributionByTariff, still computed above into
+        # evnex_adjusted_cost - kept as the FALLBACK for whenever
+        # PVOutput data can't be trusted for this window) or inferring
+        # self-consumption from AGL's export figure alone. Best-effort:
+        # never fatal to the AGL/Evnex figures above if it fails
+        # (missing credentials, network egress, rate limit, an
+        # unexpected response shape).
+        pv_split = {
+            "generation_kwh": None, "consumption_kwh": None, "self_consumed_kwh": None,
+            "export_kwh": None, "import_kwh": None, "solar_fraction": None, "coverage": 0.0,
+            "error": "PVOutput import failed",
+        }
+        pv_agl_conflict = False  # default, in case the import/call below never runs at all
         try:
-            from pvoutput_common import (
+            from lib.pvoutput_common import (
                 load_config as _pv_load_config,
                 get_api_key as _pv_get_api_key,
                 get_system_id as _pv_get_system_id,
-                api_get as _pv_api_get,
-                parse_status_rows as _pv_parse_status_rows,
+                pv_window_split as _pv_window_split,
+                pv_agl_import_conflict as _pv_agl_import_conflict,
             )
             pv_cfg = _pv_load_config()
             pv_key = _pv_get_api_key(None, pv_cfg)
             pv_sid = _pv_get_system_id(None, pv_cfg)
             if not pv_key or not pv_sid:
-                pv_error = "no PVOutput credentials configured"
+                pv_split["error"] = "no PVOutput credentials configured"
             else:
-                date_str = result["local_start"].strftime("%Y%m%d")
-                status, body, _hdrs = _pv_api_get(
-                    "getstatus", pv_key, pv_sid, params={"d": date_str, "h": 1, "limit": 288}
+                pv_split = _pv_window_split(result["local_start"], result["local_end"], pv_key, pv_sid)
+                # Computed HERE, inside the same try, rather than
+                # unconditionally further down - an earlier version
+                # called _pv_agl_import_conflict() unconditionally after
+                # this try/except, which raised UnboundLocalError
+                # whenever the import itself failed (caught by `except`
+                # below, but that only assigns pv_split["error"] - it
+                # never bound the name _pv_agl_import_conflict, so a
+                # later unconditional reference to it blew up instead of
+                # degrading gracefully like every other PVOutput figure
+                # here is supposed to).
+                pv_agl_conflict = _pv_agl_import_conflict(
+                    pv_split["import_kwh"], pv_split["coverage"],
+                    result.get("real_import_kwh"), result.get("buckets_missing"),
                 )
-                if status != 200:
-                    pv_error = f"HTTP {status}"
-                else:
-                    rows = _pv_parse_status_rows(body)
-                    # Basic h=1 row shape: Date,Time,EnergyGen(Wh),
-                    # PowerGen(W),EnergyCons(Wh),PowerCons(W),
-                    # Normalised,Temp,Voltage (Tessie/PVOUTPUT_API.md) -
-                    # Energy Generation is a CUMULATIVE-for-the-day
-                    # figure, so this session's own share is the delta
-                    # between the last reading at/after local_end and
-                    # the last reading at/before local_start, not a sum.
-                    gen_readings = []
-                    for row in rows:
-                        if len(row) < 3:
-                            continue
-                        try:
-                            r_time = datetime.strptime(f"{row[0]} {row[1]}", "%Y%m%d %H:%M")
-                            r_gen_wh = float(row[2])
-                        except (ValueError, IndexError):
-                            continue
-                        gen_readings.append((r_time, r_gen_wh))
-                    gen_readings.sort()
-                    before = [g for t, g in gen_readings if t <= result["local_start"]]
-                    upto_end = [g for t, g in gen_readings if t <= result["local_end"]]
-                    if before and upto_end and upto_end[-1] >= before[-1]:
-                        pv_generation_kwh = (upto_end[-1] - before[-1]) / 1000.0
-                    elif gen_readings:
-                        pv_error = "not enough readings spanning this session's window"
-                    else:
-                        pv_error = "no readings returned for this date"
-                    if pv_generation_kwh is not None and result.get("real_export_kwh") is not None:
-                        pv_self_consumed_kwh = max(0.0, pv_generation_kwh - result["real_export_kwh"])
         except Exception as e:
-            pv_error = str(e)
+            pv_split["error"] = str(e)
+
+        pv_generation_kwh = pv_split["generation_kwh"]
+        pv_consumption_kwh = pv_split["consumption_kwh"]
+        pv_self_consumed_kwh = pv_split["self_consumed_kwh"]
+        pv_export_kwh = pv_split["export_kwh"]
+        pv_import_kwh = pv_split["import_kwh"]
+        pv_solar_fraction = pv_split["solar_fraction"]
+        pv_coverage = pv_split["coverage"]
+        pv_error = pv_split["error"]
+
+        # Same GST treatment as evnex_adjusted_cost above (see
+        # evaluate_session()'s own comment for the full rationale) - GST
+        # on the grid-attributed share only, none on the solar-
+        # attributed share (a GST-free opportunity-cost credit, not a
+        # real charge).
+        GST_MULTIPLIER = 1.10
+        pv_adjusted_cost = None
+        pv_adjusted_cost_incl_gst = None
+        if pv_solar_fraction is not None and result.get("kwh_total"):
+            pv_solar_kwh = result["kwh_total"] * pv_solar_fraction
+            pv_grid_kwh = result["kwh_total"] * (1.0 - pv_solar_fraction)
+            grid_charge_ex_gst = pv_grid_kwh * result["usage_rate"]
+            solar_credit_component = pv_solar_kwh * result["solar_tier1_rate"]
+            pv_adjusted_cost = grid_charge_ex_gst + solar_credit_component
+            pv_adjusted_cost_incl_gst = grid_charge_ex_gst * GST_MULTIPLIER + solar_credit_component
+
+        # pv_agl_conflict (PVOutput's own real import figure for this
+        # window vs AGL's real smart-meter import figure,
+        # real_import_kwh from real_agl_overlap() above - two
+        # INDEPENDENT meters measuring the same physical quantity, grid
+        # import to the whole house, for the same window, so they
+        # should roughly agree) was already computed above, inside the
+        # same try/except the PVOutput fetch itself runs in - see the
+        # comment there. A material mismatch flags a data-quality issue
+        # (clock/timezone drift between the two accounts, a PVOutput day
+        # not fully synced yet, a stale/gapped AGL export) rather than
+        # anything about solar usage specifically - a DIFFERENT kind of
+        # flag from evaluate_session()'s own "conflict" field above
+        # (which is about Evnex's claimed solar% vs AGL's real import).
 
         result_out = dict(result)
         result_out["local_start"] = result["local_start"].isoformat()
         result_out["local_end"] = result["local_end"].isoformat()
         result_out["pv_generation_kwh"] = pv_generation_kwh
+        result_out["pv_consumption_kwh"] = pv_consumption_kwh
         result_out["pv_self_consumed_kwh"] = pv_self_consumed_kwh
+        result_out["pv_export_kwh"] = pv_export_kwh
+        result_out["pv_import_kwh"] = pv_import_kwh
+        result_out["pv_solar_fraction"] = pv_solar_fraction
+        result_out["pv_coverage"] = pv_coverage
         result_out["pv_error"] = pv_error
+        result_out["pv_adjusted_cost"] = pv_adjusted_cost
+        result_out["pv_adjusted_cost_incl_gst"] = pv_adjusted_cost_incl_gst
+        result_out["pv_agl_import_conflict"] = pv_agl_conflict
         result_out["evnex_deepdive_file"] = os.path.basename(evnex_path)
         result_out["computed_at"] = datetime.now().isoformat()
         result_out["_from_cache"] = False
@@ -4081,6 +4142,67 @@ class TessieChargingAnalyzer:
                 pass
 
         return result_out
+
+    def precompute_energy_sources(self, sessions=None, force_refresh=False, log=print):
+        """Batch-populates the '<evnex .json stem>_sources.json' cross-
+        check cache (get_energy_source_crosscheck()'s own caching
+        contract) for every home Evnex session in `sessions` (default:
+        every reconciled session), so a later --inspect never has to
+        wait on a live PVOutput/AGL fetch - the user's own "batch all
+        the jobs together in prep" ask (REQ-072): they want the deep-
+        dive data already sitting there when they bring up a session,
+        not computed on demand the first time they look.
+
+        Reuses get_energy_source_crosscheck() UNCHANGED for every
+        session - same cache format, same write-then-swap safety, same
+        per-calendar-day PVOutput fetch reuse - this is purely a batch
+        DRIVER over that existing, already-verified per-session logic,
+        never a second implementation of it. Silently skips anything
+        that isn't a home Evnex session (get_energy_source_crosscheck()
+        itself would just return None for those anyway).
+
+        force_refresh=True re-fetches every session's cross-check even
+        if a cache file already exists - needed once after a change to
+        the underlying calculation (e.g. REQ-071's PVOutput-primary
+        rewrite), since an OLD cache file predating that rewrite simply
+        lacks the new fields and would otherwise sit there stale
+        forever (get_energy_source_crosscheck() never migrates an old
+        cache's schema on read - it either trusts the file as-is or
+        recomputes it whole)."""
+        if not self.reconciled_sessions:
+            self.reconcile()
+        sessions = sessions if sessions is not None else self.reconciled_sessions
+        evnex_sessions = [s for s in sessions if s.get("network") == "Evnex"]
+
+        if not evnex_sessions:
+            log("No home Evnex sessions to precompute.")
+            return {"total": 0, "cached_already": 0, "computed": 0, "no_match": 0, "no_pv_data": 0}
+
+        cached_already = 0
+        computed = 0
+        no_match = 0
+        no_pv_data = 0
+
+        log(f"Precomputing energy-source cross-check for {len(evnex_sessions)} home Evnex session(s) "
+            f"{'(forcing refresh of every cache)' if force_refresh else '(skipping ones already cached)'}...")
+        for i, s in enumerate(evnex_sessions, 1):
+            r = self.get_energy_source_crosscheck(s, force_refresh=force_refresh)
+            if r is None:
+                no_match += 1
+            elif r.get("_from_cache"):
+                cached_already += 1
+            else:
+                computed += 1
+                if r.get("pv_error"):
+                    no_pv_data += 1
+            if i % 10 == 0 or i == len(evnex_sessions):
+                log(f"  ...{i}/{len(evnex_sessions)} processed")
+
+        log(f"Done: {cached_already} already cached, {computed} newly computed "
+            f"({no_pv_data} of those with no usable PVOutput data for their window), "
+            f"{no_match} with no matching Evnex deep-dive file.")
+        return {"total": len(evnex_sessions), "cached_already": cached_already, "computed": computed,
+                "no_match": no_match, "no_pv_data": no_pv_data}
 
     def inspect_session(self, target):
         if not self.reconciled_sessions:
@@ -4315,6 +4437,34 @@ class TessieChargingAnalyzer:
                 base_cost_incl_gst = xcheck["base_cost"] * 1.10
             x2 = f"    • {C_BOLD}{'AGL Base Cost (100% grid):':<{lw_x}}{C_RESET}${base_cost_incl_gst:.4f} AUD incl GST"
             print(f"│{pad_display(x2, box_w - 2, truncate=True)}│")
+
+            # REQ-071: PVOutput is now the PRIMARY solar-vs-grid split
+            # (real generation+consumption CT clamps, not a configured
+            # schedule) - shown first and labelled PRIMARY; Evnex's own
+            # distributionByTariff-based split (further below) is the
+            # FALLBACK for whenever this isn't available/trustworthy for
+            # the window (pv_coverage < 0.9, or an outright pv_error).
+            if xcheck.get("pv_adjusted_cost_incl_gst") is not None:
+                pv_pct = xcheck["pv_solar_fraction"] * 100.0
+                cov_note = "" if xcheck.get("pv_coverage", 1.0) >= 0.99 else f", {xcheck['pv_coverage']*100:.0f}% window coverage"
+                x3 = (f"    • {C_BOLD}{'PVOutput Solar Split (PRIMARY):':<{lw_x}}{C_RESET}"
+                      f"{pv_pct:.1f}% solar / {100 - pv_pct:.1f}% grid -> ${xcheck['pv_adjusted_cost_incl_gst']:.4f} AUD incl GST{cov_note}")
+            else:
+                x3 = (f"    • {C_BOLD}{'PVOutput Solar Split (PRIMARY):':<{lw_x}}{C_RESET}"
+                      f"{C_YELLOW}unavailable ({xcheck.get('pv_error') or 'unknown reason'}) - falling back to Evnex below{C_RESET}")
+            print(f"│{pad_display(x3, box_w - 2, truncate=True)}│")
+
+            x4 = (f"    • {C_BOLD}{'Real AGL Import/Export (window):':<{lw_x}}{C_RESET}"
+                  f"{xcheck['real_import_kwh']:.2f} kWh import / {xcheck['real_export_kwh']:.2f} kWh export "
+                  f"({xcheck['buckets_found']}/{xcheck['buckets_found'] + xcheck['buckets_missing']} half-hour buckets found)")
+            print(f"│{pad_display(x4, box_w - 2, truncate=True)}│")
+
+            if xcheck.get("pv_generation_kwh") is not None:
+                x5 = (f"    • {C_BOLD}{'PVOutput Gen/Cons (window):':<{lw_x}}{C_RESET}"
+                      f"{xcheck['pv_generation_kwh']:.2f} kWh gen, {xcheck['pv_consumption_kwh']:.2f} kWh cons -> "
+                      f"{xcheck['pv_self_consumed_kwh']:.2f} kWh self-consumed, {xcheck['pv_export_kwh']:.2f} kWh export, {xcheck['pv_import_kwh']:.2f} kWh import")
+                print(f"│{pad_display(x5, box_w - 2, truncate=True)}│")
+
             if xcheck.get("solar_pct") is not None:
                 adj_incl_gst = xcheck.get("evnex_adjusted_cost_incl_gst")
                 if adj_incl_gst is None:
@@ -4324,27 +4474,22 @@ class TessieChargingAnalyzer:
                     solar_frac = xcheck["solar_pct"] / 100.0
                     grid_ex_gst = xcheck["evnex_adjusted_cost"] - xcheck["kwh_total"] * solar_frac * xcheck["solar_tier1_rate"]
                     adj_incl_gst = grid_ex_gst * 1.10 + xcheck["kwh_total"] * solar_frac * xcheck["solar_tier1_rate"]
-                x3 = f"    • {C_BOLD}{'Evnex Solar Split:':<{lw_x}}{C_RESET}{xcheck['solar_pct']:.1f}% solar / {100 - xcheck['solar_pct']:.1f}% grid -> ${adj_incl_gst:.4f} AUD incl GST"
+                x6 = f"    • {C_BOLD}{'Evnex Solar Split (fallback):':<{lw_x}}{C_RESET}{xcheck['solar_pct']:.1f}% solar / {100 - xcheck['solar_pct']:.1f}% grid -> ${adj_incl_gst:.4f} AUD incl GST"
             else:
-                x3 = f"    • {C_BOLD}{'Evnex Solar Split:':<{lw_x}}{C_RESET}{C_YELLOW}n/a (no distributionByTariff on this session){C_RESET}"
-            print(f"│{pad_display(x3, box_w - 2, truncate=True)}│")
-            x4 = (f"    • {C_BOLD}{'Real AGL Import/Export (window):':<{lw_x}}{C_RESET}"
-                  f"{xcheck['real_import_kwh']:.2f} kWh import / {xcheck['real_export_kwh']:.2f} kWh export "
-                  f"({xcheck['buckets_found']}/{xcheck['buckets_found'] + xcheck['buckets_missing']} half-hour buckets found)")
-            print(f"│{pad_display(x4, box_w - 2, truncate=True)}│")
-            if xcheck.get("pv_generation_kwh") is not None:
-                x5 = (f"    • {C_BOLD}{'PVOutput Generation (window):':<{lw_x}}{C_RESET}"
-                      f"{xcheck['pv_generation_kwh']:.2f} kWh generated -> {xcheck['pv_self_consumed_kwh']:.2f} kWh self-consumed")
-            else:
-                x5 = f"    • {C_BOLD}{'PVOutput Generation (window):':<{lw_x}}{C_RESET}{C_YELLOW}unavailable ({xcheck.get('pv_error') or 'unknown reason'}){C_RESET}"
-            print(f"│{pad_display(x5, box_w - 2, truncate=True)}│")
+                x6 = f"    • {C_BOLD}{'Evnex Solar Split (fallback):':<{lw_x}}{C_RESET}{C_YELLOW}n/a (no distributionByTariff on this session){C_RESET}"
+            print(f"│{pad_display(x6, box_w - 2, truncate=True)}│")
+
             if xcheck.get("conflict"):
-                x6 = f"    {C_RED}⚠️  Conflict: Evnex claims mostly-solar but real AGL grid import is large relative to this session's own kWh - see AGENTS.md TODO-013.{C_RESET}"
-                for w_line in wrap_text_display(x6, box_w - 4):
+                x7 = f"    {C_RED}⚠️  Conflict: Evnex claims mostly-solar but real AGL grid import is large relative to this session's own kWh - see AGENTS.md TODO-013.{C_RESET}"
+                for w_line in wrap_text_display(x7, box_w - 4):
+                    print(f"│{pad_display(w_line, box_w - 2, truncate=True)}│")
+            if xcheck.get("pv_agl_import_conflict"):
+                x8 = f"    {C_RED}⚠️  Conflict: PVOutput's real import for this window disagrees with AGL's real meter import by >=30% - a data-quality issue (clock drift, an un-synced PVOutput day, a stale AGL export), not a solar-usage question. See REQ-071.{C_RESET}"
+                for w_line in wrap_text_display(x8, box_w - 4):
                     print(f"│{pad_display(w_line, box_w - 2, truncate=True)}│")
             cache_note = "cached - press [r] to refresh" if xcheck.get("_from_cache") else "freshly fetched just now"
-            x7 = f"    {C_DIM}({cache_note}){C_RESET}"
-            print(f"│{pad_display(x7, box_w - 2, truncate=True)}│")
+            x9 = f"    {C_DIM}({cache_note}){C_RESET}"
+            print(f"│{pad_display(x9, box_w - 2, truncate=True)}│")
 
         if "MATCHED" in s['status'] or "VERIFIED" in s['status']:
             stat_color = C_GREEN
@@ -4639,14 +4784,14 @@ class TessieChargingAnalyzer:
         print(f"{C_YELLOW}│ ℹ️  CHARGER DISCOVERY & SEARCH NOTICE                                                    │{C_RESET}")
         print(f"{C_YELLOW}├────────────────────────────────────────────────────────────────────────────────────────┤{C_RESET}")
         print(f"│ Charger discovery, searching, pricing comparison, and TOU rate lookups have moved to  │")
-        print(f"│ the dedicated unified discovery tool: {C_BOLD}./Tools/find_chargers.py{C_RESET}                       │")
+        print(f"│ the dedicated unified discovery tool: {C_BOLD}./Tools/charger_find.py{C_RESET}                       │")
         print(f"│                                                                                        │")
         print(f"│ Usage Examples:                                                                        │")
-        print(f"│   • Search nearby:          ./Tools/find_chargers.py --near 'Ryde'                     │")
-        print(f"│   • Tesla Superchargers:    ./Tools/find_chargers.py --sc                              │")
-        print(f"│   • Specific network:       ./Tools/find_chargers.py --network chargefox               │")
-        print(f"│   • Sort by active price:   ./Tools/find_chargers.py --sort price                      │")
-        print(f"│   • Export master JSON:     ./Tools/find_chargers.py --export-consolidated             │")
+        print(f"│   • Search nearby:          ./Tools/charger_find.py --near 'Ryde'                     │")
+        print(f"│   • Tesla Superchargers:    ./Tools/charger_find.py --sc                              │")
+        print(f"│   • Specific network:       ./Tools/charger_find.py --network chargefox               │")
+        print(f"│   • Sort by active price:   ./Tools/charger_find.py --sort price                      │")
+        print(f"│   • Export master JSON:     ./Tools/charger_find.py --export-consolidated             │")
         print(f"{C_YELLOW}└────────────────────────────────────────────────────────────────────────────────────────┘{C_RESET}\n")
 
         sc_list = list(self.superchargers.items())
@@ -4731,7 +4876,7 @@ class TessieChargingAnalyzer:
             st_state = loc.get("state") or data.get("state")
             if (not st_state or st_state == "-") and loc.get("lat") and loc.get("lon"):
                 try:
-                    from find_tesla_chargers import state_from_coords
+                    from charger_find_tesla import state_from_coords
                     resolved_st, _ = state_from_coords(loc.get("lat"), loc.get("lon"))
                     if resolved_st:
                         st_state = resolved_st
@@ -5272,36 +5417,85 @@ def display_charging_months_menu(filtered_sessions, analyzer):
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Tessie Charging & Supercharger Reconciliation Engine",
-        formatter_class=argparse.RawDescriptionHelpFormatter
+        usage="""tessie_charging_analyzer.py [--superchargers | --third-party | --home]
+                                   [--exclude-superchargers | --exclude-third-party | --exclude-home]
+                                   [--unreconciled] [--month YYYY-MM] [--since DATE] [--until DATE] [--audit]
+   or:  tessie_charging_analyzer.py --inspect ID_OR_DATE [--correlation]
+   or:  tessie_charging_analyzer.py --consolidate
+   or:  tessie_charging_analyzer.py --update-master
+   or:  tessie_charging_analyzer.py --rename-invoices [--rename-format TEMPLATE] [--dry-run] [--yes]
+   or:  tessie_charging_analyzer.py --export FILE
+   or:  tessie_charging_analyzer.py --precompute-sources [--since DATE] [--force-refresh]
+""",
+        description="""
+NAME
+    tessie_charging_analyzer.py - Tessie Charging & Supercharger Reconciliation Engine
+
+DESCRIPTION
+    Reconcile Tessie charge sessions against invoice PDFs/CSV receipts and detailed
+    telemetry CSVs, filter and audit sessions by source or date, and manage invoice
+    file naming.
+""",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+EXAMPLES
+  Filtering & Auditing:
+    tessie_charging_analyzer.py --superchargers --month 2026-09
+    tessie_charging_analyzer.py --unreconciled --audit
+    tessie_charging_analyzer.py --home --since monday
+
+  Inspection & Reconciliation:
+    tessie_charging_analyzer.py --inspect "2026-09-01"
+    tessie_charging_analyzer.py --inspect 142 --correlation
+    tessie_charging_analyzer.py --consolidate
+    tessie_charging_analyzer.py --update-master
+
+  Invoice Management:
+    tessie_charging_analyzer.py --rename-invoices --dry-run
+    tessie_charging_analyzer.py --rename-invoices --yes
+    tessie_charging_analyzer.py --export reconciled.csv
+
+  Prep (REQ-072):
+    tessie_charging_analyzer.py --precompute-sources
+    tessie_charging_analyzer.py --precompute-sources --since 2026-08-01
+    tessie_charging_analyzer.py --precompute-sources --force-refresh
+"""
     )
-    parser.add_argument("--config", "-c", help="Path to custom config.json file")
-    parser.add_argument("--tessie-dir", "-d", help="Path to Tessie directory containing CSVs and JSONs")
-    parser.add_argument("--invoices-dir", "-i", help="Path to directory containing invoice PDFs / CSV receipts")
-    
-    parser.add_argument("--superchargers", "-s", action="store_true", help="Filter for Tesla Supercharger sessions only")
-    parser.add_argument("--third-party", "-t", action="store_true", help="Filter for 3rd-Party Fast/AC charging sessions only")
-    parser.add_argument("--home", "-H", action="store_true", help="Filter for Home AC charging sessions only")
-    parser.add_argument("--exclude-superchargers", action="store_true", help="Exclude Tesla Supercharger sessions (e.g. combine with other filters to show everything else)")
-    parser.add_argument("--exclude-third-party", action="store_true", help="Exclude 3rd-Party Fast/AC charging sessions")
-    parser.add_argument("--exclude-home", action="store_true", help="Exclude Home AC charging sessions (e.g. show all non-home sessions)")
-    parser.add_argument("--unreconciled", "-u", action="store_true", help="Filter for unreconciled sessions or rate mismatches")
-    parser.add_argument("--audit", "-a", action="store_true", help="List mismatches without interactive prompting")
-    parser.add_argument("--month", help="Filter sessions by month (e.g. '2026-09', 'september', 'aug')")
-    parser.add_argument("--since", help="Filter sessions on or after date (YYYY-MM-DD or relative: today, yesterday, monday)")
-    parser.add_argument("--until", help="Filter sessions on or before date (YYYY-MM-DD)")
-    
-    parser.add_argument("--inspect", help="Deep-dive inspect a specific session by Charge # or Date")
-    parser.add_argument("--correlation", "--compare", action="store_true", help="Display 3-way correlation audit comparing Tessie summary, detailed telemetry CSV, and Invoices")
-    parser.add_argument("--list-chargers", action="store_true", help="(Deprecated) List registered stations. Prefer using ./Tools/find_chargers.py")
-    parser.add_argument("--consolidate", action="store_true", help="Consolidate all charges into charges_master.csv")
-    parser.add_argument("--update-master", "--update-all", "--fix-all", "--sync-invoices", action="store_true", help="Update charges_master.csv and individual charge files with official invoice costs/rates")
-    parser.add_argument("--rename-invoices", "--rename", action="store_true", help="Rename invoice PDFs to <date/time>_<network>_<invoice_num>_<place>.pdf")
-    parser.add_argument("--rename-format", help="Custom renaming template (e.g. '{datetime}_{network}_{invoice_num}_{place}.pdf')")
-    parser.add_argument("--dry-run", action="store_true", help="Preview renaming without modifying files on disk")
-    parser.add_argument("--yes", "-y", action="store_true", help="Automatically confirm renaming without interactive prompt")
-    parser.add_argument("--export", help="Export reconciled results to a CSV or JSON file")
-    parser.add_argument("--tolerance-mins", type=int, default=None, help="Invoice matching time tolerance in minutes (default: 45 or config)")
+
+    g_config = parser.add_argument_group("Configuration & Paths")
+    g_config.add_argument("--config", "-c", help="Path to custom config.json file")
+    g_config.add_argument("--tessie-dir", "-d", help="Path to Tessie directory containing CSVs and JSONs")
+    g_config.add_argument("--invoices-dir", "-i", help="Path to directory containing invoice PDFs / CSV receipts")
+
+    g_filter = parser.add_argument_group("Session Filters")
+    g_filter.add_argument("--superchargers", "-s", action="store_true", help="Filter for Tesla Supercharger sessions only")
+    g_filter.add_argument("--third-party", "-t", action="store_true", help="Filter for 3rd-Party Fast/AC charging sessions only")
+    g_filter.add_argument("--home", "-H", action="store_true", help="Filter for Home AC charging sessions only")
+    g_filter.add_argument("--exclude-superchargers", action="store_true", help="Exclude Tesla Supercharger sessions (e.g. combine with other filters to show everything else)")
+    g_filter.add_argument("--exclude-third-party", action="store_true", help="Exclude 3rd-Party Fast/AC charging sessions")
+    g_filter.add_argument("--exclude-home", action="store_true", help="Exclude Home AC charging sessions (e.g. show all non-home sessions)")
+    g_filter.add_argument("--unreconciled", "-u", action="store_true", help="Filter for unreconciled sessions or rate mismatches")
+    g_filter.add_argument("--audit", "-a", action="store_true", help="List mismatches without interactive prompting")
+    g_filter.add_argument("--month", help="Filter sessions by month (e.g. '2026-09', 'september', 'aug')")
+    g_filter.add_argument("--since", help="Filter sessions on or after date (YYYY-MM-DD or relative: today, yesterday, monday)")
+    g_filter.add_argument("--until", help="Filter sessions on or before date (YYYY-MM-DD)")
+
+    g_action = parser.add_argument_group("Inspection, Reconciliation & Invoice Actions")
+    g_action.add_argument("--inspect", help="Deep-dive inspect a specific session by Charge # or Date")
+    g_action.add_argument("--correlation", "--compare", action="store_true", help="Display 3-way correlation audit comparing Tessie summary, detailed telemetry CSV, and Invoices")
+    g_action.add_argument("--list-chargers", action="store_true", help="(Deprecated) List registered stations. Prefer using ./Tools/charger_find.py")
+    g_action.add_argument("--consolidate", action="store_true", help="Consolidate all charges into charges_master.csv")
+    g_action.add_argument("--update-master", "--update-all", "--fix-all", "--sync-invoices", action="store_true", help="Update charges_master.csv and individual charge files with official invoice costs/rates")
+    g_action.add_argument("--rename-invoices", "--rename", action="store_true", help="Rename invoice PDFs to <date/time>_<network>_<invoice_num>_<place>.pdf")
+    g_action.add_argument("--rename-format", help="Custom renaming template (e.g. '{datetime}_{network}_{invoice_num}_{place}.pdf')")
+    g_action.add_argument("--dry-run", action="store_true", help="Preview renaming without modifying files on disk")
+    g_action.add_argument("--yes", "-y", action="store_true", help="Automatically confirm renaming without interactive prompt")
+    g_action.add_argument("--export", help="Export reconciled results to a CSV or JSON file")
+    g_action.add_argument("--tolerance-mins", type=int, default=None, help="Invoice matching time tolerance in minutes (default: 45 or config)")
+    g_action.add_argument("--precompute-sources", action="store_true",
+                           help="Batch-populate the PVOutput/AGL/Evnex energy-source cross-check cache for every matching home Evnex session (combine with --since/--until/--month to scope it), so --inspect never waits on a live fetch (REQ-072)")
+    g_action.add_argument("--force-refresh", action="store_true",
+                           help="With --precompute-sources, re-fetch every session's cross-check even if already cached (needed once after a change to the underlying calculation)")
 
     args = parser.parse_args()
 
@@ -5383,6 +5577,10 @@ def main():
         if u_dt:
             u_dt_end = u_dt + timedelta(days=1)
             filtered = [s for s in filtered if s["datetime"] and s["datetime"] <= u_dt_end]
+
+    if args.precompute_sources:
+        analyzer.precompute_energy_sources(sessions=filtered, force_refresh=args.force_refresh)
+        return
 
     if args.correlation:
         analyzer.print_correlation_table(filtered)

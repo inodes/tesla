@@ -77,11 +77,11 @@ import time
 from datetime import datetime
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from tessie_api_common import (
-    DEFAULT_UNIT_PARAMS, REPO_ROOT, SCRIPT_DIR, api_get, extract_json_records,
+from lib.tessie_api_common import (
+    DEFAULT_UNIT_PARAMS, REPO_ROOT, TOOLS_DIR, api_get, extract_json_records,
     get_token, get_vin, load_config, resolve_tessie_data_home,
 )
-import tessie_timezone as tztools
+import lib.tessie_timezone as tztools
 
 CACHE_DIR = os.path.join(REPO_ROOT, "Tessie", "api_cache")
 
@@ -90,8 +90,14 @@ CACHE_DIR = os.path.join(REPO_ROOT, "Tessie", "api_cache")
 # command yourself) - never imports their classes, so they stay fully
 # decoupled from how fetching works.
 CONSOLIDATE_SCRIPTS = {
-    "drives": os.path.join(SCRIPT_DIR, "tessie_drives_analyzer.py"),
-    "charges": os.path.join(SCRIPT_DIR, "tessie_charging_analyzer.py"),
+    # REQ-072 fix (2026-09-15): tessie_drives_analyzer.py/tessie_charging_analyzer.py
+    # live in Tools/, not Tools/lib/ - REQ-067 moved tessie_api_common.py (and its
+    # SCRIPT_DIR) one directory deeper into lib/ without updating these two paths,
+    # so --consolidate silently broke ("can't open file .../lib/tessie_charging_analyzer.py").
+    # TOOLS_DIR (the same two-hop constant REQ-067 introduced for REPO_ROOT) is the
+    # correct base here.
+    "drives": os.path.join(TOOLS_DIR, "tessie_drives_analyzer.py"),
+    "charges": os.path.join(TOOLS_DIR, "tessie_charging_analyzer.py"),
 }
 
 # One entry per data type this tool knows how to fetch. Adding a new Tessie
@@ -430,7 +436,7 @@ def sync_battery_health(tessie_dir=None, since_days=1095):
     to), and merges everything into
     <tessie data home>/battery_health_log.json, deduplicated by
     timestamp. This replaces relying on manually-exported CSVs
-    (car_efficiency_profile.py's load_battery_health_history() still
+    (analysis_car_efficiency.py's load_battery_health_history() still
     merges any of those it finds too, but only as a fallback/supplement -
     the API pull here is the real, primary source per the user's own
     request: "I wanted you to pull down full battery_health from tessie
@@ -457,7 +463,7 @@ def sync_battery_health(tessie_dir=None, since_days=1095):
     token = get_token(None, cfg)
     vin = get_vin(None, cfg)
     if not token or not vin:
-        print("❌ No access token/VIN configured - see Tessie/config.json or TESSIE_ACCESS_TOKEN.")
+        print("❌ No access token/VIN configured - see config.json or TESSIE_ACCESS_TOKEN.")
         return None
 
     to_ts = int(time.time())
@@ -553,7 +559,7 @@ def backfill_deepdive_telemetry(kinds, limit=None, pace_seconds=1.5, since_days=
 
     Returns {kind: (fetched, skipped_in_progress, already_had, failed)}.
     """
-    sys.path.insert(0, SCRIPT_DIR)
+    sys.path.insert(0, TOOLS_DIR)  # REQ-072 fix: these analyzer modules live in Tools/, not Tools/lib/
     results = {}
     if "drives" in kinds:
         results["drives"] = _backfill_drive_deepdive(limit, pace_seconds, since_days, tessie_dir)
@@ -719,45 +725,75 @@ def should_consolidate(pending_types, auto_yes, is_tty, input_fn=input):
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Fetch Tessie drives/charges via the Developer API, then run the existing --consolidate flows for you (with a confirmation prompt)"
+        usage="""tessie_api_sync.py [--drives | --charges] [--since-days N] [--yes] [--dry-run]
+                       [--reset-cache] [--token TOKEN] [--vin VIN] [--landing-dir DIR]
+   or:  tessie_api_sync.py --consolidate [--drives | --charges]
+   or:  tessie_api_sync.py --backfill-deepdive [--drives | --charges] [--limit N] [--pace SECONDS]
+   or:  tessie_api_sync.py --battery-health [--battery-health-since-days N]
+""",
+        description="""
+NAME
+    tessie_api_sync.py - Tessie Developer API Drive/Charge/Battery-Health Sync
+
+DESCRIPTION
+    Fetch Tessie drives/charges via the Developer API, then run the existing
+    --consolidate flows for you (with a confirmation prompt unless --yes is given).
+""",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+EXAMPLES
+  tessie_api_sync.py --drives --since-days 30
+  tessie_api_sync.py --charges --yes
+  tessie_api_sync.py --consolidate --drives
+  tessie_api_sync.py --backfill-deepdive --limit 50 --pace 2
+  tessie_api_sync.py --battery-health
+"""
     )
-    parser.add_argument("--drives", action="store_true", help="Sync drives only")
-    parser.add_argument("--charges", action="store_true", help="Sync charges only")
-    parser.add_argument("--token", help="Tessie API access token (overrides env var / config.json)")
-    parser.add_argument("--vin", help="Vehicle VIN (overrides Tessie/config.json's 'vin')")
-    parser.add_argument("--since-days", type=int, default=None,
+
+    g_select = parser.add_argument_group("Selection & Auth")
+    g_select.add_argument("--drives", action="store_true", help="Sync drives only")
+    g_select.add_argument("--charges", action="store_true", help="Sync charges only")
+    g_select.add_argument("--token", help="Tessie API access token (overrides env var / config.json)")
+    g_select.add_argument("--vin", help="Vehicle VIN (overrides config.json's 'vin')")
+
+    g_sync = parser.add_argument_group("Sync Behavior")
+    g_sync.add_argument("--since-days", type=int, default=None,
                          help="First-run backfill window in days (default: 90; ignored once a type has a prior sync point unless --reset-cache is also passed)")
-    parser.add_argument("--landing-dir", help="Where to write the CSV (default: Tessie/config.json's 'landing_directory')")
-    parser.add_argument("--dry-run", action="store_true", help="Fetch and report only - write nothing to disk")
-    parser.add_argument("--reset-cache", action="store_true",
+    g_sync.add_argument("--landing-dir", help="Where to write the CSV (default: config.json's 'landing_directory')")
+    g_sync.add_argument("--dry-run", action="store_true", help="Fetch and report only - write nothing to disk")
+    g_sync.add_argument("--reset-cache", action="store_true",
                          help="Forget the prior sync point/cache for the selected type(s) and do a fresh --since-days backfill")
-    parser.add_argument("--yes", "-y", action="store_true",
+    g_sync.add_argument("--yes", "-y", action="store_true",
                          help="Consolidate automatically without prompting (needed for unattended/cron use)")
-    parser.add_argument("--no-consolidate", action="store_true",
+    g_sync.add_argument("--no-consolidate", action="store_true",
                          help="Fetch only - never run --consolidate, even interactively")
-    parser.add_argument("--consolidate", action="store_true",
+    g_sync.add_argument("--consolidate", action="store_true",
                          help="Skip fetching entirely and just run --consolidate directly on each "
                               "selected analyzer script (drives and/or charges), merging whatever "
                               "CSV(s) are already sitting in the landing directory - e.g. to finish "
                               "consolidating from a previous sync without doing a new fetch. No "
                               "token/VIN needed for this mode.")
-    parser.add_argument("--backfill-deepdive", action="store_true",
+
+    g_deepdive = parser.add_argument_group("Deep-Dive Telemetry Backfill")
+    g_deepdive.add_argument("--backfill-deepdive", action="store_true",
                          help="Bulk-fetch deep-dive telemetry from Tessie's /states API for every past "
                               "drive and/or charging session that doesn't have a local "
                               "drive_deepdive_*.csv / charge_deepdive_*.csv yet (uses the same "
                               "--drives/--charges selectors as the sync above - both, if neither is "
                               "given). Separate from the regular sync - re-run as many times as needed, "
                               "it only ever fetches what's still missing.")
-    parser.add_argument("--limit", type=int, default=25,
+    g_deepdive.add_argument("--limit", type=int, default=25,
                          help="Max NEW deep-dive fetches per domain for --backfill-deepdive in this run (default 25 - re-run to continue). Use 0 for no cap.")
-    parser.add_argument("--pace", type=float, default=1.5,
+    g_deepdive.add_argument("--pace", type=float, default=1.5,
                          help="Seconds to wait between --backfill-deepdive API calls (default 1.5)")
-    parser.add_argument("--tessie-dir", help="Custom path to directory containing Tessie CSV exports (--backfill-deepdive only)")
-    parser.add_argument("--battery-health", action="store_true",
+    g_deepdive.add_argument("--tessie-dir", help="Custom path to directory containing Tessie CSV exports (--backfill-deepdive only)")
+
+    g_battery = parser.add_argument_group("Battery Health")
+    g_battery.add_argument("--battery-health", action="store_true",
                          help="Pull the vehicle's full battery health history from Tessie's API (default "
                               "3 years back) plus a current snapshot, and merge everything into "
                               "battery_health_log.json, deduplicated by timestamp.")
-    parser.add_argument("--battery-health-since-days", type=int, default=1095,
+    g_battery.add_argument("--battery-health-since-days", type=int, default=1095,
                          help="How far back to pull real battery_health history on --battery-health "
                               "(default: 1095 / ~3 years).")
     args = parser.parse_args()
@@ -811,11 +847,11 @@ def main():
 
     if not token:
         print("❌ No access token found. Provide one via --token, the TESSIE_ACCESS_TOKEN")
-        print('   environment variable, or a "tessie_access_token" key in Tessie/config.json.')
+        print('   environment variable, or a "tessie_access_token" key in config.json.')
         print("   Generate one at: https://dash.tessie.com/settings/api")
         sys.exit(1)
     if not vin:
-        print("❌ No VIN found. Provide one via --vin or ensure Tessie/config.json has a \"vin\" key.")
+        print("❌ No VIN found. Provide one via --vin or ensure config.json has a \"vin\" key.")
         sys.exit(1)
 
     print(f"\U0001f50e Syncing Tessie API data for VIN ...{vin[-6:]} (token not shown)")

@@ -16,7 +16,7 @@ addoutput.jsp), same pattern as test_tessie_api.py and evnex_explore.py.
 Auth - reads the API key + system ID from, in priority order:
   1. --api-key / --system-id CLI args
   2. PVOUTPUT_API_KEY / PVOUTPUT_SYSTEM_ID environment variables
-  3. "pvoutput_api_key" / "pvoutput_system_id" keys in Tessie/config.json
+  3. "pvoutput_api_key" / "pvoutput_system_id" keys in config.json
      (gitignored - never committed)
 Never hardcode a key in this file, in git, or paste one into chat.
 
@@ -40,7 +40,7 @@ import os
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from pvoutput_common import (  # noqa: F401 - shared with any later real sync script, see Tessie/PVOUTPUT_API.md
+from lib.pvoutput_common import (  # noqa: F401 - shared with any later real sync script, see Tessie/PVOUTPUT_API.md
     api_get,
     get_api_key,
     get_system_id,
@@ -74,7 +74,21 @@ def show_raw_fields(label, body, show_values=False, max_fields=40):
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Test connectivity to the PVOutput API and inspect the getsystem/getstatus data shape"
+        usage="test_pvoutput_api.py [--api-key KEY] [--system-id ID] [--date YYYYMMDD] [--show-values]\n",
+        description="""
+NAME
+    test_pvoutput_api.py - PVOutput API connectivity & data-shape test
+
+DESCRIPTION
+    Test connectivity to the PVOutput API and inspect the getsystem/getstatus
+    data shape.
+""",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+EXAMPLES
+  test_pvoutput_api.py
+  test_pvoutput_api.py --date 20260901 --show-values
+"""
     )
     parser.add_argument("--api-key", help="PVOutput API key (overrides env var / config.json)")
     parser.add_argument("--system-id", help="PVOutput system ID (overrides env var / config.json)")
@@ -89,7 +103,7 @@ def main():
     if not api_key or not system_id:
         print("❌ No API key / system ID found. Provide via --api-key/--system-id, the")
         print("   PVOUTPUT_API_KEY/PVOUTPUT_SYSTEM_ID environment variables, or the")
-        print('   "pvoutput_api_key"/"pvoutput_system_id" keys in Tessie/config.json.')
+        print('   "pvoutput_api_key"/"pvoutput_system_id" keys in config.json.')
         print("   Generate a key at: https://pvoutput.org/account.jsp (Settings -> API)")
         sys.exit(1)
 

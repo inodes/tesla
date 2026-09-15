@@ -29,7 +29,7 @@ In-progress sessions are always skipped (Evnex's own sessionStatus ==
 figures aren't final yet. Re-run this again later and a since-completed
 session is picked up normally, no special handling needed.
 
-Credentials come from evnex_common.py (Tessie/config.json or
+Credentials come from evnex_common.py (config.json or
 EVNEX_CLIENT_USERNAME/EVNEX_CLIENT_PASSWORD env vars) - nothing this
 script prints or writes includes the Evnex username/password.
 
@@ -48,10 +48,10 @@ import sys
 from datetime import datetime, timezone
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from evnex_common import get_authenticated_client, is_real_charging_session, EvnexCredentialsError  # noqa: E402
+from lib.evnex_common import get_authenticated_client, is_real_charging_session, EvnexCredentialsError  # noqa: E402
 from evnex_explore import to_jsonable  # noqa: E402
-from tessie_api_common import resolve_tessie_data_home, unique_stamped_path  # noqa: E402
-import tessie_timezone as tztools  # noqa: E402
+from lib.tessie_api_common import resolve_tessie_data_home, unique_stamped_path  # noqa: E402
+import lib.tessie_timezone as tztools  # noqa: E402
 
 
 def deepdive_dir():
@@ -68,7 +68,7 @@ def iso_to_epoch(iso_str):
 
 
 def is_session_complete(attrs):
-    """Same completeness rule already used by home_charge_deep_dive.py's
+    """Same completeness rule already used by analysis_home_charge_deep_dive.py's
     match_evnex_sessions() - Evnex is explicit about an in-progress session
     via sessionStatus/chargingStopped, so trust that rather than guessing
     from timestamps."""
@@ -261,7 +261,26 @@ async def run(dry_run, limit, log):
 
 
 def main():
-    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser = argparse.ArgumentParser(
+        usage="evnex_api_sync.py [--dry-run] [--limit N] [--quiet]\n",
+        description="""
+NAME
+    evnex_api_sync.py - sync completed Evnex home-charging sessions into deep-dive files
+
+DESCRIPTION
+    Automated, idempotent sync that turns newly-completed Evnex home-charging
+    sessions into per-session deep-dive files under charges/deepdive/ - keyed
+    on Evnex's own session UUID, never a filename. Only ever writes new files;
+    never modifies or deletes an existing one.
+""",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+EXAMPLES
+  evnex_api_sync.py
+  evnex_api_sync.py --dry-run
+  evnex_api_sync.py --limit 5 --quiet
+"""
+    )
     parser.add_argument("--dry-run", action="store_true", help="Show what would be written, write nothing")
     parser.add_argument("--limit", type=int, default=None, help="Cap how many new files get written this run")
     parser.add_argument("--quiet", action="store_true", help="Summary only, suppress per-session progress lines")

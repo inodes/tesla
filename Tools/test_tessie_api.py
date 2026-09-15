@@ -15,7 +15,7 @@ passed) writes nothing to disk at all.
 Auth - reads the access token from, in priority order:
   1. --token CLI arg
   2. TESSIE_ACCESS_TOKEN environment variable
-  3. "tessie_access_token" key in Tessie/config.json (gitignored - never
+  3. "tessie_access_token" key in config.json (gitignored - never
      committed, same as the "vin" key already stored there)
 Never hardcode a token in this file, in git, or paste one into chat.
 
@@ -42,7 +42,7 @@ import sys
 import time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from tessie_api_common import api_get, get_token, get_vin, load_config  # noqa: F401 - shared with tessie_api_sync.py, see Tessie/TESSIE_API.md
+from lib.tessie_api_common import api_get, get_token, get_vin, load_config  # noqa: F401 - shared with tessie_api_sync.py, see Tessie/TESSIE_API.md
 
 
 def summarize_json_records(label, body, show_values=False):
@@ -70,17 +70,44 @@ def summarize_json_records(label, body, show_values=False):
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Test connectivity to the Tessie API and inspect the /drives and /charges data shape"
+        usage="""test_tessie_api.py [--token TOKEN] [--vin VIN] [--limit N] [--since-days N]
+                       [--save-csv] [--show-values]
+                       [--distance-format mi|km] [--temperature-format c|f] [--timezone TZ]
+""",
+        description="""
+NAME
+    test_tessie_api.py - Tessie Developer API Connectivity & Data-Shape Test
+
+DESCRIPTION
+    One-shot sanity check for the Tessie Developer API: confirms an access token
+    works, pulls a small sample of /drives and /charges, and shows what fields
+    come back so they can be compared against the existing Tessie CSV export
+    columns this repo's tools already parse. Test/exploration only - it makes no
+    changes to any registry or master CSV, and (unless --save-csv is passed)
+    writes nothing to disk at all.
+""",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+EXAMPLES
+  test_tessie_api.py
+  test_tessie_api.py --limit 10 --since-days 7
+  test_tessie_api.py --save-csv --show-values
+  test_tessie_api.py --distance-format mi --temperature-format f
+"""
     )
-    parser.add_argument("--token", help="Tessie API access token (overrides env var / config.json)")
-    parser.add_argument("--vin", help="Vehicle VIN (overrides Tessie/config.json's 'vin')")
-    parser.add_argument("--limit", type=int, default=5, help="Records to request per endpoint (default: 5)")
-    parser.add_argument("--since-days", type=int, default=30, help="Only request records from the last N days (default: 30)")
-    parser.add_argument("--save-csv", action="store_true", help="Also request format=csv and save a small sample file per endpoint")
-    parser.add_argument("--show-values", action="store_true", help="Print full field values for the first record too (off by default - this is real location/battery data)")
-    parser.add_argument("--distance-format", default="km", choices=["mi", "km"], help="Distance unit for API responses (default: km, matching this repo's CSVs - API itself defaults to mi)")
-    parser.add_argument("--temperature-format", default="c", choices=["c", "f"], help="Temperature unit for API responses (default: c)")
-    parser.add_argument("--timezone", default="Australia/Sydney", help="IANA timezone for API timestamps (default: Australia/Sydney, matching the '(AEST)' CSV headers - API itself defaults to UTC)")
+
+    g_auth = parser.add_argument_group("Auth & Request Scope")
+    g_auth.add_argument("--token", help="Tessie API access token (overrides env var / config.json)")
+    g_auth.add_argument("--vin", help="Vehicle VIN (overrides config.json's 'vin')")
+    g_auth.add_argument("--limit", type=int, default=5, help="Records to request per endpoint (default: 5)")
+    g_auth.add_argument("--since-days", type=int, default=30, help="Only request records from the last N days (default: 30)")
+
+    g_output = parser.add_argument_group("Output & Formatting")
+    g_output.add_argument("--save-csv", action="store_true", help="Also request format=csv and save a small sample file per endpoint")
+    g_output.add_argument("--show-values", action="store_true", help="Print full field values for the first record too (off by default - this is real location/battery data)")
+    g_output.add_argument("--distance-format", default="km", choices=["mi", "km"], help="Distance unit for API responses (default: km, matching this repo's CSVs - API itself defaults to mi)")
+    g_output.add_argument("--temperature-format", default="c", choices=["c", "f"], help="Temperature unit for API responses (default: c)")
+    g_output.add_argument("--timezone", default="Australia/Sydney", help="IANA timezone for API timestamps (default: Australia/Sydney, matching the '(AEST)' CSV headers - API itself defaults to UTC)")
     args = parser.parse_args()
 
     config = load_config()
@@ -89,11 +116,11 @@ def main():
 
     if not token:
         print("❌ No access token found. Provide one via --token, the TESSIE_ACCESS_TOKEN")
-        print('   environment variable, or a "tessie_access_token" key in Tessie/config.json.')
+        print('   environment variable, or a "tessie_access_token" key in config.json.')
         print("   Generate one at: https://dash.tessie.com/settings/api")
         sys.exit(1)
     if not vin:
-        print("❌ No VIN found. Provide one via --vin or ensure Tessie/config.json has a \"vin\" key.")
+        print("❌ No VIN found. Provide one via --vin or ensure config.json has a \"vin\" key.")
         sys.exit(1)
 
     print(f"\U0001f50e Testing Tessie API for VIN ...{vin[-6:]} (token not shown)\n")
