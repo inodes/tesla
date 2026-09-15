@@ -502,7 +502,7 @@ class UnifiedStationRecord:
         return "AC Public"
 
     def type_icon(self) -> str:
-        """Returns short type icon (🔴 SC, 🔌 Dest, 🦊 CF, ⚡ NRMA, 🔌 Evie, 🟢 BP, 🔌 3rd)."""
+        """Returns short type icon (🔴 SC, 🔌 Dest, 🦊 CF, ⚡ NRMA, 🕊️ Evie, 🟢 BP, 🔌 3rd)."""
         if self.speed_tier == "supercharger":
             return "🔴 SC"
         if self.source == "tesla" or "tesla" in (self.network or "").lower():
@@ -515,7 +515,7 @@ class UnifiedStationRecord:
         if "evx" in net or self.source == "evx":
             return "🔌 EVX"
         if "evie" in net:
-            return "🔌 Evie"
+            return "🕊️ Evie"
         if "bp" in net:
             return "🟢 BP"
         return "🔌 3rd"
@@ -577,7 +577,7 @@ class UnifiedStationRecord:
         if "evx" in net or self.source == "evx":
             return "🔌 EVX"
         if "evie" in net:
-            return "🔌 Evie"
+            return "🕊️ Evie"
         if "bp" in net or "pulse" in net:
             return "🟢 BP Pulse"
         if "ampcharge" in net or "ampol" in net:
@@ -678,7 +678,7 @@ class UnifiedStationRecord:
         evie_view = views.get("evie")
         if evie_view and isinstance(evie_view, dict):
             evie_url = evie_view.get("url") or "https://evie.com.au/find-a-charger/"
-            _add("Evie", "🔌", "Evie Networks", evie_url)
+            _add("Evie", "🕊️", "Evie Networks", evie_url)
 
         # 5. bp pulse View
         bp_view = views.get("bppulse")

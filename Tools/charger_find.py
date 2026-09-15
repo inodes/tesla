@@ -5,7 +5,7 @@
 Finds, compares, and explores EV charging stations across all public networks:
 - ⚡ Tesla Superchargers & Destination Chargers (Tier 1 First-Party)
 - 🦊 Chargefox, NRMA, WA EV Network, QLD Electric Highway (Tier 1 First-Party)
-- 🔌 Evie, BP Pulse, AmpCharge, Exploren, Chargepoint, Engie (Tier 2 Aggregator)
+- 🕊️ Evie, BP Pulse, AmpCharge, Exploren, Chargepoint, Engie (Tier 2 Aggregator)
 
 Key Features:
 - Spatial Deduplication (R <= 60m) & First-Party Truth Hierarchy (Tier 1 > Tier 2)
@@ -271,7 +271,7 @@ def _contextual_type_icon(st: UnifiedStationRecord, network_filter: Optional[str
     if nf == "evx":
         return "🔌 EVX"
     if nf == "evie":
-        return "🔌 Evie"
+        return "🕊️ Evie"
     if "bp" in nf:
         return "🟢 BP"
     if nf == "tesla":
@@ -411,7 +411,7 @@ def render_stations_table(
     print(bot_b)
 
 
-def browse_chargefox_catalog_grid(manager: ChargerDiscoveryManager, country: str = "Australia") -> None:
+def browse_chargefox_catalog_grid(manager: ChargerDiscoveryManager, country: str = "Australia", auto_save: bool = False) -> None:
     """
     Live Chargefox/NRMA catalog browser mirroring charger_find_tesla.py's
     browse_stations_by_type() grid+status-legend+menu UX (REQ-060,
@@ -426,7 +426,9 @@ def browse_chargefox_catalog_grid(manager: ChargerDiscoveryManager, country: str
     the menu the way Tesla's 'all'/'new'/'renamed'/'stale' subset-scrape
     does - fetching live IS the preview. sync_all_australia(auto_save=False)
     keeps this non-destructive: nothing overwrites
-    Tessie/chargefox_chargers.json until the user explicitly picks 'save'.
+    Tessie/chargefox_chargers.json until the user explicitly picks 'save' (or passes
+    auto_save=True, wired to the top-level --save/--update flag, for a one-shot
+    non-interactive refresh: `--live --network chargefox --save`).
     """
     from charger_find_tesla import AU_STATE_MAP
 
@@ -476,7 +478,10 @@ def browse_chargefox_catalog_grid(manager: ChargerDiscoveryManager, country: str
         title_str = rec.name
         if status == "RENAMED":
             title_str += f" {C_MAGENTA}🔄 (in JSON: {renamed_from[rec.key]}){C_RESET}"
-        return f" [{color}{counter:3d}{C_RESET}] 🔌 {title_str}"
+        # Use the record's own network-appropriate icon (🦊 Chargefox, ⚡ NRMA,
+        # etc.) instead of a hardcoded generic plug - BUG-090 follow-on.
+        icon = rec.type_icon().split(" ", 1)[0]
+        return f" [{color}{counter:3d}{C_RESET}] {icon} {title_str}"
 
     max_len = 0
     for rec in live_records:
@@ -506,6 +511,11 @@ def browse_chargefox_catalog_grid(manager: ChargerDiscoveryManager, country: str
             else:
                 print(left_text)
         print()
+
+    if auto_save:
+        provider.save_cached_registry(live_records)
+        print(f"\u2714 Saved {len(live_records)} Chargefox/NRMA locations to {provider.registry_path}")
+        return
 
     print(f"{C_BOLD}Options:{C_RESET}")
     print(f"  \u2022 Enter a station number [1-{len(live_records)}] to inspect details")
@@ -1130,7 +1140,7 @@ DESCRIPTION
                     print(f"  ⚠️ EVX sync encountered error: {e}")
         sync_results.append(("EVX", evx_ok))
 
-        print("\n🔌 [4/7] Syncing Evie Networks Fast Charging Stations across Australia...")
+        print("\n🕊️ [4/7] Syncing Evie Networks Fast Charging Stations across Australia...")
         evie_ok = False
         for p in manager.providers:
             if isinstance(p, EvieProvider):
@@ -1394,7 +1404,7 @@ DESCRIPTION
             browse_stations_by_type(tesla_explorer, types_to_fetch, args.country or "Australia")
             return
         if net_lower in ("chargefox", "nrma"):
-            browse_chargefox_catalog_grid(manager, args.country or "Australia")
+            browse_chargefox_catalog_grid(manager, args.country or "Australia", auto_save=args.save)
             return
         print(f"{C_YELLOW}⚠ --live browsing isn't available for this network selection - it needs one canonical upstream catalog to diff against (Tesla via --network tesla or --sc, or Chargefox via --network chargefox). PlugShare-aggregated networks (Evie, bp pulse, etc.) have no single such list.{C_RESET}")
         print(f"{C_DIM}Falling back to the local registry view below.{C_RESET}")
