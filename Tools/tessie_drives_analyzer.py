@@ -3456,42 +3456,55 @@ def display_footage_details(trip, analyzer):
     print(f"\n💡 Quick Tips:")
     print(f"   • To view side doors (getting in/out): check *-left_repeater.mp4 or *-right_repeater.mp4")
     print(f"   • To view trunk/rear walking: check *-back.mp4")
-    if start_clips or end_clips:
+    # BUG-087 (2026-09-15): the whole action prompt below - including
+    # "[o]pen chart in browser" - used to be nested inside
+    # "if start_clips or end_clips:", so a drive with real deep-dive
+    # telemetry/chart but NO local dashcam footage (a real user report:
+    # an early-morning drive with a chart but no synced footage yet)
+    # never got offered the chart action at all. has_chart and
+    # has_footage are now independent gates - the chart action shows up
+    # whenever a chart exists, whether or not footage does.
+    has_chart = bool(dd_chart_path and os.path.exists(dd_chart_path))
+    has_footage = bool(start_clips or end_clips)
+    first_folder = None
+    if has_footage:
         first_folder = (start_clips[0]['folder'] if start_clips else end_clips[0]['folder'])
         print(f"   • Open folder in Finder: open \"{first_folder}\"")
-        if sys.stdin.isatty():
-            try:
-                has_chart = bool(dd_chart_path and os.path.exists(dd_chart_path))
-                action_parts = ["[d]elete footage across all drives"]
-                if has_chart:
-                    action_parts.append("[o]pen chart in browser")
+    if (has_footage or has_chart) and sys.stdin.isatty():
+        try:
+            action_parts = []
+            if has_footage:
+                action_parts.append("[d]elete footage across all drives")
+            if has_chart:
+                action_parts.append("[o]pen chart in browser")
+            if has_footage:
                 action_parts.append("[f]older")
-                action_parts.append("[Enter] continue")
-                action_choice = input(f"\n📹 Trip Footage Action: {', '.join(action_parts)}: ").strip().lower()
-                if action_choice in ("d", "del", "delete"):
-                    all_clips = start_clips + end_clips
-                    pkgs = build_timeline_footage_packages({"clips": all_clips, "start_dt": trip["start_dt"], "end_dt": trip["end_dt"]})
-                    if pkgs:
-                        total_files = sum(p["files_count"] for p in pkgs)
-                        num_drives = max(1, len(analyzer.teslacam_dirs))
-                        total_bytes = sum(p["tot_size"] for p in pkgs) * num_drives
-                        mb_val = total_bytes / (1024 * 1024)
-                        sz_str = f"{mb_val/1024:.1f} GB" if mb_val >= 1024 else f"{mb_val:.0f} MB"
-                        print(f"\n⚠️  Permanently delete all footage for this trip (~{total_files * num_drives} files, {sz_str}) across {num_drives} mounted drive(s)? [y/N]: ", end="")
-                        conf = input().strip().lower()
-                        if conf in ("y", "yes"):
-                            n_del, b_del, n_tombs = delete_footage_packages_across_drives(pkgs, analyzer)
-                            del_mb = b_del / (1024 * 1024)
-                            del_sz = f"{del_mb/1024:.1f} GB" if del_mb >= 1024 else f"{del_mb:.0f} MB"
-                            print(f"✔ Successfully deleted {n_del} file(s) ({del_sz}) and recorded {n_tombs} tombstone(s).\n")
-                elif action_choice in ("o", "open", "chart", "c") and has_chart:
-                    try_open_in_browser(dd_chart_path)
-                elif action_choice in ("f", "folder"):
-                    if sys.platform == "darwin" and os.path.exists(first_folder):
-                        subprocess.run(["open", first_folder])
-                        print(f"📂 Opened in Finder: {first_folder}\n")
-            except (KeyboardInterrupt, EOFError):
-                pass
+            action_parts.append("[Enter] continue")
+            action_choice = input(f"\n📹 Trip Footage Action: {', '.join(action_parts)}: ").strip().lower()
+            if action_choice in ("d", "del", "delete") and has_footage:
+                all_clips = start_clips + end_clips
+                pkgs = build_timeline_footage_packages({"clips": all_clips, "start_dt": trip["start_dt"], "end_dt": trip["end_dt"]})
+                if pkgs:
+                    total_files = sum(p["files_count"] for p in pkgs)
+                    num_drives = max(1, len(analyzer.teslacam_dirs))
+                    total_bytes = sum(p["tot_size"] for p in pkgs) * num_drives
+                    mb_val = total_bytes / (1024 * 1024)
+                    sz_str = f"{mb_val/1024:.1f} GB" if mb_val >= 1024 else f"{mb_val:.0f} MB"
+                    print(f"\n⚠️  Permanently delete all footage for this trip (~{total_files * num_drives} files, {sz_str}) across {num_drives} mounted drive(s)? [y/N]: ", end="")
+                    conf = input().strip().lower()
+                    if conf in ("y", "yes"):
+                        n_del, b_del, n_tombs = delete_footage_packages_across_drives(pkgs, analyzer)
+                        del_mb = b_del / (1024 * 1024)
+                        del_sz = f"{del_mb/1024:.1f} GB" if del_mb >= 1024 else f"{del_mb:.0f} MB"
+                        print(f"✔ Successfully deleted {n_del} file(s) ({del_sz}) and recorded {n_tombs} tombstone(s).\n")
+            elif action_choice in ("o", "open", "chart", "c") and has_chart:
+                try_open_in_browser(dd_chart_path)
+            elif action_choice in ("f", "folder") and has_footage:
+                if sys.platform == "darwin" and os.path.exists(first_folder):
+                    subprocess.run(["open", first_folder])
+                    print(f"📂 Opened in Finder: {first_folder}\n")
+        except (KeyboardInterrupt, EOFError):
+            pass
 
 def drill_down_day(day_str, day_trips, analyzer):
     """Level 2: Display drives for a selected day in a structured table and allow picking a trip for footage listing."""
