@@ -141,6 +141,32 @@ def format_duration_short(mins):
         return f"{h}h"
     return f"{h}h {m}m"
 
+def format_drive_efficiency(t):
+    """kWh/100km average efficiency for a whole trip (drives-table column,
+    REQ AGENTS.local.md 2026-09-15: user - "a new column in the drives
+    probably after 'Route (Origin -> Destination)' and before 'Parked
+    Duration' - this should be in kWh/100km"). Prefers Tessie's own
+    'Average Energy Used (Wh/km)' summary column (already correctly
+    averaged over the whole drive - divide by 10 for kWh/100km), falling
+    back to Total Energy Used (kWh) / Distance (km) * 100 when Wh/km is
+    missing but both of those are present. Returns '-' when neither is
+    available (e.g. an older export or a footage-only row with no
+    drive-summary energy data)."""
+    wh_km = t.get("wh_km")
+    try:
+        if wh_km not in (None, "", "-"):
+            return f"{float(wh_km) / 10.0:.1f} kWh/100km"
+    except (TypeError, ValueError):
+        pass
+    kwh_used = t.get("kwh_used")
+    dist_km = t.get("dist_km")
+    try:
+        if kwh_used not in (None, "", "-") and dist_km and float(dist_km) > 0:
+            return f"{(float(kwh_used) / float(dist_km)) * 100.0:.1f} kWh/100km"
+    except (TypeError, ValueError, ZeroDivisionError):
+        pass
+    return "-"
+
 def clean_event_reason(reason):
     if not reason:
         return "event"
@@ -2234,6 +2260,7 @@ class TessieAnalyzer:
                     return None
 
                 raw_ts, raw_elev, raw_speed, raw_power, raw_odo, raw_erem = [], [], [], [], [], []
+                raw_lat, raw_lon = [], []
                 timestamps = []
 
                 def to_float(v):
@@ -2253,6 +2280,8 @@ class TessieAnalyzer:
                     raw_power.append(to_float(row.get("Power (kW)")))
                     raw_odo.append(to_float(row.get("Odometer (km)")))
                     raw_erem.append(to_float(row.get("Energy Remaining (kWh)")))
+                    raw_lat.append(to_float(row.get("Latitude")))
+                    raw_lon.append(to_float(row.get("Longitude")))
 
                 if not timestamps:
                     return None
@@ -2277,6 +2306,8 @@ class TessieAnalyzer:
                         "power_kw": raw_power,
                         "odometer_km": raw_odo,
                         "energy_remaining_kwh": raw_erem,
+                        "latitude": raw_lat,
+                        "longitude": raw_lon,
                     },
                 }
         except Exception:
@@ -2678,9 +2709,26 @@ class TessieAnalyzer:
         base = os.path.splitext(os.path.basename(dt_rec.get("source_file") or "drive"))[0]
         out_path = os.path.join(src_dir, f"{base}_profile.html")
 
+        # Whole-drive average efficiency (REQ AGENTS.local.md 2026-09-15) -
+        # a single number for the WHOLE drive, not the smoothed per-sample
+        # eff_series above (that's for the curve on the chart itself, this
+        # is the one-line summary under the heading) - total energy used
+        # (first sample's Energy Remaining minus the last, since it only
+        # decreases while actually driving) over the drive's total distance.
+        avg_eff = None
+        erem_vals = [v for v in raw.get("energy_remaining_kwh", []) if v is not None]
+        dist_km = dt_rec.get("distance_km")
+        if erem_vals and dist_km and dist_km > 0.05:
+            energy_used_kwh = erem_vals[0] - erem_vals[-1]
+            if energy_used_kwh > 0:
+                avg_eff = (energy_used_kwh / dist_km) * 100.0
+
         subtitle = (f"{dt_rec.get('samples_count', n)} samples over "
                     f"{dt_rec.get('duration_mins', 0):.1f} min"
-                    + (f", {dt_rec['distance_km']:.1f} km" if dt_rec.get("distance_km") else ""))
+                    + (f", {dt_rec['distance_km']:.1f} km" if dt_rec.get("distance_km") else "")
+                    + (f" \u2014 Avg Efficiency: {avg_eff:.1f} kWh/100km" if avg_eff is not None else ""))
+
+        locations = self._compute_drive_locations(raw)
 
         write_interactive_chart(
             out_path,
@@ -2689,8 +2737,87 @@ class TessieAnalyzer:
             x_label="Time",
             series=series,
             subtitle=subtitle,
+            locations=locations,
         )
         return out_path
+
+    def _compute_drive_locations(self, raw_samples):
+        """Sparse, nearest-fill reverse-geocoded location label per sample,
+        for the drive profile chart's hover tooltip (REQ AGENTS.local.md
+        2026-09-15: user - "while dragging cursor along the timeline, it
+        would be good to have an extra line for where the car is at that
+        point in time (e.g. address pulled from csv)"). The CSV only has
+        raw Latitude/Longitude, not a ready-made address, so this reverse-
+        geocodes via tessie_places.reverse_geocode() (Nominatim) - but only
+        when the car has moved more than MIN_MOVE_M since the last lookup,
+        caching by a coarsely-rounded lat/lon and nearest-filling every
+        sample in between. Reverse-geocoding every single sample would be
+        both pointless (a still-moving car's address doesn't meaningfully
+        change every few seconds) and abusive of Nominatim's free-API 1
+        req/sec usage policy for a drive with hundreds of samples. Returns
+        None (no location line at all) if there's no lat/lon in this CSV
+        (older exports) or every lookup fails; otherwise a list the same
+        length as the sample series, aligned 1:1 like every other series
+        write_interactive_chart() takes."""
+        lats = raw_samples.get("latitude") or []
+        lons = raw_samples.get("longitude") or []
+        n = len(lats)
+        if n == 0 or not any(v is not None for v in lats):
+            return None
+
+        try:
+            from tessie_places import reverse_geocode, haversine_distance
+        except ImportError:
+            return None
+
+        MIN_MOVE_M = 400.0
+        cache = {}
+        geocoded_idx = []
+        labels = [None] * n
+        last_lat, last_lon = None, None
+
+        for i in range(n):
+            lat, lon = lats[i], lons[i]
+            if lat is None or lon is None:
+                continue
+            if last_lat is not None and haversine_distance(last_lat, last_lon, lat, lon) < MIN_MOVE_M:
+                continue
+            key = (round(lat, 3), round(lon, 3))
+            if key in cache:
+                label = cache[key]
+            else:
+                try:
+                    info = reverse_geocode(lat, lon)
+                except Exception:
+                    info = None
+                label = self._format_reverse_geocode_label(info) if info else None
+                cache[key] = label
+                time.sleep(1.0)  # Nominatim usage policy: max 1 request/sec
+            labels[i] = label
+            last_lat, last_lon = lat, lon
+            geocoded_idx.append(i)
+
+        if not geocoded_idx:
+            return None
+
+        filled = [None] * n
+        for i in range(n):
+            nearest = min(geocoded_idx, key=lambda gi: abs(gi - i))
+            filled[i] = labels[nearest]
+        return filled
+
+    @staticmethod
+    def _format_reverse_geocode_label(info):
+        """Short 'Road, Suburb'-style label from a tessie_places.reverse_geocode()
+        result, falling back to its display_name/name when address parts
+        are missing (e.g. open water, a highway with no suburb tag)."""
+        addr = (info or {}).get("address") or {}
+        road = addr.get("road") or addr.get("pedestrian") or addr.get("footway") or addr.get("cycleway")
+        suburb = addr.get("suburb") or addr.get("town") or addr.get("city") or addr.get("village") or addr.get("municipality")
+        parts = [p for p in (road, suburb) if p]
+        if parts:
+            return ", ".join(parts)
+        return info.get("display_name") or info.get("name") or None
 
     DRIVE_FINALIZE_GRACE_SECONDS = 600  # see _drive_is_in_progress()
 
@@ -3553,6 +3680,7 @@ def drill_down_day(day_str, day_trips, analyzer):
                 "dist": dist_str,
                 "soc": soc_str,
                 "route": route_str,
+                "eff": f" {format_drive_efficiency(t)}",
                 "park": park_str,
                 "sav": "📹" if "Saved" in f_cats else "·",
                 "sen": "🛡️" if "Sentry" in f_cats else "·",
@@ -3565,6 +3693,7 @@ def drill_down_day(day_str, day_trips, analyzer):
         w_dist = max(len(" Distance "), max((display_len(r["dist"]) + 1 for r in rows_data), default=11))
         w_soc = max(len(" SoC % "), max((display_len(r["soc"]) + 1 for r in rows_data), default=10))
         w_route = max(len(" Route (Origin ➔ Destination) "), max((display_len(r["route"]) + 1 for r in rows_data), default=30))
+        w_eff = max(len(" Avg Efficiency "), max((display_len(r["eff"]) + 1 for r in rows_data), default=17))
         w_park = max(len(" Parked Duration "), max((display_len(r["park"]) + 1 for r in rows_data), default=14))
         
         w_sav = 7
@@ -3572,8 +3701,8 @@ def drill_down_day(day_str, day_trips, analyzer):
         w_rec = 8
         w_foot_total = w_sav + w_sen + w_rec + 2  # 25
 
-        left_widths = [w_idx, w_time, w_dur, w_dist, w_soc, w_route, w_park]
-        left_headers = [" #", " Time Window", " Dur", " Distance", " SoC %", " Route (Origin ➔ Destination)", " Parked Duration"]
+        left_widths = [w_idx, w_time, w_dur, w_dist, w_soc, w_route, w_eff, w_park]
+        left_headers = [" #", " Time Window", " Dur", " Distance", " SoC %", " Route (Origin ➔ Destination)", " Avg Efficiency", " Parked Duration"]
 
         total_inner = sum(left_widths) + len(left_widths) + w_foot_total
         title = f" 📅 {dt_obj.strftime('%A, %d %B %Y')} — {len(day_trips)} Drives (Total: {time_str}, {total_km:.1f} km)"
@@ -3608,10 +3737,10 @@ def drill_down_day(day_str, day_trips, analyzer):
         all_widths = left_widths + [w_sav, w_sen, w_rec]
         # idx/dur/dist/soc/park are numbers (with units, or plain for idx) -> right-aligned;
         # time and route are free text -> left-aligned; footage icons stay centered.
-        all_aligns = ["right", "left", "right", "right", "right", "left", "right", "center", "center", "center"]
+        all_aligns = ["right", "left", "right", "right", "right", "left", "right", "right", "center", "center", "center"]
         for r in rows_data:
             row_cells = [
-                r["idx"] + " ", r["time"], r["dur"] + " ", r["dist"] + " ", r["soc"] + " ", r["route"], r["park"] + " ",
+                r["idx"] + " ", r["time"], r["dur"] + " ", r["dist"] + " ", r["soc"] + " ", r["route"], r["eff"] + " ", r["park"] + " ",
                 r["sav"], r["sen"], r["rec"]
             ]
             print(format_row(row_cells, all_widths, all_aligns))
@@ -3692,6 +3821,7 @@ def drill_down_all_days(sorted_days, days_dict, analyzer, title):
                 "dist": dist_str,
                 "soc": soc_str,
                 "route": route_str,
+                "eff": f" {format_drive_efficiency(t)}",
                 "park": park_str,
                 "sav": "📹" if "Saved" in f_cats else "·",
                 "sen": "🛡️" if "Sentry" in f_cats else "·",
@@ -3705,6 +3835,7 @@ def drill_down_all_days(sorted_days, days_dict, analyzer, title):
         w_dist = max(len(" Distance "), max((display_len(r["dist"]) + 1 for r in rows_data), default=11))
         w_soc = max(len(" SoC % "), max((display_len(r["soc"]) + 1 for r in rows_data), default=10))
         w_route = max(len(" Route (Origin ➔ Destination) "), max((display_len(r["route"]) + 1 for r in rows_data), default=30))
+        w_eff = max(len(" Avg Efficiency "), max((display_len(r["eff"]) + 1 for r in rows_data), default=17))
         w_park = max(len(" Parked Duration "), max((display_len(r["park"]) + 1 for r in rows_data), default=14))
 
         w_sav = 7
@@ -3712,8 +3843,8 @@ def drill_down_all_days(sorted_days, days_dict, analyzer, title):
         w_rec = 8
         w_foot_total = w_sav + w_sen + w_rec + 2  # 25
 
-        left_widths = [w_idx, w_date, w_time, w_dur, w_dist, w_soc, w_route, w_park]
-        left_headers = [" #", " Date", " Time Window", " Dur", " Distance", " SoC %", " Route (Origin ➔ Destination)", " Parked Duration"]
+        left_widths = [w_idx, w_date, w_time, w_dur, w_dist, w_soc, w_route, w_eff, w_park]
+        left_headers = [" #", " Date", " Time Window", " Dur", " Distance", " SoC %", " Route (Origin ➔ Destination)", " Avg Efficiency", " Parked Duration"]
 
         total_inner = sum(left_widths) + len(left_widths) + w_foot_total
         title_str = f" 📋 {title} — All {len(all_trips)} Drives (Total: {time_str}, {total_km:.1f} km)"
@@ -3748,10 +3879,10 @@ def drill_down_all_days(sorted_days, days_dict, analyzer, title):
         all_widths = left_widths + [w_sav, w_sen, w_rec]
         # idx/dur/dist/soc are numbers (with units, or plain for idx) -> right-aligned;
         # date/time/route are free text -> left-aligned; footage icons stay centered.
-        all_aligns = ["right", "left", "left", "right", "right", "right", "left", "right", "center", "center", "center"]
+        all_aligns = ["right", "left", "left", "right", "right", "right", "left", "right", "right", "center", "center", "center"]
         for r in rows_data:
             row_cells = [
-                r["idx"] + " ", r["date"], r["time"], r["dur"] + " ", r["dist"] + " ", r["soc"] + " ", r["route"], r["park"] + " ",
+                r["idx"] + " ", r["date"], r["time"], r["dur"] + " ", r["dist"] + " ", r["soc"] + " ", r["route"], r["eff"] + " ", r["park"] + " ",
                 r["sav"], r["sen"], r["rec"]
             ]
             print(format_row(row_cells, all_widths, all_aligns))
