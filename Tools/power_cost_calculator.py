@@ -1,12 +1,24 @@
 #!/usr/bin/env python3
 """
-agl_cost_calculator.py - Full AGL Solar VIP bill reconstruction from the
-usage master (agl_usage_sync.py) and dated tariff rates
-(agl_tariff_rates.json): usage charge, supply charge, tiered solar
-credit, and the Ausgrid EA025 demand charge (agl_demand_calculator.py),
-all in one place so the true cost of a charging session (or any other
-load) can eventually be weighed against real, verified AGL pricing
-rather than a guess.
+power_cost_calculator.py - Full electricity-bill reconstruction for the
+active power provider (e.g. AGL's Solar VIP plan) from the usage master
+(power_usage_sync.py) and the provider's own dated tariff rates: usage
+charge, supply charge, tiered solar credit, and the distributor's
+residential demand charge (power_demand_calculator.py), all in one
+place so the true cost of a charging session (or any other load) can
+eventually be weighed against real, verified pricing rather than a
+guess.
+
+REQ-070 (2026-09-15): generalized from agl_cost_calculator.py - the
+retailer-specific rules this file used to hardcode (AGL's pooled
+tiered solar credit, the Ausgrid EA025 demand charge, the GST handling)
+now live in Tools/providers_power/power_agl.py's AGLProvider, the first
+and so far only BasePowerProvider implementation (get_power_provider(),
+default "agl" - see providers_power/__init__.py). This file itself
+contains no AGL-specific numbers; every provider-specific rule is
+delegated. The design notes below describe AGL's own real billing
+behaviour (still true, still how the self-test below is verified), not
+something this file computes directly any more.
 
 Solar credit tiering (see AGENTS.md REQ-031 - found by reading the FULL
 invoice text, not just the headline "Standard feed-in tariff*" line):
@@ -17,17 +29,20 @@ flat $0.04/kWh that hasn't been observed to change). This is a POOLED
 period-total cap, not a per-day cap summed afterward - confirmed because
 every observed tier-1 amount is an exact multiple of 10 x the sub-period's
 day count (300, 310, 250, ...), which would be a remarkable coincidence
-under day-by-day capping.
+under day-by-day capping. (See AGLProvider.solar_credit() for the actual
+implementation.)
 
 Demand-charge arrears timing (confirmed against 2 real invoices): the
 invoice for cycle [start, end] bills the demand peak for the calendar
 month immediately before `end`'s month - i.e. the most recently FULLY
-COMPLETED calendar month as of the cycle's end date.
+COMPLETED calendar month as of the cycle's end date. This timing rule
+is provider-agnostic and stays in this file (demand_month_for_cycle_end()
+below) rather than in the provider class.
 
-Self-test (run this file directly) reconstructs 4 real invoices (Apr,
-May, Jun, Jul 2026 cycles) end-to-end and compares the computed total
-against each bill's actual "Direct Debit amount due" - within a small
-cents-level tolerance for AGL's own per-line rounding.
+Self-test (run this file directly) reconstructs 4 real AGL invoices
+(Apr, May, Jun, Jul 2026 cycles) end-to-end and compares the computed
+total against each bill's actual "Direct Debit amount due" - within a
+small cents-level tolerance for AGL's own per-line rounding.
 """
 
 import argparse
@@ -37,15 +52,8 @@ import sys
 from datetime import date, datetime, timedelta
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from agl_common import resolve_agl_data_home  # noqa: E402
-from agl_demand_calculator import load_rate_periods, rate_for_date, monthly_latched_kw, demand_charge  # noqa: E402
-
-TIER2_RATE = 0.04  # flat $0.04/kWh beyond the daily cap - unchanged across every period observed so far
-TIER1_CAP_KWH_PER_DAY = 10
-
-
-def parse_agl_datetime(s):
-    return datetime.strptime(s.strip(), "%d/%m/%Y %I:%M:%S %p")
+from providers_power import get_power_provider  # noqa: E402
+from power_demand_calculator import load_rate_periods, rate_for_date, monthly_latched_kw, demand_charge  # noqa: E402
 
 
 def daterange_days(start, end):
@@ -72,13 +80,14 @@ def split_by_rate_period(start, end, periods=None):
     return out
 
 
-def sum_kwh(master_path, role, start, end):
+def sum_kwh(master_path, role, start, end, provider=None):
+    provider = provider or get_power_provider()
     total = 0.0
     with open(master_path, "r", encoding="utf-8-sig", newline="") as f:
         for row in csv.DictReader(f):
             if row["Role"] != role:
                 continue
-            dt = parse_agl_datetime(row["StartDate"])
+            dt = provider.parse_datetime(row["StartDate"])
             if start <= dt.date() <= end:
                 total += float(row["kWh"])
     return total
@@ -86,26 +95,27 @@ def sum_kwh(master_path, role, start, end):
 
 def demand_month_for_cycle_end(end):
     """The calendar month billed on an invoice ending on `end` - the
-    most recently fully completed calendar month as of that date."""
+    most recently fully completed calendar month as of that date. This
+    arrears-timing rule is the same for every provider observed so far,
+    so it stays here rather than in providers_power/."""
     first_of_end_month = end.replace(day=1)
     last_month_end = first_of_end_month - timedelta(days=1)
     return last_month_end.year, last_month_end.month
 
 
-def solar_credit(total_kwh, days, tier1_rate):
-    cap = TIER1_CAP_KWH_PER_DAY * days
-    tier1_kwh = min(total_kwh, cap)
-    tier2_kwh = max(0.0, total_kwh - cap)
-    return round(tier1_kwh * tier1_rate, 2), round(tier2_kwh * TIER2_RATE, 2)
+def solar_credit(total_kwh, days, tier1_rate, provider=None):
+    provider = provider or get_power_provider()
+    return provider.solar_credit(total_kwh, days, tier1_rate)
 
 
 def reconstruct_bill(start, end, master_path=None, periods=None, log=None):
     """Full ex-GST/incl-GST reconstruction for invoice cycle [start, end]
-    (inclusive date() objects). Returns a dict of every component plus
-    the total, so a caller can inspect where the money went, not just
-    the bottom line."""
-    data_home = resolve_agl_data_home()
-    master_path = master_path or os.path.join(data_home, "usage", "agl_usage_master.csv")
+    (inclusive date() objects), under the active power provider. Returns
+    a dict of every component plus the total, so a caller can inspect
+    where the money went, not just the bottom line."""
+    provider = get_power_provider()
+    data_home = provider.resolve_data_home()
+    master_path = master_path or os.path.join(data_home, "usage", provider.usage_master_filename())
     periods = periods or load_rate_periods()
     days = daterange_days(start, end)
 
@@ -114,11 +124,11 @@ def reconstruct_bill(start, end, master_path=None, periods=None, log=None):
     solar_credit_total = 0.0
     for sub_start, sub_end, period in split_by_rate_period(start, end, periods):
         sub_days = daterange_days(sub_start, sub_end)
-        import_kwh = sum_kwh(master_path, "import", sub_start, sub_end)
-        solar_kwh = sum_kwh(master_path, "solar_export", sub_start, sub_end)
+        import_kwh = sum_kwh(master_path, "import", sub_start, sub_end, provider)
+        solar_kwh = sum_kwh(master_path, "solar_export", sub_start, sub_end, provider)
         usage_ex_gst += import_kwh * period["usage_rate_per_kwh"]
         supply_ex_gst += sub_days * period["supply_charge_per_day"]
-        t1, t2 = solar_credit(solar_kwh, sub_days, period["solar_feed_in_tier1_rate_per_kwh"])
+        t1, t2 = solar_credit(solar_kwh, sub_days, period["solar_feed_in_tier1_rate_per_kwh"], provider)
         solar_credit_total += t1 + t2
         if log:
             log(f"  [{sub_start} to {sub_end}, {sub_days}d, rate from {period['effective_from']}] "
@@ -134,7 +144,10 @@ def reconstruct_bill(start, end, master_path=None, periods=None, log=None):
     # to CHARGES ONLY (usage + supply + demand), never netted against the
     # solar export credit - "Total GST" on every sampled bill is exactly
     # 10% of "Total charges", not 10% of the net after credits. Solar
-    # credits are GST-free and simply subtracted at the end.
+    # credits are GST-free and simply subtracted at the end. (This GST
+    # treatment is currently the same for every provider observed - if a
+    # future provider does it differently, this is the place to make it
+    # provider-specific rather than assuming it stays universal.)
     charges_ex_gst = usage_ex_gst + supply_ex_gst + demand_ex_gst
     total_ex_gst = charges_ex_gst - solar_credit_total
     total_incl_gst = round(charges_ex_gst * 1.10 - solar_credit_total, 2)
@@ -153,13 +166,27 @@ def reconstruct_bill(start, end, master_path=None, periods=None, log=None):
     }
 
 
+# REQ-071 (2026-09-15): real invoice cycles pulled out of self_test()
+# into this module-level constant so analysis_ev_session_cost.py's own
+# --reconcile-invoices (the user's own "AGL invoices can be used to
+# cross reference the data as we've determined it") can reuse the SAME
+# already-verified (start, end, real total) cases as ground truth for
+# reconstruct_bill(), instead of a second hand-copied list that could
+# drift from this one. Real dollar totals and invoice numbers, not
+# rates or usage data - this repo's own established precedent already
+# commits these (they were here, inline in self_test(), before this
+# refactor) rather than treating them as PII the way agl_tariff_rates.json
+# and agl_usage_master.csv are.
+REAL_INVOICE_CYCLES = [
+    (date(2026, 4, 25), date(2026, 5, 24), 49.89, "487506779-1 (Apr)"),
+    (date(2026, 5, 25), date(2026, 6, 24), 80.31, "491187907 (May)"),
+    (date(2026, 6, 25), date(2026, 7, 24), 269.98, "494808436 (Jun)"),
+    (date(2026, 7, 25), date(2026, 8, 24), 202.44, "498179654 (Jul)"),
+]
+
+
 def self_test():
-    cases = [
-        (date(2026, 4, 25), date(2026, 5, 24), 49.89, "487506779-1 (Apr)"),
-        (date(2026, 5, 25), date(2026, 6, 24), 80.31, "491187907 (May)"),
-        (date(2026, 6, 25), date(2026, 7, 24), 269.98, "494808436 (Jun)"),
-        (date(2026, 7, 25), date(2026, 8, 24), 202.44, "498179654 (Jul)"),
-    ]
+    cases = REAL_INVOICE_CYCLES
     all_ok = True
     for start, end, expected_total, label in cases:
         print(f"=== {label}: {start} to {end} ===")
@@ -179,8 +206,32 @@ def self_test():
 
 
 def main():
-    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("--self-test", action="store_true")
+    parser = argparse.ArgumentParser(
+        usage="""power_cost_calculator.py --start YYYY-MM-DD --end YYYY-MM-DD
+   or:  power_cost_calculator.py --self-test
+""",
+        description="""
+NAME
+    power_cost_calculator.py - full electricity-bill reconstruction for the active power provider
+
+DESCRIPTION
+    Reconstructs the active power provider's full bill for a cycle (e.g.
+    AGL's Solar VIP plan) from the usage master (power_usage_sync.py) and
+    the provider's own dated tariff rates: usage charge, supply charge,
+    tiered solar credit, and the distributor's residential demand charge
+    (power_demand_calculator.py) - all in one place, so the true cost of a
+    charging session (or any other load) can be weighed against real,
+    verified pricing. The active provider is config.json's "power_provider"
+    key (default "agl").
+""",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+EXAMPLES
+  power_cost_calculator.py --start 2026-08-01 --end 2026-08-31
+  power_cost_calculator.py --self-test
+"""
+    )
+    parser.add_argument("--self-test", action="store_true", help="Run the built-in self-test against already-invoiced AGL cycles")
     parser.add_argument("--start", help="YYYY-MM-DD cycle start")
     parser.add_argument("--end", help="YYYY-MM-DD cycle end")
     args = parser.parse_args()

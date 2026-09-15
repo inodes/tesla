@@ -11,7 +11,7 @@ consumer-app API the Evnex phone app itself uses, authenticating with your
 normal Evnex account email + password.
 
 Credential handling rules (deliberate, not incidental):
-  - Source of truth is Tessie/config.json ("evnex_username"/"evnex_password"),
+  - Source of truth is config.json ("evnex_username"/"evnex_password"),
     the same file/pattern tessie_access_token already uses - see
     tessie_api_common.py.
   - EVNEX_CLIENT_USERNAME / EVNEX_CLIENT_PASSWORD environment variables
@@ -29,10 +29,10 @@ Credential handling rules (deliberate, not incidental):
 """
 
 import os
-import sys
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from tessie_api_common import load_config  # noqa: E402  (reuse Tessie/config.json loader)
+# REQ-067: now a sibling module inside Tools/lib/ - a package-relative
+# import replaces the old sys.path.insert()+flat-import trick.
+from .tessie_api_common import load_config  # (reuse config.json loader)
 
 ENV_USERNAME = "EVNEX_CLIENT_USERNAME"
 ENV_PASSWORD = "EVNEX_CLIENT_PASSWORD"
@@ -66,7 +66,7 @@ def require_evnex_credentials(config=None):
         missing.append("evnex_password")
     if missing:
         raise EvnexCredentialsError(
-            "Missing " + " and ".join(missing) + ". Set in Tessie/config.json "
+            "Missing " + " and ".join(missing) + ". Set in config.json "
             "(see Tessie/config.example.json) or via the "
             f"{ENV_USERNAME}/{ENV_PASSWORD} environment variables."
         )
@@ -99,7 +99,7 @@ async def get_authenticated_client(config=None):
 def session_energy_wh(attrs):
     """Real energy delivered (Wh) for one Evnex session's own `attributes`
     dict (the same dict evnex_api_sync.py writes as record["session"]
-    ["attributes"], and ev_session_cost.py reads back as session["session"]
+    ["attributes"], and analysis_ev_session_cost.py reads back as session["session"]
     ["attributes"]), or None if Evnex didn't report a totalEnergyUsage at
     all for this session. Kept in one shared place so "did this session
     actually deliver power" is judged identically everywhere that asks -

@@ -13,7 +13,7 @@ from datetime import datetime, timezone
 from typing import Dict, List, Optional, Any, Tuple
 from concurrent.futures import ThreadPoolExecutor
 
-from .base import (
+from .chargers_base import (
     BaseChargerProvider,
     UnifiedStationRecord,
     haversine_km,
@@ -22,12 +22,12 @@ from .base import (
     archive_station_record,
     save_json_with_fallback
 )
-from .tesla_provider import TeslaProvider
-from .chargefox_provider import ChargefoxProvider
-from .evx_provider import EVXProvider
-from .evie_provider import EvieProvider
-from .bppulse_provider import BPPulseProvider
-from .plugshare_provider import PlugShareProvider
+from .chargers_tesla import TeslaProvider
+from .chargers_chargefox import ChargefoxProvider
+from .chargers_evx import EVXProvider
+from .chargers_evie import EvieProvider
+from .chargers_bppulse import BPPulseProvider
+from .chargers_plugshare import PlugShareProvider
 
 
 def _normalize_street_word(w: str) -> str:
@@ -409,14 +409,39 @@ class ChargerDiscoveryManager:
         deduplicates, and sorts.
         """
         filters = filters or {}
+        requested_speed_tier = filters.get("speed_tier")
+
         all_found: List[UnifiedStationRecord] = []
         for p in self.providers:
-            if hasattr(p, "load_cached_registry"):
-                try:
-                    recs = p.load_cached_registry()
-                    all_found.extend(recs)
-                except Exception:
-                    pass
+            if not hasattr(p, "load_cached_registry"):
+                continue
+
+            # BUG-079: get_all_stations() used to unconditionally load every
+            # provider's full registry before any filter was applied - so a
+            # `--sc`-only query (Tesla Superchargers, provably Tesla-exclusive
+            # hardware) still paid the cost of converting every OTHER
+            # network's registry too, including ChargefoxProvider, whose
+            # load_cached_registry() can trigger a live, rate-limited (~1
+            # req/sec) Nominatim reverse-geocode HTTP call per uncached
+            # station and can block for a long time on a cold/partial geo
+            # cache. Skip providers that declare (via POSSIBLE_SPEED_TIERS -
+            # see chargers_base.py) that they can never produce a record
+            # matching the active speed_tier filter - a provider with
+            # POSSIBLE_SPEED_TIERS=None (unknown/unrestricted) is never
+            # skipped, so this is opt-in per provider and safe by default.
+            possible_tiers = getattr(p, "POSSIBLE_SPEED_TIERS", None)
+            if (
+                requested_speed_tier
+                and possible_tiers is not None
+                and requested_speed_tier not in possible_tiers
+            ):
+                continue
+
+            try:
+                recs = p.load_cached_registry()
+                all_found.extend(recs)
+            except Exception:
+                pass
 
         deduped = self.deduplicate_records(all_found)
         filtered = filter_station_records(deduped, filters)
@@ -469,7 +494,7 @@ class ChargerDiscoveryManager:
         if not target_path:
             tessie_home = None
             try:
-                from tessie_api_common import resolve_tessie_data_home
+                from lib.tessie_api_common import resolve_tessie_data_home
                 tessie_home = resolve_tessie_data_home()
             except Exception:
                 pass
@@ -549,7 +574,7 @@ class ChargerDiscoveryManager:
 
         try:
             if "tesla" in src or "tesla" in net:
-                from find_tesla_chargers import TeslaChargerExplorer
+                from charger_find_tesla import TeslaChargerExplorer
                 explorer = TeslaChargerExplorer()
                 c_type = "supercharger" if station.speed_tier == "supercharger" else "destination_charger"
                 explorer.scrape_station_detail(station.url, c_type, auto_save=True)

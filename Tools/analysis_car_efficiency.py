@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-car_efficiency_profile.py - AGENTS.md TODO-031
+analysis_car_efficiency.py - AGENTS.md TODO-031
 
 Builds a speed-vs-efficiency / speed-vs-range "fact sheet" for this
 vehicle from REAL deep-dive drive telemetry (drive_deepdive_*.csv files
@@ -101,7 +101,7 @@ from datetime import datetime
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from tessie_drives_analyzer import TessieAnalyzer  # noqa: E402
-from tessie_api_common import load_vehicle_spec, load_config, get_vin  # noqa: E402
+from lib.tessie_api_common import load_vehicle_spec, load_config, get_vin  # noqa: E402
 
 # (lo, hi) km/h, half-open [lo, hi) except the last bucket.
 SPEED_BUCKETS_KMH = [
@@ -658,7 +658,7 @@ def build_profile(tessie_dir=None, vehicle_mass_kg=None):
 
 
 def write_outputs(profile, out_dir, vin=None):
-    """Writes car_profile.json (renamed from car_efficiency_profile.json,
+    """Writes car_profile.json (renamed from analysis_car_efficiency.json,
     2026-09-08, per the user's own suggestion once vehicle_spec.json/this
     file's own vehicle_reference block made clear how much per-vehicle
     reference data was accumulating here: "given it has so much
@@ -672,7 +672,7 @@ def write_outputs(profile, out_dir, vin=None):
     data. Any OTHER vin's entry already in the file is read back and
     preserved before writing (this vin's own entry is always fully
     replaced/regenerated, since it's a computed profile, not hand-edited
-    data) - if vin is None (couldn't be resolved from Tessie/config.json),
+    data) - if vin is None (couldn't be resolved from config.json),
     falls back to the literal key "unknown_vin" rather than silently
     clobbering the whole file structure."""
     os.makedirs(out_dir, exist_ok=True)
@@ -727,7 +727,23 @@ def write_outputs(profile, out_dir, vin=None):
 
 def main():
     import argparse
-    parser = argparse.ArgumentParser(description="Build the TODO-031 speed-vs-efficiency/range car profile from real deep-dive drive telemetry.")
+    parser = argparse.ArgumentParser(
+        usage="analysis_car_efficiency.py [--tessie-dir DIR] [--out-dir DIR] [--vehicle-mass-kg KG]\n",
+        description="""
+NAME
+    analysis_car_efficiency.py - build the speed-vs-efficiency/range car profile
+
+DESCRIPTION
+    Builds the speed-vs-efficiency/range car profile (car_profile.json/.csv)
+    from real deep-dive drive telemetry.
+""",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+EXAMPLES
+  analysis_car_efficiency.py
+  analysis_car_efficiency.py --vehicle-mass-kg 2100
+"""
+    )
     parser.add_argument("--tessie-dir", help="Custom path to directory containing Tessie CSV exports")
     parser.add_argument("--out-dir", help="Where to write car_profile.json/.csv (default: alongside drives_master.csv, i.e. the resolved Tessie data home - never the repo)")
     parser.add_argument("--vehicle-mass-kg", type=float, default=None,

@@ -24,7 +24,7 @@ import urllib.request
 import urllib.parse
 import urllib.error
 
-from .base import (
+from .chargers_base import (
     BaseChargerProvider,
     UnifiedStationRecord,
     haversine_km,
@@ -116,7 +116,7 @@ def _resolve_plugshare_registry_path() -> str:
     candidates = []
     tessie_home = None
     try:
-        from tessie_api_common import resolve_tessie_data_home
+        from lib.tessie_api_common import resolve_tessie_data_home
         tessie_home = resolve_tessie_data_home()
     except Exception:
         pass
@@ -124,7 +124,9 @@ def _resolve_plugshare_registry_path() -> str:
         candidates.append(os.path.join(tessie_home, "plugshare_chargers.json"))
 
     candidates.append(os.path.join(_repo_root, "Tessie", "plugshare_chargers.json"))
-    config_path = os.path.join(_repo_root, "Tessie", "config.json")
+    config_path = os.path.join(_repo_root, "config.json")  # TODO-034: root is primary now
+    if not os.path.isfile(config_path):
+        config_path = os.path.join(_repo_root, "Tessie", "config.json")  # legacy fallback
     if os.path.isfile(config_path):
         try:
             with open(config_path, "r", encoding="utf-8") as f:
@@ -712,6 +714,16 @@ class PlugShareClient:
 class PlugShareProvider(BaseChargerProvider):
     name: str = "PlugShare"
     tier: int = 2  # Multi-network Aggregator
+    # BUG-079: unlike the other aggregators, PlugShare CAN assign
+    # speed_tier="supercharger" - see the "tesla" + "supercharger" network-name
+    # check near line 433, added to correctly cross-list PlugShare's own
+    # listing of a real Tesla Supercharger (while still rejecting false
+    # positives like a non-Tesla "... supercharger"-named AC destination
+    # charger). So PlugShare must stay in the "possible" set here rather than
+    # being skippable under a --sc query, even though it's the rarer case.
+    # PlugShare's load_cached_registry() only reads a local JSON file (no
+    # live network calls), so keeping it loaded costs nothing.
+    POSSIBLE_SPEED_TIERS = {"dc_fast", "ac_destination", "supercharger"}
 
     def __init__(self, registry_path: Optional[str] = None):
         self.registry_path = registry_path or _resolve_plugshare_registry_path()
@@ -743,11 +755,11 @@ class PlugShareProvider(BaseChargerProvider):
         AGENTS.md BUG-067: this used to catch a bare `Exception` around
         the write and just return False - most of THIS function's own
         callers (sync_nearby/sync_state/sync_australia/refresh_prices,
-        each called from find_chargers.py) never check that return
+        each called from charger_find.py) never check that return
         value, so a save failure used to disappear silently rather than
         surfacing as a sync error. Now writes atomically
         (atomic_write_json(), base.py) and lets a real failure raise -
-        find_chargers.py's per-provider try/except is where that should
+        charger_find.py's per-provider try/except is where that should
         be caught and reported, not swallowed twice."""
         atomic_write_json(self.registry_path, data)
         self._cache = None  # Invalidate cache
@@ -997,25 +1009,70 @@ class PlugShareProvider(BaseChargerProvider):
 
         refreshed = 0
         failed = 0
+
+        # BUG-008 follow-up (2026-09-15, AGENTS.local.md): the original pacing
+        # here was a flat 1.5-2.5s between every request, with only a single
+        # one-off 5-7s pause right after a 429/rate-limit hit before
+        # immediately resuming at the SAME flat pace - which just re-tripped
+        # PlugShare's server-side throttling again almost immediately, so a
+        # batched run kept leaving most stations unpriced (confirmed by the
+        # user). `current_delay` now escalates for the REST of the run on
+        # each rate-limit hit (doubling, capped at `max_delay`) so the
+        # request rate actually drops under whatever threshold PlugShare is
+        # enforcing, and eases back toward the base pace only after a
+        # sustained run of successes (so it doesn't immediately re-trip the
+        # limit the moment it recovers).
+        base_delay = 1.5
+        max_delay = 20.0
+        current_delay = base_delay
+        consecutive_successes = 0
+
+        # BUG-008 follow-up: checkpoint the registry periodically instead of
+        # only once at the very end - a rate-limited run can take a long
+        # time, and losing every successful refresh from a run that was
+        # interrupted (Ctrl-C, a crash, or the user giving up partway
+        # through) forced a full re-run from scratch. Cheap to do (atomic
+        # write of a JSON file this size), so checkpoint often.
+        checkpoint_every = 10
+        since_last_save = 0
+
         for i, (k, loc_id, rec_data) in enumerate(missing_keys, 1):
             full_d = self.client.get_location_details(loc_id)
             has_identity = isinstance(full_d, dict) and (full_d.get("id") or full_d.get("name") or full_d.get("latitude") is not None)
             if not has_identity:
                 failed += 1
-                if self.client.last_error and ("rate-limited" in self.client.last_error or "HTTP 429" in self.client.last_error):
-                    time.sleep(5.0 + random.uniform(0, 2.0))
+                was_rate_limited = bool(
+                    self.client.last_error
+                    and ("rate-limited" in self.client.last_error or "HTTP 429" in self.client.last_error)
+                )
+                if was_rate_limited:
+                    consecutive_successes = 0
+                    current_delay = min(current_delay * 2.0, max_delay)
+                    time.sleep(current_delay + random.uniform(0, 2.0))
                 else:
-                    time.sleep(1.5 + random.uniform(0, 1.0))
+                    time.sleep(current_delay + random.uniform(0, 1.0))
                 continue
+
+            consecutive_successes += 1
+            if consecutive_successes >= 5 and current_delay > base_delay:
+                current_delay = max(base_delay, current_delay / 1.5)
+                consecutive_successes = 0
 
             new_key, new_rec = plugshare_to_registry_record(rec_data, full_detail=full_d)
             new_rate = new_rec.get("tariffs", {}).get("per_kwh_flat", 0.0)
             if new_rate > 0:
                 refreshed += 1
             self.add_or_update(k, new_rec, registry)
-            time.sleep(1.5 + random.uniform(0, 1.0))
+            since_last_save += 1
 
-        self.save_raw_registry(registry)
+            if since_last_save >= checkpoint_every:
+                self.save_raw_registry(registry)
+                since_last_save = 0
+
+            time.sleep(current_delay + random.uniform(0, 1.0))
+
+        if since_last_save > 0:
+            self.save_raw_registry(registry)
         return refreshed, total_missing, failed
 
     def discover_from_history(self, charges_master_path: Optional[str] = None) -> List[UnifiedStationRecord]:
@@ -1026,7 +1083,7 @@ class PlugShareProvider(BaseChargerProvider):
         if not master_path:
             tessie_home = None
             try:
-                from tessie_api_common import resolve_tessie_data_home
+                from lib.tessie_api_common import resolve_tessie_data_home
                 tessie_home = resolve_tessie_data_home()
             except Exception:
                 pass

@@ -31,19 +31,19 @@ High-speed multi-drive sync, intelligent auto-pruning, storage auditing, and loc
 ### 1. Multi-Drive Backup & Verification
 ```bash
 # Run automatic multi-drive detection & sync
-./Tools/tesla_sync.sh
+./Tools/dashcam_sync.sh
 
 # Perform dry run (preview payload without copying)
-./Tools/tesla_sync.sh --dry-run
+./Tools/dashcam_sync.sh --dry-run
 
 # Check storage breakdown & archive status
-./Tools/tesla_sync.sh --status
+./Tools/dashcam_sync.sh --status
 ```
 
 ### 2. View Footage with ExportDash
 ```bash
 # Launch ExportDash web viewer on http://localhost:3000
-./Tools/run_exportdash.sh
+./Tools/dashcam_exportdash.sh
 ```
 
 ---

@@ -1,6 +1,52 @@
 #!/usr/bin/env python3
 """
-home_charge_deep_dive.py - Sample home-charging sessions and pull the full
+============================================================================
+DEPRECATED (REQ-069, 2026-09-15) - moved to Tools/archive/, kept for
+reference only, not part of the active pipeline. Do not wire this back
+into any sync/analysis flow without re-reading this note first.
+
+Why: this is a REQ-026-era tool, predating the automated cost cross-check
+this repo now has. At the time it was written, none of the following
+existed yet - they all do now, and together they cover everything this
+script tried to do, more canonically:
+
+  1. Raw per-second Tessie /states telemetry for a home charging session
+     - this script's own hand-rolled fetch_tessie_states() call - is now
+     fetched automatically by tessie_charging_analyzer.py's
+     fetch_charge_deepdive_from_api() (REQ-050), wired into every regular
+     tessie_api_sync.py run. It writes into the canonical charges/deepdive/
+     location, named to match the session's own Evnex JSON file, and IS
+     read downstream (analysis_charge_curve.py). This script's own
+     session_NN_*.json bundles were never read by anything.
+
+  2. Evnex session matching against a raw evnex_explore.py dump (this
+     script's match_evnex_sessions()) is superseded by the canonical
+     charges/deepdive/*_Evnex_Home.json records (evnex_api_sync.py) that
+     analysis_ev_session_cost.py's load_evnex_deepdive_sessions() matches
+     against by real charging-window overlap (TODO-027's bug-fixed
+     version - see AGENTS.local.md) - a more reliable match than this
+     script's own start-time-proximity approach ever was.
+
+  3. The blank "solaredge": null / "agl": null placeholders this script
+     left for MANUAL entry are exactly what TODO-027 automated: real
+     dated AGL tariff rates + real AGL half-hourly smart-meter import/
+     export + real PVOutput solar generation, combined with Evnex's own
+     solar/grid split, into one genuine three-way cross-check -
+     analysis_ev_session_cost.py's evaluate_session(), called from
+     tessie_charging_analyzer.py's get_energy_source_crosscheck() and
+     shown automatically in every `--inspect <session>` view of a home
+     Evnex session. Nothing here needs pasting in by hand anymore.
+
+Checked before archiving (user asked directly: "any features of that
+script that we're not already covering in other scripts?") - the answer
+was no. If a real future need turns up (e.g. visually correlating the
+computed solar/grid split against the car's own raw per-second charging
+current, which fetch_charge_deepdive_from_api()'s CSV output does have),
+repurpose THAT existing telemetry file rather than reviving this script's
+own separate fetch path.
+============================================================================
+
+analysis_home_charge_deep_dive.py - Sample home-charging sessions and pull the full
 Tessie history + matching Evnex session, for manual cross-referencing
 against Solaredge/AGL data while building a real AGL Solar VIP cost model.
 =============================================================================
@@ -26,10 +72,10 @@ this data today; would need revisiting if a non-home AC destination
 charger session ever gets recorded.
 
 Usage:
-    ./home_charge_deep_dive.py --list                  # show the sample pool, most recent first
-    ./home_charge_deep_dive.py --sample 3               # deep-dive the 3 most recent home sessions
-    ./home_charge_deep_dive.py --rows 1,5,12            # deep-dive specific pool rows (see --list numbering)
-    ./home_charge_deep_dive.py --sample 3 --pad-minutes 15
+    ./analysis_home_charge_deep_dive.py --list                  # show the sample pool, most recent first
+    ./analysis_home_charge_deep_dive.py --sample 3               # deep-dive the 3 most recent home sessions
+    ./analysis_home_charge_deep_dive.py --rows 1,5,12            # deep-dive specific pool rows (see --list numbering)
+    ./analysis_home_charge_deep_dive.py --sample 3 --pad-minutes 15
 """
 
 import argparse
@@ -41,7 +87,7 @@ import sys
 from datetime import datetime, timezone
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from tessie_api_common import (  # noqa: E402
+from lib.tessie_api_common import (  # noqa: E402
     DEFAULT_UNIT_PARAMS,
     api_get,
     extract_json_records,
@@ -50,14 +96,38 @@ from tessie_api_common import (  # noqa: E402
     load_config,
     resolve_tessie_data_home,
 )
-import tessie_timezone as tztools  # noqa: E402
+import lib.tessie_timezone as tztools  # noqa: E402
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 
 TESSIE_DATA_HOME = resolve_tessie_data_home()
 CHARGES_MASTER = os.path.join(TESSIE_DATA_HOME, "charges", "charges_master.csv")
-DEFAULT_OUTPUT_DIR = os.path.join(TESSIE_DATA_HOME, "home_charge_deep_dive")
+# REQ-068: this script was renamed from home_charge_deep_dive.py, but its
+# on-disk data directory was deliberately left as the OLD name at rename
+# time to avoid orphaning any already-written session_*.json files - see
+# _migrate_default_output_dir() below, which one-time-renames the old
+# directory to the new name (a same-filesystem os.rename(), instant, no
+# copy) the first time this script runs after the rename. From then on
+# the directory name matches the script name like every other renamed
+# family in this repo.
+_OLD_OUTPUT_DIR_NAME = "home_charge_deep_dive"
+_NEW_OUTPUT_DIR_NAME = "analysis_home_charge_deep_dive"
+DEFAULT_OUTPUT_DIR = os.path.join(TESSIE_DATA_HOME, _NEW_OUTPUT_DIR_NAME)
+
+
+def _migrate_default_output_dir():
+    """One-time migration: if the new-named directory doesn't exist yet
+    but the old-named one does, rename it in place. Never touches a
+    directory the caller explicitly overrode via --output-dir - only the
+    script's own default location."""
+    old_dir = os.path.join(TESSIE_DATA_HOME, _OLD_OUTPUT_DIR_NAME)
+    if os.path.isdir(old_dir) and not os.path.isdir(DEFAULT_OUTPUT_DIR):
+        os.rename(old_dir, DEFAULT_OUTPUT_DIR)
+        print(f"REQ-068: migrated existing data directory '{_OLD_OUTPUT_DIR_NAME}' -> '{_NEW_OUTPUT_DIR_NAME}' (one-time, matches this script's REQ-068 rename)")
+
+
+_migrate_default_output_dir()
 
 
 def load_home_charge_pool():
@@ -223,17 +293,48 @@ def fetch_tessie_states(vin, token, from_ts, to_ts, interval):
 
 
 def main():
-    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("--token", help="Tessie API access token (overrides env var / config.json)")
-    parser.add_argument("--vin", help="Vehicle VIN (overrides Tessie/config.json's 'vin')")
-    parser.add_argument("--list", action="store_true", help="List the home-session pool (most recent first) and exit")
-    parser.add_argument("--sample", type=int, default=3, help="Deep-dive the N most recent home sessions (default: 3, ignored if --rows given)")
-    parser.add_argument("--rows", help="Comma-separated 1-based pool indices to deep-dive instead of --sample (see --list)")
-    parser.add_argument("--pad-minutes", type=int, default=10, help="Minutes of padding before/after the session window for the Tessie states pull (default: 10)")
-    parser.add_argument("--interval", type=int, default=1, help="Tessie /states sampling interval in seconds, 1 = finest available (default: 1)")
-    parser.add_argument("--evnex-file", help="Path to a specific evnex_explore.py JSON dump (default: the most recent Tessie/evnex_explore_*.json)")
-    parser.add_argument("--output-dir", default=DEFAULT_OUTPUT_DIR, help=f"Where to write per-session JSON bundles (default: {DEFAULT_OUTPUT_DIR})")
-    parser.add_argument("--include-in-progress", action="store_true", help="Also list/sample sessions with no confirmed end time yet (excluded by default - see module docstring)")
+    parser = argparse.ArgumentParser(
+        usage="""analysis_home_charge_deep_dive.py --list [--include-in-progress]
+   or:  analysis_home_charge_deep_dive.py [--sample N | --rows I,J,K] [--pad-minutes M] [--interval SEC]
+                          [--evnex-file PATH] [--output-dir DIR] [--include-in-progress]
+""",
+        description="""
+NAME
+    analysis_home_charge_deep_dive.py - sample home-charging sessions and gather matching
+    Tessie + Evnex telemetry for a manual Solar VIP cost model
+
+DESCRIPTION
+    Samples home-charging sessions and pulls the full Tessie /states history plus
+    the matching Evnex charging-session record, for manual cross-referencing
+    against Solaredge/AGL data while building a real AGL Solar VIP cost model.
+    This script doesn't compute cost itself - it gathers the two sides that can
+    already be pulled automatically into one JSON bundle per session, with
+    clearly-marked blank spots for Solaredge/AGL figures to be added by hand.
+    See the module docstring for the full home-session detection rationale.
+""",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+EXAMPLES
+  analysis_home_charge_deep_dive.py --list
+  analysis_home_charge_deep_dive.py --sample 5
+  analysis_home_charge_deep_dive.py --rows 2,7,9 --pad-minutes 15
+  analysis_home_charge_deep_dive.py --list --include-in-progress
+"""
+    )
+
+    g_select = parser.add_argument_group("Session Selection")
+    g_select.add_argument("--list", action="store_true", help="List the home-session pool (most recent first) and exit")
+    g_select.add_argument("--sample", type=int, default=3, help="Deep-dive the N most recent home sessions (default: 3, ignored if --rows given)")
+    g_select.add_argument("--rows", help="Comma-separated 1-based pool indices to deep-dive instead of --sample (see --list)")
+    g_select.add_argument("--include-in-progress", action="store_true", help="Also list/sample sessions with no confirmed end time yet (excluded by default - see module docstring)")
+
+    g_tuning = parser.add_argument_group("Data Sources & Output Tuning")
+    g_tuning.add_argument("--token", help="Tessie API access token (overrides env var / config.json)")
+    g_tuning.add_argument("--vin", help="Vehicle VIN (overrides Tessie/config.json's 'vin')")
+    g_tuning.add_argument("--pad-minutes", type=int, default=10, help="Minutes of padding before/after the session window for the Tessie states pull (default: 10)")
+    g_tuning.add_argument("--interval", type=int, default=1, help="Tessie /states sampling interval in seconds, 1 = finest available (default: 1)")
+    g_tuning.add_argument("--evnex-file", help="Path to a specific evnex_explore.py JSON dump (default: the most recent Tessie/evnex_explore_*.json)")
+    g_tuning.add_argument("--output-dir", default=DEFAULT_OUTPUT_DIR, help=f"Where to write per-session JSON bundles (default: {DEFAULT_OUTPUT_DIR})")
     args = parser.parse_args()
 
     pool, in_progress_pool = load_home_charge_pool()

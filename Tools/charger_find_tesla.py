@@ -127,7 +127,7 @@ _tools_dir = os.path.dirname(os.path.abspath(__file__))
 if _tools_dir not in sys.path:
     sys.path.insert(0, _tools_dir)
 
-from table_formatter import (
+from lib.table_formatter import (
     format_field_line,
     format_local_timestamp,
     hyperlink,
@@ -304,7 +304,7 @@ def load_geo_cache(repo_root: str = None) -> dict:
     """Loads persistent geocoding cache from Tessie/geo_cache.json or external Tessie data home."""
     tessie_home = None
     try:
-        from tessie_api_common import resolve_tessie_data_home
+        from lib.tessie_api_common import resolve_tessie_data_home
         tessie_home = resolve_tessie_data_home()
     except Exception:
         pass
@@ -325,7 +325,7 @@ def save_geo_cache(cache: dict, repo_root: str = None):
     """Saves persistent geocoding cache to Tessie/geo_cache.json or external Tessie data home."""
     tessie_home = None
     try:
-        from tessie_api_common import resolve_tessie_data_home
+        from lib.tessie_api_common import resolve_tessie_data_home
         tessie_home = resolve_tessie_data_home()
     except Exception:
         pass
@@ -583,7 +583,7 @@ def get_current_gps_location(repo_root: str = None) -> tuple:
 
     tessie_home = None
     try:
-        from tessie_api_common import resolve_tessie_data_home
+        from lib.tessie_api_common import resolve_tessie_data_home
         tessie_home = resolve_tessie_data_home()
     except Exception:
         pass
@@ -996,7 +996,7 @@ class TeslaChargerExplorer:
         
         tessie_home = None
         try:
-            from tessie_api_common import resolve_tessie_data_home
+            from lib.tessie_api_common import resolve_tessie_data_home
             tessie_home = resolve_tessie_data_home()
         except Exception:
             pass
@@ -1714,23 +1714,51 @@ class TeslaChargerExplorer:
                 # 2. Match by numeric ID / findus_url / slug / short_name / keywords
                 title_lower = title.lower()
                 clean_title_norm = clean_station_short_name(title).lower()
+                live_state = str(station_or_query.get("state") or "").strip().upper()
                 for k, entry in cur_reg.items():
                     meta = entry.get("tesla_metadata", {})
                     st_id = str(entry.get("id", "")).strip() or str(meta.get("findus_id", "")).strip()
                     findus_url = meta.get("findus_url", "")
                     findus_url_lower = findus_url.lower()
+                    entry_state = str((entry.get("location", {}) or {}).get("state") or "").strip().upper()
+                    # An ID/URL/slug match is normally our strongest signal - but
+                    # a confidently-known state mismatch (this station's own
+                    # title/GPS says one state while the registry entry's own
+                    # stored address says another) means it's almost certainly
+                    # a stale or upstream-reused ID rather than a genuine rename
+                    # of the SAME physical charger. User-reported: a live
+                    # "Mercure Sunshine Coast Kawana Waters" (QLD) entry
+                    # false-matched the registry's "Bowral, NSW" purely because
+                    # Bowral's stored findus_url/ID happened to collide with it.
+                    # Skip ID-based candidates like this rather than trusting
+                    # them blindly - fall through to the name/keyword/GPS checks
+                    # below instead, which are unaffected by this guard.
+                    id_match_is_geo_plausible = not (live_state and entry_state and live_state != entry_state)
 
-                    # Exact numeric ID match
-                    if slug and st_id and slug == st_id.lower():
-                        return k, entry, cur_type
-                    if url and st_id and f"/{st_id}" in url:
-                        return k, entry, cur_type
+                    if id_match_is_geo_plausible:
+                        # Exact numeric ID match
+                        if slug and st_id and slug == st_id.lower():
+                            return k, entry, cur_type
+                        if url and st_id and f"/{st_id}" in url:
+                            return k, entry, cur_type
 
-                    # Findus URL match
-                    if url and findus_url and findus_url == url:
-                        return k, entry, cur_type
-                    if slug and findus_url_lower and slug in findus_url_lower:
-                        return k, entry, cur_type
+                        # Findus URL match
+                        if url and findus_url and findus_url == url:
+                            return k, entry, cur_type
+                        # Exact tail-segment match, NOT a bare substring check.
+                        # Tesla's own live payload can carry a broken/placeholder
+                        # location_url_slug for some destination chargers (e.g.
+                        # "dc" - confirmed live for "Mercure Sunshine Coast Kawana
+                        # Waters", root cause of BUG-071's false Bowral match) -
+                        # a short slug like that is trivially a substring of any
+                        # "dcNNNNN"-style findus_url, so "slug in findus_url_lower"
+                        # would false-match nearly every such station in the
+                        # registry. Require the slug to equal the URL's own
+                        # trailing path segment exactly instead.
+                        if slug and findus_url_lower:
+                            findus_url_tail = findus_url_lower.rstrip("/").rsplit("/", 1)[-1]
+                            if slug == findus_url_tail:
+                                return k, entry, cur_type
 
                     # Findus List / Location name & Alias match
                     list_name = meta.get("findus_list_name", "")
@@ -1828,6 +1856,44 @@ class TeslaChargerExplorer:
                     return k, entry, cur_type
 
         return None, None, None
+
+    def find_existing_match(self, key: str, record: dict, sc_reg: dict = None, dc_reg: dict = None) -> tuple:
+        """
+        Given a freshly LIVE-SCRAPED station's key and full record (as returned
+        by scrape_station_details(), not a shallow fetch_station_list() list
+        entry), checks whether it actually corresponds to an existing registry
+        entry - possibly under a DIFFERENT key - using the same trusted
+        matching logic as get_station_record() (findus_url/GPS/name), now with
+        the fuller data (address, precise GPS, findus_url) a full scrape
+        provides that the shallow list entry may not have had.
+
+        This exists for the case where a station was NOT_IN_JSON going into
+        the scrape (no cached_record from the shallow list lookup), but the
+        richer scraped data reveals it actually IS already in the registry -
+        so the caller can offer "Update" instead of silently creating a
+        duplicate entry under a slightly different key.
+
+        Returns (existing_key, existing_entry, charger_type), or
+        (None, None, None) if genuinely not found. Was previously called
+        (interactive_drilldown(), browse_stations_by_type()) without ever
+        being defined - AttributeError on every first-time save of a truly
+        new station (BUG: user-reported crash saving "Mercure Sunshine Coast
+        Kawana Waters").
+        """
+        if sc_reg is None or dc_reg is None:
+            sc_reg, dc_reg = self.load_active_registries()
+
+        meta = record.get("tesla_metadata", {}) or {}
+        loc = record.get("location", {}) or {}
+        synthetic_station = {
+            "title": meta.get("findus_location_name") or meta.get("name") or key,
+            "short_name": meta.get("short_name", ""),
+            "url": meta.get("findus_url", ""),
+            "type": meta.get("type", ""),
+            "location": {"lat": loc.get("lat"), "lon": loc.get("lon")},
+            "state": loc.get("state", ""),
+        }
+        return self.get_station_record(synthetic_station, sc_reg=sc_reg, dc_reg=dc_reg)
 
     def find_all_matching_stations(self, query: str, sc_reg: dict = None, dc_reg: dict = None, target_type: str = None) -> list:
         """
@@ -2831,7 +2897,11 @@ def interactive_station_selector_loop(stations: list, explorer: TeslaChargerExpl
 
         if is_direct_scrape or not cached_record:
             print(f"\n{C_CYAN}⚡ Fetching live details for [{target_num}] {station_title}...{C_RESET}")
-            key, record = explorer.scrape_station_details(station_url or station_title, charger_type=station_type)
+            # station_title came straight from the live Find Us LIST fetch that
+            # populated this menu, so it IS the current list-page title - pass
+            # it through so the scraped record's "Find Us List Name" reflects
+            # it instead of falling back to the location page's own name.
+            key, record = explorer.scrape_station_details(station_url or station_title, charger_type=station_type, list_title=station_title)
             if record:
                 explorer.display_preview(key, record, from_cache=False)
                 try:
@@ -2862,7 +2932,10 @@ def interactive_station_selector_loop(stations: list, explorer: TeslaChargerExpl
                 break
             elif act == "1":
                 target_url = station_url or cached_record.get("tesla_metadata", {}).get("findus_url", station_title)
-                key, record = explorer.scrape_station_details(target_url, charger_type=station_type)
+                # Same reasoning as the direct-scrape branch above: station_title
+                # is this run's live list-page title, not the cached record's -
+                # thread it through so a re-scrape doesn't blank the list name.
+                key, record = explorer.scrape_station_details(target_url, charger_type=station_type, list_title=station_title)
                 if record:
                     explorer.display_preview(key, record, from_cache=False)
                     try:
@@ -3003,7 +3076,7 @@ def browse_stations_by_type(explorer: TeslaChargerExplorer, types_to_fetch: list
     all/new/renamed/stale/near/<number> interactive menu.
 
     Extracted from interactive_drilldown() on 2026-09-14 (see
-    AGENTS.local.md REQ-060) so find_chargers.py's --sc/--dc bare listing
+    AGENTS.local.md REQ-060) so charger_find.py's --sc/--dc bare listing
     can reuse this EXACT, already-proven rendering/menu logic instead of
     re-implementing it - interactive_drilldown() now just does the
     region/country/type wizard, then calls straight into this.
@@ -3104,12 +3177,36 @@ def browse_stations_by_type(explorer: TeslaChargerExplorer, types_to_fetch: list
 
     station_lookup = {}
     st_counter = 1
+    # Tracks whether any station in this listing needed the "*" list-name-vs-
+    # location-name marker below, so the explainer footnote only prints when
+    # it's actually relevant (user-reported: title shows "Manly" - Tesla's
+    # Find Us LIST grouping name - while the charger's own location page is
+    # "Balgowlah").
+    used_list_name_marker = [False]
+
+    def _live_list_title_differs_from_location(st_dict):
+        """True if this station is matched to a registry entry whose stored
+        findus_location_name differs from the live list title being displayed
+        here (st_dict["title"] comes from Tesla's Find Us LIST page, which can
+        genuinely differ from the charger's own findus_location_name - see
+        display_station_inspection_card's identical "Find Us List Name" vs
+        "Find Us Location Name" distinction). Stations not yet in the registry
+        have no location name to compare against, so they never get the marker.
+        """
+        _, cached_entry, _ = explorer.get_station_record(st_dict, sc_reg=sc_reg, dc_reg=dc_reg)
+        if not cached_entry:
+            return False
+        loc_name = (cached_entry.get("tesla_metadata", {}) or {}).get("findus_location_name", "").strip()
+        return bool(loc_name) and loc_name.lower() != st_dict["title"].strip().lower()
 
     def format_explorer_station_text(st_dict, counter_val):
         status = explorer.get_station_status(st_dict, sc_reg=sc_reg, dc_reg=dc_reg)
         color = C_GREEN if status == "UP_TO_DATE" else (C_MAGENTA if status == "RENAMED" else (C_BLUE if status == "STALE" else C_ORANGE))
         icon = "🔴" if st_dict["type"] == "supercharger" else "🔌"
         title_str = st_dict["title"]
+        if _live_list_title_differs_from_location(st_dict):
+            title_str += f" {C_YELLOW}*{C_RESET}"
+            used_list_name_marker[0] = True
         if status == "RENAMED":
             cached_k, _, _ = explorer.get_station_record(st_dict, sc_reg=sc_reg, dc_reg=dc_reg)
             if cached_k:
@@ -3120,6 +3217,8 @@ def browse_stations_by_type(explorer: TeslaChargerExplorer, types_to_fetch: list
     for s in all_stations:
         s_status = explorer.get_station_status(s, sc_reg=sc_reg, dc_reg=dc_reg)
         l_len = display_len(s["title"])
+        if _live_list_title_differs_from_location(s):
+            l_len += display_len(" *")
         if s_status == "RENAMED":
             cached_k, _, _ = explorer.get_station_record(s, sc_reg=sc_reg, dc_reg=dc_reg)
             if cached_k:
@@ -3153,6 +3252,9 @@ def browse_stations_by_type(explorer: TeslaChargerExplorer, types_to_fetch: list
             else:
                 print(f"{left_text}")
         print()
+
+    if used_list_name_marker[0]:
+        print(f"{C_YELLOW}  * The listed name varies from the actual location name as per Tesla's website.{C_RESET}\n")
 
     # Step 5: Select Station to Scrape / Inspect
     print(f"{C_BOLD}Options:{C_RESET}")
@@ -3274,7 +3376,13 @@ def browse_stations_by_type(explorer: TeslaChargerExplorer, types_to_fetch: list
                 if rescrape_prompt != "y":
                     return
 
-            key, record = explorer.scrape_station_details(target_st["url"], charger_type=target_st["type"])
+            # target_st["title"] is this run's live Find Us LIST page title (it's
+            # exactly what populated the state-grouped grid above) - thread it
+            # through so the re-scraped record keeps a correct "Find Us List
+            # Name" instead of the location-page scrape falling back to the
+            # location name itself (BUG: user-reported "Manly, NSW" -> lost on
+            # re-scrape of Balgowlah, NSW).
+            key, record = explorer.scrape_station_details(target_st["url"], charger_type=target_st["type"], list_title=target_st.get("title"))
             if record:
                 explorer.display_preview(key, record, from_cache=False)
                 if not is_existing:
@@ -3296,93 +3404,94 @@ def browse_stations_by_type(explorer: TeslaChargerExplorer, types_to_fetch: list
 
 def main():
     parser = argparse.ArgumentParser(
+        usage="""charger_find_tesla.py -i [--region NAME]
+   or:  charger_find_tesla.py [--near PLACE | --address ADDR | --coords LAT,LON | --gps]
+                     [--country NAME | --state ST | --suburb NAME] [--sc | --dc]
+                     [--radius-km KM] [--time HH:MM] [--sort dist|price|power|stalls]
+                     [--limit N] --list
+   or:  charger_find_tesla.py [--sc | --dc] [--tier V2|V3|V4|AC] [--filter EXPR]
+                     [--new | --stale | --unpriced | --renamed] --all [--save]
+   or:  charger_find_tesla.py --inspect QUERY [--live] [--save]
+   or:  charger_find_tesla.py --url URL [--live] [--save]
+""",
         description="""
-⚡ Tesla Charger Discovery, Exploration, Query & Scraper Engine ⚡
-================================================================
-Explore, list, search, filter, and scrape technical hardware specs, Time-of-Use
-(TOU) rate cards, and accessibility across Tesla Superchargers and Destination Chargers.
+NAME
+    charger_find_tesla.py - Tesla Charger Discovery, Exploration, Query & Scraper Engine
+
+DESCRIPTION
+    Explore, list, search, filter, and scrape technical hardware specs, Time-of-Use
+    (TOU) rate cards, and accessibility across Tesla Superchargers and Destination
+    Chargers.
 """,
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
-Query & Proximity Examples:
-  # 1. List chargers ordered by distance from an arbitrary street address with live pricing:
-  ./Tools/find_tesla_chargers.py --address "100 George St, Sydney" --limit 10 --list
-  ./Tools/find_tesla_chargers.py --near "14 Parraweena Rd, Miranda" --limit 10 --list
-  ./Tools/find_tesla_chargers.py --near "Ryde" --radius-km 25 --list
+EXAMPLES
+  Proximity & Time-of-Use Pricing:
+    charger_find_tesla.py --address "100 George St, Sydney" --limit 10 --list
+    charger_find_tesla.py --near "14 Parraweena Rd, Miranda" --limit 10 --list
+    charger_find_tesla.py --near "Ryde" --radius-km 25 --list
+    charger_find_tesla.py --near "Home" --time "14:00" --list
+    charger_find_tesla.py --near "Home" --sort price --limit 10 --list
 
-  # 2. Evaluate pricing at a specific time of day (e.g. 2:00 PM Peak or 11:30 PM Night):
-  ./Tools/find_tesla_chargers.py --near "Home" --time "14:00" --list
-  ./Tools/find_tesla_chargers.py --near "Home" --time "23:30" --list
+  Filtering:
+    charger_find_tesla.py --sc --tier V3 --list
+    charger_find_tesla.py --sc --filter "tier == 'V3' and rate <= 0.50" --list
+    charger_find_tesla.py --sc --non-tesla --list
+    charger_find_tesla.py --sc --gps --list
 
-  # 3. Sort chargers by lowest price near your location (defaults to 50km radius):
-  ./Tools/find_tesla_chargers.py --near "Home" --sort price --limit 10 --list
-  ./Tools/find_tesla_chargers.py --near "Home" --sort price --radius-km 100 --list
-
-  # 4. Filter all V3 Superchargers:
-  ./Tools/find_tesla_chargers.py --sc --tier V3 --list
-  ./Tools/find_tesla_chargers.py --sc --filter "tier == 'V3' and rate <= 0.50" --list
-
-  # 5. List stations open to Non-Tesla CCS2 vehicles:
-  ./Tools/find_tesla_chargers.py --sc --non-tesla --list
-
-  # 6. Auto-discover location from vehicle GPS telemetry / IP:
-  ./Tools/find_tesla_chargers.py --sc --gps --list
-
-  # 7. Fast offline inspection from local JSON cache:
-  ./Tools/find_tesla_chargers.py --inspect "Macquarie"
-  ./Tools/find_tesla_chargers.py --inspect "Miranda" --live
-
-  # 8. Batch scrape new or stale stations (--all always saves - no --save/--sync needed):
-  ./Tools/find_tesla_chargers.py --sc --new --all
-  ./Tools/find_tesla_chargers.py --sc --stale --all
+  Inspection & Batch Scraping (--all always saves - no --save/--sync needed):
+    charger_find_tesla.py --inspect "Macquarie"
+    charger_find_tesla.py --inspect "Miranda" --live
+    charger_find_tesla.py --sc --new --all
+    charger_find_tesla.py --sc --stale --all
 """
     )
-    
-    # Discovery & Geographic Flags
-    parser.add_argument("-i", "--interactive", action="store_true", help="Launch interactive terminal drill-down (Region ➔ Country ➔ Type ➔ State)")
-    parser.add_argument("--region", help="Geographic Region (e.g. 'Asia/Pacific', 'North America', 'Europe')")
-    parser.add_argument("--country", default="Australia", help="Country name (default: 'Australia')")
-    parser.add_argument("--state", help="State / Territory code (e.g. 'NSW', 'VIC', 'QLD', 'WA', 'SA', 'TAS', 'ACT', 'NT')")
-    parser.add_argument("--suburb", help="Filter by suburb name")
-    parser.add_argument("-q", "--search", "--query", help="Search term across station names, locations, and addresses")
-    parser.add_argument("-sc", "--sc", "--superchargers", action="store_true", help="Filter Superchargers only")
-    parser.add_argument("-dc", "--dc", "--destination-chargers", action="store_true", help="Filter Destination Chargers only")
-    parser.add_argument("-l", "--list", action="store_true", help="List matching charging stations in rich table format")
-    
-    # Address, GPS & Proximity Flags
-    parser.add_argument("-a", "--address", "--near", dest="near_address", help="Reference address, suburb, place name, or shortcut (e.g. 'Home', '100 George St, Sydney', 'Ryde')")
-    parser.add_argument("--gps", action="store_true", help="Auto-discover current GPS location from vehicle telemetry / IP / Home")
-    parser.add_argument("--coords", help="Direct reference coordinates in 'lat,lon' format (e.g. '-33.806,151.079')")
-    parser.add_argument("-r", "--radius", "--radius-km", dest="radius_km", type=float, help="Filter stations within specified radius in kilometers (default: 50km when sorting by price near a location; 0 for nationwide)")
-    parser.add_argument("-t", "--time", help="Evaluation time for Time-of-Use pricing (e.g. '14:30', '2:00 PM', 'now'). Defaults to current local time.")
-    parser.add_argument("-n", "--limit", type=int, help="Maximum number of stations to display")
-    parser.add_argument("--sort", choices=["dist", "price", "power", "stalls"], help="Sort results by distance, price at time, max power, or stall count")
 
-    # Hardware, Accessibility & Tariff Filter Flags
-    parser.add_argument("--filter", help="Python filter expression (e.g. \"tier == 'V3' and price <= 0.50 and stalls >= 8\")")
-    parser.add_argument("--tier", help="Filter by Supercharger tier (e.g. 'V2', 'V3', 'V4', 'AC')")
-    parser.add_argument("--tesla-only", action="store_true", help="Filter Tesla-only charging stations")
-    parser.add_argument("--non-tesla", "--open-to-all", action="store_true", help="Filter stations open to Non-Tesla CCS2 vehicles")
-    parser.add_argument("--max-price", type=float, help="Filter stations with member rate <= specified price/kWh at target time")
-    parser.add_argument("--min-stalls", type=int, help="Filter stations with stall count >= specified count")
-    parser.add_argument("--status", choices=["UP_TO_DATE", "RENAMED", "STALE", "NOT_IN_JSON", "up_to_date", "renamed", "stale", "not_in_json"], help="Filter by registry status")
-    parser.add_argument("--new", action="store_true", help="Filter only stations not present in JSON registry")
-    parser.add_argument("--renamed", "--discrepancy", action="store_true", help="Filter only stations with upstream name/title discrepancies")
-    parser.add_argument("--stale", action="store_true", help="Filter only stale stations (> 90 days since verification)")
-    parser.add_argument("--unpriced", "--missing-price", "--missing-pricing", action="store_true", help="Filter or batch refresh stations missing pricing in the JSON registry")
+    g_discovery = parser.add_argument_group("Discovery & Geographic Filters")
+    g_discovery.add_argument("-i", "--interactive", action="store_true", help="Launch interactive terminal drill-down (Region -> Country -> Type -> State)")
+    g_discovery.add_argument("--region", help="Geographic Region (e.g. 'Asia/Pacific', 'North America', 'Europe')")
+    g_discovery.add_argument("--country", default="Australia", help="Country name (default: 'Australia')")
+    g_discovery.add_argument("--state", help="State / Territory code (e.g. 'NSW', 'VIC', 'QLD', 'WA', 'SA', 'TAS', 'ACT', 'NT')")
+    g_discovery.add_argument("--suburb", help="Filter by suburb name")
+    g_discovery.add_argument("-q", "--search", "--query", help="Search term across station names, locations, and addresses")
+    g_discovery.add_argument("-sc", "--sc", "--superchargers", action="store_true", help="Filter Superchargers only")
+    g_discovery.add_argument("-dc", "--dc", "--destination-chargers", action="store_true", help="Filter Destination Chargers only")
+    g_discovery.add_argument("-l", "--list", action="store_true", help="List matching charging stations in rich table format")
 
-    # Inspection, Scraping & Persistence Flags
-    parser.add_argument("--inspect", "--scrape", help="Inspect station details (defaults to fast offline JSON; use --live for web scrape)")
-    parser.add_argument("--url", help="Direct Tesla Find Us location URL to inspect or scrape")
-    parser.add_argument("--live", "--force", action="store_true", help="Force live WebKit scrape from Tesla Find Us instead of cached JSON")
-    parser.add_argument("--all", action="store_true", help="Batch scrape and update all matching stations")
-    parser.add_argument("--delay", type=float, default=0.5, help="Pacing delay in seconds between station requests in batch mode (default: 0.5)")
-    parser.add_argument("--timeout", type=int, default=35, help="Network timeout in seconds per page load (default: 35)")
-    parser.add_argument("--retries", type=int, default=3, help="Max retry attempts per station with exponential backoff (default: 3)")
-    parser.add_argument("--all-types", action="store_true", help="Include both Superchargers and Destination Chargers")
-    parser.add_argument("--save", "--update", action="store_true", help="Save / update scraped entry in superchargers.json or destination_chargers.json")
-    parser.add_argument("--json", action="store_true", help="Output results in JSON format")
-    parser.add_argument("--headful", "--visible", action="store_true", help="Run browser in visible mode (default is headless)")
+    g_address = parser.add_argument_group("Address, GPS & Proximity")
+    g_address.add_argument("-a", "--address", "--near", dest="near_address", help="Reference address, suburb, place name, or shortcut (e.g. 'Home', '100 George St, Sydney', 'Ryde')")
+    g_address.add_argument("--gps", action="store_true", help="Auto-discover current GPS location from vehicle telemetry / IP / Home")
+    g_address.add_argument("--coords", help="Direct reference coordinates in 'lat,lon' format (e.g. '-33.806,151.079')")
+    g_address.add_argument("-r", "--radius", "--radius-km", dest="radius_km", type=float, help="Filter stations within specified radius in kilometers (default: 50km when sorting by price near a location; 0 for nationwide)")
+    g_address.add_argument("-t", "--time", help="Evaluation time for Time-of-Use pricing (e.g. '14:30', '2:00 PM', 'now'). Defaults to current local time.")
+    g_address.add_argument("-n", "--limit", type=int, help="Maximum number of stations to display")
+    g_address.add_argument("--sort", choices=["dist", "price", "power", "stalls"], help="Sort results by distance, price at time, max power, or stall count")
+
+    g_filter = parser.add_argument_group("Hardware, Accessibility & Tariff Filters")
+    g_filter.add_argument("--filter", help="Python filter expression (e.g. \"tier == 'V3' and price <= 0.50 and stalls >= 8\")")
+    g_filter.add_argument("--tier", help="Filter by Supercharger tier (e.g. 'V2', 'V3', 'V4', 'AC')")
+    g_filter.add_argument("--tesla-only", action="store_true", help="Filter Tesla-only charging stations")
+    g_filter.add_argument("--non-tesla", "--open-to-all", action="store_true", help="Filter stations open to Non-Tesla CCS2 vehicles")
+    g_filter.add_argument("--max-price", type=float, help="Filter stations with member rate <= specified price/kWh at target time")
+    g_filter.add_argument("--min-stalls", type=int, help="Filter stations with stall count >= specified count")
+    g_filter.add_argument("--status", choices=["UP_TO_DATE", "RENAMED", "STALE", "NOT_IN_JSON", "up_to_date", "renamed", "stale", "not_in_json"], help="Filter by registry status")
+    g_filter.add_argument("--new", action="store_true", help="Filter only stations not present in JSON registry")
+    g_filter.add_argument("--renamed", "--discrepancy", action="store_true", help="Filter only stations with upstream name/title discrepancies")
+    g_filter.add_argument("--stale", action="store_true", help="Filter only stale stations (> 90 days since verification)")
+    g_filter.add_argument("--unpriced", "--missing-price", "--missing-pricing", action="store_true", help="Filter or batch refresh stations missing pricing in the JSON registry")
+
+    g_inspect = parser.add_argument_group("Inspection, Scraping & Persistence")
+    g_inspect.add_argument("--inspect", "--scrape", help="Inspect station details (defaults to fast offline JSON; use --live for web scrape)")
+    g_inspect.add_argument("--url", help="Direct Tesla Find Us location URL to inspect or scrape")
+    g_inspect.add_argument("--live", "--force", action="store_true", help="Force live WebKit scrape from Tesla Find Us instead of cached JSON")
+    g_inspect.add_argument("--all", action="store_true", help="Batch scrape and update all matching stations")
+    g_inspect.add_argument("--delay", type=float, default=0.5, help="Pacing delay in seconds between station requests in batch mode (default: 0.5)")
+    g_inspect.add_argument("--timeout", type=int, default=35, help="Network timeout in seconds per page load (default: 35)")
+    g_inspect.add_argument("--retries", type=int, default=3, help="Max retry attempts per station with exponential backoff (default: 3)")
+    g_inspect.add_argument("--all-types", action="store_true", help="Include both Superchargers and Destination Chargers")
+    g_inspect.add_argument("--save", "--update", action="store_true", help="Save / update scraped entry in superchargers.json or destination_chargers.json")
+    g_inspect.add_argument("--json", action="store_true", help="Output results in JSON format")
+    g_inspect.add_argument("--headful", "--visible", action="store_true", help="Run browser in visible mode (default is headless)")
 
     args = parser.parse_args()
     explorer = TeslaChargerExplorer(headless=not args.headful)
@@ -3668,8 +3777,8 @@ Query & Proximity Examples:
         if sys.stdin.isatty():
             interactive_station_selector_loop(filtered, explorer, re_render_cb=render_table_cb)
         else:
-            print(f"\n{C_DIM}To inspect details:     ./Tools/find_tesla_chargers.py --inspect <ID_or_Name_or_URL>{C_RESET}")
-            print(f"{C_DIM}To batch update:        ./Tools/find_tesla_chargers.py --sc --new --all{C_RESET}\n")
+            print(f"\n{C_DIM}To inspect details:     ./Tools/charger_find_tesla.py --inspect <ID_or_Name_or_URL>{C_RESET}")
+            print(f"{C_DIM}To batch update:        ./Tools/charger_find_tesla.py --sc --new --all{C_RESET}\n")
         return
 
     # 4. Interactive Mode Fallback
@@ -3696,7 +3805,7 @@ def inspect_or_scrape_station(explorer: TeslaChargerExplorer, inspect: str = Non
     Resolves a station by name/query or direct Find Us URL, shows it (from
     cache, or freshly scraped when live=True), and saves it into the local
     registry when save=True. Extracted from main()'s old inline 'Section 1'
-    on 2026-09-14 (REQ-061, AGENTS.local.md) so find_chargers.py can offer
+    on 2026-09-14 (REQ-061, AGENTS.local.md) so charger_find.py can offer
     the exact same single-station --inspect/--live/--save behavior this
     script always had, instead of requiring the user to run this script
     directly for a one-off Tesla re-scrape.
@@ -3736,7 +3845,7 @@ def inspect_or_scrape_station(explorer: TeslaChargerExplorer, inspect: str = Non
                     print(json.dumps({single["title"]: single["_record"]}, indent=2, ensure_ascii=False))
                     return
                 explorer.display_preview(single["title"], single["_record"], from_cache=True)
-                print(f"{C_DIM}To re-scrape live pricing: ./Tools/find_tesla_chargers.py --inspect '{single['title']}' --live [--save]{C_RESET}\n")
+                print(f"{C_DIM}To re-scrape live pricing: ./Tools/charger_find_tesla.py --inspect '{single['title']}' --live [--save]{C_RESET}\n")
                 return
 
             # Fallback to single lookup record getter
@@ -3746,11 +3855,21 @@ def inspect_or_scrape_station(explorer: TeslaChargerExplorer, inspect: str = Non
                     print(json.dumps({cached_key: cached_record}, indent=2, ensure_ascii=False))
                     return
                 explorer.display_preview(cached_key, cached_record, from_cache=True)
-                print(f"{C_DIM}To re-scrape live pricing: ./Tools/find_tesla_chargers.py --inspect '{target_inspect}' --live [--save]{C_RESET}\n")
+                print(f"{C_DIM}To re-scrape live pricing: ./Tools/charger_find_tesla.py --inspect '{target_inspect}' --live [--save]{C_RESET}\n")
                 return
 
         # If target_inspect is not a direct URL, resolve exact URL from station catalog or local cache
         scrape_target = target_inspect
+        # The location page a live scrape hits below has no concept of the
+        # Find Us LIST page's grouping name (e.g. "Manly, NSW" for the
+        # "Balgowlah, NSW" location) - that name only exists on the separate
+        # .../findus/list/<superchargers|chargers>/<country> page. Resolve it
+        # here (user-reported: a single-station live re-scrape was silently
+        # dropping a previously-known-correct list name) so scrape_target's
+        # eventual scrape_station_details() call always gets an accurate,
+        # freshly-checked list_title instead of falling back to the location
+        # name.
+        resolved_list_title = None
         if not scrape_target.startswith("http"):
             c_type = "chargers" if dc else "superchargers"
             # 1. Check if cached local record already has a known findus_url
@@ -3758,6 +3877,18 @@ def inspect_or_scrape_station(explorer: TeslaChargerExplorer, inspect: str = Non
             cached_url = cached_record.get("tesla_metadata", {}).get("findus_url") if cached_record else None
             if cached_url and cached_url.startswith("http"):
                 scrape_target = cached_url
+                # Fast path: we already know the URL, so the catalog search
+                # below never runs - but the LIST page is still the only
+                # source of the current list name, so fetch it anyway and
+                # match this station's URL against it.
+                try:
+                    list_stations_for_title = explorer.fetch_station_list(country=country, charger_type=c_type)
+                    for s in list_stations_for_title:
+                        if s.get("url") == cached_url:
+                            resolved_list_title = s.get("title")
+                            break
+                except Exception:
+                    pass
             else:
                 cat_stations = explorer.fetch_station_list(country=country, charger_type=c_type)
                 q_clean = target_inspect.lower()
@@ -3789,15 +3920,18 @@ def inspect_or_scrape_station(explorer: TeslaChargerExplorer, inspect: str = Non
 
                 if len(cat_matches) == 1:
                     scrape_target = cat_matches[0]["url"]
+                    resolved_list_title = cat_matches[0].get("title")
                 elif len(cat_matches) > 1:
                     exact = [s for s in cat_matches if s.get("title", "").lower() == target_inspect.lower() or q_clean == clean_station_short_name(s.get("title", "")).lower()]
-                    scrape_target = exact[0]["url"] if exact else cat_matches[0]["url"]
+                    chosen = exact[0] if exact else cat_matches[0]
+                    scrape_target = chosen["url"]
+                    resolved_list_title = chosen.get("title")
                 else:
                     print(f"{C_RED}❌ Could not resolve live Find Us URL for '{target_inspect}'.{C_RESET}")
                     print(f"{C_YELLOW}Please specify the direct Find Us URL or check station name.{C_RESET}\n")
                     return
 
-        station_key, data = explorer.scrape_station_details(scrape_target, charger_type=target_type or "supercharger")
+        station_key, data = explorer.scrape_station_details(scrape_target, charger_type=target_type or "supercharger", list_title=resolved_list_title)
         if not data:
             sys.exit(1)
         if json_out:

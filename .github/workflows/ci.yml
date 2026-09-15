@@ -23,23 +23,23 @@ jobs:
 
       - name: Validate Shell Script Syntax
         run: |
-          echo "Checking syntax of Tools/run_exportdash.sh..."
-          bash -n Tools/run_exportdash.sh
+          echo "Checking syntax of Tools/dashcam_exportdash.sh..."
+          bash -n Tools/dashcam_exportdash.sh
           
-          echo "Checking syntax of Tools/tesla_sync.sh..."
-          zsh -n Tools/tesla_sync.sh
+          echo "Checking syntax of Tools/dashcam_sync.sh..."
+          zsh -n Tools/dashcam_sync.sh
 
       - name: Verify CLI Help & Flags
         run: |
-          chmod +x Tools/tesla_sync.sh Tools/run_exportdash.sh Tools/*.py
-          ./Tools/tesla_sync.sh --help
-          ./Tools/tesla_sync.sh --doctor || true
-          ./Tools/run_exportdash.sh --help
+          chmod +x Tools/dashcam_sync.sh Tools/dashcam_exportdash.sh Tools/*.py
+          ./Tools/dashcam_sync.sh --help
+          ./Tools/dashcam_sync.sh --doctor || true
+          ./Tools/dashcam_exportdash.sh --help
           ./Tools/tessie_drives_analyzer.py --help
           ./Tools/tessie_charging_analyzer.py --help
           ./Tools/tessie_places.py --help
-          ./Tools/find_tesla_chargers.py --help
-          ./Tools/find_plugshare_chargers.py --help
+          ./Tools/charger_find_tesla.py --help
+          ./Tools/charger_find_plugshare.py --help
 
       - name: Verify Embedded Python Scripts
         run: |

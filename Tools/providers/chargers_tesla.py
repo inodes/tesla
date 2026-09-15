@@ -11,7 +11,7 @@ import json
 import re
 from typing import Dict, List, Optional, Any
 
-from .base import BaseChargerProvider, UnifiedStationRecord, haversine_km, filter_station_records
+from .chargers_base import BaseChargerProvider, UnifiedStationRecord, haversine_km, filter_station_records
 
 _script_dir = os.path.dirname(os.path.abspath(__file__))
 _tools_dir = os.path.dirname(_script_dir)
@@ -25,7 +25,7 @@ def _resolve_tesla_registry_paths() -> List[str]:
     
     tessie_home = None
     try:
-        from tessie_api_common import resolve_tessie_data_home
+        from lib.tessie_api_common import resolve_tessie_data_home
         tessie_home = resolve_tessie_data_home()
     except Exception:
         pass
@@ -39,7 +39,9 @@ def _resolve_tesla_registry_paths() -> List[str]:
         os.path.join(_repo_root, "Tessie", "tesla_chargers.json"),
         os.path.join(_repo_root, "Tessie", "tesla_superchargers.json"),
     ])
-    config_path = os.path.join(_repo_root, "Tessie", "config.json")
+    config_path = os.path.join(_repo_root, "config.json")  # TODO-034: root is primary now
+    if not os.path.isfile(config_path):
+        config_path = os.path.join(_repo_root, "Tessie", "config.json")  # legacy fallback
     if os.path.isfile(config_path):
         try:
             with open(config_path, "r", encoding="utf-8") as f:
@@ -60,6 +62,9 @@ def _resolve_tesla_registry_paths() -> List[str]:
 
 class TeslaProvider(BaseChargerProvider):
     name: str = "Tesla"
+    # BUG-079: verified via grep 'speed_tier\s*=' - line ~126 sets
+    # "ac_destination" for destination chargers, "supercharger" otherwise.
+    POSSIBLE_SPEED_TIERS = {"supercharger", "ac_destination"}
     tier: int = 1  # First-Party Authoritative
 
     def __init__(self, registry_paths: Optional[List[str]] = None):
@@ -154,11 +159,11 @@ class TeslaProvider(BaseChargerProvider):
 
                 # Non-Tesla rate schedule + effective-date extraction - both were
                 # entirely missing from this provider until 2026-09-14 (see
-                # AGENTS.local.md). find_tesla_chargers.py's own
+                # AGENTS.local.md). charger_find_tesla.py's own
                 # display_preview() already reads these same registry keys
                 # (tariffs.non_tesla.rate_schedules, and top-level valid_from /
                 # last_verified on the raw entry) - this mirrors that exactly so
-                # find_chargers.py can show the same "Non-Tesla ... Rates" and
+                # charger_find.py can show the same "Non-Tesla ... Rates" and
                 # "Effective Date" info the old script always showed.
                 non_tesla_rate_schedules = []
                 _nt_block = tariffs.get("non_tesla", {}) if isinstance(tariffs.get("non_tesla"), dict) else {}
@@ -249,13 +254,13 @@ class TeslaProvider(BaseChargerProvider):
                     # 2026-09-14 - this used to prefer idle whenever it was
                     # present/nonzero, on the mistaken assumption that "standard
                     # AU Superchargers have an idle fee" as a default. That's
-                    # backwards: find_tesla_chargers.py's own scraper already
+                    # backwards: charger_find_tesla.py's own scraper already
                     # documents the same either/or rule and nulls idle_fee once a
                     # real congestion_fee is found - this function must not
                     # second-guess that by resurrecting idle_fee whenever the
                     # upstream registry still has a stale nonzero value in both
                     # fields (see AGENTS.local.md - Macquarie, NSW showed "Idle
-                    # $1.00/min" in find_chargers.py when the findus page itself
+                    # $1.00/min" in charger_find.py when the findus page itself
                     # only lists "Congestion fees (up to) $0.50/min").
                     if raw_cong is not None:
                         try:
@@ -325,7 +330,7 @@ class TeslaProvider(BaseChargerProvider):
                         # this is what invoice matching (tessie_charging_analyzer.py)
                         # keys off, so it must never be the arbitrary numeric findus_id.
                         # Fixed 2026-09-14: this key didn't exist before, so
-                        # find_chargers.py's display fell back to source_id
+                        # charger_find.py's display fell back to source_id
                         # (the numeric findus_id) for every single Tesla station.
                         "short_name": t_meta.get("findus_location_short_name") or t_meta.get("short_name") or key,
                         "general_location": t_meta.get("general_location") or t_meta.get("location_name") or suburb

@@ -2,14 +2,14 @@
 EV Charging Providers Package for unified discovery and exploration.
 """
 
-from .base import BaseChargerProvider, UnifiedStationRecord
-from .tesla_provider import TeslaProvider
-from .chargefox_provider import ChargefoxProvider
-from .evx_provider import EVXProvider
-from .evie_provider import EvieProvider
-from .bppulse_provider import BPPulseProvider
-from .plugshare_provider import PlugShareProvider
-from .manager import ChargerDiscoveryManager
+from .chargers_base import BaseChargerProvider, UnifiedStationRecord
+from .chargers_tesla import TeslaProvider
+from .chargers_chargefox import ChargefoxProvider
+from .chargers_evx import EVXProvider
+from .chargers_evie import EvieProvider
+from .chargers_bppulse import BPPulseProvider
+from .chargers_plugshare import PlugShareProvider
+from .chargers_manager import ChargerDiscoveryManager
 
 __all__ = [
     "BaseChargerProvider",

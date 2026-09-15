@@ -6,10 +6,10 @@ DEPRECATION NOTICE:
 This standalone script is deprecated. All PlugShare discovery, inspection,
 search, pricing extraction, and registry management capabilities have been
 consolidated into:
-    ./Tools/find_chargers.py
-    ./Tools/providers/plugshare_provider.py
+    ./Tools/charger_find.py
+    ./Tools/providers/chargers_plugshare.py
 
-This wrapper prints a deprecation banner and delegates execution to find_chargers.py.
+This wrapper prints a deprecation banner and delegates execution to charger_find.py.
 """
 
 import os
@@ -23,13 +23,13 @@ C_RESET = "\033[0m"
 
 
 def main():
-    print(f"\n{C_YELLOW}{C_BOLD}[DEPRECATED]{C_RESET} {C_YELLOW}./Tools/find_plugshare_chargers.py is deprecated.{C_RESET}")
-    print(f"👉 Please use {C_BOLD}./Tools/find_chargers.py{C_RESET} instead.\n")
+    print(f"\n{C_YELLOW}{C_BOLD}[DEPRECATED]{C_RESET} {C_YELLOW}./Tools/charger_find_plugshare.py is deprecated.{C_RESET}")
+    print(f"👉 Please use {C_BOLD}./Tools/charger_find.py{C_RESET} instead.\n")
 
     _tools_dir = os.path.dirname(os.path.abspath(__file__))
-    target_script = os.path.join(_tools_dir, "find_chargers.py")
+    target_script = os.path.join(_tools_dir, "charger_find.py")
 
-    # Map legacy arguments to find_chargers.py arguments if needed
+    # Map legacy arguments to charger_find.py arguments if needed
     args = sys.argv[1:]
     mapped_args = []
     has_sync = False
@@ -57,7 +57,7 @@ def main():
                 i += 1
                 mapped_args.append(args[i])
         elif a == "--all-types":
-            # Handled by default in find_chargers.py
+            # Handled by default in charger_find.py
             pass
         elif a == "--plugshare":
             has_inspect = True

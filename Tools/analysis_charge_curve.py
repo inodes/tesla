@@ -59,7 +59,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 try:
-    from tessie_api_common import resolve_tessie_data_home
+    from lib.tessie_api_common import resolve_tessie_data_home
 except Exception:
     def resolve_tessie_data_home():
         return None
@@ -159,7 +159,7 @@ def load_charger_registries():
     """Merges Tessie/tesla_superchargers*.json and tesla_chargers*.json
     from THIS repo's own Tessie/ folder (not the iCloud data home -
     these are the hand/scraper-maintained hardware registries
-    find_tesla_chargers.py builds, gitignored real-data files, same as
+    charger_find_tesla.py builds, gitignored real-data files, same as
     vehicle_spec.json). Missing files are a normal "not scraped yet" case,
     not an error."""
     merged = {}
@@ -968,9 +968,23 @@ def process_session(session, all_sessions, registry, force=False):
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Builds charging-curve charts (power-vs-SoC and voltage/current/SoC-vs-time, "
-                    "each as PNG + interactive HTML) from charge deep-dive telemetry CSVs - every "
-                    "session Tessie itself sees, Superchargers/3rd-party and home Evnex alike."
+        usage="analysis_charge_curve.py [CSV ...] [--deepdive-dir DIR] [--force] [--refresh-related]\n",
+        description="""
+NAME
+    analysis_charge_curve.py - build charging-curve charts (power-vs-SoC, voltage/current/SoC-vs-time)
+
+DESCRIPTION
+    Builds charging-curve charts (power-vs-SoC and voltage/current/SoC-vs-time,
+    each as PNG + interactive HTML) from charge deep-dive telemetry CSVs - every
+    session Tessie itself sees, Superchargers/3rd-party and home Evnex alike.
+""",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+EXAMPLES
+  analysis_charge_curve.py
+  analysis_charge_curve.py charge_deepdive_142.csv --force
+  analysis_charge_curve.py --refresh-related
+"""
     )
     parser.add_argument("csv", nargs="*", help="Specific charge_deepdive_*.csv file(s) to chart. "
                         "Omit to process every telemetry CSV under the deep-dive folder.")

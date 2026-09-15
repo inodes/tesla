@@ -27,7 +27,6 @@ STATUS_MODE=0
 TIMELINE_MODE=0 # 0=summary table only, 1=daily, 2=full expanded
 CHECK_DEPS_MODE=0
 INSTALL_TOOLS_MODE=0
-INSTALL_BIN_DIR=""
 
 # Sync destination override (Local directory / NAS alternative to 2TB SSD)
 LOCAL_SYNC_DIR=""
@@ -207,36 +206,11 @@ install_tools_to_drives() {
   exit 0
 }
 
-install_to_bin() {
-  local target_dir="${1:-/usr/local/bin}"
-  target_dir="${target_dir/#\~/$HOME}"
-  mkdir -p "$target_dir" 2>/dev/null || sudo mkdir -p "$target_dir"
-  if [[ -w "$target_dir" ]]; then
-    cp "$SCRIPT_PATH" "$target_dir/tesla_sync"
-    chmod +x "$target_dir/tesla_sync"
-  else
-    sudo cp "$SCRIPT_PATH" "$target_dir/tesla_sync"
-    sudo chmod +x "$target_dir/tesla_sync"
-  fi
-  echo "✔ Installed global binary: $target_dir/tesla_sync"
-  echo "You can now run 'tesla_sync' from any directory in Terminal."
-  exit 0
-}
-
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --install-tools|--update-drives|--sync-tools)
       INSTALL_TOOLS_MODE=1
       shift
-      ;;
-    --install-bin|--install-global)
-      INSTALL_BIN_DIR="${2:-/usr/local/bin}"
-      if [[ -n "$2" && "$2" != -* ]]; then
-        shift 2
-      else
-        shift
-      fi
-      install_to_bin "$INSTALL_BIN_DIR"
       ;;
     --check-deps|--doctor|--requirements)
       CHECK_DEPS_MODE=1
@@ -320,16 +294,15 @@ while [[ $# -gt 0 ]]; do
       ;;
     --help|-h)
       cat << 'HELP_EOF'
-Usage: tesla_sync.sh [options]
+Usage: dashcam_sync.sh [options]
 
 Note on Execution & Drive Discovery:
-  tesla_sync.sh can be run from any directory or installed globally to PATH.
+  dashcam_sync.sh can be run from any directory.
   By default, it automatically discovers connected Tesla USBs, SSDs, and Archive
   drives mounted under /Volumes.
 
 Installation & Drive Sync:
   --install-tools            Copy/update this script into <Drive>/Tools on each connected volume
-  --install-bin [DIR]        Install as a global command (default: /usr/local/bin/tesla_sync)
 
 Status & Summary:
   -s,  --status, --summary   Show structured storage table with % of drive & archive status
@@ -1606,7 +1579,7 @@ if [[ "$STATUS_MODE" -eq 1 && -z "$PURGE_MODE" ]]; then
   if [[ -z "$VOL_TESLA_USB" && -z "$VOL_JOWUA" && -z "$VOL_2TB" ]]; then
     echo "ERROR: No active TeslaCam volumes or archive directories detected." >&2
     echo "       Tesla drives typically mount under /Volumes as 'TESLADRIVE'." >&2
-    echo "       To specify a custom path, use: ./tesla_sync.sh --status --source /path/to/drive" >&2
+    echo "       To specify a custom path, use: ./dashcam_sync.sh --status --source /path/to/drive" >&2
     exit 1
   fi
 
