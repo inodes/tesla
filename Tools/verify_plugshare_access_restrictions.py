@@ -184,9 +184,18 @@ def main():
 
     print()
     print(f"Checked {len(candidates)} station(s) this run. Mislabeled: {len(mismatches)}. Errors: {len(errors)}.")
-    still_remaining = len(remaining) - len(candidates)
+    # Based on what's ACTUALLY left in checked_this_campaign, not just
+    # len(candidates) - a station that errored was deliberately never
+    # marked checked, so counting it as "done" here would misreport a
+    # campaign as complete when errored stations (typically delisted or
+    # placeholder "(Coming Soon)" listings with no live PlugShare page)
+    # will keep reappearing on every future run.
+    still_remaining = len([r for r in candidates if r.source_id not in checked_this_campaign])
     if still_remaining > 0:
-        print(f"{still_remaining} candidate(s) left in this campaign - re-run the same command to continue where this left off.")
+        if still_remaining == len(errors):
+            print(f"{still_remaining} candidate(s) left, all currently erroring (delisted/placeholder listings) - safe to leave as-is, or re-run later in case they come back.")
+        else:
+            print(f"{still_remaining} candidate(s) left in this campaign - re-run the same command to continue where this left off.")
     elif total_candidates:
         print("Campaign complete - every candidate has now been checked at least once this campaign. Use --reset to start a new one.")
     if mismatches and not args.apply:
