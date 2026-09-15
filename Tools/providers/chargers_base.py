@@ -247,10 +247,10 @@ class UnifiedStationRecord:
     schedule: List[Dict[str, Any]] = field(default_factory=list)
     # Separate non-Tesla-vehicle rate schedule (Superchargers open to non-Tesla
     # CCS2 EVs commonly charge a different rate than Tesla members/vehicles).
-    # Added 2026-09-14 - this dimension existed in find_tesla_chargers.py's
+    # Added 2026-09-14 - this dimension existed in charger_find_tesla.py's
     # raw registry (tariffs.non_tesla.rate_schedules) the whole time but was
     # never carried into UnifiedStationRecord, so it silently vanished from
-    # find_chargers.py's display when this schema became the shared one.
+    # charger_find.py's display when this schema became the shared one.
     non_tesla_schedule: List[Dict[str, Any]] = field(default_factory=list)
     idle_fee_per_min: Optional[float] = None
     congestion_fee_per_min: Optional[float] = None
@@ -263,7 +263,7 @@ class UnifiedStationRecord:
     source_id: str = ""
     url: str = ""
     last_verified_utc: str = ""
-    # When this record's pricing/hardware became effective (find_tesla_chargers.py's
+    # When this record's pricing/hardware became effective (charger_find_tesla.py's
     # "valid_from"/"first_seen") - distinct from last_verified_utc, which is
     # just "when this was last checked against the live page". Added
     # 2026-09-14: tessie_charging_analyzer.py's invoice reconciliation needs
@@ -725,6 +725,26 @@ class BaseChargerProvider(ABC):
     """Abstract base class for all EV charging data providers."""
     name: str = "base"
     tier: int = 2  # 1 = First-Party Authoritative, 2 = Aggregator
+
+    # BUG-079: the set of speed_tier values this provider's
+    # load_cached_registry() can ever produce, or None if unknown/unrestricted.
+    # get_all_stations() (chargers_manager.py) uses this to skip providers that
+    # provably cannot contribute a record matching an active speed_tier filter -
+    # e.g. a --sc query only wants speed_tier="supercharger", and only
+    # TeslaProvider and PlugShareProvider (a narrow cross-listing case - see its
+    # own POSSIBLE_SPEED_TIERS comment) ever set that tier, so ChargefoxProvider
+    # (whose load_cached_registry() can trigger a live, rate-limited Nominatim
+    # reverse-geocode call per uncached station), EVXProvider, EvieProvider, and
+    # BPPulseProvider can be skipped entirely for that query. Declared
+    # per-subclass and verified against each provider's actual speed_tier
+    # assignments (grep "speed_tier\s*=" in each *_provider file) - if a
+    # provider is ever changed to assign a new speed_tier, this set MUST be
+    # updated too, or get_all_stations() will silently drop its matching
+    # records under a speed_tier filter. Leave as None (the default) for any
+    # provider whose possible tiers aren't confidently known - that disables
+    # the skip for it (always loaded), which is always correctness-safe, just
+    # not optimized.
+    POSSIBLE_SPEED_TIERS: Optional[set] = None
 
     @abstractmethod
     def search_nearby(self, lat: float, lon: float, radius_km: float = 15.0, filters: Optional[Dict[str, Any]] = None) -> List[UnifiedStationRecord]:

@@ -25,7 +25,7 @@
      - PII includes: Personal addresses, residential coordinates, trip/drive logs, tariff/billing rates tied to a real account, or any CSV files (all Tessie CSVs are classified as PII).
      - Non-PII includes: Public JSON files scraped from public websites (such as Tesla chargers or PlugShare registries) and sanitized `.example.json` templates.
      - Never commit `places.json`, `config.json`, or `Tessie/invoices/*.pdf`.
-   - **PII Never Lives in the Repo Working Tree At All** (found via REQ-034 - `agl_tariff_rates.json`, real account tariff data, was being written directly into `Tools/`): this is stronger than "never commit" - a real/PII data file must never even be CREATED under `~/repos/tesla` (or its iCloud symlink), regardless of `.gitignore` status, because a file sitting there is one `git add -A` away from being committed and the whole point is to not depend on remembering to exclude it. Every script that reads/writes real data MUST resolve its path through that domain's own `resolve_*_data_home()` helper (e.g. `resolve_tessie_data_home()`, `resolve_agl_data_home()`) - NEVER a path built from `os.path.dirname(__file__)` or otherwise hardcoded beside the script. `.gitignore` entries for real files (`config.json`, `places.json`, etc.) are a defense-in-depth backstop only, not the primary control - if a real file is ever found inside the repo tree at all, that is itself the bug to fix (relocate the file AND fix the code path that put it there), not just an ignore-list gap to patch.
+   - **PII Never Lives in the Repo Working Tree At All** (found via REQ-034 - `agl_tariff_rates.json`, real account tariff data, was being written directly into `Tools/`): this is stronger than "never commit" - a real/PII data file must never even be CREATED under `~/repos/tesla` (or its iCloud symlink), regardless of `.gitignore` status, because a file sitting there is one `git add -A` away from being committed and the whole point is to not depend on remembering to exclude it. Every script that reads/writes real data MUST resolve its path through that domain's own `resolve_*_data_home()` helper (e.g. `resolve_tessie_data_home()`, or a `BasePowerProvider.resolve_data_home()` implementation - REQ-070 generalized the AGL-specific `resolve_agl_data_home()` this rule originally named into that interface) - NEVER a path built from `os.path.dirname(__file__)` or otherwise hardcoded beside the script. `.gitignore` entries for real files (`config.json`, `places.json`, etc.) are a defense-in-depth backstop only, not the primary control - if a real file is ever found inside the repo tree at all, that is itself the bug to fix (relocate the file AND fix the code path that put it there), not just an ignore-list gap to patch.
    - **Credential & Secret Protection**: If any string resembles an API token, password, or secret, flag it immediately for inclusion in `.gitignore`.
    - **Cadence**: Regular `git status` checks and tidy, logical git commits should occur.
 
@@ -81,20 +81,125 @@ tesla/
 ├── README.md                  # Human-facing project overview
 ├── .gitignore                 # Git ignore rules (with pointer to AGENTS.md)
 ├── requirements.txt           # Python dependencies
+├── config.example.json        # Sanitized template for config.json (committed)
+├── config.json                 # TODO-034 (2026-09-15): moved here from Tessie/ - this project outgrew
+│                                #   being "a Tessie connector" a long time ago (AGL/PVOutput/dashcam/
+│                                #   charger-discovery all live here too), so its one config file no
+│                                #   longer sits inside the subdirectory named after the original,
+│                                #   narrower scope. Real file, gitignored (see 1's PII rule); root
+│                                #   config.json is checked first, Tessie/config.json only as a legacy
+│                                #   fallback (lib/tessie_api_common.py's resolve_config_path()).
+├── AGL/                        # Sanitized AGL tariff-rate example template (real file lives outside the repo)
 ├── Tessie/                    # Tessie telemetry, charging, and trip exports
 │   ├── drives/                # Drive summary files & drives_master.csv
 │   │   └── archive/           # Raw imported drive files (timestamp-archived)
 │   ├── charges/               # Charging session summary files & charges_master.csv
 │   │   └── archive/           # Raw imported charge files (timestamp-archived)
 │   ├── invoices/              # Tesla Supercharger tax invoices (PDFs)
-│   ├── places.json            # Tagged places, boundaries, and GPS coordinates
-│   └── config.json            # Tariffs, electricity plans, and API keys
-├── Tools/                     # Core CLI analyzers and utilities
+│   └── places.json            # Tagged places, boundaries, and GPS coordinates
+├── Tools/                     # CLI entry points ONLY - every *.py here is a real, user-invoked script
+│   │                          # with its own argparse-based --help (see 3.1); every *.sh here is a real,
+│   │                          # user-invoked script with its own -h/--help guard (see 3.3). Nothing in
+│   │                          # this directory is imported BY another script in this directory - if it
+│   │                          # is, it belongs in lib/ or providers/ instead (see 3.1).
+│   │
+│   ├── lib/                   # Shared library modules (3.1) - plain function/helper collections that
+│   │   │                      # one or more CLI scripts import. No argparse, no user-facing --help
+│   │   │                      # (table_formatter.py's __main__ is a self-test, not a CLI). Package-
+│   │   │                      # relative imports internally (`from .tessie_api_common import ...`);
+│   │   │                      # `from lib.X import Y` from anywhere in Tools/ or Tools/providers/.
+│   │   ├── __init__.py
+│   │   ├── archive_naming.py    # Shared timestamp-archived filename scheme
+│   │   ├── analysis_deepdive_charts.py   # Self-contained interactive HTML line-chart renderer
+│   │   ├── evnex_common.py      # Evnex credential loading + client bootstrap
+│   │   ├── pvoutput_common.py   # PVOutput config/auth/HTTP plumbing
+│   │   ├── table_formatter.py   # Shared terminal table/box-drawing formatter
+│   │   ├── tessie_api_common.py # Tessie API auth, config, and data-home path resolution
+│   │   └── tessie_timezone.py   # Per-event real-timezone resolution helpers
+│   │
+│   ├── providers/              # Pluggable charging-network adapters (3.1) - one BaseChargerProvider
+│   │   │                      # subclass per network, ALL implementing the same interface
+│   │   │                      # (search_nearby/search_by_text/get_station_details/load_cached_registry),
+│   │   │                      # swappable/interchangeable by design - this is what earns them a shared
+│   │   │                      # `chargers_` prefix AND their own directory, unlike lib/'s grab-bag of
+│   │   │                      # otherwise-unrelated helpers.
+│   │   ├── __init__.py
+│   │   ├── chargers_base.py    # BaseChargerProvider / UnifiedStationRecord + shared filter/dedup logic
+│   │   ├── chargers_manager.py # ChargerDiscoveryManager - orchestrates all registered providers
+│   │   └── chargers_tesla.py / chargers_chargefox.py / chargers_evx.py / chargers_evie.py /
+│   │       chargers_bppulse.py / chargers_plugshare.py   # one adapter per network
+│   │
+│   ├── providers_power/    # Pluggable power-retailer/distributor billing providers (3.1, REQ-070) -
+│   │   │                      # one BasePowerProvider subclass per retailer, ALL implementing the same
+│   │   │                      # interface (resolve_data_home/load_rate_periods/rate_for_date/
+│   │   │                      # in_demand_window/solar_credit/demand_charge/...). Shaped differently
+│   │   │                      # from providers/ above: only ONE power provider is ever active for a
+│   │   │                      # household at a time (unlike chargers, queried many-at-once and merged),
+│   │   │                      # so there's no "manager" here, just get_power_provider()'s factory - see
+│   │   │                      # power_base.py's own docstring for the full reasoning.
+│   │   ├── __init__.py
+│   │   └── power_base.py / power_agl.py   # BasePowerProvider interface + the AGL implementation
+│   │
 │   ├── tessie_drives_analyzer.py    # Drives explorer, footage linker, and master consolidator
 │   ├── tessie_charging_analyzer.py  # 3-way charging reconciler, tariff auditor, and invoice matcher
-│   └── tessie_places.py             # Place tagging and geocoding utility
-└── dashcam/                   # TeslaCam clips and sentry event utilities
+│   ├── tessie_places.py             # Place tagging and geocoding utility
+│   ├── charger_sync_all.sh         # One-command CHARGERS-domain sync (hardware/station registries)
+│   ├── charging_sync_all.sh         # One-command CHARGING-SESSIONS-domain sync (Tessie/Evnex/invoices/AGL/cross-check prep)
+│   ├── drives_sync_all.sh           # One-command DRIVES-domain sync
+│   └── ...                          # every other CLI script - charger_find.py, power_*.py, evnex_*.py,
+│                                     # test_*.py, etc.
+└── dashcam/                    # TeslaCam clips and sentry event utilities
 ```
+
+### 3.1 Classifying a Python file: CLI script, library, or provider
+
+Every `.py` file under `Tools/` is exactly one of these three things. Decide which BEFORE creating a new
+file or moving an existing one - the answer decides where it lives and how it's named:
+
+- **CLI entry point** (stays directly in `Tools/`): has its own `argparse.ArgumentParser` and a real
+  `if __name__ == "__main__":` that a person runs directly (`./script.py ...`). Gets a comprehensive,
+  man-page-style `-h`/`--help` (3.3) - non-negotiable, every one, always kept current.
+- **Shared library module** (`Tools/lib/`): no argparse, no user-facing CLI - a collection of functions
+  one or more CLI scripts (or other library modules) import. `table_formatter.py`'s `__main__` calling
+  `run_self_test()` doesn't make it a CLI - a self-test isn't a user-facing command. If two or more
+  otherwise-unrelated CLI scripts need the same logic, it belongs here, not copy-pasted or left sitting
+  in whichever script happened to need it first.
+- **Provider adapter** (`Tools/providers/`, `Tools/providers_power/`): specifically a subclass
+  implementing one shared interface for one interchangeable implementation - `BaseChargerProvider` for a
+  charging network, `BasePowerProvider` (REQ-070) for a power retailer/distributor. This is a narrower
+  category than "library module" - it's reserved for genuinely pluggable, interchangeable implementations
+  of one abstract interface, which is why the chargers family additionally shares the `chargers_` filename
+  prefix (REQ-063) on top of living in its own directory (the power family's own CLI scripts share a
+  `power_` prefix instead - see providers_power/power_base.py's own docstring for why that package isn't
+  shaped identically to providers/). A shared helper that ISN'T an interchangeable adapter
+  (`table_formatter.py`, `analysis_deepdive_charts.py`) is a library module, not a provider, even when the
+  charging or power domain is what it's used for.
+
+A file that is BOTH a real CLI script AND imported by other scripts for its functions (e.g.
+`power_demand_calculator.py`, imported by `power_cost_calculator.py`) stays in `Tools/` as a CLI script -
+the CLI-entry-point test is "does it have its own argparse + `__main__`", not "is it ever imported".
+
+### 3.2 Naming & grouping convention
+
+Prefer a shared **prefix** over a shared suffix for a family of related files, so they group together in a
+plain alphabetical listing (`ls Tools/chargers_*`, `ls Tools/lib/`) without needing `ls | grep`. `chargers_`
+(REQ-063) is the existing precedent for the providers/ family. When starting a new file that clearly belongs
+to an existing family (another chart renderer, another sync wrapper, another provider), prefix it to match
+rather than inventing a new pattern - and if a naming decision is genuinely ambiguous (which family it
+belongs to, or whether a NEW prefix is warranted), settle it explicitly with the user before renaming
+existing files, the same way REQ-063 settled "charger(s)/charging/charges" before touching anything (see
+AGENTS.local.md for that precedent) - a repo-wide rename is expensive to undo and easy to get wrong on a
+guess.
+
+### 3.3 Every CLI script and every shell script gets a real `-h`/`--help`
+
+Standing rule (BUG-074/BUG-080/BUG-084): every `.py` CLI entry point and every `.sh` script in this repo
+must support `-h`/`--help` with comprehensive, man-page-style output (NAME/SYNOPSIS/DESCRIPTION/grouped
+OPTIONS/EXAMPLES for `.py` via `argparse`; a `print_help`-then-`exit 0` guard checked BEFORE any real step
+runs, for `.sh`) - and it must be kept up to date as flags/behavior change, not written once and left to
+drift. `--help` must never have a side effect - BUG-084 found three `.sh` scripts where `--help` was
+silently ignored and the ENTIRE real sync ran instead; that class of bug is why this is a written rule, not
+just a habit.
 
 ---
 

@@ -8,6 +8,7 @@ Connects directly to Chargefox GraphQL API with local JSON caching.
 
 import os
 import re
+import sys
 import json
 import time
 import random
@@ -16,11 +17,13 @@ from concurrent.futures import ThreadPoolExecutor
 from typing import Dict, List, Optional, Any
 from datetime import datetime, timezone
 
-from .base import BaseChargerProvider, UnifiedStationRecord, haversine_km, filter_station_records, detect_station_changes, archive_station_record, save_json_with_fallback
+from .chargers_base import BaseChargerProvider, UnifiedStationRecord, haversine_km, filter_station_records, detect_station_changes, archive_station_record, save_json_with_fallback
 
 _script_dir = os.path.dirname(os.path.abspath(__file__))
 _tools_dir = os.path.dirname(_script_dir)
 _repo_root = os.path.dirname(_tools_dir)
+if _tools_dir not in sys.path:
+    sys.path.insert(0, _tools_dir)
 
 CHARGEFOX_GRAPHQL_URL = "https://app.chargefox.com/graphql"
 
@@ -30,7 +33,7 @@ def _resolve_chargefox_registry_path() -> str:
     candidates = []
     tessie_home = None
     try:
-        from tessie_api_common import resolve_tessie_data_home
+        from lib.tessie_api_common import resolve_tessie_data_home
         tessie_home = resolve_tessie_data_home()
     except Exception:
         pass
@@ -38,7 +41,9 @@ def _resolve_chargefox_registry_path() -> str:
         candidates.append(os.path.join(tessie_home, "chargefox_chargers.json"))
         
     candidates.append(os.path.join(_repo_root, "Tessie", "chargefox_chargers.json"))
-    config_path = os.path.join(_repo_root, "Tessie", "config.json")
+    config_path = os.path.join(_repo_root, "config.json")  # TODO-034: root is primary now
+    if not os.path.isfile(config_path):
+        config_path = os.path.join(_repo_root, "Tessie", "config.json")  # legacy fallback
     if os.path.isfile(config_path):
         try:
             with open(config_path, "r", encoding="utf-8") as f:
@@ -173,8 +178,65 @@ def extract_suburb_from_station_name(name: str) -> str:
     return clean or name
 
 
+def _resolve_suburb_via_geocode(lat: float, lon: float) -> tuple:
+    """
+    BUG-076 (2026-09-15, AGENTS.local.md). Root cause confirmed live against
+    Chargefox's own production GraphQL API: the per-location query never
+    requested any address field, and a live introspection sweep of ~25
+    plausible field names (address/suburb/city/locality/postcode/... on both
+    Location and Address) came back "doesn't exist" for every one - Chargefox
+    genuinely has no queryable suburb/address text, only lat/lng. That meant
+    extract_suburb_from_station_name() (a regex heuristic parsing the venue's
+    own display NAME) fired for every single station, not just edge cases -
+    confirmed broken broadly: "480 Marion Street Chargers", "Aeria Carpark
+    North" -> "Aeria", "7 Poynton Place, Thornton NSW AUS" all came back as
+    the raw name/address text rather than a real suburb.
+
+    Reverse-geocodes the station's own real lat/lon via the same
+    Nominatim-based, rate-limited, persistently-cached helper
+    charger_find_tesla.py's state_from_coords() already uses for its
+    border-proximity lookups (Tessie/geo_cache.json, same
+    "{lat:.4f},{lon:.4f}" cache key) - so a coordinate already resolved by
+    the Tesla path is a free cache hit here too, and vice versa. Returns
+    (suburb, postcode), either "" if unresolved. Never raises - this is a
+    best-effort data-quality enhancement, not a hard requirement to import a
+    station; a genuine failure (offline, Nominatim down, rate-limited) falls
+    back to the caller's existing name-heuristic, not an exception.
+    """
+    try:
+        from charger_find_tesla import reverse_geocode_osm, load_geo_cache, save_geo_cache
+    except Exception:
+        return "", ""
+    try:
+        cache = load_geo_cache()
+    except Exception:
+        cache = {}
+    ckey = f"{lat:.4f},{lon:.4f}"
+    entry = cache.get(ckey)
+    if entry:
+        return entry.get("suburb") or "", entry.get("postcode") or ""
+    try:
+        geo = reverse_geocode_osm(lat, lon)
+    except Exception:
+        geo = None
+    if not geo:
+        return "", ""
+    cache[ckey] = geo
+    try:
+        save_geo_cache(cache)
+    except Exception:
+        pass
+    time.sleep(1.0)  # Nominatim usage policy: max ~1 request/second
+    return geo.get("suburb") or "", geo.get("postcode") or ""
+
+
 class ChargefoxProvider(BaseChargerProvider):
     name: str = "Chargefox"
+    # BUG-079: verified via grep 'speed_tier\s*=' - only ever "dc_fast" or
+    # "ac_destination" (by max_power_kw threshold). Never "supercharger" -
+    # this is exactly what lets get_all_stations() skip Chargefox (and its
+    # potentially slow live Nominatim geocoding) for a --sc-only query.
+    POSSIBLE_SPEED_TIERS = {"dc_fast", "ac_destination"}
     tier: int = 1  # First-Party Authoritative
 
     def __init__(self, registry_path: Optional[str] = None):
@@ -333,9 +395,46 @@ class ChargefoxProvider(BaseChargerProvider):
         if not state and lat is not None and lon is not None:
             state = resolve_au_state(lat, lon)
 
-        # Fallback suburb resolution from station name
+        # Fast path: a suburb/postcode already reverse-geocoded on a PRIOR
+        # conversion of this exact node (persisted back onto it below).
+        # BUG-079 (2026-09-15, AGENTS.local.md): load_cached_registry() calls
+        # this function fresh on EVERY load (by design - the cache stores
+        # Chargefox's raw upstream node shape, not a resolved
+        # UnifiedStationRecord), so without this short-circuit, BUG-076's
+        # reverse-geocode fix was re-running a live Nominatim call for every
+        # one of ~1000+ stations on EVERY plain filter/listing command, not
+        # just an explicit --sync-chargefox - turning something as simple as
+        # `--state NSW` into a many-minute hang. Stashing the resolved value
+        # onto `node` (which IS what gets persisted verbatim to
+        # Tessie/chargefox_chargers.json via views={"chargefox": node}) makes
+        # the geocode a true one-time cost per station once this has been
+        # through one save cycle.
+        if not suburb:
+            suburb = node.get("_resolved_suburb") or ""
+        if not postcode:
+            postcode = node.get("_resolved_postcode") or ""
+
+        # Fallback suburb/postcode resolution via reverse geocoding (BUG-076,
+        # 2026-09-15, AGENTS.local.md) - Chargefox's API has no address field
+        # at all, so addr_obj above is empty for every station, not just some.
+        if not suburb and lat is not None and lon is not None:
+            suburb, geo_postcode = _resolve_suburb_via_geocode(lat, lon)
+            if geo_postcode and not postcode:
+                postcode = geo_postcode
+
+        # Last-resort fallback: parse the venue's own display name. Only
+        # reached if reverse geocoding above also failed (offline, Nominatim
+        # down/rate-limited) - real suburb data from the station's own GPS
+        # is always preferred over this heuristic.
         if not suburb:
             suburb = extract_suburb_from_station_name(name)
+
+        # Persist whatever was resolved back onto the raw node so the NEXT
+        # load of this same cached station is instant (BUG-079 above).
+        if suburb:
+            node["_resolved_suburb"] = suburb
+        if postcode:
+            node["_resolved_postcode"] = postcode
 
         return UnifiedStationRecord(
             key=f"Chargefox_{loc_id}",
@@ -385,19 +484,46 @@ class ChargefoxProvider(BaseChargerProvider):
             return self._cache
 
         records = []
+        newly_resolved = False
         if os.path.isfile(self.registry_path):
             try:
                 with open(self.registry_path, "r", encoding="utf-8") as f:
                     data = json.load(f)
                     stations_list = data.get("stations", []) if isinstance(data, dict) else (data if isinstance(data, list) else [])
                     for item in stations_list:
+                        had_suburb = bool(isinstance(item, dict) and item.get("_resolved_suburb"))
                         rec = self._convert_chargefox_node(item)
                         if rec:
                             records.append(rec)
+                        if not had_suburb and isinstance(item, dict) and item.get("_resolved_suburb"):
+                            newly_resolved = True
             except Exception:
                 pass
 
         self._cache = records
+
+        # BUG-079 (2026-09-15 follow-up, AGENTS.local.md): _convert_chargefox_node()
+        # already stashes a freshly-resolved suburb/postcode back onto the raw
+        # `item` dict (see its own BUG-079 comment above), and that mutated dict
+        # IS what gets persisted via views={"chargefox": node}. But nothing
+        # actually WROTE it back to `self.registry_path` unless the caller was
+        # an explicit --sync-chargefox (the only prior caller of
+        # save_cached_registry()) - so a plain listing/filter command's
+        # resolution was thrown away the moment the process exited, and the
+        # NEXT plain command re-ran live geocoding for every station all over
+        # again. `newly_resolved` tracks whether THIS load actually resolved
+        # anything new (vs. every station already having a cached suburb, the
+        # common case once this has run once), so a fully-warmed cache never
+        # pays this save's extra I/O. Best-effort: a write failure here (e.g. a
+        # read-only mount) must never break a plain listing command, so it's
+        # swallowed - the in-memory resolution for THIS process is unaffected
+        # either way.
+        if newly_resolved:
+            try:
+                self.save_cached_registry(records)
+            except Exception:
+                pass
+
         return self._cache
 
     def save_cached_registry(self, records: List[UnifiedStationRecord]) -> None:

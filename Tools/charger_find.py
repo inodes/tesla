@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-⚡ Unified Multi-Network EV Charging Discovery Engine (find_chargers.py) ⚡
+⚡ Unified Multi-Network EV Charging Discovery Engine (charger_find.py) ⚡
 ========================================================================
 Finds, compares, and explores EV charging stations across all public networks:
 - ⚡ Tesla Superchargers & Destination Chargers (Tier 1 First-Party)
@@ -30,7 +30,7 @@ _repo_root = os.path.dirname(_tools_dir)
 if _tools_dir not in sys.path:
     sys.path.insert(0, _tools_dir)
 
-from table_formatter import (
+from lib.table_formatter import (
     char_width,
     display_len,
     pad_display,
@@ -149,7 +149,7 @@ def resolve_reference_coords(near_query: str) -> Tuple[Optional[float], Optional
     places_candidates = []
     tessie_home = None
     try:
-        from tessie_api_common import resolve_tessie_data_home
+        from lib.tessie_api_common import resolve_tessie_data_home
         tessie_home = resolve_tessie_data_home()
     except Exception:
         pass
@@ -160,7 +160,9 @@ def resolve_reference_coords(near_query: str) -> Tuple[Optional[float], Optional
         os.path.join(_repo_root, "Tessie", "places.json"),
         os.path.join(_repo_root, "Tessie", "places.example.json")
     ])
-    cfg_path = os.path.join(_repo_root, "Tessie", "config.json")
+    cfg_path = os.path.join(_repo_root, "config.json")  # TODO-034: root is primary now
+    if not os.path.isfile(cfg_path):
+        cfg_path = os.path.join(_repo_root, "Tessie", "config.json")  # legacy fallback
     if os.path.isfile(cfg_path):
         try:
             with open(cfg_path, "r", encoding="utf-8") as f:
@@ -243,6 +245,40 @@ def resolve_reference_coords(near_query: str) -> Tuple[Optional[float], Optional
     return None, None, q_clean
 
 
+def _contextual_type_icon(st: UnifiedStationRecord, network_filter: Optional[str]) -> str:
+    """
+    Normally just st.type_icon(). BUG-075 (2026-09-15, AGENTS.local.md):
+    user filtered --network chargefox and saw rows badged "Tesla Destination"
+    or "Evie" with no visible sign why they matched - those ARE genuinely
+    cross-listed (station.source = "tesla+chargefox" / "evie+chargefox" from
+    manager.py's multi-source merge, not a filter leak), but the badge
+    always shows the record's primary source. User's own framing: "when
+    displaying Chargefox - list it as a Chargefox, when listing Tesla-dest -
+    list it as that." When the active --network filter matched this row via a
+    SECONDARY source in a merged record, show THAT network's badge instead of
+    always the primary one, so the row reads as "why did this match".
+    """
+    if not network_filter:
+        return st.type_icon()
+    nf = network_filter.strip().lower()
+    sources = [s.strip().lower() for s in (st.source or "").split("+") if s.strip()]
+    if len(sources) < 2 or nf not in sources or nf == sources[0]:
+        return st.type_icon()
+    if nf == "chargefox":
+        return "🦊 CF"
+    if nf == "nrma":
+        return "⚡ NRMA"
+    if nf == "evx":
+        return "🔌 EVX"
+    if nf == "evie":
+        return "🔌 Evie"
+    if "bp" in nf:
+        return "🟢 BP"
+    if nf == "tesla":
+        return "🔴 SC" if st.speed_tier == "supercharger" else "🔌 Dest"
+    return st.type_icon()
+
+
 def render_stations_table(
     stations: List[UnifiedStationRecord],
     title: str,
@@ -251,7 +287,8 @@ def render_stations_table(
     ref_lat: Optional[float] = None,
     ref_lon: Optional[float] = None,
     active_radius: Optional[float] = None,
-    sort_mode: Optional[str] = None
+    sort_mode: Optional[str] = None,
+    network_filter: Optional[str] = None
 ) -> None:
     """Renders rich executive 10/11-column Unicode table of stations matching Tesla Explorer styling."""
     if not stations:
@@ -319,7 +356,7 @@ def render_stations_table(
         status = st.get_status()
         color = C_GREEN if status == "UP_TO_DATE" else (C_MAGENTA if status == "RENAMED" else (C_BLUE if status == "STALE" else C_ORANGE))
         num_str = f"[{color}{idx:2d}{C_RESET}]"
-        t_icon = st.type_icon()
+        t_icon = _contextual_type_icon(st, network_filter)
         state_str = st.state or "-"
         name_disp = truncate_display(st.name, w_name - 2)
         tier_str = st.tier_badge()
@@ -376,9 +413,9 @@ def render_stations_table(
 
 def browse_chargefox_catalog_grid(manager: ChargerDiscoveryManager, country: str = "Australia") -> None:
     """
-    Live Chargefox/NRMA catalog browser mirroring find_tesla_chargers.py's
+    Live Chargefox/NRMA catalog browser mirroring charger_find_tesla.py's
     browse_stations_by_type() grid+status-legend+menu UX (REQ-060,
-    AGENTS.local.md, 2026-09-14) - built so `find_chargers.py --network
+    AGENTS.local.md, 2026-09-14) - built so `charger_find.py --network
     chargefox --live` gets the same rich per-state browsing find_tesla_
     chargers.py --country Australia already has, instead of the flat
     render_stations_table() view.
@@ -391,7 +428,7 @@ def browse_chargefox_catalog_grid(manager: ChargerDiscoveryManager, country: str
     keeps this non-destructive: nothing overwrites
     Tessie/chargefox_chargers.json until the user explicitly picks 'save'.
     """
-    from find_tesla_chargers import AU_STATE_MAP
+    from charger_find_tesla import AU_STATE_MAP
 
     provider = next((p for p in manager.providers if isinstance(p, ChargefoxProvider)), None)
     if provider is None:
@@ -548,7 +585,7 @@ def display_station_inspection_card(station: UnifiedStationRecord, eval_time: Op
         _field("📂", "Data Source", f"Multi-Source Consolidated ({views_count} sources: {view_names})")
     elif station.source == "tesla":
         reg_name = "tesla_superchargers.json" if station.speed_tier == "supercharger" else "tesla_chargers.json"
-        # Matches find_tesla_chargers.py's own display_preview() coloring
+        # Matches charger_find_tesla.py's own display_preview() coloring
         # (green = trusted local registry) - this line lost its color when
         # the display logic was ported into the provider system. Fixed 2026-09-14.
         _field("📂", "Data Source", f"{C_GREEN}Local JSON Registry (Tessie/{reg_name}){C_RESET}")
@@ -676,7 +713,7 @@ def display_station_inspection_card(station: UnifiedStationRecord, eval_time: Op
     if station.parking_fee:
         _field("🅿️", "Parking Fee", station.parking_fee)
 
-    # Combined Effective Date/Last Verified - mirrors find_tesla_chargers.py's
+    # Combined Effective Date/Last Verified - mirrors charger_find_tesla.py's
     # display_preview() exactly. "Last Verified" alone told you when the data
     # was last re-checked but not which historic period it actually applies
     # to; tessie_charging_analyzer.py needs the effective date to match old
@@ -716,7 +753,7 @@ def display_station_inspection_card(station: UnifiedStationRecord, eval_time: Op
     else:
         print(f"\n  💰 {C_BOLD}Pricing:{C_RESET} {C_YELLOW}Free or Not Specified{C_RESET}")
 
-    # Non-Tesla Flat/TOU Rates - mirrors find_tesla_chargers.py's own
+    # Non-Tesla Flat/TOU Rates - mirrors charger_find_tesla.py's own
     # display_preview() nt_scheds block, which this provider-backed card was
     # entirely missing until 2026-09-14 (see AGENTS.local.md). Only Tesla
     # stations populate station.non_tesla_schedule today (tesla_provider.py),
@@ -736,6 +773,51 @@ def display_station_inspection_card(station: UnifiedStationRecord, eval_time: Op
                 print(f"    • {pad_display(lbl, 21)} {st} – {et}: ${rate:.2f}/kWh")
     elif station.source == "tesla" and station.speed_tier == "supercharger" and (station.metadata or {}).get("open_to_non_tesla"):
         print(f"\n  🔌 {C_BOLD}Non-Tesla Pricing:{C_RESET} {C_YELLOW}Not available (re-scrape to fetch){C_RESET}")
+
+    # "Also Listed On" - BUG-075 (2026-09-15, AGENTS.local.md). A merged
+    # multi-source record only ever displayed ONE side's pricing/access above
+    # (manager.py's merge picks a single "primary" rate_range/access, the
+    # other source's own numbers are discarded from the top-level fields even
+    # though they're still sitting in station.views[source]). User: "when
+    # displaying Chargefox - list it as a Chargefox, when listing Tesla-dest -
+    # list it as that. But also somewhere in the deep dive you need to
+    # provide both details clearly." A Tesla Destination Charger and its
+    # co-listed Chargefox entry can genuinely have different prices/access
+    # (Tesla member rate vs Chargefox public rate) - this surfaces the OTHER
+    # source(s)' own raw price/access snippet from their untouched view data,
+    # best-effort across each provider's own raw field shapes.
+    if station.views and len(station.views) > 1:
+        primary_key = (station.source or "").split("+")[0].strip().lower()
+        other_views = {k: v for k, v in station.views.items() if k.lower() != primary_key and isinstance(v, dict)}
+        if other_views:
+            print(f"\n  🌐 {C_BOLD}Also Listed On:{C_RESET}")
+            for src_key, view in other_views.items():
+                price_snip = ""
+                pr = view.get("priceRange")
+                if isinstance(pr, dict) and pr.get("energyDescription"):
+                    price_snip = str(pr["energyDescription"]).strip()
+                if not price_snip:
+                    for ped in (view.get("pedestals") or []):
+                        for conn in (ped.get("connectors") or []):
+                            if conn.get("price_raw"):
+                                price_snip = str(conn["price_raw"]).strip()
+                                break
+                        if price_snip:
+                            break
+                if not price_snip:
+                    for key in ("price_raw", "rate_range", "priceDescription"):
+                        if view.get(key):
+                            price_snip = str(view[key]).strip()
+                            break
+                access_snip = ""
+                for key in ("access", "accessType", "status"):
+                    v = view.get(key)
+                    if isinstance(v, str) and v.strip():
+                        access_snip = v.strip()
+                        break
+                bits = [b for b in (price_snip, access_snip) if b]
+                detail = " | ".join(bits) if bits else "see its own URL above for pricing/access"
+                print(f"    • {pad_display(src_key.title(), 12)} {detail}")
 
     cost_desc = meta.get("cost_description")
     if cost_desc and cost_desc != station.rate_range:
@@ -770,150 +852,212 @@ def display_station_inspection_card(station: UnifiedStationRecord, eval_time: Op
 
 
 def main():
+    # AGENTS.local.md BUG-074, 2026-09-15: user - "The usage / man here is
+    # terrible!!!" - followed by a request to structure --help the way a real
+    # man page does (NAME / SYNOPSIS / DESCRIPTION / OPTIONS / EXAMPLES; see
+    # https://gist.github.com/sebastiancarlos/a7fb89f73b4617ccc2ea9445abf62f90
+    # for the conventions this follows). The old version left argparse to
+    # auto-generate its usage line, which for 50+ flags with no `usage=`
+    # override sprawled across 17 wrapped lines with every flag dumped in
+    # alphabetical-ish order - nothing like a SYNOPSIS a human can scan. This
+    # version supplies a curated, mode-based `usage=` (the tool really has 5
+    # distinct modes - sync, browse/filter, live-catalog, inspect, plugshare -
+    # so one flat bracket-soup can never represent it well) plus a NAME line
+    # and a trimmed DESCRIPTION; OPTIONS is the real add_argument_group()
+    # split below (BUG-074 continued); EXAMPLES is the epilog, unchanged in
+    # content but now under one consistent heading style.
+    synopsis = """charger_find.py --sync-all | --sync-tesla | --sync-chargefox | --sync-evx |
+                     --sync-evie | --sync-bppulse | --sync-plugshare | --export-consolidated
+                     [--near PLACE] [--radius KM] [--state ST] [--new] [--add-all]
+   or:  charger_find.py [--near PLACE | --all | --query TEXT] [--state ST]
+                     [--sc | --dc | --ac] [--network NAME] [--min-kw KW]
+                     [--sort KEY] [--time HH:MM] [--limit N] [--json]
+   or:  charger_find.py --live [--sc] [--network tesla | chargefox] [--country NAME]
+   or:  charger_find.py --inspect QUERY [--live] [--save]
+   or:  charger_find.py --plugshare ID[,ID...] [--save]
+"""
     parser = argparse.ArgumentParser(
-        description="""
-⚡ Unified Multi-Network EV Charging Discovery & Synchronization Engine ⚡
-========================================================================
-Comprehensive discovery, comparison, filtering, and synchronization engine for EV
-charging infrastructure across Australia and beyond.
+        usage=synopsis,
+        description="""NAME
+  charger_find.py - unified multi-network EV charging discovery, comparison,
+  and synchronization engine (Tesla, Chargefox/NRMA, PlugShare-aggregated
+  networks, and a consolidated master catalog) for Australia and beyond.
 
-PROVIDERS & ARCHITECTURAL BENEFITS
-----------------------------------
-1. ⚡ Tesla (Tier 1 First-Party Authoritative):
-   - Direct integration with Tesla Find Us API and local authoritative JSON registries.
-   - Dual-layer naming consolidation: prioritizes specific site location names
-     (findus_location_name) over generic regional list labels (findus_list_name).
-   - Complete hardware categorization: Supercharger V2 (130/150 kW), V3 (250 kW),
-     V4 (300 kW), and AC Destination Chargers (22 kW).
-   - Time-of-Use (TOU) dynamic tariff schedules (Member vs Non-Member rates).
-   - Strict mutual exclusivity of fee enforcement: stations operate under either
-     an Idle Fee regime or a Congestion Fee regime, never both at once.
-   - Live non-Tesla CCS2 open access filtering (--non-tesla).
-
-2. 🦊 Chargefox & NRMA (Tier 1 First-Party Authoritative):
-   - Direct GraphQL API integration (https://app.chargefox.com/graphql) querying
-     918+ Australian locations across Chargefox, NRMA, WA EV Network, and QLD Electric Highway.
-   - Zero web scraping overhead: fetches structured real-time connector availability,
-     socket types, operational status, and exact $/kWh tariffs in a single batch.
-
-3. 🔌 PlugShare (Tier 2 Multi-Network Aggregator):
-   - Aggregates multi-network fast charging infrastructure: Evie Networks, BP Pulse,
-     AmpCharge, Exploren, JOLT, EVUp, Engie, ChargePoint, and independent sites.
-   - 0.05° spatial grid tiling (search_nearby) to eliminate silent API bounding-box
-     truncation on dense metro clusters.
-   - Unlisted price backfilling (--refresh-prices) with exponential backoff.
-   - Automated history discovery (--from-history) matching past charging sessions
-     from Tessie charges_master.csv to auto-register new charging locations.
-
-4. 🌐 Consolidated Master (Unified Multi-View Catalog):
-   - Spatial deduplication (R <= 60m) merging identical physical sites across networks.
-   - Strict First-Party Truth Hierarchy: First-Party (Tesla / Chargefox) metadata,
-     locations, and tariffs supersede 3rd-party aggregator estimates while preserving
-     full multi-source raw records under the 'views' schema.
-   - Exports unified multi-view catalog to Tessie/charging_stations.json.
+DESCRIPTION
+  1. Tesla (Tier 1 First-Party): Find Us API + local JSON registries, with
+     dual-layer naming (specific location name over regional list label),
+     full hardware tiers (Supercharger V2/V3/V4, AC Destination Chargers),
+     and Time-of-Use tariffs.
+  2. Chargefox & NRMA (Tier 1 First-Party): direct GraphQL integration
+     (918+ AU locations incl. NRMA, WA EV Network, QLD Electric Highway).
+  3. PlugShare (Tier 2 Aggregator): Evie, BP Pulse, AmpCharge, Exploren,
+     JOLT, EVUp, Engie, ChargePoint, and independent sites, with spatial
+     grid tiling to avoid API bounding-box truncation on dense clusters.
+  4. Consolidated Master: spatial dedup (<=60m) merges the same physical
+     site across networks into one record, First-Party data taking
+     precedence over aggregator estimates - see Tessie/charging_stations.json.
 """,
         formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog="""
-SYNCHRONIZATION COMMANDS:
-  # Sync All Providers end-to-end (Tesla, Chargefox, PlugShare, and Master Catalog):
-  ./Tools/find_chargers.py --sync-all --near Home --radius 50
+        epilog="""EXAMPLES
+  Synchronization:
+    # Sync All Providers end-to-end (Tesla, Chargefox, PlugShare, and Master Catalog):
+    ./Tools/charger_find.py --sync-all --near Home --radius 50
 
-  # Sync Chargefox & NRMA nationwide via live GraphQL API:
-  ./Tools/find_chargers.py --sync-chargefox
+    # Sync Chargefox & NRMA nationwide via live GraphQL API:
+    ./Tools/charger_find.py --sync-chargefox
 
-  # Sync PlugShare stations near a location or across a state:
-  ./Tools/find_chargers.py --sync-plugshare --near "Ryde" --radius 15 --add-all
-  ./Tools/find_chargers.py --sync-plugshare --state NSW --add-all
+    # Sync PlugShare stations near a location or across a state:
+    ./Tools/charger_find.py --sync-plugshare --near "Ryde" --radius 15 --add-all
+    ./Tools/charger_find.py --sync-plugshare --state NSW --add-all
 
-  # Sync Tesla Superchargers & Destination Chargers:
-  ./Tools/find_chargers.py --sync-tesla --sc --near Home --radius 50 --new
-  ./Tools/find_chargers.py --sync-tesla --dc --near Home --radius 50 --new
+    # Sync Tesla Superchargers & Destination Chargers:
+    ./Tools/charger_find.py --sync-tesla --sc --near Home --radius 50 --new
+    ./Tools/charger_find.py --sync-tesla --dc --near Home --radius 50 --new
 
-  # Refresh unlisted pricing or discover chargers from past charging history:
-  ./Tools/find_chargers.py --refresh-prices
-  ./Tools/find_chargers.py --from-history --add-all
+    # Refresh unlisted pricing or discover chargers from past charging history:
+    ./Tools/charger_find.py --refresh-prices
+    ./Tools/charger_find.py --from-history --add-all
 
-  # Compile & Export Consolidated Master Catalog (charging_stations.json):
-  ./Tools/find_chargers.py --export-consolidated
+    # Compile & Export Consolidated Master Catalog (charging_stations.json):
+    ./Tools/charger_find.py --export-consolidated
 
-PROXIMITY & SEARCH EXAMPLES:
-  # Find all chargers near an address sorted by distance:
-  ./Tools/find_chargers.py --near "100 George St, Sydney" --limit 10
+  Proximity & Search:
+    # Find all chargers near an address sorted by distance:
+    ./Tools/charger_find.py --near "100 George St, Sydney" --limit 10
 
-  # Find cheapest charging options near Home (defaults to 15km radius):
-  ./Tools/find_chargers.py --near Home --sort price --radius 25
+    # Find cheapest charging options near Home (defaults to 15km radius):
+    ./Tools/charger_find.py --near Home --sort price --radius 25
 
-  # Evaluate Time-of-Use pricing at peak vs off-peak hours:
-  ./Tools/find_chargers.py --near Home --time 14:00 --sort price
-  ./Tools/find_chargers.py --near Home --time 23:30 --sort price
+    # Evaluate Time-of-Use pricing at peak vs off-peak hours:
+    ./Tools/charger_find.py --near Home --time 14:00 --sort price
+    ./Tools/charger_find.py --near Home --time 23:30 --sort price
 
-  # Filter high-power DC Fast Chargers (>= 150 kW) or specific networks:
-  ./Tools/find_chargers.py --dc --min-kw 150 --near "Ryde"
-  ./Tools/find_chargers.py --network chargefox --state NSW
-  ./Tools/find_chargers.py --network tesla --sc --near Home
+    # Filter high-power DC Fast Chargers (>= 150 kW, any network) or specific networks:
+    ./Tools/charger_find.py --dc --min-kw 150 --near "Ryde"
+    ./Tools/charger_find.py --network chargefox --state NSW
+    ./Tools/charger_find.py --network tesla --sc --near Home
 
-INSPECTION & DRILL-DOWN:
-  # Inspect detailed card for a specific station by query:
-  ./Tools/find_chargers.py -q "Macquarie"
+  Inspection & Drill-Down:
+    # Inspect detailed card for a specific station by query:
+    ./Tools/charger_find.py -q "Macquarie"
 
-  # Inspect a PlugShare location ID directly:
-  ./Tools/find_chargers.py --plugshare 801149 --save
+    # Inspect a PlugShare location ID directly:
+    ./Tools/charger_find.py --plugshare 801149 --save
 """
     )
     
-    # Location & Search Scope
-    parser.add_argument("--near", "-l", type=str, help="Reference place name, address, or lat,lon (e.g. 'Home', 'Ryde')")
-    parser.add_argument("--radius", "-r", "--radius-km", type=float, default=15.0, help="Search radius in km (default: 15)")
-    parser.add_argument("--query", "-q", type=str, help="Text search by station name, suburb, or network")
-    parser.add_argument("--all", "-a", action="store_true", help="List all registered stations across the entire country or selected state")
-    parser.add_argument("--state", choices=["NSW", "VIC", "QLD", "WA", "SA", "TAS", "ACT", "NT", "nsw", "vic", "qld", "wa", "sa", "tas", "act", "nt"], help="Filter by State/Territory (e.g. NSW, VIC)")
-    parser.add_argument("--country", default="Australia", help="Country name (default: Australia)")
-    
-    # Charging Speed & Type Filter
-    parser.add_argument("--sc", action="store_true", help="Tesla Superchargers only")
-    parser.add_argument("--dc", action="store_true", help="DC Fast Chargers only (>= 25 kW)")
-    parser.add_argument("--ac", action="store_true", help="AC Public / Destination Chargers only (< 25 kW)")
-    parser.add_argument("--min-kw", type=float, default=0.0, help="Minimum charging power in kW (e.g. --min-kw 150)")
-    
-    # Network Filter
-    parser.add_argument("--network", "-n", type=str, help="Filter by network name (e.g. tesla, chargefox, nrma, evie, bp)")
-    
-    # Sorting & Time of Use
-    parser.add_argument("--sort", "-s", choices=["distance", "price", "power", "stalls", "name", "state"], default="distance", help="Sort order (default: distance)")
-    parser.add_argument("-t", "--time", type=str, help="Evaluate TOU pricing at specific local time (HH:MM)")
-    
-    # Output & Synchronization controls
-    parser.add_argument("--limit", type=int, default=100, help="Maximum number of stations to display (default: 100)")
-    parser.add_argument("--json", action="store_true", help="Output results in JSON format")
-    parser.add_argument("--sync-all", action="store_true", help="Perform end-to-end sync across all providers (Tesla, Chargefox, EVX, Evie, bp pulse, PlugShare, and Master Catalog)")
-    parser.add_argument("--sync-tesla", action="store_true", help="Download, verify and cache Tesla Superchargers and Destination Chargers")
-    parser.add_argument("--sync-chargefox", action="store_true", help="Download and cache all Chargefox & NRMA stations across Australia")
-    parser.add_argument("--sync-evx", action="store_true", help="Download and cache all EVX Kerbside Polechargers across Australia")
-    parser.add_argument("--sync-evie", action="store_true", help="Download and cache all Evie Networks fast charging stations across Australia")
-    parser.add_argument("--sync-bppulse", action="store_true", help="Download and cache all bp pulse DC Fast & Ultra-Fast charging stations across Australia")
-    parser.add_argument("--sync-plugshare", action="store_true", help="Discover and cache PlugShare 3rd-party stations across Australia or near a location")
-    parser.add_argument("--export-consolidated", "--sync-master", action="store_true", help="Compile and export multi-view master charging_stations.json to Tessie data home")
-    parser.add_argument("--plugshare", "--inspect-plugshare", type=str, help="PlugShare location ID(s) to inspect / scrape live (comma-separated)")
-    parser.add_argument("--refresh-prices", action="store_true", help="Fetch live PlugShare details for stations missing pricing and update the registry")
-    parser.add_argument("--from-history", action="store_true", help="Auto-discover unregistered charging locations from charges_master.csv")
-    parser.add_argument("--save", "--update", action="store_true", help="Save / update inspected stations into local registry")
-    parser.add_argument("--add-all", action="store_true", help="Auto-add all discovered stations to local registry")
-    parser.add_argument("--status", choices=["UP_TO_DATE", "RENAMED", "STALE", "NOT_IN_JSON", "uptodate", "up_to_date", "up-to-date", "renamed", "stale", "new", "not_in_json"], help="Filter by registry status")
-    parser.add_argument("--update-stale", action="store_true", help="Batch re-verify and update all stale stations across providers (archives changes)")
-    parser.add_argument("--update-renamed", action="store_true", help="Batch re-verify and reconcile all renamed stations across providers (archives changes)")
-    parser.add_argument("--new", action="store_true", help="Filter only stations not present in registry")
-    parser.add_argument("--stale", action="store_true", help="Filter only stale stations (> 90 days since verification)")
-    parser.add_argument("--renamed", action="store_true", help="Filter only renamed / discrepancy stations")
-    parser.add_argument("--unpriced", "--missing-price", "--missing-pricing", action="store_true", help="Filter (or, with --sync-tesla --all, batch refresh) stations missing pricing in the JSON registry - mirrors find_tesla_chargers.py's --unpriced. Fixed 2026-09-14 (REQ-062, AGENTS.local.md): --sync-tesla's subset_filter logic already referenced args.unpriced but this flag never existed, crashing with AttributeError on every --sync-tesla invocation.")
-    parser.add_argument("--views", action="store_true", help="Display multi-view comparison (First-Party vs PlugShare) for matching stations")
-    parser.add_argument("--audit-plugshare", "--audit", action="store_true", help="Run full discrepancy audit between First-Party registries and PlugShare")
-    parser.add_argument("--delay", type=float, default=0.5, help="Pacing delay in seconds between requests (default: 0.5)")
-    parser.add_argument("--timeout", type=int, default=35, help="Network timeout in seconds per page load (default: 35)")
-    parser.add_argument("--retries", type=int, default=3, help="Max retry attempts per station (default: 3)")
-    parser.add_argument("--live", action="store_true", help="Browse the live upstream catalog (Tesla Find Us list, or Chargefox GraphQL) grouped by state with a Renamed/Stale/Not-in-JSON status legend and interactive menu - matches find_tesla_chargers.py's --country explorer. Only supported for --sc/--dc (Tesla) and --network chargefox; other networks have no single canonical upstream catalog to diff against.")
-    parser.add_argument("--inspect", type=str, help="Inspect a single Tesla station by name/query (offline cache by default; add --live to re-scrape from Tesla Find Us, and --save to write the result into the registry) - reuses find_tesla_chargers.py's own inspect_or_scrape_station(), same as --inspect there.")
+    # AGENTS.local.md BUG-074, 2026-09-15: --help had become unreadable - a
+    # single flat argparse "options:" list of 50+ flags with no grouping
+    # (the section comments below were never real argparse groups, just
+    # visual dividers in the source), several help= strings carrying
+    # multi-sentence commit-message-style rationale straight into user-facing
+    # --help output (--tesla-dest, --unpriced, --live, --inspect). Split into
+    # real add_argument_group()s matching those original section comments,
+    # and trimmed every help= string to one concise line - the fuller
+    # rationale for non-obvious flags now lives in a source comment instead.
+    g_location = parser.add_argument_group("Location & Search Scope")
+    g_location.add_argument("--near", "-l", type=str, help="Reference place name, address, or lat,lon (e.g. 'Home', 'Ryde')")
+    g_location.add_argument("--radius", "-r", "--radius-km", type=float, default=15.0, help="Search radius in km (default: 15)")
+    g_location.add_argument("--query", "-q", type=str, help="Text search by station name, suburb, or network")
+    g_location.add_argument("--all", "-a", action="store_true", help="List all registered stations across the entire country or selected state")
+    g_location.add_argument("--state", choices=["NSW", "VIC", "QLD", "WA", "SA", "TAS", "ACT", "NT", "nsw", "vic", "qld", "wa", "sa", "tas", "act", "nt"], help="Filter by State/Territory (e.g. NSW, VIC)")
+    g_location.add_argument("--country", default="Australia", help="Country name (default: Australia)")
+
+    g_speed = parser.add_argument_group("Charging Speed & Type Filter")
+    # BUG-073 (2026-09-15) tried adding a dedicated --tesla-dest/--tesla-sc/
+    # --tesla-dc flag family to disambiguate --dc from its Tesla-only meaning.
+    # BUG-077 (2026-09-15, AGENTS.local.md): user - "We've just done
+    # --tesla-sc and --tesla-dc. Maybe we should be consistent and use
+    # --network." Right - the tool already has a --network mechanism for
+    # exactly this (--network chargefox, --network evie, ...); giving Tesla
+    # its own separate flag family instead of using that same mechanism was
+    # inconsistent. Reverted: --sc/--dc/--ac are bare again, and Tesla's own
+    # Destination Chargers are now selected the same way any other network's
+    # subset is - "--network tesla --dc" (or --ac) - handled below wherever
+    # this used to read args.tesla_dest.
+    g_speed.add_argument("--sc", action="store_true", help="Tesla Superchargers only")
+    g_speed.add_argument("--dc", action="store_true", help="DC Fast Chargers only (>= 25 kW), any network - combine with --network tesla for Tesla's own Destination Chargers")
+    g_speed.add_argument("--ac", action="store_true", help="AC Public / Destination Chargers only (< 25 kW), any network - combine with --network tesla for Tesla's own Destination Chargers")
+    g_speed.add_argument("--min-kw", type=float, default=0.0, help="Minimum charging power in kW (e.g. --min-kw 150)")
+
+    g_network = parser.add_argument_group("Network Filter")
+    g_network.add_argument("--network", "-n", type=str, help="Filter by network name (e.g. tesla, chargefox, nrma, evie, bp)")
+
+    g_sort = parser.add_argument_group("Sorting & Time of Use")
+    g_sort.add_argument("--sort", "-s", choices=["distance", "price", "power", "stalls", "name", "state"], default="distance", help="Sort order (default: distance)")
+    g_sort.add_argument("-t", "--time", type=str, help="Evaluate TOU pricing at specific local time (HH:MM)")
+
+    g_output = parser.add_argument_group("Output Controls")
+    g_output.add_argument("--limit", type=int, default=100, help="Maximum number of stations to display (default: 100)")
+    g_output.add_argument("--json", action="store_true", help="Output results in JSON format")
+
+    g_sync = parser.add_argument_group("Synchronization")
+    g_sync.add_argument("--sync-all", action="store_true", help="End-to-end sync across all providers (Tesla, Chargefox, EVX, Evie, bp pulse, PlugShare, Master Catalog)")
+    g_sync.add_argument("--sync-tesla", action="store_true", help="Download, verify and cache Tesla Superchargers and Destination Chargers")
+    g_sync.add_argument("--sync-chargefox", action="store_true", help="Download and cache all Chargefox & NRMA stations across Australia")
+    g_sync.add_argument("--sync-evx", action="store_true", help="Download and cache all EVX Kerbside Polechargers across Australia")
+    g_sync.add_argument("--sync-evie", action="store_true", help="Download and cache all Evie Networks fast charging stations across Australia")
+    g_sync.add_argument("--sync-bppulse", action="store_true", help="Download and cache all bp pulse DC Fast & Ultra-Fast charging stations across Australia")
+    g_sync.add_argument("--sync-plugshare", action="store_true", help="Discover and cache PlugShare 3rd-party stations across Australia or near a location")
+    g_sync.add_argument("--export-consolidated", "--sync-master", action="store_true", help="Compile and export multi-view master charging_stations.json to Tessie data home")
+
+    g_registry = parser.add_argument_group("Registry Filters & Batch Updates")
+    g_registry.add_argument("--plugshare", "--inspect-plugshare", type=str, help="PlugShare location ID(s) to inspect / scrape live (comma-separated)")
+    g_registry.add_argument("--refresh-prices", action="store_true", help="Fetch live PlugShare details for stations missing pricing and update the registry")
+    g_registry.add_argument("--from-history", action="store_true", help="Auto-discover unregistered charging locations from charges_master.csv")
+    g_registry.add_argument("--save", "--update", action="store_true", help="Save / update inspected stations into local registry")
+    g_registry.add_argument("--add-all", action="store_true", help="Auto-add all discovered stations to local registry")
+    g_registry.add_argument("--status", choices=["UP_TO_DATE", "RENAMED", "STALE", "NOT_IN_JSON", "uptodate", "up_to_date", "up-to-date", "renamed", "stale", "new", "not_in_json"], help="Filter by registry status")
+    g_registry.add_argument("--update-stale", action="store_true", help="Batch re-verify and update all stale stations across providers (archives changes)")
+    g_registry.add_argument("--update-renamed", action="store_true", help="Batch re-verify and reconcile all renamed stations across providers (archives changes)")
+    g_registry.add_argument("--new", action="store_true", help="Filter only stations not present in registry")
+    g_registry.add_argument("--stale", action="store_true", help="Filter only stale stations (> 90 days since verification)")
+    g_registry.add_argument("--renamed", action="store_true", help="Filter only renamed / discrepancy stations")
+    # REQ-062 (2026-09-14, AGENTS.local.md): mirrors charger_find_tesla.py's
+    # --unpriced. With --sync-tesla --all, also drives a batch refresh instead
+    # of just filtering.
+    g_registry.add_argument("--unpriced", "--missing-price", "--missing-pricing", action="store_true", help="Filter (or with --sync-tesla --all, batch refresh) stations missing pricing")
+    g_registry.add_argument("--views", action="store_true", help="Display multi-view comparison (First-Party vs PlugShare) for matching stations")
+    g_registry.add_argument("--audit-plugshare", "--audit", action="store_true", help="Run full discrepancy audit between First-Party registries and PlugShare")
+
+    g_tuning = parser.add_argument_group("Network Request Tuning")
+    g_tuning.add_argument("--delay", type=float, default=0.5, help="Pacing delay in seconds between requests (default: 0.5)")
+    g_tuning.add_argument("--timeout", type=int, default=35, help="Network timeout in seconds per page load (default: 35)")
+    g_tuning.add_argument("--retries", type=int, default=3, help="Max retry attempts per station (default: 3)")
+
+    g_live = parser.add_argument_group("Live Browsing & Inspection")
+    # REQ-060 (2026-09-14, AGENTS.local.md): only Tesla (--network tesla or
+    # bare --sc) and Chargefox have one canonical upstream list to diff a
+    # local registry against - matches charger_find_tesla.py's --country
+    # explorer. BUG-077 (2026-09-15): dropped the short-lived --tesla-dest
+    # flag in favor of --network tesla, consistent with every other network.
+    g_live.add_argument("--live", action="store_true", help="Browse the live upstream catalog grouped by state with a Renamed/Stale/Not-in-JSON legend (Tesla via --network tesla or --sc, or Chargefox via --network chargefox)")
+    # REQ-061 (2026-09-14, AGENTS.local.md): reuses charger_find_tesla.py's
+    # own inspect_or_scrape_station(), same behavior as --inspect there.
+    g_live.add_argument("--inspect", type=str, help="Inspect a single Tesla station by name/query (offline cache by default; add --live to re-scrape, --save to write into the registry)")
 
     args = parser.parse_args()
+
+    # BUG-078 (2026-09-15, AGENTS.local.md): user typo'd "--network changefox"
+    # (an easy transposition of "chargefox") and got a generic, unhelpful
+    # "--live browsing isn't available for this network selection" - nothing
+    # told them the network NAME itself was probably the mistake, since
+    # --network has always accepted any free-text string with zero
+    # validation. Real aggregator sub-brand names (Exploren, WA EV Network,
+    # QLD Electric Highway, ...) mean a hard allowlist would reject valid
+    # input, so this only WARNS - via a fuzzy match against the known
+    # first-party network names - and always still proceeds with whatever the
+    # user typed as a free-text filter.
+    if args.network:
+        _KNOWN_NETWORKS = ["tesla", "chargefox", "nrma", "evie", "evx", "bppulse", "plugshare"]
+        _net_check = args.network.strip().lower()
+        if _net_check not in _KNOWN_NETWORKS and not any(_net_check in n or n in _net_check for n in _KNOWN_NETWORKS):
+            import difflib
+            _close = difflib.get_close_matches(_net_check, _KNOWN_NETWORKS, n=1, cutoff=0.6)
+            if _close:
+                print(f"{C_YELLOW}⚠ Unknown network '{args.network}' - did you mean '{_close[0]}'? (Known: {', '.join(_KNOWN_NETWORKS)}. Proceeding with '{args.network}' as a free-text filter anyway.){C_RESET}")
+            else:
+                print(f"{C_YELLOW}⚠ '{args.network}' doesn't match a known first-party network ({', '.join(_KNOWN_NETWORKS)}) - proceeding as a free-text filter, which also matches PlugShare-aggregated sub-brands like Exploren or WA EV Network.{C_RESET}")
 
     manager = ChargerDiscoveryManager()
 
@@ -930,7 +1074,7 @@ INSPECTION & DRILL-DOWN:
 
         print("🚀 [1/7] Starting Full Network Sync: Tesla Superchargers & Destination Chargers...")
         try:
-            from find_tesla_chargers import TeslaChargerExplorer
+            from charger_find_tesla import TeslaChargerExplorer
             explorer = TeslaChargerExplorer()
             ref_lat, ref_lon, ref_label = (None, None, None)
             if args.near:
@@ -942,7 +1086,7 @@ INSPECTION & DRILL-DOWN:
                 print(f"  ⚡ Fetching Tesla {t_lbl}...")
                 t_stations = explorer.fetch_station_list(country=args.country or "Australia", charger_type=c_type)
                 if ref_lat is not None and ref_lon is not None:
-                    from providers.base import haversine_km
+                    from providers.chargers_base import haversine_km
                     t_stations = [s for s in t_stations if s.get("_lat") is not None and s.get("_lon") is not None and haversine_km(ref_lat, ref_lon, s["_lat"], s["_lon"]) <= radius]
                 explorer.scrape_all_stations(t_stations, subset_filter="new", pacing_delay=args.delay, timeout_sec=args.timeout, max_retries=args.retries)
             sync_results.append(("Tesla", True))
@@ -1038,7 +1182,7 @@ INSPECTION & DRILL-DOWN:
         return
 
     if args.sync_tesla:
-        from find_tesla_chargers import TeslaChargerExplorer
+        from charger_find_tesla import TeslaChargerExplorer
         explorer = TeslaChargerExplorer()
         charger_types = []
         if args.sc:
@@ -1056,7 +1200,7 @@ INSPECTION & DRILL-DOWN:
                 ref_lat, ref_lon, ref_label = resolve_reference_coords(args.near)
                 if ref_lat is not None and ref_lon is not None:
                     radius = args.radius or 50.0
-                    from providers.base import haversine_km
+                    from providers.chargers_base import haversine_km
                     scoped = []
                     for s in stations:
                         s_lat = s.get("_lat")
@@ -1198,19 +1342,19 @@ INSPECTION & DRILL-DOWN:
         return
 
     if args.audit_plugshare:
-        from plugshare_auditor import run_audit
+        from charger_plugshare_auditor import run_audit
         net_filter = args.network if args.network else None
         run_audit(network_filter=net_filter, state_filter=args.state)
         return
 
-    # Single-station inspect / live re-scrape - reuses find_tesla_chargers.py's
+    # Single-station inspect / live re-scrape - reuses charger_find_tesla.py's
     # own inspect_or_scrape_station() (extracted from its main() on
     # 2026-09-14, REQ-061, AGENTS.local.md) so a one-off Tesla re-scrape
     # (e.g. "Macquarie, NSW" had stale idle/congestion fee data but wasn't
     # RENAMED or STALE-by-age, so no --sync-tesla subset filter could target
     # it) never requires dropping into the old script directly.
     if args.inspect:
-        from find_tesla_chargers import TeslaChargerExplorer, inspect_or_scrape_station
+        from charger_find_tesla import TeslaChargerExplorer, inspect_or_scrape_station
         tesla_explorer = TeslaChargerExplorer()
         inspect_or_scrape_station(
             tesla_explorer, inspect=args.inspect, url=None,
@@ -1224,22 +1368,23 @@ INSPECTION & DRILL-DOWN:
     # to diff a local registry against (Tesla's own findus list pages,
     # Chargefox's GraphQL catalog). REQ-060, AGENTS.local.md, 2026-09-14.
     if args.live and not args.query and not args.near:
-        if (args.sc or args.dc) and not args.ac:
-            from find_tesla_chargers import TeslaChargerExplorer, browse_stations_by_type
+        net_lower = (args.network or "").strip().lower()
+        if args.sc or net_lower == "tesla":
+            from charger_find_tesla import TeslaChargerExplorer, browse_stations_by_type
             types_to_fetch = []
-            if args.dc:
-                types_to_fetch.append("chargers")
             if args.sc:
                 types_to_fetch.append("superchargers")
+            if args.dc or args.ac:
+                types_to_fetch.append("chargers")
             if not types_to_fetch:
                 types_to_fetch = ["superchargers", "chargers"]
             tesla_explorer = TeslaChargerExplorer()
             browse_stations_by_type(tesla_explorer, types_to_fetch, args.country or "Australia")
             return
-        if args.network and args.network.strip().lower() in ("chargefox", "nrma"):
+        if net_lower in ("chargefox", "nrma"):
             browse_chargefox_catalog_grid(manager, args.country or "Australia")
             return
-        print(f"{C_YELLOW}⚠ --live browsing isn't available for this network selection - it needs one canonical upstream catalog to diff against (Tesla via --sc/--dc, or Chargefox via --network chargefox). PlugShare-aggregated networks (Evie, bp pulse, etc.) have no single such list.{C_RESET}")
+        print(f"{C_YELLOW}⚠ --live browsing isn't available for this network selection - it needs one canonical upstream catalog to diff against (Tesla via --network tesla or --sc, or Chargefox via --network chargefox). PlugShare-aggregated networks (Evie, bp pulse, etc.) have no single such list.{C_RESET}")
         print(f"{C_DIM}Falling back to the local registry view below.{C_RESET}")
 
     # Determine filters
@@ -1333,7 +1478,7 @@ INSPECTION & DRILL-DOWN:
 
     # Multi-View comparison mode
     if args.views:
-        from plugshare_auditor import inspect_station_views
+        from charger_plugshare_auditor import inspect_station_views
         if not stations:
             print(f"❌ No stations found to display views.")
             return
@@ -1378,7 +1523,8 @@ INSPECTION & DRILL-DOWN:
             ref_lat=ref_lat,
             ref_lon=ref_lon,
             active_radius=active_radius,
-            sort_mode=sort_mode_desc
+            sort_mode=sort_mode_desc,
+            network_filter=args.network
         )
 
     render_cb()

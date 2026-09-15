@@ -28,7 +28,7 @@ EXTRA_ARGS=()
 # ==============================================================================
 print_help() {
     cat << 'EOF'
-Usage: ./run_exportdash.sh [options] [--cli <command>]
+Usage: ./dashcam_exportdash.sh [options] [--cli <command>]
 
 Options:
   -p, --port <port>       Local web server port (default: 3000)
@@ -39,10 +39,10 @@ Options:
   -h, --help              Show this help message
 
 CLI Utility Examples:
-  ./run_exportdash.sh                                          # Launch Web UI on http://localhost:3000
-  ./run_exportdash.sh --source usb                             # Launch Web UI using glovebox USB
-  ./run_exportdash.sh --cli stitch                             # Batch stitch all clips into 4-camera grids
-  ./run_exportdash.sh --cli stitch /data/input/SavedClips/XYZ  # Stitch specific event folder
+  ./dashcam_exportdash.sh                                          # Launch Web UI on http://localhost:3000
+  ./dashcam_exportdash.sh --source usb                             # Launch Web UI using glovebox USB
+  ./dashcam_exportdash.sh --cli stitch                             # Batch stitch all clips into 4-camera grids
+  ./dashcam_exportdash.sh --cli stitch /data/input/SavedClips/XYZ  # Stitch specific event folder
 EOF
     exit 0
 }

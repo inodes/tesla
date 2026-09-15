@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-PlugShare Discrepancy & Error Auditor (plugshare_auditor.py)
+PlugShare Discrepancy & Error Auditor (charger_plugshare_auditor.py)
 ===========================================================
 Compares First-Party Authoritative Tier 1 Registries (Tesla, Chargefox, EVX)
 against Tier 2 PlugShare Aggregator data to identify:
@@ -33,7 +33,7 @@ from providers import (
     EVXProvider,
     PlugShareProvider
 )
-from table_formatter import (
+from lib.table_formatter import (
     pad_display,
     truncate_display,
     format_box_line,
@@ -320,7 +320,27 @@ def generate_markdown_report(
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Audit PlugShare records against Authoritative First-Party Registries")
+    parser = argparse.ArgumentParser(
+        usage="""charger_plugshare_auditor.py [--network evx|chargefox|tesla|all] [--state ST] [--report FILE.md]
+   or:  charger_plugshare_auditor.py --query TEXT
+""",
+        description="""
+NAME
+    charger_plugshare_auditor.py - audit PlugShare records against authoritative first-party registries
+
+DESCRIPTION
+    Audits PlugShare records against this repo's authoritative first-party
+    charger registries (Tesla, Chargefox, Evie/EVX), flagging discrepancies and
+    optionally exporting a Markdown report.
+""",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+EXAMPLES
+  charger_plugshare_auditor.py --network chargefox --state NSW
+  charger_plugshare_auditor.py --query "1 Endeavour"
+  charger_plugshare_auditor.py --report plugshare_audit_report.md
+"""
+    )
     parser.add_argument("--query", "-q", type=str, help="Inspect multi-views and PlugShare comparison for a specific station (e.g. '1 Endeavour')")
     parser.add_argument("--network", "-n", choices=["evx", "chargefox", "tesla", "all"], default="all", help="Filter audit by network")
     parser.add_argument("--state", "-s", choices=["NSW", "VIC", "QLD", "WA", "SA", "TAS", "ACT", "NT"], help="Filter audit by state")

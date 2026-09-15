@@ -14,7 +14,7 @@ import urllib.request
 from typing import Dict, List, Optional, Any, Tuple
 from datetime import datetime, timezone
 
-from .base import (
+from .chargers_base import (
     BaseChargerProvider,
     UnifiedStationRecord,
     haversine_km,
@@ -37,7 +37,7 @@ def _resolve_evx_registry_path() -> str:
     candidates = []
     tessie_home = None
     try:
-        from tessie_api_common import resolve_tessie_data_home
+        from lib.tessie_api_common import resolve_tessie_data_home
         tessie_home = resolve_tessie_data_home()
     except Exception:
         pass
@@ -45,7 +45,9 @@ def _resolve_evx_registry_path() -> str:
         candidates.append(os.path.join(tessie_home, "evx_chargers.json"))
         
     candidates.append(os.path.join(_repo_root, "Tessie", "evx_chargers.json"))
-    config_path = os.path.join(_repo_root, "Tessie", "config.json")
+    config_path = os.path.join(_repo_root, "config.json")  # TODO-034: root is primary now
+    if not os.path.isfile(config_path):
+        config_path = os.path.join(_repo_root, "Tessie", "config.json")  # legacy fallback
     if os.path.isfile(config_path):
         try:
             with open(config_path, "r", encoding="utf-8") as f:
@@ -299,6 +301,9 @@ def parse_evx_location_record(loc: Dict[str, Any]) -> Dict[str, Any]:
 class EVXProvider(BaseChargerProvider):
     name: str = "EVX"
     tier: int = 1  # First-Party Authoritative
+    # BUG-079: verified via grep 'speed_tier\s*=' - both occurrences hardcode
+    # "ac_destination"; EVX never assigns "dc_fast" or "supercharger".
+    POSSIBLE_SPEED_TIERS = {"ac_destination"}
 
     def __init__(self, registry_path: Optional[str] = None):
         self.registry_path = registry_path or _resolve_evx_registry_path()

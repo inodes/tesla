@@ -15,7 +15,7 @@ import urllib.request
 from typing import Dict, List, Optional, Any, Tuple
 from datetime import datetime, timezone
 
-from .base import (
+from .chargers_base import (
     BaseChargerProvider,
     UnifiedStationRecord,
     haversine_km,
@@ -26,7 +26,7 @@ from .base import (
     atomic_write_json
 )
 
-from .chargefox_provider import resolve_au_state
+from .chargers_chargefox import resolve_au_state
 
 _script_dir = os.path.dirname(os.path.abspath(__file__))
 _tools_dir = os.path.dirname(_script_dir)
@@ -75,7 +75,7 @@ def _resolve_evie_registry_path() -> str:
     candidates = []
     tessie_home = None
     try:
-        from tessie_api_common import resolve_tessie_data_home
+        from lib.tessie_api_common import resolve_tessie_data_home
         tessie_home = resolve_tessie_data_home()
     except Exception:
         pass
@@ -83,7 +83,9 @@ def _resolve_evie_registry_path() -> str:
         candidates.append(os.path.join(tessie_home, "evie_chargers.json"))
         
     candidates.append(os.path.join(_repo_root, "Tessie", "evie_chargers.json"))
-    config_path = os.path.join(_repo_root, "Tessie", "config.json")
+    config_path = os.path.join(_repo_root, "config.json")  # TODO-034: root is primary now
+    if not os.path.isfile(config_path):
+        config_path = os.path.join(_repo_root, "Tessie", "config.json")  # legacy fallback
     if os.path.isfile(config_path):
         try:
             with open(config_path, "r", encoding="utf-8") as f:
@@ -425,6 +427,10 @@ def parse_evie_location_record(loc: Dict[str, Any]) -> Dict[str, Any]:
 
 
 class EvieProvider(BaseChargerProvider):
+    # BUG-079: verified via grep 'speed_tier\s*=' - only "dc_fast" or
+    # "ac_destination" (by max_power_kw threshold, or a stored hardware
+    # speed_tier defaulting to "dc_fast"). Never "supercharger".
+    POSSIBLE_SPEED_TIERS = {"dc_fast", "ac_destination"}
     """
     Tier 1 First-Party Authoritative Provider for Evie Networks.
     """

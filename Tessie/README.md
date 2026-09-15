@@ -24,8 +24,8 @@ A suite of tools for analyzing [Tessie](https://share.tessie.com/bGRu5q9S2kB) te
 | **`tessie_drives_analyzer.py`** | Consolidates raw Tessie drive CSV exports, high-level drives summary with monthly breakdown, interactive period/day drill-down, place geofencing, and TeslaCam video linking. | `./Tools/tessie_drives_analyzer.py --consolidate`<br>`./Tools/tessie_drives_analyzer.py --drives`<br>`./Tools/tessie_drives_analyzer.py --since wednesday` |
 | **`tessie_places.py`** | Location management, interactive POI lookup by address/GPS, frequent stop-cluster reviewer, and formatted place inspector (leaves chargers alone). | `./Tools/tessie_places.py list`<br>`./Tools/tessie_places.py lookup "109 Blaxland Rd, Ryde"`<br>`./Tools/tessie_places.py review` |
 | **`tessie_charging_analyzer.py`** | Reconciles Tesla Supercharger & 3rd-party invoices against Tessie telemetry, calculates dispenser vs battery loss, verifies TOU rates, and audits charging costs. | `./Tools/tessie_charging_analyzer.py --superchargers`<br>`./Tools/tessie_charging_analyzer.py --inspect 1`<br>`./Tools/tessie_charging_analyzer.py --consolidate` |
-| **`find_tesla_chargers.py`** | Hierarchical discovery explorer and live scraper for Tesla Superchargers and Destination Chargers with state filtering, search, TOU pricing, and registry sync. | `./Tools/find_tesla_chargers.py --interactive`<br>`./Tools/find_tesla_chargers.py --state NSW --sc --list`<br>`./Tools/find_tesla_chargers.py --inspect 19258 --save` |
-| **`find_plugshare_chargers.py`** | Discovers and registers public 3rd-party chargers (Chargefox, Evie, BP Pulse, JOLT, Exploren, AmpCharge, and more) listed on PlugShare, with gross-tariff pricing and hardware detail scraping. | `./Tools/find_plugshare_chargers.py --near Home --dc`<br>`./Tools/find_plugshare_chargers.py --plugshare 801149 --save`<br>`./Tools/find_plugshare_chargers.py --refresh-prices` |
+| **`charger_find_tesla.py`** | Hierarchical discovery explorer and live scraper for Tesla Superchargers and Destination Chargers with state filtering, search, TOU pricing, and registry sync. | `./Tools/charger_find_tesla.py --interactive`<br>`./Tools/charger_find_tesla.py --state NSW --sc --list`<br>`./Tools/charger_find_tesla.py --inspect 19258 --save` |
+| **`charger_find_plugshare.py`** | Discovers and registers public 3rd-party chargers (Chargefox, Evie, BP Pulse, JOLT, Exploren, AmpCharge, and more) listed on PlugShare, with gross-tariff pricing and hardware detail scraping. | `./Tools/charger_find_plugshare.py --near Home --dc`<br>`./Tools/charger_find_plugshare.py --plugshare 801149 --save`<br>`./Tools/charger_find_plugshare.py --refresh-prices` |
 
 ---
 
@@ -89,39 +89,39 @@ A suite of tools for analyzing [Tessie](https://share.tessie.com/bGRu5q9S2kB) te
 ### 3. Tesla Charger Discovery & Live Scraping
 ```bash
 # Interactive hierarchical drill-down menu (Region ➔ Country ➔ Type ➔ State ➔ Station):
-./Tools/find_tesla_chargers.py --interactive
+./Tools/charger_find_tesla.py --interactive
 
 # List all Superchargers in Australia grouped by state:
-./Tools/find_tesla_chargers.py --country Australia --sc --list
+./Tools/charger_find_tesla.py --country Australia --sc --list
 
 # Filter NSW Superchargers:
-./Tools/find_tesla_chargers.py --country Australia --state NSW --sc --list
+./Tools/charger_find_tesla.py --country Australia --state NSW --sc --list
 
 # Search charging infrastructure by keyword (e.g. Miranda, Parramatta, Airport):
-./Tools/find_tesla_chargers.py --country Australia --search "Miranda"
+./Tools/charger_find_tesla.py --country Australia --search "Miranda"
 
 # Inspect cached JSON details by Location ID, or force a live re-scrape:
-./Tools/find_tesla_chargers.py --inspect 19258
-./Tools/find_tesla_chargers.py --inspect 19258 --live --save
+./Tools/charger_find_tesla.py --inspect 19258
+./Tools/charger_find_tesla.py --inspect 19258 --live --save
 
 # Inspect directly by Find Us URL:
-./Tools/find_tesla_chargers.py --url "https://www.tesla.com/en_AU/findus/location/supercharger/19258"
+./Tools/charger_find_tesla.py --url "https://www.tesla.com/en_AU/findus/location/supercharger/19258"
 ```
 
 ### 4. PlugShare 3rd-Party Charger Discovery & Live Scraping
 ```bash
 # DC fast chargers within 15km of a known place, sorted by state then station name:
-./Tools/find_plugshare_chargers.py --near Home --dc --radius 15
+./Tools/charger_find_plugshare.py --near Home --dc --radius 15
 
 # Search PlugShare by name/keyword:
-./Tools/find_plugshare_chargers.py --search "Bunnings"
+./Tools/charger_find_plugshare.py --search "Bunnings"
 
 # Inspect a specific station by PlugShare location ID and save it into the registry:
-./Tools/find_plugshare_chargers.py --plugshare 801149 --save
+./Tools/charger_find_plugshare.py --plugshare 801149 --save
 
 # Backfill pricing for every currently-listed station missing a rate
 # (bulk search doesn't return pricing - only the single-station detail lookup does):
-./Tools/find_plugshare_chargers.py --near Home --dc --radius 15 --refresh-prices
+./Tools/charger_find_plugshare.py --near Home --dc --radius 15 --refresh-prices
 ```
 
 ### 5. Known Places & POI Lookup Engine

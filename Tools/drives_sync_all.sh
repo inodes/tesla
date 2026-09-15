@@ -21,6 +21,28 @@
 set -euo pipefail
 cd "$(dirname "$0")"
 
+if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
+    cat << 'EOF'
+Usage: ./drives_sync_all.sh [-h|--help]
+
+The one command for the DRIVES domain. Takes no arguments; running it
+executes every step below in order against your real data. Does NOT itself
+touch places.json - that stays tessie_places.py's own separate review
+workflow (drives-sync only needs to read an already-maintained
+places.json, not manage it).
+
+Steps run, in order:
+  1. Tessie drives - fetch, then --consolidate
+     (tessie_api_sync.py --drives --yes)
+  2. Drive deep-dive telemetry backfill
+     (tessie_api_sync.py --backfill-deepdive --drives --limit 0)
+  3. Battery health (vehicle-wide, not drives-specific - lives here since
+     this runs regularly)
+     (tessie_api_sync.py --battery-health)
+EOF
+    exit 0
+fi
+
 echo "==> Tessie drives (fetch + consolidate)"
 ./tessie_api_sync.py --drives --yes
 
