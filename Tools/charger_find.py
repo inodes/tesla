@@ -862,6 +862,54 @@ def display_station_inspection_card(station: UnifiedStationRecord, eval_time: Op
     print()
 
 
+def display_nearby_facilities(station: UnifiedStationRecord, radius_m: int = 250) -> None:
+    """
+    Looks up real, named nearby facilities (shops, food, amenities, services)
+    around a charging station via OpenStreetMap's free/keyless Overpass API -
+    reusing Tools/tessie_places.py's already-proven query_overpass_pois(),
+    the same lookup that already identifies drive-log stop locations.
+
+    REQ (2026-09-15, AGENTS.local.md): user - "the information about
+    facilities that exist around each charger (primarily Tesla Superchargers)
+    is very weak. I would love the ability to get a list of actual facilities
+    that are related close to each Supercharger." Works for any station with
+    coordinates, not just Tesla - Superchargers are the primary use case but
+    there's nothing Tesla-specific about the lookup itself.
+    """
+    if not station.lat or not station.lon:
+        print(f"{C_YELLOW}⚠ No coordinates on file for this station - can't look up nearby facilities.{C_RESET}")
+        return
+
+    print(f"\n{C_BOLD}🏙️  Nearby Facilities (within {radius_m}m of {station.name}, via OpenStreetMap):{C_RESET}")
+    print(f"{C_GRAY}   Looking up live - this can take a few seconds...{C_RESET}")
+
+    try:
+        from tessie_places import query_overpass_pois
+    except ImportError as e:
+        print(f"{C_RED}❌ Could not load the facilities lookup (Tools/tessie_places.py): {e}{C_RESET}")
+        return
+
+    try:
+        pois = query_overpass_pois(station.lat, station.lon, radius_m=radius_m)
+    except Exception as e:
+        print(f"{C_RED}❌ Facilities lookup failed: {e}{C_RESET}")
+        return
+
+    if not pois:
+        print(f"{C_YELLOW}  No named facilities found within {radius_m}m (or OpenStreetMap's Overpass API didn't respond - try again in a moment).{C_RESET}")
+        return
+
+    plural = "y" if len(pois) == 1 else "ies"
+    print(f"  Found {len(pois)} named facilit{plural} within {radius_m}m:\n")
+    max_show = 25
+    for i, poi in enumerate(pois[:max_show], 1):
+        dist_str = f"{poi['dist_m']:.0f}m"
+        print(f"  {i:>2}. {C_CYAN}{poi['name']}{C_RESET} \u2014 {poi['category']} ({dist_str})")
+    if len(pois) > max_show:
+        print(f"  ... and {len(pois) - max_show} more within {radius_m}m.")
+    print()
+
+
 def main():
     # AGENTS.local.md BUG-074, 2026-09-15: user - "The usage / man here is
     # terrible!!!" - followed by a request to structure --help the way a real
@@ -1646,17 +1694,18 @@ DESCRIPTION
                 
             print(f"  [{C_GREEN}u{C_RESET}] Update / Re-verify this station live (archives historical changes)")
             print(f"  [{C_GREEN}m{C_RESET}] Open in Google Maps (navigation / coordinates)")
+            print(f"  [{C_GREEN}f{C_RESET}] Nearby Facilities (shops, food, amenities within 250m - via OpenStreetMap)")
             print(f"  [{C_GREEN}b{C_RESET}] Back to station list")
             print(f"  [{C_GREEN}q{C_RESET}] Quit")
             print()
 
             action_prompt_range = f"1-{len(source_urls)}" if len(source_urls) > 1 else "1"
             if len(source_urls) > 1:
-                prompt_options = f"{action_prompt_range}, a, u, m, b, q"
+                prompt_options = f"{action_prompt_range}, a, u, m, f, b, q"
             elif len(source_urls) == 1:
-                prompt_options = f"1, u, m, b, q"
+                prompt_options = f"1, u, m, f, b, q"
             else:
-                prompt_options = f"u, m, b, q"
+                prompt_options = f"u, m, f, b, q"
 
             try:
                 act = input(f"Action [{prompt_options}, default: b]: ").strip().lower()
@@ -1685,6 +1734,9 @@ DESCRIPTION
                 gmap_url = f"https://www.google.com/maps/search/?api=1&query={sel.lat},{sel.lon}"
                 import subprocess
                 subprocess.run(["open", gmap_url] if sys.platform == "darwin" else ["xdg-open", gmap_url], check=False)
+            elif act in ("f", "facilities", "nearby"):
+                display_nearby_facilities(sel)
+                input("\nPress Enter to continue...")
 
             render_cb()
 
