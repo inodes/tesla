@@ -284,6 +284,17 @@ class ChargefoxProvider(BaseChargerProvider):
 
         loc_id = str(node.get("id", ""))
         name = node.get("name") or "Chargefox Station"
+        # Chargefox's upstream data occasionally embeds invisible characters
+        # mid-name (e.g. a literal U+200B zero-width space: "157 \u200bCurlewis
+        # St") - harmless to width-aware rendering (table_formatter.py's
+        # char_width() already scores these as 0 display columns) but pure
+        # noise to carry through the registry, and a plausible contributor to
+        # any "alignment looks off" report given how these characters render
+        # inconsistently across terminals/fonts. Root-caused via a live diff
+        # against this exact station (user: "wondering what causes this given
+        # alignment should be self healing"). Stripped at ingestion instead.
+        name = re.sub(r"[\u200b\u200c\u200d\u2060\ufeff]", "", name).strip()
+        name = re.sub(r"\s{2,}", " ", name)
         lat = node.get("lat")
         lon = node.get("lng") or node.get("lon")
         if lat is None or lon is None:

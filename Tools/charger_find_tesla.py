@@ -2905,11 +2905,17 @@ def interactive_station_selector_loop(stations: list, explorer: TeslaChargerExpl
             if record:
                 explorer.display_preview(key, record, from_cache=False)
                 try:
-                    existing_match, _, _ = explorer.find_existing_match(key, record)
-                    prompt_label = "Update this station in local registry?" if (cached_record or existing_match) else "Save this station to local registry?"
-                    save_in = input(f"{prompt_label} [Y/n]: ").strip().lower()
-                    if save_in != "n":
+                    existing_key, existing_entry, _ = explorer.find_existing_match(key, record)
+                    is_existing = bool(cached_record or existing_key)
+                    diff_baseline = cached_record or existing_entry
+                    if is_existing and diff_baseline and not explorer._detect_record_changes(diff_baseline, record):
+                        print(f"{C_GREEN}\u2714 No changes detected - registry already up to date.{C_RESET}")
                         explorer.update_registry(key, record)
+                    else:
+                        prompt_label = "Update this station in local registry?" if is_existing else "Save this station to local registry?"
+                        save_in = input(f"{prompt_label} [Y/n]: ").strip().lower()
+                        if save_in != "n":
+                            explorer.update_registry(key, record)
                 except (EOFError, KeyboardInterrupt):
                     pass
         else:
@@ -2939,9 +2945,13 @@ def interactive_station_selector_loop(stations: list, explorer: TeslaChargerExpl
                 if record:
                     explorer.display_preview(key, record, from_cache=False)
                     try:
-                        save_in = input("Update this station in local registry? [Y/n]: ").strip().lower()
-                        if save_in != "n":
+                        if not explorer._detect_record_changes(cached_record, record):
+                            print(f"{C_GREEN}\u2714 No changes detected - registry already up to date.{C_RESET}")
                             explorer.update_registry(key, record)
+                        else:
+                            save_in = input("Update this station in local registry? [Y/n]: ").strip().lower()
+                            if save_in != "n":
+                                explorer.update_registry(key, record)
                     except (EOFError, KeyboardInterrupt):
                         pass
             elif act == "2":
@@ -3370,10 +3380,41 @@ def browse_stations_by_type(explorer: TeslaChargerExplorer, types_to_fetch: list
             target_st = station_lookup[int(pick)]
             cached_key, cached_record, _ = explorer.get_station_record(target_st, sc_reg=sc_reg, dc_reg=dc_reg)
             is_existing = bool(cached_record)
+            existing_entry_for_diff = cached_record
+
             if cached_record:
                 explorer.display_preview(cached_key, cached_record, from_cache=True)
-                rescrape_prompt = input("Fetch fresh live pricing from Tesla Find Us? [y/N]: ").strip().lower()
-                if rescrape_prompt != "y":
+                print(f"{C_BOLD}Actions for {target_st.get('title', '')}:{C_RESET}")
+                print(f"  [{C_GREEN}1{C_RESET}] Re-scrape live pricing from Tesla Find Us (WebKit)")
+                print(f"  [{C_GREEN}2{C_RESET}] Open Find Us URL in default web browser")
+                print(f"  [{C_GREEN}3{C_RESET}] Open in Google Maps (navigation / coordinates)")
+                print(f"  [{C_GREEN}Enter{C_RESET}] Skip / back to list")
+                print()
+                try:
+                    act = input("Action [1-3, Enter to skip]: ").strip().lower()
+                except (EOFError, KeyboardInterrupt):
+                    return
+                if act == "2":
+                    url_to_open = target_st.get("url") or cached_record.get("tesla_metadata", {}).get("findus_url")
+                    if url_to_open:
+                        print(f"\U0001F310 Opening {url_to_open}...")
+                        import subprocess
+                        subprocess.run(["open", url_to_open] if sys.platform == "darwin" else ["xdg-open", url_to_open], check=False)
+                    else:
+                        print(f"{C_RED}\u274C No Find Us URL found for this station.{C_RESET}")
+                    return
+                elif act == "3":
+                    loc_data = cached_record.get("location", {})
+                    lat_val, lon_val = loc_data.get("lat"), loc_data.get("lon")
+                    if lat_val is not None and lon_val is not None:
+                        maps_url = f"https://www.google.com/maps/search/?api=1&query={lat_val},{lon_val}"
+                        print(f"\U0001F5FA\uFE0F Opening Google Maps: {maps_url}...")
+                        import subprocess
+                        subprocess.run(["open", maps_url] if sys.platform == "darwin" else ["xdg-open", maps_url], check=False)
+                    else:
+                        print(f"{C_RED}\u274C GPS coordinates missing for this station.{C_RESET}")
+                    return
+                elif act != "1":
                     return
 
             # target_st["title"] is this run's live Find Us LIST page title (it's
@@ -3386,9 +3427,13 @@ def browse_stations_by_type(explorer: TeslaChargerExplorer, types_to_fetch: list
             if record:
                 explorer.display_preview(key, record, from_cache=False)
                 if not is_existing:
-                    existing_match, _, _ = explorer.find_existing_match(key, record)
-                    if existing_match:
+                    existing_key, existing_entry_for_diff, _ = explorer.find_existing_match(key, record)
+                    if existing_key:
                         is_existing = True
+                if is_existing and existing_entry_for_diff and not explorer._detect_record_changes(existing_entry_for_diff, record):
+                    print(f"{C_GREEN}\u2714 No changes detected - registry already up to date.{C_RESET}")
+                    explorer.update_registry(key, record)
+                    return
                 prompt_text = "Update this station in local registry?" if is_existing else "Save this station to local registry?"
                 save_prompt = input(f"{prompt_text} [y/N]: ").strip().lower()
                 if save_prompt == "y":
