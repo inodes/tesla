@@ -22,6 +22,15 @@ id gets its own stacked tick-label column on the right (in that
 axis's own series color) so two-plus differently-scaled metrics -
 e.g. Elevation (m) / Efficiency (kWh/100km) / Speed (km/h) - can
 share one chart without a shared/misleading scale.
+
+Optional `locations`: a list of str-or-None the same length as
+x_values (REQ AGENTS.local.md 2026-09-15: user - "while dragging
+cursor along the timeline, it would be good to have an extra line
+for where the car is at that point in time") - shown as an extra
+line in the hover tooltip when the mouse is at that x position.
+Omit (or pass None) for a chart with no location data (e.g. the
+charging-curve chart, which doesn't move) - the tooltip simply
+doesn't grow that line.
 """
 
 import json
@@ -200,6 +209,9 @@ canvas.addEventListener('mousemove', (ev) => {{
     const v = s.values[i];
     lines.push(`${{s.name}}: ${{v === null || v === undefined ? '-' : v.toFixed(2)}} ${{s.unit}}`);
   }});
+  if (DATA.locations && DATA.locations[i]) {{
+    lines.push(`📍 ${{DATA.locations[i]}}`);
+  }}
   tooltip.innerHTML = lines.join('<br>');
   tooltip.style.display = 'block';
   const my = (ev.clientY - rect.top) * (canvas.height / rect.height);
@@ -217,7 +229,7 @@ draw();
 """
 
 
-def write_interactive_chart(output_path, title, x_values, x_label, series, subtitle=""):
+def write_interactive_chart(output_path, title, x_values, x_label, series, subtitle="", locations=None):
     """Write a self-contained interactive HTML chart to output_path.
 
     x_values: list of str labels (already formatted - a timestamp
@@ -229,8 +241,12 @@ def write_interactive_chart(output_path, title, x_values, x_label, series, subti
     gridlined axis; every other id gets its own stacked tick-label
     column on the right, so 3+ differently-scaled series can share one
     chart.
+
+    locations: optional list of str-or-None, same length as x_values -
+    an extra "Location: ..." tooltip line at that x, or omitted
+    entirely (None) for a chart with nothing to show there.
     """
-    data = {"x": x_values, "x_label": x_label, "series": series}
+    data = {"x": x_values, "x_label": x_label, "series": series, "locations": locations}
     html = _TEMPLATE.format(
         title=title,
         subtitle=subtitle,
