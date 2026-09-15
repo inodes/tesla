@@ -330,7 +330,29 @@ def plugshare_to_registry_record(basic_or_detail: dict, full_detail: Optional[di
     if is_res or acc_code == 3 or is_coming_soon:
         return "", {}
 
+    # BUG-088 (2026-09-15): PlugShare's `access` field (1/2/3) is only a
+    # coarse base classification - a station can ALSO carry a separate
+    # `access_restrictions` list (e.g. ["EMPLOYEES_ONLY"], with a matching
+    # human-readable `access_restriction_descriptions`) that PlugShare's
+    # own site renders as an ADDITIONAL red "RESTRICTED"/aqua "EMPLOYEES
+    # ONLY" badge on top of the base access level. Real user report:
+    # plugshare.com/location/525387 (Mortlake Slipway) has access=2 (the
+    # bare "Customer / Patron" mapping below), but ALSO carries
+    # access_restrictions=["EMPLOYEES_ONLY"] - confirmed live against
+    # PlugShare's own API - so this tool was showing it as ordinary
+    # customer-accessible when it's actually staff-only. The restriction
+    # descriptions, when present, now take priority over the base code.
+    restriction_descs = d.get("access_restriction_descriptions") or []
+    if not restriction_descs:
+        restriction_items = d.get("access_restriction_items") or []
+        restriction_descs = [
+            it.get("description") for it in restriction_items
+            if isinstance(it, dict) and it.get("description")
+        ]
+
     access_str = "Public" if acc_code == 1 else ("Customer / Patron" if acc_code == 2 else "Restricted")
+    if restriction_descs:
+        access_str = f"Restricted ({', '.join(restriction_descs)})"
     if d.get("open247"):
         access_str += " 24/7"
 

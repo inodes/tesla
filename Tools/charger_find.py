@@ -1036,6 +1036,18 @@ DESCRIPTION
     # own inspect_or_scrape_station(), same behavior as --inspect there.
     g_live.add_argument("--inspect", type=str, help="Inspect a single Tesla station by name/query (offline cache by default; add --live to re-scrape, --save to write into the registry)")
 
+    # User report (2026-09-15): running with literally no arguments at all
+    # looked "frozen" - line 1416 below (`args.all or args.state or (not
+    # args.near and not args.query)`) treats an all-defaults Namespace as
+    # "full country / state list mode" and silently kicks off a nationwide,
+    # every-provider get_all_stations() fetch with zero printed explanation
+    # first. Bare `charger_find.py` should show help instead of guessing at
+    # a real command, matching argparse's own convention for a tool with no
+    # sensible zero-argument default action.
+    if len(sys.argv) == 1:
+        parser.print_help(sys.stderr)
+        sys.exit(1)
+
     args = parser.parse_args()
 
     # BUG-078 (2026-09-15, AGENTS.local.md): user typo'd "--network changefox"
