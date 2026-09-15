@@ -38,10 +38,10 @@ _tools_dir = os.path.dirname(os.path.abspath(__file__))
 if _tools_dir not in sys.path:
     sys.path.insert(0, _tools_dir)
 
-from archive_naming import next_archive_path
-from deepdive_charts import write_interactive_chart, try_open_in_browser
+from lib.archive_naming import next_archive_path
+from lib.analysis_deepdive_charts import write_interactive_chart, try_open_in_browser
 
-from table_formatter import (
+from lib.table_formatter import (
     char_width,
     display_len,
     pad_display,
@@ -50,8 +50,8 @@ from table_formatter import (
     format_title_line,
     format_box_line,
 )
-import tessie_timezone as tztools
-import tessie_api_common
+import lib.tessie_timezone as tztools
+import lib.tessie_api_common as tessie_api_common
 
 
 def normalize_row_timezone(row, lat_key, lon_key, start_key_prefix):
@@ -292,7 +292,7 @@ def find_mounted_tesla_volumes(subdir=None):
     (see AGENTS.md) - this is what locates real footage on the drive for
     the Saved/Sentry/Recent columns below. Tessie CSV/registry data is
     never read from or written to TESLADRIVE (that tooling runs from the
-    repository and iCloud only, see tesla_sync.sh) - callers must not pass
+    repository and iCloud only, see dashcam_sync.sh) - callers must not pass
     a 'Tessie' subdir here.
     """
     volumes_root = "/Volumes"
@@ -1028,7 +1028,7 @@ def export_tombstone_rsync_excludes(master_dir=None, out_path=None):
 def flag_footage_packages_for_deletion(packages, analyzer):
     """
     Stages packages for deletion in .TeslaCam_tombstones.json with status='flagged'.
-    Files REMAIN physically on disk until explicitly purged via tesla_sync.sh or [P]urge.
+    Files REMAIN physically on disk until explicitly purged via dashcam_sync.sh or [P]urge.
     Returns (count_flagged, total_est_bytes).
     """
     master_dir = resolve_master_teslacam_dir(analyzer.teslacam_dirs)
@@ -1650,7 +1650,9 @@ class TessieAnalyzer:
         # TessieChargingAnalyzer and tessie_api_common.load_config()) just
         # for its "tessie_directory" setting - see self.tessie_data_home
         # below for why.
-        _cfg_path = os.path.join(parent_dir, "Tessie", "config.json")
+        _cfg_path = os.path.join(parent_dir, "config.json")  # TODO-034: root is primary now
+        if not os.path.isfile(_cfg_path):
+            _cfg_path = os.path.join(parent_dir, "Tessie", "config.json")  # legacy fallback
         cfg_tessie_dir = None
         if os.path.isfile(_cfg_path):
             try:
@@ -1887,7 +1889,7 @@ class TessieAnalyzer:
             dest_dirs = list(self.drives_dirs)
 
         if not dest_dirs:
-            print("\033[31mNo Tessie data directory configured - set \"tessie_directory\" in Tessie/config.json "
+            print("\033[31mNo Tessie data directory configured - set \"tessie_directory\" in config.json "
                   "(see Tessie/config.example.json). Refusing to write drives_master.csv into the repo folder.\033[0m")
             return 0
 
@@ -2460,19 +2462,196 @@ class TessieAnalyzer:
 
         return segments
 
+    def _rolling_distance_window(self, iv_dist, i, window_km):
+        """Shared centered, distance-based window expansion used by every
+        compute_rolling_*() smoother below (originally
+        compute_rolling_efficiency()'s own logic, factored out 2026-09-15
+        when the user asked for the same rolling-window treatment on a
+        new Speed series too - "Drives can be spiky. So rolling
+        averages" - rather than duplicating this per metric).
+
+        iv_dist: real per-INTERVAL distance (km), one entry between each
+        pair of consecutive samples (see compute_drive_segments()/
+        compute_rolling_efficiency() for how that's derived from real
+        Odometer deltas - never assumed from speed).
+
+        Starts centered on sample i (the interval just before it and the
+        interval just after it), then grows outward - alternating left/
+        right - until at least window_km of REAL distance is covered, so
+        it adapts to how fast the car was actually going rather than a
+        fixed sample count or time span (0.8 km is ~30 sec on the
+        freeway, several minutes stuck in traffic).
+
+        Returns (lo, hi, dist_km) - the interval-index range [lo, hi]
+        (inclusive) and the real distance it covers - or None if sample i
+        has no touching interval at all (shouldn't normally happen once
+        n >= 2, but kept explicit rather than silently returning a
+        zero-width window)."""
+        n_iv = len(iv_dist)
+        lo = max(0, i - 1)
+        hi = min(n_iv - 1, i)
+        if lo > hi:
+            return None
+        dist = sum(iv_dist[lo:hi + 1])
+        grow_left_next = True
+        while dist < window_km and (lo > 0 or hi < n_iv - 1):
+            if grow_left_next and lo > 0:
+                lo -= 1
+                dist += iv_dist[lo]
+            elif hi < n_iv - 1:
+                hi += 1
+                dist += iv_dist[hi]
+            elif lo > 0:
+                lo -= 1
+                dist += iv_dist[lo]
+            grow_left_next = not grow_left_next
+        return lo, hi, dist
+
+    def compute_rolling_efficiency(self, raw_samples, window_km=0.8, min_km=0.15):
+        """Per-SAMPLE instantaneous efficiency (kWh/100km), smoothed with a
+        centered ROLLING-DISTANCE window (_rolling_distance_window())
+        rather than either extreme: raw per-interval (wild swings - two
+        ~15-30s samples can be under 50m apart, so a tiny real energy
+        delta divided by that is meaningless noise) or one flat value per
+        whole climbing/level/descending SEGMENT (the previous chart
+        behavior - a real user report, 2026-09-15: "the efficiency graph
+        is disjointed and not smooth and connected", because broadcasting
+        one number across an entire segment produces a blocky step
+        function with a sharp near-vertical jump at every segment-class
+        boundary, even though the drive itself is continuous).
+
+        Built from the exact same real per-interval Odometer (km) /
+        Energy Remaining (kWh) deltas compute_drive_segments() computes,
+        so the chart and the segment table can never silently disagree
+        about the underlying data, only about how it's presented (one
+        flat number per segment there, one smoothly-varying curve here).
+
+        Returns a list the same length as raw_samples's own arrays - None
+        wherever the window still couldn't gather min_km of real distance
+        (e.g. near a full stop) or lacks enough real energy readings to
+        trust, rather than guessing."""
+        ts = raw_samples.get("timestamp") or []
+        odo = raw_samples.get("odometer_km") or []
+        erem = raw_samples.get("energy_remaining_kwh") or []
+        n = len(ts)
+        if n < 2:
+            return [None] * n
+
+        # Real per-interval deltas - interval k sits between sample k and
+        # k+1 (same source data compute_drive_segments() already derives).
+        n_iv = n - 1
+        iv_dist = [0.0] * n_iv
+        iv_energy = [None] * n_iv
+        for k in range(n_iv):
+            o0 = odo[k] if k < len(odo) else None
+            o1 = odo[k + 1] if k + 1 < len(odo) else None
+            r0 = erem[k] if k < len(erem) else None
+            r1 = erem[k + 1] if k + 1 < len(erem) else None
+            if o0 is not None and o1 is not None:
+                iv_dist[k] = max(0.0, o1 - o0)
+            if r0 is not None and r1 is not None:
+                iv_energy[k] = r0 - r1
+
+        result = [None] * n
+        for i in range(n):
+            win = self._rolling_distance_window(iv_dist, i, window_km)
+            if win is None:
+                continue
+            lo, hi, dist = win
+            if dist < min_km:
+                continue
+            window = iv_energy[lo:hi + 1]
+            known = [e for e in window if e is not None]
+            # Require real energy data for essentially the whole window,
+            # not just a lucky interval or two, else this would silently
+            # understate/overstate rather than honestly showing a gap.
+            if len(known) < max(1, len(window) * 0.5):
+                continue
+            result[i] = (sum(known) / dist) * 100.0
+        return result
+
+    def compute_rolling_speed(self, raw_samples, window_km=0.8, min_km=0.15):
+        """Per-sample average speed (km/h), smoothed with the exact same
+        centered rolling-distance window as compute_rolling_efficiency()
+        (_rolling_distance_window()) - real distance over real elapsed
+        time within the window, not a plain average of the raw per-
+        sample 'Speed (km/h)' telemetry field, and not assumed from
+        Odometer alone either.
+
+        Added 2026-09-15 at the user's request (plotting average speed
+        alongside Elevation/Efficiency), then smoothed at their explicit
+        follow-up - the raw instantaneous speed reading is genuinely
+        spiky sample-to-sample ("Drives can be spiky. So rolling
+        averages"), and averaging real distance/time over the same
+        window already used for efficiency keeps a stretch of stop-start
+        traffic from getting smoothed into a misleadingly steady speed
+        (a plain mean of the instantaneous readings would do exactly
+        that).
+
+        Returns a list the same length as raw_samples's own arrays -
+        None wherever the window can't gather min_km of real distance or
+        enough real elapsed-time coverage to trust, same gap-honesty
+        contract as compute_rolling_efficiency()."""
+        ts = raw_samples.get("timestamp") or []
+        odo = raw_samples.get("odometer_km") or []
+        n = len(ts)
+        if n < 2:
+            return [None] * n
+
+        dts = [self._deepdive_ts(t) if t else None for t in ts]
+        n_iv = n - 1
+        iv_dist = [0.0] * n_iv
+        iv_time_hr = [None] * n_iv
+        for k in range(n_iv):
+            o0 = odo[k] if k < len(odo) else None
+            o1 = odo[k + 1] if k + 1 < len(odo) else None
+            if o0 is not None and o1 is not None:
+                iv_dist[k] = max(0.0, o1 - o0)
+            dt0, dt1 = dts[k], dts[k + 1]
+            if dt0 and dt1 and dt1 > dt0:
+                iv_time_hr[k] = (dt1 - dt0).total_seconds() / 3600.0
+
+        result = [None] * n
+        for i in range(n):
+            win = self._rolling_distance_window(iv_dist, i, window_km)
+            if win is None:
+                continue
+            lo, hi, dist = win
+            if dist < min_km:
+                continue
+            window = iv_time_hr[lo:hi + 1]
+            known = [t for t in window if t is not None]
+            if len(known) < max(1, len(window) * 0.5):
+                continue
+            total_hr = sum(known)
+            if total_hr <= 0:
+                continue
+            result[i] = dist / total_hr
+        return result
+
     def generate_drive_profile_chart(self, dt_rec):
-        """Interactive elevation/efficiency profile for one drive's
+        """Interactive elevation/efficiency/speed profile for one drive's
         deep-dive telemetry (AGENTS.md REQ-036/REQ-037) - Elevation (m) on
-        the left axis, Efficiency (kWh/100km) on the right, x-axis = time.
-        The efficiency series is each segment's own aggregate value
-        (compute_drive_segments()) broadcast across that segment's
-        samples as a step function, rather than a raw per-sample
-        instantaneous figure - the per-interval distance between two
-        ~15-30s samples is small enough (often under 50m) that dividing
-        a tiny real energy delta by it produces wild, meaningless swings;
-        the segment-level aggregate is the same number the segment
-        breakdown table already reports, so the chart and the table agree.
-        Mirrors generate_charging_curve_chart() in
+        the left axis, Efficiency (kWh/100km) and Speed (km/h) each on
+        their own stacked right-hand axis, x-axis = time. Both Efficiency
+        and Speed are compute_rolling_efficiency()/compute_rolling_speed()'s
+        smoothed per-sample curves, not the raw per-sample telemetry -
+        two real user reports on 2026-09-15 drove this: (1) broadcasting
+        each SEGMENT's own single aggregate efficiency flat across every
+        sample in it produced a blocky, disconnected-looking step function
+        (sharp near-vertical jumps at every climbing/level/descending
+        boundary, even though the drive itself is continuous), and (2),
+        once Speed was added per the same user's request, the raw
+        'Speed (km/h)' telemetry field is itself genuinely spiky
+        sample-to-sample ("Drives can be spiky. So rolling averages") -
+        see each compute_rolling_*() method's own docstring for why a
+        shared distance-based rolling window (_rolling_distance_window())
+        is the right middle ground between that and a raw, wildly-noisy
+        per-interval figure. The chart itself also now draws every series
+        as a smooth curve through each contiguous run of real values
+        (analysis_deepdive_charts.py's write_interactive_chart()) rather
+        than a straight-line polyline, matching a reference chart style
+        the user pointed to. Mirrors generate_charging_curve_chart() in
         tessie_charging_analyzer.py."""
         raw = dt_rec.get("raw_samples")
         if not raw or not raw.get("timestamp"):
@@ -2481,23 +2660,16 @@ class TessieAnalyzer:
         n = len(timestamps)
         x_labels = [ts[11:19] if ts and len(ts) >= 19 else (ts or "") for ts in timestamps]
 
-        segments = self.compute_drive_segments(raw)
-        dts = [self._deepdive_ts(t) if t else None for t in timestamps]
-        eff_series = [None] * n
-        seg_idx = 0
-        for i, dt in enumerate(dts):
-            if dt is None or not segments:
-                continue
-            while seg_idx < len(segments) - 1 and dt > segments[seg_idx]["end"]:
-                seg_idx += 1
-            if segments[seg_idx]["start"] <= dt <= segments[seg_idx]["end"]:
-                eff_series[i] = segments[seg_idx]["efficiency_kwh_per_100km"]
+        eff_series = self.compute_rolling_efficiency(raw)
+        speed_series = self.compute_rolling_speed(raw)
 
         series = [
             {"name": "Elevation", "unit": "m", "axis": "left", "color": "#16a34a",
              "values": raw.get("elevation_m", [None] * n)},
             {"name": "Efficiency", "unit": "kWh/100km", "axis": "right", "color": "#dc2626",
              "values": eff_series},
+            {"name": "Speed", "unit": "km/h", "axis": "speed", "color": "#2563eb",
+             "values": speed_series},
         ]
 
         # No "plots" subfolder - sits right beside the CSV, alongside
@@ -2512,7 +2684,7 @@ class TessieAnalyzer:
 
         write_interactive_chart(
             out_path,
-            title=f"Drive Elevation/Efficiency Profile - {dt_rec.get('source_file', '')}",
+            title=f"Drive Elevation/Efficiency/Speed Profile - {dt_rec.get('source_file', '')}",
             x_values=x_labels,
             x_label="Time",
             series=series,
@@ -2549,7 +2721,7 @@ class TessieAnalyzer:
         drive_deepdive_*.csv already covers it - the automated equivalent
         of the Tesla app's manual "download detailed telemetry" export,
         using the exact same endpoint/calling convention already proven
-        live by home_charge_deep_dive.py's fetch_tessie_states(). Deliberately
+        live by analysis_home_charge_deep_dive.py's fetch_tessie_states(). Deliberately
         requests format="csv" (not json) so Tessie's own server does the
         CSV formatting - the same convention the manual export already
         produces, and the one parse_detailed_drive_csv() already expects -
@@ -2576,7 +2748,7 @@ class TessieAnalyzer:
             return None
 
         try:
-            from tessie_api_common import load_config, get_token, get_vin, api_get, DEFAULT_UNIT_PARAMS
+            from lib.tessie_api_common import load_config, get_token, get_vin, api_get, DEFAULT_UNIT_PARAMS
         except Exception:
             return None
 
@@ -2653,13 +2825,18 @@ class TessieAnalyzer:
 
     def get_drive_deepdive(self, target_drive):
         """Looks up deep-dive telemetry for one drive, computes its segment
-        breakdown, and generates + auto-opens its elevation/efficiency
-        profile chart in the browser (if one exists) - the shared data/
-        side-effect logic behind BOTH inspect_drive() (the standalone
-        --inspect-drive flag) and display_footage_details() (AGENTS.md
-        TODO-019: folded into the ordinary trip drill-down so this shows up
-        automatically alongside footage, with no separate footage-vs-deep-
-        dive prompt - mirrors how tessie_charging_analyzer.py's
+        breakdown, and generates (but no longer auto-opens - user report,
+        2026-09-15: opening a browser tab unconditionally on every single
+        day/trip selection was surprising and unwanted, unlike
+        tessie_charging_analyzer.py's own charging curve, which only opens
+        via an explicit "[o]pen chart in browser" action - callers now
+        offer that same explicit action instead, see display_footage_details()
+        and inspect_drive()) its elevation/efficiency profile chart (if one
+        exists) - the shared data logic behind BOTH inspect_drive() (the
+        standalone --inspect-drive flag) and display_footage_details()
+        (AGENTS.md TODO-019: folded into the ordinary trip drill-down so
+        this shows up automatically alongside footage, with no separate
+        footage-vs-deep-dive prompt - mirrors how tessie_charging_analyzer.py's
         inspect_session() already handles its charging curve inline).
         When no local file covers this drive yet, auto-fetches one from
         Tessie's /states API instead of giving up (AGENTS.md TODO-026) -
@@ -2685,8 +2862,6 @@ class TessieAnalyzer:
             chart_path = self.generate_drive_profile_chart(dt_rec)
         except Exception:
             chart_path = None
-        if chart_path:
-            try_open_in_browser(chart_path)
         return dt_rec, segments, chart_path
 
     def inspect_drive(self, target):
@@ -2765,6 +2940,18 @@ class TessieAnalyzer:
             l4 = f"  \033[1mElevation/Efficiency Profile:\033[0m {chart_path}"
             print(f"│{pad_display(l4, box_w - 2, truncate=True)}│")
         print(f"└{'─' * (box_w - 2)}┘")
+
+        # User report (2026-09-15): used to auto-open in the browser
+        # unconditionally (get_drive_deepdive() no longer does that) -
+        # explicit action instead, matching tessie_charging_analyzer.py's
+        # own "[o]pen chart in browser" for the charging curve.
+        if chart_path and sys.stdin.isatty():
+            try:
+                act = input(f"{'':2}Action: [o]pen chart in browser, [Enter] to return: ").strip().lower()
+                if act in ('o', 'open', 'chart', 'c'):
+                    try_open_in_browser(chart_path)
+            except (KeyboardInterrupt, EOFError):
+                pass
         print()
 
     def sync_drives_if_stale(self, target_date=None, force=False):
@@ -3243,9 +3430,13 @@ def display_footage_details(trip, analyzer):
     # 3. Drive deep-dive telemetry (AGENTS.md TODO-019) - shown automatically
     # alongside footage whenever it exists, no separate footage-vs-deep-dive
     # prompt, mirroring how tessie_charging_analyzer.py's inspect_session()
-    # already shows its charging curve inline. get_drive_deepdive() also
-    # auto-opens the profile chart in the browser when one is generated.
+    # already shows its charging curve inline. User report (2026-09-15): this
+    # used to auto-open the chart in the browser unconditionally on every
+    # trip selection - now offered as an explicit "[o]pen chart in browser"
+    # action below instead, matching tessie_charging_analyzer.py's own
+    # charging-curve action.
     print(f"\n📊 3. DRIVE TELEMETRY:")
+    dd_chart_path = None
     deepdive_result = analyzer.get_drive_deepdive(trip)
     if not deepdive_result:
         print("   ℹ️  No deep-dive telemetry (drive_deepdive_*.csv) found for this drive.")
@@ -3270,7 +3461,13 @@ def display_footage_details(trip, analyzer):
         print(f"   • Open folder in Finder: open \"{first_folder}\"")
         if sys.stdin.isatty():
             try:
-                action_choice = input("\n📹 Trip Footage Action: [d]elete footage across all drives, [o]pen folder, [Enter] continue: ").strip().lower()
+                has_chart = bool(dd_chart_path and os.path.exists(dd_chart_path))
+                action_parts = ["[d]elete footage across all drives"]
+                if has_chart:
+                    action_parts.append("[o]pen chart in browser")
+                action_parts.append("[f]older")
+                action_parts.append("[Enter] continue")
+                action_choice = input(f"\n📹 Trip Footage Action: {', '.join(action_parts)}: ").strip().lower()
                 if action_choice in ("d", "del", "delete"):
                     all_clips = start_clips + end_clips
                     pkgs = build_timeline_footage_packages({"clips": all_clips, "start_dt": trip["start_dt"], "end_dt": trip["end_dt"]})
@@ -3287,7 +3484,9 @@ def display_footage_details(trip, analyzer):
                             del_mb = b_del / (1024 * 1024)
                             del_sz = f"{del_mb/1024:.1f} GB" if del_mb >= 1024 else f"{del_mb:.0f} MB"
                             print(f"✔ Successfully deleted {n_del} file(s) ({del_sz}) and recorded {n_tombs} tombstone(s).\n")
-                elif action_choice in ("o", "open"):
+                elif action_choice in ("o", "open", "chart", "c") and has_chart:
+                    try_open_in_browser(dd_chart_path)
+                elif action_choice in ("f", "folder"):
                     if sys.platform == "darwin" and os.path.exists(first_folder):
                         subprocess.run(["open", first_folder])
                         print(f"📂 Opened in Finder: {first_folder}\n")
@@ -3962,7 +4161,7 @@ def display_timeline_event_details(event, analyzer):
                 mult_mb = (b_flag * num_drives) / (1024 * 1024)
                 mult_sz = f"{mult_mb/1024:.1f} GB" if mult_mb >= 1024 else f"{mult_mb:.0f} MB"
                 print(f"\n ✔ Flagged {n_flag} footage package(s) for deletion (~{f_sz}/drive ➔ ~{mult_sz} across {num_drives} drive(s)).")
-                print("   Files remain on disk until explicitly purged via 'tesla_sync.sh' or [P]urge.\n")
+                print("   Files remain on disk until explicitly purged via 'dashcam_sync.sh' or [P]urge.\n")
                 continue
 
             if is_unflag:
@@ -4190,7 +4389,7 @@ def batch_flag_events_interactive(events, choice_str, analyzer, is_unflag=False)
     if conf in ("", "y", "yes"):
         n_flag, b_flag = flag_footage_packages_for_deletion(packages_to_process, analyzer)
         print(f"\n ✔ Successfully flagged {n_flag} footage package(s) for deletion.")
-        print("   Files remain on disk until explicitly purged via 'tesla_sync.sh' or [P]urge.\n")
+        print("   Files remain on disk until explicitly purged via 'dashcam_sync.sh' or [P]urge.\n")
     else:
         print("\n Flagging cancelled.\n")
 
@@ -4248,7 +4447,7 @@ def purge_home_recent_cli(analyzer, target_dates=None, stage_only=False, dry_run
 
     if stage_only:
         print(f"\n ✔ Flagged {n_flag} Home Recent package(s) for deletion.")
-        print("   Files remain on disk until explicitly purged via 'tesla_sync.sh' or [P]urge.\n")
+        print("   Files remain on disk until explicitly purged via 'dashcam_sync.sh' or [P]urge.\n")
         return n_flag, b_flag
 
     print("\n🗑️  Executing multi-drive purge of flagged Home Recent packages...")
@@ -4358,7 +4557,7 @@ def display_timeline(target_date, analyzer, compact=False):
             
         print(format_box_line("├", "┴", "┤", col_widths))
         if not has_any_footage:
-            foot_msg = " No local footage on archive SSD. Run 'tesla_sync.sh' to backup from car."
+            foot_msg = " No local footage on archive SSD. Run 'dashcam_sync.sh' to backup from car."
             print(f"│{pad_display(foot_msg, total_inner, 'left')}│")
         else:
             rec_tot = format_duration_short(total_recent_mins)
@@ -4644,24 +4843,60 @@ def display_months_menu(days_dict, analyzer):
             break
 
 def main():
-    parser = argparse.ArgumentParser(description="Tessie Drive Log Analyzer & Master Consolidator")
-    parser.add_argument("--drives", action="store_true", help="Analyze and inspect drives")
-    parser.add_argument("--timeline", nargs="?", const="today", default=None, help="Generate 24-hour event-driven vehicle & camera activity timeline for a date (e.g. today, yesterday, 2026-09-02, wednesday)")
-    parser.add_argument("--today", action="store_true", help="Inspect only today's drives")
-    parser.add_argument("--yesterday", action="store_true", help="Inspect only yesterday's drives")
-    parser.add_argument("--month", help="Filter drives by month (e.g. '2026-09', 'september', 'aug')")
-    parser.add_argument("--since", help="Filter drives since date or day name (e.g. 'wednesday', '2026-09-02')")
-    parser.add_argument("--days", type=int, help="Filter drives from past N days")
-    parser.add_argument("--place", help="Filter drives by place nickname (e.g. 'School', 'Work', 'Gym')")
-    parser.add_argument("--consolidate", nargs="?", const=True, help="Consolidate drives CSV(s) into drives_master.csv (optionally specify path to a new CSV)")
-    parser.add_argument("--inspect-drive", help="Deep-dive inspect a specific drive by 1-based index (start-time order) or date/datetime (e.g. '2026-08-30', '2026-08-30 21:01')")
-    parser.add_argument("--tessie-dir", help="Custom path to directory containing Tessie CSV exports")
-    parser.add_argument("--sync", action="store_true", help="Force sync latest drives from Tessie API before running")
-    parser.add_argument("--no-sync", action="store_true", help="Disable automatic API sync check when data is stale")
-    parser.add_argument("--purge-home-recent", "--auto-purge-home-recent", action="store_true", help="Auto-purge all unflagged RecentClips packages recorded while parked at Home")
-    parser.add_argument("--stage-home-recent", "--auto-flag-home-recent", action="store_true", help="Stage all unflagged Home RecentClips packages for deletion without purging")
-    parser.add_argument("--dry-run", action="store_true", help="Preview footage to be staged or purged without modifying disks")
-    parser.add_argument("--yes", "-y", action="store_true", help="Automatically confirm purge without interactive prompt")
+    parser = argparse.ArgumentParser(
+        usage="""tessie_drives_analyzer.py --drives [--today | --yesterday | --month M | --since DATE | --days N]
+                                  [--place NAME]
+   or:  tessie_drives_analyzer.py --timeline [DATE]
+   or:  tessie_drives_analyzer.py --inspect-drive INDEX_OR_DATE
+   or:  tessie_drives_analyzer.py --consolidate [CSV]
+   or:  tessie_drives_analyzer.py --sync | --no-sync
+   or:  tessie_drives_analyzer.py [--purge-home-recent | --stage-home-recent] [--dry-run] [--yes]
+""",
+        description="""
+NAME
+    tessie_drives_analyzer.py - Tessie Drive Log Analyzer & Master Consolidator
+
+DESCRIPTION
+    Analyze, filter, and deep-dive Tessie drive logs, generate 24-hour vehicle &
+    camera activity timelines, consolidate drive CSVs into drives_master.csv, and
+    manage Home-parked RecentClips dashcam footage.
+""",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+EXAMPLES
+  tessie_drives_analyzer.py --drives --today
+  tessie_drives_analyzer.py --drives --place Work --days 30
+  tessie_drives_analyzer.py --timeline yesterday
+  tessie_drives_analyzer.py --inspect-drive "2026-08-30 21:01"
+  tessie_drives_analyzer.py --consolidate
+  tessie_drives_analyzer.py --stage-home-recent --dry-run
+"""
+    )
+
+    g_filter = parser.add_argument_group("Drive Selection & Filtering")
+    g_filter.add_argument("--drives", action="store_true", help="Analyze and inspect drives")
+    g_filter.add_argument("--today", action="store_true", help="Inspect only today's drives")
+    g_filter.add_argument("--yesterday", action="store_true", help="Inspect only yesterday's drives")
+    g_filter.add_argument("--month", help="Filter drives by month (e.g. '2026-09', 'september', 'aug')")
+    g_filter.add_argument("--since", help="Filter drives since date or day name (e.g. 'wednesday', '2026-09-02')")
+    g_filter.add_argument("--days", type=int, help="Filter drives from past N days")
+    g_filter.add_argument("--place", help="Filter drives by place nickname (e.g. 'School', 'Work', 'Gym')")
+
+    g_timeline = parser.add_argument_group("Timeline & Inspection")
+    g_timeline.add_argument("--timeline", nargs="?", const="today", default=None, help="Generate 24-hour event-driven vehicle & camera activity timeline for a date (e.g. today, yesterday, 2026-09-02, wednesday)")
+    g_timeline.add_argument("--inspect-drive", help="Deep-dive inspect a specific drive by 1-based index (start-time order) or date/datetime (e.g. '2026-08-30', '2026-08-30 21:01')")
+
+    g_sync = parser.add_argument_group("Consolidation & Sync")
+    g_sync.add_argument("--consolidate", nargs="?", const=True, help="Consolidate drives CSV(s) into drives_master.csv (optionally specify path to a new CSV)")
+    g_sync.add_argument("--tessie-dir", help="Custom path to directory containing Tessie CSV exports")
+    g_sync.add_argument("--sync", action="store_true", help="Force sync latest drives from Tessie API before running")
+    g_sync.add_argument("--no-sync", action="store_true", help="Disable automatic API sync check when data is stale")
+
+    g_camera = parser.add_argument_group("Home Camera Clip Management")
+    g_camera.add_argument("--purge-home-recent", "--auto-purge-home-recent", action="store_true", help="Auto-purge all unflagged RecentClips packages recorded while parked at Home")
+    g_camera.add_argument("--stage-home-recent", "--auto-flag-home-recent", action="store_true", help="Stage all unflagged Home RecentClips packages for deletion without purging")
+    g_camera.add_argument("--dry-run", action="store_true", help="Preview footage to be staged or purged without modifying disks")
+    g_camera.add_argument("--yes", "-y", action="store_true", help="Automatically confirm purge without interactive prompt")
 
     args = parser.parse_args()
 

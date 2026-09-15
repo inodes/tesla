@@ -43,10 +43,10 @@ SUPERCHARGERS_JSON_PATH = os.path.join(TESSIE_DIR, "tesla_superchargers.json") i
 # the Repo Working Tree At All" rule (REQ-034), they resolve through the
 # same external tessie_directory home every other real-data script uses,
 # not a path hardcoded beside this script. sys.path[0] already has this
-# directory (Tools/) when run directly, matching find_chargers.py's own
+# directory (Tools/) when run directly, matching charger_find.py's own
 # use of this same import (added 2026-09-14, real-data-in-tree audit).
 try:
-    from tessie_api_common import resolve_tessie_data_home as _resolve_tessie_data_home
+    from lib.tessie_api_common import resolve_tessie_data_home as _resolve_tessie_data_home
     _REAL_TESSIE_DIR = _resolve_tessie_data_home()
 except Exception:
     _REAL_TESSIE_DIR = TESSIE_DIR
@@ -60,7 +60,7 @@ _tools_dir = os.path.dirname(os.path.abspath(__file__))
 if _tools_dir not in sys.path:
     sys.path.insert(0, _tools_dir)
 
-from table_formatter import (
+from lib.table_formatter import (
     char_width,
     display_len,
     truncate_display,
@@ -721,7 +721,7 @@ def load_config():
         "tessie_directory": "~/Library/Mobile Documents/com~apple~CloudDocs/Tesla/Tessie",
         "invoices_directory": "~/iCloud/PDF/Tesla/charging_invoices"
     }
-    for cfg_p in [CONFIG_JSON_PATH, os.path.join(REPO_ROOT, "config.json")]:
+    for cfg_p in [os.path.join(REPO_ROOT, "config.json"), CONFIG_JSON_PATH]:  # TODO-034: root is primary, Tessie/ legacy fallback
         if os.path.exists(cfg_p):
             try:
                 with open(cfg_p, "r", encoding="utf-8") as f:
@@ -1805,7 +1805,38 @@ def cmd_edit(args):
 # ---------------------------------------------------------------------------
 def main():
     parser = argparse.ArgumentParser(
-        description="Tesla / Tessie Location Management & POI Lookup Engine",
+        description="""
+NAME
+    tessie_places.py - Tesla / Tessie Location Management & POI Lookup Engine
+
+SYNOPSIS
+    tessie_places.py list   [--near PLACE] [--search TEXT] [--sort name|radius|dist]
+    tessie_places.py edit   [NAME] [--search TEXT] [--near PLACE]
+    tessie_places.py lookup [QUERY ...] [--radius METERS]
+    tessie_places.py review [--min-stops N]
+    tessie_places.py ignored
+    tessie_places.py add    NAME [--address ADDR | --lat LAT --lon LON] [--radius M]
+                     [--keywords K ...] [--notes TEXT]
+    tessie_places.py update NAME [--radius M] [--address ADDR | --lat LAT --lon LON]
+                     [--add-keyword K ...] [--remove-keyword K ...] [--notes TEXT]
+    tessie_places.py alias  NAME --address ADDR [--keywords K ...] [--expand-radius]
+    tessie_places.py remove NAME
+    tessie_places.py rename OLD_NAME NEW_NAME
+
+DESCRIPTION
+    Manage the named-place registry (places.json) used across the Tesla/Tessie
+    tooling for geofencing, proximity search, and POI lookups. Each subcommand
+    below covers one place-management workflow; run 'tessie_places.py COMMAND -h'
+    for that subcommand's own options.
+""",
+        epilog="""
+EXAMPLES
+  tessie_places.py list --near Home --sort dist
+  tessie_places.py lookup "100 George St, Sydney"
+  tessie_places.py add "Work" --address "1 Martin Pl, Sydney" --radius 100
+  tessie_places.py update "Work" --add-keyword "Martin Place"
+  tessie_places.py review --min-stops 3
+""",
         formatter_class=argparse.RawTextHelpFormatter
     )
     subparsers = parser.add_subparsers(dest="command", help="Available subcommands")

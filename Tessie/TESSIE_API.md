@@ -24,7 +24,7 @@ anything this doc doesn't cover.
 - No paid Tessie tier is required just to poll historical `/drives` and
   `/charges` data.
 
-**Config key**: store it as `"tessie_access_token"` in `Tessie/config.json`
+**Config key**: store it as `"tessie_access_token"` in `config.json`
 (gitignored, same treatment as the existing `"vin"` key). This matches the
 repo's existing flat snake_case config style (`vin`, `tessie_directory`,
 `invoices_directory`) rather than nesting it under a new sub-object.
@@ -204,7 +204,7 @@ caught up to yet. Nothing is missing; nothing numeric differs.
 
 `Tools/test_tessie_api.py` is a one-shot connectivity/shape check — it makes
 no changes to any registry or master CSV. It reads the token from
-`--token`, then `TESSIE_ACCESS_TOKEN`, then `Tessie/config.json`'s
+`--token`, then `TESSIE_ACCESS_TOKEN`, then `config.json`'s
 `tessie_access_token` key, and the VIN from `--vin` or the existing `"vin"`
 config key. Run it with `--help` for all flags (`--limit`, `--since-days`,
 `--save-csv`, `--show-values`).
@@ -419,7 +419,7 @@ with neither error printed).
 "Consolidated 1055 total drives (+0 new)" / "appended 0 new charges (Total:
 197)" and was written up here as confirmation the 4 pending CSVs were
 redundant. That was a false negative caused by a path-resolution trap, not
-a real result: in that shell, `~/Downloads` (`Tessie/config.json`'s
+a real result: in that shell, `~/Downloads` (`config.json`'s
 `landing_directory`) expands to that shell's own home directory, which
 doesn't have a `Downloads` folder at all - the real `/Users/<macos-username>/Downloads`
 is only reachable there via a `~/mnt/Downloads` mount alias that a
@@ -619,7 +619,7 @@ is exactly what REQ-027 wants to stop doing.
 |---|---|---|
 | `from` / `to` | number | Unix timestamp seconds - the window to fetch |
 | `interval` | number | Seconds between points; `1` = every point available |
-| `condense` | boolean | Default `true` (arrays-per-field); `home_charge_deep_dive.py` passes `false` for one-object-per-sample, easier to reason about |
+| `condense` | boolean | Default `true` (arrays-per-field); `false` gives one-object-per-sample, easier to reason about (used by `tessie_charging_analyzer.py`'s `fetch_charge_deepdive_from_api()` today - see REQ-069 note below) |
 | `timezone` | string | IANA name, default UTC |
 | `distance_format` / `temperature_format` | string | Same as `/drives`/`/charges` |
 | `format` | string | `json` (default) or `csv` |
@@ -637,18 +637,28 @@ is exactly what REQ-027 wants to stop doing.
 `module_temp_max`; `power`, `pack_current`, `pack_voltage`,
 `lifetime_energy_used`. The reference doesn't promise a fixed sampling
 interval when `interval` is omitted ("a sensible interval based on the
-timeframe") - `home_charge_deep_dive.py` always passes `interval=1`
-explicitly to get the finest grain available for a single charge/drive
-window rather than relying on that default.
+timeframe") - the canonical per-session fetchers (`fetch_charge_deepdive_from_api()`/
+`fetch_drive_deepdive_from_api()`) always pass `interval=1` explicitly to
+get the finest grain available for a single charge/drive window rather
+than relying on that default.
 
-**Confirmed live** (2026-09-07, `home_charge_deep_dive.py --sample 3`
-against the real vehicle/account): the endpoint works exactly as
+**Confirmed live** (2026-09-07, via the now-archived `analysis_home_charge_deep_dive.py --sample 3`
+against the real vehicle/account, before `fetch_charge_deepdive_from_api()`
+existed - see REQ-069 note below): the endpoint works exactly as
 documented above. A 207-minute home charge returned 318 samples (~1 every
 39s on average, not literally 1-second density even with `interval=1` -
 Tessie's backend still applies its own real sampling cadence rather than
 returning a point for every single requested second); shorter 7-9 minute
-sessions returned 37-40 samples. Still not yet checked: whether
-`charger_power`/`charger_voltage`/`charger_phases` are actually populated
-for home AC charging specifically (vs. only during Supercharger DC
-sessions) - worth inspecting one of the written
-`Tessie/home_charge_deep_dive/session_*.json` files directly.
+sessions returned 37-40 samples. `charger_power`/`charger_voltage`/`charger_phases`
+are confirmed populated for home AC charging too (REQ-050) - see the
+real `charge_deepdive_*_Evnex_Home.csv` files `fetch_charge_deepdive_from_api()`
+now writes into `charges/deepdive/`.
+
+**REQ-069 note (2026-09-15)**: `analysis_home_charge_deep_dive.py` (the
+script this section originally documented against) has been archived to
+`Tools/archive/` - superseded by `tessie_charging_analyzer.py`'s
+`fetch_charge_deepdive_from_api()` for the raw telemetry fetch shown
+above, and by `analysis_ev_session_cost.py`/`get_energy_source_crosscheck()`
+for the actual AGL/Evnex/PVOutput cost cross-check this script used to
+leave blank for manual entry. See its own file header for the full
+reasoning.

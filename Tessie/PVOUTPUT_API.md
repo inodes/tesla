@@ -54,10 +54,10 @@ pvoutput.org). Two equivalent auth styles, both officially documented:
   higher rate limits and extended fields — see Rate Limits below.
 
 **Config key convention** (matching this repo's existing flat
-`Tessie/config.json` style — `vin`, `tessie_access_token`,
+`config.json` style — `vin`, `tessie_access_token`,
 `evnex_username`/`evnex_password` all already live there regardless of
 which domain they belong to): stored as `"pvoutput_api_key"` and
-`"pvoutput_system_id"`. Placeholders added to `Tessie/config.json` and
+`"pvoutput_system_id"`. Placeholders added to `config.json` and
 `Tessie/config.example.json` in REQ-038; the user populated the real
 values afterwards, and both have now been exercised against the real
 account (see "Confirmed live against the real account" below).
