@@ -10,6 +10,7 @@ import re
 import json
 import math
 import tempfile
+import unicodedata
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -216,6 +217,32 @@ def filter_station_records(
     return filtered
 
 
+def strip_invisible_chars(s: Optional[str]) -> Optional[str]:
+    """
+    Strips zero-width and other invisible Unicode formatting characters
+    (zero-width space/joiner/non-joiner, word joiner, BOM, soft hyphen,
+    bidi control marks, etc. - Unicode general category 'Cf') from
+    upstream text, then collapses any resulting double space.
+
+    These are pure noise in a charger name/address - width-aware display
+    code already scores them as 0 columns (see table_formatter.py's
+    char_width()) - but they're an easy way for a visual "this should be
+    self-healing" alignment, or a plain string comparison, to go wrong
+    depending on how forgiving a given terminal/font/JSON diff is of stray
+    invisible characters riding through otherwise-plain text.
+    Root-caused via a real Chargefox station
+    ("Bondi Beach - 157 \u200bCurlewis St" - see AGENTS.local.md BUG-093),
+    then generalized here to every text field a provider can populate, not
+    just name, since upstream catalogs can embed this junk into an address
+    or suburb just as easily (REQ-077).
+    """
+    if not s:
+        return s
+    cleaned = "".join(c for c in s if unicodedata.category(c) != "Cf")
+    cleaned = re.sub(r"[ \t]{2,}", " ", cleaned).strip()
+    return cleaned
+
+
 @dataclass
 class UnifiedStationRecord:
     key: str
@@ -278,6 +305,39 @@ class UnifiedStationRecord:
     
     # Calculated / Runtime properties
     distance_km: Optional[float] = None
+
+    def __post_init__(self):
+        """
+        Strips invisible/zero-width characters (strip_invisible_chars(),
+        above) from every free-text field a provider can populate - not
+        just `name` - per the user's own generalization of BUG-093: "It
+        would be good to remove any padding invisible characters on all
+        fields that have values."
+
+        Deliberately excludes `key` (the registry's own persistence/
+        matching identifier - silently rewriting it here would look like
+        every affected station "renamed itself" on the next diff, which
+        is a call for the RENAMED-status reconciliation flow to surface,
+        not something to do silently in a constructor) and non-prose
+        fields (url, source, source_id, currency, timezone, country)
+        where stripping could alter a machine-meaningful value.
+        """
+        self.name = strip_invisible_chars(self.name)
+        self.operator_name = strip_invisible_chars(self.operator_name)
+        self.address = strip_invisible_chars(self.address)
+        self.suburb = strip_invisible_chars(self.suburb)
+        self.state = strip_invisible_chars(self.state)
+        self.postcode = strip_invisible_chars(self.postcode)
+        self.hardware_model = strip_invisible_chars(self.hardware_model)
+        self.rate_range = strip_invisible_chars(self.rate_range)
+        if self.parking_fee:
+            self.parking_fee = strip_invisible_chars(self.parking_fee)
+        self.plugs = [strip_invisible_chars(p) for p in self.plugs]
+        self.keywords = [strip_invisible_chars(k) for k in self.keywords]
+        for meta_dict in (self.metadata, self.amenities):
+            for mk, mv in list(meta_dict.items()):
+                if isinstance(mv, str):
+                    meta_dict[mk] = strip_invisible_chars(mv)
 
     def to_dict(self) -> Dict[str, Any]:
         """Converts UnifiedStationRecord to the full multi-view canonical dictionary format."""
