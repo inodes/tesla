@@ -54,7 +54,8 @@ from providers import (
     EVXProvider,
     EvieProvider,
     BPPulseProvider,
-    PlugShareProvider
+    PlugShareProvider,
+    AmpChargeProvider
 )
 
 C_RESET = "\033[0m"
@@ -877,7 +878,7 @@ def main():
     # split below (BUG-074 continued); EXAMPLES is the epilog, unchanged in
     # content but now under one consistent heading style.
     synopsis = """charger_find.py --sync-all | --sync-tesla | --sync-chargefox | --sync-evx |
-                     --sync-evie | --sync-bppulse | --sync-plugshare | --export-consolidated
+                     --sync-evie | --sync-bppulse | --sync-plugshare | --sync-ampcharge | --export-consolidated
                      [--near PLACE] [--radius KM] [--state ST] [--new] [--add-all]
    or:  charger_find.py [--near PLACE | --all | --query TEXT] [--state ST]
                      [--sc | --dc | --ac] [--network NAME] [--min-kw KW]
@@ -1002,13 +1003,14 @@ DESCRIPTION
     g_output.add_argument("--json", action="store_true", help="Output results in JSON format")
 
     g_sync = parser.add_argument_group("Synchronization")
-    g_sync.add_argument("--sync-all", action="store_true", help="End-to-end sync across all providers (Tesla, Chargefox, EVX, Evie, bp pulse, PlugShare, Master Catalog)")
+    g_sync.add_argument("--sync-all", action="store_true", help="End-to-end sync across all providers (Tesla, Chargefox, EVX, Evie, bp pulse, PlugShare, AmpCharge, Master Catalog)")
     g_sync.add_argument("--sync-tesla", action="store_true", help="Download, verify and cache Tesla Superchargers and Destination Chargers")
     g_sync.add_argument("--sync-chargefox", action="store_true", help="Download and cache all Chargefox & NRMA stations across Australia")
     g_sync.add_argument("--sync-evx", action="store_true", help="Download and cache all EVX Kerbside Polechargers across Australia")
     g_sync.add_argument("--sync-evie", action="store_true", help="Download and cache all Evie Networks fast charging stations across Australia")
     g_sync.add_argument("--sync-bppulse", action="store_true", help="Download and cache all bp pulse DC Fast & Ultra-Fast charging stations across Australia")
     g_sync.add_argument("--sync-plugshare", action="store_true", help="Discover and cache PlugShare 3rd-party stations across Australia or near a location")
+    g_sync.add_argument("--sync-ampcharge", action="store_true", help="Download and cache all Ampol AmpCharge & Ampol Foodary EV fast-charging sites across Australia")
     g_sync.add_argument("--export-consolidated", "--sync-master", action="store_true", help="Compile and export multi-view master charging_stations.json to Tessie data home")
 
     g_registry = parser.add_argument_group("Registry Filters & Batch Updates")
@@ -1071,7 +1073,7 @@ DESCRIPTION
     # first-party network names - and always still proceeds with whatever the
     # user typed as a free-text filter.
     if args.network:
-        _KNOWN_NETWORKS = ["tesla", "chargefox", "nrma", "evie", "evx", "bppulse", "plugshare"]
+        _KNOWN_NETWORKS = ["tesla", "chargefox", "nrma", "evie", "evx", "bppulse", "plugshare", "ampcharge"]
         _net_check = args.network.strip().lower()
         if _net_check not in _KNOWN_NETWORKS and not any(_net_check in n or n in _net_check for n in _KNOWN_NETWORKS):
             import difflib
@@ -1094,7 +1096,7 @@ DESCRIPTION
         # exit code reflect what actually happened.
         sync_results = []
 
-        print("🚀 [1/7] Starting Full Network Sync: Tesla Superchargers & Destination Chargers...")
+        print("🚀 [1/8] Starting Full Network Sync: Tesla Superchargers & Destination Chargers...")
         try:
             from charger_find_tesla import TeslaChargerExplorer
             explorer = TeslaChargerExplorer()
@@ -1116,7 +1118,7 @@ DESCRIPTION
             print(f"  ⚠️ Tesla sync encountered error: {e}")
             sync_results.append(("Tesla", False))
 
-        print("\n🦊 [2/7] Syncing Chargefox & NRMA Network across Australia via GraphQL...")
+        print("\n🦊 [2/8] Syncing Chargefox & NRMA Network across Australia via GraphQL...")
         cf_ok = False
         for p in manager.providers:
             if isinstance(p, ChargefoxProvider):
@@ -1128,7 +1130,7 @@ DESCRIPTION
                     print(f"  ⚠️ Chargefox sync encountered error: {e}")
         sync_results.append(("Chargefox/NRMA", cf_ok))
 
-        print("\n🔌 [3/7] Syncing EVX Kerbside Polecharger Network across Australia...")
+        print("\n🔌 [3/8] Syncing EVX Kerbside Polecharger Network across Australia...")
         evx_ok = False
         for p in manager.providers:
             if isinstance(p, EVXProvider):
@@ -1140,7 +1142,7 @@ DESCRIPTION
                     print(f"  ⚠️ EVX sync encountered error: {e}")
         sync_results.append(("EVX", evx_ok))
 
-        print("\n🕊️ [4/7] Syncing Evie Networks Fast Charging Stations across Australia...")
+        print("\n🕊️ [4/8] Syncing Evie Networks Fast Charging Stations across Australia...")
         evie_ok = False
         for p in manager.providers:
             if isinstance(p, EvieProvider):
@@ -1152,7 +1154,7 @@ DESCRIPTION
                     print(f"  ⚠️ Evie sync encountered error: {e}")
         sync_results.append(("Evie", evie_ok))
 
-        print("\n⚡ [5/7] Syncing bp pulse DC Fast & Ultra-Fast Charging Stations across Australia...")
+        print("\n⚡ [5/8] Syncing bp pulse DC Fast & Ultra-Fast Charging Stations across Australia...")
         bp_ok = False
         for p in manager.providers:
             if isinstance(p, BPPulseProvider):
@@ -1164,7 +1166,7 @@ DESCRIPTION
                     print(f"  ⚠️ bp pulse sync encountered error: {e}")
         sync_results.append(("bp pulse", bp_ok))
 
-        print("\n🔌 [6/7] Syncing PlugShare 3rd-party Network...")
+        print("\n🔌 [6/8] Syncing PlugShare 3rd-party Network...")
         ps_ok = False
         for p in manager.providers:
             if isinstance(p, PlugShareProvider):
@@ -1185,7 +1187,19 @@ DESCRIPTION
                     print(f"  ⚠️ PlugShare sync encountered error: {e}")
         sync_results.append(("PlugShare", ps_ok))
 
-        print("\n🌐 [7/7] Compiling and Exporting Consolidated Master Registry...")
+        print("\n⛽ [7/8] Syncing Ampol AmpCharge & Ampol Foodary EV Fast Charging Sites across Australia...")
+        amp_ok = False
+        for p in manager.providers:
+            if isinstance(p, AmpChargeProvider):
+                try:
+                    synced_amp = p.sync_all_australia()
+                    print(f"  ✔ Cached {len(synced_amp)} AmpCharge/Ampol Foodary stations to {p.registry_path}")
+                    amp_ok = True
+                except Exception as e:
+                    print(f"  ⚠️ AmpCharge sync encountered error: {e}")
+        sync_results.append(("AmpCharge", amp_ok))
+
+        print("\n🌐 [8/8] Compiling and Exporting Consolidated Master Registry...")
         try:
             out_path, total_count = manager.export_consolidated_registry()
             print(f"  ✔ Successfully exported {total_count} consolidated multi-view stations to:")
@@ -1200,7 +1214,7 @@ DESCRIPTION
             print(f"\n💥 Full multi-network sync FINISHED WITH {len(failed)} FAILURE(S): {', '.join(failed)}")
             print("   (see the ⚠️ lines above for each one's error - nothing else below this line was skipped, only these steps.)")
             sys.exit(1)
-        print("\n✨ Full multi-network sync completed - all 7 steps succeeded.")
+        print("\n✨ Full multi-network sync completed - all 8 steps succeeded.")
         return
 
     if args.sync_tesla:
@@ -1254,6 +1268,14 @@ DESCRIPTION
                 print("🌐 Fetching all Chargefox & NRMA stations across Australia via GraphQL...")
                 synced = p.sync_all_australia()
                 print(f"✔ Successfully saved {len(synced)} Chargefox stations to {p.registry_path}")
+                return
+
+    if args.sync_ampcharge:
+        for p in manager.providers:
+            if isinstance(p, AmpChargeProvider):
+                print("⛽ Fetching all Ampol AmpCharge & Ampol Foodary EV fast-charging sites across Australia...")
+                synced = p.sync_all_australia()
+                print(f"✔ Successfully saved {len(synced)} AmpCharge/Ampol Foodary stations to {p.registry_path}")
                 return
 
     if args.sync_evx:
