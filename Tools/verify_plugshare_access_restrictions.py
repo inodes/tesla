@@ -175,9 +175,12 @@ def main():
             print(f"  [{i}/{len(candidates)}] {rec.name!r} (id={rec.source_id}): OK ({old_label!r})")
 
         checked_this_campaign[rec.source_id] = datetime.now(timezone.utc).isoformat()
+        # Saved after EVERY station, not just at the end of the loop - this
+        # run may be one chunk of a much longer campaign and can be killed
+        # by an external timeout at any moment (see BUG-095), so progress
+        # already made must never depend on reaching the end of the loop.
+        _save_progress(progress_path, checked_this_campaign)
         time.sleep(args.delay)
-
-    _save_progress(progress_path, checked_this_campaign)
 
     print()
     print(f"Checked {len(candidates)} station(s) this run. Mislabeled: {len(mismatches)}. Errors: {len(errors)}.")
