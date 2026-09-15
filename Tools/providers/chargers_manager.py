@@ -28,6 +28,7 @@ from .chargers_evx import EVXProvider
 from .chargers_evie import EvieProvider
 from .chargers_bppulse import BPPulseProvider
 from .chargers_plugshare import PlugShareProvider
+from .chargers_ampcharge import AmpChargeProvider
 
 
 def _normalize_street_word(w: str) -> str:
@@ -111,7 +112,8 @@ def are_stations_co_located(s1: UnifiedStationRecord, s2: UnifiedStationRecord, 
                 ("evx" in net1 and ("polecharger" in s2.name.lower() or "evx" in s2.name.lower())) or
                 ("evx" in net2 and ("polecharger" in s1.name.lower() or "evx" in s1.name.lower())) or
                 ("bp" in net1 and "bp" in net2) or
-                ("evie" in net1 and "evie" in net2))
+                ("evie" in net1 and "evie" in net2) or
+                (("ampcharge" in net1 or "ampol" in net1) and ("ampcharge" in net2 or "ampol" in net2)))
 
     # Token similarity
     tok1 = _tokenize(s1.name)
@@ -304,7 +306,8 @@ class ChargerDiscoveryManager:
                 EVXProvider(),
                 EvieProvider(),
                 BPPulseProvider(),
-                PlugShareProvider()
+                PlugShareProvider(),
+                AmpChargeProvider()
             ]
 
     def deduplicate_records(self, records: List[UnifiedStationRecord]) -> List[UnifiedStationRecord]:
