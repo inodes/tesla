@@ -25,7 +25,7 @@ A suite of tools for analyzing [Tessie](https://share.tessie.com/bGRu5q9S2kB) te
 | **`tessie_places.py`** | Location management, interactive POI lookup by address/GPS, frequent stop-cluster reviewer, and formatted place inspector (leaves chargers alone). | `./Tools/tessie_places.py list`<br>`./Tools/tessie_places.py lookup "109 Blaxland Rd, Ryde"`<br>`./Tools/tessie_places.py review` |
 | **`tessie_charging_analyzer.py`** | Reconciles Tesla Supercharger & 3rd-party invoices against Tessie telemetry, calculates dispenser vs battery loss, verifies TOU rates, and audits charging costs. | `./Tools/tessie_charging_analyzer.py --superchargers`<br>`./Tools/tessie_charging_analyzer.py --inspect 1`<br>`./Tools/tessie_charging_analyzer.py --consolidate` |
 | **`charger_find_tesla.py`** | Hierarchical discovery explorer and live scraper for Tesla Superchargers and Destination Chargers with state filtering, search, TOU pricing, and registry sync. | `./Tools/charger_find_tesla.py --interactive`<br>`./Tools/charger_find_tesla.py --state NSW --sc --list`<br>`./Tools/charger_find_tesla.py --inspect 19258 --save` |
-| **`charger_find_plugshare.py`** | Discovers and registers public 3rd-party chargers (Chargefox, Evie, BP Pulse, JOLT, Exploren, AmpCharge, and more) listed on PlugShare, with gross-tariff pricing and hardware detail scraping. | `./Tools/charger_find_plugshare.py --near Home --dc`<br>`./Tools/charger_find_plugshare.py --plugshare 801149 --save`<br>`./Tools/charger_find_plugshare.py --refresh-prices` |
+| **`charger_find.py`** | Unified multi-network EV charger discovery, comparison, and sync engine (Tesla, Chargefox/NRMA, PlugShare-aggregated networks, and a consolidated master catalog) - discovers and registers public 3rd-party chargers (Chargefox, Evie, BP Pulse, JOLT, Exploren, AmpCharge, and more) listed on PlugShare, with gross-tariff pricing and hardware detail scraping. | `./Tools/charger_find.py --near Home --dc --network plugshare`<br>`./Tools/charger_find.py --plugshare 801149 --save`<br>`./Tools/charger_find.py --refresh-prices` |
 
 ---
 
@@ -111,17 +111,17 @@ A suite of tools for analyzing [Tessie](https://share.tessie.com/bGRu5q9S2kB) te
 ### 4. PlugShare 3rd-Party Charger Discovery & Live Scraping
 ```bash
 # DC fast chargers within 15km of a known place, sorted by state then station name:
-./Tools/charger_find_plugshare.py --near Home --dc --radius 15
+./Tools/charger_find.py --near Home --dc --radius 15 --network plugshare
 
 # Search PlugShare by name/keyword:
-./Tools/charger_find_plugshare.py --search "Bunnings"
+./Tools/charger_find.py --query "Bunnings" --network plugshare
 
 # Inspect a specific station by PlugShare location ID and save it into the registry:
-./Tools/charger_find_plugshare.py --plugshare 801149 --save
+./Tools/charger_find.py --plugshare 801149 --save
 
 # Backfill pricing for every currently-listed station missing a rate
 # (bulk search doesn't return pricing - only the single-station detail lookup does):
-./Tools/charger_find_plugshare.py --near Home --dc --radius 15 --refresh-prices
+./Tools/charger_find.py --near Home --dc --radius 15 --refresh-prices
 ```
 
 ### 5. Known Places & POI Lookup Engine

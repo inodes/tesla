@@ -39,7 +39,6 @@ jobs:
           ./Tools/tessie_charging_analyzer.py --help
           ./Tools/tessie_places.py --help
           ./Tools/charger_find_tesla.py --help
-          ./Tools/charger_find_plugshare.py --help
 
       - name: Verify Embedded Python Scripts
         run: |
