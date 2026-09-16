@@ -580,7 +580,7 @@ class UnifiedStationRecord:
         return "AC Public"
 
     def type_icon(self) -> str:
-        """Returns short type icon (🔴 SC, 🔌 Dest, 🦊 CF, ⚡ NRMA, 🕊️ Evie, 🟢 BP, 🔌 3rd)."""
+        """Returns short type icon (🔴 SC, 🔌 Dest, 🦊 CF, ⚡ NRMA, 🕊️ Evie, 🟢 BP, ⛽ Amp, 🟣 Exp, 🔵 Jolt, 🔌 3rd)."""
         if self.speed_tier == "supercharger":
             return "🔴 SC"
         if self.source == "tesla" or "tesla" in (self.network or "").lower():
@@ -596,6 +596,12 @@ class UnifiedStationRecord:
             return "🕊️ Evie"
         if "bp" in net:
             return "🟢 BP"
+        if "ampcharge" in net or "ampol" in net:
+            return "⛽ Amp"
+        if "exploren" in net:
+            return "🟣 Exp"
+        if "jolt" in net:
+            return "🔵 Jolt"
         return "🔌 3rd"
 
     def tier_badge(self) -> str:

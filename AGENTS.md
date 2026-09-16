@@ -127,7 +127,8 @@ tesla/
 │   │   ├── chargers_base.py    # BaseChargerProvider / UnifiedStationRecord + shared filter/dedup logic
 │   │   ├── chargers_manager.py # ChargerDiscoveryManager - orchestrates all registered providers
 │   │   └── chargers_tesla.py / chargers_chargefox.py / chargers_evx.py / chargers_evie.py /
-│   │       chargers_bppulse.py / chargers_plugshare.py   # one adapter per network
+│   │       chargers_bppulse.py / chargers_plugshare.py / chargers_ampcharge.py /
+│   │       chargers_exploren.py / chargers_jolt.py   # one adapter per network
 │   │
 │   ├── providers_power/    # Pluggable power-retailer/distributor billing providers (3.1, REQ-070) -
 │   │   │                      # one BasePowerProvider subclass per retailer, ALL implementing the same
