@@ -1582,7 +1582,20 @@ prompt_home_recent_purge() {
     return 0
   fi
 
-  python3 - "$script_dir" "$ASSUME_YES" "${drives[@]}" << 'PY_EOF'
+  # NOTE: this deliberately does NOT pipe the Python source via a stdin
+  # heredoc (`python3 - ... <<'EOF'`) like the sibling functions above -
+  # purge_home_recent_cli() itself calls input() for its own confirmation
+  # prompt, and a stdin heredoc would bind that process's stdin to the
+  # heredoc's own content instead of the terminal, so input() would hit
+  # EOF immediately and silently auto-cancel (caught live: the confirm
+  # prompt printed, then "Operation cancelled." appeared with no chance
+  # to answer - BUG-103). Writing the script to a temp file and running
+  # `python3 <tmpfile>` instead leaves stdin connected to the real
+  # terminal, so the prompt can actually read an answer.
+  local tmp_py
+  tmp_py="$(mktemp "${TMPDIR:-/tmp}/dashcam_home_recent.XXXXXX.py")" || return 0
+
+  cat > "$tmp_py" << 'PY_EOF'
 import os
 import sys
 
@@ -1604,6 +1617,33 @@ except ImportError:
 if not drive_dirs:
     sys.exit(0)
 
+# Home + Recent detection is entirely Tessie-derived (parked/driving
+# events, and "is this parked event at Home" both come from synced
+# Tessie telemetry + places.json) - this script itself is also used by
+# people who run it purely for dashcam sync/prune with no Tessie
+# account configured at all (BUG-103 follow-up). For them this whole
+# check - including the message below - should not appear, and it must
+# never let a missing token fall through into index_footage()'s own
+# stale-telemetry auto-sync (which shells out to tessie_api_sync.py).
+# So bypass completely, with no output at all, unless a real (non-
+# placeholder) token AND vin are configured.
+def _tessie_is_configured():
+    try:
+        from lib.tessie_api_common import load_config, get_token, get_vin
+    except ImportError:
+        return False
+    cfg = load_config()
+    token = get_token(None, cfg)
+    vin = get_vin(None, cfg)
+    if not token or token == "YOUR_TESSIE_API_TOKEN_HERE":
+        return False
+    if not vin or vin == "YOUR_VIN_HERE":
+        return False
+    return True
+
+if not _tessie_is_configured():
+    sys.exit(0)
+
 print(">>> Checking for Home + Recent footage (RecentClips parked at Home)...")
 analyzer = TessieAnalyzer(teslacam_dirs=drive_dirs)
 purge_home_recent_cli(analyzer, yes=assume_yes)
@@ -1616,6 +1656,9 @@ master_dir = resolve_master_teslacam_dir(drive_dirs)
 if master_dir:
     export_tombstone_rsync_excludes(master_dir, "/tmp/teslacam_sync/tombstones_exclude.txt")
 PY_EOF
+
+  python3 "$tmp_py" "$script_dir" "$ASSUME_YES" "${drives[@]}"
+  rm -f "$tmp_py"
 }
 
 # Tombstone list mode (--tombstones)
