@@ -80,7 +80,7 @@ from datetime import datetime
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from lib.tessie_api_common import (
     DEFAULT_UNIT_PARAMS, REPO_ROOT, TOOLS_DIR, api_get, extract_json_records,
-    get_token, get_vin, load_config, resolve_tessie_data_home,
+    get_token, get_vin, load_config, load_vehicle_spec, resolve_tessie_data_home,
 )
 import lib.tessie_timezone as tztools
 
@@ -429,14 +429,54 @@ def fetch_battery_health_chunked(vin, token, from_ts, to_ts, chunk_limit=500, ap
 
 
 def detect_battery_health_outliers(records, z_threshold=4.0):
-    """Trendline-residual outlier detection: evaluates deviation from the
-    vehicle's dynamic degradation slope vs odometer, rather than static
-    battery thresholds. Adapts automatically as the battery ages over time.
+    """Two layers of outlier detection, persisting 'is_outlier': True and
+    'outlier_reason' on matching records ('is_outlier': False on valid ones):
 
-    Persists 'is_outlier': True and 'outlier_reason' on matching records.
-    Valid records have 'is_outlier': False.
+    1. Physical-ceiling check (needs no history at all): usable capacity can
+       never exceed this pack's gross capacity (vehicle_spec.json). Tessie's
+       BMS can momentarily report above that ceiling right after a high-power
+       DC fast-charge burst, before cell voltage has settled - a known
+       artifact, confirmed 2026-09-16 by cross-referencing one such reading
+       against the charge log (it landed seconds after a 120+kW Supercharger
+       session ended). These points are excluded from the trend fit below,
+       not just flagged after the fact, so a spike doesn't also tilt the
+       trendline it gets measured against.
+    2. Trendline-residual check: evaluates deviation from the vehicle's own
+       dynamic degradation slope vs odometer, rather than a static threshold.
+       Adapts automatically as the battery ages. Needs >= 4 real readings.
     """
-    if not isinstance(records, list) or len(records) < 4:
+    if not isinstance(records, list):
+        return records
+
+    spec = load_vehicle_spec()
+    gross_kwh = (spec.get("battery") or {}).get("gross_kwh")
+
+    def physical_ceiling_reason(r):
+        cap = r.get("capacity_kwh")
+        if gross_kwh and cap is not None and cap > gross_kwh:
+            return (f"Capacity {cap:.2f} kWh exceeds this pack's {gross_kwh:.2f} kWh gross "
+                    f"capacity - physically impossible as a usable-capacity reading, "
+                    f"almost certainly a BMS estimation artifact right after a high-power DC charge")
+        return None
+
+    physically_impossible = {}
+    for r in records:
+        if not isinstance(r, dict):
+            continue
+        reason = physical_ceiling_reason(r)
+        if reason:
+            physically_impossible[id(r)] = reason
+
+    if len(records) < 4:
+        for r in records:
+            if not isinstance(r, dict):
+                continue
+            reason = physically_impossible.get(id(r))
+            if reason:
+                r["is_outlier"] = True
+                r["outlier_reason"] = reason
+            else:
+                r.setdefault("is_outlier", False)
         return records
 
     def linear_fit(xs, ys):
@@ -451,8 +491,13 @@ def detect_battery_health_outliers(records, z_threshold=4.0):
         b = my - m * mx
         return m, b
 
-    # Separate readings with and without odometer
-    odo_records = [r for r in records if isinstance(r, dict) and r.get("odometer_km") is not None]
+    # Separate readings with and without odometer - excluding any reading
+    # already flagged as physically impossible, so a BMS spike doesn't also
+    # bias the trend line it (and every other reading) gets measured against.
+    odo_records = [
+        r for r in records
+        if isinstance(r, dict) and r.get("odometer_km") is not None and id(r) not in physically_impossible
+    ]
 
     # Model Capacity vs Odometer degradation trend
     cap_pts = [(r["odometer_km"], r["capacity_kwh"], r) for r in odo_records if r.get("capacity_kwh") is not None]
@@ -484,8 +529,12 @@ def detect_battery_health_outliers(records, z_threshold=4.0):
             p[2]["_z_rng"] = z
             p[2]["_exp_rng"] = m * p[0] + b
 
-    # Chronological median fallback for records with no odometer
-    all_ranges = [r.get("max_range_km") for r in records if isinstance(r, dict) and r.get("max_range_km") is not None]
+    # Chronological median fallback for records with no odometer - also
+    # excluding physically-impossible readings from the reference set.
+    all_ranges = [
+        r.get("max_range_km") for r in records
+        if isinstance(r, dict) and r.get("max_range_km") is not None and id(r) not in physically_impossible
+    ]
     med_all_rng = statistics.median(all_ranges) if all_ranges else 0.0
     mad_all_rng = statistics.median([abs(x - med_all_rng) for x in all_ranges]) if all_ranges else 1.0
     sigma_all_rng = 1.4826 * mad_all_rng if mad_all_rng > 0 else 1.0
@@ -499,20 +548,27 @@ def detect_battery_health_outliers(records, z_threshold=4.0):
         exp_cap = r.pop("_exp_cap", None)
         exp_rng = r.pop("_exp_rng", None)
 
+        physical_reason = physically_impossible.get(id(r))
+        if physical_reason:
+            reasons.append(physical_reason)
+
         if z_cap is not None and abs(z_cap) > z_threshold:
-            reasons.append(f"Capacity {r['capacity_kwh']:.2f} kWh vs trend {exp_cap:.2f} kWh (Z={z_cap:+.2f})")
+            reasons.append(f"Capacity {r['capacity_kwh']:.2f} kWh vs trend {exp_cap:.2f} kWh "
+                            f"(exceeds {z_threshold}σ trend residual, Z={z_cap:+.2f})")
         if z_rng is not None and abs(z_rng) > z_threshold:
-            reasons.append(f"Range {r['max_range_km']:.2f} km vs trend {exp_rng:.2f} km (Z={z_rng:+.2f})")
+            reasons.append(f"Range {r['max_range_km']:.2f} km vs trend {exp_rng:.2f} km "
+                            f"(exceeds {z_threshold}σ trend residual, Z={z_rng:+.2f})")
 
         # Fallback for no-odometer records
         if r.get("odometer_km") is None and r.get("max_range_km") is not None:
             z_no_odo = (r["max_range_km"] - med_all_rng) / sigma_all_rng
             if abs(z_no_odo) > z_threshold:
-                reasons.append(f"Range {r['max_range_km']:.2f} km vs median {med_all_rng:.2f} km (Z={z_no_odo:+.2f})")
+                reasons.append(f"Range {r['max_range_km']:.2f} km vs median {med_all_rng:.2f} km "
+                                f"(exceeds {z_threshold}σ trend residual, Z={z_no_odo:+.2f})")
 
         if reasons:
             r["is_outlier"] = True
-            r["outlier_reason"] = f"Exceeds {z_threshold}σ degradation trend residual: " + ", ".join(reasons)
+            r["outlier_reason"] = "; ".join(reasons)
         else:
             r["is_outlier"] = False
             r.pop("outlier_reason", None)
