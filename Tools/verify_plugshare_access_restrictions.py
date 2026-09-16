@@ -69,8 +69,8 @@ _tools_dir = os.path.dirname(os.path.abspath(__file__))
 if _tools_dir not in sys.path:
     sys.path.insert(0, _tools_dir)
 
-from providers import PlugShareProvider  # noqa: E402
-from providers.chargers_base import atomic_write_json  # noqa: E402
+from providers_chargers import PlugShareProvider  # noqa: E402
+from providers_chargers.chargers_base import atomic_write_json  # noqa: E402
 
 try:
     import json as _json

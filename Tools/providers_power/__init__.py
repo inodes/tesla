@@ -1,7 +1,7 @@
 """
 providers_power - pluggable power-retailer/distributor billing providers.
 
-REQ-070 (2026-09-15): mirrors Tools/providers/'s BaseChargerProvider
+REQ-070 (2026-09-15): mirrors Tools/providers_chargers/'s BaseChargerProvider
 pattern (REQ-063) for household electricity billing rather than EV
 charger discovery - but shaped differently, since only ONE power
 provider is ever active for a household at a time (unlike chargers,

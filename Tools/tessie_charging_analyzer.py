@@ -1010,7 +1010,7 @@ class TessieChargingAnalyzer:
         "lng", no "keywords", no "network") don't match the normalized
         schema _candidate_geo()/_candidate_keywords()/_candidate_result()
         expect either - full support needs that provider's own normalizer
-        (see Tools/providers/), not just this loader. This only guarantees
+        (see Tools/providers_chargers/), not just this loader. This only guarantees
         the loader itself never crashes the rest of the pipeline."""
         data = {}
         for td in self.tessie_dirs:

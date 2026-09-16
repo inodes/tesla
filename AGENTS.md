@@ -107,7 +107,7 @@ tesla/
 │   │   │                      # one or more CLI scripts import. No argparse, no user-facing --help
 │   │   │                      # (table_formatter.py's __main__ is a self-test, not a CLI). Package-
 │   │   │                      # relative imports internally (`from .tessie_api_common import ...`);
-│   │   │                      # `from lib.X import Y` from anywhere in Tools/ or Tools/providers/.
+│   │   │                      # `from lib.X import Y` from anywhere in Tools/ or Tools/providers_chargers/.
 │   │   ├── __init__.py
 │   │   ├── archive_naming.py    # Shared timestamp-archived filename scheme
 │   │   ├── analysis_deepdive_charts.py   # Self-contained interactive HTML line-chart renderer
@@ -117,7 +117,7 @@ tesla/
 │   │   ├── tessie_api_common.py # Tessie API auth, config, and data-home path resolution
 │   │   └── tessie_timezone.py   # Per-event real-timezone resolution helpers
 │   │
-│   ├── providers/              # Pluggable charging-network adapters (3.1) - one BaseChargerProvider
+│   ├── providers_chargers/     # Pluggable charging-network adapters (3.1) - one BaseChargerProvider
 │   │   │                      # subclass per network, ALL implementing the same interface
 │   │   │                      # (search_nearby/search_by_text/get_station_details/load_cached_registry),
 │   │   │                      # swappable/interchangeable by design - this is what earns them a shared
@@ -133,7 +133,7 @@ tesla/
 │   │   │                      # one BasePowerProvider subclass per retailer, ALL implementing the same
 │   │   │                      # interface (resolve_data_home/load_rate_periods/rate_for_date/
 │   │   │                      # in_demand_window/solar_credit/demand_charge/...). Shaped differently
-│   │   │                      # from providers/ above: only ONE power provider is ever active for a
+│   │   │                      # from providers_chargers/ above: only ONE power provider is ever active for a
 │   │   │                      # household at a time (unlike chargers, queried many-at-once and merged),
 │   │   │                      # so there's no "manager" here, just get_power_provider()'s factory - see
 │   │   │                      # power_base.py's own docstring for the full reasoning.
@@ -164,14 +164,14 @@ file or moving an existing one - the answer decides where it lives and how it's 
   `run_self_test()` doesn't make it a CLI - a self-test isn't a user-facing command. If two or more
   otherwise-unrelated CLI scripts need the same logic, it belongs here, not copy-pasted or left sitting
   in whichever script happened to need it first.
-- **Provider adapter** (`Tools/providers/`, `Tools/providers_power/`): specifically a subclass
+- **Provider adapter** (`Tools/providers_chargers/`, `Tools/providers_power/`): specifically a subclass
   implementing one shared interface for one interchangeable implementation - `BaseChargerProvider` for a
   charging network, `BasePowerProvider` (REQ-070) for a power retailer/distributor. This is a narrower
   category than "library module" - it's reserved for genuinely pluggable, interchangeable implementations
   of one abstract interface, which is why the chargers family additionally shares the `chargers_` filename
   prefix (REQ-063) on top of living in its own directory (the power family's own CLI scripts share a
   `power_` prefix instead - see providers_power/power_base.py's own docstring for why that package isn't
-  shaped identically to providers/). A shared helper that ISN'T an interchangeable adapter
+  shaped identically to providers_chargers/). A shared helper that ISN'T an interchangeable adapter
   (`table_formatter.py`, `analysis_deepdive_charts.py`) is a library module, not a provider, even when the
   charging or power domain is what it's used for.
 
@@ -183,7 +183,7 @@ the CLI-entry-point test is "does it have its own argparse + `__main__`", not "i
 
 Prefer a shared **prefix** over a shared suffix for a family of related files, so they group together in a
 plain alphabetical listing (`ls Tools/chargers_*`, `ls Tools/lib/`) without needing `ls | grep`. `chargers_`
-(REQ-063) is the existing precedent for the providers/ family. When starting a new file that clearly belongs
+(REQ-063) is the existing precedent for the providers_chargers/ family. When starting a new file that clearly belongs
 to an existing family (another chart renderer, another sync wrapper, another provider), prefix it to match
 rather than inventing a new pattern - and if a naming decision is genuinely ambiguous (which family it
 belongs to, or whether a NEW prefix is warranted), settle it explicitly with the user before renaming
