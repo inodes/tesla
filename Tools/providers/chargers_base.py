@@ -212,6 +212,24 @@ def filter_station_records(
             if meta_acc.startswith("private"):
                 continue
 
+        # Minimum facilities quality rating filter
+        min_fac = (filters.get("min_facilities") or "").lower().strip()
+        if min_fac:
+            min_score = 8.0 if min_fac.startswith("exc") else (5.5 if min_fac.startswith("goo") else (3.0 if min_fac.startswith("bas") else 0.0))
+            try:
+                from station_facilities import get_facilities_registry
+                _f_reg = get_facilities_registry()
+            except ImportError:
+                try:
+                    from lib.station_facilities import get_facilities_registry
+                    _f_reg = get_facilities_registry()
+                except ImportError:
+                    _f_reg = None
+            if _f_reg:
+                fac = _f_reg.get_station_facilities(station_key=st.key, station_name=st.name, lat=st.lat, lon=st.lon)
+                if not fac or (fac.get("score", 0.0) < min_score):
+                    continue
+
         filtered.append(st)
 
     return filtered

@@ -31,6 +31,12 @@ for _py_candidate in [
             except Exception:
                 pass
 
+_lib_dir = os.path.join(_script_dir, "lib")
+if _script_dir not in sys.path:
+    sys.path.insert(0, _script_dir)
+if _lib_dir not in sys.path:
+    sys.path.insert(0, _lib_dir)
+
 import re
 import time
 import json
@@ -119,6 +125,7 @@ C_YELLOW = C_ORANGE
 C_BLUE = "\033[38;5;39m"
 C_RED = "\033[91m"
 C_MAGENTA = "\033[95m"
+C_GRAY = "\033[90m"
 C_BOLD = "\033[1m"
 C_DIM = "\033[2m"
 C_RESET = "\033[0m"
@@ -529,8 +536,12 @@ def merge_tou_intervals(intervals: list) -> list:
         if entry.get("label"):
             continue  # Preserve explicitly set labels (e.g. from flat-rate capture)
         st, et = entry["start_time"], entry["end_time"]
-        is_nt = entry.get("is_non_tesla", False)
-        prefix = "Non-Tesla " if is_nt else ""
+        # Labels are printed under their own "Tesla & Members" / "Non-Tesla"
+        # section header, so a per-row "Non-Tesla " prefix was redundant and
+        # broke column alignment between the two tables (BUG-097: user
+        # reported "Non-Tesla Standard Rate" / "Non-Tesla Peak Day" not
+        # lining up under the un-prefixed Tesla-section labels above them).
+        prefix = ""
         
         st_h = int(st.split(":")[0]) if ":" in st else 0
         et_h = int(et.split(":")[0]) if ":" in et else 24
@@ -2546,7 +2557,131 @@ class TeslaChargerExplorer:
         elif tariffs.get("non_tesla", {}).get("supported"):
             print(f"\n  🔌 {C_BOLD}Non-Tesla Pricing:{C_RESET} {C_YELLOW}Not available (re-scrape to fetch){C_RESET}")
 
+        # Cached Facilities Quality Rating / Summary (REQ-082)
+        try:
+            from station_facilities import get_facilities_registry, format_facilities_summary_card
+            _fac_reg = get_facilities_registry()
+        except ImportError:
+            try:
+                from lib.station_facilities import get_facilities_registry, format_facilities_summary_card
+                _fac_reg = get_facilities_registry()
+            except ImportError:
+                _fac_reg = None
+                format_facilities_summary_card = None
+
+        loc = data.get("location", {}) if isinstance(data, dict) else {}
+        st_name = (data.get("tesla_metadata", {}) or {}).get("findus_location_name") or station_key
+        if _fac_reg and loc.get("lat") and loc.get("lon"):
+            cached_fac = _fac_reg.get_station_facilities(station_key=station_key, station_name=st_name, lat=loc.get("lat"), lon=loc.get("lon"))
+            if cached_fac and format_facilities_summary_card:
+                lines = format_facilities_summary_card(cached_fac, indent="  ")
+                if lines:
+                    print()
+                    for line in lines:
+                        print(line)
+
         print()
+
+    def display_nearby_facilities(self, record: dict, station_name: str = None, radius_m: int = 250, force_refresh: bool = False) -> None:
+        """Looks up real named POIs within radius_m around a station via OpenStreetMap, backed by persistent cache."""
+        loc = record.get("location", {}) if isinstance(record, dict) else {}
+        lat = loc.get("lat")
+        lon = loc.get("lon")
+        name = station_name or (record.get("tesla_metadata", {}) or {}).get("findus_location_name") or "Station"
+        if not lat or not lon:
+            print(f"{C_YELLOW}⚠ No coordinates on file for this station - can't look up nearby facilities.{C_RESET}")
+            return
+
+        try:
+            from station_facilities import get_facilities_registry
+            reg = get_facilities_registry()
+        except ImportError:
+            try:
+                from lib.station_facilities import get_facilities_registry
+                reg = get_facilities_registry()
+            except ImportError:
+                reg = None
+
+        station_key = record.get("station_id") or record.get("id") or name
+        cached = reg.get_station_facilities(station_key=station_key, station_name=name, lat=lat, lon=lon) if (reg and not force_refresh) else None
+
+        if cached:
+            print(f"\n{C_BOLD}🏙️  Nearby Facilities (within {cached.get('radius_m', radius_m)}m of {name}):{C_RESET}")
+            print(f"  {C_BOLD}Quality Score:{C_RESET} {cached.get('badge', '')}  {C_GRAY}[⚡ Cached Registry - instant pullup]{C_RESET}\n")
+            pois = cached.get("pois", [])
+        else:
+            print(f"\n{C_BOLD}🏙️  Nearby Facilities (within {radius_m}m of {name}, via OpenStreetMap):{C_RESET}")
+            print(f"{C_GRAY}   Looking up live - this can take a few seconds...{C_RESET}")
+
+            try:
+                from tessie_places import query_overpass_pois
+            except ImportError as e:
+                print(f"{C_RED}❌ Could not load the facilities lookup (Tools/tessie_places.py): {e}{C_RESET}")
+                return
+
+            try:
+                pois = query_overpass_pois(lat, lon, radius_m=radius_m)
+            except Exception as e:
+                print(f"{C_RED}❌ Facilities lookup failed: {e}{C_RESET}")
+                return
+
+            if not pois:
+                print(f"{C_YELLOW}  No named facilities found within {radius_m}m (or OpenStreetMap's Overpass API didn't respond - try again in a moment).{C_RESET}\n")
+                return
+
+            if reg:
+                cached = reg.store_station_facilities(
+                    station_key=station_key,
+                    station_name=name,
+                    network="tesla",
+                    lat=lat,
+                    lon=lon,
+                    pois=pois,
+                    radius_m=radius_m
+                )
+                print(f"  {C_BOLD}Quality Score:{C_RESET} {cached.get('badge', '')}\n")
+
+        # Prominently display immediate doorstep facilities (<= 100m)
+        doorstep = [p for p in pois if p.get("dist_m", 999.0) <= 100.0]
+        if doorstep:
+            print(f"  🚪 {C_BOLD}Immediate Doorstep (≤ 100m — 1-2 min walk) ({len(doorstep)}):{C_RESET}")
+            for poi in doorstep:
+                dist_str = f"{poi['dist_m']:.0f}m"
+                emoji = poi.get("emoji", "📍")
+                print(f"     • {emoji} {C_CYAN}{poi['name']}{C_RESET} — {poi['category']} ({dist_str})")
+            print()
+        elif pois:
+            closest = pois[0]
+            print(f"  🚪 {C_BOLD}Immediate Doorstep (≤ 100m):{C_RESET} {C_DIM}None within 100m (closest is {closest['name']} at {closest['dist_m']:.0f}m){C_RESET}\n")
+
+        plural = "y" if len(pois) == 1 else "ies"
+        print(f"  {C_BOLD}All Facilities within {radius_m}m ({len(pois)} total):{C_RESET}\n")
+
+        groups = {}
+        for p in pois:
+            grp = p.get("group", "Other Facilities")
+            emoji = p.get("emoji", "📍")
+            key = (grp, emoji)
+            if key not in groups:
+                groups[key] = []
+            groups[key].append(p)
+
+        total_shown = 0
+        max_total = 35
+        for (grp_name, grp_emoji), grp_pois in groups.items():
+            if total_shown >= max_total:
+                break
+            print(f"  {grp_emoji} {C_BOLD}{grp_name}{C_RESET} ({len(grp_pois)}):")
+            for poi in grp_pois:
+                if total_shown >= max_total:
+                    break
+                dist_str = f"{poi['dist_m']:.0f}m"
+                print(f"     • {C_CYAN}{poi['name']}{C_RESET} — {poi['category']} ({dist_str})")
+                total_shown += 1
+            print()
+
+        if len(pois) > total_shown:
+            print(f"  {C_GRAY}... and {len(pois) - total_shown} more facilities within {radius_m}m.{C_RESET}\n")
 
     def update_registry(self, station_key: str, data: dict) -> str:
         """
@@ -2925,12 +3060,13 @@ def interactive_station_selector_loop(stations: list, explorer: TeslaChargerExpl
             print(f"  [{C_GREEN}1{C_RESET}] Re-scrape live pricing from Tesla Find Us (WebKit)")
             print(f"  [{C_GREEN}2{C_RESET}] Open Find Us URL in default web browser")
             print(f"  [{C_GREEN}3{C_RESET}] Open in Google Maps (navigation / coordinates)")
+            print(f"  [{C_GREEN}f{C_RESET}] Nearby Facilities (shops, food, amenities within 250m, or type 'f 500' / 'f 1000')")
             print(f"  [{C_GREEN}b{C_RESET}] Back to station list")
             print(f"  [{C_GREEN}q{C_RESET}] Quit")
             print()
 
             try:
-                act = input(f"Action [1-3, b, q, default: b]: ").strip().lower()
+                act = input(f"Action [1-3, f, b, q, default: b]: ").strip().lower()
             except (EOFError, KeyboardInterrupt):
                 break
 
@@ -2946,7 +3082,7 @@ def interactive_station_selector_loop(stations: list, explorer: TeslaChargerExpl
                     explorer.display_preview(key, record, from_cache=False)
                     try:
                         if not explorer._detect_record_changes(cached_record, record):
-                            print(f"{C_GREEN}\u2714 No changes detected - registry already up to date.{C_RESET}")
+                            print(f"{C_GREEN}✔ No changes detected - registry already up to date.{C_RESET}")
                             explorer.update_registry(key, record)
                         else:
                             save_in = input("Update this station in local registry? [Y/n]: ").strip().lower()
@@ -2973,6 +3109,16 @@ def interactive_station_selector_loop(stations: list, explorer: TeslaChargerExpl
                     subprocess.run(["open", maps_url] if sys.platform == "darwin" else ["xdg-open", maps_url], check=False)
                 else:
                     print(f"{C_RED}❌ GPS coordinates missing for this station.{C_RESET}")
+            elif act.startswith("f") or act in ("facilities", "nearby"):
+                parts = act.split()
+                r = 250
+                if len(parts) >= 2 and parts[1].isdigit():
+                    r = int(parts[1])
+                explorer.display_nearby_facilities(cached_record, station_name=station_title, radius_m=r)
+                try:
+                    input("Press Enter to continue...")
+                except (EOFError, KeyboardInterrupt):
+                    pass
             elif act in ("b", "back", ""):
                 pass
             print()
@@ -3388,10 +3534,11 @@ def browse_stations_by_type(explorer: TeslaChargerExplorer, types_to_fetch: list
                 print(f"  [{C_GREEN}1{C_RESET}] Re-scrape live pricing from Tesla Find Us (WebKit)")
                 print(f"  [{C_GREEN}2{C_RESET}] Open Find Us URL in default web browser")
                 print(f"  [{C_GREEN}3{C_RESET}] Open in Google Maps (navigation / coordinates)")
+                print(f"  [{C_GREEN}f{C_RESET}] Nearby Facilities (shops, food, amenities within 250m, or type 'f 500' / 'f 1000')")
                 print(f"  [{C_GREEN}Enter{C_RESET}] Skip / back to list")
                 print()
                 try:
-                    act = input("Action [1-3, Enter to skip]: ").strip().lower()
+                    act = input("Action [1-3, f, Enter to skip]: ").strip().lower()
                 except (EOFError, KeyboardInterrupt):
                     return
                 if act == "2":
@@ -3413,6 +3560,17 @@ def browse_stations_by_type(explorer: TeslaChargerExplorer, types_to_fetch: list
                         subprocess.run(["open", maps_url] if sys.platform == "darwin" else ["xdg-open", maps_url], check=False)
                     else:
                         print(f"{C_RED}\u274C GPS coordinates missing for this station.{C_RESET}")
+                    return
+                elif act.startswith("f") or act in ("facilities", "nearby"):
+                    parts = act.split()
+                    r = 250
+                    if len(parts) >= 2 and parts[1].isdigit():
+                        r = int(parts[1])
+                    explorer.display_nearby_facilities(cached_record, station_name=target_st.get("title"), radius_m=r)
+                    try:
+                        input("Press Enter to continue...")
+                    except (EOFError, KeyboardInterrupt):
+                        pass
                     return
                 elif act != "1":
                     return
@@ -3510,7 +3668,7 @@ EXAMPLES
     g_address.add_argument("-r", "--radius", "--radius-km", dest="radius_km", type=float, help="Filter stations within specified radius in kilometers (default: 50km when sorting by price near a location; 0 for nationwide)")
     g_address.add_argument("-t", "--time", help="Evaluation time for Time-of-Use pricing (e.g. '14:30', '2:00 PM', 'now'). Defaults to current local time.")
     g_address.add_argument("-n", "--limit", type=int, help="Maximum number of stations to display")
-    g_address.add_argument("--sort", choices=["dist", "price", "power", "stalls"], help="Sort results by distance, price at time, max power, or stall count")
+    g_address.add_argument("--sort", choices=["dist", "price", "power", "stalls", "facilities", "facility", "rating"], help="Sort results by distance, price at time, max power, stall count, or nearby facilities quality score")
 
     g_filter = parser.add_argument_group("Hardware, Accessibility & Tariff Filters")
     g_filter.add_argument("--filter", help="Python filter expression (e.g. \"tier == 'V3' and price <= 0.50 and stalls >= 8\")")
@@ -3524,6 +3682,12 @@ EXAMPLES
     g_filter.add_argument("--renamed", "--discrepancy", action="store_true", help="Filter only stations with upstream name/title discrepancies")
     g_filter.add_argument("--stale", action="store_true", help="Filter only stale stations (> 90 days since verification)")
     g_filter.add_argument("--unpriced", "--missing-price", "--missing-pricing", action="store_true", help="Filter or batch refresh stations missing pricing in the JSON registry")
+
+    g_facilities = parser.add_argument_group("Nearby Facilities & POI Lookup")
+    g_facilities.add_argument("--facilities", "-f", "--poi", action="store_true", help="Look up and display nearby facilities (cafes, dining, supermarkets, retail, amenities) around matching station(s)")
+    g_facilities.add_argument("--facilities-radius", "--radius-m", type=int, default=250, help="Search radius in meters for nearby facilities (default: 250)")
+    g_facilities.add_argument("--min-facilities", "--facilities-min", choices=["excellent", "good", "basic", "sparse"], help="Filter stations meeting minimum facility quality rating tier")
+    g_facilities.add_argument("--sync-facilities", action="store_true", help="Batch look up and cache nearby facilities for matching stations in station_facilities.json")
 
     g_inspect = parser.add_argument_group("Inspection, Scraping & Persistence")
     g_inspect.add_argument("--inspect", "--scrape", help="Inspect station details (defaults to fast offline JSON; use --live for web scrape)")
@@ -3748,6 +3912,27 @@ EXAMPLES
                 return not t_scheds and not c_scheds and not flat and (c_flat == 0.0 or c_flat is None)
             filtered = [s for s in filtered if is_unpriced_filter(s)]
 
+        if getattr(args, "min_facilities", None):
+            min_fac = args.min_facilities.lower().strip()
+            min_score = 8.0 if min_fac.startswith("exc") else (5.5 if min_fac.startswith("goo") else (3.0 if min_fac.startswith("bas") else 0.0))
+            try:
+                from station_facilities import get_facilities_registry
+                _f_reg = get_facilities_registry()
+            except ImportError:
+                try:
+                    from lib.station_facilities import get_facilities_registry
+                    _f_reg = get_facilities_registry()
+                except ImportError:
+                    _f_reg = None
+            if _f_reg:
+                def meets_fac(s):
+                    loc = s.get("location", {})
+                    lat = loc.get("lat") or s.get("lat")
+                    lon = loc.get("lon") or s.get("lon")
+                    fac = _f_reg.get_station_facilities(station_key=s.get("station_id") or s.get("id"), station_name=s.get("title") or s.get("name"), lat=lat, lon=lon)
+                    return fac and (fac.get("score", 0.0) >= min_score)
+                filtered = [s for s in filtered if meets_fac(s)]
+
         if args.filter:
             filtered = [s for s in filtered if evaluate_station_filter(s, args.filter, target_time=args.time)]
 
@@ -3764,6 +3949,28 @@ EXAMPLES
             filtered.sort(key=lambda s: (float(s.get("hardware", {}).get("max_power_kw", 0) or 0), -s.get("_distance_km", float("inf"))), reverse=True)
         elif args.sort == "stalls":
             filtered.sort(key=lambda s: (int(s.get("hardware", {}).get("stalls", 0) or 0), -s.get("_distance_km", float("inf"))), reverse=True)
+        elif args.sort in ("facilities", "facility", "rating"):
+            try:
+                from station_facilities import get_facilities_registry
+                _f_reg = get_facilities_registry()
+            except ImportError:
+                try:
+                    from lib.station_facilities import get_facilities_registry
+                    _f_reg = get_facilities_registry()
+                except ImportError:
+                    _f_reg = None
+
+            def _fac_sort_key(s):
+                if _f_reg:
+                    loc = s.get("location", {})
+                    lat = loc.get("lat") or s.get("lat")
+                    lon = loc.get("lon") or s.get("lon")
+                    fac = _f_reg.get_station_facilities(station_key=s.get("station_id") or s.get("id"), station_name=s.get("title") or s.get("name"), lat=lat, lon=lon)
+                    if fac:
+                        return (-fac.get("score", 0.0), s.get("_distance_km", float("inf")), (s.get("title") or "").lower())
+                return (1.0, s.get("_distance_km", float("inf")), (s.get("title") or "").lower())
+
+            filtered.sort(key=_fac_sort_key)
         else:
             # No explicit --sort and no proximity reference to sort by distance:
             # default to State, then Station Name (alphabetical) instead of
@@ -3786,6 +3993,56 @@ EXAMPLES
             )
             return
 
+        # Batch facilities sync mode
+        if getattr(args, "sync_facilities", False):
+            if not filtered:
+                print(f"❌ No stations found matching current criteria to sync facilities for.")
+                return
+            radius = args.facilities_radius or 250
+            print(f"\n🔄 Batch syncing facilities for {len(filtered)} Tesla station(s) (search radius: {radius}m)...")
+            try:
+                from tessie_places import query_overpass_pois
+                from station_facilities import get_facilities_registry
+                fac_reg = get_facilities_registry()
+            except ImportError:
+                try:
+                    from lib.station_facilities import get_facilities_registry
+                    fac_reg = get_facilities_registry()
+                except ImportError:
+                    fac_reg = None
+
+            synced_count = 0
+            for i, st in enumerate(filtered, 1):
+                cached_key, cached_rec, _ = explorer.get_station_record(st)
+                loc = (cached_rec or {}).get("location", {})
+                lat = loc.get("lat")
+                lon = loc.get("lon")
+                name = st.get("title") or (cached_rec or {}).get("tesla_metadata", {}).get("findus_location_name") or "Station"
+                if not lat or not lon:
+                    continue
+                print(f"  [{i}/{len(filtered)}] {name} ({st.get('state') or ''})...", end="", flush=True)
+                try:
+                    pois = query_overpass_pois(lat, lon, radius_m=radius)
+                    if fac_reg:
+                        rec = fac_reg.store_station_facilities(
+                            station_key=cached_key or name,
+                            station_name=name,
+                            network="tesla",
+                            lat=lat,
+                            lon=lon,
+                            pois=pois,
+                            radius_m=radius
+                        )
+                        print(f" ✔ {rec.get('badge')}")
+                        synced_count += 1
+                    else:
+                        print(f" ✔ Found {len(pois)} facilities")
+                except Exception as e:
+                    print(f" ❌ Error: {e}")
+                time.sleep(max(args.delay, 1.0))
+            print(f"\n✔ Facilities sync complete: {synced_count} station records cached in station_facilities.json.")
+            return
+
         # Output JSON if requested
         if args.json:
             print(json.dumps(filtered, indent=2, ensure_ascii=False))
@@ -3801,6 +4058,8 @@ EXAMPLES
             sort_mode_desc = "Max Power (kW, Highest First)"
         elif args.sort == "stalls":
             sort_mode_desc = "Stall Count (Highest First)"
+        elif args.sort in ("facilities", "facility", "rating"):
+            sort_mode_desc = "Facilities Quality Rating (Best Amenities First)"
         else:
             sort_mode_desc = "State, then Station Name (Alphabetical)"
 
@@ -3818,6 +4077,18 @@ EXAMPLES
             )
 
         render_table_cb()
+
+        if args.facilities:
+            radius = args.facilities_radius or 250
+            limit_fac = min(len(filtered), 5 if len(filtered) > 1 else 1)
+            for st in filtered[:limit_fac]:
+                cached_key, cached_record, _ = explorer.get_station_record(st)
+                if cached_record:
+                    explorer.display_nearby_facilities(cached_record, station_name=st.get("title"), radius_m=radius)
+            if len(filtered) > limit_fac:
+                print(f"  {C_GRAY}(Showing facilities for top {limit_fac} matching stations. Select a specific station to inspect further.){C_RESET}\n")
+            if not sys.stdin.isatty():
+                return
 
         if sys.stdin.isatty():
             interactive_station_selector_loop(filtered, explorer, re_render_cb=render_table_cb)
