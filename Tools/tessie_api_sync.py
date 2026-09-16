@@ -71,6 +71,7 @@ import csv
 import io
 import json
 import os
+import statistics
 import subprocess
 import sys
 import time
@@ -427,6 +428,98 @@ def fetch_battery_health_chunked(vin, token, from_ts, to_ts, chunk_limit=500, ap
     return list(combined.values())
 
 
+def detect_battery_health_outliers(records, z_threshold=4.0):
+    """Trendline-residual outlier detection: evaluates deviation from the
+    vehicle's dynamic degradation slope vs odometer, rather than static
+    battery thresholds. Adapts automatically as the battery ages over time.
+
+    Persists 'is_outlier': True and 'outlier_reason' on matching records.
+    Valid records have 'is_outlier': False.
+    """
+    if not isinstance(records, list) or len(records) < 4:
+        return records
+
+    def linear_fit(xs, ys):
+        n = len(xs)
+        if n < 2:
+            return 0.0, statistics.mean(ys) if ys else 0.0
+        mx, my = statistics.mean(xs), statistics.mean(ys)
+        denom = sum((x - mx) ** 2 for x in xs)
+        if denom == 0:
+            return 0.0, my
+        m = sum((x - mx) * (y - my) for x, y in zip(xs, ys)) / denom
+        b = my - m * mx
+        return m, b
+
+    # Separate readings with and without odometer
+    odo_records = [r for r in records if isinstance(r, dict) and r.get("odometer_km") is not None]
+
+    # Model Capacity vs Odometer degradation trend
+    cap_pts = [(r["odometer_km"], r["capacity_kwh"], r) for r in odo_records if r.get("capacity_kwh") is not None]
+    if len(cap_pts) >= 4:
+        xs = [p[0] for p in cap_pts]
+        ys = [p[1] for p in cap_pts]
+        m, b = linear_fit(xs, ys)
+        res = [y - (m * x + b) for x, y in zip(xs, ys)]
+        med_res = statistics.median(res)
+        mad = statistics.median([abs(r_val - med_res) for r_val in res])
+        sigma = 1.4826 * mad if mad > 0 else (statistics.stdev(res) if len(res) > 1 else 1.0)
+        for p, r_val in zip(cap_pts, res):
+            z = r_val / (sigma if sigma > 0 else 1.0)
+            p[2]["_z_cap"] = z
+            p[2]["_exp_cap"] = m * p[0] + b
+
+    # Model Range vs Odometer degradation trend
+    rng_pts = [(r["odometer_km"], r["max_range_km"], r) for r in odo_records if r.get("max_range_km") is not None]
+    if len(rng_pts) >= 4:
+        xs = [p[0] for p in rng_pts]
+        ys = [p[1] for p in rng_pts]
+        m, b = linear_fit(xs, ys)
+        res = [y - (m * x + b) for x, y in zip(xs, ys)]
+        med_res = statistics.median(res)
+        mad = statistics.median([abs(r_val - med_res) for r_val in res])
+        sigma = 1.4826 * mad if mad > 0 else (statistics.stdev(res) if len(res) > 1 else 1.0)
+        for p, r_val in zip(rng_pts, res):
+            z = r_val / (sigma if sigma > 0 else 1.0)
+            p[2]["_z_rng"] = z
+            p[2]["_exp_rng"] = m * p[0] + b
+
+    # Chronological median fallback for records with no odometer
+    all_ranges = [r.get("max_range_km") for r in records if isinstance(r, dict) and r.get("max_range_km") is not None]
+    med_all_rng = statistics.median(all_ranges) if all_ranges else 0.0
+    mad_all_rng = statistics.median([abs(x - med_all_rng) for x in all_ranges]) if all_ranges else 1.0
+    sigma_all_rng = 1.4826 * mad_all_rng if mad_all_rng > 0 else 1.0
+
+    for r in records:
+        if not isinstance(r, dict):
+            continue
+        reasons = []
+        z_cap = r.pop("_z_cap", None)
+        z_rng = r.pop("_z_rng", None)
+        exp_cap = r.pop("_exp_cap", None)
+        exp_rng = r.pop("_exp_rng", None)
+
+        if z_cap is not None and abs(z_cap) > z_threshold:
+            reasons.append(f"Capacity {r['capacity_kwh']:.2f} kWh vs trend {exp_cap:.2f} kWh (Z={z_cap:+.2f})")
+        if z_rng is not None and abs(z_rng) > z_threshold:
+            reasons.append(f"Range {r['max_range_km']:.2f} km vs trend {exp_rng:.2f} km (Z={z_rng:+.2f})")
+
+        # Fallback for no-odometer records
+        if r.get("odometer_km") is None and r.get("max_range_km") is not None:
+            z_no_odo = (r["max_range_km"] - med_all_rng) / sigma_all_rng
+            if abs(z_no_odo) > z_threshold:
+                reasons.append(f"Range {r['max_range_km']:.2f} km vs median {med_all_rng:.2f} km (Z={z_no_odo:+.2f})")
+
+        if reasons:
+            r["is_outlier"] = True
+            r["outlier_reason"] = f"Exceeds {z_threshold}σ degradation trend residual: " + ", ".join(reasons)
+        else:
+            r["is_outlier"] = False
+            r.pop("outlier_reason", None)
+
+    return records
+
+
 def sync_battery_health(tessie_dir=None, since_days=1095):
     """Pulls the vehicle's FULL real battery_health history straight from
     Tessie's API (fetch_battery_health_chunked(), from `since_days` ago
@@ -510,20 +603,25 @@ def sync_battery_health(tessie_dir=None, since_days=1095):
         return None
 
     log = sorted(merged.values(), key=lambda e: e["synced_at"])
+    log = detect_battery_health_outliers(log)
+
     tmp = log_path + ".tmp"
     with open(tmp, "w", encoding="utf-8") as f:
         json.dump(log, f, indent=2)
     os.replace(tmp, log_path)
 
-    latest = log[-1]
+    latest_valid = next((e for e in reversed(log) if not e.get("is_outlier")), log[-1])
+    outlier_count = sum(1 for e in log if e.get("is_outlier"))
     print(f"✅ Battery health: {len(history_records)} historical reading(s) pulled from Tessie's API "
           f"(since {datetime.fromtimestamp(from_ts).date()}), plus current snapshot.")
-    print(f"   Latest: {latest['capacity_kwh']} kWh usable capacity, {latest['max_range_km']} km max range "
-          f"(at current charge - NOT a rated figure), {latest['max_ideal_range_km']} km max ideal range.")
-    if latest.get("health_percent") is not None or latest.get("degradation_percent") is not None:
-        print(f"   Health: {latest['health_percent']}% / Degradation: {latest['degradation_percent']}%")
+    print(f"   Latest: {latest_valid['capacity_kwh']} kWh usable capacity, {latest_valid['max_range_km']} km max range "
+          f"(at current charge - NOT a rated figure), {latest_valid['max_ideal_range_km']} km max ideal range.")
+    if latest_valid.get("health_percent") is not None or latest_valid.get("degradation_percent") is not None:
+        print(f"   Health: {latest_valid['health_percent']}% / Degradation: {latest_valid['degradation_percent']}%")
+    if outlier_count > 0:
+        print(f"   Outliers flagged: {outlier_count} reading(s) excluded from degradation baselines.")
     print(f"   Logged to {log_path} ({len(log)} reading(s) total, deduplicated by timestamp).")
-    return latest
+    return latest_valid
 
 
 def backfill_deepdive_telemetry(kinds, limit=None, pace_seconds=1.5, since_days=None, tessie_dir=None):
