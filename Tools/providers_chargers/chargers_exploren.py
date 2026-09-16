@@ -22,6 +22,7 @@ its own; this closes that gap the same way EVX/Evie/bp pulse/AmpCharge did.
 import os
 import re
 import json
+import time
 import urllib.request
 import urllib.parse
 from typing import Dict, List, Optional, Any, Tuple
@@ -353,22 +354,44 @@ class ExplorenProvider(BaseChargerProvider):
         detail_map: Dict[Any, Dict[str, Any]] = {}
 
         def _fetch_single_detail(loc_id: Any) -> Tuple[Any, Optional[Dict[str, Any]]]:
+            # BUG-113 (AGENTS.local.md, 2026-09-16): a failed/timed-out detail
+            # fetch here used to silently return None on the FIRST try, no
+            # retry - and every downstream consumer of `units=[]` falls back
+            # to a hardcoded "2 stalls, no connector breakdown" guess
+            # (parse_exploren_location_record's `len(units) if units else 2`).
+            # Caught concretely via the user's own report: Bankstown Central
+            # showed "2 Stalls | Up to 160 kW" in the app, but Exploren's own
+            # page lists 4 independent "Chargers (4)" - #10968/10969/9098/9099,
+            # all confirmed DC 160kW on a fresh direct fetch, proving the
+            # parser itself is correct and this was a transient fetch failure
+            # baked into the cache, not a parsing bug. Across the full cached
+            # registry, 499/637 stations (78%) show exactly stalls==2 - far
+            # more than plausible as all being genuinely single-pedestal
+            # sites, meaning this silent fallback was hit at scale. A couple
+            # of retries here, plus surfacing the still-failed count from
+            # sync(), turns "quietly wrong for hundreds of stations" into
+            # "actually retried, and here's what's still unknown."
             if not nonce:
                 return loc_id, None
-            try:
-                form = urllib.parse.urlencode({
-                    "action": "exploren_get_location_detail",
-                    "location_id": loc_id,
-                    "nonce": nonce,
-                }).encode("utf-8")
-                req = urllib.request.Request(EXPLOREN_AJAX_URL, data=form, headers=EXPLOREN_HEADERS)
-                with urllib.request.urlopen(req, timeout=timeout) as r:
-                    payload = json.load(r)
-                if payload.get("success"):
-                    return loc_id, parse_exploren_detail_html(payload.get("data", ""))
-                return loc_id, None
-            except Exception:
-                return loc_id, None
+            last_err = None
+            for attempt in range(3):
+                try:
+                    form = urllib.parse.urlencode({
+                        "action": "exploren_get_location_detail",
+                        "location_id": loc_id,
+                        "nonce": nonce,
+                    }).encode("utf-8")
+                    req = urllib.request.Request(EXPLOREN_AJAX_URL, data=form, headers=EXPLOREN_HEADERS)
+                    with urllib.request.urlopen(req, timeout=timeout) as r:
+                        payload = json.load(r)
+                    if payload.get("success"):
+                        return loc_id, parse_exploren_detail_html(payload.get("data", ""))
+                    last_err = ValueError(f"success=False for location {loc_id}")
+                except Exception as e:
+                    last_err = e
+                if attempt < 2:
+                    time.sleep(0.5 * (attempt + 1))
+            return loc_id, None
 
         all_ids = [l.get("id") for l in locations if l.get("id") is not None]
         from concurrent.futures import ThreadPoolExecutor
@@ -376,6 +399,17 @@ class ExplorenProvider(BaseChargerProvider):
             for loc_id, d_obj in executor.map(_fetch_single_detail, all_ids):
                 if d_obj:
                     detail_map[loc_id] = d_obj
+
+        # BUG-113: surface how many detail fetches never succeeded even after
+        # 3 attempts, instead of letting them vanish into a silent "2 stalls,
+        # no breakdown" fallback - those specific stations are named so a
+        # re-run or a targeted --sync-exploren retry can be judged on real
+        # information rather than guessing at the scale of the gap.
+        failed_ids = [str(lid) for lid in all_ids if lid not in detail_map]
+        if failed_ids:
+            print(f"⚠ Exploren: detail fetch failed for {len(failed_ids)}/{len(all_ids)} station(s) after 3 attempts each - "
+                  f"these fall back to a generic 2-stall estimate: {', '.join(failed_ids[:15])}"
+                  f"{' ...' if len(failed_ids) > 15 else ''}")
 
         records: List[UnifiedStationRecord] = []
         for loc in locations:
@@ -508,8 +542,18 @@ class ExplorenProvider(BaseChargerProvider):
                 meta = s_data.get("metadata", {})
 
                 max_pwr = float(hw_data.get("max_power_kw") or 0.0)
-                is_dc = "dc" in str(meta.get("current_type", "")).lower()
-                speed_tier = "dc_fast" if (is_dc and max_pwr >= 25.0) else "ac_destination"
+                # BUG-112 (AGENTS.local.md, 2026-09-16): this used to re-derive
+                # speed_tier from meta.get("current_type", "") - a metadata key
+                # that sync() never actually writes (there is no top-level
+                # "metadata" object in the cached JSON at all), so is_dc was
+                # unconditionally False and EVERY cached Exploren station loaded
+                # as "ac_destination", discarding the correct value sync()
+                # already computed and stored at hardware.speed_tier (e.g.
+                # Bunnings Gladesville: 2x CCS2, 120kW, on-disk speed_tier
+                # "dc_fast" - but every load showed it, and 148 other real DC
+                # stations, as AC). Trust the stored field directly instead of
+                # re-deriving it from data that was never there.
+                speed_tier = hw_data.get("speed_tier") or ("dc_fast" if max_pwr >= 25.0 else "ac_destination")
 
                 rec = UnifiedStationRecord(
                     key=s_id,

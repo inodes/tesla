@@ -151,17 +151,21 @@ def compute_tax_breakdown(
 # NRMA...)" convention. AmpCharge's real source tag is "ampol", not
 # "ampcharge" - see chargers_ampcharge.py's own UnifiedStationRecord
 # construction.
-_FIRST_PARTY_NETWORK_SOURCE_TAGS: Dict[str, str] = {
-    "tesla": "tesla",
-    "chargefox": "chargefox",
-    "nrma": "chargefox",
-    "evx": "evx",
-    "evie": "evie",
-    "bp": "bp",
-    "ampcharge": "ampol",
-    "ampol": "ampol",
-    "exploren": "exploren",
-    "jolt": "jolt",
+_FIRST_PARTY_NETWORK_SOURCE_TAGS: Dict[str, Tuple[str, ...]] = {
+    "tesla": ("tesla",),
+    "chargefox": ("chargefox",),
+    # NRMA now has its own Tier 1 provider (source="nrma", REQ-088,
+    # AGENTS.local.md 2026-09-16) as well as being reachable through
+    # Chargefox's own feed for the ~28 overlapping sites - either
+    # provenance tag is a verified NRMA claim, so both are accepted.
+    "nrma": ("chargefox", "nrma"),
+    "evx": ("evx",),
+    "evie": ("evie",),
+    "bp": ("bp",),
+    "ampcharge": ("ampol",),
+    "ampol": ("ampol",),
+    "exploren": ("exploren",),
+    "jolt": ("jolt",),
 }
 
 
@@ -182,8 +186,8 @@ def _network_claims_unverified_brand(network: Optional[str], source: Optional[st
     """
     net = (network or "").lower()
     src = (source or "").lower()
-    for token, tag in _FIRST_PARTY_NETWORK_SOURCE_TAGS.items():
-        if token in net and tag not in src:
+    for token, tags in _FIRST_PARTY_NETWORK_SOURCE_TAGS.items():
+        if token in net and not any(tag in src for tag in tags):
             return True
     return False
 
@@ -686,12 +690,13 @@ class UnifiedStationRecord:
         # no `chargefox` provenance at all). A name-only match with no
         # matching source now falls through to the generic "3rd" badge - an
         # honest "unverified 3rd-party listing" signal instead of a
-        # confident, possibly-wrong brand badge. (NRMA has no separate
-        # source tag of its own - see AGENTS.md's own "chargefox (covers
-        # NRMA...)" convention - so it's verified via `chargefox` in src.)
+        # confident, possibly-wrong brand badge. (NRMA is verified via EITHER
+        # `chargefox` in src - the Chargefox-fed subset of NRMA sites, see
+        # AGENTS.md's "chargefox (covers NRMA...)" convention - OR `nrma`
+        # in src, its own dedicated Tier 1 provider added in REQ-088.)
         if "chargefox" in net and "chargefox" in src:
             return "🦊 CF"
-        if "nrma" in net and "chargefox" in src:
+        if "nrma" in net and ("chargefox" in src or "nrma" in src):
             return "⚡ NRMA"
         if "evx" in net and "evx" in src:
             return "🔌 EVX"

@@ -29,6 +29,13 @@
 # here alongside adding the new Exploren network (REQ-086); Jolt (REQ-087)
 # was added the same way from day one.
 #
+# REQ-088 (AGENTS.local.md): NRMA now has its own dedicated Tier 1 provider
+# (KML export from NRMA's own Google My Maps embed), ranked below Chargefox
+# specifically where the two cover the same physical site (Chargefox's data
+# is richer there) - added as its own step alongside step 3's existing
+# Chargefox sync, which still separately covers the ~28 NRMA sites also
+# present in Chargefox's own GraphQL feed.
+#
 # This script is run manually for now. Exits non-zero if any step fails.
 
 set -euo pipefail
@@ -47,7 +54,7 @@ scope yourself if you want a broader sweep than "near Home, 50km".
 Steps run, in order:
   1. Tesla Superchargers      (charger_find_tesla.py --sc --near Home --radius-km 50 --new --all)
   2. Tesla Destination Chargers (charger_find_tesla.py --dc --near Home --radius-km 50 --new --all)
-  3. Chargefox & NRMA network  (charger_find.py --sync-chargefox)
+  3. Chargefox network         (charger_find.py --sync-chargefox)
   4. EVX Kerbside Polechargers (charger_find.py --sync-evx)
   5. Evie Networks             (charger_find.py --sync-evie)
   6. bp pulse DC Fast Chargers (charger_find.py --sync-bppulse)
@@ -55,7 +62,8 @@ Steps run, in order:
   8. Ampol AmpCharge & Foodary (charger_find.py --sync-ampcharge)
   9. Exploren AC/DC network    (charger_find.py --sync-exploren)
   10. Jolt DC Fast network     (charger_find.py --sync-jolt)
-  11. Multi-View Consolidated Registry Export (charger_find.py --export-consolidated)
+  11. NRMA EV Charging network (charger_find.py --sync-nrma)
+  12. Multi-View Consolidated Registry Export (charger_find.py --export-consolidated)
 
 See this file's own header comment for the full rationale behind each step
 (why "near Home" scoping, PlugShare rate-limit avoidance (BUG-008), etc.) -
@@ -72,7 +80,7 @@ echo "==> Tesla Destination Chargers (near Home, 50km)"
 ./charger_find_tesla.py --dc --near Home --radius-km 50 --new --all
 
 echo
-echo "==> Chargefox & NRMA network (Australia)"
+echo "==> Chargefox network (Australia)"
 ./charger_find.py --sync-chargefox
 
 echo
@@ -102,6 +110,10 @@ echo "==> Exploren AC/DC network (Australia)"
 echo
 echo "==> Jolt DC Fast network (Australia)"
 ./charger_find.py --sync-jolt
+
+echo
+echo "==> NRMA EV Charging network (Australia)"
+./charger_find.py --sync-nrma
 
 echo
 echo "==> Multi-View Consolidated Registry Export"
