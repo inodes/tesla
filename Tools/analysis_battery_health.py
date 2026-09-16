@@ -108,13 +108,20 @@ def load_points(tessie_dir=None):
     history = load_battery_health_history(analyzer.tessie_data_home, include_outliers=True) or []
     points, excluded_no_odo, excluded_outliers = [], 0, 0
     for e in history:
-        if e.get("is_outlier") is True:
-            excluded_outliers += 1
-            continue
         odo = e.get("odometer_km")
         cap = e.get("capacity_kwh")
+        # Check "no odometer" before "outlier": a reading with no odometer_km
+        # was never going to appear as a plotted point on this chart either
+        # way, so it should count against that bucket, not against
+        # "outliers excluded" - otherwise the outlier count on this chart
+        # can include readings the user could never have seen removed from
+        # it, making the caption look more aggressive than what it actually
+        # trimmed off the visible trend line.
         if odo is None or cap is None:
             excluded_no_odo += 1
+            continue
+        if e.get("is_outlier") is True:
+            excluded_outliers += 1
             continue
         points.append({
             "odometer_km": float(odo),
