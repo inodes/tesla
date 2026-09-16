@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# drives_sync_all.sh - the one command for the Drives domain: fetch Tessie
+# sync_drives_all.sh - the one command for the Drives domain: fetch Tessie
 # drives via the Developer API and consolidate into drives_master.csv
 # (see AGENTS.md REQ-033).
 #
@@ -23,7 +23,7 @@ cd "$(dirname "$0")"
 
 if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
     cat << 'EOF'
-Usage: ./drives_sync_all.sh [-h|--help]
+Usage: ./sync_drives_all.sh [-h|--help]
 
 The one command for the DRIVES domain. Takes no arguments; running it
 executes every step below in order against your real data. Does NOT itself
@@ -33,26 +33,26 @@ places.json, not manage it).
 
 Steps run, in order:
   1. Tessie drives - fetch, then --consolidate
-     (tessie_api_sync.py --drives --yes)
+     (api_sync_tessie.py --drives --yes)
   2. Drive deep-dive telemetry backfill
-     (tessie_api_sync.py --backfill-deepdive --drives --limit 0)
+     (api_sync_tessie.py --backfill-deepdive --drives --limit 0)
   3. Battery health (vehicle-wide, not drives-specific - lives here since
      this runs regularly)
-     (tessie_api_sync.py --battery-health)
+     (api_sync_tessie.py --battery-health)
 EOF
     exit 0
 fi
 
 echo "==> Tessie drives (fetch + consolidate)"
-./tessie_api_sync.py --drives --yes
+./api_sync_tessie.py --drives --yes
 
 echo
 echo "==> Drive deep-dive telemetry backfill"
-./tessie_api_sync.py --backfill-deepdive --drives --limit 0
+./api_sync_tessie.py --backfill-deepdive --drives --limit 0
 
 echo
 echo "==> Battery health (vehicle-wide, not drives-specific - lives here since this runs regularly)"
-./tessie_api_sync.py --battery-health
+./api_sync_tessie.py --battery-health
 
 echo
 echo "==> Done."

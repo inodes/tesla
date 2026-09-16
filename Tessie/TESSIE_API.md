@@ -218,7 +218,7 @@ here**. It needs to be run from the user's own Mac with a real token to
 confirm anything about the live API's actual behavior.
 
 
-## Sync tool: `Tools/tessie_api_sync.py` (2026-09-06)
+## Sync tool: `Tools/api_sync_tessie.py` (2026-09-06)
 
 Replaces the manual "download CSV, drop it in Downloads" workflow. Fetches
 via the API and writes a CSV into the landing directory in the exact shape
@@ -234,13 +234,13 @@ of the API plumbing, not two drifting copies.
 
 ```
 export TESSIE_ACCESS_TOKEN=your_token_here
-./Tools/tessie_api_sync.py                      # fetch + prompt to consolidate, both types
-./Tools/tessie_api_sync.py --yes                # fetch + consolidate without prompting (cron)
-./Tools/tessie_api_sync.py --no-consolidate      # fetch only, leave CSV(s) for you to merge later
-./Tools/tessie_api_sync.py --drives             # just drives
-./Tools/tessie_api_sync.py --since-days 180     # first-run backfill window (default: 90)
-./Tools/tessie_api_sync.py --dry-run            # fetch and report, write/consolidate nothing
-./Tools/tessie_api_sync.py --reset-cache --charges  # forget prior sync point, re-backfill
+./Tools/api_sync_tessie.py                      # fetch + prompt to consolidate, both types
+./Tools/api_sync_tessie.py --yes                # fetch + consolidate without prompting (cron)
+./Tools/api_sync_tessie.py --no-consolidate      # fetch only, leave CSV(s) for you to merge later
+./Tools/api_sync_tessie.py --drives             # just drives
+./Tools/api_sync_tessie.py --since-days 180     # first-run backfill window (default: 90)
+./Tools/api_sync_tessie.py --dry-run            # fetch and report, write/consolidate nothing
+./Tools/api_sync_tessie.py --reset-cache --charges  # forget prior sync point, re-backfill
 ```
 
 **Consolidation is built in, not a separate manual step.** After writing a
@@ -387,9 +387,9 @@ the `_01` suffix instead of clobbering the first file - both files verified
 to still exist on disk afterward. Full existing test suite re-run
 alongside it with no regressions.
 
-### BUG-020: `--consolidate` wasn't a real flag on `tessie_api_sync.py` (2026-09-07)
+### BUG-020: `--consolidate` wasn't a real flag on `api_sync_tessie.py` (2026-09-07)
 
-User ran `./Tools/tessie_api_sync.py --consolidate` - a reasonable thing to
+User ran `./Tools/api_sync_tessie.py --consolidate` - a reasonable thing to
 type, since that's the flag name used everywhere in this doc for the
 underlying analyzer scripts - and got `error: unrecognized arguments:
 --consolidate`. The sync tool only ever exposed `--yes` (auto-consolidate
@@ -397,7 +397,7 @@ after a fresh fetch) and `--no-consolidate` (skip it); `--consolidate`
 belongs to `tessie_drives_analyzer.py`/`tessie_charging_analyzer.py`
 themselves.
 
-**Fixed** by adding a real `--consolidate` flag to `tessie_api_sync.py`
+**Fixed** by adding a real `--consolidate` flag to `api_sync_tessie.py`
 too: it skips fetching entirely (no token/VIN needed for this mode at all)
 and runs `run_consolidate()` directly for each selected type - the exact
 same subprocess call as typing each analyzer's own `--consolidate` by
@@ -406,8 +406,8 @@ of first. Rejected with exit code 2 if combined with `--no-consolidate`
 (contradictory) or `--dry-run` (this mode has no fetch to be "dry" about).
 
 ```
-./Tools/tessie_api_sync.py --consolidate            # merge whatever's pending, both types
-./Tools/tessie_api_sync.py --consolidate --drives   # just drives
+./Tools/api_sync_tessie.py --consolidate            # merge whatever's pending, both types
+./Tools/api_sync_tessie.py --consolidate --drives   # just drives
 ```
 
 Verified with 7 mocked/subprocess checks (both conflict cases exit 2 with
@@ -423,7 +423,7 @@ a real result: in that shell, `~/Downloads` (`config.json`'s
 `landing_directory`) expands to that shell's own home directory, which
 doesn't have a `Downloads` folder at all - the real `/Users/<macos-username>/Downloads`
 is only reachable there via a `~/mnt/Downloads` mount alias that a
-subprocess launched from `tessie_api_sync.py` has no way to know about. So
+subprocess launched from `api_sync_tessie.py` has no way to know about. So
 the analyzer scripts found zero landing files to ingest - "+0 new" meant
 "0 files processed", not "0 new among files genuinely processed" - and
 nothing was archived because nothing was ever read.
@@ -492,12 +492,12 @@ real UTC offsets (SA is 30/60 min behind NSW depending on daylight saving).
 
 **What's actually true today, verified rather than assumed**:
 - The API's `from`/`to` request params are Unix-epoch seconds - always
-  UTC by construction, already correct in `tessie_api_sync.py`.
+  UTC by construction, already correct in `api_sync_tessie.py`.
 - The JSON response's `started_at`/`ended_at` fields are (per the official
   parameter reference and the `started_at`/`created_at`/`updated_at`
   naming convention) also true Unix-epoch UTC, unaffected by the
   `timezone` request parameter - that parameter only controls how Tessie
-  FORMATS its own `format=csv` text output. So `tessie_api_sync.py`'s JSON
+  FORMATS its own `format=csv` text output. So `api_sync_tessie.py`'s JSON
   cache (`Tessie/api_cache/<type>.json`) is already UTC-correct and needs
   no change.
 - The bug is downstream, in every CSV - manually-exported AND API-fetched

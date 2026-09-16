@@ -14,7 +14,7 @@ Thank you for your interest in contributing to the **TeslaCam Multi-Drive Suite*
    ```
 3. **Verify your local environment**:
    ```bash
-   ./Tools/dashcam_sync.sh --check-deps
+   ./Tools/sync_dashcam.sh --check-deps
    ```
 
 ---

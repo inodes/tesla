@@ -3,7 +3,7 @@
 (capacity vs odometer, range vs odometer), from real battery_health_log.json
 history.
 
-Context: tessie_api_sync.py --battery-health has been pulling the
+Context: api_sync_tessie.py --battery-health has been pulling the
 vehicle's full real battery_health history for a while now (REQ-045/047),
 and analysis_car_efficiency.py already reads that history
 (load_battery_health_history()) to pick a live usable-capacity figure for
@@ -380,7 +380,7 @@ EXAMPLES
     points, excluded_no_odo, excluded_outliers, history, tessie_data_home = load_points(tessie_dir=args.tessie_dir)
     if len(points) < 2:
         print(f"Only {len(points)} real reading(s) with odometer data - need at least 2 to chart a trend. "
-              f"Run ./tessie_api_sync.py --battery-health to sync more.")
+              f"Run ./api_sync_tessie.py --battery-health to sync more.")
         return
 
     if args.out_dir:

@@ -2283,7 +2283,7 @@ class TessieChargingAnalyzer:
         load_drives() uses) rather than importing/instantiating
         TessieAnalyzer - charges stay a self-contained domain (AGENTS.md's
         sync/analysis split), this is just borrowing drives_master.csv's
-        own totals the same way tessie_api_sync.py's bulk-backfill
+        own totals the same way api_sync_tessie.py's bulk-backfill
         already borrows the analyzer classes for a narrow, documented
         match-only purpose.
 
@@ -2366,7 +2366,7 @@ class TessieChargingAnalyzer:
         window-overlap match get_energy_source_crosscheck() uses, via
         analysis_ev_session_cost.load_evnex_deepdive_sessions() - and returns that
         file's own "<date>_<HHMM>" stamp (the value unique_stamped_path()
-        was originally given when evnex_api_sync.py wrote it) rather than
+        was originally given when api_sync_evnex.py wrote it) rather than
         a full path. fetch_charge_deepdive_from_api() re-runs that same
         stamp through unique_stamped_path() itself, letting its own "_NN"
         disambiguator claim the next free slot.
@@ -2478,7 +2478,7 @@ class TessieChargingAnalyzer:
 
         Home Evnex sessions ARE included (AGENTS.md REQ-050 - an earlier
         version of this method deliberately skipped them on the theory
-        that /states has nothing to add over evnex_api_sync.py's own
+        that /states has nothing to add over api_sync_evnex.py's own
         JSON; live-verified against a real Evnex session's own recorded
         window that this was wrong - Tessie polls the car's own charge
         state during ANY plugged-in session, home included, and this is
@@ -2595,7 +2595,7 @@ class TessieChargingAnalyzer:
             # result matches the existing naming convention exactly.
             suffix = self._deepdive_location_suffix(session)
             # AGENTS.md TODO-033: fold the real AEST/AEDT abbreviation into
-            # the stamp here too, matching evnex_api_sync.py's own writer -
+            # the stamp here too, matching api_sync_evnex.py's own writer -
             # only reached when no existing Evnex JSON stamp was found to
             # match against above (matched_stamp already carries its own
             # tz suffix once present, via _EVNEX_JSON_STAMP_RE).
@@ -3907,7 +3907,7 @@ class TessieChargingAnalyzer:
         Caching contract, per the user's own three-part ask: (a) fetch
         on the fly if the sibling "<evnex .json stem>_sources.json"
         cache file next to that session's own already-synced
-        charge_deepdive_*_Evnex_Home*.json (evnex_api_sync.py) doesn't
+        charge_deepdive_*_Evnex_Home*.json (api_sync_evnex.py) doesn't
         exist yet, (b) use it unchanged if it does, (c) force_refresh=True
         re-fetches and only overwrites the cache once the new result
         writes successfully - a backup of the OLD cache is kept until

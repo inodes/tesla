@@ -287,7 +287,7 @@ def _contextual_type_icon(st: UnifiedStationRecord, network_filter: Optional[str
     if nf == "nrma":
         return "⚡ NRMA"
     if nf == "evx":
-        return "🔌 EVX"
+        return "🟠 EVX"
     if nf == "evie":
         return "🕊️ Evie"
     if nf == "exploren":
@@ -301,6 +301,35 @@ def _contextual_type_icon(st: UnifiedStationRecord, network_filter: Optional[str
     if nf == "tesla":
         return "🔴 SC" if st.speed_tier == "supercharger" else "🔌 Dest"
     return st.type_icon()
+
+
+def _print_reverify_result(name: str, ok: bool, diffs) -> None:
+    """
+    BUG-117 (2026-09-16, AGENTS.local.md): the "Update / Re-verify" action
+    used to print the same "Successfully updated and saved (historical
+    version archived if changed)" line every time, regardless of whether the
+    live re-fetch actually found anything different - user report: re-ran it
+    on a station, got that message, but "nothing shows as updated" and asked
+    for either an honest "no change" message or a visible diff. `diffs` is
+    the (ok, diffs) tuple's second element from
+    ChargerDiscoveryManager.reverify_station(): None means the re-fetch
+    itself failed or a diff couldn't be computed, {} means it succeeded with
+    no display-relevant change, and a non-empty dict lists exactly what did.
+    """
+    if not ok:
+        print(f"{C_RED}❌ Failed to update station '{name}'.{C_RESET}")
+        return
+    if diffs is None:
+        print(f"{C_GREEN}✔ Re-verified '{name}' live and saved.{C_RESET} {C_DIM}(unable to compute a field-level diff for this source){C_RESET}")
+        return
+    if not diffs:
+        print(f"{C_GREEN}✔ No changes detected for '{name}' - already up to date.{C_RESET}")
+        return
+    print(f"{C_GREEN}✔ Re-verified '{name}' - {len(diffs)} field(s) changed:{C_RESET}")
+    for label, (old_v, new_v) in diffs.items():
+        old_disp = old_v if old_v not in (None, "") else "-"
+        new_disp = new_v if new_v not in (None, "") else "-"
+        print(f"   {C_DIM}{label}:{C_RESET}  {old_disp}  {C_DIM}->{C_RESET}  {new_disp}")
 
 
 def render_stations_table(
@@ -382,7 +411,16 @@ def render_stations_table(
         num_str = f"[{color}{idx:2d}{C_RESET}]"
         t_icon = _contextual_type_icon(st, network_filter)
         state_str = st.state or "-"
-        name_disp = truncate_display(st.name, w_name - 2)
+        # BUG-118 (2026-09-16, AGENTS.local.md): a station flagged PARTIALLY
+        # UNDER REPAIR / OUT OF ORDER etc. on PlugShare's own side used to
+        # look identical to a fully working one in this table - user: "out
+        # of order etc.... should not be unseen by the listings. Maybe a red
+        # exclamation mark in the listing."
+        op_status_row = ((st.metadata or {}).get("operational_status") or "").strip()
+        if op_status_row:
+            name_disp = f"{C_RED}⚠{C_RESET} " + truncate_display(st.name, w_name - 4)
+        else:
+            name_disp = truncate_display(st.name, w_name - 2)
         tier_str = st.tier_badge()
         stalls_str = f"{st.stalls_total} bays" if st.stalls_total > 0 else "-"
         
@@ -611,6 +649,17 @@ def display_station_inspection_card(station: UnifiedStationRecord, eval_time: Op
         print(format_field_line(icon, label, val_str, icon_w=2, label_w=22, indent=2))
 
     meta = station.metadata or {}
+
+    # BUG-118 (2026-09-16, AGENTS.local.md): PlugShare's own operational
+    # status ("PARTIALLY_UNDER_REPAIR", "OUT_OF_ORDER", etc. - distinct from
+    # the coming_soon/under_construction cases that are rejected on import
+    # entirely) was being captured nowhere and shown nowhere - user found a
+    # station "PARTIALLY UNDER REPAIR" on PlugShare's own page with no sign
+    # of it in this tool at all. Surfaced first, above Source & Provenance,
+    # so it can't be missed.
+    op_status = (meta.get("operational_status") or "").strip()
+    if op_status:
+        _field("🚧", "Operational Status", f"{C_RED}{C_BOLD}⚠️  {op_status.replace('_', ' ').title()}{C_RESET}")
 
     # 1. Source & Provenance
     views_count = len(station.views) if station.views else 1
@@ -1983,11 +2032,8 @@ DESCRIPTION
                     if 1 <= t_idx <= len(stations):
                         target_st = stations[t_idx - 1]
                         print(f"🔄 Re-verifying station '{target_st.name}' live...")
-                        ok = manager.reverify_station(target_st)
-                        if ok:
-                            print(f"✔ Successfully updated '{target_st.name}' (historical version archived if changed).")
-                        else:
-                            print(f"❌ Failed to update '{target_st.name}'.")
+                        ok, diffs, _fresh = manager.reverify_station(target_st)
+                        _print_reverify_result(target_st.name, ok, diffs)
                         input("\nPress Enter to refresh list...")
                         render_cb()
                         continue
@@ -2045,11 +2091,15 @@ DESCRIPTION
                     subprocess.run(["open", u["url"]] if sys.platform == "darwin" else ["xdg-open", u["url"]], check=False)
             elif act in ("u", "update", "refresh"):
                 print(f"🔄 Re-verifying station '{sel.name}' live...")
-                ok = manager.reverify_station(sel)
-                if ok:
-                    print(f"✔ Successfully updated and saved {sel.name} (historical version archived if changed).")
-                else:
-                    print(f"❌ Failed to update station '{sel.name}'.")
+                ok, diffs, fresh = manager.reverify_station(sel)
+                _print_reverify_result(sel.name, ok, diffs)
+                if ok and fresh:
+                    # BUG-117: "Re-verifying should reload the entry - differences
+                    # can then be seen" - redisplay the just-refreshed card in
+                    # place instead of leaving the user looking at stale values.
+                    sel = fresh
+                    print()
+                    display_station_inspection_card(sel, eval_time=args.time)
                 input("\nPress Enter to continue...")
             elif (act in ("m", "g", "map", "maps") or (act == "2" and len(source_urls) <= 1)) and sel.lat is not None and sel.lon is not None:
                 gmap_url = f"https://www.google.com/maps/search/?api=1&query={sel.lat},{sel.lon}"

@@ -699,7 +699,7 @@ class UnifiedStationRecord:
         if "nrma" in net and ("chargefox" in src or "nrma" in src):
             return "⚡ NRMA"
         if "evx" in net and "evx" in src:
-            return "🔌 EVX"
+            return "🟠 EVX"
         if "evie" in net and "evie" in src:
             return "🕊️ Evie"
         if "bp" in net and "bp" in src:
@@ -767,7 +767,7 @@ class UnifiedStationRecord:
         if "nrma" in net:
             return "⚡ NRMA"
         if "evx" in net or self.source == "evx":
-            return "🔌 EVX"
+            return "🟠 EVX"
         if "evie" in net:
             return "🕊️ Evie"
         if "bp" in net or "pulse" in net:

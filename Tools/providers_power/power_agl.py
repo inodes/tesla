@@ -53,7 +53,7 @@ class AGLProvider(BasePowerProvider):
     name = "agl"
     display_name = "AGL"
     # REQ-071: AGL offers no usage-history API for residential accounts
-    # (see power_usage_sync.py's module docstring) - every usage-export
+    # (see sync_power_usage.py's module docstring) - every usage-export
     # refresh is a manual CSV download, so this is the provider this
     # flag exists for.
     manual_usage_sync = True

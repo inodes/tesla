@@ -2,7 +2,7 @@
 """
 power_demand_calculator.py - Reproduce the active power provider's demand
 charge (e.g. AGL's Ausgrid EA025 Residential Demand charge) from the
-consolidated usage master (power_usage_sync.py) and the active
+consolidated usage master (sync_power_usage.py) and the active
 provider's own dated tariff rates.
 
 REQ-070 (2026-09-15): generalized from agl_demand_calculator.py - this
@@ -142,7 +142,7 @@ NAME
 DESCRIPTION
     Reproduces the active power provider's demand charge (e.g. AGL's Ausgrid
     EA025 Residential Demand charge - see Tools/providers_power/power_agl.py)
-    from the consolidated usage master (power_usage_sync.py) and the
+    from the consolidated usage master (sync_power_usage.py) and the
     provider's own dated tariff rates: finds the provider's own
     season-appropriate demand window's maximum half-hourly import for the
     month and bills that single latched kW value in arrears, at

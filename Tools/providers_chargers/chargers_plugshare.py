@@ -178,6 +178,51 @@ def extract_au_state_and_suburb(addr: str) -> Tuple[str, str]:
     return st, sub
 
 
+def _resolve_state_suburb_via_geocode(lat: float, lon: float) -> Tuple[str, str, str]:
+    """
+    BUG-116 (2026-09-16, AGENTS.local.md): extract_au_state_and_suburb() can only
+    parse what's literally present in PlugShare's own free-text address field -
+    and that field is frequently bare street-level text with no state/suburb at
+    all ("6 Everard St Hunters Hill" has a suburb but no "NSW"/postcode; "5
+    Talavera Rd" has neither). Falls back to the same Nominatim-based,
+    rate-limited, persistently-cached reverse-geocode helper already used for
+    Chargefox (see chargers_chargefox.py's _resolve_suburb_via_geocode() /
+    BUG-076) and Tesla's own border lookups - charger_find_tesla.py's
+    reverse_geocode_osm()/load_geo_cache()/save_geo_cache(), same
+    Tessie/geo_cache.json, same "{lat:.4f},{lon:.4f}" cache key - so a coordinate
+    already resolved by either of those paths is a free cache hit here too, and
+    vice versa. Returns (state, suburb, postcode), each "" if unresolved. Never
+    raises - best-effort data-quality enhancement, not a hard import requirement.
+    """
+    try:
+        from charger_find_tesla import reverse_geocode_osm, load_geo_cache, save_geo_cache
+    except Exception:
+        return "", "", ""
+    try:
+        cache = load_geo_cache()
+    except Exception:
+        cache = {}
+    ckey = f"{lat:.4f},{lon:.4f}"
+    entry = cache.get(ckey)
+    if entry:
+        st = entry.get("state") or ""
+        return ("" if st == "Other" else st), entry.get("suburb") or "", entry.get("postcode") or ""
+    try:
+        geo = reverse_geocode_osm(lat, lon)
+    except Exception:
+        geo = None
+    if not geo:
+        return "", "", ""
+    cache[ckey] = geo
+    try:
+        save_geo_cache(cache)
+    except Exception:
+        pass
+    time.sleep(1.0)  # Nominatim usage policy: max ~1 request/second
+    st = geo.get("state") or ""
+    return ("" if st == "Other" else st), geo.get("suburb") or "", geo.get("postcode") or ""
+
+
 def extract_gross_rate_per_kwh(details_json: dict) -> float:
     """Extracts consumer-facing gross rate per kWh ($/kWh) following Gross-First architecture."""
     if not isinstance(details_json, dict):
@@ -330,6 +375,11 @@ def plugshare_to_registry_record(basic_or_detail: dict, full_detail: Optional[di
     if is_res or acc_code == 3 or is_coming_soon:
         return "", {}
 
+    raw_op_status = str(d.get("status") or "").strip().upper()
+    operational_status = raw_op_status if raw_op_status and raw_op_status not in ("OPERATIONAL", "OK", "OPEN", "ACTIVE") else ""
+    if bool(d.get("under_repair")) and not operational_status:
+        operational_status = "UNDER_REPAIR"
+
     # BUG-088 (2026-09-15): PlugShare's `access` field (1/2/3) is only a
     # coarse base classification - a station can ALSO carry a separate
     # `access_restrictions` list (e.g. ["EMPLOYEES_ONLY"], with a matching
@@ -358,6 +408,15 @@ def plugshare_to_registry_record(basic_or_detail: dict, full_detail: Optional[di
 
     now_iso = _get_utc_now_iso()
     state, suburb = extract_au_state_and_suburb(addr_str)
+    postcode = ""
+    if lat is not None and lon is not None and (state == "-" or not suburb):
+        g_state, g_suburb, g_postcode = _resolve_state_suburb_via_geocode(lat, lon)
+        if state == "-" and g_state:
+            state = g_state
+        if not suburb and g_suburb:
+            suburb = g_suburb
+        if g_postcode:
+            postcode = g_postcode
 
     record = {
         "plugshare_metadata": {
@@ -373,7 +432,7 @@ def plugshare_to_registry_record(basic_or_detail: dict, full_detail: Optional[di
             "street": addr_str.split(",")[0].strip() if addr_str else "",
             "suburb": suburb,
             "state": state,
-            "postcode": "",
+            "postcode": postcode,
             "country": "Australia",
             "country_code": "AU",
             "lat": lat,
@@ -393,7 +452,8 @@ def plugshare_to_registry_record(basic_or_detail: dict, full_detail: Optional[di
         },
         "access": {
             "hours": d.get("hours") or ("Available 24/7" if d.get("open247") else None),
-            "description": d.get("description") or d.get("cost_description")
+            "description": d.get("description") or d.get("cost_description"),
+            "operational_status": operational_status
         },
         "tariffs": {
             "currency": "AUD",
@@ -529,6 +589,7 @@ def record_dict_to_unified(key: str, info: dict) -> Optional[UnifiedStationRecor
         "coming_soon": is_cs,
         "under_construction": is_cs,
         "status": "COMING_SOON" if is_cs else "OPEN",
+        "operational_status": access_dict.get("operational_status", ""),
     }
 
     return UnifiedStationRecord(
@@ -881,7 +942,27 @@ class PlugShareProvider(BaseChargerProvider):
             record["first_seen"] = existing.get("first_seen", now_utc)
             record["last_updated"] = now_utc
             record["last_verified"] = now_utc
-            registry[existing_key] = record
+
+            # BUG-117 (2026-09-16, AGENTS.local.md): existing_key comes from
+            # find_existing_match()'s PlugShare-ID lookup, so it can be the
+            # registry key this station was FIRST discovered under - which
+            # sticks around forever even after PlugShare's own upstream name
+            # changes (e.g. a location first scraped as "Evie Top Ryde
+            # Shopping Centre" later renamed "Top Ryde City Shopping Centre"
+            # on PlugShare's own site keeps a registry key/"Station Key"
+            # display that still says "Evie" with nothing else about the
+            # record actually saying so - user report: "it is NOT Evie -
+            # nothing says Evie except the json"). When the freshly-fetched
+            # record's own current-name-derived key differs from the key this
+            # entry is stored under, migrate the entry to the new key so the
+            # persisted identity tracks what PlugShare itself calls it now -
+            # but only when that new key is free, so we never silently
+            # clobber a genuinely different station that already owns it.
+            target_key = existing_key
+            if station_key and station_key != existing_key and station_key not in registry:
+                del registry[existing_key]
+                target_key = station_key
+            registry[target_key] = record
             result = "UPDATED"
         else:
             final_key = station_key

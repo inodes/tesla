@@ -319,7 +319,7 @@ def find_mounted_tesla_volumes(subdir=None):
     (see AGENTS.md) - this is what locates real footage on the drive for
     the Saved/Sentry/Recent columns below. Tessie CSV/registry data is
     never read from or written to TESLADRIVE (that tooling runs from the
-    repository and iCloud only, see dashcam_sync.sh) - callers must not pass
+    repository and iCloud only, see sync_dashcam.sh) - callers must not pass
     a 'Tessie' subdir here.
     """
     volumes_root = "/Volumes"
@@ -1055,7 +1055,7 @@ def export_tombstone_rsync_excludes(master_dir=None, out_path=None):
 def flag_footage_packages_for_deletion(packages, analyzer):
     """
     Stages packages for deletion in .TeslaCam_tombstones.json with status='flagged'.
-    Files REMAIN physically on disk until explicitly purged via dashcam_sync.sh or [P]urge.
+    Files REMAIN physically on disk until explicitly purged via sync_dashcam.sh or [P]urge.
     Returns (count_flagged, total_est_bytes).
     """
     master_dir = resolve_master_teslacam_dir(analyzer.teslacam_dirs)
@@ -3192,7 +3192,7 @@ class TessieAnalyzer:
     def sync_drives_if_stale(self, target_date=None, force=False):
         """
         Determines if local drives_master.csv is stale compared to requested date or current time,
-        and automatically triggers tessie_api_sync.py --drives --yes to fetch fresh telemetry.
+        and automatically triggers api_sync_tessie.py --drives --yes to fetch fresh telemetry.
         """
         if getattr(self, "_sync_disabled", False):
             return False
@@ -3242,7 +3242,7 @@ class TessieAnalyzer:
         if not is_stale:
             return False
 
-        sync_script = os.path.join(self.script_dir, "tessie_api_sync.py")
+        sync_script = os.path.join(self.script_dir, "api_sync_tessie.py")
         if not os.path.isfile(sync_script):
             return False
 
@@ -4413,7 +4413,7 @@ def display_timeline_event_details(event, analyzer):
                 mult_mb = (b_flag * num_drives) / (1024 * 1024)
                 mult_sz = f"{mult_mb/1024:.1f} GB" if mult_mb >= 1024 else f"{mult_mb:.0f} MB"
                 print(f"\n ✔ Flagged {n_flag} footage package(s) for deletion (~{f_sz}/drive ➔ ~{mult_sz} across {num_drives} drive(s)).")
-                print("   Files remain on disk until explicitly purged via 'dashcam_sync.sh' or [P]urge.\n")
+                print("   Files remain on disk until explicitly purged via 'sync_dashcam.sh' or [P]urge.\n")
                 continue
 
             if is_unflag:
@@ -4641,7 +4641,7 @@ def batch_flag_events_interactive(events, choice_str, analyzer, is_unflag=False)
     if conf in ("", "y", "yes"):
         n_flag, b_flag = flag_footage_packages_for_deletion(packages_to_process, analyzer)
         print(f"\n ✔ Successfully flagged {n_flag} footage package(s) for deletion.")
-        print("   Files remain on disk until explicitly purged via 'dashcam_sync.sh' or [P]urge.\n")
+        print("   Files remain on disk until explicitly purged via 'sync_dashcam.sh' or [P]urge.\n")
     else:
         print("\n Flagging cancelled.\n")
 
@@ -4699,7 +4699,7 @@ def purge_home_recent_cli(analyzer, target_dates=None, stage_only=False, dry_run
 
     if stage_only:
         print(f"\n ✔ Flagged {n_flag} Home Recent package(s) for deletion.")
-        print("   Files remain on disk until explicitly purged via 'dashcam_sync.sh' or [P]urge.\n")
+        print("   Files remain on disk until explicitly purged via 'sync_dashcam.sh' or [P]urge.\n")
         return n_flag, b_flag
 
     print("\n🗑️  Executing multi-drive purge of flagged Home Recent packages...")
@@ -4809,7 +4809,7 @@ def display_timeline(target_date, analyzer, compact=False):
             
         print(format_box_line("├", "┴", "┤", col_widths))
         if not has_any_footage:
-            foot_msg = " No local footage on archive SSD. Run 'dashcam_sync.sh' to backup from car."
+            foot_msg = " No local footage on archive SSD. Run 'sync_dashcam.sh' to backup from car."
             print(f"│{pad_display(foot_msg, total_inner, 'left')}│")
         else:
             rec_tot = format_duration_short(total_recent_mins)
