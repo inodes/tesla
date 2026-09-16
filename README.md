@@ -30,14 +30,16 @@ tesla/
 │   ├── lib/                        # Shared library modules imported by the scripts below (not run
 │   │                                #   directly) - table_formatter.py, tessie_api_common.py, etc.
 │   ├── providers_chargers/         # Pluggable charging-network adapters (Tesla/Chargefox/EVX/Evie/
-│   │                                #   BP Pulse/PlugShare), orchestrated by charger_find.py
+│   │                                #   BP Pulse/AmpCharge/Exploren/Jolt/PlugShare),
+│   │                                #   orchestrated by charger_find.py
 │   ├── dashcam_sync.sh               # Multi-drive TeslaCam sync, audit & prune engine
 │   ├── dashcam_exportdash.sh           # Local ExportDash web player launcher
 │   ├── tessie_drives_analyzer.py   # Drives explorer, footage linker, and master consolidator
 │   ├── tessie_charging_analyzer.py # Charging reconciliation & invoice parser
 │   ├── tessie_places.py            # Place tagging, geocoding, and stop-cluster review utility
 │   ├── charger_find.py            # Unified multi-network charger discovery (Tesla/Chargefox/EVX/Evie/
-│   │                                #   BP Pulse/PlugShare) - see Tools/providers_chargers/
+│   │                                #   BP Pulse/AmpCharge/Exploren/Jolt/PlugShare) - see
+│   │                                #   Tools/providers_chargers/
 │   ├── charger_find_tesla.py      # Tesla Supercharger / Destination Charger explorer & live scraper
 │   ├── providers_power/            # Pluggable power-retailer/distributor billing providers (3.1) - one
 │   │                                #   BasePowerProvider subclass per retailer (currently just AGL),

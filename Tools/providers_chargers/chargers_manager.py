@@ -29,6 +29,8 @@ from .chargers_evie import EvieProvider
 from .chargers_bppulse import BPPulseProvider
 from .chargers_plugshare import PlugShareProvider
 from .chargers_ampcharge import AmpChargeProvider
+from .chargers_exploren import ExplorenProvider
+from .chargers_jolt import JoltProvider
 
 
 def _normalize_street_word(w: str) -> str:
@@ -105,7 +107,9 @@ def are_stations_co_located(s1: UnifiedStationRecord, s2: UnifiedStationRecord, 
                 ("evx" in net2 and ("polecharger" in s1.name.lower() or "evx" in s1.name.lower())) or
                 ("bp" in net1 and "bp" in net2) or
                 ("evie" in net1 and "evie" in net2) or
-                (("ampcharge" in net1 or "ampol" in net1) and ("ampcharge" in net2 or "ampol" in net2)))
+                (("ampcharge" in net1 or "ampol" in net1) and ("ampcharge" in net2 or "ampol" in net2)) or
+                ("exploren" in net1 and "exploren" in net2) or
+                ("jolt" in net1 and "jolt" in net2))
 
     # Two DIFFERENT Tier-1 (first-party authoritative) providers are never
     # the same physical charger just because their names/addresses look
@@ -243,6 +247,11 @@ def merge_station_records(primary: UnifiedStationRecord, secondary: UnifiedStati
         merged_hw_model = f"bp pulse {pwr_label} {desc_type} Charger"
     elif "evx" in (primary.network or "").lower() or primary.source == "evx":
         merged_hw_model = "EVX 22kW Dual AC Polecharger"
+    elif "exploren" in (primary.network or "").lower() or primary.source == "exploren":
+        pwr_label = f"{int(merged_max_power)}kW" if merged_max_power.is_integer() else f"{merged_max_power:.0f}kW"
+        merged_hw_model = f"Exploren {pwr_label} Charger"
+    elif "jolt" in (primary.network or "").lower() or primary.source == "jolt":
+        merged_hw_model = "JOLT 50kW DC Fast Charger"
     elif primary.speed_tier == "supercharger":
         if merged_max_power >= 300:
             merged_hw_model = "Tesla Supercharger V4"
@@ -319,7 +328,9 @@ class ChargerDiscoveryManager:
                 EvieProvider(),
                 BPPulseProvider(),
                 PlugShareProvider(),
-                AmpChargeProvider()
+                AmpChargeProvider(),
+                ExplorenProvider(),
+                JoltProvider()
             ]
 
     def deduplicate_records(self, records: List[UnifiedStationRecord]) -> List[UnifiedStationRecord]:
@@ -657,6 +668,16 @@ class ChargerDiscoveryManager:
                         p.sync_location(ps_id, auto_save=True)
                         self.export_consolidated_registry()
                         return True
+                elif isinstance(p, ExplorenProvider) and "exploren" in src:
+                    exploren_id = station.source_id or station.key.replace("Exploren_", "")
+                    p.reverify_station(exploren_id)
+                    self.export_consolidated_registry()
+                    return True
+                elif isinstance(p, JoltProvider) and "jolt" in src:
+                    jolt_id = station.source_id or station.key.replace("Jolt_", "")
+                    p.reverify_station(jolt_id)
+                    self.export_consolidated_registry()
+                    return True
         except Exception as e:
             print(f"Error reverifying station {station.name}: {e}")
             return False

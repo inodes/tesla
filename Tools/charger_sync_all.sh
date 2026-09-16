@@ -24,6 +24,11 @@
 # Run `charger_find_tesla.py --stale --all` yourself if you want to refresh
 # aging Tesla entries; PlugShare has no separate staleness flag today.
 #
+# BUG-105 (AGENTS.local.md): AmpCharge was already wired into charger_find.py's
+# --sync-all but had never been added to THIS script's own step list - fixed
+# here alongside adding the new Exploren network (REQ-086); Jolt (REQ-087)
+# was added the same way from day one.
+#
 # This script is run manually for now. Exits non-zero if any step fails.
 
 set -euo pipefail
@@ -47,7 +52,10 @@ Steps run, in order:
   5. Evie Networks             (charger_find.py --sync-evie)
   6. bp pulse DC Fast Chargers (charger_find.py --sync-bppulse)
   7. PlugShare 3rd-party       (charger_find.py --sync-plugshare --near Home --radius 50 --add-all)
-  8. Multi-View Consolidated Registry Export (charger_find.py --export-consolidated)
+  8. Ampol AmpCharge & Foodary (charger_find.py --sync-ampcharge)
+  9. Exploren AC/DC network    (charger_find.py --sync-exploren)
+  10. Jolt DC Fast network     (charger_find.py --sync-jolt)
+  11. Multi-View Consolidated Registry Export (charger_find.py --export-consolidated)
 
 See this file's own header comment for the full rationale behind each step
 (why "near Home" scoping, PlugShare rate-limit avoidance (BUG-008), etc.) -
@@ -82,6 +90,18 @@ echo "==> bp pulse DC Fast Chargers (Australia)"
 echo
 echo "==> PlugShare 3rd-party chargers (near Home, 50km)"
 ./charger_find.py --sync-plugshare --near Home --radius 50 --add-all
+
+echo
+echo "==> Ampol AmpCharge & Ampol Foodary (Australia)"
+./charger_find.py --sync-ampcharge
+
+echo
+echo "==> Exploren AC/DC network (Australia)"
+./charger_find.py --sync-exploren
+
+echo
+echo "==> Jolt DC Fast network (Australia)"
+./charger_find.py --sync-jolt
 
 echo
 echo "==> Multi-View Consolidated Registry Export"

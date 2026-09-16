@@ -10,6 +10,8 @@ from .chargers_evie import EvieProvider
 from .chargers_bppulse import BPPulseProvider
 from .chargers_plugshare import PlugShareProvider
 from .chargers_ampcharge import AmpChargeProvider
+from .chargers_exploren import ExplorenProvider
+from .chargers_jolt import JoltProvider
 from .chargers_manager import ChargerDiscoveryManager
 
 __all__ = [
@@ -22,6 +24,8 @@ __all__ = [
     "BPPulseProvider",
     "PlugShareProvider",
     "AmpChargeProvider",
+    "ExplorenProvider",
+    "JoltProvider",
     "ChargerDiscoveryManager"
 ]
 
