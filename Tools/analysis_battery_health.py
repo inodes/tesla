@@ -99,18 +99,22 @@ def _linear_fit(xs, ys):
 
 def load_points(tessie_dir=None):
     """Real (odometer_km, capacity_kwh, max_range_km, synced_at) points,
-    oldest-to-newest, plus a count of readings excluded for having no
-    odometer_km. Reuses analysis_car_efficiency's own history loader
-    (battery_health_log.json + any manually-exported CSV, deduplicated)
-    rather than re-reading/re-parsing the log a second way."""
+    oldest-to-newest, plus counts of readings excluded for having no
+    odometer_km or being flagged as statistical outliers. Reuses
+    analysis_car_efficiency's own history loader (battery_health_log.json + any
+    manually-exported CSV, deduplicated) rather than re-reading/re-parsing the
+    log a second way."""
     analyzer = TessieAnalyzer(tessie_dir=tessie_dir)
-    history = load_battery_health_history(analyzer.tessie_data_home) or []
-    points, excluded = [], 0
+    history = load_battery_health_history(analyzer.tessie_data_home, include_outliers=True) or []
+    points, excluded_no_odo, excluded_outliers = [], 0, 0
     for e in history:
+        if e.get("is_outlier") is True:
+            excluded_outliers += 1
+            continue
         odo = e.get("odometer_km")
         cap = e.get("capacity_kwh")
         if odo is None or cap is None:
-            excluded += 1
+            excluded_no_odo += 1
             continue
         points.append({
             "odometer_km": float(odo),
@@ -119,7 +123,7 @@ def load_points(tessie_dir=None):
             "synced_at": e.get("synced_at"),
         })
     points.sort(key=lambda p: p["odometer_km"])
-    return points, excluded, history, analyzer.tessie_data_home
+    return points, excluded_no_odo, excluded_outliers, history, analyzer.tessie_data_home
 
 
 def _metric_trend_str(pts, key, unit, decimals=2):
@@ -144,9 +148,12 @@ def build_subtitle(pts, key, unit, excluded_note, date_range):
 
 
 def render_png(pts, key, unit, label, color, title, subtitle, out_png):
-    import matplotlib
-    matplotlib.use("Agg")
-    import matplotlib.pyplot as plt
+    try:
+        import matplotlib
+        matplotlib.use("Agg")
+        import matplotlib.pyplot as plt
+    except ImportError:
+        return False
 
     odo = [p["odometer_km"] for p in pts]
     vals = [p[key] for p in pts]
@@ -177,6 +184,7 @@ def render_png(pts, key, unit, label, color, title, subtitle, out_png):
 
     fig.savefig(out_png, facecolor=SURFACE, bbox_inches="tight", dpi=FIG_DPI)
     plt.close(fig)
+    return True
 
 
 _HTML_TEMPLATE = """<!doctype html>
@@ -362,7 +370,7 @@ EXAMPLES
     parser.add_argument("--out-dir", help="Where to write the chart files (default: <tessie_directory>/battery/, matching the charges/drives output convention)")
     args = parser.parse_args()
 
-    points, excluded, history, tessie_data_home = load_points(tessie_dir=args.tessie_dir)
+    points, excluded_no_odo, excluded_outliers, history, tessie_data_home = load_points(tessie_dir=args.tessie_dir)
     if len(points) < 2:
         print(f"Only {len(points)} real reading(s) with odometer data - need at least 2 to chart a trend. "
               f"Run ./tessie_api_sync.py --battery-health to sync more.")
@@ -378,11 +386,23 @@ EXAMPLES
     range_points = [p for p in points if p["max_range_km"] is not None]
     range_excluded = len(points) - len(range_points)
 
+    excluded_notes = []
+    if excluded_no_odo:
+        excluded_notes.append(f"{excluded_no_odo} excluded - no odometer recorded")
+    if excluded_outliers:
+        excluded_notes.append(f"{excluded_outliers} outlier{'s' if excluded_outliers > 1 else ''} excluded")
+    cap_excluded_note = " · ".join(excluded_notes) if excluded_notes else None
+
+    range_notes = list(excluded_notes)
+    if range_excluded:
+        range_notes.append(f"{range_excluded} more excluded - no range recorded")
+    range_excluded_note = " · ".join(range_notes) if range_notes else None
+
     charts = [
         ("capacity_kwh", "kWh", "Usable capacity", S1_BLUE, "battery_capacity_vs_odometer", points,
-         f"{excluded} excluded - no odometer recorded" if excluded else None),
+         cap_excluded_note),
         ("max_range_km", "km", "Max rated range", S3_AQUA, "battery_range_vs_odometer", range_points,
-         f"{range_excluded} more excluded - no range recorded" if range_excluded else None),
+         range_excluded_note),
     ]
     written = []
     for key, unit, label, color, stem, pts, excluded_note in charts:
@@ -393,10 +413,11 @@ EXAMPLES
         subtitle = build_subtitle(pts, key, unit, excluded_note, date_range)
         out_png = os.path.join(out_dir, f"{stem}.png")
         out_html = os.path.join(out_dir, f"{stem}.html")
-        render_png(pts, key, unit, label, color, title, subtitle, out_png)
+        if render_png(pts, key, unit, label, color, title, subtitle, out_png):
+            written.append(out_png)
         render_html(pts, key, unit, label, color, title, subtitle, out_html)
+        written.append(out_html)
         print(f"{label}: {_metric_trend_str(pts, key, unit)}")
-        written.extend([out_png, out_html])
 
     print("\n" + "\n".join(f"Wrote {p}" for p in written))
 

@@ -330,7 +330,7 @@ def _parse_battery_health_csv(path):
         return []
 
 
-def load_battery_health_history(tessie_dir_home):
+def load_battery_health_history(tessie_dir_home, include_outliers=False):
     """The FULL history of readings, merged from every source this repo
     has for it: battery_health_log.json (written by tessie_api_sync.py
     --battery-health, AGENTS.md TODO-031/REQ-045 - it appends one entry
@@ -350,10 +350,16 @@ def load_battery_health_history(tessie_dir_home):
     exports too. Entries are deduplicated by exact synced_at timestamp
     (a live JSON reading wins over a CSV row at the same instant, since
     it's the more precise/authoritative source) and returned
-    oldest-to-newest. Returns None if nothing at all was found/readable
-    - callers needing "the current capacity" should use history[-1]
-    (the most recent real reading) and fall back to the empirical
-    estimate if this is None."""
+    oldest-to-newest.
+
+    When include_outliers is False (default), records flagged with
+    'is_outlier': True are filtered out so downstream degradation
+    profiles and live capacity selection are not distorted by transient
+    charging artifacts.
+
+    Returns None if nothing at all was found/readable - callers needing
+    "the current capacity" should use history[-1] (the most recent real
+    reading) and fall back to the empirical estimate if this is None."""
     if not tessie_dir_home:
         return None
 
@@ -367,6 +373,8 @@ def load_battery_health_history(tessie_dir_home):
             if isinstance(log, list):
                 for e in log:
                     if isinstance(e, dict) and e.get("capacity_kwh") is not None and e.get("synced_at"):
+                        if not include_outliers and e.get("is_outlier") is True:
+                            continue
                         e = dict(e)
                         e.setdefault("source", "battery_health_log.json")
                         merged[e["synced_at"]] = e
@@ -379,6 +387,8 @@ def load_battery_health_history(tessie_dir_home):
         csv_paths = []
     for csv_path in csv_paths:
         for e in _parse_battery_health_csv(csv_path):
+            if not include_outliers and e.get("is_outlier") is True:
+                continue
             merged.setdefault(e["synced_at"], e)  # a live JSON reading at the exact same timestamp wins
 
     if not merged:
