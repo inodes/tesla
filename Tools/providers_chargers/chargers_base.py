@@ -143,6 +143,51 @@ def compute_tax_breakdown(
     return gross, net, tax, tax_name, tax_rate
 
 
+# Known first-party network name-tokens and each one's expected `source`
+# provenance tag - shared by type_icon() (BUG-107, badge selection) and
+# filter_station_records() (BUG-108, default exclusion of unverified brand
+# self-claims). NRMA has no separate source tag of its own - it's sourced
+# via Chargefox's own GraphQL feed, per AGENTS.md's "chargefox (covers
+# NRMA...)" convention. AmpCharge's real source tag is "ampol", not
+# "ampcharge" - see chargers_ampcharge.py's own UnifiedStationRecord
+# construction.
+_FIRST_PARTY_NETWORK_SOURCE_TAGS: Dict[str, str] = {
+    "tesla": "tesla",
+    "chargefox": "chargefox",
+    "nrma": "chargefox",
+    "evx": "evx",
+    "evie": "evie",
+    "bp": "bp",
+    "ampcharge": "ampol",
+    "ampol": "ampol",
+    "exploren": "exploren",
+    "jolt": "jolt",
+}
+
+
+def _network_claims_unverified_brand(network: Optional[str], source: Optional[str]) -> bool:
+    """
+    True if `network`'s free text claims one of our known first-party
+    brands but `source` doesn't actually carry that brand's own provenance
+    tag - i.e. the claim was never confirmed against that network's real
+    live registry.
+
+    BUG-107/BUG-108 (AGENTS.local.md, 2026-09-16): concretely caught via a
+    real PlugShare-only listing named "Jolt - Meadowbank" ($0.52/kWh, 1
+    bay) that doesn't correspond to any of JOLT's own 133 real live
+    stations - `source` for it is `"plugshare"` only, `network` self-
+    reports `"Jolt"` with nothing behind that claim. A live-registry check
+    finding zero match makes "stale / mislabeled / decommissioned" far
+    more likely than "real charger we just haven't verified yet".
+    """
+    net = (network or "").lower()
+    src = (source or "").lower()
+    for token, tag in _FIRST_PARTY_NETWORK_SOURCE_TAGS.items():
+        if token in net and tag not in src:
+            return True
+    return False
+
+
 def filter_station_records(
     records: List['UnifiedStationRecord'],
     filters: Optional[Dict[str, Any]] = None
@@ -204,6 +249,16 @@ def filter_station_records(
                 continue
             st_status = str(meta.get("status") or meta.get("site_status") or "").lower()
             if st_status in ("in_development", "permit", "construction", "under_construction", "coming_soon", "planned"):
+                continue
+
+        # Exclude records whose `network` free text claims a known first-
+        # party brand we have a live authoritative registry for, but whose
+        # actual `source` provenance never matched that registry - BUG-108.
+        # BUG-107 already stops these getting a confident brand badge; this
+        # goes further and excludes them from results by default too (opt
+        # back in with include_unverified_brand=True).
+        if not filters.get("include_unverified_brand", False):
+            if _network_claims_unverified_brand(st.network, st.source):
                 continue
 
         # Exclude Private Residential stations by default
@@ -356,6 +411,35 @@ class UnifiedStationRecord:
             for mk, mv in list(meta_dict.items()):
                 if isinstance(mv, str):
                     meta_dict[mk] = strip_invisible_chars(mv)
+
+        # BUG-109 (AGENTS.local.md, 2026-09-16): "supercharger" is a Tesla-
+        # exclusive hardware/network term, but `speed_tier` is populated by
+        # each PROVIDER's own parsing/classification logic - and a Tier-2
+        # aggregator (PlugShare) can self-classify a crowd-sourced listing
+        # as "supercharger" from its own (unverified) network-name text,
+        # with no actual Tesla registry match behind that claim. Concretely
+        # caught via a real PlugShare-only ("Macquarie Centre (2)",
+        # source="plugshare") listing carrying speed_tier="supercharger" -
+        # every consumer of `self.speed_tier` (type_icon(), badge(),
+        # access_label(), speed_tier_label(), and the --dc filter's
+        # dc_fast branch, which treats "supercharger" as passing) trusted
+        # it completely unconditionally, so this one bad field silently
+        # produced a confidently-wrong 🔴 SC badge and "CCS2 All"/V2-tier
+        # display everywhere downstream - fixing every call site
+        # individually is exactly the kind of whack-a-mole that already
+        # missed spots once (BUG-107 covered every OTHER network branch in
+        # type_icon() but not this one, its very first line). Enforcing the
+        # invariant once, here, at construction time, means every consumer
+        # inherits the fix for free: a record claiming "supercharger" but
+        # whose `source` doesn't actually carry "tesla" (a merged record's
+        # source is a "+"-joined string like "tesla+plugshare", so this is
+        # a substring check, not equality) gets downgraded to "dc_fast" -
+        # still an honest, plausible classification for a real DC charger,
+        # just not a Tesla-verified Supercharger claim - with the original
+        # claim preserved in metadata for anyone auditing the correction.
+        if self.speed_tier == "supercharger" and "tesla" not in (self.source or "").lower():
+            self.metadata["speed_tier_corrected_from"] = "supercharger"
+            self.speed_tier = "dc_fast"
 
     def to_dict(self) -> Dict[str, Any]:
         """Converts UnifiedStationRecord to the full multi-view canonical dictionary format."""
