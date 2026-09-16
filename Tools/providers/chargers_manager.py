@@ -388,10 +388,13 @@ class ChargerDiscoveryManager:
         query: str,
         filters: Optional[Dict[str, Any]] = None,
         sort_by: str = "name",
-        eval_time: Optional[str] = None
+        eval_time: Optional[str] = None,
+        ref_lat: Optional[float] = None,
+        ref_lon: Optional[float] = None
     ) -> List[UnifiedStationRecord]:
         """
         Queries all providers for text match, deduplicates, and sorts.
+        Computes distance_km if ref_lat and ref_lon are supplied.
         """
         filters = filters or {}
         all_found: List[UnifiedStationRecord] = []
@@ -410,6 +413,10 @@ class ChargerDiscoveryManager:
 
         deduped = self.deduplicate_records(all_found)
         filtered = filter_station_records(deduped, filters)
+        if ref_lat is not None and ref_lon is not None:
+            for r in filtered:
+                if r.lat is not None and r.lon is not None:
+                    r.distance_km = round(haversine_km(ref_lat, ref_lon, r.lat, r.lon), 1)
         sorted_res = self.sort_records(filtered, sort_by=sort_by, eval_time=eval_time)
         return sorted_res
 
@@ -417,11 +424,13 @@ class ChargerDiscoveryManager:
         self,
         filters: Optional[Dict[str, Any]] = None,
         sort_by: str = "name",
-        eval_time: Optional[str] = None
+        eval_time: Optional[str] = None,
+        ref_lat: Optional[float] = None,
+        ref_lon: Optional[float] = None
     ) -> List[UnifiedStationRecord]:
         """
         Retrieves all stations from all registered providers, filters by speed/state/network,
-        deduplicates, and sorts.
+        deduplicates, and sorts. Computes distance_km if ref_lat and ref_lon are supplied.
         """
         filters = filters or {}
         requested_speed_tier = filters.get("speed_tier")
@@ -460,6 +469,10 @@ class ChargerDiscoveryManager:
 
         deduped = self.deduplicate_records(all_found)
         filtered = filter_station_records(deduped, filters)
+        if ref_lat is not None and ref_lon is not None:
+            for r in filtered:
+                if r.lat is not None and r.lon is not None:
+                    r.distance_km = round(haversine_km(ref_lat, ref_lon, r.lat, r.lon), 1)
         sorted_res = self.sort_records(filtered, sort_by=sort_by, eval_time=eval_time)
         return sorted_res
 
@@ -488,6 +501,27 @@ class ChargerDiscoveryManager:
 
         elif sort_by == "stalls":
             return sorted(records, key=lambda r: (- (r.stalls_total or 0), r.distance_km or 999.0))
+
+        elif sort_by in ["facilities", "facility", "rating"]:
+            try:
+                from station_facilities import get_facilities_registry
+                _f_reg = get_facilities_registry()
+            except ImportError:
+                try:
+                    from lib.station_facilities import get_facilities_registry
+                    _f_reg = get_facilities_registry()
+                except ImportError:
+                    _f_reg = None
+
+            def fac_key(r: UnifiedStationRecord):
+                if _f_reg:
+                    f = _f_reg.get_station_facilities(station_key=r.key, station_name=r.name, lat=r.lat, lon=r.lon)
+                    if f:
+                        score = f.get("score", 0.0)
+                        return (-score, r.distance_km if r.distance_km is not None else 999.0, r.name.lower())
+                return (1.0, r.distance_km if r.distance_km is not None else 999.0, r.name.lower())
+
+            return sorted(records, key=fac_key)
 
         elif sort_by in ["name", "state"]:
             return sorted(records, key=lambda r: (r.state or "ZZ", r.name.lower()))

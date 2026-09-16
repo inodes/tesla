@@ -269,6 +269,37 @@ def reverse_geocode(lat, lon):
         pass
     return None
 
+def classify_poi_group(tags):
+    """Classifies OSM tags into user-friendly top-level facility groups."""
+    amenity = (tags.get("amenity") or "").lower()
+    shop = (tags.get("shop") or "").lower()
+    cuisine = (tags.get("cuisine") or "").lower()
+    leisure = (tags.get("leisure") or "").lower()
+    tourism = (tags.get("tourism") or "").lower()
+    healthcare = (tags.get("healthcare") or "").lower()
+    office = (tags.get("office") or "").lower()
+    
+    if amenity in ("cafe", "coffee_shop") or shop in ("coffee", "tea") or "coffee" in cuisine:
+        return "Cafes & Coffee", "☕"
+    if amenity in ("restaurant", "fast_food", "food_court", "pub", "bar", "biergarten", "ice_cream"):
+        return "Dining & Fast Food", "🍔"
+    if shop in ("supermarket", "convenience", "bakery", "butcher", "greengrocer", "deli", "grocery", "general", "department_store", "mall"):
+        return "Supermarkets & Groceries", "🛒"
+    if shop or tags.get("building") in ("retail", "commercial") or amenity == "marketplace":
+        return "Retail & Shopping", "🛍️"
+    if amenity in ("toilets", "restroom", "drinking_water", "atm", "bank", "pharmacy", "post_box", "post_office"):
+        return "Amenities & Services", "🚻"
+    if tourism in ("hotel", "motel", "guest_house", "hostel", "apartment", "camp_site"):
+        return "Lodging & Hotels", "🏨"
+    if amenity in ("fuel", "car_wash", "parking", "charging_station") or shop in ("car", "car_repair", "car_parts"):
+        return "Automotive & Parking", "🚗"
+    if leisure or tourism in ("attraction", "museum", "gallery", "theme_park", "viewpoint") or amenity in ("cinema", "theatre"):
+        return "Leisure & Entertainment", "🎯"
+    if healthcare or amenity in ("hospital", "clinic", "doctors", "dentist", "veterinary"):
+        return "Healthcare", "🏥"
+    return "Other Facilities", "📍"
+
+
 def query_overpass_pois(lat, lon, radius_m=250):
     """Queries Overpass API for all named POIs / venues within radius_m of lat, lon."""
     query = f"""
@@ -305,6 +336,10 @@ def query_overpass_pois(lat, lon, radius_m=250):
                     building = tags.get("building")
                     brand = tags.get("brand")
 
+                    # Filter out charging station self-matches
+                    if amenity == "charging_station" or "supercharger" in name.lower() or name.lower().startswith("tesla super"):
+                        continue
+
                     category = amenity or shop or leisure or tourism or office or healthcare
                     if not category and building and building != "yes":
                         category = f"building ({building})"
@@ -324,9 +359,13 @@ def query_overpass_pois(lat, lon, radius_m=250):
                     if brand and brand.lower() != name.lower():
                         cat_label += f" ({brand})"
 
+                    group_name, group_emoji = classify_poi_group(tags)
+
                     results.append({
                         "name": name,
                         "category": cat_label,
+                        "group": group_name,
+                        "emoji": group_emoji,
                         "lat": p_lat,
                         "lon": p_lon,
                         "dist_m": round(dist, 1)

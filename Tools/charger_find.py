@@ -17,6 +17,7 @@ Key Features:
 import os
 import sys
 import re
+import time
 import json
 import argparse
 import urllib.request
@@ -27,8 +28,11 @@ from datetime import datetime
 
 _tools_dir = os.path.dirname(os.path.abspath(__file__))
 _repo_root = os.path.dirname(_tools_dir)
+_lib_dir = os.path.join(_tools_dir, "lib")
 if _tools_dir not in sys.path:
     sys.path.insert(0, _tools_dir)
+if _lib_dir not in sys.path:
+    sys.path.insert(0, _lib_dir)
 
 from lib.table_formatter import (
     char_width,
@@ -859,55 +863,134 @@ def display_station_inspection_card(station: UnifiedStationRecord, eval_time: Op
         elif isinstance(station.amenities, list) and station.amenities:
             print(f"\n  🛒 {C_BOLD}Amenities:{C_RESET} {', '.join(str(x) for x in station.amenities)}")
 
+    # Cached Facilities Quality Rating / Summary (REQ-082)
+    try:
+        from station_facilities import get_facilities_registry, format_facilities_summary_card
+        _fac_reg = get_facilities_registry()
+    except ImportError:
+        try:
+            from lib.station_facilities import get_facilities_registry, format_facilities_summary_card
+            _fac_reg = get_facilities_registry()
+        except ImportError:
+            _fac_reg = None
+            format_facilities_summary_card = None
+
+    if _fac_reg and station.lat and station.lon:
+        cached_fac = _fac_reg.get_station_facilities(station_key=station.key, station_name=station.name, lat=station.lat, lon=station.lon)
+        if cached_fac and format_facilities_summary_card:
+            lines = format_facilities_summary_card(cached_fac, indent="  ")
+            if lines:
+                print()
+                for line in lines:
+                    print(line)
+
     print()
 
 
-def display_nearby_facilities(station: UnifiedStationRecord, radius_m: int = 250) -> None:
+def display_nearby_facilities(station: UnifiedStationRecord, radius_m: int = 250, force_refresh: bool = False) -> None:
     """
     Looks up real, named nearby facilities (shops, food, amenities, services)
     around a charging station via OpenStreetMap's free/keyless Overpass API -
     reusing Tools/tessie_places.py's already-proven query_overpass_pois(),
     the same lookup that already identifies drive-log stop locations.
 
-    REQ (2026-09-15, AGENTS.local.md): user - "the information about
-    facilities that exist around each charger (primarily Tesla Superchargers)
-    is very weak. I would love the ability to get a list of actual facilities
-    that are related close to each Supercharger." Works for any station with
-    coordinates, not just Tesla - Superchargers are the primary use case but
-    there's nothing Tesla-specific about the lookup itself.
+    Persisted in station_facilities.json for instant offline pullup with
+    a 0-10 Quality Scoring Engine (REQ-082).
     """
     if not station.lat or not station.lon:
         print(f"{C_YELLOW}⚠ No coordinates on file for this station - can't look up nearby facilities.{C_RESET}")
         return
 
-    print(f"\n{C_BOLD}🏙️  Nearby Facilities (within {radius_m}m of {station.name}, via OpenStreetMap):{C_RESET}")
-    print(f"{C_GRAY}   Looking up live - this can take a few seconds...{C_RESET}")
-
     try:
-        from tessie_places import query_overpass_pois
-    except ImportError as e:
-        print(f"{C_RED}❌ Could not load the facilities lookup (Tools/tessie_places.py): {e}{C_RESET}")
-        return
+        from station_facilities import get_facilities_registry
+        reg = get_facilities_registry()
+    except ImportError:
+        try:
+            from lib.station_facilities import get_facilities_registry
+            reg = get_facilities_registry()
+        except ImportError:
+            reg = None
 
-    try:
-        pois = query_overpass_pois(station.lat, station.lon, radius_m=radius_m)
-    except Exception as e:
-        print(f"{C_RED}❌ Facilities lookup failed: {e}{C_RESET}")
-        return
+    cached = reg.get_station_facilities(station_key=station.key, station_name=station.name, lat=station.lat, lon=station.lon) if (reg and not force_refresh) else None
 
-    if not pois:
-        print(f"{C_YELLOW}  No named facilities found within {radius_m}m (or OpenStreetMap's Overpass API didn't respond - try again in a moment).{C_RESET}")
-        return
+    if cached:
+        print(f"\n{C_BOLD}🏙️  Nearby Facilities (within {cached.get('radius_m', radius_m)}m of {station.name}):{C_RESET}")
+        print(f"  {C_BOLD}Quality Score:{C_RESET} {cached.get('badge', '')}  {C_GRAY}[⚡ Cached Registry - instant pullup]{C_RESET}\n")
+        pois = cached.get("pois", [])
+    else:
+        print(f"\n{C_BOLD}🏙️  Nearby Facilities (within {radius_m}m of {station.name}, via OpenStreetMap):{C_RESET}")
+        print(f"{C_GRAY}   Looking up live - this can take a few seconds...{C_RESET}")
+
+        try:
+            from tessie_places import query_overpass_pois
+        except ImportError as e:
+            print(f"{C_RED}❌ Could not load the facilities lookup (Tools/tessie_places.py): {e}{C_RESET}")
+            return
+
+        try:
+            pois = query_overpass_pois(station.lat, station.lon, radius_m=radius_m)
+        except Exception as e:
+            print(f"{C_RED}❌ Facilities lookup failed: {e}{C_RESET}")
+            return
+
+        if not pois:
+            print(f"{C_YELLOW}  No named facilities found within {radius_m}m (or OpenStreetMap's Overpass API didn't respond - try again in a moment).{C_RESET}\n")
+            return
+
+        if reg:
+            cached = reg.store_station_facilities(
+                station_key=station.key,
+                station_name=station.name,
+                network=station.network or "unknown",
+                lat=station.lat,
+                lon=station.lon,
+                pois=pois,
+                radius_m=radius_m
+            )
+            print(f"  {C_BOLD}Quality Score:{C_RESET} {cached.get('badge', '')}\n")
+
+    # Prominently display immediate doorstep facilities (<= 100m)
+    doorstep = [p for p in pois if p.get("dist_m", 999.0) <= 100.0]
+    if doorstep:
+        print(f"  🚪 {C_BOLD}Immediate Doorstep (≤ 100m — 1-2 min walk) ({len(doorstep)}):{C_RESET}")
+        for poi in doorstep:
+            dist_str = f"{poi['dist_m']:.0f}m"
+            emoji = poi.get("emoji", "📍")
+            print(f"     • {emoji} {C_CYAN}{poi['name']}{C_RESET} — {poi['category']} ({dist_str})")
+        print()
+    elif pois:
+        closest = pois[0]
+        print(f"  🚪 {C_BOLD}Immediate Doorstep (≤ 100m):{C_RESET} {C_DIM}None within 100m (closest is {closest['name']} at {closest['dist_m']:.0f}m){C_RESET}\n")
 
     plural = "y" if len(pois) == 1 else "ies"
-    print(f"  Found {len(pois)} named facilit{plural} within {radius_m}m:\n")
-    max_show = 25
-    for i, poi in enumerate(pois[:max_show], 1):
-        dist_str = f"{poi['dist_m']:.0f}m"
-        print(f"  {i:>2}. {C_CYAN}{poi['name']}{C_RESET} \u2014 {poi['category']} ({dist_str})")
-    if len(pois) > max_show:
-        print(f"  ... and {len(pois) - max_show} more within {radius_m}m.")
-    print()
+    print(f"  {C_BOLD}All Facilities within {radius_m}m ({len(pois)} total):{C_RESET}\n")
+
+    # Group POIs by category group
+    groups = {}
+    for p in pois:
+        grp = p.get("group", "Other Facilities")
+        emoji = p.get("emoji", "📍")
+        key = (grp, emoji)
+        if key not in groups:
+            groups[key] = []
+        groups[key].append(p)
+
+    total_shown = 0
+    max_total = 35
+    for (grp_name, grp_emoji), grp_pois in groups.items():
+        if total_shown >= max_total:
+            break
+        print(f"  {grp_emoji} {C_BOLD}{grp_name}{C_RESET} ({len(grp_pois)}):")
+        for poi in grp_pois:
+            if total_shown >= max_total:
+                break
+            dist_str = f"{poi['dist_m']:.0f}m"
+            print(f"     • {C_CYAN}{poi['name']}{C_RESET} — {poi['category']} ({dist_str})")
+            total_shown += 1
+        print()
+
+    if len(pois) > total_shown:
+        print(f"  {C_GRAY}... and {len(pois) - total_shown} more facilities within {radius_m}m.{C_RESET}\n")
 
 
 def main():
@@ -1043,7 +1126,7 @@ DESCRIPTION
     g_network.add_argument("--network", "-n", type=str, help="Filter by network - free-text substring match against network/operator/station-name/source (case-insensitive). Known first-party networks: tesla, chargefox (covers NRMA, WA EV Network, Qld Electric Highway sub-brands), evx, evie, bppulse, ampcharge (covers Ampol Foodary). Use 'plugshare' to see only PlugShare-sourced listings, or any other text to match a PlugShare-aggregated sub-brand (e.g. Exploren).")
 
     g_sort = parser.add_argument_group("Sorting & Time of Use")
-    g_sort.add_argument("--sort", "-s", choices=["distance", "price", "power", "stalls", "name", "state"], default="distance", help="Sort order (default: distance)")
+    g_sort.add_argument("--sort", "-s", choices=["distance", "price", "power", "stalls", "name", "state", "facilities", "facility", "rating"], default="distance", help="Sort order (default: distance)")
     g_sort.add_argument("-t", "--time", type=str, help="Evaluate TOU pricing at specific local time (HH:MM)")
 
     g_output = parser.add_argument_group("Output Controls")
@@ -1060,6 +1143,12 @@ DESCRIPTION
     g_sync.add_argument("--sync-plugshare", action="store_true", help="Discover and cache PlugShare 3rd-party stations across Australia or near a location")
     g_sync.add_argument("--sync-ampcharge", action="store_true", help="Download and cache all Ampol AmpCharge & Ampol Foodary EV fast-charging sites across Australia")
     g_sync.add_argument("--export-consolidated", "--sync-master", action="store_true", help="Compile and export multi-view master charging_stations.json to Tessie data home")
+
+    g_facilities = parser.add_argument_group("Nearby Facilities & POI Lookup")
+    g_facilities.add_argument("--facilities", "-f", "--poi", action="store_true", help="Look up and display nearby facilities (cafes, dining, supermarkets, retail, amenities) around matching station(s)")
+    g_facilities.add_argument("--facilities-radius", "--radius-m", type=int, default=250, help="Search radius in meters for nearby facilities (default: 250)")
+    g_facilities.add_argument("--min-facilities", "--facilities-min", choices=["excellent", "good", "basic", "sparse"], help="Filter stations meeting minimum facility quality rating tier")
+    g_facilities.add_argument("--sync-facilities", action="store_true", help="Batch look up and cache nearby facilities for matching stations in station_facilities.json")
 
     g_registry = parser.add_argument_group("Registry Filters & Batch Updates")
     g_registry.add_argument("--plugshare", "--inspect-plugshare", type=str, help="PlugShare location ID(s) to inspect / scrape live (comma-separated)")
@@ -1492,7 +1581,8 @@ DESCRIPTION
         "speed_tier": speed_tier,
         "min_kw": args.min_kw,
         "network": args.network,
-        "state": args.state
+        "state": args.state,
+        "min_facilities": getattr(args, "min_facilities", None)
     }
 
     # Execute search
@@ -1505,36 +1595,69 @@ DESCRIPTION
     # it must never be derived from the raw args.sort default alone.
     effective_sort = args.sort
 
-    if args.all or args.state or (not args.near and not args.query):
-        # Full country / state list mode - there is no reference point here, so
-        # "distance" (the CLI default) has no meaning; fall back to state ordering.
+    explicit_sort = any(a in sys.argv for a in ("--sort", "-s")) or any(a.startswith("--sort=") for a in sys.argv)
+    explicit_radius = any(a in sys.argv for a in ("--radius", "-r", "--radius-km")) or any(a.startswith(("--radius=", "-r=", "--radius-km=")) for a in sys.argv)
+    is_state_or_all = bool(args.all or args.state)
+
+    if args.near or explicit_sort or not is_state_or_all:
+        ref_loc = args.near or "Home"
+        ref_lat, ref_lon, ref_label = resolve_reference_coords(ref_loc)
+
+    if is_state_or_all:
         state_suffix = f" IN {args.state.upper()}" if args.state else " IN AUSTRALIA"
         type_lbl = "SUPERCHARGERS" if args.sc else ("DC FAST CHARGERS" if args.dc else ("AC CHARGERS" if args.ac else "CHARGING STATIONS"))
         title = f"{type_lbl}{state_suffix}"
-        effective_sort = args.sort if args.sort != "distance" else "state"
-        stations = manager.get_all_stations(filters=filters, sort_by=effective_sort, eval_time=args.time)
+        if not explicit_sort and not args.near and args.sort == "distance":
+            effective_sort = "state"
+        else:
+            effective_sort = args.sort
+        stations = manager.get_all_stations(
+            filters=filters,
+            sort_by=effective_sort,
+            eval_time=args.time,
+            ref_lat=ref_lat,
+            ref_lon=ref_lon
+        )
     elif args.query:
-        # Text query mode - also no fixed reference point, so "distance" falls back
-        # to alphabetical-by-name (search_by_text's own default) rather than lying
-        # about a distance sort that never happened.
         title = "MATCHING CHARGING STATIONS"
         ref_label = f'Query: "{args.query}"'
-        effective_sort = args.sort if args.sort != "distance" else "name"
-        stations = manager.search_by_text(args.query, filters=filters, sort_by=effective_sort, eval_time=args.time)
+        if not explicit_sort and not args.near and args.sort == "distance":
+            effective_sort = "name"
+        else:
+            effective_sort = args.sort
+        stations = manager.search_by_text(
+            args.query,
+            filters=filters,
+            sort_by=effective_sort,
+            eval_time=args.time,
+            ref_lat=ref_lat,
+            ref_lon=ref_lon
+        )
     else:
         ref_loc = args.near or "Home"
-        ref_lat, ref_lon, ref_label = resolve_reference_coords(ref_loc)
-        active_radius = args.radius
         if ref_lat is not None and ref_lon is not None:
-            title = f"CHARGERS NEAR {ref_label.upper()}"
-            effective_sort = args.sort
-            stations = manager.search_nearby(
-                ref_lat, ref_lon,
-                radius_km=args.radius,
-                filters=filters,
-                sort_by=effective_sort,
-                eval_time=args.time
-            )
+            if explicit_radius and args.radius and args.radius > 0:
+                active_radius = args.radius
+                title = f"CHARGERS NEAR {ref_label.upper()}"
+                effective_sort = args.sort
+                stations = manager.search_nearby(
+                    ref_lat, ref_lon,
+                    radius_km=args.radius,
+                    filters=filters,
+                    sort_by=effective_sort,
+                    eval_time=args.time
+                )
+            else:
+                type_lbl = "SUPERCHARGERS" if args.sc else ("DC FAST CHARGERS" if args.dc else ("AC CHARGERS" if args.ac else "CHARGING STATIONS"))
+                title = f"{type_lbl} IN AUSTRALIA"
+                effective_sort = args.sort
+                stations = manager.get_all_stations(
+                    filters=filters,
+                    sort_by=effective_sort,
+                    eval_time=args.time,
+                    ref_lat=ref_lat,
+                    ref_lon=ref_lon
+                )
         else:
             print(f"❌ Error: Could not resolve reference location '{ref_loc}'.", file=sys.stderr)
             sys.exit(1)
@@ -1566,6 +1689,51 @@ DESCRIPTION
         print(f"🔄 Starting batch update for {target_status} stations (historical changes will be archived)...")
         stats = manager.batch_reverify_stations(stations, status_filter=target_status)
         print(f"\n✔ Batch update complete: {stats['SUCCESS']} updated, {stats['ERROR']} failed out of {stats['TOTAL']} target stations.")
+        return
+
+    # Batch Facilities Sync Action
+    if getattr(args, "sync_facilities", False):
+        if not stations:
+            print(f"❌ No stations found matching current criteria to sync facilities for.")
+            return
+        radius = args.facilities_radius or 250
+        print(f"\n🔄 Batch syncing facilities for {len(stations)} station(s) (search radius: {radius}m)...")
+        try:
+            from tessie_places import query_overpass_pois
+            from station_facilities import get_facilities_registry
+            fac_reg = get_facilities_registry()
+        except ImportError:
+            try:
+                from lib.station_facilities import get_facilities_registry
+                fac_reg = get_facilities_registry()
+            except ImportError:
+                fac_reg = None
+
+        synced_count = 0
+        for i, st in enumerate(stations, 1):
+            if not st.lat or not st.lon:
+                continue
+            print(f"  [{i}/{len(stations)}] {st.name} ({st.state or ''})...", end="", flush=True)
+            try:
+                pois = query_overpass_pois(st.lat, st.lon, radius_m=radius)
+                if fac_reg:
+                    rec = fac_reg.store_station_facilities(
+                        station_key=st.key,
+                        station_name=st.name,
+                        network=st.network or "unknown",
+                        lat=st.lat,
+                        lon=st.lon,
+                        pois=pois,
+                        radius_m=radius
+                    )
+                    print(f" ✔ {rec.get('badge')}")
+                    synced_count += 1
+                else:
+                    print(f" ✔ Found {len(pois)} facilities")
+            except Exception as e:
+                print(f" ❌ Error: {e}")
+            time.sleep(max(args.delay, 1.0))
+        print(f"\n✔ Facilities sync complete: {synced_count} station records cached in station_facilities.json.")
         return
 
     # Multi-View comparison mode
@@ -1602,6 +1770,8 @@ DESCRIPTION
         sort_mode_desc = "Max Power (kW, Highest First)"
     elif effective_sort == "stalls":
         sort_mode_desc = "Stall Count (Highest First)"
+    elif effective_sort in ("facilities", "facility", "rating"):
+        sort_mode_desc = "Facilities Quality Rating (Best Amenities First)"
     elif effective_sort == "name":
         sort_mode_desc = "Station Name (Alphabetical)"
     elif effective_sort == "state":
@@ -1620,6 +1790,20 @@ DESCRIPTION
         )
 
     render_cb()
+
+    # Facilities CLI direct execution mode
+    if args.facilities:
+        if not stations:
+            print(f"{C_YELLOW}⚠ No stations found to look up nearby facilities.{C_RESET}")
+            return
+        radius = args.facilities_radius or 250
+        limit_fac = min(len(stations), 5 if len(stations) > 1 else 1)
+        for st in stations[:limit_fac]:
+            display_nearby_facilities(st, radius_m=radius)
+        if len(stations) > limit_fac:
+            print(f"  {C_GRAY}(Showing facilities for top {limit_fac} matching stations. Select a specific station to inspect further.){C_RESET}\n")
+        if not sys.stdin.isatty():
+            return
 
     # Interactive Station Selector Loop
     if sys.stdin.isatty():
@@ -1694,7 +1878,7 @@ DESCRIPTION
                 
             print(f"  [{C_GREEN}u{C_RESET}] Update / Re-verify this station live (archives historical changes)")
             print(f"  [{C_GREEN}m{C_RESET}] Open in Google Maps (navigation / coordinates)")
-            print(f"  [{C_GREEN}f{C_RESET}] Nearby Facilities (shops, food, amenities within 250m - via OpenStreetMap)")
+            print(f"  [{C_GREEN}f{C_RESET}] Nearby Facilities (instant pullup; type 'f 500' for radius or 'f r' to refresh live)")
             print(f"  [{C_GREEN}b{C_RESET}] Back to station list")
             print(f"  [{C_GREEN}q{C_RESET}] Quit")
             print()
@@ -1734,8 +1918,16 @@ DESCRIPTION
                 gmap_url = f"https://www.google.com/maps/search/?api=1&query={sel.lat},{sel.lon}"
                 import subprocess
                 subprocess.run(["open", gmap_url] if sys.platform == "darwin" else ["xdg-open", gmap_url], check=False)
-            elif act in ("f", "facilities", "nearby"):
-                display_nearby_facilities(sel)
+            elif act.startswith("f") or act in ("facilities", "nearby"):
+                parts = act.split()
+                radius = args.facilities_radius or 250
+                force = "refresh" in act or act == "fr"
+                for p in parts[1:]:
+                    if p.isdigit():
+                        radius = int(p)
+                    elif p in ("r", "refresh", "-r", "--refresh"):
+                        force = True
+                display_nearby_facilities(sel, radius_m=radius, force_refresh=force)
                 input("\nPress Enter to continue...")
 
             render_cb()
