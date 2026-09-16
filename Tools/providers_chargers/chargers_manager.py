@@ -81,21 +81,32 @@ def _jaccard_similarity(set1: set, set2: set) -> float:
     return intersection / union if union > 0 else 0.0
 
 
+def _hardware_class_mismatch(s1: UnifiedStationRecord, s2: UnifiedStationRecord) -> bool:
+    """
+    True if the two records report fundamentally different charging classes
+    (AC destination vs DC-capable/supercharger) - see BUG-115 in
+    are_stations_co_located() for the concrete case this exists to catch.
+    """
+    t1, t2 = s1.speed_tier, s2.speed_tier
+    if not t1 or not t2:
+        return False
+    return (t1 == "ac_destination") != (t2 == "ac_destination")
+
+
 def are_stations_co_located(s1: UnifiedStationRecord, s2: UnifiedStationRecord, max_dist_m: float = 250.0) -> bool:
     """
     Determines if two station records represent the same physical charging site across apps.
     Criteria:
     1. Distance <= max_dist_m (default 250 meters for carparks / shopping centres).
     2. Same network + token similarity >= 0.20 or identical suburb/postcode.
-    3. Unconditionally co-located if distance <= 45m with street token overlap.
+    3. Co-located if distance <= 35m, UNLESS the two are on different
+       networks AND report fundamentally different charging classes (AC
+       vs DC) - see BUG-115, 2026-09-16.
     """
     dist_km = haversine_km(s1.lat, s1.lon, s2.lat, s2.lon)
     dist_m = dist_km * 1000.0
     if dist_m > max_dist_m:
         return False
-
-    if dist_m <= 35.0:
-        return True
 
     # Check network match
     net1 = (s1.network or "").lower()
@@ -112,6 +123,27 @@ def are_stations_co_located(s1: UnifiedStationRecord, s2: UnifiedStationRecord, 
                 ("exploren" in net1 and "exploren" in net2) or
                 ("jolt" in net1 and "jolt" in net2) or
                 ("nrma" in net1 and "nrma" in net2))
+
+    if dist_m <= 35.0:
+        # BUG-115 (AGENTS.local.md, 2026-09-16): this used to be an
+        # UNCONDITIONAL "same charger" verdict at this range, on the
+        # assumption two different operators never install that close
+        # together - false in practice: "NRMA Fast Charger Cowra" (NRMA
+        # KML, DC, 2x CCS2) and "Cowra Art Gallery EV Chargers" (Exploren,
+        # AC, 2x Type 2 22kW) sit ~27m apart at the same real address and
+        # got silently merged into one record, hiding one of two genuinely
+        # separate, independently-operated chargers. The user's own
+        # diagnosis: "With the different charging speed it's obvious" -
+        # a single physical charger can't report both AC-only and DC-
+        # capable specs across sources, so a fundamental AC-vs-DC mismatch
+        # between two DIFFERENT networks this close together is now treated
+        # as two real installs, not one misreported one. Same-network pairs
+        # (same_net True) are unaffected - a spec disagreement there is far
+        # more likely a data-quality issue on one side than proof of two
+        # chargers, and demanding a match would risk splitting genuinely
+        # identical stations.
+        if same_net or not _hardware_class_mismatch(s1, s2):
+            return True
 
     # Two DIFFERENT Tier-1 (first-party authoritative) providers are never
     # the same physical charger just because their names/addresses look
