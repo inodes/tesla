@@ -49,7 +49,8 @@ tesla/
 │   ├── power_cost_calculator.py    # Full electricity-bill reconstruction (usage + supply + solar credit + demand)
 │   ├── drives_sync_all.sh          # One command: Tessie drives, fetch + consolidate
 │   ├── charging_sync_all.sh        # One command: Tessie charges + Evnex + invoices + AGL usage + PVOutput/AGL/Evnex cross-check prep, fetch + consolidate
-│   └── charger_sync_all.sh        # One command: fetch new charger hardware across every network, near Home
+│   ├── charger_sync_all.sh        # One command: fetch new charger hardware across every network, near Home
+│   └── sync_all.sh                 # Runs all 3 domains above in one command (not dashcam - see its own header)
 │
 ├── .github/                        # GitHub Actions CI & community standards
 ├── LICENSE                         # MIT License
@@ -59,6 +60,8 @@ tesla/
 ---
 
 ## ⚡ Quick Start
+
+👉 *In a hurry? `./Tools/sync_all.sh` runs the Drives, Charging Sessions, and Charger Discovery one-command syncs below (2, 3, 4) back to back - it's just a thin wrapper around them, not a replacement for running one on its own. Doesn't include TeslaCam sync (1) - that needs physical drives connected.*
 
 ### 1. Multi-Drive TeslaCam Backup
 ```bash
