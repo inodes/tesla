@@ -583,24 +583,43 @@ class UnifiedStationRecord:
         """Returns short type icon (🔴 SC, 🔌 Dest, 🦊 CF, ⚡ NRMA, 🕊️ Evie, 🟢 BP, ⛽ Amp, 🟣 Exp, 🔵 Jolt, 🔌 3rd)."""
         if self.speed_tier == "supercharger":
             return "🔴 SC"
-        if self.source == "tesla" or "tesla" in (self.network or "").lower():
-            return "🔌 Dest"
         net = (self.network or "").lower()
-        if "chargefox" in net:
+        src = (self.source or "").lower()
+        if self.source == "tesla" or ("tesla" in net and "tesla" in src):
+            return "🔌 Dest"
+        # BUG-107 (AGENTS.local.md, 2026-09-16): a network-specific badge is
+        # only trustworthy when this record has ACTUAL Tier-1 provenance for
+        # that network (src - `source`, a "+"-joined provenance tag like
+        # "jolt" or a merged "jolt+plugshare" - contains that network's own
+        # tag), never just because `network` TEXT says so. `network` is a
+        # free-text label a PURE PlugShare ("Tier 2 Aggregator") record can
+        # self-report as anything at all, unverified against the real
+        # network's own registry - caught concretely via the user's own
+        # report of a real PlugShare listing named "Jolt - Meadowbank" that
+        # doesn't match any station in JOLT's actual live feed, plus (found
+        # while fixing it) a "Sydney Olympic Park" listing self-tagged
+        # "NRMA" that's equally unverified (`sources: ["plugshare"]` only,
+        # no `chargefox` provenance at all). A name-only match with no
+        # matching source now falls through to the generic "3rd" badge - an
+        # honest "unverified 3rd-party listing" signal instead of a
+        # confident, possibly-wrong brand badge. (NRMA has no separate
+        # source tag of its own - see AGENTS.md's own "chargefox (covers
+        # NRMA...)" convention - so it's verified via `chargefox` in src.)
+        if "chargefox" in net and "chargefox" in src:
             return "🦊 CF"
-        if "nrma" in net:
+        if "nrma" in net and "chargefox" in src:
             return "⚡ NRMA"
-        if "evx" in net or self.source == "evx":
+        if "evx" in net and "evx" in src:
             return "🔌 EVX"
-        if "evie" in net:
+        if "evie" in net and "evie" in src:
             return "🕊️ Evie"
-        if "bp" in net:
+        if "bp" in net and "bp" in src:
             return "🟢 BP"
-        if "ampcharge" in net or "ampol" in net:
+        if ("ampcharge" in net or "ampol" in net) and "ampol" in src:
             return "⛽ Amp"
-        if "exploren" in net:
+        if "exploren" in net and "exploren" in src:
             return "🟣 Exp"
-        if "jolt" in net:
+        if "jolt" in net and "jolt" in src:
             return "🔵 Jolt"
         return "🔌 3rd"
 
