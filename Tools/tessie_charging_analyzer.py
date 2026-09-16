@@ -4779,173 +4779,6 @@ class TessieChargingAnalyzer:
         self.load_charges()
         self.reconcile(interactive=False)
 
-    def list_chargers(self):
-        print(f"\n{C_YELLOW}┌────────────────────────────────────────────────────────────────────────────────────────┐{C_RESET}")
-        print(f"{C_YELLOW}│ ℹ️  CHARGER DISCOVERY & SEARCH NOTICE                                                    │{C_RESET}")
-        print(f"{C_YELLOW}├────────────────────────────────────────────────────────────────────────────────────────┤{C_RESET}")
-        print(f"│ Charger discovery, searching, pricing comparison, and TOU rate lookups have moved to  │")
-        print(f"│ the dedicated unified discovery tool: {C_BOLD}./Tools/charger_find.py{C_RESET}                       │")
-        print(f"│                                                                                        │")
-        print(f"│ Usage Examples:                                                                        │")
-        print(f"│   • Search nearby:          ./Tools/charger_find.py --near 'Ryde'                     │")
-        print(f"│   • Tesla Superchargers:    ./Tools/charger_find.py --sc                              │")
-        print(f"│   • Specific network:       ./Tools/charger_find.py --network chargefox               │")
-        print(f"│   • Sort by active price:   ./Tools/charger_find.py --sort price                      │")
-        print(f"│   • Export master JSON:     ./Tools/charger_find.py --export-consolidated             │")
-        print(f"{C_YELLOW}└────────────────────────────────────────────────────────────────────────────────────────┘{C_RESET}\n")
-
-        sc_list = list(self.superchargers.items())
-        widths = [4, 7, 28, 28, 8, 6, 12, 28]
-        total_w = sum(widths) + len(widths) - 1
-
-        print(f"\n┌{'─' * total_w}┐")
-        sc_title = f" 🔴 {C_BOLD}REGISTERED TESLA SUPERCHARGERS ({len(sc_list)} stations){C_RESET}"
-        print(f"│{pad_display(sc_title, total_w, 'left')}│")
-        print("├" + "┬".join("─" * w for w in widths) + "┤")
-        headers = ["#", "State", "Station Name", "General Location / Suburb", "Stalls", "Tier", "Access", "Rates (AUD)"]
-        print("│" + "│".join(pad_display(f"{C_BOLD}{h}{C_RESET}", w, "center") for h, w in zip(headers, widths)) + "│")
-        print("├" + "┼".join("─" * w for w in widths) + "┤")
-
-        for idx, (name, data) in enumerate(sc_list, 1):
-            meta = data.get("tesla_metadata", {})
-            loc = data.get("location", {})
-            hw = data.get("hardware", {})
-            comp = data.get("compatibility", {})
-            cost = data.get("tessie_cost_config", {})
-            st_state = loc.get("state") or (name.split(",")[1].strip() if "," in name else "-")
-            suburb = loc.get("suburb") or meta.get("general_location") or "-"
-            
-            schedules = cost.get("rate_schedules", [])
-            sched_str = f"{len(schedules)} TOU periods" if len(schedules) > 1 else (f"${schedules[0].get('rate_per_kwh')}/kWh" if schedules else f"${cost.get('per_kwh_flat', 0):.2f}/kWh flat")
-            access_str = f"{C_GREEN}CCS2 All{C_RESET}" if comp.get("open_to_non_tesla") else "Tesla Only"
-            stalls_str = f"{hw.get('stalls')} bays" if hw.get('stalls') else "-"
-            tier_str = hw.get("tier", "-") or "-"
-
-            row_cells = [
-                pad_display(str(idx) + " ", widths[0], "right"),
-                pad_display(st_state, widths[1], "center"),
-                pad_display(f" {name}", widths[2], "left", truncate=True),
-                pad_display(f" {suburb}", widths[3], "left", truncate=True),
-                pad_display(stalls_str + " ", widths[4], "right"),
-                pad_display(tier_str, widths[5], "center"),
-                pad_display(" " + access_str, widths[6], "left"),
-                pad_display(f" {sched_str}", widths[7], "left", truncate=True)
-            ]
-            print("│" + "│".join(row_cells) + "│")
-        print("└" + "┴".join("─" * w for w in widths) + "┘\n")
-
-        oth_list = list(self.charging_stations.items())
-        widths_oth = [4, 7, 28, 22, 10, 10, 12, 28]
-        total_w_oth = sum(widths_oth) + len(widths_oth) - 1
-
-        print(f"┌{'─' * total_w_oth}┐")
-        oth_title = f" 🏢 {C_BOLD}REGISTERED TESLA DESTINATION & HOME CHARGERS ({len(oth_list)} stations){C_RESET}"
-        print(f"│{pad_display(oth_title, total_w_oth, 'left')}│")
-        print("├" + "┬".join("─" * w for w in widths_oth) + "┤")
-        headers_oth = ["#", "State", "Station / Location Name", "Network / Operator", "Type", "Power", "Hardware", "Rates (AUD)"]
-        print("│" + "│".join(pad_display(f"{C_BOLD}{h}{C_RESET}", w, "center") for h, w in zip(headers_oth, widths_oth)) + "│")
-        print("├" + "┼".join("─" * w for w in widths_oth) + "┤")
-
-        for idx, (name, data) in enumerate(oth_list, 1):
-            st_type = data.get("type") or data.get("tesla_metadata", {}).get("type", "ac")
-            is_dest = "destination" in str(st_type).lower() or "destination" in name.lower()
-            emoji = "🏠" if st_type == "home" else ("🅿️" if is_dest else "🔌")
-            hw = data.get("hardware", {})
-            costs = data.get("costs", {}) or data.get("tessie_cost_config", {})
-            
-            if st_type == "home":
-                net = "Home AC"
-            elif is_dest:
-                net = "Tesla Destination"
-            else:
-                net = data.get("network") or data.get("operator") or "Tesla Destination"
-
-            type_lbl = "Home AC" if st_type == "home" else ("Tesla Dest" if is_dest else "AC Public")
-            pwr_val = hw.get("max_power_kw") or hw.get("maxPowerKw") or 22.0
-            pwr = f"{float(pwr_val):.0f} kW" if pwr_val else "-"
-            hw_type = hw.get("tier") or hw.get("charger_type") or "Type 2"
-            
-            if "per_kwh_flat" in costs and costs.get("per_kwh_flat") is not None:
-                sched_str = f"${costs.get('per_kwh_flat', 0):.2f}/kWh flat" if costs.get("per_kwh_flat") > 0 else "Free"
-            elif "flat_per_kwh" in costs:
-                sched_str = f"${costs.get('flat_per_kwh', 0):.2f}/kWh flat" if costs.get('flat_per_kwh') > 0 else "Free"
-            else:
-                sched_str = "Free"
-
-            loc = data.get("location", {}) if isinstance(data.get("location"), dict) else {}
-            st_state = loc.get("state") or data.get("state")
-            if (not st_state or st_state == "-") and loc.get("lat") and loc.get("lon"):
-                try:
-                    from charger_find_tesla import state_from_coords
-                    resolved_st, _ = state_from_coords(loc.get("lat"), loc.get("lon"))
-                    if resolved_st:
-                        st_state = resolved_st
-                except Exception:
-                    pass
-            st_state = st_state or "-"
-
-            row_cells = [
-                pad_display(str(idx) + " ", widths_oth[0], "right"),
-                pad_display(st_state, widths_oth[1], "center"),
-                pad_display(f" {emoji} {name}", widths_oth[2], "left", truncate=True),
-                pad_display(f" {net}", widths_oth[3], "left", truncate=True),
-                pad_display(" " + type_lbl, widths_oth[4], "left"),
-                pad_display(pwr + " ", widths_oth[5], "right"),
-                pad_display(" " + hw_type, widths_oth[6], "left"),
-                pad_display(f" {sched_str}", widths_oth[7], "left", truncate=True)
-            ]
-            print("│" + "│".join(row_cells) + "│")
-        print("└" + "┴".join("─" * w for w in widths_oth) + "┘\n")
-
-        # Table 3: PlugShare & 3rd-Party Multi-Network Registries
-        if self.plugshare_chargers:
-            ps_list = list(self.plugshare_chargers.items())
-            print(f"┌{'─' * total_w_oth}┐")
-            ps_title = f" 🌐 {C_BOLD}REGISTERED MULTI-NETWORK PUBLIC CHARGERS ({len(ps_list)} stations — Chargefox, Evie, Exploren, AmpCharge, BP Pulse, NRMA){C_RESET}"
-            print(f"│{pad_display(ps_title, total_w_oth, 'left')}│")
-            print("├" + "┬".join("─" * w for w in widths_oth) + "┤")
-            print("│" + "│".join(pad_display(f"{C_BOLD}{h}{C_RESET}", w, "center") for h, w in zip(headers_oth, widths_oth)) + "│")
-            print("├" + "┼".join("─" * w for w in widths_oth) + "┤")
-
-            for idx, (name, data) in enumerate(ps_list, 1):
-                ps_meta = data.get("plugshare_metadata", {}) if isinstance(data.get("plugshare_metadata"), dict) else {}
-                loc = data.get("location", {}) if isinstance(data.get("location"), dict) else {}
-                hw = data.get("hardware", {}) if isinstance(data.get("hardware"), dict) else {}
-                tariffs = data.get("tariffs", {}) if isinstance(data.get("tariffs"), dict) else {}
-                
-                net = ps_meta.get("network") or data.get("network") or "3rd-Party"
-                pwr_val = hw.get("max_power_kw") or data.get("max_power_kw") or 0.0
-                is_fast = float(pwr_val) >= 25.0
-                type_lbl = "DC Fast" if is_fast else "AC Public"
-                emoji = "⚡" if "tesla" in net.lower() or "nrma" in net.lower() or "exploren" in net.lower() else ("🦊" if "chargefox" in net.lower() else ("🔌" if "evie" in net.lower() else ("🟢" if "bp" in net.lower() else "🔴")))
-                
-                pwr = f"{float(pwr_val):.0f} kW" if pwr_val else "-"
-                conns = hw.get("connector_types") or []
-                hw_type = conns[0] if conns else (hw.get("tier") or "-")
-                
-                flat_rate = tariffs.get("per_kwh_flat") or tariffs.get("rate_per_kwh")
-                if flat_rate is not None and float(flat_rate) > 0:
-                    sched_str = f"${float(flat_rate):.2f}/kWh"
-                elif flat_rate == 0.0 or tariffs.get("pricing_model") == "free":
-                    sched_str = "Free"
-                else:
-                    sched_str = "-"
-
-                st_state = loc.get("state") or data.get("state") or "-"
-
-                row_cells = [
-                    pad_display(str(idx) + " ", widths_oth[0], "right"),
-                    pad_display(st_state, widths_oth[1], "center"),
-                    pad_display(f" {emoji} {name}", widths_oth[2], "left", truncate=True),
-                    pad_display(f" {net}", widths_oth[3], "left", truncate=True),
-                    pad_display(" " + type_lbl, widths_oth[4], "left"),
-                    pad_display(pwr + " ", widths_oth[5], "right"),
-                    pad_display(" " + hw_type, widths_oth[6], "left"),
-                    pad_display(f" {sched_str}", widths_oth[7], "left", truncate=True)
-                ]
-                print("│" + "│".join(row_cells) + "│")
-            print("└" + "┴".join("─" * w for w in widths_oth) + "┘\n")
-
     def export_reconciliation(self, filepath, filtered_sessions=None):
         if not self.reconciled_sessions:
             self.reconcile()
@@ -5483,7 +5316,6 @@ EXAMPLES
     g_action = parser.add_argument_group("Inspection, Reconciliation & Invoice Actions")
     g_action.add_argument("--inspect", help="Deep-dive inspect a specific session by Charge # or Date")
     g_action.add_argument("--correlation", "--compare", action="store_true", help="Display 3-way correlation audit comparing Tessie summary, detailed telemetry CSV, and Invoices")
-    g_action.add_argument("--list-chargers", action="store_true", help="(Deprecated) List registered stations. Prefer using ./Tools/charger_find.py")
     g_action.add_argument("--consolidate", action="store_true", help="Consolidate all charges into charges_master.csv")
     g_action.add_argument("--update-master", "--update-all", "--fix-all", "--sync-invoices", action="store_true", help="Update charges_master.csv and individual charge files with official invoice costs/rates")
     g_action.add_argument("--rename-invoices", "--rename", action="store_true", help="Rename invoice PDFs to <date/time>_<network>_<invoice_num>_<place>.pdf")
@@ -5505,10 +5337,6 @@ EXAMPLES
         invoices_dir=args.invoices_dir,
         tolerance_mins=args.tolerance_mins
     )
-
-    if args.list_chargers:
-        analyzer.list_chargers()
-        return
 
     if args.consolidate:
         analyzer.consolidate_charges_master()

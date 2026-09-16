@@ -39,7 +39,6 @@ tesla/
 │   ├── charger_find.py            # Unified multi-network charger discovery (Tesla/Chargefox/EVX/Evie/
 │   │                                #   BP Pulse/PlugShare) - see Tools/providers_chargers/
 │   ├── charger_find_tesla.py      # Tesla Supercharger / Destination Charger explorer & live scraper
-│   ├── charger_find_plugshare.py  # Deprecated wrapper - delegates to charger_find.py (see REQ-056)
 │   ├── providers_power/            # Pluggable power-retailer/distributor billing providers (3.1) - one
 │   │                                #   BasePowerProvider subclass per retailer (currently just AGL),
 │   │                                #   swappable via config.json's "power_provider" key
@@ -121,7 +120,7 @@ tesla/
 ./Tools/charger_find_tesla.py --address Home --sc --list
 
 # PlugShare-listed 3rd-party DC fast chargers near a known place
-./Tools/charger_find_plugshare.py --near Home --dc --radius 15
+./Tools/charger_find.py --near Home --dc --radius 15 --network plugshare
 ```
 👉 *See [Tessie/README.md](Tessie/README.md) for full documentation on drives, charging reconciliation, invoices, tariffs, places, and charger discovery.*
 

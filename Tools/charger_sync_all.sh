@@ -2,7 +2,7 @@
 # charger_sync_all.sh - the one command for the Chargers domain: pull fresh
 # charger data for both registries this repo tracks - Tesla Superchargers /
 # Destination Chargers via charger_find_tesla.py, and PlugShare-listed
-# 3rd-party chargers via charger_find_plugshare.py (see AGENTS.md REQ-033).
+# 3rd-party chargers via charger_find.py --sync-plugshare (see AGENTS.md REQ-033).
 #
 # Scoped to near Home (50km radius) rather than a state/nationwide pull, to
 # keep this fast and avoid PlugShare's own rate-limiting on large bursts
