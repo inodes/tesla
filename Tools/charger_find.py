@@ -61,7 +61,8 @@ from providers_chargers import (
     PlugShareProvider,
     AmpChargeProvider,
     ExplorenProvider,
-    JoltProvider
+    JoltProvider,
+    NrmaProvider
 )
 
 C_RESET = "\033[0m"
@@ -75,6 +76,16 @@ C_BLUE = "\033[34m"
 C_MAGENTA = "\033[35m"
 C_ORANGE = "\033[38;5;214m"
 C_GRAY = "\033[90m"
+
+# BUG-111 (AGENTS.local.md, 2026-09-16): when --near is combined with a
+# non-distance --sort (e.g. --sort price) and no explicit --radius, the
+# closest N stations by distance are gathered FIRST, then re-sorted by the
+# requested field - rather than sorting/truncating a nationwide list, which
+# let a Supercharger 1400km away outrank anything actually near the given
+# point. A candidate COUNT (not a fixed km radius) is used deliberately so a
+# search from a remote/sparse area never returns zero results just because
+# nothing falls inside an arbitrary radius.
+NEAR_SORT_CANDIDATE_COUNT = 10
 
 _GEOCODE_CACHE = {}
 
@@ -622,6 +633,8 @@ def display_station_inspection_card(station: UnifiedStationRecord, eval_time: Op
         _field("📂", "Data Source", f"Jolt Registry (ID: {station.source_id})")
     elif station.source == "plugshare":
         _field("📂", "Data Source", f"PlugShare Registry (ID: {station.source_id})")
+    elif station.source == "nrma":
+        _field("📂", "Data Source", f"NRMA Registry (ID: {station.source_id})")
     else:
         _field("📂", "Data Source", f"{station.source.title()} Registry (ID: {station.source_id})")
 
@@ -634,6 +647,17 @@ def display_station_inspection_card(station: UnifiedStationRecord, eval_time: Op
         _field("🌐", "Co-located Networks", ", ".join(co_nets))
     elif station.network and station.network not in ("3rd-Party", "unknown"):
         _field("⚡", "Network", station.network)
+
+    # REQ-088 (AGENTS.local.md, 2026-09-16): when two same-tier sources (in
+    # practice, NRMA vs Chargefox for the ~28 sites they both list) disagree
+    # on a field, merge_station_records() keeps both values instead of
+    # silently picking one - surface that here rather than only in raw
+    # metadata, so a real discrepancy is visible instead of hidden behind
+    # whichever source happened to win the merge.
+    src_conflicts = meta.get("source_conflicts") or {}
+    for field_name, values in src_conflicts.items():
+        conflict_str = " vs. ".join(f"{src.title()}: {val}" for src, val in values.items())
+        _field("⚠️", f"Conflict ({field_name})", conflict_str)
 
     findus_list = meta.get("findus_list_name")
     findus_loc = meta.get("findus_location_name")
@@ -684,8 +708,22 @@ def display_station_inspection_card(station: UnifiedStationRecord, eval_time: Op
     _field("🔌", "Hardware", hw_desc)
     
     cb = (station.metadata or {}).get("connector_breakdown")
+    # BUG-114 (AGENTS.local.md, 2026-09-16): connector_breakdown is PlugShare
+    # metadata ("2 x CCS2 (DC 120kW)") that survives onto a merged record even
+    # when the primary (Tier 1) source's own "Hardware" line above already
+    # says the exact same thing in different words ("2 Stalls | Up to 120 kW")
+    # - user-reported as confusing duplication on Bunnings Gladesville. Only
+    # show the granular per-unit breakdown when it's actually informative,
+    # i.e. this site has more than one distinct connector/power combination
+    # (mixed hardware) - otherwise collapse to a plain connector type name,
+    # since the count and power are already stated once, above.
     if cb and isinstance(cb, list) and len(cb) > 0:
-        _field("🔌", "Connectors", ", ".join(cb))
+        if len(set(cb)) > 1:
+            _field("🔌", "Connectors", ", ".join(cb))
+        elif station.plugs:
+            _field("🔌", "Connectors", ", ".join(sorted(set(station.plugs))))
+        else:
+            _field("🔌", "Connectors", ", ".join(cb))
     elif station.plugs:
         _field("🔌", "Connectors", ", ".join(station.plugs))
 
@@ -1022,7 +1060,7 @@ def main():
     # content but now under one consistent heading style.
     synopsis = """charger_find.py --sync-all | --sync-tesla | --sync-chargefox | --sync-evx |
                      --sync-evie | --sync-bppulse | --sync-plugshare | --sync-ampcharge | --sync-exploren |
-                     --sync-jolt | --export-consolidated
+                     --sync-jolt | --sync-nrma | --export-consolidated
                      [--near PLACE] [--radius KM] [--state ST] [--new] [--add-all]
    or:  charger_find.py [--near PLACE | --all | --query TEXT] [--state ST]
                      [--sc | --dc | --ac] [--network NAME] [--min-kw KW]
@@ -1136,7 +1174,7 @@ DESCRIPTION
     g_speed.add_argument("--min-kw", type=float, default=0.0, help="Minimum charging power in kW (e.g. --min-kw 150)")
 
     g_network = parser.add_argument_group("Network Filter")
-    g_network.add_argument("--network", "-n", type=str, help="Filter by network - free-text substring match against network/operator/station-name/source (case-insensitive). Known first-party networks: tesla, chargefox (covers NRMA, WA EV Network, Qld Electric Highway sub-brands), evx, evie, bppulse, ampcharge (covers Ampol Foodary), exploren, jolt. Use 'plugshare' to see only PlugShare-sourced listings, or any other text to match a PlugShare-aggregated sub-brand.")
+    g_network.add_argument("--network", "-n", type=str, help="Filter by network - free-text substring match against network/operator/station-name/source (case-insensitive). Known first-party networks: tesla, chargefox (covers WA EV Network, Qld Electric Highway sub-brands), nrma (own Tier 1 KML feed, merged with Chargefox's ~28 overlapping NRMA sites where both cover the same site), evx, evie, bppulse, ampcharge (covers Ampol Foodary), exploren, jolt. Use 'plugshare' to see only PlugShare-sourced listings, or any other text to match a PlugShare-aggregated sub-brand.")
 
     g_sort = parser.add_argument_group("Sorting & Time of Use")
     g_sort.add_argument("--sort", "-s", choices=["distance", "price", "power", "stalls", "name", "state", "facilities", "facility", "rating"], default="distance", help="Sort order (default: distance)")
@@ -1147,7 +1185,7 @@ DESCRIPTION
     g_output.add_argument("--json", action="store_true", help="Output results in JSON format")
 
     g_sync = parser.add_argument_group("Synchronization")
-    g_sync.add_argument("--sync-all", action="store_true", help="End-to-end sync across all providers (Tesla, Chargefox, EVX, Evie, bp pulse, PlugShare, AmpCharge, Exploren, Jolt, Master Catalog)")
+    g_sync.add_argument("--sync-all", action="store_true", help="End-to-end sync across all providers (Tesla, Chargefox, EVX, Evie, bp pulse, PlugShare, AmpCharge, Exploren, Jolt, NRMA, Master Catalog)")
     g_sync.add_argument("--sync-tesla", action="store_true", help="Download, verify and cache Tesla Superchargers and Destination Chargers")
     g_sync.add_argument("--sync-chargefox", action="store_true", help="Download and cache all Chargefox & NRMA stations across Australia")
     g_sync.add_argument("--sync-evx", action="store_true", help="Download and cache all EVX Kerbside Polechargers across Australia")
@@ -1157,6 +1195,7 @@ DESCRIPTION
     g_sync.add_argument("--sync-ampcharge", action="store_true", help="Download and cache all Ampol AmpCharge & Ampol Foodary EV fast-charging sites across Australia")
     g_sync.add_argument("--sync-exploren", action="store_true", help="Download and cache all Exploren AC/DC charging stations across Australia")
     g_sync.add_argument("--sync-jolt", action="store_true", help="Download and cache all Jolt DC fast charging stations across Australia")
+    g_sync.add_argument("--sync-nrma", action="store_true", help="Download and cache all NRMA EV Charging Network stations across Australia")
     g_sync.add_argument("--export-consolidated", "--sync-master", action="store_true", help="Compile and export multi-view master charging_stations.json to Tessie data home")
 
     g_facilities = parser.add_argument_group("Nearby Facilities & POI Lookup")
@@ -1248,7 +1287,7 @@ DESCRIPTION
         # exit code reflect what actually happened.
         sync_results = []
 
-        print("🚀 [1/10] Starting Full Network Sync: Tesla Superchargers & Destination Chargers...")
+        print("🚀 [1/11] Starting Full Network Sync: Tesla Superchargers & Destination Chargers...")
         try:
             from charger_find_tesla import TeslaChargerExplorer
             explorer = TeslaChargerExplorer()
@@ -1270,7 +1309,7 @@ DESCRIPTION
             print(f"  {C_YELLOW}⚠️ Tesla sync encountered error: {e}{C_RESET}")
             sync_results.append(("Tesla", False))
 
-        print(f"\n{C_CYAN}🦊 [2/10] Syncing Chargefox & NRMA Network across Australia via GraphQL...{C_RESET}")
+        print(f"\n{C_CYAN}🦊 [2/11] Syncing Chargefox Network across Australia via GraphQL...{C_RESET}")
         cf_ok = False
         for p in manager.providers:
             if isinstance(p, ChargefoxProvider):
@@ -1282,7 +1321,7 @@ DESCRIPTION
                     print(f"  {C_YELLOW}⚠️ Chargefox sync encountered error: {e}{C_RESET}")
         sync_results.append(("Chargefox/NRMA", cf_ok))
 
-        print(f"\n{C_CYAN}🔌 [3/10] Syncing EVX Kerbside Polecharger Network across Australia...{C_RESET}")
+        print(f"\n{C_CYAN}🔌 [3/11] Syncing EVX Kerbside Polecharger Network across Australia...{C_RESET}")
         evx_ok = False
         for p in manager.providers:
             if isinstance(p, EVXProvider):
@@ -1294,7 +1333,7 @@ DESCRIPTION
                     print(f"  {C_YELLOW}⚠️ EVX sync encountered error: {e}{C_RESET}")
         sync_results.append(("EVX", evx_ok))
 
-        print(f"\n{C_CYAN}🕊️ [4/10] Syncing Evie Networks Fast Charging Stations across Australia...{C_RESET}")
+        print(f"\n{C_CYAN}🕊️ [4/11] Syncing Evie Networks Fast Charging Stations across Australia...{C_RESET}")
         evie_ok = False
         for p in manager.providers:
             if isinstance(p, EvieProvider):
@@ -1306,7 +1345,7 @@ DESCRIPTION
                     print(f"  {C_YELLOW}⚠️ Evie sync encountered error: {e}{C_RESET}")
         sync_results.append(("Evie", evie_ok))
 
-        print(f"\n{C_CYAN}⚡ [5/10] Syncing bp pulse DC Fast & Ultra-Fast Charging Stations across Australia...{C_RESET}")
+        print(f"\n{C_CYAN}⚡ [5/11] Syncing bp pulse DC Fast & Ultra-Fast Charging Stations across Australia...{C_RESET}")
         bp_ok = False
         for p in manager.providers:
             if isinstance(p, BPPulseProvider):
@@ -1318,7 +1357,7 @@ DESCRIPTION
                     print(f"  {C_YELLOW}⚠️ bp pulse sync encountered error: {e}{C_RESET}")
         sync_results.append(("bp pulse", bp_ok))
 
-        print(f"\n{C_CYAN}🔌 [6/10] Syncing PlugShare 3rd-party Network...{C_RESET}")
+        print(f"\n{C_CYAN}🔌 [6/11] Syncing PlugShare 3rd-party Network...{C_RESET}")
         ps_ok = False
         for p in manager.providers:
             if isinstance(p, PlugShareProvider):
@@ -1339,7 +1378,7 @@ DESCRIPTION
                     print(f"  {C_YELLOW}⚠️ PlugShare sync encountered error: {e}{C_RESET}")
         sync_results.append(("PlugShare", ps_ok))
 
-        print(f"\n{C_CYAN}⛽ [7/10] Syncing Ampol AmpCharge & Ampol Foodary EV Fast Charging Sites across Australia...{C_RESET}")
+        print(f"\n{C_CYAN}⛽ [7/11] Syncing Ampol AmpCharge & Ampol Foodary EV Fast Charging Sites across Australia...{C_RESET}")
         amp_ok = False
         for p in manager.providers:
             if isinstance(p, AmpChargeProvider):
@@ -1351,7 +1390,7 @@ DESCRIPTION
                     print(f"  {C_YELLOW}⚠️ AmpCharge sync encountered error: {e}{C_RESET}")
         sync_results.append(("AmpCharge", amp_ok))
 
-        print(f"\n{C_CYAN}🔋 [8/10] Syncing Exploren AC/DC Charging Network across Australia...{C_RESET}")
+        print(f"\n{C_CYAN}🔋 [8/11] Syncing Exploren AC/DC Charging Network across Australia...{C_RESET}")
         exploren_ok = False
         for p in manager.providers:
             if isinstance(p, ExplorenProvider):
@@ -1363,7 +1402,7 @@ DESCRIPTION
                     print(f"  {C_YELLOW}⚠️ Exploren sync encountered error: {e}{C_RESET}")
         sync_results.append(("Exploren", exploren_ok))
 
-        print(f"\n{C_CYAN}🔵 [9/10] Syncing Jolt DC Fast Charging Network across Australia...{C_RESET}")
+        print(f"\n{C_CYAN}🔵 [9/11] Syncing Jolt DC Fast Charging Network across Australia...{C_RESET}")
         jolt_ok = False
         for p in manager.providers:
             if isinstance(p, JoltProvider):
@@ -1375,7 +1414,19 @@ DESCRIPTION
                     print(f"  {C_YELLOW}⚠️ Jolt sync encountered error: {e}{C_RESET}")
         sync_results.append(("Jolt", jolt_ok))
 
-        print(f"\n{C_CYAN}🌐 [10/10] Compiling and Exporting Consolidated Master Registry...{C_RESET}")
+        print(f"\n{C_CYAN}⚡ [10/11] Syncing NRMA EV Charging Network across Australia...{C_RESET}")
+        nrma_ok = False
+        for p in manager.providers:
+            if isinstance(p, NrmaProvider):
+                try:
+                    synced_nrma = p.sync()
+                    print(f"  {C_GREEN}✔ Cached {len(synced_nrma)} NRMA stations to {p.registry_path}{C_RESET}")
+                    nrma_ok = True
+                except Exception as e:
+                    print(f"  {C_YELLOW}⚠️ NRMA sync encountered error: {e}{C_RESET}")
+        sync_results.append(("NRMA", nrma_ok))
+
+        print(f"\n{C_CYAN}🌐 [11/11] Compiling and Exporting Consolidated Master Registry...{C_RESET}")
         try:
             out_path, total_count = manager.export_consolidated_registry()
             print(f"  {C_GREEN}✔ Successfully exported {total_count} consolidated multi-view stations to:{C_RESET}")
@@ -1390,7 +1441,7 @@ DESCRIPTION
             print(f"\n{C_RED}💥 Full multi-network sync FINISHED WITH {len(failed)} FAILURE(S): {', '.join(failed)}{C_RESET}")
             print(f"   {C_DIM}(see the ⚠️ lines above for each one's error - nothing else below this line was skipped, only these steps.){C_RESET}")
             sys.exit(1)
-        print(f"\n{C_GREEN}✨ Full multi-network sync completed - all 10 steps succeeded.{C_RESET}")
+        print(f"\n{C_GREEN}✨ Full multi-network sync completed - all 11 steps succeeded.{C_RESET}")
         return
 
     if args.sync_tesla:
@@ -1492,6 +1543,14 @@ DESCRIPTION
                 print(f"{C_CYAN}🔵 Fetching all Jolt DC fast charging stations across Australia...{C_RESET}")
                 synced = p.sync()
                 print(f"{C_GREEN}✔ Successfully saved {len(synced)} Jolt stations to {p.registry_path}{C_RESET}")
+                return
+
+    if args.sync_nrma:
+        for p in manager.providers:
+            if isinstance(p, NrmaProvider):
+                print(f"{C_CYAN}⚡ Fetching all NRMA EV Charging Network stations across Australia...{C_RESET}")
+                synced = p.sync()
+                print(f"{C_GREEN}✔ Successfully saved {len(synced)} NRMA stations to {p.registry_path}{C_RESET}")
                 return
 
     if args.sync_plugshare:
@@ -1652,6 +1711,7 @@ DESCRIPTION
 
     explicit_sort = any(a in sys.argv for a in ("--sort", "-s")) or any(a.startswith("--sort=") for a in sys.argv)
     explicit_radius = any(a in sys.argv for a in ("--radius", "-r", "--radius-km")) or any(a.startswith(("--radius=", "-r=", "--radius-km=")) for a in sys.argv)
+    explicit_limit = any(a == "--limit" for a in sys.argv) or any(a.startswith("--limit=") for a in sys.argv)
     is_state_or_all = bool(args.all or args.state)
 
     if args.near or explicit_sort or not is_state_or_all:
@@ -1704,15 +1764,37 @@ DESCRIPTION
                 )
             else:
                 type_lbl = "SUPERCHARGERS" if args.sc else ("DC FAST CHARGERS" if args.dc else ("AC CHARGERS" if args.ac else "CHARGING STATIONS"))
-                title = f"{type_lbl} IN AUSTRALIA"
                 effective_sort = args.sort
-                stations = manager.get_all_stations(
-                    filters=filters,
-                    sort_by=effective_sort,
-                    eval_time=args.time,
-                    ref_lat=ref_lat,
-                    ref_lon=ref_lon
-                )
+                if effective_sort != "distance":
+                    # BUG-111: closest-N-first, then sort within that pool -
+                    # see NEAR_SORT_CANDIDATE_COUNT above for the rationale.
+                    title = f"{type_lbl} NEAR {ref_label.upper()}"
+                    # --limit's argparse default (100) is NOT a user request for a 100-
+                    # station candidate pool here - only an EXPLICIT --limit means
+                    # "widen the nearest-N pool to N"; otherwise this stays a tight
+                    # nearby set (NEAR_SORT_CANDIDATE_COUNT) so a non-distance sort
+                    # can't still surface something hundreds of km away.
+                    candidate_count = args.limit if explicit_limit else NEAR_SORT_CANDIDATE_COUNT
+                    distance_pool = manager.get_all_stations(
+                        filters=filters,
+                        sort_by="distance",
+                        eval_time=args.time,
+                        ref_lat=ref_lat,
+                        ref_lon=ref_lon
+                    )
+                    nearest_pool = distance_pool[:candidate_count]
+                    stations = manager.sort_records(nearest_pool, sort_by=effective_sort, eval_time=args.time)
+                    if nearest_pool:
+                        active_radius = max((s.distance_km or 0.0) for s in nearest_pool)
+                else:
+                    title = f"{type_lbl} IN AUSTRALIA"
+                    stations = manager.get_all_stations(
+                        filters=filters,
+                        sort_by=effective_sort,
+                        eval_time=args.time,
+                        ref_lat=ref_lat,
+                        ref_lon=ref_lon
+                    )
         else:
             print(f"❌ Error: Could not resolve reference location '{ref_loc}'.", file=sys.stderr)
             sys.exit(1)

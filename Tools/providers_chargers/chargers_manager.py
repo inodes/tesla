@@ -31,6 +31,7 @@ from .chargers_plugshare import PlugShareProvider
 from .chargers_ampcharge import AmpChargeProvider
 from .chargers_exploren import ExplorenProvider
 from .chargers_jolt import JoltProvider
+from .chargers_nrma import NrmaProvider
 
 
 def _normalize_street_word(w: str) -> str:
@@ -109,7 +110,8 @@ def are_stations_co_located(s1: UnifiedStationRecord, s2: UnifiedStationRecord, 
                 ("evie" in net1 and "evie" in net2) or
                 (("ampcharge" in net1 or "ampol" in net1) and ("ampcharge" in net2 or "ampol" in net2)) or
                 ("exploren" in net1 and "exploren" in net2) or
-                ("jolt" in net1 and "jolt" in net2))
+                ("jolt" in net1 and "jolt" in net2) or
+                ("nrma" in net1 and "nrma" in net2))
 
     # Two DIFFERENT Tier-1 (first-party authoritative) providers are never
     # the same physical charger just because their names/addresses look
@@ -158,6 +160,49 @@ def merge_station_records(primary: UnifiedStationRecord, secondary: UnifiedStati
     if primary.tier > secondary.tier:
         # Swap so primary is the higher authority (lower tier number)
         primary, secondary = secondary, primary
+
+    # REQ-088 (AGENTS.local.md, 2026-09-16): NRMA and Chargefox are the one
+    # Tier-1-vs-Tier-1 pairing in this codebase that CAN legitimately
+    # co-locate (are_stations_co_located()'s same_net check matches both
+    # sides' network="NRMA" text) - NRMA is a Chargefox network partner, so
+    # the same physical site can show up in both feeds. Equal tier alone
+    # doesn't pick a winner (the swap above only fires on tier MISMATCH), so
+    # without this, whichever provider happened to sort first won by
+    # accident. The user's explicit call: Chargefox's data is richer here
+    # (address, live pricing, confirmed hardware vs NRMA's name+GPS-point-
+    # only KML), so Chargefox is primary whenever both are present -
+    # regardless of sort order - while NRMA's confirmation that the site is
+    # still live carries through via merged_source/co_located_networks.
+    def _src(r):
+        return (r.source or "").lower()
+    if primary.tier == 1 and secondary.tier == 1:
+        if "nrma" in _src(primary) and "chargefox" in _src(secondary):
+            primary, secondary = secondary, primary
+
+    # Surface (rather than silently drop) meaningfully conflicting values
+    # between two same-tier sources describing the same site - e.g. NRMA's
+    # KML default-guess power rating vs Chargefox's confirmed hardware spec.
+    # Recorded on the merged record's metadata so the station detail view
+    # can show both sides with attribution instead of just picking one.
+    source_conflicts: Dict[str, Dict[str, Any]] = {}
+    if primary.tier == 1 and secondary.tier == 1 and _src(primary) != _src(secondary):
+        if (
+            primary.max_power_kw is not None
+            and secondary.max_power_kw is not None
+            and abs(primary.max_power_kw - secondary.max_power_kw) >= 1.0
+        ):
+            source_conflicts["max_power_kw"] = {
+                primary.source: primary.max_power_kw,
+                secondary.source: secondary.max_power_kw,
+            }
+        if (
+            primary.address and secondary.address
+            and primary.address.strip().lower() != secondary.address.strip().lower()
+        ):
+            source_conflicts["address"] = {
+                primary.source: primary.address,
+                secondary.source: secondary.address,
+            }
 
     # Deduplicate unique sources cleanly
     raw_sources = [s.strip() for s in f"{primary.source}+{secondary.source}".split("+") if s.strip()]
@@ -213,6 +258,9 @@ def merge_station_records(primary: UnifiedStationRecord, secondary: UnifiedStati
     merged_metadata["secondary_source_ids"] = list(dict.fromkeys(
         merged_metadata.get("secondary_source_ids", []) + [secondary_id]
     ))
+
+    if source_conflicts:
+        merged_metadata["source_conflicts"] = source_conflicts
 
     merged_amenities: Any
     if isinstance(primary.amenities, dict) and isinstance(secondary.amenities, dict):
@@ -330,7 +378,8 @@ class ChargerDiscoveryManager:
                 PlugShareProvider(),
                 AmpChargeProvider(),
                 ExplorenProvider(),
-                JoltProvider()
+                JoltProvider(),
+                NrmaProvider()
             ]
 
     def deduplicate_records(self, records: List[UnifiedStationRecord]) -> List[UnifiedStationRecord]:
@@ -465,12 +514,24 @@ class ChargerDiscoveryManager:
             # POSSIBLE_SPEED_TIERS=None (unknown/unrestricted) is never
             # skipped, so this is opt-in per provider and safe by default.
             possible_tiers = getattr(p, "POSSIBLE_SPEED_TIERS", None)
-            if (
-                requested_speed_tier
-                and possible_tiers is not None
-                and requested_speed_tier not in possible_tiers
-            ):
-                continue
+            if requested_speed_tier and possible_tiers is not None:
+                # BUG-110 (AGENTS.local.md, 2026-09-16): filter_station_records()'s
+                # "dc_fast" branch deliberately also accepts speed_tier=="supercharger"
+                # records (`st.speed_tier not in ("dc_fast", "supercharger")`) because
+                # a real Tesla Supercharger with non-Tesla (CCS2) access IS a DC fast
+                # charging option. This provider-level skip must match that same
+                # acceptance rule, or a provider whose POSSIBLE_SPEED_TIERS is only
+                # {"supercharger", ...} (i.e. TeslaProvider) gets silently skipped
+                # for every `--dc` query before filter_station_records ever runs -
+                # which is exactly why real, closer Superchargers were vanishing
+                # from `--near <place> --dc` results while `--sc` still found them
+                # fine. Skip only when the provider truly cannot produce anything
+                # that would pass either acceptance path.
+                if requested_speed_tier == "dc_fast":
+                    if "dc_fast" not in possible_tiers and "supercharger" not in possible_tiers:
+                        continue
+                elif requested_speed_tier not in possible_tiers:
+                    continue
 
             try:
                 recs = p.load_cached_registry()
@@ -676,6 +737,11 @@ class ChargerDiscoveryManager:
                 elif isinstance(p, JoltProvider) and "jolt" in src:
                     jolt_id = station.source_id or station.key.replace("Jolt_", "")
                     p.reverify_station(jolt_id)
+                    self.export_consolidated_registry()
+                    return True
+                elif isinstance(p, NrmaProvider) and "nrma" in src:
+                    nrma_id = station.source_id or station.key.replace("NRMA_", "")
+                    p.reverify_station(nrma_id)
                     self.export_consolidated_registry()
                     return True
         except Exception as e:
