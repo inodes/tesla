@@ -32,7 +32,7 @@ tesla/
 │   ├── providers_chargers/         # Pluggable charging-network adapters (Tesla/Chargefox/EVX/Evie/
 │   │                                #   BP Pulse/AmpCharge/Exploren/Jolt/NRMA/PlugShare),
 │   │                                #   orchestrated by charger_find.py
-│   ├── dashcam_sync.sh               # Multi-drive TeslaCam sync, audit & prune engine
+│   ├── sync_dashcam.sh               # Multi-drive TeslaCam sync, audit & prune engine
 │   ├── dashcam_exportdash.sh           # Local ExportDash web player launcher
 │   ├── tessie_drives_analyzer.py   # Drives explorer, footage linker, and master consolidator
 │   ├── tessie_charging_analyzer.py # Charging reconciliation & invoice parser
@@ -45,13 +45,13 @@ tesla/
 │   │                                #   BasePowerProvider subclass per retailer (currently just AGL),
 │   │                                #   swappable via config.json's "power_provider" key
 │   ├── evnex_explore.py            # Read-only dump of home charger (Evnex) status/session data
-│   ├── evnex_api_sync.py           # Idempotent sync: new completed Evnex sessions -> charges/deepdive/*.json
-│   ├── power_usage_sync.py         # Consolidate the active power provider's usage-export CSVs into one master CSV
+│   ├── api_sync_evnex.py           # Idempotent sync: new completed Evnex sessions -> charges/deepdive/*.json
+│   ├── sync_power_usage.py         # Consolidate the active power provider's usage-export CSVs into one master CSV
 │   ├── power_demand_calculator.py  # Reproduce the active power provider's residential demand charge (AGL: Ausgrid EA025)
 │   ├── power_cost_calculator.py    # Full electricity-bill reconstruction (usage + supply + solar credit + demand)
-│   ├── drives_sync_all.sh          # One command: Tessie drives, fetch + consolidate
-│   ├── charging_sync_all.sh        # One command: Tessie charges + Evnex + invoices + AGL usage + PVOutput/AGL/Evnex cross-check prep, fetch + consolidate
-│   ├── charger_sync_all.sh        # One command: fetch new charger hardware across every network, near Home
+│   ├── sync_drives_all.sh          # One command: Tessie drives, fetch + consolidate
+│   ├── sync_charging_all.sh        # One command: Tessie charges + Evnex + invoices + AGL usage + PVOutput/AGL/Evnex cross-check prep, fetch + consolidate
+│   ├── sync_charger_all.sh        # One command: fetch new charger hardware across every network, near Home
 │   └── sync_all.sh                 # Runs all 3 domains above in one command (not dashcam - see its own header)
 │
 ├── .github/                        # GitHub Actions CI & community standards
@@ -68,10 +68,10 @@ tesla/
 ### 1. Multi-Drive TeslaCam Backup
 ```bash
 # Automatically detect all connected Tesla drives and sync to Master Archive SSD
-./Tools/dashcam_sync.sh
+./Tools/sync_dashcam.sh
 
 # Check storage breakdown and archive status
-./Tools/dashcam_sync.sh --status
+./Tools/sync_dashcam.sh --status
 ```
 👉 *See [dashcam/README.md](dashcam/README.md) for full documentation on drive tiers and pruning rules.*
 
@@ -82,7 +82,7 @@ tesla/
 
 # ...or the one-command version: fetch new drives from the Tessie API and
 # consolidate in one step (requires config.json's API token/VIN)
-./Tools/drives_sync_all.sh
+./Tools/sync_drives_all.sh
 
 # Interactive drives overview and time-period selector
 ./Tools/tessie_drives_analyzer.py --drives
@@ -102,7 +102,7 @@ tesla/
 # cache for every home session (so a later --inspect never waits on a live
 # fetch) - see AGENTS.md REQ-033 for what's covered and what's still
 # manual (AGL invoices, Solaredge)
-./Tools/charging_sync_all.sh
+./Tools/sync_charging_all.sh
 
 # Reconcile Supercharger invoices against Tessie charging sessions
 ./Tools/tessie_charging_analyzer.py --superchargers
@@ -119,7 +119,7 @@ tesla/
 # The one command to pull fresh charger data near Home (50km) for both
 # registries this repo tracks - see AGENTS.md REQ-033 for why it's scoped
 # to Home rather than state/nationwide (PlugShare rate-limiting, BUG-008)
-./Tools/charger_sync_all.sh
+./Tools/sync_charger_all.sh
 
 # Tesla Superchargers/Destination Chargers near a known place
 ./Tools/charger_find_tesla.py --address Home --sc --list
@@ -146,15 +146,15 @@ tesla/
 # NN a zero-padded position starting at "00") -
 # idempotent (safe to re-run; keyed on Evnex's own session id, never on
 # the filename), skips sessions still actively charging.
-./Tools/evnex_api_sync.py
+./Tools/api_sync_evnex.py
 ```
-👉 *This is also run as part of `./Tools/charging_sync_all.sh` (see section 3) - run it standalone only if you want just the Evnex step.*
+👉 *This is also run as part of `./Tools/sync_charging_all.sh` (see section 3) - run it standalone only if you want just the Evnex step.*
 
 ### 6. Deploy Scripts to External Drives
 
 ```bash
-# Automatically install/update dashcam_sync.sh to /Volumes/*/Tools/ across all mounted drives
-./Tools/dashcam_sync.sh --install-tools
+# Automatically install/update sync_dashcam.sh to /Volumes/*/Tools/ across all mounted drives
+./Tools/sync_dashcam.sh --install-tools
 ```
 
 ---

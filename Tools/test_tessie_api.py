@@ -42,7 +42,7 @@ import sys
 import time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from lib.tessie_api_common import api_get, get_token, get_vin, load_config  # noqa: F401 - shared with tessie_api_sync.py, see Tessie/TESSIE_API.md
+from lib.tessie_api_common import api_get, get_token, get_vin, load_config  # noqa: F401 - shared with api_sync_tessie.py, see Tessie/TESSIE_API.md
 
 
 def summarize_json_records(label, body, show_values=False):

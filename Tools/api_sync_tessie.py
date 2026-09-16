@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-tessie_api_sync.py - Fetch Tessie drives & charges via the Developer API
+api_sync_tessie.py - Fetch Tessie drives & charges via the Developer API
 ==========================================================================
 Replaces the manual "download CSV from Tessie, drop it in Downloads,
 run --consolidate" workflow with one command. This tool fetches new/changed
@@ -55,13 +55,13 @@ Tessie/TESSIE_API.md.)
 
 Usage:
     export TESSIE_ACCESS_TOKEN=your_token_here
-    ./tessie_api_sync.py                       # fetch + prompt to consolidate, both types
-    ./tessie_api_sync.py --yes                  # fetch + consolidate without prompting (cron)
-    ./tessie_api_sync.py --no-consolidate        # fetch only, leave CSV(s) for you to merge later
-    ./tessie_api_sync.py --drives                # just drives
-    ./tessie_api_sync.py --since-days 180        # first-run backfill window
-    ./tessie_api_sync.py --dry-run               # fetch and report, write/consolidate nothing
-    ./tessie_api_sync.py --reset-cache --charges  # forget prior sync point, re-backfill
+    ./api_sync_tessie.py                       # fetch + prompt to consolidate, both types
+    ./api_sync_tessie.py --yes                  # fetch + consolidate without prompting (cron)
+    ./api_sync_tessie.py --no-consolidate        # fetch only, leave CSV(s) for you to merge later
+    ./api_sync_tessie.py --drives                # just drives
+    ./api_sync_tessie.py --since-days 180        # first-run backfill window
+    ./api_sync_tessie.py --dry-run               # fetch and report, write/consolidate nothing
+    ./api_sync_tessie.py --reset-cache --charges  # forget prior sync point, re-backfill
 
 See Tessie/TESSIE_API.md for endpoint/field notes and known limitations.
 """
@@ -879,15 +879,15 @@ def should_consolidate(pending_types, auto_yes, is_tty, input_fn=input):
 
 def main():
     parser = argparse.ArgumentParser(
-        usage="""tessie_api_sync.py [--drives | --charges] [--since-days N] [--yes] [--dry-run]
+        usage="""api_sync_tessie.py [--drives | --charges] [--since-days N] [--yes] [--dry-run]
                        [--reset-cache] [--token TOKEN] [--vin VIN] [--landing-dir DIR]
-   or:  tessie_api_sync.py --consolidate [--drives | --charges]
-   or:  tessie_api_sync.py --backfill-deepdive [--drives | --charges] [--limit N] [--pace SECONDS]
-   or:  tessie_api_sync.py --battery-health [--battery-health-since-days N]
+   or:  api_sync_tessie.py --consolidate [--drives | --charges]
+   or:  api_sync_tessie.py --backfill-deepdive [--drives | --charges] [--limit N] [--pace SECONDS]
+   or:  api_sync_tessie.py --battery-health [--battery-health-since-days N]
 """,
         description="""
 NAME
-    tessie_api_sync.py - Tessie Developer API Drive/Charge/Battery-Health Sync
+    api_sync_tessie.py - Tessie Developer API Drive/Charge/Battery-Health Sync
 
 DESCRIPTION
     Fetch Tessie drives/charges via the Developer API, then run the existing
@@ -896,11 +896,11 @@ DESCRIPTION
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 EXAMPLES
-  tessie_api_sync.py --drives --since-days 30
-  tessie_api_sync.py --charges --yes
-  tessie_api_sync.py --consolidate --drives
-  tessie_api_sync.py --backfill-deepdive --limit 50 --pace 2
-  tessie_api_sync.py --battery-health
+  api_sync_tessie.py --drives --since-days 30
+  api_sync_tessie.py --charges --yes
+  api_sync_tessie.py --consolidate --drives
+  api_sync_tessie.py --backfill-deepdive --limit 50 --pace 2
+  api_sync_tessie.py --battery-health
 """
     )
 

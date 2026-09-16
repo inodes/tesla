@@ -2,7 +2,7 @@
 """
 power_cost_calculator.py - Full electricity-bill reconstruction for the
 active power provider (e.g. AGL's Solar VIP plan) from the usage master
-(power_usage_sync.py) and the provider's own dated tariff rates: usage
+(sync_power_usage.py) and the provider's own dated tariff rates: usage
 charge, supply charge, tiered solar credit, and the distributor's
 residential demand charge (power_demand_calculator.py), all in one
 place so the true cost of a charging session (or any other load) can
@@ -216,7 +216,7 @@ NAME
 
 DESCRIPTION
     Reconstructs the active power provider's full bill for a cycle (e.g.
-    AGL's Solar VIP plan) from the usage master (power_usage_sync.py) and
+    AGL's Solar VIP plan) from the usage master (sync_power_usage.py) and
     the provider's own dated tariff rates: usage charge, supply charge,
     tiered solar credit, and the distributor's residential demand charge
     (power_demand_calculator.py) - all in one place, so the true cost of a

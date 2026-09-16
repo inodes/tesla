@@ -31,13 +31,13 @@ High-speed multi-drive sync, intelligent auto-pruning, storage auditing, and loc
 ### 1. Multi-Drive Backup & Verification
 ```bash
 # Run automatic multi-drive detection & sync
-./Tools/dashcam_sync.sh
+./Tools/sync_dashcam.sh
 
 # Perform dry run (preview payload without copying)
-./Tools/dashcam_sync.sh --dry-run
+./Tools/sync_dashcam.sh --dry-run
 
 # Check storage breakdown & archive status
-./Tools/dashcam_sync.sh --status
+./Tools/sync_dashcam.sh --status
 ```
 
 ### 2. View Footage with ExportDash

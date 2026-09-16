@@ -98,7 +98,7 @@ async def get_authenticated_client(config=None):
     return Evnex(auth=auth)
 def session_energy_wh(attrs):
     """Real energy delivered (Wh) for one Evnex session's own `attributes`
-    dict (the same dict evnex_api_sync.py writes as record["session"]
+    dict (the same dict api_sync_evnex.py writes as record["session"]
     ["attributes"], and analysis_ev_session_cost.py reads back as session["session"]
     ["attributes"]), or None if Evnex didn't report a totalEnergyUsage at
     all for this session. Kept in one shared place so "did this session

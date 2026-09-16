@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-power_usage_sync.py - Consolidate the active power provider's
+sync_power_usage.py - Consolidate the active power provider's
 half-hourly usage-export CSVs (e.g. AGL's, downloaded manually from its
 "My Usage" portal - see below) into one master CSV under that
 provider's own data home (get_power_provider().resolve_data_home()).
@@ -61,8 +61,8 @@ master is. Threshold: config.json's "power_usage_staleness_days"
 (default DEFAULT_STALENESS_DAYS below).
 
 Usage:
-    ./power_usage_sync.py              # consolidate, write the master, report staleness
-    ./power_usage_sync.py --dry-run    # show what would happen, write nothing (still reports staleness)
+    ./sync_power_usage.py              # consolidate, write the master, report staleness
+    ./sync_power_usage.py --dry-run    # show what would happen, write nothing (still reports staleness)
 """
 
 import argparse
@@ -236,10 +236,10 @@ def check_staleness(master_path=None, provider=None, threshold_days=None, log=pr
 
 def main():
     parser = argparse.ArgumentParser(
-        usage="power_usage_sync.py [--dry-run]\n",
+        usage="sync_power_usage.py [--dry-run]\n",
         description="""
 NAME
-    power_usage_sync.py - consolidate the active power provider's usage-export CSVs into one master CSV
+    sync_power_usage.py - consolidate the active power provider's usage-export CSVs into one master CSV
 
 DESCRIPTION
     Consolidates the active power provider's half-hourly usage-export CSVs
@@ -256,8 +256,8 @@ DESCRIPTION
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 EXAMPLES
-  power_usage_sync.py
-  power_usage_sync.py --dry-run
+  sync_power_usage.py
+  sync_power_usage.py --dry-run
 """
     )
     parser.add_argument("--dry-run", action="store_true", help="Show what would be consolidated, write nothing")

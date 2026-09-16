@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-evnex_api_sync.py - Automated, idempotent sync that turns newly-
+api_sync_evnex.py - Automated, idempotent sync that turns newly-
 COMPLETED Evnex home-charging sessions into per-session deep-dive files
 under charges/deepdive/ (see AGENTS.md REQ-030/REQ-032). Renamed from
 evnex_api_downloader.py so every source-consolidation script in this
@@ -34,10 +34,10 @@ EVNEX_CLIENT_USERNAME/EVNEX_CLIENT_PASSWORD env vars) - nothing this
 script prints or writes includes the Evnex username/password.
 
 Usage:
-    ./evnex_api_sync.py                # write any new completed sessions
-    ./evnex_api_sync.py --dry-run       # show what would be written, write nothing
-    ./evnex_api_sync.py --limit 5       # cap how many new files get written this run
-    ./evnex_api_sync.py --quiet         # summary only
+    ./api_sync_evnex.py                # write any new completed sessions
+    ./api_sync_evnex.py --dry-run       # show what would be written, write nothing
+    ./api_sync_evnex.py --limit 5       # cap how many new files get written this run
+    ./api_sync_evnex.py --quiet         # summary only
 """
 
 import argparse
@@ -262,10 +262,10 @@ async def run(dry_run, limit, log):
 
 def main():
     parser = argparse.ArgumentParser(
-        usage="evnex_api_sync.py [--dry-run] [--limit N] [--quiet]\n",
+        usage="api_sync_evnex.py [--dry-run] [--limit N] [--quiet]\n",
         description="""
 NAME
-    evnex_api_sync.py - sync completed Evnex home-charging sessions into deep-dive files
+    api_sync_evnex.py - sync completed Evnex home-charging sessions into deep-dive files
 
 DESCRIPTION
     Automated, idempotent sync that turns newly-completed Evnex home-charging
@@ -276,9 +276,9 @@ DESCRIPTION
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 EXAMPLES
-  evnex_api_sync.py
-  evnex_api_sync.py --dry-run
-  evnex_api_sync.py --limit 5 --quiet
+  api_sync_evnex.py
+  api_sync_evnex.py --dry-run
+  api_sync_evnex.py --limit 5 --quiet
 """
     )
     parser.add_argument("--dry-run", action="store_true", help="Show what would be written, write nothing")

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# charger_sync_all.sh - the one command for the Chargers domain: pull fresh
+# sync_charger_all.sh - the one command for the Chargers domain: pull fresh
 # charger data for both registries this repo tracks - Tesla Superchargers /
 # Destination Chargers via charger_find_tesla.py, and PlugShare-listed
 # 3rd-party chargers via charger_find.py --sync-plugshare (see AGENTS.md REQ-033).
@@ -43,7 +43,7 @@ cd "$(dirname "$0")"
 
 if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
     cat << 'EOF'
-Usage: ./charger_sync_all.sh [-h|--help]
+Usage: ./sync_charger_all.sh [-h|--help]
 
 The one command for the CHARGERS domain (charging hardware/station
 registries - see AGENTS.md REQ-033 for the charger/charging/charges split).

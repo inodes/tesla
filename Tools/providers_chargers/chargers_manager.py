@@ -394,6 +394,42 @@ def merge_station_records(primary: UnifiedStationRecord, secondary: UnifiedStati
     return merged
 
 
+def _diff_station_fields(old: UnifiedStationRecord, new: UnifiedStationRecord) -> Dict[str, Tuple[Any, Any]]:
+    """
+    BUG-117 (2026-09-16, AGENTS.local.md): reverify_station() previously threw
+    away the freshly-fetched record and returned a bare bool, so a live
+    "Update / Re-verify" always printed the same canned "Successfully updated
+    and saved (historical version archived if changed)" message whether or
+    not anything actually changed - user report: re-verified a station, saw
+    that message, but "nothing shows as updated" and asked for either an
+    honest "No change detected" or an actual visible diff. Compares the
+    display-relevant fields between the pre-reverify snapshot and the
+    freshly-fetched record and returns only the fields that differ, each as
+    (old_value, new_value) - an empty dict means a genuine no-op reverify.
+    """
+    diffs: Dict[str, Tuple[Any, Any]] = {}
+    field_labels = [
+        ("name", "Name"),
+        ("network", "Network"),
+        ("address", "Address"),
+        ("suburb", "Suburb"),
+        ("state", "State"),
+        ("max_power_kw", "Max Power (kW)"),
+        ("stalls_total", "Stalls"),
+        ("current_rate_per_kwh", "Rate ($/kWh)"),
+    ]
+    for attr, label in field_labels:
+        ov = getattr(old, attr, None)
+        nv = getattr(new, attr, None)
+        if ov != nv:
+            diffs[label] = (ov, nv)
+    old_plugs = sorted(old.plugs or [])
+    new_plugs = sorted(new.plugs or [])
+    if old_plugs != new_plugs:
+        diffs["Connectors"] = (", ".join(old_plugs) or "-", ", ".join(new_plugs) or "-")
+    return diffs
+
+
 class ChargerDiscoveryManager:
     """Unified multi-network charging discovery manager."""
 
@@ -717,10 +753,16 @@ class ChargerDiscoveryManager:
 
         return final_path, len(stations_dict)
 
-    def reverify_station(self, station: UnifiedStationRecord) -> bool:
+    def reverify_station(self, station: UnifiedStationRecord) -> Tuple[bool, Optional[Dict[str, Tuple[Any, Any]]], Optional[UnifiedStationRecord]]:
         """
         Re-verifies a single station live against its primary provider,
         updating local cache and archiving historical state if changes occur.
+        Returns (ok, diffs): ok is whether the live re-fetch itself succeeded;
+        diffs is None when ok is False or a diff couldn't be computed, {} when
+        the re-fetch succeeded but nothing display-relevant changed, or a
+        {field: (old, new)} map when it did - see _diff_station_fields() /
+        BUG-117. `fresh` is the newly-fetched UnifiedStationRecord (None if
+        unavailable) so the caller can reload/redisplay it in place.
         """
         src = (station.source or "").lower()
         net = (station.network or "").lower()
@@ -730,57 +772,75 @@ class ChargerDiscoveryManager:
                 from charger_find_tesla import TeslaChargerExplorer
                 explorer = TeslaChargerExplorer()
                 c_type = "supercharger" if station.speed_tier == "supercharger" else "destination_charger"
-                explorer.scrape_station_detail(station.url, c_type, auto_save=True)
+                # BUG-117: this used to call a scrape_station_detail() method
+                # (singular) that has never existed on TeslaChargerExplorer -
+                # every live Tesla re-verify silently raised AttributeError,
+                # caught below, and always reported "Failed to update".  The
+                # real method is scrape_station_details() (plural), returns
+                # (key, record) and does not persist on its own - it must be
+                # explicitly saved via update_registry(), matching the exact
+                # pattern charger_find_tesla.py's own interactive re-scrape
+                # flow already uses.
+                tesla_key, tesla_record = explorer.scrape_station_details(station.url, charger_type=c_type, list_title=station.name)
+                if not tesla_record:
+                    return False, None, None
+                explorer.update_registry(tesla_key, tesla_record)
                 self.export_consolidated_registry()
-                return True
+                fresh = None
+                for p in self.providers:
+                    if isinstance(p, TeslaProvider):
+                        fresh = p.get_station_details(tesla_key)
+                        break
+                diffs = _diff_station_fields(station, fresh) if fresh else None
+                return True, diffs, fresh
 
             for p in self.providers:
                 if isinstance(p, ChargefoxProvider) and "chargefox" in src:
                     cf_id = station.source_id or station.key.replace("Chargefox_", "")
-                    p.reverify_station(cf_id)
+                    fresh = p.reverify_station(cf_id)
                     self.export_consolidated_registry()
-                    return True
+                    return True, (_diff_station_fields(station, fresh) if fresh else None), fresh
                 elif isinstance(p, EvieProvider) and "evie" in src:
                     evie_id = station.source_id or station.key.replace("Evie_", "")
-                    p.reverify_station(evie_id)
+                    fresh = p.reverify_station(evie_id)
                     self.export_consolidated_registry()
-                    return True
+                    return True, (_diff_station_fields(station, fresh) if fresh else None), fresh
                 elif isinstance(p, BPPulseProvider) and ("bppulse" in src or "bp pulse" in net):
                     bp_id = station.source_id or station.key.replace("BPPulse_", "")
-                    p.reverify_station(bp_id)
+                    fresh = p.reverify_station(bp_id)
                     self.export_consolidated_registry()
-                    return True
+                    return True, (_diff_station_fields(station, fresh) if fresh else None), fresh
                 elif isinstance(p, EVXProvider) and "evx" in src:
                     evx_id = station.source_id or station.key.replace("EVX_", "")
-                    p.reverify_station(evx_id)
+                    fresh = p.reverify_station(evx_id)
                     self.export_consolidated_registry()
-                    return True
+                    return True, (_diff_station_fields(station, fresh) if fresh else None), fresh
                 elif isinstance(p, PlugShareProvider) and "plugshare" in src:
                     ps_id = station.source_id or station.metadata.get("plugshare_id") or str(station.views.get("plugshare", {}).get("id", ""))
                     if ps_id:
-                        p.sync_location(ps_id, auto_save=True)
+                        fresh = p.sync_location(ps_id, auto_save=True)
                         self.export_consolidated_registry()
-                        return True
+                        return True, (_diff_station_fields(station, fresh) if fresh else None), fresh
                 elif isinstance(p, ExplorenProvider) and "exploren" in src:
                     exploren_id = station.source_id or station.key.replace("Exploren_", "")
-                    p.reverify_station(exploren_id)
+                    fresh = p.reverify_station(exploren_id)
                     self.export_consolidated_registry()
-                    return True
+                    return True, (_diff_station_fields(station, fresh) if fresh else None), fresh
                 elif isinstance(p, JoltProvider) and "jolt" in src:
                     jolt_id = station.source_id or station.key.replace("Jolt_", "")
-                    p.reverify_station(jolt_id)
+                    fresh = p.reverify_station(jolt_id)
                     self.export_consolidated_registry()
-                    return True
+                    return True, (_diff_station_fields(station, fresh) if fresh else None), fresh
                 elif isinstance(p, NrmaProvider) and "nrma" in src:
                     nrma_id = station.source_id or station.key.replace("NRMA_", "")
-                    p.reverify_station(nrma_id)
+                    fresh = p.reverify_station(nrma_id)
                     self.export_consolidated_registry()
-                    return True
+                    return True, (_diff_station_fields(station, fresh) if fresh else None), fresh
         except Exception as e:
             print(f"Error reverifying station {station.name}: {e}")
-            return False
+            return False, None, None
 
-        return False
+        return False, None, None
 
     def batch_reverify_stations(
         self,
@@ -802,7 +862,7 @@ class ChargerDiscoveryManager:
         stats = {"TOTAL": len(targets), "SUCCESS": 0, "ERROR": 0}
         for idx, s in enumerate(targets, 1):
             print(f"  [{idx}/{len(targets)}] 🔄 Re-verifying '{s.name}' ({s.source.title()})...")
-            ok = self.reverify_station(s)
+            ok, _diffs, _fresh = self.reverify_station(s)
             if ok:
                 stats["SUCCESS"] += 1
             else:

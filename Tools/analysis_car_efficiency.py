@@ -13,7 +13,7 @@ Design (per the user's own TODO-031 writeup):
   2. For a given speed, what range should we expect?
   3. This is a PROFILE, not a one-off report - re-running it as more
      drives accumulate deep-dive telemetry (see --backfill-deepdive in
-     tessie_api_sync.py) makes it more accurate over time. Every run
+     api_sync_tessie.py) makes it more accurate over time. Every run
      fully regenerates the output from whatever real data currently
      exists - there is no incremental/manual state to merge, so it can
      never drift from what the data actually shows.
@@ -65,7 +65,7 @@ incline down can be also factored in"):
     vehicle_mass_kg_for_profile() below - else a generic fallback).
 
 Usable battery capacity: prefers a LIVE reading over a historical
-estimate. tessie_api_sync.py --battery-health (AGENTS.md TODO-031)
+estimate. api_sync_tessie.py --battery-health (AGENTS.md TODO-031)
 polls Tessie's own battery_health endpoint on a regular basis and logs
 every reading to battery_health_log.json in the Tessie data home; the
 MOST RECENT logged capacity_kwh is used here whenever that file exists,
@@ -332,9 +332,9 @@ def _parse_battery_health_csv(path):
 
 def load_battery_health_history(tessie_dir_home, include_outliers=False):
     """The FULL history of readings, merged from every source this repo
-    has for it: battery_health_log.json (written by tessie_api_sync.py
+    has for it: battery_health_log.json (written by api_sync_tessie.py
     --battery-health, AGENTS.md TODO-031/REQ-045 - it appends one entry
-    per sync, on whatever regular cadence drives_sync_all.sh runs at,
+    per sync, on whatever regular cadence sync_drives_all.sh runs at,
     never overwrites) PLUS any manually-exported battery-health-history
     CSV sitting loose at the Tessie data home root (TODO-011 - naming
     has already changed once in the wild, from
@@ -576,7 +576,7 @@ def build_profile(tessie_dir=None, vehicle_mass_kg=None):
             "vehicle_reference.configured is False if that file doesn't "
             "exist yet.",
             "usable_battery_capacity_kwh.kwh_used_for_range prefers the "
-            "LATEST entry in live_reading_history (tessie_api_sync.py "
+            "LATEST entry in live_reading_history (api_sync_tessie.py "
             "--battery-health, polled on a regular basis - see "
             "live_reading_trend for how it's moved since the first "
             "logged reading) since it reflects the car's actual current "
@@ -617,7 +617,7 @@ def build_profile(tessie_dir=None, vehicle_mass_kg=None):
             "confidence is 'low' under 5km of real driving in that speed "
             "bucket, 'medium' under 20km, 'high' above - re-run this "
             "script after more drives get deep-dive telemetry "
-            "(tessie_api_sync.py --backfill-deepdive --drives) to firm "
+            "(api_sync_tessie.py --backfill-deepdive --drives) to firm "
             "up any 'low'/'medium' bucket.",
             "live_reading_history is the FULL merged history from every "
             "source this repo has for it: battery_health_log.json (every "

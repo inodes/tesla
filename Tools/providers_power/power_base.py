@@ -51,9 +51,9 @@ class BasePowerProvider:
     # REQ-071 (2026-09-15): True if this provider's usage-export data
     # requires a manual step to refresh (e.g. AGL: no history API for
     # residential accounts, a CSV downloaded by hand from its "My Usage"
-    # portal - see power_usage_sync.py's own module docstring) rather
+    # portal - see sync_power_usage.py's own module docstring) rather
     # than an automated sync a script can just run. Drives
-    # power_usage_sync.py's post-consolidate staleness reminder - a
+    # sync_power_usage.py's post-consolidate staleness reminder - a
     # provider whose usage data syncs automatically (like this repo's
     # Evnex/PVOutput integrations already do) never goes stale in the
     # same way, so the default here is False and only a genuinely manual

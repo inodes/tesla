@@ -3,7 +3,7 @@
 pvoutput_common.py - Shared PVOutput API plumbing
 ====================================================
 Config/auth loading and the low-level HTTP call, factored out the same
-way tessie_api_common.py serves test_tessie_api.py/tessie_api_sync.py -
+way tessie_api_common.py serves test_tessie_api.py/api_sync_tessie.py -
 so test_pvoutput_api.py and any later real sync script share one
 implementation instead of drifting apart.
 

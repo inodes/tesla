@@ -294,10 +294,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --help|-h)
       cat << 'HELP_EOF'
-Usage: dashcam_sync.sh [options]
+Usage: sync_dashcam.sh [options]
 
 Note on Execution & Drive Discovery:
-  dashcam_sync.sh can be run from any directory.
+  sync_dashcam.sh can be run from any directory.
   By default, it automatically discovers connected Tesla USBs, SSDs, and Archive
   drives mounted under /Volumes.
 
@@ -1624,7 +1624,7 @@ if not drive_dirs:
 # account configured at all (BUG-103 follow-up). For them this whole
 # check - including the message below - should not appear, and it must
 # never let a missing token fall through into index_footage()'s own
-# stale-telemetry auto-sync (which shells out to tessie_api_sync.py).
+# stale-telemetry auto-sync (which shells out to api_sync_tessie.py).
 # So bypass completely, with no output at all, unless a real (non-
 # placeholder) token AND vin are configured.
 def _tessie_is_configured():
@@ -1685,7 +1685,7 @@ if [[ "$STATUS_MODE" -eq 1 && -z "$PURGE_MODE" ]]; then
   if [[ -z "$VOL_TESLA_USB" && -z "$VOL_JOWUA" && -z "$VOL_2TB" ]]; then
     echo "ERROR: No active TeslaCam volumes or archive directories detected." >&2
     echo "       Tesla drives typically mount under /Volumes as 'TESLADRIVE'." >&2
-    echo "       To specify a custom path, use: ./dashcam_sync.sh --status --source /path/to/drive" >&2
+    echo "       To specify a custom path, use: ./sync_dashcam.sh --status --source /path/to/drive" >&2
     exit 1
   fi
 

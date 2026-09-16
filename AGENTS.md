@@ -144,9 +144,9 @@ tesla/
 │   ├── tessie_drives_analyzer.py    # Drives explorer, footage linker, and master consolidator
 │   ├── tessie_charging_analyzer.py  # 3-way charging reconciler, tariff auditor, and invoice matcher
 │   ├── tessie_places.py             # Place tagging and geocoding utility
-│   ├── charger_sync_all.sh         # One-command CHARGERS-domain sync (hardware/station registries)
-│   ├── charging_sync_all.sh         # One-command CHARGING-SESSIONS-domain sync (Tessie/Evnex/invoices/AGL/cross-check prep)
-│   ├── drives_sync_all.sh           # One-command DRIVES-domain sync
+│   ├── sync_charger_all.sh         # One-command CHARGERS-domain sync (hardware/station registries)
+│   ├── sync_charging_all.sh         # One-command CHARGING-SESSIONS-domain sync (Tessie/Evnex/invoices/AGL/cross-check prep)
+│   ├── sync_drives_all.sh           # One-command DRIVES-domain sync
 │   └── ...                          # every other CLI script - charger_find.py, power_*.py, evnex_*.py,
 │                                     # test_*.py, etc.
 └── dashcam/                    # TeslaCam clips and sentry event utilities
