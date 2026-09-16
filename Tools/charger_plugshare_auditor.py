@@ -43,7 +43,7 @@ _repo_root = os.path.dirname(_tools_dir)
 if _tools_dir not in sys.path:
     sys.path.insert(0, _tools_dir)
 
-from providers import (
+from providers_chargers import (
     ChargerDiscoveryManager,
     UnifiedStationRecord,
     TeslaProvider,

@@ -38,9 +38,9 @@ from datetime import datetime
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 # REQ-067 (2026-09-15, AGENTS.local.md): this file moved from Tools/ into
-# Tools/lib/ (mirroring the Tools/providers/ package), one directory deeper
-# than when SCRIPT_DIR->REPO_ROOT was a single dirname() hop - now needs the
-# same two-hop pattern providers/*.py already uses (_script_dir -> _tools_dir
+# Tools/lib/ (mirroring the Tools/providers_chargers/ package), one directory
+# deeper than when SCRIPT_DIR->REPO_ROOT was a single dirname() hop - now needs
+# the same two-hop pattern providers_chargers/*.py already uses (_script_dir -> _tools_dir
 # -> _repo_root) so REPO_ROOT still resolves to the actual repo root, not Tools/.
 TOOLS_DIR = os.path.dirname(SCRIPT_DIR)
 REPO_ROOT = os.path.dirname(TOOLS_DIR)

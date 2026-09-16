@@ -50,7 +50,7 @@ from lib.table_formatter import (
     clean_station_short_name
 )
 
-from providers import (
+from providers_chargers import (
     ChargerDiscoveryManager,
     UnifiedStationRecord,
     TeslaProvider,
@@ -1247,7 +1247,7 @@ DESCRIPTION
                 print(f"  ⚡ Fetching Tesla {t_lbl}...")
                 t_stations = explorer.fetch_station_list(country=args.country or "Australia", charger_type=c_type)
                 if ref_lat is not None and ref_lon is not None:
-                    from providers.chargers_base import haversine_km
+                    from providers_chargers.chargers_base import haversine_km
                     t_stations = [s for s in t_stations if s.get("_lat") is not None and s.get("_lon") is not None and haversine_km(ref_lat, ref_lon, s["_lat"], s["_lon"]) <= radius]
                 explorer.scrape_all_stations(t_stations, subset_filter="new", pacing_delay=args.delay, timeout_sec=args.timeout, max_retries=args.retries)
             sync_results.append(("Tesla", True))
@@ -1373,7 +1373,7 @@ DESCRIPTION
                 ref_lat, ref_lon, ref_label = resolve_reference_coords(args.near)
                 if ref_lat is not None and ref_lon is not None:
                     radius = args.radius or 50.0
-                    from providers.chargers_base import haversine_km
+                    from providers_chargers.chargers_base import haversine_km
                     scoped = []
                     for s in stations:
                         s_lat = s.get("_lat")
