@@ -27,6 +27,7 @@ import time
 import unicodedata
 from datetime import datetime, timedelta
 from collections import defaultdict, Counter
+from typing import Optional, List, Dict, Tuple, Any, Union
 
 EMOJI_MAP = {
     "Recent": "🔄 Recent",
@@ -1662,6 +1663,29 @@ def run_interactive_footage_review(packages, analyzer, context_label="Event Foot
 
     return kept_count, deleted_count, freed_bytes_total
 
+
+def compute_adaptive_rolling_window(distance_km: Optional[float]) -> float:
+    """
+    Computes an optimal adaptive rolling distance window (km) based on total drive distance.
+    Formula: Window (W) = Total Distance * 0.05 (Option 1: Adaptive Window Formula)
+
+    Bounds:
+    - Minimum floor of 0.35 km: Prevents 0.01 kWh battery quantization noise artifacts on short trips.
+    - Maximum ceiling of 5.0 km: Keeps long highway road trips responsive to major terrain trends.
+
+    Examples:
+    - 6 km trip:  max(0.35, 6 * 0.05)   = 0.35 km window (high-res city traffic detail)
+    - 10 km trip: max(0.35, 10 * 0.05)  = 0.50 km window (traffic lights & local accelerations)
+    - 20 km trip: 20 * 0.05             = 1.00 km window (mixed commute)
+    - 50 km trip: 50 * 0.05             = 2.50 km window (suburban & freeway)
+    - 100+ km:    min(5.0, 100 * 0.05)  = 5.00 km window (smooth highway trends)
+    """
+    if not distance_km or distance_km <= 0:
+        return 0.8
+    w = distance_km * 0.05
+    return max(0.35, min(5.0, round(w, 2)))
+
+
 class TessieAnalyzer:
     def __init__(self, tessie_dir=None, teslacam_dirs=None):
         self.script_dir = os.path.dirname(os.path.abspath(__file__))
@@ -1904,8 +1928,10 @@ class TessieAnalyzer:
                 return target_name
 
         # 6. Fallback: first part of street address
-        parts = address.split(",")
-        return parts[0].strip() if parts else address
+        if address and isinstance(address, str):
+            parts = address.split(",")
+            return parts[0].strip() if parts else address
+        return saved_loc or ""
 
     def consolidate_drives(self, new_csv_path=None, master_dir=None, verbose=False):
         dest_dirs = []
@@ -2538,7 +2564,7 @@ class TessieAnalyzer:
             grow_left_next = not grow_left_next
         return lo, hi, dist
 
-    def compute_rolling_efficiency(self, raw_samples, window_km=0.8, min_km=0.15):
+    def compute_rolling_efficiency(self, raw_samples, window_km=None, min_km=None):
         """Per-SAMPLE instantaneous efficiency (kWh/100km), smoothed with a
         centered ROLLING-DISTANCE window (_rolling_distance_window())
         rather than either extreme: raw per-interval (wild swings - two
@@ -2556,6 +2582,9 @@ class TessieAnalyzer:
         so the chart and the segment table can never silently disagree
         about the underlying data, only about how it's presented (one
         flat number per segment there, one smoothly-varying curve here).
+
+        Adapts dynamically to total drive length (5% adaptive window)
+        when window_km is None.
 
         Returns a list the same length as raw_samples's own arrays - None
         wherever the window still couldn't gather min_km of real distance
@@ -2583,25 +2612,26 @@ class TessieAnalyzer:
             if r0 is not None and r1 is not None:
                 iv_energy[k] = r0 - r1
 
+        total_trip_dist = sum(iv_dist)
+        eff_window_km = window_km if window_km is not None else compute_adaptive_rolling_window(total_trip_dist)
+        eff_min_km = min_km if min_km is not None else max(0.15, eff_window_km * 0.35)
+
         result = [None] * n
         for i in range(n):
-            win = self._rolling_distance_window(iv_dist, i, window_km)
+            win = self._rolling_distance_window(iv_dist, i, eff_window_km)
             if win is None:
                 continue
             lo, hi, dist = win
-            if dist < min_km:
+            if dist < eff_min_km:
                 continue
             window = iv_energy[lo:hi + 1]
             known = [e for e in window if e is not None]
-            # Require real energy data for essentially the whole window,
-            # not just a lucky interval or two, else this would silently
-            # understate/overstate rather than honestly showing a gap.
             if len(known) < max(1, len(window) * 0.5):
                 continue
             result[i] = (sum(known) / dist) * 100.0
         return result
 
-    def compute_rolling_speed(self, raw_samples, window_km=0.8, min_km=0.15):
+    def compute_rolling_speed(self, raw_samples, window_km=None, min_km=None):
         """Per-sample average speed (km/h), smoothed with the exact same
         centered rolling-distance window as compute_rolling_efficiency()
         (_rolling_distance_window()) - real distance over real elapsed
@@ -2609,15 +2639,8 @@ class TessieAnalyzer:
         sample 'Speed (km/h)' telemetry field, and not assumed from
         Odometer alone either.
 
-        Added 2026-09-15 at the user's request (plotting average speed
-        alongside Elevation/Efficiency), then smoothed at their explicit
-        follow-up - the raw instantaneous speed reading is genuinely
-        spiky sample-to-sample ("Drives can be spiky. So rolling
-        averages"), and averaging real distance/time over the same
-        window already used for efficiency keeps a stretch of stop-start
-        traffic from getting smoothed into a misleadingly steady speed
-        (a plain mean of the instantaneous readings would do exactly
-        that).
+        Adapts dynamically to total drive length (5% adaptive window)
+        when window_km is None.
 
         Returns a list the same length as raw_samples's own arrays -
         None wherever the window can't gather min_km of real distance or
@@ -2642,13 +2665,17 @@ class TessieAnalyzer:
             if dt0 and dt1 and dt1 > dt0:
                 iv_time_hr[k] = (dt1 - dt0).total_seconds() / 3600.0
 
+        total_trip_dist = sum(iv_dist)
+        eff_window_km = window_km if window_km is not None else compute_adaptive_rolling_window(total_trip_dist)
+        eff_min_km = min_km if min_km is not None else max(0.15, eff_window_km * 0.35)
+
         result = [None] * n
         for i in range(n):
-            win = self._rolling_distance_window(iv_dist, i, window_km)
+            win = self._rolling_distance_window(iv_dist, i, eff_window_km)
             if win is None:
                 continue
             lo, hi, dist = win
-            if dist < min_km:
+            if dist < eff_min_km:
                 continue
             window = iv_time_hr[lo:hi + 1]
             known = [t for t in window if t is not None]
@@ -2660,30 +2687,14 @@ class TessieAnalyzer:
             result[i] = dist / total_hr
         return result
 
-    def generate_drive_profile_chart(self, dt_rec):
+    def generate_drive_profile_chart(self, dt_rec, target_drive=None):
         """Interactive elevation/efficiency/speed profile for one drive's
         deep-dive telemetry (AGENTS.md REQ-036/REQ-037) - Elevation (m) on
         the left axis, Efficiency (kWh/100km) and Speed (km/h) each on
         their own stacked right-hand axis, x-axis = time. Both Efficiency
         and Speed are compute_rolling_efficiency()/compute_rolling_speed()'s
-        smoothed per-sample curves, not the raw per-sample telemetry -
-        two real user reports on 2026-09-15 drove this: (1) broadcasting
-        each SEGMENT's own single aggregate efficiency flat across every
-        sample in it produced a blocky, disconnected-looking step function
-        (sharp near-vertical jumps at every climbing/level/descending
-        boundary, even though the drive itself is continuous), and (2),
-        once Speed was added per the same user's request, the raw
-        'Speed (km/h)' telemetry field is itself genuinely spiky
-        sample-to-sample ("Drives can be spiky. So rolling averages") -
-        see each compute_rolling_*() method's own docstring for why a
-        shared distance-based rolling window (_rolling_distance_window())
-        is the right middle ground between that and a raw, wildly-noisy
-        per-interval figure. The chart itself also now draws every series
-        as a smooth curve through each contiguous run of real values
-        (analysis_deepdive_charts.py's write_interactive_chart()) rather
-        than a straight-line polyline, matching a reference chart style
-        the user pointed to. Mirrors generate_charging_curve_chart() in
-        tessie_charging_analyzer.py."""
+        smoothed per-sample curves with an adaptive rolling distance window
+        (5% of total drive length, bounded between 0.35 km and 5.0 km)."""
         raw = dt_rec.get("raw_samples")
         if not raw or not raw.get("timestamp"):
             return None
@@ -2691,14 +2702,21 @@ class TessieAnalyzer:
         n = len(timestamps)
         x_labels = [ts[11:19] if ts and len(ts) >= 19 else (ts or "") for ts in timestamps]
 
-        eff_series = self.compute_rolling_efficiency(raw)
-        speed_series = self.compute_rolling_speed(raw)
+        total_dist = dt_rec.get("distance_km")
+        if not total_dist and raw.get("odometer_km"):
+            odo_clean = [o for o in raw["odometer_km"] if o is not None]
+            if len(odo_clean) >= 2:
+                total_dist = max(0.0, odo_clean[-1] - odo_clean[0])
+
+        window_km = compute_adaptive_rolling_window(total_dist)
+        eff_series = self.compute_rolling_efficiency(raw, window_km=window_km)
+        speed_series = self.compute_rolling_speed(raw, window_km=window_km)
 
         series = [
             {"name": "Elevation", "unit": "m", "axis": "left", "color": "#16a34a",
              "values": raw.get("elevation_m", [None] * n)},
             {"name": "Efficiency", "unit": "kWh/100km", "axis": "right", "color": "#dc2626",
-             "values": eff_series},
+             "fill_negative": True, "values": eff_series},
             {"name": "Speed", "unit": "km/h", "axis": "speed", "color": "#2563eb",
              "values": speed_series},
         ]
@@ -2723,10 +2741,56 @@ class TessieAnalyzer:
             if energy_used_kwh > 0:
                 avg_eff = (energy_used_kwh / dist_km) * 100.0
 
-        subtitle = (f"{dt_rec.get('samples_count', n)} samples over "
+        ref_lines = []
+        if avg_eff is not None:
+            ref_lines.append({
+                "value": round(avg_eff, 2),
+                "axis": "right",
+                "label": f"Drive Avg: {avg_eff:.1f} kWh/100km",
+                "color": "#d97706",
+                "style": "dashed",
+            })
+
+        # Resolve from and to places (AGENTS.local.md REQ-083)
+        start_place = (target_drive.get("start_place") if target_drive else None) or dt_rec.get("start_place")
+        end_place = (target_drive.get("end_place") if target_drive else None) or dt_rec.get("end_place")
+
+        if not start_place or not end_place:
+            d_start = dt_rec.get("start_datetime")
+            if d_start and getattr(self, "drives", None):
+                for d in self.drives:
+                    ds = d.get("start_dt")
+                    if ds and abs((ds - d_start).total_seconds()) <= 180:
+                        start_place = start_place or d.get("start_place")
+                        end_place = end_place or d.get("end_place")
+                        break
+
+        if not start_place and raw.get("latitude") and raw.get("longitude"):
+            for lat, lon in zip(raw["latitude"], raw["longitude"]):
+                if lat is not None and lon is not None:
+                    start_place = self.resolve_place(None, "", lat, lon)
+                    break
+
+        if not end_place and raw.get("latitude") and raw.get("longitude"):
+            for lat, lon in reversed(list(zip(raw["latitude"], raw["longitude"]))):
+                if lat is not None and lon is not None:
+                    end_place = self.resolve_place(None, "", lat, lon)
+                    break
+
+        route_prefix = ""
+        if start_place and end_place:
+            route_prefix = f"{start_place} ➔ {end_place} \u2014 "
+        elif start_place:
+            route_prefix = f"From {start_place} \u2014 "
+        elif end_place:
+            route_prefix = f"To {end_place} \u2014 "
+
+        win_str = f"{window_km:.2f} km" if window_km < 1.0 else f"{window_km:.1f} km"
+        subtitle = (f"{route_prefix}{dt_rec.get('samples_count', n)} samples over "
                     f"{dt_rec.get('duration_mins', 0):.1f} min"
                     + (f", {dt_rec['distance_km']:.1f} km" if dt_rec.get("distance_km") else "")
-                    + (f" \u2014 Avg Efficiency: {avg_eff:.1f} kWh/100km" if avg_eff is not None else ""))
+                    + (f" \u2014 Avg Efficiency: {avg_eff:.1f} kWh/100km" if avg_eff is not None else "")
+                    + f" ({win_str} adaptive rolling window)")
 
         locations = self._compute_drive_locations(raw)
 
@@ -2738,6 +2802,7 @@ class TessieAnalyzer:
             series=series,
             subtitle=subtitle,
             locations=locations,
+            ref_lines=ref_lines,
         )
         return out_path
 
@@ -2770,7 +2835,19 @@ class TessieAnalyzer:
         except ImportError:
             return None
 
-        MIN_MOVE_M = 400.0
+        geo_cache = {}
+        try:
+            from charger_find_tesla import load_geo_cache, save_geo_cache
+            geo_cache = load_geo_cache(self.repo_root) or {}
+        except Exception:
+            pass
+
+        MIN_MOVE_M = 500.0
+        MAX_LIVE_LOOKUPS = 4
+        live_lookups_done = 0
+        network_available = True
+        dirty_cache = False
+
         cache = {}
         geocoded_idx = []
         labels = [None] * n
@@ -2782,20 +2859,51 @@ class TessieAnalyzer:
                 continue
             if last_lat is not None and haversine_distance(last_lat, last_lon, lat, lon) < MIN_MOVE_M:
                 continue
-            key = (round(lat, 3), round(lon, 3))
-            if key in cache:
-                label = cache[key]
+
+            # 1. Check known places first (0ms latency)
+            matched_place = self.resolve_place(None, "", lat, lon)
+            if matched_place:
+                label = matched_place
+                cache[(round(lat, 3), round(lon, 3))] = label
             else:
-                try:
-                    info = reverse_geocode(lat, lon)
-                except Exception:
-                    info = None
-                label = self._format_reverse_geocode_label(info) if info else None
-                cache[key] = label
-                time.sleep(1.0)  # Nominatim usage policy: max 1 request/sec
-            labels[i] = label
+                cache_key = f"{round(lat, 3)},{round(lon, 3)}"
+                if (round(lat, 3), round(lon, 3)) in cache:
+                    label = cache[(round(lat, 3), round(lon, 3))]
+                elif cache_key in geo_cache:
+                    cached_val = geo_cache[cache_key]
+                    if isinstance(cached_val, dict):
+                        label = self._format_reverse_geocode_label(cached_val)
+                    else:
+                        label = str(cached_val)
+                    cache[(round(lat, 3), round(lon, 3))] = label
+                elif network_available and live_lookups_done < MAX_LIVE_LOOKUPS:
+                    try:
+                        info = reverse_geocode(lat, lon)
+                        live_lookups_done += 1
+                        if info:
+                            label = self._format_reverse_geocode_label(info)
+                            cache[(round(lat, 3), round(lon, 3))] = label
+                            geo_cache[cache_key] = info
+                            dirty_cache = True
+                        else:
+                            label = None
+                    except Exception:
+                        network_available = False
+                        label = None
+                else:
+                    label = None
+
+            if label:
+                labels[i] = label
+                geocoded_idx.append(i)
             last_lat, last_lon = lat, lon
-            geocoded_idx.append(i)
+
+        if dirty_cache:
+            try:
+                from charger_find_tesla import save_geo_cache
+                save_geo_cache(geo_cache, self.repo_root)
+            except Exception:
+                pass
 
         if not geocoded_idx:
             return None
@@ -2986,7 +3094,7 @@ class TessieAnalyzer:
             return None
         segments = self.compute_drive_segments(dt_rec["raw_samples"])
         try:
-            chart_path = self.generate_drive_profile_chart(dt_rec)
+            chart_path = self.generate_drive_profile_chart(dt_rec, target_drive=target_drive)
         except Exception:
             chart_path = None
         return dt_rec, segments, chart_path

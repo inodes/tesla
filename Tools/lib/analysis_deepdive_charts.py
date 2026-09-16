@@ -86,9 +86,13 @@ function xAt(i) {{ return padL + (n <= 1 ? 0 : (i / (n - 1)) * plotW); }}
 
 function axisRange(series, axis) {{
   let vals = [];
-  series.filter(s => s.axis === axis).forEach(s => s.values.forEach(v => {{ if (v !== null && v !== undefined) vals.push(v); }}));
+  const sList = series.filter(s => s.axis === axis);
+  sList.forEach(s => s.values.forEach(v => {{ if (v !== null && v !== undefined) vals.push(v); }}));
   if (vals.length === 0) return [0, 1];
   let lo = Math.min(...vals), hi = Math.max(...vals);
+  if (sList.some(s => s.fill_negative || s.name === 'Efficiency')) {{
+    if (lo > 0) lo = 0; // ensure 0 baseline is visible for efficiency/regen
+  }}
   if (lo === hi) {{ lo -= 1; hi += 1; }}
   const pad = (hi - lo) * 0.08;
   return [lo - pad, hi + pad];
@@ -136,6 +140,17 @@ function draw() {{
   }});
   ctx.fillStyle = '#888';
 
+  // 0-baseline for right/efficiency axis if range crosses zero
+  rightAxisIds.forEach(axis => {{
+    const [lo, hi] = ranges[axis];
+    if (lo < 0 && hi > 0) {{
+      const y0 = yAt(0, axis);
+      ctx.strokeStyle = '#cbd5e1';
+      ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.moveTo(padL, y0); ctx.lineTo(W - padR, y0); ctx.stroke();
+    }}
+  }});
+
   // x-axis labels (sparse)
   ctx.textAlign = 'center';
   const xTicks = Math.min(8, n);
@@ -147,19 +162,61 @@ function draw() {{
   ctx.textAlign = 'center';
   ctx.fillText(DATA.x_label, padL + plotW / 2, H - 6);
 
-  // series lines - smooth curve through each contiguous run of real
-  // values (quadratic-through-midpoints: no overshoot, no library) -
-  // a real user report (2026-09-15) pointed at a reference chart with
-  // a smooth connected curve rather than this chart's old straight-
-  // line polyline.
+  // series lines & shaded regen below 0
   DATA.series.forEach(s => {{
+    let runs = [];
+    let curRun = [];
+    for (let i = 0; i < n; i++) {{
+      const v = s.values[i];
+      if (v === null || v === undefined) {{
+        if (curRun.length > 0) {{ runs.push(curRun); curRun = []; }}
+      }} else {{
+        curRun.push({{ i, x: xAt(i), y: yAt(v, s.axis), v }});
+      }}
+    }}
+    if (curRun.length > 0) runs.push(curRun);
+
+    // 1. Shaded area below 0 (Regenerative braking / descent)
+    if (s.fill_negative) {{
+      const [lo, hi] = ranges[s.axis];
+      if (lo < 0) {{
+        const y0 = yAt(0, s.axis);
+        runs.forEach(run => {{
+          if (run.length < 2) return;
+          if (!run.some(p => p.v < 0)) return;
+          ctx.save();
+          ctx.beginPath();
+          ctx.rect(padL, y0, plotW, Math.max(1, padT + plotH - y0));
+          ctx.clip();
+
+          ctx.beginPath();
+          ctx.moveTo(run[0].x, y0);
+          ctx.lineTo(run[0].x, run[0].y);
+          if (run.length === 2) {{
+            ctx.lineTo(run[1].x, run[1].y);
+          }} else {{
+            for (let k = 1; k < run.length - 1; k++) {{
+              const p1 = run[k], p2 = run[k + 1];
+              ctx.quadraticCurveTo(p1.x, p1.y, (p1.x + p2.x) / 2, (p1.y + p2.y) / 2);
+            }}
+            ctx.lineTo(run[run.length - 1].x, run[run.length - 1].y);
+          }}
+          ctx.lineTo(run[run.length - 1].x, y0);
+          ctx.closePath();
+          ctx.fillStyle = 'rgba(34, 197, 94, 0.35)'; // translucent green regen fill
+          ctx.fill();
+          ctx.restore();
+        }});
+      }}
+    }}
+
+    // 2. Smooth line stroke
     ctx.strokeStyle = s.color;
     ctx.lineWidth = 2;
     ctx.lineJoin = 'round';
     ctx.lineCap = 'round';
-    let run = [];
-    const flushRun = () => {{
-      if (run.length < 2) {{ run = []; return; }}
+    runs.forEach(run => {{
+      if (run.length < 2) return;
       ctx.beginPath();
       ctx.moveTo(run[0].x, run[0].y);
       if (run.length === 2) {{
@@ -167,27 +224,47 @@ function draw() {{
       }} else {{
         for (let k = 1; k < run.length - 1; k++) {{
           const p1 = run[k], p2 = run[k + 1];
-          const midX = (p1.x + p2.x) / 2, midY = (p1.y + p2.y) / 2;
-          ctx.quadraticCurveTo(p1.x, p1.y, midX, midY);
+          ctx.quadraticCurveTo(p1.x, p1.y, (p1.x + p2.x) / 2, (p1.y + p2.y) / 2);
         }}
-        const last = run[run.length - 1];
-        ctx.lineTo(last.x, last.y);
+        ctx.lineTo(run[run.length - 1].x, run[run.length - 1].y);
       }}
       ctx.stroke();
-      run = [];
-    }};
-    for (let i = 0; i < n; i++) {{
-      const v = s.values[i];
-      if (v === null || v === undefined) {{ flushRun(); continue; }}
-      run.push({{ x: xAt(i), y: yAt(v, s.axis) }});
-    }}
-    flushRun();
+    }});
   }});
+
+  // Reference lines (e.g. Drive Average efficiency dashed line)
+  if (DATA.ref_lines && DATA.ref_lines.length > 0) {{
+    DATA.ref_lines.forEach(ref => {{
+      const y = yAt(ref.value, ref.axis || 'right');
+      if (y >= padT && y <= padT + plotH) {{
+        ctx.strokeStyle = ref.color || '#d97706';
+        ctx.lineWidth = 1.75;
+        ctx.setLineDash(ref.style === 'dashed' ? [6, 4] : []);
+        ctx.beginPath();
+        ctx.moveTo(padL, y);
+        ctx.lineTo(W - padR, y);
+        ctx.stroke();
+        ctx.setLineDash([]);
+
+        if (ref.label) {{
+          ctx.font = 'bold 11px sans-serif';
+          ctx.textAlign = 'right';
+          const txtW = ctx.measureText(ref.label).width;
+          ctx.fillStyle = 'rgba(255, 255, 255, 0.85)';
+          ctx.fillRect(W - padR - txtW - 12, y - 14, txtW + 8, 14);
+          ctx.fillStyle = ref.color || '#d97706';
+          ctx.fillText(ref.label, W - padR - 8, y - 3);
+        }}
+      }}
+    }});
+  }}
 
   // legend
   legend.innerHTML = DATA.series.map(s =>
-    `<span><span class="dot" style="background:${{s.color}}"></span>${{s.name}} (${{s.unit}}${{s.axis !== 'left' ? ', ' + s.axis + ' axis' : ''}})</span>`
-  ).join('');
+    `<span><span class="dot" style="background:${{s.color}}"></span>${{s.name}} (${{s.unit}}${{s.axis !== 'left' ? ', ' + s.axis + ' axis' : ''}}${{s.fill_negative ? ' · <span style="color:#16a34a">■</span> regen' : ''}})</span>`
+  ).join('') + ((DATA.ref_lines || []).map(r =>
+    `<span><span style="display:inline-block;width:14px;border-top:2px dashed ${{r.color}};margin-right:5px;vertical-align:middle"></span>${{r.label || 'Average'}}</span>`
+  ).join(''));
 }}
 
 canvas.addEventListener('mousemove', (ev) => {{
@@ -207,7 +284,9 @@ canvas.addEventListener('mousemove', (ev) => {{
   let lines = [`<b>${{DATA.x[i]}}</b>`];
   DATA.series.forEach(s => {{
     const v = s.values[i];
-    lines.push(`${{s.name}}: ${{v === null || v === undefined ? '-' : v.toFixed(2)}} ${{s.unit}}`);
+    const isRegen = s.fill_negative && v !== null && v !== undefined && v < 0;
+    const valStr = v === null || v === undefined ? '-' : `${{v.toFixed(2)}} ${{s.unit}}${{isRegen ? ' (Regen ⚡)' : ''}}`;
+    lines.push(`${{s.name}}: ${{valStr}}`);
   }});
   if (DATA.locations && DATA.locations[i]) {{
     lines.push(`📍 ${{DATA.locations[i]}}`);
@@ -229,24 +308,22 @@ draw();
 """
 
 
-def write_interactive_chart(output_path, title, x_values, x_label, series, subtitle="", locations=None):
+def write_interactive_chart(output_path, title, x_values, x_label, series, subtitle="", locations=None, ref_lines=None):
     """Write a self-contained interactive HTML chart to output_path.
 
     x_values: list of str labels (already formatted - a timestamp
     string, a distance string, whatever the caller wants shown).
-    series: list of {"name", "unit", "axis", "color", "values"} dicts,
-    each "values" the same length as x_values (use None for a missing
-    sample rather than omitting it, so the x-axis alignment across
-    series stays correct). "axis" is any str id - "left" is the one
-    gridlined axis; every other id gets its own stacked tick-label
-    column on the right, so 3+ differently-scaled series can share one
-    chart.
-
-    locations: optional list of str-or-None, same length as x_values -
-    an extra "Location: ..." tooltip line at that x, or omitted
-    entirely (None) for a chart with nothing to show there.
+    series: list of {"name", "unit", "axis", "color", "values", "fill_negative"} dicts.
+    locations: optional list of str-or-None, same length as x_values.
+    ref_lines: optional list of {"value", "axis", "label", "color", "style"} reference lines.
     """
-    data = {"x": x_values, "x_label": x_label, "series": series, "locations": locations}
+    data = {
+        "x": x_values,
+        "x_label": x_label,
+        "series": series,
+        "locations": locations,
+        "ref_lines": ref_lines or [],
+    }
     html = _TEMPLATE.format(
         title=title,
         subtitle=subtitle,
