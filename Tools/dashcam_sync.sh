@@ -1555,6 +1555,69 @@ PY_EOF
   fi
 }
 
+# Pre-sync Home + Recent deletion prompt. "Home + Recent" = RecentClips
+# footage recorded while parked at the registered Home location - the
+# clearest, lowest-value-to-keep category (driveway/garage loop footage).
+# This is a deliberate, user-in-the-loop decision, separate from the
+# automatic space-management purge (execute_safe_or_force_purge) below:
+# it only ever runs when an archive destination (2TB SSD or --localsync
+# dir) is connected, mirroring that same function's own rule of never
+# deleting footage that hasn't been archived somewhere first. It always
+# runs BEFORE the sync legs for this drive combo, and purges any
+# confirmed packages directly from every currently-connected drive
+# (source included) so the sync legs that follow never see them to copy.
+prompt_home_recent_purge() {
+  local script_dir="$(cd "$(dirname "$SCRIPT_PATH")" && pwd)"
+  local drives=("$@")
+
+  # Never fires under --dry-run (it would permanently delete files), and
+  # only fires unattended when --yes was explicitly passed (ASSUME_YES
+  # already documented as "Skip standard confirmation prompts" - this is
+  # one of them, consistent with how it already skips the tombstone-scrub
+  # prompt above).
+  if [[ "$DRY_RUN" -eq 1 ]]; then
+    return 0
+  fi
+  if [[ "$ASSUME_YES" -eq 0 && ! -t 0 ]]; then
+    return 0
+  fi
+
+  python3 - "$script_dir" "$ASSUME_YES" "${drives[@]}" << 'PY_EOF'
+import os
+import sys
+
+script_dir = sys.argv[1]
+assume_yes = sys.argv[2] == "1"
+drive_dirs = [d for d in sys.argv[3:] if d and d != "none" and os.path.isdir(d)]
+sys.path.insert(0, script_dir)
+
+try:
+    from tessie_drives_analyzer import (
+        TessieAnalyzer,
+        purge_home_recent_cli,
+        resolve_master_teslacam_dir,
+        export_tombstone_rsync_excludes,
+    )
+except ImportError:
+    sys.exit(0)
+
+if not drive_dirs:
+    sys.exit(0)
+
+print(">>> Checking for Home + Recent footage (RecentClips parked at Home)...")
+analyzer = TessieAnalyzer(teslacam_dirs=drive_dirs)
+purge_home_recent_cli(analyzer, yes=assume_yes)
+
+# Belt-and-braces: refresh the rsync exclude file too, so a tombstone
+# created here for a drive that wasn't connected to purge from directly
+# (e.g. a drive not in this run's combo) is still excluded from any sync
+# leg that runs against it later.
+master_dir = resolve_master_teslacam_dir(drive_dirs)
+if master_dir:
+    export_tombstone_rsync_excludes(master_dir, "/tmp/teslacam_sync/tombstones_exclude.txt")
+PY_EOF
+}
+
 # Tombstone list mode (--tombstones)
 if [[ "$TOMBSTONE_MODE" -eq 1 ]]; then
   list_dashcam_tombstones "$VOL_TESLA_USB" "$VOL_JOWUA" "$VOL_2TB" "$LOCAL_SYNC_DIR"
@@ -1841,6 +1904,18 @@ echo "======================================================"
 # 1. Pre-sync flagged deletions check & prompt (Method B: On-Demand)
 check_and_prompt_flagged_tombstones "$VOL_TESLA_USB" "$VOL_JOWUA" "$VOL_2TB" "$LOCAL_SYNC_DIR"
 echo ""
+
+# 1a. Pre-sync Home + Recent deletion prompt - only when an archive
+# destination is connected (2TB SSD or --localsync dir), matching the
+# "only delete after archiving" rule the purge step below already follows
+# in the no-archive branch further down. Runs before any sync_volumes
+# call in every branch that has one, so a confirmed purge removes the
+# footage from every connected drive (source included) before that
+# drive's sync leg runs.
+if [[ -n "$VOL_2TB" || -n "$LOCAL_SYNC_DIR" ]]; then
+  prompt_home_recent_purge "$VOL_TESLA_USB" "$VOL_JOWUA" "$VOL_2TB" "$LOCAL_SYNC_DIR"
+  echo ""
+fi
 
 # Target: Local directory (--localsync)
 if [[ -n "$LOCAL_SYNC_DIR" ]]; then
