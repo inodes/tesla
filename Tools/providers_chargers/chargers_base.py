@@ -80,6 +80,44 @@ def save_json_with_fallback(target_paths: List[str], payload: Any, indent: int =
     raise PermissionError(f"Could not save registry to any of: {target_paths}{detail}")
 
 
+
+def resolve_au_state(lat: float, lon: float) -> str:
+    """Deterministically resolves Australian State/Territory code from GPS coordinates."""
+    if lat is None or lon is None:
+        return ""
+    # ACT: approx -35.92 to -35.12 lat, 148.76 to 149.24 lon (Carwoola/Queanbeyan are east of 149.24 in NSW)
+    if -35.92 <= lat <= -35.12 and 148.76 <= lon <= 149.24:
+        return "ACT"
+    # TAS: approx -44.0 to -39.5 lat, 143.5 to 149.0 lon
+    if -44.0 <= lat <= -39.5 and 143.5 <= lon <= 149.0:
+        return "TAS"
+    # WA: lon < 129.0
+    if 112.0 <= lon < 129.0 and -36.0 <= lat <= -13.0:
+        return "WA"
+    # NT: 129.0 <= lon <= 138.0 and lat > -26.0
+    if 129.0 <= lon <= 138.0 and -26.0 < lat <= -10.0:
+        return "NT"
+    # SA: 129.0 <= lon <= 141.0 and lat <= -26.0
+    if 129.0 <= lon <= 141.0 and -38.5 <= lat <= -26.0:
+        return "SA"
+    # QLD: lat > -29.0 and lon >= 138.0
+    if lat > -29.0 and 138.0 <= lon <= 154.0:
+        return "QLD"
+    # VIC: lat <= -34.0 and lon <= 150.0 and lat > -39.5
+    if -39.5 <= lat <= -34.0 and 140.9 <= lon <= 150.0:
+        if lat <= -36.0 or (lat <= -34.2 and lon < 143.0) or (lat <= -35.8 and lon < 147.0):
+            return "VIC"
+        if lat < -36.1:
+            return "VIC"
+    # NSW fallback for eastern Australia
+    if -37.6 <= lat <= -28.0 and 141.0 <= lon <= 154.0:
+        return "NSW"
+    # New Zealand
+    if -48.0 <= lat <= -34.0 and 166.0 <= lon <= 179.0:
+        return "NZ"
+    return "NSW"
+
+
 def haversine_km(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
     """Computes great-circle distance between two GPS coordinates in kilometers."""
     if lat1 is None or lon1 is None or lat2 is None or lon2 is None:
@@ -416,6 +454,14 @@ class UnifiedStationRecord:
         self.address = strip_invisible_chars(self.address)
         self.suburb = strip_invisible_chars(self.suburb)
         self.state = strip_invisible_chars(self.state)
+        # Auto-resolve / normalize Australian State if missing or set to placeholder ("OTHER", "UNKNOWN", "-")
+        if (self.country or "").upper() in ("AU", "AUSTRALIA", ""):
+            valid_au_states = {"NSW", "VIC", "QLD", "WA", "SA", "TAS", "ACT", "NT", "NZ"}
+            st_clean = (self.state or "").strip().upper()
+            if (st_clean not in valid_au_states or st_clean in ("OTHER", "UNKNOWN", "-")) and self.lat is not None and self.lon is not None:
+                resolved_st = resolve_au_state(self.lat, self.lon)
+                if resolved_st:
+                    self.state = resolved_st
         self.postcode = strip_invisible_chars(self.postcode)
         self.hardware_model = strip_invisible_chars(self.hardware_model)
         self.rate_range = strip_invisible_chars(self.rate_range)
