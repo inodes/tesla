@@ -458,6 +458,41 @@ def reverse_geocode(lat, lon):
         pass
     return None
 
+def prompt_poi_naming(base_name, category):
+    """
+    Prompts the user on whether to keep the pure name or include the category in brackets.
+    E.g. [ 1 ] Ron Routley Oval (default)
+         [ 2 ] Ron Routley Oval (Pitch)
+         [ c ] Enter custom name
+    """
+    clean_base = (base_name or "").strip()
+    clean_cat = (category or "").strip()
+
+    if not clean_cat or clean_cat.lower() in clean_base.lower():
+        return clean_base
+
+    name_with_cat = f"{clean_base} ({clean_cat})"
+    print(f"\n🏷️  Select place name format:")
+    print(f"  [ 1 ] {clean_base} (default)")
+    print(f"  [ 2 ] {name_with_cat}")
+    print(f"  [ c ] Enter custom name")
+
+    try:
+        n_choice = input("Choice [1]: ").strip().lower()
+    except (EOFError, KeyboardInterrupt):
+        return clean_base
+
+    if n_choice == "2":
+        return name_with_cat
+    elif n_choice in ("c", "custom"):
+        try:
+            custom_val = input(f"Enter custom name [default: {clean_base}]: ").strip()
+            return custom_val if custom_val else clean_base
+        except (EOFError, KeyboardInterrupt):
+            return clean_base
+    return clean_base
+
+
 def classify_poi_group(tags):
     """Classifies OSM tags into user-friendly top-level facility groups."""
     amenity = (tags.get("amenity") or "").lower()
@@ -559,6 +594,10 @@ def query_overpass_pois(lat, lon, radius_m=300):
                     man_made = tags.get("man_made")
                     waterway = tags.get("waterway")
                     sport = tags.get("sport")
+                    club = tags.get("club")
+                    historic = tags.get("historic")
+                    social_facility = tags.get("social_facility")
+                    craft = tags.get("craft")
 
                     # Synthesize descriptive names for unnamed boating/park infrastructure
                     if not name:
@@ -576,6 +615,8 @@ def query_overpass_pois(lat, lon, radius_m=300):
                             name = "Public Park / Reserve"
                         elif sport:
                             name = f"{sport.replace('_', ' ').title()} Facility"
+                        elif club:
+                            name = f"{club.replace('_', ' ').title()} Club"
                         elif brand:
                             name = brand.title()
 
@@ -586,12 +627,17 @@ def query_overpass_pois(lat, lon, radius_m=300):
                     if amenity == "charging_station" or "supercharger" in name.lower() or name.lower().startswith("tesla super"):
                         continue
 
-                    category = amenity or shop or leisure or tourism or office or healthcare or man_made or waterway or sport
-                    if not category and building and building != "yes":
-                        category = f"building ({building})"
-
-                    if not category and not brand:
-                        continue
+                    # Derive friendly category label
+                    category = amenity or shop or leisure or tourism or club or sport or social_facility or office or healthcare or man_made or waterway or historic or craft
+                    if not category:
+                        if building and building != "yes":
+                            category = f"building ({building})"
+                        elif "club" in name.lower():
+                            category = "Club"
+                        elif building == "yes":
+                            category = "Venue"
+                        else:
+                            category = "Place"
 
                     p_lat = el.get("lat") or el.get("center", {}).get("lat", lat)
                     p_lon = el.get("lon") or el.get("center", {}).get("lon", lon)
@@ -847,6 +893,41 @@ def reverse_geocode(lat, lon):
         pass
     return None
 
+def prompt_poi_naming(base_name, category):
+    """
+    Prompts the user on whether to keep the pure name or include the category in brackets.
+    E.g. [ 1 ] Ron Routley Oval (default)
+         [ 2 ] Ron Routley Oval (Pitch)
+         [ c ] Enter custom name
+    """
+    clean_base = (base_name or "").strip()
+    clean_cat = (category or "").strip()
+
+    if not clean_cat or clean_cat.lower() in clean_base.lower():
+        return clean_base
+
+    name_with_cat = f"{clean_base} ({clean_cat})"
+    print(f"\n🏷️  Select place name format:")
+    print(f"  [ 1 ] {clean_base} (default)")
+    print(f"  [ 2 ] {name_with_cat}")
+    print(f"  [ c ] Enter custom name")
+
+    try:
+        n_choice = input("Choice [1]: ").strip().lower()
+    except (EOFError, KeyboardInterrupt):
+        return clean_base
+
+    if n_choice == "2":
+        return name_with_cat
+    elif n_choice in ("c", "custom"):
+        try:
+            custom_val = input(f"Enter custom name [default: {clean_base}]: ").strip()
+            return custom_val if custom_val else clean_base
+        except (EOFError, KeyboardInterrupt):
+            return clean_base
+    return clean_base
+
+
 def classify_poi_group(tags):
     """Classifies OSM tags into user-friendly top-level facility groups."""
     amenity = (tags.get("amenity") or "").lower()
@@ -941,6 +1022,10 @@ def query_overpass_pois(lat, lon, radius_m=300):
                     man_made = tags.get("man_made")
                     waterway = tags.get("waterway")
                     sport = tags.get("sport")
+                    club = tags.get("club")
+                    historic = tags.get("historic")
+                    social_facility = tags.get("social_facility")
+                    craft = tags.get("craft")
 
                     # Synthesize descriptive names for unnamed boating/park infrastructure
                     if not name:
@@ -958,6 +1043,8 @@ def query_overpass_pois(lat, lon, radius_m=300):
                             name = "Public Park / Reserve"
                         elif sport:
                             name = f"{sport.replace('_', ' ').title()} Facility"
+                        elif club:
+                            name = f"{club.replace('_', ' ').title()} Club"
                         elif brand:
                             name = brand.title()
 
@@ -968,12 +1055,17 @@ def query_overpass_pois(lat, lon, radius_m=300):
                     if amenity == "charging_station" or "supercharger" in name.lower() or name.lower().startswith("tesla super"):
                         continue
 
-                    category = amenity or shop or leisure or tourism or office or healthcare or man_made or waterway or sport
-                    if not category and building and building != "yes":
-                        category = f"building ({building})"
-
-                    if not category and not brand:
-                        continue
+                    # Derive friendly category label
+                    category = amenity or shop or leisure or tourism or club or sport or social_facility or office or healthcare or man_made or waterway or historic or craft
+                    if not category:
+                        if building and building != "yes":
+                            category = f"building ({building})"
+                        elif "club" in name.lower():
+                            category = "Club"
+                        elif building == "yes":
+                            category = "Venue"
+                        else:
+                            category = "Place"
 
                     p_lat = el.get("lat") or el.get("center", {}).get("lat", lat)
                     p_lon = el.get("lon") or el.get("center", {}).get("lon", lon)
@@ -1227,6 +1319,41 @@ def reverse_geocode(lat, lon):
         pass
     return None
 
+def prompt_poi_naming(base_name, category):
+    """
+    Prompts the user on whether to keep the pure name or include the category in brackets.
+    E.g. [ 1 ] Ron Routley Oval (default)
+         [ 2 ] Ron Routley Oval (Pitch)
+         [ c ] Enter custom name
+    """
+    clean_base = (base_name or "").strip()
+    clean_cat = (category or "").strip()
+
+    if not clean_cat or clean_cat.lower() in clean_base.lower():
+        return clean_base
+
+    name_with_cat = f"{clean_base} ({clean_cat})"
+    print(f"\n🏷️  Select place name format:")
+    print(f"  [ 1 ] {clean_base} (default)")
+    print(f"  [ 2 ] {name_with_cat}")
+    print(f"  [ c ] Enter custom name")
+
+    try:
+        n_choice = input("Choice [1]: ").strip().lower()
+    except (EOFError, KeyboardInterrupt):
+        return clean_base
+
+    if n_choice == "2":
+        return name_with_cat
+    elif n_choice in ("c", "custom"):
+        try:
+            custom_val = input(f"Enter custom name [default: {clean_base}]: ").strip()
+            return custom_val if custom_val else clean_base
+        except (EOFError, KeyboardInterrupt):
+            return clean_base
+    return clean_base
+
+
 def classify_poi_group(tags):
     """Classifies OSM tags into user-friendly top-level facility groups."""
     amenity = (tags.get("amenity") or "").lower()
@@ -1321,6 +1448,10 @@ def query_overpass_pois(lat, lon, radius_m=350):
                     man_made = tags.get("man_made")
                     waterway = tags.get("waterway")
                     sport = tags.get("sport")
+                    club = tags.get("club")
+                    historic = tags.get("historic")
+                    social_facility = tags.get("social_facility")
+                    craft = tags.get("craft")
 
                     # Synthesize descriptive names for unnamed boating/park infrastructure
                     if not name:
@@ -1338,6 +1469,8 @@ def query_overpass_pois(lat, lon, radius_m=350):
                             name = "Public Park / Reserve"
                         elif sport:
                             name = f"{sport.replace('_', ' ').title()} Facility"
+                        elif club:
+                            name = f"{club.replace('_', ' ').title()} Club"
                         elif brand:
                             name = brand.title()
 
@@ -1348,12 +1481,17 @@ def query_overpass_pois(lat, lon, radius_m=350):
                     if amenity == "charging_station" or "supercharger" in name.lower() or name.lower().startswith("tesla super"):
                         continue
 
-                    category = amenity or shop or leisure or tourism or office or healthcare or man_made or waterway or sport
-                    if not category and building and building != "yes":
-                        category = f"building ({building})"
-
-                    if not category and not brand:
-                        continue
+                    # Derive friendly category label
+                    category = amenity or shop or leisure or tourism or club or sport or social_facility or office or healthcare or man_made or waterway or historic or craft
+                    if not category:
+                        if building and building != "yes":
+                            category = f"building ({building})"
+                        elif "club" in name.lower():
+                            category = "Club"
+                        elif building == "yes":
+                            category = "Venue"
+                        else:
+                            category = "Place"
 
                     p_lat = el.get("lat") or el.get("center", {}).get("lat", lat)
                     p_lon = el.get("lon") or el.get("center", {}).get("lon", lon)
@@ -1603,6 +1741,41 @@ def reverse_geocode(lat, lon):
     except Exception:
         pass
     return None
+
+def prompt_poi_naming(base_name, category):
+    """
+    Prompts the user on whether to keep the pure name or include the category in brackets.
+    E.g. [ 1 ] Ron Routley Oval (default)
+         [ 2 ] Ron Routley Oval (Pitch)
+         [ c ] Enter custom name
+    """
+    clean_base = (base_name or "").strip()
+    clean_cat = (category or "").strip()
+
+    if not clean_cat or clean_cat.lower() in clean_base.lower():
+        return clean_base
+
+    name_with_cat = f"{clean_base} ({clean_cat})"
+    print(f"\n🏷️  Select place name format:")
+    print(f"  [ 1 ] {clean_base} (default)")
+    print(f"  [ 2 ] {name_with_cat}")
+    print(f"  [ c ] Enter custom name")
+
+    try:
+        n_choice = input("Choice [1]: ").strip().lower()
+    except (EOFError, KeyboardInterrupt):
+        return clean_base
+
+    if n_choice == "2":
+        return name_with_cat
+    elif n_choice in ("c", "custom"):
+        try:
+            custom_val = input(f"Enter custom name [default: {clean_base}]: ").strip()
+            return custom_val if custom_val else clean_base
+        except (EOFError, KeyboardInterrupt):
+            return clean_base
+    return clean_base
+
 
 def classify_poi_group(tags):
     """Classifies OSM tags into user-friendly top-level facility groups."""
@@ -1941,7 +2114,7 @@ def interactive_lookup_and_add(query_or_addr=None, lat=None, lon=None, default_r
 
     if choice.isdigit() and 1 <= int(choice) <= len(pois[:7]):
         poi = pois[int(choice) - 1]
-        selected_name = poi["name"]
+        selected_name = prompt_poi_naming(poi["name"], poi.get("category", ""))
         final_lat = poi["lat"]
         final_lon = poi["lon"]
         recommended_radius = max(150, int(poi["dist_m"] + 60))
@@ -2090,6 +2263,60 @@ def _format_stay_duration(minutes):
         m = 0
     return f"{h}h {m}m" if m > 0 else f"{h}h"
 
+def load_chargers():
+    """
+    Loads all known charging stations (Superchargers, destination chargers, third-party)
+    from configured tessie_directory so they are accurately recognized and excluded from place review.
+    """
+    chargers = {}
+    config = load_config()
+    tessie_dir = os.path.abspath(os.path.expanduser(config.get("tessie_directory", "~/Library/Mobile Documents/com~apple~CloudDocs/Tesla/Tessie")))
+    
+    search_dirs = [tessie_dir]
+    if TESSIE_DIR not in search_dirs and os.path.exists(TESSIE_DIR):
+        search_dirs.append(TESSIE_DIR)
+
+    filenames = [
+        "tesla_superchargers.json",
+        "superchargers.json",
+        "tesla_chargers.json",
+        "charging.json",
+        "charging_stations.json",
+        "chargefox_chargers.json",
+        "evie_chargers.json",
+        "bppulse_chargers.json",
+        "nrma_chargers.json",
+        "jolt_chargers.json",
+        "ampcharge_chargers.json",
+        "evx_chargers.json",
+        "exploren_chargers.json"
+    ]
+
+    for d in search_dirs:
+        for fname in filenames:
+            c_path = os.path.join(d, fname)
+            if os.path.isfile(c_path):
+                try:
+                    with open(c_path, "r", encoding="utf-8") as f:
+                        c_data = json.load(f)
+                        if isinstance(c_data, dict):
+                            for k, v in c_data.items():
+                                if isinstance(v, dict):
+                                    lat = v.get("lat") or v.get("location", {}).get("lat")
+                                    lon = v.get("lon") or v.get("location", {}).get("lon")
+                                    if lat is not None and lon is not None:
+                                        rad = v.get("radius_m") or v.get("location", {}).get("radius_m", 250)
+                                        chargers[k] = {
+                                            "lat": float(lat),
+                                            "lon": float(lon),
+                                            "radius_m": rad,
+                                            "name": v.get("name") or k
+                                        }
+                except Exception:
+                    pass
+    return chargers
+
+
 def get_place_visit_counts(places, drive_logs=None):
     """
     Computes visit frequency (unique visits / stays) for each place in places.json by scanning drive logs.
@@ -2102,18 +2329,7 @@ def get_place_visit_counts(places, drive_logs=None):
     if not drive_logs:
         return visit_counts
 
-    chargers = {}
-    for c_path in [CHARGING_JSON_PATH, SUPERCHARGERS_JSON_PATH]:
-        if os.path.exists(c_path):
-            try:
-                with open(c_path, "r", encoding="utf-8") as f:
-                    c_data = json.load(f)
-                    if isinstance(c_data, dict):
-                        for k, v in c_data.items():
-                            if isinstance(v, dict) and "lat" in v and "lon" in v:
-                                chargers[k] = v
-            except Exception:
-                pass
+    chargers = load_chargers()
 
     for csv_file in drive_logs:
         try:
@@ -2147,18 +2363,7 @@ def get_place_trip_history(target_place_name, places=None, drive_logs=None):
     if not drive_logs:
         return []
 
-    chargers = {}
-    for c_path in [CHARGING_JSON_PATH, SUPERCHARGERS_JSON_PATH]:
-        if os.path.exists(c_path):
-            try:
-                with open(c_path, "r", encoding="utf-8") as f:
-                    c_data = json.load(f)
-                    if isinstance(c_data, dict):
-                        for k, v in c_data.items():
-                            if isinstance(v, dict) and "lat" in v and "lon" in v:
-                                chargers[k] = v
-            except Exception:
-                pass
+    chargers = load_chargers()
 
     raw_drives = []
     for csv_file in drive_logs:
@@ -2494,11 +2699,13 @@ def review_single_cluster(cl, places, total_clusters=1, cluster_num=1, allow_ign
     print(f"GPS:     {hyperlink(gps_str, gmaps_url(cl['center_lat'], cl['center_lon']))}")
     print(f"==============================================================================")
 
+    print(f"\n🌐 Querying OpenStreetMap POIs near {cl['center_lat']:.5f}, {cl['center_lon']:.5f}...")
     pois = query_overpass_pois(cl["center_lat"], cl["center_lon"], radius_m=350)
     candidates = pois[:5]
 
     if candidates:
-        print("\n🏢 Suggested POIs from API:")
+        print(f"✔ Discovered {len(candidates)} nearby POI{'s' if len(candidates) != 1 else ''}.\n")
+        print("🏢 Suggested POIs from API:")
         for p_idx, poi in enumerate(candidates, 1):
             dist_disp = format_dist_human(poi['dist_m'])
             print(f"  [{p_idx}] {poi['name']} ({poi['category']}) [~{dist_disp} | Center: {poi['lat']:.5f}, {poi['lon']:.5f}]")
@@ -2593,7 +2800,7 @@ def review_single_cluster(cl, places, total_clusters=1, cluster_num=1, allow_ign
 
     if choice.isdigit() and 1 <= int(choice) <= len(candidates):
         poi = candidates[int(choice) - 1]
-        selected_name = poi["name"]
+        selected_name = prompt_poi_naming(poi["name"], poi.get("category", ""))
         final_lat = poi["lat"]
         final_lon = poi["lon"]
         recommended_radius = max(150, int(poi["dist_m"] + 60))
@@ -2686,20 +2893,7 @@ def cmd_review_drives(args):
     places = load_places()
     
     # Read chargers to strictly exclude them from review (chargers left alone)
-    chargers = {}
-    for c_path in [CHARGING_JSON_PATH, SUPERCHARGERS_JSON_PATH]:
-        if os.path.exists(c_path):
-            try:
-                with open(c_path, "r", encoding="utf-8") as f:
-                    c_data = json.load(f)
-                    if isinstance(c_data, dict):
-                        for k, v in c_data.items():
-                            if isinstance(v, dict) and "lat" in v and "lon" in v:
-                                chargers[k] = v
-            except Exception:
-                pass
-
-    print(f"🔍 Analyzing drive history from {len(csv_candidates)} file(s) (excluding chargers)...")
+    chargers = load_chargers()
     
     unlabelled_stops = []
     for csv_file in csv_candidates:
