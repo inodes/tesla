@@ -783,24 +783,23 @@ def resolve_reference_coordinates(ref_str: str, repo_root: str = None) -> tuple:
         try:
             with open(places_p, "r", encoding="utf-8") as f:
                 places = json.load(f)
-            # Exact match
+            # Exact match on saved place
             for p_name, p_info in places.items():
                 if p_name.lower() == clean.lower():
                     return float(p_info.get("lat")), float(p_info.get("lon")), f"{p_name} (places.json)"
-            # Partial match
-            for p_name, p_info in places.items():
-                if clean.lower() in p_name.lower():
-                    return float(p_info.get("lat")), float(p_info.get("lon")), f"{p_name} (places.json)"
-                for kw in p_info.get("keywords", []):
-                    if clean.lower() in kw.lower():
-                        return float(p_info.get("lat")), float(p_info.get("lon")), f"{p_name} ({kw})"
         except Exception:
             pass
 
-    # Online Geocoding for address/suburb
-    geo_lat, geo_lon, geo_label = geocode_address(clean)
-    if geo_lat is not None and geo_lon is not None:
-        return geo_lat, geo_lon, geo_label
+    # Online Geocoding for address/suburb with smart disambiguation
+    try:
+        from places_manager import resolve_location_disambiguated
+        geo_lat, geo_lon, geo_label = resolve_location_disambiguated(clean, interactive=True)
+        if geo_lat is not None and geo_lon is not None:
+            return geo_lat, geo_lon, geo_label
+    except Exception:
+        geo_lat, geo_lon, geo_label = geocode_address(clean)
+        if geo_lat is not None and geo_lon is not None:
+            return geo_lat, geo_lon, geo_label
 
     # Fallback to Tessie/superchargers.json for exact station names
     sc_p = os.path.join(repo_root, "Tessie", "superchargers.json")

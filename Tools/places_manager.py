@@ -215,6 +215,17 @@ def resolve_stop(addr, saved_loc, lat, lon, places, chargers):
 # ---------------------------------------------------------------------------
 USER_AGENT = "TeslaPlacesManager/1.0 (https://github.com/inodes/tesla)"
 
+AU_STATE_MAP = {
+    "New South Wales": "NSW",
+    "Victoria": "VIC",
+    "Queensland": "QLD",
+    "South Australia": "SA",
+    "Western Australia": "WA",
+    "Tasmania": "TAS",
+    "Australian Capital Territory": "ACT",
+    "Northern Territory": "NT"
+}
+
 OVERPASS_ENDPOINTS = [
     "https://overpass-api.de/api/interpreter",
     "https://lz4.overpass-api.de/api/interpreter",
@@ -224,32 +235,198 @@ OVERPASS_ENDPOINTS = [
     "https://overpass.kumi.systems/api/interpreter",
 ]
 
-def geocode_address(address_str):
-    """Geocodes a street address or place name string to lat, lon via Nominatim."""
-    if not address_str or not address_str.strip():
-        return None
+def geocode_candidates(query, country_hint="Australia", anchor_coords=None, limit=10):
+    """
+    Finds geographic location candidates in Australia via Nominatim / Photon.
+    Returns a list of structured candidate dicts:
+    [{'lat': float, 'lon': float, 'label': str, 'state': str, 'name': str, 'dist_km': float, 'display_name': str, 'raw': dict}, ...]
+    Deduplicated by vicinity and sorted by distance to anchor_coords (e.g. Home).
+    """
+    if not query or not query.strip():
+        return []
+
+    clean = query.strip()
+    q_str = clean if country_hint.lower() in clean.lower() else f"{clean}, {country_hint}"
     
-    clean_addr = address_str.strip()
-    encoded = urllib.parse.quote(clean_addr)
-    url = f"https://nominatim.openstreetmap.org/search?q={encoded}&format=json&addressdetails=1&extratags=1&limit=5"
+    candidates = []
     
-    req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
+    # 1. Nominatim (OpenStreetMap)
     try:
-        with urllib.request.urlopen(req, timeout=6) as resp:
+        params = urllib.parse.urlencode({
+            "q": q_str,
+            "format": "json",
+            "addressdetails": 1,
+            "extratags": 1,
+            "countrycodes": "au",
+            "limit": limit
+        })
+        url = f"https://nominatim.openstreetmap.org/search?{params}"
+        req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
+        with urllib.request.urlopen(req, timeout=5.0) as resp:
             data = json.loads(resp.read().decode("utf-8"))
-            if data and isinstance(data, list) and len(data) > 0:
-                first = data[0]
-                return {
-                    "lat": float(first.get("lat")),
-                    "lon": float(first.get("lon")),
-                    "display_name": first.get("display_name", ""),
-                    "type": first.get("type", ""),
-                    "class": first.get("class", ""),
-                    "address": first.get("address", {}),
-                    "raw": first
-                }
+            if isinstance(data, list):
+                for item in data:
+                    lat = float(item.get("lat", 0))
+                    lon = float(item.get("lon", 0))
+                    addr = item.get("address", {})
+                    
+                    iso_state = addr.get("ISO3166-2-lvl4", "")
+                    state_code = iso_state.replace("AU-", "") if iso_state.startswith("AU-") else AU_STATE_MAP.get(addr.get("state"), addr.get("state") or "")
+                    
+                    raw_name = item.get("name") or ""
+                    name = addr.get("suburb") or addr.get("neighbourhood") or addr.get("political") or addr.get("quarter") or addr.get("town") or raw_name or addr.get("city") or clean
+                    name = name.replace(" District", "").replace(" Shire", "").strip()
+                    
+                    disp = item.get("display_name", "")
+                    q_lower = clean.lower()
+                    if "," not in clean and q_lower not in name.lower():
+                        continue
+                        
+                    label = f"{name}, {state_code}" if state_code else name
+                    dist_km = haversine_distance(anchor_coords[0], anchor_coords[1], lat, lon) / 1000.0 if anchor_coords else None
+
+                    candidates.append({
+                        "lat": lat,
+                        "lon": lon,
+                        "label": label,
+                        "state": state_code,
+                        "name": name,
+                        "dist_km": dist_km,
+                        "display_name": disp,
+                        "raw": item
+                    })
     except Exception:
         pass
+
+    # 2. Photon (Komoot) fallback if Nominatim returned 0 candidates
+    if not candidates:
+        try:
+            params = urllib.parse.urlencode({"q": q_str, "limit": limit})
+            url = f"https://photon.komoot.io/api/?{params}"
+            req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
+            with urllib.request.urlopen(req, timeout=5.0) as resp:
+                pdata = json.loads(resp.read().decode("utf-8"))
+                for feat in pdata.get("features", []):
+                    coords = feat.get("geometry", {}).get("coordinates", [])
+                    if len(coords) < 2:
+                        continue
+                    lon = float(coords[0])
+                    lat = float(coords[1])
+                    props = feat.get("properties", {})
+                    state = props.get("state") or ""
+                    state_code = AU_STATE_MAP.get(state, state)
+                    raw_name = props.get("name") or props.get("street") or props.get("city") or clean
+                    name = raw_name.replace(" District", "").replace(" Shire", "").strip()
+                    label = f"{name}, {state_code}" if state_code else name
+                    dist_km = haversine_distance(anchor_coords[0], anchor_coords[1], lat, lon) / 1000.0 if anchor_coords else None
+                    candidates.append({
+                        "lat": lat,
+                        "lon": lon,
+                        "label": label,
+                        "state": state_code,
+                        "name": name,
+                        "dist_km": dist_km,
+                        "display_name": f"{label}, Australia",
+                        "raw": feat
+                    })
+        except Exception:
+            pass
+
+    # Deduplicate candidates within 25km of each other or with identical label
+    deduped = []
+    for c in candidates:
+        is_dup = False
+        for d in deduped:
+            if c["label"] == d["label"] or (haversine_distance(c["lat"], c["lon"], d["lat"], d["lon"]) < 25000.0):
+                is_dup = True
+                break
+        if not is_dup:
+            deduped.append(c)
+
+    # Proximity sort if anchor coords given
+    if anchor_coords:
+        deduped.sort(key=lambda x: x["dist_km"] if x["dist_km"] is not None else 999999)
+
+    return deduped
+
+
+def resolve_location_disambiguated(query, anchor_coords=None, interactive=True, country_hint="Australia"):
+    """
+    Resolves an address/suburb query with interactive disambiguation if multiple distinct locations match.
+    Returns (lat: float, lon: float, label: str) or (None, None, "").
+    """
+    if not query or not query.strip():
+        return None, None, ""
+
+    clean = query.strip()
+    candidates = geocode_candidates(clean, country_hint=country_hint, anchor_coords=anchor_coords)
+    
+    if not candidates:
+        return None, None, ""
+
+    # Check for direct label match (e.g. user specified "Richmond, NSW" or "West Ryde, NSW")
+    for c in candidates:
+        if c["label"].lower() == clean.lower():
+            return c["lat"], c["lon"], c["label"]
+
+    # If only 1 candidate exists, return it directly
+    if len(candidates) == 1:
+        return candidates[0]["lat"], candidates[0]["lon"], candidates[0]["label"]
+
+    # Multiple candidates found
+    # Interactive prompt if running in interactive terminal
+    if interactive and sys.stdin and sys.stdin.isatty():
+        print(f"\n📍 Multiple locations found for '{clean}':")
+        for i, c in enumerate(candidates[:5]):
+            dist_str = f" [{c['dist_km']:.0f} km away]" if c.get("dist_km") is not None else ""
+            print(f"   [ {i+1} ] {c['label']} ({c['lat']:.4f}, {c['lon']:.4f}){dist_str}")
+        cancel_idx = min(len(candidates), 5) + 1
+        print(f"   [ {cancel_idx} ] None of the above - please be more specific (e.g. --near \"{clean}, NSW\")\n")
+        
+        try:
+            choice = input(f"Select location [1-{cancel_idx-1}, default 1]: ").strip()
+            if not choice:
+                selected = candidates[0]
+                return selected["lat"], selected["lon"], selected["label"]
+            if choice.isdigit():
+                idx = int(choice)
+                if 1 <= idx <= min(len(candidates), 5):
+                    selected = candidates[idx - 1]
+                    return selected["lat"], selected["lon"], selected["label"]
+                else:
+                    return None, None, ""
+            else:
+                return None, None, ""
+        except (KeyboardInterrupt, EOFError):
+            print()
+            return None, None, ""
+
+    # Non-interactive fallback: pick closest candidate and log informative message
+    top = candidates[0]
+    dist_str = f" ({top['dist_km']:.0f} km away)" if top.get("dist_km") is not None else ""
+    print(f"ℹ️  Multiple locations found for '{clean}'; defaulted to closest: {top['label']}{dist_str}. (Specify '{clean}, <State>' to override).")
+    return top["lat"], top["lon"], top["label"]
+
+
+def geocode_address(address_str):
+    """Geocodes a street address or place name string to structured dict via geocode_candidates."""
+    if not address_str or not address_str.strip():
+        return None
+    cands = geocode_candidates(address_str, limit=5)
+    if cands:
+        first = cands[0]
+        return {
+            "lat": first["lat"],
+            "lon": first["lon"],
+            "display_name": first["display_name"],
+            "label": first["label"],
+            "state": first["state"],
+            "name": first["name"],
+            "type": first["raw"].get("type", "") if isinstance(first.get("raw"), dict) else "",
+            "class": first["raw"].get("class", "") if isinstance(first.get("raw"), dict) else "",
+            "address": first["raw"].get("address", {}) if isinstance(first.get("raw"), dict) else {},
+            "raw": first["raw"]
+        }
     return None
 
 def reverse_geocode(lat, lon):
