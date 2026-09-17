@@ -26,6 +26,7 @@ import urllib.parse
 import webbrowser
 from datetime import datetime
 from collections import defaultdict
+import textwrap
 
 # ---------------------------------------------------------------------------
 # Path & Environment Setup
@@ -78,6 +79,15 @@ def gmaps_url(lat, lon):
 # ---------------------------------------------------------------------------
 # Geodesic Math
 # ---------------------------------------------------------------------------
+def format_dist_human(dist_m):
+    """Formats distance in m (if < 1000m) or km (if >= 1000m)."""
+    if dist_m is None:
+        return ""
+    if dist_m >= 1000:
+        return f"{dist_m / 1000.0:.1f} km"
+    return f"{int(round(dist_m))}m"
+
+
 def haversine_distance(lat1, lon1, lat2, lon2):
     """Returns distance in meters between two lat/lon coordinates."""
     R = 6371000.0
@@ -227,13 +237,1158 @@ AU_STATE_MAP = {
 }
 
 OVERPASS_ENDPOINTS = [
-    "https://overpass-api.de/api/interpreter",
-    "https://lz4.overpass-api.de/api/interpreter",
-    "https://z.overpass-api.de/api/interpreter",
-    "https://overpass.openstreetmap.fr/api/interpreter",
-    "https://overpass.private.coffee/api/interpreter",
     "https://overpass.kumi.systems/api/interpreter",
+    "https://overpass.private.coffee/api/interpreter",
+    "https://overpass.openstreetmap.fr/api/interpreter",
+    "https://lz4.overpass-api.de/api/interpreter",
+    "https://overpass-api.de/api/interpreter",
 ]
+
+def geocode_candidates(query, country_hint="Australia", anchor_coords=None, limit=10):
+    """
+    Finds geographic location candidates in Australia via Nominatim / Photon.
+    Returns a list of structured candidate dicts:
+    [{'lat': float, 'lon': float, 'label': str, 'state': str, 'name': str, 'dist_km': float, 'display_name': str, 'raw': dict}, ...]
+    Deduplicated by vicinity and sorted by distance to anchor_coords (e.g. Home).
+    """
+    if not query or not query.strip():
+        return []
+
+    clean = query.strip()
+    q_str = clean if country_hint.lower() in clean.lower() else f"{clean}, {country_hint}"
+    
+    candidates = []
+    
+    # 1. Nominatim (OpenStreetMap)
+    try:
+        params = urllib.parse.urlencode({
+            "q": q_str,
+            "format": "json",
+            "addressdetails": 1,
+            "extratags": 1,
+            "countrycodes": "au",
+            "limit": limit
+        })
+        url = f"https://nominatim.openstreetmap.org/search?{params}"
+        req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
+        with urllib.request.urlopen(req, timeout=5.0) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+            if isinstance(data, list):
+                for item in data:
+                    lat = float(item.get("lat", 0))
+                    lon = float(item.get("lon", 0))
+                    addr = item.get("address", {})
+                    
+                    iso_state = addr.get("ISO3166-2-lvl4", "")
+                    state_code = iso_state.replace("AU-", "") if iso_state.startswith("AU-") else AU_STATE_MAP.get(addr.get("state"), addr.get("state") or "")
+                    
+                    raw_name = item.get("name") or ""
+                    name = addr.get("suburb") or addr.get("neighbourhood") or addr.get("political") or addr.get("quarter") or addr.get("town") or raw_name or addr.get("city") or clean
+                    name = name.replace(" District", "").replace(" Shire", "").strip()
+                    
+                    disp = item.get("display_name", "")
+                    q_lower = clean.lower()
+                    if "," not in clean and q_lower not in name.lower():
+                        continue
+                        
+                    label = f"{name}, {state_code}" if state_code else name
+                    dist_km = haversine_distance(anchor_coords[0], anchor_coords[1], lat, lon) / 1000.0 if anchor_coords else None
+
+                    candidates.append({
+                        "lat": lat,
+                        "lon": lon,
+                        "label": label,
+                        "state": state_code,
+                        "name": name,
+                        "dist_km": dist_km,
+                        "display_name": disp,
+                        "raw": item
+                    })
+    except Exception:
+        pass
+
+    # 2. Photon (Komoot) fallback if Nominatim returned 0 candidates
+    if not candidates:
+        try:
+            params = urllib.parse.urlencode({"q": q_str, "limit": limit})
+            url = f"https://photon.komoot.io/api/?{params}"
+            req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
+            with urllib.request.urlopen(req, timeout=5.0) as resp:
+                pdata = json.loads(resp.read().decode("utf-8"))
+                for feat in pdata.get("features", []):
+                    coords = feat.get("geometry", {}).get("coordinates", [])
+                    if len(coords) < 2:
+                        continue
+                    lon = float(coords[0])
+                    lat = float(coords[1])
+                    props = feat.get("properties", {})
+                    state = props.get("state") or ""
+                    state_code = AU_STATE_MAP.get(state, state)
+                    raw_name = props.get("name") or props.get("street") or props.get("city") or clean
+                    name = raw_name.replace(" District", "").replace(" Shire", "").strip()
+                    label = f"{name}, {state_code}" if state_code else name
+                    dist_km = haversine_distance(anchor_coords[0], anchor_coords[1], lat, lon) / 1000.0 if anchor_coords else None
+                    candidates.append({
+                        "lat": lat,
+                        "lon": lon,
+                        "label": label,
+                        "state": state_code,
+                        "name": name,
+                        "dist_km": dist_km,
+                        "display_name": f"{label}, Australia",
+                        "raw": feat
+                    })
+        except Exception:
+            pass
+
+    # Deduplicate candidates within 25km of each other or with identical label
+    deduped = []
+    for c in candidates:
+        is_dup = False
+        for d in deduped:
+            if c["label"] == d["label"] or (haversine_distance(c["lat"], c["lon"], d["lat"], d["lon"]) < 25000.0):
+                is_dup = True
+                break
+        if not is_dup:
+            deduped.append(c)
+
+    # Proximity sort if anchor coords given
+    if anchor_coords:
+        deduped.sort(key=lambda x: x["dist_km"] if x["dist_km"] is not None else 999999)
+
+    return deduped
+
+
+def resolve_location_disambiguated(query, anchor_coords=None, interactive=True, country_hint="Australia"):
+    """
+    Resolves an address/suburb query with interactive disambiguation if multiple distinct locations match.
+    Returns (lat: float, lon: float, label: str) or (None, None, "").
+    """
+    if not query or not query.strip():
+        return None, None, ""
+
+    clean = query.strip()
+    candidates = geocode_candidates(clean, country_hint=country_hint, anchor_coords=anchor_coords)
+    
+    if not candidates:
+        return None, None, ""
+
+    # Check for direct label match (e.g. user specified "Richmond, NSW" or "West Ryde, NSW")
+    for c in candidates:
+        if c["label"].lower() == clean.lower():
+            return c["lat"], c["lon"], c["label"]
+
+    # If only 1 candidate exists, return it directly
+    if len(candidates) == 1:
+        return candidates[0]["lat"], candidates[0]["lon"], candidates[0]["label"]
+
+    # Multiple candidates found
+    # Interactive prompt if running in interactive terminal
+    if interactive and sys.stdin and sys.stdin.isatty():
+        print(f"\n📍 Multiple locations found for '{clean}':")
+        for i, c in enumerate(candidates[:5]):
+            dist_str = f" [{c['dist_km']:.0f} km away]" if c.get("dist_km") is not None else ""
+            print(f"   [ {i+1} ] {c['label']} ({c['lat']:.4f}, {c['lon']:.4f}){dist_str}")
+        cancel_idx = min(len(candidates), 5) + 1
+        print(f"   [ {cancel_idx} ] None of the above - please be more specific (e.g. --near \"{clean}, NSW\")\n")
+        
+        try:
+            choice = input(f"Select location [1-{cancel_idx-1}, default 1]: ").strip()
+            if not choice:
+                selected = candidates[0]
+                return selected["lat"], selected["lon"], selected["label"]
+            if choice.isdigit():
+                idx = int(choice)
+                if 1 <= idx <= min(len(candidates), 5):
+                    selected = candidates[idx - 1]
+                    return selected["lat"], selected["lon"], selected["label"]
+                else:
+                    return None, None, ""
+            else:
+                return None, None, ""
+        except (KeyboardInterrupt, EOFError):
+            print()
+            return None, None, ""
+
+    # Non-interactive fallback: pick closest candidate and log informative message
+    top = candidates[0]
+    dist_str = f" ({top['dist_km']:.0f} km away)" if top.get("dist_km") is not None else ""
+    print(f"ℹ️  Multiple locations found for '{clean}'; defaulted to closest: {top['label']}{dist_str}. (Specify '{clean}, <State>' to override).")
+    return top["lat"], top["lon"], top["label"]
+
+
+def geocode_address(address_str):
+    """Geocodes a street address or place name string to structured dict via geocode_candidates."""
+    if not address_str or not address_str.strip():
+        return None
+    cands = geocode_candidates(address_str, limit=5)
+    if cands:
+        first = cands[0]
+        return {
+            "lat": first["lat"],
+            "lon": first["lon"],
+            "display_name": first["display_name"],
+            "label": first["label"],
+            "state": first["state"],
+            "name": first["name"],
+            "type": first["raw"].get("type", "") if isinstance(first.get("raw"), dict) else "",
+            "class": first["raw"].get("class", "") if isinstance(first.get("raw"), dict) else "",
+            "address": first["raw"].get("address", {}) if isinstance(first.get("raw"), dict) else {},
+            "raw": first["raw"]
+        }
+    return None
+
+def reverse_geocode(lat, lon):
+    """Reverse geocodes lat, lon to structured address and place name via Nominatim."""
+    url = f"https://nominatim.openstreetmap.org/reverse?lat={lat}&lon={lon}&format=json&addressdetails=1&extratags=1&namedetails=1"
+    req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
+    try:
+        with urllib.request.urlopen(req, timeout=6) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+            if data:
+                return {
+                    "name": data.get("namedetails", {}).get("name") or data.get("name") or "",
+                    "display_name": data.get("display_name", ""),
+                    "category": data.get("category") or data.get("class", ""),
+                    "type": data.get("type", ""),
+                    "address": data.get("address", {}),
+                    "raw": data
+                }
+    except Exception:
+        pass
+    return None
+
+def classify_poi_group(tags):
+    """Classifies OSM tags into user-friendly top-level facility groups."""
+    amenity = (tags.get("amenity") or "").lower()
+    shop = (tags.get("shop") or "").lower()
+    cuisine = (tags.get("cuisine") or "").lower()
+    leisure = (tags.get("leisure") or "").lower()
+    tourism = (tags.get("tourism") or "").lower()
+    healthcare = (tags.get("healthcare") or "").lower()
+    office = (tags.get("office") or "").lower()
+    man_made = (tags.get("man_made") or "").lower()
+    waterway = (tags.get("waterway") or "").lower()
+    sport = (tags.get("sport") or "").lower()
+
+    name = (tags.get("name") or "").lower()
+    brand = (tags.get("brand") or "").lower()
+    supermarket_brands = ("woolworths", "coles", "aldi", "iga", "harris farm", "costco", "foodland", "drakes", "spudshed", "kmart", "target", "big w")
+    if any(b in name or b in brand for b in supermarket_brands):
+        return "Supermarkets & Groceries", "🛒"
+
+    if leisure in ("slipway", "marina") or man_made in ("pier", "wharf", "jetty", "pontoon") or waterway in ("boat_ramp", "dock", "wharf") or "boat" in amenity or sport in ("sailing", "rowing", "kayak", "boating"):
+        return "Boating, Wharves & Ramps", "⛵"
+    if leisure in ("park", "playground", "nature_reserve", "garden", "dog_park", "pitch", "track"):
+        return "Parks & Recreation", "🌳"
+    if amenity in ("cafe", "coffee_shop") or shop in ("coffee", "tea") or "coffee" in cuisine:
+        return "Cafes & Coffee", "☕"
+    if amenity in ("restaurant", "fast_food", "food_court", "pub", "bar", "biergarten", "ice_cream"):
+        return "Dining & Fast Food", "🍔"
+    if shop in ("supermarket", "convenience", "bakery", "butcher", "greengrocer", "deli", "grocery", "general", "department_store", "mall"):
+        return "Supermarkets & Groceries", "🛒"
+    if shop or tags.get("building") in ("retail", "commercial") or amenity == "marketplace":
+        return "Retail & Shopping", "🛍️"
+    if amenity in ("toilets", "restroom", "drinking_water", "atm", "bank", "pharmacy", "post_box", "post_office"):
+        return "Amenities & Services", "🚻"
+    if tourism in ("hotel", "motel", "guest_house", "hostel", "apartment", "camp_site"):
+        return "Lodging & Hotels", "🏨"
+    if amenity in ("fuel", "car_wash", "parking", "charging_station") or shop in ("car", "car_repair", "car_parts"):
+        return "Automotive & Parking", "🚗"
+    if leisure or tourism in ("attraction", "museum", "gallery", "theme_park", "viewpoint") or amenity in ("cinema", "theatre"):
+        return "Leisure & Entertainment", "🎯"
+    if healthcare or amenity in ("hospital", "clinic", "doctors", "dentist", "veterinary"):
+        return "Healthcare", "🏥"
+    return "Other Facilities", "📍"
+
+
+_POI_MEMORY_CACHE = {}
+
+def query_overpass_pois(lat, lon, radius_m=300):
+    """
+    Queries Overpass API using fast spatial index (nwr) and memory caching.
+    Returns all named POIs, venues, boat ramps, wharves, parks, and facilities strictly within radius_m.
+    """
+    if lat is None or lon is None:
+        return []
+
+    cache_key = f"{round(lat, 4)}_{round(lon, 4)}_{radius_m}"
+    if cache_key in _POI_MEMORY_CACHE:
+        return _POI_MEMORY_CACHE[cache_key]
+
+    # Optimized indexed Overpass QL using 'nwr' (node, way, relation together)
+    query = f"""
+    [out:json][timeout:5];
+    (
+      nwr(around:{radius_m},{lat},{lon})["name"];
+      nwr(around:{radius_m},{lat},{lon})["leisure"];
+      nwr(around:{radius_m},{lat},{lon})["amenity"];
+      nwr(around:{radius_m},{lat},{lon})["shop"];
+      nwr(around:{radius_m},{lat},{lon})["man_made"];
+      nwr(around:{radius_m},{lat},{lon})["waterway"];
+    );
+    out center tags;
+    """
+    data = urllib.parse.urlencode({"data": query}).encode("utf-8")
+    headers = {
+        "User-Agent": USER_AGENT,
+        "Accept": "application/json, */*",
+    }
+
+    for endpoint in OVERPASS_ENDPOINTS:
+        try:
+            req = urllib.request.Request(endpoint, data=data, headers=headers)
+            with urllib.request.urlopen(req, timeout=3.5) as resp:
+                res_data = json.loads(resp.read().decode("utf-8"))
+                elements = res_data.get("elements", [])
+
+                results = []
+                seen_names = set()
+                for el in elements:
+                    tags = el.get("tags", {})
+                    name = (tags.get("name") or tags.get("official_name") or tags.get("alt_name") or tags.get("description") or tags.get("loc_name") or "").strip()
+
+                    amenity = tags.get("amenity")
+                    shop = tags.get("shop")
+                    leisure = tags.get("leisure")
+                    tourism = tags.get("tourism")
+                    office = tags.get("office")
+                    healthcare = tags.get("healthcare")
+                    building = tags.get("building")
+                    brand = tags.get("brand")
+                    man_made = tags.get("man_made")
+                    waterway = tags.get("waterway")
+                    sport = tags.get("sport")
+
+                    # Synthesize descriptive names for unnamed boating/park infrastructure
+                    if not name:
+                        if leisure == "slipway" or waterway == "boat_ramp":
+                            name = "Boat Ramp / Slipway"
+                        elif man_made in ("wharf", "pier", "jetty", "pontoon"):
+                            name = f"Public {man_made.title()}"
+                        elif amenity == "ferry_terminal":
+                            name = "Ferry Wharf"
+                        elif leisure == "playground":
+                            name = "Playground"
+                        elif leisure == "dog_park":
+                            name = "Off-Leash Dog Park"
+                        elif leisure == "park":
+                            name = "Public Park / Reserve"
+                        elif sport:
+                            name = f"{sport.replace('_', ' ').title()} Facility"
+                        elif brand:
+                            name = brand.title()
+
+                    if not name:
+                        continue
+
+                    # Filter out charging station self-matches
+                    if amenity == "charging_station" or "supercharger" in name.lower() or name.lower().startswith("tesla super"):
+                        continue
+
+                    category = amenity or shop or leisure or tourism or office or healthcare or man_made or waterway or sport
+                    if not category and building and building != "yes":
+                        category = f"building ({building})"
+
+                    if not category and not brand:
+                        continue
+
+                    p_lat = el.get("lat") or el.get("center", {}).get("lat", lat)
+                    p_lon = el.get("lon") or el.get("center", {}).get("lon", lon)
+                    dist = haversine_distance(lat, lon, p_lat, p_lon)
+
+                    # Hard filter: exclude POIs whose center is outside the cluster search radius
+                    if dist > radius_m:
+                        continue
+
+                    # Deduplicate
+                    name_key = f"{name.lower()}_{round(p_lat, 3)}_{round(p_lon, 3)}"
+                    if name_key in seen_names:
+                        continue
+                    seen_names.add(name_key)
+
+                    cat_label = (category or "facility").replace("_", " ").title()
+                    if brand and brand.lower() != name.lower():
+                        cat_label += f" ({brand})"
+
+                    group_name, group_emoji = classify_poi_group(tags)
+
+                    results.append({
+                        "name": name,
+                        "category": cat_label,
+                        "group": group_name,
+                        "emoji": group_emoji,
+                        "lat": p_lat,
+                        "lon": p_lon,
+                        "dist_m": round(dist, 1),
+                        "tags": tags
+                    })
+
+                results.sort(key=lambda x: x["dist_m"])
+                _POI_MEMORY_CACHE[cache_key] = results
+                return results
+        except Exception:
+            continue
+
+    _POI_MEMORY_CACHE[cache_key] = []
+    return []
+
+def geocode_candidates(query, country_hint="Australia", anchor_coords=None, limit=10):
+    """
+    Finds geographic location candidates in Australia via Nominatim / Photon.
+    Returns a list of structured candidate dicts:
+    [{'lat': float, 'lon': float, 'label': str, 'state': str, 'name': str, 'dist_km': float, 'display_name': str, 'raw': dict}, ...]
+    Deduplicated by vicinity and sorted by distance to anchor_coords (e.g. Home).
+    """
+    if not query or not query.strip():
+        return []
+
+    clean = query.strip()
+    q_str = clean if country_hint.lower() in clean.lower() else f"{clean}, {country_hint}"
+    
+    candidates = []
+    
+    # 1. Nominatim (OpenStreetMap)
+    try:
+        params = urllib.parse.urlencode({
+            "q": q_str,
+            "format": "json",
+            "addressdetails": 1,
+            "extratags": 1,
+            "countrycodes": "au",
+            "limit": limit
+        })
+        url = f"https://nominatim.openstreetmap.org/search?{params}"
+        req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
+        with urllib.request.urlopen(req, timeout=5.0) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+            if isinstance(data, list):
+                for item in data:
+                    lat = float(item.get("lat", 0))
+                    lon = float(item.get("lon", 0))
+                    addr = item.get("address", {})
+                    
+                    iso_state = addr.get("ISO3166-2-lvl4", "")
+                    state_code = iso_state.replace("AU-", "") if iso_state.startswith("AU-") else AU_STATE_MAP.get(addr.get("state"), addr.get("state") or "")
+                    
+                    raw_name = item.get("name") or ""
+                    name = addr.get("suburb") or addr.get("neighbourhood") or addr.get("political") or addr.get("quarter") or addr.get("town") or raw_name or addr.get("city") or clean
+                    name = name.replace(" District", "").replace(" Shire", "").strip()
+                    
+                    disp = item.get("display_name", "")
+                    q_lower = clean.lower()
+                    if "," not in clean and q_lower not in name.lower():
+                        continue
+                        
+                    label = f"{name}, {state_code}" if state_code else name
+                    dist_km = haversine_distance(anchor_coords[0], anchor_coords[1], lat, lon) / 1000.0 if anchor_coords else None
+
+                    candidates.append({
+                        "lat": lat,
+                        "lon": lon,
+                        "label": label,
+                        "state": state_code,
+                        "name": name,
+                        "dist_km": dist_km,
+                        "display_name": disp,
+                        "raw": item
+                    })
+    except Exception:
+        pass
+
+    # 2. Photon (Komoot) fallback if Nominatim returned 0 candidates
+    if not candidates:
+        try:
+            params = urllib.parse.urlencode({"q": q_str, "limit": limit})
+            url = f"https://photon.komoot.io/api/?{params}"
+            req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
+            with urllib.request.urlopen(req, timeout=5.0) as resp:
+                pdata = json.loads(resp.read().decode("utf-8"))
+                for feat in pdata.get("features", []):
+                    coords = feat.get("geometry", {}).get("coordinates", [])
+                    if len(coords) < 2:
+                        continue
+                    lon = float(coords[0])
+                    lat = float(coords[1])
+                    props = feat.get("properties", {})
+                    state = props.get("state") or ""
+                    state_code = AU_STATE_MAP.get(state, state)
+                    raw_name = props.get("name") or props.get("street") or props.get("city") or clean
+                    name = raw_name.replace(" District", "").replace(" Shire", "").strip()
+                    label = f"{name}, {state_code}" if state_code else name
+                    dist_km = haversine_distance(anchor_coords[0], anchor_coords[1], lat, lon) / 1000.0 if anchor_coords else None
+                    candidates.append({
+                        "lat": lat,
+                        "lon": lon,
+                        "label": label,
+                        "state": state_code,
+                        "name": name,
+                        "dist_km": dist_km,
+                        "display_name": f"{label}, Australia",
+                        "raw": feat
+                    })
+        except Exception:
+            pass
+
+    # Deduplicate candidates within 25km of each other or with identical label
+    deduped = []
+    for c in candidates:
+        is_dup = False
+        for d in deduped:
+            if c["label"] == d["label"] or (haversine_distance(c["lat"], c["lon"], d["lat"], d["lon"]) < 25000.0):
+                is_dup = True
+                break
+        if not is_dup:
+            deduped.append(c)
+
+    # Proximity sort if anchor coords given
+    if anchor_coords:
+        deduped.sort(key=lambda x: x["dist_km"] if x["dist_km"] is not None else 999999)
+
+    return deduped
+
+
+def resolve_location_disambiguated(query, anchor_coords=None, interactive=True, country_hint="Australia"):
+    """
+    Resolves an address/suburb query with interactive disambiguation if multiple distinct locations match.
+    Returns (lat: float, lon: float, label: str) or (None, None, "").
+    """
+    if not query or not query.strip():
+        return None, None, ""
+
+    clean = query.strip()
+    candidates = geocode_candidates(clean, country_hint=country_hint, anchor_coords=anchor_coords)
+    
+    if not candidates:
+        return None, None, ""
+
+    # Check for direct label match (e.g. user specified "Richmond, NSW" or "West Ryde, NSW")
+    for c in candidates:
+        if c["label"].lower() == clean.lower():
+            return c["lat"], c["lon"], c["label"]
+
+    # If only 1 candidate exists, return it directly
+    if len(candidates) == 1:
+        return candidates[0]["lat"], candidates[0]["lon"], candidates[0]["label"]
+
+    # Multiple candidates found
+    # Interactive prompt if running in interactive terminal
+    if interactive and sys.stdin and sys.stdin.isatty():
+        print(f"\n📍 Multiple locations found for '{clean}':")
+        for i, c in enumerate(candidates[:5]):
+            dist_str = f" [{c['dist_km']:.0f} km away]" if c.get("dist_km") is not None else ""
+            print(f"   [ {i+1} ] {c['label']} ({c['lat']:.4f}, {c['lon']:.4f}){dist_str}")
+        cancel_idx = min(len(candidates), 5) + 1
+        print(f"   [ {cancel_idx} ] None of the above - please be more specific (e.g. --near \"{clean}, NSW\")\n")
+        
+        try:
+            choice = input(f"Select location [1-{cancel_idx-1}, default 1]: ").strip()
+            if not choice:
+                selected = candidates[0]
+                return selected["lat"], selected["lon"], selected["label"]
+            if choice.isdigit():
+                idx = int(choice)
+                if 1 <= idx <= min(len(candidates), 5):
+                    selected = candidates[idx - 1]
+                    return selected["lat"], selected["lon"], selected["label"]
+                else:
+                    return None, None, ""
+            else:
+                return None, None, ""
+        except (KeyboardInterrupt, EOFError):
+            print()
+            return None, None, ""
+
+    # Non-interactive fallback: pick closest candidate and log informative message
+    top = candidates[0]
+    dist_str = f" ({top['dist_km']:.0f} km away)" if top.get("dist_km") is not None else ""
+    print(f"ℹ️  Multiple locations found for '{clean}'; defaulted to closest: {top['label']}{dist_str}. (Specify '{clean}, <State>' to override).")
+    return top["lat"], top["lon"], top["label"]
+
+
+def geocode_address(address_str):
+    """Geocodes a street address or place name string to structured dict via geocode_candidates."""
+    if not address_str or not address_str.strip():
+        return None
+    cands = geocode_candidates(address_str, limit=5)
+    if cands:
+        first = cands[0]
+        return {
+            "lat": first["lat"],
+            "lon": first["lon"],
+            "display_name": first["display_name"],
+            "label": first["label"],
+            "state": first["state"],
+            "name": first["name"],
+            "type": first["raw"].get("type", "") if isinstance(first.get("raw"), dict) else "",
+            "class": first["raw"].get("class", "") if isinstance(first.get("raw"), dict) else "",
+            "address": first["raw"].get("address", {}) if isinstance(first.get("raw"), dict) else {},
+            "raw": first["raw"]
+        }
+    return None
+
+def reverse_geocode(lat, lon):
+    """Reverse geocodes lat, lon to structured address and place name via Nominatim."""
+    url = f"https://nominatim.openstreetmap.org/reverse?lat={lat}&lon={lon}&format=json&addressdetails=1&extratags=1&namedetails=1"
+    req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
+    try:
+        with urllib.request.urlopen(req, timeout=6) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+            if data:
+                return {
+                    "name": data.get("namedetails", {}).get("name") or data.get("name") or "",
+                    "display_name": data.get("display_name", ""),
+                    "category": data.get("category") or data.get("class", ""),
+                    "type": data.get("type", ""),
+                    "address": data.get("address", {}),
+                    "raw": data
+                }
+    except Exception:
+        pass
+    return None
+
+def classify_poi_group(tags):
+    """Classifies OSM tags into user-friendly top-level facility groups."""
+    amenity = (tags.get("amenity") or "").lower()
+    shop = (tags.get("shop") or "").lower()
+    cuisine = (tags.get("cuisine") or "").lower()
+    leisure = (tags.get("leisure") or "").lower()
+    tourism = (tags.get("tourism") or "").lower()
+    healthcare = (tags.get("healthcare") or "").lower()
+    office = (tags.get("office") or "").lower()
+    man_made = (tags.get("man_made") or "").lower()
+    waterway = (tags.get("waterway") or "").lower()
+    sport = (tags.get("sport") or "").lower()
+
+    name = (tags.get("name") or "").lower()
+    brand = (tags.get("brand") or "").lower()
+    supermarket_brands = ("woolworths", "coles", "aldi", "iga", "harris farm", "costco", "foodland", "drakes", "spudshed", "kmart", "target", "big w")
+    if any(b in name or b in brand for b in supermarket_brands):
+        return "Supermarkets & Groceries", "🛒"
+
+    if leisure in ("slipway", "marina") or man_made in ("pier", "wharf", "jetty", "pontoon") or waterway in ("boat_ramp", "dock", "wharf") or "boat" in amenity or sport in ("sailing", "rowing", "kayak", "boating"):
+        return "Boating, Wharves & Ramps", "⛵"
+    if leisure in ("park", "playground", "nature_reserve", "garden", "dog_park", "pitch", "track"):
+        return "Parks & Recreation", "🌳"
+    if amenity in ("cafe", "coffee_shop") or shop in ("coffee", "tea") or "coffee" in cuisine:
+        return "Cafes & Coffee", "☕"
+    if amenity in ("restaurant", "fast_food", "food_court", "pub", "bar", "biergarten", "ice_cream"):
+        return "Dining & Fast Food", "🍔"
+    if shop in ("supermarket", "convenience", "bakery", "butcher", "greengrocer", "deli", "grocery", "general", "department_store", "mall"):
+        return "Supermarkets & Groceries", "🛒"
+    if shop or tags.get("building") in ("retail", "commercial") or amenity == "marketplace":
+        return "Retail & Shopping", "🛍️"
+    if amenity in ("toilets", "restroom", "drinking_water", "atm", "bank", "pharmacy", "post_box", "post_office"):
+        return "Amenities & Services", "🚻"
+    if tourism in ("hotel", "motel", "guest_house", "hostel", "apartment", "camp_site"):
+        return "Lodging & Hotels", "🏨"
+    if amenity in ("fuel", "car_wash", "parking", "charging_station") or shop in ("car", "car_repair", "car_parts"):
+        return "Automotive & Parking", "🚗"
+    if leisure or tourism in ("attraction", "museum", "gallery", "theme_park", "viewpoint") or amenity in ("cinema", "theatre"):
+        return "Leisure & Entertainment", "🎯"
+    if healthcare or amenity in ("hospital", "clinic", "doctors", "dentist", "veterinary"):
+        return "Healthcare", "🏥"
+    return "Other Facilities", "📍"
+
+
+def query_overpass_pois(lat, lon, radius_m=300):
+    """
+    Queries Overpass API for all named POIs, venues, boat ramps, wharves, parks,
+    and recreation facilities strictly within radius_m of lat, lon.
+    """
+    query = f"""
+    [out:json][timeout:25];
+    (
+      node(around:{radius_m},{lat},{lon})["name"];
+      way(around:{radius_m},{lat},{lon})["name"];
+      relation(around:{radius_m},{lat},{lon})["name"];
+      node(around:{radius_m},{lat},{lon})["leisure"~"slipway|park|playground|pitch|sports_centre|marina|dog_park"];
+      way(around:{radius_m},{lat},{lon})["leisure"~"slipway|park|playground|pitch|sports_centre|marina|dog_park"];
+      node(around:{radius_m},{lat},{lon})["man_made"~"pier|wharf|jetty|pontoon"];
+      way(around:{radius_m},{lat},{lon})["man_made"~"pier|wharf|jetty|pontoon"];
+      node(around:{radius_m},{lat},{lon})["waterway"~"boat_ramp|dock|wharf"];
+      node(around:{radius_m},{lat},{lon})["amenity"~"ferry_terminal|boat_rental|community_centre|public_bath"];
+    );
+    out center tags;
+    """
+    data = urllib.parse.urlencode({"data": query}).encode("utf-8")
+    headers = {
+        "User-Agent": USER_AGENT,
+        "Accept": "application/json, */*",
+    }
+
+    for endpoint in OVERPASS_ENDPOINTS:
+        try:
+            req = urllib.request.Request(endpoint, data=data, headers=headers)
+            with urllib.request.urlopen(req, timeout=12) as resp:
+                res_data = json.loads(resp.read().decode("utf-8"))
+                elements = res_data.get("elements", [])
+
+                results = []
+                seen_names = set()
+                for el in elements:
+                    tags = el.get("tags", {})
+                    name = (tags.get("name") or tags.get("official_name") or tags.get("alt_name") or tags.get("description") or tags.get("loc_name") or "").strip()
+
+                    amenity = tags.get("amenity")
+                    shop = tags.get("shop")
+                    leisure = tags.get("leisure")
+                    tourism = tags.get("tourism")
+                    office = tags.get("office")
+                    healthcare = tags.get("healthcare")
+                    building = tags.get("building")
+                    brand = tags.get("brand")
+                    man_made = tags.get("man_made")
+                    waterway = tags.get("waterway")
+                    sport = tags.get("sport")
+
+                    # Synthesize descriptive names for unnamed boating/park infrastructure
+                    if not name:
+                        if leisure == "slipway" or waterway == "boat_ramp":
+                            name = "Boat Ramp / Slipway"
+                        elif man_made in ("wharf", "pier", "jetty", "pontoon"):
+                            name = f"Public {man_made.title()}"
+                        elif amenity == "ferry_terminal":
+                            name = "Ferry Wharf"
+                        elif leisure == "playground":
+                            name = "Playground"
+                        elif leisure == "dog_park":
+                            name = "Off-Leash Dog Park"
+                        elif leisure == "park":
+                            name = "Public Park / Reserve"
+                        elif sport:
+                            name = f"{sport.replace('_', ' ').title()} Facility"
+                        elif brand:
+                            name = brand.title()
+
+                    if not name:
+                        continue
+
+                    # Filter out charging station self-matches
+                    if amenity == "charging_station" or "supercharger" in name.lower() or name.lower().startswith("tesla super"):
+                        continue
+
+                    category = amenity or shop or leisure or tourism or office or healthcare or man_made or waterway or sport
+                    if not category and building and building != "yes":
+                        category = f"building ({building})"
+
+                    if not category and not brand:
+                        continue
+
+                    p_lat = el.get("lat") or el.get("center", {}).get("lat", lat)
+                    p_lon = el.get("lon") or el.get("center", {}).get("lon", lon)
+                    dist = haversine_distance(lat, lon, p_lat, p_lon)
+
+                    # Hard filter: exclude POIs whose center is outside the cluster search radius
+                    if dist > radius_m:
+                        continue
+
+                    # Deduplicate
+                    name_key = f"{name.lower()}_{round(p_lat, 3)}_{round(p_lon, 3)}"
+                    if name_key in seen_names:
+                        continue
+                    seen_names.add(name_key)
+
+                    cat_label = (category or "facility").replace("_", " ").title()
+                    if brand and brand.lower() != name.lower():
+                        cat_label += f" ({brand})"
+
+                    group_name, group_emoji = classify_poi_group(tags)
+
+                    results.append({
+                        "name": name,
+                        "category": cat_label,
+                        "group": group_name,
+                        "emoji": group_emoji,
+                        "lat": p_lat,
+                        "lon": p_lon,
+                        "dist_m": round(dist, 1),
+                        "tags": tags
+                    })
+
+                results.sort(key=lambda x: x["dist_m"])
+                return results
+        except Exception:
+            continue
+
+    return []
+
+def geocode_candidates(query, country_hint="Australia", anchor_coords=None, limit=10):
+    """
+    Finds geographic location candidates in Australia via Nominatim / Photon.
+    Returns a list of structured candidate dicts:
+    [{'lat': float, 'lon': float, 'label': str, 'state': str, 'name': str, 'dist_km': float, 'display_name': str, 'raw': dict}, ...]
+    Deduplicated by vicinity and sorted by distance to anchor_coords (e.g. Home).
+    """
+    if not query or not query.strip():
+        return []
+
+    clean = query.strip()
+    q_str = clean if country_hint.lower() in clean.lower() else f"{clean}, {country_hint}"
+    
+    candidates = []
+    
+    # 1. Nominatim (OpenStreetMap)
+    try:
+        params = urllib.parse.urlencode({
+            "q": q_str,
+            "format": "json",
+            "addressdetails": 1,
+            "extratags": 1,
+            "countrycodes": "au",
+            "limit": limit
+        })
+        url = f"https://nominatim.openstreetmap.org/search?{params}"
+        req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
+        with urllib.request.urlopen(req, timeout=5.0) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+            if isinstance(data, list):
+                for item in data:
+                    lat = float(item.get("lat", 0))
+                    lon = float(item.get("lon", 0))
+                    addr = item.get("address", {})
+                    
+                    iso_state = addr.get("ISO3166-2-lvl4", "")
+                    state_code = iso_state.replace("AU-", "") if iso_state.startswith("AU-") else AU_STATE_MAP.get(addr.get("state"), addr.get("state") or "")
+                    
+                    raw_name = item.get("name") or ""
+                    name = addr.get("suburb") or addr.get("neighbourhood") or addr.get("political") or addr.get("quarter") or addr.get("town") or raw_name or addr.get("city") or clean
+                    name = name.replace(" District", "").replace(" Shire", "").strip()
+                    
+                    disp = item.get("display_name", "")
+                    q_lower = clean.lower()
+                    if "," not in clean and q_lower not in name.lower():
+                        continue
+                        
+                    label = f"{name}, {state_code}" if state_code else name
+                    dist_km = haversine_distance(anchor_coords[0], anchor_coords[1], lat, lon) / 1000.0 if anchor_coords else None
+
+                    candidates.append({
+                        "lat": lat,
+                        "lon": lon,
+                        "label": label,
+                        "state": state_code,
+                        "name": name,
+                        "dist_km": dist_km,
+                        "display_name": disp,
+                        "raw": item
+                    })
+    except Exception:
+        pass
+
+    # 2. Photon (Komoot) fallback if Nominatim returned 0 candidates
+    if not candidates:
+        try:
+            params = urllib.parse.urlencode({"q": q_str, "limit": limit})
+            url = f"https://photon.komoot.io/api/?{params}"
+            req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
+            with urllib.request.urlopen(req, timeout=5.0) as resp:
+                pdata = json.loads(resp.read().decode("utf-8"))
+                for feat in pdata.get("features", []):
+                    coords = feat.get("geometry", {}).get("coordinates", [])
+                    if len(coords) < 2:
+                        continue
+                    lon = float(coords[0])
+                    lat = float(coords[1])
+                    props = feat.get("properties", {})
+                    state = props.get("state") or ""
+                    state_code = AU_STATE_MAP.get(state, state)
+                    raw_name = props.get("name") or props.get("street") or props.get("city") or clean
+                    name = raw_name.replace(" District", "").replace(" Shire", "").strip()
+                    label = f"{name}, {state_code}" if state_code else name
+                    dist_km = haversine_distance(anchor_coords[0], anchor_coords[1], lat, lon) / 1000.0 if anchor_coords else None
+                    candidates.append({
+                        "lat": lat,
+                        "lon": lon,
+                        "label": label,
+                        "state": state_code,
+                        "name": name,
+                        "dist_km": dist_km,
+                        "display_name": f"{label}, Australia",
+                        "raw": feat
+                    })
+        except Exception:
+            pass
+
+    # Deduplicate candidates within 25km of each other or with identical label
+    deduped = []
+    for c in candidates:
+        is_dup = False
+        for d in deduped:
+            if c["label"] == d["label"] or (haversine_distance(c["lat"], c["lon"], d["lat"], d["lon"]) < 25000.0):
+                is_dup = True
+                break
+        if not is_dup:
+            deduped.append(c)
+
+    # Proximity sort if anchor coords given
+    if anchor_coords:
+        deduped.sort(key=lambda x: x["dist_km"] if x["dist_km"] is not None else 999999)
+
+    return deduped
+
+
+def resolve_location_disambiguated(query, anchor_coords=None, interactive=True, country_hint="Australia"):
+    """
+    Resolves an address/suburb query with interactive disambiguation if multiple distinct locations match.
+    Returns (lat: float, lon: float, label: str) or (None, None, "").
+    """
+    if not query or not query.strip():
+        return None, None, ""
+
+    clean = query.strip()
+    candidates = geocode_candidates(clean, country_hint=country_hint, anchor_coords=anchor_coords)
+    
+    if not candidates:
+        return None, None, ""
+
+    # Check for direct label match (e.g. user specified "Richmond, NSW" or "West Ryde, NSW")
+    for c in candidates:
+        if c["label"].lower() == clean.lower():
+            return c["lat"], c["lon"], c["label"]
+
+    # If only 1 candidate exists, return it directly
+    if len(candidates) == 1:
+        return candidates[0]["lat"], candidates[0]["lon"], candidates[0]["label"]
+
+    # Multiple candidates found
+    # Interactive prompt if running in interactive terminal
+    if interactive and sys.stdin and sys.stdin.isatty():
+        print(f"\n📍 Multiple locations found for '{clean}':")
+        for i, c in enumerate(candidates[:5]):
+            dist_str = f" [{c['dist_km']:.0f} km away]" if c.get("dist_km") is not None else ""
+            print(f"   [ {i+1} ] {c['label']} ({c['lat']:.4f}, {c['lon']:.4f}){dist_str}")
+        cancel_idx = min(len(candidates), 5) + 1
+        print(f"   [ {cancel_idx} ] None of the above - please be more specific (e.g. --near \"{clean}, NSW\")\n")
+        
+        try:
+            choice = input(f"Select location [1-{cancel_idx-1}, default 1]: ").strip()
+            if not choice:
+                selected = candidates[0]
+                return selected["lat"], selected["lon"], selected["label"]
+            if choice.isdigit():
+                idx = int(choice)
+                if 1 <= idx <= min(len(candidates), 5):
+                    selected = candidates[idx - 1]
+                    return selected["lat"], selected["lon"], selected["label"]
+                else:
+                    return None, None, ""
+            else:
+                return None, None, ""
+        except (KeyboardInterrupt, EOFError):
+            print()
+            return None, None, ""
+
+    # Non-interactive fallback: pick closest candidate and log informative message
+    top = candidates[0]
+    dist_str = f" ({top['dist_km']:.0f} km away)" if top.get("dist_km") is not None else ""
+    print(f"ℹ️  Multiple locations found for '{clean}'; defaulted to closest: {top['label']}{dist_str}. (Specify '{clean}, <State>' to override).")
+    return top["lat"], top["lon"], top["label"]
+
+
+def geocode_address(address_str):
+    """Geocodes a street address or place name string to structured dict via geocode_candidates."""
+    if not address_str or not address_str.strip():
+        return None
+    cands = geocode_candidates(address_str, limit=5)
+    if cands:
+        first = cands[0]
+        return {
+            "lat": first["lat"],
+            "lon": first["lon"],
+            "display_name": first["display_name"],
+            "label": first["label"],
+            "state": first["state"],
+            "name": first["name"],
+            "type": first["raw"].get("type", "") if isinstance(first.get("raw"), dict) else "",
+            "class": first["raw"].get("class", "") if isinstance(first.get("raw"), dict) else "",
+            "address": first["raw"].get("address", {}) if isinstance(first.get("raw"), dict) else {},
+            "raw": first["raw"]
+        }
+    return None
+
+def reverse_geocode(lat, lon):
+    """Reverse geocodes lat, lon to structured address and place name via Nominatim."""
+    url = f"https://nominatim.openstreetmap.org/reverse?lat={lat}&lon={lon}&format=json&addressdetails=1&extratags=1&namedetails=1"
+    req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
+    try:
+        with urllib.request.urlopen(req, timeout=6) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+            if data:
+                return {
+                    "name": data.get("namedetails", {}).get("name") or data.get("name") or "",
+                    "display_name": data.get("display_name", ""),
+                    "category": data.get("category") or data.get("class", ""),
+                    "type": data.get("type", ""),
+                    "address": data.get("address", {}),
+                    "raw": data
+                }
+    except Exception:
+        pass
+    return None
+
+def classify_poi_group(tags):
+    """Classifies OSM tags into user-friendly top-level facility groups."""
+    amenity = (tags.get("amenity") or "").lower()
+    shop = (tags.get("shop") or "").lower()
+    cuisine = (tags.get("cuisine") or "").lower()
+    leisure = (tags.get("leisure") or "").lower()
+    tourism = (tags.get("tourism") or "").lower()
+    healthcare = (tags.get("healthcare") or "").lower()
+    office = (tags.get("office") or "").lower()
+    man_made = (tags.get("man_made") or "").lower()
+    waterway = (tags.get("waterway") or "").lower()
+    sport = (tags.get("sport") or "").lower()
+
+    name = (tags.get("name") or "").lower()
+    brand = (tags.get("brand") or "").lower()
+    supermarket_brands = ("woolworths", "coles", "aldi", "iga", "harris farm", "costco", "foodland", "drakes", "spudshed", "kmart", "target", "big w")
+    if any(b in name or b in brand for b in supermarket_brands):
+        return "Supermarkets & Groceries", "🛒"
+
+    if leisure in ("slipway", "marina") or man_made in ("pier", "wharf", "jetty", "pontoon") or waterway in ("boat_ramp", "dock", "wharf") or "boat" in amenity or sport in ("sailing", "rowing", "kayak", "boating"):
+        return "Boating, Wharves & Ramps", "⛵"
+    if leisure in ("park", "playground", "nature_reserve", "garden", "dog_park", "pitch", "track"):
+        return "Parks & Recreation", "🌳"
+    if amenity in ("cafe", "coffee_shop") or shop in ("coffee", "tea") or "coffee" in cuisine:
+        return "Cafes & Coffee", "☕"
+    if amenity in ("restaurant", "fast_food", "food_court", "pub", "bar", "biergarten", "ice_cream"):
+        return "Dining & Fast Food", "🍔"
+    if shop in ("supermarket", "convenience", "bakery", "butcher", "greengrocer", "deli", "grocery", "general", "department_store", "mall"):
+        return "Supermarkets & Groceries", "🛒"
+    if shop or tags.get("building") in ("retail", "commercial") or amenity == "marketplace":
+        return "Retail & Shopping", "🛍️"
+    if amenity in ("toilets", "restroom", "drinking_water", "atm", "bank", "pharmacy", "post_box", "post_office"):
+        return "Amenities & Services", "🚻"
+    if tourism in ("hotel", "motel", "guest_house", "hostel", "apartment", "camp_site"):
+        return "Lodging & Hotels", "🏨"
+    if amenity in ("fuel", "car_wash", "parking", "charging_station") or shop in ("car", "car_repair", "car_parts"):
+        return "Automotive & Parking", "🚗"
+    if leisure or tourism in ("attraction", "museum", "gallery", "theme_park", "viewpoint") or amenity in ("cinema", "theatre"):
+        return "Leisure & Entertainment", "🎯"
+    if healthcare or amenity in ("hospital", "clinic", "doctors", "dentist", "veterinary"):
+        return "Healthcare", "🏥"
+    return "Other Facilities", "📍"
+
+
+def query_overpass_pois(lat, lon, radius_m=350):
+    """
+    Queries Overpass API for all named POIs, venues, boat ramps, wharves, parks,
+    and recreation facilities within radius_m of lat, lon.
+    """
+    query = f"""
+    [out:json][timeout:25];
+    (
+      node(around:{radius_m},{lat},{lon})["name"];
+      way(around:{radius_m},{lat},{lon})["name"];
+      relation(around:{radius_m},{lat},{lon})["name"];
+      node(around:{radius_m},{lat},{lon})["leisure"~"slipway|park|playground|pitch|sports_centre|marina|dog_park"];
+      way(around:{radius_m},{lat},{lon})["leisure"~"slipway|park|playground|pitch|sports_centre|marina|dog_park"];
+      node(around:{radius_m},{lat},{lon})["man_made"~"pier|wharf|jetty|pontoon"];
+      way(around:{radius_m},{lat},{lon})["man_made"~"pier|wharf|jetty|pontoon"];
+      node(around:{radius_m},{lat},{lon})["waterway"~"boat_ramp|dock|wharf"];
+      node(around:{radius_m},{lat},{lon})["amenity"~"ferry_terminal|boat_rental|community_centre|public_bath"];
+    );
+    out center tags;
+    """
+    data = urllib.parse.urlencode({"data": query}).encode("utf-8")
+    headers = {
+        "User-Agent": USER_AGENT,
+        "Accept": "application/json, */*",
+    }
+
+    for endpoint in OVERPASS_ENDPOINTS:
+        try:
+            req = urllib.request.Request(endpoint, data=data, headers=headers)
+            with urllib.request.urlopen(req, timeout=12) as resp:
+                res_data = json.loads(resp.read().decode("utf-8"))
+                elements = res_data.get("elements", [])
+
+                results = []
+                seen_names = set()
+                for el in elements:
+                    tags = el.get("tags", {})
+                    name = (tags.get("name") or tags.get("official_name") or tags.get("alt_name") or tags.get("description") or tags.get("loc_name") or "").strip()
+
+                    amenity = tags.get("amenity")
+                    shop = tags.get("shop")
+                    leisure = tags.get("leisure")
+                    tourism = tags.get("tourism")
+                    office = tags.get("office")
+                    healthcare = tags.get("healthcare")
+                    building = tags.get("building")
+                    brand = tags.get("brand")
+                    man_made = tags.get("man_made")
+                    waterway = tags.get("waterway")
+                    sport = tags.get("sport")
+
+                    # Synthesize descriptive names for unnamed boating/park infrastructure
+                    if not name:
+                        if leisure == "slipway" or waterway == "boat_ramp":
+                            name = "Boat Ramp / Slipway"
+                        elif man_made in ("wharf", "pier", "jetty", "pontoon"):
+                            name = f"Public {man_made.title()}"
+                        elif amenity == "ferry_terminal":
+                            name = "Ferry Wharf"
+                        elif leisure == "playground":
+                            name = "Playground"
+                        elif leisure == "dog_park":
+                            name = "Off-Leash Dog Park"
+                        elif leisure == "park":
+                            name = "Public Park / Reserve"
+                        elif sport:
+                            name = f"{sport.replace('_', ' ').title()} Facility"
+                        elif brand:
+                            name = brand.title()
+
+                    if not name:
+                        continue
+
+                    # Filter out charging station self-matches
+                    if amenity == "charging_station" or "supercharger" in name.lower() or name.lower().startswith("tesla super"):
+                        continue
+
+                    category = amenity or shop or leisure or tourism or office or healthcare or man_made or waterway or sport
+                    if not category and building and building != "yes":
+                        category = f"building ({building})"
+
+                    if not category and not brand:
+                        continue
+
+                    p_lat = el.get("lat") or el.get("center", {}).get("lat", lat)
+                    p_lon = el.get("lon") or el.get("center", {}).get("lon", lon)
+                    dist = haversine_distance(lat, lon, p_lat, p_lon)
+
+                    # Deduplicate
+                    name_key = f"{name.lower()}_{round(p_lat, 3)}_{round(p_lon, 3)}"
+                    if name_key in seen_names:
+                        continue
+                    seen_names.add(name_key)
+
+                    cat_label = (category or "facility").replace("_", " ").title()
+                    if brand and brand.lower() != name.lower():
+                        cat_label += f" ({brand})"
+
+                    group_name, group_emoji = classify_poi_group(tags)
+
+                    results.append({
+                        "name": name,
+                        "category": cat_label,
+                        "group": group_name,
+                        "emoji": group_emoji,
+                        "lat": p_lat,
+                        "lon": p_lon,
+                        "dist_m": round(dist, 1),
+                        "tags": tags
+                    })
+
+                results.sort(key=lambda x: x["dist_m"])
+                return results
+        except Exception:
+            continue
+
+    return []
+
 
 def geocode_candidates(query, country_hint="Australia", anchor_coords=None, limit=10):
     """
@@ -568,68 +1723,94 @@ def query_overpass_pois(lat, lon, radius_m=250):
             continue
     return []
 
-def search_places_by_name(query, near_lat=None, near_lon=None, limit=7, radius_km=15):
+def search_places_by_name(query, near_lat=None, near_lon=None, limit=7, max_radius_m=350):
     """
-    Forward name/text search via Nominatim (as opposed to query_overpass_pois()'s
-    GPS-radius lookup) - for finding a place by what it's actually called (e.g.
-    "Macquarie" -> "Macquarie Shopping Centre") rather than only whatever small
-    tenant/shop happens to be tagged nearest the parking GPS point. When
-    near_lat/near_lon are given, results are HARD-FILTERED to within
-    ~radius_km of that point (Nominatim's viewbox with bounded=1) - a fuzzy
-    text match can otherwise easily outrank the real local place with an
-    unrelated same-named result on the other side of the country (seen live:
-    searching "Macquarie Shopping Centre" surfaced only "Glenquarie Shopping
-    Centre" 31km away with bounded=0's mere bias). There is no local point to
-    bound against when a raw "b" typo etc. leaves near_lat/near_lon unset -
-    a plain global search runs in that case only.
-    Returns a list of dicts: name, category, lat, lon, dist_m (None if no
-    near_lat/near_lon given), display_name.
+    Proximity-first name/text search for places strictly within the immediate cluster vicinity:
+    1. First queries local Overpass POIs around near_lat, near_lon (within max_radius_m).
+    2. Falls back to Nominatim with a tight localized bounding box, discarding anything beyond max_radius_m.
+    Returns a list of dicts sorted strictly by distance (closest first):
+    [{'name': str, 'category': str, 'lat': float, 'lon': float, 'dist_m': float, 'display_name': str}, ...]
     """
     if not query or not query.strip():
         return []
 
-    params = {
-        "q": query.strip(),
-        "format": "json",
-        "addressdetails": 1,
-        "limit": limit,
-    }
-    if near_lat is not None and near_lon is not None:
-        d = radius_km / 111.0  # ~111km per degree of latitude
-        params["viewbox"] = f"{near_lon - d},{near_lat + d},{near_lon + d},{near_lat - d}"
-        params["bounded"] = 1
-
-    url = f"https://nominatim.openstreetmap.org/search?{urllib.parse.urlencode(params)}"
-    req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
-    try:
-        with urllib.request.urlopen(req, timeout=8) as resp:
-            data = json.loads(resp.read().decode("utf-8"))
-    except Exception:
-        return []
-
+    q_clean = query.strip().lower()
     results = []
-    for item in data or []:
+    seen_keys = set()
+
+    # 1. Local Overpass search (within max_radius_m of cluster)
+    if near_lat is not None and near_lon is not None:
         try:
-            p_lat = float(item.get("lat"))
-            p_lon = float(item.get("lon"))
-        except (TypeError, ValueError):
-            continue
-        display_name = item.get("display_name", "")
-        name = display_name.split(",")[0].strip() if display_name else query.strip()
-        category = (item.get("type") or item.get("class") or "").replace("_", " ").title()
-        dist_m = round(haversine_distance(near_lat, near_lon, p_lat, p_lon), 1) if near_lat is not None and near_lon is not None else None
-        results.append({
-            "name": name,
-            "category": category or "Place",
-            "lat": p_lat,
-            "lon": p_lon,
-            "dist_m": dist_m,
-            "display_name": display_name,
-        })
+            local_pois = query_overpass_pois(near_lat, near_lon, radius_m=max_radius_m)
+            for poi in local_pois:
+                name = poi.get("name", "")
+                cat = poi.get("category", "")
+                tags_str = " ".join(str(v) for v in poi.get("tags", {}).values()).lower()
+                if q_clean in name.lower() or q_clean in cat.lower() or q_clean in tags_str:
+                    p_lat = poi["lat"]
+                    p_lon = poi["lon"]
+                    dist_m = poi["dist_m"]
+                    key = f"{name.lower()}_{round(p_lat, 4)}_{round(p_lon, 4)}"
+                    if key not in seen_keys:
+                        seen_keys.add(key)
+                        results.append({
+                            "name": name,
+                            "category": cat or "POI",
+                            "lat": p_lat,
+                            "lon": p_lon,
+                            "dist_m": dist_m,
+                            "display_name": f"{name} ({cat})",
+                        })
+        except Exception:
+            pass
+
+    # 2. Localized Nominatim Search with tight proximity bounding box (max ~max_radius_m)
+    if near_lat is not None and near_lon is not None:
+        r_km = max(0.4, max_radius_m / 1000.0)
+        d = r_km / 111.0  # ~111km per degree of latitude
+        params = {
+            "q": query.strip(),
+            "format": "json",
+            "addressdetails": 1,
+            "limit": limit,
+            "viewbox": f"{near_lon - d},{near_lat + d},{near_lon + d},{near_lat - d}",
+            "bounded": 1
+        }
+        url = f"https://nominatim.openstreetmap.org/search?{urllib.parse.urlencode(params)}"
+        req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
+        try:
+            with urllib.request.urlopen(req, timeout=8) as resp:
+                data = json.loads(resp.read().decode("utf-8"))
+                for item in data or []:
+                    try:
+                        p_lat = float(item.get("lat"))
+                        p_lon = float(item.get("lon"))
+                    except (TypeError, ValueError):
+                        continue
+                    dist_m = round(haversine_distance(near_lat, near_lon, p_lat, p_lon), 1)
+                    # Hard cap: ignore anything outside max_radius_m
+                    if dist_m > max_radius_m:
+                        continue
+                    display_name = item.get("display_name", "")
+                    name = display_name.split(",")[0].strip() if display_name else query.strip()
+                    category = (item.get("type") or item.get("class") or "").replace("_", " ").title()
+                    key = f"{name.lower()}_{round(p_lat, 4)}_{round(p_lon, 4)}"
+                    if key not in seen_keys:
+                        seen_keys.add(key)
+                        results.append({
+                            "name": name,
+                            "category": category or "Place",
+                            "lat": p_lat,
+                            "lon": p_lon,
+                            "dist_m": dist_m,
+                            "display_name": display_name,
+                        })
+        except Exception:
+            pass
 
     if any(r["dist_m"] is not None for r in results):
         results.sort(key=lambda r: r["dist_m"] if r["dist_m"] is not None else float("inf"))
-    return results
+    return results[:limit]
 
 def suggest_keywords(address_str, poi_name=""):
     """Extracts clean street and address keywords from a raw address string."""
@@ -842,107 +2023,8 @@ def interactive_lookup_and_add(query_or_addr=None, lat=None, lon=None, default_r
     return selected_name
 
 # ---------------------------------------------------------------------------
-# CLI Command: List Stored Places
 # ---------------------------------------------------------------------------
-def cmd_list(args):
-    places = load_places()
-    if not places:
-        print("ℹ️  No places defined in Tessie/places.json.")
-        return
-
-    if args.search:
-        q = args.search.lower()
-        filtered = {}
-        for name, data in places.items():
-            kws = " ".join(data.get("keywords", [])).lower()
-            notes = data.get("notes", "").lower()
-            if q in name.lower() or q in kws or q in notes:
-                filtered[name] = data
-        places = filtered
-
-    if not places:
-        print(f"ℹ️  No places matched search query: \"{args.search}\"")
-        return
-
-    ref_lat, ref_lon = None, None
-    if args.near:
-        all_places = load_places()
-        if args.near in all_places:
-            ref_lat = all_places[args.near]["lat"]
-            ref_lon = all_places[args.near]["lon"]
-        else:
-            geo = geocode_address(args.near)
-            if geo:
-                ref_lat, ref_lon = geo["lat"], geo["lon"]
-            else:
-                print(f"⚠️  Reference place \"{args.near}\" not found.")
-
-    items = list(places.items())
-    if ref_lat is not None and ref_lon is not None:
-        items.sort(key=lambda x: haversine_distance(ref_lat, ref_lon, x[1]["lat"], x[1]["lon"]))
-    elif args.sort == "name":
-        items.sort(key=lambda x: x[0].lower())
-    elif args.sort == "radius":
-        items.sort(key=lambda x: x[1].get("radius_m", 0), reverse=True)
-
-    w_num = 4
-    w_name = 28
-    w_coords = 22
-    w_radius = 8
-    w_dist = 11 if ref_lat is not None else 0
-    w_kws = 36
-
-    header_cols = [
-        pad_display("#", w_num, "right"),
-        pad_display("Place Name", w_name),
-        pad_display("Coordinates (Lat, Lon)", w_coords),
-        pad_display("Radius", w_radius, "right"),
-    ]
-    if ref_lat is not None:
-        header_cols.append(pad_display("Dist (km)", w_dist, "right"))
-    header_cols.append(pad_display("Keywords / Aliases", w_kws))
-
-    header = "  " + "  ".join(header_cols)
-    total_w = display_len(header) + 2
-    border = "─" * total_w
-
-    title = f"📍 STORED LOCATIONS ({len(items)} places)"
-    if args.near:
-        title += f" [Sorted by distance from {args.near}]"
-
-    print("\n┌" + border[2:] + "┐")
-    print(f"│ {title}" + " " * max(0, total_w - display_len(title) - 4) + " │")
-    print("├" + border[2:] + "┤")
-    print("│" + header + " " * max(0, total_w - display_len(header) - 2) + "│")
-    print("├" + border[2:] + "┤")
-
-    for idx, (name, data) in enumerate(items, 1):
-        lat = data.get("lat", 0.0)
-        lon = data.get("lon", 0.0)
-        radius = f"{data.get('radius_m', 0)}m"
-        kws = ", ".join(data.get("keywords", []))
-        if len(kws) > w_kws:
-            kws = kws[:w_kws - 3] + "..."
-        coords_str = f"{lat:.5f}, {lon:.5f}"
-
-        row_cols = [
-            pad_display(f"[{idx:2d}]", w_num, "right"),
-            pad_display(name[:w_name], w_name),
-            pad_display(coords_str, w_coords),
-            pad_display(radius, w_radius, "right"),
-        ]
-        if ref_lat is not None:
-            dist_km = haversine_distance(ref_lat, ref_lon, lat, lon) / 1000.0
-            row_cols.append(pad_display(f"{dist_km:.1f} km", w_dist, "right"))
-        row_cols.append(pad_display(kws, w_kws))
-
-        row_str = "  " + "  ".join(row_cols)
-        print("│" + row_str + " " * max(0, total_w - display_len(row_str) - 2) + "│")
-
-    print("└" + border[2:] + "┘\n")
-
-# ---------------------------------------------------------------------------
-# Drive Log Discovery Helper
+# Drive Log Discovery & Visit Analytics Helpers
 # ---------------------------------------------------------------------------
 def load_config():
     """Loads configuration dictionary from config.json."""
@@ -968,22 +2050,15 @@ def find_candidate_drive_logs():
     config = load_config()
     tessie_dir = os.path.abspath(os.path.expanduser(config.get("tessie_directory", "~/Library/Mobile Documents/com~apple~CloudDocs/Tesla/Tessie")))
     
-    # TESLADRIVE* volumes are reserved exclusively for dashcam/TeslaCam media,
-    # not Tessie data - only the configured Tessie dir and repo dir are searched.
     search_dirs = [tessie_dir]
     if TESSIE_DIR not in search_dirs:
         search_dirs.append(TESSIE_DIR)
 
-    # 1. Check for drives_master.csv first - analyse_drives.py's
-    # consolidate_drives() writes it under a "drives" subdirectory of each
-    # Tessie dir (with an older flat layout as a fallback, same order it
-    # checks itself), so mirror both here.
     for d in search_dirs:
         for mf in (os.path.join(d, "drives", "drives_master.csv"), os.path.join(d, "drives_master.csv")):
             if os.path.isfile(mf):
                 return [mf]
 
-    # 2. Check for summary CSVs, same two locations
     summaries = []
     for d in search_dirs:
         for sub in ("drives", ""):
@@ -991,6 +2066,424 @@ def find_candidate_drive_logs():
                 if f not in summaries:
                     summaries.append(f)
     return summaries
+
+def _parse_drive_ts(ts_str):
+    if not ts_str or ts_str == "-":
+        return None
+    clean = re.sub(r"\s+[A-Z]{3,4}$", "", ts_str.strip())
+    for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M", "%d/%m/%Y %H:%M:%S", "%d/%m/%Y %H:%M"):
+        try:
+            return datetime.strptime(clean, fmt)
+        except ValueError:
+            pass
+    return None
+
+def _format_stay_duration(minutes):
+    if minutes is None or minutes < 0:
+        return "-"
+    if minutes < 60:
+        return f"{int(round(minutes))}m"
+    h = int(minutes // 60)
+    m = int(round(minutes % 60))
+    if m >= 60:
+        h += 1
+        m = 0
+    return f"{h}h {m}m" if m > 0 else f"{h}h"
+
+def get_place_visit_counts(places, drive_logs=None):
+    """
+    Computes visit frequency (unique visits / stays) for each place in places.json by scanning drive logs.
+    An arrival followed by a departure at the same location is paired into 1 single visit.
+    Returns: dict {place_name: visit_count}
+    """
+    visit_counts = {p: 0 for p in places}
+    if drive_logs is None:
+        drive_logs = find_candidate_drive_logs()
+    if not drive_logs:
+        return visit_counts
+
+    chargers = {}
+    for c_path in [CHARGING_JSON_PATH, SUPERCHARGERS_JSON_PATH]:
+        if os.path.exists(c_path):
+            try:
+                with open(c_path, "r", encoding="utf-8") as f:
+                    c_data = json.load(f)
+                    if isinstance(c_data, dict):
+                        for k, v in c_data.items():
+                            if isinstance(v, dict) and "lat" in v and "lon" in v:
+                                chargers[k] = v
+            except Exception:
+                pass
+
+    for csv_file in drive_logs:
+        try:
+            with open(csv_file, "r", encoding="utf-8-sig") as fp:
+                reader = csv.DictReader(fp)
+                for row in reader:
+                    e_addr = (row.get("Ending Location") or row.get("ending_location") or row.get("Ending Address") or row.get("ending_address") or "").strip()
+                    e_saved = (row.get("Ending Saved Location") or row.get("ending_saved_location") or "").strip()
+                    e_lat = float(row.get("Ending Latitude") or row.get("ending_latitude") or row.get("Ending Lat") or 0) if (row.get("Ending Latitude") or row.get("ending_latitude") or row.get("Ending Lat")) else None
+                    e_lon = float(row.get("Ending Longitude") or row.get("ending_longitude") or row.get("Ending Lon") or 0) if (row.get("Ending Longitude") or row.get("ending_longitude") or row.get("Ending Lon")) else None
+
+                    dest = resolve_stop(e_addr, e_saved, e_lat, e_lon, places, chargers) or e_saved or e_addr.split(",")[0] or "Unknown"
+                    if dest in visit_counts:
+                        visit_counts[dest] += 1
+        except Exception:
+            pass
+
+    return visit_counts
+
+def get_place_trip_history(target_place_name, places=None, drive_logs=None):
+    """
+    Extracts all chronological visits to a given place from drive logs.
+    Pairs arrival and subsequent departure legs into single visit records:
+    Origin ➔ target_place_name ➔ Destination.
+    Returns: list of dicts with visit details.
+    """
+    if places is None:
+        places = load_places()
+    if drive_logs is None:
+        drive_logs = find_candidate_drive_logs()
+    if not drive_logs:
+        return []
+
+    chargers = {}
+    for c_path in [CHARGING_JSON_PATH, SUPERCHARGERS_JSON_PATH]:
+        if os.path.exists(c_path):
+            try:
+                with open(c_path, "r", encoding="utf-8") as f:
+                    c_data = json.load(f)
+                    if isinstance(c_data, dict):
+                        for k, v in c_data.items():
+                            if isinstance(v, dict) and "lat" in v and "lon" in v:
+                                chargers[k] = v
+            except Exception:
+                pass
+
+    raw_drives = []
+    for csv_file in drive_logs:
+        try:
+            with open(csv_file, "r", encoding="utf-8-sig") as fp:
+                reader = csv.DictReader(fp)
+                for row in reader:
+                    s_addr = (row.get("Starting Location") or row.get("starting_location") or row.get("Starting Address") or row.get("starting_address") or "").strip()
+                    s_saved = (row.get("Starting Saved Location") or row.get("starting_saved_location") or "").strip()
+                    s_lat = float(row.get("Starting Latitude") or row.get("starting_latitude") or row.get("Starting Lat") or 0) if (row.get("Starting Latitude") or row.get("starting_latitude") or row.get("Starting Lat")) else None
+                    s_lon = float(row.get("Starting Longitude") or row.get("starting_longitude") or row.get("Starting Lon") or 0) if (row.get("Starting Longitude") or row.get("starting_longitude") or row.get("Starting Lon")) else None
+
+                    e_addr = (row.get("Ending Location") or row.get("ending_location") or row.get("Ending Address") or row.get("ending_address") or "").strip()
+                    e_saved = (row.get("Ending Saved Location") or row.get("ending_saved_location") or "").strip()
+                    e_lat = float(row.get("Ending Latitude") or row.get("ending_latitude") or row.get("Ending Lat") or 0) if (row.get("Ending Latitude") or row.get("ending_latitude") or row.get("Ending Lat")) else None
+                    e_lon = float(row.get("Ending Longitude") or row.get("ending_longitude") or row.get("Ending Lon") or 0) if (row.get("Ending Longitude") or row.get("ending_longitude") or row.get("Ending Lon")) else None
+
+                    origin = resolve_stop(s_addr, s_saved, s_lat, s_lon, places, chargers) or s_saved or s_addr.split(",")[0] or "Unknown"
+                    dest = resolve_stop(e_addr, e_saved, e_lat, e_lon, places, chargers) or e_saved or e_addr.split(",")[0] or "Unknown"
+
+                    start_ts = (row.get("Started At (Local)") or row.get("Started At (AEST)") or row.get("Started At") or "").strip()
+                    end_ts = (row.get("Ended At (Local)") or row.get("Ended At (AEST)") or row.get("Ended At") or "").strip()
+                    try:
+                        dist_km = float(row.get("Distance (km)") or row.get("distance_km") or 0)
+                    except ValueError:
+                        dist_km = 0.0
+                    try:
+                        dur_min = float(row.get("Duration (Minutes)") or row.get("duration_minutes") or row.get("Duration") or 0)
+                    except ValueError:
+                        dur_min = 0.0
+                    try:
+                        energy_kwh = float(row.get("Total Energy Used (kWh)") or row.get("energy_used_kwh") or 0)
+                    except ValueError:
+                        energy_kwh = 0.0
+
+                    raw_drives.append({
+                        "origin": origin,
+                        "dest": dest,
+                        "start_ts": start_ts,
+                        "end_ts": end_ts,
+                        "dist_km": dist_km,
+                        "dur_min": dur_min,
+                        "energy_kwh": energy_kwh
+                    })
+        except Exception:
+            pass
+
+    # Reconstruct paired visits
+    visits = []
+    i = 0
+    total_drives = len(raw_drives)
+    while i < total_drives:
+        d = raw_drives[i]
+        if d["dest"] == target_place_name:
+            arrival = d
+            departure = None
+            if i + 1 < total_drives and raw_drives[i + 1]["origin"] == target_place_name:
+                departure = raw_drives[i + 1]
+                i += 1
+
+            arr_dt = _parse_drive_ts(arrival["end_ts"])
+            dep_dt = _parse_drive_ts(departure["start_ts"]) if departure else None
+            stay_mins = (dep_dt - arr_dt).total_seconds() / 60.0 if (arr_dt and dep_dt and dep_dt >= arr_dt) else None
+
+            visits.append({
+                "date_ts": arrival["end_ts"][:16] if arrival["end_ts"] else (arrival["start_ts"][:16] if arrival["start_ts"] else "-"),
+                "origin": arrival["origin"],
+                "place": target_place_name,
+                "destination": departure["dest"] if departure else "-",
+                "stay": _format_stay_duration(stay_mins) if stay_mins is not None else "-",
+                "dist_km": arrival["dist_km"] + (departure["dist_km"] if departure else 0.0),
+                "energy_kwh": arrival["energy_kwh"] + (departure["energy_kwh"] if departure else 0.0),
+                "paired": departure is not None,
+                "is_arrival": True,
+                "is_departure": departure is not None
+            })
+        elif d["origin"] == target_place_name:
+            visits.append({
+                "date_ts": d["start_ts"][:16] if d["start_ts"] else "-",
+                "origin": "-",
+                "place": target_place_name,
+                "destination": d["dest"],
+                "stay": "-",
+                "dist_km": d["dist_km"],
+                "energy_kwh": d["energy_kwh"],
+                "paired": False,
+                "is_arrival": False,
+                "is_departure": True
+            })
+        i += 1
+
+    return visits
+
+def inspect_place(place_name_or_query, places=None):
+    """
+    Renders a detailed inspection card for a specific place with recent trip history and statistics.
+    Uses table_formatter with exact ┬, ┼, ┴ column junction borders.
+    """
+    if places is None:
+        places = load_places()
+    if not places:
+        print("ℹ️  No places defined in places.json.")
+        return
+
+    # Find matching place
+    target_name = None
+    q = place_name_or_query.strip().lower() if isinstance(place_name_or_query, str) else str(place_name_or_query)
+
+    # 1. Exact match
+    for p_name in places:
+        if p_name.lower() == q:
+            target_name = p_name
+            break
+
+    # 2. Substring match
+    if not target_name:
+        for p_name, p_data in places.items():
+            kws = " ".join(p_data.get("keywords", [])).lower()
+            if q in p_name.lower() or q in kws:
+                target_name = p_name
+                break
+
+    if not target_name:
+        print(f"❌ Place \"{place_name_or_query}\" not found in places.json.")
+        return
+
+    p_data = places[target_name]
+    lat, lon = p_data.get("lat", 0.0), p_data.get("lon", 0.0)
+    rad = p_data.get("radius_m", 150)
+    kws = ", ".join(p_data.get("keywords", [])) or "None"
+    notes = p_data.get("notes", "") or "None"
+
+    visits = get_place_trip_history(target_name, places=places)
+    total_legs = sum(2 if v.get("paired") else 1 for v in visits)
+
+    col_widths = [6, 18, 56, 10, 12]
+    headers = [" # ", " Date & Time", " Trip Flow (Origin ➔ Target ➔ Next)", " Stay ", " Total Dist "]
+    aligns = ["right", "left", "left", "right", "right"]
+    total_inner = sum(col_widths) + len(col_widths) - 1
+
+    print("\n" + format_box_line("┌", "─", "┐", [total_inner]))
+    print(format_title_line(f" 📍 LOCATION DETAILS: {target_name}", total_inner))
+    print(format_box_line("├", "─", "┤", [total_inner]))
+    print(format_title_line(f"  Coordinates:   {lat:.5f}, {lon:.5f} ({rad}m geofence radius)", total_inner))
+    map_link = gmaps_url(lat, lon)
+    print(format_title_line(f"  Google Maps:   {hyperlink(f'{lat:.5f}, {lon:.5f}', map_link)}", total_inner))
+    if kws != "None":
+        kw_prefix = "  Keywords:      "
+        kw_indent = " " * len(kw_prefix)
+        wrapped_kws = textwrap.wrap(kws, width=total_inner - len(kw_prefix) - 2)
+        for idx, wl in enumerate(wrapped_kws):
+            line = f"{kw_prefix}{wl}" if idx == 0 else f"{kw_indent}{wl}"
+            print(format_title_line(line, total_inner))
+    if notes != "None":
+        n_prefix = "  Notes:         "
+        n_indent = " " * len(n_prefix)
+        wrapped_notes = textwrap.wrap(notes, width=total_inner - len(n_prefix) - 2)
+        for idx, wl in enumerate(wrapped_notes):
+            line = f"{n_prefix}{wl}" if idx == 0 else f"{n_indent}{wl}"
+            print(format_title_line(line, total_inner))
+    print(format_box_line("├", "─", "┤", [total_inner]))
+    print(format_title_line("  📊 DRIVE & VISIT HISTORY SUMMARY", total_inner))
+    print(format_title_line(f"  Total Recorded Visits:     {len(visits)} visits ({total_legs} drive legs)", total_inner))
+    if visits:
+        first_ts = visits[0]["date_ts"]
+        latest_ts = visits[-1]["date_ts"]
+        print(format_title_line(f"  First Recorded Visit:      {first_ts}", total_inner))
+        print(format_title_line(f"  Latest Recorded Visit:     {latest_ts}", total_inner))
+    print(format_box_line("├", "─", "┤", [total_inner]))
+    print(format_title_line("  🚗 RECENT VISITS & TRIP FLOW (Newest First)", total_inner))
+    print(format_box_line("├", "┬", "┤", col_widths))
+    print(format_row(headers, col_widths, aligns=aligns))
+    print(format_box_line("├", "┼", "┤", col_widths))
+
+    if not visits:
+        no_trips_msg = "No recorded drive visits found for this location."
+        print(f"│{pad_display(f'  {no_trips_msg}', total_inner, 'left')}│")
+        print(format_box_line("└", "┴", "┘", col_widths) + "\n")
+    else:
+        recent_visits = list(reversed(visits[-15:]))
+        for idx, v in enumerate(recent_visits, 1):
+            orig = v["origin"]
+            dest = v["destination"]
+            if orig != "-" and dest != "-":
+                route_str = f"{orig} ➔ {target_name} ➔ {dest}"
+            elif orig != "-":
+                route_str = f"{orig} ➔ {target_name}"
+            else:
+                route_str = f"{target_name} ➔ {dest}"
+
+            ts_short = v["date_ts"]
+            dist_str = f"{v['dist_km']:.1f} km"
+            stay_str = v["stay"]
+
+            r_cells = [
+                f" [{idx:2d}] ",
+                f" {ts_short}",
+                f" {route_str}",
+                f" {stay_str} ",
+                f" {dist_str} "
+            ]
+            print(format_row(r_cells, col_widths, aligns=aligns))
+
+        print(format_box_line("└", "┴", "┘", col_widths) + "\n")
+
+
+# ---------------------------------------------------------------------------
+# CLI Command: List Stored Places
+# ---------------------------------------------------------------------------
+def cmd_list(args):
+    places = load_places()
+    if not places:
+        print("ℹ️  No places defined in places.json.")
+        return
+
+    if getattr(args, "search", None):
+        q = args.search.lower()
+        filtered = {}
+        for name, data in places.items():
+            kws = " ".join(data.get("keywords", [])).lower()
+            notes = data.get("notes", "").lower()
+            if q in name.lower() or q in kws or q in notes:
+                filtered[name] = data
+        places = filtered
+
+    if not places:
+        print(f"ℹ️  No places matched search query: \"{args.search}\"")
+        return
+
+    visit_counts = get_place_visit_counts(places)
+
+    ref_lat, ref_lon = None, None
+    if getattr(args, "near", None):
+        all_places = load_places()
+        if args.near in all_places:
+            ref_lat = all_places[args.near]["lat"]
+            ref_lon = all_places[args.near]["lon"]
+        else:
+            geo = geocode_address(args.near)
+            if geo:
+                ref_lat, ref_lon = geo["lat"], geo["lon"]
+            else:
+                print(f"⚠️  Reference place \"{args.near}\" not found.")
+
+    items = list(places.items())
+    sort_choice = getattr(args, "sort", "visits")
+    if ref_lat is not None and ref_lon is not None:
+        items.sort(key=lambda x: haversine_distance(ref_lat, ref_lon, x[1]["lat"], x[1]["lon"]))
+    elif sort_choice == "name":
+        items.sort(key=lambda x: x[0].lower())
+    elif sort_choice == "radius":
+        items.sort(key=lambda x: x[1].get("radius_m", 0), reverse=True)
+    elif sort_choice == "visits":
+        items.sort(key=lambda x: (visit_counts.get(x[0], 0), x[0].lower()), reverse=True)
+
+    col_widths = [6, 30, 8, 24, 8]
+    headers = [" # ", " Place Name", " Visits ", " Coordinates (Lat, Lon) ", " Radius "]
+    aligns = ["right", "left", "right", "center", "right"]
+
+    if ref_lat is not None:
+        col_widths.append(11)
+        headers.append(" Dist (km) ")
+        aligns.append("right")
+
+    col_widths.append(38)
+    headers.append(" Keywords / Aliases")
+    aligns.append("left")
+
+    total_inner = sum(col_widths) + len(col_widths) - 1
+
+    title = f" 📍 STORED LOCATIONS ({len(items)} places)"
+    if getattr(args, "near", None):
+        title += f" [Sorted by distance from {args.near}]"
+    elif sort_choice == "visits":
+        title += " [Sorted by visits (highest frequency first)]"
+
+    print("\n" + format_box_line("┌", "─", "┐", [total_inner]))
+    print(format_title_line(title, total_inner))
+    print(format_box_line("├", "┬", "┤", col_widths))
+    print(format_row(headers, col_widths, aligns=aligns))
+    print(format_box_line("├", "┼", "┤", col_widths))
+
+    for idx, (name, data) in enumerate(items, 1):
+        lat = data.get("lat", 0.0)
+        lon = data.get("lon", 0.0)
+        radius = f"{data.get('radius_m', 0)}m"
+        kws = ", ".join(data.get("keywords", []))
+        coords_str = f"{lat:.5f}, {lon:.5f}"
+        v_str = str(visit_counts.get(name, 0))
+
+        row_cells = [
+            f" [{idx:2d}] ",
+            f" {name}",
+            f" {v_str} ",
+            f" {coords_str} ",
+            f" {radius} "
+        ]
+        if ref_lat is not None:
+            dist_km = haversine_distance(ref_lat, ref_lon, lat, lon) / 1000.0
+            row_cells.append(f" {dist_km:.1f} km ")
+        row_cells.append(f" {kws}")
+
+        print(format_row(row_cells, col_widths, aligns=aligns))
+
+    print(format_box_line("└", "┴", "┘", col_widths) + "\n")
+
+    # Interactive inspection selection loop
+    if sys.stdin and sys.stdin.isatty():
+        while True:
+            try:
+                pick = input("Enter [#] to inspect location details & visit history, or [q] to quit: ").strip()
+            except (KeyboardInterrupt, EOFError):
+                print()
+                break
+            if not pick or pick.lower() in ("q", "quit", "exit"):
+                break
+            if pick.isdigit():
+                p_idx = int(pick)
+                if 1 <= p_idx <= len(items):
+                    sel_name = items[p_idx - 1][0]
+                    inspect_place(sel_name, places=places)
+                else:
+                    print(f"⚠️ Invalid selection. Please enter 1 to {len(items)}.")
+            else:
+                inspect_place(pick, places=places)
 
 def review_single_cluster(cl, places, total_clusters=1, cluster_num=1, allow_ignore=True):
     clean_addr = cl["address"] or f"{cl['center_lat']:.5f}, {cl['center_lon']:.5f}"
@@ -1001,28 +2494,33 @@ def review_single_cluster(cl, places, total_clusters=1, cluster_num=1, allow_ign
     print(f"GPS:     {hyperlink(gps_str, gmaps_url(cl['center_lat'], cl['center_lon']))}")
     print(f"==============================================================================")
 
-    pois = query_overpass_pois(cl["center_lat"], cl["center_lon"], radius_m=250)
+    pois = query_overpass_pois(cl["center_lat"], cl["center_lon"], radius_m=350)
     candidates = pois[:5]
 
     if candidates:
         print("\n🏢 Suggested POIs from API:")
         for p_idx, poi in enumerate(candidates, 1):
-            print(f"  [{p_idx}] {poi['name']} ({poi['category']}) [~{poi['dist_m']}m | Center: {poi['lat']:.5f}, {poi['lon']:.5f}]")
+            dist_disp = format_dist_human(poi['dist_m'])
+            print(f"  [{p_idx}] {poi['name']} ({poi['category']}) [~{dist_disp} | Center: {poi['lat']:.5f}, {poi['lon']:.5f}]")
     else:
-        print("\nℹ️  No specific commercial POI found in OpenStreetMap within 250m.")
+        print("\nℹ️  No specific commercial POI found in OpenStreetMap within 350m.")
 
-    print("\nAction:")
-    if candidates:
-        print(f"  [1-{len(candidates)}] Accept suggested POI (uses POI center & auto-adjusted radius)")
-    print("  [c]   Enter custom name (uses parking stop coordinates)")
-    print("  [g]   Provide custom GPS coordinates or address (set a precise center)")
-    print("  [s]   Search for a place by name (e.g. a shopping centre or landmark)")
-    print("  [m]   Open this location in your browser (Google Maps)")
-    if allow_ignore:
-        print("  [i]   Ignore permanently (address is fine as-is, not worth naming - won't be asked again)")
-    print("  [b]   Back to cluster list (leave unlabelled for now)")
-    print("  [q]   Quit review session")
+    def print_actions():
+        print("\nAction:")
+        if candidates:
+            print(f"  [1-{len(candidates)}] Accept suggested POI (uses POI center & auto-adjusted radius)")
+        print("  [c]   Enter custom name (uses parking stop coordinates)")
+        print("  [g]   Provide custom GPS coordinates or address (set a precise center)")
+        print("  [s]   Search for a place by name (e.g. a shopping centre or landmark)")
+        print("  [m]   Open this location in your browser (Google Maps)")
+        if allow_ignore:
+            print("  [i]   Ignore permanently (address is fine as-is, not worth naming - won't be asked again)")
+        print("  [b]   Back to cluster list (leave unlabelled for now)")
+        print("  [q]   Quit review session")
 
+    print_actions()
+
+    search_pick = None
     while True:
         try:
             choice = input("\nChoice: ").strip().lower()
@@ -1040,56 +2538,55 @@ def review_single_cluster(cl, places, total_clusters=1, cluster_num=1, allow_ign
                 print(f"🌐 Opened in your default browser: {map_url}")
             else:
                 print(f"⚠️  Couldn't open a browser automatically - copy this URL instead:\n   {map_url}")
+            print_actions()
             continue
 
         if choice in ("s", "search"):
-            search_pick = None
-            try:
-                s_in = input("Search for (e.g. a shopping centre or landmark name): ").strip()
-            except (EOFError, KeyboardInterrupt):
-                return "quit"
-            if not s_in:
-                continue
-            s_results = search_places_by_name(s_in, near_lat=cl["center_lat"], near_lon=cl["center_lon"])
-            if not s_results:
-                print(f"ℹ️  No results found near this location for \"{s_in}\".")
-                continue
-            print(f"\n🔎 Search results for \"{s_in}\":")
-            for s_idx, r in enumerate(s_results, 1):
-                dist_part = f" [~{r['dist_m']:.0f}m away]" if r["dist_m"] is not None else ""
-                print(f"  [{s_idx}] {r['name']} ({r['category']}){dist_part}")
-                print(f"        {r['display_name']}")
-            try:
-                s_choice = input(f"Select result [1-{len(s_results)}], or Enter to search again: ").strip()
-            except (EOFError, KeyboardInterrupt):
-                return "quit"
-            if s_choice.isdigit() and 1 <= int(s_choice) <= len(s_results):
-                search_pick = s_results[int(s_choice) - 1]
-            if search_pick is None:
-                continue
-            choice = "s_pick"
+            while True:
+                try:
+                    s_in = input("\nSearch for (e.g. a shopping centre or landmark name, or [b] back): ").strip()
+                except (EOFError, KeyboardInterrupt):
+                    return "quit"
+                if not s_in or s_in.lower() in ("b", "back", "cancel"):
+                    print_actions()
+                    break
+                s_results = search_places_by_name(s_in, near_lat=cl["center_lat"], near_lon=cl["center_lon"], max_radius_m=350)
+                if not s_results:
+                    print(f"ℹ️  No results found within 350m for \"{s_in}\".")
+                    continue
+                print(f"\n🔎 Search results for \"{s_in}\":")
+                for s_idx, r in enumerate(s_results, 1):
+                    dist_part = f" [~{format_dist_human(r['dist_m'])} away]" if r["dist_m"] is not None else ""
+                    print(f"  [{s_idx}] {r['name']} ({r['category']}){dist_part}")
+                    print(f"        {r['display_name']}")
+                try:
+                    s_choice = input(f"\nSelect result [1-{len(s_results)}], [s] search again, or [b] back: ").strip().lower()
+                except (EOFError, KeyboardInterrupt):
+                    return "quit"
+                if s_choice in ("b", "back", "cancel"):
+                    print_actions()
+                    break
+                if s_choice.isdigit() and 1 <= int(s_choice) <= len(s_results):
+                    search_pick = s_results[int(s_choice) - 1]
+                    choice = "s_pick"
+                    break
+
+            if choice == "s_pick":
+                break
+            continue
+
+        if choice in ("q", "quit", "b", "back", "s_pick", "c", "custom", "g", "gps", "i", "ignore") or (choice.isdigit() and 1 <= int(choice) <= len(candidates)):
             break
-        break
+
+        print(f"⚠️  Unrecognised choice \"{choice}\". Please select an option from the menu.")
+        print_actions()
 
     if choice in ("q", "quit"):
         return "quit"
-    elif choice in ("b", "back", "s", "skip", ""):
+    elif choice in ("b", "back", "skip", ""):
         return False
-    elif allow_ignore and choice in ("i", "ignore"):
-        ignored = load_ignored_places()
-        ignored.append({
-            "address": clean_addr,
-            "center_lat": cl["center_lat"],
-            "center_lon": cl["center_lon"],
-            "radius_m": 100,
-            "stops": cl["stops"],
-            "ignored_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        })
-        save_ignored_places(ignored)
-        print(f"🙈 Ignored \"{clean_addr}\" - won't be asked about it again. Run `./places_manager.py ignored` to review or un-ignore it later.")
-        return "ignored"
 
-    selected_name = None
+        selected_name = None
     final_lat = cl["center_lat"]
     final_lon = cl["center_lon"]
     recommended_radius = 150
@@ -2075,7 +3572,11 @@ EXAMPLES
     p_list = subparsers.add_parser("list", help="List all stored places in a clean formatted table")
     p_list.add_argument("--near", type=str, help="Reference place name or coordinates to sort by proximity")
     p_list.add_argument("--search", type=str, help="Search query filter for name, keywords, or notes")
-    p_list.add_argument("--sort", choices=["name", "radius", "dist"], default="name", help="Sort order")
+    p_list.add_argument("--sort", choices=["visits", "name", "radius", "dist"], default="visits", help="Sort order (default: visits)")
+
+    # Subcommand: inspect / info / query
+    p_inspect = subparsers.add_parser("inspect", aliases=["info", "query", "show"], help="Inspect a specific stored location's details, coordinates, and recent visit/trip history")
+    p_inspect.add_argument("name", type=str, help="Place name or search query to inspect")
 
     # Subcommand: edit
     p_edit = subparsers.add_parser("edit", help="Interactively select and edit stored places")
@@ -2135,14 +3636,21 @@ EXAMPLES
     args = parser.parse_args()
 
     if not args.command:
+        # If user passed a bare place name or search string, inspect directly
+        raw_args = [a for a in sys.argv[1:] if not a.startswith("-")]
+        if raw_args:
+            inspect_place(" ".join(raw_args))
+            return
         args.near = None
         args.search = None
-        args.sort = "name"
+        args.sort = "visits"
         cmd_list(args)
         return
 
     if args.command == "list":
         cmd_list(args)
+    elif args.command in ("inspect", "info", "query", "show"):
+        inspect_place(args.name)
     elif args.command == "edit":
         cmd_edit(args)
     elif args.command == "lookup":
