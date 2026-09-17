@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-analysis_ev_session_cost.py - Per-session EV-charging cost under the real AGL
+analyse_session_cost.py - Per-session EV-charging cost under the real AGL
 Solar VIP tariff (AGENTS.md TODO-013)
 =====================================================================
 The actual answer REQ-027/031's whole body of AGL work was for: given one
@@ -323,7 +323,7 @@ def evaluate_session(session, periods, master_path=USAGE_MASTER):
     # solar-attributed share. Caught missing entirely in an earlier
     # version (AGENTS.md TODO-027) when the user manually reproduced this
     # calculation by hand and it didn't match a GST-inclusive figure
-    # shown right next to it in tessie_charging_analyzer.py's own
+    # shown right next to it in analyse_charging.py's own
     # inspect_session() box.
     GST_MULTIPLIER = 1.10
 
@@ -551,13 +551,13 @@ def reconcile_against_invoices(deepdive_dir=None, master_path=USAGE_MASTER, peri
 
 def main():
     parser = argparse.ArgumentParser(
-        usage="""analysis_ev_session_cost.py [--limit N | --all] [--since-days N] [--deepdive-dir DIR] [--usage-master CSV]
-   or:  analysis_ev_session_cost.py --session-id UUID [--deepdive-dir DIR] [--usage-master CSV]
-   or:  analysis_ev_session_cost.py --reconcile-invoices [--usage-master CSV]
+        usage="""analyse_session_cost.py [--limit N | --all] [--since-days N] [--deepdive-dir DIR] [--usage-master CSV]
+   or:  analyse_session_cost.py --session-id UUID [--deepdive-dir DIR] [--usage-master CSV]
+   or:  analyse_session_cost.py --reconcile-invoices [--usage-master CSV]
 """,
         description="""
 NAME
-    analysis_ev_session_cost.py - per-session EV-charging cost under the real AGL Solar VIP tariff
+    analyse_session_cost.py - per-session EV-charging cost under the real AGL Solar VIP tariff
 
 DESCRIPTION
     Computes what a home-charging session actually cost under AGL's real dated
@@ -576,11 +576,11 @@ DESCRIPTION
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 EXAMPLES
-  analysis_ev_session_cost.py --limit 10
-  analysis_ev_session_cost.py --since-days 30
-  analysis_ev_session_cost.py --all
-  analysis_ev_session_cost.py --session-id 3f9c1e2a-...-b7d4
-  analysis_ev_session_cost.py --reconcile-invoices
+  analyse_session_cost.py --limit 10
+  analyse_session_cost.py --since-days 30
+  analyse_session_cost.py --all
+  analyse_session_cost.py --session-id 3f9c1e2a-...-b7d4
+  analyse_session_cost.py --reconcile-invoices
 """
     )
     parser.add_argument("--limit", type=int, default=20, help="Most recent N sessions to evaluate (default: 20, ignored with --all)")

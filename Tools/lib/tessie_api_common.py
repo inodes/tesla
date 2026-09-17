@@ -3,7 +3,7 @@
 tessie_api_common.py - Shared Tessie Developer API plumbing
 ==============================================================
 Config/auth loading and the low-level HTTP call, factored out so
-test_tessie_api.py and api_sync_tessie.py (and anything else that talks to
+test_tessie_api.py and sync_api_tessie.py (and anything else that talks to
 the API later) share one implementation instead of drifting apart.
 
 See Tessie/TESSIE_API.md for endpoint/field notes, confirmed parameters,
@@ -114,8 +114,8 @@ def resolve_tessie_data_home():
     REQ-028/029: real data does not belong inside the repo folder), falling
     back to the default iCloud path only if nothing is configured. Never
     falls back to REPO_ROOT. Shared by every script that reads or writes
-    real data outside the repo (tessie_drives_analyzer.py/
-    tessie_charging_analyzer.py have their own copy of this same logic
+    real data outside the repo (analyse_drives.py/
+    analyse_charging.py have their own copy of this same logic
     baked into their classes; this is the standalone-script equivalent)."""
     cfg_dir = load_config().get("tessie_directory")
     if cfg_dir:
@@ -145,7 +145,7 @@ def unique_stamped_path(directory, prefix, stamp, suffix="", ext=""):
     PREFIX scheme for archived raw CSVs, kept exactly as-is - that one
     exists so Spotlight/Finder still recognise the original filename and
     extension, a different problem than this one) and from
-    api_sync_tessie.py's unique_csv_path() (a different stamp format -
+    sync_api_tessie.py's unique_csv_path() (a different stamp format -
     YYYYMMDD_HHMMSS with seconds - guarding against a documented,
     unrelated re-fetch scenario, not a human-facing display name)."""
     n = 0

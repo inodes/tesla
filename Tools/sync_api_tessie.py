@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-api_sync_tessie.py - Fetch Tessie drives & charges via the Developer API
+sync_api_tessie.py - Fetch Tessie drives & charges via the Developer API
 ==========================================================================
 Replaces the manual "download CSV from Tessie, drop it in Downloads,
 run --consolidate" workflow with one command. This tool fetches new/changed
@@ -11,7 +11,7 @@ already has, and then - by default, with a confirmation prompt - runs the
 existing analyzer scripts' own `--consolidate` flag as a subprocess for
 each type that got new data. It never imports or reimplements
 drives_master.csv/charges_master.csv merging, invoice reconciliation, or
-archiving - tessie_drives_analyzer.py and tessie_charging_analyzer.py don't
+archiving - analyse_drives.py and analyse_charging.py don't
 need to change at all; this tool just runs the exact command you'd type
 yourself. Fetching logic stays out of those two scripts either way.
 
@@ -55,13 +55,13 @@ Tessie/TESSIE_API.md.)
 
 Usage:
     export TESSIE_ACCESS_TOKEN=your_token_here
-    ./api_sync_tessie.py                       # fetch + prompt to consolidate, both types
-    ./api_sync_tessie.py --yes                  # fetch + consolidate without prompting (cron)
-    ./api_sync_tessie.py --no-consolidate        # fetch only, leave CSV(s) for you to merge later
-    ./api_sync_tessie.py --drives                # just drives
-    ./api_sync_tessie.py --since-days 180        # first-run backfill window
-    ./api_sync_tessie.py --dry-run               # fetch and report, write/consolidate nothing
-    ./api_sync_tessie.py --reset-cache --charges  # forget prior sync point, re-backfill
+    ./sync_api_tessie.py                       # fetch + prompt to consolidate, both types
+    ./sync_api_tessie.py --yes                  # fetch + consolidate without prompting (cron)
+    ./sync_api_tessie.py --no-consolidate        # fetch only, leave CSV(s) for you to merge later
+    ./sync_api_tessie.py --drives                # just drives
+    ./sync_api_tessie.py --since-days 180        # first-run backfill window
+    ./sync_api_tessie.py --dry-run               # fetch and report, write/consolidate nothing
+    ./sync_api_tessie.py --reset-cache --charges  # forget prior sync point, re-backfill
 
 See Tessie/TESSIE_API.md for endpoint/field notes and known limitations.
 """
@@ -91,19 +91,19 @@ CACHE_DIR = os.path.join(REPO_ROOT, "Tessie", "api_cache")
 # command yourself) - never imports their classes, so they stay fully
 # decoupled from how fetching works.
 CONSOLIDATE_SCRIPTS = {
-    # REQ-072 fix (2026-09-15): tessie_drives_analyzer.py/tessie_charging_analyzer.py
+    # REQ-072 fix (2026-09-15): analyse_drives.py/analyse_charging.py
     # live in Tools/, not Tools/lib/ - REQ-067 moved tessie_api_common.py (and its
     # SCRIPT_DIR) one directory deeper into lib/ without updating these two paths,
     # so --consolidate silently broke ("can't open file .../lib/tessie_charging_analyzer.py").
     # TOOLS_DIR (the same two-hop constant REQ-067 introduced for REPO_ROOT) is the
     # correct base here.
-    "drives": os.path.join(TOOLS_DIR, "tessie_drives_analyzer.py"),
-    "charges": os.path.join(TOOLS_DIR, "tessie_charging_analyzer.py"),
+    "drives": os.path.join(TOOLS_DIR, "analyse_drives.py"),
+    "charges": os.path.join(TOOLS_DIR, "analyse_charging.py"),
 }
 
 # One entry per data type this tool knows how to fetch. Adding a new Tessie
 # endpoint later (e.g. "idles") means adding one entry here, not a new
-# script and not touching tessie_drives_analyzer.py/tessie_charging_analyzer.py.
+# script and not touching analyse_drives.py/analyse_charging.py.
 DATA_TYPES = {
     "drives": {
         "endpoint": "drives",
@@ -306,7 +306,7 @@ def _parse_battery_health_timestamp(ts):
     """Best-effort parse of one battery_health reading's own "timestamp"
     field into a naive LOCAL-time datetime (matching this repo's own
     convention elsewhere - drives/charges CSV timestamps are always
-    local, e.g. tessie_drives_analyzer.py's own tztools.localize() calls
+    local, e.g. analyse_drives.py's own tztools.localize() calls
     - so this needs to actually convert, not just relabel).
 
     BUG #1 (2026-09-08, live on the user's real Mac): this was originally
@@ -687,8 +687,8 @@ def backfill_deepdive_telemetry(kinds, limit=None, pace_seconds=1.5, since_days=
     Tessie's own history actually has. `kinds` is a list containing
     "drives", "charges", or both.
 
-    This lives HERE, not as a flag on tessie_drives_analyzer.py's or
-    tessie_charging_analyzer.py's own CLI, on purpose: pulling data from
+    This lives HERE, not as a flag on analyse_drives.py's or
+    analyse_charging.py's own CLI, on purpose: pulling data from
     Tessie's API in bulk is exactly the "sync" shape of work this whole
     module exists for (drives/charges fetch, above), not analysis or
     display. Each analyzer script keeps exactly one narrow, pre-existing
@@ -730,7 +730,7 @@ def _since_cutoff(since_days):
 
 
 def _backfill_drive_deepdive(limit, pace_seconds, since_days, tessie_dir):
-    from tessie_drives_analyzer import TessieAnalyzer  # noqa: E402 (deliberate - see backfill_deepdive_telemetry docstring)
+    from analyse_drives import TessieAnalyzer  # noqa: E402 (deliberate - see backfill_deepdive_telemetry docstring)
 
     print("==> Drives deep-dive backfill")
     analyzer = TessieAnalyzer(tessie_dir=tessie_dir)
@@ -787,7 +787,7 @@ def _backfill_drive_deepdive(limit, pace_seconds, since_days, tessie_dir):
 
 
 def _backfill_charge_deepdive(limit, pace_seconds, since_days, tessie_dir):
-    from tessie_charging_analyzer import TessieChargingAnalyzer  # noqa: E402 (deliberate - see backfill_deepdive_telemetry docstring)
+    from analyse_charging import TessieChargingAnalyzer  # noqa: E402 (deliberate - see backfill_deepdive_telemetry docstring)
 
     print("==> Charges deep-dive backfill")
     analyzer = TessieChargingAnalyzer(tessie_dir=tessie_dir)
@@ -879,15 +879,15 @@ def should_consolidate(pending_types, auto_yes, is_tty, input_fn=input):
 
 def main():
     parser = argparse.ArgumentParser(
-        usage="""api_sync_tessie.py [--drives | --charges] [--since-days N] [--yes] [--dry-run]
+        usage="""sync_api_tessie.py [--drives | --charges] [--since-days N] [--yes] [--dry-run]
                        [--reset-cache] [--token TOKEN] [--vin VIN] [--landing-dir DIR]
-   or:  api_sync_tessie.py --consolidate [--drives | --charges]
-   or:  api_sync_tessie.py --backfill-deepdive [--drives | --charges] [--limit N] [--pace SECONDS]
-   or:  api_sync_tessie.py --battery-health [--battery-health-since-days N]
+   or:  sync_api_tessie.py --consolidate [--drives | --charges]
+   or:  sync_api_tessie.py --backfill-deepdive [--drives | --charges] [--limit N] [--pace SECONDS]
+   or:  sync_api_tessie.py --battery-health [--battery-health-since-days N]
 """,
         description="""
 NAME
-    api_sync_tessie.py - Tessie Developer API Drive/Charge/Battery-Health Sync
+    sync_api_tessie.py - Tessie Developer API Drive/Charge/Battery-Health Sync
 
 DESCRIPTION
     Fetch Tessie drives/charges via the Developer API, then run the existing
@@ -896,11 +896,11 @@ DESCRIPTION
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 EXAMPLES
-  api_sync_tessie.py --drives --since-days 30
-  api_sync_tessie.py --charges --yes
-  api_sync_tessie.py --consolidate --drives
-  api_sync_tessie.py --backfill-deepdive --limit 50 --pace 2
-  api_sync_tessie.py --battery-health
+  sync_api_tessie.py --drives --since-days 30
+  sync_api_tessie.py --charges --yes
+  sync_api_tessie.py --consolidate --drives
+  sync_api_tessie.py --backfill-deepdive --limit 50 --pace 2
+  sync_api_tessie.py --battery-health
 """
     )
 
@@ -985,7 +985,7 @@ EXAMPLES
     if args.consolidate:
         # Direct mode: no API call at all, so no token/VIN needed - just run
         # each selected analyzer's own --consolidate, exactly as if you'd
-        # typed e.g. `tessie_drives_analyzer.py --consolidate` yourself.
+        # typed e.g. `analyse_drives.py --consolidate` yourself.
         print(f"\u25b6 --consolidate: skipping fetch, running --consolidate directly for: {', '.join(selected)}\n")
         any_failed = False
         for type_name in selected:

@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
-"""analysis_battery_health.py - Battery-health degradation scatterplots
+"""analyse_battery_health.py - Battery-health degradation scatterplots
 (capacity vs odometer, range vs odometer), from real battery_health_log.json
 history.
 
-Context: api_sync_tessie.py --battery-health has been pulling the
+Context: sync_api_tessie.py --battery-health has been pulling the
 vehicle's full real battery_health history for a while now (REQ-045/047),
-and analysis_car_efficiency.py already reads that history
+and analyse_car_efficiency.py already reads that history
 (load_battery_health_history()) to pick a live usable-capacity figure for
 its speed-vs-range table - but nothing in this repo ever actually CHARTS
 that history. This is the first script that does: a real degradation
@@ -56,9 +56,9 @@ the HTML output as SVG outright rather than continuing to patch canvas
 hit-testing around the edges.
 
 Usage:
-    ./analysis_battery_health.py                    # writes to <tessie_directory>/battery/
-    ./analysis_battery_health.py --tessie-dir DIR    # override the Tessie data home
-    ./analysis_battery_health.py --out-dir DIR       # override just the output location
+    ./analyse_battery_health.py                    # writes to <tessie_directory>/battery/
+    ./analyse_battery_health.py --tessie-dir DIR    # override the Tessie data home
+    ./analyse_battery_health.py --out-dir DIR       # override just the output location
 """
 import argparse
 import json
@@ -66,10 +66,10 @@ import os
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from tessie_drives_analyzer import TessieAnalyzer  # noqa: E402
-from analysis_car_efficiency import load_battery_health_history  # noqa: E402
+from analyse_drives import TessieAnalyzer  # noqa: E402
+from analyse_car_efficiency import load_battery_health_history  # noqa: E402
 
-# --- dataviz reference palette (light mode) - matches analysis_charge_curve.py
+# --- dataviz reference palette (light mode) - matches analyse_charge_curves.py
 # so every chart in this repo reads as one system (AGENTS.md / dataviz skill).
 SURFACE = "#fcfcfb"
 TEXT_PRIMARY = "#0b0b0b"
@@ -357,10 +357,10 @@ def render_html(pts, key, unit, label, color, title, subtitle, out_html):
 
 def main():
     parser = argparse.ArgumentParser(
-        usage="analysis_battery_health.py [--tessie-dir DIR] [--out-dir DIR]\n",
+        usage="analyse_battery_health.py [--tessie-dir DIR] [--out-dir DIR]\n",
         description="""
 NAME
-    analysis_battery_health.py - chart battery_health history (capacity & range vs odometer)
+    analyse_battery_health.py - chart battery_health history (capacity & range vs odometer)
 
 DESCRIPTION
     Charts real battery_health history (capacity vs odometer, range vs
@@ -369,8 +369,8 @@ DESCRIPTION
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 EXAMPLES
-  analysis_battery_health.py
-  analysis_battery_health.py --out-dir ~/iCloud/Tesla/Tessie/battery
+  analyse_battery_health.py
+  analyse_battery_health.py --out-dir ~/iCloud/Tesla/Tessie/battery
 """
     )
     parser.add_argument("--tessie-dir", help="Custom path to directory containing Tessie CSV exports / battery_health_log.json")
@@ -380,7 +380,7 @@ EXAMPLES
     points, excluded_no_odo, excluded_outliers, history, tessie_data_home = load_points(tessie_dir=args.tessie_dir)
     if len(points) < 2:
         print(f"Only {len(points)} real reading(s) with odometer data - need at least 2 to chart a trend. "
-              f"Run ./api_sync_tessie.py --battery-health to sync more.")
+              f"Run ./sync_api_tessie.py --battery-health to sync more.")
         return
 
     if args.out_dir:

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-api_sync_evnex.py - Automated, idempotent sync that turns newly-
+sync_api_evnex.py - Automated, idempotent sync that turns newly-
 COMPLETED Evnex home-charging sessions into per-session deep-dive files
 under charges/deepdive/ (see AGENTS.md REQ-030/REQ-032). Renamed from
 evnex_api_downloader.py so every source-consolidation script in this
@@ -34,10 +34,10 @@ EVNEX_CLIENT_USERNAME/EVNEX_CLIENT_PASSWORD env vars) - nothing this
 script prints or writes includes the Evnex username/password.
 
 Usage:
-    ./api_sync_evnex.py                # write any new completed sessions
-    ./api_sync_evnex.py --dry-run       # show what would be written, write nothing
-    ./api_sync_evnex.py --limit 5       # cap how many new files get written this run
-    ./api_sync_evnex.py --quiet         # summary only
+    ./sync_api_evnex.py                # write any new completed sessions
+    ./sync_api_evnex.py --dry-run       # show what would be written, write nothing
+    ./sync_api_evnex.py --limit 5       # cap how many new files get written this run
+    ./sync_api_evnex.py --quiet         # summary only
 """
 
 import argparse
@@ -48,8 +48,12 @@ import sys
 from datetime import datetime, timezone
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from lib.evnex_common import get_authenticated_client, is_real_charging_session, EvnexCredentialsError  # noqa: E402
-from evnex_explore import to_jsonable  # noqa: E402
+from lib.evnex_common import (  # noqa: E402
+    get_authenticated_client,
+    is_real_charging_session,
+    to_jsonable,
+    EvnexCredentialsError,
+)
 from lib.tessie_api_common import resolve_tessie_data_home, unique_stamped_path  # noqa: E402
 import lib.tessie_timezone as tztools  # noqa: E402
 
@@ -262,10 +266,10 @@ async def run(dry_run, limit, log):
 
 def main():
     parser = argparse.ArgumentParser(
-        usage="api_sync_evnex.py [--dry-run] [--limit N] [--quiet]\n",
+        usage="sync_api_evnex.py [--dry-run] [--limit N] [--quiet]\n",
         description="""
 NAME
-    api_sync_evnex.py - sync completed Evnex home-charging sessions into deep-dive files
+    sync_api_evnex.py - sync completed Evnex home-charging sessions into deep-dive files
 
 DESCRIPTION
     Automated, idempotent sync that turns newly-completed Evnex home-charging
@@ -276,9 +280,9 @@ DESCRIPTION
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 EXAMPLES
-  api_sync_evnex.py
-  api_sync_evnex.py --dry-run
-  api_sync_evnex.py --limit 5 --quiet
+  sync_api_evnex.py
+  sync_api_evnex.py --dry-run
+  sync_api_evnex.py --limit 5 --quiet
 """
     )
     parser.add_argument("--dry-run", action="store_true", help="Show what would be written, write nothing")

@@ -7,7 +7,7 @@
 # etc + boundaries) for the drives *analyzer*'s "Notable Destinations"
 # column and place-name filtering to mean anything - this sync script does
 # NOT touch places.json itself; that stays its own separate workflow, run
-# via Tools/tessie_places.py (e.g. `./tessie_places.py review`) whenever new
+# via Tools/places_manager.py (e.g. `./places_manager.py review`) whenever new
 # unnamed stop clusters show up.
 #
 # NOT covered yet: the other 4 confirmed-automatable Tessie endpoints
@@ -27,32 +27,32 @@ Usage: ./sync_drives_all.sh [-h|--help]
 
 The one command for the DRIVES domain. Takes no arguments; running it
 executes every step below in order against your real data. Does NOT itself
-touch places.json - that stays tessie_places.py's own separate review
+touch places.json - that stays places_manager.py's own separate review
 workflow (drives-sync only needs to read an already-maintained
 places.json, not manage it).
 
 Steps run, in order:
   1. Tessie drives - fetch, then --consolidate
-     (api_sync_tessie.py --drives --yes)
+     (sync_api_tessie.py --drives --yes)
   2. Drive deep-dive telemetry backfill
-     (api_sync_tessie.py --backfill-deepdive --drives --limit 0)
+     (sync_api_tessie.py --backfill-deepdive --drives --limit 0)
   3. Battery health (vehicle-wide, not drives-specific - lives here since
      this runs regularly)
-     (api_sync_tessie.py --battery-health)
+     (sync_api_tessie.py --battery-health)
 EOF
     exit 0
 fi
 
 echo "==> Tessie drives (fetch + consolidate)"
-./api_sync_tessie.py --drives --yes
+./sync_api_tessie.py --drives --yes
 
 echo
 echo "==> Drive deep-dive telemetry backfill"
-./api_sync_tessie.py --backfill-deepdive --drives --limit 0
+./sync_api_tessie.py --backfill-deepdive --drives --limit 0
 
 echo
 echo "==> Battery health (vehicle-wide, not drives-specific - lives here since this runs regularly)"
-./api_sync_tessie.py --battery-health
+./sync_api_tessie.py --battery-health
 
 echo
 echo "==> Done."

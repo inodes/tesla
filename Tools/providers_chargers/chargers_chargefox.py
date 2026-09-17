@@ -581,7 +581,7 @@ class ChargefoxProvider(BaseChargerProvider):
         # checked the resulting `saved` flag, so a total failure still let
         # the caller print "successfully saved N stations". Also never
         # atomic - a killed process mid-write could corrupt the file that
-        # load_json_registry()'s own callers (tessie_charging_analyzer.py)
+        # load_json_registry()'s own callers (analyse_charging.py)
         # depend on. save_json_with_fallback() (base.py) now raises if
         # every candidate path fails, and writes atomically either way.
         target_paths = [self.registry_path, os.path.join(_repo_root, "Tessie", "chargefox_chargers.json")]

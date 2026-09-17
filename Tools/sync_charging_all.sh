@@ -8,7 +8,7 @@
 #   1. Tessie charges -> fetch, then --consolidate into charges_master.csv
 #   2. Charge deep-dive telemetry backfill -> any Supercharger/3rd-party DC
 #      session missing a local charge_deepdive_*.csv gets one fetched from
-#      Tessie's own /states API (api_sync_tessie.py --backfill-deepdive).
+#      Tessie's own /states API (sync_api_tessie.py --backfill-deepdive).
 #      Evnex home sessions are deliberately excluded here - they get their
 #      own richer deep-dive via step 3 below, not a redundant /states pull.
 #   3. Evnex home-charger sessions -> charges/deepdive/*_Evnex_Home.json
@@ -17,7 +17,7 @@
 #      and correct ONLY where they disagree - which sessions exist comes
 #      entirely from Tessie (step 1), invoices are just the source of truth
 #      for cost/rate specifically when the two disagree, not for
-#      reconciliation in general (tessie_charging_analyzer.py
+#      reconciliation in general (analyse_charging.py
 #      --rename-invoices / --update-master)
 #   5. AGL usage export consolidation -> sync_power_usage.py picks up any
 #      "*Usage*.csv" already sitting in the AGL invoices folder. AGL has no
@@ -31,7 +31,7 @@
 #      a session's deep-dive charging info later is instant. Runs LAST,
 #      after step 5, because the cross-check reads AGL's usage master data
 #      and should see whatever step 5 just consolidated.
-#      (tessie_charging_analyzer.py --precompute-sources)
+#      (analyse_charging.py --precompute-sources)
 #
 # NOT covered yet ("potentially more" from REQ-033):
 #   - AGL invoice PDFs (TODO-012: a Python port of the old aglstatement.sc
@@ -57,17 +57,17 @@ your real data, so nothing gets missed by accident.
 
 Steps run, in order:
   1. Tessie charges - fetch, then --consolidate into charges_master.csv
-     (api_sync_tessie.py --charges --yes)
+     (sync_api_tessie.py --charges --yes)
   2. Charge deep-dive telemetry backfill - Superchargers/3rd-party DC only;
      Evnex home sessions are deliberately excluded here, they get their own
      richer deep-dive in step 3
-     (api_sync_tessie.py --backfill-deepdive --charges --limit 0)
-  3. Evnex home-charger sessions (api_sync_evnex.py)
+     (sync_api_tessie.py --backfill-deepdive --charges --limit 0)
+  3. Evnex home-charger sessions (sync_api_evnex.py)
   4. Invoice PDFs - rename to the standard scheme, then correct ONLY
      cost/rate fields in charges_master.csv where they disagree with what
      Tessie already wrote (Tessie is always the source of which sessions
      exist; invoices are the source of truth for cost/rate specifically)
-     (tessie_charging_analyzer.py --rename-invoices --yes,
+     (analyse_charging.py --rename-invoices --yes,
       then --update-master --yes)
   5. AGL usage export consolidation - picks up any "*Usage*.csv" already
      sitting in the AGL invoices folder; AGL has no history API, so getting
@@ -77,7 +77,7 @@ Steps run, in order:
   6. Energy-source cross-check prep - pre-populates the PVOutput/AGL/Evnex
      cross-check cache for every home Evnex session, so --inspect never
      waits on a live fetch later; runs last so it sees step 5's AGL data
-     (tessie_charging_analyzer.py --precompute-sources)
+     (analyse_charging.py --precompute-sources)
 
 NOT covered yet: AGL invoice PDFs (TODO-012), Solaredge solar-monitoring
 data (mentioned in REQ-027, nothing automated exists yet). See this file's
@@ -88,20 +88,20 @@ EOF
 fi
 
 echo "==> Tessie charges (fetch + consolidate)"
-./api_sync_tessie.py --charges --yes
+./sync_api_tessie.py --charges --yes
 
 echo
 echo "==> Charge deep-dive telemetry backfill (Superchargers/3rd-party DC - Evnex home sessions have their own sync below)"
-./api_sync_tessie.py --backfill-deepdive --charges --limit 0
+./sync_api_tessie.py --backfill-deepdive --charges --limit 0
 
 echo
 echo "==> Evnex home-charger sessions"
-./api_sync_evnex.py
+./sync_api_evnex.py
 
 echo
 echo "==> Invoice PDFs (rename, then correct cost/rate mismatches in charges_master.csv)"
-./tessie_charging_analyzer.py --rename-invoices --yes
-./tessie_charging_analyzer.py --update-master --yes
+./analyse_charging.py --rename-invoices --yes
+./analyse_charging.py --update-master --yes
 
 echo
 echo "==> AGL usage export consolidation"
@@ -109,7 +109,7 @@ echo "==> AGL usage export consolidation"
 
 echo
 echo "==> Energy-source cross-check prep (PVOutput/AGL/Evnex)"
-./tessie_charging_analyzer.py --precompute-sources
+./analyse_charging.py --precompute-sources
 
 echo
 echo "==> Done."

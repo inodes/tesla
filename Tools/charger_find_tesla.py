@@ -797,24 +797,24 @@ def resolve_reference_coordinates(ref_str: str, repo_root: str = None) -> tuple:
         except Exception:
             pass
 
-    # Search Tessie/superchargers.json
+    # Online Geocoding for address/suburb
+    geo_lat, geo_lon, geo_label = geocode_address(clean)
+    if geo_lat is not None and geo_lon is not None:
+        return geo_lat, geo_lon, geo_label
+
+    # Fallback to Tessie/superchargers.json for exact station names
     sc_p = os.path.join(repo_root, "Tessie", "superchargers.json")
     if os.path.isfile(sc_p):
         try:
             with open(sc_p, "r", encoding="utf-8") as f:
                 sc_data = json.load(f)
             for sc_name, sc_info in sc_data.items():
-                if clean.lower() in sc_name.lower() or clean.lower() in sc_info.get("location", {}).get("suburb", "").lower():
+                if clean.lower() == sc_name.lower():
                     loc = sc_info.get("location", {})
                     if loc.get("lat") is not None and loc.get("lon") is not None:
                         return float(loc.get("lat")), float(loc.get("lon")), sc_name
         except Exception:
             pass
-
-    # Fallback to Online Geocoding
-    geo_lat, geo_lon, geo_label = geocode_address(clean)
-    if geo_lat is not None and geo_lon is not None:
-        return geo_lat, geo_lon, geo_label
 
     return None, None, None
 
@@ -2614,9 +2614,9 @@ class TeslaChargerExplorer:
             print(f"{C_GRAY}   Looking up live - this can take a few seconds...{C_RESET}")
 
             try:
-                from tessie_places import query_overpass_pois
+                from places_manager import query_overpass_pois
             except ImportError as e:
-                print(f"{C_RED}❌ Could not load the facilities lookup (Tools/tessie_places.py): {e}{C_RESET}")
+                print(f"{C_RED}❌ Could not load the facilities lookup (Tools/places_manager.py): {e}{C_RESET}")
                 return
 
             try:
@@ -4061,7 +4061,7 @@ EXAMPLES
             radius = args.facilities_radius or 250
             print(f"\n🔄 Batch syncing facilities for {len(filtered)} Tesla station(s) (search radius: {radius}m)...")
             try:
-                from tessie_places import query_overpass_pois
+                from places_manager import query_overpass_pois
                 from station_facilities import get_facilities_registry
                 fac_reg = get_facilities_registry()
             except ImportError:

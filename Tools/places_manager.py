@@ -797,7 +797,7 @@ def find_candidate_drive_logs():
     if TESSIE_DIR not in search_dirs:
         search_dirs.append(TESSIE_DIR)
 
-    # 1. Check for drives_master.csv first - tessie_drives_analyzer.py's
+    # 1. Check for drives_master.csv first - analyse_drives.py's
     # consolidate_drives() writes it under a "drives" subdirectory of each
     # Tessie dir (with an older flat layout as a fallback, same order it
     # checks itself), so mirror both here.
@@ -909,7 +909,7 @@ def review_single_cluster(cl, places, total_clusters=1, cluster_num=1, allow_ign
             "ignored_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         })
         save_ignored_places(ignored)
-        print(f"🙈 Ignored \"{clean_addr}\" - won't be asked about it again. Run `./tessie_places.py ignored` to review or un-ignore it later.")
+        print(f"🙈 Ignored \"{clean_addr}\" - won't be asked about it again. Run `./places_manager.py ignored` to review or un-ignore it later.")
         return "ignored"
 
     selected_name = None
@@ -1131,7 +1131,7 @@ def cmd_review_drives(args):
         if not remaining_clusters:
             print("\n🎉 All drive stop clusters are now tagged or resolved!")
             if ignored_entries:
-                print(f"ℹ️  {len(ignored_entries)} previously-ignored cluster(s) - run `./tessie_places.py ignored` to review them.")
+                print(f"ℹ️  {len(ignored_entries)} previously-ignored cluster(s) - run `./places_manager.py ignored` to review them.")
             break
 
         # Render cluster table
@@ -1860,35 +1860,35 @@ def main():
     parser = argparse.ArgumentParser(
         description="""
 NAME
-    tessie_places.py - Tesla / Tessie Location Management & POI Lookup Engine
+    places_manager.py - Tesla / Tessie Location Management & POI Lookup Engine
 
 SYNOPSIS
-    tessie_places.py list   [--near PLACE] [--search TEXT] [--sort name|radius|dist]
-    tessie_places.py edit   [NAME] [--search TEXT] [--near PLACE]
-    tessie_places.py lookup [QUERY ...] [--radius METERS]
-    tessie_places.py review [--min-stops N]
-    tessie_places.py ignored
-    tessie_places.py add    NAME [--address ADDR | --lat LAT --lon LON] [--radius M]
+    places_manager.py list   [--near PLACE] [--search TEXT] [--sort name|radius|dist]
+    places_manager.py edit   [NAME] [--search TEXT] [--near PLACE]
+    places_manager.py lookup [QUERY ...] [--radius METERS]
+    places_manager.py review [--min-stops N]
+    places_manager.py ignored
+    places_manager.py add    NAME [--address ADDR | --lat LAT --lon LON] [--radius M]
                      [--keywords K ...] [--notes TEXT]
-    tessie_places.py update NAME [--radius M] [--address ADDR | --lat LAT --lon LON]
+    places_manager.py update NAME [--radius M] [--address ADDR | --lat LAT --lon LON]
                      [--add-keyword K ...] [--remove-keyword K ...] [--notes TEXT]
-    tessie_places.py alias  NAME --address ADDR [--keywords K ...] [--expand-radius]
-    tessie_places.py remove NAME
-    tessie_places.py rename OLD_NAME NEW_NAME
+    places_manager.py alias  NAME --address ADDR [--keywords K ...] [--expand-radius]
+    places_manager.py remove NAME
+    places_manager.py rename OLD_NAME NEW_NAME
 
 DESCRIPTION
     Manage the named-place registry (places.json) used across the Tesla/Tessie
     tooling for geofencing, proximity search, and POI lookups. Each subcommand
-    below covers one place-management workflow; run 'tessie_places.py COMMAND -h'
+    below covers one place-management workflow; run 'places_manager.py COMMAND -h'
     for that subcommand's own options.
 """,
         epilog="""
 EXAMPLES
-  tessie_places.py list --near Home --sort dist
-  tessie_places.py lookup "100 George St, Sydney"
-  tessie_places.py add "Work" --address "1 Martin Pl, Sydney" --radius 100
-  tessie_places.py update "Work" --add-keyword "Martin Place"
-  tessie_places.py review --min-stops 3
+  places_manager.py list --near Home --sort dist
+  places_manager.py lookup "100 George St, Sydney"
+  places_manager.py add "Work" --address "1 Martin Pl, Sydney" --radius 100
+  places_manager.py update "Work" --add-keyword "Martin Place"
+  places_manager.py review --min-stops 3
 """,
         formatter_class=argparse.RawTextHelpFormatter
     )

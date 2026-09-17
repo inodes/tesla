@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Builds two charging-curve charts (PNG + interactive HTML) from a charge
 deep-dive telemetry CSV - the per-sample vehicle-state export
-tessie_charging_analyzer.py's fetch_charge_deepdive_from_api() produces for
+analyse_charging.py's fetch_charge_deepdive_from_api() produces for
 EVERY session Tessie itself sees (Superchargers, 3rd-party DC/AC, and home
 Evnex sessions alike - AGENTS.md REQ-050 reversed an earlier, wrong
 assumption that home sessions have no per-sample telemetry).
@@ -968,10 +968,10 @@ def process_session(session, all_sessions, registry, force=False):
 
 def main():
     parser = argparse.ArgumentParser(
-        usage="analysis_charge_curve.py [CSV ...] [--deepdive-dir DIR] [--force] [--refresh-related]\n",
+        usage="analyse_charge_curves.py [CSV ...] [--deepdive-dir DIR] [--force] [--refresh-related]\n",
         description="""
 NAME
-    analysis_charge_curve.py - build charging-curve charts (power-vs-SoC, voltage/current/SoC-vs-time)
+    analyse_charge_curves.py - build charging-curve charts (power-vs-SoC, voltage/current/SoC-vs-time)
 
 DESCRIPTION
     Builds charging-curve charts (power-vs-SoC and voltage/current/SoC-vs-time,
@@ -981,9 +981,9 @@ DESCRIPTION
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 EXAMPLES
-  analysis_charge_curve.py
-  analysis_charge_curve.py charge_deepdive_142.csv --force
-  analysis_charge_curve.py --refresh-related
+  analyse_charge_curves.py
+  analyse_charge_curves.py charge_deepdive_142.csv --force
+  analyse_charge_curves.py --refresh-related
 """
     )
     parser.add_argument("csv", nargs="*", help="Specific charge_deepdive_*.csv file(s) to chart. "
