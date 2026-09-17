@@ -282,7 +282,7 @@ class TeslaProvider(BaseChargerProvider):
                 state = loc.get("state") or info.get("state", "")
 
                 record = UnifiedStationRecord(
-                    key=f"Tesla_{key}",
+                    key=key,
                     name=clean_name,
                     network=network,
                     operator_name="Tesla",
@@ -327,7 +327,7 @@ class TeslaProvider(BaseChargerProvider):
                         "findus_location_name": findus_loc_name,
                         "findus_location_short_name": t_meta.get("findus_location_short_name", ""),
                         # Human-readable, file-name-safe, location-based short name -
-                        # this is what invoice matching (tessie_charging_analyzer.py)
+                        # this is what invoice matching (analyse_charging.py)
                         # keys off, so it must never be the arbitrary numeric findus_id.
                         # Fixed 2026-09-14: this key didn't exist before, so
                         # charger_find.py's display fell back to source_id

@@ -1297,7 +1297,7 @@ drive_dirs = [d for d in sys.argv[2:] if d and d != "none" and os.path.isdir(d)]
 sys.path.insert(0, script_dir)
 
 try:
-    from tessie_drives_analyzer import (
+    from analyse_drives import (
         resolve_master_teslacam_dir,
         load_tombstones,
         save_tombstones,
@@ -1384,7 +1384,7 @@ drive_dirs = [d for d in sys.argv[4:] if d and d != "none" and os.path.isdir(d)]
 sys.path.insert(0, script_dir)
 
 try:
-    from tessie_drives_analyzer import (
+    from analyse_drives import (
         resolve_master_teslacam_dir,
         reconcile_archive_catalog_and_tombstones,
         purge_flagged_tombstones_across_drives,
@@ -1468,7 +1468,7 @@ drive_dirs = [d for d in sys.argv[2:] if d and d != "none" and os.path.isdir(d)]
 sys.path.insert(0, script_dir)
 
 try:
-    from tessie_drives_analyzer import (
+    from analyse_drives import (
         resolve_master_teslacam_dir,
         get_drive_identifier,
         reconcile_archive_catalog_and_tombstones,
@@ -1605,7 +1605,7 @@ drive_dirs = [d for d in sys.argv[3:] if d and d != "none" and os.path.isdir(d)]
 sys.path.insert(0, script_dir)
 
 try:
-    from tessie_drives_analyzer import (
+    from analyse_drives import (
         TessieAnalyzer,
         purge_home_recent_cli,
         resolve_master_teslacam_dir,
@@ -1624,7 +1624,7 @@ if not drive_dirs:
 # account configured at all (BUG-103 follow-up). For them this whole
 # check - including the message below - should not appear, and it must
 # never let a missing token fall through into index_footage()'s own
-# stale-telemetry auto-sync (which shells out to api_sync_tessie.py).
+# stale-telemetry auto-sync (which shells out to sync_api_tessie.py).
 # So bypass completely, with no output at all, unless a real (non-
 # placeholder) token AND vin are configured.
 def _tessie_is_configured():

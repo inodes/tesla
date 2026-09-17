@@ -28,6 +28,7 @@ Credential handling rules (deliberate, not incidental):
     version of that library ever echoes request details on failure.
 """
 
+from datetime import datetime
 import os
 
 # REQ-067: now a sibling module inside Tools/lib/ - a package-relative
@@ -36,6 +37,27 @@ from .tessie_api_common import load_config  # (reuse config.json loader)
 
 ENV_USERNAME = "EVNEX_CLIENT_USERNAME"
 ENV_PASSWORD = "EVNEX_CLIENT_PASSWORD"
+
+
+def to_jsonable(obj):
+    """Recursively convert pydantic models (and containers of them) into
+    plain JSON-safe data. Falls back to str() for anything else exotic
+    (e.g. datetime objects some fields might carry)."""
+    if obj is None or isinstance(obj, (str, int, float, bool)):
+        return obj
+    if isinstance(obj, dict):
+        return {str(k): to_jsonable(v) for k, v in obj.items()}
+    if isinstance(obj, (list, tuple)):
+        return [to_jsonable(v) for v in obj]
+    model_dump = getattr(obj, "model_dump", None)
+    if callable(model_dump):
+        try:
+            return to_jsonable(model_dump(mode="json"))
+        except TypeError:
+            return to_jsonable(model_dump())
+    if isinstance(obj, datetime):
+        return obj.isoformat()
+    return str(obj)
 
 
 class EvnexCredentialsError(RuntimeError):
@@ -98,8 +120,8 @@ async def get_authenticated_client(config=None):
     return Evnex(auth=auth)
 def session_energy_wh(attrs):
     """Real energy delivered (Wh) for one Evnex session's own `attributes`
-    dict (the same dict api_sync_evnex.py writes as record["session"]
-    ["attributes"], and analysis_ev_session_cost.py reads back as session["session"]
+    dict (the same dict sync_api_evnex.py writes as record["session"]
+    ["attributes"], and analyse_session_cost.py reads back as session["session"]
     ["attributes"]), or None if Evnex didn't report a totalEnergyUsage at
     all for this session. Kept in one shared place so "did this session
     actually deliver power" is judged identically everywhere that asks -

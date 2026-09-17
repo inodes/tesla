@@ -1,16 +1,26 @@
 {
   "Macquarie, NSW": {
     "tesla_metadata": {
-      "name": "Tesla Supercharger - Macquarie, NSW",
+      "findus_list_name": "Macquarie, NSW",
+      "findus_list_short_name": "Macquarie_NSW",
+      "findus_location_name": "Macquarie, NSW",
+      "findus_location_short_name": "Macquarie_NSW",
+      "name": "Macquarie, NSW",
+      "short_name": "Macquarie_NSW",
       "general_location": "Macquarie Centre",
       "location_name": "Macquarie Centre",
-      "short_name": "Macquarie_NSW",
       "type": "supercharger",
       "keywords": [
-        "Banda Road",
+        "Macquarie, NSW",
+        "Macquarie_NSW",
+        "Macquarie",
         "Macquarie Centre",
-        "Macquarie Park",
         "North Ryde",
+        "NSW",
+        "55-61 Talavera Road, North Ryde, New South Wales 2113",
+        "55-61 Talavera Road",
+        "Banda Road",
+        "Macquarie Park",
         "Talavera Road",
         "55-61 Talavera"
       ]
@@ -299,17 +309,25 @@
   },
   "Miranda, NSW - Parraweena Rd": {
     "tesla_metadata": {
-      "name": "Tesla Supercharger - Miranda, NSW - Parraweena Rd",
+      "findus_list_name": "Miranda, NSW - Parraweena Rd",
+      "findus_list_short_name": "Miranda_NSW_Parraweena_Rd",
+      "findus_location_name": "Miranda, NSW - Parraweena Rd",
+      "findus_location_short_name": "Miranda_NSW_Parraweena_Rd",
+      "name": "Miranda, NSW - Parraweena Rd",
+      "short_name": "Miranda_NSW_Parraweena_Rd",
       "general_location": "Tesla Center",
       "location_name": "Tesla Center",
-      "short_name": "Miranda_NSW_Parraweena_Rd",
       "type": "supercharger",
       "findus_url": "https://www.tesla.com/en_AU/findus/location/supercharger/19258",
       "keywords": [
-        "100-104 Parraweena Rd",
+        "Miranda, NSW - Parraweena Rd",
+        "Miranda_NSW_Parraweena_Rd",
+        "Miranda",
         "Tesla Center",
-        "Miranda, NSW",
-        "Miranda"
+        "NSW",
+        "100-104 Parraweena Rd, Miranda, New South Wales",
+        "100-104 Parraweena Rd",
+        "Miranda, NSW"
       ]
     },
     "location": {

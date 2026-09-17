@@ -382,7 +382,7 @@ class UnifiedStationRecord:
     # When this record's pricing/hardware became effective (charger_find_tesla.py's
     # "valid_from"/"first_seen") - distinct from last_verified_utc, which is
     # just "when this was last checked against the live page". Added
-    # 2026-09-14: tessie_charging_analyzer.py's invoice reconciliation needs
+    # 2026-09-14: analyse_charging.py's invoice reconciliation needs
     # the EFFECTIVE date to pick the right historical (active or archived)
     # tariff record for a charge from long ago, not merely the most recent
     # verification timestamp - see AGENTS.local.md.

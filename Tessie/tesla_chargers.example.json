@@ -1,17 +1,24 @@
 {
   "Bowral, NSW": {
     "tesla_metadata": {
+      "findus_list_name": "Bowral, NSW",
+      "findus_list_short_name": "Bowral_NSW",
+      "findus_location_name": "Bowral, NSW",
+      "findus_location_short_name": "Bowral_NSW",
       "name": "Bowral, NSW",
+      "short_name": "Bowral_NSW",
       "general_location": "Centennial Vineyards",
       "location_name": "Centennial Vineyards",
-      "short_name": "Bowral_NSW",
       "type": "destination_charger",
       "findus_url": "https://www.tesla.com/en_AU/findus/location/charger/dc1165175",
       "keywords": [
-        "252 Centennial Rd",
-        "Centennial Vineyards",
         "Bowral, NSW",
-        "Bowral"
+        "Bowral_NSW",
+        "Bowral",
+        "Centennial Vineyards",
+        "NSW",
+        "252 Centennial Rd, Bowral, New South Wales",
+        "252 Centennial Rd"
       ]
     },
     "location": {

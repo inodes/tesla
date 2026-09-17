@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-analysis_car_efficiency.py - AGENTS.md TODO-031
+analyse_car_efficiency.py - AGENTS.md TODO-031
 
 Builds a speed-vs-efficiency / speed-vs-range "fact sheet" for this
 vehicle from REAL deep-dive drive telemetry (drive_deepdive_*.csv files
@@ -13,14 +13,14 @@ Design (per the user's own TODO-031 writeup):
   2. For a given speed, what range should we expect?
   3. This is a PROFILE, not a one-off report - re-running it as more
      drives accumulate deep-dive telemetry (see --backfill-deepdive in
-     api_sync_tessie.py) makes it more accurate over time. Every run
+     sync_api_tessie.py) makes it more accurate over time. Every run
      fully regenerates the output from whatever real data currently
      exists - there is no incremental/manual state to merge, so it can
      never drift from what the data actually shows.
 
 Method
 ------
-Reuses TessieAnalyzer (tessie_drives_analyzer.py) for all the real-data
+Reuses TessieAnalyzer (analyse_drives.py) for all the real-data
 plumbing already proven by REQ-036/037 and TODO-026:
   - load_drives() / load_detailed_drives() to find every drive and every
     local drive_deepdive_*.csv.
@@ -65,7 +65,7 @@ incline down can be also factored in"):
     vehicle_mass_kg_for_profile() below - else a generic fallback).
 
 Usable battery capacity: prefers a LIVE reading over a historical
-estimate. api_sync_tessie.py --battery-health (AGENTS.md TODO-031)
+estimate. sync_api_tessie.py --battery-health (AGENTS.md TODO-031)
 polls Tessie's own battery_health endpoint on a regular basis and logs
 every reading to battery_health_log.json in the Tessie data home; the
 MOST RECENT logged capacity_kwh is used here whenever that file exists,
@@ -100,7 +100,7 @@ import statistics
 from datetime import datetime
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from tessie_drives_analyzer import TessieAnalyzer  # noqa: E402
+from analyse_drives import TessieAnalyzer  # noqa: E402
 from lib.tessie_api_common import load_vehicle_spec, load_config, get_vin  # noqa: E402
 
 # (lo, hi) km/h, half-open [lo, hi) except the last bucket.
@@ -332,7 +332,7 @@ def _parse_battery_health_csv(path):
 
 def load_battery_health_history(tessie_dir_home, include_outliers=False):
     """The FULL history of readings, merged from every source this repo
-    has for it: battery_health_log.json (written by api_sync_tessie.py
+    has for it: battery_health_log.json (written by sync_api_tessie.py
     --battery-health, AGENTS.md TODO-031/REQ-045 - it appends one entry
     per sync, on whatever regular cadence sync_drives_all.sh runs at,
     never overwrites) PLUS any manually-exported battery-health-history
@@ -576,7 +576,7 @@ def build_profile(tessie_dir=None, vehicle_mass_kg=None):
             "vehicle_reference.configured is False if that file doesn't "
             "exist yet.",
             "usable_battery_capacity_kwh.kwh_used_for_range prefers the "
-            "LATEST entry in live_reading_history (api_sync_tessie.py "
+            "LATEST entry in live_reading_history (sync_api_tessie.py "
             "--battery-health, polled on a regular basis - see "
             "live_reading_trend for how it's moved since the first "
             "logged reading) since it reflects the car's actual current "
@@ -602,7 +602,7 @@ def build_profile(tessie_dir=None, vehicle_mass_kg=None):
             "elevation_change_m, J->kWh) before being bucketed by speed "
             "- an estimate of what the efficiency would have been on "
             "the flat. This is NOT a replacement for the flat-only "
-            f"table - it assumes {vehicle_mass_kg:.0f}kg for this car "
+            "table - it assumes {vehicle_mass_kg:.0f}kg for this car "
             "(source_data.vehicle_mass_kg_assumed_for_grade_correction - "
             "from Tessie/vehicle_spec.json's mass.assumed_driving_mass_kg "
             "when configured, else a generic fallback; override per-run "
@@ -617,7 +617,7 @@ def build_profile(tessie_dir=None, vehicle_mass_kg=None):
             "confidence is 'low' under 5km of real driving in that speed "
             "bucket, 'medium' under 20km, 'high' above - re-run this "
             "script after more drives get deep-dive telemetry "
-            "(api_sync_tessie.py --backfill-deepdive --drives) to firm "
+            "(sync_api_tessie.py --backfill-deepdive --drives) to firm "
             "up any 'low'/'medium' bucket.",
             "live_reading_history is the FULL merged history from every "
             "source this repo has for it: battery_health_log.json (every "
@@ -738,10 +738,10 @@ def write_outputs(profile, out_dir, vin=None):
 def main():
     import argparse
     parser = argparse.ArgumentParser(
-        usage="analysis_car_efficiency.py [--tessie-dir DIR] [--out-dir DIR] [--vehicle-mass-kg KG]\n",
+        usage="analyse_car_efficiency.py [--tessie-dir DIR] [--out-dir DIR] [--vehicle-mass-kg KG]\n",
         description="""
 NAME
-    analysis_car_efficiency.py - build the speed-vs-efficiency/range car profile
+    analyse_car_efficiency.py - build the speed-vs-efficiency/range car profile
 
 DESCRIPTION
     Builds the speed-vs-efficiency/range car profile (car_profile.json/.csv)
@@ -750,8 +750,8 @@ DESCRIPTION
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 EXAMPLES
-  analysis_car_efficiency.py
-  analysis_car_efficiency.py --vehicle-mass-kg 2100
+  analyse_car_efficiency.py
+  analyse_car_efficiency.py --vehicle-mass-kg 2100
 """
     )
     parser.add_argument("--tessie-dir", help="Custom path to directory containing Tessie CSV exports")

@@ -2279,11 +2279,11 @@ class TessieChargingAnalyzer:
         separate, additive figure instead of folded in).
 
         This is a direct, read-only CSV read (mirrors the column names
-        and localize() handling tessie_drives_analyzer.py's own
+        and localize() handling analyse_drives.py's own
         load_drives() uses) rather than importing/instantiating
         TessieAnalyzer - charges stay a self-contained domain (AGENTS.md's
         sync/analysis split), this is just borrowing drives_master.csv's
-        own totals the same way api_sync_tessie.py's bulk-backfill
+        own totals the same way sync_api_tessie.py's bulk-backfill
         already borrows the analyzer classes for a narrow, documented
         match-only purpose.
 
@@ -2364,9 +2364,9 @@ class TessieChargingAnalyzer:
         """Finds the existing charge_deepdive_..._Evnex_Home.json file
         whose own charging window overlaps [start_dt, end_dt] - the same
         window-overlap match get_energy_source_crosscheck() uses, via
-        analysis_ev_session_cost.load_evnex_deepdive_sessions() - and returns that
+        analyse_session_cost.load_evnex_deepdive_sessions() - and returns that
         file's own "<date>_<HHMM>" stamp (the value unique_stamped_path()
-        was originally given when api_sync_evnex.py wrote it) rather than
+        was originally given when sync_api_evnex.py wrote it) rather than
         a full path. fetch_charge_deepdive_from_api() re-runs that same
         stamp through unique_stamped_path() itself, letting its own "_NN"
         disambiguator claim the next free slot.
@@ -2390,7 +2390,7 @@ class TessieChargingAnalyzer:
         Returns None if no matching JSON is found; the caller falls back
         to a fresh stamp of its own in that case."""
         try:
-            import analysis_ev_session_cost as _evc
+            import analyse_session_cost as _evc
         except Exception:
             return None
         pad = timedelta(minutes=2)
@@ -2478,7 +2478,7 @@ class TessieChargingAnalyzer:
 
         Home Evnex sessions ARE included (AGENTS.md REQ-050 - an earlier
         version of this method deliberately skipped them on the theory
-        that /states has nothing to add over api_sync_evnex.py's own
+        that /states has nothing to add over sync_api_evnex.py's own
         JSON; live-verified against a real Evnex session's own recorded
         window that this was wrong - Tessie polls the car's own charge
         state during ANY plugged-in session, home included, and this is
@@ -2507,7 +2507,7 @@ class TessieChargingAnalyzer:
         filenames. For an Evnex session, named to match the EXISTING
         charge_deepdive_..._Evnex_Home.json file's own stem (found by the
         same charging-window-overlap match get_energy_source_crosscheck()
-        already uses, via analysis_ev_session_cost.load_evnex_deepdive_sessions())
+        already uses, via analyse_session_cost.load_evnex_deepdive_sessions())
         rather than minting a fresh name - the whole point (AGENTS.md
         REQ-050) is that the .json and .csv for one real session sort and
         pair together by filename alone; a fresh unique_stamped_path() call
@@ -2578,7 +2578,7 @@ class TessieChargingAnalyzer:
             # all (just the bare "_NN" disambiguator from
             # unique_stamped_path()), unlike every manually-ingested/legacy
             # deepdive CSV, which is always named "..._<Network>_<ShortName>"
-            # (e.g. "Tesla_Macquarie_NSW"). analysis_charge_curve.py's historical
+            # (e.g. "Tesla_Macquarie_NSW"). analyse_charge_curves.py's historical
             # pooling keys ENTIRELY off that slug (via tesla_superchargers
             # .json's short_name) - a session named "..._00.csv" can never
             # match its own site's history, so it silently got NO dashed
@@ -2595,7 +2595,7 @@ class TessieChargingAnalyzer:
             # result matches the existing naming convention exactly.
             suffix = self._deepdive_location_suffix(session)
             # AGENTS.md TODO-033: fold the real AEST/AEDT abbreviation into
-            # the stamp here too, matching api_sync_evnex.py's own writer -
+            # the stamp here too, matching sync_api_evnex.py's own writer -
             # only reached when no existing Evnex JSON stamp was found to
             # match against above (matched_stamp already carries its own
             # tz suffix once present, via _EVNEX_JSON_STAMP_RE).
@@ -3907,7 +3907,7 @@ class TessieChargingAnalyzer:
         Caching contract, per the user's own three-part ask: (a) fetch
         on the fly if the sibling "<evnex .json stem>_sources.json"
         cache file next to that session's own already-synced
-        charge_deepdive_*_Evnex_Home*.json (api_sync_evnex.py) doesn't
+        charge_deepdive_*_Evnex_Home*.json (sync_api_evnex.py) doesn't
         exist yet, (b) use it unchanged if it does, (c) force_refresh=True
         re-fetches and only overwrites the cache once the new result
         writes successfully - a backup of the OLD cache is kept until
@@ -3927,7 +3927,7 @@ class TessieChargingAnalyzer:
             return None
 
         try:
-            import analysis_ev_session_cost as _evc
+            import analyse_session_cost as _evc
             from power_demand_calculator import load_rate_periods
         except Exception:
             return None
@@ -5250,19 +5250,19 @@ def display_charging_months_menu(filtered_sessions, analyzer):
 
 def main():
     parser = argparse.ArgumentParser(
-        usage="""tessie_charging_analyzer.py [--superchargers | --third-party | --home]
-                                   [--exclude-superchargers | --exclude-third-party | --exclude-home]
-                                   [--unreconciled] [--month YYYY-MM] [--since DATE] [--until DATE] [--audit]
-   or:  tessie_charging_analyzer.py --inspect ID_OR_DATE [--correlation]
-   or:  tessie_charging_analyzer.py --consolidate
-   or:  tessie_charging_analyzer.py --update-master
-   or:  tessie_charging_analyzer.py --rename-invoices [--rename-format TEMPLATE] [--dry-run] [--yes]
-   or:  tessie_charging_analyzer.py --export FILE
-   or:  tessie_charging_analyzer.py --precompute-sources [--since DATE] [--force-refresh]
+        usage="""analyse_charging.py [--superchargers | --third-party | --home]
+                                    [--exclude-superchargers | --exclude-third-party | --exclude-home]
+                                    [--unreconciled] [--month YYYY-MM] [--since DATE] [--until DATE] [--audit]
+   or:  analyse_charging.py --inspect ID_OR_DATE [--correlation]
+   or:  analyse_charging.py --consolidate
+   or:  analyse_charging.py --update-master
+   or:  analyse_charging.py --rename-invoices [--rename-format TEMPLATE] [--dry-run] [--yes]
+   or:  analyse_charging.py --export FILE
+   or:  analyse_charging.py --precompute-sources [--since DATE] [--force-refresh]
 """,
         description="""
 NAME
-    tessie_charging_analyzer.py - Tessie Charging & Supercharger Reconciliation Engine
+    analyse_charging.py - Tessie Charging & Supercharger Reconciliation Engine
 
 DESCRIPTION
     Reconcile Tessie charge sessions against invoice PDFs/CSV receipts and detailed
@@ -5273,25 +5273,25 @@ DESCRIPTION
         epilog="""
 EXAMPLES
   Filtering & Auditing:
-    tessie_charging_analyzer.py --superchargers --month 2026-09
-    tessie_charging_analyzer.py --unreconciled --audit
-    tessie_charging_analyzer.py --home --since monday
+    analyse_charging.py --superchargers --month 2026-09
+    analyse_charging.py --unreconciled --audit
+    analyse_charging.py --home --since monday
 
   Inspection & Reconciliation:
-    tessie_charging_analyzer.py --inspect "2026-09-01"
-    tessie_charging_analyzer.py --inspect 142 --correlation
-    tessie_charging_analyzer.py --consolidate
-    tessie_charging_analyzer.py --update-master
+    analyse_charging.py --inspect "2026-09-01"
+    analyse_charging.py --inspect 142 --correlation
+    analyse_charging.py --consolidate
+    analyse_charging.py --update-master
 
   Invoice Management:
-    tessie_charging_analyzer.py --rename-invoices --dry-run
-    tessie_charging_analyzer.py --rename-invoices --yes
-    tessie_charging_analyzer.py --export reconciled.csv
+    analyse_charging.py --rename-invoices --dry-run
+    analyse_charging.py --rename-invoices --yes
+    analyse_charging.py --export reconciled.csv
 
   Prep (REQ-072):
-    tessie_charging_analyzer.py --precompute-sources
-    tessie_charging_analyzer.py --precompute-sources --since 2026-08-01
-    tessie_charging_analyzer.py --precompute-sources --force-refresh
+    analyse_charging.py --precompute-sources
+    analyse_charging.py --precompute-sources --since 2026-08-01
+    analyse_charging.py --precompute-sources --force-refresh
 """
     )
 

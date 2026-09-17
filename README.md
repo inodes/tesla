@@ -27,31 +27,34 @@ tesla/
 │   └── README.md                   # Full Tessie documentation
 │
 ├── Tools/                          # 🛠️ Executable scripts for multi-drive deployment
+│   ├── archive/                    # Archived one-off / exploratory test scripts
 │   ├── lib/                        # Shared library modules imported by the scripts below (not run
 │   │                                #   directly) - table_formatter.py, tessie_api_common.py, etc.
 │   ├── providers_chargers/         # Pluggable charging-network adapters (Tesla/Chargefox/EVX/Evie/
 │   │                                #   BP Pulse/AmpCharge/Exploren/Jolt/NRMA/PlugShare),
 │   │                                #   orchestrated by charger_find.py
-│   ├── sync_dashcam.sh               # Multi-drive TeslaCam sync, audit & prune engine
-│   ├── dashcam_exportdash.sh           # Local ExportDash web player launcher
-│   ├── tessie_drives_analyzer.py   # Drives explorer, footage linker, and master consolidator
-│   ├── tessie_charging_analyzer.py # Charging reconciliation & invoice parser
-│   ├── tessie_places.py            # Place tagging, geocoding, and stop-cluster review utility
-│   ├── charger_find.py            # Unified multi-network charger discovery (Tesla/Chargefox/EVX/Evie/
-│   │                                #   BP Pulse/AmpCharge/Exploren/Jolt/NRMA/PlugShare) - see
-│   │                                #   Tools/providers_chargers/
-│   ├── charger_find_tesla.py      # Tesla Supercharger / Destination Charger explorer & live scraper
-│   ├── providers_power/            # Pluggable power-retailer/distributor billing providers (3.1) - one
+│   ├── providers_power/            # Pluggable power-retailer/distributor billing providers - one
 │   │                                #   BasePowerProvider subclass per retailer (currently just AGL),
 │   │                                #   swappable via config.json's "power_provider" key
-│   ├── evnex_explore.py            # Read-only dump of home charger (Evnex) status/session data
-│   ├── api_sync_evnex.py           # Idempotent sync: new completed Evnex sessions -> charges/deepdive/*.json
-│   ├── sync_power_usage.py         # Consolidate the active power provider's usage-export CSVs into one master CSV
-│   ├── power_demand_calculator.py  # Reproduce the active power provider's residential demand charge (AGL: Ausgrid EA025)
+│   ├── analyse_battery_health.py   # Longitudinal battery capacity & degradation analyser
+│   ├── analyse_car_efficiency.py   # Vehicle speed & temperature efficiency curve analyser
+│   ├── analyse_charge_curves.py    # Multi-session Supercharger charging curve & speed analyser
+│   ├── analyse_charging.py         # Charging reconciliation & invoice parser
+│   ├── analyse_drives.py           # Drives explorer, footage linker, and master consolidator
+│   ├── analyse_session_cost.py     # Home EV charging solar vs grid cost & tariff calculator
+│   ├── charger_find.py            # Unified multi-network charger discovery
+│   ├── charger_find_tesla.py      # Tesla Supercharger / Destination Charger explorer & live scraper
+│   ├── places_manager.py           # Place tagging, geocoding, and stop-cluster review utility
 │   ├── power_cost_calculator.py    # Full electricity-bill reconstruction (usage + supply + solar credit + demand)
+│   ├── power_demand_calculator.py  # Reproduce the active power provider's residential demand charge (AGL: Ausgrid EA025)
+│   ├── sync_api_evnex.py           # Idempotent sync: new completed Evnex sessions -> charges/deepdive/*.json
+│   ├── sync_api_tessie.py          # Direct Tessie REST API fetch & sync engine for drives, charges, and telemetry
+│   ├── sync_power_usage.py         # Consolidate the active power provider's usage-export CSVs into one master CSV
+│   ├── sync_dashcam.sh             # Multi-drive TeslaCam sync, audit & prune engine
+│   ├── dashcam_exportdash.sh       # Local ExportDash web player launcher
 │   ├── sync_drives_all.sh          # One command: Tessie drives, fetch + consolidate
 │   ├── sync_charging_all.sh        # One command: Tessie charges + Evnex + invoices + AGL usage + PVOutput/AGL/Evnex cross-check prep, fetch + consolidate
-│   ├── sync_charger_all.sh        # One command: fetch new charger hardware across every network, near Home
+│   ├── sync_charger_all.sh         # One command: fetch new charger hardware across every network, near Home
 │   └── sync_all.sh                 # Runs all 3 domains above in one command (not dashcam - see its own header)
 │
 ├── .github/                        # GitHub Actions CI & community standards
@@ -78,17 +81,17 @@ tesla/
 ### 2. Tessie Drive Log Analysis & Place Matching
 ```bash
 # Consolidate newly-exported Tessie CSVs into drives_master.csv
-./Tools/tessie_drives_analyzer.py --consolidate
+./Tools/analyse_drives.py --consolidate
 
 # ...or the one-command version: fetch new drives from the Tessie API and
 # consolidate in one step (requires config.json's API token/VIN)
 ./Tools/sync_drives_all.sh
 
 # Interactive drives overview and time-period selector
-./Tools/tessie_drives_analyzer.py --drives
+./Tools/analyse_drives.py --drives
 
 # Filter trips since a specific date or weekday
-./Tools/tessie_drives_analyzer.py --since wednesday
+./Tools/analyse_drives.py --since wednesday
 ```
 
 ### 3. Charging & Supercharger Invoice Reconciliation
@@ -105,13 +108,13 @@ tesla/
 ./Tools/sync_charging_all.sh
 
 # Reconcile Supercharger invoices against Tessie charging sessions
-./Tools/tessie_charging_analyzer.py --superchargers
+./Tools/analyse_charging.py --superchargers
 
 # Reconcile 3rd-party fast-charging sessions (Chargefox, Evie, BP Pulse, Jolt)
-./Tools/tessie_charging_analyzer.py --third-party
+./Tools/analyse_charging.py --third-party
 
 # Inspect charging efficiency loss and TOU tariff rate for a session
-./Tools/tessie_charging_analyzer.py --inspect 142
+./Tools/analyse_charging.py --inspect 142
 ```
 
 ### 4. Charger Discovery
@@ -129,16 +132,7 @@ tesla/
 ```
 👉 *See [Tessie/README.md](Tessie/README.md) for full documentation on drives, charging reconciliation, invoices, tariffs, places, and charger discovery.*
 
-### 5. Home Charger (Evnex) Exploration
-
-```bash
-# Dump everything the `evnex` library can see about your Evnex home charger
-# (status, energy meter, charging sessions) to a JSON file for inspection -
-# read-only, never issues a charge command. Credentials come from
-# config.json or EVNEX_CLIENT_USERNAME/EVNEX_CLIENT_PASSWORD env vars
-# (see Tools/evnex_common.py).
-./Tools/evnex_explore.py
-```
+### 5. Home Charger (Evnex) Sync
 
 ```bash
 # Turn any newly-completed Evnex session into its own deep-dive file
@@ -146,7 +140,7 @@ tesla/
 # NN a zero-padded position starting at "00") -
 # idempotent (safe to re-run; keyed on Evnex's own session id, never on
 # the filename), skips sessions still actively charging.
-./Tools/api_sync_evnex.py
+./Tools/sync_api_evnex.py
 ```
 👉 *This is also run as part of `./Tools/sync_charging_all.sh` (see section 3) - run it standalone only if you want just the Evnex step.*
 

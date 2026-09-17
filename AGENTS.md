@@ -10,6 +10,11 @@
 
 ## 1. Core Operating Directives
 
+0. **Implementation Plans First — Explicit Permission Required Before Action**:
+   - **CRITICAL DIRECTIVE**: The agent MUST ALWAYS research, formulate, and present a comprehensive implementation plan first before taking any modifying actions.
+   - **NEVER ACT PREMATURELY**: The agent MUST NOT execute source code edits, file creations, file renames (`git mv`), deletions, migrations, or modifying scripts until the user has reviewed the plan and explicitly given permission to proceed.
+   - **Plan First, Act Only When Approved**: When a user asks for a feature, refactor, migration, or cleanup, provide the architectural breakdown, trade-offs, and step-by-step plan for confirmation first.
+
 1. **Primary Workspace & iCloud Symlink**:
    - **Primary Workspace**: `$HOME/repos/tesla` (or `~/repos/tesla`, local filesystem clone).
    - **iCloud Symlink**: `~/Library/Mobile Documents/com~apple~CloudDocs/repos/tesla` is a direct symlink back to `$HOME/repos/tesla`.
@@ -44,7 +49,7 @@
 
 ## 2. Table Display & UI Formatting Standards
 
-All terminal tools (such as `Tools/tessie_drives_analyzer.py` and `Tools/tessie_charging_analyzer.py`) render rich Unicode box-drawing tables. The following rules are mandatory for all table implementations:
+All terminal tools (such as `Tools/analyse_drives.py` and `Tools/analyse_charging.py`) render rich Unicode box-drawing tables. The following rules are mandatory for all table implementations:
 
 1. **Dynamic Column Width Measurement (No Hardcoded Cell Sizing)**:
    - Never hardcode column widths for dynamic text columns (e.g., `Notable Destinations`, `Route`, `Station / Location`, `Address`).
@@ -141,14 +146,13 @@ tesla/
 │   │   ├── __init__.py
 │   │   └── power_base.py / power_agl.py   # BasePowerProvider interface + the AGL implementation
 │   │
-│   ├── tessie_drives_analyzer.py    # Drives explorer, footage linker, and master consolidator
-│   ├── tessie_charging_analyzer.py  # 3-way charging reconciler, tariff auditor, and invoice matcher
-│   ├── tessie_places.py             # Place tagging and geocoding utility
-│   ├── sync_charger_all.sh         # One-command CHARGERS-domain sync (hardware/station registries)
+│   ├── analyse_drives.py            # Drives explorer, footage linker, and master consolidator
+│   ├── analyse_charging.py          # 3-way charging reconciler, tariff auditor, and invoice matcher
+│   ├── places_manager.py            # Place tagging and geocoding utility
+│   ├── sync_charger_all.sh          # One-command CHARGERS-domain sync (hardware/station registries)
 │   ├── sync_charging_all.sh         # One-command CHARGING-SESSIONS-domain sync (Tessie/Evnex/invoices/AGL/cross-check prep)
 │   ├── sync_drives_all.sh           # One-command DRIVES-domain sync
-│   └── ...                          # every other CLI script - charger_find.py, power_*.py, evnex_*.py,
-│                                     # test_*.py, etc.
+│   └── ...                          # every other CLI script - analyse_*.py, charger_*.py, power_*.py, sync_*.py, etc.
 └── dashcam/                    # TeslaCam clips and sentry event utilities
 ```
 

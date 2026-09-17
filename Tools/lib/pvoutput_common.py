@@ -3,7 +3,7 @@
 pvoutput_common.py - Shared PVOutput API plumbing
 ====================================================
 Config/auth loading and the low-level HTTP call, factored out the same
-way tessie_api_common.py serves test_tessie_api.py/api_sync_tessie.py -
+way tessie_api_common.py serves test_tessie_api.py/sync_api_tessie.py -
 so test_pvoutput_api.py and any later real sync script share one
 implementation instead of drifting apart.
 
@@ -62,7 +62,7 @@ RATE_LIMIT_HEADERS = ("X-Rate-Limit-Remaining", "X-Rate-Limit-Limit", "X-Rate-Li
 # Consumption sits at index 7 here, NOT index 4 (index 4 is only
 # Energy Consumption in the Basic shape, which this repo never
 # requests). REQ-071: an earlier version of
-# tessie_charging_analyzer.py's get_energy_source_crosscheck() only
+# analyse_charging.py's get_energy_source_crosscheck() only
 # ever read index 2 (Energy Generation, which happens to sit at the
 # same index in both shapes) and never touched Energy Consumption at
 # all, so this mislabeling was harmless until PVOutput's own
@@ -73,8 +73,8 @@ HISTORY_ENERGY_CONS_IDX = 7
 
 # Cross-source (PVOutput-real-import vs AGL-real-import) conflict
 # thresholds - single source of truth since two different top-level
-# scripts (tessie_charging_analyzer.py's live single-session path,
-# analysis_ev_session_cost.py's batch path) both need to agree on them.
+# scripts (analyse_charging.py's live single-session path,
+# analyse_session_cost.py's batch path) both need to agree on them.
 # See either caller's own comment near its use for the full rationale:
 # PVOutput and AGL are two INDEPENDENT real meters measuring the same
 # physical import for the same window, so a material disagreement is a
@@ -351,8 +351,8 @@ def pv_agl_import_conflict(pv_import_kwh, pv_coverage, agl_import_kwh, agl_bucke
     evaluate_session()'s own "conflict" field (Evnex's CLAIMED solar%
     vs AGL's real import), this is purely a cross-source data-quality
     check, not a solar-usage question. Shared here (REQ-071) so
-    tessie_charging_analyzer.py's live single-session path and
-    analysis_ev_session_cost.py's batch path can't drift apart on the
+    analyse_charging.py's live single-session path and
+    analyse_session_cost.py's batch path can't drift apart on the
     thresholds. Returns False (never flags) whenever either source
     doesn't have enough real data for the window to trust the
     comparison at all (pv_coverage below PV_AGL_CONFLICT_MIN_COVERAGE,

@@ -2259,7 +2259,7 @@ class TessieAnalyzer:
         plain 'YYYY-MM-DD HH:MM:SS' local string with no timezone suffix
         (unlike drives_master.csv's '(AEST)'-suffixed columns), so this
         is deliberately its own small parser rather than reusing
-        tessie_charging_analyzer.py's parse_flexible_date() (a different
+        analyse_charging.py's parse_flexible_date() (a different
         module, and overkill for a format this fixed)."""
         if not ts_str:
             return None
@@ -2340,7 +2340,7 @@ class TessieAnalyzer:
             return None
 
     def load_detailed_drives(self):
-        """Mirrors load_detailed_charges() (tessie_charging_analyzer.py) -
+        """Mirrors load_detailed_charges() (analyse_charging.py) -
         find every drive_deepdive_*.csv this data home has (drives_dirs,
         their archive/deepdive subfolders, the repo Tessie/ dirs, and the
         landing dir), parse it, and keep the ones that actually contain
@@ -2813,7 +2813,7 @@ class TessieAnalyzer:
         would be good to have an extra line for where the car is at that
         point in time (e.g. address pulled from csv)"). The CSV only has
         raw Latitude/Longitude, not a ready-made address, so this reverse-
-        geocodes via tessie_places.reverse_geocode() (Nominatim) - but only
+        geocodes via places_manager.reverse_geocode() (Nominatim) - but only
         when the car has moved more than MIN_MOVE_M since the last lookup,
         caching by a coarsely-rounded lat/lon and nearest-filling every
         sample in between. Reverse-geocoding every single sample would be
@@ -2831,7 +2831,7 @@ class TessieAnalyzer:
             return None
 
         try:
-            from tessie_places import reverse_geocode, haversine_distance
+            from places_manager import reverse_geocode, haversine_distance
         except ImportError:
             return None
 
@@ -2916,7 +2916,7 @@ class TessieAnalyzer:
 
     @staticmethod
     def _format_reverse_geocode_label(info):
-        """Short 'Road, Suburb'-style label from a tessie_places.reverse_geocode()
+        """Short 'Road, Suburb'-style label from a places_manager.reverse_geocode()
         result, falling back to its display_name/name when address parts
         are missing (e.g. open water, a highway with no suburb tag)."""
         addr = (info or {}).get("address") or {}
@@ -3063,7 +3063,7 @@ class TessieAnalyzer:
         breakdown, and generates (but no longer auto-opens - user report,
         2026-09-15: opening a browser tab unconditionally on every single
         day/trip selection was surprising and unwanted, unlike
-        tessie_charging_analyzer.py's own charging curve, which only opens
+        analyse_charging.py's own charging curve, which only opens
         via an explicit "[o]pen chart in browser" action - callers now
         offer that same explicit action instead, see display_footage_details()
         and inspect_drive()) its elevation/efficiency profile chart (if one
@@ -3071,7 +3071,7 @@ class TessieAnalyzer:
         standalone --inspect-drive flag) and display_footage_details()
         (AGENTS.md TODO-019: folded into the ordinary trip drill-down so
         this shows up automatically alongside footage, with no separate
-        footage-vs-deep-dive prompt - mirrors how tessie_charging_analyzer.py's
+        footage-vs-deep-dive prompt - mirrors how analyse_charging.py's
         inspect_session() already handles its charging curve inline).
         When no local file covers this drive yet, auto-fetches one from
         Tessie's /states API instead of giving up (AGENTS.md TODO-026) -
@@ -3106,7 +3106,7 @@ class TessieAnalyzer:
         climbing/level/descending segment breakdown (compute_drive_segments)
         when a matching drive_deepdive_*.csv exists for it, and opens the
         interactive elevation/power profile chart. Mirrors
-        tessie_charging_analyzer.py's inspect_session(), just keyed on a
+        analyse_charging.py's inspect_session(), just keyed on a
         drive instead of a charge."""
         if not self.drives:
             self.load_drives()
@@ -3178,7 +3178,7 @@ class TessieAnalyzer:
 
         # User report (2026-09-15): used to auto-open in the browser
         # unconditionally (get_drive_deepdive() no longer does that) -
-        # explicit action instead, matching tessie_charging_analyzer.py's
+        # explicit action instead, matching analyse_charging.py's
         # own "[o]pen chart in browser" for the charging curve.
         if chart_path and sys.stdin.isatty():
             try:
@@ -3192,7 +3192,7 @@ class TessieAnalyzer:
     def sync_drives_if_stale(self, target_date=None, force=False):
         """
         Determines if local drives_master.csv is stale compared to requested date or current time,
-        and automatically triggers api_sync_tessie.py --drives --yes to fetch fresh telemetry.
+        and automatically triggers sync_api_tessie.py --drives --yes to fetch fresh telemetry.
         """
         if getattr(self, "_sync_disabled", False):
             return False
@@ -3242,7 +3242,7 @@ class TessieAnalyzer:
         if not is_stale:
             return False
 
-        sync_script = os.path.join(self.script_dir, "api_sync_tessie.py")
+        sync_script = os.path.join(self.script_dir, "sync_api_tessie.py")
         if not os.path.isfile(sync_script):
             return False
 
@@ -3664,11 +3664,11 @@ def display_footage_details(trip, analyzer):
 
     # 3. Drive deep-dive telemetry (AGENTS.md TODO-019) - shown automatically
     # alongside footage whenever it exists, no separate footage-vs-deep-dive
-    # prompt, mirroring how tessie_charging_analyzer.py's inspect_session()
+    # prompt, mirroring how analyse_charging.py's inspect_session()
     # already shows its charging curve inline. User report (2026-09-15): this
     # used to auto-open the chart in the browser unconditionally on every
     # trip selection - now offered as an explicit "[o]pen chart in browser"
-    # action below instead, matching tessie_charging_analyzer.py's own
+    # action below instead, matching analyse_charging.py's own
     # charging-curve action.
     print(f"\n📊 3. DRIVE TELEMETRY:")
     dd_chart_path = None
@@ -5096,17 +5096,17 @@ def display_months_menu(days_dict, analyzer):
 
 def main():
     parser = argparse.ArgumentParser(
-        usage="""tessie_drives_analyzer.py --drives [--today | --yesterday | --month M | --since DATE | --days N]
+        usage="""analyse_drives.py [--drives] [--today | --yesterday | --month YYYY-MM | --since DATE | --days N]
                                   [--place NAME]
-   or:  tessie_drives_analyzer.py --timeline [DATE]
-   or:  tessie_drives_analyzer.py --inspect-drive INDEX_OR_DATE
-   or:  tessie_drives_analyzer.py --consolidate [CSV]
-   or:  tessie_drives_analyzer.py --sync | --no-sync
-   or:  tessie_drives_analyzer.py [--purge-home-recent | --stage-home-recent] [--dry-run] [--yes]
+   or:  analyse_drives.py --timeline [DATE]
+   or:  analyse_drives.py --inspect-drive INDEX_OR_DATE
+   or:  analyse_drives.py --consolidate [CSV]
+   or:  analyse_drives.py --sync | --no-sync
+   or:  analyse_drives.py [--purge-home-recent | --stage-home-recent] [--dry-run] [--yes]
 """,
         description="""
 NAME
-    tessie_drives_analyzer.py - Tessie Drive Log Analyzer & Master Consolidator
+    analyse_drives.py - Tessie Drive Log Analyzer & Master Consolidator
 
 DESCRIPTION
     Analyze, filter, and deep-dive Tessie drive logs, generate 24-hour vehicle &
@@ -5116,12 +5116,12 @@ DESCRIPTION
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 EXAMPLES
-  tessie_drives_analyzer.py --drives --today
-  tessie_drives_analyzer.py --drives --place Work --days 30
-  tessie_drives_analyzer.py --timeline yesterday
-  tessie_drives_analyzer.py --inspect-drive "2026-08-30 21:01"
-  tessie_drives_analyzer.py --consolidate
-  tessie_drives_analyzer.py --stage-home-recent --dry-run
+  analyse_drives.py --drives --today
+  analyse_drives.py --drives --place Work --days 30
+  analyse_drives.py --timeline yesterday
+  analyse_drives.py --inspect-drive "2026-08-30 21:01"
+  analyse_drives.py --consolidate
+  analyse_drives.py --stage-home-recent --dry-run
 """
     )
 

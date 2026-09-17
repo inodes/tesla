@@ -32,7 +32,7 @@ let this block check run as a fallback), (4) wcwidth, (5) East-Asian-Width.
 BUG-037 first tried live-probing the terminal (print the glyph, read back
 its own ANSI cursor-position report) wired into EVERY char_width()/
 display_len() call. That made things WORSE (BUG-038): this module is used
-by interactive REPL menus (tessie_drives_analyzer.py etc.) that are
+by interactive REPL menus (analyse_drives.py etc.) that are
 themselves reading stdin for the user's own next keypress at the same
 time render calls happen, and the probe's raw-mode stdin read raced with
 that - observed live as a menu prompt hanging until Ctrl-C, and stray

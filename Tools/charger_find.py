@@ -210,7 +210,12 @@ def resolve_reference_coords(near_query: str) -> Tuple[Optional[float], Optional
             except Exception:
                 pass
 
-    # 3. Known station match in local registries
+    # 3. Online geocoding for suburb, city, or street address
+    g_lat, g_lon, g_label = geocode_address(q_clean)
+    if g_lat is not None and g_lon is not None:
+        return g_lat, g_lon, g_label or q_clean
+
+    # 4. Known station match in local registries (fallback for offline or exact station name queries)
     reg_candidates = []
     if tessie_home:
         reg_candidates.extend([
@@ -240,10 +245,7 @@ def resolve_reference_coords(near_query: str) -> Tuple[Optional[float], Optional
                             if not isinstance(s_v, dict):
                                 continue
                             name_to_check = s_v.get("name", s_k)
-                            suburb_to_check = s_v.get("location", {}).get("suburb", "") if isinstance(s_v.get("location"), dict) else s_v.get("suburb", "")
-                            if (q_clean.lower() in s_k.lower() or 
-                                q_clean.lower() in name_to_check.lower() or 
-                                (suburb_to_check and q_clean.lower() in suburb_to_check.lower())):
+                            if q_clean.lower() == s_k.lower() or q_clean.lower() == name_to_check.lower():
                                 loc = s_v.get("location", {}) if isinstance(s_v.get("location"), dict) else {}
                                 lat = loc.get("lat") or loc.get("latitude") or s_v.get("lat") or s_v.get("latitude")
                                 lon = loc.get("lon") or loc.get("longitude") or s_v.get("lon") or s_v.get("longitude")
@@ -251,11 +253,6 @@ def resolve_reference_coords(near_query: str) -> Tuple[Optional[float], Optional
                                     return float(lat), float(lon), name_to_check or s_k
             except Exception:
                 pass
-
-    # 4. Fallback to geocoding
-    g_lat, g_lon, g_label = geocode_address(q_clean)
-    if g_lat is not None and g_lon is not None:
-        return g_lat, g_lon, g_label or q_clean
 
     # 5. Default Sydney fallback if Home requested
     if q_clean.lower() == "home":
@@ -844,7 +841,7 @@ def display_station_inspection_card(station: UnifiedStationRecord, eval_time: Op
     # Combined Effective Date/Last Verified - mirrors charger_find_tesla.py's
     # display_preview() exactly. "Last Verified" alone told you when the data
     # was last re-checked but not which historic period it actually applies
-    # to; tessie_charging_analyzer.py needs the effective date to match old
+    # to; analyse_charging.py needs the effective date to match old
     # invoices against the right (possibly archived) registry entry. Fixed
     # 2026-09-14 - see AGENTS.local.md.
     if station.effective_date_utc and station.last_verified_utc:
@@ -1004,7 +1001,7 @@ def display_nearby_facilities(station: UnifiedStationRecord, radius_m: int = 250
     """
     Looks up real, named nearby facilities (shops, food, amenities, services)
     around a charging station via OpenStreetMap's free/keyless Overpass API -
-    reusing Tools/tessie_places.py's already-proven query_overpass_pois(),
+    # reusing Tools/places_manager.py's already-proven query_overpass_pois(),
     the same lookup that already identifies drive-log stop locations.
 
     Persisted in station_facilities.json for instant offline pullup with
@@ -1035,9 +1032,9 @@ def display_nearby_facilities(station: UnifiedStationRecord, radius_m: int = 250
         print(f"{C_GRAY}   Looking up live - this can take a few seconds...{C_RESET}")
 
         try:
-            from tessie_places import query_overpass_pois
+            from places_manager import query_overpass_pois
         except ImportError as e:
-            print(f"{C_RED}❌ Could not load the facilities lookup (Tools/tessie_places.py): {e}{C_RESET}")
+            print(f"{C_RED}❌ Could not load the facilities lookup (Tools/places_manager.py): {e}{C_RESET}")
             return
 
         try:
@@ -1935,7 +1932,7 @@ DESCRIPTION
         radius = args.facilities_radius or 250
         print(f"\n🔄 Batch syncing facilities for {len(stations)} station(s) (search radius: {radius}m)...")
         try:
-            from tessie_places import query_overpass_pois
+            from places_manager import query_overpass_pois
             from station_facilities import get_facilities_registry
             fac_reg = get_facilities_registry()
         except ImportError:

@@ -4,8 +4,8 @@
     "type": "home",
     "network": "Tesla Wall Connector",
     "address": "123 Example Street, Sydney NSW 2000",
-    "lat": -33.80000,
-    "lon": 151.00000,
+    "lat": -33.8,
+    "lon": 151.0,
     "radius_m": 100,
     "keywords": [
       "123 Example",
@@ -14,7 +14,9 @@
     "hardware": {
       "charger_type": "AC Level 2",
       "max_power_kw": 11.0,
-      "connector_types": ["Type 2"]
+      "connector_types": [
+        "Type 2"
+      ]
     },
     "compatibility": {
       "open_to_non_tesla": true,
@@ -25,34 +27,111 @@
       "currency": "AUD",
       "timezone": "Australia/Sydney",
       "pricing_model": "time_of_use",
-      "flat_per_kwh": 0.00,
-      "per_minute": 0.00,
-      "per_session": 0.00,
+      "flat_per_kwh": 0.0,
+      "per_minute": 0.0,
+      "per_session": 0.0,
       "rate_schedules": [
         {
           "name": "Solar Sponge (Day Rate)",
           "rate_per_kwh": 0.12,
           "start_time": "07:00",
           "end_time": "16:00",
-          "days": ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"],
-          "months": ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
+          "days": [
+            "Mon",
+            "Tue",
+            "Wed",
+            "Thu",
+            "Fri",
+            "Sat",
+            "Sun"
+          ],
+          "months": [
+            "Jan",
+            "Feb",
+            "Mar",
+            "Apr",
+            "May",
+            "Jun",
+            "Jul",
+            "Aug",
+            "Sep",
+            "Oct",
+            "Nov",
+            "Dec"
+          ]
         },
         {
           "name": "Peak Rate",
           "rate_per_kwh": 0.2852,
           "start_time": "16:00",
           "end_time": "22:00",
-          "days": ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"],
-          "months": ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
+          "days": [
+            "Mon",
+            "Tue",
+            "Wed",
+            "Thu",
+            "Fri",
+            "Sat",
+            "Sun"
+          ],
+          "months": [
+            "Jan",
+            "Feb",
+            "Mar",
+            "Apr",
+            "May",
+            "Jun",
+            "Jul",
+            "Aug",
+            "Sep",
+            "Oct",
+            "Nov",
+            "Dec"
+          ]
         },
         {
           "name": "Overnight / Off-Peak Rate",
           "rate_per_kwh": 0.2852,
           "start_time": "22:00",
           "end_time": "07:00",
-          "days": ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"],
-          "months": ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
+          "days": [
+            "Mon",
+            "Tue",
+            "Wed",
+            "Thu",
+            "Fri",
+            "Sat",
+            "Sun"
+          ],
+          "months": [
+            "Jan",
+            "Feb",
+            "Mar",
+            "Apr",
+            "May",
+            "Jun",
+            "Jul",
+            "Aug",
+            "Sep",
+            "Oct",
+            "Nov",
+            "Dec"
+          ]
         }
+      ]
+    },
+    "tesla_metadata": {
+      "findus_list_name": "Home",
+      "findus_list_short_name": "Home",
+      "findus_location_name": "Home",
+      "findus_location_short_name": "Home",
+      "name": "Home",
+      "short_name": "Home",
+      "general_location": "",
+      "location_name": "",
+      "type": "destination_charger",
+      "keywords": [
+        "Home"
       ]
     }
   },
@@ -73,7 +152,10 @@
       "stalls": 2,
       "max_power_kw": 50,
       "charger_type": "DC Fast",
-      "connector_types": ["CCS2", "CHAdeMO"]
+      "connector_types": [
+        "CCS2",
+        "CHAdeMO"
+      ]
     },
     "compatibility": {
       "open_to_non_tesla": true,
@@ -83,9 +165,9 @@
     "costs": {
       "currency": "AUD",
       "pricing_model": "flat",
-      "flat_per_kwh": 0.60,
-      "per_minute": 0.00,
-      "per_session": 0.00,
+      "flat_per_kwh": 0.6,
+      "per_minute": 0.0,
+      "per_session": 0.0,
       "app_payment": "Chargefox App / RFID Card"
     },
     "amenities": {
@@ -94,6 +176,22 @@
       "shopping": true,
       "coffee": true,
       "parking": true
+    },
+    "tesla_metadata": {
+      "findus_list_name": "Bunnings Gladesville (Chargefox)",
+      "findus_list_short_name": "Bunnings_Gladesville_Chargefox",
+      "findus_location_name": "Bunnings Gladesville (Chargefox)",
+      "findus_location_short_name": "Bunnings_Gladesville_Chargefox",
+      "name": "Bunnings Gladesville (Chargefox)",
+      "short_name": "Bunnings_Gladesville_Chargefox",
+      "general_location": "",
+      "location_name": "",
+      "type": "destination_charger",
+      "keywords": [
+        "Bunnings Gladesville",
+        "Bunnings Gladesville (Chargefox)",
+        "Bunnings_Gladesville_Chargefox"
+      ]
     }
   },
   "ChargePoint Sample": {
@@ -113,7 +211,9 @@
       "stalls": 2,
       "max_power_kw": 22,
       "charger_type": "AC Destination",
-      "connector_types": ["Type 2"]
+      "connector_types": [
+        "Type 2"
+      ]
     },
     "compatibility": {
       "open_to_non_tesla": true,
@@ -123,13 +223,29 @@
     "costs": {
       "currency": "AUD",
       "pricing_model": "flat",
-      "flat_per_kwh": 0.40,
-      "per_minute": 0.00,
-      "per_session": 0.00,
+      "flat_per_kwh": 0.4,
+      "per_minute": 0.0,
+      "per_session": 0.0,
       "app_payment": "ChargePoint App"
     },
     "amenities": {
       "parking": true
+    },
+    "tesla_metadata": {
+      "findus_list_name": "ChargePoint Sample Station",
+      "findus_list_short_name": "ChargePoint_Sample_Station",
+      "findus_location_name": "ChargePoint Sample Station",
+      "findus_location_short_name": "ChargePoint_Sample_Station",
+      "name": "ChargePoint Sample Station",
+      "short_name": "ChargePoint_Sample_Station",
+      "general_location": "",
+      "location_name": "",
+      "type": "destination_charger",
+      "keywords": [
+        "ChargePoint Sample",
+        "ChargePoint Sample Station",
+        "ChargePoint_Sample_Station"
+      ]
     }
   }
 }
