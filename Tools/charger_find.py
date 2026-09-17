@@ -99,7 +99,19 @@ def geocode_address(address_str: str) -> Tuple[Optional[float], Optional[float],
     if clean in _GEOCODE_CACHE:
         return _GEOCODE_CACHE[clean]
 
-    # 1. Nominatim (OpenStreetMap)
+    # Primary: Delegate to places_manager's geocode_candidates
+    try:
+        from places_manager import geocode_candidates
+        cands = geocode_candidates(clean, limit=5)
+        if cands:
+            top = cands[0]
+            res = (top["lat"], top["lon"], top["label"])
+            _GEOCODE_CACHE[clean] = res
+            return res
+    except Exception:
+        pass
+
+    # 1. Nominatim (OpenStreetMap) Fallback
     try:
         params = urllib.parse.urlencode({
             "q": f"{clean}, Australia" if "australia" not in clean.lower() else clean,
@@ -123,7 +135,7 @@ def geocode_address(address_str: str) -> Tuple[Optional[float], Optional[float],
     except Exception:
         pass
 
-    # 2. Open-Meteo Geocoding API
+    # 2. Open-Meteo Geocoding API Fallback
     try:
         params = urllib.parse.urlencode({"name": clean, "count": 1, "format": "json"})
         url = f"https://geocoding-api.open-meteo.com/v1/search?{params}"
@@ -146,7 +158,7 @@ def geocode_address(address_str: str) -> Tuple[Optional[float], Optional[float],
 def resolve_reference_coords(near_query: str) -> Tuple[Optional[float], Optional[float], str]:
     """
     Resolves reference location name into (lat, lon, label).
-    Checks places.json (Home, Work, etc.), direct 'lat,lon' coordinates, or online geocoding.
+    Checks places.json (Home, Work, etc.), direct 'lat,lon' coordinates, or online geocoding with disambiguation.
     """
     if not near_query:
         return None, None, ""
@@ -192,6 +204,7 @@ def resolve_reference_coords(near_query: str) -> Tuple[Optional[float], Optional
         except Exception:
             pass
 
+    home_coords = None
     for p_file in places_candidates:
         if os.path.isfile(p_file):
             try:
@@ -199,10 +212,19 @@ def resolve_reference_coords(near_query: str) -> Tuple[Optional[float], Optional
                     p_data = json.load(f)
                     places_dict = p_data.get("places") if (isinstance(p_data, dict) and "places" in p_data and isinstance(p_data["places"], dict)) else p_data
                     if isinstance(places_dict, dict):
+                        # Extract Home coords if present for distance ranking
+                        if "home" in [k.lower() for k in places_dict.keys()]:
+                            for pk, pv in places_dict.items():
+                                if pk.lower() == "home" and isinstance(pv, dict):
+                                    h_lat = pv.get("lat") or pv.get("latitude")
+                                    h_lon = pv.get("lon") or pv.get("longitude") or pv.get("lng")
+                                    if h_lat is not None and h_lon is not None:
+                                        home_coords = (float(h_lat), float(h_lon))
+                                    break
                         for p_name, p_info in places_dict.items():
                             if not isinstance(p_info, dict):
                                 continue
-                            if p_name.lower() == q_clean.lower() or q_clean.lower() in p_name.lower():
+                            if p_name.lower() == q_clean.lower():
                                 lat = p_info.get("lat") or p_info.get("latitude")
                                 lon = p_info.get("lon") or p_info.get("longitude") or p_info.get("lng")
                                 if lat is not None and lon is not None:
@@ -210,10 +232,16 @@ def resolve_reference_coords(near_query: str) -> Tuple[Optional[float], Optional
             except Exception:
                 pass
 
-    # 3. Online geocoding for suburb, city, or street address
-    g_lat, g_lon, g_label = geocode_address(q_clean)
-    if g_lat is not None and g_lon is not None:
-        return g_lat, g_lon, g_label or q_clean
+    # 3. Online geocoding with smart disambiguation for suburb, city, or street address
+    try:
+        from places_manager import resolve_location_disambiguated
+        g_lat, g_lon, g_label = resolve_location_disambiguated(q_clean, anchor_coords=home_coords, interactive=True)
+        if g_lat is not None and g_lon is not None:
+            return g_lat, g_lon, g_label or q_clean
+    except Exception:
+        g_lat, g_lon, g_label = geocode_address(q_clean)
+        if g_lat is not None and g_lon is not None:
+            return g_lat, g_lon, g_label or q_clean
 
     # 4. Known station match in local registries (fallback for offline or exact station name queries)
     reg_candidates = []
