@@ -2641,6 +2641,8 @@ class TeslaChargerExplorer:
                 )
                 print(f"  {C_BOLD}Quality Score:{C_RESET} {cached.get('badge', '')}\n")
 
+        term_width = shutil.get_terminal_size((100, 24)).columns
+
         # Prominently display immediate doorstep facilities (<= 100m)
         doorstep = [p for p in pois if p.get("dist_m", 999.0) <= 100.0]
         if doorstep:
@@ -2648,7 +2650,23 @@ class TeslaChargerExplorer:
             for poi in doorstep:
                 dist_str = f"{poi['dist_m']:.0f}m"
                 emoji = poi.get("emoji", "📍")
-                print(f"     • {emoji} {C_CYAN}{poi['name']}{C_RESET} — {poi['category']} ({dist_str})")
+                prefix = f"     • {emoji} "
+                suffix = f" ({dist_str})"
+                avail = max(20, term_width - display_len(prefix) - display_len(suffix))
+                name_val = poi.get("name", "")
+                cat_val = poi.get("category", "")
+                if cat_val:
+                    full_c = f"{name_val} — {cat_val}"
+                    if display_len(full_c) <= avail:
+                        print(f"{prefix}{C_CYAN}{name_val}{C_RESET} — {cat_val}{suffix}")
+                    else:
+                        cat_short = truncate_display(cat_val, 16)
+                        rem_n = max(8, avail - display_len(f" — {cat_short}"))
+                        name_short = truncate_display(name_val, rem_n)
+                        print(f"{prefix}{C_CYAN}{name_short}{C_RESET} — {cat_short}{suffix}")
+                else:
+                    name_short = truncate_display(name_val, avail)
+                    print(f"{prefix}{C_CYAN}{name_short}{C_RESET}{suffix}")
             print()
         elif pois:
             closest = pois[0]
@@ -2676,7 +2694,23 @@ class TeslaChargerExplorer:
                 if total_shown >= max_total:
                     break
                 dist_str = f"{poi['dist_m']:.0f}m"
-                print(f"     • {C_CYAN}{poi['name']}{C_RESET} — {poi['category']} ({dist_str})")
+                prefix = "     • "
+                suffix = f" ({dist_str})"
+                avail = max(20, term_width - display_len(prefix) - display_len(suffix))
+                name_val = poi.get("name", "")
+                cat_val = poi.get("category", "")
+                if cat_val:
+                    full_c = f"{name_val} — {cat_val}"
+                    if display_len(full_c) <= avail:
+                        print(f"{prefix}{C_CYAN}{name_val}{C_RESET} — {cat_val}{suffix}")
+                    else:
+                        cat_short = truncate_display(cat_val, 16)
+                        rem_n = max(8, avail - display_len(f" — {cat_short}"))
+                        name_short = truncate_display(name_val, rem_n)
+                        print(f"{prefix}{C_CYAN}{name_short}{C_RESET} — {cat_short}{suffix}")
+                else:
+                    name_short = truncate_display(name_val, avail)
+                    print(f"{prefix}{C_CYAN}{name_short}{C_RESET}{suffix}")
                 total_shown += 1
             print()
 
@@ -3687,6 +3721,7 @@ EXAMPLES
     g_facilities.add_argument("--facilities", "-f", "--poi", action="store_true", help="Look up and display nearby facilities (cafes, dining, supermarkets, retail, amenities) around matching station(s)")
     g_facilities.add_argument("--facilities-radius", "--radius-m", type=int, default=250, help="Search radius in meters for nearby facilities (default: 250)")
     g_facilities.add_argument("--min-facilities", "--facilities-min", choices=["excellent", "good", "basic", "sparse"], help="Filter stations meeting minimum facility quality rating tier")
+    g_facilities.add_argument("--supermarket", "--groceries", action="store_true", help="Filter stations located at or near a major supermarket (Woolworths, Coles, Aldi, IGA, Costco, etc.)")
     g_facilities.add_argument("--sync-facilities", action="store_true", help="Batch look up and cache nearby facilities for matching stations in station_facilities.json")
 
     g_inspect = parser.add_argument_group("Inspection, Scraping & Persistence")
@@ -3931,7 +3966,32 @@ EXAMPLES
                     lon = loc.get("lon") or s.get("lon")
                     fac = _f_reg.get_station_facilities(station_key=s.get("station_id") or s.get("id"), station_name=s.get("title") or s.get("name"), lat=lat, lon=lon)
                     return fac and (fac.get("score", 0.0) >= min_score)
-                filtered = [s for s in filtered if meets_fac(s)]
+        if getattr(args, "supermarket", False) or getattr(args, "groceries", False):
+            try:
+                from station_facilities import get_facilities_registry, station_has_supermarket
+                _f_reg = get_facilities_registry()
+            except ImportError:
+                try:
+                    from lib.station_facilities import get_facilities_registry, station_has_supermarket
+                    _f_reg = get_facilities_registry()
+                except ImportError:
+                    _f_reg = None
+                    station_has_supermarket = None
+
+            def is_supermarket_station(s):
+                st_text = f"{s.get('title', '')} {s.get('name', '')} {s.get('address', '')} {s.get('suburb', '')}".lower()
+                sm_brands = ("woolworths", "coles", "aldi", "iga", "harris farm", "costco", "supermarket", "groceries", "foodland", "drakes", "spudshed", "kmart")
+                if any(b in st_text for b in sm_brands):
+                    return True
+                if _f_reg and station_has_supermarket:
+                    loc = s.get("location", {})
+                    lat = loc.get("lat") or s.get("lat")
+                    lon = loc.get("lon") or s.get("lon")
+                    fac = _f_reg.get_station_facilities(station_key=s.get("station_id") or s.get("id"), station_name=s.get("title") or s.get("name"), lat=lat, lon=lon)
+                    if fac and station_has_supermarket(fac):
+                        return True
+                return False
+            filtered = [s for s in filtered if is_supermarket_station(s)]
 
         if args.filter:
             filtered = [s for s in filtered if evaluate_station_filter(s, args.filter, target_time=args.time)]

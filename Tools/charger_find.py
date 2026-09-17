@@ -19,6 +19,7 @@ import sys
 import re
 import time
 import json
+import shutil
 import argparse
 import urllib.request
 import urllib.parse
@@ -361,8 +362,8 @@ def render_stations_table(
     max_suburb_len = max((display_len(s.suburb or s.state or "") for s in stations), default=18)
     w_suburb = max(18, min(24, max_suburb_len + 2))
 
-    widths = [6, 9, 7, w_name, 6, 9, 13, 12, 22]
-    headers = ["  #   ", "  Type   ", " State ", "          Station Name          ", " Tier ", " Stalls  ", "   Access    ", " Rate (Now) ", "   Period / Window    "]
+    widths = [8, 9, 7, w_name, 6, 9, 13, 12, 22]
+    headers = ["   #    ", "  Type   ", " State ", "          Station Name          ", " Tier ", " Stalls  ", "   Access    ", " Rate (Now) ", "   Period / Window    "]
     
     if has_dist:
         widths.extend([9, w_suburb])
@@ -388,11 +389,16 @@ def render_stations_table(
     eval_label = f"Target Time: {eval_time}" if eval_time else "Current Local Time"
     print(f"│{pad_display(f' ⏰ {C_BOLD}Pricing Evaluation:{C_RESET} {eval_label}', total_inner_w, 'left')}│")
 
+    C_ALERT_RED = "\033[91;1m"
+
     c_up = sum(1 for s in stations if s.get_status() == "UP_TO_DATE")
     c_renamed = sum(1 for s in stations if s.get_status() == "RENAMED")
     c_stale = sum(1 for s in stations if s.get_status() == "STALE")
     c_new = sum(1 for s in stations if s.get_status() == "NOT_IN_JSON")
+    c_degraded = sum(1 for s in stations if ((s.metadata or {}).get("operational_status") or "").strip())
     legend_line = f" 📊 {C_BOLD}Status Legend:{C_RESET} [{C_GREEN} 1 {C_RESET}] Up to Date: {c_up}  |  [{C_MAGENTA} 2 {C_RESET}] Renamed: {c_renamed}  |  [{C_BLUE} 3 {C_RESET}] Stale (>3mo): {c_stale}  |  [{C_ORANGE} 4 {C_RESET}] Not in JSON: {c_new}"
+    if c_degraded > 0:
+        legend_line += f"  |  [{C_ALERT_RED}!{C_RESET}] Degraded/Repair: {c_degraded}"
     print(f"│{pad_display(legend_line, total_inner_w, 'left')}│")
     
     # Table Header Line
@@ -405,22 +411,30 @@ def render_stations_table(
     mid_b = "├" + "┼".join("─" * w for w in widths) + "┤"
     print(mid_b)
 
+    aligns = ["left", "left", "center", "left", "center", "right", "left", "right", "left"]
+    if has_dist:
+        aligns.extend(["right", "left"])
+    else:
+        aligns.append("left")
+
     for idx, st in enumerate(stations, 1):
         status = st.get_status()
         color = C_GREEN if status == "UP_TO_DATE" else (C_MAGENTA if status == "RENAMED" else (C_BLUE if status == "STALE" else C_ORANGE))
-        num_str = f"[{color}{idx:2d}{C_RESET}]"
-        t_icon = _contextual_type_icon(st, network_filter)
-        state_str = st.state or "-"
-        # BUG-118 (2026-09-16, AGENTS.local.md): a station flagged PARTIALLY
-        # UNDER REPAIR / OUT OF ORDER etc. on PlugShare's own side used to
-        # look identical to a fully working one in this table - user: "out
-        # of order etc.... should not be unseen by the listings. Maybe a red
-        # exclamation mark in the listing."
         op_status_row = ((st.metadata or {}).get("operational_status") or "").strip()
         if op_status_row:
-            name_disp = f"{C_RED}⚠{C_RESET} " + truncate_display(st.name, w_name - 4)
+            if idx < 100:
+                num_str = f" [{color}{idx:2d}{C_RESET}] {C_ALERT_RED}!{C_RESET} "
+            else:
+                num_str = f"[{color}{idx:3d}{C_RESET}] {C_ALERT_RED}!{C_RESET} "
         else:
-            name_disp = truncate_display(st.name, w_name - 2)
+            if idx < 100:
+                num_str = f" [{color}{idx:2d}{C_RESET}]   "
+            else:
+                num_str = f"[{color}{idx:3d}{C_RESET}]   "
+
+        t_icon = _contextual_type_icon(st, network_filter)
+        state_str = st.state or "-"
+        name_disp = truncate_display(st.name, w_name - 2)
         tier_str = st.tier_badge()
         stalls_str = f"{st.stalls_total} bays" if st.stalls_total > 0 else "-"
         
@@ -467,7 +481,7 @@ def render_stations_table(
         else:
             row_cells.append(pad_display(f" {C_DIM}{suburb_disp}{C_RESET}", widths[9], "left"))
 
-        print("│" + "│".join(row_cells) + "│")
+        print(format_row(row_cells, widths, aligns))
 
     bot_b = "└" + "┴".join("─" * w for w in widths) + "┘"
     print(bot_b)
@@ -1048,6 +1062,8 @@ def display_nearby_facilities(station: UnifiedStationRecord, radius_m: int = 250
             )
             print(f"  {C_BOLD}Quality Score:{C_RESET} {cached.get('badge', '')}\n")
 
+    term_width = shutil.get_terminal_size((100, 24)).columns
+
     # Prominently display immediate doorstep facilities (<= 100m)
     doorstep = [p for p in pois if p.get("dist_m", 999.0) <= 100.0]
     if doorstep:
@@ -1055,7 +1071,23 @@ def display_nearby_facilities(station: UnifiedStationRecord, radius_m: int = 250
         for poi in doorstep:
             dist_str = f"{poi['dist_m']:.0f}m"
             emoji = poi.get("emoji", "📍")
-            print(f"     • {emoji} {C_CYAN}{poi['name']}{C_RESET} — {poi['category']} ({dist_str})")
+            prefix = f"     • {emoji} "
+            suffix = f" ({dist_str})"
+            avail = max(20, term_width - display_len(prefix) - display_len(suffix))
+            name_val = poi.get("name", "")
+            cat_val = poi.get("category", "")
+            if cat_val:
+                full_c = f"{name_val} — {cat_val}"
+                if display_len(full_c) <= avail:
+                    print(f"{prefix}{C_CYAN}{name_val}{C_RESET} — {cat_val}{suffix}")
+                else:
+                    cat_short = truncate_display(cat_val, 16)
+                    rem_n = max(8, avail - display_len(f" — {cat_short}"))
+                    name_short = truncate_display(name_val, rem_n)
+                    print(f"{prefix}{C_CYAN}{name_short}{C_RESET} — {cat_short}{suffix}")
+            else:
+                name_short = truncate_display(name_val, avail)
+                print(f"{prefix}{C_CYAN}{name_short}{C_RESET}{suffix}")
         print()
     elif pois:
         closest = pois[0]
@@ -1084,7 +1116,23 @@ def display_nearby_facilities(station: UnifiedStationRecord, radius_m: int = 250
             if total_shown >= max_total:
                 break
             dist_str = f"{poi['dist_m']:.0f}m"
-            print(f"     • {C_CYAN}{poi['name']}{C_RESET} — {poi['category']} ({dist_str})")
+            prefix = "     • "
+            suffix = f" ({dist_str})"
+            avail = max(20, term_width - display_len(prefix) - display_len(suffix))
+            name_val = poi.get("name", "")
+            cat_val = poi.get("category", "")
+            if cat_val:
+                full_c = f"{name_val} — {cat_val}"
+                if display_len(full_c) <= avail:
+                    print(f"{prefix}{C_CYAN}{name_val}{C_RESET} — {cat_val}{suffix}")
+                else:
+                    cat_short = truncate_display(cat_val, 16)
+                    rem_n = max(8, avail - display_len(f" — {cat_short}"))
+                    name_short = truncate_display(name_val, rem_n)
+                    print(f"{prefix}{C_CYAN}{name_short}{C_RESET} — {cat_short}{suffix}")
+            else:
+                name_short = truncate_display(name_val, avail)
+                print(f"{prefix}{C_CYAN}{name_short}{C_RESET}{suffix}")
             total_shown += 1
         print()
 
@@ -1251,6 +1299,7 @@ DESCRIPTION
     g_facilities.add_argument("--facilities", "-f", "--poi", action="store_true", help="Look up and display nearby facilities (cafes, dining, supermarkets, retail, amenities) around matching station(s)")
     g_facilities.add_argument("--facilities-radius", "--radius-m", type=int, default=250, help="Search radius in meters for nearby facilities (default: 250)")
     g_facilities.add_argument("--min-facilities", "--facilities-min", choices=["excellent", "good", "basic", "sparse"], help="Filter stations meeting minimum facility quality rating tier")
+    g_facilities.add_argument("--supermarket", "--groceries", action="store_true", help="Filter stations located at or near a major supermarket (Woolworths, Coles, Aldi, IGA, Costco, etc.)")
     g_facilities.add_argument("--sync-facilities", action="store_true", help="Batch look up and cache nearby facilities for matching stations in station_facilities.json")
 
     g_registry = parser.add_argument_group("Registry Filters & Batch Updates")
@@ -1745,7 +1794,8 @@ DESCRIPTION
         "min_kw": args.min_kw,
         "network": args.network,
         "state": args.state,
-        "min_facilities": getattr(args, "min_facilities", None)
+        "min_facilities": getattr(args, "min_facilities", None),
+        "supermarket": getattr(args, "supermarket", False)
     }
 
     # Execute search

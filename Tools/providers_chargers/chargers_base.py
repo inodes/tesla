@@ -273,20 +273,32 @@ def filter_station_records(
 
         # Minimum facilities quality rating filter
         min_fac = (filters.get("min_facilities") or "").lower().strip()
-        if min_fac:
+        supermarket_filter = bool(filters.get("supermarket") or filters.get("groceries"))
+        if min_fac or supermarket_filter:
             min_score = 8.0 if min_fac.startswith("exc") else (5.5 if min_fac.startswith("goo") else (3.0 if min_fac.startswith("bas") else 0.0))
             try:
-                from station_facilities import get_facilities_registry
+                from station_facilities import get_facilities_registry, station_has_supermarket
                 _f_reg = get_facilities_registry()
             except ImportError:
                 try:
-                    from lib.station_facilities import get_facilities_registry
+                    from lib.station_facilities import get_facilities_registry, station_has_supermarket
                     _f_reg = get_facilities_registry()
                 except ImportError:
                     _f_reg = None
-            if _f_reg:
-                fac = _f_reg.get_station_facilities(station_key=st.key, station_name=st.name, lat=st.lat, lon=st.lon)
-                if not fac or (fac.get("score", 0.0) < min_score):
+                    station_has_supermarket = None
+
+            fac = _f_reg.get_station_facilities(station_key=st.key, station_name=st.name, lat=st.lat, lon=st.lon) if _f_reg else None
+            if min_fac and (not fac or (fac.get("score", 0.0) < min_score)):
+                continue
+
+            if supermarket_filter:
+                # Check station name/address/amenities first
+                st_text = f"{st.name} {st.address or ''} {' '.join(st.amenities if isinstance(st.amenities, list) else [])}".lower()
+                sm_brands = ("woolworths", "coles", "aldi", "iga", "harris farm", "costco", "supermarket", "groceries", "foodland", "drakes", "spudshed", "kmart")
+                has_sm = any(b in st_text for b in sm_brands)
+                if not has_sm and fac and station_has_supermarket:
+                    has_sm = station_has_supermarket(fac)
+                if not has_sm:
                     continue
 
         filtered.append(st)

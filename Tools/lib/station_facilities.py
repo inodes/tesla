@@ -318,18 +318,72 @@ def get_facilities_registry() -> FacilitiesRegistry:
     return _FACILITIES_REGISTRY
 
 
-def format_facilities_summary_card(cached_fac: dict, indent: str = "  ") -> list:
+SUPERMARKET_KEYWORDS = {
+    "woolworths", "coles", "aldi", "iga", "harris farm", "costco",
+    "foodland", "drakes", "spudshed", "kmart", "target", "big w",
+    "supermarket", "grocery", "groceries"
+}
+
+def station_has_supermarket(cached_fac: dict, max_dist_m: int = 250) -> bool:
+    """True if cached facilities record contains a confirmed supermarket within max_dist_m."""
+    if not cached_fac:
+        return False
+    pois = cached_fac.get("pois", [])
+    for p in pois:
+        if p.get("dist_m", 999.0) <= max_dist_m:
+            if p.get("group") == "Supermarkets & Groceries":
+                return True
+            cat = (p.get("category") or "").lower()
+            name = (p.get("name") or "").lower()
+            if any(kw in cat or kw in name for kw in SUPERMARKET_KEYWORDS):
+                return True
+    return False
+
+
+import shutil
+
+try:
+    from table_formatter import display_len, truncate_display
+except ImportError:
+    try:
+        from lib.table_formatter import display_len, truncate_display
+    except ImportError:
+        try:
+            from Tools.lib.table_formatter import display_len, truncate_display
+        except ImportError:
+            import re
+            _ANSI_RE = re.compile(r"\x1b\[[0-9;]*[a-zA-Z]|\033\[[0-9;]*[a-zA-Z]")
+            def display_len(s: str) -> int:
+                return len(_ANSI_RE.sub("", str(s)))
+            def truncate_display(s: str, max_w: int, ellipsis: str = "…") -> str:
+                d = display_len(s)
+                if d <= max_w:
+                    return s
+                return str(s)[:max(1, max_w - 1)] + ellipsis
+
+
+def format_facilities_summary_card(cached_fac: dict, indent: str = "  ", max_width: int = None) -> list:
     """
     Renders an executive, beautifully formatted terminal block for nearby facilities
-    on station inspection and preview cards.
+    on station inspection and preview cards, strictly constrained to terminal width.
     """
     if not cached_fac:
         return []
 
+    if max_width is None:
+        try:
+            cols = shutil.get_terminal_size((100, 24)).columns
+            max_width = max(60, cols)
+        except Exception:
+            max_width = 100
+
     lines = []
     radius_m = cached_fac.get("radius_m", 250)
     badge = cached_fac.get("badge", "")
-    lines.append(f"{indent}🏙️  \033[1mNearby Facilities:\033[0m {badge} \033[90m(within {radius_m}m)\033[0m")
+    header_raw = f"{indent}🏙️  \033[1mNearby Facilities:\033[0m {badge} \033[90m(within {radius_m}m)\033[0m"
+    if display_len(header_raw) > max_width:
+        header_raw = truncate_display(header_raw, max_width)
+    lines.append(header_raw)
 
     # 1. Immediate Doorstep (<= 100m)
     pois = cached_fac.get("pois", [])
@@ -346,8 +400,25 @@ def format_facilities_summary_card(cached_fac: dict, indent: str = "  ") -> list
             name = p.get("name", "Unknown")
             cat = p.get("category", "")
             dist = f"{p.get('dist_m', 0):.0f}m"
-            cat_str = f" — \033[90m{cat}\033[0m" if cat else ""
-            lines.append(f"{indent}      • {emoji} \033[36m{name}\033[0m{cat_str} ({dist})")
+            
+            prefix = f"{indent}      • {emoji} "
+            suffix = f" ({dist})"
+            avail = max_width - display_len(prefix) - display_len(suffix)
+            
+            if cat:
+                full_content = f"{name} — {cat}"
+                if display_len(full_content) <= avail:
+                    line = f"{prefix}\033[36m{name}\033[0m — \033[90m{cat}\033[0m{suffix}"
+                else:
+                    cat_short = truncate_display(cat, 16)
+                    rem_for_name = max(8, avail - display_len(f" — {cat_short}"))
+                    name_short = truncate_display(name, rem_for_name)
+                    line = f"{prefix}\033[36m{name_short}\033[0m — \033[90m{cat_short}\033[0m{suffix}"
+            else:
+                name_short = truncate_display(name, avail)
+                line = f"{prefix}\033[36m{name_short}\033[0m{suffix}"
+            lines.append(line)
+
         if len(doorstep) > 8:
             lines.append(f"{indent}      \033[90m... and {len(doorstep) - 8} more within 100m\033[0m")
     else:
@@ -393,9 +464,34 @@ def format_facilities_summary_card(cached_fac: dict, indent: str = "  ") -> list
             return prio.get(g_name, 99)
 
         for (grp_name, grp_emoji), grp_pois in sorted(groups.items(), key=group_sort_order):
-            venues_str = ", ".join([f"{p['name']} ({p.get('dist_m', 0):.0f}m)" for p in grp_pois[:5]])
-            if len(grp_pois) > 5:
-                venues_str += f", +{len(grp_pois) - 5} more"
-            lines.append(f"{indent}      • {grp_emoji} \033[1m{grp_name}\033[0m ({len(grp_pois)}): \033[90m{venues_str}\033[0m")
+            prefix = f"{indent}      • {grp_emoji} \033[1m{grp_name}\033[0m ({len(grp_pois)}): "
+            avail = max(15, max_width - display_len(prefix))
+            
+            # Dynamically pack as many venues as fit within line width
+            chosen_venues = []
+            for p in grp_pois:
+                v_str = f"{p['name']} ({p.get('dist_m', 0):.0f}m)"
+                rem_count = len(grp_pois) - (len(chosen_venues) + 1)
+                suffix_check = f", +{rem_count} more" if rem_count > 0 else ""
+                candidate = ", ".join(chosen_venues + [v_str]) + suffix_check
+                if display_len(candidate) <= avail:
+                    chosen_venues.append(v_str)
+                else:
+                    break
+
+            if chosen_venues:
+                rem_count = len(grp_pois) - len(chosen_venues)
+                if rem_count > 0:
+                    venues_str = ", ".join(chosen_venues) + f", +{rem_count} more"
+                else:
+                    venues_str = ", ".join(chosen_venues)
+            else:
+                first_v = f"{grp_pois[0]['name']} ({grp_pois[0].get('dist_m', 0):.0f}m)"
+                rem_count = len(grp_pois) - 1
+                suffix = f", +{rem_count} more" if rem_count > 0 else ""
+                first_avail = max(8, avail - display_len(suffix))
+                venues_str = truncate_display(first_v, first_avail) + suffix
+
+            lines.append(f"{prefix}\033[90m{venues_str}\033[0m")
 
     return lines

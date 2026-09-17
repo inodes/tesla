@@ -539,6 +539,21 @@ class ChargerDiscoveryManager:
         for res in results_lists:
             all_found.extend(res)
 
+        # Check facilities registry for matching POIs (e.g. searching "Woolworths", "Coles", "Aldi", "Kmart")
+        try:
+            from lib.station_facilities import get_facilities_registry
+            _f_reg = get_facilities_registry()
+            if _f_reg and query:
+                q_low = query.lower().strip()
+                for st in self.get_all_stations(filters=filters):
+                    fac = _f_reg.get_station_facilities(station_key=st.key, station_name=st.name, lat=st.lat, lon=st.lon)
+                    if fac:
+                        pois = fac.get("pois", [])
+                        if any(q_low in (p.get("name", "") + " " + p.get("category", "")).lower() for p in pois):
+                            all_found.append(st)
+        except Exception:
+            pass
+
         deduped = self.deduplicate_records(all_found)
         filtered = filter_station_records(deduped, filters)
         if ref_lat is not None and ref_lon is not None:
