@@ -111,6 +111,7 @@ REPO_EMOJI_WIDTHS = {
     # -------------------------------------------------------------------------
     "⚙": 1,            # Gear (Text representation without variation selector)
     "⏱": 1,            # Stopwatch (Text representation without variation selector)
+    "⚠": 1,            # Warning Sign (Text representation without variation selector)
     "✔": 1,            # Heavy Check Mark
     "🅿": 1,            # Parking Symbol (Standalone enclosed alphanumeric - 1 cell)
     "·": 1,            # Middle Dot (Absent footage indicator)
@@ -124,7 +125,7 @@ REPO_EMOJI_WIDTHS = {
     # -------------------------------------------------------------------------
     "🅿️": 2,           # Parking Symbol with variation selector (2 cells in terminal)
     "🇦🇺": 2,           # Australia Flag (Regional Indicator Pair - 2 cells in terminal)
-    "⚠️": 2, "⚠": 2,    # Warning Sign (Alert / Discrepancy)
+    "⚠️": 2,           # Warning Sign with variation selector (2 cells in terminal)
     "⚙️": 2,            # Gear with variation selector (2 cells in modern terminal fonts)
     "⏱️": 2,            # Stopwatch with variation selector (2 cells in modern terminal fonts)
     "🏷️": 2, "🏷": 2,    # Label / Tag

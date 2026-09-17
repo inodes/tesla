@@ -217,8 +217,11 @@ USER_AGENT = "TeslaPlacesManager/1.0 (https://github.com/inodes/tesla)"
 
 OVERPASS_ENDPOINTS = [
     "https://overpass-api.de/api/interpreter",
+    "https://lz4.overpass-api.de/api/interpreter",
+    "https://z.overpass-api.de/api/interpreter",
+    "https://overpass.openstreetmap.fr/api/interpreter",
+    "https://overpass.private.coffee/api/interpreter",
     "https://overpass.kumi.systems/api/interpreter",
-    "https://maps.mail.ru/osm/tools/overpass/api/interpreter"
 ]
 
 def geocode_address(address_str):
@@ -279,6 +282,12 @@ def classify_poi_group(tags):
     healthcare = (tags.get("healthcare") or "").lower()
     office = (tags.get("office") or "").lower()
     
+    name = (tags.get("name") or "").lower()
+    brand = (tags.get("brand") or "").lower()
+    supermarket_brands = ("woolworths", "coles", "aldi", "iga", "harris farm", "costco", "foodland", "drakes", "spudshed", "kmart", "target", "big w")
+    if any(b in name or b in brand for b in supermarket_brands):
+        return "Supermarkets & Groceries", "🛒"
+
     if amenity in ("cafe", "coffee_shop") or shop in ("coffee", "tea") or "coffee" in cuisine:
         return "Cafes & Coffee", "☕"
     if amenity in ("restaurant", "fast_food", "food_court", "pub", "bar", "biergarten", "ice_cream"):
@@ -303,19 +312,24 @@ def classify_poi_group(tags):
 def query_overpass_pois(lat, lon, radius_m=250):
     """Queries Overpass API for all named POIs / venues within radius_m of lat, lon."""
     query = f"""
-    [out:json][timeout:10];
+    [out:json][timeout:20];
     (
       node(around:{radius_m},{lat},{lon})["name"];
       way(around:{radius_m},{lat},{lon})["name"];
+      relation(around:{radius_m},{lat},{lon})["name"];
     );
     out center tags;
     """
     data = urllib.parse.urlencode({"data": query}).encode("utf-8")
+    headers = {
+        "User-Agent": USER_AGENT,
+        "Accept": "application/json, */*",
+    }
     
     for endpoint in OVERPASS_ENDPOINTS:
         try:
-            req = urllib.request.Request(endpoint, data=data, headers={"User-Agent": USER_AGENT})
-            with urllib.request.urlopen(req, timeout=8) as resp:
+            req = urllib.request.Request(endpoint, data=data, headers=headers)
+            with urllib.request.urlopen(req, timeout=12) as resp:
                 res_data = json.loads(resp.read().decode("utf-8"))
                 elements = res_data.get("elements", [])
                 
