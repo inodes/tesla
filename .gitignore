@@ -36,6 +36,7 @@ Tessie/invoices/*
 !Tessie/tesla_superchargers.example.json
 !Tessie/tesla_superchargers_archived.example.json
 !Tessie/vehicle_spec.example.json
+!Tessie/comparison_vehicles.example.json
 !Tessie/personal_chargers.example.json
 !Tessie/state_boundaries.json
 !config.example.json
@@ -69,6 +70,7 @@ __pycache__/
 .env
 *.log
 scratch/
+Claude outputs/
 .direnv/
 .venv/
 

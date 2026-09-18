@@ -119,8 +119,8 @@ def resolve_tessie_data_home():
     baked into their classes; this is the standalone-script equivalent)."""
     cfg_dir = load_config().get("tessie_directory")
     if cfg_dir:
-        return os.path.abspath(os.path.expanduser(cfg_dir))
-    return os.path.expanduser("~/Library/Mobile Documents/com~apple~CloudDocs/Tesla/Tessie")
+        return os.path.realpath(os.path.abspath(os.path.expanduser(cfg_dir)))
+    return os.path.realpath(os.path.expanduser("~/Library/Mobile Documents/com~apple~CloudDocs/Tesla/Tessie"))
 
 
 def unique_stamped_path(directory, prefix, stamp, suffix="", ext=""):

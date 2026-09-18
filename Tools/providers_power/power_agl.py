@@ -261,3 +261,20 @@ class AGLProvider(BasePowerProvider):
         ex_gst = kw_latched * rate_per_kw_day * billing_days
         incl_gst = ex_gst * 1.10
         return round(ex_gst, 2), round(incl_gst, 2)
+
+    # ---- invoices ------------------------------------------------------
+
+    def load_invoices(self):
+        """Discover and extract metadata from all AGL invoice PDFs in the invoices directory."""
+        from lib.invoice_common import detect_and_extract_invoice
+        invoices_dir = self.resolve_invoices_dir()
+        if not os.path.isdir(invoices_dir):
+            return []
+        invoices = []
+        for f in sorted(os.listdir(invoices_dir)):
+            if f.lower().endswith(".pdf") and not f.startswith("."):
+                p = os.path.join(invoices_dir, f)
+                _ext, data, _ = detect_and_extract_invoice(p, forced_provider=self.name)
+                invoices.append(data)
+        return invoices
+

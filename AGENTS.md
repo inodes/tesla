@@ -117,6 +117,8 @@ tesla/
 │   │   ├── archive_naming.py    # Shared timestamp-archived filename scheme
 │   │   ├── analysis_deepdive_charts.py   # Self-contained interactive HTML line-chart renderer
 │   │   ├── evnex_common.py      # Evnex credential loading + client bootstrap
+│   │   ├── fuel_common.py       # NSW FuelCheck CKAN harvesting, streaming XLSX parser, and price DB
+│   │   ├── invoice_common.py    # Zero-dep Deflate & CMap/Identity-H PDF parser + multi-provider extractors
 │   │   ├── pvoutput_common.py   # PVOutput config/auth/HTTP plumbing
 │   │   ├── table_formatter.py   # Shared terminal table/box-drawing formatter
 │   │   ├── tessie_api_common.py # Tessie API auth, config, and data-home path resolution
@@ -152,6 +154,9 @@ tesla/
 │   ├── sync_charger_all.sh          # One-command CHARGERS-domain sync (hardware/station registries)
 │   ├── sync_charging_all.sh         # One-command CHARGING-SESSIONS-domain sync (Tessie/Evnex/invoices/AGL/cross-check prep)
 │   ├── sync_drives_all.sh           # One-command DRIVES-domain sync
+│   ├── sync_fuel_all.sh             # One-command FUEL-domain sync (NSW FuelCheck historical & live)
+│   ├── sync_fuel_history.py         # NSW FuelCheck discovery, download, and SQLite aggregator CLI
+│   ├── sync_invoices.py             # Multi-provider PDF invoice parser, renamer, and importer CLI
 │   └── ...                          # every other CLI script - analyse_*.py, charger_*.py, power_*.py, sync_*.py, etc.
 └── dashcam/                    # TeslaCam clips and sentry event utilities
 ```
