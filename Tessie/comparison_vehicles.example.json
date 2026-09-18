@@ -1,0 +1,363 @@
+{
+  "_comment": "Registry of benchmark comparison vehicles for EV running cost and savings analysis sourced from the Australian Green Vehicle Guide (GVG - https://greenvehicleguide.gov.au/#top20). Copy to Tessie/comparison_vehicles.json (gitignored) to customize.",
+  "default_vehicle": "petrol_standard",
+  "vehicles": {
+    "petrol_standard": {
+      "name": "Medium Petrol SUV (e.g. Mazda CX-5 G25)",
+      "category": "Medium SUV",
+      "gvg_rank_top20": 7,
+      "gvg_url": "https://greenvehicleguide.gov.au/Vehicle/Search",
+      "fuel_type": "U91",
+      "co2_g_per_km": 191,
+      "consumption": {
+        "combined_l_per_100km": 8.2,
+        "urban_l_per_100km": 9.8,
+        "highway_l_per_100km": 7.1
+      },
+      "running_costs": {
+        "service_maintenance_per_km": 0.045,
+        "tyres_per_km": 0.025
+      }
+    },
+    "ford_ranger_diesel": {
+      "name": "Ford Ranger 4x4 (2.0L Bi-Turbo / 3.0L V6 Diesel)",
+      "category": "Light Commercial / Ute",
+      "gvg_rank_top20": 1,
+      "gvg_url": "https://greenvehicleguide.gov.au/Vehicle/Search",
+      "fuel_type": "Diesel",
+      "co2_g_per_km": 201,
+      "consumption": {
+        "combined_l_per_100km": 7.6,
+        "urban_l_per_100km": 9.1,
+        "highway_l_per_100km": 6.8
+      },
+      "running_costs": {
+        "service_maintenance_per_km": 0.060,
+        "tyres_per_km": 0.035
+      }
+    },
+    "rav4_hybrid": {
+      "name": "Toyota RAV4 Hybrid (2.5L eFour AWD)",
+      "category": "Hybrid SUV",
+      "gvg_rank_top20": 2,
+      "gvg_url": "https://greenvehicleguide.gov.au/Vehicle/Search",
+      "fuel_type": "U91",
+      "co2_g_per_km": 107,
+      "consumption": {
+        "combined_l_per_100km": 4.8,
+        "urban_l_per_100km": 4.9,
+        "highway_l_per_100km": 4.7
+      },
+      "running_costs": {
+        "service_maintenance_per_km": 0.035,
+        "tyres_per_km": 0.022
+      }
+    },
+    "hilux_diesel": {
+      "name": "Toyota HiLux 4x4 (2.8L Turbo Diesel)",
+      "category": "Light Commercial / Ute",
+      "gvg_rank_top20": 3,
+      "gvg_url": "https://greenvehicleguide.gov.au/Vehicle/Search",
+      "fuel_type": "Diesel",
+      "co2_g_per_km": 207,
+      "consumption": {
+        "combined_l_per_100km": 7.9,
+        "urban_l_per_100km": 9.5,
+        "highway_l_per_100km": 7.0
+      },
+      "running_costs": {
+        "service_maintenance_per_km": 0.062,
+        "tyres_per_km": 0.035
+      }
+    },
+    "dmax_diesel": {
+      "name": "Isuzu D-Max 4x4 (3.0L Turbo Diesel)",
+      "category": "Light Commercial / Ute",
+      "gvg_rank_top20": 4,
+      "gvg_url": "https://greenvehicleguide.gov.au/Vehicle/Search",
+      "fuel_type": "Diesel",
+      "co2_g_per_km": 210,
+      "consumption": {
+        "combined_l_per_100km": 8.0,
+        "urban_l_per_100km": 9.6,
+        "highway_l_per_100km": 7.1
+      },
+      "running_costs": {
+        "service_maintenance_per_km": 0.058,
+        "tyres_per_km": 0.034
+      }
+    },
+    "ford_everest_diesel": {
+      "name": "Ford Everest 4WD (2.0L Bi-Turbo Diesel)",
+      "category": "Large SUV",
+      "gvg_rank_top20": 5,
+      "gvg_url": "https://greenvehicleguide.gov.au/Vehicle/Search",
+      "fuel_type": "Diesel",
+      "co2_g_per_km": 194,
+      "consumption": {
+        "combined_l_per_100km": 7.2,
+        "urban_l_per_100km": 8.8,
+        "highway_l_per_100km": 6.3
+      },
+      "running_costs": {
+        "service_maintenance_per_km": 0.060,
+        "tyres_per_km": 0.033
+      }
+    },
+    "prado_diesel": {
+      "name": "Toyota LandCruiser Prado (2.8L Turbo Diesel 4WD)",
+      "category": "Large 4WD / Diesel",
+      "gvg_rank_top20": 6,
+      "gvg_url": "https://greenvehicleguide.gov.au/Vehicle/Search",
+      "fuel_type": "Diesel",
+      "co2_g_per_km": 208,
+      "consumption": {
+        "combined_l_per_100km": 7.9,
+        "urban_l_per_100km": 9.2,
+        "highway_l_per_100km": 7.0
+      },
+      "running_costs": {
+        "service_maintenance_per_km": 0.065,
+        "tyres_per_km": 0.035
+      }
+    },
+    "mazda_cx5_petrol": {
+      "name": "Mazda CX-5 (2.5L G25 Petrol)",
+      "category": "Medium SUV",
+      "gvg_rank_top20": 7,
+      "gvg_url": "https://greenvehicleguide.gov.au/Vehicle/Search",
+      "fuel_type": "U91",
+      "co2_g_per_km": 191,
+      "consumption": {
+        "combined_l_per_100km": 8.2,
+        "urban_l_per_100km": 9.8,
+        "highway_l_per_100km": 7.1
+      },
+      "running_costs": {
+        "service_maintenance_per_km": 0.045,
+        "tyres_per_km": 0.025
+      }
+    },
+    "outlander_petrol": {
+      "name": "Mitsubishi Outlander (2.5L Petrol AWD)",
+      "category": "Medium SUV",
+      "gvg_rank_top20": 8,
+      "gvg_url": "https://greenvehicleguide.gov.au/Vehicle/Search",
+      "fuel_type": "U91",
+      "co2_g_per_km": 185,
+      "consumption": {
+        "combined_l_per_100km": 8.1,
+        "urban_l_per_100km": 9.7,
+        "highway_l_per_100km": 7.1
+      },
+      "running_costs": {
+        "service_maintenance_per_km": 0.046,
+        "tyres_per_km": 0.026
+      }
+    },
+    "hyundai_tucson_petrol": {
+      "name": "Hyundai Tucson (2.0L Petrol FWD)",
+      "category": "Medium SUV",
+      "gvg_rank_top20": 9,
+      "gvg_url": "https://greenvehicleguide.gov.au/Vehicle/Search",
+      "fuel_type": "U91",
+      "co2_g_per_km": 186,
+      "consumption": {
+        "combined_l_per_100km": 8.1,
+        "urban_l_per_100km": 10.2,
+        "highway_l_per_100km": 6.8
+      },
+      "running_costs": {
+        "service_maintenance_per_km": 0.044,
+        "tyres_per_km": 0.025
+      }
+    },
+    "mg_zs_petrol": {
+      "name": "MG ZS / ZST (1.5L Petrol)",
+      "category": "Small SUV",
+      "gvg_rank_top20": 10,
+      "gvg_url": "https://greenvehicleguide.gov.au/Vehicle/Search",
+      "fuel_type": "U91",
+      "co2_g_per_km": 160,
+      "consumption": {
+        "combined_l_per_100km": 6.9,
+        "urban_l_per_100km": 8.4,
+        "highway_l_per_100km": 5.9
+      },
+      "running_costs": {
+        "service_maintenance_per_km": 0.040,
+        "tyres_per_km": 0.022
+      }
+    },
+    "corolla_hybrid": {
+      "name": "Toyota Corolla Hybrid (1.8L Hybrid)",
+      "category": "Small Car",
+      "gvg_rank_top20": 11,
+      "gvg_url": "https://greenvehicleguide.gov.au/Vehicle/Search",
+      "fuel_type": "U91",
+      "co2_g_per_km": 91,
+      "consumption": {
+        "combined_l_per_100km": 4.0,
+        "urban_l_per_100km": 3.9,
+        "highway_l_per_100km": 4.1
+      },
+      "running_costs": {
+        "service_maintenance_per_km": 0.028,
+        "tyres_per_km": 0.018
+      }
+    },
+    "corolla_petrol": {
+      "name": "Toyota Corolla (2.0L Petrol)",
+      "category": "Small Car",
+      "gvg_rank_top20": 12,
+      "gvg_url": "https://greenvehicleguide.gov.au/Vehicle/Search",
+      "fuel_type": "U91",
+      "co2_g_per_km": 139,
+      "consumption": {
+        "combined_l_per_100km": 6.0,
+        "urban_l_per_100km": 7.5,
+        "highway_l_per_100km": 5.1
+      },
+      "running_costs": {
+        "service_maintenance_per_km": 0.030,
+        "tyres_per_km": 0.020
+      }
+    },
+    "hyundai_i30_petrol": {
+      "name": "Hyundai i30 (2.0L Petrol Hatch)",
+      "category": "Small Car",
+      "gvg_rank_top20": 13,
+      "gvg_url": "https://greenvehicleguide.gov.au/Vehicle/Search",
+      "fuel_type": "U91",
+      "co2_g_per_km": 168,
+      "consumption": {
+        "combined_l_per_100km": 7.4,
+        "urban_l_per_100km": 9.9,
+        "highway_l_per_100km": 5.9
+      },
+      "running_costs": {
+        "service_maintenance_per_km": 0.038,
+        "tyres_per_km": 0.021
+      }
+    },
+    "kia_sportage_diesel": {
+      "name": "Kia Sportage (2.0L CRDi Diesel AWD)",
+      "category": "Medium SUV",
+      "gvg_rank_top20": 14,
+      "gvg_url": "https://greenvehicleguide.gov.au/Vehicle/Search",
+      "fuel_type": "Diesel",
+      "co2_g_per_km": 166,
+      "consumption": {
+        "combined_l_per_100km": 6.3,
+        "urban_l_per_100km": 7.7,
+        "highway_l_per_100km": 5.5
+      },
+      "running_costs": {
+        "service_maintenance_per_km": 0.048,
+        "tyres_per_km": 0.027
+      }
+    },
+    "subaru_forester_petrol": {
+      "name": "Subaru Forester (2.5L Petrol AWD)",
+      "category": "Medium SUV",
+      "gvg_rank_top20": 15,
+      "gvg_url": "https://greenvehicleguide.gov.au/Vehicle/Search",
+      "fuel_type": "U91",
+      "co2_g_per_km": 168,
+      "consumption": {
+        "combined_l_per_100km": 7.4,
+        "urban_l_per_100km": 9.3,
+        "highway_l_per_100km": 6.3
+      },
+      "running_costs": {
+        "service_maintenance_per_km": 0.049,
+        "tyres_per_km": 0.026
+      }
+    },
+    "yaris_cross_hybrid": {
+      "name": "Toyota Yaris Cross Hybrid (1.5L Hybrid)",
+      "category": "Small SUV",
+      "gvg_rank_top20": 16,
+      "gvg_url": "https://greenvehicleguide.gov.au/Vehicle/Search",
+      "fuel_type": "U91",
+      "co2_g_per_km": 86,
+      "consumption": {
+        "combined_l_per_100km": 3.8,
+        "urban_l_per_100km": 3.6,
+        "highway_l_per_100km": 3.9
+      },
+      "running_costs": {
+        "service_maintenance_per_km": 0.026,
+        "tyres_per_km": 0.017
+      }
+    },
+    "kia_carnival_diesel": {
+      "name": "Kia Carnival (2.2L CRDi Diesel)",
+      "category": "People Mover",
+      "gvg_rank_top20": 17,
+      "gvg_url": "https://greenvehicleguide.gov.au/Vehicle/Search",
+      "fuel_type": "Diesel",
+      "co2_g_per_km": 170,
+      "consumption": {
+        "combined_l_per_100km": 6.5,
+        "urban_l_per_100km": 7.8,
+        "highway_l_per_100km": 5.7
+      },
+      "running_costs": {
+        "service_maintenance_per_km": 0.052,
+        "tyres_per_km": 0.030
+      }
+    },
+    "golf_gti_p98": {
+      "name": "VW Golf GTI (2.0L Turbo Petrol P98)",
+      "category": "Performance / Euro",
+      "gvg_rank_top20": 18,
+      "gvg_url": "https://greenvehicleguide.gov.au/Vehicle/Search",
+      "fuel_type": "P98",
+      "co2_g_per_km": 159,
+      "consumption": {
+        "combined_l_per_100km": 7.0,
+        "urban_l_per_100km": 8.9,
+        "highway_l_per_100km": 5.9
+      },
+      "running_costs": {
+        "service_maintenance_per_km": 0.055,
+        "tyres_per_km": 0.030
+      }
+    },
+    "kluger_hybrid": {
+      "name": "Toyota Kluger Hybrid (2.5L AWD Large SUV)",
+      "category": "Large SUV",
+      "gvg_rank_top20": 19,
+      "gvg_url": "https://greenvehicleguide.gov.au/Vehicle/Search",
+      "fuel_type": "U91",
+      "co2_g_per_km": 128,
+      "consumption": {
+        "combined_l_per_100km": 5.6,
+        "urban_l_per_100km": 5.7,
+        "highway_l_per_100km": 5.5
+      },
+      "running_costs": {
+        "service_maintenance_per_km": 0.042,
+        "tyres_per_km": 0.028
+      }
+    },
+    "camry_hybrid": {
+      "name": "Toyota Camry Hybrid (2.5L Hybrid Sedan)",
+      "category": "Medium Sedan",
+      "gvg_rank_top20": 20,
+      "gvg_url": "https://greenvehicleguide.gov.au/Vehicle/Search",
+      "fuel_type": "U91",
+      "co2_g_per_km": 96,
+      "consumption": {
+        "combined_l_per_100km": 4.2,
+        "urban_l_per_100km": 4.0,
+        "highway_l_per_100km": 4.4
+      },
+      "running_costs": {
+        "service_maintenance_per_km": 0.030,
+        "tyres_per_km": 0.020
+      }
+    }
+  }
+}

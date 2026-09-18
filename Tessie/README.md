@@ -26,6 +26,8 @@ A suite of tools for analyzing [Tessie](https://share.tessie.com/bGRu5q9S2kB) te
 | **`analyse_charging.py`** | Reconciles Tesla Supercharger & 3rd-party invoices against Tessie telemetry, calculates dispenser vs battery loss, verifies TOU rates, and audits charging costs. | `./Tools/analyse_charging.py --superchargers`<br>`./Tools/analyse_charging.py --inspect 1`<br>`./Tools/analyse_charging.py --consolidate` |
 | **`charger_find_tesla.py`** | Hierarchical discovery explorer and live scraper for Tesla Superchargers and Destination Chargers with state filtering, search, TOU pricing, and registry sync. | `./Tools/charger_find_tesla.py --interactive`<br>`./Tools/charger_find_tesla.py --state NSW --sc --list`<br>`./Tools/charger_find_tesla.py --inspect 19258 --save` |
 | **`charger_find.py`** | Unified multi-network EV charger discovery, comparison, and sync engine (Tesla, Chargefox/NRMA, PlugShare-aggregated networks, and a consolidated master catalog) - discovers and registers public 3rd-party chargers (Chargefox, Evie, BP Pulse, JOLT, Exploren, AmpCharge, and more) listed on PlugShare, with gross-tariff pricing and hardware detail scraping. | `./Tools/charger_find.py --near Home --dc --network plugshare`<br>`./Tools/charger_find.py --plugshare 801149 --save`<br>`./Tools/charger_find.py --refresh-prices` |
+| **`sync_fuel_history.py`** | Downloads, indexes, and queries 10+ years of NSW FuelCheck historical monthly price datasets into an accelerated SQLite database for EV vs ICE cost comparisons. | `./Tools/sync_fuel_all.sh`<br>`./Tools/sync_fuel_history.py --status`<br>`./Tools/sync_fuel_history.py --query --date 2024-06-15` |
+| **`sync_invoices.py`** | Discovers, inspects, and standardizes names of PDF invoices (AGL statements, EV charging receipts, generic PDFs) with pure-Python extraction. | `./Tools/sync_invoices.py --scan --dry-run`<br>`./Tools/sync_invoices.py --inspect invoice.pdf`<br>`./Tools/sync_invoices.py --scan --rename` |
 
 ---
 
@@ -149,6 +151,33 @@ A suite of tools for analyzing [Tessie](https://share.tessie.com/bGRu5q9S2kB) te
 ./Tools/places_manager.py alias "Top Ryde City Shopping Centre" --address "1 Devlin Street" --expand-radius
 ./Tools/places_manager.py remove "Old Place"
 ```
+
+### 6. NSW FuelCheck Historical Pricing & Green Vehicle Guide (GVG) Comparison
+```bash
+# Sync entire 10+ year historical archive and ongoing monthly datasets:
+./Tools/sync_fuel_all.sh
+
+# Display status, database size, and indexed daily average count:
+./Tools/sync_fuel_history.py --status
+
+# Look up historical NSW petrol and diesel prices and benchmark vehicle costs for any date:
+./Tools/sync_fuel_history.py --query --date 2024-06-15
+
+# View official Australian Green Vehicle Guide (GVG) Top 20 Best-Selling Vehicles:
+./Tools/analyse_charging.py --gvg-top20
+
+# Search comparison vehicles by make, model, category, or fuel type:
+./Tools/analyse_charging.py --search-vehicles "hybrid"
+./Tools/analyse_charging.py --search-vehicles "diesel"
+
+# Map EV charging costs and net savings against any GVG vehicle:
+./Tools/analyse_charging.py --vehicle ford_ranger_diesel
+./Tools/analyse_charging.py --vehicle rav4_hybrid
+
+# Generate full side-by-side comparison matrix across all configured vehicles:
+./Tools/analyse_charging.py --compare-all
+```
+
 
 ---
 

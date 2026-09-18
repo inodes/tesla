@@ -3254,7 +3254,7 @@ class TessieChargingAnalyzer:
         dest_names = ", ".join(shorten_display_path(m, 0) for m in master_files)
         print(f"\033[92mSuccessfully appended {len(new_records)} new charges (Total: {len(all_records)}) to:\033[0m {dest_names}")
 
-    def print_summary(self, filtered_sessions=None):
+    def print_summary(self, filtered_sessions=None, selected_vehicle=None, compare_all=False):
         sessions = filtered_sessions if filtered_sessions is not None else self.reconciled_sessions
         if not sessions:
             print(f"{C_YELLOW}No charging sessions matching the selected criteria.{C_RESET}")
@@ -3274,30 +3274,68 @@ class TessieChargingAnalyzer:
         total_spend = sum((s["invoice_cost"] if s["invoice_cost"] is not None else s["tessie_cost"]) for s in sessions)
         avg_cost_kwh = (total_spend / total_dispenser_kwh) if total_dispenser_kwh > 0 else 0.0
 
+        # Dynamic dated fuel prices & comparison vehicle mapping (TODO-030 / TODO-042)
+        try:
+            from lib.fuel_common import (
+                get_fuel_price,
+                get_comparison_vehicle,
+                load_comparison_vehicles,
+                calculate_single_vehicle_running_cost
+            )
+        except ImportError:
+            try:
+                from Tools.lib.fuel_common import (
+                    get_fuel_price,
+                    get_comparison_vehicle,
+                    load_comparison_vehicles,
+                    calculate_single_vehicle_running_cost
+                )
+            except ImportError:
+                get_fuel_price = None
+                get_comparison_vehicle = None
+                load_comparison_vehicles = None
+                calculate_single_vehicle_running_cost = None
+
+        # Resolve chosen comparison vehicle (or default)
+        v_key = "petrol_standard"
+        v_name = "Medium Petrol SUV (Mazda CX-5 G25)"
+        v_fuel_type = "U91"
+        v_l_per_100km = 8.2
+        if get_comparison_vehicle:
+            v_key, v_spec = get_comparison_vehicle(selected_vehicle, tessie_dir=self.tessie_data_home)
+            v_name = v_spec.get("name") or v_spec.get("label") or "Comparison Vehicle"
+            v_fuel_type = v_spec.get("fuel_type", "U91")
+            consumption = v_spec.get("consumption", {})
+            if isinstance(consumption, dict):
+                v_l_per_100km = consumption.get("combined_l_per_100km") or consumption.get("l_per_100km") or 8.2
+            else:
+                v_l_per_100km = v_spec.get("l_per_100km", 8.2)
+
         total_km_added = sum(s["range_added_km"] for s in sessions)
-        petrol_equiv_spend = (total_km_added / 100.0) * 9.5 * 1.95 if total_km_added > 0 else (total_battery_kwh / 0.15 / 100.0) * 9.5 * 1.95
+        petrol_equiv_spend = 0.0
+        fuel_price_samples = []
+        for s in sessions:
+            s_km = s.get("range_added_km") or 0.0
+            if s_km <= 0:
+                s_kwh = s.get("battery_kwh") or 0.0
+                s_km = (s_kwh / 0.15) if s_kwh > 0 else 0.0
+            
+            s_dt = s.get("datetime")
+            p_price = 1.95
+            if get_fuel_price and s_dt:
+                p_price = get_fuel_price(s_dt, fuel_type=v_fuel_type, tessie_dir=self.tessie_data_home)
+                fuel_price_samples.append(p_price)
+            petrol_equiv_spend += (s_km / 100.0) * v_l_per_100km * p_price
+
+        avg_petrol_price = (sum(fuel_price_samples) / len(fuel_price_samples)) if fuel_price_samples else 1.95
         savings = max(0.0, petrol_equiv_spend - total_spend)
 
         # Real km travelled (from drives_master.csv, not the rated-range
         # "added" figure above) over the exact same window these sessions
         # cover, plus the derived cost/efficiency/annualized figures that
         # only mean anything once anchored to real distance driven.
-        #
-        # Driving efficiency is deliberately taken from drives_master.csv's
-        # OWN "Total Energy Used (kWh)" per drive (the same real per-drive
-        # figure Tessie/the car report), NOT from how much energy was
-        # ADDED via charging over the period - those are two different
-        # things that only coincidentally match when the battery's
-        # start/end SoC happen to net out to about the same level over the
-        # window. Charging losses (dispenser->battery, already computed
-        # above as total_loss_kwh) are reported as their own SEPARATE,
-        # additive kWh/100km figure instead of being blended into "average
-        # efficiency" - the user caught the earlier blended version
-        # reading 19.3 kWh/100km against a real 15.4 kWh/100km from
-        # Tessie/the car directly, and asked for pure driving efficiency
-        # plus charging losses reported separately.
-        PETROL_L_PER_100KM = 9.5  # same assumption already used for petrol_equiv_spend above
-        PETROL_PRICE_PER_L = 1.95
+        PETROL_L_PER_100KM = v_l_per_100km
+        PETROL_PRICE_PER_L = avg_petrol_price
         session_dts = [s["datetime"] for s in sessions if s.get("datetime")]
         km_travelled = None
         period_days = None
@@ -3320,7 +3358,7 @@ class TessieChargingAnalyzer:
                 annualize_ratio = 365.25 / period_days
                 projected_annual_km = km_travelled * annualize_ratio
                 projected_annual_spend = total_spend * annualize_ratio
-                projected_annual_petrol_equiv = (projected_annual_km / 100.0) * PETROL_L_PER_100KM * PETROL_PRICE_PER_L
+                projected_annual_petrol_equiv = (projected_annual_km / 100.0) * PETROL_L_PER_100KM * avg_petrol_price
                 projected_annual_savings = max(0.0, projected_annual_petrol_equiv - projected_annual_spend)
 
         fully_matched_fast = sum(1 for s in sessions if (s["is_supercharger"] or s["is_fast_charger"]) and s["status"] == "MATCHED ✅")
@@ -3347,8 +3385,9 @@ class TessieChargingAnalyzer:
         kpi_l4 = f"  {C_BOLD}Total Electricity Spend:{C_RESET} ${total_spend:,.2f} AUD  │  {C_BOLD}Average Cost:{C_RESET} ${avg_cost_kwh:.2f}/kWh"
         print(f"│{pad_display(kpi_l4, box_w - 2)}│")
 
-        kpi_l5 = f"  {C_BOLD}Estimated Petrol Equivalent:{C_RESET} ${petrol_equiv_spend:,.2f}  │  {C_GREEN}{C_BOLD}Net Fuel Savings:{C_RESET} ${savings:,.2f} AUD"
-        print(f"│{pad_display(kpi_l5, box_w - 2)}│")
+        v_summary_tag = f"[{v_fuel_type}, {v_l_per_100km:.1f}L/100km - {v_name}]"
+        kpi_l5 = f"  {C_BOLD}Estimated ICE Equivalent:{C_RESET} ${petrol_equiv_spend:,.2f} (@ ~${avg_petrol_price:.2f}/L {v_summary_tag})  │  {C_GREEN}{C_BOLD}Net Savings:{C_RESET} ${savings:,.2f} AUD"
+        print(f"│{pad_display(kpi_l5, box_w - 2, truncate=True)}│")
 
         if mismatched_fast > 0:
             recon_details = f"{fully_matched_fast}/{total_fast_count} Matched, {mismatched_fast} Mismatched ⚠️"
@@ -3377,9 +3416,9 @@ class TessieChargingAnalyzer:
             print(f"│{pad_display(kpi_l9, box_w - 2)}│")
 
             annualize_caveat = " (short window - rough)" if period_days and period_days < 30 else ""
-            kpi_l10 = (f"  {C_GREEN}{C_BOLD}Projected Annual Savings vs Petrol:{C_RESET} "
+            kpi_l10 = (f"  {C_GREEN}{C_BOLD}Projected Annual Savings vs {v_name.split('(')[0].strip()}:{C_RESET} "
                        f"${projected_annual_savings:,.2f} AUD/yr{annualize_caveat}")
-            print(f"│{pad_display(kpi_l10, box_w - 2)}│")
+            print(f"│{pad_display(kpi_l10, box_w - 2, truncate=True)}│")
         else:
             kpi_l8 = f"  {C_BOLD}Distance Travelled:{C_RESET} {C_ORANGE}No Tessie measurement for this session{C_RESET}"
             print(f"│{pad_display(kpi_l8, box_w - 2)}│")
@@ -3392,6 +3431,15 @@ class TessieChargingAnalyzer:
             print(f"│{pad_display(kpi_l7, box_w - 2, truncate=True)}│")
         
         print(f"└{'─' * (box_w - 2)}┘\n")
+
+        # Optional multi-vehicle comparison matrix
+        if compare_all and load_comparison_vehicles and get_fuel_price:
+            self._print_multi_vehicle_comparison_matrix(
+                sessions=sessions,
+                total_spend=total_spend,
+                km_travelled=km_travelled,
+                period_days=period_days
+            )
 
         network_groups = defaultdict(list)
         for s in sessions:
@@ -3439,6 +3487,102 @@ class TessieChargingAnalyzer:
         bot_b = "└" + "┴".join("─" * w for w in widths) + "┘"
         print(bot_b)
         print()
+
+    def _print_multi_vehicle_comparison_matrix(self, sessions, total_spend, km_travelled=None, period_days=None):
+        """Renders side-by-side benchmark comparison matrix across all configured vehicles."""
+        try:
+            from lib.fuel_common import load_comparison_vehicles, get_fuel_price
+        except ImportError:
+            try:
+                from Tools.lib.fuel_common import load_comparison_vehicles, get_fuel_price
+            except ImportError:
+                return
+
+        registry = load_comparison_vehicles(self.tessie_data_home)
+        vehicles = registry.get("vehicles", {})
+        if not vehicles:
+            return
+
+        total_km_added = sum(s["range_added_km"] for s in sessions)
+        rows_data = []
+
+        for v_key, v_spec in vehicles.items():
+            v_name = v_spec.get("name") or v_spec.get("label") or v_key
+            v_fuel = v_spec.get("fuel_type", "U91")
+            consumption = v_spec.get("consumption", {})
+            if isinstance(consumption, dict):
+                v_l_100km = consumption.get("combined_l_per_100km") or consumption.get("l_per_100km") or 8.5
+            else:
+                v_l_100km = v_spec.get("l_per_100km", 8.5)
+
+            fuel_costs = []
+            prices = []
+            for s in sessions:
+                s_km = s.get("range_added_km") or 0.0
+                if s_km <= 0:
+                    s_kwh = s.get("battery_kwh") or 0.0
+                    s_km = (s_kwh / 0.15) if s_kwh > 0 else 0.0
+                s_dt = s.get("datetime")
+                p = get_fuel_price(s_dt, fuel_type=v_fuel, tessie_dir=self.tessie_data_home)
+                prices.append(p)
+                fuel_costs.append((s_km / 100.0) * v_l_100km * p)
+
+            v_spend = sum(fuel_costs)
+            v_avg_price = (sum(prices) / len(prices)) if prices else 1.95
+            v_savings = v_spend - total_spend
+
+            running_costs = v_spec.get("running_costs", {})
+            maint_km = running_costs.get("service_maintenance_per_km", 0.0) if isinstance(running_costs, dict) else 0.0
+            tyre_km = running_costs.get("tyres_per_km", 0.0) if isinstance(running_costs, dict) else 0.0
+            running_per_km_str = f"${(maint_km + tyre_km):.3f}/km" if (maint_km + tyre_km) > 0 else "N/A"
+
+            ann_savings_str = "N/A"
+            if km_travelled and km_travelled > 0 and period_days and period_days > 0:
+                ann_ratio = 365.25 / period_days
+                ann_km = km_travelled * ann_ratio
+                ann_ev_spend = total_spend * ann_ratio
+                ann_v_spend = (ann_km / 100.0) * v_l_100km * v_avg_price
+                ann_savings = max(0.0, ann_v_spend - ann_ev_spend)
+                ann_savings_str = f"${ann_savings:,.0f}/yr"
+
+            rows_data.append({
+                "name": v_name,
+                "category": v_spec.get("category", "-"),
+                "fuel": v_fuel,
+                "l_100km": f"{v_l_100km:.1f} L",
+                "avg_price": f"${v_avg_price:.2f}/L",
+                "equiv_spend": f"${v_spend:,.2f}",
+                "savings": f"+${v_savings:,.2f}" if v_savings >= 0 else f"-${abs(v_savings):,.2f}",
+                "running_km": running_per_km_str,
+                "ann_savings": ann_savings_str
+            })
+
+        matrix_headers = ["Benchmark Vehicle", "Category", "Fuel", "L/100km", "Avg Price", "Equiv Spend", "Net Savings", "Annual Savings"]
+        m_widths = [36, 18, 8, 9, 11, 13, 13, 16]
+        m_inner_w = sum(m_widths) + len(m_widths) - 1
+
+        print(f"┌{'─' * m_inner_w}┐")
+        m_title = f" 🚗 {C_BOLD}BENCHMARK ICE & HYBRID RUNNING COST COMPARISON MATRIX{C_RESET}"
+        print(f"│{pad_display(m_title, m_inner_w, 'left', truncate=True)}│")
+        print("├" + "┬".join("─" * w for w in m_widths) + "┤")
+        print("│" + "│".join(pad_display(f"{C_BOLD}{h}{C_RESET}", w, "center") for h, w in zip(matrix_headers, m_widths)) + "│")
+        print("├" + "┼".join("─" * w for w in m_widths) + "┤")
+
+        for r in rows_data:
+            s_color = C_GREEN if r["savings"].startswith("+") else C_RED
+            print("│" + "│".join([
+                pad_display(f" {r['name']}", m_widths[0], "left", truncate=True),
+                pad_display(f" {r['category']}", m_widths[1], "left", truncate=True),
+                pad_display(r["fuel"], m_widths[2], "center", truncate=True),
+                pad_display(f"{r['l_100km']} ", m_widths[3], "right", truncate=True),
+                pad_display(f"{r['avg_price']} ", m_widths[4], "right", truncate=True),
+                pad_display(f"{r['equiv_spend']} ", m_widths[5], "right", truncate=True),
+                pad_display(f"{s_color}{r['savings']}{C_RESET} ", m_widths[6], "right", truncate=True),
+                pad_display(f"{r['ann_savings']} ", m_widths[7], "right", truncate=True),
+            ]) + "│")
+
+        print("└" + "┴".join("─" * w for w in m_widths) + "┘")
+        print(f"👉 {C_DIM}Configure benchmark vehicle profiles and running costs in Tessie/comparison_vehicles.json{C_RESET}\n")
 
     def print_sessions_table(self, filtered_sessions=None):
         sessions = filtered_sessions if filtered_sessions is not None else self.reconciled_sessions
@@ -5248,12 +5392,195 @@ def display_charging_months_menu(filtered_sessions, analyzer):
             return
 
 
+def display_comparison_vehicles_table(tessie_dir=None):
+    """Prints a formatted table of all benchmark comparison vehicles from comparison_vehicles.json."""
+    try:
+        from lib.fuel_common import load_comparison_vehicles
+    except ImportError:
+        try:
+            from Tools.lib.fuel_common import load_comparison_vehicles
+        except ImportError:
+            print("Unable to load fuel_common library.")
+            return
+
+    registry = load_comparison_vehicles(tessie_dir)
+    vehicles = registry.get("vehicles", {})
+    default_key = registry.get("default_vehicle", "petrol_standard")
+
+    if not vehicles:
+        print("No comparison vehicles configured.")
+        return
+
+    headers = ["Key", "Vehicle Name", "Category", "Fuel", "Comb L/100", "Urban L", "Hwy L", "Maint/km", "Tyres/km", "Default"]
+    widths = [22, 42, 22, 6, 11, 8, 7, 10, 10, 8]
+    total_w = sum(widths) + len(widths) - 1
+
+    print(f"\n┌{'─' * total_w}┐")
+    title = f" 🚗 {C_BOLD}BENCHMARK COMPARISON VEHICLES REGISTRY (Tessie/comparison_vehicles.json){C_RESET}"
+    print(f"│{pad_display(title, total_w, 'left', truncate=True)}│")
+    print("├" + "┬".join("─" * w for w in widths) + "┤")
+    print("│" + "│".join(pad_display(f"{C_BOLD}{h}{C_RESET}", w, "center") for h, w in zip(headers, widths)) + "│")
+    print("├" + "┼".join("─" * w for w in widths) + "┤")
+
+    for key, spec in vehicles.items():
+        name = spec.get("name") or spec.get("label") or key
+        category = spec.get("category", "-")
+        fuel = spec.get("fuel_type", "U91")
+        consumption = spec.get("consumption", {})
+        if isinstance(consumption, dict):
+            comb = consumption.get("combined_l_per_100km") or consumption.get("l_per_100km") or 8.5
+            urban = consumption.get("urban_l_per_100km", comb)
+            hwy = consumption.get("highway_l_per_100km", comb)
+        else:
+            comb = spec.get("l_per_100km", 8.5)
+            urban = spec.get("urban_l_per_100km", comb)
+            hwy = spec.get("highway_l_per_100km", comb)
+
+        running_costs = spec.get("running_costs", {})
+        maint = running_costs.get("service_maintenance_per_km", 0.0) if isinstance(running_costs, dict) else 0.0
+        tyres = running_costs.get("tyres_per_km", 0.0) if isinstance(running_costs, dict) else 0.0
+        is_default = " ⭐ YES" if key == default_key else ""
+
+        print("│" + "│".join([
+            pad_display(f" {key}", widths[0], "left", truncate=True),
+            pad_display(f" {name}", widths[1], "left", truncate=True),
+            pad_display(f" {category}", widths[2], "left", truncate=True),
+            pad_display(fuel, widths[3], "center", truncate=True),
+            pad_display(f"{comb:.1f} L ", widths[4], "right", truncate=True),
+            pad_display(f"{urban:.1f} L ", widths[5], "right", truncate=True),
+            pad_display(f"{hwy:.1f} L ", widths[6], "right", truncate=True),
+            pad_display(f"${maint:.3f} " if maint > 0 else "- ", widths[7], "right", truncate=True),
+            pad_display(f"${tyres:.3f} " if tyres > 0 else "- ", widths[8], "right", truncate=True),
+            pad_display(is_default, widths[9], "center", truncate=True),
+        ]) + "│")
+
+    print("└" + "┴".join("─" * w for w in widths) + "┘")
+    print(f"👉 {C_DIM}To compare against any vehicle, pass --vehicle <key>. Customize in Tessie/comparison_vehicles.json{C_RESET}\n")
+
+
+def display_gvg_top20_table(tessie_dir=None):
+    """Displays official Australian Green Vehicle Guide (GVG) Top 20 best-sellers and benchmark ratings."""
+    try:
+        from lib.fuel_common import get_gvg_top20_vehicles, load_comparison_vehicles
+    except ImportError:
+        try:
+            from Tools.lib.fuel_common import get_gvg_top20_vehicles, load_comparison_vehicles
+        except ImportError:
+            print("Unable to load fuel_common library.")
+            return
+
+    top20_list = get_gvg_top20_vehicles(tessie_dir)
+    reg = load_comparison_vehicles(tessie_dir)
+    default_key = reg.get("default_vehicle", "petrol_standard")
+
+    if not top20_list:
+        print("No Green Vehicle Guide Top 20 vehicles found.")
+        return
+
+    headers = ["Rank", "Key", "Green Vehicle Guide (GVG) Model", "Category", "Fuel", "Comb L/100", "CO2 g/km", "Maint/km", "Tyres/km", "Total $/km"]
+    widths = [8, 22, 44, 20, 6, 11, 10, 10, 10, 11]
+    total_w = sum(widths) + len(widths) - 1
+
+    print(f"\n┌{'─' * total_w}┐")
+    title = f" 🏆 {C_BOLD}AUSTRALIAN GREEN VEHICLE GUIDE (GVG) TOP 20 BEST-SELLING VEHICLES{C_RESET}"
+    print(f"│{pad_display(title, total_w, 'left', truncate=True)}│")
+    print(f"│{pad_display(f' {C_DIM}Source: Official GVG ADR 81/02 Testing (https://greenvehicleguide.gov.au/#top20){C_RESET}', total_w, 'left', truncate=True)}│")
+    print("├" + "┬".join("─" * w for w in widths) + "┤")
+    print("│" + "│".join(pad_display(f"{C_BOLD}{h}{C_RESET}", w, "center") for h, w in zip(headers, widths)) + "│")
+    print("├" + "┼".join("─" * w for w in widths) + "┤")
+
+    for key, spec in top20_list:
+        rank_num = spec.get("gvg_rank_top20", "-")
+        if rank_num == 1:
+            rank_s = "🥇 #1"
+        elif rank_num == 2:
+            rank_s = "🥈 #2"
+        elif rank_num == 3:
+            rank_s = "🥉 #3"
+        else:
+            rank_s = f"#{rank_num}"
+
+        name = spec.get("name", key)
+        category = spec.get("category", "-")
+        fuel = spec.get("fuel_type", "U91")
+        co2 = spec.get("co2_g_per_km", "-")
+        co2_s = f"{co2} g" if co2 != "-" else "-"
+
+        consumption = spec.get("consumption", {})
+        comb = consumption.get("combined_l_per_100km", 8.5) if isinstance(consumption, dict) else 8.5
+
+        running_costs = spec.get("running_costs", {})
+        maint = running_costs.get("service_maintenance_per_km", 0.0) if isinstance(running_costs, dict) else 0.0
+        tyres = running_costs.get("tyres_per_km", 0.0) if isinstance(running_costs, dict) else 0.0
+        total_running = maint + tyres
+
+        key_display = f"{C_CYAN}{key}{C_RESET}" if key != default_key else f"{C_GREEN}{key} ⭐{C_RESET}"
+
+        print("│" + "│".join([
+            pad_display(rank_s, widths[0], "center", truncate=True),
+            pad_display(f" {key_display}", widths[1], "left", truncate=True),
+            pad_display(f" {name}", widths[2], "left", truncate=True),
+            pad_display(f" {category}", widths[3], "left", truncate=True),
+            pad_display(fuel, widths[4], "center", truncate=True),
+            pad_display(f"{comb:.1f} L ", widths[5], "right", truncate=True),
+            pad_display(f"{co2_s} ", widths[6], "right", truncate=True),
+            pad_display(f"${maint:.3f} " if maint > 0 else "- ", widths[7], "right", truncate=True),
+            pad_display(f"${tyres:.3f} " if tyres > 0 else "- ", widths[8], "right", truncate=True),
+            pad_display(f"${total_running:.3f} " if total_running > 0 else "- ", widths[9], "right", truncate=True),
+        ]) + "│")
+
+    print("└" + "┴".join("─" * w for w in widths) + "┘")
+    print(f"👉 {C_DIM}Run with --vehicle <key> to map real EV charging costs against any GVG model (e.g. --vehicle ford_ranger_diesel){C_RESET}\n")
+
+
+def search_and_display_vehicles(query_str, tessie_dir=None):
+    """Searches and prints matching vehicles from GVG and comparison registry."""
+    try:
+        from lib.fuel_common import search_comparison_vehicles
+    except ImportError:
+        try:
+            from Tools.lib.fuel_common import search_comparison_vehicles
+        except ImportError:
+            print("Unable to load fuel_common library.")
+            return
+
+    matches = search_comparison_vehicles(query_str, tessie_dir)
+    if not matches:
+        print(f"\n{C_YELLOW}No comparison vehicles found matching '{query_str}'.{C_RESET}")
+        print(f"👉 Run --gvg-top20 or --list-vehicles to view available comparison vehicles.\n")
+        return
+
+    print(f"\n🔍 Found {len(matches)} comparison vehicle(s) matching '{C_BOLD}{query_str}{C_RESET}':\n")
+    for key, spec in matches:
+        rank = spec.get("gvg_rank_top20")
+        rank_badge = f"[GVG Top 20: #{rank}] " if rank else ""
+        name = spec.get("name", key)
+        cat = spec.get("category", "-")
+        fuel = spec.get("fuel_type", "U91")
+        cons = spec.get("consumption", {})
+        comb = cons.get("combined_l_per_100km", 0.0) if isinstance(cons, dict) else 0.0
+        urban = cons.get("urban_l_per_100km", comb) if isinstance(cons, dict) else comb
+        hwy = cons.get("highway_l_per_100km", comb) if isinstance(cons, dict) else comb
+        co2 = spec.get("co2_g_per_km")
+        co2_s = f", {co2} g CO2/km" if co2 else ""
+
+        rc = spec.get("running_costs", {})
+        maint = rc.get("service_maintenance_per_km", 0.0) if isinstance(rc, dict) else 0.0
+        tyres = rc.get("tyres_per_km", 0.0) if isinstance(rc, dict) else 0.0
+
+        print(f"  • {C_GREEN}{C_BOLD}{key}{C_RESET}: {name} ({cat})")
+        print(f"    {C_DIM}Fuel:{C_RESET} {fuel} | {C_DIM}ADR Consumption:{C_RESET} {comb:.1f} L/100km combined ({urban:.1f} urban / {hwy:.1f} hwy){co2_s}")
+        print(f"    {C_DIM}Running Costs:{C_RESET} ${maint:.3f}/km service/maint + ${tyres:.3f}/km tyres = ${maint+tyres:.3f}/km total")
+        print(f"    {C_DIM}Command:{C_RESET} {C_CYAN}./Tools/analyse_charging.py --vehicle {key}{C_RESET}\n")
+
+
 def main():
     parser = argparse.ArgumentParser(
         usage="""analyse_charging.py [--superchargers | --third-party | --home]
                                     [--exclude-superchargers | --exclude-third-party | --exclude-home]
                                     [--unreconciled] [--month YYYY-MM] [--since DATE] [--until DATE] [--audit]
    or:  analyse_charging.py --inspect ID_OR_DATE [--correlation]
+   or:  analyse_charging.py --vehicle VEHICLE [--compare-all] [--list-vehicles] [--gvg-top20] [--search-vehicles TERM]
    or:  analyse_charging.py --consolidate
    or:  analyse_charging.py --update-master
    or:  analyse_charging.py --rename-invoices [--rename-format TEMPLATE] [--dry-run] [--yes]
@@ -5276,6 +5603,15 @@ EXAMPLES
     analyse_charging.py --superchargers --month 2026-09
     analyse_charging.py --unreconciled --audit
     analyse_charging.py --home --since monday
+
+  Vehicle Cost Comparisons & Green Vehicle Guide (GVG):
+    analyse_charging.py --vehicle ford_ranger_diesel
+    analyse_charging.py --vehicle rav4_hybrid
+    analyse_charging.py --vehicle hilux_diesel --month 2026-06
+    analyse_charging.py --compare-all
+    analyse_charging.py --gvg-top20
+    analyse_charging.py --search-vehicles "hilux"
+    analyse_charging.py --list-vehicles
 
   Inspection & Reconciliation:
     analyse_charging.py --inspect "2026-09-01"
@@ -5313,6 +5649,13 @@ EXAMPLES
     g_filter.add_argument("--since", help="Filter sessions on or after date (YYYY-MM-DD or relative: today, yesterday, monday)")
     g_filter.add_argument("--until", help="Filter sessions on or before date (YYYY-MM-DD)")
 
+    g_ice = parser.add_argument_group("ICE & Hybrid Vehicle Comparison & Green Vehicle Guide (GVG)")
+    g_ice.add_argument("--vehicle", "-V", help="Map EV running costs and savings against a specific comparison vehicle (e.g. 'ford_ranger_diesel', 'rav4_hybrid', 'hilux_diesel', 'prado', 'cx5')")
+    g_ice.add_argument("--compare-all", action="store_true", help="Display side-by-side comparison matrix against all configured benchmark vehicles")
+    g_ice.add_argument("--gvg-top20", action="store_true", help="Display official Australian Green Vehicle Guide (GVG) Top 20 best-sellers and ADR specs")
+    g_ice.add_argument("--search-vehicles", metavar="TERM", help="Search GVG and comparison vehicle registry by make, model, category, or fuel")
+    g_ice.add_argument("--list-vehicles", action="store_true", help="List all configured benchmark comparison vehicles and efficiency specs")
+
     g_action = parser.add_argument_group("Inspection, Reconciliation & Invoice Actions")
     g_action.add_argument("--inspect", help="Deep-dive inspect a specific session by Charge # or Date")
     g_action.add_argument("--correlation", "--compare", action="store_true", help="Display 3-way correlation audit comparing Tessie summary, detailed telemetry CSV, and Invoices")
@@ -5330,6 +5673,18 @@ EXAMPLES
                            help="With --precompute-sources, re-fetch every session's cross-check even if already cached (needed once after a change to the underlying calculation)")
 
     args = parser.parse_args()
+
+    if args.gvg_top20:
+        display_gvg_top20_table(args.tessie_dir)
+        return
+
+    if args.search_vehicles:
+        search_and_display_vehicles(args.search_vehicles, args.tessie_dir)
+        return
+
+    if args.list_vehicles:
+        display_comparison_vehicles_table(args.tessie_dir)
+        return
 
     analyzer = TessieChargingAnalyzer(
         config_path=args.config,
@@ -5426,7 +5781,7 @@ EXAMPLES
         display_charging_months_menu(filtered, analyzer)
         return
 
-    analyzer.print_summary(filtered)
+    analyzer.print_summary(filtered, selected_vehicle=args.vehicle, compare_all=args.compare_all)
     analyzer.print_sessions_table(filtered)
 
     if args.export:

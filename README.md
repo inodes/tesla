@@ -49,13 +49,16 @@ tesla/
 │   ├── power_demand_calculator.py  # Reproduce the active power provider's residential demand charge (AGL: Ausgrid EA025)
 │   ├── sync_api_evnex.py           # Idempotent sync: new completed Evnex sessions -> charges/deepdive/*.json
 │   ├── sync_api_tessie.py          # Direct Tessie REST API fetch & sync engine for drives, charges, and telemetry
+│   ├── sync_fuel_history.py        # NSW FuelCheck historical & live dataset harvester and SQLite database manager
+│   ├── sync_invoices.py            # Generic PDF invoice ingestion, discovery, inspection, and standardization tool
 │   ├── sync_power_usage.py         # Consolidate the active power provider's usage-export CSVs into one master CSV
 │   ├── sync_dashcam.sh             # Multi-drive TeslaCam sync, audit & prune engine
 │   ├── dashcam_exportdash.sh       # Local ExportDash web player launcher
 │   ├── sync_drives_all.sh          # One command: Tessie drives, fetch + consolidate
 │   ├── sync_charging_all.sh        # One command: Tessie charges + Evnex + invoices + AGL usage + PVOutput/AGL/Evnex cross-check prep, fetch + consolidate
 │   ├── sync_charger_all.sh         # One command: fetch new charger hardware across every network, near Home
-│   └── sync_all.sh                 # Runs all 3 domains above in one command (not dashcam - see its own header)
+│   ├── sync_fuel_all.sh            # One command: sync NSW FuelCheck historical archives & live prices
+│   └── sync_all.sh                 # Runs all 4 domains above in one command (not dashcam - see its own header)
 │
 ├── .github/                        # GitHub Actions CI & community standards
 ├── LICENSE                         # MIT License
@@ -144,7 +147,53 @@ tesla/
 ```
 👉 *This is also run as part of `./Tools/sync_charging_all.sh` (see section 3) - run it standalone only if you want just the Evnex step.*
 
-### 6. Deploy Scripts to External Drives
+### 6. NSW FuelCheck Historical Pricing & Green Vehicle Guide (GVG) Comparison
+
+```bash
+# The one command to sync the NSW FuelCheck monthly historical pricing datasets:
+./Tools/sync_fuel_all.sh
+
+# Check database status, indexed date range, and current reference fuel prices:
+./Tools/sync_fuel_history.py --status
+
+# Query historical fuel price averages and benchmark vehicle costs for a specific date:
+./Tools/sync_fuel_history.py --query --date 2024-06-15
+
+# View official Australian Green Vehicle Guide (GVG) Top 20 Best-Selling Vehicles:
+./Tools/analyse_charging.py --gvg-top20
+
+# Search comparison vehicles by make, model, category, or fuel type:
+./Tools/analyse_charging.py --search-vehicles "hybrid"
+./Tools/analyse_charging.py --search-vehicles "ranger"
+
+# Compare EV charging costs against any specific GVG vehicle (e.g. Ford Ranger, RAV4 Hybrid):
+./Tools/analyse_charging.py --vehicle ford_ranger_diesel
+./Tools/analyse_charging.py --vehicle rav4_hybrid
+
+# Generate side-by-side net savings matrix against all benchmark comparison vehicles:
+./Tools/analyse_charging.py --compare-all
+```
+👉 *Historical pricing is indexed into `<tessie_data_home>/fuel/fuel_history.db` (SQLite) with microsecond queries and zero external dependencies. Comparison vehicles and running costs (maintenance & tyres) are sourced from the Australian Green Vehicle Guide (ADR 81/02) and fully configurable in `Tessie/comparison_vehicles.json`.*
+
+
+### 7. Generic PDF Invoice Ingestion & AGL Extractor
+
+```bash
+# Preview unstandardized PDFs across default directories (~/Downloads, PDF/AGL):
+./Tools/sync_invoices.py --scan --dry-run
+
+# Deep-dive inspect any invoice PDF and extract structured metadata:
+./Tools/sync_invoices.py --inspect ~/Downloads/invoice.pdf
+
+# Rename and standardize AGL statements in-place:
+./Tools/sync_invoices.py --scan "~/Library/Mobile Documents/com~apple~CloudDocs/PDF/AGL" --rename
+
+# Move and import discovered invoices into canonical provider directories:
+./Tools/sync_invoices.py --scan ~/Downloads --import
+```
+👉 *Supports AGL energy statements (`Statement_electricity_YYYYMMDD.pdf`), EV charging receipts (`YYYYMMDD_HHMM_Network_Inv_Place.pdf`), and generic invoices with zero external dependencies.*
+
+### 8. Deploy Scripts to External Drives
 
 ```bash
 # Automatically install/update sync_dashcam.sh to /Volumes/*/Tools/ across all mounted drives

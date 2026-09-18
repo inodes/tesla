@@ -99,7 +99,8 @@ echo "==> Evnex home-charger sessions"
 ./sync_api_evnex.py
 
 echo
-echo "==> Invoice PDFs (rename, then correct cost/rate mismatches in charges_master.csv)"
+echo "==> Invoice PDFs (rename & standardize, then reconcile cost/rate in charges_master.csv)"
+./sync_invoices.py --scan --rename
 ./analyse_charging.py --rename-invoices --yes
 ./analyse_charging.py --update-master --yes
 

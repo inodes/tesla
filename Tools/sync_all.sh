@@ -42,8 +42,9 @@ Steps run, in order:
   1. Chargers domain           (./sync_charger_all.sh)
   2. Charging Sessions domain  (./sync_charging_all.sh)
   3. Drives domain             (./sync_drives_all.sh)
+  4. Fuel domain (NSW Fuel)    (./sync_fuel_all.sh)
 
-Run any one of those three directly yourself for that domain alone, or
+Run any one of those four directly yourself for that domain alone, or
 for a wider scope than its own defaults. See this file's own header
 comment for the full rationale behind the step order.
 EOF
@@ -55,16 +56,20 @@ echo "                    sync_all.sh                       "
 echo "======================================================"
 echo
 
-echo "========== [1/3] Chargers domain =========="
+echo "========== [1/4] Chargers domain =========="
 ./sync_charger_all.sh
 
 echo
-echo "========== [2/3] Charging Sessions domain =========="
+echo "========== [2/4] Charging Sessions domain =========="
 ./sync_charging_all.sh
 
 echo
-echo "========== [3/3] Drives domain =========="
+echo "========== [3/4] Drives domain =========="
 ./sync_drives_all.sh
+
+echo
+echo "========== [4/4] Fuel domain (NSW FuelCheck) =========="
+./sync_fuel_all.sh
 
 echo
 echo "======================================================"
