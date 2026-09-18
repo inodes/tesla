@@ -493,6 +493,24 @@ def prompt_poi_naming(base_name, category):
     return clean_base
 
 
+def prompt_radius_input(default_radius=150, label="Radius in meters"):
+    """
+    Prompts the user for a radius in meters with validation and friendly error re-prompting.
+    Accepts raw numbers (e.g. 50) or values with units (e.g. 50m, 50 meters).
+    """
+    while True:
+        try:
+            r_input = input(f"{label} [default {default_radius}m]: ").strip()
+        except (EOFError, KeyboardInterrupt):
+            return default_radius
+        if not r_input:
+            return default_radius
+        clean_r = re.sub(r'(?i)\s*(m|meters|meter|metres|metre)$', '', r_input).strip()
+        if clean_r.isdigit() and int(clean_r) > 0:
+            return int(clean_r)
+        print(f"⚠️  Invalid radius \"{r_input}\". Please enter a positive number of meters (e.g. 50 or 50m).")
+
+
 def classify_poi_group(tags):
     """Classifies OSM tags into user-friendly top-level facility groups."""
     amenity = (tags.get("amenity") or "").lower()
@@ -2164,11 +2182,7 @@ def interactive_lookup_and_add(query_or_addr=None, lat=None, lon=None, default_r
         print("❌ Place name cannot be empty.")
         return None
 
-    try:
-        r_input = input(f"Geofence Radius in meters [default {recommended_radius}m]: ").strip()
-        radius_m = int(r_input) if r_input else recommended_radius
-    except Exception:
-        radius_m = recommended_radius
+    radius_m = prompt_radius_input(recommended_radius, label="Geofence Radius in meters")
 
     kw_candidates = suggest_keywords(resolved_addr, selected_name)
     kw_str = ", ".join(kw_candidates) if kw_candidates else ""
@@ -2569,6 +2583,86 @@ def inspect_place(place_name_or_query, places=None):
 
         print(format_box_line("└", "┴", "┘", col_widths) + "\n")
 
+    if sys.stdin and sys.stdin.isatty():
+        while True:
+            print("Action:")
+            print("  [d] Delete this place")
+            print("  [r] Rename place")
+            print("  [g] Change geofence radius")
+            print("  [k] Edit keywords / aliases")
+            print("  [n] Edit notes")
+            print("  [b] Back to list (or press Enter)")
+            try:
+                act = input("\nChoice [b]: ").strip().lower()
+            except (KeyboardInterrupt, EOFError):
+                print()
+                break
+            if not act or act in ("b", "back", "q", "quit"):
+                break
+            elif act in ("d", "delete"):
+                try:
+                    conf = input(f"⚠️ Are you sure you want to permanently delete \"{target_name}\"? [y/N]: ").strip().lower()
+                except (KeyboardInterrupt, EOFError):
+                    break
+                if conf in ("y", "yes"):
+                    places = load_places()
+                    if target_name in places:
+                        del places[target_name]
+                        save_places(places)
+                        print(f"✔ Permanently deleted \"{target_name}\" from places.json.")
+                        return "deleted"
+                else:
+                    print("Deletion cancelled.")
+            elif act in ("r", "rename"):
+                try:
+                    new_n = input(f"Enter new name [current: \"{target_name}\"]: ").strip()
+                except (KeyboardInterrupt, EOFError):
+                    break
+                if new_n and new_n != target_name:
+                    places = load_places()
+                    if new_n in places:
+                        print(f"❌ Place \"{new_n}\" already exists in places.json.")
+                    else:
+                        places[new_n] = places.pop(target_name)
+                        save_places(places)
+                        print(f"✔ Renamed \"{target_name}\" ➔ \"{new_n}\".")
+                        return "renamed"
+            elif act in ("g", "radius"):
+                new_rad = prompt_radius_input(rad, label="Enter new radius in meters")
+                if new_rad != rad:
+                    places = load_places()
+                    if target_name in places:
+                        places[target_name]["radius_m"] = new_rad
+                        save_places(places)
+                        print(f"✔ Geofence radius updated: {rad}m ➔ {new_rad}m.")
+                        rad = new_rad
+            elif act in ("k", "keywords", "alias"):
+                curr_kws = p_data.get("keywords", [])
+                curr_kws_str = ", ".join(curr_kws)
+                try:
+                    new_k_str = input(f"Enter keywords / aliases (comma-separated) [current: {curr_kws_str}]: ").strip()
+                except (KeyboardInterrupt, EOFError):
+                    break
+                if new_k_str:
+                    new_kws = [k.strip() for k in new_k_str.split(",") if k.strip()]
+                    places = load_places()
+                    if target_name in places:
+                        places[target_name]["keywords"] = new_kws
+                        save_places(places)
+                        print(f"✔ Keywords updated: {', '.join(new_kws)}")
+            elif act in ("n", "notes"):
+                curr_notes = p_data.get("notes", "")
+                try:
+                    new_n_str = input(f"Enter notes [current: {curr_notes}]: ").strip()
+                except (KeyboardInterrupt, EOFError):
+                    break
+                if new_n_str:
+                    places = load_places()
+                    if target_name in places:
+                        places[target_name]["notes"] = new_n_str
+                        save_places(places)
+                        print(f"✔ Notes updated: \"{new_n_str}\"")
+
 
 # ---------------------------------------------------------------------------
 # CLI Command: List Stored Places
@@ -2684,11 +2778,15 @@ def cmd_list(args):
                 p_idx = int(pick)
                 if 1 <= p_idx <= len(items):
                     sel_name = items[p_idx - 1][0]
-                    inspect_place(sel_name, places=places)
+                    res = inspect_place(sel_name, places=places)
+                    if res in ("deleted", "renamed"):
+                        return cmd_list(args)
                 else:
                     print(f"⚠️ Invalid selection. Please enter 1 to {len(items)}.")
             else:
-                inspect_place(pick, places=places)
+                res = inspect_place(pick, places=places)
+                if res in ("deleted", "renamed"):
+                    return cmd_list(args)
 
 def review_single_cluster(cl, places, total_clusters=1, cluster_num=1, allow_ignore=True):
     clean_addr = cl["address"] or f"{cl['center_lat']:.5f}, {cl['center_lon']:.5f}"
@@ -2792,8 +2890,22 @@ def review_single_cluster(cl, places, total_clusters=1, cluster_num=1, allow_ign
         return "quit"
     elif choice in ("b", "back", "skip", ""):
         return False
+    elif allow_ignore and choice in ("i", "ignore"):
+        ignored_entries = load_ignored_places()
+        entry = {
+            "address": cl.get("address", ""),
+            "center_lat": cl["center_lat"],
+            "center_lon": cl["center_lon"],
+            "radius_m": 100,
+            "stops": cl.get("stops", []),
+            "ignored_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        }
+        ignored_entries.append(entry)
+        save_ignored_places(ignored_entries)
+        print(f"\n🙈 Ignored cluster at {clean_addr} (won't be asked again).")
+        return True
 
-        selected_name = None
+    selected_name = None
     final_lat = cl["center_lat"]
     final_lon = cl["center_lon"]
     recommended_radius = 150
@@ -2807,7 +2919,7 @@ def review_single_cluster(cl, places, total_clusters=1, cluster_num=1, allow_ign
         print(f"\n📍 Using POI Center: {final_lat:.5f}, {final_lon:.5f} [{selected_name}]")
         print(f"   Parking offset: {poi['dist_m']}m ➔ Recommended Geofence Radius: {recommended_radius}m")
 
-    elif choice == "s_pick":
+    elif choice == "s_pick" and search_pick:
         selected_name = search_pick["name"]
         final_lat = search_pick["lat"]
         final_lon = search_pick["lon"]
@@ -2816,7 +2928,7 @@ def review_single_cluster(cl, places, total_clusters=1, cluster_num=1, allow_ign
         print(f"\n📍 Using Search Result: {final_lat:.5f}, {final_lon:.5f} [{selected_name}]")
         print(f"   Parking offset: {offset_d:.0f}m ➔ Recommended Geofence Radius: {recommended_radius}m")
 
-    elif choice == "g":
+    elif choice in ("g", "gps"):
         try:
             g_in = input("Enter central GPS (lat, lon) or exact address to re-center: ").strip()
             g_lat, g_lon, g_addr = parse_coords_or_address(g_in)
@@ -2836,7 +2948,7 @@ def review_single_cluster(cl, places, total_clusters=1, cluster_num=1, allow_ign
         except (EOFError, KeyboardInterrupt):
             return "quit"
 
-    elif choice == "c":
+    elif choice in ("c", "custom"):
         try:
             selected_name = input("Enter Place Name: ").strip()
             c_coord = input(f"Center Coordinates [default: {final_lat:.5f}, {final_lon:.5f} (Enter to keep, or provide new)]: ").strip()
@@ -2850,17 +2962,13 @@ def review_single_cluster(cl, places, total_clusters=1, cluster_num=1, allow_ign
         except (EOFError, KeyboardInterrupt):
             return "quit"
     else:
-        selected_name = choice
+        selected_name = choice.strip()
 
     if not selected_name:
         print("⏩ Skipped (empty name).")
         return False
 
-    try:
-        r_input = input(f"Radius in meters [default {recommended_radius}m]: ").strip()
-        radius_m = int(r_input) if r_input else recommended_radius
-    except Exception:
-        radius_m = recommended_radius
+    radius_m = prompt_radius_input(recommended_radius, label="Radius in meters")
 
     keywords = suggest_keywords(clean_addr, selected_name)
     notes = f"{selected_name} ({clean_addr.split(',')[0].strip()})"
