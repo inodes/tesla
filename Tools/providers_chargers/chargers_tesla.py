@@ -31,13 +31,13 @@ def _resolve_tesla_registry_paths() -> List[str]:
         pass
     if tessie_home:
         candidates.extend([
-            os.path.join(tessie_home, "tesla_chargers.json"),
             os.path.join(tessie_home, "tesla_superchargers.json"),
+            os.path.join(tessie_home, "tesla_chargers.json"),
         ])
         
     candidates.extend([
-        os.path.join(_repo_root, "Tessie", "tesla_chargers.json"),
         os.path.join(_repo_root, "Tessie", "tesla_superchargers.json"),
+        os.path.join(_repo_root, "Tessie", "tesla_chargers.json"),
     ])
     config_path = os.path.join(_repo_root, "config.json")  # TODO-034: root is primary now
     if not os.path.isfile(config_path):
@@ -49,8 +49,8 @@ def _resolve_tesla_registry_paths() -> List[str]:
                 td = cfg.get("tessie_directory")
                 if td:
                     td_exp = os.path.expanduser(td)
-                    candidates.insert(0, os.path.join(td_exp, "tesla_chargers.json"))
-                    candidates.insert(1, os.path.join(td_exp, "tesla_superchargers.json"))
+                    candidates.insert(0, os.path.join(td_exp, "tesla_superchargers.json"))
+                    candidates.insert(1, os.path.join(td_exp, "tesla_chargers.json"))
         except Exception:
             pass
 
@@ -101,19 +101,7 @@ class TeslaProvider(BaseChargerProvider):
                 stations_dict = {s.get("name", f"Station_{i}"): s for i, s in enumerate(data)}
 
             for key, info in stations_dict.items():
-                if not isinstance(info, dict) or key in seen_keys:
-                    continue
-
-                # Location block (handles nested schema)
-                loc = info.get("location", {}) if isinstance(info.get("location"), dict) else {}
-                lat = loc.get("lat") or loc.get("latitude") or info.get("lat") or info.get("latitude")
-                lon = loc.get("lon") or loc.get("longitude") or loc.get("lng") or info.get("lon") or info.get("longitude") or info.get("lng")
-                if lat is None or lon is None:
-                    continue
-                try:
-                    lat = float(lat)
-                    lon = float(lon)
-                except (ValueError, TypeError):
+                if not isinstance(info, dict):
                     continue
 
                 # Metadata & naming (findus_location_name is authoritative over findus_list_name)
@@ -127,6 +115,26 @@ class TeslaProvider(BaseChargerProvider):
                 is_dest = (st_type in ["destination", "destination_charging", "destination_charger"] or 
                            "destination" in key.lower() or 
                            info.get("is_destination", False))
+
+                if key in seen_keys:
+                    if is_dest and f"{key} (Destination)" not in seen_keys:
+                        key = f"{key} (Destination)"
+                    elif not is_dest and f"{key} (Supercharger)" not in seen_keys:
+                        key = f"{key} (Supercharger)"
+                    else:
+                        continue
+
+                # Location block (handles nested schema)
+                loc = info.get("location", {}) if isinstance(info.get("location"), dict) else {}
+                lat = loc.get("lat") or loc.get("latitude") or info.get("lat") or info.get("latitude")
+                lon = loc.get("lon") or loc.get("longitude") or loc.get("lng") or info.get("lon") or info.get("longitude") or info.get("lng")
+                if lat is None or lon is None:
+                    continue
+                try:
+                    lat = float(lat)
+                    lon = float(lon)
+                except (ValueError, TypeError):
+                    continue
                 
                 speed_tier = "ac_destination" if is_dest else "supercharger"
                 network = "Tesla Destination" if is_dest else "Tesla"
