@@ -3743,6 +3743,9 @@ class TessieAnalyzer:
         is_stale = False
         stale_reason = ""
 
+        if not self.drives:
+            self.load_drives(check_stale=False)
+
         latest_drive_dt = None
         if self.drives:
             latest_drive_dt = max(d["start_dt"] for d in self.drives)
@@ -3987,6 +3990,8 @@ class TessieAnalyzer:
 
     def get_timeline_data(self, target_date):
         """Build event-driven timeline for target_date alternating seamlessly between parked and driving states."""
+        if not self.drives:
+            self.load_drives()
         self.index_footage()
         now = datetime.now()
         if isinstance(target_date, str):
