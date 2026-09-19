@@ -149,12 +149,12 @@ def parse_bppulse_location(basic: Dict[str, Any], detail: Optional[Dict[str, Any
     lon = float(basic.get("lng") or 0.0)
     state = resolve_bppulse_state(raw_prov, lat, lon)
 
-    # Clean address assembly
+ # Clean address assembly
     addr_parts = [p for p in [street, extra] if p]
     street_full = ", ".join(addr_parts) if addr_parts else street
     full_address = f"{street_full}, {city} {state} {postcode}".strip(", ")
 
-    # Detailed EV Data parsing
+ # Detailed EV Data parsing
     stalls_total = 0
     stalls_available = 0
     connectors_set = set()
@@ -210,7 +210,7 @@ def parse_bppulse_location(basic: Dict[str, Any], detail: Optional[Dict[str, Any
     speed_tier = "dc_fast" if max_pwr >= 25.0 else "ac_destination"
     hw_tier = f"{int(max_pwr)}kW" if max_pwr.is_integer() else f"{max_pwr:.0f}kW"
 
-    # Default bp pulse Australia tariff ($0.65/kWh for 75kW, $0.69/kWh for 150kW, $0.72/kWh for 300kW)
+ # Default bp pulse Australia tariff ($0.65/kWh for 75kW, $0.69/kWh for 150kW, $0.72/kWh for 300kW)
     if max_pwr >= 300.0:
         base_rate = 0.72
     elif max_pwr >= 150.0:
@@ -223,7 +223,7 @@ def parse_bppulse_location(basic: Dict[str, Any], detail: Optional[Dict[str, Any
     station_key = f"BPPulse_{bp_id}"
     clean_name = f"bp pulse - {city}" if city else f"bp pulse Station #{bp_id}"
 
-    # Timezone resolution
+ # Timezone resolution
     tz = "Australia/Sydney"
     if state in ("VIC", "TAS"):
         tz = "Australia/Melbourne" if state == "VIC" else "Australia/Hobart"
@@ -241,8 +241,8 @@ def parse_bppulse_location(basic: Dict[str, Any], detail: Optional[Dict[str, Any
     phone = detail.get("phone", "+61 1300 002 738") if detail else "+61 1300 002 738"
     photos = [p.get("publicUrl") for p in (detail.get("photos") or []) if p.get("publicUrl")] if detail else []
 
-    # Direct station deep-link search URL on bp pulse
-    # Example: https://www.bppulse.com/en-au/public-ev-charging/ev-charging-locations/s?q=bp+pulse+Charging+Station+-+1233+Marsden+Road%2C+2114+West+Ryde
+ # Direct station deep-link search URL on bp pulse
+ # Example: https://www.bppulse.com/en-au/public-ev-charging/ev-charging-locations/s?q=bp+pulse+Charging+Station+-+1233+Marsden+Road%2C+2114+West+Ryde
     if street_full and postcode and city:
         query_str = f"bp pulse Charging Station - {street_full}, {postcode} {city}"
     elif street_full and city:
@@ -391,9 +391,9 @@ class BPPulseProvider(BaseChargerProvider):
     """
     name: str = "BP Pulse"
     tier: int = 1
-    # BUG-079: verified via grep 'speed_tier\s*=' - only "dc_fast" or
-    # "ac_destination" (by max_power_kw threshold, or a stored hardware
-    # speed_tier defaulting to "dc_fast"). Never "supercharger".
+ # verified via grep 'speed_tier\s*=' - only "dc_fast" or
+ # "ac_destination" (by max_power_kw threshold, or a stored hardware
+ # speed_tier defaulting to "dc_fast"). Never "supercharger".
     POSSIBLE_SPEED_TIERS = {"dc_fast", "ac_destination"}
 
     def __init__(self, registry_path: Optional[str] = None):
@@ -491,7 +491,7 @@ class BPPulseProvider(BaseChargerProvider):
         archive_path = os.path.join(os.path.dirname(target_path), "bppulse_chargers_archived.json")
         now_utc = datetime.now(timezone.utc).isoformat()
 
-        # Load existing registry to detect changes
+ # Load existing registry to detect changes
         existing_stations = {}
         if os.path.isfile(target_path):
             try:
@@ -509,7 +509,7 @@ class BPPulseProvider(BaseChargerProvider):
                 d["views"] = r.views
             stations_dict[r.key] = d
 
-            # Archive if previous version exists and changed
+ # Archive if previous version exists and changed
             if r.key in existing_stations:
                 old_st = existing_stations[r.key]
                 if detect_station_changes(old_st, d):
@@ -523,12 +523,12 @@ class BPPulseProvider(BaseChargerProvider):
             "stations": stations_dict
         }
 
-        # AGENTS.md BUG-067: was a bare open(path, "w") - a process killed
-        # mid-write (Ctrl-C, laptop sleep, OOM) could leave a truncated/
-        # corrupt registry; atomic_write_json() (base.py) writes to a temp
-        # file in the same directory and os.replace()s it into place, so
-        # target_path is always either the old complete file or the new
-        # complete one, never something in between.
+ # AGENTS.md was a bare open(path, "w") - a process killed
+ # mid-write (Ctrl-C, laptop sleep, OOM) could leave a truncated/
+ # corrupt registry; atomic_write_json() (base.py) writes to a temp
+ # file in the same directory and os.replace()s it into place, so
+ # target_path is always either the old complete file or the new
+ # complete one, never something in between.
         atomic_write_json(target_path, payload)
 
         self._cache = records

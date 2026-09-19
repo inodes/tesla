@@ -150,11 +150,11 @@ def extract_au_state_and_suburb(addr: str) -> Tuple[str, str]:
     st_m = re.search(r"\b(NSW|VIC|QLD|WA|SA|TAS|ACT|NT)\b", addr, re.IGNORECASE)
     st = st_m.group(1).upper() if st_m else "-"
 
-    # 1. Standard ", Suburb STATE [postcode]"
+ # 1. Standard ", Suburb STATE [postcode]"
     sub_m = re.search(r",\s*([^,]+?)\s+(?:NSW|VIC|QLD|WA|SA|TAS|ACT|NT)\b", addr, re.IGNORECASE)
     sub = sub_m.group(1).strip() if sub_m else ""
 
-    # 2. If no match, check split by comma
+ # 2. If no match, check split by comma
     if not sub:
         parts = [p.strip() for p in addr.split(",") if p.strip()]
         for p in parts[1:]:
@@ -163,7 +163,7 @@ def extract_au_state_and_suburb(addr: str) -> Tuple[str, str]:
                 sub = cleaned
                 break
 
-    # 3. If still empty or just state/postcode, extract from parts[0]
+ # 3. If still empty or just state/postcode, extract from parts[0]
     if not sub or re.match(r"^(?:NSW|VIC|QLD|WA|SA|TAS|ACT|NT)?\s*\d{0,4}$", sub, re.IGNORECASE):
         parts = [p.strip() for p in addr.split(",") if p.strip()]
         if parts:
@@ -180,14 +180,14 @@ def extract_au_state_and_suburb(addr: str) -> Tuple[str, str]:
 
 def _resolve_state_suburb_via_geocode(lat: float, lon: float) -> Tuple[str, str, str]:
     """
-    BUG-116 (2026-09-16, AGENTS.local.md): extract_au_state_and_suburb() can only
+    (2026-09-16, AGENTS.local.md): extract_au_state_and_suburb() can only
     parse what's literally present in PlugShare's own free-text address field -
     and that field is frequently bare street-level text with no state/suburb at
     all ("6 Everard St Hunters Hill" has a suburb but no "NSW"/postcode; "5
     Talavera Rd" has neither). Falls back to the same Nominatim-based,
     rate-limited, persistently-cached reverse-geocode helper already used for
     Chargefox (see chargers_chargefox.py's _resolve_suburb_via_geocode() /
-    BUG-076) and Tesla's own border lookups - charger_find_tesla.py's
+    ) and Tesla's own border lookups - charger_find_tesla.py's
     reverse_geocode_osm()/load_geo_cache()/save_geo_cache(), same
     Tessie/geo_cache.json, same "{lat:.4f},{lon:.4f}" cache key - so a coordinate
     already resolved by either of those paths is a free cache hit here too, and
@@ -380,18 +380,18 @@ def plugshare_to_registry_record(basic_or_detail: dict, full_detail: Optional[di
     if bool(d.get("under_repair")) and not operational_status:
         operational_status = "UNDER_REPAIR"
 
-    # BUG-088 (2026-09-15): PlugShare's `access` field (1/2/3) is only a
-    # coarse base classification - a station can ALSO carry a separate
-    # `access_restrictions` list (e.g. ["EMPLOYEES_ONLY"], with a matching
-    # human-readable `access_restriction_descriptions`) that PlugShare's
-    # own site renders as an ADDITIONAL red "RESTRICTED"/aqua "EMPLOYEES
-    # ONLY" badge on top of the base access level. Real user report:
-    # plugshare.com/location/525387 (Mortlake Slipway) has access=2 (the
-    # bare "Customer / Patron" mapping below), but ALSO carries
-    # access_restrictions=["EMPLOYEES_ONLY"] - confirmed live against
-    # PlugShare's own API - so this tool was showing it as ordinary
-    # customer-accessible when it's actually staff-only. The restriction
-    # descriptions, when present, now take priority over the base code.
+ # (2026-09-15): PlugShare's `access` field (1/2/3) is only a
+ # coarse base classification - a station can ALSO carry a separate
+ # `access_restrictions` list (e.g. ["EMPLOYEES_ONLY"], with a matching
+ # human-readable `access_restriction_descriptions`) that PlugShare's
+ # own site renders as an ADDITIONAL red "RESTRICTED"/aqua "EMPLOYEES
+ # ONLY" badge on top of the base access level. Real user report:
+ # plugshare.com/location/525387 (Mortlake Slipway) has access=2 (the
+ # bare "Customer / Patron" mapping below), but ALSO carries
+ # access_restrictions=["EMPLOYEES_ONLY"] - confirmed live against
+ # PlugShare's own API - so this tool was showing it as ordinary
+ # customer-accessible when it's actually staff-only. The restriction
+ # descriptions, when present, now take priority over the base code.
     restriction_descs = d.get("access_restriction_descriptions") or []
     if not restriction_descs:
         restriction_items = d.get("access_restriction_items") or []
@@ -480,7 +480,7 @@ def record_dict_to_unified(key: str, info: dict) -> Optional[UnifiedStationRecor
     if not isinstance(info, dict):
         return None
 
-    # Location block
+ # Location block
     loc = info.get("location", {}) if isinstance(info.get("location"), dict) else {}
     lat = loc.get("lat") or loc.get("latitude") or info.get("lat") or info.get("latitude")
     lon = loc.get("lon") or loc.get("longitude") or loc.get("lng") or info.get("lon") or info.get("longitude") or info.get("lng")
@@ -492,12 +492,12 @@ def record_dict_to_unified(key: str, info: dict) -> Optional[UnifiedStationRecor
     except (ValueError, TypeError):
         return None
 
-    # Metadata block
+ # Metadata block
     ps_meta = info.get("plugshare_metadata", {}) if isinstance(info.get("plugshare_metadata"), dict) else {}
     name = ps_meta.get("name") or info.get("name") or key
     network = ps_meta.get("network") or info.get("network") or info.get("operator") or "Public"
 
-    # Hardware block
+ # Hardware block
     hw = info.get("hardware", {}) if isinstance(info.get("hardware"), dict) else {}
     max_kw = hw.get("max_power_kw") or hw.get("max_kw") or info.get("max_power_kw") or info.get("max_kw") or 0.0
     try:
@@ -506,17 +506,17 @@ def record_dict_to_unified(key: str, info: dict) -> Optional[UnifiedStationRecor
         max_kw = 0.0
 
     speed_tier = "dc_fast" if max_kw >= 25.0 else "ac_destination"
-    # "Supercharger" is a Tesla-specific hardware/network term - matching it
-    # anywhere in the network OR station name string was misclassifying
-    # non-Tesla stations whose name happens to contain the word colloquially
-    # (e.g. PlugShare's own "Coochin Creek Evie supercharger" entry, an Evie
-    # AC destination charger, was showing up under --sc/tesla_superchargers
-    # filters). Now requires "tesla" AND "supercharger" together in the
-    # network string specifically. Fixed 2026-09-14.
+ # "Supercharger" is a Tesla-specific hardware/network term - matching it
+ # anywhere in the network OR station name string was misclassifying
+ # non-Tesla stations whose name happens to contain the word colloquially
+ # (e.g. PlugShare's own "Coochin Creek Evie supercharger" entry, an Evie
+ # AC destination charger, was showing up under --sc/tesla_superchargers
+ # filters). Now requires "tesla" AND "supercharger" together in the
+ # network string specifically. Fixed 2026-09-14.
     if "tesla" in network.lower() and "supercharger" in network.lower():
         speed_tier = "supercharger"
 
-    # Tariffs block
+ # Tariffs block
     tariffs = info.get("tariffs", {}) if isinstance(info.get("tariffs"), dict) else {}
     flat_rate = tariffs.get("per_kwh_flat") or info.get("rate_per_kwh")
     tariff_str = str(info.get("tariff", "") or info.get("cost_description", "")).strip()
@@ -544,7 +544,7 @@ def record_dict_to_unified(key: str, info: dict) -> Optional[UnifiedStationRecor
             current_rate = float(m.group(1))
             pricing_model = "flat" if "-" not in tariff_str else "time_of_use"
 
-    # Stalls & Plugs
+ # Stalls & Plugs
     stalls = hw.get("stalls") or info.get("stalls") or info.get("outlets_count") or info.get("stalls_total") or 1
     try:
         stalls = int(stalls)
@@ -797,15 +797,15 @@ class PlugShareClient:
 class PlugShareProvider(BaseChargerProvider):
     name: str = "PlugShare"
     tier: int = 2  # Multi-network Aggregator
-    # BUG-079: unlike the other aggregators, PlugShare CAN assign
-    # speed_tier="supercharger" - see the "tesla" + "supercharger" network-name
-    # check near line 433, added to correctly cross-list PlugShare's own
-    # listing of a real Tesla Supercharger (while still rejecting false
-    # positives like a non-Tesla "... supercharger"-named AC destination
-    # charger). So PlugShare must stay in the "possible" set here rather than
-    # being skippable under a --sc query, even though it's the rarer case.
-    # PlugShare's load_cached_registry() only reads a local JSON file (no
-    # live network calls), so keeping it loaded costs nothing.
+ # unlike the other aggregators, PlugShare CAN assign
+ # speed_tier="supercharger" - see the "tesla" + "supercharger" network-name
+ # check near line 433, added to correctly cross-list PlugShare's own
+ # listing of a real Tesla Supercharger (while still rejecting false
+ # positives like a non-Tesla "... supercharger"-named AC destination
+ # charger). So PlugShare must stay in the "possible" set here rather than
+ # being skippable under a --sc query, even though it's the rarer case.
+ # PlugShare's load_cached_registry() only reads a local JSON file (no
+ # live network calls), so keeping it loaded costs nothing.
     POSSIBLE_SPEED_TIERS = {"dc_fast", "ac_destination", "supercharger"}
 
     def __init__(self, registry_path: Optional[str] = None):
@@ -813,7 +813,7 @@ class PlugShareProvider(BaseChargerProvider):
         self._cache: Optional[List[UnifiedStationRecord]] = None
         self.client = PlugShareClient()
 
-    # --- Local Registry Operations ---
+ # --- Local Registry Operations ---
 
     def load_raw_registry(self) -> Dict[str, dict]:
         """Loads raw dictionary of stations from plugshare_chargers.json."""
@@ -835,7 +835,7 @@ class PlugShareProvider(BaseChargerProvider):
     def save_raw_registry(self, data: Dict[str, dict]) -> bool:
         """Saves dictionary of stations to plugshare_chargers.json.
 
-        AGENTS.md BUG-067: this used to catch a bare `Exception` around
+        AGENTS.md this used to catch a bare `Exception` around
         the write and just return False - most of THIS function's own
         callers (sync_nearby/sync_state/sync_australia/refresh_prices,
         each called from charger_find.py) never check that return
@@ -869,7 +869,7 @@ class PlugShareProvider(BaseChargerProvider):
             registry = self.load_raw_registry()
         new_id = record.get("plugshare_metadata", {}).get("id")
 
-        # 1. Authoritative PlugShare ID match
+ # 1. Authoritative PlugShare ID match
         if new_id:
             for k, v in registry.items():
                 if v.get("plugshare_metadata", {}).get("id") == new_id:
@@ -879,14 +879,14 @@ class PlugShareProvider(BaseChargerProvider):
             existing_id = v.get("plugshare_metadata", {}).get("id")
             return bool(existing_id) and bool(new_id) and existing_id != new_id
 
-        # 2. Key match without ID conflict
+ # 2. Key match without ID conflict
         if station_key in registry and not _id_conflicts(registry[station_key]):
             return station_key, registry[station_key]
         for k, v in registry.items():
             if k.lower() == station_key.lower() and not _id_conflicts(v):
                 return k, v
 
-        # 3. Spatial proximity fallback (< 200m)
+ # 3. Spatial proximity fallback (< 200m)
         new_lat = record.get("location", {}).get("lat")
         new_lon = record.get("location", {}).get("lon")
         if new_lat is not None and new_lon is not None:
@@ -928,7 +928,7 @@ class PlugShareProvider(BaseChargerProvider):
         existing_key, existing = self.find_existing_match(station_key, record, registry)
 
         if existing:
-            # Check if tariffs or hardware changed
+ # Check if tariffs or hardware changed
             if detect_station_changes(existing, record):
                 archive_path = os.path.join(os.path.dirname(self.registry_path), "plugshare_chargers_archived.json")
                 archive_station_record(archive_path, existing_key or station_key, existing, now_utc)
@@ -943,21 +943,21 @@ class PlugShareProvider(BaseChargerProvider):
             record["last_updated"] = now_utc
             record["last_verified"] = now_utc
 
-            # BUG-117 (2026-09-16, AGENTS.local.md): existing_key comes from
-            # find_existing_match()'s PlugShare-ID lookup, so it can be the
-            # registry key this station was FIRST discovered under - which
-            # sticks around forever even after PlugShare's own upstream name
-            # changes (e.g. a location first scraped as "Evie Top Ryde
-            # Shopping Centre" later renamed "Top Ryde City Shopping Centre"
-            # on PlugShare's own site keeps a registry key/"Station Key"
-            # display that still says "Evie" with nothing else about the
-            # record actually saying so - user report: "it is NOT Evie -
-            # nothing says Evie except the json"). When the freshly-fetched
-            # record's own current-name-derived key differs from the key this
-            # entry is stored under, migrate the entry to the new key so the
-            # persisted identity tracks what PlugShare itself calls it now -
-            # but only when that new key is free, so we never silently
-            # clobber a genuinely different station that already owns it.
+ # (2026-09-16, AGENTS.local.md): existing_key comes from
+ # find_existing_match()'s PlugShare-ID lookup, so it can be the
+ # registry key this station was FIRST discovered under - which
+ # sticks around forever even after PlugShare's own upstream name
+ # changes (e.g. a location first scraped as "Evie Top Ryde
+ # Shopping Centre" later renamed "Top Ryde City Shopping Centre"
+ # on PlugShare's own site keeps a registry key/"Station Key"
+ # display that still says "Evie" with nothing else about the
+ # record actually saying so - user report: "it is NOT Evie -
+ # nothing says Evie except the json"). When the freshly-fetched
+ # record's own current-name-derived key differs from the key this
+ # entry is stored under, migrate the entry to the new key so the
+ # persisted identity tracks what PlugShare itself calls it now -
+ # but only when that new key is free, so we never silently
+ # clobber a genuinely different station that already owns it.
             target_key = existing_key
             if station_key and station_key != existing_key and station_key not in registry:
                 del registry[existing_key]
@@ -993,7 +993,7 @@ class PlugShareProvider(BaseChargerProvider):
             return "ERROR"
         return result
 
-    # --- Live Sync Operations ---
+ # --- Live Sync Operations ---
 
     def sync_location(self, location_id: Any, auto_save: bool = True) -> Optional[UnifiedStationRecord]:
         """Fetches full details for a single PlugShare location and optionally persists it."""
@@ -1113,29 +1113,29 @@ class PlugShareProvider(BaseChargerProvider):
         refreshed = 0
         failed = 0
 
-        # BUG-008 follow-up (2026-09-15, AGENTS.local.md): the original pacing
-        # here was a flat 1.5-2.5s between every request, with only a single
-        # one-off 5-7s pause right after a 429/rate-limit hit before
-        # immediately resuming at the SAME flat pace - which just re-tripped
-        # PlugShare's server-side throttling again almost immediately, so a
-        # batched run kept leaving most stations unpriced (confirmed by the
-        # user). `current_delay` now escalates for the REST of the run on
-        # each rate-limit hit (doubling, capped at `max_delay`) so the
-        # request rate actually drops under whatever threshold PlugShare is
-        # enforcing, and eases back toward the base pace only after a
-        # sustained run of successes (so it doesn't immediately re-trip the
-        # limit the moment it recovers).
+ # follow-up (2026-09-15, AGENTS.local.md): the original pacing
+ # here was a flat 1.5-2.5s between every request, with only a single
+ # one-off 5-7s pause right after a 429/rate-limit hit before
+ # immediately resuming at the SAME flat pace - which just re-tripped
+ # PlugShare's server-side throttling again almost immediately, so a
+ # batched run kept leaving most stations unpriced (confirmed by the
+ # user). `current_delay` now escalates for the REST of the run on
+ # each rate-limit hit (doubling, capped at `max_delay`) so the
+ # request rate actually drops under whatever threshold PlugShare is
+ # enforcing, and eases back toward the base pace only after a
+ # sustained run of successes (so it doesn't immediately re-trip the
+ # limit the moment it recovers).
         base_delay = 1.5
         max_delay = 20.0
         current_delay = base_delay
         consecutive_successes = 0
 
-        # BUG-008 follow-up: checkpoint the registry periodically instead of
-        # only once at the very end - a rate-limited run can take a long
-        # time, and losing every successful refresh from a run that was
-        # interrupted (Ctrl-C, a crash, or the user giving up partway
-        # through) forced a full re-run from scratch. Cheap to do (atomic
-        # write of a JSON file this size), so checkpoint often.
+ # follow-up: checkpoint the registry periodically instead of
+ # only once at the very end - a rate-limited run can take a long
+ # time, and losing every successful refresh from a run that was
+ # interrupted (Ctrl-C, a crash, or the user giving up partway
+ # through) forced a full re-run from scratch. Cheap to do (atomic
+ # write of a JSON file this size), so checkpoint often.
         checkpoint_every = 10
         since_last_save = 0
 
@@ -1259,7 +1259,7 @@ class PlugShareProvider(BaseChargerProvider):
                     discovered.append(u_rec)
         return discovered
 
-    # --- Standard BaseChargerProvider Query Methods ---
+ # --- Standard BaseChargerProvider Query Methods ---
 
     def search_nearby(self, lat: float, lon: float, radius_km: float = 15.0, filters: Optional[Dict[str, Any]] = None) -> List[UnifiedStationRecord]:
         """Finds PlugShare stations within geographic radius."""

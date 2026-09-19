@@ -67,7 +67,7 @@ def normalize_plug_name(p: str) -> str:
 def _tokenize(name: str) -> set:
     """Extracts alphanumeric tokens of length >= 2 with street normalization."""
     words = re.findall(r"[a-zA-Z0-9]+", name.lower())
-    # Exclude very generic noise words
+ # Exclude very generic noise words
     stop_words = {"station", "charger", "charging", "supercharger", "australia", "nsw", "vic", "qld", "wa", "sa", "tas", "act"}
     return set(_normalize_street_word(w) for w in words if len(w) >= 2 and w not in stop_words)
 
@@ -84,7 +84,7 @@ def _jaccard_similarity(set1: set, set2: set) -> float:
 def _hardware_class_mismatch(s1: UnifiedStationRecord, s2: UnifiedStationRecord) -> bool:
     """
     True if the two records report fundamentally different charging classes
-    (AC destination vs DC-capable/supercharger) - see BUG-115 in
+    (AC destination vs DC-capable/supercharger) - see in
     are_stations_co_located() for the concrete case this exists to catch.
     """
     t1, t2 = s1.speed_tier, s2.speed_tier
@@ -101,14 +101,14 @@ def are_stations_co_located(s1: UnifiedStationRecord, s2: UnifiedStationRecord, 
     2. Same network + token similarity >= 0.20 or identical suburb/postcode.
     3. Co-located if distance <= 35m, UNLESS the two are on different
        networks AND report fundamentally different charging classes (AC
-       vs DC) - see BUG-115, 2026-09-16.
+       vs DC) - see , 2026-09-16.
     """
     dist_km = haversine_km(s1.lat, s1.lon, s2.lat, s2.lon)
     dist_m = dist_km * 1000.0
     if dist_m > max_dist_m:
         return False
 
-    # Check network match
+ # Check network match
     net1 = (s1.network or "").lower()
     net2 = (s2.network or "").lower()
     same_net = (net1 in net2 or net2 in net1 or 
@@ -130,19 +130,19 @@ def are_stations_co_located(s1: UnifiedStationRecord, s2: UnifiedStationRecord, 
     if dist_m <= 35.0:
         return True
 
-    # Two DIFFERENT Tier-1 (first-party authoritative) providers are never
-    # the same physical charger just because their names/addresses look
-    # similar - e.g. a genuine Chargefox install and a genuine AmpCharge
-    # install can both sit in the same shopping centre car park, ~100m
-    # apart, and both match "<Centre Name> Shopping Centre" on name tokens
-    # without being the same charger. Only the unconditional <=35m branch
-    # above, or an actual same-network match, may co-locate two Tier-1
-    # sources - the two fuzzy paths below are blocked for this case. A
-    # Tier-2 aggregator (PlugShare) fuzzy-matching a Tier-1 record by name
-    # is unaffected - that is its actual job.
+ # Two DIFFERENT Tier-1 (first-party authoritative) providers are never
+ # the same physical charger just because their names/addresses look
+ # similar - e.g. a genuine Chargefox install and a genuine AmpCharge
+ # install can both sit in the same shopping centre car park, ~100m
+ # apart, and both match "<Centre Name> Shopping Centre" on name tokens
+ # without being the same charger. Only the unconditional <=35m branch
+ # above, or an actual same-network match, may co-locate two Tier-1
+ # sources - the two fuzzy paths below are blocked for this case. A
+ # Tier-2 aggregator (PlugShare) fuzzy-matching a Tier-1 record by name
+ # is unaffected - that is its actual job.
     cross_tier1_mismatch = (s1.tier == 1 and s2.tier == 1 and not same_net)
 
-    # Token similarity on names and addresses
+ # Token similarity on names and addresses
     tok1 = _tokenize(f"{s1.name} {s1.address}")
     tok2 = _tokenize(f"{s2.name} {s2.address}")
     sim = _jaccard_similarity(tok1, tok2)
@@ -150,7 +150,7 @@ def are_stations_co_located(s1: UnifiedStationRecord, s2: UnifiedStationRecord, 
     if not cross_tier1_mismatch and dist_m <= 60.0 and sim >= 0.25:
         return True
 
-    # Token similarity (name only)
+ # Token similarity (name only)
     tok1 = _tokenize(s1.name)
     tok2 = _tokenize(s2.name)
     sim = _jaccard_similarity(tok1, tok2)
@@ -175,32 +175,32 @@ def merge_station_records(primary: UnifiedStationRecord, secondary: UnifiedStati
     Primary is assumed to be higher or equal tier (Tier 1 > Tier 2).
     """
     if primary.tier > secondary.tier:
-        # Swap so primary is the higher authority (lower tier number)
+ # Swap so primary is the higher authority (lower tier number)
         primary, secondary = secondary, primary
 
-    # REQ-088 (AGENTS.local.md, 2026-09-16): NRMA and Chargefox are the one
-    # Tier-1-vs-Tier-1 pairing in this codebase that CAN legitimately
-    # co-locate (are_stations_co_located()'s same_net check matches both
-    # sides' network="NRMA" text) - NRMA is a Chargefox network partner, so
-    # the same physical site can show up in both feeds. Equal tier alone
-    # doesn't pick a winner (the swap above only fires on tier MISMATCH), so
-    # without this, whichever provider happened to sort first won by
-    # accident. The user's explicit call: Chargefox's data is richer here
-    # (address, live pricing, confirmed hardware vs NRMA's name+GPS-point-
-    # only KML), so Chargefox is primary whenever both are present -
-    # regardless of sort order - while NRMA's confirmation that the site is
-    # still live carries through via merged_source/co_located_networks.
+ # REQ-088 (AGENTS.local.md, 2026-09-16): NRMA and Chargefox are the one
+ # Tier-1-vs-Tier-1 pairing in this codebase that CAN legitimately
+ # co-locate (are_stations_co_located()'s same_net check matches both
+ # sides' network="NRMA" text) - NRMA is a Chargefox network partner, so
+ # the same physical site can show up in both feeds. Equal tier alone
+ # doesn't pick a winner (the swap above only fires on tier MISMATCH), so
+ # without this, whichever provider happened to sort first won by
+ # accident. The user's explicit call: Chargefox's data is richer here
+ # (address, live pricing, confirmed hardware vs NRMA's name+GPS-point-
+ # only KML), so Chargefox is primary whenever both are present -
+ # regardless of sort order - while NRMA's confirmation that the site is
+ # still live carries through via merged_source/co_located_networks.
     def _src(r):
         return (r.source or "").lower()
     if primary.tier == 1 and secondary.tier == 1:
         if "nrma" in _src(primary) and "chargefox" in _src(secondary):
             primary, secondary = secondary, primary
 
-    # Surface (rather than silently drop) meaningfully conflicting values
-    # between two same-tier sources describing the same site - e.g. NRMA's
-    # KML default-guess power rating vs Chargefox's confirmed hardware spec.
-    # Recorded on the merged record's metadata so the station detail view
-    # can show both sides with attribution instead of just picking one.
+ # Surface (rather than silently drop) meaningfully conflicting values
+ # between two same-tier sources describing the same site - e.g. NRMA's
+ # KML default-guess power rating vs Chargefox's confirmed hardware spec.
+ # Recorded on the merged record's metadata so the station detail view
+ # can show both sides with attribution instead of just picking one.
     source_conflicts: Dict[str, Dict[str, Any]] = {}
     if primary.tier == 1 and secondary.tier == 1 and _src(primary) != _src(secondary):
         if (
@@ -221,12 +221,12 @@ def merge_station_records(primary: UnifiedStationRecord, secondary: UnifiedStati
                 secondary.source: secondary.address,
             }
 
-    # Deduplicate unique sources cleanly
+ # Deduplicate unique sources cleanly
     raw_sources = [s.strip() for s in f"{primary.source}+{secondary.source}".split("+") if s.strip()]
     unique_sources = list(dict.fromkeys(raw_sources))
     merged_source = "+".join(unique_sources)
 
-    # Primary authoritative source_id (must be clean and valid for filenames, no pipes)
+ # Primary authoritative source_id (must be clean and valid for filenames, no pipes)
     primary_id = primary.source_id or primary.key
     secondary_id = secondary.source_id or secondary.key
 
@@ -237,21 +237,21 @@ def merge_station_records(primary: UnifiedStationRecord, secondary: UnifiedStati
         elif k not in merged_metadata:
             merged_metadata[k] = v
 
-    # Preserve rich descriptions & access notes across views
+ # Preserve rich descriptions & access notes across views
     p_desc = (primary.metadata or {}).get("description") or (primary.metadata or {}).get("access_description")
     s_desc = (secondary.metadata or {}).get("description") or (secondary.metadata or {}).get("access_description")
     if not p_desc and s_desc:
         merged_metadata["description"] = s_desc
         merged_metadata["access_description"] = s_desc
 
-    # Preserve operating hours if missing in primary
+ # Preserve operating hours if missing in primary
     p_hours = (primary.metadata or {}).get("access_hours") or (primary.metadata or {}).get("hours")
     s_hours = (secondary.metadata or {}).get("access_hours") or (secondary.metadata or {}).get("hours")
     if not p_hours and s_hours:
         merged_metadata["access_hours"] = s_hours
         merged_metadata["hours"] = s_hours
 
-    # Track co-located networks
+ # Track co-located networks
     raw_nets = [primary.network, secondary.network, primary.operator_name, secondary.operator_name]
     all_nets = []
     for n in raw_nets:
@@ -264,7 +264,7 @@ def merge_station_records(primary: UnifiedStationRecord, secondary: UnifiedStati
     if all_nets:
         merged_metadata["co_located_networks"] = all_nets
 
-    # Preserve connector breakdown across views if available
+ # Preserve connector breakdown across views if available
     p_cb = (primary.metadata or {}).get("connector_breakdown")
     s_cb = (secondary.metadata or {}).get("connector_breakdown")
     if p_cb:
@@ -304,7 +304,7 @@ def merge_station_records(primary: UnifiedStationRecord, secondary: UnifiedStati
     merged_max_power = max(primary.max_power_kw or 0.0, secondary.max_power_kw or 0.0)
     merged_stalls = max(primary.stalls_total or 0, secondary.stalls_total or 0) or primary.stalls_total or secondary.stalls_total
 
-    # Resolve hardware model cleanly matching merged power
+ # Resolve hardware model cleanly matching merged power
     merged_hw_model = primary.hardware_model or secondary.hardware_model
     if "bp" in (primary.network or "").lower() or "pulse" in (primary.network or "").lower():
         pwr_label = f"{int(merged_max_power)}kW" if merged_max_power.is_integer() else f"{merged_max_power:.0f}kW"
@@ -349,18 +349,18 @@ def merge_station_records(primary: UnifiedStationRecord, secondary: UnifiedStati
         current_rate_per_kwh=primary.current_rate_per_kwh if primary.current_rate_per_kwh is not None else secondary.current_rate_per_kwh,
         rate_range=primary.rate_range or secondary.rate_range,
         schedule=primary.schedule or secondary.schedule,
-        # non_tesla_schedule / effective_date_utc were both missing from this
-        # merge until 2026-09-14 (see AGENTS.local.md) - same class of bug as
-        # the congestion_fee_per_min omission just below: a Tesla-sourced
-        # non-Tesla rate schedule or effective date silently vanished on any
-        # multi-source merge.
+ # non_tesla_schedule / effective_date_utc were both missing from this
+ # merge until 2026-09-14 (see AGENTS.local.md) - same class of issue as
+ # the congestion_fee_per_min omission just below: a Tesla-sourced
+ # non-Tesla rate schedule or effective date silently vanished on any
+ # multi-source merge.
         non_tesla_schedule=primary.non_tesla_schedule or secondary.non_tesla_schedule,
         idle_fee_per_min=primary.idle_fee_per_min if primary.idle_fee_per_min is not None else secondary.idle_fee_per_min,
-        # congestion_fee_per_min was missing from this merge entirely until
-        # 2026-09-14 - it silently fell back to UnifiedStationRecord's own
-        # None default on every multi-source merge, regardless of what either
-        # source actually had (e.g. Tesla's own $0.50/min congestion fee for
-        # Macquarie, NSW vanished the moment it merged with a PlugShare match).
+ # congestion_fee_per_min was missing from this merge entirely until
+ # 2026-09-14 - it silently fell back to UnifiedStationRecord's own
+ # None default on every multi-source merge, regardless of what either
+ # source actually had (e.g. Tesla's own $0.50/min congestion fee for
+ # Macquarie, NSW vanished the moment it merged with a PlugShare match).
         congestion_fee_per_min=primary.congestion_fee_per_min if primary.congestion_fee_per_min is not None else secondary.congestion_fee_per_min,
         parking_fee=primary.parking_fee or secondary.parking_fee,
         currency=primary.currency or secondary.currency,
@@ -381,7 +381,7 @@ def merge_station_records(primary: UnifiedStationRecord, secondary: UnifiedStati
 
 def _diff_station_fields(old: UnifiedStationRecord, new: UnifiedStationRecord) -> Dict[str, Tuple[Any, Any]]:
     """
-    BUG-117 (2026-09-16, AGENTS.local.md): reverify_station() previously threw
+    (2026-09-16, AGENTS.local.md): reverify_station() previously threw
     away the freshly-fetched record and returned a bare bool, so a live
     "Update / Re-verify" always printed the same canned "Successfully updated
     and saved (historical version archived if changed)" message whether or
@@ -442,7 +442,7 @@ class ChargerDiscoveryManager:
         if not records:
             return []
 
-        # Sort records by authority tier (Tier 1 first)
+ # Sort records by authority tier (Tier 1 first)
         sorted_records = sorted(records, key=lambda r: (r.tier, -(r.max_power_kw or 0)))
         merged_results: List[UnifiedStationRecord] = []
 
@@ -454,7 +454,7 @@ class ChargerDiscoveryManager:
                     break
 
             if matched_idx >= 0:
-                # Merge into existing higher-tier record
+ # Merge into existing higher-tier record
                 merged_results[matched_idx] = merge_station_records(merged_results[matched_idx], record)
             else:
                 merged_results.append(record)
@@ -488,11 +488,11 @@ class ChargerDiscoveryManager:
         for res in results_lists:
             all_found.extend(res)
 
-        # Deduplicate
+ # Deduplicate
         deduped = self.deduplicate_records(all_found)
-        # Apply standard filters
+ # Apply standard filters
         filtered = filter_station_records(deduped, filters)
-        # Sort results
+ # Sort results
         sorted_res = self.sort_records(filtered, sort_by=sort_by, eval_time=eval_time)
         return sorted_res
 
@@ -524,7 +524,7 @@ class ChargerDiscoveryManager:
         for res in results_lists:
             all_found.extend(res)
 
-        # Check facilities registry for matching POIs (e.g. searching "Woolworths", "Coles", "Aldi", "Kmart")
+ # Check facilities registry for matching POIs (e.g. searching "Woolworths", "Coles", "Aldi", "Kmart")
         try:
             from lib.station_facilities import get_facilities_registry
             _f_reg = get_facilities_registry()
@@ -568,33 +568,33 @@ class ChargerDiscoveryManager:
             if not hasattr(p, "load_cached_registry"):
                 continue
 
-            # BUG-079: get_all_stations() used to unconditionally load every
-            # provider's full registry before any filter was applied - so a
-            # `--sc`-only query (Tesla Superchargers, provably Tesla-exclusive
-            # hardware) still paid the cost of converting every OTHER
-            # network's registry too, including ChargefoxProvider, whose
-            # load_cached_registry() can trigger a live, rate-limited (~1
-            # req/sec) Nominatim reverse-geocode HTTP call per uncached
-            # station and can block for a long time on a cold/partial geo
-            # cache. Skip providers that declare (via POSSIBLE_SPEED_TIERS -
-            # see chargers_base.py) that they can never produce a record
-            # matching the active speed_tier filter - a provider with
-            # POSSIBLE_SPEED_TIERS=None (unknown/unrestricted) is never
-            # skipped, so this is opt-in per provider and safe by default.
+ # get_all_stations() used to unconditionally load every
+ # provider's full registry before any filter was applied - so a
+ # `--sc`-only query (Tesla Superchargers, provably Tesla-exclusive
+ # hardware) still paid the cost of converting every OTHER
+ # network's registry too, including ChargefoxProvider, whose
+ # load_cached_registry() can trigger a live, rate-limited (~1
+ # req/sec) Nominatim reverse-geocode HTTP call per uncached
+ # station and can block for a long time on a cold/partial geo
+ # cache. Skip providers that declare (via POSSIBLE_SPEED_TIERS -
+ # see chargers_base.py) that they can never produce a record
+ # matching the active speed_tier filter - a provider with
+ # POSSIBLE_SPEED_TIERS=None (unknown/unrestricted) is never
+ # skipped, so this is opt-in per provider and safe by default.
             possible_tiers = getattr(p, "POSSIBLE_SPEED_TIERS", None)
             if requested_speed_tier and possible_tiers is not None:
-                # BUG-110 (AGENTS.local.md, 2026-09-16): filter_station_records()'s
-                # "dc_fast" branch deliberately also accepts speed_tier=="supercharger"
-                # records (`st.speed_tier not in ("dc_fast", "supercharger")`) because
-                # a real Tesla Supercharger with non-Tesla (CCS2) access IS a DC fast
-                # charging option. This provider-level skip must match that same
-                # acceptance rule, or a provider whose POSSIBLE_SPEED_TIERS is only
-                # {"supercharger", ...} (i.e. TeslaProvider) gets silently skipped
-                # for every `--dc` query before filter_station_records ever runs -
-                # which is exactly why real, closer Superchargers were vanishing
-                # from `--near <place> --dc` results while `--sc` still found them
-                # fine. Skip only when the provider truly cannot produce anything
-                # that would pass either acceptance path.
+ # (AGENTS.local.md, 2026-09-16): filter_station_records()'s
+ # "dc_fast" branch deliberately also accepts speed_tier=="supercharger"
+ # records (`st.speed_tier not in ("dc_fast", "supercharger")`) because
+ # a real Tesla Supercharger with non-Tesla (CCS2) access IS a DC fast
+ # charging option. This provider-level skip must match that same
+ # acceptance rule, or a provider whose POSSIBLE_SPEED_TIERS is only
+ # {"supercharger", ...} (i.e. TeslaProvider) gets silently skipped
+ # for every `--dc` query before filter_station_records ever runs -
+ # which is exactly why real, closer Superchargers were vanishing
+ # from `--near <place> --dc` results while `--sc` still found them
+ # fine. Skip only when the provider truly cannot produce anything
+ # that would pass either acceptance path.
                 if requested_speed_tier == "dc_fast":
                     if "dc_fast" not in possible_tiers and "supercharger" not in possible_tiers:
                         continue
@@ -628,19 +628,21 @@ class ChargerDiscoveryManager:
         if sort_by == "price":
             def price_key(r: UnifiedStationRecord):
                 p = r.evaluate_rate(eval_time)
+                dist = r.distance_km if r.distance_km is not None else 999999.0
+                name = (r.name or "").lower()
                 if p is None:
-                    return (3, 999.0, r.name)
+                    return (3, 999.0, dist, name)
                 elif p == 0.0:
-                    return (0, 0.0, r.name)
+                    return (0, 0.0, dist, name)
                 else:
-                    return (1, p, r.name)
+                    return (1, p, dist, name)
             return sorted(records, key=price_key)
 
         elif sort_by == "power":
-            return sorted(records, key=lambda r: (- (r.max_power_kw or 0.0), r.distance_km or 999.0))
+            return sorted(records, key=lambda r: (- (r.max_power_kw or 0.0), r.distance_km if r.distance_km is not None else 999999.0, (r.name or "").lower()))
 
         elif sort_by == "stalls":
-            return sorted(records, key=lambda r: (- (r.stalls_total or 0), r.distance_km or 999.0))
+            return sorted(records, key=lambda r: (- (r.stalls_total or 0), r.distance_km if r.distance_km is not None else 999999.0, (r.name or "").lower()))
 
         elif sort_by in ["facilities", "facility", "rating"]:
             try:
@@ -654,25 +656,27 @@ class ChargerDiscoveryManager:
                     _f_reg = None
 
             def fac_key(r: UnifiedStationRecord):
+                dist = r.distance_km if r.distance_km is not None else 999999.0
+                name = (r.name or "").lower()
                 if _f_reg:
                     f = _f_reg.get_station_facilities(station_key=r.key, station_name=r.name, lat=r.lat, lon=r.lon)
                     if f:
                         score = f.get("score", 0.0)
-                        return (-score, r.distance_km if r.distance_km is not None else 999.0, r.name.lower())
-                return (1.0, r.distance_km if r.distance_km is not None else 999.0, r.name.lower())
+                        return (-score, dist, name)
+                return (1.0, dist, name)
 
             return sorted(records, key=fac_key)
 
         elif sort_by in ["name", "state"]:
-            return sorted(records, key=lambda r: (r.state or "ZZ", r.name.lower()))
+            return sorted(records, key=lambda r: (r.state or "ZZ", (r.name or "").lower()))
 
         else:  # default "distance"
             has_dist = any(r.distance_km is not None for r in records)
             if has_dist:
-                return sorted(records, key=lambda r: (r.distance_km if r.distance_km is not None else 999999.0, r.name.lower()))
+                return sorted(records, key=lambda r: (r.distance_km if r.distance_km is not None else 999999.0, (r.name or "").lower()))
             else:
                 tier_order = {"supercharger": 0, "dc_fast": 1, "ac_destination": 2}
-                return sorted(records, key=lambda r: (tier_order.get(r.speed_tier, 3), r.state or "ZZ", r.name.lower()))
+                return sorted(records, key=lambda r: (tier_order.get(r.speed_tier, 3), r.state or "ZZ", (r.name or "").lower()))
 
     def export_consolidated_registry(self, target_path: Optional[str] = None) -> Tuple[str, int]:
         """
@@ -696,7 +700,7 @@ class ChargerDiscoveryManager:
         archive_path = os.path.join(os.path.dirname(target_path), "charging_stations_archived.json")
         now_utc = datetime.now(timezone.utc).isoformat()
 
-        # Load existing registry to detect tariff or hardware changes
+ # Load existing registry to detect tariff or hardware changes
         existing_stations = {}
         if os.path.isfile(target_path):
             try:
@@ -722,7 +726,7 @@ class ChargerDiscoveryManager:
             d = r.to_dict()
             stations_dict[r.key] = d
 
-            # Archive superseded version if pricing/hardware/name changed
+ # Archive superseded version if pricing/hardware/name changed
             if r.key in existing_stations:
                 old_st = existing_stations[r.key]
                 if detect_station_changes(old_st, d):
@@ -743,12 +747,12 @@ class ChargerDiscoveryManager:
         if local_fallback not in target_candidates:
             target_candidates.append(local_fallback)
 
-        # AGENTS.md BUG-067: save_json_with_fallback() (base.py) now
-        # carries this exact "try each candidate, raise if all fail"
-        # behavior AND writes atomically (temp file + os.replace) - this
-        # used to be a bare open(path, "w") per candidate, so a killed
-        # process mid-write on this potentially large consolidated export
-        # could corrupt charging_stations.json.
+ # AGENTS.md save_json_with_fallback() (base.py) now
+ # carries this exact "try each candidate, raise if all fail"
+ # behavior AND writes atomically (temp file + os.replace) - this
+ # used to be a bare open(path, "w") per candidate, so a killed
+ # process mid-write on this potentially large consolidated export
+ # could corrupt charging_stations.json.
         final_path = save_json_with_fallback(target_candidates, payload)
 
         return final_path, len(stations_dict)
@@ -761,7 +765,7 @@ class ChargerDiscoveryManager:
         diffs is None when ok is False or a diff couldn't be computed, {} when
         the re-fetch succeeded but nothing display-relevant changed, or a
         {field: (old, new)} map when it did - see _diff_station_fields() /
-        BUG-117. `fresh` is the newly-fetched UnifiedStationRecord (None if
+        . `fresh` is the newly-fetched UnifiedStationRecord (None if
         unavailable) so the caller can reload/redisplay it in place.
         """
         src = (station.source or "").lower()
@@ -772,15 +776,15 @@ class ChargerDiscoveryManager:
                 from charger_find_tesla import TeslaChargerExplorer
                 explorer = TeslaChargerExplorer()
                 c_type = "supercharger" if station.speed_tier == "supercharger" else "destination_charger"
-                # BUG-117: this used to call a scrape_station_detail() method
-                # (singular) that has never existed on TeslaChargerExplorer -
-                # every live Tesla re-verify silently raised AttributeError,
-                # caught below, and always reported "Failed to update".  The
-                # real method is scrape_station_details() (plural), returns
-                # (key, record) and does not persist on its own - it must be
-                # explicitly saved via update_registry(), matching the exact
-                # pattern charger_find_tesla.py's own interactive re-scrape
-                # flow already uses.
+ # this used to call a scrape_station_detail() method
+ # (singular) that has never existed on TeslaChargerExplorer -
+ # every live Tesla re-verify silently raised AttributeError,
+ # caught below, and always reported "Failed to update". The
+ # real method is scrape_station_details() (plural), returns
+ # (key, record) and does not persist on its own - it must be
+ # explicitly saved via update_registry(), matching the exact
+ # pattern charger_find_tesla.py's own interactive re-scrape
+ # flow already uses.
                 tesla_key, tesla_record = explorer.scrape_station_details(station.url, charger_type=c_type, list_title=station.name)
                 if not tesla_record:
                     return False, None, None

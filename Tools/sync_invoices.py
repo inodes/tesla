@@ -78,15 +78,15 @@ def resolve_default_scan_dirs() -> List[str]:
         if os.path.isdir(real_p) and real_p not in dirs:
             dirs.append(real_p)
 
-    # 1. Power / AGL invoices dir
+ # 1. Power / AGL invoices dir
     add_dir(cfg.get("power_invoices_directory") or cfg.get("agl_invoices_directory"))
     add_dir("~/Library/Mobile Documents/com~apple~CloudDocs/PDF/AGL")
 
-    # 2. EV Charging invoices dir (Tesla Supercharger, Exploren, Chargefox)
+ # 2. EV Charging invoices dir (Tesla Supercharger, Exploren, Chargefox)
     add_dir(cfg.get("invoices_directory"))
     add_dir("~/Library/Mobile Documents/com~apple~CloudDocs/PDF/Tesla/charging_invoices")
 
-    # 3. Downloads folder
+ # 3. Downloads folder
     add_dir("~/Downloads")
 
     return dirs
@@ -165,7 +165,7 @@ def process_scanned_invoices(
 
     results = []
     for p in pdf_paths:
-        # In batch scan mode, detect auto first so provider filter acts as a filter
+ # In batch scan mode, detect auto first so provider filter acts as a filter
         is_single_file = (len(pdf_paths) == 1)
         ext_override = forced_provider if is_single_file else None
         extractor, data, _ = detect_and_extract_invoice(p, ext_override)
@@ -207,7 +207,7 @@ def process_scanned_invoices(
         print(json.dumps(serializable, indent=2))
         return
 
-    # Dynamic column widths
+ # Dynamic column widths
     w_src = min(40, max(len("Source File") + 2, max(len(r["source_file"]) + 2 for r in results)))
     w_prov = max(len("Provider") + 2, max(len(r["extractor"].display_name) + 2 for r in results))
     w_dt = 13
@@ -262,7 +262,7 @@ def process_scanned_invoices(
             pad_display(f" {tgt_display}", widths[5], "left", truncate=True),
         ]) + "│")
 
-        # Execute rename or import if not dry-run
+ # Execute rename or import if not dry-run
         if not dry_run:
             src_path = r["source_path"]
             if do_import:
@@ -270,7 +270,7 @@ def process_scanned_invoices(
                 os.makedirs(dest_dir, exist_ok=True)
                 dest_path = os.path.join(dest_dir, tgt)
                 if os.path.abspath(src_path) != os.path.abspath(dest_path):
-                    # Anti-clobber protection
+ # Anti-clobber protection
                     if os.path.exists(dest_path) and os.path.getsize(src_path) != os.path.getsize(dest_path):
                         base, ext = os.path.splitext(tgt)
                         dest_path = os.path.join(dest_dir, f"{base}_01{ext}")
@@ -320,11 +320,11 @@ def main():
 
     args = parser.parse_args()
 
-    # Default action is --scan if no mode flag given
+ # Default action is --scan if no mode flag given
     if not args.inspect and args.scan is None:
         args.scan = ""
 
-    # Dry-run is default unless --rename or --import is explicitly passed
+ # Dry-run is default unless --rename or --import is explicitly passed
     is_dry_run = True
     if args.rename or args.do_import:
         is_dry_run = False
@@ -335,7 +335,7 @@ def main():
         inspect_single_pdf(args.inspect, args.provider)
         return
 
-    # Scan mode
+ # Scan mode
     scan_target = args.scan
     pdf_list = []
     if scan_target:
@@ -351,7 +351,7 @@ def main():
         for d in resolve_default_scan_dirs():
             pdf_list.extend(scan_directory_for_pdfs(d, args.recursive))
 
-    # Deduplicate by realpath while preserving order
+ # Deduplicate by realpath while preserving order
     seen_paths = set()
     deduped_list = []
     for p in pdf_list:

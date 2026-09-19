@@ -113,7 +113,7 @@ EXAMPLES
 
     any_ok = False
 
-    # --- getsystem.jsp: one-off system metadata (name, size, panels, lat/lon, status interval) ---
+ # --- getsystem.jsp: one-off system metadata (name, size, panels, lat/lon, status interval) ---
     print("getsystem.jsp (system metadata):")
     status, body, headers = api_get("getsystem", api_key, system_id, params={"donations": 1})
     if status == 200:
@@ -131,7 +131,7 @@ EXAMPLES
         print(f"  ❌ unexpected HTTP {status} - {body[:200].decode('utf-8', errors='replace')}")
     print()
 
-    # --- getstatus.jsp?h=1: one historical day of intraday readings ---
+ # --- getstatus.jsp?h=1: one historical day of intraday readings ---
     print(f"getstatus.jsp?d={date_arg}&h=1 (historical intraday readings):")
     status, body, headers = api_get("getstatus", api_key, system_id, params={"d": date_arg, "h": 1, "limit": 288})
     if status == 200:

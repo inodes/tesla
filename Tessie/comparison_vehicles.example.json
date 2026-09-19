@@ -1,7 +1,28 @@
 {
   "_comment": "Registry of benchmark comparison vehicles for EV running cost and savings analysis sourced from the Australian Green Vehicle Guide (GVG - https://greenvehicleguide.gov.au/#top20). Copy to Tessie/comparison_vehicles.json (gitignored) to customize.",
-  "default_vehicle": "petrol_standard",
+  "default_vehicle": "mazda_cx8_diesel",
   "vehicles": {
+    "mazda_cx8_diesel": {
+      "name": "Mazda CX-8 (2.2L Skyactiv-D Diesel)",
+      "category": "Large SUV",
+      "gvg_url": "https://greenvehicleguide.gov.au/Vehicle/Search",
+      "fuel_type": "Diesel",
+      "co2_g_per_km": 158,
+      "consumption": {
+        "combined_l_per_100km": 7.5,
+        "urban_l_per_100km": 10.0,
+        "highway_l_per_100km": 6.0
+      },
+      "adr_consumption": {
+        "combined_l_per_100km": 6.0,
+        "urban_l_per_100km": 7.0,
+        "highway_l_per_100km": 5.5
+      },
+      "running_costs": {
+        "service_maintenance_per_km": 0.045,
+        "tyres_per_km": 0.026
+      }
+    },
     "petrol_standard": {
       "name": "Medium Petrol SUV (e.g. Mazda CX-5 G25)",
       "category": "Medium SUV",

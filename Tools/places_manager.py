@@ -24,7 +24,7 @@ import unicodedata
 import urllib.request
 import urllib.parse
 import webbrowser
-from datetime import datetime
+from datetime import datetime, timedelta
 from collections import defaultdict
 import textwrap
 
@@ -187,7 +187,7 @@ def resolve_stop(addr, saved_loc, lat, lon, places, chargers):
         return saved_loc
     
     if lat is not None and lon is not None:
-        # 1. GPS geofence in places.json
+ # 1. GPS geofence in places.json
         best_place, best_dist = None, 999999
         for p_name, p_data in places.items():
             p_lat = p_data.get("lat")
@@ -201,7 +201,7 @@ def resolve_stop(addr, saved_loc, lat, lon, places, chargers):
         if best_place:
             return best_place
 
-        # 2. GPS geofence in chargers (superchargers / destination)
+ # 2. GPS geofence in chargers (superchargers / destination)
         for c_name, c_data in chargers.items():
             c_lat = c_data.get("lat")
             c_lon = c_data.get("lon")
@@ -210,12 +210,19 @@ def resolve_stop(addr, saved_loc, lat, lon, places, chargers):
                 if d <= 250:
                     return c_name
 
-    # 3. Keyword matching against places.json
+ # 3. Keyword matching against places.json
     if addr:
         addr_clean = addr.lower()
         for p_name, p_data in places.items():
             for kw in p_data.get("keywords", []):
                 if kw and len(kw) >= 3 and kw.lower() in addr_clean:
+                    if lat is not None and lon is not None:
+                        p_lat = p_data.get("lat")
+                        p_lon = p_data.get("lon")
+                        if p_lat is not None and p_lon is not None:
+                            d = haversine_distance(lat, lon, p_lat, p_lon)
+                            if d > 1000:
+                                continue
                     return p_name
 
     return None
@@ -259,7 +266,7 @@ def geocode_candidates(query, country_hint="Australia", anchor_coords=None, limi
     
     candidates = []
     
-    # 1. Nominatim (OpenStreetMap)
+ # 1. Nominatim (OpenStreetMap)
     try:
         params = urllib.parse.urlencode({
             "q": q_str,
@@ -307,7 +314,7 @@ def geocode_candidates(query, country_hint="Australia", anchor_coords=None, limi
     except Exception:
         pass
 
-    # 2. Photon (Komoot) fallback if Nominatim returned 0 candidates
+ # 2. Photon (Komoot) fallback if Nominatim returned 0 candidates
     if not candidates:
         try:
             params = urllib.parse.urlencode({"q": q_str, "limit": limit})
@@ -341,7 +348,7 @@ def geocode_candidates(query, country_hint="Australia", anchor_coords=None, limi
         except Exception:
             pass
 
-    # Deduplicate candidates within 25km of each other or with identical label
+ # Deduplicate candidates within 25km of each other or with identical label
     deduped = []
     for c in candidates:
         is_dup = False
@@ -352,7 +359,7 @@ def geocode_candidates(query, country_hint="Australia", anchor_coords=None, limi
         if not is_dup:
             deduped.append(c)
 
-    # Proximity sort if anchor coords given
+ # Proximity sort if anchor coords given
     if anchor_coords:
         deduped.sort(key=lambda x: x["dist_km"] if x["dist_km"] is not None else 999999)
 
@@ -373,17 +380,17 @@ def resolve_location_disambiguated(query, anchor_coords=None, interactive=True, 
     if not candidates:
         return None, None, ""
 
-    # Check for direct label match (e.g. user specified "Richmond, NSW" or "West Ryde, NSW")
+ # Check for direct label match (e.g. user specified "Richmond, NSW" or "West Ryde, NSW")
     for c in candidates:
         if c["label"].lower() == clean.lower():
             return c["lat"], c["lon"], c["label"]
 
-    # If only 1 candidate exists, return it directly
+ # If only 1 candidate exists, return it directly
     if len(candidates) == 1:
         return candidates[0]["lat"], candidates[0]["lon"], candidates[0]["label"]
 
-    # Multiple candidates found
-    # Interactive prompt if running in interactive terminal
+ # Multiple candidates found
+ # Interactive prompt if running in interactive terminal
     if interactive and sys.stdin and sys.stdin.isatty():
         print(f"\n📍 Multiple locations found for '{clean}':")
         for i, c in enumerate(candidates[:5]):
@@ -410,7 +417,7 @@ def resolve_location_disambiguated(query, anchor_coords=None, interactive=True, 
             print()
             return None, None, ""
 
-    # Non-interactive fallback: pick closest candidate and log informative message
+ # Non-interactive fallback: pick closest candidate and log informative message
     top = candidates[0]
     dist_str = f" ({top['dist_km']:.0f} km away)" if top.get("dist_km") is not None else ""
     print(f"ℹ️  Multiple locations found for '{clean}'; defaulted to closest: {top['label']}{dist_str}. (Specify '{clean}, <State>' to override).")
@@ -569,7 +576,7 @@ def query_overpass_pois(lat, lon, radius_m=300):
     if cache_key in _POI_MEMORY_CACHE:
         return _POI_MEMORY_CACHE[cache_key]
 
-    # Optimized indexed Overpass QL using 'nwr' (node, way, relation together)
+ # Optimized indexed Overpass QL using 'nwr' (node, way, relation together)
     query = f"""
     [out:json][timeout:5];
     (
@@ -617,7 +624,7 @@ def query_overpass_pois(lat, lon, radius_m=300):
                     social_facility = tags.get("social_facility")
                     craft = tags.get("craft")
 
-                    # Synthesize descriptive names for unnamed boating/park infrastructure
+ # Synthesize descriptive names for unnamed boating/park infrastructure
                     if not name:
                         if leisure == "slipway" or waterway == "boat_ramp":
                             name = "Boat Ramp / Slipway"
@@ -641,11 +648,11 @@ def query_overpass_pois(lat, lon, radius_m=300):
                     if not name:
                         continue
 
-                    # Filter out charging station self-matches
+ # Filter out charging station self-matches
                     if amenity == "charging_station" or "supercharger" in name.lower() or name.lower().startswith("tesla super"):
                         continue
 
-                    # Derive friendly category label
+ # Derive friendly category label
                     category = amenity or shop or leisure or tourism or club or sport or social_facility or office or healthcare or man_made or waterway or historic or craft
                     if not category:
                         if building and building != "yes":
@@ -661,11 +668,11 @@ def query_overpass_pois(lat, lon, radius_m=300):
                     p_lon = el.get("lon") or el.get("center", {}).get("lon", lon)
                     dist = haversine_distance(lat, lon, p_lat, p_lon)
 
-                    # Hard filter: exclude POIs whose center is outside the cluster search radius
+ # Hard filter: exclude POIs whose center is outside the cluster search radius
                     if dist > radius_m:
                         continue
 
-                    # Deduplicate
+ # Deduplicate
                     name_key = f"{name.lower()}_{round(p_lat, 3)}_{round(p_lon, 3)}"
                     if name_key in seen_names:
                         continue
@@ -712,7 +719,7 @@ def geocode_candidates(query, country_hint="Australia", anchor_coords=None, limi
     
     candidates = []
     
-    # 1. Nominatim (OpenStreetMap)
+ # 1. Nominatim (OpenStreetMap)
     try:
         params = urllib.parse.urlencode({
             "q": q_str,
@@ -760,7 +767,7 @@ def geocode_candidates(query, country_hint="Australia", anchor_coords=None, limi
     except Exception:
         pass
 
-    # 2. Photon (Komoot) fallback if Nominatim returned 0 candidates
+ # 2. Photon (Komoot) fallback if Nominatim returned 0 candidates
     if not candidates:
         try:
             params = urllib.parse.urlencode({"q": q_str, "limit": limit})
@@ -794,7 +801,7 @@ def geocode_candidates(query, country_hint="Australia", anchor_coords=None, limi
         except Exception:
             pass
 
-    # Deduplicate candidates within 25km of each other or with identical label
+ # Deduplicate candidates within 25km of each other or with identical label
     deduped = []
     for c in candidates:
         is_dup = False
@@ -805,7 +812,7 @@ def geocode_candidates(query, country_hint="Australia", anchor_coords=None, limi
         if not is_dup:
             deduped.append(c)
 
-    # Proximity sort if anchor coords given
+ # Proximity sort if anchor coords given
     if anchor_coords:
         deduped.sort(key=lambda x: x["dist_km"] if x["dist_km"] is not None else 999999)
 
@@ -826,17 +833,17 @@ def resolve_location_disambiguated(query, anchor_coords=None, interactive=True, 
     if not candidates:
         return None, None, ""
 
-    # Check for direct label match (e.g. user specified "Richmond, NSW" or "West Ryde, NSW")
+ # Check for direct label match (e.g. user specified "Richmond, NSW" or "West Ryde, NSW")
     for c in candidates:
         if c["label"].lower() == clean.lower():
             return c["lat"], c["lon"], c["label"]
 
-    # If only 1 candidate exists, return it directly
+ # If only 1 candidate exists, return it directly
     if len(candidates) == 1:
         return candidates[0]["lat"], candidates[0]["lon"], candidates[0]["label"]
 
-    # Multiple candidates found
-    # Interactive prompt if running in interactive terminal
+ # Multiple candidates found
+ # Interactive prompt if running in interactive terminal
     if interactive and sys.stdin and sys.stdin.isatty():
         print(f"\n📍 Multiple locations found for '{clean}':")
         for i, c in enumerate(candidates[:5]):
@@ -863,7 +870,7 @@ def resolve_location_disambiguated(query, anchor_coords=None, interactive=True, 
             print()
             return None, None, ""
 
-    # Non-interactive fallback: pick closest candidate and log informative message
+ # Non-interactive fallback: pick closest candidate and log informative message
     top = candidates[0]
     dist_str = f" ({top['dist_km']:.0f} km away)" if top.get("dist_km") is not None else ""
     print(f"ℹ️  Multiple locations found for '{clean}'; defaulted to closest: {top['label']}{dist_str}. (Specify '{clean}, <State>' to override).")
@@ -1045,7 +1052,7 @@ def query_overpass_pois(lat, lon, radius_m=300):
                     social_facility = tags.get("social_facility")
                     craft = tags.get("craft")
 
-                    # Synthesize descriptive names for unnamed boating/park infrastructure
+ # Synthesize descriptive names for unnamed boating/park infrastructure
                     if not name:
                         if leisure == "slipway" or waterway == "boat_ramp":
                             name = "Boat Ramp / Slipway"
@@ -1069,11 +1076,11 @@ def query_overpass_pois(lat, lon, radius_m=300):
                     if not name:
                         continue
 
-                    # Filter out charging station self-matches
+ # Filter out charging station self-matches
                     if amenity == "charging_station" or "supercharger" in name.lower() or name.lower().startswith("tesla super"):
                         continue
 
-                    # Derive friendly category label
+ # Derive friendly category label
                     category = amenity or shop or leisure or tourism or club or sport or social_facility or office or healthcare or man_made or waterway or historic or craft
                     if not category:
                         if building and building != "yes":
@@ -1089,11 +1096,11 @@ def query_overpass_pois(lat, lon, radius_m=300):
                     p_lon = el.get("lon") or el.get("center", {}).get("lon", lon)
                     dist = haversine_distance(lat, lon, p_lat, p_lon)
 
-                    # Hard filter: exclude POIs whose center is outside the cluster search radius
+ # Hard filter: exclude POIs whose center is outside the cluster search radius
                     if dist > radius_m:
                         continue
 
-                    # Deduplicate
+ # Deduplicate
                     name_key = f"{name.lower()}_{round(p_lat, 3)}_{round(p_lon, 3)}"
                     if name_key in seen_names:
                         continue
@@ -1138,7 +1145,7 @@ def geocode_candidates(query, country_hint="Australia", anchor_coords=None, limi
     
     candidates = []
     
-    # 1. Nominatim (OpenStreetMap)
+ # 1. Nominatim (OpenStreetMap)
     try:
         params = urllib.parse.urlencode({
             "q": q_str,
@@ -1186,7 +1193,7 @@ def geocode_candidates(query, country_hint="Australia", anchor_coords=None, limi
     except Exception:
         pass
 
-    # 2. Photon (Komoot) fallback if Nominatim returned 0 candidates
+ # 2. Photon (Komoot) fallback if Nominatim returned 0 candidates
     if not candidates:
         try:
             params = urllib.parse.urlencode({"q": q_str, "limit": limit})
@@ -1220,7 +1227,7 @@ def geocode_candidates(query, country_hint="Australia", anchor_coords=None, limi
         except Exception:
             pass
 
-    # Deduplicate candidates within 25km of each other or with identical label
+ # Deduplicate candidates within 25km of each other or with identical label
     deduped = []
     for c in candidates:
         is_dup = False
@@ -1231,7 +1238,7 @@ def geocode_candidates(query, country_hint="Australia", anchor_coords=None, limi
         if not is_dup:
             deduped.append(c)
 
-    # Proximity sort if anchor coords given
+ # Proximity sort if anchor coords given
     if anchor_coords:
         deduped.sort(key=lambda x: x["dist_km"] if x["dist_km"] is not None else 999999)
 
@@ -1252,17 +1259,17 @@ def resolve_location_disambiguated(query, anchor_coords=None, interactive=True, 
     if not candidates:
         return None, None, ""
 
-    # Check for direct label match (e.g. user specified "Richmond, NSW" or "West Ryde, NSW")
+ # Check for direct label match (e.g. user specified "Richmond, NSW" or "West Ryde, NSW")
     for c in candidates:
         if c["label"].lower() == clean.lower():
             return c["lat"], c["lon"], c["label"]
 
-    # If only 1 candidate exists, return it directly
+ # If only 1 candidate exists, return it directly
     if len(candidates) == 1:
         return candidates[0]["lat"], candidates[0]["lon"], candidates[0]["label"]
 
-    # Multiple candidates found
-    # Interactive prompt if running in interactive terminal
+ # Multiple candidates found
+ # Interactive prompt if running in interactive terminal
     if interactive and sys.stdin and sys.stdin.isatty():
         print(f"\n📍 Multiple locations found for '{clean}':")
         for i, c in enumerate(candidates[:5]):
@@ -1289,7 +1296,7 @@ def resolve_location_disambiguated(query, anchor_coords=None, interactive=True, 
             print()
             return None, None, ""
 
-    # Non-interactive fallback: pick closest candidate and log informative message
+ # Non-interactive fallback: pick closest candidate and log informative message
     top = candidates[0]
     dist_str = f" ({top['dist_km']:.0f} km away)" if top.get("dist_km") is not None else ""
     print(f"ℹ️  Multiple locations found for '{clean}'; defaulted to closest: {top['label']}{dist_str}. (Specify '{clean}, <State>' to override).")
@@ -1471,7 +1478,7 @@ def query_overpass_pois(lat, lon, radius_m=350):
                     social_facility = tags.get("social_facility")
                     craft = tags.get("craft")
 
-                    # Synthesize descriptive names for unnamed boating/park infrastructure
+ # Synthesize descriptive names for unnamed boating/park infrastructure
                     if not name:
                         if leisure == "slipway" or waterway == "boat_ramp":
                             name = "Boat Ramp / Slipway"
@@ -1495,11 +1502,11 @@ def query_overpass_pois(lat, lon, radius_m=350):
                     if not name:
                         continue
 
-                    # Filter out charging station self-matches
+ # Filter out charging station self-matches
                     if amenity == "charging_station" or "supercharger" in name.lower() or name.lower().startswith("tesla super"):
                         continue
 
-                    # Derive friendly category label
+ # Derive friendly category label
                     category = amenity or shop or leisure or tourism or club or sport or social_facility or office or healthcare or man_made or waterway or historic or craft
                     if not category:
                         if building and building != "yes":
@@ -1515,7 +1522,7 @@ def query_overpass_pois(lat, lon, radius_m=350):
                     p_lon = el.get("lon") or el.get("center", {}).get("lon", lon)
                     dist = haversine_distance(lat, lon, p_lat, p_lon)
 
-                    # Deduplicate
+ # Deduplicate
                     name_key = f"{name.lower()}_{round(p_lat, 3)}_{round(p_lon, 3)}"
                     if name_key in seen_names:
                         continue
@@ -1561,7 +1568,7 @@ def geocode_candidates(query, country_hint="Australia", anchor_coords=None, limi
     
     candidates = []
     
-    # 1. Nominatim (OpenStreetMap)
+ # 1. Nominatim (OpenStreetMap)
     try:
         params = urllib.parse.urlencode({
             "q": q_str,
@@ -1609,7 +1616,7 @@ def geocode_candidates(query, country_hint="Australia", anchor_coords=None, limi
     except Exception:
         pass
 
-    # 2. Photon (Komoot) fallback if Nominatim returned 0 candidates
+ # 2. Photon (Komoot) fallback if Nominatim returned 0 candidates
     if not candidates:
         try:
             params = urllib.parse.urlencode({"q": q_str, "limit": limit})
@@ -1643,7 +1650,7 @@ def geocode_candidates(query, country_hint="Australia", anchor_coords=None, limi
         except Exception:
             pass
 
-    # Deduplicate candidates within 25km of each other or with identical label
+ # Deduplicate candidates within 25km of each other or with identical label
     deduped = []
     for c in candidates:
         is_dup = False
@@ -1654,7 +1661,7 @@ def geocode_candidates(query, country_hint="Australia", anchor_coords=None, limi
         if not is_dup:
             deduped.append(c)
 
-    # Proximity sort if anchor coords given
+ # Proximity sort if anchor coords given
     if anchor_coords:
         deduped.sort(key=lambda x: x["dist_km"] if x["dist_km"] is not None else 999999)
 
@@ -1675,17 +1682,17 @@ def resolve_location_disambiguated(query, anchor_coords=None, interactive=True, 
     if not candidates:
         return None, None, ""
 
-    # Check for direct label match (e.g. user specified "Richmond, NSW" or "West Ryde, NSW")
+ # Check for direct label match (e.g. user specified "Richmond, NSW" or "West Ryde, NSW")
     for c in candidates:
         if c["label"].lower() == clean.lower():
             return c["lat"], c["lon"], c["label"]
 
-    # If only 1 candidate exists, return it directly
+ # If only 1 candidate exists, return it directly
     if len(candidates) == 1:
         return candidates[0]["lat"], candidates[0]["lon"], candidates[0]["label"]
 
-    # Multiple candidates found
-    # Interactive prompt if running in interactive terminal
+ # Multiple candidates found
+ # Interactive prompt if running in interactive terminal
     if interactive and sys.stdin and sys.stdin.isatty():
         print(f"\n📍 Multiple locations found for '{clean}':")
         for i, c in enumerate(candidates[:5]):
@@ -1712,7 +1719,7 @@ def resolve_location_disambiguated(query, anchor_coords=None, interactive=True, 
             print()
             return None, None, ""
 
-    # Non-interactive fallback: pick closest candidate and log informative message
+ # Non-interactive fallback: pick closest candidate and log informative message
     top = candidates[0]
     dist_str = f" ({top['dist_km']:.0f} km away)" if top.get("dist_km") is not None else ""
     print(f"ℹ️  Multiple locations found for '{clean}'; defaulted to closest: {top['label']}{dist_str}. (Specify '{clean}, <State>' to override).")
@@ -1873,7 +1880,7 @@ def query_overpass_pois(lat, lon, radius_m=250):
                     building = tags.get("building")
                     brand = tags.get("brand")
 
-                    # Filter out charging station self-matches
+ # Filter out charging station self-matches
                     if amenity == "charging_station" or "supercharger" in name.lower() or name.lower().startswith("tesla super"):
                         continue
 
@@ -1929,7 +1936,7 @@ def search_places_by_name(query, near_lat=None, near_lon=None, limit=7, max_radi
     results = []
     seen_keys = set()
 
-    # 1. Local Overpass search (within max_radius_m of cluster)
+ # 1. Local Overpass search (within max_radius_m of cluster)
     if near_lat is not None and near_lon is not None:
         try:
             local_pois = query_overpass_pois(near_lat, near_lon, radius_m=max_radius_m)
@@ -1955,7 +1962,7 @@ def search_places_by_name(query, near_lat=None, near_lon=None, limit=7, max_radi
         except Exception:
             pass
 
-    # 2. Localized Nominatim Search with tight proximity bounding box (max ~max_radius_m)
+ # 2. Localized Nominatim Search with tight proximity bounding box (max ~max_radius_m)
     if near_lat is not None and near_lon is not None:
         r_km = max(0.4, max_radius_m / 1000.0)
         d = r_km / 111.0  # ~111km per degree of latitude
@@ -1979,7 +1986,7 @@ def search_places_by_name(query, near_lat=None, near_lon=None, limit=7, max_radi
                     except (TypeError, ValueError):
                         continue
                     dist_m = round(haversine_distance(near_lat, near_lon, p_lat, p_lon), 1)
-                    # Hard cap: ignore anything outside max_radius_m
+ # Hard cap: ignore anything outside max_radius_m
                     if dist_m > max_radius_m:
                         continue
                     display_name = item.get("display_name", "")
@@ -2003,43 +2010,65 @@ def search_places_by_name(query, near_lat=None, near_lon=None, limit=7, max_radi
         results.sort(key=lambda r: r["dist_m"] if r["dist_m"] is not None else float("inf"))
     return results[:limit]
 
+def is_coord_string(s):
+    """Returns True if string represents coordinates, coordinate pairs, or coordinate URLs rather than a street address."""
+    if not s:
+        return False
+    c = str(s).strip("()[]{}'\" \t\r\n")
+    if c.lower().startswith("geo:"):
+        c = c[4:].strip()
+    return bool(re.match(r'^[+-]?\d+(?:\.\d+)?(?:[,\s]+[+-]?\d+(?:\.\d+)?)?$', c)) or bool(re.search(r'[@?&q=][+-]?\d+\.\d+[,/][+-]?\d+\.\d+', c))
+
 def suggest_keywords(address_str, poi_name=""):
-    """Extracts clean street and address keywords from a raw address string."""
+    """Extracts clean street and address keywords from a raw address string, rejecting coordinates."""
     keywords = []
-    if not address_str:
-        return keywords
-    
-    parts = [p.strip() for p in re.split(r'[,;]', address_str) if p.strip()]
-    if parts:
-        street_part = parts[0]
-        keywords.append(street_part)
-        
-        m = re.match(r'^\d+[\w\-/]*\s+(.+)$', street_part)
-        if m:
-            street_only = m.group(1).strip()
-            if street_only and street_only not in keywords:
-                keywords.append(street_only)
-        
-        for p in list(keywords):
-            abbr = p.replace(" Road", " Rd").replace(" Street", " St").replace(" Avenue", " Ave").replace(" Highway", " Hwy")
-            if abbr != p and abbr not in keywords:
-                keywords.append(abbr)
-    
-    if poi_name and len(poi_name) > 3 and poi_name not in keywords:
+    if address_str and not is_coord_string(address_str):
+        parts = [p.strip() for p in re.split(r'[,;]', address_str) if p.strip()]
+        if parts:
+            street_part = parts[0]
+            if not is_coord_string(street_part):
+                keywords.append(street_part)
+                m = re.match(r'^\d+[\w\-/]*\s+(.+)$', street_part)
+                if m:
+                    street_only = m.group(1).strip()
+                    if street_only and not is_coord_string(street_only) and street_only not in keywords:
+                        keywords.append(street_only)
+                for p in list(keywords):
+                    abbr = p.replace(" Road", " Rd").replace(" Street", " St").replace(" Avenue", " Ave").replace(" Highway", " Hwy")
+                    if abbr != p and abbr not in keywords:
+                        keywords.append(abbr)
+
+    if poi_name and len(poi_name) > 3 and not is_coord_string(poi_name) and poi_name not in keywords:
         keywords.append(poi_name)
-        
-    return keywords
+
+    return [k for k in keywords if not is_coord_string(k)]
 
 def parse_coords_or_address(user_input):
     """
     Parses 'lat, lon' coordinate string or geocodes an address/name string.
+    Supports raw floats, parentheses, brackets, Google Maps URLs, and geo: URIs.
     Returns (lat, lon, display_name) or (None, None, None).
     """
     if not user_input or not user_input.strip():
         return None, None, None
     
     clean = user_input.strip()
-    coord_match = re.match(r'^\s*([+-]?\d+(?:\.\d+)?)[,\s]+([+-]?\d+(?:\.\d+)?)\s*$', clean)
+
+ # 1. URL pattern (e.g. google maps links or geo: URIs)
+    url_match = re.search(r'[@?&q=]([+-]?\d+\.\d+)[,/]([+-]?\d+\.\d+)', clean)
+    if url_match:
+        lat = float(url_match.group(1))
+        lon = float(url_match.group(2))
+        rev = reverse_geocode(lat, lon)
+        addr = rev.get("display_name", "") if rev else ""
+        return lat, lon, addr
+
+ # 2. Stripped of enclosing brackets, parentheses, or quotes
+    cleaned_input = clean.strip("()[]{}'\" \t\r\n")
+    if cleaned_input.lower().startswith("geo:"):
+        cleaned_input = cleaned_input[4:].strip()
+
+    coord_match = re.match(r'^\s*([+-]?\d+(?:\.\d+)?)[,\s]+([+-]?\d+(?:\.\d+)?)\s*$', cleaned_input)
     if coord_match:
         lat = float(coord_match.group(1))
         lon = float(coord_match.group(2))
@@ -2057,126 +2086,440 @@ def parse_coords_or_address(user_input):
 # ---------------------------------------------------------------------------
 def interactive_lookup_and_add(query_or_addr=None, lat=None, lon=None, default_radius=150):
     """
-    Interactively resolves an address or GPS coordinate, fetches POI candidates,
-    prompts the user to pick, customize, recenter, or skip, and saves to places.json.
+    Interactively resolves an address or GPS coordinate, displays associated drive history immediately,
+    and delays OSM / Places API lookup until explicitly requested via [s].
     """
     places = load_places()
-    
+
     resolved_lat = lat
     resolved_lon = lon
     resolved_addr = query_or_addr or ""
+    existing_name = None
+    existing_place_data = None
+    initial_radius = max(150, default_radius)
 
-    print(f"\n🌐 Querying Places API...")
-    
-    if resolved_lat is not None and resolved_lon is not None:
-        rev = reverse_geocode(resolved_lat, resolved_lon)
-        if rev:
-            resolved_addr = resolved_addr or rev.get("display_name", "")
-    elif query_or_addr:
-        p_lat, p_lon, p_addr = parse_coords_or_address(query_or_addr)
-        if p_lat is not None and p_lon is not None:
-            resolved_lat = p_lat
-            resolved_lon = p_lon
-            resolved_addr = p_addr or query_or_addr
+    # 1. Prioritize direct lookup against existing places in places.json
+    if query_or_addr and places and (resolved_lat is None or resolved_lon is None):
+        q_clean = query_or_addr.strip()
+        matched_entry = None
+        if q_clean in places:
+            matched_entry = (q_clean, places[q_clean])
         else:
-            print(f"⚠️  Could not geocode address: \"{query_or_addr}\"")
+            q_lower = q_clean.lower()
+            for p_name, p_data in places.items():
+                if p_name.lower() == q_lower:
+                    matched_entry = (p_name, p_data)
+                    break
+                kws = [k.lower() for k in p_data.get("keywords", []) if isinstance(k, str)]
+                if q_lower in kws:
+                    matched_entry = (p_name, p_data)
+                    break
+
+        if matched_entry:
+            existing_name, existing_place_data = matched_entry
+            p_lat = existing_place_data.get("lat")
+            p_lon = existing_place_data.get("lon")
+            if p_lat is not None and p_lon is not None:
+                resolved_lat = p_lat
+                resolved_lon = p_lon
+                resolved_addr = existing_place_data.get("address") or existing_place_data.get("display_address") or ""
+                if not resolved_addr:
+                    rev = reverse_geocode(resolved_lat, resolved_lon)
+                    resolved_addr = rev.get("display_name", "") if rev else existing_name
+                initial_radius = existing_place_data.get("radius_m", default_radius)
+
+    if resolved_lat is None or resolved_lon is None:
+        if not query_or_addr:
             try:
-                c_in = input("Enter central GPS (lat, lon) or address to re-center (or Enter to cancel): ").strip()
+                c_in = input("Enter central GPS (lat, lon) or address to lookup (or Enter to cancel): ").strip()
                 if not c_in:
                     return None
-                resolved_lat, resolved_lon, resolved_addr = parse_coords_or_address(c_in)
-            except Exception:
+                query_or_addr = c_in
+                if query_or_addr in places:
+                    existing_name = query_or_addr
+                    existing_place_data = places[query_or_addr]
+                    resolved_lat = existing_place_data.get("lat")
+                    resolved_lon = existing_place_data.get("lon")
+                    resolved_addr = existing_place_data.get("address") or existing_place_data.get("display_address") or ""
+                    if not resolved_addr and resolved_lat is not None and resolved_lon is not None:
+                        rev = reverse_geocode(resolved_lat, resolved_lon)
+                        resolved_addr = rev.get("display_name", "") if rev else existing_name
+                    initial_radius = existing_place_data.get("radius_m", default_radius)
+            except (EOFError, KeyboardInterrupt):
                 return None
+
+        if resolved_lat is None or resolved_lon is None:
+            p_lat, p_lon, p_addr = parse_coords_or_address(query_or_addr)
+            if p_lat is not None and p_lon is not None:
+                resolved_lat = p_lat
+                resolved_lon = p_lon
+                resolved_addr = p_addr or query_or_addr
+            else:
+                print(f"⚠️  Could not geocode address: \"{query_or_addr}\"")
+                try:
+                    c_in = input("Enter central GPS (lat, lon) or address to re-center (or Enter to cancel): ").strip()
+                    if not c_in:
+                        return None
+                    resolved_lat, resolved_lon, resolved_addr = parse_coords_or_address(c_in)
+                except Exception:
+                    return None
 
     if resolved_lat is None or resolved_lon is None:
         print("❌ Invalid coordinates.")
         return None
 
-    pois = query_overpass_pois(resolved_lat, resolved_lon, radius_m=250)
+    def _is_coord_str(s):
+        if not s:
+            return True
+        c = s.strip("()[]{}'\" \t\r\n")
+        if c.lower().startswith("geo:"):
+            c = c[4:].strip()
+        return bool(re.match(r'^[+-]?\d+(?:\.\d+)?([,\s]+[+-]?\d+(?:\.\d+)?)?$', c)) or bool(re.search(r'[@?&q=][+-]?\d+\.\d+[,/][+-]?\d+\.\d+', c))
+
+    if places and resolved_lat is not None and resolved_lon is not None and not existing_name:
+        for p_name, p_data in places.items():
+            p_lat = p_data.get("lat")
+            p_lon = p_data.get("lon")
+            p_rad = p_data.get("radius_m", 150)
+            if p_lat is not None and p_lon is not None:
+                d = haversine_distance(resolved_lat, resolved_lon, p_lat, p_lon)
+                if d <= p_rad:
+                    existing_name = p_name
+                    existing_place_data = p_data
+                    break
+
+    if existing_name:
+        target_label = existing_name
+    elif query_or_addr and not _is_coord_str(query_or_addr):
+        target_label = query_or_addr.split(",")[0].strip()
+    elif resolved_addr and not _is_coord_str(resolved_addr):
+        target_label = resolved_addr.split(",")[0].strip()
+    else:
+        target_label = "Target"
+
+    visits = get_coords_trip_history(resolved_lat, resolved_lon, radius_m=initial_radius, places=places, label=target_label)
+    pass_bys = get_coords_pass_by_history(resolved_lat, resolved_lon, radius_m=initial_radius, places=places, label=target_label, visits=visits)
+
+    # If no recorded drive visits or pass-through trips are found, expand radius in steps up to 1km
+    if not visits and not pass_bys:
+        nearest_stop = find_nearest_drive_stop(resolved_lat, resolved_lon, max_radius_m=1000)
+        if nearest_stop:
+            orig_lat, orig_lon = resolved_lat, resolved_lon
+            resolved_lat = nearest_stop["lat"]
+            resolved_lon = nearest_stop["lon"]
+            if nearest_stop.get("addr"):
+                resolved_addr = nearest_stop["addr"]
+            if not _is_coord_str(resolved_addr):
+                target_label = resolved_addr.split(",")[0].strip()
+
+            existing_name = None
+            existing_place_data = None
+            if places:
+                for p_name, p_data in places.items():
+                    p_lat = p_data.get("lat")
+                    p_lon = p_data.get("lon")
+                    p_rad = p_data.get("radius_m", 150)
+                    if p_lat is not None and p_lon is not None:
+                        if haversine_distance(resolved_lat, resolved_lon, p_lat, p_lon) <= p_rad:
+                            existing_name = p_name
+                            existing_place_data = p_data
+                            target_label = p_name
+                            break
+
+            print(f"\n🔍 No drive stops found within {initial_radius}m of input ({orig_lat:.5f}, {orig_lon:.5f}).")
+            print(f"✔ Expanded search radius up to 1km and matched nearest recorded stop (~{nearest_stop['dist_m']:.1f}m away):")
+            print(f"   📍 Replacement GPS Coords : {resolved_lat:.5f}, {resolved_lon:.5f}")
+            if resolved_addr:
+                print(f"   📍 Location Address       : {resolved_addr[:65]}")
+
+            visits = get_coords_trip_history(resolved_lat, resolved_lon, radius_m=initial_radius, places=places, label=target_label)
+            pass_bys = get_coords_pass_by_history(resolved_lat, resolved_lon, radius_m=initial_radius, places=places, label=target_label, visits=visits)
 
     print("\n" + "=" * 78)
-    print(f"📍 Location:   {resolved_addr[:65] if resolved_addr else 'Unknown Address'}")
-    print(f"🎯 GPS Coords: {resolved_lat:.5f}, {resolved_lon:.5f}")
+    if existing_name:
+        kws_list = existing_place_data.get("keywords", []) if existing_place_data else []
+        kws_str = ", ".join(kws_list) if kws_list else "(None)"
+        p_rad = existing_place_data.get("radius_m", 150) if existing_place_data else 150
+        print(f"📍 Place Name:   {existing_name} (✔ Defined in places.json)")
+        if resolved_addr:
+            print(f"📍 Location:     {resolved_addr[:65]}")
+        print(f"🎯 GPS Coords:   {resolved_lat:.5f}, {resolved_lon:.5f} (Radius: {p_rad}m)")
+        print(f"🏷️  Keywords:     {kws_str}")
+    else:
+        print(f"📍 Location:     {resolved_addr[:65] if resolved_addr else 'Unknown Address'}")
+        print(f"🎯 GPS Coords:   {resolved_lat:.5f}, {resolved_lon:.5f}")
     print("=" * 78)
 
-    if pois:
-        print("\n🏢 Nearby Point-of-Interest (POI) Candidates:")
-        for idx, poi in enumerate(pois[:7], 1):
-            print(f"  [{idx}] {poi['name']} ({poi['category']})  [~{poi['dist_m']}m away | Center: {poi['lat']:.5f}, {poi['lon']:.5f}]")
+    if visits or pass_bys:
+        col_widths = [6, 18, 56, 10, 12]
+        headers = [" # ", " Date & Time", " Trip Flow (Origin ➔ Target ➔ Next)", " Stay ", " Total Dist "]
+        aligns = ["right", "left", "left", "right", "right"]
+        total_inner = sum(col_widths) + len(col_widths) - 1
+
+        print("\n" + format_box_line("┌", "─", "┐", [total_inner]))
+        title_summary = []
+        if visits:
+            title_summary.append(f"{len(visits)} visit{'s' if len(visits) != 1 else ''}")
+        if pass_bys:
+            title_summary.append(f"{len(pass_bys)} pass-by drive{'s' if len(pass_bys) != 1 else ''}")
+        summary_txt = " | ".join(title_summary)
+        print(format_title_line(f" 🚗 ASSOCIATED DRIVES ({summary_txt})", total_inner))
+
+        if visits:
+            print(format_box_line("├", "─", "┤", [total_inner]))
+            print(format_title_line("  🚗 RECORDED VISITS & STOPS (Newest First)", total_inner))
+            print(format_box_line("├", "┬", "┤", col_widths))
+            print(format_row(headers, col_widths, aligns=aligns))
+            print(format_box_line("├", "┼", "┤", col_widths))
+
+            recent_visits = list(reversed(visits[-15:]))
+            for idx, v in enumerate(recent_visits, 1):
+                orig = v["origin"]
+                dest = v["destination"]
+                if orig != "-" and dest != "-":
+                    route_str = f"{orig} ➔ {target_label} ➔ {dest}"
+                elif orig != "-":
+                    route_str = f"{orig} ➔ {target_label}"
+                else:
+                    route_str = f"{target_label} ➔ {dest}"
+
+                ts_short = v["date_ts"]
+                dist_str = f"{v['dist_km']:.1f} km"
+                stay_str = v["stay"]
+
+                r_cells = [
+                    f" [{idx:2d}] ",
+                    f" {ts_short}",
+                    f" {route_str}",
+                    f" {stay_str} ",
+                    f" {dist_str} "
+                ]
+                print(format_row(r_cells, col_widths, aligns=aligns))
+
+        if pass_bys:
+            print(format_box_line("├", "─", "┤", [total_inner]))
+            print(format_title_line("  🚗 PASSING BY (Newest First)", total_inner))
+            print(format_box_line("├", "┬", "┤", col_widths))
+            print(format_row(headers, col_widths, aligns=aligns))
+            print(format_box_line("├", "┼", "┤", col_widths))
+
+            recent_pass_bys = list(reversed(pass_bys[-15:]))
+            for idx, pb in enumerate(recent_pass_bys, 1):
+                orig = pb["origin"]
+                dest = pb["destination"]
+                route_str = f"{orig} ➔ {target_label} ➔ {dest}"
+                ts_short = pb["date_ts"]
+                dist_str = f"{pb['dist_km']:.1f} km"
+                stay_str = pb["stay"]
+
+                r_cells = [
+                    f" [{idx:2d}] ",
+                    f" {ts_short}",
+                    f" {route_str}",
+                    f" {stay_str} ",
+                    f" {dist_str} "
+                ]
+                print(format_row(r_cells, col_widths, aligns=aligns))
+
+        print(format_box_line("└", "┴", "┘", col_widths))
     else:
-        print("\nℹ️  No specific commercial POI found in OpenStreetMap within 250m.")
+        print("\n🚗 Associated Drives: No recorded drive visits or pass-through trips found within 1km of these coordinates.")
 
-    print("\nOptions:")
-    if pois:
-        print(f"  [1-{len(pois[:7])}] Accept suggested POI (uses POI center & recommended geofence radius)")
-    print("  [c]   Enter custom name (uses current coordinates)")
-    print("  [g]   Provide custom GPS coordinates or address (set a precise center)")
-    print("  [s]   Skip / Keep address as-is (Leave drive unchanged)")
-    print("  [q]   Quit")
+    candidates = []
 
-    try:
-        choice = input("\nSelect choice: ").strip().lower()
-    except (EOFError, KeyboardInterrupt):
-        return None
+    def print_actions():
+        print("\nAction:")
+        if candidates:
+            print(f"  [1-{len(candidates)}] Accept suggested POI (uses POI center & auto-adjusted radius)")
+        if existing_name:
+            print(f"  [e]   Edit / Update \"{existing_name}\" details (name, radius, keywords, coords)")
+            print("  [c]   Enter custom name (override current place)")
+        else:
+            print("  [c]   Enter custom name (uses parking stop coordinates)")
+        print("  [g]   Provide custom GPS coordinates or address (set a precise center)")
+        print("  [s]   Search for a place by name (e.g. a shopping centre or landmark)")
+        print("  [m]   Open this location in your browser (Google Maps)")
+        if existing_name:
+            print(f"  [d]   Delete \"{existing_name}\" from places.json")
+        print("  [b]   Back to lookup list")
+        print("  [q]   Quit review session")
 
-    if choice in ("s", "skip", ""):
-        print("⏩ Skipped (kept as raw drive address).")
-        return None
-    elif choice in ("q", "quit"):
-        return None
+    print_actions()
 
     selected_name = None
     final_lat = resolved_lat
     final_lon = resolved_lon
     recommended_radius = default_radius
 
-    if choice.isdigit() and 1 <= int(choice) <= len(pois[:7]):
-        poi = pois[int(choice) - 1]
-        selected_name = prompt_poi_naming(poi["name"], poi.get("category", ""))
-        final_lat = poi["lat"]
-        final_lon = poi["lon"]
-        recommended_radius = max(150, int(poi["dist_m"] + 60))
-        print(f"\n📍 Using POI Center: {final_lat:.5f}, {final_lon:.5f} [{selected_name}]")
-        print(f"   Parking offset: {poi['dist_m']}m ➔ Recommended Geofence Radius: {recommended_radius}m")
-
-    elif choice == "g":
+    while True:
         try:
-            g_in = input("Enter central GPS (lat, lon) or exact address to re-center: ").strip()
-            g_lat, g_lon, g_addr = parse_coords_or_address(g_in)
-            if g_lat is None or g_lon is None:
-                print("❌ Could not parse coordinates or address.")
+            choice = input("\nChoice: ").strip().lower()
+        except (EOFError, KeyboardInterrupt):
+            return None
+
+        if choice in ("b", "back", "k", "skip", ""):
+            print("⏩ Skipped (kept as raw drive address).")
+            return None
+        elif choice in ("q", "quit"):
+            return None
+
+        if choice in ("e", "edit", "u", "update") and existing_name:
+            ret, places = interactive_edit_place(existing_name, places)
+            if ret == "quit":
                 return None
-            final_lat = g_lat
-            final_lon = g_lon
-            resolved_addr = g_addr or resolved_addr
-            offset_d = haversine_distance(resolved_lat, resolved_lon, final_lat, final_lon)
-            recommended_radius = max(150, int(offset_d + 60))
-            print(f"✔ Centered at: {final_lat:.5f}, {final_lon:.5f} (Offset from parking: {offset_d:.1f}m)")
-            
-            # Prompt name
-            def_name = g_addr.split(",")[0].strip() if g_addr else ""
-            n_prompt = f"Enter Place Name [default: {def_name}]: " if def_name else "Enter Place Name: "
-            n_in = input(n_prompt).strip()
-            selected_name = n_in if n_in else def_name
-        except (EOFError, KeyboardInterrupt):
-            return None
+            return existing_name
 
-    elif choice == "c":
-        try:
-            selected_name = input("Enter Place Name: ").strip()
-            # Optional coordinate override
-            c_coord = input(f"Center Coordinates [default: {final_lat:.5f}, {final_lon:.5f} (Enter to keep, or provide new)]: ").strip()
-            if c_coord:
-                c_lat, c_lon, _ = parse_coords_or_address(c_coord)
-                if c_lat is not None and c_lon is not None:
-                    final_lat, final_lon = c_lat, c_lon
-                    offset_d = haversine_distance(resolved_lat, resolved_lon, final_lat, final_lon)
-                    recommended_radius = max(150, int(offset_d + 60))
-                    print(f"✔ Set center: {final_lat:.5f}, {final_lon:.5f} (Offset: {offset_d:.1f}m)")
-        except (EOFError, KeyboardInterrupt):
-            return None
-    else:
-        selected_name = choice
+        if choice in ("d", "del", "delete") and existing_name:
+            try:
+                confirm = input(f"Are you sure you want to delete \"{existing_name}\" from places.json? [y/N]: ").strip().lower()
+                if confirm in ("y", "yes"):
+                    del places[existing_name]
+                    save_places(places)
+                    print(f"✔ Successfully deleted \"{existing_name}\" from places.json.")
+                    return None
+                else:
+                    print("Deletion cancelled.")
+                    print_actions()
+                    continue
+            except (EOFError, KeyboardInterrupt):
+                return None
+
+        if choice in ("m", "map"):
+            map_url = gmaps_url(resolved_lat, resolved_lon)
+            opened = False
+            try:
+                opened = webbrowser.open(map_url)
+            except Exception:
+                opened = False
+            if opened:
+                print(f"🌐 Opened in your default browser: {map_url}")
+            else:
+                print(f"⚠️  Couldn't open browser: {map_url}")
+            print_actions()
+            continue
+
+        if choice in ("s", "search"):
+            while True:
+                try:
+                    s_in = input("\nSearch for place name or landmark (or press [Enter] to query nearby OSM POIs, [b] back): ").strip()
+                except (EOFError, KeyboardInterrupt):
+                    return None
+                if s_in.lower() in ("b", "back", "cancel"):
+                    print_actions()
+                    break
+                if not s_in:
+                    print(f"\n🌐 Querying OpenStreetMap POIs near {resolved_lat:.5f}, {resolved_lon:.5f}...")
+                    pois = query_overpass_pois(resolved_lat, resolved_lon, radius_m=350)
+                    if not pois:
+                        print("\nℹ️  No specific commercial POI found in OpenStreetMap within 350m.")
+                        continue
+                    candidates = pois[:7]
+                    print(f"✔ Discovered {len(candidates)} nearby POI{'s' if len(candidates) != 1 else ''}.\n")
+                    print("🏢 Nearby Point-of-Interest (POI) Candidates:")
+                    for p_idx, poi in enumerate(candidates, 1):
+                        dist_disp = format_dist_human(poi['dist_m'])
+                        print(f"  [{p_idx}] {poi['name']} ({poi['category']})  [~{dist_disp} away | Center: {poi['lat']:.5f}, {poi['lon']:.5f}]")
+                    try:
+                        p_choice = input(f"\nSelect POI [1-{len(candidates)}], [s] search again, or [b] back: ").strip().lower()
+                    except (EOFError, KeyboardInterrupt):
+                        return None
+                    if p_choice in ("b", "back", "cancel"):
+                        print_actions()
+                        break
+                    if p_choice.isdigit() and 1 <= int(p_choice) <= len(candidates):
+                        poi = candidates[int(p_choice) - 1]
+                        selected_name = prompt_poi_naming(poi["name"], poi.get("category", ""))
+                        final_lat = poi["lat"]
+                        final_lon = poi["lon"]
+                        recommended_radius = max(150, int(poi["dist_m"] + 60))
+                        print(f"\n📍 Using POI Center: {final_lat:.5f}, {final_lon:.5f} [{selected_name}]")
+                        print(f"   Parking offset: {poi['dist_m']}m ➔ Recommended Geofence Radius: {recommended_radius}m")
+                        break
+                    continue
+                else:
+                    s_results = search_places_by_name(s_in, near_lat=resolved_lat, near_lon=resolved_lon, max_radius_m=500)
+                    if not s_results:
+                        print(f"ℹ️  No results found within 500m for \"{s_in}\".")
+                        continue
+                    candidates = s_results[:7]
+                    print(f"\n🔎 Search results for \"{s_in}\":")
+                    for s_idx, r in enumerate(candidates, 1):
+                        dist_part = f" [~{format_dist_human(r['dist_m'])} away]" if r.get("dist_m") is not None else ""
+                        print(f"  [{s_idx}] {r['name']} ({r.get('category', '')}){dist_part}")
+                        print(f"        {r.get('display_name', '')}")
+                    try:
+                        s_choice = input(f"\nSelect result [1-{len(candidates)}], [s] search again, or [b] back: ").strip().lower()
+                    except (EOFError, KeyboardInterrupt):
+                        return None
+                    if s_choice in ("b", "back", "cancel"):
+                        print_actions()
+                        break
+                    if s_choice.isdigit() and 1 <= int(s_choice) <= len(candidates):
+                        poi = candidates[int(s_choice) - 1]
+                        selected_name = prompt_poi_naming(poi["name"], poi.get("category", ""))
+                        final_lat = poi["lat"]
+                        final_lon = poi["lon"]
+                        offset_d = poi.get("dist_m") or haversine_distance(resolved_lat, resolved_lon, final_lat, final_lon)
+                        recommended_radius = max(150, int(offset_d + 60))
+                        print(f"\n📍 Using POI Center: {final_lat:.5f}, {final_lon:.5f} [{selected_name}]")
+                        print(f"   Offset from parking: {offset_d:.1f}m ➔ Recommended Geofence Radius: {recommended_radius}m")
+                        break
+
+            if selected_name:
+                break
+            continue
+
+        if choice.isdigit() and candidates and 1 <= int(choice) <= len(candidates):
+            poi = candidates[int(choice) - 1]
+            selected_name = prompt_poi_naming(poi["name"], poi.get("category", ""))
+            final_lat = poi["lat"]
+            final_lon = poi["lon"]
+            offset_d = poi.get("dist_m") or haversine_distance(resolved_lat, resolved_lon, final_lat, final_lon)
+            recommended_radius = max(150, int(offset_d + 60))
+            print(f"\n📍 Using POI Center: {final_lat:.5f}, {final_lon:.5f} [{selected_name}]")
+            print(f"   Offset: {offset_d:.1f}m ➔ Recommended Geofence Radius: {recommended_radius}m")
+            break
+
+        elif choice == "g":
+            try:
+                g_in = input("Enter central GPS (lat, lon) or exact address to re-center: ").strip()
+                g_lat, g_lon, g_addr = parse_coords_or_address(g_in)
+                if g_lat is None or g_lon is None:
+                    print("❌ Could not parse coordinates or address.")
+                    print_actions()
+                    continue
+                final_lat = g_lat
+                final_lon = g_lon
+                resolved_addr = g_addr or resolved_addr
+                offset_d = haversine_distance(resolved_lat, resolved_lon, final_lat, final_lon)
+                recommended_radius = max(150, int(offset_d + 60))
+                print(f"✔ Centered at: {final_lat:.5f}, {final_lon:.5f} (Offset from parking: {offset_d:.1f}m)")
+                
+                def_name = g_addr.split(",")[0].strip() if g_addr else ""
+                n_prompt = f"Enter Place Name [default: {def_name}]: " if def_name else "Enter Place Name: "
+                n_in = input(n_prompt).strip()
+                selected_name = n_in if n_in else def_name
+                break
+            except (EOFError, KeyboardInterrupt):
+                return None
+
+        elif choice == "c":
+            try:
+                selected_name = input("Enter Place Name: ").strip()
+                c_coord = input(f"Center Coordinates [default: {final_lat:.5f}, {final_lon:.5f} (Enter to keep, or provide new)]: ").strip()
+                if c_coord:
+                    c_lat, c_lon, _ = parse_coords_or_address(c_coord)
+                    if c_lat is not None and c_lon is not None:
+                        final_lat, final_lon = c_lat, c_lon
+                        offset_d = haversine_distance(resolved_lat, resolved_lon, final_lat, final_lon)
+                        recommended_radius = max(150, int(offset_d + 60))
+                        print(f"✔ Set center: {final_lat:.5f}, {final_lon:.5f} (Offset: {offset_d:.1f}m)")
+                break
+            except (EOFError, KeyboardInterrupt):
+                return None
+        else:
+            selected_name = choice
+            break
 
     if not selected_name:
         print("❌ Place name cannot be empty.")
@@ -2189,13 +2532,14 @@ def interactive_lookup_and_add(query_or_addr=None, lat=None, lon=None, default_r
     try:
         k_input = input(f"Keywords / Aliases [default: {kw_str}]: ").strip()
         if k_input:
-            keywords = [k.strip() for k in k_input.split(",") if k.strip()]
+            keywords = [k.strip() for k in k_input.split(",") if k.strip() and not is_coord_string(k.strip())]
         else:
             keywords = kw_candidates
     except Exception:
         keywords = kw_candidates
 
-    notes = f"{selected_name} ({resolved_addr.split(',')[0].strip() if resolved_addr else ''})"
+    addr_label = resolved_addr.split(',')[0].strip() if (resolved_addr and not is_coord_string(resolved_addr)) else ""
+    notes = f"{selected_name} ({addr_label})" if addr_label else selected_name
 
     places[selected_name] = {
         "lat": round(final_lat, 5),
@@ -2253,6 +2597,29 @@ def find_candidate_drive_logs():
                 if f not in summaries:
                     summaries.append(f)
     return summaries
+
+
+def find_deepdive_files():
+    """Finds all drive_deepdive_*.csv files from configured directories and subdirectories."""
+    config = load_config()
+    tessie_dir = os.path.abspath(os.path.expanduser(config.get("tessie_directory", "~/Library/Mobile Documents/com~apple~CloudDocs/Tesla/Tessie")))
+    
+    search_dirs = [tessie_dir]
+    if TESSIE_DIR not in search_dirs and os.path.exists(TESSIE_DIR):
+        search_dirs.append(TESSIE_DIR)
+
+    files = []
+    seen = set()
+    for d in search_dirs:
+        for sub in ["", "drives", "drives/deepdive", "deepdive", "archive", "drives/archive"]:
+            p = os.path.join(d, sub)
+            if os.path.isdir(p):
+                for f in glob.glob(os.path.join(p, "drive_deepdive_*.csv")):
+                    real = os.path.realpath(f)
+                    if real not in seen:
+                        seen.add(real)
+                        files.append(real)
+    return files
 
 def _parse_drive_ts(ts_str):
     if not ts_str or ts_str == "-":
@@ -2425,7 +2792,7 @@ def get_place_trip_history(target_place_name, places=None, drive_logs=None):
         except Exception:
             pass
 
-    # Reconstruct paired visits
+ # Reconstruct paired visits
     visits = []
     i = 0
     total_drives = len(raw_drives)
@@ -2469,7 +2836,358 @@ def get_place_trip_history(target_place_name, places=None, drive_logs=None):
             })
         i += 1
 
+def find_nearest_drive_stop(lat, lon, max_radius_m=1000, drive_logs=None):
+    """
+    Finds the closest recorded drive stop (start or end point of a recorded drive)
+    within max_radius_m of (lat, lon).
+    Returns dict with (dist_m, lat, lon, addr, timestamp, type) or None.
+    """
+    if drive_logs is None:
+        drive_logs = find_candidate_drive_logs()
+    if not drive_logs:
+        return None
+
+    closest = None
+    min_dist = float("inf")
+
+    for csv_file in drive_logs:
+        try:
+            with open(csv_file, "r", encoding="utf-8-sig") as fp:
+                reader = csv.DictReader(fp)
+                for row in reader:
+                    s_lat = float(row.get("Starting Latitude") or row.get("starting_latitude") or row.get("Starting Lat") or 0) if (row.get("Starting Latitude") or row.get("starting_latitude") or row.get("Starting Lat")) else None
+                    s_lon = float(row.get("Starting Longitude") or row.get("starting_longitude") or row.get("Starting Lon") or 0) if (row.get("Starting Longitude") or row.get("starting_longitude") or row.get("Starting Lon")) else None
+                    s_addr = (row.get("Starting Location") or row.get("starting_location") or row.get("Starting Address") or row.get("starting_address") or "").strip()
+                    s_ts = (row.get("Started At (Local)") or row.get("Started At (AEST)") or row.get("Started At") or "").strip()
+
+                    e_lat = float(row.get("Ending Latitude") or row.get("ending_latitude") or row.get("Ending Lat") or 0) if (row.get("Ending Latitude") or row.get("ending_latitude") or row.get("Ending Lat")) else None
+                    e_lon = float(row.get("Ending Longitude") or row.get("ending_longitude") or row.get("Ending Lon") or 0) if (row.get("Ending Longitude") or row.get("ending_longitude") or row.get("Ending Lon")) else None
+                    e_addr = (row.get("Ending Location") or row.get("ending_location") or row.get("Ending Address") or row.get("ending_address") or "").strip()
+                    e_ts = (row.get("Ended At (Local)") or row.get("Ended At (AEST)") or row.get("Ended At") or "").strip()
+
+                    if s_lat is not None and s_lon is not None:
+                        d = haversine_distance(lat, lon, s_lat, s_lon)
+                        if d <= max_radius_m and d < min_dist:
+                            min_dist = d
+                            closest = {
+                                "dist_m": d,
+                                "lat": s_lat,
+                                "lon": s_lon,
+                                "addr": s_addr,
+                                "timestamp": s_ts,
+                                "type": "Start"
+                            }
+
+                    if e_lat is not None and e_lon is not None:
+                        d = haversine_distance(lat, lon, e_lat, e_lon)
+                        if d <= max_radius_m and d < min_dist:
+                            min_dist = d
+                            closest = {
+                                "dist_m": d,
+                                "lat": e_lat,
+                                "lon": e_lon,
+                                "addr": e_addr,
+                                "timestamp": e_ts,
+                                "type": "End"
+                            }
+        except Exception:
+            pass
+
+    return closest
+
+
+def get_coords_trip_history(lat, lon, radius_m=150, places=None, drive_logs=None, label="Target"):
+    """
+    Extracts all chronological visits matching a coordinate radius from drive logs.
+    Pairs arrival and subsequent departure legs into single visit records:
+    Origin ➔ label ➔ Destination.
+    Returns: list of dicts with visit details.
+    """
+    if places is None:
+        places = load_places()
+    if drive_logs is None:
+        drive_logs = find_candidate_drive_logs()
+    if not drive_logs:
+        return []
+
+    chargers = load_chargers()
+
+    raw_drives = []
+    for csv_file in drive_logs:
+        try:
+            with open(csv_file, "r", encoding="utf-8-sig") as fp:
+                reader = csv.DictReader(fp)
+                for row in reader:
+                    s_addr = (row.get("Starting Location") or row.get("starting_location") or row.get("Starting Address") or row.get("starting_address") or "").strip()
+                    s_saved = (row.get("Starting Saved Location") or row.get("starting_saved_location") or "").strip()
+                    s_lat = float(row.get("Starting Latitude") or row.get("starting_latitude") or row.get("Starting Lat") or 0) if (row.get("Starting Latitude") or row.get("starting_latitude") or row.get("Starting Lat")) else None
+                    s_lon = float(row.get("Starting Longitude") or row.get("starting_longitude") or row.get("Starting Lon") or 0) if (row.get("Starting Longitude") or row.get("starting_longitude") or row.get("Starting Lon")) else None
+
+                    e_addr = (row.get("Ending Location") or row.get("ending_location") or row.get("Ending Address") or row.get("ending_address") or "").strip()
+                    e_saved = (row.get("Ending Saved Location") or row.get("ending_saved_location") or "").strip()
+                    e_lat = float(row.get("Ending Latitude") or row.get("ending_latitude") or row.get("Ending Lat") or 0) if (row.get("Ending Latitude") or row.get("ending_latitude") or row.get("Ending Lat")) else None
+                    e_lon = float(row.get("Ending Longitude") or row.get("ending_longitude") or row.get("Ending Lon") or 0) if (row.get("Ending Longitude") or row.get("ending_longitude") or row.get("Ending Lon")) else None
+
+                    s_match = False
+                    if s_lat is not None and s_lon is not None:
+                        s_match = (haversine_distance(lat, lon, s_lat, s_lon) <= radius_m)
+
+                    e_match = False
+                    if e_lat is not None and e_lon is not None:
+                        e_match = (haversine_distance(lat, lon, e_lat, e_lon) <= radius_m)
+
+                    if not s_match and not e_match:
+                        continue
+
+                    origin = label if s_match else (resolve_stop(s_addr, s_saved, s_lat, s_lon, places, chargers) or s_saved or s_addr.split(",")[0] or "Unknown")
+                    dest = label if e_match else (resolve_stop(e_addr, e_saved, e_lat, e_lon, places, chargers) or e_saved or e_addr.split(",")[0] or "Unknown")
+
+                    start_ts = (row.get("Started At (Local)") or row.get("Started At (AEST)") or row.get("Started At") or "").strip()
+                    end_ts = (row.get("Ended At (Local)") or row.get("Ended At (AEST)") or row.get("Ended At") or "").strip()
+                    try:
+                        dist_km = float(row.get("Distance (km)") or row.get("distance_km") or 0)
+                    except ValueError:
+                        dist_km = 0.0
+                    try:
+                        dur_min = float(row.get("Duration (Minutes)") or row.get("duration_minutes") or row.get("Duration") or 0)
+                    except ValueError:
+                        dur_min = 0.0
+                    try:
+                        energy_kwh = float(row.get("Total Energy Used (kWh)") or row.get("energy_used_kwh") or 0)
+                    except ValueError:
+                        energy_kwh = 0.0
+
+                    raw_drives.append({
+                        "origin": origin,
+                        "dest": dest,
+                        "start_ts": start_ts,
+                        "end_ts": end_ts,
+                        "dist_km": dist_km,
+                        "dur_min": dur_min,
+                        "energy_kwh": energy_kwh,
+                        "s_match": s_match,
+                        "e_match": e_match
+                    })
+        except Exception:
+            pass
+
+ # Reconstruct paired visits
+    visits = []
+    i = 0
+    total_drives = len(raw_drives)
+    while i < total_drives:
+        d = raw_drives[i]
+        if d["e_match"]:
+            arrival = d
+            departure = None
+            if i + 1 < total_drives and raw_drives[i + 1]["s_match"]:
+                departure = raw_drives[i + 1]
+                i += 1
+
+            arr_dt = _parse_drive_ts(arrival["end_ts"])
+            dep_dt = _parse_drive_ts(departure["start_ts"]) if departure else None
+            stay_mins = (dep_dt - arr_dt).total_seconds() / 60.0 if (arr_dt and dep_dt and dep_dt >= arr_dt) else None
+
+            visits.append({
+                "date_ts": arrival["end_ts"][:16] if arrival["end_ts"] else (arrival["start_ts"][:16] if arrival["start_ts"] else "-"),
+                "origin": arrival["origin"],
+                "place": label,
+                "destination": departure["dest"] if departure else "-",
+                "stay": _format_stay_duration(stay_mins) if stay_mins is not None else "-",
+                "dist_km": arrival["dist_km"] + (departure["dist_km"] if departure else 0.0),
+                "energy_kwh": arrival["energy_kwh"] + (departure["energy_kwh"] if departure else 0.0),
+                "paired": departure is not None,
+                "is_arrival": True,
+                "is_departure": departure is not None
+            })
+        elif d["s_match"]:
+            visits.append({
+                "date_ts": d["start_ts"][:16] if d["start_ts"] else "-",
+                "origin": "-",
+                "place": label,
+                "destination": d["dest"],
+                "stay": "-",
+                "dist_km": d["dist_km"],
+                "energy_kwh": d["energy_kwh"],
+                "paired": False,
+                "is_arrival": False,
+                "is_departure": True
+            })
+        i += 1
+
     return visits
+
+
+def get_coords_pass_by_history(target_lat, target_lon, radius_m=150, places=None, drive_logs=None, deepdive_files=None, label="Target", visits=None):
+    """
+    Finds drives that passed within radius_m of (target_lat, target_lon) without stopping there.
+    Excludes drives that start or end at the target, and drives that occurred within 10 minutes
+    of a recorded visit (stop) at the target location.
+    Returns: list of dicts with pass-by details (sorted chronologically).
+    """
+    if places is None:
+        places = load_places()
+    if drive_logs is None:
+        drive_logs = find_candidate_drive_logs()
+    if not drive_logs:
+        return []
+    if deepdive_files is None:
+        deepdive_files = find_deepdive_files()
+    if not deepdive_files:
+        return []
+
+    chargers = load_chargers()
+
+ # Collect all visit timestamps to exclude pass-bys within 10 minutes of stopping there
+    stop_dts = []
+    if visits is None:
+        visits = get_coords_trip_history(target_lat, target_lon, radius_m=radius_m, places=places, drive_logs=drive_logs, label=label)
+    
+    for v in visits:
+        v_dt = _parse_drive_ts(v.get("date_ts"))
+        if v_dt:
+            stop_dts.append(v_dt)
+
+    drives_master = []
+    for csv_file in drive_logs:
+        try:
+            with open(csv_file, "r", encoding="utf-8-sig") as fp:
+                reader = csv.DictReader(fp)
+                for row in reader:
+                    s_addr = (row.get("Starting Location") or row.get("starting_location") or row.get("Starting Address") or row.get("starting_address") or "").strip()
+                    s_saved = (row.get("Starting Saved Location") or row.get("starting_saved_location") or "").strip()
+                    s_lat = float(row.get("Starting Latitude") or row.get("starting_latitude") or row.get("Starting Lat") or 0) if (row.get("Starting Latitude") or row.get("starting_latitude") or row.get("Starting Lat")) else None
+                    s_lon = float(row.get("Starting Longitude") or row.get("starting_longitude") or row.get("Starting Lon") or 0) if (row.get("Starting Longitude") or row.get("starting_longitude") or row.get("Starting Lon")) else None
+
+                    e_addr = (row.get("Ending Location") or row.get("ending_location") or row.get("Ending Address") or row.get("ending_address") or "").strip()
+                    e_saved = (row.get("Ending Saved Location") or row.get("ending_saved_location") or "").strip()
+                    e_lat = float(row.get("Ending Latitude") or row.get("ending_latitude") or row.get("Ending Lat") or 0) if (row.get("Ending Latitude") or row.get("ending_latitude") or row.get("Ending Lat")) else None
+                    e_lon = float(row.get("Ending Longitude") or row.get("ending_longitude") or row.get("Ending Lon") or 0) if (row.get("Ending Longitude") or row.get("ending_longitude") or row.get("Ending Lon")) else None
+
+                    start_ts = (row.get("Started At (Local)") or row.get("Started At (AEST)") or row.get("Started At") or "").strip()
+                    end_ts = (row.get("Ended At (Local)") or row.get("Ended At (AEST)") or row.get("Ended At") or "").strip()
+
+                    try:
+                        dist_km = float(row.get("Distance (km)") or row.get("distance_km") or 0)
+                    except ValueError:
+                        dist_km = 0.0
+
+                    s_dist = haversine_distance(target_lat, target_lon, s_lat, s_lon) if s_lat is not None and s_lon is not None else float("inf")
+                    e_dist = haversine_distance(target_lat, target_lon, e_lat, e_lon) if e_lat is not None and e_lon is not None else float("inf")
+
+                    d_start_dt = _parse_drive_ts(start_ts)
+                    d_end_dt = _parse_drive_ts(end_ts)
+
+ # Also add start/end dt to stop_dts if it was near target
+                    if s_dist <= radius_m and d_start_dt:
+                        stop_dts.append(d_start_dt)
+                    if e_dist <= radius_m and d_end_dt:
+                        stop_dts.append(d_end_dt)
+
+                    drives_master.append({
+                        "s_addr": s_addr, "s_saved": s_saved, "s_lat": s_lat, "s_lon": s_lon, "s_dist": s_dist,
+                        "e_addr": e_addr, "e_saved": e_saved, "e_lat": e_lat, "e_lon": e_lon, "e_dist": e_dist,
+                        "start_ts": start_ts, "end_ts": end_ts, "dist_km": dist_km,
+                        "start_dt": d_start_dt, "end_dt": d_end_dt
+                    })
+        except Exception:
+            pass
+
+    deg_lat_pad = (radius_m + 100) / 111000.0
+    deg_lon_pad = (radius_m + 100) / 85000.0
+    min_lat, max_lat = target_lat - deg_lat_pad, target_lat + deg_lat_pad
+    min_lon, max_lon = target_lon - deg_lon_pad, target_lon + deg_lon_pad
+
+    pass_bys = []
+
+    for fpath in deepdive_files:
+        try:
+            with open(fpath, "r", encoding="utf-8-sig") as fp:
+                reader = csv.DictReader(fp)
+                fieldnames = reader.fieldnames or []
+                if "Latitude" not in fieldnames or "Longitude" not in fieldnames:
+                    continue
+
+                rows = list(reader)
+                if len(rows) < 10:
+                    continue
+
+                first_row = rows[0]
+                last_row = rows[-1]
+
+                try:
+                    f_lat, f_lon = float(first_row.get("Latitude") or 0), float(first_row.get("Longitude") or 0)
+                    l_lat, l_lon = float(last_row.get("Latitude") or 0), float(last_row.get("Longitude") or 0)
+                except ValueError:
+                    continue
+
+                f_dist = haversine_distance(target_lat, target_lon, f_lat, f_lon)
+                l_dist = haversine_distance(target_lat, target_lon, l_lat, l_lon)
+
+ # Exclude if drive started or stopped within radius
+                if f_dist <= radius_m or l_dist <= radius_m:
+                    continue
+
+                matched_row = None
+                min_pass_dist = float("inf")
+
+ # Skip the first 5 and last 5 rows to ensure we only capture genuine en-route passage
+                for idx, r in enumerate(rows[5:-5], 5):
+                    try:
+                        r_lat = float(r.get("Latitude") or 0)
+                        r_lon = float(r.get("Longitude") or 0)
+                    except ValueError:
+                        continue
+
+                    if min_lat <= r_lat <= max_lat and min_lon <= r_lon <= max_lon:
+                        d = haversine_distance(target_lat, target_lon, r_lat, r_lon)
+                        if d <= radius_m and d < min_pass_dist:
+                            min_pass_dist = d
+                            matched_row = r
+
+                if matched_row:
+                    pass_ts = matched_row.get("Timestamp (AEST)") or matched_row.get("Timestamp (Local)") or matched_row.get("Timestamp")
+                    pass_dt = _parse_drive_ts(pass_ts)
+
+ # Exclude if within 10 minutes of any recorded stop/visit at this target
+                    if pass_dt and any(abs((pass_dt - s_dt).total_seconds()) < 600 for s_dt in stop_dts):
+                        continue
+
+                    matched_master = None
+                    if pass_dt:
+                        for dm in drives_master:
+                            if dm["start_dt"] and dm["end_dt"]:
+                                if dm["start_dt"] - timedelta(minutes=3) <= pass_dt <= dm["end_dt"] + timedelta(minutes=3):
+                                    matched_master = dm
+                                    break
+
+                    if matched_master:
+                        orig = resolve_stop(matched_master["s_addr"], matched_master["s_saved"], matched_master["s_lat"], matched_master["s_lon"], places, chargers) or matched_master["s_saved"] or matched_master["s_addr"].split(",")[0] or "Unknown"
+                        dest = resolve_stop(matched_master["e_addr"], matched_master["e_saved"], matched_master["e_lat"], matched_master["e_lon"], places, chargers) or matched_master["e_saved"] or matched_master["e_addr"].split(",")[0] or "Unknown"
+                        dist_km = matched_master["dist_km"]
+                        date_str = matched_master["start_ts"][:16] if matched_master["start_ts"] else (pass_ts[:16] if pass_ts else "-")
+                    else:
+                        orig = resolve_stop(first_row.get("Starting Location", ""), "", f_lat, f_lon, places, chargers) or f"Start ({f_lat:.2f}, {f_lon:.2f})"
+                        dest = resolve_stop(last_row.get("Ending Location", ""), "", l_lat, l_lon, places, chargers) or f"End ({l_lat:.2f}, {l_lon:.2f})"
+                        dist_km = 0.0
+                        date_str = pass_ts[:16] if pass_ts else "-"
+
+                    pass_bys.append({
+                        "date_ts": date_str,
+                        "pass_ts": pass_ts,
+                        "origin": orig,
+                        "place": label,
+                        "destination": dest,
+                        "stay": "Pass by",
+                        "closest_dist_m": min_pass_dist,
+                        "dist_km": dist_km
+                    })
+        except Exception:
+            pass
+
+    pass_bys.sort(key=lambda x: _parse_drive_ts(x["date_ts"]) or datetime.min)
+    return pass_bys
+
 
 def inspect_place(place_name_or_query, places=None):
     """
@@ -2482,17 +3200,17 @@ def inspect_place(place_name_or_query, places=None):
         print("ℹ️  No places defined in places.json.")
         return
 
-    # Find matching place
+ # Find matching place
     target_name = None
     q = place_name_or_query.strip().lower() if isinstance(place_name_or_query, str) else str(place_name_or_query)
 
-    # 1. Exact match
+ # 1. Exact match
     for p_name in places:
         if p_name.lower() == q:
             target_name = p_name
             break
 
-    # 2. Substring match
+ # 2. Substring match
     if not target_name:
         for p_name, p_data in places.items():
             kws = " ".join(p_data.get("keywords", [])).lower()
@@ -2511,6 +3229,7 @@ def inspect_place(place_name_or_query, places=None):
     notes = p_data.get("notes", "") or "None"
 
     visits = get_place_trip_history(target_name, places=places)
+    pass_bys = get_coords_pass_by_history(lat, lon, radius_m=rad, places=places, label=target_name, visits=visits)
     total_legs = sum(2 if v.get("paired") else 1 for v in visits)
 
     col_widths = [6, 18, 56, 10, 12]
@@ -2541,6 +3260,8 @@ def inspect_place(place_name_or_query, places=None):
     print(format_box_line("├", "─", "┤", [total_inner]))
     print(format_title_line("  📊 DRIVE & VISIT HISTORY SUMMARY", total_inner))
     print(format_title_line(f"  Total Recorded Visits:     {len(visits)} visits ({total_legs} drive legs)", total_inner))
+    if pass_bys:
+        print(format_title_line(f"  Total Passed By Trips:     {len(pass_bys)} drives passing through", total_inner))
     if visits:
         first_ts = visits[0]["date_ts"]
         latest_ts = visits[-1]["date_ts"]
@@ -2555,7 +3276,6 @@ def inspect_place(place_name_or_query, places=None):
     if not visits:
         no_trips_msg = "No recorded drive visits found for this location."
         print(f"│{pad_display(f'  {no_trips_msg}', total_inner, 'left')}│")
-        print(format_box_line("└", "┴", "┘", col_widths) + "\n")
     else:
         recent_visits = list(reversed(visits[-15:]))
         for idx, v in enumerate(recent_visits, 1):
@@ -2581,7 +3301,32 @@ def inspect_place(place_name_or_query, places=None):
             ]
             print(format_row(r_cells, col_widths, aligns=aligns))
 
-        print(format_box_line("└", "┴", "┘", col_widths) + "\n")
+    if pass_bys:
+        print(format_box_line("├", "─", "┤", [total_inner]))
+        print(format_title_line("  🚗 PASSING BY (Newest First)", total_inner))
+        print(format_box_line("├", "┬", "┤", col_widths))
+        print(format_row(headers, col_widths, aligns=aligns))
+        print(format_box_line("├", "┼", "┤", col_widths))
+
+        recent_pass_bys = list(reversed(pass_bys[-15:]))
+        for idx, pb in enumerate(recent_pass_bys, 1):
+            orig = pb["origin"]
+            dest = pb["destination"]
+            route_str = f"{orig} ➔ {target_name} ➔ {dest}"
+            ts_short = pb["date_ts"]
+            dist_str = f"{pb['dist_km']:.1f} km"
+            stay_str = pb["stay"]
+
+            r_cells = [
+                f" [{idx:2d}] ",
+                f" {ts_short}",
+                f" {route_str}",
+                f" {stay_str} ",
+                f" {dist_str} "
+            ]
+            print(format_row(r_cells, col_widths, aligns=aligns))
+
+    print(format_box_line("└", "┴", "┘", col_widths) + "\n")
 
     if sys.stdin and sys.stdin.isatty():
         while True:
@@ -2668,125 +3413,122 @@ def inspect_place(place_name_or_query, places=None):
 # CLI Command: List Stored Places
 # ---------------------------------------------------------------------------
 def cmd_list(args):
-    places = load_places()
-    if not places:
-        print("ℹ️  No places defined in places.json.")
-        return
+    while True:
+        places = load_places()
+        if not places:
+            print("ℹ️  No places defined in places.json.")
+            return
 
-    if getattr(args, "search", None):
-        q = args.search.lower()
-        filtered = {}
-        for name, data in places.items():
-            kws = " ".join(data.get("keywords", [])).lower()
-            notes = data.get("notes", "").lower()
-            if q in name.lower() or q in kws or q in notes:
-                filtered[name] = data
-        places = filtered
+        if getattr(args, "search", None):
+            q = args.search.lower()
+            filtered = {}
+            for name, data in places.items():
+                kws = " ".join(data.get("keywords", [])).lower()
+                notes = data.get("notes", "").lower()
+                if q in name.lower() or q in kws or q in notes:
+                    filtered[name] = data
+            places = filtered
 
-    if not places:
-        print(f"ℹ️  No places matched search query: \"{args.search}\"")
-        return
+        if not places:
+            print(f"ℹ️  No places matched search query: \"{args.search}\"")
+            return
 
-    visit_counts = get_place_visit_counts(places)
+        visit_counts = get_place_visit_counts(places)
 
-    ref_lat, ref_lon = None, None
-    if getattr(args, "near", None):
-        all_places = load_places()
-        if args.near in all_places:
-            ref_lat = all_places[args.near]["lat"]
-            ref_lon = all_places[args.near]["lon"]
-        else:
-            geo = geocode_address(args.near)
-            if geo:
-                ref_lat, ref_lon = geo["lat"], geo["lon"]
+        ref_lat, ref_lon = None, None
+        if getattr(args, "near", None):
+            all_places = load_places()
+            if args.near in all_places:
+                ref_lat = all_places[args.near]["lat"]
+                ref_lon = all_places[args.near]["lon"]
             else:
-                print(f"⚠️  Reference place \"{args.near}\" not found.")
-
-    items = list(places.items())
-    sort_choice = getattr(args, "sort", "visits")
-    if ref_lat is not None and ref_lon is not None:
-        items.sort(key=lambda x: haversine_distance(ref_lat, ref_lon, x[1]["lat"], x[1]["lon"]))
-    elif sort_choice == "name":
-        items.sort(key=lambda x: x[0].lower())
-    elif sort_choice == "radius":
-        items.sort(key=lambda x: x[1].get("radius_m", 0), reverse=True)
-    elif sort_choice == "visits":
-        items.sort(key=lambda x: (visit_counts.get(x[0], 0), x[0].lower()), reverse=True)
-
-    col_widths = [6, 30, 8, 24, 8]
-    headers = [" # ", " Place Name", " Visits ", " Coordinates (Lat, Lon) ", " Radius "]
-    aligns = ["right", "left", "right", "center", "right"]
-
-    if ref_lat is not None:
-        col_widths.append(11)
-        headers.append(" Dist (km) ")
-        aligns.append("right")
-
-    col_widths.append(38)
-    headers.append(" Keywords / Aliases")
-    aligns.append("left")
-
-    total_inner = sum(col_widths) + len(col_widths) - 1
-
-    title = f" 📍 STORED LOCATIONS ({len(items)} places)"
-    if getattr(args, "near", None):
-        title += f" [Sorted by distance from {args.near}]"
-    elif sort_choice == "visits":
-        title += " [Sorted by visits (highest frequency first)]"
-
-    print("\n" + format_box_line("┌", "─", "┐", [total_inner]))
-    print(format_title_line(title, total_inner))
-    print(format_box_line("├", "┬", "┤", col_widths))
-    print(format_row(headers, col_widths, aligns=aligns))
-    print(format_box_line("├", "┼", "┤", col_widths))
-
-    for idx, (name, data) in enumerate(items, 1):
-        lat = data.get("lat", 0.0)
-        lon = data.get("lon", 0.0)
-        radius = f"{data.get('radius_m', 0)}m"
-        kws = ", ".join(data.get("keywords", []))
-        coords_str = f"{lat:.5f}, {lon:.5f}"
-        v_str = str(visit_counts.get(name, 0))
-
-        row_cells = [
-            f" [{idx:2d}] ",
-            f" {name}",
-            f" {v_str} ",
-            f" {coords_str} ",
-            f" {radius} "
-        ]
-        if ref_lat is not None:
-            dist_km = haversine_distance(ref_lat, ref_lon, lat, lon) / 1000.0
-            row_cells.append(f" {dist_km:.1f} km ")
-        row_cells.append(f" {kws}")
-
-        print(format_row(row_cells, col_widths, aligns=aligns))
-
-    print(format_box_line("└", "┴", "┘", col_widths) + "\n")
-
-    # Interactive inspection selection loop
-    if sys.stdin and sys.stdin.isatty():
-        while True:
-            try:
-                pick = input("Enter [#] to inspect location details & visit history, or [q] to quit: ").strip()
-            except (KeyboardInterrupt, EOFError):
-                print()
-                break
-            if not pick or pick.lower() in ("q", "quit", "exit"):
-                break
-            if pick.isdigit():
-                p_idx = int(pick)
-                if 1 <= p_idx <= len(items):
-                    sel_name = items[p_idx - 1][0]
-                    res = inspect_place(sel_name, places=places)
-                    if res in ("deleted", "renamed"):
-                        return cmd_list(args)
+                geo = geocode_address(args.near)
+                if geo:
+                    ref_lat, ref_lon = geo["lat"], geo["lon"]
                 else:
-                    print(f"⚠️ Invalid selection. Please enter 1 to {len(items)}.")
+                    print(f"⚠️  Reference place \"{args.near}\" not found.")
+
+        items = list(places.items())
+        sort_choice = getattr(args, "sort", "visits")
+        if ref_lat is not None and ref_lon is not None:
+            items.sort(key=lambda x: haversine_distance(ref_lat, ref_lon, x[1]["lat"], x[1]["lon"]))
+        elif sort_choice == "name":
+            items.sort(key=lambda x: x[0].lower())
+        elif sort_choice == "radius":
+            items.sort(key=lambda x: x[1].get("radius_m", 0), reverse=True)
+        elif sort_choice == "visits":
+            items.sort(key=lambda x: (visit_counts.get(x[0], 0), x[0].lower()), reverse=True)
+
+        col_widths = [6, 30, 8, 24, 8]
+        headers = [" # ", " Place Name", " Visits ", " Coordinates (Lat, Lon) ", " Radius "]
+        aligns = ["right", "left", "right", "center", "right"]
+
+        if ref_lat is not None:
+            col_widths.append(11)
+            headers.append(" Dist (km) ")
+            aligns.append("right")
+
+        col_widths.append(38)
+        headers.append(" Keywords / Aliases")
+        aligns.append("left")
+
+        total_inner = sum(col_widths) + len(col_widths) - 1
+
+        title = f" 📍 STORED LOCATIONS ({len(items)} places)"
+        if getattr(args, "near", None):
+            title += f" [Sorted by distance from {args.near}]"
+        elif sort_choice == "visits":
+            title += " [Sorted by visits (highest frequency first)]"
+
+        print("\n" + format_box_line("┌", "─", "┐", [total_inner]))
+        print(format_title_line(title, total_inner))
+        print(format_box_line("├", "┬", "┤", col_widths))
+        print(format_row(headers, col_widths, aligns=aligns))
+        print(format_box_line("├", "┼", "┤", col_widths))
+
+        for idx, (name, data) in enumerate(items, 1):
+            lat = data.get("lat", 0.0)
+            lon = data.get("lon", 0.0)
+            radius = f"{data.get('radius_m', 0)}m"
+            kws = ", ".join(data.get("keywords", []))
+            coords_str = f"{lat:.5f}, {lon:.5f}"
+            v_str = str(visit_counts.get(name, 0))
+
+            row_cells = [
+                f" [{idx:2d}] ",
+                f" {name}",
+                f" {v_str} ",
+                f" {coords_str} ",
+                f" {radius} "
+            ]
+            if ref_lat is not None:
+                dist_km = haversine_distance(ref_lat, ref_lon, lat, lon) / 1000.0
+                row_cells.append(f" {dist_km:.1f} km ")
+            row_cells.append(f" {kws}")
+
+            print(format_row(row_cells, col_widths, aligns=aligns))
+
+        print(format_box_line("└", "┴", "┘", col_widths) + "\n")
+
+        if not (sys.stdin and sys.stdin.isatty()):
+            break
+
+        try:
+            pick = input("Enter [#] to inspect location details & visit history, or [q] to quit: ").strip()
+        except (KeyboardInterrupt, EOFError):
+            print()
+            break
+        if not pick or pick.lower() in ("q", "quit", "exit"):
+            break
+        if pick.isdigit():
+            p_idx = int(pick)
+            if 1 <= p_idx <= len(items):
+                sel_name = items[p_idx - 1][0]
+                inspect_place(sel_name, places=places)
             else:
-                res = inspect_place(pick, places=places)
-                if res in ("deleted", "renamed"):
-                    return cmd_list(args)
+                print(f"⚠️ Invalid selection. Please enter 1 to {len(items)}.")
+        else:
+            inspect_place(pick, places=places)
 
 def review_single_cluster(cl, places, total_clusters=1, cluster_num=1, allow_ignore=True):
     clean_addr = cl["address"] or f"{cl['center_lat']:.5f}, {cl['center_lon']:.5f}"
@@ -2797,18 +3539,7 @@ def review_single_cluster(cl, places, total_clusters=1, cluster_num=1, allow_ign
     print(f"GPS:     {hyperlink(gps_str, gmaps_url(cl['center_lat'], cl['center_lon']))}")
     print(f"==============================================================================")
 
-    print(f"\n🌐 Querying OpenStreetMap POIs near {cl['center_lat']:.5f}, {cl['center_lon']:.5f}...")
-    pois = query_overpass_pois(cl["center_lat"], cl["center_lon"], radius_m=350)
-    candidates = pois[:5]
-
-    if candidates:
-        print(f"✔ Discovered {len(candidates)} nearby POI{'s' if len(candidates) != 1 else ''}.\n")
-        print("🏢 Suggested POIs from API:")
-        for p_idx, poi in enumerate(candidates, 1):
-            dist_disp = format_dist_human(poi['dist_m'])
-            print(f"  [{p_idx}] {poi['name']} ({poi['category']}) [~{dist_disp} | Center: {poi['lat']:.5f}, {poi['lon']:.5f}]")
-    else:
-        print("\nℹ️  No specific commercial POI found in OpenStreetMap within 350m.")
+    candidates = []
 
     def print_actions():
         print("\nAction:")
@@ -2849,32 +3580,64 @@ def review_single_cluster(cl, places, total_clusters=1, cluster_num=1, allow_ign
         if choice in ("s", "search"):
             while True:
                 try:
-                    s_in = input("\nSearch for (e.g. a shopping centre or landmark name, or [b] back): ").strip()
+                    s_in = input("\nSearch for place name or landmark (or press [Enter] to query nearby OSM POIs, [b] back): ").strip()
                 except (EOFError, KeyboardInterrupt):
                     return "quit"
-                if not s_in or s_in.lower() in ("b", "back", "cancel"):
+                if s_in.lower() in ("b", "back", "cancel"):
                     print_actions()
                     break
-                s_results = search_places_by_name(s_in, near_lat=cl["center_lat"], near_lon=cl["center_lon"], max_radius_m=350)
-                if not s_results:
-                    print(f"ℹ️  No results found within 350m for \"{s_in}\".")
+                if not s_in:
+                    print(f"\n🌐 Querying OpenStreetMap POIs near {cl['center_lat']:.5f}, {cl['center_lon']:.5f}...")
+                    pois = query_overpass_pois(cl["center_lat"], cl["center_lon"], radius_m=350)
+                    if not pois:
+                        print("\nℹ️  No specific commercial POI found in OpenStreetMap within 350m.")
+                        continue
+                    candidates = pois[:5]
+                    print(f"✔ Discovered {len(candidates)} nearby POI{'s' if len(candidates) != 1 else ''}.\n")
+                    print("🏢 Suggested POIs from API:")
+                    for p_idx, poi in enumerate(candidates, 1):
+                        dist_disp = format_dist_human(poi['dist_m'])
+                        print(f"  [{p_idx}] {poi['name']} ({poi['category']}) [~{dist_disp} | Center: {poi['lat']:.5f}, {poi['lon']:.5f}]")
+                    try:
+                        p_choice = input(f"\nSelect POI [1-{len(candidates)}], [s] search again, or [b] back: ").strip().lower()
+                    except (EOFError, KeyboardInterrupt):
+                        return "quit"
+                    if p_choice in ("b", "back", "cancel"):
+                        print_actions()
+                        break
+                    if p_choice.isdigit() and 1 <= int(p_choice) <= len(candidates):
+                        poi = candidates[int(p_choice) - 1]
+                        search_pick = {
+                            "name": prompt_poi_naming(poi["name"], poi.get("category", "")),
+                            "lat": poi["lat"],
+                            "lon": poi["lon"],
+                            "dist_m": poi["dist_m"],
+                            "category": poi.get("category", "")
+                        }
+                        choice = "s_pick"
+                        break
                     continue
-                print(f"\n🔎 Search results for \"{s_in}\":")
-                for s_idx, r in enumerate(s_results, 1):
-                    dist_part = f" [~{format_dist_human(r['dist_m'])} away]" if r["dist_m"] is not None else ""
-                    print(f"  [{s_idx}] {r['name']} ({r['category']}){dist_part}")
-                    print(f"        {r['display_name']}")
-                try:
-                    s_choice = input(f"\nSelect result [1-{len(s_results)}], [s] search again, or [b] back: ").strip().lower()
-                except (EOFError, KeyboardInterrupt):
-                    return "quit"
-                if s_choice in ("b", "back", "cancel"):
-                    print_actions()
-                    break
-                if s_choice.isdigit() and 1 <= int(s_choice) <= len(s_results):
-                    search_pick = s_results[int(s_choice) - 1]
-                    choice = "s_pick"
-                    break
+                else:
+                    s_results = search_places_by_name(s_in, near_lat=cl["center_lat"], near_lon=cl["center_lon"], max_radius_m=350)
+                    if not s_results:
+                        print(f"ℹ️  No results found within 350m for \"{s_in}\".")
+                        continue
+                    print(f"\n🔎 Search results for \"{s_in}\":")
+                    for s_idx, r in enumerate(s_results, 1):
+                        dist_part = f" [~{format_dist_human(r['dist_m'])} away]" if r["dist_m"] is not None else ""
+                        print(f"  [{s_idx}] {r['name']} ({r['category']}){dist_part}")
+                        print(f"        {r['display_name']}")
+                    try:
+                        s_choice = input(f"\nSelect result [1-{len(s_results)}], [s] search again, or [b] back: ").strip().lower()
+                    except (EOFError, KeyboardInterrupt):
+                        return "quit"
+                    if s_choice in ("b", "back", "cancel"):
+                        print_actions()
+                        break
+                    if s_choice.isdigit() and 1 <= int(s_choice) <= len(s_results):
+                        search_pick = s_results[int(s_choice) - 1]
+                        choice = "s_pick"
+                        break
 
             if choice == "s_pick":
                 break
@@ -3000,7 +3763,7 @@ def cmd_review_drives(args):
 
     places = load_places()
     
-    # Read chargers to strictly exclude them from review (chargers left alone)
+ # Read chargers to strictly exclude them from review (chargers left alone)
     chargers = load_chargers()
     
     unlabelled_stops = []
@@ -3056,7 +3819,7 @@ def cmd_review_drives(args):
         print("✔ All drive stops match existing places in places.json or known charging stations!")
         return
 
-    # Cluster unlabelled stops within 75 meters of each other
+ # Cluster unlabelled stops within 75 meters of each other
     clusters = []
     for stop in unlabelled_stops:
         found_cluster = None
@@ -3086,7 +3849,7 @@ def cmd_review_drives(args):
         print(f"✔ No unlabelled stop clusters with ≥ {min_stops} visits found.")
         return
 
-    # Interactive Cluster Selection Menu Loop
+ # Interactive Cluster Selection Menu Loop
     while True:
         places = load_places()
         ignored_entries = load_ignored_places()
@@ -3110,7 +3873,7 @@ def cmd_review_drives(args):
                 print(f"ℹ️  {len(ignored_entries)} previously-ignored cluster(s) - run `./places_manager.py ignored` to review them.")
             break
 
-        # Render cluster table
+ # Render cluster table
         w_num = 4
         w_visits = 10
         w_addr = 46
@@ -3272,7 +4035,7 @@ def cmd_review_ignored(args):
                 if res == "quit":
                     return
                 if res is True:
-                    # Successfully named & saved to places.json - no longer needed here.
+ # Successfully named & saved to places.json - no longer needed here.
                     ignored_entries.pop(val - 1)
                     save_ignored_places(ignored_entries)
             else:
@@ -3677,7 +4440,7 @@ def cmd_edit(args):
         print("ℹ️ No places found in places.json. Use 'add' or 'lookup' to create one.")
         return
 
-    # Direct name argument provided
+ # Direct name argument provided
     if getattr(args, "name", None):
         target_name = None
         q = args.name.strip().lower()
@@ -3746,7 +4509,7 @@ def cmd_edit(args):
             except (EOFError, KeyboardInterrupt):
                 break
 
-        # Render places table
+ # Render places table
         w_num = 4
         w_name = 30
         w_coords = 23
@@ -3870,35 +4633,35 @@ EXAMPLES
     )
     subparsers = parser.add_subparsers(dest="command", help="Available subcommands")
 
-    # Subcommand: list
+ # Subcommand: list
     p_list = subparsers.add_parser("list", help="List all stored places in a clean formatted table")
     p_list.add_argument("--near", type=str, help="Reference place name or coordinates to sort by proximity")
     p_list.add_argument("--search", type=str, help="Search query filter for name, keywords, or notes")
     p_list.add_argument("--sort", choices=["visits", "name", "radius", "dist"], default="visits", help="Sort order (default: visits)")
 
-    # Subcommand: inspect / info / query
+ # Subcommand: inspect / info / query
     p_inspect = subparsers.add_parser("inspect", aliases=["info", "query", "show"], help="Inspect a specific stored location's details, coordinates, and recent visit/trip history")
     p_inspect.add_argument("name", type=str, help="Place name or search query to inspect")
 
-    # Subcommand: edit
+ # Subcommand: edit
     p_edit = subparsers.add_parser("edit", help="Interactively select and edit stored places")
     p_edit.add_argument("name", nargs="?", default=None, help="Optional place name to jump directly to editing")
     p_edit.add_argument("--search", type=str, help="Initial search filter")
     p_edit.add_argument("--near", type=str, help="Reference place name or coordinates to sort by proximity")
 
-    # Subcommand: lookup
+ # Subcommand: lookup
     p_lookup = subparsers.add_parser("lookup", help="Interactively look up an address or coordinates using Places/POI API")
     p_lookup.add_argument("query", nargs="*", help="Address string or 'lat lon' coordinates")
     p_lookup.add_argument("--radius", type=int, default=150, help="Default geofence radius in meters")
 
-    # Subcommand: review
+ # Subcommand: review
     p_review = subparsers.add_parser("review", help="Scan drives_master.csv and interactively review unlabelled stop clusters (ignores chargers)")
     p_review.add_argument("--min-stops", type=int, default=2, help="Minimum visits required to flag a stop cluster (default: 2)")
 
-    # Subcommand: ignored
+ # Subcommand: ignored
     p_ignored = subparsers.add_parser("ignored", help="Review stop clusters previously marked [i]gnore during 'review' - promote one to a named place, or un-ignore it")
 
-    # Subcommand: add
+ # Subcommand: add
     p_add = subparsers.add_parser("add", help="Add a new place directly via CLI")
     p_add.add_argument("name", type=str, help="Place name / nickname")
     p_add.add_argument("--address", type=str, help="Street address to geocode automatically")
@@ -3908,7 +4671,7 @@ EXAMPLES
     p_add.add_argument("--keywords", nargs="+", help="Keywords/aliases for address matching")
     p_add.add_argument("--notes", type=str, help="Optional descriptive notes")
 
-    # Subcommand: update
+ # Subcommand: update
     p_update = subparsers.add_parser("update", help="Update properties of an existing place")
     p_update.add_argument("name", type=str, help="Existing place name")
     p_update.add_argument("--radius", type=int, help="New geofence radius in meters")
@@ -3919,18 +4682,18 @@ EXAMPLES
     p_update.add_argument("--remove-keyword", nargs="+", help="One or more keywords to remove")
     p_update.add_argument("--notes", type=str, help="New notes string")
 
-    # Subcommand: alias
+ # Subcommand: alias
     p_alias = subparsers.add_parser("alias", help="Alias a secondary street address to an existing place")
     p_alias.add_argument("name", type=str, help="Existing place name")
     p_alias.add_argument("--address", type=str, help="Secondary entrance/street address to alias")
     p_alias.add_argument("--keywords", nargs="+", help="Additional keywords to alias")
     p_alias.add_argument("--expand-radius", action="store_true", help="Auto-expand radius if new address offset exceeds current radius")
 
-    # Subcommand: remove
+ # Subcommand: remove
     p_remove = subparsers.add_parser("remove", help="Remove a place from places.json")
     p_remove.add_argument("name", type=str, help="Place name to remove")
 
-    # Subcommand: rename
+ # Subcommand: rename
     p_rename = subparsers.add_parser("rename", help="Rename an existing place in places.json")
     p_rename.add_argument("old_name", type=str, help="Existing place name")
     p_rename.add_argument("new_name", type=str, help="New place name")
@@ -3938,7 +4701,7 @@ EXAMPLES
     args = parser.parse_args()
 
     if not args.command:
-        # If user passed a bare place name or search string, inspect directly
+ # If user passed a bare place name or search string, inspect directly
         raw_args = [a for a in sys.argv[1:] if not a.startswith("-")]
         if raw_args:
             inspect_place(" ".join(raw_args))

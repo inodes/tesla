@@ -6,7 +6,7 @@ Design (per the user's own scoping):
              what the Tessie API itself already hands us in
              started_at/ended_at. Sorting/uniqueness/comparisons are
              done on this and only this - no naive-datetime ambiguity,
-             no DST fall-back repeated-hour bug.
+             no DST fall-back repeated-hour anomaly.
   - csv:     UTC epoch + the IANA timezone name the event actually
              happened in, stored side by side. Enough to re-derive
              correct local wall-clock time and the right abbreviation

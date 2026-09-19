@@ -5,39 +5,39 @@
 # gets missed by accident (see AGENTS.md REQ-030/033).
 #
 # Today that's:
-#   1. Tessie charges -> fetch, then --consolidate into charges_master.csv
-#   2. Charge deep-dive telemetry backfill -> any Supercharger/3rd-party DC
-#      session missing a local charge_deepdive_*.csv gets one fetched from
-#      Tessie's own /states API (sync_api_tessie.py --backfill-deepdive).
-#      Evnex home sessions are deliberately excluded here - they get their
-#      own richer deep-dive via step 3 below, not a redundant /states pull.
-#   3. Evnex home-charger sessions -> charges/deepdive/*_Evnex_Home.json
-#   4. Invoice PDFs -> rename to the standard scheme, then check invoice
-#      cost/rate against what Tessie already wrote into charges_master.csv
-#      and correct ONLY where they disagree - which sessions exist comes
-#      entirely from Tessie (step 1), invoices are just the source of truth
-#      for cost/rate specifically when the two disagree, not for
-#      reconciliation in general (analyse_charging.py
-#      --rename-invoices / --update-master)
-#   5. AGL usage export consolidation -> sync_power_usage.py picks up any
-#      "*Usage*.csv" already sitting in the AGL invoices folder. AGL has no
-#      history API, so getting a fresh export there in the first place is
-#      still a manual step (see sync_power_usage.py --help) - if nothing new
-#      is sitting there, it reports "Found 0 usage export file(s)" and
-#      exits clean.
-#   6. Energy-source cross-check prep (REQ-072) -> for every home Evnex
-#      session, pre-populates the PVOutput/AGL/Evnex "*_sources.json" cache
-#      that --inspect otherwise computes lazily on first look, so pulling up
-#      a session's deep-dive charging info later is instant. Runs LAST,
-#      after step 5, because the cross-check reads AGL's usage master data
-#      and should see whatever step 5 just consolidated.
-#      (analyse_charging.py --precompute-sources)
+# 1. Tessie charges -> fetch, then --consolidate into charges_master.csv
+# 2. Charge deep-dive telemetry backfill -> any Supercharger/3rd-party DC
+# session missing a local charge_deepdive_*.csv gets one fetched from
+# Tessie's own /states API (sync_api_tessie.py --backfill-deepdive).
+# Evnex home sessions are deliberately excluded here - they get their
+# own richer deep-dive via step 3 below, not a redundant /states pull.
+# 3. Evnex home-charger sessions -> charges/deepdive/*_Evnex_Home.json
+# 4. Invoice PDFs -> rename to the standard scheme, then check invoice
+# cost/rate against what Tessie already wrote into charges_master.csv
+# and correct ONLY where they disagree - which sessions exist comes
+# entirely from Tessie (step 1), invoices are just the source of truth
+# for cost/rate specifically when the two disagree, not for
+# reconciliation in general (analyse_charging.py
+# --rename-invoices / --update-master)
+# 5. AGL usage export consolidation -> sync_power_usage.py picks up any
+# "*Usage*.csv" already sitting in the AGL invoices folder. AGL has no
+# history API, so getting a fresh export there in the first place is
+# still a manual step (see sync_power_usage.py --help) - if nothing new
+# is sitting there, it reports "Found 0 usage export file(s)" and
+# exits clean.
+# 6. Energy-source cross-check prep (REQ-072) -> for every home Evnex
+# session, pre-populates the PVOutput/AGL/Evnex "*_sources.json" cache
+# that --inspect otherwise computes lazily on first look, so pulling up
+# a session's deep-dive charging info later is instant. Runs LAST,
+# after step 5, because the cross-check reads AGL's usage master data
+# and should see whatever step 5 just consolidated.
+# (analyse_charging.py --precompute-sources)
 #
 # NOT covered yet ("potentially more" from REQ-033):
-#   - AGL invoice PDFs (TODO-012: a Python port of the old aglstatement.sc
-#     renamer hasn't been built)
-#   - Solaredge solar-monitoring data (REQ-027 mentioned it as a future
-#     source; nothing automated for it exists yet)
+# - AGL invoice PDFs (TODO-012: a Python port of the old aglstatement.sc
+# renamer hasn't been built)
+# - Solaredge solar-monitoring data (REQ-027 mentioned it as a future
+# source; nothing automated for it exists yet)
 #
 # This script is run manually for now (no scheduler wired up yet - see
 # AGENTS.md TODO-011). Exits non-zero if any step fails, without masking

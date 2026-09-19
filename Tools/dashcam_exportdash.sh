@@ -210,7 +210,7 @@ fi
 # previous version always preferred Docker.app over OrbStack.app when both were
 # present, regardless of which docker CLI DOCKER_BIN pointed at, so an
 # OrbStack-resolved DOCKER_BIN still spun up Docker Desktop's own (much larger,
-# needs manual cleanup) VM disk image unnecessarily (BUG-069).
+# needs manual cleanup) VM disk image unnecessarily ().
 if ! "$DOCKER_BIN" info >/dev/null 2>&1; then
     RESOLVED_BIN="$(readlink -f "$DOCKER_BIN" 2>/dev/null || echo "$DOCKER_BIN")"
     ENGINE_APP=""
@@ -219,8 +219,8 @@ if ! "$DOCKER_BIN" info >/dev/null 2>&1; then
     elif [[ "$RESOLVED_BIN" == *"Docker.app"* || "$DOCKER_BIN" == *"Docker.app"* ]]; then
         ENGINE_APP="Docker"
     elif [[ -d "/Applications/OrbStack.app" ]]; then
-        # Ambiguous resolution (e.g. a generic /usr/local/bin/docker shim) with
-        # OrbStack installed - prefer it over Docker Desktop by default.
+ # Ambiguous resolution (e.g. a generic /usr/local/bin/docker shim) with
+ # OrbStack installed - prefer it over Docker Desktop by default.
         ENGINE_APP="OrbStack"
     elif [[ -d "/Applications/Docker.app" ]]; then
         ENGINE_APP="Docker"
@@ -275,7 +275,7 @@ fi
 # Normalize path arguments inside EXTRA_ARGS for in-container execution
 NORMALIZED_ARGS=()
 for arg in "${EXTRA_ARGS[@]}"; do
-    # Remove host /Volumes/.../TeslaCam prefixes
+ # Remove host /Volumes/.../TeslaCam prefixes
     clean_arg="$arg"
     clean_arg="${clean_arg#/Volumes/*/TeslaCam/}"
     clean_arg="${clean_arg#/Volumes/*/}"

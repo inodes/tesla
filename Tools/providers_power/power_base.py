@@ -48,24 +48,24 @@ class BasePowerProvider:
     name = "base"
     display_name = "Base"
 
-    # REQ-071 (2026-09-15): True if this provider's usage-export data
-    # requires a manual step to refresh (e.g. AGL: no history API for
-    # residential accounts, a CSV downloaded by hand from its "My Usage"
-    # portal - see sync_power_usage.py's own module docstring) rather
-    # than an automated sync a script can just run. Drives
-    # sync_power_usage.py's post-consolidate staleness reminder - a
-    # provider whose usage data syncs automatically (like this repo's
-    # Evnex/PVOutput integrations already do) never goes stale in the
-    # same way, so the default here is False and only a genuinely manual
-    # provider overrides it.
+ # REQ-071 (2026-09-15): True if this provider's usage-export data
+ # requires a manual step to refresh (e.g. AGL: no history API for
+ # residential accounts, a CSV downloaded by hand from its "My Usage"
+ # portal - see sync_power_usage.py's own module docstring) rather
+ # than an automated sync a script can just run. Drives
+ # sync_power_usage.py's post-consolidate staleness reminder - a
+ # provider whose usage data syncs automatically (like this repo's
+ # Evnex/PVOutput integrations already do) never goes stale in the
+ # same way, so the default here is False and only a genuinely manual
+ # provider overrides it.
     manual_usage_sync = False
 
-    # ------------------------------------------------------------------
-    # Paths - config.json-driven, with a generic key checked before a
-    # provider-specific legacy key, so an existing agl_directory-style
-    # config keeps working unchanged while new configs can use the
-    # generic power_directory key regardless of which provider is active.
-    # ------------------------------------------------------------------
+ # ------------------------------------------------------------------
+ # Paths - config.json-driven, with a generic key checked before a
+ # provider-specific legacy key, so an existing agl_directory-style
+ # config keeps working unchanged while new configs can use the
+ # generic power_directory key regardless of which provider is active.
+ # ------------------------------------------------------------------
 
     def config_directory_keys(self):
         """(generic_key, legacy_key, ...) - config.json keys checked in
@@ -127,9 +127,9 @@ class BasePowerProvider:
         error messages when the real file is missing."""
         raise NotImplementedError
 
-    # ------------------------------------------------------------------
-    # Usage-export ingestion - retailer-specific manual-export format.
-    # ------------------------------------------------------------------
+ # ------------------------------------------------------------------
+ # Usage-export ingestion - retailer-specific manual-export format.
+ # ------------------------------------------------------------------
 
     def is_usage_export_filename(self, filename):
         """True if `filename` (basename only) looks like one of this
@@ -155,9 +155,9 @@ class BasePowerProvider:
         value shaped to MASTER_FIELDS above."""
         raise NotImplementedError
 
-    # ------------------------------------------------------------------
-    # Tariff / billing math - retailer + distributor specific.
-    # ------------------------------------------------------------------
+ # ------------------------------------------------------------------
+ # Tariff / billing math - retailer + distributor specific.
+ # ------------------------------------------------------------------
 
     def load_rate_periods(self):
         """Sorted list of this provider's own dated tariff periods, from

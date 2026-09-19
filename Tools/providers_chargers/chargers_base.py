@@ -28,7 +28,7 @@ def atomic_write_json(path: str, payload: Any, indent: int = 2) -> None:
     Raises on failure (permission, disk full, missing parent, ...) - the
     caller decides whether to fall back to another path or propagate.
 
-    AGENTS.md BUG-067: every provider's own registry save used to write
+    AGENTS.md every provider's own registry save used to write
     directly to its target path with plain `open(path, "w")`, with no
     atomicity at all - this is the fix, factored out once here so every
     provider (and manager.py's consolidated export) shares the same
@@ -57,9 +57,9 @@ def save_json_with_fallback(target_paths: List[str], payload: Any, indent: int =
     per-path environmental failure (PermissionError/OSError - e.g. a
     read-only mount, or a parent directory that can't be created) falls
     through to the next candidate; any other exception propagates
-    immediately, since that's a real bug, not "try the next path".
+    immediately, since that's a real issue, not "try the next path".
 
-    AGENTS.md BUG-067: this replaces a pattern that used to be
+    AGENTS.md this replaces a pattern that used to be
     copy-pasted per provider (chargefox_provider.py, manager.py) as a
     bare `for p in target_paths: try: ... except (PermissionError,
     OSError): continue` loop with NOTHING checking whether any write
@@ -85,34 +85,34 @@ def resolve_au_state(lat: float, lon: float) -> str:
     """Deterministically resolves Australian State/Territory code from GPS coordinates."""
     if lat is None or lon is None:
         return ""
-    # ACT: approx -35.92 to -35.12 lat, 148.76 to 149.24 lon (Carwoola/Queanbeyan are east of 149.24 in NSW)
+ # ACT: approx -35.92 to -35.12 lat, 148.76 to 149.24 lon (Carwoola/Queanbeyan are east of 149.24 in NSW)
     if -35.92 <= lat <= -35.12 and 148.76 <= lon <= 149.24:
         return "ACT"
-    # TAS: approx -44.0 to -39.5 lat, 143.5 to 149.0 lon
+ # TAS: approx -44.0 to -39.5 lat, 143.5 to 149.0 lon
     if -44.0 <= lat <= -39.5 and 143.5 <= lon <= 149.0:
         return "TAS"
-    # WA: lon < 129.0
+ # WA: lon < 129.0
     if 112.0 <= lon < 129.0 and -36.0 <= lat <= -13.0:
         return "WA"
-    # NT: 129.0 <= lon <= 138.0 and lat > -26.0
+ # NT: 129.0 <= lon <= 138.0 and lat > -26.0
     if 129.0 <= lon <= 138.0 and -26.0 < lat <= -10.0:
         return "NT"
-    # SA: 129.0 <= lon <= 141.0 and lat <= -26.0
+ # SA: 129.0 <= lon <= 141.0 and lat <= -26.0
     if 129.0 <= lon <= 141.0 and -38.5 <= lat <= -26.0:
         return "SA"
-    # QLD: lat > -29.0 and lon >= 138.0
+ # QLD: lat > -29.0 and lon >= 138.0
     if lat > -29.0 and 138.0 <= lon <= 154.0:
         return "QLD"
-    # VIC: lat <= -34.0 and lon <= 150.0 and lat > -39.5
+ # VIC: lat <= -34.0 and lon <= 150.0 and lat > -39.5
     if -39.5 <= lat <= -34.0 and 140.9 <= lon <= 150.0:
         if lat <= -36.0 or (lat <= -34.2 and lon < 143.0) or (lat <= -35.8 and lon < 147.0):
             return "VIC"
         if lat < -36.1:
             return "VIC"
-    # NSW fallback for eastern Australia
+ # NSW fallback for eastern Australia
     if -37.6 <= lat <= -28.0 and 141.0 <= lon <= 154.0:
         return "NSW"
-    # New Zealand
+ # New Zealand
     if -48.0 <= lat <= -34.0 and 166.0 <= lon <= 179.0:
         return "NZ"
     return "NSW"
@@ -182,8 +182,8 @@ def compute_tax_breakdown(
 
 
 # Known first-party network name-tokens and each one's expected `source`
-# provenance tag - shared by type_icon() (BUG-107, badge selection) and
-# filter_station_records() (BUG-108, default exclusion of unverified brand
+# provenance tag - shared by type_icon() (, badge selection) and
+# filter_station_records() (, default exclusion of unverified brand
 # self-claims). NRMA has no separate source tag of its own - it's sourced
 # via Chargefox's own GraphQL feed, per AGENTS.md's "chargefox (covers
 # NRMA...)" convention. AmpCharge's real source tag is "ampol", not
@@ -192,10 +192,10 @@ def compute_tax_breakdown(
 _FIRST_PARTY_NETWORK_SOURCE_TAGS: Dict[str, Tuple[str, ...]] = {
     "tesla": ("tesla",),
     "chargefox": ("chargefox",),
-    # NRMA now has its own Tier 1 provider (source="nrma", REQ-088,
-    # AGENTS.local.md 2026-09-16) as well as being reachable through
-    # Chargefox's own feed for the ~28 overlapping sites - either
-    # provenance tag is a verified NRMA claim, so both are accepted.
+ # NRMA now has its own Tier 1 provider (source="nrma", REQ-088,
+ # AGENTS.local.md 2026-09-16) as well as being reachable through
+ # Chargefox's own feed for the ~28 overlapping sites - either
+ # provenance tag is a verified NRMA claim, so both are accepted.
     "nrma": ("chargefox", "nrma"),
     "evx": ("evx",),
     "evie": ("evie",),
@@ -214,7 +214,7 @@ def _network_claims_unverified_brand(network: Optional[str], source: Optional[st
     tag - i.e. the claim was never confirmed against that network's real
     live registry.
 
-    BUG-107/BUG-108 (AGENTS.local.md, 2026-09-16): concretely caught via a
+    /(AGENTS.local.md, 2026-09-16): concretely caught via a
     real PlugShare-only listing named "Jolt - Meadowbank" ($0.52/kWh, 1
     bay) that doesn't correspond to any of JOLT's own 133 real live
     stations - `source` for it is `"plugshare"` only, `network` self-
@@ -247,17 +247,17 @@ def filter_station_records(
 
     filtered = []
     for st in records:
-        # Speed tier filter
+ # Speed tier filter
         if speed_tier:
             if speed_tier == "supercharger":
-                # "Supercharger" is exclusively a Tesla network/hardware term -
-                # --sc means "look at tesla_superchargers", full stop. Source
-                # is checked here as defense-in-depth (a misclassification bug
-                # in any provider - e.g. PlugShare tagging a non-Tesla station
-                # as speed_tier="supercharger" - must not leak through this
-                # filter regardless). Fixed 2026-09-14.
-                # source can be a merged "tesla+plugshare" string after
-                # multi-source dedup, so check membership, not equality.
+ # "Supercharger" is exclusively a Tesla network/hardware term -
+ # --sc means "look at tesla_superchargers", full stop. Source
+ # is checked here as defense-in-depth (a misclassification issue
+ # in any provider - e.g. PlugShare tagging a non-Tesla station
+ # as speed_tier="supercharger" - must not leak through this
+ # filter regardless). Fixed 2026-09-14.
+ # source can be a merged "tesla+plugshare" string after
+ # multi-source dedup, so check membership, not equality.
                 if st.speed_tier != "supercharger" or "tesla" not in (st.source or "").lower():
                     continue
             elif speed_tier == "dc_fast":
@@ -267,21 +267,21 @@ def filter_station_records(
                 if st.speed_tier != "ac_destination" and (st.max_power_kw or 0.0) >= 25.0:
                     continue
 
-        # Minimum power filter
+ # Minimum power filter
         if min_kw and (st.max_power_kw or 0.0) < min_kw:
             continue
 
-        # State filter
+ # State filter
         if state and (st.state or "").upper() != state:
             continue
 
-        # Network filter
+ # Network filter
         if network:
             net_search = f"{st.network} {st.operator_name or ''} {st.name} {st.source}".lower()
             if network not in net_search:
                 continue
 
-        # Exclude Coming Soon / Under Construction / In Development / Planned stations by default
+ # Exclude Coming Soon / Under Construction / In Development / Planned stations by default
         if not filters.get("include_coming_soon", False):
             name_low = st.name.lower()
             if any(phrase in name_low for phrase in ("coming soon", "under construction", "in development", "planned", "permit")):
@@ -293,23 +293,23 @@ def filter_station_records(
             if st_status in ("in_development", "permit", "construction", "under_construction", "coming_soon", "planned"):
                 continue
 
-        # Exclude records whose `network` free text claims a known first-
-        # party brand we have a live authoritative registry for, but whose
-        # actual `source` provenance never matched that registry - BUG-108.
-        # BUG-107 already stops these getting a confident brand badge; this
-        # goes further and excludes them from results by default too (opt
-        # back in with include_unverified_brand=True).
+ # Exclude records whose `network` free text claims a known first-
+ # party brand we have a live authoritative registry for, but whose
+ # actual `source` provenance never matched that registry - .
+ # already stops these getting a confident brand badge; this
+ # goes further and excludes them from results by default too (opt
+ # back in with include_unverified_brand=True).
         if not filters.get("include_unverified_brand", False):
             if _network_claims_unverified_brand(st.network, st.source):
                 continue
 
-        # Exclude Private Residential stations by default
+ # Exclude Private Residential stations by default
         if not filters.get("include_private", False):
             meta_acc = str(st.metadata.get("access_type", "")).strip().lower()
             if meta_acc.startswith("private"):
                 continue
 
-        # Minimum facilities quality rating filter
+ # Minimum facilities quality rating filter
         min_fac = (filters.get("min_facilities") or "").lower().strip()
         supermarket_filter = bool(filters.get("supermarket") or filters.get("groceries"))
         if min_fac or supermarket_filter:
@@ -330,7 +330,7 @@ def filter_station_records(
                 continue
 
             if supermarket_filter:
-                # Check station name/address/amenities first
+ # Check station name/address/amenities first
                 st_text = f"{st.name} {st.address or ''} {' '.join(st.amenities if isinstance(st.amenities, list) else [])}".lower()
                 sm_brands = ("woolworths", "coles", "aldi", "iga", "harris farm", "costco", "supermarket", "groceries", "foodland", "drakes", "spudshed", "kmart")
                 has_sm = any(b in st_text for b in sm_brands)
@@ -358,7 +358,7 @@ def strip_invisible_chars(s: Optional[str]) -> Optional[str]:
     depending on how forgiving a given terminal/font/JSON diff is of stray
     invisible characters riding through otherwise-plain text.
     Root-caused via a real Chargefox station
-    ("Bondi Beach - 157 \u200bCurlewis St" - see AGENTS.local.md BUG-093),
+    ("Bondi Beach - 157 \u200bCurlewis St" - see AGENTS.local.md ),
     then generalized here to every text field a provider can populate, not
     just name, since upstream catalogs can embed this junk into an address
     or suburb just as easily (REQ-077).
@@ -385,7 +385,7 @@ class UnifiedStationRecord:
     lon: float = 0.0
     timezone: str = "Australia/Sydney"
     
-    # Hardware
+ # Hardware
     speed_tier: str = "dc_fast"  # 'supercharger', 'dc_fast', 'ac_destination'
     max_power_kw: float = 0.0
     stalls_total: int = 0
@@ -394,50 +394,50 @@ class UnifiedStationRecord:
     tethered: bool = True
     hardware_model: str = ""
     
-    # Tariffs / Pricing
+ # Tariffs / Pricing
     pricing_model: str = "unknown"  # 'flat', 'time_of_use', 'free', 'unknown'
     current_rate_per_kwh: Optional[float] = None
     rate_range: str = ""
     schedule: List[Dict[str, Any]] = field(default_factory=list)
-    # Separate non-Tesla-vehicle rate schedule (Superchargers open to non-Tesla
-    # CCS2 EVs commonly charge a different rate than Tesla members/vehicles).
-    # Added 2026-09-14 - this dimension existed in charger_find_tesla.py's
-    # raw registry (tariffs.non_tesla.rate_schedules) the whole time but was
-    # never carried into UnifiedStationRecord, so it silently vanished from
-    # charger_find.py's display when this schema became the shared one.
+ # Separate non-Tesla-vehicle rate schedule (Superchargers open to non-Tesla
+ # CCS2 EVs commonly charge a different rate than Tesla members/vehicles).
+ # Added 2026-09-14 - this dimension existed in charger_find_tesla.py's
+ # raw registry (tariffs.non_tesla.rate_schedules) the whole time but was
+ # never carried into UnifiedStationRecord, so it silently vanished from
+ # charger_find.py's display when this schema became the shared one.
     non_tesla_schedule: List[Dict[str, Any]] = field(default_factory=list)
     idle_fee_per_min: Optional[float] = None
     congestion_fee_per_min: Optional[float] = None
     parking_fee: Optional[str] = None
     currency: str = "AUD"
     
-    # Source & Provenance
+ # Source & Provenance
     tier: int = 1  # 1 = First-Party Authoritative, 2 = Aggregator
     source: str = "unknown"
     source_id: str = ""
     url: str = ""
     last_verified_utc: str = ""
-    # When this record's pricing/hardware became effective (charger_find_tesla.py's
-    # "valid_from"/"first_seen") - distinct from last_verified_utc, which is
-    # just "when this was last checked against the live page". Added
-    # 2026-09-14: analyse_charging.py's invoice reconciliation needs
-    # the EFFECTIVE date to pick the right historical (active or archived)
-    # tariff record for a charge from long ago, not merely the most recent
-    # verification timestamp - see AGENTS.local.md.
+ # When this record's pricing/hardware became effective (charger_find_tesla.py's
+ # "valid_from"/"first_seen") - distinct from last_verified_utc, which is
+ # just "when this was last checked against the live page". Added
+ # 2026-09-14: analyse_charging.py's invoice reconciliation needs
+ # the EFFECTIVE date to pick the right historical (active or archived)
+ # tariff record for a charge from long ago, not merely the most recent
+ # verification timestamp - see AGENTS.local.md.
     effective_date_utc: str = ""
     metadata: Dict[str, Any] = field(default_factory=dict)
     amenities: Dict[str, Any] = field(default_factory=dict)
     keywords: List[str] = field(default_factory=list)
     views: Dict[str, Any] = field(default_factory=dict)
     
-    # Calculated / Runtime properties
+ # Calculated / Runtime properties
     distance_km: Optional[float] = None
 
     def __post_init__(self):
         """
         Strips invisible/zero-width characters (strip_invisible_chars(),
         above) from every free-text field a provider can populate - not
-        just `name` - per the user's own generalization of BUG-093: "It
+        just `name` - per the user's own generalization of "It
         would be good to remove any padding invisible characters on all
         fields that have values."
 
@@ -454,7 +454,7 @@ class UnifiedStationRecord:
         self.address = strip_invisible_chars(self.address)
         self.suburb = strip_invisible_chars(self.suburb)
         self.state = strip_invisible_chars(self.state)
-        # Auto-resolve / normalize Australian State if missing or set to placeholder ("OTHER", "UNKNOWN", "-")
+ # Auto-resolve / normalize Australian State if missing or set to placeholder ("OTHER", "UNKNOWN", "-")
         if (self.country or "").upper() in ("AU", "AUSTRALIA", ""):
             valid_au_states = {"NSW", "VIC", "QLD", "WA", "SA", "TAS", "ACT", "NT", "NZ"}
             st_clean = (self.state or "").strip().upper()
@@ -474,31 +474,31 @@ class UnifiedStationRecord:
                 if isinstance(mv, str):
                     meta_dict[mk] = strip_invisible_chars(mv)
 
-        # BUG-109 (AGENTS.local.md, 2026-09-16): "supercharger" is a Tesla-
-        # exclusive hardware/network term, but `speed_tier` is populated by
-        # each PROVIDER's own parsing/classification logic - and a Tier-2
-        # aggregator (PlugShare) can self-classify a crowd-sourced listing
-        # as "supercharger" from its own (unverified) network-name text,
-        # with no actual Tesla registry match behind that claim. Concretely
-        # caught via a real PlugShare-only ("Macquarie Centre (2)",
-        # source="plugshare") listing carrying speed_tier="supercharger" -
-        # every consumer of `self.speed_tier` (type_icon(), badge(),
-        # access_label(), speed_tier_label(), and the --dc filter's
-        # dc_fast branch, which treats "supercharger" as passing) trusted
-        # it completely unconditionally, so this one bad field silently
-        # produced a confidently-wrong 🔴 SC badge and "CCS2 All"/V2-tier
-        # display everywhere downstream - fixing every call site
-        # individually is exactly the kind of whack-a-mole that already
-        # missed spots once (BUG-107 covered every OTHER network branch in
-        # type_icon() but not this one, its very first line). Enforcing the
-        # invariant once, here, at construction time, means every consumer
-        # inherits the fix for free: a record claiming "supercharger" but
-        # whose `source` doesn't actually carry "tesla" (a merged record's
-        # source is a "+"-joined string like "tesla+plugshare", so this is
-        # a substring check, not equality) gets downgraded to "dc_fast" -
-        # still an honest, plausible classification for a real DC charger,
-        # just not a Tesla-verified Supercharger claim - with the original
-        # claim preserved in metadata for anyone auditing the correction.
+ # (AGENTS.local.md, 2026-09-16): "supercharger" is a Tesla-
+ # exclusive hardware/network term, but `speed_tier` is populated by
+ # each PROVIDER's own parsing/classification logic - and a Tier-2
+ # aggregator (PlugShare) can self-classify a crowd-sourced listing
+ # as "supercharger" from its own (unverified) network-name text,
+ # with no actual Tesla registry match behind that claim. Concretely
+ # caught via a real PlugShare-only ("Macquarie Centre (2)",
+ # source="plugshare") listing carrying speed_tier="supercharger" -
+ # every consumer of `self.speed_tier` (type_icon(), badge(),
+ # access_label(), speed_tier_label(), and the --dc filter's
+ # dc_fast branch, which treats "supercharger" as passing) trusted
+ # it completely unconditionally, so this one bad field silently
+ # produced a confidently-wrong 🔴 SC badge and "CCS2 All"/V2-tier
+ # display everywhere downstream - fixing every call site
+ # individually is exactly the kind of whack-a-mole that already
+ # missed spots once (covered every OTHER network branch in
+ # type_icon() but not this one, its very first line). Enforcing the
+ # invariant once, here, at construction time, means every consumer
+ # inherits the fix for free: a record claiming "supercharger" but
+ # whose `source` doesn't actually carry "tesla" (a merged record's
+ # source is a "+"-joined string like "tesla+plugshare", so this is
+ # a substring check, not equality) gets downgraded to "dc_fast" -
+ # still an honest, plausible classification for a real DC charger,
+ # just not a Tesla-verified Supercharger claim - with the original
+ # claim preserved in metadata for anyone auditing the correction.
         if self.speed_tier == "supercharger" and "tesla" not in (self.source or "").lower():
             self.metadata["speed_tier_corrected_from"] = "supercharger"
             self.speed_tier = "dc_fast"
@@ -515,7 +515,7 @@ class UnifiedStationRecord:
         open_nt = self.metadata.get("open_to_non_tesla", "Tesla" not in self.network or "CCS2" in self.plugs)
         t_only = self.metadata.get("tesla_only", "Tesla" in self.network and not open_nt)
         
-        # Compute rate tax breakdown
+ # Compute rate tax breakdown
         gross_r, net_r, tax_r, tax_n, tax_pct = compute_tax_breakdown(self.current_rate_per_kwh, self.country)
         gross_idle, net_idle, _, _, _ = compute_tax_breakdown(self.idle_fee_per_min, self.country)
         gross_cong, net_cong, _, _, _ = compute_tax_breakdown(self.congestion_fee_per_min, self.country)
@@ -536,7 +536,7 @@ class UnifiedStationRecord:
                 "months": s.get("months", ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"])
             })
 
-        # Build tessie cost config
+ # Build tessie cost config
         tessie_cost_config = {
             "currency": self.currency,
             "pricing_model": self.pricing_model,
@@ -635,7 +635,7 @@ class UnifiedStationRecord:
         if self.pricing_model == "free" or (self.current_rate_per_kwh == 0.0 and not self.schedule):
             return 0.0, "Free", "24/7"
 
-        # Resolve local time in station timezone
+ # Resolve local time in station timezone
         from zoneinfo import ZoneInfo
         from datetime import datetime
         try:
@@ -733,25 +733,25 @@ class UnifiedStationRecord:
         src = (self.source or "").lower()
         if self.source == "tesla" or ("tesla" in net and "tesla" in src):
             return "🔌 Dest"
-        # BUG-107 (AGENTS.local.md, 2026-09-16): a network-specific badge is
-        # only trustworthy when this record has ACTUAL Tier-1 provenance for
-        # that network (src - `source`, a "+"-joined provenance tag like
-        # "jolt" or a merged "jolt+plugshare" - contains that network's own
-        # tag), never just because `network` TEXT says so. `network` is a
-        # free-text label a PURE PlugShare ("Tier 2 Aggregator") record can
-        # self-report as anything at all, unverified against the real
-        # network's own registry - caught concretely via the user's own
-        # report of a real PlugShare listing named "Jolt - Meadowbank" that
-        # doesn't match any station in JOLT's actual live feed, plus (found
-        # while fixing it) a "Sydney Olympic Park" listing self-tagged
-        # "NRMA" that's equally unverified (`sources: ["plugshare"]` only,
-        # no `chargefox` provenance at all). A name-only match with no
-        # matching source now falls through to the generic "3rd" badge - an
-        # honest "unverified 3rd-party listing" signal instead of a
-        # confident, possibly-wrong brand badge. (NRMA is verified via EITHER
-        # `chargefox` in src - the Chargefox-fed subset of NRMA sites, see
-        # AGENTS.md's "chargefox (covers NRMA...)" convention - OR `nrma`
-        # in src, its own dedicated Tier 1 provider added in REQ-088.)
+ # (AGENTS.local.md, 2026-09-16): a network-specific badge is
+ # only trustworthy when this record has ACTUAL Tier-1 provenance for
+ # that network (src - `source`, a "+"-joined provenance tag like
+ # "jolt" or a merged "jolt+plugshare" - contains that network's own
+ # tag), never just because `network` TEXT says so. `network` is a
+ # free-text label a PURE PlugShare ("Tier 2 Aggregator") record can
+ # self-report as anything at all, unverified against the real
+ # network's own registry - caught concretely via the user's own
+ # report of a real PlugShare listing named "Jolt - Meadowbank" that
+ # doesn't match any station in JOLT's actual live feed, plus (found
+ # while fixing it) a "Sydney Olympic Park" listing self-tagged
+ # "NRMA" that's equally unverified (`sources: ["plugshare"]` only,
+ # no `chargefox` provenance at all). A name-only match with no
+ # matching source now falls through to the generic "3rd" badge - an
+ # honest "unverified 3rd-party listing" signal instead of a
+ # confident, possibly-wrong brand badge. (NRMA is verified via EITHER
+ # `chargefox` in src - the Chargefox-fed subset of NRMA sites, see
+ # AGENTS.md's "chargefox (covers NRMA...)" convention - OR `nrma`
+ # in src, its own dedicated Tier 1 provider added in REQ-088.)
         if "chargefox" in net and "chargefox" in src:
             return "🦊 CF"
         if "nrma" in net and ("chargefox" in src or "nrma" in src):
@@ -850,7 +850,7 @@ class UnifiedStationRecord:
         if meta.get("is_renamed") or meta.get("renamed") or meta.get("status") == "RENAMED":
             return "RENAMED"
 
-        # Check views for title discrepancy
+ # Check views for title discrepancy
         views = self.views or {}
         if len(views) > 1:
             for vname, vdata in views.items():
@@ -860,10 +860,10 @@ class UnifiedStationRecord:
                         t1 = re.sub(r"[^\w\s]", "", self.name.lower()).strip()
                         t2 = re.sub(r"[^\w\s]", "", v_title.lower()).strip()
                         if t1 and t2 and t1 != t2 and not (t1 in t2 or t2 in t1):
-                            # Name discrepancy detected across views
+ # Name discrepancy detected across views
                             return "RENAMED"
 
-        # Check verification date
+ # Check verification date
         ver_str = self.last_verified_utc or meta.get("last_verified") or meta.get("last_updated") or meta.get("first_seen")
         if not ver_str:
             for vdata in views.values():
@@ -904,39 +904,39 @@ class UnifiedStationRecord:
 
         views = self.views or {}
 
-        # 1. Tesla View
+ # 1. Tesla View
         t_view = views.get("tesla")
         if t_view and isinstance(t_view, dict):
             t_meta = t_view.get("tesla_metadata", {})
             t_url = t_meta.get("findus_url") or t_view.get("location", {}).get("url") or t_view.get("url")
             _add("Tesla", "⚡", "Tesla Find Us", t_url)
 
-        # 2. Chargefox View
+ # 2. Chargefox View
         cf_view = views.get("chargefox")
         if cf_view and isinstance(cf_view, dict):
             cf_id = cf_view.get("id")
             cf_url = cf_view.get("url") or (f"https://app.chargefox.com/charge-stations/{cf_id}" if cf_id else None)
             _add("Chargefox", "🦊", "Chargefox App", cf_url)
 
-        # 3. EVX View
+ # 3. EVX View
         evx_view = views.get("evx")
         if evx_view and isinstance(evx_view, dict):
             evx_url = evx_view.get("url") or evx_view.get("storepoint_url")
             _add("EVX", "🔌", "EVX Portal", evx_url)
 
-        # 4. Evie View
+ # 4. Evie View
         evie_view = views.get("evie")
         if evie_view and isinstance(evie_view, dict):
             evie_url = evie_view.get("url") or "https://evie.com.au/find-a-charger/"
             _add("Evie", "🕊️", "Evie Networks", evie_url)
 
-        # 5. bp pulse View
+ # 5. bp pulse View
         bp_view = views.get("bppulse")
         if bp_view and isinstance(bp_view, dict):
             bp_url = bp_view.get("url")
             _add("BP Pulse", "🟢", "bp pulse Storefinder", bp_url)
 
-        # 6. PlugShare View
+ # 6. PlugShare View
         ps_view = views.get("plugshare")
         if ps_view and isinstance(ps_view, dict):
             ps_meta = ps_view.get("plugshare_metadata", {})
@@ -944,7 +944,7 @@ class UnifiedStationRecord:
             ps_url = ps_meta.get("url") or ps_view.get("url") or (f"https://www.plugshare.com/location/{ps_id}" if ps_id else None)
             _add("PlugShare", "🔌", "PlugShare", ps_url)
 
-        # 7. Base station URL fallback
+ # 7. Base station URL fallback
         if self.url and self.url not in seen_urls:
             label = "Web Link"
             icon = "🔗"
@@ -976,24 +976,24 @@ class BaseChargerProvider(ABC):
     name: str = "base"
     tier: int = 2  # 1 = First-Party Authoritative, 2 = Aggregator
 
-    # BUG-079: the set of speed_tier values this provider's
-    # load_cached_registry() can ever produce, or None if unknown/unrestricted.
-    # get_all_stations() (chargers_manager.py) uses this to skip providers that
-    # provably cannot contribute a record matching an active speed_tier filter -
-    # e.g. a --sc query only wants speed_tier="supercharger", and only
-    # TeslaProvider and PlugShareProvider (a narrow cross-listing case - see its
-    # own POSSIBLE_SPEED_TIERS comment) ever set that tier, so ChargefoxProvider
-    # (whose load_cached_registry() can trigger a live, rate-limited Nominatim
-    # reverse-geocode call per uncached station), EVXProvider, EvieProvider, and
-    # BPPulseProvider can be skipped entirely for that query. Declared
-    # per-subclass and verified against each provider's actual speed_tier
-    # assignments (grep "speed_tier\s*=" in each *_provider file) - if a
-    # provider is ever changed to assign a new speed_tier, this set MUST be
-    # updated too, or get_all_stations() will silently drop its matching
-    # records under a speed_tier filter. Leave as None (the default) for any
-    # provider whose possible tiers aren't confidently known - that disables
-    # the skip for it (always loaded), which is always correctness-safe, just
-    # not optimized.
+ # the set of speed_tier values this provider's
+ # load_cached_registry() can ever produce, or None if unknown/unrestricted.
+ # get_all_stations() (chargers_manager.py) uses this to skip providers that
+ # provably cannot contribute a record matching an active speed_tier filter -
+ # e.g. a --sc query only wants speed_tier="supercharger", and only
+ # TeslaProvider and PlugShareProvider (a narrow cross-listing case - see its
+ # own POSSIBLE_SPEED_TIERS comment) ever set that tier, so ChargefoxProvider
+ # (whose load_cached_registry() can trigger a live, rate-limited Nominatim
+ # reverse-geocode call per uncached station), EVXProvider, EvieProvider, and
+ # BPPulseProvider can be skipped entirely for that query. Declared
+ # per-subclass and verified against each provider's actual speed_tier
+ # assignments (grep "speed_tier\s*=" in each *_provider file) - if a
+ # provider is ever changed to assign a new speed_tier, this set MUST be
+ # updated too, or get_all_stations() will silently drop its matching
+ # records under a speed_tier filter. Leave as None (the default) for any
+ # provider whose possible tiers aren't confidently known - that disables
+ # the skip for it (always loaded), which is always correctness-safe, just
+ # not optimized.
     POSSIBLE_SPEED_TIERS: Optional[set] = None
 
     @abstractmethod
@@ -1025,11 +1025,11 @@ def detect_station_changes(existing_entry: Dict[str, Any], new_entry: Dict[str, 
     if not existing_entry or not new_entry:
         return False
 
-    # 1. Tariffs comparison
+ # 1. Tariffs comparison
     ex_tar = existing_entry.get("tariffs", {})
     new_tar = new_entry.get("tariffs", {})
     
-    # Flat rate check
+ # Flat rate check
     ex_flat = ex_tar.get("per_kwh_gross") if ex_tar.get("per_kwh_gross") is not None else ex_tar.get("per_kwh_flat")
     new_flat = new_tar.get("per_kwh_gross") if new_tar.get("per_kwh_gross") is not None else new_tar.get("per_kwh_flat")
     if ex_flat is not None and new_flat is not None:
@@ -1039,7 +1039,7 @@ def detect_station_changes(existing_entry: Dict[str, Any], new_entry: Dict[str, 
         except Exception:
             pass
 
-    # TOU schedules comparison
+ # TOU schedules comparison
     ex_scheds = ex_tar.get("schedule") or ex_tar.get("tesla_members", {}).get("rate_schedules", []) or existing_entry.get("tessie_cost_config", {}).get("rate_schedules", [])
     new_scheds = new_tar.get("schedule") or new_tar.get("tesla_members", {}).get("rate_schedules", []) or new_entry.get("tessie_cost_config", {}).get("rate_schedules", [])
     
@@ -1059,7 +1059,7 @@ def detect_station_changes(existing_entry: Dict[str, Any], new_entry: Dict[str, 
             if (s1.get("start_time") or s1.get("start")) != (s2.get("start_time") or s2.get("start")):
                 return True
 
-    # 2. Hardware comparison (stalls, max_power_kw, tier)
+ # 2. Hardware comparison (stalls, max_power_kw, tier)
     ex_hw = existing_entry.get("hardware", {})
     new_hw = new_entry.get("hardware", {})
     if ex_hw.get("stalls") and new_hw.get("stalls") and ex_hw.get("stalls") != new_hw.get("stalls"):

@@ -23,7 +23,7 @@ script tried to do, more canonically:
      script's match_evnex_sessions()) is superseded by the canonical
      charges/deepdive/*_Evnex_Home.json records (evnex_api_sync.py) that
      analysis_ev_session_cost.py's load_evnex_deepdive_sessions() matches
-     against by real charging-window overlap (TODO-027's bug-fixed
+     against by real charging-window overlap (TODO-027's fixed
      version - see AGENTS.local.md) - a more reliable match than this
      script's own start-time-proximity approach ever was.
 

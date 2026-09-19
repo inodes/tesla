@@ -257,10 +257,10 @@ def estimate_usable_capacity_kwh(drives, min_pct_delta=5):
         if pct_delta < min_pct_delta or kwh_used <= 0:
             continue
         capacity = kwh_used / (pct_delta / 100.0)
-        # Sanity bounds - a real pack here is not going to estimate
-        # under 20kWh or over 150kWh from one drive; anything outside
-        # that is almost certainly a bad/rounded CSV row, not a real
-        # capacity reading.
+ # Sanity bounds - a real pack here is not going to estimate
+ # under 20kWh or over 150kWh from one drive; anything outside
+ # that is almost certainly a bad/rounded CSV row, not a real
+ # capacity reading.
         if 20.0 <= capacity <= 150.0:
             estimates.append(capacity)
     if not estimates:
@@ -504,9 +504,9 @@ def build_profile(tessie_dir=None, vehicle_mass_kg=None):
 
             b = bucket_for_speed(seg["avg_speed_kmh"])
 
-            # Grade-corrected pool: every non-stationary segment,
-            # regardless of class, contributes here (the whole point of
-            # factoring in inclines rather than throwing them away).
+ # Grade-corrected pool: every non-stationary segment,
+ # regardless of class, contributes here (the whole point of
+ # factoring in inclines rather than throwing them away).
             corrected_eff = grade_corrected_efficiency_kwh_per_100km(seg, vehicle_mass_kg)
             if b is not None and corrected_eff is not None:
                 pe_kwh = potential_energy_kwh(vehicle_mass_kg, seg.get("elevation_change_m", 0.0))
@@ -524,9 +524,9 @@ def build_profile(tessie_dir=None, vehicle_mass_kg=None):
                 descend_segs.append(seg)
                 continue
 
-            # class == "level" - eligible for the strict flat-only pool,
-            # subject to the tighter net-grade check this tool applies
-            # on top of compute_drive_segments()'s own +/-2%.
+ # class == "level" - eligible for the strict flat-only pool,
+ # subject to the tighter net-grade check this tool applies
+ # on top of compute_drive_segments()'s own +/-2%.
             if seg.get("efficiency_kwh_per_100km") is None:
                 continue
             total_level_distance_km += seg["distance_km"]
@@ -593,7 +593,7 @@ def build_profile(tessie_dir=None, vehicle_mass_kg=None):
             f"answers is specifically corrupted by grade. See "
             f"source_data.excluded_by_stricter_flat_filter for how much "
             f"this excluded - a bucket that goes thin/disappears here is "
-            f"the tightening doing its job, not a bug.",
+            f"the tightening doing its job, not an issue.",
             "speed_vs_efficiency_grade_corrected is the ADDITIONAL "
             "figure the flat-only table doesn't give up: EVERY "
             "non-stationary segment (flat, climbing, or descending) "

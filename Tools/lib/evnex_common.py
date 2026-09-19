@@ -113,8 +113,8 @@ async def get_authenticated_client(config=None):
     try:
         await auth.start_authentication(username, password)
     except Exception as e:
-        # Scrub the password out of whatever the auth library's exception
-        # says, on the off chance it ever echoes request details.
+ # Scrub the password out of whatever the auth library's exception
+ # says, on the off chance it ever echoes request details.
         safe_msg = str(e).replace(password, "***REDACTED***") if password else str(e)
         raise RuntimeError(f"Evnex authentication failed: {safe_msg}") from e
     return Evnex(auth=auth)

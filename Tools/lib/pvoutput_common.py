@@ -86,13 +86,13 @@ PV_AGL_CONFLICT_RATIO = 0.3  # flag if the two sources differ by >=30% of the la
 
 
 def load_config():
-    # TODO-034 (2026-09-15): used to duplicate tessie_api_common.py's own
-    # CONFIG_PATH/load_config() with its own hardcoded "config.json"
-    # path - now just delegates, so this module and every other caller
-    # agree on where the real config.json is (root, with a Tessie/ legacy
-    # fallback) from ONE place rather than two copies that could drift.
-    # Kept as its own function (not removed) since analysis_ev_session_cost.py
-    # and others already import it by this name.
+ # TODO-034 (2026-09-15): used to duplicate tessie_api_common.py's own
+ # CONFIG_PATH/load_config() with its own hardcoded "config.json"
+ # path - now just delegates, so this module and every other caller
+ # agree on where the real config.json is (root, with a Tessie/ legacy
+ # fallback) from ONE place rather than two copies that could drift.
+ # Kept as its own function (not removed) since analysis_ev_session_cost.py
+ # and others already import it by this name.
     from .tessie_api_common import load_config as _shared_load_config
     return _shared_load_config()
 
@@ -206,20 +206,20 @@ def day_intervals(readings):
     prev_gen = 0.0
     prev_cons = 0.0
     for r_time, r_gen, r_cons in readings:
-        # A NaN reading (PVOutput sends literal "NaN" text for a field
-        # it didn't log at that instant - confirmed real, e.g.
-        # Temperature/Voltage often, and seen LIVE on this account's own
-        # very first 00:00 reading of a day for Energy Generation) is
-        # skipped entirely rather than treated as a real 0 or allowed to
-        # poison every later delta. `x != x` detects it without needing
-        # `import math` (a NaN never equals itself). Skipping just
-        # widens the NEXT valid reading's own interval to span the gap,
-        # rather than zeroing real generation/consumption during it - an
-        # earlier version let a NaN reading become prev_gen/prev_cons,
-        # which (since anything - NaN is also NaN) silently zeroed every
-        # later delta for the rest of the day via the max(0.0, ...)
-        # clamp below, caught in this file's own live smoke test against
-        # a real account response.
+ # A NaN reading (PVOutput sends literal "NaN" text for a field
+ # it didn't log at that instant - confirmed real, e.g.
+ # Temperature/Voltage often, and seen LIVE on this account's own
+ # very first 00:00 reading of a day for Energy Generation) is
+ # skipped entirely rather than treated as a real 0 or allowed to
+ # poison every later delta. `x != x` detects it without needing
+ # `import math` (a NaN never equals itself). Skipping just
+ # widens the NEXT valid reading's own interval to span the gap,
+ # rather than zeroing real generation/consumption during it - an
+ # earlier version let a NaN reading become prev_gen/prev_cons,
+ # which (since anything - NaN is also NaN) silently zeroed every
+ # later delta for the rest of the day via the max(0.0, ...)
+ # clamp below, caught in this file's own live smoke test against
+ # a real account response.
         if r_gen != r_gen or r_cons != r_cons:
             continue
         gen_delta = max(0.0, r_gen - prev_gen)

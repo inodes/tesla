@@ -29,7 +29,7 @@ tesla/
 ├── Tools/                          # 🛠️ Executable scripts for multi-drive deployment
 │   ├── archive/                    # Archived one-off / exploratory test scripts
 │   ├── lib/                        # Shared library modules imported by the scripts below (not run
-│   │                                #   directly) - table_formatter.py, tessie_api_common.py, etc.
+│   │                                #   directly) - sei_inspector.py, table_formatter.py, tessie_api_common.py, etc.
 │   ├── providers_chargers/         # Pluggable charging-network adapters (Tesla/Chargefox/EVX/Evie/
 │   │                                #   BP Pulse/AmpCharge/Exploren/Jolt/NRMA/PlugShare),
 │   │                                #   orchestrated by charger_find.py
@@ -42,8 +42,8 @@ tesla/
 │   ├── analyse_charging.py         # Charging reconciliation & invoice parser
 │   ├── analyse_drives.py           # Drives explorer, footage linker, and master consolidator
 │   ├── analyse_session_cost.py     # Home EV charging solar vs grid cost & tariff calculator
-│   ├── charger_find.py            # Unified multi-network charger discovery
-│   ├── charger_find_tesla.py      # Tesla Supercharger / Destination Charger explorer & live scraper
+│   ├── charger_find.py            # Unified multi-network EV charger discovery, pricing & sync engine
+│   ├── charger_find_tesla.py      # [Deprecated] Legacy Tesla Supercharger explorer (superseded by charger_find.py)
 │   ├── places_manager.py           # Place tagging, geocoding, and stop-cluster review utility
 │   ├── power_cost_calculator.py    # Full electricity-bill reconstruction (usage + supply + solar credit + demand)
 │   ├── power_demand_calculator.py  # Reproduce the active power provider's residential demand charge (AGL: Ausgrid EA025)
@@ -122,16 +122,19 @@ tesla/
 
 ### 4. Charger Discovery
 ```bash
-# The one command to pull fresh charger data near Home (50km) for both
+# The one command to pull fresh charger data near Home (50km) for all
 # registries this repo tracks - see AGENTS.md REQ-033 for why it's scoped
 # to Home rather than state/nationwide (PlugShare rate-limiting, BUG-008)
 ./Tools/sync_charger_all.sh
 
-# Tesla Superchargers/Destination Chargers near a known place
-./Tools/charger_find_tesla.py --address Home --sc --list
+# Find all Tesla Superchargers near a place (or nationwide with --state)
+./Tools/charger_find.py --near Home --sc --radius 25
 
-# PlugShare-listed 3rd-party DC fast chargers near a known place
-./Tools/charger_find.py --near Home --dc --radius 15 --network plugshare
+# Find cheapest chargers sorted by price (with secondary distance sorting)
+./Tools/charger_find.py --near Home --sort price --radius 25
+
+# Find high-power DC Fast Chargers (Tesla + 3rd-party networks >= 25kW)
+./Tools/charger_find.py --near Parramatta --dc --sort power --radius 30
 ```
 👉 *See [Tessie/README.md](Tessie/README.md) for full documentation on drives, charging reconciliation, invoices, tariffs, places, and charger discovery.*
 

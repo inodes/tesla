@@ -21,5 +21,6 @@
   },
   "tariffs": {
     "default_currency": "AUD"
-  }
+  },
+  "default_comparison_vehicle": "mazda_cx8_diesel"
 }

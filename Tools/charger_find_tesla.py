@@ -78,7 +78,7 @@ def resolve_location_timezone(state: str = None, country: str = None, lat: float
         elif st_clean == "NT":
             return "Australia/Darwin"
         
-        # Coordinate-based fallback for Australia
+ # Coordinate-based fallback for Australia
         if lon is not None:
             if lon < 129.0:
                 return "Australia/Perth"
@@ -229,7 +229,7 @@ def clean_station_short_name(name: str) -> str:
 def normalize_country_slug(country_name: str) -> str:
     """Normalizes country name to URL slug (e.g. 'Hong Kong' -> 'Hong+Kong', 'Australia' -> 'Australia')."""
     clean = country_name.replace("_", " ").strip()
-    # Normalize common abbreviations
+ # Normalize common abbreviations
     c_lower = clean.lower()
     if c_lower in ["au", "australia", "aus"]:
         return "Australia"
@@ -244,7 +244,7 @@ def normalize_country_slug(country_name: str) -> str:
     if c_lower in ["jp", "japan"]:
         return "Japan"
     
-    # Capitalize words
+ # Capitalize words
     words = clean.split()
     cap_words = [w.capitalize() for w in words]
     return "+".join(cap_words)
@@ -253,25 +253,25 @@ def extract_au_state_from_text(title: str, address_str: str = "") -> str:
     """Extracts standard 2-3 letter Australian state code from title or address string."""
     text = f"{title} {address_str}"
     
-    # 1. Match trailing or embedded ", NSW" / ", VIC" / ", QLD" etc.
+ # 1. Match trailing or embedded ", NSW" / ", VIC" / ", QLD" etc.
     m = re.search(r",\s*([A-Za-z]{2,3})(?:\s*-\s*|\s*$|\s*,|\s*\d{4})", title)
     if m:
         st = m.group(1).upper()
         if st in AU_STATE_MAP:
             return st
             
-    # 2. Match embedded state code with word boundaries
+ # 2. Match embedded state code with word boundaries
     for st_code in ["NSW", "VIC", "QLD", "WA", "SA", "TAS", "ACT", "NT"]:
         if re.search(rf"\b{st_code}\b", title):
             return st_code
             
-    # 3. Match full state names
+ # 3. Match full state names
     text_lower = text.lower()
     for full_name, code in AU_STATE_REVERSE_MAP.items():
         if full_name in text_lower:
             return code
             
-    # 4. Match postcode ranges in address
+ # 4. Match postcode ranges in address
     postcode_match = re.search(r"\b(\d{4})\b", text)
     if postcode_match:
         pc = int(postcode_match.group(1))
@@ -388,13 +388,13 @@ def get_country_boundary_config(boundaries: dict, country: str = "Australia") ->
         return {}
     c_clean = (country or "Australia").replace("+", " ").strip().lower()
 
-    # 1. Search under regions hierarchy
+ # 1. Search under regions hierarchy
     for r_key, r_data in boundaries.get("regions", {}).items():
         for c_name, c_data in r_data.get("countries", {}).items():
             if c_name.lower() == c_clean or str(c_data.get("country_code", "")).lower() == c_clean:
                 return c_data
 
-    # 2. Fallbacks
+ # 2. Fallbacks
     if country in boundaries:
         return boundaries[country]
     if "states" in boundaries:
@@ -421,7 +421,7 @@ def state_from_coords(lat: float, lon: float, country: str = "Australia", repo_r
     boundaries = load_state_boundaries(repo_root=repo_root)
     country_config = get_country_boundary_config(boundaries, country=country)
 
-    # Country bounding box rejection (e.g. Australia: lat [-44.5, -10.0], lon [112.0, 154.5])
+ # Country bounding box rejection (e.g. Australia: lat [-44.5, -10.0], lon [112.0, 154.5])
     c_bbox = country_config.get("bbox", [-44.5, 112.0, -10.0, 154.5])
     if c_bbox and len(c_bbox) == 4:
         min_lat, min_lon, max_lat, max_lon = c_bbox
@@ -430,14 +430,14 @@ def state_from_coords(lat: float, lon: float, country: str = "Australia", repo_r
 
     threshold_km = country_config.get("border_threshold_km", 15.0)
 
-    # 1. Fast path: check safe interior bounds (definitively inside state, far from any border)
+ # 1. Fast path: check safe interior bounds (definitively inside state, far from any border)
     for st, data in country_config.get("states", {}).items():
         sb = data.get("safe_bounds")
         if sb and len(sb) == 4:
             if sb[0] <= lat <= sb[2] and sb[1] <= lon <= sb[3]:
                 return st, None
 
-    # 2. Border proximity detection
+ # 2. Border proximity detection
     near_border = False
     for b_name, b_pts in country_config.get("borders", {}).items():
         min_b_lon = min(p[0] for p in b_pts) - 0.5
@@ -453,7 +453,7 @@ def state_from_coords(lat: float, lon: float, country: str = "Australia", repo_r
         if near_border:
             break
 
-    # 3. If near border, check local cache or reverse geocode
+ # 3. If near border, check local cache or reverse geocode
     if near_border:
         cache = load_geo_cache(repo_root=repo_root)
         ckey = f"{lat:.4f},{lon:.4f}"
@@ -461,7 +461,7 @@ def state_from_coords(lat: float, lon: float, country: str = "Australia", repo_r
             entry = cache[ckey]
             return entry.get("state", "Other"), entry.get("suburb")
 
-        # Network lookup with cache write
+ # Network lookup with cache write
         geo = reverse_geocode_osm(lat, lon)
         if geo:
             cache[ckey] = geo
@@ -469,24 +469,24 @@ def state_from_coords(lat: float, lon: float, country: str = "Australia", repo_r
             time.sleep(1.0)
             return geo.get("state", "Other"), geo.get("suburb")
 
-    # 4. Geometric boundary interpolation (for interior areas not covered by safe boxes)
+ # 4. Geometric boundary interpolation (for interior areas not covered by safe boxes)
     act_data = country_config.get("states", {}).get("ACT", {})
     act_bb = act_data.get("bbox", [-35.92, 148.76, -35.12, 149.40])
     if act_bb[0] <= lat <= act_bb[2] and act_bb[1] <= lon <= act_bb[3]:
         return "ACT", None
 
-    # WA
+ # WA
     if lon < 129.0:
         return "WA", None
-    # NT vs SA
+ # NT vs SA
     if 129.0 <= lon < 138.0:
         return "NT" if lat > -26.0 else "SA", None
-    # SA vs QLD/NSW
+ # SA vs QLD/NSW
     if 138.0 <= lon < 141.0:
         if lat > -26.0: return "QLD", None
         return "SA", None
 
-    # NSW vs VIC (Murray River & Black-Allan Line)
+ # NSW vs VIC (Murray River & Black-Allan Line)
     nsw_vic = country_config.get("borders", {}).get("NSW_VIC", [])
     if nsw_vic:
         for i in range(len(nsw_vic) - 1):
@@ -498,7 +498,7 @@ def state_from_coords(lat: float, lon: float, country: str = "Australia", repo_r
                     return "VIC", None
                 break
 
-    # QLD vs NSW
+ # QLD vs NSW
     qld_nsw = country_config.get("borders", {}).get("QLD_NSW", [])
     if qld_nsw:
         for i in range(len(qld_nsw) - 1):
@@ -531,16 +531,16 @@ def merge_tou_intervals(intervals: list) -> list:
             curr = dict(nxt)
     merged.append(curr)
 
-    # Assign descriptive label based on time range
+ # Assign descriptive label based on time range
     for entry in merged:
         if entry.get("label"):
             continue  # Preserve explicitly set labels (e.g. from flat-rate capture)
         st, et = entry["start_time"], entry["end_time"]
-        # Labels are printed under their own "Tesla & Members" / "Non-Tesla"
-        # section header, so a per-row "Non-Tesla " prefix was redundant and
-        # broke column alignment between the two tables (BUG-097: user
-        # reported "Non-Tesla Standard Rate" / "Non-Tesla Peak Day" not
-        # lining up under the un-prefixed Tesla-section labels above them).
+ # Labels are printed under their own "Tesla & Members" / "Non-Tesla"
+ # section header, so a per-row "Non-Tesla " prefix was redundant and
+ # broke column alignment between the two tables (user
+ # reported "Non-Tesla Standard Rate" / "Non-Tesla Peak Day" not
+ # lining up under the un-prefixed Tesla-section labels above them).
         prefix = ""
         
         st_h = int(st.split(":")[0]) if ":" in st else 0
@@ -599,7 +599,7 @@ def get_current_gps_location(repo_root: str = None) -> tuple:
     except Exception:
         pass
 
-    # 1. Latest Vehicle Telemetry / Drives GPS
+ # 1. Latest Vehicle Telemetry / Drives GPS
     drives_candidates = []
     if tessie_home:
         drives_candidates.extend([
@@ -629,7 +629,7 @@ def get_current_gps_location(repo_root: str = None) -> tuple:
             except Exception:
                 pass
 
-    # 2. Places.json 'Home' Location
+ # 2. Places.json 'Home' Location
     places_candidates = []
     if tessie_home:
         places_candidates.append(os.path.join(tessie_home, "places.json"))
@@ -651,7 +651,7 @@ def get_current_gps_location(repo_root: str = None) -> tuple:
             except Exception:
                 pass
 
-    # 3. IP-based Geolocation Fallback
+ # 3. IP-based Geolocation Fallback
     try:
         import urllib.request
         req = urllib.request.Request("http://ip-api.com/json/", headers={"User-Agent": "curl/7.88.1"})
@@ -663,7 +663,7 @@ def get_current_gps_location(repo_root: str = None) -> tuple:
     except Exception:
         pass
 
-    # Default Sydney CBD fallback
+ # Default Sydney CBD fallback
     return -33.8688, 151.2093, "Sydney CBD (Default Fallback)"
 
 _GEOCODE_CACHE = {}
@@ -682,9 +682,9 @@ def geocode_address(address_str: str, country_hint: str = "Australia") -> tuple:
     import urllib.request
     import urllib.parse
 
-    # 1. Try OpenStreetMap Nominatim with contact info (Nominatim's usage policy
-    # requires an identifiable contact for automated requests - read it from an
-    # env var so no personal address is hardcoded/committed to the repo).
+ # 1. Try OpenStreetMap Nominatim with contact info (Nominatim's usage policy
+ # requires an identifiable contact for automated requests - read it from an
+ # env var so no personal address is hardcoded/committed to the repo).
     try:
         contact = os.environ.get("NOMINATIM_CONTACT", "").strip()
         q_str = clean if country_hint.lower() in clean.lower() else f"{clean}, {country_hint}"
@@ -710,7 +710,7 @@ def geocode_address(address_str: str, country_hint: str = "Australia") -> tuple:
     except Exception:
         pass
 
-    # 2. Try Photon Komoot API
+ # 2. Try Photon Komoot API
     try:
         params = urllib.parse.urlencode({"q": clean, "limit": 1})
         url = f"https://photon.komoot.io/api/?{params}"
@@ -731,7 +731,7 @@ def geocode_address(address_str: str, country_hint: str = "Australia") -> tuple:
     except Exception:
         pass
 
-    # 3. Try Open-Meteo Geocoding API
+ # 3. Try Open-Meteo Geocoding API
     try:
         params = urllib.parse.urlencode({"name": clean, "count": 1, "format": "json"})
         url = f"https://geocoding-api.open-meteo.com/v1/search?{params}"
@@ -766,7 +766,7 @@ def resolve_reference_coordinates(ref_str: str, repo_root: str = None) -> tuple:
     if clean.lower() in ["me", "current", "gps", "auto", "here"]:
         return get_current_gps_location(repo_root)
 
-    # Direct coordinate match: lat,lon
+ # Direct coordinate match: lat,lon
     coord_m = re.match(r"^([-\d\.]+)\s*,\s*([-\d\.]+)$", clean)
     if coord_m:
         try:
@@ -777,20 +777,20 @@ def resolve_reference_coordinates(ref_str: str, repo_root: str = None) -> tuple:
     if not repo_root:
         repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
-    # Search Tessie/places.json
+ # Search Tessie/places.json
     places_p = os.path.join(repo_root, "Tessie", "places.json")
     if os.path.isfile(places_p):
         try:
             with open(places_p, "r", encoding="utf-8") as f:
                 places = json.load(f)
-            # Exact match on saved place
+ # Exact match on saved place
             for p_name, p_info in places.items():
                 if p_name.lower() == clean.lower():
                     return float(p_info.get("lat")), float(p_info.get("lon")), f"{p_name} (places.json)"
         except Exception:
             pass
 
-    # Online Geocoding for address/suburb with smart disambiguation
+ # Online Geocoding for address/suburb with smart disambiguation
     try:
         from places_manager import resolve_location_disambiguated
         geo_lat, geo_lon, geo_label = resolve_location_disambiguated(clean, interactive=True)
@@ -801,7 +801,7 @@ def resolve_reference_coordinates(ref_str: str, repo_root: str = None) -> tuple:
         if geo_lat is not None and geo_lon is not None:
             return geo_lat, geo_lon, geo_label
 
-    # Fallback to Tessie/superchargers.json for exact station names
+ # Fallback to Tessie/superchargers.json for exact station names
     sc_p = os.path.join(repo_root, "Tessie", "superchargers.json")
     if os.path.isfile(sc_p):
         try:
@@ -991,7 +991,7 @@ def evaluate_station_filter(station_data: dict, filter_expr: str, target_time: s
     try:
         return bool(eval(clean_expr, {"__builtins__": {}}, ctx))
     except Exception:
-        # Fallback to case-insensitive text match
+ # Fallback to case-insensitive text match
         return clean_expr.lower() in json.dumps(ctx).lower()
 
 # -----------------------------------------------------------------------------
@@ -1055,7 +1055,7 @@ class TeslaChargerExplorer:
             except Exception as e:
                 print(f"{C_YELLOW}⚠ Network timeout waiting for idle, parsing current DOM...{C_RESET}")
 
-            # Primary: extract structured data from __NEXT_DATA__ SSR payload
+ # Primary: extract structured data from __NEXT_DATA__ SSR payload
             try:
                 raw_next = page.eval_on_selector("#__NEXT_DATA__", "e => e.textContent")
                 if raw_next:
@@ -1063,7 +1063,7 @@ class TeslaChargerExplorer:
             except Exception:
                 pass
 
-            # Fallback: extract location links from page DOM
+ # Fallback: extract location links from page DOM
             links = []
             if not next_data_payload:
                 links = page.eval_on_selector_all(
@@ -1073,7 +1073,7 @@ class TeslaChargerExplorer:
 
             browser.close()
 
-        # Parse __NEXT_DATA__ if available (richer data: lat/lon, display name, slug)
+ # Parse __NEXT_DATA__ if available (richer data: lat/lon, display name, slug)
         if next_data_payload:
             nd_entries = next_data_payload.get("props", {}).get("pageProps", {}).get("data", [])
             is_au = country_slug.replace("+", " ").lower() in ["australia"]
@@ -1087,12 +1087,12 @@ class TeslaChargerExplorer:
                 src = entry.get("_source", {})
                 mkt = src.get("marketing", {})
 
-                # Resolve display name: prefer en-AU translation, fall back to display_name
+ # Resolve display name: prefer en-AU translation, fall back to display_name
                 translations = mkt.get("translations", {})
                 name_trans = translations.get("customerFacingName", {})
                 title = name_trans.get("en-AU") or name_trans.get("en-US") or mkt.get("display_name", "")
 
-                # Also check function-level translations for a better en-AU name
+ # Also check function-level translations for a better en-AU name
                 for func in src.get("functions", []):
                     func_trans = func.get("translations", {}).get("customerFacingName", {})
                     en_au = func_trans.get("en-AU")
@@ -1104,7 +1104,7 @@ class TeslaChargerExplorer:
                 if not title:
                     continue
 
-                # Determine state: text-based first, then coordinate/border fallback
+ # Determine state: text-based first, then coordinate/border fallback
                 state = extract_au_state_from_text(title)
                 resolved_suburb = None
                 if lat is not None and lon is not None:
@@ -1113,7 +1113,7 @@ class TeslaChargerExplorer:
                         if coord_state:
                             state = coord_state
                         elif is_au:
-                            # Coordinates outside AU bounding boxes — foreign entry (e.g. NZ)
+ # Coordinates outside AU bounding boxes — foreign entry (e.g. NZ)
                             skipped_foreign += 1
                             continue
 
@@ -1146,7 +1146,7 @@ class TeslaChargerExplorer:
             if skipped_foreign:
                 print(f"{C_DIM}   (Skipped {skipped_foreign} non-{country_slug.replace('+', ' ')} entry/entries){C_RESET}")
         else:
-            # Fallback: parse from DOM links (no lat/lon available)
+ # Fallback: parse from DOM links (no lat/lon available)
             seen_hrefs = set()
             for idx, item in enumerate(links, 1):
                 title = item.get("title", "").strip()
@@ -1199,7 +1199,7 @@ class TeslaChargerExplorer:
                 except Exception as e:
                     err_msg = str(e)
 
-                # Expand accordions if present
+ # Expand accordions if present
                 for accordion_label in ["Pricing for Tesla & Members", "Pricing for Non-Tesla"]:
                     try:
                         btn = page.locator(f"button:has-text('{accordion_label}'), [role='button']:has-text('{accordion_label}')").first
@@ -1209,7 +1209,7 @@ class TeslaChargerExplorer:
                     except Exception:
                         pass
 
-                # Extract __NEXT_DATA__ SSR props
+ # Extract __NEXT_DATA__ SSR props
                 try:
                     raw_next = page.eval_on_selector("#__NEXT_DATA__", "e => e.textContent")
                     if raw_next:
@@ -1217,7 +1217,7 @@ class TeslaChargerExplorer:
                 except Exception:
                     pass
 
-                # Extract visible page text (for fee notices, access details, etc.)
+ # Extract visible page text (for fee notices, access details, etc.)
                 try:
                     page_text = page.eval_on_selector("body", "e => e.innerText")
                     if page_text:
@@ -1225,7 +1225,7 @@ class TeslaChargerExplorer:
                 except Exception:
                     pass
 
-                # If valid data captured, return immediately
+ # If valid data captured, return immediately
                 if next_data_payload or captured_api_data:
                     return captured_api_data, next_data_payload
             finally:
@@ -1234,7 +1234,7 @@ class TeslaChargerExplorer:
                 except Exception:
                     pass
 
-            # Exponential backoff with jitter on transient error / timeout
+ # Exponential backoff with jitter on transient error / timeout
             if attempt < max_retries:
                 backoff = base_retry_delay * (2 ** (attempt - 1)) + random.uniform(0.5, 1.5)
                 reason = f" ({err_msg[:60]}...)" if err_msg else ""
@@ -1260,13 +1260,13 @@ class TeslaChargerExplorer:
         if not charger_payload and not fmt_data and not loc_data:
             return None, None
 
-        # Extract Core Metadata
+ # Extract Core Metadata
         station_name = (
             charger_payload.get("name") if charger_payload
             else fmt_data.get("chargerName") or fmt_data.get("chargerBrandName") or "Tesla Charger"
         )
 
-        # Address & Suburb Parsing
+ # Address & Suburb Parsing
         addr_info = charger_payload.get("address", {}) if charger_payload else {}
         street_num = addr_info.get("streetNumber", "").strip()
         street_name = addr_info.get("street", "").strip()
@@ -1277,7 +1277,7 @@ class TeslaChargerExplorer:
         country = addr_info.get("country", "Australia").strip()
         country_code = addr_info.get("countryCode", "AU").strip()
 
-        # Fallback from formattedData.chargerAddress
+ # Fallback from formattedData.chargerAddress
         if not street_full and fmt_data.get("chargerAddress"):
             addr_lines = fmt_data.get("chargerAddress")
             if len(addr_lines) >= 1:
@@ -1288,11 +1288,11 @@ class TeslaChargerExplorer:
                 if len(parts) > 1:
                     raw_state = parts[1].strip()
 
-        # Resolve state code
+ # Resolve state code
         state_code = extract_au_state_from_text(station_name, f"{street_full} {suburb} {raw_state} {postcode}")
         formatted_address = f"{street_full}, {suburb}, {AU_STATE_MAP.get(state_code, state_code)} {postcode}".strip(", ")
 
-        # Geolocation Coordinates
+ # Geolocation Coordinates
         lat, lon = None, None
         directions_link = fmt_data.get("chargerAddressDetails", {}).get("directionsLink", "")
         if "daddr=" in directions_link:
@@ -1315,7 +1315,7 @@ class TeslaChargerExplorer:
 
         is_dc = (charger_type != "supercharger") or ("/charger/" in target_url)
 
-        # Hardware Specs
+ # Hardware Specs
         stalls = (
             charger_payload.get("publicStallCount") if charger_payload
             else fmt_data.get("chargerQuantity") or (2 if is_dc else 8)
@@ -1328,19 +1328,19 @@ class TeslaChargerExplorer:
             pwr_val = 0
 
         if is_dc:
-            # Destination Chargers: AC Type 2 Wall Connectors (max 22 kW)
+ # Destination Chargers: AC Type 2 Wall Connectors (max 22 kW)
             max_kw = pwr_val if (0 < pwr_val <= 22) else 22
             tier = "AC"
         else:
-            # Superchargers: DC Fast Charging (V2/V3/V4)
+ # Superchargers: DC Fast Charging (V2/V3/V4)
             max_kw = pwr_val if pwr_val > 0 else 250
             tier = "V4" if max_kw >= 300 else ("V3" if max_kw >= 250 else ("V2" if max_kw >= 120 else "AC"))
 
-        # Non-Tesla Compatibility
+ # Non-Tesla Compatibility
         notice = str(fmt_data.get("additionalNotice") or "")
         open_to_non_tesla_flag = bool(charger_payload.get("openToNonTeslas")) if charger_payload else None
 
-        # General Location / Center Name
+ # General Location / Center Name
         common_name = (
             charger_payload.get("commonSiteName") if charger_payload
             else fmt_data.get("commonSiteName") or loc_data.get("marketing", {}).get("display_name")
@@ -1355,7 +1355,7 @@ class TeslaChargerExplorer:
 
         short_name = clean_station_short_name(station_name)
 
-        # Access Hours
+ # Access Hours
         hours_str = "Available 24/7"
         raw_hours = charger_payload.get("accessHours") if charger_payload else None
         if isinstance(raw_hours, dict) and raw_hours.get("twentyFourSeven"):
@@ -1363,7 +1363,7 @@ class TeslaChargerExplorer:
         elif isinstance(raw_hours, str) and raw_hours.strip():
             hours_str = raw_hours.strip()
 
-        # Pricebooks & TOU Rate Schedules
+ # Pricebooks & TOU Rate Schedules
         pricebooks = charger_payload.get("effectivePricebooks", []) if charger_payload else []
         tesla_raw_tou = []
         non_tesla_raw_tou = []
@@ -1397,7 +1397,7 @@ class TeslaChargerExplorer:
                         entry["is_non_tesla"] = True
                         non_tesla_raw_tou.append(entry)
                 else:
-                    # Flat-rate (no time-of-use windows) — store as single 24/7 entry
+ # Flat-rate (no time-of-use windows) — store as single 24/7 entry
                     entry = {
                         "start_time": "00:00",
                         "end_time": "24:00",
@@ -1411,7 +1411,7 @@ class TeslaChargerExplorer:
                         entry["is_non_tesla"] = True
                         non_tesla_raw_tou.append(entry)
 
-        # Extract idle or congestion fees (Tesla Policy: A Supercharger site has either idle fees OR congestion fees, never both)
+ # Extract idle or congestion fees (Tesla Policy: A Supercharger site has either idle fees OR congestion fees, never both)
         page_text = captured_api_data.get("_page_text", "") if isinstance(captured_api_data, dict) else ""
         all_text_search = f"{page_text} {notice} {json.dumps(fmt_data)}"
 
@@ -1425,11 +1425,11 @@ class TeslaChargerExplorer:
             if idle_m:
                 idle_fee = float(idle_m.group(1))
 
-        # Enforce Tesla either/or rule: congestion fee sites do not charge idle fees, and vice versa
+ # Enforce Tesla either/or rule: congestion fee sites do not charge idle fees, and vice versa
         if congestion_fee is not None and float(congestion_fee) > 0:
             idle_fee = None
 
-        # Fallback pricing parsing from fmt_data.chargerPricing
+ # Fallback pricing parsing from fmt_data.chargerPricing
         if not tesla_raw_tou and fmt_data.get("chargerPricing"):
             for p_group in fmt_data.get("chargerPricing", []):
                 grp_label = str(p_group.get("chargingLabel", "")).lower()
@@ -1464,7 +1464,7 @@ class TeslaChargerExplorer:
                         else:
                             tesla_raw_tou.append(entry)
                     elif rate_val > 0:
-                        # Flat-rate entry (e.g. "Base Rate: A$0.48/kWh") — no time window
+ # Flat-rate entry (e.g. "Base Rate: A$0.48/kWh") — no time window
                         entry = {
                             "start_time": "00:00",
                             "end_time": "24:00",
@@ -1489,12 +1489,12 @@ class TeslaChargerExplorer:
                 bool(non_tesla_raw_tou)
             )
 
-        # Determine if pricing is genuinely TOU vs flat rate stored as a 24/7 schedule
+ # Determine if pricing is genuinely TOU vs flat rate stored as a 24/7 schedule
         is_tesla_tou = len(tesla_rate_schedules) > 1
         is_non_tesla_tou = len(non_tesla_rate_schedules) > 1
         tesla_flat_rate = tesla_rate_schedules[0]["rate_per_kwh"] if (tesla_rate_schedules and not is_tesla_tou) else 0.0
 
-        # Build backward-compatible tessie_cost_config for Tesla vehicles
+ # Build backward-compatible tessie_cost_config for Tesla vehicles
         tessie_cost_schedules = []
         for s in tesla_rate_schedules:
             tessie_cost_schedules.append({
@@ -1524,7 +1524,7 @@ class TeslaChargerExplorer:
         short_name = findus_location_short_name
         display_name = f"Tesla Supercharger - {findus_location_name}" if charger_type == "supercharger" and not findus_location_name.startswith("Tesla") else findus_location_name
 
-        # Construct Unified Station Record
+ # Construct Unified Station Record
         record = {
             "id": findus_id,
             "tesla_metadata": {
@@ -1627,7 +1627,7 @@ class TeslaChargerExplorer:
             print(f"{C_RED}❌ Playwright is not installed in the active virtual environment.{C_RESET}")
             sys.exit(1)
 
-        # Resolve target URL
+ # Resolve target URL
         if url_or_id.startswith("http"):
             target_url = url_or_id
         else:
@@ -1712,7 +1712,7 @@ class TeslaChargerExplorer:
             lon = station_or_query.get("_lon") or (station_or_query.get("location") or {}).get("lon") or station_or_query.get("lon")
 
             for cur_reg, cur_type in regs:
-                # 1. Exact title key match
+ # 1. Exact title key match
                 if title in cur_reg:
                     return title, cur_reg[title], cur_type
                 alt_title = station_or_query.get("title", "")
@@ -1721,7 +1721,7 @@ class TeslaChargerExplorer:
                 if cur_type == "supercharger" and f"Tesla Supercharger - {title}" in cur_reg:
                     return f"Tesla Supercharger - {title}", cur_reg[f"Tesla Supercharger - {title}"], cur_type
 
-                # 2. Match by numeric ID / findus_url / slug / short_name / keywords
+ # 2. Match by numeric ID / findus_url / slug / short_name / keywords
                 title_lower = title.lower()
                 clean_title_norm = clean_station_short_name(title).lower()
                 live_state = str(station_or_query.get("state") or "").strip().upper()
@@ -1731,46 +1731,46 @@ class TeslaChargerExplorer:
                     findus_url = meta.get("findus_url", "")
                     findus_url_lower = findus_url.lower()
                     entry_state = str((entry.get("location", {}) or {}).get("state") or "").strip().upper()
-                    # An ID/URL/slug match is normally our strongest signal - but
-                    # a confidently-known state mismatch (this station's own
-                    # title/GPS says one state while the registry entry's own
-                    # stored address says another) means it's almost certainly
-                    # a stale or upstream-reused ID rather than a genuine rename
-                    # of the SAME physical charger. User-reported: a live
-                    # "Mercure Sunshine Coast Kawana Waters" (QLD) entry
-                    # false-matched the registry's "Bowral, NSW" purely because
-                    # Bowral's stored findus_url/ID happened to collide with it.
-                    # Skip ID-based candidates like this rather than trusting
-                    # them blindly - fall through to the name/keyword/GPS checks
-                    # below instead, which are unaffected by this guard.
+ # An ID/URL/slug match is normally our strongest signal - but
+ # a confidently-known state mismatch (this station's own
+ # title/GPS says one state while the registry entry's own
+ # stored address says another) means it's almost certainly
+ # a stale or upstream-reused ID rather than a genuine rename
+ # of the SAME physical charger. User-reported: a live
+ # "Mercure Sunshine Coast Kawana Waters" (QLD) entry
+ # false-matched the registry's "Bowral, NSW" purely because
+ # Bowral's stored findus_url/ID happened to collide with it.
+ # Skip ID-based candidates like this rather than trusting
+ # them blindly - fall through to the name/keyword/GPS checks
+ # below instead, which are unaffected by this guard.
                     id_match_is_geo_plausible = not (live_state and entry_state and live_state != entry_state)
 
                     if id_match_is_geo_plausible:
-                        # Exact numeric ID match
+ # Exact numeric ID match
                         if slug and st_id and slug == st_id.lower():
                             return k, entry, cur_type
                         if url and st_id and f"/{st_id}" in url:
                             return k, entry, cur_type
 
-                        # Findus URL match
+ # Findus URL match
                         if url and findus_url and findus_url == url:
                             return k, entry, cur_type
-                        # Exact tail-segment match, NOT a bare substring check.
-                        # Tesla's own live payload can carry a broken/placeholder
-                        # location_url_slug for some destination chargers (e.g.
-                        # "dc" - confirmed live for "Mercure Sunshine Coast Kawana
-                        # Waters", root cause of BUG-071's false Bowral match) -
-                        # a short slug like that is trivially a substring of any
-                        # "dcNNNNN"-style findus_url, so "slug in findus_url_lower"
-                        # would false-match nearly every such station in the
-                        # registry. Require the slug to equal the URL's own
-                        # trailing path segment exactly instead.
+ # Exact tail-segment match, NOT a bare substring check.
+ # Tesla's own live payload can carry a broken/placeholder
+ # location_url_slug for some destination chargers (e.g.
+ # "dc" - confirmed live for "Mercure Sunshine Coast Kawana
+ # Waters", root cause of 's false Bowral match) -
+ # a short slug like that is trivially a substring of any
+ # "dcNNNNN"-style findus_url, so "slug in findus_url_lower"
+ # would false-match nearly every such station in the
+ # registry. Require the slug to equal the URL's own
+ # trailing path segment exactly instead.
                         if slug and findus_url_lower:
                             findus_url_tail = findus_url_lower.rstrip("/").rsplit("/", 1)[-1]
                             if slug == findus_url_tail:
                                 return k, entry, cur_type
 
-                    # Findus List / Location name & Alias match
+ # Findus List / Location name & Alias match
                     list_name = meta.get("findus_list_name", "")
                     loc_name = meta.get("findus_location_name", "")
                     list_short = meta.get("findus_list_short_name", "")
@@ -1788,18 +1788,18 @@ class TeslaChargerExplorer:
                     if loc_short and clean_title_norm == loc_short.lower():
                         return k, entry, cur_type
 
-                    # Short name match
+ # Short name match
                     if short_name and meta.get("short_name") == short_name:
                         return k, entry, cur_type
                     if clean_title_norm and clean_station_short_name(meta.get("short_name", "")).lower() == clean_title_norm:
                         return k, entry, cur_type
 
-                    # Keywords match
+ # Keywords match
                     keywords = [kw.lower() for kw in meta.get("keywords", [])]
                     if title_lower in keywords:
                         return k, entry, cur_type
 
-                # 3. GPS Spatial Proximity match (within 250m)
+ # 3. GPS Spatial Proximity match (within 250m)
                 if lat is not None and lon is not None:
                     for k, entry in cur_reg.items():
                         c_loc = entry.get("location", {})
@@ -1825,13 +1825,13 @@ class TeslaChargerExplorer:
             regs = [(sc_reg, "supercharger"), (dc_reg, "destination_charger")]
 
         for cur_reg, cur_type in regs:
-            # 1. Exact key match
+ # 1. Exact key match
             if clean_q in cur_reg:
                 return clean_q, cur_reg[clean_q], cur_type
             if cur_type == "supercharger" and f"Tesla Supercharger - {clean_q}" in cur_reg:
                 return f"Tesla Supercharger - {clean_q}", cur_reg[f"Tesla Supercharger - {clean_q}"], cur_type
 
-            # 2. Normalized short_name, numeric ID, or Find Us URL match
+ # 2. Normalized short_name, numeric ID, or Find Us URL match
             q_slug = clean_station_short_name(clean_q).lower()
             for k, entry in cur_reg.items():
                 meta = entry.get("tesla_metadata", {})
@@ -1844,7 +1844,7 @@ class TeslaChargerExplorer:
                 if clean_lower in findus_url or (clean_q.isdigit() and f"/{clean_q}" in findus_url):
                     return k, entry, cur_type
 
-            # 3. Aliases, addresses, and keywords match
+ # 3. Aliases, addresses, and keywords match
             for k, entry in cur_reg.items():
                 meta = entry.get("tesla_metadata", {})
                 loc = entry.get("location", {})
@@ -1887,8 +1887,7 @@ class TeslaChargerExplorer:
         (None, None, None) if genuinely not found. Was previously called
         (interactive_drilldown(), browse_stations_by_type()) without ever
         being defined - AttributeError on every first-time save of a truly
-        new station (BUG: user-reported crash saving "Mercure Sunshine Coast
-        Kawana Waters").
+        new station (e.g. saving "Mercure Sunshine Coast Kawana Waters").
         """
         if sc_reg is None or dc_reg is None:
             sc_reg, dc_reg = self.load_active_registries()
@@ -2010,7 +2009,7 @@ class TeslaChargerExplorer:
         if not matched_entry:
             return "NOT_IN_JSON"
 
-        # Check for upstream rename / title discrepancy (RENAMED)
+ # Check for upstream rename / title discrepancy (RENAMED)
         live_title = (station.get("live_title") or station.get("title", "")).strip()
         if live_title and matched_key:
             clean_live = clean_station_short_name(live_title).lower()
@@ -2042,7 +2041,7 @@ class TeslaChargerExplorer:
             if not is_name_match:
                 return "RENAMED"
 
-        # Check last_verified timestamp
+ # Check last_verified timestamp
         ver_str = matched_entry.get("last_verified") or matched_entry.get("last_updated") or matched_entry.get("first_seen")
         if not ver_str:
             return "STALE"
@@ -2068,7 +2067,7 @@ class TeslaChargerExplorer:
 
         sc_reg, dc_reg = self.load_active_registries()
 
-        # Apply subset filter if requested ('new', 'renamed', 'stale', or 'unpriced')
+ # Apply subset filter if requested ('new', 'renamed', 'stale', or 'unpriced')
         target_stations = list(stations)
         if subset_filter == "new":
             target_stations = [s for s in target_stations if (s.get("_status") or self.get_station_status(s, sc_reg=sc_reg, dc_reg=dc_reg)) == "NOT_IN_JSON"]
@@ -2129,7 +2128,7 @@ class TeslaChargerExplorer:
             context, page = create_fresh_session()
 
             for idx, st in enumerate(target_stations, 1):
-                # Periodic context recycling every 15 stations: releases memory and resets connection pools
+ # Periodic context recycling every 15 stations: releases memory and resets connection pools
                 if idx > 1 and (idx - 1) % 15 == 0:
                     try:
                         page.close()
@@ -2173,7 +2172,7 @@ class TeslaChargerExplorer:
                     failed_stations.append(st_title)
                     stats["ERROR"] = stats.get("ERROR", 0) + 1
                     consecutive_failures += 1
-                    # Self-heal crashed context immediately
+ # Self-heal crashed context immediately
                     try:
                         page.close()
                         context.close()
@@ -2181,7 +2180,7 @@ class TeslaChargerExplorer:
                         pass
                     context, page = create_fresh_session()
 
-                # Circuit breaker cooldown if 3 consecutive failures occur
+ # Circuit breaker cooldown if 3 consecutive failures occur
                 if consecutive_failures >= 3:
                     print(f"\n  {C_YELLOW}⚠ 3 consecutive failures encountered. Re-spawning session and cooling down 10s...{C_RESET}\n")
                     try:
@@ -2193,7 +2192,7 @@ class TeslaChargerExplorer:
                     context, page = create_fresh_session()
                     consecutive_failures = 0
 
-                # Adaptive pacing delay between requests with randomized jitter
+ # Adaptive pacing delay between requests with randomized jitter
                 if idx < total and pacing_delay > 0:
                     time.sleep(pacing_delay + random.uniform(0.3, 1.2))
 
@@ -2234,7 +2233,7 @@ class TeslaChargerExplorer:
         if not existing or not new:
             return False
 
-        # Compare hardware
+ # Compare hardware
         ex_hw = existing.get("hardware", {})
         new_hw = new.get("hardware", {})
         if (ex_hw.get("stalls") != new_hw.get("stalls") or 
@@ -2242,7 +2241,7 @@ class TeslaChargerExplorer:
             ex_hw.get("tier") != new_hw.get("tier")):
             return True
 
-        # Compare compatibility & access
+ # Compare compatibility & access
         ex_comp = existing.get("compatibility", {})
         new_comp = new.get("compatibility", {})
         if ex_comp.get("open_to_non_tesla") != new_comp.get("open_to_non_tesla"):
@@ -2253,13 +2252,13 @@ class TeslaChargerExplorer:
         if ex_acc.get("hours") != new_acc.get("hours"):
             return True
 
-        # Extract normalized tariffs from existing
+ # Extract normalized tariffs from existing
         ex_tariffs = existing.get("tariffs", {})
         ex_t_scheds = ex_tariffs.get("tesla_members", {}).get("rate_schedules", [])
         if not ex_t_scheds and "tessie_cost_config" in existing:
             ex_t_scheds = existing.get("tessie_cost_config", {}).get("rate_schedules", [])
 
-        # Extract normalized tariffs from new
+ # Extract normalized tariffs from new
         new_tariffs = new.get("tariffs", {})
         new_t_scheds = new_tariffs.get("tesla_members", {}).get("rate_schedules", [])
 
@@ -2269,11 +2268,11 @@ class TeslaChargerExplorer:
         ex_simple = simplify_scheds(ex_t_scheds)
         new_simple = simplify_scheds(new_t_scheds)
 
-        # Treat empty price as missing data / bug: only archive if existing had pricing and it actually changed
+ # Treat empty price as missing data / anomaly: only archive if existing had pricing and it actually changed
         if ex_simple and new_simple and ex_simple != new_simple:
             return True
 
-        # Compare fees only if existing had pricing
+ # Compare fees only if existing had pricing
         if ex_simple:
             ex_idle = ex_tariffs.get("idle_fee_per_min") or existing.get("tessie_cost_config", {}).get("idle_fee_per_min", 0)
             new_idle = new_tariffs.get("idle_fee_per_min", 0)
@@ -2285,7 +2284,7 @@ class TeslaChargerExplorer:
             if round(float(ex_cong or 0), 2) != round(float(new_cong or 0), 2):
                 return True
 
-        # Compare non-tesla schedules
+ # Compare non-tesla schedules
         ex_nt_scheds = ex_tariffs.get("non_tesla", {}).get("rate_schedules", [])
         if not ex_nt_scheds and "non_tesla_pricing" in existing:
             ex_nt_scheds = existing.get("non_tesla_pricing", {}).get("rate_schedules", [])
@@ -2306,21 +2305,21 @@ class TeslaChargerExplorer:
             summary.append(f"New Station Registered: '{new_key}'")
             return summary
 
-        # 1. Renaming / Discrepancy
+ # 1. Renaming / Discrepancy
         if existing_key and existing_key != new_key:
             summary.append(f"Station Renamed: '{existing_key}' ➔ '{new_key}'")
 
-        # 1b. Find Us List Name vs Location Name discrepancy - this is the
-        # actual "RENAMED" signal get_station_status() flags for stations
-        # like Carmila, QLD (list page shows "St Lawrence, QLD") - the
-        # registry KEY stays location-name-based and never changes for
-        # these, so the "Station Renamed" check above never fires for them.
-        # Missing here entirely until 2026-09-14 (BUG-064, AGENTS.local.md) -
-        # a live re-scrape was correctly populating findus_list_name with
-        # the real discrepancy value, but the changelog stayed silent about
-        # it, so a batch --renamed run showed only incidental pricing
-        # changes and looked like it hadn't done the one thing it was run
-        # for.
+ # 1b. Find Us List Name vs Location Name discrepancy - this is the
+ # actual "RENAMED" signal get_station_status() flags for stations
+ # like Carmila, QLD (list page shows "St Lawrence, QLD") - the
+ # registry KEY stays location-name-based and never changes for
+ # these, so the "Station Renamed" check above never fires for them.
+ # Missing here entirely until 2026-09-14 (, AGENTS.local.md) -
+ # a live re-scrape was correctly populating findus_list_name with
+ # the real discrepancy value, but the changelog stayed silent about
+ # it, so a batch --renamed run showed only incidental pricing
+ # changes and looked like it hadn't done the one thing it was run
+ # for.
         ex_meta = existing_entry.get("tesla_metadata", {})
         new_meta = new_entry.get("tesla_metadata", {})
         ex_list_name = (ex_meta.get("findus_list_name") or "").strip()
@@ -2334,7 +2333,7 @@ class TeslaChargerExplorer:
                 else:
                     summary.append(f"Find Us List Name Discovered: '{new_list_name}' (differs from location name '{new_loc_name_meta}' - list page groups this site under a different regional title)")
 
-        # 2. Location & Address
+ # 2. Location & Address
         ex_loc = existing_entry.get("location", {})
         new_loc = new_entry.get("location", {})
         ex_addr = (ex_loc.get("address") or "").strip()
@@ -2349,7 +2348,7 @@ class TeslaChargerExplorer:
             if dist_m >= 15.0:
                 summary.append(f"GPS Location: ({ex_lat:.5f}, {ex_lon:.5f}) ➔ ({new_lat:.5f}, {new_lon:.5f}) [{dist_m:.0f}m shift]")
 
-        # 3. Hardware (Tier, Stalls, Max Power)
+ # 3. Hardware (Tier, Stalls, Max Power)
         ex_hw = existing_entry.get("hardware", {})
         new_hw = new_entry.get("hardware", {})
         ex_tier, new_tier = ex_hw.get("tier"), new_hw.get("tier")
@@ -2364,7 +2363,7 @@ class TeslaChargerExplorer:
         if ex_pwr != new_pwr and (ex_pwr or new_pwr):
             summary.append(f"Max Power: {ex_pwr or 0} kW ➔ {new_pwr or 0} kW")
 
-        # 4. Tariffs / Pricing
+ # 4. Tariffs / Pricing
         ex_tariffs = existing_entry.get("tariffs", {})
         ex_t_scheds = ex_tariffs.get("tesla_members", {}).get("rate_schedules", [])
         if not ex_t_scheds and "tessie_cost_config" in existing_entry:
@@ -2394,7 +2393,7 @@ class TeslaChargerExplorer:
             else:
                 summary.append(f"Tesla Rate Schedules Updated: [{fmt_scheds(ex_t_scheds)}] ➔ [{fmt_scheds(new_t_scheds)}]")
 
-        # Fees
+ # Fees
         ex_idle = ex_tariffs.get("idle_fee_per_min") or existing_entry.get("tessie_cost_config", {}).get("idle_fee_per_min", 0)
         new_idle = new_tariffs.get("idle_fee_per_min", 0)
         if round(float(ex_idle or 0), 2) != round(float(new_idle or 0), 2):
@@ -2405,7 +2404,7 @@ class TeslaChargerExplorer:
         if round(float(ex_cong or 0), 2) != round(float(new_cong or 0), 2):
             summary.append(f"Congestion Fee: ${float(ex_cong or 0):.2f}/min ➔ ${float(new_cong or 0):.2f}/min")
 
-        # Non-Tesla rates
+ # Non-Tesla rates
         ex_nt_scheds = ex_tariffs.get("non_tesla", {}).get("rate_schedules", [])
         if not ex_nt_scheds and "non_tesla_pricing" in existing_entry:
             ex_nt_scheds = existing_entry.get("non_tesla_pricing", {}).get("rate_schedules", [])
@@ -2421,7 +2420,7 @@ class TeslaChargerExplorer:
             else:
                 summary.append(f"Non-Tesla Rates Updated: [{fmt_scheds(ex_nt_scheds)}] ➔ [{fmt_scheds(new_nt_scheds)}]")
 
-        # 5. Access & Compatibility
+ # 5. Access & Compatibility
         ex_comp = existing_entry.get("compatibility", {}).get("open_to_non_tesla")
         new_comp = new_entry.get("compatibility", {}).get("open_to_non_tesla")
         if ex_comp is not None and new_comp is not None and ex_comp != new_comp:
@@ -2472,14 +2471,14 @@ class TeslaChargerExplorer:
         loc_n = meta.get("findus_location_name")
         findus_url_for_link = meta.get("findus_url", "")
         if list_n and loc_n and list_n != loc_n:
-            # findus_list_name is the (lesser-importance) grouping name Tesla's
-            # own list page uses for this charger, which can genuinely differ
-            # from the specific charger's own findus_location_name (e.g. the
-            # New Italy Supercharger is grouped under "Ballina, NSW" on
-            # https://www.tesla.com/en_AU/findus/list/superchargers/Australia
-            # even though its own findus_location page - the URL below - is
-            # titled "New Italy, NSW"). Linked to the same URL since that's
-            # where the list name is sourced from. Fixed 2026-09-14.
+ # findus_list_name is the (lesser-importance) grouping name Tesla's
+ # own list page uses for this charger, which can genuinely differ
+ # from the specific charger's own findus_location_name (e.g. the
+ # New Italy Supercharger is grouped under "Ballina, NSW" on
+ # https://www.tesla.com/en_AU/findus/list/superchargers/Australia
+ # even though its own findus_location page - the URL below - is
+ # titled "New Italy, NSW"). Linked to the same URL since that's
+ # where the list name is sourced from. Fixed 2026-09-14.
             list_display = hyperlink(list_n, findus_url_for_link) if findus_url_for_link else list_n
             _field("📋", "Find Us List Name", list_display)
             _field("📌", "Find Us Location Name", loc_n)
@@ -2500,7 +2499,7 @@ class TeslaChargerExplorer:
         cong_val = tariffs.get('congestion_fee_per_min')
         idle_val = tariffs.get('idle_fee_per_min')
         if not is_sc:
-            # Destination Chargers do not have congestion fees or idle fees
+ # Destination Chargers do not have congestion fees or idle fees
             pass
         elif cong_val is not None and float(cong_val) > 0 and (idle_val is None or float(idle_val) == 0):
             _field("🚦", "Congestion Charge", f"${float(cong_val):.2f}/min")
@@ -2532,7 +2531,7 @@ class TeslaChargerExplorer:
                 else:
                     print(f"    • {pad_display(lbl, 21)} {st} – {et}: ${rate:.2f}/kWh")
         else:
-            # Check for per_kwh_flat fallback
+ # Check for per_kwh_flat fallback
             flat_rate = tariffs.get("per_kwh_flat")
             if flat_rate and float(flat_rate) > 0:
                 print(f"\n  💰 {C_BOLD}Tesla & Members Flat Rate ({curr}):{C_RESET}")
@@ -2556,7 +2555,7 @@ class TeslaChargerExplorer:
         elif tariffs.get("non_tesla", {}).get("supported"):
             print(f"\n  🔌 {C_BOLD}Non-Tesla Pricing:{C_RESET} {C_YELLOW}Not available (re-scrape to fetch){C_RESET}")
 
-        # Cached Facilities Quality Rating / Summary (REQ-082)
+ # Cached Facilities Quality Rating / Summary (REQ-082)
         try:
             from station_facilities import get_facilities_registry, format_facilities_summary_card
             _fac_reg = get_facilities_registry()
@@ -2642,7 +2641,7 @@ class TeslaChargerExplorer:
 
         term_width = shutil.get_terminal_size((100, 24)).columns
 
-        # Prominently display immediate doorstep facilities (<= 100m)
+ # Prominently display immediate doorstep facilities (<= 100m)
         doorstep = [p for p in pois if p.get("dist_m", 999.0) <= 100.0]
         if doorstep:
             print(f"  🚪 {C_BOLD}Immediate Doorstep (≤ 100m — 1-2 min walk) ({len(doorstep)}):{C_RESET}")
@@ -2728,7 +2727,7 @@ class TeslaChargerExplorer:
         arch_name = os.path.basename(archive_fpath)
         now_utc = get_utc_now_iso()
 
-        # Load active registry
+ # Load active registry
         active_reg = {}
         if os.path.isfile(target_fpath):
             try:
@@ -2737,7 +2736,7 @@ class TeslaChargerExplorer:
             except Exception:
                 active_reg = {}
 
-        # Load archive registry
+ # Load archive registry
         archive_reg = {}
         if os.path.isfile(archive_fpath):
             try:
@@ -2752,7 +2751,7 @@ class TeslaChargerExplorer:
         changes_detected = False
         result_status = "CREATED"
 
-        # Check if existing station matches by numeric station ID or spatial proximity
+ # Check if existing station matches by numeric station ID or spatial proximity
         new_meta = new_entry.get("tesla_metadata", {})
         new_st_id = str(new_entry.get("id", "")).strip() or str(new_meta.get("findus_id", "")).strip()
         new_loc = new_entry.get("location", {})
@@ -2766,7 +2765,7 @@ class TeslaChargerExplorer:
                     existing_key = k
                     existing_entry = entry
                     break
-                # Spatial proximity match within 250m
+ # Spatial proximity match within 250m
                 loc = entry.get("location", {})
                 e_lat, e_lon = loc.get("lat"), loc.get("lon")
                 if new_lat is not None and new_lon is not None and e_lat is not None and e_lon is not None:
@@ -2779,7 +2778,7 @@ class TeslaChargerExplorer:
             orig_first_seen = existing_entry.get("first_seen") or existing_entry.get("created_at") or now_utc
             new_entry["first_seen"] = orig_first_seen
 
-            # Inherit and accumulate aliases and past addresses
+ # Inherit and accumulate aliases and past addresses
             accumulated_aliases = set(new_entry.get("aliases", []))
             accumulated_addresses = set(new_entry.get("addresses", []))
             if existing_key and existing_key != station_key:
@@ -2792,7 +2791,7 @@ class TeslaChargerExplorer:
             new_entry["aliases"] = sorted(list(accumulated_aliases))
             new_entry["addresses"] = sorted(list(accumulated_addresses))
 
-            # If station key changed (e.g. West Gosford -> Gosford), remove old key from active
+ # If station key changed (e.g. West Gosford -> Gosford), remove old key from active
             if existing_key and existing_key != station_key:
                 print(f"  {C_CYAN}🔄 Reconciling station rename / upgrade:{C_RESET} '{existing_key}' ➔ '{station_key}'")
                 del active_reg[existing_key]
@@ -2846,7 +2845,7 @@ class TeslaChargerExplorer:
         change_summary = self._generate_change_summary(existing_key, existing_entry, station_key, new_entry)
         self.last_change_summary = list(change_summary)
 
-        # Write active registry
+ # Write active registry
         try:
             with open(target_fpath, "w", encoding="utf-8") as f:
                 json.dump(active_reg, f, indent=2, ensure_ascii=False)
@@ -2855,7 +2854,7 @@ class TeslaChargerExplorer:
             print(f"  {C_RED}❌ Failed writing {target_fpath}:{C_RESET} {e}")
             return "ERROR"
 
-        # Write archive registry if changes occurred
+ # Write archive registry if changes occurred
         if changes_detected:
             try:
                 with open(archive_fpath, "w", encoding="utf-8") as f:
@@ -2865,7 +2864,7 @@ class TeslaChargerExplorer:
                 print(f"  {C_RED}❌ Failed writing archive {archive_fpath}:{C_RESET} {e}")
                 return "ERROR"
 
-        # Output detailed change summary if any modifications or initial population occurred
+ # Output detailed change summary if any modifications or initial population occurred
         if change_summary and existing_entry:
             print(f"\n  📝 {C_BOLD}Summary of Changes to JSON Registry:{C_RESET}")
             for item in change_summary:
@@ -2891,15 +2890,15 @@ def print_charging_stations_table(stations: list, ref_lat: float = None, ref_lon
 
     has_dist = ref_lat is not None and ref_lon is not None
     
-    # Calculate column widths dynamically with strict clamping to prevent line wrapping
+ # Calculate column widths dynamically with strict clamping to prevent line wrapping
     max_title_len = max((display_len(s.get("title", "")) for s in stations), default=20)
     title_col_w = min(max(max_title_len + 2, 24), 32)
     
     max_suburb_len = max((display_len(s.get("location", {}).get("suburb") or s.get("short_name", "")) for s in stations), default=12)
-    # Floor must cover the header text itself ("Location / Suburb" = 18 cells)
-    # plus 2 cells of padding, or the header overflows its own column and
-    # sits flush against the border - the 14-cell floor this used to have
-    # was narrower than the header, which is exactly what caused that.
+ # Floor must cover the header text itself ("Location / Suburb" = 18 cells)
+ # plus 2 cells of padding, or the header overflows its own column and
+ # sits flush against the border - the 14-cell floor this used to have
+ # was narrower than the header, which is exactly what caused that.
     suburb_col_w = max(display_len("Location / Suburb") + 2, min(max_suburb_len + 2, 24))
 
     headers = ["#", "Type", "State", "Station Name", "Tier", "Stalls", "Access", "Rate (Now)", "Period / Window"]
@@ -2914,7 +2913,7 @@ def print_charging_stations_table(stations: list, ref_lat: float = None, ref_lon
 
     total_inner_w = sum(widths) + len(widths) - 1
 
-    # Header Box Banner
+ # Header Box Banner
     print(f"\n┌{'─' * total_inner_w}┐")
     title_line = f" ⚡ {C_BOLD}MATCHING CHARGING STATIONS ({len(stations)} found){C_RESET}"
     print(f"│{pad_display(title_line, total_inner_w, 'left')}│")
@@ -2936,7 +2935,7 @@ def print_charging_stations_table(stations: list, ref_lat: float = None, ref_lon
     legend_line = f" 📊 {C_BOLD}Status Legend:{C_RESET} [{C_GREEN} 1 {C_RESET}] Up to Date (<=3mo)  |  [{C_MAGENTA} 2 {C_RESET}] Renamed / Discrepancy  |  [{C_BLUE} 3 {C_RESET}] Stale (>3mo)  |  [{C_ORANGE} 4 {C_RESET}] Not in JSON"
     print(f"│{pad_display(legend_line, total_inner_w, 'left')}│")
     
-    # Table Top Line & Header
+ # Table Top Line & Header
     top_b = "├" + "┬".join("─" * w for w in widths) + "┤"
     print(top_b)
     
@@ -3065,10 +3064,10 @@ def interactive_station_selector_loop(stations: list, explorer: TeslaChargerExpl
 
         if is_direct_scrape or not cached_record:
             print(f"\n{C_CYAN}⚡ Fetching live details for [{target_num}] {station_title}...{C_RESET}")
-            # station_title came straight from the live Find Us LIST fetch that
-            # populated this menu, so it IS the current list-page title - pass
-            # it through so the scraped record's "Find Us List Name" reflects
-            # it instead of falling back to the location page's own name.
+ # station_title came straight from the live Find Us LIST fetch that
+ # populated this menu, so it IS the current list-page title - pass
+ # it through so the scraped record's "Find Us List Name" reflects
+ # it instead of falling back to the location page's own name.
             key, record = explorer.scrape_station_details(station_url or station_title, charger_type=station_type, list_title=station_title)
             if record:
                 explorer.display_preview(key, record, from_cache=False)
@@ -3107,9 +3106,9 @@ def interactive_station_selector_loop(stations: list, explorer: TeslaChargerExpl
                 break
             elif act == "1":
                 target_url = station_url or cached_record.get("tesla_metadata", {}).get("findus_url", station_title)
-                # Same reasoning as the direct-scrape branch above: station_title
-                # is this run's live list-page title, not the cached record's -
-                # thread it through so a re-scrape doesn't blank the list name.
+ # Same reasoning as the direct-scrape branch above: station_title
+ # is this run's live list-page title, not the cached record's -
+ # thread it through so a re-scrape doesn't blank the list name.
                 key, record = explorer.scrape_station_details(target_url, charger_type=station_type, list_title=station_title)
                 if record:
                     explorer.display_preview(key, record, from_cache=False)
@@ -3169,7 +3168,7 @@ def interactive_drilldown(explorer: TeslaChargerExplorer, initial_region=None, i
     selected_country = None
     selected_region = None
 
-    # Check if initial_country was supplied directly
+ # Check if initial_country was supplied directly
     if initial_country:
         init_c_clean = initial_country.strip().lower()
         for r_key, r_info in REGIONS_MAP.items():
@@ -3183,7 +3182,7 @@ def interactive_drilldown(explorer: TeslaChargerExplorer, initial_region=None, i
         if not selected_country:
             selected_country = initial_country.strip()
 
-    # Step 1: Select Region (only if country was not directly supplied)
+ # Step 1: Select Region (only if country was not directly supplied)
     region_keys = list(REGIONS_MAP.keys())
     if not selected_country and not selected_region:
         if initial_region:
@@ -3211,7 +3210,7 @@ def interactive_drilldown(explorer: TeslaChargerExplorer, initial_region=None, i
 
             selected_region = REGIONS_MAP[region_keys[r_idx]]
 
-    # Step 2: Select Country (only if country was not directly supplied)
+ # Step 2: Select Country (only if country was not directly supplied)
     if not selected_country:
         countries = selected_region["countries"]
         print(f"\n{C_BOLD}Select Country in {selected_region['name']}:{C_RESET}")
@@ -3230,7 +3229,7 @@ def interactive_drilldown(explorer: TeslaChargerExplorer, initial_region=None, i
 
         selected_country = countries[c_idx]
 
-    # Step 3: Select Charger Type
+ # Step 3: Select Charger Type
     if initial_type in ("superchargers", "chargers", "all"):
         types_to_fetch = ["chargers"] if initial_type == "chargers" else (["superchargers", "chargers"] if initial_type == "all" else ["superchargers"])
     else:
@@ -3270,7 +3269,7 @@ def browse_stations_by_type(explorer: TeslaChargerExplorer, types_to_fetch: list
     re-implementing it - interactive_drilldown() now just does the
     region/country/type wizard, then calls straight into this.
     """
-    # Fetch Station Lists
+ # Fetch Station Lists
     all_stations = []
     for c_type in types_to_fetch:
         stations = explorer.fetch_station_list(country=selected_country, charger_type=c_type)
@@ -3280,7 +3279,7 @@ def browse_stations_by_type(explorer: TeslaChargerExplorer, types_to_fetch: list
         print(f"{C_YELLOW}No stations found for {selected_country}.{C_RESET}")
         return
 
-    # Group Stations by State / Region
+ # Group Stations by State / Region
     grouped = {}
     for st in all_stations:
         state_key = st["state"]
@@ -3288,10 +3287,10 @@ def browse_stations_by_type(explorer: TeslaChargerExplorer, types_to_fetch: list
             grouped[state_key] = []
         grouped[state_key].append(st)
 
-    # Load registries for status checking
+ # Load registries for status checking
     sc_reg, dc_reg = explorer.load_active_registries()
 
-    # Include any custom/local registry stations not present in the web list
+ # Include any custom/local registry stations not present in the web list
     matched_sc_keys = set()
     matched_dc_keys = set()
     for s in all_stations:
@@ -3334,7 +3333,7 @@ def browse_stations_by_type(explorer: TeslaChargerExplorer, types_to_fetch: list
                 }
                 all_stations.append(st_entry)
 
-    # Re-group Stations by State / Region
+ # Re-group Stations by State / Region
     grouped = {}
     for st in all_stations:
         state_key = st["state"]
@@ -3342,7 +3341,7 @@ def browse_stations_by_type(explorer: TeslaChargerExplorer, types_to_fetch: list
             grouped[state_key] = []
         grouped[state_key].append(st)
 
-    # Calculate status counts
+ # Calculate status counts
     new_count = 0
     renamed_count = 0
     stale_count = 0
@@ -3358,7 +3357,7 @@ def browse_stations_by_type(explorer: TeslaChargerExplorer, types_to_fetch: list
         else:
             uptodate_count += 1
 
-    # Display Stations Grouped by State
+ # Display Stations Grouped by State
     print(f"\n{C_BOLD}{'='*80}{C_RESET}")
     print(f"  ⚡ {C_BOLD}{selected_country.upper()} CHARGING STATIONS ({len(all_stations)} total){C_RESET}")
     print(f"  {C_BOLD}📊 Status Breakdown:{C_RESET} [{C_GREEN} Up to Date: {uptodate_count} {C_RESET}] | [{C_MAGENTA} Renamed / Discrepancy: {renamed_count} {C_RESET}] | [{C_BLUE} Stale (>3mo): {stale_count} {C_RESET}] | [{C_ORANGE} Not in JSON: {new_count} {C_RESET}]")
@@ -3366,11 +3365,11 @@ def browse_stations_by_type(explorer: TeslaChargerExplorer, types_to_fetch: list
 
     station_lookup = {}
     st_counter = 1
-    # Tracks whether any station in this listing needed the "*" list-name-vs-
-    # location-name marker below, so the explainer footnote only prints when
-    # it's actually relevant (user-reported: title shows "Manly" - Tesla's
-    # Find Us LIST grouping name - while the charger's own location page is
-    # "Balgowlah").
+ # Tracks whether any station in this listing needed the "*" list-name-vs-
+ # location-name marker below, so the explainer footnote only prints when
+ # it's actually relevant (user-reported: title shows "Manly" - Tesla's
+ # Find Us LIST grouping name - while the charger's own location page is
+ # "Balgowlah").
     used_list_name_marker = [False]
 
     def _live_list_title_differs_from_location(st_dict):
@@ -3418,10 +3417,10 @@ def browse_stations_by_type(explorer: TeslaChargerExplorer, types_to_fetch: list
 
     sorted_states = sorted(grouped.keys())
     for st_name in sorted_states:
-        # REQ-016 already established "State, then Station Name (alphabetical)"
-        # as the default sort for the non-interactive query path - this
-        # interactive drill-down view was missed and left stations in
-        # whatever order Tesla's own station-list API returned them.
+ # REQ-016 already established "State, then Station Name (alphabetical)"
+ # as the default sort for the non-interactive query path - this
+ # interactive drill-down view was missed and left stations in
+ # whatever order Tesla's own station-list API returned them.
         st_list = sorted(grouped[st_name], key=lambda s: s["title"])
         state_header = f"{AU_STATE_MAP.get(st_name, st_name)} ({st_name})" if st_name in AU_STATE_MAP else st_name
         print(f"{C_CYAN}{C_BOLD}📍 {state_header} [{len(st_list)} stations]:{C_RESET}")
@@ -3445,7 +3444,7 @@ def browse_stations_by_type(explorer: TeslaChargerExplorer, types_to_fetch: list
     if used_list_name_marker[0]:
         print(f"{C_YELLOW}  * The listed name varies from the actual location name as per Tesla's website.{C_RESET}\n")
 
-    # Step 5: Select Station to Scrape / Inspect
+ # Step 5: Select Station to Scrape / Inspect
     print(f"{C_BOLD}Options:{C_RESET}")
     print(f"  • Enter a station number [1-{len(all_stations)}] to inspect details")
     print(f"  • Type {C_GREEN}'all'{C_RESET} to batch scrape and update all {len(all_stations)} stations")
@@ -3461,7 +3460,7 @@ def browse_stations_by_type(explorer: TeslaChargerExplorer, types_to_fetch: list
         if not pick:
             return
 
-        # Proximity search in interactive drilldown
+ # Proximity search in interactive drilldown
         if pick.lower().startswith("near ") or pick.lower().startswith("address "):
             addr_q = pick.split(" ", 1)[1].strip()
             geo_lat, geo_lon, geo_label = resolve_reference_coordinates(addr_q, explorer.repo_root)
@@ -3473,7 +3472,7 @@ def browse_stations_by_type(explorer: TeslaChargerExplorer, types_to_fetch: list
             now_dt = datetime.now(ZoneInfo("Australia/Sydney"))
             print(f"⏰ {C_BOLD}Pricing Evaluated At:{C_RESET} {now_dt.strftime('%I:%M %p').lstrip('0')} (Current Local Time)\n")
 
-            # Attach distance and effective rates
+ # Attach distance and effective rates
             near_list = []
             for st in all_stations:
                 st_c = dict(st)
@@ -3608,12 +3607,11 @@ def browse_stations_by_type(explorer: TeslaChargerExplorer, types_to_fetch: list
                 elif act != "1":
                     return
 
-            # target_st["title"] is this run's live Find Us LIST page title (it's
-            # exactly what populated the state-grouped grid above) - thread it
-            # through so the re-scraped record keeps a correct "Find Us List
-            # Name" instead of the location-page scrape falling back to the
-            # location name itself (BUG: user-reported "Manly, NSW" -> lost on
-            # re-scrape of Balgowlah, NSW).
+ # target_st["title"] is this run's live Find Us LIST page title (it's
+ # exactly what populated the state-grouped grid above) - thread it
+ # through so the re-scraped record keeps a correct "Find Us List
+ # Name" instead of the location-page scrape falling back to the
+ # location name itself (e.g. "Manly, NSW" on re-scrape of Balgowlah, NSW).
             key, record = explorer.scrape_station_details(target_st["url"], charger_type=target_st["type"], list_title=target_st.get("title"))
             if record:
                 explorer.display_preview(key, record, from_cache=False)
@@ -3739,7 +3737,7 @@ EXAMPLES
     args = parser.parse_args()
     explorer = TeslaChargerExplorer(headless=not args.headful)
 
-    # 1. Inspection / Direct Scrape by Query, Name, URL, or ID
+ # 1. Inspection / Direct Scrape by Query, Name, URL, or ID
     if args.inspect or args.url:
         inspect_or_scrape_station(
             explorer, inspect=args.inspect, url=args.url,
@@ -3749,7 +3747,7 @@ EXAMPLES
         return
 
 
-    # 2. Location / GPS Reference Resolution
+ # 2. Location / GPS Reference Resolution
     ref_lat, ref_lon, ref_label = None, None, None
     if args.gps:
         ref_lat, ref_lon, ref_label = get_current_gps_location(explorer.repo_root)
@@ -3758,7 +3756,7 @@ EXAMPLES
     elif args.near_address:
         ref_lat, ref_lon, ref_label = resolve_reference_coordinates(args.near_address, explorer.repo_root)
 
-    # 3. Command-Line Listing / Search / Batch Scrape / Filtering
+ # 3. Command-Line Listing / Search / Batch Scrape / Filtering
     has_explicit_country = any(a == "--country" or a.startswith("--country=") for a in sys.argv)
     has_explicit_region = any(a == "--region" or a.startswith("--region=") for a in sys.argv)
     is_interactive_explicit = args.interactive
@@ -3782,7 +3780,7 @@ EXAMPLES
         elif args.all_types or (args.sc and args.dc):
             charger_types = ["superchargers", "chargers"]
         else:
-            # Default to Superchargers only
+ # Default to Superchargers only
             charger_types = ["superchargers"]
 
         all_stations = []
@@ -3792,7 +3790,7 @@ EXAMPLES
 
         sc_reg, dc_reg = explorer.load_active_registries()
 
-        # Include any custom/local registry stations not present in the web list
+ # Include any custom/local registry stations not present in the web list
         matched_sc_keys = set()
         matched_dc_keys = set()
         for s in all_stations:
@@ -3835,7 +3833,7 @@ EXAMPLES
                     }
                     all_stations.append(st_entry)
 
-        # Attach registry status, cached hardware, proximity data, and effective rates
+ # Attach registry status, cached hardware, proximity data, and effective rates
         enriched_stations = []
         for s in all_stations:
             st_copy = dict(s)
@@ -3853,7 +3851,7 @@ EXAMPLES
                 st_copy["location"] = cached_data.get("location", {})
                 st_copy["tesla_metadata"] = cached_data.get("tesla_metadata", {})
 
-                # Compute distance if reference coordinates available
+ # Compute distance if reference coordinates available
                 c_lat = cached_data.get("location", {}).get("lat")
                 if c_lat is None:
                     c_lat = cached_data.get("lat")
@@ -3868,7 +3866,7 @@ EXAMPLES
             else:
                 st_copy["_distance_km"] = float("inf")
 
-            # Calculate effective rate at target time
+ # Calculate effective rate at target time
             eff_rate, eff_lbl, eff_win, loc_time = get_effective_rate_at_time(
                 st_copy, target_time_input=args.time, is_non_tesla=args.non_tesla
             )
@@ -3879,7 +3877,7 @@ EXAMPLES
 
             enriched_stations.append(st_copy)
 
-        # Apply Filters
+ # Apply Filters
         filtered = enriched_stations
 
         if args.state:
@@ -3927,7 +3925,7 @@ EXAMPLES
         if args.min_stalls is not None:
             filtered = [s for s in filtered if int(s.get("hardware", {}).get("stalls", 0) or 0) >= args.min_stalls]
 
-        # Determine proximity radius filter (default to 50km when searching near an address/place unless explicitly overridden)
+ # Determine proximity radius filter (default to 50km when searching near an address/place unless explicitly overridden)
         active_radius = args.radius_km
         if active_radius is None and ref_lat is not None and ref_lon is not None:
             active_radius = 50.0
@@ -3995,11 +3993,11 @@ EXAMPLES
         if args.filter:
             filtered = [s for s in filtered if evaluate_station_filter(s, args.filter, target_time=args.time)]
 
-        # Sorting Logic
+ # Sorting Logic
         if args.sort == "dist" or (args.sort is None and ref_lat is not None and ref_lon is not None):
             filtered.sort(key=lambda s: s.get("_distance_km", float("inf")))
         elif args.sort == "price":
-            # Sort by lowest price first, tiebreak with closest distance
+ # Sort by lowest price first, tiebreak with closest distance
             filtered.sort(key=lambda s: (
                 s.get("_eff_rate") if s.get("_eff_rate") is not None else float("inf"),
                 s.get("_distance_km", float("inf"))
@@ -4031,16 +4029,16 @@ EXAMPLES
 
             filtered.sort(key=_fac_sort_key)
         else:
-            # No explicit --sort and no proximity reference to sort by distance:
-            # default to State, then Station Name (alphabetical) instead of
-            # leaving results in arbitrary registry order.
+ # No explicit --sort and no proximity reference to sort by distance:
+ # default to State, then Station Name (alphabetical) instead of
+ # leaving results in arbitrary registry order.
             filtered.sort(key=lambda s: (s.get("state", "-") or "-", s.get("title", "").lower()))
 
-        # Apply limit if requested
+ # Apply limit if requested
         if args.limit and args.limit > 0:
             filtered = filtered[:args.limit]
 
-        # Batch scrape mode
+ # Batch scrape mode
         if args.all:
             subset_mode = "unpriced" if args.unpriced else ("new" if args.new else ("renamed" if args.renamed else ("stale" if args.stale else None)))
             explorer.scrape_all_stations(
@@ -4052,7 +4050,7 @@ EXAMPLES
             )
             return
 
-        # Batch facilities sync mode
+ # Batch facilities sync mode
         if getattr(args, "sync_facilities", False):
             if not filtered:
                 print(f"❌ No stations found matching current criteria to sync facilities for.")
@@ -4102,12 +4100,12 @@ EXAMPLES
             print(f"\n✔ Facilities sync complete: {synced_count} station records cached in station_facilities.json.")
             return
 
-        # Output JSON if requested
+ # Output JSON if requested
         if args.json:
             print(json.dumps(filtered, indent=2, ensure_ascii=False))
             return
 
-        # Determine human-friendly sort mode description
+ # Determine human-friendly sort mode description
         sort_mode_desc = None
         if args.sort == "dist" or (args.sort is None and ref_lat is not None and ref_lon is not None):
             sort_mode_desc = "Distance (Closest First)"
@@ -4156,7 +4154,7 @@ EXAMPLES
             print(f"{C_DIM}To batch update:        ./Tools/charger_find_tesla.py --sc --new --all{C_RESET}\n")
         return
 
-    # 4. Interactive Mode Fallback
+ # 4. Interactive Mode Fallback
     if is_interactive_explicit or sys.stdin.isatty():
         explicit_country = args.country if has_explicit_country else None
         explicit_region = args.region if has_explicit_region else None
@@ -4191,7 +4189,7 @@ def inspect_or_scrape_station(explorer: TeslaChargerExplorer, inspect: str = Non
         sc_reg, dc_reg = explorer.load_active_registries()
 
         if not live:
-            # Check for multiple matching stations across local registries
+ # Check for multiple matching stations across local registries
             matches = explorer.find_all_matching_stations(target_inspect, sc_reg=sc_reg, dc_reg=dc_reg, target_type=target_type)
             if len(matches) > 1:
                 if json_out:
@@ -4223,7 +4221,7 @@ def inspect_or_scrape_station(explorer: TeslaChargerExplorer, inspect: str = Non
                 print(f"{C_DIM}To re-scrape live pricing: ./Tools/charger_find_tesla.py --inspect '{single['title']}' --live [--save]{C_RESET}\n")
                 return
 
-            # Fallback to single lookup record getter
+ # Fallback to single lookup record getter
             cached_key, cached_record, cached_type = explorer.get_station_record(target_inspect, sc_reg=sc_reg, dc_reg=dc_reg, target_type=target_type)
             if cached_record:
                 if json_out:
@@ -4233,29 +4231,29 @@ def inspect_or_scrape_station(explorer: TeslaChargerExplorer, inspect: str = Non
                 print(f"{C_DIM}To re-scrape live pricing: ./Tools/charger_find_tesla.py --inspect '{target_inspect}' --live [--save]{C_RESET}\n")
                 return
 
-        # If target_inspect is not a direct URL, resolve exact URL from station catalog or local cache
+ # If target_inspect is not a direct URL, resolve exact URL from station catalog or local cache
         scrape_target = target_inspect
-        # The location page a live scrape hits below has no concept of the
-        # Find Us LIST page's grouping name (e.g. "Manly, NSW" for the
-        # "Balgowlah, NSW" location) - that name only exists on the separate
-        # .../findus/list/<superchargers|chargers>/<country> page. Resolve it
-        # here (user-reported: a single-station live re-scrape was silently
-        # dropping a previously-known-correct list name) so scrape_target's
-        # eventual scrape_station_details() call always gets an accurate,
-        # freshly-checked list_title instead of falling back to the location
-        # name.
+ # The location page a live scrape hits below has no concept of the
+ # Find Us LIST page's grouping name (e.g. "Manly, NSW" for the
+ # "Balgowlah, NSW" location) - that name only exists on the separate
+ # .../findus/list/<superchargers|chargers>/<country> page. Resolve it
+ # here (user-reported: a single-station live re-scrape was silently
+ # dropping a previously-known-correct list name) so scrape_target's
+ # eventual scrape_station_details() call always gets an accurate,
+ # freshly-checked list_title instead of falling back to the location
+ # name.
         resolved_list_title = None
         if not scrape_target.startswith("http"):
             c_type = "chargers" if dc else "superchargers"
-            # 1. Check if cached local record already has a known findus_url
+ # 1. Check if cached local record already has a known findus_url
             cached_key, cached_record, cached_type = explorer.get_station_record(target_inspect, sc_reg=sc_reg, dc_reg=dc_reg, target_type=target_type)
             cached_url = cached_record.get("tesla_metadata", {}).get("findus_url") if cached_record else None
             if cached_url and cached_url.startswith("http"):
                 scrape_target = cached_url
-                # Fast path: we already know the URL, so the catalog search
-                # below never runs - but the LIST page is still the only
-                # source of the current list name, so fetch it anyway and
-                # match this station's URL against it.
+ # Fast path: we already know the URL, so the catalog search
+ # below never runs - but the LIST page is still the only
+ # source of the current list name, so fetch it anyway and
+ # match this station's URL against it.
                 try:
                     list_stations_for_title = explorer.fetch_station_list(country=country, charger_type=c_type)
                     for s in list_stations_for_title:
@@ -4282,7 +4280,7 @@ def inspect_or_scrape_station(explorer: TeslaChargerExplorer, inspect: str = Non
                         cat_matches.append(s)
 
                 if not cat_matches and cached_record:
-                    # Coordinate-based proximity match against catalog
+ # Coordinate-based proximity match against catalog
                     c_lat = cached_record.get("location", {}).get("lat")
                     c_lon = cached_record.get("location", {}).get("lon")
                     if c_lat is not None and c_lon is not None:

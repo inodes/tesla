@@ -154,10 +154,10 @@ def _summarize_hours(item: Dict[str, Any]) -> (Dict[str, str], str):
 class AmpChargeProvider(BaseChargerProvider):
     name: str = "AmpCharge"
     tier: int = 1  # First-Party Authoritative
-    # Every EVChargingData entry seen in a live sample is CCS2/CHAdeMO DC
-    # fast/rapid charging (85-400 kW) - the siteservice query itself filters
-    # on EVFastCharging=true, so this provider never contributes an
-    # ac_destination or supercharger record.
+ # Every EVChargingData entry seen in a live sample is CCS2/CHAdeMO DC
+ # fast/rapid charging (85-400 kW) - the siteservice query itself filters
+ # on EVFastCharging=true, so this provider never contributes an
+ # ac_destination or supercharger record.
     POSSIBLE_SPEED_TIERS = {"dc_fast"}
 
     def __init__(self, registry_path: Optional[str] = None):
@@ -274,8 +274,8 @@ class AmpChargeProvider(BaseChargerProvider):
             plugs=sorted(plugs) if plugs else ["CCS2"],
             tethered=True,
             hardware_model=hardware_model,
-            # Never guess pricing: the siteservice response has no tariff
-            # fields at all - see module docstring.
+ # Never guess pricing: the siteservice response has no tariff
+ # fields at all - see module docstring.
             pricing_model="unknown",
             current_rate_per_kwh=None,
             rate_range="",
@@ -383,9 +383,9 @@ class AmpChargeProvider(BaseChargerProvider):
             self.save_cached_registry(records)
         return records
 
-    # Alias matching the simpler single-fetch providers' (EVX/Evie/bp pulse)
-    # CLI convention (p.sync()), while sync_all_australia() stays the more
-    # descriptive name matching ChargefoxProvider's.
+ # Alias matching the simpler single-fetch providers' (EVX/Evie/bp pulse)
+ # CLI convention (p.sync()), while sync_all_australia() stays the more
+ # descriptive name matching ChargefoxProvider's.
     def sync(self) -> List[UnifiedStationRecord]:
         return self.sync_all_australia()
 

@@ -44,7 +44,7 @@ class PDFTextExtractor:
     @classmethod
     def extract_text(cls, pdf_path: str) -> str:
         """Extract full plain text from PDF with layout reconstruction."""
-        # Fast path: if pypdf or pdfplumber is available, try it first
+ # Fast path: if pypdf or pdfplumber is available, try it first
         try:
             import pypdf
             reader = pypdf.PdfReader(pdf_path)
@@ -96,7 +96,7 @@ class PDFTextExtractor:
                 except Exception:
                     return raw
 
-        # 1. Parse font CMaps (/ToUnicode)
+ # 1. Parse font CMaps (/ToUnicode)
         font_cmaps: Dict[int, Dict[int, str]] = {}
         for oid, body in objects.items():
             if b"/ToUnicode" in body:
@@ -107,16 +107,16 @@ class PDFTextExtractor:
                     tu_stream = get_stream(tu_body).decode("latin1", errors="replace")
                     cmap: Dict[int, str] = {}
 
-                    # Parse bfchar
+ # Parse bfchar
                     for block in RE_BFCHAR.findall(tu_stream):
                         for src, dst in RE_PAIR.findall(block):
                             s_val = int(src, 16)
                             dst_str = "".join(chr(int(dst[i:i+4], 16)) for i in range(0, len(dst), 4))
                             cmap[s_val] = dst_str
 
-                    # Parse bfrange (both sequential range and array forms)
+ # Parse bfrange (both sequential range and array forms)
                     for block in RE_BFRANGE.findall(tu_stream):
-                        # Form 1: <start> <end> <dest_start>
+ # Form 1: <start> <end> <dest_start>
                         for s_hex, e_hex, d_hex in RE_RANGE_SEQ.findall(block):
                             s_val = int(s_hex, 16)
                             e_val = int(e_hex, 16)
@@ -124,7 +124,7 @@ class PDFTextExtractor:
                             for i in range(e_val - s_val + 1):
                                 cmap[s_val + i] = chr(d_val + i)
 
-                        # Form 2: <start> <end> [ <dest1> <dest2> ... ]
+ # Form 2: <start> <end> [ <dest1> <dest2> ... ]
                         for s_hex, e_hex, arr_str in RE_RANGE_ARR.findall(block):
                             s_val = int(s_hex, 16)
                             dests = re.findall(r"<([0-9a-fA-F]+)>", arr_str)
@@ -134,14 +134,14 @@ class PDFTextExtractor:
 
                     font_cmaps[oid] = cmap
 
-        # 2. Map resource fonts (/F1, /F2, etc.) to font object IDs
+ # 2. Map resource fonts (/F1, /F2, etc.) to font object IDs
         res_fonts: Dict[str, int] = {}
         for oid, body in objects.items():
             if b"/Font" in body:
                 for fname, fid in RE_FONTS.findall(body):
                     res_fonts[fname.decode("latin1")] = int(fid)
 
-        # 3. Extract text from content streams
+ # 3. Extract text from content streams
         chunks: List[str] = []
         for oid, body in objects.items():
             if b"/Contents" in body or b"/Length" in body:
@@ -155,7 +155,7 @@ class PDFTextExtractor:
                     fid = res_fonts.get(curr_font or "", -1)
                     cmap = font_cmaps.get(fid, {})
 
-                    # Literal strings
+ # Literal strings
                     for t in RE_TJ_LIT.findall(bt):
                         lit = t.replace(b"\\(", b"(").replace(b"\\)", b")").replace(b"\\\\", b"\\")
                         if len(lit) >= 2 and len(lit) % 2 == 0 and any(cmap.get(int.from_bytes(lit[i:i+2], "big")) for i in range(0, min(10, len(lit)), 2)):
@@ -166,14 +166,14 @@ class PDFTextExtractor:
                             for b in lit:
                                 chunks.append(cmap.get(b, chr(b) if 32 <= b < 128 else ""))
 
-                    # Hex strings
+ # Hex strings
                     for hx in RE_TJ_HEX.findall(bt):
                         hx_clean = re.sub(rb"\s+", b"", hx).decode("ascii", errors="ignore")
                         for i in range(0, len(hx_clean), 4):
                             cid = int(hx_clean[i:i+4], 16)
                             chunks.append(cmap.get(cid, chr(cid) if 32 <= cid < 128 else ""))
 
-                    # TJ Arrays
+ # TJ Arrays
                     for arr in RE_TJ_ARR.findall(bt):
                         for hx_item, lit_item in RE_ARR_ITEMS.findall(arr):
                             if hx_item:
@@ -245,7 +245,7 @@ class BaseInvoiceExtractor:
         if not loc_raw:
             return "Charging"
         loc = loc_raw.strip()
-        # Known custom site normalizations
+ # Known custom site normalizations
         if "Bunnings Rydalmere" in loc:
             return "Bunnings_Rydalmere"
         if "Bunnings Gladesville" in loc:
@@ -257,7 +257,7 @@ class BaseInvoiceExtractor:
         if "Macquarie" in loc:
             return "Macquarie_NSW"
 
-        # General clean
+ # General clean
         clean = re.sub(r"(?:Talavera Road.*|Manns Rd.*|Parraweena Rd.*|\d{4}\s+North Ryde.*)", "", loc)
         clean = re.sub(r"[\/,–\-]+", " ", clean)
         clean = re.sub(r"\s+", "_", clean).strip("_")
@@ -312,29 +312,29 @@ class AGLInvoiceExtractor(BaseInvoiceExtractor):
             "peak_demand_kw": None,
         }
 
-        # 1. Service Type
+ # 1. Service Type
         t_low = text.lower()
         if "gas bill" in t_low or "statement_gas_" in fname.lower() or "natural gas" in t_low:
             data["service_type"] = "gas"
         else:
             data["service_type"] = "electricity"
 
-        # 2. Account Number
+ # 2. Account Number
         acc_m = re.search(r"Account\s*number\s*([0-9\s]{8,15})", text, re.IGNORECASE)
         if acc_m:
             data["account_number"] = acc_m.group(1).replace(" ", "")
 
-        # 3. NMI (National Metering Identifier)
+ # 3. NMI (National Metering Identifier)
         nmi_m = re.search(r"National\s*Metering\s*Identifier\s*\(NMI\)[\s:]*([0-9]{10,11})", text, re.IGNORECASE)
         if nmi_m:
             data["nmi"] = nmi_m.group(1)
 
-        # 4. Issue Date / Bill Date
+ # 4. Issue Date / Bill Date
         dt_m = re.search(r"(?:Issue\s*date|Date\s*of\s*issue|Bill\s*date|Statement\s*date)[\s:]*(\d{1,2}\s+[A-Za-z]{3,9}\s+\d{4}|\d{1,2}/\d{1,2}/\d{2,4}|\d{4}-\d{2}-\d{2})", text, re.IGNORECASE)
         if dt_m:
             data["issue_date"] = self._parse_flexible_date(dt_m.group(1))
 
-        # Fallback date from existing filename: e.g. Statement_electricity_20260728.pdf
+ # Fallback date from existing filename: e.g. Statement_electricity_20260728.pdf
         if not data["issue_date"]:
             fn_dt_m = re.search(r"(\d{4})(\d{2})(\d{2})", fname)
             if fn_dt_m:
@@ -343,12 +343,12 @@ class AGLInvoiceExtractor(BaseInvoiceExtractor):
                 except Exception:
                     pass
 
-        # 5. Due Date / Direct Debit Date
+ # 5. Due Date / Direct Debit Date
         due_m = re.search(r"(?:Direct\s*Debit\s*date|Due\s*date|Payment\s*due)[\s:]*(\d{1,2}\s+[A-Za-z]{3,9}\s+\d{4}|\d{1,2}/\d{1,2}/\d{2,4})", text, re.IGNORECASE)
         if due_m:
             data["due_date"] = self._parse_flexible_date(due_m.group(1))
 
-        # 6. Total Amount
+ # 6. Total Amount
         amt_m = re.search(r"(?:Direct\s*Debit\s*amount|Total\s*amount\s*due|Total\s*charges|Amount\s*due)[\s:]*\$([0-9,]+\.\d{2})", text, re.IGNORECASE)
         if amt_m:
             try:
@@ -356,7 +356,7 @@ class AGLInvoiceExtractor(BaseInvoiceExtractor):
             except ValueError:
                 pass
 
-        # 7. GST Amount
+ # 7. GST Amount
         gst_m = re.search(r"(?:Includes\s*GST\s*of|Total\s*GST|GST\s*includes)[\s:]*\$([0-9,]+\.\d{2})", text, re.IGNORECASE)
         if gst_m:
             try:
@@ -364,7 +364,7 @@ class AGLInvoiceExtractor(BaseInvoiceExtractor):
             except ValueError:
                 pass
 
-        # 8. Invoice / Statement Number
+ # 8. Invoice / Statement Number
         inv_m = re.search(r"(?:Tax\s*Invoice|Statement\s*No|Invoice\s*number)[\s:]*([0-9]{8,12})", text, re.IGNORECASE)
         if inv_m:
             data["invoice_number"] = inv_m.group(1)
@@ -442,7 +442,7 @@ class TeslaInvoiceExtractor(BaseInvoiceExtractor):
             "charger_sn": None,
         }
 
-        # 1. Invoice Number (e.g. 2010P0004164366)
+ # 1. Invoice Number (e.g. 2010P0004164366)
         inv_m = re.search(r"(?:Invoice\s*Number\s*|TAX\s*INVOICE\s*)(2010P\d{10}|TSLA-[A-Za-z0-9\-]+)", text, re.IGNORECASE)
         if inv_m:
             data["invoice_number"] = inv_m.group(1).strip()
@@ -451,12 +451,12 @@ class TeslaInvoiceExtractor(BaseInvoiceExtractor):
             if sc_m:
                 data["invoice_number"] = sc_m.group(1)
 
-        # 2. Date
+ # 2. Date
         dt_m = re.search(r"(?:Invoice\s*date|Date\s*of\s*Event|Date)\s*(\d{4}[\/\-]\d{2}[\/\-]\d{2}|\d{1,2}[\/\-]\d{1,2}[\/\-]\d{4})", text, re.IGNORECASE)
         if dt_m:
             data["issue_date"] = self._parse_flexible_date(dt_m.group(1))
 
-        # Check existing filename for date and time: e.g. 20260606_2204_Tesla_...
+ # Check existing filename for date and time: e.g. 20260606_2204_Tesla_...
         fn_match = re.search(r"(\d{4})(\d{2})(\d{2})_(\d{4})_Tesla", fname)
         if fn_match:
             if not data["issue_date"]:
@@ -467,7 +467,7 @@ class TeslaInvoiceExtractor(BaseInvoiceExtractor):
             if fn_m2:
                 data["issue_date"] = f"{fn_m2.group(1)}-{fn_m2.group(2)}-{fn_m2.group(3)}"
 
-        # 3. Location
+ # 3. Location
         loc_m = re.search(r"Charging\s*Location\s*([A-Za-z\s,\-]+?)(?:Talavera|Manns|Parraweena|S\/N|\d{4}\s+North Ryde|\d{4}\s+West Gosford|\d{4}\s+Miranda|\n|$)", text, re.IGNORECASE)
         if loc_m:
             data["location_name"] = loc_m.group(1).strip()
@@ -479,10 +479,10 @@ class TeslaInvoiceExtractor(BaseInvoiceExtractor):
                     data["place_safe"] = self._clean_place_name(site)
                     break
 
-        # Check invoice_locations.json if available
+ # Check invoice_locations.json if available
         self._enrich_from_invoice_locations(data)
 
-        # 4. Energy (kWh) & Unit Rate ($/kWh)
+ # 4. Energy (kWh) & Unit Rate ($/kWh)
         ef_m = re.search(r"Energy\s*fee\s*([\d\.]+)\s*\/\s*kWh\s*([\d\.]+)\s*kWh", text, re.IGNORECASE)
         if ef_m:
             try:
@@ -499,12 +499,12 @@ class TeslaInvoiceExtractor(BaseInvoiceExtractor):
                 except Exception:
                     pass
 
-        # 5. Amounts (AUD)
+ # 5. Amounts (AUD)
         tot_m = re.search(r"Total\s*Amount\s*\(AUD\)\s*([\d\.]+)", text, re.IGNORECASE)
         if not tot_m:
             tot_m = re.search(r"(?:Total\s*due|Total\s*incl\.?\s*GST)\s*AUD\s*\$?([\d\.]+)", text, re.IGNORECASE)
         if not tot_m:
-            # Table row total (exclude date patterns like 2026/06/06)
+ # Table row total (exclude date patterns like 2026/06/06)
             tot_m = re.search(r"Total\s*\(AUD\)\s*(?!\d{4}[\/\-])([\d\.]+)", text, re.IGNORECASE)
         if tot_m:
             try:
@@ -519,7 +519,7 @@ class TeslaInvoiceExtractor(BaseInvoiceExtractor):
             except Exception:
                 pass
 
-        # 6. VIN & Serial Number
+ # 6. VIN & Serial Number
         vin_m = re.search(r"Vehicle\s*Identification\s*Number:\s*([A-Za-z0-9]{17})", text, re.IGNORECASE)
         if vin_m:
             data["vin"] = vin_m.group(1)
@@ -626,7 +626,7 @@ class ExplorenInvoiceExtractor(BaseInvoiceExtractor):
             "transaction_ref": None,
         }
 
-        # 1. Receipt / Invoice Number (e.g. 0000533887)
+ # 1. Receipt / Invoice Number (e.g. 0000533887)
         rec_m = re.search(r"(?:Receipt\s*No\.?\s*|Invoice\s*#?\s*)([0-9]{8,12})", text, re.IGNORECASE)
         if rec_m:
             data["invoice_number"] = rec_m.group(1)
@@ -635,11 +635,11 @@ class ExplorenInvoiceExtractor(BaseInvoiceExtractor):
             if fn_inv:
                 data["invoice_number"] = fn_inv.group(1)
 
-        # 2. Session Start Date & Time
+ # 2. Session Start Date & Time
         start_m = re.search(r"Session\s*started\s*(\d{1,2}/\d{1,2}/\d{4})\s*(\d{1,2}:\d{2}(?::\d{2})?\s*[APap][Mm])", text, re.IGNORECASE)
         if start_m:
             data["issue_date"] = self._parse_flexible_date(start_m.group(1))
-            # Format time to 24h HHMM
+ # Format time to 24h HHMM
             try:
                 tm_dt = datetime.datetime.strptime(start_m.group(2).strip(), "%I:%M:%S %p" if ":" in start_m.group(2).strip() and start_m.group(2).count(":") == 2 else "%I:%M %p")
                 data["session_time"] = tm_dt.strftime("%H%M")
@@ -655,7 +655,7 @@ class ExplorenInvoiceExtractor(BaseInvoiceExtractor):
                 except Exception:
                     pass
 
-        # Fallback date from existing filename: e.g. 20260530_1614_Exploren_...
+ # Fallback date from existing filename: e.g. 20260530_1614_Exploren_...
         fn_match = re.search(r"(\d{4})(\d{2})(\d{2})_(\d{4})_Exploren", fname)
         if fn_match:
             if not data["issue_date"]:
@@ -663,7 +663,7 @@ class ExplorenInvoiceExtractor(BaseInvoiceExtractor):
             if data["session_time"] == "0000":
                 data["session_time"] = fn_match.group(4)
 
-        # 3. Location & Charge Point
+ # 3. Location & Charge Point
         loc_m = re.search(r"Location\s*([^\n\r]+?)\s*Charge\s*Point", text, re.IGNORECASE)
         if loc_m:
             data["location_name"] = loc_m.group(1).strip()
@@ -679,10 +679,10 @@ class ExplorenInvoiceExtractor(BaseInvoiceExtractor):
         if cp_m:
             data["charge_point"] = cp_m.group(1).strip()
 
-        # Check invoice_locations.json if available
+ # Check invoice_locations.json if available
         self._enrich_from_invoice_locations(data)
 
-        # 4. Energy (kWh) & Unit Price ($/kWh)
+ # 4. Energy (kWh) & Unit Price ($/kWh)
         kwh_m = re.search(r"Total\s*energy\s*([\d\.]+)\s*kWh", text, re.IGNORECASE)
         if kwh_m:
             try:
@@ -697,7 +697,7 @@ class ExplorenInvoiceExtractor(BaseInvoiceExtractor):
             except Exception:
                 pass
 
-        # 5. Amounts
+ # 5. Amounts
         amt_m = re.search(r"(?:Total\s*incl\.?\s*Tax|Total\s*for\s*payment|Line\s*total)\s*\$([\d\.]+)", text, re.IGNORECASE)
         if amt_m:
             try:
@@ -712,7 +712,7 @@ class ExplorenInvoiceExtractor(BaseInvoiceExtractor):
             except Exception:
                 pass
 
-        # 6. Transaction Reference
+ # 6. Transaction Reference
         tx_m = re.search(r"Transaction\s*Ref\.?\s*([A-Za-z0-9_]+)", text, re.IGNORECASE)
         if tx_m:
             data["transaction_ref"] = tx_m.group(1)
@@ -809,12 +809,12 @@ class ChargefoxInvoiceExtractor(BaseInvoiceExtractor):
             "gst_amount": None,
         }
 
-        # 1. Invoice Number
+ # 1. Invoice Number
         cf_m = re.search(r"(?:Invoice\s*#?\s*|TAX\s*INVOICE\s*)(CF-[0-9]+|[0-9]{6,12})", text, re.IGNORECASE)
         if cf_m:
             data["invoice_number"] = cf_m.group(1)
 
-        # 2. Date & Time
+ # 2. Date & Time
         dt_m = re.search(r"(\d{1,2}/\d{1,2}/\d{4}|\d{4}-\d{2}-\d{2})\s*(\d{1,2}:\d{2}(?::\d{2})?\s*[APap][Mm])?", text, re.IGNORECASE)
         if dt_m:
             data["issue_date"] = self._parse_flexible_date(dt_m.group(1))
@@ -825,13 +825,13 @@ class ChargefoxInvoiceExtractor(BaseInvoiceExtractor):
                 except Exception:
                     pass
 
-        # 3. Location
+ # 3. Location
         loc_m = re.search(r"(?:Station|Location|Site)[:\s]*([^\n\r]+)", text, re.IGNORECASE)
         if loc_m:
             data["location_name"] = loc_m.group(1).strip()
             data["place_safe"] = self._clean_place_name(data["location_name"])
 
-        # 4. Energy & Amount
+ # 4. Energy & Amount
         kwh_m = re.search(r"([\d\.]+)\s*kWh", text, re.IGNORECASE)
         if kwh_m:
             try:
@@ -941,12 +941,12 @@ class GenericInvoiceExtractor(BaseInvoiceExtractor):
             "total_amount": None,
         }
 
-        # Generic date search
+ # Generic date search
         dt_m = re.search(r"(\d{1,2}\s+[A-Za-z]{3,9}\s+\d{4}|\d{4}-\d{2}-\d{2}|\d{1,2}/\d{1,2}/\d{4})", text)
         if dt_m:
             data["issue_date"] = self._parse_flexible_date(dt_m.group(1))
 
-        # Generic dollar amount
+ # Generic dollar amount
         amt_m = re.search(r"\$([0-9,]+\.\d{2})", text)
         if amt_m:
             try:
@@ -1001,7 +1001,7 @@ def detect_and_extract_invoice(
                 extractor = ext
                 break
         if extractor.name == "generic":
-            # Check charging composite
+ # Check charging composite
             charging_ext = TeslaChargingInvoiceExtractor()
             if charging_ext.detect(text, pdf_path):
                 extractor = charging_ext

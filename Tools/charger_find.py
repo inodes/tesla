@@ -78,7 +78,7 @@ C_MAGENTA = "\033[35m"
 C_ORANGE = "\033[38;5;214m"
 C_GRAY = "\033[90m"
 
-# BUG-111 (AGENTS.local.md, 2026-09-16): when --near is combined with a
+# (AGENTS.local.md, 2026-09-16): when --near is combined with a
 # non-distance --sort (e.g. --sort price) and no explicit --radius, the
 # closest N stations by distance are gathered FIRST, then re-sorted by the
 # requested field - rather than sorting/truncating a nationwide list, which
@@ -99,7 +99,7 @@ def geocode_address(address_str: str) -> Tuple[Optional[float], Optional[float],
     if clean in _GEOCODE_CACHE:
         return _GEOCODE_CACHE[clean]
 
-    # Primary: Delegate to places_manager's geocode_candidates
+ # Primary: Delegate to places_manager's geocode_candidates
     try:
         from places_manager import geocode_candidates
         cands = geocode_candidates(clean, limit=5)
@@ -111,7 +111,7 @@ def geocode_address(address_str: str) -> Tuple[Optional[float], Optional[float],
     except Exception:
         pass
 
-    # 1. Nominatim (OpenStreetMap) Fallback
+ # 1. Nominatim (OpenStreetMap) Fallback
     try:
         params = urllib.parse.urlencode({
             "q": f"{clean}, Australia" if "australia" not in clean.lower() else clean,
@@ -135,7 +135,7 @@ def geocode_address(address_str: str) -> Tuple[Optional[float], Optional[float],
     except Exception:
         pass
 
-    # 2. Open-Meteo Geocoding API Fallback
+ # 2. Open-Meteo Geocoding API Fallback
     try:
         params = urllib.parse.urlencode({"name": clean, "count": 1, "format": "json"})
         url = f"https://geocoding-api.open-meteo.com/v1/search?{params}"
@@ -165,7 +165,7 @@ def resolve_reference_coords(near_query: str) -> Tuple[Optional[float], Optional
 
     q_clean = near_query.strip()
     
-    # 1. Direct coordinates: "lat,lon"
+ # 1. Direct coordinates: "lat,lon"
     if "," in q_clean:
         parts = [p.strip() for p in q_clean.split(",")]
         if len(parts) == 2:
@@ -176,7 +176,7 @@ def resolve_reference_coords(near_query: str) -> Tuple[Optional[float], Optional
             except ValueError:
                 pass
 
-    # 2. Look in places.json
+ # 2. Look in places.json
     places_candidates = []
     tessie_home = None
     try:
@@ -212,7 +212,7 @@ def resolve_reference_coords(near_query: str) -> Tuple[Optional[float], Optional
                     p_data = json.load(f)
                     places_dict = p_data.get("places") if (isinstance(p_data, dict) and "places" in p_data and isinstance(p_data["places"], dict)) else p_data
                     if isinstance(places_dict, dict):
-                        # Extract Home coords if present for distance ranking
+ # Extract Home coords if present for distance ranking
                         if "home" in [k.lower() for k in places_dict.keys()]:
                             for pk, pv in places_dict.items():
                                 if pk.lower() == "home" and isinstance(pv, dict):
@@ -232,7 +232,7 @@ def resolve_reference_coords(near_query: str) -> Tuple[Optional[float], Optional
             except Exception:
                 pass
 
-    # 3. Online geocoding with smart disambiguation for suburb, city, or street address
+ # 3. Online geocoding with smart disambiguation for suburb, city, or street address
     try:
         from places_manager import resolve_location_disambiguated
         g_lat, g_lon, g_label = resolve_location_disambiguated(q_clean, anchor_coords=home_coords, interactive=True)
@@ -243,7 +243,7 @@ def resolve_reference_coords(near_query: str) -> Tuple[Optional[float], Optional
         if g_lat is not None and g_lon is not None:
             return g_lat, g_lon, g_label or q_clean
 
-    # 4. Known station match in local registries (fallback for offline or exact station name queries)
+ # 4. Known station match in local registries (fallback for offline or exact station name queries)
     reg_candidates = []
     if tessie_home:
         reg_candidates.extend([
@@ -282,7 +282,7 @@ def resolve_reference_coords(near_query: str) -> Tuple[Optional[float], Optional
             except Exception:
                 pass
 
-    # 5. Default Sydney fallback if Home requested
+ # 5. Default Sydney fallback if Home requested
     if q_clean.lower() == "home":
         return -33.8688, 151.2093, "Sydney"
 
@@ -291,7 +291,7 @@ def resolve_reference_coords(near_query: str) -> Tuple[Optional[float], Optional
 
 def _contextual_type_icon(st: UnifiedStationRecord, network_filter: Optional[str]) -> str:
     """
-    Normally just st.type_icon(). BUG-075 (2026-09-15, AGENTS.local.md):
+    Normally just st.type_icon(). (2026-09-15, AGENTS.local.md):
     user filtered --network chargefox and saw rows badged "Tesla Destination"
     or "Evie" with no visible sign why they matched - those ARE genuinely
     cross-listed (station.source = "tesla+chargefox" / "evie+chargefox" from
@@ -331,7 +331,7 @@ def _contextual_type_icon(st: UnifiedStationRecord, network_filter: Optional[str
 
 def _print_reverify_result(name: str, ok: bool, diffs) -> None:
     """
-    BUG-117 (2026-09-16, AGENTS.local.md): the "Update / Re-verify" action
+    (2026-09-16, AGENTS.local.md): the "Update / Re-verify" action
     used to print the same "Successfully updated and saved (historical
     version archived if changed)" line every time, regardless of whether the
     live re-fetch actually found anything different - user report: re-ran it
@@ -399,7 +399,7 @@ def render_stations_table(
 
     total_inner_w = sum(widths) + len(widths) - 1
 
-    # Top Banner Box
+ # Top Banner Box
     print(f"\n┌{'─' * total_inner_w}┐")
     print(f"│{pad_display(f' ⚡ {title.upper()} ({len(stations)} found)', total_inner_w, 'left')}│")
     
@@ -426,7 +426,7 @@ def render_stations_table(
         legend_line += f"  |  [{C_ALERT_RED}!{C_RESET}] Degraded/Repair: {c_degraded}"
     print(f"│{pad_display(legend_line, total_inner_w, 'left')}│")
     
-    # Table Header Line
+ # Table Header Line
     top_b = "├" + "┬".join("─" * w for w in widths) + "┤"
     print(top_b)
     
@@ -579,8 +579,8 @@ def browse_chargefox_catalog_grid(manager: ChargerDiscoveryManager, country: str
         title_str = rec.name
         if status == "RENAMED":
             title_str += f" {C_MAGENTA}🔄 (in JSON: {renamed_from[rec.key]}){C_RESET}"
-        # Use the record's own network-appropriate icon (🦊 Chargefox, ⚡ NRMA,
-        # etc.) instead of a hardcoded generic plug - BUG-090 follow-on.
+ # Use the record's own network-appropriate icon (🦊 Chargefox, ⚡ NRMA,
+ # etc.) instead of a hardcoded generic plug - follow-on.
         icon = rec.type_icon().split(" ", 1)[0]
         return f" [{color}{counter:3d}{C_RESET}] {icon} {title_str}"
 
@@ -689,27 +689,27 @@ def display_station_inspection_card(station: UnifiedStationRecord, eval_time: Op
 
     meta = station.metadata or {}
 
-    # BUG-118 (2026-09-16, AGENTS.local.md): PlugShare's own operational
-    # status ("PARTIALLY_UNDER_REPAIR", "OUT_OF_ORDER", etc. - distinct from
-    # the coming_soon/under_construction cases that are rejected on import
-    # entirely) was being captured nowhere and shown nowhere - user found a
-    # station "PARTIALLY UNDER REPAIR" on PlugShare's own page with no sign
-    # of it in this tool at all. Surfaced first, above Source & Provenance,
-    # so it can't be missed.
+ # (2026-09-16, AGENTS.local.md): PlugShare's own operational
+ # status ("PARTIALLY_UNDER_REPAIR", "OUT_OF_ORDER", etc. - distinct from
+ # the coming_soon/under_construction cases that are rejected on import
+ # entirely) was being captured nowhere and shown nowhere - user found a
+ # station "PARTIALLY UNDER REPAIR" on PlugShare's own page with no sign
+ # of it in this tool at all. Surfaced first, above Source & Provenance,
+ # so it can't be missed.
     op_status = (meta.get("operational_status") or "").strip()
     if op_status:
         _field("🚧", "Operational Status", f"{C_RED}{C_BOLD}⚠️  {op_status.replace('_', ' ').title()}{C_RESET}")
 
-    # 1. Source & Provenance
+ # 1. Source & Provenance
     views_count = len(station.views) if station.views else 1
     view_names = ", ".join([v.title() for v in station.views.keys()]) if station.views else station.source.title()
     if views_count > 1:
         _field("📂", "Data Source", f"Multi-Source Consolidated ({views_count} sources: {view_names})")
     elif station.source == "tesla":
         reg_name = "tesla_superchargers.json" if station.speed_tier == "supercharger" else "tesla_chargers.json"
-        # Matches charger_find_tesla.py's own display_preview() coloring
-        # (green = trusted local registry) - this line lost its color when
-        # the display logic was ported into the provider system. Fixed 2026-09-14.
+ # Matches charger_find_tesla.py's own display_preview() coloring
+ # (green = trusted local registry) - this line lost its color when
+ # the display logic was ported into the provider system. Fixed 2026-09-14.
         _field("📂", "Data Source", f"{C_GREEN}Local JSON Registry (Tessie/{reg_name}){C_RESET}")
     elif station.source == "chargefox":
         _field("📂", "Data Source", f"Chargefox Registry (ID: {station.source_id})")
@@ -736,12 +736,12 @@ def display_station_inspection_card(station: UnifiedStationRecord, eval_time: Op
     elif station.network and station.network not in ("3rd-Party", "unknown"):
         _field("⚡", "Network", station.network)
 
-    # REQ-088 (AGENTS.local.md, 2026-09-16): when two same-tier sources (in
-    # practice, NRMA vs Chargefox for the ~28 sites they both list) disagree
-    # on a field, merge_station_records() keeps both values instead of
-    # silently picking one - surface that here rather than only in raw
-    # metadata, so a real discrepancy is visible instead of hidden behind
-    # whichever source happened to win the merge.
+ # REQ-088 (AGENTS.local.md, 2026-09-16): when two same-tier sources (in
+ # practice, NRMA vs Chargefox for the ~28 sites they both list) disagree
+ # on a field, merge_station_records() keeps both values instead of
+ # silently picking one - surface that here rather than only in raw
+ # metadata, so a real discrepancy is visible instead of hidden behind
+ # whichever source happened to win the merge.
     src_conflicts = meta.get("source_conflicts") or {}
     for field_name, values in src_conflicts.items():
         conflict_str = " vs. ".join(f"{src.title()}: {val}" for src, val in values.items())
@@ -750,11 +750,11 @@ def display_station_inspection_card(station: UnifiedStationRecord, eval_time: Op
     findus_list = meta.get("findus_list_name")
     findus_loc = meta.get("findus_location_name")
     if findus_list and findus_loc and findus_list.strip().lower() != findus_loc.strip().lower():
-        # findus_list_name (lesser importance) is Tesla's own findus LIST page
-        # grouping name for this charger, which can genuinely differ from its
-        # own findus_location_name (e.g. New Italy, NSW is grouped under
-        # "Ballina, NSW" on the list page). Linked to the findus URL since
-        # that's where the list name comes from. Fixed 2026-09-14.
+ # findus_list_name (lesser importance) is Tesla's own findus LIST page
+ # grouping name for this charger, which can genuinely differ from its
+ # own findus_location_name (e.g. New Italy, NSW is grouped under
+ # "Ballina, NSW" on the list page). Linked to the findus URL since
+ # that's where the list name comes from. Fixed 2026-09-14.
         findus_url_for_link = meta.get("findus_url", "")
         list_display = hyperlink(findus_list, findus_url_for_link) if findus_url_for_link else findus_list
         _field("📋", "Find Us List Name", list_display)
@@ -773,11 +773,11 @@ def display_station_inspection_card(station: UnifiedStationRecord, eval_time: Op
         _field("📏", "Distance", f"{station.distance_km:.2f} km")
 
     _field("🌐", "Timezone", station.timezone or "Australia/Sydney")
-    # max_len raised from the 55-char default: this box is 86 wide with a
-    # 22-char label column, so a typical ~60-70 char findus/plugshare URL
-    # fits without truncation - the default was cutting off URLs (like
-    # Tesla's findus/location/supercharger/<id> ones) that would display in
-    # full. Fixed 2026-09-14.
+ # max_len raised from the 55-char default: this box is 86 wide with a
+ # 22-char label column, so a typical ~60-70 char findus/plugshare URL
+ # fits without truncation - the default was cutting off URLs (like
+ # Tesla's findus/location/supercharger/<id> ones) that would display in
+ # full. Fixed 2026-09-14.
     source_urls = station.get_source_urls()
     if len(source_urls) > 1:
         for u in source_urls:
@@ -789,22 +789,22 @@ def display_station_inspection_card(station: UnifiedStationRecord, eval_time: Op
         url_label = "Find Us URL" if station.source == "tesla" else "Web Link / URL"
         _field("🔗", url_label, format_display_url(station.url, max_len=75))
 
-    # 2. Hardware & Access
+ # 2. Hardware & Access
     pwr_str = f"Up to {station.formatted_power()}" if station.max_power_kw else "Standard Power"
     hw_model = f" ({station.hardware_model})" if station.hardware_model else ""
     hw_desc = f"{station.stalls_total} Stalls | {pwr_str}{hw_model}"
     _field("🔌", "Hardware", hw_desc)
     
     cb = (station.metadata or {}).get("connector_breakdown")
-    # BUG-114 (AGENTS.local.md, 2026-09-16): connector_breakdown is PlugShare
-    # metadata ("2 x CCS2 (DC 120kW)") that survives onto a merged record even
-    # when the primary (Tier 1) source's own "Hardware" line above already
-    # says the exact same thing in different words ("2 Stalls | Up to 120 kW")
-    # - user-reported as confusing duplication on Bunnings Gladesville. Only
-    # show the granular per-unit breakdown when it's actually informative,
-    # i.e. this site has more than one distinct connector/power combination
-    # (mixed hardware) - otherwise collapse to a plain connector type name,
-    # since the count and power are already stated once, above.
+ # (AGENTS.local.md, 2026-09-16): connector_breakdown is PlugShare
+ # metadata ("2 x CCS2 (DC 120kW)") that survives onto a merged record even
+ # when the primary (Tier 1) source's own "Hardware" line above already
+ # says the exact same thing in different words ("2 Stalls | Up to 120 kW")
+ # - user-reported as confusing duplication on Bunnings Gladesville. Only
+ # show the granular per-unit breakdown when it's actually informative,
+ # i.e. this site has more than one distinct connector/power combination
+ # (mixed hardware) - otherwise collapse to a plain connector type name,
+ # since the count and power are already stated once, above.
     if cb and isinstance(cb, list) and len(cb) > 0:
         if len(set(cb)) > 1:
             _field("🔌", "Connectors", ", ".join(cb))
@@ -816,7 +816,7 @@ def display_station_inspection_card(station: UnifiedStationRecord, eval_time: Op
         _field("🔌", "Connectors", ", ".join(station.plugs))
 
     meta = station.metadata or {}
-    # Non-Tesla Access / Compatibility
+ # Non-Tesla Access / Compatibility
     if station.speed_tier == "supercharger":
         open_all = meta.get("open_to_non_tesla")
         acc_str = f"{C_GREEN}YES (CCS2 All EVs){C_RESET}" if open_all else f"{C_RED}NO (Tesla Only){C_RESET}"
@@ -846,9 +846,9 @@ def display_station_inspection_card(station: UnifiedStationRecord, eval_time: Op
         except (ValueError, TypeError):
             _field("⭐", "PlugShare Rating", f"⭐ {score}")
 
-    # Fee Rules (Tesla Policy: Superchargers enforce either an Idle Rule OR a Congestion Rule, never both. Destination Chargers have no congestion fees.)
+ # Fee Rules (Tesla Policy: Superchargers enforce either an Idle Rule OR a Congestion Rule, never both. Destination Chargers have no congestion fees.)
     if station.source == "tesla" and station.speed_tier != "supercharger":
-        # Destination Chargers have no congestion fees or idle fees
+ # Destination Chargers have no congestion fees or idle fees
         pass
     elif station.congestion_fee_per_min and station.congestion_fee_per_min > 0:
         _field("🚦", "Congestion Charge", f"${station.congestion_fee_per_min:.2f}/min")
@@ -866,12 +866,12 @@ def display_station_inspection_card(station: UnifiedStationRecord, eval_time: Op
     if station.parking_fee:
         _field("🅿️", "Parking Fee", station.parking_fee)
 
-    # Combined Effective Date/Last Verified - mirrors charger_find_tesla.py's
-    # display_preview() exactly. "Last Verified" alone told you when the data
-    # was last re-checked but not which historic period it actually applies
-    # to; analyse_charging.py needs the effective date to match old
-    # invoices against the right (possibly archived) registry entry. Fixed
-    # 2026-09-14 - see AGENTS.local.md.
+ # Combined Effective Date/Last Verified - mirrors charger_find_tesla.py's
+ # display_preview() exactly. "Last Verified" alone told you when the data
+ # was last re-checked but not which historic period it actually applies
+ # to; analyse_charging.py needs the effective date to match old
+ # invoices against the right (possibly archived) registry entry. Fixed
+ # 2026-09-14 - see AGENTS.local.md.
     if station.effective_date_utc and station.last_verified_utc:
         _field("🕒", "Effective Date", f"{format_local_timestamp(station.effective_date_utc)} (Verified: {format_local_timestamp(station.last_verified_utc)})")
     elif station.last_verified_utc:
@@ -879,7 +879,7 @@ def display_station_inspection_card(station: UnifiedStationRecord, eval_time: Op
     elif station.effective_date_utc:
         _field("🕒", "Effective Date", format_local_timestamp(station.effective_date_utc))
 
-    # 3. Tariff & Time-of-Use Rates
+ # 3. Tariff & Time-of-Use Rates
     curr = station.currency or "AUD"
     if station.schedule:
         is_tou = len(station.schedule) > 1
@@ -906,11 +906,11 @@ def display_station_inspection_card(station: UnifiedStationRecord, eval_time: Op
     else:
         print(f"\n  💰 {C_BOLD}Pricing:{C_RESET} {C_YELLOW}Free or Not Specified{C_RESET}")
 
-    # Non-Tesla Flat/TOU Rates - mirrors charger_find_tesla.py's own
-    # display_preview() nt_scheds block, which this provider-backed card was
-    # entirely missing until 2026-09-14 (see AGENTS.local.md). Only Tesla
-    # stations populate station.non_tesla_schedule today (tesla_provider.py),
-    # so this only prints for those, same as the old script.
+ # Non-Tesla Flat/TOU Rates - mirrors charger_find_tesla.py's own
+ # display_preview() nt_scheds block, which this provider-backed card was
+ # entirely missing until 2026-09-14 (see AGENTS.local.md). Only Tesla
+ # stations populate station.non_tesla_schedule today (tesla_provider.py),
+ # so this only prints for those, same as the old script.
     if station.non_tesla_schedule:
         is_nt_tou = len(station.non_tesla_schedule) > 1
         nt_title = f"Non-Tesla {'Time-of-Use' if is_nt_tou else 'Flat'} Rates ({curr})"
@@ -927,18 +927,18 @@ def display_station_inspection_card(station: UnifiedStationRecord, eval_time: Op
     elif station.source == "tesla" and station.speed_tier == "supercharger" and (station.metadata or {}).get("open_to_non_tesla"):
         print(f"\n  🔌 {C_BOLD}Non-Tesla Pricing:{C_RESET} {C_YELLOW}Not available (re-scrape to fetch){C_RESET}")
 
-    # "Also Listed On" - BUG-075 (2026-09-15, AGENTS.local.md). A merged
-    # multi-source record only ever displayed ONE side's pricing/access above
-    # (manager.py's merge picks a single "primary" rate_range/access, the
-    # other source's own numbers are discarded from the top-level fields even
-    # though they're still sitting in station.views[source]). User: "when
-    # displaying Chargefox - list it as a Chargefox, when listing Tesla-dest -
-    # list it as that. But also somewhere in the deep dive you need to
-    # provide both details clearly." A Tesla Destination Charger and its
-    # co-listed Chargefox entry can genuinely have different prices/access
-    # (Tesla member rate vs Chargefox public rate) - this surfaces the OTHER
-    # source(s)' own raw price/access snippet from their untouched view data,
-    # best-effort across each provider's own raw field shapes.
+ # "Also Listed On" - (2026-09-15, AGENTS.local.md). A merged
+ # multi-source record only ever displayed ONE side's pricing/access above
+ # (manager.py's merge picks a single "primary" rate_range/access, the
+ # other source's own numbers are discarded from the top-level fields even
+ # though they're still sitting in station.views[source]). User: "when
+ # displaying Chargefox - list it as a Chargefox, when listing Tesla-dest -
+ # list it as that. But also somewhere in the deep dive you need to
+ # provide both details clearly." A Tesla Destination Charger and its
+ # co-listed Chargefox entry can genuinely have different prices/access
+ # (Tesla member rate vs Chargefox public rate) - this surfaces the OTHER
+ # source(s)' own raw price/access snippet from their untouched view data,
+ # best-effort across each provider's own raw field shapes.
     if station.views and len(station.views) > 1:
         primary_key = (station.source or "").split("+")[0].strip().lower()
         other_views = {k: v for k, v in station.views.items() if k.lower() != primary_key and isinstance(v, dict)}
@@ -1001,7 +1001,7 @@ def display_station_inspection_card(station: UnifiedStationRecord, eval_time: Op
         elif isinstance(station.amenities, list) and station.amenities:
             print(f"\n  🛒 {C_BOLD}Amenities:{C_RESET} {', '.join(str(x) for x in station.amenities)}")
 
-    # Cached Facilities Quality Rating / Summary (REQ-082)
+ # Cached Facilities Quality Rating / Summary (REQ-082)
     try:
         from station_facilities import get_facilities_registry, format_facilities_summary_card
         _fac_reg = get_facilities_registry()
@@ -1029,7 +1029,7 @@ def display_nearby_facilities(station: UnifiedStationRecord, radius_m: int = 250
     """
     Looks up real, named nearby facilities (shops, food, amenities, services)
     around a charging station via OpenStreetMap's free/keyless Overpass API -
-    # reusing Tools/places_manager.py's already-proven query_overpass_pois(),
+ # reusing Tools/places_manager.py's already-proven query_overpass_pois(),
     the same lookup that already identifies drive-log stop locations.
 
     Persisted in station_facilities.json for instant offline pullup with
@@ -1089,7 +1089,7 @@ def display_nearby_facilities(station: UnifiedStationRecord, radius_m: int = 250
 
     term_width = shutil.get_terminal_size((100, 24)).columns
 
-    # Prominently display immediate doorstep facilities (<= 100m)
+ # Prominently display immediate doorstep facilities (<= 100m)
     doorstep = [p for p in pois if p.get("dist_m", 999.0) <= 100.0]
     if doorstep:
         print(f"  🚪 {C_BOLD}Immediate Doorstep (≤ 100m — 1-2 min walk) ({len(doorstep)}):{C_RESET}")
@@ -1121,7 +1121,7 @@ def display_nearby_facilities(station: UnifiedStationRecord, radius_m: int = 250
     plural = "y" if len(pois) == 1 else "ies"
     print(f"  {C_BOLD}All Facilities within {radius_m}m ({len(pois)} total):{C_RESET}\n")
 
-    # Group POIs by category group
+ # Group POIs by category group
     groups = {}
     for p in pois:
         grp = p.get("group", "Other Facilities")
@@ -1166,20 +1166,20 @@ def display_nearby_facilities(station: UnifiedStationRecord, radius_m: int = 250
 
 
 def main():
-    # AGENTS.local.md BUG-074, 2026-09-15: user - "The usage / man here is
-    # terrible!!!" - followed by a request to structure --help the way a real
-    # man page does (NAME / SYNOPSIS / DESCRIPTION / OPTIONS / EXAMPLES; see
-    # https://gist.github.com/sebastiancarlos/a7fb89f73b4617ccc2ea9445abf62f90
-    # for the conventions this follows). The old version left argparse to
-    # auto-generate its usage line, which for 50+ flags with no `usage=`
-    # override sprawled across 17 wrapped lines with every flag dumped in
-    # alphabetical-ish order - nothing like a SYNOPSIS a human can scan. This
-    # version supplies a curated, mode-based `usage=` (the tool really has 5
-    # distinct modes - sync, browse/filter, live-catalog, inspect, plugshare -
-    # so one flat bracket-soup can never represent it well) plus a NAME line
-    # and a trimmed DESCRIPTION; OPTIONS is the real add_argument_group()
-    # split below (BUG-074 continued); EXAMPLES is the epilog, unchanged in
-    # content but now under one consistent heading style.
+ # AGENTS.local.md , 2026-09-15: user - "The usage / man here is
+ # terrible!!!" - followed by a request to structure --help the way a real
+ # man page does (NAME / SYNOPSIS / DESCRIPTION / OPTIONS / EXAMPLES; see
+ # https://gist.github.com/sebastiancarlos/a7fb89f73b4617ccc2ea9445abf62f90
+ # for the conventions this follows). The old version left argparse to
+ # auto-generate its usage line, which for 50+ flags with no `usage=`
+ # override sprawled across 17 wrapped lines with every flag dumped in
+ # alphabetical-ish order - nothing like a SYNOPSIS a human can scan. This
+ # version supplies a curated, mode-based `usage=` (the tool really has 5
+ # distinct modes - sync, browse/filter, live-catalog, inspect, plugshare -
+ # so one flat bracket-soup can never represent it well) plus a NAME line
+ # and a trimmed DESCRIPTION; OPTIONS is the real add_argument_group()
+ # split below (continued); EXAMPLES is the epilog, unchanged in
+ # content but now under one consistent heading style.
     synopsis = """charger_find.py --sync-all | --sync-tesla | --sync-chargefox | --sync-evx |
                      --sync-evie | --sync-bppulse | --sync-plugshare | --sync-ampcharge | --sync-exploren |
                      --sync-jolt | --sync-nrma | --export-consolidated
@@ -1215,61 +1215,61 @@ DESCRIPTION
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""EXAMPLES
   Synchronization:
-    # Sync All Providers end-to-end (Tesla, Chargefox, PlugShare, and Master Catalog):
+ # Sync All Providers end-to-end (Tesla, Chargefox, PlugShare, and Master Catalog):
     ./Tools/charger_find.py --sync-all --near Home --radius 50
 
-    # Sync Chargefox & NRMA nationwide via live GraphQL API:
+ # Sync Chargefox & NRMA nationwide via live GraphQL API:
     ./Tools/charger_find.py --sync-chargefox
 
-    # Sync PlugShare stations near a location or across a state:
+ # Sync PlugShare stations near a location or across a state:
     ./Tools/charger_find.py --sync-plugshare --near "Ryde" --radius 15 --add-all
     ./Tools/charger_find.py --sync-plugshare --state NSW --add-all
 
-    # Sync Tesla Superchargers & Destination Chargers:
+ # Sync Tesla Superchargers & Destination Chargers:
     ./Tools/charger_find.py --sync-tesla --sc --near Home --radius 50 --new
     ./Tools/charger_find.py --sync-tesla --dc --near Home --radius 50 --new
 
-    # Refresh unlisted pricing or discover chargers from past charging history:
+ # Refresh unlisted pricing or discover chargers from past charging history:
     ./Tools/charger_find.py --refresh-prices
     ./Tools/charger_find.py --from-history --add-all
 
-    # Compile & Export Consolidated Master Catalog (charging_stations.json):
+ # Compile & Export Consolidated Master Catalog (charging_stations.json):
     ./Tools/charger_find.py --export-consolidated
 
   Proximity & Search:
-    # Find all chargers near an address sorted by distance:
+ # Find all chargers near an address sorted by distance:
     ./Tools/charger_find.py --near "100 George St, Sydney" --limit 10
 
-    # Find cheapest charging options near Home (defaults to 15km radius):
+ # Find cheapest charging options near Home (defaults to 15km radius):
     ./Tools/charger_find.py --near Home --sort price --radius 25
 
-    # Evaluate Time-of-Use pricing at peak vs off-peak hours:
+ # Evaluate Time-of-Use pricing at peak vs off-peak hours:
     ./Tools/charger_find.py --near Home --time 14:00 --sort price
     ./Tools/charger_find.py --near Home --time 23:30 --sort price
 
-    # Filter high-power DC Fast Chargers (>= 150 kW, any network) or specific networks:
+ # Filter high-power DC Fast Chargers (>= 150 kW, any network) or specific networks:
     ./Tools/charger_find.py --dc --min-kw 150 --near "Ryde"
     ./Tools/charger_find.py --network chargefox --state NSW
     ./Tools/charger_find.py --network tesla --sc --near Home
 
   Inspection & Drill-Down:
-    # Inspect detailed card for a specific station by query:
+ # Inspect detailed card for a specific station by query:
     ./Tools/charger_find.py -q "Macquarie"
 
-    # Inspect a PlugShare location ID directly:
+ # Inspect a PlugShare location ID directly:
     ./Tools/charger_find.py --plugshare 801149 --save
 """
     )
     
-    # AGENTS.local.md BUG-074, 2026-09-15: --help had become unreadable - a
-    # single flat argparse "options:" list of 50+ flags with no grouping
-    # (the section comments below were never real argparse groups, just
-    # visual dividers in the source), several help= strings carrying
-    # multi-sentence commit-message-style rationale straight into user-facing
-    # --help output (--tesla-dest, --unpriced, --live, --inspect). Split into
-    # real add_argument_group()s matching those original section comments,
-    # and trimmed every help= string to one concise line - the fuller
-    # rationale for non-obvious flags now lives in a source comment instead.
+ # AGENTS.local.md , 2026-09-15: --help had become unreadable - a
+ # single flat argparse "options:" list of 50+ flags with no grouping
+ # (the section comments below were never real argparse groups, just
+ # visual dividers in the source), several help= strings carrying
+ # multi-sentence commit-message-style rationale straight into user-facing
+ # --help output (--tesla-dest, --unpriced, --live, --inspect). Split into
+ # real add_argument_group()s matching those original section comments,
+ # and trimmed every help= string to one concise line - the fuller
+ # rationale for non-obvious flags now lives in a source comment instead.
     g_location = parser.add_argument_group("Location & Search Scope")
     g_location.add_argument("--near", "-l", type=str, help="Reference place name, address, or lat,lon (e.g. 'Home', 'Ryde')")
     g_location.add_argument("--radius", "-r", "--radius-km", type=float, default=15.0, help="Search radius in km (default: 15)")
@@ -1279,17 +1279,17 @@ DESCRIPTION
     g_location.add_argument("--country", default="Australia", help="Country name (default: Australia)")
 
     g_speed = parser.add_argument_group("Charging Speed & Type Filter")
-    # BUG-073 (2026-09-15) tried adding a dedicated --tesla-dest/--tesla-sc/
-    # --tesla-dc flag family to disambiguate --dc from its Tesla-only meaning.
-    # BUG-077 (2026-09-15, AGENTS.local.md): user - "We've just done
-    # --tesla-sc and --tesla-dc. Maybe we should be consistent and use
-    # --network." Right - the tool already has a --network mechanism for
-    # exactly this (--network chargefox, --network evie, ...); giving Tesla
-    # its own separate flag family instead of using that same mechanism was
-    # inconsistent. Reverted: --sc/--dc/--ac are bare again, and Tesla's own
-    # Destination Chargers are now selected the same way any other network's
-    # subset is - "--network tesla --dc" (or --ac) - handled below wherever
-    # this used to read args.tesla_dest.
+ # (2026-09-15) tried adding a dedicated --tesla-dest/--tesla-sc/
+ # --tesla-dc flag family to disambiguate --dc from its Tesla-only meaning.
+ # (2026-09-15, AGENTS.local.md): user - "We've just done
+ # --tesla-sc and --tesla-dc. Maybe we should be consistent and use
+ # --network." Right - the tool already has a --network mechanism for
+ # exactly this (--network chargefox, --network evie, ...); giving Tesla
+ # its own separate flag family instead of using that same mechanism was
+ # inconsistent. Reverted: --sc/--dc/--ac are bare again, and Tesla's own
+ # Destination Chargers are now selected the same way any other network's
+ # subset is - "--network tesla --dc" (or --ac) - handled below wherever
+ # this used to read args.tesla_dest.
     g_speed.add_argument("--sc", action="store_true", help="Tesla Superchargers only")
     g_speed.add_argument("--dc", action="store_true", help="DC Fast Chargers only (>= 25 kW), any network - combine with --network tesla for Tesla's own Destination Chargers")
     g_speed.add_argument("--ac", action="store_true", help="AC Public / Destination Chargers only (< 25 kW), any network - combine with --network tesla for Tesla's own Destination Chargers")
@@ -1339,9 +1339,9 @@ DESCRIPTION
     g_registry.add_argument("--new", action="store_true", help="Filter only stations not present in registry")
     g_registry.add_argument("--stale", action="store_true", help="Filter only stale stations (> 90 days since verification)")
     g_registry.add_argument("--renamed", action="store_true", help="Filter only renamed / discrepancy stations")
-    # REQ-062 (2026-09-14, AGENTS.local.md): mirrors charger_find_tesla.py's
-    # --unpriced. With --sync-tesla --all, also drives a batch refresh instead
-    # of just filtering.
+ # REQ-062 (2026-09-14, AGENTS.local.md): mirrors charger_find_tesla.py's
+ # --unpriced. With --sync-tesla --all, also drives a batch refresh instead
+ # of just filtering.
     g_registry.add_argument("--unpriced", "--missing-price", "--missing-pricing", action="store_true", help="Filter (or with --sync-tesla --all, batch refresh) stations missing pricing")
     g_registry.add_argument("--views", action="store_true", help="Display multi-view comparison (First-Party vs PlugShare) for matching stations")
     g_registry.add_argument("--audit-plugshare", "--audit", action="store_true", help="Run full discrepancy audit between First-Party registries and PlugShare")
@@ -1352,40 +1352,40 @@ DESCRIPTION
     g_tuning.add_argument("--retries", type=int, default=3, help="Max retry attempts per station (default: 3)")
 
     g_live = parser.add_argument_group("Live Browsing & Inspection")
-    # REQ-060 (2026-09-14, AGENTS.local.md): only Tesla (--network tesla or
-    # bare --sc) and Chargefox have one canonical upstream list to diff a
-    # local registry against - matches charger_find_tesla.py's --country
-    # explorer. BUG-077 (2026-09-15): dropped the short-lived --tesla-dest
-    # flag in favor of --network tesla, consistent with every other network.
+ # REQ-060 (2026-09-14, AGENTS.local.md): only Tesla (--network tesla or
+ # bare --sc) and Chargefox have one canonical upstream list to diff a
+ # local registry against - matches charger_find_tesla.py's --country
+ # explorer. (2026-09-15): dropped the short-lived --tesla-dest
+ # flag in favor of --network tesla, consistent with every other network.
     g_live.add_argument("--live", action="store_true", help="Browse the live upstream catalog grouped by state with a Renamed/Stale/Not-in-JSON legend (Tesla via --network tesla or --sc, or Chargefox via --network chargefox)")
-    # REQ-061 (2026-09-14, AGENTS.local.md): reuses charger_find_tesla.py's
-    # own inspect_or_scrape_station(), same behavior as --inspect there.
+ # REQ-061 (2026-09-14, AGENTS.local.md): reuses charger_find_tesla.py's
+ # own inspect_or_scrape_station(), same behavior as --inspect there.
     g_live.add_argument("--inspect", type=str, help="Inspect a single Tesla station by name/query (offline cache by default; add --live to re-scrape, --save to write into the registry)")
 
-    # User report (2026-09-15): running with literally no arguments at all
-    # looked "frozen" - line 1416 below (`args.all or args.state or (not
-    # args.near and not args.query)`) treats an all-defaults Namespace as
-    # "full country / state list mode" and silently kicks off a nationwide,
-    # every-provider get_all_stations() fetch with zero printed explanation
-    # first. Bare `charger_find.py` should show help instead of guessing at
-    # a real command, matching argparse's own convention for a tool with no
-    # sensible zero-argument default action.
+ # User report (2026-09-15): running with literally no arguments at all
+ # looked "frozen" - line 1416 below (`args.all or args.state or (not
+ # args.near and not args.query)`) treats an all-defaults Namespace as
+ # "full country / state list mode" and silently kicks off a nationwide,
+ # every-provider get_all_stations() fetch with zero printed explanation
+ # first. Bare `charger_find.py` should show help instead of guessing at
+ # a real command, matching argparse's own convention for a tool with no
+ # sensible zero-argument default action.
     if len(sys.argv) == 1:
         parser.print_help(sys.stderr)
         sys.exit(1)
 
     args = parser.parse_args()
 
-    # BUG-078 (2026-09-15, AGENTS.local.md): user typo'd "--network changefox"
-    # (an easy transposition of "chargefox") and got a generic, unhelpful
-    # "--live browsing isn't available for this network selection" - nothing
-    # told them the network NAME itself was probably the mistake, since
-    # --network has always accepted any free-text string with zero
-    # validation. Real aggregator sub-brand names (Exploren, WA EV Network,
-    # QLD Electric Highway, ...) mean a hard allowlist would reject valid
-    # input, so this only WARNS - via a fuzzy match against the known
-    # first-party network names - and always still proceeds with whatever the
-    # user typed as a free-text filter.
+ # (2026-09-15, AGENTS.local.md): user typo'd "--network changefox"
+ # (an easy transposition of "chargefox") and got a generic, unhelpful
+ # "--live browsing isn't available for this network selection" - nothing
+ # told them the network NAME itself was probably the mistake, since
+ # --network has always accepted any free-text string with zero
+ # validation. Real aggregator sub-brand names (Exploren, WA EV Network,
+ # QLD Electric Highway, ...) mean a hard allowlist would reject valid
+ # input, so this only WARNS - via a fuzzy match against the known
+ # first-party network names - and always still proceeds with whatever the
+ # user typed as a free-text filter.
     if args.network:
         _KNOWN_NETWORKS = ["tesla", "chargefox", "nrma", "evie", "evx", "bppulse", "plugshare", "ampcharge", "exploren", "jolt"]
         _net_check = args.network.strip().lower()
@@ -1400,14 +1400,14 @@ DESCRIPTION
     manager = ChargerDiscoveryManager()
 
     if args.sync_all:
-        # AGENTS.md BUG-067: every step below used to catch its own
-        # Exception, print a "⚠️ encountered error" line, and just carry
-        # on - nothing tracked whether any step actually failed, so this
-        # command always printed "✨ Full multi-network sync completed."
-        # and exited 0 even if EVERY provider failed (auth error, network
-        # down, a schema break like BUG-067's chargefox one). sync_results
-        # now records a (label, ok) pair per step so the final banner and
-        # exit code reflect what actually happened.
+ # AGENTS.md every step below used to catch its own
+ # Exception, print a "⚠️ encountered error" line, and just carry
+ # on - nothing tracked whether any step actually failed, so this
+ # command always printed "✨ Full multi-network sync completed."
+ # and exited 0 even if EVERY provider failed (auth error, network
+ # down, a schema break like 's chargefox one). sync_results
+ # now records a (label, ok) pair per step so the final banner and
+ # exit code reflect what actually happened.
         sync_results = []
 
         print("🚀 [1/11] Starting Full Network Sync: Tesla Superchargers & Destination Chargers...")
@@ -1765,12 +1765,12 @@ DESCRIPTION
         run_audit(network_filter=net_filter, state_filter=args.state)
         return
 
-    # Single-station inspect / live re-scrape - reuses charger_find_tesla.py's
-    # own inspect_or_scrape_station() (extracted from its main() on
-    # 2026-09-14, REQ-061, AGENTS.local.md) so a one-off Tesla re-scrape
-    # (e.g. "Macquarie, NSW" had stale idle/congestion fee data but wasn't
-    # RENAMED or STALE-by-age, so no --sync-tesla subset filter could target
-    # it) never requires dropping into the old script directly.
+ # Single-station inspect / live re-scrape - reuses charger_find_tesla.py's
+ # own inspect_or_scrape_station() (extracted from its main() on
+ # 2026-09-14, REQ-061, AGENTS.local.md) so a one-off Tesla re-scrape
+ # (e.g. "Macquarie, NSW" had stale idle/congestion fee data but wasn't
+ # RENAMED or STALE-by-age, so no --sync-tesla subset filter could target
+ # it) never requires dropping into the old script directly.
     if args.inspect:
         from charger_find_tesla import TeslaChargerExplorer, inspect_or_scrape_station
         tesla_explorer = TeslaChargerExplorer()
@@ -1781,10 +1781,10 @@ DESCRIPTION
         )
         return
 
-    # Live catalog browsing (grid + status legend + all/new/renamed/stale/near
-    # menu) - only meaningful for networks with one canonical upstream list
-    # to diff a local registry against (Tesla's own findus list pages,
-    # Chargefox's GraphQL catalog). REQ-060, AGENTS.local.md, 2026-09-14.
+ # Live catalog browsing (grid + status legend + all/new/renamed/stale/near
+ # menu) - only meaningful for networks with one canonical upstream list
+ # to diff a local registry against (Tesla's own findus list pages,
+ # Chargefox's GraphQL catalog). REQ-060, AGENTS.local.md, 2026-09-14.
     if args.live and not args.query and not args.near:
         net_lower = (args.network or "").strip().lower()
         if args.sc or net_lower == "tesla":
@@ -1805,7 +1805,7 @@ DESCRIPTION
         print(f"{C_YELLOW}⚠ --live browsing isn't available for this network selection - it needs one canonical upstream catalog to diff against (Tesla via --network tesla or --sc, or Chargefox via --network chargefox). PlugShare-aggregated networks (Evie, bp pulse, etc.) have no single such list.{C_RESET}")
         print(f"{C_DIM}Falling back to the local registry view below.{C_RESET}")
 
-    # Determine filters
+ # Determine filters
     speed_tier = None
     if args.sc:
         speed_tier = "supercharger"
@@ -1823,14 +1823,14 @@ DESCRIPTION
         "supermarket": getattr(args, "supermarket", False)
     }
 
-    # Execute search
+ # Execute search
     stations: List[UnifiedStationRecord] = []
     title = "PUBLIC EV CHARGING STATIONS"
     ref_lat, ref_lon, ref_label = None, None, None
     active_radius = None
-    # Tracks the sort key actually handed to the manager for this branch, so the
-    # displayed "Sort Order" label always matches the real ordering below (BUG-066) -
-    # it must never be derived from the raw args.sort default alone.
+ # Tracks the sort key actually handed to the manager for this branch, so the
+ # displayed "Sort Order" label always matches the real ordering below () -
+ # it must never be derived from the raw args.sort default alone.
     effective_sort = args.sort
 
     explicit_sort = any(a in sys.argv for a in ("--sort", "-s")) or any(a.startswith("--sort=") for a in sys.argv)
@@ -1890,14 +1890,14 @@ DESCRIPTION
                 type_lbl = "SUPERCHARGERS" if args.sc else ("DC FAST CHARGERS" if args.dc else ("AC CHARGERS" if args.ac else "CHARGING STATIONS"))
                 effective_sort = args.sort
                 if effective_sort != "distance":
-                    # BUG-111: closest-N-first, then sort within that pool -
-                    # see NEAR_SORT_CANDIDATE_COUNT above for the rationale.
+ # closest-N-first, then sort within that pool -
+ # see NEAR_SORT_CANDIDATE_COUNT above for the rationale.
                     title = f"{type_lbl} NEAR {ref_label.upper()}"
-                    # --limit's argparse default (100) is NOT a user request for a 100-
-                    # station candidate pool here - only an EXPLICIT --limit means
-                    # "widen the nearest-N pool to N"; otherwise this stays a tight
-                    # nearby set (NEAR_SORT_CANDIDATE_COUNT) so a non-distance sort
-                    # can't still surface something hundreds of km away.
+ # --limit's argparse default (100) is NOT a user request for a 100-
+ # station candidate pool here - only an EXPLICIT --limit means
+ # "widen the nearest-N pool to N"; otherwise this stays a tight
+ # nearby set (NEAR_SORT_CANDIDATE_COUNT) so a non-distance sort
+ # can't still surface something hundreds of km away.
                     candidate_count = args.limit if explicit_limit else NEAR_SORT_CANDIDATE_COUNT
                     distance_pool = manager.get_all_stations(
                         filters=filters,
@@ -1923,7 +1923,7 @@ DESCRIPTION
             print(f"❌ Error: Could not resolve reference location '{ref_loc}'.", file=sys.stderr)
             sys.exit(1)
 
-    # Apply Status Filters
+ # Apply Status Filters
     if args.status:
         st_req = args.status.upper()
         if st_req in ("NEW", "NOT_IN_JSON"):
@@ -1944,7 +1944,7 @@ DESCRIPTION
     if args.limit and len(stations) > args.limit:
         stations = stations[:args.limit]
 
-    # Batch Update CLI Actions
+ # Batch Update CLI Actions
     if args.update_stale or args.update_renamed:
         target_status = "STALE" if args.update_stale else "RENAMED"
         print(f"🔄 Starting batch update for {target_status} stations (historical changes will be archived)...")
@@ -1952,7 +1952,7 @@ DESCRIPTION
         print(f"\n✔ Batch update complete: {stats['SUCCESS']} updated, {stats['ERROR']} failed out of {stats['TOTAL']} target stations.")
         return
 
-    # Batch Facilities Sync Action
+ # Batch Facilities Sync Action
     if getattr(args, "sync_facilities", False):
         if not stations:
             print(f"❌ No stations found matching current criteria to sync facilities for.")
@@ -1997,7 +1997,7 @@ DESCRIPTION
         print(f"\n✔ Facilities sync complete: {synced_count} station records cached in station_facilities.json.")
         return
 
-    # Multi-View comparison mode
+ # Multi-View comparison mode
     if args.views:
         from charger_plugshare_auditor import inspect_station_views
         if not stations:
@@ -2007,23 +2007,23 @@ DESCRIPTION
             print(inspect_station_views(st))
         return
 
-    # JSON Output Mode
+ # JSON Output Mode
     if args.json:
         data = [s.to_dict() for s in stations]
         print(json.dumps(data, indent=2))
         return
 
-    # Determine sort mode description - derived from effective_sort (the key
-    # actually handed to the manager above), never the raw args.sort default, so
-    # this label can never claim a distance sort that didn't happen (BUG-066).
+ # Determine sort mode description - derived from effective_sort (the key
+ # actually handed to the manager above), never the raw args.sort default, so
+ # this label can never claim a distance sort that didn't happen ().
     sort_mode_desc = None
     if effective_sort == "distance":
         has_real_dist = any(s.distance_km is not None for s in stations)
         if has_real_dist:
             sort_mode_desc = "Distance (Closest First)"
         else:
-            # No reference point/coordinates were available, so sort_records()
-            # fell back to its type-then-state-then-name ordering internally.
+ # No reference point/coordinates were available, so sort_records()
+ # fell back to its type-then-state-then-name ordering internally.
             sort_mode_desc = "Charger Type, then State, then Station Name"
     elif effective_sort == "price":
         sort_mode_desc = "Price (Lowest First)"
@@ -2052,7 +2052,7 @@ DESCRIPTION
 
     render_cb()
 
-    # Facilities CLI direct execution mode
+ # Facilities CLI direct execution mode
     if args.facilities:
         if not stations:
             print(f"{C_YELLOW}⚠ No stations found to look up nearby facilities.{C_RESET}")
@@ -2066,7 +2066,7 @@ DESCRIPTION
         if not sys.stdin.isatty():
             return
 
-    # Interactive Station Selector Loop
+ # Interactive Station Selector Loop
     if sys.stdin.isatty():
         while True:
             print(f"\n{C_BOLD}Options:{C_RESET} Enter station number [{C_GREEN}1-{len(stations)}{C_RESET}] to inspect, {C_MAGENTA}'renamed'{C_RESET} to reconcile renames, {C_BLUE}'stale'{C_RESET} to update stale, {C_CYAN}'u <#>' {C_RESET}to update station, or {C_YELLOW}Enter{C_RESET}/'q' to quit.")
@@ -2099,7 +2099,7 @@ DESCRIPTION
                 render_cb()
                 continue
 
-            # Quick update command e.g. "u 3" or "update 3"
+ # Quick update command e.g. "u 3" or "update 3"
             if choice.startswith("u ") or choice.startswith("update ") or choice.startswith("s "):
                 parts = choice.split()
                 if len(parts) >= 2 and parts[1].isdigit():
@@ -2169,9 +2169,9 @@ DESCRIPTION
                 ok, diffs, fresh = manager.reverify_station(sel)
                 _print_reverify_result(sel.name, ok, diffs)
                 if ok and fresh:
-                    # BUG-117: "Re-verifying should reload the entry - differences
-                    # can then be seen" - redisplay the just-refreshed card in
-                    # place instead of leaving the user looking at stale values.
+ # "Re-verifying should reload the entry - differences
+ # can then be seen" - redisplay the just-refreshed card in
+ # place instead of leaving the user looking at stale values.
                     sel = fresh
                     print()
                     display_station_inspection_card(sel, eval_time=args.time)

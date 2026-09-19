@@ -310,21 +310,21 @@ def evaluate_session(session, periods, master_path=USAGE_MASTER):
     usage_rate = period["usage_rate_per_kwh"]
     solar_tier1_rate = period["solar_feed_in_tier1_rate_per_kwh"]
 
-    # GST treatment confirmed against real invoices elsewhere in this repo
-    # (power_cost_calculator.py's reconstruct_bill(), agl_tariff_rates.
-    # example.json's own "_comment") - agl_tariff_rates.json's rates are
-    # ex GST, GST applies to usage/supply/demand CHARGES only, and the
-    # solar feed-in credit is GST-free and simply netted off afterward
-    # ("Total GST" on every real sampled invoice = 10% of charges, not
-    # 10% of the post-credit net). The "Evnex-adjusted" figure here
-    # values the solar-attributed share as that SAME kind of GST-free
-    # credit (an opportunity cost, not a real charge), so it gets the
-    # same treatment: GST on the grid-attributed share only, none on the
-    # solar-attributed share. Caught missing entirely in an earlier
-    # version (AGENTS.md TODO-027) when the user manually reproduced this
-    # calculation by hand and it didn't match a GST-inclusive figure
-    # shown right next to it in analyse_charging.py's own
-    # inspect_session() box.
+ # GST treatment confirmed against real invoices elsewhere in this repo
+ # (power_cost_calculator.py's reconstruct_bill(), agl_tariff_rates.
+ # example.json's own "_comment") - agl_tariff_rates.json's rates are
+ # ex GST, GST applies to usage/supply/demand CHARGES only, and the
+ # solar feed-in credit is GST-free and simply netted off afterward
+ # ("Total GST" on every real sampled invoice = 10% of charges, not
+ # 10% of the post-credit net). The "Evnex-adjusted" figure here
+ # values the solar-attributed share as that SAME kind of GST-free
+ # credit (an opportunity cost, not a real charge), so it gets the
+ # same treatment: GST on the grid-attributed share only, none on the
+ # solar-attributed share. Caught missing entirely in an earlier
+ # version (AGENTS.md TODO-027) when the user manually reproduced this
+ # calculation by hand and it didn't match a GST-inclusive figure
+ # shown right next to it in analyse_charging.py's own
+ # inspect_session() box.
     GST_MULTIPLIER = 1.10
 
     base_cost = kwh_total * usage_rate
@@ -352,12 +352,12 @@ def evaluate_session(session, periods, master_path=USAGE_MASTER):
         and import_kwh >= CONFLICT_IMPORT_RATIO * kwh_total
     )
 
-    # REQ-071: PVOutput-primary solar split - real generation+consumption
-    # CT clamps for this session's own window (module-level _PV_DAY_CACHE
-    # shares one fetch per calendar day across a whole batch run). Never
-    # fatal to any of the figures above if it fails (missing credentials,
-    # network egress, rate limit, an unexpected response shape) -
-    # evnex_adjusted_cost above stays available as the fallback.
+ # REQ-071: PVOutput-primary solar split - real generation+consumption
+ # CT clamps for this session's own window (module-level _PV_DAY_CACHE
+ # shares one fetch per calendar day across a whole batch run). Never
+ # fatal to any of the figures above if it fails (missing credentials,
+ # network egress, rate limit, an unexpected response shape) -
+ # evnex_adjusted_cost above stays available as the fallback.
     pv_split = {
         "generation_kwh": None, "consumption_kwh": None, "self_consumed_kwh": None,
         "export_kwh": None, "import_kwh": None, "solar_fraction": None, "coverage": 0.0,
@@ -481,7 +481,7 @@ def reconcile_against_invoices(deepdive_dir=None, master_path=USAGE_MASTER, peri
          sum of every EV session's own real-AGL-meter import for its
          window (real_import_kwh) can never exceed the cycle's own
          total real household import - every session's window sits
-         INSIDE the cycle, so violating this would mean a real bug
+         INSIDE the cycle, so violating this would mean a real issue
          (double-counted or wrongly-dated session windows), not
          anything about solar usage. Skipped (not "PASS", not "FAIL",
          just not checked) whenever the cycle's own usage master
@@ -605,13 +605,13 @@ EXAMPLES
         print("No matching Evnex deep-dive sessions found.")
         return 1
 
-    # A session that delivered ~zero energy is a connection blip (charger
-    # pairing/testing, a momentary plug/unplug, a start that never drew
-    # power) rather than a real charge - see evnex_common.
-    # is_real_charging_session()'s own docstring for how this was found
-    # (a real charger swap producing 5 of these, plus 23 more already on
-    # disk predating it). Excluded from every count/total below, but
-    # never silently - the excluded count is always reported.
+ # A session that delivered ~zero energy is a connection blip (charger
+ # pairing/testing, a momentary plug/unplug, a start that never drew
+ # power) rather than a real charge - see evnex_common.
+ # is_real_charging_session()'s own docstring for how this was found
+ # (a real charger swap producing 5 of these, plus 23 more already on
+ # disk predating it). Excluded from every count/total below, but
+ # never silently - the excluded count is always reported.
     def _attrs(s):
         return (s.get("session", {}) or {}).get("attributes", {}) or {}
 
@@ -638,11 +638,11 @@ EXAMPLES
     total_base = sum(r["base_cost"] for r in results)
     total_base_incl_gst = sum(r["base_cost_incl_gst"] for r in results)
 
-    # REQ-071: blended total now prefers PVOutput-adjusted (real, measured
-    # self-consumption) FIRST, Evnex-adjusted (a configured schedule, not a
-    # live measurement) SECOND, and plain base cost only for a session with
-    # neither - so every session is always covered, never silently dropped,
-    # while always using the most direct measurement available for it.
+ # REQ-071: blended total now prefers PVOutput-adjusted (real, measured
+ # self-consumption) FIRST, Evnex-adjusted (a configured schedule, not a
+ # live measurement) SECOND, and plain base cost only for a session with
+ # neither - so every session is always covered, never silently dropped,
+ # while always using the most direct measurement available for it.
     n_pv = sum(1 for r in results if r.get("pv_adjusted_cost") is not None)
     n_evnex_fallback = sum(1 for r in results if r.get("pv_adjusted_cost") is None and r["evnex_adjusted_cost"] is not None)
     n_base_only = len(results) - n_pv - n_evnex_fallback

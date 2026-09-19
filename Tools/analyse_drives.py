@@ -51,8 +51,10 @@ from lib.table_formatter import (
     format_title_line,
     format_box_line,
 )
+from lib.sei_inspector import inspect_mp4_clip, format_stream_banner
 import lib.tessie_timezone as tztools
 import lib.tessie_api_common as tessie_api_common
+from lib.fuel_common import format_drive_fuel_comparison, SAMPLE_COMPARISON_VEHICLES
 
 
 def normalize_row_timezone(row, lat_key, lon_key, start_key_prefix):
@@ -88,12 +90,12 @@ def normalize_row_timezone(row, lat_key, lon_key, start_key_prefix):
         row[tz_key] = ""
         row[local_key] = legacy
         return
-    # naive.timestamp() would interpret the naive value in THIS machine's
-    # own local zone, which is wrong on any host not itself set to
-    # Sydney - compute purely arithmetically instead: treat the naive
-    # value as if it already were UTC (epoch_as_if_utc), then subtract
-    # the offset Tessie actually applied (Sydney's, for this date) to
-    # recover the true UTC instant.
+ # naive.timestamp() would interpret the naive value in THIS machine's
+ # own local zone, which is wrong on any host not itself set to
+ # Sydney - compute purely arithmetically instead: treat the naive
+ # value as if it already were UTC (epoch_as_if_utc), then subtract
+ # the offset Tessie actually applied (Sydney's, for this date) to
+ # recover the true UTC instant.
     sydney_offset = tztools.sydney_offset_seconds(naive)
     epoch_as_if_utc = int((naive - datetime(1970, 1, 1)).total_seconds())
     true_utc_epoch = epoch_as_if_utc - int(sydney_offset)
@@ -143,27 +145,32 @@ def format_duration_short(mins):
     return f"{h}h {m}m"
 
 def format_drive_efficiency(t):
-    """kWh/100km average efficiency for a whole trip (drives-table column,
-    REQ AGENTS.local.md 2026-09-15: user - "a new column in the drives
-    probably after 'Route (Origin -> Destination)' and before 'Parked
-    Duration' - this should be in kWh/100km"). Prefers Tessie's own
-    'Average Energy Used (Wh/km)' summary column (already correctly
-    averaged over the whole drive - divide by 10 for kWh/100km), falling
-    back to Total Energy Used (kWh) / Distance (km) * 100 when Wh/km is
-    missing but both of those are present. Returns '-' when neither is
-    available (e.g. an older export or a footage-only row with no
-    drive-summary energy data)."""
+    """kWh/100km average efficiency for a whole trip (drives-table column).
+    Prefers Tessie's own 'Average Energy Used (Wh/km)' summary column (divide by 10 for kWh/100km),
+    falling back to Total Energy Used (kWh) / Distance (km) * 100.
+    Returns '-' when distance is zero/near-zero (<0.1 km) or when efficiency is out of physical bounds (e.g. >100 kWh/100km or <0)."""
+    dist_km = t.get("dist_km")
+    try:
+        if dist_km is not None and float(dist_km) < 0.1:
+            return "-"
+    except (TypeError, ValueError):
+        pass
     wh_km = t.get("wh_km")
     try:
         if wh_km not in (None, "", "-"):
-            return f"{float(wh_km) / 10.0:.1f} kWh/100km"
+            val = float(wh_km) / 10.0
+            if 0.0 <= val <= 100.0:
+                return f"{val:.1f} kWh/100km"
+            return "-"
     except (TypeError, ValueError):
         pass
     kwh_used = t.get("kwh_used")
-    dist_km = t.get("dist_km")
     try:
-        if kwh_used not in (None, "", "-") and dist_km and float(dist_km) > 0:
-            return f"{(float(kwh_used) / float(dist_km)) * 100.0:.1f} kWh/100km"
+        if kwh_used not in (None, "", "-") and dist_km and float(dist_km) >= 0.1:
+            val = (float(kwh_used) / float(dist_km)) * 100.0
+            if 0.0 <= val <= 100.0:
+                return f"{val:.1f} kWh/100km"
+            return "-"
     except (TypeError, ValueError, ZeroDivisionError):
         pass
     return "-"
@@ -209,7 +216,7 @@ def is_home_place(place_str, places_dict=None):
                 nick_name = str(p_info.get("nickname", "")).lower()
                 if p_lower in (str(p_name).lower(), meta_short, loc_name, nick_name) and p_lower:
                     return True
-    # Strictly match 'home' as a discrete token (zero hardcoded PII)
+ # Strictly match 'home' as a discrete token (zero hardcoded PII)
     return bool(re.search(r"\bhome\b", p_lower))
 
 def is_home_event(ev, analyzer=None):
@@ -354,7 +361,7 @@ def resolve_master_teslacam_dir(teslacam_dirs=None):
     """
     candidates = list(teslacam_dirs) if teslacam_dirs else []
     
-    # If no candidates provided, auto-discover from /Volumes
+ # If no candidates provided, auto-discover from /Volumes
     if not candidates:
         if os.path.isdir("/Volumes/TESLADRIVE/TeslaCam") or os.path.isdir("/Volumes/TESLADRIVE"):
             candidates.append("/Volumes/TESLADRIVE")
@@ -362,7 +369,7 @@ def resolve_master_teslacam_dir(teslacam_dirs=None):
             if v not in candidates and os.path.isdir(os.path.join(v, "TeslaCam")):
                 candidates.append(v)
 
-    # Pass 1: Explicit Root Marker (ARCHIVE_2TB / ARCHIVE)
+ # Pass 1: Explicit Root Marker (ARCHIVE_2TB / ARCHIVE)
     for d in candidates:
         if not d:
             continue
@@ -373,7 +380,7 @@ def resolve_master_teslacam_dir(teslacam_dirs=None):
             tc_dir = os.path.join(root, "TeslaCam")
             return tc_dir if os.path.isdir(tc_dir) else root
 
-    # Pass 2: Capacity > 1600 GB (2TB Master Archive SSD)
+ # Pass 2: Capacity > 1600 GB (2TB Master Archive SSD)
     for d in candidates:
         if not d:
             continue
@@ -388,7 +395,7 @@ def resolve_master_teslacam_dir(teslacam_dirs=None):
         except OSError:
             pass
 
-    # Pass 3: Primary Mount Name '/Volumes/TESLADRIVE' (strictly without ' 1', ' 2')
+ # Pass 3: Primary Mount Name '/Volumes/TESLADRIVE' (strictly without ' 1', ' 2')
     for d in candidates:
         if not d:
             continue
@@ -400,7 +407,7 @@ def resolve_master_teslacam_dir(teslacam_dirs=None):
             tc_dir = os.path.join(root, "TeslaCam")
             return tc_dir if os.path.isdir(tc_dir) else root
 
-    # Pass 4: Fallback to first candidate that is NOT JOWUA or USB
+ # Pass 4: Fallback to first candidate that is NOT JOWUA or USB
     for d in candidates:
         if not d:
             continue
@@ -412,7 +419,7 @@ def resolve_master_teslacam_dir(teslacam_dirs=None):
             tc_dir = os.path.join(root, "TeslaCam")
             return tc_dir if os.path.isdir(tc_dir) else d
 
-    # Last resort fallback if only one candidate exists
+ # Last resort fallback if only one candidate exists
     if candidates and candidates[0]:
         root0 = get_drive_root(candidates[0])
         tc_dir = os.path.join(root0, "TeslaCam")
@@ -437,7 +444,7 @@ def get_drive_identifier(drive_path, master_dir=None):
     if m_root and os.path.realpath(root) == os.path.realpath(m_root):
         return "MASTER"
 
-    # 1. Root Marker Directory Inspection
+ # 1. Root Marker Directory Inspection
     if os.path.isdir(os.path.join(root, "ARCHIVE_2TB")) or os.path.isdir(os.path.join(root, "ARCHIVE")):
         return "VOL_2TB_ARCHIVE"
     elif os.path.isdir(os.path.join(root, "JOWUA_1TB")) or os.path.isdir(os.path.join(root, "JOWUA")):
@@ -445,7 +452,7 @@ def get_drive_identifier(drive_path, master_dir=None):
     elif any(os.path.isdir(os.path.join(root, m)) for m in ["TESLA_USB_128GB", "TESLA_USB_256GB", "TESLA_USB"]):
         return "VOL_TESLA_USB"
 
-    # 2. Mount Name / Directory Name Matching
+ # 2. Mount Name / Directory Name Matching
     norm = os.path.normpath(drive_path)
     base = os.path.basename(root)
     if "TESLADRIVE 1" in norm or base == "TESLADRIVE 1" or "JOWUA" in base.upper():
@@ -455,7 +462,7 @@ def get_drive_identifier(drive_path, master_dir=None):
     elif base == "TESLADRIVE":
         return "VOL_2TB_ARCHIVE"
 
-    # 3. Physical Storage Capacity Heuristic (Fallback for distinct hardware partitions)
+ # 3. Physical Storage Capacity Heuristic (Fallback for distinct hardware partitions)
     try:
         total_gb = shutil.disk_usage(root).total / (1024**3)
         if total_gb > 1600:
@@ -484,7 +491,7 @@ def get_catalog_file_path(drive_dir=None):
     if d_dir and os.path.isdir(d_dir):
         root = get_drive_root(d_dir)
         new_path = os.path.join(root, ".TeslaCam_catalog.json")
-        # Self-healing migration from legacy .catalog.json if present
+ # Self-healing migration from legacy .catalog.json if present
         legacy_path_root = os.path.join(root, ".catalog.json")
         legacy_path_tc = os.path.join(d_dir, ".catalog.json")
         if not os.path.isfile(new_path):
@@ -507,7 +514,7 @@ def get_tombstone_file_path(master_dir=None):
     if m_dir and os.path.isdir(m_dir):
         root = get_drive_root(m_dir)
         new_path = os.path.join(root, ".TeslaCam_tombstones.json")
-        # Self-healing migration from legacy .tombstones.json if present
+ # Self-healing migration from legacy .tombstones.json if present
         legacy_path_root = os.path.join(root, ".tombstones.json")
         legacy_path_tc = os.path.join(m_dir, ".tombstones.json")
         if not os.path.isfile(new_path):
@@ -587,14 +594,14 @@ def scan_or_update_drive_catalog(drive_path, master_dir=None, force_rescan=False
     if not drive_path or not os.path.isdir(drive_path):
         return {"version": 1, "drive_id": "UNKNOWN", "packages": {}}
 
-    # If drive_path is the drive root, resolve its TeslaCam subfolder if present
+ # If drive_path is the drive root, resolve its TeslaCam subfolder if present
     if os.path.isdir(os.path.join(drive_path, "TeslaCam")):
         drive_path = os.path.join(drive_path, "TeslaCam")
 
     m_dir = master_dir or resolve_master_teslacam_dir()
     drive_id = get_drive_identifier(drive_path, m_dir)
     
-    # 1. Quick mtime inspection of top-level categories
+ # 1. Quick mtime inspection of top-level categories
     cur_mtimes = {}
     for cat in ["SavedClips", "SentryClips", "RecentClips"]:
         p = os.path.join(drive_path, cat)
@@ -609,11 +616,11 @@ def scan_or_update_drive_catalog(drive_path, master_dir=None, force_rescan=False
     cached_mtimes = catalog_data.get("dirs_mtime", {})
     pkgs = catalog_data.get("packages", {})
 
-    # Check if we can fast-return cached catalog
+ # Check if we can fast-return cached catalog
     if not force_rescan and pkgs and cached_mtimes == cur_mtimes:
         return catalog_data
 
-    # 2. Re-index SavedClips and SentryClips incrementally
+ # 2. Re-index SavedClips and SentryClips incrementally
     for cat_name, cat_label in [("SavedClips", "Saved"), ("SentryClips", "Sentry")]:
         cat_dir = os.path.join(drive_path, cat_name)
         if not os.path.isdir(cat_dir):
@@ -635,7 +642,7 @@ def scan_or_update_drive_catalog(drive_path, master_dir=None, force_rescan=False
                     except OSError:
                         folder_mtime = 0.0
 
-                    # If folder mtime matches cached package, keep cached package
+ # If folder mtime matches cached package, keep cached package
                     cached_pkg = pkgs.get(rel_k)
                     if cached_pkg and cached_pkg.get("mtime") == folder_mtime and not force_rescan:
                         continue
@@ -695,12 +702,12 @@ def scan_or_update_drive_catalog(drive_path, master_dir=None, force_rescan=False
         except OSError:
             pass
 
-        # Remove deleted event folders from catalog
+ # Remove deleted event folders from catalog
         for k in list(pkgs.keys()):
             if k.startswith(f"{cat_name}/") and k not in disk_entries:
                 del pkgs[k]
 
-    # 3. Re-index RecentClips (Continuous driving buffer)
+ # 3. Re-index RecentClips (Continuous driving buffer)
     rc_dir = os.path.join(drive_path, "RecentClips")
     if os.path.isdir(rc_dir):
         disk_recent_days = defaultdict(list)
@@ -811,15 +818,15 @@ def reconcile_archive_catalog_and_tombstones(master_dir, secondary_dirs=None, fo
                 known_drives.append(drv_id)
         tombstones_data["known_drives"] = known_drives
 
-    # Load previous catalog before update to detect Finder deletions
+ # Load previous catalog before update to detect Finder deletions
     old_catalog = load_catalog(master_dir)
     old_pkgs = dict(old_catalog.get("packages", {}))
 
-    # Scan and update Master catalog with fast mtime cache
+ # Scan and update Master catalog with fast mtime cache
     new_catalog = scan_or_update_drive_catalog(master_dir, master_dir, force_rescan=force_rescan)
     new_pkgs = new_catalog.get("packages", {})
 
-    # Detect Finder deletions: in old_pkgs but not in new_pkgs
+ # Detect Finder deletions: in old_pkgs but not in new_pkgs
     promoted_tombstones = 0
     now_iso = datetime.now().isoformat()
     for cat_k, cat_info in old_pkgs.items():
@@ -839,14 +846,14 @@ def reconcile_archive_catalog_and_tombstones(master_dir, secondary_dirs=None, fo
 
     added_to_catalog = sum(1 for k in new_pkgs if k not in old_pkgs)
 
-    # Clean any tombstoned items that were restored or re-added
+ # Clean any tombstoned items that were restored or re-added
     for k in new_pkgs:
         if k in tombs:
             del tombs[k]
 
     save_tombstones(tombstones_data, master_dir)
 
-    # Update secondary drive catalogs if present
+ # Update secondary drive catalogs if present
     if secondary_dirs:
         for s in secondary_dirs:
             if s and os.path.isdir(s):
@@ -1172,7 +1179,7 @@ def purge_flagged_tombstones_across_drives(teslacam_dirs, repo_root=None, dry_ru
     total_retired = 0
     now_iso = datetime.now().isoformat()
 
-    # 1. Unlink files from Master Archive
+ # 1. Unlink files from Master Archive
     if master_dir and os.path.isdir(master_dir):
         for key, info in list(tombs.items()):
             target_dir = os.path.join(master_dir, key)
@@ -1217,7 +1224,7 @@ def purge_flagged_tombstones_across_drives(teslacam_dirs, repo_root=None, dry_ru
             save_tombstones(tombstones_data, master_dir)
             scan_or_update_drive_catalog(master_dir, master_dir, force_rescan=True)
 
-    # 2. Scrub connected secondary drives
+ # 2. Scrub connected secondary drives
     for d in teslacam_dirs:
         drv_id = get_drive_identifier(d, master_dir)
         if drv_id != "MASTER":
@@ -1226,7 +1233,7 @@ def purge_flagged_tombstones_across_drives(teslacam_dirs, repo_root=None, dry_ru
             total_bytes += b_f
             total_retired += n_r
 
-    # If all known secondary drives were scrubbed or no secondary drives pending, clean up retired tombstones
+ # If all known secondary drives were scrubbed or no secondary drives pending, clean up retired tombstones
     if not dry_run:
         fresh_tombs = load_tombstones(master_dir)
         t_dict = fresh_tombs.get("tombstones", {})
@@ -1277,7 +1284,7 @@ def display_flagged_deletions_table(analyzer):
         print(format_box_line("└", "─", "┘", [total_inner]))
         return []
 
-    # Parse and sort all items chronologically (newest first)
+ # Parse and sort all items chronologically (newest first)
     parsed_items = []
     for k, info in flagged.items():
         dt = parse_tombstone_datetime(k, info)
@@ -1285,7 +1292,7 @@ def display_flagged_deletions_table(analyzer):
 
     parsed_items.sort(key=lambda x: x[2], reverse=True)
 
-    # Group by month (e.g. '2026-09')
+ # Group by month (e.g. '2026-09')
     months_grouped = {}
     for k, info, dt in parsed_items:
         m_key = dt.strftime("%Y-%m") if dt != datetime.min else "Unknown"
@@ -1386,7 +1393,12 @@ def display_flagged_deletions_menu(analyzer):
             break
             
         try:
-            choice = input("Tombstones Action: [u <#>] unflag, [P]urge secondary drives now, [b]ack, [q]uit: ").strip().lower()
+            print("\nAction:")
+            print("  [u <#>] Unflag footage package from deletion (e.g. 'u 1', 'u 2-4', 'u all')")
+            print("  [p]     Purge secondary drives now across mounted TeslaCam archives")
+            print("  [b]     Back to timeline")
+            print("  [q]     Quit")
+            choice = input("\nChoice: ").strip().lower()
             if choice == "q":
                 sys.exit(0)
             elif choice in ["b", "back"]:
@@ -1495,11 +1507,454 @@ def get_primary_preview_clip(pkg):
             return f
     return mp4_files[0]
 
+
+def preserve_file_metadata(src_path, dst_path):
+    """Preserves POSIX mode, modification & access times, and macOS birthtime (creation date)."""
+    try:
+        shutil.copystat(src_path, dst_path)
+    except Exception:
+        pass
+    if sys.platform == "darwin":
+        try:
+            st = os.stat(src_path)
+            ts = getattr(st, "st_birthtime", None) or st.st_mtime
+            dt_obj = datetime.fromtimestamp(ts)
+            ts_str = dt_obj.strftime("%m/%d/%Y %H:%M:%S")
+            subprocess.run(["SetFile", "-d", ts_str, "-m", dt_obj.strftime("%m/%d/%Y %H:%M:%S"), dst_path],
+                           capture_output=True, check=False)
+        except Exception:
+            pass
+
+
+def copy_clips_locally(clips_or_files, analyzer, date_or_str=None, default_dest=None, ask_preference=True, prompt_prefix="📥 Copy clips locally for faster viewing?"):
+    """
+    Copies video clips (from clip dicts or file paths) to local disk (default: <landing_directory>/TeslaCam/<YYYY-MM-DD>/).
+    Preserves all timestamps (creation birthtime & modified time) and companion event metadata (event.json & thumb.png).
+    Prompts user for destination or viewing in place on drive.
+    Returns: (copied_count, dest_dir)
+    """
+    if not clips_or_files:
+        print("⚠️  No files provided to copy.")
+        return 0, None
+
+    # Collect distinct valid source file paths
+    src_paths = []
+    for item in clips_or_files:
+        if isinstance(item, str):
+            if os.path.isfile(item):
+                src_paths.append(item)
+        elif isinstance(item, dict):
+            p = item.get("path")
+            if p and os.path.isfile(p):
+                src_paths.append(p)
+            for f in item.get("files", []):
+                if os.path.isfile(f):
+                    src_paths.append(f)
+
+    src_paths = sorted(list(set(src_paths)))
+    if not src_paths:
+        print("⚠️  No valid video files found to copy.")
+        return 0, None
+
+    # Determine default destination directory (<landing_directory>/TeslaCam/<YYYY-MM-DD>/)
+    landing_base = getattr(analyzer, "landing_dir", None) or os.path.expanduser("~/Downloads")
+    if not date_or_str and src_paths:
+        m = re.search(r"(\d{4}-\d{2}-\d{2})", os.path.basename(src_paths[0]))
+        date_or_str = m.group(1) if m else datetime.now().strftime("%Y-%m-%d")
+
+    target_sub = date_or_str or datetime.now().strftime("%Y-%m-%d")
+    if default_dest is None:
+        if os.path.basename(landing_base).lower() == "teslacam":
+            default_dest = os.path.join(landing_base, target_sub)
+        else:
+            default_dest = os.path.join(landing_base, "TeslaCam", target_sub)
+
+    # Inspect video stream & SEI telemetry prior to copy
+    primary_sample = src_paths[0] if src_paths else None
+    stream_info = inspect_mp4_clip(primary_sample) if primary_sample else None
+    stream_banner = format_stream_banner(stream_info) if stream_info else None
+
+    first_folder = os.path.dirname(src_paths[0])
+
+    if ask_preference:
+        print(f"\n{prompt_prefix}")
+        if stream_banner:
+            print(f"   {stream_banner}")
+        if stream_info and stream_info.get("is_encrypted"):
+            print(f"   ⚠️  Stream is encrypted ({stream_info.get('encryption_scheme', 'CENC')}) — requires vehicle decryption tools to view.")
+        print(f"   Default destination: {default_dest}")
+        try:
+            c_input = input(f"   [Enter] copy to default, [v]iew in place on drive, or enter custom folder path: ").strip()
+        except (KeyboardInterrupt, EOFError):
+            c_input = "v"
+
+        if c_input.lower() in ("v", "view", "n", "no", "place", "p"):
+            if sys.platform == "darwin" and os.path.exists(first_folder):
+                subprocess.run(["open", first_folder])
+                print(f"📂 Opened in Finder: {first_folder}\n")
+            return 0, first_folder
+
+        if c_input.lower() in ("", "c", "copy", "y", "yes"):
+            dest_dir = default_dest
+        else:
+            dest_dir = os.path.abspath(os.path.expanduser(c_input))
+    else:
+        dest_dir = default_dest
+
+    os.makedirs(dest_dir, exist_ok=True)
+
+    # Collect any companion event metadata files (event.json, thumb.png) from event folders
+    files_to_copy = [(src, os.path.basename(src)) for src in src_paths]
+    seen_event_dirs = set()
+    for src in src_paths:
+        src_dir = os.path.dirname(src)
+        if src_dir not in seen_event_dirs:
+            seen_event_dirs.add(src_dir)
+            folder_name = os.path.basename(src_dir)
+            for meta_name in ("event.json", "thumb.png"):
+                meta_path = os.path.join(src_dir, meta_name)
+                if os.path.isfile(meta_path):
+                    dest_meta_name = f"{folder_name}_{meta_name}" if "Clips" in os.path.dirname(src_dir) else meta_name
+                    files_to_copy.append((meta_path, dest_meta_name))
+
+    copied_count = 0
+    copied_bytes = 0
+    total_files = len(files_to_copy)
+    total_bytes = sum(os.path.getsize(f) for f, _ in files_to_copy if os.path.exists(f))
+    start_time = time.time()
+    bar_width = 26
+
+    def _render_progress(cur_bytes, cur_file_idx, cur_fname=""):
+        if not sys.stdout.isatty():
+            return
+        elapsed = time.time() - start_time
+        speed = (cur_bytes / elapsed) if elapsed > 0.3 else 0
+        pct = (cur_bytes / total_bytes) if total_bytes > 0 else 1.0
+        filled = int(bar_width * pct)
+        bar = "█" * filled + "░" * (bar_width - filled)
+
+        speed_str = f"{speed / (1024 * 1024):.1f} MB/s" if speed >= 1024 * 1024 else f"{speed / 1024:.0f} KB/s"
+        c_mb = cur_bytes / (1024 * 1024)
+        t_mb = total_bytes / (1024 * 1024)
+        c_sz_str = f"{c_mb/1024:.1f} GB" if t_mb >= 1024 else f"{c_mb:.0f} MB"
+        t_sz_str = f"{t_mb/1024:.1f} GB" if t_mb >= 1024 else f"{t_mb:.0f} MB"
+
+        fname_short = (cur_fname[:26] + "…") if len(cur_fname) > 27 else cur_fname
+        line = f"\r ⏳ [{bar}] {pct*100:>3.0f}% ({cur_file_idx}/{total_files} files, {c_sz_str}/{t_sz_str}) [{speed_str}] {fname_short:<28}"
+        sys.stdout.write(line)
+        sys.stdout.flush()
+
+    for idx, (src, dst_name) in enumerate(files_to_copy, 1):
+        dst_file = os.path.join(dest_dir, dst_name)
+        try:
+            src_sz = os.path.getsize(src)
+            if os.path.exists(dst_file) and os.path.getsize(dst_file) == src_sz:
+                preserve_file_metadata(src, dst_file)
+                copied_bytes += src_sz
+                copied_count += 1
+                _render_progress(copied_bytes, idx, dst_name)
+            else:
+                chunk_size = 2 * 1024 * 1024
+                with open(src, "rb") as fsrc, open(dst_file, "wb") as fdst:
+                    while True:
+                        buf = fsrc.read(chunk_size)
+                        if not buf:
+                            break
+                        fdst.write(buf)
+                        copied_bytes += len(buf)
+                        _render_progress(copied_bytes, idx, dst_name)
+                preserve_file_metadata(src, dst_file)
+                copied_count += 1
+        except Exception as e:
+            if sys.stdout.isatty():
+                sys.stdout.write("\n")
+            print(f"   ⚠️ Error copying {dst_name}: {e}")
+
+    if sys.stdout.isatty():
+        sys.stdout.write("\r" + " " * 95 + "\r")
+        sys.stdout.flush()
+
+    mb_done = copied_bytes / (1024 * 1024)
+    done_str = f"{mb_done/1024:.1f} GB" if mb_done >= 1024 else f"{mb_done:.0f} MB"
+    print(f"\n✔ Successfully copied {copied_count} clip & metadata file(s) ({done_str}) to:\n   {dest_dir}\n")
+    if sys.platform == "darwin" and os.path.exists(dest_dir):
+        subprocess.run(["open", dest_dir])
+        print(f"📂 Opened in Finder: {dest_dir}\n")
+
+    return copied_count, dest_dir
+
+
+def open_footage_package(pkg_or_items, analyzer, date_or_str=None, chosen_file=None, reveal_clip=True, ask_preference=True, force_copy=False):
+    """
+    Unified entry point for opening, revealing, and previewing TeslaCam footage.
+    - For RecentClips or when force_copy=True: Prompts/copies to organized local folder (<landing_directory>/TeslaCam/<YYYY-MM-DD>/)
+      preserving all file permissions and timestamps before revealing or opening.
+    - For SavedClips / SentryClips: Opens the self-contained event directory directly in macOS Finder
+      or reveals the primary clip.
+    Returns: (dest_dir, primary_clip_path)
+    """
+    if not pkg_or_items:
+        print("⚠️  No footage provided to open.")
+        return None, None
+
+    files = []
+    cat = None
+    folder = None
+
+    if isinstance(pkg_or_items, dict) and "files" in pkg_or_items:
+        pkg = pkg_or_items
+        files = list(pkg.get("files", []))
+        cat = pkg.get("cat")
+        folder = pkg.get("folder")
+        if not date_or_str:
+            date_val = pkg.get("date_str")
+            if not date_val and pkg.get("start_dt"):
+                date_val = pkg["start_dt"].strftime("%Y-%m-%d")
+            date_or_str = date_val
+    elif isinstance(pkg_or_items, list):
+        if len(pkg_or_items) == 1 and isinstance(pkg_or_items[0], dict) and "files" in pkg_or_items[0]:
+            return open_footage_package(pkg_or_items[0], analyzer, date_or_str=date_or_str, chosen_file=chosen_file, reveal_clip=reveal_clip, ask_preference=ask_preference, force_copy=force_copy)
+        for it in pkg_or_items:
+            if isinstance(it, str):
+                files.append(it)
+                if not cat:
+                    if "RecentClips" in it:
+                        cat = "Recent"
+                    elif "SentryClips" in it:
+                        cat = "Sentry"
+                    elif "SavedClips" in it:
+                        cat = "Saved"
+            elif isinstance(it, dict):
+                p = it.get("path")
+                if p:
+                    files.append(p)
+                for f in it.get("files", []):
+                    files.append(f)
+                if not cat:
+                    cat = it.get("cat")
+                if not folder:
+                    folder = it.get("folder")
+                if not date_or_str and it.get("dt"):
+                    date_or_str = it["dt"].strftime("%Y-%m-%d")
+    else:
+        return None, None
+
+    files = [f for f in files if os.path.isfile(f)]
+    if not files and folder and os.path.exists(folder):
+        if sys.platform == "darwin":
+            subprocess.run(["open", folder])
+            print(f"📂 Opened in Finder: {folder}\n")
+        return folder, None
+
+    if not files:
+        print("⚠️  No valid video files found in package.")
+        return None, None
+
+    is_recent = (cat == "Recent") or any("RecentClips" in f for f in files)
+    should_copy = force_copy or is_recent
+
+    if should_copy:
+        copied_cnt, dest_dir = copy_clips_locally(files, analyzer, date_or_str=date_or_str, ask_preference=ask_preference)
+        target_f = chosen_file or (get_primary_preview_clip({"files": files}) if reveal_clip else None)
+        local_target = None
+        if target_f and dest_dir and os.path.exists(dest_dir):
+            candidate = os.path.join(dest_dir, os.path.basename(target_f))
+            if os.path.exists(candidate):
+                local_target = candidate
+            elif os.path.exists(target_f):
+                local_target = target_f
+
+        if local_target and reveal_clip:
+            preview_footage_file(local_target, method="quicklook")
+        return dest_dir, local_target
+    else:
+        target_f = chosen_file or (get_primary_preview_clip({"files": files}) if reveal_clip else None)
+        target_folder = folder or (os.path.dirname(files[0]) if files else None)
+        if reveal_clip and target_f and os.path.exists(target_f):
+            preview_footage_file(target_f, method="quicklook")
+            return os.path.dirname(target_f), target_f
+        elif target_folder and os.path.exists(target_folder):
+            if sys.platform == "darwin":
+                subprocess.run(["open", target_folder])
+            print(f"📂 Opened in Finder: {target_folder}\n")
+            return target_folder, target_f
+        elif target_f and os.path.exists(target_f):
+            preview_footage_file(target_f, method="quicklook")
+            return os.path.dirname(target_f), target_f
+        else:
+            print("⚠️ Folder not accessible.\n")
+            return None, None
+
+
+def display_package_sei_breakdown(packages_or_items, analyzer=None):
+    """
+    Lists files grouped by timestamp prefix for all cameras (front, back, repeaters, pillars, cabin)
+    and checks SEI metadata status for each individual camera file.
+
+    For each timestamp prefix, displays:
+      a) ✔ (All N have SEI) [with sample telemetry: speed, gear, AP]
+      b) ❌ (0/N have SEI)
+      c) ✔ x X  ❌ x Y (partial SEI presence)
+    """
+    if not packages_or_items:
+        print("\n⚠️  No footage provided to inspect.\n")
+        return
+
+    pkgs = packages_or_items if isinstance(packages_or_items, list) else [packages_or_items]
+
+    normalized_pkgs = []
+    for item in pkgs:
+        if isinstance(item, dict) and "files" in item:
+            normalized_pkgs.append(item)
+        elif isinstance(item, dict) and "path" in item:
+            normalized_pkgs.append({"files": [item["path"]], "cat": item.get("cat", "Footage"), "folder": os.path.dirname(item["path"])})
+        elif isinstance(item, str) and os.path.isfile(item):
+            normalized_pkgs.append({"files": [item], "cat": "Footage", "folder": os.path.dirname(item)})
+
+    if not normalized_pkgs:
+        print("\n⚠️  No footage files found to inspect.\n")
+        return
+
+    print("\n" + "=" * 80)
+    print(" 🔍 TESLACAM FILES & SEI METADATA BREAKDOWN")
+    print("=" * 80)
+
+    total_all_files = 0
+    total_all_sei = 0
+    total_all_no_sei = 0
+    total_all_enc = 0
+
+    for idx, pkg in enumerate(normalized_pkgs, 1):
+        files = pkg.get("files", [])
+        if not files:
+            continue
+
+        cat = pkg.get("cat", "Footage")
+        icon = "🔄" if cat == "Recent" else ("💾" if cat == "Saved" else ("🔴" if cat == "Sentry" else "📁"))
+        folder = pkg.get("folder") or (os.path.dirname(files[0]) if files else "TeslaCam")
+        rel_p = pkg.get("rel_path") or os.path.basename(folder)
+        reason = pkg.get("reason", "")
+        reason_str = f" — {reason}" if reason else ""
+
+        print(f"\n  📂 [{icon} {cat}Clips] {folder}{reason_str}")
+
+        # Group files by timestamp prefix (YYYY-MM-DD_HH-MM-SS or YYYY-MM-DD_HH-MM)
+        groups = defaultdict(list)
+        for f in files:
+            bn = os.path.basename(f)
+            m = re.match(r"^(\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2})", bn)
+            if not m:
+                m = re.match(r"^(\d{4}-\d{2}-\d{2}_\d{2}-\d{2})", bn)
+            prefix = m.group(1) if m else os.path.splitext(bn)[0]
+            groups[prefix].append(f)
+
+        pkg_files_cnt = 0
+        pkg_sei_cnt = 0
+        pkg_no_sei_cnt = 0
+        pkg_enc_cnt = 0
+
+        for prefix in sorted(groups.keys()):
+            cam_files = sorted(groups[prefix])
+            num_cams = len(cam_files)
+            pkg_files_cnt += num_cams
+
+            # Format time representation
+            time_part = prefix
+            m_t = re.search(r"(\d{2})-(\d{2})-(\d{2})$", prefix)
+            if m_t:
+                time_part = f"{m_t.group(1)}:{m_t.group(2)}:{m_t.group(3)}"
+            else:
+                m_t2 = re.search(r"(\d{2})-(\d{2})$", prefix)
+                if m_t2:
+                    time_part = f"{m_t2.group(1)}:{m_t2.group(2)}"
+
+            # Inspect each camera file
+            sei_files = []
+            no_sei_files = []
+            enc_files = []
+            sample_telem = None
+
+            for cf in cam_files:
+                st = inspect_mp4_clip(cf)
+                if st.get("is_encrypted"):
+                    enc_files.append((cf, st))
+                elif st.get("has_sei"):
+                    sei_files.append((cf, st))
+                    if not sample_telem and st.get("telemetry_sample"):
+                        sample_telem = st.get("telemetry_sample")
+                else:
+                    no_sei_files.append((cf, st))
+
+            n_sei = len(sei_files)
+            n_no_sei = len(no_sei_files)
+            n_enc = len(enc_files)
+
+            pkg_sei_cnt += n_sei
+            pkg_no_sei_cnt += n_no_sei
+            pkg_enc_cnt += n_enc
+
+            # Determine mark
+            if n_enc == num_cams:
+                mark = f"🔒 (All {num_cams} encrypted)"
+            elif n_sei == num_cams:
+                telem_bits = []
+                if sample_telem:
+                    if "speed_kmh" in sample_telem:
+                        telem_bits.append(f"{sample_telem['speed_kmh']} km/h")
+                    if "gear" in sample_telem:
+                        telem_bits.append(f"Gear {sample_telem['gear']}")
+                    if "autopilot_state" in sample_telem:
+                        telem_bits.append(f"AP: {sample_telem['autopilot_state']}")
+                telem_str = f": {', '.join(telem_bits)}" if telem_bits else ""
+                mark = f"✔ (All {num_cams} have SEI{telem_str})"
+            elif n_sei == 0 and n_enc == 0:
+                mark = f"❌ (0/{num_cams} have SEI)"
+            else:
+                parts = []
+                if n_sei > 0:
+                    parts.append(f"✔ x {n_sei}")
+                if n_no_sei > 0:
+                    parts.append(f"❌ x {n_no_sei}")
+                if n_enc > 0:
+                    parts.append(f"🔒 x {n_enc}")
+                mark = "  ".join(parts)
+
+            cams_label = f"[{num_cams} file{'s' if num_cams != 1 else ''}]"
+            print(f"     • {time_part} ➔ {prefix}-*.mp4  {cams_label:<10} {mark}")
+
+        total_all_files += pkg_files_cnt
+        total_all_sei += pkg_sei_cnt
+        total_all_no_sei += pkg_no_sei_cnt
+        total_all_enc += pkg_enc_cnt
+
+        summary_parts = []
+        if pkg_sei_cnt > 0:
+            summary_parts.append(f"✔ {pkg_sei_cnt} with SEI")
+        if pkg_no_sei_cnt > 0:
+            summary_parts.append(f"❌ {pkg_no_sei_cnt} without SEI")
+        if pkg_enc_cnt > 0:
+            summary_parts.append(f"🔒 {pkg_enc_cnt} encrypted")
+        res_str = ", ".join(summary_parts) if summary_parts else "No video files"
+        print(f"     └─ Package Summary: {len(groups)} interval(s), {pkg_files_cnt} files ({res_str})")
+
+    print("\n" + "-" * 80)
+    grand_parts = []
+    if total_all_sei > 0:
+        grand_parts.append(f"✔ {total_all_sei} with SEI")
+    if total_all_no_sei > 0:
+        grand_parts.append(f"❌ {total_all_no_sei} without SEI")
+    if total_all_enc > 0:
+        grand_parts.append(f"🔒 {total_all_enc} encrypted")
+    grand_str = ", ".join(grand_parts) if grand_parts else "None"
+    print(f" Total Checked: {total_all_files} video files across inspected package(s) ({grand_str})")
+    print("=" * 80 + "\n")
+
+
 def run_interactive_footage_review(packages, analyzer, context_label="Event Footage"):
     """
     Interactive Step-Through Review Wizard:
     Sequentially reviews footage packages, launches macOS Quick Look video preview for each,
-    and prompts user to Keep ([k] / Enter) or Delete ([d]).
+    and prompts user to Keep ([k] / Enter), Copy ([c]), Delete ([f]), or Open ([o]).
     """
     if not packages:
         print("\n⚠️  No footage packages available to review.")
@@ -1511,7 +1966,7 @@ def run_interactive_footage_review(packages, analyzer, context_label="Event Foot
     print("=" * 76)
     print(f" Stepping through {total_pkgs} footage package(s).")
     print(" Footage clips will be revealed in macOS Finder.")
-    print(" Commands: [k]eep / next (Enter), [f]lag delete, [u]nflag, [v]iew in Finder, [o]pen folder, [s]kip, [q]uit.")
+    print(" Commands: [k]eep / next (Enter), [c]opy locally, [f]lag delete, [u]nflag, [v]iew cams, [o]pen, [s]kip, [q]uit.")
     print("=" * 76)
 
     kept_count = 0
@@ -1539,8 +1994,9 @@ def run_interactive_footage_review(packages, analyzer, context_label="Event Foot
             mb_val = pkg["tot_size"] / (1024 * 1024)
             sz_str = f"{mb_val/1024:.1f} GB" if mb_val >= 1024 else f"{mb_val:.0f} MB"
 
-            if primary_clip:
-                current_proc = preview_footage_file(primary_clip, method="quicklook")
+            dest_p, local_primary = open_footage_package(pkg, analyzer, reveal_clip=True, ask_preference=True)
+            if local_primary:
+                primary_clip = local_primary
 
             box_w = 78
             p_rel = pkg["rel_path"]
@@ -1574,10 +2030,30 @@ def run_interactive_footage_review(packages, analyzer, context_label="Event Foot
             else:
                 status_prev = " Highlight  : ⚠️  No previewable MP4 file found"
             print(f"│{pad_display(status_prev, box_w, 'left')}│")
+
+            if primary_clip and os.path.exists(primary_clip):
+                st_info = inspect_mp4_clip(primary_clip)
+                if st_info.get("is_encrypted"):
+                    enc_scheme = st_info.get("encryption_scheme") or "CENC"
+                    print(f"│{pad_display(f' Stream     : 🔒 Encrypted ({enc_scheme})', box_w, 'left')}│")
+                elif st_info.get("has_sei"):
+                    sample = st_info.get("telemetry_sample", {})
+                    telem_bits = []
+                    if "speed_kmh" in sample:
+                        telem_bits.append(f"{sample['speed_kmh']} km/h")
+                    if "gear" in sample:
+                        telem_bits.append(f"Gear {sample['gear']}")
+                    if "autopilot_state" in sample:
+                        telem_bits.append(f"AP: {sample['autopilot_state']}")
+                    telem_str = ", ".join(telem_bits) if telem_bits else "Available"
+                    print(f"│{pad_display(f' Telemetry  : 📊 SEI ({telem_str})', box_w, 'left')}│")
+                else:
+                    codec = st_info.get("codec", "H.264")
+                    print(f"│{pad_display(f' Stream     : {codec} (Standard video, No SEI)', box_w, 'left')}│")
             print(f"└{'─'*box_w}┘")
 
             while True:
-                prompt_str = f"Action: [k]eep / next (Enter), [f]lag delete, [u]nflag, [v]iew cams, [o]pen, [s]kip, [q]uit: "
+                prompt_str = f"Action: [k]eep / next (Enter), [c]opy locally, [f]lag delete, [u]nflag, [v]iew cams, [o]pen, [s]kip, [q]uit: "
                 try:
                     ans = input(prompt_str).strip().lower()
                 except (KeyboardInterrupt, EOFError):
@@ -1586,6 +2062,10 @@ def run_interactive_footage_review(packages, analyzer, context_label="Event Foot
                 if ans in ("", "k", "keep", "n", "next"):
                     kept_count += 1
                     break
+                elif ans in ("c", "copy"):
+                    date_val = pkg.get("date_str") or (pkg["start_dt"].strftime("%Y-%m-%d") if pkg.get("start_dt") else None)
+                    copy_clips_locally(pkg.get("files", []), analyzer, date_or_str=date_val, ask_preference=True)
+                    continue
                 elif ans in ("f", "flag", "d", "del", "delete"):
                     n_flag, b_flag = flag_footage_packages_for_deletion([pkg], analyzer)
                     deleted_count += 1
@@ -1618,21 +2098,16 @@ def run_interactive_footage_review(packages, analyzer, context_label="Event Foot
                         close_preview_process(current_proc)
                         current_proc = None
                         for c_f in mp4s:
-                            preview_footage_file(c_f, method="quicklook")
+                            open_footage_package(pkg, analyzer, chosen_file=c_f, reveal_clip=True, ask_preference=False)
                         print(" 📹 Launched all camera angles in Quick Look.\n")
                     elif c_pick.isdigit() and 1 <= int(c_pick) <= len(mp4s):
                         close_preview_process(current_proc)
                         chosen_f = mp4s[int(c_pick) - 1]
-                        current_proc = preview_footage_file(chosen_f, method="quicklook")
+                        open_footage_package(pkg, analyzer, chosen_file=chosen_f, reveal_clip=True, ask_preference=False)
                         print(f" 📹 Launched: {os.path.basename(chosen_f)}\n")
                     continue
                 elif ans in ("o", "open"):
-                    folder_p = pkg.get("folder")
-                    if folder_p and os.path.exists(folder_p) and sys.platform == "darwin":
-                        subprocess.run(["open", folder_p])
-                        print(f" 📂 Opened in Finder: {folder_p}\n")
-                    else:
-                        print(" ⚠️ Folder not accessible.\n")
+                    open_footage_package(pkg, analyzer, reveal_clip=False, ask_preference=True)
                     continue
                 elif ans in ("s", "skip"):
                     print("\n Skipping remainder of review.")
@@ -1642,7 +2117,7 @@ def run_interactive_footage_review(packages, analyzer, context_label="Event Foot
                     print("\n Exiting review wizard.")
                     return kept_count, deleted_count, freed_bytes_total
                 else:
-                    print(" Invalid option. Press Enter to keep, 'd' to delete, 'v' to switch camera angle, or 'q' to quit.")
+                    print(" Invalid option. Press Enter to keep, 'c' to copy, 'f' to delete, 'v' to switch camera angle, or 'q' to quit.")
 
             if ans in ("s", "skip"):
                 break
@@ -1696,55 +2171,60 @@ class TessieAnalyzer:
         self._synced_this_session = False
         self._sync_disabled = False
 
-        # Read config.json directly (same file/convention as
-        # TessieChargingAnalyzer and tessie_api_common.load_config()) just
-        # for its "tessie_directory" setting - see self.tessie_data_home
-        # below for why.
+ # Read config.json directly (same file/convention as
+ # TessieChargingAnalyzer and tessie_api_common.load_config()) just
+ # for its "tessie_directory" setting - see self.tessie_data_home
+ # below for why.
         _cfg_path = os.path.join(parent_dir, "config.json")  # TODO-034: root is primary now
         if not os.path.isfile(_cfg_path):
             _cfg_path = os.path.join(parent_dir, "Tessie", "config.json")  # legacy fallback
         cfg_tessie_dir = None
+        cfg_landing_dir = None
         if os.path.isfile(_cfg_path):
             try:
                 with open(_cfg_path, "r", encoding="utf-8") as _f:
-                    cfg_tessie_dir = json.load(_f).get("tessie_directory")
+                    _cdata = json.load(_f)
+                    cfg_tessie_dir = _cdata.get("tessie_directory")
+                    cfg_landing_dir = _cdata.get("landing_directory")
             except Exception:
                 cfg_tessie_dir = None
         if cfg_tessie_dir:
             cfg_tessie_dir = os.path.expanduser(cfg_tessie_dir)
+        if cfg_landing_dir:
+            self.landing_dir = os.path.expanduser(cfg_landing_dir)
 
-        # The ONE authoritative home for drives_master.csv and its
-        # archive/ folder: config.json's "tessie_directory" if present,
-        # else the default iCloud path, else (last resort - e.g. no
-        # config yet) the repo's own Tessie folder. Deliberately singular
-        # - this used to be written to EVERY discovered Tessie-like
-        # directory (repo AND iCloud via self.tessie_dirs, which stays
-        # plural below for registry/legacy-layout READING), which is why
-        # the repo ended up holding its own drifting copy of real drive
-        # data, including its own separate archive/ contents. User's
-        # explicit ask: nothing should be archived (or duplicated at all)
-        # in the repo folder.
+ # The ONE authoritative home for drives_master.csv and its
+ # archive/ folder: config.json's "tessie_directory" if present,
+ # else the default iCloud path, else (last resort - e.g. no
+ # config yet) the repo's own Tessie folder. Deliberately singular
+ # - this used to be written to EVERY discovered Tessie-like
+ # directory (repo AND iCloud via self.tessie_dirs, which stays
+ # plural below for registry/legacy-layout READING), which is why
+ # the repo ended up holding its own drifting copy of real drive
+ # data, including its own separate archive/ contents. User's
+ # explicit ask: nothing should be archived (or duplicated at all)
+ # in the repo folder.
         if cfg_tessie_dir:
-            # Trust the user's own configured location UNCONDITIONALLY -
-            # do not silently fall back to the repo folder just because
-            # this particular process can't currently see that path (e.g.
-            # it doesn't exist yet, or a sandboxed/bridged shell resolves
-            # a "~"-relative path differently than the user's real
-            # machine does - see BUG-020's identical lesson, which is
-            # exactly what happened testing this very code from this
-            # session's own bridge: it silently fell through to this
-            # repo folder and re-corrupted drives_master.csv). Only the
-            # ABSENCE of a configured value falls through below.
+ # Trust the user's own configured location UNCONDITIONALLY -
+ # do not silently fall back to the repo folder just because
+ # this particular process can't currently see that path (e.g.
+ # it doesn't exist yet, or a sandboxed/bridged shell resolves
+ # a "~"-relative path differently than the user's real
+ # machine does - see 's identical lesson, which is
+ # exactly what happened testing this very code from this
+ # session's own bridge: it silently fell through to this
+ # repo folder and re-corrupted drives_master.csv). Only the
+ # ABSENCE of a configured value falls through below.
             self.tessie_data_home = os.path.abspath(os.path.expanduser(cfg_tessie_dir))
         elif os.path.isdir(self.icloud_dir):
             self.tessie_data_home = os.path.abspath(os.path.realpath(self.icloud_dir))
         else:
-            # Explicit user instruction: the repo folder is NEVER a valid
-            # home for real master data, not even as a last-resort
-            # fallback. If nothing is configured and the default iCloud
-            # folder doesn't exist either, there is no data home -
-            # consolidate_drives() below refuses to write rather than
-            # silently defaulting into the repo.
+ # Explicit user instruction: the repo folder is NEVER a valid
+ # home for real master data, not even as a last-resort
+ # fallback. If nothing is configured and the default iCloud
+ # folder doesn't exist either, there is no data home -
+ # consolidate_drives() below refuses to write rather than
+ # silently defaulting into the repo.
             self.tessie_data_home = None
 
         self.tessie_dirs = []
@@ -1755,7 +2235,7 @@ class TessieAnalyzer:
             os.path.expanduser("~/iCloud/repos/tesla/Tessie"),
             self.icloud_dir
         ]  # Tessie CSV/registry data runs from the repo and iCloud only -
-           # TESLADRIVE is not scanned here (see find_mounted_tesla_volumes).
+ # TESLADRIVE is not scanned here (see find_mounted_tesla_volumes).
         seen_tessie = set()
         for d in candidates:
             try:
@@ -1834,10 +2314,10 @@ class TessieAnalyzer:
     def resolve_place(self, address, saved_loc="", lat=None, lon=None):
         addr_clean = address.lower() if address else ""
 
-        # 1. GPS Geofence matching on known places (Highest Accuracy! - checked
-        #    before Tessie's own Saved Location, which is manually entered in the
-        #    Tessie app and can be stale, generic, or missing charger-specific
-        #    detail our own registries already have - see AGENTS.md BUG-016.)
+ # 1. GPS Geofence matching on known places (Highest Accuracy! - checked
+ # before Tessie's own Saved Location, which is manually entered in the
+ # Tessie app and can be stale, generic, or missing charger-specific
+ # detail our own registries already have - see AGENTS.md .)
         if lat is not None and lon is not None:
             best_place = None
             min_dist = float("inf")
@@ -1856,7 +2336,7 @@ class TessieAnalyzer:
             if best_place:
                 return best_place
 
-        # 2. GPS Geofence matching on charging profiles
+ # 2. GPS Geofence matching on charging profiles
         if lat is not None and lon is not None:
             best_charge = None
             min_dist = float("inf")
@@ -1875,7 +2355,7 @@ class TessieAnalyzer:
             if best_charge:
                 return best_charge
 
-        # 3. GPS Geofence matching on Superchargers
+ # 3. GPS Geofence matching on Superchargers
         if lat is not None and lon is not None:
             best_sc = None
             min_dist = float("inf")
@@ -1894,9 +2374,9 @@ class TessieAnalyzer:
             if best_sc:
                 return best_sc
 
-        # 4. Saved Location exact or keyword match (Tessie's own manually-entered
-        #    field - fallback only, since it's user-editable in the Tessie app and
-        #    not guaranteed to reflect our own registries or stay in sync with them)
+ # 4. Saved Location exact or keyword match (Tessie's own manually-entered
+ # field - fallback only, since it's user-editable in the Tessie app and
+ # not guaranteed to reflect our own registries or stay in sync with them)
         if saved_loc and saved_loc.strip():
             s_clean = saved_loc.strip()
             if s_clean in self.places:
@@ -1912,22 +2392,30 @@ class TessieAnalyzer:
                         return place_name
             return s_clean
 
-        # 5. Strict Keyword matching on known places (sorted by length descending)
+ # 5. Strict Keyword matching on known places (sorted by length descending)
         all_kws = []
         for place_name, p_info in self.places.items():
             if not isinstance(p_info, dict):
                 continue
+            loc = p_info.get("location", {})
+            p_lat = p_info.get("lat") if p_info.get("lat") is not None else loc.get("lat")
+            p_lon = p_info.get("lon") if p_info.get("lon") is not None else loc.get("lon")
             kws = p_info.get("keywords") or p_info.get("tesla_metadata", {}).get("keywords") or []
             target_name = p_info.get("tesla_metadata", {}).get("short_name") or p_info.get("location_name") or p_info.get("nickname") or place_name
             for kw in kws:
                 if kw and isinstance(kw, str) and kw.strip() and len(kw.strip()) >= 3:
-                    all_kws.append((len(kw.strip()), kw.strip().lower(), target_name))
+                    all_kws.append((len(kw.strip()), kw.strip().lower(), target_name, p_lat, p_lon))
         all_kws.sort(key=lambda x: x[0], reverse=True)
-        for _, kw_clean, target_name in all_kws:
+        for _, kw_clean, target_name, p_lat, p_lon in all_kws:
             if kw_clean in addr_clean:
+ # If GPS is known, do not match keyword if the place is located > 1000m away
+                if lat is not None and lon is not None and p_lat is not None and p_lon is not None:
+                    dist_to_place = haversine_distance_m(lat, lon, p_lat, p_lon)
+                    if dist_to_place > 1000:
+                        continue
                 return target_name
 
-        # 6. Fallback: first part of street address
+ # 6. Fallback: first part of street address
         if address and isinstance(address, str):
             parts = address.split(",")
             return parts[0].strip() if parts else address
@@ -1953,12 +2441,12 @@ class TessieAnalyzer:
             except Exception:
                 pass
 
-        # 1. Gather all candidate CSV files
+ # 1. Gather all candidate CSV files
         candidate_files = []
         if new_csv_path and os.path.isfile(new_csv_path):
             candidate_files.append((new_csv_path, False))
 
-        # Scan root directory of each Tessie dir for newly dropped/unrenamed drive files
+ # Scan root directory of each Tessie dir for newly dropped/unrenamed drive files
         for td in self.tessie_dirs:
             if not os.path.isdir(td):
                 continue
@@ -1967,14 +2455,14 @@ class TessieAnalyzer:
                     fp = os.path.join(td, f)
                     if os.path.isfile(fp) and f.endswith(".csv"):
                         f_lower = f.lower()
-                        # Strictly target drive exports, ignoring system-wide logs and charging files
+ # Strictly target drive exports, ignoring system-wide logs and charging files
                         ignored_stems = ["charges", "telemetry_stream", "firmware", "tire", "battery_health", "idles"]
                         if ("drives" in f_lower or f.startswith("drive_deepdive_")) and not any(ign in f_lower for ign in ignored_stems):
                             candidate_files.append((fp, True))
             except Exception:
                 pass
 
-        # Scan existing drives/ subdirectories and their archives
+ # Scan existing drives/ subdirectories and their archives
         for dd in dest_dirs:
             if not os.path.isdir(dd):
                 continue
@@ -1993,7 +2481,7 @@ class TessieAnalyzer:
             except Exception:
                 pass
 
-        # Files in self.landing_dir (e.g. ~/Downloads)
+ # Files in self.landing_dir (e.g. ~/Downloads)
         files_to_archive = []
         if self.landing_dir and os.path.isdir(self.landing_dir):
             try:
@@ -2004,14 +2492,14 @@ class TessieAnalyzer:
             except Exception:
                 pass
 
-        # 2. Read and deduplicate records
+ # 2. Read and deduplicate records
         raw_rows = []
         seen_keys = set()
         fieldnames = None
         initial_master_count = 0
         existing_disk_row_count = 0
 
-        # Read existing master file first if present
+ # Read existing master file first if present
         for mf in master_files:
             if os.path.isfile(mf):
                 try:
@@ -2039,7 +2527,7 @@ class TessieAnalyzer:
                 except Exception:
                     pass
 
-        # Read all other candidate files
+ # Read all other candidate files
         seen_paths = set()
         for fp, from_landing in candidate_files:
             try:
@@ -2056,10 +2544,10 @@ class TessieAnalyzer:
                     if not reader.fieldnames:
                         continue
                     
-                    # Check if this is a high-frequency Drive Deep Dive telemetry file
+ # Check if this is a high-frequency Drive Deep Dive telemetry file
                     is_drive_deepdive = ("Speed (km/h)" in reader.fieldnames or "Shift State" in reader.fieldnames) and "Starting Location" not in reader.fieldnames
                     if is_drive_deepdive:
-                        # Full drive telemetry - keep strictly separate from summary master!
+ # Full drive telemetry - keep strictly separate from summary master!
                         if from_landing:
                             try:
                                 first_row = next(reader, None)
@@ -2090,15 +2578,15 @@ class TessieAnalyzer:
                                         os.makedirs(deepdive_dir, exist_ok=True)
                                         target_dd_path = os.path.join(deepdive_dir, deepdive_name)
                                         shutil.copy2(fp, target_dd_path)
-                                        # AGENTS.md TODO-033: set this file's mtime to the
-                                        # real drive-start event, not whenever this manual
-                                        # ingest happened to run.
+ # AGENTS.md TODO-033: set this file's mtime to the
+ # real drive-start event, not whenever this manual
+ # ingest happened to run.
                                         if dt_epoch is not None:
                                             try:
                                                 os.utime(target_dd_path, (dt_epoch, dt_epoch))
                                             except Exception:
                                                 pass
-                                    # Archive source from landing or root
+ # Archive source from landing or root
                                     archive_dir = os.path.join(dest_dirs[0], "archive") if dest_dirs else os.path.join(self.repo_root, "Tessie", "drives", "archive")
                                     os.makedirs(archive_dir, exist_ok=True)
                                     shutil.move(fp, next_archive_path(archive_dir, os.path.basename(fp)))
@@ -2107,7 +2595,7 @@ class TessieAnalyzer:
                                 pass
                         continue
 
-                    # Otherwise, must be a trip summary file
+ # Otherwise, must be a trip summary file
                     if "Starting Location" not in reader.fieldnames:
                         continue
 
@@ -2139,10 +2627,10 @@ class TessieAnalyzer:
                 print("No drive records found to consolidate.")
             return 0
 
-        # TODO-009: self-healing UTC + real per-event timezone columns.
-        # Runs on every row every consolidate - old master rows and
-        # freshly-landed rows alike - so there is no separate one-time
-        # migration step; see normalize_row_timezone()'s own docstring.
+ # TODO-009: self-healing UTC + real per-event timezone columns.
+ # Runs on every row every consolidate - old master rows and
+ # freshly-landed rows alike - so there is no separate one-time
+ # migration step; see normalize_row_timezone()'s own docstring.
         for row in raw_rows:
             normalize_row_timezone(row, "Starting Latitude", "Starting Longitude", "Started At")
             normalize_row_timezone(row, "Ending Latitude", "Ending Longitude", "Ended At")
@@ -2151,9 +2639,9 @@ class TessieAnalyzer:
             new_time_cols = ["Started At (UTC)", "Started At TZ", "Started At (Local)",
                               "Ended At (UTC)", "Ended At TZ", "Ended At (Local)"]
             if any(c in fieldnames for c in new_time_cols):
-                # Already migrated (idempotent re-run) - just drop any
-                # lingering legacy columns, new columns are already
-                # present in the right place.
+ # Already migrated (idempotent re-run) - just drop any
+ # lingering legacy columns, new columns are already
+ # present in the right place.
                 fieldnames = [c for c in fieldnames if c not in legacy_time_cols]
             else:
                 rebuilt = []
@@ -2169,20 +2657,20 @@ class TessieAnalyzer:
                     rebuilt = new_time_cols + rebuilt
                 fieldnames = rebuilt
 
-        # Sort chronologically by true UTC (fixes DST fall-back's
-        # repeated hour and any future cross-timezone ordering issue -
-        # TODO-009), falling back to the legacy text for any row that
-        # somehow still lacks it.
+ # Sort chronologically by true UTC (fixes DST fall-back's
+ # repeated hour and any future cross-timezone ordering issue -
+ # TODO-009), falling back to the legacy text for any row that
+ # somehow still lacks it.
         raw_rows.sort(key=lambda x: (
             int(x["Started At (UTC)"]) if x.get("Started At (UTC)") else 0,
             x.get("Started At (AEST)") or x.get("Started At") or x.get("Started") or ""))
 
-        # Safety net (BUG-023/024/025 history): back up the master file's
-        # pre-change state before overwriting it, whenever the row count is
-        # about to actually change (new rows landing, or stale duplicates
-        # being cleaned up) - archived with the same anti-clobber XX_ scheme
-        # as everything else, so a real pre-change snapshot is always
-        # recoverable rather than reconstructed by hand after the fact.
+ # Safety net (/024/025 history): back up the master file's
+ # pre-change state before overwriting it, whenever the row count is
+ # about to actually change (new rows landing, or stale duplicates
+ # being cleaned up) - archived with the same anti-clobber XX_ scheme
+ # as everything else, so a real pre-change snapshot is always
+ # recoverable rather than reconstructed by hand after the fact.
         rows_changing = existing_disk_row_count != len(raw_rows)
         duplicates_found_in_existing = max(0, existing_disk_row_count - initial_master_count)
         if rows_changing:
@@ -2196,7 +2684,7 @@ class TessieAnalyzer:
                         except Exception:
                             pass
 
-        # Write to all master files
+ # Write to all master files
         for mf in master_files:
             try:
                 with open(mf, "w", encoding="utf-8", newline="") as f:
@@ -2207,10 +2695,10 @@ class TessieAnalyzer:
                 if verbose:
                     print(f"Error writing master file {mf}: {e}")
 
-        # Sanity-check what was actually written before reporting success -
-        # catches a bad write (row-count mismatch) or a lingering exact-
-        # duplicate line the key-based dedup above should have already
-        # prevented, rather than silently trusting the write succeeded.
+ # Sanity-check what was actually written before reporting success -
+ # catches a bad write (row-count mismatch) or a lingering exact-
+ # duplicate line the key-based dedup above should have already
+ # prevented, rather than silently trusting the write succeeded.
         sanity_issues = []
         for mf in master_files:
             try:
@@ -2231,7 +2719,7 @@ class TessieAnalyzer:
             for issue in sanity_issues:
                 print(f"   - {issue}")
 
-        # Archive processed raw files now that they've been merged into master
+ # Archive processed raw files now that they've been merged into master
         archive_dir = os.path.join(dest_dirs[0], "archive") if dest_dirs else os.path.join(self.repo_root, "Tessie", "drives", "archive")
         os.makedirs(archive_dir, exist_ok=True)
         for lp in files_to_archive:
@@ -2287,6 +2775,7 @@ class TessieAnalyzer:
 
                 raw_ts, raw_elev, raw_speed, raw_power, raw_odo, raw_erem = [], [], [], [], [], []
                 raw_lat, raw_lon = [], []
+                raw_current, raw_voltage = [], []
                 timestamps = []
 
                 def to_float(v):
@@ -2308,6 +2797,8 @@ class TessieAnalyzer:
                     raw_erem.append(to_float(row.get("Energy Remaining (kWh)")))
                     raw_lat.append(to_float(row.get("Latitude")))
                     raw_lon.append(to_float(row.get("Longitude")))
+                    raw_current.append(to_float(row.get("Pack Current (A)")))
+                    raw_voltage.append(to_float(row.get("Pack Voltage (V)")))
 
                 if not timestamps:
                     return None
@@ -2334,6 +2825,8 @@ class TessieAnalyzer:
                         "energy_remaining_kwh": raw_erem,
                         "latitude": raw_lat,
                         "longitude": raw_lon,
+                        "pack_current_a": raw_current,
+                        "pack_voltage_v": raw_voltage,
                     },
                 }
         except Exception:
@@ -2360,14 +2853,14 @@ class TessieAnalyzer:
                 sub_p = os.path.join(td, sub)
                 if os.path.isdir(sub_p) and sub_p not in search_dirs:
                     search_dirs.append(sub_p)
-            # A --tessie-dir override (e.g. running against an alternate
-            # data location) deserves the SAME "drives/deepdive" and
-            # "drives/archive" treatment drives_dirs already gets above -
-            # without this, deep-dive telemetry sitting in <td>/drives/deepdive
-            # was silently invisible to this search whenever td came from
-            # --tessie-dir rather than tessie_data_home (found the hard way
-            # verifying --backfill-deepdive against a location that wasn't
-            # this process's config-resolved tessie_data_home).
+ # A --tessie-dir override (e.g. running against an alternate
+ # data location) deserves the SAME "drives/deepdive" and
+ # "drives/archive" treatment drives_dirs already gets above -
+ # without this, deep-dive telemetry sitting in <td>/drives/deepdive
+ # was silently invisible to this search whenever td came from
+ # --tessie-dir rather than tessie_data_home (found the hard way
+ # verifying --backfill-deepdive against a location that wasn't
+ # this process's config-resolved tessie_data_home).
             for sub in ["drives/deepdive", "drives/archive"]:
                 sub_p = os.path.join(td, sub)
                 if os.path.isdir(sub_p) and sub_p not in search_dirs:
@@ -2414,82 +2907,65 @@ class TessieAnalyzer:
             return None
         if not d_end:
             d_end = d_start
-        # Small padding (Tesla's own start/stop detection and the app's
-        # detailed export don't always agree to the second).
+ # Small padding (Tesla's own start/stop detection and the app's
+ # detailed export don't always agree to the second).
         pad = timedelta(minutes=2)
         for rec in self.detailed_drives:
             if rec["start_datetime"] <= d_end + pad and rec["end_datetime"] >= d_start - pad:
                 return rec
         return None
 
-    def compute_drive_segments(self, raw_samples, grade_threshold_pct=2.0):
+    def compute_drive_segments(self, raw_samples, grade_threshold_pct=2.0, smoothing_window_km=0.45):
         """Break a drive's raw telemetry into contiguous climbing/level/
-        descending segments (see AGENTS.md REQ-036) and compute per-segment
-        distance/duration/elevation-change/energy/efficiency - the actual
-        point being to answer "what was my efficiency going downhill",
-        which a whole-trip average can never show.
-
-        Grade is derived from consecutive samples' own Elevation (m) and
-        Odometer (km) - Delevation / (Ddistance * 1000) * 100 - never
-        assumed from speed or road type. Energy per interval is the
-        REAL delta in "Energy Remaining (kWh)" between consecutive
-        samples (e_rem[i] - e_rem[i+1]) - not a Power (kW) integration
-        (see AGENTS.md REQ-037: the user pointed out Power (kW) is
-        sometimes entirely empty in a real drive export, while Odometer
-        and Energy Remaining reliably vary, and that they're the more
-        trustworthy source for efficiency anyway). Positive means net
-        consumption (the battery's remaining energy went down); a
-        descending segment showing net-negative energy (i.e. net
-        regeneration - remaining energy went UP) is an expected,
-        physically real result here, not a bug, and is exactly the kind
-        of thing this is meant to reveal.
-
-        Intervals with no usable distance (Ddistance <= 0, e.g. a stopped
-        moment) are classified "stationary" rather than forced into a
-        grade bucket, and are still tracked as their own segment so a
-        red light doesn't get silently absorbed into whichever segment
-        happens to be adjacent."""
+        descending segments using rolling distance windows for both grade
+        classification and segment efficiency, matching the smoothed
+        profile chart (eliminating micro-sample discretization artifacts
+        like spurious 50 kWh/100km on a descent)."""
         ts = raw_samples.get("timestamp") or []
         elev = raw_samples.get("elevation_m") or []
         odo = raw_samples.get("odometer_km") or []
-        erem = raw_samples.get("energy_remaining_kwh") or []
         n = len(ts)
+        if n < 2:
+            return []
 
         dts = [self._deepdive_ts(t) if t else None for t in ts]
+        rolling_eff = self.compute_rolling_efficiency(raw_samples)
+
+        n_iv = n - 1
+        iv_dist = [max(0.0, (odo[k + 1] - odo[k])) if (odo[k] is not None and odo[k + 1] is not None) else 0.0 for k in range(n_iv)]
+        iv_elev = [(elev[k + 1] - elev[k]) if (elev[k] is not None and elev[k + 1] is not None) else 0.0 for k in range(n_iv)]
 
         intervals = []
-        for i in range(n - 1):
+        for i in range(n_iv):
             dt0, dt1 = dts[i], dts[i + 1]
-            e0, e1 = elev[i], elev[i + 1]
-            o0, o1 = odo[i], odo[i + 1]
-            r0 = erem[i] if i < len(erem) else None
-            r1 = erem[i + 1] if i + 1 < len(erem) else None
+            dist_k = iv_dist[i]
+            delev_k = iv_elev[i]
             if not (dt0 and dt1 and dt1 > dt0):
                 continue
-            dt_hours = (dt1 - dt0).total_seconds() / 3600.0
-            ddist_km = (o1 - o0) if (o0 is not None and o1 is not None) else None
-            delev_m = (e1 - e0) if (e0 is not None and e1 is not None) else None
-            energy_kwh = (r0 - r1) if (r0 is not None and r1 is not None) else None
 
-            if ddist_km is not None and ddist_km > 0.01 and delev_m is not None:
-                grade_pct = (delev_m / (ddist_km * 1000.0)) * 100.0
-                if grade_pct >= grade_threshold_pct:
-                    cls = "climbing"
-                elif grade_pct <= -grade_threshold_pct:
-                    cls = "descending"
-                else:
-                    cls = "level"
+            win = self._rolling_distance_window(iv_dist, i, smoothing_window_km)
+            if win is not None and win[2] >= 0.15:
+                lo, hi, w_dist = win
+                w_delev = (elev[hi + 1] - elev[lo]) if (lo < len(elev) and hi + 1 < len(elev) and elev[lo] is not None and elev[hi + 1] is not None) else delev_k
+                grade_pct = (w_delev / (w_dist * 1000.0)) * 100.0
             else:
-                grade_pct = None
+                grade_pct = (delev_k / (dist_k * 1000.0) * 100.0) if dist_k > 0.01 else 0.0
+
+            if dist_k <= 0.01:
                 cls = "stationary"
+            elif grade_pct >= grade_threshold_pct:
+                cls = "climbing"
+            elif grade_pct <= -grade_threshold_pct:
+                cls = "descending"
+            else:
+                cls = "level"
 
             intervals.append({
-                "start": dt0, "end": dt1, "dt_hours": dt_hours,
-                "distance_km": ddist_km or 0.0, "elevation_change_m": delev_m or 0.0,
-                "energy_kwh": energy_kwh, "grade_pct": grade_pct, "class": cls,
+                "start": dt0, "end": dt1, "distance_km": dist_k,
+                "elevation_change_m": delev_k, "class": cls, "sample_idx": i
             })
 
-        # Merge consecutive same-class intervals into segments.
+ # Merge contiguous same-class intervals
         segments = []
         for iv in intervals:
             if segments and segments[-1]["class"] == iv["class"]:
@@ -2497,27 +2973,32 @@ class TessieAnalyzer:
                 seg["end"] = iv["end"]
                 seg["distance_km"] += iv["distance_km"]
                 seg["elevation_change_m"] += iv["elevation_change_m"]
-                if iv["energy_kwh"] is not None:
-                    seg["energy_kwh"] = (seg["energy_kwh"] or 0.0) + iv["energy_kwh"]
-                seg["_interval_count"] += 1
+                seg["sample_indices"].append(iv["sample_idx"])
             else:
                 segments.append({
                     "class": iv["class"], "start": iv["start"], "end": iv["end"],
                     "distance_km": iv["distance_km"], "elevation_change_m": iv["elevation_change_m"],
-                    "energy_kwh": iv["energy_kwh"], "_interval_count": 1,
+                    "sample_indices": [iv["sample_idx"]]
                 })
 
+ # Calculate duration, speed, and smoothed rolling efficiency
+        final_segments = []
         for seg in segments:
             seg["duration_mins"] = (seg["end"] - seg["start"]).total_seconds() / 60.0
             seg["avg_speed_kmh"] = (seg["distance_km"] / (seg["duration_mins"] / 60.0)
                                      if seg["duration_mins"] > 0 else None)
-            if seg["distance_km"] > 0.15 and seg["energy_kwh"] is not None:
-                seg["efficiency_kwh_per_100km"] = (seg["energy_kwh"] / seg["distance_km"]) * 100.0
+            s_effs = [rolling_eff[k] for k in seg["sample_indices"] if rolling_eff[k] is not None]
+            if s_effs and seg["distance_km"] >= 0.10:
+                seg["efficiency_kwh_per_100km"] = sum(s_effs) / len(s_effs)
             else:
                 seg["efficiency_kwh_per_100km"] = None
-            del seg["_interval_count"]
+            del seg["sample_indices"]
 
-        return segments
+            if seg["class"] == "stationary" and seg["duration_mins"] < 0.2 and seg["distance_km"] <= 0.001:
+                continue
+            final_segments.append(seg)
+
+        return final_segments
 
     def _rolling_distance_window(self, iv_dist, i, window_km):
         """Shared centered, distance-based window expansion used by every
@@ -2593,24 +3074,52 @@ class TessieAnalyzer:
         ts = raw_samples.get("timestamp") or []
         odo = raw_samples.get("odometer_km") or []
         erem = raw_samples.get("energy_remaining_kwh") or []
+        cur = raw_samples.get("pack_current_a") or []
+        volt = raw_samples.get("pack_voltage_v") or []
+        pwr = raw_samples.get("power_kw") or []
         n = len(ts)
         if n < 2:
             return [None] * n
 
-        # Real per-interval deltas - interval k sits between sample k and
-        # k+1 (same source data compute_drive_segments() already derives).
+        dts = [self._deepdive_ts(t) if t else None for t in ts]
+
+ # Real per-interval deltas - interval k sits between sample k and
+ # k+1 (same source data compute_drive_segments() already derives).
         n_iv = n - 1
         iv_dist = [0.0] * n_iv
         iv_energy = [None] * n_iv
         for k in range(n_iv):
             o0 = odo[k] if k < len(odo) else None
             o1 = odo[k + 1] if k + 1 < len(odo) else None
-            r0 = erem[k] if k < len(erem) else None
-            r1 = erem[k + 1] if k + 1 < len(erem) else None
             if o0 is not None and o1 is not None:
                 iv_dist[k] = max(0.0, o1 - o0)
-            if r0 is not None and r1 is not None:
-                iv_energy[k] = r0 - r1
+
+            dt0 = dts[k] if k < len(dts) else None
+            dt1 = dts[k + 1] if k + 1 < len(dts) else None
+            dt_hr = ((dt1 - dt0).total_seconds() / 3600.0) if (dt0 and dt1 and dt1 > dt0) else None
+
+ # High-precision power integration:
+ # If pack current (A) and pack voltage (V) are available:
+ # Negative current = discharging (+power consumed).
+ # Positive current = regen into pack (-power consumed / energy returned).
+            if dt_hr and cur and volt and k + 1 < len(cur) and k + 1 < len(volt):
+                c0, v0 = cur[k], volt[k]
+                c1, v1 = cur[k + 1], volt[k + 1]
+                if c0 is not None and v0 is not None and c1 is not None and v1 is not None:
+                    p0 = - (c0 * v0) / 1000.0
+                    p1 = - (c1 * v1) / 1000.0
+                    iv_energy[k] = 0.5 * (p0 + p1) * dt_hr
+            elif dt_hr and pwr and k + 1 < len(pwr):
+                pw0, pw1 = pwr[k], pwr[k + 1]
+                if pw0 is not None and pw1 is not None:
+                    iv_energy[k] = 0.5 * (pw0 + pw1) * dt_hr
+
+ # Fallback to Energy Remaining (kWh) delta
+            if iv_energy[k] is None:
+                r0 = erem[k] if k < len(erem) else None
+                r1 = erem[k + 1] if k + 1 < len(erem) else None
+                if r0 is not None and r1 is not None:
+                    iv_energy[k] = r0 - r1
 
         total_trip_dist = sum(iv_dist)
         eff_window_km = window_km if window_km is not None else compute_adaptive_rolling_window(total_trip_dist)
@@ -2721,18 +3230,18 @@ class TessieAnalyzer:
              "values": speed_series},
         ]
 
-        # No "plots" subfolder - sits right beside the CSV, alongside
-        # every other deep-dive artifact for this same drive.
+ # No "plots" subfolder - sits right beside the CSV, alongside
+ # every other deep-dive artifact for this same drive.
         src_dir = os.path.dirname(dt_rec.get("source_path") or "") or os.getcwd()
         base = os.path.splitext(os.path.basename(dt_rec.get("source_file") or "drive"))[0]
         out_path = os.path.join(src_dir, f"{base}_profile.html")
 
-        # Whole-drive average efficiency (REQ AGENTS.local.md 2026-09-15) -
-        # a single number for the WHOLE drive, not the smoothed per-sample
-        # eff_series above (that's for the curve on the chart itself, this
-        # is the one-line summary under the heading) - total energy used
-        # (first sample's Energy Remaining minus the last, since it only
-        # decreases while actually driving) over the drive's total distance.
+ # Whole-drive average efficiency (REQ AGENTS.local.md 2026-09-15) -
+ # a single number for the WHOLE drive, not the smoothed per-sample
+ # eff_series above (that's for the curve on the chart itself, this
+ # is the one-line summary under the heading) - total energy used
+ # (first sample's Energy Remaining minus the last, since it only
+ # decreases while actually driving) over the drive's total distance.
         avg_eff = None
         erem_vals = [v for v in raw.get("energy_remaining_kwh", []) if v is not None]
         dist_km = dt_rec.get("distance_km")
@@ -2751,7 +3260,7 @@ class TessieAnalyzer:
                 "style": "dashed",
             })
 
-        # Resolve from and to places (AGENTS.local.md REQ-083)
+ # Resolve from and to places (AGENTS.local.md REQ-083)
         start_place = (target_drive.get("start_place") if target_drive else None) or dt_rec.get("start_place")
         end_place = (target_drive.get("end_place") if target_drive else None) or dt_rec.get("end_place")
 
@@ -2860,7 +3369,7 @@ class TessieAnalyzer:
             if last_lat is not None and haversine_distance(last_lat, last_lon, lat, lon) < MIN_MOVE_M:
                 continue
 
-            # 1. Check known places first (0ms latency)
+ # 1. Check known places first (0ms latency)
             matched_place = self.resolve_place(None, "", lat, lon)
             if matched_place:
                 label = matched_place
@@ -2993,10 +3502,10 @@ class TessieAnalyzer:
         if not token or not vin:
             return None
 
-        # Same +/-2min padding match_detailed_drive() already allows for
-        # when matching an existing file - Tesla's own start/stop
-        # detection and the detailed export don't always agree to the
-        # second.
+ # Same +/-2min padding match_detailed_drive() already allows for
+ # when matching an existing file - Tesla's own start/stop
+ # detection and the detailed export don't always agree to the
+ # second.
         pad = 120
         params = dict(DEFAULT_UNIT_PARAMS)
         params.update({
@@ -3020,8 +3529,8 @@ class TessieAnalyzer:
 
         start_dt = target_drive.get("start_dt") or datetime.fromtimestamp(start_epoch)
         stamp = start_dt.strftime("%Y-%m-%d_%H-%M")
-        # AGENTS.md TODO-033: fold the real AEST/AEDT abbreviation into the
-        # stamp here too, matching the manual-ingest path above.
+ # AGENTS.md TODO-033: fold the real AEST/AEDT abbreviation into the
+ # stamp here too, matching the manual-ingest path above.
         try:
             _, abbr, _ = tztools.localize(start_epoch)
             if abbr:
@@ -3039,8 +3548,8 @@ class TessieAnalyzer:
                 f.write(body)
         except Exception:
             return None
-        # AGENTS.md TODO-033: set this file's mtime to the real drive-start
-        # event, not whenever this auto-fetch happened to run.
+ # AGENTS.md TODO-033: set this file's mtime to the real drive-start
+ # event, not whenever this auto-fetch happened to run.
         try:
             os.utime(dest_path, (start_epoch, start_epoch))
         except Exception:
@@ -3099,7 +3608,7 @@ class TessieAnalyzer:
             chart_path = None
         return dt_rec, segments, chart_path
 
-    def inspect_drive(self, target):
+    def inspect_drive(self, target, vehicle_key=None):
         """Deep-dive inspect a specific drive by 1-based index (in
         start-time order, matching how drives are listed elsewhere) or by
         date/datetime string (see AGENTS.md REQ-036) - prints the
@@ -3143,17 +3652,42 @@ class TessieAnalyzer:
         print(f"├{'─' * (box_w - 2)}┤")
 
         dur_mins = (target_drive["end_dt"] - target_drive["start_dt"]).total_seconds() / 60.0
-        l1 = f"  \033[1mStarted:\033[0m {target_drive['start_dt'].strftime('%Y-%m-%d %H:%M:%S')}   \033[1mDuration:\033[0m {dur_mins:.0f} mins"
+        dist_km = float(target_drive.get("dist_km", 0))
+        soc_str = f"   \033[1mBattery:\033[0m {target_drive.get('start_soc', '')}% ➔ {target_drive.get('end_soc', '')}%" if target_drive.get("start_soc") else ""
+        eff_str = format_drive_efficiency(target_drive)
+        eff_disp = f"   \033[1mEfficiency:\033[0m {eff_str}" if eff_str and eff_str != "-" else ""
+        l1 = f"  \033[1mStarted:\033[0m {target_drive['start_dt'].strftime('%Y-%m-%d %H:%M:%S')}   \033[1mDuration:\033[0m {dur_mins:.0f} mins   \033[1mDistance:\033[0m {dist_km:.1f} km{soc_str}{eff_disp}"
         print(f"│{pad_display(l1, box_w - 2, truncate=True)}│")
 
         result = self.get_drive_deepdive(target_drive)
+        dt_rec, segments, chart_path = result if result else (None, None, None)
+        raw_samples = dt_rec.get("raw_samples") if dt_rec else None
+
+ # Comparative ICE running costs on drive date
+        try:
+            kwh = float(target_drive.get("kwh_used")) if target_drive.get("kwh_used") else None
+        except (ValueError, TypeError):
+            kwh = None
+
+        td_home = self.tessie_data_home or (self.tessie_dirs[0] if self.tessie_dirs else None)
+        fuel_lines = format_drive_fuel_comparison(
+            dist_km, target_drive["start_dt"], kwh_used=kwh,
+            duration_mins=dur_mins, raw_samples=raw_samples,
+            vehicle_key=vehicle_key, tessie_dir=td_home, box_width=box_w, indent="  "
+        )
+        if fuel_lines:
+            print(f"├{'─' * (box_w - 2)}┤")
+            for fl in fuel_lines:
+                print(f"│{pad_display(fl, box_w - 2, truncate=True)}│")
+
         if not result:
+            print(f"├{'─' * (box_w - 2)}┤")
             l2 = "  \033[38;5;214mNo deep-dive telemetry (drive_deepdive_*.csv) found for this drive.\033[0m"
             print(f"│{pad_display(l2, box_w - 2, truncate=True)}│")
             print(f"└{'─' * (box_w - 2)}┘")
             return
-        dt_rec, segments, chart_path = result
 
+        print(f"├{'─' * (box_w - 2)}┤")
         l3 = f"  \033[1mDeep-Dive File:\033[0m {dt_rec.get('source_file', '')}   ({dt_rec.get('samples_count', 0)} samples)"
         print(f"│{pad_display(l3, box_w - 2, truncate=True)}│")
         print(f"├{'─' * (box_w - 2)}┤")
@@ -3176,10 +3710,10 @@ class TessieAnalyzer:
             print(f"│{pad_display(l4, box_w - 2, truncate=True)}│")
         print(f"└{'─' * (box_w - 2)}┘")
 
-        # User report (2026-09-15): used to auto-open in the browser
-        # unconditionally (get_drive_deepdive() no longer does that) -
-        # explicit action instead, matching analyse_charging.py's
-        # own "[o]pen chart in browser" for the charging curve.
+ # User report (2026-09-15): used to auto-open in the browser
+ # unconditionally (get_drive_deepdive() no longer does that) -
+ # explicit action instead, matching analyse_charging.py's
+ # own "[o]pen chart in browser" for the charging curve.
         if chart_path and sys.stdin.isatty():
             try:
                 act = input(f"{'':2}Action: [o]pen chart in browser, [Enter] to return: ").strip().lower()
@@ -3199,7 +3733,7 @@ class TessieAnalyzer:
         if getattr(self, "_synced_this_session", False) and not force:
             return False
 
-        # 1. Check if Tessie API token is available
+ # 1. Check if Tessie API token is available
         cfg = tessie_api_common.load_config()
         token = os.environ.get("TESSIE_ACCESS_TOKEN") or cfg.get("tessie_access_token")
         if not token:
@@ -3257,7 +3791,7 @@ class TessieAnalyzer:
             )
             self._synced_this_session = True
             if "Consolidated" in res.stdout or "+0 new" not in res.stdout:
-                # Reload drives cleanly into memory
+ # Reload drives cleanly into memory
                 self._indexed = False
                 self.load_drives(check_stale=False)
                 return True
@@ -3287,17 +3821,17 @@ class TessieAnalyzer:
             reader = csv.DictReader(f)
             for r in reader:
                 try:
-                    # TODO-009: prefer the self-healing UTC+TZ columns
-                    # (normalize_row_timezone() in consolidate_drives(),
-                    # which always runs first, above) over the legacy
-                    # single-fixed-zone text - dt_start/dt_end stay
-                    # naive LOCAL datetimes for every bit of downstream
-                    # display/day-grouping code that already expects
-                    # that, but are now correctly localized per-row
-                    # instead of blindly assumed Sydney; start_utc_epoch/
-                    # end_utc_epoch carry the true UTC instant for
-                    # sorting, so ordering is correct even across a
-                    # DST fall-back or a future interstate trip.
+ # TODO-009: prefer the self-healing UTC+TZ columns
+ # (normalize_row_timezone() in consolidate_drives(),
+ # which always runs first, above) over the legacy
+ # single-fixed-zone text - dt_start/dt_end stay
+ # naive LOCAL datetimes for every bit of downstream
+ # display/day-grouping code that already expects
+ # that, but are now correctly localized per-row
+ # instead of blindly assumed Sydney; start_utc_epoch/
+ # end_utc_epoch carry the true UTC instant for
+ # sorting, so ordering is correct even across a
+ # DST fall-back or a future interstate trip.
                     start_utc_epoch = int(r["Started At (UTC)"]) if r.get("Started At (UTC)") else None
                     end_utc_epoch = int(r["Ended At (UTC)"]) if r.get("Ended At (UTC)") else None
                     start_tz = r.get("Started At TZ") or tztools.DEFAULT_TIMEZONE
@@ -3359,9 +3893,9 @@ class TessieAnalyzer:
                 except Exception:
                     continue
 
-        # TODO-009: sort by true UTC when available (correct across a
-        # DST fall-back or any future cross-timezone trip), falling
-        # back to local-naive for any legacy row without it.
+ # TODO-009: sort by true UTC when available (correct across a
+ # DST fall-back or any future cross-timezone trip), falling
+ # back to local-naive for any legacy row without it.
         parsed.sort(key=lambda x: x["start_utc_epoch"] if x["start_utc_epoch"] is not None else x["start_dt"].timestamp())
         self.drives = parsed
         return self.drives
@@ -3427,11 +3961,24 @@ class TessieAnalyzer:
         matches.sort(key=lambda x: (x["dt"], x["cam"]))
         return matches
 
+    def find_footage_range(self, start_dt, end_dt, prior_seconds=300, after_seconds=300):
+        """Find all footage (Recent, Saved, Sentry) within a continuous time range,
+        including a configurable window prior to start and after end (default: 5 mins prior, 5 mins after)."""
+        self.index_footage()
+        earliest = start_dt - timedelta(seconds=prior_seconds)
+        latest = end_dt + timedelta(seconds=after_seconds)
+        matches = []
+        for item in self.footage_db:
+            if earliest <= item["dt"] <= latest:
+                matches.append(item)
+        matches.sort(key=lambda x: (x["dt"], x["cam"]))
+        return matches
+
     def get_trip_footage_summary(self, trip):
-        """Returns formatted string tag and set of categories."""
-        start_clips = self.find_footage(trip["start_dt"], 120)
-        end_clips = self.find_footage(trip["end_dt"], 180)
-        all_clips = start_clips + end_clips
+        """Returns formatted string tag and set of categories covering the full trip and prior/after windows."""
+        s_dt = trip["start_dt"]
+        e_dt = trip.get("end_dt") or s_dt
+        all_clips = self.find_footage_range(s_dt, e_dt, prior_seconds=300, after_seconds=300)
         if not all_clips:
             return "No local footage", set()
         
@@ -3453,11 +4000,11 @@ class TessieAnalyzer:
         day_start = datetime(target_date.year, target_date.month, target_date.day, 0, 0, 0)
         day_end = day_start + timedelta(days=1)
         
-        # 1. Check if date is in the future
+ # 1. Check if date is in the future
         if day_start.date() > now.date():
             return [], day_start, "Future date — no telemetry or drive data recorded."
             
-        # 2. Check if date is before earliest recorded drive
+ # 2. Check if date is before earliest recorded drive
         if self.drives and day_end <= self.drives[0]["start_dt"]:
             first_drive_str = self.drives[0]["start_dt"].strftime("%Y-%m-%d")
             return [], day_start, f"No drive data recorded prior to earliest record ({first_drive_str})."
@@ -3465,7 +4012,7 @@ class TessieAnalyzer:
         is_today = (day_start.date() == now.date())
         effective_end = min(day_end, now) if is_today else day_end
 
-        # Check staleness and auto-sync if target date has no drives
+ # Check staleness and auto-sync if target date has no drives
         if not getattr(self, "_sync_disabled", False):
             day_drives = [
                 d for d in self.drives
@@ -3484,7 +4031,7 @@ class TessieAnalyzer:
             ]
         day_drives.sort(key=lambda x: x["start_dt"])
         
-        # Determine initial location at 00:00
+ # Determine initial location at 00:00
         prev_drives = [d for d in self.drives if d["end_dt"] <= day_start]
         current_location = prev_drives[-1]["end_place"] if prev_drives else (self.drives[0]["start_place"] if self.drives else "Unknown")
         
@@ -3496,7 +4043,7 @@ class TessieAnalyzer:
             d_start = max(d["start_dt"], day_start)
             d_end = min(d["end_dt"], day_end)
             
-            # 1. Parked period before this drive (if cursor_time < d_start)
+ # 1. Parked period before this drive (if cursor_time < d_start)
             if d_start > cursor_time:
                 park_dur_mins = int((d_start - cursor_time).total_seconds() / 60)
                 dur_str = format_duration_short(park_dur_mins) if park_dur_mins > 0 else "<1m"
@@ -3514,12 +4061,19 @@ class TessieAnalyzer:
                 })
                 event_idx += 1
                 
-            # 2. Driving period
+ # 2. Driving period
             drive_dur_mins = int((d_end - d_start).total_seconds() / 60)
             dur_str = format_duration_short(drive_dur_mins) if drive_dur_mins > 0 else "<1m"
             dist_str = f"{d['dist_km']:.1f} km"
             s_str = d_start.strftime("%H:%M")
             e_str = "24:00" if d_end == day_end else d_end.strftime("%H:%M")
+            sp = d['start_place']
+            ep = d['end_place']
+            if sp == ep:
+                act_msg = f"🅿️ {sp} (Reposition {dist_str}, {dur_str})"
+            else:
+                act_msg = f"🚗 {sp} ➔ {ep} ({dist_str}, {dur_str})"
+
             events.append({
                 "event_idx": event_idx,
                 "type": "drive",
@@ -3527,14 +4081,14 @@ class TessieAnalyzer:
                 "end_dt": d_end,
                 "time_str": f"{s_str} - {e_str}",
                 "location": d["end_place"],
-                "activity": f"🚗 {d['start_place']} ➔ {d['end_place']} ({dist_str}, {dur_str})",
+                "activity": act_msg,
                 "drive": d
             })
             event_idx += 1
             current_location = d["end_place"]
             cursor_time = d_end
             
-        # 3. Final parked period (or entire day if no drives)
+ # 3. Final parked period (or entire day if no drives)
         if cursor_time < effective_end:
             park_dur_mins = int((effective_end - cursor_time).total_seconds() / 60)
             dur_str = format_duration_short(park_dur_mins) if park_dur_mins > 0 else "<1m"
@@ -3564,17 +4118,29 @@ class TessieAnalyzer:
             })
             event_idx += 1
             
-        # Attach footage to each event (filter for target day once)
-        day_clips = [c for c in self.footage_db if day_start <= c["dt"] < day_end]
+ # Attach footage to each event (filter for target day once, including 5m prior/after buffer for Recent context)
+        day_clips = [c for c in self.footage_db if day_start - timedelta(minutes=10) <= c["dt"] < day_end + timedelta(minutes=10)]
         for ev in events:
             s_dt = ev["start_dt"]
             e_dt = ev["end_dt"]
-            clips = [c for c in day_clips if s_dt <= c["dt"] < e_dt]
+            is_drive = (ev.get("type") == "drive")
+            s_buf = s_dt - timedelta(minutes=5)
+            e_buf = e_dt + timedelta(minutes=5)
+            if is_drive:
+                clips = [
+                    c for c in day_clips
+                    if s_buf <= c["dt"] <= e_buf
+                ]
+            else:
+                clips = [
+                    c for c in day_clips
+                    if s_dt <= c["dt"] < e_dt
+                ]
             ev["recent_mins"] = len(set(c["dt"] for c in clips if c["cat"] == "Recent"))
             ev["saved_mins"] = len(set(c["dt"] for c in clips if c["cat"] == "Saved"))
             ev["sentry_mins"] = len(set(c["dt"] for c in clips if c["cat"] == "Sentry"))
             ev["clips"] = clips
-            
+
         return events, day_start, None
 
 def render_footage_listing(clips, indent=""):
@@ -3633,44 +4199,54 @@ def render_footage_listing(clips, indent=""):
 
 def display_footage_details(trip, analyzer):
     """Level 3: Deep listing of exact video files by camera angle for a single drive."""
-    start_clips = analyzer.find_footage(trip["start_dt"], 120)
-    end_clips = analyzer.find_footage(trip["end_dt"], 180)
-    
     t_start = trip["start_dt"]
     t_end = trip["end_dt"]
+    
+ # Continuous footage across prior window (5m), full drive, and post-drive window (5m)
+    all_clips = analyzer.find_footage_range(t_start, t_end, prior_seconds=300, after_seconds=300)
+    
+    entry_clips = [c for c in all_clips if c["dt"] < t_start]
+    drive_clips = [c for c in all_clips if t_start <= c["dt"] <= t_end]
+    exit_clips = [c for c in all_clips if c["dt"] > t_end]
     
     box_inner = 72
     print()
     print(format_box_line("┌", "─", "┐", [box_inner]))
     print(format_title_line(f" 📹 CAMERA FOOTAGE: {t_start.strftime('%a %d %b %Y')} ({t_start.strftime('%H:%M')} ➔ {t_end.strftime('%H:%M')})", box_inner))
     print(format_box_line("├", "─", "┤", [box_inner]))
-    print(format_title_line(f"    Origin      : {trip['start_place']} ({trip['start_addr'].split(',')[0]})", box_inner))
-    print(format_title_line(f"    Destination : {trip['end_place']} ({trip['end_addr'].split(',')[0]})", box_inner))
+    if trip['start_place'] == trip['end_place']:
+        print(format_title_line(f"    Location    : 🅿️ {trip['start_place']} ({trip['start_addr'].split(',')[0]})", box_inner))
+    else:
+        print(format_title_line(f"    Origin      : {trip['start_place']} ({trip['start_addr'].split(',')[0]})", box_inner))
+        print(format_title_line(f"    Destination : {trip['end_place']} ({trip['end_addr'].split(',')[0]})", box_inner))
     print(format_box_line("└", "─", "┘", [box_inner]))
     
-    # 1. Entry footage (getting into car)
-    print(f"\n🚪 1. ENTRY WINDOW (Departure ~{t_start.strftime('%H:%M:%S')}):")
-    if start_clips:
-        render_footage_listing(start_clips, indent="  ")
-    else:
-        print("   ⚠️ No local footage found on archive drives.")
+    sec_idx = 1
+    if entry_clips:
+        print(f"\n🚪 {sec_idx}. PRE-DRIVE & ENTRY WINDOW (Prior to ~{t_start.strftime('%H:%M:%S')}):")
+        render_footage_listing(entry_clips, indent="  ")
+        sec_idx += 1
 
-    # 2. Exit footage (arriving & unloading)
-    print(f"\n🚪 2. EXIT WINDOW (Arrival ~{t_end.strftime('%H:%M:%S')}):")
-    if end_clips:
-        render_footage_listing(end_clips, indent="  ")
-    else:
-        print("   ⚠️ No local footage found on archive drives.")
+    if drive_clips:
+        print(f"\n🚗 {sec_idx}. IN-DRIVE FOOTAGE ({t_start.strftime('%H:%M:%S')} ➔ {t_end.strftime('%H:%M:%S')}):")
+        render_footage_listing(drive_clips, indent="  ")
+        sec_idx += 1
 
-    # 3. Drive deep-dive telemetry (AGENTS.md TODO-019) - shown automatically
-    # alongside footage whenever it exists, no separate footage-vs-deep-dive
-    # prompt, mirroring how analyse_charging.py's inspect_session()
-    # already shows its charging curve inline. User report (2026-09-15): this
-    # used to auto-open the chart in the browser unconditionally on every
-    # trip selection - now offered as an explicit "[o]pen chart in browser"
-    # action below instead, matching analyse_charging.py's own
-    # charging-curve action.
-    print(f"\n📊 3. DRIVE TELEMETRY:")
+    if exit_clips:
+        print(f"\n🚪 {sec_idx}. POST-DRIVE & EXIT WINDOW (Arrival ~{t_end.strftime('%H:%M:%S')} + Post Context):")
+        render_footage_listing(exit_clips, indent="  ")
+        sec_idx += 1
+
+    if not all_clips:
+        print(f"\n🚪 1. TRIP FOOTAGE WINDOW ({t_start.strftime('%H:%M:%S')} ➔ {t_end.strftime('%H:%M:%S')}):")
+        print("   ⚠️ No local footage found on archive drives.")
+        sec_idx += 1
+
+ # Drive deep-dive telemetry (AGENTS.md TODO-019) - shown automatically
+ # alongside footage whenever it exists, no separate footage-vs-deep-dive
+ # prompt, mirroring how analyse_charging.py's inspect_session()
+ # already shows its charging curve inline.
+    print(f"\n📊 {sec_idx}. DRIVE TELEMETRY:")
     dd_chart_path = None
     deepdive_result = analyzer.get_drive_deepdive(trip)
     if not deepdive_result:
@@ -3688,58 +4264,118 @@ def display_footage_details(trip, analyzer):
         if dd_chart_path:
             print(f"   Elevation/Efficiency Profile: {dd_chart_path}")
 
+ # 4. Comparative ICE Fuel Running Costs
+    dist_km = float(trip.get("dist_km", 0))
+    start_dt = trip.get("start_dt")
+    dur_mins = (trip["end_dt"] - trip["start_dt"]).total_seconds() / 60.0 if (trip.get("end_dt") and trip.get("start_dt")) else None
+    raw_samples = dd_rec.get("raw_samples") if deepdive_result else None
+    try:
+        kwh = float(trip.get("kwh_used")) if trip.get("kwh_used") else None
+    except (ValueError, TypeError):
+        kwh = None
+
+    td_home = analyzer.tessie_data_home or (analyzer.tessie_dirs[0] if analyzer.tessie_dirs else None)
+    fuel_lines = format_drive_fuel_comparison(
+        dist_km, start_dt, kwh_used=kwh,
+        duration_mins=dur_mins, raw_samples=raw_samples,
+        tessie_dir=td_home, indent="   "
+    )
+    if fuel_lines:
+        print()
+        for fl in fuel_lines:
+            print(fl)
+
     print(f"\n💡 Quick Tips:")
     print(f"   • To view side doors (getting in/out): check *-left_repeater.mp4 or *-right_repeater.mp4")
     print(f"   • To view trunk/rear walking: check *-back.mp4")
-    # BUG-087 (2026-09-15): the whole action prompt below - including
-    # "[o]pen chart in browser" - used to be nested inside
-    # "if start_clips or end_clips:", so a drive with real deep-dive
-    # telemetry/chart but NO local dashcam footage (a real user report:
-    # an early-morning drive with a chart but no synced footage yet)
-    # never got offered the chart action at all. has_chart and
-    # has_footage are now independent gates - the chart action shows up
-    # whenever a chart exists, whether or not footage does.
     has_chart = bool(dd_chart_path and os.path.exists(dd_chart_path))
-    has_footage = bool(start_clips or end_clips)
-    first_folder = None
+    has_footage = bool(all_clips)
+
+    recent_clips = [c for c in all_clips if c.get("cat") == "Recent"]
+    sentry_clips = [c for c in all_clips if c.get("cat") == "Sentry"]
+    saved_clips = [c for c in all_clips if c.get("cat") == "Saved"]
+
+    has_recent = bool(recent_clips)
+    has_sentry = bool(sentry_clips)
+    has_saved = bool(saved_clips)
+
+    if has_recent:
+        print(f"   • RecentClips: use [r]ecent action below to copy locally into organized folder")
+    if has_sentry:
+        s_folder = sentry_clips[0].get("folder") or os.path.dirname(sentry_clips[0]["path"])
+        print(f"   • Open SentryClips in Finder: open \"{s_folder}\"")
+    if has_saved:
+        v_folder = saved_clips[0].get("folder") or os.path.dirname(saved_clips[0]["path"])
+        print(f"   • Open SavedClips in Finder: open \"{v_folder}\"")
+
     if has_footage:
-        first_folder = (start_clips[0]['folder'] if start_clips else end_clips[0]['folder'])
-        print(f"   • Open folder in Finder: open \"{first_folder}\"")
+        sample_path = all_clips[0].get("path") if all_clips else None
+        if sample_path and os.path.exists(sample_path):
+            st_info = inspect_mp4_clip(sample_path)
+            st_banner = format_stream_banner(st_info)
+            print(f"\n{st_banner}")
+            if st_info.get("is_encrypted"):
+                print(f"   ⚠️  Stream is encrypted ({st_info.get('encryption_scheme', 'CENC')}) — requires vehicle decryption tools to view.")
+
     if (has_footage or has_chart) and sys.stdin.isatty():
-        try:
-            action_parts = []
-            if has_footage:
-                action_parts.append("[d]elete footage across all drives")
-            if has_chart:
-                action_parts.append("[o]pen chart in browser")
-            if has_footage:
-                action_parts.append("[f]older")
-            action_parts.append("[Enter] continue")
-            action_choice = input(f"\n📹 Trip Footage Action: {', '.join(action_parts)}: ").strip().lower()
-            if action_choice in ("d", "del", "delete") and has_footage:
-                all_clips = start_clips + end_clips
-                pkgs = build_timeline_footage_packages({"clips": all_clips, "start_dt": trip["start_dt"], "end_dt": trip["end_dt"]})
-                if pkgs:
-                    total_files = sum(p["files_count"] for p in pkgs)
-                    num_drives = max(1, len(analyzer.teslacam_dirs))
-                    total_bytes = sum(p["tot_size"] for p in pkgs) * num_drives
-                    mb_val = total_bytes / (1024 * 1024)
-                    sz_str = f"{mb_val/1024:.1f} GB" if mb_val >= 1024 else f"{mb_val:.0f} MB"
-                    print(f"\n⚠️  Permanently delete all footage for this trip (~{total_files * num_drives} files, {sz_str}) across {num_drives} mounted drive(s)? [y/N]: ", end="")
-                    conf = input().strip().lower()
-                    if conf in ("y", "yes"):
-                        n_del, b_del, n_tombs = delete_footage_packages_across_drives(pkgs, analyzer)
-                        del_mb = b_del / (1024 * 1024)
-                        del_sz = f"{del_mb/1024:.1f} GB" if del_mb >= 1024 else f"{del_mb:.0f} MB"
-                        print(f"✔ Successfully deleted {n_del} file(s) ({del_sz}) and recorded {n_tombs} tombstone(s).\n")
-            elif action_choice in ("o", "open", "chart", "c") and has_chart:
-                try_open_in_browser(dd_chart_path)
-            elif action_choice in ("f", "folder") and has_footage:
-                if sys.platform == "darwin" and os.path.exists(first_folder):
-                    subprocess.run(["open", first_folder])
-                    print(f"📂 Opened in Finder: {first_folder}\n")
-        except (KeyboardInterrupt, EOFError):
-            pass
+        while True:
+            try:
+                print("\nAction:")
+                if has_footage:
+                    print("  [c]   Copy all footage locally (<landing_directory>/TeslaCam/<YYYY-MM-DD>/)")
+                if has_chart:
+                    print("  [o]   Open elevation & efficiency chart in browser")
+                if has_recent:
+                    print("  [r]   Copy / open RecentClips only")
+                if has_sentry:
+                    print("  [s]   Copy / open SentryClips in Finder")
+                if has_saved:
+                    print("  [v]   Copy / open SavedClips in Finder")
+                if has_footage:
+                    print("  [l]   List files & inspect SEI metadata (by camera timestamp prefix)")
+                if has_footage:
+                    print("  [d]   Permanently delete all footage for this trip across archive drives")
+                print("  [b]   Back / continue to trips list (or press Enter)")
+                print("  [q]   Quit")
+                action_choice = input("\nChoice: ").strip().lower()
+                date_str = trip["start_dt"].strftime("%Y-%m-%d")
+                if action_choice == "q":
+                    sys.exit(0)
+                elif action_choice in ("b", "back", ""):
+                    break
+                elif action_choice in ("l", "list") and has_footage:
+                    pkgs = build_timeline_footage_packages({"clips": all_clips, "start_dt": trip["start_dt"], "end_dt": trip["end_dt"]})
+                    display_package_sei_breakdown(pkgs, analyzer)
+                    continue
+                elif action_choice in ("d", "del", "delete") and has_footage:
+                    pkgs = build_timeline_footage_packages({"clips": all_clips, "start_dt": trip["start_dt"], "end_dt": trip["end_dt"]})
+                    if pkgs:
+                        total_files = sum(p["files_count"] for p in pkgs)
+                        num_drives = max(1, len(analyzer.teslacam_dirs))
+                        total_bytes = sum(p["tot_size"] for p in pkgs) * num_drives
+                        mb_val = total_bytes / (1024 * 1024)
+                        sz_str = f"{mb_val/1024:.1f} GB" if mb_val >= 1024 else f"{mb_val:.0f} MB"
+                        print(f"\n⚠️  Permanently delete all footage for this trip (~{total_files * num_drives} files, {sz_str}) across {num_drives} mounted drive(s)? [y/N]: ", end="")
+                        conf = input().strip().lower()
+                        if conf in ("y", "yes"):
+                            n_del, b_del, n_tombs = delete_footage_packages_across_drives(pkgs, analyzer)
+                            del_mb = b_del / (1024 * 1024)
+                            del_sz = f"{del_mb/1024:.1f} GB" if del_mb >= 1024 else f"{del_mb:.0f} MB"
+                            print(f"✔ Successfully deleted {n_del} file(s) ({del_sz}) and recorded {n_tombs} tombstone(s).\n")
+                elif action_choice in ("o", "open", "chart") and has_chart:
+                    try_open_in_browser(dd_chart_path)
+                elif action_choice in ("c", "copy", "all") and has_footage:
+                    copy_clips_locally(all_clips, analyzer, date_or_str=date_str, ask_preference=True)
+                elif action_choice in ("r", "recent") and has_recent:
+                    open_footage_package(recent_clips, analyzer, date_or_str=date_str, reveal_clip=True, ask_preference=True, force_copy=True)
+                elif action_choice in ("s", "sentry") and has_sentry:
+                    open_footage_package(sentry_clips, analyzer, date_or_str=date_str, reveal_clip=False, ask_preference=True, force_copy=True)
+                elif action_choice in ("v", "saved", "save") and has_saved:
+                    open_footage_package(saved_clips, analyzer, date_or_str=date_str, reveal_clip=False, ask_preference=True, force_copy=True)
+                elif action_choice in ("f", "folder") and has_footage:
+                    open_footage_package(recent_clips or sentry_clips or saved_clips or all_clips, analyzer, reveal_clip=False)
+            except (KeyboardInterrupt, EOFError):
+                break
 
 def drill_down_day(day_str, day_trips, analyzer):
     """Level 2: Display drives for a selected day in a structured table and allow picking a trip for footage listing."""
@@ -3750,7 +4386,7 @@ def drill_down_day(day_str, day_trips, analyzer):
         hours, mins = divmod(total_mins, 60)
         time_str = f"{hours}h {mins:02d}m" if hours else f"{mins}m"
         
-        # Precompute rows to dynamically measure max column width
+ # Precompute rows to dynamically measure max column width
         rows_data = []
         for i, t in enumerate(day_trips):
             t_start = t["start_dt"].strftime("%H:%M")
@@ -3770,7 +4406,10 @@ def drill_down_day(day_str, day_trips, analyzer):
                 s_p = "🏠 Home"
             if e_p.lower() == "home":
                 e_p = "🏠 Home"
-            route_str = f" {s_p} ➔ {e_p}"
+            if s_p == e_p or s_p.lstrip("🏠 ") == e_p.lstrip("🏠 "):
+                route_str = f" 🅿️ {s_p}"
+            else:
+                route_str = f" {s_p} ➔ {e_p}"
             
             park_str = " —"
             if i < len(day_trips) - 1:
@@ -3843,8 +4482,8 @@ def drill_down_day(day_str, day_trips, analyzer):
         print(border_data)
         
         all_widths = left_widths + [w_sav, w_sen, w_rec]
-        # idx/dur/dist/soc/park are numbers (with units, or plain for idx) -> right-aligned;
-        # time and route are free text -> left-aligned; footage icons stay centered.
+ # idx/dur/dist/soc/park are numbers (with units, or plain for idx) -> right-aligned;
+ # time and route are free text -> left-aligned; footage icons stay centered.
         all_aligns = ["right", "left", "right", "right", "right", "left", "right", "right", "center", "center", "center"]
         for r in rows_data:
             row_cells = [
@@ -3855,7 +4494,13 @@ def drill_down_day(day_str, day_trips, analyzer):
             
         print(border_bot)
         try:
-            choice = input(f"Select Trip [1-{len(day_trips)}] for footage, [t]imeline, [a]ll, [b]ack to days, [q]uit: ").strip().lower()
+            print("\nAction:")
+            print(f"  [1-{len(day_trips)}] Select Trip to inspect footage & telemetry")
+            print("  [t]    Open 24-Hour Event Timeline")
+            print("  [a]    View all trips footage")
+            print("  [b]    Back to days list")
+            print("  [q]    Quit")
+            choice = input("\nChoice: ").strip().lower()
             if choice == "q":
                 sys.exit(0)
             elif choice in ["b", "back"]:
@@ -3906,12 +4551,15 @@ def drill_down_all_days(sorted_days, days_dict, analyzer, title):
                 s_p = "🏠 Home"
             if e_p.lower() == "home":
                 e_p = "🏠 Home"
-            route_str = f" {s_p} ➔ {e_p}"
+            if s_p == e_p or s_p.lstrip("🏠 ") == e_p.lstrip("🏠 "):
+                route_str = f" 🅿️ {s_p}"
+            else:
+                route_str = f" {s_p} ➔ {e_p}"
 
-            # Parked Duration is the gap to the next trip - only meaningful
-            # within the same day (the list crosses day boundaries, newest
-            # day first), so it's only computed when the next entry is
-            # chronologically later on the same date.
+ # Parked Duration is the gap to the next trip - only meaningful
+ # within the same day (the list crosses day boundaries, newest
+ # day first), so it's only computed when the next entry is
+ # chronologically later on the same date.
             park_str = " —"
             if i < len(all_trips) - 1 and all_trips[i+1][0] == d_str:
                 next_start = all_trips[i+1][1]["start_dt"]
@@ -3985,8 +4633,8 @@ def drill_down_all_days(sorted_days, days_dict, analyzer, title):
         print(border_data)
 
         all_widths = left_widths + [w_sav, w_sen, w_rec]
-        # idx/dur/dist/soc are numbers (with units, or plain for idx) -> right-aligned;
-        # date/time/route are free text -> left-aligned; footage icons stay centered.
+ # idx/dur/dist/soc are numbers (with units, or plain for idx) -> right-aligned;
+ # date/time/route are free text -> left-aligned; footage icons stay centered.
         all_aligns = ["right", "left", "left", "right", "right", "right", "left", "right", "right", "center", "center", "center"]
         for r in rows_data:
             row_cells = [
@@ -3997,7 +4645,12 @@ def drill_down_all_days(sorted_days, days_dict, analyzer, title):
 
         print(border_bot)
         try:
-            choice = input(f"Select Trip [1-{len(all_trips)}] for footage, [a]ll, [b]ack to days, [q]uit: ").strip().lower()
+            print("\nAction:")
+            print(f"  [1-{len(all_trips)}] Select Trip to inspect footage & telemetry")
+            print("  [a]    View all trips footage")
+            print("  [b]    Back to days list")
+            print("  [q]    Quit")
+            choice = input("\nChoice: ").strip().lower()
             if choice == "q":
                 sys.exit(0)
             elif choice in ["b", "back"]:
@@ -4086,7 +4739,7 @@ def build_timeline_footage_packages(event, compute_sizes=False):
             seen_rel.add(rel_tc)
             unique_clips.append(c)
 
-    # 1. Saved and Sentry folders
+ # 1. Saved and Sentry folders
     by_folder = defaultdict(list)
     for c in unique_clips:
         if c["cat"] in ("Saved", "Sentry"):
@@ -4143,7 +4796,7 @@ def build_timeline_footage_packages(event, compute_sizes=False):
             "is_folder": True
         })
 
-    # 2. Recent clips (grouped into continuous chunks)
+ # 2. Recent clips (grouped into continuous chunks)
     recent_clips = [c for c in unique_clips if c["cat"] == "Recent"]
     recent_by_dt = defaultdict(list)
     for c in recent_clips:
@@ -4314,9 +4967,19 @@ def display_timeline_event_details(event, analyzer):
 
         try:
             n_flagged = len(get_flagged_tombstones(analyzer.repo_root))
-            purge_opt = f", [P]urge flagged ({n_flagged})" if n_flagged > 0 else ""
-            prompt_str = f"Footage Action: [1, 2, 'all'] copy, [v <#>] preview, [f <#>] flag delete, [u <#>] unflag{purge_opt}, [r]eview, [o]pen, [b]ack, [q]uit: "
-            choice = input(prompt_str).strip().lower()
+            print("\nAction:")
+            print("  [1, 2, 'all'] Copy selected footage package(s) locally (<landing_directory>/TeslaCam/<YYYY-MM-DD>/)")
+            print("  [v <#>]       Preview footage in macOS Quick Look (e.g. 'v 1', 'v 2')")
+            print("  [l <#>]       List files & inspect SEI metadata (e.g. 'l 1', 'l 2-4', 'l all', or 'l')")
+            print("  [f <#>]       Flag footage package for deletion (e.g. 'f 1', 'f 2-4', 'f all')")
+            print("  [u <#>]       Unflag footage package (e.g. 'u 1', 'u 2-4', 'u all')")
+            if n_flagged > 0:
+                print(f"  [p]           Purge all flagged deletions ({n_flagged} staged across mounted drives)")
+            print("  [r]           Review wizard (step through event footage sequentially)")
+            print("  [o]           Open event folder(s) directly in Finder")
+            print("  [b]           Back to timeline")
+            print("  [q]           Quit")
+            choice = input("\nChoice: ").strip().lower()
             if choice == "q":
                 sys.exit(0)
             elif choice in ["b", "back"]:
@@ -4328,13 +4991,8 @@ def display_timeline_event_details(event, analyzer):
                 event["clips"] = [c for c in analyzer.footage_db if s_dt <= c["dt"] < e_dt]
                 continue
             elif choice in ["o", "open"]:
-                folder_to_open = packages[0]["folder"] if packages else None
-                if folder_to_open and os.path.exists(folder_to_open):
-                    if sys.platform == "darwin":
-                        subprocess.run(["open", folder_to_open])
-                    print(f"📂 Opened in Finder: {folder_to_open}\n")
-                else:
-                    print("⚠️ Folder not accessible.\n")
+                for p in packages:
+                    open_footage_package(p, analyzer, reveal_clip=False, ask_preference=True)
                 continue
             elif choice in ["p", "purge"]:
                 flagged_tombs = get_flagged_tombstones(analyzer.repo_root)
@@ -4364,9 +5022,16 @@ def display_timeline_event_details(event, analyzer):
             is_flag_del = False
             is_unflag = False
             is_preview = False
+            is_list_sei = False
             target_str = choice
 
-            if choice.startswith("f ") or choice.startswith("flag ") or choice.startswith("d ") or choice.startswith("del ") or choice.startswith("delete "):
+            if choice.startswith("l ") or choice.startswith("list "):
+                is_list_sei = True
+                target_str = choice.split(maxsplit=1)[1].strip()
+            elif choice in ("l", "list"):
+                is_list_sei = True
+                target_str = "all"
+            elif choice.startswith("f ") or choice.startswith("flag ") or choice.startswith("d ") or choice.startswith("del ") or choice.startswith("delete "):
                 is_flag_del = True
                 target_str = choice.split(maxsplit=1)[1].strip()
             elif choice in ("f", "flag", "d", "del", "delete"):
@@ -4387,23 +5052,21 @@ def display_timeline_event_details(event, analyzer):
 
             selected_indices = parse_selection_indices(target_str, len(packages))
             if not selected_indices:
-                print(f"Invalid choice. Please enter item numbers (e.g. 1, 6-9, 'all'), [v <#>] to preview, [f <#>] to flag, [u <#>] to unflag, [P]urge, [r]eview, [o]pen, [b]ack, or [q]uit.\n")
+                print(f"Invalid choice. Please enter item numbers (e.g. 1, 6-9, 'all'), [l <#>] to list/inspect, [v <#>] to preview, [f <#>] to flag, [u <#>] to unflag, [P]urge, [r]eview, [o]pen, [b]ack, or [q]uit.\n")
+                continue
+
+            selected_pkgs = [p for p in packages if p["pkg_idx"] in selected_indices]
+
+            if is_list_sei:
+                display_package_sei_breakdown(selected_pkgs, analyzer)
                 continue
 
             if is_preview:
                 for idx_val in selected_indices:
                     matching = [p for p in packages if p["pkg_idx"] == idx_val]
                     if matching:
-                        p_cand = matching[0]
-                        clip_p = get_primary_preview_clip(p_cand)
-                        if clip_p:
-                            preview_footage_file(clip_p, method="quicklook")
-                            print(f"\n📂 Revealed in Finder for item [{idx_val}]: {os.path.basename(clip_p)}\n")
-                        else:
-                            print(f"\n⚠️  No previewable MP4 file found for item [{idx_val}].\n")
+                        open_footage_package(matching[0], analyzer, reveal_clip=True, ask_preference=True)
                 continue
-
-            selected_pkgs = [p for p in packages if p["pkg_idx"] in selected_indices]
             
             if is_flag_del:
                 n_flag, b_flag = flag_footage_packages_for_deletion(selected_pkgs, analyzer)
@@ -4420,63 +5083,13 @@ def display_timeline_event_details(event, analyzer):
                 n_unflag = unflag_footage_packages(selected_pkgs, analyzer)
                 print(f"\n ✔ Unflagged {n_unflag} footage package(s).\n")
                 continue
-            total_files = sum(p["files_count"] for p in selected_pkgs)
-            total_bytes = sum(p["tot_size"] for p in selected_pkgs)
-            total_mb = total_bytes / (1024 * 1024)
-            size_str = f"{total_mb/1024:.1f} GB" if total_mb >= 1024 else f"{total_mb:.0f} MB"
 
-            slug = make_event_slug(event)
-            default_dest = os.path.expanduser(f"~/Downloads/TeslaCam/{slug}")
-            
-            dest_input = input(f"📁 Export destination [Enter for '{default_dest}']: ").strip()
-            dest_dir = os.path.abspath(os.path.expanduser(dest_input)) if dest_input else default_dest
-            
-            os.makedirs(dest_dir, exist_ok=True)
-            print(f"\n📦 Exporting {len(selected_pkgs)} items ({total_files} files, {size_str}) to:\n   {dest_dir}")
-            
-            copied_count = 0
-            copied_bytes = 0
+            all_selected_files = []
             for p in selected_pkgs:
-                if p.get("is_folder"):
-                    folder_base = os.path.basename(p["folder"])
-                    sub_dest = os.path.join(dest_dir, f"{p['cat']}Clips", folder_base)
-                    os.makedirs(sub_dest, exist_ok=True)
-                    for f_src in p["files"]:
-                        if os.path.isfile(f_src):
-                            f_name = os.path.basename(f_src)
-                            dst_file = os.path.join(sub_dest, f_name)
-                            try:
-                                shutil.copyfile(f_src, dst_file)
-                                copied_count += 1
-                                copied_bytes += os.path.getsize(dst_file)
-                            except Exception as e:
-                                print(f"   ⚠️ Error copying {f_name}: {e}")
-                else:
-                    sub_dest = os.path.join(dest_dir, "RecentClips")
-                    os.makedirs(sub_dest, exist_ok=True)
-                    for f_src in p["files"]:
-                        if os.path.isfile(f_src):
-                            f_name = os.path.basename(f_src)
-                            dst_file = os.path.join(sub_dest, f_name)
-                            try:
-                                shutil.copyfile(f_src, dst_file)
-                                copied_count += 1
-                                copied_bytes += os.path.getsize(dst_file)
-                            except Exception as e:
-                                print(f"   ⚠️ Error copying {f_name}: {e}")
-
-            mb_done = copied_bytes / (1024 * 1024)
-            done_str = f"{mb_done/1024:.1f} GB" if mb_done >= 1024 else f"{mb_done:.0f} MB"
-            print(f"\n✔ Successfully exported {copied_count} files ({done_str}) to:\n   {dest_dir}\n")
-
-            if sys.platform == "darwin":
-                try:
-                    open_resp = input("🔍 Open exported folder in Finder? [Y/n]: ").strip().lower()
-                    if open_resp in ("", "y", "yes"):
-                        subprocess.run(["open", dest_dir])
-                        print(f"📂 Opened in Finder: {dest_dir}\n")
-                except (KeyboardInterrupt, EOFError):
-                    pass
+                all_selected_files.extend(p.get("files", []))
+            ev_date_str = event["start_dt"].strftime("%Y-%m-%d") if event.get("start_dt") else None
+            copy_clips_locally(all_selected_files, analyzer, date_or_str=ev_date_str, ask_preference=True)
+            continue
 
         except (KeyboardInterrupt, EOFError):
             break
@@ -4630,7 +5243,7 @@ def batch_flag_events_interactive(events, choice_str, analyzer, is_unflag=False)
         print(f"\n✔ Unflagged {n_unflag} footage package(s).\n")
         return
 
-    # Unambiguous preview table before flagging
+ # Unambiguous preview table before flagging
     render_staging_preview_table(packages_to_process, idx_title, analyzer)
 
     try:
@@ -4655,7 +5268,7 @@ def find_home_recent_footage_packages(analyzer, target_dates=None):
     if target_dates:
         dates_to_scan = target_dates
     else:
-        # Only scan dates that actually have RecentClips indexed in footage_db
+ # Only scan dates that actually have RecentClips indexed in footage_db
         dates_to_scan = sorted(list(set(c["dt"].date() for c in analyzer.footage_db if c.get("cat") == "Recent")))
 
     home_recent_pkgs = []
@@ -4755,7 +5368,7 @@ def display_timeline(target_date, analyzer, compact=False):
         tombstones_data = load_tombstones(master_dir)
         lookup_sets = get_tombstone_lookup_sets(tombstones_data)
 
-        # Expand w_act dynamically so that no route or location line gets truncated or broken
+ # Expand w_act dynamically so that no route or location line gets truncated or broken
         max_act_len = max((display_len(ev["activity"]) + 4 for ev in events), default=50)
         w_act = max(60, max_act_len + 3)
         col_widths = [w_idx, w_time, w_rec, w_sav, w_sen, w_act]
@@ -4825,12 +5438,22 @@ def display_timeline(target_date, analyzer, compact=False):
             break
             
         try:
-            a_prompt = f", [a]uto-flag Home Recent ({len(home_recent_pkgs)})" if home_recent_pkgs else ""
-            r_prompt = ", [r]eview day" if has_any_footage else ""
             n_fl = len(get_flagged_tombstones(master_dir))
-            f_prompt = f", [F]lagged ({n_fl})" if n_fl > 0 else ""
-            prompt_str = f"Select Event [1-{len(events)} or HH:MM]{a_prompt}, [f <#|range>] flag, [u <#|range>] unflag{r_prompt}{f_prompt}, [p]rev day, [n]ext day, [b]ack, [q]uit: "
-            choice = input(prompt_str).strip().lower()
+            print("\nAction:")
+            print(f"  [1-{len(events)}]  Select Event to drill down and inspect footage (or enter HH:MM)")
+            print("  [f <#>] Flag event footage for deletion (e.g. 'f 1', 'f 2-5', 'f all')")
+            print("  [u <#>] Unflag event footage (e.g. 'u 1', 'u 2-5', 'u all')")
+            if home_recent_pkgs:
+                print(f"  [a]     Auto-flag Home Recent footage ({len(home_recent_pkgs)} package{'s' if len(home_recent_pkgs) != 1 else ''})")
+            if has_any_footage:
+                print("  [r]     Review day (step through event footage in Quick Look)")
+            if n_fl > 0:
+                print(f"  [F]     View flagged deletions menu ({n_fl} staged)")
+            print("  [p]     Previous day")
+            print("  [n]     Next day")
+            print("  [b]     Back to day trips")
+            print("  [q]     Quit")
+            choice = input("\nChoice: ").strip().lower()
             if choice == "q":
                 sys.exit(0)
             elif choice in ["b", "back"]:
@@ -4888,7 +5511,7 @@ def display_days_menu(days_dict, title, analyzer, can_go_back=False):
     while True:
         total_trips = sum(len(v) for v in days_dict.values())
         
-        # Precompute rows to dynamically measure max column widths
+ # Precompute rows to dynamically measure max column widths
         rows_data = []
         for idx, d_str in enumerate(sorted_days):
             day_trips = days_dict[d_str]
@@ -4963,8 +5586,8 @@ def display_days_menu(days_dict, title, analyzer, can_go_back=False):
         print(border_data)
         
         all_widths = left_widths + [w_sav, w_sen, w_rec]
-        # idx/trips/time/dist are numbers (with units, or plain for idx/trips) -> right-aligned;
-        # date and notable-destinations are free text -> left-aligned; footage icons stay centered.
+ # idx/trips/time/dist are numbers (with units, or plain for idx/trips) -> right-aligned;
+ # date and notable-destinations are free text -> left-aligned; footage icons stay centered.
         all_aligns = ["right", "left", "right", "right", "right", "left", "center", "center", "center"]
         for r in rows_data:
             row_cells = [
@@ -4975,8 +5598,13 @@ def display_days_menu(days_dict, title, analyzer, can_go_back=False):
 
         print(border_bot)
         try:
-            back_prompt = ", [b]ack" if can_go_back else ""
-            choice = input(f"Select Day [1-{len(sorted_days)}] to drill down{back_prompt}, [a]ll, [q]uit: ").strip().lower()
+            print("\nAction:")
+            print(f"  [1-{len(sorted_days)}] Select Day to drill down into drive list")
+            print("  [a]    View all drives across all days")
+            if can_go_back:
+                print("  [b]    Back to months overview")
+            print("  [q]    Quit")
+            choice = input("\nChoice: ").strip().lower()
             if choice == "q":
                 sys.exit(0)
             elif choice in ["b", "back"] and can_go_back:
@@ -5006,7 +5634,7 @@ def display_months_menu(days_dict, analyzer):
         return
         
     while True:
-        # Precompute rows to dynamically measure max column widths
+ # Precompute rows to dynamically measure max column widths
         rows_data = []
         for idx, m_key in enumerate(sorted_months):
             m_days = months_dict[m_key]
@@ -5055,8 +5683,8 @@ def display_months_menu(days_dict, analyzer):
         
         m_widths = [w_idx, w_month, w_days, w_trips, w_time, w_dist, w_notable]
         m_headers = [" #", " Month", " Days", " Trips", " Time", " Distance", " Notable Destinations"]
-        # idx/days/trips/time/dist are numbers (with units, or plain for idx/days/trips) -> right-aligned;
-        # month and notable-destinations are free text -> left-aligned.
+ # idx/days/trips/time/dist are numbers (with units, or plain for idx/days/trips) -> right-aligned;
+ # month and notable-destinations are free text -> left-aligned.
         m_aligns = ["right", "left", "right", "right", "right", "right", "left"]
         print(format_row(m_headers, m_widths))
         print(border_data_divider)
@@ -5067,8 +5695,13 @@ def display_months_menu(days_dict, analyzer):
             
         print(border_bot)
         try:
-            prompt = f"Select Month [1-{len(sorted_months)}], [a]ll months, [t]oday, [y]esterday, [q]uit: "
-            choice = input(prompt).strip().lower()
+            print("\nAction:")
+            print(f"  [1-{len(sorted_months)}] Select Month to inspect days & drives")
+            print("  [a]    View all months combined")
+            print("  [t]    Jump to Today's drives")
+            print("  [y]    Jump to Yesterday's drives")
+            print("  [q]    Quit")
+            choice = input("\nChoice: ").strip().lower()
             if choice == "q":
                 sys.exit(0)
             elif choice in ["a", "all"]:
@@ -5137,6 +5770,7 @@ EXAMPLES
     g_timeline = parser.add_argument_group("Timeline & Inspection")
     g_timeline.add_argument("--timeline", nargs="?", const="today", default=None, help="Generate 24-hour event-driven vehicle & camera activity timeline for a date (e.g. today, yesterday, 2026-09-02, wednesday)")
     g_timeline.add_argument("--inspect-drive", help="Deep-dive inspect a specific drive by 1-based index (start-time order) or date/datetime (e.g. '2026-08-30', '2026-08-30 21:01')")
+    g_timeline.add_argument("--vehicle", "--compare-vehicle", dest="vehicle", help="Specific ICE/Hybrid vehicle key for fuel comparison (e.g. ford_ranger_diesel, rav4_hybrid, petrol_standard, prado_diesel, golf_gti_p98)")
 
     g_sync = parser.add_argument_group("Consolidation & Sync")
     g_sync.add_argument("--consolidate", nargs="?", const=True, help="Consolidate drives CSV(s) into drives_master.csv (optionally specify path to a new CSV)")
@@ -5195,7 +5829,7 @@ EXAMPLES
         return
 
     if args.inspect_drive:
-        analyzer.inspect_drive(args.inspect_drive)
+        analyzer.inspect_drive(args.inspect_drive, vehicle_key=args.vehicle)
         return
 
     if args.timeline is not None:
@@ -5246,13 +5880,13 @@ EXAMPLES
         d_key = d["start_dt"].strftime("%Y-%m-%d")
         days_dict[d_key].append(d)
 
-    # If specific day or single day filtered, go directly to day view
+ # If specific day or single day filtered, go directly to day view
     if args.today or args.yesterday:
         selected_d = list(days_dict.keys())[0]
         drill_down_day(selected_d, days_dict[selected_d], analyzer)
         return
 
-    # If filtered to a specific month or single place/short range
+ # If filtered to a specific month or single place/short range
     unique_months = set(d_str[:7] for d_str in days_dict.keys())
     if args.month or len(unique_months) == 1:
         m_str = list(unique_months)[0]

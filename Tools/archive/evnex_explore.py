@@ -191,8 +191,8 @@ EXAMPLES
         print(f"Error: {e}", file=sys.stderr)
         return 1
     except RuntimeError as e:
-        # get_authenticated_client() already scrubs any credential value
-        # out of this message before it reaches here.
+ # get_authenticated_client() already scrubs any credential value
+ # out of this message before it reaches here.
         print(f"Error: {e}", file=sys.stderr)
         return 1
 

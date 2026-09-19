@@ -115,9 +115,9 @@ def resolve_home_zone(location):
             lon = float(coords.get("longitude"))
         except (TypeError, ValueError):
             lat = lon = None
-    # resolve_timezone() already falls back to DEFAULT_TIMEZONE
-    # (Australia/Sydney) when lat/lon are missing - no need to duplicate
-    # that fallback here.
+ # resolve_timezone() already falls back to DEFAULT_TIMEZONE
+ # (Australia/Sydney) when lat/lon are missing - no need to duplicate
+ # that fallback here.
     return tztools.resolve_timezone(lat, lon)
 
 
@@ -188,21 +188,21 @@ async def run(dry_run, limit, log):
         zone = resolve_home_zone(location)
         local_dt, abbr, offset_str = tztools.localize(start_epoch, zone)
         if local_dt:
-            # AGENTS.md TODO-033: fold the real timezone abbreviation into
-            # the filename's time portion itself, not just the human-
-            # readable local_start_str below - every session recorded so
-            # far is AEST/AEDT (Australia/Sydney), but a bare "1327" gives
-            # no way to tell which without opening the file.
+ # AGENTS.md TODO-033: fold the real timezone abbreviation into
+ # the filename's time portion itself, not just the human-
+ # readable local_start_str below - every session recorded so
+ # far is AEST/AEDT (Australia/Sydney), but a bare "1327" gives
+ # no way to tell which without opening the file.
             local_label = f"{local_dt.strftime('%Y-%m-%d_%H%M')}_{abbr}" if abbr else local_dt.strftime("%Y-%m-%d_%H%M")
             local_start_str = f"{local_dt.strftime('%Y-%m-%d %H:%M')} {abbr}"
         else:
             local_label = datetime.fromtimestamp(start_epoch, tz=timezone.utc).strftime("%Y-%m-%d_%H%M")
             local_start_str = None
 
-        # Always-present, zero-padded "_NN" position suffix (starting at
-        # "00") rather than a bare name for the first file and an ad-hoc
-        # "_2", "_3", ... suffix only from the second collision onward -
-        # see unique_stamped_path()'s docstring / AGENTS.md REQ-030.
+ # Always-present, zero-padded "_NN" position suffix (starting at
+ # "00") rather than a bare name for the first file and an ad-hoc
+ # "_2", "_3", ... suffix only from the second collision onward -
+ # see unique_stamped_path()'s docstring / AGENTS.md REQ-030.
         out_path = unique_stamped_path(ddir, "charge_deepdive", local_label, suffix="_Evnex_Home", ext=".json")
         base_name = os.path.basename(out_path)
 
@@ -221,17 +221,17 @@ async def run(dry_run, limit, log):
             "session": session,
         }
 
-        # A session that delivered ~zero energy (totalEnergyUsage.total
-        # == 0.0, typically transaction.reason == "EVDisconnected") is a
-        # connection blip - pairing/testing a charger, a momentary
-        # plug/unplug - not a real charge. Found via a real report:
-        # swapping the home Evnex charger produced 5 of these within an
-        # hour of setup, and the same pattern already existed in 23 of
-        # the 144 real session files on disk, well predating that swap.
-        # Still written (never silently dropped - see
-        # is_real_charging_session()'s own docstring), just flagged so
-        # it's obvious at a glance rather than looking like a real charge
-        # that happened to log 0 kWh.
+ # A session that delivered ~zero energy (totalEnergyUsage.total
+ # == 0.0, typically transaction.reason == "EVDisconnected") is a
+ # connection blip - pairing/testing a charger, a momentary
+ # plug/unplug - not a real charge. Found via a real report:
+ # swapping the home Evnex charger produced 5 of these within an
+ # hour of setup, and the same pattern already existed in 23 of
+ # the 144 real session files on disk, well predating that swap.
+ # Still written (never silently dropped - see
+ # is_real_charging_session()'s own docstring), just flagged so
+ # it's obvious at a glance rather than looking like a real charge
+ # that happened to log 0 kWh.
         is_blip = not is_real_charging_session(attrs)
         if is_blip:
             written_blips += 1
@@ -243,10 +243,10 @@ async def run(dry_run, limit, log):
             os.makedirs(ddir, exist_ok=True)
             with open(out_path, "w", encoding="utf-8") as f:
                 json.dump(record, f, indent=2, default=str)
-            # AGENTS.md TODO-033: set this file's mtime to the real
-            # charge-start event, not whenever this sync happened to run,
-            # so `ls -alt` sorts deep-dive files in true chronological
-            # order regardless of when they were fetched.
+ # AGENTS.md TODO-033: set this file's mtime to the real
+ # charge-start event, not whenever this sync happened to run,
+ # so `ls -alt` sorts deep-dive files in true chronological
+ # order regardless of when they were fetched.
             try:
                 os.utime(out_path, (start_epoch, start_epoch))
             except Exception:
@@ -300,8 +300,8 @@ EXAMPLES
         print(f"Error: {e}", file=sys.stderr)
         return 1
     except RuntimeError as e:
-        # get_authenticated_client() already scrubs any credential value
-        # out of this message before it reaches here.
+ # get_authenticated_client() already scrubs any credential value
+ # out of this message before it reaches here.
         print(f"Error: {e}", file=sys.stderr)
         return 1
     return 0

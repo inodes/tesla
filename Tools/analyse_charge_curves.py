@@ -283,17 +283,17 @@ def historical_extension(sessions, current, registry=None):
         pairs.sort()
         return pairs
 
-    # Deliberately NOT anchored/offset to match this session's own boundary
-    # value - an earlier version shifted the historical curve so it met the
-    # current curve exactly at the edge, but that breaks badly when the
-    # boundary sample itself is atypical (e.g. the very first sample of a
-    # session, often still 0-2 kW while the car and charger are still
-    # negotiating): the shift then drags the WHOLE historical line toward
-    # that one noisy point. Plotting the other sessions' real values
-    # unmodified is more honest - a visible gap where the dashed line
-    # doesn't quite meet the solid one is real session-to-session
-    # variation (shared power, battery temp, a different day), not a
-    # rendering bug.
+ # Deliberately NOT anchored/offset to match this session's own boundary
+ # value - an earlier version shifted the historical curve so it met the
+ # current curve exactly at the edge, but that breaks badly when the
+ # boundary sample itself is atypical (e.g. the very first sample of a
+ # session, often still 0-2 kW while the car and charger are still
+ # negotiating): the shift then drags the WHOLE historical line toward
+ # that one noisy point. Plotting the other sessions' real values
+ # unmodified is more honest - a visible gap where the dashed line
+ # doesn't quite meet the solid one is real session-to-session
+ # variation (shared power, battery temp, a different day), not a
+ # rendering issue.
     result = {
         "n_site_sessions": len(same_site),
         "n_tier_sessions": len(same_tier_other_sites),
@@ -305,9 +305,9 @@ def historical_extension(sessions, current, registry=None):
         site_before = [(x, y) for x, y in site_pairs if x <= cur_lo]
         site_after = [(x, y) for x, y in site_pairs if x >= cur_hi]
 
-        # Only reach for the coarser same-tier/other-site pool when the
-        # exact-site pool doesn't have enough of its own history yet
-        # (fewer than 2 points in that direction) - see module docstring.
+ # Only reach for the coarser same-tier/other-site pool when the
+ # exact-site pool doesn't have enough of its own history yet
+ # (fewer than 2 points in that direction) - see module docstring.
         before, after = site_before, site_after
         if len(before) < 2 and same_tier_other_sites:
             tier_pairs = _pairs(same_tier_other_sites, metric)
@@ -322,7 +322,7 @@ def historical_extension(sessions, current, registry=None):
                 after = tier_after
                 result["used_tier_fallback"] = True
 
-        # Require >=2 points so a lone stray sample never renders as a line.
+ # Require >=2 points so a lone stray sample never renders as a line.
         result[metric] = {
             "before": before if len(before) >= 2 else [],
             "after": after if len(after) >= 2 else [],
@@ -395,13 +395,13 @@ def render_curve_chart(current, hist, hardware_name, hardware, out_png, out_html
     temp_soc = np.array([p["soc"] for p in temp_pts])
     temp_c = np.array([p["temp_c"] for p in temp_pts])
 
-    # DejaVu Sans Bold hits noticeably different hinting/anti-aliasing than
-    # the browser's own font at typical PNG export sizes ("rough" heading
-    # complaint) - a slightly larger base DPI and pinning savefig() to the
-    # SAME dpi as figure creation (bbox_inches="tight" otherwise leaves the
-    # effective resolution to chance) is the concrete, repeatable fix
-    # available from matplotlib itself; there's no way to make a rasterized
-    # PNG font look byte-identical to the browser's own vector text.
+ # DejaVu Sans Bold hits noticeably different hinting/anti-aliasing than
+ # the browser's own font at typical PNG export sizes ("rough" heading
+ # complaint) - a slightly larger base DPI and pinning savefig() to the
+ # SAME dpi as figure creation (bbox_inches="tight" otherwise leaves the
+ # effective resolution to chance) is the concrete, repeatable fix
+ # available from matplotlib itself; there's no way to make a rasterized
+ # PNG font look byte-identical to the browser's own vector text.
     FIG_DPI = 220
     fig, ax = plt.subplots(figsize=(10, 6), dpi=FIG_DPI)
     fig.patch.set_facecolor(SURFACE)
@@ -447,10 +447,10 @@ def render_curve_chart(current, hist, hardware_name, hardware, out_png, out_html
     ax.set_ylabel("Charger power (kW)", color=S1_BLUE, fontsize=11, fontfamily="DejaVu Sans")
     ax.tick_params(axis="y", colors=S1_BLUE)
 
-    # Pack temperature - a THIRD line on this chart (alongside the real
-    # power line and its dashed historical estimate), on its own right
-    # axis: a cold, un-preconditioned pack visibly suppresses the power
-    # curve, so seeing both together is the point (user-requested).
+ # Pack temperature - a THIRD line on this chart (alongside the real
+ # power line and its dashed historical estimate), on its own right
+ # axis: a cold, un-preconditioned pack visibly suppresses the power
+ # curve, so seeing both together is the point (user-requested).
     if len(temp_soc) >= 2:
         ax_temp = ax.twinx()
         for seg_key in ("before", "after"):
@@ -502,10 +502,10 @@ def render_profile_chart(current, hist, title, out_png, out_html):
     voltage = np.array([p["voltage_v"] for p in pts])
     current_a = np.array([p["current_a"] for p in pts])
 
-    # This session's own SoC-per-minute slope near each boundary, used only
-    # to place a historical (soc, value) point at a plausible elapsed-time
-    # x-position for the dashed extension - never to compute the dashed
-    # VALUES themselves (those come from history, per historical_extension()).
+ # This session's own SoC-per-minute slope near each boundary, used only
+ # to place a historical (soc, value) point at a plausible elapsed-time
+ # x-position for the dashed extension - never to compute the dashed
+ # VALUES themselves (those come from history, per historical_extension()).
     def _elapsed_for_soc(target_soc):
         if target_soc <= soc.min():
             i0, i1 = 0, min(3, len(soc) - 1)
@@ -533,14 +533,14 @@ def render_profile_chart(current, hist, title, out_png, out_html):
     l1, = ax.plot(elapsed, voltage, color=S1_BLUE, linewidth=2, solid_capstyle="round", zorder=3, label="Pack voltage (V)")
     ax.set_ylabel("Pack voltage (V)", color=S1_BLUE, fontsize=11, fontfamily="DejaVu Sans")
     ax.tick_params(axis="y", colors=S1_BLUE, labelsize=10, length=0)
-    # BUG (real file caught live: charge_deepdive_2026-08-01_1733_Tesla_West_
-    # Gosford_NSW_profile.png): these limits used to come from ONLY this
-    # session's own voltage/current arrays, so a dashed historical segment
-    # whose real values fell outside this session's own range got silently
-    # clipped off the PNG canvas entirely (the HTML version was unaffected -
-    # its own axis ranges are already computed from every series' y-values,
-    # same class of fix as the x-axis one below). Both ax and ax_cur's
-    # limits now include the historical segments' own values too.
+ # (real file caught live: charge_deepdive_2026-08-01_1733_Tesla_West_
+ # Gosford_NSW_profile.png): these limits used to come from ONLY this
+ # session's own voltage/current arrays, so a dashed historical segment
+ # whose real values fell outside this session's own range got silently
+ # clipped off the PNG canvas entirely (the HTML version was unaffected -
+ # its own axis ranges are already computed from every series' y-values,
+ # same class of fix as the x-axis one below). Both ax and ax_cur's
+ # limits now include the historical segments' own values too.
     all_voltages = list(voltage) + [y for seg in (hist or {}).get("voltage_v", {}).values() for _, y in seg]
     vpad = (max(all_voltages) - min(all_voltages)) * 0.5 or 5
     ax.set_ylim(min(all_voltages) - vpad, max(all_voltages) + vpad * 2)
@@ -616,17 +616,17 @@ _HTML_TEMPLATE = """<!doctype html>
           background: {surface}; color: {text_primary}; }}
   h1 {{ font-size: 18px; margin: 16px 20px 4px; }}
   .sub {{ margin: 0 20px 12px; color: {text_secondary}; font-size: 13px; white-space: pre-line; }}
-  #wrap {{ position: relative; margin: 0 12px 12px; }}
+ #wrap {{ position: relative; margin: 0 12px 12px; }}
   canvas {{ display: block; background: {surface}; border: 1px solid {grid}; border-radius: 6px; }}
-  #tooltip {{
+ #tooltip {{
     position: absolute; pointer-events: none; background: rgba(11,11,11,0.92); color: #fff;
     padding: 8px 10px; border-radius: 6px; font-size: 12px; line-height: 1.5; display: none;
     white-space: nowrap; z-index: 10;
   }}
-  #legend {{ margin: 4px 20px 14px; font-size: 12px; }}
-  #legend span {{ margin-right: 16px; }}
-  #legend .dot {{ display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 5px; }}
-  #legend .dash {{ display: inline-block; width: 14px; height: 0; border-top: 2px dashed currentColor; margin-right: 5px; vertical-align: middle; }}
+ #legend {{ margin: 4px 20px 14px; font-size: 12px; }}
+ #legend span {{ margin-right: 16px; }}
+ #legend .dot {{ display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 5px; }}
+ #legend .dash {{ display: inline-block; width: 14px; height: 0; border-top: 2px dashed currentColor; margin-right: 5px; vertical-align: middle; }}
 </style>
 </head>
 <body>
@@ -710,11 +710,11 @@ function draw() {{
       const y = yAt(v, key);
       ctx.fillText(v.toFixed(0), x, y + 3);
     }}
-    // BUG: a right axis's own name (e.g. "Pack current (A)") was never
-    // drawn at all - only its tick numbers - even though the left axis
-    // (and the matching matplotlib PNG) always shows one. Mirrors the
-    // left-axis label code above, rotated the other way since it sits on
-    // the opposite side.
+ // a right axis's own name (e.g. "Pack current (A)") was never
+ // drawn at all - only its tick numbers - even though the left axis
+ // (and the matching matplotlib PNG) always shows one. Mirrors the
+ // left-axis label code above, rotated the other way since it sits on
+ // the opposite side.
     ctx.save();
     ctx.translate(x + 34, padT + plotH / 2);
     ctx.rotate(Math.PI / 2);
@@ -783,10 +783,10 @@ canvas.addEventListener('mousemove', (ev) => {{
   let lines = [];
   SERIES.forEach(s => {{
     if (s.dash) return;
-    // Only read a value where this series actually has data - otherwise
-    // hovering past where a shorter series (e.g. a partial telemetry
-    // segment) ends would silently show its nearest stale endpoint as if
-    // it were a real reading at the cursor's x.
+ // Only read a value where this series actually has data - otherwise
+ // hovering past where a shorter series (e.g. a partial telemetry
+ // segment) ends would silently show its nearest stale endpoint as if
+ // it were a real reading at the cursor's x.
     const sMin = Math.min(...s.x), sMax = Math.max(...s.x);
     if (xv < sMin || xv > sMax) return;
     let best = null, bestDist = Infinity;
@@ -796,9 +796,9 @@ canvas.addEventListener('mousemove', (ev) => {{
     }}
     if (best !== null && s.y[best] !== null && s.y[best] !== undefined) {{
       lines.push(`${{s.name}}: ${{s.y[best].toFixed(2)}} ${{s.unit}}`);
-      // Pin a small marker at the exact sample this value comes from, so
-      // each tooltip line is visibly anchored to a real point on its own
-      // line, not just implied by the crosshair's position.
+ // Pin a small marker at the exact sample this value comes from, so
+ // each tooltip line is visibly anchored to a real point on its own
+ // line, not just implied by the crosshair's position.
       const px = xAt(s.x[best]), py = yAt(s.y[best], s.axis);
       ctx.beginPath();
       ctx.arc(px, py, 6, 0, Math.PI * 2);
@@ -817,14 +817,14 @@ canvas.addEventListener('mousemove', (ev) => {{
   const my = (ev.clientY - rect.top) * scaleY;
   let left = mx + 12, top = my - 10;
   if (left > W - 220) left = mx - 12 - 200;
-  // Convert back from canvas-pixel space to CSS pixel space before
-  // positioning the tooltip DIV - the crosshair/markers above are drawn
-  // straight onto the canvas's own backing-pixel grid, but this tooltip
-  // is a separate absolutely-positioned element, so its coordinates need
-  // the inverse of the same scale factor whenever the canvas is
-  // displayed at a different CSS size than its backing resolution (the
-  // real reason a hover tooltip can drift away from the point it
-  // describes).
+ // Convert back from canvas-pixel space to CSS pixel space before
+ // positioning the tooltip DIV - the crosshair/markers above are drawn
+ // straight onto the canvas's own backing-pixel grid, but this tooltip
+ // is a separate absolutely-positioned element, so its coordinates need
+ // the inverse of the same scale factor whenever the canvas is
+ // displayed at a different CSS size than its backing resolution (the
+ // real reason a hover tooltip can drift away from the point it
+ // describes).
   tooltip.style.left = (left / scaleX) + 'px';
   tooltip.style.top = (Math.max(0, top) / scaleY) + 'px';
 }});
@@ -875,8 +875,8 @@ def render_curve_html(current, hist, hardware, out_html, title):
 
     axes = {"power": {"label": "Charger power (kW)", "color": S1_BLUE, "side": "left"}}
 
-    # Pack temperature - the same third line the PNG now draws (a cold,
-    # un-preconditioned pack visibly suppresses the power curve).
+ # Pack temperature - the same third line the PNG now draws (a cold,
+ # un-preconditioned pack visibly suppresses the power curve).
     temp_pts = [p for p in current["points"] if p["soc"] is not None and p.get("temp_c") is not None]
     if len(temp_pts) >= 2:
         series.append({"name": "Pack temperature", "unit": "°C", "axis": "temp", "color": S3_AQUA,

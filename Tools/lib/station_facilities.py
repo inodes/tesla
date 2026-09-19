@@ -42,7 +42,7 @@ def compute_facility_score(pois: list) -> dict:
     Closer venues (<= 100m) receive full weight; 100m-250m receive 0.8x weight;
     venues > 250m receive 0.5x weight.
     """
-    # Exclude charging station self-matches
+ # Exclude charging station self-matches
     filtered_pois = [
         p for p in (pois or [])
         if not (p.get("category", "").lower().startswith("charging") or "supercharger" in p.get("name", "").lower() or p.get("name", "").lower().startswith("tesla super"))
@@ -63,7 +63,7 @@ def compute_facility_score(pois: list) -> dict:
             "closest_poi": None,
         }
 
-    # Group POIs by category group
+ # Group POIs by category group
     grouped = {}
     for p in pois:
         grp = p.get("group", "Other Facilities")
@@ -92,7 +92,7 @@ def compute_facility_score(pois: list) -> dict:
     raw_score = pts_restroom + pts_dining + pts_coffee + pts_groceries + pts_retail + pts_leisure
     score = round(min(10.0, raw_score), 1)
 
-    # Determine Rating Tier
+ # Determine Rating Tier
     if score >= 8.0:
         rating = "Excellent"
         tier_color = "🟢"
@@ -106,7 +106,7 @@ def compute_facility_score(pois: list) -> dict:
         rating = "Sparse"
         tier_color = "🔴"
 
-    # Emoji summary chips for available categories
+ # Emoji summary chips for available categories
     chips_list = []
     if "Amenities & Services" in grouped:
         chips_list.append("🚻")
@@ -130,7 +130,7 @@ def compute_facility_score(pois: list) -> dict:
     for grp_name, items in grouped.items():
         cat_summary[grp_name] = [f"{it['name']} ({it['dist_m']:.0f}m)" for it in items[:6]]
 
-    # Immediate Doorstep amenities (<= 100m, ~1-2 min walk right by the stalls)
+ # Immediate Doorstep amenities (<= 100m, ~1-2 min walk right by the stalls)
     doorstep_pois = [p for p in pois if p.get("dist_m", 999.0) <= 100.0]
     doorstep_summary = [f"{p['name']} ({p.get('dist_m', 0):.0f}m)" for p in doorstep_pois]
     immediate_doorstep = [
@@ -174,7 +174,7 @@ class FacilitiesRegistry:
             os.path.expanduser("~/Library/Mobile Documents/com~apple~CloudDocs/Tesla/Tessie/station_facilities.json"),
             os.path.join(repo_root, "Tessie", "station_facilities.json")
         ]
-        # Remove duplicate paths while preserving order
+ # Remove duplicate paths while preserving order
         seen = set()
         self.candidate_paths = [p for p in self.candidate_paths if not (p in seen or seen.add(p))]
         self.file_path = self.candidate_paths[0]
@@ -246,7 +246,7 @@ class FacilitiesRegistry:
                     res = v
                     break
 
-        # Coordinate matching (within ~200m)
+ # Coordinate matching (within ~200m)
         if not res and lat is not None and lon is not None:
             for k, v in data.items():
                 v_lat, v_lon = v.get("lat"), v.get("lon")
@@ -260,7 +260,7 @@ class FacilitiesRegistry:
         if not res:
             return None
 
-        # Backwards compatibility: dynamically attach doorstep_100m & immediate_doorstep if missing from older json
+ # Backwards compatibility: dynamically attach doorstep_100m & immediate_doorstep if missing from older json
         if ("doorstep_100m" not in res or "immediate_doorstep" not in res) and "pois" in res:
             doorstep_pois = [p for p in res["pois"] if p.get("dist_m", 999.0) <= 100.0]
             res["doorstep_100m"] = [f"{p['name']} ({p.get('dist_m', 0):.0f}m)" for p in doorstep_pois]
@@ -385,7 +385,7 @@ def format_facilities_summary_card(cached_fac: dict, indent: str = "  ", max_wid
         header_raw = truncate_display(header_raw, max_width)
     lines.append(header_raw)
 
-    # 1. Immediate Doorstep (<= 100m)
+ # 1. Immediate Doorstep (<= 100m)
     pois = cached_fac.get("pois", [])
     doorstep = [
         p for p in pois
@@ -433,7 +433,7 @@ def format_facilities_summary_card(cached_fac: dict, indent: str = "  ", max_wid
         else:
             lines.append(f"{indent}   🚪 \033[1mWithin 100m:\033[0m \033[90mNo amenities detected\033[0m")
 
-    # 2. Detailed Per-Line Category Summary with emojis, counts, and top venues
+ # 2. Detailed Per-Line Category Summary with emojis, counts, and top venues
     groups = {}
     for p in pois:
         if p.get("category", "").lower().startswith("charging") or "supercharger" in p.get("name", "").lower() or p.get("name", "").lower().startswith("tesla super"):
@@ -467,7 +467,7 @@ def format_facilities_summary_card(cached_fac: dict, indent: str = "  ", max_wid
             prefix = f"{indent}      • {grp_emoji} \033[1m{grp_name}\033[0m ({len(grp_pois)}): "
             avail = max(15, max_width - display_len(prefix))
             
-            # Dynamically pack as many venues as fit within line width
+ # Dynamically pack as many venues as fit within line width
             chosen_venues = []
             for p in grp_pois:
                 v_str = f"{p['name']} ({p.get('dist_m', 0):.0f}m)"
