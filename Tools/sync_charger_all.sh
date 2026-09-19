@@ -6,7 +6,7 @@
 #
 # Scoped to near Home (50km radius) rather than a state/nationwide pull, to
 # keep this fast and avoid PlugShare's own rate-limiting on large bursts
-# (see AGENTS.md BUG-008). Run the two scripts directly with a wider
+# (see AGENTS.md ). Run the two scripts directly with a wider
 # --state/--country scope yourself if you want a broader sweep.
 #
 # Tesla: --all always persists (update_registry() runs unconditionally in
@@ -24,7 +24,7 @@
 # Run `charger_find_tesla.py --stale --all` yourself if you want to refresh
 # aging Tesla entries; PlugShare has no separate staleness flag today.
 #
-# BUG-105 (AGENTS.local.md): AmpCharge was already wired into charger_find.py's
+# (AGENTS.local.md): AmpCharge was already wired into charger_find.py's
 # --sync-all but had never been added to THIS script's own step list - fixed
 # here alongside adding the new Exploren network (REQ-086); Jolt (REQ-087)
 # was added the same way from day one.
@@ -66,7 +66,7 @@ Steps run, in order:
   12. Multi-View Consolidated Registry Export (charger_find.py --export-consolidated)
 
 See this file's own header comment for the full rationale behind each step
-(why "near Home" scoping, PlugShare rate-limit avoidance (BUG-008), etc.) -
+(why "near Home" scoping, PlugShare rate-limit avoidance (), etc.) -
 keep that comment and this help text in sync if either changes.
 EOF
     exit 0

@@ -196,12 +196,12 @@ def parse_exploren_detail_html(html: str) -> Dict[str, Any]:
             "power_kw": float(cm.group(3)),
         })
 
-    # The last "py-4 border-top border-light-gray" block is either a $/kWh
-    # pricing block ("Paid Charger: ... $X per kWh ... $Y Connection Fee") or a
-    # free-text site-specific access note - the "Operational Instructions" /
-    # "How to Charge Your Car" block that always precedes it is skipped by
-    # simply taking the LAST split segment rather than trying to bound each
-    # block with a nested-div-safe regex.
+ # The last "py-4 border-top border-light-gray" block is either a $/kWh
+ # pricing block ("Paid Charger: ... $X per kWh ... $Y Connection Fee") or a
+ # free-text site-specific access note - the "Operational Instructions" /
+ # "How to Charge Your Car" block that always precedes it is skipped by
+ # simply taking the LAST split segment rather than trying to bound each
+ # block with a nested-div-safe regex.
     segments = html.split('<div class="py-4 border-top border-light-gray">')
     per_kwh = None
     connection_fee = None
@@ -325,8 +325,8 @@ class ExplorenProvider(BaseChargerProvider):
     """
     name: str = "Exploren"
     tier: int = 1
-    # Verified via the base station list's own `current_type` field, which is
-    # exclusively "ac", "dc", or "ac/dc" - never a Tesla-specific value.
+ # Verified via the base station list's own `current_type` field, which is
+ # exclusively "ac", "dc", or "ac/dc" - never a Tesla-specific value.
     POSSIBLE_SPEED_TIERS = {"dc_fast", "ac_destination"}
 
     def __init__(self, registry_path: Optional[str] = None):
@@ -354,23 +354,23 @@ class ExplorenProvider(BaseChargerProvider):
         detail_map: Dict[Any, Dict[str, Any]] = {}
 
         def _fetch_single_detail(loc_id: Any) -> Tuple[Any, Optional[Dict[str, Any]]]:
-            # BUG-113 (AGENTS.local.md, 2026-09-16): a failed/timed-out detail
-            # fetch here used to silently return None on the FIRST try, no
-            # retry - and every downstream consumer of `units=[]` falls back
-            # to a hardcoded "2 stalls, no connector breakdown" guess
-            # (parse_exploren_location_record's `len(units) if units else 2`).
-            # Caught concretely via the user's own report: Bankstown Central
-            # showed "2 Stalls | Up to 160 kW" in the app, but Exploren's own
-            # page lists 4 independent "Chargers (4)" - #10968/10969/9098/9099,
-            # all confirmed DC 160kW on a fresh direct fetch, proving the
-            # parser itself is correct and this was a transient fetch failure
-            # baked into the cache, not a parsing bug. Across the full cached
-            # registry, 499/637 stations (78%) show exactly stalls==2 - far
-            # more than plausible as all being genuinely single-pedestal
-            # sites, meaning this silent fallback was hit at scale. A couple
-            # of retries here, plus surfacing the still-failed count from
-            # sync(), turns "quietly wrong for hundreds of stations" into
-            # "actually retried, and here's what's still unknown."
+ # (AGENTS.local.md, 2026-09-16): a failed/timed-out detail
+ # fetch here used to silently return None on the FIRST try, no
+ # retry - and every downstream consumer of `units=[]` falls back
+ # to a hardcoded "2 stalls, no connector breakdown" guess
+ # (parse_exploren_location_record's `len(units) if units else 2`).
+ # Caught concretely via the user's own report: Bankstown Central
+ # showed "2 Stalls | Up to 160 kW" in the app, but Exploren's own
+ # page lists 4 independent "Chargers (4)" - #10968/10969/9098/9099,
+ # all confirmed DC 160kW on a fresh direct fetch, proving the
+ # parser itself is correct and this was a transient fetch failure
+ # baked into the cache, not a parsing issue. Across the full cached
+ # registry, 499/637 stations (78%) show exactly stalls==2 - far
+ # more than plausible as all being genuinely single-pedestal
+ # sites, meaning this silent fallback was hit at scale. A couple
+ # of retries here, plus surfacing the still-failed count from
+ # sync(), turns "quietly wrong for hundreds of stations" into
+ # "actually retried, and here's what's still unknown."
             if not nonce:
                 return loc_id, None
             last_err = None
@@ -400,11 +400,11 @@ class ExplorenProvider(BaseChargerProvider):
                 if d_obj:
                     detail_map[loc_id] = d_obj
 
-        # BUG-113: surface how many detail fetches never succeeded even after
-        # 3 attempts, instead of letting them vanish into a silent "2 stalls,
-        # no breakdown" fallback - those specific stations are named so a
-        # re-run or a targeted --sync-exploren retry can be judged on real
-        # information rather than guessing at the scale of the gap.
+ # surface how many detail fetches never succeeded even after
+ # 3 attempts, instead of letting them vanish into a silent "2 stalls,
+ # no breakdown" fallback - those specific stations are named so a
+ # re-run or a targeted --sync-exploren retry can be judged on real
+ # information rather than guessing at the scale of the gap.
         failed_ids = [str(lid) for lid in all_ids if lid not in detail_map]
         if failed_ids:
             print(f"⚠ Exploren: detail fetch failed for {len(failed_ids)}/{len(all_ids)} station(s) after 3 attempts each - "
@@ -542,17 +542,17 @@ class ExplorenProvider(BaseChargerProvider):
                 meta = s_data.get("metadata", {})
 
                 max_pwr = float(hw_data.get("max_power_kw") or 0.0)
-                # BUG-112 (AGENTS.local.md, 2026-09-16): this used to re-derive
-                # speed_tier from meta.get("current_type", "") - a metadata key
-                # that sync() never actually writes (there is no top-level
-                # "metadata" object in the cached JSON at all), so is_dc was
-                # unconditionally False and EVERY cached Exploren station loaded
-                # as "ac_destination", discarding the correct value sync()
-                # already computed and stored at hardware.speed_tier (e.g.
-                # Bunnings Gladesville: 2x CCS2, 120kW, on-disk speed_tier
-                # "dc_fast" - but every load showed it, and 148 other real DC
-                # stations, as AC). Trust the stored field directly instead of
-                # re-deriving it from data that was never there.
+ # (AGENTS.local.md, 2026-09-16): this used to re-derive
+ # speed_tier from meta.get("current_type", "") - a metadata key
+ # that sync() never actually writes (there is no top-level
+ # "metadata" object in the cached JSON at all), so is_dc was
+ # unconditionally False and EVERY cached Exploren station loaded
+ # as "ac_destination", discarding the correct value sync()
+ # already computed and stored at hardware.speed_tier (e.g.
+ # Bunnings Gladesville: 2x CCS2, 120kW, on-disk speed_tier
+ # "dc_fast" - but every load showed it, and 148 other real DC
+ # stations, as AC). Trust the stored field directly instead of
+ # re-deriving it from data that was never there.
                 speed_tier = hw_data.get("speed_tier") or ("dc_fast" if max_pwr >= 25.0 else "ac_destination")
 
                 rec = UnifiedStationRecord(

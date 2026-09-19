@@ -8,11 +8,12 @@ High-speed multi-drive sync, intelligent auto-pruning, storage auditing, and loc
 
 1. **High-Speed Multi-Drive Sync:** Synchronizes Tesla USB and in-car SSDs (e.g. JOWUA) directly to your high-capacity Master Archive SSD (or Mac local folder via `--localsync`).
 2. **ExFAT 2-Second Timestamp Parity:** Native `--modify-window=2` handling prevents false re-transfers across macOS and external drives.
-3. **Safe Two-Tier Auto-Pruning:**
+3. **Embedded SEI Metadata & Telemetry Extraction:** Pure-Python parser for embedded H.264/H.265 Supplemental Enhancement Information (SEI) NAL units (`dashcam.proto`), providing vehicle speed, gear, steering, GPS coordinates, and stream encryption detection (`encv` / CENC) with zero native dependencies.
+4. **Safe Two-Tier Auto-Pruning:**
    - **In-Car Buffer (e.g. JOWUA):** Auto-prunes oldest `RecentClips` only when capacity exceeds 80% and all clips are verified on the Master Archive SSD.
    - **Glovebox OEM USB:** Preserves `SavedClips` and `SentryClips` permanently while managing loop headroom.
    - **Master Archive SSD:** Never deletes any footage.
-4. **Local Browser Video Viewer (ExportDash):** Stitch and view all 4 synchronized camera angles (`front`, `back`, `left_repeater`, `right_repeater`) in a web interface powered by [ExportDash](https://github.com/nobig-deals/exportdash.cam).
+5. **Local Browser Video Viewer (ExportDash):** Stitch and view all 4 synchronized camera angles (`front`, `back`, `left_repeater`, `right_repeater`) in a web interface powered by [ExportDash](https://github.com/nobig-deals/exportdash.cam).
 
 ---
 

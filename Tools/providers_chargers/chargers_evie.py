@@ -135,7 +135,7 @@ def parse_evie_price(price_str: Optional[str]) -> Dict[str, Any]:
 
     clean = price_str.strip()
 
-    # Time-of-Use pattern: "0.75/kWh + 0.04/kWh (9:00 AM-9:00 PM)"
+ # Time-of-Use pattern: "0.75/kWh + 0.04/kWh (9:00 AM-9:00 PM)"
     tou_m = re.search(r"(\d+(?:\.\d+)?)/kWh\s*\+\s*(\d+(?:\.\d+)?)/kWh\s*\(([^)]+)\)", clean)
     if tou_m:
         base_rate = float(tou_m.group(1))
@@ -179,7 +179,7 @@ def parse_evie_price(price_str: Optional[str]) -> Dict[str, Any]:
                 "schedule": schedule
             }
 
-    # Flat rate pattern: "0.75/kWh"
+ # Flat rate pattern: "0.75/kWh"
     flat_m = re.search(r"(\d+(?:\.\d+)?)/kWh", clean)
     if flat_m:
         rate = float(flat_m.group(1))
@@ -235,7 +235,7 @@ def parse_evie_location_record(loc: Dict[str, Any]) -> Dict[str, Any]:
     except (ValueError, TypeError):
         lon = 0.0
 
-    # Resolve State/Territory
+ # Resolve State/Territory
     state = STATE_NORMALIZATION.get(raw_state.upper(), "")
     if not state and lat and lon:
         state = resolve_au_state(lat, lon)
@@ -248,7 +248,7 @@ def parse_evie_location_record(loc: Dict[str, Any]) -> Dict[str, Any]:
         if len(parts) >= 2:
             suburb = parts[1]
 
-    # Parse pedestals & connectors
+ # Parse pedestals & connectors
     evie_ch_raw = loc.get("evie_chargers")
     pedestals = []
     if isinstance(evie_ch_raw, str) and evie_ch_raw.strip():
@@ -427,9 +427,9 @@ def parse_evie_location_record(loc: Dict[str, Any]) -> Dict[str, Any]:
 
 
 class EvieProvider(BaseChargerProvider):
-    # BUG-079: verified via grep 'speed_tier\s*=' - only "dc_fast" or
-    # "ac_destination" (by max_power_kw threshold, or a stored hardware
-    # speed_tier defaulting to "dc_fast"). Never "supercharger".
+ # verified via grep 'speed_tier\s*=' - only "dc_fast" or
+ # "ac_destination" (by max_power_kw threshold, or a stored hardware
+ # speed_tier defaulting to "dc_fast"). Never "supercharger".
     POSSIBLE_SPEED_TIERS = {"dc_fast", "ac_destination"}
     """
     Tier 1 First-Party Authoritative Provider for Evie Networks.
@@ -505,7 +505,7 @@ class EvieProvider(BaseChargerProvider):
         archive_path = os.path.join(os.path.dirname(target_path), "evie_chargers_archived.json")
         now_utc = datetime.now(timezone.utc).isoformat()
 
-        # Load existing registry to detect tariff or hardware changes
+ # Load existing registry to detect tariff or hardware changes
         existing_stations = {}
         if os.path.isfile(target_path):
             try:
@@ -523,7 +523,7 @@ class EvieProvider(BaseChargerProvider):
                 d["views"] = r.views
             stations_dict[r.key] = d
 
-            # Archive if previous version exists and changed
+ # Archive if previous version exists and changed
             if r.key in existing_stations:
                 old_st = existing_stations[r.key]
                 if detect_station_changes(old_st, d):
@@ -537,12 +537,12 @@ class EvieProvider(BaseChargerProvider):
             "stations": stations_dict
         }
 
-        # AGENTS.md BUG-067: was a bare open(path, "w") - a process killed
-        # mid-write (Ctrl-C, laptop sleep, OOM) could leave a truncated/
-        # corrupt registry; atomic_write_json() (base.py) writes to a temp
-        # file in the same directory and os.replace()s it into place, so
-        # target_path is always either the old complete file or the new
-        # complete one, never something in between.
+ # AGENTS.md was a bare open(path, "w") - a process killed
+ # mid-write (Ctrl-C, laptop sleep, OOM) could leave a truncated/
+ # corrupt registry; atomic_write_json() (base.py) writes to a temp
+ # file in the same directory and os.replace()s it into place, so
+ # target_path is always either the old complete file or the new
+ # complete one, never something in between.
         atomic_write_json(target_path, payload)
 
         self._cache = records

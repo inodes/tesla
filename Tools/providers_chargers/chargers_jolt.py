@@ -269,8 +269,8 @@ class JoltProvider(BaseChargerProvider):
     """
     name: str = "Jolt"
     tier: int = 1
-    # Every station in the feed is a 50kW DC unit (see module docstring) -
-    # never AC.
+ # Every station in the feed is a 50kW DC unit (see module docstring) -
+ # never AC.
     POSSIBLE_SPEED_TIERS = {"dc_fast"}
 
     def __init__(self, registry_path: Optional[str] = None):

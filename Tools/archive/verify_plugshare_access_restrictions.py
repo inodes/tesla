@@ -2,7 +2,7 @@
 """
 verify_plugshare_access_restrictions.py
 
-BUG-089 follow-up (AGENTS.local.md): plugshare_to_registry_record() used to
+follow-up (AGENTS.local.md): plugshare_to_registry_record() used to
 only read a PlugShare location's coarse `access` code (1=Public,
 2=Customer/Patron, else=Restricted), missing a separate
 `access_restrictions`/`access_restriction_descriptions` list that PlugShare's
@@ -18,12 +18,12 @@ This script is that live re-check, scoped to exactly the stations that could
 be affected: the 481 (at last count) currently labeled "Customer / Patron"
 *or* "Restricted (Customers Only)" (the candidate filter matches on the
 substring "customer" in the cached access_type, which both labels contain -
-that's intentional: BUG-089 could have hidden a restriction under either
+that's intentional: could have hidden a restriction under either
 one), since that's the specific base code the reported station (Mortlake
 Slipway) had. Public-labeled stations are left alone - genuinely nothing to
 hide there.
 
-BUG-095 (AGENTS.local.md, found while resuming a chunked --apply run):
+(AGENTS.local.md, found while resuming a chunked --apply run):
 re-running this script - whether via --limit N or letting an unbounded run
 get killed by an external timeout partway through - always re-scanned the
 candidate list FROM THE FRONT. A station that came back genuinely correct
@@ -50,12 +50,12 @@ Usage:
     python3 Tools/verify_plugshare_access_restrictions.py --apply --reset          # start a fresh campaign
 
 Re-checks each station live via PlugShareClient.get_location_details() (the
-same call BUG-089 was verified against), reusing the already-fixed
+same call was verified against), reusing the already-fixed
 plugshare_to_registry_record() conversion - no new parsing logic here, just
 the iteration driver. Paced with a delay between requests (default 1.5s) to
 be polite to PlugShare's API; safe to Ctrl+C (or a killed/timed-out chunk)
 and re-run later - each run skips whatever this campaign has already
-checked (see BUG-095 above) and picks up wherever it left off. The campaign
+checked (see above) and picks up wherever it left off. The campaign
 is considered complete once a run reports 0 remaining candidates; --reset
 starts a new one from scratch.
 """
@@ -94,8 +94,8 @@ def _load_progress(path: str) -> dict:
             data = _json.load(f)
         return data if isinstance(data, dict) else {}
     except (OSError, ValueError):
-        # A corrupt/unreadable progress file should never block the actual
-        # verification work - just start this campaign over.
+ # A corrupt/unreadable progress file should never block the actual
+ # verification work - just start this campaign over.
         return {}
 
 
@@ -154,8 +154,8 @@ def main():
         except Exception as e:
             errors.append((rec.name, rec.source_id, str(e)))
             print(f"  [{i}/{len(candidates)}] {rec.name!r} (id={rec.source_id}) -> ERROR: {e}")
-            # Deliberately NOT marked checked - a network hiccup should be
-            # retried next run, not permanently skipped for the campaign.
+ # Deliberately NOT marked checked - a network hiccup should be
+ # retried next run, not permanently skipped for the campaign.
             time.sleep(args.delay)
             continue
 
@@ -175,21 +175,21 @@ def main():
             print(f"  [{i}/{len(candidates)}] {rec.name!r} (id={rec.source_id}): OK ({old_label!r})")
 
         checked_this_campaign[rec.source_id] = datetime.now(timezone.utc).isoformat()
-        # Saved after EVERY station, not just at the end of the loop - this
-        # run may be one chunk of a much longer campaign and can be killed
-        # by an external timeout at any moment (see BUG-095), so progress
-        # already made must never depend on reaching the end of the loop.
+ # Saved after EVERY station, not just at the end of the loop - this
+ # run may be one chunk of a much longer campaign and can be killed
+ # by an external timeout at any moment (see ), so progress
+ # already made must never depend on reaching the end of the loop.
         _save_progress(progress_path, checked_this_campaign)
         time.sleep(args.delay)
 
     print()
     print(f"Checked {len(candidates)} station(s) this run. Mislabeled: {len(mismatches)}. Errors: {len(errors)}.")
-    # Based on what's ACTUALLY left in checked_this_campaign, not just
-    # len(candidates) - a station that errored was deliberately never
-    # marked checked, so counting it as "done" here would misreport a
-    # campaign as complete when errored stations (typically delisted or
-    # placeholder "(Coming Soon)" listings with no live PlugShare page)
-    # will keep reappearing on every future run.
+ # Based on what's ACTUALLY left in checked_this_campaign, not just
+ # len(candidates) - a station that errored was deliberately never
+ # marked checked, so counting it as "done" here would misreport a
+ # campaign as complete when errored stations (typically delisted or
+ # placeholder "(Coming Soon)" listings with no live PlugShare page)
+ # will keep reappearing on every future run.
     still_remaining = len([r for r in candidates if r.source_id not in checked_this_campaign])
     if still_remaining > 0:
         if still_remaining == len(errors):

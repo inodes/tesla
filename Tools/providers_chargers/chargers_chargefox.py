@@ -63,34 +63,34 @@ def _resolve_chargefox_registry_path() -> str:
 
 def resolve_au_state(lat: float, lon: float) -> str:
     """Deterministically resolves Australian State/Territory code from GPS coordinates."""
-    # ACT: approx -36.0 to -35.1 lat, 148.7 to 149.4 lon
+ # ACT: approx -36.0 to -35.1 lat, 148.7 to 149.4 lon
     if -36.0 <= lat <= -35.1 and 148.7 <= lon <= 149.4:
         return "ACT"
-    # TAS: approx -44.0 to -39.5 lat, 143.5 to 149.0 lon
+ # TAS: approx -44.0 to -39.5 lat, 143.5 to 149.0 lon
     if -44.0 <= lat <= -39.5 and 143.5 <= lon <= 149.0:
         return "TAS"
-    # WA: lon < 129.0
+ # WA: lon < 129.0
     if 112.0 <= lon < 129.0 and -36.0 <= lat <= -13.0:
         return "WA"
-    # NT: 129.0 <= lon <= 138.0 and lat > -26.0
+ # NT: 129.0 <= lon <= 138.0 and lat > -26.0
     if 129.0 <= lon <= 138.0 and -26.0 < lat <= -10.0:
         return "NT"
-    # SA: 129.0 <= lon <= 141.0 and lat <= -26.0
+ # SA: 129.0 <= lon <= 141.0 and lat <= -26.0
     if 129.0 <= lon <= 141.0 and -38.5 <= lat <= -26.0:
         return "SA"
-    # QLD: lat > -29.0 and lon >= 138.0
+ # QLD: lat > -29.0 and lon >= 138.0
     if lat > -29.0 and 138.0 <= lon <= 154.0:
         return "QLD"
-    # VIC: lat <= -34.0 and lon <= 150.0 and lat > -39.5
+ # VIC: lat <= -34.0 and lon <= 150.0 and lat > -39.5
     if -39.5 <= lat <= -34.0 and 140.9 <= lon <= 150.0:
         if lat <= -36.0 or (lat <= -34.2 and lon < 143.0) or (lat <= -35.8 and lon < 147.0):
             return "VIC"
         if lat < -36.1:
             return "VIC"
-    # NSW fallback for eastern Australia
+ # NSW fallback for eastern Australia
     if -37.6 <= lat <= -28.0 and 141.0 <= lon <= 154.0:
         return "NSW"
-    # New Zealand
+ # New Zealand
     if -48.0 <= lat <= -34.0 and 166.0 <= lon <= 179.0:
         return "NZ"
     return "NSW"
@@ -102,7 +102,7 @@ def extract_suburb_from_station_name(name: str) -> str:
         return ""
     clean = name.strip()
     
-    # Strip common operator, dealership, and retailer prefixes
+ # Strip common operator, dealership, and retailer prefixes
     prefixes = [
         r"^NRMA\s+",
         r"^RACV\s+",
@@ -141,7 +141,7 @@ def extract_suburb_from_station_name(name: str) -> str:
     for p in prefixes:
         clean = re.sub(p, "", clean, flags=re.IGNORECASE).strip()
     
-    # Strip common suffixes / descriptors
+ # Strip common suffixes / descriptors
     suffixes = [
         r"\s+Polecharger.*$",
         r"\s+Supercharger.*$",
@@ -180,7 +180,7 @@ def extract_suburb_from_station_name(name: str) -> str:
 
 def _resolve_suburb_via_geocode(lat: float, lon: float) -> tuple:
     """
-    BUG-076 (2026-09-15, AGENTS.local.md). Root cause confirmed live against
+    (2026-09-15, AGENTS.local.md). Root cause confirmed live against
     Chargefox's own production GraphQL API: the per-location query never
     requested any address field, and a live introspection sweep of ~25
     plausible field names (address/suburb/city/locality/postcode/... on both
@@ -232,10 +232,10 @@ def _resolve_suburb_via_geocode(lat: float, lon: float) -> tuple:
 
 class ChargefoxProvider(BaseChargerProvider):
     name: str = "Chargefox"
-    # BUG-079: verified via grep 'speed_tier\s*=' - only ever "dc_fast" or
-    # "ac_destination" (by max_power_kw threshold). Never "supercharger" -
-    # this is exactly what lets get_all_stations() skip Chargefox (and its
-    # potentially slow live Nominatim geocoding) for a --sc-only query.
+ # verified via grep 'speed_tier\s*=' - only ever "dc_fast" or
+ # "ac_destination" (by max_power_kw threshold). Never "supercharger" -
+ # this is exactly what lets get_all_stations() skip Chargefox (and its
+ # potentially slow live Nominatim geocoding) for a --sc-only query.
     POSSIBLE_SPEED_TIERS = {"dc_fast", "ac_destination"}
     tier: int = 1  # First-Party Authoritative
 
@@ -284,15 +284,15 @@ class ChargefoxProvider(BaseChargerProvider):
 
         loc_id = str(node.get("id", ""))
         name = node.get("name") or "Chargefox Station"
-        # Chargefox's upstream data occasionally embeds invisible characters
-        # mid-name (e.g. a literal U+200B zero-width space: "157 \u200bCurlewis
-        # St") - harmless to width-aware rendering (table_formatter.py's
-        # char_width() already scores these as 0 display columns) but pure
-        # noise to carry through the registry, and a plausible contributor to
-        # any "alignment looks off" report given how these characters render
-        # inconsistently across terminals/fonts. Root-caused via a live diff
-        # against this exact station (user: "wondering what causes this given
-        # alignment should be self healing"). Stripped at ingestion instead.
+ # Chargefox's upstream data occasionally embeds invisible characters
+ # mid-name (e.g. a literal U+200B zero-width space: "157 \u200bCurlewis
+ # St") - harmless to width-aware rendering (table_formatter.py's
+ # char_width() already scores these as 0 display columns) but pure
+ # noise to carry through the registry, and a plausible contributor to
+ # any "alignment looks off" report given how these characters render
+ # inconsistently across terminals/fonts. Root-caused via a live diff
+ # against this exact station (user: "wondering what causes this given
+ # alignment should be self healing"). Stripped at ingestion instead.
         name = re.sub(r"[\u200b\u200c\u200d\u2060\ufeff]", "", name).strip()
         name = re.sub(r"\s{2,}", " ", name)
         lat = node.get("lat")
@@ -305,7 +305,7 @@ class ChargefoxProvider(BaseChargerProvider):
         except (ValueError, TypeError):
             return None
 
-        # Determine Network branding
+ # Determine Network branding
         net = "Chargefox"
         name_lower = name.lower()
         if "nrma" in name_lower:
@@ -315,7 +315,7 @@ class ChargefoxProvider(BaseChargerProvider):
         elif "queensland electric highway" in name_lower or "qeh" in name_lower:
             net = "Qld Electric Highway"
 
-        # Max power & Speed Tier
+ # Max power & Speed Tier
         max_power = node.get("maxPower")
         speed_raw = str(node.get("chargingSpeed", "")).lower()
         
@@ -338,7 +338,7 @@ class ChargefoxProvider(BaseChargerProvider):
 
         speed_tier = "dc_fast" if max_kw >= 25.0 else "ac_destination"
 
-        # Stalls and Connectors
+ # Stalls and Connectors
         stations = node.get("chargeStations", [])
         stalls_total = len(stations) if stations else 1
         stalls_avail = 0
@@ -366,7 +366,7 @@ class ChargefoxProvider(BaseChargerProvider):
         if not plugs:
             plugs = ["CCS2", "CHAdeMO"] if speed_tier == "dc_fast" else ["Type 2"]
 
-        # Tariffs & Pricing
+ # Tariffs & Pricing
         pr = node.get("priceRange") or {}
         e_desc = pr.get("energyDescription") or ""
         t_desc = pr.get("timeDescription") or ""
@@ -390,7 +390,7 @@ class ChargefoxProvider(BaseChargerProvider):
             rate_range = "$0.54 - $0.60/kWh"
             pricing_model = "flat"
 
-        # Clean address components
+ # Clean address components
         addr_obj = node.get("address") or {}
         address_str = ""
         suburb = ""
@@ -402,46 +402,46 @@ class ChargefoxProvider(BaseChargerProvider):
             state = addr_obj.get("state", "")
             postcode = addr_obj.get("postcode", "")
 
-        # Fallback state resolution from GPS coordinates
+ # Fallback state resolution from GPS coordinates
         if not state and lat is not None and lon is not None:
             state = resolve_au_state(lat, lon)
 
-        # Fast path: a suburb/postcode already reverse-geocoded on a PRIOR
-        # conversion of this exact node (persisted back onto it below).
-        # BUG-079 (2026-09-15, AGENTS.local.md): load_cached_registry() calls
-        # this function fresh on EVERY load (by design - the cache stores
-        # Chargefox's raw upstream node shape, not a resolved
-        # UnifiedStationRecord), so without this short-circuit, BUG-076's
-        # reverse-geocode fix was re-running a live Nominatim call for every
-        # one of ~1000+ stations on EVERY plain filter/listing command, not
-        # just an explicit --sync-chargefox - turning something as simple as
-        # `--state NSW` into a many-minute hang. Stashing the resolved value
-        # onto `node` (which IS what gets persisted verbatim to
-        # Tessie/chargefox_chargers.json via views={"chargefox": node}) makes
-        # the geocode a true one-time cost per station once this has been
-        # through one save cycle.
+ # Fast path: a suburb/postcode already reverse-geocoded on a PRIOR
+ # conversion of this exact node (persisted back onto it below).
+ # (2026-09-15, AGENTS.local.md): load_cached_registry() calls
+ # this function fresh on EVERY load (by design - the cache stores
+ # Chargefox's raw upstream node shape, not a resolved
+ # UnifiedStationRecord), so without this short-circuit, 's
+ # reverse-geocode fix was re-running a live Nominatim call for every
+ # one of ~1000+ stations on EVERY plain filter/listing command, not
+ # just an explicit --sync-chargefox - turning something as simple as
+ # `--state NSW` into a many-minute hang. Stashing the resolved value
+ # onto `node` (which IS what gets persisted verbatim to
+ # Tessie/chargefox_chargers.json via views={"chargefox": node}) makes
+ # the geocode a true one-time cost per station once this has been
+ # through one save cycle.
         if not suburb:
             suburb = node.get("_resolved_suburb") or ""
         if not postcode:
             postcode = node.get("_resolved_postcode") or ""
 
-        # Fallback suburb/postcode resolution via reverse geocoding (BUG-076,
-        # 2026-09-15, AGENTS.local.md) - Chargefox's API has no address field
-        # at all, so addr_obj above is empty for every station, not just some.
+ # Fallback suburb/postcode resolution via reverse geocoding (,
+ # 2026-09-15, AGENTS.local.md) - Chargefox's API has no address field
+ # at all, so addr_obj above is empty for every station, not just some.
         if not suburb and lat is not None and lon is not None:
             suburb, geo_postcode = _resolve_suburb_via_geocode(lat, lon)
             if geo_postcode and not postcode:
                 postcode = geo_postcode
 
-        # Last-resort fallback: parse the venue's own display name. Only
-        # reached if reverse geocoding above also failed (offline, Nominatim
-        # down/rate-limited) - real suburb data from the station's own GPS
-        # is always preferred over this heuristic.
+ # Last-resort fallback: parse the venue's own display name. Only
+ # reached if reverse geocoding above also failed (offline, Nominatim
+ # down/rate-limited) - real suburb data from the station's own GPS
+ # is always preferred over this heuristic.
         if not suburb:
             suburb = extract_suburb_from_station_name(name)
 
-        # Persist whatever was resolved back onto the raw node so the NEXT
-        # load of this same cached station is instant (BUG-079 above).
+ # Persist whatever was resolved back onto the raw node so the NEXT
+ # load of this same cached station is instant (above).
         if suburb:
             node["_resolved_suburb"] = suburb
         if postcode:
@@ -513,22 +513,22 @@ class ChargefoxProvider(BaseChargerProvider):
 
         self._cache = records
 
-        # BUG-079 (2026-09-15 follow-up, AGENTS.local.md): _convert_chargefox_node()
-        # already stashes a freshly-resolved suburb/postcode back onto the raw
-        # `item` dict (see its own BUG-079 comment above), and that mutated dict
-        # IS what gets persisted via views={"chargefox": node}. But nothing
-        # actually WROTE it back to `self.registry_path` unless the caller was
-        # an explicit --sync-chargefox (the only prior caller of
-        # save_cached_registry()) - so a plain listing/filter command's
-        # resolution was thrown away the moment the process exited, and the
-        # NEXT plain command re-ran live geocoding for every station all over
-        # again. `newly_resolved` tracks whether THIS load actually resolved
-        # anything new (vs. every station already having a cached suburb, the
-        # common case once this has run once), so a fully-warmed cache never
-        # pays this save's extra I/O. Best-effort: a write failure here (e.g. a
-        # read-only mount) must never break a plain listing command, so it's
-        # swallowed - the in-memory resolution for THIS process is unaffected
-        # either way.
+ # (2026-09-15 follow-up, AGENTS.local.md): _convert_chargefox_node()
+ # already stashes a freshly-resolved suburb/postcode back onto the raw
+ # `item` dict (see its own comment above), and that mutated dict
+ # IS what gets persisted via views={"chargefox": node}. But nothing
+ # actually WROTE it back to `self.registry_path` unless the caller was
+ # an explicit --sync-chargefox (the only prior caller of
+ # save_cached_registry()) - so a plain listing/filter command's
+ # resolution was thrown away the moment the process exited, and the
+ # NEXT plain command re-ran live geocoding for every station all over
+ # again. `newly_resolved` tracks whether THIS load actually resolved
+ # anything new (vs. every station already having a cached suburb, the
+ # common case once this has run once), so a fully-warmed cache never
+ # pays this save's extra I/O. Best-effort: a write failure here (e.g. a
+ # read-only mount) must never break a plain listing command, so it's
+ # swallowed - the in-memory resolution for THIS process is unaffected
+ # either way.
         if newly_resolved:
             try:
                 self.save_cached_registry(records)
@@ -542,7 +542,7 @@ class ChargefoxProvider(BaseChargerProvider):
         archive_path = os.path.join(os.path.dirname(self.registry_path), "chargefox_chargers_archived.json")
         now_utc = datetime.now(timezone.utc).isoformat()
 
-        # Load existing registry to detect tariff or hardware changes
+ # Load existing registry to detect tariff or hardware changes
         existing_map = {}
         if os.path.isfile(self.registry_path):
             try:
@@ -562,7 +562,7 @@ class ChargefoxProvider(BaseChargerProvider):
             r_dict = r.views.get("chargefox", r.to_dict())
             s_id = str(r_dict.get("id") or r.source_id or r.key)
             
-            # Check if existing station changed
+ # Check if existing station changed
             if s_id in existing_map:
                 old_node = existing_map[s_id]
                 if detect_station_changes(old_node, r_dict):
@@ -576,14 +576,14 @@ class ChargefoxProvider(BaseChargerProvider):
             "station_count": len(records),
             "stations": data
         }
-        # AGENTS.md BUG-067: this used to try each target path in a loop
-        # and just fall through silently if EVERY write failed - nothing
-        # checked the resulting `saved` flag, so a total failure still let
-        # the caller print "successfully saved N stations". Also never
-        # atomic - a killed process mid-write could corrupt the file that
-        # load_json_registry()'s own callers (analyse_charging.py)
-        # depend on. save_json_with_fallback() (base.py) now raises if
-        # every candidate path fails, and writes atomically either way.
+ # AGENTS.md this used to try each target path in a loop
+ # and just fall through silently if EVERY write failed - nothing
+ # checked the resulting `saved` flag, so a total failure still let
+ # the caller print "successfully saved N stations". Also never
+ # atomic - a killed process mid-write could corrupt the file that
+ # load_json_registry()'s own callers (analyse_charging.py)
+ # depend on. save_json_with_fallback() (base.py) now raises if
+ # every candidate path fails, and writes atomically either way.
         target_paths = [self.registry_path, os.path.join(_repo_root, "Tessie", "chargefox_chargers.json")]
         self.registry_path = save_json_with_fallback(target_paths, payload)
         self._cache = records
@@ -595,7 +595,7 @@ class ChargefoxProvider(BaseChargerProvider):
         if not rec:
             return None
 
-        # Update cache in place
+ # Update cache in place
         cached = self.load_cached_registry()
         updated_list = []
         found = False
@@ -654,7 +654,7 @@ class ChargefoxProvider(BaseChargerProvider):
 
         records: List[UnifiedStationRecord] = []
         
-        # Batch query locations using aliased GraphQL fields
+ # Batch query locations using aliased GraphQL fields
         for i in range(0, len(all_ids), batch_size):
             chunk = all_ids[i:i + batch_size]
             loc_queries = []
@@ -707,7 +707,7 @@ class ChargefoxProvider(BaseChargerProvider):
         cached = self.load_cached_registry()
         results = []
 
-        # If cache exists with populated names, query from cache
+ # If cache exists with populated names, query from cache
         if cached and any(s.name != "Chargefox Station" for s in cached):
             for st in cached:
                 dist = haversine_km(lat, lon, st.lat, st.lon)
@@ -718,7 +718,7 @@ class ChargefoxProvider(BaseChargerProvider):
             results.sort(key=lambda s: s.distance_km if s.distance_km is not None else 999999)
             return results
 
-        # Fallback to live API bounding box + concurrent details enrichment
+ # Fallback to live API bounding box + concurrent details enrichment
         deg_lat = radius_km / 111.0
         deg_lon = radius_km / 90.0
         bounds_q = f"""
@@ -746,7 +746,7 @@ class ChargefoxProvider(BaseChargerProvider):
         except Exception:
             pass
 
-        # Sort candidate IDs by distance and fetch top 20 detailed station records in parallel
+ # Sort candidate IDs by distance and fetch top 20 detailed station records in parallel
         candidate_ids.sort(key=lambda x: x[1])
         top_ids = [c[0] for c in candidate_ids[:20]]
 

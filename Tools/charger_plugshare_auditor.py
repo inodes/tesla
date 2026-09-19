@@ -121,13 +121,13 @@ def inspect_station_views(station: UnifiedStationRecord) -> str:
     lines.append(f"  📍 Canonical Key: {station.key} | Co-located Sources: {station.source}")
     lines.append(f"{C_BOLD}══════════════════════════════════════════════════════════════════════════════════{C_RESET}\n")
 
-    # Display First-Party Truth View. Uses the already-merged
-    # UnifiedStationRecord's own fields rather than hand-parsing each
-    # provider's raw view dict - the manager's dedup/merge already resolved
-    # "the truth" onto these fields for whichever Tier 1 provider owns this
-    # station, so this works identically for Tesla, Chargefox, EVX, Evie,
-    # bp pulse, AmpCharge, and any future Tier 1 provider with no changes
-    # needed here.
+ # Display First-Party Truth View. Uses the already-merged
+ # UnifiedStationRecord's own fields rather than hand-parsing each
+ # provider's raw view dict - the manager's dedup/merge already resolved
+ # "the truth" onto these fields for whichever Tier 1 provider owns this
+ # station, so this works identically for Tesla, Chargefox, EVX, Evie,
+ # bp pulse, AmpCharge, and any future Tier 1 provider with no changes
+ # needed here.
     has_tier1_view = any(v in views for v in ("tesla", "chargefox", "evx", "evie", "bppulse", "ampol"))
     if has_tier1_view:
         lines.append(f"  ⭐ {C_GREEN}{C_BOLD}FIRST-PARTY AUTHORITATIVE TRUTH (Tier {station.tier}: {station.network.upper()}):{C_RESET}")
@@ -141,7 +141,7 @@ def inspect_station_views(station: UnifiedStationRecord) -> str:
         lines.append(f"    • Official URL:        {official_url or '-'}")
         lines.append("")
 
-    # Display PlugShare View
+ # Display PlugShare View
     if "plugshare" in views:
         ps = views["plugshare"]
         ps_meta = ps.get("plugshare_metadata", {})
@@ -161,8 +161,8 @@ def inspect_station_views(station: UnifiedStationRecord) -> str:
         lines.append(f"    • PlugShare URL:       {ps_url}")
         lines.append("")
 
-        # Discrepancy Analysis - generic across every Tier 1 provider now,
-        # rather than a hardcoded per-provider if/elif chain.
+ # Discrepancy Analysis - generic across every Tier 1 provider now,
+ # rather than a hardcoded per-provider if/elif chain.
         lines.append(f"  ⚠️ {C_RED}{C_BOLD}DISCREPANCY SUMMARY / RECOMMENDED PLUGSHARE EDITS:{C_RESET}")
         discrepancies = discrepancies_for_station(station, ps_meta, ps_hw, ps_tariffs)
 
@@ -202,12 +202,12 @@ def discrepancies_for_station(
     """
     out = []
 
-    # 1. Network misattribution
+ # 1. Network misattribution
     ps_net = ps_meta.get("network", "") or ""
     if not network_matches(s.network, ps_net):
         out.append(f"Network: Change from '{ps_net or 'Unknown'}' ➔ '{s.network}'")
 
-    # 2. Pricing - missing/unlisted, or a live mismatch against a published rate
+ # 2. Pricing - missing/unlisted, or a live mismatch against a published rate
     if s.pricing_model != "unknown" and s.current_rate_per_kwh is not None and s.current_rate_per_kwh > 0:
         ps_price = ps_tariffs.get("per_kwh_flat", 0.0) or 0.0
         has_tou = ps_tariffs.get("has_tou_pricing", False)
@@ -218,7 +218,7 @@ def discrepancies_for_station(
             if diff_pct > price_tolerance_pct:
                 out.append(f"Tariff: Update stale rate ${ps_price:.2f}/kWh ➔ {_fmt_price(s.current_rate_per_kwh)} (off by {diff_pct:.0f}%)")
 
-    # 3. Hardware / power / stalls
+ # 3. Hardware / power / stalls
     ps_power = ps_hw.get("max_power_kw")
     if ps_power and s.max_power_kw:
         try:
@@ -261,10 +261,10 @@ def run_audit(network_filter: Optional[str] = None, state_filter: Optional[str] 
     missing_stations = []
 
     for s in all_stations:
-        # Only Tier 1 (first-party authoritative) stations are audited -
-        # this already covers every current provider (Tesla, Chargefox,
-        # EVX, Evie, bp pulse, AmpCharge) with no per-provider listing
-        # needed, since it's a plain numeric tier check.
+ # Only Tier 1 (first-party authoritative) stations are audited -
+ # this already covers every current provider (Tesla, Chargefox,
+ # EVX, Evie, bp pulse, AmpCharge) with no per-provider listing
+ # needed, since it's a plain numeric tier check.
         if s.tier != 1:
             continue
 
@@ -282,7 +282,7 @@ def run_audit(network_filter: Optional[str] = None, state_filter: Optional[str] 
         ps_id = ps_meta.get("id") or ps.get("id")
         ps_url = ps_meta.get("url") or f"https://www.plugshare.com/location/{ps_id}"
 
-        # 1. Network misattribution
+ # 1. Network misattribution
         ps_net = ps_meta.get("network", "") or ""
         if not network_matches(s.network, ps_net):
             network_errors.append({
@@ -294,7 +294,7 @@ def run_audit(network_filter: Optional[str] = None, state_filter: Optional[str] 
                 "ps_url": ps_url
             })
 
-        # 2. Pricing - missing/unlisted, or a live mismatch
+ # 2. Pricing - missing/unlisted, or a live mismatch
         if s.pricing_model != "unknown" and s.current_rate_per_kwh is not None and s.current_rate_per_kwh > 0:
             ps_price = ps_tariffs.get("per_kwh_flat", 0.0) or 0.0
             has_tou = ps_tariffs.get("has_tou_pricing", False)
@@ -319,7 +319,7 @@ def run_audit(network_filter: Optional[str] = None, state_filter: Optional[str] 
                         "ps_url": ps_url
                     })
 
-        # 3. Hardware / power / stalls
+ # 3. Hardware / power / stalls
         hw_issues = []
         ps_power = ps_hw.get("max_power_kw")
         if ps_power and s.max_power_kw:

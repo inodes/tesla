@@ -101,7 +101,7 @@ def self_test():
     periods = load_rate_periods()
 
     cases = [
-        # (year, month, billing_days, expected_kw, expected_ex_gst, invoice_label)
+ # (year, month, billing_days, expected_kw, expected_ex_gst, invoice_label)
         (2026, 6, 30, 9.84, 113.62, "494808436 (25 Jun-24 Jul 2026)"),
         (2026, 7, 31, 8.74, 104.28, "498179654 (25 Jul-24 Aug 2026)"),
     ]
@@ -116,9 +116,9 @@ def self_test():
         print(f"[{status}] {year}-{month:02d}: latched {kw} kW at {at} -> "
               f"${ex_gst} ex GST (${incl_gst} incl) | invoice {label} says {expected_kw} kW / ${expected_ex_gst}")
 
-    # August 2026: not yet invoiced at the time this was written - a
-    # projection, not a reconciliation. Printed separately so it's
-    # never mistaken for a verified self-test result.
+ # August 2026: not yet invoiced at the time this was written - a
+ # projection, not a reconciliation. Printed separately so it's
+ # never mistaken for a verified self-test result.
     kw, at = monthly_latched_kw(master_path, 2026, 8)
     rate = rate_for_date(datetime(2026, 8, 1).date(), periods)["demand_rate_per_kw_day"]
     ex_gst, incl_gst = demand_charge(kw, 31, rate)

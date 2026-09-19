@@ -53,7 +53,7 @@ def summarize_json_records(label, body, show_values=False):
         print("     " + body[:200].decode("utf-8", errors="replace"))
         return None
 
-    # Tessie's list endpoints typically wrap results as {"results": [...]}
+ # Tessie's list endpoints typically wrap results as {"results": [...]}
     records = data.get("results") if isinstance(data, dict) else data
     if not isinstance(records, list):
         keys = list(data.keys()) if isinstance(data, dict) else type(data).__name__

@@ -52,13 +52,13 @@ REGISTER_ROLE = {
 class AGLProvider(BasePowerProvider):
     name = "agl"
     display_name = "AGL"
-    # REQ-071: AGL offers no usage-history API for residential accounts
-    # (see sync_power_usage.py's module docstring) - every usage-export
-    # refresh is a manual CSV download, so this is the provider this
-    # flag exists for.
+ # REQ-071: AGL offers no usage-history API for residential accounts
+ # (see sync_power_usage.py's module docstring) - every usage-export
+ # refresh is a manual CSV download, so this is the provider this
+ # flag exists for.
     manual_usage_sync = True
 
-    # ---- paths -------------------------------------------------------
+ # ---- paths -------------------------------------------------------
 
     def config_directory_keys(self):
         return ("power_directory", "agl_directory")
@@ -81,7 +81,7 @@ class AGLProvider(BasePowerProvider):
     def tariff_rates_example_path(self):
         return "AGL/agl_tariff_rates.example.json"
 
-    # ---- usage-export ingestion --------------------------------------
+ # ---- usage-export ingestion --------------------------------------
 
     def is_usage_export_filename(self, filename):
         f_lower = filename.lower()
@@ -111,9 +111,9 @@ class AGLProvider(BasePowerProvider):
                     end = row["EndDate"].strip()
                     reg = row["RegisterCode"].strip()
                     kwh = float(row["ProfileReadValue"])
-                    # Validate the timestamp parses even though we store
-                    # the original string - a row we can't date-parse
-                    # isn't safe to trust for anything downstream.
+ # Validate the timestamp parses even though we store
+ # the original string - a row we can't date-parse
+ # isn't safe to trust for anything downstream.
                     self.parse_datetime(start)
                 except Exception:
                     skipped += 1
@@ -129,17 +129,17 @@ class AGLProvider(BasePowerProvider):
                 }
         return rows, skipped
 
-    # ---- NSW public holidays (Ausgrid/EA025 demand-window input) ----
-    # Computed, not hardcoded per-year - covers any year in the usage
-    # data without needing an annual update. Weekend-substitution (a
-    # fixed-date holiday moves to the following Monday when it falls on
-    # a Sat/Sun) is applied only to the holidays where it's well-
-    # established NSW practice: New Year's Day, Australia Day, Christmas
-    # Day, Boxing Day. Anzac Day and Labour Day are included for
-    # completeness but never affect the demand calculation below
-    # (neither falls inside the Jun-Aug or Nov-Mar windows). This is a
-    # best-effort reconstruction of the NSW statutory calendar, not
-    # sourced from an official feed.
+ # ---- NSW public holidays (Ausgrid/EA025 demand-window input) ----
+ # Computed, not hardcoded per-year - covers any year in the usage
+ # data without needing an annual update. Weekend-substitution (a
+ # fixed-date holiday moves to the following Monday when it falls on
+ # a Sat/Sun) is applied only to the holidays where it's well-
+ # established NSW practice: New Year's Day, Australia Day, Christmas
+ # Day, Boxing Day. Anzac Day and Labour Day are included for
+ # completeness but never affect the demand calculation below
+ # (neither falls inside the Jun-Aug or Nov-Mar windows). This is a
+ # best-effort reconstruction of the NSW statutory calendar, not
+ # sourced from an official feed.
 
     _holiday_cache = {}
 
@@ -208,11 +208,11 @@ class AGLProvider(BasePowerProvider):
             cls._holiday_cache[y] = cls.nsw_public_holidays(y)
         return d in cls._holiday_cache[y]
 
-    # ---- Ausgrid EA025 Residential Demand window ---------------------
-    # Two seasonal windows, weekdays only, NSW public holidays excluded.
-    # Every other interval (weekends, holidays, shoulder months
-    # Apr/May/Sep/Oct, off-window hours) carries zero demand risk.
-    # Confirmed against real invoiced kW figures.
+ # ---- Ausgrid EA025 Residential Demand window ---------------------
+ # Two seasonal windows, weekdays only, NSW public holidays excluded.
+ # Every other interval (weekends, holidays, shoulder months
+ # Apr/May/Sep/Oct, off-window hours) carries zero demand risk.
+ # Confirmed against real invoiced kW figures.
 
     def in_demand_window(self, dt):
         """True if the half-hour interval starting at datetime `dt`
@@ -230,7 +230,7 @@ class AGLProvider(BasePowerProvider):
             return 14 <= hour < 20
         return False                     # shoulder months (Apr/May/Sep/Oct): no demand charge
 
-    # ---- tariff rates --------------------------------------------------
+ # ---- tariff rates --------------------------------------------------
 
     def load_rate_periods(self):
         rates_path = os.path.join(self.resolve_data_home(), self.tariff_rates_filename())
@@ -249,7 +249,7 @@ class AGLProvider(BasePowerProvider):
                               f"{periods[0]['effective_from']}")
         return applicable[-1]
 
-    # ---- solar credit / demand charge math -----------------------------
+ # ---- solar credit / demand charge math -----------------------------
 
     def solar_credit(self, total_kwh, days, tier1_rate):
         cap = TIER1_CAP_KWH_PER_DAY * days
@@ -262,7 +262,7 @@ class AGLProvider(BasePowerProvider):
         incl_gst = ex_gst * 1.10
         return round(ex_gst, 2), round(incl_gst, 2)
 
-    # ---- invoices ------------------------------------------------------
+ # ---- invoices ------------------------------------------------------
 
     def load_invoices(self):
         """Discover and extract metadata from all AGL invoice PDFs in the invoices directory."""

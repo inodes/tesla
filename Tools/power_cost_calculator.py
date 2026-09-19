@@ -140,14 +140,14 @@ def reconstruct_bill(start, end, master_path=None, periods=None, log=None):
     demand_rate = rate_for_date(end, periods)["demand_rate_per_kw_day"]
     demand_ex_gst, _ = demand_charge(kw_latched, days, demand_rate) if kw_latched else (0.0, 0.0)
 
-    # Confirmed against real invoices (see AGENTS.md REQ-031): GST applies
-    # to CHARGES ONLY (usage + supply + demand), never netted against the
-    # solar export credit - "Total GST" on every sampled bill is exactly
-    # 10% of "Total charges", not 10% of the net after credits. Solar
-    # credits are GST-free and simply subtracted at the end. (This GST
-    # treatment is currently the same for every provider observed - if a
-    # future provider does it differently, this is the place to make it
-    # provider-specific rather than assuming it stays universal.)
+ # Confirmed against real invoices (see AGENTS.md REQ-031): GST applies
+ # to CHARGES ONLY (usage + supply + demand), never netted against the
+ # solar export credit - "Total GST" on every sampled bill is exactly
+ # 10% of "Total charges", not 10% of the net after credits. Solar
+ # credits are GST-free and simply subtracted at the end. (This GST
+ # treatment is currently the same for every provider observed - if a
+ # future provider does it differently, this is the place to make it
+ # provider-specific rather than assuming it stays universal.)
     charges_ex_gst = usage_ex_gst + supply_ex_gst + demand_ex_gst
     total_ex_gst = charges_ex_gst - solar_credit_total
     total_incl_gst = round(charges_ex_gst * 1.10 - solar_credit_total, 2)

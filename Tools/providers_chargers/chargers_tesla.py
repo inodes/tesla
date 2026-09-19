@@ -62,8 +62,8 @@ def _resolve_tesla_registry_paths() -> List[str]:
 
 class TeslaProvider(BaseChargerProvider):
     name: str = "Tesla"
-    # BUG-079: verified via grep 'speed_tier\s*=' - line ~126 sets
-    # "ac_destination" for destination chargers, "supercharger" otherwise.
+ # verified via grep 'speed_tier\s*=' - line ~126 sets
+ # "ac_destination" for destination chargers, "supercharger" otherwise.
     POSSIBLE_SPEED_TIERS = {"supercharger", "ac_destination"}
     tier: int = 1  # First-Party Authoritative
 
@@ -104,7 +104,7 @@ class TeslaProvider(BaseChargerProvider):
                 if not isinstance(info, dict):
                     continue
 
-                # Metadata & naming (findus_location_name is authoritative over findus_list_name)
+ # Metadata & naming (findus_location_name is authoritative over findus_list_name)
                 t_meta = info.get("tesla_metadata", {}) if isinstance(info.get("tesla_metadata"), dict) else {}
                 findus_loc_name = t_meta.get("findus_location_name") or ""
                 findus_list_name = t_meta.get("findus_list_name") or ""
@@ -124,7 +124,7 @@ class TeslaProvider(BaseChargerProvider):
                     else:
                         continue
 
-                # Location block (handles nested schema)
+ # Location block (handles nested schema)
                 loc = info.get("location", {}) if isinstance(info.get("location"), dict) else {}
                 lat = loc.get("lat") or loc.get("latitude") or info.get("lat") or info.get("latitude")
                 lon = loc.get("lon") or loc.get("longitude") or loc.get("lng") or info.get("lon") or info.get("longitude") or info.get("lng")
@@ -139,7 +139,7 @@ class TeslaProvider(BaseChargerProvider):
                 speed_tier = "ac_destination" if is_dest else "supercharger"
                 network = "Tesla Destination" if is_dest else "Tesla"
 
-                # Hardware block
+ # Hardware block
                 hw = info.get("hardware", {}) if isinstance(info.get("hardware"), dict) else {}
                 max_kw = hw.get("max_power_kw") or hw.get("maxPowerKw") or hw.get("power_kw") or info.get("max_power_kw") or info.get("maxPowerKw")
                 if max_kw is None:
@@ -158,21 +158,21 @@ class TeslaProvider(BaseChargerProvider):
 
                 hw_tier = hw.get("tier") or ("V4" if max_kw >= 300 else ("V3" if max_kw >= 250 else ("V2" if not is_dest else "AC")))
 
-                # Compatibility block
+ # Compatibility block
                 comp = info.get("compatibility", {}) if isinstance(info.get("compatibility"), dict) else {}
 
-                # Tariffs block
+ # Tariffs block
                 tariffs = info.get("tariffs", {}) if isinstance(info.get("tariffs"), dict) else {}
                 pricing_block = info.get("pricing", {}) if isinstance(info.get("pricing"), dict) else tariffs
 
-                # Non-Tesla rate schedule + effective-date extraction - both were
-                # entirely missing from this provider until 2026-09-14 (see
-                # AGENTS.local.md). charger_find_tesla.py's own
-                # display_preview() already reads these same registry keys
-                # (tariffs.non_tesla.rate_schedules, and top-level valid_from /
-                # last_verified on the raw entry) - this mirrors that exactly so
-                # charger_find.py can show the same "Non-Tesla ... Rates" and
-                # "Effective Date" info the old script always showed.
+ # Non-Tesla rate schedule + effective-date extraction - both were
+ # entirely missing from this provider until 2026-09-14 (see
+ # AGENTS.local.md). charger_find_tesla.py's own
+ # display_preview() already reads these same registry keys
+ # (tariffs.non_tesla.rate_schedules, and top-level valid_from /
+ # last_verified on the raw entry) - this mirrors that exactly so
+ # charger_find.py can show the same "Non-Tesla ... Rates" and
+ # "Effective Date" info the old script always showed.
                 non_tesla_rate_schedules = []
                 _nt_block = tariffs.get("non_tesla", {}) if isinstance(tariffs.get("non_tesla"), dict) else {}
                 for _nt_item in _nt_block.get("rate_schedules", []) or []:
@@ -196,7 +196,7 @@ class TeslaProvider(BaseChargerProvider):
                 rate_range = ""
                 pricing_model = "unknown"
 
-                # Check tesla_members sub-dict in tariffs or tessie_cost_config
+ # Check tesla_members sub-dict in tariffs or tessie_cost_config
                 tm = tariffs.get("tesla_members", {})
                 schedules_list = tm.get("rate_schedules", []) if isinstance(tm, dict) else []
                 if not schedules_list and "schedule" in pricing_block:
@@ -256,20 +256,20 @@ class TeslaProvider(BaseChargerProvider):
                 if not is_dest:
                     raw_idle = tariffs.get("idle_fee_per_min")
                     raw_cong = tariffs.get("congestion_fee_per_min") or (info.get("tessie_cost_config", {}) or {}).get("congestion_fee_per_min")
-                    # Enforce Tesla's real either/or policy (per findus's own fee
-                    # pages - a site has congestion pricing OR idle pricing, never
-                    # both): CONGESTION WINS whenever both are present. Fixed
-                    # 2026-09-14 - this used to prefer idle whenever it was
-                    # present/nonzero, on the mistaken assumption that "standard
-                    # AU Superchargers have an idle fee" as a default. That's
-                    # backwards: charger_find_tesla.py's own scraper already
-                    # documents the same either/or rule and nulls idle_fee once a
-                    # real congestion_fee is found - this function must not
-                    # second-guess that by resurrecting idle_fee whenever the
-                    # upstream registry still has a stale nonzero value in both
-                    # fields (see AGENTS.local.md - Macquarie, NSW showed "Idle
-                    # $1.00/min" in charger_find.py when the findus page itself
-                    # only lists "Congestion fees (up to) $0.50/min").
+ # Enforce Tesla's real either/or policy (per findus's own fee
+ # pages - a site has congestion pricing OR idle pricing, never
+ # both): CONGESTION WINS whenever both are present. Fixed
+ # 2026-09-14 - this used to prefer idle whenever it was
+ # present/nonzero, on the mistaken assumption that "standard
+ # AU Superchargers have an idle fee" as a default. That's
+ # backwards: charger_find_tesla.py's own scraper already
+ # documents the same either/or rule and nulls idle_fee once a
+ # real congestion_fee is found - this function must not
+ # second-guess that by resurrecting idle_fee whenever the
+ # upstream registry still has a stale nonzero value in both
+ # fields (see AGENTS.local.md - Macquarie, NSW showed "Idle
+ # $1.00/min" in charger_find.py when the findus page itself
+ # only lists "Congestion fees (up to) $0.50/min").
                     if raw_cong is not None:
                         try:
                             if float(raw_cong) > 0:
@@ -282,7 +282,7 @@ class TeslaProvider(BaseChargerProvider):
                         except (ValueError, TypeError):
                             pass
 
-                # Plugs
+ # Plugs
                 plugs = ["IEC 62196 Type 2"] if is_dest else ["Tesla Supercharger (CCS2)"]
 
                 address_str = loc.get("address") or info.get("address", "")
@@ -334,12 +334,12 @@ class TeslaProvider(BaseChargerProvider):
                         "findus_list_short_name": t_meta.get("findus_list_short_name", ""),
                         "findus_location_name": findus_loc_name,
                         "findus_location_short_name": t_meta.get("findus_location_short_name", ""),
-                        # Human-readable, file-name-safe, location-based short name -
-                        # this is what invoice matching (analyse_charging.py)
-                        # keys off, so it must never be the arbitrary numeric findus_id.
-                        # Fixed 2026-09-14: this key didn't exist before, so
-                        # charger_find.py's display fell back to source_id
-                        # (the numeric findus_id) for every single Tesla station.
+ # Human-readable, file-name-safe, location-based short name -
+ # this is what invoice matching (analyse_charging.py)
+ # keys off, so it must never be the arbitrary numeric findus_id.
+ # Fixed 2026-09-14: this key didn't exist before, so
+ # charger_find.py's display fell back to source_id
+ # (the numeric findus_id) for every single Tesla station.
                         "short_name": t_meta.get("findus_location_short_name") or t_meta.get("short_name") or key,
                         "general_location": t_meta.get("general_location") or t_meta.get("location_name") or suburb
                     },

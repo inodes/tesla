@@ -13,12 +13,12 @@ Rules enforced:
 5. pad_display and format_row enforce automatic column and row width sanity checks
    so table borders ('│') never misalign or overflow.
 
-Width measurement priority (AGENTS.md BUG-005 / BUG-036 / BUG-037 / BUG-038 /
-BUG-040): a handful of symbol+variation-selector pictographs (the calendar/
+Width measurement priority (AGENTS.md / / / /
+): a handful of symbol+variation-selector pictographs (the calendar/
 shield/wrench/label/map/gear/warning glyphs) render at genuinely different
 cell widths across real terminal emulators - no static guess has held up:
-BUG-005 said width 1, BUG-036 "corrected" that to width 2 via Unicode
-block-range rules, and BUG-038 proved width 2 is ALSO wrong on the user's
+said width 1, "corrected" that to width 2 via Unicode
+block-range rules, and proved width 2 is ALSO wrong on the user's
 own real terminal (live-measured: 🗓️/🛡️ are actually width 1 there). There
 is no universally-correct static answer for these glyphs - real terminals
 disagree with each other, so char_width()/display_len() check, in order:
@@ -29,16 +29,16 @@ purpose - macOS's bundled wcwidth tables predate most of these blocks and
 return wrong non-negative answers instead of the -1 "unknown" that would
 let this block check run as a fallback), (4) wcwidth, (5) East-Asian-Width.
 
-BUG-037 first tried live-probing the terminal (print the glyph, read back
+first tried live-probing the terminal (print the glyph, read back
 its own ANSI cursor-position report) wired into EVERY char_width()/
-display_len() call. That made things WORSE (BUG-038): this module is used
+display_len() call. That made things WORSE (): this module is used
 by interactive REPL menus (analyse_drives.py etc.) that are
 themselves reading stdin for the user's own next keypress at the same
 time render calls happen, and the probe's raw-mode stdin read raced with
 that - observed live as a menu prompt hanging until Ctrl-C, and stray
 characters leaking into rendered output.
 
-BUG-040's fix keeps the same real measurement but separates MEASURING
+'s fix keeps the same real measurement but separates MEASURING
 from USING. Measuring happens exactly once, deliberately, when the user
 runs `python3 table_formatter.py` directly - run_self_test() probes every
 known glyph and writes any that disagree with the static guess to
@@ -81,18 +81,18 @@ except Exception:
     _wcwidth_fn = None
 
 # =============================================================================
-# Persisted per-machine width calibration (AGENTS.md BUG-038/BUG-040)
+# Persisted per-machine width calibration (AGENTS.md /)
 # =============================================================================
-# BUG-005 hardcoded these pictograph+variation-selector glyphs (calendar,
-# shield, wrench, label, map, ...) to width 1. BUG-036 "corrected" that to
-# width 2 via Unicode block-range rules. BUG-038 proved width 2 is ALSO
+# hardcoded these pictograph+variation-selector glyphs (calendar,
+# shield, wrench, label, map, ...) to width 1. "corrected" that to
+# width 2 via Unicode block-range rules. proved width 2 is ALSO
 # wrong - on the user's own real terminal, run_self_test()'s live probe
 # measured 🛡️ at width 1, not 2 - so neither static guess is authoritative;
 # real terminal emulators genuinely disagree on these glyphs and no amount
 # of table-editing fixes that. The one thing that IS authoritative is
 # asking THIS terminal directly (probe_glyph_widths(), below) - the
 # problem was only ever wiring that ask into the hot render path of an
-# interactive REPL (BUG-037/BUG-038's mistake).
+# interactive REPL (/'s mistake).
 #
 # The fix: separate MEASURING from USING. Measuring happens exactly once,
 # deliberately, when the user runs `python3 table_formatter.py` directly
@@ -106,9 +106,9 @@ except Exception:
 # Definitive Explicit Widths for All Symbols & Emojis Used Across Codebase
 # =============================================================================
 REPO_EMOJI_WIDTHS = {
-    # -------------------------------------------------------------------------
-    # Width 1: Single-Cell Glyphs, Controls, & Standalone Text Presentation
-    # -------------------------------------------------------------------------
+ # -------------------------------------------------------------------------
+ # Width 1: Single-Cell Glyphs, Controls, & Standalone Text Presentation
+ # -------------------------------------------------------------------------
     "⚙": 1,            # Gear (Text representation without variation selector)
     "⏱": 1,            # Stopwatch (Text representation without variation selector)
     "⚠": 1,            # Warning Sign (Text representation without variation selector)
@@ -120,9 +120,9 @@ REPO_EMOJI_WIDTHS = {
     "…": 1,            # Horizontal Ellipsis
     "–": 1, "—": 1,    # En / Em Dashes
 
-    # -------------------------------------------------------------------------
-    # Width 2: Emojis & Pictographs (render across 2 character cells in terminal)
-    # -------------------------------------------------------------------------
+ # -------------------------------------------------------------------------
+ # Width 2: Emojis & Pictographs (render across 2 character cells in terminal)
+ # -------------------------------------------------------------------------
     "🅿️": 2,           # Parking Symbol with variation selector (2 cells in terminal)
     "🇦🇺": 2,           # Australia Flag (Regional Indicator Pair - 2 cells in terminal)
     "⚠️": 2,           # Warning Sign with variation selector (2 cells in terminal)
@@ -186,7 +186,7 @@ CHAR_WIDTH_1_CODEPOINTS = {
     0x2019,  # ’ Right Single Quotation Mark
     0x201C,  # “ Left Double Quotation Mark
     0x201D,  # ” Right Double Quotation Mark
-    # Box Drawing Characters
+ # Box Drawing Characters
     0x2500, 0x2502, 0x250C, 0x2510, 0x2514, 0x2518, 0x251C, 0x2524, 0x252C, 0x2534, 0x253C,
     0x2550, 0x2551, 0x2554, 0x2557, 0x255A, 0x255D, 0x2560, 0x2563, 0x2566, 0x2569, 0x256C,
 }
@@ -242,15 +242,15 @@ def char_width(c: str) -> int:
 
     code = ord(c)
 
-    # Zero-width: variation selectors, ZWJ, ZWSP, combining marks
+ # Zero-width: variation selectors, ZWJ, ZWSP, combining marks
     if code in (0xFE0F, 0xFE0E, 0x200D, 0x200B, 0x200C) or unicodedata.category(c) in ("Mn", "Me"):
         return 0
 
-    # Standard Unicode Emoji Blocks (all modern terminals display these as
-    # width 2) - checked BEFORE libc wcwidth on purpose (2026-09-08): macOS's
-    # bundled wcwidth tables predate most of these blocks and return wrong,
-    # non-negative answers (usually 1) for many real pictographs rather than
-    # the -1 "unknown" that would let this block-check run as a fallback.
+ # Standard Unicode Emoji Blocks (all modern terminals display these as
+ # width 2) - checked BEFORE libc wcwidth on purpose (2026-09-08): macOS's
+ # bundled wcwidth tables predate most of these blocks and return wrong,
+ # non-negative answers (usually 1) for many real pictographs rather than
+ # the -1 "unknown" that would let this block-check run as a fallback.
     if (
         0x1F100 <= code <= 0x1F1FF or  # Enclosed Alphanumeric Supplement (🆖, 🆗, Flags 1F1E6..1F1FF)
         0x1F300 <= code <= 0x1F5FF or  # Misc Symbols and Pictographs (📹, 🕒, 📍, 🏠, 🚗, 💾, 🔄, 🔌, 💰, 🔴, 🗓, 🏷, 🗺)
@@ -264,8 +264,8 @@ def char_width(c: str) -> int:
     ):
         return 2
 
-    # Query OS libc wcwidth if available (authoritative for macOS terminal,
-    # for everything NOT in the emoji blocks handled above)
+ # Query OS libc wcwidth if available (authoritative for macOS terminal,
+ # for everything NOT in the emoji blocks handled above)
     if _wcwidth_fn is not None:
         try:
             w = _wcwidth_fn(c)
@@ -274,16 +274,16 @@ def char_width(c: str) -> int:
         except Exception:
             pass
 
-    # Explicit 1-width overrides
+ # Explicit 1-width overrides
     if code in CHAR_WIDTH_1_CODEPOINTS:
         return 1
 
-    # East Asian Wide ('W') and Fullwidth ('F')
+ # East Asian Wide ('W') and Fullwidth ('F')
     eaw = unicodedata.east_asian_width(c)
     if eaw in ("W", "F"):
         return 2
 
-    # Default single width
+ # Default single width
     return 1
 
 
@@ -301,8 +301,8 @@ def display_len(s: str) -> int:
     i = 0
     n = len(clean)
     while i < n:
-        # Check for 2-character sequences (e.g. '🗓️', '🛡️', '🇦🇺', '🅿️') against the
-        # static REPO_EMOJI_WIDTHS table.
+ # Check for 2-character sequences (e.g. '🗓️', '🛡️', '🇦🇺', '🅿️') against the
+ # static REPO_EMOJI_WIDTHS table.
         two = clean[i:i+2]
         if i + 1 < n and two in REPO_EMOJI_WIDTHS:
             total += REPO_EMOJI_WIDTHS[two]
@@ -317,7 +317,7 @@ def display_len(s: str) -> int:
 
         cw = char_width(c)
         
-        # Look ahead for variation selectors (\ufe0f or \ufe0e)
+ # Look ahead for variation selectors (\ufe0f or \ufe0e)
         if i + 1 < n and clean[i + 1] in ("\ufe0f", "\ufe0e"):
             if clean[i + 1] == "\ufe0f":
                 total += 2
@@ -344,7 +344,7 @@ def truncate_display(s: str, max_width: int, ellipsis: str = "…") -> str:
     el_w = display_len(ellipsis)
     target_w = max(1, max_width - el_w)
     
-    # Split by ANSI/OSC-8 escape sequences to preserve color styling and hyperlinks
+ # Split by ANSI/OSC-8 escape sequences to preserve color styling and hyperlinks
     tokens = re.split(f"({ESCAPE_REGEX.pattern})", str(s))
     res = []
     cur_w = 0
@@ -362,7 +362,7 @@ def truncate_display(s: str, max_width: int, ellipsis: str = "…") -> str:
         n = len(tok)
         while i < n:
             c = tok[i]
-            # Check for variation selector pair
+ # Check for variation selector pair
             if i + 1 < n and tok[i + 1] in ("\ufe0f", "\ufe0e"):
                 chunk = tok[i:i + 2]
                 cw = display_len(chunk)
@@ -420,7 +420,7 @@ def pad_display(s: Union[str, int, float], target_width: int, align: str = "left
     else:
         res = s_str + (" " * pad_len)
         
-    # SANITY CHECK: verify exact visual cell count
+ # SANITY CHECK: verify exact visual cell count
     actual_w = display_len(res)
     if actual_w < target_width:
         res = res + (" " * (target_width - actual_w))
@@ -483,7 +483,7 @@ def format_row(cells: List[Union[str, int, float]], col_widths: List[int], align
         al = align_list[i]
         p = pad_display(cell_val, w, align=al)
         
-        # Column Sanity Check
+ # Column Sanity Check
         cw = display_len(p)
         if cw != w:
             if cw < w:
@@ -494,16 +494,16 @@ def format_row(cells: List[Union[str, int, float]], col_widths: List[int], align
         
     row_str = "│" + "│".join(padded_cells) + "│"
     
-    # Whole-Row Sanity Check
+ # Whole-Row Sanity Check
     expected_row_w = sum(col_widths) + len(col_widths) + 1
     actual_row_w = display_len(row_str)
     if actual_row_w != expected_row_w:
         diff = expected_row_w - actual_row_w
         if diff > 0:
-            # Row too short: insert spaces before closing pipe
+ # Row too short: insert spaces before closing pipe
             row_str = row_str[:-1] + (" " * diff) + "│"
         elif diff < 0 and row_str.endswith("│"):
-            # Row too long: check if spaces can be safely trimmed before closing pipe
+ # Row too long: check if spaces can be safely trimmed before closing pipe
             excess = -diff
             body = row_str[1:-1]
             if body.endswith(" " * excess):
@@ -546,7 +546,7 @@ def format_local_timestamp(utc_iso_str: Optional[str], include_tz: bool = True) 
         tz_abbr = dt_local.tzname() or ""
         fmt = "%Y-%m-%d %I:%M %p" + (f" {tz_abbr}" if include_tz and tz_abbr else "")
         res = dt_local.strftime(fmt).strip()
-        # Clean leading zeros on hour (e.g., ' 03:05 PM' -> ' 3:05 PM')
+ # Clean leading zeros on hour (e.g., ' 03:05 PM' -> ' 3:05 PM')
         res = re.sub(r"\b0(\d:\d{2}\s+[AP]M)", r"\1", res)
         return res
     except Exception:
@@ -684,9 +684,9 @@ def run_self_test(verbose: bool = True) -> bool:
         ("—", "Em Dash", 1),
     ]
 
-    # -------------------------------------------------------------------------
-    # Visual Test 1: Full Visual Audit Table of All Codebase Emojis & Symbols
-    # -------------------------------------------------------------------------
+ # -------------------------------------------------------------------------
+ # Visual Test 1: Full Visual Audit Table of All Codebase Emojis & Symbols
+ # -------------------------------------------------------------------------
     sym_widths = [6, 9, 48, 18, 10, 11]
     sym_aligns = ["center", "center", "left", "left", "center", "center"]
     sym_inner = sum(sym_widths) + len(sym_widths) - 1
@@ -724,9 +724,9 @@ def run_self_test(verbose: bool = True) -> bool:
 
         print(format_box_line("└", "┴", "┘", sym_widths))
 
-    # -------------------------------------------------------------------------
-    # Test 2: Padding Sanity Checks (pad_display)
-    # -------------------------------------------------------------------------
+ # -------------------------------------------------------------------------
+ # Test 2: Padding Sanity Checks (pad_display)
+ # -------------------------------------------------------------------------
     pad_cases = [
         ("·", 7, "center"),
         ("·", 8, "center"),
@@ -745,9 +745,9 @@ def run_self_test(verbose: bool = True) -> bool:
         if act_w != target_w:
             errors.append(f"pad_display failed for '{txt}' (target {target_w}, align {align}): got {act_w}")
 
-    # -------------------------------------------------------------------------
-    # Test 3: Row & Column Sanity Checks (format_row)
-    # -------------------------------------------------------------------------
+ # -------------------------------------------------------------------------
+ # Test 3: Row & Column Sanity Checks (format_row)
+ # -------------------------------------------------------------------------
     test_widths = [5, 17, 7, 8, 10, 35, 7, 8, 8]
     test_cells = [
         " [1]", " Sun 06 Sep 2026", " 7", " 3h 01m", " 186.3 km",
@@ -760,9 +760,9 @@ def run_self_test(verbose: bool = True) -> bool:
     if actual_row_w != expected_row_w:
         errors.append(f"format_row width mismatch: expected {expected_row_w}, got {actual_row_w}")
 
-    # -------------------------------------------------------------------------
-    # Test 4: Title Banner vs Box Borders Sanity Check
-    # -------------------------------------------------------------------------
+ # -------------------------------------------------------------------------
+ # Test 4: Title Banner vs Box Borders Sanity Check
+ # -------------------------------------------------------------------------
     total_inner = sum(test_widths) + len(test_widths) - 1
     top_b = format_box_line("┌", "─", "┐", [total_inner])
     title_line = format_title_line(" 🗓️ TESSIE DRIVES BY MONTH (1,055 Trips Across 98 Days)", total_inner, "left")  # single space after emoji, corrected 2026-09-08 now that its width auto-calculates correctly
@@ -777,9 +777,9 @@ def run_self_test(verbose: bool = True) -> bool:
     if not (w_top == w_title == w_mid == w_bot == expected_row_w):
         errors.append(f"Border width mismatch: top={w_top}, title={w_title}, mid={w_mid}, bot={w_bot}, expected={expected_row_w}")
 
-    # -------------------------------------------------------------------------
-    # Test Report Table Output
-    # -------------------------------------------------------------------------
+ # -------------------------------------------------------------------------
+ # Test Report Table Output
+ # -------------------------------------------------------------------------
     if verbose:
         bold = "\033[1m"
         reset_color = "\033[0m"

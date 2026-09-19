@@ -32,7 +32,7 @@ Why JSON *and* CSV, not just CSV:
     of its columns (e.g. Cost Per kWh) are computed server-side from
     full-precision values before rounding, and re-deriving them from the
     already-rounded JSON fields was found to disagree slightly during
-    testing. Using Tessie's own CSV formatting avoids that class of bug
+    testing. Using Tessie's own CSV formatting avoids that class of issue
     entirely. See Tessie/TESSIE_API.md.
 
 No pagination cursor is documented for either endpoint, so a JSON fetch
@@ -50,7 +50,7 @@ view: because the watermark was never advanced for it, the next sync
 simply re-fetches and re-surfaces that same window again. (An earlier
 version of this script advanced the watermark on fetch success alone,
 which meant a CSV lost before --consolidate was gone for good and
-silently excluded from every future sync - see BUG-019 in
+silently excluded from every future sync - see in
 Tessie/TESSIE_API.md.)
 
 Usage:
@@ -91,12 +91,12 @@ CACHE_DIR = os.path.join(REPO_ROOT, "Tessie", "api_cache")
 # command yourself) - never imports their classes, so they stay fully
 # decoupled from how fetching works.
 CONSOLIDATE_SCRIPTS = {
-    # REQ-072 fix (2026-09-15): analyse_drives.py/analyse_charging.py
-    # live in Tools/, not Tools/lib/ - REQ-067 moved tessie_api_common.py (and its
-    # SCRIPT_DIR) one directory deeper into lib/ without updating these two paths,
-    # so --consolidate silently broke ("can't open file .../lib/tessie_charging_analyzer.py").
-    # TOOLS_DIR (the same two-hop constant REQ-067 introduced for REPO_ROOT) is the
-    # correct base here.
+ # REQ-072 fix (2026-09-15): analyse_drives.py/analyse_charging.py
+ # live in Tools/, not Tools/lib/ - REQ-067 moved tessie_api_common.py (and its
+ # SCRIPT_DIR) one directory deeper into lib/ without updating these two paths,
+ # so --consolidate silently broke ("can't open file .../lib/tessie_charging_analyzer.py").
+ # TOOLS_DIR (the same two-hop constant REQ-067 introduced for REPO_ROOT) is the
+ # correct base here.
     "drives": os.path.join(TOOLS_DIR, "analyse_drives.py"),
     "charges": os.path.join(TOOLS_DIR, "analyse_charging.py"),
 }
@@ -149,7 +149,7 @@ def commit_cache(spec, cache, to_ts):
     there was nothing new to lose (new_or_changed == 0, so there's no
     pending CSV at all), or --consolidate has just successfully merged the
     freshly-written CSV into the master file. Committing on fetch success
-    alone was the original bug (BUG-019): a CSV deleted before
+    alone was the original issue: a CSV deleted before
     consolidation was permanently unrecoverable, because the cache already
     considered those records 'seen'."""
     cache["_meta"]["last_synced_to"] = to_ts
@@ -173,10 +173,10 @@ def fetch_json_chunked(endpoint, vin, token, from_ts, to_ts, chunk_limit=500, ap
     if len(records) < chunk_limit:
         return records
     if (to_ts - from_ts) <= MIN_CHUNK_SECONDS:
-        # Hit the minimum split size while still at the limit ceiling - for
-        # real drive/charge data this should never happen (it would mean
-        # chunk_limit-or-more events inside one hour), so fail loudly rather
-        # than silently returning a truncated, incomplete result.
+ # Hit the minimum split size while still at the limit ceiling - for
+ # real drive/charge data this should never happen (it would mean
+ # chunk_limit-or-more events inside one hour), so fail loudly rather
+ # than silently returning a truncated, incomplete result.
         raise RuntimeError(
             f"{endpoint}: got {len(records)} record(s) (>= limit {chunk_limit}) in a window that "
             f"can't be split further ({from_ts}-{to_ts}, {to_ts - from_ts}s) - refusing to silently "
@@ -215,7 +215,7 @@ def unique_csv_path(landing_dir, prefix, stamp):
     same "latest entry" stamp even though they're genuinely different
     files: a field-level edit to an already-seen record doesn't move the
     max timestamp, and a re-run before --consolidate was ever answered
-    re-fetches the same pending window (by design, since BUG-019) and so
+    re-fetches the same pending window (by design, since ) and so
     can compute the same latest-entry stamp again."""
     base = f"{prefix}_{stamp}"
     path = os.path.join(landing_dir, base + ".csv")
@@ -274,15 +274,15 @@ def sync_one_type(type_name, spec, token, vin, since_days, dry_run, landing_dir,
         with open(csv_path, "wb") as f:
             f.write(csv_body)
 
-    # Only advance the watermark immediately when there's nothing pending
-    # to lose (new_or_changed == 0 - no CSV was written this run either).
-    # When new_or_changed > 0, a CSV now exists in the landing directory
-    # that hasn't been merged into the master file yet; committing here
-    # would let a deleted/lost CSV silently vanish from all future syncs
-    # (BUG-019). Instead, hand the in-memory cache back via
-    # "pending_commit" so the caller can commit it once --consolidate
-    # actually succeeds - or never, if the CSV never gets merged, in which
-    # case the next sync safely re-fetches and re-surfaces the same window.
+ # Only advance the watermark immediately when there's nothing pending
+ # to lose (new_or_changed == 0 - no CSV was written this run either).
+ # When new_or_changed > 0, a CSV now exists in the landing directory
+ # that hasn't been merged into the master file yet; committing here
+ # would let a deleted/lost CSV silently vanish from all future syncs
+ # (). Instead, hand the in-memory cache back via
+ # "pending_commit" so the caller can commit it once --consolidate
+ # actually succeeds - or never, if the CSV never gets merged, in which
+ # case the next sync safely re-fetches and re-surfaces the same window.
     committed = False
     if not dry_run and new_or_changed == 0:
         commit_cache(spec, cache, to_ts)
@@ -309,14 +309,14 @@ def _parse_battery_health_timestamp(ts):
     local, e.g. analyse_drives.py's own tztools.localize() calls
     - so this needs to actually convert, not just relabel).
 
-    BUG #1 (2026-09-08, live on the user's real Mac): this was originally
+    Note (2026-09-08, live on the user's real Mac): this was originally
     assumed to always be Unix seconds (an int/float) per a docs summary -
     the real API returned a STRING instead (`TypeError: 'str' object
     cannot be interpreted as an integer`), so every shape actually seen
     or plausible is handled now: a numeric string (still epoch seconds,
     stringified), a real Unix int/float, or an ISO-8601 string.
 
-    BUG #2 (found while building a scatterplot from this same data,
+    Note (found while building a scatterplot from this same data,
     2026-09-08): the real API's ISO strings carry an explicit UTC "Z"
     suffix (e.g. "2026-06-05T05:55:34.000Z") - the first fix's
     `.replace(tzinfo=None)` kept the UTC clock numbers but silently
@@ -491,15 +491,15 @@ def detect_battery_health_outliers(records, z_threshold=4.0):
         b = my - m * mx
         return m, b
 
-    # Separate readings with and without odometer - excluding any reading
-    # already flagged as physically impossible, so a BMS spike doesn't also
-    # bias the trend line it (and every other reading) gets measured against.
+ # Separate readings with and without odometer - excluding any reading
+ # already flagged as physically impossible, so a BMS spike doesn't also
+ # bias the trend line it (and every other reading) gets measured against.
     odo_records = [
         r for r in records
         if isinstance(r, dict) and r.get("odometer_km") is not None and id(r) not in physically_impossible
     ]
 
-    # Model Capacity vs Odometer degradation trend
+ # Model Capacity vs Odometer degradation trend
     cap_pts = [(r["odometer_km"], r["capacity_kwh"], r) for r in odo_records if r.get("capacity_kwh") is not None]
     if len(cap_pts) >= 4:
         xs = [p[0] for p in cap_pts]
@@ -514,7 +514,7 @@ def detect_battery_health_outliers(records, z_threshold=4.0):
             p[2]["_z_cap"] = z
             p[2]["_exp_cap"] = m * p[0] + b
 
-    # Model Range vs Odometer degradation trend
+ # Model Range vs Odometer degradation trend
     rng_pts = [(r["odometer_km"], r["max_range_km"], r) for r in odo_records if r.get("max_range_km") is not None]
     if len(rng_pts) >= 4:
         xs = [p[0] for p in rng_pts]
@@ -529,8 +529,8 @@ def detect_battery_health_outliers(records, z_threshold=4.0):
             p[2]["_z_rng"] = z
             p[2]["_exp_rng"] = m * p[0] + b
 
-    # Chronological median fallback for records with no odometer - also
-    # excluding physically-impossible readings from the reference set.
+ # Chronological median fallback for records with no odometer - also
+ # excluding physically-impossible readings from the reference set.
     all_ranges = [
         r.get("max_range_km") for r in records
         if isinstance(r, dict) and r.get("max_range_km") is not None and id(r) not in physically_impossible
@@ -559,7 +559,7 @@ def detect_battery_health_outliers(records, z_threshold=4.0):
             reasons.append(f"Range {r['max_range_km']:.2f} km vs trend {exp_rng:.2f} km "
                             f"(exceeds {z_threshold}σ trend residual, Z={z_rng:+.2f})")
 
-        # Fallback for no-odometer records
+ # Fallback for no-odometer records
         if r.get("odometer_km") is None and r.get("max_range_km") is not None:
             z_no_odo = (r["max_range_km"] - med_all_rng) / sigma_all_rng
             if abs(z_no_odo) > z_threshold:
@@ -593,7 +593,7 @@ def sync_battery_health(tessie_dir=None, since_days=1095):
     version" (2026-09-08), after an earlier version of this function only
     ever logged one live snapshot per run).
 
-    BUG FIXED (2026-09-08): every earlier call here omitted
+    Note (2026-09-08): every earlier call here omitted
     DEFAULT_UNIT_PARAMS entirely (unlike the drives/charges sync
     functions, which always include it) - Tessie's API defaults to MILES
     when distance_format isn't specified, so max_range_km/max_ideal_range_km
@@ -762,12 +762,12 @@ def _backfill_drive_deepdive(limit, pace_seconds, since_days, tessie_dir):
         path = analyzer.fetch_drive_deepdive_from_api(d)
         if path:
             fetched += 1
-            # Keep detailed_drives in sync so match_detailed_drive() doesn't
-            # re-fetch the same drive later in this same run - parse just
-            # the ONE new file and append it rather than re-running the
-            # full load_detailed_drives() rescan after every fetch, which
-            # made each successive fetch progressively slower (O(n^2) over
-            # a 1000+-drive run) when first tried this way.
+ # Keep detailed_drives in sync so match_detailed_drive() doesn't
+ # re-fetch the same drive later in this same run - parse just
+ # the ONE new file and append it rather than re-running the
+ # full load_detailed_drives() rescan after every fetch, which
+ # made each successive fetch progressively slower (O(n^2) over
+ # a 1000+-drive run) when first tried this way.
             parsed = analyzer.parse_detailed_drive_csv(path)
             if parsed:
                 analyzer.detailed_drives.append(parsed)
@@ -811,9 +811,9 @@ def _backfill_charge_deepdive(limit, pace_seconds, since_days, tessie_dir):
         if getattr(analyzer, "is_invoice_only", lambda c: c.get("duration_mins", 0) <= 0 and c.get("odometer_km", 0) <= 0)(s):
             skipped_invoice_only += 1
             continue
-        # AGENTS.md REQ-050: home Evnex sessions are no longer skipped here
-        # - fetch_charge_deepdive_from_api() now covers them too (Tessie
-        # polls the car during ANY plugged-in session, home included).
+ # AGENTS.md REQ-050: home Evnex sessions are no longer skipped here
+ # - fetch_charge_deepdive_from_api() now covers them too (Tessie
+ # polls the car during ANY plugged-in session, home included).
         total_candidates += 1
         if analyzer._charge_is_in_progress(s):
             skipped_in_progress += 1
@@ -972,10 +972,10 @@ EXAMPLES
         selected = list(DATA_TYPES.keys())  # "all things are fetched" when neither flag is given
 
     if args.backfill_deepdive:
-        # Reuses the same --drives/--charges selectors as the regular sync
-        # above (both, when neither is given) - "which drives and which
-        # charges were pulled" should be exactly as explicit here as it is
-        # for a normal sync run.
+ # Reuses the same --drives/--charges selectors as the regular sync
+ # above (both, when neither is given) - "which drives and which
+ # charges were pulled" should be exactly as explicit here as it is
+ # for a normal sync run.
         limit = None if args.limit == 0 else args.limit
         backfill_deepdive_telemetry(selected, limit=limit, pace_seconds=args.pace, since_days=args.since_days, tessie_dir=args.tessie_dir)
         return
@@ -983,9 +983,9 @@ EXAMPLES
     config = load_config()
 
     if args.consolidate:
-        # Direct mode: no API call at all, so no token/VIN needed - just run
-        # each selected analyzer's own --consolidate, exactly as if you'd
-        # typed e.g. `analyse_drives.py --consolidate` yourself.
+ # Direct mode: no API call at all, so no token/VIN needed - just run
+ # each selected analyzer's own --consolidate, exactly as if you'd
+ # typed e.g. `analyse_drives.py --consolidate` yourself.
         print(f"\u25b6 --consolidate: skipping fetch, running --consolidate directly for: {', '.join(selected)}\n")
         any_failed = False
         for type_name in selected:

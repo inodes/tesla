@@ -110,13 +110,13 @@ def load_points(tessie_dir=None):
     for e in history:
         odo = e.get("odometer_km")
         cap = e.get("capacity_kwh")
-        # Check "no odometer" before "outlier": a reading with no odometer_km
-        # was never going to appear as a plotted point on this chart either
-        # way, so it should count against that bucket, not against
-        # "outliers excluded" - otherwise the outlier count on this chart
-        # can include readings the user could never have seen removed from
-        # it, making the caption look more aggressive than what it actually
-        # trimmed off the visible trend line.
+ # Check "no odometer" before "outlier": a reading with no odometer_km
+ # was never going to appear as a plotted point on this chart either
+ # way, so it should count against that bucket, not against
+ # "outliers excluded" - otherwise the outlier count on this chart
+ # can include readings the user could never have seen removed from
+ # it, making the caption look more aggressive than what it actually
+ # trimmed off the visible trend line.
         if odo is None or cap is None:
             excluded_no_odo += 1
             continue
@@ -213,13 +213,13 @@ _HTML_TEMPLATE = """<!doctype html>
   .trend-line {{ stroke: {color}; stroke-width: 2; stroke-dasharray: 6 4; opacity: 0.55; fill: none; stroke-linecap: round; }}
   .dot {{ fill: {color}; stroke: {surface}; stroke-width: 1.4; }}
   .hit {{ fill: transparent; cursor: pointer; }}
-  #tooltip {{
+ #tooltip {{
     position: absolute; pointer-events: none; background: rgba(11,11,11,0.92); color: #fff;
     padding: 8px 10px; border-radius: 6px; font-size: 12px; line-height: 1.5; display: none;
     white-space: nowrap; z-index: 10; transform: translate(-50%, -100%); top: 0; left: 0;
   }}
-  #tooltip .val {{ font-weight: 700; font-size: 14px; }}
-  #legend {{ margin: 8px 0 0; font-size: 12px; color: {text_muted}; }}
+ #tooltip .val {{ font-weight: 700; font-size: 14px; }}
+ #legend {{ margin: 8px 0 0; font-size: 12px; color: {text_muted}; }}
 </style>
 </head>
 <body>

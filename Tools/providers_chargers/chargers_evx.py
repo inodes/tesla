@@ -83,20 +83,20 @@ def parse_evx_location_record(loc: Dict[str, Any]) -> Dict[str, Any]:
     elif isinstance(cf_raw, dict):
         cf = cf_raw
 
-    # Custom field extraction
+ # Custom field extraction
     hw_model = cf.get("9rn4ydnspl") or "Polecharger"
     pwr_type = cf.get("48ckicykouj") or "AC"
     plug_type = cf.get("qi6rkgzgrn") or "Type 2"
     pwr_raw = cf.get("dq3ho4dk08") or "22 KW"
     pole_id = str(cf.get("7ulej7jp2u") or "").strip()
 
-    # Parse power float
+ # Parse power float
     max_pwr = 22.0
     pwr_m = re.search(r"(\d+(?:\.\d+)?)", pwr_raw)
     if pwr_m:
         max_pwr = float(pwr_m.group(1))
 
-    # Parse Postcode and State
+ # Parse Postcode and State
     postcode = ""
     state = "NSW"
     m_postcode = re.search(r"\b(2\d{3}|3\d{3}|4\d{3}|0\d{3}|5\d{3}|6\d{3}|7\d{3})\b", addr)
@@ -115,7 +115,7 @@ def parse_evx_location_record(loc: Dict[str, Any]) -> Dict[str, Any]:
     if m_state:
         state = m_state.group(1).upper()
 
-    # Parse Suburb and Street Address
+ # Parse Suburb and Street Address
     suburb = ""
     parts = [p.strip() for p in addr.split(",") if p.strip()]
     if len(parts) >= 2:
@@ -126,7 +126,7 @@ def parse_evx_location_record(loc: Dict[str, Any]) -> Dict[str, Any]:
     else:
         street = addr
 
-    # Clean display name from raw_name e.g. "21-27 Wattle St-West Ryde-20203A"
+ # Clean display name from raw_name e.g. "21-27 Wattle St-West Ryde-20203A"
     name_parts = raw_name.rsplit("-", 2)
     if len(name_parts) == 3:
         clean_site, parsed_suburb, _ = [p.strip() for p in name_parts]
@@ -146,7 +146,7 @@ def parse_evx_location_record(loc: Dict[str, Any]) -> Dict[str, Any]:
     lat = float(loc.get("loc_lat") or 0.0)
     lon = float(loc.get("loc_long") or 0.0)
 
-    # EVX standard pricing
+ # EVX standard pricing
     rate_val = 0.50  # Typical standard rate
     now_utc = datetime.now(timezone.utc).isoformat()
 
@@ -301,8 +301,8 @@ def parse_evx_location_record(loc: Dict[str, Any]) -> Dict[str, Any]:
 class EVXProvider(BaseChargerProvider):
     name: str = "EVX"
     tier: int = 1  # First-Party Authoritative
-    # BUG-079: verified via grep 'speed_tier\s*=' - both occurrences hardcode
-    # "ac_destination"; EVX never assigns "dc_fast" or "supercharger".
+ # verified via grep 'speed_tier\s*=' - both occurrences hardcode
+ # "ac_destination"; EVX never assigns "dc_fast" or "supercharger".
     POSSIBLE_SPEED_TIERS = {"ac_destination"}
 
     def __init__(self, registry_path: Optional[str] = None):
@@ -379,7 +379,7 @@ class EVXProvider(BaseChargerProvider):
         archive_path = os.path.join(os.path.dirname(target_path), "evx_chargers_archived.json")
         now_utc = datetime.now(timezone.utc).isoformat()
 
-        # Load existing registry to detect tariff or hardware changes
+ # Load existing registry to detect tariff or hardware changes
         existing_stations = {}
         if os.path.isfile(target_path):
             try:
@@ -397,7 +397,7 @@ class EVXProvider(BaseChargerProvider):
                 d["views"] = r.views
             stations_dict[r.key] = d
 
-            # Archive if previous version exists and changed
+ # Archive if previous version exists and changed
             if r.key in existing_stations:
                 old_st = existing_stations[r.key]
                 if detect_station_changes(old_st, d):
@@ -410,12 +410,12 @@ class EVXProvider(BaseChargerProvider):
             "stations": stations_dict
         }
 
-        # AGENTS.md BUG-067: was a bare open(path, "w") - a process killed
-        # mid-write (Ctrl-C, laptop sleep, OOM) could leave a truncated/
-        # corrupt registry; atomic_write_json() (base.py) writes to a temp
-        # file in the same directory and os.replace()s it into place, so
-        # target_path is always either the old complete file or the new
-        # complete one, never something in between.
+ # AGENTS.md was a bare open(path, "w") - a process killed
+ # mid-write (Ctrl-C, laptop sleep, OOM) could leave a truncated/
+ # corrupt registry; atomic_write_json() (base.py) writes to a temp
+ # file in the same directory and os.replace()s it into place, so
+ # target_path is always either the old complete file or the new
+ # complete one, never something in between.
         atomic_write_json(target_path, payload)
 
         self._cache = records

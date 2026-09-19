@@ -66,7 +66,7 @@ check_system_requirements() {
     echo "=========================================================================="
   fi
 
-  # 1. Check Python 3
+ # 1. Check Python 3
   local py_ver=""
   if command -v python3 >/dev/null 2>&1; then
     py_ver="$(python3 -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}")' 2>/dev/null || echo "detected")"
@@ -78,7 +78,7 @@ check_system_requirements() {
     has_issues=1
   fi
 
-  # 2. Check Rsync
+ # 2. Check Rsync
   local rsync_ver=""
   local rsync_major=0
   if [[ -x "$RSYNC_BIN" ]]; then
@@ -100,7 +100,7 @@ check_system_requirements() {
     has_issues=1
   fi
 
-  # 3. Check Homebrew
+ # 3. Check Homebrew
   if (( is_explicit == 1 )); then
     if [[ -n "$brew_path" ]]; then
       local brew_ver="$("$brew_path" --version 2>/dev/null | head -n 1)"
@@ -109,7 +109,7 @@ check_system_requirements() {
       echo "  ℹ brew     : Not installed (https://brew.sh/)"
     fi
 
-    # 4. Check Container Engine (OrbStack / Docker for ExportDash player/stitcher)
+ # 4. Check Container Engine (OrbStack / Docker for ExportDash player/stitcher)
     local docker_bin=""
     local engine_type="Docker"
     if [[ -d "/Applications/OrbStack.app" ]] || [[ -d "$HOME/.orbstack" ]]; then
@@ -137,7 +137,7 @@ check_system_requirements() {
     echo "=========================================================================="
   fi
 
-  # Guide user if requirements are missing or warnings exist in doctor mode
+ # Guide user if requirements are missing or warnings exist in doctor mode
   if [[ "$has_issues" -eq 1 ]] || [[ "$is_explicit" -eq 1 && ( "$has_warnings" -eq 1 || -z "$brew_path" ) ]]; then
     echo ""
     echo "📦 Package Installation & Upgrade Guide:"
@@ -442,10 +442,10 @@ fi
 for vol in /Volumes/*; do
   [[ -d "$vol" && -d "$vol/TeslaCam" ]] || continue
 
-  # Prevent macOS Spotlight from indexing and locking Tesla drives during unmounts
+ # Prevent macOS Spotlight from indexing and locking Tesla drives during unmounts
   touch "$vol/.metadata_never_index" 2>/dev/null || true
 
-  # Primary identification via root identity markers
+ # Primary identification via root identity markers
   if [[ -z "$VOL_2TB" && -d "$vol/ARCHIVE_2TB" ]]; then
     VOL_2TB="$vol"
   elif [[ -z "$VOL_JOWUA" && -d "$vol/JOWUA_1TB" ]]; then
@@ -453,7 +453,7 @@ for vol in /Volumes/*; do
   elif [[ -z "$VOL_TESLA_USB" && ( -d "$vol/TESLA_USB_128GB" || -d "$vol/TESLA_USB_256GB" || -d "$vol/TESLA_USB" ) ]]; then
     VOL_TESLA_USB="$vol"
   else
-    # Fallback to partition capacity heuristics
+ # Fallback to partition capacity heuristics
     TOTAL_GB=$(df -g "$vol" 2>/dev/null | awk 'NR==2 {print $2}' || echo 0)
     if (( TOTAL_GB > 30 && TOTAL_GB <= 600 )) && [[ -z "$VOL_TESLA_USB" ]]; then
       VOL_TESLA_USB="$vol"
@@ -827,12 +827,12 @@ execute_safe_or_force_purge() {
     src_label="Tesla USB"
   fi
 
-  # If purging the destination archive drive/folder itself, force mode is mandatory
+ # If purging the destination archive drive/folder itself, force mode is mandatory
   if [[ -n "$VOL_2TB" && "$src" == "$VOL_2TB" ]]; then
     is_force=1
   fi
 
-  # If Archive Destination is missing and force is NOT set, block execution
+ # If Archive Destination is missing and force is NOT set, block execution
   if (( is_force == 0 )) && [[ -z "$dst" || ! -d "$dst/TeslaCam" ]]; then
     echo "SAFETY BLOCK: Master Archive Destination is NOT connected or configured."
     echo "              Nothing will be purged from $src_label."
@@ -840,7 +840,7 @@ execute_safe_or_force_purge() {
     return 0
   fi
 
-  # Run Python scanner (verified or force mode)
+ # Run Python scanner (verified or force mode)
   local scan_result
   scan_result=$(python3 - "$src" "${dst:-none}" "$scope" "$param" "$is_force" << 'PY_EOF'
 import os
@@ -987,7 +987,7 @@ PY_EOF
     return 0
   fi
 
-  # Confirmation Gate
+ # Confirmation Gate
   if (( is_force == 1 )); then
     printf "Type 'FORCE' in capital letters to confirm permanent deletion: "
     read -r force_confirm
@@ -1004,7 +1004,7 @@ PY_EOF
     fi
   fi
 
-  # Execute deletion
+ # Execute deletion
   python3 - "$src" "${dst:-none}" "$scope" "$param" "$is_force" << 'PY_EOF'
 import os
 import sys
@@ -1456,7 +1456,7 @@ check_and_prompt_flagged_tombstones() {
   local script_dir="$(cd "$(dirname "$SCRIPT_PATH")" && pwd)"
   local drives=("$@")
   
-  # Step 1: Reconcile and check if there are active tombstones
+ # Step 1: Reconcile and check if there are active tombstones
   local flag_info
   flag_info=$(python3 - "$script_dir" "${drives[@]}" << 'PY_EOF'
 import os
@@ -1529,13 +1529,13 @@ PY_EOF
     echo "    Deleted on Master Archive — pending cleanup from connected secondary drive(s)."
     echo ""
 
-    # If assume-yes or tombstone-purge flag set
+ # If assume-yes or tombstone-purge flag set
     if [[ "$ASSUME_YES" -eq 1 || "$TOMBSTONE_PURGE_MODE" -eq 1 ]]; then
       reconcile_tombstones_on_drives "$DRY_RUN" "$ASSUME_YES" "${drives[@]}"
       return 0
     fi
 
-    # Interactive prompt
+ # Interactive prompt
     if [[ -t 0 && "$DRY_RUN" -eq 0 ]]; then
       local reply
       printf "Would you like to scrub these deleted files now from connected secondary drive(s)? [Y/n]: "
@@ -1570,11 +1570,11 @@ prompt_home_recent_purge() {
   local script_dir="$(cd "$(dirname "$SCRIPT_PATH")" && pwd)"
   local drives=("$@")
 
-  # Never fires under --dry-run (it would permanently delete files), and
-  # only fires unattended when --yes was explicitly passed (ASSUME_YES
-  # already documented as "Skip standard confirmation prompts" - this is
-  # one of them, consistent with how it already skips the tombstone-scrub
-  # prompt above).
+ # Never fires under --dry-run (it would permanently delete files), and
+ # only fires unattended when --yes was explicitly passed (ASSUME_YES
+ # already documented as "Skip standard confirmation prompts" - this is
+ # one of them, consistent with how it already skips the tombstone-scrub
+ # prompt above).
   if [[ "$DRY_RUN" -eq 1 ]]; then
     return 0
   fi
@@ -1582,16 +1582,16 @@ prompt_home_recent_purge() {
     return 0
   fi
 
-  # NOTE: this deliberately does NOT pipe the Python source via a stdin
-  # heredoc (`python3 - ... <<'EOF'`) like the sibling functions above -
-  # purge_home_recent_cli() itself calls input() for its own confirmation
-  # prompt, and a stdin heredoc would bind that process's stdin to the
-  # heredoc's own content instead of the terminal, so input() would hit
-  # EOF immediately and silently auto-cancel (caught live: the confirm
-  # prompt printed, then "Operation cancelled." appeared with no chance
-  # to answer - BUG-103). Writing the script to a temp file and running
-  # `python3 <tmpfile>` instead leaves stdin connected to the real
-  # terminal, so the prompt can actually read an answer.
+ # NOTE: this deliberately does NOT pipe the Python source via a stdin
+ # heredoc (`python3 - ... <<'EOF'`) like the sibling functions above -
+ # purge_home_recent_cli() itself calls input() for its own confirmation
+ # prompt, and a stdin heredoc would bind that process's stdin to the
+ # heredoc's own content instead of the terminal, so input() would hit
+ # EOF immediately and silently auto-cancel (caught live: the confirm
+ # prompt printed, then "Operation cancelled." appeared with no chance
+ # to answer - ). Writing the script to a temp file and running
+ # `python3 <tmpfile>` instead leaves stdin connected to the real
+ # terminal, so the prompt can actually read an answer.
   local tmp_py
   tmp_py="$(mktemp "${TMPDIR:-/tmp}/dashcam_home_recent.XXXXXX.py")" || return 0
 
@@ -1621,7 +1621,7 @@ if not drive_dirs:
 # events, and "is this parked event at Home" both come from synced
 # Tessie telemetry + places.json) - this script itself is also used by
 # people who run it purely for dashcam sync/prune with no Tessie
-# account configured at all (BUG-103 follow-up). For them this whole
+# account configured at all (follow-up). For them this whole
 # check - including the message below - should not appear, and it must
 # never let a missing token fall through into index_footage()'s own
 # stale-telemetry auto-sync (which shells out to sync_api_tessie.py).
@@ -1829,7 +1829,7 @@ sync_volumes() {
     extra_rsync_opts+=("--exclude-from=$tombstone_exclude_file")
   fi
 
-  # 1. Calculate bytes to transfer via dry-run (strictly matching execution flags)
+ # 1. Calculate bytes to transfer via dry-run (strictly matching execution flags)
   printf "    Calculating transfer payload..."
   local dry_run_out
   dry_run_out=$("$RSYNC_BIN" -a --dry-run --stats \
@@ -1861,11 +1861,11 @@ sync_volumes() {
   local to_transfer_gb=$(printf "%.2f" "$(( to_transfer_kb / 1048576.0 ))")
   printf "\r\033[K    Payload: %s GB to sync.\n" "$to_transfer_gb"
 
-  # Baseline destination disk usage
+ # Baseline destination disk usage
   local initial_dst_kb=$(df -k "$dst" | awk 'NR==2 {print $3}')
   local prev_dst_kb=$initial_dst_kb
 
-  # 2. Launch Rsync in background with --stats
+ # 2. Launch Rsync in background with --stats
   "$RSYNC_BIN" -a \
     --modify-window=2 \
     --stats \
@@ -1883,7 +1883,7 @@ sync_volumes() {
     "$src/TeslaCam/" "$dst/TeslaCam/" > "$LOG_FILE" 2>&1 &
   local rsync_pid=$!
 
-  # 3. Live progress updater polling loop
+ # 3. Live progress updater polling loop
   while kill -0 $rsync_pid 2>/dev/null; do
     sleep 2
     local cur_dst_kb=$(df -k "$dst" | awk 'NR==2 {print $3}')

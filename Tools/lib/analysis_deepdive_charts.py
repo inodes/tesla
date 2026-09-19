@@ -47,16 +47,16 @@ _TEMPLATE = """<!doctype html>
           background: #f7f7f9; color: #1a1a1a; }}
   h1 {{ font-size: 18px; margin: 16px 20px 4px; }}
   .sub {{ margin: 0 20px 12px; color: #666; font-size: 13px; }}
-  #wrap {{ position: relative; margin: 0 12px 12px; }}
+ #wrap {{ position: relative; margin: 0 12px 12px; }}
   canvas {{ display: block; background: #fff; border: 1px solid #ddd; border-radius: 6px; }}
-  #tooltip {{
+ #tooltip {{
     position: absolute; pointer-events: none; background: rgba(20,20,20,0.92); color: #fff;
     padding: 8px 10px; border-radius: 6px; font-size: 12px; line-height: 1.5; display: none;
     white-space: nowrap; z-index: 10;
   }}
-  #legend {{ margin: 4px 20px 14px; font-size: 12px; }}
-  #legend span {{ margin-right: 16px; }}
-  #legend .dot {{ display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 5px; }}
+ #legend {{ margin: 4px 20px 14px; font-size: 12px; }}
+ #legend span {{ margin-right: 16px; }}
+ #legend .dot {{ display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 5px; }}
 </style>
 </head>
 <body>
@@ -115,7 +115,7 @@ function axisColor(axis) {{
 function draw() {{
   ctx.clearRect(0, 0, W, H);
 
-  // gridlines + left axis labels
+ // gridlines + left axis labels
   ctx.strokeStyle = '#eee';
   ctx.fillStyle = '#888';
   ctx.font = '11px sans-serif';
@@ -140,18 +140,28 @@ function draw() {{
   }});
   ctx.fillStyle = '#888';
 
-  // 0-baseline for right/efficiency axis if range crosses zero
+ // 0-baseline dashed line for right/efficiency axis if range crosses zero
   rightAxisIds.forEach(axis => {{
     const [lo, hi] = ranges[axis];
     if (lo < 0 && hi > 0) {{
       const y0 = yAt(0, axis);
-      ctx.strokeStyle = '#cbd5e1';
-      ctx.lineWidth = 1;
+      ctx.save();
+      ctx.strokeStyle = '#64748b'; // clear slate dashed line
+      ctx.lineWidth = 1.5;
+      ctx.setLineDash([5, 4]);
       ctx.beginPath(); ctx.moveTo(padL, y0); ctx.lineTo(W - padR, y0); ctx.stroke();
+      ctx.setLineDash([]);
+
+ // Label at 0 on the right axis
+      ctx.font = 'bold 11px sans-serif';
+      ctx.fillStyle = '#16a34a';
+      ctx.textAlign = 'left';
+      ctx.fillText('0.0 (Regen ⬇)', W - padR + 8, y0 + 3);
+      ctx.restore();
     }}
   }});
 
-  // x-axis labels (sparse)
+ // x-axis labels (sparse)
   ctx.textAlign = 'center';
   const xTicks = Math.min(8, n);
   for (let t = 0; t < xTicks; t++) {{
@@ -162,7 +172,7 @@ function draw() {{
   ctx.textAlign = 'center';
   ctx.fillText(DATA.x_label, padL + plotW / 2, H - 6);
 
-  // series lines & shaded regen below 0
+ // series lines & shaded regen below 0
   DATA.series.forEach(s => {{
     let runs = [];
     let curRun = [];
@@ -176,14 +186,13 @@ function draw() {{
     }}
     if (curRun.length > 0) runs.push(curRun);
 
-    // 1. Shaded area below 0 (Regenerative braking / descent)
+ // 1. Shaded area below 0 (Regenerative braking / descent)
     if (s.fill_negative) {{
       const [lo, hi] = ranges[s.axis];
       if (lo < 0) {{
         const y0 = yAt(0, s.axis);
         runs.forEach(run => {{
           if (run.length < 2) return;
-          if (!run.some(p => p.v < 0)) return;
           ctx.save();
           ctx.beginPath();
           ctx.rect(padL, y0, plotW, Math.max(1, padT + plotH - y0));
@@ -203,36 +212,92 @@ function draw() {{
           }}
           ctx.lineTo(run[run.length - 1].x, y0);
           ctx.closePath();
-          ctx.fillStyle = 'rgba(34, 197, 94, 0.35)'; // translucent green regen fill
+          ctx.fillStyle = 'rgba(22, 163, 74, 0.35)'; // translucent green regen fill
           ctx.fill();
           ctx.restore();
         }});
       }}
     }}
 
-    // 2. Smooth line stroke
-    ctx.strokeStyle = s.color;
-    ctx.lineWidth = 2;
-    ctx.lineJoin = 'round';
-    ctx.lineCap = 'round';
-    runs.forEach(run => {{
-      if (run.length < 2) return;
+ // 2. Smooth line stroke
+    const [lo, hi] = ranges[s.axis];
+    if (s.fill_negative && lo < 0 && hi > 0) {{
+      const y0 = yAt(0, s.axis);
+ // Positive / consumption stroke (above y0)
+      ctx.save();
       ctx.beginPath();
-      ctx.moveTo(run[0].x, run[0].y);
-      if (run.length === 2) {{
-        ctx.lineTo(run[1].x, run[1].y);
-      }} else {{
-        for (let k = 1; k < run.length - 1; k++) {{
-          const p1 = run[k], p2 = run[k + 1];
-          ctx.quadraticCurveTo(p1.x, p1.y, (p1.x + p2.x) / 2, (p1.y + p2.y) / 2);
+      ctx.rect(padL, padT, plotW, Math.max(1, y0 - padT));
+      ctx.clip();
+      ctx.strokeStyle = s.color;
+      ctx.lineWidth = 2;
+      ctx.lineJoin = 'round';
+      ctx.lineCap = 'round';
+      runs.forEach(run => {{
+        if (run.length < 2) return;
+        ctx.beginPath();
+        ctx.moveTo(run[0].x, run[0].y);
+        if (run.length === 2) {{
+          ctx.lineTo(run[1].x, run[1].y);
+        }} else {{
+          for (let k = 1; k < run.length - 1; k++) {{
+            const p1 = run[k], p2 = run[k + 1];
+            ctx.quadraticCurveTo(p1.x, p1.y, (p1.x + p2.x) / 2, (p1.y + p2.y) / 2);
+          }}
+          ctx.lineTo(run[run.length - 1].x, run[run.length - 1].y);
         }}
-        ctx.lineTo(run[run.length - 1].x, run[run.length - 1].y);
-      }}
-      ctx.stroke();
-    }});
+        ctx.stroke();
+      }});
+      ctx.restore();
+
+ // Negative / regen stroke (below y0)
+      ctx.save();
+      ctx.beginPath();
+      ctx.rect(padL, y0, plotW, Math.max(1, padT + plotH - y0));
+      ctx.clip();
+      ctx.strokeStyle = '#16a34a'; // green for regen
+      ctx.lineWidth = 2.5;
+      ctx.lineJoin = 'round';
+      ctx.lineCap = 'round';
+      runs.forEach(run => {{
+        if (run.length < 2) return;
+        ctx.beginPath();
+        ctx.moveTo(run[0].x, run[0].y);
+        if (run.length === 2) {{
+          ctx.lineTo(run[1].x, run[1].y);
+        }} else {{
+          for (let k = 1; k < run.length - 1; k++) {{
+            const p1 = run[k], p2 = run[k + 1];
+            ctx.quadraticCurveTo(p1.x, p1.y, (p1.x + p2.x) / 2, (p1.y + p2.y) / 2);
+          }}
+          ctx.lineTo(run[run.length - 1].x, run[run.length - 1].y);
+        }}
+        ctx.stroke();
+      }});
+      ctx.restore();
+    }} else {{
+      ctx.strokeStyle = s.color;
+      ctx.lineWidth = 2;
+      ctx.lineJoin = 'round';
+      ctx.lineCap = 'round';
+      runs.forEach(run => {{
+        if (run.length < 2) return;
+        ctx.beginPath();
+        ctx.moveTo(run[0].x, run[0].y);
+        if (run.length === 2) {{
+          ctx.lineTo(run[1].x, run[1].y);
+        }} else {{
+          for (let k = 1; k < run.length - 1; k++) {{
+            const p1 = run[k], p2 = run[k + 1];
+            ctx.quadraticCurveTo(p1.x, p1.y, (p1.x + p2.x) / 2, (p1.y + p2.y) / 2);
+          }}
+          ctx.lineTo(run[run.length - 1].x, run[run.length - 1].y);
+        }}
+        ctx.stroke();
+      }});
+    }}
   }});
 
-  // Reference lines (e.g. Drive Average efficiency dashed line)
+ // Reference lines (e.g. Drive Average efficiency dashed line)
   if (DATA.ref_lines && DATA.ref_lines.length > 0) {{
     DATA.ref_lines.forEach(ref => {{
       const y = yAt(ref.value, ref.axis || 'right');
@@ -259,7 +324,7 @@ function draw() {{
     }});
   }}
 
-  // legend
+ // legend
   legend.innerHTML = DATA.series.map(s =>
     `<span><span class="dot" style="background:${{s.color}}"></span>${{s.name}} (${{s.unit}}${{s.axis !== 'left' ? ', ' + s.axis + ' axis' : ''}}${{s.fill_negative ? ' · <span style="color:#16a34a">■</span> regen' : ''}})</span>`
   ).join('') + ((DATA.ref_lines || []).map(r =>

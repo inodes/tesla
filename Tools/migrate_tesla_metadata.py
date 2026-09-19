@@ -57,24 +57,24 @@ def migrate_entry(key: str, data: dict, charger_type: str) -> dict:
     t_meta = data.get("tesla_metadata", {}) if isinstance(data.get("tesla_metadata"), dict) else {}
     loc = data.get("location", {}) if isinstance(data.get("location"), dict) else {}
 
-    # 1. Location Name (Authoritative)
+ # 1. Location Name (Authoritative)
     raw_loc = (t_meta.get("findus_location_name") or t_meta.get("name") or data.get("name") or key)
     findus_loc_name = str(raw_loc).replace("Tesla Supercharger - ", "").replace("Tesla Destination - ", "").strip()
     findus_loc_short_name = t_meta.get("findus_location_short_name") or clean_station_short_name(findus_loc_name)
 
-    # 2. List Name (Directory List)
+ # 2. List Name (Directory List)
     list_override = KNOWN_LIST_OVERRIDES[charger_type].get(key) or KNOWN_LIST_OVERRIDES[charger_type].get(findus_loc_name)
     raw_list = list_override or t_meta.get("findus_list_name") or findus_loc_name
     findus_list_name = str(raw_list).replace("Tesla Supercharger - ", "").replace("Tesla Destination - ", "").strip()
     findus_list_short_name = t_meta.get("findus_list_short_name") or clean_station_short_name(findus_list_name)
 
-    # 3. Canonical Display Name (Location > List rule: findus_name)
+ # 3. Canonical Display Name (Location > List rule: findus_name)
     canonical_name = findus_loc_name
 
-    # 4. Canonical Short Name
+ # 4. Canonical Short Name
     canonical_short_name = findus_loc_short_name or findus_list_short_name or clean_station_short_name(key)
 
-    # 5. Clean Suburb & Postcode
+ # 5. Clean Suburb & Postcode
     raw_suburb = loc.get("suburb") or data.get("suburb") or ""
     raw_pc = loc.get("postcode") or data.get("postcode") or ""
     clean_sub, clean_pc = clean_suburb_and_postcode(raw_suburb, raw_pc)
@@ -85,10 +85,10 @@ def migrate_entry(key: str, data: dict, charger_type: str) -> dict:
         if clean_pc:
             data["location"]["postcode"] = clean_pc
 
-    # General / location descriptor
+ # General / location descriptor
     general_location = t_meta.get("general_location") or t_meta.get("location_name") or clean_sub
 
-    # Keywords indexing all 6 representations
+ # Keywords indexing all 6 representations
     existing_kw = t_meta.get("keywords", [])
     street_str = loc.get("street") or loc.get("address", "")
     address_str = loc.get("address", "")
@@ -114,7 +114,7 @@ def migrate_entry(key: str, data: dict, charger_type: str) -> dict:
         ] + existing_kw) if k and str(k).strip()
     ]
 
-    # Build top-ordered tesla_metadata with the 6 fields first
+ # Build top-ordered tesla_metadata with the 6 fields first
     ordered_meta = {
         "findus_list_name": findus_list_name,
         "findus_list_short_name": findus_list_short_name,
@@ -132,7 +132,7 @@ def migrate_entry(key: str, data: dict, charger_type: str) -> dict:
     if "findus_url" in t_meta:
         ordered_meta["findus_url"] = t_meta["findus_url"]
 
-    # Preserve any other metadata fields
+ # Preserve any other metadata fields
     for k, v in t_meta.items():
         if k not in ordered_meta and k != "keywords":
             ordered_meta[k] = v
@@ -175,7 +175,7 @@ def main():
     sc_count = migrate_file(sc_path, "supercharger")
     dc_count = migrate_file(dc_path, "destination_charger")
 
-    # Also migrate repo template example files if present
+ # Also migrate repo template example files if present
     repo_tessie = os.path.join(_repo_root, "Tessie")
     for f, c_type in [
         ("tesla_superchargers.example.json", "supercharger"),

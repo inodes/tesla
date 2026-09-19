@@ -45,7 +45,7 @@ register; two overlapping exports covering the same period produce
 identical keys and collapse to one row, never a duplicate.
 
 Same 4-point safety net already established for drives/charges
-(BUG-025): back up the master before writing, sanity-check the row
+(): back up the master before writing, sanity-check the row
 count and duplicate-key count after writing, and report what changed.
 
 REQ-071 (2026-09-15): every run now ends with a non-blocking staleness
@@ -160,7 +160,7 @@ def consolidate(dry_run=False, invoices_dir=None, data_home=None, log=print, pro
             w.writerow(merged[key])
     os.replace(tmp_path, master_path)
 
-    # Sanity check: re-read what we just wrote.
+ # Sanity check: re-read what we just wrote.
     written = load_master_rows(master_path)
     if len(written) != len(merged):
         log(f"⚠ Consolidate sanity check failed: wrote {len(merged)} rows but re-read {len(written)}")

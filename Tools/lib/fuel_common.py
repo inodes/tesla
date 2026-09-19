@@ -36,7 +36,7 @@ REPO_ROOT = os.path.dirname(TOOLS_DIR)
 try:
     from .tessie_api_common import load_config, resolve_tessie_data_home
 except ImportError:
-    # Standalone execution fallback
+ # Standalone execution fallback
     if SCRIPT_DIR not in sys.path:
         sys.path.insert(0, SCRIPT_DIR)
     from tessie_api_common import load_config, resolve_tessie_data_home
@@ -46,6 +46,27 @@ DEFAULT_USER_AGENT = "Tesla-Data-Toolkit/1.0 (macOS; FuelCheckSync)"
 
 # Built-in Default Comparison Vehicles (Australian Green Vehicle Guide Top 20 Performers & Sellers)
 DEFAULT_COMPARISON_VEHICLES = {
+    "mazda_cx8_diesel": {
+        "name": "Mazda CX-8 (2.2L Skyactiv-D Diesel)",
+        "category": "Large SUV",
+        "gvg_url": "https://greenvehicleguide.gov.au/Vehicle/Search",
+        "fuel_type": "Diesel",
+        "co2_g_per_km": 158,
+        "consumption": {
+            "combined_l_per_100km": 7.5,
+            "urban_l_per_100km": 10.0,
+            "highway_l_per_100km": 6.0,
+        },
+        "adr_consumption": {
+            "combined_l_per_100km": 6.0,
+            "urban_l_per_100km": 7.0,
+            "highway_l_per_100km": 5.5,
+        },
+        "running_costs": {
+            "service_maintenance_per_km": 0.045,
+            "tyres_per_km": 0.026,
+        }
+    },
     "petrol_standard": {
         "name": "Medium Petrol SUV (e.g. Mazda CX-5 G25)",
         "category": "Medium SUV",
@@ -430,7 +451,7 @@ def get_gvg_top20_vehicles(tessie_dir: Optional[str] = None) -> List[Tuple[str, 
                 top20.append((rank_int, k, v))
 
     if not top20:
-        # Fall back to built-in DEFAULT_COMPARISON_VEHICLES if custom config lacks GVG ranks
+ # Fall back to built-in DEFAULT_COMPARISON_VEHICLES if custom config lacks GVG ranks
         for k, v in DEFAULT_COMPARISON_VEHICLES.items():
             if isinstance(v, dict):
                 rank = v.get("gvg_rank_top20")
@@ -487,15 +508,151 @@ def search_comparison_vehicles(query_str: str, tessie_dir: Optional[str] = None)
     return [(k, v) for _, k, v in matches]
 
 
+def _sync_comparison_vehicles_to_db(conn: sqlite3.Connection, tessie_dir: Optional[str] = None):
+    """Ensures comparison vehicles table in SQLite is populated with default & custom vehicles."""
+    try:
+        cur = conn.cursor()
+        cur.execute("SELECT COUNT(*) FROM comparison_vehicles")
+        count = cur.fetchone()[0]
+        if count == 0:
+            for k, v in DEFAULT_COMPARISON_VEHICLES.items():
+                cons = v.get("consumption", {})
+                rc = v.get("running_costs", {})
+                is_def = 1 if k == "mazda_cx8_diesel" else 0
+                cur.execute("""
+                    INSERT OR REPLACE INTO comparison_vehicles (
+                        vehicle_key, name, category, gvg_rank_top20, gvg_url, fuel_type,
+                        co2_g_per_km, combined_l_per_100km, urban_l_per_100km, highway_l_per_100km,
+                        service_maint_per_km, tyres_per_km, is_default, metadata_json
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """, (
+                    k, v.get("name"), v.get("category"), v.get("gvg_rank_top20"), v.get("gvg_url"),
+                    v.get("fuel_type", "U91"), v.get("co2_g_per_km"),
+                    cons.get("combined_l_per_100km"), cons.get("urban_l_per_100km"), cons.get("highway_l_per_100km"),
+                    rc.get("service_maintenance_per_km", 0.0), rc.get("tyres_per_km", 0.0),
+                    is_def, json.dumps(v)
+                ))
+            conn.commit()
+    except Exception:
+        pass
+
+
+def get_db_comparison_vehicles(conn_or_tessie_dir: Optional[Any] = None) -> Dict[str, Dict[str, Any]]:
+    """Loads all comparison vehicles from SQLite database."""
+    conn = conn_or_tessie_dir if isinstance(conn_or_tessie_dir, sqlite3.Connection) else get_db_connection(conn_or_tessie_dir)
+    cur = conn.cursor()
+    cur.execute("""
+        SELECT vehicle_key, name, category, gvg_rank_top20, gvg_url, fuel_type,
+               co2_g_per_km, combined_l_per_100km, urban_l_per_100km, highway_l_per_100km,
+               service_maint_per_km, tyres_per_km, is_default, metadata_json
+        FROM comparison_vehicles
+    """)
+    vehicles = {}
+    for r in cur.fetchall():
+        k = r[0]
+        meta = json.loads(r[13]) if r[13] else {}
+        veh = {
+            "name": r[1],
+            "category": r[2],
+            "gvg_rank_top20": r[3],
+            "gvg_url": r[4],
+            "fuel_type": r[5],
+            "co2_g_per_km": r[6],
+            "consumption": {
+                "combined_l_per_100km": r[7],
+                "urban_l_per_100km": r[8],
+                "highway_l_per_100km": r[9],
+            },
+            "running_costs": {
+                "service_maintenance_per_km": r[10],
+                "tyres_per_km": r[11],
+            },
+            "is_default": bool(r[12]),
+        }
+        if "adr_consumption" in meta:
+            veh["adr_consumption"] = meta["adr_consumption"]
+        vehicles[k] = veh
+    return vehicles
+
+
+def save_db_comparison_vehicle(vehicle_key: str, vehicle_spec: Dict[str, Any], is_default: int = 0, conn_or_tessie_dir: Optional[Any] = None) -> bool:
+    """Inserts or updates a comparison vehicle in SQLite."""
+    conn = conn_or_tessie_dir if isinstance(conn_or_tessie_dir, sqlite3.Connection) else get_db_connection(conn_or_tessie_dir)
+    cons = vehicle_spec.get("consumption", {})
+    rc = vehicle_spec.get("running_costs", {})
+    with conn:
+        if is_default:
+            conn.execute("UPDATE comparison_vehicles SET is_default = 0")
+        conn.execute("""
+            INSERT OR REPLACE INTO comparison_vehicles (
+                vehicle_key, name, category, gvg_rank_top20, gvg_url, fuel_type,
+                co2_g_per_km, combined_l_per_100km, urban_l_per_100km, highway_l_per_100km,
+                service_maint_per_km, tyres_per_km, is_default, metadata_json
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, (
+            vehicle_key, vehicle_spec.get("name"), vehicle_spec.get("category"),
+            vehicle_spec.get("gvg_rank_top20"), vehicle_spec.get("gvg_url"),
+            vehicle_spec.get("fuel_type", "U91"), vehicle_spec.get("co2_g_per_km"),
+            cons.get("combined_l_per_100km"), cons.get("urban_l_per_100km"), cons.get("highway_l_per_100km"),
+            rc.get("service_maintenance_per_km", 0.0), rc.get("tyres_per_km", 0.0),
+            is_default, json.dumps(vehicle_spec)
+        ))
+    return True
+
+
+def set_db_default_comparison_vehicle(vehicle_key: str, conn_or_tessie_dir: Optional[Any] = None) -> bool:
+    """Marks a vehicle as default in SQLite and unsets others."""
+    conn = conn_or_tessie_dir if isinstance(conn_or_tessie_dir, sqlite3.Connection) else get_db_connection(conn_or_tessie_dir)
+    with conn:
+        conn.execute("UPDATE comparison_vehicles SET is_default = 0")
+        cur = conn.execute("UPDATE comparison_vehicles SET is_default = 1 WHERE vehicle_key = ?", (vehicle_key,))
+        return cur.rowcount > 0
+
+
+def get_default_comparison_vehicle_key(tessie_dir: Optional[str] = None) -> str:
+    """
+    Finds the active default comparison vehicle key.
+    Checks:
+    1. config.json ("default_comparison_vehicle" or "comparison_vehicle")
+    2. comparison_vehicles table in SQLite (WHERE is_default = 1)
+    3. comparison_vehicles.json ("default_vehicle")
+    4. Built-in fallback: "mazda_cx8_diesel"
+    """
+    try:
+        cfg = load_config()
+        if cfg.get("default_comparison_vehicle"):
+            return cfg["default_comparison_vehicle"]
+        if cfg.get("comparison_vehicle"):
+            return cfg["comparison_vehicle"]
+    except Exception:
+        pass
+
+    try:
+        conn = get_db_connection(tessie_dir)
+        cur = conn.cursor()
+        cur.execute("SELECT vehicle_key FROM comparison_vehicles WHERE is_default = 1 LIMIT 1")
+        row = cur.fetchone()
+        if row and row[0]:
+            return row[0]
+    except Exception:
+        pass
+
+    return "mazda_cx8_diesel"
+
+
 def load_comparison_vehicles(tessie_dir: Optional[str] = None) -> Dict[str, Any]:
     """
-    Loads comparison vehicles registry from JSON configuration.
-    Checks:
-    1. <tessie_data_home>/comparison_vehicles.json
-    2. <repo_root>/Tessie/comparison_vehicles.json
-    3. <repo_root>/Tessie/comparison_vehicles.example.json
-    4. Built-in defaults
+    Loads comparison vehicles registry from SQLite database and JSON files.
     """
+    merged_vehicles = dict(DEFAULT_COMPARISON_VEHICLES)
+
+    try:
+        db_vehs = get_db_comparison_vehicles(tessie_dir)
+        if db_vehs:
+            merged_vehicles.update(db_vehs)
+    except Exception:
+        pass
+
     candidate_paths = []
     if tessie_dir:
         candidate_paths.append(os.path.join(tessie_dir, "comparison_vehicles.json"))
@@ -510,9 +667,6 @@ def load_comparison_vehicles(tessie_dir: Optional[str] = None) -> Dict[str, Any]
     candidate_paths.append(os.path.join(REPO_ROOT, "Tessie", "comparison_vehicles.json"))
     candidate_paths.append(os.path.join(REPO_ROOT, "Tessie", "comparison_vehicles.example.json"))
 
-    merged_vehicles = dict(DEFAULT_COMPARISON_VEHICLES)
-    default_key = "petrol_standard"
-
     for p in candidate_paths:
         if os.path.isfile(p):
             try:
@@ -520,16 +674,11 @@ def load_comparison_vehicles(tessie_dir: Optional[str] = None) -> Dict[str, Any]
                     data = json.load(f)
                     if isinstance(data, dict) and "vehicles" in data and isinstance(data["vehicles"], dict):
                         merged_vehicles.update(data["vehicles"])
-                        if "default_vehicle" in data:
-                            default_key = data["default_vehicle"]
-                        return {"default_vehicle": default_key, "vehicles": merged_vehicles}
-                    elif isinstance(data, dict) and data:
-                        # Direct dictionary of vehicles
-                        merged_vehicles.update(data)
-                        return {"default_vehicle": list(data.keys())[0], "vehicles": merged_vehicles}
+                        break
             except Exception:
                 continue
 
+    default_key = get_default_comparison_vehicle_key(tessie_dir)
     return {"default_vehicle": default_key, "vehicles": merged_vehicles}
 
 
@@ -541,7 +690,7 @@ def get_comparison_vehicle(vehicle_query: Optional[str] = None, tessie_dir: Opti
     """
     registry = load_comparison_vehicles(tessie_dir)
     vehicles = registry.get("vehicles", {})
-    default_key = registry.get("default_vehicle", "petrol_standard")
+    default_key = registry.get("default_vehicle", "mazda_cx8_diesel")
 
     if not vehicles:
         vehicles = DEFAULT_COMPARISON_VEHICLES
@@ -552,7 +701,7 @@ def get_comparison_vehicle(vehicle_query: Optional[str] = None, tessie_dir: Opti
 
     q_lower = vehicle_query.strip().lower()
 
-    # 1. Exact key match
+ # 1. Exact key match
     if q_lower in vehicles:
         return q_lower, vehicles[q_lower]
 
@@ -560,19 +709,19 @@ def get_comparison_vehicle(vehicle_query: Optional[str] = None, tessie_dir: Opti
         if k.lower() == q_lower:
             return k, v
 
-    # 2. Exact or substring name match
+ # 2. Exact or substring name match
     for k, v in vehicles.items():
         name = v.get("name", "")
         if q_lower in name.lower() or q_lower in k.lower():
             return k, v
 
-    # 3. Category match
+ # 3. Category match
     for k, v in vehicles.items():
         category = v.get("category", "")
         if q_lower in category.lower():
             return k, v
 
-    # Fallback to default
+ # Fallback to default
     key = default_key if default_key in vehicles else list(vehicles.keys())[0]
     return key, vehicles[key]
 
@@ -590,8 +739,11 @@ def resolve_fuel_dir(tessie_dir: Optional[str] = None) -> str:
     """Authoritative path to external fuel data directory."""
     base = tessie_dir or resolve_tessie_data_home()
     fuel_dir = os.path.join(base, "fuel")
-    os.makedirs(fuel_dir, exist_ok=True)
-    os.makedirs(os.path.join(fuel_dir, "raw"), exist_ok=True)
+    try:
+        os.makedirs(fuel_dir, exist_ok=True)
+        os.makedirs(os.path.join(fuel_dir, "raw"), exist_ok=True)
+    except Exception:
+        pass
     return fuel_dir
 
 
@@ -612,58 +764,79 @@ def get_db_connection(tessie_dir: Optional[str] = None) -> sqlite3.Connection:
 
 def _init_db_schema(conn: sqlite3.Connection):
     """Creates database schema if not already present."""
-    with conn:
-        conn.executescript("""
-        CREATE TABLE IF NOT EXISTS fuel_stations (
-            station_id TEXT PRIMARY KEY,
-            name TEXT,
-            brand TEXT,
-            address TEXT,
-            suburb TEXT,
-            postcode TEXT,
-            state TEXT DEFAULT 'NSW',
-            is_metro INTEGER DEFAULT 0
-        );
+    try:
+        with conn:
+            conn.executescript("""
+            CREATE TABLE IF NOT EXISTS fuel_stations (
+                station_id TEXT PRIMARY KEY,
+                name TEXT,
+                brand TEXT,
+                address TEXT,
+                suburb TEXT,
+                postcode TEXT,
+                state TEXT DEFAULT 'NSW',
+                is_metro INTEGER DEFAULT 0
+            );
 
-        CREATE TABLE IF NOT EXISTS fuel_sync_log (
-            resource_id TEXT PRIMARY KEY,
-            title TEXT,
-            month_year TEXT UNIQUE,
-            format TEXT,
-            url TEXT,
-            file_size INTEGER DEFAULT 0,
-            row_count INTEGER DEFAULT 0,
-            status TEXT DEFAULT 'pending',
-            last_synced_at TEXT
-        );
+            CREATE TABLE IF NOT EXISTS fuel_sync_log (
+                resource_id TEXT PRIMARY KEY,
+                title TEXT,
+                month_year TEXT UNIQUE,
+                format TEXT,
+                url TEXT,
+                file_size INTEGER DEFAULT 0,
+                row_count INTEGER DEFAULT 0,
+                status TEXT DEFAULT 'pending',
+                last_synced_at TEXT
+            );
 
-        CREATE TABLE IF NOT EXISTS fuel_daily_averages (
-            date TEXT,
-            fuel_type TEXT,
-            region TEXT,
-            avg_price_cents REAL,
-            min_price_cents REAL,
-            max_price_cents REAL,
-            sample_count INTEGER,
-            PRIMARY KEY (date, fuel_type, region)
-        );
+            CREATE TABLE IF NOT EXISTS fuel_daily_averages (
+                date TEXT,
+                fuel_type TEXT,
+                region TEXT,
+                avg_price_cents REAL,
+                min_price_cents REAL,
+                max_price_cents REAL,
+                sample_count INTEGER,
+                PRIMARY KEY (date, fuel_type, region)
+            );
 
-        CREATE INDEX IF NOT EXISTS idx_fuel_daily_date ON fuel_daily_averages(date);
-        CREATE INDEX IF NOT EXISTS idx_fuel_daily_fuel ON fuel_daily_averages(fuel_type);
+            CREATE INDEX IF NOT EXISTS idx_fuel_daily_date ON fuel_daily_averages(date);
+            CREATE INDEX IF NOT EXISTS idx_fuel_daily_fuel ON fuel_daily_averages(fuel_type);
 
-        CREATE TABLE IF NOT EXISTS fuel_monthly_averages (
-            year_month TEXT,
-            fuel_type TEXT,
-            region TEXT,
-            avg_price_cents REAL,
-            min_price_cents REAL,
-            max_price_cents REAL,
-            sample_count INTEGER,
-            PRIMARY KEY (year_month, fuel_type, region)
-        );
+            CREATE TABLE IF NOT EXISTS fuel_monthly_averages (
+                year_month TEXT,
+                fuel_type TEXT,
+                region TEXT,
+                avg_price_cents REAL,
+                min_price_cents REAL,
+                max_price_cents REAL,
+                sample_count INTEGER,
+                PRIMARY KEY (year_month, fuel_type, region)
+            );
 
-        CREATE INDEX IF NOT EXISTS idx_fuel_monthly_ym ON fuel_monthly_averages(year_month);
-        """)
+            CREATE INDEX IF NOT EXISTS idx_fuel_monthly_ym ON fuel_monthly_averages(year_month);
+
+            CREATE TABLE IF NOT EXISTS comparison_vehicles (
+                vehicle_key TEXT PRIMARY KEY,
+                name TEXT,
+                category TEXT,
+                gvg_rank_top20 INTEGER,
+                gvg_url TEXT,
+                fuel_type TEXT,
+                co2_g_per_km REAL,
+                combined_l_per_100km REAL,
+                urban_l_per_100km REAL,
+                highway_l_per_100km REAL,
+                service_maint_per_km REAL,
+                tyres_per_km REAL,
+                is_default INTEGER DEFAULT 0,
+                metadata_json TEXT
+            );
+            """)
+        _sync_comparison_vehicles_to_db(conn)
+    except Exception:
+        pass
 
 
 def normalize_fuel_code(raw_code: str) -> str:
@@ -702,7 +875,7 @@ def parse_date_val(val: Any) -> Optional[datetime.datetime]:
     try:
         float_val = float(val)
         if 35000 < float_val < 65000:
-            # Excel base: 1899-12-30
+ # Excel base: 1899-12-30
             base = datetime.datetime(1899, 12, 30)
             return base + datetime.timedelta(days=float_val)
     except (ValueError, TypeError):
@@ -1145,29 +1318,109 @@ def get_fuel_price(
     return defaults.get(fuel_code, 1.95)
 
 
+def compute_drive_urban_highway_split(
+    distance_km: float,
+    duration_mins: Optional[float] = None,
+    raw_samples: Optional[Dict[str, List[Any]]] = None,
+    urban_speed_threshold_kmh: float = 70.0
+) -> Tuple[float, float, str]:
+    """
+    Determines the proportion of urban driving vs extra-urban/highway driving for a trip.
+    
+    1. High-resolution telemetry integration: If raw_samples (with speed_kmh and odometer_km)
+       are provided, integrates the exact distance driven at speed <= urban_speed_threshold_kmh
+       vs speed > urban_speed_threshold_kmh.
+    2. ADR 81/02 average speed model: If only summary distance and duration are available,
+       interpolates the urban/highway ratio from the trip's average speed (dist / duration).
+    """
+    if distance_km is None or distance_km <= 0:
+        return 1.0, 0.0, "0.0 km"
+
+ # Method 1: Point-by-point telemetry integration
+    if raw_samples and isinstance(raw_samples, dict):
+        speeds = raw_samples.get("speed_kmh") or []
+        odos = raw_samples.get("odometer_km") or []
+        if len(speeds) >= 2 and len(odos) >= 2:
+            n = min(len(speeds), len(odos))
+            urban_d = 0.0
+            hwy_d = 0.0
+            for i in range(n - 1):
+                o0, o1 = odos[i], odos[i + 1]
+                s0, s1 = speeds[i], speeds[i + 1]
+                if o0 is not None and o1 is not None and o1 >= o0:
+                    delta_d = o1 - o0
+                    spd = s1 if s1 is not None else (s0 if s0 is not None else 0.0)
+                    if spd <= urban_speed_threshold_kmh:
+                        urban_d += delta_d
+                    else:
+                        hwy_d += delta_d
+
+            tot = urban_d + hwy_d
+            if tot > 0:
+                u_pct = urban_d / tot
+                h_pct = hwy_d / tot
+                avg_spd = (distance_km / (duration_mins / 60.0)) if (duration_mins and duration_mins > 0) else None
+                spd_str = f" · avg {avg_spd:.0f} km/h" if avg_spd else ""
+                desc = f"Telemetry: {u_pct*100:.0f}% Urban / {h_pct*100:.0f}% Hwy{spd_str}"
+                return u_pct, h_pct, desc
+
+ # Method 2: Average speed model (derived from Australian ADR 81/02 driving cycles)
+    if duration_mins and duration_mins > 0:
+        avg_speed = distance_km / (duration_mins / 60.0)
+    else:
+        avg_speed = 35.0
+
+    if avg_speed <= 35.0:
+        u_pct = 1.0
+        h_pct = 0.0
+    elif avg_speed >= 85.0:
+        u_pct = 0.05
+        h_pct = 0.95
+    else:
+        h_pct = ((avg_speed - 35.0) / (85.0 - 35.0)) * 0.95
+        u_pct = 1.0 - h_pct
+
+    desc = f"Avg Speed {avg_speed:.0f} km/h: {u_pct*100:.0f}% Urban / {h_pct*100:.0f}% Hwy"
+    return u_pct, h_pct, desc
+
+
 def calculate_single_vehicle_running_cost(
     vehicle_spec: Dict[str, Any],
     distance_km: float,
     start_date: Any,
+    urban_pct: Optional[float] = None,
+    highway_pct: Optional[float] = None,
+    duration_mins: Optional[float] = None,
+    raw_samples: Optional[Dict[str, List[Any]]] = None,
     tessie_dir: Optional[str] = None
 ) -> Dict[str, Any]:
     """
     Computes detailed running costs (fuel + optional maintenance/tyres) for a single comparison vehicle.
+    Dynamically weights consumption using urban_pct and highway_pct (derived from drive profile).
     """
     fuel_type = vehicle_spec.get("fuel_type", "U91")
     price_per_l = get_fuel_price(start_date, fuel_type=fuel_type, tessie_dir=tessie_dir)
 
     consumption = vehicle_spec.get("consumption", {})
     if isinstance(consumption, dict):
-        l_per_100km = consumption.get("combined_l_per_100km") or consumption.get("l_per_100km") or 8.5
-        urban_l_per_100km = consumption.get("urban_l_per_100km", l_per_100km)
-        highway_l_per_100km = consumption.get("highway_l_per_100km", l_per_100km)
+        combined_l = consumption.get("combined_l_per_100km") or consumption.get("l_per_100km") or 8.5
+        urban_l = consumption.get("urban_l_per_100km", combined_l)
+        highway_l = consumption.get("highway_l_per_100km", combined_l)
     else:
-        l_per_100km = vehicle_spec.get("l_per_100km", 8.5)
-        urban_l_per_100km = vehicle_spec.get("urban_l_per_100km", l_per_100km)
-        highway_l_per_100km = vehicle_spec.get("highway_l_per_100km", l_per_100km)
+        combined_l = vehicle_spec.get("l_per_100km", 8.5)
+        urban_l = vehicle_spec.get("urban_l_per_100km", combined_l)
+        highway_l = vehicle_spec.get("highway_l_per_100km", combined_l)
 
-    litres_used = (distance_km / 100.0) * l_per_100km
+    if urban_pct is None or highway_pct is None:
+        u_p, h_p, split_desc = compute_drive_urban_highway_split(
+            distance_km, duration_mins=duration_mins, raw_samples=raw_samples
+        )
+    else:
+        u_p, h_p = urban_pct, highway_pct
+        split_desc = f"{u_p*100:.0f}% Urban / {h_p*100:.0f}% Hwy"
+
+    effective_l_per_100km = (u_p * urban_l) + (h_p * highway_l)
+    litres_used = (distance_km / 100.0) * effective_l_per_100km
     fuel_cost = litres_used * price_per_l
 
     running_costs = vehicle_spec.get("running_costs", {})
@@ -1183,9 +1436,13 @@ def calculate_single_vehicle_running_cost(
         "label": name,
         "category": category,
         "fuel_type": fuel_type,
-        "l_per_100km": l_per_100km,
-        "urban_l_per_100km": urban_l_per_100km,
-        "highway_l_per_100km": highway_l_per_100km,
+        "l_per_100km": effective_l_per_100km,
+        "combined_l_per_100km": combined_l,
+        "urban_l_per_100km": urban_l,
+        "highway_l_per_100km": highway_l,
+        "urban_pct": u_p,
+        "highway_pct": h_p,
+        "split_desc": split_desc,
         "fuel_price_per_l": price_per_l,
         "litres_used": litres_used,
         "fuel_cost": fuel_cost,
@@ -1223,6 +1480,117 @@ def calculate_ice_comparison_costs(
     for key, spec in vehicles.items():
         results[key] = calculate_single_vehicle_running_cost(spec, distance_km, start_date, tessie_dir=tessie_dir)
     return results
+
+
+SAMPLE_COMPARISON_VEHICLES = [
+    "mazda_cx8_diesel",     # 🚙 Mazda CX-8 Diesel (Large SUV)
+    "ford_ranger_diesel",   # 🥇 #1 Ford Ranger 4x4 (Diesel Ute)
+    "rav4_hybrid",          # 🥈 #2 Toyota RAV4 Hybrid (Hybrid SUV)
+    "petrol_standard",      # 🚗 #7 Medium Petrol SUV (Mazda CX-5 G25)
+    "prado_diesel",         # 🚙 #6 Toyota Prado (Large 4WD Diesel)
+    "golf_gti_p98",         # 🏎️ #18 VW Golf GTI (Performance Euro P98)
+]
+
+
+def format_drive_fuel_comparison(
+    distance_km: float,
+    start_date: Any,
+    kwh_used: Optional[float] = None,
+    duration_mins: Optional[float] = None,
+    raw_samples: Optional[Dict[str, List[Any]]] = None,
+    vehicle_key: Optional[str] = None,
+    tessie_dir: Optional[str] = None,
+    box_width: int = 145,
+    indent: str = "  "
+) -> List[str]:
+    """
+    Renders an executive, ANSI/width-aware terminal block comparing a drive's
+    equivalent ICE fuel running costs at the exact historical fuel prices on that date,
+    dynamically weighted by urban vs highway driving.
+    
+    Assumes historical NSW FuelCheck daily averages as the baseline reference
+    for Australian driving.
+    """
+    if distance_km is None or distance_km <= 0:
+        return []
+
+    if isinstance(start_date, (datetime.date, datetime.datetime)):
+        d_str = start_date.strftime("%Y-%m-%d")
+    else:
+        d_str = str(start_date).strip()[:10]
+
+    u_p, h_p, split_desc = compute_drive_urban_highway_split(
+        distance_km, duration_mins=duration_mins, raw_samples=raw_samples
+    )
+
+    p_u91 = get_fuel_price(d_str, "U91", tessie_dir=tessie_dir)
+    p_p98 = get_fuel_price(d_str, "P98", tessie_dir=tessie_dir)
+    p_dl = get_fuel_price(d_str, "Diesel", tessie_dir=tessie_dir)
+
+ # Estimate EV electricity charging cost (default to ~0.28 $/kWh home/off-peak)
+    ev_rate = 0.28
+    ev_cost = (kwh_used * ev_rate) if (kwh_used is not None and kwh_used > 0) else None
+
+    lines = []
+    lines.append(f"{indent}\033[1m\033[93m⛽ COMPARATIVE ICE FUEL RUNNING COSTS\033[0m \033[90m(Historical AU Baseline on {d_str} · {split_desc})\033[0m:")
+    
+    price_hdr = f"{indent}   \033[90mRef Fuel Prices: U91: ${p_u91:.2f}/L  |  P98: ${p_p98:.2f}/L  |  Diesel: ${p_dl:.2f}/L\033[0m"
+    if ev_cost is not None and kwh_used is not None:
+        price_hdr += f"   \033[36m⚡ EV Energy: {kwh_used:.2f} kWh (~${ev_cost:.2f})\033[0m"
+    lines.append(price_hdr)
+
+    def_key = get_default_comparison_vehicle_key(tessie_dir)
+    if vehicle_key:
+        keys = [vehicle_key]
+    else:
+        sample_keys = [k for k in SAMPLE_COMPARISON_VEHICLES if k != def_key]
+        keys = [def_key] + sample_keys
+
+    for k in keys:
+        try:
+            _, spec = get_comparison_vehicle(k, tessie_dir=tessie_dir)
+        except Exception:
+            continue
+        c = calculate_single_vehicle_running_cost(
+            spec, distance_km, d_str, urban_pct=u_p, highway_pct=h_p, tessie_dir=tessie_dir
+        )
+        name = c["name"]
+        ft = c["fuel_type"]
+        eff_l = c["l_per_100km"]
+        litres = c["litres_used"]
+        fp = c["fuel_price_per_l"]
+        fc = c["fuel_cost"]
+
+        if ev_cost is not None and fc > 0:
+            diff = fc - ev_cost
+            pct = (diff / fc * 100.0)
+            if diff > 0:
+                sav_str = f"  \033[92mSaved ${diff:.2f}\033[0m \033[90m({pct:.0f}% cheaper)\033[0m"
+            else:
+                sav_str = f"  \033[91m+${abs(diff):.2f}\033[0m"
+        else:
+            sav_str = ""
+
+        if k == def_key and not vehicle_key:
+            badge = "⭐ "
+        elif "ranger" in k:
+            badge = "🥇 "
+        elif "rav4" in k:
+            badge = "🥈 "
+        elif "petrol" in k:
+            badge = "🚗 "
+        elif "prado" in k or "cx8" in k or "cx-8" in k:
+            badge = "🚙 "
+        elif "gti" in k or "golf" in k:
+            badge = "🏎️  "
+        else:
+            badge = "🚘 "
+
+        row = f"{indent}   • {badge}\033[1m{name:<44}\033[0m \033[90m({ft:<6} · {eff_l:4.1f} L/100km)\033[0m: {litres:5.2f} L @ ${fp:4.2f}/L = \033[1m${fc:5.2f}\033[0m{sav_str}"
+        lines.append(row)
+
+    lines.append(f"{indent}   \033[90m* Assumes NSW FuelCheck daily average as national reference pricing for Australian drives.\033[0m")
+    return lines
 
 
 def get_sync_status_summary(tessie_dir: Optional[str] = None) -> Dict[str, Any]:
