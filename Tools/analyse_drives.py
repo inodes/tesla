@@ -5784,6 +5784,7 @@ EXAMPLES
     g_sync.add_argument("--no-sync", action="store_true", help="Disable automatic API sync check when data is stale")
 
     g_camera = parser.add_argument_group("Home Camera Clip Management")
+    g_camera.add_argument("--flagged", "--staged", "--tombstones", action="store_true", help="View and manage staged deletion packages and active tombstones")
     g_camera.add_argument("--purge-home-recent", "--auto-purge-home-recent", action="store_true", help="Auto-purge all unflagged RecentClips packages recorded while parked at Home")
     g_camera.add_argument("--stage-home-recent", "--auto-flag-home-recent", action="store_true", help="Stage all unflagged Home RecentClips packages for deletion without purging")
     g_camera.add_argument("--dry-run", action="store_true", help="Preview footage to be staged or purged without modifying disks")
@@ -5799,6 +5800,10 @@ EXAMPLES
     if args.consolidate:
         path = args.consolidate if isinstance(args.consolidate, str) else None
         analyzer.consolidate_drives(new_csv_path=path, verbose=True)
+        return
+
+    if args.flagged:
+        display_flagged_deletions_menu(analyzer)
         return
 
     drives = analyzer.load_drives()
