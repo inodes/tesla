@@ -27,6 +27,7 @@ import webbrowser
 from datetime import datetime, timedelta
 from collections import defaultdict
 import textwrap
+from typing import List, Tuple, Dict, Any, Optional, Set
 
 # ---------------------------------------------------------------------------
 # Path & Environment Setup
@@ -103,6 +104,62 @@ def haversine_distance(lat1, lon1, lat2, lon2):
 # ---------------------------------------------------------------------------
 # Places JSON Storage Manager (Only touches places.json, leaves chargers alone)
 # ---------------------------------------------------------------------------
+def validate_place_name(name: str) -> Tuple[bool, str]:
+    """
+    Validates a proposed place name.
+    Rejects names that:
+    - Are empty or whitespace
+    - Start with './', '../', or '/' (file paths / CLI commands)
+    - Contain script filenames (e.g. places_manager.py, analyse_drives.py, .sh, .py)
+    - Contain CLI action verbs combined with script invocations
+    - Consist purely of punctuation, box-drawing characters, or separator lines (===, ---, ───)
+    Returns (is_valid, error_message).
+    """
+    if not name or not isinstance(name, str) or not name.strip():
+        return False, "Place name cannot be empty."
+
+    clean = name.strip()
+
+    if len(clean) < 2:
+        return False, "Place name is too short (minimum 2 characters)."
+
+    # Check for CLI commands or script paths accidentally entered
+    if clean.startswith(("./", "../", "/")):
+        return False, f"Invalid place name \"{clean}\": looks like a file path or shell command."
+
+    if re.search(r'\b(places_manager|analyse_drives|analyse_charging|sync_api|charger_find)\.(py|sh)\b', clean, re.I):
+        return False, f"Invalid place name \"{clean}\": contains script filename."
+
+    if re.search(r'^(python|python3|bash|zsh|sh|\./)\s+', clean, re.I):
+        return False, f"Invalid place name \"{clean}\": looks like a shell command invocation."
+
+    # Check for box-drawing / separator lines
+    if re.match(r'^[=\-─_#*~+│├┤┬┴┼┌┐└┘]+$', clean):
+        return False, f"Invalid place name \"{clean}\": contains only separator/box characters."
+
+    return True, ""
+
+
+def clean_place_keywords(keywords: List[str]) -> List[str]:
+    """Filters out coordinate strings, separator lines, empty entries, and CLI artifacts."""
+    cleaned = []
+    for kw in keywords:
+        if not kw or not isinstance(kw, str):
+            continue
+        k = kw.strip()
+        if not k:
+            continue
+        if is_coord_string(k):
+            continue
+        if re.match(r'^[=\-─_#*~+│├┤┬┴┼┌┐└┘]+$', k):
+            continue
+        if k.startswith(("./", "../")) or re.search(r'\.(py|sh)\b', k, re.I):
+            continue
+        if k not in cleaned:
+            cleaned.append(k)
+    return cleaned
+
+
 def load_places(path=PLACES_JSON_PATH):
     """Loads and returns places dictionary from places.json."""
     if not os.path.exists(path):
@@ -114,9 +171,23 @@ def load_places(path=PLACES_JSON_PATH):
         print(f"❌ Error loading {path}: {e}")
         return {}
 
+
 def save_places(places, path=PLACES_JSON_PATH):
-    """Sorts keys and atomically saves places dictionary to places.json."""
-    sorted_places = dict(sorted(places.items(), key=lambda x: x[0].lower()))
+    """Sorts keys, cleans keywords, and atomically saves places dictionary to places.json."""
+    cleaned_places = {}
+    for k, v in places.items():
+        is_val, _ = validate_place_name(k)
+        if not is_val:
+            continue
+        if isinstance(v, dict):
+            entry = dict(v)
+            if "keywords" in entry and isinstance(entry["keywords"], list):
+                entry["keywords"] = clean_place_keywords(entry["keywords"])
+            cleaned_places[k] = entry
+        else:
+            cleaned_places[k] = v
+
+    sorted_places = dict(sorted(cleaned_places.items(), key=lambda x: x[0].lower()))
     
     dir_name = os.path.dirname(os.path.abspath(path))
     os.makedirs(dir_name, exist_ok=True)
@@ -2039,9 +2110,11 @@ def suggest_keywords(address_str, poi_name=""):
                         keywords.append(abbr)
 
     if poi_name and len(poi_name) > 3 and not is_coord_string(poi_name) and poi_name not in keywords:
-        keywords.append(poi_name)
+        is_val, _ = validate_place_name(poi_name)
+        if is_val:
+            keywords.append(poi_name)
 
-    return [k for k in keywords if not is_coord_string(k)]
+    return clean_place_keywords(keywords)
 
 def parse_coords_or_address(user_input):
     """
@@ -2523,6 +2596,11 @@ def interactive_lookup_and_add(query_or_addr=None, lat=None, lon=None, default_r
 
     if not selected_name:
         print("❌ Place name cannot be empty.")
+        return None
+
+    is_valid, err = validate_place_name(selected_name)
+    if not is_valid:
+        print(f"❌ {err}")
         return None
 
     radius_m = prompt_radius_input(recommended_radius, label="Geofence Radius in meters")
@@ -3364,14 +3442,18 @@ def inspect_place(place_name_or_query, places=None):
                 except (KeyboardInterrupt, EOFError):
                     break
                 if new_n and new_n != target_name:
-                    places = load_places()
-                    if new_n in places:
-                        print(f"❌ Place \"{new_n}\" already exists in places.json.")
+                    is_valid, err = validate_place_name(new_n)
+                    if not is_valid:
+                        print(f"❌ {err}")
                     else:
-                        places[new_n] = places.pop(target_name)
-                        save_places(places)
-                        print(f"✔ Renamed \"{target_name}\" ➔ \"{new_n}\".")
-                        return "renamed"
+                        places = load_places()
+                        if new_n in places:
+                            print(f"❌ Place \"{new_n}\" already exists in places.json.")
+                        else:
+                            places[new_n] = places.pop(target_name)
+                            save_places(places)
+                            print(f"✔ Renamed \"{target_name}\" ➔ \"{new_n}\".")
+                            return "renamed"
             elif act in ("g", "radius"):
                 new_rad = prompt_radius_input(rad, label="Enter new radius in meters")
                 if new_rad != rad:
@@ -3731,6 +3813,11 @@ def review_single_cluster(cl, places, total_clusters=1, cluster_num=1, allow_ign
         print("⏩ Skipped (empty name).")
         return False
 
+    is_valid, err = validate_place_name(selected_name)
+    if not is_valid:
+        print(f"❌ {err}")
+        return False
+
     radius_m = prompt_radius_input(recommended_radius, label="Radius in meters")
 
     keywords = suggest_keywords(clean_addr, selected_name)
@@ -4050,6 +4137,11 @@ def cmd_add(args):
     places = load_places()
     name = args.name.strip()
     
+    is_valid, err = validate_place_name(name)
+    if not is_valid:
+        print(f"❌ {err}")
+        return
+
     lat = args.lat
     lon = args.lon
     
@@ -4078,7 +4170,7 @@ def cmd_add(args):
         "lat": round(lat, 5),
         "lon": round(lon, 5),
         "radius_m": args.radius,
-        "keywords": keywords,
+        "keywords": clean_place_keywords(keywords),
         "notes": notes
     }
 
@@ -4101,6 +4193,10 @@ def cmd_rename(args):
     new_name = args.new_name.strip()
     if old_name not in places:
         print(f"❌ Place \"{old_name}\" not found in places.json.")
+        return
+    is_valid, err = validate_place_name(new_name)
+    if not is_valid:
+        print(f"❌ {err}")
         return
     if new_name in places and new_name != old_name:
         print(f"❌ Place \"{new_name}\" already exists in places.json.")
@@ -4285,7 +4381,10 @@ def interactive_edit_place(name, places):
             try:
                 new_n = input(f"Enter new name [default: \"{curr_name}\"]: ").strip()
                 if new_n and new_n != curr_name:
-                    if new_n in places:
+                    is_valid, err = validate_place_name(new_n)
+                    if not is_valid:
+                        print(f"❌ {err}")
+                    elif new_n in places:
                         print(f"❌ Place \"{new_n}\" already exists.")
                     else:
                         places[new_n] = places.pop(curr_name)
