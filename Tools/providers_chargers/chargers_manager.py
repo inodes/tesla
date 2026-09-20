@@ -835,6 +835,11 @@ class ChargerDiscoveryManager:
                     fresh = p.reverify_station(jolt_id)
                     self.export_consolidated_registry()
                     return True, (_diff_station_fields(station, fresh) if fresh else None), fresh
+                elif isinstance(p, AmpChargeProvider) and ("ampcharge" in src or "ampol" in src or "ampcharge" in net or "ampol" in net):
+                    amp_id = station.source_id or station.key.replace("Ampol_", "")
+                    fresh = p.reverify_station(amp_id)
+                    self.export_consolidated_registry()
+                    return True, (_diff_station_fields(station, fresh) if fresh else None), fresh
                 elif isinstance(p, NrmaProvider) and "nrma" in src:
                     nrma_id = station.source_id or station.key.replace("NRMA_", "")
                     fresh = p.reverify_station(nrma_id)
