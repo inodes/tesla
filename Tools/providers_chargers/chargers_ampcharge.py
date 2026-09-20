@@ -217,9 +217,10 @@ class AmpChargeProvider(BaseChargerProvider):
             return None
 
         brand = (item.get("Brand") or "").strip()
-        network = "AmpCharge" if brand.lower() == "ampcharge" else "Ampol Foodary"
+        # All Ampol sites with EVFastCharging=true belong to the AmpCharge network
+        network = "AmpCharge"
 
-        name = item.get("DisplayName") or ("AmpCharge Station" if network == "AmpCharge" else "Ampol Foodary Station")
+        name = item.get("DisplayName") or f"AmpCharge {item.get('Suburb', 'Station')}"
 
         evd = item.get("EVChargingData") or []
         bays = set()
@@ -247,7 +248,7 @@ class AmpChargeProvider(BaseChargerProvider):
 
         stalls_total = len(bays) if bays else max(1, len(evd))
         max_kw = max(powers) if powers else 0.0
-        default_model = "Ampol AmpCharge DC Fast Charger" if network == "AmpCharge" else "Ampol Foodary DC Fast Charger"
+        default_model = "Ampol AmpCharge DC Fast Charger"
         hardware_model = ", ".join(sorted(hw_models)) if hw_models else default_model
 
         state = (item.get("State") or "").upper()
