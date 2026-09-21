@@ -135,8 +135,14 @@ tesla/
 
 # Find high-power DC Fast Chargers (Tesla + 3rd-party networks >= 25kW)
 ./Tools/charger_find.py --near Parramatta --dc --sort power --radius 30
+
+# Discover chargers along a highway route corridor (with live Tessie battery SoC, arrival SoC projection, and 1-click ABRP road trip links):
+./Tools/charger_find.py --from "Sydney" --to "Brisbane" --sc
+./Tools/charger_find.py --from "Sydney" --to "Brisbane" --sc --sort score --limit 10
+./Tools/charger_find.py --from Home --to "Canberra" --via "Goulburn" --dc --min-kw 150 --soc 90
+./Tools/charger_find.py --from "Sydney" --to "Melbourne" --network ampcharge --sort price --corridor 10
 ```
-👉 *See [Tessie/README.md](Tessie/README.md) for full documentation on drives, charging reconciliation, invoices, tariffs, places, and charger discovery.*
+👉 *See [Tessie/README.md](Tessie/README.md) for full documentation on drives, charging reconciliation, invoices, tariffs, places, ABRP EV route planning, and charger discovery.*
 
 ### 5. Home Charger (Evnex) Sync
 

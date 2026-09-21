@@ -8,6 +8,7 @@ and enforces the First-Party Truth Hierarchy (Tier 1 Operator > Tier 2 Aggregato
 
 import os
 import re
+import sys
 import json
 from datetime import datetime, timezone
 from typing import Dict, List, Optional, Any, Tuple
@@ -526,12 +527,13 @@ class ChargerDiscoveryManager:
 
  # Check facilities registry for matching POIs (e.g. searching "Woolworths", "Coles", "Aldi", "Kmart")
         try:
-            from lib.station_facilities import get_facilities_registry
+            from lib.station_facilities import get_facilities_registry, resolve_station_physical_coords
             _f_reg = get_facilities_registry()
             if _f_reg and query:
                 q_low = query.lower().strip()
                 for st in self.get_all_stations(filters=filters):
-                    fac = _f_reg.get_station_facilities(station_key=st.key, station_name=st.name, lat=st.lat, lon=st.lon)
+                    phys_lat, phys_lon, _ = resolve_station_physical_coords(st)
+                    fac = _f_reg.get_station_facilities(station_key=st.key, station_name=st.name, lat=phys_lat, lon=phys_lon)
                     if fac:
                         pois = fac.get("pois", [])
                         if any(q_low in (p.get("name", "") + " " + p.get("category", "")).lower() for p in pois):
@@ -616,6 +618,39 @@ class ChargerDiscoveryManager:
         sorted_res = self.sort_records(filtered, sort_by=sort_by, eval_time=eval_time)
         return sorted_res
 
+    def search_route_corridor(
+        self,
+        waypoints: List[Tuple[float, float]],
+        corridor_radius_km: float = 5.0,
+        filters: Optional[Dict[str, Any]] = None,
+        sort_by: str = "progress",
+        eval_time: Optional[str] = None
+    ) -> Tuple[List[UnifiedStationRecord], Dict[str, Any]]:
+        """
+        Discovers chargers along a driving corridor across waypoints within corridor_radius_km.
+        Projects each station onto the route to compute highway progress and detour offsets.
+        Returns (sorted_stations, route_info).
+        """
+        try:
+            from lib.route_planner import fetch_driving_route, calculate_corridor_stations
+        except ImportError:
+            from route_planner import fetch_driving_route, calculate_corridor_stations
+
+        # 1. Fetch driving route geometry
+        route_info = fetch_driving_route(waypoints, fallback=True)
+        polyline = route_info.get("polyline", [])
+
+        # 2. Get all candidate stations matching filters
+        candidates = self.get_all_stations(filters=filters)
+
+        # 3. Project stations onto highway corridor
+        projected = calculate_corridor_stations(candidates, polyline, corridor_radius_km=corridor_radius_km)
+        corridor_records = [st for st, prog, detour in projected]
+
+        # 4. Sort records
+        sorted_records = self.sort_records(corridor_records, sort_by=sort_by, eval_time=eval_time)
+        return sorted_records, route_info
+
     def sort_records(
         self,
         records: List[UnifiedStationRecord],
@@ -623,12 +658,18 @@ class ChargerDiscoveryManager:
         eval_time: Optional[str] = None
     ) -> List[UnifiedStationRecord]:
         """
-        Sorts unified records by distance, price, power, stalls, or name.
+        Sorts unified records by distance, route progress, detour, price, power, stalls, or name.
         """
-        if sort_by == "price":
+        if sort_by in ("progress", "route"):
+            return sorted(records, key=lambda r: (getattr(r, "route_progress_km", r.distance_km if r.distance_km is not None else 999999.0), getattr(r, "detour_km", 999999.0), (r.name or "").lower()))
+
+        elif sort_by == "detour":
+            return sorted(records, key=lambda r: (getattr(r, "detour_km", 999999.0), getattr(r, "route_progress_km", r.distance_km if r.distance_km is not None else 999999.0), (r.name or "").lower()))
+
+        elif sort_by == "price":
             def price_key(r: UnifiedStationRecord):
                 p = r.evaluate_rate(eval_time)
-                dist = r.distance_km if r.distance_km is not None else 999999.0
+                dist = getattr(r, "route_progress_km", r.distance_km if r.distance_km is not None else 999999.0)
                 name = (r.name or "").lower()
                 if p is None:
                     return (3, 999.0, dist, name)
@@ -639,10 +680,29 @@ class ChargerDiscoveryManager:
             return sorted(records, key=price_key)
 
         elif sort_by == "power":
-            return sorted(records, key=lambda r: (- (r.max_power_kw or 0.0), r.distance_km if r.distance_km is not None else 999999.0, (r.name or "").lower()))
+            return sorted(records, key=lambda r: (- (r.max_power_kw or 0.0), getattr(r, "route_progress_km", r.distance_km if r.distance_km is not None else 999999.0), (r.name or "").lower()))
 
         elif sort_by == "stalls":
-            return sorted(records, key=lambda r: (- (r.stalls_total or 0), r.distance_km if r.distance_km is not None else 999999.0, (r.name or "").lower()))
+            return sorted(records, key=lambda r: (- (r.stalls_total or 0), getattr(r, "route_progress_km", r.distance_km if r.distance_km is not None else 999999.0), (r.name or "").lower()))
+
+        elif sort_by in ["score", "stop_score", "quality"]:
+            try:
+                from lib.route_planner import compute_route_stop_score
+            except ImportError:
+                from route_planner import compute_route_stop_score
+
+            def score_key(r: UnifiedStationRecord):
+                sc_data = getattr(r, "stop_score_data", None)
+                if not sc_data:
+                    sc_data = compute_route_stop_score(r, getattr(r, "detour_km", None))
+                    r.stop_score_data = sc_data
+                    r.stop_score = sc_data["score"]
+                sc = sc_data["score"]
+                prog = getattr(r, "route_progress_km", r.distance_km if r.distance_km is not None else 999999.0)
+                name = (r.name or "").lower()
+                return (-sc, prog, name)
+
+            return sorted(records, key=score_key)
 
         elif sort_by in ["facilities", "facility", "rating"]:
             try:
@@ -656,10 +716,15 @@ class ChargerDiscoveryManager:
                     _f_reg = None
 
             def fac_key(r: UnifiedStationRecord):
-                dist = r.distance_km if r.distance_km is not None else 999999.0
+                dist = getattr(r, "route_progress_km", r.distance_km if r.distance_km is not None else 999999.0)
                 name = (r.name or "").lower()
                 if _f_reg:
-                    f = _f_reg.get_station_facilities(station_key=r.key, station_name=r.name, lat=r.lat, lon=r.lon)
+                    try:
+                        from lib.station_facilities import resolve_station_physical_coords
+                        phys_lat, phys_lon, _ = resolve_station_physical_coords(r)
+                    except Exception:
+                        phys_lat, phys_lon = r.lat, r.lon
+                    f = _f_reg.get_station_facilities(station_key=r.key, station_name=r.name, lat=phys_lat, lon=phys_lon)
                     if f:
                         score = f.get("score", 0.0)
                         return (-score, dist, name)
@@ -773,6 +838,15 @@ class ChargerDiscoveryManager:
 
         try:
             if "tesla" in src or "tesla" in net:
+                # charger_find_tesla.py was archived to Tools/archive/ - make this
+                # import self-contained (don't rely on the caller having already
+                # put Tools/archive on sys.path, e.g. analyse_charging.py,
+                # charger_plugshare_auditor.py and places_osm_editor.py all reach
+                # this method without doing so). REQ-095 tracks fully absorbing
+                # this logic into chargers_tesla.py so this import goes away.
+                _archive_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "archive")
+                if _archive_dir not in sys.path:
+                    sys.path.insert(0, _archive_dir)
                 from charger_find_tesla import TeslaChargerExplorer
                 explorer = TeslaChargerExplorer()
                 c_type = "supercharger" if station.speed_tier == "supercharger" else "destination_charger"

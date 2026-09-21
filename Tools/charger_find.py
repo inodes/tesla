@@ -30,10 +30,13 @@ from datetime import datetime
 _tools_dir = os.path.dirname(os.path.abspath(__file__))
 _repo_root = os.path.dirname(_tools_dir)
 _lib_dir = os.path.join(_tools_dir, "lib")
+_archive_dir = os.path.join(_tools_dir, "archive")
 if _tools_dir not in sys.path:
     sys.path.insert(0, _tools_dir)
 if _lib_dir not in sys.path:
     sys.path.insert(0, _lib_dir)
+if _archive_dir not in sys.path:
+    sys.path.insert(0, _archive_dir)
 
 from lib.table_formatter import (
     char_width,
@@ -367,9 +370,10 @@ def render_stations_table(
     ref_lon: Optional[float] = None,
     active_radius: Optional[float] = None,
     sort_mode: Optional[str] = None,
-    network_filter: Optional[str] = None
+    network_filter: Optional[str] = None,
+    route_info: Optional[Dict[str, Any]] = None
 ) -> None:
-    """Renders rich executive 10/11-column Unicode table of stations matching Tesla Explorer styling."""
+    """Renders rich executive 10/11/12-column Unicode table of stations matching Tesla Explorer styling."""
     if not stations:
         total_inner = 88
         print(f"\n┌{'─'*total_inner}┐")
@@ -379,7 +383,8 @@ def render_stations_table(
         print(format_box_line("└", "─", "┘", [total_inner]))
         return
 
-    has_dist = any(s.distance_km is not None for s in stations)
+    has_route = route_info is not None and any(getattr(s, "route_progress_km", None) is not None for s in stations)
+    has_dist = (not has_route) and any(s.distance_km is not None for s in stations)
     
     max_name_len = max((display_len(s.name) for s in stations), default=28)
     w_name = max(28, min(40, max_name_len + 2))
@@ -387,10 +392,13 @@ def render_stations_table(
     max_suburb_len = max((display_len(s.suburb or s.state or "") for s in stations), default=18)
     w_suburb = max(18, min(24, max_suburb_len + 2))
 
-    widths = [8, 9, 7, w_name, 6, 9, 13, 12, 22]
-    headers = ["   #    ", "  Type   ", " State ", "          Station Name          ", " Tier ", " Stalls  ", "   Access    ", " Rate (Now) ", "   Period / Window    "]
+    widths = [8, 9, 7, w_name, 6, 6, 13, 12, 22]
+    headers = ["   #    ", "  Type   ", " State ", "          Station Name          ", " Tier ", " Bays ", "   Access    ", " Rate (Now) ", "   Period / Window    "]
     
-    if has_dist:
+    if has_route:
+        widths.extend([11, 9, 10, 8, w_suburb])
+        headers.extend([" Progress  ", " Detour  ", " Arr SoC  ", " Score  ", " Location / Suburb "])
+    elif has_dist:
         widths.extend([9, w_suburb])
         headers.extend(["  Dist   ", " Location / Suburb "])
     else:
@@ -403,7 +411,32 @@ def render_stations_table(
     print(f"\n┌{'─' * total_inner_w}┐")
     print(f"│{pad_display(f' ⚡ {title.upper()} ({len(stations)} found)', total_inner_w, 'left')}│")
     
-    if ref_label:
+    if route_info:
+        orig = route_info.get("origin_label", "Origin")
+        dest = route_info.get("destination_label", "Destination")
+        vias = route_info.get("via_labels", [])
+        via_str = f" via {', '.join(vias)}" if vias else ""
+        tot_dist = route_info.get("distance_km", 0.0)
+        tot_dur = route_info.get("duration_mins", 0.0)
+        dur_str = f"{int(tot_dur // 60)}h {int(tot_dur % 60):02d}m" if tot_dur >= 60 else f"{int(tot_dur)}m"
+        r_sum = route_info.get("summary", "")
+        summary_str = f" [{r_sum}]" if r_sum and r_sum != "Driving Route" else ""
+        
+        print(f"│{pad_display(f' 🚗 {C_CYAN}Driving Corridor:{C_RESET} {orig} ➔ {dest}{via_str} ({tot_dist:.1f} km, ~{dur_str}){summary_str}', total_inner_w, 'left')}│")
+        
+        dep_soc = route_info.get("departure_soc")
+        dep_src = route_info.get("departure_soc_src", "Config")
+        tgt_soc = route_info.get("target_arrival_soc", 10)
+        max_soc = route_info.get("max_charge_soc", 85)
+        if dep_soc is not None:
+            live_detail = route_info.get("live_detail") or {}
+            range_info = f" (~{live_detail['battery_range_km']:.0f} km range)" if live_detail.get("battery_range_km") else ""
+            print(f"│{pad_display(f' 🔋 {C_GREEN}Departure Battery:{C_RESET} {dep_soc}% [{dep_src}{range_info}]  |  {C_YELLOW}Target Min:{C_RESET} {tgt_soc:.0f}%  |  {C_CYAN}Max Charge:{C_RESET} {max_soc:.0f}%', total_inner_w, 'left')}│")
+
+        c_rad = route_info.get("corridor_radius_km", 5.0)
+        sort_str = f" [Sorted by: {sort_mode}]" if sort_mode else ""
+        print(f"│{pad_display(f' 🛣️  {C_CYAN}Corridor Radius:{C_RESET} {c_rad:.1f} km max lateral detour{sort_str}', total_inner_w, 'left')}│")
+    elif ref_label:
         radius_note = f" [within {active_radius:.0f} km]" if (active_radius and active_radius > 0) else ""
         sort_str = f" [Sorted by: {sort_mode}]" if sort_mode else ""
         coords_str = f" ({ref_lat:.4f}, {ref_lon:.4f})" if (ref_lat is not None and ref_lon is not None) else ""
@@ -437,7 +470,9 @@ def render_stations_table(
     print(mid_b)
 
     aligns = ["left", "left", "center", "left", "center", "right", "left", "right", "left"]
-    if has_dist:
+    if has_route:
+        aligns.extend(["right", "right", "center", "center", "left"])
+    elif has_dist:
         aligns.extend(["right", "left"])
     else:
         aligns.append("left")
@@ -461,7 +496,7 @@ def render_stations_table(
         state_str = st.state or "-"
         name_disp = truncate_display(st.name, w_name - 2)
         tier_str = st.tier_badge()
-        stalls_str = f"{st.stalls_total} bays" if st.stalls_total > 0 else "-"
+        stalls_str = str(st.stalls_total) if st.stalls_total > 0 else "-"
         
         acc_lbl = st.access_label()
         if acc_lbl == "Tesla Only":
@@ -498,7 +533,57 @@ def render_stations_table(
             pad_display(" " + period_disp, widths[8], "left"),
         ]
 
-        if has_dist:
+        if has_route:
+            prog_val = getattr(st, "route_progress_km", st.distance_km)
+            prog_text = f"{prog_val:.1f} km " if prog_val is not None else "-- "
+            detour_val = getattr(st, "detour_km", None)
+            if detour_val is not None:
+                if detour_val <= 1.0:
+                    d_col = C_GREEN
+                elif detour_val <= 2.5:
+                    d_col = C_YELLOW
+                elif detour_val <= 4.0:
+                    d_col = C_ORANGE
+                else:
+                    d_col = C_RED
+                detour_text = f"{d_col}{detour_val:.1f} km{C_RESET} "
+            else:
+                detour_text = "-- "
+            
+            # Arrival SoC Calculation
+            dep_soc = route_info.get("departure_soc", 90) if route_info else 90
+            c_wh_km = route_info.get("consumption_wh_km", 165.0) if route_info else 165.0
+            u_kwh = route_info.get("usable_kwh", 60.0) if route_info else 60.0
+            tgt_min = route_info.get("target_arrival_soc", 10.0) if route_info else 10.0
+
+            if prog_val is not None:
+                try:
+                    from lib.abrp_planner import estimate_arrival_soc, format_soc_badge
+                    arr_soc, _ = estimate_arrival_soc(dep_soc, prog_val, detour_val or 0.0, c_wh_km, u_kwh)
+                    soc_badge, _ = format_soc_badge(arr_soc, tgt_min)
+                except Exception:
+                    soc_badge = "—"
+            else:
+                soc_badge = "—"
+
+            sc_data = getattr(st, "stop_score_data", None)
+            if not sc_data:
+                try:
+                    from lib.route_planner import compute_route_stop_score
+                    c_rad = route_info.get("corridor_radius_km", 5.0) if route_info else 5.0
+                    sc_data = compute_route_stop_score(st, detour_val, c_rad)
+                    st.stop_score_data = sc_data
+                    st.stop_score = sc_data["score"]
+                except Exception:
+                    sc_data = {"badge": "—"}
+            score_disp = sc_data.get("badge", "—")
+
+            row_cells.append(pad_display(prog_text, widths[9], "right"))
+            row_cells.append(pad_display(detour_text, widths[10], "right"))
+            row_cells.append(pad_display(soc_badge, widths[11], "center"))
+            row_cells.append(pad_display(score_disp, widths[12], "center"))
+            row_cells.append(pad_display(f" {C_DIM}{suburb_disp}{C_RESET}", widths[13], "left"))
+        elif has_dist:
             dist_val = st.distance_km
             dist_text = f"{dist_val:.1f} km " if dist_val is not None else "-- "
             row_cells.append(pad_display(dist_text, widths[9], "right"))
@@ -510,6 +595,10 @@ def render_stations_table(
 
     bot_b = "└" + "┴".join("─" * w for w in widths) + "┘"
     print(bot_b)
+
+    if route_info and route_info.get("abrp_link"):
+        abrp_url = route_info["abrp_link"]
+        print(f"\n 🌐 {C_BOLD}ABRP 1-Click Road Trip:{C_RESET} {C_CYAN}{abrp_url}{C_RESET}")
 
 
 def browse_chargefox_catalog_grid(manager: ChargerDiscoveryManager, country: str = "Australia", auto_save: bool = False) -> None:
@@ -665,9 +754,18 @@ def display_station_inspection_card(station: UnifiedStationRecord, eval_time: Op
     box_w = 86
     inner_w = box_w - 2
     
-    if station.source == "tesla" and station.speed_tier == "supercharger":
+    is_tesla_sc = (
+        station.speed_tier == "supercharger"
+        and ("tesla" in (station.source or "").lower() or (station.network or "").lower() == "tesla" or "tesla" in (station.views or {}))
+    )
+    is_tesla_dest = (
+        ("tesla" in (station.source or "").lower() or "tesla" in (station.network or "").lower() or "tesla" in (station.views or {}))
+        and not is_tesla_sc
+    )
+
+    if is_tesla_sc:
         title_content = f"TESLA SUPERCHARGER: {station.name}"
-    elif station.source == "tesla":
+    elif is_tesla_dest:
         title_content = f"TESLA DESTINATION CHARGER: {station.name}"
     else:
         title_content = f"⚡ STATION DETAILS: {station.name}"
@@ -767,9 +865,133 @@ def display_station_inspection_card(station: UnifiedStationRecord, eval_time: Op
     clean_addr = format_station_address(station)
     _field("📮", "Address", clean_addr)
     if station.lat is not None and station.lon is not None:
-        _field("🌐", "GPS Coordinates", f"({station.lat:.6f}, {station.lon:.6f})")
+        meta = station.metadata or {}
+        osm_lat = meta.get("osm_lat")
+        osm_lon = meta.get("osm_lon")
+
+        # Look up supercharge.info data strictly for Tesla Superchargers
+        sc_site = None
+        if is_tesla_sc:
+            try:
+                from lib.supercharge_info import find_supercharge_site
+                loc_id = meta.get("location_id") or meta.get("short_name") or station.source_id
+                sc_site = find_supercharge_site(station.name, station.lat, station.lon, location_id=loc_id)
+            except Exception:
+                sc_site = None
+
+        # Auto-populate and auto-cache OSM node and physical GPS if available from supercharge.info
+        if is_tesla_sc and sc_site:
+            sc_osm_id = sc_site.get("osmId")
+            sc_gps = sc_site.get("gps", {})
+            sc_lat_val = sc_gps.get("latitude")
+            sc_lon_val = sc_gps.get("longitude")
+            if sc_osm_id:
+                if not meta.get("osm_node_id"):
+                    meta["osm_node_id"] = sc_osm_id
+                if osm_lat is None and sc_lat_val is not None and sc_lon_val is not None:
+                    osm_lat = sc_lat_val
+                    osm_lon = sc_lon_val
+                    meta["osm_lat"] = osm_lat
+                    meta["osm_lon"] = osm_lon
+                    try:
+                        from lib.tessie_api_common import save_audited_osm_to_tesla_registry
+                        save_audited_osm_to_tesla_registry(station.name, float(osm_lat), float(osm_lon), int(sc_osm_id))
+                    except Exception:
+                        pass
+
+        try:
+            from lib.geo_common import haversine_distance_km
+        except Exception:
+            haversine_distance_km = None
+
+        st_src_lower = (station.source or "").lower()
+        if is_tesla_sc or is_tesla_dest or "tesla" in st_src_lower:
+            src_lbl = "Tesla GPS"
+        elif "chargefox" in st_src_lower:
+            src_lbl = "Chargefox GPS"
+        elif "nrma" in st_src_lower:
+            src_lbl = "NRMA GPS"
+        elif "evie" in st_src_lower:
+            src_lbl = "Evie GPS"
+        elif "evx" in st_src_lower:
+            src_lbl = "EVX GPS"
+        elif "ampcharge" in st_src_lower or "ampol" in st_src_lower:
+            src_lbl = "Ampol GPS"
+        elif "bppulse" in st_src_lower:
+            src_lbl = "bp pulse GPS"
+        elif "jolt" in st_src_lower:
+            src_lbl = "Jolt GPS"
+        elif "exploren" in st_src_lower:
+            src_lbl = "Exploren GPS"
+        elif "plugshare" in st_src_lower:
+            src_lbl = "PlugShare GPS"
+        else:
+            src_lbl = "Entry GPS"
+
+        if osm_lat is not None or sc_site is not None:
+            _field("🌐", src_lbl, f"({station.lat:.6f}, {station.lon:.6f})")
+        else:
+            _field("🌐", "GPS Coordinates", f"({station.lat:.6f}, {station.lon:.6f})")
+
+        if sc_site and sc_site.get("gps"):
+            sc_lat = sc_site["gps"].get("latitude")
+            sc_lon = sc_site["gps"].get("longitude")
+            if sc_lat is not None and sc_lon is not None:
+                if haversine_distance_km:
+                    sc_offset = haversine_distance_km(station.lat, station.lon, float(sc_lat), float(sc_lon)) * 1000.0
+                    sc_err = f" {C_YELLOW}~{sc_offset:.0f}m offset !{C_RESET}" if sc_offset > 25.0 else f" {C_GREEN}~{sc_offset:.0f}m (aligned){C_RESET}"
+                else:
+                    sc_err = ""
+                _field("🌐", "SC.info GPS", f"({float(sc_lat):.6f}, {float(sc_lon):.6f}){sc_err}")
+
+        if osm_lat is not None and osm_lon is not None:
+            if haversine_distance_km:
+                offset_m = haversine_distance_km(station.lat, station.lon, float(osm_lat), float(osm_lon)) * 1000.0
+                err_str = f" {C_YELLOW}~{offset_m:.0f}m offset !{C_RESET}" if offset_m > 25.0 else f" {C_GREEN}~{offset_m:.0f}m (aligned){C_RESET}"
+            else:
+                err_str = ""
+            _field("🌐", "OSM GPS", f"({float(osm_lat):.6f}, {float(osm_lon):.6f}){err_str}")
     
-    if station.distance_km is not None:
+    if getattr(station, "route_progress_km", None) is not None and getattr(station, "detour_km", None) is not None:
+        _field("🚗", "Route Progress", f"{station.route_progress_km:.1f} km from departure")
+        d_val = station.detour_km
+        if d_val <= 1.0:
+            d_col = C_GREEN
+        elif d_val <= 2.5:
+            d_col = C_YELLOW
+        elif d_val <= 4.0:
+            d_col = C_ORANGE
+        else:
+            d_col = C_RED
+        _field("🛣️", "Highway Detour", f"{d_col}{d_val:.1f} km off route{C_RESET}")
+
+        sc_data = getattr(station, "stop_score_data", None)
+        if not sc_data:
+            try:
+                from lib.route_planner import compute_route_stop_score
+                sc_data = compute_route_stop_score(station, station.detour_km)
+            except Exception:
+                pass
+        if sc_data:
+            _field("⭐", "Stop Quality Score", f"{sc_data['badge']}/10.0 (Facilities: {sc_data['facilities_score']:.1f}, Detour: {sc_data['detour_score']:.1f}, Speed & Bays: {sc_data['speed_score']:.1f})")
+
+        # Arrival SoC Projection
+        try:
+            from lib.abrp_planner import load_abrp_config, estimate_arrival_soc, format_soc_badge, resolve_departure_soc
+            ab_cfg = load_abrp_config()
+            dep_soc, dep_src, _ = resolve_departure_soc(None)
+            arr_soc, energy_kwh = estimate_arrival_soc(
+                dep_soc,
+                station.route_progress_km,
+                station.detour_km,
+                ab_cfg.get("consumption_wh_km", 165.0),
+                ab_cfg.get("usable_kwh", 60.0)
+            )
+            soc_badge, _ = format_soc_badge(arr_soc, ab_cfg.get("target_arrival_soc", 10.0))
+            _field("🔋", "Projected Arrival SoC", f"{soc_badge} (from {dep_soc}% departure | ~{energy_kwh:.1f} kWh consumed)")
+        except Exception:
+            pass
+    elif station.distance_km is not None:
         _field("📏", "Distance", f"{station.distance_km:.2f} km")
 
     _field("🌐", "Timezone", station.timezone or "Australia/Sydney")
@@ -786,7 +1008,7 @@ def display_station_inspection_card(station: UnifiedStationRecord, eval_time: Op
         u = source_urls[0]
         _field(u["icon"], f"{u['label']} URL", format_display_url(u["url"], max_len=75))
     elif station.url:
-        url_label = "Find Us URL" if station.source == "tesla" else "Web Link / URL"
+        url_label = "Find Us URL" if (is_tesla_sc or is_tesla_dest) else "Web Link / URL"
         _field("🔗", url_label, format_display_url(station.url, max_len=75))
 
  # 2. Hardware & Access
@@ -821,7 +1043,7 @@ def display_station_inspection_card(station: UnifiedStationRecord, eval_time: Op
         open_all = meta.get("open_to_non_tesla")
         acc_str = f"{C_GREEN}YES (CCS2 All EVs){C_RESET}" if open_all else f"{C_RED}NO (Tesla Only){C_RESET}"
         _field("🚗", "Non-Tesla Access", acc_str)
-    elif "tesla" in (station.network or "").lower() or "tesla" in (station.source or "").lower():
+    elif is_tesla_dest or "tesla" in (station.network or "").lower() or "tesla" in (station.source or "").lower():
         open_all = meta.get("open_to_non_tesla")
         t_only = meta.get("tesla_only")
         if open_all:
@@ -847,7 +1069,7 @@ def display_station_inspection_card(station: UnifiedStationRecord, eval_time: Op
             _field("⭐", "PlugShare Rating", f"⭐ {score}")
 
  # Fee Rules (Tesla Policy: Superchargers enforce either an Idle Rule OR a Congestion Rule, never both. Destination Chargers have no congestion fees.)
-    if station.source == "tesla" and station.speed_tier != "supercharger":
+    if is_tesla_dest:
  # Destination Chargers have no congestion fees or idle fees
         pass
     elif station.congestion_fee_per_min and station.congestion_fee_per_min > 0:
@@ -883,7 +1105,7 @@ def display_station_inspection_card(station: UnifiedStationRecord, eval_time: Op
     curr = station.currency or "AUD"
     if station.schedule:
         is_tou = len(station.schedule) > 1
-        pricing_title = "Tesla & Members" if station.source == "tesla" else (station.network or "Network")
+        pricing_title = "Tesla & Members" if (is_tesla_sc or is_tesla_dest) else (station.network or "Network")
         section_title = f"{pricing_title} {'Time-of-Use' if is_tou else 'Flat'} Rates ({curr})"
         print(f"\n  💰 {C_BOLD}{section_title}:{C_RESET}")
         for item in station.schedule:
@@ -924,7 +1146,7 @@ def display_station_inspection_card(station: UnifiedStationRecord, eval_time: Op
                 print(f"    • {pad_display('Flat Rate (24/7)', 21)} {C_GREEN}${rate:.2f}/kWh{C_RESET}")
             else:
                 print(f"    • {pad_display(lbl, 21)} {st} – {et}: ${rate:.2f}/kWh")
-    elif station.source == "tesla" and station.speed_tier == "supercharger" and (station.metadata or {}).get("open_to_non_tesla"):
+    elif is_tesla_sc and (station.metadata or {}).get("open_to_non_tesla"):
         print(f"\n  🔌 {C_BOLD}Non-Tesla Pricing:{C_RESET} {C_YELLOW}Not available (re-scrape to fetch){C_RESET}")
 
  # "Also Listed On" - (2026-09-15, AGENTS.local.md). A merged
@@ -1014,7 +1236,12 @@ def display_station_inspection_card(station: UnifiedStationRecord, eval_time: Op
             format_facilities_summary_card = None
 
     if _fac_reg and station.lat and station.lon:
-        cached_fac = _fac_reg.get_station_facilities(station_key=station.key, station_name=station.name, lat=station.lat, lon=station.lon)
+        try:
+            from lib.station_facilities import resolve_station_physical_coords
+            phys_lat, phys_lon, _ = resolve_station_physical_coords(station)
+        except Exception:
+            phys_lat, phys_lon = station.lat, station.lon
+        cached_fac = _fac_reg.get_station_facilities(station_key=station.key, station_name=station.name, lat=phys_lat, lon=phys_lon)
         if cached_fac and format_facilities_summary_card:
             lines = format_facilities_summary_card(cached_fac, indent="  ")
             if lines:
@@ -1023,6 +1250,248 @@ def display_station_inspection_card(station: UnifiedStationRecord, eval_time: Op
                     print(line)
 
     print()
+
+
+def _handle_browser_open_combo(
+    choice: str,
+    gmaps_coords: Optional[Tuple[Optional[float], Optional[float]]] = None,
+    osm_element: Optional[Tuple[str, Any]] = None,
+    osm_coords: Optional[Tuple[Optional[float], Optional[float]]] = None,
+    sc_id: Optional[Any] = None,
+    url: Optional[str] = None,
+    provider_name: str = "Tesla"
+) -> bool:
+    """
+    Handles single or multi-target browser opening commands:
+    e.g. 'm', 'o', 's', 'b', 'mo', 'ms', 'os', 'mos', 'som', 'smo', 'm o s', 'm,o,s'.
+    Returns True if choice was handled as a browser command, False otherwise.
+    """
+    choice_clean = choice.lower().strip()
+    if not choice_clean:
+        return False
+
+    if choice_clean in ("1", "2", "3", "4", "5", "6", "7", "8", "9", "q", "quit", "exit", "u", "update", "refresh"):
+        return False
+    if choice_clean.startswith("f ") or choice_clean in ("f", "facilities", "nearby", "a", "audit"):
+        return False
+
+    valid_browser_chars = set("mosb")
+    letters = re.findall(r"[a-z]", choice_clean)
+    if not letters:
+        return False
+
+    is_known_word = choice_clean in ("m", "maps", "gmaps", "o", "osm", "s", "sc", "supercharge", "supercharge.info", "b", "browser", "url")
+    is_char_combo = set(letters).issubset(valid_browser_chars)
+
+    if not (is_known_word or is_char_combo):
+        return False
+
+    targets_to_open: List[str] = []
+    if choice_clean in ("m", "maps", "gmaps"):
+        targets_to_open = ["m"]
+    elif choice_clean in ("o", "osm"):
+        targets_to_open = ["o"]
+    elif choice_clean in ("s", "sc", "supercharge", "supercharge.info"):
+        targets_to_open = ["s"]
+    elif choice_clean in ("b", "browser", "url"):
+        targets_to_open = ["b"]
+    else:
+        seen = set()
+        for ch in letters:
+            if ch in valid_browser_chars and ch not in seen:
+                seen.add(ch)
+                targets_to_open.append(ch)
+
+    for target in targets_to_open:
+        if target == "m":
+            if gmaps_coords and gmaps_coords[0] is not None and gmaps_coords[1] is not None:
+                g_url = f"https://www.google.com/maps/search/?api=1&query={gmaps_coords[0]},{gmaps_coords[1]}"
+                webbrowser.open(g_url)
+                print(f"🌐 {C_GREEN}Opened Google Maps ({provider_name} location) in browser: {g_url}{C_RESET}")
+        elif target == "o":
+            if osm_element and osm_element[1]:
+                osm_url = f"https://www.openstreetmap.org/{osm_element[0]}/{osm_element[1]}"
+            elif osm_coords and osm_coords[0] is not None and osm_coords[1] is not None:
+                osm_url = f"https://www.openstreetmap.org/?mlat={osm_coords[0]}&mlon={osm_coords[1]}#map=19/{osm_coords[0]}/{osm_coords[1]}"
+            elif gmaps_coords and gmaps_coords[0] is not None and gmaps_coords[1] is not None:
+                osm_url = f"https://www.openstreetmap.org/?mlat={gmaps_coords[0]}&mlon={gmaps_coords[1]}#map=19/{gmaps_coords[0]}/{gmaps_coords[1]}"
+            else:
+                osm_url = "https://www.openstreetmap.org"
+            webbrowser.open(osm_url)
+            print(f"🌐 {C_GREEN}Opened OpenStreetMap in browser: {osm_url}{C_RESET}")
+        elif target == "s":
+            if sc_id:
+                sc_url = f"https://supercharge.info/map?siteId={sc_id}"
+                webbrowser.open(sc_url)
+                print(f"🌐 {C_GREEN}Opened supercharge.info in browser: {sc_url}{C_RESET}")
+            else:
+                print(f"{C_YELLOW}⚠ No supercharge.info site ID available.{C_RESET}")
+        elif target == "b":
+            if url:
+                webbrowser.open(url)
+                print(f"🌐 {C_GREEN}Opened Charger URL in browser: {url}{C_RESET}")
+            else:
+                print(f"{C_YELLOW}⚠ No charger URL available.{C_RESET}")
+
+    print()
+    return True
+
+
+def interactive_station_actions(station: UnifiedStationRecord) -> None:
+    """Provides interactive browser launch and audit actions for inspected station."""
+    if not sys.stdin.isatty():
+        return
+
+    meta = station.metadata or {}
+    lat = station.lat
+    lon = station.lon
+    osm_lat = meta.get("osm_lat")
+    osm_lon = meta.get("osm_lon")
+    osm_id = meta.get("osm_node_id") or meta.get("osm_id")
+    url = station.url or (f"https://www.google.com/maps/search/?api=1&query={lat},{lon}" if lat and lon else None)
+
+    is_tesla_sc = (
+        station.speed_tier == "supercharger"
+        and ("tesla" in (station.source or "").lower() or (station.network or "").lower() == "tesla" or "tesla" in (station.views or {}))
+    )
+    sc_site = None
+    if is_tesla_sc:
+        try:
+            from lib.supercharge_info import find_supercharge_site
+            loc_id = meta.get("location_id") or meta.get("short_name") or station.source_id
+            sc_site = find_supercharge_site(station.name, station.lat, station.lon, location_id=loc_id)
+            if sc_site:
+                if sc_site.get("osmId") and not osm_id:
+                    osm_id = sc_site.get("osmId")
+                sc_gps = sc_site.get("gps", {})
+                if sc_gps.get("latitude") and not osm_lat:
+                    osm_lat = sc_gps.get("latitude")
+                    osm_lon = sc_gps.get("longitude")
+        except Exception:
+            sc_site = None
+
+    loc_provider_name = "Tesla" if (is_tesla_sc or is_tesla_dest or "tesla" in (station.source or "").lower()) else (station.network or "Station")
+
+    while True:
+        print(f"{C_BOLD}Actions:{C_RESET}")
+        print(f"  [{C_GREEN}u{C_RESET}]   Update / re-verify this station live (archives historical changes)")
+        print(f"  [{C_GREEN}m{C_RESET}]   Open {loc_provider_name} location in your browser (Google Maps)")
+        print(f"  [{C_GREEN}o{C_RESET}]   Open OSM location in your browser (OpenStreetMap)")
+        if sc_site and sc_site.get("id"):
+            print(f"  [{C_GREEN}s{C_RESET}]   Open SC.info location in your browser (supercharge.info)")
+        print(f"  [{C_GREEN}b{C_RESET}]   Open Charger URL in browser")
+        print(f"  [{C_GREEN}f{C_RESET}]   Nearby Facilities (instant pullup; type 'f 500' for radius or 'f r' to refresh live)")
+        print(f"  [{C_GREEN}a{C_RESET}]   Audit this station against OpenStreetMap")
+        print(f"  [{C_GREEN}q{C_RESET}]   Quit (or press Enter)")
+
+        prompt_choices = "u/m/o/s/b/f/a/q" if (sc_site and sc_site.get("id")) else "u/m/o/b/f/a/q"
+        try:
+            choice = input(f"\n{C_BOLD}Choice [{prompt_choices}]: {C_RESET}").strip().lower()
+        except (EOFError, KeyboardInterrupt):
+            print()
+            break
+
+        if choice in ("q", "quit", "exit", ""):
+            break
+        elif choice in ("u", "update", "refresh"):
+            try:
+                from providers_chargers.chargers_manager import ChargerDiscoveryManager
+                mgr = ChargerDiscoveryManager()
+                mgr.load_all_providers()
+                print(f"🔄 Re-verifying station '{station.name}' live...")
+                ok, diffs, fresh = mgr.reverify_station(station)
+                _print_reverify_result(station.name, ok, diffs)
+                if ok and fresh:
+                    station = fresh
+                    print()
+                    display_station_inspection_card(station)
+            except Exception as e:
+                print(f"{C_RED}❌ Error reverifying station: {e}{C_RESET}")
+            print()
+        elif choice.startswith("f") or choice in ("facilities", "nearby"):
+            parts = choice.split()
+            radius = 250
+            force = "refresh" in choice or choice in ("fr", "f r")
+            for p in parts[1:]:
+                if p.isdigit():
+                    radius = int(p)
+                elif p in ("r", "refresh", "-r", "--refresh"):
+                    force = True
+            display_nearby_facilities(station, radius_m=radius, force_refresh=force)
+            print()
+        elif _handle_browser_open_combo(
+            choice,
+            gmaps_coords=(lat, lon),
+            osm_element=("node", osm_id) if osm_id else None,
+            osm_coords=(osm_lat, osm_lon) if (osm_lat and osm_lon) else (lat, lon),
+            sc_id=sc_site.get("id") if sc_site else None,
+            url=url,
+            provider_name=loc_provider_name
+        ):
+            pass
+        elif choice in ("a", "audit"):
+            try:
+                from places_osm_editor import _audit_tesla_station, load_osm_config
+                cfg = load_osm_config()
+                _audit_tesla_station(query=station.key or station.name, token=cfg.get("access_token"))
+            except Exception as e:
+                print(f"{C_RED}❌ Error running audit: {e}{C_RESET}")
+            print()
+
+
+def inspect_single_station(manager: ChargerDiscoveryManager, query: str, eval_time: Optional[str] = None) -> None:
+    """Natively resolves and inspects a single station across all unified providers."""
+    all_stations = manager.get_all_stations()
+    q_lower = query.strip().lower()
+
+    matches = []
+    for s in all_stations:
+        meta = s.metadata or {}
+        findus_loc = (meta.get("findus_location_name") or "").lower()
+        findus_list = (meta.get("findus_list_name") or "").lower()
+        short_n = (meta.get("short_name") or "").lower()
+        if (q_lower == s.key.lower() or
+            q_lower == s.name.lower() or
+            q_lower in s.name.lower() or
+            q_lower in s.key.lower() or
+            q_lower in s.suburb.lower() or
+            q_lower in s.address.lower() or
+            q_lower == short_n or
+            q_lower in findus_loc or
+            q_lower in findus_list or
+            q_lower == str(s.source_id).lower()):
+            matches.append(s)
+
+    # Prefer exact match if exists
+    exact = [m for m in matches if m.name.lower() == q_lower or m.key.lower() == q_lower or (m.metadata or {}).get("short_name", "").lower() == q_lower]
+    if len(exact) == 1:
+        matches = exact
+
+    if not matches:
+        print(f"{C_RED}❌ No charging station matching '{query}' found in registries.{C_RESET}")
+        return
+
+    if len(matches) == 1:
+        st = matches[0]
+        display_station_inspection_card(st, eval_time=eval_time)
+        interactive_station_actions(st)
+        return
+
+    # Multiple matches
+    render_stations_table(matches, title=f"SEARCH RESULTS FOR '{query}'", eval_time=eval_time)
+    if sys.stdin.isatty():
+        num_m = f"1-{len(matches)}" if len(matches) > 1 else "1"
+        print(f"\n{C_BOLD}Actions:{C_RESET}")
+        print(f"  [{C_GREEN}{num_m}{C_RESET}]    Inspect station details & nearby amenities (e.g. {C_GREEN}1{C_RESET})")
+        print(f"  [{C_GREEN}q{C_RESET}]      Quit (or press Enter)")
+        try:
+            pick = input(f"\n{C_BOLD}Choice [{num_m}/q]: {C_RESET}").strip().lower()
+            if pick.isdigit() and 1 <= int(pick) <= len(matches):
+                st = matches[int(pick) - 1]
+                display_station_inspection_card(st, eval_time=eval_time)
+                interactive_station_actions(st)
+        except (EOFError, KeyboardInterrupt):
+            print()
 
 
 def display_nearby_facilities(station: UnifiedStationRecord, radius_m: int = 250, force_refresh: bool = False) -> None:
@@ -1035,7 +1504,13 @@ def display_nearby_facilities(station: UnifiedStationRecord, radius_m: int = 250
     Persisted in station_facilities.json for instant offline pullup with
     a 0-10 Quality Scoring Engine (REQ-082).
     """
-    if not station.lat or not station.lon:
+    try:
+        from lib.station_facilities import resolve_station_physical_coords
+        phys_lat, phys_lon, coord_src = resolve_station_physical_coords(station)
+    except Exception:
+        phys_lat, phys_lon, coord_src = station.lat, station.lon, "Source GPS"
+
+    if not phys_lat or not phys_lon:
         print(f"{C_YELLOW}⚠ No coordinates on file for this station - can't look up nearby facilities.{C_RESET}")
         return
 
@@ -1049,14 +1524,16 @@ def display_nearby_facilities(station: UnifiedStationRecord, radius_m: int = 250
         except ImportError:
             reg = None
 
-    cached = reg.get_station_facilities(station_key=station.key, station_name=station.name, lat=station.lat, lon=station.lon) if (reg and not force_refresh) else None
+    cached = reg.get_station_facilities(station_key=station.key, station_name=station.name, lat=phys_lat, lon=phys_lon) if (reg and not force_refresh) else None
 
     if cached:
-        print(f"\n{C_BOLD}🏙️  Nearby Facilities (within {cached.get('radius_m', radius_m)}m of {station.name}):{C_RESET}")
+        src_tag = f" {C_GRAY}[coords: {coord_src}]{C_RESET}" if coord_src != "Source GPS" else ""
+        print(f"\n{C_BOLD}🏙️  Nearby Facilities (within {cached.get('radius_m', radius_m)}m of {station.name}{src_tag}):{C_RESET}")
         print(f"  {C_BOLD}Quality Score:{C_RESET} {cached.get('badge', '')}  {C_GRAY}[⚡ Cached Registry - instant pullup]{C_RESET}\n")
         pois = cached.get("pois", [])
     else:
-        print(f"\n{C_BOLD}🏙️  Nearby Facilities (within {radius_m}m of {station.name}, via OpenStreetMap):{C_RESET}")
+        src_tag = f" via {coord_src}" if coord_src != "Source GPS" else ""
+        print(f"\n{C_BOLD}🏙️  Nearby Facilities (within {radius_m}m of {station.name}{src_tag}, via OpenStreetMap):{C_RESET}")
         print(f"{C_GRAY}   Looking up live - this can take a few seconds...{C_RESET}")
 
         try:
@@ -1066,7 +1543,7 @@ def display_nearby_facilities(station: UnifiedStationRecord, radius_m: int = 250
             return
 
         try:
-            pois = query_overpass_pois(station.lat, station.lon, radius_m=radius_m)
+            pois = query_overpass_pois(phys_lat, phys_lon, radius_m=radius_m)
         except Exception as e:
             print(f"{C_RED}❌ Facilities lookup failed: {e}{C_RESET}")
             return
@@ -1080,8 +1557,8 @@ def display_nearby_facilities(station: UnifiedStationRecord, radius_m: int = 250
                 station_key=station.key,
                 station_name=station.name,
                 network=station.network or "unknown",
-                lat=station.lat,
-                lon=station.lon,
+                lat=phys_lat,
+                lon=phys_lon,
                 pois=pois,
                 radius_m=radius_m
             )
@@ -1237,26 +1714,36 @@ DESCRIPTION
     ./Tools/charger_find.py --export-consolidated
 
   Proximity & Search:
- # Find all chargers near an address sorted by distance:
+  # Find all chargers near an address sorted by distance:
     ./Tools/charger_find.py --near "100 George St, Sydney" --limit 10
 
- # Find cheapest charging options near Home (defaults to 15km radius):
+  # Find cheapest charging options near Home (defaults to 15km radius):
     ./Tools/charger_find.py --near Home --sort price --radius 25
 
- # Evaluate Time-of-Use pricing at peak vs off-peak hours:
+  # Evaluate Time-of-Use pricing at peak vs off-peak hours:
     ./Tools/charger_find.py --near Home --time 14:00 --sort price
     ./Tools/charger_find.py --near Home --time 23:30 --sort price
 
- # Filter high-power DC Fast Chargers (>= 150 kW, any network) or specific networks:
+  # Filter high-power DC Fast Chargers (>= 150 kW, any network) or specific networks:
     ./Tools/charger_find.py --dc --min-kw 150 --near "Ryde"
     ./Tools/charger_find.py --network chargefox --state NSW
     ./Tools/charger_find.py --network tesla --sc --near Home
 
+  Route Corridor Search:
+  # Find Superchargers along a road trip from Sydney to Brisbane:
+    ./Tools/charger_find.py --from "Sydney" --to "Brisbane" --sc
+
+  # Find DC fast chargers (>= 150 kW) from Home to Canberra via Goulburn:
+    ./Tools/charger_find.py --from Home --to "Canberra" --via "Goulburn" --dc --min-kw 150
+
+  # Find cheapest AmpCharge / Ampol stations along Hume Highway (Sydney -> Melbourne):
+    ./Tools/charger_find.py --from "Sydney" --to "Melbourne" --network ampcharge --sort price --corridor 10
+
   Inspection & Drill-Down:
- # Inspect detailed card for a specific station by query:
+  # Inspect detailed card for a specific station by query:
     ./Tools/charger_find.py -q "Macquarie"
 
- # Inspect a PlugShare location ID directly:
+  # Inspect a PlugShare location ID directly:
     ./Tools/charger_find.py --plugshare 801149 --save
 """
     )
@@ -1272,11 +1759,24 @@ DESCRIPTION
  # rationale for non-obvious flags now lives in a source comment instead.
     g_location = parser.add_argument_group("Location & Search Scope")
     g_location.add_argument("--near", "-l", type=str, help="Reference place name, address, or lat,lon (e.g. 'Home', 'Ryde')")
-    g_location.add_argument("--radius", "-r", "--radius-km", type=float, default=15.0, help="Search radius in km (default: 15)")
+    g_location.add_argument("--radius", "-r", "--radius-km", type=float, default=50.0, help="Search radius in km (default: 50)")
     g_location.add_argument("--query", "-q", type=str, help="Text search by station name, suburb, or network")
     g_location.add_argument("--all", "-a", action="store_true", help="List all registered stations across the entire country or selected state")
     g_location.add_argument("--state", choices=["NSW", "VIC", "QLD", "WA", "SA", "TAS", "ACT", "NT", "nsw", "vic", "qld", "wa", "sa", "tas", "act", "nt"], help="Filter by State/Territory (e.g. NSW, VIC)")
     g_location.add_argument("--country", default="Australia", help="Country name (default: Australia)")
+
+    g_route = parser.add_argument_group("Route & Highway Corridor Search")
+    g_route.add_argument("--from", "--origin", dest="from_loc", type=str, help="Route origin / departure point (place name, address, or lat,lon)")
+    g_route.add_argument("--to", "--destination", dest="to_loc", type=str, help="Route destination point (place name, address, or lat,lon)")
+    g_route.add_argument("--via", nargs="+", help="Intermediate route waypoint(s) (e.g. --via 'Goulburn' 'Canberra')")
+    g_route.add_argument("--corridor-radius", "--corridor", "--detour-max", type=float, default=5.0, help="Corridor radius / max highway detour in km (default: 5.0 km)")
+
+    g_abrp = parser.add_argument_group("ABRP & EV Trip Planning")
+    g_abrp.add_argument("--soc", "--departure-soc", dest="departure_soc", type=str, help="Departure battery percentage (0-100 or 'live' to query Tessie real-time)")
+    g_abrp.add_argument("--target-soc", "--min-soc", dest="target_soc", type=float, help="Target minimum arrival battery percentage (default: 10.0)")
+    g_abrp.add_argument("--max-soc", dest="max_soc", type=float, help="Maximum charging target percentage (default: 85.0)")
+    g_abrp.add_argument("--abrp-link", "--abrp", action="store_true", default=True, help="Generate and display 1-click ABRP interactive road trip URL (default: True)")
+    g_abrp.add_argument("--no-abrp", action="store_false", dest="abrp_link", help="Suppress ABRP 1-click URL generation")
 
     g_speed = parser.add_argument_group("Charging Speed & Type Filter")
  # (2026-09-15) tried adding a dedicated --tesla-dest/--tesla-sc/
@@ -1299,7 +1799,7 @@ DESCRIPTION
     g_network.add_argument("--network", "-n", type=str, help="Filter by network - free-text substring match against network/operator/station-name/source (case-insensitive). Known first-party networks: tesla, chargefox (covers WA EV Network, Qld Electric Highway sub-brands), nrma (own Tier 1 KML feed, merged with Chargefox's ~28 overlapping NRMA sites where both cover the same site), evx, evie, bppulse, ampcharge (covers Ampol Foodary), exploren, jolt. Use 'plugshare' to see only PlugShare-sourced listings, or any other text to match a PlugShare-aggregated sub-brand.")
 
     g_sort = parser.add_argument_group("Sorting & Time of Use")
-    g_sort.add_argument("--sort", "-s", choices=["distance", "price", "power", "stalls", "name", "state", "facilities", "facility", "rating"], default="distance", help="Sort order (default: distance)")
+    g_sort.add_argument("--sort", "-s", choices=["distance", "price", "power", "stalls", "bays", "name", "state", "facilities", "facility", "rating", "progress", "route", "detour", "score", "stop_score", "quality"], default="distance", help="Sort order (default: distance; or progress/detour/score along a route)")
     g_sort.add_argument("-t", "--time", type=str, help="Evaluate TOU pricing at specific local time (HH:MM)")
 
     g_output = parser.add_argument_group("Output Controls")
@@ -1772,13 +2272,7 @@ DESCRIPTION
  # RENAMED or STALE-by-age, so no --sync-tesla subset filter could target
  # it) never requires dropping into the old script directly.
     if args.inspect:
-        from charger_find_tesla import TeslaChargerExplorer, inspect_or_scrape_station
-        tesla_explorer = TeslaChargerExplorer()
-        inspect_or_scrape_station(
-            tesla_explorer, inspect=args.inspect, url=None,
-            dc=args.dc, sc=args.sc, live=args.live,
-            json_out=args.json, save=args.save, country=args.country or "Australia"
-        )
+        inspect_single_station(manager, args.inspect, eval_time=args.time)
         return
 
  # Live catalog browsing (grid + status legend + all/new/renamed/stale/near
@@ -1828,6 +2322,7 @@ DESCRIPTION
     title = "PUBLIC EV CHARGING STATIONS"
     ref_lat, ref_lon, ref_label = None, None, None
     active_radius = None
+    route_info = None
  # Tracks the sort key actually handed to the manager for this branch, so the
  # displayed "Sort Order" label always matches the real ordering below () -
  # it must never be derived from the raw args.sort default alone.
@@ -1836,13 +2331,102 @@ DESCRIPTION
     explicit_sort = any(a in sys.argv for a in ("--sort", "-s")) or any(a.startswith("--sort=") for a in sys.argv)
     explicit_radius = any(a in sys.argv for a in ("--radius", "-r", "--radius-km")) or any(a.startswith(("--radius=", "-r=", "--radius-km=")) for a in sys.argv)
     explicit_limit = any(a == "--limit" for a in sys.argv) or any(a.startswith("--limit=") for a in sys.argv)
+    is_route_search = bool(args.from_loc and args.to_loc)
     is_state_or_all = bool(args.all or args.state)
 
-    if args.near or explicit_sort or not is_state_or_all:
+    if bool(args.from_loc) ^ bool(args.to_loc):
+        missing = "--to / --destination" if args.from_loc else "--from / --origin"
+        print(f"❌ Error: Route corridor search requires both an origin and destination. Missing {missing}.", file=sys.stderr)
+        sys.exit(1)
+    elif args.via and not is_route_search:
+        print("❌ Error: --via can only be used with --from and --to for route corridor search.", file=sys.stderr)
+        sys.exit(1)
+
+    if is_route_search:
+        f_lat, f_lon, f_label = resolve_reference_coords(args.from_loc)
+        if f_lat is None or f_lon is None:
+            print(f"❌ Error: Could not resolve route departure origin '{args.from_loc}'.", file=sys.stderr)
+            sys.exit(1)
+        t_lat, t_lon, t_label = resolve_reference_coords(args.to_loc)
+        if t_lat is None or t_lon is None:
+            print(f"❌ Error: Could not resolve route destination '{args.to_loc}'.", file=sys.stderr)
+            sys.exit(1)
+
+        waypoints = [(f_lat, f_lon)]
+        via_labels = []
+        if args.via:
+            for v_str in args.via:
+                v_lat, v_lon, v_label = resolve_reference_coords(v_str)
+                if v_lat is None or v_lon is None:
+                    print(f"❌ Error: Could not resolve route intermediate waypoint '{v_str}'.", file=sys.stderr)
+                    sys.exit(1)
+                waypoints.append((v_lat, v_lon))
+                via_labels.append(v_label)
+        waypoints.append((t_lat, t_lon))
+
+        type_lbl = "SUPERCHARGERS" if args.sc else ("DC FAST CHARGERS" if args.dc else ("AC CHARGERS" if args.ac else "CHARGING STATIONS"))
+        title = f"{type_lbl} ALONG ROUTE: {f_label.upper()} ➔ {t_label.upper()}"
+
+        if not explicit_sort and args.sort == "distance":
+            effective_sort = "progress"
+        else:
+            effective_sort = args.sort
+
+        if not args.json:
+            print(f"🛣️  {C_CYAN}Calculating driving corridor from {f_label} to {t_label}...{C_RESET}")
+        stations, route_info = manager.search_route_corridor(
+            waypoints=waypoints,
+            corridor_radius_km=args.corridor_radius,
+            filters=filters,
+            sort_by=effective_sort,
+            eval_time=args.time
+        )
+        route_info["origin_label"] = f_label
+        route_info["destination_label"] = t_label
+        route_info["corridor_radius_km"] = args.corridor_radius
+        route_info["via_labels"] = via_labels
+
+        # Resolve ABRP & EV Route Intelligence
+        from lib.abrp_planner import (
+            load_abrp_config,
+            resolve_departure_soc,
+            generate_abrp_deep_link
+        )
+        abrp_cfg = load_abrp_config()
+        dep_soc, dep_src, live_detail = resolve_departure_soc(args.departure_soc)
+        tgt_soc = args.target_soc if args.target_soc is not None else float(abrp_cfg.get("target_arrival_soc", 10.0))
+        max_soc = args.max_soc if args.max_soc is not None else float(abrp_cfg.get("max_charge_soc", 85.0))
+
+        via_pts = waypoints[1:-1] if len(waypoints) > 2 else []
+        abrp_url = None
+        if getattr(args, "abrp_link", True):
+            abrp_url = generate_abrp_deep_link(
+                origin_coords=(f_lat, f_lon),
+                dest_coords=(t_lat, t_lon),
+                via_coords=via_pts,
+                vehicle_typecode=abrp_cfg.get("vehicle_typecode"),
+                departure_soc=dep_soc,
+                target_soc=int(tgt_soc),
+                max_soc=int(max_soc)
+            )
+
+        route_info["departure_soc"] = dep_soc
+        route_info["departure_soc_src"] = dep_src
+        route_info["live_detail"] = live_detail or {}
+        route_info["target_arrival_soc"] = tgt_soc
+        route_info["max_charge_soc"] = max_soc
+        route_info["abrp_link"] = abrp_url
+        route_info["consumption_wh_km"] = abrp_cfg.get("consumption_wh_km", 175.0)
+        route_info["usable_kwh"] = abrp_cfg.get("usable_kwh", 85.0)
+        route_info["vehicle_name"] = abrp_cfg.get("vehicle_name", "Tesla Model YL AWD")
+
+    elif args.near or explicit_sort or not is_state_or_all:
         ref_loc = args.near or "Home"
         ref_lat, ref_lon, ref_label = resolve_reference_coords(ref_loc)
 
-    if is_state_or_all:
+    if is_route_search:
+        pass
+    elif is_state_or_all:
         state_suffix = f" IN {args.state.upper()}" if args.state else " IN AUSTRALIA"
         type_lbl = "SUPERCHARGERS" if args.sc else ("DC FAST CHARGERS" if args.dc else ("AC CHARGERS" if args.ac else "CHARGING STATIONS"))
         title = f"{type_lbl}{state_suffix}"
@@ -1875,50 +2459,19 @@ DESCRIPTION
     else:
         ref_loc = args.near or "Home"
         if ref_lat is not None and ref_lon is not None:
-            if explicit_radius and args.radius and args.radius > 0:
-                active_radius = args.radius
-                title = f"CHARGERS NEAR {ref_label.upper()}"
-                effective_sort = args.sort
-                stations = manager.search_nearby(
-                    ref_lat, ref_lon,
-                    radius_km=args.radius,
-                    filters=filters,
-                    sort_by=effective_sort,
-                    eval_time=args.time
-                )
-            else:
-                type_lbl = "SUPERCHARGERS" if args.sc else ("DC FAST CHARGERS" if args.dc else ("AC CHARGERS" if args.ac else "CHARGING STATIONS"))
-                effective_sort = args.sort
-                if effective_sort != "distance":
- # closest-N-first, then sort within that pool -
- # see NEAR_SORT_CANDIDATE_COUNT above for the rationale.
-                    title = f"{type_lbl} NEAR {ref_label.upper()}"
- # --limit's argparse default (100) is NOT a user request for a 100-
- # station candidate pool here - only an EXPLICIT --limit means
- # "widen the nearest-N pool to N"; otherwise this stays a tight
- # nearby set (NEAR_SORT_CANDIDATE_COUNT) so a non-distance sort
- # can't still surface something hundreds of km away.
-                    candidate_count = args.limit if explicit_limit else NEAR_SORT_CANDIDATE_COUNT
-                    distance_pool = manager.get_all_stations(
-                        filters=filters,
-                        sort_by="distance",
-                        eval_time=args.time,
-                        ref_lat=ref_lat,
-                        ref_lon=ref_lon
-                    )
-                    nearest_pool = distance_pool[:candidate_count]
-                    stations = manager.sort_records(nearest_pool, sort_by=effective_sort, eval_time=args.time)
-                    if nearest_pool:
-                        active_radius = max((s.distance_km or 0.0) for s in nearest_pool)
-                else:
-                    title = f"{type_lbl} IN AUSTRALIA"
-                    stations = manager.get_all_stations(
-                        filters=filters,
-                        sort_by=effective_sort,
-                        eval_time=args.time,
-                        ref_lat=ref_lat,
-                        ref_lon=ref_lon
-                    )
+            # Default radius for --near search is 50km unless explicitly overridden with --radius / -r
+            effective_radius = args.radius if (explicit_radius and args.radius is not None and args.radius > 0) else (args.radius or 50.0)
+            active_radius = effective_radius
+            type_lbl = "SUPERCHARGERS" if args.sc else ("DC FAST CHARGERS" if args.dc else ("AC CHARGERS" if args.ac else "CHARGING STATIONS"))
+            title = f"{type_lbl} NEAR {ref_label.upper()}"
+            effective_sort = args.sort
+            stations = manager.search_nearby(
+                ref_lat, ref_lon,
+                radius_km=effective_radius,
+                filters=filters,
+                sort_by=effective_sort,
+                eval_time=args.time
+            )
         else:
             print(f"❌ Error: Could not resolve reference location '{ref_loc}'.", file=sys.stderr)
             sys.exit(1)
@@ -2017,7 +2570,13 @@ DESCRIPTION
  # actually handed to the manager above), never the raw args.sort default, so
  # this label can never claim a distance sort that didn't happen ().
     sort_mode_desc = None
-    if effective_sort == "distance":
+    if effective_sort in ("progress", "route"):
+        sort_mode_desc = "Route Progress (Start to Finish)"
+    elif effective_sort == "detour":
+        sort_mode_desc = "Detour Distance (Smallest Lateral Offset First)"
+    elif effective_sort in ("score", "stop_score", "quality"):
+        sort_mode_desc = "Stop Quality Score (Highest First, Facilities + Detour + Speed & Bays)"
+    elif effective_sort == "distance":
         has_real_dist = any(s.distance_km is not None for s in stations)
         if has_real_dist:
             sort_mode_desc = "Distance (Closest First)"
@@ -2026,11 +2585,11 @@ DESCRIPTION
  # fell back to its type-then-state-then-name ordering internally.
             sort_mode_desc = "Charger Type, then State, then Station Name"
     elif effective_sort == "price":
-        sort_mode_desc = "Price (Lowest First)"
+        sort_mode_desc = "Price (Lowest First, Secondary: Route Progress)" if route_info else "Price (Lowest First)"
     elif effective_sort == "power":
-        sort_mode_desc = "Max Power (kW, Highest First)"
-    elif effective_sort == "stalls":
-        sort_mode_desc = "Stall Count (Highest First)"
+        sort_mode_desc = "Max Power (kW, Highest First, Secondary: Route Progress)" if route_info else "Max Power (kW, Highest First)"
+    elif effective_sort in ("stalls", "bays"):
+        sort_mode_desc = "Bay Count (Highest First, Secondary: Route Progress)" if route_info else "Bay Count (Highest First)"
     elif effective_sort in ("facilities", "facility", "rating"):
         sort_mode_desc = "Facilities Quality Rating (Best Amenities First)"
     elif effective_sort == "name":
@@ -2047,7 +2606,8 @@ DESCRIPTION
             ref_lon=ref_lon,
             active_radius=active_radius,
             sort_mode=sort_mode_desc,
-            network_filter=args.network
+            network_filter=args.network,
+            route_info=route_info
         )
 
     render_cb()
@@ -2066,18 +2626,41 @@ DESCRIPTION
         if not sys.stdin.isatty():
             return
 
- # Interactive Station Selector Loop
+    # Interactive Station Selector Loop
     if sys.stdin.isatty():
+        has_abrp = bool(route_info and route_info.get("abrp_link"))
         while True:
-            print(f"\n{C_BOLD}Options:{C_RESET} Enter station number [{C_GREEN}1-{len(stations)}{C_RESET}] to inspect, {C_MAGENTA}'renamed'{C_RESET} to reconcile renames, {C_BLUE}'stale'{C_RESET} to update stale, {C_CYAN}'u <#>' {C_RESET}to update station, or {C_YELLOW}Enter{C_RESET}/'q' to quit.")
+            num_range = f"1-{len(stations)}" if len(stations) > 1 else "1"
+            print(f"\n{C_BOLD}Actions:{C_RESET}")
+            print(f"  [{C_GREEN}{num_range}{C_RESET}]     Inspect station details & view nearby amenities (e.g. {C_GREEN}14{C_RESET})")
+            if has_abrp:
+                print(f"  [{C_GREEN}abrp{C_RESET}]    Open ABRP 1-Click Road Trip in your browser")
+            print(f"  [{C_CYAN}u <#>{C_RESET}]    Update / re-verify a station live (e.g. {C_CYAN}u 14{C_RESET})")
+            print(f"  [{C_BLUE}stale{C_RESET}]    Batch re-verify all stale stations in this query")
+            print(f"  [{C_MAGENTA}renamed{C_RESET}]  Batch re-verify all renamed stations in this query")
+            print(f"  [{C_GREEN}r{C_RESET}]        Redisplay station table")
+            print(f"  [{C_GREEN}q{C_RESET}]        Quit (or press Enter)")
+
+            prompt_parts = [num_range]
+            if has_abrp:
+                prompt_parts.append("abrp")
+            prompt_parts.extend(["u <#>", "stale", "renamed", "r", "q"])
+            prompt_str = "/".join(prompt_parts)
+
             try:
-                choice = input(f"Select Station [1-{len(stations)}], 'stale', 'renamed', 'u <#>', [q]uit: ").strip().lower()
+                choice = input(f"\n{C_BOLD}Choice [{prompt_str}]: {C_RESET}").strip().lower()
             except (EOFError, KeyboardInterrupt):
                 print()
                 break
 
             if not choice or choice in ("q", "quit", "exit"):
                 break
+
+            if has_abrp and choice in ("abrp", "a", "roadtrip", "open-abrp"):
+                abrp_url = route_info["abrp_link"]
+                webbrowser.open(abrp_url)
+                print(f"🌐 {C_GREEN}Opened ABRP Road Trip in browser: {abrp_url}{C_RESET}\n")
+                continue
 
             if choice in ("r", "list", "table"):
                 render_cb()
@@ -2099,7 +2682,7 @@ DESCRIPTION
                 render_cb()
                 continue
 
- # Quick update command e.g. "u 3" or "update 3"
+            # Quick update command e.g. "u 3" or "update 3"
             if choice.startswith("u ") or choice.startswith("update ") or choice.startswith("s "):
                 parts = choice.split()
                 if len(parts) >= 2 and parts[1].isdigit():
@@ -2125,32 +2708,57 @@ DESCRIPTION
             display_station_inspection_card(sel, eval_time=args.time)
 
             source_urls = sel.get_source_urls()
+            is_sel_tesla_sc = (
+                sel.speed_tier == "supercharger"
+                and ("tesla" in (sel.source or "").lower() or (sel.network or "").lower() == "tesla" or "tesla" in (sel.views or {}))
+            )
+            is_sel_tesla_dest = (
+                ("tesla" in (sel.source or "").lower() or "tesla" in (sel.network or "").lower() or "tesla" in (sel.views or {}))
+                and not is_sel_tesla_sc
+            )
+            sc_site = None
+            if is_sel_tesla_sc:
+                try:
+                    from lib.supercharge_info import find_supercharge_site
+                    sc_meta = sel.metadata or {}
+                    loc_id = sc_meta.get("location_id") or sc_meta.get("short_name") or sel.source_id
+                    sc_site = find_supercharge_site(sel.name, sel.lat, sel.lon, location_id=loc_id)
+                except Exception:
+                    sc_site = None
+
+            sel_loc_provider = "Tesla" if (is_sel_tesla_sc or is_sel_tesla_dest or "tesla" in (sel.source or "").lower()) else (sel.network or "Station")
+
             print(f"{C_BOLD}Actions for {sel.name}:{C_RESET}")
             
             url_actions = {}
             idx = 1
             for u in source_urls:
-                print(f"  [{C_GREEN}{idx}{C_RESET}] Open {u['label']} in default browser ({format_display_url(u['url'])})")
+                print(f"  [{C_GREEN}{idx}{C_RESET}]      Open {u['label']} in default browser ({format_display_url(u['url'])})")
                 url_actions[str(idx)] = u["url"]
                 idx += 1
                 
-            print(f"  [{C_GREEN}u{C_RESET}] Update / Re-verify this station live (archives historical changes)")
-            print(f"  [{C_GREEN}m{C_RESET}] Open in Google Maps (navigation / coordinates)")
-            print(f"  [{C_GREEN}f{C_RESET}] Nearby Facilities (instant pullup; type 'f 500' for radius or 'f r' to refresh live)")
-            print(f"  [{C_GREEN}b{C_RESET}] Back to station list")
-            print(f"  [{C_GREEN}q{C_RESET}] Quit")
-            print()
+            print(f"  [{C_GREEN}u{C_RESET}]      Update / re-verify this station live (archives historical changes)")
+            print(f"  [{C_GREEN}m{C_RESET}]      Open {sel_loc_provider} location in your browser (Google Maps)")
+            print(f"  [{C_GREEN}o{C_RESET}]      Open OSM location in your browser (OpenStreetMap)")
+            if sc_site and sc_site.get("id"):
+                print(f"  [{C_GREEN}s{C_RESET}]      Open SC.info location in your browser (supercharge.info)")
+            print(f"  [{C_GREEN}f{C_RESET}]      Nearby Facilities (instant pullup; type 'f 500' for radius or 'f r' to refresh live)")
+            print(f"  [{C_GREEN}b{C_RESET}]      Back to station list")
+            print(f"  [{C_GREEN}q{C_RESET}]      Quit")
 
-            action_prompt_range = f"1-{len(source_urls)}" if len(source_urls) > 1 else "1"
+            prompt_parts = []
             if len(source_urls) > 1:
-                prompt_options = f"{action_prompt_range}, a, u, m, f, b, q"
+                prompt_parts.append(f"1-{len(source_urls)}")
             elif len(source_urls) == 1:
-                prompt_options = f"1, u, m, f, b, q"
-            else:
-                prompt_options = f"u, m, f, b, q"
+                prompt_parts.append("1")
+            prompt_parts.extend(["u", "m", "o"])
+            if sc_site and sc_site.get("id"):
+                prompt_parts.append("s")
+            prompt_parts.extend(["f", "b", "q"])
+            prompt_options = "/".join(prompt_parts)
 
             try:
-                act = input(f"Action [{prompt_options}, default: b]: ").strip().lower()
+                act = input(f"\n{C_BOLD}Choice [{prompt_options}, default: b]: {C_RESET}").strip().lower()
             except (EOFError, KeyboardInterrupt):
                 break
 
@@ -2169,17 +2777,20 @@ DESCRIPTION
                 ok, diffs, fresh = manager.reverify_station(sel)
                 _print_reverify_result(sel.name, ok, diffs)
                 if ok and fresh:
- # "Re-verifying should reload the entry - differences
- # can then be seen" - redisplay the just-refreshed card in
- # place instead of leaving the user looking at stale values.
                     sel = fresh
                     print()
                     display_station_inspection_card(sel, eval_time=args.time)
                 input("\nPress Enter to continue...")
-            elif (act in ("m", "g", "map", "maps") or (act == "2" and len(source_urls) <= 1)) and sel.lat is not None and sel.lon is not None:
-                gmap_url = f"https://www.google.com/maps/search/?api=1&query={sel.lat},{sel.lon}"
-                import subprocess
-                subprocess.run(["open", gmap_url] if sys.platform == "darwin" else ["xdg-open", gmap_url], check=False)
+            elif _handle_browser_open_combo(
+                act,
+                gmaps_coords=(sel.lat, sel.lon),
+                osm_element=("node", (sel.metadata or {}).get("osm_node_id") or (sel.metadata or {}).get("osm_id")),
+                osm_coords=((sel.metadata or {}).get("osm_lat"), (sel.metadata or {}).get("osm_lon")),
+                sc_id=sc_site.get("id") if sc_site else None,
+                url=sel.url,
+                provider_name="Station"
+            ):
+                pass
             elif act.startswith("f") or act in ("facilities", "nearby"):
                 parts = act.split()
                 radius = args.facilities_radius or 250
