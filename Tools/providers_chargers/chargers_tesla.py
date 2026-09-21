@@ -341,7 +341,11 @@ class TeslaProvider(BaseChargerProvider):
  # charger_find.py's display fell back to source_id
  # (the numeric findus_id) for every single Tesla station.
                         "short_name": t_meta.get("findus_location_short_name") or t_meta.get("short_name") or key,
-                        "general_location": t_meta.get("general_location") or t_meta.get("location_name") or suburb
+                        "general_location": t_meta.get("general_location") or t_meta.get("location_name") or suburb,
+                        "osm_lat": loc.get("osm_lat") or info.get("osm_lat"),
+                        "osm_lon": loc.get("osm_lon") or info.get("osm_lon"),
+                        "osm_node_id": loc.get("osm_node_id") or info.get("osm_node_id") or loc.get("osm_id") or info.get("osm_id"),
+                        "osm_audited_utc": loc.get("osm_audited_utc") or info.get("osm_audited_utc"),
                     },
                     amenities=info.get("amenities", {}) if isinstance(info.get("amenities"), dict) else {"items": info.get("amenities", [])},
                     keywords=[
