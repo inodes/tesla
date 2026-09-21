@@ -42,6 +42,10 @@ Tessie/invoices/*
 !config.example.json
 config.json
 places.json
+.abrp_token.json
+.*abrp*.json
+.osm_token.json
+.*osm*.json
 
 # TeslaCam & Dashcam Metadata
 .catalog.json
