@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # sync_charger_all.sh - the one command for the Chargers domain: pull fresh
 # charger data for both registries this repo tracks - Tesla Superchargers /
-# Destination Chargers via charger_find_tesla.py, and PlugShare-listed
+# Destination Chargers via archive/charger_find_tesla.py (archived but still
+# the only Tesla scraper - see REQ-095), and PlugShare-listed
 # 3rd-party chargers via charger_find.py --sync-plugshare (see AGENTS.md REQ-033).
 #
 # Scoped to near Home (50km radius) rather than a state/nationwide pull, to
@@ -21,7 +22,7 @@
 #
 # This does NOT check for or refresh STALE existing entries (verification
 # age) - that's a deliberate choice to keep this "fetch new" script fast.
-# Run `charger_find_tesla.py --stale --all` yourself if you want to refresh
+# Run `archive/charger_find_tesla.py --stale --all` yourself if you want to refresh
 # aging Tesla entries; PlugShare has no separate staleness flag today.
 #
 # (AGENTS.local.md): AmpCharge was already wired into charger_find.py's
@@ -52,8 +53,8 @@ your real data. Run the two scripts directly with a wider --state/--country
 scope yourself if you want a broader sweep than "near Home, 50km".
 
 Steps run, in order:
-  1. Tesla Superchargers      (charger_find_tesla.py --sc --near Home --radius-km 50 --new --all)
-  2. Tesla Destination Chargers (charger_find_tesla.py --dc --near Home --radius-km 50 --new --all)
+  1. Tesla Superchargers      (archive/charger_find_tesla.py --sc --near Home --radius-km 50 --new --all)
+  2. Tesla Destination Chargers (archive/charger_find_tesla.py --dc --near Home --radius-km 50 --new --all)
   3. Chargefox network         (charger_find.py --sync-chargefox)
   4. EVX Kerbside Polechargers (charger_find.py --sync-evx)
   5. Evie Networks             (charger_find.py --sync-evie)
@@ -73,11 +74,17 @@ EOF
 fi
 
 echo "==> Tesla Superchargers (near Home, 50km)"
-./charger_find_tesla.py --sc --near Home --radius-km 50 --new --all
+# charger_find_tesla.py was archived to Tools/archive/ (REQ-089-era cleanup) -
+# it's the only thing that discovers NEW Tesla stations (chargers_tesla.py is
+# a read-only registry adapter, not a scraper), so it's still called here from
+# its archived path rather than removed. REQ-095 tracks fully absorbing this
+# logic into providers_chargers/chargers_tesla.py so charger_find.py needs no
+# archive/ dependency at all - see AGENTS.local.md.
+./archive/charger_find_tesla.py --sc --near Home --radius-km 50 --new --all
 
 echo
 echo "==> Tesla Destination Chargers (near Home, 50km)"
-./charger_find_tesla.py --dc --near Home --radius-km 50 --new --all
+./archive/charger_find_tesla.py --dc --near Home --radius-km 50 --new --all
 
 echo
 echo "==> Chargefox network (Australia)"
