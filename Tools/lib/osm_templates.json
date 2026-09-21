@@ -1,0 +1,707 @@
+{
+  "brand_catalog": {
+    "tesla supercharger": {
+      "amenity": "charging_station",
+      "brand": "Tesla Supercharger",
+      "brand:wikidata": "Q17089620",
+      "operator": "Tesla",
+      "operator:wikidata": "Q478214",
+      "network": "Supercharger",
+      "network:wikidata": "Q17089620",
+      "manufacturer": "Tesla",
+      "manufacturer:wikidata": "Q478214",
+      "model": "V3 Supercharger",
+      "model:wikidata": "Q116171539",
+      "socket:type2_combo": "yes",
+      "socket:type2_combo:voltage": "400",
+      "socket:type2_combo:output": "250kW",
+      "frequency": "0",
+      "motorcar": "yes",
+      "fee": "yes",
+      "parking:fee": "no",
+      "payment:app:tesla": "yes",
+      "opening_hours": "24/7"
+    },
+    "tesla destination": {
+      "amenity": "charging_station",
+      "brand": "Tesla",
+      "brand:wikidata": "Q478214",
+      "network": "Tesla Destination",
+      "operator": "Tesla",
+      "operator:wikidata": "Q478214",
+      "socket:type2": "yes",
+      "socket:type2:output": "11kW",
+      "access": "customers",
+      "motorcar": "yes"
+    },
+    "tesla service": {
+      "shop": "car_repair",
+      "brand": "Tesla",
+      "brand:wikidata": "Q478214",
+      "operator": "Tesla",
+      "operator:wikidata": "Q478214"
+    },
+    "tesla store": {
+      "shop": "car",
+      "brand": "Tesla",
+      "brand:wikidata": "Q478214",
+      "operator": "Tesla",
+      "operator:wikidata": "Q478214"
+    },
+    "tesla showroom": {
+      "shop": "car",
+      "brand": "Tesla",
+      "brand:wikidata": "Q478214",
+      "operator": "Tesla",
+      "operator:wikidata": "Q478214"
+    },
+    "chargefox": {
+      "amenity": "charging_station",
+      "brand": "Chargefox",
+      "brand:wikidata": "Q108888062",
+      "operator": "Chargefox",
+      "socket:type2_combo": "yes",
+      "motorcar": "yes",
+      "fee": "yes"
+    },
+    "evie networks": {
+      "amenity": "charging_station",
+      "brand": "Evie Networks",
+      "operator": "Evie Networks",
+      "socket:type2_combo": "yes",
+      "motorcar": "yes",
+      "fee": "yes"
+    },
+    "bp pulse": {
+      "amenity": "charging_station",
+      "brand": "BP pulse",
+      "brand:wikidata": "Q109675270",
+      "operator": "BP pulse",
+      "socket:type2_combo": "yes",
+      "motorcar": "yes",
+      "fee": "yes"
+    },
+    "nrma": {
+      "amenity": "charging_station",
+      "brand": "NRMA",
+      "brand:wikidata": "Q6954848",
+      "operator": "NRMA",
+      "socket:type2_combo": "yes",
+      "motorcar": "yes"
+    },
+    "supa iga": {
+      "shop": "supermarket",
+      "brand": "IGA",
+      "brand:wikidata": "Q5965406",
+      "brand:wikipedia": "en:IGA (Australian supermarket group)"
+    },
+    "iga": {
+      "shop": "supermarket",
+      "brand": "IGA",
+      "brand:wikidata": "Q5965406",
+      "brand:wikipedia": "en:IGA (Australian supermarket group)"
+    },
+    "woolworths": {
+      "shop": "supermarket",
+      "brand": "Woolworths",
+      "brand:wikidata": "Q3249089",
+      "brand:wikipedia": "en:Woolworths Supermarkets"
+    },
+    "coles": {
+      "shop": "supermarket",
+      "brand": "Coles",
+      "brand:wikidata": "Q2982464",
+      "brand:wikipedia": "en:Coles Supermarkets"
+    },
+    "aldi": {
+      "shop": "supermarket",
+      "brand": "ALDI",
+      "brand:wikidata": "Q41171672",
+      "brand:wikipedia": "en:Aldi"
+    },
+    "chemist warehouse": {
+      "amenity": "pharmacy",
+      "brand": "Chemist Warehouse",
+      "brand:wikidata": "Q5090623",
+      "dispensing": "yes"
+    },
+    "priceline pharmacy": {
+      "amenity": "pharmacy",
+      "brand": "Priceline Pharmacy",
+      "brand:wikidata": "Q7242602",
+      "dispensing": "yes"
+    },
+    "terrywhite chemmart": {
+      "amenity": "pharmacy",
+      "brand": "TerryWhite Chemmart",
+      "brand:wikidata": "Q28180479",
+      "dispensing": "yes"
+    },
+    "mcdonald's": {
+      "amenity": "fast_food",
+      "brand": "McDonald's",
+      "brand:wikidata": "Q3805",
+      "cuisine": "burger",
+      "takeaway": "yes"
+    },
+    "hungry jack's": {
+      "amenity": "fast_food",
+      "brand": "Hungry Jack's",
+      "brand:wikidata": "Q1638018",
+      "cuisine": "burger",
+      "takeaway": "yes"
+    },
+    "kfc": {
+      "amenity": "fast_food",
+      "brand": "KFC",
+      "brand:wikidata": "Q524757",
+      "cuisine": "chicken",
+      "takeaway": "yes"
+    },
+    "subway": {
+      "amenity": "fast_food",
+      "brand": "Subway",
+      "brand:wikidata": "Q244457",
+      "cuisine": "sandwich",
+      "takeaway": "yes"
+    },
+    "bakers delight": {
+      "shop": "bakery",
+      "brand": "Bakers Delight",
+      "brand:wikidata": "Q4849303"
+    },
+    "ampol": {
+      "amenity": "fuel",
+      "brand": "Ampol",
+      "brand:wikidata": "Q4748530"
+    },
+    "bp": {
+      "amenity": "fuel",
+      "brand": "BP",
+      "brand:wikidata": "Q152057"
+    },
+    "7-eleven": {
+      "shop": "convenience",
+      "brand": "7-Eleven",
+      "brand:wikidata": "Q259340"
+    }
+  },
+  "templates": {
+    "tesla_supercharger": {
+      "label": "Tesla Supercharger Station (v3/v4)",
+      "category": "Tesla & EV Charging",
+      "primary_tags": {
+        "amenity": "charging_station",
+        "brand": "Tesla Supercharger",
+        "brand:wikidata": "Q17089620",
+        "operator": "Tesla",
+        "operator:wikidata": "Q478214",
+        "network": "Supercharger",
+        "network:wikidata": "Q17089620",
+        "manufacturer": "Tesla",
+        "manufacturer:wikidata": "Q478214",
+        "model": "V3 Supercharger",
+        "model:wikidata": "Q116171539",
+        "socket:type2_combo": "yes",
+        "socket:type2_combo:voltage": "400",
+        "socket:type2_combo:output": "250kW",
+        "frequency": "0",
+        "motorcar": "yes",
+        "fee": "yes",
+        "parking:fee": "no",
+        "payment:app:tesla": "yes",
+        "opening_hours": "24/7"
+      },
+      "suggested_tags": {
+        "capacity": "6",
+        "socket:type2_combo": "6",
+        "model": "V3 Supercharger",
+        "model:wikidata": "Q116171539",
+        "socket:type2_combo:output": "250kW",
+        "access": "yes",
+        "opening_hours": "24/7"
+      },
+      "keywords": [
+        "tesla supercharger",
+        "supercharger",
+        "tesla charger station"
+      ]
+    },
+    "tesla_destination": {
+      "label": "Tesla Destination Charger (Wall Connector)",
+      "category": "Tesla & EV Charging",
+      "primary_tags": {
+        "amenity": "charging_station",
+        "brand": "Tesla",
+        "brand:wikidata": "Q478214",
+        "network": "Tesla Destination",
+        "operator": "Tesla",
+        "operator:wikidata": "Q478214",
+        "socket:type2": "yes",
+        "socket:type2:output": "11kW",
+        "access": "customers",
+        "motorcar": "yes"
+      },
+      "suggested_tags": {
+        "capacity": "2",
+        "fee": "no",
+        "socket:type2:output": "22kW",
+        "access": "destination"
+      },
+      "keywords": [
+        "tesla destination",
+        "tesla wall connector",
+        "destination charger"
+      ]
+    },
+    "tesla_store": {
+      "label": "Tesla Store / Showroom",
+      "category": "Tesla & EV Charging",
+      "primary_tags": {
+        "shop": "car",
+        "brand": "Tesla",
+        "brand:wikidata": "Q478214",
+        "operator": "Tesla",
+        "operator:wikidata": "Q478214"
+      },
+      "suggested_tags": {
+        "wheelchair": "yes",
+        "opening_hours": "Mo-Sa 09:00-17:30; Su 10:00-16:00"
+      },
+      "keywords": [
+        "tesla store",
+        "tesla showroom",
+        "tesla retail"
+      ]
+    },
+    "tesla_service": {
+      "label": "Tesla Service Centre",
+      "category": "Tesla & EV Charging",
+      "primary_tags": {
+        "shop": "car_repair",
+        "brand": "Tesla",
+        "brand:wikidata": "Q478214",
+        "operator": "Tesla",
+        "operator:wikidata": "Q478214"
+      },
+      "suggested_tags": {
+        "service:vehicle:electric": "yes",
+        "opening_hours": "Mo-Fr 08:00-17:00"
+      },
+      "keywords": [
+        "tesla service",
+        "tesla repair",
+        "tesla collision",
+        "tesla body shop"
+      ]
+    },
+    "ev_charging_station": {
+      "label": "Universal EV Fast Charging Station",
+      "category": "Tesla & EV Charging",
+      "primary_tags": {
+        "amenity": "charging_station",
+        "fee": "yes",
+        "access": "yes",
+        "motorcar": "yes",
+        "socket:type2_combo": "yes"
+      },
+      "suggested_tags": {
+        "capacity": "2",
+        "socket:type2_combo:output": "150kW",
+        "parking:fee": "no"
+      },
+      "keywords": [
+        "ev charging",
+        "charging station",
+        "fast charger",
+        "chargefox",
+        "evie",
+        "bp pulse"
+      ]
+    },
+    "basketball_court": {
+      "label": "Basketball Court / Half Court",
+      "category": "Sports & Recreation",
+      "primary_tags": {
+        "leisure": "pitch",
+        "sport": "basketball",
+        "access": "yes"
+      },
+      "suggested_tags": {
+        "surface": "asphalt",
+        "lit": "no",
+        "hoops": "1",
+        "covered": "no"
+      },
+      "keywords": [
+        "basket ball",
+        "basketball",
+        "hoop",
+        "half court",
+        "basketball court",
+        "bball"
+      ]
+    },
+    "tennis_court": {
+      "label": "Tennis Court",
+      "category": "Sports & Recreation",
+      "primary_tags": {
+        "leisure": "pitch",
+        "sport": "tennis",
+        "access": "yes"
+      },
+      "suggested_tags": {
+        "surface": "hard",
+        "lit": "no",
+        "net": "yes"
+      },
+      "keywords": [
+        "tennis",
+        "tennis court",
+        "tennis club"
+      ]
+    },
+    "pickleball_court": {
+      "label": "Pickleball Court",
+      "category": "Sports & Recreation",
+      "primary_tags": {
+        "leisure": "pitch",
+        "sport": "pickleball",
+        "access": "yes"
+      },
+      "suggested_tags": {
+        "surface": "acrylic",
+        "lit": "no"
+      },
+      "keywords": [
+        "pickleball",
+        "pickle ball"
+      ]
+    },
+    "playground": {
+      "label": "Children's Playground",
+      "category": "Sports & Recreation",
+      "primary_tags": {
+        "leisure": "playground",
+        "access": "yes"
+      },
+      "suggested_tags": {
+        "wheelchair": "yes",
+        "min_age": "2",
+        "max_age": "12",
+        "shade": "yes",
+        "fenced": "yes"
+      },
+      "keywords": [
+        "playground",
+        "play area",
+        "play space",
+        "kids play",
+        "play park"
+      ]
+    },
+    "skate_park": {
+      "label": "Skate Park / Bowl",
+      "category": "Sports & Recreation",
+      "primary_tags": {
+        "leisure": "pitch",
+        "sport": "skateboard",
+        "access": "yes"
+      },
+      "suggested_tags": {
+        "surface": "concrete",
+        "lit": "no"
+      },
+      "keywords": [
+        "skate park",
+        "skatepark",
+        "skate bowl",
+        "pump track"
+      ]
+    },
+    "dog_park": {
+      "label": "Off-Leash Dog Park",
+      "category": "Sports & Recreation",
+      "primary_tags": {
+        "leisure": "dog_park",
+        "access": "yes"
+      },
+      "suggested_tags": {
+        "fenced": "yes",
+        "drinking_water": "yes",
+        "dog:waste_disposal": "yes"
+      },
+      "keywords": [
+        "dog park",
+        "off leash",
+        "off-leash",
+        "dog exercise",
+        "dog off-leash"
+      ]
+    },
+    "outdoor_gym": {
+      "label": "Outdoor Fitness Equipment",
+      "category": "Sports & Recreation",
+      "primary_tags": {
+        "leisure": "fitness_station",
+        "access": "yes",
+        "fee": "no"
+      },
+      "suggested_tags": {
+        "surface": "grass"
+      },
+      "keywords": [
+        "fitness station",
+        "outdoor gym",
+        "exercise equipment",
+        "workout station"
+      ]
+    },
+    "public_toilets": {
+      "label": "Public Restrooms / Toilets",
+      "category": "Public Amenities",
+      "primary_tags": {
+        "amenity": "toilets",
+        "access": "yes",
+        "fee": "no"
+      },
+      "suggested_tags": {
+        "wheelchair": "yes",
+        "toilets:wheelchair": "yes",
+        "changing_table": "yes",
+        "indoor": "no",
+        "unisex": "yes",
+        "male": "yes",
+        "female": "yes"
+      },
+      "keywords": [
+        "public toilet",
+        "toilets",
+        "restroom",
+        "restrooms",
+        "bathroom",
+        "amenities block",
+        "wc",
+        "loo"
+      ]
+    },
+    "shopping_centre_toilets": {
+      "label": "Shopping Centre Indoor Restrooms",
+      "category": "Public Amenities",
+      "primary_tags": {
+        "amenity": "toilets",
+        "access": "customers",
+        "fee": "no",
+        "indoor": "yes",
+        "location": "indoor"
+      },
+      "suggested_tags": {
+        "wheelchair": "yes",
+        "changing_table": "yes",
+        "toilets:wheelchair": "yes"
+      },
+      "keywords": [
+        "centre toilets",
+        "mall toilets",
+        "mall restroom"
+      ]
+    },
+    "drinking_water": {
+      "label": "Drinking Water Bubbler / Refill Station",
+      "category": "Public Amenities",
+      "primary_tags": {
+        "amenity": "drinking_water",
+        "access": "yes",
+        "fee": "no"
+      },
+      "suggested_tags": {
+        "bottle": "yes",
+        "wheelchair": "yes",
+        "dog": "yes"
+      },
+      "keywords": [
+        "drinking water",
+        "water fountain",
+        "water bubbler",
+        "water refill",
+        "tap"
+      ]
+    },
+    "bbq": {
+      "label": "Public BBQ / Barbecue Grill",
+      "category": "Public Amenities",
+      "primary_tags": {
+        "amenity": "bbq",
+        "access": "yes",
+        "fee": "no"
+      },
+      "suggested_tags": {
+        "fuel": "electric",
+        "covered": "yes"
+      },
+      "keywords": [
+        "barbecue",
+        "bbq",
+        "public bbq",
+        "electric bbq"
+      ]
+    },
+    "picnic_table": {
+      "label": "Picnic Table & Seating",
+      "category": "Public Amenities",
+      "primary_tags": {
+        "leisure": "picnic_table",
+        "access": "yes"
+      },
+      "suggested_tags": {
+        "covered": "yes",
+        "material": "wood",
+        "wheelchair": "yes"
+      },
+      "keywords": [
+        "picnic table",
+        "picnic setting",
+        "picnic shelter"
+      ]
+    },
+    "supermarket": {
+      "label": "Supermarket / Grocer",
+      "category": "Retail & Shopping",
+      "primary_tags": {
+        "shop": "supermarket"
+      },
+      "suggested_tags": {
+        "wheelchair": "yes",
+        "opening_hours": "Mo-Su 07:00-21:00",
+        "payment:contactless": "yes"
+      },
+      "keywords": [
+        "supermarket",
+        "grocer",
+        "grocery",
+        "supa iga",
+        "iga",
+        "coles",
+        "woolworths",
+        "woolies",
+        "aldi"
+      ]
+    },
+    "shopping_mall": {
+      "label": "Shopping Mall / Town Centre",
+      "category": "Retail & Shopping",
+      "primary_tags": {
+        "shop": "mall"
+      },
+      "suggested_tags": {
+        "wheelchair": "yes",
+        "toilets": "yes",
+        "parking": "surface"
+      },
+      "keywords": [
+        "shopping centre",
+        "town centre",
+        "shopping plaza",
+        "plaza",
+        "mall"
+      ]
+    },
+    "pharmacy": {
+      "label": "Chemist / Pharmacy",
+      "category": "Health & Beauty",
+      "primary_tags": {
+        "amenity": "pharmacy",
+        "dispensing": "yes"
+      },
+      "suggested_tags": {
+        "healthcare": "pharmacy",
+        "wheelchair": "yes"
+      },
+      "keywords": [
+        "chemist",
+        "pharmacy",
+        "apothecary",
+        "chemist warehouse",
+        "priceline"
+      ]
+    },
+    "cafe": {
+      "label": "Cafe / Coffee Shop",
+      "category": "Dining & Food",
+      "primary_tags": {
+        "amenity": "cafe",
+        "cuisine": "coffee_shop"
+      },
+      "suggested_tags": {
+        "takeaway": "yes",
+        "outdoor_seating": "yes",
+        "wheelchair": "yes"
+      },
+      "keywords": [
+        "cafe",
+        "coffee",
+        "espresso",
+        "roastery",
+        "specialty coffee"
+      ]
+    },
+    "bakery": {
+      "label": "Bakery / Bakehouse",
+      "category": "Dining & Food",
+      "primary_tags": {
+        "shop": "bakery"
+      },
+      "suggested_tags": {
+        "takeaway": "yes",
+        "pastry": "yes"
+      },
+      "keywords": [
+        "bakery",
+        "bakehouse",
+        "patisserie",
+        "bakers delight"
+      ]
+    },
+    "restaurant": {
+      "label": "Restaurant / Dining",
+      "category": "Dining & Food",
+      "primary_tags": {
+        "amenity": "restaurant"
+      },
+      "suggested_tags": {
+        "takeaway": "yes",
+        "outdoor_seating": "yes",
+        "wheelchair": "yes"
+      },
+      "keywords": [
+        "restaurant",
+        "pizzeria",
+        "trattoria",
+        "bistro",
+        "grill",
+        "dining"
+      ]
+    },
+    "fast_food": {
+      "label": "Fast Food Outlet",
+      "category": "Dining & Food",
+      "primary_tags": {
+        "amenity": "fast_food",
+        "takeaway": "yes"
+      },
+      "suggested_tags": {
+        "drive_through": "no",
+        "wheelchair": "yes"
+      },
+      "keywords": [
+        "fast food",
+        "takeaway",
+        "mcdonald's",
+        "maccas",
+        "hungry jack's",
+        "kfc",
+        "subway"
+      ]
+    }
+  }
+}
