@@ -199,3 +199,57 @@ def extract_json_records(body):
         keys = list(data.keys()) if isinstance(data, dict) else type(data).__name__
         raise ValueError(f"unexpected response shape - top-level: {keys}")
     return records
+
+
+def save_audited_osm_to_tesla_registry(
+    station_key: str,
+    osm_lat: float,
+    osm_lon: float,
+    osm_node_id: int = None
+) -> bool:
+    """Saves verified OSM GPS coordinates and node ID to local Tesla registry."""
+    from datetime import datetime, timezone
+    candidates = []
+    tessie_dir = resolve_tessie_data_home()
+    if tessie_dir:
+        candidates.append(tessie_dir)
+    candidates.append(os.path.join(REPO_ROOT, "Tessie"))
+
+    saved_any = False
+    for c_dir in candidates:
+        for filename in ("tesla_superchargers.json", "tesla_chargers.json"):
+            fpath = os.path.join(c_dir, filename)
+            if not os.path.isfile(fpath):
+                continue
+            try:
+                with open(fpath, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+
+                target_key = None
+                if isinstance(data, dict):
+                    if station_key in data:
+                        target_key = station_key
+                    else:
+                        st_norm = station_key.lower().replace(" ", "").replace("_", "")
+                        for k in data.keys():
+                            k_norm = k.lower().replace(" ", "").replace("_", "")
+                            if st_norm == k_norm or st_norm in k_norm or k_norm in st_norm:
+                                target_key = k
+                                break
+
+                if target_key:
+                    entry = data[target_key]
+                    if "location" not in entry or not isinstance(entry["location"], dict):
+                        entry["location"] = {}
+                    entry["location"]["osm_lat"] = round(float(osm_lat), 6)
+                    entry["location"]["osm_lon"] = round(float(osm_lon), 6)
+                    if osm_node_id:
+                        entry["location"]["osm_node_id"] = int(osm_node_id)
+                    entry["location"]["osm_audited_utc"] = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+                    with open(fpath, "w", encoding="utf-8") as f:
+                        json.dump(data, f, indent=2, ensure_ascii=False)
+                    saved_any = True
+            except Exception:
+                continue
+    return saved_any
