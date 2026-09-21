@@ -45,6 +45,45 @@
 5. **CLI Help Text Stays User-Facing (No TODO/REQ/BUG/AGENTS.md References)** (added 2026-09-08, REQ-045):
    - A script's own `--help`/argparse `help=` text is what a real user reads - it must NEVER reference this document's TODO-XXX/REQ-XXX/BUG-XXX IDs or say "AGENTS.md". Put that context in code comments/docstrings instead, which agents read but `--help` never surfaces. This rule applies to every script in the repo, not just the one it was first caught in.
 
+6. **Full-Repo Reference Sweep Before Archiving, Moving, or Renaming Any File** (added 2026-09-21, BUG-120):
+   - Moving a file to `Tools/archive/` (or renaming/relocating it anywhere) is not done until every OTHER
+     file that imports it, subprocess-calls it, or invokes it by its old path has been found and fixed -
+     `grep -rn "<old_name_without_ext>" --include=*.py --include=*.sh --include=*.md .` across the WHOLE
+     repo, not just the one entry point you happen to be testing from. REQ-089's 7-file rename did this
+     rigorously (a full 27-file reference audit, functional vs. cosmetic references separated and both
+     fixed); this week's archiving of `charger_find_tesla.py` did not, and silently broke
+     `sync_charger_all.sh` (aborted the entire 11-step sync on line 1) and `chargers_manager.py`'s live
+     Tesla re-verify - neither surfaced by `py_compile`, only by someone actually invoking them. Test the
+     actual entry points that reach the moved code (not just the one you moved it FOR) before calling an
+     archive/rename complete.
+
+7. **Check for ID Collisions Before Assigning a New REQ-/BUG-/TODO- Number** (added 2026-09-21):
+   - Before writing a new `REQ-NNN`/`BUG-NNN`/`TODO-NNN` row in `AGENTS.local.md`, grep for that exact ID
+     first (`grep -n "TODO-038" AGENTS.local.md`, etc.) to confirm it isn't already taken - a real
+     collision happened (two unrelated sessions both wrote `TODO-038` for the same feature, one entirely
+     unaware of the other) because neither checked. Separately: an agent's own commit-message bug
+     numbering (Antigravity's informal "BUG-068", "BUG-069" style references in commit messages this week)
+     MUST correspond to a real row in this file's own tracker, not a private, un-journaled numbering
+     scheme - if a bug doesn't have a row here, it isn't tracked, no matter what a commit message calls it.
+
+8. **Cross-Agent Handover Notes Go Into `AGENTS.local.md`'s Trackers, Not a New Standalone Document**
+   (added 2026-09-21): Writing a narrative "what I did this week" document (`ANTIGRAVITY_FEEDBACK.md`,
+   `CLAUDE_FEEDBACK.md`) is fine as a readable summary, but any OPEN action item in one must also get a
+   real `REQ-`/`BUG-`/`TODO-` row in `AGENTS.local.md` - that's the one place status is tracked for both
+   agents (see `AGENTS.local.md` Section 0). A standalone feedback doc with its own open items that never
+   make it into the real tracker is exactly how work gets silently dropped between agents/sessions.
+
+9. **"Verified" Means You Ran It and Are Reporting Real Output - Say So Explicitly When You Didn't**
+   (added 2026-09-21): A status of "✅ Complete" / "verified" / a specific accuracy figure (e.g. "100%
+   extraction accuracy across 38 invoices") must be backed by an actual command run against real data,
+   with its real output referenced concretely - not a description of what the code is intended to do.
+   Two real incidents this week: `CLAUDE_FEEDBACK.md` cited a `supercharge.info` API endpoint
+   (`/allSiteChanges`) that returns a live 404 and doesn't match the code, which calls a different URL;
+   and TODO-012/REQ-092/093 claimed verified 100% AGL invoice extraction accuracy when a live re-run
+   against the real PDFs on disk showed 60% silently returning null. If something is implemented but
+   genuinely not yet run against real data, say exactly that ("implemented, not yet tested live") rather
+   than "verified" - `py_compile` passing, or the code merely existing, is not verification.
+
 ---
 
 ## 2. Table Display & UI Formatting Standards
@@ -222,3 +261,9 @@ Before completing any prompt or task, every agent must perform the following che
 4. **Docs Update**: If a request was fulfilled or a new bug/TODO was discovered, update the Active Requests / Known Bugs / TODOs sections of `AGENTS.local.md` (not this file - this file stays generic and PII-free).
 5. **Insertion-Boundary Check** (added 2026-09-16, after a real incident): `python3 -m py_compile` proves a file parses, nothing more - it cannot catch a splice that silently deletes the last line (often a `return`) of the function immediately BEFORE or AFTER a new block you inserted. When adding a new top-level function/class between two existing ones, re-read the few lines directly above and below the insertion point in the actual diff, not just the lines you added, to confirm the surrounding code is still intact.
 6. **Git Hygiene Check**: Before considering a session that touched git done, run `git status` and actually read its output (not just its exit code). A crashed or interrupted git command can leave `.git/index.lock` (or another lock file) behind, which silently blocks every future `git add`/`git commit` - yours in a later session, or the next agent's - until someone notices and clears it; git itself will often warn about this on a plain `git status`.
+7. **Reference Sweep Check** (added 2026-09-21, BUG-120): If a file was moved, renamed, or archived this
+   session, grep the WHOLE repo for its old name/path before calling the session done, and actually run
+   (not just `py_compile`) at least one real entry point that depends on it - see Section 1 item 6.
+8. **Claim-Honesty Check** (added 2026-09-21, BUG-122/BUG-126): Before writing "verified"/"complete"/a
+   specific accuracy number anywhere (a tracker row, a handover doc, a commit message), confirm you
+   actually ran it against real data and can point to the real output - see Section 1 item 9.
