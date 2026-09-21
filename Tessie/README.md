@@ -106,6 +106,12 @@ A suite of tools for analyzing [Tessie](https://share.tessie.com/bGRu5q9S2kB) te
 # Inspect a specific station by PlugShare location ID and save it into the registry:
 ./Tools/charger_find.py --plugshare 801149 --save
 
+# Discover charging stops along a driving route corridor (in progress order with detour distance, arrival SoC %, Stop Quality Score, and 1-click ABRP link):
+./Tools/charger_find.py --from "Sydney" --to "Brisbane" --sc
+./Tools/charger_find.py --from "Sydney" --to "Brisbane" --sc --sort score --limit 10
+./Tools/charger_find.py --from Home --to "Canberra" --via "Goulburn" --dc --min-kw 150 --soc 90
+./Tools/charger_find.py --from "Sydney" --to "Melbourne" --network ampcharge --sort price --corridor 10
+
 # Backfill and refresh live pricing for all stations in radius:
 ./Tools/charger_find.py --near Home --dc --radius 15 --refresh-prices
 ```

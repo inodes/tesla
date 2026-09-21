@@ -325,7 +325,12 @@ def filter_station_records(
                     _f_reg = None
                     station_has_supermarket = None
 
-            fac = _f_reg.get_station_facilities(station_key=st.key, station_name=st.name, lat=st.lat, lon=st.lon) if _f_reg else None
+            try:
+                from lib.station_facilities import resolve_station_physical_coords
+                phys_lat, phys_lon, _ = resolve_station_physical_coords(st)
+            except Exception:
+                phys_lat, phys_lon = st.lat, st.lon
+            fac = _f_reg.get_station_facilities(station_key=st.key, station_name=st.name, lat=phys_lat, lon=phys_lon) if _f_reg else None
             if min_fac and (not fac or (fac.get("score", 0.0) < min_score)):
                 continue
 
@@ -564,6 +569,10 @@ class UnifiedStationRecord:
                 "lon": self.lon,
                 "radius_m": 250 if self.speed_tier == "supercharger" else 150,
                 "timezone": self.timezone,
+                "distance_km": self.distance_km,
+                "route_progress_km": getattr(self, "route_progress_km", None),
+                "detour_km": getattr(self, "detour_km", None),
+                "stop_score": getattr(self, "stop_score", None),
             },
             "hardware": {
                 "speed_tier": self.speed_tier,

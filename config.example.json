@@ -22,5 +22,10 @@
   "tariffs": {
     "default_currency": "AUD"
   },
-  "default_comparison_vehicle": "mazda_cx8_diesel"
+  "default_comparison_vehicle": "mazda_cx8_diesel",
+  "abrp": {
+    "client_id": "YOUR_ABRP_CLIENT_ID_HERE",
+    "api_key": "YOUR_ABRP_APPLICATION_API_KEY_HERE",
+    "user_token": "YOUR_ABRP_GENERIC_USER_TOKEN_HERE"
+  }
 }
