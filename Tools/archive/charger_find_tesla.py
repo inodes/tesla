@@ -14,8 +14,8 @@ import os
 import sys
 
 # Auto re-exec inside local direnv/pyenv virtual environment if not already active
-_script_dir = os.path.dirname(os.path.abspath(__file__))
-_repo_root = os.path.dirname(_script_dir)
+_tools_dir = os.path.dirname(os.path.abspath(__file__))
+_repo_root = os.path.dirname(_tools_dir)
 for _py_candidate in [
     os.path.join(_repo_root, ".direnv", "python-3.11", "bin", "python3"),
     os.path.join(_repo_root, ".direnv", "python-3.11", "bin", "python"),
@@ -31,9 +31,9 @@ for _py_candidate in [
             except Exception:
                 pass
 
-_lib_dir = os.path.join(_script_dir, "lib")
-if _script_dir not in sys.path:
-    sys.path.insert(0, _script_dir)
+_lib_dir = os.path.join(_tools_dir, "lib")
+if _tools_dir not in sys.path:
+    sys.path.insert(0, _tools_dir)
 if _lib_dir not in sys.path:
     sys.path.insert(0, _lib_dir)
 
@@ -2486,8 +2486,27 @@ class TeslaChargerExplorer:
             _field("📌", "Find Us Location Name", list_n or loc_n)
         _field("🏷️", "Short ID", meta.get('short_name', '-'))
         _field("📮", "Address", loc.get('address', '-'))
-        if loc.get('lat') is not None and loc.get('lon') is not None:
-            _field("🌐", "GPS Coordinates", f"({loc.get('lat')}, {loc.get('lon')})")
+        st_lat = loc.get('lat')
+        st_lon = loc.get('lon')
+        osm_lat = loc.get('osm_lat') or data.get('osm_lat')
+        osm_lon = loc.get('osm_lon') or data.get('osm_lon')
+        if st_lat is not None and st_lon is not None:
+            if osm_lat is not None and osm_lon is not None:
+                try:
+                    offset_m = haversine_distance_km(float(st_lat), float(st_lon), float(osm_lat), float(osm_lon)) * 1000.0
+                except Exception:
+                    offset_m = None
+                _field("🌐", "Tesla GPS", f"({float(st_lat):.6f}, {float(st_lon):.6f})")
+                if offset_m is not None:
+                    if offset_m > 25.0:
+                        err_str = f" {C_YELLOW}~{offset_m:.0f}m offset !{C_RESET}"
+                    else:
+                        err_str = f" {C_GREEN}~{offset_m:.0f}m (aligned){C_RESET}"
+                else:
+                    err_str = ""
+                _field("🌐", "OSM GPS", f"({float(osm_lat):.6f}, {float(osm_lon):.6f}){err_str}")
+            else:
+                _field("🌐", "GPS Coordinates", f"({st_lat}, {st_lon})")
         _field("🌐", "Timezone", tz_name)
         _field("🔗", "Find Us URL", meta.get('findus_url', '-'))
         _field("🔌", "Hardware", f"{hw.get('stalls')} Stalls | Up to {hw.get('max_power_kw')} kW ({hw.get('tier')})")
@@ -2569,8 +2588,10 @@ class TeslaChargerExplorer:
 
         loc = data.get("location", {}) if isinstance(data, dict) else {}
         st_name = (data.get("tesla_metadata", {}) or {}).get("findus_location_name") or station_key
-        if _fac_reg and loc.get("lat") and loc.get("lon"):
-            cached_fac = _fac_reg.get_station_facilities(station_key=station_key, station_name=st_name, lat=loc.get("lat"), lon=loc.get("lon"))
+        st_lat = loc.get("lat") or loc.get("latitude")
+        st_lon = loc.get("lon") or loc.get("longitude")
+        if _fac_reg and st_lat and st_lon:
+            cached_fac = _fac_reg.get_station_facilities(station_key=station_key, station_name=st_name, lat=st_lat, lon=st_lon)
             if cached_fac and format_facilities_summary_card:
                 lines = format_facilities_summary_card(cached_fac, indent="  ")
                 if lines:
@@ -3638,19 +3659,19 @@ def browse_stations_by_type(explorer: TeslaChargerExplorer, types_to_fetch: list
 
 def main():
     parser = argparse.ArgumentParser(
-        usage="""charger_find_tesla.py -i [--region NAME]
-   or:  charger_find_tesla.py [--near PLACE | --address ADDR | --coords LAT,LON | --gps]
+        usage="""charger_find.py -i [--region NAME]
+   or:  charger_find.py [--near PLACE | --address ADDR | --coords LAT,LON | --gps]
                      [--country NAME | --state ST | --suburb NAME] [--sc | --dc]
                      [--radius-km KM] [--time HH:MM] [--sort dist|price|power|stalls]
                      [--limit N] --list
-   or:  charger_find_tesla.py [--sc | --dc] [--tier V2|V3|V4|AC] [--filter EXPR]
+   or:  charger_find.py [--sc | --dc] [--tier V2|V3|V4|AC] [--filter EXPR]
                      [--new | --stale | --unpriced | --renamed] --all [--save]
-   or:  charger_find_tesla.py --inspect QUERY [--live] [--save]
-   or:  charger_find_tesla.py --url URL [--live] [--save]
+   or:  charger_find.py --inspect QUERY [--live] [--save]
+   or:  charger_find.py --url URL [--live] [--save]
 """,
         description="""
 NAME
-    charger_find_tesla.py - Tesla Charger Discovery, Exploration, Query & Scraper Engine
+    charger_find.py - Tesla Charger Discovery, Exploration, Query & Scraper Engine
 
 DESCRIPTION
     Explore, list, search, filter, and scrape technical hardware specs, Time-of-Use
@@ -3661,23 +3682,23 @@ DESCRIPTION
         epilog="""
 EXAMPLES
   Proximity & Time-of-Use Pricing:
-    charger_find_tesla.py --address "100 George St, Sydney" --limit 10 --list
-    charger_find_tesla.py --near "14 Parraweena Rd, Miranda" --limit 10 --list
-    charger_find_tesla.py --near "Ryde" --radius-km 25 --list
-    charger_find_tesla.py --near "Home" --time "14:00" --list
-    charger_find_tesla.py --near "Home" --sort price --limit 10 --list
+    charger_find.py --address "100 George St, Sydney" --limit 10 --list
+    charger_find.py --near "14 Parraweena Rd, Miranda" --limit 10 --list
+    charger_find.py --near "Ryde" --radius-km 25 --list
+    charger_find.py --near "Home" --time "14:00" --list
+    charger_find.py --near "Home" --sort price --limit 10 --list
 
   Filtering:
-    charger_find_tesla.py --sc --tier V3 --list
-    charger_find_tesla.py --sc --filter "tier == 'V3' and rate <= 0.50" --list
-    charger_find_tesla.py --sc --non-tesla --list
-    charger_find_tesla.py --sc --gps --list
+    charger_find.py --sc --tier V3 --list
+    charger_find.py --sc --filter "tier == 'V3' and rate <= 0.50" --list
+    charger_find.py --sc --non-tesla --list
+    charger_find.py --sc --gps --list
 
   Inspection & Batch Scraping (--all always saves - no --save/--sync needed):
-    charger_find_tesla.py --inspect "Macquarie"
-    charger_find_tesla.py --inspect "Miranda" --live
-    charger_find_tesla.py --sc --new --all
-    charger_find_tesla.py --sc --stale --all
+    charger_find.py --inspect "Macquarie"
+    charger_find.py --inspect "Miranda" --live
+    charger_find.py --sc --new --all
+    charger_find.py --sc --stale --all
 """
     )
 
@@ -4150,8 +4171,8 @@ EXAMPLES
         if sys.stdin.isatty():
             interactive_station_selector_loop(filtered, explorer, re_render_cb=render_table_cb)
         else:
-            print(f"\n{C_DIM}To inspect details:     ./Tools/charger_find_tesla.py --inspect <ID_or_Name_or_URL>{C_RESET}")
-            print(f"{C_DIM}To batch update:        ./Tools/charger_find_tesla.py --sc --new --all{C_RESET}\n")
+            print(f"\n{C_DIM}To inspect details:     ./Tools/charger_find.py --inspect <ID_or_Name_or_URL>{C_RESET}")
+            print(f"{C_DIM}To batch update:        ./Tools/charger_find.py --sc --new --all{C_RESET}\n")
         return
 
  # 4. Interactive Mode Fallback
@@ -4170,10 +4191,69 @@ EXAMPLES
         parser.print_help()
 
 
+def interactive_single_station_actions(station_key: str, record: dict) -> None:
+    """Provides interactive browser launch and audit actions for inspected station."""
+    if not sys.stdin.isatty():
+        return
+
+    loc = record.get("location", {}) if isinstance(record, dict) else {}
+    lat = loc.get("lat")
+    lon = loc.get("lon")
+    osm_lat = loc.get("osm_lat") or record.get("osm_lat")
+    osm_lon = loc.get("osm_lon") or record.get("osm_lon")
+    osm_id = loc.get("osm_node_id") or loc.get("osm_id") or record.get("osm_node_id") or record.get("osm_id")
+    url = (record.get("tesla_metadata", {}) or {}).get("findus_url") or record.get("url") or (f"https://www.google.com/maps/search/?api=1&query={lat},{lon}" if lat and lon else None)
+
+    while True:
+        print(f"{C_BOLD}Actions:{C_RESET}")
+        print(f"  [{C_GREEN}m{C_RESET}]   Open this location in your browser (Google Maps)")
+        print(f"  [{C_GREEN}o{C_RESET}]   Open this location in your browser (OpenStreetMap)")
+        print(f"  [{C_GREEN}b{C_RESET}]   Open Charger URL in browser")
+        print(f"  [{C_GREEN}a{C_RESET}]   Audit this station against OpenStreetMap")
+        print(f"  [{C_GREEN}q{C_RESET}]   Quit (or press Enter)")
+
+        try:
+            choice = input(f"\n{C_BOLD}Choice [m/o/b/a/q]: {C_RESET}").strip().lower()
+        except (EOFError, KeyboardInterrupt):
+            print()
+            break
+
+        if choice in ("q", "quit", "exit", ""):
+            break
+        elif choice in ("m", "maps", "gmaps"):
+            target_lat = osm_lat if osm_lat is not None else lat
+            target_lon = osm_lon if osm_lon is not None else lon
+            if target_lat and target_lon:
+                g_url = f"https://www.google.com/maps/search/?api=1&query={target_lat},{target_lon}"
+                webbrowser.open(g_url)
+                print(f"🌐 {C_GREEN}Opened Google Maps in browser: {g_url}{C_RESET}\n")
+        elif choice in ("o", "osm"):
+            if osm_id:
+                osm_url = f"https://www.openstreetmap.org/node/{osm_id}"
+            elif osm_lat and osm_lon:
+                osm_url = f"https://www.openstreetmap.org/?mlat={osm_lat}&mlon={osm_lon}#map=19/{osm_lat}/{osm_lon}"
+            elif lat and lon:
+                osm_url = f"https://www.openstreetmap.org/?mlat={lat}&mlon={lon}#map=19/{lat}/{lon}"
+            else:
+                osm_url = "https://www.openstreetmap.org"
+            webbrowser.open(osm_url)
+            print(f"🌐 {C_GREEN}Opened OpenStreetMap in browser: {osm_url}{C_RESET}\n")
+        elif choice in ("b", "url", "browser"):
+            if url:
+                webbrowser.open(url)
+                print(f"🌐 {C_GREEN}Opened Charger URL in browser: {url}{C_RESET}\n")
+            else:
+                print(f"{C_YELLOW}⚠ No charger URL available.{C_RESET}\n")
+        elif choice in ("a", "audit"):
+            import subprocess
+            cmd = [sys.executable, os.path.join(_tools_dir, "places_osm_editor.py"), "--audit-tesla", station_key]
+            subprocess.run(cmd)
+            print()
+
 
 def inspect_or_scrape_station(explorer: TeslaChargerExplorer, inspect: str = None, url: str = None,
-                               dc: bool = False, sc: bool = False, live: bool = False,
-                               json_out: bool = False, save: bool = False, country: str = "Australia") -> None:
+                                dc: bool = False, sc: bool = False, live: bool = False,
+                                json_out: bool = False, save: bool = False, country: str = "Australia") -> None:
     """
     Resolves a station by name/query or direct Find Us URL, shows it (from
     cache, or freshly scraped when live=True), and saves it into the local
@@ -4218,7 +4298,10 @@ def inspect_or_scrape_station(explorer: TeslaChargerExplorer, inspect: str = Non
                     print(json.dumps({single["title"]: single["_record"]}, indent=2, ensure_ascii=False))
                     return
                 explorer.display_preview(single["title"], single["_record"], from_cache=True)
-                print(f"{C_DIM}To re-scrape live pricing: ./Tools/charger_find_tesla.py --inspect '{single['title']}' --live [--save]{C_RESET}\n")
+                if sys.stdin.isatty():
+                    interactive_single_station_actions(single["title"], single["_record"])
+                else:
+                    print(f"{C_DIM}To re-scrape live pricing: ./Tools/charger_find.py --inspect '{single['title']}' --live [--save]{C_RESET}\n")
                 return
 
  # Fallback to single lookup record getter
@@ -4228,7 +4311,10 @@ def inspect_or_scrape_station(explorer: TeslaChargerExplorer, inspect: str = Non
                     print(json.dumps({cached_key: cached_record}, indent=2, ensure_ascii=False))
                     return
                 explorer.display_preview(cached_key, cached_record, from_cache=True)
-                print(f"{C_DIM}To re-scrape live pricing: ./Tools/charger_find_tesla.py --inspect '{target_inspect}' --live [--save]{C_RESET}\n")
+                if sys.stdin.isatty():
+                    interactive_single_station_actions(cached_key, cached_record)
+                else:
+                    print(f"{C_DIM}To re-scrape live pricing: ./Tools/charger_find.py --inspect '{target_inspect}' --live [--save]{C_RESET}\n")
                 return
 
  # If target_inspect is not a direct URL, resolve exact URL from station catalog or local cache
