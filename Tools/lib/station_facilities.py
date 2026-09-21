@@ -26,6 +26,103 @@ except ImportError:
             def resolve_tessie_data_home():
                 return os.path.expanduser("~/Library/Mobile Documents/com~apple~CloudDocs/Tesla/Tessie")
 
+try:
+    from geo_common import haversine_distance_km
+except ImportError:
+    try:
+        from lib.geo_common import haversine_distance_km
+    except ImportError:
+        try:
+            from Tools.lib.geo_common import haversine_distance_km
+        except ImportError:
+            import math
+            def haversine_distance_km(lat1, lon1, lat2, lon2):
+                r = 6371.0
+                dlat = math.radians(lat2 - lat1)
+                dlon = math.radians(lon2 - lon1)
+                a = (math.sin(dlat / 2.0) ** 2 +
+                     math.cos(math.radians(lat1)) * math.cos(math.radians(lat2)) *
+                     math.sin(dlon / 2.0) ** 2)
+                return r * 2.0 * math.atan2(math.sqrt(a), math.sqrt(1.0 - a))
+
+
+def resolve_station_physical_coords(station: any) -> tuple:
+    """
+    Resolves the authoritative physical stall coordinates for a station according to
+    the hierarchy of truth:
+    a) supercharge.info GPS coords (for Tesla Superchargers) -> highest fidelity physical stall location
+    b) OpenStreetMap (OSM) GPS coords (if available in metadata) -> community mapped stall node
+    c) Source / Tesla GPS coords (station.lat, station.lon) -> compulsory baseline (driveway / entrance)
+
+    Returns:
+        (lat, lon, source_name)
+    """
+    if station is None:
+        return None, None, "Unknown"
+
+    # 1. Base coordinates
+    base_lat = getattr(station, "lat", None)
+    base_lon = getattr(station, "lon", None)
+    if isinstance(station, dict):
+        base_lat = station.get("lat") if station.get("lat") is not None else station.get("latitude")
+        base_lon = station.get("lon") if station.get("lon") is not None else station.get("longitude")
+        if (base_lat is None or base_lon is None) and "location" in station and isinstance(station["location"], dict):
+            base_lat = station["location"].get("lat")
+            base_lon = station["location"].get("lon")
+
+    # 2. Extract station attributes
+    st_source = getattr(station, "source", "") if not isinstance(station, dict) else station.get("source", "")
+    st_tier = getattr(station, "speed_tier", "") if not isinstance(station, dict) else (station.get("speed_tier") or (station.get("hardware") or {}).get("speed_tier", ""))
+    st_name = getattr(station, "name", "") if not isinstance(station, dict) else station.get("name", "")
+    st_meta = getattr(station, "metadata", {}) if not isinstance(station, dict) else station.get("metadata", {})
+    if not isinstance(st_meta, dict):
+        st_meta = {}
+
+    st_network = getattr(station, "network", "") if not isinstance(station, dict) else station.get("network", "")
+    st_views = getattr(station, "views", {}) if not isinstance(station, dict) else station.get("views", {})
+
+    # a) Check supercharge.info if Tesla Supercharger
+    is_supercharger = (
+        st_tier == "supercharger"
+        or "supercharger" in str(st_name).lower()
+        or ("tesla" in str(st_network).lower() and st_tier == "supercharger")
+        or ("tesla" in str(st_source).lower() and st_tier == "supercharger")
+        or (isinstance(st_views, dict) and "tesla" in st_views and st_tier == "supercharger")
+    )
+    if is_supercharger:
+        try:
+            try:
+                from lib.supercharge_info import find_supercharge_site
+            except ImportError:
+                try:
+                    from supercharge_info import find_supercharge_site
+                except ImportError:
+                    from Tools.lib.supercharge_info import find_supercharge_site
+            loc_id = st_meta.get("location_id") or st_meta.get("short_name") or getattr(station, "source_id", None) or (station.get("source_id") if isinstance(station, dict) else None)
+            sc_site = find_supercharge_site(str(st_name), base_lat, base_lon, location_id=loc_id)
+            if sc_site and sc_site.get("gps"):
+                sc_lat = sc_site["gps"].get("latitude")
+                sc_lon = sc_site["gps"].get("longitude")
+                if sc_lat is not None and sc_lon is not None:
+                    return float(sc_lat), float(sc_lon), "supercharge.info"
+        except Exception:
+            pass
+
+    # b) Check OSM coordinates
+    osm_lat = st_meta.get("osm_lat")
+    osm_lon = st_meta.get("osm_lon")
+    if osm_lat is not None and osm_lon is not None:
+        try:
+            return float(osm_lat), float(osm_lon), "OpenStreetMap"
+        except (ValueError, TypeError):
+            pass
+
+    # c) Base / Source coordinates
+    src_label = f"{st_source.capitalize()} GPS" if st_source else "Source GPS"
+    return (float(base_lat) if base_lat is not None else None,
+            float(base_lon) if base_lon is not None else None,
+            src_label)
+
 
 def compute_facility_score(pois: list) -> dict:
     """
@@ -89,6 +186,27 @@ def compute_facility_score(pois: list) -> dict:
     pts_retail = group_pts("Retail & Shopping", 0.7, 0.4)
     pts_leisure = group_pts("Leisure & Entertainment", 0.3, 0.3)
 
+    # Universal detection: Shopping centres, town centres, supermarkets, service plazas, and multi-category retail hubs
+    commercial_categories = {"Dining & Fast Food", "Cafes & Coffee", "Supermarkets & Groceries", "Retail & Shopping"}
+    active_commercial_groups = set(p.get("group") for p in pois if p.get("group") in commercial_categories)
+
+    has_commercial_hub = (
+        len(pois) >= 5 and len(active_commercial_groups) >= 3
+    ) or any(
+        (p.get("tags") or {}).get("landuse") in ("retail", "commercial")
+        or (p.get("tags") or {}).get("shop") in ("mall", "supermarket")
+        or p.get("group") == "Supermarkets & Groceries"
+        or "supermarket" in (p.get("category") or "").lower()
+        or any(s in (p.get("name") or "").lower() for s in (
+            "town centre", "town center", "shopping centre", "shopping center",
+            "shopping plaza", "shopping mall", "homemaker centre", "marketplace",
+            "service centre", "service center", "roadhouse", "travel centre", "travel center"
+        ))
+        for p in pois
+    )
+    if pts_restroom < 2.0 and has_commercial_hub:
+        pts_restroom = max(pts_restroom, 2.4)
+
     raw_score = pts_restroom + pts_dining + pts_coffee + pts_groceries + pts_retail + pts_leisure
     score = round(min(10.0, raw_score), 1)
 
@@ -108,7 +226,7 @@ def compute_facility_score(pois: list) -> dict:
 
  # Emoji summary chips for available categories
     chips_list = []
-    if "Amenities & Services" in grouped:
+    if "Amenities & Services" in grouped or (has_commercial_hub and pts_restroom > 0):
         chips_list.append("🚻")
     if "Cafes & Coffee" in grouped:
         chips_list.append("☕")
@@ -260,7 +378,41 @@ class FacilitiesRegistry:
         if not res:
             return None
 
- # Backwards compatibility: dynamically attach doorstep_100m & immediate_doorstep if missing from older json
+        # If refined coordinates are provided and differ from cached coords (>15m),
+        # dynamically recompute POI distances and quality score from the refined coordinates.
+        if lat is not None and lon is not None and res.get("pois"):
+            r_lat = res.get("lat")
+            r_lon = res.get("lon")
+            if r_lat is not None and r_lon is not None:
+                try:
+                    offset_m = haversine_distance_km(float(r_lat), float(r_lon), float(lat), float(lon)) * 1000.0
+                except Exception:
+                    offset_m = 0.0
+                if offset_m > 15.0:
+                    for p in res["pois"]:
+                        if p.get("lat") is not None and p.get("lon") is not None:
+                            p["dist_m"] = round(haversine_distance_km(float(lat), float(lon), float(p["lat"]), float(p["lon"])) * 1000.0, 1)
+                    res["pois"].sort(key=lambda p: p.get("dist_m", 999.0))
+                    score_info = compute_facility_score(res["pois"])
+                    res.update({
+                        "lat": float(lat),
+                        "lon": float(lon),
+                        "score": score_info["score"],
+                        "rating": score_info["rating"],
+                        "tier_color": score_info["tier_color"],
+                        "badge": score_info["badge"],
+                        "chips": score_info["chips"],
+                        "total_count": score_info["total_count"],
+                        "doorstep_count": score_info["doorstep_count"],
+                        "doorstep_100m": score_info["doorstep_100m"],
+                        "immediate_doorstep": score_info["immediate_doorstep"],
+                        "closest_poi": score_info["closest_poi"],
+                        "categories": score_info["categories"],
+                    })
+                    self.save()
+                    return res
+
+        # Backwards compatibility: dynamically attach doorstep_100m & immediate_doorstep if missing from older json
         if ("doorstep_100m" not in res or "immediate_doorstep" not in res) and "pois" in res:
             doorstep_pois = [p for p in res["pois"] if p.get("dist_m", 999.0) <= 100.0]
             res["doorstep_100m"] = [f"{p['name']} ({p.get('dist_m', 0):.0f}m)" for p in doorstep_pois]
