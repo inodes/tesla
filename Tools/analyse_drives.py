@@ -209,15 +209,35 @@ def is_home_place(place_str, places_dict=None):
         return False
     p_lower = str(place_str).lower().replace("🏠", "").replace("📍", "").strip()
     if places_dict and isinstance(places_dict, dict):
+ # BUG-102 follow-up (2026-09-21): this used to key off `type == "home" OR
+ # name == "home"` - but nothing ever actually set a "type" field on any
+ # place, so in practice this only ever matched by literal name, silently.
+ # That meant Home-detection would break the moment the place was ever
+ # renamed (no other signal ties it to "home"), and offered no protection
+ # beyond "the dict key happens to be the string home" - places_manager.py
+ # now sets an explicit `"type": "home"` field on the real Home entry
+ # (the one authoritative marker of "this is the user's home", independent
+ # of what it's named), so this now keys off *only* that field.
         for p_name, p_info in places_dict.items():
-            if isinstance(p_info, dict) and (p_info.get("type") == "home" or str(p_name).lower() == "home"):
+            if isinstance(p_info, dict) and p_info.get("type") == "home":
                 meta_short = str((p_info.get("tesla_metadata") or {}).get("short_name", "")).lower()
                 loc_name = str(p_info.get("location_name", "")).lower()
                 nick_name = str(p_info.get("nickname", "")).lower()
                 if p_lower in (str(p_name).lower(), meta_short, loc_name, nick_name) and p_lower:
                     return True
- # Strictly match 'home' as a discrete token (zero hardcoded PII)
-    return bool(re.search(r"\bhome\b", p_lower))
+ # BUG-102 (2026-09-21): require the *entire* cleaned string to reduce to
+ # "home", not merely contain it as one token. Real place strings reaching
+ # here (Tessie's own reverse-geocoded/manually-entered "Saved Location"
+ # field, or this module's own resolve_place() address-fallback branch) can
+ # be arbitrary business names or street addresses that happen to contain
+ # the word "home" - e.g. "Home Depot", "At Home Furniture", "Home Plate
+ # Grill" - which \bhome\b matched too. That was low-stakes while every
+ # consumer was an interactive, manually-confirmed flow; it is materially
+ # higher-stakes now that REQ-084 wires this into sync_dashcam.sh's
+ # unattended --yes purge path, where a false-positive match here stages
+ # real footage from an unrelated business stop for permanent deletion.
+ # A places_dict registry match (exact, above) is unaffected by this change.
+    return p_lower == "home"
 
 def is_home_event(ev, analyzer=None):
     if not ev:

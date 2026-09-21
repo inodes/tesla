@@ -320,9 +320,18 @@ class AGLInvoiceExtractor(BaseInvoiceExtractor):
             data["service_type"] = "electricity"
 
  # 2. Account Number
-        acc_m = re.search(r"Account\s*number\s*([0-9\s]{8,15})", text, re.IGNORECASE)
+ # BUG-126 (2026-09-21): older AGL statements (2020-2022) render this as two separate
+ # blocks - a run of labels ("Name: Account number: Supply address:") followed by a run
+ # of values in the same order ("<Name> <Surname> <account number> <street address>...") -
+ # rather than a label immediately followed by its own value. The old strict-adjacency
+ # regex never matched that layout at all. Widened to allow up to 120 characters of
+ # intervening text (other labels, newlines) between the label and the actual account
+ # number, which AGL formats consistently as three digit groups (4-3-3, e.g.
+ # "1234 567 890") - that specific shape keeps this from false-matching an unrelated
+ # number (like the NMI) that happens to fall within the window.
+        acc_m = re.search(r"Account\s*number\s*:?[\s\S]{0,120}?(\d{4}\s?\d{3}\s?\d{3})\b", text, re.IGNORECASE)
         if acc_m:
-            data["account_number"] = acc_m.group(1).replace(" ", "")
+            data["account_number"] = re.sub(r"\s+", "", acc_m.group(1))
 
  # 3. NMI (National Metering Identifier)
         nmi_m = re.search(r"National\s*Metering\s*Identifier\s*\(NMI\)[\s:]*([0-9]{10,11})", text, re.IGNORECASE)
@@ -355,6 +364,19 @@ class AGLInvoiceExtractor(BaseInvoiceExtractor):
                 data["total_amount"] = float(amt_m.group(1).replace(",", ""))
             except ValueError:
                 pass
+        else:
+ # BUG-126: a "Payment not required. Your credit will be carried forward" month has no
+ # "Direct Debit amount"/"Total amount due" line at all - the only real dollar figure on
+ # the bill is "Account balance $X.XXcr". Capture it as a negative amount (credit, nothing
+ # owed) rather than leaving total_amount null - null previously made these bills
+ # invisible to any downstream cost reconciliation instead of correctly showing $0 owed.
+            bal_m = re.search(r"Account\s*balance\s*\$([0-9,]+\.\d{2})(cr)?", text, re.IGNORECASE)
+            if bal_m:
+                try:
+                    val = float(bal_m.group(1).replace(",", ""))
+                    data["total_amount"] = -val if bal_m.group(2) else val
+                except ValueError:
+                    pass
 
  # 7. GST Amount
         gst_m = re.search(r"(?:Includes\s*GST\s*of|Total\s*GST|GST\s*includes)[\s:]*\$([0-9,]+\.\d{2})", text, re.IGNORECASE)

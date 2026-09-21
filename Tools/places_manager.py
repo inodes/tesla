@@ -618,6 +618,10 @@ def classify_poi_group(tags):
         return "Dining & Fast Food", "🍔"
     if shop in ("supermarket", "convenience", "bakery", "butcher", "greengrocer", "deli", "grocery", "general", "department_store", "mall"):
         return "Supermarkets & Groceries", "🛒"
+    landuse = (tags.get("landuse") or "").lower()
+    if landuse in ("retail", "commercial") or shop == "mall" or any(s in name for s in ("town centre", "town center", "shopping centre", "shopping center", "shopping plaza", "shopping mall", "homemaker centre", "marketplace")):
+        return "Retail & Shopping", "🛍️"
+
     if shop or tags.get("building") in ("retail", "commercial") or amenity == "marketplace":
         return "Retail & Shopping", "🛍️"
     if amenity in ("toilets", "restroom", "drinking_water", "atm", "bank", "pharmacy", "post_box", "post_office"):
@@ -2913,6 +2917,13 @@ def get_place_trip_history(target_place_name, places=None, drive_logs=None):
                 "is_departure": True
             })
         i += 1
+
+ # BUG-128 (2026-09-21): this function built `visits` correctly but never
+ # returned it - every call fell through to Python's implicit `return None`,
+ # so `inspect_place()` crashed with "TypeError: 'NoneType' object is not
+ # iterable" when selecting ANY place from `places_manager.py list` (not
+ # just "Home" - that was simply the first entry tested).
+    return visits
 
 def find_nearest_drive_stop(lat, lon, max_radius_m=1000, drive_logs=None):
     """
