@@ -90,8 +90,19 @@ def find_supercharge_site(
         if lat is not None and lon is not None and s_lat is not None and s_lon is not None:
             dist_km = haversine_distance_km(lat, lon, s_lat, s_lon)
 
-        # Direct proximity match
-        if dist_km < 1.0:
+        # BUG-152 (2026-09-22): this used to be "< 1.0" (1km) and returned
+        # immediately with NO name check at all - fine for GPS imprecision
+        # on the SAME site, but two genuinely distinct Tesla superchargers
+        # can legitimately be built well under 1km apart (Coffs Harbour,
+        # NSW's old Park Beach Plaza site and its new Pacific Hwy/Big Banana
+        # replacement are ~787m apart) - so this was confidently returning
+        # the WRONG site for the old station, which find_supercharge_site()'s
+        # caller then auto-cached as if it were verified OSM ground truth
+        # (see charger_find.py's --inspect auto-populate block). Tightened
+        # to a radius that only fires for "same site, imprecise GPS", not
+        # "different site nearby" - name similarity (below) still covers the
+        # wider-radius case, and is never skipped just because something's close.
+        if dist_km < 0.1:
             return s
 
         # Name match within reasonable radius

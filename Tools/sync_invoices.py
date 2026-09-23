@@ -78,12 +78,13 @@ def resolve_default_scan_dirs() -> List[str]:
         if os.path.isdir(real_p) and real_p not in dirs:
             dirs.append(real_p)
 
- # 1. Power / AGL invoices dir
-    add_dir(cfg.get("power_invoices_directory") or cfg.get("agl_invoices_directory"))
-    add_dir("~/Library/Mobile Documents/com~apple~CloudDocs/PDF/AGL")
+ # 1. Power / AGL invoices dir (config.json's directories.power_invoices -
+ # genuinely optional now; BUG-131 follow-up removed the hardcoded iCloud
+ # fallback that used to be duplicated here)
+    add_dir(cfg.get("directories", {}).get("power_invoices"))
 
  # 2. EV Charging invoices dir (Tesla Supercharger, Exploren, Chargefox)
-    add_dir(cfg.get("invoices_directory"))
+    add_dir(cfg.get("directories", {}).get("invoices"))
     add_dir("~/Library/Mobile Documents/com~apple~CloudDocs/PDF/Tesla/charging_invoices")
 
  # 3. Downloads folder

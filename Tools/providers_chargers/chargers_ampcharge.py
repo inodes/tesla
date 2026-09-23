@@ -40,7 +40,8 @@ from .chargers_base import (
     filter_station_records,
     detect_station_changes,
     archive_station_record,
-    save_json_with_fallback
+    save_json_with_fallback,
+    merge_with_staleness
 )
 
 _script_dir = os.path.dirname(os.path.abspath(__file__))
@@ -80,15 +81,15 @@ def _resolve_ampcharge_registry_path() -> str:
     if tessie_home:
         candidates.append(os.path.join(tessie_home, "ampcharge_chargers.json"))
 
-    candidates.append(os.path.join(_repo_root, "Tessie", "ampcharge_chargers.json"))
+    candidates.append(os.path.join(_repo_root, "resources", "ampcharge_chargers.json"))
     config_path = os.path.join(_repo_root, "config.json")  # TODO-034: root is primary now
     if not os.path.isfile(config_path):
-        config_path = os.path.join(_repo_root, "Tessie", "config.json")  # legacy fallback
+        config_path = os.path.join(_repo_root, "resources", "config.json")  # legacy fallback
     if os.path.isfile(config_path):
         try:
             with open(config_path, "r", encoding="utf-8") as f:
                 cfg = json.load(f)
-                td = cfg.get("tessie_directory")
+                td = cfg.get("directories", {}).get("data")
                 if td:
                     td_exp = os.path.expanduser(td)
                     candidates.insert(0, os.path.join(td_exp, "ampcharge_chargers.json"))
@@ -98,7 +99,7 @@ def _resolve_ampcharge_registry_path() -> str:
     for c in candidates:
         if os.path.isfile(c):
             return c
-    return candidates[0] if candidates else os.path.join(_repo_root, "Tessie", "ampcharge_chargers.json")
+    return candidates[0] if candidates else os.path.join(_repo_root, "resources", "ampcharge_chargers.json")
 
 
 def _normalize_plug_type(raw: str) -> str:
@@ -345,25 +346,23 @@ class AmpChargeProvider(BaseChargerProvider):
             except Exception:
                 pass
 
-        data = []
+        fresh_by_key = {}
         for r in records:
             r_dict = r.views.get("ampol", r.to_dict())
             s_id = str(r_dict.get("LocationID") or r.source_id or r.key)
+            fresh_by_key[s_id] = r_dict
 
-            if s_id in existing_map:
-                old_node = existing_map[s_id]
-                if detect_station_changes(old_node, r_dict):
-                    archive_station_record(archive_path, f"Ampol_{s_id}", old_node, now_utc)
-
-            data.append(r_dict)
+        merged = merge_with_staleness(existing_map, fresh_by_key, now_utc, archive_path,
+                                       archive_key_fn=lambda k: f"Ampol_{k}")
+        data = list(merged.values())
 
         payload = {
             "version": "1.0",
             "updated_at": now_utc,
-            "station_count": len(records),
+            "station_count": len(data),
             "stations": data
         }
-        target_paths = [self.registry_path, os.path.join(_repo_root, "Tessie", "ampcharge_chargers.json")]
+        target_paths = [self.registry_path, os.path.join(_repo_root, "resources", "ampcharge_chargers.json")]
         self.registry_path = save_json_with_fallback(target_paths, payload)
         self._cache = records
 

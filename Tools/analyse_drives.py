@@ -2197,15 +2197,15 @@ class TessieAnalyzer:
  # below for why.
         _cfg_path = os.path.join(parent_dir, "config.json")  # TODO-034: root is primary now
         if not os.path.isfile(_cfg_path):
-            _cfg_path = os.path.join(parent_dir, "Tessie", "config.json")  # legacy fallback
+            _cfg_path = os.path.join(parent_dir, "resources", "config.json")  # legacy fallback
         cfg_tessie_dir = None
         cfg_landing_dir = None
         if os.path.isfile(_cfg_path):
             try:
                 with open(_cfg_path, "r", encoding="utf-8") as _f:
                     _cdata = json.load(_f)
-                    cfg_tessie_dir = _cdata.get("tessie_directory")
-                    cfg_landing_dir = _cdata.get("landing_directory")
+                    cfg_tessie_dir = _cdata.get("directories", {}).get("data")
+                    cfg_landing_dir = _cdata.get("directories", {}).get("landing")
             except Exception:
                 cfg_tessie_dir = None
         if cfg_tessie_dir:
@@ -2250,8 +2250,17 @@ class TessieAnalyzer:
         self.tessie_dirs = []
         candidates = [
             tessie_dir,
-            os.path.join(parent_dir, "Tessie"),
-            os.path.join(self.script_dir, "Tessie"),
+            self.tessie_data_home,  # BUG-133: the ONE authoritative config-resolved
+ # data home (see above) was never actually in this list, so once
+ # drives_master.csv/deepdive stopped being duplicated into the repo
+ # folder (BUG-131 follow-up's de-duplication), load_drives()/
+ # load_detailed_drives() - which both scan self.tessie_dirs, not
+ # self.tessie_data_home directly - silently found 0 drives even
+ # though the real data was sitting right there in tessie_data_home.
+ # Listed first: it's the authoritative source, everything after it
+ # is a legacy/registry-only fallback.
+            os.path.join(parent_dir, "resources"),
+            os.path.join(self.script_dir, "resources"),
             os.path.expanduser("~/iCloud/repos/tesla/Tessie"),
             self.icloud_dir
         ]  # Tessie CSV/registry data runs from the repo and iCloud only -
@@ -2607,7 +2616,7 @@ class TessieAnalyzer:
                                             except Exception:
                                                 pass
  # Archive source from landing or root
-                                    archive_dir = os.path.join(dest_dirs[0], "archive") if dest_dirs else os.path.join(self.repo_root, "Tessie", "drives", "archive")
+                                    archive_dir = os.path.join(dest_dirs[0], "archive") if dest_dirs else os.path.join(self.repo_root, "resources", "drives", "archive")
                                     os.makedirs(archive_dir, exist_ok=True)
                                     shutil.move(fp, next_archive_path(archive_dir, os.path.basename(fp)))
                                     print(f"\033[94m⚡ Saved Drive Deep Dive Telemetry (Kept Separate):\033[0m {deepdive_name}")
@@ -2740,7 +2749,7 @@ class TessieAnalyzer:
                 print(f"   - {issue}")
 
  # Archive processed raw files now that they've been merged into master
-        archive_dir = os.path.join(dest_dirs[0], "archive") if dest_dirs else os.path.join(self.repo_root, "Tessie", "drives", "archive")
+        archive_dir = os.path.join(dest_dirs[0], "archive") if dest_dirs else os.path.join(self.repo_root, "resources", "drives", "archive")
         os.makedirs(archive_dir, exist_ok=True)
         for lp in files_to_archive:
             try:
@@ -3755,7 +3764,7 @@ class TessieAnalyzer:
 
  # 1. Check if Tessie API token is available
         cfg = tessie_api_common.load_config()
-        token = os.environ.get("TESSIE_ACCESS_TOKEN") or cfg.get("tessie_access_token")
+        token = os.environ.get("TESSIE_ACCESS_TOKEN") or cfg.get("tessie", {}).get("access_token")
         if not token:
             return False
 

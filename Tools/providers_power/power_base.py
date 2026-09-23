@@ -73,20 +73,19 @@ class BasePowerProvider:
         tariff rates, demand-charge output)."""
         raise NotImplementedError
 
-    def config_invoices_directory_keys(self):
-        """Same idea, for where this provider's RAW invoice PDFs/usage-
-        export CSVs live - kept separate from the derived data home
-        deliberately, same reasoning as resolve_agl_invoices_dir() always
-        had: raw source documents are the household's general PDF
-        archive, not Tesla-repo-managed derived data."""
+    def config_invoices_directory_path(self):
+        """(config_group, config_key) into the nested config.json - where
+        this provider's RAW invoice PDFs/usage-export CSVs live, e.g.
+        ("directories", "power_invoices") - kept separate from the
+        derived data home deliberately, same reasoning as
+        resolve_agl_invoices_dir() always had: raw source documents are
+        the household's general PDF archive, not Tesla-repo-managed
+        derived data. Genuinely optional - see resolve_invoices_dir()."""
         raise NotImplementedError
 
     def default_data_home_name(self):
         """Fallback directory name (sibling of the Tessie/ data folder)
         when no config.json override is set for either key above."""
-        raise NotImplementedError
-
-    def default_invoices_home_name(self):
         raise NotImplementedError
 
     def resolve_data_home(self):
@@ -101,15 +100,20 @@ class BasePowerProvider:
         )
 
     def resolve_invoices_dir(self):
+        """Returns the configured folder, or None if genuinely unset.
+        config.json restructure follow-up (2026-09-21, BUG-131): this used
+        to fall back to a literal iCloud path duplicated (independently,
+        with no shared constant) across this file, sync_invoices.py, and
+        lib/invoice_common.py - removed per user request; it's config.json-
+        driven only now, and every call site handles a None/missing
+        folder gracefully instead of guessing a default."""
         from lib.tessie_api_common import load_config
         cfg = load_config()
-        for key in self.config_invoices_directory_keys():
-            val = cfg.get(key)
-            if val:
-                return os.path.abspath(os.path.expanduser(val))
-        return os.path.expanduser(
-            f"~/Library/Mobile Documents/com~apple~CloudDocs/PDF/{self.default_invoices_home_name()}"
-        )
+        group, key = self.config_invoices_directory_path()
+        val = cfg.get(group, {}).get(key)
+        if val:
+            return os.path.abspath(os.path.expanduser(val))
+        return None
 
     def usage_master_filename(self):
         """Filename (not path) of this provider's consolidated usage

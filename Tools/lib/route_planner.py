@@ -292,14 +292,21 @@ def compute_route_stop_score(
                 fac_score = float(fac_info["score"])
                 fac_summary = fac_info.get("badge", f"{fac_score:.1f}/10")
             elif getattr(station, "amenities", None):
+                # BUG-148: a dict/list can be truthy (non-empty) while every value
+                # inside it is empty (e.g. {"items": []}) - that carries zero real
+                # amenity signal and must NOT floor to a fake "found something"
+                # score. Only trust a genuinely non-zero count; otherwise fall
+                # through and keep the honest 5.0 "Neutral / Unverified" default
+                # rather than a manufactured 3.0 that looks like real OSM data.
                 am = getattr(station, "amenities", None)
                 if isinstance(am, list) and am:
                     fac_score = min(10.0, max(3.0, len(am) * 1.5))
                     fac_summary = ", ".join(am[:3])
                 elif isinstance(am, dict) and am:
                     cnt = sum(len(v) if isinstance(v, list) else 1 for v in am.values())
-                    fac_score = min(10.0, max(3.0, cnt * 1.2))
-                    fac_summary = f"{cnt} amenities listed"
+                    if cnt > 0:
+                        fac_score = min(10.0, max(3.0, cnt * 1.2))
+                        fac_summary = f"{cnt} amenities listed"
     except Exception:
         pass
 

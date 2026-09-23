@@ -14,7 +14,14 @@ import os
 import sys
 
 # Auto re-exec inside local direnv/pyenv virtual environment if not already active
-_tools_dir = os.path.dirname(os.path.abspath(__file__))
+# Fix (2026-09-21): this file now lives in Tools/archive/ (see BUG-120), so
+# _tools_dir must go up one extra level to still mean "Tools/", not
+# "Tools/archive" - the old single os.path.dirname() left _lib_dir pointing
+# at a nonexistent Tools/archive/lib and _repo_root pointing at Tools/
+# itself, breaking both the venv re-exec search and every `from lib...`
+# import whenever this script is run directly (as sync_charger_all.sh does)
+# rather than imported from a caller that already has Tools/lib on sys.path.
+_tools_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 _repo_root = os.path.dirname(_tools_dir)
 for _py_candidate in [
     os.path.join(_repo_root, ".direnv", "python-3.11", "bin", "python3"),
@@ -130,7 +137,7 @@ C_BOLD = "\033[1m"
 C_DIM = "\033[2m"
 C_RESET = "\033[0m"
 
-_tools_dir = os.path.dirname(os.path.abspath(__file__))
+_tools_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _tools_dir not in sys.path:
     sys.path.insert(0, _tools_dir)
 
@@ -2274,14 +2281,27 @@ class TeslaChargerExplorer:
 
  # Compare fees only if existing had pricing
         if ex_simple:
-            ex_idle = ex_tariffs.get("idle_fee_per_min") or existing.get("tessie_cost_config", {}).get("idle_fee_per_min", 0)
-            new_idle = new_tariffs.get("idle_fee_per_min", 0)
-            if round(float(ex_idle or 0), 2) != round(float(new_idle or 0), 2):
-                return True
-
             ex_cong = ex_tariffs.get("congestion_fee_per_min") or existing.get("tessie_cost_config", {}).get("congestion_fee_per_min", 0)
             new_cong = new_tariffs.get("congestion_fee_per_min", 0)
-            if round(float(ex_cong or 0), 2) != round(float(new_cong or 0), 2):
+            ex_cong_r = round(float(ex_cong or 0), 2)
+            new_cong_r = round(float(new_cong or 0), 2)
+
+ # BUG-147: idle_fee_per_min is force-suppressed to None whenever a congestion
+ # fee applies (the "Tesla either/or" rule added 2026-09-14). Once a congestion
+ # fee is present on BOTH sides, idle_fee carries no independent information any
+ # more - comparing it only measures whether that suppression rule has been
+ # applied yet, not whether the real-world fee changed. That mismatch is what
+ # caused ~145 stations to be falsely archived on 2026-09-20 the first time this
+ # rule ran against pre-existing records. Only compare idle_fee when NEITHER
+ # side has a congestion fee, so a derivation-rule change can never again
+ # masquerade as a genuine pricing change.
+            if ex_cong_r <= 0 and new_cong_r <= 0:
+                ex_idle = ex_tariffs.get("idle_fee_per_min") or existing.get("tessie_cost_config", {}).get("idle_fee_per_min", 0)
+                new_idle = new_tariffs.get("idle_fee_per_min", 0)
+                if round(float(ex_idle or 0), 2) != round(float(new_idle or 0), 2):
+                    return True
+
+            if ex_cong_r != new_cong_r:
                 return True
 
  # Compare non-tesla schedules
@@ -2529,11 +2549,11 @@ class TeslaChargerExplorer:
         vf = data.get("valid_from")
         lv = data.get("last_verified")
         if vf and lv:
-            _field("🕒", "Effective Date", f"{format_local_timestamp(vf)} (Verified: {format_local_timestamp(lv)})")
+            _field("🕒", "Effective Since Date", f"{format_local_timestamp(vf)} (Verified: {format_local_timestamp(lv)})")
         elif lv:
             _field("🕒", "Last Verified", format_local_timestamp(lv))
         elif vf:
-            _field("🕒", "Effective Date", format_local_timestamp(vf))
+            _field("🕒", "Effective Since Date", format_local_timestamp(vf))
 
         curr = tariffs.get("currency", "AUD")
         t_scheds = tariffs.get("tesla_members", {}).get("rate_schedules", [])

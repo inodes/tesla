@@ -5,6 +5,17 @@
 Backfills all 6 canonical Tesla naming fields across tesla_superchargers.json
 and tesla_chargers.json, orders the 6 fields at the very top of tesla_metadata,
 removes legacy name prefixes, cleans raw suburb strings, and validates on-disk consistency.
+
+ARCHIVED (2026-09-21): this was a one-time historical migration, already
+applied to the real registries. It has zero references anywhere else in the
+repo (confirmed by a full-repo grep before archiving), no README entry, and
+- more importantly - NO argument handling of any kind: it has no argparse,
+so it ignores --help entirely and unconditionally RUNS the migration
+(including writing tesla_superchargers.json/tesla_chargers.json in place)
+on every invocation. Kept here for reference/re-run only if the 6-field
+standard ever needs reapplying after a schema change - do not move it back
+to the top-level Tools/ without first adding real argparse (at minimum a
+--dry-run and an explicit confirmation before it writes anything).
 """
 
 import os

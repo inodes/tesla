@@ -36,17 +36,17 @@ def _resolve_tesla_registry_paths() -> List[str]:
         ])
         
     candidates.extend([
-        os.path.join(_repo_root, "Tessie", "tesla_superchargers.json"),
-        os.path.join(_repo_root, "Tessie", "tesla_chargers.json"),
+        os.path.join(_repo_root, "resources", "tesla_superchargers.json"),
+        os.path.join(_repo_root, "resources", "tesla_chargers.json"),
     ])
     config_path = os.path.join(_repo_root, "config.json")  # TODO-034: root is primary now
     if not os.path.isfile(config_path):
-        config_path = os.path.join(_repo_root, "Tessie", "config.json")  # legacy fallback
+        config_path = os.path.join(_repo_root, "resources", "config.json")  # legacy fallback
     if os.path.isfile(config_path):
         try:
             with open(config_path, "r", encoding="utf-8") as f:
                 cfg = json.load(f)
-                td = cfg.get("tessie_directory")
+                td = cfg.get("directories", {}).get("data")
                 if td:
                     td_exp = os.path.expanduser(td)
                     candidates.insert(0, os.path.join(td_exp, "tesla_superchargers.json"))
@@ -136,8 +136,6 @@ class TeslaProvider(BaseChargerProvider):
                 except (ValueError, TypeError):
                     continue
                 
-                speed_tier = "ac_destination" if is_dest else "supercharger"
-                network = "Tesla Destination" if is_dest else "Tesla"
 
  # Hardware block
                 hw = info.get("hardware", {}) if isinstance(info.get("hardware"), dict) else {}
@@ -158,6 +156,26 @@ class TeslaProvider(BaseChargerProvider):
 
                 hw_tier = hw.get("tier") or ("V4" if max_kw >= 300 else ("V3" if max_kw >= 250 else ("V2" if not is_dest else "AC")))
 
+
+ # speed_tier: "supercharger" is Tesla's own distinct hardware/network
+ # term, always kept apart from the generic "dc_fast" tier regardless of
+ # measured power (BUG-073, AGENTS.local.md) - --sc means "look at
+ # tesla_superchargers.json", full stop, no power threshold involved.
+ # Destination Chargers' tier, however, is now DERIVED from real
+ # measured power (the same >=25kW threshold every other provider
+ # already uses for this - chargers_chargefox.py, chargers_evie.py,
+ # chargers_bppulse.py) instead of being assumed purely from which list
+ # the station was scraped from (the old, hardcoded
+ # "ac_destination" if is_dest else "supercharger"). No real Destination
+ # Charger currently exceeds 22kW (checked against the live registry:
+ # all 461 real entries top out there), so this changes no current
+ # result - but it means a genuinely DC-capable Destination Charger
+ # (plausible given Tesla's V4 hardware direction) would be classified
+ # by its actual hardware rather than by source file alone. REQ-106,
+ # AGENTS.local.md, 2026-09-23 - "some destination chargers could be dc
+ # fast charging but for the destination".
+                speed_tier = "supercharger" if not is_dest else ("dc_fast" if max_kw >= 25.0 else "ac_destination")
+                network = "Tesla Destination" if is_dest else "Tesla"
  # Compatibility block
                 comp = info.get("compatibility", {}) if isinstance(info.get("compatibility"), dict) else {}
 
@@ -347,7 +365,17 @@ class TeslaProvider(BaseChargerProvider):
                         "osm_node_id": loc.get("osm_node_id") or info.get("osm_node_id") or loc.get("osm_id") or info.get("osm_id"),
                         "osm_audited_utc": loc.get("osm_audited_utc") or info.get("osm_audited_utc"),
                     },
-                    amenities=info.get("amenities", {}) if isinstance(info.get("amenities"), dict) else {"items": info.get("amenities", [])},
+                    # BUG-148: Tesla's registry never actually has an "amenities" key,
+                    # so this used to fall through to {"items": []} - a dict that is non-
+                    # empty (truthy) but holds zero real amenity data. Downstream scoring
+                    # (route_planner.compute_route_stop_score) treats any truthy dict as a
+                    # real amenities signal, so that hollow wrapper silently produced a fake
+                    # "3.0 / 0 amenities listed" facilities score with no OSM lookup involved.
+                    # Only wrap into {"items": [...]} when there is something real to wrap.
+                    amenities=(
+                        info.get("amenities", {}) if isinstance(info.get("amenities"), dict)
+                        else ({"items": info["amenities"]} if isinstance(info.get("amenities"), list) and info.get("amenities") else {})
+                    ),
                     keywords=[
                         k for k in dict.fromkeys([
                             key,

@@ -31,7 +31,7 @@ have merit:
 Both a session's OWN real telemetry (solid line) and - where this session
 didn't cover the full range - a DASHED estimate built from this car's own
 charging history are drawn. That estimate is pooled from OTHER sessions at
-the exact same charger first (matched via Tessie/tesla_superchargers.json's
+the exact same charger first (matched via resources/tesla_superchargers.json's
 short_name, e.g. "Macquarie_NSW") - a V3 250kW stall's curve says nothing
 trustworthy about this V2 130kW one. Only when the same-site pool doesn't
 yet have 2+ points in a given direction does it fall back to OTHER sites of
@@ -43,7 +43,7 @@ than extrapolated past real data.
 
 The charger's own rated max power (Tesla's V2/V3/V4 stall tiers) is drawn
 as a light reference line on the power-vs-SoC chart when this session's
-site matches an entry in Tessie/tesla_superchargers.json, so a session that
+site matches an entry in resources/tesla_superchargers.json, so a session that
 never reached the stall's cap (shared power, cold battery, etc.) is visibly
 distinguishable from a session that did.
 """
@@ -156,14 +156,14 @@ def slug_from_deepdive_filename(path):
 
 
 def load_charger_registries():
-    """Merges Tessie/tesla_superchargers*.json and tesla_chargers*.json
-    from THIS repo's own Tessie/ folder (not the iCloud data home -
+    """Merges resources/tesla_superchargers*.json and tesla_chargers*.json
+    from THIS repo's own resources/ folder (not the iCloud data home -
     these are the hand/scraper-maintained hardware registries
     charger_find_tesla.py builds, gitignored real-data files, same as
     vehicle_spec.json). Missing files are a normal "not scraped yet" case,
     not an error."""
     merged = {}
-    tessie_dir = os.path.join(REPO_ROOT, "Tessie")
+    tessie_dir = os.path.join(REPO_ROOT, "resources")
     for fname in ("tesla_superchargers.json", "tesla_superchargers_archived.json",
                   "tesla_chargers.json", "tesla_chargers_archived.json"):
         p = os.path.join(tessie_dir, fname)

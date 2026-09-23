@@ -17,6 +17,9 @@ import json
 import math
 import time
 import random
+import threading
+import heapq
+import itertools
 from datetime import datetime, timezone
 from concurrent.futures import ThreadPoolExecutor
 from typing import Dict, List, Optional, Tuple, Any, Set
@@ -31,7 +34,9 @@ from .chargers_base import (
     filter_station_records,
     detect_station_changes,
     archive_station_record,
-    atomic_write_json
+    atomic_write_json,
+    resolve_scan_state_path,
+    run_priority_box_scan
 )
 
 _script_dir = os.path.dirname(os.path.abspath(__file__))
@@ -82,28 +87,39 @@ AUSTRALIAN_STATES_BOUNDS = {
 }
 
 AUSTRALIAN_SEARCH_REGIONS = [
-    ("Sydney Metro & Central Coast", -33.75, 151.10, 1.8, 1.8),
-    ("Melbourne Metro & Port Phillip", -37.85, 145.00, 1.8, 1.8),
-    ("Brisbane Metro & South East QLD", -27.47, 153.05, 1.8, 1.8),
-    ("Gold Coast & Tweed", -28.05, 153.40, 1.0, 1.0),
-    ("Sunshine Coast", -26.65, 153.05, 1.0, 1.0),
-    ("Perth Metro & Peel", -31.95, 115.85, 1.8, 1.8),
-    ("Adelaide Metro & Hills", -34.93, 138.60, 1.5, 1.5),
-    ("Canberra & ACT", -35.30, 149.13, 0.8, 0.8),
-    ("Hobart & Southern TAS", -42.88, 147.32, 1.0, 1.0),
-    ("Launceston & Northern TAS", -41.44, 147.14, 1.0, 1.0),
-    ("Newcastle & Hunter Valley", -32.85, 151.60, 1.5, 1.5),
-    ("Wollongong & Illawarra", -34.43, 150.88, 1.2, 1.2),
-    ("Geelong & Bellarine", -38.15, 144.36, 1.0, 1.0),
-    ("Cairns & Far North QLD", -16.92, 145.77, 1.5, 1.5),
-    ("Townsville & North QLD", -19.26, 146.81, 1.5, 1.5),
-    ("Darwin & Top End", -12.46, 130.84, 1.5, 1.5),
-    ("Alice Springs & Red Centre", -23.70, 133.88, 1.5, 1.5),
-    ("Albury / Wodonga / Hume", -36.08, 146.92, 1.5, 1.5),
-    ("Dubbo & Central West NSW", -32.25, 148.60, 2.0, 2.0),
-    ("Ballarat & Western VIC", -37.56, 143.85, 1.5, 1.5),
-    ("Bendigo & Central VIC", -36.76, 144.28, 1.5, 1.5),
-    ("Toowoomba & Darling Downs", -27.56, 151.95, 1.5, 1.5),
+ # (name, states, lat, lon, spanLat, spanLng) - states is a tuple since a
+ # few border regions genuinely span two (Gold Coast & Tweed straddles
+ # QLD/NSW at Tweed Heads; Albury/Wodonga/Hume straddles NSW/VIC at the
+ # Murray River). Explicit per-region state tagging (BUG found 2026-09-23,
+ # replacing both an earlier name-substring match and a geographic
+ # bounding-box check) - see search_state()'s docstring/comment for why
+ # neither of those worked: region NAMES don't reliably contain the state
+ # code (Sydney/Newcastle/Wollongong are NSW but say nothing NSW-shaped),
+ # and AUSTRALIAN_STATES_BOUNDS' own boxes aren't accurate enough either
+ # (QLD's box caps at 149.5 degrees longitude, west of Brisbane itself at
+ # 153.05).
+    ("Sydney Metro & Central Coast", ("NSW",), -33.75, 151.10, 1.8, 1.8),
+    ("Melbourne Metro & Port Phillip", ("VIC",), -37.85, 145.00, 1.8, 1.8),
+    ("Brisbane Metro & South East QLD", ("QLD",), -27.47, 153.05, 1.8, 1.8),
+    ("Gold Coast & Tweed", ("QLD", "NSW"), -28.05, 153.40, 1.0, 1.0),
+    ("Sunshine Coast", ("QLD",), -26.65, 153.05, 1.0, 1.0),
+    ("Perth Metro & Peel", ("WA",), -31.95, 115.85, 1.8, 1.8),
+    ("Adelaide Metro & Hills", ("SA",), -34.93, 138.60, 1.5, 1.5),
+    ("Canberra & ACT", ("ACT",), -35.30, 149.13, 0.8, 0.8),
+    ("Hobart & Southern TAS", ("TAS",), -42.88, 147.32, 1.0, 1.0),
+    ("Launceston & Northern TAS", ("TAS",), -41.44, 147.14, 1.0, 1.0),
+    ("Newcastle & Hunter Valley", ("NSW",), -32.85, 151.60, 1.5, 1.5),
+    ("Wollongong & Illawarra", ("NSW",), -34.43, 150.88, 1.2, 1.2),
+    ("Geelong & Bellarine", ("VIC",), -38.15, 144.36, 1.0, 1.0),
+    ("Cairns & Far North QLD", ("QLD",), -16.92, 145.77, 1.5, 1.5),
+    ("Townsville & North QLD", ("QLD",), -19.26, 146.81, 1.5, 1.5),
+    ("Darwin & Top End", ("NT",), -12.46, 130.84, 1.5, 1.5),
+    ("Alice Springs & Red Centre", ("NT",), -23.70, 133.88, 1.5, 1.5),
+    ("Albury / Wodonga / Hume", ("NSW", "VIC"), -36.08, 146.92, 1.5, 1.5),
+    ("Dubbo & Central West NSW", ("NSW",), -32.25, 148.60, 2.0, 2.0),
+    ("Ballarat & Western VIC", ("VIC",), -37.56, 143.85, 1.5, 1.5),
+    ("Bendigo & Central VIC", ("VIC",), -36.76, 144.28, 1.5, 1.5),
+    ("Toowoomba & Darling Downs", ("QLD",), -27.56, 151.95, 1.5, 1.5),
 ]
 
 
@@ -123,15 +139,15 @@ def _resolve_plugshare_registry_path() -> str:
     if tessie_home:
         candidates.append(os.path.join(tessie_home, "plugshare_chargers.json"))
 
-    candidates.append(os.path.join(_repo_root, "Tessie", "plugshare_chargers.json"))
+    candidates.append(os.path.join(_repo_root, "resources", "plugshare_chargers.json"))
     config_path = os.path.join(_repo_root, "config.json")  # TODO-034: root is primary now
     if not os.path.isfile(config_path):
-        config_path = os.path.join(_repo_root, "Tessie", "config.json")  # legacy fallback
+        config_path = os.path.join(_repo_root, "resources", "config.json")  # legacy fallback
     if os.path.isfile(config_path):
         try:
             with open(config_path, "r", encoding="utf-8") as f:
                 cfg = json.load(f)
-                td = cfg.get("tessie_directory")
+                td = cfg.get("directories", {}).get("data")
                 if td:
                     td_exp = os.path.expanduser(td)
                     candidates.insert(0, os.path.join(td_exp, "plugshare_chargers.json"))
@@ -141,7 +157,24 @@ def _resolve_plugshare_registry_path() -> str:
     for c in candidates:
         if os.path.isfile(c):
             return c
-    return candidates[0] if candidates else os.path.join(_repo_root, "Tessie", "plugshare_chargers.json")
+    return candidates[0] if candidates else os.path.join(_repo_root, "resources", "plugshare_chargers.json")
+
+
+def _resolve_plugshare_scan_state_path() -> str:
+    """Finds path to plugshare_scan_state.json - thin PlugShare-specific
+    wrapper over the generic resolve_scan_state_path() (chargers_base.py),
+    which every map-tile-style provider shares (see also Chargefox's own
+    equivalent in chargers_chargefox.py)."""
+    tessie_home = None
+    try:
+        from lib.tessie_api_common import resolve_tessie_data_home
+        tessie_home = resolve_tessie_data_home()
+    except Exception:
+        pass
+    config_path = os.path.join(_repo_root, "config.json")
+    if not os.path.isfile(config_path):
+        config_path = os.path.join(_repo_root, "resources", "config.json")
+    return resolve_scan_state_path("plugshare", _repo_root, tessie_home=tessie_home, config_path=config_path)
 
 
 def extract_au_state_and_suburb(addr: str) -> Tuple[str, str]:
@@ -513,8 +546,22 @@ def record_dict_to_unified(key: str, info: dict) -> Optional[UnifiedStationRecor
  # AC destination charger, was showing up under --sc/tesla_superchargers
  # filters). Now requires "tesla" AND "supercharger" together in the
  # network string specifically. Fixed 2026-09-14.
-    if "tesla" in network.lower() and "supercharger" in network.lower():
+    net_lower = network.lower()
+    if "tesla" in net_lower and "supercharger" in net_lower:
         speed_tier = "supercharger"
+ # BUG-127 follow-up (2026-09-23): PlugShare treats "Tesla Supercharger"
+ # (network_id 8) and "Tesla Destination" (network_id 35) as two
+ # genuinely separate networks - plugshare_to_registry_record() above
+ # already assigns that exact network label from PLUGSHARE_NETWORKS, but
+ # this function only had an explicit override for the Supercharger side;
+ # the Destination side silently fell through to the generic max_kw>=25.0
+ # guess instead of trusting PlugShare's own explicit tag. Symmetric fix:
+ # a "Tesla Destination"-tagged record is always ac_destination,
+ # regardless of what power figure PlugShare's crowd-sourced data has for
+ # it, matching how the co-located-but-genuinely-different Supercharger
+ # is never second-guessed by power either.
+    elif "tesla" in net_lower and "destination" in net_lower:
+        speed_tier = "ac_destination"
 
  # Tariffs block
     tariffs = info.get("tariffs", {}) if isinstance(info.get("tariffs"), dict) else {}
@@ -647,7 +694,17 @@ class PlugShareClient:
         }
         if headers:
             self.headers.update(headers)
-        self.last_error: Optional[str] = None
+        self._error_local = threading.local()
+
+    @property
+    def last_error(self) -> Optional[str]:
+        """Thread-local: each thread sees only the error from its own most recent
+        _get() call, never one clobbered by a concurrent call on another thread."""
+        return getattr(self._error_local, "value", None)
+
+    @last_error.setter
+    def last_error(self, value: Optional[str]) -> None:
+        self._error_local.value = value
 
     def _get(self, endpoint: str, params: Optional[dict] = None, timeout: int = 15, retries: int = 1, backoff: float = 1.5) -> Any:
         url = f"{self.BASE_URL}{endpoint}"
@@ -746,7 +803,7 @@ class PlugShareClient:
     def search_australia(self) -> List[dict]:
         """Fast concurrent discovery across Australian metro and regional centers."""
         def _fetch_region(item):
-            name, lat, lon, slat, slon = item
+            name, states, lat, lon, slat, slon = item
             return self.search_region(lat, lon, span_lat=slat, span_lng=slon, count=250)
 
         with ThreadPoolExecutor(max_workers=10) as ex:
@@ -768,12 +825,35 @@ class PlugShareClient:
         if st not in AUSTRALIAN_STATES_BOUNDS:
             return []
         cfg = AUSTRALIAN_STATES_BOUNDS[st]
-        matching_regions = [r for r in AUSTRALIAN_SEARCH_REGIONS if st in r[0] or cfg["name"].split()[0] in r[0]]
+ # BUG (found 2026-09-23, during a real --sync-plugshare --state NSW run
+ # that discovered almost nothing near Sydney): this used to select
+ # regions by checking whether the state code/name literally appeared as
+ # a SUBSTRING of the region's display name (e.g. "NSW" in "Sydney Metro
+ # & Central Coast") - which is false for nearly every real region, since
+ # AUSTRALIAN_SEARCH_REGIONS names are metro/area names, not state-coded
+ # ("Sydney Metro & Central Coast", "Newcastle & Hunter Valley",
+ # "Wollongong & Illawarra" are all NSW but none contain "NSW"; "Gold
+ # Coast & Tweed", "Sunshine Coast", "Toowoomba & Darling Downs" are all
+ # QLD but none contain "QLD"). A state sync was silently searching only
+ # the one or two regions whose NAME happened to contain the state code
+ # (e.g. NSW matched only "Dubbo & Central West NSW", missing Sydney
+ # entirely) instead of every region actually inside that state.
+ #
+ # A geographic bounding-box containment check (region center inside the
+ # state's own box) was tried next and is ALSO wrong: AUSTRALIAN_STATES_
+ # BOUNDS' own boxes aren't accurate enough - QLD's box caps at 149.5
+ # degrees longitude, which is WEST of Brisbane itself (153.05), so it
+ # would exclude Brisbane, Gold Coast, Sunshine Coast and Toowoomba from
+ # their own state. Fixed properly: each AUSTRALIAN_SEARCH_REGIONS entry
+ # now carries its real state(s) explicitly (a tuple, since a couple of
+ # border regions genuinely span two states) instead of being inferred
+ # from a name string or recomputed from an inexact box.
+        matching_regions = [r for r in AUSTRALIAN_SEARCH_REGIONS if st in r[1]]
         if not matching_regions:
-            matching_regions = [(cfg["name"], cfg["lat"], cfg["lon"], cfg["spanLat"], cfg["spanLng"])]
+            matching_regions = [(cfg["name"], (st,), cfg["lat"], cfg["lon"], cfg["spanLat"], cfg["spanLng"])]
 
         def _fetch_reg(item):
-            name, lat, lon, slat, slon = item
+            name, states, lat, lon, slat, slon = item
             return self.search_region(lat, lon, span_lat=slat, span_lng=slon, count=250)
 
         with ThreadPoolExecutor(max_workers=6) as ex:
@@ -788,6 +868,252 @@ class PlugShareClient:
                     seen.add(s_id)
                     stations.append(s)
         return stations
+
+    def _reliable_search_region(self, lat: float, lon: float, span_lat: float, span_lng: float,
+                                 count: int = 250, access: str = "1,2",
+                                 max_retries: int = 4, base_backoff: float = 1.0) -> List[dict]:
+        """
+        search_region, but distinguishing "the call failed" from "this box is
+        genuinely empty" - which plain search_region cannot do, since it
+        swallows every failure (timeout, network error, and critically HTTP
+        429 rate-limiting) down to an empty list. That conflation is fine
+        for the existing single-shot callers, but is actively dangerous for
+        search_adaptive: confirmed 2026-09-23 that PlugShare's API returns
+        HTTP 429 fairly often under the concurrent load search_adaptive
+        generates, and a 429 on the one query whose box actually contained
+        a station (e.g. Balgowlah, in a real test run) looks identical to a
+        real empty box - so the algorithm accepted it as "converged" and
+        permanently lost that station, even though the resolution/box-size
+        logic itself was working correctly.
+
+        Retries with exponential backoff + jitter whenever a call comes
+        back empty AND last_error is set (i.e. it failed, rather than
+        succeeding with a genuinely empty result), giving up after
+        max_retries and returning whatever the final attempt got.
+        """
+        result: List[dict] = []
+        for attempt in range(max_retries + 1):
+            result = self.search_region(lat, lon, span_lat=span_lat, span_lng=span_lng, count=count, access=access)
+            if result or self.last_error is None:
+                return result
+            if attempt < max_retries:
+                time.sleep(base_backoff * (2 ** attempt) + random.uniform(0, 0.5))
+        return result
+
+    def search_adaptive(self, lat: float, lon: float, span_lat: float, span_lng: float,
+                         min_span_deg: float = 0.02, max_depth: int = 6,
+                         skip_subdivide_below: int = 2, max_workers: int = 5) -> List[dict]:
+        """
+        Adaptively discovers stations in a lat/lon box, correcting for the
+        `/locations/region` endpoint's map-overview/decluttering behavior on
+        large viewports (confirmed 2026-09-23: a Sydney-metro-sized box
+        returned a spatially-thinned SAMPLE - well under its own 250-result
+        cap - silently omitting real known stations, e.g. Balgowlah, even
+        though the cap was never hit. "Did we hit the count cap" is NOT a
+        reliable completeness signal for this endpoint).
+
+        Algorithm (Glenn's spec, 2026-09-23):
+          1. Query this box directly - call that the box's own result set.
+          2. Split the SAME total area into a 3x3 grid of 9 equal-area
+             sub-boxes (a "nonant" split) and query each.
+          3. If the union of unique station IDs across the 9 sub-boxes is
+             NOT larger than the box's own count, this box's own query was
+             already complete at this resolution - stop, return the box's
+             own results.
+          4. Otherwise the box under-counted (too coarse a resolution for
+             this density) - recurse independently into EVERY one of the 9
+             sub-boxes (not just the densest), so sparse cells that still
+             hide extra stations are never skipped just because a
+             neighboring cell was denser. This is what makes the whole
+             thing cover the entire country rather than a fixed list of
+             hand-picked regions.
+
+        This means the recursion naturally drills deepest exactly where
+        Glenn expects it to - dense metro areas like Sydney or Melbourne,
+        where a coarse box really does undercount - while resolving in one
+        query almost everywhere else, without needing a separate
+        calibration pass to pick one "safe" box size up front: the
+        algorithm finds the right resolution independently per-region as it
+        goes.
+
+        Cheap short-circuit (Glenn's point, 2026-09-23): if a box's own
+        query already comes back with hardly any stations
+        (<= skip_subdivide_below), there is nothing for PlugShare's
+        decluttering to have thinned - a box with 1 entry has no reason to
+        hide more just because it's large. Skip the 9-way probe entirely
+        and accept the box as complete. This is what lets a whole-of-
+        Australia scan blow straight through empty ocean/outback boxes
+        instead of spending 9 extra API calls confirming each one is
+        empty.
+
+        Safety floor (defensive guard, not part of the spec above): stop
+        recursing once span_lat/span_lng drop below `min_span_deg`, or
+        `max_depth` recursions have been made, whichever comes first, so a
+        single noisy/inconsistent API response can't cause runaway
+        recursion. Hitting the floor never discards results: it returns
+        the union of the box's own query and its one 9-way probe rather
+        than silently keeping only the smaller of the two.
+
+        All `search_region` calls across the whole recursion tree share a
+        single bounded ThreadPoolExecutor (max_workers), so concurrency
+        never exceeds max_workers regardless of recursion depth - a naive
+        "spawn a fresh ThreadPoolExecutor per recursion level" design would
+        blow up to 9^depth threads.
+
+        After a call, `self.last_adaptive_stats` holds a dict with
+        `queries` (total API calls made), `leaf_boxes` (boxes resolved
+        without further recursion), `skipped_low_count` (boxes skipped via
+        the short-circuit above), and `max_depth_hit` (boxes that hit the
+        safety floor still un-converged) - useful for sizing a real run
+        before committing to it nationwide.
+
+        Returns: deduplicated list of raw PlugShare location dicts across
+        the whole area.
+        """
+        stats = {"queries": 0, "leaf_boxes": 0, "skipped_low_count": 0, "max_depth_hit": 0}
+        executor = ThreadPoolExecutor(max_workers=max_workers)
+        try:
+            results = self._search_adaptive_impl(
+                lat, lon, span_lat, span_lng, min_span_deg, max_depth,
+                skip_subdivide_below, executor, stats, _depth=0
+            )
+        finally:
+            executor.shutdown(wait=True)
+        self.last_adaptive_stats = stats
+        return results
+
+    def _search_adaptive_impl(self, lat: float, lon: float, span_lat: float, span_lng: float,
+                               min_span_deg: float, max_depth: int, skip_subdivide_below: int,
+                               executor: ThreadPoolExecutor, stats: dict, _depth: int,
+                               _own_results: Optional[List[dict]] = None) -> List[dict]:
+        if _own_results is not None:
+            # This exact box was already fetched by the parent's 9-way
+            # convergence probe (recursing here means it decided to drill
+            # into this cell) - reuse that result instead of re-querying
+            # the identical box a second time. Found 2026-09-23: every
+            # recursing child was redundantly re-issuing the exact query
+            # its parent had just made, roughly doubling total API calls
+            # and doubling exposure to PlugShare's rate limiter, which is
+            # what was silently dropping real stations (see
+            # _reliable_search_region's docstring).
+            own_results = _own_results
+        else:
+            own_results = self._reliable_search_region(lat, lon, span_lat=span_lat, span_lng=span_lng, count=250)
+            stats["queries"] += 1
+        own_ids = {s.get("id") for s in own_results if s.get("id") is not None}
+
+        if len(own_ids) <= skip_subdivide_below:
+            stats["leaf_boxes"] += 1
+            stats["skipped_low_count"] += 1
+            return own_results
+
+        sub_span_lat = span_lat / 3.0
+        sub_span_lng = span_lng / 3.0
+        offsets = (-2, 0, 2)
+        sub_centers = [
+            (lat + oy * sub_span_lat, lon + ox * sub_span_lng)
+            for oy in offsets
+            for ox in offsets
+        ]
+
+        futures = [
+            executor.submit(self._reliable_search_region, c[0], c[1], span_lat=sub_span_lat, span_lng=sub_span_lng, count=250)
+            for c in sub_centers
+        ]
+        sub_results = [f.result() for f in futures]
+        stats["queries"] += 9
+
+        sub_ids: Set[Any] = set()
+        for res in sub_results:
+            for s in res:
+                s_id = s.get("id")
+                if s_id is not None:
+                    sub_ids.add(s_id)
+
+        if len(sub_ids) <= len(own_ids):
+            # Converged: splitting further didn't surface anything the
+            # direct query didn't already have. This box's resolution is fine.
+            stats["leaf_boxes"] += 1
+            return own_results
+
+        # Not converged - merge what the 9-way probe already found now, so
+        # a floor hit below never discards it.
+        merged: Dict[Any, dict] = {}
+        for s in own_results:
+            s_id = s.get("id")
+            if s_id is not None:
+                merged[s_id] = s
+        for res in sub_results:
+            for s in res:
+                s_id = s.get("id")
+                if s_id is not None:
+                    merged[s_id] = s
+
+        at_floor = (span_lat <= min_span_deg or span_lng <= min_span_deg or _depth + 1 >= max_depth)
+        if at_floor:
+            stats["leaf_boxes"] += 1
+            stats["max_depth_hit"] += 1
+            return list(merged.values())
+
+        # Not converged and not at the floor - recurse independently into
+        # EVERY sub-box (not just the densest), sharing the same bounded
+        # executor for the whole call tree.
+        for c, sub_res in zip(sub_centers, sub_results):
+            child = self._search_adaptive_impl(
+                c[0], c[1], sub_span_lat, sub_span_lng,
+                min_span_deg, max_depth, skip_subdivide_below,
+                executor, stats, _depth=_depth + 1, _own_results=sub_res
+            )
+            for s in child:
+                s_id = s.get("id")
+                if s_id is not None:
+                    merged[s_id] = s
+
+        return list(merged.values())
+
+    def scan_country_priority(self, root_lat: float, root_lon: float,
+                               root_span_lat: float, root_span_lng: float,
+                               state_path: str, min_span_deg: float = 0.02,
+                               max_depth: int = 7, skip_subdivide_below: int = 2,
+                               max_workers: int = 5, max_cells_this_run: Optional[int] = None,
+                               stale_after_days: float = 30.0, country: str = "AU") -> dict:
+        """
+        Persistent, priority-ordered, resumable whole-country discovery
+        (Glenn's design, 2026-09-23) - thin PlugShare-specific wrapper over
+        the generic, provider-agnostic run_priority_box_scan()
+        (chargers_base.py), which every map-tile-style provider now shares
+        (see also ChargefoxProvider.scan_australia_priority). Supplies
+        this client's own reliable query primitive
+        (_reliable_search_region, which already retries on PlugShare's
+        HTTP 429 rate-limiting rather than silently returning an empty
+        list) and a best-effort AUSTRALIAN_STATES_BOUNDS-based region hint
+        for humans skimming the state file - never used to attribute or
+        filter a station, since a cell can genuinely span multiple
+        states/cities while a station's own coordinates never do.
+
+        See run_priority_box_scan()'s own docstring for the full algorithm
+        (priority-queue-ordered cell processing, resumability, per-station
+        first_seen_at/last_seen_at/seen_count tracking). Returns the same
+        summary dict it does: cells_processed, cells_skipped_fresh,
+        stations_seen_this_run, stations_total_known, frontier_remaining.
+        """
+        def _query_fn(lat: float, lon: float, span_lat: float, span_lng: float) -> List[dict]:
+            return self._reliable_search_region(lat, lon, span_lat=span_lat, span_lng=span_lng, count=250)
+
+        def _region_hint(lat: float, lon: float) -> List[str]:
+            hits = []
+            for code, cfg in AUSTRALIAN_STATES_BOUNDS.items():
+                if (cfg["lat"] - cfg["spanLat"] <= lat <= cfg["lat"] + cfg["spanLat"] and
+                        cfg["lon"] - cfg["spanLng"] <= lon <= cfg["lon"] + cfg["spanLng"]):
+                    hits.append(code)
+            return hits
+
+        return run_priority_box_scan(
+            _query_fn, root_lat, root_lon, root_span_lat, root_span_lng, state_path,
+            min_span_deg=min_span_deg, max_depth=max_depth, skip_subdivide_below=skip_subdivide_below,
+            max_workers=max_workers, max_cells_this_run=max_cells_this_run,
+            stale_after_days=stale_after_days, country=country, region_hint_fn=_region_hint,
+        )
 
 
 # -----------------------------------------------------------------------------
@@ -940,6 +1266,7 @@ class PlugShareProvider(BaseChargerProvider):
             new_keywords = set(record.get("plugshare_metadata", {}).get("keywords", []))
             record["plugshare_metadata"]["keywords"] = sorted(list(ex_keywords | new_keywords))
             record["first_seen"] = existing.get("first_seen", now_utc)
+            record["seen_count"] = existing.get("seen_count", 1) + 1
             record["last_updated"] = now_utc
             record["last_verified"] = now_utc
 
@@ -982,6 +1309,7 @@ class PlugShareProvider(BaseChargerProvider):
                 final_key = candidate
 
             record["first_seen"] = now_utc
+            record["seen_count"] = 1
             record["last_updated"] = now_utc
             record["last_verified"] = now_utc
             registry[final_key] = record
@@ -1198,8 +1526,8 @@ class PlugShareProvider(BaseChargerProvider):
                     os.path.join(tessie_home, "charges_master.csv"),
                 ])
             charges_candidates.extend([
-                os.path.join(_repo_root, "Tessie", "charges", "charges_master.csv"),
-                os.path.join(_repo_root, "Tessie", "charges_master.csv"),
+                os.path.join(_repo_root, "resources", "charges", "charges_master.csv"),
+                os.path.join(_repo_root, "resources", "charges_master.csv"),
                 os.path.expanduser("~/Library/Mobile Documents/com~apple~CloudDocs/Tesla/Tessie/charges/charges_master.csv"),
                 os.path.expanduser("~/Library/Mobile Documents/com~apple~CloudDocs/Tesla/Tessie/charges_master.csv"),
                 os.path.expanduser("~/iCloud/Tesla/Tessie/charges/charges_master.csv"),

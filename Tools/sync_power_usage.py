@@ -80,7 +80,7 @@ from lib.tessie_api_common import load_config  # noqa: E402
 
 def find_usage_csvs(invoices_dir, provider=None):
     provider = provider or get_power_provider()
-    if not os.path.isdir(invoices_dir):
+    if not invoices_dir or not os.path.isdir(invoices_dir):
         return []
     out = []
     for f in sorted(os.listdir(invoices_dir)):
@@ -220,7 +220,7 @@ def check_staleness(master_path=None, provider=None, threshold_days=None, log=pr
 
     if threshold_days is None:
         cfg = load_config()
-        threshold_days = cfg.get("power_usage_staleness_days", DEFAULT_STALENESS_DAYS)
+        threshold_days = cfg.get("power", {}).get("usage_staleness_days", DEFAULT_STALENESS_DAYS)
 
     age_days = (datetime.now() - newest).days
     if age_days > threshold_days:

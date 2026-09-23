@@ -34,7 +34,7 @@ from typing import List, Tuple, Dict, Any, Optional, Set
 # ---------------------------------------------------------------------------
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 REPO_ROOT = os.path.dirname(SCRIPT_DIR)
-TESSIE_DIR = os.path.join(REPO_ROOT, "Tessie")
+TESSIE_DIR = os.path.join(REPO_ROOT, "resources")
 CONFIG_JSON_PATH = os.path.join(TESSIE_DIR, "config.json")
 DRIVES_MASTER_PATH = os.path.join(TESSIE_DIR, "drives", "drives_master.csv")
 CHARGING_JSON_PATH = os.path.join(TESSIE_DIR, "tesla_chargers.json") if os.path.isfile(os.path.join(TESSIE_DIR, "tesla_chargers.json")) else os.path.join(TESSIE_DIR, "charging.json")
@@ -1878,7 +1878,25 @@ def prompt_poi_naming(base_name, category):
 
 
 def classify_poi_group(tags):
-    """Classifies OSM tags into user-friendly top-level facility groups."""
+    """Classifies OSM tags into user-friendly top-level facility groups.
+
+    REQ-099 (2026-09-22): rewritten after BUG-145 exposed that this
+    function - like query_overpass_pois() right below it - had drifted
+    across 4 separate module-level copies of itself (this file's own
+    duplication debt, see query_overpass_pois()'s docstring), and even
+    the one copy that's actually reachable had silently regressed
+    relative to its dead siblings (missing the boating group and the
+    landuse retail check that 3 of the 4 copies had). Also found: `office`
+    was read into a local variable in every single copy but never once
+    checked by any branch - so every real office=* venue (lawyer,
+    accountant, real estate agent, ...) has always fallen through to
+    "Other Facilities" here, the same silent-drop shape as BUG-145's
+    craft=* gap, just never previously noticed. `craft` (beyond the
+    winery/brewery case) and `historic` had no group of their own either.
+    This is a single, deliberately broader rewrite - not a patch - so
+    the recognized-category set here matches query_overpass_pois()'s own
+    expanded set below, rather than the two silently drifting apart again.
+    """
     amenity = (tags.get("amenity") or "").lower()
     shop = (tags.get("shop") or "").lower()
     cuisine = (tags.get("cuisine") or "").lower()
@@ -1886,36 +1904,122 @@ def classify_poi_group(tags):
     tourism = (tags.get("tourism") or "").lower()
     healthcare = (tags.get("healthcare") or "").lower()
     office = (tags.get("office") or "").lower()
-    
+    craft = (tags.get("craft") or "").lower()
+    historic = (tags.get("historic") or "").lower()
+    sport = (tags.get("sport") or "").lower()
+    man_made = (tags.get("man_made") or "").lower()
+    waterway = (tags.get("waterway") or "").lower()
+    landuse = (tags.get("landuse") or "").lower()
+    building = (tags.get("building") or "").lower()
+
     name = (tags.get("name") or "").lower()
     brand = (tags.get("brand") or "").lower()
+
     supermarket_brands = ("woolworths", "coles", "aldi", "iga", "harris farm", "costco", "foodland", "drakes", "spudshed", "kmart", "target", "big w")
     if any(b in name or b in brand for b in supermarket_brands):
         return "Supermarkets & Groceries", "🛒"
 
+    # Wineries, breweries & distilleries - the exact case that triggered this
+    # rewrite (craft=winery had nowhere of its own to go and fell to
+    # "Other Facilities"). Checked early so it wins over the more generic
+    # dining/retail buckets below for a venue tagged both ways (e.g. a
+    # cellar-door restaurant with amenity=restaurant + craft=winery).
+    if craft in ("winery", "brewery", "distillery", "beverage_production") or tourism == "wine_cellar" or amenity == "brewery":
+        return "Wineries & Breweries", "🍷"
+
+    if leisure in ("slipway", "marina") or man_made in ("pier", "wharf", "jetty", "pontoon") or waterway in ("boat_ramp", "dock", "wharf") or "boat" in amenity or sport in ("sailing", "rowing", "kayak", "canoe", "boating"):
+        return "Boating, Wharves & Ramps", "⛵"
+
     if amenity in ("cafe", "coffee_shop") or shop in ("coffee", "tea") or "coffee" in cuisine:
         return "Cafes & Coffee", "☕"
+
     if amenity in ("restaurant", "fast_food", "food_court", "pub", "bar", "biergarten", "ice_cream"):
         return "Dining & Fast Food", "🍔"
-    if shop in ("supermarket", "convenience", "bakery", "butcher", "greengrocer", "deli", "grocery", "general", "department_store", "mall"):
+
+    if shop in ("supermarket", "convenience", "bakery", "butcher", "greengrocer", "deli", "grocery", "general", "department_store", "mall", "farm", "health_food", "seafood", "cheese", "confectionery", "chocolate", "frozen_food", "pastry", "nuts", "spices"):
         return "Supermarkets & Groceries", "🛒"
-    if shop or tags.get("building") in ("retail", "commercial") or amenity == "marketplace":
+
+    if landuse in ("retail", "commercial") or shop == "mall" or any(s in name for s in ("town centre", "town center", "shopping centre", "shopping center", "shopping plaza", "shopping mall", "homemaker centre", "marketplace")):
         return "Retail & Shopping", "🛍️"
-    if amenity in ("toilets", "restroom", "drinking_water", "atm", "bank", "pharmacy", "post_box", "post_office"):
+
+    if shop in ("hairdresser", "beauty", "massage", "tattoo", "piercing", "optician", "cosmetics", "chemist", "hearing_aids", "perfumery"):
+        return "Health & Beauty", "💇"
+
+    if shop or building in ("retail", "commercial") or amenity == "marketplace":
+        return "Retail & Shopping", "🛍️"
+
+    if amenity in ("toilets", "restroom", "drinking_water", "atm", "bank", "bureau_de_change", "pharmacy", "post_box", "post_office", "library", "community_centre", "place_of_worship", "social_facility", "townhall", "courthouse", "police", "fire_station"):
         return "Amenities & Services", "🚻"
-    if tourism in ("hotel", "motel", "guest_house", "hostel", "apartment", "camp_site"):
+
+    if tourism in ("hotel", "motel", "guest_house", "hostel", "apartment", "camp_site", "caravan_site", "chalet", "alpine_hut", "wilderness_hut"):
         return "Lodging & Hotels", "🏨"
-    if amenity in ("fuel", "car_wash", "parking", "charging_station") or shop in ("car", "car_repair", "car_parts"):
+
+    if amenity in ("fuel", "car_wash", "parking", "charging_station", "car_rental", "car_sharing", "vehicle_inspection", "compressed_air") or shop in ("car", "car_repair", "car_parts", "tyres", "motorcycle"):
         return "Automotive & Parking", "🚗"
-    if leisure or tourism in ("attraction", "museum", "gallery", "theme_park", "viewpoint") or amenity in ("cinema", "theatre"):
-        return "Leisure & Entertainment", "🎯"
-    if healthcare or amenity in ("hospital", "clinic", "doctors", "dentist", "veterinary"):
+
+    if healthcare or amenity in ("hospital", "clinic", "doctors", "doctor", "dentist", "veterinary"):
         return "Healthcare", "🏥"
+
+    if office:
+        return "Offices & Professional Services", "💼"
+
+    if craft:
+        return "Trades & Craft Services", "🔨"
+
+    if tourism in ("attraction", "museum", "gallery", "viewpoint", "zoo", "aquarium", "artwork", "theme_park", "picnic_site"):
+        return "Attractions & Culture", "📸"
+
+    if historic:
+        return "Historic Sites", "🏛️"
+
+    if leisure in ("fitness_centre", "sports_centre", "sports_hall", "golf_course", "swimming_pool", "bowling_alley", "ice_rink", "stadium", "miniature_golf", "trampoline_park", "water_park") or sport:
+        return "Sports & Fitness", "🏋️"
+
+    if leisure in ("park", "playground", "nature_reserve", "garden", "dog_park", "pitch", "track", "picnic_table"):
+        return "Parks & Recreation", "🌳"
+
+    if leisure or amenity in ("cinema", "theatre", "arts_centre"):
+        return "Leisure & Entertainment", "🎯"
+
     return "Other Facilities", "📍"
 
 
 def query_overpass_pois(lat, lon, radius_m=250):
-    """Queries Overpass API for all named POIs / venues within radius_m of lat, lon."""
+    """Queries Overpass API for all named POIs / venues within radius_m of lat, lon.
+
+    Duplication note (BUG-140/145, still true): this file has FOUR
+    separate module-level `def query_overpass_pois` definitions (lines
+    ~642, ~1075, ~1501, and this one) and FOUR of `classify_poi_group`
+    right above each - only the last pair (this one) is ever reachable;
+    the other three are dead code, each having independently drifted out
+    of sync with this one over time (that drift is exactly how BUG-140's
+    missing radius guard and REQ-099's missing boating/office/craft
+    groups happened - a fix landing in one copy silently never reached
+    the others). Not consolidated here - that's a bigger, separate
+    cleanup touching several unrelated duplicated functions in this same
+    file (geocode_candidates, resolve_location_disambiguated,
+    geocode_address, reverse_geocode, prompt_poi_naming are ALSO each
+    duplicated 3x alongside this pair, discovered while scoping this fix -
+    flagged, not touched, deliberately out of scope for a POI-
+    categorization fix).
+
+    REQ-099 (2026-09-22): category detection used to only recognize a
+    hand-picked handful of top-level keys (amenity/shop/leisure/tourism/
+    office/healthcare, then craft after BUG-145). Any real, named,
+    in-range OSM feature tagged with something outside that list was
+    silently dropped, at any radius, cache or no cache - discovered from
+    Cassegrain Winery (craft=winery only) having been invisible to this
+    tool since a 2021 retag. Now recognizes every top-level key that
+    denotes a distinct kind of named place a driver might reasonably
+    want to know is nearby (amenity, shop, tourism, leisure, office,
+    healthcare, craft, historic, sport), plus a small curated set of
+    specific man_made/waterway values (pier, wharf, jetty, pontoon,
+    boat_ramp, dock) - deliberately NOT the bare man_made/waterway keys,
+    which are mostly noisy infrastructure (water towers, masts, drains)
+    that isn't a "facility" in this sense. classify_poi_group() above was
+    rewritten in step so nothing newly-detected here dead-ends in an
+    uninformative "Other Facilities" bucket.
+    """
     query = f"""
     [out:json][timeout:20];
     (
@@ -1952,6 +2056,11 @@ def query_overpass_pois(lat, lon, radius_m=250):
                     tourism = tags.get("tourism")
                     office = tags.get("office")
                     healthcare = tags.get("healthcare")
+                    craft = tags.get("craft")
+                    historic = tags.get("historic")
+                    sport = tags.get("sport")
+                    man_made = tags.get("man_made")
+                    waterway = tags.get("waterway")
                     building = tags.get("building")
                     brand = tags.get("brand")
 
@@ -1959,7 +2068,14 @@ def query_overpass_pois(lat, lon, radius_m=250):
                     if amenity == "charging_station" or "supercharger" in name.lower() or name.lower().startswith("tesla super"):
                         continue
 
-                    category = amenity or shop or leisure or tourism or office or healthcare
+                    category = (
+                        amenity or shop or leisure or tourism or office or
+                        healthcare or craft or historic or sport
+                    )
+                    if not category and man_made in ("pier", "wharf", "jetty", "pontoon"):
+                        category = man_made
+                    if not category and waterway in ("boat_ramp", "dock", "wharf"):
+                        category = waterway
                     if not category and building and building != "yes":
                         category = f"building ({building})"
                     
@@ -1974,11 +2090,38 @@ def query_overpass_pois(lat, lon, radius_m=250):
                     p_lon = el.get("lon") or el.get("center", {}).get("lon", lon)
                     dist = haversine_distance(lat, lon, p_lat, p_lon)
 
+ # BUG-140: a way/relation's centroid can sit outside radius_m even
+ # though Overpass's own around: filter matched some part of its
+ # geometry - see this function's docstring. Restored the guard the
+ # other (dead, unreachable) copies of this function each had.
+                    if dist > radius_m:
+                        continue
+
                     cat_label = (category or "business").replace("_", " ").title()
                     if brand and brand.lower() != name.lower():
                         cat_label += f" ({brand})"
 
                     group_name, group_emoji = classify_poi_group(tags)
+
+ # BUG-151: cache only ever stored the COMPUTED name/category/group/emoji,
+ # never the raw tags classify_poi_group() actually read - so when its rules
+ # changed (REQ-099), every cached record became permanently un-recomputable
+ # without a live Overpass refetch (BUG-146's CATEGORY_SCHEMA_CUTOFF forces
+ # exactly that, at real cost - see BUG-149/BUG-150). Saving just the handful
+ # of tag values classify_poi_group() actually consults means a FUTURE
+ # classification change can be applied to every cached record instantly and
+ # offline (see station_facilities.py's reclassify_cached_facilities()) -
+ # this is the last time a rule change has to cost a live refetch.
+                    raw_tags = {
+                        k: v for k, v in {
+                            "amenity": amenity, "shop": shop, "cuisine": tags.get("cuisine"),
+                            "leisure": leisure, "tourism": tourism, "office": office,
+                            "healthcare": healthcare, "craft": craft, "historic": historic,
+                            "sport": sport, "man_made": man_made, "waterway": waterway,
+                            "landuse": tags.get("landuse"), "building": building,
+                            "brand": brand, "name": name,
+                        }.items() if v
+                    }
 
                     results.append({
                         "name": name,
@@ -1987,7 +2130,8 @@ def query_overpass_pois(lat, lon, radius_m=250):
                         "emoji": group_emoji,
                         "lat": p_lat,
                         "lon": p_lon,
-                        "dist_m": round(dist, 1)
+                        "dist_m": round(dist, 1),
+                        "raw_tags": raw_tags
                     })
 
                 results.sort(key=lambda x: x["dist_m"])
@@ -1995,6 +2139,7 @@ def query_overpass_pois(lat, lon, radius_m=250):
         except Exception:
             continue
     return []
+
 
 def search_places_by_name(query, near_lat=None, near_lon=None, limit=7, max_radius_m=350):
     """
@@ -2643,7 +2788,7 @@ def load_config():
     """Loads configuration dictionary from config.json."""
     default_config = {
         "landing_directory": "~/Downloads",
-        "tessie_directory": "~/Library/Mobile Documents/com~apple~CloudDocs/Tesla/Tessie",
+        "data_directory": "~/Library/Mobile Documents/com~apple~CloudDocs/Tesla",
         "invoices_directory": "~/iCloud/PDF/Tesla/charging_invoices"
     }
     for cfg_p in [os.path.join(REPO_ROOT, "config.json"), CONFIG_JSON_PATH]:  # TODO-034: root is primary, Tessie/ legacy fallback
@@ -2661,7 +2806,7 @@ def load_config():
 def find_candidate_drive_logs():
     """Finds drives_master.csv or drives_summary_*.csv from configured directories and external SSDs."""
     config = load_config()
-    tessie_dir = os.path.abspath(os.path.expanduser(config.get("tessie_directory", "~/Library/Mobile Documents/com~apple~CloudDocs/Tesla/Tessie")))
+    tessie_dir = os.path.abspath(os.path.expanduser(config.get("directories", {}).get("data", "~/Library/Mobile Documents/com~apple~CloudDocs/Tesla")))
     
     search_dirs = [tessie_dir]
     if TESSIE_DIR not in search_dirs:
@@ -2684,7 +2829,7 @@ def find_candidate_drive_logs():
 def find_deepdive_files():
     """Finds all drive_deepdive_*.csv files from configured directories and subdirectories."""
     config = load_config()
-    tessie_dir = os.path.abspath(os.path.expanduser(config.get("tessie_directory", "~/Library/Mobile Documents/com~apple~CloudDocs/Tesla/Tessie")))
+    tessie_dir = os.path.abspath(os.path.expanduser(config.get("directories", {}).get("data", "~/Library/Mobile Documents/com~apple~CloudDocs/Tesla")))
     
     search_dirs = [tessie_dir]
     if TESSIE_DIR not in search_dirs and os.path.exists(TESSIE_DIR):
@@ -2733,7 +2878,7 @@ def load_chargers():
     """
     chargers = {}
     config = load_config()
-    tessie_dir = os.path.abspath(os.path.expanduser(config.get("tessie_directory", "~/Library/Mobile Documents/com~apple~CloudDocs/Tesla/Tessie")))
+    tessie_dir = os.path.abspath(os.path.expanduser(config.get("directories", {}).get("data", "~/Library/Mobile Documents/com~apple~CloudDocs/Tesla")))
     
     search_dirs = [tessie_dir]
     if TESSIE_DIR not in search_dirs and os.path.exists(TESSIE_DIR):

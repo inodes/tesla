@@ -99,7 +99,7 @@ def fetch_abrp_telemetry(api_key: str, user_token: str, timeout: int = 10, force
 def get_abrp_token_file() -> str:
     """Returns the preferred path for storing the generated ABRP user token."""
     cfg = load_config()
-    tessie_dir = cfg.get("tessie_directory")
+    tessie_dir = cfg.get("directories", {}).get("data")
     if tessie_dir:
         expanded = os.path.expanduser(tessie_dir)
         if os.path.isdir(expanded):
@@ -196,14 +196,23 @@ def load_abrp_config() -> Dict[str, Any]:
         or DEFAULT_VEHICLE_TYPECODE
     )
 
-    # Local vehicle name (Tesla Model YL AWD)
-    v_name = "Tesla Model YL AWD"
+    # Local vehicle name, derived from vehicle_spec.json's actual model/trim.
+    # Fix (2026-09-21): this used to hardcode the literal "Tesla Model YL AWD"
+    # whenever the trim happened to contain "YL", discarding whatever the
+    # real spec said and never adapting if the car or its trim ever changes.
+    # vehicle_spec.json's trim strings look like "YL (AWD Long Range - L
+    # Premium AWD)" - the short code before the parenthetical - so build a
+    # compact name from model + that code, falling back to the full trim
+    # text (or just the model) when there's no code to split out.
+    v_name = "Tesla Model Y"
     if spec_veh:
-        model = spec_veh.get("model", "Tesla Model Y")
-        if "YL" in str(spec_veh.get("trim", "")):
-            v_name = "Tesla Model YL AWD"
-        elif spec_veh.get("trim"):
-            v_name = f"{model} {spec_veh.get('trim')}".strip()
+        model = str(spec_veh.get("model") or "Tesla Model Y").strip()
+        trim = str(spec_veh.get("trim") or "").strip()
+        if trim:
+            trim_code = trim.split("(", 1)[0].strip()
+            v_name = f"{model} {trim_code}".strip() if trim_code else f"{model} {trim}".strip()
+        else:
+            v_name = model
 
     # Reference consumption (Wh/km): prefer ABRP calibrated live reference, then config, then GVG/spec
     if "consumption_wh_km" in abrp_cfg:
@@ -234,6 +243,7 @@ def load_abrp_config() -> Dict[str, Any]:
         "default_departure_soc": abrp_cfg.get("default_departure_soc", "live"),
         "target_arrival_soc": float(abrp_cfg.get("target_arrival_soc", 10)),
         "max_charge_soc": float(abrp_cfg.get("max_charge_soc", 85)),
+        "corridor_radius_km": float(abrp_cfg.get("corridor_radius_km", 5.0)),
         "consumption_wh_km": consumption_wh_km,
         "usable_kwh": usable_kwh,
         "live_telemetry": tlm_result.get("telemetry") if tlm_result else None,
