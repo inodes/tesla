@@ -19,26 +19,27 @@ CLAUDE.md
 *.csv
 *.xlsx
 *.pdf
-Tessie/*.csv
-Tessie/*.json
-Tessie/api_cache/
-Tessie/invoices/*
-!Tessie/invoices/.gitkeep
-!Tessie/places.example.json
-!Tessie/charging.example.json
-!Tessie/charging_archived.example.json
-!Tessie/superchargers.example.json
-!Tessie/superchargers_archived.example.json
-!Tessie/tesla_chargers.example.json
-!Tessie/tesla_chargers_archived.example.json
-!Tessie/plugshare_chargers.example.json
-!Tessie/plugshare_chargers_archived.example.json
-!Tessie/tesla_superchargers.example.json
-!Tessie/tesla_superchargers_archived.example.json
-!Tessie/vehicle_spec.example.json
-!Tessie/comparison_vehicles.example.json
-!Tessie/personal_chargers.example.json
-!Tessie/state_boundaries.json
+resources/*.csv
+resources/*.json
+resources/api_cache/
+resources/invoices/*
+!resources/invoices/.gitkeep
+!resources/places.example.json
+!resources/charging.example.json
+!resources/charging_archived.example.json
+!resources/superchargers.example.json
+!resources/superchargers_archived.example.json
+!resources/tesla_chargers.example.json
+!resources/tesla_chargers_archived.example.json
+!resources/plugshare_chargers.example.json
+!resources/plugshare_chargers_archived.example.json
+!resources/tesla_superchargers.example.json
+!resources/tesla_superchargers_archived.example.json
+!resources/vehicle_spec.example.json
+!resources/comparison_vehicles.example.json
+!resources/personal_chargers.example.json
+!resources/state_boundaries.json
+!resources/station_facilities.example.json
 !config.example.json
 config.json
 places.json
@@ -59,8 +60,8 @@ dashcam/*.json
 
 # AGL tariff rates - real account-specific plan/billing figures (REQ-034).
 # Lives in the AGL data home (agl_common.resolve_agl_data_home()), never in
-# this repo. AGL/ mirrors the Tessie/ pattern - only the sanitized template
-# is checked in, same as Tessie/*.example.json.
+# this repo. AGL/ mirrors the resources/ pattern - only the sanitized template
+# is checked in, same as resources/*.example.json.
 AGL/*.json
 !AGL/agl_tariff_rates.example.json
 # Defense-in-depth: a real file must never land in Tools/ either (REQ-034's

@@ -11,9 +11,9 @@ consumer-app API the Evnex phone app itself uses, authenticating with your
 normal Evnex account email + password.
 
 Credential handling rules (deliberate, not incidental):
-  - Source of truth is config.json ("evnex_username"/"evnex_password"),
-    the same file/pattern tessie_access_token already uses - see
-    tessie_api_common.py.
+  - Source of truth is config.json's "evnex" block ("username"/"password"),
+    the same nested-block pattern the "tessie" block (vin/access_token)
+    already uses - see tessie_api_common.py.
   - EVNEX_CLIENT_USERNAME / EVNEX_CLIENT_PASSWORD environment variables
     override config.json if set. These are the `evnex` library's own env
     var names (see its README), reused here rather than inventing new ones.
@@ -68,12 +68,12 @@ class EvnexCredentialsError(RuntimeError):
 
 def get_evnex_username(config=None):
     config = load_config() if config is None else config
-    return os.environ.get(ENV_USERNAME) or config.get("evnex_username") or None
+    return os.environ.get(ENV_USERNAME) or config.get("evnex", {}).get("username") or None
 
 
 def get_evnex_password(config=None):
     config = load_config() if config is None else config
-    return os.environ.get(ENV_PASSWORD) or config.get("evnex_password") or None
+    return os.environ.get(ENV_PASSWORD) or config.get("evnex", {}).get("password") or None
 
 
 def require_evnex_credentials(config=None):
@@ -83,13 +83,13 @@ def require_evnex_credentials(config=None):
     password = get_evnex_password(config)
     missing = []
     if not username:
-        missing.append("evnex_username")
+        missing.append("evnex.username")
     if not password:
-        missing.append("evnex_password")
+        missing.append("evnex.password")
     if missing:
         raise EvnexCredentialsError(
-            "Missing " + " and ".join(missing) + ". Set in config.json "
-            "(see Tessie/config.example.json) or via the "
+            "Missing " + " and ".join(missing) + ". Set in config.json's "
+            "\"evnex\" block (see Tessie/config.example.json) or via the "
             f"{ENV_USERNAME}/{ENV_PASSWORD} environment variables."
         )
     return username, password

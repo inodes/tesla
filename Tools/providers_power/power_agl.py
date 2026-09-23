@@ -63,13 +63,10 @@ class AGLProvider(BasePowerProvider):
     def config_directory_keys(self):
         return ("power_directory", "agl_directory")
 
-    def config_invoices_directory_keys(self):
-        return ("power_invoices_directory", "agl_invoices_directory")
+    def config_invoices_directory_path(self):
+        return ("directories", "power_invoices")
 
     def default_data_home_name(self):
-        return "AGL"
-
-    def default_invoices_home_name(self):
         return "AGL"
 
     def usage_master_filename(self):
@@ -268,7 +265,7 @@ class AGLProvider(BasePowerProvider):
         """Discover and extract metadata from all AGL invoice PDFs in the invoices directory."""
         from lib.invoice_common import detect_and_extract_invoice
         invoices_dir = self.resolve_invoices_dir()
-        if not os.path.isdir(invoices_dir):
+        if not invoices_dir or not os.path.isdir(invoices_dir):
             return []
         invoices = []
         for f in sorted(os.listdir(invoices_dir)):

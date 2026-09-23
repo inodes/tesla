@@ -664,8 +664,8 @@ def load_comparison_vehicles(tessie_dir: Optional[str] = None) -> Dict[str, Any]
     except Exception:
         pass
 
-    candidate_paths.append(os.path.join(REPO_ROOT, "Tessie", "comparison_vehicles.json"))
-    candidate_paths.append(os.path.join(REPO_ROOT, "Tessie", "comparison_vehicles.example.json"))
+    candidate_paths.append(os.path.join(REPO_ROOT, "resources", "comparison_vehicles.json"))
+    candidate_paths.append(os.path.join(REPO_ROOT, "resources", "comparison_vehicles.example.json"))
 
     for p in candidate_paths:
         if os.path.isfile(p):

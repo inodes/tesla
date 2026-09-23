@@ -504,6 +504,26 @@ def build_profile(tessie_dir=None, vehicle_mass_kg=None):
 
             b = bucket_for_speed(seg["avg_speed_kmh"])
 
+ # Fix (2026-09-21): compute_drive_segments() never attaches a raw
+ # energy_kwh figure to its merged segments - only the smoothed
+ # "efficiency_kwh_per_100km" ratio survives the interval merge.
+ # Both grade_corrected_efficiency_kwh_per_100km() below and
+ # _bucket_row_from_segments()'s weighted-average Eff column were
+ # written assuming seg["energy_kwh"] existed; it never did, so
+ # every energy-weighted sum silently came out as 0.0 for the
+ # strict-flat table (Segments/Dist correct, Eff always 0.0), and
+ # every grade-corrected efficiency computed to None - so nothing
+ # was ever appended to corrected_buckets at all (Segments: 0 in
+ # every single row). Derive it here from the same smoothed
+ # efficiency ratio compute_drive_segments() already produces -
+ # the best approximation available once the underlying per-sample
+ # energy figures are gone after the interval merge.
+            if seg.get("energy_kwh") is None:
+                seg["energy_kwh"] = (
+                    (seg["efficiency_kwh_per_100km"] * seg["distance_km"]) / 100.0
+                    if seg.get("efficiency_kwh_per_100km") is not None else None
+                )
+
  # Grade-corrected pool: every non-stationary segment,
  # regardless of class, contributes here (the whole point of
  # factoring in inclines rather than throwing them away).

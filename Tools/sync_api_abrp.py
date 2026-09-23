@@ -11,7 +11,22 @@ Usage:
   ./Tools/sync_api_abrp.py                 # Query vehicle telemetry & profile
   ./Tools/sync_api_abrp.py --auth-url      # Generate 1-click ABRP login link
   ./Tools/sync_api_abrp.py --code <auth_code>   # Exchange code and inspect vehicle profile
-  ./Tools/sync_api_abrp.py --token <token>      # Query user info & custom vehicle directly
+  ./Tools/sync_api_abrp.py --token <token>      # Query user info & custom vehicle directly (this run only)
+  ./Tools/sync_api_abrp.py --token <token> --save-token  # ...and cache it for future runs
+
+Token storage (BUG-141-style safety, applied here too):
+  The one-time, manually-generated ABRP telemetry token (from
+  https://abetterrouteplanner.com/home/app/api-keys/telemetry) never expires
+  and never needs regenerating - the recommended place for it is directly in
+  config.json's "abrp": {"user_token": "..."} block, which load_abrp_config()
+  always checks FIRST. In that setup, .abrp_token.json is never touched.
+  .abrp_token.json exists only to cache the OAuth access_token produced by
+  --code - that one genuinely cannot be re-derived from client_id/api_key
+  alone (it requires a one-time browser consent step), so it has to persist
+  somewhere between runs. --token alone NEVER writes to that cache (or to
+  config.json) - it only affects the current invocation, so inspecting or
+  testing a token can't silently overwrite your real one; pass --save-token
+  to actually persist it.
 """
 
 import sys
@@ -37,6 +52,7 @@ from lib.abrp_planner import (
     load_abrp_token,
     get_abrp_token_file,
 )
+from lib.tessie_api_common import load_config as _load_raw_config
 from lib.table_formatter import pad_display
 
 C_GREEN = "\033[92m"
@@ -52,7 +68,8 @@ def main():
     parser = argparse.ArgumentParser(description="ABRP / Iternio API Connectivity & Vehicle Inspector")
     parser.add_argument("--auth-url", action="store_true", help="Generate ABRP OAuth login URL")
     parser.add_argument("--code", type=str, help="Authorization code received from ABRP OAuth redirect")
-    parser.add_argument("--token", type=str, help="User access token to inspect and cache")
+    parser.add_argument("--token", type=str, help="User access token to inspect (this run only, unless --save-token is also passed)")
+    parser.add_argument("--save-token", action="store_true", help="Persist --token to the local ABRP token cache (.abrp_token.json). Without this, --token only affects the current run.")
     parser.add_argument("--redirect-uri", type=str, default="http://localhost:8080", help="OAuth redirect URI (default: http://localhost:8080)")
     parser.add_argument("--open", action="store_true", help="Open OAuth login link directly in browser")
 
@@ -74,14 +91,26 @@ def main():
         sys.exit(1)
 
     if args.token:
-        save_abrp_token(args.token.strip(), {"source": "cli_token"})
-        abrp_cfg = load_abrp_config()
+        cli_token = args.token.strip()
+        if args.save_token:
+            # BUG-141 (OSM) taught us --token used for a one-off inspection/test
+            # must never silently clobber the real cached/config token - only
+            # persist when the user explicitly opts in.
+            save_abrp_token(cli_token, {"source": "cli_token"})
+            abrp_cfg = load_abrp_config()
+        else:
+            abrp_cfg["user_token"] = cli_token
 
     active_token = abrp_cfg.get("user_token")
 
     if active_token and not args.auth_url and not args.code:
         token_file = get_abrp_token_file()
-        token_src = f"CLI argument" if args.token else f"Generated Cache ({os.path.basename(token_file)})"
+        if args.token:
+            token_src = "CLI argument (saved to cache)" if args.save_token else "CLI argument (not persisted - pass --save-token to cache it)"
+        elif (_load_raw_config().get("abrp", {}) or {}).get("user_token") or (_load_raw_config().get("abrp", {}) or {}).get("user_api_key") or (_load_raw_config().get("abrp", {}) or {}).get("token"):
+            token_src = "config.json (abrp.user_token)"
+        else:
+            token_src = f"Generated Cache ({os.path.basename(token_file)})"
         print(f"🔍 {C_CYAN}Querying ABRP Live Telemetry & Vehicle Profile using token from {token_src}...{C_RESET}")
         from lib.abrp_planner import fetch_abrp_telemetry
         tlm_res, raw = fetch_abrp_telemetry(api_key, active_token)

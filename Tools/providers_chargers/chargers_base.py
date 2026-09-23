@@ -11,10 +11,13 @@ import json
 import math
 import tempfile
 import unicodedata
+import heapq
+import itertools
 from abc import ABC, abstractmethod
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Dict, List, Optional, Any, Tuple
+from typing import Dict, List, Optional, Any, Tuple, Callable, Set
 
 
 def atomic_write_json(path: str, payload: Any, indent: int = 2) -> None:
@@ -1131,4 +1134,350 @@ def archive_station_record(
             json.dump(archive_reg, f, indent=2, ensure_ascii=False)
     except Exception as e:
         print(f"Warning: Failed to write archive record to {archive_path}: {e}")
+
+
+def merge_with_staleness(existing_by_key: Dict[str, dict], fresh_by_key: Dict[str, dict],
+                          now_iso: str, archive_path: Optional[str] = None,
+                          archive_key_fn: Optional[Any] = None) -> Dict[str, dict]:
+    """
+    Standard staleness-aware merge, shared by every full-list-scrape
+    provider (JOLT, NRMA, Evie, EVX, Exploren, BPPulse, AmpCharge,
+    Chargefox) - deliberately NOT Tesla, which Glenn explicitly excluded
+    (2026-09-23): Tesla's own findus list is authoritative, so there's no
+    "did we just miss it, or is it really gone" ambiguity for Tesla to
+    track in the first place.
+
+    Reuses this codebase's existing first_seen/last_verified naming
+    (archive_station_record's own orig_first_seen fallback chain already
+    looks for "first_seen" and "last_verified" - and BPPulse's own
+    conversion step already writes both) rather than inventing a second,
+    competing convention. The bug those existing writers had: they stamp
+    first_seen fresh to "now" on every single sync, so it never actually
+    reflects when a station was first discovered - just when it was last
+    converted. This function is what actually carries it forward.
+
+    `fresh_by_key` is this sync's newly-fetched records, already reduced
+    by the caller to plain dicts keyed by that provider's own native id
+    (whatever key each provider already merges on - r.key for the
+    to_dict()-based providers, LocationID/id for AmpCharge/Chargefox).
+    For each fresh record: carries first_seen forward from the existing
+    entry if there is one (else stamps it to now_iso), bumps seen_count,
+    sets last_verified = now_iso, and archives the superseded version via
+    archive_station_record() when detect_station_changes() finds a real
+    tariff/hardware change (first_seen/last_verified/seen_count themselves
+    are deliberately excluded from that comparison, since bumping them
+    every sync would otherwise spam the archive with no real content
+    change).
+
+    Anything present in `existing_by_key` but ABSENT from `fresh_by_key`
+    is carried forward into the result UNCHANGED (first_seen/
+    last_verified/seen_count untouched) rather than being dropped - so a
+    station that drops out of one fetch visibly goes stale (its
+    last_verified stops advancing) instead of silently vanishing from the
+    registry (Glenn, 2026-09-23: "the whole idea of staleness should be
+    baked into every provider's json file"). A separate, later pass
+    decides what to do with anything stale past some threshold; this
+    function's only job is to stop deleting-by-omission.
+
+    Returns the merged dict, keyed the same way as both inputs.
+    """
+    merged: Dict[str, dict] = {}
+    for key, d in fresh_by_key.items():
+        old = existing_by_key.get(key)
+        if old and old.get("first_seen"):
+            d["first_seen"] = old["first_seen"]
+            d["seen_count"] = old.get("seen_count", 1) + 1
+        else:
+            d["first_seen"] = now_iso
+            d["seen_count"] = 1
+        d["last_verified"] = now_iso
+
+        if old and archive_path and detect_station_changes(old, d):
+            archive_key = archive_key_fn(key) if archive_key_fn else key
+            archive_station_record(archive_path, archive_key, old, now_iso)
+
+        merged[key] = d
+
+    for key, old in existing_by_key.items():
+        if key not in merged:
+            merged[key] = old
+
+    return merged
+
+
+def resolve_scan_state_path(provider_name: str, repo_root: str, tessie_home: Optional[str] = None,
+                             config_path: Optional[str] = None) -> str:
+    """Finds path to <provider_name>_scan_state.json - the persistent record
+    of which lat/lon cells a map-tile-style provider (PlugShare, Chargefox,
+    ...) has adaptively scanned, at what resolution, and which station IDs
+    each one found. Mirrors each provider's own _resolve_<provider>_
+    registry_path()'s directory search (real data folder from config.json's
+    directories.data, falling back to resources/), just for a different
+    filename - the scan-state file lives right next to that provider's own
+    registry JSON."""
+    filename = f"{provider_name}_scan_state.json"
+    candidates = []
+    if tessie_home:
+        candidates.append(os.path.join(tessie_home, filename))
+    candidates.append(os.path.join(repo_root, "resources", filename))
+    if config_path and os.path.isfile(config_path):
+        try:
+            with open(config_path, "r", encoding="utf-8") as f:
+                cfg = json.load(f)
+                td = cfg.get("directories", {}).get("data")
+                if td:
+                    td_exp = os.path.expanduser(td)
+                    candidates.insert(0, os.path.join(td_exp, filename))
+        except Exception:
+            pass
+    for c in candidates:
+        if os.path.isfile(c):
+            return c
+    return candidates[0] if candidates else os.path.join(repo_root, "resources", filename)
+
+
+def load_scan_state(path: str, country: str, root_lat: float, root_lon: float,
+                     root_span_lat: float, root_span_lng: float) -> dict:
+    """Loads a persistent map-tile scan-state file, or seeds a fresh one.
+    The schema is intentionally provider- and country-agnostic: root_bbox
+    is the only thing specific to whichever provider/country this call was
+    seeded with - a second provider or a second country is just a second
+    state file with its own root_bbox, no code changes."""
+    if os.path.isfile(path):
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            if isinstance(data, dict) and "cells" in data and "stations" in data:
+                return data
+        except Exception:
+            pass
+    now_iso = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    return {
+        "version": 1,
+        "country": country,
+        "root_bbox": {"lat": root_lat, "lon": root_lon, "span_lat": root_span_lat, "span_lng": root_span_lng},
+        "created_at": now_iso,
+        "updated_at": now_iso,
+        "cells": {},
+        "stations": {},
+    }
+
+
+def save_scan_state(path: str, state: dict) -> None:
+    state["updated_at"] = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    atomic_write_json(path, state)
+
+
+def run_priority_box_scan(query_fn: Callable[[float, float, float, float], List[dict]],
+                           root_lat: float, root_lon: float, root_span_lat: float, root_span_lng: float,
+                           state_path: str, min_span_deg: float = 0.02, max_depth: int = 7,
+                           skip_subdivide_below: int = 2, max_workers: int = 5,
+                           max_cells_this_run: Optional[int] = None, stale_after_days: float = 30.0,
+                           country: str = "AU", region_hint_fn: Optional[Callable[[float, float], List[str]]] = None) -> dict:
+    """
+    Persistent, priority-ordered, resumable map-tile discovery - shared by
+    every provider whose only way to discover new stations is querying a
+    moving map viewport (PlugShare's /locations/region, Chargefox's
+    locationsByBounds - as opposed to Tesla's or JOLT's literal full-list
+    scrape, which has no "did we miss a region" problem to begin with, per
+    Glenn 2026-09-23: "This is something not required of Tesla... which
+    scraps literal full list of names and addresses rather than moving a
+    map").
+
+    Originally built PlugShare-specific, generalized here so any such
+    provider gets it "for free" by supplying `query_fn` and its own
+    `state_path` (see PlugShareClient.scan_country_priority and
+    ChargefoxProvider.scan_australia_priority for the thin per-provider
+    wrappers).
+
+    `query_fn(lat, lon, span_lat, span_lng) -> List[dict]` is the ONLY
+    provider-specific piece: it must already be internally reliable (its
+    own retry/backoff on rate-limiting - PlugShareClient uses
+    _reliable_search_region; Chargefox's _query_graphql already retries on
+    429), and each returned dict must carry "id", "latitude", "longitude"
+    and "name" keys (the caller normalizes its own API's native key names,
+    e.g. Chargefox's "lat"/"lng", before returning).
+
+    Cells are pulled off a PRIORITY QUEUE ordered by each cell's own result
+    count, highest first - not processed depth-first down one branch at a
+    time. That single choice gives the behavior Glenn asked for: dense
+    areas (a big city) keep re-entering the queue with high counts as they
+    split, so they naturally get drilled to a fine resolution, while a
+    sparse or empty cell (ocean, outback) is queried once, found to have
+    few/no stations, and marked done immediately - it never competes for
+    further processing time, so most of the country's *area* gets "ticked
+    off" at a coarse resolution almost for free.
+
+    Every cell processed - its resolution, whether it converged, and which
+    station IDs it found - is written to `state_path` as it happens, keyed
+    by a deterministic id from its own lat/lon/span. Re-running this
+    against the same state file RESUMES: a cell already marked done and
+    not older than `stale_after_days` is skipped, and anything left
+    "pending" from an interrupted prior run is picked back up.
+    `max_cells_this_run` lets one call process a bounded chunk instead of
+    one long blocking scan.
+
+    Every station ID seen is ALSO tracked on its own, independent of which
+    cell found it, with first_seen_at/last_seen_at/seen_count - separate
+    from cell bookkeeping, because this scan's job is to find and record
+    entries cheaply, not to deep-dive them (that's a separate, budget-
+    conscious pass keyed off staleness).
+
+    `region_hint_fn(lat, lon) -> List[str]`, if given, labels each cell
+    with e.g. state codes for a human skimming the state file ONLY - never
+    used to attribute or filter a station, since a cell can genuinely span
+    multiple states/cities.
+
+    Returns: cells_processed, cells_skipped_fresh, stations_seen_this_run,
+    stations_total_known, frontier_remaining.
+    """
+    state = load_scan_state(state_path, country, root_lat, root_lon, root_span_lat, root_span_lng)
+    cells = state["cells"]
+    stations = state["stations"]
+
+    now = datetime.now(timezone.utc)
+    now_iso_fmt = "%Y-%m-%dT%H:%M:%SZ"
+    stale_cutoff_ts = now.timestamp() - stale_after_days * 86400.0
+
+    def _cell_id(lat: float, lon: float, span_lat: float, span_lng: float) -> str:
+        return f"{lat:.6f}_{lon:.6f}_{span_lat:.6f}_{span_lng:.6f}"
+
+    def _record_stations(records: List[dict], cell_id: str, ts: str) -> int:
+        new_or_confirmed = 0
+        for s in records:
+            sid = s.get("id")
+            if sid is None:
+                continue
+            key = str(sid)
+            entry = stations.get(key)
+            if entry is None:
+                stations[key] = {
+                    "first_seen_at": ts,
+                    "last_seen_at": ts,
+                    "last_seen_cell": cell_id,
+                    "lat": s.get("latitude"),
+                    "lon": s.get("longitude"),
+                    "name": s.get("name"),
+                    "seen_count": 1,
+                }
+            else:
+                entry["last_seen_at"] = ts
+                entry["last_seen_cell"] = cell_id
+                entry["seen_count"] = entry.get("seen_count", 0) + 1
+            new_or_confirmed += 1
+        return new_or_confirmed
+
+    counter = itertools.count()
+    heap: List[Tuple[int, int, dict]] = []
+
+    def _is_fresh_done(cid: str) -> bool:
+        c = cells.get(cid)
+        return bool(c) and c.get("status") == "done" and c.get("last_scanned_at_ts", 0) >= stale_cutoff_ts
+
+    root_id = _cell_id(root_lat, root_lon, root_span_lat, root_span_lng)
+    if _is_fresh_done(root_id):
+        for cid, c in cells.items():
+            if c.get("status") == "pending":
+                heapq.heappush(heap, (-c.get("own_count", 0), next(counter), {
+                    "lat": c["lat"], "lon": c["lon"], "span_lat": c["span_lat"], "span_lng": c["span_lng"],
+                    "depth": c["depth"], "id": cid,
+                }))
+    else:
+        heapq.heappush(heap, (-1, next(counter), {
+            "lat": root_lat, "lon": root_lon, "span_lat": root_span_lat, "span_lng": root_span_lng,
+            "depth": 0, "id": root_id,
+        }))
+
+    cells_processed = 0
+    cells_skipped_fresh = 0
+    stations_seen_this_run = 0
+
+    while heap and (max_cells_this_run is None or cells_processed < max_cells_this_run):
+        _, _, spec = heapq.heappop(heap)
+        cid = spec["id"]
+        lat, lon = spec["lat"], spec["lon"]
+        span_lat, span_lng, depth = spec["span_lat"], spec["span_lng"], spec["depth"]
+
+        if _is_fresh_done(cid):
+            cells_skipped_fresh += 1
+            continue
+
+        own_results = spec.get("_prefetched")
+        if own_results is None:
+            own_results = query_fn(lat, lon, span_lat, span_lng)
+        own_ids = {s.get("id") for s in own_results if s.get("id") is not None}
+        ts = now.strftime(now_iso_fmt)
+        stations_seen_this_run += _record_stations(own_results, cid, ts)
+
+        existing = cells.get(cid, {})
+        cell_record = {
+            "lat": lat, "lon": lon, "span_lat": span_lat, "span_lng": span_lng,
+            "depth": depth, "own_count": len(own_ids),
+            "last_scanned_at": ts, "last_scanned_at_ts": now.timestamp(),
+            "region_hint": region_hint_fn(lat, lon) if region_hint_fn else [],
+            "scan_count": existing.get("scan_count", 0) + 1,
+        }
+
+        at_floor = (len(own_ids) <= skip_subdivide_below or span_lat <= min_span_deg
+                    or span_lng <= min_span_deg or depth >= max_depth)
+        if at_floor:
+            cell_record["status"] = "done"
+            cell_record["converged"] = True
+            cell_record["station_ids"] = sorted(str(i) for i in own_ids)
+            cells[cid] = cell_record
+            cells_processed += 1
+            save_scan_state(state_path, state)
+            continue
+
+        sub_span_lat = span_lat / 3.0
+        sub_span_lng = span_lng / 3.0
+        offsets = (-2, 0, 2)
+        sub_points = [(lat + oy * sub_span_lat, lon + ox * sub_span_lng) for oy in offsets for ox in offsets]
+
+        with ThreadPoolExecutor(max_workers=max_workers) as ex:
+            futures = [ex.submit(query_fn, s_lat, s_lon, sub_span_lat, sub_span_lng) for s_lat, s_lon in sub_points]
+            sub_results_list = [f.result() for f in futures]
+
+        sub_ids: Set[Any] = set()
+        for res in sub_results_list:
+            for s in res:
+                sid = s.get("id")
+                if sid is not None:
+                    sub_ids.add(sid)
+        for (s_lat, s_lon), res in zip(sub_points, sub_results_list):
+            stations_seen_this_run += _record_stations(res, cid, ts)
+
+        converged = len(sub_ids) <= len(own_ids)
+        cell_record["converged"] = converged
+        cell_record["status"] = "done" if converged else "split"
+        cell_record["station_ids"] = sorted(str(i) for i in (own_ids if converged else own_ids | sub_ids))
+        cells[cid] = cell_record
+        cells_processed += 1
+
+        if not converged:
+            for (s_lat, s_lon), res in zip(sub_points, sub_results_list):
+                child_id = _cell_id(s_lat, s_lon, sub_span_lat, sub_span_lng)
+                if _is_fresh_done(child_id):
+                    continue
+                child_count = len({s.get("id") for s in res if s.get("id") is not None})
+                cells[child_id] = {
+                    "status": "pending", "own_count": child_count,
+                    "lat": s_lat, "lon": s_lon, "span_lat": sub_span_lat, "span_lng": sub_span_lng,
+                    "depth": depth + 1,
+                }
+                heapq.heappush(heap, (-child_count, next(counter), {
+                    "lat": s_lat, "lon": s_lon, "span_lat": sub_span_lat, "span_lng": sub_span_lng,
+                    "depth": depth + 1, "id": child_id, "_prefetched": res,
+                }))
+
+        save_scan_state(state_path, state)
+
+    save_scan_state(state_path, state)
+    return {
+        "cells_processed": cells_processed,
+        "cells_skipped_fresh": cells_skipped_fresh,
+        "stations_seen_this_run": stations_seen_this_run,
+        "stations_total_known": len(stations),
+        "frontier_remaining": len(heap),
+    }
 

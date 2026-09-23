@@ -1,19 +1,30 @@
 {
-  "_comment": "Tesla Tools Suite Configuration - Copy this file to 'config.json' or 'Tessie/config.json' and customize your local paths. archive_directory is optional (null by default) - when omitted or null, archives automatically default to an 'archive' subfolder inside your tessie_directory or target JSON directory. If external_drive_path is null/omitted, drives matching /Volumes/TESLADRIVE* are auto-discovered. evnex_username/evnex_password are your normal Evnex app login (email + password) for the community-maintained `evnex` python library (https://github.com/hardbyte/python-evnex), which talks to Evnex's own consumer app API - Evnex only issues real API keys to Enterprise/CP-Link customers. Prefer the EVNEX_CLIENT_USERNAME/EVNEX_CLIENT_PASSWORD env vars over config.json if you'd rather not keep the password on disk at all. pvoutput_api_key/pvoutput_system_id are placeholders for the PVOutput.org API (see Tessie/PVOUTPUT_API.md) - not yet wired up to any script, no real credentials requested yet. power_provider selects the active Tools/providers_power/ implementation (get_power_provider(), default 'agl' if omitted). power_usage_staleness_days (REQ-071) is the age, in days, at which power_usage_sync.py's post-consolidate reminder starts nagging for a fresh usage-export CSV from a manual-sync provider like AGL (default 14 if omitted) - purely a reminder, never blocks anything.",
-  "landing_directory": "~/Downloads",
-  "inbox_directory": "~/Library/Mobile Documents/com~apple~CloudDocs/Tesla/Tessie/Inbox",
-  "tessie_directory": "~/Library/Mobile Documents/com~apple~CloudDocs/Tesla/Tessie",
-  "archive_directory": null,
-  "invoices_directory": "~/iCloud/PDF/Tesla/Supercharging",
-  "external_drive_path": null,
-  "vin": "YOUR_VIN_HERE",
-  "tessie_access_token": "YOUR_TESSIE_API_TOKEN_HERE",
-  "evnex_username": "YOUR_EVNEX_ACCOUNT_EMAIL_HERE",
-  "evnex_password": "YOUR_EVNEX_ACCOUNT_PASSWORD_HERE",
-  "pvoutput_api_key": "YOUR_PVOUTPUT_API_KEY_HERE",
-  "pvoutput_system_id": "YOUR_PVOUTPUT_SYSTEM_ID_HERE",
-  "power_provider": "agl",
-  "power_usage_staleness_days": 14,
+  "_comment": "Tesla Tools Suite Configuration - Copy this file to 'config.json' or 'resources/config.json' and customize your local paths. directories.archive is optional (null by default) - when omitted or null, archives automatically default to an 'archive' subfolder inside directories.data or the target JSON directory. If directories.external_drive is null/omitted, drives matching /Volumes/TESLADRIVE* are auto-discovered. evnex.username/evnex.password are your normal Evnex app login (email + password) for the community-maintained `evnex` python library (https://github.com/hardbyte/python-evnex), which talks to Evnex's own consumer app API - Evnex only issues real API keys to Enterprise/CP-Link customers. Prefer the EVNEX_CLIENT_USERNAME/EVNEX_CLIENT_PASSWORD env vars over config.json if you'd rather not keep the password on disk at all. pvoutput.api_key/pvoutput.system_id are placeholders for the PVOutput.org API (see resources/PVOUTPUT_API.md) - not yet wired up to any script, no real credentials requested yet. power.provider selects the active Tools/providers_power/ implementation (get_power_provider(), default 'agl' if omitted). power.usage_staleness_days (REQ-071) is the age, in days, at which sync_power_usage.py's post-consolidate reminder starts nagging for a fresh usage-export CSV from a manual-sync provider like AGL (default 14 if omitted) - purely a reminder, never blocks anything. directories.power_invoices is optional (omit or null) - the folder where the active power provider's (AGL, currently the only one) raw invoice PDFs and manual usage-export CSVs live; if unset, invoice scanning/filing/consolidation for that provider simply finds nothing there and skips it gracefully - no default folder is guessed. osm.client_id/osm.client_secret are an OpenStreetMap OAuth2 app's credentials (register one at https://www.openstreetmap.org/oauth2/applications), used by places_osm_editor.py - leave osm out entirely if you don't use that tool. abrp.target_arrival_soc/abrp.max_charge_soc/abrp.corridor_radius_km are the persistent defaults for charger_find.py's --target-soc/--max-soc/--corridor-radius route-planning flags (target: minimum acceptable arrival battery %, default 10; max: charging target ceiling % to charge to at an enroute stop - not the departure SoC, which is --soc's own concern - default 80 here, since supercharging speed tapers hard past 80%; corridor_radius_km: max lateral highway detour in km, default 5.0) - each still overridable per-run via its CLI flag.",
+  "directories": {
+    "landing": "~/Downloads",
+    "inbox": "~/Library/Mobile Documents/com~apple~CloudDocs/Tesla/Inbox",
+    "data": "~/Library/Mobile Documents/com~apple~CloudDocs/Tesla",
+    "archive": null,
+    "invoices": "~/iCloud/PDF/Tesla/Supercharging",
+    "power_invoices": "~/iCloud/PDF/AGL",
+    "external_drive": null
+  },
+  "tessie": {
+    "vin": "YOUR_VIN_HERE",
+    "access_token": "YOUR_TESSIE_API_TOKEN_HERE"
+  },
+  "evnex": {
+    "username": "YOUR_EVNEX_ACCOUNT_EMAIL_HERE",
+    "password": "YOUR_EVNEX_ACCOUNT_PASSWORD_HERE"
+  },
+  "pvoutput": {
+    "api_key": "YOUR_PVOUTPUT_API_KEY_HERE",
+    "system_id": "YOUR_PVOUTPUT_SYSTEM_ID_HERE"
+  },
+  "power": {
+    "provider": "agl",
+    "usage_staleness_days": 14
+  },
   "reconciliation": {
     "tolerance_mins": 45,
     "tolerance_kwh": 5.0,
@@ -26,6 +37,14 @@
   "abrp": {
     "client_id": "YOUR_ABRP_CLIENT_ID_HERE",
     "api_key": "YOUR_ABRP_APPLICATION_API_KEY_HERE",
-    "user_token": "YOUR_ABRP_GENERIC_USER_TOKEN_HERE"
+    "user_token": "YOUR_ABRP_GENERIC_USER_TOKEN_HERE",
+    "target_arrival_soc": 10,
+    "max_charge_soc": 80,
+    "corridor_radius_km": 5.0
+  },
+  "osm": {
+    "client_id": "YOUR_OSM_OAUTH2_CLIENT_ID_HERE",
+    "client_secret": "YOUR_OSM_OAUTH2_CLIENT_SECRET_HERE",
+    "redirect_uri": "urn:ietf:wg:oauth:2.0:oob"
   }
 }

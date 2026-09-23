@@ -98,11 +98,11 @@ def load_config():
 
 
 def get_api_key(cli_value, config):
-    return cli_value or os.environ.get("PVOUTPUT_API_KEY") or config.get("pvoutput_api_key")
+    return cli_value or os.environ.get("PVOUTPUT_API_KEY") or config.get("pvoutput", {}).get("api_key")
 
 
 def get_system_id(cli_value, config):
-    return cli_value or os.environ.get("PVOUTPUT_SYSTEM_ID") or config.get("pvoutput_system_id")
+    return cli_value or os.environ.get("PVOUTPUT_SYSTEM_ID") or config.get("pvoutput", {}).get("system_id")
 
 
 def api_get(endpoint, api_key, system_id, params=None, timeout=30):

@@ -807,7 +807,7 @@ class TessieChargingAnalyzer:
         self.tolerance_kwh = tolerance_kwh if tolerance_kwh is not None else cfg_reconcile.get("tolerance_kwh", 5.0)
 
  # 2. Discover Tessie directories (CLI > config.json > auto-discovery)
-        cfg_tessie_dir = self.config.get("tessie_directory") or self.config.get("tessie_dir")
+        cfg_tessie_dir = self.config.get("directories", {}).get("data") or self.config.get("tessie_dir")
         if cfg_tessie_dir:
             cfg_tessie_dir = os.path.expanduser(cfg_tessie_dir)
 
@@ -815,9 +815,9 @@ class TessieChargingAnalyzer:
         candidates_tessie = [
             tessie_dir,
             cfg_tessie_dir,
-            os.path.join(self.repo_root, "Tessie"),
-            os.path.join(self.script_dir, "Tessie"),
-            os.path.expanduser("~/iCloud/repos/tesla/Tessie"),
+            os.path.join(self.repo_root, "resources"),
+            os.path.join(self.script_dir, "resources"),
+            os.path.expanduser("~/iCloud/repos/tesla/resources"),
             self.icloud_dir
         ]
         seen_tessie_dirs = set()
@@ -873,7 +873,7 @@ class TessieChargingAnalyzer:
             self.charges_dirs = []
 
  # 3. Discover Invoices directories (CLI > config.json > local folders)
-        primary_inv_dir = invoices_dir or self.config.get("invoices_directory") or self.config.get("invoices_dir")
+        primary_inv_dir = invoices_dir or self.config.get("directories", {}).get("invoices") or self.config.get("invoices_dir")
         if primary_inv_dir:
             primary_inv_dir = os.path.expanduser(primary_inv_dir)
 
@@ -888,8 +888,8 @@ class TessieChargingAnalyzer:
                 os.path.expanduser("~/Library/Mobile Documents/com~apple~CloudDocs/PDF/Tesla/Supercharging"),
                 os.path.expanduser("~/iCloud/PDF/Tesla"),
                 os.path.expanduser("~/Library/Mobile Documents/com~apple~CloudDocs/PDF/Tesla"),
-                os.path.join(self.repo_root, "Tessie", "charging_invoices"),
-                os.path.join(self.repo_root, "Tessie", "invoices"),
+                os.path.join(self.repo_root, "resources", "charging_invoices"),
+                os.path.join(self.repo_root, "resources", "invoices"),
                 os.path.join(self.icloud_dir, "charging_invoices"),
                 os.path.join(self.icloud_dir, "invoices"),
                 os.path.expanduser("~/Documents/Tesla/Invoices"),
@@ -949,8 +949,8 @@ class TessieChargingAnalyzer:
         self._invoice_location_map_dirty = False
         
  # 5. Detailed Telemetry CSVs
-        self.vin = self.config.get("vin")
-        self.landing_dir = os.path.expanduser(self.config.get("landing_directory", "~/Downloads"))
+        self.vin = self.config.get("tessie", {}).get("vin")
+        self.landing_dir = os.path.expanduser(self.config.get("directories", {}).get("landing", "~/Downloads"))
         self.detailed_charges = []
 
         self.charges = []
@@ -963,7 +963,7 @@ class TessieChargingAnalyzer:
         config_candidates = [
             explicit_config_path,
             os.path.join(self.repo_root, "config.json"),  # TODO-034: root is primary now
-            os.path.join(self.repo_root, "Tessie", "config.json"),  # legacy fallback
+            os.path.join(self.repo_root, "resources", "config.json"),  # legacy fallback
             os.path.expanduser("~/.config/tesla/config.json"),
             os.path.join(self.icloud_dir, "config.json")
         ]
@@ -1641,7 +1641,7 @@ class TessieChargingAnalyzer:
             if td and os.path.isdir(td):
                 source_dirs.append((td, False))
 
-        primary_charges_dir = self.charges_dirs[0] if self.charges_dirs else os.path.join(self.repo_root, "Tessie", "charges")
+        primary_charges_dir = self.charges_dirs[0] if self.charges_dirs else os.path.join(self.repo_root, "resources", "charges")
         archive_dir = os.path.join(primary_charges_dir, "archive")
         os.makedirs(archive_dir, exist_ok=True)
 
@@ -3424,7 +3424,7 @@ class TessieChargingAnalyzer:
 
         if self.config_file:
             cfg_disp = shorten_display_path(self.config_file, 55)
-            inv_dir_val = self.config.get("invoices_directory") or (self.invoice_dirs[0] if self.invoice_dirs else "None")
+            inv_dir_val = self.config.get("directories", {}).get("invoices") or (self.invoice_dirs[0] if self.invoice_dirs else "None")
             inv_disp = shorten_display_path(inv_dir_val, 55)
             kpi_l7 = f"  {C_BOLD}Config Loaded:{C_RESET} {cfg_disp} (Invoices: {inv_disp})"
             print(f"│{pad_display(kpi_l7, box_w - 2, truncate=True)}│")

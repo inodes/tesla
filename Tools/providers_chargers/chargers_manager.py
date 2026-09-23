@@ -98,12 +98,29 @@ def are_stations_co_located(s1: UnifiedStationRecord, s2: UnifiedStationRecord, 
     """
     Determines if two station records represent the same physical charging site across apps.
     Criteria:
+    0. Tesla's own data is source of truth for identity: two records BOTH
+       sourced directly from Tesla (source == "tesla") with DIFFERENT
+       Tesla-assigned identity (source_id, e.g. Balgowlah's Supercharger vs.
+       its co-located Destination Charger, or Coffs Harbour's old vs. new
+       site) are NEVER co-located, full stop - no distance/hardware
+       calculation below is allowed to override that. If Tesla itself
+       lists two distinct pages/URLs for a location, they are two sites.
+       The distance + hardware-class checks that follow exist to correctly
+       attach a LOWER-TIER source's own record (PlugShare, etc.) to
+       whichever already-distinct Tesla site it actually belongs to - not
+       to second-guess Tesla's own identity for two Tesla-sourced records.
     1. Distance <= max_dist_m (default 250 meters for carparks / shopping centres).
     2. Same network + token similarity >= 0.20 or identical suburb/postcode.
     3. Co-located if distance <= 35m, UNLESS the two are on different
        networks AND report fundamentally different charging classes (AC
        vs DC) - see , 2026-09-16.
     """
+    if s1.source == "tesla" and s2.source == "tesla":
+        id1 = s1.source_id or s1.key
+        id2 = s2.source_id or s2.key
+        if id1 and id2 and id1 != id2:
+            return False
+
     dist_km = haversine_km(s1.lat, s1.lon, s2.lat, s2.lon)
     dist_m = dist_km * 1000.0
     if dist_m > max_dist_m:
@@ -759,7 +776,7 @@ class ChargerDiscoveryManager:
             if not tessie_home:
                 tools_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
                 repo_root = os.path.dirname(tools_dir)
-                tessie_home = os.path.join(repo_root, "Tessie")
+                tessie_home = os.path.join(repo_root, "resources")
             target_path = os.path.join(tessie_home, "charging_stations.json")
 
         archive_path = os.path.join(os.path.dirname(target_path), "charging_stations_archived.json")
@@ -808,7 +825,7 @@ class ChargerDiscoveryManager:
         target_candidates = [target_path]
         tools_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
         repo_root = os.path.dirname(tools_dir)
-        local_fallback = os.path.join(repo_root, "Tessie", "charging_stations.json")
+        local_fallback = os.path.join(repo_root, "resources", "charging_stations.json")
         if local_fallback not in target_candidates:
             target_candidates.append(local_fallback)
 
@@ -936,7 +953,15 @@ class ChargerDiscoveryManager:
         targets = []
         for s in stations:
             st = s.get_status()
-            if status_filter:
+ # REQ-102: status_filter="ALL" is a sentinel meaning "every station in this
+ # list, regardless of its current status" - refreshing literally everything
+ # from source (Tesla, PlugShare, Chargefox, ...) rather than only whatever
+ # our own STALE/RENAMED heuristics happen to flag. get_status() never
+ # actually returns the literal string "ALL" for a real station, so without
+ # this branch status_filter="ALL" would just match nothing.
+            if status_filter and status_filter.upper() == "ALL":
+                targets.append(s)
+            elif status_filter:
                 if status_filter.upper() == st.upper():
                     targets.append(s)
             elif st in ("STALE", "RENAMED", "NOT_IN_JSON"):

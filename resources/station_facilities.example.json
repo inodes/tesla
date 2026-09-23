@@ -1,0 +1,85 @@
+{
+  "supercharger_kirrawee_nsw": {
+    "station_name": "Kirrawee Supercharger",
+    "network": "tesla",
+    "lat": -34.0322,
+    "lon": 151.0664,
+    "radius_m": 250,
+    "last_updated": "2026-09-15T12:00:00Z",
+    "score": 8.8,
+    "rating": "Excellent",
+    "tier_color": "🟢",
+    "badge": "🟢 Excellent (8.8/10) · 🚻☕🍔🛒🛍️",
+    "chips": "🚻☕🍔🛒🛍️",
+    "total_count": 14,
+    "doorstep_count": 3,
+    "doorstep_100m": [
+      "Public Restrooms (45m)",
+      "Brick Pit Espresso (60m)",
+      "McDonald's (80m)",
+      "Coles South Village (95m)"
+    ],
+    "immediate_doorstep": [
+      {
+        "name": "Public Restrooms",
+        "category": "Toilets",
+        "group": "Amenities & Services",
+        "emoji": "🚻",
+        "dist_m": 45.0
+      },
+      {
+        "name": "Brick Pit Espresso",
+        "category": "Cafe",
+        "group": "Cafes & Coffee",
+        "emoji": "☕",
+        "dist_m": 60.0
+      },
+      {
+        "name": "McDonald's",
+        "category": "Fast Food",
+        "group": "Dining & Fast Food",
+        "emoji": "🍔",
+        "dist_m": 80.0
+      },
+      {
+        "name": "Coles South Village",
+        "category": "Supermarket",
+        "group": "Supermarkets & Groceries",
+        "emoji": "🛒",
+        "dist_m": 95.0
+      }
+    ],
+    "categories": {
+      "Amenities & Services": [
+        "Public Restrooms (45m)"
+      ],
+      "Cafes & Coffee": [
+        "Brick Pit Espresso (60m)",
+        "Cafe Kirrawee (110m)"
+      ],
+      "Dining & Fast Food": [
+        "McDonald's (80m)",
+        "Guzman y Gomez (120m)"
+      ],
+      "Supermarkets & Groceries": [
+        "Coles South Village (95m)",
+        "ALDI (150m)"
+      ],
+      "Retail & Shopping": [
+        "Priceline Pharmacy (110m)"
+      ]
+    },
+    "pois": [
+      {
+        "name": "Public Restrooms",
+        "category": "Toilets",
+        "group": "Amenities & Services",
+        "emoji": "🚻",
+        "dist_m": 45.0,
+        "lat": -34.0325,
+        "lon": 151.0667
+      }
+    ],
+    "notes": "Inside South Village shopping centre basement car park"
+  }
+}

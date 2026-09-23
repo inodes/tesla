@@ -25,7 +25,7 @@ import urllib.request
 import urllib.parse
 import webbrowser
 from typing import Dict, List, Optional, Tuple, Any
-from datetime import datetime
+from datetime import datetime, timezone
 
 _tools_dir = os.path.dirname(os.path.abspath(__file__))
 _repo_root = os.path.dirname(_tools_dir)
@@ -191,17 +191,17 @@ def resolve_reference_coords(near_query: str) -> Tuple[Optional[float], Optional
         places_candidates.append(os.path.join(tessie_home, "places.json"))
 
     places_candidates.extend([
-        os.path.join(_repo_root, "Tessie", "places.json"),
-        os.path.join(_repo_root, "Tessie", "places.example.json")
+        os.path.join(_repo_root, "resources", "places.json"),
+        os.path.join(_repo_root, "resources", "places.example.json")
     ])
     cfg_path = os.path.join(_repo_root, "config.json")  # TODO-034: root is primary now
     if not os.path.isfile(cfg_path):
-        cfg_path = os.path.join(_repo_root, "Tessie", "config.json")  # legacy fallback
+        cfg_path = os.path.join(_repo_root, "resources", "config.json")  # legacy fallback
     if os.path.isfile(cfg_path):
         try:
             with open(cfg_path, "r", encoding="utf-8") as f:
                 cfg = json.load(f)
-                td = cfg.get("tessie_directory")
+                td = cfg.get("directories", {}).get("data")
                 if td:
                     places_candidates.insert(0, os.path.join(os.path.expanduser(td), "places.json"))
         except Exception:
@@ -258,11 +258,11 @@ def resolve_reference_coords(near_query: str) -> Tuple[Optional[float], Optional
             os.path.join(tessie_home, "geo_cache.json"),
         ])
     reg_candidates.extend([
-        os.path.join(_repo_root, "Tessie", "tesla_superchargers.json"),
-        os.path.join(_repo_root, "Tessie", "tesla_chargers.json"),
-        os.path.join(_repo_root, "Tessie", "chargefox_chargers.json"),
-        os.path.join(_repo_root, "Tessie", "evx_chargers.json"),
-        os.path.join(_repo_root, "Tessie", "geo_cache.json"),
+        os.path.join(_repo_root, "resources", "tesla_superchargers.json"),
+        os.path.join(_repo_root, "resources", "tesla_chargers.json"),
+        os.path.join(_repo_root, "resources", "chargefox_chargers.json"),
+        os.path.join(_repo_root, "resources", "evx_chargers.json"),
+        os.path.join(_repo_root, "resources", "geo_cache.json"),
     ])
 
     for reg_path in reg_candidates:
@@ -385,6 +385,9 @@ def render_stations_table(
 
     has_route = route_info is not None and any(getattr(s, "route_progress_km", None) is not None for s in stations)
     has_dist = (not has_route) and any(s.distance_km is not None for s in stations)
+    # --charger-stops (multi-leg re-planning): adds a "Dep SoC" column, shown
+    # only for the chosen stops, alongside the always-populated "Arr SoC".
+    multi_stop = has_route and bool(route_info and route_info.get("charger_stops"))
     
     max_name_len = max((display_len(s.name) for s in stations), default=28)
     w_name = max(28, min(40, max_name_len + 2))
@@ -395,7 +398,10 @@ def render_stations_table(
     widths = [8, 9, 7, w_name, 6, 6, 13, 12, 22]
     headers = ["   #    ", "  Type   ", " State ", "          Station Name          ", " Tier ", " Bays ", "   Access    ", " Rate (Now) ", "   Period / Window    "]
     
-    if has_route:
+    if has_route and multi_stop:
+        widths.extend([11, 9, 10, 9, 8, w_suburb])
+        headers.extend([" Progress  ", " Detour  ", " Arr SoC  ", " Dep SoC  ", " Score  ", " Location / Suburb "])
+    elif has_route:
         widths.extend([11, 9, 10, 8, w_suburb])
         headers.extend([" Progress  ", " Detour  ", " Arr SoC  ", " Score  ", " Location / Suburb "])
     elif has_dist:
@@ -470,7 +476,9 @@ def render_stations_table(
     print(mid_b)
 
     aligns = ["left", "left", "center", "left", "center", "right", "left", "right", "left"]
-    if has_route:
+    if has_route and multi_stop:
+        aligns.extend(["right", "right", "center", "center", "center", "left"])
+    elif has_route:
         aligns.extend(["right", "right", "center", "center", "left"])
     elif has_dist:
         aligns.extend(["right", "left"])
@@ -551,20 +559,44 @@ def render_stations_table(
                 detour_text = "-- "
             
             # Arrival SoC Calculation
+            # Fix (2026-09-21): this used to fall back to its own invented
+            # 165.0 Wh/km / 60.0 kWh pair - the 60.0 kWh figure is ~30% under
+            # this vehicle's real 85.0 kWh usable capacity per vehicle_spec.json.
+            # Reuse abrp_planner's own DEFAULT_CONSUMPTION_WH_KM/DEFAULT_USABLE_KWH
+            # (which are themselves only a last-resort fallback behind
+            # config.json and vehicle_spec.json) instead of a third, different,
+            # wrong pair.
+            from lib.abrp_planner import DEFAULT_CONSUMPTION_WH_KM, DEFAULT_USABLE_KWH
             dep_soc = route_info.get("departure_soc", 90) if route_info else 90
-            c_wh_km = route_info.get("consumption_wh_km", 165.0) if route_info else 165.0
-            u_kwh = route_info.get("usable_kwh", 60.0) if route_info else 60.0
+            c_wh_km = route_info.get("consumption_wh_km", DEFAULT_CONSUMPTION_WH_KM) if route_info else DEFAULT_CONSUMPTION_WH_KM
+            u_kwh = route_info.get("usable_kwh", DEFAULT_USABLE_KWH) if route_info else DEFAULT_USABLE_KWH
             tgt_min = route_info.get("target_arrival_soc", 10.0) if route_info else 10.0
 
-            if prog_val is not None:
+            # --charger-stops (2026-09-21): when a multi-leg re-plan has been
+            # precomputed (see the CLI's chosen_stops block), each station
+            # carries its own effective leg departure SoC/distance-since-stop
+            # instead of always using the single non-stop departure_soc/
+            # distance-from-origin pair above. Falls straight through to the
+            # original single-leg behavior when multi_stop is off (these
+            # attrs are simply absent then).
+            leg_dep_soc = getattr(st, "leg_departure_soc", None)
+            leg_dist_km = getattr(st, "leg_distance_km", None)
+            eff_dep_soc = leg_dep_soc if leg_dep_soc is not None else dep_soc
+            eff_dist_km = leg_dist_km if leg_dist_km is not None else prog_val
+
+            if eff_dist_km is not None:
                 try:
                     from lib.abrp_planner import estimate_arrival_soc, format_soc_badge
-                    arr_soc, _ = estimate_arrival_soc(dep_soc, prog_val, detour_val or 0.0, c_wh_km, u_kwh)
+                    arr_soc, _ = estimate_arrival_soc(eff_dep_soc, eff_dist_km, detour_val or 0.0, c_wh_km, u_kwh)
                     soc_badge, _ = format_soc_badge(arr_soc, tgt_min)
                 except Exception:
                     soc_badge = "—"
             else:
                 soc_badge = "—"
+
+            if multi_stop:
+                stop_dep_soc = getattr(st, "stop_dep_soc", None)
+                dep_soc_disp = f"🔌 {stop_dep_soc:.0f}%" if stop_dep_soc is not None else f"{C_DIM}-{C_RESET}"
 
             sc_data = getattr(st, "stop_score_data", None)
             if not sc_data:
@@ -581,8 +613,13 @@ def render_stations_table(
             row_cells.append(pad_display(prog_text, widths[9], "right"))
             row_cells.append(pad_display(detour_text, widths[10], "right"))
             row_cells.append(pad_display(soc_badge, widths[11], "center"))
-            row_cells.append(pad_display(score_disp, widths[12], "center"))
-            row_cells.append(pad_display(f" {C_DIM}{suburb_disp}{C_RESET}", widths[13], "left"))
+            if multi_stop:
+                row_cells.append(pad_display(dep_soc_disp, widths[12], "center"))
+                row_cells.append(pad_display(score_disp, widths[13], "center"))
+                row_cells.append(pad_display(f" {C_DIM}{suburb_disp}{C_RESET}", widths[14], "left"))
+            else:
+                row_cells.append(pad_display(score_disp, widths[12], "center"))
+                row_cells.append(pad_display(f" {C_DIM}{suburb_disp}{C_RESET}", widths[13], "left"))
         elif has_dist:
             dist_val = st.distance_km
             dist_text = f"{dist_val:.1f} km " if dist_val is not None else "-- "
@@ -733,6 +770,321 @@ def browse_chargefox_catalog_grid(manager: ChargerDiscoveryManager, country: str
         print(f"{C_YELLOW}Invalid selection.{C_RESET}")
 
 
+def _load_raw_stations_by_key(provider) -> Dict[str, dict]:
+    """
+    Reads a provider's registry JSON straight off disk, keyed the same way
+    each provider's own save path keys it - bypassing load_cached_registry(),
+    which reconstructs UnifiedStationRecord objects and has no dataclass slot
+    for the staleness fields merge_with_staleness() writes (first_seen,
+    last_verified, seen_count - chargers_base.py). Handles both registry
+    shapes in play: the six dict-of-dicts providers (JOLT, NRMA, Evie, EVX,
+    Exploren, BP Pulse - keyed by r.key already) and AmpCharge's list-shaped
+    one (keyed by its own raw LocationID/id field instead). REQ-104
+    follow-on, 2026-09-23.
+    """
+    reg_path = getattr(provider, "registry_path", None)
+    if not reg_path or not os.path.isfile(reg_path):
+        return {}
+    try:
+        with open(reg_path, "r", encoding="utf-8") as f:
+            raw = json.load(f)
+    except Exception:
+        return {}
+    stations = raw.get("stations") if isinstance(raw, dict) else raw
+    if isinstance(stations, dict):
+        return stations
+    if isinstance(stations, list):
+        out: Dict[str, dict] = {}
+        for item in stations:
+            if isinstance(item, dict):
+                rid = item.get("LocationID") or item.get("id")
+                if rid is not None:
+                    out[str(rid)] = item
+        return out
+    return {}
+
+
+def _find_raw_entry(raw_by_key: Dict[str, dict], rec: UnifiedStationRecord) -> Optional[dict]:
+    """Looks up rec's raw registry entry, coping with AmpCharge's bare
+    LocationID keys not matching UnifiedStationRecord.key's "Ampol_<id>"
+    form (and the equivalent for any future list-shaped provider)."""
+    if rec.key in raw_by_key:
+        return raw_by_key[rec.key]
+    if rec.source_id and str(rec.source_id) in raw_by_key:
+        return raw_by_key[str(rec.source_id)]
+    if "_" in rec.key:
+        suffix = rec.key.split("_", 1)[1]
+        if suffix in raw_by_key:
+            return raw_by_key[suffix]
+    return None
+
+
+# Matches charger_find_tesla.py's get_station_status() 90-day threshold
+# exactly (AGENTS.local.md REQ-104) - the fields it reads
+# (last_verified/last_updated/first_seen) are the same ones
+# merge_with_staleness() now writes for every other full-list provider,
+# so one classifier serves both.
+_LIVE_DIFF_STALE_DAYS = 90.0
+
+
+def _classify_live_entry(raw_entry: Optional[dict], rec: UnifiedStationRecord) -> str:
+    """RENAMED / STALE / UP_TO_DATE / NOT_IN_JSON, mirroring Tesla's own
+    get_station_status() and browse_chargefox_catalog_grid()'s name-diff
+    check."""
+    if raw_entry is None:
+        return "NOT_IN_JSON"
+    old_name = (raw_entry.get("name") or raw_entry.get("DisplayName") or "").strip().lower()
+    new_name = (rec.name or "").strip().lower()
+    if old_name and new_name and old_name != new_name:
+        return "RENAMED"
+    ts = raw_entry.get("last_verified") or raw_entry.get("last_updated") or raw_entry.get("first_seen")
+    if not ts:
+        return "STALE"
+    try:
+        dt = datetime.fromisoformat(str(ts).replace("Z", "+00:00"))
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        age_days = (datetime.now(timezone.utc) - dt).total_seconds() / 86400.0
+    except Exception:
+        return "STALE"
+    return "STALE" if age_days > _LIVE_DIFF_STALE_DAYS else "UP_TO_DATE"
+
+
+def _fetch_provider_live(provider) -> List[UnifiedStationRecord]:
+    """Adaptive live-fetch: fetch_all_remote() where it exists (JOLT, NRMA,
+    Evie, EVX, Exploren, BP Pulse), else sync_all_australia(auto_save=False)
+    (AmpCharge) - never sync()/save_cached_registry() at this stage, so
+    nothing is written until the user explicitly picks 'save'."""
+    if hasattr(provider, "fetch_all_remote"):
+        return provider.fetch_all_remote()
+    if hasattr(provider, "sync_all_australia"):
+        return provider.sync_all_australia(auto_save=False)
+    raise AttributeError(f"{provider.name} provider has no live-fetch method (fetch_all_remote/sync_all_australia)")
+
+
+def _save_provider_live(provider, records: List[UnifiedStationRecord]) -> None:
+    """Adaptive save: save_cached_registry(records) where it exists
+    (AmpCharge, Chargefox - saves the records already in hand); the six
+    fetch_all_remote()-only providers have no way to save already-fetched
+    records without a redundant re-fetch, so sync() (which re-fetches AND
+    saves) is the only option there - a known, accepted inefficiency
+    (AGENTS.local.md REQ-104)."""
+    if hasattr(provider, "save_cached_registry"):
+        provider.save_cached_registry(records)
+    else:
+        provider.sync()
+
+
+def browse_live_diff_grid(provider, network_label: str, country: str = "Australia", auto_save: bool = False) -> None:
+    """
+    Generic live-diff browser for the Tier 1 full-list-scrape providers that
+    don't have their own bespoke view (JOLT, NRMA, Evie, EVX, Exploren,
+    BP Pulse, AmpCharge) - same state-grouped grid + status legend +
+    save/inspect/skip menu UX as browse_chargefox_catalog_grid(), generalized
+    to read staleness (first_seen/last_verified/seen_count,
+    merge_with_staleness() in chargers_base.py) straight from the raw
+    registry JSON rather than through load_cached_registry(), which drops
+    those fields on reconstruction. REQ-104 follow-on, 2026-09-23 - "I'd
+    love a live report for all."
+
+    Tesla keeps its own browse_stations_by_type() (a genuinely different
+    scrape shape - per-station findus pages, not one catalog fetch) and
+    Chargefox keeps browse_chargefox_catalog_grid() (its existing 3-status
+    view) untouched; this covers everything else with a single canonical
+    live list to diff against.
+    """
+    from charger_find_tesla import AU_STATE_MAP
+
+    raw_by_key = _load_raw_stations_by_key(provider)
+
+    print(f"\n{C_CYAN}🌐 Fetching {network_label} locations across {country}...{C_RESET}")
+    try:
+        live_records = _fetch_provider_live(provider)
+    except Exception as e:
+        print(f"{C_RED}❌ Live fetch failed: {e}{C_RESET}")
+        return
+    if not live_records:
+        print(f"{C_YELLOW}No {network_label} locations returned.{C_RESET}")
+        return
+
+    grouped: Dict[str, List[UnifiedStationRecord]] = {}
+    statuses: Dict[str, str] = {}
+    renamed_from: Dict[str, str] = {}
+    for rec in live_records:
+        raw_entry = _find_raw_entry(raw_by_key, rec)
+        status = _classify_live_entry(raw_entry, rec)
+        statuses[rec.key] = status
+        if status == "RENAMED" and raw_entry:
+            renamed_from[rec.key] = raw_entry.get("name") or raw_entry.get("DisplayName") or "?"
+        state_key = rec.state or "-"
+        grouped.setdefault(state_key, []).append(rec)
+
+    counts = {"UP_TO_DATE": 0, "RENAMED": 0, "STALE": 0, "NOT_IN_JSON": 0}
+    for s in statuses.values():
+        counts[s] += 1
+
+    STATUS_COLOR = {"UP_TO_DATE": C_GREEN, "RENAMED": C_MAGENTA, "STALE": C_YELLOW, "NOT_IN_JSON": C_ORANGE}
+
+    print(f"\n{C_BOLD}{'='*80}{C_RESET}")
+    print(f"  ⚡ {C_BOLD}{network_label.upper()} STATIONS ({len(live_records)} total){C_RESET}")
+    print(f"  {C_BOLD}📊 Status Breakdown:{C_RESET} "
+          f"[{C_GREEN} Up to Date: {counts['UP_TO_DATE']} {C_RESET}] | "
+          f"[{C_MAGENTA} Renamed: {counts['RENAMED']} {C_RESET}] | "
+          f"[{C_YELLOW} Stale (>{int(_LIVE_DIFF_STALE_DAYS)}d): {counts['STALE']} {C_RESET}] | "
+          f"[{C_ORANGE} Not in JSON: {counts['NOT_IN_JSON']} {C_RESET}]")
+    print(f"{C_BOLD}{'='*80}{C_RESET}\n")
+
+    def fmt_entry(rec: UnifiedStationRecord, counter: int) -> str:
+        status = statuses[rec.key]
+        color = STATUS_COLOR[status]
+        title_str = rec.name
+        if status == "RENAMED":
+            title_str += f" {C_MAGENTA}🔄 (in JSON: {renamed_from[rec.key]}){C_RESET}"
+        icon = rec.type_icon().split(" ", 1)[0]
+        return f" [{color}{counter:3d}{C_RESET}] {icon} {title_str}"
+
+    max_len = 0
+    for rec in live_records:
+        l_len = display_len(rec.name)
+        if statuses[rec.key] == "RENAMED":
+            l_len += display_len(f" 🔄 (in JSON: {renamed_from[rec.key]})")
+        max_len = max(max_len, l_len)
+    col_width = max(38, max_len + 12)
+
+    station_lookup: Dict[int, UnifiedStationRecord] = {}
+    counter = 1
+    for state_key in sorted(grouped.keys()):
+        st_list = sorted(grouped[state_key], key=lambda r: r.name or "")
+        state_header = f"{AU_STATE_MAP.get(state_key, state_key)} ({state_key})" if state_key in AU_STATE_MAP else state_key
+        print(f"{C_CYAN}{C_BOLD}📍 {state_header} [{len(st_list)} stations]:{C_RESET}")
+        for i in range(0, len(st_list), 2):
+            left = st_list[i]
+            left_text = fmt_entry(left, counter)
+            station_lookup[counter] = left
+            counter += 1
+            if i + 1 < len(st_list):
+                right = st_list[i + 1]
+                right_text = fmt_entry(right, counter)
+                station_lookup[counter] = right
+                counter += 1
+                print(f"{pad_display(left_text, col_width)} {right_text}")
+            else:
+                print(left_text)
+        print()
+
+    if auto_save:
+        _save_provider_live(provider, live_records)
+        print(f"✔ Saved {len(live_records)} {network_label} locations to {provider.registry_path}")
+        return
+
+    print(f"{C_BOLD}Options:{C_RESET}")
+    print(f"  • Enter a station number [1-{len(live_records)}] to inspect details")
+    print(f"  • Type {C_GREEN}'save'{C_RESET} to write all {len(live_records)} freshly-fetched locations into the registry (archives prior data)")
+    print(f"  • Press {C_YELLOW}Enter{C_RESET} or Ctrl+C to skip without saving")
+    print()
+
+    try:
+        pick = input("Select option (number, 'save', or Enter to skip): ").strip()
+    except (KeyboardInterrupt, EOFError):
+        print("\nExiting.")
+        return
+
+    if not pick:
+        return
+
+    if pick.lower() in ("save", "s", "y", "yes"):
+        _save_provider_live(provider, live_records)
+        print(f"✔ Saved {len(live_records)} {network_label} locations to {provider.registry_path}")
+        return
+
+    if pick.isdigit() and int(pick) in station_lookup:
+        display_station_inspection_card(station_lookup[int(pick)])
+    else:
+        print(f"{C_YELLOW}Invalid selection.{C_RESET}")
+
+
+def plugshare_local_staleness_report(provider) -> None:
+    """
+    PlugShare has no single canonical upstream list to fetch-and-diff (it's
+    a moving-viewport aggregator, not a full-list scrape - REQ-104), so
+    unlike the other providers' --live, this never hits the network: it
+    reads the already-scanned local registry (plugshare_chargers.json - a
+    flat {key: record} dict, not the {"stations": ...}-wrapped shape the
+    full-list providers use) and reports how stale each entry's own
+    first_seen/last_verified/seen_count is, so the user can decide which
+    ones are overdue for scan_country_priority() to revisit or a manual
+    get_location_details() check. Threshold matches
+    run_priority_box_scan()'s own stale_after_days default (30) rather than
+    Tesla's 90 - PlugShare entries age faster since nothing here re-fetches
+    them automatically the way a full-list sync() does.
+    """
+    reg_path = getattr(provider, "registry_path", None)
+    if not reg_path or not os.path.isfile(reg_path):
+        print(f"{C_YELLOW}No local PlugShare registry found at {reg_path}.{C_RESET}")
+        return
+    try:
+        with open(reg_path, "r", encoding="utf-8") as f:
+            raw = json.load(f)
+    except Exception as e:
+        print(f"{C_RED}❌ Failed to read {reg_path}: {e}{C_RESET}")
+        return
+    if not isinstance(raw, dict):
+        print(f"{C_YELLOW}Unexpected PlugShare registry shape.{C_RESET}")
+        return
+
+    stale_after_days = 30.0
+    now = datetime.now(timezone.utc)
+    rows = []
+    fresh_count = 0
+    stale_count = 0
+    never_count = 0
+    for key, entry in raw.items():
+        if not isinstance(entry, dict):
+            continue
+        name = (entry.get("plugshare_metadata") or {}).get("name") or key
+        state = (entry.get("location") or {}).get("state") or "-"
+        ts = entry.get("last_verified") or entry.get("last_updated") or entry.get("first_seen")
+        seen_count = entry.get("seen_count", 0)
+        if not ts:
+            never_count += 1
+            rows.append((float("inf"), name, state, None, seen_count))
+            continue
+        try:
+            dt = datetime.fromisoformat(str(ts).replace("Z", "+00:00"))
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=timezone.utc)
+            age_days = (now - dt).total_seconds() / 86400.0
+        except Exception:
+            never_count += 1
+            rows.append((float("inf"), name, state, None, seen_count))
+            continue
+        if age_days > stale_after_days:
+            stale_count += 1
+        else:
+            fresh_count += 1
+        rows.append((age_days, name, state, age_days, seen_count))
+
+    print(f"\n{C_BOLD}{'='*80}{C_RESET}")
+    print(f"  🕊️ {C_BOLD}PLUGSHARE LOCAL STALENESS REPORT ({len(raw)} total entries){C_RESET}")
+    print(f"  {C_BOLD}📊 Status Breakdown:{C_RESET} "
+          f"[{C_GREEN} Fresh (<={int(stale_after_days)}d): {fresh_count} {C_RESET}] | "
+          f"[{C_YELLOW} Stale (>{int(stale_after_days)}d): {stale_count} {C_RESET}] | "
+          f"[{C_ORANGE} Never verified: {never_count} {C_RESET}]")
+    print(f"{C_BOLD}{'='*80}{C_RESET}\n")
+    print(f"{C_DIM}No live fetch here - PlugShare has no single canonical list to diff against; this is purely local. Use scan_country_priority() to actually refresh coverage.{C_RESET}\n")
+
+    rows.sort(key=lambda r: -r[0])
+    print(f"{C_BOLD}Stalest entries:{C_RESET}")
+    for age_days, name, state, raw_age, seen_count in rows[:30]:
+        if raw_age is None:
+            age_str = f"{C_ORANGE}never verified{C_RESET}"
+        else:
+            color = C_YELLOW if raw_age > stale_after_days else C_GREEN
+            age_str = f"{color}{raw_age:.0f}d{C_RESET}"
+        print(f"  [{state:>3}] {name} - {age_str} (seen {seen_count}x)")
+    print()
+
+
 def format_station_address(station: UnifiedStationRecord) -> str:
     addr = (station.address or "").strip()
     if not addr:
@@ -808,7 +1160,7 @@ def display_station_inspection_card(station: UnifiedStationRecord, eval_time: Op
  # Matches charger_find_tesla.py's own display_preview() coloring
  # (green = trusted local registry) - this line lost its color when
  # the display logic was ported into the provider system. Fixed 2026-09-14.
-        _field("📂", "Data Source", f"{C_GREEN}Local JSON Registry (Tessie/{reg_name}){C_RESET}")
+        _field("📂", "Data Source", f"{C_GREEN}Local JSON Registry ({reg_name}){C_RESET}")
     elif station.source == "chargefox":
         _field("📂", "Data Source", f"Chargefox Registry (ID: {station.source_id})")
     elif station.source == "evx":
@@ -858,9 +1210,25 @@ def display_station_inspection_card(station: UnifiedStationRecord, eval_time: Op
         _field("📋", "Find Us List Name", list_display)
         _field("📌", "Find Us Location Name", findus_loc)
     
-    suburb_loc = station.suburb or (meta.get("general_location") if meta else "")
-    if suburb_loc:
-        _field("🏢", "General Location", suburb_loc)
+    # BUG-135 (2026-09-22 follow-up): originally just flipped this to prefer
+    # general_location over suburb outright - user pushed back: they want
+    # BOTH shown, same as Find Us List/Location Name just above. Tesla's own
+    # provider parser (chargers_tesla.py) sets metadata.general_location to
+    # the real named venue when Tesla's data has one (e.g. "Cassegrain Wines"
+    # for the Port Macquarie Supercharger, sited in its car park), falling
+    # back to the bare suburb only when Tesla's data has nothing more
+    # specific - so general_location is NEVER worse than suburb, and when it
+    # differs it's the more useful, more specific description. Only Tesla's
+    # provider sets general_location at all (other networks leave it unset),
+    # so the "differs" branch below is Tesla-only; everything else still
+    # gets the same single Suburb line as before.
+    suburb_val = (station.suburb or "").strip()
+    general_loc = ((meta.get("general_location") if meta else "") or "").strip()
+    if general_loc and suburb_val and general_loc.lower() != suburb_val.lower():
+        _field("🏢", "General Location", general_loc)
+        _field("🏙️", "Suburb / Place", suburb_val)
+    elif general_loc or suburb_val:
+        _field("🏢", "General Location", general_loc or suburb_val)
 
     clean_addr = format_station_address(station)
     _field("📮", "Address", clean_addr)
@@ -880,12 +1248,30 @@ def display_station_inspection_card(station: UnifiedStationRecord, eval_time: Op
                 sc_site = None
 
         # Auto-populate and auto-cache OSM node and physical GPS if available from supercharge.info
+        # BUG-152 (2026-09-22): find_supercharge_site() can return the closest
+        # PLAUSIBLE site it has, which is not always THIS station - two distinct
+        # Tesla superchargers can sit well under 1km apart (Coffs Harbour, NSW's
+        # old Park Beach Plaza site and its new Pacific Hwy/Big Banana replacement
+        # are ~787m apart), so this block was silently writing one station's
+        # verified GPS into the OTHER station's registry entry on nothing more
+        # than a plain --inspect call - no [a] audit, no confirmation. A sanity
+        # cap here (same idea as station_facilities.py's REFINEMENT_SANITY_CAP_M)
+        # means a too-far match is just not trusted/cached, rather than accepted
+        # as ground truth - "no confident OSM data yet" beats "confidently wrong".
+        _SC_AUTOCACHE_MAX_OFFSET_M = 300.0
         if is_tesla_sc and sc_site:
             sc_osm_id = sc_site.get("osmId")
             sc_gps = sc_site.get("gps", {})
             sc_lat_val = sc_gps.get("latitude")
             sc_lon_val = sc_gps.get("longitude")
-            if sc_osm_id:
+            sc_offset_ok = True
+            if sc_lat_val is not None and sc_lon_val is not None and station.lat is not None and station.lon is not None:
+                try:
+                    from lib.geo_common import haversine_distance_km as _hkm
+                    sc_offset_ok = (_hkm(station.lat, station.lon, float(sc_lat_val), float(sc_lon_val)) * 1000.0) <= _SC_AUTOCACHE_MAX_OFFSET_M
+                except Exception:
+                    sc_offset_ok = True
+            if sc_osm_id and sc_offset_ok:
                 if not meta.get("osm_node_id"):
                     meta["osm_node_id"] = sc_osm_id
                 if osm_lat is None and sc_lat_val is not None and sc_lon_val is not None:
@@ -895,7 +1281,7 @@ def display_station_inspection_card(station: UnifiedStationRecord, eval_time: Op
                     meta["osm_lon"] = osm_lon
                     try:
                         from lib.tessie_api_common import save_audited_osm_to_tesla_registry
-                        save_audited_osm_to_tesla_registry(station.name, float(osm_lat), float(osm_lon), int(sc_osm_id))
+                        save_audited_osm_to_tesla_registry(station.name, float(osm_lat), float(osm_lon), int(sc_osm_id), is_destination=False)
                     except Exception:
                         pass
 
@@ -1095,11 +1481,11 @@ def display_station_inspection_card(station: UnifiedStationRecord, eval_time: Op
  # invoices against the right (possibly archived) registry entry. Fixed
  # 2026-09-14 - see AGENTS.local.md.
     if station.effective_date_utc and station.last_verified_utc:
-        _field("🕒", "Effective Date", f"{format_local_timestamp(station.effective_date_utc)} (Verified: {format_local_timestamp(station.last_verified_utc)})")
+        _field("🕒", "Effective Since Date", f"{format_local_timestamp(station.effective_date_utc)} (Verified: {format_local_timestamp(station.last_verified_utc)})")
     elif station.last_verified_utc:
         _field("🕒", "Last Verified", format_local_timestamp(station.last_verified_utc))
     elif station.effective_date_utc:
-        _field("🕒", "Effective Date", format_local_timestamp(station.effective_date_utc))
+        _field("🕒", "Effective Since Date", format_local_timestamp(station.effective_date_utc))
 
  # 3. Tariff & Time-of-Use Rates
     curr = station.currency or "AUD"
@@ -1354,6 +1740,16 @@ def interactive_station_actions(station: UnifiedStationRecord) -> None:
         station.speed_tier == "supercharger"
         and ("tesla" in (station.source or "").lower() or (station.network or "").lower() == "tesla" or "tesla" in (station.views or {}))
     )
+    # BUG-153 (2026-09-22): is_tesla_dest was referenced below but never
+    # defined in this function (only display_station_inspection_card()
+    # computed it) - crashed with NameError on every single --inspect
+    # of a Tesla Destination Charger (is_tesla_sc is False for those, so
+    # the `or is_tesla_dest` short-circuit below was actually reached).
+    # Same definition as display_station_inspection_card() uses.
+    is_tesla_dest = (
+        ("tesla" in (station.source or "").lower() or "tesla" in (station.network or "").lower() or "tesla" in (station.views or {}))
+        and not is_tesla_sc
+    )
     sc_site = None
     if is_tesla_sc:
         try:
@@ -1433,7 +1829,14 @@ def interactive_station_actions(station: UnifiedStationRecord) -> None:
             try:
                 from places_osm_editor import _audit_tesla_station, load_osm_config
                 cfg = load_osm_config()
-                _audit_tesla_station(query=station.key or station.name, token=cfg.get("access_token"))
+                # BUG-152 (2026-09-22): pass the already-selected station object
+                # directly instead of re-deriving it by name string - two real
+                # stations can share a name/key that's a prefix of the other
+                # (e.g. "Coffs Harbour, NSW" vs "Coffs Harbour, NSW - Pacific
+                # Hwy"), which made the name-based re-search inside
+                # _audit_tesla_station ambiguous for no reason, since this
+                # code already knows exactly which station it means.
+                _audit_tesla_station(query=station.key or station.name, token=cfg.get("access_token"), preselected_station=station)
             except Exception as e:
                 print(f"{C_RED}❌ Error running audit: {e}{C_RESET}")
             print()
@@ -1492,6 +1895,136 @@ def inspect_single_station(manager: ChargerDiscoveryManager, query: str, eval_ti
                 interactive_station_actions(st)
         except (EOFError, KeyboardInterrupt):
             print()
+
+
+def sync_facilities_for_stations(stations: list, radius_m: int = 250, delay_s: float = 1.0) -> dict:
+    """Batch-refreshes the nearby-facilities cache for a list of stations,
+    skipping any already fresh (per station_facilities.py's TTL/schema-cutoff
+    checks), never caching an ambiguous empty result (BUG-149), and retrying
+    once at the end of the run for anything that came back empty or errored
+    the first time (BUG-150). Shared by the `--sync-facilities` CLI flag and
+    the interactive station-list menu's `facilities` command, so both get the
+    same resumable, rate-limit-aware behaviour instead of two copies drifting
+    apart.
+
+    Returns {"synced": int, "skip_fresh": int, "still_failed": int,
+    "still_failed_names": [str, ...], "total_candidates": int}.
+    """
+    try:
+        from places_manager import query_overpass_pois
+        try:
+            from lib.station_facilities import get_facilities_registry, resolve_station_physical_coords
+        except ImportError:
+            from station_facilities import get_facilities_registry, resolve_station_physical_coords
+        fac_reg = get_facilities_registry()
+    except ImportError:
+        fac_reg = None
+        resolve_station_physical_coords = None
+
+ # BUG-149: this batch sync used to (a) always re-query every matching
+ # station even if its cache was already fresh - wasteful and makes a
+ # big run un-resumable - and (b) call store_station_facilities() with
+ # whatever query_overpass_pois() returned, INCLUDING an empty list.
+ # query_overpass_pois() collapses "confirmed zero POIs nearby" and
+ # "every Overpass mirror failed/rate-limited" into the same `[]` return
+ # (see its own docstring / BUG-146's notes on mirrors rate-limiting
+ # under repeated testing) - the interactive [f] pullup already knows
+ # this and deliberately skips caching an empty result for exactly this
+ # reason, but this batch path didn't, so a rate-limited run could
+ # silently write false "Sparse 0/10, no facilities" records that then
+ # look like confirmed ground truth for days. Also used raw st.lat/lon
+ # instead of resolve_station_physical_coords() (OSM-aligned when
+ # available), unlike every other facilities call site - Harwood's own
+ # Tesla GPS is ~18m off from its OSM-aligned position, so this could
+ # cache a station's most notable facility just far enough that others
+ # queried later actually returned different results.
+    skip_fresh = 0
+    candidates = []
+    for st in stations:
+        if not st.lat or not st.lon:
+            continue
+        if fac_reg:
+            phys_lat, phys_lon, _coord_src = (
+                resolve_station_physical_coords(st) if resolve_station_physical_coords else (st.lat, st.lon, "Source GPS")
+            )
+            if fac_reg.get_station_facilities(station_key=st.key, station_name=st.name, lat=phys_lat, lon=phys_lon) is not None:
+                skip_fresh += 1
+                continue
+            candidates.append((st, phys_lat, phys_lon))
+        else:
+            candidates.append((st, st.lat, st.lon))
+
+    print(f"\n🔄 Batch syncing facilities for {len(candidates)} station(s) needing a refresh (search radius: {radius_m}m; {skip_fresh} already fresh, skipped)...")
+    if not candidates:
+        print("✔ Nothing to do - every matching station's facilities cache is already current.")
+        return {"synced": 0, "skip_fresh": skip_fresh, "still_failed": 0, "still_failed_names": [], "total_candidates": 0}
+
+    def _sync_one(st, plat, plon):
+        """Attempts a single station's facilities refresh; prints the
+        outcome. Returns True if a real result was cached, False if this
+        station should be retried (empty result or a request error - both
+        ambiguous per BUG-149: could be a genuinely quiet vicinity or a
+        rate-limited/failed Overpass mirror, and we can't tell which from
+        here)."""
+        try:
+            pois = query_overpass_pois(plat, plon, radius_m=radius_m)
+        except Exception as e:
+            print(f" ❌ Error: {e}")
+            return False
+        if not pois:
+            print(" ⚠ No result (genuinely empty, or every Overpass mirror failed)")
+            return False
+        if fac_reg:
+            rec = fac_reg.store_station_facilities(
+                station_key=st.key,
+                station_name=st.name,
+                network=st.network or "unknown",
+                lat=plat,
+                lon=plon,
+                pois=pois,
+                radius_m=radius_m
+            )
+            print(f" ✔ {rec.get('badge')}")
+        else:
+            print(f" ✔ Found {len(pois)} facilities")
+        return True
+
+    synced_count = 0
+    retry_list = []
+    for i, (st, plat, plon) in enumerate(candidates, 1):
+        print(f"  [{i}/{len(candidates)}] {st.name} ({st.state or ''})...", end="", flush=True)
+        if _sync_one(st, plat, plon):
+            synced_count += 1
+        else:
+            retry_list.append((st, plat, plon))
+        time.sleep(max(delay_s, 1.0))
+
+ # BUG-150 (user request): retry stations that came back empty/errored once
+ # at the end of THIS SAME run, rather than only ever picking them up on a
+ # separate future invocation. By the time this retry pass starts, every
+ # other station in the batch has already had its own turn - which alone
+ # gives a rate-limited mirror a real gap to recover before we ask it again.
+    still_failed = []
+    if retry_list:
+        print(f"\n🔁 Retrying {len(retry_list)} station(s) with no result from this run...")
+        for i, (st, plat, plon) in enumerate(retry_list, 1):
+            print(f"  [retry {i}/{len(retry_list)}] {st.name} ({st.state or ''})...", end="", flush=True)
+            if _sync_one(st, plat, plon):
+                synced_count += 1
+            else:
+                still_failed.append(st.name)
+            time.sleep(max(delay_s, 1.0))
+
+    print(f"\n✔ Facilities sync complete: {synced_count} cached, {len(still_failed)} still empty/failed after retry (will retry next run), {skip_fresh} already fresh.")
+    if still_failed:
+        print(f"   Still failed: {', '.join(still_failed)}")
+    return {
+        "synced": synced_count,
+        "skip_fresh": skip_fresh,
+        "still_failed": len(still_failed),
+        "still_failed_names": still_failed,
+        "total_candidates": len(candidates),
+    }
 
 
 def display_nearby_facilities(station: UnifiedStationRecord, radius_m: int = 250, force_refresh: bool = False) -> None:
@@ -1769,12 +2302,13 @@ DESCRIPTION
     g_route.add_argument("--from", "--origin", dest="from_loc", type=str, help="Route origin / departure point (place name, address, or lat,lon)")
     g_route.add_argument("--to", "--destination", dest="to_loc", type=str, help="Route destination point (place name, address, or lat,lon)")
     g_route.add_argument("--via", nargs="+", help="Intermediate route waypoint(s) (e.g. --via 'Goulburn' 'Canberra')")
-    g_route.add_argument("--corridor-radius", "--corridor", "--detour-max", type=float, default=5.0, help="Corridor radius / max highway detour in km (default: 5.0 km)")
+    g_route.add_argument("--corridor-radius", "--corridor", "--detour-max", type=float, default=None, help="Corridor radius / max highway detour in km (default: 5.0 km, or config.json's abrp.corridor_radius_km if set)")
 
     g_abrp = parser.add_argument_group("ABRP & EV Trip Planning")
     g_abrp.add_argument("--soc", "--departure-soc", dest="departure_soc", type=str, help="Departure battery percentage (0-100 or 'live' to query Tessie real-time)")
-    g_abrp.add_argument("--target-soc", "--min-soc", dest="target_soc", type=float, help="Target minimum arrival battery percentage (default: 10.0)")
-    g_abrp.add_argument("--max-soc", dest="max_soc", type=float, help="Maximum charging target percentage (default: 85.0)")
+    g_abrp.add_argument("--target-soc", "--min-soc", dest="target_soc", type=float, help="Target minimum arrival battery percentage (default: config.json's abrp.target_arrival_soc, else 10.0)")
+    g_abrp.add_argument("--max-soc", dest="max_soc", type=float, help="Maximum charging target percentage (default: config.json's abrp.max_charge_soc, else 85.0)")
+    g_abrp.add_argument("--charger-stops", dest="charger_stops", action="append", metavar="NAME", help="Chosen enroute charging stop, matched by station name in THIS query's results (repeatable, e.g. --charger-stops \"Heatherbrae, NSW\" --charger-stops \"Coffs Harbour, NSW\") - re-plans Arr/Dep SoC leg-by-leg through these stops instead of one non-stop estimate from departure")
     g_abrp.add_argument("--abrp-link", "--abrp", action="store_true", default=True, help="Generate and display 1-click ABRP interactive road trip URL (default: True)")
     g_abrp.add_argument("--no-abrp", action="store_false", dest="abrp_link", help="Suppress ABRP 1-click URL generation")
 
@@ -1794,6 +2328,13 @@ DESCRIPTION
     g_speed.add_argument("--dc", action="store_true", help="DC Fast Chargers only (>= 25 kW), any network - combine with --network tesla for Tesla's own Destination Chargers")
     g_speed.add_argument("--ac", action="store_true", help="AC Public / Destination Chargers only (< 25 kW), any network - combine with --network tesla for Tesla's own Destination Chargers")
     g_speed.add_argument("--min-kw", type=float, default=0.0, help="Minimum charging power in kW (e.g. --min-kw 150)")
+    # (2026-09-23, AGENTS.local.md REQ-106) --tesla-sc/--tesla-dc are
+    # PRODUCT-LINE shortcuts - literally "which file did this station come
+    # from" (tesla_superchargers.json vs tesla_chargers.json) - distinct
+    # from --network tesla --sc/--dc/--ac, which filter by MEASURED
+    # hardware tier instead. Both imply --network tesla automatically.
+    g_speed.add_argument("--tesla-sc", action="store_true", help="Tesla Superchargers only, straight from tesla_superchargers.json - implies --network tesla. Equivalent to --network tesla --sc (Superchargers are hardware-homogeneous, so there's no measured-tier ambiguity here).")
+    g_speed.add_argument("--tesla-dc", action="store_true", help="Tesla Destination Chargers only, straight from tesla_chargers.json, REGARDLESS of measured AC/DC hardware tier - implies --network tesla. NOT the same as --network tesla --dc, which filters by measured power (>= 25 kW) instead of by source file.")
 
     g_network = parser.add_argument_group("Network Filter")
     g_network.add_argument("--network", "-n", type=str, help="Filter by network - free-text substring match against network/operator/station-name/source (case-insensitive). Known first-party networks: tesla, chargefox (covers WA EV Network, Qld Electric Highway sub-brands), nrma (own Tier 1 KML feed, merged with Chargefox's ~28 overlapping NRMA sites where both cover the same site), evx, evie, bppulse, ampcharge (covers Ampol Foodary), exploren, jolt. Use 'plugshare' to see only PlugShare-sourced listings, or any other text to match a PlugShare-aggregated sub-brand.")
@@ -1826,6 +2367,7 @@ DESCRIPTION
     g_facilities.add_argument("--min-facilities", "--facilities-min", choices=["excellent", "good", "basic", "sparse"], help="Filter stations meeting minimum facility quality rating tier")
     g_facilities.add_argument("--supermarket", "--groceries", action="store_true", help="Filter stations located at or near a major supermarket (Woolworths, Coles, Aldi, IGA, Costco, etc.)")
     g_facilities.add_argument("--sync-facilities", action="store_true", help="Batch look up and cache nearby facilities for matching stations in station_facilities.json")
+    g_facilities.add_argument("--reclassify-facilities", action="store_true", help="BUG-151: instantly re-run facility categorization on every cached record that has raw OSM tags saved, no network call - use after a classify_poi_group() logic change instead of --sync-facilities")
 
     g_registry = parser.add_argument_group("Registry Filters & Batch Updates")
     g_registry.add_argument("--plugshare", "--inspect-plugshare", type=str, help="PlugShare location ID(s) to inspect / scrape live (comma-separated)")
@@ -1836,6 +2378,7 @@ DESCRIPTION
     g_registry.add_argument("--status", choices=["UP_TO_DATE", "RENAMED", "STALE", "NOT_IN_JSON", "uptodate", "up_to_date", "up-to-date", "renamed", "stale", "new", "not_in_json"], help="Filter by registry status")
     g_registry.add_argument("--update-stale", action="store_true", help="Batch re-verify and update all stale stations across providers (archives changes)")
     g_registry.add_argument("--update-renamed", action="store_true", help="Batch re-verify and reconcile all renamed stations across providers (archives changes)")
+    g_registry.add_argument("--update-all", "--refresh-all", action="store_true", help="Batch re-verify EVERY matching station live from its source (Tesla, PlugShare, Chargefox, ...), regardless of current status - not just STALE/RENAMED (archives changes)")
     g_registry.add_argument("--new", action="store_true", help="Filter only stations not present in registry")
     g_registry.add_argument("--stale", action="store_true", help="Filter only stale stations (> 90 days since verification)")
     g_registry.add_argument("--renamed", action="store_true", help="Filter only renamed / discrepancy stations")
@@ -1886,6 +2429,21 @@ DESCRIPTION
  # input, so this only WARNS - via a fuzzy match against the known
  # first-party network names - and always still proceeds with whatever the
  # user typed as a free-text filter.
+    # (2026-09-23, AGENTS.local.md REQ-106) User: "To cover all bases...
+    # --tesla-sc = Tesla Superchargers (automatically assumes --network
+    # tesla) - only tesla_superchargers.json ... --tesla-dc = Tesla
+    # Destination Chargers (automatically assumes --network tesla) - only
+    # tesla_chargers.json". Force --network to "tesla" here so every
+    # downstream check (the fuzzy-match block right below, the
+    # --live-requires--network gate, the provider fetch itself) sees it
+    # without the caller having to pass both.
+    if args.tesla_sc and args.tesla_dc:
+        parser.error("--tesla-sc and --tesla-dc are mutually exclusive - a station cannot be in both tesla_superchargers.json and tesla_chargers.json.")
+    if (args.tesla_sc or args.tesla_dc) and args.network and args.network.strip().lower() != "tesla":
+        parser.error(f"--tesla-sc/--tesla-dc already imply --network tesla - drop the conflicting --network {args.network!r}.")
+    if args.tesla_sc or args.tesla_dc:
+        args.network = "tesla"
+
     if args.network:
         _KNOWN_NETWORKS = ["tesla", "chargefox", "nrma", "evie", "evx", "bppulse", "plugshare", "ampcharge", "exploren", "jolt"]
         _net_check = args.network.strip().lower()
@@ -1896,6 +2454,17 @@ DESCRIPTION
                 print(f"{C_YELLOW}⚠ Unknown network '{args.network}' - did you mean '{_close[0]}'? (Known: {', '.join(_KNOWN_NETWORKS)}. Proceeding with '{args.network}' as a free-text filter anyway.){C_RESET}")
             else:
                 print(f"{C_YELLOW}⚠ '{args.network}' doesn't match a known first-party network ({', '.join(_KNOWN_NETWORKS)}) - proceeding as a free-text filter, which also matches PlugShare-aggregated sub-brands like Exploren or WA EV Network.{C_RESET}")
+
+    # (2026-09-23, AGENTS.local.md REQ-104 follow-on): --live used to
+    # silently fall through to a generic "not available" warning for
+    # anything other than Tesla/--sc or Chargefox, which made sense when
+    # only those two had a live-diff view. Now that JOLT, NRMA, Evie, EVX,
+    # Exploren, BP Pulse, AmpCharge and PlugShare all route through --live
+    # too, which network's live catalog to browse is no longer optional -
+    # the user asked for this explicitly: "--live should require the
+    # network."
+    if args.live and not args.network and not args.sc:
+        parser.error("--live requires --network <name> (or --sc). Known: tesla, chargefox, nrma, evie, evx, bppulse, ampcharge, exploren, jolt, plugshare.")
 
     manager = ChargerDiscoveryManager()
 
@@ -2284,19 +2853,58 @@ DESCRIPTION
         if args.sc or net_lower == "tesla":
             from charger_find_tesla import TeslaChargerExplorer, browse_stations_by_type
             types_to_fetch = []
-            if args.sc:
+            if args.sc or args.tesla_sc:
                 types_to_fetch.append("superchargers")
-            if args.dc or args.ac:
+            if args.dc or args.ac or args.tesla_dc:
                 types_to_fetch.append("chargers")
             if not types_to_fetch:
                 types_to_fetch = ["superchargers", "chargers"]
             tesla_explorer = TeslaChargerExplorer()
             browse_stations_by_type(tesla_explorer, types_to_fetch, args.country or "Australia")
             return
-        if net_lower in ("chargefox", "nrma"):
+        if net_lower == "chargefox":
             browse_chargefox_catalog_grid(manager, args.country or "Australia", auto_save=args.save)
             return
-        print(f"{C_YELLOW}⚠ --live browsing isn't available for this network selection - it needs one canonical upstream catalog to diff against (Tesla via --network tesla or --sc, or Chargefox via --network chargefox). PlugShare-aggregated networks (Evie, bp pulse, etc.) have no single such list.{C_RESET}")
+        # (2026-09-23, REQ-104 follow-on) NRMA used to piggyback on
+        # Chargefox's view (its 28-ish overlapping sites made that a
+        # reasonable shortcut), but NRMA has its own independent first-party
+        # source (chargers_nrma.py's own fetch_all_remote(), a Google
+        # MyMaps KML feed) and now gets its own native live-diff like every
+        # other full-list provider, rather than being folded into
+        # Chargefox's catalog.
+        _GENERIC_LIVE_DIFF_NETWORKS = {
+            "nrma": "NRMA",
+            "jolt": "JOLT",
+            "evie": "Evie",
+            "evx": "EVX",
+            "exploren": "Exploren",
+            "bppulse": "BP Pulse",
+            "ampcharge": "AmpCharge",
+        }
+        if net_lower in _GENERIC_LIVE_DIFF_NETWORKS:
+            provider_cls_map = {
+                "nrma": NrmaProvider, "jolt": JoltProvider, "evie": EvieProvider,
+                "evx": EVXProvider, "exploren": ExplorenProvider,
+                "bppulse": BPPulseProvider, "ampcharge": AmpChargeProvider,
+            }
+            provider = next((p for p in manager.providers if isinstance(p, provider_cls_map[net_lower])), None)
+            if provider is None:
+                print(f"{C_RED}❌ {_GENERIC_LIVE_DIFF_NETWORKS[net_lower]} provider not configured.{C_RESET}")
+                return
+            browse_live_diff_grid(provider, _GENERIC_LIVE_DIFF_NETWORKS[net_lower], args.country or "Australia", auto_save=args.save)
+            return
+        if net_lower == "plugshare":
+            # PlugShare is Tier 2 (a moving-viewport aggregator, not a
+            # full-list scrape) - it has no single canonical upstream list
+            # to live-fetch-and-diff, so it gets a local-only staleness
+            # report instead of a live browse.
+            provider = next((p for p in manager.providers if isinstance(p, PlugShareProvider)), None)
+            if provider is None:
+                print(f"{C_RED}❌ PlugShare provider not configured.{C_RESET}")
+                return
+            plugshare_local_staleness_report(provider)
+            return
+        print(f"{C_YELLOW}⚠ --live browsing isn't available for this network selection - it needs one canonical upstream catalog to diff against (tesla, chargefox, nrma, evie, evx, bppulse, ampcharge, exploren, jolt), or use plugshare for a local staleness report.{C_RESET}")
         print(f"{C_DIM}Falling back to the local registry view below.{C_RESET}")
 
  # Determine filters
@@ -2372,27 +2980,38 @@ DESCRIPTION
         else:
             effective_sort = args.sort
 
+        # Resolve ABRP & EV Route Intelligence config early - corridor_radius_km
+        # needs it too now (config.json follow-up, 2026-09-21: --target-soc/
+        # --max-soc already fell back to abrp_cfg when unset on the CLI;
+        # --corridor-radius used to hardcode default=5.0 in argparse itself,
+        # so it could never fall back to anything - moved load_abrp_config()
+        # up here so all three routing knobs resolve the same way: CLI flag
+        # wins, else config.json's abrp.* value, else the original literal).
+        from lib.abrp_planner import (
+            load_abrp_config,
+            resolve_departure_soc,
+            generate_abrp_deep_link,
+            estimate_arrival_soc,
+            DEFAULT_CONSUMPTION_WH_KM,
+            DEFAULT_USABLE_KWH
+        )
+        abrp_cfg = load_abrp_config()
+        corridor_radius_km = args.corridor_radius if args.corridor_radius is not None else float(abrp_cfg.get("corridor_radius_km", 5.0))
+
         if not args.json:
             print(f"🛣️  {C_CYAN}Calculating driving corridor from {f_label} to {t_label}...{C_RESET}")
         stations, route_info = manager.search_route_corridor(
             waypoints=waypoints,
-            corridor_radius_km=args.corridor_radius,
+            corridor_radius_km=corridor_radius_km,
             filters=filters,
             sort_by=effective_sort,
             eval_time=args.time
         )
         route_info["origin_label"] = f_label
         route_info["destination_label"] = t_label
-        route_info["corridor_radius_km"] = args.corridor_radius
+        route_info["corridor_radius_km"] = corridor_radius_km
         route_info["via_labels"] = via_labels
 
-        # Resolve ABRP & EV Route Intelligence
-        from lib.abrp_planner import (
-            load_abrp_config,
-            resolve_departure_soc,
-            generate_abrp_deep_link
-        )
-        abrp_cfg = load_abrp_config()
         dep_soc, dep_src, live_detail = resolve_departure_soc(args.departure_soc)
         tgt_soc = args.target_soc if args.target_soc is not None else float(abrp_cfg.get("target_arrival_soc", 10.0))
         max_soc = args.max_soc if args.max_soc is not None else float(abrp_cfg.get("max_charge_soc", 85.0))
@@ -2416,9 +3035,81 @@ DESCRIPTION
         route_info["target_arrival_soc"] = tgt_soc
         route_info["max_charge_soc"] = max_soc
         route_info["abrp_link"] = abrp_url
-        route_info["consumption_wh_km"] = abrp_cfg.get("consumption_wh_km", 175.0)
-        route_info["usable_kwh"] = abrp_cfg.get("usable_kwh", 85.0)
-        route_info["vehicle_name"] = abrp_cfg.get("vehicle_name", "Tesla Model YL AWD")
+        # Fix (2026-09-21): reuse the same shared constants as the fallback
+        # above instead of yet another independently-invented pair (175.0 vs
+        # 165.0 vs abrp_planner.py's own 171.1), and a generic vehicle-name
+        # fallback instead of a hardcoded specific car (abrp_cfg always sets
+        # "vehicle_name" itself - see load_abrp_config() - so this fallback
+        # is last-resort only).
+        route_info["consumption_wh_km"] = abrp_cfg.get("consumption_wh_km", DEFAULT_CONSUMPTION_WH_KM)
+        route_info["usable_kwh"] = abrp_cfg.get("usable_kwh", DEFAULT_USABLE_KWH)
+        route_info["vehicle_name"] = abrp_cfg.get("vehicle_name", "Tesla Model Y")
+
+        # --charger-stops (2026-09-21): multi-leg re-plan through user-chosen
+        # enroute charging stops, matched by station name against THIS
+        # query's own results. Every station's Arr SoC is recomputed leg-by-
+        # leg (the PRECEDING chosen stop's charge-to target and the distance
+        # SINCE that stop, not the original single non-stop departure/
+        # distance-from-origin pair); Dep SoC is set only on the chosen
+        # stops themselves - see render_stations_table()'s multi_stop branch.
+        chosen_stops = []
+        if getattr(args, "charger_stops", None):
+            for want in args.charger_stops:
+                want_l = want.strip().lower()
+                if not want_l:
+                    continue
+                exact = [s for s in stations if (s.name or "").strip().lower() == want_l]
+                if exact:
+                    chosen_stops.append(exact[0])
+                    continue
+                sub = [s for s in stations if want_l in (s.name or "").lower()]
+                if len(sub) == 1:
+                    chosen_stops.append(sub[0])
+                elif len(sub) > 1:
+                    names = ", ".join(s.name for s in sub[:5])
+                    more = ", ..." if len(sub) > 5 else ""
+                    print(f"⚠️  '{want}' matches multiple stations in this query ({names}{more}) - use a more specific name.", file=sys.stderr)
+                else:
+                    print(f"⚠️  '{want}' did not match any station in this query's results.", file=sys.stderr)
+
+            seen_ids = {}
+            for s in chosen_stops:
+                seen_ids[id(s)] = s
+            chosen_stops = sorted(
+                seen_ids.values(),
+                key=lambda s: getattr(s, "route_progress_km", None) if getattr(s, "route_progress_km", None) is not None else 0.0
+            )
+
+        if chosen_stops:
+            route_info["charger_stops"] = [s.name for s in chosen_stops]
+            stop_charge_target = max_soc  # same charge-to % at every chosen stop (user decision, 2026-09-21)
+            leg_bounds = [(0.0, dep_soc)]
+            for stop in chosen_stops:
+                stop_prog = getattr(stop, "route_progress_km", None)
+                if stop_prog is None:
+                    continue
+                leg_start_prog, leg_start_soc = leg_bounds[-1]
+                arr_here, _ = estimate_arrival_soc(
+                    leg_start_soc, max(0.0, stop_prog - leg_start_prog),
+                    getattr(stop, "detour_km", 0.0) or 0.0,
+                    route_info["consumption_wh_km"], route_info["usable_kwh"]
+                )
+                if arr_here < 0:
+                    print(f"⚠️  Leg to '{stop.name}' needs ~{-arr_here:.0f}% more battery than available departing the previous stop at {leg_start_soc:.0f}% - not reachable as chosen.", file=sys.stderr)
+                stop.leg_arrival_soc = arr_here
+                stop.stop_dep_soc = stop_charge_target
+                leg_bounds.append((stop_prog, stop_charge_target))
+
+            for st in stations:
+                prog = getattr(st, "route_progress_km", None)
+                if prog is None:
+                    continue
+                leg_start_prog, leg_start_soc = leg_bounds[0]
+                for lp, ls in leg_bounds:
+                    if lp < prog:
+                        leg_start_prog, leg_start_soc = lp, ls
+                st.leg_departure_soc = leg_start_soc
+                st.leg_distance_km = max(0.0, prog - leg_start_prog)
 
     elif args.near or explicit_sort or not is_state_or_all:
         ref_loc = args.near or "Home"
@@ -2476,6 +3167,19 @@ DESCRIPTION
             print(f"❌ Error: Could not resolve reference location '{ref_loc}'.", file=sys.stderr)
             sys.exit(1)
 
+ # (2026-09-23, AGENTS.local.md REQ-106) --tesla-sc/--tesla-dc PRODUCT-LINE
+ # post-filter - independent of speed_tier/max_power_kw, this checks the
+ # record's own `network` field (set purely by which JSON file it was
+ # scraped from - chargers_tesla.py's `network = "Tesla Destination" if
+ # is_dest else "Tesla"`), so it stays correct even for a hypothetical
+ # future DC-capable Destination Charger that `--network tesla --dc`
+ # would (correctly, after this same REQ-106) also start picking up on
+ # hardware grounds alone.
+    if args.tesla_sc:
+        stations = [s for s in stations if (s.network or "") == "Tesla"]
+    elif args.tesla_dc:
+        stations = [s for s in stations if (s.network or "") == "Tesla Destination"]
+
  # Apply Status Filters
     if args.status:
         st_req = args.status.upper()
@@ -2498,11 +3202,30 @@ DESCRIPTION
         stations = stations[:args.limit]
 
  # Batch Update CLI Actions
-    if args.update_stale or args.update_renamed:
-        target_status = "STALE" if args.update_stale else "RENAMED"
-        print(f"🔄 Starting batch update for {target_status} stations (historical changes will be archived)...")
+    if args.update_stale or args.update_renamed or getattr(args, "update_all", False):
+ # REQ-102: user asked for the ability to refresh ALL matching stations live
+ # from their sources (Tesla, PlugShare, ...), not just whatever our own
+ # STALE/RENAMED status heuristics happen to flag - "ALL" is a sentinel
+ # batch_reverify_stations() specifically recognizes to skip that filter
+ # entirely (see chargers_manager.py).
+        target_status = "ALL" if getattr(args, "update_all", False) else ("STALE" if args.update_stale else "RENAMED")
+        label = "EVERY matching" if target_status == "ALL" else target_status
+        print(f"🔄 Starting batch update for {label} station(s) (historical changes will be archived)...")
         stats = manager.batch_reverify_stations(stations, status_filter=target_status)
         print(f"\n✔ Batch update complete: {stats['SUCCESS']} updated, {stats['ERROR']} failed out of {stats['TOTAL']} target stations.")
+        return
+
+ # Offline Facilities Reclassify Action (BUG-151, no network call)
+    if getattr(args, "reclassify_facilities", False):
+        try:
+            from lib.station_facilities import get_facilities_registry
+        except ImportError:
+            from station_facilities import get_facilities_registry
+        fac_reg = get_facilities_registry()
+        print("\U0001f504 Reclassifying cached facilities offline (no network calls)...")
+        result = fac_reg.reclassify_cached_facilities()
+        print(f"\u2714 {result['reclassified']} record(s) reclassified, {result['unchanged']} already correct, "
+              f"{result['needs_live_refetch']} still need a live refetch (predate raw-tag saving - use --sync-facilities for those).")
         return
 
  # Batch Facilities Sync Action
@@ -2510,44 +3233,7 @@ DESCRIPTION
         if not stations:
             print(f"❌ No stations found matching current criteria to sync facilities for.")
             return
-        radius = args.facilities_radius or 250
-        print(f"\n🔄 Batch syncing facilities for {len(stations)} station(s) (search radius: {radius}m)...")
-        try:
-            from places_manager import query_overpass_pois
-            from station_facilities import get_facilities_registry
-            fac_reg = get_facilities_registry()
-        except ImportError:
-            try:
-                from lib.station_facilities import get_facilities_registry
-                fac_reg = get_facilities_registry()
-            except ImportError:
-                fac_reg = None
-
-        synced_count = 0
-        for i, st in enumerate(stations, 1):
-            if not st.lat or not st.lon:
-                continue
-            print(f"  [{i}/{len(stations)}] {st.name} ({st.state or ''})...", end="", flush=True)
-            try:
-                pois = query_overpass_pois(st.lat, st.lon, radius_m=radius)
-                if fac_reg:
-                    rec = fac_reg.store_station_facilities(
-                        station_key=st.key,
-                        station_name=st.name,
-                        network=st.network or "unknown",
-                        lat=st.lat,
-                        lon=st.lon,
-                        pois=pois,
-                        radius_m=radius
-                    )
-                    print(f" ✔ {rec.get('badge')}")
-                    synced_count += 1
-                else:
-                    print(f" ✔ Found {len(pois)} facilities")
-            except Exception as e:
-                print(f" ❌ Error: {e}")
-            time.sleep(max(args.delay, 1.0))
-        print(f"\n✔ Facilities sync complete: {synced_count} station records cached in station_facilities.json.")
+        sync_facilities_for_stations(stations, radius_m=args.facilities_radius or 250, delay_s=args.delay)
         return
 
  # Multi-View comparison mode
@@ -2631,20 +3317,33 @@ DESCRIPTION
         has_abrp = bool(route_info and route_info.get("abrp_link"))
         while True:
             num_range = f"1-{len(stations)}" if len(stations) > 1 else "1"
-            print(f"\n{C_BOLD}Actions:{C_RESET}")
-            print(f"  [{C_GREEN}{num_range}{C_RESET}]     Inspect station details & view nearby amenities (e.g. {C_GREEN}14{C_RESET})")
+
+            # Action rows (label, color, description) - width computed from
+            # the actual labels every time, not hand-typed spacing, so the
+            # description column stays aligned regardless of how wide
+            # num_range happens to be (e.g. "1" vs "1-11" vs "1-100") or
+            # which optional rows (abrp) are present this run.
+            action_rows = [(num_range, C_GREEN, f"Inspect station details & view nearby amenities (e.g. {C_GREEN}14{C_RESET})")]
             if has_abrp:
-                print(f"  [{C_GREEN}abrp{C_RESET}]    Open ABRP 1-Click Road Trip in your browser")
-            print(f"  [{C_CYAN}u <#>{C_RESET}]    Update / re-verify a station live (e.g. {C_CYAN}u 14{C_RESET})")
-            print(f"  [{C_BLUE}stale{C_RESET}]    Batch re-verify all stale stations in this query")
-            print(f"  [{C_MAGENTA}renamed{C_RESET}]  Batch re-verify all renamed stations in this query")
-            print(f"  [{C_GREEN}r{C_RESET}]        Redisplay station table")
-            print(f"  [{C_GREEN}q{C_RESET}]        Quit (or press Enter)")
+                action_rows.append(("abrp", C_GREEN, "Open ABRP 1-Click Road Trip in your browser"))
+            action_rows.append(("u <#>", C_CYAN, f"Update / re-verify a station live (e.g. {C_CYAN}u 14{C_RESET})"))
+            action_rows.append(("stale", C_BLUE, "Batch re-verify all stale stations in this query"))
+            action_rows.append(("renamed", C_MAGENTA, "Batch re-verify all renamed stations in this query"))
+            action_rows.append(("all", C_ORANGE, "Batch re-verify EVERY station in this list live from its source (Tesla, PlugShare, ...) - not just stale/renamed"))
+            action_rows.append(("facilities", C_YELLOW, "Batch re-fetch nearby OSM facilities for every station in this list"))
+            action_rows.append(("r", C_GREEN, "Redisplay station table"))
+            action_rows.append(("q", C_GREEN, "Quit (or press Enter)"))
+
+            label_col_w = max(len(label) + 2 for label, _, _ in action_rows)  # +2 for the brackets
+            print(f"\n{C_BOLD}Actions:{C_RESET}")
+            for label, color, desc in action_rows:
+                bracketed = f"[{label}]"
+                print(f"  {color}{bracketed}{C_RESET}{' ' * (label_col_w - len(bracketed) + 2)}{desc}")
 
             prompt_parts = [num_range]
             if has_abrp:
                 prompt_parts.append("abrp")
-            prompt_parts.extend(["u <#>", "stale", "renamed", "r", "q"])
+            prompt_parts.extend(["u <#>", "stale", "renamed", "all", "facilities", "r", "q"])
             prompt_str = "/".join(prompt_parts)
 
             try:
@@ -2682,6 +3381,32 @@ DESCRIPTION
                 render_cb()
                 continue
 
+            if choice in ("all", "update-all", "refresh-all"):
+ # REQ-102: user request - refresh literally every station in this list live
+ # from its own source (Tesla via Playwright, PlugShare/Chargefox/etc via
+ # their own APIs - reverify_station() already dispatches by provider), not
+ # only whatever STALE/RENAMED happens to flag. "ALL" is a sentinel
+ # batch_reverify_stations() recognizes to skip that status filter entirely.
+                confirm = input(f"This will re-verify all {len(stations)} station(s) in this list live, regardless of status - continue? [y/N]: ").strip().lower()
+                if confirm == "y":
+                    print(f"🔄 Re-verifying all {len(stations)} station(s) in current query live from source...")
+                    stats = manager.batch_reverify_stations(stations, status_filter="ALL")
+                    print(f"✔ Done: {stats['SUCCESS']} updated, {stats['ERROR']} failed.")
+                    input("\nPress Enter to refresh list...")
+                render_cb()
+                continue
+
+            if choice in ("facilities", "osm", "sync-facilities"):
+ # User request: "not only batch refresh all of them but batch refresh OSM
+ # too" - the CLI-level --sync-facilities flag already existed but required
+ # leaving this list and re-invoking the whole program; this lets you cover
+ # exactly the stations already in front of you (e.g. one route's worth)
+ # without a separate, much slower whole-registry run.
+                sync_facilities_for_stations(stations, radius_m=args.facilities_radius or 250, delay_s=args.delay)
+                input("\nPress Enter to refresh list...")
+                render_cb()
+                continue
+
             # Quick update command e.g. "u 3" or "update 3"
             if choice.startswith("u ") or choice.startswith("update ") or choice.startswith("s "):
                 parts = choice.split()
@@ -2704,105 +3429,157 @@ DESCRIPTION
                 print(f"{C_RED}❌ Invalid selection. Please enter a number between 1 and {len(stations)}.{C_RESET}\n")
                 continue
 
-            sel = stations[target_num - 1]
-            display_station_inspection_card(sel, eval_time=args.time)
+            break_outer = False
 
-            source_urls = sel.get_source_urls()
-            is_sel_tesla_sc = (
-                sel.speed_tier == "supercharger"
-                and ("tesla" in (sel.source or "").lower() or (sel.network or "").lower() == "tesla" or "tesla" in (sel.views or {}))
-            )
-            is_sel_tesla_dest = (
-                ("tesla" in (sel.source or "").lower() or "tesla" in (sel.network or "").lower() or "tesla" in (sel.views or {}))
-                and not is_sel_tesla_sc
-            )
-            sc_site = None
-            if is_sel_tesla_sc:
-                try:
-                    from lib.supercharge_info import find_supercharge_site
-                    sc_meta = sel.metadata or {}
-                    loc_id = sc_meta.get("location_id") or sc_meta.get("short_name") or sel.source_id
-                    sc_site = find_supercharge_site(sel.name, sel.lat, sel.lon, location_id=loc_id)
-                except Exception:
-                    sc_site = None
+            # Inner loop: lets [n]ext/[p]revious step straight to the next/prev
+            # station's own card+menu without dropping back out to the full
+            # table each time (which is what re-entering a number here would
+            # otherwise require). Every other action keeps its exact previous
+            # behaviour of falling through to render_cb() below via the shared
+            # `break` at the bottom of this loop.
+            while True:
+                sel = stations[target_num - 1]
+                display_station_inspection_card(sel, eval_time=args.time)
 
-            sel_loc_provider = "Tesla" if (is_sel_tesla_sc or is_sel_tesla_dest or "tesla" in (sel.source or "").lower()) else (sel.network or "Station")
+                source_urls = sel.get_source_urls()
+                is_sel_tesla_sc = (
+                    sel.speed_tier == "supercharger"
+                    and ("tesla" in (sel.source or "").lower() or (sel.network or "").lower() == "tesla" or "tesla" in (sel.views or {}))
+                )
+                is_sel_tesla_dest = (
+                    ("tesla" in (sel.source or "").lower() or "tesla" in (sel.network or "").lower() or "tesla" in (sel.views or {}))
+                    and not is_sel_tesla_sc
+                )
+                sc_site = None
+                if is_sel_tesla_sc:
+                    try:
+                        from lib.supercharge_info import find_supercharge_site
+                        sc_meta = sel.metadata or {}
+                        loc_id = sc_meta.get("location_id") or sc_meta.get("short_name") or sel.source_id
+                        sc_site = find_supercharge_site(sel.name, sel.lat, sel.lon, location_id=loc_id)
+                    except Exception:
+                        sc_site = None
 
-            print(f"{C_BOLD}Actions for {sel.name}:{C_RESET}")
-            
-            url_actions = {}
-            idx = 1
-            for u in source_urls:
-                print(f"  [{C_GREEN}{idx}{C_RESET}]      Open {u['label']} in default browser ({format_display_url(u['url'])})")
-                url_actions[str(idx)] = u["url"]
-                idx += 1
+                sel_loc_provider = "Tesla" if (is_sel_tesla_sc or is_sel_tesla_dest or "tesla" in (sel.source or "").lower()) else (sel.network or "Station")
+
+                print(f"{C_BOLD}Actions for {sel.name}:{C_RESET}")
                 
-            print(f"  [{C_GREEN}u{C_RESET}]      Update / re-verify this station live (archives historical changes)")
-            print(f"  [{C_GREEN}m{C_RESET}]      Open {sel_loc_provider} location in your browser (Google Maps)")
-            print(f"  [{C_GREEN}o{C_RESET}]      Open OSM location in your browser (OpenStreetMap)")
-            if sc_site and sc_site.get("id"):
-                print(f"  [{C_GREEN}s{C_RESET}]      Open SC.info location in your browser (supercharge.info)")
-            print(f"  [{C_GREEN}f{C_RESET}]      Nearby Facilities (instant pullup; type 'f 500' for radius or 'f r' to refresh live)")
-            print(f"  [{C_GREEN}b{C_RESET}]      Back to station list")
-            print(f"  [{C_GREEN}q{C_RESET}]      Quit")
-
-            prompt_parts = []
-            if len(source_urls) > 1:
-                prompt_parts.append(f"1-{len(source_urls)}")
-            elif len(source_urls) == 1:
-                prompt_parts.append("1")
-            prompt_parts.extend(["u", "m", "o"])
-            if sc_site and sc_site.get("id"):
-                prompt_parts.append("s")
-            prompt_parts.extend(["f", "b", "q"])
-            prompt_options = "/".join(prompt_parts)
-
-            try:
-                act = input(f"\n{C_BOLD}Choice [{prompt_options}, default: b]: {C_RESET}").strip().lower()
-            except (EOFError, KeyboardInterrupt):
-                break
-
-            if act in ("q", "quit"):
-                break
-            elif act in url_actions:
-                target_url = url_actions[act]
-                import subprocess
-                subprocess.run(["open", target_url] if sys.platform == "darwin" else ["xdg-open", target_url], check=False)
-            elif act == "a" and source_urls:
-                import subprocess
+                url_actions = {}
+                idx = 1
                 for u in source_urls:
-                    subprocess.run(["open", u["url"]] if sys.platform == "darwin" else ["xdg-open", u["url"]], check=False)
-            elif act in ("u", "update", "refresh"):
-                print(f"🔄 Re-verifying station '{sel.name}' live...")
-                ok, diffs, fresh = manager.reverify_station(sel)
-                _print_reverify_result(sel.name, ok, diffs)
-                if ok and fresh:
-                    sel = fresh
-                    print()
-                    display_station_inspection_card(sel, eval_time=args.time)
-                input("\nPress Enter to continue...")
-            elif _handle_browser_open_combo(
-                act,
-                gmaps_coords=(sel.lat, sel.lon),
-                osm_element=("node", (sel.metadata or {}).get("osm_node_id") or (sel.metadata or {}).get("osm_id")),
-                osm_coords=((sel.metadata or {}).get("osm_lat"), (sel.metadata or {}).get("osm_lon")),
-                sc_id=sc_site.get("id") if sc_site else None,
-                url=sel.url,
-                provider_name="Station"
-            ):
-                pass
-            elif act.startswith("f") or act in ("facilities", "nearby"):
-                parts = act.split()
-                radius = args.facilities_radius or 250
-                force = "refresh" in act or act == "fr"
-                for p in parts[1:]:
-                    if p.isdigit():
-                        radius = int(p)
-                    elif p in ("r", "refresh", "-r", "--refresh"):
-                        force = True
-                display_nearby_facilities(sel, radius_m=radius, force_refresh=force)
-                input("\nPress Enter to continue...")
+                    print(f"  [{C_GREEN}{idx}{C_RESET}]      Open {u['label']} in default browser ({format_display_url(u['url'])})")
+                    url_actions[str(idx)] = u["url"]
+                    idx += 1
+                    
+                print(f"  [{C_GREEN}u{C_RESET}]      Update / re-verify this station live (archives historical changes)")
+                print(f"  [{C_GREEN}m{C_RESET}]      Open {sel_loc_provider} location in your browser (Google Maps)")
+                print(f"  [{C_GREEN}o{C_RESET}]      Open OSM location in your browser (OpenStreetMap)")
+                if sc_site and sc_site.get("id"):
+                    print(f"  [{C_GREEN}s{C_RESET}]      Open SC.info location in your browser (supercharge.info)")
+                print(f"  [{C_GREEN}f{C_RESET}]      Nearby Facilities (instant pullup; type 'f 500' for radius or 'f r' to refresh live)")
+                if target_num < len(stations):
+                    print(f"  [{C_GREEN}n{C_RESET}]      Next station in list ({stations[target_num].name})")
+                if target_num > 1:
+                    print(f"  [{C_GREEN}p{C_RESET}]      Previous station in list ({stations[target_num - 2].name})")
+                print(f"  [{C_GREEN}b{C_RESET}]      Back to station list")
+                print(f"  [{C_GREEN}q{C_RESET}]      Quit")
 
+                prompt_parts = []
+                if len(source_urls) > 1:
+                    prompt_parts.append(f"1-{len(source_urls)}")
+                elif len(source_urls) == 1:
+                    prompt_parts.append("1")
+                prompt_parts.extend(["u", "m", "o"])
+                if sc_site and sc_site.get("id"):
+                    prompt_parts.append("s")
+                prompt_parts.append("f")
+                if target_num < len(stations):
+                    prompt_parts.append("n")
+                if target_num > 1:
+                    prompt_parts.append("p")
+                prompt_parts.extend(["b", "q"])
+                prompt_options = "/".join(prompt_parts)
+
+                try:
+                    act = input(f"\n{C_BOLD}Choice [{prompt_options}, default: b]: {C_RESET}").strip().lower()
+                except (EOFError, KeyboardInterrupt):
+                    break_outer = True
+                    break
+
+                if act in ("q", "quit"):
+                    break_outer = True
+                    break
+                elif act in ("n", "next"):
+                    if target_num < len(stations):
+                        target_num += 1
+                        continue
+                    print(f"{C_YELLOW}⚠ Already at the last station in this list.{C_RESET}")
+                    continue
+                elif act in ("p", "prev", "previous"):
+                    if target_num > 1:
+                        target_num -= 1
+                        continue
+                    print(f"{C_YELLOW}⚠ Already at the first station in this list.{C_RESET}")
+                    continue
+                elif act in url_actions:
+                    target_url = url_actions[act]
+                    import subprocess
+                    subprocess.run(["open", target_url] if sys.platform == "darwin" else ["xdg-open", target_url], check=False)
+                elif act == "a" and source_urls:
+                    import subprocess
+                    for u in source_urls:
+                        subprocess.run(["open", u["url"]] if sys.platform == "darwin" else ["xdg-open", u["url"]], check=False)
+                elif act in ("u", "update", "refresh"):
+                    print(f"🔄 Re-verifying station '{sel.name}' live...")
+                    ok, diffs, fresh = manager.reverify_station(sel)
+                    _print_reverify_result(sel.name, ok, diffs)
+                    if ok and fresh:
+                        sel = fresh
+                        print()
+                        display_station_inspection_card(sel, eval_time=args.time)
+                    input("\nPress Enter to continue...")
+                elif act in ("b", "back"):
+ # BUG-134: this menu's own printed action list (and its "default: b")
+ # promise "[b] Back to station list" - a pure no-op that just lets
+ # control fall through to render_cb() below like every other branch
+ # does. Without this explicit branch, "b" fell all the way through to
+ # _handle_browser_open_combo(), which ALSO treats a bare "b" as a
+ # valid single-letter trigger - but for it, "b" means "open the
+ # station's own Charger URL in the browser" (see that function's
+ # 'elif choice_clean in ("b", "browser", "url")' branch) - a real,
+ # unwanted side effect (an unexpected browser tab) on every plain
+ # "back" in exactly this menu. The OTHER menu that reuses
+ # _handle_browser_open_combo() (display_station_inspection_card's own
+ # "Actions:" prompt) has no "back" concept at all - its quit key is
+ # "q"/Enter - so "b" genuinely means "browser" there with no clash;
+ # this fix is scoped to just this station-list-return menu.
+                    pass
+                elif _handle_browser_open_combo(
+                    act,
+                    gmaps_coords=(sel.lat, sel.lon),
+                    osm_element=("node", (sel.metadata or {}).get("osm_node_id") or (sel.metadata or {}).get("osm_id")),
+                    osm_coords=((sel.metadata or {}).get("osm_lat"), (sel.metadata or {}).get("osm_lon")),
+                    sc_id=sc_site.get("id") if sc_site else None,
+                    url=sel.url,
+                    provider_name="Station"
+                ):
+                    pass
+                elif act.startswith("f") or act in ("facilities", "nearby"):
+                    parts = act.split()
+                    radius = args.facilities_radius or 250
+                    force = "refresh" in act or act == "fr"
+                    for p in parts[1:]:
+                        if p.isdigit():
+                            radius = int(p)
+                        elif p in ("r", "refresh", "-r", "--refresh"):
+                            force = True
+                    display_nearby_facilities(sel, radius_m=radius, force_refresh=force)
+                    input("\nPress Enter to continue...")
+
+                break
+
+            if break_outer:
+                break
             render_cb()
 
 

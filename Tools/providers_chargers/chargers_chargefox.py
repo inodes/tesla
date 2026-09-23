@@ -17,7 +17,7 @@ from concurrent.futures import ThreadPoolExecutor
 from typing import Dict, List, Optional, Any
 from datetime import datetime, timezone
 
-from .chargers_base import BaseChargerProvider, UnifiedStationRecord, haversine_km, filter_station_records, detect_station_changes, archive_station_record, save_json_with_fallback
+from .chargers_base import BaseChargerProvider, UnifiedStationRecord, haversine_km, filter_station_records, detect_station_changes, archive_station_record, save_json_with_fallback, merge_with_staleness, resolve_scan_state_path, run_priority_box_scan
 
 _script_dir = os.path.dirname(os.path.abspath(__file__))
 _tools_dir = os.path.dirname(_script_dir)
@@ -40,15 +40,15 @@ def _resolve_chargefox_registry_path() -> str:
     if tessie_home:
         candidates.append(os.path.join(tessie_home, "chargefox_chargers.json"))
         
-    candidates.append(os.path.join(_repo_root, "Tessie", "chargefox_chargers.json"))
+    candidates.append(os.path.join(_repo_root, "resources", "chargefox_chargers.json"))
     config_path = os.path.join(_repo_root, "config.json")  # TODO-034: root is primary now
     if not os.path.isfile(config_path):
-        config_path = os.path.join(_repo_root, "Tessie", "config.json")  # legacy fallback
+        config_path = os.path.join(_repo_root, "resources", "config.json")  # legacy fallback
     if os.path.isfile(config_path):
         try:
             with open(config_path, "r", encoding="utf-8") as f:
                 cfg = json.load(f)
-                td = cfg.get("tessie_directory")
+                td = cfg.get("directories", {}).get("data")
                 if td:
                     td_exp = os.path.expanduser(td)
                     candidates.insert(0, os.path.join(td_exp, "chargefox_chargers.json"))
@@ -58,7 +58,29 @@ def _resolve_chargefox_registry_path() -> str:
     for c in candidates:
         if os.path.isfile(c):
             return c
-    return candidates[0] if candidates else os.path.join(_repo_root, "Tessie", "chargefox_chargers.json")
+    return candidates[0] if candidates else os.path.join(_repo_root, "resources", "chargefox_chargers.json")
+
+
+def _resolve_chargefox_scan_state_path() -> str:
+    """Finds path to chargefox_scan_state.json - thin wrapper over the
+    generic resolve_scan_state_path() (chargers_base.py), same pattern as
+    PlugShareClient's own _resolve_plugshare_scan_state_path(). Chargefox's
+    sync_all_australia() turns out to have the exact same silent-
+    undercounting risk PlugShare had: locationsByBounds is a viewport-
+    style query too, just called against 6 giant fixed regions instead of
+    a resolution that's actually fine enough - see scan_australia_priority
+    below, which replaces those 6 fixed boxes with the same adaptive,
+    resumable priority scan PlugShare uses."""
+    tessie_home = None
+    try:
+        from lib.tessie_api_common import resolve_tessie_data_home
+        tessie_home = resolve_tessie_data_home()
+    except Exception:
+        pass
+    config_path = os.path.join(_repo_root, "config.json")
+    if not os.path.isfile(config_path):
+        config_path = os.path.join(_repo_root, "resources", "config.json")
+    return resolve_scan_state_path("chargefox", _repo_root, tessie_home=tessie_home, config_path=config_path)
 
 
 def resolve_au_state(lat: float, lon: float) -> str:
@@ -557,23 +579,20 @@ class ChargefoxProvider(BaseChargerProvider):
             except Exception:
                 pass
 
-        data = []
+        fresh_by_key = {}
         for r in records:
             r_dict = r.views.get("chargefox", r.to_dict())
             s_id = str(r_dict.get("id") or r.source_id or r.key)
-            
- # Check if existing station changed
-            if s_id in existing_map:
-                old_node = existing_map[s_id]
-                if detect_station_changes(old_node, r_dict):
-                    archive_station_record(archive_path, f"Chargefox_{s_id}", old_node, now_utc)
-            
-            data.append(r_dict)
+            fresh_by_key[s_id] = r_dict
+
+        merged = merge_with_staleness(existing_map, fresh_by_key, now_utc, archive_path,
+                                       archive_key_fn=lambda k: f"Chargefox_{k}")
+        data = list(merged.values())
 
         payload = {
             "version": "1.0",
             "updated_at": now_utc,
-            "station_count": len(records),
+            "station_count": len(data),
             "stations": data
         }
  # AGENTS.md this used to try each target path in a loop
@@ -584,7 +603,7 @@ class ChargefoxProvider(BaseChargerProvider):
  # load_json_registry()'s own callers (analyse_charging.py)
  # depend on. save_json_with_fallback() (base.py) now raises if
  # every candidate path fails, and writes atomically either way.
-        target_paths = [self.registry_path, os.path.join(_repo_root, "Tessie", "chargefox_chargers.json")]
+        target_paths = [self.registry_path, os.path.join(_repo_root, "resources", "chargefox_chargers.json")]
         self.registry_path = save_json_with_fallback(target_paths, payload)
         self._cache = records
 
@@ -701,6 +720,78 @@ class ChargefoxProvider(BaseChargerProvider):
         if records and auto_save:
             self.save_cached_registry(records)
         return records
+
+    def _query_bounds_signal(self, lat: float, lon: float, span_lat: float, span_lng: float) -> List[dict]:
+        """Queries locationsByBounds for one box, normalized to the
+        id/latitude/longitude/name shape run_priority_box_scan()
+        (chargers_base.py) expects from every map-tile-style provider's
+        query_fn. _query_graphql already retries on HTTP 429 internally
+        (max_retries=4 with backoff), so this is already the "reliable"
+        primitive the shared engine wants - no second retry layer needed
+        on top."""
+        sw_lat, ne_lat = lat - span_lat, lat + span_lat
+        sw_lng, ne_lng = lon - span_lng, lon + span_lng
+        bounds_q = f"""
+        query {{
+          locationsByBounds(sw: {{lat: {sw_lat}, lng: {sw_lng}}}, ne: {{lat: {ne_lat}, lng: {ne_lng}}}) {{
+            id
+            name
+            lat
+            lng
+          }}
+        }}
+        """
+        r = self._query_graphql(bounds_q)
+        nodes = r.get("data", {}).get("locationsByBounds", [])
+        return [
+            {"id": n.get("id"), "latitude": n.get("lat"), "longitude": n.get("lng"), "name": n.get("name")}
+            for n in nodes if n.get("id") is not None
+        ]
+
+    def scan_australia_priority(self, state_path: Optional[str] = None, root_lat: float = -25.5,
+                                 root_lon: float = 134.0, root_span_lat: float = 15.0, root_span_lng: float = 20.0,
+                                 min_span_deg: float = 0.02, max_depth: int = 7, skip_subdivide_below: int = 2,
+                                 max_workers: int = 5, max_cells_this_run: Optional[int] = None,
+                                 stale_after_days: float = 30.0) -> dict:
+        """
+        Persistent, priority-ordered, resumable whole-country discovery
+        for Chargefox - the same shared engine PlugShareClient.
+        scan_country_priority() uses (run_priority_box_scan(),
+        chargers_base.py), wired to Chargefox's own locationsByBounds
+        query.
+
+        Replaces sync_all_australia()'s 6 giant fixed regional_bounds
+        boxes (found 2026-09-23 to have the exact same silent-
+        undercounting risk PlugShare's fixed-region search_australia() had
+        - a huge locationsByBounds query is a viewport-style query too,
+        just via GraphQL instead of PlugShare's REST endpoint) with the
+        same adaptive drill-down PlugShare gets: dense metro cells split
+        down to a resolution that actually converges, sparse/empty cells
+        (most of the country's area) resolve in one query and are marked
+        done, and the whole scan is resumable via `state_path` instead of
+        being one long blocking call.
+
+        The default root box is a loose whole-of-Australia bound (rather
+        than the tighter, more error-prone per-state/city boxes
+        regional_bounds hardcoded) - deliberately generous, since an empty
+        box just converges immediately and costs one query, per
+        run_priority_box_scan()'s own skip_subdivide_below short-circuit.
+
+        Returns the same summary dict run_priority_box_scan() does:
+        cells_processed, cells_skipped_fresh, stations_seen_this_run,
+        stations_total_known, frontier_remaining. Note this only performs
+        DISCOVERY (id/lat/lon/name) - turning newly-found ids into full
+        UnifiedStationRecords still goes through the existing batched
+        per-location GraphQL query in sync_all_australia()'s second half,
+        deliberately kept separate so discovery stays cheap.
+        """
+        resolved_state_path = state_path or _resolve_chargefox_scan_state_path()
+        return run_priority_box_scan(
+            self._query_bounds_signal, root_lat, root_lon, root_span_lat, root_span_lng, resolved_state_path,
+            min_span_deg=min_span_deg, max_depth=max_depth, skip_subdivide_below=skip_subdivide_below,
+            max_workers=max_workers, max_cells_this_run=max_cells_this_run,
+            stale_after_days=stale_after_days, country="AU",
+        )
 
     def search_nearby(self, lat: float, lon: float, radius_km: float = 15.0, filters: Optional[Dict[str, Any]] = None) -> List[UnifiedStationRecord]:
         """Finds stations near coordinates, fetching detailed metadata for nearby candidates."""

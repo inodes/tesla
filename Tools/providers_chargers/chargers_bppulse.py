@@ -26,7 +26,8 @@ from .chargers_base import (
     compute_tax_breakdown,
     detect_station_changes,
     archive_station_record,
-    atomic_write_json
+    atomic_write_json,
+    merge_with_staleness
 )
 
 from .chargers_chargefox import resolve_au_state
@@ -79,15 +80,15 @@ def _resolve_bppulse_registry_path() -> str:
     if tessie_home:
         candidates.append(os.path.join(tessie_home, "bppulse_chargers.json"))
 
-    candidates.append(os.path.join(_repo_root, "Tessie", "bppulse_chargers.json"))
+    candidates.append(os.path.join(_repo_root, "resources", "bppulse_chargers.json"))
     config_path = os.path.join(_repo_root, "config.json")  # TODO-034: root is primary now
     if not os.path.isfile(config_path):
-        config_path = os.path.join(_repo_root, "Tessie", "config.json")  # legacy fallback
+        config_path = os.path.join(_repo_root, "resources", "config.json")  # legacy fallback
     if os.path.isfile(config_path):
         try:
             with open(config_path, "r", encoding="utf-8") as f:
                 cfg = json.load(f)
-                td = cfg.get("tessie_directory")
+                td = cfg.get("directories", {}).get("data")
                 if td:
                     td_exp = os.path.expanduser(td)
                     candidates.insert(0, os.path.join(td_exp, "bppulse_chargers.json"))
@@ -97,7 +98,7 @@ def _resolve_bppulse_registry_path() -> str:
     for c in candidates:
         if os.path.isfile(c):
             return c
-    return candidates[0] if candidates else os.path.join(_repo_root, "Tessie", "bppulse_chargers.json")
+    return candidates[0] if candidates else os.path.join(_repo_root, "resources", "bppulse_chargers.json")
 
 
 AU_PROVINCES = {
@@ -502,18 +503,13 @@ class BPPulseProvider(BaseChargerProvider):
                 existing_stations = {}
 
         records = self.fetch_all_remote()
-        stations_dict = {}
+        fresh_by_key = {}
         for r in records:
             d = r.to_dict()
             if r.views:
                 d["views"] = r.views
-            stations_dict[r.key] = d
-
- # Archive if previous version exists and changed
-            if r.key in existing_stations:
-                old_st = existing_stations[r.key]
-                if detect_station_changes(old_st, d):
-                    archive_station_record(archive_path, r.key, old_st, now_utc)
+            fresh_by_key[r.key] = d
+        stations_dict = merge_with_staleness(existing_stations, fresh_by_key, now_utc, archive_path)
 
         payload = {
             "version": "1.0",

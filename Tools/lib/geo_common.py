@@ -129,7 +129,7 @@ def load_state_boundaries(repo_root: Optional[str] = None) -> dict:
     """Loads state_boundaries.json containing corner polygons, safe bounding boxes, and border lines."""
     if not repo_root:
         repo_root = _repo_root
-    b_path = os.path.join(repo_root, "Tessie", "state_boundaries.json")
+    b_path = os.path.join(repo_root, "resources", "state_boundaries.json")
     if os.path.isfile(b_path):
         try:
             with open(b_path, "r", encoding="utf-8") as f:
@@ -150,7 +150,7 @@ def load_geo_cache(repo_root: Optional[str] = None) -> dict:
     if not tessie_home:
         if not repo_root:
             repo_root = _repo_root
-        tessie_home = os.path.join(repo_root, "Tessie")
+        tessie_home = os.path.join(repo_root, "resources")
     c_path = os.path.join(tessie_home, "geo_cache.json")
     if os.path.isfile(c_path):
         try:
@@ -172,7 +172,7 @@ def save_geo_cache(cache: dict, repo_root: Optional[str] = None):
     if not tessie_home:
         if not repo_root:
             repo_root = _repo_root
-        tessie_home = os.path.join(repo_root, "Tessie")
+        tessie_home = os.path.join(repo_root, "resources")
     c_path = os.path.join(tessie_home, "geo_cache.json")
     try:
         os.makedirs(os.path.dirname(c_path), exist_ok=True)

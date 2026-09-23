@@ -16,6 +16,7 @@ import os
 import urllib.error
 import urllib.parse
 import urllib.request
+from typing import Optional
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 # REQ-067 (2026-09-15, AGENTS.local.md): this file moved from Tools/ into
@@ -68,15 +69,100 @@ DEFAULT_UNIT_PARAMS = {
 }
 
 
+# config.json restructure (2026-09-21, user request): directories/tessie/
+# evnex/pvoutput/power got their own nested blocks, matching how abrp/osm
+# were already grouped, instead of a long flat run of top-level keys. This
+# maps each new nested path back to the old flat key name so load_config()
+# can inject both - existing call sites that haven't been migrated yet
+# (grep the repo for these old names before deleting this) keep working
+# unchanged during the transition; new/updated call sites should read the
+# nested path directly and this shim removed once nothing reads the old
+# flat names any more.
+_FLAT_KEY_COMPAT_MAP = {
+    "landing_directory": ("directories", "landing"),
+    "inbox_directory": ("directories", "inbox"),
+    "tessie_directory": ("directories", "data"),
+    "archive_directory": ("directories", "archive"),
+    "invoices_directory": ("directories", "invoices"),
+    "external_drive_path": ("directories", "external_drive"),
+    "vin": ("tessie", "vin"),
+    "tessie_access_token": ("tessie", "access_token"),
+    "evnex_username": ("evnex", "username"),
+    "evnex_password": ("evnex", "password"),
+    "pvoutput_api_key": ("pvoutput", "api_key"),
+    "pvoutput_system_id": ("pvoutput", "system_id"),
+    "power_provider": ("power", "provider"),
+    "power_usage_staleness_days": ("power", "usage_staleness_days"),
+}
+
+# BUG-131 TODO (2026-09-21): temporary instrumentation, delete this whole
+# block (down to and including _CompatAccessDict) plus the
+# `_CompatAccessDict(cfg, ...)` wrapping below, once we're confident every
+# real call site was migrated off the old flat key names above. While it's
+# in place, any code that still does cfg.get("evnex_username") etc. (instead
+# of cfg.get("evnex", {}).get("username")) gets one line appended to
+# config_compat_access.log (repo root, already *.log-gitignored) recording
+# which flat key and which file/line read it. Watch that log stay empty
+# across a normal week of real usage (syncs, places_manager, charger_find,
+# etc.) before removing the shim in _FLAT_KEY_COMPAT_MAP entirely - a
+# non-empty log after that means a real caller was missed by the mechanical
+# refactor and still needs updating, not that the shim should stay forever.
+_COMPAT_ACCESS_LOG_PATH = os.path.join(REPO_ROOT, "config_compat_access.log")
+
+
+def _log_compat_access(flat_key):
+    import inspect
+    import time
+    try:
+        caller = "?"
+        for fr in inspect.stack()[2:]:
+            if fr.filename != __file__:
+                caller = f"{fr.filename}:{fr.lineno}"
+                break
+        with open(_COMPAT_ACCESS_LOG_PATH, "a", encoding="utf-8") as f:
+            f.write(f"{time.strftime('%Y-%m-%d %H:%M:%S')} key={flat_key} caller={caller}\n")
+    except Exception:
+        pass  # instrumentation must never break a real config read
+
+
+class _CompatAccessDict(dict):
+    """dict subclass that logs a read of any still-live legacy flat config
+    key (see _log_compat_access docstring above) without changing behavior
+    at all - every read still returns exactly what a plain dict would."""
+
+    def __init__(self, *args, _watch_keys=(), **kwargs):
+        super().__init__(*args, **kwargs)
+        self._watch_keys = frozenset(_watch_keys)
+
+    def get(self, key, default=None):
+        if key in self._watch_keys:
+            _log_compat_access(key)
+        return super().get(key, default)
+
+    def __getitem__(self, key):
+        if key in self._watch_keys:
+            _log_compat_access(key)
+        return super().__getitem__(key)
+
+
 def load_config():
     cfg_path = resolve_config_path()
+    cfg = {}
     if os.path.isfile(cfg_path):
         try:
             with open(cfg_path, "r", encoding="utf-8") as f:
-                return json.load(f)
+                cfg = json.load(f)
         except Exception:
-            pass
-    return {}
+            return {}
+    if not isinstance(cfg, dict):
+        return cfg
+    for flat_key, (group, nested_key) in _FLAT_KEY_COMPAT_MAP.items():
+        if flat_key in cfg:
+            continue  # an old-style flat config.json still wins, unchanged
+        group_val = cfg.get(group)
+        if isinstance(group_val, dict) and nested_key in group_val:
+            cfg[flat_key] = group_val[nested_key]
+    return _CompatAccessDict(cfg, _watch_keys=_FLAT_KEY_COMPAT_MAP.keys())
 
 
 def load_vehicle_spec():
@@ -117,10 +203,10 @@ def resolve_tessie_data_home():
     real data outside the repo (analyse_drives.py/
     analyse_charging.py have their own copy of this same logic
     baked into their classes; this is the standalone-script equivalent)."""
-    cfg_dir = load_config().get("tessie_directory")
+    cfg_dir = load_config().get("directories", {}).get("data")
     if cfg_dir:
         return os.path.realpath(os.path.abspath(os.path.expanduser(cfg_dir)))
-    return os.path.realpath(os.path.expanduser("~/Library/Mobile Documents/com~apple~CloudDocs/Tesla/Tessie"))
+    return os.path.realpath(os.path.expanduser("~/Library/Mobile Documents/com~apple~CloudDocs/Tesla"))
 
 
 def unique_stamped_path(directory, prefix, stamp, suffix="", ext=""):
@@ -158,11 +244,11 @@ def unique_stamped_path(directory, prefix, stamp, suffix="", ext=""):
 
 
 def get_token(cli_token, config):
-    return cli_token or os.environ.get("TESSIE_ACCESS_TOKEN") or config.get("tessie_access_token")
+    return cli_token or os.environ.get("TESSIE_ACCESS_TOKEN") or config.get("tessie", {}).get("access_token")
 
 
 def get_vin(cli_vin, config):
-    return cli_vin or config.get("vin")
+    return cli_vin or config.get("tessie", {}).get("vin")
 
 
 def api_get(path, vin, token, params=None, timeout=30):
@@ -205,19 +291,63 @@ def save_audited_osm_to_tesla_registry(
     station_key: str,
     osm_lat: float,
     osm_lon: float,
-    osm_node_id: int = None
+    osm_node_id: int = None,
+    is_destination: Optional[bool] = None,
 ) -> bool:
-    """Saves verified OSM GPS coordinates and node ID to local Tesla registry."""
+    """Saves verified OSM GPS coordinates and node ID to local Tesla registry.
+
+    BUG-153 (2026-09-22): a Supercharger and its co-located Tesla Destination
+    Charger commonly share the exact same display name/key (Balgowlah, NSW
+    has both) - this used to loop over BOTH tesla_superchargers.json and
+    tesla_chargers.json unconditionally and write to EVERY file where the
+    name matched, with no idea which type was actually being audited. That
+    meant auditing either one of a co-located pair could silently overwrite
+    the OTHER's OSM data too - worse than just picking the wrong file, this
+    wrote the wrong coordinates into BOTH records in one call. Callers that
+    know the type (every real one - it's always the caller's own station
+    object) now pass it, restricting the search to only that type's file;
+    an unspecified type (is_destination=None) that resolves to the same key
+    in both files is an unresolvable ambiguity and is refused rather than
+    guessed, matching the same fix applied to places_osm_editor.py's
+    (separate, historically-diverged) copy of this same function.
+    """
     from datetime import datetime, timezone
     candidates = []
     tessie_dir = resolve_tessie_data_home()
     if tessie_dir:
         candidates.append(tessie_dir)
-    candidates.append(os.path.join(REPO_ROOT, "Tessie"))
+    candidates.append(os.path.join(REPO_ROOT, "resources"))
+
+    if is_destination is True:
+        filenames = ("tesla_chargers.json",)
+    elif is_destination is False:
+        filenames = ("tesla_superchargers.json",)
+    else:
+        filenames = ("tesla_superchargers.json", "tesla_chargers.json")
+
+    if is_destination is None:
+        hits = []
+        for c_dir in candidates:
+            for filename in filenames:
+                fpath = os.path.join(c_dir, filename)
+                if not os.path.isfile(fpath):
+                    continue
+                try:
+                    with open(fpath, "r", encoding="utf-8") as f:
+                        data = json.load(f)
+                    if isinstance(data, dict) and station_key in data:
+                        hits.append((c_dir, filename))
+                except Exception:
+                    continue
+        if len({fn for _, fn in hits}) > 1:
+            print(f"⚠ Refusing to save audited OSM data for '{station_key}': this name exists in "
+                  f"more than one registry file and the caller didn't say which one it means - "
+                  f"pass is_destination explicitly instead of guessing.")
+            return False
 
     saved_any = False
     for c_dir in candidates:
-        for filename in ("tesla_superchargers.json", "tesla_chargers.json"):
+        for filename in filenames:
             fpath = os.path.join(c_dir, filename)
             if not os.path.isfile(fpath):
                 continue

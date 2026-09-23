@@ -84,7 +84,7 @@ from lib.tessie_api_common import (
 )
 import lib.tessie_timezone as tztools
 
-CACHE_DIR = os.path.join(REPO_ROOT, "Tessie", "api_cache")
+CACHE_DIR = os.path.join(REPO_ROOT, "resources", "api_cache")
 
 # Which existing analyzer script owns --consolidate for each data type. This
 # tool only ever shells out to these as a subprocess (same as typing the
@@ -997,7 +997,7 @@ EXAMPLES
 
     token = get_token(args.token, config)
     vin = get_vin(args.vin, config)
-    landing_dir = args.landing_dir or os.path.expanduser(config.get("landing_directory") or "~/Downloads")
+    landing_dir = args.landing_dir or os.path.expanduser(config.get("directories", {}).get("landing") or "~/Downloads")
 
     if not token:
         print("❌ No access token found. Provide one via --token, the TESSIE_ACCESS_TOKEN")

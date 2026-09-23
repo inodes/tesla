@@ -37,7 +37,7 @@ def get_power_provider(name=None):
     if name is None:
         from lib.tessie_api_common import load_config
         cfg = load_config()
-        name = cfg.get("power_provider", "agl")
+        name = cfg.get("power", {}).get("provider", "agl")
     name = name.lower()
     try:
         cls = _PROVIDERS[name]

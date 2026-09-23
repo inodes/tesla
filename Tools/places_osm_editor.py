@@ -81,16 +81,65 @@ def save_audited_osm_to_tesla_registry(
     station_key: str,
     osm_lat: float,
     osm_lon: float,
-    osm_node_id: Optional[int] = None
+    osm_node_id: Optional[int] = None,
+    is_destination: Optional[bool] = None,
 ) -> bool:
-    """Saves verified OSM GPS coordinates and node ID to local Tesla registry."""
+    """Saves verified OSM GPS coordinates and node ID to local Tesla registry.
+
+    BUG-153 (2026-09-22): a Supercharger and its co-located Tesla Destination
+    Charger commonly share the exact same display name/key (e.g. Balgowlah,
+    NSW has both, 8 bays each, correctly listed as two separate stations in
+    two separate registry files) - this function used to search
+    tesla_superchargers.json THEN tesla_chargers.json for a name match and
+    return on the FIRST hit, with zero awareness of which type it was
+    actually auditing. Given a shared name, that meant a destination
+    charger's audit could silently overwrite its co-located supercharger's
+    OSM data (or vice versa) - the exact same "different station, same
+    name" failure mode as the Coffs Harbour bug (BUG-152), just triggered by
+    two DIFFERENT files/types sharing a key instead of two records in the
+    same file. Callers that know which type they're auditing (all of them,
+    in this codebase - the station object's own speed_tier is always known)
+    now pass it, so only the correct file is ever searched; if a caller
+    genuinely doesn't know (is_destination=None, kept only for backward
+    compatibility) and the same key exists in BOTH files, that's an
+    unresolvable ambiguity and this now refuses to guess rather than
+    silently picking whichever file happens to be checked first.
+    """
     from lib.tessie_api_common import resolve_tessie_data_home
     from datetime import datetime, timezone
     tessie_dir = resolve_tessie_data_home()
     if not tessie_dir:
         return False
 
-    for filename in ("tesla_superchargers.json", "tesla_chargers.json"):
+    if is_destination is True:
+        filenames = ("tesla_chargers.json",)
+    elif is_destination is False:
+        filenames = ("tesla_superchargers.json",)
+    else:
+        filenames = ("tesla_superchargers.json", "tesla_chargers.json")
+
+    if is_destination is None:
+        # Type unknown - check for an unresolvable cross-file name collision
+        # before touching anything, rather than picking the first match.
+        hits = []
+        for filename in filenames:
+            fpath = os.path.join(tessie_dir, filename)
+            if not os.path.isfile(fpath):
+                continue
+            try:
+                with open(fpath, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                if isinstance(data, dict) and station_key in data:
+                    hits.append(filename)
+            except Exception:
+                continue
+        if len(hits) > 1:
+            print(f"⚠ Refusing to save audited OSM data for '{station_key}': this name exists in "
+                  f"more than one registry file ({', '.join(hits)}) and the caller didn't say which "
+                  f"one it means - pass is_destination explicitly instead of guessing.")
+            return False
+
+    for filename in filenames:
         fpath = os.path.join(tessie_dir, filename)
         if not os.path.isfile(fpath):
             continue
@@ -130,7 +179,8 @@ def main():
     parser = argparse.ArgumentParser(description="OpenStreetMap Amenities Inspector & Live Editor for EV Stations")
     parser.add_argument("--auth-url", action="store_true", help="Generate OSM OAuth login URL")
     parser.add_argument("--code", type=str, help="Authorization code received from OSM OAuth screen")
-    parser.add_argument("--token", type=str, help="Directly supply or test an OSM access token")
+    parser.add_argument("--token", type=str, help="Use this OSM access token for this run only (in-memory - does NOT overwrite the saved token; pass --save-token too if you actually want to persist it). BUG-141 (2026-09-22): used to unconditionally overwrite the saved token file just from being passed, which is exactly how a throwaway test value (e.g. --token fake, used to verify --add-place's confirmation gate without a real token) silently destroyed the real saved token with no backup and no git history (this file is gitignored) - fixed by requiring --save-token as a separate, explicit opt-in.")
+    parser.add_argument("--save-token", action="store_true", help="Persist --token to the saved token file. Without this, --token is used for this run only.")
     parser.add_argument("--whoami", action="store_true", help="Check currently authenticated OSM user")
     parser.add_argument("--inspect", type=str, help="Inspect nearby OSM elements around a station name or lat,lon")
     parser.add_argument("--radius", type=int, default=300, help="Search radius in meters (default: 300)")
@@ -147,6 +197,17 @@ def main():
     parser.add_argument("--create-node", action="store_true", help="DISABLED BY POLICY (BUG-121, 2026-09-21) - node creation is no longer performed by this tool, no override exists. Kept as a flag only so old invocations fail with a clear message instead of an argparse error.")
     parser.add_argument("--name", type=str, help="Override place name for new node")
     parser.add_argument("--add-toilets", action="store_true", help="Create an amenity=toilets node at --at coordinates")
+    # BUG-139 (2026-09-22): a narrow, deliberate, one-at-a-time exception to BUG-121's
+    # "no node creation" policy - NOT a reversal of it. For the specific case the general
+    # policy doesn't cover well: a real, physically-verified place (the user has actually
+    # been there / knows it exists) that OSM has no node for at all, so there is nothing to
+    # audit or tag-edit - only creation can represent it. Scoped tightly on purpose: requires
+    # --name and at least one --tag, still goes through --live + the typed 'yes' confirm gate,
+    # and (below) always runs its own live proximity re-check immediately before writing so a
+    # duplicate can never be created even if the place turns out to already be mapped under a
+    # name/tag the user didn't think to search for first.
+    parser.add_argument("--add-place", action="store_true", help="Create a new OSM node for a real place you have personally verified is missing (e.g. via --inspect finding nothing there). Requires --at, --name, and --tags. A deliberate, narrow exception to BUG-121's node-creation policy - never for batch/automated use, and always re-checks for an existing nearby node immediately before writing.")
+    parser.add_argument("--verify-radius-m", type=int, default=30, help="Radius (metres) --add-place checks for an already-existing OSM element before allowing creation - refuses if anything is found within it (default: 30)")
     parser.add_argument("--tag-way", type=int, help="OSM Way ID to update tags on")
     parser.add_argument("--tags", nargs="+", help="Tags to apply in key=value format (e.g. shop=mall toilets=yes)")
     parser.add_argument("--at", type=str, help="Coordinates for new node (lat,lon)")
@@ -166,11 +227,10 @@ def main():
     client_id = cfg.get("client_id")
     client_secret = cfg.get("client_secret")
     redirect_uri = cfg.get("redirect_uri", "urn:ietf:wg:oauth:2.0:oob")
-    token = args.token or cfg.get("access_token")
+    token = args.token.strip() if args.token else cfg.get("access_token")
 
-    if args.token:
+    if args.token and args.save_token:
         save_osm_token(args.token.strip())
-        token = args.token.strip()
 
     # Flow 1: OAuth Code Exchange
     if args.code:
@@ -388,6 +448,45 @@ def main():
             return
 
         _publish_node(token, lat, lon, tags, comment, open_browser=args.open_browser)
+        return
+
+    # Flow 5b: Add a Verified New Place (BUG-139 - narrow exception to BUG-121's
+    # node-creation policy, see _publish_verified_new_node()'s own docstring)
+    if args.add_place:
+        if not token:
+            print(f"{C_RED}❌ Authentication required for map editing. Run ./Tools/places_osm_editor.py --auth-url{C_RESET}", file=sys.stderr)
+            sys.exit(1)
+        if not args.at:
+            print(f"{C_RED}❌ Error: --at <lat,lon or Google Maps link> is required.{C_RESET}", file=sys.stderr)
+            sys.exit(1)
+        if not args.name:
+            print(f"{C_RED}❌ Error: --name is required for a new place.{C_RESET}", file=sys.stderr)
+            sys.exit(1)
+        if not args.tags:
+            print(f"{C_RED}❌ Error: at least one --tags key=value is required (e.g. --tags craft=winery tourism=wine_cellar).{C_RESET}", file=sys.stderr)
+            sys.exit(1)
+
+        lat, lon = _parse_coords(args.at)
+        comment = args.comment or f"Add {args.name} - personally verified missing from OSM"
+        tags = {"name": args.name}
+        for t in args.tags:
+            if "=" in t:
+                k, v = t.split("=", 1)
+                tags[k.strip()] = v.strip()
+
+        if args.dry_run:
+            print()
+            print(f"📍 {C_BOLD}[DRY-RUN] Would create OSM Node:{C_RESET}")
+            print(f"  • Coordinates: {lat:.6f}, {lon:.6f}")
+            print(f"  • Comment:     {comment}")
+            print(f"  • Tags:        {json.dumps(tags, indent=2)}")
+            print()
+            print(f"{C_YELLOW}⚠ [DRY-RUN] No edits sent to OpenStreetMap - the live proximity re-check and "
+                  f"unrecognized-tag check only run with --live.{C_RESET}")
+            return
+
+        _publish_verified_new_node(token, lat, lon, tags, comment,
+                                    verify_radius_m=args.verify_radius_m, open_browser=args.open_browser)
         return
 
     # Flow 6: Tag Way / Building
@@ -679,6 +778,109 @@ def _publish_way_tags(token: str, way_id: int, tags: dict, comment: str, open_br
         except Exception:
             pass
 
+
+
+# BUG-139 (2026-09-22): NOT an enforced allowlist like SIMPLE_TAG_ALLOWLIST (osm_client.py) -
+# --add-place is for real, varied places (a winery, a cafe, a lookout), and a hardcoded
+# charging-station-scoped 8-key list would be actively wrong here. This is a "double check
+# standards" reference set instead: any --tags key NOT in here is surfaced by name in the
+# pre-publish summary (never silently dropped, never silently allowed) so a typo like
+# "amenty=restaurant" or an invented key is something the user consciously sees and confirms,
+# not something that quietly reaches production OSM unnoticed. Deliberately generous/common
+# real-world keys, not exhaustive - OSM has thousands of legitimate tags.
+RECOGNIZED_POI_TAG_KEYS = {
+    "name", "alt_name", "official_name", "short_name", "loc_name",
+    "amenity", "shop", "craft", "tourism", "leisure", "office", "landuse", "building",
+    "cuisine", "produce", "product", "wine", "brewery",
+    "brand", "brand:wikidata", "operator", "operator:wikidata",
+    "website", "contact:website", "phone", "contact:phone", "email", "contact:email",
+    "opening_hours", "wheelchair", "internet_access", "smoking",
+    "addr:housenumber", "addr:street", "addr:city", "addr:suburb", "addr:state",
+    "addr:postcode", "addr:country",
+    "description", "level", "outdoor_seating", "takeaway", "reservation",
+}
+
+
+def _publish_verified_new_node(token: str, lat: float, lon: float, tags: dict, comment: str,
+                                verify_radius_m: int = 30, open_browser: bool = True):
+    """
+    BUG-139 (2026-09-22): the deliberate, narrow exception to BUG-121's node-creation policy -
+    for a real place the user has personally verified is missing from OSM entirely (so there is
+    no existing node to audit or tag-edit - see AGENTS.local.md). Two safeguards _publish_node()
+    (the old, permanently-disabled path) never had, both aimed at the exact failure mode that
+    made BUG-137's data corruption possible - trusting a match/absence without checking it live
+    at the moment of the actual write:
+
+      1. A live Overpass re-check for anything already within verify_radius_m of (lat, lon),
+         run immediately before writing (not relying on an earlier --inspect the user ran
+         separately, which could be stale by the time this runs) - refuses outright if anything
+         is found, rather than risking a duplicate node.
+      2. Every tag key NOT in RECOGNIZED_POI_TAG_KEYS is called out by name in the pre-publish
+         summary, so an unusual or mistyped key is something the user consciously sees and
+         still has to type 'yes' past, never something that reaches OSM unnoticed.
+
+    Otherwise mirrors _publish_way_tags()'s shape exactly: confirm -> open changeset -> write ->
+    close changeset -> print + open the real URLs.
+    """
+    print(f"\n🔍 {C_CYAN}Re-checking live for anything already mapped within {verify_radius_m}m...{C_RESET}")
+    try:
+        existing = query_overpass_pois(lat, lon, radius_m=verify_radius_m)
+    except Exception as e:
+        print(f"{C_RED}❌ Could not complete the live proximity re-check ({e}) - refusing to create a node "
+              f"without it. Try again in a moment.{C_RESET}")
+        return None
+    if existing:
+        print(f"{C_RED}❌ Refusing to create a new node - {len(existing)} element(s) already mapped within "
+              f"{verify_radius_m}m:{C_RESET}")
+        for p in existing:
+            print(f"    • {p.get('name')} ({p.get('dist_m')}m) - {p.get('category')}")
+        print(f"{C_YELLOW}  If this IS one of these (just missing/wrong tags), use --inspect and --tag-way / "
+              f"the audit flows to edit it instead of creating a duplicate. If it's genuinely a different, "
+              f"separate place that happens to be nearby, re-run with a smaller --verify-radius-m.{C_RESET}")
+        return None
+
+    unrecognized = sorted(k for k in tags if k not in RECOGNIZED_POI_TAG_KEYS)
+
+    print(f"\n📍 {C_BOLD}Creating new OSM Node:{C_RESET}")
+    print(f"  • Coordinates: {lat:.6f}, {lon:.6f}")
+    print(f"  • Comment:     {comment}")
+    print(f"  • Tags:        {json.dumps(tags, indent=2)}")
+    if unrecognized:
+        print(f"  {C_YELLOW}⚠ Unrecognized tag key(s) - not blocked, just flagged for a second look against "
+              f"https://wiki.openstreetmap.org/wiki/Tags before confirming: {', '.join(unrecognized)}{C_RESET}")
+
+    if not _confirm_live_publish(f"create a new node at ({lat:.6f}, {lon:.6f}) with tags {tags}"):
+        return None
+
+    print(f"🚀 {C_CYAN}Opening changeset on OpenStreetMap...{C_RESET}")
+    cs_id, cs_data = open_changeset(token, comment=comment, source="field survey / personally verified")
+    if not cs_id:
+        print(f"{C_RED}❌ Failed to open changeset: {cs_data.get('error') or cs_data}{C_RESET}")
+        return None
+
+    print(f"  • Changeset ID: {C_GREEN}{cs_id}{C_RESET}")
+    print(f"🚀 {C_CYAN}Creating node...{C_RESET}")
+    node_id, res = create_node(token, cs_id, lat, lon, tags, allow_node_creation=True, allow_extra_tags=True)
+    if not node_id:
+        print(f"{C_RED}❌ Failed to create node: {res.get('error') or res}{C_RESET}")
+        close_changeset(token, cs_id)
+        return None
+
+    print(f"🚀 {C_CYAN}Closing changeset...{C_RESET}")
+    close_changeset(token, cs_id)
+    print(f"{C_GREEN}✔ Successfully created new node on OpenStreetMap!{C_RESET}")
+    print(f"  View Node:      {C_CYAN}https://www.openstreetmap.org/node/{node_id}{C_RESET}")
+    print(f"  View Changeset: {C_CYAN}https://www.openstreetmap.org/changeset/{cs_id}{C_RESET}\n")
+
+    if open_browser:
+        node_url = f"https://www.openstreetmap.org/node/{node_id}"
+        try:
+            webbrowser.open(node_url)
+            print(f"🌐 {C_DIM}Opened new node in browser: {node_url}{C_RESET}\n")
+        except Exception:
+            pass
+
+    return node_id
 
 
 def _inspect_location(query: str, radius_m: int):
@@ -1265,7 +1467,7 @@ def _create_primary_cluster_node(
 
     new_node_id = _publish_node(token, lat, lon, wiki_tags, cs_comment, open_browser=open_browser)
     if new_node_id:
-        save_audited_osm_to_tesla_registry(st_name, lat, lon, new_node_id)
+        save_audited_osm_to_tesla_registry(st_name, lat, lon, new_node_id, is_destination=is_destination)
         print(f"💾 {C_GREEN}Saved primary cluster Node ID #{new_node_id} into local registry.{C_RESET}\n")
 
 
@@ -1308,7 +1510,7 @@ def _audit_micromapped_stalls(
     print(f"✔ {C_GREEN}{C_BOLD}STATUS: MICRO-MAPPED INDIVIDUAL CHARGING STALLS FOUND IN OPENSTREETMAP{C_RESET} ({mapped_count} stall nodes)\n")
 
     if stall_nodes and stall_nodes[0].get("id"):
-        save_audited_osm_to_tesla_registry(st_name, c_lat, c_lon, stall_nodes[0]["id"])
+        save_audited_osm_to_tesla_registry(st_name, c_lat, c_lon, stall_nodes[0]["id"], is_destination=is_destination)
         print(f"💾 {C_GREEN}Cached audited cluster OSM coordinates ({c_lat:.6f}, {c_lon:.6f}) into local registry.{C_RESET}\n")
 
     print(f"📍 {C_BOLD}Geographic Coordinate Comparison:{C_RESET}")
@@ -1505,7 +1707,7 @@ def _audit_micromapped_stalls(
 
             elif choice == "4":
                 first_id = stall_nodes[0].get("id") if stall_nodes else None
-                save_audited_osm_to_tesla_registry(st_name, c_lat, c_lon, first_id)
+                save_audited_osm_to_tesla_registry(st_name, c_lat, c_lon, first_id, is_destination=is_destination)
                 print(f"💾 {C_GREEN}Saved audited cluster coordinates ({c_lat:.6f}, {c_lon:.6f}) into local registry.{C_RESET}\n")
                 return
 
@@ -1540,7 +1742,8 @@ def _audit_tesla_station(
     comment: Optional[str] = None,
     user_tags: Optional[List[str]] = None,
     override_name: Optional[str] = None,
-    open_browser: bool = True
+    open_browser: bool = True,
+    preselected_station=None,
 ):
     from providers_chargers.chargers_tesla import TeslaProvider
     from providers_chargers.chargers_base import haversine_km
@@ -1553,45 +1756,57 @@ def _audit_tesla_station(
     matched = []
     gmaps_audited_info = None
 
-    # Check if query is a Google Maps link
-    if "maps.app.goo.gl" in q_lower or "goo.gl/maps" in q_lower or "google.com/maps" in q_lower:
-        gmaps_audited_info = resolve_gmaps_url(query)
-        g_lat = gmaps_audited_info.get("latitude")
-        g_lon = gmaps_audited_info.get("longitude")
-        if g_lat is not None and g_lon is not None and stations:
-            # Find closest Tesla station in registry
-            closest = min(stations, key=lambda s: haversine_km(g_lat, g_lon, s.lat, s.lon) if (s.lat and s.lon) else 999999)
-            if closest.lat and closest.lon and haversine_km(g_lat, g_lon, closest.lat, closest.lon) <= 15.0:
-                matched.append(closest)
+    # BUG-152 (2026-09-22): when the caller already has the exact station
+    # object in hand (e.g. the interactive [a] action off an --inspect card),
+    # re-deriving it here by re-searching on a NAME STRING is unsafe - two
+    # real, distinct stations can share a name/key that's a prefix of the
+    # other (Coffs Harbour, NSW vs Coffs Harbour, NSW - Pacific Hwy), and
+    # names are not guaranteed unique in general (identically-named stations
+    # at different sites are a legitimate case, not a bug). Passing the
+    # already-selected object through sidesteps the whole name-matching
+    # question instead of trying to make name-matching itself airtight.
+    if preselected_station is not None:
+        matched = [preselected_station]
+    elif True:
+        # Check if query is a Google Maps link
+        if "maps.app.goo.gl" in q_lower or "goo.gl/maps" in q_lower or "google.com/maps" in q_lower:
+            gmaps_audited_info = resolve_gmaps_url(query)
+            g_lat = gmaps_audited_info.get("latitude")
+            g_lon = gmaps_audited_info.get("longitude")
+            if g_lat is not None and g_lon is not None and stations:
+                # Find closest Tesla station in registry
+                closest = min(stations, key=lambda s: haversine_km(g_lat, g_lon, s.lat, s.lon) if (s.lat and s.lon) else 999999)
+                if closest.lat and closest.lon and haversine_km(g_lat, g_lon, closest.lat, closest.lon) <= 15.0:
+                    matched.append(closest)
 
-    # Check if query is explicitly a supercharge.info site ID or URL
-    is_sc_direct = (
-        query.strip().startswith("#") or 
-        "supercharge.info" in q_lower or 
-        "siteid=" in q_lower or
-        (query.strip().isdigit() and len(query.strip()) <= 5 and not any(query.strip() == getattr(s, "short_id", "") for s in stations))
-    )
+        # Check if query is explicitly a supercharge.info site ID or URL
+        is_sc_direct = (
+            query.strip().startswith("#") or 
+            "supercharge.info" in q_lower or 
+            "siteid=" in q_lower or
+            (query.strip().isdigit() and len(query.strip()) <= 5 and not any(query.strip() == getattr(s, "short_id", "") for s in stations))
+        )
 
-    if not is_sc_direct and not matched and stations:
-        for s in stations:
-            if (q_lower in s.name.lower() or 
-                q_lower in s.key.lower() or 
-                q_lower in s.address.lower() or 
-                q_lower in s.suburb.lower()):
-                matched.append(s)
+        if not is_sc_direct and not matched and stations:
+            for s in stations:
+                if (q_lower in s.name.lower() or 
+                    q_lower in s.key.lower() or 
+                    q_lower in s.address.lower() or 
+                    q_lower in s.suburb.lower()):
+                    matched.append(s)
 
-    # Deduplicate matched stations (avoids duplicates when both tesla_superchargers.json & tesla_chargers.json are loaded)
-    deduped = []
-    seen = set()
-    for s in matched:
-        loc_id = s.metadata.get("location_id") or s.metadata.get("findus_id") or ""
-        st_lat = round(s.lat or 0, 4)
-        st_lon = round(s.lon or 0, 4)
-        dedup_key = (loc_id, s.speed_tier) if loc_id else (s.name.strip().lower(), s.speed_tier, st_lat, st_lon)
-        if dedup_key not in seen:
-            seen.add(dedup_key)
-            deduped.append(s)
-    matched = deduped
+        # Deduplicate matched stations (avoids duplicates when both tesla_superchargers.json & tesla_chargers.json are loaded)
+        deduped = []
+        seen = set()
+        for s in matched:
+            loc_id = s.metadata.get("location_id") or s.metadata.get("findus_id") or ""
+            st_lat = round(s.lat or 0, 4)
+            st_lon = round(s.lon or 0, 4)
+            dedup_key = (loc_id, s.speed_tier) if loc_id else (s.name.strip().lower(), s.speed_tier, st_lat, st_lon)
+            if dedup_key not in seen:
+                seen.add(dedup_key)
+                deduped.append(s)
+        matched = deduped
 
     if not matched:
         # Fallback to supercharge.info global database seamlessly
@@ -1918,7 +2133,7 @@ def _audit_tesla_station(
                 return
             new_node_id = _publish_node(token, target_lat, target_lon, wiki_tags, cs_comment, open_browser=open_browser)
             if new_node_id:
-                save_audited_osm_to_tesla_registry(st.name, target_lat, target_lon, new_node_id)
+                save_audited_osm_to_tesla_registry(st.name, target_lat, target_lon, new_node_id, is_destination=is_destination)
                 print(f"💾 {C_GREEN}Saved verified OSM coordinates & node ID #{new_node_id} into local registry.{C_RESET}")
         return
 
@@ -1981,7 +2196,7 @@ def _audit_tesla_station(
 
     # Auto-cache verified OSM coordinates & Node ID to local registry
     if e_lat is not None and e_lon is not None:
-        if save_audited_osm_to_tesla_registry(st.name, e_lat, e_lon, e_id):
+        if save_audited_osm_to_tesla_registry(st.name, e_lat, e_lon, e_id, is_destination=is_destination):
             print(f"💾 {C_GREEN}Cached audited OSM coordinates ({e_lat:.6f}, {e_lon:.6f}) & Node ID #{e_id} into local registry.{C_RESET}\n")
 
     sc_dist_m = haversine_km(sc_lat, sc_lon, e_lat, e_lon) * 1000.0 if (sc_lat and sc_lon) else None
@@ -2156,7 +2371,7 @@ def _audit_tesla_station(
 
     # Action 4: Save current OSM GPS to local JSON registry without making OSM edits
     if action_chosen == "4":
-        save_audited_osm_to_tesla_registry(st.name, e_lat, e_lon, e_id)
+        save_audited_osm_to_tesla_registry(st.name, e_lat, e_lon, e_id, is_destination=is_destination)
         print(f"💾 {C_GREEN}Saved audited OSM coordinates ({e_lat:.6f}, {e_lon:.6f}) & Node ID #{e_id} into local registry.{C_RESET}\n")
         return
 
@@ -2317,7 +2532,7 @@ def _audit_tesla_station(
                 saved_lat, saved_lon = e_lat, e_lon
             else:
                 saved_lat, saved_lon = final_lat, final_lon
-            save_audited_osm_to_tesla_registry(st.name, saved_lat, saved_lon, e_id)
+            save_audited_osm_to_tesla_registry(st.name, saved_lat, saved_lon, e_id, is_destination=is_destination)
             print(f"💾 {C_GREEN}Saved updated OSM coordinates & Node ID into local registry.{C_RESET}\n")
 
             if open_browser:
@@ -2638,7 +2853,7 @@ def _source_and_audit_supercharge(
                 return
             new_node_id = _publish_node(token, target_lat, target_lon, wiki_tags, cs_comment, open_browser=open_browser)
             if new_node_id:
-                save_audited_osm_to_tesla_registry(site_name, target_lat, target_lon, new_node_id)
+                save_audited_osm_to_tesla_registry(site_name, target_lat, target_lon, new_node_id, is_destination=False)
                 print(f"💾 {C_GREEN}Saved verified OSM coordinates & node ID #{new_node_id} into local registry.{C_RESET}")
         return
 
@@ -2701,7 +2916,7 @@ def _source_and_audit_supercharge(
 
     # Auto-cache verified OSM coordinates & Node ID to local registry
     if e_lat is not None and e_lon is not None:
-        if save_audited_osm_to_tesla_registry(site_name, e_lat, e_lon, e_id):
+        if save_audited_osm_to_tesla_registry(site_name, e_lat, e_lon, e_id, is_destination=False):
             print(f"💾 {C_GREEN}Cached audited OSM coordinates ({e_lat:.6f}, {e_lon:.6f}) & Node ID #{e_id} into local registry.{C_RESET}\n")
 
     print(f"📍 {C_BOLD}Geographic Coordinate Comparison:{C_RESET}")
@@ -2836,7 +3051,7 @@ def _source_and_audit_supercharge(
                 return
 
     if action_chosen == "4":
-        save_audited_osm_to_tesla_registry(site_name, e_lat, e_lon, e_id)
+        save_audited_osm_to_tesla_registry(site_name, e_lat, e_lon, e_id, is_destination=False)
         print(f"💾 {C_GREEN}Saved audited OSM coordinates ({e_lat:.6f}, {e_lon:.6f}) & Node ID #{e_id} into local registry.{C_RESET}\n")
         return
 
@@ -2990,7 +3205,7 @@ def _source_and_audit_supercharge(
                 saved_lat, saved_lon = e_lat, e_lon
             else:
                 saved_lat, saved_lon = final_lat, final_lon
-            save_audited_osm_to_tesla_registry(site_name, saved_lat, saved_lon, e_id)
+            save_audited_osm_to_tesla_registry(site_name, saved_lat, saved_lon, e_id, is_destination=False)
             print(f"💾 {C_GREEN}Saved updated OSM coordinates & Node ID into local registry.{C_RESET}\n")
             if open_browser:
                 try:

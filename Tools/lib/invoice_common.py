@@ -404,17 +404,19 @@ class AGLInvoiceExtractor(BaseInvoiceExtractor):
         return os.path.basename(original_path)
 
     def resolve_target_dir(self, data: Dict[str, Any], original_path: str) -> Optional[str]:
+        # BUG-131 follow-up (2026-09-21): the hardcoded iCloud fallback
+        # this used to have (duplicated independently in sync_invoices.py
+        # and providers_power/power_base.py) is gone - config.json's
+        # directories.power_invoices is genuinely optional now; if unset,
+        # a renamed AGL PDF is simply left beside its original file.
         try:
             from lib.tessie_api_common import load_config
             cfg = load_config()
-            agl_dir = cfg.get("power_invoices_directory") or cfg.get("agl_invoices_directory")
+            agl_dir = cfg.get("directories", {}).get("power_invoices")
             if agl_dir:
                 return os.path.abspath(os.path.expanduser(agl_dir))
         except Exception:
             pass
-        default_dir = os.path.expanduser("~/Library/Mobile Documents/com~apple~CloudDocs/PDF/AGL")
-        if os.path.isdir(default_dir):
-            return default_dir
         return os.path.dirname(original_path)
 
 
@@ -572,7 +574,7 @@ class TeslaInvoiceExtractor(BaseInvoiceExtractor):
         try:
             from lib.tessie_api_common import load_config
             cfg = load_config()
-            inv_dir = cfg.get("invoices_directory")
+            inv_dir = cfg.get("directories", {}).get("invoices")
             if inv_dir:
                 return os.path.abspath(os.path.expanduser(inv_dir))
         except Exception:
@@ -761,7 +763,7 @@ class ExplorenInvoiceExtractor(BaseInvoiceExtractor):
         try:
             from lib.tessie_api_common import load_config
             cfg = load_config()
-            inv_dir = cfg.get("invoices_directory")
+            inv_dir = cfg.get("directories", {}).get("invoices")
             if inv_dir:
                 return os.path.abspath(os.path.expanduser(inv_dir))
         except Exception:
