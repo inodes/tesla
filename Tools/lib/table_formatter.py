@@ -216,6 +216,21 @@ def hyperlink(text: str, url: str) -> str:
     return f"\x1b]8;;{url}\x1b\\\x1b[4;36m{text}\x1b[0m\x1b]8;;\x1b\\"
 
 
+def bold_headers(headers):
+    """
+    Wraps each header cell in ANSI bold (\033[1m...\033[0m) for consistent
+    bolded table headers across every report table (TODO-015 - header
+    bolding used to be reinvented ad hoc per-analyzer, inconsistently, with
+    no shared helper; this centralizes it here so future tables get it for
+    free). display_len/pad_display/format_row/truncate_display all already
+    treat ANSI escape codes as zero-width via strip_ansi(), so the result is
+    safe to feed directly into format_row() or pad_display() exactly like a
+    plain header string - no width bookkeeping changes required at the
+    call site.
+    """
+    return [f"\033[1m{h}\033[0m" for h in headers]
+
+
 def format_display_url(url: str, max_len: int = 55) -> str:
     """
     Displays a truncated URL cut off with ellipsis, wrapped in an OSC 8 terminal
@@ -778,6 +793,66 @@ def run_self_test(verbose: bool = True) -> bool:
         errors.append(f"Border width mismatch: top={w_top}, title={w_title}, mid={w_mid}, bot={w_bot}, expected={expected_row_w}")
 
  # -------------------------------------------------------------------------
+ # Visual Test 6: truncate_display / strip_ansi / hyperlink /
+ # format_display_url (TODO-004) - the previous 5 tests never exercised
+ # these, despite truncate_display being the single most regression-prone
+ # function in this module (every table column overflow goes through it)
+ # and hyperlink/format_display_url being the OSC 8 machinery TODO-007
+ # investigated directly. These are plain input->expected-output checks,
+ # not visual/printed ones.
+ # -------------------------------------------------------------------------
+    truncate_cases = [
+        # (input, max_width, expected)
+        ("Hello World", 5, "Hell…"),
+        ("Hi", 10, "Hi"),
+        ("", 10, ""),
+        ("Exact", 5, "Exact"),
+        ("🔴 Tesla Supercharger", 6, "🔴 Te…"),
+    ]
+    for txt, mw, expected in truncate_cases:
+        got = truncate_display(txt, mw)
+        if got != expected:
+            errors.append(f"truncate_display({txt!r}, {mw}) expected {expected!r}, got {got!r}")
+        if txt and display_len(got) > mw:
+            errors.append(f"truncate_display({txt!r}, {mw}) result {got!r} exceeds max_width (display_len={display_len(got)})")
+
+    link = hyperlink("ABC", "http://example.com/test")
+    if strip_ansi(link) != "ABC":
+        errors.append(f"strip_ansi(hyperlink(...)) expected 'ABC', got {strip_ansi(link)!r}")
+    if display_len(link) != display_len("ABC"):
+        errors.append(f"hyperlink(...) should be zero-width beyond its visible text: display_len(link)={display_len(link)}, display_len('ABC')={display_len('ABC')}")
+
+    long_url = "http://example.com/" + ("x" * 80)
+    disp_url = format_display_url(long_url, max_len=20)
+    plain_disp_url = strip_ansi(disp_url)
+    if not plain_disp_url.endswith("..."):
+        errors.append(f"format_display_url(long_url, 20) expected an ellipsis-terminated display text, got {plain_disp_url!r}")
+    if display_len(disp_url) > 20:
+        errors.append(f"format_display_url(long_url, 20) display_len={display_len(disp_url)} exceeds max_len=20")
+    short_url = "http://example.com"
+    if strip_ansi(format_display_url(short_url, max_len=55)) != short_url:
+        errors.append(f"format_display_url should leave a short URL untruncated: got {strip_ansi(format_display_url(short_url, max_len=55))!r}")
+
+ # -------------------------------------------------------------------------
+ # Visual Test 7: bold_headers (TODO-015) - every report table's header row
+ # should render bold; this was previously reinvented ad hoc per-analyzer
+ # (inconsistently) rather than living in this shared module, so the checks
+ # below both confirm the escape-wrapping is correct AND that display_len
+ # treats it as zero-width, exactly like Test 6's hyperlink() checks.
+ # -------------------------------------------------------------------------
+    header_cases = [" #", "Month", "Total Spend", ""]
+    bolded = bold_headers(header_cases)
+    if len(bolded) != len(header_cases):
+        errors.append(f"bold_headers({header_cases!r}) returned {len(bolded)} cells, expected {len(header_cases)}")
+    for original, b in zip(header_cases, bolded):
+        if strip_ansi(b) != original:
+            errors.append(f"bold_headers: strip_ansi({b!r}) expected {original!r}, got {strip_ansi(b)!r}")
+        if display_len(b) != display_len(original):
+            errors.append(f"bold_headers: display_len({b!r})={display_len(b)} should equal display_len({original!r})={display_len(original)}")
+        if original and not (b.startswith("\033[1m") and b.endswith("\033[0m")):
+            errors.append(f"bold_headers({original!r}) expected \\033[1m...\\033[0m wrapping, got {b!r}")
+
+ # -------------------------------------------------------------------------
  # Test Report Table Output
  # -------------------------------------------------------------------------
     if verbose:
@@ -799,6 +874,8 @@ def run_self_test(verbose: bool = True) -> bool:
             (" [3]", " Row Width Sanity Checks (format_row)", " 9 columns", " PASSED ✅"),
             (" [4]", " Title Banner vs Box Borders Alignment", f" {expected_row_w} cells", " PASSED ✅"),
             (" [5]", " 2-Tier Footage Mini-Columns (📹/🛡️/🕒)", " 3 indicators", " PASSED ✅"),
+            (" [6]", " Truncate/Hyperlink/URL Display", f" {len(truncate_cases)+3} cases", " PASSED ✅"),
+            (" [7]", " Bold Header Wrapping", f" {len(header_cases)} cases", " PASSED ✅"),
         ]
         for tr in test_rows:
             print(format_row(list(tr), rep_widths))

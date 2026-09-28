@@ -17,22 +17,28 @@ Three cost figures are printed for every session:
   1. "base cost" - kWh x that date's dated usage rate (agl_tariff_rates.json),
      i.e. what it would have cost if 100% grid-imported. Always computed.
 
-  2. "PVOutput-adjusted" (REQ-071, 2026-09-15, PRIMARY) - splits the
+  2. "<PV provider>-adjusted" (REQ-071, 2026-09-15, PRIMARY; REQ-140,
+     2026-09-25, migrated from PVOutput to providers_pv/SolarEdge -
+     PVOutput on this account turned out to be a pure relay of this
+     SAME SolarEdge account's own API, confirmed both by near-identical
+     historical readings and by the user's own PVOutput "Edit System"
+     settings screenshot, not an independent measurement) - splits the
      session's own kWh by a real household solar-self-consumption
-     fraction measured directly from PVOutput's own TWO CT clamps
-     (generation AND consumption, independently - lib/pvoutput_common.py's
-     pv_window_split(), summed at 5-minute-interval resolution, not just
-     from day-level totals) for the session's own window. This is the
-     user's own explicit steer (AGENTS.local.md REQ-071): of the three
-     data sources this repo integrates, Evnex only sees the car's own
-     usage plus a single CT clamp (good enough for ITS OWN solar%
-     estimate, but see #3 below for why that estimate isn't a live
-     measurement); AGL only sees import/export and is manual-sync
-     besides; PVOutput alone can MEASURE - not infer - real household
-     self-consumption. Same opportunity-cost solar valuation as #3 below
-     (tier-1 rate, GST-free). Falls back to #3, then #1, whenever
-     PVOutput data isn't available or doesn't cover the window well
-     (see evaluate_session()'s own pv_coverage handling).
+     fraction measured directly from the active PV provider's own real
+     per-interval generation/consumption/self-consumption meters
+     (lib/pv_history_db.py's pv_window_split(), summed at 15-minute
+     resolution, not just from day-level totals) for the session's own
+     window. This is the user's own explicit steer (AGENTS.local.md
+     REQ-071): of the three data sources this repo integrates, Evnex
+     only sees the car's own usage plus a single CT clamp (good enough
+     for ITS OWN solar% estimate, but see #3 below for why that
+     estimate isn't a live measurement); AGL only sees import/export
+     and is manual-sync besides; the PV provider alone can MEASURE -
+     not infer - real household self-consumption. Same opportunity-cost
+     solar valuation as #3 below (tier-1 rate, GST-free). Falls back to
+     #3, then #1, whenever PV provider data isn't available or doesn't
+     cover the window well (see evaluate_session()'s own pv_coverage
+     handling).
 
   3. "Evnex-adjusted" (fallback) - splits the session's own kWh by
      Evnex's own `distributionByTariff`. IMPORTANT (user-confirmed,
@@ -58,12 +64,12 @@ against AGL's own real smart-meter half-hourly readings
 (agl_usage_master.csv) for the exact overlapping window(s) - real import
 kWh recorded during a session Evnex called mostly-solar is flagged as a
 conflict worth a second look, rather than silently trusted. A SEPARATE
-cross-check (REQ-071, pv_agl_conflict) compares PVOutput's own real
-import figure for the window against AGL's - two independent real
+cross-check (REQ-071, pv_agl_conflict) compares the PV provider's own
+real import figure for the window against AGL's - two independent real
 meters for the same physical quantity that should roughly agree; a
 material mismatch there is a data-quality flag (clock drift, an
-un-synced PVOutput day, a stale AGL export), not a claim about solar
-usage. One confirmed,
+un-synced PV provider day, a stale AGL export), not a claim about
+solar usage. One confirmed,
 plausible explanation for a flagged conflict (AGENTS.md REQ-040): the user
 can manually override the charger's own real solar-export-threshold
 auto-start feature and force a charge regardless of real solar export -
@@ -82,8 +88,8 @@ that's the multi-cycle case its historical-pooling and filename-stem
 matching both have to account for). This tool doesn't (yet) distinguish
 an override from either of these; it just surfaces the mismatch.
 
-Deliberately NOT attempted here (left for a future PVOutput-based pass,
-per Tessie/PVOUTPUT_API.md's "Fit with existing AGL/solar work" section):
+Deliberately NOT attempted here (left for a future finer-grained pass,
+per resources/PVOUTPUT_API.md's "Fit with existing AGL/solar work" section):
 disaggregating a session's own share of a half-hour's total household
 import/export from everything else drawing power in the house at the
 same time. AGL's smart meter reports one net figure per half-hour for
@@ -120,7 +126,6 @@ Usage:
 """
 
 import argparse
-import csv
 import glob
 import json
 import os
@@ -130,34 +135,34 @@ from datetime import date, datetime, timedelta, timezone
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from providers_power import get_power_provider  # noqa: E402
 from power_demand_calculator import load_rate_periods, rate_for_date  # noqa: E402
+from lib.power_usage_db import get_usage_db_connection, resolve_usage_db_path, iter_rows  # noqa: E402
 from lib.evnex_common import is_real_charging_session  # noqa: E402
-from lib.tessie_api_common import resolve_tessie_data_home  # noqa: E402
-from lib.pvoutput_common import (  # noqa: E402
-    load_config as pv_load_config,
-    get_api_key as pv_get_api_key,
-    get_system_id as pv_get_system_id,
-    pv_window_split,
-    pv_agl_import_conflict,
-)
+from lib.tessie_api_common import resolve_tessie_data_home, load_config  # noqa: E402
+from providers_pv import get_pv_provider  # noqa: E402
+from lib.pv_history_db import get_pv_db_connection, pv_window_split  # noqa: E402
+from lib.pvoutput_common import pv_agl_import_conflict  # noqa: E402
 from zoneinfo import ZoneInfo  # noqa: E402
 
 DEEPDIVE_DIR = os.path.join(resolve_tessie_data_home(), "charges", "deepdive")
 _POWER_PROVIDER = get_power_provider()
-USAGE_MASTER = os.path.join(_POWER_PROVIDER.resolve_data_home(), "usage", _POWER_PROVIDER.usage_master_filename())
+DATA_HOME = _POWER_PROVIDER.resolve_data_home()
 
-# REQ-071 (2026-09-15): PVOutput credentials, resolved once at import
-# time (same "load once, reuse everywhere" pattern as USAGE_MASTER
-# above), plus a module-level per-calendar-day fetch cache
-# (_PV_DAY_CACHE) shared across every evaluate_session() call in one
-# batch run - mirrors load_agl_index()'s own _agl_index_cache pattern
-# below, and matters for the same reason: PVOutput's rate limit
-# (300/hr donation-tier, 60/hr free - Tessie/PVOUTPUT_API.md) would
-# otherwise get hit hard by a --all run over hundreds of sessions that
-# often share the same handful of calendar days.
-_PV_CFG = pv_load_config()
-_PV_KEY = pv_get_api_key(None, _PV_CFG)
-_PV_SID = pv_get_system_id(None, _PV_CFG)
-_PV_DAY_CACHE = {}
+# REQ-071 (2026-09-15, PVOutput-based originally)/REQ-140 (2026-09-25,
+# migrated to providers_pv/SolarEdge - PVOutput turned out to be a pure
+# relay of this SAME SolarEdge account's own API, not an independent
+# measurement, see AGENTS.local.md's REQ-140 entry): the active PV
+# provider's credentials and a single persistent pv_history.db
+# connection, resolved/opened once at import time (same "load once,
+# reuse everywhere" pattern as DATA_HOME above) and shared across every
+# evaluate_session() call in one batch run - lib/pv_history_db.py's own
+# on-disk cache means a --all run over hundreds of sessions that share
+# the same handful of calendar days only ever fetches each day once,
+# same intent as the old module-level _PV_DAY_CACHE this replaces, now
+# handled by the persistent SQLite cache instead of an in-memory dict.
+_PV_PROVIDER = get_pv_provider()
+_PV_CFG = load_config()
+_PV_KEY, _PV_ACCOUNT_ID = _PV_PROVIDER.resolve_credentials(_PV_CFG)
+_PV_CONN = get_pv_db_connection()
 
 # A "material" real import figure during a window Evnex claims is mostly
 # solar - scaled to the SESSION's own kWh, not a fixed absolute number.
@@ -218,26 +223,31 @@ def parse_agl_dt(s):
 _agl_index_cache = None
 
 
-def load_agl_index(master_path):
+def load_agl_index(data_home):
     """{half_hour_start_naive_datetime: {"import": kWh, "solar_export": kWh}}
-    - one pass through agl_usage_master.csv, cached for the life of this
-    process so every session's lookup afterward is O(session length /
-    30 min) instead of re-scanning the whole (~200k row) file each time."""
+    - one pass through the usage database (lib/power_usage_db.py),
+    cached for the life of this process so every session's lookup
+    afterward is O(session length / 30 min) instead of re-querying the
+    whole (~200k row) table each time. REQ-115: replaces the old
+    single-pass agl_usage_master.csv scan - same shape, same cache."""
     global _agl_index_cache
     if _agl_index_cache is not None:
         return _agl_index_cache
     index = {}
-    if not os.path.isfile(master_path):
+    if not os.path.isfile(resolve_usage_db_path(_POWER_PROVIDER, data_home)):
         _agl_index_cache = index
         return index
-    with open(master_path, "r", encoding="utf-8-sig", newline="") as f:
-        for row in csv.DictReader(f):
+    conn = get_usage_db_connection(_POWER_PROVIDER, data_home)
+    try:
+        for row in iter_rows(conn):
             role = row["Role"]
             if role not in ("import", "solar_export"):
                 continue
             dt = parse_agl_dt(row["StartDate"])
             bucket = index.setdefault(dt, {})
             bucket[role] = bucket.get(role, 0.0) + float(row["kWh"])
+    finally:
+        conn.close()
     _agl_index_cache = index
     return index
 
@@ -246,7 +256,7 @@ def half_hour_floor(dt):
     return dt.replace(minute=0 if dt.minute < 30 else 30, second=0, microsecond=0)
 
 
-def real_agl_overlap(master_path, local_start, local_end):
+def real_agl_overlap(data_home, local_start, local_end):
     """(import_kwh, export_kwh, buckets_found, buckets_missing) - the
     REAL whole-household AGL smart-meter total for every half-hour
     bucket overlapping [local_start, local_end) (naive Sydney-local
@@ -256,7 +266,7 @@ def real_agl_overlap(master_path, local_start, local_end):
     `buckets_missing` counts buckets with no AGL data at all (outside
     an exported date range, or in the known 2022-05-31 to 2024-09-07
     gap - see AGENTS.md REQ-031) - never silently treated as zero."""
-    index = load_agl_index(master_path)
+    index = load_agl_index(data_home)
     cur = half_hour_floor(local_start)
     import_kwh = export_kwh = 0.0
     found = missing = 0
@@ -289,7 +299,182 @@ def solar_split(distribution):
     return solar_pct, other_pct
 
 
-def evaluate_session(session, periods, master_path=USAGE_MASTER):
+_tessie_home_charges_cache = None
+
+
+def load_tessie_home_charges(tessie_dir=None):
+    """Real Tessie charges_master.csv rows for the Home network only,
+    parsed once and cached for the life of this process - ground truth
+    for what TESSIE ITSELF considers one charge (its own precise
+    Started/Ended At window, its own Energy Used (kWh), and its own
+    reported Cost/Cost Per kWh for direct comparison).
+
+    User's own correction (2026-09-26): Evnex's chargingStarted/
+    chargingStopped window is NOT the same thing as "when Tessie
+    considers this a charge" - confirmed live, a real Evnex session
+    reporting 176 minutes/7.239 kWh of continuous "charging" had only
+    ONE matching Tessie charge record covering just 69 of those minutes
+    and 6.88 kWh; Tessie's own charging state machine didn't consider
+    the rest of that plugged-in window (breaks in current flow, e.g.
+    solar-diversion cycling pausing/resuming) to be part of any charge
+    at all. This is the fix: scope cost calculations to Tessie's own
+    window/kWh via match_tessie_charges(), not Evnex's broader one."""
+    global _tessie_home_charges_cache
+    if _tessie_home_charges_cache is not None:
+        return _tessie_home_charges_cache
+    tessie_dir = tessie_dir or resolve_tessie_data_home()
+    rows = []
+    for candidate in (os.path.join(tessie_dir, "charges", "charges_master.csv"),
+                      os.path.join(tessie_dir, "charges_master.csv")):
+        if not os.path.isfile(candidate):
+            continue
+        with open(candidate, "r", encoding="utf-8-sig", newline="") as f:
+            import csv as _csv
+            for row in _csv.DictReader(f):
+                if (row.get("Saved Location") or "").strip() != "Home":
+                    continue
+                try:
+                    started = datetime.strptime(row["Started At (Local)"].strip()[:16], "%Y-%m-%d %H:%M")
+                    ended = datetime.strptime(row["Ended At (Local)"].strip()[:16], "%Y-%m-%d %H:%M")
+                    kwh = float(row.get("Energy Used (kWh)") or 0.0)
+                except (ValueError, KeyError, TypeError):
+                    continue
+                rows.append({
+                    "started": started,
+                    "ended": ended,
+                    "kwh": kwh,
+                    "tessie_cost": float(row["Cost"]) if row.get("Cost") not in (None, "") else None,
+                    "tessie_cost_per_kwh": float(row["Cost Per kWh"]) if row.get("Cost Per kWh") not in (None, "") else None,
+                })
+        break
+    _tessie_home_charges_cache = rows
+    return rows
+
+
+def match_tessie_charges(local_start, local_end, tessie_rows, tolerance_min=15):
+    """Every real Tessie charges_master.csv row (Home only) that
+    overlaps [local_start, local_end) - Evnex's own reported plug-in
+    window - or starts within tolerance_min of it (mirrors
+    analyse_charging.py's own match_detailed_charge() tolerance).
+    Usually one, can be zero (Tessie considered none of this window a
+    real charge) or more than one (the car paused and resumed drawing
+    current more than once within the same plug-in session, and Tessie
+    logged each resumption as its own separate charge record)."""
+    tol_seconds = tolerance_min * 60
+    matches = [
+        row for row in tessie_rows
+        if (row["started"] < local_end and row["ended"] > local_start)
+        or abs((row["started"] - local_start).total_seconds()) <= tol_seconds
+    ]
+    matches.sort(key=lambda r: r["started"])
+    return matches
+
+
+def cumulative_solar_export_before(local_dt):
+    """Real cumulative SolarEdge export (kWh) for local_dt's own
+    calendar day, from local midnight up to local_dt. The AGL tier-1
+    daily feed-in cap (10 kWh/day) is a running total FOR THE WHOLE DAY,
+    not per-session - a session's own marginal solar kWh needs to know
+    how much of that day's cap earlier (unrelated) export already used
+    up before this session even started, to correctly value the
+    session's OWN share as an opportunity cost (user's own explicit
+    ask, 2026-09-26: "the opportunity cost needs to be calculated on
+    which of the feed in tariffs would have been received during that
+    charging session"). Returns None if PV provider data isn't
+    available - same graceful-degradation shape as pv_window_split()
+    elsewhere in this file."""
+    if not (_PV_KEY and _PV_ACCOUNT_ID):
+        return None
+    midnight = local_dt.replace(hour=0, minute=0, second=0, microsecond=0)
+    if local_dt <= midnight:
+        return 0.0
+    try:
+        split = pv_window_split(_PV_CONN, midnight, local_dt, _PV_PROVIDER, _PV_KEY, _PV_ACCOUNT_ID)
+    except Exception:
+        return None
+    return split.get("export_kwh")
+
+
+def evaluate_tessie_charge(tessie_row, periods, data_home=DATA_HOME):
+    """The real cost of exactly what TESSIE ITSELF considers one charge
+    - its own precise Started/Ended At window and its own Energy Used
+    (kWh) (user's ask #1), priced with the tier-1/tier-2 feed-in split
+    correctly anchored to how much of that CALENDAR DAY's 10kWh cap was
+    already used up before this specific charge started, rather than a
+    flat single-tier assumption (user's ask #2)."""
+    local_start = tessie_row["started"]
+    local_end = tessie_row["ended"]
+    kwh_total = tessie_row["kwh"]
+
+    period = rate_for_date(local_start.date(), periods)
+    usage_rate, usage_rate_breakdown = _POWER_PROVIDER.usage_rate_for_window(period, local_start, local_end)
+    tier1_rate = period["solar_feed_in_tier1_rate_per_kwh"]
+    GST_MULTIPLIER = 1.10
+
+    base_cost = kwh_total * usage_rate
+    base_cost_incl_gst = base_cost * GST_MULTIPLIER
+
+    pv_split = {"solar_fraction": None, "coverage": 0.0,
+                "error": f"no {_PV_PROVIDER.display_name} credentials configured"}
+    if _PV_KEY and _PV_ACCOUNT_ID:
+        try:
+            pv_split = pv_window_split(_PV_CONN, local_start, local_end, _PV_PROVIDER, _PV_KEY, _PV_ACCOUNT_ID)
+        except Exception as e:
+            pv_split = dict(pv_split)
+            pv_split["error"] = str(e)
+
+    real_cost = real_cost_incl_gst = None
+    solar_kwh = grid_kwh = None
+    tier1_kwh = tier2_kwh = None
+    tier2_rate = None
+    cumulative_before = cumulative_solar_export_before(local_start)
+    used_flat_tier1_fallback = False
+
+    if pv_split.get("solar_fraction") is not None and kwh_total > 0:
+        solar_kwh = kwh_total * pv_split["solar_fraction"]
+        grid_kwh = kwh_total - solar_kwh
+        grid_charge_ex_gst = grid_kwh * usage_rate
+        if cumulative_before is not None:
+            tier1_kwh, tier2_kwh, tier2_rate = _POWER_PROVIDER.solar_tier_split_kwh(cumulative_before, solar_kwh)
+            solar_credit_component = tier1_kwh * tier1_rate + tier2_kwh * (tier2_rate or 0.0)
+        else:
+ # No cumulative-export figure available for earlier that day
+ # (PV data gap) - fall back to the old flat tier-1-only
+ # assumption rather than silently dropping the figure, but say
+ # so explicitly so this isn't mistaken for a real tiered result.
+            solar_credit_component = solar_kwh * tier1_rate
+            used_flat_tier1_fallback = True
+        real_cost = grid_charge_ex_gst + solar_credit_component
+        real_cost_incl_gst = grid_charge_ex_gst * GST_MULTIPLIER + solar_credit_component
+
+    return {
+        "local_start": local_start,
+        "local_end": local_end,
+        "duration_min": round((local_end - local_start).total_seconds() / 60.0, 1),
+        "kwh_total": kwh_total,
+        "usage_rate": usage_rate,
+        "usage_rate_breakdown": usage_rate_breakdown,
+        "tier1_rate": tier1_rate,
+        "base_cost": base_cost,
+        "base_cost_incl_gst": base_cost_incl_gst,
+        "pv_solar_fraction": pv_split.get("solar_fraction"),
+        "pv_coverage": pv_split.get("coverage", 0.0),
+        "pv_error": pv_split.get("error"),
+        "solar_kwh": solar_kwh,
+        "grid_kwh": grid_kwh,
+        "cumulative_export_before_kwh": cumulative_before,
+        "tier1_kwh": tier1_kwh,
+        "tier2_kwh": tier2_kwh,
+        "tier2_rate": tier2_rate,
+        "used_flat_tier1_fallback": used_flat_tier1_fallback,
+        "real_cost": real_cost,
+        "real_cost_incl_gst": real_cost_incl_gst,
+        "tessie_cost": tessie_row["tessie_cost"],
+        "tessie_cost_per_kwh": tessie_row["tessie_cost_per_kwh"],
+    }
+
+
+def evaluate_session(session, periods, data_home=DATA_HOME):
     attrs = session.get("session", {}).get("attributes", {}) or {}
     te = attrs.get("totalEnergyUsage") or {}
     kwh_total = (te.get("total") or 0.0) / 1000.0  # Wh -> kWh
@@ -307,7 +492,7 @@ def evaluate_session(session, periods, master_path=USAGE_MASTER):
         local_end = local_start + timedelta(minutes=1)  # degenerate/instant session - still needs a non-empty window to look up
 
     period = rate_for_date(local_start.date(), periods)
-    usage_rate = period["usage_rate_per_kwh"]
+    usage_rate, usage_rate_breakdown = _POWER_PROVIDER.usage_rate_for_window(period, local_start, local_end)
     solar_tier1_rate = period["solar_feed_in_tier1_rate_per_kwh"]
 
  # GST treatment confirmed against real invoices elsewhere in this repo
@@ -343,7 +528,7 @@ def evaluate_session(session, periods, master_path=USAGE_MASTER):
         evnex_adjusted_cost = grid_charge_ex_gst + solar_credit_component
         evnex_adjusted_cost_incl_gst = grid_charge_ex_gst * GST_MULTIPLIER + solar_credit_component
 
-    import_kwh, export_kwh, buckets_found, buckets_missing = real_agl_overlap(master_path, local_start, local_end)
+    import_kwh, export_kwh, buckets_found, buckets_missing = real_agl_overlap(data_home, local_start, local_end)
 
     conflict = (
         solar_pct is not None
@@ -352,20 +537,22 @@ def evaluate_session(session, periods, master_path=USAGE_MASTER):
         and import_kwh >= CONFLICT_IMPORT_RATIO * kwh_total
     )
 
- # REQ-071: PVOutput-primary solar split - real generation+consumption
- # CT clamps for this session's own window (module-level _PV_DAY_CACHE
- # shares one fetch per calendar day across a whole batch run). Never
- # fatal to any of the figures above if it fails (missing credentials,
- # network egress, rate limit, an unexpected response shape) -
- # evnex_adjusted_cost above stays available as the fallback.
+ # REQ-071/REQ-140: PV-provider-primary solar split - the active
+ # provider's real per-interval generation/consumption/self-
+ # consumption meters for this session's own window (module-level
+ # _PV_CONN's on-disk cache shares one fetch per calendar day across a
+ # whole batch run). Never fatal to any of the figures above if it
+ # fails (missing credentials, network egress, rate limit, an
+ # unexpected response shape) - evnex_adjusted_cost above stays
+ # available as the fallback.
     pv_split = {
         "generation_kwh": None, "consumption_kwh": None, "self_consumed_kwh": None,
         "export_kwh": None, "import_kwh": None, "solar_fraction": None, "coverage": 0.0,
-        "error": "no PVOutput credentials configured",
+        "error": f"no {_PV_PROVIDER.display_name} credentials configured",
     }
-    if _PV_KEY and _PV_SID:
+    if _PV_KEY and _PV_ACCOUNT_ID:
         try:
-            pv_split = pv_window_split(local_start, local_end, _PV_KEY, _PV_SID, day_cache=_PV_DAY_CACHE)
+            pv_split = pv_window_split(_PV_CONN, local_start, local_end, _PV_PROVIDER, _PV_KEY, _PV_ACCOUNT_ID)
         except Exception as e:
             pv_split = dict(pv_split)
             pv_split["error"] = str(e)
@@ -382,14 +569,25 @@ def evaluate_session(session, periods, master_path=USAGE_MASTER):
 
     pv_agl_conflict = pv_agl_import_conflict(pv_split["import_kwh"], pv_split["coverage"], import_kwh, buckets_missing)
 
+ # User's own correction (2026-09-26): everything above prices EVNEX's
+ # own chargingStarted/chargingStopped window - useful context, but NOT
+ # what Tessie itself bills as "a charge" (ask #1). This attaches the
+ # Tessie-scoped view alongside it, additively - nothing above changes,
+ # so reconcile_against_invoices()'s existing use of this dict's
+ # top-level fields is unaffected.
+    tessie_matches = match_tessie_charges(local_start, local_end, load_tessie_home_charges())
+    tessie_charges = [evaluate_tessie_charge(m, periods, data_home=data_home) for m in tessie_matches]
+
     return {
         "evnex_session_id": session.get("evnex_session_id"),
+        "tessie_charges": tessie_charges,
         "local_start": local_start,
         "local_end": local_end,
         "duration_min": round((local_end - local_start).total_seconds() / 60.0, 1),
         "kwh_total": kwh_total,
         "period_effective_from": period["effective_from"],
         "usage_rate": usage_rate,
+        "usage_rate_breakdown": usage_rate_breakdown,
         "solar_tier1_rate": solar_tier1_rate,
         "base_cost": base_cost,
         "base_cost_incl_gst": base_cost_incl_gst,
@@ -423,10 +621,10 @@ def print_session(r):
     if r.get("pv_adjusted_cost_incl_gst") is not None:
         pv_pct = r["pv_solar_fraction"] * 100.0
         cov_note = "" if r.get("pv_coverage", 1.0) >= 0.99 else f", {r['pv_coverage']*100:.0f}% window coverage"
-        print(f"   PVOutput-adjusted (PRIMARY, solar {pv_pct:.1f}% real measured{cov_note}) : "
+        print(f"   {_PV_PROVIDER.display_name}-adjusted (PRIMARY, solar {pv_pct:.1f}% real measured{cov_note}) : "
               f"${r['pv_adjusted_cost']:.4f} ex GST -> ${r['pv_adjusted_cost_incl_gst']:.4f} incl GST")
     else:
-        print(f"   PVOutput-adjusted (PRIMARY)            : unavailable ({r.get('pv_error') or 'unknown reason'}) - falling back to Evnex/base below")
+        print(f"   {_PV_PROVIDER.display_name}-adjusted (PRIMARY)            : unavailable ({r.get('pv_error') or 'unknown reason'}) - falling back to Evnex/base below")
     if r["evnex_adjusted_cost"] is None:
         print(f"   Evnex-adjusted (fallback)               : n/a (no distributionByTariff on this session)")
     else:
@@ -438,7 +636,7 @@ def print_session(r):
     else:
         print(f"   real AGL meter (whole household, {r['buckets_found']} half-hour bucket(s)): import {r['real_import_kwh']:.3f} kWh, export {r['real_export_kwh']:.3f} kWh")
     if r.get("pv_generation_kwh") is not None:
-        print(f"   PVOutput gen/cons (whole household, this window): {r['pv_generation_kwh']:.3f} kWh gen, {r['pv_consumption_kwh']:.3f} kWh cons -> "
+        print(f"   {_PV_PROVIDER.display_name} gen/cons (whole household, this window): {r['pv_generation_kwh']:.3f} kWh gen, {r['pv_consumption_kwh']:.3f} kWh cons -> "
               f"{r['pv_self_consumed_kwh']:.3f} kWh self-consumed, {r['pv_export_kwh']:.3f} kWh export, {r['pv_import_kwh']:.3f} kWh import")
     if r["conflict"]:
         ratio_pct = 100.0 * r["real_import_kwh"] / r["kwh_total"] if r["kwh_total"] else 0.0
@@ -449,13 +647,60 @@ def print_session(r):
               f"explanation: a manual override of the charger's own solar-export-threshold auto-start "
               f"(real CT-clamp based) forcing a charge regardless of actual solar that day.")
     if r.get("pv_agl_conflict"):
-        print(f"   ⚠️  CONFLICT: PVOutput's real import for this window ({r['pv_import_kwh']:.3f} kWh) disagrees with "
+        print(f"   ⚠️  CONFLICT: {_PV_PROVIDER.display_name}'s real import for this window ({r['pv_import_kwh']:.3f} kWh) disagrees with "
               f"AGL's real meter import ({r['real_import_kwh']:.3f} kWh) by >=30% - a data-quality issue (clock drift, "
-              f"an un-synced PVOutput day, a stale AGL export), not a solar-usage question. See REQ-071.")
+              f"an un-synced PV day, a stale AGL export), not a solar-usage question. See REQ-071.")
+    print_tessie_charges(r)
     print()
 
 
-def reconcile_against_invoices(deepdive_dir=None, master_path=USAGE_MASTER, periods=None, log=print):
+def print_tessie_charges(r):
+    """The user's own ask #1: what did TESSIE ITSELF actually consider
+    "a charge" within this Evnex-reported plug-in window, and what did
+    it really cost - priced with the tier-1/tier-2 feed-in split
+    correctly anchored per-charge (ask #2), not the Evnex-window figures
+    printed above this."""
+    tessie_charges = r.get("tessie_charges") or []
+    if not tessie_charges:
+        print(f"   ⚠️  Tessie itself logged NO charge record at all overlapping this window - Evnex reports "
+              f"this whole span as charging, but Tessie's own charging state considered none of it a real charge.")
+        return
+    print(f"   --- Tessie's own charge record(s) for this window ({len(tessie_charges)}) ---")
+    total_real_incl_gst = 0.0
+    total_tessie_cost = 0.0
+    any_real = False
+    for tc in tessie_charges:
+        ts = tc["local_start"].strftime("%H:%M")
+        te = tc["local_end"].strftime("%H:%M")
+        print(f"   [{ts} -> {te}, {tc['duration_min']:.1f}min, {tc['kwh_total']:.3f} kWh] Tessie's own charge record")
+        if tc["real_cost_incl_gst"] is not None:
+            any_real = True
+            total_real_incl_gst += tc["real_cost_incl_gst"]
+            solar_pct = (tc["solar_kwh"] / tc["kwh_total"] * 100.0) if tc["kwh_total"] else 0.0
+            print(f"      Solar self-consumption (measured, this exact window): {solar_pct:.1f}% "
+                  f"({tc['solar_kwh']:.3f} kWh solar / {tc['grid_kwh']:.3f} kWh grid)")
+            if tc["used_flat_tier1_fallback"]:
+                print(f"      Daily feed-in cap: cumulative export before this charge unavailable - "
+                      f"assumed flat tier-1 (${tc['tier1_rate']}/kWh) for the whole solar share")
+            else:
+                print(f"      Daily feed-in cap: {tc['cumulative_export_before_kwh']:.3f} kWh already exported "
+                      f"today before this charge started -> {tc['tier1_kwh']:.3f} kWh @ tier-1 (${tc['tier1_rate']}/kWh), "
+                      f"{tc['tier2_kwh']:.3f} kWh @ tier-2 (${tc['tier2_rate']}/kWh)")
+            print(f"      Real cost (tiered)   : ${tc['real_cost']:.4f} ex GST -> ${tc['real_cost_incl_gst']:.4f} incl GST")
+        else:
+            print(f"      Real cost: unavailable ({tc.get('pv_error') or 'no PV data for this window'})")
+        if tc["tessie_cost"] is not None:
+            total_tessie_cost += tc["tessie_cost"]
+            per_kwh_note = f" (${tc['tessie_cost_per_kwh']}/kWh flat)" if tc["tessie_cost_per_kwh"] is not None else ""
+            print(f"      Tessie's own reported cost: ${tc['tessie_cost']:.2f}{per_kwh_note}")
+    if len(tessie_charges) > 1 or (any_real and tessie_charges[0]["tessie_cost"] is not None):
+        diff = total_real_incl_gst - total_tessie_cost
+        print(f"   Tessie-scoped total: ${total_real_incl_gst:.4f} incl GST (real, tiered) vs "
+              f"${total_tessie_cost:.2f} (Tessie's own) - Tessie {'overstates' if diff < 0 else 'understates'} "
+              f"by ${abs(diff):.2f}")
+
+
+def reconcile_against_invoices(deepdive_dir=None, data_home=DATA_HOME, periods=None, log=print):
     """Cross-references AGL's real invoiced totals
     (power_cost_calculator.REAL_INVOICE_CYCLES - already self-tested
     against reconstruct_bill() there) against this file's own computed
@@ -513,14 +758,14 @@ def reconcile_against_invoices(deepdive_dir=None, master_path=USAGE_MASTER, peri
     all_ok = True
     for start, end, expected_total, label in REAL_INVOICE_CYCLES:
         log(f"=== {label}: {start} to {end} ===")
-        bill = reconstruct_bill(start, end, master_path=master_path, periods=periods)
+        bill = reconstruct_bill(start, end, data_home=data_home, periods=periods)
         bill_diff = abs(bill["total_incl_gst"] - expected_total)
         log(f"  whole-household reconstructed bill: ${bill['total_incl_gst']:.2f} incl GST "
             f"(invoice: ${expected_total:.2f}, diff ${bill_diff:.2f} - see power_cost_calculator.py "
             f"--self-test for the authoritative check on this figure)")
 
         cycle_sessions = [s for s in all_sessions if start <= (_session_local_date(s) or date.max) <= end]
-        results = [evaluate_session(s, periods, master_path=master_path) for s in cycle_sessions]
+        results = [evaluate_session(s, periods, data_home=data_home) for s in cycle_sessions]
         ev_kwh = sum(r["kwh_total"] for r in results)
         ev_cost_incl_gst = sum(
             r["pv_adjusted_cost_incl_gst"] if r.get("pv_adjusted_cost_incl_gst") is not None
@@ -528,10 +773,10 @@ def reconcile_against_invoices(deepdive_dir=None, master_path=USAGE_MASTER, peri
             for r in results
         )
         ev_import_sum = sum(r["real_import_kwh"] for r in results)
-        cycle_import_kwh = sum_kwh(master_path, "import", start, end, provider=_POWER_PROVIDER)
+        cycle_import_kwh = sum_kwh(data_home, "import", start, end, provider=_POWER_PROVIDER)
 
         log(f"  {len(results)} EV charging session(s) in this cycle: {ev_kwh:.3f} kWh, "
-            f"${ev_cost_incl_gst:.2f} incl GST computed (PVOutput/Evnex/base blended per-session)")
+            f"${ev_cost_incl_gst:.2f} incl GST computed ({_PV_PROVIDER.display_name}/Evnex/base blended per-session)")
         if cycle_import_kwh > 0.01:
             share_pct = 100.0 * ev_kwh / cycle_import_kwh if cycle_import_kwh else 0.0
             bound_ok = ev_import_sum <= cycle_import_kwh + 0.01  # tiny float-rounding slack
@@ -551,9 +796,9 @@ def reconcile_against_invoices(deepdive_dir=None, master_path=USAGE_MASTER, peri
 
 def main():
     parser = argparse.ArgumentParser(
-        usage="""analyse_session_cost.py [--limit N | --all] [--since-days N] [--deepdive-dir DIR] [--usage-master CSV]
-   or:  analyse_session_cost.py --session-id UUID [--deepdive-dir DIR] [--usage-master CSV]
-   or:  analyse_session_cost.py --reconcile-invoices [--usage-master CSV]
+        usage="""analyse_session_cost.py [--limit N | --all] [--since-days N] [--deepdive-dir DIR] [--data-home DIR]
+   or:  analyse_session_cost.py --session-id UUID [--deepdive-dir DIR] [--data-home DIR]
+   or:  analyse_session_cost.py --reconcile-invoices [--data-home DIR]
 """,
         description="""
 NAME
@@ -587,14 +832,14 @@ EXAMPLES
     parser.add_argument("--since-days", type=int, help="Only sessions from the last N days")
     parser.add_argument("--session-id", help="Evaluate one specific Evnex session by its UUID")
     parser.add_argument("--all", action="store_true", help="Evaluate every session found (overrides --limit)")
-    parser.add_argument("--deepdive-dir", help=f"Override the deep-dive JSON folder (default: {DEEPDIVE_DIR})")
-    parser.add_argument("--usage-master", default=USAGE_MASTER, help=f"Override the AGL usage master CSV path (default: {USAGE_MASTER})")
+    parser.add_argument("--deepdive-dir", help="Override the deep-dive JSON folder (default: <data_home>/charges/deepdive)")
+    parser.add_argument("--data-home", default=DATA_HOME, help="Override the power provider's data home directory (default: the active power provider's own resolve_data_home())")
     parser.add_argument("--reconcile-invoices", action="store_true",
                          help="Cross-reference AGL's real invoiced totals against the aggregate of computed per-session costs (REQ-071), instead of the normal per-session listing")
     args = parser.parse_args()
 
     if args.reconcile_invoices:
-        ok = reconcile_against_invoices(deepdive_dir=args.deepdive_dir, master_path=args.usage_master)
+        ok = reconcile_against_invoices(deepdive_dir=args.deepdive_dir, data_home=args.data_home)
         return 0 if ok else 1
 
     limit = None if (args.all or args.session_id) else args.limit
@@ -627,7 +872,7 @@ EXAMPLES
         print(f"❌ {e}")
         return 1
 
-    results = [evaluate_session(s, periods, master_path=args.usage_master) for s in sessions]
+    results = [evaluate_session(s, periods, data_home=args.data_home) for s in sessions]
 
     blip_note = f" ({len(blips)} connection blip(s) excluded - 0 kWh, not real charges)" if blips else ""
     print(f"=== {len(results)} home-charging session(s) ==={blip_note}\n")
@@ -638,11 +883,12 @@ EXAMPLES
     total_base = sum(r["base_cost"] for r in results)
     total_base_incl_gst = sum(r["base_cost_incl_gst"] for r in results)
 
- # REQ-071: blended total now prefers PVOutput-adjusted (real, measured
- # self-consumption) FIRST, Evnex-adjusted (a configured schedule, not a
- # live measurement) SECOND, and plain base cost only for a session with
- # neither - so every session is always covered, never silently dropped,
- # while always using the most direct measurement available for it.
+ # REQ-071/REQ-140: blended total now prefers PV-provider-adjusted
+ # (real, measured self-consumption) FIRST, Evnex-adjusted (a
+ # configured schedule, not a live measurement) SECOND, and plain base
+ # cost only for a session with neither - so every session is always
+ # covered, never silently dropped, while always using the most direct
+ # measurement available for it.
     n_pv = sum(1 for r in results if r.get("pv_adjusted_cost") is not None)
     n_evnex_fallback = sum(1 for r in results if r.get("pv_adjusted_cost") is None and r["evnex_adjusted_cost"] is not None)
     n_base_only = len(results) - n_pv - n_evnex_fallback
@@ -665,12 +911,12 @@ EXAMPLES
     print("=== Totals ===")
     print(f"  {len(results)} session(s), {total_kwh:.3f} kWh total{blip_note}")
     print(f"  base cost (100% grid, every session)                         : ${total_base:.2f} ex GST -> ${total_base_incl_gst:.2f} incl GST")
-    print(f"  blended best estimate (PVOutput split for {n_pv}/{len(results)}, Evnex fallback for {n_evnex_fallback},")
+    print(f"  blended best estimate ({_PV_PROVIDER.display_name} split for {n_pv}/{len(results)}, Evnex fallback for {n_evnex_fallback},")
     print(f"                         base cost for the remaining {n_base_only})       : ${total_blended:.2f} ex GST -> ${total_blended_incl_gst:.2f} incl GST")
     if n_conflict:
         print(f"  ⚠️  {n_conflict} session(s) flagged with a solar-claim/real-import conflict (Evnex vs AGL) - see above")
     if n_pv_agl_conflict:
-        print(f"  ⚠️  {n_pv_agl_conflict} session(s) flagged with a PVOutput/AGL real-import cross-source conflict - see above")
+        print(f"  ⚠️  {n_pv_agl_conflict} session(s) flagged with a {_PV_PROVIDER.display_name}/AGL real-import cross-source conflict - see above")
     return 0
 
 

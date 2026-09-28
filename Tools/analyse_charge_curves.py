@@ -64,6 +64,92 @@ except Exception:
     def resolve_tessie_data_home():
         return None
 
+# TODO-038: real per-moment solar-vs-grid split for home (Evnex) charging
+# sessions, sourced from the same PV provider/credentials/cache
+# analyse_session_cost.py already trusts for its own whole-session solar
+# split (REQ-071/REQ-140) - never re-derived or approximated differently
+# here, just applied at finer (per-interval) granularity. Guarded the same
+# defensive way as resolve_tessie_data_home() above: if lib/providers_pv
+# aren't importable (or no PV credentials are configured), home sessions
+# still get their charts - just without the solar/grid split, per-total-
+# power only (see render_home_curve_chart's split=None fallback).
+try:
+    from datetime import datetime as _dt, timedelta as _timedelta
+    from providers_pv import get_pv_provider
+    from lib.pv_history_db import get_pv_db_connection, pv_window_split, pv_interval_series
+    from lib.tessie_api_common import load_config as _load_config
+    _PV_PROVIDER = get_pv_provider()
+    _PV_KEY, _PV_ACCOUNT_ID = _PV_PROVIDER.resolve_credentials(_load_config())
+    _PV_CONN = get_pv_db_connection() if (_PV_KEY and _PV_ACCOUNT_ID) else None
+except Exception:
+    _PV_PROVIDER = None
+    _PV_KEY = _PV_ACCOUNT_ID = None
+    _PV_CONN = None
+
+
+def compute_home_solar_grid_split(points):
+    """TODO-038: for a home Evnex session's telemetry points (each with a
+    naive-local "t" timestamp and "power_kw"), return a parallel list of
+    (solar_kw, grid_kw) tuples - or None if no PV data is available for
+    this session at all (missing credentials, or zero real interval
+    coverage), so the caller can fall back to plotting total power alone.
+
+    Method: for each point, find the pv_intraday interval whose
+    [start, end) contains its timestamp and use THAT interval's own real
+    solar_fraction (self_consumption_kwh/consumption_kwh - REQ-140's
+    per-interval SolarEdge/PVOutput meter fields, never approximated).
+    A point whose interval has no usable fraction (missing data, or zero
+    household consumption that interval) falls back to the whole-session
+    solar_fraction from pv_window_split() - the exact same blended figure
+    analyse_session_cost.py already surfaces and the user already trusts
+    for billing. Only if NEITHER is available does a point go unsplit
+    (solar_kw=0.0, grid_kw=power_kw - conservative, never invents solar
+    credit from nothing)."""
+    if not points or _PV_CONN is None or not (_PV_KEY and _PV_ACCOUNT_ID):
+        return None
+    try:
+        t0 = _dt.strptime(points[0]["t"], "%Y-%m-%d %H:%M:%S")
+        t1 = _dt.strptime(points[-1]["t"], "%Y-%m-%d %H:%M:%S") + _timedelta(minutes=1)
+    except (ValueError, KeyError):
+        return None
+
+    intervals = pv_interval_series(_PV_CONN, t0, t1, _PV_PROVIDER, _PV_KEY, _PV_ACCOUNT_ID, log=lambda *a, **k: None)
+    whole = pv_window_split(_PV_CONN, t0, t1, _PV_PROVIDER, _PV_KEY, _PV_ACCOUNT_ID)
+    fallback_fraction = whole.get("solar_fraction")
+
+    if not intervals and fallback_fraction is None:
+        return None
+
+    out = []
+    any_real = False
+    for p in points:
+        power_kw = p.get("power_kw") or 0.0
+        try:
+            ts = _dt.strptime(p["t"], "%Y-%m-%d %H:%M:%S")
+        except (ValueError, KeyError):
+            out.append((0.0, power_kw))
+            continue
+        frac = None
+        for iv in intervals:
+            if iv["start"] <= ts < iv["end"]:
+                frac = iv["solar_fraction"]
+                break
+        if frac is not None:
+            any_real = True
+        elif fallback_fraction is not None:
+            frac = fallback_fraction
+        if frac is None:
+            out.append((0.0, power_kw))
+            continue
+        frac = max(0.0, min(1.0, frac))
+        solar_kw = power_kw * frac
+        out.append((solar_kw, power_kw - solar_kw))
+
+    if not any_real and fallback_fraction is None:
+        return None
+    return out
+
+
 # --- dataviz reference palette (light mode) - see AGENTS.md / dataviz skill ---
 SURFACE = "#fcfcfb"
 TEXT_PRIMARY = "#0b0b0b"
@@ -380,7 +466,152 @@ def build_title(session, hardware_name, hardware):
     return f"{date_str} - {title}" if date_str else title
 
 
+def render_home_curve_chart(current, out_png, out_html, title):
+    """TODO-038: the home-Evnex variant of render_curve_chart() below -
+    elapsed TIME on the x-axis instead of SoC (BUG-039 flagged SoC as a
+    poor fit for home sessions, since it barely moves across most of
+    them), with the total charger-power trace SPLIT into a solar-kW area
+    (below) and grid-kW area (stacked on top) when real PV interval data
+    is available for this session's window (compute_home_solar_grid_split()
+    above) - matching the Evnex app's own solar=green/grid=blue
+    power-vs-time convention. Falls back to a single plain power line
+    (still time-based) when no PV split is available, rather than
+    skipping the chart or reverting to the SoC axis.
+
+    Deliberately a SEPARATE function from render_curve_chart(), not a
+    branch inside it - keeps the well-tested Supercharger/3rd-party
+    SoC-based path completely untouched by this change."""
+    import numpy as np
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+
+    pts = [p for p in current["points"] if p["power_kw"] is not None]
+    elapsed = np.array([p["elapsed_min"] for p in pts])
+    power = np.array([p["power_kw"] for p in pts])
+    split = compute_home_solar_grid_split(pts)
+
+    temp_pts = [p for p in current["points"] if p.get("temp_c") is not None]
+    temp_elapsed = np.array([p["elapsed_min"] for p in temp_pts])
+    temp_c = np.array([p["temp_c"] for p in temp_pts])
+
+    FIG_DPI = 220
+    fig, ax = plt.subplots(figsize=(10, 6), dpi=FIG_DPI)
+    fig.patch.set_facecolor(SURFACE)
+    ax.set_facecolor(SURFACE)
+
+    if split:
+        solar_kw = np.array([s for s, _ in split])
+        grid_kw = np.array([g for _, g in split])
+        ax.stackplot(elapsed, solar_kw, grid_kw, colors=[S3_AQUA, S1_BLUE],
+                     labels=["Solar (kW)", "Grid (kW)"], alpha=0.85, zorder=2)
+        ax.plot(elapsed, power, color=TEXT_PRIMARY, linewidth=1, alpha=0.35, zorder=3)
+        _trapz = np.trapezoid if hasattr(np, "trapezoid") else np.trapz
+        total_solar_kwh = float(_trapz(solar_kw, elapsed) / 60.0)
+        total_kwh = float(_trapz(power, elapsed) / 60.0)
+        solar_pct = (total_solar_kwh / total_kwh * 100.0) if total_kwh > 0 else 0.0
+        ax.legend(loc="upper right", frameon=False, fontsize=9.5, labelcolor=TEXT_SECONDARY)
+        split_caption = f"{solar_pct:.0f}% solar (real PV meter data, this session's window)"
+    else:
+        ax.plot(elapsed, power, color=S1_BLUE, linewidth=2.5, solid_capstyle="round", zorder=3)
+        ax.scatter(elapsed, power, s=36, color=S1_BLUE, edgecolors=SURFACE, linewidths=1.2, zorder=4)
+        split_caption = "solar/grid split unavailable (no PV data for this session's window)"
+
+    peak_i = int(power.argmax())
+ # Flip the annotation to the LEFT of its point (and anchor its text
+ # box on that side) whenever the peak sits in the right half of the
+ # chart - otherwise the offset text collides with the pack-temperature
+ # axis's own tick labels, which live just past the right edge (a real
+ # collision seen on a session whose peak was near the end of charging).
+    peak_on_right = elapsed[peak_i] > (elapsed.min() + elapsed.max()) / 2.0
+    ann_dx, ann_ha = (-12, "right") if peak_on_right else (12, "left")
+    ax.annotate(f"peak {power[peak_i]:.1f} kW\nat {elapsed[peak_i]:.0f} min", (elapsed[peak_i], power[peak_i]),
+                xytext=(ann_dx, -30), textcoords="offset points", fontsize=9.5, color=TEXT_PRIMARY,
+                fontfamily="DejaVu Sans", va="top", ha=ann_ha)
+
+    ax.yaxis.grid(True, color=GRID, linewidth=1)
+    ax.xaxis.grid(False)
+    ax.set_axisbelow(True)
+    for spine in ("top", "right", "left"):
+        ax.spines[spine].set_visible(False)
+    ax.spines["bottom"].set_color(BASELINE)
+    ax.tick_params(axis="both", colors=TEXT_SECONDARY, labelsize=10, length=0)
+    ax.set_xlim(elapsed.min(), elapsed.max())
+    ax.set_ylim(0, max(power) * 1.18 if len(power) else 1)
+    ax.set_xlabel("Elapsed time (min)", color=TEXT_SECONDARY, fontsize=11, fontfamily="DejaVu Sans")
+    ax.set_ylabel("Charger power (kW)", color=S1_BLUE if not split else TEXT_SECONDARY, fontsize=11,
+                  fontfamily="DejaVu Sans")
+
+    if len(temp_elapsed) >= 2:
+        ax_temp = ax.twinx()
+        ax_temp.plot(temp_elapsed, temp_c, color=S2_ORANGE, linewidth=1.8, solid_capstyle="round", zorder=5, alpha=0.9)
+        ax_temp.set_ylabel("Pack temperature (°C)", color=S2_ORANGE, fontsize=11, fontfamily="DejaVu Sans")
+        ax_temp.tick_params(axis="y", colors=S2_ORANGE, labelsize=10, length=0)
+        tpad = (max(temp_c) - min(temp_c)) * 0.25 or 3
+        ax_temp.set_ylim(min(temp_c) - tpad, max(temp_c) + tpad)
+        for spine in ("top", "left"):
+            ax_temp.spines[spine].set_visible(False)
+        ax_temp.spines["right"].set_color(BASELINE)
+
+    fig.suptitle("Charging curve", x=0.085, y=0.975, ha="left", va="top", color=TEXT_PRIMARY,
+                 fontsize=17, fontweight="bold", fontfamily="DejaVu Sans")
+    subtitle = f"{title}\n{len(pts)} samples over {elapsed.max():.0f} min  •  {split_caption}"
+    ax.set_title(subtitle, loc="left", color=TEXT_SECONDARY, fontsize=10.5, pad=30, fontfamily="DejaVu Sans",
+                 linespacing=1.5)
+
+    fig.tight_layout(rect=(0, 0, 1, 0.88))
+    fig.savefig(out_png, facecolor=SURFACE, bbox_inches="tight", dpi=FIG_DPI)
+    plt.close(fig)
+
+
+def render_home_curve_html(current, out_html, title):
+    """HTML twin of render_home_curve_chart() above, reusing the existing
+    generic series/axes _write_html()/_HTML_TEMPLATE machinery unchanged
+    (that hand-rolled canvas renderer only strokes lines, no fill/stack
+    support - see its own code - so this draws Solar/Grid as two
+    overlaid lines rather than a true stacked fill; the PNG above is the
+    one with the fuller Evnex-style stacked-area look)."""
+    pts = [p for p in current["points"] if p["power_kw"] is not None]
+    elapsed = [p["elapsed_min"] for p in pts]
+    power = [p["power_kw"] for p in pts]
+    split = compute_home_solar_grid_split(pts)
+
+    if split:
+        solar_kw = [s for s, _ in split]
+        grid_kw = [g for _, g in split]
+        series = [
+            {"name": "Solar power", "unit": "kW", "axis": "power", "color": S3_AQUA, "dash": False,
+             "x": elapsed, "y": solar_kw},
+            {"name": "Grid power", "unit": "kW", "axis": "power", "color": S1_BLUE, "dash": False,
+             "x": elapsed, "y": grid_kw},
+        ]
+        total_kwh = sum(power[i] * (elapsed[i + 1] - elapsed[i]) / 60.0 for i in range(len(power) - 1)) or 0.0
+        total_solar_kwh = sum(solar_kw[i] * (elapsed[i + 1] - elapsed[i]) / 60.0 for i in range(len(solar_kw) - 1)) or 0.0
+        solar_pct = (total_solar_kwh / total_kwh * 100.0) if total_kwh > 0 else 0.0
+        split_caption = f"{solar_pct:.0f}% solar (real PV meter data, this session's window)"
+    else:
+        series = [{"name": "Charger power", "unit": "kW", "axis": "power", "color": S1_BLUE,
+                   "dash": False, "x": elapsed, "y": power}]
+        split_caption = "solar/grid split unavailable (no PV data for this session's window)"
+
+    axes = {"power": {"label": "Charger power (kW)", "color": S1_BLUE, "side": "left"}}
+
+    temp_pts = [p for p in current["points"] if p.get("temp_c") is not None]
+    if len(temp_pts) >= 2:
+        series.append({"name": "Pack temperature", "unit": "°C", "axis": "temp", "color": S2_ORANGE,
+                        "dash": False, "x": [p["elapsed_min"] for p in temp_pts], "y": [p["temp_c"] for p in temp_pts]})
+        axes["temp"] = {"label": "Pack temperature (°C)", "color": S2_ORANGE, "side": "right"}
+
+    peak = max(power)
+    peak_min = elapsed[power.index(peak)]
+    subtitle = f"{title} - {len(pts)} samples over {max(elapsed):.0f} min, peak {peak:.1f} kW at {peak_min:.0f} min\n{split_caption}"
+    _write_html(out_html, "Charging curve", subtitle, series, axes, "Elapsed time (min)")
+
+
 def render_curve_chart(current, hist, hardware_name, hardware, out_png, out_html, title):
+    if current["slug"] == "Evnex_Home":
+        render_home_curve_chart(current, out_png, out_html, title)
+        return
     import numpy as np
     import matplotlib
     matplotlib.use("Agg")
@@ -853,6 +1084,9 @@ def _write_html(out_html, title, subtitle, series, axes, x_label, hline=None):
 
 
 def render_curve_html(current, hist, hardware, out_html, title):
+    if current["slug"] == "Evnex_Home":
+        render_home_curve_html(current, out_html, title)
+        return
     pts = [p for p in current["points"] if p["soc"] is not None and p["power_kw"] is not None]
     soc = [p["soc"] for p in pts]
     power = [p["power_kw"] for p in pts]

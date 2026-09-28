@@ -50,6 +50,7 @@ from lib.table_formatter import (
     format_row,
     format_title_line,
     format_box_line,
+    bold_headers,
 )
 from lib.sei_inspector import inspect_mp4_clip, format_stream_banner
 import lib.tessie_timezone as tztools
@@ -57,57 +58,15 @@ import lib.tessie_api_common as tessie_api_common
 from lib.fuel_common import format_drive_fuel_comparison, SAMPLE_COMPARISON_VEHICLES
 
 
-def normalize_row_timezone(row, lat_key, lon_key, start_key_prefix):
-    """Ensures row[f"{start_key_prefix} (UTC)"]/(TZ)/(Local) are populated
-    (TODO-009). Idempotent: if the row already has a non-empty UTC value
-    (e.g. re-reading an already-migrated drives_master.csv), leaves it
-    alone. Otherwise derives true UTC from whichever legacy column is
-    present - Tessie's own CSV export always applies ONE fixed,
-    known offset (Australia/Sydney's, for whatever date the row is on -
-    this repo always requests timezone=Australia/Sydney), so that offset
-    is exactly reversible regardless of where the event really happened;
-    the row's own (unaffected) lat/lon then gives the TRUE zone via
-    resolve_timezone(). Self-healing: works identically whether the row
-    came from the existing master file or a freshly landed CSV, so a
-    normal --consolidate run upgrades old and new rows alike with no
-    separate migration step."""
-    utc_key = f"{start_key_prefix} (UTC)"
-    tz_key = f"{start_key_prefix} TZ"
-    local_key = f"{start_key_prefix} (Local)"
-    if row.get(utc_key):
-        return
-    legacy = (row.get(f"{start_key_prefix} (AEST)") or row.get(start_key_prefix)
-              or row.get(start_key_prefix.replace(" At", "")) or "").strip()
-    if not legacy:
-        row[utc_key] = ""
-        row[tz_key] = ""
-        row[local_key] = ""
-        return
-    try:
-        naive = datetime.strptime(legacy[:16], "%Y-%m-%d %H:%M")
-    except Exception:
-        row[utc_key] = ""
-        row[tz_key] = ""
-        row[local_key] = legacy
-        return
- # naive.timestamp() would interpret the naive value in THIS machine's
- # own local zone, which is wrong on any host not itself set to
- # Sydney - compute purely arithmetically instead: treat the naive
- # value as if it already were UTC (epoch_as_if_utc), then subtract
- # the offset Tessie actually applied (Sydney's, for this date) to
- # recover the true UTC instant.
-    sydney_offset = tztools.sydney_offset_seconds(naive)
-    epoch_as_if_utc = int((naive - datetime(1970, 1, 1)).total_seconds())
-    true_utc_epoch = epoch_as_if_utc - int(sydney_offset)
-
-    lat = row.get(lat_key)
-    lon = row.get(lon_key)
-    zone = tztools.resolve_timezone(lat, lon)
-    local_dt, abbr, offset_str = tztools.localize(true_utc_epoch, zone)
-
-    row[utc_key] = str(true_utc_epoch)
-    row[tz_key] = zone
-    row[local_key] = f"{local_dt.strftime('%Y-%m-%d %H:%M')} {abbr}" if local_dt else legacy
+# TODO-009 (2026-09-26): normalize_row_timezone() moved to the shared
+# lib/tessie_timezone.py (as tztools.normalize_row_timezone) so
+# tessie_charging_analyzer.py's own consolidate_charges_master() can
+# reuse the exact same logic instead of a drifting copy - see that
+# module's own docstring for the full explanation. Nothing below this
+# comment changes: every call site in this file still says
+# `normalize_row_timezone(...)`, now resolved via the module-level
+# alias just below.
+normalize_row_timezone = tztools.normalize_row_timezone
 
 
 def wrap_text_display(s, max_width):
@@ -1603,8 +1562,11 @@ def copy_clips_locally(clips_or_files, analyzer, date_or_str=None, default_dest=
         if stream_info and stream_info.get("is_encrypted"):
             print(f"   ⚠️  Stream is encrypted ({stream_info.get('encryption_scheme', 'CENC')}) — requires vehicle decryption tools to view.")
         print(f"   Default destination: {default_dest}")
+        print("   [Enter] Copy to default")
+        print("   [v]     View in place on drive")
+        print("   Or enter a custom folder path")
         try:
-            c_input = input(f"   [Enter] copy to default, [v]iew in place on drive, or enter custom folder path: ").strip()
+            c_input = input("   > ").strip()
         except (KeyboardInterrupt, EOFError):
             c_input = "v"
 
@@ -2073,9 +2035,17 @@ def run_interactive_footage_review(packages, analyzer, context_label="Event Foot
             print(f"└{'─'*box_w}┘")
 
             while True:
-                prompt_str = f"Action: [k]eep / next (Enter), [c]opy locally, [f]lag delete, [u]nflag, [v]iew cams, [o]pen, [s]kip, [q]uit: "
+                print("Action:")
+                print("  [k]eep / next (Enter)")
+                print("  [c]opy locally")
+                print("  [f]lag delete")
+                print("  [u]nflag")
+                print("  [v]iew cams")
+                print("  [o]pen")
+                print("  [s]kip")
+                print("  [q]uit")
                 try:
-                    ans = input(prompt_str).strip().lower()
+                    ans = input("> ").strip().lower()
                 except (KeyboardInterrupt, EOFError):
                     ans = "q"
 
@@ -2315,20 +2285,28 @@ class TessieAnalyzer:
         self.places = {}
         self.charging_places = {}
         self.supercharger_places = {}
+        self._places_source_mtimes = {}
         for td in self.tessie_dirs:
             for fname, target_dict in [
                 ("places.json", self.places),
-                ("personal_chargers.json", self.places),
-                ("tesla_superchargers.json", self.supercharger_places),
+                ("chargers/personal_chargers.json", self.places),
+                ("chargers/tesla_superchargers.json", self.supercharger_places),
                 ("superchargers.json", self.supercharger_places),
-                ("tesla_chargers.json", self.charging_places),
+                ("chargers/tesla_chargers.json", self.charging_places),
                 ("destination_chargers.json", self.charging_places),
                 ("charging.json", self.charging_places),
-                ("plugshare_chargers.json", self.charging_places),
+                ("chargers/plugshare_chargers.json", self.charging_places),
             ]:
                 try:
                     pf = os.path.join(td, fname)
                     if os.path.isfile(pf):
+ # Record this file's mtime at load time (TODO-001) - checked by
+ # _places_cache_is_stale() before every resolve_place() lookup so an
+ # edit to places.json (or any of these sibling registries) made
+ # mid-session, e.g. in another terminal/editor while a long-running
+ # interactive menu loop is still open, is picked up on the next
+ # lookup rather than silently ignored until the process restarts.
+                        self._places_source_mtimes[pf] = os.path.getmtime(pf)
                         with open(pf, "r", encoding="utf-8") as f:
                             data = json.load(f)
                             if isinstance(data, dict):
@@ -2340,7 +2318,39 @@ class TessieAnalyzer:
                     pass
         return self.places
 
+    def _places_cache_is_stale(self):
+ # TODO-001: true if any source file's mtime has changed since the
+ # last load_places() call, OR a previously-missing file now exists
+ # (e.g. personal_chargers.json created mid-session), OR a
+ # previously-present file has been deleted. Cheap (a handful of
+ # os.path.getmtime() calls) so it is fine to run before every
+ # resolve_place() lookup rather than on a timer.
+        known = getattr(self, "_places_source_mtimes", None)
+        if known is None:
+            return True
+        for td in self.tessie_dirs:
+            for fname in (
+                "places.json", "chargers/personal_chargers.json",
+                "chargers/tesla_superchargers.json", "superchargers.json",
+                "chargers/tesla_chargers.json", "destination_chargers.json",
+                "charging.json", "chargers/plugshare_chargers.json",
+            ):
+                pf = os.path.join(td, fname)
+                exists = os.path.isfile(pf)
+                was_known = pf in known
+                if exists != was_known:
+                    return True
+                if exists:
+                    try:
+                        if os.path.getmtime(pf) != known[pf]:
+                            return True
+                    except OSError:
+                        return True
+        return False
+
     def resolve_place(self, address, saved_loc="", lat=None, lon=None):
+        if self._places_cache_is_stale():
+            self.load_places()
         addr_clean = address.lower() if address else ""
 
  # 1. GPS Geofence matching on known places (Highest Accuracy! - checked
@@ -2921,13 +2931,51 @@ class TessieAnalyzer:
         self.detailed_drives = detailed
         return self.detailed_drives
 
+    def _drive_start_collision_epochs(self):
+        """TODO-003: the set of Started At (UTC) epoch values shared by
+        MORE than one drives_master.csv row - a real, recurring pattern
+        (~1.8% of drives) where a 0-distance "blip" drive (a shift-state
+        rolling/parking micro-adjustment) is recorded starting at the
+        exact same second as the real drive that follows it. Cached on
+        first use since self.drives doesn't change within a run."""
+        if getattr(self, "_collision_epochs_cache", None) is not None:
+            return self._collision_epochs_cache
+        if not self.drives:
+            self.load_drives()
+        counts = {}
+        for d in self.drives:
+            key = d.get("start_utc_epoch")
+            if key is not None:
+                counts[key] = counts.get(key, 0) + 1
+        self._collision_epochs_cache = {k for k, v in counts.items() if v > 1}
+        return self._collision_epochs_cache
+
     def match_detailed_drive(self, drive_row):
         """The detailed_drives entry (if any) whose telemetry window
         overlaps this drives_master.csv row's start/end - same optional,
         may-or-may-not-exist lookup pattern already used for charges'
         dt_rec (self.detailed_charges), just keyed on drive start/end
         instead of a fuzzy 15-minute window (a drive's own start/end is
-        already precise, no need to guess)."""
+        already precise, no need to guess).
+
+        TODO-003 found a real data-integrity edge case this loose overlap
+        test alone gets wrong: when a 0-distance "blip" drive and the real
+        drive after it share the identical start timestamp (see
+        _drive_start_collision_epochs()), BOTH rows' padded windows overlap
+        the SAME short deep-dive record - the blip's own tiny telemetry -
+        and the real (often much longer) drive would silently be shown
+        that unrelated, mostly-stationary snippet as if it were its own.
+        Verified against this repo's real drive history: 12 real drives
+        (8-54 min, matched to a 2.6-13.3 min record covering as little as
+        6% of their own declared duration) were affected. The fix is
+        deliberately narrow - the duration-sanity check below only ever
+        applies to a drive_row whose start IS a genuine collision, and
+        only rejects a candidate covering under 40% of the drive's own
+        declared duration - because plenty of ordinary, non-colliding
+        drives legitimately have a deep-dive record shorter than their
+        full duration (partial telemetry capture is a normal, accepted
+        characteristic of this data source, confirmed across the wider
+        drive history and deliberately left untouched here)."""
         if not getattr(self, "detailed_drives", None):
             return None
         d_start = drive_row.get("start_dt")
@@ -2939,8 +2987,14 @@ class TessieAnalyzer:
  # Small padding (Tesla's own start/stop detection and the app's
  # detailed export don't always agree to the second).
         pad = timedelta(minutes=2)
+        is_collision = drive_row.get("start_utc_epoch") in self._drive_start_collision_epochs()
+        drive_duration_min = (d_end - d_start).total_seconds() / 60.0
         for rec in self.detailed_drives:
             if rec["start_datetime"] <= d_end + pad and rec["end_datetime"] >= d_start - pad:
+                if is_collision and drive_duration_min > 5:
+                    rec_duration_min = (rec["end_datetime"] - rec["start_datetime"]).total_seconds() / 60.0
+                    if rec_duration_min < 0.4 * drive_duration_min:
+                        continue
                 return rec
         return None
 
@@ -3745,7 +3799,10 @@ class TessieAnalyzer:
  # own "[o]pen chart in browser" for the charging curve.
         if chart_path and sys.stdin.isatty():
             try:
-                act = input(f"{'':2}Action: [o]pen chart in browser, [Enter] to return: ").strip().lower()
+                print("  Action:")
+                print("    [o]pen chart in browser")
+                print("    [Enter] to return")
+                act = input("  > ").strip().lower()
                 if act in ('o', 'open', 'chart', 'c'):
                     try_open_in_browser(chart_path)
             except (KeyboardInterrupt, EOFError):
@@ -4425,6 +4482,19 @@ def drill_down_day(day_str, day_trips, analyzer):
         for i, t in enumerate(day_trips):
             t_start = t["start_dt"].strftime("%H:%M")
             t_end = t["end_dt"].strftime("%H:%M")
+            # TODO-010: a trip whose start and end resolve to genuinely
+            # different real per-event timezones (e.g. an interstate
+            # border crossing) is ambiguous as a bare "HH:MM -> HH:MM" -
+            # show each end's own real abbreviation whenever they
+            # actually differ, so the crossing is visible right in the
+            # day table instead of silently assumed away. No visual
+            # change for the common case (every trip so far has been
+            # within a single zone).
+            t_start_abbr = t.get("start_tz_abbr") or ""
+            t_end_abbr = t.get("end_tz_abbr") or ""
+            if t_start_abbr and t_end_abbr and t_start_abbr != t_end_abbr:
+                t_start = f"{t_start} {t_start_abbr}"
+                t_end = f"{t_end} {t_end_abbr}"
             time_w = f" {t_start} ➔ {t_end}"
             dur_str = f" {format_duration_short(t['dur_min'])}"
             dist_str = f" {t['dist_km']:.1f} km"
@@ -4503,7 +4573,7 @@ def drill_down_day(day_str, day_trips, analyzer):
         print(format_title_line(title, total_inner, "left"))
         print(border_top_header)
         
-        row1_cols = [pad_display(h, w) for h, w in zip(left_headers, left_widths)] + [pad_display("Footage", w_foot_total, "center")]
+        row1_cols = [pad_display(h, w) for h, w in zip(bold_headers(left_headers), left_widths)] + [pad_display(f"\033[1mFootage\033[0m", w_foot_total, "center")]  # TODO-015: bolded to match analyse_charging.py header convention
         print("│" + "│".join(row1_cols) + "│")
         print(border_sub)
         
@@ -4654,7 +4724,7 @@ def drill_down_all_days(sorted_days, days_dict, analyzer, title):
         print(format_title_line(title_str, total_inner, "left"))
         print(border_top_header)
 
-        row1_cols = [pad_display(h, w) for h, w in zip(left_headers, left_widths)] + [pad_display("Footage", w_foot_total, "center")]
+        row1_cols = [pad_display(h, w) for h, w in zip(bold_headers(left_headers), left_widths)] + [pad_display(f"\033[1mFootage\033[0m", w_foot_total, "center")]  # TODO-015: bolded to match analyse_charging.py header convention
         print("│" + "│".join(row1_cols) + "│")
         print(border_sub)
 
@@ -4989,7 +5059,10 @@ def display_timeline_event_details(event, analyzer):
             if not sys.stdin.isatty():
                 break
             try:
-                c = input("Navigation: [b]ack, [q]uit: ").strip().lower()
+                print("Navigation:")
+                print("  [b]ack")
+                print("  [q]uit")
+                c = input("> ").strip().lower()
                 if c == "q":
                     sys.exit(0)
                 break
@@ -5317,6 +5390,63 @@ def find_home_recent_footage_packages(analyzer, target_dates=None):
 
     return home_recent_pkgs
 
+def export_all_deepdives(analyzer, dest_dir, dry_run=False):
+    """
+    TODO-024: bundles every real deep-dive artifact (driving AND charging)
+    into one destination folder, so grabbing them doesn't mean reaching
+    into the nested iCloud folder structure by hand. Plain flattened copy
+    into <dest_dir>/drives/ and <dest_dir>/charges/ (not a zip) - the
+    backlog note for this TODO explicitly deferred the zip-vs-plain-copy
+    choice pending the user's confirmation, so this ships the option that
+    needed no decision at all.
+
+    Copies whatever real files already exist for each session - CSV/JSON
+    always, HTML/PNG only where they already exist. As of 2026-09-25:
+    driving deep-dives (drives/deepdive/) have NO PNG yet, only the
+    dependency-free HTML canvas charts (deepdive_charts.py's own design
+    choice, not an oversight - see its module docstring); charging
+    deep-dives (charges/deepdive/) already include real PNGs from earlier
+    session work. This function does not generate anything new - it only
+    copies what is already on disk, so that gap is inherited here rather
+    than solved by it.
+    """
+    home = analyzer.tessie_data_home
+    if not home:
+        print("No Tessie data home resolved - nothing to export.")
+        return 0, 0
+
+    sources = [
+        (os.path.join(home, "drives", "deepdive"), os.path.join(dest_dir, "drives")),
+        (os.path.join(home, "charges", "deepdive"), os.path.join(dest_dir, "charges")),
+    ]
+    total_files = 0
+    total_bytes = 0
+    by_ext = defaultdict(int)
+
+    for src_dir, dst_dir in sources:
+        if not os.path.isdir(src_dir):
+            continue
+        if not dry_run:
+            os.makedirs(dst_dir, exist_ok=True)
+        for fname in sorted(os.listdir(src_dir)):
+            if fname.startswith("."):
+                continue
+            ext = os.path.splitext(fname)[1].lower()
+            if ext not in (".csv", ".json", ".html", ".png"):
+                continue
+            src_path = os.path.join(src_dir, fname)
+            if not os.path.isfile(src_path):
+                continue
+            sz = os.path.getsize(src_path)
+            if not dry_run:
+                shutil.copy2(src_path, os.path.join(dst_dir, fname))
+            total_files += 1
+            total_bytes += sz
+            by_ext[ext] += 1
+
+    return total_files, total_bytes, by_ext
+
+
 def purge_home_recent_cli(analyzer, target_dates=None, stage_only=False, dry_run=False, yes=False):
     """CLI flow to stage or purge all Home RecentClips footage packages."""
     pkgs = find_home_recent_footage_packages(analyzer, target_dates=target_dates)
@@ -5383,7 +5513,12 @@ def display_timeline(target_date, analyzer, compact=False):
                 break
                 
             try:
-                choice = input("Navigation: [p]rev day, [n]ext day, [b]ack, [q]uit: ").strip().lower()
+                print("Navigation:")
+                print("  [p]rev day")
+                print("  [n]ext day")
+                print("  [b]ack")
+                print("  [q]uit")
+                choice = input("> ").strip().lower()
                 if choice == "q":
                     sys.exit(0)
                 elif choice in ["b", "back"]:
@@ -5607,7 +5742,7 @@ def display_days_menu(days_dict, title, analyzer, can_go_back=False):
         print(format_title_line(title_str, total_inner, "left"))
         print(border_top_header)
         
-        row1_cols = [pad_display(h, w) for h, w in zip(left_headers, left_widths)] + [pad_display("Footage", w_foot_total, "center")]
+        row1_cols = [pad_display(h, w) for h, w in zip(bold_headers(left_headers), left_widths)] + [pad_display(f"\033[1mFootage\033[0m", w_foot_total, "center")]  # TODO-015: bolded to match analyse_charging.py header convention
         print("│" + "│".join(row1_cols) + "│")
         print(border_sub)
         
@@ -5720,7 +5855,7 @@ def display_months_menu(days_dict, analyzer):
  # idx/days/trips/time/dist are numbers (with units, or plain for idx/days/trips) -> right-aligned;
  # month and notable-destinations are free text -> left-aligned.
         m_aligns = ["right", "left", "right", "right", "right", "right", "left"]
-        print(format_row(m_headers, m_widths))
+        print(format_row(bold_headers(m_headers), m_widths))  # TODO-015: bolded to match analyse_charging.py header convention
         print(border_data_divider)
         
         for r in rows_data:
@@ -5819,6 +5954,9 @@ EXAMPLES
     g_camera.add_argument("--dry-run", action="store_true", help="Preview footage to be staged or purged without modifying disks")
     g_camera.add_argument("--yes", "-y", action="store_true", help="Automatically confirm purge without interactive prompt")
 
+    g_export = parser.add_argument_group("Deep-Dive Export")
+    g_export.add_argument("--export-deepdives", metavar="DEST_DIR", help="Bundle every real drive + charging deep-dive artifact (CSV/JSON/HTML/PNG, whichever already exist) into DEST_DIR/drives and DEST_DIR/charges")
+
     args = parser.parse_args()
 
     analyzer = TessieAnalyzer(tessie_dir=args.tessie_dir)
@@ -5833,6 +5971,22 @@ EXAMPLES
 
     if args.flagged:
         display_flagged_deletions_menu(analyzer)
+        return
+
+    if args.export_deepdives:
+        dest = os.path.abspath(os.path.expanduser(args.export_deepdives))
+        n_files, n_bytes, by_ext = export_all_deepdives(analyzer, dest, dry_run=args.dry_run)
+        if n_files == 0:
+            print("No deep-dive artifacts found to export.")
+        else:
+            mb = n_bytes / (1024 * 1024)
+            sz_str = f"{mb/1024:.1f} GB" if mb >= 1024 else f"{mb:.1f} MB"
+            ext_summary = ", ".join(f"{n} {ext.lstrip('.').upper()}" for ext, n in sorted(by_ext.items()))
+            verb = "Would copy" if args.dry_run else "Copied"
+            print(f"{verb} {n_files} deep-dive file(s) ({sz_str}) to {dest} ({ext_summary})")
+            if not args.dry_run:
+                print(f"  -> {os.path.join(dest, 'drives')}")
+                print(f"  -> {os.path.join(dest, 'charges')}")
         return
 
     drives = analyzer.load_drives()

@@ -1,0 +1,31 @@
+{
+  "_comment": "TEMPLATE ONLY - not real data. Copy this file's SHAPE into your own solar_system.json, which lives in the active power provider's data home under a Solar/ subfolder (get_power_provider().resolve_data_home()/Solar - a sibling of AGL/, PVOutput/, SolarEdge/ - NEVER inside this repo's Tools/ directory - see AGENTS.md REQ-034/REQ-150). Real per-domain DATA does not live in this repo. Every real figure here is specific to one household's install and is treated as PII, so no real values are checked in. Only install_date/system_size_kw/net_upfront_cost_aud/lifetime_years are required (used by power_roi_report.py, REQ-121); home_location/orientation_deg_from_true_north/panel_groups/west_obstruction are optional, richer physical-geometry fields (REQ-127/128/129) used by lib/shading_model.py's clear-sky shading comparison - omit them entirely if you don't need that model.",
+  "install_date": "YYYY-MM-DD",
+  "system_size_kw": 6.6,
+  "net_upfront_cost_aud": 5500.0,
+  "lifetime_years": 25,
+  "notes": "Net_upfront_cost_aud should be the fully installed price AFTER any STC/rebate, GST inclusive, straight off your signed contract - used by power_roi_report.py to compute payback period and lifetime ROI from the real self-consumption savings + export credit this repo already calculates.",
+  "home_location": {
+    "lat": 0.0,
+    "lon": 0.0,
+    "source": "Where this lat/lon came from (e.g. your own places registry's 'Home' entry)"
+  },
+  "orientation_deg_from_true_north": 0,
+  "orientation_note": "Compass offset of the house/array from true north - negative = degrees WEST of north, positive = EAST. Optional; only needed for the shading model.",
+  "panel_groups": [
+    {
+      "name": "example_group",
+      "panel_count": 10,
+      "roof_type": "e.g. tiled main roof, skillion patio extension, ground mount, etc.",
+      "tilt_deg": 25,
+      "azimuth_deg_from_true_north": 0,
+      "source": "How you know this group's geometry (drone photo, install diagram, physical measurement, etc.)"
+    }
+  ],
+  "west_obstruction": {
+    "description": "Free-text description of any known shading obstruction (a neighbouring building, trees, etc.) and how it was confirmed.",
+    "permanent": true,
+    "completed_approx": "YYYY-MM",
+    "completed_note": "How you know when the obstruction appeared/was completed."
+  }
+}

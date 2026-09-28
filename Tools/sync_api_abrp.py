@@ -2,6 +2,14 @@
 """
 sync_api_abrp.py - ABRP / Iternio Telemetry Sync & Vehicle Profile Inspector
 =============================================================================
+NOTE (BUG-123, 2026-09-26): despite the "sync_" prefix, this is a MANUAL,
+one-time OAuth setup / vehicle-profile inspection tool - it is not chained
+into sync_all.sh or any other sync_*_all.sh pipeline, and nothing else in
+the repo calls it automatically. Run it by hand whenever you need to
+(re)authorize ABRP or inspect the live vehicle profile it sees. Its
+underlying library, lib/abrp_common.py, IS genuinely used by charger_find.py
+for live range/SoC estimation - that part is unaffected by this note.
+
 Communicates with the ABRP (A Better Routeplanner / Iternio) Telemetry API:
 - Validates client_id, api_key, and user_token configured in config.json
 - Queries live battery level, health, calibrated consumption, and vehicle profile
@@ -43,7 +51,7 @@ if _tools_dir not in sys.path:
 if _lib_dir not in sys.path:
     sys.path.insert(0, _lib_dir)
 
-from lib.abrp_planner import (
+from lib.abrp_common import (
     load_abrp_config,
     fetch_oauth_token,
     fetch_user_info,
@@ -112,7 +120,7 @@ def main():
         else:
             token_src = f"Generated Cache ({os.path.basename(token_file)})"
         print(f"🔍 {C_CYAN}Querying ABRP Live Telemetry & Vehicle Profile using token from {token_src}...{C_RESET}")
-        from lib.abrp_planner import fetch_abrp_telemetry
+        from lib.abrp_common import fetch_abrp_telemetry
         tlm_res, raw = fetch_abrp_telemetry(api_key, active_token)
         if tlm_res and not tlm_res.get("error"):
             _display_vehicle_telemetry(tlm_res)
@@ -145,7 +153,7 @@ def main():
             cached_path = save_abrp_token(token, {"source": "oauth_code", "data": token_data})
             print(f"{C_GREEN}✔ Access Token successfully retrieved and cached to {cached_path}!{C_RESET}")
             print(f"🔍 {C_CYAN}Fetching user & custom vehicle profile from ABRP...{C_RESET}")
-            from lib.abrp_planner import fetch_abrp_telemetry
+            from lib.abrp_common import fetch_abrp_telemetry
             tlm_res, raw = fetch_abrp_telemetry(api_key, token)
             if tlm_res and not tlm_res.get("error"):
                 _display_vehicle_telemetry(tlm_res)

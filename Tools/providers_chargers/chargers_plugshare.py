@@ -137,7 +137,7 @@ def _resolve_plugshare_registry_path() -> str:
     except Exception:
         pass
     if tessie_home:
-        candidates.append(os.path.join(tessie_home, "plugshare_chargers.json"))
+        candidates.append(os.path.join(tessie_home, "chargers", "plugshare_chargers.json"))
 
     candidates.append(os.path.join(_repo_root, "resources", "plugshare_chargers.json"))
     config_path = os.path.join(_repo_root, "config.json")  # TODO-034: root is primary now
@@ -150,7 +150,7 @@ def _resolve_plugshare_registry_path() -> str:
                 td = cfg.get("directories", {}).get("data")
                 if td:
                     td_exp = os.path.expanduser(td)
-                    candidates.insert(0, os.path.join(td_exp, "plugshare_chargers.json"))
+                    candidates.insert(0, os.path.join(td_exp, "chargers", "plugshare_chargers.json"))
         except Exception:
             pass
 
@@ -1256,7 +1256,10 @@ class PlugShareProvider(BaseChargerProvider):
         if existing:
  # Check if tariffs or hardware changed
             if detect_station_changes(existing, record):
-                archive_path = os.path.join(os.path.dirname(self.registry_path), "plugshare_chargers_archived.json")
+                from lib.tessie_api_common import resolve_tessie_archive_home
+                _archive_dir = os.path.join(resolve_tessie_archive_home(), "chargers")
+                os.makedirs(_archive_dir, exist_ok=True)
+                archive_path = os.path.join(_archive_dir, "plugshare_chargers_archived.json")
                 archive_station_record(archive_path, existing_key or station_key, existing, now_utc)
 
             ex_rate = existing.get("tariffs", {}).get("per_kwh_flat", 0.0)

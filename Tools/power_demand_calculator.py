@@ -39,13 +39,14 @@ Usage:
 """
 
 import argparse
-import csv
+import calendar
 import os
 import sys
-from datetime import datetime
+from datetime import date, datetime
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from providers_power import get_power_provider  # noqa: E402
+from lib.power_usage_db import get_usage_db_connection, iter_rows  # noqa: E402
 
 
 def load_rate_periods():
@@ -59,30 +60,36 @@ def rate_for_date(d, periods=None):
     return get_power_provider().rate_for_date(d, periods)
 
 
-def load_import_readings(master_path, year, month):
-    """[(datetime, kWh), ...] for every "import"-role row in
-    `master_path` whose StartDate falls in the given calendar
-    year/month - datetime parsing follows the active provider's own
-    usage-export timestamp format."""
+def load_import_readings(data_home, year, month):
+    """[(datetime, kWh), ...] for every "import"-role row in the usage
+    database (lib/power_usage_db.py) whose StartDate falls in the given
+    calendar year/month - datetime parsing follows the active provider's
+    own usage-export timestamp format. REQ-115: queried via the derived
+    start_date_iso column (indexed, correctly bounded), replacing the old
+    full-file agl_usage_master.csv linear scan."""
     provider = get_power_provider()
-    out = []
-    with open(master_path, "r", encoding="utf-8-sig", newline="") as f:
-        for row in csv.DictReader(f):
-            if row["Role"] != "import":
-                continue
+    conn = get_usage_db_connection(provider, data_home)
+    try:
+        last_day = calendar.monthrange(year, month)[1]
+        month_start = date(year, month, 1)
+        month_end = date(year, month, last_day)
+        out = []
+        for row in iter_rows(conn, role="import", start_date=month_start, end_date=month_end):
             dt = provider.parse_datetime(row["StartDate"])
-            if dt.year == year and dt.month == month:
+            if dt.year == year and dt.month == month:  # belt-and-suspenders vs. any TZ/boundary edge case
                 out.append((dt, float(row["kWh"])))
-    return out
+        return out
+    finally:
+        conn.close()
 
 
-def monthly_latched_kw(master_path, year, month):
+def monthly_latched_kw(data_home, year, month):
     """(kw, at_datetime) for the latched demand peak in this calendar
     month under the active provider's own demand window, or (0.0, None)
     if no interval in the demand window this month (e.g. a shoulder
     month)."""
     provider = get_power_provider()
-    readings = load_import_readings(master_path, year, month)
+    readings = load_import_readings(data_home, year, month)
     candidates = [(dt, kwh) for dt, kwh in readings if provider.in_demand_window(dt)]
     if not candidates:
         return 0.0, None
@@ -97,7 +104,6 @@ def demand_charge(kw_latched, billing_days, rate_per_kw_day):
 def self_test():
     provider = get_power_provider()
     data_home = provider.resolve_data_home()
-    master_path = os.path.join(data_home, "usage", provider.usage_master_filename())
     periods = load_rate_periods()
 
     cases = [
@@ -107,7 +113,7 @@ def self_test():
     ]
     all_passed = True
     for year, month, days, expected_kw, expected_ex_gst, label in cases:
-        kw, at = monthly_latched_kw(master_path, year, month)
+        kw, at = monthly_latched_kw(data_home, year, month)
         rate = rate_for_date(datetime(year, month, 1).date(), periods)["demand_rate_per_kw_day"]
         ex_gst, incl_gst = demand_charge(kw, days, rate)
         ok = abs(kw - expected_kw) < 0.005 and abs(ex_gst - expected_ex_gst) < 0.005
@@ -119,7 +125,7 @@ def self_test():
  # August 2026: not yet invoiced at the time this was written - a
  # projection, not a reconciliation. Printed separately so it's
  # never mistaken for a verified self-test result.
-    kw, at = monthly_latched_kw(master_path, 2026, 8)
+    kw, at = monthly_latched_kw(data_home, 2026, 8)
     rate = rate_for_date(datetime(2026, 8, 1).date(), periods)["demand_rate_per_kw_day"]
     ex_gst, incl_gst = demand_charge(kw, 31, rate)
     print(f"[PROJECTED, not yet invoiced] 2026-08: latched {kw} kW at {at} -> "
@@ -169,8 +175,7 @@ EXAMPLES
         year, month = (int(x) for x in args.month.split("-"))
         provider = get_power_provider()
         data_home = provider.resolve_data_home()
-        master_path = os.path.join(data_home, "usage", provider.usage_master_filename())
-        kw, at = monthly_latched_kw(master_path, year, month)
+        kw, at = monthly_latched_kw(data_home, year, month)
         print(f"{args.month}: latched {kw} kW" + (f" at {at}" if at else " (no demand-window interval this month)"))
         if args.days and kw:
             rate = rate_for_date(datetime(year, month, 1).date())["demand_rate_per_kw_day"]

@@ -43,6 +43,20 @@ FORCE_MODE=0
 TOMBSTONE_MODE=0
 TOMBSTONE_PURGE_MODE=0
 
+# REQ (2026-09-26): dedicated Recent (cap) Home purge mode - the exact
+# intersection prompt_home_recent_purge()/purge_home_recent_backlog()
+# already compute (RecentClips packages recorded while parked at Home),
+# now exposed as its own standalone CLI flag instead of only being
+# reachable via the interactive post-sync prompt or the new automatic
+# backlog pass. Deliberately NOT folded into --purge-recent/
+# --purge-all-recent (which purge ALL RecentClips regardless of
+# location) or any "purge all Home footage" notion (which would also
+# catch SavedClips/SentryClips recorded at Home, not wanted here) -
+# this is the union of "Recent" and "Home" being asked for, not all of
+# either category on its own.
+HOME_RECENT_PURGE_MODE=0
+HOME_RECENT_PURGE_DAYS=""    # empty = no age restriction (all ages)
+
 # ==============================================================================
 # REQUIREMENT & DEPENDENCY CHECKER
 # ==============================================================================
@@ -272,6 +286,14 @@ while [[ $# -gt 0 ]]; do
       PURGE_TARGET_PCT="${2:-50}"
       shift 2
       ;;
+    --purge-home-recent|-phr)
+      HOME_RECENT_PURGE_MODE=1
+      if [[ -n "$2" && "$2" =~ ^[0-9]+$ ]]; then
+        HOME_RECENT_PURGE_DAYS="$2"
+        shift
+      fi
+      shift
+      ;;
     --target|-tgt)
       PURGE_TARGET_DRIVE="$2"
       shift 2
@@ -326,6 +348,18 @@ CLI Purge Controls (Default: Requires Archive Drive/Folder Connected):
   -n,  --dry-run             Simulate purge and report reclaimable space without deleting
   -y,  --yes                 Skip standard confirmation prompts
 
+Home + Recent Purge (RecentClips (cap) parked-at-Home only - NOT all Home, NOT all Recent):
+  -phr,--purge-home-recent [DAYS]
+                             Purge RecentClips footage recorded while parked at Home, across
+                             the Master Archive AND every other connected drive at once
+                             (ignores --target - always all connected drives, since this is a
+                             flag/tombstone-tracked deletion, not a per-drive verified-copy
+                             check like the CLI Purge Controls above). Optional DAYS restricts
+                             to packages from more than DAYS ago (default: all ages found).
+                             Requires Tessie sync configured (GPS + places.json - this is how
+                             "parked at Home" is determined at all); silently does nothing
+                             otherwise. Respects -n/--dry-run and -y/--yes above.
+
 Tombstone Registry & Multi-Volume Deletion:
   --tombstones               List all permanently deleted dashcam events/clips in registry
   --purge-tombstones         Purge tombstoned clips across connected drives (or clear registry)
@@ -337,6 +371,11 @@ Sync & Backup (No flags):
   Performs pre-sync tombstone reconciliation across drives, complete multi-drive backup sync
   to archive SSD (or --localsync directory), and verified RecentClips retention prune (2 days on USB).
   No footage is purged from JOWUA or Archive SSD unless explicitly requested.
+  Before each sync leg starts, free space on the destination is checked against the actual
+  rsync --dry-run payload estimate (+1GB headroom). If there isn't enough room, that leg is
+  skipped with a warning (pointing at --purge-home-recent to reclaim space) instead of starting
+  a transfer that would stall or fail partway through. Auto-skipped with no prompt when
+  unattended (-y/--yes or no TTY); prompted for override when run interactively.
 HELP_EOF
       exit 0
       ;;
@@ -1555,17 +1594,20 @@ PY_EOF
   fi
 }
 
-# Pre-sync Home + Recent deletion prompt. "Home + Recent" = RecentClips
+# Post-sync Home + Recent deletion prompt. "Home + Recent" = RecentClips
 # footage recorded while parked at the registered Home location - the
 # clearest, lowest-value-to-keep category (driveway/garage loop footage).
 # This is a deliberate, user-in-the-loop decision, separate from the
 # automatic space-management purge (execute_safe_or_force_purge) below:
 # it only ever runs when an archive destination (2TB SSD or --localsync
 # dir) is connected, mirroring that same function's own rule of never
-# deleting footage that hasn't been archived somewhere first. It always
-# runs BEFORE the sync legs for this drive combo, and purges any
-# confirmed packages directly from every currently-connected drive
-# (source included) so the sync legs that follow never see them to copy.
+# deleting footage that hasn't been archived somewhere first. Runs AFTER
+# every sync_volumes leg for this drive combo has finished (moved here
+# from a pre-sync call at the user's request), so any Home RecentClips
+# footage from since the last run has already been copied to the archive
+# destination before this ever offers to delete it from the recording
+# drive - guaranteeing nothing is purged before it exists somewhere else
+# too.
 prompt_home_recent_purge() {
   local script_dir="$(cd "$(dirname "$SCRIPT_PATH")" && pwd)"
   local drives=("$@")
@@ -1661,6 +1703,199 @@ PY_EOF
   rm -f "$tmp_py"
 }
 
+# REQ (2026-09-26): fast, non-interactive Home+Recent BACKLOG purge, run
+# at the very START of the script (before any sync_volumes leg), so
+# accumulated old Home RecentClips footage is cleared immediately rather
+# than waiting on a potentially large/slow sync to finish first - raised
+# directly by the user after noticing the Archive drive at 98% full
+# while a transfer was stalled. Deliberately kept SEPARATE from
+# prompt_home_recent_purge() above rather than just moving that one
+# earlier: that function's post-sync placement is itself a deliberate,
+# previously-agreed safety design (a brand-new Home RecentClips package
+# is only ever offered for deletion after THIS run's own sync has
+# already copied it to the archive destination) - moving it wholesale
+# would reopen exactly the gap that placement was built to close, since
+# "an archive destination is connected" is a coarse yes/no check here,
+# not per-file archived verification.
+#
+# This function sidesteps that risk instead of ignoring it: it only ever
+# targets packages from days STRICTLY OLDER than
+# HOME_RECENT_BACKLOG_SAFETY_DAYS ago, on the reasoning that anything
+# that old has almost certainly already been through at least one full
+# sync cycle already (this script's own normal run cadence) - so purging
+# it immediately, before today's sync leg, carries no realistic risk of
+# deleting footage that was never archived anywhere. Runs with yes=True
+# unconditionally (no interactive prompt) since it's restricted to that
+# safe backlog window; anything from the last few days still goes
+# through the existing, slower, confirmed-post-sync path above.
+HOME_RECENT_BACKLOG_SAFETY_DAYS=3
+
+purge_home_recent_backlog() {
+  local script_dir="$(cd "$(dirname "$SCRIPT_PATH")" && pwd)"
+  local drives=("$@")
+
+ # Never fires under --dry-run (it would permanently delete files).
+  if [[ "$DRY_RUN" -eq 1 ]]; then
+    return 0
+  fi
+
+  local tmp_py
+  tmp_py="$(mktemp "${TMPDIR:-/tmp}/dashcam_home_recent_backlog.XXXXXX.py")" || return 0
+
+  cat > "$tmp_py" << 'PY_EOF'
+import os
+import sys
+from datetime import date, timedelta
+
+script_dir = sys.argv[1]
+safety_days = int(sys.argv[2])
+drive_dirs = [d for d in sys.argv[3:] if d and d != "none" and os.path.isdir(d)]
+sys.path.insert(0, script_dir)
+
+try:
+    from analyse_drives import (
+        TessieAnalyzer,
+        find_home_recent_footage_packages,
+        purge_home_recent_cli,
+        resolve_master_teslacam_dir,
+        export_tombstone_rsync_excludes,
+    )
+except ImportError:
+    sys.exit(0)
+
+if not drive_dirs:
+    sys.exit(0)
+
+# Same Tessie-configured gate as the post-sync prompt - stays
+# completely silent for anyone running this purely for dashcam
+# sync/prune with no Tessie account configured at all.
+def _tessie_is_configured():
+    try:
+        from lib.tessie_api_common import load_config, get_token, get_vin
+    except ImportError:
+        return False
+    cfg = load_config()
+    token = get_token(None, cfg)
+    vin = get_vin(None, cfg)
+    if not token or token == "YOUR_TESSIE_API_TOKEN_HERE":
+        return False
+    if not vin or vin == "YOUR_VIN_HERE":
+        return False
+    return True
+
+if not _tessie_is_configured():
+    sys.exit(0)
+
+analyzer = TessieAnalyzer(teslacam_dirs=drive_dirs)
+analyzer.index_footage()
+
+cutoff = date.today() - timedelta(days=safety_days)
+old_dates = sorted(
+    d for d in set(c["dt"].date() for c in analyzer.footage_db if c.get("cat") == "Recent")
+    if d < cutoff
+)
+if not old_dates:
+    sys.exit(0)
+
+# Quick pre-check so this stays silent when there's genuinely nothing
+# to do (the common case once the backlog is cleared) rather than
+# printing a header every single run.
+pkgs = find_home_recent_footage_packages(analyzer, target_dates=old_dates)
+if not pkgs:
+    sys.exit(0)
+
+print(f">>> Clearing Home+Recent backlog ({len(old_dates)} day(s) older than {safety_days} days, "
+      f"{len(pkgs)} package(s))...")
+purge_home_recent_cli(analyzer, target_dates=old_dates, yes=True)
+
+master_dir = resolve_master_teslacam_dir(drive_dirs)
+if master_dir:
+    export_tombstone_rsync_excludes(master_dir, "/tmp/teslacam_sync/tombstones_exclude.txt")
+PY_EOF
+
+  python3 "$tmp_py" "$script_dir" "$HOME_RECENT_BACKLOG_SAFETY_DAYS" "${drives[@]}"
+  rm -f "$tmp_py"
+}
+
+# CLI-invoked Home+Recent purge (--purge-home-recent / -phr). Unlike
+# purge_home_recent_backlog() above (always yes=True, always restricted
+# to the safe backlog window), this is an explicit user action - it
+# respects -n/--dry-run and -y/--yes exactly like the other CLI Purge
+# Controls, defaults to ALL ages (not just old backlog) since the whole
+# point of calling this directly is "purge it now", and always targets
+# every connected drive (Master Archive + every secondary) rather than
+# a single --target, since Recent+Home is a flag/tombstone-tracked
+# deletion that has to stay consistent across all of them at once, not
+# a per-drive verified-copy check like --purge-recent/--purge-days.
+cli_purge_home_recent() {
+  local script_dir="$(cd "$(dirname "$SCRIPT_PATH")" && pwd)"
+  local days_filter="$1"; shift
+  local dry_run_flag="$1"; shift
+  local yes_flag="$1"; shift
+  local drives=("$@")
+
+  local tmp_py
+  tmp_py="$(mktemp "${TMPDIR:-/tmp}/dashcam_home_recent_cli.XXXXXX.py")" || return 1
+
+  cat > "$tmp_py" << 'PY_EOF'
+import os
+import sys
+from datetime import date, timedelta
+
+script_dir = sys.argv[1]
+days_filter = sys.argv[2]
+dry_run = sys.argv[3] == "1"
+yes = sys.argv[4] == "1"
+drive_dirs = [d for d in sys.argv[5:] if d and d != "none" and os.path.isdir(d)]
+sys.path.insert(0, script_dir)
+
+try:
+    from analyse_drives import TessieAnalyzer, purge_home_recent_cli
+except ImportError:
+    print("ERROR: could not import analyse_drives.py - is this script still beside it in Tools/?")
+    sys.exit(1)
+
+if not drive_dirs:
+    print("ERROR: no connected drives to purge Home+Recent footage from.")
+    sys.exit(1)
+
+try:
+    from lib.tessie_api_common import load_config, get_token, get_vin
+    cfg = load_config()
+    token = get_token(None, cfg)
+    vin = get_vin(None, cfg)
+    configured = bool(token) and token != "YOUR_TESSIE_API_TOKEN_HERE" and bool(vin) and vin != "YOUR_VIN_HERE"
+except Exception:
+    configured = False
+
+if not configured:
+    print("ERROR: --purge-home-recent needs a configured Tessie account (GPS + places.json")
+    print("       is how \"parked at Home\" is determined at all) - nothing to purge without it.")
+    sys.exit(1)
+
+analyzer = TessieAnalyzer(teslacam_dirs=drive_dirs)
+analyzer.index_footage()
+
+target_dates = None
+if days_filter:
+    cutoff = date.today() - timedelta(days=int(days_filter))
+    target_dates = sorted(
+        d for d in set(c["dt"].date() for c in analyzer.footage_db if c.get("cat") == "Recent")
+        if d < cutoff
+    )
+    if not target_dates:
+        print(f"No RecentClips older than {days_filter} day(s) found - nothing to check.")
+        sys.exit(0)
+
+n_del, b_del = purge_home_recent_cli(analyzer, target_dates=target_dates, dry_run=dry_run, yes=yes)
+PY_EOF
+
+  python3 "$tmp_py" "$script_dir" "$days_filter" "$dry_run_flag" "$yes_flag" "${drives[@]}"
+  local rc=$?
+  rm -f "$tmp_py"
+  return $rc
+}
+
 # Tombstone list mode (--tombstones)
 if [[ "$TOMBSTONE_MODE" -eq 1 ]]; then
   list_dashcam_tombstones "$VOL_TESLA_USB" "$VOL_JOWUA" "$VOL_2TB" "$LOCAL_SYNC_DIR"
@@ -1676,6 +1911,22 @@ if [[ "$TOMBSTONE_PURGE_MODE" -eq 1 ]]; then
   echo "Tombstone purge complete."
   echo "======================================================"
   exit 0
+fi
+
+# Home+Recent purge mode (--purge-home-recent / -phr)
+if [[ "$HOME_RECENT_PURGE_MODE" -eq 1 ]]; then
+  echo "======================================================"
+  echo "     TeslaCam Home + Recent Purge Across Drives       "
+  echo "======================================================"
+  cli_purge_home_recent "$HOME_RECENT_PURGE_DAYS" "$DRY_RUN" "$ASSUME_YES" \
+    "$VOL_TESLA_USB" "$VOL_JOWUA" "$VOL_2TB" "$LOCAL_SYNC_DIR"
+  rc=$?
+  echo "======================================================"
+  if (( rc == 0 )); then
+    echo "Home + Recent purge complete."
+  fi
+  echo "======================================================"
+  exit $rc
 fi
 
 # ==============================================================================
@@ -1861,6 +2112,38 @@ sync_volumes() {
   local to_transfer_gb=$(printf "%.2f" "$(( to_transfer_kb / 1048576.0 ))")
   printf "\r\033[K    Payload: %s GB to sync.\n" "$to_transfer_gb"
 
+ # Pre-flight: estimate whether the destination actually has room for
+ # this payload BEFORE launching the real transfer, so a sync never
+ # silently stalls/fills the drive mid-transfer the way it did before
+ # this check existed. 1GB safety headroom is kept beyond the payload
+ # itself since filesystems (especially near-full APFS volumes) behave
+ # badly at literally zero free space.
+  local SPACE_SAFETY_BUFFER_KB=1048576
+  local avail_dst_kb=$(df -k "$dst" | awk 'NR==2 {print $4}')
+  local avail_dst_gb=$(printf "%.2f" "$(( avail_dst_kb / 1048576.0 ))")
+  local shortfall_kb=$(( (to_transfer_kb + SPACE_SAFETY_BUFFER_KB) - avail_dst_kb ))
+
+  if (( shortfall_kb > 0 )); then
+    local shortfall_gb=$(printf "%.2f" "$(( shortfall_kb / 1048576.0 ))")
+    echo "    ⚠️  WARNING: Not enough free space on destination for this sync leg."
+    echo "        Target      : $dst"
+    echo "        Payload     : ${to_transfer_gb} GB"
+    echo "        Free space  : ${avail_dst_gb} GB"
+    echo "        Shortfall   : ~${shortfall_gb} GB short (incl. 1GB safety headroom)"
+    echo "        Tip: free space first with:  $(basename "$0") --purge-home-recent"
+    if [[ "$ASSUME_YES" -eq 1 || ! -t 0 ]]; then
+      echo "    Skipping this sync leg (unattended - no confirmation possible)."
+      return 1
+    fi
+    printf "    Continue anyway and risk filling the drive mid-transfer? [y/N]: "
+    read -r space_confirm
+    if [[ "$space_confirm" != [yY] && "$space_confirm" != [yY][eE][sS] ]]; then
+      echo "    Skipping this sync leg."
+      return 1
+    fi
+    echo "    Proceeding at user's request despite low free space."
+  fi
+
  # Baseline destination disk usage
   local initial_dst_kb=$(df -k "$dst" | awk 'NR==2 {print $3}')
   local prev_dst_kb=$initial_dst_kb
@@ -1948,15 +2231,14 @@ echo "======================================================"
 check_and_prompt_flagged_tombstones "$VOL_TESLA_USB" "$VOL_JOWUA" "$VOL_2TB" "$LOCAL_SYNC_DIR"
 echo ""
 
-# 1a. Pre-sync Home + Recent deletion prompt - only when an archive
-# destination is connected (2TB SSD or --localsync dir), matching the
-# "only delete after archiving" rule the purge step below already follows
-# in the no-archive branch further down. Runs before any sync_volumes
-# call in every branch that has one, so a confirmed purge removes the
-# footage from every connected drive (source included) before that
-# drive's sync leg runs.
+# 2. Fast Home+Recent BACKLOG purge (older than
+# $HOME_RECENT_BACKLOG_SAFETY_DAYS days - see that function's own
+# comment for why this is safe to run unattended, before any sync leg,
+# without reopening the newer-footage safety gap the post-sync purge
+# below was specifically built to close). Same "archive destination
+# connected" gate as every other purge in this script.
 if [[ -n "$VOL_2TB" || -n "$LOCAL_SYNC_DIR" ]]; then
-  prompt_home_recent_purge "$VOL_TESLA_USB" "$VOL_JOWUA" "$VOL_2TB" "$LOCAL_SYNC_DIR"
+  purge_home_recent_backlog "$VOL_TESLA_USB" "$VOL_JOWUA" "$VOL_2TB" "$LOCAL_SYNC_DIR"
   echo ""
 fi
 
@@ -2007,6 +2289,22 @@ elif [[ -n "$VOL_JOWUA" && -n "$VOL_TESLA_USB" ]]; then
   echo ""
   echo ">>> Purge Notice: Master Archive is not connected."
   echo "    Skipping all pruning to guarantee footage is ONLY deleted after being archived."
+fi
+
+# 6. Post-sync Home + Recent deletion prompt - moved here (from before
+# the sync legs above) at the user's request: running it AFTER every
+# sync_volumes call in this run's branch means today's Home RecentClips
+# footage is guaranteed to have already been copied to the archive
+# destination before this ever offers to delete it from the recording
+# drive - closing the gap in the old pre-sync placement, where a clip
+# recorded since the last sync could be purged before it was ever
+# archived anywhere. Trade-off: a clip about to be purged now gets
+# synced first (a little wasted transfer) rather than skipped - judged
+# worth it for the safety guarantee. Still gated on an archive
+# destination being connected, same rule as before.
+if [[ -n "$VOL_2TB" || -n "$LOCAL_SYNC_DIR" ]]; then
+  echo ""
+  prompt_home_recent_purge "$VOL_TESLA_USB" "$VOL_JOWUA" "$VOL_2TB" "$LOCAL_SYNC_DIR"
 fi
 
 echo ""

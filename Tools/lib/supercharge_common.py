@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-supercharge_info.py - Supercharge.info Integration & Metadata Enricher
-=======================================================================
+supercharge_common.py - Supercharge.info Integration & Metadata Enricher
+========================================================================
 Provides integration with supercharge.info community API for authoritative
 stall versions (v2/v3/v4), opening dates, elevation, plug types, and ref IDs.
 """

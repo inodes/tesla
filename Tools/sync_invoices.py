@@ -25,6 +25,8 @@ Usage:
 """
 
 import argparse
+import calendar
+import datetime
 import json
 import os
 import shutil
@@ -91,6 +93,35 @@ def resolve_default_scan_dirs() -> List[str]:
     add_dir("~/Downloads")
 
     return dirs
+
+
+def set_mtime_from_invoice_metadata(path: str, meta: Dict[str, Any]) -> None:
+    """REQ-142: after filing an invoice PDF under its standardized name,
+    set the file's own mtime (and atime) to the date the invoice's DATA
+    represents - its issue_date (YYYY-MM-DD, every extractor sets this)
+    plus session_time (HHMM local, charging-invoice extractors only) when
+    present - rather than leaving it at whatever moment it happened to be
+    downloaded/moved/renamed on this machine. Matches the convention used
+    for the one-time REQ-142 mtime backfill: date component at 00:00 UTC
+    when no time-of-day is known, otherwise the known local time treated
+    as UTC (good enough for sorting/browsing - these files don't carry a
+    real timezone-aware timestamp field to convert from). Best-effort:
+    a missing/unparseable date leaves the file's mtime untouched rather
+    than raising, since a filing operation succeeding is more important
+    than this cosmetic follow-up."""
+    issue_date = meta.get("issue_date")
+    if not issue_date:
+        return
+    try:
+        year, month, day = (int(x) for x in issue_date.split("-"))
+        hour, minute = 0, 0
+        session_time = meta.get("session_time")
+        if session_time and len(session_time) == 4 and session_time.isdigit():
+            hour, minute = int(session_time[:2]), int(session_time[2:])
+        epoch = calendar.timegm((year, month, day, hour, minute, 0, 0, 0, 0))
+        os.utime(path, (epoch, epoch))
+    except (ValueError, OSError):
+        pass
 
 
 def scan_directory_for_pdfs(dir_path: str, recursive: bool = False) -> List[str]:
@@ -276,6 +307,7 @@ def process_scanned_invoices(
                         base, ext = os.path.splitext(tgt)
                         dest_path = os.path.join(dest_dir, f"{base}_01{ext}")
                     shutil.move(src_path, dest_path)
+                    set_mtime_from_invoice_metadata(dest_path, meta)
                     imported_count += 1
             elif do_rename:
                 dest_path = os.path.join(os.path.dirname(src_path), tgt)
@@ -284,6 +316,7 @@ def process_scanned_invoices(
                         base, ext = os.path.splitext(tgt)
                         dest_path = os.path.join(os.path.dirname(src_path), f"{base}_01{ext}")
                     os.rename(src_path, dest_path)
+                    set_mtime_from_invoice_metadata(dest_path, meta)
                     renamed_count += 1
 
     print("└" + "┴".join("─" * w for w in widths) + "┘")

@@ -71,6 +71,7 @@ import csv
 import io
 import json
 import os
+import shutil
 import statistics
 import subprocess
 import sys
@@ -119,6 +120,59 @@ DATA_TYPES = {
     },
 }
 
+# TODO-011: idles/tire_pressure/firmware_alerts - simple "single CSV +
+# archive" persistence, deliberately NOT the fuller <type>/ folder +
+# master CSV + deepdive/archive pattern drives/charges use (there's no
+# per-record deep-dive detail to fetch for any of these three, and no
+# dedicated analyzer script to hand a --consolidate step to either) -
+# the user's own explicit choice for this TODO's format: "simple...
+# single csv with archive". Each gets its own <type>_master.csv under
+# <tessie data home>/<type>/, with a pre-change backup copied to
+# <type>/archive/ before every overwrite (BUG-025's own convention).
+IDLES_CACHE_FILE = os.path.join(CACHE_DIR, "idles.json")
+FIRMWARE_ALERTS_CACHE_FILE = os.path.join(CACHE_DIR, "firmware_alerts.json")
+TIRE_PRESSURE_CACHE_FILE = os.path.join(CACHE_DIR, "tire_pressure.json")
+
+IDLES_FIELDNAMES = [
+    "Idle ID", "Started At (UTC)", "Started At TZ", "Started At (Local)",
+    "Ended At (UTC)", "Ended At TZ", "Ended At (Local)", "Duration (min)",
+    "Location", "Saved Location", "Latitude", "Longitude",
+    "Starting Battery (%)", "Ending Battery (%)",
+    "Rated Range Used (km)", "Ideal Range Used (km)",
+    "Climate Fraction", "Sentry Fraction",
+    "Energy Used (kWh)", "Charger Energy Used (kWh)", "Import ID",
+]
+
+# Confirmed live (2026-09-26, corrected same day): tire_pressure DOES
+# support real history via from/to - an earlier pass here tested only the
+# no-args current-snapshot call and wrongly concluded there was no
+# history at all. With from/to given, the response shape changes
+# entirely: a flat "melted" list of {timestamp, tire, pressure} entries
+# (one per tire per reading, no `results` wrapper, no `id`, and no
+# per-reading status - status only comes from the current-snapshot
+# call), pivoted here into one wide row per timestamp by
+# _pivot_tire_pressure_history(). Also confirmed: Tessie's own backend
+# only retains ~30-35 days of this history regardless of how far back
+# `from` asks (a 10-year window and a 30-day window returned within
+# ~100 rows of each other), and `limit` has no truncating effect on this
+# endpoint at all (unlike idles) - so this is fetched as one direct call
+# per window, not via fetch_json_chunked()'s id-based recursive split.
+TIRE_PRESSURE_FIELDNAMES = [
+    "Timestamp (UTC)", "Timestamp TZ", "Timestamp (Local)",
+    "Front Left (kPa)", "Front Left Status",
+    "Front Right (kPa)", "Front Right Status",
+    "Rear Left (kPa)", "Rear Left Status",
+    "Rear Right (kPa)", "Rear Right Status",
+]
+
+# Confirmed live (2026-09-26): firmware_alerts records have NO `id` field
+# at all (unlike drives/charges/idles) - "Alert Key" (timestamp+name) is
+# this repo's own synthesized dedup key, not anything Tessie returns.
+FIRMWARE_ALERTS_FIELDNAMES = [
+    "Alert Key", "Timestamp (UTC)", "Timestamp TZ", "Timestamp (Local)",
+    "Name", "Description", "Impact", "Recent Fleet Count", "Incidence Rate",
+]
+
 MIN_CHUNK_SECONDS = 3600  # don't split a date range smaller than 1 hour
 OVERLAP_SECONDS = 86400   # re-check the last day every run in case of late server-side edits
 
@@ -157,13 +211,20 @@ def commit_cache(spec, cache, to_ts):
     save_cache(spec["cache_file"], cache)
 
 
-def fetch_json_chunked(endpoint, vin, token, from_ts, to_ts, chunk_limit=500, api_get_fn=api_get):
+def fetch_json_chunked(endpoint, vin, token, from_ts, to_ts, chunk_limit=500, api_get_fn=api_get, key_fn=None):
     """Fetch every JSON record in [from_ts, to_ts), splitting the window in
     half and recursing whenever a chunk comes back exactly at chunk_limit
     (a sign there could be more we didn't see - no cursor is documented for
-    either endpoint, so this is the safe way to avoid silent truncation)."""
+    either endpoint, so this is the safe way to avoid silent truncation).
+
+    key_fn (TODO-011): the recursive merge below dedupes overlapping-window
+    records by a per-record key - originally always the API's own numeric
+    `id` (drives/charges/idles all have one). firmware_alerts has no `id`
+    at all (confirmed live), so it passes its own composite key function
+    instead; every other caller keeps the default."""
     if to_ts <= from_ts:
         return []
+    key_fn = key_fn or (lambda r: r["id"])
     params = dict(DEFAULT_UNIT_PARAMS)
     params.update({"from": from_ts, "to": to_ts, "limit": chunk_limit})
     status, body = api_get_fn(endpoint, vin, token, params=params)
@@ -183,10 +244,10 @@ def fetch_json_chunked(endpoint, vin, token, from_ts, to_ts, chunk_limit=500, ap
             f"drop records. Re-run with a larger --chunk-limit if this is genuinely expected."
         )
     mid = (from_ts + to_ts) // 2
-    left = fetch_json_chunked(endpoint, vin, token, from_ts, mid, chunk_limit, api_get_fn)
-    right = fetch_json_chunked(endpoint, vin, token, mid, to_ts, chunk_limit, api_get_fn)
-    combined = {r["id"]: r for r in left}
-    combined.update({r["id"]: r for r in right})
+    left = fetch_json_chunked(endpoint, vin, token, from_ts, mid, chunk_limit, api_get_fn, key_fn)
+    right = fetch_json_chunked(endpoint, vin, token, mid, to_ts, chunk_limit, api_get_fn, key_fn)
+    combined = {key_fn(r): r for r in left}
+    combined.update({key_fn(r): r for r in right})
     return list(combined.values())
 
 
@@ -576,6 +637,401 @@ def detect_battery_health_outliers(records, z_threshold=4.0):
     return records
 
 
+def _utc_tz_local_cols(prefix, epoch, lat=None, lon=None):
+    """{prefix (UTC)/(TZ)/(Local)} for one Unix epoch second read straight
+    from Tessie's JSON API. Deliberately NOT normalize_row_timezone()
+    (TODO-009) - that helper reverses Tessie's own CSV EXPORT convention
+    (a naive local string, always in the one fixed Australia/Sydney offset
+    it was requested in, that has to be un-reversed via the true lat/lon
+    to recover UTC). The JSON API's own epoch fields are already true UTC
+    with no such reversal needed - this just localizes them for display.
+    Uses resolve_timezone(lat, lon) for the real zone when a per-record
+    GPS point exists (idles); falls back to tztools.localize()'s own
+    default (Australia/Sydney) when it doesn't (tire_pressure/
+    firmware_alerts carry no location at all from the API)."""
+    if epoch is None or epoch == "":
+        return {f"{prefix} (UTC)": "", f"{prefix} TZ": "", f"{prefix} (Local)": ""}
+    zone = tztools.resolve_timezone(lat, lon) if (lat is not None and lon is not None) else None
+    local_dt, abbr, _ = tztools.localize(epoch, zone)
+    return {
+        f"{prefix} (UTC)": int(epoch),
+        f"{prefix} TZ": abbr or "",
+        f"{prefix} (Local)": local_dt.strftime("%Y-%m-%d %H:%M") if local_dt else "",
+    }
+
+
+def _idle_row_from_api(r):
+    started_at = r.get("started_at")
+    ended_at = r.get("ended_at")
+    lat = r.get("latitude")
+    lon = r.get("longitude")
+    duration_min = (round((ended_at - started_at) / 60.0, 1)
+                     if (started_at is not None and ended_at is not None) else "")
+    row = {
+        "Idle ID": r.get("id"),
+        "Duration (min)": duration_min,
+        "Location": r.get("location") or "",
+        "Saved Location": r.get("saved_location") or "",
+        "Latitude": lat,
+        "Longitude": lon,
+        "Starting Battery (%)": r.get("starting_battery"),
+        "Ending Battery (%)": r.get("ending_battery"),
+        "Rated Range Used (km)": r.get("rated_range_used"),
+        "Ideal Range Used (km)": r.get("ideal_range_used"),
+        "Climate Fraction": r.get("climate_fraction"),
+        "Sentry Fraction": r.get("sentry_fraction"),
+        "Energy Used (kWh)": r.get("energy_used"),
+        "Charger Energy Used (kWh)": r.get("charger_energy_used"),
+        "Import ID": r.get("import_id") or "",
+    }
+    row.update(_utc_tz_local_cols("Started At", started_at, lat, lon))
+    row.update(_utc_tz_local_cols("Ended At", ended_at, lat, lon))
+    return row
+
+
+def _tire_pressure_row_from_api(r):
+    """Builds one wide CSV row from either shape tire_pressure's API can
+    hand us: the current-snapshot call (has *_status fields) or one
+    pivoted history entry from _pivot_tire_pressure_history() (pressures
+    only, no status - Tessie's history mode doesn't report it). Missing
+    status keys simply come out blank either way."""
+    row = {
+        "Front Left (kPa)": r.get("front_left"),
+        "Front Left Status": r.get("front_left_status") or "",
+        "Front Right (kPa)": r.get("front_right"),
+        "Front Right Status": r.get("front_right_status") or "",
+        "Rear Left (kPa)": r.get("rear_left"),
+        "Rear Left Status": r.get("rear_left_status") or "",
+        "Rear Right (kPa)": r.get("rear_right"),
+        "Rear Right Status": r.get("rear_right_status") or "",
+    }
+    row.update(_utc_tz_local_cols("Timestamp", r.get("timestamp")))
+    return row
+
+
+def fetch_tire_pressure_history(vin, token, from_ts, to_ts, api_get_fn=api_get):
+    """Fetch every historical tire_pressure reading in [from_ts, to_ts).
+    Confirmed live (2026-09-26): passing from/to switches this endpoint
+    into a genuinely different response shape from its current-snapshot
+    mode - a flat list of {timestamp, tire, pressure} entries (one per
+    tire per reading), no `results` wrapper, no `id`. `limit` has no
+    truncating effect here (tested), so - unlike fetch_json_chunked() -
+    this is one direct, unchunked call per window."""
+    if to_ts <= from_ts:
+        return []
+    params = {"pressure_format": "kpa", "from": from_ts, "to": to_ts}
+    status, body = api_get_fn("tire_pressure", vin, token, params=params)
+    if status != 200:
+        raise RuntimeError(f"tire_pressure history fetch failed for [{from_ts}, {to_ts}): HTTP {status} - {body[:200]!r}")
+    try:
+        data = json.loads(body)
+    except Exception as e:
+        raise RuntimeError(f"tire_pressure history response was not valid JSON: {e}") from e
+    if not isinstance(data, list):
+        raise RuntimeError(f"unexpected tire_pressure history response shape: {type(data).__name__}")
+    return data
+
+
+def _pivot_tire_pressure_history(entries):
+    """Groups the melted {timestamp, tire, pressure} list from
+    fetch_tire_pressure_history() into one dict per timestamp (all 4
+    tires) - the same wide shape _tire_pressure_row_from_api() already
+    expects for a current-snapshot reading, just without any *_status
+    keys (the history shape doesn't carry them)."""
+    by_ts = {}
+    for e in entries:
+        ts = e.get("timestamp")
+        tire = e.get("tire")
+        if ts is None or tire not in ("front_left", "front_right", "rear_left", "rear_right"):
+            continue
+        by_ts.setdefault(ts, {"timestamp": ts})[tire] = e.get("pressure")
+    return list(by_ts.values())
+
+
+def _firmware_alert_key(r):
+    """No native id on this endpoint (confirmed live) - timestamp+name is
+    unique enough for one vehicle (the same named alert firing twice in
+    the exact same second isn't a real-world case)."""
+    return f"{r.get('timestamp')}:{r.get('name')}"
+
+
+def _firmware_alert_row_from_api(r):
+    row = {
+        "Alert Key": _firmware_alert_key(r),
+        "Name": r.get("name") or "",
+        "Description": r.get("description") or "",
+        "Impact": r.get("impact") or "",
+        "Recent Fleet Count": r.get("recent_fleet_count"),
+        "Incidence Rate": r.get("incidence_rate"),
+    }
+    row.update(_utc_tz_local_cols("Timestamp", r.get("timestamp")))
+    return row
+
+
+def merge_into_master_csv(type_name, home, new_rows, fieldnames, key_field, sort_key_fn):
+    """Simple "single CSV + archive" persistence for a Tessie data type
+    with no dedicated analyzer script of its own (idles/tire_pressure/
+    firmware_alerts - TODO-011): unlike drives/charges there's no
+    separate --consolidate step to hand off to, so this writes directly
+    to <home>/<type_name>/<type_name>_master.csv. Deliberately the
+    simpler of the two shapes this repo now has for a new Tessie data
+    type (vs. the fuller <type>/ folder + master CSV + deepdive/archive
+    pattern drives/charges use, and vs. battery_health's single JSON
+    log) - the user's own explicit choice for this TODO: "simple...
+    single csv with archive."
+
+    Merges new_rows into whatever master CSV already exists, keyed by
+    key_field (a re-fetched/updated record overwrites its old row rather
+    than duplicating), and - matching drives/charges' own "pre-change
+    backup saved to archive/" convention (BUG-025) - copies the master
+    to <type_name>/archive/ with a UTC timestamp in its name before
+    overwriting it, whenever it already existed. Returns (added, changed,
+    total)."""
+    type_dir = os.path.join(home, type_name)
+    archive_dir = os.path.join(type_dir, "archive")
+    master_path = os.path.join(type_dir, f"{type_name}_master.csv")
+    os.makedirs(type_dir, exist_ok=True)
+
+    existing = {}
+    if os.path.isfile(master_path):
+        with open(master_path, "r", encoding="utf-8-sig", newline="") as f:
+            for row in csv.DictReader(f):
+                k = row.get(key_field)
+                if k:
+                    existing[k] = row
+
+    added = 0
+    changed = 0
+    for raw_row in new_rows:
+        row = {k: ("" if v is None else v) for k, v in raw_row.items()}
+        k = str(row.get(key_field))
+        prev = existing.get(k)
+        if prev is None:
+            added += 1
+        elif {kk: str(vv) for kk, vv in prev.items()} != {kk: str(vv) for kk, vv in row.items()}:
+            changed += 1
+        existing[k] = row
+
+    if added == 0 and changed == 0:
+        return 0, 0, len(existing)
+
+    all_rows = sorted(existing.values(), key=sort_key_fn)
+
+    if os.path.isfile(master_path):
+        os.makedirs(archive_dir, exist_ok=True)
+        stamp = datetime.utcnow().strftime("%Y%m%d_%H%M%SZ")
+        shutil.copy2(master_path, os.path.join(archive_dir, f"{type_name}_master_backup_{stamp}.csv"))
+
+    tmp = master_path + ".tmp"
+    with open(tmp, "w", encoding="utf-8", newline="") as f:
+        writer = csv.DictWriter(f, fieldnames=fieldnames, extrasaction="ignore", restval="")
+        writer.writeheader()
+        writer.writerows(all_rows)
+    os.replace(tmp, master_path)
+
+    return added, changed, len(all_rows)
+
+
+def sync_idles(tessie_dir=None, since_days=90, dry_run=False, reset_cache=False):
+    """idles: a real fetchable date-range history (has `id`, `started_at`,
+    `ended_at`, real per-record lat/lon) - same chunked incremental-fetch
+    shape as drives/charges, just written straight to its own simple
+    master CSV instead of a landing-dir CSV + --consolidate subprocess
+    (TODO-011 - no dedicated analyzer script exists for this type)."""
+    home = tessie_dir or resolve_tessie_data_home()
+    if not home:
+        print("❌ No Tessie data home configured - nothing to sync to.")
+        return None
+    cfg = load_config()
+    token = get_token(None, cfg)
+    vin = get_vin(None, cfg)
+    if not token or not vin:
+        print("❌ No access token/VIN configured - see config.json or TESSIE_ACCESS_TOKEN.")
+        return None
+
+    cache = {"_meta": {"last_synced_to": None}, "records": {}} if reset_cache else load_cache(IDLES_CACHE_FILE)
+    last_synced_to = cache["_meta"].get("last_synced_to")
+    to_ts = int(time.time())
+    from_ts = max(0, last_synced_to - OVERLAP_SECONDS) if last_synced_to else (to_ts - since_days * 86400)
+
+    try:
+        records = fetch_json_chunked("idles", vin, token, from_ts, to_ts)
+    except RuntimeError as e:
+        print(f"❌ idles fetch failed: {e}")
+        return None
+
+    new_or_changed = 0
+    for r in records:
+        rid = str(r.get("id")) if r.get("id") is not None else None
+        if not rid:
+            continue
+        if cache["records"].get(rid) != r:
+            new_or_changed += 1
+        cache["records"][rid] = r
+
+    print(f"🔎 idles: window {datetime.fromtimestamp(from_ts)} -> {datetime.fromtimestamp(to_ts)}")
+    print(f"   Fetched {len(records)} record(s); {new_or_changed} new/changed")
+
+    if dry_run:
+        print("   (--dry-run: not written, sync point not advanced)")
+        return {"fetched": len(records), "new_or_changed": new_or_changed}
+
+    if new_or_changed == 0:
+        commit_cache({"cache_file": IDLES_CACHE_FILE}, cache, to_ts)
+        print("   Nothing new or changed - idles_master.csv unchanged.")
+        return {"fetched": len(records), "new_or_changed": 0}
+
+    rows = [_idle_row_from_api(r) for r in cache["records"].values()]
+    added, changed, total = merge_into_master_csv(
+        "idles", home, rows, IDLES_FIELDNAMES, "Idle ID",
+        sort_key_fn=lambda row: int(row.get("Started At (UTC)") or 0),
+    )
+    commit_cache({"cache_file": IDLES_CACHE_FILE}, cache, to_ts)
+    print(f"   💾 idles_master.csv: {added} added, {changed} changed, {total} total")
+    return {"fetched": len(records), "new_or_changed": new_or_changed, "added": added, "changed": changed, "total": total}
+
+
+def sync_tire_pressure(tessie_dir=None, since_days=35, dry_run=False, reset_cache=False):
+    """tire_pressure DOES have real history (corrected 2026-09-26 - see
+    fetch_tire_pressure_history()'s own comment for how an earlier pass
+    here got this wrong by only testing the no-args call). Backfills
+    from Tessie's own real retention window (~30-35 days - default
+    since_days matches that, since asking further back doesn't return
+    anything more) using the same watermark/cache incremental-sync shape
+    as idles/firmware_alerts, keyed by each reading's own Timestamp
+    (there's no `id` on this endpoint at all, in either response shape).
+    ALSO does the current-snapshot poll every run and merges it in on
+    top - that's the only way to get the *_status (low/normal) fields at
+    all, since the history shape never reports them."""
+    home = tessie_dir or resolve_tessie_data_home()
+    if not home:
+        print("❌ No Tessie data home configured - nothing to sync to.")
+        return None
+    cfg = load_config()
+    token = get_token(None, cfg)
+    vin = get_vin(None, cfg)
+    if not token or not vin:
+        print("❌ No access token/VIN configured - see config.json or TESSIE_ACCESS_TOKEN.")
+        return None
+
+    cache = {"_meta": {"last_synced_to": None}, "records": {}} if reset_cache else load_cache(TIRE_PRESSURE_CACHE_FILE)
+    last_synced_to = cache["_meta"].get("last_synced_to")
+    to_ts = int(time.time())
+    from_ts = max(0, last_synced_to - OVERLAP_SECONDS) if last_synced_to else (to_ts - since_days * 86400)
+
+    try:
+        history_entries = fetch_tire_pressure_history(vin, token, from_ts, to_ts)
+    except RuntimeError as e:
+        print(f"❌ tire_pressure history fetch failed: {e}")
+        history_entries = []
+    history_rows = _pivot_tire_pressure_history(history_entries)
+
+    current_reading = None
+    status, body = api_get("tire_pressure", vin, token, params={"pressure_format": "kpa"})
+    if status == 200:
+        try:
+            current_reading = json.loads(body)
+        except Exception as e:
+            print(f"❌ Could not parse current tire_pressure snapshot: {e}")
+    else:
+        print(f"❌ Current tire_pressure snapshot fetch failed: HTTP {status}")
+
+    new_or_changed = 0
+    for hr in history_rows:
+        key = str(hr["timestamp"])
+        if cache["records"].get(key) != hr:
+            new_or_changed += 1
+        cache["records"][key] = hr
+    if current_reading:
+        key = str(current_reading.get("timestamp"))
+        if cache["records"].get(key) != current_reading:
+            new_or_changed += 1
+        cache["records"][key] = current_reading
+
+    print(f"🔎 tire_pressure: window {datetime.fromtimestamp(from_ts)} -> {datetime.fromtimestamp(to_ts)} "
+          f"(+ current snapshot)")
+    print(f"   Fetched {len(history_rows)} historical reading(s); {new_or_changed} new/changed")
+    if current_reading:
+        print(f"   Current: FL {current_reading.get('front_left')}kPa ({current_reading.get('front_left_status')})  "
+              f"FR {current_reading.get('front_right')}kPa ({current_reading.get('front_right_status')})")
+        print(f"            RL {current_reading.get('rear_left')}kPa ({current_reading.get('rear_left_status')})  "
+              f"RR {current_reading.get('rear_right')}kPa ({current_reading.get('rear_right_status')})")
+
+    if dry_run:
+        print("   (--dry-run: not written, sync point not advanced)")
+        return {"fetched": len(history_rows), "new_or_changed": new_or_changed}
+
+    if new_or_changed == 0:
+        commit_cache({"cache_file": TIRE_PRESSURE_CACHE_FILE}, cache, to_ts)
+        print("   Nothing new or changed - tire_pressure_master.csv unchanged.")
+        return {"fetched": len(history_rows), "new_or_changed": 0}
+
+    rows = [_tire_pressure_row_from_api(r) for r in cache["records"].values()]
+    added, changed, total = merge_into_master_csv(
+        "tire_pressure", home, rows, TIRE_PRESSURE_FIELDNAMES, "Timestamp (UTC)",
+        sort_key_fn=lambda r: int(r.get("Timestamp (UTC)") or 0),
+    )
+    commit_cache({"cache_file": TIRE_PRESSURE_CACHE_FILE}, cache, to_ts)
+    print(f"   💾 tire_pressure_master.csv: {added} added, {changed} changed, {total} total")
+    return {"fetched": len(history_rows), "new_or_changed": new_or_changed, "added": added, "changed": changed, "total": total}
+
+
+def sync_firmware_alerts(tessie_dir=None, since_days=180, dry_run=False, reset_cache=False):
+    """firmware_alerts: a real fetchable date-range history (from/to
+    supported) but with NO native `id` (confirmed live) - dedup keyed on
+    the synthesized "timestamp:name" instead. Same simple single-CSV-
+    plus-archive persistence as idles (TODO-011)."""
+    home = tessie_dir or resolve_tessie_data_home()
+    if not home:
+        print("❌ No Tessie data home configured - nothing to sync to.")
+        return None
+    cfg = load_config()
+    token = get_token(None, cfg)
+    vin = get_vin(None, cfg)
+    if not token or not vin:
+        print("❌ No access token/VIN configured - see config.json or TESSIE_ACCESS_TOKEN.")
+        return None
+
+    cache = {"_meta": {"last_synced_to": None}, "records": {}} if reset_cache else load_cache(FIRMWARE_ALERTS_CACHE_FILE)
+    last_synced_to = cache["_meta"].get("last_synced_to")
+    to_ts = int(time.time())
+    from_ts = max(0, last_synced_to - OVERLAP_SECONDS) if last_synced_to else (to_ts - since_days * 86400)
+
+    try:
+        records = fetch_json_chunked("firmware_alerts", vin, token, from_ts, to_ts, key_fn=_firmware_alert_key)
+    except RuntimeError as e:
+        print(f"❌ firmware_alerts fetch failed: {e}")
+        return None
+
+    new_or_changed = 0
+    for r in records:
+        key = _firmware_alert_key(r)
+        if cache["records"].get(key) != r:
+            new_or_changed += 1
+        cache["records"][key] = r
+
+    print(f"🔎 firmware_alerts: window {datetime.fromtimestamp(from_ts)} -> {datetime.fromtimestamp(to_ts)}")
+    print(f"   Fetched {len(records)} record(s); {new_or_changed} new/changed")
+
+    if dry_run:
+        print("   (--dry-run: not written, sync point not advanced)")
+        return {"fetched": len(records), "new_or_changed": new_or_changed}
+
+    if new_or_changed == 0:
+        commit_cache({"cache_file": FIRMWARE_ALERTS_CACHE_FILE}, cache, to_ts)
+        print("   Nothing new or changed - firmware_alerts_master.csv unchanged.")
+        return {"fetched": len(records), "new_or_changed": 0}
+
+    rows = [_firmware_alert_row_from_api(r) for r in cache["records"].values()]
+    added, changed, total = merge_into_master_csv(
+        "firmware_alerts", home, rows, FIRMWARE_ALERTS_FIELDNAMES, "Alert Key",
+        sort_key_fn=lambda row: int(row.get("Timestamp (UTC)") or 0),
+    )
+    commit_cache({"cache_file": FIRMWARE_ALERTS_CACHE_FILE}, cache, to_ts)
+    print(f"   💾 firmware_alerts_master.csv: {added} added, {changed} changed, {total} total")
+    return {"fetched": len(records), "new_or_changed": new_or_changed, "added": added, "changed": changed, "total": total}
+
+
 def sync_battery_health(tessie_dir=None, since_days=1095):
     """Pulls the vehicle's FULL real battery_health history straight from
     Tessie's API (fetch_battery_health_chunked(), from `since_days` ago
@@ -884,6 +1340,7 @@ def main():
    or:  sync_api_tessie.py --consolidate [--drives | --charges]
    or:  sync_api_tessie.py --backfill-deepdive [--drives | --charges] [--limit N] [--pace SECONDS]
    or:  sync_api_tessie.py --battery-health [--battery-health-since-days N]
+   or:  sync_api_tessie.py [--idles] [--tire-pressure] [--firmware-alerts] [--dry-run] [--reset-cache]
 """,
         description="""
 NAME
@@ -901,6 +1358,7 @@ EXAMPLES
   sync_api_tessie.py --consolidate --drives
   sync_api_tessie.py --backfill-deepdive --limit 50 --pace 2
   sync_api_tessie.py --battery-health
+  sync_api_tessie.py --idles --tire-pressure --firmware-alerts
 """
     )
 
@@ -950,11 +1408,58 @@ EXAMPLES
     g_battery.add_argument("--battery-health-since-days", type=int, default=1095,
                          help="How far back to pull real battery_health history on --battery-health "
                               "(default: 1095 / ~3 years).")
+
+    g_simple = parser.add_argument_group("Idles / Tire Pressure / Firmware Alerts (TODO-011)")
+    g_simple.add_argument("--idles", action="store_true",
+                         help="Sync idle events (parked, not charging) into idles_master.csv "
+                              "(simple single-CSV-plus-archive format, incremental like drives/charges).")
+    g_simple.add_argument("--idles-since-days", type=int, default=90,
+                         help="First-run backfill window in days for --idles (default: 90).")
+    g_simple.add_argument("--tire-pressure", action="store_true",
+                         help="Sync tire pressure history (Tessie retains ~30-35 days of it, "
+                              "regardless of how far back is asked) plus the current live snapshot "
+                              "(the only source of the low/normal status fields) into "
+                              "tire_pressure_master.csv.")
+    g_simple.add_argument("--tire-pressure-since-days", type=int, default=35,
+                         help="First-run backfill window in days for --tire-pressure (default: 35 - "
+                              "beyond Tessie's own real retention window for this endpoint, so a "
+                              "larger value won't return more).")
+    g_simple.add_argument("--firmware-alerts", action="store_true",
+                         help="Sync vehicle firmware alert history into firmware_alerts_master.csv "
+                              "(simple single-CSV-plus-archive format, incremental like --idles).")
+    g_simple.add_argument("--firmware-alerts-since-days", type=int, default=180,
+                         help="First-run backfill window in days for --firmware-alerts (default: 180).")
     args = parser.parse_args()
 
     if args.battery_health:
         sync_battery_health(tessie_dir=args.tessie_dir, since_days=args.battery_health_since_days)
         return
+
+    if args.idles or args.tire_pressure or args.firmware_alerts:
+ # Same isolated-flag shape as --battery-health above (TODO-011): a
+ # lightweight fetch+merge with no --consolidate subprocess/prompt to
+ # coordinate, so these can run standalone or combined with each
+ # other, but not mixed into the same invocation as --drives/--charges.
+        any_failed = False
+        if args.idles:
+            result = sync_idles(tessie_dir=args.tessie_dir, since_days=args.idles_since_days,
+                                 dry_run=args.dry_run, reset_cache=args.reset_cache)
+            if result is None:
+                any_failed = True
+            print()
+        if args.tire_pressure:
+            result = sync_tire_pressure(tessie_dir=args.tessie_dir, since_days=args.tire_pressure_since_days,
+                                         dry_run=args.dry_run, reset_cache=args.reset_cache)
+            if result is None:
+                any_failed = True
+            print()
+        if args.firmware_alerts:
+            result = sync_firmware_alerts(tessie_dir=args.tessie_dir, since_days=args.firmware_alerts_since_days,
+                                           dry_run=args.dry_run, reset_cache=args.reset_cache)
+            if result is None:
+                any_failed = True
+            print()
+        sys.exit(1 if any_failed else 0)
 
     if args.consolidate and args.no_consolidate:
         print("❌ --consolidate and --no-consolidate are mutually exclusive.")

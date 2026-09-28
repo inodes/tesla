@@ -66,7 +66,7 @@ from providers_chargers import (
     AmpChargeProvider,
     ExplorenProvider,
     JoltProvider,
-    NrmaProvider
+    NRMAProvider
 )
 
 C_RESET = "\033[0m"
@@ -250,11 +250,11 @@ def resolve_reference_coords(near_query: str) -> Tuple[Optional[float], Optional
     reg_candidates = []
     if tessie_home:
         reg_candidates.extend([
-            os.path.join(tessie_home, "tesla_superchargers.json"),
-            os.path.join(tessie_home, "tesla_chargers.json"),
-            os.path.join(tessie_home, "chargefox_chargers.json"),
-            os.path.join(tessie_home, "evx_chargers.json"),
-            os.path.join(tessie_home, "plugshare_chargers.json"),
+            os.path.join(tessie_home, "chargers", "tesla_superchargers.json"),
+            os.path.join(tessie_home, "chargers", "tesla_chargers.json"),
+            os.path.join(tessie_home, "chargers", "chargefox_chargers.json"),
+            os.path.join(tessie_home, "chargers", "evx_chargers.json"),
+            os.path.join(tessie_home, "chargers", "plugshare_chargers.json"),
             os.path.join(tessie_home, "geo_cache.json"),
         ])
     reg_candidates.extend([
@@ -562,11 +562,11 @@ def render_stations_table(
             # Fix (2026-09-21): this used to fall back to its own invented
             # 165.0 Wh/km / 60.0 kWh pair - the 60.0 kWh figure is ~30% under
             # this vehicle's real 85.0 kWh usable capacity per vehicle_spec.json.
-            # Reuse abrp_planner's own DEFAULT_CONSUMPTION_WH_KM/DEFAULT_USABLE_KWH
+            # Reuse abrp_common's own DEFAULT_CONSUMPTION_WH_KM/DEFAULT_USABLE_KWH
             # (which are themselves only a last-resort fallback behind
             # config.json and vehicle_spec.json) instead of a third, different,
             # wrong pair.
-            from lib.abrp_planner import DEFAULT_CONSUMPTION_WH_KM, DEFAULT_USABLE_KWH
+            from lib.abrp_common import DEFAULT_CONSUMPTION_WH_KM, DEFAULT_USABLE_KWH
             dep_soc = route_info.get("departure_soc", 90) if route_info else 90
             c_wh_km = route_info.get("consumption_wh_km", DEFAULT_CONSUMPTION_WH_KM) if route_info else DEFAULT_CONSUMPTION_WH_KM
             u_kwh = route_info.get("usable_kwh", DEFAULT_USABLE_KWH) if route_info else DEFAULT_USABLE_KWH
@@ -586,7 +586,7 @@ def render_stations_table(
 
             if eff_dist_km is not None:
                 try:
-                    from lib.abrp_planner import estimate_arrival_soc, format_soc_badge
+                    from lib.abrp_common import estimate_arrival_soc, format_soc_badge
                     arr_soc, _ = estimate_arrival_soc(eff_dep_soc, eff_dist_km, detour_val or 0.0, c_wh_km, u_kwh)
                     soc_badge, _ = format_soc_badge(arr_soc, tgt_min)
                 except Exception:
@@ -601,7 +601,7 @@ def render_stations_table(
             sc_data = getattr(st, "stop_score_data", None)
             if not sc_data:
                 try:
-                    from lib.route_planner import compute_route_stop_score
+                    from lib.route_common import compute_route_stop_score
                     c_rad = route_info.get("corridor_radius_km", 5.0) if route_info else 5.0
                     sc_data = compute_route_stop_score(st, detour_val, c_rad)
                     st.stop_score_data = sc_data
@@ -1156,7 +1156,7 @@ def display_station_inspection_card(station: UnifiedStationRecord, eval_time: Op
     if views_count > 1:
         _field("📂", "Data Source", f"Multi-Source Consolidated ({views_count} sources: {view_names})")
     elif station.source == "tesla":
-        reg_name = "tesla_superchargers.json" if station.speed_tier == "supercharger" else "tesla_chargers.json"
+        reg_name = "chargers/tesla_superchargers.json" if station.speed_tier == "supercharger" else "chargers/tesla_chargers.json"
  # Matches charger_find_tesla.py's own display_preview() coloring
  # (green = trusted local registry) - this line lost its color when
  # the display logic was ported into the provider system. Fixed 2026-09-14.
@@ -1241,7 +1241,7 @@ def display_station_inspection_card(station: UnifiedStationRecord, eval_time: Op
         sc_site = None
         if is_tesla_sc:
             try:
-                from lib.supercharge_info import find_supercharge_site
+                from lib.supercharge_common import find_supercharge_site
                 loc_id = meta.get("location_id") or meta.get("short_name") or station.source_id
                 sc_site = find_supercharge_site(station.name, station.lat, station.lon, location_id=loc_id)
             except Exception:
@@ -1255,7 +1255,7 @@ def display_station_inspection_card(station: UnifiedStationRecord, eval_time: Op
         # are ~787m apart), so this block was silently writing one station's
         # verified GPS into the OTHER station's registry entry on nothing more
         # than a plain --inspect call - no [a] audit, no confirmation. A sanity
-        # cap here (same idea as station_facilities.py's REFINEMENT_SANITY_CAP_M)
+        # cap here (same idea as station_facilities_common.py's REFINEMENT_SANITY_CAP_M)
         # means a too-far match is just not trusted/cached, rather than accepted
         # as ground truth - "no confident OSM data yet" beats "confidently wrong".
         _SC_AUTOCACHE_MAX_OFFSET_M = 300.0
@@ -1354,16 +1354,17 @@ def display_station_inspection_card(station: UnifiedStationRecord, eval_time: Op
         sc_data = getattr(station, "stop_score_data", None)
         if not sc_data:
             try:
-                from lib.route_planner import compute_route_stop_score
+                from lib.route_common import compute_route_stop_score
                 sc_data = compute_route_stop_score(station, station.detour_km)
             except Exception:
                 pass
         if sc_data:
-            _field("⭐", "Stop Quality Score", f"{sc_data['badge']}/10.0 (Facilities: {sc_data['facilities_score']:.1f}, Detour: {sc_data['detour_score']:.1f}, Speed & Bays: {sc_data['speed_score']:.1f})")
+            _ps_part = f", PlugShare: {sc_data['plugshare_score']:.1f}" if sc_data.get('plugshare_score') is not None else ""
+            _field("⭐", "Stop Quality Score", f"{sc_data['badge']}/10.0 (Facilities: {sc_data['facilities_score']:.1f}, Detour: {sc_data['detour_score']:.1f}, Speed & Bays: {sc_data['speed_score']:.1f}{_ps_part})")
 
         # Arrival SoC Projection
         try:
-            from lib.abrp_planner import load_abrp_config, estimate_arrival_soc, format_soc_badge, resolve_departure_soc
+            from lib.abrp_common import load_abrp_config, estimate_arrival_soc, format_soc_badge, resolve_departure_soc
             ab_cfg = load_abrp_config()
             dep_soc, dep_src, _ = resolve_departure_soc(None)
             arr_soc, energy_kwh = estimate_arrival_soc(
@@ -1611,11 +1612,11 @@ def display_station_inspection_card(station: UnifiedStationRecord, eval_time: Op
 
  # Cached Facilities Quality Rating / Summary (REQ-082)
     try:
-        from station_facilities import get_facilities_registry, format_facilities_summary_card
+        from station_facilities_common import get_facilities_registry, format_facilities_summary_card
         _fac_reg = get_facilities_registry()
     except ImportError:
         try:
-            from lib.station_facilities import get_facilities_registry, format_facilities_summary_card
+            from lib.station_facilities_common import get_facilities_registry, format_facilities_summary_card
             _fac_reg = get_facilities_registry()
         except ImportError:
             _fac_reg = None
@@ -1623,7 +1624,7 @@ def display_station_inspection_card(station: UnifiedStationRecord, eval_time: Op
 
     if _fac_reg and station.lat and station.lon:
         try:
-            from lib.station_facilities import resolve_station_physical_coords
+            from lib.station_facilities_common import resolve_station_physical_coords
             phys_lat, phys_lon, _ = resolve_station_physical_coords(station)
         except Exception:
             phys_lat, phys_lon = station.lat, station.lon
@@ -1753,7 +1754,7 @@ def interactive_station_actions(station: UnifiedStationRecord) -> None:
     sc_site = None
     if is_tesla_sc:
         try:
-            from lib.supercharge_info import find_supercharge_site
+            from lib.supercharge_common import find_supercharge_site
             loc_id = meta.get("location_id") or meta.get("short_name") or station.source_id
             sc_site = find_supercharge_site(station.name, station.lat, station.lon, location_id=loc_id)
             if sc_site:
@@ -1806,7 +1807,7 @@ def interactive_station_actions(station: UnifiedStationRecord) -> None:
             print()
         elif choice.startswith("f") or choice in ("facilities", "nearby"):
             parts = choice.split()
-            radius = 250
+            radius = 500
             force = "refresh" in choice or choice in ("fr", "f r")
             for p in parts[1:]:
                 if p.isdigit():
@@ -1897,9 +1898,9 @@ def inspect_single_station(manager: ChargerDiscoveryManager, query: str, eval_ti
             print()
 
 
-def sync_facilities_for_stations(stations: list, radius_m: int = 250, delay_s: float = 1.0) -> dict:
+def sync_facilities_for_stations(stations: list, radius_m: int = 500, delay_s: float = 1.0) -> dict:
     """Batch-refreshes the nearby-facilities cache for a list of stations,
-    skipping any already fresh (per station_facilities.py's TTL/schema-cutoff
+    skipping any already fresh (per station_facilities_common.py's TTL/schema-cutoff
     checks), never caching an ambiguous empty result (BUG-149), and retrying
     once at the end of the run for anything that came back empty or errored
     the first time (BUG-150). Shared by the `--sync-facilities` CLI flag and
@@ -1913,9 +1914,9 @@ def sync_facilities_for_stations(stations: list, radius_m: int = 250, delay_s: f
     try:
         from places_manager import query_overpass_pois
         try:
-            from lib.station_facilities import get_facilities_registry, resolve_station_physical_coords
+            from lib.station_facilities_common import get_facilities_registry, resolve_station_physical_coords
         except ImportError:
-            from station_facilities import get_facilities_registry, resolve_station_physical_coords
+            from station_facilities_common import get_facilities_registry, resolve_station_physical_coords
         fac_reg = get_facilities_registry()
     except ImportError:
         fac_reg = None
@@ -1947,7 +1948,14 @@ def sync_facilities_for_stations(stations: list, radius_m: int = 250, delay_s: f
             phys_lat, phys_lon, _coord_src = (
                 resolve_station_physical_coords(st) if resolve_station_physical_coords else (st.lat, st.lon, "Source GPS")
             )
-            if fac_reg.get_station_facilities(station_key=st.key, station_name=st.name, lat=phys_lat, lon=phys_lon) is not None:
+            existing = fac_reg.get_station_facilities(station_key=st.key, station_name=st.name, lat=phys_lat, lon=phys_lon)
+ # REQ-109: a cached entry captured at a SMALLER radius than what this
+ # run is asking for can't answer the wider question (Overpass was
+ # never asked about anything past its own old radius_m) - treat it as
+ # not-fresh so a code-level radius bump actually reaches already-cached
+ # stations via a batch --sync-facilities run, mirroring the same check
+ # already applied to the interactive single-station [f] pullup path.
+            if existing is not None and existing.get("radius_m", 0) >= radius_m:
                 skip_fresh += 1
                 continue
             candidates.append((st, phys_lat, phys_lon))
@@ -2027,7 +2035,7 @@ def sync_facilities_for_stations(stations: list, radius_m: int = 250, delay_s: f
     }
 
 
-def display_nearby_facilities(station: UnifiedStationRecord, radius_m: int = 250, force_refresh: bool = False) -> None:
+def display_nearby_facilities(station: UnifiedStationRecord, radius_m: int = 500, force_refresh: bool = False) -> None:
     """
     Looks up real, named nearby facilities (shops, food, amenities, services)
     around a charging station via OpenStreetMap's free/keyless Overpass API -
@@ -2038,7 +2046,7 @@ def display_nearby_facilities(station: UnifiedStationRecord, radius_m: int = 250
     a 0-10 Quality Scoring Engine (REQ-082).
     """
     try:
-        from lib.station_facilities import resolve_station_physical_coords
+        from lib.station_facilities_common import resolve_station_physical_coords
         phys_lat, phys_lon, coord_src = resolve_station_physical_coords(station)
     except Exception:
         phys_lat, phys_lon, coord_src = station.lat, station.lon, "Source GPS"
@@ -2048,16 +2056,19 @@ def display_nearby_facilities(station: UnifiedStationRecord, radius_m: int = 250
         return
 
     try:
-        from station_facilities import get_facilities_registry
+        from station_facilities_common import get_facilities_registry
         reg = get_facilities_registry()
     except ImportError:
         try:
-            from lib.station_facilities import get_facilities_registry
+            from lib.station_facilities_common import get_facilities_registry
             reg = get_facilities_registry()
         except ImportError:
             reg = None
 
     cached = reg.get_station_facilities(station_key=station.key, station_name=station.name, lat=phys_lat, lon=phys_lon) if (reg and not force_refresh) else None
+    if cached and cached.get("radius_m", 0) < radius_m:
+        print(f"{C_GRAY}  (cached facilities were captured at {cached.get('radius_m')}m - re-querying live for the requested {radius_m}m){C_RESET}")
+        cached = None
 
     if cached:
         src_tag = f" {C_GRAY}[coords: {coord_src}]{C_RESET}" if coord_src != "Source GPS" else ""
@@ -2363,11 +2374,11 @@ DESCRIPTION
 
     g_facilities = parser.add_argument_group("Nearby Facilities & POI Lookup")
     g_facilities.add_argument("--facilities", "-f", "--poi", action="store_true", help="Look up and display nearby facilities (cafes, dining, supermarkets, retail, amenities) around matching station(s)")
-    g_facilities.add_argument("--facilities-radius", "--radius-m", type=int, default=250, help="Search radius in meters for nearby facilities (default: 250)")
+    g_facilities.add_argument("--facilities-radius", "--radius-m", type=int, default=500, help="Search radius in meters for nearby facilities (default: 500)")
     g_facilities.add_argument("--min-facilities", "--facilities-min", choices=["excellent", "good", "basic", "sparse"], help="Filter stations meeting minimum facility quality rating tier")
     g_facilities.add_argument("--supermarket", "--groceries", action="store_true", help="Filter stations located at or near a major supermarket (Woolworths, Coles, Aldi, IGA, Costco, etc.)")
     g_facilities.add_argument("--sync-facilities", action="store_true", help="Batch look up and cache nearby facilities for matching stations in station_facilities.json")
-    g_facilities.add_argument("--reclassify-facilities", action="store_true", help="BUG-151: instantly re-run facility categorization on every cached record that has raw OSM tags saved, no network call - use after a classify_poi_group() logic change instead of --sync-facilities")
+    g_facilities.add_argument("--reclassify-facilities", action="store_true", help="Instantly re-run facility categorization on every cached record that has raw OSM tags saved, no network call - use after a classify_poi_group() logic change instead of --sync-facilities")
 
     g_registry = parser.add_argument_group("Registry Filters & Batch Updates")
     g_registry.add_argument("--plugshare", "--inspect-plugshare", type=str, help="PlugShare location ID(s) to inspect / scrape live (comma-separated)")
@@ -2609,7 +2620,7 @@ DESCRIPTION
         print(f"\n{C_CYAN}⚡ [10/11] Syncing NRMA EV Charging Network across Australia...{C_RESET}")
         nrma_ok = False
         for p in manager.providers:
-            if isinstance(p, NrmaProvider):
+            if isinstance(p, NRMAProvider):
                 try:
                     synced_nrma = p.sync()
                     print(f"  {C_GREEN}✔ Cached {len(synced_nrma)} NRMA stations to {p.registry_path}{C_RESET}")
@@ -2739,7 +2750,7 @@ DESCRIPTION
 
     if args.sync_nrma:
         for p in manager.providers:
-            if isinstance(p, NrmaProvider):
+            if isinstance(p, NRMAProvider):
                 print(f"{C_CYAN}⚡ Fetching all NRMA EV Charging Network stations across Australia...{C_RESET}")
                 synced = p.sync()
                 print(f"{C_GREEN}✔ Successfully saved {len(synced)} NRMA stations to {p.registry_path}{C_RESET}")
@@ -2883,7 +2894,7 @@ DESCRIPTION
         }
         if net_lower in _GENERIC_LIVE_DIFF_NETWORKS:
             provider_cls_map = {
-                "nrma": NrmaProvider, "jolt": JoltProvider, "evie": EvieProvider,
+                "nrma": NRMAProvider, "jolt": JoltProvider, "evie": EvieProvider,
                 "evx": EVXProvider, "exploren": ExplorenProvider,
                 "bppulse": BPPulseProvider, "ampcharge": AmpChargeProvider,
             }
@@ -2987,7 +2998,7 @@ DESCRIPTION
         # so it could never fall back to anything - moved load_abrp_config()
         # up here so all three routing knobs resolve the same way: CLI flag
         # wins, else config.json's abrp.* value, else the original literal).
-        from lib.abrp_planner import (
+        from lib.abrp_common import (
             load_abrp_config,
             resolve_departure_soc,
             generate_abrp_deep_link,
@@ -3037,7 +3048,7 @@ DESCRIPTION
         route_info["abrp_link"] = abrp_url
         # Fix (2026-09-21): reuse the same shared constants as the fallback
         # above instead of yet another independently-invented pair (175.0 vs
-        # 165.0 vs abrp_planner.py's own 171.1), and a generic vehicle-name
+        # 165.0 vs abrp_common.py's own 171.1), and a generic vehicle-name
         # fallback instead of a hardcoded specific car (abrp_cfg always sets
         # "vehicle_name" itself - see load_abrp_config() - so this fallback
         # is last-resort only).
@@ -3218,9 +3229,9 @@ DESCRIPTION
  # Offline Facilities Reclassify Action (BUG-151, no network call)
     if getattr(args, "reclassify_facilities", False):
         try:
-            from lib.station_facilities import get_facilities_registry
+            from lib.station_facilities_common import get_facilities_registry
         except ImportError:
-            from station_facilities import get_facilities_registry
+            from station_facilities_common import get_facilities_registry
         fac_reg = get_facilities_registry()
         print("\U0001f504 Reclassifying cached facilities offline (no network calls)...")
         result = fac_reg.reclassify_cached_facilities()
@@ -3233,7 +3244,7 @@ DESCRIPTION
         if not stations:
             print(f"❌ No stations found matching current criteria to sync facilities for.")
             return
-        sync_facilities_for_stations(stations, radius_m=args.facilities_radius or 250, delay_s=args.delay)
+        sync_facilities_for_stations(stations, radius_m=args.facilities_radius or 500, delay_s=args.delay)
         return
 
  # Multi-View comparison mode
@@ -3261,7 +3272,7 @@ DESCRIPTION
     elif effective_sort == "detour":
         sort_mode_desc = "Detour Distance (Smallest Lateral Offset First)"
     elif effective_sort in ("score", "stop_score", "quality"):
-        sort_mode_desc = "Stop Quality Score (Highest First, Facilities + Detour + Speed & Bays)"
+        sort_mode_desc = "Stop Quality Score (Highest First, Facilities + Detour + Speed & Bays + PlugShare)"
     elif effective_sort == "distance":
         has_real_dist = any(s.distance_km is not None for s in stations)
         if has_real_dist:
@@ -3303,7 +3314,7 @@ DESCRIPTION
         if not stations:
             print(f"{C_YELLOW}⚠ No stations found to look up nearby facilities.{C_RESET}")
             return
-        radius = args.facilities_radius or 250
+        radius = args.facilities_radius or 500
         limit_fac = min(len(stations), 5 if len(stations) > 1 else 1)
         for st in stations[:limit_fac]:
             display_nearby_facilities(st, radius_m=radius)
@@ -3402,7 +3413,7 @@ DESCRIPTION
  # leaving this list and re-invoking the whole program; this lets you cover
  # exactly the stations already in front of you (e.g. one route's worth)
  # without a separate, much slower whole-registry run.
-                sync_facilities_for_stations(stations, radius_m=args.facilities_radius or 250, delay_s=args.delay)
+                sync_facilities_for_stations(stations, radius_m=args.facilities_radius or 500, delay_s=args.delay)
                 input("\nPress Enter to refresh list...")
                 render_cb()
                 continue
@@ -3453,7 +3464,7 @@ DESCRIPTION
                 sc_site = None
                 if is_sel_tesla_sc:
                     try:
-                        from lib.supercharge_info import find_supercharge_site
+                        from lib.supercharge_common import find_supercharge_site
                         sc_meta = sel.metadata or {}
                         loc_id = sc_meta.get("location_id") or sc_meta.get("short_name") or sel.source_id
                         sc_site = find_supercharge_site(sel.name, sel.lat, sel.lon, location_id=loc_id)
@@ -3566,7 +3577,7 @@ DESCRIPTION
                     pass
                 elif act.startswith("f") or act in ("facilities", "nearby"):
                     parts = act.split()
-                    radius = args.facilities_radius or 250
+                    radius = args.facilities_radius or 500
                     force = "refresh" in act or act == "fr"
                     for p in parts[1:]:
                         if p.isdigit():

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-station_facilities.py - Persisted Station Facilities Registry & Quality Scoring Engine
-====================================================================================
+station_facilities_common.py - Persisted Station Facilities Registry & Quality Scoring Engine
+=============================================================================================
 Maintains a local JSON cache of verified nearby amenities, food, restrooms, and shops
 around EV charging stations (primarily Superchargers), with a 0-10 quality scoring
 algorithm that allows drivers to instantly see which chargers have good vs bad facilities.
@@ -93,12 +93,12 @@ def resolve_station_physical_coords(station: any) -> tuple:
     if is_supercharger:
         try:
             try:
-                from lib.supercharge_info import find_supercharge_site
+                from lib.supercharge_common import find_supercharge_site
             except ImportError:
                 try:
-                    from supercharge_info import find_supercharge_site
+                    from supercharge_common import find_supercharge_site
                 except ImportError:
-                    from Tools.lib.supercharge_info import find_supercharge_site
+                    from Tools.lib.supercharge_common import find_supercharge_site
             loc_id = st_meta.get("location_id") or st_meta.get("short_name") or getattr(station, "source_id", None) or (station.get("source_id") if isinstance(station, dict) else None)
             sc_site = find_supercharge_site(str(st_name), base_lat, base_lon, location_id=loc_id)
             if sc_site and sc_site.get("gps"):
@@ -604,7 +604,7 @@ class FacilitiesRegistry:
             res["closest_poi"] = f"{closest_poi['name']} ({closest_poi['dist_m']:.0f}m)" if closest_poi else None
         return res
 
-    def store_station_facilities(self, station_key: str, station_name: str, network: str, lat: float, lon: float, pois: list, radius_m: int = 250, notes: str = "") -> dict:
+    def store_station_facilities(self, station_key: str, station_name: str, network: str, lat: float, lon: float, pois: list, radius_m: int = 500, notes: str = "") -> dict:
         """Computes score and stores facility record in JSON registry.
 
         BUG-144 (2026-09-22): used to always write to the literal `station_key`
@@ -752,7 +752,7 @@ SUPERMARKET_KEYWORDS = {
     "supermarket", "grocery", "groceries"
 }
 
-def station_has_supermarket(cached_fac: dict, max_dist_m: int = 250) -> bool:
+def station_has_supermarket(cached_fac: dict, max_dist_m: int = 500) -> bool:
     """True if cached facilities record contains a confirmed supermarket within max_dist_m."""
     if not cached_fac:
         return False
@@ -806,7 +806,7 @@ def format_facilities_summary_card(cached_fac: dict, indent: str = "  ", max_wid
             max_width = 100
 
     lines = []
-    radius_m = cached_fac.get("radius_m", 250)
+    radius_m = cached_fac.get("radius_m", 500)
     badge = cached_fac.get("badge", "")
     header_raw = f"{indent}🏙️  \033[1mNearby Facilities:\033[0m {badge} \033[90m(within {radius_m}m)\033[0m"
     if display_len(header_raw) > max_width:

@@ -318,18 +318,18 @@ def filter_station_records(
         if min_fac or supermarket_filter:
             min_score = 8.0 if min_fac.startswith("exc") else (5.5 if min_fac.startswith("goo") else (3.0 if min_fac.startswith("bas") else 0.0))
             try:
-                from station_facilities import get_facilities_registry, station_has_supermarket
+                from station_facilities_common import get_facilities_registry, station_has_supermarket
                 _f_reg = get_facilities_registry()
             except ImportError:
                 try:
-                    from lib.station_facilities import get_facilities_registry, station_has_supermarket
+                    from lib.station_facilities_common import get_facilities_registry, station_has_supermarket
                     _f_reg = get_facilities_registry()
                 except ImportError:
                     _f_reg = None
                     station_has_supermarket = None
 
             try:
-                from lib.station_facilities import resolve_station_physical_coords
+                from lib.station_facilities_common import resolve_station_physical_coords
                 phys_lat, phys_lon, _ = resolve_station_physical_coords(st)
             except Exception:
                 phys_lat, phys_lon = st.lat, st.lon

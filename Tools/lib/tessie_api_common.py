@@ -209,6 +209,24 @@ def resolve_tessie_data_home():
     return os.path.realpath(os.path.expanduser("~/Library/Mobile Documents/com~apple~CloudDocs/Tesla"))
 
 
+def resolve_tessie_archive_home():
+    """The ONE authoritative home for ARCHIVED real data - config.json's
+    own "directories.archive" key, falling back to "<data_home>/archive"
+    if nothing is configured. Distinct from resolve_tessie_data_home():
+    live/current registries live under the "data" directory, superseded/
+    removed records live under "archive" instead - a station's live JSON
+    at data_home/chargers/tesla_chargers.json and its archived-removals
+    JSON at archive_home/chargers/tesla_chargers_archived.json are
+    siblings by subfolder name ("chargers") but under two different base
+    directories, never nested one inside the other (REQ-107,
+    AGENTS.local.md, 2026-09-23 - "the archived files should be in
+    subdirectories from ${archive}/X not ${data}/X/archive")."""
+    cfg_dir = load_config().get("directories", {}).get("archive")
+    if cfg_dir:
+        return os.path.realpath(os.path.abspath(os.path.expanduser(cfg_dir)))
+    return os.path.join(resolve_tessie_data_home(), "archive")
+
+
 def unique_stamped_path(directory, prefix, stamp, suffix="", ext=""):
     """<prefix>_<stamp>_<NN><suffix><ext> inside `directory`, where NN is a
     zero-padded 2-digit sequence number that is ALWAYS present - never
@@ -264,6 +282,31 @@ def api_get(path, vin, token, params=None, timeout=30):
     url = f"{API_BASE}/{vin}/{path}?{urllib.parse.urlencode(params)}"
     accept = "text/csv, */*;q=0.1" if params.get("format") == "csv" else "application/json"
     req = urllib.request.Request(url, headers={"Accept": accept, "User-Agent": "tessie-tools/1.0"})
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            return resp.status, resp.read()
+    except urllib.error.HTTPError as e:
+        return e.code, e.read()
+    except Exception as e:
+        return None, str(e).encode("utf-8")
+
+
+def api_post(path, vin, token, params=None, timeout=30):
+    """POST https://api.tessie.com/{vin}/{path}?access_token=...&...
+    Same URL/params shape as api_get() (Tessie's write endpoints - e.g.
+    set_cost - take their arguments as query-string params, not a JSON
+    body, exactly like every read endpoint) but issues a real POST with
+    an empty body, for a real Tessie API call that changes account data
+    rather than just reading it. Returns (status_code_or_None, raw_bytes)
+    - status is None only for a connection-level failure (DNS/timeout/
+    blocked egress), not an HTTP error."""
+    params = dict(params or {})
+    params["access_token"] = token
+    url = f"{API_BASE}/{vin}/{path}?{urllib.parse.urlencode(params)}"
+    req = urllib.request.Request(
+        url, method="POST",
+        headers={"Accept": "application/json", "User-Agent": "tessie-tools/1.0"},
+    )
     try:
         with urllib.request.urlopen(req, timeout=timeout) as resp:
             return resp.status, resp.read()

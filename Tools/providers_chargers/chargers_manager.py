@@ -32,7 +32,7 @@ from .chargers_plugshare import PlugShareProvider
 from .chargers_ampcharge import AmpChargeProvider
 from .chargers_exploren import ExplorenProvider
 from .chargers_jolt import JoltProvider
-from .chargers_nrma import NrmaProvider
+from .chargers_nrma import NRMAProvider
 
 
 def _normalize_street_word(w: str) -> str:
@@ -450,7 +450,7 @@ class ChargerDiscoveryManager:
                 AmpChargeProvider(),
                 ExplorenProvider(),
                 JoltProvider(),
-                NrmaProvider()
+                NRMAProvider()
             ]
 
     def deduplicate_records(self, records: List[UnifiedStationRecord]) -> List[UnifiedStationRecord]:
@@ -544,7 +544,7 @@ class ChargerDiscoveryManager:
 
  # Check facilities registry for matching POIs (e.g. searching "Woolworths", "Coles", "Aldi", "Kmart")
         try:
-            from lib.station_facilities import get_facilities_registry, resolve_station_physical_coords
+            from lib.station_facilities_common import get_facilities_registry, resolve_station_physical_coords
             _f_reg = get_facilities_registry()
             if _f_reg and query:
                 q_low = query.lower().strip()
@@ -649,9 +649,9 @@ class ChargerDiscoveryManager:
         Returns (sorted_stations, route_info).
         """
         try:
-            from lib.route_planner import fetch_driving_route, calculate_corridor_stations
+            from lib.route_common import fetch_driving_route, calculate_corridor_stations
         except ImportError:
-            from route_planner import fetch_driving_route, calculate_corridor_stations
+            from route_common import fetch_driving_route, calculate_corridor_stations
 
         # 1. Fetch driving route geometry
         route_info = fetch_driving_route(waypoints, fallback=True)
@@ -704,9 +704,9 @@ class ChargerDiscoveryManager:
 
         elif sort_by in ["score", "stop_score", "quality"]:
             try:
-                from lib.route_planner import compute_route_stop_score
+                from lib.route_common import compute_route_stop_score
             except ImportError:
-                from route_planner import compute_route_stop_score
+                from route_common import compute_route_stop_score
 
             def score_key(r: UnifiedStationRecord):
                 sc_data = getattr(r, "stop_score_data", None)
@@ -723,11 +723,11 @@ class ChargerDiscoveryManager:
 
         elif sort_by in ["facilities", "facility", "rating"]:
             try:
-                from station_facilities import get_facilities_registry
+                from station_facilities_common import get_facilities_registry
                 _f_reg = get_facilities_registry()
             except ImportError:
                 try:
-                    from lib.station_facilities import get_facilities_registry
+                    from lib.station_facilities_common import get_facilities_registry
                     _f_reg = get_facilities_registry()
                 except ImportError:
                     _f_reg = None
@@ -737,7 +737,7 @@ class ChargerDiscoveryManager:
                 name = (r.name or "").lower()
                 if _f_reg:
                     try:
-                        from lib.station_facilities import resolve_station_physical_coords
+                        from lib.station_facilities_common import resolve_station_physical_coords
                         phys_lat, phys_lon, _ = resolve_station_physical_coords(r)
                     except Exception:
                         phys_lat, phys_lon = r.lat, r.lon
@@ -931,7 +931,7 @@ class ChargerDiscoveryManager:
                     fresh = p.reverify_station(amp_id)
                     self.export_consolidated_registry()
                     return True, (_diff_station_fields(station, fresh) if fresh else None), fresh
-                elif isinstance(p, NrmaProvider) and "nrma" in src:
+                elif isinstance(p, NRMAProvider) and "nrma" in src:
                     nrma_id = station.source_id or station.key.replace("NRMA_", "")
                     fresh = p.reverify_station(nrma_id)
                     self.export_consolidated_registry()

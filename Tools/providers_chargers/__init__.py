@@ -12,7 +12,7 @@ from .chargers_plugshare import PlugShareProvider
 from .chargers_ampcharge import AmpChargeProvider
 from .chargers_exploren import ExplorenProvider
 from .chargers_jolt import JoltProvider
-from .chargers_nrma import NrmaProvider
+from .chargers_nrma import NRMAProvider
 from .chargers_manager import ChargerDiscoveryManager
 
 __all__ = [
@@ -27,7 +27,7 @@ __all__ = [
     "AmpChargeProvider",
     "ExplorenProvider",
     "JoltProvider",
-    "NrmaProvider",
+    "NRMAProvider",
     "ChargerDiscoveryManager"
 ]
 

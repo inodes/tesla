@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-osm_templates.py - Standard OpenStreetMap Tagging Templates & Presets
-=======================================================================
+osm_templates_common.py - Standard OpenStreetMap Tagging Templates & Presets
+============================================================================
 Provides rich, OSM-compliant tagging presets, Australian brand matching,
 and tag inference for converting Google Maps locations into valid OSM objects.
 
