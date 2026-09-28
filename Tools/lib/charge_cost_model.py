@@ -11,7 +11,7 @@ import would be circular.
 Method (unchanged from REQ-147's own report):
   - Home charges (emoji "🏠", via analyse_charging.py's own GPS/registry-
     based resolve_location() - not the raw "Saved Location" CSV text)
-    are priced with analyse_session_cost.py's real tiered/solar-aware
+    are priced with lib/session_cost.py's real tiered/solar-aware
     opportunity-cost model (evaluate_tessie_charge()), applied directly
     to Tessie's own Started/Ended At window and Energy Used (kWh).
   - DC/public charges are priced from the real matched invoice
@@ -82,7 +82,7 @@ def compute_all_charge_costs(analyzer):
       real Tessie numeric `id` a caller needs for set_cost), pv_pct,
       notes (list of str).
     """
-    from analyse_session_cost import evaluate_tessie_charge
+    from lib.session_cost import evaluate_tessie_charge
     from power_demand_calculator import load_rate_periods
 
     sessions = analyzer.reconcile()

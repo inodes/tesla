@@ -2655,7 +2655,7 @@ class TessieChargingAnalyzer:
         """Finds the existing charge_deepdive_..._Evnex_Home.json file
         whose own charging window overlaps [start_dt, end_dt] - the same
         window-overlap match get_energy_source_crosscheck() uses, via
-        analyse_session_cost.load_evnex_deepdive_sessions() - and returns that
+        lib.session_cost.load_evnex_deepdive_sessions() - and returns that
         file's own "<date>_<HHMM>" stamp (the value unique_stamped_path()
         was originally given when sync_api_evnex.py wrote it) rather than
         a full path. fetch_charge_deepdive_from_api() re-runs that same
@@ -2681,7 +2681,7 @@ class TessieChargingAnalyzer:
         Returns None if no matching JSON is found; the caller falls back
         to a fresh stamp of its own in that case."""
         try:
-            import analyse_session_cost as _evc
+            import lib.session_cost as _evc
         except Exception:
             return None
         pad = timedelta(minutes=2)
@@ -2798,7 +2798,7 @@ class TessieChargingAnalyzer:
         filenames. For an Evnex session, named to match the EXISTING
         charge_deepdive_..._Evnex_Home.json file's own stem (found by the
         same charging-window-overlap match get_energy_source_crosscheck()
-        already uses, via analyse_session_cost.load_evnex_deepdive_sessions())
+        already uses, via lib.session_cost.load_evnex_deepdive_sessions())
         rather than minting a fresh name - the whole point (AGENTS.md
         REQ-050) is that the .json and .csv for one real session sort and
         pair together by filename alone; a fresh unique_stamped_path() call
@@ -2869,7 +2869,7 @@ class TessieChargingAnalyzer:
  # all (just the bare "_NN" disambiguator from
  # unique_stamped_path()), unlike every manually-ingested/legacy
  # deepdive CSV, which is always named "..._<Network>_<ShortName>"
- # (e.g. "Tesla_Macquarie_NSW"). analyse_charge_curves.py's historical
+ # (e.g. "Tesla_Macquarie_NSW"). lib/charge_curves.py's historical
  # pooling keys ENTIRELY off that slug (via tesla_superchargers
  # .json's short_name) - a session named "..._00.csv" can never
  # match its own site's history, so it silently got NO dashed
@@ -4446,6 +4446,38 @@ class TessieChargingAnalyzer:
             series=series,
             subtitle=subtitle,
         )
+
+ # REQ-154: also build the fuller curve/profile chart set
+ # (Charger Power vs SoC + Pack Temp, and Pack Voltage/Current vs
+ # elapsed time - both PNG + interactive HTML, with dashed
+ # historical-pooling estimates from other sessions at the same
+ # site/tier) via lib/charge_curves.py's own process_session() -
+ # the SAME builder analyse_charge_curves.py used to run as its own
+ # separate script, now triggered automatically here so there is no
+ # need to ever run that as a separate step. Best-effort: this
+ # method's own out_path (the simpler, richer-subtitled chart above)
+ # is still returned and still what --inspect's "[o]pen chart"
+ # action opens, so a failure/skip here never breaks the existing
+ # flow - process_session() itself already no-ops (returns False)
+ # when the curve/profile files already exist and force=False.
+        try:
+            from lib.charge_curves import (
+                discover_deepdive_sessions, load_charger_registries, process_session,
+            )
+            csv_path = dt_rec.get("source_path")
+            if csv_path and os.path.isfile(csv_path):
+                deepdive_dir = os.path.dirname(csv_path)
+                all_sessions = discover_deepdive_sessions(deepdive_dir)
+                this_session = next(
+                    (cs for cs in all_sessions if os.path.abspath(cs["path"]) == os.path.abspath(csv_path)),
+                    None,
+                )
+                if this_session:
+                    registry = load_charger_registries()
+                    process_session(this_session, all_sessions, registry, force=False)
+        except Exception:
+            pass
+
         return out_path
 
     def get_energy_source_crosscheck(self, s, force_refresh=False):
@@ -4520,7 +4552,7 @@ class TessieChargingAnalyzer:
             return None
 
         try:
-            import analyse_session_cost as _evc
+            import lib.session_cost as _evc
             from power_demand_calculator import load_rate_periods
         except Exception:
             return None
@@ -4965,6 +4997,19 @@ class TessieChargingAnalyzer:
             if curve_path:
                 t7 = f"    • {C_BOLD}{'Charging Curve:':<{lw_tele}}{C_RESET}{shorten_display_path(curve_path, 85)}"
                 print(f"│{pad_display(t7, box_w - 2, truncate=True)}│")
+
+ # REQ-154: the fuller power-vs-SoC/pack-temp + voltage-current-
+ # profile chart set (lib/charge_curves.py, with dashed historical-
+ # pooling estimates) that generate_charging_curve_chart() above
+ # also just built/found alongside the simpler chart - surfaced
+ # here too so there's never a reason to run analyse_charge_curves.py
+ # as its own script to get these.
+                stem = os.path.splitext(dt_rec.get("source_path") or "")[0]
+                curve_png = stem + "_curve.png" if stem else None
+                profile_html = stem + "_profile.html" if stem else None
+                if curve_png and os.path.isfile(curve_png):
+                    t7b = f"    • {C_BOLD}{'Curve/Profile Charts:':<{lw_tele}}{C_RESET}{shorten_display_path(curve_png, 85)} (+ _profile.png/.html)"
+                    print(f"│{pad_display(t7b, box_w - 2, truncate=True)}│")
 
  # TODO-018: preconditioning cross-reference against the preceding
  # drive's own telemetry - independent of dt_rec above (which is the
@@ -6375,6 +6420,10 @@ EXAMPLES
                            help="Batch-populate the PV provider/AGL/Evnex energy-source cross-check cache for every matching home Evnex session (combine with --since/--until/--month to scope it), so --inspect never waits on a live fetch (REQ-072)")
     g_action.add_argument("--force-refresh", action="store_true",
                            help="With --precompute-sources, re-fetch every session's cross-check even if already cached (needed once after a change to the underlying calculation)")
+    g_action.add_argument("--reconcile-invoices", action="store_true",
+                           help="Cross-reference AGL's real invoiced totals against the aggregate of "
+                                "computed per-session EV charging costs (REQ-071/REQ-154 - moved here from "
+                                "the old standalone analyse_session_cost.py), instead of the normal listing")
     g_action.add_argument("--sync-tessie-costs", action="store_true",
                            help="REQ-148: push our real calculated/known cost (tiered solar model for Home, matched invoice for DC/public) back to Tessie's own live account via set_cost. Always a dry-run preview unless --apply is also given.")
     g_action.add_argument("--apply", action="store_true",
@@ -6415,6 +6464,11 @@ EXAMPLES
 
     if args.sync_tessie_costs:
         analyzer.sync_tessie_costs(apply=args.apply, limit=args.limit, only_confident=args.only_confident)
+        return
+
+    if args.reconcile_invoices:
+        from lib.session_cost import reconcile_against_invoices
+        reconcile_against_invoices()
         return
 
     if args.rename_invoices:
