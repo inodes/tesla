@@ -29,7 +29,9 @@ tesla/
 ├── Tools/                          # 🛠️ Executable scripts for multi-drive deployment
 │   ├── archive/                    # Archived one-off / exploratory test scripts
 │   ├── lib/                        # Shared library modules imported by the scripts below (not run
-│   │                                #   directly) - sei_inspector.py, table_formatter.py, tessie_api_common.py, etc.
+│   │                                #   directly) - sei_inspector.py, table_formatter.py, tessie_api_common.py,
+│   │                                #   session_cost.py (REQ-154, per-session EV cost), charge_curves.py
+│   │                                #   (REQ-154, charging-curve charts) etc.
 │   ├── providers_chargers/         # Pluggable charging-network adapters (Tesla/Chargefox/EVX/Evie/
 │   │                                #   BP Pulse/AmpCharge/Exploren/Jolt/NRMA/PlugShare),
 │   │                                #   orchestrated by charger_find.py
@@ -38,10 +40,8 @@ tesla/
 │   │                                #   swappable via config.json's "power_provider" key
 │   ├── analyse_battery_health.py   # Longitudinal battery capacity & degradation analyser
 │   ├── analyse_car_efficiency.py   # Vehicle speed & temperature efficiency curve analyser
-│   ├── analyse_charge_curves.py    # Multi-session Supercharger charging curve & speed analyser
 │   ├── analyse_charging.py         # Charging reconciliation & invoice parser
 │   ├── analyse_drives.py           # Drives explorer, footage linker, and master consolidator
-│   ├── analyse_session_cost.py     # Home EV charging solar vs grid cost & tariff calculator
 │   ├── charger_find.py            # Unified multi-network EV charger discovery, pricing & sync engine
 │   ├── charger_find_tesla.py      # [Deprecated] Legacy Tesla Supercharger explorer (superseded by charger_find.py)
 │   ├── places_manager.py           # Place tagging, geocoding, and stop-cluster review utility

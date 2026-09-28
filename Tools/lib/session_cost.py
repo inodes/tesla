@@ -1,5 +1,12 @@
-#!/usr/bin/env python3
 """
+lib/session_cost.py - per-session EV-charging cost under the real AGL
+Solar VIP tariff (REQ-154: moved here from the old standalone
+analyse_session_cost.py script, folded into analyse_charging.py per the
+user's own explicit steer - "why would I run analyse_session_cost.py by
+passing in a session if I can just run ./analyse_charging.py to select a
+session then have session_cost built in" - this file's substance is
+otherwise UNCHANGED.
+
 analyse_session_cost.py - Per-session EV-charging cost under the real AGL
 Solar VIP tariff (AGENTS.md TODO-013)
 =====================================================================
@@ -117,12 +124,7 @@ here):
   - AGL/agl_tariff_rates.json (REQ-031's dated tariff periods - PII,
     never committed, see power_demand_calculator.py's own note)
 
-Usage:
-    ./analysis_ev_session_cost.py                       # 20 most recent sessions
-    ./analysis_ev_session_cost.py --limit 5
-    ./analysis_ev_session_cost.py --since-days 30
-    ./analysis_ev_session_cost.py --all
-    ./analysis_ev_session_cost.py --session-id 525f9c52-429b-496a-901d-eb1c002afee1
+Library usage (REQ-154): this file has no CLI of its own any more - it is imported by analyse_charging.py, which is the only supported entry point for everything charging-related. Batch AGL-invoice cross-reference: `./analyse_charging.py --reconcile-invoices`. Per-session cost breakdown: `./analyse_charging.py --inspect <#/date>` (shows this automatically for a home Evnex session - see get_energy_source_crosscheck() there, which calls evaluate_session() below - no separate flag needed).
 """
 
 import argparse
@@ -132,7 +134,9 @@ import os
 import sys
 from datetime import date, datetime, timedelta, timezone
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+_TOOLS_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if _TOOLS_DIR not in sys.path:
+    sys.path.insert(0, _TOOLS_DIR)
 from providers_power import get_power_provider  # noqa: E402
 from power_demand_calculator import load_rate_periods, rate_for_date  # noqa: E402
 from lib.power_usage_db import get_usage_db_connection, resolve_usage_db_path, iter_rows  # noqa: E402
@@ -175,6 +179,7 @@ _PV_CONN = get_pv_db_connection()
 # import before it's flagged.)
 CONFLICT_IMPORT_RATIO = 0.25  # real import >= 25% of the session's own kWh
 CONFLICT_SOLAR_PCT_THRESHOLD = 50.0
+
 
 
 def iso_to_epoch(s):
@@ -794,131 +799,3 @@ def reconcile_against_invoices(deepdive_dir=None, data_home=DATA_HOME, periods=N
     return all_ok
 
 
-def main():
-    parser = argparse.ArgumentParser(
-        usage="""analyse_session_cost.py [--limit N | --all] [--since-days N] [--deepdive-dir DIR] [--data-home DIR]
-   or:  analyse_session_cost.py --session-id UUID [--deepdive-dir DIR] [--data-home DIR]
-   or:  analyse_session_cost.py --reconcile-invoices [--data-home DIR]
-""",
-        description="""
-NAME
-    analyse_session_cost.py - per-session EV-charging cost under the real AGL Solar VIP tariff
-
-DESCRIPTION
-    Computes what a home-charging session actually cost under AGL's real dated
-    Solar VIP rates - not Tessie's own "Cost"/"Cost Per kWh" columns (the car's
-    own guess), and not a share of the monthly demand charge (that stays a
-    separate whole-account number in power_demand_calculator.py /
-    power_cost_calculator.py, never attributed to one session here). See the
-    module docstring for the full tariff/cost-model rationale.
-
-    --reconcile-invoices (REQ-071) cross-references AGL's real invoiced
-    totals against the aggregate of this file's own computed per-session
-    costs, for every cycle power_cost_calculator.py's own self-test
-    already knows about - see reconcile_against_invoices()'s own
-    docstring for exactly what is and isn't actually checked.
-""",
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog="""
-EXAMPLES
-  analyse_session_cost.py --limit 10
-  analyse_session_cost.py --since-days 30
-  analyse_session_cost.py --all
-  analyse_session_cost.py --session-id 3f9c1e2a-...-b7d4
-  analyse_session_cost.py --reconcile-invoices
-"""
-    )
-    parser.add_argument("--limit", type=int, default=20, help="Most recent N sessions to evaluate (default: 20, ignored with --all)")
-    parser.add_argument("--since-days", type=int, help="Only sessions from the last N days")
-    parser.add_argument("--session-id", help="Evaluate one specific Evnex session by its UUID")
-    parser.add_argument("--all", action="store_true", help="Evaluate every session found (overrides --limit)")
-    parser.add_argument("--deepdive-dir", help="Override the deep-dive JSON folder (default: <data_home>/charges/deepdive)")
-    parser.add_argument("--data-home", default=DATA_HOME, help="Override the power provider's data home directory (default: the active power provider's own resolve_data_home())")
-    parser.add_argument("--reconcile-invoices", action="store_true",
-                         help="Cross-reference AGL's real invoiced totals against the aggregate of computed per-session costs (REQ-071), instead of the normal per-session listing")
-    args = parser.parse_args()
-
-    if args.reconcile_invoices:
-        ok = reconcile_against_invoices(deepdive_dir=args.deepdive_dir, data_home=args.data_home)
-        return 0 if ok else 1
-
-    limit = None if (args.all or args.session_id) else args.limit
-    sessions = load_evnex_deepdive_sessions(
-        deepdive_dir=args.deepdive_dir, since_days=args.since_days, limit=limit, session_id=args.session_id
-    )
-    if not sessions:
-        print("No matching Evnex deep-dive sessions found.")
-        return 1
-
- # A session that delivered ~zero energy is a connection blip (charger
- # pairing/testing, a momentary plug/unplug, a start that never drew
- # power) rather than a real charge - see evnex_common.
- # is_real_charging_session()'s own docstring for how this was found
- # (a real charger swap producing 5 of these, plus 23 more already on
- # disk predating it). Excluded from every count/total below, but
- # never silently - the excluded count is always reported.
-    def _attrs(s):
-        return (s.get("session", {}) or {}).get("attributes", {}) or {}
-
-    blips = [s for s in sessions if not is_real_charging_session(_attrs(s))]
-    sessions = [s for s in sessions if is_real_charging_session(_attrs(s))]
-    if not sessions:
-        print(f"All {len(blips)} matching session(s) look like connection blips (0 kWh) - nothing real to evaluate.")
-        return 0
-
-    try:
-        periods = load_rate_periods()
-    except FileNotFoundError as e:
-        print(f"❌ {e}")
-        return 1
-
-    results = [evaluate_session(s, periods, data_home=args.data_home) for s in sessions]
-
-    blip_note = f" ({len(blips)} connection blip(s) excluded - 0 kWh, not real charges)" if blips else ""
-    print(f"=== {len(results)} home-charging session(s) ==={blip_note}\n")
-    for r in results:
-        print_session(r)
-
-    total_kwh = sum(r["kwh_total"] for r in results)
-    total_base = sum(r["base_cost"] for r in results)
-    total_base_incl_gst = sum(r["base_cost_incl_gst"] for r in results)
-
- # REQ-071/REQ-140: blended total now prefers PV-provider-adjusted
- # (real, measured self-consumption) FIRST, Evnex-adjusted (a
- # configured schedule, not a live measurement) SECOND, and plain base
- # cost only for a session with neither - so every session is always
- # covered, never silently dropped, while always using the most direct
- # measurement available for it.
-    n_pv = sum(1 for r in results if r.get("pv_adjusted_cost") is not None)
-    n_evnex_fallback = sum(1 for r in results if r.get("pv_adjusted_cost") is None and r["evnex_adjusted_cost"] is not None)
-    n_base_only = len(results) - n_pv - n_evnex_fallback
-
-    def _best_cost(r, incl_gst):
-        key_pv = "pv_adjusted_cost_incl_gst" if incl_gst else "pv_adjusted_cost"
-        key_evnex = "evnex_adjusted_cost_incl_gst" if incl_gst else "evnex_adjusted_cost"
-        key_base = "base_cost_incl_gst" if incl_gst else "base_cost"
-        if r.get(key_pv) is not None:
-            return r[key_pv]
-        if r.get(key_evnex) is not None:
-            return r[key_evnex]
-        return r[key_base]
-
-    total_blended = sum(_best_cost(r, incl_gst=False) for r in results)
-    total_blended_incl_gst = sum(_best_cost(r, incl_gst=True) for r in results)
-    n_conflict = sum(1 for r in results if r["conflict"])
-    n_pv_agl_conflict = sum(1 for r in results if r.get("pv_agl_conflict"))
-
-    print("=== Totals ===")
-    print(f"  {len(results)} session(s), {total_kwh:.3f} kWh total{blip_note}")
-    print(f"  base cost (100% grid, every session)                         : ${total_base:.2f} ex GST -> ${total_base_incl_gst:.2f} incl GST")
-    print(f"  blended best estimate ({_PV_PROVIDER.display_name} split for {n_pv}/{len(results)}, Evnex fallback for {n_evnex_fallback},")
-    print(f"                         base cost for the remaining {n_base_only})       : ${total_blended:.2f} ex GST -> ${total_blended_incl_gst:.2f} incl GST")
-    if n_conflict:
-        print(f"  ⚠️  {n_conflict} session(s) flagged with a solar-claim/real-import conflict (Evnex vs AGL) - see above")
-    if n_pv_agl_conflict:
-        print(f"  ⚠️  {n_pv_agl_conflict} session(s) flagged with a {_PV_PROVIDER.display_name}/AGL real-import cross-source conflict - see above")
-    return 0
-
-
-if __name__ == "__main__":
-    main()

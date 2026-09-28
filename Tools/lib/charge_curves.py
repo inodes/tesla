@@ -1,5 +1,13 @@
-#!/usr/bin/env python3
-"""Builds two charging-curve charts (PNG + interactive HTML) from a charge
+"""
+lib/charge_curves.py - charging-curve chart builders (power-vs-SoC,
+voltage/current/SoC-vs-time) (REQ-154: moved here from the old
+standalone analyse_charge_curves.py script, folded into
+analyse_charging.py per the user's own explicit steer - this file's
+substance is otherwise UNCHANGED). Called automatically by
+analyse_charging.py's inspect_session()/generate_charging_curve_chart()
+for any session with per-sample telemetry - there is no need to run this
+as a separate script any more.
+
 deep-dive telemetry CSV - the per-sample vehicle-state export
 analyse_charging.py's fetch_charge_deepdive_from_api() produces for
 EVERY session Tessie itself sees (Superchargers, 3rd-party DC/AC, and home
@@ -55,8 +63,10 @@ import os
 import re
 import sys
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+_TOOLS_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if _TOOLS_DIR not in sys.path:
+    sys.path.insert(0, _TOOLS_DIR)
+REPO_ROOT = os.path.dirname(_TOOLS_DIR)
 
 try:
     from lib.tessie_api_common import resolve_tessie_data_home
@@ -85,6 +95,7 @@ except Exception:
     _PV_PROVIDER = None
     _PV_KEY = _PV_ACCOUNT_ID = None
     _PV_CONN = None
+
 
 
 def compute_home_solar_grid_split(points):
@@ -1200,86 +1211,3 @@ def process_session(session, all_sessions, registry, force=False):
     return True
 
 
-def main():
-    parser = argparse.ArgumentParser(
-        usage="analyse_charge_curves.py [CSV ...] [--deepdive-dir DIR] [--force] [--refresh-related]\n",
-        description="""
-NAME
-    analyse_charge_curves.py - build charging-curve charts (power-vs-SoC, voltage/current/SoC-vs-time)
-
-DESCRIPTION
-    Builds charging-curve charts (power-vs-SoC and voltage/current/SoC-vs-time,
-    each as PNG + interactive HTML) from charge deep-dive telemetry CSVs - every
-    session Tessie itself sees, Superchargers/3rd-party and home Evnex alike.
-""",
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog="""
-EXAMPLES
-  analyse_charge_curves.py
-  analyse_charge_curves.py charge_deepdive_142.csv --force
-  analyse_charge_curves.py --refresh-related
-"""
-    )
-    parser.add_argument("csv", nargs="*", help="Specific charge_deepdive_*.csv file(s) to chart. "
-                        "Omit to process every telemetry CSV under the deep-dive folder.")
-    parser.add_argument("--deepdive-dir", help="Override the charges/deepdive folder "
-                        "(default: resolved from Tessie's own data-home config).")
-    parser.add_argument("--force", action="store_true",
-                        help="Regenerate charts even if the output files already exist.")
-    parser.add_argument("--refresh-related", action="store_true",
-                        help="When a brand-new session is charted, also regenerate every OTHER "
-                             "existing session at the same site/slug, so their dashed historical "
-                             "estimate picks up this new session too (the 'big picture' keeps "
-                             "growing as more sessions accumulate, instead of only ever helping "
-                             "sessions charted after it). Off by default since it can mean "
-                             "regenerating many files for one new session at a busy site.")
-    args = parser.parse_args()
-
-    deepdive_dir = args.deepdive_dir
-    if not deepdive_dir:
-        data_home = resolve_tessie_data_home()
-        if data_home:
-            deepdive_dir = os.path.join(data_home, "charges", "deepdive")
-    if not deepdive_dir or not os.path.isdir(deepdive_dir):
-        print("Could not resolve a charges/deepdive folder - pass --deepdive-dir explicitly.")
-        return 1
-
-    all_sessions = discover_deepdive_sessions(deepdive_dir)
-    if not all_sessions:
-        print(f"No telemetry deep-dive CSVs found under {deepdive_dir}")
-        return 0
-
-    registry = load_charger_registries()
-    targets = all_sessions
-    if args.csv:
-        wanted = {os.path.abspath(p) for p in args.csv}
-        targets = [s for s in all_sessions if os.path.abspath(s["path"]) in wanted]
-
-    made, skipped = 0, 0
-    newly_made_slugs = set()
-    for session in targets:
-        if process_session(session, all_sessions, registry, force=args.force):
-            made += 1
-            newly_made_slugs.add(session["slug"])
-            print(f"✅ {os.path.basename(session['path'])} -> _curve/_profile .png/.html")
-        else:
-            skipped += 1
-
-    refreshed = 0
-    if args.refresh_related and newly_made_slugs:
-        already_done = {s["path"] for s in targets}
-        siblings = [s for s in all_sessions if s["slug"] in newly_made_slugs and s["path"] not in already_done]
-        for session in siblings:
-            if process_session(session, all_sessions, registry, force=True):
-                refreshed += 1
-                print(f"🔄 {os.path.basename(session['path'])} refreshed (new sibling session at this site)")
-
-    summary = f"\n{made} session(s) charted, {skipped} already up to date (use --force to regenerate)."
-    if args.refresh_related:
-        summary += f" {refreshed} related session(s) refreshed."
-    print(summary)
-    return 0
-
-
-if __name__ == "__main__":
-    sys.exit(main())
