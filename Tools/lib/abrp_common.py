@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-abrp_planner.py - ABRP (A Better Routeplanner) & EV Route Intelligence
-========================================================================
+abrp_common.py - ABRP (A Better Routeplanner) & EV Route Intelligence
+=====================================================================
 Combines local vehicle intelligence (Tessie live SoC, VIN/model specs) with
 route corridor analysis and ABRP (Iternio) trip planning.
 

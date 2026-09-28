@@ -46,7 +46,6 @@ small cents-level tolerance for AGL's own per-line rounding.
 """
 
 import argparse
-import csv
 import os
 import sys
 from datetime import date, datetime, timedelta
@@ -54,6 +53,7 @@ from datetime import date, datetime, timedelta
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from providers_power import get_power_provider  # noqa: E402
 from power_demand_calculator import load_rate_periods, rate_for_date, monthly_latched_kw, demand_charge  # noqa: E402
+from lib.power_usage_db import get_usage_db_connection, iter_rows  # noqa: E402
 
 
 def daterange_days(start, end):
@@ -80,17 +80,66 @@ def split_by_rate_period(start, end, periods=None):
     return out
 
 
-def sum_kwh(master_path, role, start, end, provider=None):
+def sum_kwh(data_home, role, start, end, provider=None):
     provider = provider or get_power_provider()
-    total = 0.0
-    with open(master_path, "r", encoding="utf-8-sig", newline="") as f:
-        for row in csv.DictReader(f):
-            if row["Role"] != role:
-                continue
-            dt = provider.parse_datetime(row["StartDate"])
-            if start <= dt.date() <= end:
-                total += float(row["kWh"])
-    return total
+    conn = get_usage_db_connection(provider, data_home)
+    try:
+        total = 0.0
+        for row in iter_rows(conn, role=role, start_date=start, end_date=end):
+            total += float(row["kWh"])
+        return total
+    finally:
+        conn.close()
+
+
+def usage_cost_for_range(data_home, start, end, period, provider):
+    """(total_cost_ex_gst, total_import_kwh) for every real "import"
+    usage reading in [start, end] (inclusive dates), pricing EACH real
+    interval (AGL: half-hourly) at its OWN rate via provider.
+    usage_rate_for_window() - REQ-152. This is deliberately NOT the
+    same shortcut analyse_session_cost.py's evaluate_tessie_charge()
+    uses for a single EV-charging session (one wall-clock-time-weighted
+    blended rate for the whole session) - that shortcut relies on a
+    session's power draw being roughly constant, which is a reasonable
+    assumption for a car charging at a fixed rate but NOT for a whole
+    household's consumption across possibly many days of a rate
+    period, so this instead prices every real interval individually
+    and sums the cost, the only correct way to bill a genuine TOU
+    period when consumption varies by time of day. For a flat (non-TOU)
+    period this is mathematically identical to the old `import_kwh *
+    period["usage_rate_per_kwh"]` (usage_rate_for_window() returns that
+    same flat rate for every interval) - confirmed to the cent against
+    every real invoiced cycle's self-test."""
+    conn = get_usage_db_connection(provider, data_home)
+    try:
+        total_cost = 0.0
+        total_kwh = 0.0
+        for row in iter_rows(conn, role="import", start_date=start, end_date=end):
+            row_start = provider.parse_datetime(row["StartDate"])
+            row_end = provider.parse_datetime(row["EndDate"])
+            kwh = float(row["kWh"])
+            rate, _breakdown = provider.usage_rate_for_window(period, row_start, row_end)
+            total_cost += kwh * rate
+            total_kwh += kwh
+        return total_cost, total_kwh
+    finally:
+        conn.close()
+
+
+def _missing_rate_fields(period):
+    """Fields required to price this period's usage/supply/solar
+    charges, accounting for a genuine TOU/tou3 period's usage_rate_per_kwh
+    being intentionally None (REQ-149/151) - replaced by its own real
+    peak/(shoulder/)off-peak rate fields instead of one flat number."""
+    common = ["supply_charge_per_day", "solar_feed_in_tier1_rate_per_kwh"]
+    ttype = period.get("tariff_type")
+    if ttype == "tou":
+        usage_fields = ["peak_rate_per_kwh", "offpeak_rate_per_kwh"]
+    elif ttype == "tou3":
+        usage_fields = ["peak_rate_per_kwh", "shoulder_rate_per_kwh", "offpeak_rate_per_kwh"]
+    else:
+        usage_fields = ["usage_rate_per_kwh"]
+    return [f for f in common + usage_fields if period.get(f) is None]
 
 
 def demand_month_for_cycle_end(end):
@@ -108,14 +157,13 @@ def solar_credit(total_kwh, days, tier1_rate, provider=None):
     return provider.solar_credit(total_kwh, days, tier1_rate)
 
 
-def reconstruct_bill(start, end, master_path=None, periods=None, log=None):
+def reconstruct_bill(start, end, data_home=None, periods=None, log=None):
     """Full ex-GST/incl-GST reconstruction for invoice cycle [start, end]
     (inclusive date() objects), under the active power provider. Returns
     a dict of every component plus the total, so a caller can inspect
     where the money went, not just the bottom line."""
     provider = get_power_provider()
-    data_home = provider.resolve_data_home()
-    master_path = master_path or os.path.join(data_home, "usage", provider.usage_master_filename())
+    data_home = data_home or provider.resolve_data_home()
     periods = periods or load_rate_periods()
     days = daterange_days(start, end)
 
@@ -124,19 +172,43 @@ def reconstruct_bill(start, end, master_path=None, periods=None, log=None):
     solar_credit_total = 0.0
     for sub_start, sub_end, period in split_by_rate_period(start, end, periods):
         sub_days = daterange_days(sub_start, sub_end)
-        import_kwh = sum_kwh(master_path, "import", sub_start, sub_end, provider)
-        solar_kwh = sum_kwh(master_path, "solar_export", sub_start, sub_end, provider)
-        usage_ex_gst += import_kwh * period["usage_rate_per_kwh"]
+ # A rate period can legitimately have some fields still unfilled -
+ # sync_agl_rates.py (REQ-112) auto-proposes a new period's own
+ # effective_from/demand_rate the moment it notices a new bill's date
+ # range, but usage_rate_per_kwh/supply_charge_per_day/
+ # solar_feed_in_tier1_rate_per_kwh only get filled in once that
+ # period's own ELECTRICITY invoice text is actually parsed (a period
+ # auto-proposed from a GAS bill, for instance, never gets them at
+ # all). A real gap here (caught live testing REQ-140's PV-provider
+ # migration: this account's own agl_tariff_rates.json has exactly
+ # this shape for 2025-08-27 through 2026-06-29) used to crash this
+ # whole reconstruction with a bare TypeError on the multiplication
+ # below - raised explicitly here instead, so a caller spanning an
+ # incomplete period gets a clear, actionable message pointing at
+ # which real period needs its rates filled in, not a stack trace.
+        missing_fields = _missing_rate_fields(period)
+        if missing_fields:
+            raise ValueError(
+                f"agl_tariff_rates.json's period starting {period['effective_from']} (covers "
+                f"{sub_start} to {sub_end} of this request) is missing {', '.join(missing_fields)} - "
+                f"fill it in from that period's real electricity invoice before reconstructing a bill "
+                f"that spans it."
+            )
+        usage_cost_this_period, import_kwh = usage_cost_for_range(data_home, sub_start, sub_end, period, provider)
+        solar_kwh = sum_kwh(data_home, "solar_export", sub_start, sub_end, provider)
+        usage_ex_gst += usage_cost_this_period
         supply_ex_gst += sub_days * period["supply_charge_per_day"]
         t1, t2 = solar_credit(solar_kwh, sub_days, period["solar_feed_in_tier1_rate_per_kwh"], provider)
         solar_credit_total += t1 + t2
         if log:
+            rate_note = (f"${period['usage_rate_per_kwh']}" if period.get("usage_rate_per_kwh") is not None
+                         else f"real per-interval {period.get('tariff_type')} rate")
             log(f"  [{sub_start} to {sub_end}, {sub_days}d, rate from {period['effective_from']}] "
-                f"import {import_kwh:.3f} kWh x ${period['usage_rate_per_kwh']}, "
+                f"import {import_kwh:.3f} kWh x {rate_note} -> usage ${usage_cost_this_period:.2f}, "
                 f"solar {solar_kwh:.3f} kWh -> credit ${t1 + t2:.2f}")
 
     demand_year, demand_month = demand_month_for_cycle_end(end)
-    kw_latched, peak_at = monthly_latched_kw(master_path, demand_year, demand_month)
+    kw_latched, peak_at = monthly_latched_kw(data_home, demand_year, demand_month)
     demand_rate = rate_for_date(end, periods)["demand_rate_per_kw_day"]
     demand_ex_gst, _ = demand_charge(kw_latched, days, demand_rate) if kw_latched else (0.0, 0.0)
 

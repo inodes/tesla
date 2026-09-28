@@ -29,6 +29,17 @@ In-progress sessions are always skipped (Evnex's own sessionStatus ==
 figures aren't final yet. Re-run this again later and a since-completed
 session is picked up normally, no special handling needed.
 
+REQ-153: a completed session that delivered ~zero energy (0 kWh) is a
+connection BLIP, not a charge - Evnex records every cable plug-in/unplug
+event as its own "session", so plugging in and then deciding not to
+charge (and unplugging) produces exactly this shape. These are
+evaluated (via is_real_charging_session()) and permanently ignored -
+NOT written as a charge_deepdive_*_Evnex_Home.json file at all, since
+that file format represents a real charging session - and their ids are
+instead recorded in a tiny separate .evnex_blip_ids.json file (see
+load_ignored_blip_ids()/save_ignored_blip_ids()) purely so the same blip
+is never re-evaluated on a future run.
+
 Credentials come from evnex_common.py (config.json or
 EVNEX_CLIENT_USERNAME/EVNEX_CLIENT_PASSWORD env vars) - nothing this
 script prints or writes includes the Evnex username/password.
@@ -101,6 +112,46 @@ def load_seen_session_ids(ddir):
     return seen
 
 
+REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+BLIP_IGNORE_PATH_NAME = ".evnex_blip_ids.json"
+
+
+def load_ignored_blip_ids(ddir):
+    """REQ-153: session ids already evaluated as a connection blip (0 kWh -
+    a plug-in the user decided not to charge from, then unplugged - see
+    is_real_charging_session()'s own docstring) and deliberately NOT
+    written as a real charge_deepdive_*_Evnex_Home.json file (per the
+    user's explicit correction: "Evnex records cable plugins and
+    unplugs - not sessions. If I plugged in and decided not to charge
+    then remove - this is that."). Tracked in this tiny separate file
+    (never a full deep-dive JSON per blip, which would be a real
+    charging-session artifact for something that was never a charge)
+    purely so the SAME blip isn't re-evaluated and re-logged on every
+    future run - fetch_all_sessions() re-fetches this account's entire
+    session history every run with no incremental cursor, so without
+    this a blip would show up as "new" forever."""
+    path = os.path.join(ddir, BLIP_IGNORE_PATH_NAME)
+    if not os.path.isfile(path):
+        return set()
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        return set(data.get("ids") or [])
+    except Exception:
+        return set()
+
+
+def save_ignored_blip_ids(ddir, ids):
+    """Overwrites the blip-ignore file with the full current set of
+    ignored ids - small (a handful of UUIDs), so a full rewrite each run
+    is simpler and safer than an append-only log."""
+    os.makedirs(ddir, exist_ok=True)
+    path = os.path.join(ddir, BLIP_IGNORE_PATH_NAME)
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump({"ids": sorted(ids)}, f, indent=2)
+
+
 def resolve_home_zone(location):
     """GPS-resolved IANA zone from the Evnex location's own coordinates -
     never trust Evnex's own "timeZone" attribute (observed value: the
@@ -162,13 +213,29 @@ async def fetch_all_sessions(log):
 
 async def run(dry_run, limit, log):
     ddir = deepdive_dir()
-    seen = load_seen_session_ids(ddir)
-    log(f"Found {len(seen)} already-downloaded Evnex session(s) in {ddir}")
+    real_seen = load_seen_session_ids(ddir)
+    blip_ids = load_ignored_blip_ids(ddir)
+    seen = real_seen | blip_ids
+    log(f"Found {len(real_seen)} already-downloaded Evnex session(s) and "
+        f"{len(blip_ids)} already-ignored connection blip(s) in {ddir}")
+
+ # REQ-153: resolve each real (non-blip) session's own Tessie numeric
+ # charge id up front, from the raw un-patched Tessie API cache
+ # (resources/api_cache/charges.json) - the only place this id lives at
+ # all (charges_master.csv carries no id column, see
+ # lib/charge_cost_model.py's own docstring) - and store it directly in
+ # this session's own deep-dive JSON so a future reader never has to
+ # redo this epoch-matching against a cache that can be refreshed/
+ # pruned later. None when no match is found (e.g. this session predates
+ # the raw cache), never guessed.
+    from lib.charge_cost_model import load_raw_tessie_cache, find_cache_record_by_epoch
+    _cache_records, cache_by_epoch = load_raw_tessie_cache(REPO_ROOT)
 
     pairs = await fetch_all_sessions(log)
     log(f"Evnex reports {len(pairs)} session(s) across all organisations/charge points")
 
-    written, skipped_seen, skipped_active, skipped_bad, written_blips = 0, 0, 0, 0, 0
+    written, skipped_seen, skipped_active, skipped_bad, skipped_blips = 0, 0, 0, 0, 0
+    new_blip_ids = set()
     for session, location in pairs:
         sid = session.get("id")
         attrs = session.get("attributes") or {}
@@ -180,10 +247,29 @@ async def run(dry_run, limit, log):
             skipped_active += 1
             continue
 
+ # REQ-153: a connection blip (0 kWh - a plug-in/unplug with no real
+ # charge, per the user's own correction: "Evnex records cable
+ # plugins and unplugs - not sessions") is evaluated and permanently
+ # ignored HERE, before any of the real-session work below - it never
+ # gets a charge_deepdive_*_Evnex_Home.json file at all, since that
+ # file format represents a real charging session.
+        if not is_real_charging_session(attrs):
+            skipped_blips += 1
+            new_blip_ids.add(sid)
+            started_iso = attrs.get("chargingStarted") or attrs.get("startDate") or "?"
+            if dry_run:
+                log(f"  [dry-run] would skip session {sid} ({started_iso}) - connection blip (0 kWh, not a real charge)")
+            else:
+                log(f"  skipped session {sid} ({started_iso}) - connection blip (0 kWh, not a real charge) - not saved")
+            continue
+
         start_epoch = iso_to_epoch(attrs.get("chargingStarted") or attrs.get("startDate"))
         if start_epoch is None:
             skipped_bad += 1
             continue
+
+        tessie_cache_rec = find_cache_record_by_epoch(cache_by_epoch, start_epoch)
+        tessie_id = tessie_cache_rec.get("id") if tessie_cache_rec else None
 
         zone = resolve_home_zone(location)
         local_dt, abbr, offset_str = tztools.localize(start_epoch, zone)
@@ -218,27 +304,18 @@ async def run(dry_run, limit, log):
             "charging_stopped_utc": attrs.get("chargingStopped") or attrs.get("endDate"),
             "timezone": zone,
             "local_start": local_start_str,
+            # REQ-153: this session's own Tessie numeric charge id
+            # (resolved above from the raw API cache by epoch), or None
+            # when no match exists (e.g. this session predates the raw
+            # cache) - never guessed. See lib/charge_cost_model.py's own
+            # docstring for why this id matters (it's the only thing
+            # that can target Tessie's set_cost endpoint).
+            "tessie_id": tessie_id,
             "session": session,
         }
 
- # A session that delivered ~zero energy (totalEnergyUsage.total
- # == 0.0, typically transaction.reason == "EVDisconnected") is a
- # connection blip - pairing/testing a charger, a momentary
- # plug/unplug - not a real charge. Found via a real report:
- # swapping the home Evnex charger produced 5 of these within an
- # hour of setup, and the same pattern already existed in 23 of
- # the 144 real session files on disk, well predating that swap.
- # Still written (never silently dropped - see
- # is_real_charging_session()'s own docstring), just flagged so
- # it's obvious at a glance rather than looking like a real charge
- # that happened to log 0 kWh.
-        is_blip = not is_real_charging_session(attrs)
-        if is_blip:
-            written_blips += 1
-        blip_note = " (0 kWh - looks like a connection blip, not a real charge)" if is_blip else ""
-
         if dry_run:
-            log(f"  [dry-run] would write {base_name}{blip_note}")
+            log(f"  [dry-run] would write {base_name}")
         else:
             os.makedirs(ddir, exist_ok=True)
             with open(out_path, "w", encoding="utf-8") as f:
@@ -251,13 +328,16 @@ async def run(dry_run, limit, log):
                 os.utime(out_path, (start_epoch, start_epoch))
             except Exception:
                 pass
-            log(f"  wrote {base_name}{blip_note}")
+            log(f"  wrote {base_name}")
         written += 1
         seen.add(sid)
 
+    if new_blip_ids and not dry_run:
+        save_ignored_blip_ids(ddir, blip_ids | new_blip_ids)
+
     log(
         f"\nDone: {written} new session(s) {'would be ' if dry_run else ''}written"
-        + (f" ({written_blips} look like connection blips - 0 kWh, not real charges)" if written_blips else "")
+        + (f", {skipped_blips} connection blip(s) {'would be ' if dry_run else ''}skipped (0 kWh, not real charges - not saved)" if skipped_blips else "")
         + f", {skipped_seen} already had a file, {skipped_active} still in progress, "
         f"{skipped_bad} missing a usable start time."
     )

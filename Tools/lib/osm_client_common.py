@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-osm_client.py - OpenStreetMap API v0.6 & OAuth2 Client
-======================================================
+osm_client_common.py - OpenStreetMap API v0.6 & OAuth2 Client
+=============================================================
 Provides complete authentication and editing capabilities for OpenStreetMap:
 - OAuth2 Authorization & Token Exchange
 - Changeset lifecycle management (open, update, close)

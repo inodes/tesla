@@ -259,6 +259,11 @@ def compute_route_stop_score(
       a) Nearby facilities quality (0.0 - 10.0 pts)
       b) Highway detour offset (0.0 km = 10.0 pts, decaying linearly to 0.0 pts at max_detour_km)
       c) Speed & Capacity (Power kW up to 300kW + Stall count up to 12 bays = 0.0 - 10.0 pts)
+      d) PlugShare community rating (0.0 - 10.0 pts, already on this scale in our own
+         merged metadata's "score" field), when we have one - a station never
+         cross-referenced with PlugShare (or genuinely un-rated there) simply
+         omits this term from the average rather than being penalized with a
+         guessed value.
 
     Returns a dict with:
       - score: float (0.0 to 10.0)
@@ -270,15 +275,16 @@ def compute_route_stop_score(
       - speed_score: float
       - power_pts: float
       - stalls_pts: float
+      - plugshare_score: Optional[float] (None when this station has no known PlugShare rating)
     """
     # a) Facilities score (0.0 - 10.0)
     fac_score = 5.0
     fac_summary = "Neutral / Unverified"
     try:
         try:
-            from lib.station_facilities import get_facilities_registry, resolve_station_physical_coords
+            from lib.station_facilities_common import get_facilities_registry, resolve_station_physical_coords
         except ImportError:
-            from station_facilities import get_facilities_registry, resolve_station_physical_coords
+            from station_facilities_common import get_facilities_registry, resolve_station_physical_coords
         reg = get_facilities_registry()
         if reg:
             phys_lat, phys_lon, _ = resolve_station_physical_coords(station)
@@ -327,7 +333,24 @@ def compute_route_stop_score(
 
     speed_score = round(power_pts + stalls_pts, 1)
 
-    overall_score = round((fac_score + detour_score + speed_score) / 3.0, 1)
+    # d) PlugShare community rating (0.0 - 10.0), when known
+    ps_score: Optional[float] = None
+    try:
+        meta = getattr(station, "metadata", None) or {}
+        raw_ps_score = meta.get("score")
+        if raw_ps_score is not None:
+            ps_score = round(max(0.0, min(10.0, float(raw_ps_score))), 1)
+    except (ValueError, TypeError):
+        ps_score = None
+
+    # A missing PlugShare rating is left OUT of the average rather than
+    # assumed neutral - unlike facilities (which defaults to a "Neutral /
+    # Unverified" 5.0 above), there's no honest neutral guess for a rating
+    # we simply don't have, and most stations won't have a PlugShare match.
+    _score_components = [fac_score, detour_score, speed_score]
+    if ps_score is not None:
+        _score_components.append(ps_score)
+    overall_score = round(sum(_score_components) / len(_score_components), 1)
 
     if overall_score >= 8.0:
         emoji = "🟢"
@@ -347,5 +370,6 @@ def compute_route_stop_score(
         "detour_score": detour_score,
         "speed_score": speed_score,
         "power_pts": round(power_pts, 1),
-        "stalls_pts": round(stalls_pts, 1)
+        "stalls_pts": round(stalls_pts, 1),
+        "plugshare_score": ps_score
     }

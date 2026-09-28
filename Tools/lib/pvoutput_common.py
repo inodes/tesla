@@ -31,10 +31,11 @@ to a session's own kWh.
 
 import json
 import os
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
-from datetime import datetime
+from datetime import datetime, timedelta
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 # REQ-067 (2026-09-15, AGENTS.local.md): this file moved from Tools/ into
@@ -367,3 +368,131 @@ def pv_agl_import_conflict(pv_import_kwh, pv_coverage, agl_import_kwh, agl_bucke
     if larger < PV_AGL_CONFLICT_MIN_KWH:
         return False
     return abs(pv_import_kwh - agl_import_kwh) / larger >= PV_AGL_CONFLICT_RATIO
+
+
+# ------------------------------------------------------------------------------
+# REQ-118 (2026-09-24): bulk daily history (getoutput.jsp) - power_solar_report.py
+# ------------------------------------------------------------------------------
+# Everything above this point fetches 5-minute detail one CALENDAR DAY at a
+# time (getstatus.jsp?h=1) - fine for splitting a single charging session,
+# ruinous for a period report: a year would be 365 separate requests against
+# a 60-300/hr limit. getoutput.jsp is PVOutput's own end-of-day summary
+# endpoint and takes a df/dt DATE RANGE directly - a year is 3 requests, not
+# 365 (resources/PVOUTPUT_API.md: max 150 days/call on a donation account).
+#
+# Its documented field order below has NOT been live-confirmed against this
+# account the way getstatus.jsp's has (resources/PVOUTPUT_API.md says so
+# explicitly) - see verify_output_field_order(), which cross-checks one real
+# day's Energy Generated against the independently-already-confirmed
+# getstatus.jsp path before power_solar_report.py trusts a bulk import built
+# on it.
+
+OUTPUT_DATE_IDX = 0
+OUTPUT_GEN_WH_IDX = 1
+OUTPUT_EXPORTED_WH_IDX = 3
+OUTPUT_USED_WH_IDX = 4
+
+# REQ-124: this account IS donation-tier (confirmed live: getsystem.jsp's
+# own Donations field reads 1 for this exact sid, and the rate-limit
+# headers show Limit=300, the donation ceiling). resources/PVOUTPUT_API.md
+# documents getoutput.jsp's cap as 150 records/call on a donation account,
+# but two separate live calls against this real account/system (a 140-day
+# request, on two different days) both came back truncated to exactly the
+# LAST 50 days of the requested range, silently, with no error. Whatever
+# the documented figure says, 50 is what this account actually gets from
+# this endpoint - kept at the empirically-confirmed number, not the
+# documented one.
+MAX_OUTPUT_DAYS_PER_CALL = 50
+
+# REQ-124: getoutput.jsp does NOT have its own separate tighter rate
+# limit the way getstatistic.jsp does (resources/PVOUTPUT_API.md's "12/hr
+# free, 60/hr donation" line is under the getstatistic.jsp heading, not
+# this one - an earlier version of this comment misattributed it here).
+# getoutput.jsp draws from the same general per-account bucket as every
+# other endpoint (confirmed via the X-Rate-Limit-* headers on live calls:
+# Limit=300, decrementing by 1 per call regardless of endpoint) - a
+# donation-tier account gets 300/hr there. Paced well under that (not at
+# it) to leave headroom for whatever else is drawing from the same
+# hourly bucket (getstatus.jsp usage-sync calls, etc.) during a long
+# backfill run.
+OUTPUT_CALLS_PER_HOUR = 60
+
+
+def parse_output_day_rows(rows):
+    """rows from parse_status_rows() (a getoutput.jsp response) ->
+    sorted [(date_obj, generation_kwh, exported_kwh, used_kwh), ...],
+    skipping any row too short or with an unparseable Date/Energy field
+    (PVOutput sends literal "NaN" for a field it has no data for, same
+    as getstatus.jsp - see day_intervals()'s own comment above)."""
+    out = []
+    for row in rows:
+        if len(row) <= OUTPUT_USED_WH_IDX:
+            continue
+        try:
+            d = datetime.strptime(row[OUTPUT_DATE_IDX], "%Y%m%d").date()
+            gen_wh = float(row[OUTPUT_GEN_WH_IDX])
+            exp_wh = float(row[OUTPUT_EXPORTED_WH_IDX])
+            used_wh = float(row[OUTPUT_USED_WH_IDX])
+        except (ValueError, IndexError):
+            continue
+        if gen_wh != gen_wh or exp_wh != exp_wh or used_wh != used_wh:  # NaN != NaN
+            continue
+        out.append((d, gen_wh / 1000.0, exp_wh / 1000.0, used_wh / 1000.0))
+    out.sort(key=lambda t: t[0])
+    return out
+
+
+def fetch_output_range(date_from, date_to, api_key, system_id, timeout=30):
+    """[(date_obj, generation_kwh, exported_kwh, used_kwh), ...] for
+    every day in [date_from, date_to] (inclusive date() objects),
+    chunked at MAX_OUTPUT_DAYS_PER_CALL (getoutput.jsp's own per-call
+    day cap - not a choice made here) and paced at OUTPUT_CALLS_PER_HOUR
+    between chunks. Returns (rows, error) - error is None on full
+    success, or a short string noting which chunk(s) failed (rows still
+    holds whatever chunks DID succeed - a partial fetch is still useful
+    to the caller, not discarded)."""
+    all_rows = []
+    errors = []
+    chunk_start = date_from
+    while chunk_start <= date_to:
+        chunk_end = min(date_to, chunk_start + timedelta(days=MAX_OUTPUT_DAYS_PER_CALL - 1))
+        params = {"df": chunk_start.strftime("%Y%m%d"), "dt": chunk_end.strftime("%Y%m%d")}
+        status, body, _hdrs = api_get("getoutput", api_key, system_id, params=params, timeout=timeout)
+        if status is None:
+            errors.append(f"{chunk_start}..{chunk_end}: connection failed: {body.decode('utf-8', errors='replace')}")
+        elif status != 200:
+            errors.append(f"{chunk_start}..{chunk_end}: HTTP {status}: {body.decode('utf-8', errors='replace')[:200]}")
+        else:
+            all_rows.extend(parse_output_day_rows(parse_status_rows(body)))
+        chunk_start = chunk_end + timedelta(days=1)
+        if chunk_start <= date_to:
+            time.sleep(3600 / OUTPUT_CALLS_PER_HOUR)
+    all_rows.sort(key=lambda t: t[0])
+    return all_rows, ("; ".join(errors) if errors else None)
+
+
+def verify_output_field_order(sample_date, api_key, system_id):
+    """Cross-checks getoutput.jsp's documented (not yet live-confirmed)
+    field order against the independently-already-confirmed
+    getstatus.jsp?h=1 path, for ONE real day, before a bulk history
+    import trusts it. Returns (ok, message) - ok=False means the two
+    disagree by more than a trivial rounding amount, or either fetch
+    failed outright, and the field-order assumption above should not be
+    relied on without checking a real response by hand."""
+    out_rows, err = fetch_output_range(sample_date, sample_date, api_key, system_id)
+    if err or not out_rows:
+        return False, f"could not fetch getoutput.jsp for {sample_date}: {err or 'no rows returned'}"
+    _, out_gen_kwh, _, _ = out_rows[0]
+    status_readings, status_err = fetch_day_readings(sample_date, api_key, system_id)
+    if status_err or not status_readings:
+        return False, f"could not fetch getstatus.jsp for {sample_date}: {status_err or 'no readings'}"
+    intervals = day_intervals(status_readings)
+    status_gen_kwh = sum(g for _, _, g, _c in intervals) / 1000.0
+    if status_gen_kwh <= 0:
+        return False, f"getstatus.jsp reported ~0 generation for {sample_date} - can't cross-check against that"
+    diff_frac = abs(out_gen_kwh - status_gen_kwh) / status_gen_kwh
+    if diff_frac > 0.05:
+        return False, (f"getoutput.jsp Energy Generated ({out_gen_kwh:.2f} kWh) disagrees with "
+                        f"getstatus.jsp's own day total ({status_gen_kwh:.2f} kWh) by {diff_frac:.0%} "
+                        f"for {sample_date} - field order may be wrong, do not trust a bulk import on it")
+    return True, f"getoutput.jsp cross-checked OK for {sample_date} ({out_gen_kwh:.2f} kWh vs {status_gen_kwh:.2f} kWh)"

@@ -1984,7 +1984,7 @@ def classify_poi_group(tags):
     return "Other Facilities", "📍"
 
 
-def query_overpass_pois(lat, lon, radius_m=250):
+def query_overpass_pois(lat, lon, radius_m=500):
     """Queries Overpass API for all named POIs / venues within radius_m of lat, lon.
 
     Duplication note (BUG-140/145, still true): this file has FOUR
@@ -2110,7 +2110,7 @@ def query_overpass_pois(lat, lon, radius_m=250):
  # exactly that, at real cost - see BUG-149/BUG-150). Saving just the handful
  # of tag values classify_poi_group() actually consults means a FUTURE
  # classification change can be applied to every cached record instantly and
- # offline (see station_facilities.py's reclassify_cached_facilities()) -
+ # offline (see station_facilities_common.py's reclassify_cached_facilities()) -
  # this is the last time a rule change has to cost a live refetch.
                     raw_tags = {
                         k: v for k, v in {
@@ -2623,7 +2623,11 @@ def interactive_lookup_and_add(query_or_addr=None, lat=None, lon=None, default_r
         if choice in ("s", "search"):
             while True:
                 try:
-                    s_in = input("\nSearch for place name or landmark (or press [Enter] to query nearby OSM POIs, [b] back): ").strip()
+                    print("\nSearch for a place:")
+                    print("  Type a name or landmark, then Enter")
+                    print("  [Enter] alone to query nearby OSM POIs")
+                    print("  [b]     Back")
+                    s_in = input("  > ").strip()
                 except (EOFError, KeyboardInterrupt):
                     return None
                 if s_in.lower() in ("b", "back", "cancel"):
@@ -2642,7 +2646,11 @@ def interactive_lookup_and_add(query_or_addr=None, lat=None, lon=None, default_r
                         dist_disp = format_dist_human(poi['dist_m'])
                         print(f"  [{p_idx}] {poi['name']} ({poi['category']})  [~{dist_disp} away | Center: {poi['lat']:.5f}, {poi['lon']:.5f}]")
                     try:
-                        p_choice = input(f"\nSelect POI [1-{len(candidates)}], [s] search again, or [b] back: ").strip().lower()
+                        print(f"\nSelect a POI:")
+                        print(f"  [1-{len(candidates)}] Choose a result")
+                        print(f"  [s] Search again")
+                        print(f"  [b] Back")
+                        p_choice = input("  > ").strip().lower()
                     except (EOFError, KeyboardInterrupt):
                         return None
                     if p_choice in ("b", "back", "cancel"):
@@ -2670,7 +2678,11 @@ def interactive_lookup_and_add(query_or_addr=None, lat=None, lon=None, default_r
                         print(f"  [{s_idx}] {r['name']} ({r.get('category', '')}){dist_part}")
                         print(f"        {r.get('display_name', '')}")
                     try:
-                        s_choice = input(f"\nSelect result [1-{len(candidates)}], [s] search again, or [b] back: ").strip().lower()
+                        print(f"\nSelect a result:")
+                        print(f"  [1-{len(candidates)}] Choose a result")
+                        print(f"  [s] Search again")
+                        print(f"  [b] Back")
+                        s_choice = input("  > ").strip().lower()
                     except (EOFError, KeyboardInterrupt):
                         return None
                     if s_choice in ("b", "back", "cancel"):
@@ -2880,7 +2892,7 @@ def load_chargers():
     config = load_config()
     tessie_dir = os.path.abspath(os.path.expanduser(config.get("directories", {}).get("data", "~/Library/Mobile Documents/com~apple~CloudDocs/Tesla")))
     
-    search_dirs = [tessie_dir]
+    search_dirs = [tessie_dir, os.path.join(tessie_dir, "chargers")]
     if TESSIE_DIR not in search_dirs and os.path.exists(TESSIE_DIR):
         search_dirs.append(TESSIE_DIR)
 
@@ -3752,7 +3764,9 @@ def cmd_list(args):
             break
 
         try:
-            pick = input("Enter [#] to inspect location details & visit history, or [q] to quit: ").strip()
+            print("  [#] Inspect location details & visit history")
+            print("  [q]uit")
+            pick = input("  > ").strip()
         except (KeyboardInterrupt, EOFError):
             print()
             break
@@ -3818,7 +3832,11 @@ def review_single_cluster(cl, places, total_clusters=1, cluster_num=1, allow_ign
         if choice in ("s", "search"):
             while True:
                 try:
-                    s_in = input("\nSearch for place name or landmark (or press [Enter] to query nearby OSM POIs, [b] back): ").strip()
+                    print("\nSearch for a place:")
+                    print("  Type a name or landmark, then Enter")
+                    print("  [Enter] alone to query nearby OSM POIs")
+                    print("  [b]     Back")
+                    s_in = input("  > ").strip()
                 except (EOFError, KeyboardInterrupt):
                     return "quit"
                 if s_in.lower() in ("b", "back", "cancel"):
@@ -3837,7 +3855,11 @@ def review_single_cluster(cl, places, total_clusters=1, cluster_num=1, allow_ign
                         dist_disp = format_dist_human(poi['dist_m'])
                         print(f"  [{p_idx}] {poi['name']} ({poi['category']}) [~{dist_disp} | Center: {poi['lat']:.5f}, {poi['lon']:.5f}]")
                     try:
-                        p_choice = input(f"\nSelect POI [1-{len(candidates)}], [s] search again, or [b] back: ").strip().lower()
+                        print(f"\nSelect a POI:")
+                        print(f"  [1-{len(candidates)}] Choose a result")
+                        print(f"  [s] Search again")
+                        print(f"  [b] Back")
+                        p_choice = input("  > ").strip().lower()
                     except (EOFError, KeyboardInterrupt):
                         return "quit"
                     if p_choice in ("b", "back", "cancel"):
@@ -3866,7 +3888,11 @@ def review_single_cluster(cl, places, total_clusters=1, cluster_num=1, allow_ign
                         print(f"  [{s_idx}] {r['name']} ({r['category']}){dist_part}")
                         print(f"        {r['display_name']}")
                     try:
-                        s_choice = input(f"\nSelect result [1-{len(s_results)}], [s] search again, or [b] back: ").strip().lower()
+                        print(f"\nSelect a result:")
+                        print(f"  [1-{len(s_results)}] Choose a result")
+                        print(f"  [s] Search again")
+                        print(f"  [b] Back")
+                        s_choice = input("  > ").strip().lower()
                     except (EOFError, KeyboardInterrupt):
                         return "quit"
                     if s_choice in ("b", "back", "cancel"):
@@ -4163,9 +4189,11 @@ def cmd_review_drives(args):
 
         print("└" + border[2:] + "┘\n")
 
-        prompt_msg = f"Select Cluster to tag/edit [1-{len(remaining_clusters)}], [a]ll (step through sequentially), [q]uit: "
+        print(f"  [1-{len(remaining_clusters)}] Select a cluster to tag/edit")
+        print(f"  [a]ll (step through sequentially)")
+        print(f"  [q]uit")
         try:
-            choice = input(prompt_msg).strip().lower()
+            choice = input("  > ").strip().lower()
         except (EOFError, KeyboardInterrupt):
             break
 
@@ -4248,9 +4276,11 @@ def cmd_review_ignored(args):
 
         print("└" + border[2:] + "┘\n")
 
-        prompt_msg = f"Select [1-{len(ignored_entries)}] to name it, [u]nignore <N> (e.g. 'u 2') to let it reappear in review, [q]uit: "
+        print(f"  [1-{len(ignored_entries)}] Name it")
+        print(f"  [u]nignore <N> (e.g. 'u 2') to let it reappear in review")
+        print(f"  [q]uit")
         try:
-            choice = input(prompt_msg).strip().lower()
+            choice = input("  > ").strip().lower()
         except (EOFError, KeyboardInterrupt):
             break
 
@@ -4607,7 +4637,9 @@ def interactive_edit_place(name, places):
             for k_idx, kw in enumerate(kws, 1):
                 print(f"  [{k_idx}] {kw}")
             try:
-                rem_in = input(f"Select keyword number(s) to remove (e.g. 1, 3) or [b]ack: ").strip().lower()
+                print("  Enter keyword number(s) to remove (e.g. 1, 3)")
+                print("  [b]ack")
+                rem_in = input("  > ").strip().lower()
                 if rem_in and rem_in not in ("b", "back"):
                     indices = []
                     for part in rem_in.split(","):
@@ -4658,7 +4690,7 @@ def interactive_edit_place(name, places):
                 print(f"  [{p_idx}] {p['name']} ({p['category']}) [~{p['dist_m']}m | Center: {p['lat']:.5f}, {p['lon']:.5f}]")
             print(f"  [b] Back")
             try:
-                poi_c = input(f"Select POI [1-{min(len(pois), 7)}] to adopt center & name, or [b]ack: ").strip().lower()
+                poi_c = input("  > ").strip().lower()
                 if poi_c.isdigit() and 1 <= int(poi_c) <= min(len(pois), 7):
                     selected_poi = pois[int(poi_c) - 1]
                     data["lat"] = round(selected_poi["lat"], 5)
@@ -4752,7 +4784,10 @@ def cmd_edit(args):
         if not items:
             print(f"\nℹ️ No places matched search query: \"{search_filter}\"")
             try:
-                reset = input("Press [Enter] to clear filter, [a]dd new, [q]uit: ").strip().lower()
+                print("  [Enter] Clear filter")
+                print("  [a]dd new")
+                print("  [q]uit")
+                reset = input("  > ").strip().lower()
                 if reset in ("q", "quit"):
                     break
                 elif reset in ("a", "add"):
@@ -4812,9 +4847,12 @@ def cmd_edit(args):
 
         print("└" + border[2:] + "┘\n")
 
-        prompt_str = f"Select Place to edit [1-{len(items)}], [s]earch <query>, [a]dd new, [q]uit: "
+        print(f"  [1-{len(items)}] Select a place to edit")
+        print(f"  [s]earch <query>")
+        print(f"  [a]dd new")
+        print(f"  [q]uit")
         try:
-            choice = input(prompt_str).strip()
+            choice = input("  > ").strip()
         except (EOFError, KeyboardInterrupt):
             break
 

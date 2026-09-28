@@ -79,3 +79,4 @@ Claude outputs/
 .direnv/
 .venv/
 
+.bak_archive/

@@ -43,7 +43,7 @@ def _resolve_evx_registry_path() -> str:
     except Exception:
         pass
     if tessie_home:
-        candidates.append(os.path.join(tessie_home, "evx_chargers.json"))
+        candidates.append(os.path.join(tessie_home, "chargers", "evx_chargers.json"))
         
     candidates.append(os.path.join(_repo_root, "resources", "evx_chargers.json"))
     config_path = os.path.join(_repo_root, "config.json")  # TODO-034: root is primary now
@@ -56,7 +56,7 @@ def _resolve_evx_registry_path() -> str:
                 td = cfg.get("directories", {}).get("data")
                 if td:
                     td_exp = os.path.expanduser(td)
-                    candidates.insert(0, os.path.join(td_exp, "evx_chargers.json"))
+                    candidates.insert(0, os.path.join(td_exp, "chargers", "evx_chargers.json"))
         except Exception:
             pass
 
@@ -377,7 +377,10 @@ class EVXProvider(BaseChargerProvider):
         """Fetches remote EVX stations and saves them to the local JSON registry, archiving changes."""
         target_path = save_path or self.registry_path
         os.makedirs(os.path.dirname(os.path.abspath(target_path)), exist_ok=True)
-        archive_path = os.path.join(os.path.dirname(target_path), "evx_chargers_archived.json")
+        from lib.tessie_api_common import resolve_tessie_archive_home
+        _archive_dir = os.path.join(resolve_tessie_archive_home(), "chargers")
+        os.makedirs(_archive_dir, exist_ok=True)
+        archive_path = os.path.join(_archive_dir, "evx_chargers_archived.json")
         now_utc = datetime.now(timezone.utc).isoformat()
 
  # Load existing registry to detect tariff or hardware changes

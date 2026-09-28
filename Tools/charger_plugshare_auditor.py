@@ -3,8 +3,9 @@
 PlugShare Discrepancy & Error Auditor (charger_plugshare_auditor.py)
 ===========================================================
 Compares EVERY First-Party Authoritative Tier 1 Registry (Tesla, Chargefox/
-NRMA/WA EV Network/Qld Electric Highway, EVX, Evie, bp pulse, AmpCharge/
-Ampol Foodary) against Tier 2 PlugShare Aggregator data to identify:
+WA EV Network/Qld Electric Highway, NRMA, JOLT, Exploren, EVX, Evie, bp
+pulse, AmpCharge/Ampol Foodary) against Tier 2 PlugShare Aggregator data to
+identify:
 1. Network Misattributions (e.g. marked as '3rd-Party' instead of 'EVX' / 'Chargefox')
 2. Missing / Stale / Mismatched Pricing ($0.00 / unlisted, or a stale figure
    that no longer matches the authoritative rate)
@@ -57,11 +58,17 @@ from lib.table_formatter import (
     format_box_line,
     format_field_line,
     format_title_line,
-    format_type_badge
+    format_type_badge,
+    hyperlink,
 )
 
 C_RESET = "\033[0m"
 C_BOLD = "\033[1m"
+
+
+def gmaps_url(lat, lon):
+    """Google Maps URL for a coordinate pair, opening its pin directly (TODO-007)."""
+    return f"https://www.google.com/maps/search/?api=1&query={lat:.5f},{lon:.5f}"
 C_RED = "\033[31m"
 C_GREEN = "\033[32m"
 C_YELLOW = "\033[33m"
@@ -78,6 +85,9 @@ C_GRAY = "\033[90m"
 NETWORK_ALIASES: Dict[str, List[str]] = {
     "tesla": ["tesla"],
     "chargefox": ["chargefox", "nrma", "wa ev network", "qld electric highway", "queensland electric highway"],
+    "nrma": ["nrma"],
+    "jolt": ["jolt"],
+    "exploren": ["exploren"],
     "evx": ["evx", "polecharger"],
     "evie": ["evie"],
     "bp pulse": ["bp pulse", "bppulse", "bp"],
@@ -110,6 +120,62 @@ def _fmt_price(rate: Optional[float]) -> str:
     if rate is None:
         return "-"
     return f"${rate:.2f}/kWh"
+
+
+def _days_since(iso_str: Optional[str]) -> Optional[int]:
+    """Age in days of an ISO timestamp string (PlugShare's own
+    last_verified/last_updated/first_seen on a raw cached station), or
+    None if missing/unparseable. Mirrors get_status()'s own tolerant ISO
+    handling (chargers_base.py) rather than a stricter reimplementation."""
+    if not iso_str:
+        return None
+    try:
+        clean_iso = iso_str.replace("Z", "+00:00")
+        if "+" not in clean_iso and "-" not in clean_iso[10:]:
+            clean_iso += "+00:00"
+        dt = datetime.fromisoformat(clean_iso)
+        return (datetime.now(timezone.utc) - dt).days
+    except Exception:
+        return None
+
+
+# REQ-108 (2026-09-23, AGENTS.local.md): user, re-discovering this file
+# after the REQ-104/105 staleness engine landed - "Could we use the new
+# information we know to be able to use this to list valid issues with
+# plugshare entries." Before this, every discrepancy/missing-station
+# finding here was reported with equal confidence regardless of how old
+# the DATA BEHIND the comparison was on either side - a "network
+# misattribution" against our own six-month-stale Tesla cache, or a
+# "missing from PlugShare" call against a station our own registry
+# hasn't re-verified in months, is not a "valid issue" worth spending a
+# real PlugShare edit on; it might just be a research gap on OUR side.
+# CONFIDENT means the authoritative (Tier 1) side is itself UP_TO_DATE
+# per get_status() AND (when there's a PlugShare-side timestamp to check)
+# that cached PlugShare snapshot is no older than the same 90-day
+# threshold get_status() already uses everywhere else in this codebase.
+_STALENESS_THRESHOLD_DAYS = 90
+
+
+def finding_confidence(auth_status: str, ps_age_days: Optional[int]) -> bool:
+    """True ("CONFIRMED" / high-confidence) only when both sides of the
+    comparison are fresh enough to trust - the authoritative Tier 1
+    record itself (via get_status(), which already accounts for
+    RENAMED/STALE/NOT_IN_JSON) and, when known, our own cached PlugShare
+    snapshot of that station. False means "re-verify before acting on
+    this" rather than "not an issue" - it's still surfaced, just labeled."""
+    if auth_status != "UP_TO_DATE":
+        return False
+    if ps_age_days is not None and ps_age_days > _STALENESS_THRESHOLD_DAYS:
+        return False
+    return True
+
+
+def confidence_badge(is_confident: bool, plain: bool = False) -> str:
+    if plain:
+        return "Confirmed" if is_confident else "Re-verify first"
+    if is_confident:
+        return f"{C_GREEN}✓ confirmed{C_RESET}"
+    return f"{C_YELLOW}⚠ re-verify first{C_RESET}"
 
 
 def inspect_station_views(station: UnifiedStationRecord) -> str:
@@ -163,6 +229,12 @@ def inspect_station_views(station: UnifiedStationRecord) -> str:
 
  # Discrepancy Analysis - generic across every Tier 1 provider now,
  # rather than a hardcoded per-provider if/elif chain.
+        auth_status = station.get_status()
+        ps_last_verified = ps.get("last_verified") or ps.get("last_updated") or ps.get("first_seen")
+        ps_age_days = _days_since(ps_last_verified)
+        is_confident = finding_confidence(auth_status, ps_age_days)
+        age_str = f"{ps_age_days}d old" if ps_age_days is not None else "unknown age"
+        lines.append(f"  📅 Freshness: our record is {C_BOLD}{auth_status}{C_RESET}, PlugShare cache is {age_str} ➔ [{confidence_badge(is_confident)}]")
         lines.append(f"  ⚠️ {C_RED}{C_BOLD}DISCREPANCY SUMMARY / RECOMMENDED PLUGSHARE EDITS:{C_RESET}")
         discrepancies = discrepancies_for_station(station, ps_meta, ps_hw, ps_tariffs)
 
@@ -177,7 +249,9 @@ def inspect_station_views(station: UnifiedStationRecord) -> str:
         lines.append(f"    This station is missing from PlugShare. You can add it using:")
         lines.append(f"    • Name:        {station.name}")
         lines.append(f"    • Address:     {station.address}")
-        lines.append(f"    • Coordinates: ({station.lat:.6f}, {station.lon:.6f})")
+        coord_str = f"({station.lat:.6f}, {station.lon:.6f})"
+        coord_link = hyperlink(coord_str, gmaps_url(station.lat, station.lon))  # TODO-007
+        lines.append(f"    • Coordinates: {coord_link}")
         lines.append(f"    • Network:     {station.network}")
         lines.append(f"    • Power:       {station.max_power_kw} kW Type 2 / {station.stalls_total} bays")
 
@@ -259,6 +333,7 @@ def run_audit(network_filter: Optional[str] = None, state_filter: Optional[str] 
     pricing_errors = []
     hardware_errors = []
     missing_stations = []
+    ps_verified_samples = []  # age-in-days of every matched station's PlugShare cache (REQ-108)
 
     for s in all_stations:
  # Only Tier 1 (first-party authoritative) stations are audited -
@@ -282,6 +357,17 @@ def run_audit(network_filter: Optional[str] = None, state_filter: Optional[str] 
         ps_id = ps_meta.get("id") or ps.get("id")
         ps_url = ps_meta.get("url") or f"https://www.plugshare.com/location/{ps_id}"
 
+ # REQ-108: reuse the existing staleness engine (get_status(), REQ-104/105)
+ # to gauge confidence - a finding is only "confirmed" when BOTH the
+ # authoritative Tier 1 record itself is UP_TO_DATE and (when known) our
+ # own cached PlugShare snapshot of that station isn't itself stale.
+        auth_status = s.get_status()
+        ps_last_verified = ps.get("last_verified") or ps.get("last_updated") or ps.get("first_seen")
+        ps_age_days = _days_since(ps_last_verified)
+        if ps_age_days is not None:
+            ps_verified_samples.append(ps_age_days)
+        is_confident = finding_confidence(auth_status, ps_age_days)
+
  # 1. Network misattribution
         ps_net = ps_meta.get("network", "") or ""
         if not network_matches(s.network, ps_net):
@@ -291,7 +377,10 @@ def run_audit(network_filter: Optional[str] = None, state_filter: Optional[str] 
                 "ps_name": ps_meta.get("name"),
                 "ps_net": ps_net or "Unknown",
                 "expected_net": s.network,
-                "ps_url": ps_url
+                "ps_url": ps_url,
+                "auth_status": auth_status,
+                "ps_age_days": ps_age_days,
+                "confident": is_confident
             })
 
  # 2. Pricing - missing/unlisted, or a live mismatch
@@ -305,7 +394,10 @@ def run_audit(network_filter: Optional[str] = None, state_filter: Optional[str] 
                     "ps_name": ps_meta.get("name"),
                     "ps_price": "$0.00 / Unlisted",
                     "expected_price": _fmt_price(s.current_rate_per_kwh) if not s.schedule else f"${s.schedule[0].get('rate', 0.39):.2f} - ${s.schedule[-1].get('rate', 0.50):.2f}/kWh (TOU)",
-                    "ps_url": ps_url
+                    "ps_url": ps_url,
+                    "auth_status": auth_status,
+                    "ps_age_days": ps_age_days,
+                    "confident": is_confident
                 })
             elif ps_price > 0.0 and not has_tou:
                 diff_pct = abs(ps_price - s.current_rate_per_kwh) / s.current_rate_per_kwh * 100.0
@@ -316,7 +408,10 @@ def run_audit(network_filter: Optional[str] = None, state_filter: Optional[str] 
                         "ps_name": ps_meta.get("name"),
                         "ps_price": f"${ps_price:.2f}/kWh (stale)",
                         "expected_price": _fmt_price(s.current_rate_per_kwh),
-                        "ps_url": ps_url
+                        "ps_url": ps_url,
+                        "auth_status": auth_status,
+                        "ps_age_days": ps_age_days,
+                        "confident": is_confident
                     })
 
  # 3. Hardware / power / stalls
@@ -343,52 +438,72 @@ def run_audit(network_filter: Optional[str] = None, state_filter: Optional[str] 
                 "ps_id": ps_id,
                 "ps_name": ps_meta.get("name"),
                 "issues": hw_issues,
-                "ps_url": ps_url
+                "ps_url": ps_url,
+                "auth_status": auth_status,
+                "ps_age_days": ps_age_days,
+                "confident": is_confident
             })
+
+    confident_network = sum(1 for e in network_errors if e["confident"])
+    confident_pricing = sum(1 for e in pricing_errors if e["confident"])
+    confident_hardware = sum(1 for e in hardware_errors if e["confident"])
+    freshest_ps_age = min(ps_verified_samples) if ps_verified_samples else None
+    stalest_ps_age = max(ps_verified_samples) if ps_verified_samples else None
 
     print(f"\n{C_BOLD}📊 PLUGSHARE DISCREPANCY AUDIT SUMMARY{C_RESET}")
     print(f"──────────────────────────────────────────────────────────────────────────")
     print(f"  • Total Authoritative Tier 1 Stations: {len(all_stations)}")
     print(f"  • Co-located & Matched on PlugShare:   {C_GREEN}{matched_count}{C_RESET}")
     print(f"  • Missing from PlugShare Entirely:     {C_YELLOW}{missing_from_ps}{C_RESET}")
-    print(f"  • Network Misattributions in PlugShare: {C_RED}{len(network_errors)}{C_RESET}")
-    print(f"  • Missing / Stale Tariffs in PlugShare: {C_RED}{len(pricing_errors)}{C_RESET}")
-    print(f"  • Hardware / Power / Stall Mismatches:  {C_RED}{len(hardware_errors)}{C_RESET}")
-    print(f"──────────────────────────────────────────────────────────────────────────\n")
+    print(f"  • Network Misattributions in PlugShare: {C_RED}{len(network_errors)}{C_RESET} ({C_GREEN}{confident_network} confirmed{C_RESET} / {len(network_errors) - confident_network} re-verify first)")
+    print(f"  • Missing / Stale Tariffs in PlugShare: {C_RED}{len(pricing_errors)}{C_RESET} ({C_GREEN}{confident_pricing} confirmed{C_RESET} / {len(pricing_errors) - confident_pricing} re-verify first)")
+    print(f"  • Hardware / Power / Stall Mismatches:  {C_RED}{len(hardware_errors)}{C_RESET} ({C_GREEN}{confident_hardware} confirmed{C_RESET} / {len(hardware_errors) - confident_hardware} re-verify first)")
+    if freshest_ps_age is not None:
+        print(f"  • PlugShare cache freshness (matched):  {freshest_ps_age}-{stalest_ps_age} days old (most-recent to stalest sync)")
+    print(f"──────────────────────────────────────────────────────────────────────────")
+    print(f"  {C_GRAY}\"Confirmed\" = our own Tier 1 record is UP_TO_DATE (get_status()) and our PlugShare{C_RESET}")
+    print(f"  {C_GRAY}cache for it isn't itself stale - a real edit is worth making now. \"Re-verify first\"{C_RESET}")
+    print(f"  {C_GRAY}means one side of this comparison is old enough that a re-sync might change the answer.{C_RESET}\n")
 
     if network_errors:
         print(f"{C_BOLD}🏷️ NETWORK MISATTRIBUTIONS IN PLUGSHARE ({len(network_errors)} stations):{C_RESET}")
-        for item in network_errors[:20]:
+        for item in sorted(network_errors, key=lambda e: not e["confident"])[:20]:
             st = item["station"]
-            print(f"  • {C_CYAN}{st.name}{C_RESET} ({st.state})")
+            print(f"  • {C_CYAN}{st.name}{C_RESET} ({st.state}) [{confidence_badge(item['confident'])}]")
             print(f"    Listed on PS: '{item['ps_net']}' ➔ Should Be: '{item['expected_net']}'")
+            if not item["confident"]:
+                print(f"    Why re-verify: our record is {item['auth_status']}" + (f", PlugShare cache is {item['ps_age_days']}d old" if item["ps_age_days"] else ""))
             print(f"    Edit Link:    {item['ps_url']}\n")
         if len(network_errors) > 20:
             print(f"    ... and {len(network_errors) - 20} more.\n")
 
     if pricing_errors:
         print(f"{C_BOLD}💰 MISSING / STALE TARIFFS IN PLUGSHARE ({len(pricing_errors)} stations):{C_RESET}")
-        for item in pricing_errors[:15]:
+        for item in sorted(pricing_errors, key=lambda e: not e["confident"])[:15]:
             st = item["station"]
-            print(f"  • {C_CYAN}{st.name}{C_RESET} ({st.state})")
+            print(f"  • {C_CYAN}{st.name}{C_RESET} ({st.state}) [{confidence_badge(item['confident'])}]")
             print(f"    Listed on PS: {item['ps_price']} ➔ Official Rate: {item['expected_price']}")
+            if not item["confident"]:
+                print(f"    Why re-verify: our record is {item['auth_status']}" + (f", PlugShare cache is {item['ps_age_days']}d old" if item["ps_age_days"] else ""))
             print(f"    Edit Link:    {item['ps_url']}\n")
         if len(pricing_errors) > 15:
             print(f"    ... and {len(pricing_errors) - 15} more.\n")
 
     if hardware_errors:
         print(f"{C_BOLD}🔧 HARDWARE / POWER / STALL MISMATCHES IN PLUGSHARE ({len(hardware_errors)} stations):{C_RESET}")
-        for item in hardware_errors[:15]:
+        for item in sorted(hardware_errors, key=lambda e: not e["confident"])[:15]:
             st = item["station"]
-            print(f"  • {C_CYAN}{st.name}{C_RESET} ({st.state})")
+            print(f"  • {C_CYAN}{st.name}{C_RESET} ({st.state}) [{confidence_badge(item['confident'])}]")
             for issue in item["issues"]:
                 print(f"    {issue}")
+            if not item["confident"]:
+                print(f"    Why re-verify: our record is {item['auth_status']}" + (f", PlugShare cache is {item['ps_age_days']}d old" if item["ps_age_days"] else ""))
             print(f"    Edit Link:    {item['ps_url']}\n")
         if len(hardware_errors) > 15:
             print(f"    ... and {len(hardware_errors) - 15} more.\n")
 
     if output_md:
-        generate_markdown_report(output_md, all_stations, matched_count, missing_from_ps, network_errors, pricing_errors, hardware_errors, missing_stations)
+        generate_markdown_report(output_md, all_stations, matched_count, missing_from_ps, network_errors, pricing_errors, hardware_errors, missing_stations, ps_verified_samples)
         print(f"✔ Full Discrepancy Markdown report exported to: {output_md}")
 
 
@@ -400,36 +515,50 @@ def generate_markdown_report(
     network_errors: List[Dict[str, Any]],
     pricing_errors: List[Dict[str, Any]],
     hardware_errors: List[Dict[str, Any]],
-    missing_stations: List[UnifiedStationRecord]
+    missing_stations: List[UnifiedStationRecord],
+    ps_verified_samples: Optional[List[int]] = None
 ):
     """Generates a detailed Markdown discrepancy report with actionable edit links."""
     os.makedirs(os.path.dirname(os.path.abspath(filepath)), exist_ok=True)
     now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
+ # REQ-108: every finding below carries its own "Confidence" column -
+ # see finding_confidence()'s docstring for exactly what it checks. This
+ # doesn't hide anything; it tells you which ones are worth acting on
+ # right now vs which side of the comparison should be re-synced first.
+    confident_network = sum(1 for e in network_errors if e["confident"])
+    confident_pricing = sum(1 for e in pricing_errors if e["confident"])
+    confident_hardware = sum(1 for e in hardware_errors if e["confident"])
+    freshness_line = ""
+    if ps_verified_samples:
+        freshness_line = f"**PlugShare cache freshness (matched stations):** {min(ps_verified_samples)}-{max(ps_verified_samples)} days old  \n"
+
     lines = [
         f"# PlugShare Discrepancy & Error Audit Report",
         f"**Generated:** {now_str}  ",
-        f"**Scope:** Every Tier 1 Authoritative Provider (Tesla, Chargefox/NRMA/WA EV Network/Qld Electric Highway, EVX, Evie, bp pulse, AmpCharge/Ampol Foodary) vs Tier 2 PlugShare Aggregator\n",
+        freshness_line.rstrip("\n") if freshness_line else "",
+        f"**Scope:** Every Tier 1 Authoritative Provider (Tesla, Chargefox/WA EV Network/Qld Electric Highway, NRMA, JOLT, Exploren, EVX, Evie, bp pulse, AmpCharge/Ampol Foodary) vs Tier 2 PlugShare Aggregator\n",
         f"## 1. Executive Summary\n",
+        f"*\"Confirmed\" below means our own Tier 1 record is `UP_TO_DATE` (get_status()) and, when known, our cached PlugShare snapshot of that station is no more than 90 days old - a real PlugShare edit is worth making now. \"Re-verify first\" means one side of the comparison is old enough that a re-sync might change the answer before you spend time editing PlugShare.*\n",
         f"| Metric | Count |",
         f"| :--- | :--- |",
         f"| **Total First-Party Stations** | {len(all_stations)} |",
         f"| **Matched & Consolidated with PlugShare** | {matched_count} |",
         f"| **Missing from PlugShare (New Deployments)** | {missing_from_ps} |",
-        f"| **Network Misattributions (e.g. '3rd-Party' instead of the real network)** | {len(network_errors)} |",
-        r"| **Missing / Stale Tariffs** | " + str(len(pricing_errors)) + " |",
-        r"| **Hardware / Power / Stall Mismatches** | " + str(len(hardware_errors)) + " |\n",
+        f"| **Network Misattributions** | {len(network_errors)} ({confident_network} confirmed / {len(network_errors) - confident_network} re-verify first) |",
+        f"| **Missing / Stale Tariffs** | {len(pricing_errors)} ({confident_pricing} confirmed / {len(pricing_errors) - confident_pricing} re-verify first) |",
+        f"| **Hardware / Power / Stall Mismatches** | {len(hardware_errors)} ({confident_hardware} confirmed / {len(hardware_errors) - confident_hardware} re-verify first) |\n",
         r"---",
         r"## 2. Network Misattributions on PlugShare",
         r"These stations are listed under generic or incorrect network tags on PlugShare and should be reassigned to the proper network operator:",
         r"",
-        r"| Station Name | State | Current PlugShare Network | Correct Network | PlugShare Edit Link |",
-        r"| :--- | :---: | :--- | :--- | :--- |"
+        r"| Station Name | State | Current PlugShare Network | Correct Network | Confidence | PlugShare Edit Link |",
+        r"| :--- | :---: | :--- | :--- | :---: | :--- |"
     ]
 
-    for item in network_errors:
+    for item in sorted(network_errors, key=lambda e: not e["confident"]):
         st = item["station"]
-        lines.append(f"| **{st.name}** | {st.state} | `{item['ps_net']}` | **{item['expected_net']}** | [Edit on PlugShare #{item['ps_id']}]({item['ps_url']}) |")
+        lines.append(f"| **{st.name}** | {st.state} | `{item['ps_net']}` | **{item['expected_net']}** | {confidence_badge(item['confident'], plain=True)} | [Edit on PlugShare #{item['ps_id']}]({item['ps_url']}) |")
 
     lines.extend([
         r"",
@@ -437,13 +566,13 @@ def generate_markdown_report(
         r"## 3. Missing or Stale Tariffs on PlugShare",
         r"These stations currently show a missing, unlisted, or stale rate on PlugShare that no longer matches verified First-Party pricing:",
         r"",
-        f"| Station Name | State | Listed on PlugShare | Authoritative Operator Tariff | PlugShare Edit Link |",
-        f"| :--- | :---: | :--- | :--- | :--- |"
+        f"| Station Name | State | Listed on PlugShare | Authoritative Operator Tariff | Confidence | PlugShare Edit Link |",
+        f"| :--- | :---: | :--- | :--- | :---: | :--- |"
     ])
 
-    for item in pricing_errors:
+    for item in sorted(pricing_errors, key=lambda e: not e["confident"]):
         st = item["station"]
-        lines.append(f"| **{st.name}** | {st.state} | {item['ps_price']} | **{item['expected_price']}** | [Update Tariff #{item['ps_id']}]({item['ps_url']}) |")
+        lines.append(f"| **{st.name}** | {st.state} | {item['ps_price']} | **{item['expected_price']}** | {confidence_badge(item['confident'], plain=True)} | [Update Tariff #{item['ps_id']}]({item['ps_url']}) |")
 
     lines.extend([
         r"",
@@ -451,25 +580,28 @@ def generate_markdown_report(
         r"## 4. Hardware / Power / Stall Mismatches on PlugShare",
         r"These stations' PlugShare listing disagrees with verified First-Party hardware data:",
         r"",
-        f"| Station Name | State | Discrepancies | PlugShare Edit Link |",
-        f"| :--- | :---: | :--- | :--- |"
+        f"| Station Name | State | Discrepancies | Confidence | PlugShare Edit Link |",
+        f"| :--- | :---: | :--- | :---: | :--- |"
     ])
 
-    for item in hardware_errors:
+    for item in sorted(hardware_errors, key=lambda e: not e["confident"]):
         st = item["station"]
         issues_str = "; ".join(item["issues"])
-        lines.append(f"| **{st.name}** | {st.state} | {issues_str} | [Update on PlugShare #{item['ps_id']}]({item['ps_url']}) |")
+        lines.append(f"| **{st.name}** | {st.state} | {issues_str} | {confidence_badge(item['confident'], plain=True)} | [Update on PlugShare #{item['ps_id']}]({item['ps_url']}) |")
 
     lines.extend([
         f"\n---",
         f"## 5. First-Party Stations Missing from PlugShare\n",
         f"These active first-party stations are not yet registered on PlugShare:\n",
-        f"| Station Name | Network | State | Address | Power | Coordinates |",
-        f"| :--- | :--- | :---: | :--- | :--- | :--- |"
+        f"| Station Name | Network | State | Address | Power | Your Record | Coordinates |",
+        f"| :--- | :--- | :---: | :--- | :--- | :---: | :--- |"
     ])
-
+ # "Your Record" is our OWN Tier 1 record's freshness (get_status()) -
+ # a station this repo hasn't re-verified in a while might not actually
+ # be missing from PlugShare; it might just be stale/gone on our side.
     for st in missing_stations[:50]:
-        lines.append(f"| **{st.name}** | {st.network} | {st.state} | {st.address} | {st.max_power_kw} kW | `{st.lat:.5f}, {st.lon:.5f}` |")
+        coords_md_link = f"[{st.lat:.5f}, {st.lon:.5f}]({gmaps_url(st.lat, st.lon)})"  # TODO-007: real markdown link, matching the PlugShare-edit-link column above
+        lines.append(f"| **{st.name}** | {st.network} | {st.state} | {st.address} | {st.max_power_kw} kW | {st.get_status()} | {coords_md_link} |")
 
     if len(missing_stations) > 50:
         lines.append(f"\n*(Truncated: {len(missing_stations) - 50} additional missing stations omitted from table)*")
@@ -480,7 +612,7 @@ def generate_markdown_report(
 
 def main():
     parser = argparse.ArgumentParser(
-        usage="""charger_plugshare_auditor.py [--network tesla|chargefox|evx|evie|bppulse|ampcharge|all] [--state ST] [--report FILE.md]
+        usage="""charger_plugshare_auditor.py [--network tesla|chargefox|nrma|jolt|exploren|evx|evie|bppulse|ampcharge|all] [--state ST] [--report FILE.md]
    or:  charger_plugshare_auditor.py --query TEXT
 """,
         description="""
@@ -489,12 +621,16 @@ NAME
 
 DESCRIPTION
     Audits PlugShare records against this repo's authoritative first-party
-    charger registries - every Tier 1 provider (Tesla, Chargefox/NRMA/WA EV
-    Network/Qld Electric Highway, EVX, Evie, bp pulse, AmpCharge/Ampol
-    Foodary) - flagging network misattributions, missing/stale pricing,
-    hardware/power/stall mismatches, and stations missing from PlugShare
-    entirely, and optionally exporting a Markdown report with direct
-    PlugShare edit links for fixing the crowd-sourced data yourself.
+    charger registries - every Tier 1 provider (Tesla, Chargefox/WA EV
+    Network/Qld Electric Highway, NRMA, JOLT, Exploren, EVX, Evie, bp
+    pulse, AmpCharge/Ampol Foodary) - flagging network misattributions,
+    missing/stale pricing, hardware/power/stall mismatches, and stations
+    missing from PlugShare entirely. Each finding is labeled Confirmed or
+    Re-verify first, based on how fresh our own record and PlugShare's own
+    cached snapshot are (REQ-108) - so you know which ones are actually
+    worth editing on PlugShare right now. Optionally exports a Markdown
+    report with direct PlugShare edit links for fixing the crowd-sourced
+    data yourself.
 """,
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
@@ -506,7 +642,7 @@ EXAMPLES
 """
     )
     parser.add_argument("--query", "-q", type=str, help="Inspect multi-views and PlugShare comparison for a specific station (e.g. '1 Endeavour')")
-    parser.add_argument("--network", "-n", choices=["tesla", "chargefox", "evx", "evie", "bppulse", "ampcharge", "all"], default="all", help="Filter audit by network")
+    parser.add_argument("--network", "-n", choices=["tesla", "chargefox", "nrma", "jolt", "exploren", "evx", "evie", "bppulse", "ampcharge", "all"], default="all", help="Filter audit by network")
     parser.add_argument("--state", "-s", choices=["NSW", "VIC", "QLD", "WA", "SA", "TAS", "ACT", "NT"], help="Filter audit by state")
     parser.add_argument("--report", "-r", type=str, help="Path to export Markdown report (e.g. plugshare_audit_report.md)")
 

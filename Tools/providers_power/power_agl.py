@@ -237,14 +237,27 @@ class AGLProvider(BasePowerProvider):
         return periods
 
     def rate_for_date(self, d, periods=None):
-        """The tariff period in effect on date `d` (a date object) - the
-        last period whose effective_from is <= d."""
+        """The tariff period in effect on date `d` (a date object) -
+        REQ-141: an explicit range match (_effective_from_date <= d <=
+        _effective_to_date, both computed by load_rate_periods_from_file()
+        from chain order - see that function's own comment) rather than
+        the old "last period whose effective_from is <= d" - which
+        silently returned the wrong period whenever an incomplete period
+        with a LATER effective_from than the one that actually applied
+        got inserted between two correct ones (the real bug found live:
+        several periods auto-proposed from GAS bills, not electricity
+        ones, sat between real dated electricity periods and won every
+        lookup for their date range). An explicit range match can't make
+        that mistake - `d` either falls in exactly one period's range or
+        it doesn't."""
         periods = periods or self.load_rate_periods()
-        applicable = [p for p in periods if p["_effective_from_date"] <= d]
-        if not applicable:
-            raise ValueError(f"No tariff period covers {d} - earliest known period starts "
-                              f"{periods[0]['effective_from']}")
-        return applicable[-1]
+        for p in periods:
+            if p["_effective_from_date"] <= d <= p["_effective_to_date"]:
+                return p
+        if d > periods[-1]["_effective_from_date"]:
+            return periods[-1]  # the current, open-ended period - its _effective_to_date is "today" at load time, which a later `d` (e.g. the file wasn't reloaded today) shouldn't fall outside of
+        raise ValueError(f"No tariff period covers {d} - earliest known period starts "
+                          f"{periods[0]['effective_from']}")
 
  # ---- solar credit / demand charge math -----------------------------
 
@@ -254,10 +267,89 @@ class AGLProvider(BasePowerProvider):
         tier2_kwh = max(0.0, total_kwh - cap)
         return round(tier1_kwh * tier1_rate, 2), round(tier2_kwh * TIER2_RATE, 2)
 
+    def solar_tier_split_kwh(self, cumulative_export_before_kwh, marginal_kwh):
+        remaining_tier1_kwh = max(0.0, TIER1_CAP_KWH_PER_DAY - cumulative_export_before_kwh)
+        tier1_kwh = min(marginal_kwh, remaining_tier1_kwh)
+        tier2_kwh = max(0.0, marginal_kwh - tier1_kwh)
+        return tier1_kwh, tier2_kwh, TIER2_RATE
+
     def demand_charge(self, kw_latched, billing_days, rate_per_kw_day):
         ex_gst = kw_latched * rate_per_kw_day * billing_days
         incl_gst = ex_gst * 1.10
         return round(ex_gst, 2), round(incl_gst, 2)
+
+    def usage_rate_for_window(self, period, local_start, local_end):
+        """REQ-151: AGL/Ausgrid-specific override for this account's own
+        long-running 3-tier Peak/Shoulder/Off-peak structure - real
+        invoices confirm every bill from 2022-04-06 through 2026-09-06
+        billed usage this way (weekday + NSW-public-holiday aware, no
+        month dependency - unlike the newer 2-tier month-based "tou"
+        structure the base class already handles for 2026-09-07
+        onward). Delegates to the base implementation for anything
+        else (flat periods, and "tou" periods) - see AGENTS.local.md
+        REQ-151 for the real-invoice evidence this is built from.
+
+        This account's real rate happened to be numerically identical
+        across all three tiers for every period this has applied to so
+        far (peak_rate_per_kwh == shoulder_rate_per_kwh ==
+        offpeak_rate_per_kwh), so the blended result is always
+        identical to the old flat usage_rate_per_kwh regardless of how
+        a session's minutes classify - but the classification is done
+        for real, not assumed, so a future period where AGL's real
+        peak/shoulder/off-peak rates actually diverge (as they did
+        under the OLDER, pre-2022 three-tier bill layout AGL apparently
+        also used at some other account/point in time, and might again)
+        is handled correctly without any further code change."""
+        if period.get("tariff_type") != "tou3":
+            return super().usage_rate_for_window(period, local_start, local_end)
+
+        from datetime import timedelta
+
+        peak_start_h = period["peak_hour_start"]
+        peak_end_h = period["peak_hour_end"]
+        shoulder_weekday_windows = period["shoulder_weekday_windows"]
+        shoulder_weekend_start_h = period["shoulder_weekend_hour_start"]
+        shoulder_weekend_end_h = period["shoulder_weekend_hour_end"]
+        peak_rate = period["peak_rate_per_kwh"]
+        shoulder_rate = period["shoulder_rate_per_kwh"]
+        offpeak_rate = period["offpeak_rate_per_kwh"]
+
+        def _classify(dt):
+            if dt.weekday() >= 5 or self.is_nsw_public_holiday(dt.date()):
+                if shoulder_weekend_start_h <= dt.hour < shoulder_weekend_end_h:
+                    return "shoulder"
+                return "offpeak"
+            if peak_start_h <= dt.hour < peak_end_h:
+                return "peak"
+            if any(h0 <= dt.hour < h1 for h0, h1 in shoulder_weekday_windows):
+                return "shoulder"
+            return "offpeak"
+
+        rates = {"peak": peak_rate, "shoulder": shoulder_rate, "offpeak": offpeak_rate}
+        total_seconds = (local_end - local_start).total_seconds()
+        if total_seconds <= 0:
+            tier = _classify(local_start)
+            breakdown = {"peak_fraction": 0.0, "shoulder_fraction": 0.0, "offpeak_fraction": 0.0,
+                         "peak_rate": peak_rate, "shoulder_rate": shoulder_rate, "offpeak_rate": offpeak_rate}
+            breakdown[f"{tier}_fraction"] = 1.0
+            return rates[tier], breakdown
+
+        step = timedelta(minutes=1)
+        seconds_by_tier = {"peak": 0.0, "shoulder": 0.0, "offpeak": 0.0}
+        t = local_start
+        while t < local_end:
+            seg_end = min(t + step, local_end)
+            seconds_by_tier[_classify(t)] += (seg_end - t).total_seconds()
+            t = seg_end
+
+        fractions = {k: v / total_seconds for k, v in seconds_by_tier.items()}
+        blended = sum(fractions[k] * rates[k] for k in rates)
+        breakdown = {
+            "peak_fraction": fractions["peak"], "shoulder_fraction": fractions["shoulder"],
+            "offpeak_fraction": fractions["offpeak"],
+            "peak_rate": peak_rate, "shoulder_rate": shoulder_rate, "offpeak_rate": offpeak_rate,
+        }
+        return blended, breakdown
 
  # ---- invoices ------------------------------------------------------
 

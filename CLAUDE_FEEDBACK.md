@@ -17,7 +17,7 @@
 
 Over the past week (2026-09-14 to 2026-09-21), this repository underwent major architectural expansion and stabilization across four primary domains:
 1. **Multi-Network EV Charging Architecture & Discovery (`Tools/providers_chargers/` + `Tools/charger_find.py`)**: Generalization from Tesla-only into 10 first-party networks with co-location preservation, live pricing reconciliation, and facility scoring.
-2. **OpenStreetMap (OSM) Live Compliance & Editing Suite (`Tools/places_osm_editor.py`, `Tools/lib/osm_client.py`, `Tools/lib/supercharge_info.py`)**: OAuth2 integration with OpenStreetMap API for automated auditing, micro-mapped stall node reconciliation, and human-compliant changeset authoring.
+2. **OpenStreetMap (OSM) Live Compliance & Editing Suite (`Tools/places_osm_editor.py`, `Tools/lib/osm_client_common.py`, `Tools/lib/supercharge_common.py`)**: OAuth2 integration with OpenStreetMap API for automated auditing, micro-mapped stall node reconciliation, and human-compliant changeset authoring.
 3. **Places Geocoding & Route Telemetry (`Tools/places_manager.py`, `Tools/sync_api_abrp.py`, `Tools/tessie_drives_analyzer.py`)**: Smart multi-candidate geocoding, ABRP route synchronization, adaptive drive profile smoothing, and deletion tombstone management.
 4. **Tool Naming, Prefix Standardization & Provider Consistency (`Tools/`, `Tools/providers_chargers/`, `Tools/providers_power/`)**: Full systematic audit of prefixes (`analyse_`, `sync_`, `chargers_`, `power_`, `places_`) and archived utilities.
 
@@ -61,10 +61,10 @@ We investigated the data structure, endpoints, and capabilities of **https://sup
   - Tracks all ~7,000+ global Tesla Supercharger hubs with daily community verification.
   - Accurate physical stall GPS coordinates (benchmarked against satellite imagery and ground surveys).
   - Explicit stall hardware breakdown (e.g. `16x V4`, `6x V2`, `8x V3`), total stall count, maximum power in kW (e.g. `250`, `300`), opening dates, elevation in meters, and Non-Tesla EV access flag (`otherEVs`).
-  - Construction, permit, and expansion milestone histories via `/allSiteChanges`.
-- **API Endpoints**:
-  - `https://supercharge.info/service/supercharge/allSites` (Complete dataset, cached locally in `Tools/lib/supercharge_info.py` for 24h).
-  - `https://supercharge.info/service/supercharge/allSiteChanges` (Historical status events).
+  - Construction, permit, and expansion milestone histories via a per-site `changes` lookup (see below).
+- **API Endpoints** (corrected 2026-09-26, verified against the live code rather than assumed):
+  - `https://supercharge.info/service/supercharge/allSites` (Complete dataset, cached locally in `Tools/lib/supercharge_common.py` for 24h).
+  - `https://supercharge.info/service/supercharge/changes?search=<name>` (Historical status events for one site by name; this is the real, working endpoint - the previously-documented `/allSiteChanges` 404s and doesn't exist. **Not cached** - unlike `allSites`, `fetch_site_changes()` hits the network on every call).
 
 ### B. Critical Limitation: Destination Chargers are NOT Tracked
 - `supercharge.info` is **strictly dedicated to Tesla Superchargers (DC)**.
@@ -84,7 +84,7 @@ A thorough review was conducted across `Tools/`, `Tools/providers_chargers/`, `T
 | Prefix / Category | Directory | Scripts & Modules | Purpose & Conventions |
 | :--- | :--- | :--- | :--- |
 | **`analyse_*`** | `Tools/` | `analyse_battery_health.py`<br>`analyse_car_efficiency.py`<br>`analyse_charge_curves.py`<br>`analyse_charging.py`<br>`analyse_drives.py`<br>`analyse_session_cost.py` | Analytics, charting, financial reconciliation, and telemetry drill-downs (British English spelling). |
-| **`sync_*`** | `Tools/` | `sync_all.sh`<br>`sync_charger_all.sh`<br>`sync_charging_all.sh`<br>`sync_dashcam.sh`<br>`sync_drives_all.sh`<br>`sync_fuel_all.sh`<br>`sync_api_abrp.py`<br>`sync_api_evnex.py`<br>`sync_api_tessie.py`<br>`sync_fuel_history.py`<br>`sync_invoices.py`<br>`sync_power_usage.py` | Automated data fetching, API sync, and invoice ingestion wrappers. |
+| **`sync_*`** | `Tools/` | `sync_all.sh`<br>`sync_charger_all.sh`<br>`sync_charging_all.sh`<br>`sync_dashcam.sh`<br>`sync_drives_all.sh`<br>`sync_fuel_all.sh`<br>`sync_api_evnex.py`<br>`sync_api_tessie.py`<br>`sync_fuel_history.py`<br>`sync_invoices.py`<br>`sync_power_usage.py` | Automated data fetching, API sync, and invoice ingestion wrappers. **Exception: `sync_api_abrp.py`** is a manual, one-time OAuth setup / vehicle-profile inspection tool despite the shared prefix - it is not chained into any `sync_*_all.sh` pipeline (see BUG-123). |
 | **`chargers_*`** | `Tools/providers_chargers/` | `chargers_base.py`<br>`chargers_manager.py`<br>`chargers_ampcharge.py`<br>`chargers_bppulse.py`<br>`chargers_chargefox.py`<br>`chargers_evie.py`<br>`chargers_evx.py`<br>`chargers_exploren.py`<br>`chargers_jolt.py`<br>`chargers_nrma.py`<br>`chargers_plugshare.py`<br>`chargers_tesla.py` | 10 first-party charger network providers + core manager and data models. |
 | **`power_*`** | `Tools/` & `Tools/providers_power/` | `power_cost_calculator.py`<br>`power_demand_calculator.py`<br>`power_base.py`<br>`power_agl.py` | Home power tariffs, AGL usage data, and solar/demand calculators. |
 | **`places_*`** | `Tools/` | `places_manager.py`<br>`places_osm_editor.py` | Geocoding, place clustering, and OSM audit/editing. |
@@ -118,7 +118,7 @@ A thorough review was conducted across `Tools/`, `Tools/providers_chargers/`, `T
   - Regenerative braking shading and trip-average reference lines.
   - Statistical outlier rejection for battery degradation tracking with physical capacity ceilings.
   - Deletion tombstones (`--flagged` / `--staged` CLI flags).
-- **ABRP (A Better Routeplanner) Telemetry Stream (`Tools/sync_api_abrp.py`, `Tools/lib/abrp_planner.py`)**:
+- **ABRP (A Better Routeplanner) Telemetry Stream (`Tools/sync_api_abrp.py`, `Tools/lib/abrp_common.py`)**:
   - Live route planning, telemetry streaming, and SoC prediction.
 
 ---

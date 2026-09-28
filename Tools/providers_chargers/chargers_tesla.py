@@ -31,8 +31,8 @@ def _resolve_tesla_registry_paths() -> List[str]:
         pass
     if tessie_home:
         candidates.extend([
-            os.path.join(tessie_home, "tesla_superchargers.json"),
-            os.path.join(tessie_home, "tesla_chargers.json"),
+            os.path.join(tessie_home, "chargers", "tesla_superchargers.json"),
+            os.path.join(tessie_home, "chargers", "tesla_chargers.json"),
         ])
         
     candidates.extend([
@@ -49,8 +49,8 @@ def _resolve_tesla_registry_paths() -> List[str]:
                 td = cfg.get("directories", {}).get("data")
                 if td:
                     td_exp = os.path.expanduser(td)
-                    candidates.insert(0, os.path.join(td_exp, "tesla_superchargers.json"))
-                    candidates.insert(1, os.path.join(td_exp, "tesla_chargers.json"))
+                    candidates.insert(0, os.path.join(td_exp, "chargers", "tesla_superchargers.json"))
+                    candidates.insert(1, os.path.join(td_exp, "chargers", "tesla_chargers.json"))
         except Exception:
             pass
 
@@ -368,7 +368,7 @@ class TeslaProvider(BaseChargerProvider):
                     # BUG-148: Tesla's registry never actually has an "amenities" key,
                     # so this used to fall through to {"items": []} - a dict that is non-
                     # empty (truthy) but holds zero real amenity data. Downstream scoring
-                    # (route_planner.compute_route_stop_score) treats any truthy dict as a
+                    # (route_common.compute_route_stop_score) treats any truthy dict as a
                     # real amenities signal, so that hollow wrapper silently produced a fake
                     # "3.0 / 0 amenities listed" facilities score with no OSM lookup involved.
                     # Only wrap into {"items": [...]} when there is something real to wrap.

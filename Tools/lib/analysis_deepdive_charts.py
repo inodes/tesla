@@ -31,6 +31,25 @@ line in the hover tooltip when the mouse is at that x position.
 Omit (or pass None) for a chart with no location data (e.g. the
 charging-curve chart, which doesn't move) - the tooltip simply
 doesn't grow that line.
+
+Optional `zoomable=True` (REQ-119, 2026-09-24 - user, looking at a
+year-long daily chart: "The resolution is too high for a year. Should
+provide rolling averages that change the more you zoom in"): drag on
+the plot to zoom into an x-range, double-click to reset. Whenever
+zoomable, the drawn line is a CENTERED ROLLING AVERAGE whose window
+scales continuously with how many points are currently in view
+(roughly points-in-view / 20, capped at 21) - zoomed out over a year
+shows a smoothed line instead of a noisy 365-point zigzag; zoomed in
+to a couple of weeks the window shrinks back to 1 (raw daily values).
+The rolling average skips (never zeroes) null points, so a gap in the
+underlying data still shows as a gap, just a shorter one than the raw
+series would. Existing callers that don't pass zoomable get the exact
+same rendering as before this REQ - the whole feature is additive and
+opt-in, nothing changes unless a caller asks for it. Assumes ONE data
+point per x-step is a meaningful smoothing unit (true for the daily
+energy report this was built for) - a future zoomable chart at a
+different cadence (hourly, 5-minute) should double check the window
+math in windowForSpan() below still makes sense for it.
 """
 
 import json
@@ -63,6 +82,7 @@ _TEMPLATE = """<!doctype html>
 <h1>{title}</h1>
 <div class="sub">{subtitle}</div>
 <div id="legend"></div>
+<div id="zoomNote" style="margin:0 20px 10px;font-size:12px;color:#898781;"></div>
 <div id="wrap">
   <canvas id="chart" width="1100" height="480"></canvas>
   <div id="tooltip"></div>
@@ -73,6 +93,7 @@ const canvas = document.getElementById('chart');
 const ctx = canvas.getContext('2d');
 const tooltip = document.getElementById('tooltip');
 const legend = document.getElementById('legend');
+const zoomNote = document.getElementById('zoomNote');
 
 const W = canvas.width, H = canvas.height;
 const axisIds = [];
@@ -80,9 +101,6 @@ DATA.series.forEach(s => {{ if (!axisIds.includes(s.axis)) axisIds.push(s.axis);
 const rightAxisIds = axisIds.filter(a => a !== 'left');
 const padL = 60, padR = 20 + rightAxisIds.length * 60, padT = 16, padB = 40;
 const plotW = W - padL - padR, plotH = H - padT - padB;
-
-const n = DATA.x.length;
-function xAt(i) {{ return padL + (n <= 1 ? 0 : (i / (n - 1)) * plotW); }}
 
 function axisRange(series, axis) {{
   let vals = [];
@@ -98,9 +116,53 @@ function axisRange(series, axis) {{
   return [lo - pad, hi + pad];
 }}
 
-const ranges = {{}};
-axisIds.forEach(a => {{ ranges[a] = axisRange(DATA.series, a); }});
-const [loL, hiL] = ranges['left'] || [0, 1];
+// REQ-119: zoom (drag-select on the plot, double-click to reset) plus a
+// rolling average whose window scales with how much of the series is
+// currently in view - "resolution changes the more you zoom in". Inert
+// (view === the full raw data, window always 1) unless the caller passed
+// zoomable=True, so every EXISTING chart (charging curves, drive
+// profiles) renders identically to before this REQ.
+let viewStartIdx = 0, viewEndIdx = DATA.x.length - 1;
+let view = {{ x: DATA.x, series: DATA.series, window: 1 }};
+let n = view.x.length;
+let ranges = {{}};
+
+function rollingAverage(values, window) {{
+  if (window <= 1) return values.slice();
+  const half = Math.floor(window / 2);
+  const out = [];
+  for (let i = 0; i < values.length; i++) {{
+    let sum = 0, count = 0;
+    for (let k = Math.max(0, i - half); k <= Math.min(values.length - 1, i + half); k++) {{
+      const v = values[k];
+      if (v !== null && v !== undefined) {{ sum += v; count++; }}
+    }}
+    out.push(count > 0 ? sum / count : null);
+  }}
+  return out;
+}}
+
+// Continuous, not tiered - the window shrinks smoothly as you zoom in
+// rather than snapping between a few fixed levels. ~20 points per
+// smoothing step, capped at 21 (about a 3-week window even at full
+// zoom-out on daily data) so a very long range never over-smooths into
+// a flat line.
+function windowForSpan(spanPoints) {{
+  return Math.max(1, Math.min(21, Math.round(spanPoints / 20)));
+}}
+
+function updateView() {{
+  const rawX = DATA.x.slice(viewStartIdx, viewEndIdx + 1);
+  const window = DATA.zoomable ? windowForSpan(rawX.length) : 1;
+  const rawSeries = DATA.series.map(s => Object.assign({{}}, s, {{ values: s.values.slice(viewStartIdx, viewEndIdx + 1) }}));
+  const smoothed = window <= 1 ? rawSeries : rawSeries.map(s => Object.assign({{}}, s, {{ values: rollingAverage(s.values, window) }}));
+  view = {{ x: rawX, series: smoothed, window: window }};
+  n = view.x.length;
+  axisIds.forEach(a => {{ ranges[a] = axisRange(view.series, a); }});
+}}
+updateView();
+
+function xAt(i) {{ return padL + (n <= 1 ? 0 : (i / (n - 1)) * plotW); }}
 
 function yAt(v, axis) {{
   const [lo, hi] = ranges[axis] || ranges['left'] || [0, 1];
@@ -114,6 +176,7 @@ function axisColor(axis) {{
 
 function draw() {{
   ctx.clearRect(0, 0, W, H);
+  const [loL, hiL] = ranges['left'] || [0, 1];
 
  // gridlines + left axis labels
   ctx.strokeStyle = '#eee';
@@ -166,14 +229,15 @@ function draw() {{
   const xTicks = Math.min(8, n);
   for (let t = 0; t < xTicks; t++) {{
     const i = Math.round(t * (n - 1) / Math.max(1, xTicks - 1));
-    ctx.fillText(DATA.x[i], xAt(i), H - padB + 16);
+    ctx.fillText(view.x[i], xAt(i), H - padB + 16);
   }}
   ctx.fillStyle = '#444';
   ctx.textAlign = 'center';
   ctx.fillText(DATA.x_label, padL + plotW / 2, H - 6);
 
- // series lines & shaded regen below 0
-  DATA.series.forEach(s => {{
+ // series lines & shaded regen below 0 (view.series - the currently
+ // zoomed/smoothed data; identical to DATA.series when not zoomable)
+  view.series.forEach(s => {{
     let runs = [];
     let curRun = [];
     for (let i = 0; i < n; i++) {{
@@ -330,11 +394,45 @@ function draw() {{
   ).join('') + ((DATA.ref_lines || []).map(r =>
     `<span><span style="display:inline-block;width:14px;border-top:2px dashed ${{r.color}};margin-right:5px;vertical-align:middle"></span>${{r.label || 'Average'}}</span>`
   ).join(''));
+
+  zoomNote.textContent = !DATA.zoomable ? '' : (
+    view.window > 1
+      ? `Showing a ${{view.window}}-day rolling average (${{n}} of ${{DATA.x.length}} point(s) in view) - drag to zoom in, double-click to reset`
+      : `Showing daily values (${{n}} of ${{DATA.x.length}} point(s) in view) - drag to zoom in, double-click to reset`
+  );
 }}
+
+let isDragging = false;
+let dragStartPx = 0;
+let dragCurrentPx = 0;
+
+canvas.addEventListener('mousedown', (ev) => {{
+  if (!DATA.zoomable) return;
+  const rect = canvas.getBoundingClientRect();
+  const mx = (ev.clientX - rect.left) * (canvas.width / rect.width);
+  dragStartPx = Math.max(padL, Math.min(W - padR, mx));
+  dragCurrentPx = dragStartPx;
+  isDragging = true;
+  tooltip.style.display = 'none';
+}});
 
 canvas.addEventListener('mousemove', (ev) => {{
   const rect = canvas.getBoundingClientRect();
   const mx = (ev.clientX - rect.left) * (canvas.width / rect.width);
+
+  if (isDragging) {{
+    dragCurrentPx = Math.max(padL, Math.min(W - padR, mx));
+    draw();
+    const x0 = Math.min(dragStartPx, dragCurrentPx);
+    const x1 = Math.max(dragStartPx, dragCurrentPx);
+    ctx.fillStyle = 'rgba(42,120,214,0.15)';
+    ctx.fillRect(x0, padT, x1 - x0, H - padT - padB);
+    ctx.strokeStyle = '#2a78d6';
+    ctx.setLineDash([]);
+    ctx.strokeRect(x0, padT, x1 - x0, H - padT - padB);
+    return;
+  }}
+
   if (mx < padL || mx > W - padR) {{ tooltip.style.display = 'none'; return; }}
   let i = Math.round(((mx - padL) / plotW) * (n - 1));
   i = Math.max(0, Math.min(n - 1, i));
@@ -346,15 +444,15 @@ canvas.addEventListener('mousemove', (ev) => {{
   ctx.beginPath(); ctx.moveTo(gx, padT); ctx.lineTo(gx, H - padB); ctx.stroke();
   ctx.setLineDash([]);
 
-  let lines = [`<b>${{DATA.x[i]}}</b>`];
-  DATA.series.forEach(s => {{
+  let lines = [`<b>${{view.x[i]}}</b>`];
+  view.series.forEach(s => {{
     const v = s.values[i];
     const isRegen = s.fill_negative && v !== null && v !== undefined && v < 0;
     const valStr = v === null || v === undefined ? '-' : `${{v.toFixed(2)}} ${{s.unit}}${{isRegen ? ' (Regen ⚡)' : ''}}`;
     lines.push(`${{s.name}}: ${{valStr}}`);
   }});
-  if (DATA.locations && DATA.locations[i]) {{
-    lines.push(`📍 ${{DATA.locations[i]}}`);
+  if (DATA.locations && DATA.locations[viewStartIdx + i]) {{
+    lines.push(`📍 ${{DATA.locations[viewStartIdx + i]}}`);
   }}
   tooltip.innerHTML = lines.join('<br>');
   tooltip.style.display = 'block';
@@ -364,7 +462,40 @@ canvas.addEventListener('mousemove', (ev) => {{
   tooltip.style.left = left + 'px';
   tooltip.style.top = Math.max(0, top) + 'px';
 }});
-canvas.addEventListener('mouseleave', () => {{ tooltip.style.display = 'none'; draw(); }});
+
+canvas.addEventListener('mouseup', () => {{
+  if (!isDragging) return;
+  isDragging = false;
+  const x0 = Math.min(dragStartPx, dragCurrentPx);
+  const x1 = Math.max(dragStartPx, dragCurrentPx);
+  if (x1 - x0 < 6) {{ draw(); return; }}
+
+  let i0 = Math.round(((x0 - padL) / plotW) * (n - 1));
+  let i1 = Math.round(((x1 - padL) / plotW) * (n - 1));
+  i0 = Math.max(0, Math.min(n - 1, i0));
+  i1 = Math.max(0, Math.min(n - 1, i1));
+  if (i1 - i0 < 2) {{ draw(); return; }}
+
+  const baseStart = viewStartIdx;
+  viewStartIdx = baseStart + i0;
+  viewEndIdx = baseStart + i1;
+  updateView();
+  draw();
+}});
+
+canvas.addEventListener('dblclick', () => {{
+  if (!DATA.zoomable) return;
+  viewStartIdx = 0;
+  viewEndIdx = DATA.x.length - 1;
+  updateView();
+  draw();
+}});
+
+canvas.addEventListener('mouseleave', () => {{
+  if (isDragging) return;
+  tooltip.style.display = 'none';
+  draw();
+}});
 
 draw();
 </script>
@@ -373,7 +504,7 @@ draw();
 """
 
 
-def write_interactive_chart(output_path, title, x_values, x_label, series, subtitle="", locations=None, ref_lines=None):
+def write_interactive_chart(output_path, title, x_values, x_label, series, subtitle="", locations=None, ref_lines=None, zoomable=False):
     """Write a self-contained interactive HTML chart to output_path.
 
     x_values: list of str labels (already formatted - a timestamp
@@ -381,6 +512,10 @@ def write_interactive_chart(output_path, title, x_values, x_label, series, subti
     series: list of {"name", "unit", "axis", "color", "values", "fill_negative"} dicts.
     locations: optional list of str-or-None, same length as x_values.
     ref_lines: optional list of {"value", "axis", "label", "color", "style"} reference lines.
+    zoomable: opt-in (REQ-119) - enables drag-to-zoom/double-click-reset with a
+    continuous rolling-average smoothing level (see the module docstring for
+    the full behavior). False by default so every existing caller renders
+    exactly as before this parameter was added.
     """
     data = {
         "x": x_values,
@@ -388,6 +523,7 @@ def write_interactive_chart(output_path, title, x_values, x_label, series, subti
         "series": series,
         "locations": locations,
         "ref_lines": ref_lines or [],
+        "zoomable": bool(zoomable),
     }
     html = _TEMPLATE.format(
         title=title,

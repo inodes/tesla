@@ -174,3 +174,65 @@ def epoch_to_utc_iso(epoch_utc):
         return ""
     dt = datetime.fromtimestamp(int(float(epoch_utc)), tz=timezone.utc)
     return dt.strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def normalize_row_timezone(row, lat_key, lon_key, start_key_prefix):
+    """Ensures row[f"{start_key_prefix} (UTC)"]/(TZ)/(Local) are populated
+    (TODO-009). Idempotent: if the row already has a non-empty UTC value
+    (e.g. re-reading an already-migrated master CSV), leaves it alone.
+    Otherwise derives true UTC from whichever legacy column is present -
+    Tessie's own CSV export always applies ONE fixed, known offset
+    (Australia/Sydney's, for whatever date the row is on - this repo
+    always requests timezone=Australia/Sydney), so that offset is
+    exactly reversible regardless of where the event really happened;
+    the row's own (unaffected) lat/lon then gives the TRUE zone via
+    resolve_timezone(). Self-healing: works identically whether the row
+    came from an existing master file or a freshly landed/constructed
+    one, so a normal consolidate run upgrades old and new rows alike
+    with no separate migration step.
+
+    Shared by both tessie_drives_analyzer.py's consolidate_drives()
+    (called twice per row, once for "Starting Latitude"/"Started At",
+    once for "Ending Latitude"/"Ended At" - a drive has two distinct
+    locations) and tessie_charging_analyzer.py's
+    consolidate_charges_master() (called twice per row too, but against
+    the SAME single "Latitude"/"Longitude" pair both times - a charging
+    session has only one location for its whole duration, unlike a
+    drive)."""
+    utc_key = f"{start_key_prefix} (UTC)"
+    tz_key = f"{start_key_prefix} TZ"
+    local_key = f"{start_key_prefix} (Local)"
+    if row.get(utc_key):
+        return
+    legacy = (row.get(f"{start_key_prefix} (AEST)") or row.get(start_key_prefix)
+              or row.get(start_key_prefix.replace(" At", "")) or "").strip()
+    if not legacy:
+        row[utc_key] = ""
+        row[tz_key] = ""
+        row[local_key] = ""
+        return
+    try:
+        naive = datetime.strptime(legacy[:16], "%Y-%m-%d %H:%M")
+    except Exception:
+        row[utc_key] = ""
+        row[tz_key] = ""
+        row[local_key] = legacy
+        return
+ # naive.timestamp() would interpret the naive value in THIS machine's
+ # own local zone, which is wrong on any host not itself set to
+ # Sydney - compute purely arithmetically instead: treat the naive
+ # value as if it already were UTC (epoch_as_if_utc), then subtract
+ # the offset Tessie actually applied (Sydney's, for this date) to
+ # recover the true UTC instant.
+    sydney_offset = sydney_offset_seconds(naive)
+    epoch_as_if_utc = int((naive - datetime(1970, 1, 1)).total_seconds())
+    true_utc_epoch = epoch_as_if_utc - int(sydney_offset)
+
+    lat = row.get(lat_key)
+    lon = row.get(lon_key)
+    zone = resolve_timezone(lat, lon)
+    local_dt, abbr, offset_str = localize(true_utc_epoch, zone)
+
+    row[utc_key] = str(true_utc_epoch)
+    row[tz_key] = zone
+    row[local_key] = f"{local_dt.strftime('%Y-%m-%d %H:%M')} {abbr}" if local_dt else legacy

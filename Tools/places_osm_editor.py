@@ -40,7 +40,7 @@ if _script_dir not in sys.path:
 if os.path.join(_script_dir, "lib") not in sys.path:
     sys.path.insert(0, os.path.join(_script_dir, "lib"))
 
-from lib.osm_client import (
+from lib.osm_client_common import (
     load_osm_config,
     save_osm_token,
     load_osm_token,
@@ -58,7 +58,7 @@ from lib.osm_client import (
     query_overpass_charging_stations,
     OSM_USER_AGENT,
 )
-from lib.osm_templates import (
+from lib.osm_templates_common import (
     OSM_TEMPLATES,
     get_template,
     match_template,
@@ -179,7 +179,7 @@ def main():
     parser = argparse.ArgumentParser(description="OpenStreetMap Amenities Inspector & Live Editor for EV Stations")
     parser.add_argument("--auth-url", action="store_true", help="Generate OSM OAuth login URL")
     parser.add_argument("--code", type=str, help="Authorization code received from OSM OAuth screen")
-    parser.add_argument("--token", type=str, help="Use this OSM access token for this run only (in-memory - does NOT overwrite the saved token; pass --save-token too if you actually want to persist it). BUG-141 (2026-09-22): used to unconditionally overwrite the saved token file just from being passed, which is exactly how a throwaway test value (e.g. --token fake, used to verify --add-place's confirmation gate without a real token) silently destroyed the real saved token with no backup and no git history (this file is gitignored) - fixed by requiring --save-token as a separate, explicit opt-in.")
+    parser.add_argument("--token", type=str, help="Use this OSM access token for this run only (in-memory - does NOT overwrite the saved token; pass --save-token too if you actually want to persist it). --save-token is a separate, explicit opt-in required to actually persist a token, so a throwaway test value never overwrites the real saved token.")
     parser.add_argument("--save-token", action="store_true", help="Persist --token to the saved token file. Without this, --token is used for this run only.")
     parser.add_argument("--whoami", action="store_true", help="Check currently authenticated OSM user")
     parser.add_argument("--inspect", type=str, help="Inspect nearby OSM elements around a station name or lat,lon")
@@ -194,7 +194,7 @@ def main():
     parser.add_argument("--save-registry", action="store_true", help="Save audited OSM coordinates and node ID to local tesla_superchargers.json")
     parser.add_argument("--template", type=str, help="Apply a specific OSM preset template (e.g. basketball_court, public_toilets, supermarket)")
     parser.add_argument("--list-templates", action="store_true", help="List all available OSM-compliant tagging templates")
-    parser.add_argument("--create-node", action="store_true", help="DISABLED BY POLICY (BUG-121, 2026-09-21) - node creation is no longer performed by this tool, no override exists. Kept as a flag only so old invocations fail with a clear message instead of an argparse error.")
+    parser.add_argument("--create-node", action="store_true", help="DISABLED BY POLICY - node creation is no longer performed by this tool, no override exists. Kept as a flag only so old invocations fail with a clear message instead of an argparse error.")
     parser.add_argument("--name", type=str, help="Override place name for new node")
     parser.add_argument("--add-toilets", action="store_true", help="Create an amenity=toilets node at --at coordinates")
     # BUG-139 (2026-09-22): a narrow, deliberate, one-at-a-time exception to BUG-121's
@@ -206,7 +206,7 @@ def main():
     # and (below) always runs its own live proximity re-check immediately before writing so a
     # duplicate can never be created even if the place turns out to already be mapped under a
     # name/tag the user didn't think to search for first.
-    parser.add_argument("--add-place", action="store_true", help="Create a new OSM node for a real place you have personally verified is missing (e.g. via --inspect finding nothing there). Requires --at, --name, and --tags. A deliberate, narrow exception to BUG-121's node-creation policy - never for batch/automated use, and always re-checks for an existing nearby node immediately before writing.")
+    parser.add_argument("--add-place", action="store_true", help="Create a new OSM node for a real place you have personally verified is missing (e.g. via --inspect finding nothing there). Requires --at, --name, and --tags. A deliberate, narrow exception to this tool's node-creation policy - never for batch/automated use, and always re-checks for an existing nearby node immediately before writing.")
     parser.add_argument("--verify-radius-m", type=int, default=30, help="Radius (metres) --add-place checks for an already-existing OSM element before allowing creation - refuses if anything is found within it (default: 30)")
     parser.add_argument("--tag-way", type=int, help="OSM Way ID to update tags on")
     parser.add_argument("--tags", nargs="+", help="Tags to apply in key=value format (e.g. shop=mall toilets=yes)")
@@ -216,7 +216,7 @@ def main():
     parser.add_argument("--open", dest="open_browser", action="store_true", default=True, help="Automatically open changeset in web browser upon publishing (default: True)")
     parser.add_argument("--no-open", dest="open_browser", action="store_false", help="Do not open changeset in web browser")
     parser.add_argument("--dry-run", action="store_true", help="Preview changeset without sending edits (this is now the DEFAULT - see --live)")
-    parser.add_argument("--live", action="store_true", help="BUG-121 (2026-09-21): actually publish to OpenStreetMap. Dry-run is now the default for every flow that would write - pass --live to opt in for real. --dry-run always wins if both are passed.")
+    parser.add_argument("--live", action="store_true", help="Actually publish to OpenStreetMap. Dry-run is now the default for every flow that would write - pass --live to opt in for real. --dry-run always wins if both are passed.")
 
     args = parser.parse_args()
     # BUG-121: dry-run is now the safe default. --live is the explicit opt-in to real writes;
@@ -739,7 +739,7 @@ def _publish_node(token: str, lat: float, lon: float, tags: dict, comment: str, 
     station genuinely needs a new node, do it by hand in the OSM editor and re-run this tool to
     check/update its tags afterward.
     """
-    print(f"{C_RED}❌ Node creation is disabled by policy (BUG-121) - this tool no longer creates new "
+    print(f"{C_RED}❌ Node creation is disabled by policy - this tool no longer creates new "
           f"OSM nodes.{C_RESET}")
     return None
 
@@ -1217,7 +1217,7 @@ def _inspect_and_fix_single_stall(
                 if ok:
                     print(f"{C_GREEN}✔ Successfully updated stall node #{e_id} on OpenStreetMap! (GPS preserved){C_RESET}")
                     if res.get("tags_dropped_by_policy"):
-                        print(f"{C_YELLOW}⚠ Tags outside the simple checklist were NOT sent (BUG-121 policy): "
+                        print(f"{C_YELLOW}⚠ Tags outside the simple checklist were NOT sent (per policy): "
                               f"{', '.join(res['tags_dropped_by_policy'])}{C_RESET}")
                     print(f"  View Element:   {C_CYAN}https://www.openstreetmap.org/node/{e_id}{C_RESET}")
                     print(f"  View Changeset: {C_CYAN}https://www.openstreetmap.org/changeset/{cs_id}{C_RESET}\n")
@@ -1747,7 +1747,7 @@ def _audit_tesla_station(
 ):
     from providers_chargers.chargers_tesla import TeslaProvider
     from providers_chargers.chargers_base import haversine_km
-    from lib.supercharge_info import find_supercharge_site
+    from lib.supercharge_common import find_supercharge_site
 
     p = TeslaProvider()
     stations = p.load_cached_registry() or []
@@ -1915,7 +1915,7 @@ def _audit_tesla_station(
             print(f"  • Stall Physical GPS: ({sc_lat:.6f}, {sc_lon:.6f}) ~{sc_offset_m:.1f}m from entry")
             print(f"  • supercharge.info Map: {C_DIM}https://supercharge.info/map?siteId={sc_info.get('id')}{C_RESET}")
 
-        from lib.supercharge_info import fetch_site_changes
+        from lib.supercharge_common import fetch_site_changes
         changes = fetch_site_changes(st.name)
         if changes:
             history_events = [f"{ch.get('date')} [{ch.get('siteStatus')}]" for ch in reversed(changes[:4])]
@@ -2519,7 +2519,7 @@ def _audit_tesla_station(
         if ok:
             print(f"{C_GREEN}✔ Successfully updated {e_type} #{e_id} on OpenStreetMap!{C_RESET}")
             if res.get("tags_dropped_by_policy"):
-                print(f"{C_YELLOW}⚠ Tags outside the simple checklist were NOT sent (BUG-121 policy): "
+                print(f"{C_YELLOW}⚠ Tags outside the simple checklist were NOT sent (per policy): "
                       f"{', '.join(res['tags_dropped_by_policy'])}{C_RESET}")
             print(f"  View Element:   {C_CYAN}https://www.openstreetmap.org/{e_type}/{e_id}{C_RESET}")
             print(f"  View Changeset: {C_CYAN}https://www.openstreetmap.org/changeset/{cs_id}{C_RESET}\n")
@@ -2560,7 +2560,7 @@ def _source_and_audit_supercharge(
     open_browser: bool = True,
     gmaps_audited_info: Optional[Dict] = None,
 ):
-    from lib.supercharge_info import search_supercharge_sites, fetch_site_changes
+    from lib.supercharge_common import search_supercharge_sites, fetch_site_changes
     from providers_chargers.chargers_base import haversine_km
 
     if not gmaps_audited_info and ("maps.app.goo.gl" in query.lower() or "goo.gl/maps" in query.lower() or "google.com/maps" in query.lower()):
@@ -3193,7 +3193,7 @@ def _source_and_audit_supercharge(
         if ok:
             print(f"{C_GREEN}✔ Successfully updated {e_type} #{e_id} on OpenStreetMap!{C_RESET}")
             if res.get("tags_dropped_by_policy"):
-                print(f"{C_YELLOW}⚠ Tags outside the simple checklist were NOT sent (BUG-121 policy): "
+                print(f"{C_YELLOW}⚠ Tags outside the simple checklist were NOT sent (per policy): "
                       f"{', '.join(res['tags_dropped_by_policy'])}{C_RESET}")
             print(f"  View Element:   {C_CYAN}https://www.openstreetmap.org/{e_type}/{e_id}{C_RESET}")
             print(f"  View Changeset: {C_CYAN}https://www.openstreetmap.org/changeset/{cs_id}{C_RESET}\n")
