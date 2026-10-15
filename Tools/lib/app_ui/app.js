@@ -433,13 +433,17 @@ function clipPlayer(host,o){
     if(all)$$("#vids figure[data-c]").forEach(f=>f.onclick=()=>{view=f.dataset.c;seek=mv.currentTime;shell()});
     mv.onloadedmetadata=()=>{sk.max=mv.duration||60;vs.forEach(x=>x.playbackRate=+rate);if(seek){seekAll(seek);seek=0}vs.forEach(x=>x.play().catch(()=>{}))};
     mv.onplay=()=>pl.textContent="❚❚ Pause";mv.onpause=()=>{if(!mv.ended)pl.textContent="▶ Play"};
-    mv.ontimeupdate=()=>{sk.value=mv.currentTime;tm.textContent=fmt(mv.currentTime)+" · "+new Date(stMs(stamps[si])+mv.currentTime*1000).toTimeString().slice(0,8);
+    mv.ontimeupdate=()=>{sk.value=mv.currentTime;if(o.onTime)o.onTime(stMs(stamps[si])+mv.currentTime*1000);tm.textContent=fmt(mv.currentTime)+" · "+new Date(stMs(stamps[si])+mv.currentTime*1000).toTimeString().slice(0,8);
       vs.forEach(x=>{if(x!==mv&&Math.abs(x.currentTime-mv.currentTime)>.4)x.currentTime=mv.currentTime})};
     mv.onended=()=>{if(si<stamps.length-1){si++;seek=0;if($("#stp"))$("#stp").value=si;vids()}};
     mv.onerror=()=>box.insertAdjacentHTML("afterbegin",'<div class="sub">This clip could not be played (missing, or the drive was disconnected).</div>');
     pl.onclick=()=>{if(mv.paused)vs.forEach(x=>x.play().catch(()=>{}));else vs.forEach(x=>x.pause())};
     sk.oninput=()=>seekAll(+sk.value)};
   shell();
+  // the page can move the video to a clock time (clicking the map or the chart)
+  return {seek:ms=>{let i=stamps.findIndex(s=>stMs(s)<=ms&&ms<stMs(s)+61000);if(i<0)i=stamps.findIndex(s=>stMs(s)>ms);if(i<0)return;
+    if(i===si&&mv&&mv.readyState>0){vs.forEach(x=>{try{x.currentTime=(ms-stMs(stamps[i]))/1000}catch(e){}})}
+    else{si=i;seek=Math.max(0,(ms-stMs(stamps[i]))/1000);if($("#stp"))$("#stp").value=si;vids()}}};
 }
 // one Sentry or Saved event folder (role = which drive, folder = SentryClips | SavedClips)
 function sentryPlayer(host,ev,role="A",folder="SentryClips"){
@@ -681,28 +685,58 @@ async function pageAlerts(){
   $("#cat").value=ALP.cat;$("#cat").onchange=e=>{ALP.cat=e.target.value;draw()};$("#q").oninput=e=>{ALP.q=e.target.value;draw()};chips();draw();
 }
 
-// ---------- TeslaCam: the clips on any connected drive (Sentry, Saved and Recent), same player as the Parked page
-let TCS={role:null,kind:"sentry",q:"",r:{p:"all"}};
+// ---------- TeslaCam: the clips on any connected drive, and one continuous timeline built from the files alone
+let TCS={role:null,kind:"timeline",q:"",r:{p:"all"}},TCPOLL=null;
 const tcGet=async p=>{const r=await fetch("/api/"+p);if(!r.ok)throw new Error(p+": "+r.status);return r.json()};
-const TCF={sentry:"SentryClips",saved:"SavedClips"},TCK={sentry:"Sentry",saved:"Saved",recent:"Recent"};
-async function pageTeslaCam(){
-  loading();const [dr,act]=await Promise.all([tcGet("teslacam"),api("activity")]),drives=dr.drives;
+const tcPost=async(p,b)=>(await fetch("/api/"+p,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(b)})).json();
+const TCF={sentry:"SentryClips",saved:"SavedClips"},TCK={timeline:"Timeline",sentry:"Sentry",saved:"Saved",recent:"Recent"};
+const isoMs=t=>Date.parse(t),mins=(a,b)=>Math.round((isoMs(b)-isoMs(a))/60000);
+const clockHM=t=>t.slice(11,16);
+// the saved place (or nothing) a position is inside
+function nameAt(places,p){if(!p||p[0]==null)return "";let best="",bd=1e9;for(const x of places||[]){if(x.lat==null)continue;const d=hav(p[0],p[1],x.lat,x.lon);if(d<=Math.max(x.radius||100,60)&&d<bd){bd=d;best=x.name}}return best}
+function routeSvg(pts,w=64,h=40){if(!pts||pts.length<2)return "";const la=pts.map(p=>p[0]),lo=pts.map(p=>p[1]),a=Math.min(...la),b=Math.max(...la),c=Math.min(...lo),d=Math.max(...lo),k=Math.cos((a+b)/2*Math.PI/180),sx=(d-c)*k||1e-6,sy=(b-a)||1e-6,s=Math.min((w-6)/sx,(h-6)/sy),ox=(w-sx*s)/2,oy=(h-sy*s)/2;
+  return `<svg class="rt" width="${w}" height="${h}" viewBox="0 0 ${w} ${h}"><polyline fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" stroke-linecap="round" points="${pts.map(p=>((p[1]-c)*k*s+ox).toFixed(1)+","+(h-((p[0]-a)*s+oy)).toFixed(1)).join(" ")}"/></svg>`}
+async function pageTeslaCam(role,id){
+  if(role&&id)return pageTeslaCamDrive(role,id);
+  loading();const [dr,act,pl]=await Promise.all([tcGet("teslacam"),api("activity"),api("places").catch(()=>({saved:[]}))]),drives=dr.drives,places=(pl.saved||[]);
   const head='<h1>TeslaCam</h1><div class="sub">The clips on any connected TeslaCam drive. A drive is recognised by what is on it, not by its name, and nothing on it is changed. A drive is only read once you pick it.</div>';
   if(!drives.length){main.innerHTML=head+'<div class="empty">No TeslaCam drive is connected.</div>';return}
   if(!drives.some(d=>d.role===TCS.role))TCS.role=(drives.find(d=>d.role==="A")||drives[0]).role;
   const trips=act.filter(x=>x.k==="drive"&&!x.repark).map(x=>{const t0=Date.parse(x.day+"T"+x.hm+":00");return{id:x.id,t0,t1:t0+x.min*60000,ti:driveTitle(x)}});
-  const tripOf=v=>{const a=Date.parse(v.ts),b=Date.parse(v.end||v.ts)+60000;return trips.find(d=>d.t0<b&&d.t1>a)};
-  main.innerHTML=head+`<div class="bar" id="tcd"></div><div class="sub" id="tcn"></div><div class="bar" id="tck"></div><div class="bar"><span id="rg"></span><input type="search" id="q" placeholder="Search…" value="${esc(TCS.q)}"></div><div class="tiles" id="tl"></div><div id="spl"></div><div id="tb"></div>`;
-  let data=null,sel=null,token=0;
+  const tripOf=v=>{const a=Date.parse(v.ts||v.start),b=Date.parse(v.end||v.ts)+60000;return trips.find(d=>d.t0<b&&d.t1>a)};
+  main.innerHTML=head+`<div class="bar" id="tcd"></div><div class="sub" id="tcn"></div><div class="bar" id="tck"></div><div class="bar"><span id="rg"></span><input type="search" id="q" placeholder="Search…" value="${esc(TCS.q)}"></div><div id="ixb"></div><div class="tiles" id="tl"></div><div id="spl"></div><div id="tb"></div>`;
+  let data=null,sel=null,token=0,sentryList=null;
   const chips=()=>{$("#tcd").innerHTML=drives.map(d=>`<button class="chip ${d.role===TCS.role?"on":""}" data-r="${d.role}"><span class="dot on" style="margin-right:6px"></span>${esc(d.name)}</button>`).join("");
     $("#tck").innerHTML=Object.keys(TCK).map(k=>`<button class="chip ${k===TCS.kind?"on":""}" data-k="${k}">${TCK[k]}</button>`).join("");
     $("#tcn").textContent=TCS.role==="A"?"":"Not the Archive: its clips are read only as you open them. Stop playback and leave this page before ejecting it.";
-    $$("#tcd [data-r]").forEach(b=>b.onclick=()=>{TCS.role=b.dataset.r;$("#spl").innerHTML="";chips();load()});
+    $$("#tcd [data-r]").forEach(b=>b.onclick=()=>{TCS.role=b.dataset.r;$("#spl").innerHTML="";sentryList=null;chips();load()});
     $$("#tck [data-k]").forEach(b=>b.onclick=()=>{TCS.kind=b.dataset.k;$("#spl").innerHTML="";chips();load()})};
-  const load=async()=>{const my=++token;$("#tl").innerHTML="";$("#tb").innerHTML='<div class="empty">Reading the drive…</div>';
+  const load=async(quiet)=>{const my=++token;if(!quiet){$("#tl").innerHTML="";$("#ixb").innerHTML="";$("#tb").innerHTML='<div class="empty">Reading the drive…</div>'}
     try{const d=await tcGet("teslacam/"+TCS.role+"/"+TCS.kind);if(my!==token)return;data=d}catch(e){$("#tb").innerHTML=errBox(e.message,"Could not read the drive");return}
-    const list=TCS.kind==="recent"?data.runs:data.events;rangePicker($("#rg"),TCS.r,daysOf(list.map(v=>({day:v.ts.slice(0,10)}))),draw);draw()};
-  const draw=()=>{if(!data)return;if(!data.connected){$("#tb").innerHTML='<div class="empty">This drive is not connected.</div>';return}
+    const list=TCS.kind==="recent"?data.runs:TCS.kind==="timeline"?data.items:data.events;if(!quiet)rangePicker($("#rg"),TCS.r,daysOf((list||[]).map(v=>({day:(v.ts||v.start).slice(0,10)}))),draw);draw()};
+  const ixBar=()=>{if(TCS.kind!=="timeline"||!data||!data.connected){$("#ixb").innerHTML="";return}
+    const ix=data.index||{},run=ix.running,left=data.minutes-data.read;
+    $("#ixb").innerHTML=`<div class="card ixb"><div><b>${n0(data.read)}</b> of ${n0(data.minutes)} minutes of Recent and Saved video read for telemetry (speed, GPS, steering, pedals, autopilot).${run?` Reading now: ${n0(ix.done)} of ${n0(ix.total)}, ${esc((ix.current||"").replace("_"," ").replace(/-/g,(m,i)=>i>12?":":"-"))}.`:left>0?` Each clip is read once, about a second each; opening a drive reads just that drive.`:" All read."}${ix.error?errBox(ix.error,"Reading stopped"):""}</div>
+      ${run?'<button class="btn" id="ixs">Stop</button>':left>0?'<button class="btn pri" id="ixg">Read all of it</button>':""}</div>`;
+    if($("#ixg"))$("#ixg").onclick=async()=>{await tcPost("teslacam/index",{role:TCS.role,action:"start"});poll()};
+    if($("#ixs"))$("#ixs").onclick=async()=>{await tcPost("teslacam/index",{role:TCS.role,action:"stop"})}};
+  const poll=()=>{if(TCPOLL)clearInterval(TCPOLL);TCPOLL=setInterval(async()=>{if(!$("#ixb")){clearInterval(TCPOLL);TCPOLL=null;return}
+    try{const ix=await tcGet("teslacam/"+TCS.role+"/index");if(data)data.index=ix;if(TCS.kind==="timeline")ixBar();if(!ix.running){clearInterval(TCPOLL);TCPOLL=null;load(true)}else if(ix.done%40===0&&TCS.kind==="timeline")load(true)}catch(e){}},3000)};
+  const itemRow=v=>{const t0=clockHM(v.start),t1=clockHM(v.end),m=Math.max(1,Math.round((v.t1-v.t0)/60));
+    if(v.kind==="sentry")return `<button class="trow sen" data-id="${esc(v.ev)}"><span class="tm">${hms(v.trig||v.start)}</span><span class="tk">Sentry</span><span class="tt"><b>${esc(reason(v.reason))}</b> · ${esc([v.city,v.street].filter(Boolean).join(" · "))}</span><span class="ts">${m} min parked, watched</span></button>`;
+    if(v.kind==="parked"||v.kind==="gap"){const w=nameAt(places,v.p1)||nameAt(places,v.p0);return `<div class="trow gap"><span class="tm">${t0}</span><span class="tk">${v.kind==="parked"?"Parked":"No footage"}</span><span class="tt">${v.kind==="parked"?esc(w||"same place before and after"):(v.km!=null?"the car moved "+n0(v.km,1)+" km":"nothing recorded")}</span><span class="ts">${dur(m)}</span></div>`}
+    const a=nameAt(places,v.p0),b=nameAt(places,v.p1),ti=a||b?`${esc(a||"?")} → ${esc(b||"?")}`:"",src=(v.recent?"Recent":"")+(v.recent&&v.saved?" + ":"")+(v.saved?"Saved":"");
+    if(v.kind==="drive")return `<a class="trow drv" href="#/teslacam/${TCS.role}/${esc(v.id)}"><span class="tm">${t0}</span><span class="tk">Drive</span><span class="tt">${routeSvg(v.thumb)}<span><b>${n0(v.km,1)} km</b> · max ${n0(v.vmax)} km/h${v.fsd?` · FSD ${Math.round(v.fsd*100)}%`:""}${v.aut?` · Autosteer/TACC ${Math.round(v.aut*100)}%`:""}<small>${ti}</small></span></span><span class="ts">${dur(m)} · ${src}</span></a>`;
+    return `<a class="trow ${v.kind==="stopped"?"stp":"rec"}" href="#/teslacam/${TCS.role}/${esc(v.id)}"><span class="tm">${t0}</span><span class="tk">${v.kind==="stopped"?"Stopped":"Recording"}</span><span class="tt">${v.kind==="stopped"?"recording, but not moving":"telemetry not read yet"}<small>${v.n} clip${v.n>1?"s":""}, ${src}</small></span><span class="ts">${dur(m)}</span></a>`};
+  const drawTimeline=()=>{const q=TCS.q.toLowerCase(),rs=data.items.filter(v=>inRange({day:v.start.slice(0,10)},TCS.r)&&(!q||(v.kind+" "+(v.city||"")+" "+(v.street||"")+" "+reason(v.reason)+" "+nameAt(places,v.p0)+" "+nameAt(places,v.p1)).toLowerCase().includes(q))),byDay={};
+    rs.forEach(v=>(byDay[v.start.slice(0,10)]=byDay[v.start.slice(0,10)]||[]).push(v));const days=Object.keys(byDay).sort().reverse();
+    const dr=rs.filter(v=>v.kind==="drive");
+    $("#tl").innerHTML=tile(n0(dr.length),"drives with telemetry")+tile(n0(dr.reduce((a,v)=>a+v.km,0))+" km","driven (from the video)")+tile(n0(rs.filter(v=>v.kind==="sentry").length),"Sentry events")+tile(n0(rs.filter(v=>v.kind==="recording").length),"recordings not read yet");
+    $("#tb").innerHTML=(days.length?'<div class="sub">One stretch of time, newest first: driving (Recent and Saved clips stitched together), Sentry events in between, and the time the car sat parked or nothing was recorded. Open a drive for its map, telemetry and video.</div>':'<div class="empty">Nothing here for these dates.</div>')+days.slice(0,40).map(d=>`<div class="day">${dayName(d)}<small>${byDay[d].length} item${byDay[d].length>1?"s":""}</small></div><div class="tlist">${byDay[d].map(itemRow).join("")}</div>`).join("")+(days.length>40?'<div class="sub">Showing the newest 40 days. Narrow the dates to see older ones.</div>':"");
+    $$("#tb .trow.sen").forEach(b=>b.onclick=async()=>{$$("#tb .trow").forEach(x=>x.classList.toggle("on",x===b));$("#spl").scrollIntoView({block:"nearest"});
+      try{if(!sentryList)sentryList=(await tcGet("teslacam/"+TCS.role+"/sentry")).events;sentryPlayer($("#spl"),sentryList.find(v=>v.id===b.dataset.id),TCS.role,"SentryClips")}catch(e){$("#spl").innerHTML=errBox(e.message,"Could not read these clips")}})};
+  const draw=()=>{if(!data)return;if(!data.connected){$("#tb").innerHTML='<div class="empty">This drive is not connected.</div>';$("#ixb").innerHTML="";return}
+    if(TCS.kind==="timeline"){ixBar();return drawTimeline()}$("#ixb").innerHTML="";
     const rec=TCS.kind==="recent",q=TCS.q.toLowerCase(),role=TCS.role,folder=TCF[TCS.kind];
     const rs=(rec?data.runs:data.events).filter(v=>inRange({day:v.ts.slice(0,10)},TCS.r)&&(!q||(rec?((tripOf(v)||{}).ti||""):(v.city+" "+v.street+" "+reason(v.reason))).toLowerCase().includes(q))),byDay={};
     rs.forEach(v=>(byDay[v.ts.slice(0,10)]=byDay[v.ts.slice(0,10)]||[]).push(v));
@@ -710,7 +744,7 @@ async function pageTeslaCam(){
     $("#tl").innerHTML=rec?tile(n0(rs.length),"continuous recordings")+tile(n0(rs.reduce((a,v)=>a+v.n,0)),"minutes of video")+tile(n0(rs.filter(tripOf).length),"match a drive")
       :tile(n0(rs.length),TCK[TCS.kind]+" events")+tile(n0(rs.filter(v=>Object.keys(v.clips).length).length),"with video")+tile(n0(rs.reduce((a,v)=>a+Object.keys(v.clips).length,0)),"minutes of video");
     $("#tb").innerHTML=(days.length?"":'<div class="empty">Nothing here for these dates.</div>')+days.slice(0,60).map(d=>`<div class="day">${dayName(d)}<small>${byDay[d].length} ${rec?"recording":"event"}${byDay[d].length>1?"s":""}</small></div><div class="evs">${byDay[d].map(v=>{
-      if(rec){const t=tripOf(v);return `<button class="evc run" data-id="${esc(v.id)}"><b>${hms(v.ts).slice(0,5)} – ${hms(v.end).slice(0,5)}</b><span>${v.n} minute${v.n>1?"s":""}${v.full<v.n?" · "+(v.n-v.full)+" with fewer than 6 cameras":""}</span>${t?`<span>${esc(t.ti)}</span><a href="#/drive/${t.id}" onclick="event.stopPropagation()">open the drive</a>`:""}</button>`}
+      if(rec){const t=tripOf(v);return `<button class="evc run" data-id="${esc(v.id)}"><b>${hms(v.ts).slice(0,5)} – ${hms(v.end).slice(0,5)}</b><span>${v.n} minute${v.n>1?"s":""}${v.full<v.n?" · "+(v.n-v.full)+" with fewer than 6 cameras":""}</span>${t?`<span>${esc(t.ti)}</span><a href="#/drive/${t.id}" onclick="event.stopPropagation()">open the drive</a>`:""}<a href="#/teslacam/${role}/${esc(v.id)}" onclick="event.stopPropagation()">map and telemetry</a></button>`}
       const n=Object.keys(v.clips).length;return `<button class="evc ${n?"":"faded"}" data-id="${v.id}">${v.thumb?`<img loading="lazy" src="/footage/${role}/${folder}/${v.id}/thumb.png" onerror="this.style.visibility='hidden'">`:'<div class="noimg"></div>'}<b>${hms(v.ts)}</b><span>${esc(reason(v.reason))}</span><span>${esc([v.city,v.street].filter(Boolean).join(" · "))}</span><span>${n?n+" min of video":"no video"}</span></button>`}).join("")}</div>`).join("")+(days.length>60?'<div class="sub">Showing the newest 60 days. Narrow the dates to see older ones.</div>':"");
     $$("#tb .evc").forEach(b=>b.onclick=async()=>{sel=b.dataset.id;$$("#tb .evc").forEach(x=>x.classList.toggle("on",x===b));$("#spl").scrollIntoView({block:"nearest"});
       if(!rec)return sentryPlayer($("#spl"),data.events.find(v=>v.id===sel),role,folder);
@@ -719,6 +753,97 @@ async function pageTeslaCam(){
         clipPlayer($("#spl"),{stamps,cams:c,url:(s,k)=>`/footage/${role}/RecentClips/${s}-${k}.mp4`,head:`Continuous recording on ${dayName(run.ts.slice(0,10))}, ${hms(run.ts).slice(0,5)} to ${hms(run.end).slice(0,5)}, ${run.n} minute${run.n>1?"s":""}. The next minute plays on its own.`})}
       catch(e){$("#spl").innerHTML=errBox(e.message,"Could not read these clips")}})};
   $("#q").oninput=e=>{TCS.q=e.target.value;draw()};chips();load();
+}
+
+// ---------- one drive rebuilt from the video: map, telemetry and the stitched footage, moving together
+const APN={1:"FSD",2:"Autosteer",3:"TACC"},APC={1:"#3b6cf6",2:"#8b5cf6",3:"#14b8a6"};
+async function pageTeslaCamDrive(role,id){
+  loading();const pl=await api("places").catch(()=>({saved:[]})),places=pl.saved||[];
+  let d=null,player=null,map=null,chart=null,done=false;
+  const stop=()=>{done=true};addEventListener("hashchange",stop,{once:true});
+  const fetchSeg=async(b)=>{const r=await fetch("/api/teslacam/"+role+"/seg/"+encodeURIComponent(id)+(b!=null?"?budget="+b:""));if(!r.ok)throw new Error((await r.json().catch(()=>({}))).error||("HTTP "+r.status));return r.json()};
+  d=await fetchSeg(0);
+  const it=()=>d.item,S=()=>d.series;
+  main.innerHTML=crumbs("#/teslacam","TeslaCam")+`<h1 id="dh"></h1><div class="sub" id="dsub"></div><div id="dpend"></div><div class="tiles" id="dtl"></div>
+    <div id="dmapc" class="card" style="padding:10px"><div class="bar" style="margin:0 0 8px"><button class="chip on" data-cm="v">Speed</button><button class="chip" data-cm="ap">Autopilot / FSD</button><span class="sub" id="dleg"></span></div><div class="map big" id="dmap" style="height:340px"></div></div>
+    <div id="dchc" class="card" style="margin-top:12px;padding:10px"><div class="sub" id="dtip" style="min-height:18px"></div><canvas id="dch" style="width:100%;height:284px;display:block"></canvas></div>
+    <div class="card" style="margin-top:12px"><div id="dvid"></div></div>`;
+  const fill=()=>{const x=it(),s=S(),t=Date.parse(x.start),m=Math.max(1,Math.round((x.t1-x.t0)/60)),a=nameAt(places,x.p0),b=nameAt(places,x.p1);
+    $("#dh").textContent=(x.kind==="drive"?"Drive":x.kind==="stopped"?"Stopped, recording":"Recording")+" · "+dayName(x.start.slice(0,10))+" · "+clockHM(x.start)+" – "+clockHM(x.end);
+    $("#dsub").textContent=(a||b?(a||"?")+" → "+(b||"?")+" · ":"")+"Rebuilt from the dashcam video alone (Recent and Saved clips stitched). Telemetry is only written while the car moves.";
+    $("#dtl").innerHTML=tile(dur(m),"time")+(x.kind==="drive"?tile(n0(x.km,1)+" km","distance")+tile(n0(x.vmax)+" km/h","top speed")+tile(Math.round((x.fsd+x.aut)*100)+"%","on autopilot / FSD"):"")+tile(n0(d.minutes.length),`clips · ${x.recent||0} Recent, ${x.saved||0} Saved`);
+    $("#dpend").innerHTML=d.pending>0?`<div class="card ixb"><div>Reading the telemetry from the video (first time only): ${n0(d.pending)} of ${n0(d.minutes.length)} minutes still to read…</div></div>`:""};
+  const pts=()=>{const s=S(),o=[];for(let i=0;i<s.v.length;i++)if(s.lat[i]!=null&&Math.abs(s.lat[i])>1)o.push(i);return o};
+  const ts0=()=>Date.parse(it().start);
+  const seekIdx=i=>{if(player)player.seek(ts0()+i*1000)};
+  const cursor=sec=>{const i=Math.max(0,Math.min(S().v.length-1,Math.round(sec)));if(map)map.cursor(i);if(chart)chart.cursor(i)};
+  const build=()=>{fill();const s=S(),idx=pts();
+    if(!idx.length){$("#dmapc").hidden=$("#dchc").hidden=true}else{$("#dmapc").hidden=$("#dchc").hidden=false;
+      if(!map)map=driveMap($("#dmap"),s,idx,seekIdx,$("#dleg"));else map.update(s,idx);
+      if(!chart)chart=telemChart($("#dch"),$("#dtip"),s,seekIdx,ts0());else chart.update(s)}
+    if(!player&&d.minutes.length){const mm=d.minutes,cams={},meta={};mm.forEach(m=>{cams[m.stamp]=m.cams;meta[m.stamp]=m});
+      player=clipPlayer($("#dvid"),{stamps:mm.map(m=>m.stamp),cams,view:"all",
+        url:(st,c)=>meta[st].src==="saved"?`/footage/${role}/SavedClips/${meta[st].ref}/${st}-${c}.mp4`:`/footage/${role}/RecentClips/${st}-${c}.mp4`,
+        onTime:ms=>cursor((ms-ts0())/1000),head:`${it().kind==="drive"?"Click the map or the chart to jump there; the dot and the line follow the video.":"The car was not moving, so there is no map."} Each minute plays on to the next, Recent and Saved alike.`})}};
+  $$("[data-cm]").forEach(b=>b.onclick=()=>{$$("[data-cm]").forEach(x=>x.classList.toggle("on",x===b));if(map)map.mode(b.dataset.cm)});
+  build();
+  while(d.pending>0&&!done){try{d=await fetchSeg()}catch(e){break}if(done)break;build()}
+  fill();
+}
+function driveMap(el,s,idx,onPick,leg){
+  if(!window.maplibregl){el.innerHTML='<div class="empty">Map library not loaded (offline?).</div>';return{update(){},cursor(){},mode(){}}}
+  const dark=matchMedia("(prefers-color-scheme: dark)").matches,m=new maplibregl.Map({container:el,style:MAPSTYLE(dark),center:[idx.length?s.lon[idx[0]]:151,idx.length?s.lat[idx[0]]:-33],zoom:11,attributionControl:{compact:true}});
+  m.addControl(new maplibregl.NavigationControl({showCompass:false}),"top-right");
+  let ready=false,mode="v",S=s,I=idx,first=true,latest=null;
+  const SPD=["interpolate",["linear"],["get","v"],0,"#94a3b8",30,"#38bdf8",60,"#3b6cf6",90,"#7c3aed",120,"#be185d"],AP=["match",["get","ap"],1,APC[1],2,APC[2],3,APC[3],"#94a3b8"];
+  const feats=()=>{const f=[];for(let k=1;k<I.length;k++){const a=I[k-1],b=I[k];if(b-a>5)continue;f.push({type:"Feature",geometry:{type:"LineString",coordinates:[[S.lon[a],S.lat[a]],[S.lon[b],S.lat[b]]]},properties:{v:S.v[b]||0,ap:S.ap[b]||0,i:b}})}return{type:"FeatureCollection",features:f}};
+  const legend=()=>{leg.innerHTML=mode==="v"?'<span style="background:linear-gradient(90deg,#94a3b8,#38bdf8,#3b6cf6,#7c3aed,#be185d);display:inline-block;width:120px;height:8px;border-radius:4px;vertical-align:middle"></span> 0 → 120 km/h':Object.keys(APC).map(k=>`<span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:${APC[k]};vertical-align:middle"></span> ${APN[k]}`).join("  ")+'  <span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:#94a3b8;vertical-align:middle"></span> manual'};
+  const paint=()=>{if(ready){m.setPaintProperty("rt","line-color",mode==="v"?SPD:AP);legend()}};
+  const draw=()=>{if(!ready)return;m.getSource("rt").setData(feats());
+    if(I.length){m.getSource("st").setData({type:"FeatureCollection",features:[{type:"Feature",properties:{c:"#16a34a"},geometry:{type:"Point",coordinates:[S.lon[I[0]],S.lat[I[0]]]}},{type:"Feature",properties:{c:"#dc2626"},geometry:{type:"Point",coordinates:[S.lon[I[I.length-1]],S.lat[I[I.length-1]]]}}]});
+      if(first){first=false;const b=new maplibregl.LngLatBounds();I.forEach(i=>b.extend([S.lon[i],S.lat[i]]));m.fitBounds(b,{padding:40,maxZoom:16,duration:0})}}};
+  m.on("load",()=>{ready=true;m.addSource("rt",{type:"geojson",data:{type:"FeatureCollection",features:[]}});m.addSource("st",{type:"geojson",data:{type:"FeatureCollection",features:[]}});m.addSource("cu",{type:"geojson",data:{type:"FeatureCollection",features:[]}});
+    m.addLayer({id:"rt-case",type:"line",source:"rt",layout:{"line-cap":"round","line-join":"round"},paint:{"line-color":dark?"#000":"#fff","line-width":["interpolate",["linear"],["zoom"],8,4,16,9]}});
+    m.addLayer({id:"rt",type:"line",source:"rt",layout:{"line-cap":"round","line-join":"round"},paint:{"line-color":SPD,"line-width":["interpolate",["linear"],["zoom"],8,2.5,16,6]}});
+    m.addLayer({id:"st",type:"circle",source:"st",paint:{"circle-radius":6,"circle-color":["get","c"],"circle-stroke-width":2,"circle-stroke-color":"#fff"}});
+    m.addLayer({id:"cu",type:"circle",source:"cu",paint:{"circle-radius":8,"circle-color":"#f59e0b","circle-stroke-width":3,"circle-stroke-color":"#fff"}});
+    m.on("click","rt",e=>onPick(e.features[0].properties.i));m.on("mouseenter","rt",()=>m.getCanvas().style.cursor="pointer");m.on("mouseleave","rt",()=>m.getCanvas().style.cursor="");
+    draw();paint()});
+  return{update(s2,i2){S=s2;I=i2;draw()},mode(x){mode=x;paint()},cursor(i){if(!ready)return;let j=i;while(j>=0&&(S.lat[j]==null||Math.abs(S.lat[j])<1))j--;if(j<0)return;m.getSource("cu").setData({type:"FeatureCollection",features:[{type:"Feature",properties:{},geometry:{type:"Point",coordinates:[S.lon[j],S.lat[j]]}}]})}};
+}
+// speed, pedals and steering against time, with the autopilot state as a strip; hover reads it out, click or drag moves the video
+function telemChart(cv,tip,s,onPick,t0){
+  let S=s,cur=null,hov=null,W=0,H=0;const css=n=>getComputedStyle(document.documentElement).getPropertyValue(n).trim()||"#888";
+  const L=44,R=10,lanes=[{k:"v",t:"km/h",y:34,h:118},{k:"p",t:"pedals",y:164,h:46},{k:"s",t:"steering",y:218,h:40}];
+  const X=i=>L+(W-L-R)*i/Math.max(1,S.v.length-1),I=x=>Math.max(0,Math.min(S.v.length-1,Math.round((x-L)/(W-L-R)*(S.v.length-1))));
+  const draw=()=>{const dpr=devicePixelRatio||1;W=cv.clientWidth;H=cv.clientHeight;cv.width=W*dpr;cv.height=H*dpr;const c=cv.getContext("2d");c.setTransform(dpr,0,0,dpr,0,0);c.clearRect(0,0,W,H);
+    const ink=css("--mut"),line=css("--line"),acc=css("--acc"),bad=css("--bad"),ok=css("--charge"),n=S.v.length;if(!n)return;
+    c.font="11px system-ui";c.fillStyle=ink;c.strokeStyle=line;c.lineWidth=1;
+    const vm=Math.max(120,Math.ceil(Math.max(...S.v.filter(x=>x!=null))/20)*20),vy=v=>lanes[0].y+lanes[0].h*(1-v/vm);
+    for(let g=0;g<=vm;g+=40){c.beginPath();c.moveTo(L,vy(g));c.lineTo(W-R,vy(g));c.stroke();c.fillText(g,8,vy(g)+4)}
+    // autopilot strip
+    for(let i=0;i<n;i++){const a=S.ap[i];if(a>0&&a<4){c.fillStyle=APC[a];c.fillRect(X(i),lanes[0].y-14,Math.max(1,(W-L-R)/n+.5),8)}}
+    c.fillStyle=ink;c.fillText("autopilot / FSD",8,lanes[0].y-6);
+    // speed
+    const seg=(arr,y,col,fill,f)=>{c.beginPath();let on=false,last=-9;for(let i=0;i<n;i++){const v=arr[i];if(v==null){if(i-last>3)on=false;continue}const x=X(i),yy=f(v);if(!on){c.moveTo(x,yy);on=true}else c.lineTo(x,yy);last=i}c.strokeStyle=col;c.lineWidth=1.6;c.stroke()};
+    seg(S.v,0,acc,0,vy);
+    // brake marks over the speed lane
+    c.fillStyle=bad;c.globalAlpha=.18;for(let i=0;i<n;i++)if(S.br[i])c.fillRect(X(i),lanes[0].y,Math.max(1,(W-L-R)/n+.5),lanes[0].h);c.globalAlpha=1;
+    // pedals
+    const P=lanes[1];c.fillStyle=ink;c.fillText("accelerator %",8,P.y+10);c.strokeStyle=line;c.beginPath();c.moveTo(L,P.y+P.h);c.lineTo(W-R,P.y+P.h);c.stroke();seg(S.accel,0,ok,0,v=>P.y+P.h*(1-Math.min(100,v)/100));
+    // steering and blinkers
+    const T=lanes[2],sm=Math.max(90,Math.ceil(Math.max(...S.steer.filter(x=>x!=null).map(Math.abs))/90)*90);c.fillStyle=ink;c.fillText("steering °",8,T.y+10);c.strokeStyle=line;c.beginPath();c.moveTo(L,T.y+T.h/2);c.lineTo(W-R,T.y+T.h/2);c.stroke();seg(S.steer,0,acc,0,v=>T.y+T.h/2-(v/sm)*(T.h/2));
+    c.fillStyle="#f59e0b";for(let i=0;i<n;i++)if(S.blk[i])c.fillRect(X(i),T.y+T.h-4,Math.max(1,(W-L-R)/n+.5),4);
+    // clock axis
+    c.fillStyle=ink;const step=n>1800?600:n>600?300:60;for(let i=0;i<n;i+=step){const t=new Date(t0+i*1000);c.fillText(t.toTimeString().slice(0,5),X(i)-12,H-4)}
+    const mark=(i,col)=>{c.strokeStyle=col;c.lineWidth=1.5;c.beginPath();c.moveTo(X(i),12);c.lineTo(X(i),H-18);c.stroke()};
+    if(hov!=null)mark(hov,"#888");if(cur!=null)mark(cur,"#f59e0b")};
+  const read=i=>{const t=new Date(t0+i*1000).toTimeString().slice(0,8);if(S.v[i]==null)return t+" · no telemetry";return `${t} · ${n0(S.v[i])} km/h · accelerator ${n0(S.accel[i])}%${S.br[i]?" · braking":""} · steering ${n0(S.steer[i])}°${S.blk[i]?" · indicator":""}${APN[S.ap[i]]?" · "+APN[S.ap[i]]:""}`};
+  cv.onmousemove=e=>{const r=cv.getBoundingClientRect();hov=I(e.clientX-r.left);tip.textContent=read(hov);draw();if(e.buttons&1)onPick(hov)};
+  cv.onmouseleave=()=>{hov=null;tip.textContent=cur!=null?read(cur):"";draw()};
+  cv.onmousedown=e=>{const r=cv.getBoundingClientRect();onPick(I(e.clientX-r.left))};
+  addEventListener("resize",draw);draw();
+  return{update(s2){S=s2;draw()},cursor(i){cur=i;if(hov==null)tip.textContent=read(i);draw()}};
 }
 
 // ---------- Dashcam
@@ -751,11 +876,11 @@ function badge(){const n=qget().length,b=$("#qn");b.hidden=!n;b.textContent=n}
 // ---------- router
 const ROUTES={activity:pageActivity,drives:pageDrives,charges:pageCharges,battery:pageBattery,health:pageHealth,analytics:pageAnalytics,dashcam:pageDashcam,teslacam:pageTeslaCam,queue:pageQueue,flips:pageFlips,parked:pageParked,idles:pageParked,places:pagePlaces,alerts:pageAlerts};
 async function route(){
-  hideTip();const h=(location.hash||"#/activity").replace(/^#\//,""),[p,arg,arg2]=h.split("/").map(decodeURIComponent);
+  hideTip();if(TCPOLL){clearInterval(TCPOLL);TCPOLL=null}const h=(location.hash||"#/activity").replace(/^#\//,""),[p,arg,arg2]=h.split("/").map(decodeURIComponent);
   $$("#nav>a").forEach(a=>a.classList.toggle("on",a.dataset.p===(({drive:"drives",charge:"charges",idle:"parked",idles:"parked",flips:"dashcam",place:"places"})[p]||p)));
   badge();main.scrollTop=0;
   try{
-    if(p==="drive")await pageDrive(arg);else if(p==="charge")await pageCharge(arg,arg2);else if(p==="idle"||p==="parked"&&arg)await pageParkedOne(arg);else if(p==="place")await pagePlace(arg);else await (ROUTES[p]||pageActivity)();
+    if(p==="drive")await pageDrive(arg);else if(p==="charge")await pageCharge(arg,arg2);else if(p==="idle"||p==="parked"&&arg)await pageParkedOne(arg);else if(p==="place")await pagePlace(arg);else await (ROUTES[p]||pageActivity)(arg,arg2);
   }catch(e){main.innerHTML=errBox(e.stack||e.message,"Something went wrong")}
 }
 async function boot(){
