@@ -11,6 +11,8 @@ import threading
 
 import app_sentry
 import drive_roles as DR
+import app_config
+import teslacam_timeline as TL
 
 KINDS = {"sentry": "SentryClips", "saved": "SavedClips"}
 _REC = re.compile(r"^(\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2})-(%s)\.mp4$" % "|".join(app_sentry.CAMS))
@@ -34,6 +36,7 @@ class TeslaCam:
         if sentry:
             self.ev[("A", "sentry")] = sentry   # the Parked page shares this index
         self.rec = {}                       # role -> dict(mt, runs, clips)
+        self.tl = {}                        # role -> (Store, Indexer)
 
     def drives(self):
         return [dict(role=r, name=DR.NAMES.get(r, r), kind="archive" if r == "A" else "other") for p, r in DR.discover()]
@@ -96,3 +99,71 @@ class TeslaCam:
         c = self._scan(role, teslacam) if teslacam else None
         r = next((x for x in c["runs"] if x["id"] == rid), None) if c else None
         return {s: sorted(c["clips"][s], key=app_sentry.CAMS.index) for s in r["stamps"]} if r else None
+
+    # ------------------------------------------------------------------------------------------------- timeline
+    def _tl(self, role):
+        TL.OPTS.update({k: v for k, v in (app_config.get("teslacam") or {}).items() if k in TL.OPTS})
+        if role not in self.tl:
+            st = TL.Store(os.path.join(self.dir, "teslacam_timeline", role))
+            self.tl[role] = (st, TL.Indexer(st))
+        return self.tl[role]
+
+    def _sources(self, role, teslacam):
+        c = self._scan(role, teslacam)
+        recent = c["clips"] if c else {}
+        saved, _ = self.events(role, "saved", teslacam)
+        sentry, _ = self.events(role, "sentry", teslacam)
+        return recent, saved, sentry
+
+    def timeline(self, role, teslacam):
+        if not teslacam:
+            return dict(connected=False, items=[])
+        store, ix = self._tl(role)
+        recent, saved, sentry = self._sources(role, teslacam)
+        items = TL.build(recent, saved, sentry, store)
+        mins = TL.minutes(recent, saved)
+        read = sum(1 for m in mins if store.summary(m["stamp"]) is not None)
+        return dict(connected=True, items=items, minutes=len(mins), read=read, index=ix.status())
+
+    def index(self, role, teslacam, action):
+        """Start / stop reading the telemetry of every minute not read yet (newest first), or just report."""
+        store, ix = self._tl(role)
+        if action == "stop":
+            return ix.stop()
+        if action != "start" or not teslacam:
+            return ix.status()
+        recent, saved, _ = self._sources(role, teslacam)
+        todo = [(m["stamp"], self._front(teslacam, m)) for m in reversed(TL.minutes(recent, saved)) if "front" in m["cams"]]
+        return ix.start(todo)
+
+    @staticmethod
+    def _front(teslacam, m):
+        sub = "RecentClips" if m["src"] == "recent" else os.path.join("SavedClips", m["ref"])
+        return os.path.join(teslacam, sub, "%s-front.mp4" % m["stamp"])
+
+    def segment(self, role, teslacam, sid, budget=20.0):
+        """One drive with its telemetry; reads the minutes not read yet (up to `budget` seconds, the page asks again while `pending`)."""
+        import time
+        if not teslacam:
+            return None
+        store, ix = self._tl(role)
+        recent, saved, sentry = self._sources(role, teslacam)
+        allm = TL.minutes(recent, saved)
+        t_id = TL.secs(sid) if sid[:2] == "20" else None
+        if t_id is None:
+            return None
+        for _ in range(2):
+            items = TL.build(recent, saved, [], store)
+            it = next((x for x in items if x["kind"] in ("drive", "stopped", "recording") and x["t0"] <= t_id < x["t1"]), None)
+            if not it:
+                return None
+            mins = [m for m in allm if it["t0"] <= m["t"] < it["t1"]]
+            todo = [m for m in mins if store.summary(m["stamp"]) is None and "front" in m["cams"]]
+            if not todo or _ == 1:
+                break
+            if budget > 0:
+                TL.read_many(store, [(m["stamp"], self._front(teslacam, m)) for m in todo], deadline=time.time() + budget)
+            store.flush()
+        ser = TL.detail(mins, store, it)
+        return dict(item=it, minutes=[dict(stamp=m["stamp"], src=m["src"], ref=m["ref"], cams=m["cams"], off=round(m["t"] - it["t0"])) for m in mins],
+                    series=ser, pending=ser["pending"])

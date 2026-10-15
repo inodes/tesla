@@ -229,6 +229,9 @@ class H(BaseHTTPRequestHandler):
             if u.path == "/api/places/delete":
                 with _ACTION_LOCK:
                     return self.send_json(STORE.pl.delete(body.get("name", "")))
+            if u.path == "/api/teslacam/index":
+                role = body.get("role", "A")
+                return self.send_json(TC.index(role, footage_root(role), body.get("action", "start")))
             if u.path == "/api/chargers/sync":
                 return self.send_json(SYNC.start())
             if u.path == "/api/chargers/sync/stop":
@@ -261,6 +264,13 @@ class H(BaseHTTPRequestHandler):
             role, _, rest = name[9:].partition("/")
             kind, _, rid = rest.partition("/")
             root = footage_root(role)
+            if kind == "timeline":
+                return self.send_json(TC.timeline(role, root))
+            if kind == "index":
+                return self.send_json(TC.index(role, root, "status"))
+            if kind == "seg":
+                d = TC.segment(role, root, urllib.parse.unquote(rid), float(q.get("budget", ["20"])[0] or 20))
+                return self.send_json(d if d else {"error": "no such drive"}, 200 if d else 404)
             if kind == "recent" and rid:
                 c = TC.run_clips(role, root, urllib.parse.unquote(rid))
                 return self.send_json(dict(clips=c) if c else {"error": "no such run"}, 200 if c else 404)
