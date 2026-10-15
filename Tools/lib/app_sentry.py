@@ -22,8 +22,9 @@ def _num(v):
 
 
 class Sentry:
-    def __init__(self, data_dir):
-        self.f = os.path.join(data_dir, "sentry_index.json")
+    def __init__(self, data_dir, index="sentry_index.json", folder="SentryClips"):
+        self.f = os.path.join(data_dir, index)
+        self.folder = folder                    # SentryClips or SavedClips: both hold one folder per event
         self.mem = None
 
     def _load(self):
@@ -36,10 +37,10 @@ class Sentry:
         return self.mem
 
     def events(self, teslacam):
-        """Every saved Sentry event (newest first). teslacam = the Archive's TeslaCam folder, or None when it is not connected."""
+        """Every event folder (newest first). teslacam = a drive's TeslaCam folder, or None when it is not connected."""
         with _LOCK:
             idx = self._load()
-            root = os.path.join(teslacam, "SentryClips") if teslacam else None
+            root = os.path.join(teslacam, self.folder) if teslacam else None
             if root and os.path.isdir(root):
                 try:
                     names = sorted(n for n in os.listdir(root) if re.match(r"\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2}$", n))
