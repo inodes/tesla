@@ -154,14 +154,41 @@ async function pageDrives(){
   main.innerHTML=`<h1>Drives</h1><div class="bar"><span id="rg"></span><select id="fc"><option value="all">Any charging</option><option value="to">Ending at a charge</option><option value="from">Leaving a charge</option><option value="any">Either end at a charge</option><option value="none">No charge at either end</option><option value="low">Finished at ${cfg("drives.low_battery_pct")}% or less</option></select><select id="fr"><option value="drive">Drives</option><option value="repark">Re-parks (under ${REPM()})</option><option value="both">Drives and re-parks</option></select><select id="fx"><option value="all">All drives</option><option value="hwy">Long highway (${cfg("drives.long_highway_km")} km+)</option><option value="fsd">Used self-driving</option><option value="foot">With dashcam footage</option><option value="al">With alerts</option></select><input type="search" id="q" placeholder="Search a place…" value="${esc(DP.q)}"></div><div class="tiles" id="tl"></div><div id="tb"></div>`;
   rangePicker($("#rg"),DP.r,daysOf(all),draw);$("#q").oninput=e=>{DP.q=e.target.value;draw()};$("#fc").value=DP.ch;$("#fc").onchange=e=>{DP.ch=e.target.value;draw()};$("#fr").value=DP.rp;$("#fr").onchange=e=>{DP.rp=e.target.value;draw()};$("#fx").value=DP.ex;$("#fx").onchange=e=>{DP.ex=e.target.value;draw()};draw();
 }
-async function pageDrive(stamp){
+const localISO=ms=>{const t=new Date(ms),z=n=>String(n).padStart(2,"0");return `${t.getFullYear()}-${z(t.getMonth()+1)}-${z(t.getDate())}T${z(t.getHours())}:${z(t.getMinutes())}:${z(t.getSeconds())}`};
+// fit an embedded generated page to its content (and keep it fitted while it changes)
+function fitFrame(fr,onDoc){fr.onload=()=>{try{const doc=fr.contentDocument;if(onDoc)onDoc(doc);const fit=()=>{fr.style.height=(doc.documentElement.scrollHeight+20)+"px"};fit();new ResizeObserver(fit).observe(doc.body)}catch(e){}}}
+// hide a heading and the cards that follow it, up to the next heading
+function hideSection(doc,title){$$(".wrap > h2",doc).forEach(h=>{if(h.textContent.startsWith(title)){let n=h;n.style.display="none";n=n.nextElementSibling;while(n&&n.tagName!=="H2"&&!n.classList.contains("sub")){n.style.display="none";n=n.nextElementSibling}}})}
+async function pageDrive(stamp,tab){
   const act=await api("activity"),d=act.find(x=>x.k==="drive"&&x.id===stamp);
   const als=await alertsFor("drive",stamp);
   if(d&&!d.page){driveLite(d,als);return}
-  main.innerHTML=crumbs("#/drives","Drives")+alertsCard(als,"drive")+`<iframe class="drive" id="fr" src="/data/drives/deepdive/${encodeURIComponent(stamp)}/drive.html"></iframe>`;
-  wireAlerts(main);const fr=$("#fr");fr.onload=()=>{try{const doc=fr.contentDocument;
-    $$("a",doc).forEach(a=>{if((a.getAttribute("href")||"")==="../index.html"){a.parentNode.style.display="none"}});
-    const fit=()=>{fr.style.height=(doc.documentElement.scrollHeight+20)+"px"};fit();new ResizeObserver(fit).observe(doc.body)}catch(e){}};
+  tab=["footage","flips"].includes(tab)?tab:"overview";
+  const tabs=[["overview","Overview"],["footage","Footage"+(d&&(d.foot||d.saved)?"":"")],["flips","Flips and signs"+(d&&d.flips?" ("+d.flips+")":"")]];
+  main.innerHTML=crumbs("#/drives","Drives")+alertsCard(als,"drive")+(d?`<div class="bar" id="dtabs">${tabs.map(([k,t])=>`<a class="chip ${k===tab?"on":""}" href="#/drive/${encodeURIComponent(stamp)}/${k}">${t}</a>`).join("")}</div>`:"")+'<div id="dtab"></div>';
+  wireAlerts(main);const box=$("#dtab");
+  if(tab==="overview"||!d){
+    box.innerHTML=`<iframe class="drive" id="fr" src="/data/drives/deepdive/${encodeURIComponent(stamp)}/drive.html"></iframe>`;
+    fitFrame($("#fr"),doc=>{$$("a",doc).forEach(a=>{if((a.getAttribute("href")||"")==="../index.html"){a.parentNode.style.display="none"}});
+      // the footage and the flips have their own tabs (the clips are watched in the Footage tab)
+      const f=doc.getElementById("foot");if(f)f.style.display="none";hideSection(doc,"FSD speed changes");hideSection(doc,"Saved clips")});
+  }else if(tab==="flips"){
+    const w0=d.day+" "+d.hm+":00",w1=localISO(Date.parse(d.day+"T"+d.hm+":00")+d.min*60000).replace("T"," "),fl=await api("flip-events");
+    if(!d.flips){box.innerHTML=`<div class="card"><b>No 100 ↔ 110 speed changes were found in this drive.</b><div class="sub" style="margin-top:6px">The speed, pedal, steering and autopilot graphs for the whole drive are on the <a href="#/drive/${encodeURIComponent(stamp)}/footage">Footage</a> tab. All flips across every drive: <a href="#/flips">Flip review</a>.</div></div>`;return}
+    if(!fl.exists){box.innerHTML='<div class="card">The flip review page has not been built yet. Run <code>./dashcam_flip_review.py</code>.</div>';return}
+    box.innerHTML=`<div class="sub" style="margin:4px 0 8px">Each 100 ↔ 110 speed change in this drive: the car's own speed and autopilot state, the signs seen, and a still every second. All of them: <a href="#/flips">Flip review</a>.</div><iframe class="drive" id="ff" src="/data/drives/analysis/dashcam_flip_review/index.html?embed=1&t0=${encodeURIComponent(w0)}&t1=${encodeURIComponent(w1)}"></iframe>`;
+    fitFrame($("#ff"));
+  }else{
+    const t0=d.day+"T"+d.hm+":00",t1=localISO(Date.parse(t0)+d.min*60000),pl=await api("places").catch(()=>({saved:[]}));
+    box.innerHTML='<div id="tdh"></div><details class="card" id="mg" style="margin-top:14px"><summary><b>Copy, save as a clip, or delete clips</b></summary><div id="mgb" style="margin-top:10px"></div></details>';
+    const fetchSeg=async b=>{const r=await fetch("/api/teslacam/A/window?t0="+encodeURIComponent(t0)+"&t1="+encodeURIComponent(t1)+"&budget="+(b==null?20:b));
+      if(!r.ok){const e=(await r.json().catch(()=>({}))).error||("HTTP "+r.status);const x=new Error(e);x.none=r.status===404;throw x}return r.json()};
+    $("#mg").ontoggle=()=>{if(!$("#mg").open||$("#mgb").innerHTML)return;$("#mgb").innerHTML=`<iframe class="drive" id="mf" src="/data/drives/deepdive/${encodeURIComponent(stamp)}/drive.html"></iframe>`;
+      fitFrame($("#mf"),doc=>{const w=doc.querySelector(".wrap");if(!w)return;if(!doc.getElementById("foot")){$("#mgb").innerHTML='<div class="sub">No clip tools for this drive: the page was built without footage. Run <code>./drive_report.py</code> with the Archive connected.</div>';return}
+        [...w.children].forEach(c=>{if(c.id!=="foot")c.style.display="none"})})};
+    try{await teslaDriveBody($("#tdh"),"A",fetchSeg,pl.saved||[],{heading:false})}
+    catch(e){const h=$("#tdh");if(h)h.innerHTML=e.none?'<div class="card"><b>No dashcam footage or telemetry for this drive.</b><div class="sub" style="margin-top:6px">Nothing recorded on the Archive covers these times, and nothing was read from it before. If the Archive is not connected, connect it and open this tab again.</div></div>':errBox(e.message,"Could not rebuild this drive from the video")}
+  }
 }
 
 // A drive Tessie recorded that has no per-drive file (so no dashcam / deep-dive page): the summary from the drives list.
@@ -762,37 +789,48 @@ async function pageTeslaCam(role,id){
 // ---------- one drive rebuilt from the video: map, telemetry and the stitched footage, moving together
 const APN={1:"FSD",2:"Autosteer",3:"TACC"},APC={1:"#3b6cf6",2:"#8b5cf6",3:"#14b8a6"};
 async function pageTeslaCamDrive(role,id){
-  loading();const pl=await api("places").catch(()=>({saved:[]})),places=pl.saved||[];
-  let d=null,player=null,map=null,chart=null,done=false;
+  loading();const pl=await api("places").catch(()=>({saved:[]}));
+  main.innerHTML=crumbs("#/teslacam","TeslaCam")+'<div id="tdh"></div>';
+  const fetchSeg=async b=>{const r=await fetch("/api/teslacam/"+role+"/seg/"+encodeURIComponent(id)+(b!=null?"?budget="+b:""));if(!r.ok)throw new Error((await r.json().catch(()=>({}))).error||("HTTP "+r.status));return r.json()};
+  try{await teslaDriveBody($("#tdh"),role,fetchSeg,pl.saved||[],{})}catch(e){const h=$("#tdh");if(h)h.innerHTML=errBox(e.message,"Could not rebuild this drive")}
+}
+// The map, telemetry chart and stitched six-camera video of one drive, moving together. `fetchSeg(budget)` returns the server's segment / window answer;
+// it is asked again while minutes are still being read. opts.heading=false leaves the title to the caller (the Footage tab of a Tessie drive).
+async function teslaDriveBody(host,role,fetchSeg,places,opts){
+  let d=await fetchSeg(0),player=null,map=null,chart=null,done=false,evShown=false;
   const stop=()=>{done=true};addEventListener("hashchange",stop,{once:true});
-  const fetchSeg=async(b)=>{const r=await fetch("/api/teslacam/"+role+"/seg/"+encodeURIComponent(id)+(b!=null?"?budget="+b:""));if(!r.ok)throw new Error((await r.json().catch(()=>({}))).error||("HTTP "+r.status));return r.json()};
-  d=await fetchSeg(0);
-  const it=()=>d.item,S=()=>d.series;
-  main.innerHTML=crumbs("#/teslacam","TeslaCam")+`<h1 id="dh"></h1><div class="sub" id="dsub"></div><div id="dpend"></div><div class="tiles" id="dtl"></div>
+  const it=()=>d.item,S=()=>d.series,live=()=>!done&&$("#tdb")&&host.contains($("#tdb"));
+  host.innerHTML=`<div id="tdb"><h1 id="dh" ${opts.heading===false?"hidden":""}></h1><div class="sub" id="dsub"></div><div id="dpend"></div><div class="tiles" id="dtl"></div>
     <div id="dmapc" class="card" style="padding:10px"><div class="bar" style="margin:0 0 8px"><button class="chip on" data-cm="v">Speed</button><button class="chip" data-cm="ap">Autopilot / FSD</button><span class="sub" id="dleg"></span></div><div class="map big" id="dmap" style="height:340px"></div></div>
     <div id="dchc" class="card" style="margin-top:12px;padding:10px"><div class="sub" id="dtip" style="min-height:18px"></div><canvas id="dch" style="width:100%;height:284px;display:block"></canvas></div>
-    <div class="card" style="margin-top:12px"><div id="dvid"></div></div>`;
-  const fill=()=>{if(done||!$("#dh"))return;const x=it(),s=S(),t=Date.parse(x.start),m=Math.max(1,Math.round((x.t1-x.t0)/60)),a=nameAt(places,x.p0),b=nameAt(places,x.p1);
+    <div class="card" style="margin-top:12px"><div id="dvid"></div></div><div id="dev"></div></div>`;
+  const fill=()=>{if(!live())return;const x=it(),m=Math.max(1,Math.round((x.t1-x.t0)/60)),a=nameAt(places,x.p0),b=nameAt(places,x.p1);
     $("#dh").textContent=(x.kind==="drive"?"Drive":x.kind==="stopped"?"Stopped, recording":"Recording")+" · "+dayName(x.start.slice(0,10))+" · "+clockHM(x.start)+" – "+clockHM(x.end);
-    $("#dsub").textContent=(a||b?(a||"?")+" → "+(b||"?")+" · ":"")+"Rebuilt from the dashcam video alone (Recent and Saved clips stitched). Telemetry is only written while the car moves.";
+    $("#dsub").textContent=(a||b&&opts.heading!==false?(a||"?")+" → "+(b||"?")+" · ":"")+(d.connected===false?"The drive these clips are on is not connected: the map and telemetry come from the copy kept when they were read, and there is no video. ":"")+"Rebuilt from the dashcam video alone (Recent and Saved clips stitched). Telemetry is only written while the car moves.";
     $("#dtl").innerHTML=tile(dur(m),"time")+(x.kind==="drive"?tile(n0(x.km,1)+" km","distance")+tile(n0(x.vmax)+" km/h","top speed")+tile(Math.round((x.fsd+x.aut)*100)+"%","on autopilot / FSD"):"")+tile(n0(d.minutes.length),`clips · ${x.recent||0} Recent, ${x.saved||0} Saved`);
     $("#dpend").innerHTML=d.pending>0?`<div class="card ixb"><div>Reading the telemetry from the video (first time only): ${n0(d.pending)} of ${n0(d.minutes.length)} minutes still to read…</div></div>`:""};
   const pts=()=>{const s=S(),o=[];for(let i=0;i<s.v.length;i++)if(s.lat[i]!=null&&Math.abs(s.lat[i])>1)o.push(i);return o};
   const ts0=()=>Date.parse(it().start);
   const seekIdx=i=>{if(player)player.seek(ts0()+i*1000)};
   const cursor=sec=>{const i=Math.max(0,Math.min(S().v.length-1,Math.round(sec)));if(map)map.cursor(i);if(chart)chart.cursor(i)};
-  const build=()=>{if(done||!$("#dh"))return;fill();const s=S(),idx=pts();
+  const events=()=>{if(evShown||!d.events||!d.events.length||!live())return;evShown=true;
+    $("#dev").innerHTML=`<h2>Saved clips and Sentry events in this drive</h2><div class="sub">Click one to jump the video there.</div><div class="evs">${d.events.map(v=>`<button class="evc" data-t="${esc(v.ts)}">${v.thumb?`<img loading="lazy" src="/footage/${role}/${v.folder}/${v.id}/thumb.png" onerror="this.style.visibility='hidden'">`:'<div class="noimg"></div>'}<b>${hms(v.ts)}</b><span>${esc(v.folder==="SavedClips"?"Saved":"Sentry")} · ${esc(reason(v.reason))}</span><span>${esc(v.city||"")}</span></button>`).join("")}</div>`;
+    $$("#dev .evc").forEach(b=>b.onclick=()=>{if(player){player.seek(Date.parse(b.dataset.t));$("#dvid").scrollIntoView({block:"nearest"})}})};
+  const build=()=>{if(!live())return;fill();const s=S(),idx=pts();
     if(!idx.length){$("#dmapc").hidden=$("#dchc").hidden=true}else{$("#dmapc").hidden=$("#dchc").hidden=false;
       if(!map)map=driveMap($("#dmap"),s,idx,seekIdx,$("#dleg"));else map.update(s,idx);
       if(!chart)chart=telemChart($("#dch"),$("#dtip"),s,seekIdx,ts0());else chart.update(s)}
-    if(!player&&d.minutes.length){const mm=d.minutes,cams={},meta={};mm.forEach(m=>{cams[m.stamp]=m.cams;meta[m.stamp]=m});
+    const playable=d.minutes.filter(m=>m.cams&&m.cams.length);
+    if(!player&&playable.length){const mm=playable,cams={},meta={};mm.forEach(m=>{cams[m.stamp]=m.cams;meta[m.stamp]=m});
       player=clipPlayer($("#dvid"),{stamps:mm.map(m=>m.stamp),cams,view:"all",
         url:(st,c)=>meta[st].src==="saved"?`/footage/${role}/SavedClips/${meta[st].ref}/${st}-${c}.mp4`:`/footage/${role}/RecentClips/${st}-${c}.mp4`,
-        onTime:ms=>cursor((ms-ts0())/1000),head:`${it().kind==="drive"?"Click the map or the chart to jump there; the dot and the line follow the video.":"The car was not moving, so there is no map."} Each minute plays on to the next, Recent and Saved alike.`})}};
-  $$("[data-cm]").forEach(b=>b.onclick=()=>{$$("[data-cm]").forEach(x=>x.classList.toggle("on",x===b));if(map)map.mode(b.dataset.cm)});
+        onTime:ms=>cursor((ms-ts0())/1000),head:`${it().kind==="drive"?"Click the map or the chart to jump there; the dot and the line follow the video.":"The car was not moving, so there is no map."} Each minute plays on to the next, Recent and Saved alike.`})}
+    else if(!playable.length)$("#dvid").innerHTML='<div class="sub">No video for this time on a connected drive.</div>';
+    events()};
+  $$("[data-cm]",host).forEach(b=>b.onclick=()=>{$$("[data-cm]",host).forEach(x=>x.classList.toggle("on",x===b));if(map)map.cursor&&map.mode(b.dataset.cm)});
   build();
-  while(d.pending>0&&!done){try{d=await fetchSeg()}catch(e){break}if(done)break;build()}
-  if(!done)fill();
+  while(d.pending>0&&live()){try{d=await fetchSeg()}catch(e){break}if(!live())break;build()}
+  fill();
 }
 function driveMap(el,s,idx,onPick,leg){
   if(!window.maplibregl){el.innerHTML='<div class="empty">Map library not loaded (offline?).</div>';return{update(){},cursor(){},mode(){}}}
@@ -850,16 +888,13 @@ function telemChart(cv,tip,s,onPick,t0){
   return{update(s2){S=s2;draw()},cursor(i){cur=i;if(hov==null)tip.textContent=read(i);draw()}};
 }
 
-// ---------- Dashcam
-async function pageDashcam(){
-  loading();const [st,act,fl]=await Promise.all([api("status"),api("activity"),api("flip-events")]);cache.status=null;
-  const withClips=act.filter(x=>x.k==="drive"&&(x.saved||x.flips)).slice(0,60),r=st.roots;
-  main.innerHTML=`<h1>Dashcam</h1><div class="sub">Footage is read straight from the Archive drive; the drive is found by what is on it, not by its name.</div>
-   <div class="tiles">${tile(`<span class="dot ${r.A?"on":"off"}"></span>${r.A?"Connected":"Not connected"}`,"Archive drive")}${tile(n0(act.filter(x=>x.k==="drive"&&x.foot).length),"drives with footage")}${tile(n0(act.reduce((a,x)=>a+(x.saved||0),0)),"saved clips")}${tile(n0(act.reduce((a,x)=>a+(x.flips||0),0)),"110 ↔ 100 flips")}</div>
-   <div class="bar">${fl.exists?`<a class="btn pri" style="text-decoration:none;padding:5px 12px;border-radius:8px;background:var(--acc);color:#fff" href="#/flips">Open the flip review</a>`:""}<a class="btn" style="text-decoration:none;padding:5px 12px;border:1px solid var(--line);border-radius:8px" href="/data/drives/analysis/fsd_highway_map.html" target="_blank">FSD highway map</a><a class="btn" style="text-decoration:none;padding:5px 12px;border:1px solid var(--line);border-radius:8px" href="#/teslacam">Browse TeslaCam clips</a><a class="btn" style="text-decoration:none;padding:5px 12px;border:1px solid var(--line);border-radius:8px" href="#/queue">Footage queue</a></div>
-   <h2>Drives with saved clips or flips</h2>${withClips.map(actRow).join("")||'<div class="empty">None yet.</div>'}`;
+// ---------- Flip review (the speed-sign / FSD graphs for every 100 <-> 110 change)
+async function pageFlips(){
+  loading();const fl=await api("flip-events");
+  const bar=`<div class="bar"><a class="btn" style="text-decoration:none;padding:5px 12px;border:1px solid var(--line);border-radius:8px" href="/data/drives/analysis/fsd_highway_map.html" target="_blank">FSD highway map</a></div>`;
+  if(!fl.exists){main.innerHTML=`<h1>Flip review</h1>${bar}<div class="card">The flip review page has not been built yet. Run <code>./dashcam_flip_review.py</code>.</div>`;return}
+  main.innerHTML=`<h1>Flip review</h1><div class="sub">Every 100 ↔ 110 speed change: the car's own speed and self-driving state, the signs seen, and a still every second. For one drive, open the drive and pick its Flips tab.</div>${bar}<iframe class="drive" style="height:calc(100vh - 190px)" src="/data/drives/analysis/dashcam_flip_review/index.html"></iframe>`;
 }
-function pageFlips(){main.innerHTML=crumbs("#/dashcam","Dashcam")+`<iframe class="drive" style="height:calc(100vh - 90px)" src="/data/drives/analysis/dashcam_flip_review/index.html"></iframe>`}
 
 // ---------- Queue
 function pageQueue(){
@@ -878,13 +913,13 @@ function pageQueue(){
 function badge(){const n=qget().length,b=$("#qn");b.hidden=!n;b.textContent=n}
 
 // ---------- router
-const ROUTES={activity:pageActivity,drives:pageDrives,charges:pageCharges,battery:pageBattery,health:pageHealth,analytics:pageAnalytics,dashcam:pageDashcam,teslacam:pageTeslaCam,queue:pageQueue,flips:pageFlips,parked:pageParked,idles:pageParked,places:pagePlaces,alerts:pageAlerts};
+const ROUTES={activity:pageActivity,drives:pageDrives,charges:pageCharges,battery:pageBattery,health:pageHealth,analytics:pageAnalytics,dashcam:pageFlips,teslacam:pageTeslaCam,queue:pageQueue,flips:pageFlips,parked:pageParked,idles:pageParked,places:pagePlaces,alerts:pageAlerts};
 async function route(){
   hideTip();if(TCPOLL){clearInterval(TCPOLL);TCPOLL=null}const h=(location.hash||"#/activity").replace(/^#\//,""),[p,arg,arg2]=h.split("/").map(decodeURIComponent);
-  $$("#nav>a").forEach(a=>a.classList.toggle("on",a.dataset.p===(({drive:"drives",charge:"charges",idle:"parked",idles:"parked",flips:"dashcam",place:"places"})[p]||p)));
+  $$("#nav>a").forEach(a=>a.classList.toggle("on",a.dataset.p===(({drive:"drives",charge:"charges",idle:"parked",idles:"parked",dashcam:"flips",place:"places"})[p]||p)));
   badge();main.scrollTop=0;
   try{
-    if(p==="drive")await pageDrive(arg);else if(p==="charge")await pageCharge(arg,arg2);else if(p==="idle"||p==="parked"&&arg)await pageParkedOne(arg);else if(p==="place")await pagePlace(arg);else await (ROUTES[p]||pageActivity)(arg,arg2);
+    if(p==="drive")await pageDrive(arg,arg2);else if(p==="charge")await pageCharge(arg,arg2);else if(p==="idle"||p==="parked"&&arg)await pageParkedOne(arg);else if(p==="place")await pagePlace(arg);else await (ROUTES[p]||pageActivity)(arg,arg2);
   }catch(e){main.innerHTML=errBox(e.stack||e.message,"Something went wrong")}
 }
 async function boot(){
