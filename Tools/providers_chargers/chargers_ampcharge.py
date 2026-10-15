@@ -34,6 +34,7 @@ from typing import Dict, List, Optional, Any
 from datetime import datetime, timezone
 
 from .chargers_base import (
+    RegistryReadError,
     BaseChargerProvider,
     UnifiedStationRecord,
     haversine_km,
@@ -346,8 +347,10 @@ class AmpChargeProvider(BaseChargerProvider):
                             s_id = str(old_item.get("LocationID", ""))
                             if s_id:
                                 existing_map[s_id] = old_item
-            except Exception:
-                pass
+            except Exception as e:
+                # Never treat an unreadable existing registry as empty and
+                # save over it (loses every station's history) - stop here.
+                raise RegistryReadError(f"{self.registry_path} is unreadable ({e}) - not overwriting it") from e
 
         fresh_by_key = {}
         for r in records:

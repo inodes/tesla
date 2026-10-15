@@ -28,6 +28,7 @@ import urllib.parse
 import urllib.error
 
 from .chargers_base import (
+    RegistryReadError,
     BaseChargerProvider,
     UnifiedStationRecord,
     haversine_km,
@@ -175,6 +176,25 @@ def _resolve_plugshare_scan_state_path() -> str:
     if not os.path.isfile(config_path):
         config_path = os.path.join(_repo_root, "resources", "config.json")
     return resolve_scan_state_path("plugshare", _repo_root, tessie_home=tessie_home, config_path=config_path)
+
+
+def _parse_retry_after(headers) -> Optional[float]:
+    """Seconds to wait from a Retry-After header (delta-seconds or HTTP date)."""
+    try:
+        value = headers.get("Retry-After") if headers is not None else None
+    except Exception:
+        return None
+    if not value:
+        return None
+    value = str(value).strip()
+    if value.isdigit():
+        return float(value)
+    try:
+        from email.utils import parsedate_to_datetime
+        when = parsedate_to_datetime(value)
+        return max(0.0, (when - datetime.now(when.tzinfo)).total_seconds())
+    except Exception:
+        return None
 
 
 def extract_au_state_and_suburb(addr: str) -> Tuple[str, str]:
@@ -350,7 +370,7 @@ def plugshare_to_registry_record(basic_or_detail: dict, full_detail: Optional[di
             if c_name:
                 connectors.add(c_name)
             else:
-                c_name = "CCS2"
+                c_name = "Unknown connector"  # never guess a plug type (2026-09-30 review, C9)
             kw = float(o.get("kilowatts") or o.get("power") or 0.0)
             if kw > max_kw:
                 max_kw = kw
@@ -373,8 +393,8 @@ def plugshare_to_registry_record(basic_or_detail: dict, full_detail: Optional[di
     if not connectors and d.get("connector_types"):
         connectors = set(d["connector_types"])
 
-    if not connectors:
-        connectors.add("CCS2")
+    # 2026-09-30 review (C9): an unknown plug used to be recorded as "CCS2".
+    # Leave it empty - PlugShare didn't say.
 
     gross_rate = extract_gross_rate_per_kwh(d)
     idle_fee = 0.0
@@ -433,6 +453,31 @@ def plugshare_to_registry_record(basic_or_detail: dict, full_detail: Optional[di
             if isinstance(it, dict) and it.get("description")
         ]
 
+    # BUG (2026-09-29): BUG-089/REQ-076 fixed this label for a single-
+    # station DETAIL fetch (get_location_details(), which really does
+    # carry access_restriction_descriptions/access_restriction_items),
+    # but never accounted for the fact that a bulk-area sync
+    # (search_nearby()/search_state()/search_australia() - all hit the
+    # shallower /locations/region endpoint) returns raw items that don't
+    # carry those keys AT ALL, not even as empty lists - confirmed live:
+    # a real /locations/region item for plugshare.com/location/525387
+    # (Mortlake Slipway, access=2, genuinely EMPLOYEES ONLY per BUG-089)
+    # has none of access_restrictions/access_restriction_descriptions/
+    # access_restriction_items in its keys. Every ordinary "or []" above
+    # can't tell "confirmed no restriction" (full detail, keys present
+    # as real empty lists) apart from "this payload never said" (shallow
+    # region listing, keys absent) - so any later bulk-area resync of a
+    # previously-corrected station silently re-derived the coarse
+    # "Customer / Patron" mapping and overwrote the real, previously-
+    # confirmed "Restricted (Employees Only)" label, regressing BUG-089/
+    # REQ-076's whole 356-station correction campaign one station at a
+    # time, forever, on every ordinary area/state/country PlugShare sync.
+    # Recorded here (checked on KEY PRESENCE, not truthiness) so
+    # add_or_update() can tell the two cases apart and refuse to
+    # downgrade a real, previously-confirmed restriction just because
+    # this particular payload happened to be the shallow kind.
+    has_restriction_data = ("access_restriction_descriptions" in d) or ("access_restriction_items" in d)
+
     access_str = "Public" if acc_code == 1 else ("Customer / Patron" if acc_code == 2 else "Restricted")
     if restriction_descs:
         access_str = f"Restricted ({', '.join(restriction_descs)})"
@@ -474,13 +519,20 @@ def plugshare_to_registry_record(basic_or_detail: dict, full_detail: Optional[di
         },
         "hardware": {
             "stalls": stalls_count,
-            "max_power_kw": round(max_kw, 1) if max_kw > 0 else (150.0 if is_fast else 22.0),
+            # 2026-09-30 review (C9): no kW from PlugShare used to become an
+            # invented 150 kW (fast) / 22 kW (slow). Store None plus PlugShare's
+            # own fast-charger flag, which is what the speed tier needs.
+            "max_power_kw": round(max_kw, 1) if max_kw > 0 else None,
+            "dc_fast": bool(is_fast),
             "connector_types": sorted(list(connectors)),
             "connector_breakdown": connector_breakdown
         },
         "compatibility": {
-            "open_to_non_tesla": True,
-            "tesla_only": False,
+            # A Tesla-network listing's openness isn't in PlugShare's data -
+            # don't claim it (was always True/False). Other networks' public
+            # chargers are open to all cars by definition.
+            "open_to_non_tesla": None if "tesla" in str(network).lower() else True,
+            "tesla_only": None if "tesla" in str(network).lower() else False,
             "access": access_str
         },
         "access": {
@@ -494,16 +546,23 @@ def plugshare_to_registry_record(basic_or_detail: dict, full_detail: Optional[di
             "idle_fee_per_min": idle_fee,
             "has_tou_pricing": False
         },
-        "amenities": {
-            "parking": True,
-            "restrooms": True,
-            "shopping": True,
-            "dining": True
-        },
+        # 2026-09-30 review (C9): every PlugShare station used to be recorded
+        # with parking/restrooms/shopping/dining all True - pure invention
+        # (the same tell BUG-156 used to spot a fabricated record). Real
+        # nearby facilities come from OSM (station_facilities.json).
+        "amenities": {},
         "first_seen": now_iso,
         "last_updated": now_iso,
         "last_verified": now_iso,
-        "valid_from": now_iso
+        "valid_from": now_iso,
+ # Transient marker, never persisted to disk - popped off by
+ # add_or_update() before the record is written to the registry.
+ # See the BUG (2026-09-29) comment above: distinguishes a payload
+ # that genuinely confirmed "no restriction" (full detail fetch)
+ # from one that simply never carried the restriction keys at all
+ # (shallow bulk-area sync), so a previously-confirmed "Restricted
+ # (...)" label is never silently downgraded by a routine resync.
+        "_has_restriction_data": has_restriction_data
     }
     return station_key, record
 
@@ -539,6 +598,8 @@ def record_dict_to_unified(key: str, info: dict) -> Optional[UnifiedStationRecor
         max_kw = 0.0
 
     speed_tier = "dc_fast" if max_kw >= 25.0 else "ac_destination"
+    if max_kw <= 0 and hw.get("dc_fast"):
+        speed_tier = "dc_fast"  # PlugShare's own fast flag when it gave no kW
  # "Supercharger" is a Tesla-specific hardware/network term - matching it
  # anywhere in the network OR station name string was misclassifying
  # non-Tesla stations whose name happens to contain the word colloquially
@@ -667,7 +728,18 @@ def record_dict_to_unified(key: str, info: dict) -> Optional[UnifiedStationRecor
         tier=2,
         source="plugshare",
         source_id=str(ps_meta.get("id") or info.get("id") or key),
-        url=ps_meta.get("url") or info.get("url", f"https://www.plugshare.com/location/{ps_meta.get('id', '')}"),
+        # Audit fix (2026-09-29, same finding as chargers_tesla.py's
+        # St Leonards bug): info.get("url", f"...{ps_meta.get('id', '')}")
+        # unconditionally builds that default string even when id is
+        # missing/empty, producing a bare ".../location/" (no id) -
+        # useless but not currently live-triggered (the one real
+        # PlugShare record missing an id, "Jolt - Meadowbank", already
+        # carries its own real ps_meta["url"]). Guarded to match the
+        # safer `if ps_id else None` pattern chargers_base.py's own
+        # get_source_urls() already uses for this same PlugShare id.
+        url=ps_meta.get("url") or info.get("url") or (
+            f"https://www.plugshare.com/location/{ps_meta.get('id')}" if ps_meta.get("id") else None
+        ),
         last_verified_utc=info.get("last_verified", "") or info.get("last_verified_utc", ""),
         metadata=metadata,
         amenities=info.get("amenities", {}) if isinstance(info.get("amenities"), dict) else {"items": info.get("amenities", [])},
@@ -711,6 +783,7 @@ class PlugShareClient:
         if params:
             url += "?" + urllib.parse.urlencode(params)
         self.last_error = None
+        self.last_retry_after = None
         attempt = 0
         while True:
             req = urllib.request.Request(url, headers=self.headers)
@@ -722,6 +795,9 @@ class PlugShareClient:
                     self.last_error = "HTTP 404 (not found)"
                     return None
                 self.last_error = f"HTTP {e.code}" + (" (likely rate-limited/blocked)" if e.code in (403, 429) else "")
+                # BUG-008: Cloudflare's 429 carries Retry-After (seen live: 230 s),
+                # which used to be ignored. Record it so callers can honour it.
+                self.last_retry_after = _parse_retry_after(getattr(e, "headers", None))
             except urllib.error.URLError as e:
                 self.last_error = f"network error: {e.reason}"
             except TimeoutError:
@@ -733,7 +809,10 @@ class PlugShareClient:
             attempt += 1
             if attempt > retries:
                 return None
-            time.sleep(backoff * attempt + random.uniform(0, 0.5))
+            wait = backoff * attempt + random.uniform(0, 0.5)
+            if self.last_retry_after:
+                wait = max(wait, min(self.last_retry_after, 60.0))  # longer waits are left to the caller
+            time.sleep(wait)
 
     def get_location_details(self, location_id: Any) -> Optional[dict]:
         """Fetches complete station record including tariffs, hardware, hours, and amenities."""
@@ -1143,20 +1222,25 @@ class PlugShareProvider(BaseChargerProvider):
 
     def load_raw_registry(self) -> Dict[str, dict]:
         """Loads raw dictionary of stations from plugshare_chargers.json."""
+        # Missing file = genuinely empty registry. A file that EXISTS but
+        # can't be read/parsed raises RegistryReadError instead of returning
+        # {} - every auto-save path used to take that {} as "the registry",
+        # add the new records and atomically save it over the real ~2,000-
+        # station file (2026-09-30 review).
         if not os.path.isfile(self.registry_path):
             return {}
         try:
             with open(self.registry_path, "r", encoding="utf-8") as f:
                 data = json.load(f)
-            if isinstance(data, dict):
-                if "stations" in data and isinstance(data["stations"], dict):
-                    return data["stations"]
-                return data
-            elif isinstance(data, list):
-                return {s.get("name", f"Station_{i}"): s for i, s in enumerate(data)}
-        except Exception:
-            pass
-        return {}
+        except Exception as e:
+            raise RegistryReadError(f"{self.registry_path} is unreadable ({e}) - refusing to use it as empty") from e
+        if isinstance(data, dict):
+            if "stations" in data and isinstance(data["stations"], dict):
+                return data["stations"]
+            return data
+        if isinstance(data, list):
+            return {s.get("name", f"Station_{i}"): s for i, s in enumerate(data)}
+        raise RegistryReadError(f"{self.registry_path} has an unexpected shape ({type(data).__name__}) - refusing to use it as empty")
 
     def save_raw_registry(self, data: Dict[str, dict]) -> bool:
         """Saves dictionary of stations to plugshare_chargers.json.
@@ -1179,7 +1263,15 @@ class PlugShareProvider(BaseChargerProvider):
         if self._cache is not None:
             return self._cache
 
-        st_dict = self.load_raw_registry()
+        self.last_load_error = None
+        try:
+            st_dict = self.load_raw_registry()
+        except RegistryReadError as e:
+            self.last_load_error = str(e)
+            # Read-only listing: show nothing from PlugShare this run rather
+            # than crash every command; not cached, so the next call retries.
+            print(f"⚠️  PlugShare registry not loaded: {e}")
+            return []
         records: List[UnifiedStationRecord] = []
         for key, info in st_dict.items():
             rec = record_dict_to_unified(key, info)
@@ -1233,6 +1325,16 @@ class PlugShareProvider(BaseChargerProvider):
 
     def add_or_update(self, station_key: str, record: dict, registry: Optional[Dict[str, dict]] = None) -> str:
         """Adds or updates a station record in the local registry."""
+ # BUG-157 (2026-09-29): pop the transient "did this payload actually
+ # carry restriction-detection keys" marker here, immediately, so it
+ # is NEVER written to disk on any path (CREATED/UPDATED/REJECTED) -
+ # then use it below to stop a shallow bulk-area resync (which lacks
+ # these keys entirely) from silently overwriting a previously
+ # fully-confirmed "Restricted (...)" access label with the coarse
+ # base-code guess. Default True for any record that didn't go
+ # through plugshare_to_registry_record() at all (defensive: treat
+ # unknown provenance as "trust it" rather than "always override").
+        fresh_has_restriction_data = record.pop("_has_restriction_data", True)
         meta = record.get("plugshare_metadata", {}) or {}
         loc = record.get("location", {}) or {}
         has_identity = bool(meta.get("id")) or bool(loc.get("address"))
@@ -1265,6 +1367,21 @@ class PlugShareProvider(BaseChargerProvider):
             ex_rate = existing.get("tariffs", {}).get("per_kwh_flat", 0.0)
             if ex_rate > 0 and record.get("tariffs", {}).get("per_kwh_flat", 0.0) == 0:
                 record["tariffs"] = existing["tariffs"]
+
+ # BUG-157 (2026-09-29): this fresh payload never carried the
+ # restriction-detection keys at all (a shallow bulk-area sync,
+ # not a full single-station detail fetch) - so it has no basis
+ # for downgrading a previously-confirmed detailed restriction.
+ # Preserve the existing label rather than let the coarse
+ # access-code guess silently overwrite it. A genuine full-detail
+ # re-check (fresh_has_restriction_data=True) always wins, in
+ # either direction, since that payload actually looked.
+            existing_access = existing.get("compatibility", {}).get("access", "") or ""
+            new_access = record.get("compatibility", {}).get("access", "") or ""
+            if (not fresh_has_restriction_data
+                    and existing_access.startswith("Restricted (")
+                    and not new_access.startswith("Restricted (")):
+                record["compatibility"]["access"] = existing_access
             ex_keywords = set(existing.get("plugshare_metadata", {}).get("keywords", []))
             new_keywords = set(record.get("plugshare_metadata", {}).get("keywords", []))
             record["plugshare_metadata"]["keywords"] = sorted(list(ex_keywords | new_keywords))
@@ -1482,7 +1599,14 @@ class PlugShareProvider(BaseChargerProvider):
                 if was_rate_limited:
                     consecutive_successes = 0
                     current_delay = min(current_delay * 2.0, max_delay)
-                    time.sleep(current_delay + random.uniform(0, 2.0))
+                    retry_after = getattr(self.client, "last_retry_after", None)
+                    if retry_after:
+                        # BUG-008: PlugShare/Cloudflare said exactly how long to wait.
+                        pause = min(retry_after, 600.0)
+                        print(f"  ⏳ PlugShare asked us to wait {int(pause)}s before the next request - pausing.")
+                        time.sleep(pause + random.uniform(0, 2.0))
+                    else:
+                        time.sleep(current_delay + random.uniform(0, 2.0))
                 else:
                     time.sleep(current_delay + random.uniform(0, 1.0))
                 continue

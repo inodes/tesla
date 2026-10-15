@@ -29,6 +29,7 @@ from typing import Dict, List, Optional, Any, Tuple
 from datetime import datetime, timezone
 
 from .chargers_base import (
+    RegistryReadError,
     BaseChargerProvider,
     UnifiedStationRecord,
     haversine_km,
@@ -479,8 +480,10 @@ class ExplorenProvider(BaseChargerProvider):
                 with open(target_path, "r", encoding="utf-8") as f:
                     old_data = json.load(f)
                     existing_stations = old_data.get("stations", {}) if isinstance(old_data, dict) else {}
-            except Exception:
-                existing_stations = {}
+            except Exception as e:
+                # Never treat an unreadable existing registry as empty and
+                # save over it (loses every station's history) - stop here.
+                raise RegistryReadError(f"{target_path} is unreadable ({e}) - not overwriting it") from e
 
         records = self.fetch_all_remote()
         fresh_by_key = {}
