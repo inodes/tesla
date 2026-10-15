@@ -13,6 +13,10 @@ const api=async p=>{if(cache[p])return cache[p];const r=await fetch("/api/"+p);i
 const main=$("#main");
 const place=x=>x.place||x.addr||"Unknown place";
 const driveTitle=d=>(d.frm||"?")+" → "+(d.to||"?");
+// An error you can copy: the text is selectable and a button puts it on the clipboard.
+const errBox=(msg,lead)=>`<div class="errbox"><div>${lead||""}</div><pre>${esc(msg)}</pre><button class="btn" data-copy>Copy error</button></div>`;
+document.addEventListener("click",e=>{const b=e.target.closest("[data-copy]");if(!b)return;const pre=b.parentNode.querySelector("pre"),sel=()=>{const r=document.createRange();r.selectNodeContents(pre);const s=getSelection();s.removeAllRanges();s.addRange(r);b.textContent="Selected - press Cmd+C"};
+  (navigator.clipboard?navigator.clipboard.writeText(pre.textContent):Promise.reject()).then(()=>{b.textContent="Copied"},sel)});
 const loading=()=>main.innerHTML='<div class="empty">Loading…</div>';
 const QK="clipQueue",qget=()=>{try{return JSON.parse(localStorage.getItem(QK)||"[]")}catch(e){return[]}};
 
@@ -530,7 +534,7 @@ async function osmBlock(host,p){
   const paint=()=>{const j=OSMG[p.key]||{items:[]},its=j.items.filter(i=>!q||(i.name+" "+i.group+" "+i.category).toLowerCase().includes(q.toLowerCase())),by={};its.forEach(i=>(by[i.group]=by[i.group]||[]).push(i));
     host.innerHTML=`<div class="bar"><select id="orad">${[100,300,500,1000].map(v=>`<option value="${v}" ${v===R?"selected":""}>within ${v} m</option>`).join("")}</select><input type="search" id="oq" placeholder="Filter these…" value="${esc(q)}"><button class="btn" id="orf">Refresh from OpenStreetMap</button><span class="sub">${its.length} places · ${esc(j.source||"")}${j.fetched?" · "+esc(String(j.fetched).slice(0,10)):""}</span></div>
      <div id="ol">${its.length?Object.keys(by).sort().map(g=>`<div class="og"><h3>${esc(by[g][0].emoji||"")} ${esc(g)} <span>${by[g].length}</span></h3>${by[g].map(i=>`<div class="oi"><span class="on">${esc(i.name)}</span><span class="sub">${esc(i.category&&i.category!==g?i.category:"")}</span><span class="od">${i.dist_m==null?"":n0(i.dist_m)+" m"}</span>${i.lat!=null?`<a href="https://www.openstreetmap.org/?mlat=${i.lat}&mlon=${i.lon}#map=19/${i.lat}/${i.lon}" target="_blank">map</a><a href="#" data-sv="${esc(i.name)}|${i.lat}|${i.lon}">save as place</a>`:""}</div>`).join("")}</div>`).join("")
-      :(j.error?`<div class="sub">${esc(j.error)}. This is the server being busy, not an empty street: press Refresh to try again.</div>`:'<div class="sub">Nothing found within this radius. Try a wider radius or Refresh.</div>')}</div>`;
+      :(j.error?errBox(j.error,"OpenStreetMap did not answer. This is the server being busy, not an empty street: press Refresh from OpenStreetMap to try again."):'<div class="sub">Nothing found within this radius. Try a wider radius or Refresh.</div>')}</div>`;
     $("#orad").onchange=e=>{R=+e.target.value;OSMG[p.key+"r"]=R;load(false)};$("#oq").oninput=e=>{q=e.target.value;const pos=e.target.selectionStart;paint();const o=$("#oq");o.focus();o.setSelectionRange(pos,pos)};$("#orf").onclick=()=>load(true);
     $$("[data-sv]",host).forEach(a=>a.onclick=ev=>{ev.preventDefault();const [name,la,lo]=a.dataset.sv.split("|");sessionStorage.setItem("placePrefill",JSON.stringify({name,lat:+la,lon:+lo,radius_m:100}));location.hash="#/place/"+encodeURIComponent("@"+(+la).toFixed(5)+","+(+lo).toFixed(5))})};
   load(false);
@@ -673,7 +677,7 @@ async function route(){
   badge();main.scrollTop=0;
   try{
     if(p==="drive")await pageDrive(arg);else if(p==="charge")await pageCharge(arg,arg2);else if(p==="idle"||p==="parked"&&arg)await pageParkedOne(arg);else if(p==="place")await pagePlace(arg);else await (ROUTES[p]||pageActivity)();
-  }catch(e){main.innerHTML=`<div class="empty">Something went wrong: ${esc(e.message)}</div>`}
+  }catch(e){main.innerHTML=errBox(e.stack||e.message,"Something went wrong")}
 }
 async function boot(){
   addEventListener("hashchange",route);
