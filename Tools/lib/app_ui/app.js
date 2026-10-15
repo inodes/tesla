@@ -427,24 +427,33 @@ let PL={tab:"saved",q:"",visited:false,net:"all",state:"all",view:"list"},SYNCPO
 // A map of the rows of the current Places tab (same filters as the list). Dots are small so they do not hide each other;
 // places you have used are solid, the rest faded. New Zealand is left out for now.
 function placesMap(host,rows,tab){
-  const COL={saved:"#3b6cf6",sc:"#e0201b",chargers:"#16a34a",found:"#f59e0b"}[tab]||"#3b6cf6";
+  const COL={saved:"#3b6cf6",sc:"#e0201b",chargers:"#16a34a",found:"#f59e0b"}[tab]||"#3b6cf6",byNet=tab==="chargers"||tab==="sc",ALIAS={"Tesla Supercharger":"Tesla","Evie Networks":"Evie"};
+  const netName=r=>{const n=r.network||(tab==="sc"?"Tesla":"Other");return ALIAS[n]||n};
+  const netCol=n=>{const c=cfg("map.network_colors")||{};if(c[n])return c[n];let h=0;for(const ch of n)h=(h*31+ch.charCodeAt(0))%360;return `hsl(${h},62%,42%)`};
   const used=r=>tab==="found"?true:tab==="saved"?(r.charges||r.idles||r.drives)>0:r.charges>0;
-  const feats=()=>rows.filter(r=>r.lat!=null&&r.lon!=null&&+r.lon<cfg("map.places_max_lon")).map(r=>({type:"Feature",geometry:{type:"Point",coordinates:[+r.lon,+r.lat]},properties:{u:used(r)?1:0,key:r.key,name:r.name||r.addr||"Unnamed stop",lat:+r.lat,lon:+r.lon,
+  const hidden=(PLM&&PLM.tab===tab&&PLM.hidden)||new Set();
+  const feats=()=>rows.filter(r=>r.lat!=null&&r.lon!=null&&+r.lon<cfg("map.places_max_lon")&&!(byNet&&hidden.has(netName(r)))).map(r=>({type:"Feature",geometry:{type:"Point",coordinates:[+r.lon,+r.lat]},properties:{u:used(r)?1:0,key:r.key,name:r.name||r.addr||"Unnamed stop",lat:+r.lat,lon:+r.lon,c:byNet?netCol(netName(r)):COL,
     sub:[r.network||(tab==="sc"?"Supercharger":tab==="saved"?"Saved place":tab==="found"?"Stop to review":""),r.addr||"",r.charges?r.charges+" charge"+(r.charges>1?"s":"")+" · "+n0(r.kwh,1)+" kWh":(tab==="found"?r.visits+" days there":"")].filter(Boolean).join(" · ")}})).sort((x,y)=>x.properties.u-y.properties.u);
-  if(PLM&&PLM.tab===tab&&PLM.el&&host.contains(PLM.el)){PLM.update(true,rows);return}
+  const legend=()=>{if(!byNet)return;const cnt={};rows.forEach(r=>{if(r.lat!=null&&+r.lon<cfg("map.places_max_lon"))cnt[netName(r)]=(cnt[netName(r)]||0)+1});
+    $("#nl").innerHTML=Object.entries(cnt).sort((a,b)=>b[1]-a[1]).map(([n,c])=>`<button class="chip nw${hidden.has(n)?" off":""}" data-nw="${esc(n)}" title="Show / hide ${esc(n)}"><i style="display:inline-block;width:10px;height:10px;border-radius:50%;background:${netCol(n)};margin-right:6px"></i>${esc(n)} <b>${n0(c)}</b></button>`).join("");
+    $$("[data-nw]",host).forEach(b=>b.onclick=()=>{const n=b.dataset.nw;hidden.has(n)?hidden.delete(n):hidden.add(n);PLM.hidden=hidden;PLM.update(false);legend()})};
+  if(PLM&&PLM.tab===tab&&PLM.el&&host.contains(PLM.el)){PLM.update(true,rows);legend();return}
   if(PLM){try{PLM.m.remove()}catch(e){}PLM=null}
   if(!window.maplibregl){host.innerHTML='<div class="empty">Map library not loaded (offline?).</div>';return}
-  host.innerHTML='<div class="sub" style="margin-bottom:6px">Solid dot = used, faded = not used. Click a dot for details.</div><div class="map big" id="pm"></div>';
+  host.innerHTML=`<div class="sub" style="margin-bottom:6px">Solid dot = used, faded = not used. Dots grow and get names as you zoom in. Click a dot for details.</div>${byNet?'<div class="bar" id="nl"></div>':""}<div class="map big" id="pm"></div>`;
   const el=$("#pm"),dark=matchMedia("(prefers-color-scheme: dark)").matches,m=new maplibregl.Map({container:el,style:MAPSTYLE(dark),center:[151.2,-33.8],zoom:8,attributionControl:{compact:true}});
   m.addControl(new maplibregl.NavigationControl({showCompass:false}),"top-right");
   let ready=false,first=true;
   const update=(refit,rs)=>{if(rs)rows=rs;const F=feats();$("#cnt").textContent=F.length+" on the map";if(!ready)return;m.getSource("pl").setData({type:"FeatureCollection",features:F});
     if((refit||first)&&F.length){first=false;const b=new maplibregl.LngLatBounds();F.forEach(f=>b.extend(f.geometry.coordinates));m.fitBounds(b,{padding:50,maxZoom:13,duration:400})}};
-  PLM={m,el,update,tab};
+  PLM={m,el,update,tab,hidden};legend();
   m.on("load",()=>{ready=true;m.addSource("pl",{type:"geojson",data:{type:"FeatureCollection",features:[]}});
-    m.addLayer({id:"pl",type:"circle",source:"pl",layout:{"circle-sort-key":["get","u"]},paint:{"circle-color":COL,"circle-radius":["interpolate",["linear"],["zoom"],3,2,8,3.5,12,5.5,15,8],"circle-opacity":["case",["==",["get","u"],1],0.95,0.4],"circle-stroke-width":0.75,"circle-stroke-color":"#fff"}});
+    // the dot grows with the zoom, so it stays as easy to see against the detailed street map as against the plain country map
+    const R=["interpolate",["linear"],["zoom"],...[[3,2.5],[8,4],[12,7],[15,10],[18,13]].flatMap(([z,r])=>[z,["case",["==",["get","u"],1],r*1.35,r]])];
+    m.addLayer({id:"pl",type:"circle",source:"pl",layout:{"circle-sort-key":["get","u"]},paint:{"circle-color":["get","c"],"circle-radius":R,"circle-opacity":["case",["==",["get","u"],1],1,0.7],"circle-stroke-width":["interpolate",["linear"],["zoom"],3,0.75,12,1.5,16,2.5],"circle-stroke-color":dark?"#111":"#fff"}});
+    m.addLayer({id:"pl-name",type:"symbol",source:"pl",minzoom:12.5,layout:{"text-field":["get","name"],"text-font":["Noto Sans Regular"],"text-size":12,"text-anchor":"top","text-offset":[0,1.1],"text-optional":true,"text-max-width":9},paint:{"text-color":dark?"#e5e7eb":"#1f2937","text-halo-color":dark?"#111":"#fff","text-halo-width":1.5}});
     m.on("mouseenter","pl",()=>m.getCanvas().style.cursor="pointer");m.on("mouseleave","pl",()=>m.getCanvas().style.cursor="");
-    m.on("click","pl",e=>{const p=e.features[0].properties;new maplibregl.Popup({offset:8,maxWidth:"300px"}).setLngLat(e.features[0].geometry.coordinates).setHTML(`<div style="font:13px system-ui;color:#111"><b>${esc(p.name)}</b><div style="color:#555;margin:3px 0 6px">${esc(p.sub)}</div><a href="#/place/${encodeURIComponent(p.key)}">Open place</a><div style="margin-top:6px;font-size:12px">${mapLinks(p.lat,p.lon,p.name)}</div></div>`).addTo(m)});
+    m.on("click","pl",e=>{const p=e.features[0].properties;new maplibregl.Popup({offset:10,maxWidth:"300px"}).setLngLat(e.features[0].geometry.coordinates).setHTML(`<div style="font:13px system-ui;color:#111"><b>${esc(p.name)}</b><div style="color:#555;margin:3px 0 6px">${esc(p.sub)}</div><a href="#/place/${encodeURIComponent(p.key)}">Open place</a><div style="margin-top:6px;font-size:12px">${mapLinks(p.lat,p.lon,p.name)}</div></div>`).addTo(m)});
     update(true)});
   update(false);
 }
