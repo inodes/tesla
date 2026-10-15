@@ -36,7 +36,10 @@ Steps run, in order:
      (sync_api_tessie.py --drives --yes)
   2. Drive deep-dive telemetry backfill
      (sync_api_tessie.py --backfill-deepdive --drives --limit 0)
-  3. Battery health (vehicle-wide, not drives-specific - lives here since
+  3. Drive summary pages - drive.html in each drives/deepdive/<stamp>/ folder
+     (+ clips/ when TeslaCam footage overlaps) and deepdive/index.html
+     (drive_report.py; only new or changed drives are rebuilt)
+  4. Battery health (vehicle-wide, not drives-specific - lives here since
      this runs regularly)
      (sync_api_tessie.py --battery-health)
 EOF
@@ -49,6 +52,10 @@ echo "==> Tessie drives (fetch + consolidate)"
 echo
 echo "==> Drive deep-dive telemetry backfill"
 ./sync_api_tessie.py --backfill-deepdive --drives --limit 0
+
+echo
+echo "==> Drive summary pages (one drive.html per drive folder; picks up new footage)"
+./drive_report.py
 
 echo
 echo "==> Battery health (vehicle-wide, not drives-specific - lives here since this runs regularly)"

@@ -39,6 +39,7 @@ PURGE_TARGET_PCT=""
 PURGE_TARGET_DRIVE=""
 DRY_RUN=0
 ASSUME_YES=0
+SYNC_FAILURES=0
 FORCE_MODE=0
 TOMBSTONE_MODE=0
 TOMBSTONE_PURGE_MODE=0
@@ -315,67 +316,123 @@ while [[ $# -gt 0 ]]; do
       shift
       ;;
     --help|-h)
-      cat << 'HELP_EOF'
-Usage: sync_dashcam.sh [options]
+      # Man-page layout (AGENTS.md 3.3): bold = type as shown,
+      # underline = replace with your value. Plain text when not a terminal.
+      if [[ -t 1 ]]; then B=$'\033[1m'; U=$'\033[4m'; R=$'\033[0m'; else B=""; U=""; R=""; fi
+      cat << HELP_EOF
+${B}NAME${R}
+       sync_dashcam.sh - back up TeslaCam footage from the Tesla USB and JOWUA to the Archive
 
-Note on Execution & Drive Discovery:
-  sync_dashcam.sh can be run from any directory.
-  By default, it automatically discovers connected Tesla USBs, SSDs, and Archive
-  drives mounted under /Volumes.
+${B}SYNOPSIS${R}
+       ${B}sync_dashcam.sh${R} [${B}-n${R}] [${B}-y${R}] [${B}-src${R} ${U}path${R}] [${B}-ls${R} ${U}dir${R}]
+       ${B}sync_dashcam.sh${R} ${B}-s${R} | ${B}-t${R} | ${B}-tf${R}
+       ${B}sync_dashcam.sh${R} ${B}-p${R} | ${B}-pf${R}
+       ${B}sync_dashcam.sh${R} ${B}-pr${R} [${U}days${R}] | ${B}--purge-all-recent${R} | ${B}-pd${R} ${U}days${R} | ${B}-pt${R} ${U}pct${R} [${B}-tgt${R} ${U}drive${R}] [${B}-n${R}] [${B}-y${R}]
+       ${B}sync_dashcam.sh${R} ${B}-phr${R} [${U}days${R}] [${B}-n${R}] [${B}-y${R}]
+       ${B}sync_dashcam.sh${R} ${B}--tombstones${R} | ${B}--purge-tombstones${R}
+       ${B}sync_dashcam.sh${R} ${B}--check-deps${R} | ${B}--install-tools${R} | ${B}-h${R}
 
-Installation & Drive Sync:
-  --install-tools            Copy/update this script into <Drive>/Tools on each connected volume
+${B}DESCRIPTION${R}
+       With no options, copies new footage from the Tesla USB to the JOWUA and
+       both to the Archive, then removes RecentClips older than 2 days from the
+       Tesla USB once they are on the Archive. Drives under /Volumes are found
+       automatically.
 
-Status & Summary:
-  -s,  --status, --summary   Show structured storage table with % of drive & archive status
-  -t,  --timeline            Show storage table + daily grouped timeline (YYYY-MM-DD)
-  -tf, --timeline-full       Show storage table + full expanded events under each day
+       Except with ${B}-pf${R} and ${B}-phr${R}, footage is only deleted from the USB or
+       JOWUA after it is on the Archive, and never while the Archive is
+       disconnected. If the Archive is too full
+       for a copy, the oldest Archive RecentClips needed to make room are listed
+       and deleted only if you confirm. Saved and Sentry clips are never deleted
+       this way.
 
-Optional Source & Archive Target Overrides:
-  -ls, --localsync <DIR>     Sync footage to a local folder or NAS directory (e.g. ~/TeslaArchive)
-  -src,--source <PATH|DRIVE> Explicitly specify source path containing 'TeslaCam' (e.g. /Volumes/USB)
+${B}OPTIONS${R}
+       ${B}-s${R}, ${B}--status${R}
+              Show storage use for each drive.
 
-Interactive Purge:
-  -p,  --purge               Launch interactive purge wizard (select drive & rate interactively)
-  -pf, --force-purge         Launch interactive FORCE purge (delete without archive verification)
+       ${B}-t${R}, ${B}--timeline${R}
+              Show storage use and a day-by-day timeline.
 
-CLI Purge Controls (Default: Requires Archive Drive/Folder Connected):
-  -pr, --purge-recent [DAYS] Purge verified RecentClips older than DAYS (default: 2 days)
-       --purge-all-recent    Purge ALL verified RecentClips from recording drive
-  -pd, --purge-days <DAYS>   Purge verified footage across all folders older than DAYS
-  -pt, --purge-to <PCT>      Purge oldest verified RecentClips until drive reaches PCT% full
-  -tgt,--target <drive>      Specify target drive (jowua, usb, or 2tb)
-  -n,  --dry-run             Simulate purge and report reclaimable space without deleting
-  -y,  --yes                 Skip standard confirmation prompts
+       ${B}-tf${R}, ${B}--timeline-full${R}
+              Show storage use and every event.
 
-Home + Recent Purge (RecentClips (cap) parked-at-Home only - NOT all Home, NOT all Recent):
-  -phr,--purge-home-recent [DAYS]
-                             Purge RecentClips footage recorded while parked at Home, across
-                             the Master Archive AND every other connected drive at once
-                             (ignores --target - always all connected drives, since this is a
-                             flag/tombstone-tracked deletion, not a per-drive verified-copy
-                             check like the CLI Purge Controls above). Optional DAYS restricts
-                             to packages from more than DAYS ago (default: all ages found).
-                             Requires Tessie sync configured (GPS + places.json - this is how
-                             "parked at Home" is determined at all); silently does nothing
-                             otherwise. Respects -n/--dry-run and -y/--yes above.
+       ${B}-src${R}, ${B}--source${R} ${U}path${R}
+              Copy from ${U}path${R} instead of the Tesla USB.
 
-Tombstone Registry & Multi-Volume Deletion:
-  --tombstones               List all permanently deleted dashcam events/clips in registry
-  --purge-tombstones         Purge tombstoned clips across connected drives (or clear registry)
+       ${B}-ls${R}, ${B}--localsync${R} ${U}dir${R}
+              Use the folder ${U}dir${R} as the Archive.
 
-System Diagnostics:
-  --check-deps, --doctor     Audit all tool dependencies, versions, and installation guide
+       ${B}-p${R}, ${B}--purge${R}
+              Choose a drive and amount to free, interactively.
 
-Sync & Backup (No flags):
-  Performs pre-sync tombstone reconciliation across drives, complete multi-drive backup sync
-  to archive SSD (or --localsync directory), and verified RecentClips retention prune (2 days on USB).
-  No footage is purged from JOWUA or Archive SSD unless explicitly requested.
-  Before each sync leg starts, free space on the destination is checked against the actual
-  rsync --dry-run payload estimate (+1GB headroom). If there isn't enough room, that leg is
-  skipped with a warning (pointing at --purge-home-recent to reclaim space) instead of starting
-  a transfer that would stall or fail partway through. Auto-skipped with no prompt when
-  unattended (-y/--yes or no TTY); prompted for override when run interactively.
+       ${B}-pf${R}, ${B}--force-purge${R}
+              As ${B}-p${R}, but without checking the Archive has a copy.
+
+       ${B}-pr${R}, ${B}--purge-recent${R} [${U}days${R}]
+              Delete RecentClips older than ${U}days${R} (default 2).
+
+       ${B}--purge-all-recent${R}
+              Delete all RecentClips.
+
+       ${B}-pd${R}, ${B}--purge-days${R} ${U}days${R}
+              Delete all footage older than ${U}days${R}.
+
+       ${B}-pt${R}, ${B}--purge-to${R} ${U}pct${R}
+              Delete the oldest RecentClips until the drive is ${U}pct${R}% full.
+
+       ${B}-tgt${R}, ${B}--target${R} ${U}drive${R}
+              Drive to purge: ${B}usb${R}, ${B}jowua${R} or ${B}2tb${R}. ${B}2tb${R} asks you to type FORCE.
+
+       ${B}-phr${R}, ${B}--purge-home-recent${R} [${U}days${R}]
+              Delete RecentClips recorded while parked at Home from every
+              connected drive (only those older than ${U}days${R}, if given), then
+              offer to sync.
+
+       ${B}--tombstones${R}
+              List footage already deleted from the Archive.
+
+       ${B}--purge-tombstones${R}
+              Delete that footage from the other connected drives.
+
+       ${B}-n${R}, ${B}--dry-run${R}
+              Show what would be deleted; change nothing.
+
+       ${B}-y${R}, ${B}--yes${R}
+              Don't ask for confirmation.
+
+       ${B}--check-deps${R}
+              Check the required tools are installed.
+
+       ${B}--install-tools${R}
+              Copy this script to each connected drive.
+
+       ${B}-h${R}, ${B}--help${R}
+              Show this help.
+
+${B}EXIT STATUS${R}
+       ${B}0${R}      Success.
+       ${B}1${R}      An error, or a copy that failed or was skipped.
+
+${B}ENVIRONMENT${R}
+       ${B}TMPDIR${R}  Where temporary helper scripts are written (default /tmp).
+
+${B}FILES${R}
+       /tmp/teslacam_sync/rsync.log
+              Log of the last copy.
+       ${U}Archive${R}/.TeslaCam_tombstones.json
+              Footage deleted from the Archive.
+       ${U}drive${R}/.TeslaCam_catalog.json
+              Index of each drive's footage.
+
+${B}EXAMPLES${R}
+       Back up everything:
+              ${B}sync_dashcam.sh${R}
+       See what a purge would delete:
+              ${B}sync_dashcam.sh -pr 7 -tgt jowua -n${R}
+       Remove Home footage, then back up:
+              ${B}sync_dashcam.sh -phr${R}
+
+${B}SEE ALSO${R}
+       analyse_drives.py, sync_drives_all.sh
 HELP_EOF
       exit 0
       ;;
@@ -924,6 +981,13 @@ if scope == "capacity":
         bytes_to_free = max(0, used_b - target_used_b)
     except Exception:
         bytes_to_free = 0
+    # 2026-09-30 review: with nothing to free (already at/below target, or
+    # the drive size couldn't be read) the "stop once enough is freed"
+    # check never fired, so EVERY clip was listed for deletion. Already
+    # below target = nothing to do, for every drive and mode.
+    if bytes_to_free <= 0:
+        print("0|0.00|0|below_threshold")
+        sys.exit(0)
 else:
     days = int(param)
     if days > 0:
@@ -1080,6 +1144,8 @@ if scope == "capacity":
         bytes_to_free = max(0, used_b - target_used_b)
     except Exception:
         bytes_to_free = 0
+    if bytes_to_free <= 0:
+        sys.exit(0)  # never delete in capacity mode without a real amount to free
 else:
     days = int(param)
     if days > 0:
@@ -1466,14 +1532,17 @@ else:
         p_str = ", ".join(d.replace("VOL_", "") for d in sorted(all_pending)) if all_pending else "None"
         print(f">>> No connected secondary drives have pending files to purge.")
         print(f"    ({len(tombs)} active tombstone(s) pending for disconnected drive(s): {p_str})")
-        if force_clear:
-            if not dry_run:
-                data["tombstones"] = {}
-                save_tombstones(data, master_dir)
-                print(f"✔ Cleared and retired {len(tombs)} active tombstone(s) from Master Archive.")
-            else:
-                print(f">>> [DRY-RUN] Would clear/retire {len(tombs)} active tombstone(s) from Master Archive.")
-        elif sys.stdin.isatty() and not dry_run:
+        # 2026-09-30 review (A4): -y used to be passed in as force_clear and
+        # silently answered this default-No question with "yes", wiping every
+        # tombstone still pending for a DISCONNECTED drive. The rsync exclude
+        # list then emptied and the next JOWUA -> Archive sync copied the
+        # deleted clips back (including Archive make-room deletions). Pending
+        # tombstones are now only ever retired by actually scrubbing each
+        # drive; clearing them by hand is the interactive, default-No
+        # question in `sync_dashcam.sh --tombstones`.
+        if force_clear and not dry_run:
+            print("    (-y never clears pending tombstones - they stay until each drive is connected and scrubbed.)")
+        if sys.stdin.isatty() and not dry_run:
             try:
                 ans = input(f"Would you like to clear/retire these {len(tombs)} tombstone(s) from Master Archive now? [y/N]: ").strip().lower()
                 if ans in ("y", "yes"):
@@ -1534,8 +1603,36 @@ if not tombs:
 
 tot_b = sum(v.get("est_bytes", 0) for v in tombs.values())
 tot_files = sum(v.get("files_count", len(v.get("files", []))) for v in tombs.values())
-mb = tot_b / (1024 * 1024)
-sz_str = f"{mb/1024:.1f} GB" if mb >= 1024 else f"{mb:.0f} MB"
+def _sz(b):
+    if not b:
+        return "size not recorded"
+    mb = b / (1024 * 1024)
+    return f"~{mb/1024:.1f} GB" if mb >= 1024 else f"~{mb:.0f} MB"
+sz_str = _sz(tot_b)
+
+# 2026-09-30 (user: "could literally feel like saved and sentry are
+# included"): break the summary down by footage type, always listing all
+# three so an explicit 0 shows what is NOT affected.
+from collections import Counter as _Counter
+breakdown = {c: {"pkgs": 0, "files": 0, "bytes": 0, "dates": [], "reasons": _Counter()}
+             for c in ("RecentClips", "SavedClips", "SentryClips")}
+for k, v in tombs.items():
+    cat = k.split("/")[0]
+    b = breakdown.setdefault(cat, {"pkgs": 0, "files": 0, "bytes": 0, "dates": [], "reasons": _Counter()})
+    b["pkgs"] += 1
+    b["files"] += v.get("files_count", len(v.get("files", [])))
+    b["bytes"] += v.get("est_bytes", 0) or 0
+    b["dates"] += [f[:10] for f in v.get("files", []) if f[:4].isdigit()] or [k.split("/")[-1][:10]]
+    b["reasons"][v.get("reason", "deleted")] += 1
+detail_lines = []
+for cat, b in breakdown.items():
+    if not b["files"]:
+        detail_lines.append(f"      {cat:<12} {0:>7,} files   (none)")
+        continue
+    ds = sorted(d for d in b["dates"] if d[:4].isdigit())
+    span = f"{ds[0]} to {ds[-1]}" if ds else "dates unknown"
+    why = "; ".join(r for r, _ in b["reasons"].most_common(3))
+    detail_lines.append(f"      {cat:<12} {b['files']:>7,} files   {_sz(b['bytes']):<18} {span}   ({why})")
 
 connected_pending_drives = set()
 for d in drive_dirs:
@@ -1553,6 +1650,9 @@ p_str = ", ".join(d.replace("VOL_", "") for d in sorted(all_pending)) if all_pen
 
 conn_count = len(connected_pending_drives)
 print(f"{len(tombs)}|{tot_files}|{sz_str}|{conn_count}|{p_str}")
+for line in detail_lines:
+    print(line)
+print(f"      Still to clean from: {p_str}")
 PY_EOF
 )
 
@@ -1561,11 +1661,14 @@ PY_EOF
   fi
 
   local f_pkgs f_files f_sz f_conn f_pstr
-  IFS='|' read -r f_pkgs f_files f_sz f_conn f_pstr <<< "$flag_info"
+  local f_summary="${flag_info%%$'\n'*}"
+  local f_details=""
+  [[ "$flag_info" == *$'\n'* ]] && f_details="${flag_info#*$'\n'}"
+  IFS='|' read -r f_pkgs f_files f_sz f_conn f_pstr <<< "$f_summary"
 
   if [[ "$f_conn" -gt 0 ]]; then
-    echo ">>> Active Tombstones Detected (${f_pkgs} packages, ${f_files} files, ~${f_sz}):"
-    echo "    Deleted on Master Archive — pending cleanup from connected secondary drive(s)."
+    echo ">>> Footage already deleted from the Master Archive, still on connected drive(s) (${f_pkgs} packages, ${f_files} files, ${f_sz}):"
+    [[ -n "$f_details" ]] && echo "$f_details"
     echo ""
 
  # If assume-yes or tombstone-purge flag set
@@ -1577,7 +1680,7 @@ PY_EOF
  # Interactive prompt
     if [[ -t 0 && "$DRY_RUN" -eq 0 ]]; then
       local reply
-      printf "Would you like to scrub these deleted files now from connected secondary drive(s)? [Y/n]: "
+      printf "Delete these same files from the connected secondary drive(s) now? [Y/n]: "
       read -r reply
       echo ""
       if [[ -z "$reply" || "$reply" =~ ^[Yy]([Ee][Ss])?$ ]]; then
@@ -1590,7 +1693,8 @@ PY_EOF
       reconcile_tombstones_on_drives "$DRY_RUN" "$ASSUME_YES" "${drives[@]}"
     fi
   else
-    echo ">>> Active Tombstones: ${f_pkgs} packages (~${f_sz}). Rsync exclusion active (pending cleanup on ${f_pstr} when connected)."
+    echo ">>> Footage deleted from the Master Archive: ${f_pkgs} packages (${f_sz}) - kept from syncing back; cleanup pending on ${f_pstr} when connected."
+    [[ -n "$f_details" ]] && echo "$f_details"
   fi
 }
 
@@ -1648,7 +1752,7 @@ sys.path.insert(0, script_dir)
 
 try:
     from analyse_drives import (
-        TessieAnalyzer,
+        DriveAnalyzer,
         purge_home_recent_cli,
         resolve_master_teslacam_dir,
         export_tombstone_rsync_excludes,
@@ -1687,7 +1791,7 @@ if not _tessie_is_configured():
     sys.exit(0)
 
 print(">>> Checking for Home + Recent footage (RecentClips parked at Home)...")
-analyzer = TessieAnalyzer(teslacam_dirs=drive_dirs)
+analyzer = DriveAnalyzer(teslacam_dirs=drive_dirs)
 purge_home_recent_cli(analyzer, yes=assume_yes)
 
 # Belt-and-braces: refresh the rsync exclude file too, so a tombstone
@@ -1754,7 +1858,7 @@ sys.path.insert(0, script_dir)
 
 try:
     from analyse_drives import (
-        TessieAnalyzer,
+        DriveAnalyzer,
         find_home_recent_footage_packages,
         purge_home_recent_cli,
         resolve_master_teslacam_dir,
@@ -1786,7 +1890,7 @@ def _tessie_is_configured():
 if not _tessie_is_configured():
     sys.exit(0)
 
-analyzer = TessieAnalyzer(teslacam_dirs=drive_dirs)
+analyzer = DriveAnalyzer(teslacam_dirs=drive_dirs)
 analyzer.index_footage()
 
 cutoff = date.today() - timedelta(days=safety_days)
@@ -1850,7 +1954,7 @@ drive_dirs = [d for d in sys.argv[5:] if d and d != "none" and os.path.isdir(d)]
 sys.path.insert(0, script_dir)
 
 try:
-    from analyse_drives import TessieAnalyzer, purge_home_recent_cli
+    from analyse_drives import DriveAnalyzer, purge_home_recent_cli
 except ImportError:
     print("ERROR: could not import analyse_drives.py - is this script still beside it in Tools/?")
     sys.exit(1)
@@ -1873,7 +1977,7 @@ if not configured:
     print("       is how \"parked at Home\" is determined at all) - nothing to purge without it.")
     sys.exit(1)
 
-analyzer = TessieAnalyzer(teslacam_dirs=drive_dirs)
+analyzer = DriveAnalyzer(teslacam_dirs=drive_dirs)
 analyzer.index_footage()
 
 target_dates = None
@@ -1926,7 +2030,31 @@ if [[ "$HOME_RECENT_PURGE_MODE" -eq 1 ]]; then
     echo "Home + Recent purge complete."
   fi
   echo "======================================================"
-  exit $rc
+
+  # Chain straight into the standard sync once the purge has freed space
+  # (user: "This should choose to sync after the purge is done") - the
+  # usual reason to run -phr at all is that a sync leg was about to be
+  # skipped for lack of room. Only chains on a real (non-dry-run),
+  # successful purge with no other exclusive mode requested; the sync's
+  # own per-leg free-space pre-flight still runs, so if the purge didn't
+  # free enough on the DESTINATION, that leg still warns/skips as usual.
+  if (( rc != 0 )) || [[ "$DRY_RUN" -eq 1 || -n "$PURGE_MODE" || "$STATUS_MODE" -eq 1 ]]; then
+    exit $rc
+  fi
+  if [[ "$ASSUME_YES" -ne 1 && -t 0 ]]; then
+    echo ""
+    printf " Continue with the multi-drive sync now? [Y/n]: "
+    read -r phr_continue_sync
+    case "$(echo "$phr_continue_sync" | tr '[:upper:]' '[:lower:]')" in
+      ""|y|yes) ;;
+      *)
+        echo " Sync skipped - run $(basename "$SCRIPT_PATH") with no flags when ready."
+        exit 0
+        ;;
+    esac
+  fi
+  echo ""
+  # Fall through to the standard sync workflow below.
 fi
 
 # ==============================================================================
@@ -2065,14 +2193,72 @@ fi
 # ==============================================================================
 # HELPER: DYNAMIC CUSTOM PROGRESS MONITOR
 # ==============================================================================
+# Archive full (2026-09-30, user chose "oldest RecentClips, just enough"):
+# preview the Archive's oldest RecentClips that would cover a sync leg's
+# shortfall and delete them only after an explicit "y". Saved/Sentry and any
+# RecentClip within 10 min of an event are never touched; deleted minutes are
+# tombstoned so rsync can't copy them back. Returns 0 only if space was freed.
+# Programs holding lots of files open on a drive. On exFAT a deleted file's
+# space isn't released while anything still has it open - on 2026-09-30 the
+# Claude desktop workspace (shown as "com.apple...") had 94,148 Archive files
+# open, so deleting ~248 GB freed nothing until Claude was quit (BUG-170).
+drive_open_file_holders() {
+  local vol="$1"
+  command -v lsof >/dev/null 2>&1 || return 0
+  lsof "$vol" 2>/dev/null | awk 'NR>1 && $1 != "mds" {c[$1]++} END {for (k in c) if (c[k] > 50) printf "%s (%d files open)\n", k, c[k]}'
+}
+
+make_room_on_archive_cli() {
+  local dst="$1"; local need_bytes="$2"; shift 2
+  local script_dir="$(cd "$(dirname "$SCRIPT_PATH")" && pwd)"
+  local holders
+  holders="$(drive_open_file_holders "$dst")"
+  if [[ -n "$holders" ]]; then
+    echo "    ⚠ Not deleting anything: another program has many files open on the Archive,"
+    echo "      so deleted clips wouldn't free space until it lets go of them:"
+    echo "$holders" | sed 's/^/        /'
+    echo "      (\"com.apple...\" is usually the Claude desktop app's workspace - quit Claude, then re-run.)"
+    return 2
+  fi
+  local tmp_py
+  tmp_py="$(mktemp "${TMPDIR:-/tmp}/dashcam_archive_room.XXXXXX.py")" || return 1
+  cat > "$tmp_py" << 'PY_EOF'
+import os
+import sys
+script_dir, dst, need = sys.argv[1], sys.argv[2], int(sys.argv[3])
+secondaries = [d for d in sys.argv[4:] if d and d != "none" and os.path.isdir(d)]
+sys.path.insert(0, script_dir)
+try:
+    from analyse_drives import resolve_master_teslacam_dir, make_room_on_archive
+except ImportError:
+    sys.exit(1)
+master = resolve_master_teslacam_dir([dst])
+if not master:
+    print("    This destination isn't a recognised Master Archive - nothing deleted.")
+    sys.exit(1)
+freed = make_room_on_archive(master, need, secondaries, "/tmp/teslacam_sync/tombstones_exclude.txt")
+# 0 = space gained, 1 = nothing deleted, 2 = deleted but the space wasn't released
+sys.exit(0 if freed > 0 else (2 if freed < 0 else 1))
+PY_EOF
+  python3 "$tmp_py" "$script_dir" "$dst" "$need_bytes" "$@"
+  local rc=$?
+  rm -f "$tmp_py"
+  return $rc
+}
+
 sync_volumes() {
   local src="$1"
   local dst="$2"
   local label="$3"
+  local room_already_offered="${4:-0}"
 
   echo ">>> Starting sync: $label"
   echo "    Source: $src/TeslaCam/"
   echo "    Target: $dst/TeslaCam/"
+
+  # Remove rsync temp files left by an earlier interrupted/failed run
+  # (".<clip>.mp4.XXXXXX" - rsync's own naming); they only waste space.
+  find "$dst/TeslaCam" -maxdepth 2 -type f -name '.20??-??-??_*.mp4.??????' -delete 2>/dev/null
 
   local tombstone_exclude_file="/tmp/teslacam_sync/tombstones_exclude.txt"
   local extra_rsync_opts=()
@@ -2130,15 +2316,35 @@ sync_volumes() {
     echo "        Payload     : ${to_transfer_gb} GB"
     echo "        Free space  : ${avail_dst_gb} GB"
     echo "        Shortfall   : ~${shortfall_gb} GB short (incl. 1GB safety headroom)"
-    echo "        Tip: free space first with:  $(basename "$0") --purge-home-recent"
+    echo "        Tip: free space first with:  $(basename "$SCRIPT_PATH") --purge-home-recent"
     if [[ "$ASSUME_YES" -eq 1 || ! -t 0 ]]; then
       echo "    Skipping this sync leg (unattended - no confirmation possible)."
+      SYNC_FAILURES=$(( SYNC_FAILURES + 1 ))
       return 1
+    fi
+ # Archive destination: offer to make room from its oldest RecentClips
+ # (once per leg), then re-check the payload and free space from scratch.
+    if [[ "$DRY_RUN" -eq 0 && "$room_already_offered" -eq 0 && -n "$dst" && \
+          ( "$dst" == "$VOL_2TB" || "$dst" == "$LOCAL_SYNC_DIR" ) ]]; then
+      # +2 GB beyond the shortfall: file-system overhead means the payload
+      # takes a little more room on the Archive than rsync's estimate.
+      make_room_on_archive_cli "$dst" "$(( shortfall_kb * 1024 + 2147483648 ))" "$VOL_TESLA_USB" "$VOL_JOWUA"
+      local room_rc=$?
+      if (( room_rc == 0 )); then
+        echo ""
+        sync_volumes "$src" "$dst" "$label" 1
+        return $?
+      elif (( room_rc == 2 )); then
+        echo "    Skipping this sync leg - the Archive has no usable free space yet."
+        SYNC_FAILURES=$(( SYNC_FAILURES + 1 ))
+        return 1
+      fi
     fi
     printf "    Continue anyway and risk filling the drive mid-transfer? [y/N]: "
     read -r space_confirm
     if [[ "$space_confirm" != [yY] && "$space_confirm" != [yY][eE][sS] ]]; then
       echo "    Skipping this sync leg."
+      SYNC_FAILURES=$(( SYNC_FAILURES + 1 ))
       return 1
     fi
     echo "    Proceeding at user's request despite low free space."
@@ -2216,7 +2422,17 @@ sync_volumes() {
       printf "\r\033[K    Transfer: 100.0%% (0.00 GB transferred) | Up-to-date.\n"
     fi
   else
-    printf "\r\033[K    Transfer encountered an issue. Check %s\n" "$LOG_FILE"
+    # 2026-09-30 review (A8): this used to be a quiet note and the run still
+    # ended with "All operations completed successfully".
+    printf "\r\033[K    ✖ Transfer FAILED (rsync exit %s) - %s is NOT fully synced.\n" "$exit_code" "$dst"
+    local rsync_err=$(grep -m1 -E "No space left|Permission denied|error" "$LOG_FILE" 2>/dev/null)
+    [[ -n "$rsync_err" ]] && echo "      $rsync_err"
+    if grep -q "No space left" "$LOG_FILE" 2>/dev/null; then
+      echo "      The destination filled up. Free space on it, then run the sync again."
+    fi
+    find "$dst/TeslaCam" -maxdepth 2 -type f -name '.20??-??-??_*.mp4.??????' -delete 2>/dev/null
+    SYNC_FAILURES=$(( SYNC_FAILURES + 1 ))
+    return 1
   fi
 }
 
@@ -2309,5 +2525,10 @@ fi
 
 echo ""
 echo "======================================================"
+if (( SYNC_FAILURES > 0 )); then
+  echo "⚠ ${SYNC_FAILURES} sync leg(s) did not complete - see the messages above."
+  echo "======================================================"
+  exit 1
+fi
 echo "All operations completed successfully."
 echo "======================================================"

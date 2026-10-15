@@ -20,7 +20,7 @@ Design (per the user's own TODO-031 writeup):
 
 Method
 ------
-Reuses TessieAnalyzer (analyse_drives.py) for all the real-data
+Reuses DriveAnalyzer (analyse_drives.py) for all the real-data
 plumbing already proven by REQ-036/037 and TODO-026:
   - load_drives() / load_detailed_drives() to find every drive and every
     local drive_deepdive_*.csv.
@@ -88,7 +88,7 @@ look in a spreadsheet) into the resolved Tessie data home - same
 itself (AGENTS.md Section 1): this is an AGGREGATE, no addresses/
 coordinates/per-trip rows, but it's still real personal driving data
 and stays out of the git tree on principle, resolved via
-TessieAnalyzer's own tessie_data_home (never hardcoded beside this
+DriveAnalyzer's own tessie_data_home (never hardcoded beside this
 script).
 """
 import os
@@ -100,7 +100,7 @@ import statistics
 from datetime import datetime
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from analyse_drives import TessieAnalyzer  # noqa: E402
+from analyse_drives import DriveAnalyzer  # noqa: E402
 from lib.tessie_api_common import load_vehicle_spec, load_config, get_vin  # noqa: E402
 
 # (lo, hi) km/h, half-open [lo, hi) except the last bucket.
@@ -303,11 +303,16 @@ def _parse_battery_health_csv(path):
     try:
         with open(path, "r", encoding="utf-8-sig") as f:
             reader = csv.DictReader(f)
-            if not _BATTERY_CSV_REQUIRED_COLUMNS.issubset(set(reader.fieldnames or [])):
+            _cols = set(reader.fieldnames or [])
+            # BUG-176: the exporter's zone label flips AEST<->AEDT with daylight saving
+            _ts_col = next((c for c in (reader.fieldnames or []) if c and c.startswith("Timestamp (A")), None)
+            if _ts_col:
+                _cols.add("Timestamp (AEST)")
+            if not _BATTERY_CSV_REQUIRED_COLUMNS.issubset(_cols):
                 return []
             entries = []
             for r in reader:
-                ts_raw = (r.get("Timestamp (AEST)") or "").strip()
+                ts_raw = (r.get(_ts_col) or r.get("Timestamp (AEST)") or "").strip()
                 if not ts_raw:
                     continue
                 try:
@@ -458,7 +463,7 @@ def _bucket_row_from_segments(segs, capacity_kwh, efficiency_key):
 
 
 def build_profile(tessie_dir=None, vehicle_mass_kg=None):
-    analyzer = TessieAnalyzer(tessie_dir=tessie_dir)
+    analyzer = DriveAnalyzer(tessie_dir=tessie_dir)
     drives = analyzer.load_drives()
     analyzer.load_detailed_drives()
 
@@ -783,7 +788,7 @@ EXAMPLES
                               "neither is set)")
     args = parser.parse_args()
 
-    analyzer_probe = TessieAnalyzer(tessie_dir=args.tessie_dir)
+    analyzer_probe = DriveAnalyzer(tessie_dir=args.tessie_dir)
     out_dir = args.out_dir or analyzer_probe.tessie_data_home or "."
 
     profile = build_profile(tessie_dir=args.tessie_dir, vehicle_mass_kg=args.vehicle_mass_kg)

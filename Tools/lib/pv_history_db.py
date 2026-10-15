@@ -130,6 +130,25 @@ def query_daily_range(conn, start, end):
     return out
 
 
+# BUG-175: today's data is never "stable", so every call used to re-fetch
+# it - one --inspect of a same-day home charge printed "Fetching PV
+# intraday data" four times (one per cost/cross-check window). Within one
+# run, a day fetched in the last few minutes is reused instead.
+_RECENT_FETCH_SECONDS = 300
+_recent_fetches = {}
+
+
+def _fetched_recently(kind, r_start, r_end):
+    import time as _t
+    t = _recent_fetches.get((kind, r_start, r_end))
+    return t is not None and (_t.time() - t) < _RECENT_FETCH_SECONDS
+
+
+def _mark_fetched(kind, r_start, r_end):
+    import time as _t
+    _recent_fetches[(kind, r_start, r_end)] = _t.time()
+
+
 def sync_daily_range(conn, start, end, provider, api_key, account_id, log=print):
     """Fetches and caches every day in [start, end] not already
     cached, plus today. Returns days actually fetched."""
@@ -141,8 +160,11 @@ def sync_daily_range(conn, start, end, provider, api_key, account_id, log=print)
         return 0
     total = 0
     for r_start, r_end in missing:
+        if _fetched_recently("daily", r_start, r_end):
+            continue
         log(f"  Fetching PV daily data for {r_start} to {r_end}...")
         rows, err = provider.fetch_daily_range(r_start, r_end, api_key, account_id)
+        _mark_fetched("daily", r_start, r_end)
         if err:
             log(f"  ⚠ {err}")
         if rows:
@@ -162,8 +184,11 @@ def sync_intraday_range(conn, start, end, provider, api_key, account_id, log=pri
         return 0
     total = 0
     for r_start, r_end in missing:
+        if _fetched_recently("intraday", r_start, r_end):
+            continue
         log(f"  Fetching PV intraday data for {r_start} to {r_end}...")
         rows, err = provider.fetch_intraday_range(r_start, r_end, api_key, account_id)
+        _mark_fetched("intraday", r_start, r_end)
         if err:
             log(f"  ⚠ {err}")
         if rows:

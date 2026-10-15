@@ -290,6 +290,85 @@ def unique_csv_path(landing_dir, prefix, stamp):
         n += 1
 
 
+def retag_csv_utc_tz_local(csv_body, records):
+    """REQ-179: turn Tessie's server-formatted charges/drives CSV into the
+    same UTC / TZ / Local schema the master files use, so no row depends on
+    a zone label in a header ("Started At (AEST)" vs "(AEDT)" broke the
+    import on the first day of daylight saving) or on one fixed display zone.
+
+    The CSV is requested with timezone=UTC, so its naive time text IS UTC -
+    no offset guessing, no ambiguous repeated hour at daylight-saving
+    fall-back. Each time column is replaced by three:
+      "<X> At (UTC)"   exact Unix epoch seconds (taken from the JSON
+                        record with the same minute, else from the text)
+      "<X> At TZ"      IANA zone of WHERE the car was at that moment
+      "<X> At (Local)" "YYYY-MM-DD HH:MM ABBR" in that zone
+    Zone comes from the row's own coordinates: a charge has one point; a
+    drive has a Starting and an Ending point, resolved separately, so a drive
+    that crosses a timezone border keeps a correct local time at each end
+    while both ends stay comparable through the UTC epoch."""
+    import calendar as _cal
+    import io as _io
+    import csv as _csv
+    text = csv_body.decode("utf-8-sig") if isinstance(csv_body, (bytes, bytearray)) else csv_body
+    reader = _csv.DictReader(_io.StringIO(text))
+    fields = list(reader.fieldnames or [])
+    start_key = next((f for f in fields if f.startswith("Started At")), None)
+    end_key = next((f for f in fields if f.startswith("Ended At")), None)
+    if not start_key or not end_key or start_key.endswith("(UTC)") is False:
+        return csv_body  # not the UTC-requested shape - leave untouched
+    by_minute = {"Started At": {}, "Ended At": {}}
+    for r in records or []:
+        for label, k in (("Started At", "started_at"), ("Ended At", "ended_at")):
+            v = r.get(k)
+            if isinstance(v, (int, float)):
+                by_minute[label][int(v) // 60] = int(v)
+
+    def epoch_of(label, txt):
+        txt = (txt or "").strip()
+        if not txt:
+            return None
+        for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M"):
+            try:
+                e = _cal.timegm(datetime.strptime(txt, fmt).timetuple())
+                return by_minute[label].get(e // 60, e)
+            except ValueError:
+                continue
+        return None
+
+    def point(row, label):
+        if "Starting Latitude" in row:  # drive: start / end have their own point
+            pre = "Starting " if label == "Started At" else "Ending "
+            return row.get(pre + "Latitude"), row.get(pre + "Longitude")
+        return row.get("Latitude"), row.get("Longitude")
+
+    def cols(label, row, epoch):
+        if epoch is None:
+            return {f"{label} (UTC)": "", f"{label} TZ": "", f"{label} (Local)": ""}
+        lat, lon = point(row, label)
+        zone = tztools.resolve_timezone(lat if lat not in ("", None) else None,
+                                        lon if lon not in ("", None) else None)
+        local_dt, abbr, _ = tztools.localize(epoch, zone)
+        return {f"{label} (UTC)": str(int(epoch)), f"{label} TZ": zone,
+                f"{label} (Local)": f"{local_dt.strftime('%Y-%m-%d %H:%M')} {abbr}" if local_dt else ""}
+
+    new_fields = ["Started At (UTC)", "Started At TZ", "Started At (Local)",
+                  "Ended At (UTC)", "Ended At TZ", "Ended At (Local)"]
+    out_fields = new_fields + [f for f in fields if f not in (start_key, end_key)]
+    out = _io.StringIO()
+    w = _csv.DictWriter(out, fieldnames=out_fields, quoting=_csv.QUOTE_ALL, lineterminator="\n")
+    w.writeheader()
+    for row in reader:
+        new = {}
+        new.update(cols("Started At", row, epoch_of("Started At", row.get(start_key))))
+        new.update(cols("Ended At", row, epoch_of("Ended At", row.get(end_key))))
+        for f in fields:
+            if f not in (start_key, end_key):
+                new[f] = row.get(f, "")
+        w.writerow(new)
+    return out.getvalue().encode("utf-8")
+
+
 def sync_one_type(type_name, spec, token, vin, since_days, dry_run, landing_dir,
                    reset_cache=False, api_get_fn=api_get, now_ts=None):
     """Returns a summary dict; raises on hard failure."""
@@ -319,7 +398,10 @@ def sync_one_type(type_name, spec, token, vin, since_days, dry_run, landing_dir,
     csv_warning = None
     if new_or_changed > 0 and not dry_run:
         csv_params = dict(DEFAULT_UNIT_PARAMS)
-        csv_params.update({"from": from_ts, "to": to_ts, "format": "csv", "limit": len(records) + 10})
+        # REQ-179: ask for UTC text (exact, no daylight-saving ambiguity) and
+        # re-tag it below with per-point UTC epoch + real timezone + local time.
+        csv_params.update({"from": from_ts, "to": to_ts, "format": "csv", "limit": len(records) + 10,
+                           "timezone": "UTC"})
         status, csv_body = api_get_fn(spec["endpoint"], vin, token, params=csv_params)
         if status != 200:
             raise RuntimeError(f"{spec['endpoint']} CSV fetch failed: HTTP {status} - {csv_body[:200]!r}")
@@ -332,6 +414,7 @@ def sync_one_type(type_name, spec, token, vin, since_days, dry_run, landing_dir,
         stamp_dt = datetime.fromtimestamp(latest_ts) if latest_ts is not None else datetime.now()
         stamp = stamp_dt.strftime("%Y%m%d_%H%M%S")
         csv_path = unique_csv_path(landing_dir, spec["csv_prefix"], stamp)
+        csv_body = retag_csv_utc_tz_local(csv_body, records)
         with open(csv_path, "wb") as f:
             f.write(csv_body)
 
@@ -1186,10 +1269,10 @@ def _since_cutoff(since_days):
 
 
 def _backfill_drive_deepdive(limit, pace_seconds, since_days, tessie_dir):
-    from analyse_drives import TessieAnalyzer  # noqa: E402 (deliberate - see backfill_deepdive_telemetry docstring)
+    from analyse_drives import DriveAnalyzer  # noqa: E402 (deliberate - see backfill_deepdive_telemetry docstring)
 
-    print("==> Drives deep-dive backfill")
-    analyzer = TessieAnalyzer(tessie_dir=tessie_dir)
+    print("   Looking for drives without deep-dive telemetry...")
+    analyzer = DriveAnalyzer(tessie_dir=tessie_dir)
     drives = analyzer.load_drives()
     if not drives:
         print("   No local drives_master.csv found - nothing to backfill (run a normal --drives sync first).")
@@ -1243,10 +1326,10 @@ def _backfill_drive_deepdive(limit, pace_seconds, since_days, tessie_dir):
 
 
 def _backfill_charge_deepdive(limit, pace_seconds, since_days, tessie_dir):
-    from analyse_charging import TessieChargingAnalyzer  # noqa: E402 (deliberate - see backfill_deepdive_telemetry docstring)
+    from analyse_charging import ChargingAnalyzer  # noqa: E402 (deliberate - see backfill_deepdive_telemetry docstring)
 
-    print("==> Charges deep-dive backfill")
-    analyzer = TessieChargingAnalyzer(tessie_dir=tessie_dir)
+    print("   Looking for charges without deep-dive telemetry...")
+    analyzer = ChargingAnalyzer(tessie_dir=tessie_dir)
     charges = analyzer.load_charges()
     if not charges:
         print("   No local charges_master.csv found - nothing to backfill (run a normal --charges sync first).")
