@@ -350,6 +350,16 @@ modules, tests - must have the user-execute bit (`chmod u+x`), and git must reco
   `git update-index --chmod=+x`. Hooks are not versioned, so on a fresh clone run
   `Tools/fix_exec_bits.sh --install-hook`.
 
+
+### 3.5a Settings live in config.json, not in code
+
+Standing rule: a value a user might reasonably want to change (a threshold, a time limit, a server list, a map style, a window size, a port)
+is a setting in `config.json`, never a literal buried in code. The app, report and places settings are the `"app"` block read by
+`Tools/lib/app_config.py` (`app_config.get("drives.repark_max_km")`); every setting has a default there and is documented in
+`config.example.json`, so `config.json` only needs the values being changed. The front end gets them from `/api/settings`. When you add one,
+add it to `DEFAULTS` in `app_config.py` and to `config.example.json` in the same change. Secrets stay in `config.json` / the environment and are
+never printed.
+
 ### 3.5.1 Removable drives: identify by what is ON them; keep only the Archive connected
 
 Standing rule (2026-10-14).

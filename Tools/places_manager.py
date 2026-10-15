@@ -323,6 +323,17 @@ OVERPASS_ENDPOINTS = [
     "https://lz4.overpass-api.de/api/interpreter",
     "https://overpass-api.de/api/interpreter",
 ]
+
+
+def _nearby_setting(key, default):
+    """config.json "app.nearby.<key>" (see lib/app_config.py), else the default."""
+    try:
+        from lib import app_config
+        return app_config.get("nearby." + key, default)
+    except Exception:
+        return default
+
+
 OVERPASS_ERROR = ""     # why the last query_overpass_pois() got no answer ("" = it was answered, even if there was nothing there)
 
 def geocode_candidates(query, country_hint="Australia", anchor_coords=None, limit=10):
@@ -2048,14 +2059,16 @@ def query_overpass_pois(lat, lon, radius_m=500):
     
     global OVERPASS_ERROR
     OVERPASS_ERROR = "no OpenStreetMap server answered"
-    errs, t_end = [], time.time() + 20      # give up after 20 s in total: the servers are either up or not
-    for endpoint in OVERPASS_ENDPOINTS:
+    total = float(_nearby_setting("overpass_total_timeout_s", 20))      # give up after this long in total: the servers are either up or not
+    per = float(_nearby_setting("overpass_server_timeout_s", 8))
+    errs, t_end = [], time.time() + total
+    for endpoint in (_nearby_setting("overpass_endpoints", None) or OVERPASS_ENDPOINTS):
         if time.time() > t_end:
-            errs.append("gave up after 20 s")
+            errs.append("gave up after %d s" % total)
             break
         try:
             req = urllib.request.Request(endpoint, data=data, headers=headers)
-            with urllib.request.urlopen(req, timeout=max(3, min(8, t_end - time.time()))) as resp:
+            with urllib.request.urlopen(req, timeout=max(3, min(per, t_end - time.time()))) as resp:
                 res_data = json.loads(resp.read().decode("utf-8"))
                 elements = res_data.get("elements", [])
                 
