@@ -11,7 +11,7 @@ DESCRIPTION
     Starts a small server on 127.0.0.1 that reads the Tesla data folder (the CSV / JSON files the sync scripts already
     write; nothing is changed by looking) and shows it in the style of Tessie: an Activity timeline of drives, charges and
     idles; a page per drive (map, stacked charts, dashcam footage), per charge (power curve) and per idle; battery health;
-    monthly analytics; a Places manager (saved places, Tesla Supercharger names, nearby OpenStreetMap places); and the dashcam tools. A TeslaCam page plays the Sentry, Saved and Recent clips of any connected TeslaCam drive (all six cameras, or one; a Sentry event opens at the moment it happened on the camera that saw it). Dashcam clips are streamed from the Archive drive (found by what is on it,
+    monthly analytics; a Places manager (saved places, Tesla Supercharger names, nearby OpenStreetMap places); and the dashcam tools. A TeslaCam page plays the Sentry, Saved and Recent clips of any connected TeslaCam drive (all six cameras, or one; a Sentry event opens at the moment it happened on the camera that saw it). Each drive has Overview, Footage and Review tabs (Review: the car's speed and self-driving state, speed-limit signs read from the video, lasting speed changes; reading signs needs OpenCV, ffmpeg and tesseract, see requirements.txt). The Drives list can be filtered by length and average speed. Dashcam clips are streamed from the Archive drive (found by what is on it,
     see lib/drive_roles.py, never by its volume name). Footage actions queued on a drive page (copy / delete / save as a
     clip) run from the Queue page: a preview first, then for real.
 
@@ -103,6 +103,11 @@ def code_updated():
         except OSError:
             pass
     return newest > STARTED + 2
+
+
+def _local_ts(txt):
+    import datetime
+    return datetime.datetime.fromisoformat(txt).timestamp()
 
 
 def safe_join(root, rel):
@@ -202,6 +207,11 @@ class H(BaseHTTPRequestHandler):
                 if p and os.path.isfile(p):
                     return self.send_file(p)
                 return self.send_bytes(b"not found", "text/plain", 404)
+            if path.startswith("/review/"):         # a small picture of a sign that was read
+                p = safe_join(os.path.join(DATA_DIR, "drive_review", "crops"), path[8:])
+                if p and os.path.isfile(p) and p.endswith(".jpg"):
+                    return self.send_file(p, cache=True)
+                return self.send_bytes(b"not found", "text/plain", 404)
             if path.startswith("/footage/"):
                 role, _, rel = path[9:].partition("/")
                 root = footage_root(role)
@@ -231,6 +241,9 @@ class H(BaseHTTPRequestHandler):
             if u.path == "/api/places/delete":
                 with _ACTION_LOCK:
                     return self.send_json(STORE.pl.delete(body.get("name", "")))
+            if u.path == "/api/review":
+                role = body.get("role", "A")
+                return self.send_json(TC.review(role, footage_root(role), _local_ts(body.get("t0", "")), _local_ts(body.get("t1", "")), body.get("action", "start")))
             if u.path == "/api/teslacam/index":
                 role = body.get("role", "A")
                 return self.send_json(TC.index(role, footage_root(role), body.get("action", "start")))
@@ -259,6 +272,14 @@ class H(BaseHTTPRequestHandler):
         if name == "sentry":
             ev, ok = SENTRY.events(footage_root("A"))
             return self.send_json(dict(connected=ok, events=ev))
+        if name == "review":                    # review?role=A&t0=<local ISO>&t1=<local ISO>: signs read so far + the job
+            role = q.get("role", ["A"])[0]
+            try:
+                return self.send_json(TC.review(role, footage_root(role), _local_ts(q.get("t0", [""])[0]), _local_ts(q.get("t1", [""])[0])))
+            except ValueError:
+                return self.send_json({"error": "bad time"}, 400)
+        if name == "review/scanned":            # every minute whose signs have been read: {stamp: signs found}
+            return self.send_json(TC.review_scanned())
         if name == "teslacam":                  # the drives that are connected right now (found by what is on them)
             _ROOTS["t"] = 0
             return self.send_json(dict(drives=TC.drives()))
