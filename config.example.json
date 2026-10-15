@@ -117,6 +117,15 @@
       "same_place_est_m": 800,
       "same_minute_s": 30,
       "read_workers": 4
+    },
+    "review": {
+      "step_s": 1.0,
+      "min_kmh": 30.0,
+      "min_conf": 50.0,
+      "workers": 3,
+      "merge_s": 12.0,
+      "candidate_km": 20,
+      "candidate_avg_kmh": 60
     }
   }
 }
