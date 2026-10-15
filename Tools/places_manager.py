@@ -13,6 +13,7 @@ Tesla / Tessie Location Management & POI Lookup Engine
 import os
 from lib.tessie_timezone import legacy_get as _legacy_get  # BUG-176
 import sys
+import time
 import re
 import csv
 import json
@@ -2047,10 +2048,14 @@ def query_overpass_pois(lat, lon, radius_m=500):
     
     global OVERPASS_ERROR
     OVERPASS_ERROR = "no OpenStreetMap server answered"
+    errs, t_end = [], time.time() + 20      # give up after 20 s in total: the servers are either up or not
     for endpoint in OVERPASS_ENDPOINTS:
+        if time.time() > t_end:
+            errs.append("gave up after 20 s")
+            break
         try:
             req = urllib.request.Request(endpoint, data=data, headers=headers)
-            with urllib.request.urlopen(req, timeout=12) as resp:
+            with urllib.request.urlopen(req, timeout=max(3, min(8, t_end - time.time()))) as resp:
                 res_data = json.loads(resp.read().decode("utf-8"))
                 elements = res_data.get("elements", [])
                 
@@ -2152,7 +2157,8 @@ def query_overpass_pois(lat, lon, radius_m=500):
                 OVERPASS_ERROR = ""
                 return results
         except Exception as ex:
-            OVERPASS_ERROR = "OpenStreetMap's servers did not answer (%s)" % str(ex)[:60]
+            errs.append("%s: %s" % (endpoint.split("/")[2], str(ex)[:70]))
+            OVERPASS_ERROR = "OpenStreetMap (Overpass) did not answer. " + "; ".join(errs)
             continue
     return []
 
