@@ -180,28 +180,55 @@ class TeslaCam:
         return os.path.join(teslacam, sub, "%s-front.mp4" % m["stamp"])
 
     def segment(self, role, teslacam, sid, budget=20.0):
-        """One drive with its telemetry; reads the minutes not read yet (up to `budget` seconds, the page asks again while `pending`)."""
-        import time
-        if not teslacam:
+        """One drive of the timeline with its telemetry; reads the minutes not read yet (up to `budget` seconds, the page asks again while `pending`)."""
+        if not teslacam or sid[:2] != "20":
             return None
-        store, ix = self._tl(role)
-        recent, saved, sentry = self._sources(role, teslacam)
-        allm = TL.minutes(recent, saved)
-        t_id = TL.secs(sid) if sid[:2] == "20" else None
-        if t_id is None:
-            return None
-        for _ in range(2):
-            items = TL.build(recent, saved, [], store)
+        t_id = TL.secs(sid)
+
+        def pick(store, allm, saved, sentry):
+            items = TL.build({m["stamp"]: m["cams"] for m in allm if m["src"] == "recent"}, saved, [], store)
             it = next((x for x in items if x["kind"] in ("drive", "stopped", "recording") and x["t0"] <= t_id < x["t1"]), None)
-            if not it:
+            return (it, [m for m in allm if it["t0"] <= m["t"] < it["t1"]]) if it else None
+        return self._finish(role, teslacam, pick, budget)
+
+    def window(self, role, teslacam, t0, t1, budget=20.0):
+        """Everything recorded between two clock times (a Tessie drive): one item with telemetry and the clips, Recent and Saved stitched.
+        With the drive not connected it still returns what was read before (map and charts, no video)."""
+        def pick(store, allm, saved, sentry):
+            mins = [m for m in allm if m["t"] + 60 > t0 and m["t"] < t1] if teslacam else TL.cached_minutes(store, t0, t1)
+            if not mins:
                 return None
-            mins = [m for m in allm if it["t0"] <= m["t"] < it["t1"]]
+            sums = [store.summary(m["stamp"]) for m in mins]
+            state = "move" if any(x and x["vmax"] >= TL.OPTS["moving_kmh"] for x in sums) else "unknown" if any(x is None for x in sums) else "still"
+            return TL.drive_item([(m, state) for m in mins], store), mins
+        return self._finish(role, teslacam, pick, budget, events=(t0, t1))
+
+    def _finish(self, role, teslacam, pick, budget, events=None):
+        import time
+        store, ix = self._tl(role)
+        recent, saved, sentry = self._sources(role, teslacam) if teslacam else ({}, [], [])
+        allm = TL.minutes(recent, saved) if teslacam else []
+        for rnd in range(2):
+            r = pick(store, allm, saved, sentry)
+            if not r:
+                return None
+            it, mins = r
             todo = [m for m in mins if store.summary(m["stamp"]) is None and "front" in m["cams"]]
-            if not todo or _ == 1:
+            if not todo or rnd == 1 or not teslacam:
                 break
             if budget > 0:
                 TL.read_many(store, [(m["stamp"], self._front(teslacam, m)) for m in todo], deadline=time.time() + budget)
-            store.flush()
         ser = TL.detail(mins, store, it)
-        return dict(item=it, minutes=[dict(stamp=m["stamp"], src=m["src"], ref=m["ref"], cams=m["cams"], off=round(m["t"] - it["t0"])) for m in mins],
-                    series=ser, pending=ser["pending"])
+        out = dict(item=it, connected=bool(teslacam), minutes=[dict(stamp=m["stamp"], src=m["src"], ref=m["ref"], cams=m["cams"], off=round(m["t"] - it["t0"])) for m in mins],
+                   series=ser, pending=ser["pending"])
+        if events:
+            a, b = events
+            ev = []
+            for folder, lst in (("SavedClips", saved), ("SentryClips", sentry)):
+                for e in lst:
+                    ts = [TL.secs(k) for k in e["clips"]]
+                    if ts and any(t + 60 > a and t < b for t in ts) and (folder == "SavedClips" or a - 120 <= TL.secs(e["ts"][:10] + "_" + e["ts"][11:].replace(":", "-")) <= b + 120):
+                        ev.append(dict(id=e["id"], folder=folder, ts=e["ts"], reason=e.get("reason", ""), city=e.get("city", ""), cam=e.get("cam", ""), thumb=e.get("thumb", False),
+                                       front=("front" in e["clips"][sorted(e["clips"])[0]])))
+            out["events"] = sorted(ev, key=lambda x: x["ts"])
+        return out
