@@ -1,0 +1,312 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>FSD highway speed check</title>
+<style>
+:root{--bg:#fbfbf9;--fg:#1f2328;--mut:#5f6670;--card:#fff;--line:#d8dce1;--sel:#d4351c;
+--c0:#0072B2;--c1:#E69F00;--c2:#009E73;--c3:#CC79A7;--c4:#b9bec6;
+--k0:#7b8794;--k1:#E69F00;--k2:#CC79A7;--k3:#D55E00;--k4:#b9bec6;--k5:#e3e6ea;
+--o110:#009E73;--o100:#0072B2;--ooth:#8a8f96;--halo:#fff}
+@media (prefers-color-scheme:dark){:root:not([data-theme=light]){--bg:#16181c;--fg:#e8eaed;--mut:#9aa3ad;--card:#1e2126;--line:#343a42;--sel:#ff6a4d;
+--c0:#56B4E9;--c1:#F0B429;--c2:#2FCB9C;--c3:#E39BC6;--c4:#59606a;
+--k0:#8e9aa7;--k1:#F0B429;--k2:#E39BC6;--k3:#ff8a4d;--k4:#59606a;--k5:#2a2e34;
+--o110:#2FCB9C;--o100:#56B4E9;--ooth:#8a8f96;--halo:#1e2126}}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--fg);font:14px/1.5 system-ui,-apple-system,"Segoe UI",sans-serif}
+header{padding:16px 16px 4px;max-width:1500px;margin:0 auto}h1{font-size:20px;margin:0 0 4px}
+p.sub{margin:0;color:var(--mut);max-width:110ch}
+.kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:10px;padding:10px 16px;max-width:1500px;margin:0 auto}
+.kpi{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:10px 12px}
+.kpi b{font-size:26px;display:block;line-height:1.1;font-variant-numeric:tabular-nums}.kpi span{color:var(--mut);font-size:12.5px}
+.wrap{display:grid;grid-template-columns:minmax(0,1fr) 380px;gap:12px;padding:6px 16px 12px;max-width:1500px;margin:0 auto}
+@media(max-width:1000px){.wrap{grid-template-columns:1fr}}
+.card{background:var(--card);border:1px solid var(--line);border-radius:10px}
+#mapbox{position:relative;height:74vh;min-height:430px;overflow:hidden}
+canvas#cv{width:100%;height:100%;display:block;cursor:grab;touch-action:none}
+#tip{position:absolute;pointer-events:none;background:var(--card);border:1px solid var(--line);border-radius:8px;padding:6px 9px;font-size:12px;box-shadow:0 2px 8px #0003;display:none;max-width:270px;z-index:5}
+.ovl{position:absolute;background:color-mix(in srgb,var(--card) 92%,transparent);border:1px solid var(--line);border-radius:8px;padding:6px 9px;font-size:12px;z-index:4}
+#seg{top:8px;left:8px;display:flex;gap:0;padding:2px}#seg button{border:0;border-radius:6px;padding:4px 10px;background:transparent}#seg button.on{background:var(--fg);color:var(--bg)}
+#zoom{top:8px;right:8px;display:flex;flex-direction:column;gap:4px;padding:3px}#zoom button{width:30px;height:30px;padding:0;font-size:16px}
+#legend{bottom:8px;left:8px;max-width:330px}#legend .li{display:flex;align-items:center;gap:7px;padding:1px 0}
+#scale{bottom:8px;right:8px}
+.sw{width:22px;height:0;border-top:4px solid;border-radius:2px;flex:none}.sw.dash{border-top-style:dashed}.sw.casing{height:9px;border:0;opacity:.35;border-radius:2px}
+.sw.tri{width:0;height:0;border-left:6px solid transparent;border-right:6px solid transparent;border-top:0;border-bottom:10px solid var(--fg);background:none}
+.side{padding:12px;display:flex;flex-direction:column;gap:14px;max-height:calc(74vh + 4px);overflow:auto}
+h2{font-size:12px;margin:0 0 6px;text-transform:uppercase;letter-spacing:.05em;color:var(--mut)}
+h3{font-size:15px;margin:0 0 6px}
+label.chip{display:flex;align-items:center;gap:8px;padding:2px 0;cursor:pointer}
+.n{margin-left:auto;color:var(--mut);font-variant-numeric:tabular-nums}
+.dates{display:flex;flex-wrap:wrap;gap:6px}.dates label{border:1px solid var(--line);border-radius:999px;padding:2px 9px;cursor:pointer;user-select:none}.dates label.on{background:var(--fg);color:var(--bg)}
+button{font:inherit;border:1px solid var(--line);background:var(--card);color:var(--fg);border-radius:8px;padding:3px 10px;cursor:pointer}
+button:hover{border-color:var(--mut)}
+small,.mut{color:var(--mut)}
+a.ms{color:var(--c0);font-weight:600;text-decoration:none;white-space:nowrap}a.ms:hover{text-decoration:underline}
+#sel .kv{display:grid;grid-template-columns:auto 1fr;gap:1px 10px;margin:6px 0}#sel .kv span:nth-child(odd){color:var(--mut)}
+#strip{width:100%;height:150px;display:block;margin-top:6px}
+.verdict{border-left:4px solid var(--k4);padding:4px 8px;margin:6px 0;background:color-mix(in srgb,var(--fg) 4%,transparent);border-radius:0 6px 6px 0}
+.tabs{display:flex;gap:6px;flex-wrap:wrap;padding:0 16px;max-width:1500px;margin:6px auto 0}
+.tabs button{border-radius:8px 8px 0 0;border-bottom:0;padding:6px 12px}.tabs button.on{background:var(--fg);color:var(--bg);border-color:var(--fg)}
+.panel{margin:0 auto 24px;max-width:1468px;padding:12px;overflow:auto;border-radius:0 10px 10px 10px;display:none}.panel.on{display:block}
+table{border-collapse:collapse;width:100%;font-variant-numeric:tabular-nums}
+th,td{text-align:left;padding:5px 9px;border-bottom:1px solid var(--line);white-space:nowrap;vertical-align:top}th{font-size:12px;color:var(--mut);position:sticky;top:0;background:var(--card)}
+td.wrapc{white-space:normal;min-width:220px}
+tr.row{cursor:pointer}tr.row:hover td{background:color-mix(in srgb,var(--fg) 6%,transparent)}tr.row.cur td{background:color-mix(in srgb,var(--sel) 14%,transparent)}
+.pill{padding:1px 8px;border-radius:999px;font-size:12px;border:1px solid var(--line);white-space:nowrap}
+.p-110{background:color-mix(in srgb,var(--o110) 25%,transparent)}.p-100{background:color-mix(in srgb,var(--o100) 22%,transparent)}.p-mix{background:color-mix(in srgb,var(--c1) 28%,transparent)}
+.gid{display:inline-block;min-width:26px;text-align:center;border-radius:6px;font-weight:700;color:#111;padding:0 5px}
+.g-A{background:var(--k1)}.g-B{background:var(--k2)}.g-C{background:var(--k3);color:#fff}
+.mbar{display:flex;height:10px;width:120px;border-radius:5px;overflow:hidden;background:var(--k5);border:1px solid var(--line)}.mbar i{display:block;height:100%}
+tr.sub td{white-space:normal;background:color-mix(in srgb,var(--fg) 3%,transparent)}
+table.in{font-size:12px;width:auto}table.in td,table.in th{padding:2px 10px;position:static}
+.heat td.h{text-align:right}
+.filters{display:flex;gap:12px;flex-wrap:wrap;margin:0 0 8px;align-items:center}
+select{font:inherit;background:var(--card);color:var(--fg);border:1px solid var(--line);border-radius:6px;padding:2px 6px}
+ol.how{margin:6px 0 0 18px;padding:0}ol.how li{margin:4px 0;max-width:110ch}
+.note{max-width:110ch;color:var(--mut)}
+</style></head><body>
+<header><h1>FSD highway speed check <small id="built"></small></h1>
+<p class="sub" id="sub"></p></header>
+<div class="kpis" id="kpis"></div>
+<div class="wrap">
+ <div class="card" id="mapbox"><canvas id="cv"></canvas><div id="tip"></div>
+  <div class="ovl" id="seg"><button data-v="cmp" class="on" title="Colour by how the car's speed compares with the OpenStreetMap limit">Compare with OpenStreetMap</button><button data-v="band" title="Colour by the speed the car ran at">Speed band</button></div>
+  <div class="ovl" id="zoom"><button id="zin" aria-label="Zoom in">+</button><button id="zout" aria-label="Zoom out">&minus;</button><button id="fit" title="Fit whole route" aria-label="Fit route">&#x2922;</button></div>
+  <div class="ovl" id="legend"></div><div class="ovl" id="scale"></div></div>
+ <div class="card side">
+  <div id="sel"><h2>Selected</h2><small>Click a point, a flip marker or a lettered marker on the map, or a row in any table below.</small></div>
+  <div><h2>Layers</h2><div id="layers"></div></div>
+  <div><h2 id="fh">Show</h2><div id="filt"></div></div>
+  <div><h2>Day</h2><div class="dates" id="dates"></div></div>
+  <div><small>Drag to pan, wheel or +/- to zoom. Times are the Sydney clock from the telemetry.</small></div>
+ </div></div>
+<div class="tabs" id="tabs"></div>
+<div class="card panel" id="p-sl"></div><div class="card panel" id="p-fl"></div><div class="card panel" id="p-sec"></div>
+<div class="card panel" id="p-st"></div><div class="card panel" id="p-cal"></div><div class="card panel" id="p-how"></div>
+<script>
+const D=/*DATA*/null;
+const S=D.s, W=D.w, SM=D.sum;
+const BANDN=["Standard in a 100 (101-102)","Hurry in a 100 / the 105 (104-106)","Standard in a 110 (112)","Hurry in a 110 (114-115)","Other speeds"];
+const CAT=[["Agrees with OpenStreetMap","The car's speed class (100 or 110) matches the OSM limit"],
+["105 on an OSM 110 road","The plateau: 104-106 km/h where OpenStreetMap says 110"],
+["Standard 100 on an OSM 110 road","101-102 km/h where OpenStreetMap says 110"],
+["110/115 on an OSM 100 road","112-115 km/h where OpenStreetMap says 100"],
+["Other speed, or OSM limit not 100/110","Speeds outside the four bands, or an 80/90/no-tag OSM road"],
+["Not matched","Below 85 km/h, or not on a mapped OpenStreetMap highway"]];
+const VERDICT=["The car's speed fits the posted limit OpenStreetMap lists here.",
+"Plateau on a road OpenStreetMap lists as 110: FSD probably read this as 100 (or OpenStreetMap is wrong). A candidate for a TomTom / sign check.",
+"Standard-mode 100 on a road OpenStreetMap lists as 110: the car stayed at 100 here.",
+"Running 110+ where OpenStreetMap says 100: OpenStreetMap may be out of date, or the posted limit changed.",
+"Speed or OpenStreetMap limit outside the 100/110 comparison.","No OpenStreetMap highway matched this sample."];
+const cv=document.getElementById("cv"),ctx=cv.getContext("2d"),tip=document.getElementById("tip");
+const $=id=>document.getElementById(id);
+const st={view:SM.has_osm?"cmp":"band",L:{osm:SM.has_osm,sec:true,sl:true,fl:true,pl:true,low:true},fc:[1,1,1,1,1,0],fb:[1,1,1,1,1],dayOn:{},sel:null};
+if(!SM.has_osm){$("seg").style.display="none"}
+const C=new Uint8Array(S.length);
+function catOf(p){const o=p[7],b=p[6];if(p[2]<85||o===0)return 5;if(b===4||o<0)return 4;const per=b<2?100:110;if(o===per)return 0;if(per===100&&o===110)return b===1?1:2;if(per===110&&o===100)return 3;return 4}
+S.forEach((p,i)=>C[i]=catOf(p));
+const ccount=[0,0,0,0,0,0],bcount=[0,0,0,0,0];S.forEach((p,i)=>{if(p[2]>=85){ccount[C[i]]++;bcount[p[6]]++}});
+const days=[...new Set(D.d.map(d=>d.date))];days.forEach(d=>st.dayOn[d]=true);
+const dayOf=i=>D.d[S[i][5]].date;
+const HM=t=>new Date(t*1000).toISOString().slice(11,16),HMS=t=>new Date(t*1000).toISOString().slice(11,19);
+const comp=h=>h<0?"?":["N","NE","E","SE","S","SW","W","NW"][Math.round(h/45)%8];
+const side=h=>{const c=comp(h);return {N:"west",NE:"north-west",E:"north",SE:"north-east",S:"east",SW:"south-east",W:"south",NW:"south-west"}[c]||""};
+const MS=(a,b)=>`https://www.tomtom.com/mapshare/tools/new/mapshare/#loc=${(+a).toFixed(5)},${(+b).toFixed(5)},17`;
+const GV=(a,b,h)=>`https://www.google.com/maps/@?api=1&map_action=pano&viewpoint=${(+a).toFixed(6)},${(+b).toFixed(6)}&heading=${Math.round(h)}&pitch=0&fov=90`;
+const GM=(a,b)=>`https://www.google.com/maps/@${a},${b},17z`;
+const brg=(a,b,c,d)=>{const p=Math.PI/180,y=Math.sin((d-b)*p)*Math.cos(c*p),x=Math.cos(a*p)*Math.sin(c*p)-Math.sin(a*p)*Math.cos(c*p)*Math.cos((d-b)*p);return(Math.atan2(y,x)/p+360)%360};
+const esc=s=>String(s).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+const lim=o=>o>0?o+" km/h":o<0?"no limit tag":"not matched";
+function css(n){return getComputedStyle(document.documentElement).getPropertyValue(n).trim()}
+
+/* ---- header, KPIs ---- */
+$("built").textContent="built "+SM.built;
+$("sub").innerHTML=`Telemetry from ${SM.drives} drives since ${SM.since} (${SM.samples.toLocaleString()} samples, ${SM.hwkm.toLocaleString()} km of highway). Tessie records whole mph, so the car's speed shows which limit it believed: 101-102 = standard in a 100, <b>104-106 = hurry in a 100 (the &ldquo;105&rdquo;)</b>, 112 = standard in a 110, 114-115 = hurry in a 110. Each sample is also matched to the road it was on in OpenStreetMap to read that road's posted limit. There is no FSD or speed-limit field in the telemetry, so the mode is inferred from speed.`;
+const pct=(a,b)=>b?Math.round(100*a/b):0;
+const sd=D.cal[2][0]+D.cal[3][0],sdt=D.cal[2].reduce((a,b)=>a+b,0)+D.cal[3].reduce((a,b)=>a+b,0);
+const k=[[SM.km110.toFixed(0)+" km",`of the 105 plateau is on roads OpenStreetMap lists as 110 (${SM.sec110} of ${SM.sec} sections)`],
+[SM.km100.toFixed(0)+" km",`is on roads it lists as 100 (${SM.sec100} sections): hurry in a genuine 100`],
+[pct(sd,sdt)+"%",`of samples at 110/115 sit on OSM-110 roads, so OpenStreetMap is a fair reference here`],
+[SM.flips_in110+" of "+SM.flips,`flips of the car's 100/110 reading happen mid-road, with OpenStreetMap showing 110 on both sides`],
+[SM.sl+" points",`on the TomTom shortlist, with links`]];
+$("kpis").innerHTML=k.map(x=>`<div class="kpi"><b>${x[0]}</b><span>${x[1]}</span></div>`).join("");
+
+/* ---- map state ---- */
+let minLat=90,maxLat=-90,minLon=180,maxLon=-180;
+for(const p of S){minLat=Math.min(minLat,p[0]);maxLat=Math.max(maxLat,p[0]);minLon=Math.min(minLon,p[1]);maxLon=Math.max(maxLon,p[1])}
+const kx=Math.cos(((minLat+maxLat)/2)*Math.PI/180);
+let view={cx:(minLon+maxLon)/2,cy:(minLat+maxLat)/2,sc:1};
+function size(){const r=devicePixelRatio||1;cv.width=cv.clientWidth*r;cv.height=cv.clientHeight*r;ctx.setTransform(r,0,0,r,0,0)}
+function fit(){const w=cv.clientWidth,h=cv.clientHeight;view.sc=Math.min(w/((maxLon-minLon)*kx*1.08),h/((maxLat-minLat)*1.08));view.cx=(minLon+maxLon)/2;view.cy=(minLat+maxLat)/2;draw()}
+function px(lat,lon){return[(lon-view.cx)*kx*view.sc+cv.clientWidth/2,(view.cy-lat)*view.sc+cv.clientHeight/2]}
+function zoomAt(mx,my,f){const w=cv.clientWidth,h=cv.clientHeight;const lon=view.cx+(mx-w/2)/(kx*view.sc),lat=view.cy-(my-h/2)/view.sc;view.sc*=f;view.cx=lon-(mx-w/2)/(kx*view.sc);view.cy=lat+(my-h/2)/view.sc;draw()}
+function focus(lat,lon,sc){view.cx=lon;view.cy=lat;if(sc)view.sc=Math.max(view.sc,sc);draw()}
+
+/* ---- side controls ---- */
+const layerDefs=[["osm","OpenStreetMap posted limit (road colour)",SM.has_osm],["low","Slower driving (context)",true],["sec","Outline the 105 sections",true],["fl","Flips between 100 and 110",D.fl.length>0],["sl","TomTom shortlist (A / B / C)",D.sl.length>0],["pl","Place names (zoom in)",D.g.length>0]];
+$("layers").innerHTML=layerDefs.filter(d=>d[2]).map(d=>`<label class="chip"><input type="checkbox" data-l="${d[0]}" ${st.L[d[0]]?"checked":""}> ${d[1]}</label>`).join("");
+$("layers").onchange=e=>{st.L[e.target.dataset.l]=e.target.checked;draw()};
+function renderFilters(){
+ const cmp=st.view==="cmp";$("fh").textContent=cmp?"Show (comparison classes)":"Show (speed bands)";
+ const items=cmp?CAT.map((c,i)=>[i,c[0],`var(--k${i})`,ccount[i],st.fc[i]]):BANDN.map((n,i)=>[i,n,`var(--c${i})`,bcount[i],st.fb[i]]);
+ $("filt").innerHTML=items.map(x=>`<label class="chip" title="${cmp?esc(CAT[x[0]][1]):""}"><input type="checkbox" data-i="${x[0]}" ${x[4]?"checked":""}><span class="sw ${cmp&&x[0]===3?"dash":""}" style="border-color:${x[2]}"></span><span>${esc(x[1])}</span><span class="n">${x[3]}</span></label>`).join("");
+ $("filt").onchange=e=>{const i=+e.target.dataset.i;(cmp?st.fc:st.fb)[i]=e.target.checked?1:0;draw()};
+ renderLegend()}
+function renderLegend(){const cmp=st.view==="cmp";let h="";
+ if(cmp){h+=`<div class="li"><span class="sw" style="border-color:var(--k1);border-top-width:5px"></span>105 on an OSM 110 road</div><div class="li"><span class="sw" style="border-color:var(--k2)"></span>Standard 100 on an OSM 110 road</div><div class="li"><span class="sw dash" style="border-color:var(--k3)"></span>110/115 on an OSM 100 road</div><div class="li"><span class="sw" style="border-color:var(--k0)"></span>Agrees with OpenStreetMap</div>`}
+ else{h+=BANDN.map((n,i)=>`<div class="li"><span class="sw" style="border-color:var(--c${i})"></span>${n.split(" (")[0]}</div>`).join("")}
+ if(st.L.osm)h+=`<div class="li"><span class="sw casing" style="background:var(--o110)"></span>OSM road 110 &nbsp;<span class="sw casing" style="background:var(--o100)"></span>100 &nbsp;<span class="sw casing" style="background:var(--ooth)"></span>other</div>`;
+ if(st.L.fl)h+=`<div class="li"><span class="sw tri"></span>flip 100&rarr;110 (&#9650;) or 110&rarr;100 (&#9660;); filled = OSM 110 both sides</div>`;
+ $("legend").innerHTML=h}
+$("seg").onclick=e=>{const v=e.target.dataset.v;if(!v)return;st.view=v;[...$("seg").children].forEach(b=>b.classList.toggle("on",b.dataset.v===v));renderFilters();draw()};
+$("dates").innerHTML=days.map(d=>`<label class="on" title="${d}" data-d="${d}">${d.replace(/^\w+ /,"")}</label>`).join("");
+$("dates").onclick=e=>{const d=e.target.dataset.d;if(!d)return;st.dayOn[d]=!st.dayOn[d];e.target.classList.toggle("on",st.dayOn[d]);draw()};
+$("zin").onclick=()=>zoomAt(cv.clientWidth/2,cv.clientHeight/2,1.5);$("zout").onclick=()=>zoomAt(cv.clientWidth/2,cv.clientHeight/2,1/1.5);$("fit").onclick=fit;
+
+/* ---- drawing ---- */
+function wayColor(l){return l===110?css("--o110"):l===100?css("--o100"):css("--ooth")}
+function draw(){const w=cv.clientWidth,h=cv.clientHeight;ctx.clearRect(0,0,w,h);ctx.lineCap="round";ctx.lineJoin="round";
+ const vis=(a,b)=>!(a[0]<-30&&b[0]<-30||a[0]>w+30&&b[0]>w+30||a[1]<-30&&b[1]<-30||a[1]>h+30&&b[1]>h+30);
+ if(st.L.osm&&SM.has_osm){ctx.globalAlpha=.3;ctx.lineWidth=Math.max(7,Math.min(14,view.sc/900));
+  for(const wy of W){if(wy.p.length<2)continue;ctx.strokeStyle=wayColor(wy.l);ctx.beginPath();let first=true,prev=null;
+   for(const q of wy.p){const a=px(q[0],q[1]);if(first){ctx.moveTo(a[0],a[1]);first=false}else ctx.lineTo(a[0],a[1])}ctx.stroke()}
+  ctx.globalAlpha=1}
+ const cmp=st.view==="cmp";let prev=null,pi=-1;
+ for(let i=0;i<S.length;i++){const p=S[i],q=prev,qi=pi;prev=p;pi=i;if(!q||q[5]!==p[5]||p[4]-q[4]>150)continue;
+  if(!st.dayOn[dayOf(i)])continue;const hw=p[2]>=85&&q[2]>=85;if(!hw&&!st.L.low)continue;
+  const a=px(q[0],q[1]),b=px(p[0],p[1]);if(!vis(a,b))continue;
+  if(!hw){ctx.strokeStyle=css("--k4");ctx.lineWidth=1.5;ctx.globalAlpha=.5;ctx.setLineDash([]);ctx.beginPath();ctx.moveTo(a[0],a[1]);ctx.lineTo(b[0],b[1]);ctx.stroke();ctx.globalAlpha=1;continue}
+  let col,lw=3,dash=[],under=false;
+  if(cmp){const c=C[i];if(!st.fc[c])continue;col=css("--k"+c);lw=c===1?5:c===0?3:c===5?1.5:4;if(c===3)dash=[7,4];under=c===1}
+  else{if(!st.fb[p[6]])continue;col=css("--c"+p[6])}
+  if(under){ctx.strokeStyle=css("--fg");ctx.globalAlpha=.55;ctx.lineWidth=lw+3;ctx.setLineDash([]);ctx.beginPath();ctx.moveTo(a[0],a[1]);ctx.lineTo(b[0],b[1]);ctx.stroke();ctx.globalAlpha=1}
+  ctx.strokeStyle=col;ctx.lineWidth=lw;ctx.setLineDash(dash);ctx.beginPath();ctx.moveTo(a[0],a[1]);ctx.lineTo(b[0],b[1]);ctx.stroke();ctx.setLineDash([])}
+ if(st.L.sec){ctx.lineWidth=1;ctx.strokeStyle=css("--fg");for(const s of D.sec){const a=px(s.lat,s.lon),b=px(s.lat1,s.lon1);ctx.globalAlpha=.3;ctx.beginPath();ctx.arc((a[0]+b[0])/2,(a[1]+b[1])/2,Math.min(18,Math.max(6,Math.hypot(a[0]-b[0],a[1]-b[1])/2+4)),0,7);ctx.stroke()}ctx.globalAlpha=1}
+ if(st.L.fl){for(const f of D.fl){if(f.i!=null&&S[f.i]&&!st.dayOn[dayOf(f.i)])continue;const a=px(f.lat,f.lon);if(a[0]<-10||a[0]>w+10||a[1]<-10||a[1]>h+10)continue;
+  const up=f.k==="100->110",r=view.sc>4000?7:5;ctx.beginPath();if(up){ctx.moveTo(a[0],a[1]-r);ctx.lineTo(a[0]+r,a[1]+r*.8);ctx.lineTo(a[0]-r,a[1]+r*.8)}else{ctx.moveTo(a[0],a[1]+r);ctx.lineTo(a[0]+r,a[1]-r*.8);ctx.lineTo(a[0]-r,a[1]-r*.8)}ctx.closePath();
+  ctx.fillStyle=f.c==="OSM 110 both sides"?css("--k1"):css("--card");ctx.fill();ctx.strokeStyle=css("--fg");ctx.lineWidth=1.2;ctx.stroke()}}
+ if(st.L.sl){for(const s of D.sl){const a=px((s.lat+s.lat1)/2,(s.lon+s.lon1)/2);if(a[0]<-20||a[0]>w+20||a[1]<-20||a[1]>h+20)continue;
+  ctx.beginPath();ctx.arc(a[0],a[1],11,0,7);ctx.fillStyle=css("--k"+(s.g==="A"?1:s.g==="B"?2:3));ctx.fill();ctx.lineWidth=2;ctx.strokeStyle=css("--fg");ctx.stroke();
+  ctx.fillStyle=s.g==="C"?"#fff":"#111";ctx.font="bold 11px system-ui";ctx.textAlign="center";ctx.textBaseline="middle";ctx.fillText(s.id,a[0],a[1]+.5)}}
+ if(st.sel){drawSel(w,h)}
+ if(st.L.pl&&view.sc>2200){ctx.font="11px system-ui";ctx.textAlign="left";ctx.textBaseline="middle";const used=new Set();
+  for(const g of D.g){const a=px(g[0],g[1]);if(a[0]<0||a[0]>w||a[1]<0||a[1]>h)continue;const key=Math.round(a[0]/90)+","+Math.round(a[1]/18);if(used.has(key))continue;used.add(key);
+   ctx.lineWidth=3;ctx.strokeStyle=css("--halo");ctx.strokeText(g[2],a[0]+4,a[1]);ctx.fillStyle=css("--mut");ctx.fillText(g[2],a[0]+4,a[1])}}
+ drawScale()}
+function drawSel(w,h){const s=st.sel;ctx.strokeStyle=css("--sel");ctx.fillStyle=css("--sel");ctx.lineWidth=3;
+ if(s.i0!=null){ // highlight run of samples
+  ctx.beginPath();let on=false;for(let i=s.i0;i<=s.i1;i++){const p=S[i];const a=px(p[0],p[1]);if(!on){ctx.moveTo(a[0],a[1]);on=true}else ctx.lineTo(a[0],a[1])}ctx.globalAlpha=.9;ctx.lineWidth=8;ctx.stroke();ctx.globalAlpha=1;
+  // direction chevrons
+  let acc=0;for(let i=s.i0+1;i<=s.i1;i++){const p=S[i-1],q=S[i];const a=px(p[0],p[1]),b=px(q[0],q[1]);const L=Math.hypot(b[0]-a[0],b[1]-a[1]);acc+=L;if(acc>46&&L>4){acc=0;const ang=Math.atan2(b[1]-a[1],b[0]-a[0]);ctx.save();ctx.translate((a[0]+b[0])/2,(a[1]+b[1])/2);ctx.rotate(ang);ctx.beginPath();ctx.moveTo(-4,-5);ctx.lineTo(4,0);ctx.lineTo(-4,5);ctx.lineWidth=2;ctx.strokeStyle=css("--halo");ctx.stroke();ctx.restore()}}}
+ if(s.lat!=null){const a=px(s.lat,s.lon);ctx.beginPath();ctx.arc(a[0],a[1],13,0,7);ctx.lineWidth=3;ctx.strokeStyle=css("--sel");ctx.stroke()}}
+function drawScale(){const mpp=110540/view.sc;const opts=[50,100,200,500,1000,2000,5000,10000,20000,50000,100000,200000];let m=opts[0];for(const o of opts){if(o/mpp<=140)m=o}const wpx=m/mpp;
+ $("scale").innerHTML=`<div style="width:${wpx}px;border-bottom:3px solid var(--fg);border-left:2px solid var(--fg);border-right:2px solid var(--fg);height:7px"></div>${m>=1000?m/1000+" km":m+" m"}`}
+
+/* ---- picking ---- */
+function visibleSample(i){const p=S[i];if(!st.dayOn[dayOf(i)])return false;if(p[2]<85)return st.L.low;if(st.view==="cmp")return st.fc[C[i]];return st.fb[p[6]]}
+function pick(mx,my){
+ if(st.L.sl){for(const s of D.sl){const a=px((s.lat+s.lat1)/2,(s.lon+s.lon1)/2);if((a[0]-mx)**2+(a[1]-my)**2<150)return{t:"sl",o:s}}}
+ if(st.L.fl){let best=null,bd=100;for(const f of D.fl){const a=px(f.lat,f.lon);const d=(a[0]-mx)**2+(a[1]-my)**2;if(d<bd){bd=d;best=f}}if(best)return{t:"fl",o:best}}
+ let b=-1,bd=196;for(let i=0;i<S.length;i++){if(!visibleSample(i))continue;const a=px(S[i][0],S[i][1]);const d=(a[0]-mx)**2+(a[1]-my)**2;if(d<bd){bd=d;b=i}}
+ return b>=0?{t:"p",o:b}:null}
+function tipHtml(h){if(h.t==="p"){const p=S[h.o],w=W[p[8]];return `<b>${p[2].toFixed(0)} km/h</b> &middot; ${HM(p[4])} &middot; ${D.d[p[5]].date}<br>${BANDN[p[6]].split(" (")[0]}<br>OSM: ${lim(p[7])}${w&&w.n?" &middot; "+esc(w.n):""}<br><small>${CAT[C[h.o]][0]}</small>`}
+ if(h.t==="fl"){const f=h.o;return `<b>Flip ${f.k.replace("->","&rarr;")}</b> &middot; ${f.t.slice(5,16)}<br>${f.sa.toFixed(0)} &rarr; ${f.sb.toFixed(0)} km/h over ${f.gap} km<br>OSM ${f.osa||"?"} &rarr; ${f.osb||"?"} &middot; ${esc(f.c)}`}
+ const s=h.o;return `<b>${s.id}</b> &middot; ${s.start.slice(5,16)} &middot; ${s.km} km<br>${esc(s.road)}<br>${esc(s.note)}`}
+
+/* ---- selection card + speed profile ---- */
+function select(h,scroll){const o=h.o;
+ if(h.t==="p"){const p=S[o];st.sel={lat:p[0],lon:p[1],i:o};cardPoint(o)}
+ else if(h.t==="fl"){const f=o;st.sel={lat:f.lat,lon:f.lon,i:f.i};cardFlip(f)}
+ else if(h.t==="sl"){st.sel={lat:(o.lat+o.lat1)/2,lon:(o.lon+o.lon1)/2,i0:o.ix?o.ix[0]:null,i1:o.ix?o.ix[1]:null,i:o.ix?o.ix[0]:null};cardSpan(o,`${o.id}: ${esc(CAT0(o.g))}`,o.start,o.end,o.km,o.road,o.hd,o.note)}
+ else if(h.t==="sec"){st.sel={lat:(o.lat+o.lat1)/2,lon:(o.lon+o.lon1)/2,i0:o.ix?o.ix[0]:null,i1:o.ix?o.ix[1]:null,i:o.ix?o.ix[0]:null};cardSpan(o,"105 section",o.start,o.end,o.km,o.roads,"",`OSM: ${o.o110} samples at 110, ${o.o100} at 100, ${o.oo} other, ${o.ou} unmatched; other passes: ${o.v}`)}
+ else if(h.t==="st"){const t=o;st.sel={lat:null,i0:t.ix?t.ix[0]:null,i1:t.ix?t.ix[1]:null,i:t.ix?t.ix[0]:null};cardSpan(t,"Highway stretch",t.date+" "+t.t0,t.date+" "+t.t1,t.km,t.frm+" to "+t.to,"","")}
+ draw();strip()}
+const CAT0=g=>({A:"OSM 110 but every other pass ran 100/105",B:"Car at standard 100 where OSM says 110",C:"Car at standard 110 where OSM says 100"}[g]);
+function links(lat,lon,hd,lab){const ms=`<a class="ms" target="_blank" rel="noopener" href="${MS(lat,lon)}">TomTom MapShare</a>`;const gv=`<a class="ms" target="_blank" rel="noopener" href="${GV(lat,lon,hd>=0?hd:0)}">Street View</a>`;return `${lab?lab+": ":""}${ms} &middot; ${gv}`}
+function hint(hd){return hd>=0?`<small>Travelling ${comp(hd)}. On a divided road click the <b>${side(hd)}</b> carriageway in MapShare, within 1-2 px of its line; the Speed Limit panel then shows TomTom's stored limit.</small>`:""}
+function cardPoint(i){const p=S[i],w=W[p[8]],c=C[i];
+ $("sel").innerHTML=`<h2>Selected point</h2><h3>${p[2].toFixed(0)} km/h &middot; ${HM(p[4])} &middot; ${D.d[p[5]].date}</h3>
+ <div class="kv"><span>Car</span><span>${BANDN[p[6]]}</span><span>OpenStreetMap</span><span>${lim(p[7])}${w?` &middot; ${esc(w.n||w.r||w.h)}${w.r&&w.n?" ("+esc(w.r)+")":""}`:""}</span><span>Heading</span><span>${p[9]>=0?comp(p[9])+" ("+p[9]+"&deg;)":"n/a"}</span><span>Odometer</span><span>${p[3]} km</span><span>Position</span><span>${p[0].toFixed(5)}, ${p[1].toFixed(5)}</span></div>
+ <div class="verdict" style="border-color:var(--k${c})">${VERDICT[c]}</div><div>${links(p[0],p[1],p[9])} &middot; <a class="ms" target="_blank" rel="noopener" href="${GM(p[0],p[1])}">Google Maps</a></div>${hint(p[9])}<canvas id="strip"></canvas>`}
+function cardFlip(f){const hd=brg(f.la,f.oa,f.lb,f.ob);
+ $("sel").innerHTML=`<h2>Flip in the car's perceived limit</h2><h3>${f.k.replace("->"," &rarr; ")} &middot; ${f.t.slice(5,16)}</h3>
+ <div class="kv"><span>Speed</span><span>${f.sa.toFixed(0)} &rarr; ${f.sb.toFixed(0)} km/h</span><span>Between samples</span><span>${f.gap} km (${f.gs} s) apart: the change happened somewhere in that gap</span><span>OpenStreetMap</span><span>${f.osa||"?"} before, ${f.osb||"?"} after &middot; ${esc(f.ra||f.rb)}</span><span>Heading</span><span>${f.hd}</span></div>
+ <div class="verdict" style="border-color:var(--k1)">${f.c==="OSM 110 both sides"?"OpenStreetMap shows 110 on both sides, so this is not a mapped zone change. Per the sign observation, look for a speed sign just before the speed changes.":esc(f.c)}</div>
+ <div>${links(f.la,f.oa,hd,"From the first sample")}<br>${links(f.lb,f.ob,hd,"At the second sample")}</div>${hint(hd)}<canvas id="strip"></canvas>`}
+function cardSpan(o,title,a,b,km,road,hd,note){const h2=o.lat1!=null?brg(o.lat,o.lon,o.lat1,o.lon1):-1;
+ $("sel").innerHTML=`<h2>Selected</h2><h3>${title}</h3><div class="kv"><span>When</span><span>${a.slice(5,16)} to ${b.slice(-8,-3)}</span><span>Length</span><span>${km} km</span><span>Road</span><span>${esc(road)}</span>${hd?`<span>Heading</span><span>${esc(hd)}</span>`:""}</div>
+ ${note?`<div class="verdict">${esc(note)}</div>`:""}<div>${o.lat!=null?links(o.lat,o.lon,h2,"Start")+"<br>"+links(o.lat1,o.lon1,h2,"End"):""}</div>${hint(h2)}<canvas id="strip"></canvas>`}
+function strip(){const cvs=$("strip");if(!cvs||st.sel==null||st.sel.i==null)return;const s=st.sel;const c=cvs.getContext("2d");const r=devicePixelRatio||1;const W_=cvs.clientWidth,H_=150;cvs.width=W_*r;cvs.height=H_*r;c.setTransform(r,0,0,r,0,0);
+ let a=s.i0!=null?s.i0:s.i,b=s.i1!=null?s.i1:s.i,d=S[a][5];const o0=S[a][3]-(s.i0!=null?1.5:3),o1=S[b][3]+(s.i0!=null?1.5:3);
+ while(a>0&&S[a-1][5]===d&&S[a-1][3]>=o0)a--;while(b<S.length-1&&S[b+1][5]===d&&S[b+1][3]<=o1)b++;
+ const pts=[];for(let i=a;i<=b;i++)if(S[i][2]>=60)pts.push(S[i]);if(pts.length<2)return;
+ const x0=pts[0][3],x1=pts[pts.length-1][3],pad={l:34,r:8,t:8,b:20},Y0=85,Y1=125;
+ const X=v=>pad.l+(v-x0)/(x1-x0||1)*(W_-pad.l-pad.r),Y=v=>pad.t+(Y1-v)/(Y1-Y0)*(H_-pad.t-pad.b);
+ c.font="10px system-ui";c.fillStyle=css("--mut");c.strokeStyle=css("--line");c.lineWidth=1;c.textAlign="right";c.textBaseline="middle";
+ for(const v of [90,100,110,120]){c.beginPath();c.moveTo(pad.l,Y(v));c.lineTo(W_-pad.r,Y(v));c.setLineDash(v===100||v===110?[4,3]:[]);c.stroke();c.setLineDash([]);c.fillText(v,pad.l-4,Y(v))}
+ // OSM limit as a step line
+ c.lineWidth=5;c.globalAlpha=.35;for(let i=1;i<pts.length;i++){const o=pts[i][7];if(o>0&&pts[i-1][7]===o){c.strokeStyle=wayColor(o);c.beginPath();c.moveTo(X(pts[i-1][3]),Y(o));c.lineTo(X(pts[i][3]),Y(o));c.stroke()}}c.globalAlpha=1;
+ c.lineWidth=1.5;c.strokeStyle=css("--fg");c.beginPath();pts.forEach((p,i)=>{i?c.lineTo(X(p[3]),Y(Math.min(Y1,Math.max(Y0,p[2])))):c.moveTo(X(p[3]),Y(p[2]))});c.stroke();
+ for(const p of pts){c.fillStyle=css("--c"+p[6]);c.beginPath();c.arc(X(p[3]),Y(Math.min(Y1,Math.max(Y0,p[2]))),3.2,0,7);c.fill()}
+ if(s.i0!=null){c.fillStyle=css("--sel");c.globalAlpha=.12;c.fillRect(X(S[s.i0][3]),pad.t,X(S[s.i1][3])-X(S[s.i0][3]),H_-pad.t-pad.b);c.globalAlpha=1}
+ else{c.strokeStyle=css("--sel");c.lineWidth=2;c.beginPath();c.moveTo(X(S[s.i][3]),pad.t);c.lineTo(X(S[s.i][3]),H_-pad.b);c.stroke()}
+ c.textAlign="center";c.textBaseline="top";c.fillStyle=css("--mut");c.fillText(((x1-x0)).toFixed(1)+" km of road, in the direction driven. Dots: speed band. Pale line: OpenStreetMap limit",W_/2+10,H_-14)}
+
+/* ---- pointer interaction ---- */
+let drag=null;
+cv.onpointerdown=e=>{drag={x:e.clientX,y:e.clientY,cx:view.cx,cy:view.cy};cv.setPointerCapture(e.pointerId);cv.style.cursor="grabbing"};
+cv.onpointerup=e=>{const moved=drag&&Math.hypot(e.clientX-drag.x,e.clientY-drag.y)>4;drag=null;cv.style.cursor="grab";if(!moved){const r=cv.getBoundingClientRect();const h=pick(e.clientX-r.left,e.clientY-r.top);if(h)select(h)}};
+cv.onpointermove=e=>{const r=cv.getBoundingClientRect();if(drag){view.cx=drag.cx-(e.clientX-drag.x)/(kx*view.sc);view.cy=drag.cy+(e.clientY-drag.y)/view.sc;draw();tip.style.display="none";return}
+ const mx=e.clientX-r.left,my=e.clientY-r.top,h=pick(mx,my);if(!h){tip.style.display="none";return}
+ tip.innerHTML=tipHtml(h);tip.style.display="block";tip.style.left=Math.min(mx+14,r.width-280)+"px";tip.style.top=Math.max(my-10,4)+"px"};
+cv.onpointerleave=()=>{tip.style.display="none"};
+cv.onwheel=e=>{e.preventDefault();const r=cv.getBoundingClientRect();zoomAt(e.clientX-r.left,e.clientY-r.top,e.deltaY<0?1.25:.8)};
+
+/* ---- tables ---- */
+const TABS=[["sl","TomTom shortlist"],["fl","Flips 100 / 110"],["sec","105 sections"],["st","Highway stretches"],["cal","OpenStreetMap vs your driving"],["how","How to check in TomTom"]];
+$("tabs").innerHTML=TABS.map(t=>`<button data-t="${t[0]}">${t[1]}</button>`).join("");
+function showTab(t){[...$("tabs").children].forEach(b=>b.classList.toggle("on",b.dataset.t===t));TABS.forEach(x=>$("p-"+x[0]).classList.toggle("on",x[0]===t))}
+$("tabs").onclick=e=>{if(e.target.dataset.t)showTab(e.target.dataset.t)};
+function jump(h,lat,lon,sc){select(h);focus(lat,lon,sc||4500);window.scrollTo({top:0,behavior:"smooth"})}
+const bar=(parts)=>`<div class="mbar">${parts.map(p=>`<i style="width:${p[0]}%;background:${p[1]}" title="${p[2]}"></i>`).join("")}</div>`;
+// shortlist
+$("p-sl").innerHTML=`<h3>Points worth a TomTom check (${D.sl.length})</h3><p class="note">Group A: OpenStreetMap says 110, the car ran the 105 plateau, and every other pass over the same road ran 100/105 (so a second source agrees the car under-reads). B: standard-mode 100 on an OSM 110 road. C: standard-mode 110 on an OSM 100 road. Click a row to show it on the map; each link opens MapShare at that GPS point (see the how-to tab for the carriageway trick).</p>
+<table><thead><tr><th></th><th>Why</th><th>When</th><th>Length</th><th>Road</th><th>Heading</th><th>Detail</th><th>Check</th></tr></thead><tbody>${D.sl.map((s,i)=>`<tr class="row" data-i="${i}"><td><span class="gid g-${s.g}">${s.id}</span></td><td class="wrapc">${CAT0(s.g)}</td><td>${s.start.slice(5,16)}</td><td>${s.km} km</td><td class="wrapc">${esc(s.road)}</td><td>${s.hd}</td><td class="wrapc">${esc(s.note)}</td><td>${links(s.lat,s.lon,brg(s.lat,s.lon,s.lat1,s.lon1),"")}</td></tr>`).join("")}</tbody></table>`;
+$("p-sl").onclick=e=>{if(e.target.closest("a"))return;const tr=e.target.closest("tr.row");if(!tr)return;const s=D.sl[+tr.dataset.i];jump({t:"sl",o:s},(s.lat+s.lat1)/2,(s.lon+s.lon1)/2,5000)};
+// flips
+$("p-fl").innerHTML=`<h3>Flips in the car's perceived limit (${D.fl.length})</h3><p class="note">Every point where consecutive highway samples change between the 100 class (101-106 km/h) and the 110 class (110-116 km/h). The change happened somewhere between the two samples, about 0.9 km apart. If OpenStreetMap shows the same limit on both sides, the flip is not a mapped zone change: per your observation it sits at a speed sign, where the car's own map section starts or ends.</p>
+<div class="filters"><label>Direction <select id="fk"><option value="">both</option><option value="100->110">100 &rarr; 110</option><option value="110->100">110 &rarr; 100</option></select></label><label>OpenStreetMap <select id="fc"><option value="">any</option><option value="OSM 110 both sides">110 on both sides</option><option value="OSM 100 both sides">100 on both sides</option><option value="chg">changes at the flip</option></select></label><span class="mut" id="fcount"></span></div>
+<table><thead><tr><th>When</th><th>Flip</th><th>Speed</th><th>Gap</th><th>Road</th><th>Heading</th><th>OSM before / after</th><th>Class</th><th>Check</th></tr></thead><tbody id="fbody"></tbody></table>`;
+function renderFlips(){const k=$("fk").value,c=$("fc").value;const rows=D.fl.filter(f=>(!k||f.k===k)&&(!c||(c==="chg"?f.c.startsWith("OSM changes"):f.c===c)));$("fcount").textContent=rows.length+" shown";
+ $("fbody").innerHTML=rows.map(f=>{const hd=brg(f.la,f.oa,f.lb,f.ob);return `<tr class="row" data-i="${D.fl.indexOf(f)}"><td>${f.t.slice(5,16)}</td><td>${f.k.replace("->"," &rarr; ")}</td><td>${f.sa.toFixed(0)} &rarr; ${f.sb.toFixed(0)}</td><td>${f.gap} km</td><td>${esc(f.ra||f.rb)}</td><td>${f.hd}</td><td>${f.osa||"?"} / ${f.osb||"?"}</td><td>${esc(f.c)}</td><td>${links(f.la,f.oa,hd,"")}</td></tr>`}).join("")}
+$("p-fl").onchange=renderFlips;renderFlips();
+$("p-fl").onclick=e=>{if(e.target.closest("a")||e.target.closest("select"))return;const tr=e.target.closest("tr.row");if(!tr)return;const f=D.fl[+tr.dataset.i];jump({t:"fl",o:f},f.lat,f.lon,7000)};
+// sections
+const sorder=D.sec.map((s,i)=>i).sort((a,b)=>D.sec[a].start<D.sec[b].start?-1:1);
+$("p-sec").innerHTML=`<h3>Sections at about 105 km/h (3+ samples), ${D.sec.length}</h3><p class="note">Bar = share of the section's matched samples on OSM 110 / 100 / other roads. Click a row to show it and expand its samples (about 1 km apart): a section can cross several map segments, so check TomTom at each point, not just the start.</p>
+<table><thead><tr><th>When</th><th>Length</th><th>Road</th><th>OpenStreetMap says</th><th>Other passes there</th><th>Shortlist</th></tr></thead><tbody>${sorder.map(i=>{const s=D.sec[i],m=s.o110+s.o100+s.oo;const cls=s.v==="others at 110"?"p-110":s.v==="others at 100/105"?"p-100":s.v==="mixed"?"p-mix":"";
+ return `<tr class="row" data-i="${i}"><td>${s.start.slice(5,16)}</td><td>${s.km.toFixed(1)} km</td><td class="wrapc">${esc(s.roads||"")}</td><td>${m?`${bar([[100*s.o110/m,"var(--o110)","OSM 110: "+s.o110],[100*s.o100/m,"var(--o100)","OSM 100: "+s.o100],[100*s.oo/m,"var(--ooth)","other: "+s.oo]])} <small>${s.o110} / ${s.o100} / ${s.oo}</small>`:"<small>no OSM road</small>"}</td><td><span class="pill ${cls}">${s.v}</span> <small>${s.hi} | ${s.lo}</small></td><td>${s.sl?`<span class="gid g-${s.sl[0]}">${s.sl}</span>`:""}</td></tr><tr class="sub" id="sub${i}" style="display:none"><td colspan="6"></td></tr>`}).join("")}</tbody></table>`;
+$("p-sec").onclick=e=>{if(e.target.closest("a"))return;const tr=e.target.closest("tr.row");if(!tr)return;const i=+tr.dataset.i,s=D.sec[i],sub=$("sub"+i);
+ const open=sub.style.display==="none";document.querySelectorAll("#p-sec tr.sub").forEach(x=>x.style.display="none");
+ if(open&&s.ix&&!sub.dataset.f){let rows="";for(let q=s.ix[0];q<=s.ix[1];q++){const p=S[q],w=W[p[8]];rows+=`<tr><td>${HMS(p[4])}</td><td>+${(p[3]-S[s.ix[0]][3]).toFixed(1)} km</td><td>${p[2].toFixed(0)} km/h</td><td>${lim(p[7])}</td><td>${esc(w?w.n||w.r:"")}</td><td>${p[9]>=0?comp(p[9]):""}</td><td><a class="ms" target="_blank" rel="noopener" href="${MS(p[0],p[1])}">TomTom</a> &middot; <a class="ms" target="_blank" rel="noopener" href="${GV(p[0],p[1],p[9]>=0?p[9]:0)}">Street View</a></td></tr>`}
+  sub.firstChild.innerHTML=`<table class="in"><thead><tr><th>Time</th><th>Along</th><th>Speed</th><th>OSM limit</th><th>OSM road</th><th>Heading</th><th></th></tr></thead><tbody>${rows}</tbody></table>`;sub.dataset.f=1}
+ sub.style.display=open?"":"none";jump({t:"sec",o:s},(s.lat+s.lat1)/2,(s.lon+s.lon1)/2,5000)};
+// stretches
+$("p-st").innerHTML=`<h3>Highway stretches (${D.st.length}), 5 km or more at 85 km/h or faster</h3><p class="note">Speed mix bar: standard 100, hurry/105, standard 110, hurry 115, other. OSM columns: share of matched samples on OSM 110 / OSM 100 roads.</p>
+<table><thead><tr><th>Date</th><th>Time</th><th>From</th><th>To</th><th>Length</th><th>Average</th><th>Speed mix</th><th>OSM 110 / 100</th><th>Flips</th></tr></thead><tbody>${D.st.map((t,i)=>`<tr class="row" data-i="${i}"><td>${t.date.slice(5)}</td><td>${t.t0}-${t.t1}</td><td>${esc(t.frm)}</td><td>${esc(t.to)}</td><td>${t.km} km</td><td>${t.avg}</td><td>${bar([[t.b[0],"var(--c0)","standard 100 "+t.b[0]+"%"],[t.b[1],"var(--c1)","hurry/105 "+t.b[1]+"%"],[t.b[2],"var(--c2)","standard 110 "+t.b[2]+"%"],[t.b[3],"var(--c3)","hurry 115 "+t.b[3]+"%"],[t.b[4],"var(--c4)","other "+t.b[4]+"%"]])}</td><td>${t.m?pct(t.o110,t.m)+"% / "+pct(t.o100,t.m)+"%":"-"}</td><td>${t.sw}</td></tr>`).join("")}</tbody></table>`;
+$("p-st").onclick=e=>{const tr=e.target.closest("tr.row");if(!tr)return;const t=D.st[+tr.dataset.i];if(!t.ix)return;const a=S[t.ix[0]],b=S[t.ix[1]];st.sel=null;select({t:"st",o:t});
+ const lat=(a[0]+b[0])/2,lon=(a[1]+b[1])/2;const w=cv.clientWidth,h=cv.clientHeight;view.cx=lon;view.cy=lat;view.sc=Math.min(w/(Math.abs(b[1]-a[1])*kx*1.3+1e-4),h/(Math.abs(b[0]-a[0])*1.3+1e-4),20000);draw();window.scrollTo({top:0,behavior:"smooth"})};
+// calibration
+const bn=["Standard in a 100","Hurry in a 100 (105)","Standard in a 110","Hurry in a 110"];
+$("p-cal").innerHTML=`<h3>How well OpenStreetMap agrees with what you drove</h3><p class="note">Each row is a speed band the car ran at on a highway; each cell is the share of those samples on a road with that OpenStreetMap limit. Standard mode (rows 1 and 3) is the best proxy for the signed limit. The 105 row is the question: if it sits mostly on OSM 110, the car read a 110 road as 100.</p>
+<table class="heat"><thead><tr><th>Car speed band</th><th>OSM 110</th><th>OSM 100</th><th>Other limit (80, 90...)</th><th>No limit tag</th><th>Samples</th></tr></thead><tbody>${D.cal.map((r,i)=>{const t=r.reduce((a,b)=>a+b,0);return `<tr><td>${bn[i]}</td>${r.map((v,j)=>`<td class="h" style="background:color-mix(in srgb,${j===0?"var(--o110)":j===1?"var(--o100)":"var(--ooth)"} ${Math.round(70*v/(t||1))}%,transparent)">${pct(v,t)}% <small>(${v})</small></td>`).join("")}<td class="h">${t}</td></tr>`}).join("")}</tbody></table>
+<p class="note">Flips: ${SM.flips} changes of the car's 100/110 reading; ${SM.flips_in110} have OpenStreetMap at 110 on both sides, and only ${SM.flips_osm_changes} coincide with OpenStreetMap changing limit the same way. Match rate: ${SM.matched.toLocaleString()} of ${SM.hw.toLocaleString()} highway samples matched to an OSM road.</p>`;
+// how-to
+$("p-how").innerHTML=`<h3>Checking a point in TomTom MapShare</h3><ol class="how"><li>Open the <b>TomTom</b> link from a row or the Selected card. MapShare opens at zoom 17 centred on that GPS point. Sign in first; MapShare will ask you to sign in when you click the map.</li>
+<li>Note the heading. In Australia traffic keeps left, so on a divided road <b>northbound is the west carriageway, southbound east, eastbound north, westbound south</b>. The two carriageways are only about 15-25 m (20-35 px) apart.</li>
+<li>Click on the carriageway line, within 1-2 px of it. The map re-centres after each click and the centre marker swallows clicks, so centre the map about 40 m behind the point and click about 57 px ahead along the road. A hit highlights a segment (180 m or more) in blue.</li>
+<li>Choose <b>Speed Limit</b>. The form is pre-filled with TomTom's stored limit for that segment and shows the direction it applies to. Read it, then close the form with the X. Do not press Submit unless you mean to report a change.</li>
+<li>A segment can be long, and a flip sits within ~0.9 km of two samples, so check the segments on both sides of the flip.</li>
+<li>If TomTom shows <b>100</b> and you believe it is 110, use the Street View link (look forward along the direction travelled, just before where the car changed) to find the sign. If TomTom already shows 110, the car's 100 does not come from TomTom's data.</li></ol>
+<p class="note">Checked so far (nothing submitted): M1 Pacific Motorway at Wahroonga northbound = 110 on two segments; Pacific Highway south of Coffs Harbour southbound (A5) = 110; control, Maryborough-Hervey Bay Road = 100.</p>`;
+
+new ResizeObserver(()=>{size();draw();strip()}).observe(cv);
+size();renderFilters();fit();showTab(D.sl.length?"sl":"fl");
+matchMedia("(prefers-color-scheme:dark)").addEventListener("change",()=>{draw();strip()});
+</script></body></html>
