@@ -296,33 +296,39 @@ class Places:
         return out[:60]
 
     # ---- one place -----------------------------------------------------------------------------------------------
-    def spot_keywords(self, S, lat, lon, name=""):
+    def spot_keywords(self, S, lat, lon, name="", addr=""):
         """Keywords for a place that is not saved yet, as places_manager.py suggests them: the street of the address (and its abbreviation) plus the
-        place name. The address is the one your own drives / charges already recorded there; failing that, Nominatim is asked."""
+        place name. The address comes from OpenStreetMap: the one on the OSM place itself (addr), else what Nominatim says is at that point. Only when
+        OSM has no street there is the address Tessie recorded used, and only if it has a street (Tessie sometimes has just "12, Pialba")."""
         sys.path.insert(0, os.path.dirname(HERE))
         import places_manager as PM
-        addrs = collections.Counter()
-        for d in S.drives():
-            if d.get("addr1") and d.get("lat1") is not None and hav(lat, lon, d["lat1"], d["lon1"]) <= 150:
-                addrs[d["addr1"]] += 1
-        for c in S.charges():
-            if c.get("addr") and c.get("lat") is not None and hav(lat, lon, c["lat"], c["lon"]) <= 150:
-                addrs[c["addr"]] += 1
-        addr = addrs.most_common(1)[0][0] if addrs else ""
-        if not addr:
+        usable = lambda a: bool(a) and not (a.split(",")[0].strip().replace("/", "").replace("-", "").isdigit())
+        if not usable(addr):
+            addr = ""
             try:
                 g = PM.reverse_geocode(lat, lon) or {}
                 a = g.get("address") or {}
-                street = ((a.get("house_number") or "") + " " + (a.get("road") or "")).strip()
-                addr = ", ".join(x for x in (street, a.get("suburb") or a.get("city") or a.get("town") or "") if x)
+                road = (a.get("road") or "").strip()
+                if road and not road.replace("/", "").replace("-", "").isdigit():
+                    street = ((a.get("house_number") or "") + " " + road).strip()
+                    addr = ", ".join(x for x in (street, a.get("suburb") or a.get("city") or a.get("town") or "") if x)
             except Exception:
                 addr = ""
+        if not addr:
+            tess = collections.Counter()
+            for d in S.drives():
+                if d.get("addr1") and d.get("lat1") is not None and hav(lat, lon, d["lat1"], d["lon1"]) <= 150:
+                    tess[d["addr1"]] += 1
+            for c in S.charges():
+                if c.get("addr") and c.get("lat") is not None and hav(lat, lon, c["lat"], c["lon"]) <= 150:
+                    tess[c["addr"]] += 1
+            addr = next((a for a, _ in tess.most_common() if usable(a)), "")
         try:
             return PM.suggest_keywords(addr, name), addr
         except Exception:
             return [], addr
 
-    def detail(self, S, key, name=""):
+    def detail(self, S, key, name="", addr=""):
         info = None
         if key.startswith("p:"):
             p = next((x for x in self.defs() if x["name"] == key[2:]), None)
@@ -345,7 +351,7 @@ class Places:
             sp = self.saved_at(la, lo)
             if sp:
                 return self.detail(S, "p:" + sp["name"])
-            kws, addr = self.spot_keywords(S, la, lo, name)
+            kws, addr = self.spot_keywords(S, la, lo, name, addr)
             info = dict(kind="spot", name="Unnamed place", lat=la, lon=lo, radius=150, keywords=kws, notes="", addr=addr)
         if not info:
             return None
@@ -363,6 +369,17 @@ class Places:
                     visits.append(dict(k="drive", id=d["id"], t0=d["t1"], day=d["day"], hm=d["hm"], min=d["min"], km=d["km"], frm=d.get("frm")))
         else:
             visits = [e for e in self._events(S) if e["key"] == key]
+        # where the car itself recorded stops near here (drive ends, parked periods, charges): used to size the radius of a place saved from an
+        # OpenStreetMap result, so the spot where the car actually stopped is inside it
+        cl = float(app_config.get("places.save_radius_cluster_m"))
+        pts = set()
+        for d in S.drives():
+            if d.get("lat1") is not None and hav(info["lat"], info["lon"], d["lat1"], d["lon1"]) <= cl:
+                pts.add((round(d["lat1"], 5), round(d["lon1"], 5)))
+        for r in list(S.idles()) + list(S.charges()):
+            if r.get("lat") is not None and hav(info["lat"], info["lon"], r["lat"], r["lon"]) <= cl:
+                pts.add((round(r["lat"], 5), round(r["lon"], 5)))
+        info["pts"] = sorted(pts)[:300]
         info["visits"] = sorted(visits, key=lambda e: -e["t0"])[:400]
         info["nvisits"] = len(visits)
         return info
@@ -405,6 +422,14 @@ class Places:
         except OSError:
             pass
 
+    @staticmethod
+    def _tag_addr(tags):
+        """"12 Esplanade, Pialba" from an OSM feature's addr:* tags ("" when it has no street)."""
+        if not tags.get("addr:street"):
+            return ""
+        street = ((tags.get("addr:housenumber") or "") + " " + tags["addr:street"]).strip()
+        return ", ".join(x for x in (street, tags.get("addr:suburb") or tags.get("addr:city") or "") if x)
+
     def _photon(self, PM, lat, lon, radius):
         """The nearest named OpenStreetMap features around a point from photon.komoot.io (an independent server over the same data)."""
         import urllib.request
@@ -425,7 +450,9 @@ class Places:
                 continue
             seen.add((name.lower(), round(la, 3), round(lo, 3)))
             grp, emo = PM.classify_poi_group({k: v})
-            out.append(dict(name=name, group=grp, emoji=emo, category=(k if v == "yes" else v).replace("_", " ").title(), dist_m=round(d, 1), lat=la, lon=lo))
+            street = ((pr.get("housenumber") or "") + " " + (pr.get("street") or "")).strip()
+            out.append(dict(name=name, group=grp, emoji=emo, category=(k if v == "yes" else v).replace("_", " ").title(), dist_m=round(d, 1), lat=la, lon=lo,
+                            addr=", ".join(x for x in (street, pr.get("district") or pr.get("city") or "") if x) if pr.get("street") else ""))
         out.sort(key=lambda o: o["dist_m"])
         return out
 
@@ -457,7 +484,7 @@ class Places:
                 cache[ck] = rec
                 self._save_cache(cache)
             return dict(rec, cached=False)
-        items = [dict(name=r["name"], group=r.get("group") or "Other", emoji=r.get("emoji") or "", category=r.get("category") or "", dist_m=r.get("dist_m"), lat=r.get("lat"), lon=r.get("lon")) for r in res]
+        items = [dict(name=r["name"], group=r.get("group") or "Other", emoji=r.get("emoji") or "", category=r.get("category") or "", dist_m=r.get("dist_m"), lat=r.get("lat"), lon=r.get("lon"), addr=self._tag_addr(r.get("tags") or {})) for r in res]
         rec = dict(items=items, source="OpenStreetMap (Overpass)", fetched=datetime.datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ"), radius=radius)
         if items:       # an empty answer is more likely a busy server than an empty street, so it is not kept
             cache[ck] = rec

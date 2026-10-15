@@ -11,6 +11,8 @@ the block). A change takes effect the next time the app or script reads it (the 
   app.drives.charge_window_minutes                 a charge within this long after / before a drive makes it "to charge" / "from charge"
   app.drives.low_battery_pct                       the "finished at N% or less" filter
   app.places.stay_min_seconds                      a gap between real drives shorter than this is not a parked period
+  app.places.save_radius_*                         radius suggested when saving an OpenStreetMap place: at least min_m, else far enough to reach every stop the car
+                                                   recorded within cluster_m of the stop, plus margin_m
   app.nearby.*                                     OpenStreetMap lookups for "what is around here" (Overpass servers, time limits, Photon fallback)
   app.window.*                                     the native window size and the local web port
 """
@@ -28,7 +30,7 @@ DEFAULTS = {
     "drives": {"repark_max_km": 0.05, "repark_max_minutes": 10,
                "long_highway_km": 30, "long_highway_fast_kmh": 90, "long_highway_fast_minutes": 10,
                "charge_window_minutes": 30, "low_battery_pct": 20},
-    "places": {"stay_min_seconds": 120},
+    "places": {"stay_min_seconds": 120, "save_radius_min_m": 100, "save_radius_margin_m": 25, "save_radius_cluster_m": 250},
     "nearby": {"overpass_endpoints": ["https://overpass.kumi.systems/api/interpreter", "https://overpass.private.coffee/api/interpreter",
                                       "https://overpass.openstreetmap.fr/api/interpreter", "https://lz4.overpass-api.de/api/interpreter",
                                       "https://overpass-api.de/api/interpreter"],
