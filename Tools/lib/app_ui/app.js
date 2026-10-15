@@ -17,6 +17,8 @@ const driveTitle=d=>(d.frm||"?")+" → "+(d.to||"?");
 const errBox=(msg,lead)=>`<div class="errbox"><div>${lead||""}</div><pre>${esc(msg)}</pre><button class="btn" data-copy>Copy error</button></div>`;
 document.addEventListener("click",e=>{const b=e.target.closest("[data-copy]");if(!b)return;const pre=b.parentNode.querySelector("pre"),sel=()=>{const r=document.createRange();r.selectNodeContents(pre);const s=getSelection();s.removeAllRanges();s.addRange(r);b.textContent="Selected - press Cmd+C"};
   (navigator.clipboard?navigator.clipboard.writeText(pre.textContent):Promise.reject()).then(()=>{b.textContent="Copied"},sel)});
+// Settings come from the "app" block of config.json (see lib/app_config.py), loaded once at start.
+let SET={};const cfg=k=>k.split(".").reduce((o,x)=>o&&o[x],SET),REPM=()=>Math.round(cfg("drives.repark_max_km")*1000)+" m",MAPSTYLE=dark=>cfg("map.tiles_base")+cfg(dark?"map.style_dark":"map.style_light");
 const loading=()=>main.innerHTML='<div class="empty">Loading…</div>';
 const QK="clipQueue",qget=()=>{try{return JSON.parse(localStorage.getItem(QK)||"[]")}catch(e){return[]}};
 
@@ -35,7 +37,7 @@ function miniMap(el,lat,lon,col){
   if(lat==null||lon==null){el.outerHTML='<div class="sub">No location.</div>';return}
   if(!window.maplibregl){el.innerHTML='<div class="empty">Map library not loaded (offline?).</div>';return}
   const dark=matchMedia("(prefers-color-scheme: dark)").matches;
-  const m=new maplibregl.Map({container:el,style:"https://tiles.openfreemap.org/styles/"+(dark?"dark":"positron"),center:[lon,lat],zoom:14.5,attributionControl:{compact:true},cooperativeGestures:true});
+  const m=new maplibregl.Map({container:el,style:MAPSTYLE(dark),center:[lon,lat],zoom:14.5,attributionControl:{compact:true},cooperativeGestures:true});
   m.addControl(new maplibregl.NavigationControl({showCompass:false}),"top-right");
   new maplibregl.Marker({color:col||"#3b6cf6"}).setLngLat([lon,lat]).addTo(m);
 }
@@ -78,7 +80,7 @@ async function pageActivity(){
     $("#more").hidden=days.length>=byDay.size;
   };
   main.innerHTML=`<h1>Activity</h1><div class="sub">${act.length.toLocaleString()} drives, charges and parked periods, newest first.</div>
-   <div class="bar"><span id="rg"></span><button class="chip ${AF.drive?"on":""}" data-k="drive">Drives</button><button class="chip ${AF.charge?"on":""}" data-k="charge">Charges</button><button class="chip ${AF.idle?"on":""}" data-k="idle">Parked</button><button class="chip ${AF.repark?"on":""}" data-k="repark" title="Drives under 50 m: the car was only moved a little">Re-parks</button>
+   <div class="bar"><span id="rg"></span><button class="chip ${AF.drive?"on":""}" data-k="drive">Drives</button><button class="chip ${AF.charge?"on":""}" data-k="charge">Charges</button><button class="chip ${AF.idle?"on":""}" data-k="idle">Parked</button><button class="chip ${AF.repark?"on":""}" data-k="repark" title="Drives under ${REPM()}: the car was only moved a little">Re-parks</button>
    <input type="search" id="q" placeholder="Search a place…" value="${esc(AF.q)}"></div><div id="list"></div><div class="bar"><button class="btn" id="more">Show 30 more days</button></div>`;
   $$(".chip").forEach(c=>c.onclick=()=>{AF[c.dataset.k]=!AF[c.dataset.k];c.classList.toggle("on");draw()});
   rangePicker($("#rg"),AF.r,daysOf(act),()=>{AF.days=30;draw()});$("#q").oninput=e=>{AF.q=e.target.value;draw()};$("#more").onclick=()=>{AF.days+=30;draw()};draw();
@@ -141,14 +143,15 @@ let DP={r:{p:"all"},q:"",ch:"all",ex:"all",rp:"drive"};
 async function pageDrives(){
   loading();const act=await api("activity"),all=act.filter(x=>x.k==="drive"),chg=act.filter(x=>x.k==="charge");
   // a drive "ends at a charge" when a charge starts within 30 min after it, "leaves a charge" when one ended within 30 min before it
-  all.forEach(d=>{d.toCh=chg.find(c=>c.t0>=d.t1-300&&c.t0<=d.t1+1800)||null;d.fromCh=chg.find(c=>c.t1<=d.t0+300&&c.t1>=d.t0-1800)||null});
-  const CHF={all:()=>true,to:x=>x.toCh,from:x=>x.fromCh,any:x=>x.toCh||x.fromCh,none:x=>!x.toCh&&!x.fromCh,low:x=>x.b1!=null&&x.b1<=20},
-   EXF={all:()=>true,foot:x=>x.foot,fsd:x=>x.ap>0,al:x=>x.al>0,hwy:x=>x.km>=30&&x.max>=100};
+  const W=cfg("drives.charge_window_minutes")*60;
+  all.forEach(d=>{d.toCh=chg.find(c=>c.t0>=d.t1-300&&c.t0<=d.t1+W)||null;d.fromCh=chg.find(c=>c.t1<=d.t0+300&&c.t1>=d.t0-W)||null});
+  const CHF={all:()=>true,to:x=>x.toCh,from:x=>x.fromCh,any:x=>x.toCh||x.fromCh,none:x=>!x.toCh&&!x.fromCh,low:x=>x.b1!=null&&x.b1<=cfg("drives.low_battery_pct")},
+   EXF={all:()=>true,foot:x=>x.foot,fsd:x=>x.ap>0,al:x=>x.al>0,hwy:x=>x.km>=cfg("drives.long_highway_km")&&x.max>=cfg("drives.long_highway_fast_kmh")};
   const draw=()=>{const q=DP.q.toLowerCase(),rs=all.filter(x=>inRange(x,DP.r)&&(!q||driveTitle(x).toLowerCase().includes(q))&&CHF[DP.ch](x)&&EXF[DP.ex](x)&&(DP.rp==="both"||(DP.rp==="repark")===!!x.repark)),
     km=rs.reduce((a,x)=>a+x.km,0),kwh=rs.reduce((a,x)=>a+(x.kwh||0),0),ap=rs.reduce((a,x)=>a+(x.ap||0),0),mn=rs.reduce((a,x)=>a+(x.min||0),0);
     $("#tl").innerHTML=tile(n0(rs.length),"drives")+tile(n0(km)+" km","distance")+tile(km?n0(kwh*1000/km)+" Wh/km":"–","average efficiency")+tile(km?n0(100*ap/km)+"%":"–","self-driving")+tile(dur(mn),"time driving")+tile(n0(Math.max(0,...rs.map(x=>x.max||0)))+" km/h","top speed");
-    table($("#tb"),[{k:"t0",t:"Date",l:1,f:r=>`${r.day} ${r.hm}`},{k:"frm",t:"Trip",l:1,f:r=>esc(driveTitle(r))+(r.repark?` <span class="pill" title="Under 50 m: the car was only moved a little">re-park</span>`:"")+(r.toCh?` <span class="pill ok" title="A charge started right after this drive">to charge</span>`:"")+(r.fromCh?` <span class="pill" title="A charge ended just before this drive">from charge</span>`:"")},{k:"km",t:"km",f:r=>n0(r.km,1)},{k:"min",t:"Time",f:r=>dur(r.min)},{k:"whkm",t:"Wh/km",f:r=>n0(r.whkm)},{k:"max",t:"Max",f:r=>n0(r.max)},{k:"ap",t:"Self-driving",f:r=>r.km?n0(100*r.ap/r.km)+"%":"–"},{k:"b0",t:"Battery",f:r=>`${n0(r.b0)}→${n0(r.b1)}%`},{k:"foot",t:"Dashcam",f:r=>r.foot==null?"–":r.foot+"%"}],rs,r=>{location.hash="#/drive/"+r.id},"t0")};
-  main.innerHTML=`<h1>Drives</h1><div class="bar"><span id="rg"></span><select id="fc"><option value="all">Any charging</option><option value="to">Ending at a charge</option><option value="from">Leaving a charge</option><option value="any">Either end at a charge</option><option value="none">No charge at either end</option><option value="low">Finished at 20% or less</option></select><select id="fr"><option value="drive">Drives</option><option value="repark">Re-parks (under 50 m)</option><option value="both">Drives and re-parks</option></select><select id="fx"><option value="all">All drives</option><option value="hwy">Long highway (30 km+)</option><option value="fsd">Used self-driving</option><option value="foot">With dashcam footage</option><option value="al">With alerts</option></select><input type="search" id="q" placeholder="Search a place…" value="${esc(DP.q)}"></div><div class="tiles" id="tl"></div><div id="tb"></div>`;
+    table($("#tb"),[{k:"t0",t:"Date",l:1,f:r=>`${r.day} ${r.hm}`},{k:"frm",t:"Trip",l:1,f:r=>esc(driveTitle(r))+(r.repark?` <span class="pill" title="Under ${REPM()}: the car was only moved a little">re-park</span>`:"")+(r.toCh?` <span class="pill ok" title="A charge started right after this drive">to charge</span>`:"")+(r.fromCh?` <span class="pill" title="A charge ended just before this drive">from charge</span>`:"")},{k:"km",t:"km",f:r=>n0(r.km,1)},{k:"min",t:"Time",f:r=>dur(r.min)},{k:"whkm",t:"Wh/km",f:r=>n0(r.whkm)},{k:"max",t:"Max",f:r=>n0(r.max)},{k:"ap",t:"Self-driving",f:r=>r.km?n0(100*r.ap/r.km)+"%":"–"},{k:"b0",t:"Battery",f:r=>`${n0(r.b0)}→${n0(r.b1)}%`},{k:"foot",t:"Dashcam",f:r=>r.foot==null?"–":r.foot+"%"}],rs,r=>{location.hash="#/drive/"+r.id},"t0")};
+  main.innerHTML=`<h1>Drives</h1><div class="bar"><span id="rg"></span><select id="fc"><option value="all">Any charging</option><option value="to">Ending at a charge</option><option value="from">Leaving a charge</option><option value="any">Either end at a charge</option><option value="none">No charge at either end</option><option value="low">Finished at ${cfg("drives.low_battery_pct")}% or less</option></select><select id="fr"><option value="drive">Drives</option><option value="repark">Re-parks (under ${REPM()})</option><option value="both">Drives and re-parks</option></select><select id="fx"><option value="all">All drives</option><option value="hwy">Long highway (${cfg("drives.long_highway_km")} km+)</option><option value="fsd">Used self-driving</option><option value="foot">With dashcam footage</option><option value="al">With alerts</option></select><input type="search" id="q" placeholder="Search a place…" value="${esc(DP.q)}"></div><div class="tiles" id="tl"></div><div id="tb"></div>`;
   rangePicker($("#rg"),DP.r,daysOf(all),draw);$("#q").oninput=e=>{DP.q=e.target.value;draw()};$("#fc").value=DP.ch;$("#fc").onchange=e=>{DP.ch=e.target.value;draw()};$("#fr").value=DP.rp;$("#fr").onchange=e=>{DP.rp=e.target.value;draw()};$("#fx").value=DP.ex;$("#fx").onchange=e=>{DP.ex=e.target.value;draw()};draw();
 }
 async function pageDrive(stamp){
@@ -426,13 +429,13 @@ let PL={tab:"saved",q:"",visited:false,net:"all",state:"all",view:"list"},SYNCPO
 function placesMap(host,rows,tab){
   const COL={saved:"#3b6cf6",sc:"#e0201b",chargers:"#16a34a",found:"#f59e0b"}[tab]||"#3b6cf6";
   const used=r=>tab==="found"?true:tab==="saved"?(r.charges||r.idles||r.drives)>0:r.charges>0;
-  const feats=()=>rows.filter(r=>r.lat!=null&&r.lon!=null&&+r.lon<160).map(r=>({type:"Feature",geometry:{type:"Point",coordinates:[+r.lon,+r.lat]},properties:{u:used(r)?1:0,key:r.key,name:r.name||r.addr||"Unnamed stop",lat:+r.lat,lon:+r.lon,
+  const feats=()=>rows.filter(r=>r.lat!=null&&r.lon!=null&&+r.lon<cfg("map.places_max_lon")).map(r=>({type:"Feature",geometry:{type:"Point",coordinates:[+r.lon,+r.lat]},properties:{u:used(r)?1:0,key:r.key,name:r.name||r.addr||"Unnamed stop",lat:+r.lat,lon:+r.lon,
     sub:[r.network||(tab==="sc"?"Supercharger":tab==="saved"?"Saved place":tab==="found"?"Stop to review":""),r.addr||"",r.charges?r.charges+" charge"+(r.charges>1?"s":"")+" · "+n0(r.kwh,1)+" kWh":(tab==="found"?r.visits+" days there":"")].filter(Boolean).join(" · ")}})).sort((x,y)=>x.properties.u-y.properties.u);
   if(PLM&&PLM.tab===tab&&PLM.el&&host.contains(PLM.el)){PLM.update(true,rows);return}
   if(PLM){try{PLM.m.remove()}catch(e){}PLM=null}
   if(!window.maplibregl){host.innerHTML='<div class="empty">Map library not loaded (offline?).</div>';return}
   host.innerHTML='<div class="sub" style="margin-bottom:6px">Solid dot = used, faded = not used. Click a dot for details.</div><div class="map big" id="pm"></div>';
-  const el=$("#pm"),dark=matchMedia("(prefers-color-scheme: dark)").matches,m=new maplibregl.Map({container:el,style:"https://tiles.openfreemap.org/styles/"+(dark?"dark":"positron"),center:[151.2,-33.8],zoom:8,attributionControl:{compact:true}});
+  const el=$("#pm"),dark=matchMedia("(prefers-color-scheme: dark)").matches,m=new maplibregl.Map({container:el,style:MAPSTYLE(dark),center:[151.2,-33.8],zoom:8,attributionControl:{compact:true}});
   m.addControl(new maplibregl.NavigationControl({showCompass:false}),"top-right");
   let ready=false,first=true;
   const update=(refit,rs)=>{if(rs)rows=rs;const F=feats();$("#cnt").textContent=F.length+" on the map";if(!ready)return;m.getSource("pl").setData({type:"FeatureCollection",features:F});
@@ -458,7 +461,7 @@ async function pagePlaces(){
     else{rows=L.found.filter(p=>!q||(p.addr||"").toLowerCase().includes(q));
       cols=[{k:"addr",t:"Address of a place you return to, not saved yet",l:1,f:r=>esc(r.addr||(r.lat.toFixed(4)+", "+r.lon.toFixed(4)))},{k:"lat",t:"Lat, Lon",l:1,f:r=>`${(+r.lat).toFixed(5)}, ${(+r.lon).toFixed(5)}`},{k:"map",t:"Open in",l:1,f:r=>mapLinks(r.lat,r.lon,r.addr,1)},{k:"visits",t:"Days there"},{k:"last",t:"Last"}]}
     if(PL.view==="map"){placesMap(host,rows,PL.tab);return}
-    table(host,cols,rows,r=>location.hash="#/place/"+encodeURIComponent(r.key),PL.tab==="found"?"visits":PL.tab==="sc"||PL.tab==="chargers"?"charges":"last");
+    table(host,cols,rows,r=>{sessionStorage.removeItem("placePrefill");location.hash="#/place/"+encodeURIComponent(r.key)},PL.tab==="found"?"visits":PL.tab==="sc"||PL.tab==="chargers"?"charges":"last");
     $("#cnt").textContent=rows.length+" shown"};
   main.innerHTML=`<h1>Places</h1><div class="sub">Your saved places, the Tesla Superchargers (named as on tesla.com) and stops worth naming. Open one to see what is around it on OpenStreetMap.</div>
    <div class="tiles">${tile(L.saved.length,"saved places")}${tile(L.superchargers.filter(s=>s.charges).length+" of "+L.superchargers.length,"Superchargers used")}${tile(L.found.length,"stops to review")}</div>
@@ -497,11 +500,12 @@ const OSMG={};
 async function pagePlace(key){
   loading();
   let p;if(key==="@new"){let pre={};try{pre=JSON.parse(sessionStorage.getItem("placePrefill")||"{}")}catch(e){}p=Object.assign({kind:"spot",key,name:"New place",lat:null,lon:null,radius:150,keywords:[],notes:"",visits:[],nvisits:0},pre,{radius:pre.radius_m||150,name:pre.name||"New place"})}
-  else{const r=await fetch("/api/place?key="+encodeURIComponent(key));if(!r.ok){main.innerHTML=crumbs("#/places","Places")+'<div class="empty">That place is not in your places any more.</div>';return}p=await r.json()}
+  else{let nm="";try{nm=key[0]==="@"?(JSON.parse(sessionStorage.getItem("placePrefill")||"{}").name||""):""}catch(e){}
+    const r=await fetch("/api/place?key="+encodeURIComponent(key)+(nm?"&name="+encodeURIComponent(nm):""));if(!r.ok){main.innerHTML=crumbs("#/places","Places")+'<div class="empty">That place is not in your places any more.</div>';return}p=await r.json()}
   const kinds={saved:"Saved place",supercharger:"Tesla Supercharger",charger:"Charger"+(p.network?" · "+p.network:""),spot:"Not saved yet"},vis=p.visits||[],n=k=>vis.filter(v=>v.k===k).length,editable=p.kind!=="supercharger"&&p.kind!=="charger";
   const kw=(p.keywords||[]).join(", "),pre=(()=>{try{return JSON.parse(sessionStorage.getItem("placePrefill")||"{}")}catch(e){return{}}})();
   main.innerHTML=crumbs("#/places","Places")+`<h1>${esc(p.name)}</h1><div class="sub">${kinds[p.kind]}${p.addr?" · "+esc(p.addr):""}${p.lat!=null?" · "+p.lat.toFixed(5)+", "+p.lon.toFixed(5):""}</div>
-   <div class="tiles">${tile(n("charge"),"charges")}${tile(n("idle")+n("stay"),"parked periods")}${tile(n("drive"),"arrivals by drive")}${n("repark")?tile(n("repark"),"re-parks (car moved &lt; 50 m)"):""}${p.kind==="supercharger"||p.kind==="charger"?tile(n0(p.stalls)+(p.kw?" × "+n0(p.kw)+" kW":" stalls"),p.kw?"stalls × max power":"max power not listed"):tile(n0(p.radius)+" m","match radius")}</div>
+   <div class="tiles">${tile(n("charge"),"charges")}${tile(n("idle")+n("stay"),"parked periods")}${tile(n("drive"),"arrivals by drive")}${n("repark")?tile(n("repark"),"re-parks (car moved &lt; "+REPM()+")"):""}${p.kind==="supercharger"||p.kind==="charger"?tile(n0(p.stalls)+(p.kw?" × "+n0(p.kw)+" kW":" stalls"),p.kw?"stalls × max power":"max power not listed"):tile(n0(p.radius)+" m","match radius")}</div>
    <div class="two"><div class="card"><h2 style="margin-top:0">Map</h2><div class="map" id="mp"></div>${p.lat!=null?`<div class="sub" style="margin-top:8px">Open in: ${mapLinks(p.lat,p.lon,p.name)}</div>`:""}</div><div class="card" id="ed"></div></div>
    <div class="card" style="margin-top:14px"><h2 style="margin-top:0">Around here on OpenStreetMap</h2><div id="osm"><div class="sub">Loading…</div></div></div>
    <h2>Visits</h2><div id="vs"></div>`;
@@ -681,6 +685,7 @@ async function route(){
 }
 async function boot(){
   addEventListener("hashchange",route);
+  try{SET=await (await fetch("/api/settings")).json()}catch(e){}
   try{const s=await api("summary");$("#veh").textContent=s.vehicle;$("#vsub").textContent=n0(s.km)+" km logged"}catch(e){}
   const st=async()=>{try{const s=await (await fetch("/api/status")).json();$("#status").innerHTML=`<span class="dot ${s.roots.A?"on":"off"}"></span>Archive ${s.roots.A?"connected":"not connected"}${s.stale?'<div class="upd">The app was updated. Quit and reopen it to load the new version.</div>':""}`}catch(e){}};
   st();setInterval(st,30000);route();

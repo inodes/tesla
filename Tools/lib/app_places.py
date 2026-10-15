@@ -18,6 +18,8 @@ import sys
 import threading
 import time
 
+import app_config
+
 HERE = os.path.dirname(os.path.abspath(__file__))
 _LOCK = threading.Lock()
 _MEM = {}
@@ -206,7 +208,7 @@ class Places:
             reps = [r for r in reparks[lo:hi] if (r.get("pkey1") or "") == key] if key else []
             for r in reps:
                 stay_of[r["id"]] = True
-            if not key or nxt is None or nxt - t0 < 120:
+            if not key or nxt is None or nxt - t0 < app_config.get("places.stay_min_seconds"):
                 continue
             if any(a < nxt and b > t0 for a, b in idles.get(key, [])) or any(a < nxt and b > t0 for a, b in chg.get(key, [])):
                 continue
@@ -294,7 +296,33 @@ class Places:
         return out[:60]
 
     # ---- one place -----------------------------------------------------------------------------------------------
-    def detail(self, S, key):
+    def spot_keywords(self, S, lat, lon, name=""):
+        """Keywords for a place that is not saved yet, as places_manager.py suggests them: the street of the address (and its abbreviation) plus the
+        place name. The address is the one your own drives / charges already recorded there; failing that, Nominatim is asked."""
+        sys.path.insert(0, os.path.dirname(HERE))
+        import places_manager as PM
+        addrs = collections.Counter()
+        for d in S.drives():
+            if d.get("addr1") and d.get("lat1") is not None and hav(lat, lon, d["lat1"], d["lon1"]) <= 150:
+                addrs[d["addr1"]] += 1
+        for c in S.charges():
+            if c.get("addr") and c.get("lat") is not None and hav(lat, lon, c["lat"], c["lon"]) <= 150:
+                addrs[c["addr"]] += 1
+        addr = addrs.most_common(1)[0][0] if addrs else ""
+        if not addr:
+            try:
+                g = PM.reverse_geocode(lat, lon) or {}
+                a = g.get("address") or {}
+                street = ((a.get("house_number") or "") + " " + (a.get("road") or "")).strip()
+                addr = ", ".join(x for x in (street, a.get("suburb") or a.get("city") or a.get("town") or "") if x)
+            except Exception:
+                addr = ""
+        try:
+            return PM.suggest_keywords(addr, name), addr
+        except Exception:
+            return [], addr
+
+    def detail(self, S, key, name=""):
         info = None
         if key.startswith("p:"):
             p = next((x for x in self.defs() if x["name"] == key[2:]), None)
@@ -317,7 +345,8 @@ class Places:
             sp = self.saved_at(la, lo)
             if sp:
                 return self.detail(S, "p:" + sp["name"])
-            info = dict(kind="spot", name="Unnamed place", lat=la, lon=lo, radius=150, keywords=[], notes="")
+            kws, addr = self.spot_keywords(S, la, lo, name)
+            info = dict(kind="spot", name="Unnamed place", lat=la, lon=lo, radius=150, keywords=kws, notes="", addr=addr)
         if not info:
             return None
         info["key"] = key
@@ -379,7 +408,7 @@ class Places:
     def _photon(self, PM, lat, lon, radius):
         """The nearest named OpenStreetMap features around a point from photon.komoot.io (an independent server over the same data)."""
         import urllib.request
-        url = "https://photon.komoot.io/reverse?lat=%s&lon=%s&radius=%s&limit=50&lang=en" % (lat, lon, round(radius / 1000.0, 3))
+        url = "%s?lat=%s&lon=%s&radius=%s&limit=%d&lang=en" % (app_config.get("nearby.photon_url"), lat, lon, round(radius / 1000.0, 3), int(app_config.get("nearby.photon_limit")))
         req = urllib.request.Request(url, headers={"User-Agent": PM.USER_AGENT, "Accept": "application/json"})
         with urllib.request.urlopen(req, timeout=15) as r:
             feats = json.loads(r.read().decode("utf-8")).get("features", [])
