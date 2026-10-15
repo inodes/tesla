@@ -1005,6 +1005,27 @@ def evaluate_station_filter(station_data: dict, filter_expr: str, target_time: s
 # Tesla Charger Explorer & Scraper Engine
 # -----------------------------------------------------------------------------
 
+def _atomic_write_json_file(path, payload):
+    """Temp file in the same folder + fsync + os.replace, so a Ctrl-C or
+    sleep mid-write can never leave a truncated registry."""
+    import tempfile
+    directory = os.path.dirname(os.path.abspath(path)) or "."
+    os.makedirs(directory, exist_ok=True)
+    fd, tmp = tempfile.mkstemp(prefix=".tmp_", suffix=".json", dir=directory)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            json.dump(payload, f, indent=2, ensure_ascii=False)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp, path)
+    except Exception:
+        try:
+            os.remove(tmp)
+        except OSError:
+            pass
+        raise
+
+
 class TeslaChargerExplorer:
     def __init__(self, headless: bool = True):
         self.headless = headless
@@ -1020,10 +1041,26 @@ class TeslaChargerExplorer:
         if not tessie_home:
             tessie_home = os.path.join(self.repo_root, "Tessie")
             
-        self.superchargers_path = os.path.join(tessie_home, "tesla_superchargers.json")
-        self.superchargers_archived_path = os.path.join(tessie_home, "tesla_superchargers_archived.json")
-        self.destination_chargers_path = os.path.join(tessie_home, "tesla_chargers.json")
-        self.destination_chargers_archived_path = os.path.join(tessie_home, "tesla_chargers_archived.json")
+        # 2026-09-30 review: these pointed at <data>/tesla_*.json, but the
+        # registries moved to <data>/chargers/ and their archives to
+        # <archive>/chargers/ (REQ-107) - chargers_tesla.py's
+        # _resolve_tesla_registry_paths() reads there. A Tesla [u] re-verify
+        # or sync_charger_all.sh Tesla step was saving into stray files the
+        # app never reads and then reporting "no changes".
+        archive_home = None
+        try:
+            from lib.tessie_api_common import resolve_tessie_archive_home
+            archive_home = resolve_tessie_archive_home()
+        except Exception:
+            pass
+        if not archive_home:
+            archive_home = os.path.join(tessie_home, "archive")
+        charger_dir = os.path.join(tessie_home, "chargers")
+        charger_archive_dir = os.path.join(archive_home, "chargers")
+        self.superchargers_path = os.path.join(charger_dir, "tesla_superchargers.json")
+        self.superchargers_archived_path = os.path.join(charger_archive_dir, "tesla_superchargers_archived.json")
+        self.destination_chargers_path = os.path.join(charger_dir, "tesla_chargers.json")
+        self.destination_chargers_archived_path = os.path.join(charger_archive_dir, "tesla_chargers_archived.json")
         self.legacy_superchargers_path = os.path.join(tessie_home, "superchargers.json")
         self.legacy_destination_chargers_path = os.path.join(tessie_home, "charging.json")
         self.last_change_summary: list = []
@@ -1201,7 +1238,9 @@ class TeslaChargerExplorer:
             try:
                 err_msg = None
                 try:
-                    page.goto(target_url, wait_until="networkidle", timeout=timeout_ms)
+                    nav_response = page.goto(target_url, wait_until="networkidle", timeout=timeout_ms)
+                    if nav_response is not None:
+                        self.last_http_status = nav_response.status
                     page.wait_for_timeout(600)
                 except Exception as e:
                     err_msg = str(e)
@@ -1523,6 +1562,18 @@ class TeslaChargerExplorer:
         if not findus_id and charger_payload:
             findus_id = str(charger_payload.get("id", "")) or None
 
+        # REQ-174: Tesla's "Busy Times" chart data (congestion by hour and
+        # weekday) is in the same __NEXT_DATA__. Stored in its own file, not
+        # in this versioned registry record - it changes daily and would look
+        # like a tariff change on every scrape.
+        try:
+            from lib.tesla_busy_times import extract_busy_profile, save_busy_profile
+            _busy = extract_busy_profile(next_data_payload)
+            if _busy and findus_id:
+                save_busy_profile(findus_id, station_name, _busy)
+        except Exception as _busy_err:
+            print(f"  {C_YELLOW}⚠ Busy times not saved: {_busy_err}{C_RESET}")
+
         findus_location_name = station_name
         findus_location_short_name = clean_station_short_name(findus_location_name)
         findus_list_name = list_title or station_name
@@ -1628,6 +1679,13 @@ class TeslaChargerExplorer:
 
     def scrape_station_details(self, url_or_id: str, charger_type: str = "supercharger", list_title: str = None, page=None) -> tuple:
         """Scrapes full technical hardware, Time-of-Use pricebooks, and GPS coordinates for a station."""
+ # (2026-09-29) Reset before every call, then set by _scrape_page_payload()
+ # from the main navigation's own HTTP response status - reverify_station()
+ # (chargers_manager.py) reads this right after a failed call to tell a
+ # confirmed HTTP 404 (station genuinely gone from Tesla's own site) apart
+ # from any other failure (timeout/network/parse), without changing this
+ # method's own (key, record) return shape.
+        self.last_http_status = None
         try:
             from playwright.sync_api import sync_playwright
         except ImportError:
@@ -2769,13 +2827,19 @@ class TeslaChargerExplorer:
         now_utc = get_utc_now_iso()
 
  # Load active registry
+        # An existing registry/archive that can't be read is NEVER treated
+        # as empty (that rewrote the whole file with just this one station).
         active_reg = {}
         if os.path.isfile(target_fpath):
             try:
                 with open(target_fpath, "r", encoding="utf-8") as f:
                     active_reg = json.load(f)
-            except Exception:
-                active_reg = {}
+            except Exception as e:
+                print(f"  {C_RED}❌ {target_fpath} is unreadable ({e}) - not saving, file left untouched.{C_RESET}")
+                return "ERROR"
+            if not isinstance(active_reg, dict):
+                print(f"  {C_RED}❌ {target_fpath} has an unexpected shape - not saving, file left untouched.{C_RESET}")
+                return "ERROR"
 
  # Load archive registry
         archive_reg = {}
@@ -2783,8 +2847,12 @@ class TeslaChargerExplorer:
             try:
                 with open(archive_fpath, "r", encoding="utf-8") as f:
                     archive_reg = json.load(f)
-            except Exception:
-                archive_reg = {}
+            except Exception as e:
+                print(f"  {C_RED}❌ {archive_fpath} is unreadable ({e}) - not saving, files left untouched.{C_RESET}")
+                return "ERROR"
+            if not isinstance(archive_reg, dict):
+                print(f"  {C_RED}❌ {archive_fpath} has an unexpected shape - not saving, files left untouched.{C_RESET}")
+                return "ERROR"
 
         existing_key = station_key if station_key in active_reg else None
         existing_entry = active_reg.get(station_key)
@@ -2888,8 +2956,7 @@ class TeslaChargerExplorer:
 
  # Write active registry
         try:
-            with open(target_fpath, "w", encoding="utf-8") as f:
-                json.dump(active_reg, f, indent=2, ensure_ascii=False)
+            _atomic_write_json_file(target_fpath, active_reg)
             print(f"  {C_GREEN}✔ Saved active registry entry in:{C_RESET} {target_fpath}")
         except Exception as e:
             print(f"  {C_RED}❌ Failed writing {target_fpath}:{C_RESET} {e}")
@@ -2898,8 +2965,7 @@ class TeslaChargerExplorer:
  # Write archive registry if changes occurred
         if changes_detected:
             try:
-                with open(archive_fpath, "w", encoding="utf-8") as f:
-                    json.dump(archive_reg, f, indent=2, ensure_ascii=False)
+                _atomic_write_json_file(archive_fpath, archive_reg)
                 print(f"  {C_GREEN}✔ Updated historical archive in:{C_RESET} {archive_fpath}")
             except Exception as e:
                 print(f"  {C_RED}❌ Failed writing archive {archive_fpath}:{C_RESET} {e}")

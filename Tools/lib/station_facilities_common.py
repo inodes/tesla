@@ -125,6 +125,49 @@ def resolve_station_physical_coords(station: any) -> tuple:
             src_label)
 
 
+# REQ-176 (2026-09-30): "anchor" places - a big-name supermarket or a
+# shopping centre near the stalls matters far more on a charging stop than
+# any number of small shops (toilets, food court, groceries in one walk).
+# User: "if there are Coles and Woolworths close, these count for more than
+# other places" - Taree (Manning Mall, Taree Central, Coles, Woolworths
+# within 500 m) scored only 6.3 "Good". Shared with the --email card's
+# star line (station_report_email.facilities_brief) so both agree.
+MAJOR_SUPERMARKETS = ("woolworths", "coles", "aldi", "iga", "harris farm", "foodworks",
+                      "ritchies", "costco")
+SHOPPING_CENTRE_WORDS = ("shopping centre", "shopping center", "town centre", "town center",
+                         "shopping plaza", "shopping mall", "marketplace", "westfield", "stockland")
+
+
+def _name_has_word(name: str, words) -> bool:
+    import re as _re
+    n = (name or "").lower()
+    return any(_re.search(r"(?<![a-z])" + _re.escape(w) + r"(?![a-z])", n) for w in words)
+
+
+def is_major_supermarket(p: dict) -> bool:
+    """Woolworths, Coles, Aldi, IGA etc. - a real supermarket, not a
+    servo shop that borrows the name (Coles Express is category Fuel/Convenience)."""
+    return (p.get("category") or "").lower().startswith("supermarket") and _name_has_word(p.get("name"), MAJOR_SUPERMARKETS)
+
+
+def is_shopping_centre(p: dict) -> bool:
+    cat = (p.get("category") or "").lower()
+    return cat.startswith("mall") or (p.get("raw_tags") or {}).get("shop") == "mall" \
+        or _name_has_word(p.get("name"), SHOPPING_CENTRE_WORDS)
+
+
+def anchor_points(pois: list) -> float:
+    """Extra points for anchors within the search radius: shopping centre
+    +2.0 (within 250 m) / +1.5 (further), big-name supermarket +1.5 / +1.0,
+    counted once each (the best of each kind), capped at +3.0."""
+    def best(pred, near_pts, far_pts):
+        ds = [p.get("dist_m", 999.0) for p in pois if pred(p)]
+        if not ds:
+            return 0.0
+        return near_pts if min(ds) <= 250 else far_pts
+    return min(3.0, best(is_shopping_centre, 2.0, 1.5) + best(is_major_supermarket, 1.5, 1.0))
+
+
 def compute_facility_score(pois: list) -> dict:
     """
     Computes an objective, EV-driver focused facility quality score (0.0 to 10.0)
@@ -136,6 +179,8 @@ def compute_facility_score(pois: list) -> dict:
     3. ☕ Cafes & Coffee: up to 2.0 pts
     4. 🛒 Supermarkets & Groceries: up to 1.5 pts
     5. 🛍️ Retail & Leisure: up to 1.0 pts
+    6. ⭐ Anchors (REQ-176): shopping centre and/or big-name supermarket
+       (Woolworths, Coles, Aldi, IGA...) nearby: up to +3.0 pts
 
     Closer venues (<= 100m) receive full weight; 100m-250m receive 0.8x weight;
     venues > 250m receive 0.5x weight.
@@ -234,7 +279,8 @@ def compute_facility_score(pois: list) -> dict:
     if pts_restroom < 2.0 and has_commercial_hub:
         pts_restroom = max(pts_restroom, 2.4)
 
-    raw_score = pts_restroom + pts_dining + pts_coffee + pts_groceries + pts_retail + pts_leisure + pts_other
+    pts_anchor = anchor_points(pois)
+    raw_score = pts_restroom + pts_dining + pts_coffee + pts_groceries + pts_retail + pts_leisure + pts_other + pts_anchor
     score = round(min(10.0, raw_score), 1)
 
  # Determine Rating Tier
