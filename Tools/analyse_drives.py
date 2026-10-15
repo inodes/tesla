@@ -13,6 +13,7 @@ Tessie Drive Log Analyzer & Master Consolidator
 """
 
 import os
+from lib.tessie_timezone import legacy_get as _legacy_get  # BUG-176
 import sys
 import re
 import csv
@@ -40,6 +41,7 @@ if _tools_dir not in sys.path:
     sys.path.insert(0, _tools_dir)
 
 from lib.archive_naming import next_archive_path
+import lib.drive_paths as _drive_paths   # REQ-193 per-drive folders
 from lib.analysis_deepdive_charts import write_interactive_chart, try_open_in_browser
 
 from lib.table_formatter import (
@@ -184,6 +186,23 @@ def is_home_place(place_str, places_dict=None):
                 nick_name = str(p_info.get("nickname", "")).lower()
                 if p_lower in (str(p_name).lower(), meta_short, loc_name, nick_name) and p_lower:
                     return True
+ # 2026-09-28: found via a real cross-check on charges_master.csv's
+ # raw "Saved Location" field (Tessie's own, never run through this
+ # repo's resolve_place() pipeline) - the Home place's own `keywords`
+ # list (e.g. "1108 Victoria" for an address Tessie itself used to
+ # label this charger before the user renamed it to "Home" in the
+ # Tessie app) was never consulted here, only exact name/short_name/
+ # location_name/nickname matches - so any RAW, unresolved string
+ # still carrying an old address label silently failed this check,
+ # even though resolve_place() elsewhere in this same file already
+ # keyword-matches the identical way (kw.strip().lower() in
+ # s_clean.lower()) for exactly this reason. Mirrors that same
+ # substring semantics here so a second, less complete copy of "is
+ # this home" logic doesn't quietly diverge from the first.
+                kws = p_info.get("keywords") or []
+                for kw in kws:
+                    if kw and isinstance(kw, str) and kw.strip() and kw.strip().lower() in p_lower:
+                        return True
  # BUG-102 (2026-09-21): require the *entire* cleaned string to reduce to
  # "home", not merely contain it as one token. Real place strings reaching
  # here (Tessie's own reverse-geocoded/manually-entered "Saved Location"
@@ -359,52 +378,53 @@ def resolve_master_teslacam_dir(teslacam_dirs=None):
             tc_dir = os.path.join(root, "TeslaCam")
             return tc_dir if os.path.isdir(tc_dir) else root
 
- # Pass 2: Capacity > 1600 GB (2TB Master Archive SSD)
+ # Pass 2: Capacity > 1600 GB (2TB Master Archive SSD), never a drive
+ # carrying a JOWUA/USB identity marker.
     for d in candidates:
         if not d:
             continue
         root = get_drive_root(d)
         if not root or not os.path.isdir(root):
             continue
+        if _has_secondary_marker(root):
+            continue
         try:
             total_gb = shutil.disk_usage(root).total / (1024**3)
-            if total_gb > 1600 and not os.path.isdir(os.path.join(root, "JOWUA_1TB")):
+            if total_gb > 1600:
                 tc_dir = os.path.join(root, "TeslaCam")
                 return tc_dir if os.path.isdir(tc_dir) else root
         except OSError:
             pass
 
- # Pass 3: Primary Mount Name '/Volumes/TESLADRIVE' (strictly without ' 1', ' 2')
+ # Pass 3: a --localsync archive folder on this computer (never a
+ # removable /Volumes drive, never a drive carrying a JOWUA/USB marker).
     for d in candidates:
         if not d:
             continue
         root = get_drive_root(d)
         if not root or not os.path.isdir(root):
             continue
-        base = os.path.basename(os.path.normpath(root))
-        if base == "TESLADRIVE":
-            tc_dir = os.path.join(root, "TeslaCam")
-            return tc_dir if os.path.isdir(tc_dir) else root
-
- # Pass 4: Fallback to first candidate that is NOT JOWUA or USB
-    for d in candidates:
-        if not d:
+        if os.path.realpath(root).startswith("/Volumes/") or _has_secondary_marker(root):
             continue
-        root = get_drive_root(d)
-        if not root or not os.path.isdir(root):
-            continue
-        ident = get_drive_identifier(root)
-        if ident not in ["VOL_JOWUA", "VOL_TESLA_USB"]:
-            tc_dir = os.path.join(root, "TeslaCam")
-            return tc_dir if os.path.isdir(tc_dir) else d
+        tc_dir = os.path.join(root, "TeslaCam")
+        if os.path.isdir(tc_dir):
+            return tc_dir
 
- # Last resort fallback if only one candidate exists
-    if candidates and candidates[0]:
-        root0 = get_drive_root(candidates[0])
-        tc_dir = os.path.join(root0, "TeslaCam")
-        return tc_dir if os.path.isdir(tc_dir) else candidates[0]
-
+ # SAFETY (2026-09-30, user: "Nothing should be deleted (unless forced)
+ # unless it's on archive"): there used to be two more passes here - a
+ # name match on "/Volumes/TESLADRIVE" and a last-resort "first drive
+ # given" fallback - so with the Archive unplugged the Tesla USB became
+ # the "Master Archive". Reconcile then treated any Saved/Sentry folder
+ # the car removed from the USB as a Finder deletion on the Archive and
+ # scrubbed it from the JOWUA (possibly the only copy). No real Archive
+ # connected now means NO master, and every tombstone/purge path below
+ # refuses to delete anything.
     return None
+
+def _has_secondary_marker(root):
+    """True if this drive root carries a JOWUA or Tesla USB identity marker."""
+    return any(os.path.isdir(os.path.join(root, m)) for m in
+               ("JOWUA_1TB", "JOWUA", "TESLA_USB_128GB", "TESLA_USB_256GB", "TESLA_USB"))
 
 def get_drive_identifier(drive_path, master_dir=None):
     """
@@ -851,6 +871,8 @@ def scrub_pending_tombstones_for_drive(drive_path, master_dir=None, dry_run=Fals
 
     tc_dir = os.path.join(drive_path, "TeslaCam") if os.path.isdir(os.path.join(drive_path, "TeslaCam")) else drive_path
     m_dir = master_dir or resolve_master_teslacam_dir()
+    if not m_dir or not os.path.isdir(m_dir):
+        return 0, 0, 0  # no real Archive connected - never delete from a secondary drive
     drive_id = get_drive_identifier(drive_path, m_dir)
     if drive_id == "MASTER":
         return 0, 0, 0
@@ -1038,6 +1060,193 @@ def export_tombstone_rsync_excludes(master_dir=None, out_path=None):
                 f.write(f"{p}\n")
     return sorted(list(set(patterns)))
 
+# ---------------------------------------------------------------------------
+# Archive make-room (2026-09-30). User: "need a solution for archive full -
+# such as working through recent clips", choosing "oldest RecentClips, just
+# enough": when a sync leg into the Archive won't fit, offer the OLDEST
+# Archive RecentClips needed to cover the shortfall. Saved/Sentry footage is
+# never touched, and neither is any RecentClip within
+# ARCHIVE_ROOM_EVENT_GUARD of a Saved/Sentry event. Deleted minutes are
+# tombstoned so rsync never copies them back from the JOWUA/USB (which get
+# the normal "pending cleanup" scrub prompt later).
+# ---------------------------------------------------------------------------
+ARCHIVE_ROOM_EVENT_GUARD = timedelta(minutes=10)
+
+
+def _parse_catalog_dt(value):
+    if not value:
+        return None
+    v = str(value).replace("T", "_")[:19]
+    try:
+        return datetime.strptime(v, "%Y-%m-%d_%H-%M-%S")
+    except ValueError:
+        try:
+            return datetime.strptime(str(value)[:19], "%Y-%m-%dT%H:%M:%S")
+        except ValueError:
+            return None
+
+
+def plan_archive_recent_room(master_dir, bytes_needed):
+    """Oldest-first Archive RecentClips minutes whose deletion frees at least
+    bytes_needed. Returns (plan, planned_bytes, skipped_near_events) where plan
+    is a list of (minute_dt, [full paths], bytes)."""
+    if not master_dir or not os.path.isdir(master_dir) or bytes_needed <= 0:
+        return [], 0, 0
+    cat = scan_or_update_drive_catalog(master_dir, master_dir)
+    pkgs = cat.get("packages", {})
+    tombs = load_tombstones(master_dir)
+    lookup = get_tombstone_lookup_sets(tombs, include_flagged=True)
+
+    guards = []
+    for key, p in pkgs.items():
+        if p.get("cat") in ("Saved", "Sentry"):
+            s_dt = _parse_catalog_dt(p.get("start_dt"))
+            e_dt = _parse_catalog_dt(p.get("end_dt")) or s_dt
+            if s_dt:
+                guards.append((s_dt - ARCHIVE_ROOM_EVENT_GUARD, e_dt + ARCHIVE_ROOM_EVENT_GUARD + timedelta(minutes=1)))
+
+    minutes = defaultdict(list)
+    rc_dir = os.path.join(master_dir, "RecentClips")
+    for key, p in pkgs.items():
+        if not key.startswith("RecentClips"):
+            continue
+        for fname in p.get("files", []):
+            if not fname.endswith(".mp4") or fname.startswith("._"):
+                continue
+            dt = _parse_catalog_dt(fname[:19])
+            if dt is None:
+                continue
+            if is_clip_tombstoned(f"RecentClips/{fname}", tombs, lookup_sets=lookup, include_flagged=True):
+                continue
+            minutes[dt].append(os.path.join(rc_dir, fname))
+
+    plan, planned, skipped = [], 0, 0
+    for dt in sorted(minutes):
+        if any(g_s <= dt <= g_e for g_s, g_e in guards):
+            skipped += 1
+            continue
+        size = 0
+        paths = []
+        for fp in minutes[dt]:
+            try:
+                size += os.path.getsize(fp)
+                paths.append(fp)
+            except OSError:
+                continue  # catalog entry no longer on disk
+        if not paths:
+            continue
+        plan.append((dt, paths, size))
+        planned += size
+        if planned >= bytes_needed:
+            break
+    return plan, planned, skipped
+
+
+def make_room_on_archive(master_dir, bytes_needed, secondary_dirs=None, exclude_file=None):
+    """Interactive: preview the plan, delete only after an explicit 'y'.
+    Returns bytes actually freed (0 if declined or nothing possible)."""
+    if not master_dir or not os.path.isdir(master_dir):
+        print("    Master Archive not identified - nothing deleted.")
+        return 0
+    if not sys.stdin.isatty():
+        print("    No terminal to confirm on - nothing deleted.")
+        return 0
+    plan, planned, skipped = plan_archive_recent_room(master_dir, bytes_needed)
+    gb = lambda b: f"{b / 1024**3:.2f} GB"
+    if not plan:
+        print("    No Archive RecentClips available to remove (Saved/Sentry and clips near events are protected).")
+        return 0
+    first, last = plan[0][0], plan[-1][0]
+    n_files = sum(len(p) for _, p, _ in plan)
+    by_day = defaultdict(lambda: [0, 0])
+    for dt, paths, size in plan:
+        by_day[dt.date()][0] += 1
+        by_day[dt.date()][1] += size
+    print(f"\n    Oldest Archive RecentClips that would make room ({gb(planned)} of {gb(bytes_needed)} needed):")
+    for day in sorted(by_day):
+        mins, size = by_day[day]
+        print(f"      {day}  {mins:4d} min  {gb(size):>10}")
+    print(f"      = {len(plan)} minutes, {n_files} files, {first:%Y-%m-%d %H:%M} -> {last:%Y-%m-%d %H:%M}")
+    if skipped:
+        print(f"      ({skipped} older minutes kept because they are within "
+              f"{int(ARCHIVE_ROOM_EVENT_GUARD.total_seconds() // 60)} min of a Saved/Sentry event)")
+    if planned < bytes_needed:
+        print(f"      Note: this is all that can be removed - still {gb(bytes_needed - planned)} short.")
+    try:
+        ans = input("    Permanently delete these from the Archive (and later from the JOWUA/USB)? [y/N]: ").strip().lower()
+    except (KeyboardInterrupt, EOFError):
+        ans = ""
+    if ans not in ("y", "yes"):
+        print("    Nothing deleted.")
+        return 0
+
+    free_before = shutil.disk_usage(master_dir).free
+    known = list(tombs_known_drives(master_dir, secondary_dirs))
+    data = load_tombstones(master_dir)
+    tdict = data.setdefault("tombstones", {})
+    now_iso = datetime.now().isoformat()
+    freed = 0
+    removed_by_day = defaultdict(list)
+    bytes_by_day = defaultdict(int)
+    for dt, paths, _size in plan:
+        for fp in paths:
+            try:
+                sz = os.path.getsize(fp)
+                os.remove(fp)
+                freed += sz
+                bytes_by_day[dt.date()] += sz
+                removed_by_day[dt.date()].append(os.path.basename(fp))
+            except OSError as e:
+                print(f"      could not delete {os.path.basename(fp)}: {e}")
+    for day, files in removed_by_day.items():
+        key = f"RecentClips/{day.isoformat()}_archive-room"
+        entry = tdict.get(key) or {
+            "status": "tombstone", "deleted_at": now_iso, "cat": "Recent",
+            "reason": "Archive make-room (oldest RecentClips)", "folder": "RecentClips",
+            "files": [], "est_bytes": 0, "pending_drives": known,
+        }
+        entry["files"] = sorted(set(entry.get("files", [])) | set(files))
+        entry["files_count"] = len(entry["files"])
+        # Real size, so the "Active Tombstones (N packages, N files, ~X)"
+        # summary doesn't show ~0 MB (2026-09-30).
+        entry["est_bytes"] = entry.get("est_bytes", 0) + bytes_by_day[day]
+        tdict[key] = entry
+    save_tombstones(data, master_dir)
+    scan_or_update_drive_catalog(master_dir, master_dir, force_rescan=False)
+    if exclude_file:
+        export_tombstone_rsync_excludes(master_dir, exclude_file)
+    n_removed = sum(len(v) for v in removed_by_day.values())
+    # 2026-09-30: deleting ~248 GB once left the drive's free space unchanged
+    # (the files were gone but the space wasn't released), the sync then
+    # filled the drive and failed. Measure what the drive actually gained.
+    gained = 0
+    for _ in range(10):
+        gained = shutil.disk_usage(master_dir).free - free_before
+        if freed <= 0 or gained >= freed * 0.9:
+            break
+        time.sleep(1)
+    if freed > 0 and gained < freed * 0.5:
+        print(f"    ⚠ Deleted {gb(freed)} ({n_removed} files), but the drive's free space only went up by {gb(max(gained, 0))}.")
+        print("      Something is still holding the deleted files, so their space isn't released yet -")
+        print("      usually a program that still has them open (or, on APFS only, a Time Machine snapshot).")
+        print(f"      On the Mac:  sudo lsof -a +L1 '{get_drive_root(master_dir)}'   (programs holding deleted files)")
+        print("      Quitting that program, or ejecting and reconnecting the drive, releases the space.")
+        return -freed  # deleted, but no usable space - callers must not continue into a full drive
+    print(f"    ✔ Freed {gb(freed)} from the Archive ({n_removed} files); drive free space up {gb(gained)}.")
+    return freed
+
+
+def tombs_known_drives(master_dir, secondary_dirs=None):
+    """Secondary drive ids that should get the pending-cleanup scrub."""
+    data = load_tombstones(master_dir)
+    known = list(data.get("known_drives", ["VOL_JOWUA", "VOL_TESLA_USB"]))
+    for d in secondary_dirs or []:
+        drv_id = get_drive_identifier(d, master_dir)
+        if drv_id and drv_id != "MASTER" and drv_id not in known:
+            known.append(drv_id)
+    return known
+
+
 def flag_footage_packages_for_deletion(packages, analyzer):
     """
     Stages packages for deletion in .TeslaCam_tombstones.json with status='flagged'.
@@ -1145,6 +1354,8 @@ def purge_flagged_tombstones_across_drives(teslacam_dirs, repo_root=None, dry_ru
     Returns (total_files_deleted, total_bytes_freed, total_retired_tombstones).
     """
     master_dir = resolve_master_teslacam_dir(teslacam_dirs)
+    if not master_dir or not os.path.isdir(master_dir):
+        return 0, 0, 0  # no real Archive connected - never delete anything
     tombstones_data = load_tombstones(master_dir)
     tombs = tombstones_data.get("tombstones", {})
     if not tombs:
@@ -1948,7 +2159,10 @@ def run_interactive_footage_review(packages, analyzer, context_label="Event Foot
     print("=" * 76)
     print(f" Stepping through {total_pkgs} footage package(s).")
     print(" Footage clips will be revealed in macOS Finder.")
-    print(" Commands: [k]eep / next (Enter), [c]opy locally, [f]lag delete, [u]nflag, [v]iew cams, [o]pen, [s]kip, [q]uit.")
+    print(" Commands:")
+    for _cmd in ("[k]eep / next (Enter)", "[c]opy locally", "[f]lag for deletion", "[u]nflag",
+                 "[v]iew cameras", "[o]pen", "[s]kip", "[q]uit"):
+        print(f"   {_cmd}")
     print("=" * 76)
 
     kept_count = 0
@@ -2151,18 +2365,28 @@ def compute_adaptive_rolling_window(distance_km: Optional[float]) -> float:
     return max(0.35, min(5.0, round(w, 2)))
 
 
-class TessieAnalyzer:
+
+def _minute_bucket(v):
+    """REQ-179: identity key for a drive's start/end time. UTC epochs are
+    compared to the MINUTE, because older master rows carry epochs derived
+    from Tessie's minute-resolution CSV text while rows synced since REQ-179
+    carry the exact second - the same drive must not be added twice."""
+    v = str(v or "").strip()
+    return str(int(v) // 60) if v.isdigit() else v
+
+
+class DriveAnalyzer:
     def __init__(self, tessie_dir=None, teslacam_dirs=None):
         self.script_dir = os.path.dirname(os.path.abspath(__file__))
         parent_dir = os.path.dirname(self.script_dir)
-        self.icloud_dir = os.path.expanduser("~/Library/Mobile Documents/com~apple~CloudDocs/Tesla/Tessie")
+        self.icloud_dir = os.path.expanduser("~/Library/Mobile Documents/com~apple~CloudDocs/Tesla")
         self.repo_root = parent_dir
         self.landing_dir = os.path.expanduser("~/Downloads")
         self._synced_this_session = False
         self._sync_disabled = False
 
  # Read config.json directly (same file/convention as
- # TessieChargingAnalyzer and tessie_api_common.load_config()) just
+ # ChargingAnalyzer and tessie_api_common.load_config()) just
  # for its "tessie_directory" setting - see self.tessie_data_home
  # below for why.
         _cfg_path = os.path.join(parent_dir, "config.json")  # TODO-034: root is primary now
@@ -2348,6 +2572,35 @@ class TessieAnalyzer:
                         return True
         return False
 
+    def display_place(self, name):
+        """Full, human-readable name for a resolved place. resolve_place()
+        returns a charger's file-safe short_name ("Coffs_Harbour_NSW_Pacific_Hwy",
+        "Taree_NSW") because that is what the stored drive rows and charger
+        pooling key on; anything shown to the user maps it back to the
+        registry's full name ("Coffs Harbour, NSW - Pacific Hwy"). Names that
+        are not a registry short_name (Home, saved places, street names)
+        pass through unchanged."""
+        if not name or not isinstance(name, str) or "_" not in name:
+            return name
+        if self._places_cache_is_stale():
+            self.load_places()
+        cache = getattr(self, "_short_to_full", None)
+        if cache is None or getattr(self, "_short_to_full_src", None) is not (self.places, self.charging_places, self.supercharger_places):
+            cache = {}
+            for reg in (self.supercharger_places, self.charging_places, self.places):
+                for key, info in (reg or {}).items():
+                    if not isinstance(info, dict):
+                        continue
+                    meta = info.get("tesla_metadata") or {}
+                    short = meta.get("short_name")
+                    if not short:
+                        continue
+                    full = meta.get("findus_location_name") or meta.get("findus_list_name") or str(key)
+                    cache.setdefault(short, full)
+            self._short_to_full = cache
+            self._short_to_full_src = (self.places, self.charging_places, self.supercharger_places)
+        return cache.get(name, name)
+
     def resolve_place(self, address, saved_loc="", lat=None, lon=None):
         if self._places_cache_is_stale():
             self.load_places()
@@ -2468,8 +2721,8 @@ class TessieAnalyzer:
             dest_dirs = list(self.drives_dirs)
 
         if not dest_dirs:
-            print("\033[31mNo Tessie data directory configured - set \"tessie_directory\" in config.json "
-                  "(see Tessie/config.example.json). Refusing to write drives_master.csv into the repo folder.\033[0m")
+            print("\033[31mNo data directory configured - set \"directories.data\" in config.json "
+                  "(see config.example.json). Refusing to write drives_master.csv into the repo folder.\033[0m")
             return 0
 
         master_files = [os.path.join(d, "drives_master.csv") for d in dest_dirs]
@@ -2551,13 +2804,13 @@ class TessieAnalyzer:
                                 existing_disk_row_count += 1
                                 normalize_row_timezone(r, "Starting Latitude", "Starting Longitude", "Started At")
                                 normalize_row_timezone(r, "Ending Latitude", "Ending Longitude", "Ended At")
-                                start_time = r.get("Started At (UTC)") or r.get("Started At (AEST)") or r.get("Started At") or r.get("Started")
-                                end_time = r.get("Ended At (UTC)") or r.get("Ended At (AEST)") or r.get("Ended At") or r.get("Ended")
+                                start_time = r.get("Started At (UTC)") or _legacy_get(r, "Started At") or r.get("Started At") or r.get("Started")
+                                end_time = r.get("Ended At (UTC)") or _legacy_get(r, "Ended At") or r.get("Ended At") or r.get("Ended")
                                 dist = r.get("Distance (km)", "0")
                                 s_loc = r.get("Starting Location", "")
                                 if not start_time or not end_time:
                                     continue
-                                key = (start_time.strip(), end_time.strip(), dist.strip(), s_loc.strip())
+                                key = (_minute_bucket(start_time), _minute_bucket(end_time), dist.strip(), s_loc.strip())
                                 if key not in seen_keys:
                                     seen_keys.add(key)
                                     raw_rows.append(r)
@@ -2591,7 +2844,7 @@ class TessieAnalyzer:
                             try:
                                 first_row = next(reader, None)
                                 if first_row:
-                                    ts_raw = first_row.get("Timestamp (AEST)") or first_row.get("Timestamp") or ""
+                                    ts_raw = _legacy_get(first_row, "Timestamp") or first_row.get("Timestamp") or ""
                                     dt = parse_relative_date(ts_raw[:16]) or parse_flexible_date(ts_raw) if 'parse_flexible_date' in globals() else None
                                     if not dt:
                                         try:
@@ -2615,7 +2868,11 @@ class TessieAnalyzer:
                                     for dd in dest_dirs:
                                         deepdive_dir = os.path.join(dd, "deepdive")
                                         os.makedirs(deepdive_dir, exist_ok=True)
-                                        target_dd_path = os.path.join(deepdive_dir, deepdive_name)
+ # REQ-193: one folder per drive
+                                        if dt_epoch is not None:
+                                            target_dd_path = _drive_paths.csv_path(deepdive_dir, stamp, create=True)
+                                        else:
+                                            target_dd_path = os.path.join(deepdive_dir, deepdive_name)
                                         shutil.copy2(fp, target_dd_path)
  # AGENTS.md TODO-033: set this file's mtime to the
  # real drive-start event, not whenever this manual
@@ -2644,13 +2901,13 @@ class TessieAnalyzer:
                     for r in reader:
                         normalize_row_timezone(r, "Starting Latitude", "Starting Longitude", "Started At")
                         normalize_row_timezone(r, "Ending Latitude", "Ending Longitude", "Ended At")
-                        start_time = r.get("Started At (UTC)") or r.get("Started At (AEST)") or r.get("Started At") or r.get("Started")
-                        end_time = r.get("Ended At (UTC)") or r.get("Ended At (AEST)") or r.get("Ended At") or r.get("Ended")
+                        start_time = r.get("Started At (UTC)") or _legacy_get(r, "Started At") or r.get("Started At") or r.get("Started")
+                        end_time = r.get("Ended At (UTC)") or _legacy_get(r, "Ended At") or r.get("Ended At") or r.get("Ended")
                         dist = r.get("Distance (km)", "0")
                         s_loc = r.get("Starting Location", "")
                         if not start_time or not end_time:
                             continue
-                        key = (start_time.strip(), end_time.strip(), dist.strip(), s_loc.strip())
+                        key = (_minute_bucket(start_time), _minute_bucket(end_time), dist.strip(), s_loc.strip())
                         if key not in seen_keys:
                             seen_keys.add(key)
                             raw_rows.append(r)
@@ -2702,7 +2959,7 @@ class TessieAnalyzer:
  # somehow still lacks it.
         raw_rows.sort(key=lambda x: (
             int(x["Started At (UTC)"]) if x.get("Started At (UTC)") else 0,
-            x.get("Started At (AEST)") or x.get("Started At") or x.get("Started") or ""))
+            _legacy_get(x, "Started At") or x.get("Started At") or x.get("Started") or ""))
 
  # Safety net (/024/025 history): back up the master file's
  # pre-change state before overwriting it, whenever the row count is
@@ -2824,7 +3081,7 @@ class TessieAnalyzer:
                         return None
 
                 for row in reader:
-                    ts_str = row.get("Timestamp (AEST)") or row.get("Timestamp")
+                    ts_str = _legacy_get(row, "Timestamp") or row.get("Timestamp")
                     raw_ts.append(ts_str)
                     dt = self._deepdive_ts(ts_str) if ts_str else None
                     if dt:
@@ -2919,6 +3176,13 @@ class TessieAnalyzer:
                         if real_p not in seen_paths:
                             seen_paths.add(real_p)
                             candidates.append(real_p)
+ # REQ-193: per-drive folders (deepdive/<stamp>/drive_deepdive_<stamp>.csv)
+                if os.path.basename(os.path.normpath(s_dir)) == "deepdive":
+                    for fpath in _drive_paths.list_csvs(s_dir):
+                        real_p = os.path.realpath(fpath)
+                        if real_p not in seen_paths:
+                            seen_paths.add(real_p)
+                            candidates.append(real_p)
             except Exception:
                 pass
 
@@ -2989,14 +3253,36 @@ class TessieAnalyzer:
         pad = timedelta(minutes=2)
         is_collision = drive_row.get("start_utc_epoch") in self._drive_start_collision_epochs()
         drive_duration_min = (d_end - d_start).total_seconds() / 60.0
+        # REQ-179: overlap test in UTC - deep-dive timestamps are on Sydney's
+        # clock, a drive's start_dt/end_dt are local to where the car was
+        # (and a drive can cross a timezone), so naive clocks mismatch.
+        _ds, _de = drive_row.get("start_utc_epoch"), drive_row.get("end_utc_epoch")
+        _use_utc = _ds is not None and _de is not None
+        _pad_s = pad.total_seconds()
+        # 2026-10-14: the +/-2 min padding alone let a drive that starts ~1-2 min after the PREVIOUS drive's
+        # telemetry ended (a quick stop, then the drive back) count as "covered" by that earlier record, so its own
+        # telemetry was never fetched. A padded match now also needs a REAL overlap, or a start within the padding of
+        # the drive's own start; and the record with the largest real overlap wins instead of the first one found.
+        best, best_ov = None, None
         for rec in self.detailed_drives:
-            if rec["start_datetime"] <= d_end + pad and rec["end_datetime"] >= d_start - pad:
+            if _use_utc:
+                _rs = tztools.epoch_for_naive_local(rec["start_datetime"])
+                _re = tztools.epoch_for_naive_local(rec["end_datetime"])
+                _overlap = _rs <= _de + _pad_s and _re >= _ds - _pad_s
+                _real = min(_re, _de) - max(_rs, _ds)
+                _near = abs(_rs - _ds) <= _pad_s
+            else:
+                _overlap = rec["start_datetime"] <= d_end + pad and rec["end_datetime"] >= d_start - pad
+                _real = (min(rec["end_datetime"], d_end) - max(rec["start_datetime"], d_start)).total_seconds()
+                _near = abs((rec["start_datetime"] - d_start).total_seconds()) <= _pad_s
+            if _overlap and (_real >= 0 or _near):
                 if is_collision and drive_duration_min > 5:
                     rec_duration_min = (rec["end_datetime"] - rec["start_datetime"]).total_seconds() / 60.0
                     if rec_duration_min < 0.4 * drive_duration_min:
                         continue
-                return rec
-        return None
+                if best is None or _real > best_ov:
+                    best, best_ov = rec, _real
+        return best
 
     def compute_drive_segments(self, raw_samples, grade_threshold_pct=2.0, smoothing_window_km=0.45):
         """Break a drive's raw telemetry into contiguous climbing/level/
@@ -3369,6 +3655,8 @@ class TessieAnalyzer:
                     end_place = self.resolve_place(None, "", lat, lon)
                     break
 
+        start_place = self.display_place(start_place)
+        end_place = self.display_place(end_place)
         route_prefix = ""
         if start_place and end_place:
             route_prefix = f"{start_place} ➔ {end_place} \u2014 "
@@ -3434,9 +3722,19 @@ class TessieAnalyzer:
         except Exception:
             pass
 
-        MIN_MOVE_M = 500.0
-        MAX_LIVE_LOOKUPS = 4
+        # The sampling step grows with the trip so a long drive is still
+        # labelled along its whole length (a fixed 500 m step with a tiny
+        # lookup budget used up the budget in the first few km and every
+        # later sample was nearest-filled from the start - "Home" for a
+        # 300 km drive to Taree). Lookups are cached by rounded lat/lon, so
+        # the one-off cost (~1 s each, Nominatim's limit) is paid once.
+        _pts = [(a, b) for a, b in zip(lats, lons) if a is not None and b is not None]
+        _trip_m = sum(haversine_distance(_pts[k][0], _pts[k][1], _pts[k + 1][0], _pts[k + 1][1])
+                      for k in range(len(_pts) - 1))
+        MAX_LIVE_LOOKUPS = 50
+        MIN_MOVE_M = max(500.0, _trip_m / 45.0)
         live_lookups_done = 0
+        _last_live = 0.0
         network_available = True
         dirty_cache = False
 
@@ -3455,7 +3753,7 @@ class TessieAnalyzer:
  # 1. Check known places first (0ms latency)
             matched_place = self.resolve_place(None, "", lat, lon)
             if matched_place:
-                label = matched_place
+                label = self.display_place(matched_place)
                 cache[(round(lat, 3), round(lon, 3))] = label
             else:
                 cache_key = f"{round(lat, 3)},{round(lon, 3)}"
@@ -3470,7 +3768,12 @@ class TessieAnalyzer:
                     cache[(round(lat, 3), round(lon, 3))] = label
                 elif network_available and live_lookups_done < MAX_LIVE_LOOKUPS:
                     try:
+                        import time as _time
+                        _wait = 1.1 - (_time.time() - _last_live)
+                        if _wait > 0:
+                            _time.sleep(_wait)
                         info = reverse_geocode(lat, lon)
+                        _last_live = _time.time()
                         live_lookups_done += 1
                         if info:
                             label = self._format_reverse_geocode_label(info)
@@ -3620,11 +3923,8 @@ class TessieAnalyzer:
                 stamp = f"{stamp}_{abbr}"
         except Exception:
             pass
-        dest_path = os.path.join(dest_dir, f"drive_deepdive_{stamp}.csv")
-        n = 1
-        while os.path.exists(dest_path):
-            dest_path = os.path.join(dest_dir, f"drive_deepdive_{stamp}_{n:02d}.csv")
-            n += 1
+        stamp = _drive_paths.unique_stamp(dest_dir, stamp)       # REQ-193: <stamp>/ folder per drive
+        dest_path = _drive_paths.csv_path(dest_dir, stamp, create=True)
 
         try:
             with open(dest_path, "wb") as f:
@@ -3930,14 +4230,14 @@ class TessieAnalyzer:
                         dt_start = local_dt.replace(tzinfo=None)
                     else:
                         start_abbr = None
-                        start_str = r.get("Started At (AEST)") or r.get("Started At") or r.get("Started")
+                        start_str = _legacy_get(r, "Started At") or r.get("Started At") or r.get("Started")
                         dt_start = datetime.strptime(start_str.strip()[:16], "%Y-%m-%d %H:%M")
                     if end_utc_epoch is not None:
                         local_dt, end_abbr, _ = tztools.localize(end_utc_epoch, end_tz)
                         dt_end = local_dt.replace(tzinfo=None)
                     else:
                         end_abbr = None
-                        end_str = r.get("Ended At (AEST)") or r.get("Ended At") or r.get("Ended")
+                        end_str = _legacy_get(r, "Ended At") or r.get("Ended At") or r.get("Ended")
                         dt_end = datetime.strptime(end_str.strip()[:16], "%Y-%m-%d %H:%M")
                     
                     dist_km = float(r.get("Distance (km)", 0))
@@ -4001,6 +4301,31 @@ class TessieAnalyzer:
         for tc in self.teslacam_dirs:
             if not tc or not os.path.isdir(tc):
                 continue
+ # BUG (found 2026-09-29, user report: a low-disk-space sync warning
+ # led to investigating why the auto Home+Recent purge found nothing
+ # to reclaim): scan_or_update_drive_catalog() resolves a drive-ROOT
+ # path to its own "<root>/TeslaCam" subfolder internally for
+ # scanning (its own comment: "If drive_path is the drive root,
+ # resolve its TeslaCam subfolder if present") - but that resolution
+ # is local to that function's own `drive_path` variable and was
+ # never propagated back here. Every real caller of DriveAnalyzer
+ # (sync_dashcam.sh's $VOL_TESLA_USB/$VOL_JOWUA/$VOL_2TB, all set to
+ # the drive ROOT, e.g. /Volumes/TESLADRIVE 2, never .../TeslaCam)
+ # passes drive roots, so `tc` below stayed the unresolved root while
+ # `pkgs`' rel_k keys were computed against the CORRECTLY resolved
+ # ".../TeslaCam" folder - `folder_path = os.path.join(tc, ...)` then
+ # silently dropped the "TeslaCam" path segment for EVERY clip, on
+ # EVERY drive, always. Confirmed live against the real connected
+ # drives: 0 of 63,430 indexed clips had a path that actually existed
+ # on disk before this fix - any feature that only reads counts/dates
+ # from the cached catalog (e.g. --timeline's day summary) never
+ # noticed, but anything needing the real file (purge/delete, preview,
+ # size-on-disk, copy) would have silently failed to find every single
+ # clip. Resolve once here, exactly mirroring
+ # scan_or_update_drive_catalog()'s own check, so both that function's
+ # scan and this function's path reconstruction agree.
+            if os.path.isdir(os.path.join(tc, "TeslaCam")):
+                tc = os.path.join(tc, "TeslaCam")
             cat_data = scan_or_update_drive_catalog(tc, master_dir, force_rescan=force_rescan)
             pkgs = cat_data.get("packages", {})
 
@@ -4504,8 +4829,8 @@ def drill_down_day(day_str, day_trips, analyzer):
             e_soc = t.get("end_soc") or raw.get("Ending Battery (%)", "-")
             soc_str = f" {s_soc}%➔{e_soc}%" if s_soc and s_soc != "-" else " -"
             
-            s_p = t.get("start_place") or "Start"
-            e_p = t.get("end_place") or "End"
+            s_p = analyzer.display_place(t.get("start_place") or "Start")
+            e_p = analyzer.display_place(t.get("end_place") or "End")
             if s_p.lower() == "home":
                 s_p = "🏠 Home"
             if e_p.lower() == "home":
@@ -4649,8 +4974,8 @@ def drill_down_all_days(sorted_days, days_dict, analyzer, title):
             e_soc = t.get("end_soc") or raw.get("Ending Battery (%)", "-")
             soc_str = f" {s_soc}%➔{e_soc}%" if s_soc and s_soc != "-" else " -"
 
-            s_p = t.get("start_place") or "Start"
-            e_p = t.get("end_place") or "End"
+            s_p = analyzer.display_place(t.get("start_place") or "Start")
+            e_p = analyzer.display_place(t.get("end_place") or "End")
             if s_p.lower() == "home":
                 s_p = "🏠 Home"
             if e_p.lower() == "home":
@@ -5159,7 +5484,11 @@ def display_timeline_event_details(event, analyzer):
 
             selected_indices = parse_selection_indices(target_str, len(packages))
             if not selected_indices:
-                print(f"Invalid choice. Please enter item numbers (e.g. 1, 6-9, 'all'), [l <#>] to list/inspect, [v <#>] to preview, [f <#>] to flag, [u <#>] to unflag, [P]urge, [r]eview, [o]pen, [b]ack, or [q]uit.\n")
+                print("Invalid choice. Enter one of:")
+                for _opt in ("item numbers (e.g. 1, 6-9, 'all')", "[l <#>] list / inspect", "[v <#>] preview",
+                             "[f <#>] flag", "[u <#>] unflag", "[P]urge", "[r]eview", "[o]pen", "[b]ack", "[q]uit"):
+                    print(f"  {_opt}")
+                print()
                 continue
 
             selected_pkgs = [p for p in packages if p["pkg_idx"] in selected_indices]
@@ -5365,8 +5694,143 @@ def batch_flag_events_interactive(events, choice_str, analyzer, is_unflag=False)
     else:
         print("\n Flagging cancelled.\n")
 
+# ---------------------------------------------------------------------------
+# Home + Recent deletion safety (2026-09-30). User: "A drive sync should
+# always be checked prior - so it needs to know literally Home + Recent -
+# before deleting" and "Change radius to be sure".
+#
+# The old check trusted the day timeline: it extended wherever the last
+# drive in drives_master.csv ended right up to "Now", only refreshed Tessie
+# when a day had NO drives, and decided "Home" by substring-matching place
+# keywords (one of which is "Hay Street") against the location text. If a
+# later drive hadn't reached drives_master.csv yet, its RecentClips were
+# "parked at Home" and deleted from every drive, Archive included.
+#
+# Now a RecentClips clip is only eligible when ALL of these hold:
+#   1. Tessie drives were re-synced successfully in this run (else: nothing).
+#   2. It sits in a parked gap between two real drives where the earlier
+#      drive ENDED and the next drive STARTED inside the Home GPS radius
+#      (places.json type=home, radius_m) - no keyword/name matching - and
+#      the odometer didn't move across the gap (no missing drive).
+#   3. For the gap after the newest drive (no next drive yet), only up to
+#      the moment of this run's sync minus HOME_PURGE_OPEN_END_GRACE, so a
+#      drive Tessie hasn't finalised yet can't be mistaken for parking.
+#   4. The whole ~1-minute clip is inside that gap, with
+#      HOME_PURGE_EDGE_MARGIN kept clear at both ends.
+# ---------------------------------------------------------------------------
+HOME_PURGE_EDGE_MARGIN = timedelta(minutes=2)
+HOME_PURGE_OPEN_END_GRACE = timedelta(minutes=15)
+HOME_PURGE_ODOMETER_TOL_KM = 0.5
+HOME_PURGE_CLIP_SECONDS = 60
+
+
+def _home_geofences(analyzer):
+    """(lat, lon, radius_m) for every place marked type=home."""
+    fences = []
+    for _name, info in (getattr(analyzer, "places", None) or {}).items():
+        if not isinstance(info, dict) or info.get("type") != "home":
+            continue
+        try:
+            lat = float(info.get("lat"))
+            lon = float(info.get("lon"))
+            radius = float(info.get("radius_m") or 100)
+        except (TypeError, ValueError):
+            continue
+        fences.append((lat, lon, radius))
+    return fences
+
+
+def _point_at_home(lat, lon, fences):
+    if lat is None or lon is None or not fences:
+        return False
+    return any(haversine_distance_m(lat, lon, f_lat, f_lon) <= radius for f_lat, f_lon, radius in fences)
+
+
+def _drive_odometer(drive, column):
+    try:
+        v = (drive.get("raw") or {}).get(column)
+        return float(v) if v not in (None, "") else None
+    except (TypeError, ValueError):
+        return None
+
+
+def refresh_drives_for_home_purge(analyzer):
+    """Pull the latest drives from Tessie before any Home + Recent deletion.
+    Returns the (local) time the sync started, or None if it could not be
+    confirmed - callers must then delete nothing."""
+    cached = getattr(analyzer, "_home_purge_synced_at", None)
+    if cached is not None:
+        return cached
+    sync_script = os.path.join(analyzer.script_dir, "sync_api_tessie.py")
+    if not os.path.isfile(sync_script):
+        print("⚠️  Home + Recent: can't confirm the latest drives (sync_api_tessie.py missing) - nothing will be deleted.")
+        return None
+    print(">>> Checking Tessie for the latest drives before any Home + Recent deletion...")
+    started = datetime.now()
+    try:
+        res = subprocess.run([sys.executable, sync_script, "--drives", "--yes"],
+                             capture_output=True, text=True, timeout=180)
+    except Exception as e:
+        print(f"⚠️  Home + Recent: drive sync failed ({e}) - nothing will be deleted.")
+        return None
+    if res.returncode != 0:
+        last = [ln for ln in (res.stderr or res.stdout or "").strip().splitlines() if ln.strip()][-1:]
+        detail = f" - {last[0].strip()}" if last else ""
+        print(f"⚠️  Home + Recent: drive sync exited with code {res.returncode}{detail} - nothing will be deleted.")
+        return None
+    analyzer.load_drives(check_stale=False)
+    analyzer._synced_this_session = True
+    analyzer._home_purge_synced_at = started
+    return started
+
+
+def verified_home_parked_windows(analyzer, synced_at):
+    """[(start, end)] local-time windows where the car is proven parked at Home."""
+    fences = _home_geofences(analyzer)
+    if not fences:
+        print("⚠️  Home + Recent: no place with type=home and GPS coordinates in places.json - nothing will be deleted.")
+        return []
+    drives = sorted((d for d in (analyzer.drives or []) if d.get("start_dt") and d.get("end_dt")),
+                    key=lambda d: d["start_dt"])
+    windows = []
+    for i, a in enumerate(drives):
+        if not _point_at_home(a.get("end_lat"), a.get("end_lon"), fences):
+            continue
+        start = a["end_dt"] + HOME_PURGE_EDGE_MARGIN
+        if i + 1 < len(drives):
+            b = drives[i + 1]
+            if not _point_at_home(b.get("start_lat"), b.get("start_lon"), fences):
+                continue  # next known drive starts elsewhere -> a drive is missing in between
+            o_a = _drive_odometer(a, "Ending Odometer (km)")
+            o_b = _drive_odometer(b, "Starting Odometer (km)")
+            if o_a is not None and o_b is not None and abs(o_b - o_a) > HOME_PURGE_ODOMETER_TOL_KM:
+                continue  # the car moved between these drives
+            end = b["start_dt"] - HOME_PURGE_EDGE_MARGIN
+        else:
+            if synced_at is None:
+                continue
+            end = synced_at - HOME_PURGE_OPEN_END_GRACE
+        if end > start:
+            windows.append((start, end))
+    return windows
+
+
+def _clip_in_home_windows(clip_dt, windows):
+    clip_end = clip_dt + timedelta(seconds=HOME_PURGE_CLIP_SECONDS)
+    return any(w_start <= clip_dt and clip_end <= w_end for w_start, w_end in windows)
+
+
 def find_home_recent_footage_packages(analyzer, target_dates=None):
-    """Finds all unflagged RecentClips packages recorded while parked at Home across target dates."""
+    """Finds unflagged RecentClips packages recorded while the car was PROVEN
+    parked at Home (see the safety notes above). Returns [] - so nothing is
+    deleted - whenever that can't be proven."""
+    synced_at = refresh_drives_for_home_purge(analyzer)
+    if synced_at is None:
+        return []
+    windows = verified_home_parked_windows(analyzer, synced_at)
+    if not windows:
+        return []
+
     analyzer.index_footage()
     master_dir = resolve_master_teslacam_dir(analyzer.teslacam_dirs)
     tombstones_data = load_tombstones(master_dir)
@@ -5382,11 +5846,17 @@ def find_home_recent_footage_packages(analyzer, target_dates=None):
     for d_date in dates_to_scan:
         events, _, _ = analyzer.get_timeline_data(d_date)
         for ev in events:
-            if ev.get("type") == "parked" and is_home_event(ev, analyzer):
-                pkgs = build_timeline_footage_packages(ev)
-                for p in pkgs:
-                    if p.get("cat") == "Recent" and not is_package_flagged(p, tombstones_data=tombstones_data, master_dir=master_dir, lookup_sets=lookup_sets):
-                        home_recent_pkgs.append(p)
+            if ev.get("type") != "parked":
+                continue
+            home_clips = [c for c in ev.get("clips", [])
+                          if c.get("cat") == "Recent" and _clip_in_home_windows(c["dt"], windows)]
+            if not home_clips:
+                continue
+            ev_home = dict(ev)
+            ev_home["clips"] = home_clips
+            for p in build_timeline_footage_packages(ev_home):
+                if p.get("cat") == "Recent" and not is_package_flagged(p, tombstones_data=tombstones_data, master_dir=master_dir, lookup_sets=lookup_sets):
+                    home_recent_pkgs.append(p)
 
     return home_recent_pkgs
 
@@ -5428,18 +5898,25 @@ def export_all_deepdives(analyzer, dest_dir, dry_run=False):
             continue
         if not dry_run:
             os.makedirs(dst_dir, exist_ok=True)
-        for fname in sorted(os.listdir(src_dir)):
+        # REQ-193: drives/deepdive holds one folder per drive - walk into them (flat files too)
+        rels = []
+        for dp_, _dn, fns in os.walk(src_dir):
+            for fn_ in fns:
+                rels.append(os.path.relpath(os.path.join(dp_, fn_), src_dir))
+        for rel_name in sorted(rels):
+            fname = os.path.basename(rel_name)
             if fname.startswith("."):
                 continue
             ext = os.path.splitext(fname)[1].lower()
             if ext not in (".csv", ".json", ".html", ".png"):
                 continue
-            src_path = os.path.join(src_dir, fname)
+            src_path = os.path.join(src_dir, rel_name)
             if not os.path.isfile(src_path):
                 continue
             sz = os.path.getsize(src_path)
             if not dry_run:
-                shutil.copy2(src_path, os.path.join(dst_dir, fname))
+                os.makedirs(os.path.dirname(os.path.join(dst_dir, rel_name)), exist_ok=True)
+                shutil.copy2(src_path, os.path.join(dst_dir, rel_name))
             total_files += 1
             total_bytes += sz
             by_ext[ext] += 1
@@ -5449,6 +5926,9 @@ def export_all_deepdives(analyzer, dest_dir, dry_run=False):
 
 def purge_home_recent_cli(analyzer, target_dates=None, stage_only=False, dry_run=False, yes=False):
     """CLI flow to stage or purge all Home RecentClips footage packages."""
+    if not resolve_master_teslacam_dir(analyzer.teslacam_dirs):
+        print("\nℹ️  Master Archive not connected - Home + Recent footage is never deleted without it.\n")
+        return 0, 0
     pkgs = find_home_recent_footage_packages(analyzer, target_dates=target_dates)
     if not pkgs:
         print("\nℹ️  No unflagged Home Recent footage packages found.\n")
@@ -5959,7 +6439,7 @@ EXAMPLES
 
     args = parser.parse_args()
 
-    analyzer = TessieAnalyzer(tessie_dir=args.tessie_dir)
+    analyzer = DriveAnalyzer(tessie_dir=args.tessie_dir)
     if args.no_sync:
         analyzer._sync_disabled = True
     if args.sync:
@@ -5991,9 +6471,15 @@ EXAMPLES
 
     drives = analyzer.load_drives()
 
-    if not drives:
-        print("No Tessie drive records found. Please ensure CSVs exist in iCloud or Tessie/.")
-        sys.exit(0)
+    # TODO-040: this used to hard-exit here whenever no drive records were
+    # found, which blocked --timeline, --inspect-drive and the Home Recent
+    # purge flags too - even though all three already degrade gracefully
+    # with zero drives (get_timeline_data() falls back to a single all-day
+    # "Unknown" parked event and still attaches footage; inspect_drive()
+    # prints a friendly "Could not find drive matching" message; the purge
+    # flow works off footage_db/places, not drive records). Only the
+    # default month/day drive-grouped view below genuinely needs `drives`
+    # populated, so the empty check now gates just that path.
 
     if args.purge_home_recent or args.stage_home_recent:
         target_dates = None
@@ -6032,6 +6518,12 @@ EXAMPLES
             sys.exit(1)
         display_timeline(target_date, analyzer)
         return
+
+    if not drives:
+        print("No drive records found - the default month/day view groups drives, so there's nothing "
+              "to show here. If you have local dashcam footage but no Tessie drive history, try "
+              "'--timeline' instead to browse by date using footage alone (no telemetry overlay).")
+        sys.exit(0)
 
     cutoff_dt = None
     end_dt = None
