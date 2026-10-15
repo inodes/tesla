@@ -108,6 +108,15 @@
       "width": 1440,
       "height": 940,
       "port": 8765
+    },
+    "teslacam": {
+      "moving_kmh": 3.0,
+      "run_gap_s": 75,
+      "gap_min_s": 120,
+      "same_place_m": 300,
+      "same_place_est_m": 800,
+      "same_minute_s": 30,
+      "read_workers": 4
     }
   }
 }

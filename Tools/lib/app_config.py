@@ -7,6 +7,10 @@ the block). A change takes effect the next time the app or script reads it (the 
   app.map.tiles_base / style_light / style_dark   OpenFreeMap style URL base and the style used in light / dark mode (liberty = 3D, bright, positron, dark, fiord)
   app.map.places_max_lon                           places east of this longitude are left off the Places map (160 = no New Zealand)
   app.map.network_colors                           colour of each charger network on the Places map (a network not listed gets a colour of its own)
+  app.teslacam.moving_kmh / run_gap_s / gap_min_s / same_place_m / same_place_est_m / same_minute_s / read_workers
+                                                   the TeslaCam timeline: a minute is "moving" above this speed; clips this close (s) are one recording; a hole shorter than gap_min_s is not shown;
+                                                   a gap is "parked" when the car's last and next position are within same_place_m (same_place_est_m when one is a Sentry estimate);
+                                                   clips read at once (CPU work, one process each)
   app.drives.repark_max_km / repark_max_minutes    a drive shorter than both is a "re-park" (the car was shuffled), not a drive
   app.drives.long_highway_*                        a "long highway" drive (the only kind that shows 110/100 speed-change markers)
   app.drives.charge_window_minutes                 a charge within this long after / before a drive makes it "to charge" / "from charge"
@@ -30,6 +34,7 @@ DEFAULTS = {
     "map": {"tiles_base": "https://tiles.openfreemap.org/styles/", "style_light": "positron", "style_dark": "dark", "places_max_lon": 160,
             "network_colors": {"Tesla": "#e0201b", "Tesla Destination": "#f97316", "Chargefox": "#16a34a", "Evie": "#7c3aed", "EVX": "#eab308", "Exploren": "#db2777",
                               "NRMA": "#2563eb", "AmpCharge": "#84cc16", "Jolt": "#14b8a6", "BP Pulse": "#0891b2", "3rd-Party": "#6b7280", "WA EV Network": "#9333ea"}},
+    "teslacam": {"moving_kmh": 3.0, "run_gap_s": 75, "gap_min_s": 120, "same_place_m": 300, "same_place_est_m": 800, "same_minute_s": 30, "read_workers": 4},
     "drives": {"repark_max_km": 0.05, "repark_max_minutes": 10,
                "long_highway_km": 30, "long_highway_fast_kmh": 90, "long_highway_fast_minutes": 10,
                "charge_window_minutes": 30, "low_battery_pct": 20},
