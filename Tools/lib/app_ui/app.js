@@ -33,12 +33,16 @@ function mapLinks(lat,lon,name,stop){
   const sh={"Google Maps":"Google","Apple Maps":"Apple","OpenStreetMap":"OSM"};
   return L.map(([t,u])=>`<a class="ml" href="${u}" target="_blank" rel="noopener"${sp}>${stop?(sh[t]||t):t}</a>`).join(" · ");
 }
+// zoom in / out plus a button that puts the view back (the whole route, every place, or the pin)
+function mapNav(m,reset,title){const nav=new maplibregl.NavigationControl({showCompass:false});m.addControl(nav,"top-right");
+  const b=document.createElement("button");b.type="button";b.className="maplibregl-ctrl-icon";b.title=title;b.setAttribute("aria-label",title);
+  b.innerHTML='<span style="display:block;text-align:center;font-size:18px;line-height:29px">⤢</span>';b.onclick=reset;nav._container.appendChild(b)}
 function miniMap(el,lat,lon,col){
   if(lat==null||lon==null){el.outerHTML='<div class="sub">No location.</div>';return}
   if(!window.maplibregl){el.innerHTML='<div class="empty">Map library not loaded (offline?).</div>';return}
   const dark=matchMedia("(prefers-color-scheme: dark)").matches;
   const m=new maplibregl.Map({container:el,style:MAPSTYLE(dark),center:[lon,lat],zoom:14.5,attributionControl:{compact:true},cooperativeGestures:true});
-  m.addControl(new maplibregl.NavigationControl({showCompass:false}),"top-right");
+  mapNav(m,()=>m.flyTo({center:[lon,lat],zoom:14.5}),"Back to the pin");
   new maplibregl.Marker({color:col||"#3b6cf6"}).setLngLat([lon,lat]).addTo(m);
 }
 function tile(b,s){return `<div class="tile"><b>${b}</b><span>${s}</span></div>`}
@@ -500,7 +504,7 @@ function placesMap(host,rows,tab){
   if(!window.maplibregl){host.innerHTML='<div class="empty">Map library not loaded (offline?).</div>';return}
   host.innerHTML=`<div class="sub" style="margin-bottom:6px">Solid dot = used, faded = not used. Dots grow and get names as you zoom in. Click a dot for details.</div>${byNet?'<div class="bar" id="nl"></div>':""}<div class="map big" id="pm"></div>`;
   const el=$("#pm"),dark=matchMedia("(prefers-color-scheme: dark)").matches,m=new maplibregl.Map({container:el,style:MAPSTYLE(dark),center:[151.2,-33.8],zoom:8,attributionControl:{compact:true}});
-  m.addControl(new maplibregl.NavigationControl({showCompass:false}),"top-right");
+  mapNav(m,()=>update(true),"Show every place");
   let ready=false,first=true;
   const update=(refit,rs)=>{if(rs)rows=rs;const F=feats();$("#cnt").textContent=F.length+" on the map";if(!ready)return;m.getSource("pl").setData({type:"FeatureCollection",features:F});
     if((refit||first)&&F.length){first=false;const b=new maplibregl.LngLatBounds();F.forEach(f=>b.extend(f.geometry.coordinates));m.fitBounds(b,{padding:50,maxZoom:13,duration:400})}};
@@ -807,7 +811,7 @@ async function teslaDriveBody(host,role,fetchSeg,places,opts){
   const stop=()=>{done=true};addEventListener("hashchange",stop,{once:true});
   const it=()=>d.item,S=()=>d.series,live=()=>!done&&$("#tdb")&&host.contains($("#tdb"));
   host.innerHTML=`<div id="tdb"><h1 id="dh" ${opts.heading===false?"hidden":""}></h1><div class="sub" id="dsub"></div><div id="dpend"></div><div class="tiles" id="dtl"></div>
-    <div id="dmapc" class="card" style="padding:10px"><div class="bar" style="margin:0 0 8px"><button class="chip on" data-cm="v">Speed</button><button class="chip" data-cm="ap">Autopilot / FSD</button><button class="chip" id="dfit" title="Zoom back out to the whole route" style="margin-left:auto">⤢ Whole route</button><span class="sub" id="dleg"></span></div><div class="map big" id="dmap" style="height:340px"></div></div>
+    <div id="dmapc" class="card" style="padding:10px"><div class="bar" style="margin:0 0 8px"><button class="chip on" data-cm="v">Speed</button><button class="chip" data-cm="ap">Autopilot / FSD</button><span class="sub" id="dleg"></span></div><div class="map big" id="dmap" style="height:340px"></div></div>
     <div id="drj"></div>
     <div id="dchc" class="card" style="margin-top:12px;padding:10px"><div class="sub" id="dtip" style="min-height:18px"></div><canvas id="dch" style="width:100%;height:284px;display:block"></canvas></div>
     <div class="card" style="margin-top:12px"><div id="dvid"></div></div><div id="drv"></div><div id="dev"></div></div>`;
@@ -855,7 +859,6 @@ async function teslaDriveBody(host,role,fetchSeg,places,opts){
     $$("#drv .trow").forEach(b=>b.onclick=()=>{if(player){player.seek(ts0()+(+b.dataset.i-6)*1000);$("#dvid").scrollIntoView({block:"nearest"})}})};
   const rvGet=async()=>{const r=await fetch("/api/review?role="+role+"&t0="+encodeURIComponent(opts.review.t0)+"&t1="+encodeURIComponent(opts.review.t1));if(r.ok)rv=await r.json()};
   const rvPoll=async()=>{while(live()&&rv&&rv.job.running){await new Promise(r=>setTimeout(r,2000));if(!live())break;try{await rvGet()}catch(e){break}rvDraw()}};
-  $("#dfit").onclick=()=>{if(map)map.fit()};
   build();
   if(opts.review){rvGet().then(()=>{rvDraw();rvPoll()}).catch(()=>{})}
   while(d.pending>0&&live()){try{d=await fetchSeg()}catch(e){break}if(!live())break;build()}
@@ -864,7 +867,7 @@ async function teslaDriveBody(host,role,fetchSeg,places,opts){
 function driveMap(el,s,idx,onPick,leg){
   if(!window.maplibregl){el.innerHTML='<div class="empty">Map library not loaded (offline?).</div>';return{update(){},cursor(){},mode(){}}}
   const dark=matchMedia("(prefers-color-scheme: dark)").matches,m=new maplibregl.Map({container:el,style:MAPSTYLE(dark),center:[idx.length?s.lon[idx[0]]:151,idx.length?s.lat[idx[0]]:-33],zoom:11,attributionControl:{compact:true}});
-  m.addControl(new maplibregl.NavigationControl({showCompass:false}),"top-right");
+  mapNav(m,()=>fit(),"Show the whole route");
   let ready=false,mode="v",S=s,I=idx,first=true,latest=null;
   const SPD=["interpolate",["linear"],["get","v"],0,"#94a3b8",30,"#38bdf8",60,"#3b6cf6",90,"#7c3aed",120,"#be185d"],AP=["match",["get","ap"],1,APC[1],2,APC[2],3,APC[3],"#94a3b8"];
   const feats=()=>{const f=[];for(let k=1;k<I.length;k++){const a=I[k-1],b=I[k];if(b-a>5)continue;f.push({type:"Feature",geometry:{type:"LineString",coordinates:[[S.lon[a],S.lat[a]],[S.lon[b],S.lat[b]]]},properties:{v:S.v[b]||0,ap:S.ap[b]||0,i:b}})}return{type:"FeatureCollection",features:f}};
