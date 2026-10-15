@@ -15,8 +15,8 @@ Only a moving car writes telemetry (speed, GPS, heading, steering, pedals, blink
   * the time between items is "parked" when the car's last position and its next one are the same place, otherwise "no footage"
 
 Reading the telemetry costs about a second per clip, so each clip is read once (front camera only) and remembered under
-<data>/teslacam_timeline/<role>/ (index.json = a summary per minute; <day>.json = one reading per second). Nothing on the drive
-is changed.
+<data>/teslacam_timeline/ (index.json = a summary per minute; <day>.json = one reading per second), keyed by the minute's name, so
+the same clip copied to another disk is not read again. Nothing on a drive is changed.
 """
 import datetime
 import json
