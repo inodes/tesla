@@ -68,6 +68,28 @@ C_RED = "\033[31m"
 C_MAGENTA = "\033[35m"
 
 
+def _non_clobbering_path(src_path, dest_path):
+    """Never move/rename onto an existing file (2026-09-30 review, D4: the old
+    check only diverted when sizes differed, so a same-size different
+    invoice - or a third collision onto an existing _01 - was overwritten).
+    Returns None when dest already holds identical content, else a free path
+    (dest itself, or dest with _01, _02, ... before the extension)."""
+    import filecmp
+    if not os.path.exists(dest_path):
+        return dest_path
+    if filecmp.cmp(src_path, dest_path, shallow=False):
+        return None
+    base, ext = os.path.splitext(dest_path)
+    n = 1
+    while True:
+        cand = f"{base}_{n:02d}{ext}"
+        if not os.path.exists(cand):
+            return cand
+        if filecmp.cmp(src_path, cand, shallow=False):
+            return None
+        n += 1
+
+
 def resolve_default_scan_dirs() -> List[str]:
     """Resolve candidate scan folders from config or iCloud defaults."""
     cfg = load_config()
@@ -196,6 +218,7 @@ def process_scanned_invoices(
         return
 
     results = []
+    skipped_unrecognised = 0
     for p in pdf_paths:
  # In batch scan mode, detect auto first so provider filter acts as a filter
         is_single_file = (len(pdf_paths) == 1)
@@ -209,6 +232,16 @@ def process_scanned_invoices(
                     continue
             elif extractor.name.lower() != req:
                 continue
+
+        # 2026-09-30 review (D12): a folder scan (Downloads included by
+        # default) used to rename/import ANY PDF no specific extractor
+        # recognised, via the catch-all generic extractor. Unrecognised PDFs
+        # are now skipped unless you ask for them with --provider generic
+        # (or pass that single file explicitly).
+        if extractor.name == "generic" and not is_single_file and \
+                (not forced_provider or forced_provider.lower() != "generic"):
+            skipped_unrecognised += 1
+            continue
 
         target_name = extractor.generate_filename(data, p)
         target_dir = extractor.resolve_target_dir(data, p) or os.path.dirname(p)
@@ -224,6 +257,10 @@ def process_scanned_invoices(
             "target_dir": target_dir,
             "is_standard": is_already_standard,
         })
+
+    if skipped_unrecognised and not as_json:
+        print(f"{C_YELLOW}Skipped {skipped_unrecognised} PDF(s) no invoice format recognised "
+              f"(use --provider generic to include them).{C_RESET}")
 
     if as_json:
         serializable = []
@@ -302,19 +339,20 @@ def process_scanned_invoices(
                 os.makedirs(dest_dir, exist_ok=True)
                 dest_path = os.path.join(dest_dir, tgt)
                 if os.path.abspath(src_path) != os.path.abspath(dest_path):
- # Anti-clobber protection
-                    if os.path.exists(dest_path) and os.path.getsize(src_path) != os.path.getsize(dest_path):
-                        base, ext = os.path.splitext(tgt)
-                        dest_path = os.path.join(dest_dir, f"{base}_01{ext}")
+                    dest_path = _non_clobbering_path(src_path, dest_path)
+                    if dest_path is None:
+                        print(f"  = {os.path.basename(src_path)}: identical copy already filed as {tgt} - left in place")
+                        continue
                     shutil.move(src_path, dest_path)
                     set_mtime_from_invoice_metadata(dest_path, meta)
                     imported_count += 1
             elif do_rename:
                 dest_path = os.path.join(os.path.dirname(src_path), tgt)
                 if os.path.abspath(src_path) != os.path.abspath(dest_path):
-                    if os.path.exists(dest_path) and os.path.getsize(src_path) != os.path.getsize(dest_path):
-                        base, ext = os.path.splitext(tgt)
-                        dest_path = os.path.join(os.path.dirname(src_path), f"{base}_01{ext}")
+                    dest_path = _non_clobbering_path(src_path, dest_path)
+                    if dest_path is None:
+                        print(f"  = {os.path.basename(src_path)}: identical copy already exists as {tgt} - left in place")
+                        continue
                     os.rename(src_path, dest_path)
                     set_mtime_from_invoice_metadata(dest_path, meta)
                     renamed_count += 1

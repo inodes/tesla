@@ -16,7 +16,9 @@ Usage:
 
 import argparse
 import datetime
+import json
 import os
+import re
 import sys
 import time
 import urllib.request
@@ -237,12 +239,16 @@ def recompute_all(tessie_dir: Optional[str] = None):
  # Extract month_year from filename
         m = re.search(r"(\d{4})[-_](0[1-9]|1[0-2])", fname)
         ym = f"{m.group(1)}-{m.group(2)}" if m else "unknown"
+        # Reuse the month's existing sync-log row (month_year is UNIQUE) - a new
+        # "local_<file>" resource_id collided with it and rolled back the
+        # whole recompute (2026-09-30 review, D10).
+        prev = conn.execute("SELECT resource_id, url FROM fuel_sync_log WHERE month_year = ?", (ym,)).fetchone()
         res = {
-            "resource_id": f"local_{fname}",
+            "resource_id": prev[0] if prev else f"local_{fname}",
             "title": fname,
             "month_year": ym,
             "format": "XLSX" if fname.endswith(".xlsx") else "CSV",
-            "url": fpath,
+            "url": (prev[1] if prev and prev[1] else fpath),
         }
         print(f"[{idx}/{len(files)}] Processing {fname} ({ym})...", end="", flush=True)
         t0 = time.time()
@@ -257,11 +263,11 @@ def recompute_all(tessie_dir: Optional[str] = None):
 
 def compare_drive(target: str, vehicle_key: Optional[str] = None, tessie_dir: Optional[str] = None):
     try:
-        from analyse_drives import TessieAnalyzer
+        from analyse_drives import DriveAnalyzer
     except ImportError:
-        from Tools.analyse_drives import TessieAnalyzer
+        from Tools.analyse_drives import DriveAnalyzer
 
-    analyzer = TessieAnalyzer(tessie_dir=tessie_dir)
+    analyzer = DriveAnalyzer(tessie_dir=tessie_dir)
     analyzer.inspect_drive(target, vehicle_key=vehicle_key)
 
 
@@ -306,10 +312,15 @@ def set_default_vehicle(vehicle_key: str, tessie_dir: Optional[str] = None):
             with open(cfg_path, "r", encoding="utf-8") as f:
                 cfg = json.load(f)
             cfg["default_comparison_vehicle"] = vehicle_key
-            with open(cfg_path, "w", encoding="utf-8") as f:
+            # Atomic: config.json holds real credentials - never leave it truncated.
+            tmp_path = cfg_path + ".tmp"
+            with open(tmp_path, "w", encoding="utf-8") as f:
                 json.dump(cfg, f, indent=2)
-        except Exception:
-            pass
+            os.replace(tmp_path, cfg_path)
+        except Exception as e:
+            # Used to be silent (and always hit a NameError), so it printed
+            # success without ever updating config.json.
+            print(f"⚠️  Couldn't update config.json's default_comparison_vehicle: {e}")
 
     name = vehicles[vehicle_key].get("name", vehicle_key)
     print(f"✅ Set default comparison vehicle to: \033[1m{name}\033[0m ({vehicle_key})")

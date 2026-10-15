@@ -12,6 +12,9 @@
 # Evnex home sessions are deliberately excluded here - they get their
 # own richer deep-dive via step 3 below, not a redundant /states pull.
 # 3. Evnex home-charger sessions -> charges/deepdive/*_Evnex_Home.json
+# 3b. Charging curves -> build the curve + profile charts for every deep-dive
+# session that lacks them, and list any DC session with no telemetry
+# (analyse_charging.py --build-curves, REQ-183)
 # 4. Invoice PDFs -> rename to the standard scheme, then check invoice
 # cost/rate against what Tessie already wrote into charges_master.csv
 # and correct ONLY where they disagree - which sessions exist comes
@@ -63,6 +66,9 @@ Steps run, in order:
      richer deep-dive in step 3
      (sync_api_tessie.py --backfill-deepdive --charges --limit 0)
   3. Evnex home-charger sessions (sync_api_evnex.py)
+  3b. Charging curves - builds the curve + profile charts (PNG + HTML) for
+     every deep-dive session that lacks them; reports DC sessions with no
+     telemetry (analyse_charging.py --build-curves)
   4. Invoice PDFs - rename to the standard scheme, then correct ONLY
      cost/rate fields in charges_master.csv where they disagree with what
      Tessie already wrote (Tessie is always the source of which sessions
@@ -97,6 +103,10 @@ echo "==> Charge deep-dive telemetry backfill (Superchargers/3rd-party DC - Evne
 echo
 echo "==> Evnex home-charger sessions"
 ./sync_api_evnex.py
+
+echo
+echo "==> Charging curves (every deep-dive session gets its curve + profile charts)"
+./analyse_charging.py --build-curves
 
 echo
 echo "==> Invoice PDFs (rename & standardize, then reconcile cost/rate in charges_master.csv)"

@@ -57,7 +57,7 @@ echo "======================================================"
 echo
 
 echo "========== [1/4] Chargers domain =========="
-#./sync_charger_all.sh
+./sync_charger_all.sh
 
 echo
 echo "========== [2/4] Charging Sessions domain =========="

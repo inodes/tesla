@@ -129,18 +129,28 @@ def find_usage_csvs(invoices_dir, provider=None, extra_dirs=None):
     dirs = [invoices_dir] if invoices_dir else []
     dirs.extend(extra_dirs if extra_dirs is not None else [_resolve_landing_dir()])
 
+    # 2026-09-30 review (D3): de-duplicated by file NAME, so a new export
+    # that reused an already-filed name was silently skipped. Now only an
+    # identical file (same content) counts as a duplicate.
+    import hashlib
     out = []
-    seen_basenames = set()
+    seen = {}
     for d in dirs:
         if not d or not os.path.isdir(d):
             continue
         for f in sorted(os.listdir(d)):
             if not provider.is_usage_export_filename(f):
                 continue
-            if f in seen_basenames:
+            path = os.path.join(d, f)
+            try:
+                with open(path, "rb") as fh:
+                    digest = hashlib.sha256(fh.read()).hexdigest()
+            except OSError:
                 continue
-            seen_basenames.add(f)
-            out.append(os.path.join(d, f))
+            if digest in seen:
+                continue
+            seen[digest] = path
+            out.append(path)
     return out
 
 
@@ -162,10 +172,17 @@ def _archive_landing_csv(csv_path, invoices_dir, log=print):
         return False  # already filed, nothing to do
     os.makedirs(invoices_dir, exist_ok=True)
     if os.path.exists(dest):
-        log(f"  ⚠ Not archiving {os.path.basename(csv_path)} - a file with that name already exists in {invoices_dir}")
-        return False
+        import filecmp
+        if filecmp.cmp(dest, csv_path, shallow=False):
+            log(f"  (an identical {os.path.basename(csv_path)} is already filed in {invoices_dir} - leaving the Downloads copy)")
+            return False
+        base, ext = os.path.splitext(dest)
+        n = 1
+        while os.path.exists(f"{base}_{n:02d}{ext}"):
+            n += 1
+        dest = f"{base}_{n:02d}{ext}"  # different content, same name: file it alongside, never over
     shutil.move(csv_path, dest)
-    log(f"  Archived {os.path.basename(csv_path)} -> {invoices_dir}")
+    log(f"  Archived {os.path.basename(csv_path)} -> {dest}")
     return True
 
 

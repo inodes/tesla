@@ -66,7 +66,7 @@ import os
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from analyse_drives import TessieAnalyzer  # noqa: E402
+from analyse_drives import DriveAnalyzer  # noqa: E402
 from analyse_car_efficiency import load_battery_health_history  # noqa: E402
 
 # --- dataviz reference palette (light mode) - matches analyse_charge_curves.py
@@ -104,7 +104,7 @@ def load_points(tessie_dir=None):
     analysis_car_efficiency's own history loader (battery_health_log.json + any
     manually-exported CSV, deduplicated) rather than re-reading/re-parsing the
     log a second way."""
-    analyzer = TessieAnalyzer(tessie_dir=tessie_dir)
+    analyzer = DriveAnalyzer(tessie_dir=tessie_dir)
     history = load_battery_health_history(analyzer.tessie_data_home, include_outliers=True) or []
     points, excluded_no_odo, excluded_outliers = [], 0, 0
     for e in history:
