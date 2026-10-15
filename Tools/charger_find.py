@@ -332,7 +332,7 @@ def _contextual_type_icon(st: UnifiedStationRecord, network_filter: Optional[str
     return st.type_icon()
 
 
-def _print_reverify_result(name: str, ok: bool, diffs) -> None:
+def _print_reverify_result(name: str, ok: bool, diffs, confirmed_not_found: bool = False) -> None:
     """
     (2026-09-16, AGENTS.local.md): the "Update / Re-verify" action
     used to print the same "Successfully updated and saved (historical
@@ -344,7 +344,18 @@ def _print_reverify_result(name: str, ok: bool, diffs) -> None:
     ChargerDiscoveryManager.reverify_station(): None means the re-fetch
     itself failed or a diff couldn't be computed, {} means it succeeded with
     no display-relevant change, and a non-empty dict lists exactly what did.
+
+    (2026-09-29): `confirmed_not_found` distinguishes an unambiguous "the
+    source of truth says this doesn't exist" result (HTTP 404 from Tesla's
+    own findus page or PlugShare's own API) from every other kind of
+    failure - see reverify_station()'s own docstring. Callers that see
+    confirmed_not_found=True are expected to follow up with an explicit
+    removal prompt (this function only prints; it never prompts or
+    deletes itself - see _maybe_prompt_remove_station()).
     """
+    if confirmed_not_found:
+        print(f"{C_RED}❌ '{name}' no longer exists at its own source (confirmed - not a network/timeout error).{C_RESET}")
+        return
     if not ok:
         print(f"{C_RED}❌ Failed to update station '{name}'.{C_RESET}")
         return
@@ -359,6 +370,34 @@ def _print_reverify_result(name: str, ok: bool, diffs) -> None:
         old_disp = old_v if old_v not in (None, "") else "-"
         new_disp = new_v if new_v not in (None, "") else "-"
         print(f"   {C_DIM}{label}:{C_RESET}  {old_disp}  {C_DIM}->{C_RESET}  {new_disp}")
+
+
+def _maybe_prompt_remove_station(mgr, station: UnifiedStationRecord) -> bool:
+    """
+    2026-09-29 user design requirement (prompted by BUG-156/BUG-157): "If the
+    single source of truth has no entry - then the truth is the entry
+    should be noted to user as false and removed with user prompt." Call
+    this right after _print_reverify_result() has already told the user a
+    station is confirmed gone. It asks ONE explicit y/N question and, only
+    on 'y', calls ChargerDiscoveryManager.remove_station() (the only code
+    path anywhere in this codebase that deletes a station). Returns True if
+    the station was actually removed, so the caller knows to drop it from
+    whatever in-memory list/view it's showing.
+    """
+    try:
+        confirm = input(f"{C_YELLOW}Remove '{station.name}' from the registry now? [y/N]: {C_RESET}").strip().lower()
+    except (EOFError, KeyboardInterrupt):
+        print()
+        return False
+    if confirm != "y":
+        print(f"{C_DIM}Left untouched - '{station.name}' still in the registry.{C_RESET}")
+        return False
+    ok, msg = mgr.remove_station(station)
+    if ok:
+        print(f"{C_GREEN}✔ {msg}{C_RESET}")
+    else:
+        print(f"{C_RED}❌ Could not remove: {msg}{C_RESET}")
+    return ok
 
 
 def render_stations_table(
@@ -388,6 +427,8 @@ def render_stations_table(
     # --charger-stops (multi-leg re-planning): adds a "Dep SoC" column, shown
     # only for the chosen stops, alongside the always-populated "Arr SoC".
     multi_stop = has_route and bool(route_info and route_info.get("charger_stops"))
+    show_soc = not (route_info or {}).get("no_soc")   # REQ-175 --no-soc
+    multi_stop = multi_stop and show_soc
     
     max_name_len = max((display_len(s.name) for s in stations), default=28)
     w_name = max(28, min(40, max_name_len + 2))
@@ -398,18 +439,25 @@ def render_stations_table(
     widths = [8, 9, 7, w_name, 6, 6, 13, 12, 22]
     headers = ["   #    ", "  Type   ", " State ", "          Station Name          ", " Tier ", " Bays ", "   Access    ", " Rate (Now) ", "   Period / Window    "]
     
+    # 🏪 = nearby facilities score (real cached OSM score only; "-" when not
+    # checked yet) - user, 2026-09-30: "a Facilities Score in a new column -
+    # just use a Facilities emoji", in both the terminal and --email.
+    from lib.station_report_email import FACILITIES_ICON, station_facilities_score, facilities_level
     if has_route and multi_stop:
-        widths.extend([11, 9, 10, 9, 8, w_suburb])
-        headers.extend([" Progress  ", " Detour  ", " Arr SoC  ", " Dep SoC  ", " Score  ", " Location / Suburb "])
+        widths.extend([11, 9, 10, 9, 6, 8, w_suburb])
+        headers.extend([" Progress  ", " Detour  ", " Arr SoC  ", " Dep SoC  ", FACILITIES_ICON, " Score  ", " Location / Suburb "])
+    elif has_route and not show_soc:
+        widths.extend([11, 9, 6, 8, w_suburb])
+        headers.extend([" Progress  ", " Detour  ", FACILITIES_ICON, " Score  ", " Location / Suburb "])
     elif has_route:
-        widths.extend([11, 9, 10, 8, w_suburb])
-        headers.extend([" Progress  ", " Detour  ", " Arr SoC  ", " Score  ", " Location / Suburb "])
+        widths.extend([11, 9, 10, 6, 8, w_suburb])
+        headers.extend([" Progress  ", " Detour  ", " Arr SoC  ", FACILITIES_ICON, " Score  ", " Location / Suburb "])
     elif has_dist:
-        widths.extend([9, w_suburb])
-        headers.extend(["  Dist   ", " Location / Suburb "])
+        widths.extend([9, 6, w_suburb])
+        headers.extend(["  Dist   ", FACILITIES_ICON, " Location / Suburb "])
     else:
-        widths.append(w_suburb)
-        headers.append(" Location / Suburb ")
+        widths.extend([6, w_suburb])
+        headers.extend([FACILITIES_ICON, " Location / Suburb "])
 
     total_inner_w = sum(widths) + len(widths) - 1
 
@@ -477,13 +525,13 @@ def render_stations_table(
 
     aligns = ["left", "left", "center", "left", "center", "right", "left", "right", "left"]
     if has_route and multi_stop:
-        aligns.extend(["right", "right", "center", "center", "center", "left"])
+        aligns.extend(["right", "right", "center", "center", "center", "center", "left"])
     elif has_route:
-        aligns.extend(["right", "right", "center", "center", "left"])
+        aligns.extend(["right", "right", "center", "center", "center", "left"])
     elif has_dist:
-        aligns.extend(["right", "left"])
+        aligns.extend(["right", "center", "left"])
     else:
-        aligns.append("left")
+        aligns.extend(["center", "left"])
 
     for idx, st in enumerate(stations, 1):
         status = st.get_status()
@@ -526,6 +574,9 @@ def render_stations_table(
             period_str = "-"
 
         period_disp = truncate_display(period_str, 20)
+        fac_val = station_facilities_score(st)
+        fac_col = {"good": C_GREEN, "warn": C_YELLOW, "low": C_ORANGE, "bad": C_RED}.get(facilities_level(fac_val), "")
+        fac_disp = f"{fac_col}{fac_val:.1f}{C_RESET}" if fac_val is not None else f"{C_DIM}-{C_RESET}"
         suburb_val = st.suburb or st.state or "-"
         suburb_disp = truncate_display(suburb_val, w_suburb - 2)
 
@@ -566,33 +617,13 @@ def render_stations_table(
             # (which are themselves only a last-resort fallback behind
             # config.json and vehicle_spec.json) instead of a third, different,
             # wrong pair.
-            from lib.abrp_common import DEFAULT_CONSUMPTION_WH_KM, DEFAULT_USABLE_KWH
-            dep_soc = route_info.get("departure_soc", 90) if route_info else 90
-            c_wh_km = route_info.get("consumption_wh_km", DEFAULT_CONSUMPTION_WH_KM) if route_info else DEFAULT_CONSUMPTION_WH_KM
-            u_kwh = route_info.get("usable_kwh", DEFAULT_USABLE_KWH) if route_info else DEFAULT_USABLE_KWH
+            # Arrival SoC via the shared helper (also used by --email), leg-
+            # aware when --charger-stops re-planned the trip.
+            from lib.station_report_email import station_arrival_soc
+            from lib.abrp_common import format_soc_badge
             tgt_min = route_info.get("target_arrival_soc", 10.0) if route_info else 10.0
-
-            # --charger-stops (2026-09-21): when a multi-leg re-plan has been
-            # precomputed (see the CLI's chosen_stops block), each station
-            # carries its own effective leg departure SoC/distance-since-stop
-            # instead of always using the single non-stop departure_soc/
-            # distance-from-origin pair above. Falls straight through to the
-            # original single-leg behavior when multi_stop is off (these
-            # attrs are simply absent then).
-            leg_dep_soc = getattr(st, "leg_departure_soc", None)
-            leg_dist_km = getattr(st, "leg_distance_km", None)
-            eff_dep_soc = leg_dep_soc if leg_dep_soc is not None else dep_soc
-            eff_dist_km = leg_dist_km if leg_dist_km is not None else prog_val
-
-            if eff_dist_km is not None:
-                try:
-                    from lib.abrp_common import estimate_arrival_soc, format_soc_badge
-                    arr_soc, _ = estimate_arrival_soc(eff_dep_soc, eff_dist_km, detour_val or 0.0, c_wh_km, u_kwh)
-                    soc_badge, _ = format_soc_badge(arr_soc, tgt_min)
-                except Exception:
-                    soc_badge = "—"
-            else:
-                soc_badge = "—"
+            arr_soc = station_arrival_soc(st, route_info) if show_soc else None
+            soc_badge = format_soc_badge(arr_soc, tgt_min)[0] if arr_soc is not None else "—"
 
             if multi_stop:
                 stop_dep_soc = getattr(st, "stop_dep_soc", None)
@@ -610,23 +641,23 @@ def render_stations_table(
                     sc_data = {"badge": "—"}
             score_disp = sc_data.get("badge", "—")
 
-            row_cells.append(pad_display(prog_text, widths[9], "right"))
-            row_cells.append(pad_display(detour_text, widths[10], "right"))
-            row_cells.append(pad_display(soc_badge, widths[11], "center"))
+            route_cols = [(prog_text, "right"), (detour_text, "right")]
+            if show_soc:
+                route_cols.append((soc_badge, "center"))
             if multi_stop:
-                row_cells.append(pad_display(dep_soc_disp, widths[12], "center"))
-                row_cells.append(pad_display(score_disp, widths[13], "center"))
-                row_cells.append(pad_display(f" {C_DIM}{suburb_disp}{C_RESET}", widths[14], "left"))
-            else:
-                row_cells.append(pad_display(score_disp, widths[12], "center"))
-                row_cells.append(pad_display(f" {C_DIM}{suburb_disp}{C_RESET}", widths[13], "left"))
+                route_cols.append((dep_soc_disp, "center"))
+            route_cols += [(fac_disp, "center"), (score_disp, "center"), (f" {C_DIM}{suburb_disp}{C_RESET}", "left")]
+            for k_, (txt_, al_) in enumerate(route_cols):
+                row_cells.append(pad_display(txt_, widths[9 + k_], al_))
         elif has_dist:
             dist_val = st.distance_km
             dist_text = f"{dist_val:.1f} km " if dist_val is not None else "-- "
             row_cells.append(pad_display(dist_text, widths[9], "right"))
-            row_cells.append(pad_display(f" {C_DIM}{suburb_disp}{C_RESET}", widths[10], "left"))
+            row_cells.append(pad_display(fac_disp, widths[10], "center"))
+            row_cells.append(pad_display(f" {C_DIM}{suburb_disp}{C_RESET}", widths[11], "left"))
         else:
-            row_cells.append(pad_display(f" {C_DIM}{suburb_disp}{C_RESET}", widths[9], "left"))
+            row_cells.append(pad_display(fac_disp, widths[9], "center"))
+            row_cells.append(pad_display(f" {C_DIM}{suburb_disp}{C_RESET}", widths[10], "left"))
 
         print(format_row(row_cells, widths, aligns))
 
@@ -1610,6 +1641,20 @@ def display_station_inspection_card(station: UnifiedStationRecord, eval_time: Op
         elif isinstance(station.amenities, list) and station.amenities:
             print(f"\n  🛒 {C_BOLD}Amenities:{C_RESET} {', '.join(str(x) for x in station.amenities)}")
 
+ # Tesla Busy Times (REQ-174) - from the Find Us page's own chart data
+    try:
+        from lib.tesla_busy_times import station_busy_profile, busy_summary, WEEKDAYS, WEEKENDS
+        _prof = station_busy_profile(station)
+    except Exception:
+        _prof = None
+    if _prof:
+        _as_of = str(_prof.get("profile_date") or _prof.get("fetched") or "")[:10]
+        print(f"\n  🚦 {C_BOLD}Busy Times{C_RESET} {C_DIM}(Tesla, as of {_as_of}; 4am → 3am, full bar = all stalls in use){C_RESET}")
+        for _lbl, _wds in (("Weekdays", WEEKDAYS), ("Weekends", WEEKENDS)):
+            _sm = busy_summary(_prof, _wds)
+            _col = C_YELLOW if _sm["level"] == "some" else C_GREEN
+            print(f"     {_lbl:<9} {_col}{_sm['spark']}{C_RESET}  {_sm['text']}")
+
  # Cached Facilities Quality Rating / Summary (REQ-082)
     try:
         from station_facilities_common import get_facilities_registry, format_facilities_summary_card
@@ -1793,12 +1838,24 @@ def interactive_station_actions(station: UnifiedStationRecord) -> None:
         elif choice in ("u", "update", "refresh"):
             try:
                 from providers_chargers.chargers_manager import ChargerDiscoveryManager
+ # BUG (found 2026-09-29, drive-by while wiring the confirmed-not-found
+ # removal flow): ChargerDiscoveryManager has no load_all_providers()
+ # method at all - __init__ already loads every provider unconditionally
+ # - so this call has ALWAYS raised AttributeError, silently caught below
+ # and printed as a generic "Error reverifying station" every single time
+ # [u] was pressed from THIS specific menu (this station-inspection card's
+ # own re-verify handler, as opposed to the other [u] handlers elsewhere
+ # in this file that construct their manager without this extra call and
+ # therefore never hit it). Removed - nothing else here needs it.
                 mgr = ChargerDiscoveryManager()
-                mgr.load_all_providers()
                 print(f"🔄 Re-verifying station '{station.name}' live...")
-                ok, diffs, fresh = mgr.reverify_station(station)
-                _print_reverify_result(station.name, ok, diffs)
-                if ok and fresh:
+                ok, diffs, fresh, confirmed_not_found = mgr.reverify_station(station)
+                _print_reverify_result(station.name, ok, diffs, confirmed_not_found)
+                if confirmed_not_found:
+                    if _maybe_prompt_remove_station(mgr, station):
+                        print()
+                        break
+                elif ok and fresh:
                     station = fresh
                     print()
                     display_station_inspection_card(station)
@@ -1896,6 +1953,60 @@ def inspect_single_station(manager: ChargerDiscoveryManager, query: str, eval_ti
                 interactive_station_actions(st)
         except (EOFError, KeyboardInterrupt):
             print()
+
+
+def sync_busy_times_for_stations(stations: list, delay_s: float = 1.0) -> dict:
+    """REQ-174: fetch Tesla's Busy Times chart data for every Tesla
+    Supercharger in `stations` from its Find Us page (one WebKit session),
+    saved to <data>/chargers/tesla_busy_times.json. The Supercharger
+    registry itself is not touched."""
+    tesla_sc = [s for s in stations if s.speed_tier == "supercharger" and "tesla" in (s.source or "").lower()
+                and (s.source_id or (s.metadata or {}).get("findus_id"))]
+    print(f"\n🚦 Fetching Tesla Busy Times for {len(tesla_sc)} Supercharger(s)...")
+    if not tesla_sc:
+        return {"saved": 0, "failed": 0}
+    archive_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "archive")
+    if archive_dir not in sys.path:
+        sys.path.insert(0, archive_dir)
+    from charger_find_tesla import TeslaChargerExplorer
+    from lib.tesla_busy_times import extract_busy_profile, save_busy_profile, busy_summary
+    import lib.tesla_busy_times as _busy_mod
+    try:
+        from playwright.sync_api import sync_playwright
+    except ImportError:
+        print(f"{C_RED}❌ Playwright isn't installed in this Python environment.{C_RESET}")
+        return {"saved": 0, "failed": len(tesla_sc)}
+    explorer = TeslaChargerExplorer(headless=True)
+    saved, failed = 0, []
+    with sync_playwright() as p:
+        browser = p.webkit.launch(headless=True)
+        context = browser.new_context(
+            locale="en-AU", timezone_id="Australia/Sydney",
+            user_agent="Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4 Safari/605.1.15")
+        page = context.new_page()
+        for n, st in enumerate(tesla_sc, 1):
+            fid = str(st.source_id or (st.metadata or {}).get("findus_id"))
+            url = f"https://www.tesla.com/en_AU/findus/location/supercharger/{fid}"
+            print(f"  [{n}/{len(tesla_sc)}] {st.name}... ", end="", flush=True)
+            try:
+                _api, next_data = explorer._scrape_page_payload(page, url)
+                prof = extract_busy_profile(next_data)
+            except Exception as e:
+                prof = None
+                print(f"{C_RED}error: {str(e)[:60]}{C_RESET}")
+            if prof and save_busy_profile(fid, st.name, prof):
+                saved += 1
+                print(f"{C_GREEN}✔{C_RESET} {busy_summary(prof)['text']}")
+            else:
+                failed.append(st.name)
+                if prof is None:
+                    print(f"{C_YELLOW}no busy-times data on the page{C_RESET}")
+            if n < len(tesla_sc):
+                time.sleep(delay_s)
+        browser.close()
+    _busy_mod._CACHE = None   # so the list below reads the fresh file
+    print(f"✔ Busy Times saved for {saved} station(s)" + (f", {len(failed)} without data" if failed else "") + ".")
+    return {"saved": saved, "failed": len(failed)}
 
 
 def sync_facilities_for_stations(stations: list, radius_m: int = 500, delay_s: float = 1.0) -> dict:
@@ -2313,10 +2424,11 @@ DESCRIPTION
     g_route.add_argument("--from", "--origin", dest="from_loc", type=str, help="Route origin / departure point (place name, address, or lat,lon)")
     g_route.add_argument("--to", "--destination", dest="to_loc", type=str, help="Route destination point (place name, address, or lat,lon)")
     g_route.add_argument("--via", nargs="+", help="Intermediate route waypoint(s) (e.g. --via 'Goulburn' 'Canberra')")
-    g_route.add_argument("--corridor-radius", "--corridor", "--detour-max", type=float, default=None, help="Corridor radius / max highway detour in km (default: 5.0 km, or config.json's abrp.corridor_radius_km if set)")
+    g_route.add_argument("--corridor-radius", "--corridor", "--detour-max", type=float, default=None, help="Corridor radius / max highway detour in km (default: 5.0 km, or config.json's abrp.corridor_radius_km if set; -r/--radius also sets it on a route)")
 
     g_abrp = parser.add_argument_group("ABRP & EV Trip Planning")
     g_abrp.add_argument("--soc", "--departure-soc", dest="departure_soc", type=str, help="Departure battery percentage (0-100 or 'live' to query Tessie real-time)")
+    g_abrp.add_argument("--no-soc", dest="no_soc", action="store_true", help="Route list with no battery figures: no departure/arrival SoC, planned stops or ABRP link, and no Tessie call")
     g_abrp.add_argument("--target-soc", "--min-soc", dest="target_soc", type=float, help="Target minimum arrival battery percentage (default: config.json's abrp.target_arrival_soc, else 10.0)")
     g_abrp.add_argument("--max-soc", dest="max_soc", type=float, help="Maximum charging target percentage (default: config.json's abrp.max_charge_soc, else 85.0)")
     g_abrp.add_argument("--charger-stops", dest="charger_stops", action="append", metavar="NAME", help="Chosen enroute charging stop, matched by station name in THIS query's results (repeatable, e.g. --charger-stops \"Heatherbrae, NSW\" --charger-stops \"Coffs Harbour, NSW\") - re-plans Arr/Dep SoC leg-by-leg through these stops instead of one non-stop estimate from departure")
@@ -2357,6 +2469,8 @@ DESCRIPTION
     g_output = parser.add_argument_group("Output Controls")
     g_output.add_argument("--limit", type=int, default=100, help="Maximum number of stations to display (default: 100)")
     g_output.add_argument("--json", action="store_true", help="Output results in JSON format")
+    g_output.add_argument("--email", action="store_true", help="Also copy the results to the clipboard, formatted for an email (trip summary + table)")
+    g_output.add_argument("--share", action="store_true", help="Email version for someone else (implies --email): no battery, arrival or planned-stop details, non-Tesla prices, Tesla-only stations marked to avoid")
 
     g_sync = parser.add_argument_group("Synchronization")
     g_sync.add_argument("--sync-all", action="store_true", help="End-to-end sync across all providers (Tesla, Chargefox, EVX, Evie, bp pulse, PlugShare, AmpCharge, Exploren, Jolt, NRMA, Master Catalog)")
@@ -2377,7 +2491,8 @@ DESCRIPTION
     g_facilities.add_argument("--facilities-radius", "--radius-m", type=int, default=500, help="Search radius in meters for nearby facilities (default: 500)")
     g_facilities.add_argument("--min-facilities", "--facilities-min", choices=["excellent", "good", "basic", "sparse"], help="Filter stations meeting minimum facility quality rating tier")
     g_facilities.add_argument("--supermarket", "--groceries", action="store_true", help="Filter stations located at or near a major supermarket (Woolworths, Coles, Aldi, IGA, Costco, etc.)")
-    g_facilities.add_argument("--sync-facilities", action="store_true", help="Batch look up and cache nearby facilities for matching stations in station_facilities.json")
+    g_facilities.add_argument("--sync-facilities", action="store_true", help="Look up nearby facilities for the matching stations that need it, then show the list as usual (works with --email)")
+    g_facilities.add_argument("--sync-busy-times", action="store_true", help="Fetch Tesla's Busy Times (congestion by hour) for the matching Superchargers from their Find Us pages, then show the list as usual")
     g_facilities.add_argument("--reclassify-facilities", action="store_true", help="Instantly re-run facility categorization on every cached record that has raw OSM tags saved, no network call - use after a classify_poi_group() logic change instead of --sync-facilities")
 
     g_registry = parser.add_argument_group("Registry Filters & Batch Updates")
@@ -3007,7 +3122,14 @@ DESCRIPTION
             DEFAULT_USABLE_KWH
         )
         abrp_cfg = load_abrp_config()
-        corridor_radius_km = args.corridor_radius if args.corridor_radius is not None else float(abrp_cfg.get("corridor_radius_km", 5.0))
+        # REQ-175: -r/--radius given on a route sets the corridor width too
+        # (--corridor still wins if both are given).
+        if args.corridor_radius is not None:
+            corridor_radius_km = args.corridor_radius
+        elif explicit_radius and args.radius:
+            corridor_radius_km = float(args.radius)
+        else:
+            corridor_radius_km = float(abrp_cfg.get("corridor_radius_km", 5.0))
 
         if not args.json:
             print(f"🛣️  {C_CYAN}Calculating driving corridor from {f_label} to {t_label}...{C_RESET}")
@@ -3023,13 +3145,18 @@ DESCRIPTION
         route_info["corridor_radius_km"] = corridor_radius_km
         route_info["via_labels"] = via_labels
 
-        dep_soc, dep_src, live_detail = resolve_departure_soc(args.departure_soc)
+        no_soc = bool(getattr(args, "no_soc", False))
+        route_info["no_soc"] = no_soc
+        if no_soc:
+            dep_soc, dep_src, live_detail = None, None, {}
+        else:
+            dep_soc, dep_src, live_detail = resolve_departure_soc(args.departure_soc)
         tgt_soc = args.target_soc if args.target_soc is not None else float(abrp_cfg.get("target_arrival_soc", 10.0))
         max_soc = args.max_soc if args.max_soc is not None else float(abrp_cfg.get("max_charge_soc", 85.0))
 
         via_pts = waypoints[1:-1] if len(waypoints) > 2 else []
         abrp_url = None
-        if getattr(args, "abrp_link", True):
+        if getattr(args, "abrp_link", True) and not no_soc:
             abrp_url = generate_abrp_deep_link(
                 origin_coords=(f_lat, f_lon),
                 dest_coords=(t_lat, t_lon),
@@ -3064,7 +3191,9 @@ DESCRIPTION
         # distance-from-origin pair); Dep SoC is set only on the chosen
         # stops themselves - see render_stations_table()'s multi_stop branch.
         chosen_stops = []
-        if getattr(args, "charger_stops", None):
+        if getattr(args, "charger_stops", None) and no_soc:
+            print(f"{C_YELLOW}ℹ️  --charger-stops ignored with --no-soc (it only re-plans battery figures).{C_RESET}")
+        if getattr(args, "charger_stops", None) and not no_soc:
             for want in args.charger_stops:
                 want_l = want.strip().lower()
                 if not want_l:
@@ -3224,6 +3353,14 @@ DESCRIPTION
         print(f"🔄 Starting batch update for {label} station(s) (historical changes will be archived)...")
         stats = manager.batch_reverify_stations(stations, status_filter=target_status)
         print(f"\n✔ Batch update complete: {stats['SUCCESS']} updated, {stats['ERROR']} failed out of {stats['TOTAL']} target stations.")
+        if stats.get("NOT_FOUND"):
+ # (2026-09-29) Confirmed-gone stations are counted separately from
+ # ordinary failures (see batch_reverify_stations()) - a batch run
+ # never auto-deletes, so surface them by name here rather than
+ # silently folding them into "failed" or leaving them unmentioned.
+            print(f"⚠ {stats['NOT_FOUND']} station(s) confirmed NO LONGER EXIST at their own source (not deleted automatically - re-run '[u]' on each individually to review and confirm removal):")
+            for _name in stats.get("_not_found_names", []):
+                print(f"    - {_name}")
         return
 
  # Offline Facilities Reclassify Action (BUG-151, no network call)
@@ -3239,13 +3376,29 @@ DESCRIPTION
               f"{result['needs_live_refetch']} still need a live refetch (predate raw-tag saving - use --sync-facilities for those).")
         return
 
+ # Tesla Busy Times sync (REQ-174) - additive, carries on to the list
+    if getattr(args, "sync_busy_times", False) and stations:
+        sync_busy_times_for_stations(stations, delay_s=args.delay)
+
  # Batch Facilities Sync Action
     if getattr(args, "sync_facilities", False):
         if not stations:
             print(f"❌ No stations found matching current criteria to sync facilities for.")
             return
-        sync_facilities_for_stations(stations, radius_m=args.facilities_radius or 500, delay_s=args.delay)
-        return
+        sync_result = sync_facilities_for_stations(stations, radius_m=args.facilities_radius or 500, delay_s=args.delay) or {}
+        # BUG-173 (2026-09-30): the sync used to end the run, so
+        # `--near Brisbane --sc --sync-facilities --email` never showed the
+        # list or built the email. It's additive now: after syncing, carry on
+        # with the normal output. If anything was actually refreshed, re-run
+        # the same command without --sync-facilities so stop scores, a
+        # facilities sort and a route's planned stops all use the new data.
+        if sync_result.get("synced"):
+            argv = [a for a in sys.argv[1:]
+                    if not (a.startswith("--sync-f") and "--sync-facilities".startswith(a))]
+            print(f"\n{C_CYAN}Showing results with the refreshed facilities...{C_RESET}", flush=True)
+            sys.stdout.flush()
+            sys.stderr.flush()
+            os.execv(sys.executable, [sys.executable, os.path.abspath(sys.argv[0])] + argv)
 
  # Multi-View comparison mode
     if args.views:
@@ -3308,6 +3461,16 @@ DESCRIPTION
         )
 
     render_cb()
+
+    if (getattr(args, "email", False) or getattr(args, "share", False)) and stations:
+        from lib.station_report_email import build_station_report, copy_report_to_clipboard
+        html_body, text_body = build_station_report(
+            stations, title, route_info=route_info, eval_time=args.time,
+            type_icon_fn=lambda st: _contextual_type_icon(st, args.network),
+            near_info={"label": ref_label, "radius_km": active_radius, "sort": sort_mode_desc} if ref_label else None,
+            share=bool(getattr(args, "share", False)))
+        ok, msg = copy_report_to_clipboard(html_body, text_body)
+        print(f"\n 📧 {C_GREEN if ok else C_YELLOW}{msg}{C_RESET}")
 
  # Facilities CLI direct execution mode
     if args.facilities:
@@ -3380,6 +3543,8 @@ DESCRIPTION
                 print(f"🔄 Re-verifying all stale stations in current query...")
                 stats = manager.batch_reverify_stations(stations, status_filter="STALE")
                 print(f"✔ Done: {stats['SUCCESS']} updated, {stats['ERROR']} failed.")
+                if stats.get("NOT_FOUND"):
+                    print(f"⚠ {stats['NOT_FOUND']} station(s) confirmed no longer exist at their source (not auto-deleted): {', '.join(stats.get('_not_found_names', []))}")
                 input("\nPress Enter to refresh list...")
                 render_cb()
                 continue
@@ -3388,6 +3553,8 @@ DESCRIPTION
                 print(f"🔄 Re-verifying all renamed stations in current query...")
                 stats = manager.batch_reverify_stations(stations, status_filter="RENAMED")
                 print(f"✔ Done: {stats['SUCCESS']} updated, {stats['ERROR']} failed.")
+                if stats.get("NOT_FOUND"):
+                    print(f"⚠ {stats['NOT_FOUND']} station(s) confirmed no longer exist at their source (not auto-deleted): {', '.join(stats.get('_not_found_names', []))}")
                 input("\nPress Enter to refresh list...")
                 render_cb()
                 continue
@@ -3403,6 +3570,8 @@ DESCRIPTION
                     print(f"🔄 Re-verifying all {len(stations)} station(s) in current query live from source...")
                     stats = manager.batch_reverify_stations(stations, status_filter="ALL")
                     print(f"✔ Done: {stats['SUCCESS']} updated, {stats['ERROR']} failed.")
+                    if stats.get("NOT_FOUND"):
+                        print(f"⚠ {stats['NOT_FOUND']} station(s) confirmed no longer exist at their source (not auto-deleted): {', '.join(stats.get('_not_found_names', []))}")
                     input("\nPress Enter to refresh list...")
                 render_cb()
                 continue
@@ -3426,8 +3595,10 @@ DESCRIPTION
                     if 1 <= t_idx <= len(stations):
                         target_st = stations[t_idx - 1]
                         print(f"🔄 Re-verifying station '{target_st.name}' live...")
-                        ok, diffs, _fresh = manager.reverify_station(target_st)
-                        _print_reverify_result(target_st.name, ok, diffs)
+                        ok, diffs, _fresh, confirmed_not_found = manager.reverify_station(target_st)
+                        _print_reverify_result(target_st.name, ok, diffs, confirmed_not_found)
+                        if confirmed_not_found and _maybe_prompt_remove_station(manager, target_st):
+                            stations.remove(target_st)
                         input("\nPress Enter to refresh list...")
                         render_cb()
                         continue
@@ -3542,13 +3713,22 @@ DESCRIPTION
                         subprocess.run(["open", u["url"]] if sys.platform == "darwin" else ["xdg-open", u["url"]], check=False)
                 elif act in ("u", "update", "refresh"):
                     print(f"🔄 Re-verifying station '{sel.name}' live...")
-                    ok, diffs, fresh = manager.reverify_station(sel)
-                    _print_reverify_result(sel.name, ok, diffs)
-                    if ok and fresh:
+                    ok, diffs, fresh, confirmed_not_found = manager.reverify_station(sel)
+                    _print_reverify_result(sel.name, ok, diffs, confirmed_not_found)
+                    if confirmed_not_found:
+                        removed = _maybe_prompt_remove_station(manager, sel)
+                        if removed and sel in stations:
+                            stations.remove(sel)
+                        input("\nPress Enter to continue...")
+                        if removed:
+                            break
+                    elif ok and fresh:
                         sel = fresh
                         print()
                         display_station_inspection_card(sel, eval_time=args.time)
-                    input("\nPress Enter to continue...")
+                        input("\nPress Enter to continue...")
+                    else:
+                        input("\nPress Enter to continue...")
                 elif act in ("b", "back"):
  # BUG-134: this menu's own printed action list (and its "default: b")
  # promise "[b] Back to station list" - a pure no-op that just lets
