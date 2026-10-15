@@ -415,40 +415,34 @@ function sentryPlayer(host,ev){
 }
 
 // ---------- Places (the places manager) and the page for one place
-let PL={tab:"saved",q:"",visited:false,net:"all",state:"all",ml:{saved:1,sc:1,chg:1,found:1}},SYNCPOLL=null,PLM=null;
-// One map of every place: saved places, Superchargers, other chargers and stops to review. Bigger, solid dots are places you have used.
-function placesMap(host,L,C){
-  const defs=[["saved","Saved places","#3b6cf6"],["sc","Superchargers","#e0201b"],["chg","Other chargers","#16a34a"],["found","Stops to review","#f59e0b"]],ML=PL.ml;
-  const src={saved:L.saved,sc:L.superchargers,chg:(C?C.rows:[]).filter(r=>!/^[sp]:/.test(r.key)),found:L.found};
-  const used=(g,r)=>g==="found"?true:g==="saved"?(r.charges||r.idles||r.drives)>0:r.charges>0;
-  const feats=()=>{const q=PL.q.toLowerCase(),F=[],cnt={};
-    defs.forEach(([g,,c])=>{cnt[g]=0;if(!ML[g])return;src[g].forEach(r=>{if(r.lat==null||r.lon==null)return;if(q&&!((r.name||"")+" "+(r.addr||"")+" "+(r.network||"")).toLowerCase().includes(q))return;
-      const u=used(g,r);if(PL.visited&&!u)return;cnt[g]++;
-      F.push({type:"Feature",geometry:{type:"Point",coordinates:[+r.lon,+r.lat]},properties:{g,c,u:u?1:0,key:r.key,name:r.name||r.addr||"Unnamed stop",
-        sub:[g==="sc"?"Supercharger":g==="chg"?(r.network||"Charger"):g==="saved"?"Saved place":"Stop to review",r.addr||"",r.charges?r.charges+" charge"+(r.charges>1?"s":"")+" · "+n0(r.kwh,1)+" kWh":(g==="found"?r.visits+" days there":"")].filter(Boolean).join(" · "),lat:+r.lat,lon:+r.lon}})})});
-    F.sort((a,b)=>a.properties.u-b.properties.u);return {F,cnt}};
-  const paintBar=cnt=>{$("#mlg").innerHTML=defs.map(([g,t,c])=>`<button class="chip ${ML[g]?"on":""}" data-ml="${g}"><i style="display:inline-block;width:10px;height:10px;border-radius:50%;background:${c};margin-right:6px"></i>${t} <b>${n0(cnt[g])}</b></button>`).join("")+`<span class="sub">Large dot = used. Click a dot for details.</span>`;
-    $$("[data-ml]",host).forEach(b=>b.onclick=()=>{ML[b.dataset.ml]=ML[b.dataset.ml]?0:1;PLM.update(true)})};
-  if(PLM&&PLM.el&&host.contains(PLM.el)){PLM.update(true);return}
+let PL={tab:"saved",q:"",visited:false,net:"all",state:"all",view:"list"},SYNCPOLL=null,PLM=null;
+// A map of the rows of the current Places tab (same filters as the list). Dots are small so they do not hide each other;
+// places you have used are solid, the rest faded. New Zealand is left out for now.
+function placesMap(host,rows,tab){
+  const COL={saved:"#3b6cf6",sc:"#e0201b",chargers:"#16a34a",found:"#f59e0b"}[tab]||"#3b6cf6";
+  const used=r=>tab==="found"?true:tab==="saved"?(r.charges||r.idles||r.drives)>0:r.charges>0;
+  const feats=()=>rows.filter(r=>r.lat!=null&&r.lon!=null&&+r.lon<160).map(r=>({type:"Feature",geometry:{type:"Point",coordinates:[+r.lon,+r.lat]},properties:{u:used(r)?1:0,key:r.key,name:r.name||r.addr||"Unnamed stop",lat:+r.lat,lon:+r.lon,
+    sub:[r.network||(tab==="sc"?"Supercharger":tab==="saved"?"Saved place":tab==="found"?"Stop to review":""),r.addr||"",r.charges?r.charges+" charge"+(r.charges>1?"s":"")+" · "+n0(r.kwh,1)+" kWh":(tab==="found"?r.visits+" days there":"")].filter(Boolean).join(" · ")}})).sort((x,y)=>x.properties.u-y.properties.u);
+  if(PLM&&PLM.tab===tab&&PLM.el&&host.contains(PLM.el)){PLM.update(true,rows);return}
   if(PLM){try{PLM.m.remove()}catch(e){}PLM=null}
   if(!window.maplibregl){host.innerHTML='<div class="empty">Map library not loaded (offline?).</div>';return}
-  host.innerHTML='<div class="bar" id="mlg"></div><div class="map big" id="pm"></div>';
+  host.innerHTML='<div class="sub" style="margin-bottom:6px">Solid dot = used, faded = not used. Click a dot for details.</div><div class="map big" id="pm"></div>';
   const el=$("#pm"),dark=matchMedia("(prefers-color-scheme: dark)").matches,m=new maplibregl.Map({container:el,style:"https://tiles.openfreemap.org/styles/"+(dark?"dark":"positron"),center:[151.2,-33.8],zoom:8,attributionControl:{compact:true}});
   m.addControl(new maplibregl.NavigationControl({showCompass:false}),"top-right");
   let ready=false,first=true;
-  const update=refit=>{const {F,cnt}=feats();paintBar(cnt);$("#cnt").textContent=F.length+" on the map";if(!ready)return;m.getSource("pl").setData({type:"FeatureCollection",features:F});
+  const update=(refit,rs)=>{if(rs)rows=rs;const F=feats();$("#cnt").textContent=F.length+" on the map";if(!ready)return;m.getSource("pl").setData({type:"FeatureCollection",features:F});
     if((refit||first)&&F.length){first=false;const b=new maplibregl.LngLatBounds();F.forEach(f=>b.extend(f.geometry.coordinates));m.fitBounds(b,{padding:50,maxZoom:13,duration:400})}};
-  PLM={m,el,update};
+  PLM={m,el,update,tab};
   m.on("load",()=>{ready=true;m.addSource("pl",{type:"geojson",data:{type:"FeatureCollection",features:[]}});
-    m.addLayer({id:"pl",type:"circle",source:"pl",layout:{"circle-sort-key":["get","u"]},paint:{"circle-color":["get","c"],"circle-radius":["case",["==",["get","u"],1],8,4.5],"circle-opacity":["case",["==",["get","u"],1],0.95,0.6],"circle-stroke-width":1.5,"circle-stroke-color":"#fff"}});
+    m.addLayer({id:"pl",type:"circle",source:"pl",layout:{"circle-sort-key":["get","u"]},paint:{"circle-color":COL,"circle-radius":["interpolate",["linear"],["zoom"],3,2,8,3.5,12,5.5,15,8],"circle-opacity":["case",["==",["get","u"],1],0.95,0.4],"circle-stroke-width":0.75,"circle-stroke-color":"#fff"}});
     m.on("mouseenter","pl",()=>m.getCanvas().style.cursor="pointer");m.on("mouseleave","pl",()=>m.getCanvas().style.cursor="");
-    m.on("click","pl",e=>{const p=e.features[0].properties;new maplibregl.Popup({offset:10,maxWidth:"300px"}).setLngLat(e.features[0].geometry.coordinates).setHTML(`<div style="font:13px system-ui;color:#111"><b>${esc(p.name)}</b><div style="color:#555;margin:3px 0 6px">${esc(p.sub)}</div><a href="#/place/${encodeURIComponent(p.key)}">Open place</a><div style="margin-top:6px;font-size:12px">${mapLinks(p.lat,p.lon,p.name)}</div></div>`).addTo(m)});
+    m.on("click","pl",e=>{const p=e.features[0].properties;new maplibregl.Popup({offset:8,maxWidth:"300px"}).setLngLat(e.features[0].geometry.coordinates).setHTML(`<div style="font:13px system-ui;color:#111"><b>${esc(p.name)}</b><div style="color:#555;margin:3px 0 6px">${esc(p.sub)}</div><a href="#/place/${encodeURIComponent(p.key)}">Open place</a><div style="margin-top:6px;font-size:12px">${mapLinks(p.lat,p.lon,p.name)}</div></div>`).addTo(m)});
     update(true)});
   update(false);
 }
 async function pagePlaces(){
-  loading();cache.places=null;const L=await api("places");let C=null;const need=async()=>{if(!C)C=await api("chargers")};if(PL.tab==="chargers"||PL.tab==="map")await need();
-  const draw=()=>{const q=PL.q.toLowerCase(),host=$("#tb");let rows,cols;if(PL.tab==="map"){placesMap(host,L,C);return}
+  loading();cache.places=null;const L=await api("places");let C=null;const need=async()=>{if(!C)C=await api("chargers")};if(PL.tab==="chargers")await need();
+  const draw=()=>{const q=PL.q.toLowerCase(),host=$("#tb");let rows,cols;
     const stat=[{k:"charges",t:"Charges"},{k:"idles",t:"Parked"},{k:"drives",t:"Arrivals"}];
     if(PL.tab==="saved"){rows=L.saved.filter(p=>!q||(p.name+" "+p.notes).toLowerCase().includes(q));
       cols=[{k:"name",t:"Place",l:1},{k:"notes",t:"Notes",l:1},...stat,{k:"kwh",t:"kWh charged",f:r=>r.charges?n0(r.kwh,1):"–"},{k:"last",t:"Last visit",f:r=>r.last||"–"},{k:"radius",t:"Radius",f:r=>n0(r.radius)+" m"}]}
@@ -458,16 +452,18 @@ async function pagePlaces(){
       cols=[{k:"name",t:"Charger",l:1},{k:"network",t:"Network",l:1},{k:"addr",t:"Address",l:1,f:r=>esc(r.addr||r.suburb||"")},{k:"state",t:"State"},{k:"stalls",t:"Stalls",f:r=>r.stalls==null?"–":n0(r.stalls)},{k:"kw",t:"Max kW",f:r=>r.kw?n0(r.kw):"–"},{k:"tier",t:"Type",l:1,f:r=>esc((r.tier||"").replace(/_/g," "))},{k:"conn",t:"Connectors",l:1},{k:"charges",t:"Charges"},{k:"kwh",t:"kWh",f:r=>r.charges?n0(r.kwh,1):"–"},{k:"last",t:"Last charge",f:r=>r.last||"–"}]}
     else{rows=L.found.filter(p=>!q||(p.addr||"").toLowerCase().includes(q));
       cols=[{k:"addr",t:"Address of a place you return to, not saved yet",l:1,f:r=>esc(r.addr||(r.lat.toFixed(4)+", "+r.lon.toFixed(4)))},{k:"lat",t:"Lat, Lon",l:1,f:r=>`${(+r.lat).toFixed(5)}, ${(+r.lon).toFixed(5)}`},{k:"map",t:"Open in",l:1,f:r=>mapLinks(r.lat,r.lon,r.addr,1)},{k:"visits",t:"Days there"},{k:"last",t:"Last"}]}
+    if(PL.view==="map"){placesMap(host,rows,PL.tab);return}
     table(host,cols,rows,r=>location.hash="#/place/"+encodeURIComponent(r.key),PL.tab==="found"?"visits":PL.tab==="sc"||PL.tab==="chargers"?"charges":"last");
     $("#cnt").textContent=rows.length+" shown"};
   main.innerHTML=`<h1>Places</h1><div class="sub">Your saved places, the Tesla Superchargers (named as on tesla.com) and stops worth naming. Open one to see what is around it on OpenStreetMap.</div>
    <div class="tiles">${tile(L.saved.length,"saved places")}${tile(L.superchargers.filter(s=>s.charges).length+" of "+L.superchargers.length,"Superchargers used")}${tile(L.found.length,"stops to review")}</div>
-   <div class="bar"><button class="chip" data-t="saved">Saved places</button><button class="chip" data-t="sc">Superchargers</button><button class="chip" data-t="chargers">Chargers</button><button class="chip" data-t="found">Stops to review</button><button class="chip" data-t="map">Map</button>
+   <div class="bar"><button class="chip" data-t="saved">Saved places</button><button class="chip" data-t="sc">Superchargers</button><button class="chip" data-t="chargers">Chargers</button><button class="chip" data-t="found">Stops to review</button><span class="vw"><button class="chip" data-v="list">List</button><button class="chip" data-v="map">Map</button></span>
    <select id="cn"></select><select id="cs"></select><label class="sub" id="vl"><input type="checkbox" id="vis"> used only</label><button class="btn" id="sy">Sync chargers…</button><input type="search" id="q" placeholder="Search…" value="${esc(PL.q)}"><button class="btn pri" id="add">+ New place</button><span class="sub" id="cnt"></span></div><div id="sp"></div><div id="tb"></div>`;
-  const tabs=()=>{$$("[data-t]").forEach(c=>c.classList.toggle("on",c.dataset.t===PL.tab));const ch=PL.tab==="chargers";$("#vl").style.display=PL.tab==="sc"||ch||PL.tab==="map"?"":"none";$("#cn").style.display=$("#cs").style.display=$("#sy").style.display=ch?"":"none";$("#vis").checked=PL.visited;
+  const tabs=()=>{$$("[data-t]").forEach(c=>c.classList.toggle("on",c.dataset.t===PL.tab));const ch=PL.tab==="chargers";$("#vl").style.display=PL.tab==="sc"||ch?"":"none";$$("[data-v]").forEach(c=>c.classList.toggle("on",c.dataset.v===PL.view));$("#cn").style.display=$("#cs").style.display=$("#sy").style.display=ch?"":"none";$("#vis").checked=PL.visited;
     if(ch&&C){$("#cn").innerHTML='<option value="all">All networks</option>'+C.networks.map(([n,c])=>`<option value="${esc(n)}">${esc(n||"Other")} (${n0(c)})</option>`).join("");$("#cn").value=PL.net;
       const st=[...new Set(C.rows.map(r=>r.state).filter(Boolean))].sort();$("#cs").innerHTML='<option value="all">All states</option>'+st.map(x=>`<option>${esc(x)}</option>`).join("");$("#cs").value=PL.state}};
-  $$("[data-t]").forEach(c=>c.onclick=async()=>{PL.tab=c.dataset.t;if(PL.tab==="chargers"||PL.tab==="map")await need();tabs();draw()});
+  $$("[data-t]").forEach(c=>c.onclick=async()=>{PL.tab=c.dataset.t;if(PL.tab==="chargers")await need();tabs();draw()});
+  $$("[data-v]").forEach(c=>c.onclick=()=>{PL.view=c.dataset.v;tabs();draw()});
   $("#cn").onchange=e=>{PL.net=e.target.value;draw()};$("#cs").onchange=e=>{PL.state=e.target.value;draw()};
   $("#sy").onclick=()=>syncPanel($("#sp"),async()=>{cache.chargers=null;cache.places=null;C=await api("chargers");tabs();draw()});$("#vis").onchange=e=>{PL.visited=e.target.checked;draw()};$("#q").oninput=e=>{PL.q=e.target.value;draw()};
   $("#add").onclick=()=>{sessionStorage.setItem("placePrefill",JSON.stringify({name:"",lat:"",lon:"",radius_m:150}));location.hash="#/place/"+encodeURIComponent("@new")};tabs();draw();
