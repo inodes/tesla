@@ -111,3 +111,6 @@ body{-webkit-user-select:text;user-select:text}
 .trow .tm{font-variant-numeric:tabular-nums;color:var(--mut)}.trow .tk{font-size:12px;font-weight:600}.trow .tt{display:flex;gap:10px;align-items:center;min-width:0}.trow .tt small{display:block;color:var(--mut)}.trow .ts{color:var(--mut);font-size:12px;white-space:nowrap}
 .trow.drv .tk{color:var(--acc)}.trow.sen .tk{color:var(--idle)}.trow.gap{cursor:default;border-style:dashed;background:transparent;color:var(--mut)}.trow.stp,.trow.rec{opacity:.8}.trow.on{border-color:var(--acc);box-shadow:0 0 0 2px var(--acc) inset}
 .trow:hover:not(.gap){background:var(--hover)}.rt{color:var(--acc);flex:none}
+
+.srcb{display:inline-block;align-self:flex-start;font-size:10px;font-weight:600;padding:1px 7px;border-radius:9px;text-transform:uppercase;letter-spacing:.04em;background:var(--line);color:var(--mut)}
+.srcb.sentry{background:rgba(220,38,38,.14);color:#dc2626}.srcb.saved{background:rgba(37,99,235,.14);color:#2563eb}.srcb.recent{background:rgba(22,163,74,.14);color:#16a34a}
