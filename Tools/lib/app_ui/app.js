@@ -365,8 +365,8 @@ const hav=(a,b,c,d)=>{const r=Math.PI/180,p=Math.sin((c-a)*r/2)**2+Math.cos(a*r)
 const whereLink=r=>r.pkey?`<a href="#/place/${encodeURIComponent(r.pkey)}" onclick="event.stopPropagation()" title="Open this place">${esc(place(r))}</a>`:esc(place(r));
 const sentryOf=(x,evs)=>{const s=Date.parse(x.day+"T"+x.hm+":00"),e=s+(x.min||0)*60000;return evs.filter(v=>{const t=Date.parse(v.ts);return t>=s-120000&&t<=e+120000&&(x.lat==null||v.lat==null||hav(x.lat,x.lon,v.lat,v.lon)<5000)})};
 const getSentry=async()=>{try{return await (await fetch("/api/sentry")).json()}catch(e){return{connected:false,events:[]}}};
-const REASON={sentry_aware_object_detection:"Object detected",sentry_locked_handle_pulled:"Handle pulled",sentry_accelerometer:"Bumped",user_interaction_dashcam_icon_tapped:"Saved by tap"};
-const reason=r=>REASON[r]||(r||"Sentry event").replace(/^sentry_/,"").replace(/_/g," ");
+const REASON={sentry_aware_object_detection:"Object detected",sentry_locked_handle_pulled:"Handle pulled",sentry_accelerometer:"Bumped",user_interaction_dashcam_icon_tapped:"Saved by tap",user_interaction_dashcam_panel_save:"Saved from the screen",user_interaction_honk:"Horn pressed"};
+const reason=r=>REASON[r]||(r||"Sentry event").replace(/^(sentry|user_interaction)_/,"").replace(/_/g," ");
 const CAMN={front:"Front",back:"Back",left_repeater:"Left repeater",right_repeater:"Right repeater",left_pillar:"Left pillar",right_pillar:"Right pillar"};
 const hms=ts=>ts.slice(11,19);
 let IP={r:{p:"all"},q:"",min:5,sen:"all",tab:"periods"};
@@ -401,25 +401,51 @@ async function pageParkedOne(id){
   const pick=i=>{$$(".evc").forEach(b=>b.classList.toggle("on",+b.dataset.i===i));sentryPlayer($("#spl"),evs[i])};
   $$(".evc").forEach(b=>b.onclick=()=>pick(+b.dataset.i));pick(0);
 }
-function sentryPlayer(host,ev){
-  const stamps=Object.keys(ev.clips),trig=Date.parse(ev.ts),stMs=s=>Date.parse(s.slice(0,10)+"T"+s.slice(11).replace(/-/g,":"));
-  if(!stamps.length){host.innerHTML='<div class="sub">This event has no video clips on the Archive.</div>';return}
-  let si=stamps.reduce((a,s,i)=>stMs(s)<=trig?i:a,0),cam="front",grid=false,seek=Math.max(0,(trig-stMs(stamps[si]))/1000-8);
-  const url=(s,c)=>`/footage/A/SentryClips/${ev.id}/${s}-${c}.mp4`;
-  const shell=()=>{host.innerHTML=`<div class="sp"><div class="bar">${Object.keys(CAMN).map(c=>`<button class="chip ${!grid&&c===cam?"on":""}" data-c="${c}">${CAMN[c]}</button>`).join("")}<button class="chip ${grid?"on":""}" data-c="grid">All cameras</button>
-    <select id="stp">${stamps.map((s,i)=>`<option value="${i}" ${i===si?"selected":""}>${s.slice(11).replace(/-/g,":")}${stMs(s)<=trig&&trig<stMs(s)+60000?"  ◀ triggered":""}</option>`).join("")}</select></div>
-    <div class="sub" style="margin:4px 0 8px">${esc(reason(ev.reason))} at ${hms(ev.ts)}${ev.city?" · "+esc(ev.city):""}. One-minute clips, ${stamps.length} in this event; the next clip plays on its own.</div><div id="vids" class="${grid?"vgrid":""}"></div></div>`;
-    $$(".sp [data-c]").forEach(b=>b.onclick=()=>{if(b.dataset.c==="grid")grid=true;else{grid=false;cam=b.dataset.c}seek=0;shell()});
-    $("#stp").onchange=e=>{si=+e.target.value;seek=0;vids()};vids()};
-  const vids=()=>{const s=stamps[si],have=ev.clips[s]||[],cams=grid?Object.keys(CAMN).filter(c=>have.includes(c)):[have.includes(cam)?cam:have[0]];
-    $("#vids").innerHTML=cams.map((c,i)=>`<figure><video ${i===0?"controls":"muted"} muted playsinline preload="auto" src="${url(s,c)}"></video><figcaption>${CAMN[c]}</figcaption></figure>`).join("");
-    const vs=$$("#vids video"),m=vs[0];if(!m)return;
-    m.onloadedmetadata=()=>{if(seek){m.currentTime=seek;seek=0}m.play().catch(()=>{})};
-    m.onended=()=>{if(si<stamps.length-1){si++;$("#stp").value=si;vids()}};
-    m.onerror=()=>{$("#vids").insertAdjacentHTML("afterbegin",'<div class="sub">This clip could not be played (missing, or the Archive was disconnected).</div>')};
-    if(vs.length>1){m.onplay=()=>vs.forEach(v=>v!==m&&v.play().catch(()=>{}));m.onpause=()=>vs.forEach(v=>v!==m&&v.pause());m.onseeked=()=>vs.forEach(v=>v!==m&&(v.currentTime=m.currentTime));
-      m.ontimeupdate=()=>vs.forEach(v=>{if(v!==m&&Math.abs(v.currentTime-m.currentTime)>0.4)v.currentTime=m.currentTime})}};
+// ---------- Clip player (Sentry, Saved and Recent clips): all six cameras laid out like a drive page, or one camera big
+// event.json "camera" -> the camera that saw it (checked against the thumbnails and the clips: 0 and 1 front, 5 left repeater, 6 right repeater, 7 back; others unknown -> all six)
+const EVCAM={"0":"front","1":"front","5":"left_repeater","6":"right_repeater","7":"back"};
+const CORDER=["left_pillar","front","right_pillar","left_repeater","back","right_repeater"];
+const lsGet=(k,d)=>{try{return localStorage.getItem(k)||d}catch(e){return d}},lsSet=(k,v)=>{try{localStorage.setItem(k,v)}catch(e){}};
+// o = {head: html line above the video, stamps: [minute, ...], cams: {minute: [camera, ...]}, url: (minute, camera) => url, trig: epoch ms the event happened (start a little before it)}
+function clipPlayer(host,o){
+  const stamps=o.stamps;if(!stamps.length){host.innerHTML='<div class="sub">This has no video clips.</div>';return}
+  const stMs=s=>Date.parse(s.slice(0,10)+"T"+s.slice(11).replace(/-/g,":")),clock=s=>s.slice(11).replace(/-/g,":"),fmt=t=>Math.floor(t/60)+":"+String(Math.floor(t%60)).padStart(2,"0");
+  let si=0,seek=0,view=o.view||lsGet("tc.view","all"),rate=lsGet("tc.rate","1"),vs=[],mv=null;
+  if(o.trig){si=stamps.reduce((a,s,i)=>stMs(s)<=o.trig?i:a,0);seek=Math.max(0,(o.trig-stMs(stamps[si]))/1000)}
+  const toTrig=()=>{si=stamps.reduce((a,s,i)=>stMs(s)<=o.trig?i:a,0);seek=Math.max(0,(o.trig-stMs(stamps[si]))/1000);if($("#stp"))$("#stp").value=si;vids()};
+  const shell=()=>{host.innerHTML=`<div class="sp"><div class="bar"><button class="chip ${view==="all"?"on":""}" data-c="all">All six</button>${Object.keys(CAMN).map(c=>`<button class="chip ${view===c?"on":""}" data-c="${c}">${CAMN[c]}</button>`).join("")}</div>
+    <div class="sub" style="margin:4px 0 8px">${o.head}</div>
+    <div class="vbar"><button class="btn" id="vpl">❚❚ Pause</button>${o.trig?'<button class="btn" id="vtr" title="Go back to the moment it was detected">↧ Detection</button>':""}<input type="range" id="vsk" min="0" max="60" step="0.1" value="0"><span id="vtm">0:00</span>
+     <select id="vsp">${["0.5","1","2","4"].map(r=>`<option value="${r}" ${r===rate?"selected":""}>${r}×</option>`).join("")}</select>
+     ${stamps.length>1?`<select id="stp">${stamps.map((s,i)=>`<option value="${i}" ${i===si?"selected":""}>${clock(s)}${o.trig&&stMs(s)<=o.trig&&o.trig<stMs(s)+60000?"  ◀ happened":""}</option>`).join("")}</select>`:""}</div>
+    <div id="vids"></div></div>`;
+    $$(".sp [data-c]").forEach(b=>b.onclick=()=>{view=b.dataset.c;if(!o.view)lsSet("tc.view",view);seek=mv?mv.currentTime:0;shell()});
+    $("#vsp").onchange=e=>{rate=e.target.value;lsSet("tc.rate",rate);vs.forEach(v=>v.playbackRate=+rate)};
+    if($("#stp"))$("#stp").onchange=e=>{si=+e.target.value;seek=0;vids()};
+    if($("#vtr"))$("#vtr").onclick=toTrig;
+    vids()};
+  const vids=()=>{vs.forEach(x=>{x.pause();x.removeAttribute("src");x.load()});
+    const s=stamps[si],have=o.cams[s]||[],all=view==="all",show=all?CORDER:[have.includes(view)?view:have.includes("front")?"front":have[0]];
+    const box=$("#vids");box.className=all?"vgrid":"vone";
+    box.innerHTML=show.map(c=>have.includes(c)?`<figure data-c="${c}" ${all?'title="Click to see this camera large"':""}><video muted playsinline preload="auto" src="${o.url(s,c)}"></video><figcaption>${CAMN[c]}</figcaption></figure>`:`<figure class="none"><div>no file</div><figcaption>${CAMN[c]}</figcaption></figure>`).join("");
+    vs=$$("#vids video");mv=vs.find(v=>v.parentNode.dataset.c==="front")||vs[0];if(!mv){return}
+    const sk=$("#vsk"),pl=$("#vpl"),tm=$("#vtm"),seekAll=t=>vs.forEach(x=>{try{x.currentTime=t}catch(e){}});
+    if(all)$$("#vids figure[data-c]").forEach(f=>f.onclick=()=>{view=f.dataset.c;seek=mv.currentTime;shell()});
+    mv.onloadedmetadata=()=>{sk.max=mv.duration||60;vs.forEach(x=>x.playbackRate=+rate);if(seek){seekAll(seek);seek=0}vs.forEach(x=>x.play().catch(()=>{}))};
+    mv.onplay=()=>pl.textContent="❚❚ Pause";mv.onpause=()=>{if(!mv.ended)pl.textContent="▶ Play"};
+    mv.ontimeupdate=()=>{sk.value=mv.currentTime;tm.textContent=fmt(mv.currentTime)+" · "+new Date(stMs(stamps[si])+mv.currentTime*1000).toTimeString().slice(0,8);
+      vs.forEach(x=>{if(x!==mv&&Math.abs(x.currentTime-mv.currentTime)>.4)x.currentTime=mv.currentTime})};
+    mv.onended=()=>{if(si<stamps.length-1){si++;seek=0;if($("#stp"))$("#stp").value=si;vids()}};
+    mv.onerror=()=>box.insertAdjacentHTML("afterbegin",'<div class="sub">This clip could not be played (missing, or the drive was disconnected).</div>');
+    pl.onclick=()=>{if(mv.paused)vs.forEach(x=>x.play().catch(()=>{}));else vs.forEach(x=>x.pause())};
+    sk.oninput=()=>seekAll(+sk.value)};
   shell();
+}
+// one Sentry or Saved event folder (role = which drive, folder = SentryClips | SavedClips)
+function sentryPlayer(host,ev,role="A",folder="SentryClips"){
+  const stamps=Object.keys(ev.clips),t=ev.ts,what=ev.reason?reason(ev.reason):folder==="SavedClips"?"Saved clip":"Sentry event";
+  clipPlayer(host,{stamps,cams:ev.clips,trig:Date.parse(t),view:EVCAM[ev.cam]||"all",url:(s,c)=>`/footage/${role}/${folder}/${ev.id}/${s}-${c}.mp4`,
+    head:`${esc(what)} on ${dayName(t.slice(0,10))} at ${hms(t)}${ev.city?" · "+esc(ev.city):""}${ev.street&&folder==="SavedClips"?" · "+esc(ev.street):""}. One-minute clips, ${stamps.length} in this event; the next clip plays on its own. It opens at the moment it happened${EVCAM[ev.cam]?", on the "+CAMN[EVCAM[ev.cam]].toLowerCase()+" camera, which is the one that saw it":""}.`});
 }
 
 // ---------- Places (the places manager) and the page for one place
@@ -655,13 +681,53 @@ async function pageAlerts(){
   $("#cat").value=ALP.cat;$("#cat").onchange=e=>{ALP.cat=e.target.value;draw()};$("#q").oninput=e=>{ALP.q=e.target.value;draw()};chips();draw();
 }
 
+// ---------- TeslaCam: the clips on any connected drive (Sentry, Saved and Recent), same player as the Parked page
+let TCS={role:null,kind:"sentry",q:"",r:{p:"all"}};
+const tcGet=async p=>{const r=await fetch("/api/"+p);if(!r.ok)throw new Error(p+": "+r.status);return r.json()};
+const TCF={sentry:"SentryClips",saved:"SavedClips"},TCK={sentry:"Sentry",saved:"Saved",recent:"Recent"};
+async function pageTeslaCam(){
+  loading();const [dr,act]=await Promise.all([tcGet("teslacam"),api("activity")]),drives=dr.drives;
+  const head='<h1>TeslaCam</h1><div class="sub">The clips on any connected TeslaCam drive. A drive is recognised by what is on it, not by its name, and nothing on it is changed. A drive is only read once you pick it.</div>';
+  if(!drives.length){main.innerHTML=head+'<div class="empty">No TeslaCam drive is connected.</div>';return}
+  if(!drives.some(d=>d.role===TCS.role))TCS.role=(drives.find(d=>d.role==="A")||drives[0]).role;
+  const trips=act.filter(x=>x.k==="drive"&&!x.repark).map(x=>{const t0=Date.parse(x.day+"T"+x.hm+":00");return{id:x.id,t0,t1:t0+x.min*60000,ti:driveTitle(x)}});
+  const tripOf=v=>{const a=Date.parse(v.ts),b=Date.parse(v.end||v.ts)+60000;return trips.find(d=>d.t0<b&&d.t1>a)};
+  main.innerHTML=head+`<div class="bar" id="tcd"></div><div class="sub" id="tcn"></div><div class="bar" id="tck"></div><div class="bar"><span id="rg"></span><input type="search" id="q" placeholder="Search…" value="${esc(TCS.q)}"></div><div class="tiles" id="tl"></div><div id="spl"></div><div id="tb"></div>`;
+  let data=null,sel=null,token=0;
+  const chips=()=>{$("#tcd").innerHTML=drives.map(d=>`<button class="chip ${d.role===TCS.role?"on":""}" data-r="${d.role}"><span class="dot on" style="margin-right:6px"></span>${esc(d.name)}</button>`).join("");
+    $("#tck").innerHTML=Object.keys(TCK).map(k=>`<button class="chip ${k===TCS.kind?"on":""}" data-k="${k}">${TCK[k]}</button>`).join("");
+    $("#tcn").textContent=TCS.role==="A"?"":"Not the Archive: its clips are read only as you open them. Stop playback and leave this page before ejecting it.";
+    $$("#tcd [data-r]").forEach(b=>b.onclick=()=>{TCS.role=b.dataset.r;$("#spl").innerHTML="";chips();load()});
+    $$("#tck [data-k]").forEach(b=>b.onclick=()=>{TCS.kind=b.dataset.k;$("#spl").innerHTML="";chips();load()})};
+  const load=async()=>{const my=++token;$("#tl").innerHTML="";$("#tb").innerHTML='<div class="empty">Reading the drive…</div>';
+    try{const d=await tcGet("teslacam/"+TCS.role+"/"+TCS.kind);if(my!==token)return;data=d}catch(e){$("#tb").innerHTML=errBox(e.message,"Could not read the drive");return}
+    const list=TCS.kind==="recent"?data.runs:data.events;rangePicker($("#rg"),TCS.r,daysOf(list.map(v=>({day:v.ts.slice(0,10)}))),draw);draw()};
+  const draw=()=>{if(!data)return;if(!data.connected){$("#tb").innerHTML='<div class="empty">This drive is not connected.</div>';return}
+    const rec=TCS.kind==="recent",q=TCS.q.toLowerCase(),role=TCS.role,folder=TCF[TCS.kind];
+    const rs=(rec?data.runs:data.events).filter(v=>inRange({day:v.ts.slice(0,10)},TCS.r)&&(!q||(rec?((tripOf(v)||{}).ti||""):(v.city+" "+v.street+" "+reason(v.reason))).toLowerCase().includes(q))),byDay={};
+    rs.forEach(v=>(byDay[v.ts.slice(0,10)]=byDay[v.ts.slice(0,10)]||[]).push(v));
+    const days=Object.keys(byDay).sort().reverse();
+    $("#tl").innerHTML=rec?tile(n0(rs.length),"continuous recordings")+tile(n0(rs.reduce((a,v)=>a+v.n,0)),"minutes of video")+tile(n0(rs.filter(tripOf).length),"match a drive")
+      :tile(n0(rs.length),TCK[TCS.kind]+" events")+tile(n0(rs.filter(v=>Object.keys(v.clips).length).length),"with video")+tile(n0(rs.reduce((a,v)=>a+Object.keys(v.clips).length,0)),"minutes of video");
+    $("#tb").innerHTML=(days.length?"":'<div class="empty">Nothing here for these dates.</div>')+days.slice(0,60).map(d=>`<div class="day">${dayName(d)}<small>${byDay[d].length} ${rec?"recording":"event"}${byDay[d].length>1?"s":""}</small></div><div class="evs">${byDay[d].map(v=>{
+      if(rec){const t=tripOf(v);return `<button class="evc run" data-id="${esc(v.id)}"><b>${hms(v.ts).slice(0,5)} – ${hms(v.end).slice(0,5)}</b><span>${v.n} minute${v.n>1?"s":""}${v.full<v.n?" · "+(v.n-v.full)+" with fewer than 6 cameras":""}</span>${t?`<span>${esc(t.ti)}</span><a href="#/drive/${t.id}" onclick="event.stopPropagation()">open the drive</a>`:""}</button>`}
+      const n=Object.keys(v.clips).length;return `<button class="evc ${n?"":"faded"}" data-id="${v.id}">${v.thumb?`<img loading="lazy" src="/footage/${role}/${folder}/${v.id}/thumb.png" onerror="this.style.visibility='hidden'">`:'<div class="noimg"></div>'}<b>${hms(v.ts)}</b><span>${esc(reason(v.reason))}</span><span>${esc([v.city,v.street].filter(Boolean).join(" · "))}</span><span>${n?n+" min of video":"no video"}</span></button>`}).join("")}</div>`).join("")+(days.length>60?'<div class="sub">Showing the newest 60 days. Narrow the dates to see older ones.</div>':"");
+    $$("#tb .evc").forEach(b=>b.onclick=async()=>{sel=b.dataset.id;$$("#tb .evc").forEach(x=>x.classList.toggle("on",x===b));$("#spl").scrollIntoView({block:"nearest"});
+      if(!rec)return sentryPlayer($("#spl"),data.events.find(v=>v.id===sel),role,folder);
+      const run=data.runs.find(v=>v.id===sel);$("#spl").innerHTML='<div class="sub">Reading…</div>';
+      try{const c=(await tcGet("teslacam/"+role+"/recent/"+encodeURIComponent(sel))).clips,stamps=Object.keys(c);
+        clipPlayer($("#spl"),{stamps,cams:c,url:(s,k)=>`/footage/${role}/RecentClips/${s}-${k}.mp4`,head:`Continuous recording on ${dayName(run.ts.slice(0,10))}, ${hms(run.ts).slice(0,5)} to ${hms(run.end).slice(0,5)}, ${run.n} minute${run.n>1?"s":""}. The next minute plays on its own.`})}
+      catch(e){$("#spl").innerHTML=errBox(e.message,"Could not read these clips")}})};
+  $("#q").oninput=e=>{TCS.q=e.target.value;draw()};chips();load();
+}
+
 // ---------- Dashcam
 async function pageDashcam(){
   loading();const [st,act,fl]=await Promise.all([api("status"),api("activity"),api("flip-events")]);cache.status=null;
   const withClips=act.filter(x=>x.k==="drive"&&(x.saved||x.flips)).slice(0,60),r=st.roots;
   main.innerHTML=`<h1>Dashcam</h1><div class="sub">Footage is read straight from the Archive drive; the drive is found by what is on it, not by its name.</div>
    <div class="tiles">${tile(`<span class="dot ${r.A?"on":"off"}"></span>${r.A?"Connected":"Not connected"}`,"Archive drive")}${tile(n0(act.filter(x=>x.k==="drive"&&x.foot).length),"drives with footage")}${tile(n0(act.reduce((a,x)=>a+(x.saved||0),0)),"saved clips")}${tile(n0(act.reduce((a,x)=>a+(x.flips||0),0)),"110 ↔ 100 flips")}</div>
-   <div class="bar">${fl.exists?`<a class="btn pri" style="text-decoration:none;padding:5px 12px;border-radius:8px;background:var(--acc);color:#fff" href="#/flips">Open the flip review</a>`:""}<a class="btn" style="text-decoration:none;padding:5px 12px;border:1px solid var(--line);border-radius:8px" href="/data/drives/analysis/fsd_highway_map.html" target="_blank">FSD highway map</a><a class="btn" style="text-decoration:none;padding:5px 12px;border:1px solid var(--line);border-radius:8px" href="#/queue">Footage queue</a></div>
+   <div class="bar">${fl.exists?`<a class="btn pri" style="text-decoration:none;padding:5px 12px;border-radius:8px;background:var(--acc);color:#fff" href="#/flips">Open the flip review</a>`:""}<a class="btn" style="text-decoration:none;padding:5px 12px;border:1px solid var(--line);border-radius:8px" href="/data/drives/analysis/fsd_highway_map.html" target="_blank">FSD highway map</a><a class="btn" style="text-decoration:none;padding:5px 12px;border:1px solid var(--line);border-radius:8px" href="#/teslacam">Browse TeslaCam clips</a><a class="btn" style="text-decoration:none;padding:5px 12px;border:1px solid var(--line);border-radius:8px" href="#/queue">Footage queue</a></div>
    <h2>Drives with saved clips or flips</h2>${withClips.map(actRow).join("")||'<div class="empty">None yet.</div>'}`;
 }
 function pageFlips(){main.innerHTML=crumbs("#/dashcam","Dashcam")+`<iframe class="drive" style="height:calc(100vh - 90px)" src="/data/drives/analysis/dashcam_flip_review/index.html"></iframe>`}
@@ -683,7 +749,7 @@ function pageQueue(){
 function badge(){const n=qget().length,b=$("#qn");b.hidden=!n;b.textContent=n}
 
 // ---------- router
-const ROUTES={activity:pageActivity,drives:pageDrives,charges:pageCharges,battery:pageBattery,health:pageHealth,analytics:pageAnalytics,dashcam:pageDashcam,queue:pageQueue,flips:pageFlips,parked:pageParked,idles:pageParked,places:pagePlaces,alerts:pageAlerts};
+const ROUTES={activity:pageActivity,drives:pageDrives,charges:pageCharges,battery:pageBattery,health:pageHealth,analytics:pageAnalytics,dashcam:pageDashcam,teslacam:pageTeslaCam,queue:pageQueue,flips:pageFlips,parked:pageParked,idles:pageParked,places:pagePlaces,alerts:pageAlerts};
 async function route(){
   hideTip();const h=(location.hash||"#/activity").replace(/^#\//,""),[p,arg,arg2]=h.split("/").map(decodeURIComponent);
   $$("#nav>a").forEach(a=>a.classList.toggle("on",a.dataset.p===(({drive:"drives",charge:"charges",idle:"parked",idles:"parked",flips:"dashcam",place:"places"})[p]||p)));
