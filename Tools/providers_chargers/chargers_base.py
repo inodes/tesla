@@ -20,6 +20,14 @@ from datetime import datetime, timezone
 from typing import Dict, List, Optional, Any, Tuple, Callable, Set
 
 
+class RegistryReadError(RuntimeError):
+    """A registry/archive JSON file EXISTS but could not be read or parsed
+    (partial iCloud sync, truncated write, bad JSON, wrong shape). Callers
+    must never treat this as "empty" and save over it - that would replace
+    the whole real registry with just the records from the current run
+    (2026-09-30 review, user: "Major BUG - fix this")."""
+
+
 def atomic_write_json(path: str, payload: Any, indent: int = 2) -> None:
     """Writes JSON to `path` atomically: serializes to a temp file in the
     SAME directory, flushes+fsyncs it, then os.replace()s it into place -
@@ -1099,13 +1107,17 @@ def archive_station_record(
     now_utc = now_utc or datetime.now(timezone.utc).isoformat()
     archive_reg: Dict[str, Any] = {}
     if os.path.isfile(archive_path):
+ # An existing archive that can't be read is NEVER reset to {} and
+ # written back (that silently wiped the whole station history) - raise
+ # so the caller stops before touching anything.
         try:
             with open(archive_path, "r", encoding="utf-8") as f:
                 loaded = json.load(f)
-                if isinstance(loaded, dict):
-                    archive_reg = loaded
-        except Exception:
-            archive_reg = {}
+        except Exception as e:
+            raise RegistryReadError(f"archive {archive_path} is unreadable ({e}) - not overwriting it") from e
+        if not isinstance(loaded, dict):
+            raise RegistryReadError(f"archive {archive_path} has an unexpected shape ({type(loaded).__name__}) - not overwriting it")
+        archive_reg = loaded
 
     orig_first_seen = (
         existing_entry.get("valid_from")
@@ -1128,12 +1140,11 @@ def archive_station_record(
     elif isinstance(archive_reg[station_key], dict):
         archive_reg[station_key] = [archive_reg[station_key], archived_record]
 
-    try:
-        os.makedirs(os.path.dirname(archive_path), exist_ok=True)
-        with open(archive_path, "w", encoding="utf-8") as f:
-            json.dump(archive_reg, f, indent=2, ensure_ascii=False)
-    except Exception as e:
-        print(f"Warning: Failed to write archive record to {archive_path}: {e}")
+    # Atomic, and a failure RAISES (it used to only print a warning, so
+    # remove_station() went on to delete the live record with no archive
+    # copy). Callers must only delete after this returns.
+    os.makedirs(os.path.dirname(archive_path), exist_ok=True)
+    atomic_write_json(archive_path, archive_reg)
 
 
 def merge_with_staleness(existing_by_key: Dict[str, dict], fresh_by_key: Dict[str, dict],

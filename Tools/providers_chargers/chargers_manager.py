@@ -15,6 +15,7 @@ from typing import Dict, List, Optional, Any, Tuple
 from concurrent.futures import ThreadPoolExecutor
 
 from .chargers_base import (
+    RegistryReadError,
     BaseChargerProvider,
     UnifiedStationRecord,
     haversine_km,
@@ -789,16 +790,18 @@ class ChargerDiscoveryManager:
                 with open(target_path, "r", encoding="utf-8") as f:
                     old_data = json.load(f)
                     existing_stations = old_data.get("stations", {}) if isinstance(old_data, dict) else {}
-            except Exception:
-                existing_stations = {}
+            except Exception as e:
+                raise RegistryReadError(f"{target_path} is unreadable ({e}) - not overwriting it") from e
 
         all_records: List[UnifiedStationRecord] = []
         for p in self.providers:
-            try:
-                cached = p.load_cached_registry()
-                all_records.extend(cached)
-            except Exception:
-                pass
+            # A provider whose registry failed to load must abort the export -
+            # it used to be skipped silently, so charging_stations.json was
+            # rewritten WITHOUT that network's stations (2026-09-30 review).
+            cached = p.load_cached_registry()
+            if getattr(p, "last_load_error", None):
+                raise RegistryReadError(f"{type(p).__name__}: {p.last_load_error}")
+            all_records.extend(cached)
 
         deduped = self.deduplicate_records(all_records)
         sorted_records = self.sort_records(deduped, sort_by="name")
@@ -839,22 +842,63 @@ class ChargerDiscoveryManager:
 
         return final_path, len(stations_dict)
 
-    def reverify_station(self, station: UnifiedStationRecord) -> Tuple[bool, Optional[Dict[str, Tuple[Any, Any]]], Optional[UnifiedStationRecord]]:
+    def _refresh_consolidated_export(self) -> bool:
+        """Re-export charging_stations.json after a single-station change.
+        The station change itself is already saved by the time this runs,
+        so an export failure is reported but never turns that success into
+        a failure (2026-09-30 review: remove_station() used to report "could
+        not remove" for a station it had already removed)."""
+        try:
+            self.export_consolidated_registry()
+            return True
+        except Exception as e:
+            print(f"⚠️  Station saved, but charging_stations.json was not refreshed: {e}")
+            return False
+
+    def reverify_station(self, station: UnifiedStationRecord) -> Tuple[bool, Optional[Dict[str, Tuple[Any, Any]]], Optional[UnifiedStationRecord], bool]:
         """
         Re-verifies a single station live against its primary provider,
         updating local cache and archiving historical state if changes occur.
-        Returns (ok, diffs): ok is whether the live re-fetch itself succeeded;
-        diffs is None when ok is False or a diff couldn't be computed, {} when
-        the re-fetch succeeded but nothing display-relevant changed, or a
-        {field: (old, new)} map when it did - see _diff_station_fields() /
-        . `fresh` is the newly-fetched UnifiedStationRecord (None if
-        unavailable) so the caller can reload/redisplay it in place.
+        Returns (ok, diffs, fresh, confirmed_not_found): ok is whether the
+        live re-fetch itself succeeded; diffs is None when ok is False or a
+        diff couldn't be computed, {} when the re-fetch succeeded but nothing
+        display-relevant changed, or a {field: (old, new)} map when it did -
+        see _diff_station_fields(). `fresh` is the newly-fetched
+        UnifiedStationRecord (None if unavailable) so the caller can
+        reload/redisplay it in place.
+
+        `confirmed_not_found` (2026-09-29, user design requirement: "If the
+        single source of truth has no entry - then the truth is the entry
+        should be noted to user as false and removed with user prompt.") is
+        True ONLY when the live source was actually reached and definitively
+        said "this doesn't exist" (an unambiguous HTTP 404 from Tesla's own
+        findus page or PlugShare's own /locations/{id} API) - never for a
+        generic failure (timeout, network error, rate limit, parse error,
+        WebKit crash), which is exactly the ambiguous case that must NOT be
+        treated as "confirmed gone". Currently wired up for Tesla (via
+        TeslaChargerExplorer.last_http_status, set from the main navigation's
+        own response) and PlugShare (via PlugShareClient.last_error, already
+        distinguishing "HTTP 404 (not found)" from every other failure mode)
+        - the two providers this session's two real bug reports (BUG-156's
+        fabricated "St Leonards, NSW" 404, BUG-157's Mortlake Slipway) both
+        involved. Other providers (Chargefox/Evie/BPPulse/EVX/Exploren/Jolt/
+        AmpCharge/NRMA) always report False here for now (unchanged, safe
+        default - never silently prompts to delete for those until each is
+        deliberately wired up the same way).
         """
         src = (station.source or "").lower()
         net = (station.network or "").lower()
+        # Route on the record's PRIMARY source only (2026-09-30 review, C1/C8).
+        # A merged record like "exploren+plugshare" carries the primary
+        # network's own id in source_id; matching with `"plugshare" in src`
+        # sent it to PlugShare with that foreign id (live: Exploren 804 ->
+        # a Fort Wayne, Indiana home charger; Jolt 169 -> 404 -> "confirmed
+        # gone" + removal prompt), and PlugShare-only records whose network
+        # merely says "Tesla" went to the Tesla scraper.
+        primary_src = src.split("+")[0].strip()
 
         try:
-            if "tesla" in src or "tesla" in net:
+            if primary_src == "tesla":
                 # charger_find_tesla.py was archived to Tools/archive/ - make this
                 # import self-contained (don't rely on the caller having already
                 # put Tools/archive on sys.path, e.g. analyse_charging.py,
@@ -878,69 +922,228 @@ class ChargerDiscoveryManager:
  # flow already uses.
                 tesla_key, tesla_record = explorer.scrape_station_details(station.url, charger_type=c_type, list_title=station.name)
                 if not tesla_record:
-                    return False, None, None
-                explorer.update_registry(tesla_key, tesla_record)
-                self.export_consolidated_registry()
+ # Tesla's own findus page returned an unambiguous HTTP 404 for
+ # this exact URL - not a timeout/network/parse failure - so
+ # the source of truth has definitively said this station is
+ # gone, not just "couldn't check right now".
+                    confirmed_not_found = getattr(explorer, "last_http_status", None) == 404
+                    return False, None, None, confirmed_not_found
+                if explorer.update_registry(tesla_key, tesla_record) == "ERROR":
+                    return False, None, None, False  # nothing saved - never report success
+                self._refresh_consolidated_export()
                 fresh = None
                 for p in self.providers:
                     if isinstance(p, TeslaProvider):
+                        p._cache = None  # re-read the file we just wrote
                         fresh = p.get_station_details(tesla_key)
                         break
                 diffs = _diff_station_fields(station, fresh) if fresh else None
-                return True, diffs, fresh
+                return True, diffs, fresh, False
 
             for p in self.providers:
-                if isinstance(p, ChargefoxProvider) and "chargefox" in src:
+                if isinstance(p, ChargefoxProvider) and primary_src == "chargefox":
                     cf_id = station.source_id or station.key.replace("Chargefox_", "")
                     fresh = p.reverify_station(cf_id)
-                    self.export_consolidated_registry()
-                    return True, (_diff_station_fields(station, fresh) if fresh else None), fresh
-                elif isinstance(p, EvieProvider) and "evie" in src:
+                    self._refresh_consolidated_export()
+                    return fresh is not None, (_diff_station_fields(station, fresh) if fresh else None), fresh, False  # C7: no refresh = not verified
+                elif isinstance(p, EvieProvider) and primary_src == "evie":
                     evie_id = station.source_id or station.key.replace("Evie_", "")
                     fresh = p.reverify_station(evie_id)
-                    self.export_consolidated_registry()
-                    return True, (_diff_station_fields(station, fresh) if fresh else None), fresh
-                elif isinstance(p, BPPulseProvider) and ("bppulse" in src or "bp pulse" in net):
+                    self._refresh_consolidated_export()
+                    return fresh is not None, (_diff_station_fields(station, fresh) if fresh else None), fresh, False  # C7: no refresh = not verified
+                elif isinstance(p, BPPulseProvider) and primary_src == "bppulse":
                     bp_id = station.source_id or station.key.replace("BPPulse_", "")
                     fresh = p.reverify_station(bp_id)
-                    self.export_consolidated_registry()
-                    return True, (_diff_station_fields(station, fresh) if fresh else None), fresh
-                elif isinstance(p, EVXProvider) and "evx" in src:
+                    self._refresh_consolidated_export()
+                    return fresh is not None, (_diff_station_fields(station, fresh) if fresh else None), fresh, False  # C7: no refresh = not verified
+                elif isinstance(p, EVXProvider) and primary_src == "evx":
                     evx_id = station.source_id or station.key.replace("EVX_", "")
                     fresh = p.reverify_station(evx_id)
-                    self.export_consolidated_registry()
-                    return True, (_diff_station_fields(station, fresh) if fresh else None), fresh
-                elif isinstance(p, PlugShareProvider) and "plugshare" in src:
+                    self._refresh_consolidated_export()
+                    return fresh is not None, (_diff_station_fields(station, fresh) if fresh else None), fresh, False  # C7: no refresh = not verified
+                elif isinstance(p, PlugShareProvider) and primary_src == "plugshare":
                     ps_id = station.source_id or station.metadata.get("plugshare_id") or str(station.views.get("plugshare", {}).get("id", ""))
                     if ps_id:
                         fresh = p.sync_location(ps_id, auto_save=True)
-                        self.export_consolidated_registry()
-                        return True, (_diff_station_fields(station, fresh) if fresh else None), fresh
-                elif isinstance(p, ExplorenProvider) and "exploren" in src:
+                        if fresh is None:
+ # PlugShare's own /locations/{id} API returned an
+ # unambiguous HTTP 404 for this exact id - the source of
+ # truth has definitively said this station is gone, not
+ # just "couldn't check right now" (network error, rate
+ # limit, timeout, non-JSON response all set a DIFFERENT
+ # last_error string and are correctly NOT treated as
+ # confirmed-not-found here).
+                            confirmed_not_found = getattr(p.client, "last_error", "") == "HTTP 404 (not found)"
+                            return False, None, None, confirmed_not_found
+                        self._refresh_consolidated_export()
+                        return fresh is not None, (_diff_station_fields(station, fresh) if fresh else None), fresh, False  # C7: no refresh = not verified
+                elif isinstance(p, ExplorenProvider) and primary_src == "exploren":
                     exploren_id = station.source_id or station.key.replace("Exploren_", "")
                     fresh = p.reverify_station(exploren_id)
-                    self.export_consolidated_registry()
-                    return True, (_diff_station_fields(station, fresh) if fresh else None), fresh
-                elif isinstance(p, JoltProvider) and "jolt" in src:
+                    self._refresh_consolidated_export()
+                    return fresh is not None, (_diff_station_fields(station, fresh) if fresh else None), fresh, False  # C7: no refresh = not verified
+                elif isinstance(p, JoltProvider) and primary_src == "jolt":
                     jolt_id = station.source_id or station.key.replace("Jolt_", "")
                     fresh = p.reverify_station(jolt_id)
-                    self.export_consolidated_registry()
-                    return True, (_diff_station_fields(station, fresh) if fresh else None), fresh
-                elif isinstance(p, AmpChargeProvider) and ("ampcharge" in src or "ampol" in src or "ampcharge" in net or "ampol" in net):
+                    self._refresh_consolidated_export()
+                    return fresh is not None, (_diff_station_fields(station, fresh) if fresh else None), fresh, False  # C7: no refresh = not verified
+                elif isinstance(p, AmpChargeProvider) and primary_src in ("ampcharge", "ampol"):
                     amp_id = station.source_id or station.key.replace("Ampol_", "")
                     fresh = p.reverify_station(amp_id)
-                    self.export_consolidated_registry()
-                    return True, (_diff_station_fields(station, fresh) if fresh else None), fresh
-                elif isinstance(p, NRMAProvider) and "nrma" in src:
+                    self._refresh_consolidated_export()
+                    return fresh is not None, (_diff_station_fields(station, fresh) if fresh else None), fresh, False  # C7: no refresh = not verified
+                elif isinstance(p, NRMAProvider) and primary_src == "nrma":
                     nrma_id = station.source_id or station.key.replace("NRMA_", "")
                     fresh = p.reverify_station(nrma_id)
-                    self.export_consolidated_registry()
-                    return True, (_diff_station_fields(station, fresh) if fresh else None), fresh
+                    self._refresh_consolidated_export()
+                    return fresh is not None, (_diff_station_fields(station, fresh) if fresh else None), fresh, False  # C7: no refresh = not verified
         except Exception as e:
             print(f"Error reverifying station {station.name}: {e}")
-            return False, None, None
+            return False, None, None, False
 
-        return False, None, None
+        return False, None, None, False
+
+    def remove_station(self, station: UnifiedStationRecord) -> Tuple[bool, str]:
+        """
+        Permanently removes a station from its own provider's live registry
+        file, after archiving the pre-removal record (via the same
+        archive_station_record() helper add_or_update() already uses when a
+        normal update supersedes an existing entry - so a removed station's
+        history is still recoverable for invoice-matching, not just gone).
+
+        This is the ONLY code path anywhere in the provider stack that
+        deletes a station, and it is NEVER called automatically -
+        reverify_station() and batch_reverify_stations() only ever report a
+        confirmed_not_found signal, never call this themselves. It exists so
+        the interactive [u] flows in charger_find.py can call it after the
+        user has been shown the confirmed-not-found finding and explicitly
+        typed 'y' to a removal prompt (2026-09-29 user design requirement:
+        "If the single source of truth has no entry - then the truth is the
+        entry should be noted to user as false and removed with user
+        prompt." - prompted by BUG-156/BUG-157, where a fabricated/stale
+        entry sat in the registry indefinitely because no code path ever
+        removed anything, on any failure, confirmed or not).
+
+        Currently supports Tesla and PlugShare - the two providers this
+        session's two real bug reports involved, and the only two currently
+        wired with a confirmed_not_found signal in reverify_station(). For
+        any other provider this returns (False, <reason>) rather than
+        guessing at a registry file/shape it hasn't been taught yet - the
+        caller shows the reason and leaves the registry untouched.
+
+        Returns (True, message) on success, (False, reason) otherwise.
+        """
+        from .chargers_base import atomic_write_json
+        from lib.tessie_api_common import resolve_tessie_archive_home
+
+        src = (station.source or "").lower()
+        net = (station.network or "").lower()
+        # Route on the record's PRIMARY source only (2026-09-30 review, C1/C8).
+        # A merged record like "exploren+plugshare" carries the primary
+        # network's own id in source_id; matching with `"plugshare" in src`
+        # sent it to PlugShare with that foreign id (live: Exploren 804 ->
+        # a Fort Wayne, Indiana home charger; Jolt 169 -> 404 -> "confirmed
+        # gone" + removal prompt), and PlugShare-only records whose network
+        # merely says "Tesla" went to the Tesla scraper.
+        primary_src = src.split("+")[0].strip()
+        now_utc = datetime.now(timezone.utc).isoformat()
+
+        try:
+            if primary_src == "tesla":
+                tesla_provider = None
+                for p in self.providers:
+                    if isinstance(p, TeslaProvider):
+                        tesla_provider = p
+                        break
+                if tesla_provider is None:
+                    return False, "Tesla provider not loaded"
+
+                # 2026-09-30 review (C11): match every copy, not just the first.
+                # load_cached_registry() renames a clashing key to
+                # "X (Destination)" / "X (Supercharger)", so also try the raw
+                # key; when both sides carry a findus URL they must agree, so
+                # a same-named station of the other type is never removed.
+                cand_keys = [station.key]
+                for suffix in (" (Destination)", " (Supercharger)"):
+                    if station.key.endswith(suffix):
+                        cand_keys.append(station.key[: -len(suffix)])
+                removed = []
+                seen_paths = set()
+                for reg_path in tesla_provider.registry_paths:
+                    real = os.path.realpath(reg_path)
+                    if real in seen_paths or not os.path.isfile(reg_path):
+                        continue
+                    seen_paths.add(real)
+                    try:
+                        with open(reg_path, "r", encoding="utf-8") as f:
+                            data = json.load(f)
+                    except Exception as e:
+                        return False, f"{os.path.basename(reg_path)} is unreadable ({e}) - nothing removed"
+                    if not isinstance(data, dict):
+                        continue
+                    hits = []
+                    for k in cand_keys:
+                        entry = data.get(k)
+                        if not isinstance(entry, dict):
+                            continue
+                        e_url = ((entry.get("tesla_metadata") or {}).get("findus_url") or entry.get("url") or "")
+                        if station.url and e_url and e_url.rstrip("/") != station.url.rstrip("/"):
+                            continue
+                        hits.append(k)
+                    if not hits:
+                        continue
+                    archive_dir = os.path.join(resolve_tessie_archive_home(), "chargers")
+                    os.makedirs(archive_dir, exist_ok=True)
+                    archive_basename = os.path.splitext(os.path.basename(reg_path))[0] + "_archived.json"
+                    archive_path = os.path.join(archive_dir, archive_basename)
+                    for k in hits:
+                        archive_station_record(archive_path, k, data[k], now_utc)  # raises -> nothing deleted
+                    for k in hits:
+                        del data[k]
+                    atomic_write_json(reg_path, data)
+                    removed.append(f"{', '.join(hits)} from {os.path.basename(reg_path)} (archived to {archive_basename})")
+
+                if not removed:
+                    return False, f"'{station.key}' not found in any Tesla registry file (already removed?)"
+                tesla_provider._cache = None  # force a fresh reload next time
+                self._refresh_consolidated_export()
+                note = ""
+                if "plugshare" in src.split("+")[1:]:
+                    note = " - its PlugShare listing is still in the PlugShare registry"
+                return True, "Removed " + "; ".join(removed) + note
+
+            for p in self.providers:
+                if isinstance(p, PlugShareProvider) and primary_src == "plugshare":
+                    registry = p.load_raw_registry()
+                    target_key = station.key if station.key in registry else None
+                    if target_key is None:
+ # Fall back to matching by PlugShare id, in case the display
+                        # key drifted (rename migration, REQ- naming fix, etc.)
+                        # since this UnifiedStationRecord was built.
+                        ps_id = station.source_id or station.metadata.get("plugshare_id") or str(station.views.get("plugshare", {}).get("id", ""))
+                        for k, v in registry.items():
+                            if str((v.get("plugshare_metadata", {}) or {}).get("id", "")) == str(ps_id) and ps_id:
+                                target_key = k
+                                break
+                    if target_key is None:
+                        return False, f"'{station.key}' not found in the PlugShare registry (already removed?)"
+
+                    existing_entry = registry[target_key]
+                    archive_dir = os.path.join(resolve_tessie_archive_home(), "chargers")
+                    os.makedirs(archive_dir, exist_ok=True)
+                    archive_path = os.path.join(archive_dir, "plugshare_chargers_archived.json")
+                    archive_station_record(archive_path, target_key, existing_entry, now_utc)
+
+                    del registry[target_key]
+                    if not p.save_raw_registry(registry):
+                        return False, "Failed to save the PlugShare registry after removal"
+
+                    self._refresh_consolidated_export()
+                    return True, f"Removed '{target_key}' from the PlugShare registry (archived to plugshare_chargers_archived.json)"
+
+            return False, f"Removal not yet supported for provider '{station.source or station.network}'"
+        except Exception as e:
+            return False, f"Error removing station: {e}"
 
     def batch_reverify_stations(
         self,
@@ -967,13 +1170,27 @@ class ChargerDiscoveryManager:
             elif st in ("STALE", "RENAMED", "NOT_IN_JSON"):
                 targets.append(s)
 
-        stats = {"TOTAL": len(targets), "SUCCESS": 0, "ERROR": 0}
+        stats = {"TOTAL": len(targets), "SUCCESS": 0, "ERROR": 0, "NOT_FOUND": 0}
+        not_found_stations = []
         for idx, s in enumerate(targets, 1):
             print(f"  [{idx}/{len(targets)}] 🔄 Re-verifying '{s.name}' ({s.source.title()})...")
-            ok, _diffs, _fresh = self.reverify_station(s)
+            ok, _diffs, _fresh, confirmed_not_found = self.reverify_station(s)
             if ok:
                 stats["SUCCESS"] += 1
+            elif confirmed_not_found:
+ # (2026-09-29) A batch run has no single user standing by to
+ # answer a per-station "remove it?" prompt, so this deliberately
+ # does NOT delete anything here - it only counts and lists the
+ # confirmed-gone stations separately from ordinary failures, so
+ # the caller's summary can tell "78 stations definitively no
+ # longer exist at their source" apart from "12 requests failed/
+ # timed out, try again later". Removal stays an explicit,
+ # single-station, user-confirmed action (see the interactive [u]
+ # handlers in charger_find.py).
+                stats["NOT_FOUND"] += 1
+                not_found_stations.append(s.name)
             else:
                 stats["ERROR"] += 1
 
+        stats["_not_found_names"] = not_found_stations
         return stats

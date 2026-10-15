@@ -17,7 +17,7 @@ from concurrent.futures import ThreadPoolExecutor
 from typing import Dict, List, Optional, Any
 from datetime import datetime, timezone
 
-from .chargers_base import BaseChargerProvider, UnifiedStationRecord, haversine_km, filter_station_records, detect_station_changes, archive_station_record, save_json_with_fallback, merge_with_staleness, resolve_scan_state_path, run_priority_box_scan
+from .chargers_base import RegistryReadError, BaseChargerProvider, UnifiedStationRecord, haversine_km, filter_station_records, detect_station_changes, archive_station_record, save_json_with_fallback, merge_with_staleness, resolve_scan_state_path, run_priority_box_scan
 
 _script_dir = os.path.dirname(os.path.abspath(__file__))
 _tools_dir = os.path.dirname(_script_dir)
@@ -579,8 +579,10 @@ class ChargefoxProvider(BaseChargerProvider):
                             s_id = str(item.get("id", ""))
                             if s_id:
                                 existing_map[s_id] = item
-            except Exception:
-                pass
+            except Exception as e:
+                # Never treat an unreadable existing registry as empty and
+                # save over it (loses every station's history) - stop here.
+                raise RegistryReadError(f"{self.registry_path} is unreadable ({e}) - not overwriting it") from e
 
         fresh_by_key = {}
         for r in records:

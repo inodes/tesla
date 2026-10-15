@@ -78,6 +78,7 @@ class TeslaProvider(BaseChargerProvider):
 
         records: List[UnifiedStationRecord] = []
         seen_keys = set()
+        self.last_load_error = None
 
         for reg_file in self.registry_paths:
             if not os.path.isfile(reg_file):
@@ -86,7 +87,11 @@ class TeslaProvider(BaseChargerProvider):
             try:
                 with open(reg_file, "r", encoding="utf-8") as f:
                     data = json.load(f)
-            except Exception:
+            except Exception as e:
+                # Recorded so the consolidated export refuses to run without
+                # these stations (2026-09-30 review); listing still works.
+                self.last_load_error = f"{reg_file} is unreadable ({e})"
+                print(f"⚠️  Tesla registry not loaded: {self.last_load_error}")
                 continue
 
             stations_dict = {}
@@ -337,7 +342,29 @@ class TeslaProvider(BaseChargerProvider):
                     tier=1,
                     source="tesla",
                     source_id=str(t_meta.get("findus_id") or t_meta.get("short_name") or info.get("id") or key),
-                    url=t_meta.get("findus_url") or info.get("url", f"https://www.tesla.com/findus/location/supercharger/{key.lower().replace(' ', '')}"),
+                    # BUG (2026-09-29): this used to guess a URL from the
+                    # station's own display key (e.g. "St Leonards, NSW" ->
+                    # ".../supercharger/stleonards,nsw") whenever a real
+                    # findus_url/info["url"] was missing. Real Tesla findus
+                    # slugs are opaque (numeric ids like "31609"/"400426",
+                    # arbitrary "<name>supercharger" suffixes, mixed case -
+                    # see the 158 other real entries in this same registry)
+                    # and are never derivable from the display name, so the
+                    # guess was ALWAYS wrong (also missing the required
+                    # "en_AU" locale segment every real findus_url has, and
+                    # never stripping punctuation like the comma in "St
+                    # Leonards, NSW" -> "stleonards,nsw") - a guaranteed 404
+                    # that LOOKED like a legitimate found link (get_source_urls()
+                    # step 7 in chargers_base.py labels anything containing
+                    # "tesla.com" as "Tesla Find Us" with no way to tell a
+                    # verified URL from an invented one). This surfaced when the
+                    # user hit a 404 on a "St Leonards, NSW" entry that turned
+                    # out to be entirely fabricated data (not on Tesla's own
+                    # real AU supercharger list at all - see AGENTS.local.md).
+                    # Leaving this None when there is no real URL means
+                    # get_source_urls()/the display card correctly show
+                    # nothing rather than a confident-looking broken link.
+                    url=t_meta.get("findus_url") or info.get("url"),
                     last_verified_utc=info.get("last_verified", "") or info.get("last_verified_utc", ""),
                     effective_date_utc=effective_date,
                     metadata={
