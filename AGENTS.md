@@ -283,6 +283,101 @@ drift. `--help` must never have a side effect - BUG-084 found three `.sh` script
 silently ignored and the ENTIRE real sync ran instead; that class of bug is why this is a written rule, not
 just a habit.
 
+**REQUIREMENT - help output is a man page (user, 2026-09-30).** Source of truth: "Man Pages: The Complete
+Guide" (https://medium.com/better-programming/man-pages-the-complete-guide-800ad93425fe). Every `-h`/`--help`
+in this repo MUST follow it. Checklist - an agent adding or changing a script or flag checks every line:
+
+1. **Sections, in this order, only those that apply.** Required: **NAME**, **SYNOPSIS**, **DESCRIPTION**.
+   For commands (all our scripts are man section 1): **OPTIONS** and **EXIT STATUS**. As applicable:
+   **ENVIRONMENT**, **FILES**, **NOTES**, **CAVEATS**, **BUGS**. Recommended: **EXAMPLES**, **SEE ALSO** (last).
+   Never add an empty section. (Function-only sections - LIBRARY, RETURN VALUE, ERRORS, ATTRIBUTES - don't
+   apply to our CLIs.)
+2. **NAME** is exactly one line: `name - short one-line description` (like `ls - list directory contents`).
+3. **SYNOPSIS contains no prose.** It only illustrates every way of calling the command, one line per form:
+   **bold** = type exactly as shown; *italic/underlined* = replace with your value; `[ ]` = optional;
+   `a | b` = choose one; `arg...` = repeatable.
+4. **DESCRIPTION** covers the usual case and how the command uses files, stdin, stdout and stderr. It omits
+   internals and implementation details unless they are critical to using it - no rsync maths, tombstone
+   mechanics, TTY rules, ticket numbers (BUG-/REQ-/TODO-) or history; those go in code comments and
+   AGENTS.local.md. Anything about a specific option goes in OPTIONS, not here.
+5. **OPTIONS**: every flag, each on its own line (short and long form), with what it does / how it changes
+   behaviour in one or two plain lines indented underneath. A flag needing a paragraph is a sign the detail
+   belongs in DESCRIPTION, CAVEATS or a doc.
+6. **EXIT STATUS** lists each exit value and when it happens. **ENVIRONMENT** lists every variable that
+   changes behaviour and its effect. **FILES** gives full pathnames that are "both factual and actual" -
+   files the script really reads or writes, nothing aspirational.
+7. **SEE ALSO** is ordered by section number, then alphabetically by name.
+8. **Layout**: headings flush left in capitals; body indented 7 spaces; option descriptions indented 14.
+   Bold/underline via ANSI only when stdout is a terminal, plain text otherwise (so piping to a file or
+   `less` stays clean).
+9. **No side effects**: `-h` prints and exits 0 before any real step runs (the BUG-084 rule above).
+10. **Kept current**: changing a flag or behaviour means updating the help in the same change.
+
+Python scripts render this from their argparse parser via a shared helper (so SYNOPSIS/OPTIONS can't drift
+from the real flags); each script supplies only NAME, DESCRIPTION, EXIT STATUS, FILES, EXAMPLES, SEE ALSO.
+Reference implementation: `Tools/sync_dashcam.sh -h`.
+
+### 3.4 Interactive menus: one option per line
+
+Standing rule (REQ-138, restated REQ-178): any prompt offering more than one choice prints each option on
+its own line, then asks with a bare prompt (`> `). Never join options into one line with commas, slashes
+or pipes - not in `input()` text, not in a "Commands:"/"Options:" line, not in an "Invalid choice" hint,
+and not when the list is built dynamically (`", ".join(actions)`). A single yes/no confirmation
+(`[y/N]`, `[Y/n]`) is fine on one line.
+
+```
+Action:
+  [o]pen chart in browser
+  [m]anually correct
+  [Enter] return
+  >
+```
+
+### 3.5 Script permissions: every .py and .sh is u+x
+
+Standing rule (REQ-180): every `*.py` and `*.sh` in the repo - entry points, `lib/` modules, provider
+modules, tests - must have the user-execute bit (`chmod u+x`), and git must record it (mode `100755`).
+
+- A new script gets `chmod u+x <file>` straight after it is created.
+- Edits that rewrite a file (write to a temp file, then `os.replace`) must copy the mode first
+  (`shutil.copymode(old, tmp)`), as the atomic-edit pattern already does.
+- An agent must never leave a script without u+x. An in-place rewrite (`open(path, "w")`) on the
+  device mount has dropped the bit before (2026-10-14: `drive_report.py`, `dashcam_flip_review.py`,
+  `sign_scan.py`), so run `chmod u+x <file>` after every edit, not just after creating a file.
+- `Tools/fix_exec_bits.sh` repairs any missing bits (`--check` only reports). Run it after pulling,
+  restoring from a backup or a cloud-synced folder, or whenever a script says "Permission denied".
+- `.git/hooks/pre-commit` applies `u+x` to staged `.py`/`.sh` files and records it with
+  `git update-index --chmod=+x`. Hooks are not versioned, so on a fresh clone run
+  `Tools/fix_exec_bits.sh --install-hook`.
+
+### 3.5.1 Removable drives: identify by what is ON them; keep only the Archive connected
+
+Standing rule (2026-10-14).
+
+**Identity: never by mount name.** The volumes appear as `TESLADRIVE`, `TESLADRIVE 1`, `TESLADRIVE 2` in mount order, so
+the names are interchangeable and say nothing. A drive is identified by the marker folder in its root and, failing that,
+its size: `ARCHIVE_2TB` / `ARCHIVE` = the 2 TB **Archive** (master); `JOWUA_1TB` / `JOWUA` = the **JOWUA** 1 TB drive;
+`TESLA_USB_*` = the car's **Tesla USB**; no marker: > 1600 GB Archive, 700-1600 GB JOWUA, 30-700 GB USB.
+`Tools/lib/drive_roles.py` implements this (`role_of`, `discover`, `teslacam_roots`, `find_root`; roles A / J / U) and
+matches `analyse_drives.get_drive_identifier`'s marker step. Code must not hard-code `/Volumes/TESLADRIVE...` paths to mean a
+particular drive, and queue/action files carry the drive's role, not its name (`drive_actions.py` resolves the role at run time).
+
+**Connection: only the Archive stays connected to an agent session.** A connected folder is a share served by the Claude
+app's VM (`com.apple.Virtualization.VirtualMachine`); every file a script reads through it stays open on the Mac until the
+folder is disconnected, so Finder cannot eject the volume ("in use"). A footage scan of JOWUA left ~5,900 open files.
+- Scripts read the Archive only by default (`--with-secondary` or an explicit `--teslacam` opts JOWUA / the USB in).
+- Only connect JOWUA or the USB for a task that needs them, and say when the folder can be disconnected again.
+- Check on the Mac with `lsof "/Volumes/<name>"`; the fix is to disconnect the folder in the app or relaunch it.
+
+### 3.6 Backups go in `.bak_archive/`, never beside the file
+
+Standing rule (REQ-181): before editing a script or document, copy it to `.bak_archive/` (the one inside
+the folder being edited, e.g. `Tools/.bak_archive/`; repo-root files use `./.bak_archive/`) as
+`<name>.bak-<ticket>[-<timestamp>]`. `.bak_archive/` is git-ignored. Never leave `*.bak*` files next to
+the original - they clutter the folder, break shell tab-completion and sit in the same directory the
+scripts run from. Data-folder backups (`charges_master.csv` etc.) go in the data `archive/` folder with
+a name that does not contain "charges"/"drives", because the loaders read matching files there as data.
+
 ---
 
 ## 7. Verification & Update Checklist for Agents

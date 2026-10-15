@@ -211,6 +211,37 @@ tesla/
 
 ---
 
+### 9. The Tesla App (activity, drives, charges, battery, analytics, dashcam)
+
+A local app (Python only, reads the iCloud `Tesla` folder, nothing is changed by looking) in the style of Tessie. Type each command on its own line; do not paste a trailing `# comment` after a command, because an interactive zsh passes the `#` through as an argument.
+
+```bash
+cd path/to/tesla/Tools
+./tesla_app.py
+```
+
+That opens a native window if `pywebview` is installed, otherwise your default browser (`http://127.0.0.1:8765`). Useful variants: `./tesla_app.py --browser` (always use the browser), `./tesla_app.py --no-window --port 8800` (server only), `./tesla_app.py --data-dir DIR` (another data folder), `./tesla_app.py --help`.
+
+Native window: pywebview is now in requirements.txt, so direnv installs it into the repo venv the next time you enter the repo (or run `pip install -r requirements.txt` there). Do not install it globally.
+
+```bash
+cd path/to/tesla
+pip install -r requirements.txt
+```
+
+Optional double-clickable app in `~/Applications` (a launcher around `tesla_app.py`, no Xcode; rebuild only if you move the repo; log in `~/Library/Logs/tesla_app.log`):
+
+```bash
+./build_mac_app.sh
+```
+
+Battery (charge level over time, parked drain, usual charge target) and Battery health (usable capacity and range against odometer, as `analyse_battery_health.py`) are separate pages, as in Tessie. Every listing runs newest to oldest, ordered by the UTC time (which never repeats or skips) and shown in local time. Activity, Drives, Charges, Parked and Battery have a Tessie-style date picker (presets and a calendar; days with records are bold) that selects by local day.
+
+Charges: every charge reconciled with its invoice as in `./analyse_charging.py` (a plug-in Tessie recorded as several sessions is one charge with its records as parts; invoice details, whether Tessie holds the invoice cost, losses, telemetry, charging curves). Invoices tab lists every invoice. Reading only - to send invoice costs to Tessie use `./analyse_charging.py --sync-tessie-costs --apply`.
+Places (saved places, Superchargers named as on tesla.com, a Chargers tab with every charger from `charging_stations.json` and a **Sync chargers** button that runs `./sync_charger_all.sh`, nearby OpenStreetMap places, add / edit) and Parked (with saved Sentry footage) are in the sidebar. Street-accurate drive paths: `./drive_gps.py --budget 600` (newest drives first, safe to re-run) writes a mirror of each Tessie drive CSV with the dashcam's GPS fixes added, then `./drive_report.py` redraws the maps.
+
+Dashcam clips stream from the Archive drive (found by its `ARCHIVE_2TB` folder, never by volume name). Footage actions queued on a drive page (copy, delete, save as a clip) run from the Queue page: Preview first, then Run for real.
+
 ## 🔒 Privacy & PII Protection
 Personal trip histories (`*.csv`), custom location coordinates (`places.json`), tariff/config data (`config.json`), and Supercharger invoice PDFs contain sensitive Personally Identifiable Information (PII) and are **strictly excluded from Git tracking** via `.gitignore`. Only generic templates (`places.example.json`) and public data scraped from public charger directories are committed to the repository. See [`AGENTS.md`](AGENTS.md) for the full policy.
 
