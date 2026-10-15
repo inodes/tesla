@@ -53,5 +53,44 @@
   },
   "pv": {
     "provider": "solaredge"
+  },
+  "app": {
+    "_comment": "Settings of Tools/tesla_app.py, drive_report.py and the places lookups (lib/app_config.py). Every value is optional: delete any you do not want to change and the default applies. map.style_light/style_dark: an OpenFreeMap style (positron, dark, liberty = 3D, bright, fiord). drives.repark_*: a drive shorter than both is a re-park (the car was only shuffled). nearby.*: Overpass servers/time limits and the Photon fallback for 'what is around here'.",
+    "map": {
+      "tiles_base": "https://tiles.openfreemap.org/styles/",
+      "style_light": "positron",
+      "style_dark": "dark",
+      "places_max_lon": 160
+    },
+    "drives": {
+      "repark_max_km": 0.05,
+      "repark_max_minutes": 10,
+      "long_highway_km": 30,
+      "long_highway_fast_kmh": 90,
+      "long_highway_fast_minutes": 10,
+      "charge_window_minutes": 30,
+      "low_battery_pct": 20
+    },
+    "places": {
+      "stay_min_seconds": 120
+    },
+    "nearby": {
+      "overpass_endpoints": [
+        "https://overpass.kumi.systems/api/interpreter",
+        "https://overpass.private.coffee/api/interpreter",
+        "https://overpass.openstreetmap.fr/api/interpreter",
+        "https://lz4.overpass-api.de/api/interpreter",
+        "https://overpass-api.de/api/interpreter"
+      ],
+      "overpass_total_timeout_s": 20,
+      "overpass_server_timeout_s": 8,
+      "photon_url": "https://photon.komoot.io/reverse",
+      "photon_limit": 50
+    },
+    "window": {
+      "width": 1440,
+      "height": 940,
+      "port": 8765
+    }
   }
 }

@@ -45,6 +45,7 @@ import dashcam_flip_review as D  # noqa: E402
 import footage_ui as FU  # noqa: E402
 import drive_roles as DR  # noqa: E402
 import drive_charts as DC  # noqa: E402
+import app_config as CFG  # noqa: E402
 
 REASONS = D.REASONS
 OFFSETS = D.OFFSETS
@@ -483,7 +484,7 @@ const liveMap=function(){
  const kx=Math.cos((Math.min(...L)+Math.max(...L))/2*Math.PI/180);
  const near=(la_,lo_)=>{let b=0,bd=9e9;for(let i=0;i<N;i++){if(!ok[i])continue;const q=(la[i]-la_)**2+((lo[i]-lo_)*kx)**2;if(q<bd){bd=q;b=i}}return b};D.near=near;
  const dark=window.matchMedia&&matchMedia("(prefers-color-scheme: dark)").matches;
- const map=new maplibregl.Map({container:div,style:"https://tiles.openfreemap.org/styles/"+(dark?"dark":"positron"),bounds:[[Math.min(...O),Math.min(...L)],[Math.max(...O),Math.max(...L)]],fitBoundsOptions:{padding:40,maxZoom:16},attributionControl:{compact:true},cooperativeGestures:true});
+ const map=new maplibregl.Map({container:div,style:D.map.base+(dark?D.map.dark:D.map.light),bounds:[[Math.min(...O),Math.min(...L)],[Math.max(...O),Math.max(...L)]],fitBoundsOptions:{padding:40,maxZoom:16},attributionControl:{compact:true},cooperativeGestures:true});
  map.addControl(new maplibregl.NavigationControl({showCompass:false}),"top-right");
  const mb=$("#mapbtns");if(mb)mb.innerHTML='<span class="sub" style="float:right;margin-top:2px;text-transform:none;font-weight:400;letter-spacing:0">Ctrl/⌘ + scroll to zoom · hover the route for details · click it, or a purple saved-clip marker, to play footage'+(D.gpsnote?' · '+D.gpsnote:'')+'</span>';
  let loaded=false,dead=false;
@@ -559,7 +560,8 @@ def build_page(stamp, m, win, flips, recs, saved_ev, cov, clips_rel, folder, mwi
         fl.append(dict(id=e["id"], kind=e["flip"], time=e["time"], t=epoch(pdt(e["time"])), la=f(e["lat"]), lo=f(e["lon"]),
                        road=e.get("road_before", ""), vb=e.get("speed_before"), va=e.get("speed_after"), osm=e.get("osm_class", "")))
     sv = [dict(label=s["label"], time=s["time"], t=epoch(s["dt"]), la=s["la"], lo=s["lo"]) for s in saved_ev]
-    data = dict(pts=pts, flips=fl, saved=sv, start=start, end=end, stamp=stamp)
+    data = dict(pts=pts, flips=fl, saved=sv, start=start, end=end, stamp=stamp,
+                map=dict(base=CFG.get("map.tiles_base"), light=CFG.get("map.style_light"), dark=CFG.get("map.style_dark")))
     gps, ginfo = load_gps(folder, stamp, win[0]["t"], win[-1]["t"])
     if gps:
         data["gps"] = gps
@@ -662,17 +664,18 @@ FLIPLEG = '<span><i style="background:#d4332b;height:8px;width:8px;border-radius
 
 
 def is_long_highway(win, m):
-    """The 110<->100 FSD speed-change markers only mean something on a long highway run: 30 km or more with at least
-    10 minutes spent at 90 km/h or faster. Shorter / suburban drives show none (the flips CSV is untouched)."""
+    """The 110<->100 FSD speed-change markers only mean something on a long highway run: long_highway_km or more (default 30) with at least
+    long_highway_fast_minutes (10) spent at long_highway_fast_kmh (90) or faster - config.json "app.drives". Shorter / suburban drives show none
+    (the flips CSV is untouched)."""
     km = f(m.get("Distance (km)")) if m else None
     if km is None:
         od = [p["od"] for p in win if p.get("od") is not None]
         km = (od[-1] - od[0]) if len(od) > 1 else 0
     fast = 0.0
     for a, b in zip(win, win[1:]):
-        if (a["v"] or 0) >= 90:
+        if (a["v"] or 0) >= CFG.get("drives.long_highway_fast_kmh"):
             fast += min((b["t"] - a["t"]).total_seconds(), 60)
-    return (km or 0) >= 30 and fast >= 600
+    return (km or 0) >= CFG.get("drives.long_highway_km") and fast >= 60 * CFG.get("drives.long_highway_fast_minutes")
 
 
 def process_drive(csv_path, master, flips_by_file, recs, foot, args, base_analysis):
