@@ -5,7 +5,7 @@ read-only local report) and analyse_charging.py's --sync-tessie-costs
 (which pushes the same figures back to Tessie's own live account via
 set_cost). Kept in lib/ rather than in either of those two files so
 neither has to import the other - report_all_charges_cost.py already
-imports TessieChargingAnalyzer FROM analyse_charging.py, so the reverse
+imports ChargingAnalyzer FROM analyse_charging.py, so the reverse
 import would be circular.
 
 Method (unchanged from REQ-147's own report):
@@ -50,6 +50,33 @@ def load_raw_tessie_cache(repo_root):
     return records, by_epoch
 
 
+def get_charges_sync_watermark(repo_root):
+    """The real UTC epoch through which resources/api_cache/charges.json
+    is KNOWN to be fully synced (sync_api_tessie.py's own commit_cache()
+    only ever advances this after a fetched window has been safely
+    merged - see its own docstring). None if the cache file doesn't
+    exist yet or has never completed a sync.
+
+    Purpose (2026-09-28, user's own correction on the Evnex
+    "no matching Tessie charge -> not your car" idea): absence of a
+    matching Tessie charge for an Evnex session is only meaningful
+    evidence once we can PROVE Tessie's own charge data actually covers
+    that session's window - otherwise a sync lag looks identical to a
+    genuinely different vehicle, and treating it as the latter would be
+    exactly the "trap of assumption" the user flagged. Callers should
+    compare a session's own end time (as a UTC epoch) against this
+    watermark before drawing any conclusion from an empty match list."""
+    path = os.path.join(repo_root, "resources", "api_cache", "charges.json")
+    if not os.path.isfile(path):
+        return None
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+    except Exception:
+        return None
+    return (data.get("_meta") or {}).get("last_synced_to")
+
+
 def find_cache_record_by_epoch(by_epoch, target_epoch, tolerance_s=120):
     """Nearest raw-cache record to target_epoch within tolerance_s, or
     None. by_epoch must be sorted ascending (see load_raw_tessie_cache)."""
@@ -86,6 +113,7 @@ def compute_all_charge_costs(analyzer):
     from power_demand_calculator import load_rate_periods
 
     sessions = analyzer.reconcile()
+    plugin_shares = analyzer.plugin_invoice_shares(sessions)
     cache_records, cache_by_epoch = load_raw_tessie_cache(analyzer.repo_root)
     periods = load_rate_periods()
 
@@ -107,11 +135,21 @@ def compute_all_charge_costs(analyzer):
         our_cost_source = None
         pv_pct = None
 
-        if is_home:
+        if is_home and raw and not raw.get("ended_at"):
+            # B1: still in progress - no end time to price against yet.
+            our_cost_source = "unknown(in progress)"
+            notes.append("charge still in progress (no end time) - not priced")
+        elif is_home:
+            # B3 (2026-09-30 review): Energy Used can be 0/blank on a real
+            # charge (reconcile() already falls back to Energy Added for it);
+            # pricing 0 kWh produced a $0.00 cost that could be pushed to Tessie.
+            kwh_for_cost = raw.get("energy_used_kwh") or raw.get("energy_added_kwh") or 0
+            if not raw.get("energy_used_kwh") and raw.get("energy_added_kwh"):
+                notes.append("Energy Used missing - priced on Energy Added")
             tessie_row = {
                 "started": raw["started_at"],
                 "ended": raw["ended_at"],
-                "kwh": raw["energy_used_kwh"],
+                "kwh": kwh_for_cost,
                 "tessie_cost": raw["cost"],
                 "tessie_cost_per_kwh": raw["cost_per_kwh"],
             }
@@ -129,7 +167,12 @@ def compute_all_charge_costs(analyzer):
                 notes.append(f"low PV data coverage ({result['pv_coverage']:.0%})")
             pv_pct = result.get("pv_solar_fraction")
         else:
-            if s.get("invoice_cost") is not None:
+            if id(s) in plugin_shares:
+                # REQ-183: one invoice covers a multi-record plug-in; this
+                # record's share (by Tessie-measured energy), not the total.
+                our_cost = plugin_shares[id(s)][0]
+                our_cost_source = f"invoice #{s.get('invoice_number') or '?'} (share of plug-in)"
+            elif s.get("invoice_cost") is not None:
                 our_cost = s["invoice_cost"]
                 our_cost_source = f"invoice #{s.get('invoice_number') or '?'}"
             elif s.get("theoretical_cost") is not None:

@@ -60,6 +60,7 @@ import csv
 import glob
 import json
 import os
+from lib.tessie_timezone import legacy_get as _legacy_get  # BUG-176
 import re
 import sys
 
@@ -217,7 +218,7 @@ def parse_telemetry_csv(path):
     t0 = None
     pts = []
     for row in rows:
-        ts = row.get("Timestamp (AEST)")
+        ts = _legacy_get(row, "Timestamp")
         if not ts:
             continue
         try:
@@ -260,21 +261,33 @@ def load_charger_registries():
     vehicle_spec.json). Missing files are a normal "not scraped yet" case,
     not an error."""
     merged = {}
-    tessie_dir = os.path.join(REPO_ROOT, "resources")
-    for fname in ("tesla_superchargers.json", "tesla_superchargers_archived.json",
-                  "tesla_chargers.json", "tesla_chargers_archived.json"):
-        p = os.path.join(tessie_dir, fname)
-        if not os.path.isfile(p):
-            continue
-        try:
-            with open(p, "r", encoding="utf-8") as f:
-                data = json.load(f)
-        except Exception:
-            continue
-        if isinstance(data, dict):
-            for k, v in data.items():
-                if k not in merged:
-                    merged[k] = v
+    # The live registries live in the DATA folder's chargers/ subfolder and the
+    # archived ones under <archive>/chargers/ (REQ-028/107). The repo's own
+    # resources/ folder is only the legacy location - reading ONLY that left
+    # every site without hardware, tier or cap on every chart.
+    search_dirs = []
+    try:
+        from lib.tessie_api_common import resolve_tessie_data_home, resolve_tessie_archive_home
+        search_dirs += [os.path.join(resolve_tessie_data_home(), "chargers"),
+                        os.path.join(resolve_tessie_archive_home(), "chargers")]
+    except Exception:
+        pass
+    search_dirs.append(os.path.join(REPO_ROOT, "resources"))
+    for tessie_dir in search_dirs:
+        for fname in ("tesla_superchargers.json", "tesla_superchargers_archived.json",
+                      "tesla_chargers.json", "tesla_chargers_archived.json"):
+            p = os.path.join(tessie_dir, fname)
+            if not os.path.isfile(p):
+                continue
+            try:
+                with open(p, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+            except Exception:
+                continue
+            if isinstance(data, dict):
+                for k, v in data.items():
+                    if k not in merged and isinstance(v, dict):
+                        merged[k] = v
     return merged
 
 
@@ -372,13 +385,30 @@ def historical_extension(sessions, current, registry=None):
     cur_lo, cur_hi = min(cur_socs), max(cur_socs)
 
     def _pairs(pool, metric):
-        pairs = []
+        """One clean estimate per whole-percent of SoC: the MEDIAN across the
+        pooled sessions. Plotting every pooled sample sorted by SoC drew a
+        zigzag with vertical drops to 0 kW (each session's idle / handshake /
+        paused samples landing at different SoCs), so idle samples
+        (< 1 kW below 97% SoC) are ignored and the rest are binned."""
+        import statistics
+        bins = {}
         for o in pool:
             for p in o["points"]:
-                if p["soc"] is not None and p.get(metric) is not None:
-                    pairs.append((p["soc"], p[metric]))
-        pairs.sort()
-        return pairs
+                if p["soc"] is None or p.get(metric) is None:
+                    continue
+                pw = p.get("power_kw")
+                if pw is not None and pw < 1.0 and p["soc"] < 97:
+                    continue
+                bins.setdefault(int(round(p["soc"])), []).append(p[metric])
+        med = [(b, statistics.median(v)) for b, v in sorted(bins.items())]
+        # light 3-point smoothing: few pooled sessions make the per-percent median jumpy
+        if len(med) >= 3:
+            sm = [med[0]]
+            for i in range(1, len(med) - 1):
+                sm.append((med[i][0], (med[i - 1][1] + med[i][1] + med[i + 1][1]) / 3.0))
+            sm.append(med[-1])
+            med = sm
+        return med
 
  # Deliberately NOT anchored/offset to match this session's own boundary
  # value - an earlier version shifted the historical curve so it met the
@@ -425,6 +455,173 @@ def historical_extension(sessions, current, registry=None):
             "after": after if len(after) >= 2 else [],
         }
     return result
+
+
+def _minutes_per_percent(points):
+    """{k: minutes taken to go from k% to k+1% SoC} for one session, from the
+    first time each whole percent was reached (linear between reached values,
+    so a skipped percent is still covered). The first percent is left out - the
+    session starts part-way through it."""
+    first = {}
+    for p in points:
+        if p.get("soc") is None:
+            continue
+        k = int(round(p["soc"]))
+        if k not in first:
+            first[k] = p["elapsed_min"]
+    ks = sorted(first)
+    if len(ks) < 2:
+        return {}
+    def t_at(k):
+        if k in first:
+            return first[k]
+        lo = max((x for x in ks if x < k), default=None)
+        hi = min((x for x in ks if x > k), default=None)
+        if lo is None or hi is None:
+            return None
+        return first[lo] + (first[hi] - first[lo]) * (k - lo) / (hi - lo)
+    out = {}
+    for k in range(ks[0] + 1, ks[-1]):
+        a, b = t_at(k), t_at(k + 1)
+        if a is not None and b is not None and b >= a:
+            out[k] = b - a
+    return out
+
+
+def estimate_window_minutes(sessions, current, registry=None, lo=20, hi=80):
+    """How long a charge from lo% to hi% takes, for ONE session.
+
+    Measured when the session itself covers the whole window. Otherwise an
+    estimate: the percents the session did cover use its own measured pace; the
+    rest use the median pace per percent from earlier sessions on the same
+    hardware (same site, topped up with the same charger tier at other sites),
+    scaled by how this session's pace compared with those sessions over the
+    percents they share (captures cold pack, shared stall, charger limits).
+    Home charging is not estimated (its power follows the sun, not the SoC).
+
+    Returns {"minutes", "measured": bool, "text"} - "minutes" is None with an
+    explanatory "text" when no honest figure is possible."""
+    import statistics
+    registry = registry or {}
+    if current["slug"] == "Evnex_Home":
+        return {"minutes": None, "measured": False, "text": "not estimated for home charging (power follows solar, not SoC)"}
+    cur = _minutes_per_percent(current["points"])
+    window = list(range(lo, hi))
+    cur_in = [k for k in window if k in cur]
+    socs = [p["soc"] for p in current["points"] if p.get("soc") is not None]
+    if not socs:
+        return {"minutes": None, "measured": False, "text": "no state-of-charge data"}
+    if len(cur_in) == len(window):
+        return {"minutes": sum(cur[k] for k in window), "measured": True, "text": "measured"}
+
+    # A session that saw little or none of the window (e.g. a top-up from 87%)
+    # is still estimated from the history of the same hardware; it is flagged
+    # as indicative because its own pace can only scale the percents it shares
+    # with that history.
+    thin = len(cur_in) < 8
+
+    def _peak(x):
+        return max([p["power_kw"] for p in x["points"] if p.get("power_kw") is not None] or [0])
+    cur_is_dc = _peak(current) >= 40
+
+    same_site = [x for x in sessions if x["path"] != current["path"] and x["slug"] == current["slug"]]
+    _, cur_hw = match_hardware(current["slug"], registry)
+    tier = cur_hw.get("tier") if cur_hw else None
+    tier_pool = []
+    if tier:
+        for x in sessions:
+            if x["path"] == current["path"] or x["slug"] == current["slug"] or x["slug"] == "Evnex_Home":
+                continue
+            _, hw = match_hardware(x["slug"], registry)
+            if hw and hw.get("tier") == tier:
+                tier_pool.append(x)
+
+    def pool_medians(pool):
+        bins = {}
+        for x in pool:
+            for k, v in _minutes_per_percent(x["points"]).items():
+                bins.setdefault(k, []).append(v)
+        return {k: statistics.median(v) for k, v in bins.items()}
+
+    any_dc = []
+    if cur_is_dc:
+        any_dc = [x for x in sessions if x["path"] != current["path"] and x["slug"] != "Evnex_Home"
+                  and x not in tier_pool and x not in same_site and _peak(x) >= 40]
+    site_med = pool_medians(same_site)
+    tier_med = pool_medians(tier_pool)
+    dc_med = pool_medians(any_dc)
+    hist = {}
+    used_tier = used_dc = held = False
+    for k in range(lo - 3, hi + 3):
+        if k in site_med:
+            hist[k] = site_med[k]
+        elif k in tier_med:
+            hist[k] = tier_med[k]
+            used_tier = True
+        elif k in dc_med:
+            hist[k] = dc_med[k]
+            used_dc = True
+    # A percent no earlier session reached: hold the nearest covered percent
+    # when it is close and the pace around it is steady (a power plateau).
+    if hist:
+        cov = sorted(hist)
+        for k in range(lo, hi):
+            if k in hist or k in cur:
+                continue
+            near = min(cov, key=lambda c: abs(c - k))
+            around = [hist[c] for c in cov if abs(c - near) <= 3]
+            spread = (max(around) / max(min(around), 1e-6)) if around else 99
+            # steady pace (e.g. a constant-power AC stall) may be carried further
+            if abs(near - k) > (40 if spread <= 1.15 else 12):
+                continue
+            if around and spread <= 1.6:
+                hist[k] = hist[near]
+                held = True
+
+    overlap = [k for k in cur if k in hist]
+    factor, scaled = 1.0, False
+    if len(overlap) >= 3 and sum(hist[k] for k in overlap) > 0:
+        factor = sum(cur[k] for k in overlap) / sum(hist[k] for k in overlap)
+        factor = max(0.6, min(1.6, factor))
+        scaled = True
+
+    total = 0.0
+    n_hist = 0
+    for k in window:
+        if k in cur:
+            total += cur[k]
+        elif k in hist:
+            total += hist[k] * factor
+            n_hist += 1
+        else:
+            return {"minutes": None, "measured": False,
+                    "text": f"cannot be estimated - no earlier session on this hardware covers {k}%"}
+    n_site, n_tier = len(same_site), len(tier_pool)
+    parts = []
+    if n_site:
+        parts.append(f"{n_site} earlier session{'s' if n_site != 1 else ''} at this site")
+    if (used_tier or used_dc) and n_tier:
+        parts.append(f"{n_tier} on {tier} chargers elsewhere")
+    if used_dc and any_dc:
+        parts.append(f"{len(any_dc)} other fast-charging sessions")
+    src = " + ".join(parts) if parts else "earlier sessions"
+    obs = f"{min(socs):.0f}-{max(socs):.0f}%"
+    adj = f", scaled x{factor:.2f} to this session's own pace" if scaled else ", not scaled (too few percent steps in common with that history to compare this session's pace)"
+    if thin:
+        adj += f"; indicative only - this session covered just {len(cur_in)} of the {len(window)} percent steps"
+    if held:
+        adj += "; percents no session reached reuse the nearest one"
+    return {"minutes": total, "measured": False,
+            "text": f"estimate: this session covered {obs}; the other {n_hist} of {len(window)} percent steps come from {src}{adj}"}
+
+
+def window_line(result, lo=20, hi=80):
+    """One caption line for estimate_window_minutes()'s result."""
+    if result["measured"]:
+        return f"{lo}% → {hi}%: {result['minutes']:.1f} min (measured)"
+    if result["minutes"] is None:
+        return f"{lo}% → {hi}%: {result['text']}"
+    return f"{lo}% → {hi}%: ~{result['minutes']:.0f} min ({result['text']})"
 
 
 def _history_caption(hist):
@@ -660,9 +857,13 @@ def render_curve_chart(current, hist, hardware_name, hardware, out_png, out_html
 
     peak_i = int(power.argmax())
     ax.scatter([soc[peak_i]], [power[peak_i]], s=90, color=S1_BLUE, edgecolors=SURFACE, linewidths=2, zorder=5)
-    ax.annotate(f"peak {power[peak_i]:.0f} kW\nat {soc[peak_i]:.0f}% SoC", (soc[peak_i], power[peak_i]),
-                xytext=(12, -30), textcoords="offset points", fontsize=9.5, color=TEXT_PRIMARY,
-                fontfamily="DejaVu Sans", va="top")
+    # Label sits ABOVE the peak point (never over the dots that run away from it);
+    # right-aligned when the peak is on the right half so it can't leave the plot.
+    _peak_right = soc[peak_i] > (soc.min() + soc.max()) / 2.0
+    _peak_ann = ax.annotate(f"peak {power[peak_i]:.0f} kW at {soc[peak_i]:.0f}% SoC", (soc[peak_i], power[peak_i]),
+                xytext=(-8 if _peak_right else 8, 12), textcoords="offset points", fontsize=9.5,
+                color=TEXT_PRIMARY, fontfamily="DejaVu Sans", va="bottom",
+                ha="right" if _peak_right else "left")
 
     if hardware and hardware.get("max_power_kw"):
         cap = hardware["max_power_kw"]
@@ -682,6 +883,9 @@ def render_curve_chart(current, hist, hardware_name, hardware, out_png, out_html
     all_powers = list(power) + [y for seg in (hist or {}).get("power_kw", {}).values() for _, y in seg]
     xlo, xhi = min(all_socs) - 2, max(all_socs) + 2
     ax.set_xlim(xlo, xhi)
+    if soc[peak_i] > (xlo + xhi) / 2.0:   # judged on the whole plotted range, not just this session's
+        _peak_ann.set_ha("right")
+        _peak_ann.xyann = (-8, 12)
     ymax = max(all_powers + ([hardware["max_power_kw"]] if hardware and hardware.get("max_power_kw") else []))
     ax.set_ylim(0, ymax * 1.18)
     ax.xaxis.set_major_locator(MultipleLocator(10))
@@ -712,7 +916,15 @@ def render_curve_chart(current, hist, hardware_name, hardware, out_png, out_html
 
     ax2 = ax.twiny()
     ax2.set_xlim(ax.get_xlim())
-    tick_soc = np.linspace(soc.min(), soc.max(), 6)
+    # Top "minutes" labels: drop any that would sit on top of the previous one
+    # (a short session spans few SoC points, so evenly spaced ticks collided).
+    _xl = ax.get_xlim()
+    _min_gap = (_xl[1] - _xl[0]) * 0.10
+    tick_soc = []
+    for _t in np.linspace(soc.min(), soc.max(), 6):
+        if not tick_soc or _t - tick_soc[-1] >= _min_gap:
+            tick_soc.append(_t)
+    tick_soc = np.array(tick_soc)
     tick_min = np.interp(tick_soc, soc, elapsed)
     ax2.set_xticks(tick_soc)
     ax2.set_xticklabels([f"{m:.0f} min" for m in tick_min])
@@ -724,6 +936,9 @@ def render_curve_chart(current, hist, hardware_name, hardware, out_png, out_html
                  fontsize=17, fontweight="bold", fontfamily="DejaVu Sans")
     subtitle = (f"{title}\n{len(pts)} samples over {elapsed.max():.0f} min, "
                 f"{soc.min():.0f}% → {soc.max():.0f}% SoC  •  {_history_caption(hist)}")
+    if current.get("window_line"):
+        import textwrap as _tw
+        subtitle += "\n" + "\n".join(_tw.wrap(current["window_line"], 120))
     ax.set_title(subtitle, loc="left", color=TEXT_SECONDARY, fontsize=10.5, pad=30, fontfamily="DejaVu Sans",
                  linespacing=1.5)
 
@@ -1136,6 +1351,8 @@ def render_curve_html(current, hist, hardware, out_html, title):
 
     subtitle = (f"{title} - {len(pts)} samples, {min(soc):.0f}% -> {max(soc):.0f}% SoC, "
                 f"peak {peak:.0f} kW at {peak_soc:.0f}%\n{_history_caption(hist)}")
+    if current.get("window_line"):
+        subtitle += "\n" + current["window_line"]
     _write_html(out_html, "Charging curve", subtitle, series, axes, "State of charge (%)", hline)
 
 
@@ -1203,6 +1420,7 @@ def process_session(session, all_sessions, registry, force=False):
     hardware_name, hardware = match_hardware(session["slug"], registry)
     hist = historical_extension(all_sessions, session, registry)
     title = build_title(session, hardware_name, hardware)
+    session["window_line"] = window_line(estimate_window_minutes(all_sessions, session, registry))
 
     render_curve_chart(session, hist, hardware_name, hardware, curve_png, curve_html, title)
     render_curve_html(session, hist, hardware, curve_html, title)

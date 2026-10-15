@@ -15,6 +15,7 @@ Tessie Charging & Supercharger Reconciliation Engine
 """
 
 import os
+from lib.tessie_timezone import legacy_get as _legacy_get  # BUG-176
 import sys
 import time
 
@@ -262,6 +263,22 @@ DATE_FORMATS = [
     "%d %B %Y %I:%M %p",
     "%d %B %Y"
 ]
+
+def _rate_str(rate):
+    """'$0.52' or '$?' when an invoice carries no usable rate (B9)."""
+    return f"${rate:.2f}" if isinstance(rate, (int, float)) else "$?"
+
+
+def _aware_to_local_naive(value, tz_name=None):
+    """A timezone-aware datetime -> naive local (Sydney by default) time;
+    naive values and datetime.min/max pass through unchanged."""
+    if not isinstance(value, datetime) or value.tzinfo is None:
+        return value
+    try:
+        return value.astimezone(ZoneInfo(tz_name or tztools.DEFAULT_TIMEZONE)).replace(tzinfo=None)
+    except Exception:
+        return value.replace(tzinfo=None)
+
 
 def parse_flexible_date(date_str):
     if not date_str:
@@ -793,7 +810,7 @@ ChargingInvoiceParser = TeslaInvoiceParser
 # Main Charging Analyzer & Reconciliation Engine
 # -----------------------------------------------------------------------------
 
-class TessieChargingAnalyzer:
+class ChargingAnalyzer:
     def __init__(self, config_path=None, tessie_dir=None, invoices_dir=None, tolerance_mins=None, tolerance_kwh=None):
         self.script_dir = os.path.dirname(os.path.abspath(__file__))
         self.repo_root = os.path.dirname(self.script_dir)
@@ -1484,10 +1501,12 @@ class TessieChargingAnalyzer:
                 v_to_dt = parse_flexible_date(v_to_str) if v_to_str else None
                 v_from = v_from_dt if v_from_dt is not None else datetime.min
                 v_to = v_to_dt if v_to_dt is not None else datetime.max
-                if v_from and v_from.tzinfo:
-                    v_from = v_from.replace(tzinfo=None)
-                if v_to and v_to.tzinfo:
-                    v_to = v_to.replace(tzinfo=None)
+                # B7 (2026-09-30 review): archived valid_to/archived_at are UTC;
+                # convert to local time before comparing with the (local)
+                # charge time - dropping the zone shifted the changeover by
+                # 10-11 hours on a tariff-change day.
+                v_from = _aware_to_local_naive(v_from)
+                v_to = _aware_to_local_naive(v_to)
                 check_dt = dt.replace(tzinfo=None) if dt.tzinfo else dt
                 if v_from <= check_dt <= v_to:
                     target_obj = cand
@@ -1550,10 +1569,8 @@ class TessieChargingAnalyzer:
                     v_to_dt = parse_flexible_date(v_to_str) if v_to_str else None
                     v_from = v_from_dt if v_from_dt is not None else datetime.min
                     v_to = v_to_dt if v_to_dt is not None else datetime.max
-                    if v_from and v_from.tzinfo:
-                        v_from = v_from.replace(tzinfo=None)
-                    if v_to and v_to.tzinfo:
-                        v_to = v_to.replace(tzinfo=None)
+                    v_from = _aware_to_local_naive(v_from)  # B7: UTC -> local
+                    v_to = _aware_to_local_naive(v_to)
                     check_dt = dt.replace(tzinfo=None) if dt.tzinfo else dt
                     if v_from <= check_dt <= v_to:
                         target_obj = cand
@@ -1603,6 +1620,35 @@ class TessieChargingAnalyzer:
                 "is_archived": False,
                 "timezone": "UTC"
             }
+
+        # BUG-174 (2026-10-01): a home charger's rate is the household
+        # electricity tariff on that date, not the hand-entered rate card in
+        # personal_chargers.json - that card still had the pre-7-Sep-2026 AGL
+        # rates ($0.29 "overnight"), so a 5am October charge showed $0.29
+        # when AGL's real rate was 15.93c ex GST (all-day off-peak in
+        # October). Use the power provider's dated periods (the same source
+        # lib/session_cost.py prices home charges with), GST included like
+        # every other rate shown here.
+        if (target_obj.get("type") or "").lower() == "home":
+            try:
+                from providers_power import get_power_provider
+                _pp = get_power_provider()
+                _local = dt.replace(tzinfo=None) if dt.tzinfo else dt
+                _period = _pp.rate_for_date(_local.date(), _pp.load_rate_periods())
+                _ex, _bd = _pp.usage_rate_for_window(_period, _local, _local)
+                if "peak_fraction" in _bd and abs(_bd["peak_rate"] - _bd["offpeak_rate"]) > 1e-9:
+                    _nm = "Peak" if _bd["peak_fraction"] >= 0.5 else "Off-peak"
+                else:
+                    _nm = "Flat rate"
+                _prov = getattr(_pp, "display_name", None) or getattr(_pp, "name", None) or "Power"
+                return {
+                    "rate_per_kwh": round(_ex * 1.10, 4),
+                    "schedule_name": f"{_prov} {_nm} from {_period.get('effective_from')} ({_ex * 100:.2f}c ex GST)",
+                    "is_archived": False,
+                    "timezone": "Australia/Sydney",
+                }
+            except Exception:
+                pass  # fall back to the personal_chargers.json card below
 
         loc = target_obj.get("location", {})
         tz_name = resolve_location_timezone(
@@ -1676,6 +1722,7 @@ class TessieChargingAnalyzer:
                 if time_str >= s_time or time_str < e_time:
                     matched_rate = rate
                     matched_sched_name = s_name
+                    break  # B8: overnight windows stop at the first match, like daytime ones
         if matched_rate is None:
             matched_rate = flat_rate
             matched_sched_name = "Standard Rate" if flat_rate is not None else None
@@ -1848,7 +1895,8 @@ class TessieChargingAnalyzer:
                             matched_time = (row_s_at == s_at_clean) or (row_local and row_local.startswith(s_at_clean))
 
  # Match on started_at and location
-                            if matched_time and (not loc_clean or row_loc == loc_clean or loc_clean in row_loc or row_loc in loc_clean):
+                            if matched_time and (not loc_clean or row_loc == loc_clean or
+                                                 (row_loc and (loc_clean in row_loc or row_loc in loc_clean))):
                                 if new_cost is not None and "Cost" in row:
                                     row["Cost"] = f"{float(new_cost):.2f}"
                                 if new_rate is not None and "Cost Per kWh" in row:
@@ -1920,7 +1968,7 @@ class TessieChargingAnalyzer:
                                 # "(AEST)" column) isn't silently skipped
                                 # here before normalize_row_timezone()
                                 # below even gets a chance to run.
-                                s_at = (row.get("Started At (AEST)") or row.get("Started At")
+                                s_at = (_legacy_get(row, "Started At") or row.get("Started At")
                                         or row.get("Started At (UTC)") or row.get("Started At (Local)"))
                                 if not s_at:
                                     continue
@@ -1994,7 +2042,12 @@ class TessieChargingAnalyzer:
  # string regardless of which schema the source row came from, so the
  # SAME charge collides correctly whichever file (live or archived) is
  # read first.
-                                key = (s_at_display.strip(), loc.strip(), added.strip())
+                                # B1 (2026-09-30): start + location only. Energy
+                                # Added changes while a charge is in progress, so an
+                                # archived in-progress snapshot used to load as a
+                                # second charge next to the finished one. The live
+                                # master is read first, so its row wins.
+                                key = (s_at_display.strip(), loc.strip())
                                 if key in seen_keys:
                                     continue
                                 seen_keys.add(key)
@@ -2173,7 +2226,7 @@ class TessieChargingAnalyzer:
                 inside_temp = None
 
                 for row in reader:
-                    ts_str = row.get("Timestamp (AEST)") or row.get("Timestamp")
+                    ts_str = _legacy_get(row, "Timestamp") or row.get("Timestamp")
                     if ts_str:
                         dt = parse_flexible_date(ts_str)
                         if dt:
@@ -2259,8 +2312,8 @@ class TessieChargingAnalyzer:
                 for i in range(len(reader) - 1):
                     r0 = reader[i]
                     r1 = reader[i+1]
-                    ts0 = r0.get("Timestamp (AEST)") or r0.get("Timestamp")
-                    ts1 = r1.get("Timestamp (AEST)") or r1.get("Timestamp")
+                    ts0 = _legacy_get(r0, "Timestamp") or r0.get("Timestamp")
+                    ts1 = _legacy_get(r1, "Timestamp") or r1.get("Timestamp")
                     dt0 = parse_flexible_date(ts0)
                     dt1 = parse_flexible_date(ts1)
                     if dt0 and dt1 and dt1 > dt0:
@@ -2401,6 +2454,26 @@ class TessieChargingAnalyzer:
         dt = charge.get("started_at")
         if not dt:
             return None
+        # REQ-179: compare in UTC. Deep-dive telemetry timestamps are on
+        # Sydney's clock; the charge's own `started_at` is local to wherever
+        # the car was (Brisbane during Sydney daylight saving is an hour
+        # apart), so naive clocks mismatch and the same charge was re-fetched
+        # (a "_01" duplicate) on every backfill run.
+        s_epoch = charge.get("start_utc_epoch")
+        if s_epoch is None:
+            s_epoch = (charge.get("raw_charge") or {}).get("start_utc_epoch")
+        e_epoch = charge.get("end_utc_epoch")
+        if e_epoch is None:
+            e_epoch = (charge.get("raw_charge") or {}).get("end_utc_epoch")
+        if s_epoch is not None:
+            for dt_rec in self.detailed_charges:
+                if dt_rec.get("start_datetime"):
+                    r_epoch = tztools.epoch_for_naive_local(dt_rec["start_datetime"])
+                    if abs(r_epoch - s_epoch) <= 900:
+                        return dt_rec
+                    if e_epoch is not None and s_epoch <= r_epoch <= e_epoch:
+                        return dt_rec
+            return None
         for dt_rec in self.detailed_charges:
             if dt_rec.get("start_datetime"):
                 time_diff = abs((dt_rec["start_datetime"] - dt).total_seconds())
@@ -2421,7 +2494,7 @@ class TessieChargingAnalyzer:
         _load_drive_totals_in_period() already established, since charges
         and drives are still separate domains (AGENTS.md's sync/analysis
         split) - this is a read-only cross-reference, not an import of
-        TessieAnalyzer. Returns the deepdive file path, or None if no
+        DriveAnalyzer. Returns the deepdive file path, or None if no
         drive ended within range or it has no deepdive CSV on disk."""
         master_file = None
         for td in self.tessie_dirs:
@@ -2474,9 +2547,10 @@ class TessieChargingAnalyzer:
         stamp = f"{date_part}_{time_part.replace(':', '-')}_{tz_part}"
 
         for td in self.tessie_dirs:
-            candidate = os.path.join(td, "drives", "deepdive", f"drive_deepdive_{stamp}.csv")
-            if os.path.isfile(candidate):
-                return candidate
+            for candidate in (os.path.join(td, "drives", "deepdive", stamp, f"drive_deepdive_{stamp}.csv"),   # REQ-193
+                              os.path.join(td, "drives", "deepdive", f"drive_deepdive_{stamp}.csv")):      # legacy flat
+                if os.path.isfile(candidate):
+                    return candidate
         return None
 
     def _detect_preconditioning(self, session):
@@ -2507,7 +2581,7 @@ class TessieChargingAnalyzer:
             with open(deepdive_path, "r", encoding="utf-8-sig") as f:
                 reader = csv.DictReader(f)
                 for r in reader:
-                    ts_str = r.get("Timestamp (AEST)") or r.get("Timestamp")
+                    ts_str = _legacy_get(r, "Timestamp") or r.get("Timestamp")
                     row_dt = parse_flexible_date(ts_str) if ts_str else None
                     if not row_dt:
                         continue
@@ -2572,7 +2646,7 @@ class TessieChargingAnalyzer:
         This is a direct, read-only CSV read (mirrors the column names
         and localize() handling analyse_drives.py's own
         load_drives() uses) rather than importing/instantiating
-        TessieAnalyzer - charges stay a self-contained domain (AGENTS.md's
+        DriveAnalyzer - charges stay a self-contained domain (AGENTS.md's
         sync/analysis split), this is just borrowing drives_master.csv's
         own totals the same way sync_api_tessie.py's bulk-backfill
         already borrows the analyzer classes for a narrow, documented
@@ -2617,7 +2691,7 @@ class TessieChargingAnalyzer:
                         local_dt, _abbr, _off = _tztools.localize(utc_epoch, tz_name)
                         dt_start = local_dt.replace(tzinfo=None)
                     else:
-                        start_str = r.get("Started At (AEST)") or r.get("Started At") or r.get("Started")
+                        start_str = _legacy_get(r, "Started At") or r.get("Started At") or r.get("Started")
                         if not start_str:
                             continue
                         dt_start = datetime.strptime(start_str.strip()[:16], "%Y-%m-%d %H:%M")
@@ -2637,7 +2711,7 @@ class TessieChargingAnalyzer:
     CHARGE_FINALIZE_GRACE_SECONDS = 600  # mirrors tessie_drives_analyzer.py's DRIVE_FINALIZE_GRACE_SECONDS
 
     def _charge_is_in_progress(self, session):
-        """Mirrors tessie_drives_analyzer.py's TessieAnalyzer._drive_is_in_progress()
+        """Mirrors tessie_drives_analyzer.py's DriveAnalyzer._drive_is_in_progress()
         for the same reason: don't fetch /states for a session that might
         still be plugged in and charging - Tessie's own sync can take a
         few minutes to finalize a session's summary row after it actually
@@ -2746,6 +2820,11 @@ class TessieChargingAnalyzer:
 
         net_raw = str(session.get("network") or "")
         net_lower = net_raw.lower()
+        # A saved place that is not a charging-network site (a friend's
+        # house, an AC outlet: network "AC Public") is named by the place
+        # alone, like Home - there is no network to prefix.
+        if net_lower == "ac public":
+            net_raw = net_lower = ""
         if "supercharger" in net_lower or "tesla" in net_lower:
             net_slug = "Tesla"
         elif net_raw:
@@ -2757,7 +2836,7 @@ class TessieChargingAnalyzer:
         return ("_" + "_".join(parts)) if parts else ""
 
     def fetch_charge_deepdive_from_api(self, session):
-        """Mirrors tessie_drives_analyzer.py's TessieAnalyzer.fetch_drive_deepdive_from_api()
+        """Mirrors tessie_drives_analyzer.py's DriveAnalyzer.fetch_drive_deepdive_from_api()
         almost exactly (AGENTS.md TODO-029's own "prerequisite" - this IS
         that prerequisite, built here) - auto-fetches ONE session's
         detailed telemetry from Tessie's own GET /{vin}/states endpoint
@@ -2827,8 +2906,15 @@ class TessieChargingAnalyzer:
             local_tz = ZoneInfo(_tztools.DEFAULT_TIMEZONE)
         except Exception:
             local_tz = ZoneInfo("Australia/Sydney")
-        start_epoch = start_dt.replace(tzinfo=local_tz).timestamp()
-        end_epoch = end_dt.replace(tzinfo=local_tz).timestamp()
+        # REQ-179: use the charge's own stored UTC epoch. The naive local
+        # start_dt is in the zone the car was in, so reading it as Sydney time
+        # (the old behaviour) asked Tessie for the wrong hour whenever the
+        # charge was outside Sydney's offset (e.g. Brisbane in daylight saving).
+        _raw = session.get("raw_charge") or {}
+        _s_ep = session.get("start_utc_epoch", _raw.get("start_utc_epoch"))
+        _e_ep = session.get("end_utc_epoch", _raw.get("end_utc_epoch"))
+        start_epoch = float(_s_ep) if _s_ep is not None else start_dt.replace(tzinfo=local_tz).timestamp()
+        end_epoch = float(_e_ep) if _e_ep is not None else end_dt.replace(tzinfo=local_tz).timestamp()
 
         cfg = load_config()
         token = get_token(None, cfg)
@@ -2972,9 +3058,15 @@ class TessieChargingAnalyzer:
             
             print(f"\n\033[91m[{i+1}] {s_at} @ {place}\033[0m")
             print(f"    Tessie Telemetry: {bat_kwh:.2f} kWh | Cost: ${t_cost:.2f}")
+            if disc.get("group_size", 1) > 1 and disc.get("group_cost") is not None:
+                print(f"    Same plug-in has {disc['group_size']} Tessie records totalling ${disc['group_cost']:.2f} (invoices cover the whole plug-in)")
+                print(f"    Fixing it shares the invoice across those records by energy (as --update-master does)")
             print(f"    Official Invoice: {i_kwh:.2f} kWh | Cost: ${i_cost:.2f} | Rate: ${i_rate:.2f}/kWh" if i_rate == round(i_rate, 2) else f"    Official Invoice: {i_kwh:.2f} kWh | Cost: ${i_cost:.2f} | Rate: ${i_rate:.2f}/kWh")
             
-        print(f"\nOptions: [1-{len(self.discrepancies)}] to fix individually, [a]ll to fix all, [s]kip/continue")
+        print("\nOptions:")
+        print(f"  [1-{len(self.discrepancies)}] fix one")
+        print("  [a]ll - fix all")
+        print("  [s]kip / continue")
         
         while True:
             try:
@@ -2982,6 +3074,11 @@ class TessieChargingAnalyzer:
                 if choice in ['s', 'skip', 'c', 'continue', 'q', 'quit']:
                     break
                 
+                if any((d.get("_discrepancy") or {}).get("group_size", 1) > 1 for d in self.discrepancies) \
+                        and (choice in ['a', 'all'] or choice.isdigit()):
+                    # a multi-record plug-in is fixed as a whole, never record by record
+                    self.update_master_from_invoices(auto_confirm=True)
+                    return
                 to_fix = []
                 if choice in ['a', 'all']:
                     to_fix = self.discrepancies
@@ -3036,7 +3133,7 @@ class TessieChargingAnalyzer:
                                 writer.writeheader()
                                 
                                 for row in reader:
-                                    s_at = (row.get("Started At (AEST)") or row.get("Started At", "")).strip()
+                                    s_at = (_legacy_get(row, "Started At") or row.get("Started At", "")).strip()
                                     if not s_at:
                                         # TODO-009: this source file may
                                         # already be migrated (charges_master.csv
@@ -3091,6 +3188,102 @@ class TessieChargingAnalyzer:
             except (KeyboardInterrupt, EOFError):
                 break
 
+    PLUGIN_GROUP_MAX_GAP_S = 900   # REQ-182: longest pause that can still be one plug-in
+    PLUGIN_GROUP_NO_TELEMETRY_GAP_S = 600
+
+    def _telemetry_disconnected_between(self, charge_a, charge_b):
+        """True/False if the car's own deep-dive telemetry shows a
+        "Disconnected" charging state between the end of charge_a and the
+        start of charge_b; None when there is no usable telemetry."""
+        a_end = charge_a.get("end_utc_epoch")
+        b_start = charge_b.get("start_utc_epoch")
+        if a_end is None or b_start is None:
+            return None
+        seen_any = False
+        for ch in (charge_a, charge_b):
+            rec = self.match_detailed_charge(ch)
+            path = (rec or {}).get("source_path")
+            if not path or not os.path.isfile(path):
+                continue
+            cache = getattr(self, "_plugin_telemetry_cache", None)
+            if cache is None:
+                cache = self._plugin_telemetry_cache = {}
+            if path not in cache:
+                pts = []
+                try:
+                    with open(path, "r", encoding="utf-8-sig", errors="ignore") as f:
+                        for row in csv.DictReader(f):
+                            ts = _legacy_get(row, "Timestamp") or row.get("Timestamp")
+                            st = (row.get("Charging State") or "").strip()
+                            if not ts or not st:
+                                continue
+                            try:
+                                dtv = datetime.strptime(ts[:19], "%Y-%m-%d %H:%M:%S")
+                            except ValueError:
+                                continue
+                            # deep-dive clock text is on Sydney's clock
+                            pts.append((tztools.epoch_for_naive_local(dtv), st))
+                except Exception:
+                    pts = []
+                cache[path] = pts
+            pts = cache[path]
+            if not pts:
+                continue
+            seen_any = True
+            for ep, st in pts:
+                if a_end - 120 <= ep <= b_start + 120 and st.lower() == "disconnected":
+                    return True
+        return False if seen_any else None
+
+    def _same_plugin_site(self, a, b):
+        la, lb = a.get("location_raw"), b.get("location_raw")
+        if la and lb and la == lb:
+            return True
+        try:
+            if None not in (a.get("latitude"), a.get("longitude"), b.get("latitude"), b.get("longitude")):
+                return haversine_distance_m(a["latitude"], a["longitude"], b["latitude"], b["longitude"]) <= 150
+        except Exception:
+            pass
+        return False
+
+    def build_plugin_groups(self):
+        """REQ-182: Tessie ends a charge record whenever the car reports
+        "Complete" (e.g. the user raises the charge limit while still
+        plugged in) and starts a new one when charging resumes, but the
+        Supercharger network - and Tesla's invoice - treat the whole plug-in
+        as ONE session. Returns {charge_index: (leader_index, member_indexes)}
+        for public (fast/Super) charges at one site with a short pause and no
+        "Disconnected" state between them. Home/AC sessions are never grouped."""
+        order = sorted(
+            [i for i, c in enumerate(self.charges)
+             if c.get("start_utc_epoch") is not None and c.get("end_utc_epoch") is not None
+             and (c.get("is_supercharger") or c.get("is_fast_charger"))],
+            key=lambda i: self.charges[i]["start_utc_epoch"])
+        groups = {}
+        cur = []
+        for i in order:
+            c = self.charges[i]
+            if cur:
+                prev = self.charges[cur[-1]]
+                gap = c["start_utc_epoch"] - prev["end_utc_epoch"]
+                joined = False
+                if (-120 <= gap <= self.PLUGIN_GROUP_MAX_GAP_S
+                        and bool(prev.get("is_supercharger")) == bool(c.get("is_supercharger"))
+                        and self._same_plugin_site(prev, c)):
+                    disc = self._telemetry_disconnected_between(prev, c)
+                    joined = (disc is False) or (disc is None and gap <= self.PLUGIN_GROUP_NO_TELEMETRY_GAP_S)
+                if joined:
+                    cur.append(i)
+                    continue
+                if len(cur) > 1:
+                    for m in cur:
+                        groups[m] = (cur[0], list(cur))
+            cur = [i]
+        if len(cur) > 1:
+            for m in cur:
+                groups[m] = (cur[0], list(cur))
+        return groups
+
     def reconcile(self, interactive=False):
         if not self._loaded:
             self.load_charges()
@@ -3102,13 +3295,47 @@ class TessieChargingAnalyzer:
         reconciled = []
         matched_invoice_indices = set()
 
+        # B5 (2026-09-30 review): a date-only invoice used to match only if
+        # Tessie's own cost was within $0.50 of it - exactly the case where
+        # the invoice is needed to correct Tessie. It then showed as
+        # "INVOICE ONLY" and --update-master could append a second row for
+        # the same charge. Now it also matches when it's the ONLY charge at
+        # that location that day (unambiguous whatever the cost).
+        plugin_groups = self.build_plugin_groups()
+        group_inv = {}   # leader index -> (best_inv_idx, best_inv) for followers to share
+        same_day_counts = {}
+        for i_idx, inv in enumerate(self.invoices):
+            inv_dt = inv.get("date")
+            if inv_dt and inv_dt.hour == 0 and inv_dt.minute == 0 and inv_dt.second == 0:
+                same_day_counts[i_idx] = sum(
+                    1 for k2, c2 in enumerate(self.charges)
+                    if c2.get("started_at") and c2["started_at"].date() == inv_dt.date()
+                    and self.match_location(inv.get("location_raw"), inv.get("network"), c2)
+                    and (k2 not in plugin_groups or plugin_groups[k2][0] == k2)
+                )
+
         for c_idx, charge in enumerate(self.charges):
             dt = charge["started_at"]
             best_inv_idx = None
             best_inv = None
             min_time_diff = float("inf")
 
+            # REQ-182: one plug-in = one invoice. A follower shares its leader's
+            # invoice; the leader is judged on the whole plug-in's cost/energy.
+            grp = plugin_groups.get(c_idx)
+            is_follower = bool(grp and grp[0] != c_idx)
+            group_cost = charge["cost"]
+            group_kwh = charge["energy_used_kwh"] if charge["energy_used_kwh"] > 0 else charge["energy_added_kwh"]
+            if grp:
+                members = [self.charges[m] for m in grp[1]]
+                group_cost = sum(m["cost"] for m in members)
+                group_kwh = sum((m["energy_used_kwh"] if m["energy_used_kwh"] > 0 else m["energy_added_kwh"]) for m in members)
+            if is_follower:
+                best_inv_idx, best_inv = group_inv.get(grp[0], (None, None))
+
             for i_idx, inv in enumerate(self.invoices):
+                if is_follower:
+                    break
                 if i_idx in matched_invoice_indices:
                     continue
                 inv_dt = inv.get("date")
@@ -3129,7 +3356,10 @@ class TessieChargingAnalyzer:
                     if dt.date() == inv_dt.date():
                         if self.match_location(inv.get("location_raw"), inv.get("network"), charge):
                             inv_cost = inv.get("total_cost")
-                            if inv_cost is None or abs(charge["cost"] - inv_cost) < 0.50:
+                            inv_kwh_m = inv.get("energy_kwh")
+                            kwh_close = bool(inv_kwh_m and group_kwh and abs(inv_kwh_m - group_kwh) / inv_kwh_m <= 0.05)
+                            if (inv_cost is None or abs(group_cost - inv_cost) < 0.50
+                                    or kwh_close or same_day_counts.get(i_idx) == 1):
                                 best_inv_idx = i_idx
                                 best_inv = inv
                                 break
@@ -3159,6 +3389,8 @@ class TessieChargingAnalyzer:
             session_emoji = charge["emoji"]
             session_registry_obj = charge["registry_obj"]
 
+            if grp and not is_follower and best_inv is not None:
+                group_inv[c_idx] = (best_inv_idx, best_inv)
             if best_inv:
                 matched_invoice_indices.add(best_inv_idx)
                 inv_num = best_inv.get("invoice_number")
@@ -3184,11 +3416,13 @@ class TessieChargingAnalyzer:
                 if u_rate is not None and invoice_rate is not None and abs(u_rate - invoice_rate) >= 0.01:
                     invoice_net_rate = u_rate
 
-                cost_diff = abs((invoice_cost or 0) - tessie_cost) if invoice_cost is not None else 0.0
+                cost_diff = abs((invoice_cost or 0) - (group_cost if grp else tessie_cost)) if invoice_cost is not None else 0.0
                 t_rate = charge.get("cost_per_kwh") or 0.0
                 rate_diff = abs((invoice_rate or 0) - t_rate) if (invoice_rate is not None and t_rate > 0) else 0.0
 
-                if invoice_cost is not None and cost_diff >= 0.02:
+                if is_follower:
+                    status = "MATCHED ✅"
+                elif invoice_cost is not None and cost_diff >= 0.02:
                     status = "COST MISMATCH ⚠️"
                     charge["_discrepancy"] = {
                         "invoice_cost": invoice_cost,
@@ -3196,7 +3430,9 @@ class TessieChargingAnalyzer:
                         "invoice_kwh": invoice_disp_kwh,
                         "cost_diff": cost_diff,
                         "rate_diff": rate_diff,
-                        "status": status
+                        "status": status,
+                        "group_cost": group_cost if grp else None,
+                        "group_size": len(grp[1]) if grp else 1,
                     }
                     self.discrepancies.append(charge)
                 elif invoice_rate is not None and rate_diff >= 0.01:
@@ -3207,7 +3443,9 @@ class TessieChargingAnalyzer:
                         "invoice_kwh": invoice_disp_kwh,
                         "cost_diff": cost_diff,
                         "rate_diff": rate_diff,
-                        "status": status
+                        "status": status,
+                        "group_cost": group_cost if grp else None,
+                        "group_size": len(grp[1]) if grp else 1,
                     }
                     self.discrepancies.append(charge)
                 else:
@@ -3224,6 +3462,12 @@ class TessieChargingAnalyzer:
  # some nonzero duration and a nonzero odometer reading, so this
  # combination is otherwise unreachable. Never compute a "loss"
  # or "efficiency" from a single duplicated number.
+            if is_follower:
+                invoice_disp_kwh = None
+                invoice_cost = None
+                invoice_rate = None
+                invoice_net_rate = None
+                dispenser_kwh = tessie_car_kwh if tessie_car_kwh > 0 else tessie_bat_kwh
             is_invoice_only_entry = charge["duration_mins"] <= 0 and charge["odometer_km"] <= 0
 
             if is_invoice_only_entry:
@@ -3234,6 +3478,13 @@ class TessieChargingAnalyzer:
                 car_overshoot_kwh = 0.0
             elif invoice_disp_kwh and invoice_disp_kwh > 0:
                 car_inlet = tessie_car_kwh if tessie_car_kwh > 0 else battery_kwh
+                eff_battery_kwh = battery_kwh
+                if grp and not is_follower:
+                    # REQ-182: the invoice covers the whole plug-in, so compare
+                    # it with the whole plug-in's intake, not just this record.
+                    _mem = [self.charges[m] for m in grp[1]]
+                    eff_battery_kwh = sum(m["energy_added_kwh"] for m in _mem)
+                    car_inlet = sum((m["energy_used_kwh"] if m["energy_used_kwh"] > 0 else m["energy_added_kwh"]) for m in _mem)
  # max(0.0, ...) here used to silently clamp a
  # negative "cable loss" (car reporting MORE intake than the
  # dispenser/invoice billed - physically backwards) to a
@@ -3244,9 +3495,9 @@ class TessieChargingAnalyzer:
                 raw_cable_delta = invoice_disp_kwh - car_inlet
                 cable_loss_kwh = max(0.0, raw_cable_delta)
                 car_overshoot_kwh = max(0.0, -raw_cable_delta) if raw_cable_delta < -0.05 else 0.0
-                car_loss_kwh = max(0.0, car_inlet - battery_kwh)
-                loss_kwh = max(0.0, invoice_disp_kwh - battery_kwh)
-                efficiency_pct = (battery_kwh / invoice_disp_kwh * 100.0)
+                car_loss_kwh = max(0.0, car_inlet - eff_battery_kwh)
+                loss_kwh = max(0.0, invoice_disp_kwh - eff_battery_kwh)
+                efficiency_pct = (eff_battery_kwh / invoice_disp_kwh * 100.0)
             else:
                 cable_loss_kwh = 0.0
                 car_overshoot_kwh = 0.0
@@ -3314,6 +3565,9 @@ class TessieChargingAnalyzer:
                 "status": status,
                 "matched_invoice": best_inv,
                 "detailed_telemetry": matched_detailed,
+                "plugin_group_size": len(grp[1]) if grp else 1,
+                "plugin_group_role": ("follower" if is_follower else ("leader" if grp else None)),
+                "plugin_group_leader_start": (self.charges[grp[0]].get("started_at_str") if grp else None),
                 "raw_charge": charge
             })
 
@@ -3377,6 +3631,26 @@ class TessieChargingAnalyzer:
             x["datetime"] or datetime.min))
         for i, session in enumerate(reconciled):
             session["charge_index"] = i + 1
+        # REQ-183: a multi-record plug-in has ONE invoice. Give every record its
+        # own share (by Tessie-measured energy, at the invoice's billed rate) so
+        # per-session views, totals and exports add up to the invoice instead of
+        # counting it once per record. The invoice's whole-plug-in figure is kept
+        # as plugin_invoice_total.
+        for _lead in reconciled:
+            if _lead.get("plugin_group_role") == "leader" and _lead.get("invoice_cost") is not None \
+                    and _lead.get("plugin_invoice_total") is None:
+                _lead["plugin_invoice_total"] = _lead["invoice_cost"]
+        _shares = self.plugin_invoice_shares(reconciled)
+        for _m in reconciled:
+            if id(_m) in _shares:
+                _c, _r = _shares[id(_m)]
+                _m["invoice_cost"] = _c
+                if _r is not None:
+                    _m["invoice_rate"] = _r
+                _m["plugin_invoice_total"] = next(
+                    (l.get("plugin_invoice_total") for l in reconciled
+                     if l.get("plugin_group_role") == "leader" and l.get("invoice_number") == _m.get("invoice_number")),
+                    None)
         self.reconciled_sessions = reconciled
         self.save_invoice_location_map()
         return self.reconciled_sessions
@@ -3392,7 +3666,7 @@ class TessieChargingAnalyzer:
                 reader = csv.DictReader(f)
                 fieldnames = reader.fieldnames
                 for row in reader:
-                    s_at = row.get("Started At (AEST)") or row.get("Started At")
+                    s_at = _legacy_get(row, "Started At") or row.get("Started At")
                     if s_at and s_at.strip() == target_started_at.strip():
                         row['Cost'] = f"{new_cost:.2f}"
                         if 'Cost Per kWh' in row and new_rate is not None:
@@ -3420,7 +3694,7 @@ class TessieChargingAnalyzer:
         if not dest_dirs:
             print("\033[31mNo Tessie data directory configured - set \"tessie_directory\" in config.json "
                   "(see Tessie/config.example.json). Refusing to write charges_master.csv into the repo folder.\033[0m")
-            return 0
+            return False
 
         for d in dest_dirs:
             try:
@@ -3434,6 +3708,12 @@ class TessieChargingAnalyzer:
 
         existing_records = []
         existing_keys = set()
+        # B1 (2026-09-30 review): (start, location) -> row, so a charge that
+        # was still in progress at the last sync is UPDATED when its final
+        # figures arrive, instead of appended again as a second row (the
+        # 3-part key includes Energy Added, which changes as it charges).
+        existing_by_start = {}
+        finalized_count = 0
         existing_disk_row_count = 0
         
         fieldnames = [
@@ -3501,9 +3781,16 @@ class TessieChargingAnalyzer:
                             if key not in existing_keys:
                                 existing_keys.add(key)
                                 existing_records.append(row)
+                                existing_by_start.setdefault((s_at_canon, loc), row)
                         break
                 except Exception as e:
-                    pass
+ # 2026-09-30 review: this used to be `pass`. A read that failed
+ # part-way left existing_records holding only SOME of the real rows,
+ # and the master was then rewritten with just those plus the new
+ # charges - silently losing the rest. Stop before writing anything.
+                    print(f"\033[31m✖ Could not read {mf} ({e}). Nothing was written - "
+                          f"charges_master.csv is unchanged.\033[0m")
+                    return False
 
         if not self.reconciled_sessions:
             self.reconcile()
@@ -3521,6 +3808,25 @@ class TessieChargingAnalyzer:
             loc_key = str(raw.get("location_raw", loc)).strip()
             
             key = (s_at, loc_key, added)
+            prior = existing_by_start.get((s_at, loc_key))
+            if key not in existing_keys and prior is not None:
+                prior_ended = (prior.get("Ended At (UTC)") or prior.get("Ended At") or "").strip()
+                new_ended = str(raw.get("ended_at_str", "") or "").strip()
+                if not prior_ended and new_ended:
+                    # Same charge, now finished: refresh its figures in place.
+                    prior["Ended At"] = new_ended
+                    for col in ("Ended At (UTC)", "Ended At TZ", "Ended At (Local)"):
+                        prior.pop(col, None)
+                    prior["Duration (Minutes)"] = f"{c.get('duration_mins', 0):.0f}"
+                    prior["Energy Added (kWh)"] = added
+                    prior["Energy Used (kWh)"] = f"{c.get('tessie_car_kwh', 0):.2f}"
+                    prior["Rated Range Added (km)"] = f"{c.get('range_added_km', 0):.2f}"
+                    prior["Ending Battery (%)"] = str(c.get("end_soc", ""))
+                    prior["Cost"] = f"{c.get('tessie_cost', 0):.2f}"
+                    prior["Cost Per kWh"] = f"{c.get('tessie_rate', 0):.2f}"
+                    finalized_count += 1
+                existing_keys.add(key)
+                continue
             if key not in existing_keys:
                 # TODO-009: plain keys - normalize_row_timezone() (run
                 # over all_records below) derives the real UTC/TZ/Local
@@ -3545,6 +3851,21 @@ class TessieChargingAnalyzer:
                     "Cost": f"{c.get('tessie_cost', 0):.2f}",
                     "Cost Per kWh": f"{c.get('tessie_rate', 0):.2f}"
                 }
+                # REQ-179: carry the source's EXACT UTC epoch + the zone where
+                # the car actually was, instead of the display string. The
+                # display string is already local to that zone, and
+                # normalize_row_timezone() reads a naive string as SYDNEY time,
+                # so a charge in another zone (e.g. Brisbane while Sydney is on
+                # daylight saving) came out an hour (Perth: up to 3) wrong.
+                for _lbl, _ek, _zk in (("Started At", "start_utc_epoch", "start_tz"),
+                                       ("Ended At", "end_utc_epoch", "end_tz")):
+                    _ep = raw.get(_ek)
+                    if _ep is not None:
+                        _zone = raw.get(_zk) or tztools.resolve_timezone(raw.get("latitude"), raw.get("longitude"))
+                        _ldt, _abbr, _ = tztools.localize(_ep, _zone)
+                        row[f"{_lbl} (UTC)"] = str(int(_ep))
+                        row[f"{_lbl} TZ"] = _zone
+                        row[f"{_lbl} (Local)"] = f"{_ldt.strftime('%Y-%m-%d %H:%M')} {_abbr}" if _ldt else ""
                 new_records.append(row)
                 existing_keys.add(key)
                 
@@ -3591,13 +3912,13 @@ class TessieChargingAnalyzer:
         # somehow still lacks it.
         all_records.sort(key=lambda x: (
             int(x["Started At (UTC)"]) if x.get("Started At (UTC)") else 0,
-            x.get("Started At (AEST)") or x.get("Started At") or x.get("Started") or ""))
+            _legacy_get(x, "Started At") or x.get("Started At") or x.get("Started") or ""))
 
  # Safety net (/024/025 history), same as consolidate_drives():
  # back up the master file's pre-change state whenever the row count
  # is about to actually change - new charges landing, or stale
  # duplicates found on disk being cleaned up - before overwriting it.
-        rows_changing = existing_disk_row_count != len(all_records)
+        rows_changing = existing_disk_row_count != len(all_records) or finalized_count > 0
         duplicates_found_in_existing = max(0, existing_disk_row_count - len(existing_records))
         if rows_changing:
             backup_dir = os.path.join(dest_dirs[0], "archive") if dest_dirs else None
@@ -3610,14 +3931,37 @@ class TessieChargingAnalyzer:
                         except Exception:
                             pass
 
+        # Atomic write (temp file in the same folder + os.replace): an
+        # interrupted or failed write can no longer leave a truncated
+        # master, and a failure is reported instead of swallowed.
+        write_errors = []
         for mf in master_files:
+            tmp_path = None
             try:
-                with open(mf, "w", newline="", encoding="utf-8") as f:
+                import tempfile
+                fd, tmp_path = tempfile.mkstemp(prefix=".tmp_charges_", suffix=".csv",
+                                                dir=os.path.dirname(os.path.abspath(mf)))
+                with os.fdopen(fd, "w", newline="", encoding="utf-8") as f:
                     writer = csv.DictWriter(f, fieldnames=fieldnames, extrasaction="ignore", restval="")
                     writer.writeheader()
                     writer.writerows(all_records)
-            except Exception:
-                pass
+                    f.flush()
+                    os.fsync(f.fileno())
+                if os.path.exists(mf):
+                    try:
+                        shutil.copymode(mf, tmp_path)
+                    except OSError:
+                        pass
+                os.replace(tmp_path, mf)
+                tmp_path = None
+            except Exception as e:
+                write_errors.append(f"{os.path.basename(mf)}: write failed - {e} (file left as it was)")
+            finally:
+                if tmp_path and os.path.exists(tmp_path):
+                    try:
+                        os.remove(tmp_path)
+                    except OSError:
+                        pass
 
  # Sanity-check what was actually written before reporting success.
         sanity_issues = []
@@ -3635,16 +3979,22 @@ class TessieChargingAnalyzer:
                         f"{os.path.basename(mf)}: {exact_dupes} exact-duplicate line(s) still present after dedup")
             except Exception as e:
                 sanity_issues.append(f"{os.path.basename(mf)}: could not verify after write - {e}")
+        sanity_issues = write_errors + sanity_issues
         if sanity_issues:
-            print("\033[31m⚠ Consolidate sanity check failed:\033[0m")
+            print("\033[31m✖ Consolidate did NOT complete cleanly:\033[0m")
             for issue in sanity_issues:
                 print(f"   - {issue}")
+            print("\033[31m  Not reporting success. The pre-change backup (if rows changed) is in charges/archive/.\033[0m")
+            return False
 
         if duplicates_found_in_existing > 0:
             print(f"{C_ORANGE}🧹 Flagged & auto-removed {duplicates_found_in_existing} duplicate row(s) found in the existing charges_master.csv "
                   f"(pre-change backup saved to charges/archive/){C_RESET}")
         dest_names = ", ".join(shorten_display_path(m, 0) for m in master_files)
+        if finalized_count:
+            print(f"\033[92mUpdated {finalized_count} charge(s) that were still in progress at the last sync.\033[0m")
         print(f"\033[92mSuccessfully appended {len(new_records)} new charges (Total: {len(all_records)}) to:\033[0m {dest_names}")
+        return True
 
     def _classify_charging_level(self, net_sessions):
  # TODO-032: real charging-LEVEL classification (Level 1/2/3) to replace
@@ -4029,6 +4379,74 @@ class TessieChargingAnalyzer:
         print("└" + "┴".join("─" * w for w in m_widths) + "┘")
         print(f"👉 {C_DIM}Configure benchmark vehicle profiles and running costs in Tessie/comparison_vehicles.json{C_RESET}\n")
 
+    @staticmethod
+    def session_peak_kw(s):
+        """REQ-185: highest charger power seen in the session's own telemetry
+        (None when there is no telemetry). A consolidated plug-in carries the
+        highest across its records in `peak_power_kw`."""
+        if s.get("peak_power_kw") is not None:
+            return s["peak_power_kw"] or None
+        tel = s.get("detailed_telemetry")
+        v = tel.get("peak_power_kw") if isinstance(tel, dict) else None
+        return v or None
+
+    @staticmethod
+    def session_range_kmh(s):
+        """REQ-185: rated range recovered per hour of charging (km/h) - how
+        quickly range was recovered. None when there is no duration."""
+        d = s.get("duration_mins") or 0
+        km = s.get("range_added_km") or 0
+        return (km / (d / 60.0)) if d > 0 else None
+
+    def plugin_followers(self, lead, sessions=None):
+        """REQ-184: the later Tessie records of the same plug-in as `lead`."""
+        if lead.get("plugin_group_role") != "leader" or not lead.get("raw_charge"):
+            return []
+        key = lead["raw_charge"].get("started_at_str")
+        return [f for f in (sessions if sessions is not None else self.reconciled_sessions)
+                if f.get("plugin_group_role") == "follower"
+                and f.get("plugin_group_leader_start") == key
+                and f.get("invoice_number") == lead.get("invoice_number")]
+
+    def consolidate_for_display(self, sessions):
+        """REQ-184: Tessie lists a plug-in that paused and resumed as several
+        sessions, but it is ONE charge (one plug-in, one invoice). For lists,
+        totals and exports, show it once under its first record: the first
+        record's row carries the whole plug-in (duration, energy and range
+        summed, the end SoC of the last record, the invoice total) and is
+        flagged consolidated (shown with a *). The later records are not listed
+        separately - selecting one points to the first. The underlying Tessie
+        records are not changed, and `sessions` is not modified."""
+        present = {id(x) for x in sessions}
+        out = []
+        for x in sessions:
+            if x.get("plugin_group_role") == "follower":
+                lead = next((l for l in self.reconciled_sessions
+                             if l.get("plugin_group_role") == "leader"
+                             and x in self.plugin_followers(l)), None)
+                if lead is not None and id(lead) in present:
+                    continue   # folded into its first record
+                out.append(x)
+                continue
+            fol = self.plugin_followers(x) if x.get("plugin_group_role") == "leader" else []
+            if not fol:
+                out.append(x)
+                continue
+            members = [x] + fol
+            m = dict(x)
+            m["is_consolidated"] = True
+            m["consolidated_indices"] = [y["charge_index"] for y in members]
+            m["duration_mins"] = sum((y.get("duration_mins") or 0) for y in members)
+            m["end_soc"] = members[-1].get("end_soc", x.get("end_soc"))
+            _pk = [v for v in (self.session_peak_kw(y) for y in members) if v]
+            m["peak_power_kw"] = max(_pk) if _pk else None
+            for k in ("range_added_km", "battery_kwh", "tessie_cost"):
+                m[k] = sum((y.get(k) or 0) for y in members)
+            if x.get("invoice_cost") is not None:
+                m["invoice_cost"] = sum((y.get("invoice_cost") or 0) for y in members)
+            out.append(m)
+        return out
+
     def print_sessions_table(self, filtered_sessions=None):
         sessions = filtered_sessions if filtered_sessions is not None else self.reconciled_sessions
         if not sessions:
@@ -4051,27 +4469,17 @@ class TessieChargingAnalyzer:
  # an invoice is linked. The invoice NUMBER itself is still shown on
  # the per-session inspect view, so nothing is actually lost.
         headers = [
-            "#", "Date / Time", "Place / Station", "Network", "SoC %", "Dur", "Disp kWh", "Bat kWh", "Eff %", "Rate", "Cost", "Status"
+            "#", "Date / Time", "Place / Station", "Network", "SoC %", "Dur", "Peak kW", "km/h", "Disp kWh", "Bat kWh", "Eff %", "Rate", "Cost", "Status"
         ]
-        widths = [
-            4, 18, place_col_width, 22, 9, 6, 10, 9, 8, 9, 8, 18
-        ]
-        total_inner_w = sum(widths) + len(widths) - 1
-
-        print(f"┌{'─' * total_inner_w}┐")
-        sess_title = f" ⚡ {C_BOLD}RECONCILED CHARGING SESSIONS ({len(sessions)} sessions){C_RESET}"
-        print(f"│{pad_display(sess_title, total_inner_w, 'left', truncate=True)}│")
-        top_b = "├" + "┬".join("─" * w for w in widths) + "┤"
-        print(top_b)
-        
-        h_row = "│" + "│".join(pad_display(f"{C_BOLD}{h}{C_RESET}", w, "center") for h, w in zip(headers, widths)) + "│"
-        print(h_row)
-
-        mid_b = "├" + "┼".join("─" * w for w in widths) + "┤"
-        print(mid_b)
+        # "L" = left-aligned text, "R" = right-aligned number. Every column is
+        # sized to its own widest cell (or its header), so a narrow column such
+        # as Rate is no wider than it needs to be.
+        aligns = ["R", "L", "L", "L", "R", "R", "R", "R", "R", "R", "R", "R", "R", "L"]
+        table_rows = []
 
         for s in sessions:
             idx_str = str(s["charge_index"]) if s["charge_index"] is not None else "-"
+            idx_str += "*" if s.get("is_consolidated") else " "
             dt_str = s["datetime_str"][:16] if s["datetime_str"] else "-"
             
             clean_place = s["place_name"]
@@ -4082,6 +4490,10 @@ class TessieChargingAnalyzer:
             net_str = s["network"]
             soc_str = f"{s['start_soc']}%➔{s['end_soc']}%" if (s["start_soc"] or s["end_soc"]) else "-"
             dur_str = f"{int(s['duration_mins'])}m" if s["duration_mins"] > 0 else "-"
+            _pk = self.session_peak_kw(s)
+            peak_str = f"{_pk:.0f}" if _pk else "-"
+            _kmh = self.session_range_kmh(s)
+            kmh_str = f"{_kmh:.0f}" if _kmh is not None else "-"
             disp_str = f"{s['dispenser_kwh']:.2f}"
             bat_str = f"{s['battery_kwh']:.2f}"
             eff_str = f"{s['efficiency_pct']:.1f}%" if s.get("efficiency_pct") is not None else "N/A"
@@ -4097,39 +4509,68 @@ class TessieChargingAnalyzer:
             cost_str = f"${cost_val:.2f}" if cost_val is not None else "$0.00"
 
             stat = s["status"]
+            rate_style = cost_style = ""
             if "MATCHED" in stat:
-                stat_styled = f"{C_GREEN}{stat}{C_RESET}"
+                stat_style = C_GREEN
             elif "RATE MISMATCH" in stat:
-                stat_styled = f"{C_YELLOW}{stat}{C_RESET}"
-                rate_str = f"{C_YELLOW}{rate_str}{C_RESET}"
+                stat_style, rate_style = C_YELLOW, C_YELLOW
             elif "COST MISMATCH" in stat or "WRONG" in stat:
-                stat_styled = f"{C_RED}{stat}{C_RESET}"
-                cost_str = f"{C_RED}{cost_str}{C_RESET}"
+                stat_style, cost_style = C_RED, C_RED
             elif "UNRECONCILED" in stat:
-                stat_styled = f"{C_RED}{stat}{C_RESET}"
+                stat_style = C_RED
             elif "INVOICE ONLY" in stat:
-                stat_styled = f"{C_BLUE}{stat}{C_RESET}"
+                stat_style = C_BLUE
             else:
-                stat_styled = f"{C_DIM}{stat}{C_RESET}"
+                stat_style = C_DIM
 
-            row_str = "│" + "│".join([
-                pad_display(idx_str + " ", widths[0], "right", truncate=True),
-                pad_display(" " + dt_str, widths[1], "left", truncate=True),
-                pad_display(f" {place_str}", widths[2], "left", truncate=True),
-                pad_display(f" {net_str}", widths[3], "left", truncate=True),
-                pad_display(soc_str + " ", widths[4], "right", truncate=True),
-                pad_display(dur_str + " ", widths[5], "right", truncate=True),
-                pad_display(f"{disp_str} ", widths[6], "right", truncate=True),
-                pad_display(f"{bat_str} ", widths[7], "right", truncate=True),
-                pad_display(eff_str + " ", widths[8], "right", truncate=True),
-                pad_display(f"{rate_str} ", widths[9], "right", truncate=True),
-                pad_display(f"{cost_str} ", widths[10], "right", truncate=True),
-                pad_display(f" {stat_styled}", widths[11], "left", truncate=True)
-            ]) + "│"
-            print(row_str)
+            table_rows.append([
+                (idx_str, ""), (dt_str, ""), (place_str, ""), (net_str, ""), (soc_str, ""), (dur_str, ""),
+                (peak_str, ""), (kmh_str, ""), (disp_str, ""), (bat_str, ""), (eff_str, ""),
+                (rate_str, rate_style), (cost_str, cost_style), (stat, stat_style),
+            ])
+
+        widths = []
+        for ci, h in enumerate(headers):
+            cell_w = max([display_len(r[ci][0]) for r in table_rows] + [0])
+            if ci == 0:
+                widths.append(max(cell_w + 1, display_len(h) + 2))   # number + "*"/" " marker
+            else:
+                widths.append(max(cell_w, display_len(h)) + 2)
+        total_inner_w = sum(widths) + len(widths) - 1
+
+        print(f"┌{'─' * total_inner_w}┐")
+        sess_title = f" ⚡ {C_BOLD}RECONCILED CHARGING SESSIONS ({len(sessions)} sessions){C_RESET}"
+        print(f"│{pad_display(sess_title, total_inner_w, 'left', truncate=True)}│")
+        top_b = "├" + "┬".join("─" * w for w in widths) + "┤"
+        print(top_b)
+
+        h_row = "│" + "│".join(pad_display(f"{C_BOLD}{h}{C_RESET}", w, "center") for h, w in zip(headers, widths)) + "│"
+        print(h_row)
+
+        mid_b = "├" + "┼".join("─" * w for w in widths) + "┤"
+        print(mid_b)
+
+        for r in table_rows:
+            cells = []
+            for ci, (txt, style) in enumerate(r):
+                shown = f"{style}{txt}{C_RESET}" if style else txt
+                if ci == 0:
+                    cells.append(pad_display(shown, widths[ci], "right", truncate=True))
+                elif aligns[ci] == "L":
+                    cells.append(pad_display(f" {shown}", widths[ci], "left", truncate=True))
+                else:
+                    cells.append(pad_display(f"{shown} ", widths[ci], "right", truncate=True))
+            print("│" + "│".join(cells) + "│")
 
         bot_b = "└" + "┴".join("─" * w for w in widths) + "┘"
         print(bot_b)
+
+        for s in sessions:
+            if s.get("is_consolidated"):
+                ids = s.get("consolidated_indices") or []
+                later = ", ".join(f"#{i}" for i in ids[1:])
+                print(f"  {C_DIM}* #{ids[0]} is one plug-in that Tessie recorded as {len(ids)} sessions (also {later}); "
+                      f"shown once, with one invoice. Select any of them to inspect.{C_RESET}")
 
         bad_entries = [
             s for s in sessions 
@@ -4398,7 +4839,9 @@ class TessieChargingAnalyzer:
  # this same session (see AGENTS.md REQ-037).
         src_dir = os.path.dirname(dt_rec.get("source_path") or "") or os.getcwd()
         base = os.path.splitext(os.path.basename(dt_rec.get("source_file") or "session"))[0]
-        out_path = os.path.join(src_dir, f"{base}_curve.html")
+        # Its own name: the power-vs-SoC "_curve.html" belongs to lib/charge_curves.py,
+        # and this time-axis chart used to overwrite it whenever a session was inspected.
+        out_path = os.path.join(src_dir, f"{base}_timeline.html")
 
         if session:
             dt = session.get("datetime")
@@ -4419,14 +4862,23 @@ class TessieChargingAnalyzer:
             f"{dt_rec.get('avg_power_kw', 0):.1f} kW"
         ]
 
-        mins_20_80, note_20_80 = self._estimate_20_80_time(timestamps, raw.get("battery_level_pct") or [])
-        if mins_20_80 is not None:
-            line = f"Est. 20% → 80%: {mins_20_80:.1f} min"
-            if note_20_80:
-                line += f" ({note_20_80})"
-            subtitle_lines.append(line)
-        elif note_20_80:
-            subtitle_lines.append(f"20% → 80%: {note_20_80}")
+        # 20% -> 80%: measured when this session covers it; otherwise an estimate
+        # from this session's own pace plus earlier sessions on the same hardware
+        # (lib/charge_curves.estimate_window_minutes, REQ-187).
+        try:
+            from lib.charge_curves import (discover_deepdive_sessions, load_charger_registries,
+                                           estimate_window_minutes, window_line)
+            _dd_dir = os.path.dirname(dt_rec.get("source_path") or "")
+            _pool = discover_deepdive_sessions(_dd_dir) if _dd_dir else []
+            _cur = next((x for x in _pool if os.path.abspath(x["path"]) == os.path.abspath(dt_rec.get("source_path") or "")), None)
+            if _cur is not None:
+                subtitle_lines.append(window_line(estimate_window_minutes(_pool, _cur, load_charger_registries())))
+        except Exception:
+            mins_20_80, note_20_80 = self._estimate_20_80_time(timestamps, raw.get("battery_level_pct") or [])
+            if mins_20_80 is not None:
+                subtitle_lines.append(f"Est. 20% → 80%: {mins_20_80:.1f} min" + (f" ({note_20_80})" if note_20_80 else ""))
+            elif note_20_80:
+                subtitle_lines.append(f"20% → 80%: {note_20_80}")
 
         if session:
             kwh = session.get("invoice_disp_kwh") or session.get("dispenser_kwh") or session.get("battery_kwh")
@@ -4586,26 +5038,15 @@ class TessieChargingAnalyzer:
  # not Australia/Sydney) - converts through the session's own
  # recorded IANA zone instead, same pattern evaluate_session()
  # below already uses.
+        # 2026-09-28: this window-overlap match is now the single shared
+        # implementation in lib.session_cost.find_matching_evnex_session()
+        # (was inline here and duplicated again in the inline --inspect
+        # confirmation prompt further below - extracted so both stay in
+        # sync with the same real matching semantics).
         try:
-            evnex_sessions = _evc.load_evnex_deepdive_sessions()
+            matched = _evc.find_matching_evnex_session(s_dt, s_end)
         except Exception:
-            evnex_sessions = []
-        pad = timedelta(minutes=2)
-        matched = None
-        for es in evnex_sessions:
-            es_start_epoch = _evc.iso_to_epoch(es.get("charging_started_utc"))
-            if es_start_epoch is None:
-                continue
-            es_end_epoch = _evc.iso_to_epoch(es.get("charging_stopped_utc")) or es_start_epoch
-            try:
-                es_tz = ZoneInfo(es.get("timezone") or "Australia/Sydney")
-            except Exception:
-                es_tz = ZoneInfo("Australia/Sydney")
-            es_start_dt = datetime.fromtimestamp(es_start_epoch, tz=timezone.utc).astimezone(es_tz).replace(tzinfo=None)
-            es_end_dt = datetime.fromtimestamp(es_end_epoch, tz=timezone.utc).astimezone(es_tz).replace(tzinfo=None)
-            if es_start_dt <= s_end + pad and es_end_dt >= s_dt - pad:
-                matched = es
-                break
+            matched = None
         if not matched:
             return None
 
@@ -4776,6 +5217,137 @@ class TessieChargingAnalyzer:
 
         return result_out
 
+    _DEEPDIVE_NAME_RE = re.compile(
+        r"^(charge_deepdive_\d{4}-\d\d-\d\d_\d{4}(?:_[A-Z]{3,5})?(?:_\d\d)?)(_.+)$")
+
+    def rename_stale_deepdive_files(self, deepdive_dir, log=print):
+        """A deep-dive telemetry file is named after the place its session
+        resolved to AT THE TIME it was fetched. If the places/charger
+        registries later change (e.g. a saved place such as a friend's house
+        is added, where an earlier keyword match had named the file after an
+        unrelated PlugShare entry), the name goes stale. Rename the file -
+        and its chart siblings - to the session's current location so the
+        name, the chart title and the per-site history pooling all agree.
+        Only the file NAME changes (never the telemetry), only for sessions
+        whose name is place-derived (registry hardware with a Tesla
+        short_name is left alone), and never over an existing file.
+        Returns the set of new csv paths so their charts get rebuilt."""
+        import glob
+        renamed = set()
+        if not self.reconciled_sessions:
+            self.reconcile(interactive=False)
+        for x in self.reconciled_sessions:
+            tel = x.get("detailed_telemetry") or {}
+            src = tel.get("source_path") or ""
+            if not src or x.get("network") == "Evnex" or os.path.realpath(os.path.dirname(src)) != os.path.realpath(deepdive_dir):
+                continue
+            # Tesla Supercharger names carry the registry's own short_name
+            # (the key the history pooling matches on) - never re-derive them.
+            _net = str(x.get("network") or "").lower()
+            if "tesla" in _net or "supercharger" in _net or x.get("is_supercharger"):
+                continue
+            reg_obj = x.get("registry_obj")
+            if isinstance(reg_obj, dict) and (reg_obj.get("tesla_metadata", {}) or {}).get("short_name"):
+                continue
+            m = self._DEEPDIVE_NAME_RE.match(os.path.splitext(os.path.basename(src))[0])
+            if not m:
+                continue
+            want = self._deepdive_location_suffix(x)
+            if not want or m.group(2) == want:
+                continue
+            old_stem = os.path.join(deepdive_dir, m.group(0))
+            new_stem = os.path.join(deepdive_dir, m.group(1) + want)
+            if os.path.exists(new_stem + ".csv"):
+                continue
+            moved = 0
+            for f in glob.glob(glob.escape(old_stem) + ".*") + glob.glob(glob.escape(old_stem) + "_*"):
+                try:
+                    os.replace(f, new_stem + f[len(old_stem):])
+                    moved += 1
+                except Exception as e:
+                    log(f"{C_RED}✘ could not rename {os.path.basename(f)}: {e}{C_RESET}")
+            if moved:
+                renamed.add(new_stem + ".csv")
+                tel["source_path"] = new_stem + ".csv"
+                log(f"{C_YELLOW}↻ Renamed deep-dive {m.group(2).lstrip('_')} -> {want.lstrip('_')} "
+                    f"({os.path.basename(m.group(1))}, {moved} file(s)){C_RESET}")
+        return renamed
+
+    def build_all_charging_curves(self, force=False, log=print):
+        """REQ-183: make sure EVERY deep-dive telemetry file has its four
+        chart files (<stem>_curve.png/.html and <stem>_profile.png/.html),
+        not just the ones someone happened to --inspect. Already-built
+        charts are skipped unless force=True. Then audits DC (Supercharger
+        / fast) sessions in the master: any with no telemetry file, or
+        whose telemetry file is header-only / unparseable (so no curve is
+        possible), is listed with the reason rather than silently missing."""
+        from lib.charge_curves import (
+            discover_deepdive_sessions, load_charger_registries, process_session,
+        )
+        deepdive_dir = os.path.join(self.charges_dirs[0], "deepdive")
+        if not os.path.isdir(deepdive_dir):
+            log(f"{C_YELLOW}No deep-dive folder at {deepdive_dir}{C_RESET}")
+            return
+        renamed_paths = self.rename_stale_deepdive_files(deepdive_dir, log=log)
+        sessions = discover_deepdive_sessions(deepdive_dir)
+        registry = load_charger_registries()
+        built = failed = 0
+        for sess in sessions:
+            try:
+                if process_session(sess, sessions, registry,
+                                   force=force or sess["path"] in renamed_paths):
+                    built += 1
+            except Exception as e:
+                failed += 1
+                log(f"{C_RED}✘ {os.path.basename(sess['path'])}: {e}{C_RESET}")
+        parsed = {os.path.basename(x["path"]) for x in sessions}
+        unusable = sorted(
+            f for f in os.listdir(deepdive_dir)
+            if f.startswith("charge_deepdive_") and f.endswith(".csv") and f not in parsed
+        )
+        # Header-only files can never produce a chart and would be re-listed
+        # forever; move them aside (not deleted) so nothing needs doing by hand.
+        # The sub-folder is not scanned by the deep-dive loaders.
+        if unusable:
+            qdir = os.path.join(deepdive_dir, "_unusable")
+            os.makedirs(qdir, exist_ok=True)
+            moved = []
+            for f in unusable:
+                try:
+                    os.replace(os.path.join(deepdive_dir, f), os.path.join(qdir, f))
+                    moved.append(f)
+                except Exception as e:
+                    log(f"{C_RED}✘ could not move {f}: {e}{C_RESET}")
+            if moved:
+                log(f"{C_YELLOW}⚠ Moved {len(moved)} header-only deep-dive file(s) (no samples, no curve possible) to deepdive/_unusable/{C_RESET}")
+            unusable = []
+        log(f"{C_GREEN}✔ Charging curves: {built} built, {len(sessions) - built - failed} already present, {failed} failed.{C_RESET}")
+        if unusable:
+            log(f"{C_YELLOW}⚠ {len(unusable)} deep-dive file(s) have no usable samples (header-only), so no curve is possible:{C_RESET}")
+            for f in unusable:
+                log(f"    {f}")
+
+        if not self.reconciled_sessions:
+            self.reconcile(interactive=False)
+        dc = [x for x in self.reconciled_sessions
+              if x.get("raw_charge") and (x.get("is_supercharger") or x.get("is_fast_charger"))]
+        no_tel, no_chart = [], []
+        for x in dc:
+            tel = x.get("detailed_telemetry")
+            if not tel:
+                no_tel.append(x)
+                continue
+            src = tel.get("source_path") or ""
+            stem = os.path.splitext(src)[0]
+            if not (os.path.isfile(stem + "_curve.png") and os.path.isfile(stem + "_profile.png")):
+                no_chart.append(x)
+        log(f"\nDC sessions in master: {len(dc)} | with telemetry + curves: {len(dc) - len(no_tel) - len(no_chart)} | "
+            f"no telemetry: {len(no_tel)} | telemetry but no chart: {len(no_chart)}")
+        for x in no_tel:
+            log(f"    no telemetry  {x['datetime_str']} @ {x['place_name']}")
+        for x in no_chart:
+            log(f"    no chart      {x['datetime_str']} @ {x['place_name']}")
+
     def precompute_energy_sources(self, sessions=None, force_refresh=False, log=print):
         """Batch-populates the '<evnex .json stem>_sources.json' cross-
         check cache (get_energy_source_crosscheck()'s own caching
@@ -4861,6 +5433,14 @@ class TessieChargingAnalyzer:
             print(f"{C_RED}Could not find charging session matching:{C_RESET} {target}")
             return
 
+        if target_session.get("plugin_group_role") == "follower":
+            lead = next((l for l in self.reconciled_sessions
+                         if l.get("plugin_group_role") == "leader" and target_session in self.plugin_followers(l)), None)
+            if lead is not None:
+                print(f"\n  {C_YELLOW}#{target_session['charge_index']} is part of consolidated session "
+                      f"#{lead['charge_index']} (one plug-in, one invoice) - showing #{lead['charge_index']}.{C_RESET}")
+                target_session = lead
+
         s = target_session
         box_w = 145
         idx_label = f"#{s['charge_index']}" if s["charge_index"] is not None else "-"
@@ -4877,6 +5457,17 @@ class TessieChargingAnalyzer:
         loc_raw = s["raw_charge"]["location_raw"] if s["raw_charge"] else "-"
         l2 = f"  {C_BOLD}Raw Address:{C_RESET}          {loc_raw}"
         print(f"│{pad_display(l2, box_w - 2, truncate=True)}│")
+
+        _fol = self.plugin_followers(s)
+        if _fol:
+            _members = [s] + _fol
+            lc = f"  {C_BOLD}Consolidated Session *:{C_RESET} one plug-in, one invoice - Tessie recorded {len(_members)} sessions:"
+            print(f"│{pad_display(lc, box_w - 2, truncate=True)}│")
+            for _y in _members:
+                _yc = _y.get("invoice_cost") if _y.get("invoice_cost") is not None else _y.get("tessie_cost", 0)
+                ly = (f"      #{_y['charge_index']}  {_y['datetime_str']}  {_y.get('duration_mins', 0):.0f} min  "
+                      f"{_y['start_soc']}% ➔ {_y['end_soc']}%  {_y.get('battery_kwh', 0):.2f} kWh to battery  ${_yc:.2f}")
+                print(f"│{pad_display(ly, box_w - 2, truncate=True)}│")
         
         # TODO-009: real per-event abbreviation instead of a hardcoded
         # "(AEST)" label that's wrong half the year (AEDT) and would be
@@ -4995,7 +5586,7 @@ class TessieChargingAnalyzer:
             except Exception:
                 curve_path = None
             if curve_path:
-                t7 = f"    • {C_BOLD}{'Charging Curve:':<{lw_tele}}{C_RESET}{shorten_display_path(curve_path, 85)}"
+                t7 = f"    • {C_BOLD}{'Charging Timeline:':<{lw_tele}}{C_RESET}{shorten_display_path(curve_path, 85)}"
                 print(f"│{pad_display(t7, box_w - 2, truncate=True)}│")
 
  # REQ-154: the fuller power-vs-SoC/pack-temp + voltage-current-
@@ -5051,10 +5642,14 @@ class TessieChargingAnalyzer:
             matched_inv = s.get("matched_invoice") if isinstance(s.get("matched_invoice"), dict) else {}
             inv_net_name = matched_inv.get("network") or s["network"]
             inv_type_label = ("Tesla Tax Invoice" if (s["is_supercharger"] or "tesla" in inv_net_name.lower()) else f"{inv_net_name} Receipt") + ":"
-            rate_details = f"@ ${s['invoice_rate']:.2f}/kWh"
-            if s.get("invoice_net_rate") and s.get("invoice_net_rate") != s.get("invoice_rate"):
-                rate_details = f"@ ${s['invoice_rate']:.2f}/kWh gross [${s['invoice_net_rate']:.2f} ex-GST]"
-            l10 = f"    • {C_BOLD}{inv_type_label:<{lw_fin}}{C_RESET}${s['invoice_cost']:.2f} AUD (Inv #{s['invoice_number']} {rate_details})"
+            _inv_rate = s.get("invoice_rate")
+            rate_details = f"@ ${_inv_rate:.2f}/kWh" if _inv_rate is not None else ""
+            if _inv_rate is not None and s.get("invoice_net_rate") and s.get("invoice_net_rate") != _inv_rate:
+                rate_details = f"@ ${_inv_rate:.2f}/kWh gross [${s['invoice_net_rate']:.2f} ex-GST]"
+            _share_note = ""
+            if s.get("plugin_group_size", 1) > 1 and s.get("plugin_invoice_total") is not None:
+                _share_note = f" - share of ${s['plugin_invoice_total']:.2f} plug-in total"
+            l10 = f"    • {C_BOLD}{inv_type_label:<{lw_fin}}{C_RESET}${(s['invoice_cost'] if s['invoice_cost'] is not None else 0):.2f} AUD (Inv #{s['invoice_number']} {rate_details}){_share_note}"
             print(f"│{pad_display(l10, box_w - 2, truncate=True)}│")
             
             delta_cost = (s["invoice_cost"] or 0) - s["tessie_cost"]
@@ -5090,7 +5685,18 @@ class TessieChargingAnalyzer:
                 if real_cost is not None:
                     tariff_delta = s["theoretical_cost"] - real_cost
                     if abs(tariff_delta) >= 1.0:
-                        l12c = f"    {C_RED}⚠️  Tariff Audit Delta: ${tariff_delta:+.2f} - the registry's rate card disagrees with what was actually billed by more than rounding; the registry data (not the real cost) is the more likely thing to be wrong here.{C_RESET}"
+                        if s.get("emoji") == "🏠" and s.get("invoice_cost") is None:
+                            # BUG-175: at home the "real" side here is Tessie's own
+                            # estimate (the flat price set for this location in
+                            # Tessie), and the tariff above is the actual AGL rate
+                            # (BUG-174) - so Tessie's figure is the one that's off.
+                            t_rate = s.get("tessie_rate")
+                            t_rate_s = f" (${t_rate:.2f}/kWh)" if isinstance(t_rate, (int, float)) else ""
+                            l12c = (f"    {C_YELLOW}⚠️  Tessie vs tariff: ${tariff_delta:+.2f} - Tessie's cost uses the flat price set for "
+                                    f"Home in Tessie{t_rate_s}, not your AGL tariff. The energy-source cost below is the real one; "
+                                    f"'./Tools/analyse_charging.py --sync-tessie-costs' writes it back to Tessie.{C_RESET}")
+                        else:
+                            l12c = f"    {C_RED}⚠️  Tariff Audit Delta: ${tariff_delta:+.2f} - the registry's rate card disagrees with what was actually billed by more than rounding; the registry data (not the real cost) is the more likely thing to be wrong here.{C_RESET}"
                         for w_line in wrap_text_display(l12c, box_w - 4):
                             print(f"│{pad_display(w_line, box_w - 2, truncate=True)}│")
         else:
@@ -5183,6 +5789,49 @@ class TessieChargingAnalyzer:
             x9 = f"    {C_DIM}({cache_note}){C_RESET}"
             print(f"│{pad_display(x9, box_w - 2, truncate=True)}│")
 
+            # 2026-09-28: `s` here is a charges_master.csv-shaped row
+            # (network/datetime/duration_mins/status), NOT the raw Evnex
+            # deep-dive session dict get_tessie_match_status_for_session()
+            # expects (charging_started_utc/timezone/evnex_session_id) -
+            # resolve the actual matching Evnex session first, the same
+            # window-overlap way get_energy_source_crosscheck() already
+            # did to build xcheck itself, so this stays correct even
+            # against a stale *_sources.json cache file that predates
+            # the tessie_match_status field entirely.
+            evnex_matched = None
+            s_dt = s.get("datetime")
+            if s_dt:
+                s_end = s_dt + timedelta(minutes=s.get("duration_mins", 0) or 0)
+                try:
+                    import lib.session_cost as _evc_match
+                    evnex_matched = _evc_match.find_matching_evnex_session(s_dt, s_end)
+                except Exception:
+                    evnex_matched = None
+            match_status = None
+            if evnex_matched:
+                from lib.session_cost import get_tessie_match_status_for_session
+                match_status = get_tessie_match_status_for_session(evnex_matched)
+            if match_status == "confirmed_other_vehicle":
+                x10 = f"    {C_RED}⚠️  CONFIRMED: not your vehicle - excluded from invoice reconciliation{C_RESET}"
+                print(f"│{pad_display(x10, box_w - 2, truncate=True)}│")
+            elif match_status == "unconfirmed_no_match":
+                x10 = f"    {C_YELLOW}⚠️  No matching Tessie charge for this session (sync confirmed complete through this window){C_RESET}"
+                print(f"│{pad_display(x10, box_w - 2, truncate=True)}│")
+
+        if xcheck and match_status == "unconfirmed_no_match" and sys.stdin.isatty():
+            try:
+                print("\n  Was this your Tesla?")
+                print("    [y]es")
+                print("    [n]o - flag as another vehicle")
+                print("    [Enter] skip")
+                ans = input("    > ").strip().lower()
+                if ans in ("n", "no"):
+                    from lib.session_cost import confirm_other_vehicle
+                    confirm_other_vehicle(evnex_matched.get("evnex_session_id"))
+                    print("  -> flagged as another vehicle, will be excluded from now on.")
+            except (KeyboardInterrupt, EOFError):
+                print()
+
         if "MATCHED" in s['status'] or "VERIFIED" in s['status']:
             stat_color = C_GREEN
         elif "RATE MISMATCH" in s['status']:
@@ -5212,9 +5861,12 @@ class TessieChargingAnalyzer:
                 if has_xcheck:
                     pv_label_action = xcheck.get('pv_provider_display_name', 'PV') if xcheck else 'PV'
                     actions.append(f"[r]efresh energy sources (AGL/Evnex/{pv_label_action})")
-                actions.append("[Enter] to return")
-                prompt_actions = ", ".join(actions) + ": "
-                act = input(f"{C_BOLD}Action:{C_RESET} {prompt_actions}").strip().lower()
+                actions.append("[Enter] return")
+                # REQ-138/REQ-178: one option per line, then a bare prompt.
+                print(f"{C_BOLD}Action:{C_RESET}")
+                for a_ in actions:
+                    print(f"  {a_}")
+                act = input("  > ").strip().lower()
                 if act in ['o', 'open', 'chart', 'c'] and has_curve:
                     try_open_in_browser(curve_path)
                     self.inspect_session(target)
@@ -5278,11 +5930,11 @@ class TessieChargingAnalyzer:
         print(f"\033[96m📥 UPDATE MASTER CSV WITH INVOICE #{s['invoice_number']}\033[0m")
         print(f"   Station:          {s['emoji']} {s['place_name']} ({s['datetime_str']})")
         print(f"   Current Telemetry: Rate: ${s['tessie_rate']:.2f}/kWh | Cost: ${s['tessie_cost']:.2f}")
-        print(f"   Official Invoice:  Rate: ${inv_rate:.2f}/kWh | Cost: ${inv_cost:.2f} AUD (Billed: {disp_kwh:.2f} kWh)")
+        print(f"   Official Invoice:  Rate: {_rate_str(inv_rate)}/kWh | Cost: ${inv_cost:.2f} AUD (Billed: {(disp_kwh or 0):.2f} kWh)")
         print(f"\033[96m────────────────────────────────────────────────────────────────────────\033[0m")
         
         try:
-            confirm = input(f"Save Invoice Cost (${inv_cost:.2f}) & Gross Rate (${inv_rate:.2f}/kWh) to master CSV? [Y/n]: ").strip().lower()
+            confirm = input(f"Save Invoice Cost (${inv_cost:.2f}) & Gross Rate ({_rate_str(inv_rate)}/kWh) to master CSV? [Y/n]: ").strip().lower()
             if confirm not in ['n', 'no']:
                 raw = s.get("raw_charge") or {}
                 s_at = raw.get("started_at_str") or s.get("datetime_str")
@@ -5398,21 +6050,65 @@ class TessieChargingAnalyzer:
                     pass
         return appended_count
 
+    def plugin_invoice_shares(self, sessions):
+        """REQ-183: one invoice can cover a plug-in that Tessie recorded as
+        several sessions. Tessie's sessions (times, energy) are left exactly as
+        Tessie reported them; the invoice's cost is shared across them in
+        proportion to the energy Tessie measured for each, so every record
+        carries its true share and the plug-in sums to the invoice.
+        Returns {id(session): (cost, rate)} for every member of a matched
+        multi-record plug-in. Shared by --update-master and the Tessie cost
+        push, so both always agree."""
+        def _sess_kwh(x):
+            r = x.get("raw_charge") or {}
+            return (r.get("energy_used_kwh") or r.get("energy_added_kwh") or x.get("battery_kwh") or 0.0)
+
+        share_cost = {}
+        for lead in sessions:
+            if (lead.get("plugin_group_role") == "leader" and lead.get("invoice_number")
+                    and lead.get("invoice_cost") is not None and lead.get("raw_charge")):
+                members = [lead] + [f for f in sessions
+                                    if f.get("plugin_group_role") == "follower"
+                                    and f.get("plugin_group_leader_start") == lead["raw_charge"].get("started_at_str")
+                                    and f.get("invoice_number") == lead.get("invoice_number")]
+                tot = sum(_sess_kwh(m) for m in members)
+                inv_c = lead.get("plugin_invoice_total") if lead.get("plugin_invoice_total") is not None else lead["invoice_cost"]
+                inv_r = lead.get("invoice_rate")
+                left = round(inv_c, 2)
+                for m in members[1:]:
+                    c = round(inv_c * _sess_kwh(m) / tot, 2) if tot > 0 else 0.0
+                    share_cost[id(m)] = (c, inv_r)
+                    left = round(left - c, 2)
+                share_cost[id(lead)] = (left, inv_r)
+        return share_cost
+
     def update_master_from_invoices(self, auto_confirm=False):
         """Scans all reconciled sessions and updates master CSV for any discrepancies against invoices."""
         if not self.reconciled_sessions:
             self.reconcile()
             
+        share_cost = self.plugin_invoice_shares(self.reconciled_sessions)
+
         candidates = []
         for s in self.reconciled_sessions:
-            if s.get("invoice_number") and s.get("invoice_cost") is not None:
-                i_cost = s["invoice_cost"]
-                i_rate = s.get("invoice_rate")
+            if id(s) in share_cost:
+                i_cost, i_rate = share_cost[id(s)]
                 t_cost = s.get("tessie_cost", 0)
                 t_rate = s.get("tessie_rate", 0)
                 if abs(i_cost - t_cost) >= 0.01 or (i_rate is not None and abs(i_rate - t_rate) >= 0.01):
                     candidates.append((s, i_cost, i_rate))
-                    
+            elif s.get("invoice_number") and s.get("invoice_cost") is not None and s.get("plugin_group_role") != "follower":
+                i_cost = s["invoice_cost"]
+                i_rate = s.get("invoice_rate")
+                if i_rate is None:
+                    # B9: an invoice with no printed rate - derive it, or leave None
+                    _kwh = s.get("invoice_disp_kwh") or s.get("dispenser_kwh") or s.get("battery_kwh")
+                    i_rate = round(i_cost / _kwh, 2) if _kwh else None
+                t_cost = s.get("tessie_cost", 0)
+                t_rate = s.get("tessie_rate", 0)
+                if abs(i_cost - t_cost) >= 0.01 or (i_rate is not None and abs(i_rate - t_rate) >= 0.01):
+                    candidates.append((s, i_cost, i_rate))
+
         if not candidates:
             print(f"\n{C_GREEN}✔ All charges in master CSV already match their official invoices.{C_RESET}\n")
             return
@@ -5426,7 +6122,9 @@ class TessieChargingAnalyzer:
             t_rate = s.get("tessie_rate", 0.0)
             if s.get("raw_charge") is None:
                 tag = f"{C_BLUE}[Missing from CSV ➔ Append]{C_RESET}"
-            elif abs(i_cost - t_cost) >= 0.01 and abs(i_rate - t_rate) >= 0.01:
+            elif s.get("plugin_group_role") == "follower":
+                tag = f"{C_YELLOW}[Same plug-in as {s.get('plugin_group_leader_start')} ➔ share of that invoice]{C_RESET}"
+            elif abs(i_cost - t_cost) >= 0.01 and i_rate is not None and abs(i_rate - t_rate) >= 0.01:
                 tag = f"{C_RED}[Cost & Rate Mismatch ➔ Fix CSV]{C_RESET}"
             elif abs(i_cost - t_cost) >= 0.01:
                 tag = f"{C_RED}[Cost Mismatch ➔ Fix CSV Cost]{C_RESET}"
@@ -5435,7 +6133,10 @@ class TessieChargingAnalyzer:
 
             print(f"[{idx}] {s['datetime_str']} @ {s['place_name']} {tag}")
             print(f"    Current CSV:   ${t_cost:.2f} (@ ${t_rate:.2f}/kWh)")
-            print(f"    Invoice #{s['invoice_number']}: ${i_cost:.2f} (@ ${i_rate:.2f}/kWh on {disp_kwh:.2f} kWh)")
+            if s.get("plugin_group_role") == "follower" or s.get("plugin_group_role") == "leader":
+                print(f"    Invoice #{s['invoice_number']} covers the whole plug-in; this record's share by energy: ${i_cost:.2f} (@ {_rate_str(i_rate)}/kWh)")
+            else:
+                print(f"    Invoice #{s['invoice_number']}: ${i_cost:.2f} (@ {_rate_str(i_rate)}/kWh on {disp_kwh:.2f} kWh)")
             
         if not auto_confirm:
             try:
@@ -5479,7 +6180,7 @@ class TessieChargingAnalyzer:
             s_at = raw.get("started_at_str") or s.get("datetime_str") or ""
             dt_part = s_at.split()[0] if s_at else ""
             pl = s.get("place_name") or ""
-            line_str = f"  • Date: {dt_part:<10} │ {s_at} @ {pl[:24]:<24} │ Set: ${i_cost:.2f} (@ ${i_rate:.2f}/kWh)"
+            line_str = f"  • Date: {dt_part:<10} │ {s_at} @ {pl[:24]:<24} │ Set: ${i_cost:.2f} (@ {_rate_str(i_rate)}/kWh)"
             print(f"│{pad_display(line_str, box_w - 2, 'left', truncate=True)}│")
         print(f"{C_ORANGE}└{'─' * (box_w - 2)}┘{C_RESET}\n")
         self.load_charges()
@@ -5547,6 +6248,14 @@ class TessieChargingAnalyzer:
 
         rows = []
         n_push = n_skip_no_id = n_skip_no_cost = n_skip_low_confidence = 0
+        n_skip_invalid = n_skip_ambiguous = 0
+        # B4 (2026-09-30 review): a Tessie id matched by more than one local
+        # charge (nearest-within-120s lookup) must never get two different
+        # pushes - skip it instead of letting the last one win.
+        import math
+        from collections import Counter as _Counter
+        id_counts = _Counter((r["cache_record"] or {}).get("id") for r in results if r["cache_record"])
+        plugin_shares = self.plugin_invoice_shares([x["session"] for x in results])
         for r in results:
             s = r["session"]
             raw = r["raw_charge"]
@@ -5556,12 +6265,21 @@ class TessieChargingAnalyzer:
             is_home = r["is_home"]
             low_confidence = is_home and r["our_cost_source"] == "flat_rate_fallback(no_pv_data)"
 
+            kwh_added = (raw or {}).get("energy_added_kwh") or 0
             if tessie_id is None:
                 action = "SKIP (no Tessie id - predates raw API cache)"
                 n_skip_no_id += 1
+            elif id_counts.get(tessie_id, 0) > 1:
+                action = "SKIP (Tessie id matches more than one local charge)"
+                n_skip_ambiguous += 1
             elif our_cost is None:
                 action = "SKIP (no cost available)"
                 n_skip_no_cost += 1
+            elif (not isinstance(our_cost, (int, float)) or not math.isfinite(our_cost)
+                  or our_cost < 0 or (our_cost == 0 and kwh_added > 0)):
+                # B3: never push a NaN, negative, or $0 cost for a real charge.
+                action = f"SKIP (implausible cost {our_cost!r} - check)"
+                n_skip_invalid += 1
             elif only_confident and low_confidence:
                 action = "SKIP (low confidence - no PV data)"
                 n_skip_low_confidence += 1
@@ -5578,6 +6296,14 @@ class TessieChargingAnalyzer:
                 "tessie_id": tessie_id,
                 "old_cost": r["tessie_original_cost"],
                 "new_cost": our_cost,
+                # A public charge's rate is the one the invoice actually billed
+                # (a plug-in's records all share it), not cost / battery kWh -
+                # that mixes billed and delivered energy and drifts the rate.
+                "new_rate": (plugin_shares[id(s)][1] if id(s) in plugin_shares and plugin_shares[id(s)][1] is not None
+                             else s.get("invoice_rate") if (not is_home and s.get("invoice_rate") is not None
+                                                            and s.get("invoice_cost") is not None)
+                             else (round(our_cost / kwh_added, 4)
+                                   if isinstance(our_cost, (int, float)) and kwh_added else None)),
                 "our_cost_source": r["our_cost_source"],
                 "action": action,
             })
@@ -5595,7 +6321,8 @@ class TessieChargingAnalyzer:
         print(f"{'-' * 100}")
         print(f"{n_push} to push, {n_skip_no_id} skipped (no Tessie id), "
               f"{n_skip_no_cost} skipped (no cost available), "
-              f"{n_skip_low_confidence} skipped (low confidence)")
+              f"{n_skip_low_confidence} skipped (low confidence), "
+              f"{n_skip_ambiguous} skipped (ambiguous id), {n_skip_invalid} skipped (implausible cost)")
 
         if not apply:
             print("\nDry run only - no API calls made. Re-run with --apply to push these to Tessie.")
@@ -5606,34 +6333,31 @@ class TessieChargingAnalyzer:
             return {"pushed": 0, "failed": 0, "skipped": len(rows), "rows": rows}
 
         n_pushed = n_failed = n_already_correct = 0
-        # Resumability: a prior run's own cache-vs-master-CSV "old_cost" is
-        # frozen at whenever resources/api_cache/charges.json was last
-        # refreshed, so it never reflects a push THIS run already made -
-        # comparing against it would make every resumed run redo the same
-        # already-pushed prefix instead of making forward progress (this bit
-        # a real 180s-timeout mid-batch run live). Re-reading the master CSV's
-        # OWN current Cost - which patch_charge_record() below DOES keep live
-        # - correctly detects "already pushed in an earlier invocation" and
-        # skips the redundant API call entirely.
-        live_master = os.path.join(self.charges_dirs[0], "charges_master.csv")
-        current_master_cost = {}
+        # Resumability / idempotence: remember what was actually SENT to Tessie
+        # (Tessie id -> cost) in a small ledger, and skip a charge only when
+        # the ledger says Tessie already holds exactly this figure. The master
+        # CSV is NOT a safe stand-in for "what Tessie holds": --update-master
+        # (invoices) edits the master without telling Tessie, which previously
+        # made a changed cost look "already pushed" and never reach Tessie.
+        ledger_path = os.path.join(self.repo_root, "resources", "api_cache", "tessie_cost_push_ledger.json")
         try:
-            with open(live_master, "r", encoding="utf-8-sig", newline="") as f:
-                for csv_row in csv.DictReader(f):
-                    key = csv_row.get("Started At (Local)", "").strip()
-                    if key:
-                        current_master_cost[key] = csv_row.get("Cost")
+            with open(ledger_path, "r", encoding="utf-8") as f:
+                ledger = json.load(f)
         except Exception:
-            pass
+            ledger = {}
+
+        def _save_ledger():
+            try:
+                tmp = ledger_path + ".tmp-edit"
+                with open(tmp, "w", encoding="utf-8") as f:
+                    json.dump(ledger, f, indent=0, sort_keys=True)
+                os.replace(tmp, ledger_path)
+            except Exception:
+                pass
 
         def _already_correct(row):
-            for key, cost_str in current_master_cost.items():
-                if key.startswith(row["s_at_target"]):
-                    try:
-                        return abs(float(cost_str) - row["new_cost"]) < 0.005
-                    except (TypeError, ValueError):
-                        return False
-            return False
+            held = ledger.get(str(row["tessie_id"]))
+            return held is not None and abs(float(held) - row["new_cost"]) < 0.005
 
         for row in rows:
             if row["action"] != "PUSH":
@@ -5653,7 +6377,9 @@ class TessieChargingAnalyzer:
                     ok = False
             if ok:
                 n_pushed += 1
-                self.patch_charge_record(row["s_at_target"], row["loc_target"], row["new_cost"], None)
+                ledger[str(row["tessie_id"])] = round(row["new_cost"], 2)
+                _save_ledger()
+                self.patch_charge_record(row["s_at_target"], row["loc_target"], row["new_cost"], row.get("new_rate"))
                 print(f"  {C_GREEN}✅{C_RESET} {row['datetime_str']} {row['place_name'][:30]:<30} "
                       f"-> ${row['new_cost']:.2f} (Tessie id {row['tessie_id']})")
             else:
@@ -5689,7 +6415,7 @@ class TessieChargingAnalyzer:
                 fieldnames = [
                     "Charge Index", "Started At", "Place", "Network", "Start SoC (%)", "End SoC (%)",
                     "Duration (Mins)", "Dispenser Energy (kWh)", "Battery Energy (kWh)", "Loss (kWh)",
-                    "Efficiency (%)", "Tessie Cost ($)", "Tessie Rate ($/kWh)", "Invoice Cost ($)",
+                    "Efficiency (%)", "Peak Power (kW)", "Range Rate (km/h)", "Tessie Cost ($)", "Tessie Rate ($/kWh)", "Invoice Cost ($)",
                     "Invoice Rate ($/kWh)", "Invoice Number", "Status"
                 ]
                 writer = csv.DictWriter(f, fieldnames=fieldnames)
@@ -5707,6 +6433,8 @@ class TessieChargingAnalyzer:
                         "Battery Energy (kWh)": f"{s['battery_kwh']:.2f}",
                         "Loss (kWh)": f"{s['loss_kwh']:.2f}" if s.get("loss_kwh") is not None else "N/A",
                         "Efficiency (%)": f"{s['efficiency_pct']:.1f}" if s.get("efficiency_pct") is not None else "N/A",
+                        "Peak Power (kW)": (f"{self.session_peak_kw(s):.1f}" if self.session_peak_kw(s) else ""),
+                        "Range Rate (km/h)": (f"{self.session_range_kmh(s):.1f}" if self.session_range_kmh(s) is not None else ""),
                         "Tessie Cost ($)": f"{s['tessie_cost']:.2f}",
                         "Tessie Rate ($/kWh)": f"{s['tessie_rate']:.2f}",
                         "Invoice Cost ($)": f"{s['invoice_cost']:.2f}" if s["invoice_cost"] is not None else "",
@@ -6015,12 +6743,12 @@ def interactive_charge_session_loop(analyzer, filtered, allow_back=False):
                 return True
             if choice in ['u', 'update', 'fix', 'fix-all', 'sync']:
                 analyzer.update_master_from_invoices()
-                filtered = [s for s in analyzer.reconciled_sessions if any(s["charge_index"] == orig["charge_index"] for orig in filtered)] or analyzer.reconciled_sessions
+                filtered = analyzer.consolidate_for_display([s for s in analyzer.reconciled_sessions if any(s["charge_index"] == orig["charge_index"] for orig in filtered)] or analyzer.reconciled_sessions)
                 analyzer.print_sessions_table(filtered)
             elif choice.isdigit():
                 analyzer.inspect_session(int(choice))
  # Refresh filtered list and reprint table
-                filtered = [s for s in analyzer.reconciled_sessions if any(s["charge_index"] == orig["charge_index"] for orig in filtered)] or analyzer.reconciled_sessions
+                filtered = analyzer.consolidate_for_display([s for s in analyzer.reconciled_sessions if any(s["charge_index"] == orig["charge_index"] for orig in filtered)] or analyzer.reconciled_sessions)
                 analyzer.print_sessions_table(filtered)
             else:
                 back_hint = "'b' to go back, " if allow_back else ""
@@ -6335,6 +7063,7 @@ def main():
    or:  analyse_charging.py --rename-invoices [--rename-format TEMPLATE] [--dry-run] [--yes]
    or:  analyse_charging.py --export FILE
    or:  analyse_charging.py --precompute-sources [--since DATE] [--force-refresh]
+   or:  analyse_charging.py --build-curves [--force-curves]
 """,
         description="""
 NAME
@@ -6377,6 +7106,10 @@ EXAMPLES
     analyse_charging.py --precompute-sources
     analyse_charging.py --precompute-sources --since 2026-08-01
     analyse_charging.py --precompute-sources --force-refresh
+
+  Charts (REQ-183):
+    analyse_charging.py --build-curves
+    analyse_charging.py --build-curves --force-curves
 """
     )
 
@@ -6418,12 +7151,22 @@ EXAMPLES
     g_action.add_argument("--tolerance-mins", type=int, default=None, help="Invoice matching time tolerance in minutes (default: 45 or config)")
     g_action.add_argument("--precompute-sources", action="store_true",
                            help="Batch-populate the PV provider/AGL/Evnex energy-source cross-check cache for every matching home Evnex session (combine with --since/--until/--month to scope it), so --inspect never waits on a live fetch (REQ-072)")
+    g_action.add_argument("--build-curves", action="store_true",
+                           help="Build the charging-curve and charge-profile charts (PNG + HTML) for every deep-dive telemetry file that lacks them, then list any DC session that has no telemetry or no chart (REQ-183)")
+    g_action.add_argument("--force-curves", action="store_true",
+                           help="With --build-curves, rebuild every chart even if it already exists")
     g_action.add_argument("--force-refresh", action="store_true",
                            help="With --precompute-sources, re-fetch every session's cross-check even if already cached (needed once after a change to the underlying calculation)")
     g_action.add_argument("--reconcile-invoices", action="store_true",
                            help="Cross-reference AGL's real invoiced totals against the aggregate of "
                                 "computed per-session EV charging costs (REQ-071/REQ-154 - moved here from "
                                 "the old standalone analyse_session_cost.py), instead of the normal listing")
+    g_action.add_argument("--review-unmatched", action="store_true",
+                           help="2026-09-28: batch-review every Evnex session with no matching Tessie charge "
+                                "(and sync confirmed complete through its window) - Evnex reports no vehicle/VIN "
+                                "at all, so this is the only way to catch a charge that wasn't your own Tesla; "
+                                "confirmed answers persist to .evnex_other_vehicle_ids.json and are excluded "
+                                "from --reconcile-invoices/--inspect from then on")
     g_action.add_argument("--sync-tessie-costs", action="store_true",
                            help="REQ-148: push our real calculated/known cost (tiered solar model for Home, matched invoice for DC/public) back to Tessie's own live account via set_cost. Always a dry-run preview unless --apply is also given.")
     g_action.add_argument("--apply", action="store_true",
@@ -6447,7 +7190,7 @@ EXAMPLES
         display_comparison_vehicles_table(args.tessie_dir)
         return
 
-    analyzer = TessieChargingAnalyzer(
+    analyzer = ChargingAnalyzer(
         config_path=args.config,
         tessie_dir=args.tessie_dir,
         invoices_dir=args.invoices_dir,
@@ -6455,7 +7198,10 @@ EXAMPLES
     )
 
     if args.consolidate:
-        analyzer.consolidate_charges_master()
+        # Non-zero exit on failure so sync_api_tessie.py's run_consolidate()
+        # doesn't advance the sync watermark past charges that never landed.
+        if analyzer.consolidate_charges_master() is False:
+            sys.exit(1)
         return
 
     if args.update_master:
@@ -6469,6 +7215,11 @@ EXAMPLES
     if args.reconcile_invoices:
         from lib.session_cost import reconcile_against_invoices
         reconcile_against_invoices()
+        return
+
+    if args.review_unmatched:
+        from lib.session_cost import review_unmatched_evnex_sessions
+        review_unmatched_evnex_sessions()
         return
 
     if args.rename_invoices:
@@ -6530,6 +7281,12 @@ EXAMPLES
         if u_dt:
             u_dt_end = u_dt + timedelta(days=1)
             filtered = [s for s in filtered if s["datetime"] and s["datetime"] <= u_dt_end]
+
+    if args.build_curves:
+        analyzer.build_all_charging_curves(force=args.force_curves)
+        return
+
+    filtered = analyzer.consolidate_for_display(filtered)
 
     if args.precompute_sources:
         analyzer.precompute_energy_sources(sessions=filtered, force_refresh=args.force_refresh)
