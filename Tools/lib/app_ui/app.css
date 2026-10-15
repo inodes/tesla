@@ -100,3 +100,4 @@ tr.chs td{background:var(--hover);font-size:13px}.tg{cursor:pointer;color:var(--
 .chr2 table.kv td:first-child{width:130px}
 @media (max-width:1100px){.chgrid{grid-template-columns:minmax(0,1fr)}}
 .chr2 .card{overflow-x:auto}.chr2 table.kv td{white-space:normal;overflow-wrap:anywhere}.chr2 table{font-size:13px}
+.vw{display:inline-flex;gap:6px;margin-left:6px;padding-left:12px;border-left:1px solid var(--line)}
