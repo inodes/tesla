@@ -101,3 +101,5 @@ tr.chs td{background:var(--hover);font-size:13px}.tg{cursor:pointer;color:var(--
 @media (max-width:1100px){.chgrid{grid-template-columns:minmax(0,1fr)}}
 .chr2 .card{overflow-x:auto}.chr2 table.kv td{white-space:normal;overflow-wrap:anywhere}.chr2 table{font-size:13px}
 .vw{display:inline-flex;gap:6px;margin-left:6px;padding-left:12px;border-left:1px solid var(--line)}
+.errbox{margin:10px 0}.errbox pre{white-space:pre-wrap;overflow-wrap:anywhere;user-select:text;-webkit-user-select:text;background:var(--card);border:1px solid var(--line);padding:8px 10px;border-radius:8px;font-size:12px;margin:6px 0}
+body{-webkit-user-select:text;user-select:text}

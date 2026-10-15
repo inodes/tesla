@@ -347,7 +347,7 @@ def main():
     if not a.browser:
         try:
             import webview      # optional: native window
-            webview.create_window("Tesla", url, width=1440, height=940, min_size=(900, 600))
+            webview.create_window("Tesla", url, width=1440, height=940, min_size=(900, 600), text_select=True)
             webview.start()
             return 0
         except ImportError:
