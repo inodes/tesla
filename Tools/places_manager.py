@@ -322,6 +322,7 @@ OVERPASS_ENDPOINTS = [
     "https://lz4.overpass-api.de/api/interpreter",
     "https://overpass-api.de/api/interpreter",
 ]
+OVERPASS_ERROR = ""     # why the last query_overpass_pois() got no answer ("" = it was answered, even if there was nothing there)
 
 def geocode_candidates(query, country_hint="Australia", anchor_coords=None, limit=10):
     """
@@ -2044,6 +2045,8 @@ def query_overpass_pois(lat, lon, radius_m=500):
         "Accept": "application/json, */*",
     }
     
+    global OVERPASS_ERROR
+    OVERPASS_ERROR = "no OpenStreetMap server answered"
     for endpoint in OVERPASS_ENDPOINTS:
         try:
             req = urllib.request.Request(endpoint, data=data, headers=headers)
@@ -2085,8 +2088,10 @@ def query_overpass_pois(lat, lon, radius_m=500):
                         category = man_made
                     if not category and waterway in ("boat_ramp", "dock", "wharf"):
                         category = waterway
-                    if not category and building and building != "yes":
-                        category = f"building ({building})"
+                    if not category and building:
+                        category = f"building ({building})" if building != "yes" else "building"
+                    if not category and tags.get("landuse") in ("industrial", "commercial", "retail"):
+                        category = f"{tags.get('landuse')} area"
                     
                     if not category and not brand:
                         continue
@@ -2144,8 +2149,10 @@ def query_overpass_pois(lat, lon, radius_m=500):
                     })
 
                 results.sort(key=lambda x: x["dist_m"])
+                OVERPASS_ERROR = ""
                 return results
-        except Exception:
+        except Exception as ex:
+            OVERPASS_ERROR = "OpenStreetMap's servers did not answer (%s)" % str(ex)[:60]
             continue
     return []
 
