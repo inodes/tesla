@@ -367,6 +367,39 @@ class Places:
         out.sort(key=lambda o: (o["dist_m"] is None, o["dist_m"] or 0))
         return dict(items=out, source="station_facilities.json", fetched=rec.get("last_updated"), radius=rec.get("radius_m"))
 
+    def _save_cache(self, cache):
+        try:
+            tmp = self.f_cache + ".tmp"
+            with open(tmp, "w", encoding="utf-8") as f:
+                json.dump(cache, f, ensure_ascii=False)
+            os.replace(tmp, self.f_cache)
+        except OSError:
+            pass
+
+    def _photon(self, PM, lat, lon, radius):
+        """The nearest named OpenStreetMap features around a point from photon.komoot.io (an independent server over the same data)."""
+        import urllib.request
+        url = "https://photon.komoot.io/reverse?lat=%s&lon=%s&radius=%s&limit=50&lang=en" % (lat, lon, round(radius / 1000.0, 3))
+        req = urllib.request.Request(url, headers={"User-Agent": PM.USER_AGENT, "Accept": "application/json"})
+        with urllib.request.urlopen(req, timeout=15) as r:
+            feats = json.loads(r.read().decode("utf-8")).get("features", [])
+        out, seen = [], set()
+        for f in feats:
+            pr = f.get("properties") or {}
+            name = (pr.get("name") or "").strip()
+            k, v = pr.get("osm_key") or "", pr.get("osm_value") or ""
+            if not name or k in ("highway", "route", "boundary", "place") or v == "charging_station" or "supercharger" in name.lower():
+                continue
+            lo, la = f["geometry"]["coordinates"][:2]
+            d = hav(lat, lon, la, lo)
+            if d > radius or (name.lower(), round(la, 3), round(lo, 3)) in seen:
+                continue
+            seen.add((name.lower(), round(la, 3), round(lo, 3)))
+            grp, emo = PM.classify_poi_group({k: v})
+            out.append(dict(name=name, group=grp, emoji=emo, category=(k if v == "yes" else v).replace("_", " ").title(), dist_m=round(d, 1), lat=la, lon=lo))
+        out.sort(key=lambda o: o["dist_m"])
+        return out
+
     def osm(self, key, lat, lon, radius=300, refresh=False):
         """OSM places around a spot: cached; a Tesla charger uses the facilities already collected; otherwise ask Overpass (and cache)."""
         ck = "%s|%d" % (key, radius)
@@ -382,8 +415,19 @@ class Places:
         import places_manager as PM
         PM.OVERPASS_ERROR = ""
         res = PM.query_overpass_pois(lat, lon, radius)
-        if not res and PM.OVERPASS_ERROR:       # the servers did not answer: say so (and keep nothing) rather than claim the street is empty
-            return dict(items=[], error=PM.OVERPASS_ERROR, source="OpenStreetMap (Overpass)", radius=radius, cached=False)
+        if not res and PM.OVERPASS_ERROR:
+            # Overpass did not answer: ask Photon (komoot's search over the same OpenStreetMap data) for the nearest places instead. If that fails too, say so
+            # (and keep nothing) rather than claim the street is empty.
+            why = PM.OVERPASS_ERROR
+            try:
+                items = self._photon(PM, lat, lon, radius)
+            except Exception as ex:
+                return dict(items=[], error=why + " | Photon: " + str(ex)[:120], source="OpenStreetMap", radius=radius, cached=False)
+            rec = dict(items=items, source="OpenStreetMap via Photon (Overpass did not answer, so this is the nearest 50 features, not everything)", fetched=datetime.datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ"), radius=radius, note=why)
+            if items:
+                cache[ck] = rec
+                self._save_cache(cache)
+            return dict(rec, cached=False)
         items = [dict(name=r["name"], group=r.get("group") or "Other", emoji=r.get("emoji") or "", category=r.get("category") or "", dist_m=r.get("dist_m"), lat=r.get("lat"), lon=r.get("lon")) for r in res]
         rec = dict(items=items, source="OpenStreetMap (Overpass)", fetched=datetime.datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ"), radius=radius)
         if items:       # an empty answer is more likely a busy server than an empty street, so it is not kept
