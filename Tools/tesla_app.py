@@ -197,6 +197,8 @@ class H(BaseHTTPRequestHandler):
                 return self.api(path[5:], urllib.parse.parse_qs(u.query))
             if path.startswith("/data/"):
                 p = safe_join(DATA_DIR, path[6:])
+                if p and os.path.isfile(p) and p.endswith(os.path.join("dashcam_flip_review", "index.html")):
+                    return self.send_bytes(flip_page(p).encode("utf-8"), "text/html; charset=utf-8")
                 if p and os.path.isfile(p):
                     return self.send_file(p)
                 return self.send_bytes(b"not found", "text/plain", 404)
@@ -271,6 +273,15 @@ class H(BaseHTTPRequestHandler):
             if kind == "seg":
                 d = TC.segment(role, root, urllib.parse.unquote(rid), float(q.get("budget", ["20"])[0] or 20))
                 return self.send_json(d if d else {"error": "no such drive"}, 200 if d else 404)
+            if kind == "window":                    # teslacam/<role>/window?t0=<local ISO>&t1=<local ISO>[&budget=s]
+                import datetime
+                try:
+                    t0 = datetime.datetime.fromisoformat(q.get("t0", [""])[0]).timestamp()
+                    t1 = datetime.datetime.fromisoformat(q.get("t1", [""])[0]).timestamp()
+                except ValueError:
+                    return self.send_json({"error": "bad time"}, 400)
+                d = TC.window(role, root, t0, t1, float(q.get("budget", ["20"])[0] or 20))
+                return self.send_json(d if d else {"error": "no footage or telemetry for this time"}, 200 if d else 404)
             if kind == "recent" and rid:
                 c = TC.run_clips(role, root, urllib.parse.unquote(rid))
                 return self.send_json(dict(clips=c) if c else {"error": "no such run"}, 200 if c else 404)
@@ -315,6 +326,20 @@ class H(BaseHTTPRequestHandler):
         if name == "flip-events":
             return self.send_json({"exists": os.path.isfile(os.path.join(DATA_DIR, "drives", "analysis", "dashcam_flip_review", "index.html"))})
         return self.send_bytes(b"not found", "text/plain", 404)
+
+
+FLIP_SHOW = "const E=DATA.e,SM=DATA.s;"
+FLIP_TWEAK = ("const QF=new URLSearchParams(location.search),T0=QF.get('t0'),T1=QF.get('t1');"
+              "const E=(T0&&T1?DATA.e.filter(e=>e.flip_time>=T0&&e.flip_time<=T1):DATA.e),SM=DATA.s;"
+              "if(QF.get('embed'))document.head.insertAdjacentHTML('beforeend','<style>h1,.how{display:none}.wrap{padding-top:4px}</style>');")
+
+
+def flip_page(path):
+    """The flip review page as the generator wrote it, plus two query options so one drive can show just its own flips inside the app:
+    ?t0=YYYY-MM-DD HH:MM:SS&t1=... keeps the flips in that time range, &embed=1 drops the page heading. The file on disk is not changed."""
+    with open(path, encoding="utf-8") as fh:
+        h = fh.read()
+    return h.replace(FLIP_SHOW, FLIP_TWEAK, 1)
 
 
 def run_queue(body):
