@@ -60,7 +60,21 @@
       "tiles_base": "https://tiles.openfreemap.org/styles/",
       "style_light": "positron",
       "style_dark": "dark",
-      "places_max_lon": 160
+      "places_max_lon": 160,
+      "network_colors": {
+        "Tesla": "#e0201b",
+        "Tesla Destination": "#f97316",
+        "Chargefox": "#16a34a",
+        "Evie": "#7c3aed",
+        "EVX": "#eab308",
+        "Exploren": "#db2777",
+        "NRMA": "#2563eb",
+        "AmpCharge": "#84cc16",
+        "Jolt": "#14b8a6",
+        "BP Pulse": "#0891b2",
+        "3rd-Party": "#6b7280",
+        "WA EV Network": "#9333ea"
+      }
     },
     "drives": {
       "repark_max_km": 0.05,
