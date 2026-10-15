@@ -13,6 +13,7 @@ import app_sentry
 import drive_roles as DR
 import app_config
 import teslacam_timeline as TL
+import app_review
 
 KINDS = {"sentry": "SentryClips", "saved": "SavedClips"}
 _REC = re.compile(r"^(\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2})-(%s)\.mp4$" % "|".join(app_sentry.CAMS))
@@ -38,6 +39,7 @@ class TeslaCam:
         self.rec = {}                       # role -> dict(mt, runs, clips)
         self.store = None                   # telemetry read from clips, shared by every drive (see _tl)
         self.ix = {}                        # role -> Indexer
+        self.rv = None                      # signs read from the video (see app_review.py)
 
     def drives(self):
         return [dict(role=r, name=DR.NAMES.get(r, r), kind="archive" if r == "A" else "other") for p, r in DR.discover()]
@@ -232,3 +234,40 @@ class TeslaCam:
                                        front=("front" in e["clips"][sorted(e["clips"])[0]])))
             out["events"] = sorted(ev, key=lambda x: x["ts"])
         return out
+
+    # ------------------------------------------------------------------------------------------------------ review
+    def _rv(self):
+        app_review.OPTS.update({k: v for k, v in (app_config.get("review") or {}).items() if k in app_review.OPTS})
+        if self.rv is None:
+            self.rv = app_review.Review(self.dir)
+        return self.rv
+
+    def _review_mins(self, role, teslacam, t0, t1):
+        store, _ = self._tl(role)
+        if teslacam:
+            recent, saved, _s = self._sources(role, teslacam)
+            mins = [m for m in TL.minutes(recent, saved) if m["t"] + 60 > t0 and m["t"] < t1]
+        else:
+            mins = TL.cached_minutes(store, t0, t1)
+        return store, mins
+
+    def review(self, role, teslacam, t0, t1, action="status"):
+        """The signs read so far in a time window (a Tessie drive), and the state of the reading job. action: status | start | redo | stop."""
+        rv = self._rv()
+        store, mins = self._review_mins(role, teslacam, t0, t1)
+        front = [m for m in mins if "front" in m["cams"]] if teslacam else []
+        if action == "stop":
+            rv.stop()
+        elif action in ("start", "redo") and teslacam:
+            items = []
+            for m in front:
+                ser = store.series(m["stamp"])
+                items.append((m["stamp"], self._front(teslacam, m), ser["v"] if ser else None))
+            rv.start(items, force=action == "redo")
+        done = rv.scanned()
+        stamps = [m["stamp"] for m in mins]
+        return dict(signs=rv.signs(stamps), minutes=len(front), scanned=sum(1 for m in front if m["stamp"] in done),
+                    connected=bool(teslacam), job=rv.status(), missing=app_review.requirements())
+
+    def review_scanned(self):
+        return self._rv().scanned()
