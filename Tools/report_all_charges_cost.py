@@ -37,16 +37,16 @@ from datetime import datetime, timezone
 TOOLS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, TOOLS_DIR)
 
-from analyse_charging import TessieChargingAnalyzer  # noqa: E402
+from analyse_charging import ChargingAnalyzer  # noqa: E402
 from lib.charge_cost_model import compute_all_charge_costs  # noqa: E402
 
 
 def load_deduped_analyzer():
-    """A TessieChargingAnalyzer with self.charges already filtered down
+    """A ChargingAnalyzer with self.charges already filtered down
     to the live charges_master.csv only (see module docstring) - shared
     by this script and analyse_charging.py's --sync-tessie-costs so
     both compute over exactly the same 239-row set."""
-    analyzer = TessieChargingAnalyzer()
+    analyzer = ChargingAnalyzer()
     analyzer.load_charges()
     analyzer.load_invoices()
     analyzer.load_detailed_charges()

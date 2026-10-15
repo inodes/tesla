@@ -221,6 +221,83 @@ def load_evnex_deepdive_sessions(deepdive_dir=None, since_days=None, limit=None,
     return sessions
 
 
+# REQ-158 (2026-09-28): Evnex has no vehicle/VIN/driver field at all, so
+# whether a given session was even THIS car charging is otherwise a pure
+# assumption - watermark-gated "no matching Tessie charge, AND sync proven
+# complete through this window" detection (get_tessie_match_status()
+# below), a persisted ignore list once the user confirms a session wasn't
+# theirs (this file), a batch review command (review_unmatched_evnex_
+# sessions()), and an inline confirmation prompt during --inspect
+# (analyse_charging.py) together replace the "no Tessie match = not your
+# car" guess the user explicitly flagged as unsafe.
+OTHER_VEHICLE_IGNORE_PATH_NAME = ".evnex_other_vehicle_ids.json"
+
+
+def load_other_vehicle_ids(deepdive_dir=None):
+    """2026-09-28: session ids the user has explicitly confirmed were
+    NOT charged by their own Tesla - Evnex has no vehicle/VIN/driver
+    field at all (confirmed empirically: every real session's own
+    authorizationMethod is "NoTokenRequired", no RFID/token config
+    exists on this account), so the only way to know is asking, once,
+    then remembering the answer - same shape/reasoning as REQ-153's own
+    .evnex_blip_ids.json (sync_api_evnex.py), just a different reason
+    code. NEVER auto-populated - only a human confirmation (via
+    analyse_charging.py's --review-unmatched or the inline --inspect
+    prompt) writes to this file. Sessions here are excluded from
+    reconcile_against_invoices()'s own aggregate and flagged rather
+    than silently priced as the user's own EV charging cost."""
+    deepdive_dir = deepdive_dir or DEEPDIVE_DIR
+    path = os.path.join(deepdive_dir, OTHER_VEHICLE_IGNORE_PATH_NAME)
+    if not os.path.isfile(path):
+        return set()
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        return set(data.get("ids") or [])
+    except Exception:
+        return set()
+
+
+def save_other_vehicle_ids(ids, deepdive_dir=None):
+    """Overwrites the other-vehicle-ignore file with the full current
+    set - small (a handful of UUIDs at most), so a full rewrite is
+    simpler and safer than an append-only log, matching
+    save_ignored_blip_ids()'s own convention."""
+    deepdive_dir = deepdive_dir or DEEPDIVE_DIR
+    os.makedirs(deepdive_dir, exist_ok=True)
+    path = os.path.join(deepdive_dir, OTHER_VEHICLE_IGNORE_PATH_NAME)
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump({"ids": sorted(ids)}, f, indent=2)
+
+
+def sync_completeness_status(local_end, tz, repo_root=None):
+    """Whether Tessie's own charge data is KNOWN to cover local_end yet
+    (get_charges_sync_watermark()'s real last_synced_to watermark from
+    resources/api_cache/charges.json - see that function's own
+    docstring for why this check exists at all: absence of a matching
+    Tessie charge is only meaningful evidence once sync is PROVABLY
+    caught up past this session's own window, otherwise a sync lag is
+    indistinguishable from a different vehicle). `tz` must be the SAME
+    zoneinfo the caller used to build local_end (evaluate_session()
+    already resolves this per-session) - re-deriving a timezone here
+    independently would silently misconvert the comparison.
+
+    Returns True (covered - a no-match here is meaningful), False (not
+    yet covered - a no-match is inconclusive, not evidence of anything),
+    or None (no watermark at all yet, e.g. sync has never run - also
+    inconclusive)."""
+    from lib.charge_cost_model import get_charges_sync_watermark
+    repo_root = repo_root or os.path.dirname(_TOOLS_DIR)
+    watermark = get_charges_sync_watermark(repo_root)
+    if watermark is None or local_end is None:
+        return None
+    end_epoch = local_end.replace(tzinfo=tz).timestamp()
+    # B6 (2026-09-30 review): the watermark is when the fetch ran, not proof
+    # Tessie had finalised a charge that ended minutes earlier - allow the
+    # same 10-minute grace analyse_charging uses (CHARGE_FINALIZE_GRACE_SECONDS).
+    return end_epoch + 600 < watermark
+
+
 def parse_agl_dt(s):
     return datetime.strptime(s.strip(), "%d/%m/%Y %I:%M:%S %p")
 
@@ -328,6 +405,44 @@ def load_tessie_home_charges(tessie_dir=None):
     if _tessie_home_charges_cache is not None:
         return _tessie_home_charges_cache
     tessie_dir = tessie_dir or resolve_tessie_data_home()
+
+ # 2026-09-28: found via the new tessie_match_status watermark check -
+ # this used to require Saved Location == "Home" EXACTLY, which
+ # silently dropped 178 of this account's real 244 home charges (the
+ # Tessie place was renamed from "1108 Victoria Rd" to "Home" at some
+ # point; everything charged before that rename has the OLD label and
+ # was being excluded here). Same class of bug BUG-102 already fixed
+ # for is_home_place() elsewhere (analyse_drives.py) - a place's NAME
+ # is not a stable "is this home" signal, only places.json's own
+ # authoritative type=="home" field (or, failing that, the literal
+ # string "home") is. Reusing that same hardened function here rather
+ # than re-deriving a second, now-proven-fragile copy of the same check.
+    from analyse_drives import is_home_place, haversine_distance_m
+    try:
+        from places_manager import load_places  # B6: import failure must not break every caller
+        places = load_places()
+    except Exception:
+        places = {}
+    # B6: also accept a charge by GPS inside the Home radius, so a blank or
+    # stale "Saved Location" label can't hide a real home charge (which
+    # then showed up as "was this your Tesla?").
+    home_fences = []
+    for _p in (places or {}).values():
+        if isinstance(_p, dict) and _p.get("type") == "home":
+            try:
+                home_fences.append((float(_p["lat"]), float(_p["lon"]), float(_p.get("radius_m") or 100)))
+            except (KeyError, TypeError, ValueError):
+                pass
+
+    def _row_at_home(row):
+        if is_home_place(row.get("Saved Location"), places_dict=places):
+            return True
+        try:
+            lat, lon = float(row.get("Latitude")), float(row.get("Longitude"))
+        except (TypeError, ValueError):
+            return False
+        return any(haversine_distance_m(lat, lon, a, b) <= r for a, b, r in home_fences)
+
     rows = []
     for candidate in (os.path.join(tessie_dir, "charges", "charges_master.csv"),
                       os.path.join(tessie_dir, "charges_master.csv")):
@@ -336,7 +451,7 @@ def load_tessie_home_charges(tessie_dir=None):
         with open(candidate, "r", encoding="utf-8-sig", newline="") as f:
             import csv as _csv
             for row in _csv.DictReader(f):
-                if (row.get("Saved Location") or "").strip() != "Home":
+                if not _row_at_home(row):
                     continue
                 try:
                     started = datetime.strptime(row["Started At (Local)"].strip()[:16], "%Y-%m-%d %H:%M")
@@ -479,6 +594,101 @@ def evaluate_tessie_charge(tessie_row, periods, data_home=DATA_HOME):
     }
 
 
+def find_matching_evnex_session(local_start, local_end, evnex_sessions=None, pad_minutes=2):
+    """Find the raw Evnex deep-dive session (as load_evnex_deepdive_sessions()
+    returns it, with its own "_file" key) whose own charging window
+    overlaps [local_start, local_end] - a Tessie-shaped session's own
+    naive-local start/end (e.g. a charges_master.csv row's "datetime"
+    and "datetime" + "duration_mins") - by WINDOW OVERLAP, not by how
+    close the two start times are.
+
+    This is the same interval-overlap pattern analyse_charging.py's
+    get_energy_source_crosscheck() and _matching_evnex_json_stamp()
+    already use inline (2026-09-28: extracted here as the one shared
+    implementation, so a caller working from a Tessie-shaped session -
+    like the inline --inspect confirmation prompt - can resolve to the
+    matching raw Evnex session without duplicating this loop a third
+    time). Real reason window-overlap matters, not start-time proximity:
+    solar diversion can cycle the car's charging current on and off as
+    export rises and falls, so Tessie logs each separate start/stop
+    "charging" event as its OWN short master-CSV row - a 4-7min, <1kWh
+    Tessie blip can sit entirely INSIDE a much longer real Evnex session
+    that started up to an hour earlier (AGENTS.md REQ-050).
+
+    Returns the matching raw Evnex session dict, or None if nothing
+    overlaps."""
+    if evnex_sessions is None:
+        evnex_sessions = load_evnex_deepdive_sessions()
+    pad = timedelta(minutes=pad_minutes)
+    for es in evnex_sessions:
+        es_start_epoch = iso_to_epoch(es.get("charging_started_utc"))
+        if es_start_epoch is None:
+            continue
+        es_end_epoch = iso_to_epoch(es.get("charging_stopped_utc")) or es_start_epoch
+        try:
+            es_tz = ZoneInfo(es.get("timezone") or "Australia/Sydney")
+        except Exception:
+            es_tz = ZoneInfo("Australia/Sydney")
+        es_start_dt = datetime.fromtimestamp(es_start_epoch, tz=timezone.utc).astimezone(es_tz).replace(tzinfo=None)
+        es_end_dt = datetime.fromtimestamp(es_end_epoch, tz=timezone.utc).astimezone(es_tz).replace(tzinfo=None)
+        if es_start_dt <= local_end + pad and es_end_dt >= local_start - pad:
+            return es
+    return None
+
+
+def get_tessie_match_status(local_start, local_end, tz, evnex_session_id, tessie_rows=None, tessie_matches=None):
+    """Cheap, cache-independent classification of whether this Evnex
+    session's own vehicle-charging attribution is trustworthy - Evnex
+    reports no vehicle/VIN at all, so a no-match against Tessie's own
+    charge history is the only available signal, and it's only
+    meaningful once sync coverage is PROVEN to reach past this
+    session's window (sync_completeness_status() - see its docstring:
+    the user's own correction was that a sync lag must never be
+    mistaken for "another car"). Deliberately does NOT touch PV/AGL
+    data or any on-disk cost cache - callers like the --review-unmatched
+    batch command and the inline --inspect prompt need this to be fast
+    and always fresh, never dependent on a possibly-stale
+    get_energy_source_crosscheck() cache file that predates this field.
+
+    Returns one of: "matched" (a real Tessie charge overlaps - normal),
+    "confirmed_other_vehicle" (this session id is in the user's own
+    persisted other_vehicle_ids.json - asked once, remembered from then
+    on), "unconfirmed_no_match" (no match, sync proven complete through
+    this window - worth asking about), or "sync_incomplete" (no match,
+    but sync hasn't caught up yet - not evidence of anything)."""
+    if tessie_matches is None:
+        tessie_rows = tessie_rows if tessie_rows is not None else load_tessie_home_charges()
+        tessie_matches = match_tessie_charges(local_start, local_end, tessie_rows)
+    if tessie_matches:
+        return "matched"
+    if evnex_session_id in load_other_vehicle_ids():
+        return "confirmed_other_vehicle"
+    sync_covers_window = sync_completeness_status(local_end, tz)
+    return "unconfirmed_no_match" if sync_covers_window else "sync_incomplete"
+
+
+def get_tessie_match_status_for_session(session, tessie_rows=None):
+    """Convenience wrapper for a raw Evnex session dict (as loaded by
+    load_evnex_deepdive_sessions()) - does just enough of evaluate_
+    session()'s own start/end/timezone parsing to call
+    get_tessie_match_status() above, without any of that function's
+    PV/AGL/cost computation."""
+    start_epoch = iso_to_epoch(session.get("charging_started_utc"))
+    end_epoch = iso_to_epoch(session.get("charging_stopped_utc")) or start_epoch
+    if start_epoch is None:
+        return None
+    zone = session.get("timezone") or "Australia/Sydney"
+    try:
+        tz = ZoneInfo(zone)
+    except Exception:
+        tz = ZoneInfo("Australia/Sydney")
+    local_start = datetime.fromtimestamp(start_epoch, tz=timezone.utc).astimezone(tz).replace(tzinfo=None)
+    local_end = datetime.fromtimestamp(end_epoch, tz=timezone.utc).astimezone(tz).replace(tzinfo=None)
+    if local_end <= local_start:
+        local_end = local_start + timedelta(minutes=1)
+    return get_tessie_match_status(local_start, local_end, tz, session.get("evnex_session_id"), tessie_rows=tessie_rows)
+
+
 def evaluate_session(session, periods, data_home=DATA_HOME):
     attrs = session.get("session", {}).get("attributes", {}) or {}
     te = attrs.get("totalEnergyUsage") or {}
@@ -580,12 +790,16 @@ def evaluate_session(session, periods, data_home=DATA_HOME):
  # Tessie-scoped view alongside it, additively - nothing above changes,
  # so reconcile_against_invoices()'s existing use of this dict's
  # top-level fields is unaffected.
-    tessie_matches = match_tessie_charges(local_start, local_end, load_tessie_home_charges())
+    tessie_home_rows = load_tessie_home_charges()
+    tessie_matches = match_tessie_charges(local_start, local_end, tessie_home_rows)
     tessie_charges = [evaluate_tessie_charge(m, periods, data_home=data_home) for m in tessie_matches]
+    match_status = get_tessie_match_status(local_start, local_end, tz, session.get("evnex_session_id"),
+                                            tessie_rows=tessie_home_rows, tessie_matches=tessie_matches)
 
     return {
         "evnex_session_id": session.get("evnex_session_id"),
         "tessie_charges": tessie_charges,
+        "tessie_match_status": match_status,
         "local_start": local_start,
         "local_end": local_end,
         "duration_min": round((local_end - local_start).total_seconds() / 60.0, 1),
@@ -622,6 +836,13 @@ def print_session(r):
     ts = r["local_start"].strftime("%Y-%m-%d %H:%M")
     print(f"{ts}  dur {r['duration_min']:>5.1f}min  kWh {r['kwh_total']:.3f}  "
           f"(rate period from {r['period_effective_from']}, ${r['usage_rate']}/kWh)")
+    status = r.get("tessie_match_status")
+    if status == "confirmed_other_vehicle":
+        print(f"   \033[91m⚠️  CONFIRMED: not your vehicle - excluded from invoice reconciliation\033[0m")
+    elif status == "unconfirmed_no_match":
+        print(f"   \033[93m⚠️  No matching Tessie charge (sync confirmed complete through this window) - may not be your vehicle\033[0m")
+    elif status == "sync_incomplete":
+        print(f"   \033[90mℹ️  No matching Tessie charge yet, but sync hasn't caught up to this window - not conclusive\033[0m")
     print(f"   base cost (100% grid)                 : ${r['base_cost']:.4f} ex GST -> ${r['base_cost_incl_gst']:.4f} incl GST")
     if r.get("pv_adjusted_cost_incl_gst") is not None:
         pv_pct = r["pv_solar_fraction"] * 100.0
@@ -705,6 +926,89 @@ def print_tessie_charges(r):
               f"by ${abs(diff):.2f}")
 
 
+def confirm_other_vehicle(session_id, deepdive_dir=None):
+    """Persist session_id as user-confirmed-not-mine. Shared by both the
+    batch --review-unmatched command and the inline --inspect prompt so
+    there's exactly one place this ever gets written."""
+    ids = load_other_vehicle_ids(deepdive_dir)
+    ids.add(session_id)
+    save_other_vehicle_ids(ids, deepdive_dir)
+
+
+def review_unmatched_evnex_sessions(deepdive_dir=None, interactive=True):
+    """2026-09-28: batch triage for every Evnex session that has no
+    matching Tessie charge AND sync is confirmed complete through its
+    window (see evaluate_session()'s tessie_match_status / the module
+    docstring on sync_completeness_status()) - the "may not be your
+    vehicle" cases. A real connection blip (0 kWh, is_real_charging_
+    session() == False) is excluded here same as everywhere else - it's
+    not a vehicle-attribution question at all, just not a charge.
+
+    interactive=False (non-tty) just lists them, same shape --flagged/
+    display_flagged_deletions_menu uses elsewhere in this repo for a
+    review queue. Deliberately uses the cheap get_tessie_match_status_
+    for_session() rather than the full evaluate_session() - this needs
+    to scan every real session in one pass without a live PV fetch per
+    session."""
+    sessions = load_evnex_deepdive_sessions(deepdive_dir=deepdive_dir)
+
+    def _attrs(s):
+        return (s.get("session", {}) or {}).get("attributes", {}) or {}
+
+    sessions = [s for s in sessions if is_real_charging_session(_attrs(s))]
+    tessie_rows = load_tessie_home_charges()
+
+    unmatched = []
+    for s in sessions:
+        status = get_tessie_match_status_for_session(s, tessie_rows=tessie_rows)
+        if status == "unconfirmed_no_match":
+            unmatched.append(s)
+
+    if not unmatched:
+        print("✅ No unmatched Evnex sessions to review - every real session either has a matching "
+              "Tessie charge, is already confirmed, or sync hasn't caught up to it yet.")
+        return {"reviewed": 0, "confirmed_other": 0}
+
+    print(f"\n{len(unmatched)} Evnex session(s) have no matching Tessie charge, with sync confirmed "
+          f"complete through their window:\n")
+
+    n_confirmed = 0
+    for i, s in enumerate(unmatched, 1):
+        local_dt = datetime.fromtimestamp(iso_to_epoch(s.get("charging_started_utc")), tz=timezone.utc)
+        try:
+            local_dt = local_dt.astimezone(ZoneInfo(s.get("timezone") or "Australia/Sydney"))
+        except Exception:
+            pass
+        ts = local_dt.strftime("%Y-%m-%d %H:%M")
+        attrs = _attrs(s)
+        kwh = ((attrs.get("totalEnergyUsage") or {}).get("total") or 0.0) / 1000.0
+        dur = attrs.get("totalChargingTime") or 0.0
+        print(f"[{i}/{len(unmatched)}] {ts}  {dur:.0f}min  {kwh:.3f} kWh  (session {s.get('evnex_session_id')})")
+        if not interactive or not sys.stdin.isatty():
+            continue
+        try:
+            print("    Was this your Tesla?")
+            print("      [y]es")
+            print("      [n]o - flag as another vehicle")
+            print("      [s]kip for now")
+            ans = input("      > ").strip().lower()
+        except (KeyboardInterrupt, EOFError):
+            print()
+            break
+        if ans in ("n", "no"):
+            confirm_other_vehicle(s.get("evnex_session_id"), deepdive_dir)
+            n_confirmed += 1
+            print("    -> flagged as another vehicle, will be excluded from now on.")
+        elif ans in ("y", "yes"):
+            print("    -> left as-is (still unconfirmed - Tessie may just not have logged it as a charge).")
+        else:
+            print("    -> skipped, will show up again next run.")
+
+    print(f"\nDone: {n_confirmed} session(s) newly flagged as another vehicle, "
+          f"{len(unmatched) - n_confirmed} left unconfirmed.")
+    return {"reviewed": len(unmatched), "confirmed_other": n_confirmed}
+
+
 def reconcile_against_invoices(deepdive_dir=None, data_home=DATA_HOME, periods=None, log=print):
     """Cross-references AGL's real invoiced totals
     (power_cost_calculator.REAL_INVOICE_CYCLES - already self-tested
@@ -771,17 +1075,32 @@ def reconcile_against_invoices(deepdive_dir=None, data_home=DATA_HOME, periods=N
 
         cycle_sessions = [s for s in all_sessions if start <= (_session_local_date(s) or date.max) <= end]
         results = [evaluate_session(s, periods, data_home=data_home) for s in cycle_sessions]
-        ev_kwh = sum(r["kwh_total"] for r in results)
+
+ # 2026-09-28: a session confirmed by the user as NOT their vehicle
+ # (see load_other_vehicle_ids()) still real-consumed real household
+ # electricity - it stays IN the sanity bound below (that's checking
+ # for double-counted/mis-dated sessions against the cycle's own real
+ # import, not EV attribution) but is excluded from the "EV charging"
+ # kWh/cost figures, which are specifically about the user's own EV.
+        own_ev_results = [r for r in results if r.get("tessie_match_status") != "confirmed_other_vehicle"]
+        n_other_vehicle = len(results) - len(own_ev_results)
+        ev_kwh = sum(r["kwh_total"] for r in own_ev_results)
         ev_cost_incl_gst = sum(
             r["pv_adjusted_cost_incl_gst"] if r.get("pv_adjusted_cost_incl_gst") is not None
             else (r["evnex_adjusted_cost_incl_gst"] if r["evnex_adjusted_cost_incl_gst"] is not None else r["base_cost_incl_gst"])
-            for r in results
+            for r in own_ev_results
         )
         ev_import_sum = sum(r["real_import_kwh"] for r in results)
         cycle_import_kwh = sum_kwh(data_home, "import", start, end, provider=_POWER_PROVIDER)
 
-        log(f"  {len(results)} EV charging session(s) in this cycle: {ev_kwh:.3f} kWh, "
-            f"${ev_cost_incl_gst:.2f} incl GST computed ({_PV_PROVIDER.display_name}/Evnex/base blended per-session)")
+        other_note = f", {n_other_vehicle} confirmed not-your-vehicle session(s) excluded" if n_other_vehicle else ""
+        log(f"  {len(own_ev_results)} EV charging session(s) in this cycle: {ev_kwh:.3f} kWh, "
+            f"${ev_cost_incl_gst:.2f} incl GST computed ({_PV_PROVIDER.display_name}/Evnex/base blended per-session){other_note}")
+        n_unconfirmed = sum(1 for r in own_ev_results if r.get("tessie_match_status") == "unconfirmed_no_match")
+        if n_unconfirmed:
+            log(f"  ⚠️  {n_unconfirmed} session(s) this cycle have no matching Tessie charge (sync confirmed "
+                f"complete through their window) and aren't yet confirmed either way - still counted above; "
+                f"run --review-unmatched to triage")
         if cycle_import_kwh > 0.01:
             share_pct = 100.0 * ev_kwh / cycle_import_kwh if cycle_import_kwh else 0.0
             bound_ok = ev_import_sum <= cycle_import_kwh + 0.01  # tiny float-rounding slack

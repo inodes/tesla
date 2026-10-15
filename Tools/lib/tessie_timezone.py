@@ -31,6 +31,7 @@ The fallback upgrades to full accuracy automatically the moment
 timezonefinder is installed - no code change needed.
 """
 
+import re
 from datetime import datetime, timezone
 from zoneinfo import ZoneInfo
 
@@ -204,7 +205,7 @@ def normalize_row_timezone(row, lat_key, lon_key, start_key_prefix):
     local_key = f"{start_key_prefix} (Local)"
     if row.get(utc_key):
         return
-    legacy = (row.get(f"{start_key_prefix} (AEST)") or row.get(start_key_prefix)
+    legacy = (legacy_get(row, start_key_prefix) or row.get(start_key_prefix)
               or row.get(start_key_prefix.replace(" At", "")) or "").strip()
     if not legacy:
         row[utc_key] = ""
@@ -236,3 +237,26 @@ def normalize_row_timezone(row, lat_key, lon_key, start_key_prefix):
     row[utc_key] = str(true_utc_epoch)
     row[tz_key] = zone
     row[local_key] = f"{local_dt.strftime('%Y-%m-%d %H:%M')} {abbr}" if local_dt else legacy
+
+
+_TZ_LABEL_RE = re.compile(r"\((?:AEST|AEDT|ACST|ACDT|AWST|AWDT|AET|UTC\+\d\d?)\)$")
+
+
+def legacy_get(row, base):
+    """BUG-176: Tessie CSV headers carry the exporter's own zone label -
+    "Started At (AEST)" in winter but "Started At (AEDT)" once daylight
+    saving starts - so a lookup hard-coded to "(AEST)" silently drops
+    every row from the first day of summer time. Returns the value of
+    "<base> (AEST)", "<base> (AEDT)" or any other "<base> (<zone>)"
+    column (never "(UTC)"/"(Local)", which are our own migrated columns),
+    else None."""
+    if not row:
+        return None
+    v = row.get(f"{base} (AEST)")
+    if v:
+        return v
+    prefix = base + " ("
+    for k, val in row.items():
+        if k and k.startswith(prefix) and _TZ_LABEL_RE.search(k) and val:
+            return val
+    return None
