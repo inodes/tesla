@@ -11,7 +11,7 @@ DESCRIPTION
     Starts a small server on 127.0.0.1 that reads the Tesla data folder (the CSV / JSON files the sync scripts already
     write; nothing is changed by looking) and shows it in the style of Tessie: an Activity timeline of drives, charges and
     idles; a page per drive (map, stacked charts, dashcam footage), per charge (power curve) and per idle; battery health;
-    monthly analytics; a Places manager (saved places, Tesla Supercharger names, nearby OpenStreetMap places); and the dashcam tools. Dashcam clips are streamed from the Archive drive (found by what is on it,
+    monthly analytics; a Places manager (saved places, Tesla Supercharger names, nearby OpenStreetMap places); and the dashcam tools. A TeslaCam page plays the Sentry, Saved and Recent clips of any connected TeslaCam drive (all six cameras, or one; a Sentry event opens at the moment it happened on the camera that saw it). Dashcam clips are streamed from the Archive drive (found by what is on it,
     see lib/drive_roles.py, never by its volume name). Footage actions queued on a drive page (copy / delete / save as a
     clip) run from the Queue page: a preview first, then for real.
 
@@ -64,6 +64,7 @@ sys.path.insert(0, os.path.join(HERE, "lib"))
 import app_config  # noqa: E402
 import app_data  # noqa: E402
 import app_sentry  # noqa: E402
+import app_teslacam  # noqa: E402
 import app_charges  # noqa: E402
 import app_sync  # noqa: E402
 import drive_roles as DR  # noqa: E402
@@ -73,6 +74,7 @@ DEFAULT_DATA = os.path.expanduser(os.environ.get("TESLA_DATA_DIR", "~/Library/Mo
 mimetypes.add_type("text/javascript", ".js")
 STORE = None
 SENTRY = None
+TC = None
 SYNC = None
 BOOK = None
 STARTED = time.time()
@@ -252,6 +254,21 @@ class H(BaseHTTPRequestHandler):
         if name == "sentry":
             ev, ok = SENTRY.events(footage_root("A"))
             return self.send_json(dict(connected=ok, events=ev))
+        if name == "teslacam":                  # the drives that are connected right now (found by what is on them)
+            _ROOTS["t"] = 0
+            return self.send_json(dict(drives=TC.drives()))
+        if name.startswith("teslacam/"):        # teslacam/<role>/<sentry|saved|recent>[/<run>]
+            role, _, rest = name[9:].partition("/")
+            kind, _, rid = rest.partition("/")
+            root = footage_root(role)
+            if kind == "recent" and rid:
+                c = TC.run_clips(role, root, urllib.parse.unquote(rid))
+                return self.send_json(dict(clips=c) if c else {"error": "no such run"}, 200 if c else 404)
+            if kind == "recent":
+                runs, ok = TC.recent(role, root)
+                return self.send_json(dict(connected=ok, runs=runs))
+            ev, ok = TC.events(role, kind, root)
+            return self.send_json(dict(connected=ok, events=ev))
         if name == "chargebook":
             return self.send_json(BOOK.get())
         if name.startswith("chargebook/"):
@@ -316,7 +333,7 @@ def serve(port, host="127.0.0.1"):
 
 
 def main():
-    global STORE, DATA_DIR, SENTRY, SYNC, BOOK
+    global STORE, DATA_DIR, SENTRY, TC, SYNC, BOOK
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--data-dir", default=DEFAULT_DATA)
     ap.add_argument("--port", type=int, default=int(app_config.get("window.port")))
@@ -331,6 +348,7 @@ def main():
         return 1
     STORE = app_data.Store(DATA_DIR)
     SENTRY = app_sentry.Sentry(DATA_DIR)
+    TC = app_teslacam.TeslaCam(DATA_DIR, SENTRY)
     BOOK = app_charges.ChargeBook(os.path.dirname(os.path.abspath(__file__)), DATA_DIR)
     BOOK.get()          # start reconciling the charges with their invoices in the background
     SYNC = app_sync.ChargerSync(os.path.dirname(os.path.abspath(__file__)), DATA_DIR)
