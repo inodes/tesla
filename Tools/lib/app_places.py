@@ -7,6 +7,7 @@ Sources (all in the Tesla data folder):
     station_facilities.json  OpenStreetMap places near each Tesla charger (already collected by the charger tools)
     places_osm_cache.json    OpenStreetMap places fetched from the app for the other places (written by the app)
 """
+import bisect
 import collections
 import datetime
 import json
@@ -183,8 +184,36 @@ class Places:
             ev.append(dict(k="charge", id=c["id"], t0=c["t0"], day=c["day"], hm=c["hm"], min=c["min"], kwh=c["kwh"], cost=c["cost"], key=c.get("pkey") or "", parts=c.get("parts"), net=c.get("net") or "", kind=c.get("kind"), addr=c.get("addr") or "", lat=c.get("lat"), lon=c.get("lon"), pname=c.get("place") or ""))
         for i in S.idles():
             ev.append(dict(k="idle", id=i["id"], t0=i["t0"], day=i["day"], hm=i["hm"], min=i["min"], kwh=i["kwh"], key=i.get("pkey") or ""))
-        for d in S.drives():
-            ev.append(dict(k="drive", id=d["id"], t0=d["t1"], day=d["day"], hm=d["hm"], min=d["min"], km=d["km"], key=d.get("pkey1") or "", frm=d.get("frm")))
+        idles = {}
+        for i in S.idles():
+            idles.setdefault(i.get("pkey") or "", []).append((i["t0"], i["t1"]))
+        chg = {}
+        for c in S.charges():
+            chg.setdefault(c.get("pkey") or "", []).append((c["t0"], c.get("t1") or c["t0"] + 60 * (c.get("min") or 0)))
+        drv = sorted(S.drives(), key=lambda d: d["t0"])
+        real = [d for d in drv if not d.get("repark")]
+        reparks = [d for d in drv if d.get("repark")]
+        rep_t = [d["t0"] for d in reparks]
+        # a drive that only shuffles the car (re-park) is not an arrival; it belongs to the stay it happens in: from arriving by a real
+        # drive to the next real drive leaving. The stay is the parked period when Tessie has no parked record (idle) or charge for it.
+        stay_of = {}
+        for n, d in enumerate(real):
+            key = d.get("pkey1") or ""
+            nxt = real[n + 1]["t0"] if n + 1 < len(real) else None
+            t0 = d["t1"]
+            lo = bisect.bisect_left(rep_t, t0)
+            hi = len(rep_t) if nxt is None else bisect.bisect_left(rep_t, nxt)
+            reps = [r for r in reparks[lo:hi] if (r.get("pkey1") or "") == key] if key else []
+            for r in reps:
+                stay_of[r["id"]] = True
+            if not key or nxt is None or nxt - t0 < 120:
+                continue
+            if any(a < nxt and b > t0 for a, b in idles.get(key, [])) or any(a < nxt and b > t0 for a, b in chg.get(key, [])):
+                continue
+            dt = datetime.datetime.strptime(d["day"] + " " + d["hm"], "%Y-%m-%d %H:%M") + datetime.timedelta(seconds=t0 - d["t0"])
+            ev.append(dict(k="stay", id="stay%d" % t0, t0=t0, day=dt.strftime("%Y-%m-%d"), hm=dt.strftime("%H:%M"), min=round((nxt - t0) / 60.0, 1), key=key, reparks=len(reps), kwh=0))
+        for d in drv:
+            ev.append(dict(k="repark" if d.get("repark") else "drive", id=d["id"], t0=d["t1"], day=d["day"], hm=d["hm"], min=d["min"], km=d["km"], key=d.get("pkey1") or "", frm=d.get("frm"), in_stay=bool(stay_of.get(d["id"]))))
         return ev
 
     def listing(self, S):
@@ -198,7 +227,7 @@ class Places:
             def stat(key):
                 es = by.get(key, [])
                 last = max((e["t0"] for e in es), default=0)
-                return dict(charges=sum(e["k"] == "charge" for e in es), idles=sum(e["k"] == "idle" for e in es), drives=sum(e["k"] == "drive" for e in es),
+                return dict(charges=sum(e["k"] == "charge" for e in es), idles=sum(e["k"] in ("idle", "stay") for e in es), drives=sum(e["k"] == "drive" for e in es), reparks=sum(e["k"] == "repark" for e in es),
                             kwh=round(sum(e.get("kwh") or 0 for e in es if e["k"] == "charge"), 1), cost=round(sum(e.get("cost") or 0 for e in es if e["k"] == "charge"), 2),
                             last=datetime.datetime.fromtimestamp(last).strftime("%Y-%m-%d") if last else "", t_last=last)
             saved = [dict(key="p:" + p["name"], name=p["name"], lat=p["lat"], lon=p["lon"], radius=p["radius"], notes=p["notes"], **stat("p:" + p["name"])) for p in self.defs()]
@@ -247,7 +276,7 @@ class Places:
         ign = [(e.get("center_lat"), e.get("center_lon"), e.get("radius_m") or 100) for e in ign if isinstance(e, dict) and e.get("center_lat") is not None]
         chg = [(c["lat"], c["lon"]) for c in S.charges() if c.get("lat") is not None and c.get("lon") is not None]
         cells = collections.defaultdict(list)
-        pts = [(d["lat1"], d["lon1"], d["day"], d["t1"], d.get("addr1") or "") for d in S.drives() if d.get("lat1") is not None and not d.get("pkey1", "").startswith(("p:", "s:"))]
+        pts = [(d["lat1"], d["lon1"], d["day"], d["t1"], d.get("addr1") or "") for d in S.drives() if d.get("lat1") is not None and not d.get("repark") and not d.get("pkey1", "").startswith(("p:", "s:"))]
         pts += [(i["lat"], i["lon"], i["day"], i["t0"], i.get("addr") or "") for i in S.idles() if i.get("lat") is not None and not (i.get("pkey") or "").startswith(("p:", "s:"))]
         for lat, lon, day, t, addr in pts:
             cells[(round(lat / 0.002), round(lon / 0.002))].append((lat, lon, day, t, addr))
@@ -301,7 +330,7 @@ class Places:
                 if i.get("lat") is not None and hav(info["lat"], info["lon"], i["lat"], i["lon"]) <= 150:
                     visits.append(dict(k="idle", id=i["id"], t0=i["t0"], day=i["day"], hm=i["hm"], min=i["min"], kwh=i["kwh"]))
             for d in S.drives():
-                if d.get("lat1") is not None and hav(info["lat"], info["lon"], d["lat1"], d["lon1"]) <= 150:
+                if d.get("lat1") is not None and not d.get("repark") and hav(info["lat"], info["lon"], d["lat1"], d["lon1"]) <= 150:
                     visits.append(dict(k="drive", id=d["id"], t0=d["t1"], day=d["day"], hm=d["hm"], min=d["min"], km=d["km"], frm=d.get("frm")))
         else:
             visits = [e for e in self._events(S) if e["key"] == key]
@@ -351,7 +380,10 @@ class Places:
                     return dict(f, cached=True)
         sys.path.insert(0, os.path.dirname(HERE))
         import places_manager as PM
+        PM.OVERPASS_ERROR = ""
         res = PM.query_overpass_pois(lat, lon, radius)
+        if not res and PM.OVERPASS_ERROR:       # the servers did not answer: say so (and keep nothing) rather than claim the street is empty
+            return dict(items=[], error=PM.OVERPASS_ERROR, source="OpenStreetMap (Overpass)", radius=radius, cached=False)
         items = [dict(name=r["name"], group=r.get("group") or "Other", emoji=r.get("emoji") or "", category=r.get("category") or "", dist_m=r.get("dist_m"), lat=r.get("lat"), lon=r.get("lon")) for r in res]
         rec = dict(items=items, source="OpenStreetMap (Overpass)", fetched=datetime.datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ"), radius=radius)
         if items:       # an empty answer is more likely a busy server than an empty street, so it is not kept

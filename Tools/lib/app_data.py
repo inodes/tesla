@@ -26,6 +26,12 @@ _LOCK = threading.Lock()
 _CACHE = {}
 
 
+# Tessie records every move of the car as a drive, including shuffling it a few metres in a car park. A "re-park" is a drive that covers
+# less than REPARK_KM (odometer steps are 10 m, so 0.02 = 20 m, 0.03 = 30 m) in no more than REPARK_MIN minutes. Everything else is a drive.
+REPARK_KM = 0.05
+REPARK_MIN = 10
+
+
 def _num(v, d=None):
     try:
         return float(v)
@@ -137,7 +143,8 @@ class Store:
                 t0 = int(_num(r.get("Started At (UTC)"), 0))
                 t1 = int(_num(r.get("Ended At (UTC)"), t0))
                 km = _num(r.get("Distance (km)"), 0)
-                out.append(dict(k="drive", id=st["stamp"] if st else "t%d" % t0, page=bool(st), t0=t0, t1=t1, day=dt.strftime("%Y-%m-%d"), hm=dt.strftime("%H:%M"),
+                mins = _num(r.get("Duration (Minutes)"), 0)
+                out.append(dict(k="drive", repark=km < REPARK_KM and mins <= REPARK_MIN, id=st["stamp"] if st else "t%d" % t0, page=bool(st), t0=t0, t1=t1, day=dt.strftime("%Y-%m-%d"), hm=dt.strftime("%H:%M"),
                                 tz=tz, frm=(st or {}).get("frm") or r.get("Starting Saved Location") or _short(r.get("Starting Location")), to=(st or {}).get("to") or r.get("Ending Saved Location") or _short(r.get("Ending Location")),
                                 min=_num(r.get("Duration (Minutes)"), 0), km=km, kwh=_num(r.get("Total Energy Used (kWh)"), 0), whkm=_num(r.get("Average Energy Used (Wh/km)")),
                                 avg=_num(r.get("Average Speed (km/h)")), max=_num(r.get("Max Speed (km/h)")), b0=_num(r.get("Starting Battery (%)")), b1=_num(r.get("Ending Battery (%)")),
