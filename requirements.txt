@@ -4,3 +4,6 @@ pypdf>=3.0.0
 timezonefinder>=6.0.0
 evnex>=0.7.0,<0.8.0
 matplotlib>=3.8.0
+
+# optional: native window for Tools/tesla_app.py (without it the app opens in your browser)
+pywebview>=5.0

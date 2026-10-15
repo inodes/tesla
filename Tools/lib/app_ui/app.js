@@ -1,0 +1,688 @@
+"use strict";
+// Tesla app front end (REQ-199). Plain JS, hash routing, data from /api/*; drive pages are the existing drive.html files.
+const $=(s,r=document)=>r.querySelector(s),$$=(s,r=document)=>[...r.querySelectorAll(s)];
+const esc=s=>String(s==null?"":s).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+const n0=(v,d=0)=>v==null||isNaN(v)?"–":(+v).toLocaleString("en-AU",{minimumFractionDigits:d,maximumFractionDigits:d});
+const MON=["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"],DOW=["Sun","Mon","Tue","Wed","Thu","Fri","Sat"];
+const dayName=d=>{const t=new Date(d+"T12:00:00");return DOW[t.getDay()]+" "+t.getDate()+" "+MON[t.getMonth()]+" "+t.getFullYear()};
+const addMin=(hm,m)=>{const [h,mi]=hm.split(":").map(Number),t=h*60+mi+Math.round(m||0);return String(Math.floor(t/60)%24).padStart(2,"0")+":"+String(t%60).padStart(2,"0")};
+const dur=m=>m==null?"–":m>=120?Math.floor(m/60)+" h "+Math.round(m%60)+" min":Math.round(m)+" min";
+const money=v=>v==null||isNaN(v)?"–":"$"+(+v).toFixed(2);
+const cache={};
+const api=async p=>{if(cache[p])return cache[p];const r=await fetch("/api/"+p);if(!r.ok)throw new Error(p+": "+r.status);return cache[p]=await r.json()};
+const main=$("#main");
+const place=x=>x.place||x.addr||"Unknown place";
+const driveTitle=d=>(d.frm||"?")+" → "+(d.to||"?");
+const loading=()=>main.innerHTML='<div class="empty">Loading…</div>';
+const QK="clipQueue",qget=()=>{try{return JSON.parse(localStorage.getItem(QK)||"[]")}catch(e){return[]}};
+
+// ---------- tooltip + map helpers
+const tip=document.body.appendChild(Object.assign(document.createElement("div"),{id:"tip"}));
+const showTip=(ev,html)=>{tip.innerHTML=html;tip.style.display="block";const w=tip.offsetWidth;tip.style.left=Math.min(innerWidth-w-8,ev.clientX+14)+"px";tip.style.top=(ev.clientY+14)+"px"};
+const hideTip=()=>tip.style.display="none";
+// "Open in" links for a coordinate: Google Maps, Apple Maps, OpenStreetMap, Waze (external, so they open in the browser)
+function mapLinks(lat,lon,name,stop){
+  if(lat==null||lon==null)return"";const ll=(+lat).toFixed(6)+","+(+lon).toFixed(6),q=encodeURIComponent(name||ll),sp=stop?' onclick="event.stopPropagation()"':"";
+  const L=[["Google Maps","https://www.google.com/maps/search/?api=1&query="+ll],["Apple Maps","https://maps.apple.com/?ll="+ll+"&q="+q],["OpenStreetMap","https://www.openstreetmap.org/?mlat="+(+lat).toFixed(6)+"&mlon="+(+lon).toFixed(6)+"#map=18/"+(+lat).toFixed(6)+"/"+(+lon).toFixed(6)],["Waze","https://waze.com/ul?ll="+ll+"&navigate=yes"]];
+  const sh={"Google Maps":"Google","Apple Maps":"Apple","OpenStreetMap":"OSM"};
+  return L.map(([t,u])=>`<a class="ml" href="${u}" target="_blank" rel="noopener"${sp}>${stop?(sh[t]||t):t}</a>`).join(" · ");
+}
+function miniMap(el,lat,lon,col){
+  if(lat==null||lon==null){el.outerHTML='<div class="sub">No location.</div>';return}
+  if(!window.maplibregl){el.innerHTML='<div class="empty">Map library not loaded (offline?).</div>';return}
+  const dark=matchMedia("(prefers-color-scheme: dark)").matches;
+  const m=new maplibregl.Map({container:el,style:"https://tiles.openfreemap.org/styles/"+(dark?"dark":"positron"),center:[lon,lat],zoom:14.5,attributionControl:{compact:true},cooperativeGestures:true});
+  m.addControl(new maplibregl.NavigationControl({showCompass:false}),"top-right");
+  new maplibregl.Marker({color:col||"#3b6cf6"}).setLngLat([lon,lat]).addTo(m);
+}
+function tile(b,s){return `<div class="tile"><b>${b}</b><span>${s}</span></div>`}
+function crumbs(h,label){return `<div class="crumb"><a href="${h}">← ${label}</a></div>`}
+
+// ---------- stacked charts on one shared axis (charge pages)
+function stack(host,t,panels,xfmt){
+  const W=900,L=52,R=12,H=96,G=24,n=t.length;if(n<2){host.innerHTML='<div class="sub">No telemetry for this one.</div>';return}
+  const t0=t[0],t1=t[n-1]||1,X=v=>L+(v-t0)/(t1-t0)*(W-L-R);let h="",y=0;
+  const ps=panels.filter(p=>p.vals.some(v=>v!=null));
+  ps.forEach((p,pi)=>{const v=p.vals.filter(x=>x!=null),lo=Math.min(...v,p.min!=null?p.min:Infinity),hi=Math.max(...v,p.max!=null?p.max:-Infinity),sp=(hi-lo)||1,Y=q=>y+H-(q-lo)/sp*(H-8)-4;
+    let d="";p.vals.forEach((q,i)=>{if(q!=null)d+=(d&&p.vals[i-1]!=null?"L":"M")+X(t[i]).toFixed(1)+","+Y(q).toFixed(1)});
+    p.Y=Y;p.y=y;
+    h+=`<g><text x="${L-6}" y="${y+10}" text-anchor="end">${n0(hi,hi<20?1:0)}</text><text x="${L-6}" y="${y+H-2}" text-anchor="end">${n0(lo,lo<20?1:0)}</text>
+     <line class="grid" x1="${L}" x2="${W-R}" y1="${y+H}" y2="${y+H}"/><path d="${d}" fill="none" stroke="${p.col}" stroke-width="2" stroke-linejoin="round"/>
+     <text x="${L+4}" y="${y+12}" style="fill:${p.col};font-weight:600">${p.name} <tspan style="fill:var(--mut);font-weight:400">${p.unit}</tspan></text></g>`;y+=H+G});
+  const ticks=5;let ax="";for(let i=0;i<=ticks;i++){const v=t0+(t1-t0)*i/ticks;ax+=`<text x="${X(v)}" y="${y+4}" text-anchor="middle">${xfmt(v)}</text>`}
+  host.innerHTML=`<svg viewBox="0 0 ${W} ${y+14}" style="width:100%;height:auto;display:block">${h}${ax}<line class="cl" id="cur" y1="0" y2="${y-G}" style="display:none"/></svg>`;
+  const svg=$("svg",host),cur=$("#cur",host);
+  svg.onmousemove=ev=>{const r=svg.getBoundingClientRect(),x=(ev.clientX-r.left)/r.width*W;if(x<L||x>W-R){svg.onmouseleave();return}
+    const tv=t0+(x-L)/(W-L-R)*(t1-t0);let i=0,b=1e18;t.forEach((q,k)=>{const d=Math.abs(q-tv);if(d<b){b=d;i=k}});
+    cur.setAttribute("x1",X(t[i]));cur.setAttribute("x2",X(t[i]));cur.style.display="";
+    showTip(ev,`<b>${xfmt(t[i])}</b><br>`+ps.map(p=>`<span style="color:${p.col}">●</span> ${p.name}: ${p.vals[i]==null?"–":n0(p.vals[i],p.dec==null?1:p.dec)+" "+p.unit}`).join("<br>"))};
+  svg.onmouseleave=()=>{cur.style.display="none";hideTip()};
+}
+
+// ---------- Activity
+const AF={drive:true,charge:true,idle:true,q:"",days:30,r:{p:"all"}};
+async function pageActivity(){
+  loading();const act=await api("activity");
+  const draw=()=>{
+    const q=AF.q.toLowerCase(),rows=act.filter(x=>AF[x.k]&&inRange(x,AF.r)&&(!q||(driveTitle(x)+place(x)+(x.addr||"")).toLowerCase().includes(q)));
+    const byDay=new Map();rows.forEach(x=>{if(!byDay.has(x.day))byDay.set(x.day,[]);byDay.get(x.day).push(x)});
+    const days=[...byDay.keys()].slice(0,AF.days);let h="";
+    days.forEach(d=>{const xs=byDay.get(d),km=xs.filter(x=>x.k==="drive").reduce((a,x)=>a+(x.km||0),0),used=xs.filter(x=>x.k==="drive").reduce((a,x)=>a+(x.kwh||0),0),add=xs.filter(x=>x.k==="charge").reduce((a,x)=>a+(x.kwh||0),0);
+      h+=`<div class="day">${dayName(d)}<small>${km?n0(km,1)+" km · "+n0(used,1)+" kWh used":""}${add?(km?" · ":"")+"+"+n0(add,1)+" kWh charged":""}</small></div>`;
+      xs.sort((a,b)=>b.t0-a.t0).forEach(x=>h+=actRow(x))});
+    $("#list").innerHTML=h||'<div class="empty">Nothing matches.</div>';
+    $("#more").hidden=days.length>=byDay.size;
+  };
+  main.innerHTML=`<h1>Activity</h1><div class="sub">${act.length.toLocaleString()} drives, charges and parked periods, newest first.</div>
+   <div class="bar"><span id="rg"></span><button class="chip ${AF.drive?"on":""}" data-k="drive">Drives</button><button class="chip ${AF.charge?"on":""}" data-k="charge">Charges</button><button class="chip ${AF.idle?"on":""}" data-k="idle">Parked</button>
+   <input type="search" id="q" placeholder="Search a place…" value="${esc(AF.q)}"></div><div id="list"></div><div class="bar"><button class="btn" id="more">Show 30 more days</button></div>`;
+  $$(".chip").forEach(c=>c.onclick=()=>{AF[c.dataset.k]=!AF[c.dataset.k];c.classList.toggle("on");draw()});
+  rangePicker($("#rg"),AF.r,daysOf(act),()=>{AF.days=30;draw()});$("#q").oninput=e=>{AF.q=e.target.value;draw()};$("#more").onclick=()=>{AF.days+=30;draw()};draw();
+}
+function actRow(x){
+  const end=addMin(x.hm,x.min),alb=x.al?` · ⚠ ${x.al} alert${x.al>1?"s":""}`:"",href=x.k==="drive"?"#/drive/"+x.id:x.k==="charge"?"#/charge/"+x.id:"#/parked/"+x.id;
+  let ti,st,nums;
+  if(x.k==="drive"){ti=driveTitle(x);st=`${dur(x.min)} · ${n0(x.whkm)} Wh/km · ${n0(x.b0)}→${n0(x.b1)}%${x.saved?" · "+x.saved+" saved clip":""}${x.foot?" · dashcam "+x.foot+"%":""}${alb}`;nums=`<span>${n0(x.km,1)}<small>km</small></span><span>${n0(x.kwh,1)}<small>kWh used</small></span>`}
+  else if(x.k==="charge"){ti=place(x);st=`${dur(x.min)} · ${n0(x.b0)}→${n0(x.b1)}% · ${x.kind==="supercharger"?"Supercharger":x.kind==="dc"?"DC fast":"AC"}${x.parts&&x.parts.length>1?" · "+x.parts.length+" parts":""}${alb}`;nums=`<span>+${n0(x.kwh,1)}<small>kWh</small></span><span>${money(x.cost)}<small>cost</small></span>`}
+  else{ti="Parked · "+place(x);st=`${dur(x.min)} · ${n0(x.b0)}→${n0(x.b1)}%${x.sentry>0.01?" · Sentry "+Math.round(x.sentry*100)+"%":""}${x.climate>0.01?" · Climate "+Math.round(x.climate*100)+"%":""}${alb}`;nums=`<span>${n0(x.kwh,2)}<small>kWh used</small></span>`}
+  return `<a class="row ${x.k==="idle"?"faded":""}" ${href?`href="${href}"`:""} ${x.k==="drive"&&!x.page?'title="No dashcam / deep-dive page for this drive - shows the summary"':""}><span class="t">${x.hm} – ${end}</span><span class="k ${x.k}"></span><div style="min-width:0"><div class="ti">${esc(ti)}</div><div class="st">${esc(st)}</div></div><div class="nums">${nums}</div></a>`;
+}
+
+// ---------- generic sortable table
+function table(host,cols,rows,onRow,def){
+  let sk=def||cols[0].k,dir=-1;
+  const cmp=(x,y)=>typeof x==="string"&&typeof y==="string"?x.localeCompare(y):x<y?-1:x>y?1:0,byDay=sk0=>sk0==="t0"&&rows.length&&rows[0].day!==undefined;
+  const draw=()=>{const rs=[...rows].sort((a,b)=>{const x=a[sk],y=b[sk];if(x==null||y==null)return (x==null)-(y==null);return dir*cmp(x,y)});
+    host.innerHTML=`<table><thead><tr>${cols.map(c=>`<th class="${c.l?"l":""}" data-k="${c.k}">${c.t}${sk===c.k?(dir<0?" ▾":" ▴"):""}</th>`).join("")}</tr></thead><tbody>${rs.slice(0,500).map((r,i)=>`<tr data-i="${rows.indexOf(r)}">${cols.map(c=>`<td class="${c.l?"l":""}">${c.f?c.f(r):esc(r[c.k])}</td>`).join("")}</tr>`).join("")}</tbody></table>${rs.length>500?`<div class="sub" style="padding:8px">Showing the first 500 of ${rs.length}. Narrow the filter.</div>`:""}`;
+    $$("th",host).forEach(th=>th.onclick=()=>{if(sk===th.dataset.k)dir=-dir;else{sk=th.dataset.k;dir=-1}draw()});
+    $$("tbody tr",host).forEach(tr=>tr.onclick=()=>onRow(rows[+tr.dataset.i]))};
+  draw();
+}
+// ---------- date range, like Tessie: presets and a calendar. Days are local days (what is shown); the order everywhere is UTC (t0), which never repeats or skips.
+const ymd=d=>d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0")+"-"+String(d.getDate()).padStart(2,"0");
+const addDays=(d,n)=>{const r=new Date(d);r.setDate(r.getDate()+n);return r};
+const PRESETS=[["today","Today"],["yday","Yesterday"],["7","Last 7 days"],["30","Last 30 days"],["year","This year"],["lastyear","Last year"],["all","All time"]];
+function rangeOf(st){const t=new Date(),T=ymd(t),y=t.getFullYear();
+  switch(st.p){case"today":return[T,T];case"yday":{const d=ymd(addDays(t,-1));return[d,d]}case"7":return[ymd(addDays(t,-6)),T];case"30":return[ymd(addDays(t,-29)),T];
+    case"year":return[y+"-01-01",T];case"lastyear":return[(y-1)+"-01-01",(y-1)+"-12-31"];case"custom":return[st.a,st.b||st.a];default:return null}}
+const inRange=(x,st)=>{const r=rangeOf(st);return !r||(x.day>=r[0]&&x.day<=r[1])};
+const rangeLabel=st=>{if(st.p==="custom"){const[a,b]=rangeOf(st);return a===b?dayName(a):dayName(a)+" – "+dayName(b)}return(PRESETS.find(p=>p[0]===st.p)||[0,"All time"])[1]};
+const daysOf=rows=>{const s=new Set();rows.forEach(x=>s.add(x.day));return s};
+function rangePicker(host,st,days,onChange){
+  let open=false,ym=null,pend=null;
+  const first=()=>{const r=rangeOf(st);return r?r[1]:ymd(new Date())};
+  const draw=()=>{
+    host.innerHTML=`<span class="rngw"><button class="btn rng" type="button">▦ ${esc(rangeLabel(st))} ▾</button>${open?`<div class="rpop"><div class="rpre">${PRESETS.map(([k,t])=>`<button type="button" class="${st.p===k?"on":""}" data-p="${k}">${t}</button>`).join("")}</div><div class="rcal"></div></div>`:""}</span>`;
+    $(".rng",host).onclick=e=>{e.stopPropagation();open=!open;if(open){ym=ym||first().slice(0,7)}pend=null;draw()};
+    if(!open)return;
+    $$(".rpre button",host).forEach(b=>b.onclick=e=>{e.stopPropagation();st.p=b.dataset.p;open=false;pend=null;draw();onChange()});
+    const [Y,M]=ym.split("-").map(Number),f=new Date(Y,M-1,1),lead=(f.getDay()+6)%7,dim=new Date(Y,M,0).getDate(),r=pend?[pend,pend]:rangeOf(st),T=ymd(new Date());
+    let g="";for(let i=0;i<lead;i++)g+="<i></i>";
+    for(let d=1;d<=dim;d++){const k=Y+"-"+String(M).padStart(2,"0")+"-"+String(d).padStart(2,"0"),c=[days.has(k)?"has":"",r&&k>=r[0]&&k<=r[1]?"in":"",r&&(k===r[0]||k===r[1])?"sel":"",k===T?"today":"",k>T?"fut":""].join(" ");g+=`<button type="button" class="${c}" data-d="${k}">${d}</button>`}
+    $(".rcal",host).innerHTML=`<div class="rhd"><button type="button" data-m="-1">‹</button><b>${MON[M-1]} ${Y}</b><button type="button" data-m="1">›</button></div><div class="rdw"><i>M</i><i>T</i><i>W</i><i>T</i><i>F</i><i>S</i><i>S</i></div><div class="rgd">${g}</div><div class="sub" style="margin-top:6px">${pend?"Pick the last day (or the same day again).":"Pick a day, or a first and last day."} Days with records are bold.</div>`;
+    $$(".rhd button",host).forEach(b=>b.onclick=e=>{e.stopPropagation();const d=new Date(Y,M-1+ +b.dataset.m,1);ym=ymd(d).slice(0,7);draw()});
+    $$(".rgd button",host).forEach(b=>b.onclick=e=>{e.stopPropagation();const k=b.dataset.d;
+      if(!pend){pend=k;draw();return}
+      st.p="custom";st.a=pend<k?pend:k;st.b=pend<k?k:pend;pend=null;open=false;draw();onChange()});
+  };
+  if(!rangePicker.bound){rangePicker.bound=true;document.addEventListener("click",e=>{if(!e.target.closest(".rngw"))document.dispatchEvent(new CustomEvent("rngclose"))});}
+  const close=()=>{if(!document.body.contains(host)){document.removeEventListener("rngclose",close);return}if(open){open=false;pend=null;draw()}};
+  document.addEventListener("rngclose",close);
+  draw();
+}
+
+// ---------- Drives
+let DP={r:{p:"all"},q:"",ch:"all",ex:"all"};
+async function pageDrives(){
+  loading();const act=await api("activity"),all=act.filter(x=>x.k==="drive"),chg=act.filter(x=>x.k==="charge");
+  // a drive "ends at a charge" when a charge starts within 30 min after it, "leaves a charge" when one ended within 30 min before it
+  all.forEach(d=>{d.toCh=chg.find(c=>c.t0>=d.t1-300&&c.t0<=d.t1+1800)||null;d.fromCh=chg.find(c=>c.t1<=d.t0+300&&c.t1>=d.t0-1800)||null});
+  const CHF={all:()=>true,to:x=>x.toCh,from:x=>x.fromCh,any:x=>x.toCh||x.fromCh,none:x=>!x.toCh&&!x.fromCh,low:x=>x.b1!=null&&x.b1<=20},
+   EXF={all:()=>true,foot:x=>x.foot,fsd:x=>x.ap>0,al:x=>x.al>0,hwy:x=>x.km>=30&&x.max>=100};
+  const draw=()=>{const q=DP.q.toLowerCase(),rs=all.filter(x=>inRange(x,DP.r)&&(!q||driveTitle(x).toLowerCase().includes(q))&&CHF[DP.ch](x)&&EXF[DP.ex](x)),
+    km=rs.reduce((a,x)=>a+x.km,0),kwh=rs.reduce((a,x)=>a+(x.kwh||0),0),ap=rs.reduce((a,x)=>a+(x.ap||0),0),mn=rs.reduce((a,x)=>a+(x.min||0),0);
+    $("#tl").innerHTML=tile(n0(rs.length),"drives")+tile(n0(km)+" km","distance")+tile(km?n0(kwh*1000/km)+" Wh/km":"–","average efficiency")+tile(km?n0(100*ap/km)+"%":"–","self-driving")+tile(dur(mn),"time driving")+tile(n0(Math.max(0,...rs.map(x=>x.max||0)))+" km/h","top speed");
+    table($("#tb"),[{k:"t0",t:"Date",l:1,f:r=>`${r.day} ${r.hm}`},{k:"frm",t:"Trip",l:1,f:r=>esc(driveTitle(r))+(r.toCh?` <span class="pill ok" title="A charge started right after this drive">to charge</span>`:"")+(r.fromCh?` <span class="pill" title="A charge ended just before this drive">from charge</span>`:"")},{k:"km",t:"km",f:r=>n0(r.km,1)},{k:"min",t:"Time",f:r=>dur(r.min)},{k:"whkm",t:"Wh/km",f:r=>n0(r.whkm)},{k:"max",t:"Max",f:r=>n0(r.max)},{k:"ap",t:"Self-driving",f:r=>r.km?n0(100*r.ap/r.km)+"%":"–"},{k:"b0",t:"Battery",f:r=>`${n0(r.b0)}→${n0(r.b1)}%`},{k:"foot",t:"Dashcam",f:r=>r.foot==null?"–":r.foot+"%"}],rs,r=>{location.hash="#/drive/"+r.id},"t0")};
+  main.innerHTML=`<h1>Drives</h1><div class="bar"><span id="rg"></span><select id="fc"><option value="all">Any charging</option><option value="to">Ending at a charge</option><option value="from">Leaving a charge</option><option value="any">Either end at a charge</option><option value="none">No charge at either end</option><option value="low">Finished at 20% or less</option></select><select id="fx"><option value="all">All drives</option><option value="hwy">Long highway (30 km+)</option><option value="fsd">Used self-driving</option><option value="foot">With dashcam footage</option><option value="al">With alerts</option></select><input type="search" id="q" placeholder="Search a place…" value="${esc(DP.q)}"></div><div class="tiles" id="tl"></div><div id="tb"></div>`;
+  rangePicker($("#rg"),DP.r,daysOf(all),draw);$("#q").oninput=e=>{DP.q=e.target.value;draw()};$("#fc").value=DP.ch;$("#fc").onchange=e=>{DP.ch=e.target.value;draw()};$("#fx").value=DP.ex;$("#fx").onchange=e=>{DP.ex=e.target.value;draw()};draw();
+}
+async function pageDrive(stamp){
+  const act=await api("activity"),d=act.find(x=>x.k==="drive"&&x.id===stamp);
+  const als=await alertsFor("drive",stamp);
+  if(d&&!d.page){driveLite(d,als);return}
+  main.innerHTML=crumbs("#/drives","Drives")+alertsCard(als,"drive")+`<iframe class="drive" id="fr" src="/data/drives/deepdive/${encodeURIComponent(stamp)}/drive.html"></iframe>`;
+  wireAlerts(main);const fr=$("#fr");fr.onload=()=>{try{const doc=fr.contentDocument;
+    $$("a",doc).forEach(a=>{if((a.getAttribute("href")||"")==="../index.html"){a.parentNode.style.display="none"}});
+    const fit=()=>{fr.style.height=(doc.documentElement.scrollHeight+20)+"px"};fit();new ResizeObserver(fit).observe(doc.body)}catch(e){}};
+}
+
+// A drive Tessie recorded that has no per-drive file (so no dashcam / deep-dive page): the summary from the drives list.
+function driveLite(d,als){
+  main.innerHTML=crumbs("#/drives","Drives")+`<h1>${esc(driveTitle(d))}</h1><div class="sub">${dayName(d.day)} · ${d.hm} – ${addMin(d.hm,d.min)} · ${dur(d.min)} · ${n0(d.km,1)} km</div>
+   <div class="tiles">${tile(n0(d.km,1)+" km","distance")}${tile(n0(d.kwh,1)+" kWh","energy used")}${tile(d.km?n0(d.whkm||d.kwh*1000/d.km)+" Wh/km":"–","efficiency")}${tile(n0(d.b0)+"% → "+n0(d.b1)+"%","battery")}${tile(n0(d.avg)+" / "+n0(d.max)+" km/h","average / top speed")}${tile(d.km?n0(100*(d.ap||0)/d.km)+"%":"–","self-driving")}</div>
+   ${alertsCard(als,"drive")}<div class="card"><h2 style="margin-top:0">Where</h2><div class="map" id="mp"></div><div class="sub" style="margin-top:8px">From ${esc(d.frm||"?")} to ${esc(d.to||"?")}${d.pkey1?' · <a href="#/place/'+encodeURIComponent(d.pkey1)+'">where it ended</a>':""}</div></div>
+   <div class="sub" style="margin-top:12px">Tessie has this drive but no per-drive file (route, dashcam footage) was saved for it, so only the summary is shown. Run <code>./sync_api_tessie.py</code> then <code>./drive_report.py</code> to build the full page if the data exists.</div>`;
+  wireAlerts(main);miniMap($("#mp"),d.lat,d.lon,"#3b6cf6");
+}
+
+// ---------- Charges: the charge book (analyse_charging.py's reconcile - invoices, plug-ins, Tessie sync) (REQ-207)
+let CP={r:{p:"all"},kind:"all",q:"",inv:"all",tab:"charges",open:{},sk:"t0",dir:-1};
+const cmpv=(x,y)=>typeof x==="string"&&typeof y==="string"?x.localeCompare(y):x<y?-1:x>y?1:0;
+const getBook=async()=>{try{return await (await fetch("/api/chargebook")).json()}catch(e){return{status:"error",error:String(e),book:null}}};
+const SYNC_T={synced:["In Tessie","ok","Tessie already holds the invoice cost for every record of this charge."],pending:["Not in Tessie","warn","Tessie's cost differs from the invoice. To send the invoice cost run ./analyse_charging.py --sync-tessie-costs --apply (this app never changes Tessie)."],partial:["Part in Tessie","warn","Some records already hold the invoice cost, others do not. Run ./analyse_charging.py --sync-tessie-costs --apply to send the rest."]};
+const syncPill=s=>SYNC_T[s]?`<span class="pill ${SYNC_T[s][1]}" title="${esc(SYNC_T[s][2])}">${SYNC_T[s][0]}</span>`:'<span class="sub">–</span>';
+const kindPill=k=>`<span class="pill ${k==="supercharger"?"sc":k}">${k==="supercharger"?"Supercharger":k==="dc"?"DC":"AC"}</span>`;
+const gstOf=t=>t==null?null:t/11;
+async function bookWithRaw(){
+  const [act,B0]=await Promise.all([api("activity"),getBook()]);
+  if(B0.book){const raw={};act.filter(x=>x.k==="charge").forEach(x=>raw[x.id]=x);B0.book.plugs.forEach(p=>{const r=raw[p.id];p.where=r?(r.place||p.place):p.place;p.pkey=r?r.pkey:"";p.raw=r||null;p.parts.forEach(x=>{x.raw=raw[x.id]||null})})}
+  return B0;
+}
+function bookWait(B0,title,again){
+  main.innerHTML=`<h1>${title}</h1><div class="empty">${B0.status==="error"?"Could not reconcile the charges with the invoices: "+esc(B0.error||""):"Reconciling the charges with their invoices… about 20 seconds the first time, then it is remembered."}</div>`;
+  if(B0.status!=="error")setTimeout(()=>{if(location.hash.startsWith("#/"+(title==="Charges"?"charges":"charge")))again()},3000);
+}
+async function pageCharges(){
+  loading();const B0=await bookWithRaw();if(!B0.book){bookWait(B0,"Charges",pageCharges);return}
+  const B=B0.book,P=B.plugs;
+  const COLS=[["t0","Date",1],["where","Where",1],["kind","Type"],["min","Time"],["b0","Battery"],["peak","Peak kW"],["kmh","km/h"],["disp","Dispenser kWh"],["kwh","Battery kWh"],["eff","Eff %"],["rate","$/kWh"],["cost","Cost"],["invn","Invoice"],["sync","Tessie"]];
+  const invn=p=>p.invoice&&p.invoice.number||(p.invoice_only?"":null);
+  const draw=()=>{
+    const q=CP.q.toLowerCase();
+    const rs=P.filter(p=>inRange(p,CP.r)&&(CP.kind==="all"||p.kind===CP.kind)&&(!q||((p.where||"")+" "+(p.addr||"")+" "+(p.network||"")+" "+(p.invoice&&p.invoice.number||"")).toLowerCase().includes(q))
+      &&(CP.inv==="all"||(CP.inv==="with"&&p.invoice)||(CP.inv==="without"&&!p.invoice&&!p.home)||(CP.inv==="unsynced"&&(p.sync==="pending"||p.sync==="partial"))));
+    const kwh=rs.reduce((a,x)=>a+(x.kwh||0),0),disp=rs.reduce((a,x)=>a+(x.disp||x.kwh||0),0),cost=rs.reduce((a,x)=>a+(x.cost||0),0),recs=rs.reduce((a,x)=>a+x.parts.length,0);
+    const withInv=rs.filter(x=>x.invoice).length,billed=rs.filter(x=>!x.home).length,uns=rs.filter(x=>x.sync==="pending"||x.sync==="partial").length;
+    $("#tl").innerHTML=tile(n0(rs.length),"charges"+(recs!==rs.length?" ("+recs+" Tessie records)":""))+tile(n0(kwh)+" kWh","battery energy added")+tile(money(cost),"cost")+tile(kwh?money(cost/kwh)+"/kWh":"–","average price")+tile(withInv+" of "+billed,"public charges with an invoice")+tile(uns?uns+" to send":"all sent",uns?"invoice costs not yet in Tessie":"invoice costs are in Tessie");
+    const val=(p,k)=>k==="where"?(p.where||"").toLowerCase():k==="invn"?invn(p):p[k];
+    rs.sort((a,b)=>{const x=val(a,CP.sk),y=val(b,CP.sk);if(x==null||y==null)return (x==null)-(y==null);return CP.dir*cmpv(x,y)});
+    const row=p=>{const multi=p.parts.length>1,op=CP.open[p.id];
+      let h=`<tr class="chr" data-id="${p.id}"><td class="l">${multi?`<span class="tg" data-tg="${p.id}" title="Show the ${p.parts.length} Tessie records">${op?"▾":"▸"}</span> `:""}${p.day} ${p.hm}${multi?` <span class="pill">${p.parts.length} parts</span>`:""}</td><td class="l">${whereLink({pkey:p.pkey,place:p.where,addr:p.addr})}</td><td>${kindPill(p.kind)}</td><td>${dur(p.min)}</td><td>${n0(p.b0)}→${n0(p.b1)}%</td><td>${p.peak==null?"–":n0(p.peak)}</td><td>${p.kmh==null?"–":n0(p.kmh)}</td><td>${p.disp==null?"–":n0(p.disp,1)}</td><td>${n0(p.kwh,1)}</td><td>${p.eff==null?"–":n0(p.eff)+"%"}</td><td>${p.rate==null?"–":money(p.rate)}</td><td>${money(p.cost)}</td><td>${p.invoice?esc(p.invoice.number||"yes"):p.home?'<span class="sub">–</span>':'<span class="pill warn" title="No invoice matched this charge">none</span>'}</td><td>${syncPill(p.sync)}</td></tr>`;
+      if(multi&&op)h+=p.parts.map(x=>`<tr class="chs" data-id="${x.id}"><td class="l" style="padding-left:30px">↳ ${x.day} ${x.hm}</td><td class="l sub">part of the charge above</td><td></td><td>${dur(x.min)}</td><td>${n0(x.b0)}→${n0(x.b1)}%</td><td>${x.peak==null?"–":n0(x.peak)}</td><td>${x.kmh==null?"–":n0(x.kmh)}</td><td>${x.disp==null?"–":n0(x.disp,1)}</td><td>${n0(x.kwh,1)}</td><td></td><td>${x.irate==null&&x.trate==null?"–":money(x.irate!=null?x.irate:x.trate)}</td><td>${money(x.icost!=null?x.icost:x.tcost)}</td><td class="sub">${p.invoice?"same invoice":""}</td><td>${syncPill(x.sync)}</td></tr>`).join("");
+      return h};
+    $("#tb").innerHTML=`<table><thead><tr>${COLS.map(c=>`<th class="${c[2]?"l":""}" data-k="${c[0]}">${c[1]}${CP.sk===c[0]?(CP.dir<0?" ▾":" ▴"):""}</th>`).join("")}</tr></thead><tbody>${rs.map(row).join("")}</tbody></table>${rs.length?"":'<div class="empty">No charges here.</div>'}`;
+    $$("#tb th").forEach(th=>th.onclick=()=>{const k=th.dataset.k;if(CP.sk===k)CP.dir=-CP.dir;else{CP.sk=k;CP.dir=k==="t0"||typeof P[0][k]==="number"?-1:1}draw()});
+    $$("#tb tr.chr,#tb tr.chs").forEach(tr=>tr.onclick=ev=>{const tg=ev.target.closest("[data-tg]");if(tg){CP.open[tg.dataset.tg]=!CP.open[tg.dataset.tg];draw();return}if(ev.target.closest("a"))return;location.hash="#/charge/"+tr.dataset.id});
+  };
+  const invoices=()=>{
+    const I=B.invoices.filter(i=>inRange({day:i.date},CP.r)&&(!CP.q||((i.location||"")+" "+(i.network||"")+" "+(i.number||"")).toLowerCase().includes(CP.q.toLowerCase())));
+    const tot=I.reduce((a,i)=>a+(i.total||0),0),kw=I.reduce((a,i)=>a+(i.kwh||0),0),un=I.filter(i=>!i.plug).length;
+    $("#tl").innerHTML=tile(n0(I.length),"invoices")+tile(money(tot),"invoiced")+tile(n0(kw,1)+" kWh","energy invoiced")+tile(kw?money(tot/kw)+"/kWh":"–","average price")+tile(money(gstOf(tot)),"GST included")+tile(un?String(un):"none",un?"invoices with no matching charge":"unmatched invoices");
+    table($("#tb"),[{k:"date",t:"Date",l:1},{k:"network",t:"Network",l:1,f:i=>esc(i.network||"")},{k:"location",t:"Location",l:1,f:i=>esc((i.location||"").split(",").slice(0,2).join(","))},{k:"number",t:"Invoice",l:1,f:i=>esc(i.number||"")},{k:"kwh",t:"kWh",f:i=>n0(i.kwh,2)},{k:"rate",t:"$/kWh",f:i=>i.rate==null?"–":money(i.rate)},{k:"gst",t:"GST",f:i=>money(gstOf(i.total))},{k:"total",t:"Total",f:i=>money(i.total)},{k:"plug",t:"Charge",f:i=>i.plug?`<a href="#/charge/${i.plug}" onclick="event.stopPropagation()">open</a>`:'<span class="pill warn">no match</span>'},{k:"file",t:"File",f:i=>i.file?`<a href="/api/invoice/${encodeURIComponent(i.file)}" target="_blank" onclick="event.stopPropagation()" title="${esc(i.file)}">open</a>`:""}],I,i=>{if(i.plug)location.hash="#/charge/"+i.plug},"date");
+  };
+  const show=()=>{$$("[data-tab]").forEach(c=>c.classList.toggle("on",c.dataset.tab===CP.tab));$("#kd").style.display=$("#iv").style.display=CP.tab==="charges"?"":"none";CP.tab==="charges"?draw():invoices()};
+  main.innerHTML=`<h1>Charges</h1><div class="sub">Every charge reconciled with its invoice, as in <code>./analyse_charging.py</code>. A plug-in that Tessie recorded as several sessions is one charge with its records as parts.${B0.status==="building"?" · refreshing in the background…":""}</div>
+   <div class="bar"><button class="chip" data-tab="charges">Charges</button><button class="chip" data-tab="invoices">Invoices (${B.invoices.length})</button><span id="rg"></span><select id="kd"><option value="all">All types</option><option value="ac">AC / home</option><option value="dc">DC fast</option><option value="supercharger">Supercharger</option></select><select id="iv"><option value="all">Any invoice state</option><option value="with">With an invoice</option><option value="without">Public, no invoice</option><option value="unsynced">Not yet in Tessie</option></select><input type="search" id="q" placeholder="Search a place or invoice…" value="${esc(CP.q)}"></div><div class="tiles" id="tl"></div><div id="tb" style="overflow-x:auto"></div>`;
+  $("#kd").value=CP.kind;$("#iv").value=CP.inv;rangePicker($("#rg"),CP.r,daysOf(P),show);$("#kd").onchange=e=>{CP.kind=e.target.value;show()};$("#iv").onchange=e=>{CP.inv=e.target.value;show()};$("#q").oninput=e=>{CP.q=e.target.value;show()};
+  $$("[data-tab]").forEach(c=>c.onclick=()=>{CP.tab=c.dataset.tab;show()});show();
+  if(B0.status==="building")setTimeout(()=>{if(location.hash.startsWith("#/charges"))pageCharges()},5000);
+}
+
+// time-axis chart. series: [{k,name,unit,col,axis}], axes: {id:{side:"left"|"right",label,col,min,max}}. `sel` = part drawn solid (others dashed); strip = charging-state bar
+function tsChart(host,segs,sel,tz,series,axes,o){
+  o=o||{};const all=segs.flatMap(s=>s.t);if(all.length<2){host.innerHTML='<div class="sub">No telemetry file for this charge.</div>';return}
+  const ser=series.filter(z=>segs.some(s=>(s[z.k]||[]).some(v=>v!=null)));if(!ser.length){host.innerHTML='<div class="sub">No data for this chart.</div>';return}
+  const used=[...new Set(ser.map(z=>z.axis))],nr=used.filter(a=>axes[a].side==="right").length,W=720,H=o.h||260,T=24,B=o.strip?44:30,L=50,R=Math.max(14,48*nr),t0=Math.min(...all),t1=Math.max(...all),X=v=>L+(v-t0)/((t1-t0)||1)*(W-L-R);
+  const fm=new Intl.DateTimeFormat("en-AU",{hour:"2-digit",minute:"2-digit",second:"2-digit",hour12:false,timeZone:tz||"Australia/Sydney"}),hm=v=>fm.format(new Date(v*1000)).replace(/^24/,"00");
+  const ext={};used.forEach(a=>{const v=ser.filter(z=>z.axis===a).flatMap(z=>segs.flatMap(s=>s[z.k].filter(q=>q!=null))),lo=Math.min(...v),hi=Math.max(...v),ax=axes[a],pad=((hi-lo)||1)*.08;
+    let a0=ax.min!=null?ax.min:lo-pad,a1=ax.max!=null?ax.max:hi+pad;if(ax.min!=null&&ax.min===0&&hi<=0)a1=1;ext[a]=[a0,a1]});
+  const Y=(a,v)=>T+(H-T-B)*(1-(v-ext[a][0])/((ext[a][1]-ext[a][0])||1)),solid=s=>sel==null||s.part===sel,gaps=segs.slice(1).map((s,i)=>[segs[i],s]);
+  let h="";
+  gaps.forEach(([a,b])=>{const x0=X(a.t[a.t.length-1]),x1=X(b.t[0]);h+=`<rect x="${x0}" y="${T}" width="${Math.max(1,x1-x0)}" height="${H-T-B}" fill="var(--hover)"/>`+(x1-x0>46?`<text x="${(x0+x1)/2}" y="${T+12}" text-anchor="middle">paused ${dur((b.t[0]-a.t[a.t.length-1])/60)}</text>`:"")});
+  let ri=0;const pos={};used.forEach(a=>{pos[a]=axes[a].side==="right"?W-R+6+48*(ri++):L-6});
+  used.forEach((a,ai)=>{const ax=axes[a],r=ax.side==="right",span=ext[a][1]-ext[a][0];for(let g=0;g<=4;g++){const v=ext[a][0]+span*g/4;h+=`<text x="${pos[a]}" y="${Y(a,v)+4}" text-anchor="${r?"start":"end"}" style="fill:${ax.col}">${n0(v,span<12?1:0)}</text>`+(ai===0?`<line class="grid" x1="${L}" x2="${W-R}" y1="${Y(a,v)}" y2="${Y(a,v)}"/>`:"")}
+    h+=`<text x="${r?pos[a]:6}" y="${T-8}" text-anchor="${r?"start":"start"}" style="fill:${ax.col};font-weight:600">${esc(ax.label)}</text>`});
+  const path=(s,arr,a)=>{const P=[];s.t.forEach((t,i)=>{if(arr[i]!=null)P.push([X(t),Y(a,arr[i])])});if(!P.length)return"";
+    if(!o.smooth||P.length<3)return P.map((q,i)=>(i?"L":"M")+q[0].toFixed(1)+","+q[1].toFixed(1)).join("");
+    let d="M"+P[0][0].toFixed(1)+","+P[0][1].toFixed(1);for(let i=0;i<P.length-1;i++){const p0=P[i-1]||P[i],p1=P[i],p2=P[i+1],p3=P[i+2]||p2;d+=`C${(p1[0]+(p2[0]-p0[0])/6).toFixed(1)},${(p1[1]+(p2[1]-p0[1])/6).toFixed(1)} ${(p2[0]-(p3[0]-p1[0])/6).toFixed(1)},${(p2[1]-(p3[1]-p1[1])/6).toFixed(1)} ${p2[0].toFixed(1)},${p2[1].toFixed(1)}`}return d};
+  const edge=(p,q,k,a)=>{const i=p[k].map((v,j)=>[v,j]).filter(z=>z[0]!=null).pop(),j=q[k].map((v,m)=>[v,m]).find(z=>z[0]!=null);return i&&j?`M${X(p.t[i[1]]).toFixed(1)},${Y(a,i[0]).toFixed(1)}L${X(q.t[j[1]]).toFixed(1)},${Y(a,j[0]).toFixed(1)}`:""};
+  ser.forEach(z=>{segs.forEach(s=>{h+=`<path d="${path(s,s[z.k],z.axis)}" fill="none" stroke="${z.col}" stroke-width="2" stroke-linejoin="round" ${solid(s)?"":'stroke-dasharray="5 4" opacity=".6"'}/>`});gaps.forEach(([a,b])=>{h+=`<path d="${edge(a,b,z.k,z.axis)}" fill="none" stroke="${z.col}" stroke-width="1.5" stroke-dasharray="2 4"/>`})});
+  if(o.strip){const ST={Charging:"#16a34a",Starting:"#84cc16",Complete:"#9aa3b5",NoPower:"#d98a00",Disconnected:"#d4332b",Stopped:"#d98a00"},yy=H-B+4,runs=[];segs.forEach(s=>{let a=0;s.state.forEach((st,i)=>{if(i===s.state.length-1||s.state[i+1]!==st){runs.push([s.t[a],s.t[Math.min(i+1,s.t.length-1)],st]);a=i+1}})});
+    h+=runs.map(([a,b,st])=>`<rect x="${X(a)}" y="${yy}" width="${Math.max(1,X(b)-X(a))}" height="7" fill="${ST[st]||"#c7ccd9"}"><title>${esc(st||"?")}</title></rect>`).join("")+`<text x="${L-6}" y="${yy+7}" text-anchor="end" style="font-size:10px">state</text>`}
+  for(let i=0;i<=6;i++){const v=t0+(t1-t0)*i/6;h+=`<text x="${X(v)}" y="${H-4}" text-anchor="middle">${hm(v).slice(0,5)}</text>`}
+  host.innerHTML=`<svg viewBox="0 0 ${W} ${H}" style="width:100%;height:auto;display:block">${h}<line class="cl" id="cur" y1="${T}" y2="${H-B}" style="display:none"/></svg><div class="sub" style="margin-top:4px">${ser.map(z=>`<span style="margin-right:16px"><span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:${z.col};margin-right:5px"></span>${esc(z.name)}${axes[z.axis].side==="right"?" (right axis)":""}</span>`).join("")}${o.note?" · "+o.note:""}</div>`;
+  const svg=$("svg",host),cur=$("#cur",host),pts=[];segs.forEach(s=>s.t.forEach((t,i)=>pts.push([t,s,i])));
+  svg.onmousemove=ev=>{const r=svg.getBoundingClientRect(),x=(ev.clientX-r.left)/r.width*W;if(x<L||x>W-R){svg.onmouseleave();return}
+    const tv=t0+(x-L)/(W-L-R)*(t1-t0);let b=1e18,bp=null;pts.forEach(p=>{const d=Math.abs(p[0]-tv);if(d<b){b=d;bp=p}});const [t,s,i]=bp;cur.setAttribute("x1",X(t));cur.setAttribute("x2",X(t));cur.style.display="";
+    showTip(ev,`<b>${hm(t)}</b>${s.state[i]?" · "+esc(s.state[i]):""}<br>`+ser.map(z=>`<span style="color:${z.col}">●</span> ${esc(z.name)}: ${s[z.k][i]==null?"–":n0(s[z.k][i],z.dec==null?1:z.dec)+" "+esc(z.unit)}`).join("<br>"))};
+  svg.onmouseleave=()=>{cur.style.display="none";hideTip()};
+}
+
+// generic x/y chart with named axes and dashed estimates (power vs SoC, electrical profile)
+function lineChart(host,series,axes,xlabel,xfmt){
+  const S=series.filter(s=>s.x&&s.x.length>1);if(!S.length){host.innerHTML='<div class="sub">Nothing to plot.</div>';return}
+  const W=720,H=260,L=52,R=54,T=26,B=34,xs=S.flatMap(s=>s.x),x0=Math.min(...xs),x1=Math.max(...xs),X=v=>L+(v-x0)/((x1-x0)||1)*(W-L-R);
+  const ext={};Object.keys(axes).forEach(a=>{const v=S.filter(s=>s.axis===a).flatMap(s=>s.y.filter(z=>z!=null));if(v.length){const lo=Math.min(...v),hi=Math.max(...v);ext[a]=[a==="power"||a==="amp"||a==="soc"?Math.min(0,lo):lo-(hi-lo)*.1,hi+(hi-lo||1)*.08]}});
+  const Y=(a,v)=>T+(H-T-B)*(1-(v-ext[a][0])/((ext[a][1]-ext[a][0])||1));
+  let h="";const side={left:0,right:0};
+  Object.keys(ext).forEach(a=>{const ax=axes[a],xr=ax.side==="right"?W-R+6:L-6;side[ax.side]++;for(let g=0;g<=4;g++){const v=ext[a][0]+(ext[a][1]-ext[a][0])*g/4;h+=`<text x="${xr}" y="${Y(a,v)+4}" text-anchor="${ax.side==="right"?"start":"end"}" style="fill:${ax.col}">${n0(v,ext[a][1]-ext[a][0]<20?1:0)}</text>`+(a===Object.keys(ext)[0]?`<line class="grid" x1="${L}" x2="${W-R}" y1="${Y(a,v)}" y2="${Y(a,v)}"/>`:"")}
+    h+=`<text x="${ax.side==="right"?W-4:6}" y="${T-10}" text-anchor="${ax.side==="right"?"end":"start"}" style="fill:${ax.col};font-weight:600">${esc(ax.label)}</text>`});
+  for(let g=0;g<=6;g++){const v=x0+(x1-x0)*g/6;h+=`<text x="${X(v)}" y="${H-B+16}" text-anchor="middle">${xfmt?xfmt(v):n0(v)}</text>`}
+  h+=`<text x="${(L+W-R)/2}" y="${H-4}" text-anchor="middle" style="fill:var(--mut)">${esc(xlabel)}</text>`;
+  S.forEach(s=>{let d="";s.x.forEach((x,i)=>{const v=s.y[i];if(v!=null)d+=(d?"L":"M")+X(x).toFixed(1)+","+Y(s.axis,v).toFixed(1)});h+=`<path d="${d}" fill="none" stroke="${s.col}" stroke-width="2" ${s.dash?'stroke-dasharray="6 4" opacity=".75"':""} stroke-linejoin="round"/>`});
+  host.innerHTML=`<svg viewBox="0 0 ${W} ${H}" style="width:100%;height:auto;display:block">${h}<line class="cl" id="cur" y1="${T}" y2="${H-B}" style="display:none"/></svg><div class="sub" style="margin-top:4px">${[...new Map(S.map(s=>[s.name,s])).values()].map(s=>`<span style="margin-right:14px"><span style="color:${s.col}">${s.dash?"╌╌":"──"}</span> ${esc(s.name)}</span>`).join("")}</div>`;
+  const svg=$("svg",host),cur=$("#cur",host);
+  svg.onmousemove=ev=>{const r=svg.getBoundingClientRect(),x=(ev.clientX-r.left)/r.width*W;if(x<L||x>W-R){svg.onmouseleave();return}const xv=x0+(x-L)/(W-L-R)*(x1-x0);cur.setAttribute("x1",X(xv));cur.setAttribute("x2",X(xv));cur.style.display="";
+    showTip(ev,`<b>${xfmt?xfmt(xv):n0(xv,1)}</b> ${esc(xlabel.split(" ")[0].toLowerCase()==="state"?"%":"")}<br>`+S.map(s=>{let bi=-1,bd=1e18;s.x.forEach((q,i)=>{const d=Math.abs(q-xv);if(d<bd&&s.y[i]!=null){bd=d;bi=i}});return bi<0||bd>(x1-x0)/12?"":`<span style="color:${s.col}">●</span> ${esc(s.name)}: ${n0(s.y[bi],1)} ${esc(s.unit)}`}).filter(Boolean).join("<br>"))};
+  svg.onmouseleave=()=>{cur.style.display="none";hideTip()};
+}
+
+function chartSub(p,part,cur){
+  const xs=(part?[part]:p.parts).filter(x=>x.tel),n=xs.reduce((a,x)=>a+(+x.tel.samples||0),0),mn=xs.reduce((a,x)=>a+(x.tel.min||0),0),pk=Math.max(0,...xs.map(x=>x.tel.peak||0)),av=xs.length&&mn?xs.reduce((a,x)=>a+(x.tel.avg||0)*(x.tel.min||0),0)/mn:null,v=part||p;
+  const cost=part?(part.icost!=null?part.icost:part.tcost):p.cost,rate=part?(part.irate!=null?part.irate:part.trate):p.rate,kw=part?(part.disp||part.kwh):(p.disp||p.kwh);
+  return [n?`${n} samples over ${n0(mn,1)} min - peak ${n0(pk,1)} kW${av?", avg "+n0(av,1)+" kW":""}`:"",cur&&cur.window?esc(cur.window):"",kw&&cost!=null?`${n0(kw,2)} kWh for $${n0(cost,2)} AUD${rate?" (@ $"+n0(rate,2)+"/kWh)":""}`:""].filter(Boolean).join("<br>");
+}
+async function pageCharge(id,pid){
+  loading();const [B0,D]=await Promise.all([bookWithRaw(),fetch("/api/chargebook/"+encodeURIComponent(id)+(pid?"?part="+encodeURIComponent(pid):"")).then(r=>r.ok?r.json():null).catch(()=>null)]);
+  if(!B0.book){bookWait(B0,"Charge",()=>pageCharge(id,pid));return}
+  if(!D||!D.plug){return pageChargeBasic(id)}
+  const p=D.plug,part=D.part&&p.parts.find(x=>x.id===D.part),v=part||p,multi=p.parts.length>1,raw=B0.book.plugs.find(z=>z.id===p.id)||p;
+  const where=raw.where||p.place,end=addMin(v.hm,part?part.min:p.span),inv=p.invoice,cur=D.curves&&!D.curves.error?D.curves:null;
+  const eff=v.disp&&v.kwh?100*v.kwh/v.disp:null,costv=part?(part.icost!=null?part.icost:part.tcost):p.cost,ratev=part?(part.irate!=null?part.irate:part.trate):p.rate,minv=part?part.min:p.min;
+  const links=multi?p.parts.map((x,i)=>`<a class="chip ${part&&part.id===x.id?"on":""}" href="#/charge/${p.id}/${x.id}" style="text-decoration:none">Part ${i+1} · ${x.hm}</a>`).join(" "):"";
+  const amps=D.segments[0]&&D.segments[0].amps_src==="pack";
+  main.innerHTML=(part?crumbs("#/charge/"+p.id,"the whole charge ("+p.parts.length+" parts)"):crumbs("#/charges","Charges"))+`<h1>${whereLink({pkey:raw.pkey,place:where,addr:p.addr})}${part?` <span class="sub" style="font-size:15px">· part ${p.parts.indexOf(part)+1} of ${p.parts.length}</span>`:""}</h1>
+   <div class="sub">${dayName(v.day)} · ${v.hm} – ${end} · ${dur(part?part.min:p.span)}${multi&&!part?" plugged in":""} · ${esc(p.network||(p.kind==="supercharger"?"Supercharger":p.kind==="dc"?"DC fast charger":"AC charging"))} · ${esc(String(p.status||"").replace(/[^\x20-\x7e]/g,"").trim())}${raw.pkey?' · <a href="#/place/'+encodeURIComponent(raw.pkey)+'">what is around here</a>':""}</div>
+   ${multi?`<div class="bar"><a class="chip ${part?"":"on"}" href="#/charge/${p.id}" style="text-decoration:none">Whole charge</a>${links}<span class="sub">Tessie recorded this plug-in as ${p.parts.length} sessions; it is one charge with one invoice.</span></div>`:""}
+   ${await alertsHere(p)}
+   <div class="chgrid"><div class="chl">
+     <div class="card"><h2 style="margin-top:0">Charger power and battery</h2><div class="sub" style="margin-bottom:6px">${chartSub(p,part,cur)}</div><div id="tc"></div></div>
+     <div class="card"><h2 style="margin-top:0">Pack temperature, current and voltage</h2><div id="tv"></div></div>
+     <div class="card"><h2 style="margin-top:0">Power against state of charge</h2>${cur?`<div class="sub" style="margin-bottom:6px">${[cur.hardware&&cur.tier?esc(cur.hardware)+" · "+esc(cur.tier)+(cur.cap?" · "+n0(cur.cap)+" kW cap":"")+(cur.stalls?" · "+cur.stalls+" stalls":""):"",esc(cur.caption||""),esc(cur.window||"")].filter(Boolean).join(" · ")}</div>`:""}<div id="cc"></div></div>
+     <div class="card"><h2 style="margin-top:0">Pack voltage and current, with history</h2><div id="pc"></div></div>
+     <div class="card"><h2 style="margin-top:0">Where</h2><div class="map" id="mp"></div><div class="sub" style="margin-top:8px">${esc(p.addr||"")}</div></div>
+   </div><div class="chr2">
+     <div class="tiles tiles2">${tile("+"+n0(v.kwh,1)+" kWh","into the battery")}${tile(n0(v.b0)+"% → "+n0(v.b1)+"%","battery")}${tile(money(costv),(ratev!=null?money(ratev)+"/kWh · ":"")+(inv&&!part?"invoice total":part&&v.icost!=null?"invoice share":"Tessie cost"))}${tile(v.disp!=null?n0(v.disp,1)+" kWh":"–","from the charger"+(inv&&!part?" (invoice)":""))}${tile(eff?n0(eff,1)+"%":"–","efficiency")}${tile(v.peak?n0(v.peak)+" kW":"–","peak"+(minv&&v.kwh?" · avg "+n0(v.kwh*60/minv)+" kW":""))}${tile(v.kmh?n0(v.kmh)+" km/h":"–","range recovered per hour")}${tile(syncPillText(part?part.sync:p.sync),"in Tessie")}</div>
+     ${multi&&!part?`<div class="card"><h2 style="margin-top:0">The ${p.parts.length} Tessie records</h2>${partsTable(p)}</div>`:""}
+     <div class="card"><h2 style="margin-top:0">Invoice and Tessie</h2>${invoiceCard(p,part)}</div>
+     <div class="card"><h2 style="margin-top:0">Where the energy went</h2>${energyCard(p,part)}</div>
+     <div class="card"><h2 style="margin-top:0">Telemetry</h2>${telCard(p,part)}</div>
+   </div></div>`;
+  wireAlerts(main);
+  miniMap($("#mp"),raw.raw?raw.raw.lat:(+p.lat||null),raw.raw?raw.raw.lon:(+p.lon||null),"#16a34a");
+  const sel=part?part.id:null;
+  tsChart($("#tc"),D.segments,sel,p.tz,[{k:"kw",name:"Charger power",unit:"kW",col:"#2563eb",axis:"p",dec:0},{k:"pct",name:"Battery level",unit:"%",col:"#f59e0b",axis:"b",dec:0}],{p:{side:"left",label:"Charger power (kW)",col:"#2563eb",min:0},b:{side:"right",label:"Battery (%)",col:"#f59e0b"}},{h:300,strip:true,smooth:true,note:"times on the charger's clock; dashed = "+(sel==null?"the pause between records (the plug stayed in)":"the rest of the same charge")});
+  tsChart($("#tv"),D.segments,sel,p.tz,[{k:"tmax",name:"Pack temperature (max)",unit:"°C",col:"#d4332b",axis:"t",dec:1},{k:"pack_v",name:"Pack voltage",unit:"V",col:"#2563eb",axis:"v",dec:0},{k:"amps",name:amps?"Current (pack)":"Current",unit:"A",col:"#8b5cf6",axis:"a",dec:0}],{t:{side:"left",label:"Temp (°C)",col:"#d4332b"},v:{side:"right",label:"Volts",col:"#2563eb"},a:{side:"right",label:"Amps",col:"#8b5cf6",min:0}},{h:280,smooth:true,note:amps?"a DC charger reports 0 A on the AC side, so the pack current is shown":""});
+  const AX={power:{label:"Charger power (kW)",col:"#2563eb",side:"left"},temp:{label:"Pack temperature (°C)",col:"#1baf7a",side:"right"}},COL={"Charger power":"#2563eb","Rest of this charge":"#7aa7ee","Estimated from other sessions":"#2563eb","Pack temperature":"#1baf7a","Pack voltage":"#2563eb","Pack current":"#e8792b"};
+  const mk=s=>Object.assign({},s,{col:COL[s.name]||"#6a7385"});
+  if(cur){lineChart($("#cc"),cur.curve.map(mk),AX,"State of charge (%)",q=>n0(q)+"%");
+    lineChart($("#pc"),cur.profile.map(mk),{volt:{label:"Pack voltage (V)",col:"#2563eb",side:"left"},amp:{label:"Pack current (A)",col:"#e8792b",side:"right"}},"Elapsed time (min)",q=>n0(q)+" min")}
+  else{$("#cc").innerHTML=$("#pc").innerHTML='<div class="sub">No telemetry file for this charge.</div>'}
+}
+const syncPillText=s=>s==="synced"?"Yes":s==="pending"?"No":s==="partial"?"Partly":"n/a";
+async function alertsHere(p){const out=[];for(const id of [p.id,...p.parts.map(x=>x.id)]){(await alertsFor("charge",id)).forEach(e=>out.push(e))}return alertsCard([...new Map(out.map(e=>[e.id,e])).values()].sort((a,b)=>b.t0-a.t0),"charge")}
+function partsTable(p){
+  const rows=p.parts.map((x,i)=>{const gap=i?`<tr><td colspan="7" class="sub" style="text-align:center">paused ${dur((x.t0-p.parts[i-1].t1)/60)} - the plug stayed in</td></tr>`:"";
+    return gap+`<tr class="chs" data-go="${x.id}" style="cursor:pointer"><td class="l">Part ${i+1} · ${x.hm}</td><td>${dur(x.min)}</td><td>${n0(x.b0)}→${n0(x.b1)}%</td><td>${x.peak==null?"–":n0(x.peak)}</td><td>${n0(x.kwh,2)}</td><td>${money(x.icost!=null?x.icost:x.tcost)}</td><td>${syncPill(x.sync)}</td></tr>`}).join("");
+  setTimeout(()=>$$("[data-go]").forEach(tr=>tr.onclick=()=>location.hash="#/charge/"+tr.dataset.go),0);
+  return `<table><thead><tr><th class="l">Record</th><th>Time</th><th>Battery</th><th>Peak kW</th><th>kWh</th><th>Cost</th><th>Tessie</th></tr></thead><tbody>${rows}<tr><td class="l"><b>Whole charge</b></td><td><b>${dur(p.min)}</b></td><td><b>${n0(p.b0)}→${n0(p.b1)}%</b></td><td><b>${p.peak==null?"–":n0(p.peak)}</b></td><td><b>${n0(p.kwh,2)}</b></td><td><b>${money(p.cost)}</b></td><td>${syncPill(p.sync)}</td></tr></tbody></table>`;
+}
+function invoiceCard(p,part){
+  const inv=p.invoice,kv=(a,b)=>b==null||b===""?"":`<tr><td>${a}</td><td>${b}</td></tr>`;
+  let h="";
+  if(inv){h+=`<table class="kv"><tbody>${kv("Invoice",esc(inv.number||""))}${kv("Date",esc(inv.date||""))}${kv("Network",esc(inv.network||""))}${kv("Location",esc(inv.location||""))}${kv("Energy invoiced",inv.kwh!=null?n0(inv.kwh,2)+" kWh":"")}${kv("Rate",inv.rate!=null?money(inv.rate)+"/kWh"+(inv.gross_rate!=null&&inv.gross_rate!==inv.rate?" (gross "+money(inv.gross_rate)+")":""):"")}${kv("GST included",money(gstOf(inv.total)))}${kv("Total",`<b>${money(inv.total)}</b>`)}${inv.file?kv("File",`<a href="/api/invoice/${encodeURIComponent(inv.file)}" target="_blank">${esc(inv.file)}</a>`):""}</tbody></table>`}
+  else h+=`<div class="sub">${p.home?"Home charging is not invoiced; the cost here is the Tessie estimate. The real home cost comes from your power bills (see ./analyse_charging.py --reconcile-invoices).":p.invoice_only?"":"No invoice has been matched to this charge. Put the PDF in the invoices folder and run ./analyse_charging.py --update-master."}</div>`;
+  if(!p.home){h+=`<h2>Tessie</h2><table><thead><tr><th class="l">Record</th><th>Tessie id</th><th>Tessie's cost at last sync</th><th>Sent by us</th><th>${inv?"Invoice share":"Our figure"}</th><th>Status</th></tr></thead><tbody>${p.parts.map((x,i)=>`<tr${part&&part.id!==x.id?' style="opacity:.55"':""}><td class="l">${multi1(p)?"Part "+(i+1)+" · ":""}${x.hm}</td><td>${x.tessie_id||"–"}</td><td>${x.tessie_cost_now!=null?money(x.tessie_cost_now):"–"}</td><td>${x.ledger!=null?money(x.ledger):"–"}</td><td>${x.icost!=null?money(x.icost):"–"}</td><td>${syncPill(x.sync)} <span class="sub">${esc(x.sync_why||"")}</span></td></tr>`).join("")}</tbody></table>
+    <div class="sub" style="margin-top:8px">${p.sync==="synced"?"Tessie holds the invoice cost for this charge.":p.sync==="na"?"Nothing to send yet.":"Send the invoice cost to Tessie with ./analyse_charging.py --sync-tessie-costs --apply. This app only reads."}</div>`}
+  else h+=`<div class="sub" style="margin-top:8px">Tessie cost ${money(p.tcost)}${p.trate!=null?"":""}.</div>`;
+  return h;
+}
+const multi1=p=>p.parts.length>1;
+function energyCard(p,part){
+  const v=part||p,kv=(a,b,c)=>b==null||b===""?"":`<tr><td>${a}</td><td>${b}</td><td class="sub">${c||""}</td></tr>`;
+  const loss=v.disp!=null&&v.kwh!=null?v.disp-v.kwh:null;
+  return `<table class="kv"><tbody>${kv("From the charger",v.disp!=null?n0(v.disp,2)+" kWh":"",p.invoice&&!part?"what the invoice bills":"Tessie's energy used")}${kv("Lost in the cable and charger",!part&&p.parts.length===1&&p.parts[0].cable_loss!=null?n0(p.parts[0].cable_loss,2)+" kWh":part&&part.cable_loss!=null?n0(part.cable_loss,2)+" kWh":"","dispenser to car")}${kv("Lost in the car",(part||p.parts.length===1)&&(part||p.parts[0]).car_loss!=null?n0((part||p.parts[0]).car_loss,2)+" kWh":"","car to battery")}${kv("Total loss",loss!=null?n0(loss,2)+" kWh":"","")}${kv("Into the battery",n0(v.kwh,2)+" kWh","")}${kv("Efficiency",v.disp&&v.kwh?n0(100*v.kwh/v.disp,1)+"%":"","dispenser to battery")}${kv("Range added",v.range!=null?n0(v.range,1)+" km":"","")}
+   ${!part&&p.expected_rate!=null?kv("Expected tariff",money(p.expected_rate)+"/kWh"+(p.schedule?" · "+esc(p.schedule):""),"from the charger's published rates at that time"):""}${!part&&p.theory!=null&&p.theory>0?kv("Theoretical cost",money(p.theory),"expected rate × kWh"+(p.icost!=null?" · invoice "+(p.icost-p.theory>=0?"+":"-")+money(Math.abs(p.icost-p.theory))+" vs theory":"")):""}${!part&&p.gst?kv("GST included (calculated)",money(p.gst),""):""}</tbody></table>`;
+}
+function telCard(p,part){
+  const parts=part?[part]:p.parts,kv=(a,b)=>b==null||b===""?"":`<tr><td>${a}</td><td>${b}</td></tr>`;
+  return parts.map(x=>{const t=x.tel,head=multi1(p)?`<div class="sub" style="margin:8px 0 2px"><b>Part ${p.parts.indexOf(x)+1} · ${x.hm}</b></div>`:"";
+    return head+(t?`<table class="kv"><tbody>${kv("Samples",n0(t.samples)+" over "+dur(t.min))}${kv("State of charge",n0(t.soc0)+"% → "+n0(t.soc1)+"%")}${kv("Power",(t.peak==null?"–":"peak "+n0(t.peak,1))+" kW · "+(t.avg==null?"–":"avg "+n0(t.avg,1))+" kW")}${kv("Pack temperature",t.t_start==null?"":n0(t.t_start,1)+" → "+n0(t.t_end,1)+" °C (max "+n0(t.t_max,1)+")")}${kv("Battery heater",esc(t.heater||""))}${kv("Outside / inside",t.outside==null?"":n0(t.outside,1)+" / "+(t.inside==null?"–":n0(t.inside,1))+" °C")}${kv("Energy at the charger",t.int_disp==null?"":n0(t.int_disp,2)+" kWh (integrated)")}${kv("Energy into the pack",t.int_pack==null?"":n0(t.int_pack,2)+" kWh (integrated)")}${kv("Car's own energy gauge",t.d_energy==null?"":n0(t.d_energy,2)+" kWh")}${kv("File",esc(t.file||""))}</tbody></table>`:'<div class="sub">No telemetry file for this record.</div>')}).join("");
+}
+
+// the plain page, kept for a charge that is not in the book (e.g. the book could not be built)
+async function pageChargeBasic(id){
+  loading();const d=await api("charge/"+id),c=d.charge;
+  main.innerHTML=crumbs("#/charges","Charges")+`<h1>${whereLink(c)}</h1><div class="sub">${dayName(c.day)} · ${c.hm} – ${addMin(c.hm,c.min)} · ${dur(c.min)} · ${c.kind==="supercharger"?"Supercharger":c.kind==="dc"?"DC fast charger":"AC charging"}${c.pkey?' · <a href="#/place/'+encodeURIComponent(c.pkey)+'">what is around here</a>':""}</div>
+   <div class="tiles">${tile("+"+n0(c.kwh,1)+" kWh","energy added")}${tile(n0(c.b0)+"% → "+n0(c.b1)+"%","battery")}${tile(money(c.cost),c.rate!=null?money(c.rate)+"/kWh":"cost")}${tile(c.used!=null?n0(c.used,1)+" kWh":"–","energy drawn")}${tile(c.used&&c.kwh?n0(100*c.kwh/c.used)+"%":"–","charging efficiency")}${tile(c.min?n0(c.kwh*60/c.min,1)+" kW":"–","average power")}</div>
+   ${alertsCard(await alertsFor("charge",id),"charge")}<div class="card"><h2 style="margin-top:0">Charge curve</h2><div id="ch"></div></div><div class="card" style="margin-top:14px"><h2 style="margin-top:0">Where</h2><div class="map" id="mp"></div><div class="sub" style="margin-top:8px">${esc(c.addr||"")}</div></div>`;
+  miniMap($("#mp"),c.lat,c.lon,"#16a34a");wireAlerts(main);
+  const s=d.series;if(!s){$("#ch").innerHTML='<div class="sub">No telemetry file for this charge.</div>';return}
+  const mm=v=>{const h=Math.floor(v/3600),m=Math.floor(v%3600/60);return h?h+":"+String(m).padStart(2,"0"):m+" min"};
+  stack($("#ch"),s.t,[{name:"Charger power",unit:"kW",vals:s.kw,col:"#16a34a",min:0},{name:"Battery",unit:"%",vals:s.pct,col:"#3b82f6",dec:0},{name:"Energy added",unit:"kWh",vals:s.kwh,col:"#d98a00",min:0},{name:"Current",unit:"A",vals:s.amps,col:"#8b5cf6",min:0,dec:0},{name:"Pack temp (max)",unit:"°C",vals:s.mod,col:"#d4332b"}],mm);
+}
+
+// ---------- Parked (idle periods) with the saved Sentry footage
+const hav=(a,b,c,d)=>{const r=Math.PI/180,p=Math.sin((c-a)*r/2)**2+Math.cos(a*r)*Math.cos(c*r)*Math.sin((d-b)*r/2)**2;return 12742000*Math.asin(Math.sqrt(p))};
+const whereLink=r=>r.pkey?`<a href="#/place/${encodeURIComponent(r.pkey)}" onclick="event.stopPropagation()" title="Open this place">${esc(place(r))}</a>`:esc(place(r));
+const sentryOf=(x,evs)=>{const s=Date.parse(x.day+"T"+x.hm+":00"),e=s+(x.min||0)*60000;return evs.filter(v=>{const t=Date.parse(v.ts);return t>=s-120000&&t<=e+120000&&(x.lat==null||v.lat==null||hav(x.lat,x.lon,v.lat,v.lon)<5000)})};
+const getSentry=async()=>{try{return await (await fetch("/api/sentry")).json()}catch(e){return{connected:false,events:[]}}};
+const REASON={sentry_aware_object_detection:"Object detected",sentry_locked_handle_pulled:"Handle pulled",sentry_accelerometer:"Bumped",user_interaction_dashcam_icon_tapped:"Saved by tap"};
+const reason=r=>REASON[r]||(r||"Sentry event").replace(/^sentry_/,"").replace(/_/g," ");
+const CAMN={front:"Front",back:"Back",left_repeater:"Left repeater",right_repeater:"Right repeater",left_pillar:"Left pillar",right_pillar:"Right pillar"};
+const hms=ts=>ts.slice(11,19);
+let IP={r:{p:"all"},q:"",min:5,sen:"all",tab:"periods"};
+async function pageParked(){
+  loading();const [all0,sn]=await Promise.all([api("activity"),getSentry()]),evs=sn.events,all=all0.filter(x=>x.k==="idle").map(x=>Object.assign({},x,{ev:sentryOf(x,evs)}));
+  all.forEach(x=>x.nev=x.ev.length);const matched=new Set(all.flatMap(x=>x.ev.map(v=>v.id)));
+  const idleOf=v=>all.find(x=>x.ev.some(e=>e.id===v.id));
+  const drawEvents=()=>{const q=IP.q.toLowerCase(),rs=evs.filter(v=>inRange({day:v.ts.slice(0,10)},IP.r)&&(!q||(v.city+" "+v.street+" "+reason(v.reason)).toLowerCase().includes(q))),byDay={};
+    rs.forEach(v=>(byDay[v.ts.slice(0,10)]=byDay[v.ts.slice(0,10)]||[]).push(v));
+    $("#tl").innerHTML=tile(n0(rs.length),"saved Sentry events")+tile(n0(rs.filter(v=>idleOf(v)).length),"inside a recorded parked period")+tile(sn.connected?"Connected":"Not connected","Archive drive");
+    $("#tb").innerHTML=(sn.connected?'<div id="spl"></div>':'<div class="empty">The Archive drive is not connected.</div>')+Object.keys(byDay).sort().reverse().slice(0,60).map(d=>`<div class="day">${dayName(d)}<small>${byDay[d].length} event${byDay[d].length>1?"s":""}</small></div><div class="evs">${byDay[d].map(v=>`<button class="evc" data-id="${v.id}"><img loading="lazy" src="/footage/A/SentryClips/${v.id}/thumb.png" onerror="this.style.visibility='hidden'"><b>${hms(v.ts)}</b><span>${esc(reason(v.reason))}</span><span>${esc(v.city||"")}</span>${idleOf(v)?`<a href="#/parked/${idleOf(v).id}" onclick="event.stopPropagation()">parked period</a>`:""}</button>`).join("")}</div>`).join("");
+    $$(".evc").forEach(b=>b.onclick=()=>{$$(".evc").forEach(x=>x.classList.toggle("on",x===b));sentryPlayer($("#spl"),evs.find(v=>v.id===b.dataset.id));$("#spl").scrollIntoView({block:"nearest"})})};
+  const draw=()=>{if(IP.tab==="events")return drawEvents();const q=IP.q.toLowerCase(),rs=all.filter(x=>inRange(x,IP.r)&&x.min>=IP.min&&(IP.sen==="all"||x.nev>0)&&(!q||place(x).toLowerCase().includes(q))),kwh=rs.reduce((a,x)=>a+(x.kwh||0),0),mn=rs.reduce((a,x)=>a+x.min,0);
+    $("#tl").innerHTML=tile(n0(rs.length),"parked periods")+tile(dur(mn),"time parked")+tile(n0(kwh,1)+" kWh","energy used while parked")+tile(mn?n0(kwh*1000/(mn/60))+" Wh/h":"–","average drain")+tile(n0(rs.reduce((a,x)=>a+x.nev,0)),"saved Sentry events here")+tile(sn.connected?n0(evs.length)+" ("+matched.size+" placed)":"Archive not connected","Sentry events on the Archive");
+    table($("#tb"),[{k:"t0",t:"Date",l:1,f:r=>`${r.day} ${r.hm}`},{k:"place",t:"Where",l:1,f:whereLink},{k:"min",t:"Parked",f:r=>dur(r.min)},{k:"b0",t:"Battery",f:r=>`${n0(r.b0)}→${n0(r.b1)}%`},{k:"kwh",t:"kWh",f:r=>n0(r.kwh,2)},{k:"dr",t:"Wh/h",f:r=>r.min?n0(r.kwh*1000/(r.min/60)):"–"},{k:"nev",t:"Sentry clips",f:r=>r.nev?`<b>${r.nev}</b> ▶`:"–"},{k:"sentry",t:"In Sentry",f:r=>r.sentry>0.01?Math.round(r.sentry*100)+"%":"–"},{k:"climate",t:"Climate",f:r=>r.climate>0.01?Math.round(r.climate*100)+"%":"–"}],rs.map(r=>Object.assign({dr:r.min?r.kwh/(r.min/60):0},r)),r=>location.hash="#/parked/"+r.id,"t0")};
+  main.innerHTML=`<h1>Parked</h1><div class="sub">Time spent parked: battery drain, Sentry and climate use. Open a parked period, or the All Sentry events tab, to watch saved Sentry footage.</div><div class="bar"><button class="chip" data-tb="periods">Parked periods</button><button class="chip" data-tb="events">All Sentry events</button><span id="rg"></span><select id="mn"><option value="0">Any length</option><option value="5">5 min or more</option><option value="60">1 h or more</option><option value="480">8 h or more</option></select><select id="sn"><option value="all">All parked periods</option><option value="y">Only with Sentry footage</option></select><input type="search" id="q" placeholder="Search a place…" value="${esc(IP.q)}"></div><div class="tiles" id="tl"></div><div id="tb"></div>`;
+  const tabs=()=>{$$("[data-tb]").forEach(c=>c.classList.toggle("on",c.dataset.tb===IP.tab));["mn","sn"].forEach(i=>$("#"+i).style.display=IP.tab==="periods"?"":"none")};
+  $$("[data-tb]").forEach(c=>c.onclick=()=>{IP.tab=c.dataset.tb;tabs();draw()});
+  $("#mn").value=String(IP.min);$("#sn").value=IP.sen;rangePicker($("#rg"),IP.r,daysOf(all.concat(evs.map(v=>({day:v.ts.slice(0,10)})))),draw);$("#mn").onchange=e=>{IP.min=+e.target.value;draw()};$("#sn").onchange=e=>{IP.sen=e.target.value;draw()};$("#q").oninput=e=>{IP.q=e.target.value;draw()};tabs();draw();
+}
+async function pageParkedOne(id){
+  loading();const [x,sn]=await Promise.all([api("idle/"+id),getSentry()]),h=x.min/60,evs=sentryOf(x,sn.events).sort((a,b)=>a.ts<b.ts?1:-1);
+  main.innerHTML=crumbs("#/parked","Parked")+`<h1>Parked · ${whereLink(x)}</h1><div class="sub">${dayName(x.day)} · ${x.hm} – ${addMin(x.hm,x.min)} · ${dur(x.min)}</div>
+   <div class="tiles">${tile(n0(x.b0)+"% → "+n0(x.b1)+"%","battery")}${tile(n0(x.kwh,2)+" kWh","energy used")}${tile(h?n0(x.kwh*1000/h)+" Wh/h":"–","average drain")}${tile(n0(x.range,1)+" km","rated range lost")}${tile(Math.round(x.sentry*100)+"%","time in Sentry")}${tile(Math.round(x.climate*100)+"%","time with climate on")}</div>
+   ${alertsCard(await alertsFor("idle",id),"parked period")}<div class="card"><h2 style="margin-top:0">Saved Sentry footage</h2><div id="sev"></div><div id="spl"></div></div>
+   <div class="card" style="margin-top:14px"><h2 style="margin-top:0">Where</h2><div class="map" id="mp"></div><div class="sub" style="margin-top:8px">${esc(x.addr||"")}</div></div>`;
+  miniMap($("#mp"),x.lat,x.lon,"#8b5cf6");wireAlerts(main);
+  const box=$("#sev");
+  if(!sn.connected){box.innerHTML='<div class="sub">The Archive drive is not connected, so saved Sentry clips cannot be shown.</div>';return}
+  if(!evs.length){box.innerHTML='<div class="sub">No saved Sentry events during this parked period.</div>';return}
+  box.innerHTML=`<div class="sub">${evs.length} saved event${evs.length>1?"s":""}. Pick one to watch.</div><div class="evs">${evs.map((v,i)=>`<button class="evc" data-i="${i}"><img loading="lazy" src="/footage/A/SentryClips/${v.id}/thumb.png" onerror="this.style.visibility='hidden'"><b>${hms(v.ts)}</b><span>${esc(reason(v.reason))}${v.cam?" · camera "+esc(v.cam):""}</span></button>`).join("")}</div>`;
+  const pick=i=>{$$(".evc").forEach(b=>b.classList.toggle("on",+b.dataset.i===i));sentryPlayer($("#spl"),evs[i])};
+  $$(".evc").forEach(b=>b.onclick=()=>pick(+b.dataset.i));pick(0);
+}
+function sentryPlayer(host,ev){
+  const stamps=Object.keys(ev.clips),trig=Date.parse(ev.ts),stMs=s=>Date.parse(s.slice(0,10)+"T"+s.slice(11).replace(/-/g,":"));
+  if(!stamps.length){host.innerHTML='<div class="sub">This event has no video clips on the Archive.</div>';return}
+  let si=stamps.reduce((a,s,i)=>stMs(s)<=trig?i:a,0),cam="front",grid=false,seek=Math.max(0,(trig-stMs(stamps[si]))/1000-8);
+  const url=(s,c)=>`/footage/A/SentryClips/${ev.id}/${s}-${c}.mp4`;
+  const shell=()=>{host.innerHTML=`<div class="sp"><div class="bar">${Object.keys(CAMN).map(c=>`<button class="chip ${!grid&&c===cam?"on":""}" data-c="${c}">${CAMN[c]}</button>`).join("")}<button class="chip ${grid?"on":""}" data-c="grid">All cameras</button>
+    <select id="stp">${stamps.map((s,i)=>`<option value="${i}" ${i===si?"selected":""}>${s.slice(11).replace(/-/g,":")}${stMs(s)<=trig&&trig<stMs(s)+60000?"  ◀ triggered":""}</option>`).join("")}</select></div>
+    <div class="sub" style="margin:4px 0 8px">${esc(reason(ev.reason))} at ${hms(ev.ts)}${ev.city?" · "+esc(ev.city):""}. One-minute clips, ${stamps.length} in this event; the next clip plays on its own.</div><div id="vids" class="${grid?"vgrid":""}"></div></div>`;
+    $$(".sp [data-c]").forEach(b=>b.onclick=()=>{if(b.dataset.c==="grid")grid=true;else{grid=false;cam=b.dataset.c}seek=0;shell()});
+    $("#stp").onchange=e=>{si=+e.target.value;seek=0;vids()};vids()};
+  const vids=()=>{const s=stamps[si],have=ev.clips[s]||[],cams=grid?Object.keys(CAMN).filter(c=>have.includes(c)):[have.includes(cam)?cam:have[0]];
+    $("#vids").innerHTML=cams.map((c,i)=>`<figure><video ${i===0?"controls":"muted"} muted playsinline preload="auto" src="${url(s,c)}"></video><figcaption>${CAMN[c]}</figcaption></figure>`).join("");
+    const vs=$$("#vids video"),m=vs[0];if(!m)return;
+    m.onloadedmetadata=()=>{if(seek){m.currentTime=seek;seek=0}m.play().catch(()=>{})};
+    m.onended=()=>{if(si<stamps.length-1){si++;$("#stp").value=si;vids()}};
+    m.onerror=()=>{$("#vids").insertAdjacentHTML("afterbegin",'<div class="sub">This clip could not be played (missing, or the Archive was disconnected).</div>')};
+    if(vs.length>1){m.onplay=()=>vs.forEach(v=>v!==m&&v.play().catch(()=>{}));m.onpause=()=>vs.forEach(v=>v!==m&&v.pause());m.onseeked=()=>vs.forEach(v=>v!==m&&(v.currentTime=m.currentTime));
+      m.ontimeupdate=()=>vs.forEach(v=>{if(v!==m&&Math.abs(v.currentTime-m.currentTime)>0.4)v.currentTime=m.currentTime})}};
+  shell();
+}
+
+// ---------- Places (the places manager) and the page for one place
+let PL={tab:"saved",q:"",visited:false,net:"all",state:"all",ml:{saved:1,sc:1,chg:1,found:1}},SYNCPOLL=null,PLM=null;
+// One map of every place: saved places, Superchargers, other chargers and stops to review. Bigger, solid dots are places you have used.
+function placesMap(host,L,C){
+  const defs=[["saved","Saved places","#3b6cf6"],["sc","Superchargers","#e0201b"],["chg","Other chargers","#16a34a"],["found","Stops to review","#f59e0b"]],ML=PL.ml;
+  const src={saved:L.saved,sc:L.superchargers,chg:(C?C.rows:[]).filter(r=>!/^[sp]:/.test(r.key)),found:L.found};
+  const used=(g,r)=>g==="found"?true:g==="saved"?(r.charges||r.idles||r.drives)>0:r.charges>0;
+  const feats=()=>{const q=PL.q.toLowerCase(),F=[],cnt={};
+    defs.forEach(([g,,c])=>{cnt[g]=0;if(!ML[g])return;src[g].forEach(r=>{if(r.lat==null||r.lon==null)return;if(q&&!((r.name||"")+" "+(r.addr||"")+" "+(r.network||"")).toLowerCase().includes(q))return;
+      const u=used(g,r);if(PL.visited&&!u)return;cnt[g]++;
+      F.push({type:"Feature",geometry:{type:"Point",coordinates:[+r.lon,+r.lat]},properties:{g,c,u:u?1:0,key:r.key,name:r.name||r.addr||"Unnamed stop",
+        sub:[g==="sc"?"Supercharger":g==="chg"?(r.network||"Charger"):g==="saved"?"Saved place":"Stop to review",r.addr||"",r.charges?r.charges+" charge"+(r.charges>1?"s":"")+" · "+n0(r.kwh,1)+" kWh":(g==="found"?r.visits+" days there":"")].filter(Boolean).join(" · "),lat:+r.lat,lon:+r.lon}})})});
+    F.sort((a,b)=>a.properties.u-b.properties.u);return {F,cnt}};
+  const paintBar=cnt=>{$("#mlg").innerHTML=defs.map(([g,t,c])=>`<button class="chip ${ML[g]?"on":""}" data-ml="${g}"><i style="display:inline-block;width:10px;height:10px;border-radius:50%;background:${c};margin-right:6px"></i>${t} <b>${n0(cnt[g])}</b></button>`).join("")+`<span class="sub">Large dot = used. Click a dot for details.</span>`;
+    $$("[data-ml]",host).forEach(b=>b.onclick=()=>{ML[b.dataset.ml]=ML[b.dataset.ml]?0:1;PLM.update(true)})};
+  if(PLM&&PLM.el&&host.contains(PLM.el)){PLM.update(true);return}
+  if(PLM){try{PLM.m.remove()}catch(e){}PLM=null}
+  if(!window.maplibregl){host.innerHTML='<div class="empty">Map library not loaded (offline?).</div>';return}
+  host.innerHTML='<div class="bar" id="mlg"></div><div class="map big" id="pm"></div>';
+  const el=$("#pm"),dark=matchMedia("(prefers-color-scheme: dark)").matches,m=new maplibregl.Map({container:el,style:"https://tiles.openfreemap.org/styles/"+(dark?"dark":"positron"),center:[151.2,-33.8],zoom:8,attributionControl:{compact:true}});
+  m.addControl(new maplibregl.NavigationControl({showCompass:false}),"top-right");
+  let ready=false,first=true;
+  const update=refit=>{const {F,cnt}=feats();paintBar(cnt);$("#cnt").textContent=F.length+" on the map";if(!ready)return;m.getSource("pl").setData({type:"FeatureCollection",features:F});
+    if((refit||first)&&F.length){first=false;const b=new maplibregl.LngLatBounds();F.forEach(f=>b.extend(f.geometry.coordinates));m.fitBounds(b,{padding:50,maxZoom:13,duration:400})}};
+  PLM={m,el,update};
+  m.on("load",()=>{ready=true;m.addSource("pl",{type:"geojson",data:{type:"FeatureCollection",features:[]}});
+    m.addLayer({id:"pl",type:"circle",source:"pl",layout:{"circle-sort-key":["get","u"]},paint:{"circle-color":["get","c"],"circle-radius":["case",["==",["get","u"],1],8,4.5],"circle-opacity":["case",["==",["get","u"],1],0.95,0.6],"circle-stroke-width":1.5,"circle-stroke-color":"#fff"}});
+    m.on("mouseenter","pl",()=>m.getCanvas().style.cursor="pointer");m.on("mouseleave","pl",()=>m.getCanvas().style.cursor="");
+    m.on("click","pl",e=>{const p=e.features[0].properties;new maplibregl.Popup({offset:10,maxWidth:"300px"}).setLngLat(e.features[0].geometry.coordinates).setHTML(`<div style="font:13px system-ui;color:#111"><b>${esc(p.name)}</b><div style="color:#555;margin:3px 0 6px">${esc(p.sub)}</div><a href="#/place/${encodeURIComponent(p.key)}">Open place</a><div style="margin-top:6px;font-size:12px">${mapLinks(p.lat,p.lon,p.name)}</div></div>`).addTo(m)});
+    update(true)});
+  update(false);
+}
+async function pagePlaces(){
+  loading();cache.places=null;const L=await api("places");let C=null;const need=async()=>{if(!C)C=await api("chargers")};if(PL.tab==="chargers"||PL.tab==="map")await need();
+  const draw=()=>{const q=PL.q.toLowerCase(),host=$("#tb");let rows,cols;if(PL.tab==="map"){placesMap(host,L,C);return}
+    const stat=[{k:"charges",t:"Charges"},{k:"idles",t:"Parked"},{k:"drives",t:"Arrivals"}];
+    if(PL.tab==="saved"){rows=L.saved.filter(p=>!q||(p.name+" "+p.notes).toLowerCase().includes(q));
+      cols=[{k:"name",t:"Place",l:1},{k:"notes",t:"Notes",l:1},...stat,{k:"kwh",t:"kWh charged",f:r=>r.charges?n0(r.kwh,1):"–"},{k:"last",t:"Last visit",f:r=>r.last||"–"},{k:"radius",t:"Radius",f:r=>n0(r.radius)+" m"}]}
+    else if(PL.tab==="sc"){rows=L.superchargers.filter(p=>(!PL.visited||p.charges)&&(!q||(p.name+" "+p.addr).toLowerCase().includes(q)));
+      cols=[{k:"name",t:"Supercharger (name on tesla.com)",l:1},{k:"addr",t:"Address",l:1},{k:"stalls",t:"Stalls"},{k:"kw",t:"Max kW",f:r=>n0(r.kw)},{k:"charges",t:"Charges"},{k:"kwh",t:"kWh",f:r=>r.charges?n0(r.kwh,1):"–"},{k:"cost",t:"Cost",f:r=>r.charges?money(r.cost):"–"},{k:"last",t:"Last visit",f:r=>r.last||"–"}]}
+    else if(PL.tab==="chargers"){rows=C.rows.filter(p=>(PL.net==="all"||p.network===PL.net)&&(PL.state==="all"||p.state===PL.state)&&(!PL.visited||p.charges)&&(!q||(p.name+" "+p.addr+" "+p.network+" "+p.suburb).toLowerCase().includes(q)));
+      cols=[{k:"name",t:"Charger",l:1},{k:"network",t:"Network",l:1},{k:"addr",t:"Address",l:1,f:r=>esc(r.addr||r.suburb||"")},{k:"state",t:"State"},{k:"stalls",t:"Stalls",f:r=>r.stalls==null?"–":n0(r.stalls)},{k:"kw",t:"Max kW",f:r=>r.kw?n0(r.kw):"–"},{k:"tier",t:"Type",l:1,f:r=>esc((r.tier||"").replace(/_/g," "))},{k:"conn",t:"Connectors",l:1},{k:"charges",t:"Charges"},{k:"kwh",t:"kWh",f:r=>r.charges?n0(r.kwh,1):"–"},{k:"last",t:"Last charge",f:r=>r.last||"–"}]}
+    else{rows=L.found.filter(p=>!q||(p.addr||"").toLowerCase().includes(q));
+      cols=[{k:"addr",t:"Address of a place you return to, not saved yet",l:1,f:r=>esc(r.addr||(r.lat.toFixed(4)+", "+r.lon.toFixed(4)))},{k:"lat",t:"Lat, Lon",l:1,f:r=>`${(+r.lat).toFixed(5)}, ${(+r.lon).toFixed(5)}`},{k:"map",t:"Open in",l:1,f:r=>mapLinks(r.lat,r.lon,r.addr,1)},{k:"visits",t:"Days there"},{k:"last",t:"Last"}]}
+    table(host,cols,rows,r=>location.hash="#/place/"+encodeURIComponent(r.key),PL.tab==="found"?"visits":PL.tab==="sc"||PL.tab==="chargers"?"charges":"last");
+    $("#cnt").textContent=rows.length+" shown"};
+  main.innerHTML=`<h1>Places</h1><div class="sub">Your saved places, the Tesla Superchargers (named as on tesla.com) and stops worth naming. Open one to see what is around it on OpenStreetMap.</div>
+   <div class="tiles">${tile(L.saved.length,"saved places")}${tile(L.superchargers.filter(s=>s.charges).length+" of "+L.superchargers.length,"Superchargers used")}${tile(L.found.length,"stops to review")}</div>
+   <div class="bar"><button class="chip" data-t="saved">Saved places</button><button class="chip" data-t="sc">Superchargers</button><button class="chip" data-t="chargers">Chargers</button><button class="chip" data-t="found">Stops to review</button><button class="chip" data-t="map">Map</button>
+   <select id="cn"></select><select id="cs"></select><label class="sub" id="vl"><input type="checkbox" id="vis"> used only</label><button class="btn" id="sy">Sync chargers…</button><input type="search" id="q" placeholder="Search…" value="${esc(PL.q)}"><button class="btn pri" id="add">+ New place</button><span class="sub" id="cnt"></span></div><div id="sp"></div><div id="tb"></div>`;
+  const tabs=()=>{$$("[data-t]").forEach(c=>c.classList.toggle("on",c.dataset.t===PL.tab));const ch=PL.tab==="chargers";$("#vl").style.display=PL.tab==="sc"||ch||PL.tab==="map"?"":"none";$("#cn").style.display=$("#cs").style.display=$("#sy").style.display=ch?"":"none";$("#vis").checked=PL.visited;
+    if(ch&&C){$("#cn").innerHTML='<option value="all">All networks</option>'+C.networks.map(([n,c])=>`<option value="${esc(n)}">${esc(n||"Other")} (${n0(c)})</option>`).join("");$("#cn").value=PL.net;
+      const st=[...new Set(C.rows.map(r=>r.state).filter(Boolean))].sort();$("#cs").innerHTML='<option value="all">All states</option>'+st.map(x=>`<option>${esc(x)}</option>`).join("");$("#cs").value=PL.state}};
+  $$("[data-t]").forEach(c=>c.onclick=async()=>{PL.tab=c.dataset.t;if(PL.tab==="chargers"||PL.tab==="map")await need();tabs();draw()});
+  $("#cn").onchange=e=>{PL.net=e.target.value;draw()};$("#cs").onchange=e=>{PL.state=e.target.value;draw()};
+  $("#sy").onclick=()=>syncPanel($("#sp"),async()=>{cache.chargers=null;cache.places=null;C=await api("chargers");tabs();draw()});$("#vis").onchange=e=>{PL.visited=e.target.checked;draw()};$("#q").oninput=e=>{PL.q=e.target.value;draw()};
+  $("#add").onclick=()=>{sessionStorage.setItem("placePrefill",JSON.stringify({name:"",lat:"",lon:"",radius_m:150}));location.hash="#/place/"+encodeURIComponent("@new")};tabs();draw();
+}
+// ---------- sync_charger_all.sh from the app: Run, live log, Stop
+function syncPanel(host,done){
+  if(host.firstChild){host.innerHTML="";if(SYNCPOLL){clearInterval(SYNCPOLL);SYNCPOLL=null}return}
+  host.innerHTML=`<div class="card"><h2 style="margin-top:0">Sync chargers</h2><div class="sub">Runs <b>sync_charger_all.sh</b>, the one command for the chargers: Tesla Superchargers and Destination chargers (near Home, 50 km), then Chargefox, EVX, Evie, bp pulse, PlugShare (near Home), AmpCharge, Exploren, Jolt and NRMA, and finally the consolidated export. It needs the network, can take many minutes, and updates charging_stations.json in your data folder. Existing entries are kept; new ones are added.</div>
+    <div class="bar"><button class="btn pri" id="sr">Run now</button><button class="btn bad" id="ss" disabled>Stop</button><span class="sub" id="sm"></span></div><pre class="out" id="slog" style="max-height:340px;overflow:auto" hidden></pre></div>`;
+  const log=$("#slog");let since=0,was=false;
+  const poll=async()=>{let j;try{j=await (await fetch("/api/chargers-sync?since="+since)).json()}catch(e){$("#sm").textContent="Could not reach the app.";return}
+    if(!document.body.contains(log)){clearInterval(SYNCPOLL);SYNCPOLL=null;return}
+    if(j.lines&&j.lines.length){log.hidden=false;const bot=log.scrollTop+log.clientHeight>=log.scrollHeight-20;log.textContent+=(log.textContent?"\n":"")+j.lines.join("\n");if(bot)log.scrollTop=log.scrollHeight}
+    since=j.n;$("#sr").disabled=j.running;$("#ss").disabled=!j.running;
+    $("#sm").textContent=j.running?"Running…":j.started?(j.rc===0?"Finished.":"Stopped or failed (exit "+j.rc+").")+"":"";
+    if(j.running)was=true;
+    if(!j.running&&was){was=false;clearInterval(SYNCPOLL);SYNCPOLL=null;done()}
+    if(!j.running&&!was&&SYNCPOLL&&!j.started){clearInterval(SYNCPOLL);SYNCPOLL=null}};
+  const go=()=>{if(!SYNCPOLL)SYNCPOLL=setInterval(poll,2000);poll()};
+  $("#sr").onclick=async()=>{if(!confirm("Run sync_charger_all.sh now? It contacts the charger networks and PlugShare and can take many minutes."))return;log.textContent="";since=0;was=true;
+    const j=await (await fetch("/api/chargers/sync",{method:"POST"})).json();if(j.ok===false){$("#sm").textContent=j.error;return}go()};
+  $("#ss").onclick=async()=>{await fetch("/api/chargers/sync/stop",{method:"POST"});go()};
+  poll();fetch("/api/chargers-sync?since=0").then(r=>r.json()).then(j=>{if(j.running)go()}).catch(()=>{});
+}
+const OSMG={};
+async function pagePlace(key){
+  loading();
+  let p;if(key==="@new"){let pre={};try{pre=JSON.parse(sessionStorage.getItem("placePrefill")||"{}")}catch(e){}p=Object.assign({kind:"spot",key,name:"New place",lat:null,lon:null,radius:150,keywords:[],notes:"",visits:[],nvisits:0},pre,{radius:pre.radius_m||150,name:pre.name||"New place"})}
+  else{const r=await fetch("/api/place?key="+encodeURIComponent(key));if(!r.ok){main.innerHTML=crumbs("#/places","Places")+'<div class="empty">That place is not in your places any more.</div>';return}p=await r.json()}
+  const kinds={saved:"Saved place",supercharger:"Tesla Supercharger",charger:"Charger"+(p.network?" · "+p.network:""),spot:"Not saved yet"},vis=p.visits||[],n=k=>vis.filter(v=>v.k===k).length,editable=p.kind!=="supercharger"&&p.kind!=="charger";
+  const kw=(p.keywords||[]).join(", "),pre=(()=>{try{return JSON.parse(sessionStorage.getItem("placePrefill")||"{}")}catch(e){return{}}})();
+  main.innerHTML=crumbs("#/places","Places")+`<h1>${esc(p.name)}</h1><div class="sub">${kinds[p.kind]}${p.addr?" · "+esc(p.addr):""}${p.lat!=null?" · "+p.lat.toFixed(5)+", "+p.lon.toFixed(5):""}</div>
+   <div class="tiles">${tile(n("charge"),"charges")}${tile(n("idle"),"parked periods")}${tile(n("drive"),"arrivals by drive")}${p.kind==="supercharger"||p.kind==="charger"?tile(n0(p.stalls)+(p.kw?" × "+n0(p.kw)+" kW":" stalls"),p.kw?"stalls × max power":"max power not listed"):tile(n0(p.radius)+" m","match radius")}</div>
+   <div class="two"><div class="card"><h2 style="margin-top:0">Map</h2><div class="map" id="mp"></div>${p.lat!=null?`<div class="sub" style="margin-top:8px">Open in: ${mapLinks(p.lat,p.lon,p.name)}</div>`:""}</div><div class="card" id="ed"></div></div>
+   <div class="card" style="margin-top:14px"><h2 style="margin-top:0">Around here on OpenStreetMap</h2><div id="osm"><div class="sub">Loading…</div></div></div>
+   <h2>Visits</h2><div id="vs"></div>`;
+  if(p.lat!=null)miniMap($("#mp"),p.lat,p.lon,p.kind==="supercharger"?"#e0201b":p.kind==="charger"?"#16a34a":"#3b6cf6");else $("#mp").outerHTML='<div class="sub">Enter coordinates below, or start from a stop in the Places list.</div>';
+  const ed=$("#ed");
+  if(editable){ed.innerHTML=`<h2 style="margin-top:0">${p.kind==="saved"?"Edit this place":"Save as a place"}</h2><div class="form">
+    <label class="w">Name<input id="f_name" value="${esc(p.kind==="spot"?(pre.name||""):p.name)}" placeholder="e.g. Corner Shop Chargers"></label>
+    <label>Latitude<input id="f_lat" value="${p.lat==null?"":p.lat}"></label><label>Longitude<input id="f_lon" value="${p.lon==null?"":p.lon}"></label>
+    <label>Radius (m)<input id="f_rad" value="${p.radius||150}"></label>
+    <label class="w">Keywords (addresses or names to match, comma separated)<input id="f_kw" value="${esc(kw)}"></label>
+    <label class="w">Notes<input id="f_notes" value="${esc(p.notes||"")}"></label></div>
+    <div class="bar"><button class="btn pri" id="sv">${p.kind==="saved"?"Save changes":"Save place"}</button>${p.kind==="saved"?'<button class="btn bad" id="dl">Delete</button>':""}<span class="sub" id="msg"></span></div>
+    <div class="sub">Saved places are written to places.json (a dated backup is kept first). The sync scripts use the same file.</div>`;
+    $("#sv").onclick=async()=>{const m=$("#msg");m.textContent="Saving…";const body={old_name:p.kind==="saved"?p.name:"",name:$("#f_name").value,lat:$("#f_lat").value,lon:$("#f_lon").value,radius_m:$("#f_rad").value,keywords:$("#f_kw").value,notes:$("#f_notes").value};
+      try{const j=await (await fetch("/api/places/save",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)})).json();
+        if(j.ok){Object.keys(cache).forEach(k=>delete cache[k]);sessionStorage.removeItem("placePrefill");location.hash="#/place/"+encodeURIComponent(j.key);route()}else m.textContent="Not saved: "+j.error}catch(e){m.textContent="Could not reach the app: "+e}};
+    if($("#dl"))$("#dl").onclick=async()=>{if(!confirm("Delete the saved place '"+p.name+"'? Past drives keep their addresses."))return;
+      const j=await (await fetch("/api/places/delete",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({name:p.name})})).json();
+      if(j.ok){Object.keys(cache).forEach(k=>delete cache[k]);location.hash="#/places"}else $("#msg").textContent="Not deleted: "+j.error}}
+  else ed.innerHTML=`<h2 style="margin-top:0">About this ${p.kind==="charger"?"charger":"Supercharger"}</h2><div class="sub">${p.kind==="charger"?"From the charger registry (sync_charger_all.sh). Use Sync chargers on the Places page to refresh it.":"The name is the one used on tesla.com."}</div><table class="kv">${p.kind==="charger"?`<tr><td>Network</td><td>${esc(p.network||"–")}</td></tr><tr><td>Connectors</td><td>${esc(p.conn||"–")}</td></tr><tr><td>Access</td><td>${esc(p.access||"–")}</td></tr>`:""}<tr><td>Stalls</td><td>${n0(p.stalls)}</td></tr><tr><td>Max power</td><td>${n0(p.kw)} kW${p.tier?" ("+esc(p.tier)+")":""}</td></tr><tr><td>Hours</td><td>${esc(p.hours||"–")}</td></tr><tr><td>Address</td><td>${esc(p.addr||"–")}</td></tr></table>${p.notes?`<div class="sub" style="margin-top:8px;white-space:pre-line">${esc(p.notes)}</div>`:""}`;
+  $("#vs").innerHTML=vis.length?vis.map(v=>{const href=v.k==="charge"?"#/charge/"+v.id:v.k==="idle"?"#/parked/"+v.id:v.id?"#/drive/"+v.id:"";
+    return `<a class="row" ${href?`href="${href}"`:""}><span class="t">${v.day} ${v.hm}</span><span class="k ${v.k}"></span><div style="min-width:0"><div class="ti">${v.k==="charge"?"Charge":v.k==="idle"?"Parked":"Arrived"}</div><div class="st">${dur(v.min)}${v.frm?" · from "+esc(v.frm):""}${v.parts&&v.parts.length>1?" · "+v.parts.length+" parts (Tessie recorded "+v.parts.length+" sessions)":""}</div></div><div class="nums">${v.k==="charge"?`<span>+${n0(v.kwh,1)}<small>kWh</small></span><span>${money(v.cost)}<small>cost</small></span>`:v.k==="drive"?`<span>${n0(v.km,1)}<small>km</small></span>`:`<span>${n0(v.kwh,2)}<small>kWh</small></span>`}</div></a>`+(v.parts&&v.parts.length>1?v.parts.map((x,i)=>`<a class="row nest" href="#/charge/${x.id}"><span class="t">${x.day} ${x.hm}</span><span class="k charge"></span><div style="min-width:0"><div class="st">↳ part ${i+1} · ${dur(x.min)} · ${n0(x.b0)}→${n0(x.b1)}%</div></div><div class="nums"><span>+${n0(x.kwh,1)}<small>kWh</small></span><span>${money(x.cost)}<small>cost</small></span></div></a>`).join(""):"")}).join(""):'<div class="empty">No recorded visits.</div>';
+  if(p.lat==null){$("#osm").innerHTML='<div class="sub">Needs a location.</div>';return}
+  osmBlock($("#osm"),p);
+}
+async function osmBlock(host,p){
+  let R=OSMG[p.key+"r"]||300,q="";
+  const load=async refresh=>{host.querySelector("#ol")&&(host.querySelector("#ol").innerHTML='<div class="sub">Asking OpenStreetMap…</div>');
+    try{const r=await fetch(`/api/place-osm?key=${encodeURIComponent(p.key)}&lat=${p.lat}&lon=${p.lon}&r=${R}${refresh?"&refresh=1":""}`),j=await r.json();OSMG[p.key]=j;paint()}catch(e){host.innerHTML='<div class="sub">Could not load: '+esc(e)+'</div>'}};
+  const paint=()=>{const j=OSMG[p.key]||{items:[]},its=j.items.filter(i=>!q||(i.name+" "+i.group+" "+i.category).toLowerCase().includes(q.toLowerCase())),by={};its.forEach(i=>(by[i.group]=by[i.group]||[]).push(i));
+    host.innerHTML=`<div class="bar"><select id="orad">${[100,300,500,1000].map(v=>`<option value="${v}" ${v===R?"selected":""}>within ${v} m</option>`).join("")}</select><input type="search" id="oq" placeholder="Filter these…" value="${esc(q)}"><button class="btn" id="orf">Refresh from OpenStreetMap</button><span class="sub">${its.length} places · ${esc(j.source||"")}${j.fetched?" · "+esc(String(j.fetched).slice(0,10)):""}</span></div>
+     <div id="ol">${its.length?Object.keys(by).sort().map(g=>`<div class="og"><h3>${esc(by[g][0].emoji||"")} ${esc(g)} <span>${by[g].length}</span></h3>${by[g].map(i=>`<div class="oi"><span class="on">${esc(i.name)}</span><span class="sub">${esc(i.category&&i.category!==g?i.category:"")}</span><span class="od">${i.dist_m==null?"":n0(i.dist_m)+" m"}</span>${i.lat!=null?`<a href="https://www.openstreetmap.org/?mlat=${i.lat}&mlon=${i.lon}#map=19/${i.lat}/${i.lon}" target="_blank">map</a><a href="#" data-sv="${esc(i.name)}|${i.lat}|${i.lon}">save as place</a>`:""}</div>`).join("")}</div>`).join(""):'<div class="sub">Nothing found. Try a wider radius or Refresh.</div>'}</div>`;
+    $("#orad").onchange=e=>{R=+e.target.value;OSMG[p.key+"r"]=R;load(false)};$("#oq").oninput=e=>{q=e.target.value;const pos=e.target.selectionStart;paint();const o=$("#oq");o.focus();o.setSelectionRange(pos,pos)};$("#orf").onclick=()=>load(true);
+    $$("[data-sv]",host).forEach(a=>a.onclick=ev=>{ev.preventDefault();const [name,la,lo]=a.dataset.sv.split("|");sessionStorage.setItem("placePrefill",JSON.stringify({name,lat:+la,lon:+lo,radius_m:100}));location.hash="#/place/"+encodeURIComponent("@"+(+la).toFixed(5)+","+(+lo).toFixed(5))})};
+  load(false);
+}
+
+// ---------- Battery health (the same two charts as analyse_battery_health.py: capacity and range against odometer, least-squares trend)
+function scatter(host,pts,key,unit,col,dec){
+  const W=900,H=360,L=58,R=16,T=12,B=40,xs=pts.map(p=>p.odo),ys=pts.map(p=>p[key]);
+  if(pts.length<2){host.innerHTML='<div class="sub">Not enough readings with an odometer yet.</div>';return}
+  const x0=Math.min(...xs),x1=Math.max(...xs),y0=Math.min(...ys),y1=Math.max(...ys),py=(y1-y0)*.12||1,lo=y0-py,hi=y1+py,X=v=>L+(v-x0)/((x1-x0)||1)*(W-L-R),Y=v=>T+(hi-v)/(hi-lo)*(H-T-B);
+  const n=pts.length,mx=xs.reduce((a,v)=>a+v,0)/n,my=ys.reduce((a,v)=>a+v,0)/n,sxx=xs.reduce((a,v)=>a+(v-mx)**2,0),m=sxx?xs.reduce((a,v,i)=>a+(v-mx)*(ys[i]-my),0)/sxx:0,c=my-m*mx;
+  let g="";for(let i=0;i<=5;i++){const v=lo+(hi-lo)*i/5;g+=`<line class="grid" x1="${L}" x2="${W-R}" y1="${Y(v)}" y2="${Y(v)}"/><text x="${L-6}" y="${Y(v)+4}" text-anchor="end">${n0(v,dec)}</text>`}
+  for(let i=0;i<=6;i++){const v=x0+(x1-x0)*i/6;g+=`<text x="${X(v)}" y="${H-B+16}" text-anchor="middle">${n0(v)}</text>`}
+  host.innerHTML=`<svg viewBox="0 0 ${W} ${H}" style="width:100%;height:auto;display:block">${g}<text x="${(L+W-R)/2}" y="${H-4}" text-anchor="middle">Odometer (km)</text>
+   <line x1="${X(x0)}" y1="${Y(m*x0+c)}" x2="${X(x1)}" y2="${Y(m*x1+c)}" stroke="${col}" stroke-width="2" stroke-dasharray="5 3" opacity=".6"/>
+   ${pts.map((p,i)=>`<circle cx="${X(p.odo)}" cy="${Y(p[key])}" r="4.5" fill="${col}" stroke="var(--card)" stroke-width="1.2"/><circle class="hit" data-i="${i}" cx="${X(p.odo)}" cy="${Y(p[key])}" r="11" fill="transparent"/>`).join("")}</svg>`;
+  $$(".hit",host).forEach(c=>{const p=pts[+c.dataset.i];c.onmousemove=ev=>showTip(ev,`<b>${n0(p.odo)} km</b> · ${p.t.slice(0,10)}<br>${n0(p[key],dec)} ${unit}`);c.onmouseleave=hideTip});
+  const d=ys[n-1]-ys[0];return `${n0(ys[0],dec)} → ${n0(ys[n-1],dec)} ${unit} (${d>=0?"+":""}${n0(d,dec)} ${unit}) across ${n} readings; trend ${m>=0?"+":""}${n0(m*10000,dec)} ${unit} per 10,000 km`;
+}
+async function pageHealth(){
+  loading();const b=await api("battery"),r=b.readings,sp=b.spec.battery||{},orig=sp.original_capacity_kwh,last=r[r.length-1],lastOdo=[...r].reverse().find(x=>x.odo!=null);
+  const pts=r.filter(x=>x.odo!=null).map(x=>({odo:x.odo,cap:x.kwh,rng:x.range,t:x.t})).sort((a,c)=>a.odo-c.odo),rp=pts.filter(p=>p.rng!=null);
+  const rec=r.slice(-7),avg=rec.length?rec.reduce((a,x)=>a+x.kwh,0)/rec.length:null;
+  main.innerHTML=`<h1>Battery health</h1><div class="sub">From Tessie: usable capacity and rated range against odometer, ${r.length} readings (${pts.length} with an odometer). The dashed line is the least-squares trend; single readings wobble by about ±1 kWh.</div>
+   <div class="tiles">${tile(last?n0(last.kwh,1)+" kWh":"–","latest capacity"+(last?" ("+last.t.slice(0,10)+")":""))}${tile(orig?n0(orig,1)+" kWh":"–","when new (reference)")}${tile(avg&&orig?n0(100*avg/orig,1)+"%":"–","capacity vs new (last 7 readings)")}${tile(last?n0(last.range)+" km":"–","max rated range")}${tile(lastOdo?n0(lastOdo.odo)+" km":"–","odometer")}${tile(sp.chemistry||"–","chemistry")}</div>
+   <div class="card"><h2 style="margin-top:0">Usable capacity vs odometer</h2><div class="sub" id="s1"></div><div id="c1"></div></div>
+   <div class="card" style="margin-top:14px"><h2 style="margin-top:0">Max rated range vs odometer</h2><div class="sub" id="s2"></div><div id="c2"></div></div>`;
+  const a1=scatter($("#c1"),pts.map(p=>Object.assign({},p)),"cap","kWh","#3b82f6",2),a2=scatter($("#c2"),rp,"rng","km","#16a34a",0);
+  if(a1)$("#s1").textContent=a1;if(a2)$("#s2").textContent=a2;
+}
+
+// ---------- Battery (Tessie's Battery page: where the charge level is now and how it moved; health is its own page)
+let BP={r:{p:"30"}};
+async function pageBattery(){
+  loading();const act=await api("activity"),b=await api("battery"),hr=b.readings,lastH=hr[hr.length-1];
+  const T1=x=>x.t1||x.t0+(x.min||0)*60,seg=act.filter(x=>x.b0!=null&&x.b1!=null).map(x=>({x,k:x.k,t0:x.t0,t1:Math.max(T1(x),x.t0),b0:x.b0,b1:x.b1})).sort((a,c)=>a.t0-c.t0);
+  if(!seg.length){main.innerHTML='<h1>Battery</h1><div class="empty">No battery levels in the drives, charges or parked periods yet.</div>';return}
+  const now=seg.reduce((a,s)=>s.t1>a.t1?s:a,seg[0]),cap=lastH?lastH.kwh:null,rng=lastH?lastH.range:null,d30=Date.now()/1000-30*86400;
+  const id=act.filter(x=>x.k==="idle"&&x.t0>d30&&x.min>=30),hrs=id.reduce((a,x)=>a+x.min/60,0),drain=hrs?id.reduce((a,x)=>a+(x.kwh||0),0)*1000/hrs:null,pdrop=hrs?id.reduce((a,x)=>a+Math.max(0,(x.b0||0)-(x.b1||0)),0)/(hrs/24):null;
+  const ch=act.filter(x=>x.k==="charge"&&x.b1!=null).slice(0,20).map(x=>x.b1).sort((a,c)=>a-c),lim=ch.length?ch[Math.floor(ch.length/2)]:null,lc=act.find(x=>x.k==="charge"&&(x.kwh||0)>=0.5);
+  const lo=seg.filter(s=>s.t0>d30).reduce((a,s)=>Math.min(a,s.b0,s.b1),100);
+  main.innerHTML=`<h1>Battery</h1><div class="sub">Charge level over time from your drives, charges and parked periods. As at ${new Date(now.t1*1000).toLocaleString("en-AU",{dateStyle:"medium",timeStyle:"short"})} (the end of the latest period), so it is the last known level, not live. Capacity trend and range over the years are on <a href="#/health">Battery health</a>.</div>
+   <div class="tiles">${tile(n0(now.b1)+"%","battery level")}${tile(rng?n0(rng*now.b1/100)+" km":"–","rated range (estimated)")}${tile(cap?n0(cap*now.b1/100,1)+" kWh":"–","energy in the pack (estimated)")}${tile(drain!=null?n0(drain)+" Wh/h":"–","parked drain, last 30 days")}${tile(pdrop!=null?n0(pdrop,1)+"% / day":"–","parked loss, last 30 days")}${tile(lim!=null?n0(lim)+"%":"–","usual charge target (median of last 20)")}${tile(lc?n0(lc.b0)+"% → "+n0(lc.b1)+"%":"–","last charge"+(lc?" ("+lc.day+")":""))}${tile(lo<100?n0(lo)+"%":"–","lowest level, last 30 days")}</div>
+   <div class="bar"><span id="rg"></span><span class="sub"><b style="color:#16a34a">━</b> charging &nbsp; <b style="color:#3b82f6">━</b> driving &nbsp; <b style="color:#94a3b8">━</b> parked</span></div>
+   <div class="card"><div id="bc"></div></div>`;
+  const col={charge:"#16a34a",drive:"#3b82f6",idle:"#94a3b8"},kn={charge:"Charging",drive:"Driving",idle:"Parked"};
+  const draw=()=>{const ss=seg.filter(s=>inRange(s.x,BP.r)),cut=0;if(!ss.length){$("#bc").innerHTML='<div class="sub">No periods in this range.</div>';return}
+    const W=900,H=320,L=44,R=14,T=12,B=34,x0=Math.max(cut,ss[0].t0),x1=ss[ss.length-1].t1,X=t=>L+(t-x0)/((x1-x0)||1)*(W-L-R),Y=v=>T+(100-v)/100*(H-T-B);
+    let g="";for(let v=0;v<=100;v+=20)g+=`<line class="grid" x1="${L}" x2="${W-R}" y1="${Y(v)}" y2="${Y(v)}"/><text x="${L-6}" y="${Y(v)+4}" text-anchor="end">${v}%</text>`;
+    const span=(x1-x0)/86400,nt=6;for(let i=0;i<=nt;i++){const t=x0+(x1-x0)*i/nt,d=new Date(t*1000);g+=`<text x="${X(t)}" y="${H-B+16}" text-anchor="middle">${d.toLocaleDateString("en-AU",span>400?{month:"short",year:"2-digit"}:span>3?{day:"numeric",month:"short"}:{hour:"2-digit",minute:"2-digit"})}</text>`}
+    let path="",prev=null;ss.forEach(s=>{if(prev&&s.t0>=prev.t1)path+=`<line x1="${X(Math.max(prev.t1,x0))}" y1="${Y(prev.b1)}" x2="${X(Math.max(s.t0,x0))}" y2="${Y(s.b0)}" stroke="#94a3b8" stroke-width="1" opacity=".35" stroke-dasharray="2 3"/>`;prev=s});
+    const lines=ss.map((s,i)=>{const ta=Math.max(s.t0,x0),tb=Math.max(s.t1,x0);return `<line x1="${X(ta)}" y1="${Y(s.b0)}" x2="${X(tb)}" y2="${Y(s.b1)}" stroke="${col[s.k]}" stroke-width="2.4" stroke-linecap="round"/><line class="hit" data-i="${i}" x1="${X(ta)}" y1="${Y(s.b0)}" x2="${X(tb)}" y2="${Y(s.b1)}" stroke="transparent" stroke-width="14"/>`}).join("");
+    $("#bc").innerHTML=`<svg viewBox="0 0 ${W} ${H}" style="width:100%;height:auto;display:block">${g}${path}${lines}</svg>`;
+    $$(".hit",$("#bc")).forEach(l=>{const s=ss[+l.dataset.i],x=s.x;l.style.cursor="pointer";l.onmousemove=ev=>showTip(ev,`<b>${kn[s.k]}</b> · ${x.day} ${x.hm||""}<br>${n0(s.b0)}% → ${n0(s.b1)}%${x.min?" in "+dur(x.min):""}<br>${esc(s.k==="drive"?driveTitle(x):place(x))}`);l.onmouseleave=hideTip;l.onclick=()=>{location.hash="#/"+(s.k==="idle"?"parked":s.k+"s")+"/"+encodeURIComponent(x.id)}})};
+  rangePicker($("#rg"),BP.r,daysOf(seg.map(s=>s.x)),draw);draw();
+}
+
+// ---------- Analytics
+let AM="km";
+const METRICS={km:["Distance","km",0],kwh:["Energy used driving","kWh",0],whkm:["Efficiency","Wh/km",0],ap_pct:["Self-driving","% of distance",0],added:["Energy charged","kWh",0],cost:["Charging cost","$",0],cost_km:["Cost per 100 km","$",2],drives:["Drives","",0],idle_kwh:["Parked drain","kWh",1],max:["Top speed","km/h",0]};
+async function pageAnalytics(){
+  loading();const m=await api("analytics"),rows=m.slice(-36);
+  const draw=()=>{const [t,u,dec]=METRICS[AM],vals=rows.map(x=>x[AM]),mx=Math.max(...vals.map(v=>v||0),1e-9);
+    $("#bars").innerHTML=`<div class="bars">${rows.map(x=>`<div style="height:${Math.max(2,100*(x[AM]||0)/mx)}%" data-m="${x.month}"><span>${x.month.slice(5)}${x.month.endsWith("-01")?"<br>"+x.month.slice(0,4):""}</span></div>`).join("")}</div><div style="height:30px"></div>`;
+    $$("#bars .bars div").forEach(b=>{const x=rows.find(r=>r.month===b.dataset.m);b.onmousemove=ev=>showTip(ev,`<b>${x.month}</b><br>${t}: ${x[AM]==null?"–":n0(x[AM],dec)+" "+u}`);b.onmouseleave=hideTip});
+    $$(".chip").forEach(c=>c.classList.toggle("on",c.dataset.m===AM))};
+  const tot=f=>m.reduce((a,x)=>a+(x[f]||0),0),km=tot("km");
+  main.innerHTML=`<h1>Analytics</h1><div class="sub">By month, from the drive, charge and idle records.</div>
+   <div class="tiles">${tile(n0(km)+" km","total distance")}${tile(n0(tot("drives")),"drives")}${tile(km?n0(tot("kwh")*1000/km)+" Wh/km":"–","lifetime efficiency")}${tile(n0(tot("added"))+" kWh","charged")}${tile(money(tot("cost")),"charging cost")}${tile(km?n0(100*tot("ap")/km)+"%":"–","self-driving")}</div>
+   <div class="bar">${Object.entries(METRICS).map(([k,v])=>`<button class="chip" data-m="${k}">${v[0]}</button>`).join("")}</div><div class="card" id="bars"></div><h2>Month by month</h2><div id="tb"></div>`;
+  $$(".chip").forEach(c=>c.onclick=()=>{AM=c.dataset.m;draw()});draw();
+  table($("#tb"),[{k:"month",t:"Month",l:1},{k:"drives",t:"Drives"},{k:"km",t:"km",f:r=>n0(r.km)},{k:"whkm",t:"Wh/km",f:r=>n0(r.whkm)},{k:"ap_pct",t:"Self-driving",f:r=>r.ap_pct==null?"–":n0(r.ap_pct)+"%"},{k:"charges",t:"Charges"},{k:"added",t:"kWh added",f:r=>n0(r.added)},{k:"home",t:"Home kWh",f:r=>n0(r.home)},{k:"super",t:"Fast kWh",f:r=>n0(r.super)},{k:"cost",t:"Cost",f:r=>money(r.cost)},{k:"cost_km",t:"$/100 km",f:r=>r.cost_km==null?"–":money(r.cost_km)},{k:"idle_kwh",t:"Parked kWh",f:r=>n0(r.idle_kwh,1)}],m,()=>{},"month");
+}
+
+// ---------- Alerts (Tessie firmware alerts in plain English)
+const SEV={safety:["Safety","var(--bad)"],attention:["Check","var(--warn)"],notice:["Notice","var(--acc)"],info:["Routine","var(--mut)"]};
+const sevDot=v=>`<span class="k" style="background:${SEV[v][1]}" title="${SEV[v][0]}"></span>`;
+const ctxText=c=>!c?"No drive, charge or parked record at that time":c.k==="drive"?"While driving: "+(c.label||"a drive"):c.k==="charge"?"While charging"+(c.label?" at "+c.label:""):"While parked"+(c.label?" at "+c.label:"");
+const ctxHref=c=>!c||!c.id?"":c.k==="drive"?"#/drive/"+c.id:c.k==="charge"?"#/charge/"+c.id:"#/parked/"+c.id;
+const alertRow=(e,open)=>`<div class="al ${open?"open":""}" data-id="${esc(e.id)}"><div class="alh"><span class="t">${e.hm}</span>${sevDot(e.severity)}<div style="min-width:0"><div class="ti">${esc(e.title)}${e.n>1?` <span class="sub">× ${e.n}</span>`:""}</div><div class="st">${esc(e.what)}</div></div><span class="pill">${esc(e.category)}</span></div>
+  <div class="alx"><div>${esc(e.what)}</div>${e.advice?`<div class="sub" style="margin-top:4px"><b>What to do:</b> ${esc(e.advice)}</div>`:""}${e.screen?`<div class="sub" style="margin-top:4px">The car showed: “${esc(e.screen)}”</div>`:""}
+   <div class="sub" style="margin-top:6px">${ctxHref(e.ctx)?`<a href="${ctxHref(e.ctx)}">${esc(ctxText(e.ctx))}</a>`:esc(ctxText(e.ctx))}${e.n>1?" · repeated "+e.n+" times over "+dur((e.t1-e.t0)/60):""} · Tesla code <code>${esc(e.name)}</code>${e.rate?" · about "+esc(String(e.rate).replace(/%?$/,"%"))+" of the fleet sees it":""}</div></div></div>`;
+async function alertsFor(k,id){const A=await api("alerts");return A.episodes.filter(e=>e.ctx&&e.ctx.k===k&&e.ctx.id===id).sort((a,b)=>b.t0-a.t0)}
+function alertsCard(es,what){if(!es.length)return"";const w=es.filter(e=>e.severity==="safety"||e.severity==="attention").length;
+  return `<div class="card" style="margin:14px 0"><h2 style="margin-top:0">Alerts during this ${what}</h2><div class="sub">${es.length} alert${es.length>1?"s":""}${w?", "+w+" worth a look":""}. Tap one for what it means.</div><div class="als">${es.map(e=>alertRow(e)).join("")}</div></div>`}
+function wireAlerts(host){$$(".alh",host).forEach(h=>h.onclick=()=>h.parentNode.classList.toggle("open"))}
+let ALP={tab:"timeline",sev:{safety:true,attention:true,notice:true,info:false},cat:"all",q:"",days:30};
+async function pageAlerts(){
+  loading();const A=await api("alerts"),cats=[...new Set(A.episodes.map(e=>e.category))].sort();
+  const draw=()=>{const q=ALP.q.toLowerCase();
+    if(ALP.tab==="types"){$("#tb").innerHTML=`<table><thead><tr><th class="l">Alert</th><th class="l">What it means</th><th>Seen</th><th>Last</th><th>Fleet</th></tr></thead><tbody>${A.types.filter(t=>(ALP.cat==="all"||t.category===ALP.cat)&&(!q||(t.title+t.what+t.name).toLowerCase().includes(q))).map(t=>`<tr><td class="l" style="white-space:normal;min-width:220px">${sevDot(t.severity)} <b>${esc(t.title)}</b><div class="sub">${esc(t.category)} · <code>${esc(t.name)}</code></div></td><td class="l" style="white-space:normal;min-width:320px">${esc(t.what)}${t.advice?`<div class="sub"><b>What to do:</b> ${esc(t.advice)}</div>`:""}</td><td>${t.episodes}</td><td>${new Date(t.last*1000).toISOString().slice(0,10)}</td><td>${t.rate?esc(String(t.rate).replace(/%?$/,"%")):"–"}</td></tr>`).join("")}</tbody></table>`;return}
+    const rs=A.episodes.filter(e=>ALP.sev[e.severity]&&(ALP.cat==="all"||e.category===ALP.cat)&&(!q||(e.title+e.what+e.name+ctxText(e.ctx)).toLowerCase().includes(q))),by=new Map();
+    rs.sort((a,b)=>b.t0-a.t0);rs.forEach(e=>{if(!by.has(e.day))by.set(e.day,[]);by.get(e.day).push(e)});const days=[...by.keys()].slice(0,ALP.days);
+    $("#tb").innerHTML=days.map(d=>`<div class="day">${dayName(d)}<small>${by.get(d).length} alert${by.get(d).length>1?"s":""}</small></div><div class="als">${by.get(d).map(e=>alertRow(e)).join("")}</div>`).join("")||'<div class="empty">Nothing matches.</div>';
+    if(days.length<by.size)$("#tb").insertAdjacentHTML("beforeend",'<div class="bar"><button class="btn" id="more">Show 30 more days</button></div>'),$("#more").onclick=()=>{ALP.days+=30;draw()};
+    wireAlerts($("#tb"))};
+  const n=s=>A.episodes.filter(e=>e.severity===s).length,top=A.types.slice().sort((a,b)=>b.episodes-a.episodes)[0];
+  main.innerHTML=`<h1>Alerts</h1><div class="sub">Tessie firmware alerts in plain English, tied to the drive, charge or parked period they happened in. ${A.events.toLocaleString()} alerts, shown as ${A.episodes.length.toLocaleString()} episodes (the same alert repeating within 10 minutes counts once), ${A.first?new Date(A.first*1000).toISOString().slice(0,10)+" to "+new Date(A.last*1000).toISOString().slice(0,10):""}.</div>
+   <div class="tiles">${tile(n("safety"),"safety system acted / door open in gear")}${tile(n("attention"),"features unavailable or faulty")}${tile(n("notice"),"notices")}${tile(n("info"),"routine")}${top?tile(top.episodes+" ×","most common: "+esc(top.title)):""}</div>
+   <div class="bar"><button class="chip" data-t="timeline">Timeline</button><button class="chip" data-t="types">What the alerts mean</button>
+   ${Object.keys(SEV).map(k=>`<button class="chip sevc" data-s="${k}">${SEV[k][0]}</button>`).join("")}
+   <select id="cat"><option value="all">All categories</option>${cats.map(c=>`<option>${esc(c)}</option>`).join("")}</select><input type="search" id="q" placeholder="Search…" value="${esc(ALP.q)}"></div><div id="tb"></div>`;
+  const chips=()=>{$$("[data-t]").forEach(c=>c.classList.toggle("on",c.dataset.t===ALP.tab));$$(".sevc").forEach(c=>{c.classList.toggle("on",ALP.sev[c.dataset.s]);c.style.display=ALP.tab==="timeline"?"":"none"})};
+  $$("[data-t]").forEach(c=>c.onclick=()=>{ALP.tab=c.dataset.t;chips();draw()});$$(".sevc").forEach(c=>c.onclick=()=>{ALP.sev[c.dataset.s]=!ALP.sev[c.dataset.s];chips();draw()});
+  $("#cat").value=ALP.cat;$("#cat").onchange=e=>{ALP.cat=e.target.value;draw()};$("#q").oninput=e=>{ALP.q=e.target.value;draw()};chips();draw();
+}
+
+// ---------- Dashcam
+async function pageDashcam(){
+  loading();const [st,act,fl]=await Promise.all([api("status"),api("activity"),api("flip-events")]);cache.status=null;
+  const withClips=act.filter(x=>x.k==="drive"&&(x.saved||x.flips)).slice(0,60),r=st.roots;
+  main.innerHTML=`<h1>Dashcam</h1><div class="sub">Footage is read straight from the Archive drive; the drive is found by what is on it, not by its name.</div>
+   <div class="tiles">${tile(`<span class="dot ${r.A?"on":"off"}"></span>${r.A?"Connected":"Not connected"}`,"Archive drive")}${tile(n0(act.filter(x=>x.k==="drive"&&x.foot).length),"drives with footage")}${tile(n0(act.reduce((a,x)=>a+(x.saved||0),0)),"saved clips")}${tile(n0(act.reduce((a,x)=>a+(x.flips||0),0)),"110 ↔ 100 flips")}</div>
+   <div class="bar">${fl.exists?`<a class="btn pri" style="text-decoration:none;padding:5px 12px;border-radius:8px;background:var(--acc);color:#fff" href="#/flips">Open the flip review</a>`:""}<a class="btn" style="text-decoration:none;padding:5px 12px;border:1px solid var(--line);border-radius:8px" href="/data/drives/analysis/fsd_highway_map.html" target="_blank">FSD highway map</a><a class="btn" style="text-decoration:none;padding:5px 12px;border:1px solid var(--line);border-radius:8px" href="#/queue">Footage queue</a></div>
+   <h2>Drives with saved clips or flips</h2>${withClips.map(actRow).join("")||'<div class="empty">None yet.</div>'}`;
+}
+function pageFlips(){main.innerHTML=crumbs("#/dashcam","Dashcam")+`<iframe class="drive" style="height:calc(100vh - 90px)" src="/data/drives/analysis/dashcam_flip_review/index.html"></iframe>`}
+
+// ---------- Queue
+function pageQueue(){
+  const q=qget();
+  main.innerHTML=`<h1>Footage queue</h1><div class="sub">Copy, delete and save-as-clip actions added on the drive pages. Preview shows what would happen; nothing changes until you run it.</div>
+   ${q.length?`<div class="card q"><ul>${q.map((a,i)=>`<li><span class="t ${a.type}">${a.type}</span> ${esc(a.label)} · ${a.items.length} minute(s)${a.dest?" → "+esc(a.dest):""} <button class="btn" data-rm="${i}">remove</button></li>`).join("")}</ul>
+   <div class="bar"><button class="btn" id="pv">Preview (changes nothing)</button><button class="btn bad" id="rn">Run for real</button><button class="btn" id="cl">Clear</button></div><pre class="out" id="out" hidden></pre></div>`:'<div class="empty">The queue is empty. Open a drive, select footage minutes and choose copy / delete / save.</div>'}`;
+  if(!q.length)return;
+  $$("[data-rm]").forEach(b=>b.onclick=()=>{const n=qget();n.splice(+b.dataset.rm,1);localStorage.setItem(QK,JSON.stringify(n));pageQueue();badge()});
+  $("#cl").onclick=()=>{localStorage.setItem(QK,"[]");pageQueue();badge()};
+  const run=async apply=>{const o=$("#out");o.hidden=false;o.textContent=apply?"Running…":"Checking…";
+    try{const r=await fetch("/api/queue/run",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({actions:qget(),apply,purge:qget().some(a=>a.type==="delete")})}),j=await r.json();o.textContent=j.output||j.error||"(no output)";
+      if(apply&&j.ok){localStorage.setItem(QK,"[]");o.textContent+="\n\nDone. Queue cleared.";badge()}}catch(e){o.textContent="Could not reach the app: "+e}};
+  $("#pv").onclick=()=>run(false);$("#rn").onclick=()=>{if(confirm("Run these actions for real? Deletes are flagged and then purged from the Archive."))run(true)};
+}
+function badge(){const n=qget().length,b=$("#qn");b.hidden=!n;b.textContent=n}
+
+// ---------- router
+const ROUTES={activity:pageActivity,drives:pageDrives,charges:pageCharges,battery:pageBattery,health:pageHealth,analytics:pageAnalytics,dashcam:pageDashcam,queue:pageQueue,flips:pageFlips,parked:pageParked,idles:pageParked,places:pagePlaces,alerts:pageAlerts};
+async function route(){
+  hideTip();const h=(location.hash||"#/activity").replace(/^#\//,""),[p,arg,arg2]=h.split("/").map(decodeURIComponent);
+  $$("#nav>a").forEach(a=>a.classList.toggle("on",a.dataset.p===(({drive:"drives",charge:"charges",idle:"parked",idles:"parked",flips:"dashcam",place:"places"})[p]||p)));
+  badge();main.scrollTop=0;
+  try{
+    if(p==="drive")await pageDrive(arg);else if(p==="charge")await pageCharge(arg,arg2);else if(p==="idle"||p==="parked"&&arg)await pageParkedOne(arg);else if(p==="place")await pagePlace(arg);else await (ROUTES[p]||pageActivity)();
+  }catch(e){main.innerHTML=`<div class="empty">Something went wrong: ${esc(e.message)}</div>`}
+}
+async function boot(){
+  addEventListener("hashchange",route);
+  try{const s=await api("summary");$("#veh").textContent=s.vehicle;$("#vsub").textContent=n0(s.km)+" km logged"}catch(e){}
+  const st=async()=>{try{const s=await (await fetch("/api/status")).json();$("#status").innerHTML=`<span class="dot ${s.roots.A?"on":"off"}"></span>Archive ${s.roots.A?"connected":"not connected"}${s.stale?'<div class="upd">The app was updated. Quit and reopen it to load the new version.</div>':""}`}catch(e){}};
+  st();setInterval(st,30000);route();
+}
+addEventListener("keydown",e=>{if((e.metaKey||e.ctrlKey)&&e.key.toLowerCase()==="r"){e.preventDefault();location.reload()}});
+$("#rl").onclick=()=>location.reload();
+boot();

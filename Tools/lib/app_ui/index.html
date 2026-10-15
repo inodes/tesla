@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Tesla</title>
+<link rel="stylesheet" href="/app.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/maplibre-gl/4.7.1/maplibre-gl.css">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/maplibre-gl/4.7.1/maplibre-gl.js"></script>
+</head>
+<body>
+<div id="app">
+  <nav id="nav">
+    <div class="brand"><span class="logo">T</span><div><b id="veh">Tesla</b><small id="vsub"></small></div></div>
+    <a href="#/activity" data-p="activity"><i>◷</i>Activity</a>
+    <a href="#/drives" data-p="drives"><i>➤</i>Drives</a>
+    <a href="#/charges" data-p="charges"><i>⚡</i>Charges</a>
+    <a href="#/parked" data-p="parked"><i>☾</i>Parked</a>
+    <a href="#/places" data-p="places"><i>⌖</i>Places</a>
+    <a href="#/alerts" data-p="alerts"><i>⚠</i>Alerts</a>
+    <a href="#/battery" data-p="battery"><i>▮</i>Battery</a>
+    <a href="#/health" data-p="health"><i>♡</i>Battery health</a>
+    <a href="#/analytics" data-p="analytics"><i>▥</i>Analytics</a>
+    <a href="#/dashcam" data-p="dashcam"><i>◉</i>Dashcam</a>
+    <a href="#/queue" data-p="queue"><i>☰</i>Queue <span id="qn" class="badge" hidden></span></a>
+    <div class="grow"></div>
+    <div id="status" class="status"></div>
+    <a href="#" id="rl" onclick="return false"><i>↻</i>Reload page</a>
+  </nav>
+  <main id="main"><div class="empty">Loading…</div></main>
+</div>
+<script src="/app.js"></script>
+</body>
+</html>
