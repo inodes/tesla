@@ -11,6 +11,7 @@ Tesla / Tessie Location Management & POI Lookup Engine
 """
 
 import os
+from lib.tessie_timezone import legacy_get as _legacy_get  # BUG-176
 import sys
 import re
 import csv
@@ -1939,13 +1940,21 @@ def classify_poi_group(tags):
     if shop in ("supermarket", "convenience", "bakery", "butcher", "greengrocer", "deli", "grocery", "general", "department_store", "mall", "farm", "health_food", "seafood", "cheese", "confectionery", "chocolate", "frozen_food", "pastry", "nuts", "spices"):
         return "Supermarkets & Groceries", "🛒"
 
-    if landuse in ("retail", "commercial") or shop == "mall" or any(s in name for s in ("town centre", "town center", "shopping centre", "shopping center", "shopping plaza", "shopping mall", "homemaker centre", "marketplace")):
+    # BUG-172 (2026-09-30): landuse=retail/commercial and building=retail/
+    # commercial only describe the land or the building, not what the venue
+    # is. They used to win over the venue's own tags, so at the Big Banana
+    # (Coffs Harbour) a theme park, a motel and a laser-tag centre all
+    # counted as "shops". Only fall back to them when nothing more specific
+    # is tagged.
+    has_specific = bool(amenity or tourism or leisure or healthcare or office or craft or historic or sport)
+
+    if (landuse in ("retail", "commercial") and not has_specific) or shop == "mall" or any(s in name for s in ("town centre", "town center", "shopping centre", "shopping center", "shopping plaza", "shopping mall", "homemaker centre", "marketplace")):
         return "Retail & Shopping", "🛍️"
 
     if shop in ("hairdresser", "beauty", "massage", "tattoo", "piercing", "optician", "cosmetics", "chemist", "hearing_aids", "perfumery"):
         return "Health & Beauty", "💇"
 
-    if shop or building in ("retail", "commercial") or amenity == "marketplace":
+    if shop or (building in ("retail", "commercial") and not has_specific) or amenity == "marketplace":
         return "Retail & Shopping", "🛍️"
 
     if amenity in ("toilets", "restroom", "drinking_water", "atm", "bank", "bureau_de_change", "pharmacy", "post_box", "post_office", "library", "community_centre", "place_of_worship", "social_facility", "townhall", "courthouse", "police", "fire_station"):
@@ -2853,7 +2862,8 @@ def find_deepdive_files():
         for sub in ["", "drives", "drives/deepdive", "deepdive", "archive", "drives/archive"]:
             p = os.path.join(d, sub)
             if os.path.isdir(p):
-                for f in glob.glob(os.path.join(p, "drive_deepdive_*.csv")):
+                for f in (glob.glob(os.path.join(p, "drive_deepdive_*.csv"))
+                          + glob.glob(os.path.join(p, "*", "drive_deepdive_*.csv"))):   # REQ-193 per-drive folders
                     real = os.path.realpath(f)
                     if real not in seen:
                         seen.add(real)
@@ -3004,8 +3014,8 @@ def get_place_trip_history(target_place_name, places=None, drive_logs=None):
                     origin = resolve_stop(s_addr, s_saved, s_lat, s_lon, places, chargers) or s_saved or s_addr.split(",")[0] or "Unknown"
                     dest = resolve_stop(e_addr, e_saved, e_lat, e_lon, places, chargers) or e_saved or e_addr.split(",")[0] or "Unknown"
 
-                    start_ts = (row.get("Started At (Local)") or row.get("Started At (AEST)") or row.get("Started At") or "").strip()
-                    end_ts = (row.get("Ended At (Local)") or row.get("Ended At (AEST)") or row.get("Ended At") or "").strip()
+                    start_ts = (row.get("Started At (Local)") or _legacy_get(row, "Started At") or row.get("Started At") or "").strip()
+                    end_ts = (row.get("Ended At (Local)") or _legacy_get(row, "Ended At") or row.get("Ended At") or "").strip()
                     try:
                         dist_km = float(row.get("Distance (km)") or row.get("distance_km") or 0)
                     except ValueError:
@@ -3104,12 +3114,12 @@ def find_nearest_drive_stop(lat, lon, max_radius_m=1000, drive_logs=None):
                     s_lat = float(row.get("Starting Latitude") or row.get("starting_latitude") or row.get("Starting Lat") or 0) if (row.get("Starting Latitude") or row.get("starting_latitude") or row.get("Starting Lat")) else None
                     s_lon = float(row.get("Starting Longitude") or row.get("starting_longitude") or row.get("Starting Lon") or 0) if (row.get("Starting Longitude") or row.get("starting_longitude") or row.get("Starting Lon")) else None
                     s_addr = (row.get("Starting Location") or row.get("starting_location") or row.get("Starting Address") or row.get("starting_address") or "").strip()
-                    s_ts = (row.get("Started At (Local)") or row.get("Started At (AEST)") or row.get("Started At") or "").strip()
+                    s_ts = (row.get("Started At (Local)") or _legacy_get(row, "Started At") or row.get("Started At") or "").strip()
 
                     e_lat = float(row.get("Ending Latitude") or row.get("ending_latitude") or row.get("Ending Lat") or 0) if (row.get("Ending Latitude") or row.get("ending_latitude") or row.get("Ending Lat")) else None
                     e_lon = float(row.get("Ending Longitude") or row.get("ending_longitude") or row.get("Ending Lon") or 0) if (row.get("Ending Longitude") or row.get("ending_longitude") or row.get("Ending Lon")) else None
                     e_addr = (row.get("Ending Location") or row.get("ending_location") or row.get("Ending Address") or row.get("ending_address") or "").strip()
-                    e_ts = (row.get("Ended At (Local)") or row.get("Ended At (AEST)") or row.get("Ended At") or "").strip()
+                    e_ts = (row.get("Ended At (Local)") or _legacy_get(row, "Ended At") or row.get("Ended At") or "").strip()
 
                     if s_lat is not None and s_lon is not None:
                         d = haversine_distance(lat, lon, s_lat, s_lon)
@@ -3188,8 +3198,8 @@ def get_coords_trip_history(lat, lon, radius_m=150, places=None, drive_logs=None
                     origin = label if s_match else (resolve_stop(s_addr, s_saved, s_lat, s_lon, places, chargers) or s_saved or s_addr.split(",")[0] or "Unknown")
                     dest = label if e_match else (resolve_stop(e_addr, e_saved, e_lat, e_lon, places, chargers) or e_saved or e_addr.split(",")[0] or "Unknown")
 
-                    start_ts = (row.get("Started At (Local)") or row.get("Started At (AEST)") or row.get("Started At") or "").strip()
-                    end_ts = (row.get("Ended At (Local)") or row.get("Ended At (AEST)") or row.get("Ended At") or "").strip()
+                    start_ts = (row.get("Started At (Local)") or _legacy_get(row, "Started At") or row.get("Started At") or "").strip()
+                    end_ts = (row.get("Ended At (Local)") or _legacy_get(row, "Ended At") or row.get("Ended At") or "").strip()
                     try:
                         dist_km = float(row.get("Distance (km)") or row.get("distance_km") or 0)
                     except ValueError:
@@ -3310,8 +3320,8 @@ def get_coords_pass_by_history(target_lat, target_lon, radius_m=150, places=None
                     e_lat = float(row.get("Ending Latitude") or row.get("ending_latitude") or row.get("Ending Lat") or 0) if (row.get("Ending Latitude") or row.get("ending_latitude") or row.get("Ending Lat")) else None
                     e_lon = float(row.get("Ending Longitude") or row.get("ending_longitude") or row.get("Ending Lon") or 0) if (row.get("Ending Longitude") or row.get("ending_longitude") or row.get("Ending Lon")) else None
 
-                    start_ts = (row.get("Started At (Local)") or row.get("Started At (AEST)") or row.get("Started At") or "").strip()
-                    end_ts = (row.get("Ended At (Local)") or row.get("Ended At (AEST)") or row.get("Ended At") or "").strip()
+                    start_ts = (row.get("Started At (Local)") or _legacy_get(row, "Started At") or row.get("Started At") or "").strip()
+                    end_ts = (row.get("Ended At (Local)") or _legacy_get(row, "Ended At") or row.get("Ended At") or "").strip()
 
                     try:
                         dist_km = float(row.get("Distance (km)") or row.get("distance_km") or 0)
@@ -3392,7 +3402,7 @@ def get_coords_pass_by_history(target_lat, target_lon, radius_m=150, places=None
                             matched_row = r
 
                 if matched_row:
-                    pass_ts = matched_row.get("Timestamp (AEST)") or matched_row.get("Timestamp (Local)") or matched_row.get("Timestamp")
+                    pass_ts = _legacy_get(matched_row, "Timestamp") or matched_row.get("Timestamp (Local)") or matched_row.get("Timestamp")
                     pass_dt = _parse_drive_ts(pass_ts)
 
  # Exclude if within 10 minutes of any recorded stop/visit at this target
@@ -4061,7 +4071,7 @@ def cmd_review_drives(args):
                     ).strip()
 
                     ts_s = (
-                        row.get("Ended At (Local)") or row.get("Ended At (AEST)") or
+                        row.get("Ended At (Local)") or _legacy_get(row, "Ended At") or
                         row.get("Ended At") or row.get("Ended") or row.get("end_time") or ""
                     ).strip()
                     
