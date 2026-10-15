@@ -311,8 +311,8 @@ def drive_item(part, store):
     p1 = next((s["p1"] for s in reversed(sums) if s["p1"]), None)
     it = dict(id=mm[0]["stamp"], kind=kind, start=iso(t0), end=iso(t1), t0=t0, t1=t1, n=len(mm), recent=sum(1 for m in mm if m["src"] == "recent"),
               saved=sum(1 for m in mm if m["src"] == "saved"), read=len(sums), km=round(km, 1), vmax=round(max([s["vmax"] for s in sums] or [0])),
-              fsd=round(fsd / mov, 2) if mov else 0, aut=round(aut / mov, 2) if mov else 0, p0=p0, p1=p1)
-    if kind == "drive" and len(sums) == len(mm):
+              fsd=min(1.0, round(fsd / mov, 2)) if mov else 0, aut=min(1.0, round(aut / mov, 2)) if mov else 0, p0=p0, p1=p1)
+    if kind == "drive" and sums:                # a minute that could not be read (or is still to be read) does not stop the route being drawn
         it["thumb"] = _thumb(mm, store)
     return it
 
