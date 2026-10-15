@@ -7,3 +7,8 @@ matplotlib>=3.8.0
 
 # optional: native window for Tools/tesla_app.py (without it the app opens in your browser)
 pywebview>=5.0
+
+# optional: reading speed-limit signs from dashcam video (the Review tab of Tools/tesla_app.py, sign_scan.py); also needs ffmpeg and tesseract
+#   brew install ffmpeg tesseract
+opencv-python-headless>=4.8
+numpy>=1.26

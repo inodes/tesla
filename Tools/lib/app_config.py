@@ -8,6 +8,7 @@ the block). A change takes effect the next time the app or script reads it (the 
   app.map.places_max_lon                           places east of this longitude are left off the Places map (160 = no New Zealand)
   app.map.network_colors                           colour of each charger network on the Places map (a network not listed gets a colour of its own)
   app.teslacam.moving_kmh / run_gap_s / gap_min_s / same_place_m / same_place_est_m / same_minute_s / read_workers
+  app.review.step_s / min_kmh / min_conf / workers / merge_s   reading speed-limit signs from a drive's video (Review tab); candidate_km / candidate_avg_kmh = the "Review candidates" button on Drives
                                                    the TeslaCam timeline: a minute is "moving" above this speed; clips this close (s) are one recording; a hole shorter than gap_min_s is not shown;
                                                    a gap is "parked" when the car's last and next position are within same_place_m (same_place_est_m when one is a Sentry estimate);
                                                    clips read at once (CPU work, one process each)
@@ -35,6 +36,7 @@ DEFAULTS = {
             "network_colors": {"Tesla": "#e0201b", "Tesla Destination": "#f97316", "Chargefox": "#16a34a", "Evie": "#7c3aed", "EVX": "#eab308", "Exploren": "#db2777",
                               "NRMA": "#2563eb", "AmpCharge": "#84cc16", "Jolt": "#14b8a6", "BP Pulse": "#0891b2", "3rd-Party": "#6b7280", "WA EV Network": "#9333ea"}},
     "teslacam": {"moving_kmh": 3.0, "run_gap_s": 75, "gap_min_s": 120, "same_place_m": 300, "same_place_est_m": 800, "same_minute_s": 30, "read_workers": 4},
+    "review": {"step_s": 1.0, "min_kmh": 30.0, "min_conf": 50.0, "workers": 3, "merge_s": 12.0, "candidate_km": 20, "candidate_avg_kmh": 60},
     "drives": {"repark_max_km": 0.05, "repark_max_minutes": 10,
                "long_highway_km": 30, "long_highway_fast_kmh": 90, "long_highway_fast_minutes": 10,
                "charge_window_minutes": 30, "low_battery_pct": 20},
