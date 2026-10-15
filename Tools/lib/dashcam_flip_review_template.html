@@ -1,0 +1,421 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Dashcam flip review</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<style>
+:root{--bg:#f7f7f5;--card:#fff;--ink:#1c1f23;--mut:#5b636d;--line:#dcdfe3;--acc:#0072B2;--ok:#1b7f5c;--okbg:#e2f3ec;--warn:#9a5b00;--warnbg:#fdf0d8;--bad:#b23a00;--badbg:#fbe5da;--chip:#eef0f3;--grid:#e6e8eb;--shade:rgba(213,94,0,.16);--ind:#c26a00;--spd:#0072B2;--brk:#b23a00;--lim:#8a929c;--sr:#c0281e;--sy:#d9a400;--sb:#1f5fbf;--sw:#f4f4f1;--sp:#7a3fb5;--sg:#1f9d55}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#15181b;--card:#1d2125;--ink:#e8eaed;--mut:#a3abb5;--line:#323840;--acc:#56b4e9;--ok:#5fd1a4;--okbg:#17352b;--warn:#f0b25c;--warnbg:#3a2c12;--bad:#ff9a66;--badbg:#3d2316;--chip:#2a3036;--grid:#2c3238;--shade:rgba(240,120,40,.22);--spd:#56b4e9;--brk:#ff9a66;--lim:#7b838d;--sr:#e5574c;--sy:#f2c230;--sb:#4d8ef0;--sw:#e9e9e6;--sp:#b58cf0;--sg:#34c77b;color-scheme:dark}}
+:root[data-theme="dark"]{--bg:#15181b;--card:#1d2125;--ink:#e8eaed;--mut:#a3abb5;--line:#323840;--acc:#56b4e9;--ok:#5fd1a4;--okbg:#17352b;--warn:#f0b25c;--warnbg:#3a2c12;--bad:#ff9a66;--badbg:#3d2316;--chip:#2a3036;--grid:#2c3238;--shade:rgba(240,120,40,.22);--spd:#56b4e9;--brk:#ff9a66;--lim:#7b838d;--sr:#e5574c;--sy:#f2c230;--sb:#4d8ef0;--sw:#e9e9e6;color-scheme:dark}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.45 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif}
+.wrap{max-width:1360px;margin:0 auto;padding-block:16px;padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px))}
+h1{font-size:22px;margin:0 0 4px}
+.sub{color:var(--mut);max-width:900px;margin:0 0 14px}
+.kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:10px;margin-bottom:14px}
+.kpi{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:10px 12px}
+.kpi b{display:block;font-size:24px;line-height:1.1}
+.kpi span{color:var(--mut);font-size:13px}
+.bar{position:sticky;top:env(safe-area-inset-top,0px);z-index:5;background:var(--bg);padding:8px 0;border-bottom:1px solid var(--line);margin-bottom:12px;display:flex;flex-wrap:wrap;gap:8px 12px;align-items:center}
+.bar label{font-size:13px;color:var(--mut);display:flex;gap:6px;align-items:center}
+select,button,input,textarea{font:inherit;color:var(--ink)}
+select{background:var(--card);border:1px solid var(--line);border-radius:6px;padding:4px 6px}
+.btn{background:var(--card);border:1px solid var(--line);border-radius:6px;padding:4px 10px;cursor:pointer}
+.btn:hover{border-color:var(--acc)}
+.count{margin-left:auto;color:var(--mut);font-size:13px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:12px;margin-bottom:14px;content-visibility:auto;contain-intrinsic-size:auto 900px}
+.head{display:flex;flex-wrap:wrap;gap:6px 10px;align-items:center;margin-bottom:10px}
+.head .id{font-weight:700}
+.head .when{color:var(--mut)}
+.chip{display:inline-block;border-radius:999px;padding:2px 9px;font-size:12.5px;background:var(--chip);white-space:nowrap}
+.chip.ok{background:var(--okbg);color:var(--ok)} .chip.warn{background:var(--warnbg);color:var(--warn)} .chip.bad{background:var(--badbg);color:var(--bad)}
+.top{display:grid;grid-template-columns:minmax(0,1.4fr) minmax(0,1fr);gap:14px;margin-bottom:10px;align-items:start}
+@media (max-width:860px){.top{grid-template-columns:1fr}}
+.film{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:4px}
+@media (max-width:700px){.film{grid-template-columns:repeat(3,minmax(0,1fr))}}
+.cell{position:relative;border:3px solid transparent;border-radius:6px;padding:0;cursor:zoom-in;background-color:#222;background-repeat:no-repeat;background-size:calc(var(--cols,5)*100%) calc(var(--rows,5)*100%);overflow:hidden}
+.film.on .cell:not(.nodata){background-image:var(--sheet)}
+.cell .fbar{position:absolute;left:0;right:0;bottom:0;height:5px}
+.cell .lab{bottom:5px}
+.cell.nodata{background:#2b2b2b;cursor:default;border-color:var(--line)}
+.cell .lab{position:absolute;left:0;right:0;bottom:0;background:rgba(0,0,0,.62);color:#fff;font-size:11.5px;padding:1px 5px;text-align:left;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.cell.onset{box-shadow:0 0 0 2px var(--ink)}
+.cell:hover,.cell:focus-visible{border-color:var(--acc)}
+.nosheet{display:flex;align-items:center;justify-content:center;min-height:120px;background:var(--chip);border-radius:8px;color:var(--mut);font-size:13px;padding:8px;text-align:center}
+.chart svg{width:100%;height:auto;display:block}
+.chart svg{cursor:crosshair;touch-action:pan-y}
+#ctip{position:fixed;z-index:60;pointer-events:none;background:var(--card);color:var(--ink);border:1px solid var(--line);border-radius:8px;box-shadow:0 4px 16px rgba(0,0,0,.22);padding:8px 10px;font-size:12.5px;line-height:1.45;max-width:280px}
+#ctip b{font-size:13px}#ctip .k{color:var(--mut)}
+.key{margin-top:14px;padding-top:10px;border-top:1px solid var(--line);display:flex;flex-direction:column;gap:6px;font-size:12.5px;color:var(--ink)}
+.key div{display:flex;flex-wrap:wrap;align-items:center;gap:4px 16px}
+.key b{min-width:52px;color:var(--mut);font-weight:600;font-size:11.5px;text-transform:uppercase;letter-spacing:.04em}
+.key i{display:inline-block;width:14px;height:10px;border-radius:2px;margin-right:6px;vertical-align:-1px}
+.key em{color:var(--mut);font-style:normal;font-size:11.5px}
+.tk{stroke:var(--mut);stroke-width:.8;opacity:.55}
+.tk.hot{stroke:var(--acc);stroke-width:2.4;opacity:1}
+.facts{font-size:13.5px;color:var(--ink);margin:6px 0 0;padding:0;list-style:none;display:flex;flex-direction:column;gap:5px}
+.facts .k{display:inline-block;min-width:78px;color:var(--mut);font-size:11.5px;font-weight:600;text-transform:uppercase;letter-spacing:.04em}
+.facts a{color:var(--acc)}
+.rev{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin-top:10px;padding-top:10px;border-top:1px solid var(--line)}
+.rev .opt{border:1px solid var(--line);border-radius:999px;padding:3px 11px;cursor:pointer;background:var(--card);font-size:13px}
+.rev .opt.on{background:var(--acc);border-color:var(--acc);color:#fff}
+.rev input[type=text]{flex:1;min-width:160px;background:var(--card);border:1px solid var(--line);border-radius:6px;padding:4px 8px;font-size:13px}
+.lb{position:fixed;inset:0;background:rgba(0,0,0,.88);display:flex;flex-direction:column;align-items:center;justify-content:center;z-index:20;gap:8px;padding:8px}
+.lb[hidden]{display:none}
+.lb .stage{display:flex;align-items:center;gap:8px;max-width:100%}
+.lb .big{background-repeat:no-repeat;background-color:#111;border-radius:6px;background-size:calc(var(--cols,5)*100%) calc(var(--rows,5)*100%)}
+.lb .nav{background:rgba(255,255,255,.14);color:#fff;border:0;border-radius:50%;width:42px;height:42px;font-size:22px;cursor:pointer;flex:none}
+.lb .nav:hover{background:rgba(255,255,255,.3)}
+.lb .cap{color:#fff;font-size:14px;text-align:center;max-width:1100px}
+.lb a{color:#9fd3ff}
+.panel{background:var(--card);color:var(--ink);border-radius:10px;padding:14px;width:min(640px,92vw);display:flex;flex-direction:column;gap:8px}
+.panel textarea{width:100%;font:12px/1.4 ui-monospace,Menlo,monospace;background:var(--bg);color:var(--ink);border:1px solid var(--line);border-radius:6px;padding:6px}
+.panel p{margin:0;color:var(--mut);font-size:13px}
+.opt.ag{border-color:var(--ok);color:var(--ok);font-weight:600}.opt.ag.on{background:var(--ok);color:var(--bg)}
+.cell .ind{position:absolute;top:4px;background:var(--ind);color:#fff;font-size:15px;font-weight:700;line-height:1;padding:4px 7px;border-radius:5px;box-shadow:0 0 0 2px rgba(0,0,0,.55)}
+.cell .ind.l{left:4px}.cell .ind.r{right:4px}
+.sgs{position:absolute;left:4px;bottom:24px;display:flex;gap:4px;align-items:flex-end;pointer-events:none}
+.sg{display:inline-flex;align-items:center;justify-content:center;box-shadow:0 0 0 2px rgba(0,0,0,.45);font-family:system-ui,sans-serif;font-weight:800}
+.sg.sp{width:36px;height:36px;border-radius:50%;background:#fff;border:4px solid #d1190f;color:#000;font-size:13px;letter-spacing:-.5px;box-sizing:border-box}
+.sg.wn{width:34px;height:30px;background:#f5c400;color:#000;font-size:17px;clip-path:polygon(50% 0,100% 100%,0 100%);align-items:flex-end;padding-bottom:2px;box-shadow:none;filter:drop-shadow(0 0 1px #000)}
+.sg.bl{min-width:30px;height:24px;padding:0 5px;background:#1f5fbf;color:#fff;font-size:14px;border-radius:4px;border:2px solid #fff}
+.sg.wh{min-width:30px;height:22px;padding:0 5px;background:#fff;color:#222;font-size:11px;border-radius:3px;border:2px solid #777}
+.sg.gr{min-width:30px;height:24px;padding:0 5px;background:#13803f;color:#fff;font-size:13px;border-radius:3px;border:2px solid #fff}
+.sg.tr{min-width:30px;height:24px;background:#7a3fb5;color:#fff;font-size:15px;border-radius:5px;border:2px solid #fff}
+.card.bug{border-left:6px solid var(--bad)}
+.how{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:10px 14px;margin-bottom:14px;color:var(--mut);font-size:13.5px}
+.how b{color:var(--ink)}
+.signs{margin:8px 0 2px;font-size:13px}.signs img{max-width:100%;height:auto;margin-top:6px;border-radius:6px;image-rendering:auto}.signs .mut{color:var(--mut)}
+</style>
+</head>
+<body>
+<div class="wrap">
+<h1>Dashcam flip review</h1>
+<p class="sub" id="sub"></p>
+<div class="kpis" id="kpis"></div>
+<div class="sub" id="sync"></div>
+<div class="how"><b>Each card:</b> speed chart, then one still a second. Green border = FSD on. Click a still to enlarge it (arrow keys step). Then pick <b>Your call</b>.</div>
+<div class="bar" id="bar"></div>
+<div id="list"></div>
+</div>
+<div class="lb" id="exp" hidden><div class="panel"><b>Your reviews (CSV)</b><p>Only events you marked or noted are listed. Copy this into a file or send it to Claude.</p><textarea id="expta" rows="10" readonly></textarea><div><button class="btn" id="expcopy">Copy</button> <button class="btn" id="expclose">Close</button> <span id="expmsg"></span></div></div></div>
+<div class="lb" id="lb" hidden><div class="stage"><button class="nav" id="prev" aria-label="Previous second">‹</button><div class="big" id="big"></div><button class="nav" id="next" aria-label="Next second">›</button></div><div class="cap" id="cap"></div></div>
+<script>
+const DATA=/*DATA*/null;
+const E=DATA.e,SM=DATA.s;
+const COLS=SM.cols||5,ROWS=SM.rows||4;document.documentElement.style.setProperty("--cols",COLS);document.documentElement.style.setProperty("--rows",ROWS);
+const $=s=>document.querySelector(s);
+const CATS=[["sign100","Real lower-limit sign (100 or less)"],["roadworks","Road works / variable speed"],["traffic","Traffic, exit or curve"],["sign110","110 sign, car slowed anyway"],["nosign","No sign, car changed anyway"],["othersign","Sign for another road (e.g. no entry)"],["bluesign","Blue/white sign (camera, check speed...)"],["bugovertake","FSD bug: slowed right after an overtake"],["up110","Speed-up: 110 sign seen"],["uptraffic","Speed-up: traffic ahead cleared"],["upnosign","Speed-up: no sign before it"],["unclear","Unclear"]];
+// "Agree with sign check" stores c="agree"; effCall() turns it into the category implied by the automatic sign check
+const AGREE={"100":"sign100","other-limit":"sign100","110-at":"sign110","110-before":"sign110","roadworks":"roadworks","other-road":"othersign","blue-sign":"bluesign","overtake":"bugovertake","other":"traffic","none":"nosign"};
+// speed-ups (100 -> 110) read differently: a 110 sign is the genuine reason, so they have their own categories
+const AGREE_UP={"110":"up110","110-before":"up110","110-after":"upnosign","other-limit":"upnosign","other":"uptraffic","none":"upnosign","roadworks":"roadworks","blue-sign":"bluesign","other-road":"othersign"};
+const agreeOf=e=>e.sign?((e.step.kind==="rise"?AGREE_UP:AGREE)[e.sign.read]||""):"";
+const effCall=e=>{const c=REV[e.id]&&REV[e.id].c;return c==="agree"?agreeOf(e):(c||"")};
+const KEY="dfr:v1:";
+// Your calls: saved in the artifact's shared database (kept across republishes, readable by Claude), with a
+// copy in this browser and the dashcam_flip_reviews.json that the builder embeds (so new pages start with them).
+const FT={};E.forEach(e=>FT[e.id]=e.flip_time);
+const okRev=(id,r)=>r&&FT[id]&&(!r.ft||r.ft===FT[id]);
+let REV={};
+Object.entries(DATA.r||{}).forEach(([id,r])=>{if(okRev(id,r))REV[id]=r});
+try{E.forEach(e=>{const r=localStorage.getItem(KEY+e.id);if(r){const v=JSON.parse(r);if(v&&(v.c||v.n))REV[e.id]=v}})}catch(_){}
+let DB=null;
+function setSync(t,bad){const el=document.getElementById("sync");if(el){el.textContent=t;el.style.color=bad?"var(--bad)":"var(--mut)"}}
+const _tm={};
+function pushRev(id){if(!DB)return;clearTimeout(_tm[id]);_tm[id]=setTimeout(()=>{const r=REV[id]||{};
+  DB.collection("reviews").doc(id).set({c:r.c||null,n:r.n||"",ft:FT[id],at:r.at||Date.now()}).then(()=>setSync("Your calls are saved to the shared store.")).catch(()=>setSync("Could not save to the shared store - kept in this browser only.",1))},500)}
+function saveRev(id){const r=REV[id]=REV[id]||{};r.ft=FT[id];r.at=Date.now();try{localStorage.setItem(KEY+id,JSON.stringify(r))}catch(_){}pushRev(id)}
+function paintRev(){document.querySelectorAll(".rev").forEach(b=>{const r=REV[b.dataset.id]||{};b.querySelectorAll(".opt").forEach(o=>o.classList.toggle("on",o.dataset.c===r.c));const i=b.querySelector("input");if(i&&document.activeElement!==i)i.value=r.n||""});kpis()}
+(async()=>{try{if(typeof claude==="undefined")return;const c=await claude.use("db");if(!c){setSync("Your calls are kept in this browser only.");return}
+  DB=c;let first=true;
+  c.collection("reviews").onSnapshot(snap=>{const seen={};
+    snap.docs.forEach(d=>{const r=d.data()||{};seen[d.id]=1;if(!okRev(d.id,r)||d.metadata.hasPendingWrites)return;REV[d.id]={c:r.c||null,n:r.n||"",ft:r.ft,at:r.at};try{localStorage.setItem(KEY+d.id,JSON.stringify(REV[d.id]))}catch(_){}});
+    if(first){first=false;Object.keys(REV).forEach(id=>{if(!seen[id]&&(REV[id].c||REV[id].n))pushRev(id)})}   // first load: copy browser/seed calls into the store
+    paintRev();setSync("Your calls are saved to the shared store.")},()=>setSync("Shared store unavailable - kept in this browser only.",1))
+}catch(_){setSync("Your calls are kept in this browser only.")}})();
+const esc=s=>String(s==null?"":s).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+
+const srcText=e=>{const c=e.clip_event;if(e.clip_src==="recent")return"Recent clip";
+  const k=e.clip_src==="saved"?"Saved":"Sentry";if(!c)return k;
+  return k+": "+c.label+(c.time?" at "+c.time:"")+(c.rel!=null?` (${c.rel>=0?c.rel+" s after":-c.rel+" s before"})`:"")+(c.place?", "+c.place:"")};
+const srcChip=e=>e.clip_src==="recent"?"":chip(e.clip_event&&e.clip_event.reason==="vehicle_auto_emergency_braking"?"bad":"",esc(e.clip_src==="saved"?"saved clip":"Sentry clip")+(e.clip_event?": "+esc(e.clip_event.label):""));
+const marksOf=e=>(e.marks_auto||[]).concat((e.sign&&e.sign.marks)||[]).concat(((e.sign&&e.sign.blue)||[]).map(b=>({k:"blue",t0:b.t-.5,t1:b.t+.5,text:b.text})));
+const dvCol=d=>d<=-3?"#e0201b":d<=-1.2?"#ff7a1a":d<=-0.4?"#ffc14d":d<0.4?"#7b8490":d<1.2?"#8cc2ff":d<3?"#3b8cff":"#0a5bd6";
+function sgBadges(e,rel){const a=marksOf(e).filter(q=>rel>=q.t0-.5&&rel<=q.t1+.5);if(!a.length)return"";
+  const seen={};return `<span class="sgs">`+a.map(q=>{const k=q.k+(q.k==="speed"?q.text.replace(/ .*/,""):"");if(seen[k])return"";seen[k]=1;
+    const tt=` title="${esc(q.text)}"`;
+    if(q.k==="speed")return `<span class="sg sp"${tt}>${esc(q.text.replace(/ .*/,"").slice(0,3))}</span>`;
+    if(q.k==="warn")return `<span class="sg wn"${tt}>!</span>`;
+    if(q.k==="blue")return `<span class="sg bl"${tt}>i</span>`;
+    if(q.k==="green")return `<span class="sg gr"${tt}>▭</span>`;
+    if(q.k==="white")return `<span class="sg wh"${tt}>sign</span>`;
+    return `<span class="sg tr"${tt}>🚗</span>`}).join("")+`</span>`}
+const f1=x=>x==null?"?":(Math.round(x*10)/10).toFixed(1);
+const day=e=>e.onset_local.slice(0,10);
+const apName=a=>({0:"not engaged",1:"FSD",2:"Autosteer",3:"TACC"}[a]||"?");
+const sgn=r=>(r>0?"+":r<0?"−":"")+Math.abs(r);
+
+function stepText(e){
+  const s=e.step;
+  if(s.kind==="none")return `no speed change in the video (${f1(s.pre)} km/h)`;
+  let t=`${f1(s.pre)} → ${f1(s.post)} km/h (${s.delta>0?"+":""}${f1(s.delta)}) over ${s.secs} s`;
+  // the slowdown can carry on after the first step: report where the speed ends up within the stills
+  const vs=e.frames.filter(f=>f.v!=null&&f.rel>0);
+  if(vs.length&&s.kind==="drop"){const lo=vs.reduce((a,b)=>b.v<a.v?b:a);if(lo.v<s.post-3)t+=`, then on to ${f1(lo.v)} km/h by ${sgn(lo.rel)} s (${f1(lo.v-s.pre)} in all)`}
+  return t;
+}
+const bkG=b=>b===1?"◀":b===2?"▶":b===3?"◀▶":"";
+function indText(e){
+  const r=e.indicator||[];if(!r.length)return"";
+  return r.map(x=>`${x.side==="L"?"left":x.side==="R"?"right":"hazard"} indicator ${sgn(x.t0)} to ${sgn(x.t1)} s`).join("; ");
+}
+function cruiseText(e){
+  const c=e.cruise;if(!c||c.pre==null)return"";
+  const o=v=>(v>0?"+":v<0?"−":"±")+Math.abs(v).toFixed(1);
+  let t=`Cruise before the change ${f1(c.pre)} km/h (110 limit ${o(c.pre_vs_110)})`;
+  if(c.post_vs_100!=null)t+=`, then ${f1(c.post)} km/h (100 limit ${o(c.post_vs_100)})`;
+  if(c.steady!=null&&Math.abs(c.steady-c.pre)>=0.8)t+=`; steady speed in the minute before ${f1(c.steady)} (${o(c.steady-110)})`;
+  return t+". Dashcam speed is the car's own reading; the dash can show a few km/h more.";
+}
+function cruiseShort(e){
+  const c=e.cruise;if(!c||c.pre==null||e.flip_kind!=="110->100")return"";
+  const o=v=>(v>0?"+":v<0?"−":"±")+Math.abs(v).toFixed(1);
+  return `before ${f1(c.pre)} (110 ${o(c.pre_vs_110)})`+(c.post_vs_100!=null?` · after ${f1(c.post)} (100 ${o(c.post_vs_100)})`:"");
+}
+function chip(c,t){return `<span class="chip ${c}">${t}</span>`}
+function chart(e){
+  const W=620,H=294,L=44,R=8,T=14,B=122,s=e.ser;
+  const vs=s.v.filter(v=>v!=null);let lo=Math.min(95,Math.floor((Math.min(...vs)-3)/5)*5),hi=Math.max(115,Math.ceil((Math.max(...vs)+3)/5)*5);
+  const x=t=>L+(t-s.t0)/36*(W-L-R), y=v=>T+(hi-v)/(hi-lo)*(H-T-B);
+  let o=`<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Speed around ${esc(e.id)}">`;
+  for(let v=lo;v<=hi;v+=5){o+=`<line x1="${L}" x2="${W-R}" y1="${y(v)}" y2="${y(v)}" stroke="var(--grid)"/><text x="${L-4}" y="${y(v)+4}" text-anchor="end" font-size="12" fill="var(--mut)">${v}</text>`}
+  [100,110].forEach(v=>{if(v>=lo&&v<=hi)o+=`<line x1="${L}" x2="${W-R}" y1="${y(v)}" y2="${y(v)}" stroke="var(--lim)" stroke-dasharray="4 3"/>`});
+  let a=null;for(let i=0;i<=s.ap.length;i++){const off=i<s.ap.length&&s.ap[i]!=="1"&&s.ap[i]!=="-";if(off&&a==null)a=i;if(!off&&a!=null){o+=`<rect x="${x(s.t0+a*s.dt)}" y="${T}" width="${Math.max(2,x(s.t0+i*s.dt)-x(s.t0+a*s.dt))}" height="${H-T-B}" fill="var(--shade)"/>`;a=null}}
+  const SC={"1":"var(--ok)","2":"var(--warn)","3":"var(--warn)","0":"var(--bad)"};
+  for(let i=0;i<s.ap.length;i++){const c=s.ap[i];if(c==="-")continue;o+=`<rect x="${x(s.t0+i*s.dt)}" y="${H-B+2}" width="${(W-L-R)/36*s.dt+0.6}" height="5" fill="${SC[c]||"var(--mut)"}"/>`}
+  o+=`<text x="${L-4}" y="${H-B+8}" text-anchor="end" font-size="10" fill="var(--mut)">FSD</text>`;
+  const bk=s.bk||"";let bs=null;
+  for(let i=0;i<=bk.length;i++){const b=i<bk.length?bk[i]:"0";if(b!=="0"&&bs==null)bs=[i,b];if((b==="0"||(bs&&b!==bs[1]))&&bs!=null){const gx=x(s.t0+bs[0]*s.dt),gw=Math.max(3,x(s.t0+i*s.dt)-gx);o+=`<rect x="${gx}" y="${H-B+11}" width="${gw}" height="5" fill="var(--ind)"/><text x="${gx+gw/2}" y="${H-B+14}" text-anchor="middle" font-size="7" fill="var(--bg)" dominant-baseline="middle">${bs[1]==="1"?"◀":bs[1]==="2"?"▶":"◀▶"}</text>`;bs=b!=="0"?[i,b]:null}}
+  o+=`<text x="${L-4}" y="${H-B+17}" text-anchor="end" font-size="10" fill="var(--mut)">Ind.</text>`;
+  const MK=marksOf(e);
+  [["speed","Limit","var(--sr)"],["warn","Warn","var(--sy)"],["blue","Blue","var(--sb)"],["green","Green","var(--sg)"],["white","White","var(--sw)"],["traffic","Traffic","var(--sp)"]].forEach(([k,nm,col],li)=>{const ly=H-B+22+li*11;
+    o+=`<text x="${L-4}" y="${ly+7}" text-anchor="end" font-size="10" fill="var(--mut)">${nm}</text><line x1="${L}" x2="${W-R}" y1="${ly+4.5}" y2="${ly+4.5}" stroke="var(--grid)"/>`;
+    MK.filter(q=>q.k===k).forEach(q=>{const gx=x(Math.max(q.t0,s.t0)),gw=Math.max(k==="speed"?24:8,x(Math.min(q.t1,s.t0+36))-gx);
+      if(k==="traffic"){o+=`<g><title>${esc(q.text)} (${q.t0>0?"+":""}${q.t0} s)</title><rect x="${gx}" y="${ly}" width="${gw}" height="10" rx="2" fill="var(--sp)"/><text x="${gx+8}" y="${ly+8.5}" text-anchor="middle" font-size="9">🚗</text></g>`;return}
+      const fits=gw>q.text.length*4.4;
+      o+=`<g><title>${esc(q.text)} (${q.t0>0?"+":""}${q.t0} s)</title><rect x="${gx}" y="${ly}" width="${gw}" height="9" rx="2" fill="${col}"${k==="white"?' stroke="var(--mut)"':""}/>${k==="speed"||fits?`<text x="${gx+gw/2}" y="${ly+4.7}" text-anchor="middle" dominant-baseline="middle" font-size="8.5" font-weight="700" fill="${k==="speed"||k==="blue"?"#fff":"#1c1f23"}">${esc(k==="speed"?q.text.replace(/ .*/,""):q.text)}</text>`:""}</g>`})});
+  for(let i=0;i<s.br.length;i++)if(s.br[i]==="1")o+=`<rect x="${x(s.t0+i*s.dt)-1}" y="${H-B-5}" width="2" height="5" fill="var(--brk)"/>`;
+  let d="",pen=false;s.v.forEach((v,i)=>{if(v==null){pen=false;return}d+=(pen?"L":"M")+x(s.t0+i*s.dt).toFixed(1)+" "+y(v).toFixed(1);pen=true});
+  o+=`<path d="${d}" fill="none" stroke="var(--spd)" stroke-width="2.6" stroke-linejoin="round"/>`;
+  const lab=(t,v,dy)=>{if(v==null||isNaN(v))return"";const X=Math.min(Math.max(x(t),L+16),W-R-16);return `<text x="${X}" y="${y(v)+dy}" text-anchor="middle" font-size="13" font-weight="700" fill="var(--spd)" stroke="var(--card)" stroke-width="4" paint-order="stroke">${(+v).toFixed(1)}</text>`};
+  if(e.step){const hi_=e.step.post>e.step.pre;o+=lab(-8,e.step.pre,hi_?16:-8)+lab(Math.min(12,(e.step.secs||5)+8),e.step.post,hi_?-8:16)}
+  e.frames.forEach((fr,i)=>{const X=x(fr.rel);o+=`<line class="tk" data-i="${i}" x1="${X}" x2="${X}" y1="${T}" y2="${H-B}" ${fr.v==null?'style="opacity:.2"':""}/>`});
+  o+=`<line x1="${x(0)}" x2="${x(0)}" y1="${T-4}" y2="${H-B}" stroke="var(--ink)" stroke-width="1.4"/><text x="${x(0)+4}" y="${T+6}" font-size="12" fill="var(--ink)">speed starts to change</text>`;
+  for(const t of [-20,-10,0,10]){o+=`<text x="${x(t)}" y="${H-B+108}" text-anchor="middle" font-size="12" fill="var(--mut)">${t>0?"+":""}${t} s</text>`}
+  o+=`</svg>`;
+  const sw=(c,t)=>`<span><i style="background:${c}"></i>${t}</span>`;
+  o+=`<div class="key"><div><b>FSD</b>${sw("var(--ok)","FSD on")}${sw("var(--warn)","Autosteer / TACC")}${sw("var(--bad)","No assist")}${sw("var(--ind)","Indicator")}<em>also the bar under each still · hover the graph for every state</em></div><div><b>Border</b><span><i style="background:#e0201b"></i>slowing fast</span><span><i style="background:#ff7a1a"></i>slowing</span><span><i style="background:#ffc14d"></i>easing</span><span><i style="background:#7b8490"></i>steady</span><span><i style="background:#3b8cff"></i>speeding up</span><em>change vs previous second</em></div><div><b>Signs</b>${sw("var(--sr)","Speed limit")}${sw("var(--sy)","Warning / works")}${sw("var(--sb)","Blue sign")}${sw("var(--sg)","Green location sign")}<span><i style="background:var(--sw);box-shadow:inset 0 0 0 1px var(--mut)"></i>White sign</span><span><i style="background:var(--sp)"></i>🚗 Traffic in our lane</span><em>(read by eye)</em></div></div>`;
+  return o;
+}
+function film(e){
+  if(!e.sheet)return `<div class="nosheet">Stills not extracted yet. Run dashcam_flip_review.py again.</div>`;
+  return `<div class="film" data-sheet="${e.sheet}" data-id="${e.id}">`+e.frames.map((fr,i)=>{
+    const c=i%COLS,r=Math.floor(i/COLS);
+    const none=fr.v==null;
+    const lab=none?`${sgn(fr.rel)} s · no footage`:`${sgn(fr.rel)} s · ${Math.round(fr.v)} km/h${fr.br?" · brake":""}${fr.bk?" · "+bkG(fr.bk):""}`;
+    if(none)return `<div class="cell nodata" style="aspect-ratio:${e.cw}/${e.ch}"><span class="lab">${esc(lab)}</span></div>`;
+    const pv=(i>0&&e.frames[i-1].v!=null)?e.frames[i-1].v:(e.frames[i+1]&&e.frames[i+1].v!=null?e.frames[i+1].v+0:null),dv=pv==null?0:(i>0&&e.frames[i-1].v!=null?fr.v-pv:pv-fr.v);
+    const bc=dvCol(dv),fc=fr.ap===1?"var(--ok)":fr.ap===0?"var(--bad)":"var(--warn)";
+    return `<button class="cell ${fr.rel===0?"onset":""}" data-id="${e.id}" data-i="${i}" title="${esc(lab)} · ${apName(fr.ap)} · ${dv>=0?"+":""}${f1(dv)} km/h vs the previous second" style="aspect-ratio:${e.cw}/${e.ch};border-color:${bc};background-position:${c*100/(COLS-1)}% ${r*100/(ROWS-1)}%"><span class="lab">${esc(lab)}</span><span class="fbar" style="background:${fc}"></span>${sgBadges(e,fr.rel)}${fr.bk&1?`<span class="ind l">◀</span>`:""}${fr.bk&2?`<span class="ind r">▶</span>`:""}</button>`}).join("")+`</div>`;
+}
+function review(e){
+  const r=REV[e.id]||{};
+  const ag=agreeOf(e)?`<button class="opt ag ${r.c==="agree"?"on":""}" data-c="agree" title="Accept the automatic sign check shown above as your call">✔ Agree with sign check</button>`:"";
+  return `<div class="rev" data-id="${e.id}"><span style="font-size:13px;color:var(--mut)">Your call:</span>`+ag+CATS.map(([k,t])=>`<button class="opt ${r.c===k?"on":""}" data-c="${k}">${t}</button>`).join("")+`<input type="text" placeholder="note" value="${esc(r.n||"")}"></div>`;
+}
+const SIGN={"100":["ok","110 → 100: clear 100 sign - genuine"],"110-at":["bad","110 sign at the drop - possible misread"],"110-before":["warn","110 sign 4-12 s earlier"],"roadworks":["warn","road works / variable speed sign"],"other-road":["bad","a sign meant for another road (e.g. no entry) - may have confused FSD"],"blue-sign":["warn","blue/white sign (e.g. speed camera) - a common trigger to slow"],"overtake":["bad","FSD BUG: slowed right after an overtake"],"other-limit":["","a different limit sign (e.g. 80)"],"other":["","traffic ahead (FSD kept its distance to a car in front) - not an issue"],"none":["","no sign found"]};
+const SIGN_UP={"110":["ok","100 → 110: clear 110 sign shortly before - genuine speed-up"],"110-before":["ok","110 sign 5-14 s before - plausible reason for the speed-up"],"110-after":["warn","no 110 sign before the speed-up - one only appears afterwards (FSD sped up on map data or a clear road)"],"other-limit":["","a lower-limit sign (80 / 40) near the speed-up, no 110 sign before it"],"other":["","traffic ahead cleared and FSD sped up - no sign needed"],"none":["warn","no sign found before the speed-up"]};
+function signBlock(e){
+  const s=e.sign;if(!s)return"";
+  const c=(e.step.kind==="rise"&&SIGN_UP[s.read])||SIGN[s.read]||["",s.read];
+  const bl=(s.blue||[]).map(b=>chip(b.kind==="speed"?"warn":"","Blue sign "+sgn(b.t)+" s: "+esc(b.text))).join(" ");
+  return `<div class="signs">${chip(c[0],"Sign check: "+c[1])} ${bl} <span class="mut">${esc(s.note)}</span>${s.strip?`<div><img loading="lazy" src="${s.strip}" alt="sign candidates found near ${e.id}"></div>`:""}</div>`;
+}
+function card(e){
+  const s=e.step,f=e.fsd;
+  const fsdChip=f.pct>=98?chip("ok","FSD engaged throughout"):f.pct===0?chip("bad","FSD not engaged"):chip("warn",`FSD off ${f.off_s} s of 28`);
+  const down=e.flip_kind==="110->100";
+  const stepChip=s.kind==="drop"?chip("bad","video: car slowed"):s.kind==="rise"?chip("warn",down?"video: car SPED UP - flip not confirmed":"video: car sped up"):chip(down?"warn":"","video: no speed change"+(down?" - flip not confirmed":""));
+  const osm=e.osm_before===e.osm_after?`OpenStreetMap: ${esc(e.osm_before||"?")} km/h both sides`:`OpenStreetMap: ${esc(e.osm_before)} → ${esc(e.osm_after)}`;
+  const tt=`https://www.tomtom.com/mapshare/tools/new/mapshare/#loc=${e.sign_lat},${e.sign_lon},17`;
+  const sv=`https://www.google.com/maps/@?api=1&map_action=pano&viewpoint=${e.sign_lat},${e.sign_lon}&heading=${e.sign_hd}&pitch=0&fov=90`;
+  const local=(location.protocol==="file:"&&e.clip_rel&&SM.mac_root)?` · <a href="file://${encodeURI((e.clip_drive&&SM.mac_root.indexOf("/Volumes/")===0?"/Volumes/"+e.clip_drive+"/TeslaCam":SM.mac_root)+"/"+e.clip_rel)}#t=${e.clip_t}" target="_blank" rel="noopener">Play full-resolution clip</a>`:"";
+  const isBug=(e.sign&&e.sign.read==="overtake")||effCall(e)==="bugovertake";
+  const lr=(e.indicator||[]).filter(r=>r.side==="L"&&r.t1<=1&&r.t1>=-12).pop();
+  const ovHint=lr?`Left indicator went off ${Math.abs(lr.t1).toFixed(1)} s ${lr.t1<=0?"before":"after"} the slowdown starts (pulling back in after passing?). `:"";
+  return `<section class="card${isBug?" bug":""}" id="${e.id}"><div class="head"><span class="id">${e.id}</span><span class="when">${esc(e.onset_local.slice(0,16))} · ${esc(e.road||"")} ${esc(e.heading||"")}</span>${chip("",esc(e.flip_kind.replace("->"," → "))+" (Tessie)")}${stepChip}${fsdChip}${isBug?chip("bad","FSD BUG"):""}${f.brake?chip("warn","brake pressed"):""}${srcChip(e)}${(e.indicator||[]).length?chip("warn","indicator: "+esc(indText(e))):""}</div>
+  <div class="top"><div class="chart" data-id="${e.id}">${chart(e)}</div><ul class="facts"><li><b>${esc(stepText(e))}</b></li><li><span class="k">Map</span> ${esc(osm.replace("OpenStreetMap: ",""))}</li>${cruiseShort(e)?`<li><span class="k">Cruise</span> ${esc(cruiseShort(e))}</li>`:""}${ovHint?`<li>${esc(ovHint.trim())}</li>`:""}<li><span class="k">Check sign</span> <a href="${tt}" target="_blank" rel="noopener">TomTom</a> · <a href="${sv}" target="_blank" rel="noopener">Street View</a>${local}</li><li><span class="k">Clip</span> ${esc(e.clip.replace("-front.mp4",""))} · ${esc(srcText(e))}${e.clip_offset_h?` · clock ${e.clip_offset_h} h behind`:""}</li></ul></div>
+  ${film(e)}${signBlock(e)}${review(e)}</section>`;
+}
+const ST={blue:"all",kind:"all",sign:"all",step:"drop",fsd:"all",ind:"all",rev:"all",day:"all",sort:"time"};
+function pass(e){
+  if(ST.kind!=="all"&&e.flip_kind!==ST.kind)return false;
+  if(ST.step!=="all"&&e.step.kind!==ST.step)return false;
+  if(ST.sign!=="all"&&(!e.sign||e.sign.read!==ST.sign))return false;
+  if(ST.fsd==="on"&&e.fsd.pct<98)return false;
+  if(ST.fsd==="off"&&e.fsd.pct>=98)return false;
+  const bl=(e.sign&&e.sign.blue)||[];
+  if(ST.blue==="speed"&&!bl.some(b=>b.kind==="speed"))return false;
+  if(ST.blue==="any"&&!bl.length)return false;
+  if(ST.blue==="none"&&bl.length)return false;
+  if(ST.ind==="yes"&&!(e.indicator||[]).length)return false;
+  if(ST.ind==="no"&&(e.indicator||[]).length)return false;
+  if(ST.day!=="all"&&day(e)!==ST.day)return false;
+  const r=REV[e.id]&&REV[e.id].c;
+  if(ST.rev==="none"&&r)return false;
+  if(ST.rev==="agree"&&r!=="agree")return false;
+  if(ST.rev!=="all"&&ST.rev!=="none"&&ST.rev!=="agree"&&effCall(e)!==ST.rev)return false;
+  return true;
+}
+let IO=null;
+function lazy(){
+  if(IO)IO.disconnect();
+  if(!("IntersectionObserver" in window)){document.querySelectorAll(".film").forEach(f=>{f.style.setProperty("--sheet",`url(${f.dataset.sheet})`);f.classList.add("on")});return}
+  IO=new IntersectionObserver(es=>es.forEach(en=>{const f=en.target;
+    if(en.isIntersecting){f.style.setProperty("--sheet",`url(${f.dataset.sheet})`);f.classList.add("on")}else{f.classList.remove("on")}}),{rootMargin:"700px 0px"});
+  document.querySelectorAll(".film").forEach(f=>IO.observe(f));
+}
+function render(){
+  let L=E.filter(pass);
+  if(ST.sort==="drop")L=L.slice().sort((a,b)=>a.step.delta-b.step.delta);
+  else if(ST.sort==="rise")L=L.slice().sort((a,b)=>b.step.delta-a.step.delta);
+  else L=L.slice().sort((a,b)=>a.onset_local<b.onset_local?-1:1);
+  $("#list").innerHTML=L.map(card).join("")||`<p class="sub">No events match.</p>`;
+  $("#cnt").textContent=`${L.length} of ${E.length} shown`;
+  kpis();lazy();
+}
+const medi=a=>{a=a.filter(x=>x!=null).sort((x,y)=>x-y);return a.length?a[Math.floor(a.length/2)]:null};
+function cruiseKpi(){
+  const a=medi(E.map(e=>e.cruise&&e.cruise.pre_vs_110)),b=medi(E.filter(e=>e.step.kind==="drop").map(e=>e.cruise&&e.cruise.post_vs_100));
+  const o=v=>v==null?"?":(v>0?"+":v<0?"−":"±")+Math.abs(v).toFixed(1);
+  return [`${o(a)} / ${o(b)}`,"typical cruise vs the limit: before the drop (vs 110) / after it (vs 100), km/h. A hint of the FSD profile, not proof"];
+}
+function kpis(){
+  const n=E.length,drop=E.filter(e=>e.step.kind==="drop").length,rise=E.filter(e=>e.step.kind==="rise").length,none=n-drop-rise;
+  const fsd=E.filter(e=>e.fsd.pct>=98).length;
+  const rv=E.filter(e=>REV[e.id]&&REV[e.id].c);
+  const c={};rv.forEach(e=>{const k=effCall(e)||REV[e.id].c;c[k]=(c[k]||0)+1});
+  const bug=c.sign110||0,nosign=c.nosign||0;
+  $("#kpis").innerHTML=[
+   [n,`110 ↔ 100 flips with dashcam footage (since ${SM.since})`],
+   [Math.round(100*fsd/Math.max(1,n))+"%","of events had FSD engaged for the whole window"],
+   [`${drop} / ${rise} / ${none}`,"car slowed / sped up / no change"],
+   [`${E.filter(e=>e.step.kind==="drop"&&e.sign&&e.sign.read==="100").length} / ${E.filter(e=>e.step.kind==="drop"&&e.sign&&e.sign.read==="110-at").length} / ${E.filter(e=>e.step.kind==="drop"&&e.sign&&e.sign.read==="110-before").length}`,"slow-downs: 100 sign seen / 110 sign at the drop / 110 sign earlier"],
+   [`${E.filter(e=>e.step.kind==="rise"&&e.sign&&(e.sign.read==="110"||e.sign.read==="110-before")).length} / ${E.filter(e=>e.step.kind==="rise"&&e.sign&&e.sign.read==="110-after").length} / ${E.filter(e=>e.step.kind==="rise"&&e.sign&&e.sign.read==="other").length} of ${rise}`,"speed-ups: 110 sign before / only after / traffic cleared"],
+   cruiseKpi(),
+   [`${E.filter(e=>(e.indicator||[]).length).length} of ${n}`,"had an indicator on within 20 s before to 16 s after the change"],
+   [`${rv.length} of ${n}`,"reviewed by you"],
+   [`${bug+nosign}`,`marked as errors (110 sign: ${bug}, no sign: ${nosign})`]
+  ].map(([b,t])=>`<div class="kpi"><b>${b}</b><span>${t}</span></div>`).join("");
+}
+function setup(){
+  $("#sub").textContent=`${E.length} flips between 110 and 100 with dashcam footage (${SM.skipped} more had none). Built ${SM.built}.`;
+  const days=[...new Set(E.map(day))].sort();
+  const opt=(a)=>a.map(([v,t])=>`<option value="${v}">${t}</option>`).join("");
+  $("#bar").innerHTML=
+   `<label>Car <select id="fs">${opt([["all","any"],["drop","slowed (confirmed)"],["rise","sped up"],["none","no change"]])}</select></label>`+
+   `<label>Sign <select id="fg">${opt([["all","any"],["100","100 sign seen"],["110-at","110 at the drop"],["110-before","110 earlier"],["110","110 sign (speed-up)"],["110-after","110 only after (speed-up)"],["roadworks","road works / variable"],["other-road","sign for another road"],["blue-sign","blue/white sign"],["overtake","FSD bug: after an overtake"],["blue-sign","blue/white sign"],["overtake","FSD bug: after an overtake"],["other-limit","other limit sign"],["other","traffic / other"],["none","none found"]])}</select></label>`+
+   `<label>FSD <select id="ff">${opt([["all","any"],["on","engaged throughout"],["off","not engaged"]])}</select></label>`+
+   `<label>Blue sign <select id="fb">${opt([["all","any"],["speed","speed camera / check speed"],["any","any blue sign"],["none","none"]])}</select></label>`+
+   `<label>Indicator <select id="fi">${opt([["all","any"],["yes","used near the change"],["no","not used"]])}</select></label>`+
+   `<label>Day <select id="fd">${opt([["all","all"]].concat(days.map(d=>[d,d.slice(5)])))}</select></label>`+
+   `<label>Review <select id="fr">${opt([["all","all"],["none","not reviewed"],["agree","agreed with sign check"]].concat(CATS))}</select></label>`+
+   `<label>Sort <select id="so">${opt([["time","time"],["drop","biggest slowdown"],["rise","biggest speed-up"]])}</select></label>`+
+   `<button class="btn" id="ex">Export reviews</button><span class="count" id="cnt"></span>`;
+  const bind=(id,k)=>$(id).onchange=ev=>{ST[k]=ev.target.value;render()};
+  bind("#fs","step");$("#fs").value=ST.step;bind("#fg","sign");bind("#ff","fsd");bind("#fi","ind");bind("#fb","blue");bind("#fd","day");bind("#fr","rev");bind("#so","sort");
+  $("#ex").onclick=exportRev;
+}
+function exportRev(){
+  const rows=[["id","flip_time","flip","step","speed_before","speed_after","fsd_pct","your_call","agreed_with_sign_check","sign_check","note"]];
+  E.forEach(e=>{const r=REV[e.id]||{};if(r.c||r.n)rows.push([e.id,e.flip_time,e.flip_kind,e.step.kind,e.step.pre,e.step.post,e.fsd.pct,effCall(e)||r.c||"",r.c==="agree"?"yes":"",e.sign?e.sign.read:"",r.n||""])});
+  const csv=rows.map(r=>r.map(x=>'"'+String(x==null?"":x).replace(/"/g,'""')+'"').join(",")).join("\n");
+  $("#expta").value=csv;$("#exp").hidden=false;$("#expta").focus();$("#expta").select();
+}
+$("#expcopy").onclick=()=>{const t=$("#expta");t.select();let ok=false;try{navigator.clipboard.writeText(t.value).then(()=>{$("#expmsg").textContent="Copied."},()=>{$("#expmsg").textContent="Press Ctrl/Cmd+C to copy."});ok=true}catch(_){}if(!ok)$("#expmsg").textContent="Press Ctrl/Cmd+C to copy."};
+$("#expclose").onclick=()=>{$("#exp").hidden=true};
+// lightbox
+let LB={e:null,i:0};
+function showLB(e,i){
+  const fr=e.frames[i];if(!fr||fr.v==null)return;
+  LB={e,i};
+  const col=i%COLS,row=Math.floor(i/COLS);
+  let w=Math.min(innerWidth-130,1180),h=w*e.ch/e.cw;
+  if(h>innerHeight-110){h=innerHeight-110;w=h*e.cw/e.ch}
+  const big=$("#big");big.style.width=w+"px";big.style.height=h+"px";
+  big.style.backgroundImage=`url(${e.sheet})`;big.style.backgroundPosition=`${col*100/(COLS-1)}% ${row*100/(ROWS-1)}%`;
+  $("#cap").innerHTML=`${e.id} · ${sgn(fr.rel)} s · ${f1(fr.v)} km/h · ${apName(fr.ap)}${fr.br?" · brake":""}${fr.bk?" · indicator "+bkG(fr.bk):""} · frame ${i+1} of ${e.frames.length} · <a href="${e.sheet}" target="_blank" rel="noopener">open full contact sheet</a>`;
+  $("#lb").hidden=false;
+}
+function stepLB(d){
+  if(!LB.e||$("#lb").hidden)return;
+  let i=LB.i+d;while(i>=0&&i<LB.e.frames.length&&LB.e.frames[i].v==null)i+=d;
+  if(i>=0&&i<LB.e.frames.length)showLB(LB.e,i);
+}
+$("#prev").onclick=ev=>{ev.stopPropagation();stepLB(-1)};
+$("#next").onclick=ev=>{ev.stopPropagation();stepLB(1)};
+document.addEventListener("click",ev=>{
+  const o=ev.target.closest(".rev .opt");
+  if(o){const id=o.parentNode.dataset.id;const r=REV[id]=REV[id]||{};r.c=r.c===o.dataset.c?null:o.dataset.c;saveRev(id);
+    o.parentNode.querySelectorAll(".opt").forEach(b=>b.classList.toggle("on",b.dataset.c===r.c));kpis();return}
+  const c=ev.target.closest(".cell[data-i]");
+  if(c){showLB(E.find(x=>x.id===c.dataset.id),+c.dataset.i);return}
+  if(ev.target.id==="lb"||ev.target.id==="big"||ev.target.classList.contains("stage"))$("#lb").hidden=true;
+});
+document.addEventListener("keydown",ev=>{
+  if(ev.key==="Escape"){$("#lb").hidden=true;$("#exp").hidden=true}
+  else if(ev.key==="ArrowRight")stepLB(1);else if(ev.key==="ArrowLeft")stepLB(-1);
+});
+document.addEventListener("input",ev=>{
+  if(ev.target.matches(".rev input")){const id=ev.target.parentNode.dataset.id;const r=REV[id]=REV[id]||{};r.n=ev.target.value;saveRev(id)}
+});
+
+// hover the graph: crosshair + every state at that moment (speed, FSD, indicator, brake, signs seen, traffic)
+const ctip=document.createElement("div");ctip.id="ctip";ctip.hidden=true;document.body.appendChild(ctip);
+function chartHover(ev){
+  const box=ev.target.closest&&ev.target.closest(".chart");if(!box){ctip.hidden=true;return}
+  const svg=box.querySelector("svg"),e=E.find(x=>x.id===box.dataset.id);if(!svg||!e){return}
+  const r=svg.getBoundingClientRect(),vb=svg.viewBox.baseVal,L=44,R=8,s=e.ser;
+  const px=(ev.clientX-r.left)/r.width*vb.width;
+  let line=svg.querySelector(".hx");
+  if(px<L||px>vb.width-R){ctip.hidden=true;if(line)line.style.display="none";return}
+  const t=s.t0+(px-L)/(vb.width-L-R)*36,i=Math.max(0,Math.min(s.v.length-1,Math.round((t-s.t0)/s.dt)));
+  if(!line){line=document.createElementNS("http://www.w3.org/2000/svg","line");line.setAttribute("class","hx");line.setAttribute("stroke","var(--ink)");line.setAttribute("stroke-width","1");line.setAttribute("stroke-dasharray","3 3");line.setAttribute("y1",14);line.setAttribute("y2",vb.height-122);svg.appendChild(line)}
+  line.style.display="";line.setAttribute("x1",px);line.setAttribute("x2",px);
+  const rel=Math.round((s.t0+i*s.dt)*10)/10,v=s.v[i],ap=s.ap[i],bk=+(s.bk||"")[i]||0,br=s.br[i]==="1";
+  const MK=marksOf(e);
+  const NM={speed:"Limit sign",warn:"Warning",blue:"Blue sign",green:"Green location sign",white:"White sign",traffic:"Traffic in our lane"};
+  const act=MK.filter(q=>rel>=q.t0-.25&&rel<=q.t1+.25);
+  const still=e.frames.reduce((b,f,j)=>Math.abs(f.rel-rel)<Math.abs(e.frames[b].rel-rel)?j:b,0);
+  let h=`<b>${sgn(rel)} s</b> · ${v==null?"no speed":f1(v)+" km/h"}<br><span class="k">FSD:</span> ${ap==="-"?"no data":ap==="1"?"on (FSD)":ap==="0"?"off (no assist)":apName(+ap)+" (not FSD)"}<br><span class="k">Indicator:</span> ${bk?bkG(bk)+(bk===1?" left":bk===2?" right":" both"):"off"}<br><span class="k">Brake:</span> ${br?"on":"off"}`;
+  h+=act.length?"<br>"+act.map(q=>`<span class="k">${NM[q.k]||q.k}:</span> ${esc(q.text)}`).join("<br>"):`<br><span class="k">Signs / traffic:</span> none noted`;
+  h+=`<br><span class="k">Nearest still:</span> ${still+1} of ${e.frames.length}`;
+  ctip.innerHTML=h;ctip.hidden=false;
+  const w=ctip.offsetWidth,hh=ctip.offsetHeight;let X=ev.clientX+16,Y=ev.clientY+14;
+  if(X+w>innerWidth-8)X=ev.clientX-w-16;if(Y+hh>innerHeight-8)Y=innerHeight-hh-8;ctip.style.left=Math.max(8,X)+"px";ctip.style.top=Math.max(8,Y)+"px";
+}
+document.addEventListener("pointermove",chartHover);
+document.addEventListener("pointerleave",()=>{ctip.hidden=true});
+document.addEventListener("pointerdown",ev=>{if(!ev.target.closest||!ev.target.closest(".chart"))ctip.hidden=true});
+// hover a still: highlight its moment on the chart
+function hot(ev,on){const c=ev.target.closest&&ev.target.closest(".cell[data-i]");if(!c)return;
+  const t=c.closest(".card").querySelector(`.tk[data-i="${c.dataset.i}"]`);if(t)t.classList.toggle("hot",on)}
+document.addEventListener("mouseover",ev=>hot(ev,true));
+document.addEventListener("mouseout",ev=>hot(ev,false));
+if(E.length){setup();render()}else{$("#list").innerHTML='<p class="sub">No events yet.</p>'}
+</script>
+</body>
+</html>
