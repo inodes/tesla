@@ -36,7 +36,8 @@ class TeslaCam:
         if sentry:
             self.ev[("A", "sentry")] = sentry   # the Parked page shares this index
         self.rec = {}                       # role -> dict(mt, runs, clips)
-        self.tl = {}                        # role -> (Store, Indexer)
+        self.store = None                   # telemetry read from clips, shared by every drive (see _tl)
+        self.ix = {}                        # role -> Indexer
 
     def drives(self):
         return [dict(role=r, name=DR.NAMES.get(r, r), kind="archive" if r == "A" else "other") for p, r in DR.discover()]
@@ -103,10 +104,47 @@ class TeslaCam:
     # ------------------------------------------------------------------------------------------------- timeline
     def _tl(self, role):
         TL.OPTS.update({k: v for k, v in (app_config.get("teslacam") or {}).items() if k in TL.OPTS})
-        if role not in self.tl:
-            st = TL.Store(os.path.join(self.dir, "teslacam_timeline", role))
-            self.tl[role] = (st, TL.Indexer(st))
-        return self.tl[role]
+        if self.store is None:
+            base = os.path.join(self.dir, "teslacam_timeline")
+            self.store = TL.Store(base)
+            self._migrate(base)
+        if role not in self.ix:
+            self.ix[role] = TL.Indexer(self.store)
+        return self.store, self.ix[role]
+
+    @staticmethod
+    def _migrate(base):
+        """One cache for every drive: a clip is the same minute whichever disk it was copied to, so it is read once.
+        (An earlier version kept a folder per drive; fold those into the shared one.)"""
+        import json
+        try:
+            subs = [d for d in sorted(os.listdir(base)) if os.path.isdir(os.path.join(base, d))]
+        except OSError:
+            return
+        for d in subs:
+            src = os.path.join(base, d)
+            for fn in sorted(os.listdir(src)):
+                if not fn.endswith(".json"):
+                    continue
+                a, b = os.path.join(src, fn), os.path.join(base, fn)
+                try:
+                    with open(a, encoding="utf-8") as fh:
+                        mine = json.load(fh)
+                    try:
+                        with open(b, encoding="utf-8") as fh:
+                            mine = dict(json.load(fh), **mine) if os.path.exists(b) else mine
+                    except (OSError, ValueError):
+                        pass
+                    with open(b + ".tmp", "w", encoding="utf-8") as fh:
+                        json.dump(mine, fh, separators=(",", ":"))
+                    os.replace(b + ".tmp", b)
+                    os.remove(a)
+                except (OSError, ValueError):
+                    continue
+            try:
+                os.rmdir(src)
+            except OSError:
+                pass
 
     def _sources(self, role, teslacam):
         c = self._scan(role, teslacam)
