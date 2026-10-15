@@ -20,7 +20,7 @@ DESCRIPTION
 
 OPTIONS
     --data-dir DIR   Tesla data folder (default: TESLA_DATA_DIR or the iCloud "Tesla" folder)
-    --port N         port to listen on (default 8765; 0 = any free port)
+    --port N         port to listen on (default 8765, or app.window.port in config.json; 0 = any free port)
     --no-window      only run the server (open http://127.0.0.1:PORT yourself)
     --browser        use the default browser even if pywebview is installed
 
@@ -61,6 +61,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 sys.path.insert(0, os.path.join(HERE, "lib"))
+import app_config  # noqa: E402
 import app_data  # noqa: E402
 import app_sentry  # noqa: E402
 import app_charges  # noqa: E402
@@ -273,8 +274,10 @@ class H(BaseHTTPRequestHandler):
             return self.send_json(S.pl.charger_listing(S))
         if name == "chargers-sync":
             return self.send_json(SYNC.status(int(q.get("since", ["0"])[0] or 0)))
+        if name == "settings":
+            return self.send_json(app_config.settings())
         if name == "place":
-            d = S.pl.detail(S, q.get("key", [""])[0])
+            d = S.pl.detail(S, q.get("key", [""])[0], q.get("name", [""])[0])
             return self.send_json(d if d else {"error": "no such place"}, 200 if d else 404)
         if name == "place-osm":
             g = lambda k, dv="": q.get(k, [dv])[0]
@@ -316,7 +319,7 @@ def main():
     global STORE, DATA_DIR, SENTRY, SYNC, BOOK
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--data-dir", default=DEFAULT_DATA)
-    ap.add_argument("--port", type=int, default=8765)
+    ap.add_argument("--port", type=int, default=int(app_config.get("window.port")))
     ap.add_argument("--no-window", action="store_true")
     ap.add_argument("--browser", action="store_true")
     a, extra = ap.parse_known_args()
@@ -347,7 +350,7 @@ def main():
     if not a.browser:
         try:
             import webview      # optional: native window
-            webview.create_window("Tesla", url, width=1440, height=940, min_size=(900, 600), text_select=True)
+            webview.create_window("Tesla", url, width=int(app_config.get("window.width")), height=int(app_config.get("window.height")), min_size=(900, 600), text_select=True)
             webview.start()
             return 0
         except ImportError:
