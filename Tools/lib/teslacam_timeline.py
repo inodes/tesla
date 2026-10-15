@@ -115,6 +115,10 @@ class Store:
             self.days[day][stamp] = ser
             self._dirty.add(day)
 
+    def stamps(self):
+        with _LOCK:
+            return list(self._load_sum().keys())
+
     def flush(self):
         with _LOCK:
             os.makedirs(self.base, exist_ok=True)
@@ -250,7 +254,7 @@ def build(recent, saved, sentry, store):
             runs.append(cur)
     for run in runs:
         for part in _split(run, store):
-            items.append(_drive_item(part, store))
+            items.append(drive_item(part, store))
     for ev in sentry:
         if not ev["clips"]:
             continue
@@ -292,7 +296,7 @@ def _split(run, store):
     return [[(m, s) for m, s in p] for p in parts]
 
 
-def _drive_item(part, store):
+def drive_item(part, store):
     state = part[0][1]
     mm = [m for m, _ in part]
     t0, t1 = mm[0]["t"], mm[-1]["t"] + 60
@@ -335,6 +339,11 @@ def _gap(a, b):
         km = round(d / 1000.0, 1)
         kind = "parked" if d <= lim else "gap"
     return dict(id="g:%d" % t0, kind=kind, start=iso(t0), end=iso(t1), t0=t0, t1=t1, km=km, p0=pa, p1=pb)
+
+
+def cached_minutes(store, t0, t1):
+    """The minutes already read that overlap [t0, t1) - for when the drive they came from is not connected (telemetry only, no video)."""
+    return [dict(stamp=st, t=secs(st), src="cache", ref="", cams=[]) for st in sorted(store.stamps()) if secs(st) + 60 > t0 and secs(st) < t1]
 
 
 def detail(mins, store, item):
