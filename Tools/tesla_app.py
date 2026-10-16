@@ -66,6 +66,7 @@ import app_data  # noqa: E402
 import app_sentry  # noqa: E402
 import app_teslacam  # noqa: E402
 import app_drive_review  # noqa: E402
+import app_footage  # noqa: E402
 import app_charges  # noqa: E402
 import clip_clock as CC  # noqa: E402
 import app_sync  # noqa: E402
@@ -79,6 +80,7 @@ STORE = None
 SENTRY = None
 TC = None
 DRV = None                  # the manual drive review (lib/app_drive_review.py)
+FG = None                   # the footage log and the one-second stills (lib/app_footage.py)
 SYNC = None
 BOOK = None
 STARTED = time.time()
@@ -295,6 +297,12 @@ class H(BaseHTTPRequestHandler):
                 if p and os.path.isfile(p) and p.endswith(".jpg"):
                     return self.send_file(p, cache=True)
                 return self.send_bytes(b"not found", "text/plain", 404)
+            if path.startswith("/still/"):          # one kept still: /still/<clip stamp>/<second>.jpg (the video need not exist any more)
+                m = re.match(r"^/still/(\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2})/(\d{1,2})\.jpg$", path)
+                b = FG.still(m.group(1), int(m.group(2))) if m else None
+                if b:
+                    return self.send_bytes(b, "image/jpeg", extra={"Cache-Control": "public, max-age=31536000"})
+                return self.send_bytes(b"not found", "text/plain", 404)
             if path.startswith("/revev/"):          # the contact sheet of a drive review event: /revev/<drive stamp>/<event>.jpg
                 p = safe_join(os.path.join(DATA_DIR, "drive_review", "events"), path[7:])
                 if p and os.path.isfile(p) and p.endswith(".jpg"):
@@ -338,6 +346,11 @@ class H(BaseHTTPRequestHandler):
             if u.path == "/api/review":
                 role = body.get("role", "A")
                 return self.send_json(TC.review(role, footage_root(role), _utc_arg(body.get("t0", "")), _utc_arg(body.get("t1", "")), body.get("action", "start"), _lo_arg(body.get("lo"))))
+            if u.path == "/api/footage":           # {action: log|stills|stop, roles: ["A","J"]}: update the log of the files / make the missing one-second stills
+                if body.get("action") == "stop":
+                    return self.send_json(FG.stop())
+                roles = [r for r in (body.get("roles") or ["A"]) if r in ("A", "J", "U")]
+                return self.send_json(FG.start("stills" if body.get("action") == "stills" else "log", {r: footage_root(r) for r in roles}))
             if u.path == "/api/scan":              # {action: start|stop, roles: ["A","J"]}: read the telemetry the picked drives still lack
                 if body.get("action") == "stop":
                     return self.send_json(TC.scan_stop())
@@ -385,6 +398,15 @@ class H(BaseHTTPRequestHandler):
         if name == "scan":                      # scan?roles=A,J: the footage on those drives against the telemetry kept (nothing is read)
             roles = [r for r in q.get("roles", ["A"])[0].split(",") if r in ("A", "J", "U")]
             return self.send_json(TC.scan_report({r: footage_root(r) for r in roles}))
+        if name == "footage/log":               # the log of every TeslaCam file as it stands
+            return self.send_json(FG.log())
+        if name == "footage/stills":            # footage/stills?roles=A,J: the front clips on those drives against the stills kept (nothing is made)
+            roles = [r for r in q.get("roles", ["A"])[0].split(",") if r in ("A", "J", "U")]
+            return self.send_json(FG.stills_report({r: footage_root(r) for r in roles}))
+        if name == "footage/status":
+            return self.send_json(FG.status())
+        if name == "clipstatus":                # clipstatus?stamps=a,b: kept on a drive / deleted / never logged, and whether its stills are kept
+            return self.send_json(FG.clip_status([s for s in q.get("stamps", [""])[0].split(",") if re.match(r"^\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2}$", s)][:80]))
         if name == "scan/status":
             return self.send_json(TC.scan_status())
         if name == "clipclock":                 # the car's clock as learned from the footage (clip_clock.py): runs of minutes with the offset from UTC
@@ -502,6 +524,7 @@ def main():
     SENTRY = app_sentry.Sentry(DATA_DIR)
     TC = app_teslacam.TeslaCam(DATA_DIR, SENTRY)
     DRV = app_drive_review.DriveReview(DATA_DIR, TC)
+    FG = app_footage.Footage(DATA_DIR)
     BOOK = app_charges.ChargeBook(os.path.dirname(os.path.abspath(__file__)), DATA_DIR)
     BOOK.get()          # start reconciling the charges with their invoices in the background
     SYNC = app_sync.ChargerSync(os.path.dirname(os.path.abspath(__file__)), DATA_DIR)

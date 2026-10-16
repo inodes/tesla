@@ -24,9 +24,10 @@ the block). A change takes effect the next time the app or script reads it (the 
                                                    finder starts with speed_from -> speed_to km/h (changeable in the tab), a speed within speed_tol_kmh of one is
                                                    "at" it and must hold for speed_hold_s s, the second level must start within speed_window_s s; the wheel moving
                                                    steer_deg degrees around an FSD switch-off counts as steering
-  app.review.event_before_s / event_after_s / max_event_stills / sheet_cols / sheet_tile_px
+  app.review.event_before_s / event_after_s / max_event_stills
                                                    front-camera stills of one review event: one a second from event_before_s before to event_after_s after (thinned
-                                                   to max_event_stills), laid out in a contact sheet of sheet_cols columns of sheet_tile_px-wide tiles
+                                                   to max_event_stills), each its own picture (from the kept stills, see app.stills)
+  app.stills.width / quality / workers             one-second stills of the front-camera video (teslacam_stills.py): width in px, JPEG quality (ffmpeg -q:v, 2 best .. 31 worst), clips made at once
   app.drives.repark_max_km / repark_max_minutes    a drive shorter than both is a "re-park" (the car was shuffled), not a drive
   app.drives.long_highway_*                        a "long highway" drive (the Drives list's Long highway filter)
   app.drives.charge_window_minutes                 a charge within this long after / before a drive makes it "to charge" / "from charge"
@@ -58,7 +59,8 @@ DEFAULTS = {
     "teslacam": {"moving_kmh": 3.0, "run_gap_s": 75, "gap_min_s": 120, "same_place_m": 300, "same_place_est_m": 800, "same_minute_s": 30, "read_workers": 4, "days_newest_first": True, "rows_newest_first": True},
     "review": {"step_s": 1.0, "min_kmh": 30.0, "min_conf": 50.0, "workers": 3, "merge_s": 12.0, "candidate_km": 20, "candidate_avg_kmh": 60,
                "accel_min_pct": 5, "speed_from": 100, "speed_to": 110, "speed_tol_kmh": 3, "speed_hold_s": 8, "speed_window_s": 90,
-               "event_before_s": 12, "event_after_s": 15, "max_event_stills": 40, "steer_deg": 15, "sheet_cols": 7, "sheet_tile_px": 400},
+               "event_before_s": 12, "event_after_s": 15, "max_event_stills": 40, "steer_deg": 15},
+    "stills": {"width": 400, "quality": 6, "workers": 3},
     "drives": {"repark_max_km": 0.05, "repark_max_minutes": 10,
                "long_highway_km": 30, "long_highway_fast_kmh": 90, "long_highway_fast_minutes": 10,
                "charge_window_minutes": 30, "low_battery_pct": 20},

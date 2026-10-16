@@ -186,11 +186,13 @@ async function driveReviewPanel(host,stamp,lo){
   const KCOL={intervention:"#dc2626",accelerator:"#f59e0b",speed:"#2563eb"},KNAME={intervention:"FSD interventions",accelerator:"Accelerator pressed",speed:"Speed changes"};
   const vwEl=()=>document.getElementById("drevw"),curRes=()=>S&&S.result&&S.result.events?S.result:null;
   const list=()=>{const R=curRes();if(!R)return[];return(tab==="all"?R.events:R.events.filter(e=>e.kind===tab)).slice().sort((a,b)=>a.t-b.t)};        // in the order of the drive
-  const geo=e=>e&&e.tile&&e.shots&&e.shots.length&&e.sheet?e.tile:null;
+  const geo=e=>e&&e.tile&&e.shots&&e.shots.length&&(e.pics&&e.pics.length||e.sheet)?e.tile:null;      // new reviews: one kept still per second (e.pics); older ones: a contact sheet
   const base=e=>(e.utc!=null?e.utc:e.t)-(RVAPI?RVAPI.t0():0),ea=e=>Math.round(base(e)),eb=e=>Math.round(base(e)+(e.t1-e.t));        // second of the drive (UTC both)
   const stillI=(e,k)=>Math.round(base(e)+e.shots[k]);
   const k0=e=>{let b=0;e.shots.forEach((x,k)=>{if(Math.abs(x)<Math.abs(e.shots[b]))b=k});return b};
-  const sprite=(e,k)=>{const g=e.tile,rows=Math.ceil(e.shots.length/g.cols),c=k%g.cols,r=Math.floor(k/g.cols);
+  const sprite=(e,k)=>{const g=e.tile;
+    if(e.pics&&e.pics[k])return `background-image:url(/still/${e.pics[k][0]}/${e.pics[k][1]}.jpg);background-size:cover;background-position:center;aspect-ratio:${g.w}/${g.h}`;
+    const rows=Math.ceil(e.shots.length/g.cols),c=k%g.cols,r=Math.floor(k/g.cols);
     return `background-image:url(/revev/${encodeURIComponent(S.result.stamp)}/${encodeURIComponent(e.sheet)});background-size:${g.cols*100}% ${rows*100}%;background-position:${g.cols>1?c/(g.cols-1)*100:0}% ${rows>1?r/(rows-1)*100:0}%;aspect-ratio:${g.w}/${g.h}`};
   const desc=e=>{
     const gm=e.la!=null?` · <a target="_blank" rel="noopener" href="https://www.google.com/maps/@${e.la},${e.lo},19z">map</a>`:"";
@@ -236,6 +238,12 @@ async function driveReviewPanel(host,stamp,lo){
     (geo(e)?e.shots:[]).forEach((x,k)=>{const px=X(stillI(e,k)),h=k===hot;m.xs.push(px);c.strokeStyle=c.fillStyle=h?"#f59e0b":KCOL[e.kind];c.globalAlpha=h?1:.45;c.lineWidth=h?2.5:1;c.beginPath();c.moveTo(px,T);c.lineTo(px,H-B);c.stroke();c.beginPath();c.arc(px,T,h?4.5:2.5,0,7);c.fill();c.globalAlpha=1});
     c.strokeStyle=KCOL[e.kind];c.lineWidth=1.5;c.setLineDash([4,3]);c.beginPath();c.moveTo(X(base(e)),T);c.lineTo(X(base(e)),H-B);c.stroke();c.setLineDash([]);
     c.fillStyle=ink;c.font="11px system-ui";for(let k=0;k<=4;k++){const i=a+(b-a)*k/4,t=RVAPI.clk(Math.round(i)).slice(0,8);c.fillText(t,Math.max(2,Math.min(W-52,X(i)-24)),H-4)}};
+  // is the video of this event still on a drive? (the log of the TeslaCam files); the stills stay either way
+  const DRN={A:"the Archive",J:"JOWUA",U:"the Tesla USB"};
+  const vstat=e=>{if(!e.pics||!e.pics.length)return;const sts=[...new Set(e.pics.map(p=>p[0]))];
+    fetch("/api/clipstatus?stamps="+sts.join(",")).then(r=>r.json()).then(m=>{const el=$("#rvst");if(!el||list()[ei]!==e)return;
+      const v=sts.map(s=>m[s]||{state:"unknown"}),del=v.filter(x=>x.state==="deleted"),kept=v.filter(x=>x.state==="kept"),on=[...new Set(kept.flatMap(x=>x.on||[]))].map(r=>DRN[r]||r);
+      el.textContent=del.length===v.length?`Video deleted${del[0].gone?" "+dayName(del[0].gone.slice(0,10)):""}. The stills are kept.`:del.length?`${del.length} of ${v.length} minutes of video deleted. The stills are kept.`:kept.length?`Video on ${on.join(" and ")}.`:""}).catch(()=>{})};
   // what is lit: the cells, the big still, the strip, the chart under the map
   const hot=()=>{const L=list(),e=L[ei];if(!e)return;const k=hv!=null?hv:si;
     $$("#drevw .rvc").forEach(b=>{b.classList.toggle("on",+b.dataset.k===si);b.classList.toggle("hot",hv!=null&&+b.dataset.k===hv)});
@@ -275,7 +283,7 @@ async function driveReviewPanel(host,stamp,lo){
         <div style="margin:8px 0 2px">${dd.h}</div><div>${dd.tags}</div>`;
       if(e.look_error)h+=`<div class="sub" style="color:var(--bad)">${esc(e.look_error)}</div>`;
       if(g){
-        h+=`<div class="rvmain"><div><div id="rvbig" class="rvimg" style="${sprite(e,si)}" title="Click to enlarge"></div><div class="sub" id="rvcap" style="margin-top:4px"></div></div>
+        h+=`<div class="rvmain"><div><div id="rvbig" class="rvimg" style="${sprite(e,si)}" title="Click to enlarge"></div><div class="sub" id="rvcap" style="margin-top:4px"></div><div class="sub" id="rvst"></div></div>
           <div><canvas id="rvc" class="rvcv"></canvas><div class="sgs">${(e.signs||[]).map(x=>`<span class="sgn" title="seen ${x.n} time(s), ${x.conf}% sure">${x.f?`<img src="/review/${encodeURIComponent(x.f)}" alt="">`:""}<b>${esc(x.text)}</b> <span class="sub">${hm(x.t)}</span></span>`).join("")}</div>
           <div class="sub" style="margin-top:4px">${(e.signs||[]).length?"Signs read in these stills (check each against its picture).":"No signs read in the stills."}</div></div></div>
           <div class="rvfilm">${e.shots.map((x,k)=>`<button class="rvc" data-k="${k}" style="${sprite(e,k)}" title="${x>0?"+":""}${n0(x)} s"></button>`).join("")}</div>
@@ -296,7 +304,7 @@ async function driveReviewPanel(host,stamp,lo){
       cv.onmousemove=ev=>{const k=near(ev);if(k!==hv){hv=k;hot()}};cv.onmouseleave=()=>{hv=null;hot()};cv.onclick=ev=>pick(near(ev),true);
       $$("#drevw .rvc").forEach(b=>{b.onmouseenter=()=>{hv=+b.dataset.k;hot()};b.onmouseleave=()=>{hv=null;hot()};b.onclick=()=>pick(+b.dataset.k,true)});
       $("#rvbig").onclick=lbOpen;
-      hot()}
+      hot();vstat(e)}
     else MC=null};
   const draw=()=>{
     if(!live())return;
@@ -648,13 +656,18 @@ function clipPlayer(host,o){
     vids()};
   // The next minute is loaded in the background (last 25 s of this one) and swapped in when this one ends, so there is no wait between minutes.
   let nx=null,offp=false;
+  // A video element keeps its decoder and its buffered minute until its source is removed, and a browser only has a few decoders: six per minute, never released, and after
+  // a while only one camera loads. So every element that is let go (the minute that ended, a minute loaded ahead and then not used, everything when the page is left) is emptied.
+  const drop=x=>{try{x.pause();x.removeAttribute("src");x.load()}catch(e){}};
+  const dropNext=()=>{if(nx){Object.keys(nx.m).forEach(c=>drop(nx.m[c]));nx=null}};
+  const dropAll=()=>{vs.forEach(drop);dropNext()};
   const wire=()=>{const sk=$("#vsk"),pl=$("#vpl"),tm=$("#vtm"),box=$("#vids"),seekAll=t=>vs.forEach(x=>{try{x.currentTime=t}catch(e){}});
     if(!mv)return;
     const cam=mv.parentNode.dataset.c;
     const ready=()=>{sk.max=mv.duration||60;vs.forEach(x=>x.playbackRate=+rate);if(seek){seekAll(seek);seek=0}};
     if(mv.readyState>=1)ready();else mv.onloadedmetadata=()=>{ready();vs.forEach(x=>x.play().catch(()=>{}))};
     mv.onplay=()=>pl.textContent="❚❚ Pause";mv.onpause=()=>{if(!mv.ended)pl.textContent="▶ Play"};
-    mv.ontimeupdate=()=>{sk.value=mv.currentTime;if(o.onTime)o.onTime(stMs(stamps[si])+mv.currentTime*1000);if(o.onAt)o.onAt(stamps[si],mv.currentTime);tm.textContent=fmt(mv.currentTime)+" · "+shownAt(stamps[si],mv.currentTime);
+    mv.ontimeupdate=()=>{if(!document.contains(host)){dropAll();return}sk.value=mv.currentTime;if(o.onTime)o.onTime(stMs(stamps[si])+mv.currentTime*1000);if(o.onAt)o.onAt(stamps[si],mv.currentTime);tm.textContent=fmt(mv.currentTime)+" · "+shownAt(stamps[si],mv.currentTime);
       // keep the cameras together without seeking (a seek stalls that camera): a small drift is nudged out by speeding it up or slowing it down a little, only a large one is jumped
       vs.forEach(x=>{if(x===mv)return;const dr=x.currentTime-mv.currentTime;
         if(Math.abs(dr)>1.2){try{x.currentTime=mv.currentTime}catch(e){}x.playbackRate=+rate}
@@ -668,11 +681,11 @@ function clipPlayer(host,o){
   const prep=()=>{if(nx||si>=stamps.length-1)return;const s2=stamps[si+1],have=o.cams[s2]||[],m={};
     $$("#vids figure[data-c]").forEach(f=>{const c=f.dataset.c;if(have.includes(c)){const v=document.createElement("video");v.muted=true;v.playsInline=true;v.preload="auto";v.src=o.url(s2,c);v.load();m[c]=v}});
     nx={i:si+1,m}};
-  const swap=()=>{const m=nx.m;nx=null;vs.forEach(x=>{x.pause();x.removeAttribute("src");x.load()});
+  const swap=()=>{const m=nx.m;nx=null;vs.forEach(drop);
     $$("#vids figure[data-c]").forEach(f=>{const nv=m[f.dataset.c],old=f.querySelector("video");if(nv&&old)f.replaceChild(nv,old)});
     if($("#stp"))$("#stp").value=si;
     vs=$$("#vids video");mv=vs.find(v=>v.parentNode.dataset.c==="front")||vs[0];wire();vs.forEach(x=>{x.playbackRate=+rate;x.play().catch(()=>{})})};
-  const vids=()=>{nx=null;vs.forEach(x=>{x.pause();x.removeAttribute("src");x.load()});
+  const vids=()=>{dropAll();
     const s=stamps[si],have=o.cams[s]||[],all=view==="all",show=all?CORDER:[have.includes(view)?view:have.includes("front")?"front":have[0]];
     const box=$("#vids");box.className=all?"vgrid":"vone";
     box.innerHTML=show.map(c=>have.includes(c)?`<figure data-c="${c}" class="${o.hot===c?"hot":""}" ${all?'title="Click to see this camera large"':""}><video muted playsinline preload="auto" src="${o.url(s,c)}"></video><figcaption>${CAMN[c]}${o.hot===c?" · detected here":""}</figcaption></figure>`:`<figure class="none"><div>no file</div><figcaption>${CAMN[c]}</figcaption></figure>`).join("");
@@ -680,7 +693,7 @@ function clipPlayer(host,o){
     if(all)$$("#vids figure[data-c]").forEach(f=>f.onclick=()=>{view=f.dataset.c;seek=mv.currentTime;shell()});
     wire()};
   // nothing plays while the page is hidden (a hidden tab still decodes six streams otherwise)
-  const hide=()=>{if(!document.contains(host)){document.removeEventListener("visibilitychange",hide);return}if(document.hidden&&mv&&!mv.paused){offp=true;vs.forEach(x=>x.pause())}else if(!document.hidden&&offp){offp=false;vs.forEach(x=>x.play().catch(()=>{}))}};
+  const hide=()=>{if(!document.contains(host)){document.removeEventListener("visibilitychange",hide);dropAll();return}if(document.hidden&&mv&&!mv.paused){offp=true;vs.forEach(x=>x.pause())}else if(!document.hidden&&offp){offp=false;vs.forEach(x=>x.play().catch(()=>{}))}};
   document.addEventListener("visibilitychange",hide);
   shell();
   // the page can move the video to a clock time (clicking the map or the chart)
@@ -1087,6 +1100,41 @@ function scanPanel(box,drives){
       if(j.running){const l=$("#scn .ixb div");if(l)l.textContent="Reading "+n0(j.done)+" of "+n0(j.total)+(j.current?", "+j.current.replace("_"," "):"")+"…";poll()}else{await get();paint()}}catch(e){}},2000)};
   paint();if(SCN.rep&&SCN.rep.job&&SCN.rep.job.running)poll();
 }
+let FGS={roles:{A:1},log:null,st:null,timer:null,err:""};
+function footagePanel(box,drives){
+  const picked=()=>drives.filter(d=>FGS.roles[d.role]).map(d=>d.role),alive=()=>document.body.contains(box),NM=r=>(drives.find(d=>d.role===r)||{name:({A:"Archive",J:"JOWUA",U:"Tesla USB"})[r]||r}).name;
+  const gb=b=>b>=1073741824?(b/1073741824).toFixed(1)+" GB":Math.round(b/1048576)+" MB";
+  const loadLog=async()=>{FGS.err="";try{FGS.log=await tcGet("footage/log")}catch(e){FGS.err=e.message}};
+  const loadSt=async()=>{FGS.err="";try{FGS.st=await tcGet("footage/stills?roles="+picked().join(","))}catch(e){FGS.err=e.message}};
+  const paint=()=>{if(!alive())return;const lg=FGS.log,st=FGS.st,job=(lg&&lg.job)||(st&&st.job)||null,run=!!(job&&job.running);
+    let h=`<div class="sub" style="margin:8px 0">A log of every TeslaCam video file (which drive has it, how big, when it was deleted), and a still for every second of the front camera, kept after the video is gone. Reviews show those stills one by one. A drive is only read when you pick it.</div>
+      <div class="bar" style="margin:0 0 8px">${drives.map(d=>`<label class="chip ${FGS.roles[d.role]?"on":""}" style="cursor:pointer"><input type="checkbox" data-fr="${d.role}" ${FGS.roles[d.role]?"checked":""} ${run?"disabled":""} style="margin-right:6px">${esc(d.name)}</label>`).join("")}
+      <button class="btn pri" id="fgl1" ${run||!picked().length?"disabled":""}>Update the log</button><button class="btn" id="fgs1" ${run||!picked().length?"disabled":""}>Check the stills</button></div>`;
+    if(FGS.err)h+=`<div class="sub" style="color:var(--bad);user-select:text">${esc(FGS.err)}</div>`;
+    if(run)h+=`<div class="card ixb" style="margin-top:8px"><div>${job.kind==="stills"?`Making stills: ${n0(job.done)} of ${n0(job.total)} minutes${job.current?", "+esc(job.current.replace("_"," ")):""}…`:`Listing ${esc(NM(job.current)||"")}… ${n0(job.done)} of ${n0(job.total)} drives`}</div><button class="btn" id="fgx">Stop</button></div>`;
+    else if(job&&job.error)h+=`<div class="sub" style="color:var(--bad);user-select:text">${esc(job.error)}</div>`;
+    else if(job&&job.note)h+=`<div class="sub" style="user-select:text">${esc(job.note)}</div>`;
+    if(lg&&lg.scans&&Object.keys(lg.scans).length){const t=lg.total;
+      h+=`<h3 style="margin:12px 0 4px">The log</h3><table><thead><tr><th class="l">Drive</th><th>Files listed</th><th>Size</th><th>Gone since</th><th class="l">Last listed (UTC)</th></tr></thead><tbody>${Object.keys(lg.drives).sort().map(r=>{const d=lg.drives[r],s=lg.scans[r]||{};return `<tr><td class="l"><b>${esc(NM(r))}</b></td><td>${n0(d.listed)}</td><td>${gb(d.listed_bytes)}</td><td>${n0(d.gone)}</td><td class="l">${esc((s.at||"never").replace("T"," ").replace("Z",""))}</td></tr>`}).join("")}</tbody></table>
+        <div class="sub" style="margin-top:6px">${n0(t.files)} files ever logged (${gb(t.bytes)}). <b>${n0(t.deleted)}</b> deleted from every drive (${gb(t.deleted_bytes)}), their stills and telemetry kept. <b>${n0(t.only_secondary)}</b> only on a drive other than the Archive (${gb(t.only_secondary_bytes)}), not imported yet. <b>${n0(t.purgeable)}</b> copies also on the Archive can be purged (${gb(t.purgeable_bytes)}); nothing is deleted from here.</div>`}
+    else if(lg)h+=`<div class="sub" style="margin-top:8px">The log is empty. Update it from a drive.</div>`;
+    if(st){const left=st.to_make||0;
+      h+=`<h3 style="margin:12px 0 4px">The stills</h3><table><thead><tr><th class="l">Drive</th><th>Front clips</th><th>Stills kept</th><th>To make</th><th>Also on another picked drive</th><th class="l">Dates</th></tr></thead><tbody>${st.drives.map(d=>`<tr><td class="l"><b>${esc(NM(d.role))}</b></td><td>${n0(d.clips)}</td><td>${n0(d.done)}</td><td>${d.to_make?`<b>${n0(d.to_make)}</b>`:"0"}</td><td>${n0(d.elsewhere)}</td><td class="l">${d.first?(d.first===d.last?dayName(d.first):dayName(d.first)+" to "+dayName(d.last)):""}</td></tr>`).join("")}</tbody></table>
+        <div class="sub" style="margin-top:6px">Stills kept: ${n0(st.kept)} minutes, including video that is gone.</div>`;
+      if(!run&&left)h+=`<div class="card ixb" style="margin-top:8px"><div><b>${n0(left)}</b> minutes of front video have no stills yet (about ${gb(left*750000)}).${st.ffmpeg?"":` <span style="color:var(--bad)">ffmpeg is not installed.</span>`}</div><button class="btn pri" id="fgm" ${st.ffmpeg?"":"disabled"}>Make ${n0(left)} minutes of stills</button></div>`;
+      else if(!run)h+=`<div class="sub" style="margin-top:8px">Every front clip on the picked drives has its stills.</div>`}
+    box.innerHTML=h;
+    $$("[data-fr]",box).forEach(c=>c.onchange=()=>{FGS.roles[c.dataset.fr]=c.checked?1:0;FGS.st=null;paint()});
+    const b1=$("#fgl1",box),b2=$("#fgs1",box),b3=$("#fgm",box),bx=$("#fgx",box);
+    if(b1)b1.onclick=async()=>{await tcPost("footage",{action:"log",roles:picked()});await loadLog();paint();poll()};
+    if(b2)b2.onclick=async()=>{b2.disabled=true;b2.textContent="Checking…";await loadSt();paint()};
+    if(b3)b3.onclick=async()=>{await tcPost("footage",{action:"stills",roles:picked()});await loadLog();paint();poll()};
+    if(bx)bx.onclick=async()=>{await tcPost("footage",{action:"stop"});await loadLog();paint()}};
+  const poll=()=>{clearTimeout(FGS.timer);if(!alive())return;FGS.timer=setTimeout(async()=>{try{const j=await tcGet("footage/status");
+      if(j.running){const l=$("#fgl .ixb div");if(l)l.textContent=j.kind==="stills"?"Making stills: "+n0(j.done)+" of "+n0(j.total)+" minutes"+(j.current?", "+j.current.replace("_"," "):"")+"…":"Listing drives… "+n0(j.done)+" of "+n0(j.total);poll()}
+      else{await loadLog();if(FGS.st)await loadSt();paint()}}catch(e){}},2000)};
+  loadLog().then(()=>{paint();if(FGS.log&&FGS.log.job&&FGS.log.job.running)poll()});
+}
 async function pageTeslaCam(role,id){
   if(role&&id)return /^sentry-/.test(id)?pageTeslaCamSentry(role,id.slice(7)):pageTeslaCamDrive(role,id);
   loading();const [dr,act,pl]=await Promise.all([tcGet("teslacam"),api("activity"),api("places").catch(()=>({saved:[]}))]),drives=dr.drives,places=(pl.saved||[]);
@@ -1095,7 +1143,7 @@ async function pageTeslaCam(role,id){
   if(!drives.some(d=>d.role===TCS.role))TCS.role=(drives.find(d=>d.role==="A")||drives[0]).role;
   const trips=act.filter(x=>x.k==="drive"&&!x.repark).map(x=>({id:x.id,t0:x.t0,t1:x.t0+x.min*60,ti:driveTitle(x)}));
   const tripOf=v=>{const a=v.t0!=null?v.t0:v.t,b=v.t1!=null?v.t1:(v.t||0)+60;return trips.find(d=>d.t0<b&&d.t1>a)};
-  main.innerHTML=head+`<details class="card" id="scn" style="margin-bottom:12px"><summary><b>Scan the connected drives for telemetry</b></summary><div id="scb"></div></details><div class="bar" id="tcd"></div><div class="sub" id="tcn"></div><div class="bar" id="tck"></div><div class="bar" id="tsr"></div><div class="bar"><span id="rg"></span><input type="search" id="q" placeholder="Search…" value="${esc(TCS.q)}"></div><div id="ixb"></div><div class="tiles" id="tl"></div><div id="spl"></div><div id="tb"></div>`;
+  main.innerHTML=head+`<details class="card" id="scn" style="margin-bottom:12px"><summary><b>Scan the connected drives for telemetry</b></summary><div id="scb"></div></details><details class="card" id="fgl" style="margin-bottom:12px"><summary><b>Footage log and one-second stills</b></summary><div id="fgb"></div></details><div class="bar" id="tcd"></div><div class="sub" id="tcn"></div><div class="bar" id="tck"></div><div class="bar" id="tsr"></div><div class="bar"><span id="rg"></span><input type="search" id="q" placeholder="Search…" value="${esc(TCS.q)}"></div><div id="ixb"></div><div class="tiles" id="tl"></div><div id="spl"></div><div id="tb"></div>`;
   let data=null,sel=null,token=0,sentryList=null;
   const chips=()=>{$("#tcd").innerHTML=drives.map(d=>`<button class="chip ${d.role===TCS.role?"on":""}" data-r="${d.role}"><span class="dot on" style="margin-right:6px"></span>${esc(d.name)}</button>`).join("");
     $("#tck").innerHTML=Object.keys(TCK).map(k=>`<button class="chip ${k===TCS.kind?"on":""}" data-k="${k}">${TCK[k]}</button>`).join("");
@@ -1147,7 +1195,7 @@ async function pageTeslaCam(role,id){
       try{const rr=await tcGet("teslacam/"+role+"/recent/"+encodeURIComponent(sel)),c=rr.clips,stamps=Object.keys(c);
         clipPlayer($("#spl"),{stamps,cams:c,loc:rr.loc,url:(s,k)=>`/footage/${role}/RecentClips/${s}-${k}.mp4`,head:`Continuous recording on ${dayName(run.ts.slice(0,10))}, ${hms(run.ts).slice(0,5)} to ${hms(run.end).slice(0,5)}, ${run.n} minute${run.n>1?"s":""}. The next minute plays on its own.`})}
       catch(e){$("#spl").innerHTML=errBox(e.message,"Could not read these clips")}})};
-  $("#q").oninput=e=>{TCS.q=e.target.value;draw()};chips();load();$("#scn").ontoggle=()=>{if($("#scn").open&&!$("#scb").innerHTML)scanPanel($("#scb"),drives)};
+  $("#q").oninput=e=>{TCS.q=e.target.value;draw()};chips();load();$("#scn").ontoggle=()=>{if($("#scn").open&&!$("#scb").innerHTML)scanPanel($("#scb"),drives)};$("#fgl").ontoggle=()=>{if($("#fgl").open&&!$("#fgb").innerHTML)footagePanel($("#fgb"),drives)};
 }
 
 // ---------- one drive rebuilt from the video: map, telemetry and the stitched footage, moving together
