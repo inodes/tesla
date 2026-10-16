@@ -104,7 +104,7 @@ def local(u):
 
 def camera_points(store, t0, t1, clock="local"):
     """The per-second readings in [t0, t1] (page clock) from the shared store: [(t, la, lo, speed, autopilot mode, accelerator %, steering deg,
-    indicator, brake)] by time. A clip is named by the car's clock; that is turned into UTC (clock: see utc()) and from there to the page's clock,
+    indicator, brake, clip stamp, second in the clip)] by time. A clip is named by the car's clock; that is turned into UTC (clock: see utc()) and from there to the page's clock,
     so a drive and its footage are always compared as the same instant."""
     out = []
     for st in sorted(store.stamps()):
@@ -121,7 +121,7 @@ def camera_points(store, t0, t1, clock="local"):
             if la is None or lo is None or (abs(la) < 1 and abs(lo) < 1):
                 continue
             if t0 <= m + i <= t1:
-                out.append((m + i, la, lo, ser["v"][i], ser["ap"][i], ser["accel"][i], ser["steer"][i], ser["blk"][i], ser["br"][i]))
+                out.append((m + i, la, lo, ser["v"][i], ser["ap"][i], ser["accel"][i], ser["steer"][i], ser["blk"][i], ser["br"][i], st, i))
     return out
 
 
