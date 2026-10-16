@@ -85,6 +85,7 @@ select{background:var(--card);border:1px solid var(--line);border-radius:6px;pad
 .sg.gr{min-width:30px;height:24px;padding:0 5px;background:#13803f;color:#fff;font-size:13px;border-radius:3px;border:2px solid #fff}
 .sg.tr{min-width:30px;height:24px;background:#7a3fb5;color:#fff;font-size:15px;border-radius:5px;border:2px solid #fff}
 .card.bug{border-left:6px solid var(--bad)}
+.pgn{display:flex;align-items:center;justify-content:space-between;gap:12px;margin:0 0 12px}
 .how{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:10px 14px;margin-bottom:14px;color:var(--mut);font-size:13.5px}
 .how b{color:var(--ink)}
 .signs{margin:8px 0 2px;font-size:13px}.signs img{max-width:100%;height:auto;margin-top:6px;border-radius:6px;image-rendering:auto}.signs .mut{color:var(--mut)}
@@ -288,12 +289,17 @@ function lazy(){
     if(en.isIntersecting){f.style.setProperty("--sheet",`url(${f.dataset.sheet})`);f.classList.add("on")}else{f.classList.remove("on")}}),{rootMargin:"700px 0px"});
   document.querySelectorAll(".film").forEach(f=>IO.observe(f));
 }
+let PN=0,PSIG="";
 function render(){
   let L=E.filter(pass);
   if(ST.sort==="drop")L=L.slice().sort((a,b)=>a.step.delta-b.step.delta);
   else if(ST.sort==="rise")L=L.slice().sort((a,b)=>b.step.delta-a.step.delta);
   else L=L.slice().sort((a,b)=>a.onset_local<b.onset_local?-1:1);
-  $("#list").innerHTML=L.map(card).join("")||`<p class="sub">No events match.</p>`;
+  // one event at a time, with Back / Next (a change of filter or order starts again at the first)
+  const sig=JSON.stringify(ST);if(sig!==PSIG){PSIG=sig;PN=0}PN=Math.max(0,Math.min(L.length-1,PN));
+  const one=L[PN];
+  $("#list").innerHTML=one?`<div class="pgn"><button class="btn" id="pgp" ${PN?"":"disabled"}>‹ Back</button><span><b>${esc(one.id)}</b> · ${PN+1} of ${L.length}</span><button class="btn" id="pgn" ${PN<L.length-1?"":"disabled"}>Next ›</button></div>`+card(one):`<p class="sub">No events match.</p>`;
+  if(one){$("#pgp").onclick=()=>{PN--;render();scrollTo(0,0)};$("#pgn").onclick=()=>{PN++;render();scrollTo(0,0)}}
   $("#cnt").textContent=`${L.length} of ${E.length} shown`;
   kpis();lazy();
 }
