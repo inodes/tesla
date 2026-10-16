@@ -2124,6 +2124,51 @@ class TeslaChargerExplorer:
         except Exception:
             return "STALE"
 
+    def plan_sync(self, stations: list, moved_m: float = 150.0) -> dict:
+        """Compare the tesla.com list with the registry (no page is fetched) and sort every station into one bucket:
+        new (not in the registry), renamed (title changed), moved (coordinates > moved_m metres from the registry's), stale (not
+        re-verified for 90+ days), same. gone = registry keys the list no longer carries (reported, never deleted).
+        Only a list covering the whole country may be used for gone."""
+        sc_reg, dc_reg = self.load_active_registries()
+        plan = {"new": [], "renamed": [], "moved": [], "stale": [], "same": [], "gone": []}
+        seen = set()
+        for st in stations:
+            key, entry, ctype = self.get_station_record(st, sc_reg=sc_reg, dc_reg=dc_reg)
+            status = self.get_station_status(st, sc_reg=sc_reg, dc_reg=dc_reg)
+            if key:
+                seen.add((ctype, key))
+            if status == "NOT_IN_JSON":
+                plan["new"].append(st)
+            elif status == "RENAMED":
+                plan["renamed"].append(st)
+            elif entry and self._station_moved(st, entry, moved_m):
+                plan["moved"].append(st)
+            elif status == "STALE":
+                plan["stale"].append(st)
+            else:
+                plan["same"].append(st)
+        types = {("supercharger" if "/supercharger/" in (x.get("url") or "") else "destination_charger") for x in stations}
+        for ctype, reg in (("supercharger", sc_reg), ("destination_charger", dc_reg)):
+            if ctype in types:
+                plan["gone"] += [k for k in reg if (ctype, k) not in seen]
+        return plan
+
+    @staticmethod
+    def _station_moved(station: dict, entry: dict, moved_m: float) -> bool:
+        lat, lon = station.get("_lat"), station.get("_lon")
+        loc = entry.get("location") or {}
+        if lat is None or lon is None:
+            return False
+        best = None
+        for a, b in ((loc.get("lat"), loc.get("lon")), (loc.get("osm_lat"), loc.get("osm_lon"))):     # the registry's own or its OSM-audited point
+            if a is None or b is None:
+                continue
+            dy = (float(a) - float(lat)) * 111000.0
+            dx = (float(b) - float(lon)) * 111000.0 * math.cos(math.radians(float(lat)))
+            d = (dx * dx + dy * dy) ** 0.5
+            best = d if best is None else min(best, d)
+        return best is not None and best > moved_m
+
     def scrape_all_stations(self, stations: list, force: bool = False, pacing_delay: float = 1.5, timeout_sec: int = 35, max_retries: int = 3, subset_filter: str = None):
         """Batch scrapes and updates stations with periodic context recycling, backoffs, retries, and granular change reporting."""
         try:
