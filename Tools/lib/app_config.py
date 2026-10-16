@@ -58,7 +58,7 @@ DEFAULTS = {
                               "NRMA": "#2563eb", "AmpCharge": "#84cc16", "Jolt": "#14b8a6", "BP Pulse": "#0891b2", "3rd-Party": "#6b7280", "WA EV Network": "#9333ea"}},
     "teslacam": {"moving_kmh": 3.0, "run_gap_s": 75, "gap_min_s": 120, "same_place_m": 300, "same_place_est_m": 800, "same_minute_s": 30, "read_workers": 4, "days_newest_first": True, "rows_newest_first": True},
     "review": {"step_s": 1.0, "min_kmh": 30.0, "min_conf": 50.0, "workers": 3, "merge_s": 12.0, "candidate_km": 20, "candidate_avg_kmh": 60,
-               "accel_min_pct": 5, "speed_min_kmh": 10, "speed_tol_kmh": 3,
+               "accel_min_pct": 5, "speed_min_kmh": 5, "speed_tol_kmh": 6,
                "event_before_s": 12, "event_after_s": 15, "max_event_stills": 40, "steer_deg": 15},
     "stills": {"width": 400, "quality": 6, "workers": 3},
     "drives": {"repark_max_km": 0.05, "repark_same_place_km": 0.3, "repark_same_place_m": 50, "repark_max_minutes": 10,
