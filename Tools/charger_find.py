@@ -2358,8 +2358,9 @@ DESCRIPTION
     ./Tools/charger_find.py --sync-plugshare --state NSW --add-all
 
  # Sync Tesla Superchargers & Destination Chargers:
-    ./Tools/charger_find.py --sync-tesla --sc --near Home --radius 50 --new
-    ./Tools/charger_find.py --sync-tesla --dc --near Home --radius 50 --new
+    ./Tools/charger_find.py --sync-tesla --sc          # compare tesla.com's list, fetch only new/renamed/moved
+    ./Tools/charger_find.py --sync-tesla --sc --stale  # re-check only entries not verified for 90+ days
+    ./Tools/charger_find.py --sync-tesla --all         # re-fetch every listed station
 
  # Refresh unlisted pricing or discover chargers from past charging history:
     ./Tools/charger_find.py --refresh-prices
@@ -2474,7 +2475,7 @@ DESCRIPTION
 
     g_sync = parser.add_argument_group("Synchronization")
     g_sync.add_argument("--sync-all", action="store_true", help="End-to-end sync across all providers (Tesla, Chargefox, EVX, Evie, bp pulse, PlugShare, AmpCharge, Exploren, Jolt, NRMA, Master Catalog)")
-    g_sync.add_argument("--sync-tesla", action="store_true", help="Download, verify and cache Tesla Superchargers and Destination Chargers")
+    g_sync.add_argument("--sync-tesla", action="store_true", help="Compare tesla.com's station list with the registry and fetch only the new, renamed or moved ones (--stale, --unpriced, --all widen it)")
     g_sync.add_argument("--sync-chargefox", action="store_true", help="Download and cache all Chargefox & NRMA stations across Australia")
     g_sync.add_argument("--sync-evx", action="store_true", help="Download and cache all EVX Kerbside Polechargers across Australia")
     g_sync.add_argument("--sync-evie", action="store_true", help="Download and cache all Evie Networks fast charging stations across Australia")
@@ -2777,6 +2778,16 @@ DESCRIPTION
             type_label = "Superchargers" if c_type == "superchargers" else "Destination Chargers"
             print(f"{C_CYAN}🌐 Synchronizing Tesla {type_label}...{C_RESET}")
             stations = explorer.fetch_station_list(country=args.country or "Australia", charger_type=c_type)
+            # The list is compared with the registry first (no page fetched). Only what differs is scraped, unless a flag asks for more.
+            plan = explorer.plan_sync(stations)
+            print(f"  {len(stations)} listed: {len(plan['same']) + len(plan['stale'])} match the registry, {len(plan['new'])} new, "
+                  f"{len(plan['renamed'])} renamed, {len(plan['moved'])} moved, {len(plan['gone'])} no longer listed")
+            for k in plan["gone"]:
+                print(f"  {C_YELLOW}no longer listed on tesla.com (kept): {k}{C_RESET}")
+            if plan["stale"]:
+                print(f"  {C_DIM}{len(plan['stale'])} not re-checked for 90+ days (--stale to re-check){C_RESET}")
+            changed = {x["url"] for x in plan["new"] + plan["renamed"] + plan["moved"]}
+            by_flag = bool(args.unpriced or args.new or args.renamed or args.stale or args.all)
             if args.near:
                 ref_lat, ref_lon, ref_label = resolve_reference_coords(args.near)
                 if ref_lat is not None and ref_lon is not None:
@@ -2793,17 +2804,33 @@ DESCRIPTION
                                 scoped.append(s)
                     stations = scoped
                     print(f"  {C_DIM}📍 Filtered to {len(stations)} stations within {radius:.0f}km of {ref_label}{C_RESET}")
-            
+
             subset_filter = "unpriced" if args.unpriced else ("new" if args.new else ("renamed" if args.renamed else ("stale" if args.stale else None)))
-            if subset_filter:
+            if not by_flag:
+                stations = [x for x in stations if x["url"] in changed]
+            elif subset_filter:
                 print(f"  {C_DIM}🎯 Applying subset filter: '{subset_filter}'{C_RESET}")
-            explorer.scrape_all_stations(
-                stations,
-                pacing_delay=args.delay,
-                timeout_sec=args.timeout,
-                max_retries=args.retries,
-                subset_filter=subset_filter
-            )
+            if not stations:
+                print(f"  {C_GREEN}Nothing to fetch.{C_RESET}")
+            else:
+                explorer.scrape_all_stations(
+                    stations,
+                    pacing_delay=args.delay,
+                    timeout_sec=args.timeout,
+                    max_retries=args.retries,
+                    subset_filter=subset_filter
+                )
+
+        # charging_stations.json (what the app and the other tools read) is rebuilt whenever a Tesla registry file is newer than it.
+        try:
+            from lib.tessie_api_common import resolve_tessie_data_home
+            cons = os.path.join(resolve_tessie_data_home(), "charging_stations.json")
+            srcs = [explorer.superchargers_path, explorer.destination_chargers_path]
+            if os.path.isfile(cons) and any(os.path.isfile(x) and os.path.getmtime(x) > os.path.getmtime(cons) for x in srcs):
+                out_path, total_count = manager.export_consolidated_registry()
+                print(f"{C_GREEN}✔ Rebuilt {os.path.basename(out_path)} ({total_count} stations).{C_RESET}")
+        except Exception as e:
+            print(f"{C_YELLOW}⚠ charging_stations.json was not rebuilt: {e}{C_RESET}")
         print(f"{C_GREEN}✔ Tesla synchronization complete.{C_RESET}")
         return
 
