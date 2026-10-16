@@ -142,6 +142,7 @@ from power_demand_calculator import load_rate_periods, rate_for_date  # noqa: E4
 from lib.power_usage_db import get_usage_db_connection, resolve_usage_db_path, iter_rows  # noqa: E402
 from lib.evnex_common import is_real_charging_session  # noqa: E402
 from lib.tessie_api_common import resolve_tessie_data_home, load_config  # noqa: E402
+import lib.charge_paths as CP  # noqa: E402
 from providers_pv import get_pv_provider  # noqa: E402
 from lib.pv_history_db import get_pv_db_connection, pv_window_split  # noqa: E402
 from lib.pvoutput_common import pv_agl_import_conflict  # noqa: E402
@@ -195,7 +196,7 @@ def load_evnex_deepdive_sessions(deepdive_dir=None, since_days=None, limit=None,
     for humans only)."""
     deepdive_dir = deepdive_dir or DEEPDIVE_DIR
     sessions = []
-    for path in glob.glob(os.path.join(deepdive_dir, "*_Evnex_Home*.json")):
+    for path in CP.glob_files(deepdive_dir, "*_Evnex_Home*.json"):
         try:
             with open(path, "r", encoding="utf-8") as f:
                 d = json.load(f)

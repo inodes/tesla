@@ -69,6 +69,8 @@ if _TOOLS_DIR not in sys.path:
     sys.path.insert(0, _TOOLS_DIR)
 REPO_ROOT = os.path.dirname(_TOOLS_DIR)
 
+import lib.charge_paths as CP
+
 try:
     from lib.tessie_api_common import resolve_tessie_data_home
 except Exception:
@@ -316,7 +318,7 @@ def discover_deepdive_sessions(deepdive_dir):
     only, no matching CSV) and any CSV that isn't telemetry-shaped are
     silently skipped."""
     sessions = []
-    for path in sorted(glob.glob(os.path.join(deepdive_dir, "charge_deepdive_*.csv"))):
+    for path in CP.glob_files(deepdive_dir, "charge_deepdive_*.csv"):          # day folders and any flat leftovers
         slug = slug_from_deepdive_filename(path)
         pts = parse_telemetry_csv(path)
         if slug and pts:

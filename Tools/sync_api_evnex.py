@@ -65,7 +65,8 @@ from lib.evnex_common import (  # noqa: E402
     to_jsonable,
     EvnexCredentialsError,
 )
-from lib.tessie_api_common import resolve_tessie_data_home, unique_stamped_path  # noqa: E402
+from lib.tessie_api_common import resolve_tessie_data_home  # noqa: E402
+import lib.charge_paths as CP  # noqa: E402
 import lib.tessie_timezone as tztools  # noqa: E402
 
 
@@ -98,11 +99,11 @@ def load_seen_session_ids(ddir):
     seen = set()
     if not os.path.isdir(ddir):
         return seen
-    for fname in os.listdir(ddir):
+    for fname, fpath in CP.list_files(ddir):
         if not (fname.startswith("charge_deepdive_") and fname.endswith("_Evnex_Home.json")):
             continue
         try:
-            with open(os.path.join(ddir, fname), "r", encoding="utf-8") as f:
+            with open(fpath, "r", encoding="utf-8") as f:
                 data = json.load(f)
             sid = data.get("evnex_session_id")
             if sid:
@@ -289,7 +290,7 @@ async def run(dry_run, limit, log):
  # "00") rather than a bare name for the first file and an ad-hoc
  # "_2", "_3", ... suffix only from the second collision onward -
  # see unique_stamped_path()'s docstring / AGENTS.md REQ-030.
-        out_path = unique_stamped_path(ddir, "charge_deepdive", local_label, suffix="_Evnex_Home", ext=".json")
+        out_path = CP.unique_path(ddir, local_label, suffix="_Evnex_Home", ext=".json")
         base_name = os.path.basename(out_path)
 
         if limit is not None and written >= limit:
@@ -317,7 +318,7 @@ async def run(dry_run, limit, log):
         if dry_run:
             log(f"  [dry-run] would write {base_name}")
         else:
-            os.makedirs(ddir, exist_ok=True)
+            os.makedirs(os.path.dirname(out_path), exist_ok=True)
             with open(out_path, "w", encoding="utf-8") as f:
                 json.dump(record, f, indent=2, default=str)
  # AGENTS.md TODO-033: set this file's mtime to the real

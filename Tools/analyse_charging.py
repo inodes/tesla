@@ -149,7 +149,7 @@ if _tools_dir not in sys.path:
     sys.path.insert(0, _tools_dir)
 
 from lib.archive_naming import next_archive_path
-from lib.tessie_api_common import unique_stamped_path
+import lib.charge_paths as CP
 from lib.analysis_deepdive_charts import write_interactive_chart, try_open_in_browser
 import lib.tessie_timezone as tztools
 
@@ -1810,15 +1810,15 @@ class ChargingAnalyzer:
  # reused for every mirror dir below - so the same
  # logical file gets the same name everywhere instead
  # of risking a different "_NN" in each destination.
-                                    deepdive_name = os.path.basename(unique_stamped_path(
-                                        self.charges_dirs[0], "charge_deepdive",
+                                    deepdive_name = os.path.basename(CP.unique_path(
+                                        os.path.join(self.charges_dirs[0], "deepdive"),
                                         stamp, ext=".csv"))
                                 elif dt:
                                     deepdive_name = f"charge_deepdive_{stamp}_00.csv"
                                 else:
                                     deepdive_name = f"charge_deepdive_{f}"
                                 for cd in self.charges_dirs:
-                                    dest_fp = os.path.join(cd, deepdive_name)
+                                    dest_fp = CP.path_for(os.path.join(cd, "deepdive"), deepdive_name, create=True)    # <day>/<stamp>/
                                     shutil.copy2(fp, dest_fp)
                                     if dt_epoch is not None:
                                         try:
@@ -2410,7 +2410,10 @@ class ChargingAnalyzer:
             if not s_dir or not os.path.isdir(s_dir):
                 continue
             try:
-                for fname in os.listdir(s_dir):
+                # a deepdive folder is read through charge_paths (day folders and any flat leftovers); other folders are flat
+                entries = (CP.list_files(s_dir) if os.path.basename(s_dir) == "deepdive"
+                           else [(f, os.path.join(s_dir, f)) for f in os.listdir(s_dir)])
+                for fname, entry_path in entries:
                     if not fname.endswith(".csv") or fname.startswith("."):
                         continue
                     is_match = False
@@ -2422,7 +2425,7 @@ class ChargingAnalyzer:
                         is_match = True
 
                     if is_match:
-                        fpath = os.path.join(s_dir, fname)
+                        fpath = entry_path
                         real_p = os.path.realpath(fpath)
                         if real_p not in seen_paths:
                             seen_paths.add(real_p)
@@ -2948,7 +2951,7 @@ class ChargingAnalyzer:
         if session.get("network") == "Evnex":
             matched_stamp = self._matching_evnex_json_stamp(start_dt, end_dt)
             if matched_stamp:
-                dest_path = unique_stamped_path(dest_dir, "charge_deepdive", matched_stamp, suffix="_Evnex_Home", ext=".csv")
+                dest_path = CP.unique_path(dest_dir, matched_stamp, suffix="_Evnex_Home", ext=".csv")
         if not dest_path:
  # (found 2026-09-14): this used to be
  # `"_Evnex_Home" if session.get("network") == "Evnex" else ""`
@@ -2984,9 +2987,10 @@ class ChargingAnalyzer:
                     stamp = f"{stamp}_{abbr}"
             except Exception:
                 pass
-            dest_path = unique_stamped_path(dest_dir, "charge_deepdive", stamp, suffix=suffix, ext=".csv")
+            dest_path = CP.unique_path(dest_dir, stamp, suffix=suffix, ext=".csv")
 
         try:
+            os.makedirs(os.path.dirname(dest_path), exist_ok=True)      # <day>/<stamp>/
             with open(dest_path, "wb") as f:
                 f.write(body)
         except Exception:
@@ -4869,7 +4873,7 @@ class ChargingAnalyzer:
         try:
             from lib.charge_curves import (discover_deepdive_sessions, load_charger_registries,
                                            estimate_window_minutes, window_line)
-            _dd_dir = os.path.dirname(dt_rec.get("source_path") or "")
+            _dd_dir = CP.root_of(dt_rec.get("source_path")) if dt_rec.get("source_path") else ""
             _pool = discover_deepdive_sessions(_dd_dir) if _dd_dir else []
             _cur = next((x for x in _pool if os.path.abspath(x["path"]) == os.path.abspath(dt_rec.get("source_path") or "")), None)
             if _cur is not None:
@@ -4919,7 +4923,7 @@ class ChargingAnalyzer:
             )
             csv_path = dt_rec.get("source_path")
             if csv_path and os.path.isfile(csv_path):
-                deepdive_dir = os.path.dirname(csv_path)
+                deepdive_dir = CP.root_of(csv_path)
                 all_sessions = discover_deepdive_sessions(deepdive_dir)
                 this_session = next(
                     (cs for cs in all_sessions if os.path.abspath(cs["path"]) == os.path.abspath(csv_path)),
@@ -5240,7 +5244,7 @@ class ChargingAnalyzer:
         for x in self.reconciled_sessions:
             tel = x.get("detailed_telemetry") or {}
             src = tel.get("source_path") or ""
-            if not src or x.get("network") == "Evnex" or os.path.realpath(os.path.dirname(src)) != os.path.realpath(deepdive_dir):
+            if not src or x.get("network") == "Evnex" or os.path.realpath(CP.root_of(src)) != os.path.realpath(deepdive_dir):
                 continue
             # Tesla Supercharger names carry the registry's own short_name
             # (the key the history pooling matches on) - never re-derive them.
@@ -5256,8 +5260,9 @@ class ChargingAnalyzer:
             want = self._deepdive_location_suffix(x)
             if not want or m.group(2) == want:
                 continue
-            old_stem = os.path.join(deepdive_dir, m.group(0))
-            new_stem = os.path.join(deepdive_dir, m.group(1) + want)
+            src_dir = os.path.dirname(src)                       # the charge's own folder: a rename never moves it
+            old_stem = os.path.join(src_dir, m.group(0))
+            new_stem = os.path.join(src_dir, m.group(1) + want)
             if os.path.exists(new_stem + ".csv"):
                 continue
             moved = 0
@@ -5302,10 +5307,9 @@ class ChargingAnalyzer:
                 failed += 1
                 log(f"{C_RED}✘ {os.path.basename(sess['path'])}: {e}{C_RESET}")
         parsed = {os.path.basename(x["path"]) for x in sessions}
-        unusable = sorted(
-            f for f in os.listdir(deepdive_dir)
-            if f.startswith("charge_deepdive_") and f.endswith(".csv") and f not in parsed
-        )
+        unusable_paths = {f: p for f, p in CP.list_files(deepdive_dir)
+                          if f.endswith(".csv") and f not in parsed}
+        unusable = sorted(unusable_paths)
         # Header-only files can never produce a chart and would be re-listed
         # forever; move them aside (not deleted) so nothing needs doing by hand.
         # The sub-folder is not scanned by the deep-dive loaders.
@@ -5315,7 +5319,11 @@ class ChargingAnalyzer:
             moved = []
             for f in unusable:
                 try:
-                    os.replace(os.path.join(deepdive_dir, f), os.path.join(qdir, f))
+                    os.replace(unusable_paths[f], os.path.join(qdir, f))
+                    try:
+                        os.rmdir(os.path.dirname(unusable_paths[f]))      # its charge folder, when that was the only file
+                    except OSError:
+                        pass
                     moved.append(f)
                 except Exception as e:
                     log(f"{C_RED}✘ could not move {f}: {e}{C_RESET}")
