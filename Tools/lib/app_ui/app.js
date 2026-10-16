@@ -992,16 +992,17 @@ function driveMap(el,s,idx,onPick,leg){
 // speed, pedals and steering against time, with the autopilot state as a strip; hover reads it out, click or drag moves the video
 function telemChart(cv,tip,s,onPick,t0){
   let S=s,cur=null,hov=null,W=0,H=0,M={signs:[],steps:[]};const css=n=>getComputedStyle(document.documentElement).getPropertyValue(n).trim()||"#888";
-  const L=44,R=10,lanes=[{k:"v",t:"km/h",y:34,h:118},{k:"p",t:"pedals",y:164,h:46},{k:"s",t:"steering",y:218,h:40}];
+  const L=62,R=10,lanes=[{k:"v",t:"km/h",y:34,h:118},{k:"p",t:"pedals",y:164,h:46},{k:"s",t:"steering",y:218,h:40}];
   const X=i=>L+(W-L-R)*i/Math.max(1,S.v.length-1),I=x=>Math.max(0,Math.min(S.v.length-1,Math.round((x-L)/(W-L-R)*(S.v.length-1))));
   const draw=()=>{const dpr=devicePixelRatio||1;W=cv.clientWidth;H=cv.clientHeight;cv.width=W*dpr;cv.height=H*dpr;const c=cv.getContext("2d");c.setTransform(dpr,0,0,dpr,0,0);c.clearRect(0,0,W,H);
     const ink=css("--mut"),line=css("--line"),acc=css("--acc"),bad=css("--bad"),ok=css("--charge"),n=S.v.length;if(!n)return;
-    c.font="11px system-ui";c.fillStyle=ink;c.strokeStyle=line;c.lineWidth=1;
+    const ff=getComputedStyle(document.body).fontFamily||"system-ui",F="11px "+ff;c.font=F;c.fillStyle=ink;c.strokeStyle=line;c.lineWidth=1;
     const vm=Math.max(120,Math.ceil(Math.max(...S.v.filter(x=>x!=null))/20)*20),vy=v=>lanes[0].y+lanes[0].h*(1-v/vm);
     for(let g=0;g<=vm;g+=40){c.beginPath();c.moveTo(L,vy(g));c.lineTo(W-R,vy(g));c.stroke();c.fillText(g,8,vy(g)+4)}
-    // autopilot strip
-    for(let i=0;i<n;i++){const a=S.ap[i];if(a>0&&a<4){c.fillStyle=apCol(APN[a]);c.fillRect(X(i),lanes[0].y-14,Math.max(1,(W-L-R)/n+.5),8)}}
-    c.fillStyle=ink;c.fillText("autopilot / FSD",8,lanes[0].y-6);
+    // driving-mode strip on the same time scale as the chart: FSD / Autosteer / TACC / Manual in the colours of the map legend, with its key above it
+    for(let i=0;i<n;i++){if(S.v[i]==null)continue;const a=S.ap[i];c.fillStyle=apCol(a>0&&a<4?APN[a]:"Manual");c.fillRect(X(i),lanes[0].y-12,Math.max(1,(W-L-R)/n+.5),8)}
+    c.fillStyle=ink;c.textBaseline="middle";c.fillText("FSD / AP",8,lanes[0].y-8);
+    let kx=L;["FSD","Autosteer","TACC","Manual"].forEach(k=>{c.fillStyle=apCol(k);c.beginPath();c.arc(kx+4,9,4,0,7);c.fill();c.fillStyle=ink;c.fillText(k,kx+12,10);kx+=12+c.measureText(k).width+14});c.textBaseline="alphabetic";
     // speed
     const seg=(arr,y,col,fill,f)=>{c.beginPath();let on=false,last=-9;for(let i=0;i<n;i++){const v=arr[i];if(v==null){if(i-last>3)on=false;continue}const x=X(i),yy=f(v);if(!on){c.moveTo(x,yy);on=true}else c.lineTo(x,yy);last=i}c.strokeStyle=col;c.lineWidth=1.6;c.stroke()};
     seg(S.v,0,acc,0,vy);
@@ -1009,15 +1010,15 @@ function telemChart(cv,tip,s,onPick,t0){
     const L2=M.signs.filter(g=>g.side==="L").map(g=>({i:g.i,v:+g.text})).sort((a,b)=>a.i-b.i);
     c.save();c.setLineDash([5,4]);c.strokeStyle="#f59e0b";c.lineWidth=1.2;L2.forEach((g,k)=>{const e=k+1<L2.length?L2[k+1].i:n-1;c.beginPath();const yy=Math.max(lanes[0].y+6,vy(g.v));c.moveTo(X(g.i),yy);c.lineTo(X(e),yy);c.stroke()});c.restore();
     M.signs.forEach(g=>{if(g.i<0||g.i>=n)return;const x=X(g.i),y=Math.max(lanes[0].y+6,vy(+g.text));c.beginPath();c.arc(x,y,9,0,7);c.fillStyle="#fff";c.fill();c.lineWidth=2.2;c.strokeStyle=g.side==="R"?"#94a3b8":"#dc2626";c.stroke();c.fillStyle="#111";c.font="bold 8.5px system-ui";c.textAlign="center";c.fillText(g.text,x,y+3);c.textAlign="start"});
-    c.font="11px system-ui";
+    c.font=F;
     M.steps.forEach(x=>{const px=X(x.i),py=lanes[0].y+lanes[0].h;c.fillStyle=x.d<0?"#dc2626":"#16a34a";c.beginPath();c.moveTo(px,py-9);c.lineTo(px-5,py);c.lineTo(px+5,py);c.fill()});
     // brake marks over the speed lane
     c.fillStyle=bad;c.globalAlpha=.18;for(let i=0;i<n;i++)if(S.br[i])c.fillRect(X(i),lanes[0].y,Math.max(1,(W-L-R)/n+.5),lanes[0].h);c.globalAlpha=1;
     // pedals
-    const P=lanes[1];c.fillStyle=ink;c.fillText("accelerator %",8,P.y+10);c.strokeStyle=line;c.beginPath();c.moveTo(L,P.y+P.h);c.lineTo(W-R,P.y+P.h);c.stroke();seg(S.accel,0,ok,0,v=>P.y+P.h*(1-Math.min(100,v)/100));
+    const P=lanes[1];c.fillStyle=ink;c.fillText("accel. %",8,P.y+10);c.strokeStyle=line;c.beginPath();c.moveTo(L,P.y+P.h);c.lineTo(W-R,P.y+P.h);c.stroke();seg(S.accel,0,ok,0,v=>P.y+P.h*(1-Math.min(100,v)/100));
     // steering and blinkers
     const T=lanes[2],sm=Math.max(90,Math.ceil(Math.max(...S.steer.filter(x=>x!=null).map(Math.abs))/90)*90);c.fillStyle=ink;c.fillText("steering °",8,T.y+10);c.strokeStyle=line;c.beginPath();c.moveTo(L,T.y+T.h/2);c.lineTo(W-R,T.y+T.h/2);c.stroke();seg(S.steer,0,acc,0,v=>T.y+T.h/2-(v/sm)*(T.h/2));
-    c.fillStyle="#f59e0b";for(let i=0;i<n;i++)if(S.blk[i])c.fillRect(X(i),T.y+T.h-4,Math.max(1,(W-L-R)/n+.5),4);
+    c.fillStyle="#f59e0b";for(let i=0;i<n;i++)if(S.blk[i])c.fillRect(X(i),T.y+T.h-4,Math.max(1,(W-L-R)/n+.5),4);c.fillStyle="#f59e0b";c.fillRect(8,T.y+T.h-9,8,4);c.fillStyle=ink;c.fillText("indicator",20,T.y+T.h-4);
     // clock axis
     c.fillStyle=ink;const step=n>1800?600:n>600?300:60;for(let i=0;i<n;i+=step){const t=new Date(t0+i*1000);c.fillText(t.toTimeString().slice(0,5),X(i)-12,H-4)}
     const mark=(i,col)=>{c.strokeStyle=col;c.lineWidth=1.5;c.beginPath();c.moveTo(X(i),12);c.lineTo(X(i),H-18);c.stroke()};
