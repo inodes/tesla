@@ -443,6 +443,7 @@ async function pageParkedOne(id){
 // ---------- Clip player (Sentry, Saved and Recent clips): all six cameras laid out like a drive page, or one camera big
 // event.json "camera" -> the camera that saw it (checked against the thumbnails and the clips: 0 and 1 front, 5 left repeater, 6 right repeater, 7 back; others unknown -> all six)
 const EVCAM={"0":"front","1":"front","5":"left_repeater","6":"right_repeater","7":"back"};
+const MSZ=[["s","Small","260px"],["m","Medium","420px"],["l","Large","640px"],["f","Full","calc(100vh - 120px)"]],TSZ=[["h","Hide","0"],["n","Normal","284px"],["t","Tall","480px"]];
 const CORDER=["left_pillar","front","right_pillar","left_repeater","back","right_repeater"];
 const lsGet=(k,d)=>{try{return localStorage.getItem(k)||d}catch(e){return d}},lsSet=(k,v)=>{try{localStorage.setItem(k,v)}catch(e){}};
 // o = {head: html line above the video, stamps: [minute, ...], cams: {minute: [camera, ...]}, url: (minute, camera) => url, trig: epoch ms the event happened (start a little before it)}
@@ -463,21 +464,42 @@ function clipPlayer(host,o){
     if($("#stp"))$("#stp").onchange=e=>{si=+e.target.value;seek=0;vids()};
     if($("#vtr"))$("#vtr").onclick=toTrig;
     vids()};
-  const vids=()=>{vs.forEach(x=>{x.pause();x.removeAttribute("src");x.load()});
-    const s=stamps[si],have=o.cams[s]||[],all=view==="all",show=all?CORDER:[have.includes(view)?view:have.includes("front")?"front":have[0]];
-    const box=$("#vids");box.className=all?"vgrid":"vone";
-    box.innerHTML=show.map(c=>have.includes(c)?`<figure data-c="${c}" ${all?'title="Click to see this camera large"':""}><video muted playsinline preload="auto" src="${o.url(s,c)}"></video><figcaption>${CAMN[c]}</figcaption></figure>`:`<figure class="none"><div>no file</div><figcaption>${CAMN[c]}</figcaption></figure>`).join("");
-    vs=$$("#vids video");mv=vs.find(v=>v.parentNode.dataset.c==="front")||vs[0];if(!mv){return}
-    const sk=$("#vsk"),pl=$("#vpl"),tm=$("#vtm"),seekAll=t=>vs.forEach(x=>{try{x.currentTime=t}catch(e){}});
-    if(all)$$("#vids figure[data-c]").forEach(f=>f.onclick=()=>{view=f.dataset.c;seek=mv.currentTime;shell()});
-    mv.onloadedmetadata=()=>{sk.max=mv.duration||60;vs.forEach(x=>x.playbackRate=+rate);if(seek){seekAll(seek);seek=0}vs.forEach(x=>x.play().catch(()=>{}))};
+  // The next minute is loaded in the background (last 25 s of this one) and swapped in when this one ends, so there is no wait between minutes.
+  let nx=null,offp=false;
+  const wire=()=>{const sk=$("#vsk"),pl=$("#vpl"),tm=$("#vtm"),box=$("#vids"),seekAll=t=>vs.forEach(x=>{try{x.currentTime=t}catch(e){}});
+    if(!mv)return;
+    const cam=mv.parentNode.dataset.c;
+    const ready=()=>{sk.max=mv.duration||60;vs.forEach(x=>x.playbackRate=+rate);if(seek){seekAll(seek);seek=0}};
+    if(mv.readyState>=1)ready();else mv.onloadedmetadata=()=>{ready();vs.forEach(x=>x.play().catch(()=>{}))};
     mv.onplay=()=>pl.textContent="❚❚ Pause";mv.onpause=()=>{if(!mv.ended)pl.textContent="▶ Play"};
     mv.ontimeupdate=()=>{sk.value=mv.currentTime;if(o.onTime)o.onTime(stMs(stamps[si])+mv.currentTime*1000);tm.textContent=fmt(mv.currentTime)+" · "+new Date(stMs(stamps[si])+mv.currentTime*1000).toTimeString().slice(0,8);
-      vs.forEach(x=>{if(x!==mv&&Math.abs(x.currentTime-mv.currentTime)>.4)x.currentTime=mv.currentTime})};
-    mv.onended=()=>{if(si<stamps.length-1){si++;seek=0;if($("#stp"))$("#stp").value=si;vids()}};
+      // keep the cameras together without seeking (a seek stalls that camera): a small drift is nudged out by speeding it up or slowing it down a little, only a large one is jumped
+      vs.forEach(x=>{if(x===mv)return;const dr=x.currentTime-mv.currentTime;
+        if(Math.abs(dr)>1.2){try{x.currentTime=mv.currentTime}catch(e){}x.playbackRate=+rate}
+        else if(Math.abs(dr)>.25&&!mv.paused)x.playbackRate=+rate*(dr>0?.94:1.06);
+        else if(x.playbackRate!==+rate)x.playbackRate=+rate});
+      if(!nx&&mv.duration&&mv.currentTime>mv.duration-25)prep()};
+    mv.onended=()=>{if(si>=stamps.length-1)return;si++;seek=0;if(nx&&nx.i===si&&nx.m[cam]){swap()}else vids()};
     mv.onerror=()=>box.insertAdjacentHTML("afterbegin",'<div class="sub">This clip could not be played (missing, or the drive was disconnected).</div>');
     pl.onclick=()=>{if(mv.paused)vs.forEach(x=>x.play().catch(()=>{}));else vs.forEach(x=>x.pause())};
     sk.oninput=()=>seekAll(+sk.value)};
+  const prep=()=>{if(nx||si>=stamps.length-1)return;const s2=stamps[si+1],have=o.cams[s2]||[],m={};
+    $$("#vids figure[data-c]").forEach(f=>{const c=f.dataset.c;if(have.includes(c)){const v=document.createElement("video");v.muted=true;v.playsInline=true;v.preload="auto";v.src=o.url(s2,c);v.load();m[c]=v}});
+    nx={i:si+1,m}};
+  const swap=()=>{const m=nx.m;nx=null;vs.forEach(x=>{x.pause();x.removeAttribute("src");x.load()});
+    $$("#vids figure[data-c]").forEach(f=>{const nv=m[f.dataset.c],old=f.querySelector("video");if(nv&&old)f.replaceChild(nv,old)});
+    if($("#stp"))$("#stp").value=si;
+    vs=$$("#vids video");mv=vs.find(v=>v.parentNode.dataset.c==="front")||vs[0];wire();vs.forEach(x=>{x.playbackRate=+rate;x.play().catch(()=>{})})};
+  const vids=()=>{nx=null;vs.forEach(x=>{x.pause();x.removeAttribute("src");x.load()});
+    const s=stamps[si],have=o.cams[s]||[],all=view==="all",show=all?CORDER:[have.includes(view)?view:have.includes("front")?"front":have[0]];
+    const box=$("#vids");box.className=all?"vgrid":"vone";
+    box.innerHTML=show.map(c=>have.includes(c)?`<figure data-c="${c}" class="${o.hot===c?"hot":""}" ${all?'title="Click to see this camera large"':""}><video muted playsinline preload="auto" src="${o.url(s,c)}"></video><figcaption>${CAMN[c]}${o.hot===c?" · detected here":""}</figcaption></figure>`:`<figure class="none"><div>no file</div><figcaption>${CAMN[c]}</figcaption></figure>`).join("");
+    vs=$$("#vids video");mv=vs.find(v=>v.parentNode.dataset.c==="front")||vs[0];if(!mv){return}
+    if(all)$$("#vids figure[data-c]").forEach(f=>f.onclick=()=>{view=f.dataset.c;seek=mv.currentTime;shell()});
+    wire()};
+  // nothing plays while the page is hidden (a hidden tab still decodes six streams otherwise)
+  const hide=()=>{if(!document.contains(host)){document.removeEventListener("visibilitychange",hide);return}if(document.hidden&&mv&&!mv.paused){offp=true;vs.forEach(x=>x.pause())}else if(!document.hidden&&offp){offp=false;vs.forEach(x=>x.play().catch(()=>{}))}};
+  document.addEventListener("visibilitychange",hide);
   shell();
   // the page can move the video to a clock time (clicking the map or the chart)
   return {seek:ms=>{let i=stamps.findIndex(s=>stMs(s)<=ms&&ms<stMs(s)+61000);if(i<0)i=stamps.findIndex(s=>stMs(s)>ms);if(i<0)return;
@@ -762,12 +784,12 @@ function tlFill(role,id,left){
 // one map: routes [{id,S,start}] and marks [{id,type,pos,title}]
 function dayMap(el,role,hooks){
   const dark=matchMedia("(prefers-color-scheme: dark)").matches,m=new maplibregl.Map({container:el,style:MAPSTYLE(dark),center:[151.2,-33.8],zoom:8,attributionControl:{compact:true},cooperativeGestures:true});
-  let ready=false,pend=null,pts=[],mk=[],bounds=null,lastKey="";
+  let ready=false,pend=null,pts=[],mk=[],bounds=null,lastKey="",lastMarks=[];
   const fit=()=>{if(bounds)m.fitBounds(bounds,{padding:40,maxZoom:15,duration:400})};
   mapNav(m,fit,"Show everything ticked");
   const hint=document.createElement("div");hint.className="tmempty";hint.textContent="Tick a drive, a Sentry event or a parked spell to see it here.";el.appendChild(hint);
   const pop=new maplibregl.Popup({closeButton:false,closeOnClick:false,offset:12,className:"rp"});
-  const draw=()=>{if(!ready||!pend)return;const {routes,marks}=pend,F=[],key=routes.map(r=>r.id).join()+"|"+marks.map(k=>k.id).join(),refit=key!==lastKey;lastKey=key;pts=[];bounds=new maplibregl.LngLatBounds();let any=false;
+  const draw=()=>{if(!ready||!pend)return;const {routes,marks}=pend;lastMarks=marks;const F=[],key=routes.map(r=>r.id).join()+"|"+marks.map(k=>k.id).join(),refit=key!==lastKey;lastKey=key;pts=[];bounds=new maplibregl.LngLatBounds();let any=false;
     routes.forEach(r=>{const S=r.S,n=S.v.length,step=Math.max(1,Math.ceil(n/1500));let prev=-1,km=0;const t0=Date.parse(r.start);
       for(let i=0;i<n;i+=step){km+=(S.v[i]||0)*step/3600;if(S.lat[i]==null||Math.abs(S.lat[i])<1)continue;const q={x:S.lon[i],y:S.lat[i],v:S.v[i]||0,ap:S.ap[i]||0,t:t0+i*1000,km,id:r.id};pts.push(q);bounds.extend([q.x,q.y]);any=true;
         if(prev>=0&&i-prev<=Math.max(5*step,600)){const a=pts[pts.length-2];F.push({type:"Feature",geometry:{type:"LineString",coordinates:[[a.x,a.y],[q.x,q.y]]},properties:{v:q.v,ap:q.ap,id:r.id}})}prev=i}});
@@ -786,7 +808,7 @@ function dayMap(el,role,hooks){
     m.on("mouseout",()=>pop.remove());
     m.on("click",e=>{let b=null,bd=22*22;for(const q of pts){const p=m.project([q.x,q.y]),d=(p.x-e.point.x)**2+(p.y-e.point.y)**2;if(d<bd){bd=d;b=q}}if(b&&hooks.open)hooks.open(b.id)});
     draw()});
-  return{set(routes,marks){pend={routes,marks};draw()},mode(x){if(ready)m.setPaintProperty("rt","line-color",x==="v"?spdExpr():apExpr())},fit,destroy(){try{m.remove()}catch(e){}}}}
+  return{set(routes,marks){pend={routes,marks};draw()},focus(id){const b=new maplibregl.LngLatBounds();let any=false;pts.forEach(q=>{if(q.id===id){b.extend([q.x,q.y]);any=true}});lastMarks.forEach(k=>{if(k.id===id&&k.pos){b.extend([k.pos[1],k.pos[0]]);any=true}});if(any)m.fitBounds(b,{padding:70,maxZoom:16,duration:500})},mode(x){if(ready)m.setPaintProperty("rt","line-color",x==="v"?spdExpr():apExpr())},fit,destroy(){try{m.remove()}catch(e){}}}}
 // the whole view: items are the server's timeline items (newest first); host is where to draw
 function tlDays(host,items,o){
   items.forEach(v=>v._c=tlClass(v));tlPos(items);
@@ -801,15 +823,25 @@ function tlDays(host,items,o){
   const key=(v,d)=>d>v._d0?"00:00:00":hms(v._c==="sentry"?(v.trig||v.start):v.start),rowsOf=d=>byDay[d].slice().sort((a,b)=>{const x=key(a,d),y=key(b,d);return(x<y?-1:x>y?1:a.t0-b.t0)*(TLS.rowDesc?-1:1)});
   rs.forEach(v=>{if(TLS.on[v.id]===undefined)TLS.on[v.id]=v._c==="drive"});
   const place=v=>nameAt(places,v.p0)||nameAt(places,v.p1)||nameAt(places,v._pos);
-  const tm=v=>clockHM(v.start)+" – "+clockHM(v.end),
-    tmx=(v,d)=>{const k=d>v._d0?dd(v._d0,d):0,m=d<v._d1?dd(d,v._d1):0,x=(n,g)=>` <span class="dx">(${g}${n} day${n>1?"s":""})</span>`;return clockHM(v.start)+(k?x(k,"-"):"")+" – "+clockHM(v.end)+(m?x(m,"+"):"")},mins=v=>Math.max(1,Math.round((v.t1-v.t0)/60));
-  const row=(v,d)=>{const c=v._c,id=esc(v.id),canTick=c==="drive"||!!v._pos,chk=c==="rec"?"":`<label class="ck"><input type="checkbox" data-id="${id}" ${TLS.on[v.id]?"checked":""} ${canTick?"":"disabled"} title="${canTick?"Show on the map":"No position known"}"></label>`;
-    if(c==="drive"){const a=nameAt(places,v.p0),b=nameAt(places,v.p1);return `<div class="tr drive">${chk}<a class="tb" href="#/teslacam/${role}/${id}"><span class="tm">${tmx(v,d)}</span><span class="tt"><b>${n0(v.km,1)} km</b> · ${dur(mins(v))} · max ${n0(v.vmax)} km/h${v.fsd?` · FSD ${Math.round(v.fsd*100)}%`:""}${a||b?`<small>${esc(a||"?")} → ${esc(b||"?")}</small>`:""}</span></a></div>`}
-    if(c==="sentry")return `<div class="tr sentry">${chk}<button class="tb sen" data-ev="${esc(v.ev)}"><span class="tm">${hms(v.trig||v.start).slice(0,5)}</span><span class="tt"><b>Sentry</b> · ${esc(reason(v.reason))}<small>${esc([v.city,v.street].filter(Boolean).join(" · "))} · ${mins(v)} min watched</small></span></button></div>`;
-    if(c==="parked"){const w=place(v);return `<div class="tr parked">${chk}<div class="tb"><span class="tm">${tmx(v,d)}</span><span class="tt">🅿️ <b>Parked</b> · ${dur(mins(v))}${w?`<small>${esc(w)}</small>`:""}</span></div></div>`}
-    return `<div class="tr rec"><a class="tb" href="#/teslacam/${role}/${id}"><span class="tm">${tmx(v,d)}</span><span class="tt">Recording · ${v.n} clip${v.n>1?"s":""}<small>telemetry not read yet · open to read</small></span></a></div>`};
-  host.innerHTML=days.length?`<div class="bar" style="margin:0 0 4px"><button class="chip ${TLS.mode==="v"?"on":""}" data-tm="v">Speed</button><button class="chip ${TLS.mode==="ap"?"on":""}" data-tm="ap">Autopilot / FSD</button><button class="chip" data-so="days" style="margin-left:10px">${TLS.dayDesc?"Days: newest first":"Days: oldest first"}</button><button class="chip" data-so="rows">${TLS.rowDesc?"Within a day: 23:59 → 00:00":"Within a day: 00:00 → 23:59"}</button><span class="sub" id="tlleg"></span><span class="sub" style="margin-left:auto;cursor:help" title="Tick a row to show it on the map. Click a drive to open it, a Sentry event to watch it. Hover a route for the moment under the pointer; click it to open the drive. Short drives under the re-park limits count as parked. An event that runs past midnight is shown whole on both days, with (+1 day) or (-1 day), and ticking it ticks it on both.">ⓘ how this works</span></div>`
-    +days.map(d=>`<div class="dpick"><button class="chip" data-nav="${ci>0?asc[ci-1]:""}" ${ci>0?"":"disabled"} title="Earlier day">‹</button><select id="dsel">${opts}</select><button class="chip" data-nav="${ci<asc.length-1?asc[ci+1]:""}" ${ci<asc.length-1?"":"disabled"} title="Later day">›</button><small>${byDay[d].length} item${byDay[d].length>1?"s":""}</small><label class="dall"><input type="checkbox" data-day="${d}"> show all</label></div><div class="tday" data-day="${d}"><div class="tl2">${rowsOf(d).map(v=>row(v,d)).join("")}</div><div class="tmap"></div></div>`).join("")
+  const tm=v=>clockHM(v.start)+" – "+clockHM(v.end),mins=v=>Math.max(1,Math.round((v.t1-v.t0)/60));
+  // where things were: a saved place first; else what Tessie's own record of the drive says; else (Sentry) the city and street; a drive's ends are where the stopped spells next to it were
+  const TS=(o.tess||[]).map(x=>{const a=Date.parse(x.day+"T"+x.hm+":00");return{s:a,e:a+x.min*60000,frm:x.frm||"",to:x.to||""}}).sort((a,b)=>a.s-b.s),ms=t=>Date.parse(t),WIN=20*60000;
+  const tOver=v=>{const s0=ms(v.start),e0=ms(v.end);let b=null,bo=0;for(const t of TS){const ov=Math.min(e0,t.e)-Math.max(s0,t.s);if(ov>bo){bo=ov;b=t}}return b};
+  const stayAt=v=>{const n=nameAt(places,v.p0)||nameAt(places,v.p1)||nameAt(places,v._pos);if(n)return n;
+    const cs=[v.city,v.street].filter(Boolean).join(" · ");if(v._c==="sentry"&&cs)return cs;
+    const s0=ms(v.start),e0=ms(v.end),a=TS.filter(t=>t.to&&Math.abs(t.e-s0)<=WIN).sort((x,y)=>Math.abs(x.e-s0)-Math.abs(y.e-s0))[0];if(a)return a.to;
+    const z=TS.filter(t=>t.frm&&Math.abs(t.s-e0)<=WIN).sort((x,y)=>Math.abs(x.s-e0)-Math.abs(y.s-e0))[0];return z?z.frm:cs};
+  const chron=rs.slice().sort((a,b)=>a.t0-b.t0),stays=chron.filter(v=>v._c==="parked"||v._c==="sentry");
+  const around=(v,end)=>{const t=end?v.t1:v.t0;let best=null,bd=WIN/1000;for(const k of stays){const d=end?Math.abs(k.t0-t):Math.abs(k.t1-t);if(d<bd){const n=stayAt(k);if(n){bd=d;best=n}}}return best||""};
+  const ends=v=>{const t=tOver(v);return[nameAt(places,v.p0)||(t&&t.frm)||around(v,false)||"Unknown",nameAt(places,v.p1)||(t&&t.to)||around(v,true)||"Unknown"]};
+  const ico=c=>c==="drive"?"🚗":c==="parked"?"🅿️":c==="sentry"?'<i class="hal" title="Sentry"></i>':"🎬";
+  const row=(v,d)=>{const c=v._c,id=esc(v.id),canTick=c==="drive"||!!v._pos,chk=c==="rec"?"<span></span>":`<label class="ck"><input type="checkbox" data-id="${id}" ${TLS.on[v.id]?"checked":""} ${canTick?"":"disabled"} title="${canTick?"Show on the map":"No position known"}"></label>`;
+    const when=c==="sentry"?hms(v.trig||v.start).slice(0,5):tm(v),e2=c==="drive"?ends(v):null;
+    const where=c==="drive"?`${esc(e2[0])} <span class="ar">→</span> ${esc(e2[1])}`:c==="rec"?`Recording · ${v.n} clip${v.n>1?"s":""} <span class="sub">telemetry not read yet</span>`:esc(stayAt(v)||"Unknown location");
+    const go=c==="drive"?`#/teslacam/${role}/${encodeURIComponent(v.id)}`:c==="sentry"?`#/teslacam/${role}/sentry-${encodeURIComponent(v.ev)}`:c==="rec"?`#/teslacam/${role}/${encodeURIComponent(v.id)}`:"";
+    return `<div class="tr ${c}" data-id="${id}">${chk}<span class="tm">${when}</span><span class="ti">${ico(c)}</span><span class="tw">${where}</span><span class="td">${dur(mins(v))}</span><span class="to">${go?`<button class="btn sm" data-go="${go}">${c==="rec"?"Read":"Open"} ▸</button>`:""}</span></div>`};
+  host.innerHTML=days.length?`<div class="bar" style="margin:0 0 4px"><button class="chip ${TLS.mode==="v"?"on":""}" data-tm="v">Speed</button><button class="chip ${TLS.mode==="ap"?"on":""}" data-tm="ap">Autopilot / FSD</button><button class="chip" data-so="days" style="margin-left:10px">${TLS.dayDesc?"Days: newest first":"Days: oldest first"}</button><button class="chip" data-so="rows">${TLS.rowDesc?"Within a day: 23:59 → 00:00":"Within a day: 00:00 → 23:59"}</button><span class="sub" id="tlleg"></span><span class="sub" style="margin-left:auto;cursor:help" title="Tick a row to show it on the map. Click a drive to open it, a Sentry event to watch it. Hover a route for the moment under the pointer; click it to open the drive. Short drives under the re-park limits count as parked. An event that runs past midnight is shown whole on both days, and ticking it ticks it on both. Click a row to find it on the map; Open shows a drive or Sentry event in full.">ⓘ how this works</span></div>`
+    +days.map(d=>`<div class="dpick"><button class="chip" data-nav="${ci>0?asc[ci-1]:""}" ${ci>0?"":"disabled"} title="Earlier day">‹</button><select id="dsel">${opts}</select><button class="chip" data-nav="${ci<asc.length-1?asc[ci+1]:""}" ${ci<asc.length-1?"":"disabled"} title="Later day">›</button><small>${byDay[d].length} item${byDay[d].length>1?"s":""}</small><label class="dall"><input type="checkbox" data-day="${d}"> show all</label></div><div class="tday" data-day="${d}"><div class="tl2"><div class="tr trh"><span></span><span>Time</span><span></span><span>Where</span><span class="td">Duration</span><span></span></div>${rowsOf(d).map(v=>row(v,d)).join("")}</div><div class="tmap"></div></div>`).join("")
     :'<div class="empty">Nothing here for these dates.</div>';
   if(!days.length)return;
   const leg=()=>{$("#tlleg").innerHTML=TLS.mode==="v"?spdLegend():apLegend()};leg();
@@ -834,13 +866,17 @@ function tlDays(host,items,o){
   const syncAll=()=>$$("input[data-day]",host).forEach(a=>{const bx=$$(`.tday[data-day="${a.dataset.day}"] input[data-id]:not(:disabled)`,host);a.checked=bx.length>0&&bx.every(x=>x.checked)});syncAll();
   $$("input[data-day]",host).forEach(a=>a.onchange=()=>setOn($$(`.tday[data-day="${a.dataset.day}"] input[data-id]:not(:disabled)`,host).map(x=>x.dataset.id),a.checked));
   $$("[data-tm]",host).forEach(b=>b.onclick=()=>{TLS.mode=b.dataset.tm;$$("[data-tm]",host).forEach(x=>x.classList.toggle("on",x===b));leg();Object.values(maps).forEach(x=>x.m.mode(TLS.mode))});
-  $$("button.sen",host).forEach(b=>b.onclick=()=>{$$(".tr",host).forEach(x=>x.classList.toggle("on",x.contains(b)));o.onSentry(b.dataset.ev)});
+  $$("[data-go]",host).forEach(b=>b.onclick=e=>{e.stopPropagation();location.hash=b.dataset.go});
+  // clicking a row ticks it and brings it up on the map
+  $$(".tr[data-id]",host).forEach(r=>r.onclick=async e=>{if(e.target.closest("input,button,a,label"))return;const v=rs.find(x=>x.id===r.dataset.id);if(!v||!(v._c==="drive"||v._pos))return;
+    $$(".tr.sel",host).forEach(x=>x.classList.remove("sel"));r.classList.add("sel");const c=$("input[data-id]",r);if(c&&!c.checked){c.checked=true;TLS.on[v.id]=true;syncAll()}
+    await populate(cur);const mp=maps[cur];if(mp)mp.m.focus(v.id)});
   return()=>{removeEventListener("tlroute",onRoute);removeEventListener("resize",fitH);io.disconnect();Object.values(maps).forEach(x=>x.m.destroy())}}
 
 function routeSvg(pts,w=64,h=40){if(!pts||pts.length<2)return "";const la=pts.map(p=>p[0]),lo=pts.map(p=>p[1]),a=Math.min(...la),b=Math.max(...la),c=Math.min(...lo),d=Math.max(...lo),k=Math.cos((a+b)/2*Math.PI/180),sx=(d-c)*k||1e-6,sy=(b-a)||1e-6,s=Math.min((w-6)/sx,(h-6)/sy),ox=(w-sx*s)/2,oy=(h-sy*s)/2;
   return `<svg class="rt" width="${w}" height="${h}" viewBox="0 0 ${w} ${h}"><polyline fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" stroke-linecap="round" points="${pts.map(p=>((p[1]-c)*k*s+ox).toFixed(1)+","+(h-((p[0]-a)*s+oy)).toFixed(1)).join(" ")}"/></svg>`}
 async function pageTeslaCam(role,id){
-  if(role&&id)return pageTeslaCamDrive(role,id);
+  if(role&&id)return /^sentry-/.test(id)?pageTeslaCamSentry(role,id.slice(7)):pageTeslaCamDrive(role,id);
   loading();const [dr,act,pl]=await Promise.all([tcGet("teslacam"),api("activity"),api("places").catch(()=>({saved:[]}))]),drives=dr.drives,places=(pl.saved||[]);
   const head='<h1>TeslaCam</h1><div class="sub">The clips on any connected TeslaCam drive. A drive is recognised by what is on it, not by its name, and nothing on it is changed. A drive is only read once you pick it.</div>';
   if(!drives.length){main.innerHTML=head+'<div class="empty">No TeslaCam drive is connected.</div>';return}
@@ -879,7 +915,7 @@ async function pageTeslaCam(role,id){
     rs.forEach(v=>v._c=tlClass(v));const dr=rs.filter(v=>v._c==="drive");
     $("#tl").innerHTML=tile(n0(dr.length),"drives with telemetry")+tile(n0(dr.reduce((a,v)=>a+v.km,0))+" km","driven (from the video)")+tile(n0(rs.filter(v=>v._c==="sentry").length),"Sentry events")+tile(n0(rs.filter(v=>v._c==="parked").length),"parked spells")+tile(n0(rs.filter(v=>v._c==="rec").length),"recordings not read yet");
     $("#tb").innerHTML='<div id="tlh"></div>';
-    TLOFF=tlDays($("#tlh"),rs,{role:TCS.role,places,dayOk:d=>inRange({day:d},TCS.r),redraw:drawTimeline,onSentry:async ev=>{$("#spl").scrollIntoView({block:"nearest"});
+    TLOFF=tlDays($("#tlh"),rs,{role:TCS.role,places,tess:act.filter(x=>x.k==="drive"),dayOk:d=>inRange({day:d},TCS.r),redraw:drawTimeline,onSentry:async ev=>{$("#spl").scrollIntoView({block:"nearest"});
       try{if(!sentryList)sentryList=(await tcGet("teslacam/"+TCS.role+"/sentry")).events;sentryPlayer($("#spl"),sentryList.find(v=>v.id===ev),TCS.role,"SentryClips")}catch(e){$("#spl").innerHTML=errBox(e.message,"Could not read these clips")}}})||null};
   const draw=()=>{if(!data)return;if(TCS.kind==="clips"?!data.sentry:!data.items&&data.connected!==false){return}if(!data.connected){$("#tb").innerHTML='<div class="empty">This drive is not connected.</div>';$("#ixb").innerHTML="";return}
     if(TCS.kind==="timeline"){ixBar();return drawTimeline()}$("#ixb").innerHTML="";
@@ -913,6 +949,25 @@ const apExpr=()=>["match",["get","ap"],1,apCol("FSD"),2,apCol("Autosteer"),3,apC
 const spdLegend=()=>`<span style="background:linear-gradient(90deg,${spdStops().map(([a,c])=>c+" "+(100*a/spdTop())+"%").join(",")});display:inline-block;width:140px;height:8px;border-radius:4px;vertical-align:middle"></span> 0 → ${spdTop()} km/h <span style="background:${spdOver()};display:inline-block;width:10px;height:10px;border-radius:50%;vertical-align:middle;border:1px solid #888"></span> faster`;
 const apLegend=()=>["FSD","Autosteer","TACC","Manual"].map(k=>`<span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:${apCol(k)};vertical-align:middle"></span> ${k}`).join("  ");
 const spdAt=v=>{const st=spdStops();if((v||0)>spdTop())return spdOver();const t=Math.max(0,v||0);let i=0;while(i<st.length-2&&t>=st[i+1][0])i++;const a=st[i],b=st[i+1],f=(t-a[0])/((b[0]-a[0])||1),h=c=>[1,3,5].map(k=>parseInt(c.substr(k,2),16)),A=h(a[1]),B=h(b[1]);return "#"+A.map((x,k)=>Math.round(x+(B[k]-x)*f).toString(16).padStart(2,"0")).join("")};
+// One Sentry event in full: the same layout as a drive (map on top, then the six cameras); no telemetry, the camera that detected it has a red border
+async function pageTeslaCamSentry(role,ev){
+  loading();main.innerHTML=crumbs("#/teslacam","TeslaCam")+'<div id="tdh"></div>';const host=$("#tdh");
+  try{
+    const [lr,pl]=await Promise.all([tcGet("teslacam/"+role+"/sentry"),api("places").catch(()=>({saved:[]}))]),e=lr.events.find(v=>v.id===ev),places=pl.saved||[];
+    if(!e){host.innerHTML=errBox("This event is not on a connected drive.","Sentry event not found");return}
+    const stamps=Object.keys(e.clips),at=nameAt(places,[e.lat,e.lon])||[e.city,e.street].filter(Boolean).join(" · "),hasPos=e.lat!=null&&e.lon!=null&&Math.abs(+e.lat)>1;
+    host.innerHTML=`<h1><i class="hal big"></i> Sentry · ${esc(e.reason?reason(e.reason):"event")} · ${dayName(e.ts.slice(0,10))} · ${hms(e.ts).slice(0,5)}</h1><div class="sub">${esc(at||"Location not recorded")}</div>
+      <div class="tiles">${tile(hms(e.ts),"detected")}${tile(esc(e.reason?reason(e.reason):"-"),"reason")}${tile(n0(stamps.length)+" min","of clips")}</div>
+      ${hasPos?`<div class="card" style="padding:10px"><div class="bar" style="margin:0 0 8px"><span class="sub">Where the car was parked</span><span style="margin-left:auto;display:flex;gap:6px;align-items:center"><span class="sub">Map</span>${MSZ.map(([k,t])=>`<button class="chip" data-ms="${k}">${t}</button>`).join("")}</span></div><div class="map big" id="dmap"></div></div>`:'<div class="card"><div class="sub">No position was recorded for this event, so there is no map.</div></div>'}
+      <div class="card" style="margin-top:12px"><div id="dvid"></div></div>`;
+    if(hasPos&&window.maplibregl){const dark=matchMedia("(prefers-color-scheme: dark)").matches,m=new maplibregl.Map({container:"dmap",style:MAPSTYLE(dark),center:[+e.lon,+e.lat],zoom:16,attributionControl:{compact:true}}),pos=[+e.lon,+e.lat];
+      mapNav(m,()=>m.easeTo({center:pos,zoom:16}),"Back to the car");const el=document.createElement("i");el.className="hal big";new maplibregl.Marker({element:el}).setLngLat(pos).addTo(m);
+      const setMs=k=>{lsSet("tc.mapsz.s",k);$$("[data-ms]",host).forEach(b=>b.classList.toggle("on",b.dataset.ms===k));$("#dmap").style.height=(MSZ.find(x=>x[0]===k)||MSZ[1])[2];m.resize();m.easeTo({center:pos,zoom:16,duration:200})};
+      $$("[data-ms]",host).forEach(b=>b.onclick=()=>setMs(b.dataset.ms));setMs(lsGet("tc.mapsz.s","m"))}
+    clipPlayer($("#dvid"),{stamps,cams:e.clips,trig:Date.parse(e.ts),view:"all",hot:EVCAM[e.cam]||"front",url:(s,c)=>`/footage/${role}/SentryClips/${e.id}/${s}-${c}.mp4`,
+      head:`${stamps.length} one-minute clip${stamps.length>1?"s":""}; the next plays on its own. It opens at the moment the car detected something, and the camera that saw it has a red border.`})
+  }catch(err){host.innerHTML=errBox(err.message,"Could not open this Sentry event")}
+}
 async function pageTeslaCamDrive(role,id){
   loading();const pl=await api("places").catch(()=>({saved:[]}));
   main.innerHTML=crumbs("#/teslacam","TeslaCam")+'<div id="tdh"></div>';
@@ -926,9 +981,9 @@ async function teslaDriveBody(host,role,fetchSeg,places,opts){
   const stop=()=>{done=true};addEventListener("hashchange",stop,{once:true});
   const it=()=>d.item,S=()=>d.series,live=()=>!done&&$("#tdb")&&host.contains($("#tdb"));
   host.innerHTML=`<div id="tdb"><h1 id="dh" ${opts.heading===false?"hidden":""}></h1><div class="sub" id="dsub"></div><div id="dpend"></div><div class="tiles" id="dtl"></div>
-    <div id="dmapc" class="card" style="padding:10px"><div class="bar" style="margin:0 0 8px"><button class="chip on" data-cm="v">Speed</button><button class="chip" data-cm="ap">Autopilot / FSD</button><span class="sub" id="dleg"></span></div><div class="map big" id="dmap" style="height:340px"></div></div>
+    <div id="dmapc" class="card" style="padding:10px"><div class="bar" style="margin:0 0 8px"><button class="chip on" data-cm="v">Speed</button><button class="chip" data-cm="ap">Autopilot / FSD</button><span class="sub" id="dleg"></span><span style="margin-left:auto;display:flex;gap:6px;align-items:center"><span class="sub">Map</span>${MSZ.map(([k,t])=>`<button class="chip" data-ms="${k}">${t}</button>`).join("")}</span></div><div class="map big" id="dmap"></div></div>
     <div id="drj"></div>
-    <div id="dchc" class="card" style="margin-top:12px;padding:10px"><div class="sub" id="dtip" style="min-height:18px"></div><canvas id="dch" style="width:100%;height:284px;display:block"></canvas></div>
+    <div id="dchc" class="card" style="margin-top:12px;padding:10px"><div class="bar" style="margin:0 0 6px"><b>Telemetry</b><span class="sub" id="dtip" style="min-height:18px;flex:1"></span><span style="display:flex;gap:6px;align-items:center">${TSZ.map(([k,t])=>`<button class="chip" data-ts="${k}">${t}</button>`).join("")}</span></div><canvas id="dch" style="width:100%;display:block"></canvas></div>
     <div class="card" style="margin-top:12px"><div id="dvid"></div></div><div id="drv"></div><div id="dev"></div></div>`;
   const fill=()=>{if(!live())return;const x=it(),m=Math.max(1,Math.round((x.t1-x.t0)/60)),a=nameAt(places,x.p0),b=nameAt(places,x.p1);
     $("#dh").textContent=(x.kind==="drive"?"Drive":x.kind==="stopped"?"Stopped, recording":"Recording")+" · "+dayName(x.start.slice(0,10))+" · "+clockHM(x.start)+" – "+clockHM(x.end);
@@ -953,6 +1008,11 @@ async function teslaDriveBody(host,role,fetchSeg,places,opts){
         onTime:ms=>cursor((ms-ts0())/1000),head:`${it().kind==="drive"?"Click the map or the chart to jump there; the dot and the line follow the video.":"The car was not moving, so there is no map."} Each minute plays on to the next, Recent and Saved alike.`})}
     else if(!playable.length)$("#dvid").innerHTML='<div class="sub">No video for this time on a connected drive.</div>';
     events()};
+  // map size and telemetry size / hide, remembered
+  const setMs=k=>{lsSet("tc.mapsz",k);$$("[data-ms]",host).forEach(b=>b.classList.toggle("on",b.dataset.ms===k));$("#dmap").style.height=(MSZ.find(x=>x[0]===k)||MSZ[2])[2];if(map&&map.resize){map.resize();map.fit(250)}};
+  const setTs=k=>{lsSet("tc.telsz",k);$$("[data-ts]",host).forEach(b=>b.classList.toggle("on",b.dataset.ts===k));const c=$("#dch");c.style.display=k==="h"?"none":"block";c.style.height=(TSZ.find(x=>x[0]===k)||TSZ[1])[2];dispatchEvent(new Event("resize"))};
+  $$("[data-ms]",host).forEach(b=>b.onclick=()=>setMs(b.dataset.ms));$$("[data-ts]",host).forEach(b=>b.onclick=()=>setTs(b.dataset.ts));
+  setMs(lsGet("tc.mapsz","l"));setTs(lsGet("tc.telsz","n"));
   $$("[data-cm]",host).forEach(b=>b.onclick=()=>{$$("[data-cm]",host).forEach(x=>x.classList.toggle("on",x===b));if(map)map.cursor&&map.mode(b.dataset.cm)});
   // ---- Review: the signs read from the video and the speed changes, drawn on the chart and listed
   let rv=null,steps=[],rvUrl=null;
@@ -999,14 +1059,14 @@ function driveMap(el,s,idx,onPick,leg){
     m.addLayer({id:"cu",type:"circle",source:"cu",paint:{"circle-radius":8,"circle-color":"#f59e0b","circle-stroke-width":3,"circle-stroke-color":"#fff"}});
     m.on("click","rt",e=>onPick(e.features[0].properties.i));m.on("mouseenter","rt",()=>m.getCanvas().style.cursor="pointer");m.on("mouseleave","rt",()=>m.getCanvas().style.cursor="");
     draw();paint()});
-  return{update(s2,i2){S=s2;I=i2;draw()},fit,mode(x){mode=x;paint()},cursor(i){if(!ready)return;let j=i;while(j>=0&&(S.lat[j]==null||Math.abs(S.lat[j])<1))j--;if(j<0)return;m.getSource("cu").setData({type:"FeatureCollection",features:[{type:"Feature",properties:{},geometry:{type:"Point",coordinates:[S.lon[j],S.lat[j]]}}]})}};
+  return{update(s2,i2){S=s2;I=i2;draw()},fit,resize(){m.resize()},mode(x){mode=x;paint()},cursor(i){if(!ready)return;let j=i;while(j>=0&&(S.lat[j]==null||Math.abs(S.lat[j])<1))j--;if(j<0)return;m.getSource("cu").setData({type:"FeatureCollection",features:[{type:"Feature",properties:{},geometry:{type:"Point",coordinates:[S.lon[j],S.lat[j]]}}]})}};
 }
 // speed, pedals and steering against time, with the autopilot state as a strip; hover reads it out, click or drag moves the video
 function telemChart(cv,tip,s,onPick,t0){
-  let S=s,cur=null,hov=null,W=0,H=0,M={signs:[],steps:[]};const css=n=>getComputedStyle(document.documentElement).getPropertyValue(n).trim()||"#888";
+  let S=s,cur=null,hov=null,W=0,H=0,M={signs:[],steps:[]},ver=0,cache=null,ck="";const css=n=>getComputedStyle(document.documentElement).getPropertyValue(n).trim()||"#888";
   const L=62,R=10,lanes=[{k:"v",t:"km/h",y:34,h:118},{k:"p",t:"pedals",y:164,h:46},{k:"s",t:"steering",y:218,h:40}];
   const X=i=>L+(W-L-R)*i/Math.max(1,S.v.length-1),I=x=>Math.max(0,Math.min(S.v.length-1,Math.round((x-L)/(W-L-R)*(S.v.length-1))));
-  const draw=()=>{const dpr=devicePixelRatio||1;W=cv.clientWidth;H=cv.clientHeight;cv.width=W*dpr;cv.height=H*dpr;const c=cv.getContext("2d");c.setTransform(dpr,0,0,dpr,0,0);c.clearRect(0,0,W,H);
+  const paintBase=(c,dpr)=>{c.setTransform(dpr,0,0,dpr,0,0);c.clearRect(0,0,W,H);
     const ink=css("--mut"),line=css("--line"),acc=css("--acc"),bad=css("--bad"),ok=css("--charge"),n=S.v.length;if(!n)return;
     const ff=getComputedStyle(document.body).fontFamily||"system-ui",F="11px "+ff;c.font=F;c.fillStyle=ink;c.strokeStyle=line;c.lineWidth=1;
     const vm=Math.max(120,Math.ceil(Math.max(...S.v.filter(x=>x!=null))/20)*20),vy=v=>lanes[0].y+lanes[0].h*(1-v/vm);
@@ -1033,6 +1093,10 @@ function telemChart(cv,tip,s,onPick,t0){
     c.fillStyle="#f59e0b";for(let i=0;i<n;i++)if(S.blk[i])c.fillRect(X(i),T.y+T.h-4,Math.max(1,(W-L-R)/n+.5),4);c.fillStyle="#f59e0b";c.fillRect(8,T.y+T.h-9,8,4);c.fillStyle=ink;c.fillText("indicator",20,T.y+T.h-4);
     // clock axis
     c.fillStyle=ink;const step=n>1800?600:n>600?300:60;for(let i=0;i<n;i+=step){const t=new Date(t0+i*1000);c.fillText(t.toTimeString().slice(0,5),X(i)-12,H-4)}
+  };
+  const draw=()=>{const dpr=devicePixelRatio||1;W=cv.clientWidth;H=cv.clientHeight;if(!W||!H)return;const pw=Math.round(W*dpr),ph=Math.round(H*dpr);if(cv.width!==pw||cv.height!==ph){cv.width=pw;cv.height=ph}
+    const key=[W,H,dpr,ver].join();if(!cache||ck!==key){cache=document.createElement("canvas");cache.width=pw;cache.height=ph;paintBase(cache.getContext("2d"),dpr);ck=key}
+    const c=cv.getContext("2d");c.setTransform(1,0,0,1,0,0);c.clearRect(0,0,pw,ph);c.drawImage(cache,0,0);c.setTransform(dpr,0,0,dpr,0,0);
     const mark=(i,col)=>{c.strokeStyle=col;c.lineWidth=1.5;c.beginPath();c.moveTo(X(i),12);c.lineTo(X(i),H-18);c.stroke()};
     if(hov!=null)mark(hov,"#888");if(cur!=null)mark(cur,"#f59e0b")};
   const read=i=>{const t=new Date(t0+i*1000).toTimeString().slice(0,8);if(S.v[i]==null)return t+" · no telemetry";return `${t} · ${n0(S.v[i])} km/h · accelerator ${n0(S.accel[i])}%${S.br[i]?" · braking":""} · steering ${n0(S.steer[i])}°${S.blk[i]?" · indicator":""}${APN[S.ap[i]]?" · "+APN[S.ap[i]]:""}`};
@@ -1040,7 +1104,7 @@ function telemChart(cv,tip,s,onPick,t0){
   cv.onmouseleave=()=>{hov=null;tip.textContent=cur!=null?read(cur):"";draw()};
   cv.onmousedown=e=>{const r=cv.getBoundingClientRect();onPick(I(e.clientX-r.left))};
   addEventListener("resize",draw);draw();
-  return{update(s2){S=s2;draw()},marks(m){M=m;draw()},cursor(i){cur=i;if(hov==null)tip.textContent=read(i);draw()}};
+  return{update(s2){S=s2;ver++;draw()},marks(m){M=m;ver++;draw()},cursor(i){cur=i;if(hov==null)tip.textContent=read(i);draw()}};
 }
 // lasting changes of speed: the median of the 6 s before against the 6 s after, 10 km/h or more, both while moving; one per 20 s (the biggest wins)
 function speedSteps(v,minD=10){
