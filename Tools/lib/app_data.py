@@ -15,6 +15,7 @@ import csv
 import datetime
 import glob
 import json
+import math
 import os
 import re
 import threading
@@ -30,8 +31,9 @@ _CACHE = {}
 
 
 # Tessie records every move of the car as a drive, including shuffling it a few metres in a car park. A "re-park" is a drive that covers
-# less than REPARK_KM (odometer steps are 10 m, so 0.02 = 20 m, 0.03 = 30 m) in no more than REPARK_MIN minutes. Everything else is a drive.
-# Both limits are settings (config.json "app.drives.repark_max_km" / "repark_max_minutes").
+# less than REPARK_KM (odometer steps are 10 m, so 0.02 = 20 m, 0.03 = 30 m) in no more than REPARK_MIN minutes. A trip that starts and ends at
+# the same address (or saved place) is a re-park up to the larger repark_same_place_km. Everything else is a drive.
+# The limits are settings (config.json "app.drives.repark_max_km" / "repark_same_place_km" / "repark_max_minutes").
 
 
 def _num(v, d=None):
@@ -159,7 +161,16 @@ class Store:
                 t1 = int(_num(r.get("Ended At (UTC)"), t0))
                 km = _num(r.get("Distance (km)"), 0)
                 mins = _num(r.get("Duration (Minutes)"), 0)
-                out.append(dict(k="drive", repark=km < app_config.get("drives.repark_max_km") and mins <= app_config.get("drives.repark_max_minutes"), id=st["stamp"] if st else "t%d" % t0, page=bool(st), t0=t0, t1=t1, day=dt.strftime("%Y-%m-%d"), hm=dt.strftime("%H:%M"),
+                a0, a1 = (r.get("Starting Location") or "").strip().lower(), (r.get("Ending Location") or "").strip().lower()
+                s0, s1 = (r.get("Starting Saved Location") or "").strip().lower(), (r.get("Ending Saved Location") or "").strip().lower()
+                same = bool((a0 and a0 == a1) or (s0 and s0 == s1))      # the trip began and ended at the same address / saved place
+                if not same and not ((a0 and a1) or (s0 and s1)):        # no address to compare: use how far apart the two ends are
+                    la0, lo0, la1, lo1 = (_num(r.get(k)) for k in ("Starting Latitude", "Starting Longitude", "Ending Latitude", "Ending Longitude"))
+                    if None not in (la0, lo0, la1, lo1):
+                        same = math.hypot((la1 - la0) * 111320.0, (lo1 - lo0) * 111320.0 * math.cos(math.radians(la0))) <= app_config.get("drives.repark_same_place_m")
+                quick = mins <= app_config.get("drives.repark_max_minutes")
+                repark = quick and (km < app_config.get("drives.repark_max_km") or (same and km < app_config.get("drives.repark_same_place_km")))
+                out.append(dict(k="drive", repark=repark, id=st["stamp"] if st else "t%d" % t0, page=bool(st), t0=t0, t1=t1, day=dt.strftime("%Y-%m-%d"), hm=dt.strftime("%H:%M"),
                                 tz=tz, frm=(st or {}).get("frm") or r.get("Starting Saved Location") or _short(r.get("Starting Location")), to=(st or {}).get("to") or r.get("Ending Saved Location") or _short(r.get("Ending Location")),
                                 min=_num(r.get("Duration (Minutes)"), 0), km=km, kwh=_num(r.get("Total Energy Used (kWh)"), 0), whkm=_num(r.get("Average Energy Used (Wh/km)")),
                                 avg=_num(r.get("Average Speed (km/h)")), max=_num(r.get("Max Speed (km/h)")), b0=_num(r.get("Starting Battery (%)")), b1=_num(r.get("Ending Battery (%)")),
