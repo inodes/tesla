@@ -332,6 +332,11 @@ class H(BaseHTTPRequestHandler):
             if u.path == "/api/review":
                 role = body.get("role", "A")
                 return self.send_json(TC.review(role, footage_root(role), _utc_arg(body.get("t0", "")), _utc_arg(body.get("t1", "")), body.get("action", "start"), _lo_arg(body.get("lo"))))
+            if u.path == "/api/scan":              # {action: start|stop, roles: ["A","J"]}: read the telemetry the picked drives still lack
+                if body.get("action") == "stop":
+                    return self.send_json(TC.scan_stop())
+                roles = [r for r in (body.get("roles") or ["A"]) if r in ("A", "J", "U")]
+                return self.send_json(TC.scan_start({r: footage_root(r) for r in roles}))
             if u.path == "/api/teslacam/index":
                 role = body.get("role", "A")
                 return self.send_json(TC.index(role, footage_root(role), body.get("action", "start")))
@@ -370,11 +375,12 @@ class H(BaseHTTPRequestHandler):
             r = TC.fuse(q.get("id", [""])[0])
             if not r:
                 return self.send_json({"error": "no sample file for this drive"}, 404)
-            if not q.get("summary"):
-                return self.send_json(r)
-            i = dict(r["info"])         # archive_min: minutes of this drive's footage on the Archive (None: not connected). 0 = the telemetry was read from another drive
-            i["archive_min"] = TC.footage_minutes("A", footage_root("A"), CC.from_local(i["t0"]), CC.from_local(i["t1"]))
-            return self.send_json(dict(info=i))
+            return self.send_json(dict(info=r["info"]) if q.get("summary") else r)
+        if name == "scan":                      # scan?roles=A,J: the footage on those drives against the telemetry kept (nothing is read)
+            roles = [r for r in q.get("roles", ["A"])[0].split(",") if r in ("A", "J", "U")]
+            return self.send_json(TC.scan_report({r: footage_root(r) for r in roles}))
+        if name == "scan/status":
+            return self.send_json(TC.scan_status())
         if name == "clipclock":                 # the car's clock as learned from the footage (clip_clock.py): runs of minutes with the offset from UTC
             return self.send_json(CC.status())
         if name == "drivereview":               # drivereview?id=<drive folder>: its last review, the job state, the default speeds
