@@ -176,7 +176,10 @@ async function pageDrive(stamp,tab){
   main.innerHTML=crumbs("#/drives","Drives")+alertsCard(als,"drive")+(d?`<div class="bar" id="dtabs">${tabs.map(([k,t])=>`<a class="chip ${k===tab?"on":""}" href="#/drive/${encodeURIComponent(stamp)}/${k}">${t}</a>`).join("")}</div>`:"")+'<div id="dtab"></div>';
   wireAlerts(main);const box=$("#dtab");
   if(tab==="overview"||!d){
-    box.innerHTML=`<iframe class="drive" id="fr" src="/data/drives/deepdive/${encodeURIComponent(stamp)}/drive.html"></iframe>`;
+    box.innerHTML=`<div id="fuseb"></div><iframe class="drive" id="fr" src="/data/drives/deepdive/${encodeURIComponent(stamp)}/drive.html"></iframe>`;
+    // where dashcam telemetry covers the drive, the page draws it (one point a second) instead of Tessie's one every ~30 s
+    api("drivefuse?id="+encodeURIComponent(stamp)+"&summary=1").then(r=>{const i=r.info,h=$("#fuseb");if(!h||!i||!i.cam_n)return;
+      h.innerHTML=`<div class="sub" style="margin:0 0 8px">Route drawn from the dashcam telemetry (a point every second) for ${i.cam_pct}% of this drive. Tessie's own points (every ${n0(i.tessie_every_s)} s) fill ${i.start_gap_s>5?"the first "+i.start_gap_s+" s":"the start"}${i.end_gap_s>5?" and the last "+i.end_gap_s+" s":""} and any hole in the footage.</div>`}).catch(()=>{});
     fitFrame($("#fr"),doc=>{$$("a",doc).forEach(a=>{if((a.getAttribute("href")||"")==="../index.html"){a.parentNode.style.display="none"}});
       // the footage and the flips have their own tabs (the clips are watched in the Footage tab)
       const f=doc.getElementById("foot");if(f)f.style.display="none";hideSection(doc,"FSD speed changes");hideSection(doc,"Saved clips")});

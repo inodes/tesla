@@ -105,6 +105,24 @@ def code_updated():
     return newest > STARTED + 2
 
 
+def fuse_into(h, p):
+    """The route of a drive page is Tessie's own points (one every ~30 s); where dashcam telemetry covers the drive, draw the finer track instead."""
+    mark = "const pts=[],pt=(i,col,r,tt)=>"
+    if TC is None or mark not in h or "const lines={type:" not in h:
+        return h
+    try:
+        r = TC.fuse(os.path.basename(os.path.dirname(p)))
+    except Exception:
+        r = None
+    if not r or not r["info"]["cam_n"]:
+        return h
+    fl = ('const fusedLines=F=>{const g=[];let l=null;for(let i=0;i<F.la.length;i++){const c=sc(F.v[i]||0);if(l&&l.c===c)l.p.push(i);else{if(l)l.p.push(i);l={c:c,p:[i]};g.push(l)}}'
+          'return{type:"FeatureCollection",features:g.map(x=>({type:"Feature",properties:{c:x.c},geometry:{type:"LineString",coordinates:x.p.map(i=>[F.lo[i],F.la[i]])}}))}};'
+          'if(window.FUSED)lines=fusedLines(window.FUSED);')
+    h = h.replace("const lines={type:", "let lines={type:", 1).replace(mark, fl + mark, 1)
+    return h.replace("</head>", "<script>window.FUSED=%s;</script></head>" % json.dumps(r["points"], separators=(",", ":")), 1)
+
+
 def drive_page(p):
     """A per-drive page as the generator wrote it; pages built before the map got its reset-view button get it here (no rebuild needed)."""
     with open(p, encoding="utf-8") as fh:
@@ -112,6 +130,7 @@ def drive_page(p):
     old = 'map.addControl(new maplibregl.NavigationControl({showCompass:false}),"top-right");'
     import drive_map_ui
     h = drive_map_ui.patch(h)
+    h = fuse_into(h, p)
     if "Show the whole route" in h or old not in h:
         return h
     return h.replace(old, 'const nav=new maplibregl.NavigationControl({showCompass:false});map.addControl(nav,"top-right");\n {const b=document.createElement("button");b.type="button";b.className="maplibregl-ctrl-icon";b.title="Show the whole route";b.setAttribute("aria-label","Show the whole route");b.innerHTML=\'<span style="display:block;text-align:center;font-size:18px;line-height:29px">\\u2922</span>\';\n  b.onclick=()=>map.fitBounds([[Math.min(...O),Math.min(...L)],[Math.max(...O),Math.max(...L)]],{padding:40,maxZoom:16});nav._container.appendChild(b)}')
@@ -292,6 +311,11 @@ class H(BaseHTTPRequestHandler):
                 return self.send_json(TC.review(role, footage_root(role), _local_ts(q.get("t0", [""])[0]), _local_ts(q.get("t1", [""])[0])))
             except ValueError:
                 return self.send_json({"error": "bad time"}, 400)
+        if name == "drivefuse":                 # drivefuse?id=<drive folder>[&summary=1]: the Tessie drive's track, finer where dashcam telemetry exists
+            r = TC.fuse(q.get("id", [""])[0])
+            if not r:
+                return self.send_json({"error": "no sample file for this drive"}, 404)
+            return self.send_json(dict(info=r["info"]) if q.get("summary") else r)
         if name == "review/scanned":            # every minute whose signs have been read: {stamp: signs found}
             return self.send_json(TC.review_scanned())
         if name == "teslacam":                  # the drives that are connected right now (found by what is on them)
