@@ -320,10 +320,25 @@ function lineChart(host,series,axes,xlabel,xfmt){
   svg.onmouseleave=()=>{cur.style.display="none";hideTip()};
 }
 
+// the lines under "Charger power and battery": what was recorded, the 20 → 80 % estimate and what it rests on, what it cost - one idea per line
+function winBlock(w,lo=20,hi=80){
+  if(!w)return "";
+  const head=`<b>${lo}% → ${hi}%</b> `;
+  if(w.measured)return `<div class="cs-r">${head}${n0(w.minutes,1)} min <span class="pill ok">measured</span></div>`;
+  if(w.minutes==null)return `<div class="cs-r">${head}<span class="sub">${esc(w.text||"")}</span></div>`;
+  const src=(w.sources||[]).map(esc).join("; ");
+  const why=[w.covered?`This session covered ${esc(w.covered)}.`:"",w.n_hist!=null?`The other ${w.n_hist} of ${w.n_total} percent steps come from `+(src||"earlier sessions")+".":"",
+    w.factor!=null?`Scaled ×${w.factor.toFixed(2)} to this session's own pace.`:"Not scaled: too few steps in common with that history to compare this session's pace.",
+    w.thin!=null?`Indicative only - this session covered just ${w.thin} of the ${w.n_total} steps.`:"",w.held?"Steps no session reached reuse the nearest one.":""].filter(Boolean);
+  return `<div class="cs-r">${head}about ${n0(w.minutes)} min <span class="pill warn">estimate</span></div><div class="cs-w">${why.join(" ")}</div>`;
+}
 function chartSub(p,part,cur){
-  const xs=(part?[part]:p.parts).filter(x=>x.tel),n=xs.reduce((a,x)=>a+(+x.tel.samples||0),0),mn=xs.reduce((a,x)=>a+(x.tel.min||0),0),pk=Math.max(0,...xs.map(x=>x.tel.peak||0)),av=xs.length&&mn?xs.reduce((a,x)=>a+(x.tel.avg||0)*(x.tel.min||0),0)/mn:null,v=part||p;
+  const xs=(part?[part]:p.parts).filter(x=>x.tel),n=xs.reduce((a,x)=>a+(+x.tel.samples||0),0),mn=xs.reduce((a,x)=>a+(x.tel.min||0),0),pk=Math.max(0,...xs.map(x=>x.tel.peak||0)),av=xs.length&&mn?xs.reduce((a,x)=>a+(x.tel.avg||0)*(x.tel.min||0),0)/mn:null;
   const cost=part?(part.icost!=null?part.icost:part.tcost):p.cost,rate=part?(part.irate!=null?part.irate:part.trate):p.rate,kw=part?(part.disp||part.kwh):(p.disp||p.kwh);
-  return [n?`${n} samples over ${n0(mn,1)} min - peak ${n0(pk,1)} kW${av?", avg "+n0(av,1)+" kW":""}`:"",cur&&cur.window?esc(cur.window):"",kw&&cost!=null?`${n0(kw,2)} kWh for $${n0(cost,2)} AUD${rate?" (@ $"+n0(rate,2)+"/kWh)":""}`:""].filter(Boolean).join("<br>");
+  const rec=n?`<div class="cs-r">${n} samples over ${n0(mn,1)} min · peak <b>${n0(pk,1)} kW</b>${av?" · average <b>"+n0(av,1)+" kW</b>":""}</div>`:"";
+  const win=cur?(cur.winfo?winBlock(cur.winfo):cur.window?`<div class="cs-r">${esc(cur.window)}</div>`:""):"";
+  const paid=kw&&cost!=null?`<div class="cs-r"><b>${n0(kw,2)} kWh</b> for <b>$${n0(cost,2)}</b> AUD${rate?" · $"+n0(rate,2)+"/kWh":""}</div>`:"";
+  return `<div class="cs">${rec}${win}${paid}</div>`;
 }
 async function pageCharge(id,pid){
   loading();const [B0,D]=await Promise.all([bookWithRaw(),fetch("/api/chargebook/"+encodeURIComponent(id)+(pid?"?part="+encodeURIComponent(pid):"")).then(r=>r.ok?r.json():null).catch(()=>null)]);
@@ -341,7 +356,7 @@ async function pageCharge(id,pid){
    <div class="chgrid"><div class="chl">
      <div class="card"><h2 style="margin-top:0">Charger power and battery</h2><div class="sub" style="margin-bottom:6px">${chartSub(p,part,cur)}</div><div id="tc"></div></div>
      <div class="card"><h2 style="margin-top:0">Pack temperature, current and voltage</h2><div id="tv"></div></div>
-     <div class="card"><h2 style="margin-top:0">Power against state of charge</h2>${cur?`<div class="sub" style="margin-bottom:6px">${[cur.hardware&&cur.tier?esc(cur.hardware)+" · "+esc(cur.tier)+(cur.cap?" · "+n0(cur.cap)+" kW cap":"")+(cur.stalls?" · "+cur.stalls+" stalls":""):"",esc(cur.caption||""),esc(cur.window||"")].filter(Boolean).join(" · ")}</div>`:""}<div id="cc"></div></div>
+     <div class="card"><h2 style="margin-top:0">Power against state of charge</h2>${cur?`<div class="sub" style="margin-bottom:6px"><div class="cs">${[cur.hardware&&cur.tier?esc(cur.hardware)+" · "+esc(cur.tier)+(cur.cap?" · "+n0(cur.cap)+" kW cap":"")+(cur.stalls?" · "+cur.stalls+" stalls":""):"",esc(cur.caption||"")].filter(Boolean).map(x=>`<div class="cs-r">${x}</div>`).join("")}</div></div>`:""}<div id="cc"></div></div>
      <div class="card"><h2 style="margin-top:0">Pack voltage and current, with history</h2><div id="pc"></div></div>
      <div class="card"><h2 style="margin-top:0">Where</h2><div class="map" id="mp"></div><div class="sub" style="margin-top:8px">${esc(p.addr||"")}</div></div>
    </div><div class="chr2">
