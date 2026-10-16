@@ -21,6 +21,7 @@ import threading
 
 import app_alerts
 import drive_paths as DP
+import charge_paths as CP
 import app_config
 import app_places
 
@@ -47,12 +48,25 @@ def _short(addr):
 
 
 def _stat_key(paths):
+    """What changed since last time: each path's mtime and, for a folder, the newest mtime among its sub-folders - so a new drive or charge
+    folder inside an existing day folder (deepdive/<day>/<stamp>/) is noticed, not only a new day."""
     out = []
     for p in paths:
         try:
-            out.append((p, os.path.getmtime(p)))
+            m = os.path.getmtime(p)
         except OSError:
             out.append((p, 0))
+            continue
+        sub = 0
+        if os.path.isdir(p):
+            try:
+                with os.scandir(p) as it:
+                    for e in it:
+                        if e.is_dir(follow_symlinks=False):
+                            sub = max(sub, e.stat().st_mtime)
+            except OSError:
+                pass
+        out.append((p, m, sub))
     return tuple(out)
 
 
@@ -164,7 +178,7 @@ class Store:
 
         def build():
             out = {}
-            for f in glob.glob(os.path.join(root, "charge_deepdive_*.csv")):
+            for f in CP.glob_files(root, "charge_deepdive_*.csv"):          # day folders and any flat leftovers
                 m = re.match(r"charge_deepdive_(\d{4}-\d{2}-\d{2})_(\d{2})(\d{2})_", os.path.basename(f))
                 if m:
                     out.setdefault((m.group(1), m.group(2) + ":" + m.group(3)), f)
