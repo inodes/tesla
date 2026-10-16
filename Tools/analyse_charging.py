@@ -2547,7 +2547,8 @@ class ChargingAnalyzer:
         stamp = f"{date_part}_{time_part.replace(':', '-')}_{tz_part}"
 
         for td in self.tessie_dirs:
-            for candidate in (os.path.join(td, "drives", "deepdive", stamp, f"drive_deepdive_{stamp}.csv"),   # REQ-193
+            for candidate in (os.path.join(td, "drives", "deepdive", stamp[:10], stamp, f"drive_deepdive_{stamp}.csv"),   # day folder
+                              os.path.join(td, "drives", "deepdive", stamp, f"drive_deepdive_{stamp}.csv"),   # REQ-193
                               os.path.join(td, "drives", "deepdive", f"drive_deepdive_{stamp}.csv")):      # legacy flat
                 if os.path.isfile(candidate):
                     return candidate

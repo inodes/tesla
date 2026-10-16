@@ -2889,7 +2889,8 @@ def find_deepdive_files():
             p = os.path.join(d, sub)
             if os.path.isdir(p):
                 for f in (glob.glob(os.path.join(p, "drive_deepdive_*.csv"))
-                          + glob.glob(os.path.join(p, "*", "drive_deepdive_*.csv"))):   # REQ-193 per-drive folders
+                          + glob.glob(os.path.join(p, "*", "drive_deepdive_*.csv"))             # REQ-193 per-drive folders
+                          + glob.glob(os.path.join(p, "*", "*", "drive_deepdive_*.csv"))):      # day folders
                     real = os.path.realpath(f)
                     if real not in seen:
                         seen.add(real)
