@@ -443,7 +443,7 @@ async function pageParkedOne(id){
 // ---------- Clip player (Sentry, Saved and Recent clips): all six cameras laid out like a drive page, or one camera big
 // event.json "camera" -> the camera that saw it (checked against the thumbnails and the clips: 0 and 1 front, 5 left repeater, 6 right repeater, 7 back; others unknown -> all six)
 const EVCAM={"0":"front","1":"front","5":"left_repeater","6":"right_repeater","7":"back"};
-const MSZ=[["s","Small","260px"],["m","Medium","420px"],["l","Large","640px"],["f","Full","calc(100vh - 120px)"]],TSZ=[["h","Hide","0"],["n","Normal","284px"],["t","Tall","480px"]];
+const MSZ=[["s","Small","260px"],["m","Medium","420px"],["l","Large","640px"],["f","Full","calc(100vh - 120px)"]],TSZ=[["h","Hide","0"],["n","Normal","284px"]];
 const CORDER=["left_pillar","front","right_pillar","left_repeater","back","right_repeater"];
 const lsGet=(k,d)=>{try{return localStorage.getItem(k)||d}catch(e){return d}},lsSet=(k,v)=>{try{localStorage.setItem(k,v)}catch(e){}};
 // o = {head: html line above the video, stamps: [minute, ...], cams: {minute: [camera, ...]}, url: (minute, camera) => url, trig: epoch ms the event happened (start a little before it)}
