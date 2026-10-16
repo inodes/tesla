@@ -34,6 +34,8 @@ function mapLinks(lat,lon,name,stop){
   return L.map(([t,u])=>`<a class="ml" href="${u}" target="_blank" rel="noopener"${sp}>${stop?(sh[t]||t):t}</a>`).join(" · ");
 }
 // zoom in / out plus a button that puts the view back (the whole route, every place, or the pin)
+// A map reacts to the wheel and to a trackpad pinch only after it has been clicked, and lets go again when the pointer leaves it (so scrolling the page never moves a map)
+function newMap(o){const m=new maplibregl.Map(o),c=m.getContainer();m.scrollZoom.disable();c.addEventListener("mousedown",()=>m.scrollZoom.enable());c.addEventListener("mouseleave",()=>m.scrollZoom.disable());return m}
 function mapNav(m,reset,title){const nav=new maplibregl.NavigationControl({showCompass:false});m.addControl(nav,"top-right");
   const b=document.createElement("button");b.type="button";b.className="maplibregl-ctrl-icon";b.title=title;b.setAttribute("aria-label",title);
   b.innerHTML='<span style="display:block;text-align:center;font-size:18px;line-height:29px">⤢</span>';b.onclick=reset;nav._container.appendChild(b)}
@@ -41,7 +43,7 @@ function miniMap(el,lat,lon,col){
   if(lat==null||lon==null){el.outerHTML='<div class="sub">No location.</div>';return}
   if(!window.maplibregl){el.innerHTML='<div class="empty">Map library not loaded (offline?).</div>';return}
   const dark=matchMedia("(prefers-color-scheme: dark)").matches;
-  const m=new maplibregl.Map({container:el,style:MAPSTYLE(dark),center:[lon,lat],zoom:14.5,attributionControl:{compact:true},cooperativeGestures:true});
+  const m=newMap({container:el,style:MAPSTYLE(dark),center:[lon,lat],zoom:14.5,attributionControl:{compact:true}});
   mapNav(m,()=>m.flyTo({center:[lon,lat],zoom:14.5}),"Back to the pin");
   new maplibregl.Marker({color:col||"#3b6cf6"}).setLngLat([lon,lat]).addTo(m);
 }
@@ -715,7 +717,7 @@ function placesMap(host,rows,tab){
   if(PLM){try{PLM.m.remove()}catch(e){}PLM=null}
   if(!window.maplibregl){host.innerHTML='<div class="empty">Map library not loaded (offline?).</div>';return}
   host.innerHTML=`<div class="sub" style="margin-bottom:6px">Solid dot = used, faded = not used. Dots grow and get names as you zoom in. Click a dot for details.</div>${byNet?'<div class="bar" id="nl"></div>':""}<div class="map big" id="pm"></div>`;
-  const el=$("#pm"),dark=matchMedia("(prefers-color-scheme: dark)").matches,m=new maplibregl.Map({container:el,style:MAPSTYLE(dark),center:[151.2,-33.8],zoom:8,attributionControl:{compact:true}});
+  const el=$("#pm"),dark=matchMedia("(prefers-color-scheme: dark)").matches,m=newMap({container:el,style:MAPSTYLE(dark),center:[151.2,-33.8],zoom:8,attributionControl:{compact:true}});
   mapNav(m,()=>update(true),"Show every place");
   let ready=false,first=true;
   const update=(refit,rs)=>{if(rs)rows=rs;const F=feats();$("#cnt").textContent=F.length+" on the map";if(!ready)return;m.getSource("pl").setData({type:"FeatureCollection",features:F});
@@ -968,7 +970,7 @@ function tlFill(role,id,left){
   TLQ=TLQ.then(async()=>{for(let k=0;k<40&&left>0;k++){try{const d=await tcGet("teslacam/"+role+"/seg/"+encodeURIComponent(id)+"?budget=15");if(!d||!d.series)break;TLR[id]={S:d.series,start:d.item.start,u0:d.item.t0,lo:d.item.lo};dispatchEvent(new CustomEvent("tlroute",{detail:id}));if(!d.pending||d.pending>=left)break;left=d.pending}catch(e){break}}})}
 // one map: routes [{id,S,start}] and marks [{id,type,pos,title}]
 function dayMap(el,role,hooks){
-  const dark=matchMedia("(prefers-color-scheme: dark)").matches,m=new maplibregl.Map({container:el,style:MAPSTYLE(dark),center:[151.2,-33.8],zoom:8,attributionControl:{compact:true},cooperativeGestures:true});
+  const dark=matchMedia("(prefers-color-scheme: dark)").matches,m=newMap({container:el,style:MAPSTYLE(dark),center:[151.2,-33.8],zoom:8,attributionControl:{compact:true}});
   let ready=false,pend=null,pts=[],mk=[],bounds=null,lastKey="",lastMarks=[];
   const fit=()=>{if(bounds)m.fitBounds(bounds,{padding:40,maxZoom:15,duration:400})};
   mapNav(m,fit,"Show everything ticked");
@@ -1170,7 +1172,7 @@ async function pageTeslaCamSentry(role,ev){
       <div class="tiles">${tile(hms(e.ts),"detected")}${tile(esc(e.reason?reason(e.reason):"-"),"reason")}${tile(n0(stamps.length)+" min","of clips")}</div>
       ${hasPos?`<div class="card" style="padding:10px"><div class="bar" style="margin:0 0 8px"><span class="sub">Where the car was parked</span><span style="margin-left:auto;display:flex;gap:6px;align-items:center"><span class="sub">Map</span>${MSZ.map(([k,t])=>`<button class="chip" data-ms="${k}">${t}</button>`).join("")}</span></div><div class="map big" id="dmap"></div></div>`:'<div class="card"><div class="sub">No position was recorded for this event, so there is no map.</div></div>'}
       <div class="card" style="margin-top:12px"><div id="dvid"></div></div>`;
-    if(hasPos&&window.maplibregl){const dark=matchMedia("(prefers-color-scheme: dark)").matches,m=new maplibregl.Map({container:"dmap",style:MAPSTYLE(dark),center:[+e.lon,+e.lat],zoom:16,attributionControl:{compact:true}}),pos=[+e.lon,+e.lat];
+    if(hasPos&&window.maplibregl){const dark=matchMedia("(prefers-color-scheme: dark)").matches,m=newMap({container:"dmap",style:MAPSTYLE(dark),center:[+e.lon,+e.lat],zoom:16,attributionControl:{compact:true}}),pos=[+e.lon,+e.lat];
       mapNav(m,()=>m.easeTo({center:pos,zoom:16}),"Back to the car");const el=document.createElement("i");el.className="hal big";new maplibregl.Marker({element:el}).setLngLat(pos).addTo(m);
       const setMs=k=>{lsSet("tc.mapsz.s",k);$$("[data-ms]",host).forEach(b=>b.classList.toggle("on",b.dataset.ms===k));$("#dmap").style.height=(MSZ.find(x=>x[0]===k)||MSZ[1])[2];m.resize();m.easeTo({center:pos,zoom:16,duration:200})};
       $$("[data-ms]",host).forEach(b=>b.onclick=()=>setMs(b.dataset.ms));setMs(lsGet("tc.mapsz.s","m"))}
@@ -1253,7 +1255,7 @@ async function teslaDriveBody(host,role,fetchSeg,places,opts){
 }
 function driveMap(el,s,idx,onPick,leg){
   if(!window.maplibregl){el.innerHTML='<div class="empty">Map library not loaded (offline?).</div>';return{update(){},cursor(){},mode(){}}}
-  const dark=matchMedia("(prefers-color-scheme: dark)").matches,m=new maplibregl.Map({container:el,style:MAPSTYLE(dark),center:[idx.length?s.lon[idx[0]]:151,idx.length?s.lat[idx[0]]:-33],zoom:11,attributionControl:{compact:true}});
+  const dark=matchMedia("(prefers-color-scheme: dark)").matches,m=newMap({container:el,style:MAPSTYLE(dark),center:[idx.length?s.lon[idx[0]]:151,idx.length?s.lat[idx[0]]:-33],zoom:11,attributionControl:{compact:true}});
   mapNav(m,()=>fit(),"Show the whole route");
   let ready=false,mode="v",S=s,I=idx,first=true,latest=null;
   const SPD=spdExpr(),AP=apExpr();
