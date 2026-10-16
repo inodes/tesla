@@ -43,7 +43,6 @@ tesla/
 │   ├── analyse_charging.py         # Charging reconciliation & invoice parser
 │   ├── analyse_drives.py           # Drives explorer, footage linker, and master consolidator
 │   ├── charger_find.py            # Unified multi-network EV charger discovery, pricing & sync engine
-│   ├── charger_find_tesla.py      # [Deprecated] Legacy Tesla Supercharger explorer (superseded by charger_find.py)
 │   ├── places_manager.py           # Place tagging, geocoding, and stop-cluster review utility
 │   ├── power_cost_calculator.py    # Full electricity-bill reconstruction (usage + supply + solar credit + demand)
 │   ├── power_demand_calculator.py  # Reproduce the active power provider's residential demand charge (AGL: Ausgrid EA025)
