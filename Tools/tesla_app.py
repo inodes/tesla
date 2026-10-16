@@ -65,6 +65,7 @@ import app_config  # noqa: E402
 import app_data  # noqa: E402
 import app_sentry  # noqa: E402
 import app_teslacam  # noqa: E402
+import app_drive_review  # noqa: E402
 import app_charges  # noqa: E402
 import app_sync  # noqa: E402
 import drive_roles as DR  # noqa: E402
@@ -75,6 +76,7 @@ mimetypes.add_type("text/javascript", ".js")
 STORE = None
 SENTRY = None
 TC = None
+DRV = None                  # the manual drive review (lib/app_drive_review.py)
 SYNC = None
 BOOK = None
 STARTED = time.time()
@@ -82,6 +84,15 @@ DATA_DIR = DEFAULT_DATA
 FOOT_EXT = (".mp4", ".jpg", ".jpeg", ".png", ".json")
 _ACTION_LOCK = threading.Lock()
 _ROOTS = {"t": 0, "v": {}}
+
+
+def drive_review_state(stamp):
+    """What the Review tab needs: the finished review of this drive (None until one was run), the job (running for this drive or not), the defaults,
+    and whatever signs reading needs that is missing."""
+    import app_review
+    job = DRV.status()
+    return dict(result=DRV.result(stamp), job=job if job.get("stamp") == stamp else dict(running=False), defaults=DRV.defaults(),
+                connected=bool(footage_root("A")), missing=app_review.requirements())
 
 
 def footage_root(role):
@@ -277,6 +288,11 @@ class H(BaseHTTPRequestHandler):
                 if p and os.path.isfile(p) and p.endswith(".jpg"):
                     return self.send_file(p, cache=True)
                 return self.send_bytes(b"not found", "text/plain", 404)
+            if path.startswith("/revev/"):          # the contact sheet of a drive review event: /revev/<drive stamp>/<event>.jpg
+                p = safe_join(os.path.join(DATA_DIR, "drive_review", "events"), path[7:])
+                if p and os.path.isfile(p) and p.endswith(".jpg"):
+                    return self.send_file(p, cache=True)
+                return self.send_bytes(b"not found", "text/plain", 404)
             if path.startswith("/footage/"):
                 role, _, rel = path[9:].partition("/")
                 root = footage_root(role)
@@ -306,6 +322,12 @@ class H(BaseHTTPRequestHandler):
             if u.path == "/api/places/delete":
                 with _ACTION_LOCK:
                     return self.send_json(STORE.pl.delete(body.get("name", "")))
+            if u.path == "/api/drivereview":       # {id, action: start|stop, speed_from, speed_to, both}: the manual review of one drive
+                if body.get("action") == "stop":
+                    DRV.stop()
+                else:
+                    DRV.start(body.get("id", ""), footage_root("A"), {k: body.get(k) for k in ("speed_from", "speed_to", "both")})
+                return self.send_json(drive_review_state(body.get("id", "")))
             if u.path == "/api/review":
                 role = body.get("role", "A")
                 return self.send_json(TC.review(role, footage_root(role), _local_ts(body.get("t0", "")), _local_ts(body.get("t1", "")), body.get("action", "start")))
@@ -348,6 +370,8 @@ class H(BaseHTTPRequestHandler):
             if not r:
                 return self.send_json({"error": "no sample file for this drive"}, 404)
             return self.send_json(dict(info=r["info"]) if q.get("summary") else r)
+        if name == "drivereview":               # drivereview?id=<drive folder>: its last review, the job state, the default speeds
+            return self.send_json(drive_review_state(q.get("id", [""])[0]))
         if name == "review/scanned":            # every minute whose signs have been read: {stamp: signs found}
             return self.send_json(TC.review_scanned())
         if name == "teslacam":                  # the drives that are connected right now (found by what is on them)
@@ -443,7 +467,7 @@ def serve(port, host="127.0.0.1"):
 
 
 def main():
-    global STORE, DATA_DIR, SENTRY, TC, SYNC, BOOK
+    global STORE, DATA_DIR, SENTRY, TC, DRV, SYNC, BOOK
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--data-dir", default=DEFAULT_DATA)
     ap.add_argument("--port", type=int, default=int(app_config.get("window.port")))
@@ -459,6 +483,7 @@ def main():
     STORE = app_data.Store(DATA_DIR)
     SENTRY = app_sentry.Sentry(DATA_DIR)
     TC = app_teslacam.TeslaCam(DATA_DIR, SENTRY)
+    DRV = app_drive_review.DriveReview(DATA_DIR, TC)
     BOOK = app_charges.ChargeBook(os.path.dirname(os.path.abspath(__file__)), DATA_DIR)
     BOOK.get()          # start reconciling the charges with their invoices in the background
     SYNC = app_sync.ChargerSync(os.path.dirname(os.path.abspath(__file__)), DATA_DIR)

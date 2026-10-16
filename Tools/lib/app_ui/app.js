@@ -167,6 +167,66 @@ const localISO=ms=>{const t=new Date(ms),z=n=>String(n).padStart(2,"0");return `
 function fitFrame(fr,onDoc){fr.onload=()=>{try{const doc=fr.contentDocument;if(onDoc)onDoc(doc);const fit=()=>{fr.style.height=(doc.documentElement.scrollHeight+20)+"px"};fit();new ResizeObserver(fit).observe(doc.body)}catch(e){}}}
 // hide a heading and the cards that follow it, up to the next heading
 function hideSection(doc,title){$$(".wrap > h2",doc).forEach(h=>{if(h.textContent.startsWith(title)){let n=h;n.style.display="none";n=n.nextElementSibling;while(n&&n.tagName!=="H2"&&!n.classList.contains("sub")){n.style.display="none";n=n.nextElementSibling}}})}
+// ---------- the manual review of one drive (lib/app_drive_review.py): FSD interventions, accelerator pressed while FSD is on, speed changes while FSD is on
+async function driveReviewPanel(host,stamp){
+  const hm=t=>new Date(t*1000).toISOString().substr(11,8);            // an event's t is the drive's own clock read as UTC
+  const KINDS=[["intervention","FSD interventions","FSD switched off"],["accelerator","Accelerator pressed while FSD is on","accelerator pressed with FSD on"],["speed","Speed changes while FSD is on","speed change with FSD on"]];
+  const mem=()=>{try{return JSON.parse(localStorage.getItem("drv.rev")||"{}")}catch(e){return{}}},save=o=>{try{localStorage.setItem("drv.rev",JSON.stringify(o))}catch(e){}};
+  let S=null,timer=null;
+  const live=()=>document.body.contains(host)&&location.hash.indexOf(encodeURIComponent(stamp))>=0;
+  const get=async()=>{S=await (await fetch("/api/drivereview?id="+encodeURIComponent(stamp))).json()};
+  const post=async b=>{S=await (await fetch("/api/drivereview",{method:"POST",body:JSON.stringify(Object.assign({id:stamp},b))})).json()};
+  const card=(e,R)=>{
+    const gm=e.la!=null?` · <a target="_blank" rel="noopener" href="https://www.google.com/maps/@${e.la},${e.lo},19z">map</a>`:"";
+    let h="",tags="";
+    if(e.kind==="intervention"){
+      h=`${esc(e.from_mode)} → <b>${esc(e.to_mode)}</b> at ${n0(e.v)} km/h`;
+      tags=(e.flags||[]).map(f=>`<span class="pill warn">${f==="brake"?"braking":f==="steering"?"steering":"accelerator"}</span>`).join(" ")+(e.at_stop?' <span class="pill" title="Stopped: the end of the FSD part of the trip, not an intervention on the road">stopped</span>':"")
+        +(!(e.flags||[]).length&&!e.at_stop?' <span class="pill" title="No brake, steering or accelerator around it: a stalk, button or the car itself">no pedal / wheel input</span>':"");
+      h+=`<div class="sub">${e.off_s==null?"FSD did not come back":"FSD was off for "+n0(e.off_s)+" s"} · it had been on for ${e.fsd_before_s>=120?dur(Math.round(e.fsd_before_s/60)):n0(e.fsd_before_s)+" s"}</div>`;
+    }else if(e.kind==="accelerator"){
+      h=`Accelerator held <b>${n0(e.dur_s)} s</b> · peak ${n0(e.peak)}% · ${n0(e.v)} → ${n0(e.v1)} km/h`;
+      tags=e.ended_in_off?'<span class="pill warn">FSD switched off right after</span>':"";
+    }else{
+      h=`<b>${n0(e.v)} → ${n0(e.v1)} km/h</b> in ${n0(e.dur_s)} s`;
+      tags=e.pressed?'<span class="pill warn">accelerator pressed during it</span>':'<span class="pill ok">no pedal input</span>';
+    }
+    const sg=(e.signs||[]).map(g=>`<span class="sgn" title="seen ${g.n} time(s), ${g.conf}% sure">${g.f?`<img src="/review/${encodeURIComponent(g.f)}" alt="">`:""}<b>${esc(g.text)}</b> <span class="sub">${hm(g.t)}</span></span>`).join("");
+    const sheet=e.sheet?`<a href="/revev/${encodeURIComponent(R.stamp)}/${encodeURIComponent(e.sheet)}" target="_blank"><img class="rvsheet" loading="lazy" src="/revev/${encodeURIComponent(R.stamp)}/${encodeURIComponent(e.sheet)}"></a>`:"";
+    return `<div class="card rvev"><div><div><b>${esc(e.id)}</b> · ${hm(e.t)}${gm}</div><div style="margin:4px 0">${h}</div><div>${tags}</div>
+      <div class="sub" style="margin-top:6px">${(e.signs||[]).length?"Signs seen in the stills:":(R.stills?"No signs read in the stills.":"")}</div><div class="sgs">${sg}</div>${e.look_error?`<div class="sub" style="color:var(--bad)">${esc(e.look_error)}</div>`:""}</div><div>${sheet}</div></div>`;
+  };
+  const draw=()=>{
+    if(!live())return;
+    const R=S.result,job=S.job||{},run=!!job.running,m=mem(),D=S.defaults||{},f0=m.from!=null?m.from:D.speed_from,t0=m.to!=null?m.to:D.speed_to,both=m.both!=null?m.both:D.both;
+    const ms=S.missing||{py:[],cmd:[],hint:[]};
+    let h=`<div class="card"><h2 style="margin-top:0">Review this drive</h2>
+      <div class="sub" style="margin-bottom:8px">Finds every moment FSD was switched off, every time the accelerator was pressed while FSD was on, and every lasting speed change while FSD was on. The events come from the dashcam's telemetry; only the front camera is looked at, in the seconds around each event (a still every second, every speed-limit sign read).</div>
+      <div class="bar" style="margin:0"><label>Speed change from <input type="number" id="rvf" value="${f0}" step="5" min="10" max="200" style="width:70px"></label><label>to <input type="number" id="rvt" value="${t0}" step="5" min="10" max="200" style="width:70px"></label>
+      <label><input type="checkbox" id="rvb" ${both?"checked":""}> and back</label>
+      ${run?'<button class="btn" id="rvx">Stop</button>':`<button class="btn pri" id="rvg">${R?"Run again":"Run review"}</button>`}</div>`;
+    if(run)h+=`<div class="sub" style="margin-top:8px">${esc(job.stage||"")}${job.total?" · "+n0(job.done)+" of "+n0(job.total):""}…</div>`;
+    if(job.error)h+=`<div class="sub" style="margin-top:8px;color:var(--bad);user-select:text">${esc(job.error)}</div>`;
+    if(ms.py.length+ms.cmd.length)h+=`<div class="sub" style="margin-top:8px">Stills and sign reading need ${esc(ms.py.concat(ms.cmd).join(", "))} installed. <code>${esc((ms.hint||[]).join(" ; "))}</code></div>`;
+    else if(!S.connected&&!(R&&R.stills))h+=`<div class="sub" style="margin-top:8px">The Archive is not connected: events can be found from telemetry already read, but no stills.</div>`;
+    if(R){const c=R.counts||{};
+      h+=`<div class="sub" style="margin-top:8px">Last run ${new Date(R.made).toLocaleString()} · ${n0(c.intervention||0)} FSD interventions · ${n0(c.accelerator||0)} accelerator presses · ${n0(c.speed||0)} speed changes (${n0(R.params.speed_from)} → ${n0(R.params.speed_to)}${R.params.both?" and back":""}) · dashcam telemetry covers ${R.coverage?n0(R.coverage.pct):0}% of the drive${R.stills?" · front-camera stills read":""}</div>`;
+      if(R.note)h+=`<div class="sub" style="margin-top:4px;user-select:text">${esc(R.note)}</div>`}
+    h+="</div>";
+    if(R&&R.events){
+      KINDS.forEach(([k,title,what])=>{const ev=R.events.filter(e=>e.kind===k).sort((a,b)=>b.t-a.t);        // newest first like every list
+        h+=`<h2 style="margin:18px 0 8px">${title} <span class="sub">${ev.length}</span></h2>`+(ev.length?ev.map(e=>card(e,R)).join(""):`<div class="sub" style="margin-bottom:6px">No ${what} found.</div>`)});
+    }
+    host.innerHTML=h;
+    const g=$("#rvg",host),x=$("#rvx",host);
+    if(g)g.onclick=async()=>{const o={from:+$("#rvf",host).value||100,to:+$("#rvt",host).value||110,both:$("#rvb",host).checked};save(o);
+      await post({action:"start",speed_from:o.from,speed_to:o.to,both:o.both});draw();poll()};
+    if(x)x.onclick=async()=>{await post({action:"stop"});draw()};
+  };
+  const poll=()=>{clearTimeout(timer);if(!live()||!(S&&S.job&&S.job.running))return;timer=setTimeout(async()=>{await get();draw();poll()},2000)};
+  host.innerHTML='<div class="sub">Loading…</div>';
+  try{await get();draw();poll()}catch(e){host.innerHTML=errBox(e.message,"Could not load the drive review")}
+}
 async function pageDrive(stamp,tab){
   const act=await api("activity"),d=act.find(x=>x.k==="drive"&&x.id===stamp);
   const als=await alertsFor("drive",stamp);
@@ -190,12 +250,13 @@ async function pageDrive(stamp,tab){
   }else{
     const t0=d.day+"T"+d.hm+":00",t1=localISO(Date.parse(t0)+d.min*60000),pl=await api("places").catch(()=>({saved:[]}));
     const rv=tab==="review";
-    box.innerHTML='<div id="tdh"></div>'+(rv?'':'<details class="card" id="mg" style="margin-top:14px"><summary><b>Copy, save as a clip, or delete clips</b></summary><div id="mgb" style="margin-top:10px"></div></details>');
+    box.innerHTML=(rv?'<div id="drr"></div>':'')+'<div id="tdh"></div>'+(rv?'':'<details class="card" id="mg" style="margin-top:14px"><summary><b>Copy, save as a clip, or delete clips</b></summary><div id="mgb" style="margin-top:10px"></div></details>');
     const fetchSeg=async b=>{const r=await fetch("/api/teslacam/A/window?t0="+encodeURIComponent(t0)+"&t1="+encodeURIComponent(t1)+"&budget="+(b==null?20:b));
       if(!r.ok){const e=(await r.json().catch(()=>({}))).error||("HTTP "+r.status);const x=new Error(e);x.none=r.status===404;throw x}return r.json()};
     if(!rv)$("#mg").ontoggle=()=>{if(!$("#mg").open||$("#mgb").innerHTML)return;$("#mgb").innerHTML=`<iframe class="drive" id="mf" src="/data/drives/deepdive/${encodeURIComponent(stamp)}/drive.html"></iframe>`;
       fitFrame($("#mf"),doc=>{const w=doc.querySelector(".wrap");if(!w)return;if(!doc.getElementById("foot")){$("#mgb").innerHTML='<div class="sub">No clip tools for this drive: the page was built without footage. Run <code>./drive_report.py</code> with the Archive connected.</div>';return}
         [...w.children].forEach(c=>{if(c.id!=="foot")c.style.display="none"})})};
+    if(rv)driveReviewPanel($("#drr"),stamp);
     try{await teslaDriveBody($("#tdh"),"A",fetchSeg,pl.saved||[],{heading:false,review:rv?{t0,t1}:null})}
     catch(e){const h=$("#tdh");if(h)h.innerHTML=e.none?'<div class="card"><b>No dashcam footage or telemetry for this drive.</b><div class="sub" style="margin-top:6px">Nothing recorded on the Archive covers these times, and nothing was read from it before. If the Archive is not connected, connect it and open this tab again.</div></div>':errBox(e.message,"Could not rebuild this drive from the video")}
   }

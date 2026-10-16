@@ -131,7 +131,19 @@
       "workers": 3,
       "merge_s": 12.0,
       "candidate_km": 20,
-      "candidate_avg_kmh": 60
+      "candidate_avg_kmh": 60,
+      "accel_min_pct": 5,
+      "speed_from": 100,
+      "speed_to": 110,
+      "speed_tol_kmh": 3,
+      "speed_hold_s": 8,
+      "speed_window_s": 90,
+      "event_before_s": 12,
+      "event_after_s": 15,
+      "max_event_stills": 40,
+      "steer_deg": 15,
+      "sheet_cols": 7,
+      "sheet_tile_px": 240
     }
   }
 }
