@@ -242,10 +242,11 @@ def main():
     master = DRV.load_master(data)
     foot = DRV.Footage(roots, a.since)
     t_end = time.time() + a.budget if a.budget else 1e18
-    names = sorted((n for n in os.listdir(root) if os.path.isdir(os.path.join(root, n)) and n[:10] >= a.since and (not a.only or n == a.only)), reverse=True)
+    found = dict(DRV.dp.iter_folders(root))                  # {stamp: folder} in any layout
+    names = sorted((n for n in found if n[:10] >= a.since and (not a.only or n == a.only)), reverse=True)
     done = skipped = 0
     for n in names:
-        folder = os.path.join(root, n)
+        folder = found[n]
         out_dir = os.path.join(data, "drives", "deepdive_gps", n)
         if os.path.exists(os.path.join(out_dir, "drive_gps.json")) and not a.force:
             skipped += 1

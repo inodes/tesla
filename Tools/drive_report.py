@@ -41,6 +41,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 sys.path.insert(0, os.path.join(HERE, "lib"))
 import drive_paths as dp  # noqa: E402
+import clip_clock as CC  # noqa: E402
 import dashcam_flip_review as D  # noqa: E402
 import footage_ui as FU  # noqa: E402
 import drive_roles as DR  # noqa: E402
@@ -191,7 +192,7 @@ def load_drive_csv(path):
 
 def gps_mtime(folder, stamp):
     try:
-        return os.path.getmtime(os.path.join(os.path.dirname(os.path.dirname(folder)), "deepdive_gps", stamp, "drive_gps.json"))
+        return os.path.getmtime(os.path.join(dp.drives_dir(folder), "deepdive_gps", stamp, "drive_gps.json"))
     except OSError:
         return 0
 
@@ -199,7 +200,7 @@ def gps_mtime(folder, stamp):
 def load_gps(folder, stamp, a, b):
     """The dashcam path of drive_gps.py (drives/deepdive_gps/<stamp>/), only when it was judged to agree with Tessie.
     -> (list of [epoch, lat, lon, km/h, autopilot], info dict) or (None, None)."""
-    d = os.path.join(os.path.dirname(os.path.dirname(folder)), "deepdive_gps", stamp)
+    d = os.path.join(dp.drives_dir(folder), "deepdive_gps", stamp)
     try:
         info = json.load(open(os.path.join(d, "drive_gps.json")))
         if info.get("verdict") != "used":
@@ -628,9 +629,10 @@ def build_page(stamp, m, win, flips, recs, saved_ev, cov, clips_rel, folder, mwi
 
     title = f"{t0.strftime('%a %d %b %H:%M')} {frm} → {to}"
     data['title'] = f"{frm} → {to}"
+    up = "../../" if dp.DAY_RE.match(os.path.basename(os.path.dirname(folder))) else "../"        # the way back to deepdive/index.html from the drive's folder
     return f"""<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>{esc(title)}</title><link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/maplibre-gl/4.7.1/maplibre-gl.css"><script src="https://cdnjs.cloudflare.com/ajax/libs/maplibre-gl/4.7.1/maplibre-gl.js"></script><style>{CSS}{DC.CSS}{FU.CSS}#mapl{{width:100%;height:520px;border-radius:8px;overflow:hidden}}.maplibregl-popup-content{{color:#111;font:12px system-ui,sans-serif;padding:6px 9px}}</style></head><body><div class="wrap">
-<div class="sub"><a href="../index.html">All drives</a></div>
+<div class="sub"><a href="{up}index.html">All drives</a></div>
 <h1>{esc(frm)} → {esc(to)}</h1><div class="sub">{esc(day)} · {esc(start)}–{esc(end)} · folder {esc(stamp)}</div>
 {trip}<div class="card"><div class="stats">{stats}</div></div>
 <div class="two"><div class="card"><h2>Route<span id="mapbtns"></span></h2><div id="mapbox"><svg id="map" viewBox="0 0 1060 540" style="width:100%;height:auto"></svg></div>
@@ -796,6 +798,9 @@ def process_drive(csv_path, master, flips_by_file, recs, foot, args, base_analys
                 flips=len(flips), flips_with_footage=sum(1 for e in flips if e["id"] in recs), saved_clip_events=len(saved_ev),
                 footage_clips=cov["n"] if cov else 0, footage_pct=round(cov["pct"]) if cov else 0,
                 videos=(not args.no_video) and not incomplete, foot_off=off, foot_how=foot.how if (foot and foot.clips) else "")
+    # times in the data are UTC; the zone and offset are kept so the local clock can be shown again (the day folder is the local date of the start)
+    _u0, _u1 = CC.from_local(CC.naive(summ["start"].replace(" ", "_"))), CC.from_local(CC.naive(summ["end"].replace(" ", "_")))
+    summ.update(t0=_u0, t1=_u1, tz=getattr(CC.zone(), "key", "UTC"), utc_offset_s=CC.local_offset(_u0))
     with open(os.path.join(folder, "drive_summary.json"), "w", encoding="utf-8") as fh:
         json.dump(summ, fh, indent=1, ensure_ascii=False)
     with open(out + ".tmp", "w", encoding="utf-8") as fh:
@@ -817,7 +822,7 @@ def build_index(root, master, rows):
         if day != last:
             body += f'<tr class="day"><td colspan="9"><b>{datetime.datetime.strptime(day, "%Y-%m-%d").strftime("%A %d %B %Y")}</b></td></tr>'
             last = day
-        body += (f'<tr data-q="{esc((stamp+" "+i["stamp"]+" "+i["frm"]+" "+i["to"]).lower())}"><td><a href="{esc(i["stamp"])}/drive.html">{esc(stamp[11:16].replace("-", ":"))}</a></td>'
+        body += (f'<tr data-q="{esc((stamp+" "+i["stamp"]+" "+i["frm"]+" "+i["to"]).lower())}"><td><a href="{esc(i.get("href") or i["stamp"] + "/drive.html")}">{esc(stamp[11:16].replace("-", ":"))}</a></td>'
                  f'<td>{esc(i["frm"])} → {esc(i["to"])}</td><td>{esc(i["km"])}</td><td>{esc(i["min"])}</td><td>{esc(i["avg"])}</td><td>{esc(i["max"])}</td>'
                  f'<td>{esc(i["wh"])}</td><td>{esc(i["flips"])}</td><td>{esc(i["foot"])}</td></tr>')
     page = f"""<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>All drives</title><style>{CSS}
@@ -850,7 +855,8 @@ def main():
     roots = [os.path.expanduser(c) for c in (a.teslacam or DR.teslacam_roots(a.with_secondary)) if os.path.isdir(os.path.expanduser(c))]
     foot = Footage(roots, a.footage_since) if roots else None
     if foot:            # offsets already settled by GPS on earlier runs help the drives GPS cannot settle
-        for sj in glob.glob(os.path.join(data, "drives", "deepdive", "*", "drive_summary.json")):
+        for _st, _fo in dp.iter_folders(root):
+            sj = os.path.join(_fo, "drive_summary.json")
             try:
                 j = json.load(open(sj))
                 if j.get("foot_how") == "gps":
@@ -892,7 +898,7 @@ def main():
             utc = int(mm[2]["Started At (UTC)"]) if mm else 0
         except Exception:
             utc = 0
-        rows.append((j["start"][:10] + "_" + j["start"][11:16].replace(":", "-"), dict(utc=utc, stamp=j["stamp"], frm=j["frm"], to=j["to"], km=j["km"], min=j["minutes"], avg=j["avg_kmh"],
+        rows.append((j["start"][:10] + "_" + j["start"][11:16].replace(":", "-"), dict(utc=utc, stamp=j["stamp"], href=os.path.relpath(folder, root).replace(os.sep, "/") + "/drive.html", frm=j["frm"], to=j["to"], km=j["km"], min=j["minutes"], avg=j["avg_kmh"],
                                  max=j["max_kmh"], wh=j["wh_km"], flips=j["flips"] or "", foot=("%d%%" % j["footage_pct"]) if j["footage_clips"] else "")))
     build_index(root, master, rows)
     print(f"built {done} page(s), {skipped} skipped, index of {len(rows)} drives -> {root}/index.html", flush=True)
