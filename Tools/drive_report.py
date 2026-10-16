@@ -2,7 +2,7 @@
 """drive_report.py - one summary page per drive, written into that drive's own folder (REQ-193).
 
     <data>/drives/deepdive/<stamp>/drive.html     self-contained page: stats, route map, speed/power/elevation graph,
-                                                  FSD 100<->110 flips, saved-clip events, dashcam coverage
+                                                  saved-clip events, dashcam coverage
     <data>/drives/deepdive/<stamp>/clips/         only when RecentClips / SavedClips footage overlaps the drive:
                                                   E###.jpg (1 s stills), E###.mp4 (short front snippet),
                                                   saved_<folder>.mp4 (front snippet around the saved event)
@@ -620,23 +620,6 @@ def build_page(stamp, m, win, flips, recs, saved_ev, cov, clips_rel, folder, mwi
             block("var(--bad)", fmt_t(mwin[1] if mwin else win[-1]["t"]), to, addr("Ending Location"), bat("Ending Battery (%)", -1)) + '</div></div>')
     stats = "".join(f'<div class="stat"><b>{esc(v)}</b><span>{esc(k)}</span></div>' for k, v in st)
 
-    # events
-    evh = ""
-    for e in reversed(flips):       # newest first, like every list
-        r = recs.get(e["id"])
-        gm = "https://www.google.com/maps/@%s,%s,19z" % (e["lat"], e["lon"])
-        head = f'<b>{esc(e["id"])}</b> {esc(e["flip"])} · {esc(e["time"][11:19])} · {esc(e.get("road_before",""))} {esc(e.get("heading",""))}'
-        sub = f'{esc(e.get("speed_before"))} → {esc(e.get("speed_after"))} km/h · {esc(e.get("osm_class",""))} · <a target="_blank" rel="noopener" href="{gm}">map</a>'
-        media = ""
-        if r and (r.get("id") + ".jpg") in clips_rel:
-            fsd = r.get("fsd", {})
-            sub += f' · FSD {esc(fsd.get("pct", ""))}%' if isinstance(fsd, dict) and fsd.get("pct") is not None else ""
-            media = f'<a href="clips/{e["id"]}.jpg" target="_blank"><img class="sheet" loading="lazy" src="clips/{e["id"]}.jpg"></a>'
-            if (r["id"] + ".mp4") in clips_rel:
-                media = f'<div style="margin-bottom:8px"><video controls preload="none" src="clips/{e["id"]}.mp4"></video></div>' + media
-        else:
-            media = '<div class="sub">No dashcam footage for this one.</div>'
-        evh += f'<div class="card"><div>{head}</div><div class="sub">{sub}</div>{media}</div>'
     svh = ""
     for s in reversed(saved_ev):
         v = f'<div style="margin-top:10px"><video controls preload="none" src="clips/{esc(s["mp4"])}"></video></div>' if s.get("mp4") else ""
@@ -652,32 +635,15 @@ def build_page(stamp, m, win, flips, recs, saved_ev, cov, clips_rel, folder, mwi
 {trip}<div class="card"><div class="stats">{stats}</div></div>
 <div class="two"><div class="card"><h2>Route<span id="mapbtns"></span></h2><div id="mapbox"><svg id="map" viewBox="0 0 1060 540" style="width:100%;height:auto"></svg></div>
 {MU.legend_html()}
-<div class="legend">{FLIPLEG if flips else ''}<span><i style="background:#a855f7;height:8px;width:8px;border-radius:50%"></i>saved clip</span></div></div>
+<div class="legend"><span><i style="background:#a855f7;height:8px;width:8px;border-radius:50%"></i>saved clip</span></div></div>
 <div class="card" id="charts"></div></div>
 {covh}
-{('<h2>FSD speed changes (100 ↔ 110)</h2>'+evh) if flips else ''}
 {('<h2>Saved clips</h2>'+svh) if svh else ''}
 <div class="sub">Generated {datetime.datetime.now().strftime('%Y-%m-%d %H:%M')} by drive_report.py from this folder's Tessie CSV{' and TeslaCam footage' if cov else ''}.</div>
 </div><div class="tip" id="tip"></div><script>const DATA={json.dumps(data, separators=(',', ':'))};{JS.replace('/*SC_JS*/', MU.sc_js())}{DC.JS}{FU.JS if cov else ''}</script></body></html>"""
 
 
 # ----------------------------------------------------------------------------- per drive
-FLIPLEG = '<span><i style="background:#d4332b;height:8px;width:8px;border-radius:50%"></i>110→100</span><span><i style="background:#0a6cff;height:8px;width:8px;border-radius:50%"></i>100→110</span>'
-
-
-def is_long_highway(win, m):
-    """The 110<->100 FSD speed-change markers only mean something on a long highway run: long_highway_km or more (default 30) with at least
-    long_highway_fast_minutes (10) spent at long_highway_fast_kmh (90) or faster - config.json "app.drives". Shorter / suburban drives show none
-    (the flips CSV is untouched)."""
-    km = f(m.get("Distance (km)")) if m else None
-    if km is None:
-        od = [p["od"] for p in win if p.get("od") is not None]
-        km = (od[-1] - od[0]) if len(od) > 1 else 0
-    fast = 0.0
-    for a, b in zip(win, win[1:]):
-        if (a["v"] or 0) >= CFG.get("drives.long_highway_fast_kmh"):
-            fast += min((b["t"] - a["t"]).total_seconds(), 60)
-    return (km or 0) >= CFG.get("drives.long_highway_km") and fast >= 60 * CFG.get("drives.long_highway_fast_minutes")
 
 
 def process_drive(csv_path, master, flips_by_file, recs, foot, args, base_analysis):
@@ -715,9 +681,7 @@ def process_drive(csv_path, master, flips_by_file, recs, foot, args, base_analys
                 with open(sj, "w", encoding="utf-8") as fh:
                     json.dump(old, fh, indent=1, ensure_ascii=False)
             return "up to date"
-    flips = flips_by_file.get(os.path.basename(csv_path), [])
-    if not is_long_highway(win, m):
-        flips = []
+    flips = []          # a drive page is not analysed for FSD 100 <-> 110 speed changes (dashcam_flip_review.py still does, on its own)
     clips_dir = os.path.join(folder, "clips")
     clips_rel = set(os.listdir(clips_dir)) if os.path.isdir(clips_dir) else set()
     saved_ev, cov = [], None

@@ -190,14 +190,12 @@ async function pageDrive(stamp,tab){
   }else{
     const t0=d.day+"T"+d.hm+":00",t1=localISO(Date.parse(t0)+d.min*60000),pl=await api("places").catch(()=>({saved:[]}));
     const rv=tab==="review";
-    box.innerHTML='<div id="tdh"></div>'+(rv?'<div id="flr"></div>':'<details class="card" id="mg" style="margin-top:14px"><summary><b>Copy, save as a clip, or delete clips</b></summary><div id="mgb" style="margin-top:10px"></div></details>');
+    box.innerHTML='<div id="tdh"></div>'+(rv?'':'<details class="card" id="mg" style="margin-top:14px"><summary><b>Copy, save as a clip, or delete clips</b></summary><div id="mgb" style="margin-top:10px"></div></details>');
     const fetchSeg=async b=>{const r=await fetch("/api/teslacam/A/window?t0="+encodeURIComponent(t0)+"&t1="+encodeURIComponent(t1)+"&budget="+(b==null?20:b));
       if(!r.ok){const e=(await r.json().catch(()=>({}))).error||("HTTP "+r.status);const x=new Error(e);x.none=r.status===404;throw x}return r.json()};
     if(!rv)$("#mg").ontoggle=()=>{if(!$("#mg").open||$("#mgb").innerHTML)return;$("#mgb").innerHTML=`<iframe class="drive" id="mf" src="/data/drives/deepdive/${encodeURIComponent(stamp)}/drive.html"></iframe>`;
       fitFrame($("#mf"),doc=>{const w=doc.querySelector(".wrap");if(!w)return;if(!doc.getElementById("foot")){$("#mgb").innerHTML='<div class="sub">No clip tools for this drive: the page was built without footage. Run <code>./drive_report.py</code> with the Archive connected.</div>';return}
         [...w.children].forEach(c=>{if(c.id!=="foot")c.style.display="none"})})};
-    if(rv&&d.flips)api("flip-events").then(fl=>{const h=$("#flr");if(!h||!fl.exists)return;const w0=d.day+" "+d.hm+":00",w1=localISO(Date.parse(d.day+"T"+d.hm+":00")+d.min*60000).replace("T"," ");
-      h.innerHTML=`<h2>100 ↔ 110 speed changes with a still every second</h2><div class="sub" style="margin:4px 0 8px">The car's own speed and self-driving state around each change, and the signs near it. All drives: <a href="#/review">Drive review</a>.</div><iframe class="drive" id="ff" src="/data/drives/analysis/dashcam_flip_review/index.html?embed=1&t0=${encodeURIComponent(w0)}&t1=${encodeURIComponent(w1)}"></iframe>`;fitFrame($("#ff"))}).catch(()=>{});
     try{await teslaDriveBody($("#tdh"),"A",fetchSeg,pl.saved||[],{heading:false,review:rv?{t0,t1}:null})}
     catch(e){const h=$("#tdh");if(h)h.innerHTML=e.none?'<div class="card"><b>No dashcam footage or telemetry for this drive.</b><div class="sub" style="margin-top:6px">Nothing recorded on the Archive covers these times, and nothing was read from it before. If the Archive is not connected, connect it and open this tab again.</div></div>':errBox(e.message,"Could not rebuild this drive from the video")}
   }
@@ -1134,16 +1132,6 @@ function speedSteps(v,minD=10){
   c.sort((x,y)=>Math.abs(y.d)-Math.abs(x.d));const out=[];for(const x of c)if(!out.some(o=>Math.abs(o.i-x.i)<20))out.push(x);return out.sort((x,y)=>x.i-y.i);
 }
 
-// ---------- Drive review (the 100 <-> 110 flip review of every drive; one drive's own review is the Review tab of that drive)
-async function pageReview(){
-  loading();const fl=await api("flip-events");
-  const bar=`<div class="bar"><a class="btn pri" style="text-decoration:none;padding:5px 12px;border-radius:8px;background:var(--acc);color:#fff" href="#/drives" id="rcd">Find drives to review</a><a class="btn" style="text-decoration:none;padding:5px 12px;border:1px solid var(--line);border-radius:8px" href="/data/drives/analysis/fsd_highway_map.html" target="_blank">FSD highway map</a></div>`;
-  const head=`<h1>Drive review</h1><div class="sub">Any drive can be reviewed from its <b>Review</b> tab: the car's speed and self-driving state, the speed-limit signs read from the video, and every lasting speed change. Filter the Drives list by length and average speed to find the long, fast ones. Below: every 100 ↔ 110 speed change across all drives, with a still every second.</div>${bar}`;
-  const go=()=>{const a=$("#rcd");if(a)a.onclick=()=>{DP.mk=cfg("review.candidate_km");DP.ma=cfg("review.candidate_avg_kmh");DP.ex="foot"}};
-  if(!fl.exists){main.innerHTML=head+'<div class="card">The flip review page has not been built yet. Run <code>./dashcam_flip_review.py</code>.</div>';go();return}
-  main.innerHTML=head+`<iframe class="drive" style="height:calc(100vh - 260px)" src="/data/drives/analysis/dashcam_flip_review/index.html"></iframe>`;go();
-}
-
 // ---------- Queue
 function pageQueue(){
   const q=qget();
@@ -1161,10 +1149,10 @@ function pageQueue(){
 function badge(){const n=qget().length,b=$("#qn");b.hidden=!n;b.textContent=n}
 
 // ---------- router
-const ROUTES={activity:pageActivity,drives:pageDrives,charges:pageCharges,battery:pageBattery,health:pageHealth,analytics:pageAnalytics,dashcam:pageReview,teslacam:pageTeslaCam,queue:pageQueue,flips:pageReview,review:pageReview,parked:pageParked,idles:pageParked,places:pagePlaces,alerts:pageAlerts};
+const ROUTES={activity:pageActivity,drives:pageDrives,charges:pageCharges,battery:pageBattery,health:pageHealth,analytics:pageAnalytics,teslacam:pageTeslaCam,queue:pageQueue,flips:pageDrives,review:pageDrives,dashcam:pageDrives,parked:pageParked,idles:pageParked,places:pagePlaces,alerts:pageAlerts};
 async function route(){
   hideTip();if(TLOFF){TLOFF();TLOFF=null}if(TCPOLL){clearInterval(TCPOLL);TCPOLL=null}const h=(location.hash||"#/activity").replace(/^#\//,""),[p,arg,arg2]=h.split("/").map(decodeURIComponent);
-  $$("#nav>a").forEach(a=>a.classList.toggle("on",a.dataset.p===(({drive:"drives",charge:"charges",idle:"parked",idles:"parked",dashcam:"review",flips:"review",place:"places"})[p]||p)));
+  $$("#nav>a").forEach(a=>a.classList.toggle("on",a.dataset.p===(({drive:"drives",charge:"charges",idle:"parked",idles:"parked",dashcam:"drives",flips:"drives",review:"drives",place:"places"})[p]||p)));
   badge();main.scrollTop=0;
   try{
     if(p==="drive")await pageDrive(arg,arg2);else if(p==="charge")await pageCharge(arg,arg2);else if(p==="idle"||p==="parked"&&arg)await pageParkedOne(arg);else if(p==="place")await pagePlace(arg);else await (ROUTES[p]||pageActivity)(arg,arg2);

@@ -105,6 +105,26 @@ def code_updated():
     return newest > STARTED + 2
 
 
+FLIP_LEGEND = ('<span><i style="background:#d4332b;height:8px;width:8px;border-radius:50%"></i>110→100</span>'
+               '<span><i style="background:#0a6cff;height:8px;width:8px;border-radius:50%"></i>100→110</span>')
+
+
+def drop_flips(h):
+    """A drive page built when drive_report.py still looked for FSD 100 <-> 110 speed changes: take those markers and their legend out
+    (a drive is not analysed for them any more; pages built now have none)."""
+    i = h.find("const DATA=")
+    if i < 0:
+        return h
+    try:
+        obj, end = json.JSONDecoder().raw_decode(h, i + len("const DATA="))
+    except ValueError:
+        return h
+    if obj.get("flips"):
+        obj["flips"] = []
+        h = h[:i] + "const DATA=" + json.dumps(obj, separators=(",", ":")) + h[end:]
+    return h.replace(FLIP_LEGEND, "")
+
+
 def _foot_off(p):
     """The footage clock offset the drive report found for this drive (drive_summary.json beside its page), 0 when unknown."""
     try:
@@ -142,6 +162,7 @@ def drive_page(p, enrich=True):
     old = 'map.addControl(new maplibregl.NavigationControl({showCompass:false}),"top-right");'
     import drive_map_ui
     h = drive_map_ui.patch(h)
+    h = drop_flips(h)
     if enrich:
         h = fuse_into(h, p)
     if "Show the whole route" in h or old not in h:
@@ -246,8 +267,6 @@ class H(BaseHTTPRequestHandler):
                 return self.api(path[5:], urllib.parse.parse_qs(u.query))
             if path.startswith("/data/"):
                 p = safe_join(DATA_DIR, path[6:])
-                if p and os.path.isfile(p) and p.endswith(os.path.join("dashcam_flip_review", "index.html")):
-                    return self.send_bytes(flip_page(p).encode("utf-8"), "text/html; charset=utf-8")
                 if p and os.path.isfile(p) and p.endswith("drive.html") and os.sep + "deepdive" + os.sep in p:
                     return self.send_bytes(drive_page(p, urllib.parse.parse_qs(u.query).get("enrich", ["1"])[0] != "0").encode("utf-8"), "text/html; charset=utf-8")
                 if p and os.path.isfile(p):
@@ -395,23 +414,7 @@ class H(BaseHTTPRequestHandler):
                 return self.send_json(S.pl.osm(g("key"), float(g("lat")), float(g("lon")), int(float(g("r", "300"))), g("refresh") == "1"))
             except ValueError:
                 return self.send_json({"error": "bad coordinates"}, 400)
-        if name == "flip-events":
-            return self.send_json({"exists": os.path.isfile(os.path.join(DATA_DIR, "drives", "analysis", "dashcam_flip_review", "index.html"))})
         return self.send_bytes(b"not found", "text/plain", 404)
-
-
-FLIP_SHOW = "const E=DATA.e,SM=DATA.s;"
-FLIP_TWEAK = ("const QF=new URLSearchParams(location.search),T0=QF.get('t0'),T1=QF.get('t1');"
-              "const E=(T0&&T1?DATA.e.filter(e=>e.flip_time>=T0&&e.flip_time<=T1):DATA.e),SM=DATA.s;"
-              "if(QF.get('embed'))document.head.insertAdjacentHTML('beforeend','<style>h1,.how{display:none}.wrap{padding-top:4px}</style>');")
-
-
-def flip_page(path):
-    """The flip review page as the generator wrote it, plus two query options so one drive can show just its own flips inside the app:
-    ?t0=YYYY-MM-DD HH:MM:SS&t1=... keeps the flips in that time range, &embed=1 drops the page heading. The file on disk is not changed."""
-    with open(path, encoding="utf-8") as fh:
-        h = fh.read()
-    return h.replace(FLIP_SHOW, FLIP_TWEAK, 1)
 
 
 def run_queue(body):
