@@ -31,6 +31,7 @@ import time
 import app_config
 import app_review
 import clip_clock as CC
+import drive_paths as DP
 import drive_fuse as DF
 import teslacam_timeline as TL
 
@@ -352,7 +353,7 @@ class DriveReview:
     def _review(self, stamp, teslacam, params):
         o = _opts(params)
         a_kmh, b_kmh, both = float(o["speed_from"]), float(o["speed_to"]), bool(params.get("both"))
-        folder = os.path.join(self.dir, "drives", "deepdive", stamp)
+        folder = DP.folder_for(os.path.join(self.dir, "drives", "deepdive"), stamp)
         self._stage("Reading the drive")
         with open(os.path.join(folder, "drive_summary.json"), encoding="utf-8") as fh:
             sm = json.load(fh)

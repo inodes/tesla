@@ -70,6 +70,7 @@ import app_charges  # noqa: E402
 import clip_clock as CC  # noqa: E402
 import app_sync  # noqa: E402
 import drive_roles as DR  # noqa: E402
+import drive_paths as DP  # noqa: E402
 
 UI = os.path.join(HERE, "lib", "app_ui")
 DEFAULT_DATA = os.path.expanduser(os.environ.get("TESLA_DATA_DIR", "~/Library/Mobile Documents/com~apple~CloudDocs/Tesla"))
@@ -279,6 +280,11 @@ class H(BaseHTTPRequestHandler):
                 return self.api(path[5:], urllib.parse.parse_qs(u.query))
             if path.startswith("/data/"):
                 p = safe_join(DATA_DIR, path[6:])
+                rel = path[6:].split("/")
+                if len(rel) >= 4 and rel[0] == "drives" and rel[1] == "deepdive" and DP.STAMP_RE.match(rel[2]):    # a drive's file by its stamp, in whichever layout the folder is
+                    f = DP.find_folder(os.path.join(DATA_DIR, "drives", "deepdive"), rel[2])
+                    if f:
+                        p = safe_join(f, "/".join(rel[3:])) or p
                 if p and os.path.isfile(p) and p.endswith("drive.html") and os.sep + "deepdive" + os.sep in p:
                     return self.send_bytes(drive_page(p, urllib.parse.parse_qs(u.query).get("enrich", ["1"])[0] != "0").encode("utf-8"), "text/html; charset=utf-8")
                 if p and os.path.isfile(p):

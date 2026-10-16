@@ -28,6 +28,7 @@ import os
 import math
 
 import clip_clock as CC
+import drive_paths as DP
 
 JOIN_S = 20.0       # a Tessie point this close to a camera second is left out
 MARGIN_S = 30.0     # camera seconds this far outside the Tessie drive still belong to it
@@ -155,7 +156,7 @@ def fuse(tessie, cam, t0, t1):
 def fuse_drive(data_dir, stamp, store):
     """The fused track of the Tessie drive in <data>/drives/deepdive/<stamp>/ ; None when that drive has no sample file."""
     import json
-    folder = os.path.join(data_dir, "drives", "deepdive", stamp)
+    folder = DP.folder_for(os.path.join(data_dir, "drives", "deepdive"), stamp)
     try:
         with open(os.path.join(folder, "drive_summary.json"), encoding="utf-8") as fh:
             sm = json.load(fh)

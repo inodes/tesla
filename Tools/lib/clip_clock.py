@@ -33,6 +33,7 @@ import re
 import threading
 
 import app_config as CFG
+import drive_paths as DP
 
 _STAMP = "%Y-%m-%d_%H-%M-%S"
 _LOCK = threading.RLock()
@@ -229,15 +230,11 @@ def _drive_list(data_dir):
             return _S["drives"]
     base = os.path.join(data_dir, "drives", "deepdive")
     out = []
-    try:
-        names = sorted(os.listdir(base))
-    except OSError:
-        names = []
-    for nm in names:
+    for nm, folder in DP.iter_folders(base):                  # day layout and older layouts
         try:
-            with open(os.path.join(base, nm, "drive_summary.json"), encoding="utf-8") as fh:
+            with open(os.path.join(folder, "drive_summary.json"), encoding="utf-8") as fh:
                 sm = json.load(fh)
-            out.append((from_local(naive(sm["start"].replace(" ", "_"))), from_local(naive(sm["end"].replace(" ", "_"))), os.path.join(base, nm)))
+            out.append((from_local(naive(sm["start"].replace(" ", "_"))), from_local(naive(sm["end"].replace(" ", "_"))), folder))
         except (OSError, ValueError, KeyError):
             continue
     out.sort()
@@ -377,7 +374,7 @@ def refresh(data_dir, store, wait=False):
     if wait and th and th.is_alive():
         th.join(120)                                          # a pass is already running: wait for it rather than skip
     stamps = store.stamps()
-    sig = (len(stamps), max(stamps) if stamps else "", len(os.listdir(os.path.join(data_dir, "drives", "deepdive"))) if os.path.isdir(os.path.join(data_dir, "drives", "deepdive")) else 0)
+    sig = (len(stamps), max(stamps) if stamps else "", DP.signature(os.path.join(data_dir, "drives", "deepdive")))
     with _LOCK:
         if sig == _S["sig"] or (_S["thread"] and _S["thread"].is_alive()):
             return False
