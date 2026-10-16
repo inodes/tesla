@@ -9,6 +9,8 @@ import os
 import re
 import threading
 
+import clip_clock as CC
+
 CAMS = ("front", "back", "left_repeater", "right_repeater", "left_pillar", "right_pillar")
 _CLIP = re.compile(r"^(\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2})-(%s)\.mp4$" % "|".join(CAMS))
 _LOCK = threading.Lock()
@@ -19,6 +21,22 @@ def _num(v):
         return float(v)
     except (TypeError, ValueError):
         return None
+
+
+def _shown(e):
+    """An event as the app uses it. The index keeps what the car wrote (its own clock, as the clip names are). Here the time is put in UTC and
+    the car's clock turned into the local clock for display:
+        t     UTC epoch seconds of the event (compare and sort with this)
+        ts    local clock text, for display
+        cts   the car's clock text as written (what the clip names are in, for the player)
+        loc   {clip stamp: local clock text}"""
+    try:
+        t = CC.utc(e["ts"])
+        lo = CC.place_offset(t, e.get("lat"), e.get("lon"))          # the clock of where it happened
+        loc = {k: CC.local_iso(CC.utc(k), lo) for k in e.get("clips", {})}
+    except ValueError:
+        return dict(e, t=0, cts=e.get("ts", ""), loc={})
+    return dict(e, t=t, cts=e["ts"], ts=CC.local_iso(t, lo), loc=loc)
 
 
 class Sentry:
@@ -61,7 +79,8 @@ class Sentry:
                         os.replace(tmp, self.f)
                     except OSError:
                         pass
-            return sorted(idx.values(), key=lambda e: e["ts"], reverse=True), bool(root and os.path.isdir(root))
+            shown = [_shown(e) for e in idx.values()]
+            return sorted(shown, key=lambda e: e["t"], reverse=True), bool(root and os.path.isdir(root))
 
     def _read(self, path, name):
         try:

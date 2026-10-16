@@ -12,6 +12,7 @@ import threading
 import app_sentry
 import drive_roles as DR
 import app_config
+import clip_clock as CC
 import teslacam_timeline as TL
 import app_review
 
@@ -22,12 +23,13 @@ _LOCK = threading.Lock()
 
 
 def _ts(stamp):
-    return stamp[:10] + "T" + stamp[11:].replace("-", ":")
+    """The local clock text (display) of a clip's name, which is the car's clock (clip_clock.py)."""
+    return CC.local_of(stamp)
 
 
 def _secs(stamp):
-    import datetime
-    return datetime.datetime.strptime(stamp, "%Y-%m-%d_%H-%M-%S").timestamp()
+    """UTC epoch of a clip's name."""
+    return CC.utc(stamp)
 
 
 class TeslaCam:
@@ -61,7 +63,7 @@ class TeslaCam:
         except OSError:
             return None
         c = self.rec.get(role)
-        if c and c["mt"] == mt and c["root"] == root:
+        if c and c["mt"] == mt and c["root"] == root and c.get("cv") == CC.version():
             return c
         clips = {}
         try:
@@ -83,9 +85,9 @@ class TeslaCam:
         out = []
         for r in runs:
             a, b = r["stamps"][0], r["stamps"][-1]
-            out.append(dict(id=a, ts=_ts(a), end=_ts(b), n=len(r["stamps"]), stamps=r["stamps"],
+            out.append(dict(id=a, ts=_ts(a), end=_ts(b), t0=_secs(a), t1=_secs(b) + 60, n=len(r["stamps"]), stamps=r["stamps"],
                             full=sum(1 for s in r["stamps"] if len(clips[s]) == 6)))
-        c = self.rec[role] = dict(mt=mt, root=root, runs=sorted(out, key=lambda x: x["ts"], reverse=True), clips=clips)
+        c = self.rec[role] = dict(mt=mt, root=root, cv=CC.version(), runs=sorted(out, key=lambda x: x["t0"], reverse=True), clips=clips)
         return c
 
     def recent(self, role, teslacam):
@@ -103,6 +105,11 @@ class TeslaCam:
         r = next((x for x in c["runs"] if x["id"] == rid), None) if c else None
         return {s: sorted(c["clips"][s], key=app_sentry.CAMS.index) for s in r["stamps"]} if r else None
 
+    @staticmethod
+    def loc_of(stamps):
+        """{clip stamp: local clock text}, for the player to show times on the local clock (the stamps are the car's)."""
+        return {s: _ts(s) for s in stamps}
+
     # ------------------------------------------------------------------------------------------------- timeline
     def _tl(self, role):
         TL.OPTS.update({k: v for k, v in (app_config.get("teslacam") or {}).items() if k in TL.OPTS})
@@ -110,6 +117,8 @@ class TeslaCam:
             base = os.path.join(self.dir, "teslacam_timeline")
             self.store = TL.Store(base)
             self._migrate(base)
+            CC.configure(self.dir)
+        CC.refresh(self.dir, self.store)                # learns the car's clock again in the background when the telemetry or the drives changed
         if role not in self.ix:
             self.ix[role] = TL.Indexer(self.store)
         return self.store, self.ix[role]
@@ -182,11 +191,11 @@ class TeslaCam:
         store, _ = self._tl("A")
         return drive_fuse.fuse_drive(self.dir, stamp, store)
 
-    def enrich(self, rows, clock=None):
+    def enrich(self, rows):
         """The points of a drive page with the dashcam's readings put in (drive_fuse.enrich); None when the footage's telemetry does not cover it."""
         import drive_fuse
         store, _ = self._tl("A")
-        return drive_fuse.enrich(rows, store, clock)
+        return drive_fuse.enrich(rows, store, None, self.dir)
 
     @staticmethod
     def _front(teslacam, m):
@@ -205,9 +214,28 @@ class TeslaCam:
             return (it, [m for m in allm if it["t0"] <= m["t"] < it["t1"]]) if it else None
         return self._finish(role, teslacam, pick, budget)
 
-    def window(self, role, teslacam, t0, t1, budget=20.0):
-        """Everything recorded between two clock times (a Tessie drive): one item with telemetry and the clips, Recent and Saved stitched.
-        With the drive not connected it still returns what was read before (map and charts, no video)."""
+    def _settle(self, role, teslacam, store, t0, t1, budget):
+        """The car's clock around [t0, t1] (UTC) may not be known yet - no minute of footage within clip_clock's reach has been read and matched to a
+        Tessie drive. Then the minutes that could fall in the window under ANY offset the car's clock may have had are read first (they decide it),
+        and the clock is learned, so the right minutes are the ones used. Once a minute near it is known this does nothing."""
+        recent, saved, _s = self._sources(role, teslacam)
+        unsure = [m for m in TL.minutes(recent, saved) if "front" in m["cams"] and not CC.known(m["stamp"]) and CC.maybe_in(m["stamp"], t0, t1)]
+        if not unsure:
+            return
+        import time
+        todo = [(m["stamp"], self._front(teslacam, m)) for m in unsure if store.summary(m["stamp"]) is None]
+        if todo and budget > 0:
+            TL.read_many(store, todo, deadline=time.time() + budget)
+        CC.refresh(self.dir, store, wait=True)
+
+    def window(self, role, teslacam, t0, t1, budget=20.0, lo=None):
+        """Everything recorded between two instants (t0, t1 = UTC epoch seconds - a Tessie drive): one item with telemetry and the clips, Recent and Saved
+        stitched. With the drive not connected it still returns what was read before (map and charts, no video). lo = seconds the clock the times are
+        SHOWN on is ahead of UTC (the drive list shows a drive on the clock of where it was driven); without it, app.timezone's."""
+        if teslacam:
+            store, _ = self._tl(role)
+            self._settle(role, teslacam, store, t0, t1, budget)
+
         def pick(store, allm, saved, sentry):
             mins = [m for m in allm if m["t"] + 60 > t0 and m["t"] < t1] if teslacam else TL.cached_minutes(store, t0, t1)
             if not mins:
@@ -215,9 +243,9 @@ class TeslaCam:
             sums = [store.summary(m["stamp"]) for m in mins]
             state = "move" if any(x and x["vmax"] >= TL.OPTS["moving_kmh"] for x in sums) else "unknown" if any(x is None for x in sums) else "still"
             return TL.drive_item([(m, state) for m in mins], store), mins
-        return self._finish(role, teslacam, pick, budget, events=(t0, t1))
+        return self._finish(role, teslacam, pick, budget, events=(t0, t1), lo=lo)
 
-    def _finish(self, role, teslacam, pick, budget, events=None):
+    def _finish(self, role, teslacam, pick, budget, events=None, lo=None):
         import time
         store, ix = self._tl(role)
         recent, saved, sentry = self._sources(role, teslacam) if teslacam else ({}, [], [])
@@ -233,7 +261,9 @@ class TeslaCam:
             if budget > 0:
                 TL.read_many(store, [(m["stamp"], self._front(teslacam, m)) for m in todo], deadline=time.time() + budget)
         ser = TL.detail(mins, store, it)
-        out = dict(item=it, connected=bool(teslacam), minutes=[dict(stamp=m["stamp"], src=m["src"], ref=m["ref"], cams=m["cams"], off=round(m["t"] - it["t0"])) for m in mins],
+        TL.show(it, lo)                                          # the clock the times are shown on (display only): everything below that is compared stays UTC
+        lo = it["lo"]
+        out = dict(item=it, connected=bool(teslacam), minutes=[dict(stamp=m["stamp"], src=m["src"], ref=m["ref"], cams=m["cams"], off=round(m["t"] - it["t0"]), loc=TL.iso(m["t"], lo)) for m in mins],
                    series=ser, pending=ser["pending"])
         if events:
             a, b = events
@@ -241,10 +271,10 @@ class TeslaCam:
             for folder, lst in (("SavedClips", saved), ("SentryClips", sentry)):
                 for e in lst:
                     ts = [TL.secs(k) for k in e["clips"]]
-                    if ts and any(t + 60 > a and t < b for t in ts) and (folder == "SavedClips" or a - 120 <= TL.secs(e["ts"][:10] + "_" + e["ts"][11:].replace(":", "-")) <= b + 120):
-                        ev.append(dict(id=e["id"], folder=folder, ts=e["ts"], reason=e.get("reason", ""), city=e.get("city", ""), cam=e.get("cam", ""), thumb=e.get("thumb", False),
+                    if ts and any(t + 60 > a and t < b for t in ts) and (folder == "SavedClips" or a - 120 <= e["t"] <= b + 120):
+                        ev.append(dict(id=e["id"], folder=folder, ts=TL.iso(e["t"], lo), t=e["t"], reason=e.get("reason", ""), city=e.get("city", ""), cam=e.get("cam", ""), thumb=e.get("thumb", False),
                                        front=("front" in e["clips"][sorted(e["clips"])[0]])))
-            out["events"] = sorted(ev, key=lambda x: x["ts"])
+            out["events"] = sorted(ev, key=lambda x: x["t"])
         return out
 
     # ------------------------------------------------------------------------------------------------------ review
@@ -263,7 +293,7 @@ class TeslaCam:
             mins = TL.cached_minutes(store, t0, t1)
         return store, mins
 
-    def review(self, role, teslacam, t0, t1, action="status"):
+    def review(self, role, teslacam, t0, t1, action="status", lo=None):
         """The signs read so far in a time window (a Tessie drive), and the state of the reading job. action: status | start | redo | stop."""
         rv = self._rv()
         store, mins = self._review_mins(role, teslacam, t0, t1)
@@ -278,8 +308,9 @@ class TeslaCam:
             rv.start(items, force=action == "redo")
         done = rv.scanned()
         stamps = [m["stamp"] for m in mins]
-        return dict(signs=rv.signs(stamps), minutes=len(front), scanned=sum(1 for m in front if m["stamp"] in done),
+        return dict(signs=rv.signs(stamps, lo), minutes=len(front), scanned=sum(1 for m in front if m["stamp"] in done),
                     connected=bool(teslacam), job=rv.status(), missing=app_review.requirements())
 
     def review_scanned(self):
-        return self._rv().scanned()
+        """{UTC epoch seconds of each minute whose signs were read: signs found} (the Drives list compares these with a drive's UTC times)."""
+        return {str(int(CC.utc(st))): n for st, n in self._rv().scanned().items()}

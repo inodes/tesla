@@ -9,7 +9,6 @@ so the same clip copied to another disk is never read twice. Nothing on a drive 
 Readings from motion-blurred or backlit signs are sometimes wrong: every sign is kept with its crop, how many frames saw it and
 how sure the reading was, so it can be judged by eye in the page.
 """
-import datetime
 import importlib.util
 import json
 import os
@@ -19,6 +18,8 @@ import sys
 import tempfile
 import threading
 import time
+
+import clip_clock as CC
 
 for _d in ("/opt/homebrew/bin", "/usr/local/bin"):      # an app started from the Dock does not see Homebrew's folder
     if os.path.isdir(_d) and _d not in os.environ.get("PATH", "").split(os.pathsep):
@@ -45,7 +46,8 @@ def requirements():
 
 
 def secs(stamp):
-    return datetime.datetime.strptime(stamp, "%Y-%m-%d_%H-%M-%S").timestamp()
+    """UTC epoch of a clip's name (the car's clock turned into UTC, see clip_clock.py)."""
+    return CC.utc(stamp)
 
 
 class Review:
@@ -102,7 +104,7 @@ class Review:
             for d in days:
                 self._save(d)
 
-    def signs(self, stamps):
+    def signs(self, stamps, lo=None):
         """The signs seen in these minutes, one entry per sign (the same number seen in several stills within merge_s is one sign)."""
         raw = []
         with _LOCK:
@@ -122,8 +124,9 @@ class Review:
             if d["c"] > g["conf"]:
                 g.update(conf=d["c"], crop=d.get("f", ""), t=d["t"])
         for g in out:
+            g["u"], g["u0"], g["u1"] = g["t"], g["t0"], g["t1"]                    # UTC epoch seconds: what the page compares and seeks with
             for k in ("t", "t0", "t1"):
-                g[k] = datetime.datetime.fromtimestamp(g[k]).strftime("%Y-%m-%dT%H:%M:%S")
+                g[k] = CC.local_iso(g[k], lo)                                       # local clock text (lo = seconds ahead of UTC, else app.timezone), display only
             g["conf"] = round(g["conf"])
         return out
 

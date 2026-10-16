@@ -17,6 +17,8 @@ Only a moving car writes telemetry (speed, GPS, heading, steering, pedals, blink
 Reading the telemetry costs about a second per clip, so each clip is read once (front camera only) and remembered under
 <data>/teslacam_timeline/ (index.json = a summary per minute; <day>.json = one reading per second), keyed by the minute's name, so
 the same clip copied to another disk is not read again. Nothing on a drive is changed.
+
+Time: every t0 / t1 / t in here is UTC epoch seconds (a clip's name is the car's clock, see clip_clock.py); start / end / ts texts are the local clock, for display.
 """
 import datetime
 import json
@@ -26,6 +28,7 @@ import struct
 import threading
 import time
 
+import clip_clock as CC
 import dashcam_series as DS
 
 # thresholds (the app overrides them from config.json -> app.teslacam, see app_config.py)
@@ -40,11 +43,23 @@ _LOCK = threading.RLock()
 
 
 def secs(stamp):
-    return datetime.datetime.strptime(stamp, "%Y-%m-%d_%H-%M-%S").timestamp()
+    """UTC epoch of a clip's name: the name is the CAR's clock, which clip_clock turns into UTC (it can differ from local time, and change mid-drive)."""
+    return CC.utc(stamp)
 
 
-def iso(t):
-    return datetime.datetime.fromtimestamp(t).strftime("%Y-%m-%dT%H:%M:%S")
+def iso(t, lo=None):
+    """Display text (local clock) of a UTC epoch: the configured zone's, or a clock lo seconds ahead of UTC. Never compared, only shown."""
+    return CC.local_iso(t, lo)
+
+
+def show(it, lo=None):
+    """Sets the display fields of a timeline item (start, end, lo) from its UTC t0 / t1: on the clock of where it began (its first position),
+    else app.timezone's. lo = a clock to use instead. Display only - nothing is ever compared on these texts."""
+    if lo is None:
+        p = it.get("p0") or it.get("p1")
+        lo = CC.place_offset(it["t0"], p[0], p[1]) if p and p[0] is not None else CC.local_offset(it["t0"])
+    it.update(lo=lo, start=CC.local_iso(it["t0"], lo), end=CC.local_iso(it["t1"], lo))
+    return it
 
 
 def hav(a, b, c, d):
@@ -270,6 +285,8 @@ def build(recent, saved, sentry, store):
         out.append(a)
         if b and b["t0"] - a["t1"] > OPTS["gap_min_s"]:
             out.append(_gap(a, b))
+    for it in out:                                      # shown on the clock of where it was (a drive that began in Queensland reads on Queensland's clock)
+        show(it)
     return sorted(out, key=lambda x: x["t0"], reverse=True)
 
 
