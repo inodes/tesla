@@ -38,6 +38,7 @@ if _lib_dir not in sys.path:
 if _archive_dir not in sys.path:
     sys.path.insert(0, _archive_dir)
 
+from lib.tessie_api_common import shown_path
 from lib.table_formatter import (
     char_width,
     display_len,
@@ -772,7 +773,7 @@ def browse_chargefox_catalog_grid(manager: ChargerDiscoveryManager, country: str
 
     if auto_save:
         provider.save_cached_registry(live_records)
-        print(f"\u2714 Saved {len(live_records)} Chargefox/NRMA locations to {provider.registry_path}")
+        print(f"\u2714 Saved {len(live_records)} Chargefox/NRMA locations to {shown_path(provider.registry_path)}")
         return
 
     print(f"{C_BOLD}Options:{C_RESET}")
@@ -792,7 +793,7 @@ def browse_chargefox_catalog_grid(manager: ChargerDiscoveryManager, country: str
 
     if pick.lower() in ("save", "s", "y", "yes"):
         provider.save_cached_registry(live_records)
-        print(f"\u2714 Saved {len(live_records)} Chargefox/NRMA locations to {provider.registry_path}")
+        print(f"\u2714 Saved {len(live_records)} Chargefox/NRMA locations to {shown_path(provider.registry_path)}")
         return
 
     if pick.isdigit() and int(pick) in station_lookup:
@@ -1005,7 +1006,7 @@ def browse_live_diff_grid(provider, network_label: str, country: str = "Australi
 
     if auto_save:
         _save_provider_live(provider, live_records)
-        print(f"✔ Saved {len(live_records)} {network_label} locations to {provider.registry_path}")
+        print(f"✔ Saved {len(live_records)} {network_label} locations to {shown_path(provider.registry_path)}")
         return
 
     print(f"{C_BOLD}Options:{C_RESET}")
@@ -1025,7 +1026,7 @@ def browse_live_diff_grid(provider, network_label: str, country: str = "Australi
 
     if pick.lower() in ("save", "s", "y", "yes"):
         _save_provider_live(provider, live_records)
-        print(f"✔ Saved {len(live_records)} {network_label} locations to {provider.registry_path}")
+        print(f"✔ Saved {len(live_records)} {network_label} locations to {shown_path(provider.registry_path)}")
         return
 
     if pick.isdigit() and int(pick) in station_lookup:
@@ -2634,7 +2635,7 @@ DESCRIPTION
             if isinstance(p, ChargefoxProvider):
                 try:
                     synced_cf = p.sync_all_australia()
-                    print(f"  {C_GREEN}✔ Cached {len(synced_cf)} Chargefox/NRMA stations to {p.registry_path}{C_RESET}")
+                    print(f"  {C_GREEN}✔ Cached {len(synced_cf)} Chargefox/NRMA stations to {shown_path(p.registry_path)}{C_RESET}")
                     cf_ok = True
                 except Exception as e:
                     print(f"  {C_YELLOW}⚠️ Chargefox sync encountered error: {e}{C_RESET}")
@@ -2646,7 +2647,7 @@ DESCRIPTION
             if isinstance(p, EVXProvider):
                 try:
                     synced_evx = p.sync()
-                    print(f"  {C_GREEN}✔ Cached {len(synced_evx)} EVX stations to {p.registry_path}{C_RESET}")
+                    print(f"  {C_GREEN}✔ Cached {len(synced_evx)} EVX stations to {shown_path(p.registry_path)}{C_RESET}")
                     evx_ok = True
                 except Exception as e:
                     print(f"  {C_YELLOW}⚠️ EVX sync encountered error: {e}{C_RESET}")
@@ -2658,7 +2659,7 @@ DESCRIPTION
             if isinstance(p, EvieProvider):
                 try:
                     synced_evie = p.sync()
-                    print(f"  {C_GREEN}✔ Cached {len(synced_evie)} Evie stations to {p.registry_path}{C_RESET}")
+                    print(f"  {C_GREEN}✔ Cached {len(synced_evie)} Evie stations to {shown_path(p.registry_path)}{C_RESET}")
                     evie_ok = True
                 except Exception as e:
                     print(f"  {C_YELLOW}⚠️ Evie sync encountered error: {e}{C_RESET}")
@@ -2670,7 +2671,7 @@ DESCRIPTION
             if isinstance(p, BPPulseProvider):
                 try:
                     synced_bp = p.sync()
-                    print(f"  {C_GREEN}✔ Cached {len(synced_bp)} bp pulse stations to {p.registry_path}{C_RESET}")
+                    print(f"  {C_GREEN}✔ Cached {len(synced_bp)} bp pulse stations to {shown_path(p.registry_path)}{C_RESET}")
                     bp_ok = True
                 except Exception as e:
                     print(f"  {C_YELLOW}⚠️ bp pulse sync encountered error: {e}{C_RESET}")
@@ -2691,7 +2692,7 @@ DESCRIPTION
                         synced_ps = p.sync_state(args.state.upper(), auto_save=True)
                     else:
                         synced_ps = p.sync_australia(auto_save=True)
-                    print(f"  {C_GREEN}✔ Discovered and saved {len(synced_ps)} PlugShare stations to {p.registry_path}{C_RESET}")
+                    print(f"  {C_GREEN}✔ Discovered and saved {len(synced_ps)} PlugShare stations to {shown_path(p.registry_path)}{C_RESET}")
                     ps_ok = True
                 except Exception as e:
                     print(f"  {C_YELLOW}⚠️ PlugShare sync encountered error: {e}{C_RESET}")
@@ -2703,7 +2704,7 @@ DESCRIPTION
             if isinstance(p, AmpChargeProvider):
                 try:
                     synced_amp = p.sync_all_australia()
-                    print(f"  {C_GREEN}✔ Cached {len(synced_amp)} AmpCharge/Ampol Foodary stations to {p.registry_path}{C_RESET}")
+                    print(f"  {C_GREEN}✔ Cached {len(synced_amp)} AmpCharge/Ampol Foodary stations to {shown_path(p.registry_path)}{C_RESET}")
                     amp_ok = True
                 except Exception as e:
                     print(f"  {C_YELLOW}⚠️ AmpCharge sync encountered error: {e}{C_RESET}")
@@ -2715,7 +2716,7 @@ DESCRIPTION
             if isinstance(p, ExplorenProvider):
                 try:
                     synced_exploren = p.sync()
-                    print(f"  {C_GREEN}✔ Cached {len(synced_exploren)} Exploren stations to {p.registry_path}{C_RESET}")
+                    print(f"  {C_GREEN}✔ Cached {len(synced_exploren)} Exploren stations to {shown_path(p.registry_path)}{C_RESET}")
                     exploren_ok = True
                 except Exception as e:
                     print(f"  {C_YELLOW}⚠️ Exploren sync encountered error: {e}{C_RESET}")
@@ -2727,7 +2728,7 @@ DESCRIPTION
             if isinstance(p, JoltProvider):
                 try:
                     synced_jolt = p.sync()
-                    print(f"  {C_GREEN}✔ Cached {len(synced_jolt)} Jolt stations to {p.registry_path}{C_RESET}")
+                    print(f"  {C_GREEN}✔ Cached {len(synced_jolt)} Jolt stations to {shown_path(p.registry_path)}{C_RESET}")
                     jolt_ok = True
                 except Exception as e:
                     print(f"  {C_YELLOW}⚠️ Jolt sync encountered error: {e}{C_RESET}")
@@ -2739,7 +2740,7 @@ DESCRIPTION
             if isinstance(p, NRMAProvider):
                 try:
                     synced_nrma = p.sync()
-                    print(f"  {C_GREEN}✔ Cached {len(synced_nrma)} NRMA stations to {p.registry_path}{C_RESET}")
+                    print(f"  {C_GREEN}✔ Cached {len(synced_nrma)} NRMA stations to {shown_path(p.registry_path)}{C_RESET}")
                     nrma_ok = True
                 except Exception as e:
                     print(f"  {C_YELLOW}⚠️ NRMA sync encountered error: {e}{C_RESET}")
@@ -2749,7 +2750,7 @@ DESCRIPTION
         try:
             out_path, total_count = manager.export_consolidated_registry()
             print(f"  {C_GREEN}✔ Successfully exported {total_count} consolidated multi-view stations to:{C_RESET}")
-            print(f"    {out_path}")
+            print(f"    {shown_path(out_path)}")
             sync_results.append(("Master export", True))
         except Exception as e:
             print(f"  {C_YELLOW}⚠️ Master export encountered error: {e}{C_RESET}")
@@ -2839,7 +2840,7 @@ DESCRIPTION
             if isinstance(p, ChargefoxProvider):
                 print(f"{C_CYAN}🌐 Fetching all Chargefox & NRMA stations across Australia via GraphQL...{C_RESET}")
                 synced = p.sync_all_australia()
-                print(f"{C_GREEN}✔ Successfully saved {len(synced)} Chargefox stations to {p.registry_path}{C_RESET}")
+                print(f"{C_GREEN}✔ Successfully saved {len(synced)} Chargefox stations to {shown_path(p.registry_path)}{C_RESET}")
                 return
 
     if args.sync_ampcharge:
@@ -2847,7 +2848,7 @@ DESCRIPTION
             if isinstance(p, AmpChargeProvider):
                 print(f"{C_CYAN}⛽ Fetching all Ampol AmpCharge & Ampol Foodary EV fast-charging sites across Australia...{C_RESET}")
                 synced = p.sync_all_australia()
-                print(f"{C_GREEN}✔ Successfully saved {len(synced)} AmpCharge/Ampol Foodary stations to {p.registry_path}{C_RESET}")
+                print(f"{C_GREEN}✔ Successfully saved {len(synced)} AmpCharge/Ampol Foodary stations to {shown_path(p.registry_path)}{C_RESET}")
                 return
 
     if args.sync_evx:
@@ -2855,7 +2856,7 @@ DESCRIPTION
             if isinstance(p, EVXProvider):
                 print(f"{C_CYAN}🌐 Fetching all EVX Kerbside Polechargers across Australia...{C_RESET}")
                 synced = p.sync()
-                print(f"{C_GREEN}✔ Successfully saved {len(synced)} EVX stations to {p.registry_path}{C_RESET}")
+                print(f"{C_GREEN}✔ Successfully saved {len(synced)} EVX stations to {shown_path(p.registry_path)}{C_RESET}")
                 return
 
     if args.sync_evie:
@@ -2863,7 +2864,7 @@ DESCRIPTION
             if isinstance(p, EvieProvider):
                 print(f"{C_CYAN}🌐 Fetching all Evie Networks fast charging stations across Australia...{C_RESET}")
                 synced = p.sync()
-                print(f"{C_GREEN}✔ Successfully saved {len(synced)} Evie stations to {p.registry_path}{C_RESET}")
+                print(f"{C_GREEN}✔ Successfully saved {len(synced)} Evie stations to {shown_path(p.registry_path)}{C_RESET}")
                 return
 
     if args.sync_bppulse:
@@ -2871,7 +2872,7 @@ DESCRIPTION
             if isinstance(p, BPPulseProvider):
                 print(f"{C_CYAN}⚡ Fetching all bp pulse fast charging stations across Australia...{C_RESET}")
                 synced = p.sync()
-                print(f"{C_GREEN}✔ Successfully saved {len(synced)} bp pulse stations to {p.registry_path}{C_RESET}")
+                print(f"{C_GREEN}✔ Successfully saved {len(synced)} bp pulse stations to {shown_path(p.registry_path)}{C_RESET}")
                 return
 
     if args.sync_exploren:
@@ -2879,7 +2880,7 @@ DESCRIPTION
             if isinstance(p, ExplorenProvider):
                 print(f"{C_CYAN}🔋 Fetching all Exploren AC/DC charging stations across Australia...{C_RESET}")
                 synced = p.sync()
-                print(f"{C_GREEN}✔ Successfully saved {len(synced)} Exploren stations to {p.registry_path}{C_RESET}")
+                print(f"{C_GREEN}✔ Successfully saved {len(synced)} Exploren stations to {shown_path(p.registry_path)}{C_RESET}")
                 return
 
     if args.sync_jolt:
@@ -2887,7 +2888,7 @@ DESCRIPTION
             if isinstance(p, JoltProvider):
                 print(f"{C_CYAN}🔵 Fetching all Jolt DC fast charging stations across Australia...{C_RESET}")
                 synced = p.sync()
-                print(f"{C_GREEN}✔ Successfully saved {len(synced)} Jolt stations to {p.registry_path}{C_RESET}")
+                print(f"{C_GREEN}✔ Successfully saved {len(synced)} Jolt stations to {shown_path(p.registry_path)}{C_RESET}")
                 return
 
     if args.sync_nrma:
@@ -2895,7 +2896,7 @@ DESCRIPTION
             if isinstance(p, NRMAProvider):
                 print(f"{C_CYAN}⚡ Fetching all NRMA EV Charging Network stations across Australia...{C_RESET}")
                 synced = p.sync()
-                print(f"{C_GREEN}✔ Successfully saved {len(synced)} NRMA stations to {p.registry_path}{C_RESET}")
+                print(f"{C_GREEN}✔ Successfully saved {len(synced)} NRMA stations to {shown_path(p.registry_path)}{C_RESET}")
                 return
 
     if args.sync_plugshare:
@@ -2909,7 +2910,7 @@ DESCRIPTION
                         synced = p.sync_nearby(ref_lat, ref_lon, radius_km=args.radius, limit=args.limit or 250, auto_save=auto_save)
                         print(f"{C_GREEN}✔ Discovered {len(synced)} PlugShare stations.{C_RESET}")
                         if auto_save:
-                            print(f"{C_GREEN}✔ Saved to {p.registry_path}{C_RESET}")
+                            print(f"{C_GREEN}✔ Saved to {shown_path(p.registry_path)}{C_RESET}")
                         stations = synced
                     else:
                         print(f"{C_RED}❌ Could not resolve reference location '{args.near}'.{C_RESET}", file=sys.stderr)
@@ -2919,14 +2920,14 @@ DESCRIPTION
                     synced = p.sync_state(args.state.upper(), auto_save=auto_save)
                     print(f"{C_GREEN}✔ Discovered {len(synced)} PlugShare stations in {args.state.upper()}.{C_RESET}")
                     if auto_save:
-                        print(f"{C_GREEN}✔ Saved to {p.registry_path}{C_RESET}")
+                        print(f"{C_GREEN}✔ Saved to {shown_path(p.registry_path)}{C_RESET}")
                     stations = synced
                 else:
                     print(f"{C_CYAN}🌐 Fetching PlugShare Chargers across Australia...{C_RESET}")
                     synced = p.sync_australia(auto_save=auto_save)
                     print(f"{C_GREEN}✔ Discovered {len(synced)} PlugShare stations across Australia.{C_RESET}")
                     if auto_save:
-                        print(f"{C_GREEN}✔ Saved to {p.registry_path}{C_RESET}")
+                        print(f"{C_GREEN}✔ Saved to {shown_path(p.registry_path)}{C_RESET}")
                     stations = synced
 
                 if not auto_save and stations:
@@ -2943,7 +2944,7 @@ DESCRIPTION
                     if rec:
                         display_station_inspection_card(rec, eval_time=args.time)
                         if args.save:
-                            print(f"{C_GREEN}✔ Saved station to {p.registry_path}{C_RESET}")
+                            print(f"{C_GREEN}✔ Saved station to {shown_path(p.registry_path)}{C_RESET}")
                     else:
                         print(f"{C_RED}❌ Station #{item_id} not found or returned no usable data.{C_RESET}")
                 return
@@ -2970,7 +2971,7 @@ DESCRIPTION
                         raw = st.views.get("plugshare", {})
                         if raw:
                             p.add_or_update(st.name, raw)
-                    print(f"{C_GREEN}✔ Successfully saved {len(discovered)} station(s) to {p.registry_path}{C_RESET}")
+                    print(f"{C_GREEN}✔ Successfully saved {len(discovered)} station(s) to {shown_path(p.registry_path)}{C_RESET}")
                 else:
                     render_stations_table(discovered, "DISCOVERED CHARGERS FROM HISTORY", eval_time=args.time)
                 return
@@ -2978,7 +2979,7 @@ DESCRIPTION
     if args.export_consolidated:
         out_path, total_count = manager.export_consolidated_registry()
         print(f"{C_GREEN}✔ Successfully exported {total_count} consolidated multi-view stations to:{C_RESET}")
-        print(f"  {out_path}")
+        print(f"  {shown_path(out_path)}")
         return
 
     if args.audit_plugshare:

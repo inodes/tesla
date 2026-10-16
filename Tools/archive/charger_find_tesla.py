@@ -141,6 +141,7 @@ _tools_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _tools_dir not in sys.path:
     sys.path.insert(0, _tools_dir)
 
+from lib.tessie_api_common import shown_path
 from lib.table_formatter import (
     format_field_line,
     format_local_timestamp,
@@ -2882,10 +2883,10 @@ class TeslaChargerExplorer:
                 with open(target_fpath, "r", encoding="utf-8") as f:
                     active_reg = json.load(f)
             except Exception as e:
-                print(f"  {C_RED}❌ {target_fpath} is unreadable ({e}) - not saving, file left untouched.{C_RESET}")
+                print(f"  {C_RED}❌ {shown_path(target_fpath)} is unreadable ({e}) - not saving, file left untouched.{C_RESET}")
                 return "ERROR"
             if not isinstance(active_reg, dict):
-                print(f"  {C_RED}❌ {target_fpath} has an unexpected shape - not saving, file left untouched.{C_RESET}")
+                print(f"  {C_RED}❌ {shown_path(target_fpath)} has an unexpected shape - not saving, file left untouched.{C_RESET}")
                 return "ERROR"
 
  # Load archive registry
@@ -2895,10 +2896,10 @@ class TeslaChargerExplorer:
                 with open(archive_fpath, "r", encoding="utf-8") as f:
                     archive_reg = json.load(f)
             except Exception as e:
-                print(f"  {C_RED}❌ {archive_fpath} is unreadable ({e}) - not saving, files left untouched.{C_RESET}")
+                print(f"  {C_RED}❌ {shown_path(archive_fpath)} is unreadable ({e}) - not saving, files left untouched.{C_RESET}")
                 return "ERROR"
             if not isinstance(archive_reg, dict):
-                print(f"  {C_RED}❌ {archive_fpath} has an unexpected shape - not saving, files left untouched.{C_RESET}")
+                print(f"  {C_RED}❌ {shown_path(archive_fpath)} has an unexpected shape - not saving, files left untouched.{C_RESET}")
                 return "ERROR"
 
         existing_key = station_key if station_key in active_reg else None
@@ -3004,18 +3005,18 @@ class TeslaChargerExplorer:
  # Write active registry
         try:
             _atomic_write_json_file(target_fpath, active_reg)
-            print(f"  {C_GREEN}✔ Saved active registry entry in:{C_RESET} {target_fpath}")
+            print(f"  {C_GREEN}✔ Saved active registry entry in:{C_RESET} {shown_path(target_fpath)}")
         except Exception as e:
-            print(f"  {C_RED}❌ Failed writing {target_fpath}:{C_RESET} {e}")
+            print(f"  {C_RED}❌ Failed writing {shown_path(target_fpath)}:{C_RESET} {e}")
             return "ERROR"
 
  # Write archive registry if changes occurred
         if changes_detected:
             try:
                 _atomic_write_json_file(archive_fpath, archive_reg)
-                print(f"  {C_GREEN}✔ Updated historical archive in:{C_RESET} {archive_fpath}")
+                print(f"  {C_GREEN}✔ Updated historical archive in:{C_RESET} {shown_path(archive_fpath)}")
             except Exception as e:
-                print(f"  {C_RED}❌ Failed writing archive {archive_fpath}:{C_RESET} {e}")
+                print(f"  {C_RED}❌ Failed writing archive {shown_path(archive_fpath)}:{C_RESET} {e}")
                 return "ERROR"
 
  # Output detailed change summary if any modifications or initial population occurred
