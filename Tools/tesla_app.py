@@ -105,6 +105,15 @@ def code_updated():
     return newest > STARTED + 2
 
 
+def _foot_off(p):
+    """The footage clock offset the drive report found for this drive (drive_summary.json beside its page), 0 when unknown."""
+    try:
+        with open(os.path.join(os.path.dirname(p), "drive_summary.json"), encoding="utf-8") as fh:
+            return int(json.load(fh).get("foot_off") or 0)
+    except (OSError, ValueError, TypeError):
+        return 0
+
+
 def fuse_into(h, p):
     """Enrich with TeslaCam metadata: the page's points (Tessie's, about one every 30 s) become the dashcam's per-second readings where the footage
     covers the drive, with accelerator / steering / indicator / FSD columns and the panels that draw them (drive_enrich_ui.py)."""
@@ -116,7 +125,7 @@ def fuse_into(h, p):
         return h
     try:
         obj, end = json.JSONDecoder().raw_decode(h, i + len("const DATA="))
-        new = TC.enrich(obj["pts"])
+        new = TC.enrich(obj["pts"], "standard" if _foot_off(p) == 3600 else None)
     except Exception:
         return h
     if not new:
