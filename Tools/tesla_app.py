@@ -337,11 +337,11 @@ class H(BaseHTTPRequestHandler):
             if u.path == "/api/places/delete":
                 with _ACTION_LOCK:
                     return self.send_json(STORE.pl.delete(body.get("name", "")))
-            if u.path == "/api/drivereview":       # {id, action: start|stop, speed_from, speed_to, both}: the manual review of one drive
+            if u.path == "/api/drivereview":       # {id, action: start|stop}: the manual review of one drive
                 if body.get("action") == "stop":
                     DRV.stop()
                 else:
-                    DRV.start(body.get("id", ""), footage_root("A"), {k: body.get(k) for k in ("speed_from", "speed_to", "both")})
+                    DRV.start(body.get("id", ""), footage_root("A"), {})
                 return self.send_json(drive_review_state(body.get("id", "")))
             if u.path == "/api/review":
                 role = body.get("role", "A")
