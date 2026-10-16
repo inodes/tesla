@@ -65,15 +65,6 @@ def csv_path(deepdive_root, stamp, create=False):
     return os.path.join(folder, f"{PREFIX}{stamp}.csv")
 
 
-def unique_stamp(deepdive_root, stamp):
-    """First stamp (stamp, stamp_01, stamp_02 ...) with no folder or flat file yet, in any layout."""
-    cand, n = stamp, 1
-    while find_folder(deepdive_root, cand) or os.path.exists(os.path.join(deepdive_root, f"{PREFIX}{cand}.csv")):
-        cand = f"{stamp}_{n:02d}"
-        n += 1
-    return cand
-
-
 def find_csv(deepdive_root, stamp):
     """Existing CSV for stamp in any layout, else None."""
     f = find_folder(deepdive_root, stamp)

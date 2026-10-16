@@ -3845,6 +3845,19 @@ class DriveAnalyzer:
             end_epoch = end_dt.timestamp()
         return (time.time() - end_epoch) < self.DRIVE_FINALIZE_GRACE_SECONDS
 
+    @staticmethod
+    def _drive_stamp(target_drive, start_epoch):
+        """The stamp of a drive's folder: local start minute plus the zone abbreviation (AGENTS.md TODO-033)."""
+        start_dt = target_drive.get("start_dt") or datetime.fromtimestamp(start_epoch)
+        stamp = start_dt.strftime("%Y-%m-%d_%H-%M")
+        try:
+            _, abbr, _ = tztools.localize(start_epoch)
+            if abbr:
+                stamp = f"{stamp}_{abbr}"
+        except Exception:
+            pass
+        return stamp
+
     def fetch_drive_deepdive_from_api(self, target_drive):
         """Auto-fetches this drive's detailed telemetry from Tessie's own
         GET /{vin}/states endpoint (AGENTS.md TODO-026) when no local
@@ -3892,6 +3905,11 @@ class DriveAnalyzer:
  # when matching an existing file - Tesla's own start/stop
  # detection and the detailed export don't always agree to the
  # second.
+        # A drive is identified by the minute it started: when its folder already has telemetry there is nothing to fetch, and there is
+        # never a second copy (no "_01" folders).
+        have = _drive_paths.find_csv(os.path.join(self.drives_dirs[0], "deepdive"), self._drive_stamp(target_drive, start_epoch))
+        if have:
+            return have
         pad = 120
         params = dict(DEFAULT_UNIT_PARAMS)
         params.update({
@@ -3913,18 +3931,8 @@ class DriveAnalyzer:
         except Exception:
             return None
 
-        start_dt = target_drive.get("start_dt") or datetime.fromtimestamp(start_epoch)
-        stamp = start_dt.strftime("%Y-%m-%d_%H-%M")
- # AGENTS.md TODO-033: fold the real AEST/AEDT abbreviation into the
- # stamp here too, matching the manual-ingest path above.
-        try:
-            _, abbr, _ = tztools.localize(start_epoch)
-            if abbr:
-                stamp = f"{stamp}_{abbr}"
-        except Exception:
-            pass
-        stamp = _drive_paths.unique_stamp(dest_dir, stamp)       # REQ-193: <stamp>/ folder per drive
-        dest_path = _drive_paths.csv_path(dest_dir, stamp, create=True)
+        stamp = self._drive_stamp(target_drive, start_epoch)
+        dest_path = _drive_paths.csv_path(dest_dir, stamp, create=True)       # one folder per drive, named by its start minute
 
         try:
             with open(dest_path, "wb") as f:
