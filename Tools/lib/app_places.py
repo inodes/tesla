@@ -155,16 +155,17 @@ class Places:
         return best[1] if best else None
 
     def label(self, lat, lon, supercharger=False, fallback="", charger=False):
-        """(name, key) for a spot: a saved place first, then (for a Supercharger) the tesla.com station name, then (for any charge, charger=True)
-        the nearest known charger of any network, then the fallback text."""
+        """(name, key) for a spot: (for a Supercharger) the tesla.com station name - always, even where a saved place of yours covers the spot
+        (a shopping centre's car park) - otherwise a saved place, then (for any charge, charger=True) the nearest known charger of any network,
+        then the fallback text."""
         if lat is not None and lon is not None:
-            p = self.saved_at(lat, lon)
-            if p:
-                return p["name"], "p:" + p["name"]
             if supercharger:
                 s = self.station_at(lat, lon)
                 if s:
                     return s["name"], "s:" + s["name"]
+            p = self.saved_at(lat, lon)
+            if p:
+                return p["name"], "p:" + p["name"]
             if charger:
                 c = self.charger_at(lat, lon, 400 if supercharger else 120)
                 if c:
