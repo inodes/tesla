@@ -16,7 +16,7 @@ the block). A change takes effect the next time the app or script reads it (the 
                                                    clips read at once (CPU work, one process each); days_newest_first / rows_newest_first = the order of the day blocks and of the rows inside a day
   app.review.step_s / min_kmh / min_conf / workers / merge_s   reading speed-limit signs from a drive's video (Review tab); candidate_km / candidate_avg_kmh = the "Review candidates" button on Drives
   app.drives.repark_max_km / repark_max_minutes    a drive shorter than both is a "re-park" (the car was shuffled), not a drive
-  app.drives.long_highway_*                        a "long highway" drive (the only kind that shows 110/100 speed-change markers)
+  app.drives.long_highway_*                        a "long highway" drive (the Drives list's Long highway filter)
   app.drives.charge_window_minutes                 a charge within this long after / before a drive makes it "to charge" / "from charge"
   app.drives.low_battery_pct                       the "finished at N% or less" filter
   app.places.stay_min_seconds                      a gap between real drives shorter than this is not a parked period
