@@ -52,6 +52,9 @@ tesla/
 │   ├── sync_invoices.py            # Generic PDF invoice ingestion, discovery, inspection, and standardization tool
 │   ├── sync_power_usage.py         # Consolidate the active power provider's usage-export CSVs into one master CSV
 │   ├── sync_dashcam.sh             # Multi-drive TeslaCam sync, audit & prune engine
+│   ├── teslacam_stills.py          # One-second stills of every front clip, kept after the video is deleted
+│   ├── teslacam_ledger.py          # Log of every TeslaCam file: which drive, size, deleted when; what can be purged
+│   ├── migrate_charge_folders.py   # Move charges/deepdive files into <day>/<start>/ folders (like drives)
 │   ├── dashcam_exportdash.sh       # Local ExportDash web player launcher
 │   ├── sync_drives_all.sh          # One command: Tessie drives, fetch + consolidate
 │   ├── sync_charging_all.sh        # One command: Tessie charges + Evnex + invoices + AGL usage + PVOutput/AGL/Evnex cross-check prep, fetch + consolidate
