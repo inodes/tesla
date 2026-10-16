@@ -56,6 +56,7 @@
   },
   "app": {
     "_comment": "Settings of Tools/tesla_app.py, drive_report.py and the places lookups (lib/app_config.py). Every value is optional: delete any you do not want to change and the default applies. map.style_light/style_dark: an OpenFreeMap style (positron, dark, liberty = 3D, bright, fiord). drives.repark_*: a drive shorter than both is a re-park (the car was only shuffled). nearby.*: Overpass servers/time limits and the Photon fallback for 'what is around here'. places.save_radius_*: when you save a place from an OpenStreetMap result, the radius is at least min_m and otherwise reaches every stop the car recorded within cluster_m of the stop, plus margin_m.",
+    "timezone": "Australia/Sydney",
     "map": {
       "tiles_base": "https://tiles.openfreemap.org/styles/",
       "style_light": "positron",

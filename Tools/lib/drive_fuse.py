@@ -10,6 +10,11 @@ every video frame, and once a clip has been read (teslacam_timeline.py) one read
     miss by about a minute, and any hole in the footage)
   * the camera has no elevation, so each camera second takes the elevation interpolated from Tessie's points
 
+Times are compared in UTC: Tessie's local clock and the dashcam's file names are turned into UTC with the configured time zone (app.timezone,
+daylight saving included). The car's clock sometimes stayed on standard time for days after the clocks changed (drive_summary.json foot_off 3600),
+so "local" or "standard" is chosen per drive, checked against the route by GPS; without that a drive is joined to another hour's driving and the
+track jumps between the two.
+
 Nothing is written and no Tessie record is changed (Tessie stays the source of truth); the result is worked out when asked.
 fuse_drive() returns {info, points}: info says how much the camera covered, points are parallel lists
 t (epoch s, local clock), la, lo, v (km/h), s (0 = Tessie, 1 = camera), el (m).
@@ -20,9 +25,14 @@ import csv
 import datetime
 import glob
 import os
+import math
+
+import app_config as CFG
 
 JOIN_S = 20.0       # a Tessie point this close to a camera second is left out
 MARGIN_S = 30.0     # camera seconds this far outside the Tessie drive still belong to it
+CLOCKS = ("local", "standard")   # the car's clock was right / stayed on standard time (see utc())
+MAX_ERR_KM = 3.0    # the camera must be this close to Tessie's route, on average, for an offset to be believed
 MAX_POINTS = 6000   # a page is sent at most this many points (a 360 km drive is ~13 000 camera seconds)
 
 
@@ -68,12 +78,38 @@ def tessie_points(folder):
     return out
 
 
-def camera_points(store, t0, t1):
-    """The per-second readings in [t0, t1] from the shared store: [(t, la, lo, speed, autopilot mode, accelerator %, steering deg, indicator, brake)] by time."""
+def _tz():
+    import zoneinfo
+    try:
+        return zoneinfo.ZoneInfo(CFG.get("timezone") or "Australia/Sydney")
+    except Exception:
+        return datetime.timezone.utc
+
+
+def utc(local, clock="local"):
+    """UTC epoch of a local clock reading (a naive time read as UTC, the convention of every drive page - local seconds).
+    clock="local": the clock is right, daylight saving included. clock="standard": the clock stayed on standard time (the car's did for days
+    after the clocks changed), so it is behind by the daylight-saving hour while that is in force."""
+    tz = _tz()
+    dt = datetime.datetime.fromtimestamp(local, datetime.timezone.utc).replace(tzinfo=None).replace(tzinfo=tz)
+    off = dt.utcoffset() - (dt.dst() if clock == "standard" else datetime.timedelta(0))
+    return local - off.total_seconds()
+
+
+def local(u):
+    """The page's clock (local seconds, a naive time read as UTC) of a UTC epoch."""
+    dt = datetime.datetime.fromtimestamp(u, _tz())
+    return calendar.timegm(dt.replace(tzinfo=None).timetuple())
+
+
+def camera_points(store, t0, t1, clock="local"):
+    """The per-second readings in [t0, t1] (page clock) from the shared store: [(t, la, lo, speed, autopilot mode, accelerator %, steering deg,
+    indicator, brake)] by time. A clip is named by the car's clock; that is turned into UTC (clock: see utc()) and from there to the page's clock,
+    so a drive and its footage are always compared as the same instant."""
     out = []
     for st in sorted(store.stamps()):
         try:
-            m = secs(st)
+            m = local(utc(secs(st), clock))
         except ValueError:
             continue
         if m + 60 < t0 or m > t1:
@@ -143,7 +179,8 @@ def fuse_drive(data_dir, stamp, store):
     tp = tessie_points(folder)
     if not tp:
         return None
-    return fuse(tp, camera_points(store, t0 - MARGIN_S, t1 + MARGIN_S), t0, t1)
+    off, cam = clock_offset([p["t"] for p in tp], [p["la"] for p in tp], [p["lo"] for p in tp], store, t0, t1, "standard" if sm.get("foot_off") == 3600 else None)
+    return fuse(tp, cam, t0, t1)
 
 
 MAX_PAGE_ROWS = 9000    # a drive page is given at most this many rows
@@ -165,7 +202,35 @@ def _lerp(ts, rows, col, t):
     return va + (vb - va) * f
 
 
-def enrich(rows, store):
+def _km(la1, lo1, la2, lo2):
+    x = math.radians(lo2 - lo1) * math.cos(math.radians((la1 + la2) / 2))
+    return 6371.0 * math.hypot(x, math.radians(la2 - la1))
+
+
+def clock_offset(ts, las, los, store, t0, t1, hint=None):
+    """(clock, camera points) - the camera clock ("local" or "standard", see utc()) under which the dashcam's GPS lies on Tessie's route
+    (mean distance <= MAX_ERR_KM), trying the one the drive was found with first; (None, []) when neither puts the footage on the route."""
+    best = None
+    for off in ([hint] if hint else []) + [o for o in CLOCKS if o != hint]:
+        cam = camera_points(store, t0 - MARGIN_S, t1 + MARGIN_S, off)
+        if len(cam) < 10:
+            continue
+        errs = []
+        for c in cam[::max(1, len(cam) // 60)]:
+            k = bisect.bisect_left(ts, c[0])
+            if k <= 0 or k >= len(ts):
+                continue
+            f = (c[0] - ts[k - 1]) / (ts[k] - ts[k - 1]) if ts[k] > ts[k - 1] else 0.0
+            errs.append(_km(c[1], c[2], las[k - 1] + (las[k] - las[k - 1]) * f, los[k - 1] + (los[k] - los[k - 1]) * f))
+        if len(errs) >= 5:
+            e = sum(errs) / len(errs)
+            if e <= MAX_ERR_KM:
+                return off, cam
+            best = e if best is None else min(best, e)
+    return None, []
+
+
+def enrich(rows, store, hint=None):
     """The rows of a drive page ([t, lat, lon, speed, power, elevation, battery, range, inside, outside, odometer], Tessie's, about one every 30 s)
     with the dashcam's seconds put in: speed, position, and five new columns [autopilot mode, accelerator %, steering deg, indicator, brake].
     Power, elevation, battery, range, temperatures and odometer have no camera reading, so they follow Tessie's points in a straight line
@@ -173,10 +238,14 @@ def enrich(rows, store):
     if not rows:
         return None
     rows = [list(r) + [None] * (11 - len(r)) for r in rows]
-    cam = camera_points(store, rows[0][0] - MARGIN_S, rows[-1][0] + MARGIN_S)
-    if len(cam) < 10:
+    ts = [r[0] for r in rows]
+    ok = [r for r in rows if r[1] is not None and r[2] is not None]
+    if len(ok) < 2:
         return None
-    ts, ct = [r[0] for r in rows], [c[0] for c in cam]
+    off, cam = clock_offset([r[0] for r in ok], [r[1] for r in ok], [r[2] for r in ok], store, rows[0][0], rows[-1][0], hint)
+    if off is None:
+        return None
+    ct = [c[0] for c in cam]
     out = []
     for c in cam:
         out.append([c[0], c[1], c[2], round(c[3] or 0, 1)] + [None if (x := _lerp(ts, rows, i, c[0])) is None else round(x, 3) for i in range(4, 11)] + [c[4], c[5], c[6], c[7], c[8]])
@@ -189,4 +258,4 @@ def enrich(rows, store):
     step = max(1, -(-len(out) // MAX_PAGE_ROWS))
     if step > 1:
         out = out[::step] + ([out[-1]] if (len(out) - 1) % step else [])
-    return dict(rows=out, info=dict(tessie=len(rows), camera=len(cam), rows=len(out), thinned=step > 1))
+    return dict(rows=out, info=dict(tessie=len(rows), camera=len(cam), rows=len(out), thinned=step > 1, clock=off))
