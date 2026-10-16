@@ -690,7 +690,8 @@ function clipPlayer(host,o){
     mv.onerror=()=>box.insertAdjacentHTML("afterbegin",'<div class="sub">This clip could not be played (missing, or the drive was disconnected).</div>');
     pl.onclick=()=>{if(mv.paused)vs.forEach(x=>x.play().catch(()=>{}));else vs.forEach(x=>x.pause())};
     sk.oninput=()=>seekAll(+sk.value)};
-  const prep=()=>{if(nx||si>=stamps.length-1)return;const s2=stamps[si+1],have=o.cams[s2]||[],m={};
+  // Loading the next minute ahead doubles the decoders (12 streams of 2896x1876 with all six cameras), which is what makes cameras stall: only done for one or two cameras.
+  const prep=()=>{if(nx||si>=stamps.length-1||vs.length>2)return;const s2=stamps[si+1],have=o.cams[s2]||[],m={};
     $$("#vids figure[data-c]").forEach(f=>{const c=f.dataset.c;if(have.includes(c)){const v=document.createElement("video");v.muted=true;v.playsInline=true;v.preload="auto";v.src=o.url(s2,c);v.load();m[c]=v}});
     nx={i:si+1,m}};
   const swap=()=>{const m=nx.m;nx=null;vs.forEach(drop);
@@ -707,6 +708,15 @@ function clipPlayer(host,o){
   // nothing plays while the page is hidden (a hidden tab still decodes six streams otherwise)
   const hide=()=>{if(!document.contains(host)){document.removeEventListener("visibilitychange",hide);dropAll();return}if(document.hidden&&mv&&!mv.paused){offp=true;vs.forEach(x=>x.pause())}else if(!document.hidden&&offp){offp=false;vs.forEach(x=>x.play().catch(()=>{}))}};
   document.addEventListener("visibilitychange",hide);
+  // Watchdog: a camera that has stopped moving while the others play (the browser gave up its decoder, or the read from the drive stalled) is loaded again at the same
+  // second, up to 4 times a minute each; the page is left alone while paused or hidden.
+  const dog=setInterval(()=>{if(!document.contains(host)){clearInterval(dog);dropAll();return}
+    if(!mv||mv.paused||mv.ended||document.hidden||!vs.length)return;const now=Date.now();
+    vs.forEach(x=>{const at=x.currentTime,same=x._at!=null&&Math.abs(at-x._at)<.01;x._at=at;x._still=same?(x._still||0)+1:0;
+      if(x.ended||x._still<2||!x.getAttribute("src"))return;
+      x._rv=(x._rv||[]).filter(t=>now-t<60000);if(x._rv.length>=4)return;x._rv.push(now);x._still=0;
+      const src=x.getAttribute("src"),t=Math.max(0,(x===mv?at:mv.currentTime)),r=+rate;
+      try{x.pause();x.removeAttribute("src");x.load();x.addEventListener("loadedmetadata",()=>{try{x.currentTime=t}catch(e){}x.playbackRate=r;x.play().catch(()=>{})},{once:true});x.src=src;x.load()}catch(e){}})},1500);
   shell();
   // the page can move the video to a clock time (clicking the map or the chart)
   return {seekAt:(st,sec)=>{const i=stamps.indexOf(st);if(i<0)return;                 // a minute and a second in it (the page works these out in UTC)
