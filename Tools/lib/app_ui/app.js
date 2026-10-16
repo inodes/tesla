@@ -217,9 +217,6 @@ async function driveReviewPanel(host,stamp,lo,onResult){
     }
     return{h,tags,gm};
   };
-  const plain=e=>{if(e.kind==="intervention")return `${e.from_mode} → ${e.to_mode}`+((e.flags||[]).length?" · "+e.flags.map(f=>f==="brake"?"braking":f==="steering"?"steering":"accelerator").join(", "):e.at_stop?"":" · no pedal / wheel input")+(e.at_stop?" · stopped":"")+(e.off_s==null?" · FSD did not come back":" · FSD off for "+n0(e.off_s)+" s");
-    if(e.kind==="accelerator")return `Accelerator held ${n0(e.dur_s)} s, peak ${n0(e.peak)}%`+(e.ended_in_off?" · FSD switched off right after":"");
-    return `Speed change`+(e.pressed?" · accelerator pressed":" · no pedal input")};
   const info=(e,k)=>{if(!RVAPI||!geo(e))return"";const s=RVAPI.series(),i=stillI(e,k),rel=e.shots[k];
     return `${RVAPI.clk(i)} · ${rel?(rel>0?"+":"")+n0(rel)+" s":"the moment"}${s.v[i]!=null?" · "+n0(s.v[i])+" km/h":""}${s.accel[i]?" · accelerator "+n0(s.accel[i])+"%":""}${s.br[i]?" · braking":""}${APN[s.ap[i]]?" · "+APN[s.ap[i]]:" · manual"}`};
   // the strip across the drive: where the events of this tab are; click one to go to it
@@ -301,11 +298,7 @@ async function driveReviewPanel(host,stamp,lo,onResult){
       else if(e.sheet)h+=`<div style="margin-top:8px"><a href="/revev/${encodeURIComponent(R.stamp)}/${encodeURIComponent(e.sheet)}" target="_blank"><img class="rvsheet" src="/revev/${encodeURIComponent(R.stamp)}/${encodeURIComponent(e.sheet)}"></a><div class="sub">This review was run before the stills could be picked one by one. Run it again for that.</div></div>`;
       else h+=`<div class="sub" style="margin-top:8px">${R.stills?"No stills for this event.":"No stills: the Archive was not connected when this review ran."}</div>`;
       h+="</div>"}
-    box.innerHTML=h+'<div class="card" style="margin-top:12px;padding:4px 0"><div id="rvtb"></div></div>';
-    // every event of the drive (the same ones the tabs and the speed filter leave in) as a table: click a row to open it above
-    {const rows=L.map((x,k)=>({k,id:x.id,t:x.t,kind:KNAME[x.kind]||x.kind,what:plain(x),from:x.v,to:x.kind==="intervention"?null:x.v1,sec:x.kind==="intervention"?(x.off_s==null?null:x.off_s):x.dur_s,n:(x.signs||[]).length}));
-      if(rows.length)table($("#rvtb",box),[{k:"t",t:"Time",l:1,f:r=>(r.k===ei?"▶ ":"")+hm(r.t)},{k:"id",t:"#",l:1,f:r=>`<b>${esc(r.id)}</b>`},{k:"kind",t:"Event",l:1},{k:"what",t:"What happened",l:1,f:r=>esc(r.what)},
-        {k:"from",t:"From",f:r=>r.from==null?"–":n0(r.from)+" km/h"},{k:"to",t:"To",f:r=>r.to==null?"–":n0(r.to)+" km/h"},{k:"sec",t:"Seconds",f:r=>r.sec==null?"–":n0(r.sec)},{k:"n",t:"Signs",f:r=>r.n?n0(r.n):"–"}],rows,r=>go(r.k),"t")}
+    box.innerHTML=h;
     $$("[data-tab]",box).forEach(b=>b.onclick=()=>{tab=b.dataset.tab;ei=0;const x=list()[0];si=x&&geo(x)?k0(x):0;hv=null;viewer(true);if(x)arrive(x)});
     const spSet=o=>{save(Object.assign(mem(),o));ei=0;const x=list()[0];si=x&&geo(x)?k0(x):0;hv=null;viewer(true);if(x)arrive(x)};
     if($("#spf",box)){const rd=()=>({sf:$("#spf",box).value,st:$("#spt",box).value,sx:$("#spx",box).value,sb:$("#spb",box).checked});
