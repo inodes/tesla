@@ -791,8 +791,9 @@ function tlDays(host,items,o){
   // an event that crosses midnight is listed on every day it touches (whole, with a note), and is one and the same tick on all of them
   rs.forEach(v=>{v._d0=v.start.slice(0,10);v._d1=v._c==="sentry"||!v.end||v.end<v.start?v._d0:v.end.slice(0,10);for(let n=0;n<=Math.min(dd(v._d0,v._d1),6);n++){const d=plus(v._d0,n);(byDay[d]=byDay[d]||[]).push(v)}});
   if(TLS.dayDesc===undefined)TLS.dayDesc=cfg("teslacam.days_newest_first")!==false;if(TLS.rowDesc===undefined)TLS.rowDesc=cfg("teslacam.rows_newest_first")!==false;
-  const allDays=Object.keys(byDay).filter(d=>!o.dayOk||o.dayOk(d)).sort().reverse(),days=allDays.slice(0,40),role=o.role,places=o.places;
-  if(!TLS.dayDesc)days.reverse();
+  const allDays=Object.keys(byDay).filter(d=>!o.dayOk||o.dayOk(d)).sort().reverse(),cur=TLS.day&&allDays.includes(TLS.day)?TLS.day:allDays[0],days=cur?[cur]:[],role=o.role,places=o.places;TLS.day=cur;
+  // one day at a time: a picker (newest day first by default) with arrows to the earlier / later day
+  const asc=allDays.slice().reverse(),ci=asc.indexOf(cur),opts=(TLS.dayDesc?allDays:asc).map(d=>`<option value="${d}" ${d===cur?"selected":""}>${dayName(d)} (${byDay[d].length})</option>`).join("");
   const key=(v,d)=>d>v._d0?"00:00:00":hms(v._c==="sentry"?(v.trig||v.start):v.start),rowsOf=d=>byDay[d].slice().sort((a,b)=>{const x=key(a,d),y=key(b,d);return(x<y?-1:x>y?1:a.t0-b.t0)*(TLS.rowDesc?-1:1)});
   rs.forEach(v=>{if(TLS.on[v.id]===undefined)TLS.on[v.id]=v._c==="drive"});
   const place=v=>nameAt(places,v.p0)||nameAt(places,v.p1)||nameAt(places,v._pos);
@@ -803,9 +804,9 @@ function tlDays(host,items,o){
     if(c==="sentry")return `<div class="tr sentry">${chk}<button class="tb sen" data-ev="${esc(v.ev)}"><span class="tm">${hms(v.trig||v.start).slice(0,5)}</span><span class="tt"><b>Sentry</b> · ${esc(reason(v.reason))}<small>${esc([v.city,v.street].filter(Boolean).join(" · "))} · ${mins(v)} min watched</small></span></button></div>`;
     if(c==="parked"){const w=place(v);return `<div class="tr parked">${chk}<div class="tb"><span class="tm">${tmx(v,d)}</span><span class="tt">🅿️ <b>Parked</b> · ${dur(mins(v))}${w?`<small>${esc(w)}</small>`:""}</span></div></div>`}
     return `<div class="tr rec"><a class="tb" href="#/teslacam/${role}/${id}"><span class="tm">${tmx(v,d)}</span><span class="tt">Recording · ${v.n} clip${v.n>1?"s":""}<small>telemetry not read yet · open to read</small></span></a></div>`};
-  host.innerHTML=days.length?`<div class="bar" style="margin:0 0 4px"><button class="chip ${TLS.mode==="v"?"on":""}" data-tm="v">Speed</button><button class="chip ${TLS.mode==="ap"?"on":""}" data-tm="ap">Autopilot / FSD</button><button class="chip" data-so="days" style="margin-left:10px">${TLS.dayDesc?"Days: newest first":"Days: oldest first"}</button><button class="chip" data-so="rows">${TLS.rowDesc?"Within a day: 23:59 → 00:00":"Within a day: 00:00 → 23:59"}</button><span class="sub" id="tlleg"></span></div><div class="sub" style="margin-bottom:6px">Tick a row to show it on that day's map. Click a drive to open it, a Sentry event to watch it. Hover a route for the moment under the pointer; click it to open the drive. Short drives under the re-park limits count as parked. An event that runs past midnight is shown whole on both days, with (+1 day) or (-1 day), and ticking it ticks it on both.</div>`
-    +days.map(d=>`<div class="day">${dayName(d)}<small>${byDay[d].length} item${byDay[d].length>1?"s":""}</small><label class="dall"><input type="checkbox" data-day="${d}"> show all</label></div><div class="tday" data-day="${d}"><div class="tl2">${rowsOf(d).map(v=>row(v,d)).join("")}</div><div class="tmap"></div></div>`).join("")
-    +(allDays.length>40?'<div class="sub">Showing the newest 40 days. Narrow the dates to see older ones.</div>':""):'<div class="empty">Nothing here for these dates.</div>';
+  host.innerHTML=days.length?`<div class="bar" style="margin:0 0 4px"><button class="chip ${TLS.mode==="v"?"on":""}" data-tm="v">Speed</button><button class="chip ${TLS.mode==="ap"?"on":""}" data-tm="ap">Autopilot / FSD</button><button class="chip" data-so="days" style="margin-left:10px">${TLS.dayDesc?"Days: newest first":"Days: oldest first"}</button><button class="chip" data-so="rows">${TLS.rowDesc?"Within a day: 23:59 → 00:00":"Within a day: 00:00 → 23:59"}</button><span class="sub" id="tlleg"></span><span class="sub" style="margin-left:auto;cursor:help" title="Tick a row to show it on the map. Click a drive to open it, a Sentry event to watch it. Hover a route for the moment under the pointer; click it to open the drive. Short drives under the re-park limits count as parked. An event that runs past midnight is shown whole on both days, with (+1 day) or (-1 day), and ticking it ticks it on both.">ⓘ how this works</span></div>`
+    +days.map(d=>`<div class="dpick"><button class="chip" data-nav="${ci>0?asc[ci-1]:""}" ${ci>0?"":"disabled"} title="Earlier day">‹</button><select id="dsel">${opts}</select><button class="chip" data-nav="${ci<asc.length-1?asc[ci+1]:""}" ${ci<asc.length-1?"":"disabled"} title="Later day">›</button><small>${byDay[d].length} item${byDay[d].length>1?"s":""}</small><label class="dall"><input type="checkbox" data-day="${d}"> show all</label></div><div class="tday" data-day="${d}"><div class="tl2">${rowsOf(d).map(v=>row(v,d)).join("")}</div><div class="tmap"></div></div>`).join("")
+    :'<div class="empty">Nothing here for these dates.</div>';
   if(!days.length)return;
   const leg=()=>{$("#tlleg").innerHTML=TLS.mode==="v"?spdLegend():apLegend()};leg();
   const maps={},order=[];
@@ -821,12 +822,16 @@ function tlDays(host,items,o){
   const setOn=(ids,val)=>{const ds=new Set();ids.forEach(id=>{TLS.on[id]=val;$$(`input[data-id="${CSS.escape(id)}"]`,host).forEach(x=>{if(!x.disabled)x.checked=val;ds.add(x.closest(".tday").dataset.day)})});ds.forEach(populate);syncAll()};
   $$("input[data-id]",host).forEach(c=>c.onchange=()=>setOn([c.dataset.id],c.checked));
   const onRoute=e=>{if(!TLS.on[e.detail])return;new Set($$(`input[data-id="${CSS.escape(e.detail)}"]`,host).map(x=>x.closest(".tday").dataset.day)).forEach(populate)};addEventListener("tlroute",onRoute);
+  $("#dsel",host).onchange=e=>{TLS.day=e.target.value;o.redraw&&o.redraw()};
+  $$("[data-nav]",host).forEach(b=>b.onclick=()=>{if(b.dataset.nav){TLS.day=b.dataset.nav;o.redraw&&o.redraw()}});
+  // the day's list and map are as tall as what is left of the window below them
+  const fitH=()=>{const e=$(".tday",host);if(!e)return;e.style.setProperty("--tdh",Math.max(380,innerHeight-(e.getBoundingClientRect().top+scrollY)-16)+"px")};fitH();addEventListener("resize",fitH);
   $$("[data-so]",host).forEach(b=>b.onclick=()=>{if(b.dataset.so==="days")TLS.dayDesc=!TLS.dayDesc;else TLS.rowDesc=!TLS.rowDesc;o.redraw&&o.redraw()});
   const syncAll=()=>$$("input[data-day]",host).forEach(a=>{const bx=$$(`.tday[data-day="${a.dataset.day}"] input[data-id]:not(:disabled)`,host);a.checked=bx.length>0&&bx.every(x=>x.checked)});syncAll();
   $$("input[data-day]",host).forEach(a=>a.onchange=()=>setOn($$(`.tday[data-day="${a.dataset.day}"] input[data-id]:not(:disabled)`,host).map(x=>x.dataset.id),a.checked));
   $$("[data-tm]",host).forEach(b=>b.onclick=()=>{TLS.mode=b.dataset.tm;$$("[data-tm]",host).forEach(x=>x.classList.toggle("on",x===b));leg();Object.values(maps).forEach(x=>x.m.mode(TLS.mode))});
   $$("button.sen",host).forEach(b=>b.onclick=()=>{$$(".tr",host).forEach(x=>x.classList.toggle("on",x.contains(b)));o.onSentry(b.dataset.ev)});
-  return()=>{removeEventListener("tlroute",onRoute);io.disconnect();Object.values(maps).forEach(x=>x.m.destroy())}}
+  return()=>{removeEventListener("tlroute",onRoute);removeEventListener("resize",fitH);io.disconnect();Object.values(maps).forEach(x=>x.m.destroy())}}
 
 function routeSvg(pts,w=64,h=40){if(!pts||pts.length<2)return "";const la=pts.map(p=>p[0]),lo=pts.map(p=>p[1]),a=Math.min(...la),b=Math.max(...la),c=Math.min(...lo),d=Math.max(...lo),k=Math.cos((a+b)/2*Math.PI/180),sx=(d-c)*k||1e-6,sy=(b-a)||1e-6,s=Math.min((w-6)/sx,(h-6)/sy),ox=(w-sx*s)/2,oy=(h-sy*s)/2;
   return `<svg class="rt" width="${w}" height="${h}" viewBox="0 0 ${w} ${h}"><polyline fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" stroke-linecap="round" points="${pts.map(p=>((p[1]-c)*k*s+ox).toFixed(1)+","+(h-((p[0]-a)*s+oy)).toFixed(1)).join(" ")}"/></svg>`}
