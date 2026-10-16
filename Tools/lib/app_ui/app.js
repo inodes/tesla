@@ -35,7 +35,7 @@ function mapLinks(lat,lon,name,stop){
 }
 // zoom in / out plus a button that puts the view back (the whole route, every place, or the pin)
 // A map reacts to the wheel and to a trackpad pinch only after it has been clicked, and lets go again when the pointer leaves it (so scrolling the page never moves a map)
-function newMap(o){const m=new maplibregl.Map(o),c=m.getContainer();m.scrollZoom.disable();c.addEventListener("mousedown",()=>m.scrollZoom.enable());c.addEventListener("mouseleave",()=>m.scrollZoom.disable());return m}
+function newMap(o){const m=new maplibregl.Map(o),c=m.getContainer();m.scrollZoom.disable();c.addEventListener("mousedown",e=>{if(e.button===0)m.scrollZoom.enable()});c.addEventListener("contextmenu",e=>{e.preventDefault();m.scrollZoom.disable()});c.addEventListener("mouseleave",()=>m.scrollZoom.disable());return m}   // a click turns wheel / pinch zoom on, a right-click (or ctrl-click) turns it off
 function mapNav(m,reset,title){const nav=new maplibregl.NavigationControl({showCompass:false});m.addControl(nav,"top-right");
   const b=document.createElement("button");b.type="button";b.className="maplibregl-ctrl-icon";b.title=title;b.setAttribute("aria-label",title);
   b.innerHTML='<span style="display:block;text-align:center;font-size:18px;line-height:29px">⤢</span>';b.onclick=reset;nav._container.appendChild(b)}
