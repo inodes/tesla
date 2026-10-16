@@ -612,7 +612,9 @@ def estimate_window_minutes(sessions, current, registry=None, lo=20, hi=80):
     if held:
         adj += "; percents no session reached reuse the nearest one"
     return {"minutes": total, "measured": False,
-            "text": f"estimate: this session covered {obs}; the other {n_hist} of {len(window)} percent steps come from {src}{adj}"}
+            "text": f"estimate: this session covered {obs}; the other {n_hist} of {len(window)} percent steps come from {src}{adj}",
+            "info": {"covered": obs, "n_hist": n_hist, "n_total": len(window), "sources": parts, "factor": round(factor, 2) if scaled else None,
+                     "thin": len(cur_in) if thin else None, "held": bool(held)}}
 
 
 def window_line(result, lo=20, hi=80):

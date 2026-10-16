@@ -418,7 +418,9 @@ class ChargeBook:
         hw_name, hw = cc.match_hardware(cur["slug"], reg)
         history_pool = [s for s in pool if s["path"] not in {paths[i] for i in paths}]
         hist = cc.historical_extension(history_pool + [cur], cur, reg)
-        win = cc.window_line(cc.estimate_window_minutes(history_pool + [cur], cur, reg))
+        wr = cc.estimate_window_minutes(history_pool + [cur], cur, reg)
+        win = cc.window_line(wr)
+        winfo = dict(measured=wr["measured"], minutes=wr["minutes"], text=wr["text"], **(wr.get("info") or {}))
         pts = [q for q in cur["points"] if q["soc"] is not None]
         pw = [q for q in pts if q["power_kw"] is not None]
         curve = [dict(name="Charger power", unit="kW", axis="power", dash=False, x=[q["soc"] for q in pw], y=[q["power_kw"] for q in pw])]
@@ -439,5 +441,5 @@ class ChargeBook:
         prof.append(dict(name="Pack voltage", unit="V", axis="volt", dash=False, x=[q["elapsed_min"] for q in ps], y=[q["voltage_v"] for q in ps]))
         prof.append(dict(name="Pack current", unit="A", axis="amp", dash=False, x=[q["elapsed_min"] for q in ps], y=[abs(q["current_a"]) if q["current_a"] is not None else None for q in ps]))
         peak = max((q["power_kw"] for q in pw), default=None)
-        return dict(curve=curve, profile=prof, caption=cc._history_caption(hist), window=win, hardware=hw_name, tier=(hw or {}).get("tier"), cap=(hw or {}).get("max_power_kw"),
+        return dict(curve=curve, profile=prof, caption=cc._history_caption(hist), window=win, winfo=winfo, hardware=hw_name, tier=(hw or {}).get("tier"), cap=(hw or {}).get("max_power_kw"),
                     stalls=(hw or {}).get("stalls"), peak=peak, slug=cur["slug"], home=cur["slug"] == "Evnex_Home")
