@@ -338,12 +338,11 @@ async function pageDrive(stamp,tab){
     box.innerHTML=`<div id="fuseb" style="display:flex;gap:12px;align-items:baseline;flex-wrap:wrap;margin:0 0 8px"><label id="enrl" style="display:flex;gap:6px;align-items:center;opacity:.5"><input type="checkbox" id="enr" disabled> Enrich with TeslaCam metadata</label><span class="sub" id="enrn">checking…</span></div><iframe class="drive" id="fr"></iframe>`;
     const note=(i,on)=>on?`Route drawn from the dashcam telemetry (a point every second) for ${i.cam_pct}% of this drive. Tessie's own points (every ${n0(i.tessie_every_s)} s) fill ${i.start_gap_s>5?"the first "+i.start_gap_s+" s":"the start"}${i.end_gap_s>5?" and the last "+i.end_gap_s+" s":""} and any hole in the footage.`:"Route drawn from Tessie's own points (one every "+n0(i.tessie_every_s)+" s).";
     const load=on=>{const f=$("#fr");if(f)f.src=src(on)};
-    // greyed out (and the route drawn from Tessie's points) while the drive's footage is not on the Archive: its telemetry was read from another drive
+    // greyed out only while no telemetry is kept for the drive (the Scan on the TeslaCam page reads what is missing); the video itself need not exist any more
     api("drivefuse?id="+encodeURIComponent(stamp)+"&summary=1").then(r=>{const i=r.info,c=$("#enr");if(!c||!i||!i.cam_n)throw 0;
-      if(i.archive_min===0){$("#enrl").title="Copy this drive's footage to the Archive to switch this on";$("#enrn").textContent="Not copied to the Archive yet: the dashcam telemetry for this drive was read from another drive, so the route is drawn from Tessie's own points (one every "+n0(i.tessie_every_s)+" s). Copy the footage to the Archive and this switches on.";load(false);return}
       const on=pref();c.disabled=false;c.checked=on;$("#enrl").style.opacity="";$("#enrn").textContent=note(i,on);load(on);
       c.onchange=()=>{try{localStorage.setItem("drv.enrich",c.checked?"1":"0")}catch(e){}$("#enrn").textContent=note(i,c.checked);load(c.checked)}})
-      .catch(()=>{const l=$("#enrl"),n=$("#enrn");if(l){l.title="No TeslaCam telemetry has been read for this drive";l.style.opacity=".5"}if(n)n.textContent="No TeslaCam telemetry for this drive (it was never read, or the footage is gone).";load(false)});
+      .catch(()=>{const l=$("#enrl"),n=$("#enrn");if(l){l.title="No TeslaCam telemetry has been read for this drive";l.style.opacity=".5"}if(n)n.textContent="No TeslaCam telemetry is kept for this drive yet. Scan the connected drives on the TeslaCam page to read it.";load(false)});
     fitFrame($("#fr"),doc=>{$$("a",doc).forEach(a=>{if((a.getAttribute("href")||"")==="../index.html"){a.parentNode.style.display="none"}});
       // the footage and the flips have their own tabs (the clips are watched in the Footage tab)
       const f=doc.getElementById("foot");if(f)f.style.display="none";hideSection(doc,"FSD speed changes");hideSection(doc,"Saved clips")});
@@ -1061,6 +1060,31 @@ function tlDays(host,items,o){
 
 function routeSvg(pts,w=64,h=40){if(!pts||pts.length<2)return "";const la=pts.map(p=>p[0]),lo=pts.map(p=>p[1]),a=Math.min(...la),b=Math.max(...la),c=Math.min(...lo),d=Math.max(...lo),k=Math.cos((a+b)/2*Math.PI/180),sx=(d-c)*k||1e-6,sy=(b-a)||1e-6,s=Math.min((w-6)/sx,(h-6)/sy),ox=(w-sx*s)/2,oy=(h-sy*s)/2;
   return `<svg class="rt" width="${w}" height="${h}" viewBox="0 0 ${w} ${h}"><polyline fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" stroke-linecap="round" points="${pts.map(p=>((p[1]-c)*k*s+ox).toFixed(1)+","+(h-((p[0]-a)*s+oy)).toFixed(1)).join(" ")}"/></svg>`}
+// ---------- the drive scan: footage on the drives you pick against the telemetry already kept; reads what is missing (lib/teslacam_scan.py, ./teslacam_scan.py)
+let SCN={roles:{A:1},rep:null,timer:null,err:""};
+function scanPanel(box,drives){
+  const picked=()=>drives.filter(d=>SCN.roles[d.role]).map(d=>d.role),alive=()=>document.body.contains(box);
+  const get=async()=>{SCN.err="";try{SCN.rep=await tcGet("scan?roles="+picked().join(","))}catch(e){SCN.err=e.message}};
+  const paint=()=>{if(!alive())return;const rep=SCN.rep,job=rep?rep.job:null,run=!!(job&&job.running),left=rep?rep.drives.reduce((a,d)=>a+d.to_read,0):0;
+    let h=`<div class="sub" style="margin:8px 0">Compares the footage on the drives you pick with the telemetry already kept (speed, GPS, steering, pedals, autopilot) and reads what is missing. The kept telemetry stays when the video is deleted, so those drives can still be drawn from it. A drive is only read when you pick it.</div>
+      <div class="bar" style="margin:0 0 8px">${drives.map(d=>`<label class="chip ${SCN.roles[d.role]?"on":""}" style="cursor:pointer"><input type="checkbox" data-sr="${d.role}" ${SCN.roles[d.role]?"checked":""} ${run?"disabled":""} style="margin-right:6px">${esc(d.name)}</label>`).join("")}<button class="btn ${rep?"":"pri"}" id="scg" ${run||!picked().length?"disabled":""}>${rep?"Scan again":"Scan"}</button></div>`;
+    if(SCN.err)h+=`<div class="sub" style="color:var(--bad);user-select:text">${esc(SCN.err)}</div>`;
+    if(rep){
+      h+=`<table><thead><tr><th class="l">Drive</th><th>Minutes of video</th><th>Telemetry read</th><th>Still to read</th><th>Also on another picked drive</th><th class="l">Dates</th></tr></thead><tbody>${rep.drives.map(d=>`<tr><td class="l"><b>${esc(d.name)}</b>${d.no_front?`<div class="sub">${n0(d.no_front)} without a front clip: cannot be read</div>`:""}</td><td>${n0(d.minutes)}<div class="sub">${n0(d.recent)} Recent · ${n0(d.saved)} Saved</div></td><td>${n0(d.read)}</td><td>${d.to_read?`<b>${n0(d.to_read)}</b>`:"0"}</td><td>${n0(d.elsewhere)}</td><td class="l">${d.first?(d.first===d.last?dayName(d.first):dayName(d.first)+" to "+dayName(d.last)):""}</td></tr>`).join("")}</tbody></table>
+        <div class="sub" style="margin-top:8px">Telemetry kept: ${n0(rep.kept)} minutes${rep.kept_orphans?`, ${n0(rep.kept_orphans)} of them with no video on the picked drives (kept anyway)`:""}.</div>`;
+      if(run)h+=`<div class="card ixb" style="margin-top:8px"><div>Reading ${n0(job.done)} of ${n0(job.total)}${job.current?", "+esc(job.current.replace("_"," ")):""}…</div><button class="btn" id="scx">Stop</button></div>`;
+      else if(left)h+=`<div class="card ixb" style="margin-top:8px"><div><b>${n0(left)}</b> minutes of video have no telemetry yet.${job&&job.error?` <span style="color:var(--bad);user-select:text">${esc(job.error)}</span>`:""}</div><button class="btn pri" id="scr">Read ${n0(left)} minutes</button></div>`;
+      else h+=`<div class="sub" style="margin-top:8px">Every minute with a front clip on the picked drives has its telemetry.${job&&job.done?` Read ${n0(job.done)} just now.`:""}</div>`}
+    box.innerHTML=h;
+    $$("[data-sr]",box).forEach(c=>c.onchange=()=>{SCN.roles[c.dataset.sr]=c.checked?1:0;SCN.rep=null;paint()});
+    const g=$("#scg",box),r=$("#scr",box),x=$("#scx",box);
+    if(g)g.onclick=async()=>{g.disabled=true;g.textContent="Scanning…";await get();paint()};
+    if(r)r.onclick=async()=>{await tcPost("scan",{action:"start",roles:picked()});await get();paint();poll()};
+    if(x)x.onclick=async()=>{await tcPost("scan",{action:"stop"});await get();paint()}};
+  const poll=()=>{clearTimeout(SCN.timer);if(!alive())return;SCN.timer=setTimeout(async()=>{try{const j=await tcGet("scan/status");if(SCN.rep)SCN.rep.job=j;
+      if(j.running){const l=$("#scn .ixb div");if(l)l.textContent="Reading "+n0(j.done)+" of "+n0(j.total)+(j.current?", "+j.current.replace("_"," "):"")+"…";poll()}else{await get();paint()}}catch(e){}},2000)};
+  paint();if(SCN.rep&&SCN.rep.job&&SCN.rep.job.running)poll();
+}
 async function pageTeslaCam(role,id){
   if(role&&id)return /^sentry-/.test(id)?pageTeslaCamSentry(role,id.slice(7)):pageTeslaCamDrive(role,id);
   loading();const [dr,act,pl]=await Promise.all([tcGet("teslacam"),api("activity"),api("places").catch(()=>({saved:[]}))]),drives=dr.drives,places=(pl.saved||[]);
@@ -1069,7 +1093,7 @@ async function pageTeslaCam(role,id){
   if(!drives.some(d=>d.role===TCS.role))TCS.role=(drives.find(d=>d.role==="A")||drives[0]).role;
   const trips=act.filter(x=>x.k==="drive"&&!x.repark).map(x=>({id:x.id,t0:x.t0,t1:x.t0+x.min*60,ti:driveTitle(x)}));
   const tripOf=v=>{const a=v.t0!=null?v.t0:v.t,b=v.t1!=null?v.t1:(v.t||0)+60;return trips.find(d=>d.t0<b&&d.t1>a)};
-  main.innerHTML=head+`<div class="bar" id="tcd"></div><div class="sub" id="tcn"></div><div class="bar" id="tck"></div><div class="bar" id="tsr"></div><div class="bar"><span id="rg"></span><input type="search" id="q" placeholder="Search…" value="${esc(TCS.q)}"></div><div id="ixb"></div><div class="tiles" id="tl"></div><div id="spl"></div><div id="tb"></div>`;
+  main.innerHTML=head+`<details class="card" id="scn" style="margin-bottom:12px"><summary><b>Scan the connected drives for telemetry</b></summary><div id="scb"></div></details><div class="bar" id="tcd"></div><div class="sub" id="tcn"></div><div class="bar" id="tck"></div><div class="bar" id="tsr"></div><div class="bar"><span id="rg"></span><input type="search" id="q" placeholder="Search…" value="${esc(TCS.q)}"></div><div id="ixb"></div><div class="tiles" id="tl"></div><div id="spl"></div><div id="tb"></div>`;
   let data=null,sel=null,token=0,sentryList=null;
   const chips=()=>{$("#tcd").innerHTML=drives.map(d=>`<button class="chip ${d.role===TCS.role?"on":""}" data-r="${d.role}"><span class="dot on" style="margin-right:6px"></span>${esc(d.name)}</button>`).join("");
     $("#tck").innerHTML=Object.keys(TCK).map(k=>`<button class="chip ${k===TCS.kind?"on":""}" data-k="${k}">${TCK[k]}</button>`).join("");
@@ -1121,7 +1145,7 @@ async function pageTeslaCam(role,id){
       try{const rr=await tcGet("teslacam/"+role+"/recent/"+encodeURIComponent(sel)),c=rr.clips,stamps=Object.keys(c);
         clipPlayer($("#spl"),{stamps,cams:c,loc:rr.loc,url:(s,k)=>`/footage/${role}/RecentClips/${s}-${k}.mp4`,head:`Continuous recording on ${dayName(run.ts.slice(0,10))}, ${hms(run.ts).slice(0,5)} to ${hms(run.end).slice(0,5)}, ${run.n} minute${run.n>1?"s":""}. The next minute plays on its own.`})}
       catch(e){$("#spl").innerHTML=errBox(e.message,"Could not read these clips")}})};
-  $("#q").oninput=e=>{TCS.q=e.target.value;draw()};chips();load();
+  $("#q").oninput=e=>{TCS.q=e.target.value;draw()};chips();load();$("#scn").ontoggle=()=>{if($("#scn").open&&!$("#scb").innerHTML)scanPanel($("#scb"),drives)};
 }
 
 // ---------- one drive rebuilt from the video: map, telemetry and the stitched footage, moving together

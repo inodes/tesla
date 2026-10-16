@@ -14,6 +14,7 @@ import drive_roles as DR
 import app_config
 import clip_clock as CC
 import teslacam_timeline as TL
+import teslacam_scan as TS
 import app_review
 
 KINDS = {"sentry": "SentryClips", "saved": "SavedClips"}
@@ -42,6 +43,8 @@ class TeslaCam:
         self.store = None                   # telemetry read from clips, shared by every drive (see _tl)
         self.ix = {}                        # role -> Indexer
         self.rv = None                      # signs read from the video (see app_review.py)
+        self.scan_ix = None                 # the reading job of the drive scan (teslacam_scan.py)
+        self._scan_todo = []
 
     def drives(self):
         return [dict(role=r, name=DR.NAMES.get(r, r), kind="archive" if r == "A" else "other") for p, r in DR.discover()]
@@ -185,12 +188,34 @@ class TeslaCam:
         todo = [(m["stamp"], self._front(teslacam, m)) for m in reversed(TL.minutes(recent, saved)) if "front" in m["cams"]]
         return ix.start(todo)
 
-    def footage_minutes(self, role, teslacam, u0, u1):
-        """How many minutes of footage on the connected drive `role` fall in [u0, u1] (UTC); None when that drive is not connected."""
-        if not teslacam:
-            return None
-        recent, saved, _s = self._sources(role, teslacam)
-        return sum(1 for m in TL.minutes(recent, saved) if CC.maybe_in(m["stamp"], u0, u1))
+    # ------------------------------------------------------------------------------------------------- scan (teslacam_scan.py)
+    def footage(self, role, teslacam):
+        """Every Recent and Saved minute on a drive (TL.minutes)."""
+        c = self._scan(role, teslacam)
+        saved, _ok = self.events(role, "saved", teslacam)
+        return TL.minutes(c["clips"] if c else {}, saved)
+
+    def scan_report(self, roots):
+        """Footage of the drives in roots {role: TeslaCam folder} against the telemetry kept; also what the reading job is doing."""
+        store, _ = self._tl("A")
+        mins = {r: self.footage(r, p) for r, p in roots.items() if p}
+        rep = TS.plan(store, mins, lambda r, m: self._front(roots[r], m))
+        self._scan_todo = rep.pop("todo")
+        rep["job"] = self.scan_status()
+        return rep
+
+    def scan_status(self):
+        return self.scan_ix.status() if getattr(self, "scan_ix", None) else dict(running=False, done=0, total=0, current="", error="")
+
+    def scan_start(self, roots):
+        store, _ = self._tl("A")
+        self.scan_report(roots)
+        if getattr(self, "scan_ix", None) is None:
+            self.scan_ix = TL.Indexer(store)
+        return self.scan_ix.start([(x["stamp"], x["path"]) for x in self._scan_todo])
+
+    def scan_stop(self):
+        return self.scan_ix.stop() if getattr(self, "scan_ix", None) else self.scan_status()
 
     def fuse(self, stamp):
         """The finer track of a Tessie drive (drive_fuse.py): its own points, with the dashcam's per-second readings where they exist."""
