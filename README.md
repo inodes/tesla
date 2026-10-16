@@ -147,7 +147,8 @@ tesla/
 
 ```bash
 # Turn any newly-completed Evnex session into its own deep-dive file
-# (charges/deepdive/charge_deepdive_<local-time>_NN_Evnex_Home.json,
+# (charges/deepdive/<day>/<start>/charge_deepdive_<local-time>_NN_Evnex_Home.json - one folder per charge inside its day, like drives;
+# ./Tools/migrate_charge_folders.py moves older flat files into it,
 # NN a zero-padded position starting at "00") -
 # idempotent (safe to re-run; keyed on Evnex's own session id, never on
 # the filename), skips sessions still actively charging.

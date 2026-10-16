@@ -16,6 +16,7 @@ result is cached in <data>/charges/app_chargebook.json and rebuilt in the backgr
     ChargeBook(...).invoice_file(name)              -> absolute path of an invoice PDF/CSV (only inside the invoice folders)
 """
 import contextlib
+import charge_paths as CP
 import csv
 import datetime
 import glob
@@ -70,8 +71,8 @@ class ChargeBook:
                 sig.append(os.path.basename(f) + ":-")
         dd = p("charges", "deepdive")
         try:
-            names = [n for n in os.listdir(dd) if n.startswith("charge_deepdive_") and n.endswith(".csv")]
-            sig.append("dd:%d:%d" % (len(names), int(os.stat(dd).st_mtime)))
+            names = [n for n in CP.names(dd) if n.endswith(".csv")]
+            sig.append("dd:%d:%d" % (len(names), CP.signature(dd)[1]))
         except OSError:
             sig.append("dd:-")
         for d in self._invoice_dirs_cfg():
@@ -345,7 +346,7 @@ class ChargeBook:
             f = (x.get("tel") or {}).get("file")
             fp = os.path.join(path, f) if path and f and os.path.isdir(path) else (path if path and os.path.isfile(path) else None)
             if not fp or not os.path.isfile(fp):
-                fp = os.path.join(self.data, "charges", "deepdive", f) if f else None
+                fp = CP.find(os.path.join(self.data, "charges", "deepdive"), f) if f else None
             s = self._series(fp) if fp and os.path.isfile(fp) else None
             if s is not None and s["t"]:
                 s["part"] = x["id"]
@@ -358,7 +359,7 @@ class ChargeBook:
     def _pool(self):
         dd = os.path.join(self.data, "charges", "deepdive")
         try:
-            sig = (len(os.listdir(dd)), int(os.stat(dd).st_mtime))
+            sig = CP.signature(dd)
         except OSError:
             return []
         if self.pool_sig != sig:
@@ -387,9 +388,11 @@ class ChargeBook:
         dd = os.path.join(self.data, "charges", "deepdive")
         files = [(x["id"], (x.get("tel") or {}).get("file")) for x in p["parts"]]
         paths = {}
+        known = {s["path"] for s in pool}
         for pid, f in files:
-            if f and os.path.join(dd, f) in {s["path"] for s in pool}:
-                paths[pid] = os.path.join(dd, f)
+            fp = CP.find(dd, f) if f else None
+            if fp and fp in known:
+                paths[pid] = fp
         if not paths:
             return None
         by_path = {s["path"]: s for s in pool}
