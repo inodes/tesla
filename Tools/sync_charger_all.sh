@@ -10,18 +10,14 @@
 # (see AGENTS.md ). Run the two scripts directly with a wider
 # --state/--country scope yourself if you want a broader sweep.
 #
-# Tesla: --all always persists (update_registry() runs unconditionally in
-# scrape_all_stations() regardless of --save), and --new restricts the
-# batch to stations not already in superchargers.json/destination_
-# chargers.json - it uses Playwright to actually load each new station's
-# page, so this can take a while for many new stations; find_tesla_
-# chargers.py's own pacing delay/retry backoff handles that.
+# Tesla: --sync-tesla reads tesla.com's station list and compares it with the registry; only stations
+# that are new, renamed or moved are fetched (a page each), the rest stay as they are. Nothing in the
+# registry is deleted. charging_stations.json is rebuilt when a Tesla registry changed.
 # PlugShare: --add-all only ever adds stations not already matched in the
 # registry (see the `if not ex_k:` check at its batch-add site), so this is
 # safe to re-run repeatedly without duplicating existing entries.
 #
-# This does NOT check for or refresh STALE existing entries (verification
-# age) - that's a deliberate choice to keep this "fetch new" script fast.
+# This does NOT re-check entries by age - that's a deliberate choice to keep it fast.
 # Run `charger_find.py --sync-tesla --stale` yourself if you want to refresh
 # aging Tesla entries; PlugShare has no separate staleness flag today.
 #
@@ -53,8 +49,8 @@ your real data. Run the two scripts directly with a wider --state/--country
 scope yourself if you want a broader sweep than "near Home, 50km".
 
 Steps run, in order:
-  1. Tesla Superchargers      (charger_find.py --sync-tesla --sc --near Home --radius 50 --new)
-  2. Tesla Destination Chargers (charger_find.py --sync-tesla --dc --near Home --radius 50 --new)
+  1. Tesla Superchargers      (charger_find.py --sync-tesla --sc)
+  2. Tesla Destination Chargers (charger_find.py --sync-tesla --dc)
   3. Chargefox network         (charger_find.py --sync-chargefox)
   4. EVX Kerbside Polechargers (charger_find.py --sync-evx)
   5. Evie Networks             (charger_find.py --sync-evie)
@@ -73,15 +69,15 @@ EOF
     exit 0
 fi
 
-echo "==> Tesla Superchargers (near Home, 50km)"
+echo "==> Tesla Superchargers"
 # Tesla goes through charger_find.py --sync-tesla like every other network
 # (REQ-095 tracks moving the scraper it calls out of archive/ into
 # providers_chargers/chargers_tesla.py, so nothing needs archive/ at all).
-./charger_find.py --sync-tesla --sc --near Home --radius 50 --new
+./charger_find.py --sync-tesla --sc
 
 echo
-echo "==> Tesla Destination Chargers (near Home, 50km)"
-./charger_find.py --sync-tesla --dc --near Home --radius 50 --new
+echo "==> Tesla Destination Chargers"
+./charger_find.py --sync-tesla --dc
 
 echo
 echo "==> Chargefox network (Australia)"
