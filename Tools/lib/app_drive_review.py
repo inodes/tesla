@@ -14,9 +14,9 @@ as app_review.py does for a whole drive), and the stills are kept as one contact
 other minutes are not looked at. The events and the sheets are kept in <data>/drive_review/drives/<stamp>.json and .../events/<stamp>/ so
 a finished review opens instantly; running it again replaces them. Nothing on a drive or in Tessie is changed.
 
-Time: events are found on the drive's own clock (Tessie's local clock, the page clock of every drive page) and carry their UTC time as well; the
-dashcam's file names are turned into UTC with the configured time zone and the car's clock ("local" or "standard", picked by GPS, see
-drive_fuse.py), so a drive and its footage are always compared as the same instant.
+Time: UTC is the clock. The dashcam's file names are the car's clock, which clip_clock.py turns into UTC minute by minute (it can sit on standard time for
+days, and change when the car crosses a time-zone border, even inside this drive), and Tessie's local times are turned into UTC with app.timezone, so a drive and its footage are always compared as the same instant. Each event keeps its UTC instant ("utc"); "t" is the drive page's local
+clock, which is only what is shown.
 """
 import datetime
 import json
@@ -30,6 +30,7 @@ import time
 
 import app_config
 import app_review
+import clip_clock as CC
 import drive_fuse as DF
 import teslacam_timeline as TL
 
@@ -358,21 +359,18 @@ class DriveReview:
             mins = TL.minutes(recent, saved)
             front = {m["stamp"]: self.tc._front(teslacam, m) for m in mins if "front" in m["cams"]}
         ts, las, los = [p["t"] for p in tp], [p["la"] for p in tp], [p["lo"] for p in tp]
-        hint = "standard" if sm.get("foot_off") == 3600 else None
         self._stage("Matching the dashcam telemetry")
-        clock, cam = DF.clock_offset(ts, las, los, store, t0, t1, hint)
+        clock, cam = DF.clock_offset(ts, las, los, store, t0, t1, None, self.dir)
         if clock is None and front:                             # nothing read for this drive yet: read the minutes that cover it (front camera only)
-            for ck in ([hint] if hint else []) + [c for c in DF.CLOCKS if c != hint]:
-                todo = [(m["stamp"], front[m["stamp"]]) for m in mins if m["stamp"] in front and store.summary(m["stamp"]) is None
-                        and t0 - 60 <= DF.local(DF.utc(DF.secs(m["stamp"]), ck)) <= t1 + 60]
-                if todo:
-                    self._stage("Reading the telemetry of %d minute(s) of footage" % len(todo), 0, len(todo))
-                    TL.read_many(store, todo, stop=lambda: self.stop_flag)
-                if self.stop_flag:
-                    return
-                clock, cam = DF.clock_offset(ts, las, los, store, t0, t1, ck)
-                if clock is not None:
-                    break
+            u0, u1 = DF.utc(t0), DF.utc(t1)
+            todo = [(m["stamp"], front[m["stamp"]]) for m in mins if m["stamp"] in front and store.summary(m["stamp"]) is None and CC.maybe_in(m["stamp"], u0 - 60, u1 + 60)]
+            if todo:                                            # under any offset the car's clock may have had: reading them is what teaches the clock
+                self._stage("Reading the telemetry of %d minute(s) of footage" % len(todo), 0, len(todo))
+                TL.read_many(store, todo, stop=lambda: self.stop_flag)
+            if self.stop_flag:
+                return
+            CC.refresh(self.dir, store, wait=True)
+            clock, cam = DF.clock_offset(ts, las, los, store, t0, t1, None, self.dir)
         if clock is None:
             res = dict(stamp=stamp, made=_now(), params=dict(o, both=both), clock=None, events=[], stills=False,
                        note="No dashcam telemetry lies on this drive's route (the footage is not on a connected drive, or was never read).")
@@ -402,7 +400,7 @@ class DriveReview:
             ev["utc"] = DF.utc(ev["t"])
             ev["clip"] = _clip_of(rows, ev["t"])
         secs_n = len(rows)
-        res = dict(stamp=stamp, made=_now(), params=dict(o, both=both), clock=clock, t0=t0, t1=t1, events=events, stills=can_look, note=note,
+        res = dict(stamp=stamp, made=_now(), params=dict(o, both=both), clock=clock, t0=t0, t1=t1, poff=CC.local_offset(DF.utc(t0)), events=events, stills=can_look, note=note,
                    coverage=dict(seconds=secs_n, pct=round(100.0 * min(1.0, secs_n / max(1.0, t1 - t0)))),
                    counts={k: sum(1 for e in events if e["kind"] == k) for k in ("intervention", "accelerator", "speed")})
         self._save(stamp, res)
