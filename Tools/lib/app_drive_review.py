@@ -40,8 +40,8 @@ import teslacam_timeline as TL
 
 OPTS = dict(accel_min_pct=5,        # accelerator at or above this (%) counts as pressed
             merge_s=3,              # presses / levels with a gap shorter than this are one
-            speed_min_kmh=10,       # a lasting change of speed at least this big, with FSD on, is a speed-change event
-            speed_tol_kmh=3,        # the page's speed filter: a speed this close to the one asked for matches
+            speed_min_kmh=5,        # a lasting change of speed at least this big, with FSD on, is a speed-change event (a Hurry -> Standard switch from 100 to 110 is about 105 -> 112)
+            speed_tol_kmh=6,        # the page's speed filter: a speed this close to the one asked for matches (the car rarely sits exactly on the set speed)
             event_before_s=12,      # stills from this long before an event ...
             event_after_s=15,       # ... to this long after it (28 stills with the one a second)
             max_event_stills=40,    # a longer event is thinned to this many

@@ -186,8 +186,8 @@ async function driveReviewPanel(host,stamp,lo,onResult){
   const KCOL={intervention:"#dc2626",accelerator:"#f59e0b",speed:"#2563eb"},KNAME={intervention:"FSD interventions",accelerator:"Accelerator pressed",speed:"Speed changes"};
   const vwEl=()=>document.getElementById("drevw"),curRes=()=>S&&S.result&&S.result.events?S.result:null;
   // the speed filter (kept in this browser): a speed change matches when it went from `sf` to `st` km/h (either may be blank = any), either way round when `sb`
-  const spf=()=>{const m=mem();return{f:m.sf==null||m.sf===""?null:+m.sf,t:m.st==null||m.st===""?null:+m.st,both:m.sb!==false}};
-  const spOk=e=>{if(e.kind!=="speed")return true;const q=spf();if(q.f==null&&q.t==null)return true;const tol=+cfg("review.speed_tol_kmh")||3,
+  const spf=()=>{const m=mem();return{f:m.sf==null||m.sf===""?null:+m.sf,t:m.st==null||m.st===""?null:+m.st,both:m.sb!==false,tol:m.sx>0?+m.sx:(+cfg("review.speed_tol_kmh")||6)}};
+  const spOk=e=>{if(e.kind!=="speed")return true;const q=spf();if(q.f==null&&q.t==null)return true;const tol=q.tol,
     ok=(a,b)=>(q.f==null||Math.abs(a-q.f)<=tol)&&(q.t==null||Math.abs(b-q.t)<=tol),back=(a,b)=>(q.t==null||Math.abs(a-q.t)<=tol)&&(q.f==null||Math.abs(b-q.f)<=tol);
     return ok(e.v,e.v1)||(q.both&&back(e.v,e.v1))};
   const evs=()=>{const R=curRes();return R?R.events.filter(spOk):[]};
@@ -284,7 +284,7 @@ async function driveReviewPanel(host,stamp,lo,onResult){
     const L=list();if(ei>=L.length)ei=Math.max(0,L.length-1);const e=L[ei],cnt=k=>evs().filter(x=>x.kind===k).length,nsp=R.events.filter(x=>x.kind==="speed").length;
     const tabs=[["all","All",evs().length],["intervention",KNAME.intervention,cnt("intervention")],["accelerator",KNAME.accelerator,cnt("accelerator")],["speed",KNAME.speed,cnt("speed")]];
     let h=`<div class="card rvw"><div class="bar" style="margin:0 0 8px">${tabs.map(([k,t,n])=>`<button class="chip ${k===tab?"on":""}" data-tab="${k}" ${n?"":"disabled"}>${t} <span class="sub">${n}</span></button>`).join("")}</div>`;
-    if(nsp&&(tab==="all"||tab==="speed")){const q=spf();h+=`<div class="bar" style="margin:0 0 8px"><span class="sub">Speed changes from</span><input type="number" id="spf" value="${q.f==null?"":q.f}" placeholder="any" step="5" min="0" max="250" style="width:70px"><span class="sub">to</span><input type="number" id="spt" value="${q.t==null?"":q.t}" placeholder="any" step="5" min="0" max="250" style="width:70px"><span class="sub">km/h</span><label class="sub"><input type="checkbox" id="spb" ${q.both?"checked":""}> either way round</label><button class="btn" id="spc" ${q.f==null&&q.t==null?"disabled":""}>Show all speed changes</button><span class="sub">${n0(evs().filter(x=>x.kind==="speed").length)} of ${n0(nsp)} shown</span></div>`}
+    if(nsp&&(tab==="all"||tab==="speed")){const q=spf();h+=`<div class="bar" style="margin:0 0 8px"><span class="sub">Speed changes from</span><input type="number" id="spf" value="${q.f==null?"":q.f}" placeholder="any" step="5" min="0" max="250" style="width:70px"><span class="sub">to</span><input type="number" id="spt" value="${q.t==null?"":q.t}" placeholder="any" step="5" min="0" max="250" style="width:70px"><span class="sub">km/h, give or take</span><input type="number" id="spx" value="${q.tol}" step="1" min="0" max="30" style="width:56px" title="The car rarely sits exactly on the set speed: 100 to 110 with a Hurry to Standard switch is about 105 to 112"><label class="sub"><input type="checkbox" id="spb" ${q.both?"checked":""}> either way round</label><button class="btn" id="spc" ${q.f==null&&q.t==null?"disabled":""}>Show all speed changes</button><span class="sub">${n0(evs().filter(x=>x.kind==="speed").length)} of ${n0(nsp)} shown</span></div>`}
     if(!e){h+=`<div class="sub">${R.events.length?"Nothing in this tab.":"No events found in this drive."}</div></div>`}
     else{
       const dd=desc(e),g=geo(e);
@@ -308,8 +308,8 @@ async function driveReviewPanel(host,stamp,lo,onResult){
         {k:"from",t:"From",f:r=>r.from==null?"–":n0(r.from)+" km/h"},{k:"to",t:"To",f:r=>r.to==null?"–":n0(r.to)+" km/h"},{k:"sec",t:"Seconds",f:r=>r.sec==null?"–":n0(r.sec)},{k:"n",t:"Signs",f:r=>r.n?n0(r.n):"–"}],rows,r=>go(r.k),"t")}
     $$("[data-tab]",box).forEach(b=>b.onclick=()=>{tab=b.dataset.tab;ei=0;const x=list()[0];si=x&&geo(x)?k0(x):0;hv=null;viewer(true);if(x)arrive(x)});
     const spSet=o=>{save(Object.assign(mem(),o));ei=0;const x=list()[0];si=x&&geo(x)?k0(x):0;hv=null;viewer(true);if(x)arrive(x)};
-    if($("#spf",box)){const rd=()=>({sf:$("#spf",box).value,st:$("#spt",box).value,sb:$("#spb",box).checked});
-      $("#spf",box).onchange=$("#spt",box).onchange=$("#spb",box).onchange=()=>spSet(rd());$("#spc",box).onclick=()=>spSet({sf:"",st:""})}
+    if($("#spf",box)){const rd=()=>({sf:$("#spf",box).value,st:$("#spt",box).value,sx:$("#spx",box).value,sb:$("#spb",box).checked});
+      $("#spf",box).onchange=$("#spt",box).onchange=$("#spx",box).onchange=$("#spb",box).onchange=()=>spSet(rd());$("#spc",box).onclick=()=>spSet({sf:"",st:""})}
     if(!e){MC=null;OV=null;return}
     const g=geo(e);
     $("#rvp").onclick=()=>go(ei-1);$("#rvn").onclick=()=>go(ei+1);
