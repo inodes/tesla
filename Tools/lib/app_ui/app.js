@@ -176,10 +176,14 @@ async function pageDrive(stamp,tab){
   main.innerHTML=crumbs("#/drives","Drives")+alertsCard(als,"drive")+(d?`<div class="bar" id="dtabs">${tabs.map(([k,t])=>`<a class="chip ${k===tab?"on":""}" href="#/drive/${encodeURIComponent(stamp)}/${k}">${t}</a>`).join("")}</div>`:"")+'<div id="dtab"></div>';
   wireAlerts(main);const box=$("#dtab");
   if(tab==="overview"||!d){
-    box.innerHTML=`<div id="fuseb"></div><iframe class="drive" id="fr" src="/data/drives/deepdive/${encodeURIComponent(stamp)}/drive.html"></iframe>`;
-    // where dashcam telemetry covers the drive, the page draws it (one point a second) instead of Tessie's one every ~30 s
-    api("drivefuse?id="+encodeURIComponent(stamp)+"&summary=1").then(r=>{const i=r.info,h=$("#fuseb");if(!h||!i||!i.cam_n)return;
-      h.innerHTML=`<div class="sub" style="margin:0 0 8px">Route drawn from the dashcam telemetry (a point every second) for ${i.cam_pct}% of this drive. Tessie's own points (every ${n0(i.tessie_every_s)} s) fill ${i.start_gap_s>5?"the first "+i.start_gap_s+" s":"the start"}${i.end_gap_s>5?" and the last "+i.end_gap_s+" s":""} and any hole in the footage.</div>`}).catch(()=>{});
+    // "Enrich with TeslaCam metadata": the page draws the route from the dashcam telemetry (a point a second) where it covers the drive, instead of Tessie's one every ~30 s
+    const pref=()=>{try{return localStorage.getItem("drv.enrich")!=="0"}catch(e){return true}},src=on=>`/data/drives/deepdive/${encodeURIComponent(stamp)}/drive.html?enrich=${on?1:0}`;
+    box.innerHTML=`<div id="fuseb" style="display:flex;gap:12px;align-items:baseline;flex-wrap:wrap;margin:0 0 8px"><label id="enrl" style="display:flex;gap:6px;align-items:center;opacity:.5"><input type="checkbox" id="enr" disabled> Enrich with TeslaCam metadata</label><span class="sub" id="enrn">checking…</span></div><iframe class="drive" id="fr" src="${src(pref())}"></iframe>`;
+    const note=(i,on)=>on?`Route drawn from the dashcam telemetry (a point every second) for ${i.cam_pct}% of this drive. Tessie's own points (every ${n0(i.tessie_every_s)} s) fill ${i.start_gap_s>5?"the first "+i.start_gap_s+" s":"the start"}${i.end_gap_s>5?" and the last "+i.end_gap_s+" s":""} and any hole in the footage.`:"Route drawn from Tessie's own points (one every "+n0(i.tessie_every_s)+" s).";
+    api("drivefuse?id="+encodeURIComponent(stamp)+"&summary=1").then(r=>{const i=r.info,c=$("#enr");if(!c||!i||!i.cam_n)throw 0;
+      const on=pref();c.disabled=false;c.checked=on;$("#enrl").style.opacity="";$("#enrn").textContent=note(i,on);
+      c.onchange=()=>{try{localStorage.setItem("drv.enrich",c.checked?"1":"0")}catch(e){}$("#enrn").textContent=note(i,c.checked);const f=$("#fr");if(f)f.src=src(c.checked)}})
+      .catch(()=>{const l=$("#enrl"),n=$("#enrn");if(l){l.title="No TeslaCam telemetry has been read for this drive";l.style.opacity=".5"}if(n)n.textContent="No TeslaCam telemetry for this drive (it was never read, or the footage is gone)."});
     fitFrame($("#fr"),doc=>{$$("a",doc).forEach(a=>{if((a.getAttribute("href")||"")==="../index.html"){a.parentNode.style.display="none"}});
       // the footage and the flips have their own tabs (the clips are watched in the Footage tab)
       const f=doc.getElementById("foot");if(f)f.style.display="none";hideSection(doc,"FSD speed changes");hideSection(doc,"Saved clips")});
