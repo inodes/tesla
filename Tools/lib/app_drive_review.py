@@ -46,7 +46,7 @@ OPTS = dict(accel_min_pct=5,        # accelerator at or above this (%) counts as
             max_event_stills=40,    # a longer event is thinned to this many
             steer_deg=15,           # the wheel moved this much around a switch-off = "steering"
             sheet_cols=7,
-            sheet_tile_px=240)
+            sheet_tile_px=400)
 MODES = {0: "Manual", 1: "FSD", 2: "Autosteer", 3: "TACC"}
 MAXGAP = 3                          # seconds between two readings that are still consecutive
 _LOCK = threading.RLock()
@@ -254,14 +254,22 @@ def look(ev, rows, front, base, stamp, o, stop):
         ev["signs"] = signs
         ev["n_stills"] = len(shots)
         ev["sheet"] = _sheet(shots, ev, base, stamp, o) if shots else ""
+        cols, w, h = _geom(o)                               # so the page can cut the sheet into its stills: where each one is (seconds from the event) and how the sheet is laid out
+        ev["shots"] = [round(T - ev["t"], 1) for T, _ in shots]
+        ev["tile"] = dict(cols=cols, w=w, h=h)
+
+
+def _geom(o):
+    """(columns, tile width, tile height) of a contact sheet."""
+    w = int(o["sheet_tile_px"])
+    return max(1, int(o["sheet_cols"])), w, int(w * 9 / 16)
 
 
 def _sheet(shots, ev, base, stamp, o):
     import cv2
     import numpy as np
-    cols = max(1, int(o["sheet_cols"]))
-    w = int(o["sheet_tile_px"])
-    h = int(w * 9 / 16)
+    cols, w, h = _geom(o)
+    sc = w / 240.0
     col = {"intervention": (60, 60, 230), "accelerator": (30, 160, 250), "speed": (230, 130, 40)}[ev["kind"]]      # BGR
     rows_n = (len(shots) + cols - 1) // cols
     sheet = np.zeros((rows_n * h, cols * w, 3), np.uint8)
@@ -269,10 +277,10 @@ def _sheet(shots, ev, base, stamp, o):
         tile = cv2.resize(im, (w, h))
         rel = int(round(T - ev["t"]))
         if ev["t"] - 0.5 <= T <= _end(ev) + 0.5:
-            cv2.rectangle(tile, (0, 0), (w - 1, h - 1), col, 4)
+            cv2.rectangle(tile, (0, 0), (w - 1, h - 1), col, max(4, int(4 * sc)))
         lab = "%+ds" % rel if rel else "0"
-        cv2.rectangle(tile, (0, 0), (8 * len(lab) + 12, 20), (0, 0, 0), -1)
-        cv2.putText(tile, lab, (5, 15), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1, cv2.LINE_AA)
+        cv2.rectangle(tile, (0, 0), (int((8 * len(lab) + 12) * sc), int(20 * sc)), (0, 0, 0), -1)
+        cv2.putText(tile, lab, (int(5 * sc), int(15 * sc)), cv2.FONT_HERSHEY_SIMPLEX, 0.5 * sc, (255, 255, 255), 1 if sc < 1.3 else 2, cv2.LINE_AA)
         r_, c_ = divmod(n, cols)
         sheet[r_ * h:(r_ + 1) * h, c_ * w:(c_ + 1) * w] = tile
     d = os.path.join(base, "events", stamp)
