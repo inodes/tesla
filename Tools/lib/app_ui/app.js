@@ -733,7 +733,7 @@ function nameAt(places,p){if(!p||p[0]==null)return "";let best="",bd=1e9;for(con
 // ---------- the TeslaCam timeline: for each day a map on the left, the day's drives, Sentry events and parked spells (tick boxes) on the right
 // Ticking a row shows it on that day's map: a drive as its route (speed gradient or who was driving), a Sentry event as a red dot, a parked spell as a 🅿️.
 // A drive row still opens the drive when clicked; a Sentry row plays its clips. A drive shorter than the re-park limits (settings app.drives) counts as parked.
-const TLR={},TLS={on:{},mode:"v"};
+const TLR={},TLF={},TLS={on:{},mode:"v"};let TLQ=Promise.resolve();
 function tlClass(v){
   const rp=v.kind==="drive"&&v.km<cfg("drives.repark_max_km")&&(v.t1-v.t0)/60<cfg("drives.repark_max_minutes");
   return v.kind==="drive"&&!rp?"drive":v.kind==="sentry"?"sentry":(v.kind==="parked"||v.kind==="stopped"||rp)?"parked":v.kind==="recording"?"rec":null}
@@ -746,28 +746,32 @@ function tlPos(items){
     v._pos=p})}
 async function tlRoute(role,id){
   if(TLR[id]!==undefined)return TLR[id];
-  try{const d=await tcGet("teslacam/"+role+"/seg/"+encodeURIComponent(id)+"?budget=0");TLR[id]=d&&d.series?{S:d.series,start:d.item.start}:null}catch(e){TLR[id]=null}
+  try{const d=await tcGet("teslacam/"+role+"/seg/"+encodeURIComponent(id)+"?budget=0");TLR[id]=d&&d.series?{S:d.series,start:d.item.start}:null;if(d&&d.pending)tlFill(role,id,d.pending)}catch(e){TLR[id]=null}
   return TLR[id]}
+// minutes of a drive not read yet leave holes in its line: read them in the background, one drive at a time, and tell the maps after each pass
+function tlFill(role,id,left){
+  if(TLF[id])return;TLF[id]=1;
+  TLQ=TLQ.then(async()=>{for(let k=0;k<40&&left>0;k++){try{const d=await tcGet("teslacam/"+role+"/seg/"+encodeURIComponent(id)+"?budget=15");if(!d||!d.series)break;TLR[id]={S:d.series,start:d.item.start};dispatchEvent(new CustomEvent("tlroute",{detail:id}));if(!d.pending||d.pending>=left)break;left=d.pending}catch(e){break}}})}
 // one map: routes [{id,S,start}] and marks [{id,type,pos,title}]
 function dayMap(el,role,hooks){
   const dark=matchMedia("(prefers-color-scheme: dark)").matches,m=new maplibregl.Map({container:el,style:MAPSTYLE(dark),center:[151.2,-33.8],zoom:8,attributionControl:{compact:true},cooperativeGestures:true});
-  let ready=false,pend=null,pts=[],mk=[],bounds=null;
+  let ready=false,pend=null,pts=[],mk=[],bounds=null,lastKey="";
   const fit=()=>{if(bounds)m.fitBounds(bounds,{padding:40,maxZoom:15,duration:400})};
   mapNav(m,fit,"Show everything ticked");
   const hint=document.createElement("div");hint.className="tmempty";hint.textContent="Tick a drive, a Sentry event or a parked spell to see it here.";el.appendChild(hint);
   const pop=new maplibregl.Popup({closeButton:false,closeOnClick:false,offset:12,className:"rp"});
-  const draw=()=>{if(!ready||!pend)return;const {routes,marks}=pend,F=[];pts=[];bounds=new maplibregl.LngLatBounds();let any=false;
+  const draw=()=>{if(!ready||!pend)return;const {routes,marks}=pend,F=[],key=routes.map(r=>r.id).join()+"|"+marks.map(k=>k.id).join(),refit=key!==lastKey;lastKey=key;pts=[];bounds=new maplibregl.LngLatBounds();let any=false;
     routes.forEach(r=>{const S=r.S,n=S.v.length,step=Math.max(1,Math.ceil(n/1500));let prev=-1,km=0;const t0=Date.parse(r.start);
       for(let i=0;i<n;i+=step){km+=(S.v[i]||0)*step/3600;if(S.lat[i]==null||Math.abs(S.lat[i])<1)continue;const q={x:S.lon[i],y:S.lat[i],v:S.v[i]||0,ap:S.ap[i]||0,t:t0+i*1000,km,id:r.id};pts.push(q);bounds.extend([q.x,q.y]);any=true;
-        if(prev>=0&&i-prev<=5*step){const a=pts[pts.length-2];F.push({type:"Feature",geometry:{type:"LineString",coordinates:[[a.x,a.y],[q.x,q.y]]},properties:{v:q.v,ap:q.ap,id:r.id}})}prev=i}});
+        if(prev>=0&&i-prev<=Math.max(5*step,600)){const a=pts[pts.length-2];F.push({type:"Feature",geometry:{type:"LineString",coordinates:[[a.x,a.y],[q.x,q.y]]},properties:{v:q.v,ap:q.ap,id:r.id}})}prev=i}});
     m.getSource("rt").setData({type:"FeatureCollection",features:F});
     mk.forEach(x=>x.remove());mk=[];
     marks.forEach(k=>{if(!k.pos)return;const e=document.createElement("div");e.className="mk "+k.type;e.title=k.title;if(k.type==="parked")e.textContent="🅿️";e.onclick=()=>hooks.pick&&hooks.pick(k.id);
       mk.push(new maplibregl.Marker({element:e,anchor:"center"}).setLngLat([k.pos[1],k.pos[0]]).addTo(m));bounds.extend([k.pos[1],k.pos[0]]);any=true});
-    hint.style.display=any?"none":"";if(!any)bounds=null;fit()};
-  m.on("load",()=>{ready=true;m.addSource("rt",{type:"geojson",data:{type:"FeatureCollection",features:[]}});
-    m.addLayer({id:"rt-case",type:"line",source:"rt",layout:{"line-cap":"round","line-join":"round"},paint:{"line-color":dark?"#000":"#fff","line-width":["interpolate",["linear"],["zoom"],8,4,16,9]}});
-    m.addLayer({id:"rt",type:"line",source:"rt",layout:{"line-cap":"round","line-join":"round"},paint:{"line-color":TLS.mode==="v"?spdExpr():apExpr(),"line-width":["interpolate",["linear"],["zoom"],8,2.5,16,6]}});
+    hint.style.display=any?"none":"";if(!any)bounds=null;if(refit)fit()};
+  m.on("load",()=>{ready=true;m.addSource("rt",{type:"geojson",tolerance:0,data:{type:"FeatureCollection",features:[]}});
+    m.addLayer({id:"rt-case",type:"line",source:"rt",layout:{"line-cap":"round","line-join":"round"},paint:{"line-color":dark?"#000":"#fff","line-width":["interpolate",["linear"],["zoom"],3,8,8,7.5,16,9]}});
+    m.addLayer({id:"rt",type:"line",source:"rt",layout:{"line-cap":"round","line-join":"round"},paint:{"line-color":TLS.mode==="v"?spdExpr():apExpr(),"line-width":["interpolate",["linear"],["zoom"],3,5,8,4.5,16,6]}});
     // hovering the route reads out the moment under the pointer, like the Drives page
     let busy=false;
     m.on("mousemove",e=>{if(busy)return;busy=true;requestAnimationFrame(()=>{busy=false;let b=null,bd=22*22;for(const q of pts){const p=m.project([q.x,q.y]),d=(p.x-e.point.x)**2+(p.y-e.point.y)**2;if(d<bd){bd=d;b=q}}
@@ -779,19 +783,26 @@ function dayMap(el,role,hooks){
 // the whole view: items are the server's timeline items (newest first); host is where to draw
 function tlDays(host,items,o){
   items.forEach(v=>v._c=tlClass(v));tlPos(items);
-  const rs=items.filter(v=>v._c),byDay={};rs.forEach(v=>(byDay[v.start.slice(0,10)]=byDay[v.start.slice(0,10)]||[]).push(v));
-  const days=Object.keys(byDay).sort().reverse().slice(0,40),role=o.role,places=o.places;
+  const rs=items.filter(v=>v._c),byDay={};
+  const dd=(a,b)=>Math.round((Date.parse(b+"T00:00:00Z")-Date.parse(a+"T00:00:00Z"))/864e5),plus=(d,n)=>new Date(Date.parse(d+"T00:00:00Z")+n*864e5).toISOString().slice(0,10);
+  // an event that crosses midnight is listed on every day it touches (whole, with a note), and is one and the same tick on all of them
+  rs.forEach(v=>{v._d0=v.start.slice(0,10);v._d1=v._c==="sentry"||!v.end||v.end<v.start?v._d0:v.end.slice(0,10);for(let n=0;n<=Math.min(dd(v._d0,v._d1),6);n++){const d=plus(v._d0,n);(byDay[d]=byDay[d]||[]).push(v)}});
+  if(TLS.dayDesc===undefined)TLS.dayDesc=cfg("teslacam.days_newest_first")!==false;if(TLS.rowDesc===undefined)TLS.rowDesc=cfg("teslacam.rows_newest_first")!==false;
+  const allDays=Object.keys(byDay).filter(d=>!o.dayOk||o.dayOk(d)).sort().reverse(),days=allDays.slice(0,40),role=o.role,places=o.places;
+  if(!TLS.dayDesc)days.reverse();
+  const key=(v,d)=>d>v._d0?"00:00:00":hms(v._c==="sentry"?(v.trig||v.start):v.start),rowsOf=d=>byDay[d].slice().sort((a,b)=>{const x=key(a,d),y=key(b,d);return(x<y?-1:x>y?1:a.t0-b.t0)*(TLS.rowDesc?-1:1)});
   rs.forEach(v=>{if(TLS.on[v.id]===undefined)TLS.on[v.id]=v._c==="drive"});
   const place=v=>nameAt(places,v.p0)||nameAt(places,v.p1)||nameAt(places,v._pos);
-  const tm=v=>clockHM(v.start)+" – "+clockHM(v.end),mins=v=>Math.max(1,Math.round((v.t1-v.t0)/60));
-  const row=v=>{const c=v._c,id=esc(v.id),canTick=c==="drive"||!!v._pos,chk=c==="rec"?"":`<label class="ck"><input type="checkbox" data-id="${id}" ${TLS.on[v.id]?"checked":""} ${canTick?"":"disabled"} title="${canTick?"Show on the map":"No position known"}"></label>`;
-    if(c==="drive"){const a=nameAt(places,v.p0),b=nameAt(places,v.p1);return `<div class="tr drive">${chk}<a class="tb" href="#/teslacam/${role}/${id}"><span class="tm">${tm(v)}</span><span class="tt"><b>${n0(v.km,1)} km</b> · ${dur(mins(v))} · max ${n0(v.vmax)} km/h${v.fsd?` · FSD ${Math.round(v.fsd*100)}%`:""}${a||b?`<small>${esc(a||"?")} → ${esc(b||"?")}</small>`:""}</span></a></div>`}
+  const tm=v=>clockHM(v.start)+" – "+clockHM(v.end),
+    tmx=(v,d)=>{const k=d>v._d0?dd(v._d0,d):0,m=d<v._d1?dd(d,v._d1):0,x=(n,g)=>` <span class="dx">(${g}${n} day${n>1?"s":""})</span>`;return clockHM(v.start)+(k?x(k,"-"):"")+" – "+clockHM(v.end)+(m?x(m,"+"):"")},mins=v=>Math.max(1,Math.round((v.t1-v.t0)/60));
+  const row=(v,d)=>{const c=v._c,id=esc(v.id),canTick=c==="drive"||!!v._pos,chk=c==="rec"?"":`<label class="ck"><input type="checkbox" data-id="${id}" ${TLS.on[v.id]?"checked":""} ${canTick?"":"disabled"} title="${canTick?"Show on the map":"No position known"}"></label>`;
+    if(c==="drive"){const a=nameAt(places,v.p0),b=nameAt(places,v.p1);return `<div class="tr drive">${chk}<a class="tb" href="#/teslacam/${role}/${id}"><span class="tm">${tmx(v,d)}</span><span class="tt"><b>${n0(v.km,1)} km</b> · ${dur(mins(v))} · max ${n0(v.vmax)} km/h${v.fsd?` · FSD ${Math.round(v.fsd*100)}%`:""}${a||b?`<small>${esc(a||"?")} → ${esc(b||"?")}</small>`:""}</span></a></div>`}
     if(c==="sentry")return `<div class="tr sentry">${chk}<button class="tb sen" data-ev="${esc(v.ev)}"><span class="tm">${hms(v.trig||v.start).slice(0,5)}</span><span class="tt"><b>Sentry</b> · ${esc(reason(v.reason))}<small>${esc([v.city,v.street].filter(Boolean).join(" · "))} · ${mins(v)} min watched</small></span></button></div>`;
-    if(c==="parked"){const w=place(v);return `<div class="tr parked">${chk}<div class="tb"><span class="tm">${tm(v)}</span><span class="tt">🅿️ <b>Parked</b> · ${dur(mins(v))}${w?`<small>${esc(w)}</small>`:""}</span></div></div>`}
-    return `<div class="tr rec"><a class="tb" href="#/teslacam/${role}/${id}"><span class="tm">${tm(v)}</span><span class="tt">Recording · ${v.n} clip${v.n>1?"s":""}<small>telemetry not read yet · open to read</small></span></a></div>`};
-  host.innerHTML=days.length?`<div class="bar" style="margin:0 0 4px"><button class="chip ${TLS.mode==="v"?"on":""}" data-tm="v">Speed</button><button class="chip ${TLS.mode==="ap"?"on":""}" data-tm="ap">Autopilot / FSD</button><span class="sub" id="tlleg"></span></div><div class="sub" style="margin-bottom:6px">Tick a row to show it on that day's map. Click a drive to open it, a Sentry event to watch it. Hover a route for the moment under the pointer; click it to open the drive. Short drives under the re-park limits count as parked.</div>`
-    +days.map(d=>`<div class="day">${dayName(d)}<small>${byDay[d].length} item${byDay[d].length>1?"s":""}</small><label class="dall"><input type="checkbox" data-day="${d}"> show all</label></div><div class="tday" data-day="${d}"><div class="tmap"></div><div class="tl2">${byDay[d].map(row).join("")}</div></div>`).join("")
-    +(Object.keys(byDay).length>40?'<div class="sub">Showing the newest 40 days. Narrow the dates to see older ones.</div>':""):'<div class="empty">Nothing here for these dates.</div>';
+    if(c==="parked"){const w=place(v);return `<div class="tr parked">${chk}<div class="tb"><span class="tm">${tmx(v,d)}</span><span class="tt">🅿️ <b>Parked</b> · ${dur(mins(v))}${w?`<small>${esc(w)}</small>`:""}</span></div></div>`}
+    return `<div class="tr rec"><a class="tb" href="#/teslacam/${role}/${id}"><span class="tm">${tmx(v,d)}</span><span class="tt">Recording · ${v.n} clip${v.n>1?"s":""}<small>telemetry not read yet · open to read</small></span></a></div>`};
+  host.innerHTML=days.length?`<div class="bar" style="margin:0 0 4px"><button class="chip ${TLS.mode==="v"?"on":""}" data-tm="v">Speed</button><button class="chip ${TLS.mode==="ap"?"on":""}" data-tm="ap">Autopilot / FSD</button><button class="chip" data-so="days" style="margin-left:10px">${TLS.dayDesc?"Days: newest first":"Days: oldest first"}</button><button class="chip" data-so="rows">${TLS.rowDesc?"Within a day: 23:59 → 00:00":"Within a day: 00:00 → 23:59"}</button><span class="sub" id="tlleg"></span></div><div class="sub" style="margin-bottom:6px">Tick a row to show it on that day's map. Click a drive to open it, a Sentry event to watch it. Hover a route for the moment under the pointer; click it to open the drive. Short drives under the re-park limits count as parked. An event that runs past midnight is shown whole on both days, with (+1 day) or (-1 day), and ticking it ticks it on both.</div>`
+    +days.map(d=>`<div class="day">${dayName(d)}<small>${byDay[d].length} item${byDay[d].length>1?"s":""}</small><label class="dall"><input type="checkbox" data-day="${d}"> show all</label></div><div class="tday" data-day="${d}"><div class="tl2">${rowsOf(d).map(v=>row(v,d)).join("")}</div><div class="tmap"></div></div>`).join("")
+    +(allDays.length>40?'<div class="sub">Showing the newest 40 days. Narrow the dates to see older ones.</div>':""):'<div class="empty">Nothing here for these dates.</div>';
   if(!days.length)return;
   const leg=()=>{$("#tlleg").innerHTML=TLS.mode==="v"?spdLegend():apLegend()};leg();
   const maps={},order=[];
@@ -804,12 +815,15 @@ function tlDays(host,items,o){
     const el=$(`.tday[data-day="${d}"] .tmap`,host);maps[d]={m:dayMap(el,role,{open:id=>{location.hash="#/teslacam/"+role+"/"+encodeURIComponent(id)},pick:id=>{const c=$(`input[data-id="${CSS.escape(id)}"]`,host);if(c)c.scrollIntoView({block:"center"})}})};order.push(d);populate(d)};
   const io=new IntersectionObserver(es=>es.forEach(e=>{if(e.isIntersecting)build(e.target.parentNode.dataset.day)}),{rootMargin:"300px"});
   $$(".tmap",host).forEach(e=>io.observe(e));
-  $$("input[data-id]",host).forEach(c=>c.onchange=()=>{TLS.on[c.dataset.id]=c.checked;populate(c.closest(".tday").dataset.day);syncAll()});
+  const setOn=(ids,val)=>{const ds=new Set();ids.forEach(id=>{TLS.on[id]=val;$$(`input[data-id="${CSS.escape(id)}"]`,host).forEach(x=>{if(!x.disabled)x.checked=val;ds.add(x.closest(".tday").dataset.day)})});ds.forEach(populate);syncAll()};
+  $$("input[data-id]",host).forEach(c=>c.onchange=()=>setOn([c.dataset.id],c.checked));
+  const onRoute=e=>{if(!TLS.on[e.detail])return;new Set($$(`input[data-id="${CSS.escape(e.detail)}"]`,host).map(x=>x.closest(".tday").dataset.day)).forEach(populate)};addEventListener("tlroute",onRoute);
+  $$("[data-so]",host).forEach(b=>b.onclick=()=>{if(b.dataset.so==="days")TLS.dayDesc=!TLS.dayDesc;else TLS.rowDesc=!TLS.rowDesc;o.redraw&&o.redraw()});
   const syncAll=()=>$$("input[data-day]",host).forEach(a=>{const bx=$$(`.tday[data-day="${a.dataset.day}"] input[data-id]:not(:disabled)`,host);a.checked=bx.length>0&&bx.every(x=>x.checked)});syncAll();
-  $$("input[data-day]",host).forEach(a=>a.onchange=()=>{$$(`.tday[data-day="${a.dataset.day}"] input[data-id]:not(:disabled)`,host).forEach(x=>{x.checked=a.checked;TLS.on[x.dataset.id]=a.checked});populate(a.dataset.day)});
+  $$("input[data-day]",host).forEach(a=>a.onchange=()=>setOn($$(`.tday[data-day="${a.dataset.day}"] input[data-id]:not(:disabled)`,host).map(x=>x.dataset.id),a.checked));
   $$("[data-tm]",host).forEach(b=>b.onclick=()=>{TLS.mode=b.dataset.tm;$$("[data-tm]",host).forEach(x=>x.classList.toggle("on",x===b));leg();Object.values(maps).forEach(x=>x.m.mode(TLS.mode))});
   $$("button.sen",host).forEach(b=>b.onclick=()=>{$$(".tr",host).forEach(x=>x.classList.toggle("on",x.contains(b)));o.onSentry(b.dataset.ev)});
-  return()=>{io.disconnect();Object.values(maps).forEach(x=>x.m.destroy())}}
+  return()=>{removeEventListener("tlroute",onRoute);io.disconnect();Object.values(maps).forEach(x=>x.m.destroy())}}
 
 function routeSvg(pts,w=64,h=40){if(!pts||pts.length<2)return "";const la=pts.map(p=>p[0]),lo=pts.map(p=>p[1]),a=Math.min(...la),b=Math.max(...la),c=Math.min(...lo),d=Math.max(...lo),k=Math.cos((a+b)/2*Math.PI/180),sx=(d-c)*k||1e-6,sy=(b-a)||1e-6,s=Math.min((w-6)/sx,(h-6)/sy),ox=(w-sx*s)/2,oy=(h-sy*s)/2;
   return `<svg class="rt" width="${w}" height="${h}" viewBox="0 0 ${w} ${h}"><polyline fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" stroke-linecap="round" points="${pts.map(p=>((p[1]-c)*k*s+ox).toFixed(1)+","+(h-((p[0]-a)*s+oy)).toFixed(1)).join(" ")}"/></svg>`}
@@ -849,11 +863,11 @@ async function pageTeslaCam(role,id){
     const a=nameAt(places,v.p0),b=nameAt(places,v.p1),ti=a||b?`${esc(a||"?")} → ${esc(b||"?")}`:"",src=(v.recent?"Recent":"")+(v.recent&&v.saved?" + ":"")+(v.saved?"Saved":"");
     if(v.kind==="drive")return `<a class="trow drv" href="#/teslacam/${TCS.role}/${esc(v.id)}"><span class="tm">${t0}</span><span class="tk">Drive</span><span class="tt">${routeSvg(v.thumb)}<span><b>${n0(v.km,1)} km</b> · max ${n0(v.vmax)} km/h${v.fsd?` · FSD ${Math.round(v.fsd*100)}%`:""}${v.aut?` · Autosteer/TACC ${Math.round(v.aut*100)}%`:""}<small>${ti}</small></span></span><span class="ts">${dur(m)} · ${src}</span></a>`;
     return `<a class="trow ${v.kind==="stopped"?"stp":"rec"}" href="#/teslacam/${TCS.role}/${esc(v.id)}"><span class="tm">${t0}</span><span class="tk">${v.kind==="stopped"?"Stopped":"Recording"}</span><span class="tt">${v.kind==="stopped"?"recording, but not moving":"telemetry not read yet"}<small>${v.n} clip${v.n>1?"s":""}, ${src}</small></span><span class="ts">${dur(m)}</span></a>`};
-  const drawTimeline=()=>{if(TLOFF){TLOFF();TLOFF=null}const q=TCS.q.toLowerCase(),rs=data.items.filter(v=>inRange({day:v.start.slice(0,10)},TCS.r)&&(!q||(v.kind+" "+(v.city||"")+" "+(v.street||"")+" "+reason(v.reason)+" "+nameAt(places,v.p0)+" "+nameAt(places,v.p1)).toLowerCase().includes(q)));
+  const drawTimeline=()=>{if(TLOFF){TLOFF();TLOFF=null}const q=TCS.q.toLowerCase(),rs=data.items.filter(v=>(inRange({day:v.start.slice(0,10)},TCS.r)||inRange({day:(v.end||v.start).slice(0,10)},TCS.r))&&(!q||(v.kind+" "+(v.city||"")+" "+(v.street||"")+" "+reason(v.reason)+" "+nameAt(places,v.p0)+" "+nameAt(places,v.p1)).toLowerCase().includes(q)));
     rs.forEach(v=>v._c=tlClass(v));const dr=rs.filter(v=>v._c==="drive");
     $("#tl").innerHTML=tile(n0(dr.length),"drives with telemetry")+tile(n0(dr.reduce((a,v)=>a+v.km,0))+" km","driven (from the video)")+tile(n0(rs.filter(v=>v._c==="sentry").length),"Sentry events")+tile(n0(rs.filter(v=>v._c==="parked").length),"parked spells")+tile(n0(rs.filter(v=>v._c==="rec").length),"recordings not read yet");
     $("#tb").innerHTML='<div id="tlh"></div>';
-    TLOFF=tlDays($("#tlh"),rs,{role:TCS.role,places,onSentry:async ev=>{$("#spl").scrollIntoView({block:"nearest"});
+    TLOFF=tlDays($("#tlh"),rs,{role:TCS.role,places,dayOk:d=>inRange({day:d},TCS.r),redraw:drawTimeline,onSentry:async ev=>{$("#spl").scrollIntoView({block:"nearest"});
       try{if(!sentryList)sentryList=(await tcGet("teslacam/"+TCS.role+"/sentry")).events;sentryPlayer($("#spl"),sentryList.find(v=>v.id===ev),TCS.role,"SentryClips")}catch(e){$("#spl").innerHTML=errBox(e.message,"Could not read these clips")}}})||null};
   const draw=()=>{if(!data)return;if(TCS.kind==="clips"?!data.sentry:!data.items&&data.connected!==false){return}if(!data.connected){$("#tb").innerHTML='<div class="empty">This drive is not connected.</div>';$("#ixb").innerHTML="";return}
     if(TCS.kind==="timeline"){ixBar();return drawTimeline()}$("#ixb").innerHTML="";
@@ -966,9 +980,9 @@ function driveMap(el,s,idx,onPick,leg){
     if(I.length){m.getSource("st").setData({type:"FeatureCollection",features:[{type:"Feature",properties:{c:"#16a34a"},geometry:{type:"Point",coordinates:[S.lon[I[0]],S.lat[I[0]]]}},{type:"Feature",properties:{c:"#dc2626"},geometry:{type:"Point",coordinates:[S.lon[I[I.length-1]],S.lat[I[I.length-1]]]}}]});
       if(first){first=false;fit(0)}}};
   const fit=dur=>{if(!ready||!I.length)return;const b=new maplibregl.LngLatBounds();I.forEach(i=>b.extend([S.lon[i],S.lat[i]]));m.fitBounds(b,{padding:40,maxZoom:16,duration:dur==null?600:dur})};
-  m.on("load",()=>{ready=true;m.addSource("rt",{type:"geojson",data:{type:"FeatureCollection",features:[]}});m.addSource("st",{type:"geojson",data:{type:"FeatureCollection",features:[]}});m.addSource("cu",{type:"geojson",data:{type:"FeatureCollection",features:[]}});
-    m.addLayer({id:"rt-case",type:"line",source:"rt",layout:{"line-cap":"round","line-join":"round"},paint:{"line-color":dark?"#000":"#fff","line-width":["interpolate",["linear"],["zoom"],8,4,16,9]}});
-    m.addLayer({id:"rt",type:"line",source:"rt",layout:{"line-cap":"round","line-join":"round"},paint:{"line-color":SPD,"line-width":["interpolate",["linear"],["zoom"],8,2.5,16,6]}});
+  m.on("load",()=>{ready=true;m.addSource("rt",{type:"geojson",tolerance:0,data:{type:"FeatureCollection",features:[]}});m.addSource("st",{type:"geojson",data:{type:"FeatureCollection",features:[]}});m.addSource("cu",{type:"geojson",data:{type:"FeatureCollection",features:[]}});
+    m.addLayer({id:"rt-case",type:"line",source:"rt",layout:{"line-cap":"round","line-join":"round"},paint:{"line-color":dark?"#000":"#fff","line-width":["interpolate",["linear"],["zoom"],3,8,8,7.5,16,9]}});
+    m.addLayer({id:"rt",type:"line",source:"rt",layout:{"line-cap":"round","line-join":"round"},paint:{"line-color":SPD,"line-width":["interpolate",["linear"],["zoom"],3,5,8,4.5,16,6]}});
     m.addLayer({id:"st",type:"circle",source:"st",paint:{"circle-radius":6,"circle-color":["get","c"],"circle-stroke-width":2,"circle-stroke-color":"#fff"}});
     m.addLayer({id:"cu",type:"circle",source:"cu",paint:{"circle-radius":8,"circle-color":"#f59e0b","circle-stroke-width":3,"circle-stroke-color":"#fff"}});
     m.on("click","rt",e=>onPick(e.features[0].properties.i));m.on("mouseenter","rt",()=>m.getCanvas().style.cursor="pointer");m.on("mouseleave","rt",()=>m.getCanvas().style.cursor="");
