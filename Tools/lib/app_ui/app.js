@@ -1154,48 +1154,70 @@ function driveMap(el,s,idx,onPick,leg){
 // speed, pedals and steering against time, with the autopilot state as a strip; hover reads it out, click or drag moves the video
 function telemChart(cv,tip,s,onPick,t0){          // t0: i -> "HH:MM:SS" on the local clock (or a base time in ms, shown on this computer's clock)
   const lab=typeof t0==="function"?t0:i=>new Date(t0+i*1000).toTimeString().slice(0,8);
-  let S=s,cur=null,hov=null,W=0,H=0,M={signs:[],steps:[]},ver=0,cache=null,ck="";const css=n=>getComputedStyle(document.documentElement).getPropertyValue(n).trim()||"#888";
+  // va/vb: the part of the drive shown (vb null = all of it); A/B the same, clamped, in seconds
+  let S=s,cur=null,hov=null,W=0,H=0,M={signs:[],steps:[]},ver=0,cache=null,ck="",va=0,vb=null,A=0,B=1,sel=null,selMode=false;const css=n=>getComputedStyle(document.documentElement).getPropertyValue(n).trim()||"#888";
   const L=62,R=10,lanes=[{k:"v",t:"km/h",y:34,h:118},{k:"p",t:"pedals",y:164,h:46},{k:"s",t:"steering",y:218,h:40}];
-  const X=i=>L+(W-L-R)*i/Math.max(1,S.v.length-1),I=x=>Math.max(0,Math.min(S.v.length-1,Math.round((x-L)/(W-L-R)*(S.v.length-1))));
+  const norm=()=>{const N=S.v.length-1;if(N<1){A=0;B=1;return}if(vb==null){A=0;B=N}else{A=Math.max(0,Math.min(va,N-1));B=Math.max(A+1,Math.min(vb,N))}};
+  const X=i=>L+(W-L-R)*(i-A)/Math.max(1,B-A),I=x=>Math.max(0,Math.min(S.v.length-1,Math.round(A+(x-L)/(W-L-R)*(B-A))));
   const paintBase=(c,dpr)=>{c.setTransform(dpr,0,0,dpr,0,0);c.clearRect(0,0,W,H);
     const ink=css("--mut"),line=css("--line"),acc=css("--acc"),bad=css("--bad"),ok=css("--charge"),n=S.v.length;if(!n)return;
+    const i0=Math.max(0,Math.floor(A)-1),i1=Math.min(n-1,Math.ceil(B)+1),sw=Math.max(1,(W-L-R)/(B-A+1)+.5),clipped=f=>{c.save();c.beginPath();c.rect(L,0,W-L-R,H);c.clip();f();c.restore()};
     const ff=getComputedStyle(document.body).fontFamily||"system-ui",F="11px "+ff;c.font=F;c.fillStyle=ink;c.strokeStyle=line;c.lineWidth=1;
     const vm=Math.max(120,Math.ceil(Math.max(...S.v.filter(x=>x!=null))/20)*20),vy=v=>lanes[0].y+lanes[0].h*(1-v/vm);
     for(let g=0;g<=vm;g+=40){c.beginPath();c.moveTo(L,vy(g));c.lineTo(W-R,vy(g));c.stroke();c.fillText(g,8,vy(g)+4)}
     // driving-mode strip on the same time scale as the chart: FSD / Autosteer / TACC / Manual in the colours of the map legend, with its key above it
-    for(let i=0;i<n;i++){if(S.v[i]==null)continue;const a=S.ap[i];c.fillStyle=apCol(a>0&&a<4?APN[a]:"Manual");c.fillRect(X(i),lanes[0].y-12,Math.max(1,(W-L-R)/n+.5),8)}
+    clipped(()=>{for(let i=i0;i<=i1;i++){if(S.v[i]==null)continue;const a=S.ap[i];c.fillStyle=apCol(a>0&&a<4?APN[a]:"Manual");c.fillRect(X(i),lanes[0].y-12,sw,8)}})
     c.fillStyle=ink;c.textBaseline="middle";c.fillText("FSD / AP",8,lanes[0].y-8);
     let kx=L;["FSD","Autosteer","TACC","Manual"].forEach(k=>{c.fillStyle=apCol(k);c.beginPath();c.arc(kx+4,9,4,0,7);c.fill();c.fillStyle=ink;c.fillText(k,kx+12,10);kx+=12+c.measureText(k).width+14});c.textBaseline="alphabetic";
     // speed
-    const seg=(arr,y,col,fill,f)=>{c.beginPath();let on=false,last=-9;for(let i=0;i<n;i++){const v=arr[i];if(v==null){if(i-last>3)on=false;continue}const x=X(i),yy=f(v);if(!on){c.moveTo(x,yy);on=true}else c.lineTo(x,yy);last=i}c.strokeStyle=col;c.lineWidth=1.6;c.stroke()};
+    const seg=(arr,y,col,fill,f)=>{c.save();c.beginPath();c.rect(L,0,W-L-R,H);c.clip();c.beginPath();let on=false,last=-9;for(let i=i0;i<=i1;i++){const v=arr[i];if(v==null){if(i-last>3)on=false;continue}const x=X(i),yy=f(v);if(!on){c.moveTo(x,yy);on=true}else c.lineTo(x,yy);last=i}c.strokeStyle=col;c.lineWidth=1.6;c.stroke();c.restore()};
     seg(S.v,0,acc,0,vy);
     // the limit signs read (a red ring at the number, level with it) and the last limit seen as a dashed line; speed changes as triangles on the floor of the lane
     const L2=M.signs.filter(g=>g.side==="L").map(g=>({i:g.i,v:+g.text})).sort((a,b)=>a.i-b.i);
-    c.save();c.setLineDash([5,4]);c.strokeStyle="#f59e0b";c.lineWidth=1.2;L2.forEach((g,k)=>{const e=k+1<L2.length?L2[k+1].i:n-1;c.beginPath();const yy=Math.max(lanes[0].y+6,vy(g.v));c.moveTo(X(g.i),yy);c.lineTo(X(e),yy);c.stroke()});c.restore();
-    M.signs.forEach(g=>{if(g.i<0||g.i>=n)return;const x=X(g.i),y=Math.max(lanes[0].y+6,vy(+g.text));c.beginPath();c.arc(x,y,9,0,7);c.fillStyle="#fff";c.fill();c.lineWidth=2.2;c.strokeStyle=g.side==="R"?"#94a3b8":"#dc2626";c.stroke();c.fillStyle="#111";c.font="bold 8.5px system-ui";c.textAlign="center";c.fillText(g.text,x,y+3);c.textAlign="start"});
+    c.save();c.beginPath();c.rect(L,0,W-L-R,H);c.clip();c.setLineDash([5,4]);c.strokeStyle="#f59e0b";c.lineWidth=1.2;L2.forEach((g,k)=>{const e=k+1<L2.length?L2[k+1].i:n-1;c.beginPath();const yy=Math.max(lanes[0].y+6,vy(g.v));c.moveTo(X(g.i),yy);c.lineTo(X(e),yy);c.stroke()});c.restore();
+    M.signs.forEach(g=>{if(g.i<0||g.i>=n||g.i<A-12||g.i>B+12)return;const x=X(g.i),y=Math.max(lanes[0].y+6,vy(+g.text));c.beginPath();c.arc(x,y,9,0,7);c.fillStyle="#fff";c.fill();c.lineWidth=2.2;c.strokeStyle=g.side==="R"?"#94a3b8":"#dc2626";c.stroke();c.fillStyle="#111";c.font="bold 8.5px system-ui";c.textAlign="center";c.fillText(g.text,x,y+3);c.textAlign="start"});
     c.font=F;
-    M.steps.forEach(x=>{const px=X(x.i),py=lanes[0].y+lanes[0].h;c.fillStyle=x.d<0?"#dc2626":"#16a34a";c.beginPath();c.moveTo(px,py-9);c.lineTo(px-5,py);c.lineTo(px+5,py);c.fill()});
+    M.steps.forEach(x=>{if(x.i<A-6||x.i>B+6)return;const px=X(x.i),py=lanes[0].y+lanes[0].h;c.fillStyle=x.d<0?"#dc2626":"#16a34a";c.beginPath();c.moveTo(px,py-9);c.lineTo(px-5,py);c.lineTo(px+5,py);c.fill()});
     // brake marks over the speed lane
-    c.fillStyle=bad;c.globalAlpha=.18;for(let i=0;i<n;i++)if(S.br[i])c.fillRect(X(i),lanes[0].y,Math.max(1,(W-L-R)/n+.5),lanes[0].h);c.globalAlpha=1;
+    clipped(()=>{c.fillStyle=bad;c.globalAlpha=.18;for(let i=i0;i<=i1;i++)if(S.br[i])c.fillRect(X(i),lanes[0].y,sw,lanes[0].h);c.globalAlpha=1});
     // pedals
     const P=lanes[1];c.fillStyle=ink;c.fillText("accel. %",8,P.y+10);c.strokeStyle=line;c.beginPath();c.moveTo(L,P.y+P.h);c.lineTo(W-R,P.y+P.h);c.stroke();seg(S.accel,0,ok,0,v=>P.y+P.h*(1-Math.min(100,v)/100));
     // steering and blinkers
     const T=lanes[2],sm=Math.max(90,Math.ceil(Math.max(...S.steer.filter(x=>x!=null).map(Math.abs))/90)*90);c.fillStyle=ink;c.fillText("steering °",8,T.y+10);c.strokeStyle=line;c.beginPath();c.moveTo(L,T.y+T.h/2);c.lineTo(W-R,T.y+T.h/2);c.stroke();seg(S.steer,0,acc,0,v=>T.y+T.h/2-(v/sm)*(T.h/2));
-    c.fillStyle="#f59e0b";for(let i=0;i<n;i++)if(S.blk[i])c.fillRect(X(i),T.y+T.h-4,Math.max(1,(W-L-R)/n+.5),4);c.fillStyle="#f59e0b";c.fillRect(8,T.y+T.h-9,8,4);c.fillStyle=ink;c.fillText("indicator",20,T.y+T.h-4);
+    clipped(()=>{c.fillStyle="#f59e0b";for(let i=i0;i<=i1;i++)if(S.blk[i])c.fillRect(X(i),T.y+T.h-4,sw,4)});c.fillStyle="#f59e0b";c.fillRect(8,T.y+T.h-9,8,4);c.fillStyle=ink;c.fillText("indicator",20,T.y+T.h-4);
     // clock axis
-    c.fillStyle=ink;const step=n>1800?600:n>600?300:60;for(let i=0;i<n;i+=step){c.fillText(lab(i).slice(0,5),X(i)-12,H-4)}
+    c.fillStyle=ink;{const lad=[1,2,5,10,15,30,60,120,300,600,900,1800,3600,7200],want=Math.max(2,Math.floor((W-L-R)/(B-A>=60?80:100))),step=lad.find(x=>x>=(B-A)/want)||7200;
+      for(let i=Math.ceil(A/step)*step;i<=B;i+=step){const t=lab(i);c.fillText(step<60?t.slice(0,8):t.slice(0,5),Math.max(L-12,Math.min(W-R-48,X(i)-(step<60?24:12))),H-4)}}
   };
   const draw=()=>{const dpr=devicePixelRatio||1;W=cv.clientWidth;H=cv.clientHeight;if(!W||!H)return;const pw=Math.round(W*dpr),ph=Math.round(H*dpr);if(cv.width!==pw||cv.height!==ph){cv.width=pw;cv.height=ph}
     const key=[W,H,dpr,ver].join();if(!cache||ck!==key){cache=document.createElement("canvas");cache.width=pw;cache.height=ph;paintBase(cache.getContext("2d"),dpr);ck=key}
     const c=cv.getContext("2d");c.setTransform(1,0,0,1,0,0);c.clearRect(0,0,pw,ph);c.drawImage(cache,0,0);c.setTransform(dpr,0,0,dpr,0,0);
     const mark=(i,col)=>{c.strokeStyle=col;c.lineWidth=1.5;c.beginPath();c.moveTo(X(i),12);c.lineTo(X(i),H-18);c.stroke()};
-    if(hov!=null)mark(hov,"#888");if(cur!=null)mark(cur,"#f59e0b")};
+    if(hov!=null&&hov>=A&&hov<=B)mark(hov,"#888");if(cur!=null&&cur>=A&&cur<=B)mark(cur,"#f59e0b");
+    if(sel&&sel.a!==sel.b){const x0=X(Math.min(sel.a,sel.b)),x1=X(Math.max(sel.a,sel.b));c.fillStyle=css("--acc");c.globalAlpha=.18;c.fillRect(x0,12,x1-x0,H-30);c.globalAlpha=1;c.strokeStyle=css("--acc");c.lineWidth=1;c.strokeRect(x0,12,x1-x0,H-30)}};
   const read=i=>{const t=lab(i);if(S.v[i]==null)return t+" · no telemetry";return `${t} · ${n0(S.v[i])} km/h · accelerator ${n0(S.accel[i])}%${S.br[i]?" · braking":""} · steering ${n0(S.steer[i])}°${S.blk[i]?" · indicator":""}${APN[S.ap[i]]?" · "+APN[S.ap[i]]:""}`};
-  cv.onmousemove=e=>{const r=cv.getBoundingClientRect();hov=I(e.clientX-r.left);tip.textContent=read(hov);draw();if(e.buttons&1)onPick(hov)};
+  // ---- zoom: + / − / Full, Select (drag across the chart; Shift-drag does the same), ◀ ▶ to move along, ⌘/Ctrl + wheel or pinch around the pointer, sideways scroll to move
+  const bar=cv.parentNode.querySelector(".bar"),zm=document.createElement("span");zm.style.cssText="display:flex;gap:6px;align-items:center";
+  zm.innerHTML='<span class="sub" data-z="lab"></span><button class="chip" data-z="L" title="Move back along the drive">\u25C0</button><button class="chip" data-z="R" title="Move forward along the drive">\u25B6</button><button class="chip" data-z="out" title="Zoom out">\u2212</button><button class="chip" data-z="in" title="Zoom in">+</button><button class="chip" data-z="sel" title="Drag across the chart to zoom into that part (Shift-drag does the same)">Select</button><button class="chip" data-z="full" title="The whole drive">Full</button>';
+  if(bar)bar.insertBefore(zm,bar.lastElementChild);
+  const zb=k=>zm.querySelector('[data-z="'+k+'"]');
+  const zoomed=()=>vb!=null,ui=()=>{const w=B-A,N=Math.max(1,S.v.length-1);zb("lab").textContent=zoomed()?lab(Math.round(A))+" \u2013 "+lab(Math.round(B))+" \u00b7 "+(N/w).toFixed(1)+"\u00d7":"";
+    zb("L").disabled=zb("R").disabled=zb("out").disabled=zb("full").disabled=!zoomed();zb("in").disabled=w<=12;zb("sel").classList.toggle("on",selMode);cv.style.cursor=selMode?"crosshair":""};
+  const setView=(a,b)=>{const N=S.v.length-1,w=Math.max(10,b-a);if(w>=N-1){va=0;vb=null}else{a=Math.max(0,Math.min(a,N-w));va=a;vb=a+w}norm();ver++;ui();draw()};
+  const zoomAt=(c,f)=>setView(c-(c-A)*f,c-(c-A)*f+(B-A)*f);
+  const mid=()=>cur!=null&&cur>=A&&cur<=B?cur:(A+B)/2;
+  zb("in").onclick=()=>zoomAt(mid(),.5);zb("out").onclick=()=>zoomAt(mid(),2);zb("full").onclick=()=>setView(0,1e9);
+  zb("L").onclick=()=>setView(A-(B-A)/2,B-(B-A)/2);zb("R").onclick=()=>setView(A+(B-A)/2,B+(B-A)/2);
+  zb("sel").onclick=()=>{selMode=!selMode;ui()};
+  cv.onmousemove=e=>{const r=cv.getBoundingClientRect();hov=I(e.clientX-r.left);tip.textContent=read(hov);if(sel)sel.b=hov;draw();if(e.buttons&1&&!sel)onPick(hov)};
   cv.onmouseleave=()=>{hov=null;tip.textContent=cur!=null?read(cur):"";draw()};
-  cv.onmousedown=e=>{const r=cv.getBoundingClientRect();onPick(I(e.clientX-r.left))};
-  addEventListener("resize",draw);draw();
-  return{update(s2){S=s2;ver++;draw()},marks(m){M=m;ver++;draw()},cursor(i){cur=i;if(hov==null)tip.textContent=read(i);draw()}};
+  cv.onmousedown=e=>{const r=cv.getBoundingClientRect(),i=I(e.clientX-r.left);if(selMode||e.shiftKey){sel={a:i,b:i};e.preventDefault();return}onPick(i)};
+  addEventListener("mouseup",()=>{if(!sel)return;const a=Math.min(sel.a,sel.b),b=Math.max(sel.a,sel.b),px=X(b)-X(a);sel=null;selMode=false;if(px>=8&&b-a>=3)setView(a,b);else{ui();draw()}});     // a drag of a few pixels is a slip, not a selection
+  cv.addEventListener("wheel",e=>{const r=cv.getBoundingClientRect();
+    if(e.ctrlKey||e.metaKey){e.preventDefault();zoomAt(A+(e.clientX-r.left-L)/(W-L-R)*(B-A),e.deltaY<0?.8:1.25)}
+    else if(zoomed()&&Math.abs(e.deltaX)>Math.abs(e.deltaY)){e.preventDefault();const d=(B-A)*e.deltaX/(W-L-R);setView(A+d,B+d)}},{passive:false});
+  norm();ui();addEventListener("resize",draw);draw();
+  return{update(s2){S=s2;ver++;norm();ui();draw()},marks(m){M=m;ver++;draw()},cursor(i){cur=i;if(zoomed()&&(i<A||i>B)){const w=B-A;setView(i-w*.2,i+w*.8)}if(hov==null)tip.textContent=read(i);draw()}};
 }
 // lasting changes of speed: the median of the 6 s before against the 6 s after, 10 km/h or more, both while moving; one per 20 s (the biggest wins)
 function speedSteps(v,minD=10){
