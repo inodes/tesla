@@ -182,6 +182,12 @@ class TeslaCam:
         store, _ = self._tl("A")
         return drive_fuse.fuse_drive(self.dir, stamp, store)
 
+    def enrich(self, rows):
+        """The points of a drive page with the dashcam's readings put in (drive_fuse.enrich); None when the footage's telemetry does not cover it."""
+        import drive_fuse
+        store, _ = self._tl("A")
+        return drive_fuse.enrich(rows, store)
+
     @staticmethod
     def _front(teslacam, m):
         sub = "RecentClips" if m["src"] == "recent" else os.path.join("SavedClips", m["ref"])

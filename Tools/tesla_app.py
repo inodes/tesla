@@ -106,21 +106,24 @@ def code_updated():
 
 
 def fuse_into(h, p):
-    """The route of a drive page is Tessie's own points (one every ~30 s); where dashcam telemetry covers the drive, draw the finer track instead."""
-    mark = "const pts=[],pt=(i,col,r,tt)=>"
-    if TC is None or mark not in h or "const lines={type:" not in h:
+    """Enrich with TeslaCam metadata: the page's points (Tessie's, about one every 30 s) become the dashcam's per-second readings where the footage
+    covers the drive, with accelerator / steering / indicator / FSD columns and the panels that draw them (drive_enrich_ui.py)."""
+    if TC is None:
+        return h
+    import drive_enrich_ui as EU
+    i = h.find("const DATA=")
+    if i < 0:
         return h
     try:
-        r = TC.fuse(os.path.basename(os.path.dirname(p)))
+        obj, end = json.JSONDecoder().raw_decode(h, i + len("const DATA="))
+        new = TC.enrich(obj["pts"])
     except Exception:
-        r = None
-    if not r or not r["info"]["cam_n"]:
         return h
-    fl = ('const fusedLines=F=>{const g=[];let l=null;for(let i=0;i<F.la.length;i++){const c=sc(F.v[i]||0);if(l&&l.c===c)l.p.push(i);else{if(l)l.p.push(i);l={c:c,p:[i]};g.push(l)}}'
-          'return{type:"FeatureCollection",features:g.map(x=>({type:"Feature",properties:{c:x.c},geometry:{type:"LineString",coordinates:x.p.map(i=>[F.lo[i],F.la[i]])}}))}};'
-          'if(window.FUSED)lines=fusedLines(window.FUSED);')
-    h = h.replace("const lines={type:", "let lines={type:", 1).replace(mark, fl + mark, 1)
-    return h.replace("</head>", "<script>window.FUSED=%s;</script></head>" % json.dumps(r["points"], separators=(",", ":")), 1)
+    if not new:
+        return h
+    obj["pts"] = new["rows"]
+    h = h[:i] + "const DATA=" + json.dumps(obj, separators=(",", ":")) + h[end:]
+    return h.replace("</body>", "<script>%s</script></body>" % EU.js(), 1)
 
 
 def drive_page(p, enrich=True):
