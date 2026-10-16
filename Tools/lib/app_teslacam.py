@@ -185,6 +185,13 @@ class TeslaCam:
         todo = [(m["stamp"], self._front(teslacam, m)) for m in reversed(TL.minutes(recent, saved)) if "front" in m["cams"]]
         return ix.start(todo)
 
+    def footage_minutes(self, role, teslacam, u0, u1):
+        """How many minutes of footage on the connected drive `role` fall in [u0, u1] (UTC); None when that drive is not connected."""
+        if not teslacam:
+            return None
+        recent, saved, _s = self._sources(role, teslacam)
+        return sum(1 for m in TL.minutes(recent, saved) if CC.maybe_in(m["stamp"], u0, u1))
+
     def fuse(self, stamp):
         """The finer track of a Tessie drive (drive_fuse.py): its own points, with the dashcam's per-second readings where they exist."""
         import drive_fuse
