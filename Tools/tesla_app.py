@@ -105,6 +105,16 @@ def code_updated():
     return newest > STARTED + 2
 
 
+def drive_page(p):
+    """A per-drive page as the generator wrote it; pages built before the map got its reset-view button get it here (no rebuild needed)."""
+    with open(p, encoding="utf-8") as fh:
+        h = fh.read()
+    old = 'map.addControl(new maplibregl.NavigationControl({showCompass:false}),"top-right");'
+    if "Show the whole route" in h or old not in h:
+        return h
+    return h.replace(old, 'const nav=new maplibregl.NavigationControl({showCompass:false});map.addControl(nav,"top-right");\n {const b=document.createElement("button");b.type="button";b.className="maplibregl-ctrl-icon";b.title="Show the whole route";b.setAttribute("aria-label","Show the whole route");b.innerHTML=\'<span style="display:block;text-align:center;font-size:18px;line-height:29px">\\u2922</span>\';\n  b.onclick=()=>map.fitBounds([[Math.min(...O),Math.min(...L)],[Math.max(...O),Math.max(...L)]],{padding:40,maxZoom:16});nav._container.appendChild(b)}')
+
+
 def _local_ts(txt):
     import datetime
     return datetime.datetime.fromisoformat(txt).timestamp()
@@ -204,6 +214,8 @@ class H(BaseHTTPRequestHandler):
                 p = safe_join(DATA_DIR, path[6:])
                 if p and os.path.isfile(p) and p.endswith(os.path.join("dashcam_flip_review", "index.html")):
                     return self.send_bytes(flip_page(p).encode("utf-8"), "text/html; charset=utf-8")
+                if p and os.path.isfile(p) and p.endswith("drive.html") and os.sep + "deepdive" + os.sep in p:
+                    return self.send_bytes(drive_page(p).encode("utf-8"), "text/html; charset=utf-8")
                 if p and os.path.isfile(p):
                     return self.send_file(p)
                 return self.send_bytes(b"not found", "text/plain", 404)
