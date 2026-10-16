@@ -6,7 +6,7 @@ the block). A change takes effect the next time the app or script reads it (the 
 
   app.map.tiles_base / style_light / style_dark   OpenFreeMap style URL base and the style used in light / dark mode (liberty = 3D, bright, positron, dark, fiord)
   app.map.places_max_lon                           places east of this longitude are left off the Places map (160 = no New Zealand)
-  app.map.speed_colors / autopilot_colors            the speed gradient (km/h -> colour stops, the last stop is the top of the scale) and the FSD / Autosteer / TACC / Manual colours of every route map
+  app.map.speed_colors / speed_over_color / autopilot_colors  the speed gradient (km/h -> colour stops, the last stop is the top of the scale; faster than that is speed_over_color, black) and the FSD / Autosteer / TACC / Manual colours of every route map
   app.map.network_colors                           colour of each charger network on the Places map (a network not listed gets a colour of its own)
   app.teslacam.moving_kmh / run_gap_s / gap_min_s / same_place_m / same_place_est_m / same_minute_s / read_workers
                                                    the TeslaCam timeline: a minute is "moving" above this speed; clips this close (s) are one recording; a hole shorter than gap_min_s is not shown;
@@ -34,7 +34,8 @@ except ImportError:                      # imported as lib.app_config
 
 DEFAULTS = {
     "map": {"tiles_base": "https://tiles.openfreemap.org/styles/", "style_light": "positron", "style_dark": "dark", "places_max_lon": 160,
-            "speed_colors": [[0, "#22a559"], [20, "#7ac143"], [40, "#d4d93a"], [60, "#f5b82e"], [80, "#f28a24"], [100, "#e5532b"], [120, "#c71f2e"]],
+            "speed_colors": [[0, "#0000FF"], [10, "#008080"], [20, "#90EE90"], [30, "#008000"], [40, "#32CD32"], [50, "#ADFF2F"], [60, "#FFFF00"], [70, "#FFA500"], [80, "#FF8C00"], [90, "#FF4500"], [100, "#FF0000"], [110, "#8B0000"], [120, "#800080"]],
+            "speed_over_color": "#000000",
             "autopilot_colors": {"FSD": "#3b6cf6", "Autosteer": "#8b5cf6", "TACC": "#14b8a6", "Manual": "#94a3b8"},
             "network_colors": {"Tesla": "#e0201b", "Tesla Destination": "#f97316", "Chargefox": "#16a34a", "Evie": "#7c3aed", "EVX": "#eab308", "Exploren": "#db2777",
                               "NRMA": "#2563eb", "AmpCharge": "#84cc16", "Jolt": "#14b8a6", "BP Pulse": "#0891b2", "3rd-Party": "#6b7280", "WA EV Network": "#9333ea"}},

@@ -19,12 +19,17 @@ def stops():
     return [[float(a), str(c)] for a, c in s]
 
 
+def over():
+    """Colour of a speed above the top stop."""
+    return str(CFG.get("map.speed_over_color") or "#000000")
+
+
 def sc_js():
     """The colour of a speed: the stops interpolated, in 5 km/h steps (so a route is a few dozen pieces, not one per reading)."""
     return ("const SC=%s;const hx=h=>[1,3,5].map(i=>parseInt(h.substr(i,2),16));\n"
-            "const sc=v=>{const top=SC[SC.length-1][0];v=Math.max(0,Math.min(top,Math.round((v||0)/5)*5));let i=0;while(i<SC.length-2&&v>=SC[i+1][0])i++;"
+            "const sc=v=>{const top=SC[SC.length-1][0];if((v||0)>top)return %s;v=Math.max(0,Math.round((v||0)/5)*5);let i=0;while(i<SC.length-2&&v>=SC[i+1][0])i++;"
             "const a=SC[i],b=SC[i+1],t=(v-a[0])/((b[0]-a[0])||1),A=hx(a[1]),B=hx(b[1]);return \"#\"+A.map((x,k)=>Math.round(x+(B[k]-x)*t).toString(16).padStart(2,\"0\")).join(\"\")};"
-            % json.dumps(stops(), separators=(",", ":")))
+            % (json.dumps(stops(), separators=(",", ":")), json.dumps(over())))
 
 
 def legend_html():
@@ -32,7 +37,7 @@ def legend_html():
     top = s[-1][0]
     grad = ",".join("%s %.0f%%" % (c, 100 * a / top) for a, c in s)
     return ('<div class="legend"><span style="display:inline-flex;align-items:center;gap:6px"><i style="width:150px;height:8px;border-radius:4px;margin:0;'
-            'background:linear-gradient(90deg,%s)"></i>0 → %d km/h</span></div>' % (grad, top))
+            'background:linear-gradient(90deg,%s)"></i>0 → %d km/h<i style="width:10px;height:10px;border-radius:50%%;margin:0 0 0 8px;background:%s;border:1px solid #888"></i>faster</span></div>' % (grad, top, over()))
 
 
 def patch(h):
