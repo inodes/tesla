@@ -485,11 +485,12 @@ const liveMap=function(){
  const kx=Math.cos((Math.min(...L)+Math.max(...L))/2*Math.PI/180);
  const near=(la_,lo_)=>{let b=0,bd=9e9;for(let i=0;i<N;i++){if(!ok[i])continue;const q=(la[i]-la_)**2+((lo[i]-lo_)*kx)**2;if(q<bd){bd=q;b=i}}return b};D.near=near;
  const dark=window.matchMedia&&matchMedia("(prefers-color-scheme: dark)").matches;
- const map=new maplibregl.Map({container:div,style:D.map.base+(dark?D.map.dark:D.map.light),bounds:[[Math.min(...O),Math.min(...L)],[Math.max(...O),Math.max(...L)]],fitBoundsOptions:{padding:40,maxZoom:16},attributionControl:{compact:true},cooperativeGestures:true});
+ const map=new maplibregl.Map({container:div,style:D.map.base+(dark?D.map.dark:D.map.light),bounds:[[Math.min(...O),Math.min(...L)],[Math.max(...O),Math.max(...L)]],fitBoundsOptions:{padding:40,maxZoom:16},attributionControl:{compact:true}});
+ {const c=map.getContainer();map.scrollZoom.disable();c.addEventListener('mousedown',()=>map.scrollZoom.enable());c.addEventListener('mouseleave',()=>map.scrollZoom.disable())}
  const nav=new maplibregl.NavigationControl({showCompass:false});map.addControl(nav,"top-right");
  {const b=document.createElement("button");b.type="button";b.className="maplibregl-ctrl-icon";b.title="Show the whole route";b.setAttribute("aria-label","Show the whole route");b.innerHTML='<span style="display:block;text-align:center;font-size:18px;line-height:29px">\u2922</span>';
   b.onclick=()=>map.fitBounds([[Math.min(...O),Math.min(...L)],[Math.max(...O),Math.max(...L)]],{padding:40,maxZoom:16});nav._container.appendChild(b)}
- const mb=$("#mapbtns");if(mb)mb.innerHTML='<span class="sub" style="float:right;margin-top:2px;text-transform:none;font-weight:400;letter-spacing:0">Ctrl/⌘ + scroll to zoom · hover the route for details · click it, or a purple saved-clip marker, to play footage'+(D.gpsnote?' · '+D.gpsnote:'')+'</span>';
+ const mb=$("#mapbtns");if(mb)mb.innerHTML='<span class="sub" style="float:right;margin-top:2px;text-transform:none;font-weight:400;letter-spacing:0">Click the map, then scroll or pinch to zoom · hover the route for details · click it, or a purple saved-clip marker, to play footage'+(D.gpsnote?' · '+D.gpsnote:'')+'</span>';
  let loaded=false,dead=false;
  const fail=()=>{if(dead||loaded)return;dead=true;try{map.remove()}catch(e){}div.remove();sv.style.display="";staticMap()};
  setTimeout(fail,9000);map.on("error",()=>{if(!loaded)fail()});
