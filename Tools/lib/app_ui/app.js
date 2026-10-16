@@ -635,15 +635,17 @@ function placesMap(host,rows,tab){
     update(true)});
   update(false);
 }
+const AU_STATES={"new south wales":"NSW","victoria":"VIC","queensland":"QLD","south australia":"SA","western australia":"WA","tasmania":"TAS","australian capital territory":"ACT","northern territory":"NT"};
+function stateCode(q){q=q.trim();if(!q)return null;const l=q.toLowerCase();return AU_STATES[l]||(Object.values(AU_STATES).includes(q.toUpperCase())?q.toUpperCase():null)}
 async function pagePlaces(){
   loading();cache.places=null;const L=await api("places");let C=null;const need=async()=>{if(!C)C=await api("chargers")};if(PL.tab==="chargers")await need();
-  const draw=()=>{const q=PL.q.toLowerCase(),host=$("#tb");let rows,cols;
+  const draw=()=>{const q=PL.q.toLowerCase(),host=$("#tb"),qs=stateCode(q);let rows,cols;     // a search that is just a state ("Victoria", "vic") means that state, not streets named after it
     const stat=[{k:"charges",t:"Charges"},{k:"idles",t:"Parked"},{k:"drives",t:"Arrivals"}];
     if(PL.tab==="saved"){rows=L.saved.filter(p=>!q||(p.name+" "+p.notes).toLowerCase().includes(q));
       cols=[{k:"name",t:"Place",l:1},{k:"notes",t:"Notes",l:1},...stat,{k:"reparks",t:"Re-parks"},{k:"kwh",t:"kWh charged",f:r=>r.charges?n0(r.kwh,1):"–"},{k:"last",t:"Last visit",f:r=>r.last||"–"},{k:"radius",t:"Radius",f:r=>n0(r.radius)+" m"}]}
-    else if(PL.tab==="sc"){rows=L.superchargers.filter(p=>(!PL.visited||p.charges)&&(!q||(p.name+" "+p.addr).toLowerCase().includes(q)));
+    else if(PL.tab==="sc"){rows=L.superchargers.filter(p=>(!PL.visited||p.charges)&&(!q||(qs?p.name.endsWith(", "+qs):(p.name+" "+p.addr).toLowerCase().includes(q))));
       cols=[{k:"name",t:"Supercharger (name on tesla.com)",l:1},{k:"addr",t:"Address",l:1},{k:"stalls",t:"Stalls"},{k:"kw",t:"Max kW",f:r=>n0(r.kw)},{k:"charges",t:"Charges"},{k:"kwh",t:"kWh",f:r=>r.charges?n0(r.kwh,1):"–"},{k:"cost",t:"Cost",f:r=>r.charges?money(r.cost):"–"},{k:"last",t:"Last visit",f:r=>r.last||"–"}]}
-    else if(PL.tab==="chargers"){rows=C.rows.filter(p=>(PL.net==="all"||p.network===PL.net)&&(PL.state==="all"||p.state===PL.state)&&(!PL.visited||p.charges)&&(!q||(p.name+" "+p.addr+" "+p.network+" "+p.suburb).toLowerCase().includes(q)));
+    else if(PL.tab==="chargers"){rows=C.rows.filter(p=>(PL.net==="all"||p.network===PL.net)&&(PL.state==="all"||p.state===PL.state)&&(!PL.visited||p.charges)&&(!q||(qs?p.state===qs:(p.name+" "+p.addr+" "+p.network+" "+p.suburb).toLowerCase().includes(q))));
       cols=[{k:"name",t:"Charger",l:1},{k:"network",t:"Network",l:1},{k:"addr",t:"Address",l:1,f:r=>esc(r.addr||r.suburb||"")},{k:"state",t:"State"},{k:"stalls",t:"Stalls",f:r=>r.stalls==null?"–":n0(r.stalls)},{k:"kw",t:"Max kW",f:r=>r.kw?n0(r.kw):"–"},{k:"tier",t:"Type",l:1,f:r=>esc((r.tier||"").replace(/_/g," "))},{k:"conn",t:"Connectors",l:1},{k:"charges",t:"Charges"},{k:"kwh",t:"kWh",f:r=>r.charges?n0(r.kwh,1):"–"},{k:"last",t:"Last charge",f:r=>r.last||"–"}]}
     else{rows=L.found.filter(p=>!q||(p.addr||"").toLowerCase().includes(q));
       cols=[{k:"addr",t:"Address of a place you return to, not saved yet",l:1,f:r=>esc(r.addr||(r.lat.toFixed(4)+", "+r.lon.toFixed(4)))},{k:"lat",t:"Lat, Lon",l:1,f:r=>`${(+r.lat).toFixed(5)}, ${(+r.lon).toFixed(5)}`},{k:"map",t:"Open in",l:1,f:r=>mapLinks(r.lat,r.lon,r.addr,1)},{k:"visits",t:"Days there"},{k:"last",t:"Last"}]}
