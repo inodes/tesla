@@ -86,7 +86,7 @@ async function pageActivity(){
     $("#more").hidden=days.length>=byDay.size;
   };
   main.innerHTML=`<h1>Activity</h1><div class="sub">${act.length.toLocaleString()} drives, charges and parked periods, newest first.</div>
-   <div class="bar"><span id="rg"></span><button class="chip ${AF.drive?"on":""}" data-k="drive">Drives</button><button class="chip ${AF.charge?"on":""}" data-k="charge">Charges</button><button class="chip ${AF.idle?"on":""}" data-k="idle">Parked</button><button class="chip ${AF.repark?"on":""}" data-k="repark" title="Drives under ${REPM()}: the car was only moved a little">Re-parks</button>
+   <div class="bar"><span id="rg"></span><button class="chip ${AF.drive?"on":""}" data-k="drive">Drives</button><button class="chip ${AF.charge?"on":""}" data-k="charge">Charges</button><button class="chip ${AF.idle?"on":""}" data-k="idle">Parked</button><button class="chip ${AF.repark?"on":""}" data-k="repark" title="Drives under ${REPM()}, or a short move that ends at the address it started from: the car was only moved a little">Re-parks</button>
    <input type="search" id="q" placeholder="Search a place…" value="${esc(AF.q)}"></div><div id="list"></div><div class="bar"><button class="btn" id="more">Show 30 more days</button></div>`;
   $$(".chip").forEach(c=>c.onclick=()=>{AF[c.dataset.k]=!AF[c.dataset.k];c.classList.toggle("on");draw()});
   rangePicker($("#rg"),AF.r,daysOf(act),()=>{AF.days=30;draw()});$("#q").oninput=e=>{AF.q=e.target.value;draw()};$("#more").onclick=()=>{AF.days+=30;draw()};draw();
@@ -173,7 +173,7 @@ function fitFrame(fr,onDoc){fr.onload=()=>{try{const doc=fr.contentDocument;if(o
 function hideSection(doc,title){$$(".wrap > h2",doc).forEach(h=>{if(h.textContent.startsWith(title)){let n=h;n.style.display="none";n=n.nextElementSibling;while(n&&n.tagName!=="H2"&&!n.classList.contains("sub")){n.style.display="none";n=n.nextElementSibling}}})}
 // ---------- the manual review of one drive (lib/app_drive_review.py): FSD interventions, accelerator pressed while FSD is on, speed changes while FSD is on
 let RVAPI=null;      // set by teslaDriveBody: what the review viewer may do to the page (cursor, video, chart)
-async function driveReviewPanel(host,stamp,lo){
+async function driveReviewPanel(host,stamp,lo,onResult){
   // an event's t is on the drive page's clock (Tessie's file, app.timezone) read as UTC seconds; it is SHOWN on the clock the drives list shows the drive on (lo)
   const hm=t=>{const po=S&&S.result&&S.result.poff!=null?S.result.poff:null;return lclock(po==null?t:t-po,lo==null?(po||0):lo)};
   const mem=()=>{try{return JSON.parse(localStorage.getItem("drv.rev")||"{}")}catch(e){return{}}},save=o=>{try{localStorage.setItem("drv.rev",JSON.stringify(o))}catch(e){}};
@@ -185,7 +185,13 @@ async function driveReviewPanel(host,stamp,lo){
   let tab="all",ei=0,si=0,hv=null,vkey="",tries=0,MC=null,OV=null,lb=false;
   const KCOL={intervention:"#dc2626",accelerator:"#f59e0b",speed:"#2563eb"},KNAME={intervention:"FSD interventions",accelerator:"Accelerator pressed",speed:"Speed changes"};
   const vwEl=()=>document.getElementById("drevw"),curRes=()=>S&&S.result&&S.result.events?S.result:null;
-  const list=()=>{const R=curRes();if(!R)return[];return(tab==="all"?R.events:R.events.filter(e=>e.kind===tab)).slice().sort((a,b)=>a.t-b.t)};        // in the order of the drive
+  // the speed filter (kept in this browser): a speed change matches when it went from `sf` to `st` km/h (either may be blank = any), either way round when `sb`
+  const spf=()=>{const m=mem();return{f:m.sf==null||m.sf===""?null:+m.sf,t:m.st==null||m.st===""?null:+m.st,both:m.sb!==false}};
+  const spOk=e=>{if(e.kind!=="speed")return true;const q=spf();if(q.f==null&&q.t==null)return true;const tol=+cfg("review.speed_tol_kmh")||3,
+    ok=(a,b)=>(q.f==null||Math.abs(a-q.f)<=tol)&&(q.t==null||Math.abs(b-q.t)<=tol),back=(a,b)=>(q.t==null||Math.abs(a-q.t)<=tol)&&(q.f==null||Math.abs(b-q.f)<=tol);
+    return ok(e.v,e.v1)||(q.both&&back(e.v,e.v1))};
+  const evs=()=>{const R=curRes();return R?R.events.filter(spOk):[]};
+  const list=()=>{if(!curRes())return[];return(tab==="all"?evs():evs().filter(e=>e.kind===tab)).slice().sort((a,b)=>a.t-b.t)};        // in the order of the drive        // in the order of the drive
   const geo=e=>e&&e.tile&&e.shots&&e.shots.length&&(e.pics&&e.pics.length||e.sheet)?e.tile:null;      // new reviews: one kept still per second (e.pics); older ones: a contact sheet
   const base=e=>(e.utc!=null?e.utc:e.t)-(RVAPI?RVAPI.t0():0),ea=e=>Math.round(base(e)),eb=e=>Math.round(base(e)+(e.t1-e.t));        // second of the drive (UTC both)
   const stillI=(e,k)=>Math.round(base(e)+e.shots[k]);
@@ -211,6 +217,9 @@ async function driveReviewPanel(host,stamp,lo){
     }
     return{h,tags,gm};
   };
+  const plain=e=>{if(e.kind==="intervention")return `${e.from_mode} → ${e.to_mode}`+((e.flags||[]).length?" · "+e.flags.map(f=>f==="brake"?"braking":f==="steering"?"steering":"accelerator").join(", "):e.at_stop?"":" · no pedal / wheel input")+(e.at_stop?" · stopped":"")+(e.off_s==null?" · FSD did not come back":" · FSD off for "+n0(e.off_s)+" s");
+    if(e.kind==="accelerator")return `Accelerator held ${n0(e.dur_s)} s, peak ${n0(e.peak)}%`+(e.ended_in_off?" · FSD switched off right after":"");
+    return `Speed change`+(e.pressed?" · accelerator pressed":" · no pedal input")};
   const info=(e,k)=>{if(!RVAPI||!geo(e))return"";const s=RVAPI.series(),i=stillI(e,k),rel=e.shots[k];
     return `${RVAPI.clk(i)} · ${rel?(rel>0?"+":"")+n0(rel)+" s":"the moment"}${s.v[i]!=null?" · "+n0(s.v[i])+" km/h":""}${s.accel[i]?" · accelerator "+n0(s.accel[i])+"%":""}${s.br[i]?" · braking":""}${APN[s.ap[i]]?" · "+APN[s.ap[i]]:" · manual"}`};
   // the strip across the drive: where the events of this tab are; click one to go to it
@@ -251,8 +260,8 @@ async function driveReviewPanel(host,stamp,lo){
     miniDraw();if(RVAPI&&geo(e))RVAPI.focus({a:ea(e),b:eb(e),ticks:e.shots.map((x,j)=>stillI(e,j)),hot:k,col:KCOL[e.kind]})};
   const pick=(k,seek)=>{const e=list()[ei];if(!e||!geo(e))return;si=Math.max(0,Math.min(e.shots.length-1,k));hv=null;hot();
     if(RVAPI){RVAPI.cursor(stillI(e,si));if(seek)RVAPI.seek(stillI(e,si)-1)}if(lb)lbShow()};
-  const arrive=e=>{if(!RVAPI||!e)return;const g=geo(e),t=g?e.shots.map((x,j)=>stillI(e,j)):[];       // the chart under the map zooms to this event, the map dot goes to it
-    RVAPI.focus({a:ea(e),b:eb(e),ticks:t,hot:si,col:KCOL[e.kind]});RVAPI.zoom(Math.min(ea(e),t.length?t[0]:ea(e))-10,Math.max(eb(e),t.length?t[t.length-1]:eb(e))+10);RVAPI.cursor(g?stillI(e,si):ea(e));RVAPI.seek((g?stillI(e,si):ea(e))-1)};      // the video below goes to the event too, not on playing from where it was
+  const arrive=e=>{if(!RVAPI||!e)return;const g=geo(e),t=g?e.shots.map((x,j)=>stillI(e,j)):[];       // the chart under the map shows only this event's section (Review: nothing else), the map dot goes to it
+    RVAPI.focus({a:ea(e),b:eb(e),ticks:t,hot:si,col:KCOL[e.kind]});RVAPI.limit(Math.min(ea(e),t.length?t[0]:ea(e))-10,Math.max(eb(e),t.length?t[t.length-1]:eb(e))+10);RVAPI.cursor(g?stillI(e,si):ea(e));RVAPI.seek((g?stillI(e,si):ea(e))-1)};      // the video below goes to the event too, not on playing from where it was
   const go=n=>{const L=list();if(!L.length)return;ei=Math.max(0,Math.min(L.length-1,n));const e=L[ei];si=geo(e)?k0(e):0;hv=null;viewer(true);arrive(e)};
   // the big picture
   const lbShow=()=>{const e=list()[ei],o=document.getElementById("rvlb");if(!e||!o||!geo(e)){return}
@@ -270,11 +279,12 @@ async function driveReviewPanel(host,stamp,lo){
     const box=vwEl(),R=curRes();
     if(!box){if(R&&tries++<40)setTimeout(()=>{if(live())viewer(force)},300);return}
     if(!R){box.innerHTML="";return}
-    if(vkey!==R.made){vkey=R.made;tab="all";ei=0;si=0;hv=null;force=true}
+    let first=false;if(vkey!==R.made){vkey=R.made;tab="all";ei=0;si=0;hv=null;force=true;first=true}
     if(!force&&box.firstChild)return;
-    const L=list();if(ei>=L.length)ei=Math.max(0,L.length-1);const e=L[ei],cnt=k=>R.events.filter(x=>x.kind===k).length;
-    const tabs=[["all","All",R.events.length],["intervention",KNAME.intervention,cnt("intervention")],["accelerator",KNAME.accelerator,cnt("accelerator")],["speed",KNAME.speed,cnt("speed")]];
+    const L=list();if(ei>=L.length)ei=Math.max(0,L.length-1);const e=L[ei],cnt=k=>evs().filter(x=>x.kind===k).length,nsp=R.events.filter(x=>x.kind==="speed").length;
+    const tabs=[["all","All",evs().length],["intervention",KNAME.intervention,cnt("intervention")],["accelerator",KNAME.accelerator,cnt("accelerator")],["speed",KNAME.speed,cnt("speed")]];
     let h=`<div class="card rvw"><div class="bar" style="margin:0 0 8px">${tabs.map(([k,t,n])=>`<button class="chip ${k===tab?"on":""}" data-tab="${k}" ${n?"":"disabled"}>${t} <span class="sub">${n}</span></button>`).join("")}</div>`;
+    if(nsp&&(tab==="all"||tab==="speed")){const q=spf();h+=`<div class="bar" style="margin:0 0 8px"><span class="sub">Speed changes from</span><input type="number" id="spf" value="${q.f==null?"":q.f}" placeholder="any" step="5" min="0" max="250" style="width:70px"><span class="sub">to</span><input type="number" id="spt" value="${q.t==null?"":q.t}" placeholder="any" step="5" min="0" max="250" style="width:70px"><span class="sub">km/h</span><label class="sub"><input type="checkbox" id="spb" ${q.both?"checked":""}> either way round</label><button class="btn" id="spc" ${q.f==null&&q.t==null?"disabled":""}>Show all speed changes</button><span class="sub">${n0(evs().filter(x=>x.kind==="speed").length)} of ${n0(nsp)} shown</span></div>`}
     if(!e){h+=`<div class="sub">${R.events.length?"Nothing in this tab.":"No events found in this drive."}</div></div>`}
     else{
       const dd=desc(e),g=geo(e);
@@ -291,8 +301,15 @@ async function driveReviewPanel(host,stamp,lo){
       else if(e.sheet)h+=`<div style="margin-top:8px"><a href="/revev/${encodeURIComponent(R.stamp)}/${encodeURIComponent(e.sheet)}" target="_blank"><img class="rvsheet" src="/revev/${encodeURIComponent(R.stamp)}/${encodeURIComponent(e.sheet)}"></a><div class="sub">This review was run before the stills could be picked one by one. Run it again for that.</div></div>`;
       else h+=`<div class="sub" style="margin-top:8px">${R.stills?"No stills for this event.":"No stills: the Archive was not connected when this review ran."}</div>`;
       h+="</div>"}
-    box.innerHTML=h;
+    box.innerHTML=h+'<div class="card" style="margin-top:12px;padding:4px 0"><div id="rvtb"></div></div>';
+    // every event of the drive (the same ones the tabs and the speed filter leave in) as a table: click a row to open it above
+    {const rows=L.map((x,k)=>({k,id:x.id,t:x.t,kind:KNAME[x.kind]||x.kind,what:plain(x),from:x.v,to:x.kind==="intervention"?null:x.v1,sec:x.kind==="intervention"?(x.off_s==null?null:x.off_s):x.dur_s,n:(x.signs||[]).length}));
+      if(rows.length)table($("#rvtb",box),[{k:"t",t:"Time",l:1,f:r=>(r.k===ei?"▶ ":"")+hm(r.t)},{k:"id",t:"#",l:1,f:r=>`<b>${esc(r.id)}</b>`},{k:"kind",t:"Event",l:1},{k:"what",t:"What happened",l:1,f:r=>esc(r.what)},
+        {k:"from",t:"From",f:r=>r.from==null?"–":n0(r.from)+" km/h"},{k:"to",t:"To",f:r=>r.to==null?"–":n0(r.to)+" km/h"},{k:"sec",t:"Seconds",f:r=>r.sec==null?"–":n0(r.sec)},{k:"n",t:"Signs",f:r=>r.n?n0(r.n):"–"}],rows,r=>go(r.k),"t")}
     $$("[data-tab]",box).forEach(b=>b.onclick=()=>{tab=b.dataset.tab;ei=0;const x=list()[0];si=x&&geo(x)?k0(x):0;hv=null;viewer(true);if(x)arrive(x)});
+    const spSet=o=>{save(Object.assign(mem(),o));ei=0;const x=list()[0];si=x&&geo(x)?k0(x):0;hv=null;viewer(true);if(x)arrive(x)};
+    if($("#spf",box)){const rd=()=>({sf:$("#spf",box).value,st:$("#spt",box).value,sb:$("#spb",box).checked});
+      $("#spf",box).onchange=$("#spt",box).onchange=$("#spb",box).onchange=()=>spSet(rd());$("#spc",box).onclick=()=>spSet({sf:"",st:""})}
     if(!e){MC=null;OV=null;return}
     const g=geo(e);
     $("#rvp").onclick=()=>go(ei-1);$("#rvn").onclick=()=>go(ei+1);
@@ -304,31 +321,30 @@ async function driveReviewPanel(host,stamp,lo){
       cv.onmousemove=ev=>{const k=near(ev);if(k!==hv){hv=k;hot()}};cv.onmouseleave=()=>{hv=null;hot()};cv.onclick=ev=>pick(near(ev),true);
       $$("#drevw .rvc").forEach(b=>{b.onmouseenter=()=>{hv=+b.dataset.k;hot()};b.onmouseleave=()=>{hv=null;hot()};b.onclick=()=>pick(+b.dataset.k,true)});
       $("#rvbig").onclick=lbOpen;
-      hot();vstat(e)}
+      hot();vstat(e);if(first)arrive(e)}
     else MC=null};
   const draw=()=>{
     if(!live())return;
-    const R=S.result,job=S.job||{},run=!!job.running,m=mem(),D=S.defaults||{},f0=m.from!=null?m.from:D.speed_from,t0=m.to!=null?m.to:D.speed_to,both=m.both!=null?m.both:D.both;
+    const R=S.result,job=S.job||{},run=!!job.running;
     const ms=S.missing||{py:[],cmd:[],hint:[]};
     let h=`<div class="card"><h2 style="margin-top:0">Review this drive</h2>
-      <div class="sub" style="margin-bottom:8px">Finds every moment FSD was switched off, every time the accelerator was pressed while FSD was on, and every lasting speed change while FSD was on. The events come from the dashcam's telemetry; only the front camera is looked at, in the seconds around each event (a still every second, every speed-limit sign read). The events open under the map, one at a time.</div>
-      <div class="bar" style="margin:0"><label>Speed change from <input type="number" id="rvf" value="${f0}" step="5" min="10" max="200" style="width:70px"></label><label>to <input type="number" id="rvt" value="${t0}" step="5" min="10" max="200" style="width:70px"></label>
-      <label><input type="checkbox" id="rvb" ${both?"checked":""}> and back</label>
+      <div class="sub" style="margin-bottom:8px">Finds every moment FSD was switched off, every time the accelerator was pressed while FSD was on, and every lasting speed change while FSD was on (filter them by speed afterwards, e.g. 100 → 110). The events come from the dashcam's telemetry; only the front camera is looked at, in the seconds around each event (a still every second, every speed-limit sign read). The events open under the map, one at a time.</div>
+      <div class="bar" style="margin:0">
       ${run?'<button class="btn" id="rvx">Stop</button>':`<button class="btn pri" id="rvg">${R?"Run again":"Run review"}</button>`}</div>`;
     if(run)h+=`<div class="sub" style="margin-top:8px">${esc(job.stage||"")}${job.total?" · "+n0(job.done)+" of "+n0(job.total):""}…</div>`;
     if(job.error)h+=`<div class="sub" style="margin-top:8px;color:var(--bad);user-select:text">${esc(job.error)}</div>`;
     if(ms.py.length+ms.cmd.length)h+=`<div class="sub" style="margin-top:8px">Stills and sign reading need ${esc(ms.py.concat(ms.cmd).join(", "))} installed. <code>${esc((ms.hint||[]).join(" ; "))}</code></div>`;
     else if(!S.connected&&!(R&&R.stills))h+=`<div class="sub" style="margin-top:8px">The Archive is not connected: events can be found from telemetry already read, but no stills.</div>`;
     if(R){const c=R.counts||{};
-      h+=`<div class="sub" style="margin-top:8px">Last run ${new Date(R.made).toLocaleString()} · ${n0(c.intervention||0)} FSD interventions · ${n0(c.accelerator||0)} accelerator presses · ${n0(c.speed||0)} speed changes (${n0(R.params.speed_from)} → ${n0(R.params.speed_to)}${R.params.both?" and back":""}) · dashcam telemetry covers ${R.coverage?n0(R.coverage.pct):0}% of the drive${R.stills?" · front-camera stills read":""}</div>`;
+      h+=`<div class="sub" style="margin-top:8px">Last run ${new Date(R.made).toLocaleString()} · ${n0(c.intervention||0)} FSD interventions · ${n0(c.accelerator||0)} accelerator presses · ${n0(c.speed||0)} speed changes · dashcam telemetry covers ${R.coverage?n0(R.coverage.pct):0}% of the drive${R.stills?" · front-camera stills read":""}</div>`;
       if(R.note)h+=`<div class="sub" style="margin-top:4px;user-select:text">${esc(R.note)}</div>`}
     h+="</div>";
     host.innerHTML=h;
     const g=$("#rvg",host),x=$("#rvx",host);
-    if(g)g.onclick=async()=>{const o={from:+$("#rvf",host).value||100,to:+$("#rvt",host).value||110,both:$("#rvb",host).checked};save(o);
-      await post({action:"start",speed_from:o.from,speed_to:o.to,both:o.both});draw();poll()};
+    if(g)g.onclick=async()=>{await post({action:"start"});draw();poll()};
     if(x)x.onclick=async()=>{await post({action:"stop"});draw()};
-    viewer();
+    if(onResult)onResult(!!curRes());
+    tries=0;viewer();
   };
   const poll=()=>{clearTimeout(timer);if(!live()||!(S&&S.job&&S.job.running))return;timer=setTimeout(async()=>{await get();draw();poll()},2000)};
   host.innerHTML='<div class="sub">Loading…</div>';
@@ -365,9 +381,12 @@ async function pageDrive(stamp,tab){
     if(!rv)$("#mg").ontoggle=()=>{if(!$("#mg").open||$("#mgb").innerHTML)return;$("#mgb").innerHTML=`<iframe class="drive" id="mf" src="/data/drives/deepdive/${encodeURIComponent(stamp)}/drive.html"></iframe>`;
       fitFrame($("#mf"),doc=>{const w=doc.querySelector(".wrap");if(!w)return;if(!doc.getElementById("foot")){$("#mgb").innerHTML='<div class="sub">No clip tools for this drive: the page was built without footage. Run <code>./drive_report.py</code> with the Archive connected.</div>';return}
         [...w.children].forEach(c=>{if(c.id!=="foot")c.style.display="none"})})};
-    if(rv)driveReviewPanel($("#drr"),stamp,lo);
+    let bodyOn=false;
+    const body=async()=>{
     try{await teslaDriveBody($("#tdh"),"A",fetchSeg,pl.saved||[],{heading:false,review:rv?{t0,t1,lo}:null})}
-    catch(e){const h=$("#tdh");if(h)h.innerHTML=e.none?'<div class="card"><b>No dashcam footage or telemetry for this drive.</b><div class="sub" style="margin-top:6px">Nothing recorded on the Archive covers these times, and nothing was read from it before. If the Archive is not connected, connect it and open this tab again.</div></div>':errBox(e.message,"Could not rebuild this drive from the video")}
+    catch(e){const h=$("#tdh");if(h)h.innerHTML=e.none?'<div class="card"><b>No dashcam footage or telemetry for this drive.</b><div class="sub" style="margin-top:6px">Nothing recorded on the Archive covers these times, and nothing was read from it before. If the Archive is not connected, connect it and open this tab again.</div></div>':errBox(e.message,"Could not rebuild this drive from the video")}};
+    // Review: nothing but the Review card until the drive has been reviewed; then the map, chart, video and the events
+    if(rv)driveReviewPanel($("#drr"),stamp,lo,has=>{if(has&&!bodyOn){bodyOn=true;body()}});else body();
   }
 }
 
@@ -1258,7 +1277,7 @@ async function teslaDriveBody(host,role,fetchSeg,places,opts){
   const events=()=>{if(evShown||!d.events||!d.events.length||!live())return;evShown=true;
     $("#dev").innerHTML=`<h2>Saved clips and Sentry events in this drive</h2><div class="sub">Click one to jump the video there.</div><div class="evs">${d.events.map(v=>`<button class="evc" data-u="${v.t}">${v.thumb?`<img loading="lazy" src="/footage/${role}/${v.folder}/${v.id}/thumb.png" onerror="this.style.visibility='hidden'">`:'<div class="noimg"></div>'}<b>${hms(v.ts)}</b><span>${esc(v.folder==="SavedClips"?"Saved":"Sentry")} · ${esc(reason(v.reason))}</span><span>${esc(v.city||"")}</span></button>`).join("")}</div>`;
     $$("#dev .evc").forEach(b=>b.onclick=()=>{if(player){seekIdx(Math.round(+b.dataset.u-it().t0));$("#dvid").scrollIntoView({block:"nearest"})}})};
-  RVAPI={cursor:i=>cursor(i),seek:i=>seekIdx(i),series:()=>S(),t0:()=>it().t0,clk:i=>clk(i),focus:f=>{if(chart&&chart.focus)chart.focus(f)},zoom:(a,b)=>{if(chart&&chart.view)chart.view(a,b)},live:()=>live()};
+  RVAPI={cursor:i=>cursor(i),seek:i=>seekIdx(i),series:()=>S(),t0:()=>it().t0,clk:i=>clk(i),focus:f=>{if(chart&&chart.focus)chart.focus(f)},zoom:(a,b)=>{if(chart&&chart.view)chart.view(a,b)},limit:(a,b)=>{if(chart&&chart.limit)chart.limit(a,b)},live:()=>live()};
   const build=()=>{if(!live())return;fill();const s=S(),idx=pts();
     if(!idx.length){$("#dmapc").hidden=$("#dchc").hidden=true}else{$("#dmapc").hidden=$("#dchc").hidden=false;
       if(!map)map=driveMap($("#dmap"),s,idx,seekIdx,$("#dleg"));else map.update(s,idx);
@@ -1291,7 +1310,7 @@ async function teslaDriveBody(host,role,fetchSeg,places,opts){
     const T=i=>clk(i);
     const near=x=>sg.filter(g=>g.side==="L").map(g=>({g,dt:idxOf(g)-x.i})).filter(o=>o.dt>=-30&&o.dt<=10).sort((a,b)=>Math.abs(a.dt)-Math.abs(b.dt))[0];
     $("#drv").innerHTML=(sg.length?`<h2>Signs read (${n0(sg.length)})</h2><div class="sub">Click one to jump the video to it. Dim ones were seen in a single still only.</div><div class="evs">${sg.slice(0,120).map(g=>{const i=idxOf(g),v=S0.v[i];return `<button class="evc ${g.n<2?"faded":""}" data-u="${g.u}">${g.crop?`<img loading="lazy" src="/review/${esc(g.crop)}" onerror="this.style.visibility='hidden'">`:'<div class="noimg"></div>'}<b>${esc(g.text)}${g.side==="R"?" (right side)":""}</b><span>${hms(g.t)}${v!=null?` · car ${n0(v)} km/h`:""}${S0.ap[i]?` · ${APN[S0.ap[i]]||""}`:""}</span><span>seen ${g.n}× · sure ${n0(g.conf)}%</span></button>`}).join("")}</div>${sg.length>120?`<div class="sub">The first 120 of ${n0(sg.length)} are shown.</div>`:""}`:"")
-     +(steps.length?`<h2>Speed changes (${n0(steps.length)})</h2><div class="sub">Every lasting change of 10 km/h or more while moving, from the car's own speed. Click one to jump there.</div><div class="card" style="padding:4px 12px">${steps.map(x=>{const o=near(x);return `<button class="trow" style="width:100%;text-align:left;background:none;border:0;cursor:pointer;grid-template-columns:70px 1fr auto" data-i="${x.i}"><span>${T(x.i)}</span><span>${n0(x.pre)} → ${n0(x.post)} km/h${S0.ap[x.i]?` · ${APN[S0.ap[x.i]]||""}`:""}</span><span class="sub">${o?`sign ${esc(o.g.text)} ${o.dt<0?-o.dt+" s after it":o.dt+" s before it"}`:"no sign read near"}</span></button>`}).join("")}</div>`:"");
+;
     $$("#drv .evc").forEach(b=>b.onclick=()=>{if(player){seekIdx(Math.round(+b.dataset.u-it().t0)-3);$("#dvid").scrollIntoView({block:"nearest"})}});
     $$("#drv .trow").forEach(b=>b.onclick=()=>{if(player){seekIdx(+b.dataset.i-6);$("#dvid").scrollIntoView({block:"nearest"})}})};
   const rvGet=async()=>{const r=await fetch("/api/review?role="+role+"&t0="+opts.review.t0+"&t1="+opts.review.t1+"&lo="+opts.review.lo);if(r.ok)rv=await r.json()};
@@ -1327,9 +1346,9 @@ function driveMap(el,s,idx,onPick,leg){
 function telemChart(cv,tip,s,onPick,t0){          // t0: i -> "HH:MM:SS" on the local clock (or a base time in ms, shown on this computer's clock)
   const lab=typeof t0==="function"?t0:i=>new Date(t0+i*1000).toTimeString().slice(0,8);
   // va/vb: the part of the drive shown (vb null = all of it); A/B the same, clamped, in seconds
-  let S=s,cur=null,hov=null,F=null,W=0,H=0,M={signs:[],steps:[]},ver=0,cache=null,ck="",va=0,vb=null,A=0,B=1,sel=null,selMode=false;const css=n=>getComputedStyle(document.documentElement).getPropertyValue(n).trim()||"#888";
+  let S=s,cur=null,hov=null,F=null,W=0,H=0,M={signs:[],steps:[]},ver=0,cache=null,ck="",va=0,vb=null,A=0,B=1,sel=null,selMode=false,LIM=null;const css=n=>getComputedStyle(document.documentElement).getPropertyValue(n).trim()||"#888";
   const L=62,R=10,lanes=[{k:"v",t:"km/h",y:34,h:118},{k:"p",t:"pedals",y:164,h:46},{k:"s",t:"steering",y:218,h:40}];
-  const norm=()=>{const N=S.v.length-1;if(N<1){A=0;B=1;return}if(vb==null){A=0;B=N}else{A=Math.max(0,Math.min(va,N-1));B=Math.max(A+1,Math.min(vb,N))}};
+  const norm=()=>{const N=S.v.length-1;if(N<1){A=0;B=1;return}if(vb==null){A=LIM?LIM.a:0;B=LIM?LIM.b:N}else{A=Math.max(0,Math.min(va,N-1));B=Math.max(A+1,Math.min(vb,N))}};
   const X=i=>L+(W-L-R)*(i-A)/Math.max(1,B-A),I=x=>Math.max(0,Math.min(S.v.length-1,Math.round(A+(x-L)/(W-L-R)*(B-A))));
   const paintBase=(c,dpr)=>{c.setTransform(dpr,0,0,dpr,0,0);c.clearRect(0,0,W,H);
     const ink=css("--mut"),line=css("--line"),acc=css("--acc"),bad=css("--bad"),ok=css("--charge"),n=S.v.length;if(!n)return;
@@ -1379,7 +1398,9 @@ function telemChart(cv,tip,s,onPick,t0){          // t0: i -> "HH:MM:SS" on the 
   const zb=k=>zm.querySelector('[data-z="'+k+'"]');
   const zoomed=()=>vb!=null,ui=()=>{const w=B-A,N=Math.max(1,S.v.length-1);zb("lab").textContent=zoomed()?lab(Math.round(A))+" \u2013 "+lab(Math.round(B))+" \u00b7 "+(N/w).toFixed(1)+"\u00d7":"";
     zb("L").disabled=zb("R").disabled=zb("out").disabled=zb("full").disabled=!zoomed();zb("in").disabled=w<=12;zb("sel").classList.toggle("on",selMode);cv.style.cursor=selMode?"crosshair":""};
-  const setView=(a,b)=>{const N=S.v.length-1,w=Math.max(10,b-a);if(w>=N-1){va=0;vb=null}else{a=Math.max(0,Math.min(a,N-w));va=a;vb=a+w}norm();ver++;ui();draw()};
+  const setView=(a,b)=>{const N=S.v.length-1;
+    if(LIM){const full=LIM.b-LIM.a,w=Math.max(Math.min(10,full),Math.min(b-a,full));a=Math.max(LIM.a,Math.min(a,LIM.b-w));if(w>=full-1){va=0;vb=null}else{va=a;vb=a+w}norm();ver++;ui();draw();return}
+    const w=Math.max(10,b-a);if(w>=N-1){va=0;vb=null}else{a=Math.max(0,Math.min(a,N-w));va=a;vb=a+w}norm();ver++;ui();draw()};
   const zoomAt=(c,f)=>setView(c-(c-A)*f,c-(c-A)*f+(B-A)*f);
   const mid=()=>cur!=null&&cur>=A&&cur<=B?cur:(A+B)/2;
   zb("in").onclick=()=>zoomAt(mid(),.5);zb("out").onclick=()=>zoomAt(mid(),2);zb("full").onclick=()=>setView(0,1e9);
@@ -1393,7 +1414,7 @@ function telemChart(cv,tip,s,onPick,t0){          // t0: i -> "HH:MM:SS" on the 
     if(e.ctrlKey||e.metaKey){e.preventDefault();zoomAt(A+(e.clientX-r.left-L)/(W-L-R)*(B-A),e.deltaY<0?.8:1.25)}
     else if(zoomed()&&Math.abs(e.deltaX)>Math.abs(e.deltaY)){e.preventDefault();const d=(B-A)*e.deltaX/(W-L-R);setView(A+d,B+d)}},{passive:false});
   norm();ui();addEventListener("resize",draw);draw();
-  return{update(s2){S=s2;ver++;norm();ui();draw()},marks(m){M=m;ver++;draw()},focus(f){F=f;draw()},view(a,b){setView(a,b)},cursor(i){cur=i;if(zoomed()&&(i<A||i>B)){const w=B-A;setView(i-w*.2,i+w*.8)}if(hov==null)tip.textContent=read(i);draw()}};
+  return{update(s2){S=s2;ver++;norm();ui();draw()},marks(m){M=m;ver++;draw()},focus(f){F=f;draw()},view(a,b){setView(a,b)},limit(a,b){const N=S.v.length-1;LIM=a==null?null:{a:Math.max(0,Math.min(a,N-1)),b:Math.max(1,Math.min(b,N))};va=0;vb=null;norm();ver++;ui();draw()},cursor(i){cur=i;if(zoomed()&&(i<A||i>B)){const w=B-A;setView(i-w*.2,i+w*.8)}if(hov==null)tip.textContent=read(i);draw()}};
 }
 // lasting changes of speed: the median of the 6 s before against the 6 s after, 10 km/h or more, both while moving; one per 20 s (the biggest wins)
 function speedSteps(v,minD=10){

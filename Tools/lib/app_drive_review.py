@@ -6,7 +6,8 @@ teslacam_timeline.py - nothing is read from the video for this part):
   intervention   FSD switched off (to manual, Autosteer or TACC): what the driver was doing at that moment (brake / accelerator / steering),
                  how long FSD was off, and whether it was the end of the trip (stopped)
   accelerator    the accelerator pressed while FSD was on (a run of seconds at or above accel_min_pct): length, peak, speed
-  speed change   a lasting change between two speeds the user picks (default 100 -> 110 km/h, optionally both ways) while FSD stayed on
+  speed change   every lasting change of speed_min_kmh or more (the speed a few seconds before against a few seconds after) while FSD stayed on; the
+                 page filters them afterwards (for example 100 -> 110 km/h)
 
 Then, for each event only, the FRONT camera is looked at: a still every second from event_before_s before to event_after_s after (the usual
 28 stills; a longer event is thinned to max_event_stills), every round red-ringed speed-limit sign in them is read (sign_finder.py + tesseract,
@@ -18,6 +19,7 @@ Time: UTC is the clock. The dashcam's file names are the car's clock, which clip
 days, and change when the car crosses a time-zone border, even inside this drive), and Tessie's local times are turned into UTC with app.timezone, so a drive and its footage are always compared as the same instant. Each event keeps its UTC instant ("utc"); "t" is the drive page's local
 clock, which is only what is shown.
 """
+import bisect
 import datetime
 import json
 import math
@@ -38,11 +40,8 @@ import teslacam_timeline as TL
 
 OPTS = dict(accel_min_pct=5,        # accelerator at or above this (%) counts as pressed
             merge_s=3,              # presses / levels with a gap shorter than this are one
-            speed_from=100,         # the default pair of the speed-change finder (km/h)
-            speed_to=110,
-            speed_tol_kmh=3,        # a speed this close to the target is "at" it
-            speed_hold_s=8,         # and has to stay there this long to be a level, not a pass-through
-            speed_window_s=90,      # the second level has to start within this long of the first one ending
+            speed_min_kmh=10,       # a lasting change of speed at least this big, with FSD on, is a speed-change event
+            speed_tol_kmh=3,        # the page's speed filter: a speed this close to the one asked for matches
             event_before_s=12,      # stills from this long before an event ...
             event_after_s=15,       # ... to this long after it (28 stills with the one a second)
             max_event_stills=40,    # a longer event is thinned to this many
@@ -126,44 +125,44 @@ def accel_presses(rows, o):
     return out
 
 
-def _levels(rows, target, o):
-    """Runs of consecutive readings within the tolerance of a speed that last at least speed_hold_s: [(first index, last index)]."""
-    runs, a, b = [], None, None
+def speed_changes(rows, o):
+    """Every lasting change of speed while FSD was on: the median speed 8..3 s before a second against the median 3..9 s after it, at least
+    speed_min_kmh apart and both at 20 km/h or more; the biggest change wins within 20 s."""
+    out, cand = [], []
+    tt = [r["t"] for r in rows]
+    n = len(rows)
 
-    def close():
-        if a is not None and rows[b]["t"] - rows[a]["t"] + 1 >= o["speed_hold_s"]:
-            runs.append((a, b))
-    for k, r in enumerate(rows):
-        ok = r["v"] is not None and abs(r["v"] - target) <= o["speed_tol_kmh"]
-        if ok and a is not None and r["t"] - rows[b]["t"] <= MAXGAP:
-            b = k
+    def win(t, a, b):
+        return [r for r in rows[max(0, bisect.bisect_left(tt, t + a)):bisect.bisect_right(tt, t + b)]]
+
+    def med(w):
+        v = sorted(r["v"] for r in w if r["v"] is not None)
+        return v[len(v) >> 1] if len(v) >= 3 else None
+    for k in range(n):
+        t = tt[k]
+        pre, post = win(t, -8, -3), win(t, 3, 9)
+        a, b = med(pre), med(post)
+        if a is None or b is None or a < 20 or b < 20 or abs(b - a) < o["speed_min_kmh"]:
             continue
-        close()
-        a = b = k if ok else None
-    close()
-    return runs
-
-
-def speed_changes(rows, o, a_kmh, b_kmh, both=False):
-    out = []
-    for lo, hi in ([(a_kmh, b_kmh), (b_kmh, a_kmh)] if both else [(a_kmh, b_kmh)]):
-        A, B = _levels(rows, lo, o), _levels(rows, hi, o)
-        for n, (a0, a1) in enumerate(A):
-            nxt = A[n + 1][0] if n + 1 < len(A) else None
-            nb = next((x for x in B if x[0] > a1), None)
-            if not nb or rows[nb[0]]["t"] - rows[a1]["t"] > o["speed_window_s"] or (nxt is not None and nxt < nb[0]):
-                continue
-            mid = rows[a1:nb[0] + 1]
-            if rows[a1]["ap"] != 1 or rows[nb[0]]["ap"] != 1 or sum(1 for r in mid if r["ap"] == 1) < 0.9 * len(mid):
-                continue
-            out.append(dict(kind="speed", t=rows[a1]["t"], t1=rows[nb[0]]["t"], v=round(statistics.median(r["v"] for r in rows[a0:a1 + 1])),
-                            v1=round(statistics.median(r["v"] for r in rows[nb[0]:nb[1] + 1])), la=rows[a1]["la"], lo=rows[a1]["lo"],
-                            dur_s=round(rows[nb[0]]["t"] - rows[a1]["t"]), pressed=any((r["ac"] or 0) >= o["accel_min_pct"] for r in mid)))
+        mid = win(t, -8, 9)
+        if sum(1 for r in mid if r["ap"] == 1) < 0.9 * len(mid) or rows[k]["ap"] != 1:
+            continue
+        cand.append((abs(b - a), k, a, b))
+    cand.sort(reverse=True)
+    kept = []
+    for d, k, a, b in cand:
+        if all(abs(tt[k] - tt[x[1]]) >= 20 for x in kept):
+            kept.append((d, k, a, b))
+    for d, k, a, b in sorted(kept, key=lambda x: x[1]):
+        t = tt[k]
+        mid = win(t, -2, 3)
+        out.append(dict(kind="speed", t=t - 2, t1=t + 3, v=round(a), v1=round(b), la=rows[k]["la"], lo=rows[k]["lo"], dur_s=5,
+                        pressed=any((r["ac"] or 0) >= o["accel_min_pct"] for r in mid)))
     return out
 
 
-def find_events(rows, o, a_kmh, b_kmh, both):
-    ev = interventions(rows, o) + accel_presses(rows, o) + speed_changes(rows, o, a_kmh, b_kmh, both)
+def find_events(rows, o):
+    ev = interventions(rows, o) + accel_presses(rows, o) + speed_changes(rows, o)
     ev.sort(key=lambda e: e["t"])
     n = {"intervention": 0, "accelerator": 0, "speed": 0}
     for e in ev:
@@ -310,7 +309,7 @@ class DriveReview:
 
     def defaults(self):
         o = _opts()
-        return dict(speed_from=o["speed_from"], speed_to=o["speed_to"], both=False)
+        return dict(speed_from=100, speed_to=110, speed_tol_kmh=o["speed_tol_kmh"])     # the page's speed filter starts here
 
     def start(self, stamp, teslacam, params):
         if self.t and self.t.is_alive():
@@ -337,7 +336,6 @@ class DriveReview:
 
     def _review(self, stamp, teslacam, params):
         o = _opts(params)
-        a_kmh, b_kmh, both = float(o["speed_from"]), float(o["speed_to"]), bool(params.get("both"))
         folder = DP.folder_for(os.path.join(self.dir, "drives", "deepdive"), stamp)
         self._stage("Reading the drive")
         with open(os.path.join(folder, "drive_summary.json"), encoding="utf-8") as fh:
@@ -366,12 +364,12 @@ class DriveReview:
             CC.refresh(self.dir, store, wait=True)
             clock, cam = DF.clock_offset(ts, las, los, store, t0, t1, None, self.dir)
         if clock is None:
-            res = dict(stamp=stamp, made=_now(), params=dict(o, both=both), clock=None, events=[], stills=False,
+            res = dict(stamp=stamp, made=_now(), params=dict(o), clock=None, events=[], stills=False,
                        note="No dashcam telemetry lies on this drive's route (the footage is not on a connected drive, or was never read).")
             self._save(stamp, res)
             return
         rows = to_rows(cam)
-        events = find_events(rows, o, a_kmh, b_kmh, both)
+        events = find_events(rows, o)
         req = app_review.requirements()
         stills = ST.Stills(self.dir, app_config.get("stills.width", 400), app_config.get("stills.quality", 6))
         can_sign = bool(front) and not (req["py"] or req["cmd"])
@@ -398,7 +396,7 @@ class DriveReview:
             ev["utc"] = DF.utc(ev["t"])
             ev["clip"] = _clip_of(rows, ev["t"])
         secs_n = len(rows)
-        res = dict(stamp=stamp, made=_now(), params=dict(o, both=both), clock=clock, t0=t0, t1=t1, poff=CC.local_offset(DF.utc(t0)), events=events, stills=can_look, note=note,
+        res = dict(stamp=stamp, made=_now(), params=dict(o), clock=clock, t0=t0, t1=t1, poff=CC.local_offset(DF.utc(t0)), events=events, stills=can_look, note=note,
                    coverage=dict(seconds=secs_n, pct=round(100.0 * min(1.0, secs_n / max(1.0, t1 - t0)))),
                    counts={k: sum(1 for e in events if e["kind"] == k) for k in ("intervention", "accelerator", "speed")})
         self._save(stamp, res)
