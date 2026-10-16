@@ -226,7 +226,7 @@ def _resolve_suburb_via_geocode(lat: float, lon: float) -> tuple:
     back to the caller's existing name-heuristic, not an exception.
     """
     try:
-        from charger_find_tesla import reverse_geocode_osm, load_geo_cache, save_geo_cache
+        from lib.geo_common import reverse_geocode_osm, load_geo_cache, save_geo_cache
     except Exception:
         return "", ""
     try:

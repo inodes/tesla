@@ -248,7 +248,7 @@ def _resolve_state_suburb_via_geocode(lat: float, lon: float) -> Tuple[str, str,
     raises - best-effort data-quality enhancement, not a hard import requirement.
     """
     try:
-        from charger_find_tesla import reverse_geocode_osm, load_geo_cache, save_geo_cache
+        from lib.geo_common import reverse_geocode_osm, load_geo_cache, save_geo_cache
     except Exception:
         return "", "", ""
     try:

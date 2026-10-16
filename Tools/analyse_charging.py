@@ -86,7 +86,7 @@ def resolve_location_timezone(state: str = None, country: str = None, lat: float
     if c_clean in ["australia", "au"]:
         if not st_clean and lat is not None and lon is not None:
             try:
-                from charger_find_tesla import state_from_coords
+                from lib.geo_common import state_from_coords
                 resolved_st, _ = state_from_coords(lat, lon, country=country)
                 if resolved_st:
                     st_clean = resolved_st.upper().strip()

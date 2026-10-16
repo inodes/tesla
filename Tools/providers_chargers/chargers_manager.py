@@ -899,16 +899,7 @@ class ChargerDiscoveryManager:
 
         try:
             if primary_src == "tesla":
-                # charger_find_tesla.py was archived to Tools/archive/ - make this
-                # import self-contained (don't rely on the caller having already
-                # put Tools/archive on sys.path, e.g. analyse_charging.py,
-                # charger_plugshare_auditor.py and places_osm_editor.py all reach
-                # this method without doing so). REQ-095 tracks fully absorbing
-                # this logic into chargers_tesla.py so this import goes away.
-                _archive_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "archive")
-                if _archive_dir not in sys.path:
-                    sys.path.insert(0, _archive_dir)
-                from charger_find_tesla import TeslaChargerExplorer
+                from .chargers_tesla import TeslaChargerExplorer
                 explorer = TeslaChargerExplorer()
                 c_type = "supercharger" if station.speed_tier == "supercharger" else "destination_charger"
  # this used to call a scrape_station_detail() method

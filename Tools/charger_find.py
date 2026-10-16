@@ -30,13 +30,10 @@ from datetime import datetime, timezone
 _tools_dir = os.path.dirname(os.path.abspath(__file__))
 _repo_root = os.path.dirname(_tools_dir)
 _lib_dir = os.path.join(_tools_dir, "lib")
-_archive_dir = os.path.join(_tools_dir, "archive")
 if _tools_dir not in sys.path:
     sys.path.insert(0, _tools_dir)
 if _lib_dir not in sys.path:
     sys.path.insert(0, _lib_dir)
-if _archive_dir not in sys.path:
-    sys.path.insert(0, _archive_dir)
 
 from lib.tessie_api_common import shown_path
 from lib.table_formatter import (
@@ -689,7 +686,7 @@ def browse_chargefox_catalog_grid(manager: ChargerDiscoveryManager, country: str
     auto_save=True, wired to the top-level --save/--update flag, for a one-shot
     non-interactive refresh: `--live --network chargefox --save`).
     """
-    from charger_find_tesla import AU_STATE_MAP
+    from lib.geo_common import AU_STATE_MAP
 
     provider = next((p for p in manager.providers if isinstance(p, ChargefoxProvider)), None)
     if provider is None:
@@ -925,7 +922,7 @@ def browse_live_diff_grid(provider, network_label: str, country: str = "Australi
     view) untouched; this covers everything else with a single canonical
     live list to diff against.
     """
-    from charger_find_tesla import AU_STATE_MAP
+    from lib.geo_common import AU_STATE_MAP
 
     raw_by_key = _load_raw_stations_by_key(provider)
 
@@ -1966,10 +1963,7 @@ def sync_busy_times_for_stations(stations: list, delay_s: float = 1.0) -> dict:
     print(f"\n🚦 Fetching Tesla Busy Times for {len(tesla_sc)} Supercharger(s)...")
     if not tesla_sc:
         return {"saved": 0, "failed": 0}
-    archive_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "archive")
-    if archive_dir not in sys.path:
-        sys.path.insert(0, archive_dir)
-    from charger_find_tesla import TeslaChargerExplorer
+    from providers_chargers.chargers_tesla import TeslaChargerExplorer
     from lib.tesla_busy_times import extract_busy_profile, save_busy_profile, busy_summary
     import lib.tesla_busy_times as _busy_mod
     try:
@@ -2609,7 +2603,7 @@ DESCRIPTION
 
         print("🚀 [1/11] Starting Full Network Sync: Tesla Superchargers & Destination Chargers...")
         try:
-            from charger_find_tesla import TeslaChargerExplorer
+            from providers_chargers.chargers_tesla import TeslaChargerExplorer
             explorer = TeslaChargerExplorer()
             ref_lat, ref_lon, ref_label = (None, None, None)
             if args.near:
@@ -2765,7 +2759,7 @@ DESCRIPTION
         return
 
     if args.sync_tesla:
-        from charger_find_tesla import TeslaChargerExplorer
+        from providers_chargers.chargers_tesla import TeslaChargerExplorer
         explorer = TeslaChargerExplorer()
         charger_types = []
         if args.sc:
@@ -3005,7 +2999,7 @@ DESCRIPTION
     if args.live and not args.query and not args.near:
         net_lower = (args.network or "").strip().lower()
         if args.sc or net_lower == "tesla":
-            from charger_find_tesla import TeslaChargerExplorer, browse_stations_by_type
+            from providers_chargers.chargers_tesla import TeslaChargerExplorer, browse_stations_by_type
             types_to_fetch = []
             if args.sc or args.tesla_sc:
                 types_to_fetch.append("superchargers")
