@@ -10,14 +10,10 @@ import csv
 import datetime
 import os
 
+import clip_clock as CC
 import firmware_alert_catalog as CAT
 
 GAP_S = 600
-try:
-    from zoneinfo import ZoneInfo
-    _TZ = ZoneInfo("Australia/Sydney")
-except Exception:       # pragma: no cover
-    _TZ = None
 
 
 def _rows(p):
@@ -33,7 +29,7 @@ def _local_epoch(s):
         d = datetime.datetime.strptime(s[:19], "%Y-%m-%d %H:%M:%S" if len(s) >= 19 else "%Y-%m-%d %H:%M")
     except ValueError:
         return None
-    return int(d.replace(tzinfo=_TZ).timestamp()) if _TZ else int(d.timestamp())
+    return int(CC.from_local(CC.naive(d.strftime("%Y-%m-%d_%H-%M-%S"))))           # the alert's local clock (app.timezone) turned into UTC
 
 
 def deps(data_dir):
@@ -90,8 +86,8 @@ def build(data_dir, drives, charges, idles):
         for k, i, a, b, o in wins:
             if a <= p["t0"] <= b and (ctx is None or {"drive": 0, "charge": 1, "idle": 2}[k] < {"drive": 0, "charge": 1, "idle": 2}[ctx["k"]]):
                 ctx = dict(k=k, id=i, label=(o.get("frm", "") + " → " + o.get("to", "")) if k == "drive" else (o.get("place") or ""))
-        d = datetime.datetime.fromtimestamp(p["t0"], _TZ) if _TZ else datetime.datetime.fromtimestamp(p["t0"])
-        out.append(dict(id="%s:%d" % (p["name"], p["t0"]), name=p["name"], t0=p["t0"], t1=p["t1"], n=p["n"], day=d.strftime("%Y-%m-%d"), hm=d.strftime("%H:%M"),
+        lt = CC.local_iso(p["t0"])                                                    # UTC kept in t0 / t1; the local clock is only for showing
+        out.append(dict(id="%s:%d" % (p["name"], p["t0"]), name=p["name"], t0=p["t0"], t1=p["t1"], n=p["n"], day=lt[:10], hm=lt[11:16],
                         title=x["title"], category=x["category"], severity=x["severity"], what=x["what"], advice=x["advice"], known=x["known"],
                         screen=(r.get("Customer Facing Message 1") or "").strip(), rate=r.get("Incidence Rate") or "", ctx=ctx))
     out.sort(key=lambda e: -e["t0"])

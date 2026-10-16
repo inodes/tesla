@@ -8,6 +8,7 @@ Sources (all in the Tesla data folder):
     places_osm_cache.json    OpenStreetMap places fetched from the app for the other places (written by the app)
 """
 import bisect
+import clip_clock as CC
 import collections
 import datetime
 import json
@@ -213,8 +214,8 @@ class Places:
                 continue
             if any(a < nxt and b > t0 for a, b in idles.get(key, [])) or any(a < nxt and b > t0 for a, b in chg.get(key, [])):
                 continue
-            dt = datetime.datetime.strptime(d["day"] + " " + d["hm"], "%Y-%m-%d %H:%M") + datetime.timedelta(seconds=t0 - d["t0"])
-            ev.append(dict(k="stay", id="stay%d" % t0, t0=t0, day=dt.strftime("%Y-%m-%d"), hm=dt.strftime("%H:%M"), min=round((nxt - t0) / 60.0, 1), key=key, reparks=len(reps), kwh=0))
+            lt = CC.local_iso(t0)                           # t0 is UTC; the local clock is only for showing
+            ev.append(dict(k="stay", id="stay%d" % t0, t0=t0, day=lt[:10], hm=lt[11:16], min=round((nxt - t0) / 60.0, 1), key=key, reparks=len(reps), kwh=0))
         for d in drv:
             ev.append(dict(k="repark" if d.get("repark") else "drive", id=d["id"], t0=d["t1"], day=d["day"], hm=d["hm"], min=d["min"], km=d["km"], key=d.get("pkey1") or "", frm=d.get("frm"), in_stay=bool(stay_of.get(d["id"]))))
         return ev
@@ -232,7 +233,7 @@ class Places:
                 last = max((e["t0"] for e in es), default=0)
                 return dict(charges=sum(e["k"] == "charge" for e in es), idles=sum(e["k"] in ("idle", "stay") for e in es), drives=sum(e["k"] == "drive" for e in es), reparks=sum(e["k"] == "repark" for e in es),
                             kwh=round(sum(e.get("kwh") or 0 for e in es if e["k"] == "charge"), 1), cost=round(sum(e.get("cost") or 0 for e in es if e["k"] == "charge"), 2),
-                            last=datetime.datetime.fromtimestamp(last).strftime("%Y-%m-%d") if last else "", t_last=last)
+                            last=CC.local_iso(last)[:10] if last else "", t_last=last)
             saved = [dict(key="p:" + p["name"], name=p["name"], lat=p["lat"], lon=p["lon"], radius=p["radius"], notes=p["notes"], **stat("p:" + p["name"])) for p in self.defs()]
             sc = [dict(key="s:" + s["name"], name=s["name"], lat=s["lat"], lon=s["lon"], addr=s["addr"], stalls=s["stalls"], kw=s["kw"], tier=s["tier"], **stat("s:" + s["name"])) for s in self.stations()]
             return dict(saved=saved, superchargers=sc, found=self.discover(S, ev), charger_count=len(self.chargers()["rows"]))
@@ -252,7 +253,7 @@ class Places:
                 last = max((e["t0"] for e in es), default=0)
                 r = {k: c[k] for k in ("key", "name", "network", "addr", "suburb", "state", "lat", "lon", "stalls", "kw", "tier", "conn", "access", "tesla_only")}
                 r.update(charges=len(es), kwh=round(sum(e.get("kwh") or 0 for e in es), 1), cost=round(sum(e.get("cost") or 0 for e in es), 2),
-                         last=datetime.datetime.fromtimestamp(last).strftime("%Y-%m-%d") if last else "")
+                         last=CC.local_iso(last)[:10] if last else "")
                 rows.append(r)
             known = {c["key"] for c in C["rows"]}
             # charging you have done at a place that is not a registry charger (a saved place such as Home, a friend's house, a
@@ -268,7 +269,7 @@ class Places:
                 rows.append(dict(key=key, name=es[-1].get("pname") or key[2:], network=cn or ("AC / home" if kind == "ac" else "DC fast"), addr=es[-1].get("addr") or "", suburb="", state="",
                                  lat=es[-1].get("lat"), lon=es[-1].get("lon"), stalls=None, kw=None, tier="saved place" if key.startswith("p:") else ("AC" if kind == "ac" else "DC fast"),
                                  conn="", access="", tesla_only=False, charges=len(es), kwh=round(sum(e.get("kwh") or 0 for e in es), 1), cost=round(sum(e.get("cost") or 0 for e in es), 2),
-                                 last=datetime.datetime.fromtimestamp(last).strftime("%Y-%m-%d")))
+                                 last=CC.local_iso(last)[:10]))
             nets = collections.Counter(r["network"] for r in rows)
             return dict(rows=rows, networks=sorted(nets.items(), key=lambda x: -x[1]), updated=C["updated"], sources=C["sources"])
         return _memo("charger_listing", self.deps() + [os.path.join(S.d, "charges", "charges_master.csv"), os.path.join(S.d, "charges", "app_chargebook.json"), self.f_places], build)
