@@ -45,6 +45,8 @@ OPTS = dict(accel_min_pct=5,        # accelerator at or above this (%) counts as
             event_before_s=12,      # stills from this long before an event ...
             event_after_s=15,       # ... to this long after it (28 stills with the one a second)
             max_event_stills=40,    # a longer event is thinned to this many
+            hi_px=1000,             # the big picture of each still of an event (cut from the full-size frame while the video is there): width in px, 0 = none
+            hi_quality=88,          # and its JPEG quality
             steer_deg=15)           # the wheel moved this much around a switch-off = "steering"
 MODES = {0: "Manual", 1: "FSD", 2: "Autosteer", 3: "TACC"}
 MAXGAP = 3                          # seconds between two readings that are still consecutive
@@ -229,8 +231,7 @@ def look(ev, rows, front, base, stamp, o, stop, stills=None, signs=True):
         if im is not None:
             ev["tile"] = dict(w=int(im.shape[1]), h=int(im.shape[0]))
     ev["signs"] = []
-    if not signs:
-        return
+    ev["hi"] = []
     wf = [w for w in want if w[1] in front]                 # signs are read from full-size frames, so only where the video is
     shots = []                                              # (T, image)
     with tempfile.TemporaryDirectory() as tmp:
@@ -246,6 +247,23 @@ def look(ev, rows, front, base, stamp, o, stop, stills=None, signs=True):
                     shots.append((wf[k + n][0], im))
             k = j + 1
         if stop():
+            return
+        # the big pictures of this event: the full-size frames just read, kept at hi_px wide (the one-second stills of the store are small, for browsing)
+        if shots and o["hi_px"]:
+            folder = os.path.join(base, "events", stamp)
+            os.makedirs(folder, exist_ok=True)
+            where = {w[0]: k for k, w in enumerate(pics)}
+            ev["hi"] = [""] * len(pics)
+            for T, im in shots:
+                k = where.get(T)
+                if k is None:
+                    continue
+                if im.shape[1] > o["hi_px"]:
+                    im = cv2.resize(im, (int(o["hi_px"]), max(1, int(im.shape[0] * o["hi_px"] / float(im.shape[1])))), interpolation=cv2.INTER_AREA)
+                name = "%s_%02d.jpg" % (ev["id"], k)
+                cv2.imwrite(os.path.join(folder, name), im, [cv2.IMWRITE_JPEG_QUALITY, int(o["hi_quality"])])
+                ev["hi"][k] = name
+        if not signs:
             return
         found = []
         with ThreadPoolExecutor(max(1, int(o_rv["workers"]))) as ex:

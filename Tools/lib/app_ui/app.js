@@ -200,6 +200,7 @@ async function driveReviewPanel(host,stamp,lo,onResult){
     if(e.pics&&e.pics[k])return `background-image:url(/still/${e.pics[k][0]}/${e.pics[k][1]}.jpg);background-size:cover;background-position:center;aspect-ratio:${g.w}/${g.h}`;
     const rows=Math.ceil(e.shots.length/g.cols),c=k%g.cols,r=Math.floor(k/g.cols);
     return `background-image:url(/revev/${encodeURIComponent(S.result.stamp)}/${encodeURIComponent(e.sheet)});background-size:${g.cols*100}% ${rows*100}%;background-position:${g.cols>1?c/(g.cols-1)*100:0}% ${rows>1?r/(rows-1)*100:0}%;aspect-ratio:${g.w}/${g.h}`};
+  const big=(e,k)=>{const g=e.tile;if(e.hi&&e.hi[k])return `background-image:url(/revev/${encodeURIComponent(S.result.stamp)}/${encodeURIComponent(e.hi[k])});background-size:contain;background-repeat:no-repeat;background-position:center;aspect-ratio:${g.w}/${g.h}`;return sprite(e,k)};        // the big picture (full-size frame, kept small enough) while it was kept, else the small still
   const desc=e=>{
     const gm=e.la!=null?` · <a target="_blank" rel="noopener" href="https://www.google.com/maps/@${e.la},${e.lo},19z">map</a>`:"";
     let h="",tags="";
@@ -253,7 +254,7 @@ async function driveReviewPanel(host,stamp,lo,onResult){
   // what is lit: the cells, the big still, the strip, the chart under the map
   const hot=()=>{const L=list(),e=L[ei];if(!e)return;const k=hv!=null?hv:si;
     $$("#drevw .rvc").forEach(b=>{b.classList.toggle("on",+b.dataset.k===si);b.classList.toggle("hot",hv!=null&&+b.dataset.k===hv)});
-    if(geo(e)){const bg=$("#rvbig");if(bg)bg.setAttribute("style",sprite(e,k));const cp=$("#rvcap");if(cp)cp.textContent=info(e,k)}
+    if(geo(e)){const bg=$("#rvbig");if(bg)bg.setAttribute("style",big(e,k));const cp=$("#rvcap");if(cp)cp.textContent=info(e,k)}
     miniDraw();if(RVAPI&&geo(e))RVAPI.focus({a:ea(e),b:eb(e),ticks:e.shots.map((x,j)=>stillI(e,j)),hot:k,col:KCOL[e.kind]})};
   const pick=(k,seek)=>{const e=list()[ei];if(!e||!geo(e))return;si=Math.max(0,Math.min(e.shots.length-1,k));hv=null;hot();
     if(RVAPI){RVAPI.cursor(stillI(e,si));if(seek)RVAPI.seek(stillI(e,si)-1)}if(lb)lbShow()};
@@ -262,7 +263,7 @@ async function driveReviewPanel(host,stamp,lo,onResult){
   const go=n=>{const L=list();if(!L.length)return;ei=Math.max(0,Math.min(L.length-1,n));const e=L[ei];si=geo(e)?k0(e):0;hv=null;viewer(true);arrive(e)};
   // the big picture
   const lbShow=()=>{const e=list()[ei],o=document.getElementById("rvlb");if(!e||!o||!geo(e)){return}
-    o.querySelector(".rvlbi").setAttribute("style",sprite(e,si)+";width:min(92vw,"+(e.tile.w*2.2)+"px,calc(78vh*"+e.tile.w+"/"+e.tile.h+"))");o.querySelector(".rvlbc").textContent=e.id+" · "+info(e,si)+" · "+(si+1)+" of "+e.shots.length};
+    o.querySelector(".rvlbi").setAttribute("style",big(e,si)+";width:min(92vw,"+(e.hi&&e.hi[si]?1600:e.tile.w*2.2)+"px,calc(78vh*"+e.tile.w+"/"+e.tile.h+"))");o.querySelector(".rvlbc").textContent=e.id+" · "+info(e,si)+" · "+(si+1)+" of "+e.shots.length};
   const lbClose=()=>{lb=false;const o=document.getElementById("rvlb");if(o)o.remove()};
   const lbOpen=()=>{const e=list()[ei];if(!e||!geo(e))return;lbClose();lb=true;const o=document.createElement("div");o.id="rvlb";o.className="rvlb";
     o.innerHTML='<div class="rvlbi"></div><div class="rvlbc"></div><div class="rvlbn"><button class="btn" data-d="-1">‹ Earlier</button><button class="btn" data-d="1">Later ›</button><button class="btn" data-d="0">Close</button></div>';
@@ -290,7 +291,7 @@ async function driveReviewPanel(host,stamp,lo,onResult){
         <div style="margin:8px 0 2px">${dd.h}</div><div>${dd.tags}</div>`;
       if(e.look_error)h+=`<div class="sub" style="color:var(--bad)">${esc(e.look_error)}</div>`;
       if(g){
-        h+=`<div class="rvmain"><div><div id="rvbig" class="rvimg" style="${sprite(e,si)}" title="Click to enlarge"></div><div class="sub" id="rvcap" style="margin-top:4px"></div><div class="sub" id="rvst"></div></div>
+        h+=`<div class="rvmain"><div><div id="rvbig" class="rvimg" style="${big(e,si)}" title="Click to enlarge"></div><div class="sub" id="rvcap" style="margin-top:4px"></div><div class="sub" id="rvst"></div></div>
           <div><canvas id="rvc" class="rvcv"></canvas><div class="sgs">${(e.signs||[]).map(x=>`<span class="sgn" title="seen ${x.n} time(s), ${x.conf}% sure">${x.f?`<img src="/review/${encodeURIComponent(x.f)}" alt="">`:""}<b>${esc(x.text)}</b> <span class="sub">${hm(x.t)}</span></span>`).join("")}</div>
           <div class="sub" style="margin-top:4px">${(e.signs||[]).length?"Signs read in these stills (check each against its picture).":"No signs read in the stills."}</div></div></div>
           <div class="rvfilm">${e.shots.map((x,k)=>`<button class="rvc" data-k="${k}" style="${sprite(e,k)}" title="${x>0?"+":""}${n0(x)} s"></button>`).join("")}</div>
