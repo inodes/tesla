@@ -227,6 +227,25 @@ def resolve_tessie_archive_home():
     return os.path.join(resolve_tessie_data_home(), "archive")
 
 
+def shown_path(path):
+    """A path for showing to the user, written the way config.json writes its folders (~/iCloud/Tesla/chargers/x.json),
+    not the long resolved form (iCloud's real location). The longest configured folder that contains it wins; otherwise ~ for home."""
+    if not path:
+        return path
+    p = os.path.realpath(os.path.expanduser(str(path)))
+    best = None
+    for v in (load_config().get("directories") or {}).values():
+        if not isinstance(v, str) or not v:
+            continue
+        base = os.path.realpath(os.path.expanduser(v))
+        if (p == base or p.startswith(base + os.sep)) and (best is None or len(base) > len(best[0])):
+            best = (base, v)
+    if best:
+        return best[1].rstrip("/") + p[len(best[0]):]
+    home = os.path.realpath(os.path.expanduser("~"))
+    return "~" + p[len(home):] if p.startswith(home + os.sep) else str(path)
+
+
 def unique_stamped_path(directory, prefix, stamp, suffix="", ext=""):
     """<prefix>_<stamp>_<NN><suffix><ext> inside `directory`, where NN is a
     zero-padded 2-digit sequence number that is ALWAYS present - never
