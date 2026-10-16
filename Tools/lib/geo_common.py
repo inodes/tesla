@@ -9,6 +9,7 @@ and OSM Nominatim reverse geocoding for charging and telemetry analysis.
 import os
 import sys
 import math
+import time
 import json
 import re
 import urllib.request
@@ -56,8 +57,21 @@ def haversine_km(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
 
 
 def haversine_distance_km(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
-    """Alias for haversine_km."""
-    return haversine_km(lat1, lon1, lat2, lon2)
+    """Calculates great-circle distance in kilometers between two GPS coordinates using Haversine formula."""
+    if None in (lat1, lon1, lat2, lon2):
+        return float("inf")
+    try:
+        f_lat1, f_lon1 = float(lat1), float(lon1)
+        f_lat2, f_lon2 = float(lat2), float(lon2)
+    except (ValueError, TypeError):
+        return float("inf")
+
+    R = 6371.0  # Earth's radius in km
+    dlat = math.radians(f_lat2 - f_lat1)
+    dlon = math.radians(f_lon2 - f_lon1)
+    a = math.sin(dlat / 2)**2 + math.cos(math.radians(f_lat1)) * math.cos(math.radians(f_lat2)) * math.sin(dlon / 2)**2
+    c = 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
+    return R * c
 
 
 
@@ -205,13 +219,45 @@ def reverse_geocode_osm(lat: float, lon: float) -> Optional[dict]:
         return None
 
 
-def state_from_coords(lat: float, lon: float, country: str = "Australia", repo_root: Optional[str] = None) -> Tuple[Optional[str], Optional[str]]:
+def _dist_to_segment_km(px: float, py: float, x1: float, y1: float, x2: float, y2: float) -> float:
+    """Computes minimum distance in kilometers from point (px=lon, py=lat) to line segment (x1,y1)-(x2,y2)."""
+    dx = (x2 - x1) * 111.0 * math.cos(math.radians(py))
+    dy = (y2 - y1) * 111.0
+    seg_len_sq = dx * dx + dy * dy
+    if seg_len_sq == 0:
+        return math.hypot((px - x1) * 111.0 * math.cos(math.radians(py)), (py - y1) * 111.0)
+    t = max(0.0, min(1.0, ((px - x1) * 111.0 * math.cos(math.radians(py)) * dx + (py - y1) * 111.0 * dy) / seg_len_sq))
+    proj_x = x1 + t * (x2 - x1)
+    proj_y = y1 + t * (y2 - y1)
+    return math.hypot((px - proj_x) * 111.0 * math.cos(math.radians(py)), (py - proj_y) * 111.0)
+
+def get_country_boundary_config(boundaries: dict, country: str = "Australia") -> dict:
+    """Extracts country boundary definition, searching under regions hierarchy (APAC, NA, EU, ME, SA) or top-level."""
+    if not boundaries:
+        return {}
+    c_clean = (country or "Australia").replace("+", " ").strip().lower()
+
+ # 1. Search under regions hierarchy
+    for r_key, r_data in boundaries.get("regions", {}).items():
+        for c_name, c_data in r_data.get("countries", {}).items():
+            if c_name.lower() == c_clean or str(c_data.get("country_code", "")).lower() == c_clean:
+                return c_data
+
+ # 2. Fallbacks
+    if country in boundaries:
+        return boundaries[country]
+    if "states" in boundaries:
+        return boundaries
+    return {}
+
+def state_from_coords(lat: float, lon: float, country: str = "Australia", repo_root: str = None) -> tuple:
     """
     Determines state/territory from GPS coordinates using a hybrid guide approach:
     1. Instant rejection if coordinates are outside the country's bounding box.
     2. Instant check against safe_bounds in state_boundaries.json (0 network calls).
     3. If within border_threshold_km of a state boundary, checks persistent geo_cache.json
        or performs an OSM Nominatim reverse lookup and caches the result.
+    4. Otherwise interpolates geometric state boundary lines (e.g. Murray River).
     Returns: (state_code: str or None, suburb: str or None)
     """
     if lat is None or lon is None:
@@ -222,24 +268,97 @@ def state_from_coords(lat: float, lon: float, country: str = "Australia", repo_r
         return None, None
 
     boundaries = load_state_boundaries(repo_root=repo_root)
-    country_config = {}
-    if boundaries:
-        for r_key, r_data in boundaries.get("regions", {}).items():
-            for c_name, c_data in r_data.get("countries", {}).items():
-                if c_name.lower() == country.lower():
-                    country_config = c_data
-                    break
-        if not country_config:
-            country_config = boundaries.get(country, boundaries.get("states", {}))
+    country_config = get_country_boundary_config(boundaries, country=country)
 
+ # Country bounding box rejection (e.g. Australia: lat [-44.5, -10.0], lon [112.0, 154.5])
+    c_bbox = country_config.get("bbox", [-44.5, 112.0, -10.0, 154.5])
+    if c_bbox and len(c_bbox) == 4:
+        min_lat, min_lon, max_lat, max_lon = c_bbox
+        if lat < min_lat or lat > max_lat or lon < min_lon or lon > max_lon:
+            return None, None
+
+    threshold_km = country_config.get("border_threshold_km", 15.0)
+
+ # 1. Fast path: check safe interior bounds (definitively inside state, far from any border)
     for st, data in country_config.get("states", {}).items():
         sb = data.get("safe_bounds")
         if sb and len(sb) == 4:
             if sb[0] <= lat <= sb[2] and sb[1] <= lon <= sb[3]:
                 return st, None
 
-    for st, box in AU_STATE_BOUNDS.items():
-        if box["lat"][0] <= lat <= box["lat"][1] and box["lon"][0] <= lon <= box["lon"][1]:
-            return st, None
+ # 2. Border proximity detection
+    near_border = False
+    for b_name, b_pts in country_config.get("borders", {}).items():
+        min_b_lon = min(p[0] for p in b_pts) - 0.5
+        max_b_lon = max(p[0] for p in b_pts) + 0.5
+        min_b_lat = min(p[1] for p in b_pts) - 0.5
+        max_b_lat = max(p[1] for p in b_pts) + 0.5
+        if min_b_lon <= lon <= max_b_lon and min_b_lat <= lat <= max_b_lat:
+            for i in range(len(b_pts) - 1):
+                d = _dist_to_segment_km(lon, lat, b_pts[i][0], b_pts[i][1], b_pts[i+1][0], b_pts[i+1][1])
+                if d <= threshold_km:
+                    near_border = True
+                    break
+        if near_border:
+            break
 
-    return None, None
+ # 3. If near border, check local cache or reverse geocode
+    if near_border:
+        cache = load_geo_cache(repo_root=repo_root)
+        ckey = f"{lat:.4f},{lon:.4f}"
+        if ckey in cache:
+            entry = cache[ckey]
+            return entry.get("state", "Other"), entry.get("suburb")
+
+ # Network lookup with cache write
+        geo = reverse_geocode_osm(lat, lon)
+        if geo:
+            cache[ckey] = geo
+            save_geo_cache(cache, repo_root=repo_root)
+            time.sleep(1.0)
+            return geo.get("state", "Other"), geo.get("suburb")
+
+ # 4. Geometric boundary interpolation (for interior areas not covered by safe boxes)
+    act_data = country_config.get("states", {}).get("ACT", {})
+    act_bb = act_data.get("bbox", [-35.92, 148.76, -35.12, 149.40])
+    if act_bb[0] <= lat <= act_bb[2] and act_bb[1] <= lon <= act_bb[3]:
+        return "ACT", None
+
+ # WA
+    if lon < 129.0:
+        return "WA", None
+ # NT vs SA
+    if 129.0 <= lon < 138.0:
+        return "NT" if lat > -26.0 else "SA", None
+ # SA vs QLD/NSW
+    if 138.0 <= lon < 141.0:
+        if lat > -26.0: return "QLD", None
+        return "SA", None
+
+ # NSW vs VIC (Murray River & Black-Allan Line)
+    nsw_vic = country_config.get("borders", {}).get("NSW_VIC", [])
+    if nsw_vic:
+        for i in range(len(nsw_vic) - 1):
+            x1, y1 = nsw_vic[i]
+            x2, y2 = nsw_vic[i+1]
+            if min(x1, x2) <= lon <= max(x1, x2):
+                border_lat = y1 + (y2 - y1) * (lon - x1) / (x2 - x1)
+                if lat < border_lat:
+                    return "VIC", None
+                break
+
+ # QLD vs NSW
+    qld_nsw = country_config.get("borders", {}).get("QLD_NSW", [])
+    if qld_nsw:
+        for i in range(len(qld_nsw) - 1):
+            x1, y1 = qld_nsw[i]
+            x2, y2 = qld_nsw[i+1]
+            if min(x1, x2) <= lon <= max(x1, x2):
+                border_lat = y1 + (y2 - y1) * (lon - x1) / (x2 - x1)
+                if lat > border_lat:
+                    return "QLD", None
+                break
+
+    if lat < -37.5:
+        return "TAS" if lat < -39.5 else "VIC", None
+    return "NSW", None
