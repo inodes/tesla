@@ -42,6 +42,9 @@ const line=(k,Y,fill,h)=>{let d="",gap=1,a=null,b=null;for(let i=0;i<N;i++){cons
 const strip=(val,colour,h)=>{let o="",run=null;const flush=()=>{if(run){o+=`<rect x="${X(run.a).toFixed(1)}" y="${pad}" width="${Math.max(.6,X(run.b)-X(run.a)).toFixed(1)}" height="${h}" fill="${run.c}"/>`;run=null}};
  for(let i=0;i<N;i++){if(!has(i)){flush();continue}const c=colour(val(i));if(!c){flush();continue}const a=T[i],b=a+dur(i);if(run&&run.c===c&&a-run.b<=GAP)run.b=b;else{flush();run={a:a,b:b,c:c}}}flush();return o};
 let html="";
+{let cov=0,first=null,last=null;for(let i=0;i<N;i++)if(has(i)){cov+=dur(i);if(first==null)first=i;last=i}
+ const tot=t1-t0,mm=s=>Math.floor(s/60)+" min "+String(Math.round(s%60)).padStart(2,"0")+" s";
+ if(first!=null&&tot>0&&cov<tot*.9)html+=`<p style="margin:6px 0 10px;font-size:12px;opacity:.75">Dashcam footage covers ${mm(cov)} of this ${mm(tot)} drive (${fmtT(T[first])}\u2013${fmtT(T[last])}); the rest shows Tessie's own points, about one every 30 s.</p>`}
 // FSD / AP
 {const tot=[0,0,0,0];let all=0;for(let i=0;i<N;i++)if(has(i)){const m=P[i][11];if(m>=0&&m<4)tot[m]+=dur(i);all+=dur(i)}
  const pc=m=>all?Math.round(100*tot[m]/all)+" %":"-";
