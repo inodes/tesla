@@ -3717,7 +3717,7 @@ class DriveAnalyzer:
 
         geo_cache = {}
         try:
-            from charger_find_tesla import load_geo_cache, save_geo_cache
+            from lib.geo_common import load_geo_cache, save_geo_cache
             geo_cache = load_geo_cache(self.repo_root) or {}
         except Exception:
             pass
@@ -3795,7 +3795,7 @@ class DriveAnalyzer:
 
         if dirty_cache:
             try:
-                from charger_find_tesla import save_geo_cache
+                from lib.geo_common import save_geo_cache
                 save_geo_cache(geo_cache, self.repo_root)
             except Exception:
                 pass
