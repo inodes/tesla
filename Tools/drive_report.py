@@ -507,11 +507,11 @@ const liveMap=function(){
  if(G.length>5){let cur=null;for(let k=0;k<G.length;k++){const c=sc(G[k][3]||0);if(cur&&cur.c===c)cur.p.push(k);else{if(cur)cur.p.push(k);cur={c:c,p:[k]};gl.features.push({type:"Feature",properties:{c:c},geometry:{type:"LineString",coordinates:cur.p.map(()=>null)},_g:cur})}}
   gl.features.forEach(f=>{f.geometry.coordinates=f._g.p.map(k=>[G[k][2],G[k][1]]);delete f._g})}
  map.on("load",()=>{if(dead)return;loaded=true;
-  map.addSource("route",{type:"geojson",data:lines});
+  map.addSource("route",{type:"geojson",tolerance:0,data:lines});
   map.addLayer({id:"rc",type:"line",source:"route",layout:{"line-cap":"round","line-join":"round"},paint:{"line-color":"#fff","line-width":8,"line-opacity":.9}});
   map.addLayer({id:"rl",type:"line",source:"route",layout:{"line-cap":"round","line-join":"round"},paint:{"line-color":["get","c"],"line-width":4.5}});
   if(gl.features.length){map.setPaintProperty("rl","line-width",2);map.setPaintProperty("rl","line-opacity",.45);map.setPaintProperty("rc","line-opacity",.5);
-   map.addSource("gps",{type:"geojson",data:gl});
+   map.addSource("gps",{type:"geojson",tolerance:0,data:gl});
    map.addLayer({id:"gc",type:"line",source:"gps",layout:{"line-cap":"round","line-join":"round"},paint:{"line-color":"#fff","line-width":8,"line-opacity":.9}});
    map.addLayer({id:"gl",type:"line",source:"gps",layout:{"line-cap":"round","line-join":"round"},paint:{"line-color":["get","c"],"line-width":4.5}})}
   map.addSource("pts",{type:"geojson",data:{type:"FeatureCollection",features:pts}});
