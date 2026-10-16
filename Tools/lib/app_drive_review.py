@@ -33,6 +33,7 @@ import app_review
 import clip_clock as CC
 import drive_paths as DP
 import drive_fuse as DF
+import teslacam_stills as ST
 import teslacam_timeline as TL
 
 OPTS = dict(accel_min_pct=5,        # accelerator at or above this (%) counts as pressed
@@ -45,9 +46,7 @@ OPTS = dict(accel_min_pct=5,        # accelerator at or above this (%) counts as
             event_before_s=12,      # stills from this long before an event ...
             event_after_s=15,       # ... to this long after it (28 stills with the one a second)
             max_event_stills=40,    # a longer event is thinned to this many
-            steer_deg=15,           # the wheel moved this much around a switch-off = "steering"
-            sheet_cols=7,
-            sheet_tile_px=400)
+            steer_deg=15)           # the wheel moved this much around a switch-off = "steering"
 MODES = {0: "Manual", 1: "FSD", 2: "Autosteer", 3: "TACC"}
 MAXGAP = 3                          # seconds between two readings that are still consecutive
 _LOCK = threading.RLock()
@@ -198,32 +197,54 @@ def _read_signs(im, o_rv):
     return out
 
 
-def look(ev, rows, front, base, stamp, o, stop):
-    """The front-camera stills of one event: reads the signs and writes the contact sheet. Sets ev["sheet"], ev["signs"], ev["n_stills"]."""
+def look(ev, rows, front, base, stamp, o, stop, stills=None, signs=True):
+    """The front-camera stills of one event. Sets ev["pics"] ([clip stamp, second in the clip] of each still, in time order), ev["shots"] (seconds from the
+    event), ev["tile"] (shape of a still), ev["n_stills"] and, when the video is there and `signs`, ev["signs"] read from the full-size frames.
+    The displayed stills come from the kept one-second stills (teslacam_stills): made from the video here if not yet, and still there after
+    the video is deleted."""
     import cv2
+    import numpy as np
     from concurrent.futures import ThreadPoolExecutor
     o_rv = dict(app_review.OPTS)
     t_a, t_b = ev["t"] - o["event_before_s"], _end(ev) + o["event_after_s"]
     span = t_b - t_a
     step = max(1, int(math.ceil(span / float(o["max_event_stills"]))))
     by_t = {int(r["t"]): r for r in rows}
-    want = []                                               # (T, stamp, second in the clip)
+    want = []                                               # (T, clip stamp, second in the clip)
     for T in range(int(math.ceil(t_a)), int(t_b) + 1, step):
         r = by_t.get(T) or by_t.get(T - 1) or by_t.get(T + 1)
-        if r and r["stamp"] in front:
+        if r and (r["stamp"] in front or (stills and stills.has(r["stamp"]))):
             want.append((T, r["stamp"], r["i"]))
+    if stills:
+        for st in sorted({w[1] for w in want}):             # the stills of every clip involved, from the video while it is there
+            if st in front and not stills.has(st):
+                stills.make(st, front[st])
+    pics = [w for w in want if stills and stills.has(w[1])]
+    ev["pics"] = [[st, i] for _T, st, i in pics]
+    ev["shots"] = [round(T - ev["t"], 1) for T, _st, _i in pics]
+    ev["n_stills"] = len(pics)
+    ev["sheet"] = ""
+    ev["tile"] = None
+    if pics:
+        im = cv2.imdecode(np.frombuffer(stills.get(pics[0][1], pics[0][2]) or b"", np.uint8), cv2.IMREAD_COLOR)
+        if im is not None:
+            ev["tile"] = dict(w=int(im.shape[1]), h=int(im.shape[0]))
+    ev["signs"] = []
+    if not signs:
+        return
+    wf = [w for w in want if w[1] in front]                 # signs are read from full-size frames, so only where the video is
     shots = []                                              # (T, image)
     with tempfile.TemporaryDirectory() as tmp:
         k = 0
-        while k < len(want):                                # a run in one clip, in steps of `step` seconds
+        while k < len(wf):                                  # a run in one clip, in steps of `step` seconds
             j = k
-            while j + 1 < len(want) and want[j + 1][1] == want[k][1] and want[j + 1][2] - want[j][2] == step:
+            while j + 1 < len(wf) and wf[j + 1][1] == wf[k][1] and wf[j + 1][2] - wf[j][2] == step:
                 j += 1
-            files = _extract(front[want[k][1]], want[k][2], j - k + 1, step, tmp, "r%d" % k)
+            files = _extract(front[wf[k][1]], wf[k][2], j - k + 1, step, tmp, "r%d" % k)
             for n, f in enumerate(files[:j - k + 1]):
                 im = cv2.imread(f)
                 if im is not None:
-                    shots.append((want[k + n][0], im))
+                    shots.append((wf[k + n][0], im))
             k = j + 1
         if stop():
             return
@@ -232,18 +253,18 @@ def look(ev, rows, front, base, stamp, o, stop):
             for (T, im), lst in zip(shots, ex.map(lambda s: _read_signs(s[1], o_rv), shots)):
                 for d in lst:
                     found.append(dict(d, t=T))
-        signs = []
+        sgs = []
         for d in found:
-            g = next((x for x in reversed(signs) if x["text"] == d["text"] and x["side"] == d["side"] and d["t"] - x["t1"] <= o_rv["merge_s"]), None)
+            g = next((x for x in reversed(sgs) if x["text"] == d["text"] and x["side"] == d["side"] and d["t"] - x["t1"] <= o_rv["merge_s"]), None)
             if g is None:
-                signs.append(dict(text=d["text"], side=d["side"], t=d["t"], t0=d["t"], t1=d["t"], n=0, conf=-1, crop=None, f=""))
-                g = signs[-1]
+                sgs.append(dict(text=d["text"], side=d["side"], t=d["t"], t0=d["t"], t1=d["t"], n=0, conf=-1, crop=None, f=""))
+                g = sgs[-1]
             g["n"] += 1
             g["t1"] = d["t"]
             if d["conf"] > g["conf"]:
                 g.update(conf=d["conf"], crop=d["crop"], t=d["t"])
         os.makedirs(os.path.join(base, "crops"), exist_ok=True)
-        for n, g in enumerate(signs):
+        for n, g in enumerate(sgs):
             crop = g.pop("crop")
             name = "%s_%s_%02d.jpg" % (stamp, ev["id"], n)
             if crop is not None and crop.shape[0] > 0 and crop.shape[1] > 0:
@@ -252,43 +273,7 @@ def look(ev, rows, front, base, stamp, o, stop):
                     crop = cv2.resize(crop, (max(1, int(crop.shape[1] * z)), max(1, int(crop.shape[0] * z))))
                 cv2.imwrite(os.path.join(base, "crops", name), crop, [cv2.IMWRITE_JPEG_QUALITY, 85])
                 g["f"] = name
-        ev["signs"] = signs
-        ev["n_stills"] = len(shots)
-        ev["sheet"] = _sheet(shots, ev, base, stamp, o) if shots else ""
-        cols, w, h = _geom(o)                               # so the page can cut the sheet into its stills: where each one is (seconds from the event) and how the sheet is laid out
-        ev["shots"] = [round(T - ev["t"], 1) for T, _ in shots]
-        ev["tile"] = dict(cols=cols, w=w, h=h)
-
-
-def _geom(o):
-    """(columns, tile width, tile height) of a contact sheet."""
-    w = int(o["sheet_tile_px"])
-    return max(1, int(o["sheet_cols"])), w, int(w * 9 / 16)
-
-
-def _sheet(shots, ev, base, stamp, o):
-    import cv2
-    import numpy as np
-    cols, w, h = _geom(o)
-    sc = w / 240.0
-    col = {"intervention": (60, 60, 230), "accelerator": (30, 160, 250), "speed": (230, 130, 40)}[ev["kind"]]      # BGR
-    rows_n = (len(shots) + cols - 1) // cols
-    sheet = np.zeros((rows_n * h, cols * w, 3), np.uint8)
-    for n, (T, im) in enumerate(shots):
-        tile = cv2.resize(im, (w, h))
-        rel = int(round(T - ev["t"]))
-        if ev["t"] - 0.5 <= T <= _end(ev) + 0.5:
-            cv2.rectangle(tile, (0, 0), (w - 1, h - 1), col, max(4, int(4 * sc)))
-        lab = "%+ds" % rel if rel else "0"
-        cv2.rectangle(tile, (0, 0), (int((8 * len(lab) + 12) * sc), int(20 * sc)), (0, 0, 0), -1)
-        cv2.putText(tile, lab, (int(5 * sc), int(15 * sc)), cv2.FONT_HERSHEY_SIMPLEX, 0.5 * sc, (255, 255, 255), 1 if sc < 1.3 else 2, cv2.LINE_AA)
-        r_, c_ = divmod(n, cols)
-        sheet[r_ * h:(r_ + 1) * h, c_ * w:(c_ + 1) * w] = tile
-    d = os.path.join(base, "events", stamp)
-    os.makedirs(d, exist_ok=True)
-    name = ev["id"] + ".jpg"
-    cv2.imwrite(os.path.join(d, name), sheet, [cv2.IMWRITE_JPEG_QUALITY, 78])
-    return name
+        ev["signs"] = sgs
 
 
 # -------------------------------------------------------------------------------------------------------------------- job
@@ -388,12 +373,16 @@ class DriveReview:
         rows = to_rows(cam)
         events = find_events(rows, o, a_kmh, b_kmh, both)
         req = app_review.requirements()
-        can_look = bool(front) and not (req["py"] or req["cmd"])
+        stills = ST.Stills(self.dir, app_config.get("stills.width", 400), app_config.get("stills.quality", 6))
+        can_sign = bool(front) and not (req["py"] or req["cmd"])
+        can_look = bool(front) and ST.have_ffmpeg() or bool(stills.stamps())      # stills come from the video or from the ones kept
         note = ""
-        if not front:
-            note = "The Archive is not connected, so the events are listed without stills."
-        elif not can_look:
-            note = "Stills and sign reading need: %s" % "; ".join(req["hint"])
+        if not front and not stills.stamps():
+            note = "The Archive is not connected and no stills are kept, so the events are listed without stills."
+        elif not front:
+            note = "The Archive is not connected: the stills are the kept ones, and no signs were read."
+        elif not can_sign:
+            note = "Sign reading needs: %s" % "; ".join(req["hint"])
         done_ev = 0
         if can_look:
             for ev in events:
@@ -401,7 +390,7 @@ class DriveReview:
                     return
                 self._stage("Looking at the front camera: %s" % ev["id"], done_ev, len(events))
                 try:
-                    look(ev, rows, front, self.base, stamp, o, lambda: self.stop_flag)
+                    look(ev, rows, front, self.base, stamp, o, lambda: self.stop_flag, stills, can_sign)
                 except Exception as e:
                     ev["look_error"] = "%s: %s" % (type(e).__name__, e)
                 done_ev += 1
