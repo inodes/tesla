@@ -176,6 +176,12 @@ class TeslaCam:
         todo = [(m["stamp"], self._front(teslacam, m)) for m in reversed(TL.minutes(recent, saved)) if "front" in m["cams"]]
         return ix.start(todo)
 
+    def fuse(self, stamp):
+        """The finer track of a Tessie drive (drive_fuse.py): its own points, with the dashcam's per-second readings where they exist."""
+        import drive_fuse
+        store, _ = self._tl("A")
+        return drive_fuse.fuse_drive(self.dir, stamp, store)
+
     @staticmethod
     def _front(teslacam, m):
         sub = "RecentClips" if m["src"] == "recent" else os.path.join("SavedClips", m["ref"])
