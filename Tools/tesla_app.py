@@ -67,6 +67,7 @@ import app_sentry  # noqa: E402
 import app_teslacam  # noqa: E402
 import app_drive_review  # noqa: E402
 import app_charges  # noqa: E402
+import clip_clock as CC  # noqa: E402
 import app_sync  # noqa: E402
 import drive_roles as DR  # noqa: E402
 
@@ -136,15 +137,6 @@ def drop_flips(h):
     return h.replace(FLIP_LEGEND, "")
 
 
-def _foot_off(p):
-    """The footage clock offset the drive report found for this drive (drive_summary.json beside its page), 0 when unknown."""
-    try:
-        with open(os.path.join(os.path.dirname(p), "drive_summary.json"), encoding="utf-8") as fh:
-            return int(json.load(fh).get("foot_off") or 0)
-    except (OSError, ValueError, TypeError):
-        return 0
-
-
 def fuse_into(h, p):
     """Enrich with TeslaCam metadata: the page's points (Tessie's, about one every 30 s) become the dashcam's per-second readings where the footage
     covers the drive, with accelerator / steering / indicator / FSD columns and the panels that draw them (drive_enrich_ui.py)."""
@@ -156,7 +148,7 @@ def fuse_into(h, p):
         return h
     try:
         obj, end = json.JSONDecoder().raw_decode(h, i + len("const DATA="))
-        new = TC.enrich(obj["pts"], "standard" if _foot_off(p) == 3600 else None)
+        new = TC.enrich(obj["pts"])
     except Exception:
         return h
     if not new:
@@ -181,9 +173,18 @@ def drive_page(p, enrich=True):
     return h.replace(old, 'const nav=new maplibregl.NavigationControl({showCompass:false});map.addControl(nav,"top-right");\n {const b=document.createElement("button");b.type="button";b.className="maplibregl-ctrl-icon";b.title="Show the whole route";b.setAttribute("aria-label","Show the whole route");b.innerHTML=\'<span style="display:block;text-align:center;font-size:18px;line-height:29px">\\u2922</span>\';\n  b.onclick=()=>map.fitBounds([[Math.min(...O),Math.min(...L)],[Math.max(...O),Math.max(...L)]],{padding:40,maxZoom:16});nav._container.appendChild(b)}')
 
 
-def _local_ts(txt):
-    import datetime
-    return datetime.datetime.fromisoformat(txt).timestamp()
+def _lo_arg(v):
+    """The offset (seconds ahead of UTC) of the clock a page wants times shown on, or None for app.timezone's."""
+    try:
+        return None if v in (None, "") else float(v)
+    except (TypeError, ValueError):
+        return None
+
+
+def _utc_arg(txt):
+    """UTC epoch seconds of a time the page sent: a number (UTC, what the page sends), else a local ISO text read on app.timezone's clock (never this
+    computer's). ValueError when it is neither."""
+    return CC.parse_local(txt)
 
 
 def safe_join(root, rel):
@@ -330,7 +331,7 @@ class H(BaseHTTPRequestHandler):
                 return self.send_json(drive_review_state(body.get("id", "")))
             if u.path == "/api/review":
                 role = body.get("role", "A")
-                return self.send_json(TC.review(role, footage_root(role), _local_ts(body.get("t0", "")), _local_ts(body.get("t1", "")), body.get("action", "start")))
+                return self.send_json(TC.review(role, footage_root(role), _utc_arg(body.get("t0", "")), _utc_arg(body.get("t1", "")), body.get("action", "start"), _lo_arg(body.get("lo"))))
             if u.path == "/api/teslacam/index":
                 role = body.get("role", "A")
                 return self.send_json(TC.index(role, footage_root(role), body.get("action", "start")))
@@ -359,10 +360,10 @@ class H(BaseHTTPRequestHandler):
         if name == "sentry":
             ev, ok = SENTRY.events(footage_root("A"))
             return self.send_json(dict(connected=ok, events=ev))
-        if name == "review":                    # review?role=A&t0=<local ISO>&t1=<local ISO>: signs read so far + the job
+        if name == "review":                    # review?role=A&t0=<UTC epoch s>&t1=<UTC epoch s>: signs read so far + the job
             role = q.get("role", ["A"])[0]
             try:
-                return self.send_json(TC.review(role, footage_root(role), _local_ts(q.get("t0", [""])[0]), _local_ts(q.get("t1", [""])[0])))
+                return self.send_json(TC.review(role, footage_root(role), _utc_arg(q.get("t0", [""])[0]), _utc_arg(q.get("t1", [""])[0]), "status", _lo_arg(q.get("lo", [None])[0])))
             except ValueError:
                 return self.send_json({"error": "bad time"}, 400)
         if name == "drivefuse":                 # drivefuse?id=<drive folder>[&summary=1]: the Tessie drive's track, finer where dashcam telemetry exists
@@ -370,9 +371,11 @@ class H(BaseHTTPRequestHandler):
             if not r:
                 return self.send_json({"error": "no sample file for this drive"}, 404)
             return self.send_json(dict(info=r["info"]) if q.get("summary") else r)
+        if name == "clipclock":                 # the car's clock as learned from the footage (clip_clock.py): runs of minutes with the offset from UTC
+            return self.send_json(CC.status())
         if name == "drivereview":               # drivereview?id=<drive folder>: its last review, the job state, the default speeds
             return self.send_json(drive_review_state(q.get("id", [""])[0]))
-        if name == "review/scanned":            # every minute whose signs have been read: {stamp: signs found}
+        if name == "review/scanned":            # every minute whose signs have been read: {UTC epoch s of the minute: signs found}
             return self.send_json(TC.review_scanned())
         if name == "teslacam":                  # the drives that are connected right now (found by what is on them)
             _ROOTS["t"] = 0
@@ -388,18 +391,17 @@ class H(BaseHTTPRequestHandler):
             if kind == "seg":
                 d = TC.segment(role, root, urllib.parse.unquote(rid), float(q.get("budget", ["20"])[0] or 20))
                 return self.send_json(d if d else {"error": "no such drive"}, 200 if d else 404)
-            if kind == "window":                    # teslacam/<role>/window?t0=<local ISO>&t1=<local ISO>[&budget=s]
-                import datetime
+            if kind == "window":                    # teslacam/<role>/window?t0=<UTC epoch s>&t1=<UTC epoch s>[&lo=<display offset s>][&budget=s]
                 try:
-                    t0 = datetime.datetime.fromisoformat(q.get("t0", [""])[0]).timestamp()
-                    t1 = datetime.datetime.fromisoformat(q.get("t1", [""])[0]).timestamp()
+                    t0 = _utc_arg(q.get("t0", [""])[0])
+                    t1 = _utc_arg(q.get("t1", [""])[0])
                 except ValueError:
                     return self.send_json({"error": "bad time"}, 400)
-                d = TC.window(role, root, t0, t1, float(q.get("budget", ["20"])[0] or 20))
+                d = TC.window(role, root, t0, t1, float(q.get("budget", ["20"])[0] or 20), _lo_arg(q.get("lo", [None])[0]))
                 return self.send_json(d if d else {"error": "no footage or telemetry for this time"}, 200 if d else 404)
             if kind == "recent" and rid:
                 c = TC.run_clips(role, root, urllib.parse.unquote(rid))
-                return self.send_json(dict(clips=c) if c else {"error": "no such run"}, 200 if c else 404)
+                return self.send_json(dict(clips=c, loc=TC.loc_of(c)) if c else {"error": "no such run"}, 200 if c else 404)
             if kind == "recent":
                 runs, ok = TC.recent(role, root)
                 return self.send_json(dict(connected=ok, runs=runs))
