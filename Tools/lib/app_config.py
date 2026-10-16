@@ -4,8 +4,12 @@
 Nothing here is a secret. Every setting has a default below, so config.json only needs the values you want to change (see config.example.json for
 the block). A change takes effect the next time the app or script reads it (the app re-reads config.json when its modified time changes).
 
-  app.timezone                                     the car's home time zone (IANA name). Times are matched in UTC; this is only used to turn the local clock times that
-                                                   Tessie's files and the dashcam's file names carry into UTC (and back for display), daylight saving included
+  app.timezone                                     the car's home time zone (IANA name). UTC is the clock: everything is matched, ordered and compared in UTC, and this zone is only
+                                                   used to turn the local clock times that Tessie's files and the dashcam's file names carry into UTC (and back for
+                                                   display), daylight saving included
+  app.clock.match_km / margin_km / reuse_hours     how the car's own clock is learned (lib/clip_clock.py): a minute of footage counts as evidence of the clock when its GPS lies
+                                                   within match_km of the Tessie drive at that instant under the best offset and that beats the other offset by margin_km;
+                                                   a minute with no evidence takes the nearest learned minute within reuse_hours (the car's clock stays put for days)
   app.map.tiles_base / style_light / style_dark   OpenFreeMap style URL base and the style used in light / dark mode (liberty = 3D, bright, positron, dark, fiord)
   app.map.places_max_lon                           places east of this longitude are left off the Places map (160 = no New Zealand)
   app.map.speed_colors / speed_over_color / autopilot_colors  the speed gradient (km/h -> colour stops, the last stop is the top of the scale; faster than that is speed_over_color, black) and the FSD / Autosteer / TACC / Manual colours of every route map
@@ -44,6 +48,7 @@ except ImportError:                      # imported as lib.app_config
 
 DEFAULTS = {
     "timezone": "Australia/Sydney",
+    "clock": {"match_km": 0.5, "margin_km": 1.0, "reuse_hours": 36},
     "map": {"tiles_base": "https://tiles.openfreemap.org/styles/", "style_light": "positron", "style_dark": "dark", "places_max_lon": 160,
             "speed_colors": [[0, "#0000FF"], [10, "#008080"], [20, "#90EE90"], [30, "#008000"], [40, "#32CD32"], [50, "#ADFF2F"], [60, "#FFFF00"], [70, "#FFA500"], [80, "#FF8C00"], [90, "#FF4500"], [100, "#FF0000"], [110, "#8B0000"], [120, "#800080"]],
             "speed_over_color": "#000000",
