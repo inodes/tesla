@@ -19,16 +19,16 @@ the block). A change takes effect the next time the app or script reads it (the 
                                                    a gap is "parked" when the car's last and next position are within same_place_m (same_place_est_m when one is a Sentry estimate);
                                                    clips read at once (CPU work, one process each); days_newest_first / rows_newest_first = the order of the day blocks and of the rows inside a day
   app.review.step_s / min_kmh / min_conf / workers / merge_s   reading speed-limit signs from a drive's video (Review tab); candidate_km / candidate_avg_kmh = the "Review candidates" button on Drives
-  app.review.accel_min_pct / speed_from / speed_to / speed_tol_kmh / speed_hold_s / speed_window_s / steer_deg
-                                                   the manual drive review (Review tab): an accelerator at or above accel_min_pct % is "pressed"; the speed-change
-                                                   finder starts with speed_from -> speed_to km/h (changeable in the tab), a speed within speed_tol_kmh of one is
-                                                   "at" it and must hold for speed_hold_s s, the second level must start within speed_window_s s; the wheel moving
-                                                   steer_deg degrees around an FSD switch-off counts as steering
+  app.review.accel_min_pct / speed_min_kmh / speed_tol_kmh / steer_deg
+                                                   the manual drive review (Review tab): an accelerator at or above accel_min_pct % is "pressed"; every lasting change
+                                                   of speed_min_kmh or more with FSD on is a speed-change event (the page filters them, e.g. 100 -> 110; a speed within
+                                                   speed_tol_kmh of the one asked for matches); the wheel moving steer_deg degrees around an FSD switch-off counts as steering
   app.review.event_before_s / event_after_s / max_event_stills
                                                    front-camera stills of one review event: one a second from event_before_s before to event_after_s after (thinned
                                                    to max_event_stills), each its own picture (from the kept stills, see app.stills)
   app.stills.width / quality / workers             one-second stills of the front-camera video (teslacam_stills.py): width in px, JPEG quality (ffmpeg -q:v, 2 best .. 31 worst), clips made at once
   app.drives.repark_max_km / repark_max_minutes    a drive shorter than both is a "re-park" (the car was shuffled), not a drive
+  app.drives.repark_same_place_km                  a drive that starts and ends at the same address or saved place is a re-park up to this long (and repark_max_minutes); with no address to compare, the two ends within repark_same_place_m metres count as the same place
   app.drives.long_highway_*                        a "long highway" drive (the Drives list's Long highway filter)
   app.drives.charge_window_minutes                 a charge within this long after / before a drive makes it "to charge" / "from charge"
   app.drives.low_battery_pct                       the "finished at N% or less" filter
@@ -58,10 +58,10 @@ DEFAULTS = {
                               "NRMA": "#2563eb", "AmpCharge": "#84cc16", "Jolt": "#14b8a6", "BP Pulse": "#0891b2", "3rd-Party": "#6b7280", "WA EV Network": "#9333ea"}},
     "teslacam": {"moving_kmh": 3.0, "run_gap_s": 75, "gap_min_s": 120, "same_place_m": 300, "same_place_est_m": 800, "same_minute_s": 30, "read_workers": 4, "days_newest_first": True, "rows_newest_first": True},
     "review": {"step_s": 1.0, "min_kmh": 30.0, "min_conf": 50.0, "workers": 3, "merge_s": 12.0, "candidate_km": 20, "candidate_avg_kmh": 60,
-               "accel_min_pct": 5, "speed_from": 100, "speed_to": 110, "speed_tol_kmh": 3, "speed_hold_s": 8, "speed_window_s": 90,
+               "accel_min_pct": 5, "speed_min_kmh": 10, "speed_tol_kmh": 3,
                "event_before_s": 12, "event_after_s": 15, "max_event_stills": 40, "steer_deg": 15},
     "stills": {"width": 400, "quality": 6, "workers": 3},
-    "drives": {"repark_max_km": 0.05, "repark_max_minutes": 10,
+    "drives": {"repark_max_km": 0.05, "repark_same_place_km": 0.3, "repark_same_place_m": 50, "repark_max_minutes": 10,
                "long_highway_km": 30, "long_highway_fast_kmh": 90, "long_highway_fast_minutes": 10,
                "charge_window_minutes": 30, "low_battery_pct": 20},
     "places": {"stay_min_seconds": 120, "save_radius_min_m": 100, "save_radius_margin_m": 25, "save_radius_cluster_m": 250},
