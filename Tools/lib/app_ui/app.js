@@ -343,7 +343,7 @@ async function pageDrive(stamp,tab){
       const on=pref();c.disabled=false;c.checked=on;$("#enrl").style.opacity="";$("#enrn").textContent=note(i,on);load(on);
       c.onchange=()=>{try{localStorage.setItem("drv.enrich",c.checked?"1":"0")}catch(e){}$("#enrn").textContent=note(i,c.checked);load(c.checked)}})
       .catch(()=>{const l=$("#enrl"),n=$("#enrn");if(l){l.title="No TeslaCam telemetry has been read for this drive";l.style.opacity=".5"}if(n)n.textContent="No TeslaCam telemetry is kept for this drive yet. Scan the connected drives on the TeslaCam page to read it.";load(false)});
-    fitFrame($("#fr"),doc=>{$$("a",doc).forEach(a=>{if((a.getAttribute("href")||"")==="../index.html"){a.parentNode.style.display="none"}});
+    fitFrame($("#fr"),doc=>{$$("a",doc).forEach(a=>{if(/^(\.\.\/)+index\.html$/.test(a.getAttribute("href")||"")){a.parentNode.style.display="none"}});
       // the footage and the flips have their own tabs (the clips are watched in the Footage tab)
       const f=doc.getElementById("foot");if(f)f.style.display="none";hideSection(doc,"FSD speed changes");hideSection(doc,"Saved clips")});
   }else{

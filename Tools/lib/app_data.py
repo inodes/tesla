@@ -20,6 +20,7 @@ import re
 import threading
 
 import app_alerts
+import drive_paths as DP
 import app_config
 import app_places
 
@@ -97,7 +98,8 @@ class Store:
 
         def build():
             out = []
-            for f in glob.glob(os.path.join(root, "*", "drive_summary.json")):
+            for _stamp, folder in DP.iter_folders(root):
+                f = os.path.join(folder, "drive_summary.json")
                 try:
                     j = json.load(open(f, encoding="utf-8"))
                 except (OSError, ValueError):
@@ -105,11 +107,10 @@ class Store:
                 if j.get("start"):
                     out.append(j)
             return out
-        try:
-            dirs = [root] + [os.path.join(root, n) for n in os.listdir(root)]
-        except OSError:
-            dirs = [root]
-        return _cached("summ", dirs, build)
+        dirs = [root]
+        for _stamp, folder in DP.iter_folders(root):         # a day folder changes when a drive appears, a drive folder when its summary is rewritten
+            dirs += [os.path.dirname(folder), folder]
+        return _cached("summ", list(dict.fromkeys(dirs)), build)
 
     def drives(self):
         master = self.p("drives", "drives_master.csv")
