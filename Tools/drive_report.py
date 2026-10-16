@@ -46,6 +46,7 @@ import footage_ui as FU  # noqa: E402
 import drive_roles as DR  # noqa: E402
 import drive_charts as DC  # noqa: E402
 import app_config as CFG  # noqa: E402
+import drive_map_ui as MU  # noqa: E402
 
 REASONS = D.REASONS
 OFFSETS = D.OFFSETS
@@ -436,8 +437,7 @@ a{color:var(--acc);text-decoration:none}a:hover{text-decoration:underline}video{
 JS = r"""
 const D=DATA,$=s=>document.querySelector(s),NS="http://www.w3.org/2000/svg";
 const f0=x=>x==null?"-":Math.round(x),fmtT=t=>{const d=new Date(t*1000);return d.toISOString().substr(11,5)};
-const SC=[[0,"#6b7a99"],[30,"#2f7fd8"],[60,"#18a058"],[90,"#e0b000"],[105,"#ee7a1a"],[112,"#d4332b"]];
-const sc=v=>{let c=SC[0][1];for(const [a,col] of SC)if(v>=a)c=col;return c};
+/*SC_JS*/
 const T=D.pts.map(p=>p[0]),N=T.length;
 // ---- map
 const staticMap=function(){const svg=$("#map"),W=1060,H=540,pad=26;let la=D.pts.map(p=>p[1]),lo=D.pts.map(p=>p[2]);
@@ -651,14 +651,14 @@ def build_page(stamp, m, win, flips, recs, saved_ev, cov, clips_rel, folder, mwi
 <h1>{esc(frm)} → {esc(to)}</h1><div class="sub">{esc(day)} · {esc(start)}–{esc(end)} · folder {esc(stamp)}</div>
 {trip}<div class="card"><div class="stats">{stats}</div></div>
 <div class="two"><div class="card"><h2>Route<span id="mapbtns"></span></h2><div id="mapbox"><svg id="map" viewBox="0 0 1060 540" style="width:100%;height:auto"></svg></div>
-<div class="legend"><span><i style="background:#6b7a99"></i>&lt;30</span><span><i style="background:#2f7fd8"></i>30–60</span><span><i style="background:#18a058"></i>60–90</span><span><i style="background:#e0b000"></i>90–105</span><span><i style="background:#ee7a1a"></i>105–112</span><span><i style="background:#d4332b"></i>112+ km/h</span></div>
+{MU.legend_html()}
 <div class="legend">{FLIPLEG if flips else ''}<span><i style="background:#a855f7;height:8px;width:8px;border-radius:50%"></i>saved clip</span></div></div>
 <div class="card" id="charts"></div></div>
 {covh}
 {('<h2>FSD speed changes (100 ↔ 110)</h2>'+evh) if flips else ''}
 {('<h2>Saved clips</h2>'+svh) if svh else ''}
 <div class="sub">Generated {datetime.datetime.now().strftime('%Y-%m-%d %H:%M')} by drive_report.py from this folder's Tessie CSV{' and TeslaCam footage' if cov else ''}.</div>
-</div><div class="tip" id="tip"></div><script>const DATA={json.dumps(data, separators=(',', ':'))};{JS}{DC.JS}{FU.JS if cov else ''}</script></body></html>"""
+</div><div class="tip" id="tip"></div><script>const DATA={json.dumps(data, separators=(',', ':'))};{JS.replace('/*SC_JS*/', MU.sc_js())}{DC.JS}{FU.JS if cov else ''}</script></body></html>"""
 
 
 # ----------------------------------------------------------------------------- per drive

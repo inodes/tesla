@@ -110,6 +110,8 @@ def drive_page(p):
     with open(p, encoding="utf-8") as fh:
         h = fh.read()
     old = 'map.addControl(new maplibregl.NavigationControl({showCompass:false}),"top-right");'
+    import drive_map_ui
+    h = drive_map_ui.patch(h)
     if "Show the whole route" in h or old not in h:
         return h
     return h.replace(old, 'const nav=new maplibregl.NavigationControl({showCompass:false});map.addControl(nav,"top-right");\n {const b=document.createElement("button");b.type="button";b.className="maplibregl-ctrl-icon";b.title="Show the whole route";b.setAttribute("aria-label","Show the whole route");b.innerHTML=\'<span style="display:block;text-align:center;font-size:18px;line-height:29px">\\u2922</span>\';\n  b.onclick=()=>map.fitBounds([[Math.min(...O),Math.min(...L)],[Math.max(...O),Math.max(...L)]],{padding:40,maxZoom:16});nav._container.appendChild(b)}')
