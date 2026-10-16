@@ -15,6 +15,7 @@ fuse_drive() returns {info, points}: info says how much the camera covered, poin
 t (epoch s, local clock), la, lo, v (km/h), s (0 = Tessie, 1 = camera), el (m).
 """
 import bisect
+import calendar
 import csv
 import datetime
 import glob
@@ -26,7 +27,9 @@ MAX_POINTS = 6000   # a page is sent at most this many points (a 360 km drive is
 
 
 def _t(s, fmt):
-    return datetime.datetime.strptime(s, fmt).timestamp()
+    """A local clock time as seconds: the clock read as if it were UTC, which is how the drive pages and the camera store keep time
+    (it never depends on this computer's time zone)."""
+    return calendar.timegm(datetime.datetime.strptime(s, fmt).timetuple())
 
 
 def secs(stamp):
@@ -66,7 +69,7 @@ def tessie_points(folder):
 
 
 def camera_points(store, t0, t1):
-    """The per-second GPS readings in [t0, t1] from the shared store: [(t, la, lo, v)] by time."""
+    """The per-second readings in [t0, t1] from the shared store: [(t, la, lo, speed, autopilot mode, accelerator %, steering deg, indicator, brake)] by time."""
     out = []
     for st in sorted(store.stamps()):
         try:
@@ -82,7 +85,7 @@ def camera_points(store, t0, t1):
             if la is None or lo is None or (abs(la) < 1 and abs(lo) < 1):
                 continue
             if t0 <= m + i <= t1:
-                out.append((m + i, la, lo, ser["v"][i]))
+                out.append((m + i, la, lo, ser["v"][i], ser["ap"][i], ser["accel"][i], ser["steer"][i], ser["blk"][i], ser["br"][i]))
     return out
 
 
@@ -141,3 +144,49 @@ def fuse_drive(data_dir, stamp, store):
     if not tp:
         return None
     return fuse(tp, camera_points(store, t0 - MARGIN_S, t1 + MARGIN_S), t0, t1)
+
+
+MAX_PAGE_ROWS = 9000    # a drive page is given at most this many rows
+
+
+def _lerp(ts, rows, col, t):
+    """Column `col` of the Tessie rows at time t (straight line between the two rows around it; None when there is no value)."""
+    if not rows:
+        return None
+    k = bisect.bisect_left(ts, t)
+    if k <= 0:
+        return rows[0][col]
+    if k >= len(ts):
+        return rows[-1][col]
+    va, vb = rows[k - 1][col], rows[k][col]
+    if va is None or vb is None:
+        return vb if va is None else va
+    f = (t - ts[k - 1]) / (ts[k] - ts[k - 1]) if ts[k] > ts[k - 1] else 0.0
+    return va + (vb - va) * f
+
+
+def enrich(rows, store):
+    """The rows of a drive page ([t, lat, lon, speed, power, elevation, battery, range, inside, outside, odometer], Tessie's, about one every 30 s)
+    with the dashcam's seconds put in: speed, position, and five new columns [autopilot mode, accelerator %, steering deg, indicator, brake].
+    Power, elevation, battery, range, temperatures and odometer have no camera reading, so they follow Tessie's points in a straight line
+    between them (the same line the Tessie chart already draws). Returns {rows, info} or None when the camera has nothing for this drive."""
+    if not rows:
+        return None
+    rows = [list(r) + [None] * (11 - len(r)) for r in rows]
+    cam = camera_points(store, rows[0][0] - MARGIN_S, rows[-1][0] + MARGIN_S)
+    if len(cam) < 10:
+        return None
+    ts, ct = [r[0] for r in rows], [c[0] for c in cam]
+    out = []
+    for c in cam:
+        out.append([c[0], c[1], c[2], round(c[3] or 0, 1)] + [None if (x := _lerp(ts, rows, i, c[0])) is None else round(x, 3) for i in range(4, 11)] + [c[4], c[5], c[6], c[7], c[8]])
+    for r in rows:
+        k = bisect.bisect_left(ct, r[0])
+        near = min([abs(ct[j] - r[0]) for j in (k - 1, k) if 0 <= j < len(ct)] or [1e9])
+        if near > JOIN_S:
+            out.append(r + [None] * 5)
+    out.sort(key=lambda r: r[0])
+    step = max(1, -(-len(out) // MAX_PAGE_ROWS))
+    if step > 1:
+        out = out[::step] + ([out[-1]] if (len(out) - 1) % step else [])
+    return dict(rows=out, info=dict(tessie=len(rows), camera=len(cam), rows=len(out), thinned=step > 1))
