@@ -507,7 +507,7 @@ def serve(port, host="127.0.0.1"):
 
 
 def main():
-    global STORE, DATA_DIR, SENTRY, TC, DRV, SYNC, BOOK
+    global STORE, DATA_DIR, SENTRY, TC, DRV, SYNC, BOOK, FG
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--data-dir", default=DEFAULT_DATA)
     ap.add_argument("--port", type=int, default=int(app_config.get("window.port")))
