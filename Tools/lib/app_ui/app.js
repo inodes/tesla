@@ -244,7 +244,7 @@ async function driveReviewPanel(host,stamp,lo){
   const pick=(k,seek)=>{const e=list()[ei];if(!e||!geo(e))return;si=Math.max(0,Math.min(e.shots.length-1,k));hv=null;hot();
     if(RVAPI){RVAPI.cursor(stillI(e,si));if(seek)RVAPI.seek(stillI(e,si)-1)}if(lb)lbShow()};
   const arrive=e=>{if(!RVAPI||!e)return;const g=geo(e),t=g?e.shots.map((x,j)=>stillI(e,j)):[];       // the chart under the map zooms to this event, the map dot goes to it
-    RVAPI.focus({a:ea(e),b:eb(e),ticks:t,hot:si,col:KCOL[e.kind]});RVAPI.zoom(Math.min(ea(e),t.length?t[0]:ea(e))-10,Math.max(eb(e),t.length?t[t.length-1]:eb(e))+10);RVAPI.cursor(g?stillI(e,si):ea(e))};
+    RVAPI.focus({a:ea(e),b:eb(e),ticks:t,hot:si,col:KCOL[e.kind]});RVAPI.zoom(Math.min(ea(e),t.length?t[0]:ea(e))-10,Math.max(eb(e),t.length?t[t.length-1]:eb(e))+10);RVAPI.cursor(g?stillI(e,si):ea(e));RVAPI.seek((g?stillI(e,si):ea(e))-1)};      // the video below goes to the event too, not on playing from where it was
   const go=n=>{const L=list();if(!L.length)return;ei=Math.max(0,Math.min(L.length-1,n));const e=L[ei];si=geo(e)?k0(e):0;hv=null;viewer(true);arrive(e)};
   // the big picture
   const lbShow=()=>{const e=list()[ei],o=document.getElementById("rvlb");if(!e||!o||!geo(e)){return}
@@ -252,11 +252,11 @@ async function driveReviewPanel(host,stamp,lo){
   const lbClose=()=>{lb=false;const o=document.getElementById("rvlb");if(o)o.remove()};
   const lbOpen=()=>{const e=list()[ei];if(!e||!geo(e))return;lbClose();lb=true;const o=document.createElement("div");o.id="rvlb";o.className="rvlb";
     o.innerHTML='<div class="rvlbi"></div><div class="rvlbc"></div><div class="rvlbn"><button class="btn" data-d="-1">‹ Earlier</button><button class="btn" data-d="1">Later ›</button><button class="btn" data-d="0">Close</button></div>';
-    o.onclick=ev=>{const d=ev.target.dataset&&ev.target.dataset.d;if(d==null){if(ev.target===o)lbClose();return}if(d==="0")lbClose();else pick(si+ +d,false)};document.body.appendChild(o);lbShow()};
+    o.onclick=ev=>{const d=ev.target.dataset&&ev.target.dataset.d;if(d==null){if(ev.target===o)lbClose();return}if(d==="0")lbClose();else pick(si+ +d,true)};document.body.appendChild(o);lbShow()};
   const keys=ev=>{if(!live()){removeEventListener("keydown",keys);lbClose();return}if(!list().length||/INPUT|TEXTAREA|SELECT/.test((ev.target||{}).tagName||"")||!vwEl())return;
     const L=list(),e=L[ei];
     if(ev.key==="Escape"){if(lb){lbClose();ev.preventDefault()}return}
-    if(ev.key==="ArrowLeft"||ev.key==="ArrowRight"){const d=ev.key==="ArrowLeft"?-1:1;ev.preventDefault();if(ev.shiftKey)go(ei+d);else if(e&&geo(e)){if(si+d<0)go(ei-1);else if(si+d>=e.shots.length)go(ei+1);else pick(si+d,false)}else go(ei+d)}};
+    if(ev.key==="ArrowLeft"||ev.key==="ArrowRight"){const d=ev.key==="ArrowLeft"?-1:1;ev.preventDefault();if(ev.shiftKey)go(ei+d);else if(e&&geo(e)){if(si+d<0)go(ei-1);else if(si+d>=e.shots.length)go(ei+1);else pick(si+d,true)}else go(ei+d)}};
   addEventListener("keydown",keys);
   const viewer=force=>{
     const box=vwEl(),R=curRes();
