@@ -227,7 +227,13 @@ async function bookWithRaw(){
 }
 function bookWait(B0,title,again){
   main.innerHTML=`<h1>${title}</h1><div class="empty">${B0.status==="error"?"Could not reconcile the charges with the invoices: "+esc(B0.error||""):"Reconciling the charges with their invoices… about 20 seconds the first time, then it is remembered."}</div>`;
-  if(B0.status!=="error")setTimeout(()=>{if(location.hash.startsWith("#/"+(title==="Charges"?"charges":"charge")))again()},3000);
+  if(B0.status!=="error")bookPoll(title==="Charges"?"#/charges":"#/charge",again);
+}
+// wait for the charge book without redrawing the page every few seconds (that made it flicker): look quietly, redraw once when it is ready
+function bookPoll(prefix,again,fromBuilding){
+  const tick=async()=>{if(!location.hash.startsWith(prefix))return;const b=await getBook();if(!location.hash.startsWith(prefix))return;
+    if(b.status==="error"||(b.book&&b.status!=="building")||(b.book&&!fromBuilding))again();else setTimeout(tick,4000)};
+  setTimeout(tick,3000);
 }
 async function pageCharges(){
   loading();const B0=await bookWithRaw();if(!B0.book){bookWait(B0,"Charges",pageCharges);return}
@@ -262,7 +268,7 @@ async function pageCharges(){
    <div class="bar"><button class="chip" data-tab="charges">Charges</button><button class="chip" data-tab="invoices">Invoices (${B.invoices.length})</button><span id="rg"></span><select id="kd"><option value="all">All types</option><option value="ac">AC / home</option><option value="dc">DC fast</option><option value="supercharger">Supercharger</option></select><select id="iv"><option value="all">Any invoice state</option><option value="with">With an invoice</option><option value="without">Public, no invoice</option><option value="unsynced">Not yet in Tessie</option></select><input type="search" id="q" placeholder="Search a place or invoice…" value="${esc(CP.q)}"></div><div class="tiles" id="tl"></div><div id="tb" style="overflow-x:auto"></div>`;
   $("#kd").value=CP.kind;$("#iv").value=CP.inv;rangePicker($("#rg"),CP.r,daysOf(P),show);$("#kd").onchange=e=>{CP.kind=e.target.value;show()};$("#iv").onchange=e=>{CP.inv=e.target.value;show()};$("#q").oninput=e=>{CP.q=e.target.value;show()};
   $$("[data-tab]").forEach(c=>c.onclick=()=>{CP.tab=c.dataset.tab;show()});show();
-  if(B0.status==="building")setTimeout(()=>{if(location.hash.startsWith("#/charges"))pageCharges()},5000);
+  if(B0.status==="building")bookPoll("#/charges",pageCharges,true);
 }
 
 // time-axis chart. series: [{k,name,unit,col,axis}], axes: {id:{side:"left"|"right",label,col,min,max}}. `sel` = part drawn solid (others dashed); strip = charging-state bar
