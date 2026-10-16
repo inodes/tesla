@@ -880,12 +880,13 @@ async function pageTeslaCam(role,id){
 // the colours every route map uses (settings app.map.speed_colors / autopilot_colors): speed as a gradient, and who was driving
 const APN={1:"FSD",2:"Autosteer",3:"TACC"},APD={FSD:"#3b6cf6",Autosteer:"#8b5cf6",TACC:"#14b8a6",Manual:"#94a3b8"};
 const apCol=k=>(cfg("map.autopilot_colors")||{})[k]||APD[k],APC=new Proxy({},{get:(_,a)=>apCol(APN[a]||"Manual")});
-const spdStops=()=>cfg("map.speed_colors")||[[0,"#22a559"],[120,"#c71f2e"]],spdTop=()=>spdStops()[spdStops().length-1][0];
-const spdExpr=()=>["interpolate",["linear"],["get","v"],...spdStops().flat()];
+const spdStops=()=>cfg("map.speed_colors")||[[0,"#0000FF"],[60,"#FFFF00"],[120,"#800080"]],spdTop=()=>spdStops()[spdStops().length-1][0];
+const spdOver=()=>cfg("map.speed_over_color")||"#000000";
+const spdExpr=()=>["interpolate",["linear"],["get","v"],...spdStops().flat(),spdTop()+0.5,spdOver()];
 const apExpr=()=>["match",["get","ap"],1,apCol("FSD"),2,apCol("Autosteer"),3,apCol("TACC"),apCol("Manual")];
-const spdLegend=()=>`<span style="background:linear-gradient(90deg,${spdStops().map(([a,c])=>c+" "+(100*a/spdTop())+"%").join(",")});display:inline-block;width:140px;height:8px;border-radius:4px;vertical-align:middle"></span> 0 → ${spdTop()} km/h`;
+const spdLegend=()=>`<span style="background:linear-gradient(90deg,${spdStops().map(([a,c])=>c+" "+(100*a/spdTop())+"%").join(",")});display:inline-block;width:140px;height:8px;border-radius:4px;vertical-align:middle"></span> 0 → ${spdTop()} km/h <span style="background:${spdOver()};display:inline-block;width:10px;height:10px;border-radius:50%;vertical-align:middle;border:1px solid #888"></span> faster`;
 const apLegend=()=>["FSD","Autosteer","TACC","Manual"].map(k=>`<span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:${apCol(k)};vertical-align:middle"></span> ${k}`).join("  ");
-const spdAt=v=>{const st=spdStops(),t=Math.max(0,Math.min(spdTop(),v||0));let i=0;while(i<st.length-2&&t>=st[i+1][0])i++;const a=st[i],b=st[i+1],f=(t-a[0])/((b[0]-a[0])||1),h=c=>[1,3,5].map(k=>parseInt(c.substr(k,2),16)),A=h(a[1]),B=h(b[1]);return "#"+A.map((x,k)=>Math.round(x+(B[k]-x)*f).toString(16).padStart(2,"0")).join("")};
+const spdAt=v=>{const st=spdStops();if((v||0)>spdTop())return spdOver();const t=Math.max(0,v||0);let i=0;while(i<st.length-2&&t>=st[i+1][0])i++;const a=st[i],b=st[i+1],f=(t-a[0])/((b[0]-a[0])||1),h=c=>[1,3,5].map(k=>parseInt(c.substr(k,2),16)),A=h(a[1]),B=h(b[1]);return "#"+A.map((x,k)=>Math.round(x+(B[k]-x)*f).toString(16).padStart(2,"0")).join("")};
 async function pageTeslaCamDrive(role,id){
   loading();const pl=await api("places").catch(()=>({saved:[]}));
   main.innerHTML=crumbs("#/teslacam","TeslaCam")+'<div id="tdh"></div>';
