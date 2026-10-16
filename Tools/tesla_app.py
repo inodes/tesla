@@ -370,7 +370,11 @@ class H(BaseHTTPRequestHandler):
             r = TC.fuse(q.get("id", [""])[0])
             if not r:
                 return self.send_json({"error": "no sample file for this drive"}, 404)
-            return self.send_json(dict(info=r["info"]) if q.get("summary") else r)
+            if not q.get("summary"):
+                return self.send_json(r)
+            i = dict(r["info"])         # archive_min: minutes of this drive's footage on the Archive (None: not connected). 0 = the telemetry was read from another drive
+            i["archive_min"] = TC.footage_minutes("A", footage_root("A"), CC.from_local(i["t0"]), CC.from_local(i["t1"]))
+            return self.send_json(dict(info=i))
         if name == "clipclock":                 # the car's clock as learned from the footage (clip_clock.py): runs of minutes with the offset from UTC
             return self.send_json(CC.status())
         if name == "drivereview":               # drivereview?id=<drive folder>: its last review, the job state, the default speeds
