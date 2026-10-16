@@ -6,12 +6,13 @@ the block). A change takes effect the next time the app or script reads it (the 
 
   app.map.tiles_base / style_light / style_dark   OpenFreeMap style URL base and the style used in light / dark mode (liberty = 3D, bright, positron, dark, fiord)
   app.map.places_max_lon                           places east of this longitude are left off the Places map (160 = no New Zealand)
+  app.map.speed_colors / autopilot_colors            the speed gradient (km/h -> colour stops, the last stop is the top of the scale) and the FSD / Autosteer / TACC / Manual colours of every route map
   app.map.network_colors                           colour of each charger network on the Places map (a network not listed gets a colour of its own)
   app.teslacam.moving_kmh / run_gap_s / gap_min_s / same_place_m / same_place_est_m / same_minute_s / read_workers
-  app.review.step_s / min_kmh / min_conf / workers / merge_s   reading speed-limit signs from a drive's video (Review tab); candidate_km / candidate_avg_kmh = the "Review candidates" button on Drives
                                                    the TeslaCam timeline: a minute is "moving" above this speed; clips this close (s) are one recording; a hole shorter than gap_min_s is not shown;
                                                    a gap is "parked" when the car's last and next position are within same_place_m (same_place_est_m when one is a Sentry estimate);
                                                    clips read at once (CPU work, one process each)
+  app.review.step_s / min_kmh / min_conf / workers / merge_s   reading speed-limit signs from a drive's video (Review tab); candidate_km / candidate_avg_kmh = the "Review candidates" button on Drives
   app.drives.repark_max_km / repark_max_minutes    a drive shorter than both is a "re-park" (the car was shuffled), not a drive
   app.drives.long_highway_*                        a "long highway" drive (the only kind that shows 110/100 speed-change markers)
   app.drives.charge_window_minutes                 a charge within this long after / before a drive makes it "to charge" / "from charge"
@@ -33,6 +34,8 @@ except ImportError:                      # imported as lib.app_config
 
 DEFAULTS = {
     "map": {"tiles_base": "https://tiles.openfreemap.org/styles/", "style_light": "positron", "style_dark": "dark", "places_max_lon": 160,
+            "speed_colors": [[0, "#22a559"], [20, "#7ac143"], [40, "#d4d93a"], [60, "#f5b82e"], [80, "#f28a24"], [100, "#e5532b"], [120, "#c71f2e"]],
+            "autopilot_colors": {"FSD": "#3b6cf6", "Autosteer": "#8b5cf6", "TACC": "#14b8a6", "Manual": "#94a3b8"},
             "network_colors": {"Tesla": "#e0201b", "Tesla Destination": "#f97316", "Chargefox": "#16a34a", "Evie": "#7c3aed", "EVX": "#eab308", "Exploren": "#db2777",
                               "NRMA": "#2563eb", "AmpCharge": "#84cc16", "Jolt": "#14b8a6", "BP Pulse": "#0891b2", "3rd-Party": "#6b7280", "WA EV Network": "#9333ea"}},
     "teslacam": {"moving_kmh": 3.0, "run_gap_s": 75, "gap_min_s": 120, "same_place_m": 300, "same_place_est_m": 800, "same_minute_s": 30, "read_workers": 4},
