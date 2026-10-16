@@ -1271,9 +1271,11 @@ class TeslaChargerExplorer:
                 except Exception:
                     pass
 
- # If valid data captured, return immediately
-                if next_data_payload or captured_api_data:
+ # Only a page that carries charger data counts. _page_text is captured from any page (blocked, error, empty shell), so it must not stop the retries.
+                props = ((next_data_payload or {}).get("props") or {}).get("pageProps") or {}
+                if any("get-charger-details" in k or "get-location-details" in k for k in captured_api_data) or props.get("formattedData") or props.get("locationData"):
                     return captured_api_data, next_data_payload
+                err_msg = err_msg or ("HTTP %s, no charger data on the page" % getattr(self, "last_http_status", "?"))
             finally:
                 try:
                     page.remove_listener("response", handle_response)
@@ -2228,7 +2230,7 @@ class TeslaChargerExplorer:
                             dc_reg[station_key] = record
                         consecutive_failures = 0
                     else:
-                        print(f"  {C_RED}❌ Failed parsing record for {st_title}{C_RESET}")
+                        print(f"  {C_RED}❌ Failed parsing record for {st_title} (no charger data after {max_retries} tries, last HTTP status {getattr(self, 'last_http_status', '?')}){C_RESET}")
                         failed_stations.append(st_title)
                         stats["ERROR"] = stats.get("ERROR", 0) + 1
                         consecutive_failures += 1
