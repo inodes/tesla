@@ -41,9 +41,11 @@ def legend_html():
 
 
 def patch(h):
-    """A page built before the speed gradient: give it the new colours."""
+    """A page built before the speed gradient: give it the new colours (and a route that stays whole when zoomed out)."""
     if OLD_SC in h:
         h = h.replace(OLD_SC, sc_js())
     if OLD_LEGEND in h:
         h = h.replace(OLD_LEGEND, legend_html())
+    for a in ('map.addSource("route",{type:"geojson",data:lines})', 'map.addSource("gps",{type:"geojson",data:gl})'):
+        h = h.replace(a, a.replace('type:"geojson",', 'type:"geojson",tolerance:0,'))    # no thinning: short pieces of a long route would vanish when zoomed out
     return h
