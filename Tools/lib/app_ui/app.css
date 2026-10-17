@@ -160,3 +160,5 @@ tr.chline{cursor:pointer}tr.chline td{color:var(--bad);font-weight:600;font-size
 .rvb .bk{min-width:20px;height:20px;border-radius:5px;color:#fff;font:700 12px system-ui;padding:0 2px}
 .chn{color:var(--charge);font-weight:600;text-decoration:none}a.chn:hover{text-decoration:underline}
 .rvlg{display:flex;flex-wrap:wrap;gap:4px 14px;margin-top:4px;font-size:11.5px;color:var(--mut)}.rvlg i{display:inline-block;width:11px;height:11px;border-radius:3px;margin-right:5px;vertical-align:-1px}
+
+.pbar{height:8px;border-radius:4px;background:var(--line);overflow:hidden;margin-top:6px}.pbar i{display:block;height:100%;background:var(--acc);border-radius:4px;transition:width .4s}.pbar.ind i{width:35%;animation:pbi 1.1s ease-in-out infinite alternate}@keyframes pbi{from{margin-left:0}to{margin-left:65%}}

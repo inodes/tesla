@@ -349,7 +349,8 @@ async function driveReviewPanel(host,stamp,lo,onResult){
       <div class="sub" style="margin-bottom:8px">Finds every moment FSD was switched off, every time the accelerator was pressed while FSD was on, and every lasting speed change while FSD was on (filter them by speed afterwards, e.g. 100 → 110). The events come from the dashcam's telemetry; only the front camera is looked at, in the seconds around each event (a still every second, every speed-limit sign read). The events open under the map, one at a time.</div>
       <div class="bar" style="margin:0">
       ${run?'<button class="btn" id="rvx">Stop</button>':`<button class="btn pri" id="rvg">${R?"Run again":"Run review"}</button>`}</div>`;
-    if(run)h+=`<div class="sub" style="margin-top:8px">${esc(job.stage||"")}${job.total?" · "+n0(job.done)+" of "+n0(job.total):""}…</div>`;
+    if(run){const pc=job.total?Math.min(100,Math.round(100*(job.done||0)/job.total)):null,el=job.t0?Math.max(0,Math.round(Date.now()/1000-job.t0)):0;
+      h+=`<div style="margin-top:10px"><div class="sub">${esc(job.stage||"")}${job.total?" · "+n0(job.done)+" of "+n0(job.total)+" ("+pc+"%)":""}${el?" · "+dur(Math.max(1,Math.round(el/60)))+" so far":""}</div><div class="pbar${pc==null?" ind":""}"><i ${pc==null?"":`style="width:${pc}%"`}></i></div></div>`}
     if(job.error)h+=`<div class="sub" style="margin-top:8px;color:var(--bad);user-select:text">${esc(job.error)}</div>`;
     if(ms.py.length+ms.cmd.length)h+=`<div class="sub" style="margin-top:8px">Stills and sign reading need ${esc(ms.py.concat(ms.cmd).join(", "))} installed. <code>${esc((ms.hint||[]).join(" ; "))}</code></div>`;
     else if(!S.connected&&!(R&&R.stills))h+=`<div class="sub" style="margin-top:8px">The Archive is not connected: events can be found from telemetry already read, but no stills.</div>`;
