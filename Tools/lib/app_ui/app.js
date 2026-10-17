@@ -557,7 +557,7 @@ async function pageCharge(id,pid){
    <div class="sub">${dayName(v.day)} · ${v.hm} – ${end} · ${dur(part?part.min:p.span)}${multi&&!part?" plugged in":""} · ${esc(p.network||(p.kind==="supercharger"?"Supercharger":p.kind==="dc"?"DC fast charger":"AC charging"))} · ${esc(String(p.status||"").replace(/[^\x20-\x7e]/g,"").trim())}${raw.pkey?' · <a href="#/place/'+encodeURIComponent(raw.pkey)+'">what is around here</a>':""}</div>
    ${multi?`<div class="bar"><a class="chip ${part?"":"on"}" href="#/charge/${p.id}" style="text-decoration:none">Whole charge</a>${links}<span class="sub">Tessie recorded this plug-in as ${p.parts.length} sessions; it is one charge with one invoice.</span></div>`:""}
    ${await alertsHere(p)}
-   <div class="chgrid"><div class="chline">
+   <div class="chgrid"><div class="chl">
      <div class="card"><h2 style="margin-top:0">Charger power and battery</h2><div class="sub" style="margin-bottom:6px">${chartSub(p,part,cur)}</div><div id="tc"></div></div>
      <div class="card"><h2 style="margin-top:0">Pack temperature, current and voltage</h2><div id="tv"></div></div>
      <div class="card"><h2 style="margin-top:0">Power against state of charge</h2>${cur?`<div class="sub" style="margin-bottom:6px"><div class="cs">${[cur.hardware&&cur.tier?esc(cur.hardware)+" · "+esc(cur.tier)+(cur.cap?" · "+n0(cur.cap)+" kW cap":"")+(cur.stalls?" · "+cur.stalls+" stalls":""):"",esc(cur.caption||"")].filter(Boolean).map(x=>`<div class="cs-r">${x}</div>`).join("")}</div></div>`:""}<div id="cc"></div></div>
