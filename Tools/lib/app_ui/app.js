@@ -187,6 +187,9 @@ async function driveReviewPanel(host,stamp,lo,onResult){
   // road signs by kind (colour of the sign): what a sign is, and how a chip for it looks
   const SCAT={speed:["Speed limit","#dc2626"],regulatory:["Regulatory","#b91c1c"],warning:["Warning","#ca8a04"],roadwork:["Road work","#ea580c"],info:["Information","#2563eb"],directional:["Directional","#16a34a"],safety:["Safety","#0891b2"]};
   const sgCat=x=>SCAT[x.cat||"speed"]||SCAT.speed;
+  // the lanes under the strip of an event (as in the old flip review): which lane a kind of sign goes in, and its colour
+  const LANES=[["Limit","#b91c1c"],["Warn","#d4a72c"],["Blue","#2f5fbf"],["Green","#3f9d5f"],["White","#f4f4f5"],["Traffic","#7c3aed"]];
+  const LANE_OF={speed:0,warning:1,roadwork:1,info:2,safety:2,directional:3,regulatory:4};
   const sgTitle=x=>`${sgCat(x)[0]} sign, seen ${x.n} time(s)${x.conf>0?", "+x.conf+"% sure of the reading":""}`+(x.anom?" · the car was doing "+n0(x.car)+" km/h: probably an exit or side road, not this road":"")+(x.osm!=null?" · the map says "+x.osm+(x.map?" on "+x.map:""):"")+(x.conflict?" · differs from the map":"")+(x.temp?(x.cat==="roadwork"?" · temporary road works":" · probably a temporary limit (road works nearby)"):"");
   const sgChip=x=>`<span class="sgn" style="border-left:4px solid ${sgCat(x)[1]};${x.anom?"opacity:.55;border-style:dashed;":""}" title="${esc(sgTitle(x))}">${x.f?`<img src="/review/${encodeURIComponent(x.f)}" alt="">`:""}<b>${esc(x.text||sgCat(x)[0])}</b> <span class="sub">${x.cat&&x.cat!=="speed"&&x.text?sgCat(x)[0]+" · ":""}${hm(x.t)}${x.anom?" · exit / side road?":""}${x.conflict?` · <span class="sgw">map ${x.osm}</span>`:x.osm!=null&&(x.cat||"speed")==="speed"?" · map agrees":""}${x.temp?' · <span class="sgw">temporary</span>':""}</span></span>`;
   const sgSum=L=>{const c={};L.forEach(x=>{const k=x.cat||"speed";c[k]=(c[k]||0)+1});return Object.keys(c).map(k=>c[k]+" "+(SCAT[k]||SCAT.speed)[0].toLowerCase()).join(", ")};
@@ -238,7 +241,7 @@ async function driveReviewPanel(host,stamp,lo,onResult){
     if(cv.width!==Math.round(W*dpr)||cv.height!==Math.round(H*dpr)){cv.width=Math.round(W*dpr);cv.height=Math.round(H*dpr)}
     const c=cv.getContext("2d");c.setTransform(dpr,0,0,dpr,0,0);c.clearRect(0,0,W,H);
     const st=getComputedStyle(document.documentElement),css=n=>st.getPropertyValue(n).trim()||"#888",ink=css("--mut"),line=css("--line"),acc=css("--acc"),ok=css("--charge"),bad=css("--bad");
-    const a=m.a,b=m.b,L=32,R=8,T=14,B=18,X=i=>L+(W-L-R)*(i-a)/Math.max(1,b-a),i0=Math.max(0,Math.floor(a)),i1=Math.min(s.v.length-1,Math.ceil(b)),sw=Math.max(1,X(i0+1)-X(i0));
+    const LB=LANES.length*15+6,a=m.a,b=m.b,L=44,R=8,T=14,B=18+LB,X=i=>L+(W-L-R)*(i-a)/Math.max(1,b-a),i0=Math.max(0,Math.floor(a)),i1=Math.min(s.v.length-1,Math.ceil(b)),sw=Math.max(1,X(i0+1)-X(i0));
     let vm=40;for(let i=i0;i<=i1;i++)if(s.v[i]!=null&&s.v[i]>vm)vm=s.v[i];vm=Math.ceil(vm/20)*20;const Y=v=>T+(H-T-B)*(1-v/vm);
     c.fillStyle=KCOL[e.kind];c.globalAlpha=.14;c.fillRect(X(ea(e)),T,Math.max(3,X(eb(e))-X(ea(e))),H-T-B);c.globalAlpha=1;
     c.font="11px system-ui";c.fillStyle=ink;c.strokeStyle=line;c.lineWidth=1;for(let v=0;v<=vm;v+=vm/2){c.beginPath();c.moveTo(L,Y(v));c.lineTo(W-R,Y(v));c.stroke();c.fillText(Math.round(v),3,Y(v)+4)}
@@ -246,7 +249,15 @@ async function driveReviewPanel(host,stamp,lo,onResult){
     c.fillStyle=ok;c.globalAlpha=.4;for(let i=i0;i<=i1;i++)if(s.accel[i]){const h=(H-T-B)*.4*Math.min(100,s.accel[i])/100;c.fillRect(X(i),H-B-h,sw,h)}c.globalAlpha=1;
     c.fillStyle=bad;c.globalAlpha=.5;for(let i=i0;i<=i1;i++)if(s.br[i])c.fillRect(X(i),H-B-3,sw,3);c.globalAlpha=1;
     c.beginPath();let on=false;for(let i=i0;i<=i1;i++){const v=s.v[i];if(v==null){on=false;continue}const x=X(i),y=Y(v);on?c.lineTo(x,y):c.moveTo(x,y);on=true}c.strokeStyle=acc;c.lineWidth=2;c.stroke();
-    (e.signs||[]).forEach(g=>{const i=base(e)+(g.t-e.t);if(i<a||i>b)return;const x=X(i);if((g.cat||"speed")!=="speed"){c.fillStyle=sgCat(g)[1];c.fillRect(x-5,T+3,10,10);c.strokeStyle=g.temp?"#111":"#fff";c.lineWidth=1.5;c.strokeRect(x-5,T+3,10,10);return}const y=Math.max(T+8,Y(+g.text||0));c.beginPath();c.arc(x,y,9,0,7);c.fillStyle="#fff";c.fill();c.lineWidth=2;c.strokeStyle=g.side==="R"?"#94a3b8":"#dc2626";c.stroke();c.fillStyle="#111";c.font="bold 8.5px system-ui";c.textAlign="center";c.fillText(g.text,x,y+3);c.textAlign="start"});
+    // the lanes: one row for each kind of sign (and traffic in our lane), a chip from the first to the last still it was seen in
+    const lt=H-18-LB+6;c.font="10px system-ui";c.textBaseline="middle";
+    LANES.forEach((ln,k)=>{const y=lt+k*15+7;c.strokeStyle=line;c.lineWidth=1;c.beginPath();c.moveTo(L,y);c.lineTo(W-R,y);c.stroke();c.fillStyle=ink;c.textAlign="left";c.fillText(ln[0],3,y)});
+    const chip=(k,i0,i1,txt,col,hot)=>{const y=lt+k*15+7,x0=X(Math.max(a,i0)),x1=X(Math.min(b,i1)),w=Math.max(txt?26:14,x1-x0),x=(x0+x1)/2-w/2;if(i1<a||i0>b)return;c.fillStyle=col;c.beginPath();c.roundRect?c.roundRect(x,y-6,w,12,3):c.rect(x,y-6,w,12);c.fill();if(hot){c.strokeStyle="#111";c.lineWidth=1.5;c.stroke()}
+      else if(col==="#f4f4f5"){c.strokeStyle=ink;c.lineWidth=1;c.stroke()}
+      if(txt){c.fillStyle=col==="#f4f4f5"||col==="#d4a72c"?"#111":"#fff";c.textAlign="center";c.font="bold 10px system-ui";c.fillText(txt,x+w/2,y+.5);c.font="10px system-ui"}};
+    (e.signs||[]).forEach(g=>{const k=LANE_OF[g.cat||"speed"];if(k==null)return;const i0=base(e)+(g.t0!=null?g.t0:g.t)-e.t,i1=base(e)+(g.t1!=null?g.t1:g.t)-e.t;chip(k,i0,i1,(g.cat||"speed")==="speed"?g.text:"",LANES[k][1],g.temp||g.conflict)});
+    (e.traffic||[]).forEach(q=>chip(5,base(e)+q.t0-e.t,base(e)+q.t1-e.t,"",LANES[5][1],false));
+    c.textBaseline="alphabetic";c.textAlign="start";
     const hot=hv!=null?hv:si;m.xs=[];
     (geo(e)?e.shots:[]).forEach((x,k)=>{const px=X(stillI(e,k)),h=k===hot;m.xs.push(px);c.strokeStyle=c.fillStyle=h?"#f59e0b":KCOL[e.kind];c.globalAlpha=h?1:.45;c.lineWidth=h?2.5:1;c.beginPath();c.moveTo(px,T);c.lineTo(px,H-B);c.stroke();c.beginPath();c.arc(px,T,h?4.5:2.5,0,7);c.fill();c.globalAlpha=1});
     c.strokeStyle=KCOL[e.kind];c.lineWidth=1.5;c.setLineDash([4,3]);c.beginPath();c.moveTo(X(base(e)),T);c.lineTo(X(base(e)),H-B);c.stroke();c.setLineDash([]);
@@ -298,7 +309,7 @@ async function driveReviewPanel(host,stamp,lo,onResult){
       if(e.look_error)h+=`<div class="sub" style="color:var(--bad)">${esc(e.look_error)}</div>`;
       if(g){
         h+=`<div class="rvmain"><div><div id="rvbig" class="rvimg" style="${big(e,si)}" title="Click to enlarge"></div><div class="sub" id="rvcap" style="margin-top:4px"></div><div class="sub" id="rvst"></div></div>
-          <div><canvas id="rvc" class="rvcv"></canvas><div class="sgs">${(e.signs||[]).map(sgChip).join("")}</div>
+          <div><canvas id="rvc" class="rvcv"></canvas><div class="rvlg">${LANES.map((l,k)=>`<span><i style="background:${l[1]}${l[1]==="#f4f4f5"?";border:1px solid var(--mut)":""}"></i>${["Speed limit","Warning / works","Blue sign (information)","Green sign (directions)","White sign (regulatory)","Traffic in our lane"][k]}</span>`).join("")}</div><div class="sgs">${(e.signs||[]).map(sgChip).join("")}</div>
           <div class="sub" style="margin-top:4px">${(e.signs||[]).length?"Signs found in these stills: "+sgSum(e.signs)+". The kind comes from the sign's colour; check each reading against its picture.":"No signs found in the stills."}</div></div></div>
           <div class="rvfilm">${e.shots.map((x,k)=>`<button class="rvc" data-k="${k}" style="${sprite(e,k)}" title="${x>0?"+":""}${n0(x)} s"></button>`).join("")}</div>
           <div class="sub" style="margin-top:6px">Click a still to light it up on the map, the chart and the video. ← → step through the stills, Shift + ← → through the events.</div>`}
