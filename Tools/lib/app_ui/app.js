@@ -38,7 +38,7 @@ function mapLinks(lat,lon,name,stop){
 function newMap(o){const m=new maplibregl.Map(o),c=m.getContainer();m.scrollZoom.disable();c.addEventListener("mousedown",e=>{if(e.button===0)m.scrollZoom.enable()});c.addEventListener("contextmenu",e=>{e.preventDefault();m.scrollZoom.disable()});c.addEventListener("mouseleave",()=>m.scrollZoom.disable());return m}   // a click turns wheel / pinch zoom on, a right-click (or ctrl-click) turns it off
 function mapNav(m,reset,title){const nav=new maplibregl.NavigationControl({showCompass:false});m.addControl(nav,"top-right");
   const b=document.createElement("button");b.type="button";b.className="maplibregl-ctrl-icon";b.title=title;b.setAttribute("aria-label",title);
-  b.innerHTML='<span style="display:block;text-align:center;font-size:18px;line-height:29px">⤢</span>';b.onclick=reset;nav._container.appendChild(b)}
+  b.innerHTML='<span style="display:block;text-align:center;font-size:18px;line-height:29px">⤢</span>';b.onclick=reset;nav._container.appendChild(b);return b}
 function miniMap(el,lat,lon,col){
   if(lat==null||lon==null){el.outerHTML='<div class="sub">No location.</div>';return}
   if(!window.maplibregl){el.innerHTML='<div class="empty">Map library not loaded (offline?).</div>';return}
@@ -1300,7 +1300,7 @@ async function teslaDriveBody(host,role,fetchSeg,places,opts){
     else if(!playable.length)$("#dvid").innerHTML='<div class="sub">No video for this time on a connected drive.</div>';
     events()};
   // map size and telemetry size / hide, remembered
-  const setMs=k=>{lsSet("tc.mapsz",k);$$("[data-ms]",host).forEach(b=>b.classList.toggle("on",b.dataset.ms===k));$("#dmap").style.height=(MSZ.find(x=>x[0]===k)||MSZ[2])[2];if(map&&map.resize){map.resize();map.fit(250)}};
+  const setMs=k=>{lsSet("tc.mapsz",k);$$("[data-ms]",host).forEach(b=>b.classList.toggle("on",b.dataset.ms===k));$("#dmap").style.height=(MSZ.find(x=>x[0]===k)||MSZ[2])[2];if(map&&map.resize){map.resize();map.refit(250)}};
   const setTs=k=>{lsSet("tc.telsz",k);$$("[data-ts]",host).forEach(b=>b.classList.toggle("on",b.dataset.ts===k));const c=$("#dch");c.style.display=k==="h"?"none":"block";c.style.height=(TSZ.find(x=>x[0]===k)||TSZ[1])[2];dispatchEvent(new Event("resize"))};
   $$("[data-ms]",host).forEach(b=>b.onclick=()=>setMs(b.dataset.ms));$$("[data-ts]",host).forEach(b=>b.onclick=()=>setTs(b.dataset.ts));
   setMs(lsGet("tc.mapsz","l"));setTs(lsGet("tc.telsz","n"));
@@ -1331,10 +1331,10 @@ async function teslaDriveBody(host,role,fetchSeg,places,opts){
   fill();if(opts.review&&rv)rvDraw();
 }
 function driveMap(el,s,idx,onPick,leg){
-  if(!window.maplibregl){el.innerHTML='<div class="empty">Map library not loaded (offline?).</div>';return{update(){},cursor(){},mode(){},section(){},pins(){}}}
+  if(!window.maplibregl){el.innerHTML='<div class="empty">Map library not loaded (offline?).</div>';return{update(){},cursor(){},mode(){},section(){},pins(){},refit(){}}}
   const dark=matchMedia("(prefers-color-scheme: dark)").matches,m=newMap({container:el,style:MAPSTYLE(dark),center:[idx.length?s.lon[idx[0]]:151,idx.length?s.lat[idx[0]]:-33],zoom:11,attributionControl:{compact:true}});
-  mapNav(m,()=>fit(),"Show the whole route");
-  let ready=false,mode="v",S=s,I=idx,first=true,latest=null;
+  const fitBtn=mapNav(m,()=>fit(),"Show the whole route");
+  let ready=false,mode="v",S=s,I=idx,first=true,latest=null,SEC=null;      // SEC: the section Review is looking at: its own button (inward arrows) and the size buttons fit that; the outward arrows show the whole route
   const SPD=spdExpr(),AP=apExpr();
   const feats=()=>{const f=[];for(let k=1;k<I.length;k++){const a=I[k-1],b=I[k];if(b-a>5)continue;f.push({type:"Feature",geometry:{type:"LineString",coordinates:[[S.lon[a],S.lat[a]],[S.lon[b],S.lat[b]]]},properties:{v:S.v[b]||0,ap:S.ap[b]||0,i:b}})}return{type:"FeatureCollection",features:f}};
   const legend=()=>{leg.innerHTML=mode==="v"?spdLegend():apLegend()};
@@ -1356,14 +1356,18 @@ function driveMap(el,s,idx,onPick,leg){
   const near=i=>{i=Math.max(0,Math.min(S.lat.length-1,i));for(let d=0;d<=6;d++){if(okp(i-d))return i-d;if(okp(i+d))return i+d}return -1};
   const showPins=()=>{const on=m.getZoom()>=PINZ;mk.forEach(k=>{k.getElement().style.display=on?"":"none"})};
   m.on("zoom",showPins);
-  const section=(a,b)=>{const bd=new maplibregl.LngLatBounds();let n=0;for(let i=Math.max(0,Math.floor(a));i<=Math.min(S.lat.length-1,Math.ceil(b));i++)if(okp(i)){bd.extend([S.lon[i],S.lat[i]]);n++}if(!n)return;first=false;m.fitBounds(bd,{padding:70,maxZoom:17,duration:500})};
+  const secFit=dur=>{if(!SEC)return;const bd=new maplibregl.LngLatBounds();let n=0;for(let i=Math.max(0,Math.floor(SEC[0]));i<=Math.min(S.lat.length-1,Math.ceil(SEC[1]));i++)if(okp(i)){bd.extend([S.lon[i],S.lat[i]]);n++}if(!n)return;first=false;m.fitBounds(bd,{padding:70,maxZoom:17,duration:dur==null?500:dur})};
+  const secBtn=document.createElement("button");secBtn.type="button";secBtn.className="maplibregl-ctrl-icon";secBtn.hidden=true;secBtn.title="Show the section being reviewed";secBtn.setAttribute("aria-label",secBtn.title);
+  secBtn.innerHTML='<svg viewBox="0 0 16 16" width="16" height="16" style="display:block;margin:6.5px auto" fill="none" stroke="#333" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M2 2l4 4M6 3v3H3M14 2l-4 4M10 3v3h3M2 14l4-4M3 10h3v3M14 14l-4-4M13 10h-3v3"/></svg>';
+  secBtn.onclick=()=>secFit(500);fitBtn.parentNode.appendChild(secBtn);
+  const section=(a,b)=>{SEC=[a,b];secBtn.hidden=false;secFit(500)};
   const pins=list=>{mk.splice(0).forEach(k=>k.remove());
     list.forEach(p=>{const i=near(p.i);if(i<0)return;const a=near(i-3),b=near(i+3);let h=null;if(a>=0&&b>=0&&a!==b){const dy=(S.lat[b]-S.lat[a])*110540,dx=(S.lon[b]-S.lon[a])*111320*Math.cos(S.lat[i]*Math.PI/180);if(Math.hypot(dx,dy)>=5)h=Math.atan2(dx,dy)}
       const side=p.side==="R"?1:p.side==="L"?-1:0,d=side&&h!=null?15:0,br=(h||0)+side*Math.PI/2,la=S.lat[i]+d*Math.cos(br)/110540,lo=S.lon[i]+d*Math.sin(br)/(111320*Math.cos(S.lat[i]*Math.PI/180));
       const el=document.createElement("div"),sp=p.cat==="speed";el.innerHTML=`<div class="mpin ${sp?"sp":p.cat==="roadwork"?"wn rw":"wn"}${p.conflict?" cf":""}">${sp?esc(p.text):"<span>!</span>"}</div>`;
       el.title=(sp?"Speed limit "+p.text:p.cat==="roadwork"?"Road work sign":"Warning sign")+(p.osm!=null?" · the map says "+p.osm:"")+(p.conflict?" · differs from the map":"")+(p.temp?" · probably temporary":"");
       mk.push(new maplibregl.Marker({element:el}).setLngLat([lo,la]).addTo(m))});showPins()};
-  return{section,pins,update(s2,i2){S=s2;I=i2;draw()},fit,resize(){m.resize()},mode(x){mode=x;paint()},cursor(i){if(!ready)return;let j=i;while(j>=0&&(S.lat[j]==null||Math.abs(S.lat[j])<1))j--;if(j<0)return;m.getSource("cu").setData({type:"FeatureCollection",features:[{type:"Feature",properties:{},geometry:{type:"Point",coordinates:[S.lon[j],S.lat[j]]}}]})}};
+  return{section,pins,refit:dur=>SEC?secFit(dur):fit(dur),update(s2,i2){S=s2;I=i2;draw()},fit,resize(){m.resize()},mode(x){mode=x;paint()},cursor(i){if(!ready)return;let j=i;while(j>=0&&(S.lat[j]==null||Math.abs(S.lat[j])<1))j--;if(j<0)return;m.getSource("cu").setData({type:"FeatureCollection",features:[{type:"Feature",properties:{},geometry:{type:"Point",coordinates:[S.lon[j],S.lat[j]]}}]})}};
 }
 // speed, pedals and steering against time, with the autopilot state as a strip; hover reads it out, click or drag moves the video
 function telemChart(cv,tip,s,onPick,t0){          // t0: i -> "HH:MM:SS" on the local clock (or a base time in ms, shown on this computer's clock)
