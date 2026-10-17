@@ -1067,13 +1067,19 @@ function tlDays(host,items,o){
   // where things were: a saved place first; else what Tessie's own record of the drive says; else (Sentry) the city and street; a drive's ends are where the stopped spells next to it were
   const TS=(o.tess||[]).map(x=>({s:x.t0,e:x.t0+x.min*60,frm:x.frm||"",to:x.to||""})).sort((a,b)=>a.s-b.s),WIN=20*60;       // UTC seconds
   const tOver=v=>{const s0=v.t0,e0=v.t1;let b=null,bo=0;for(const t of TS){const ov=Math.min(e0,t.e)-Math.max(s0,t.s);if(ov>bo){bo=ov;b=t}}return b};
-  const stayAt=v=>{const n=nameAt(places,v.p0)||nameAt(places,v.p1)||nameAt(places,v._pos);if(n)return n;
+  // a spot that is not a saved place, where the car has just charged: the charger's name, as the charge is stored (not the street address)
+  const CH=(o.chg||[]).filter(c=>c.place&&c.lat!=null),CR=cfg("drives.charger_name_m")||300,CW=cfg("drives.charge_window_minutes")*60;
+  const chNear=(c,p)=>p&&p[0]!=null&&hav(p[0],p[1],c.lat,c.lon)<=CR;
+  const chStay=v=>{const p=v.p0||v.p1||v._pos,c=CH.find(c=>c.t0<=v.t1+300&&c.t1>=v.t0-300&&chNear(c,p));return c?c.place:""};
+  const chEnd=v=>{const c=CH.find(c=>c.t0>=v.t1-300&&c.t0<=v.t1+CW&&chNear(c,v.p1));return c?c.place:""};
+  const chStart=v=>{const c=CH.find(c=>c.t1<=v.t0+300&&c.t1>=v.t0-CW&&chNear(c,v.p0));return c?c.place:""};
+  const stayAt=v=>{const n=nameAt(places,v.p0)||nameAt(places,v.p1)||nameAt(places,v._pos);if(n)return n;if(v._c==="parked"){const cn=chStay(v);if(cn)return cn}
     const cs=[v.city,v.street].filter(Boolean).join(" · ");if(v._c==="sentry"&&cs)return cs;
     const s0=v.t0,e0=v.t1,a=TS.filter(t=>t.to&&Math.abs(t.e-s0)<=WIN).sort((x,y)=>Math.abs(x.e-s0)-Math.abs(y.e-s0))[0];if(a)return a.to;
     const z=TS.filter(t=>t.frm&&Math.abs(t.s-e0)<=WIN).sort((x,y)=>Math.abs(x.s-e0)-Math.abs(y.s-e0))[0];return z?z.frm:cs};
   const chron=rs.slice().sort((a,b)=>a.t0-b.t0),stays=chron.filter(v=>v._c==="parked"||v._c==="sentry");
   const around=(v,end)=>{const t=end?v.t1:v.t0;let best=null,bd=WIN;for(const k of stays){const d=end?Math.abs(k.t0-t):Math.abs(k.t1-t);if(d<bd){const n=stayAt(k);if(n){bd=d;best=n}}}return best||""};
-  const ends=v=>{const t=tOver(v);return[nameAt(places,v.p0)||(t&&t.frm)||around(v,false)||"Unknown",nameAt(places,v.p1)||(t&&t.to)||around(v,true)||"Unknown"]};
+  const ends=v=>{const t=tOver(v);return[nameAt(places,v.p0)||chStart(v)||(t&&t.frm)||around(v,false)||"Unknown",nameAt(places,v.p1)||chEnd(v)||(t&&t.to)||around(v,true)||"Unknown"]};
   const ico=c=>c==="drive"?"🚗":c==="parked"?"🅿️":c==="sentry"?'<i class="hal" title="Sentry"></i>':"🎬";
   const row=(v,d)=>{const c=v._c,id=esc(v.id),canTick=c==="drive"||!!v._pos,chk=c==="rec"?"<span></span>":`<label class="ck"><input type="checkbox" data-id="${id}" ${TLS.on[v.id]?"checked":""} ${canTick?"":"disabled"} title="${canTick?"Show on the map":"No position known"}"></label>`;
     const when=c==="sentry"?hms(v.trig||v.start).slice(0,5):tm(v),e2=c==="drive"?ends(v):null;
@@ -1215,7 +1221,7 @@ async function pageTeslaCam(role,id){
     rs.forEach(v=>v._c=tlClass(v));const dr=rs.filter(v=>v._c==="drive");
     $("#tl").innerHTML=tile(n0(dr.length),"drives with telemetry")+tile(n0(dr.reduce((a,v)=>a+v.km,0))+" km","driven (from the video)")+tile(n0(rs.filter(v=>v._c==="sentry").length),"Sentry events")+tile(n0(rs.filter(v=>v._c==="parked").length),"parked spells")+tile(n0(rs.filter(v=>v._c==="rec").length),"recordings not read yet");
     $("#tb").innerHTML='<div id="tlh"></div>';
-    TLOFF=tlDays($("#tlh"),rs,{role:TCS.role,places,tess:act.filter(x=>x.k==="drive"),dayOk:d=>inRange({day:d},TCS.r),redraw:drawTimeline,onSentry:async ev=>{$("#spl").scrollIntoView({block:"nearest"});
+    TLOFF=tlDays($("#tlh"),rs,{role:TCS.role,places,tess:act.filter(x=>x.k==="drive"),chg:act.filter(x=>x.k==="charge"),dayOk:d=>inRange({day:d},TCS.r),redraw:drawTimeline,onSentry:async ev=>{$("#spl").scrollIntoView({block:"nearest"});
       try{if(!sentryList)sentryList=(await tcGet("teslacam/"+TCS.role+"/sentry")).events;sentryPlayer($("#spl"),sentryList.find(v=>v.id===ev),TCS.role,"SentryClips")}catch(e){$("#spl").innerHTML=errBox(e.message,"Could not read these clips")}}})||null};
   const draw=()=>{if(!data)return;if(TCS.kind==="clips"?!data.sentry:!data.items&&data.connected!==false){return}if(!data.connected){$("#tb").innerHTML='<div class="empty">This drive is not connected.</div>';$("#ixb").innerHTML="";return}
     if(TCS.kind==="timeline"){ixBar();return drawTimeline()}$("#ixb").innerHTML="";
