@@ -26,6 +26,9 @@ the block). A change takes effect the next time the app or script reads it (the 
   app.review.exit_car_kmh / exit_gap_kmh           a sign read at exit_car_kmh or more that is exit_gap_kmh or more below the car's speed is marked "probably an exit or side road" (shown dimmed)
   app.review.sign_min_stills                       a sign of a colour class (not a speed limit) must be seen in this many stills of an event or it is taken as noise
   app.review.works_gap_s                           a speed sign that differs from OpenStreetMap, within this many seconds of a road-work sign, is marked as a probably temporary limit
+  app.review.traffic / traffic_conf / traffic_min_w   find the vehicles ahead in our own lane in each still (the Traffic lane under the telemetry): a small object detector run by OpenCV (no extra Python package);
+                                                   traffic_conf = how sure it must be (0..1), traffic_min_w = narrower than this fraction of the picture is too far ahead to count
+  app.review.traffic_model / traffic_model_url      the detector's model file (default <data>/models/yolov8n.onnx, about 6 MB) and where it is fetched from, once, when it is missing
   app.review.osm_fetch                             fetch a missing OpenStreetMap tile (major roads only, a few seconds) to compare a speed sign with the map's limit; off = only tiles already kept
   app.review.hi_px / hi_quality                    the big picture of each still of a review event (width in px, JPEG quality), cut from the full-size video frame while the video is there; 0 px = none
   app.review.event_before_s / event_after_s / max_event_stills
@@ -65,7 +68,7 @@ DEFAULTS = {
     "teslacam": {"moving_kmh": 3.0, "run_gap_s": 75, "gap_min_s": 120, "same_place_m": 300, "same_place_est_m": 800, "same_minute_s": 30, "read_workers": 4, "days_newest_first": True, "rows_newest_first": True},
     "review": {"step_s": 1.0, "min_kmh": 30.0, "min_conf": 50.0, "workers": 3, "merge_s": 12.0, "candidate_km": 20, "candidate_avg_kmh": 60,
                "accel_min_pct": 5, "speed_min_kmh": 5, "speed_tol_kmh": 6,
-               "event_before_s": 12, "event_after_s": 15, "max_event_stills": 40, "hi_px": 1000, "hi_quality": 88, "exit_car_kmh": 90, "exit_gap_kmh": 20, "sign_min_stills": 2, "works_gap_s": 40, "osm_fetch": True, "steer_deg": 15},
+               "event_before_s": 12, "event_after_s": 15, "max_event_stills": 40, "hi_px": 1000, "hi_quality": 88, "exit_car_kmh": 90, "exit_gap_kmh": 20, "sign_min_stills": 2, "works_gap_s": 40, "osm_fetch": True, "traffic": True, "traffic_conf": 0.35, "traffic_min_w": 0.015, "traffic_model": "", "traffic_model_url": "https://huggingface.co/unity/inference-engine-yolo/resolve/main/models/yolov8n.onnx", "steer_deg": 15},
     "stills": {"width": 400, "quality": 6, "workers": 3},
     "drives": {"repark_max_km": 0.05, "repark_same_place_km": 0.3, "repark_same_place_m": 50, "repark_max_minutes": 10,
                "long_highway_km": 30, "long_highway_fast_kmh": 90, "long_highway_fast_minutes": 10,
