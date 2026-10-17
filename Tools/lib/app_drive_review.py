@@ -47,10 +47,10 @@ OPTS = dict(accel_min_pct=5,        # accelerator at or above this (%) counts as
             event_before_s=12,      # stills from this long before an event ...
             event_after_s=15,       # ... to this long after it (28 stills with the one a second)
             max_event_stills=40,    # a longer event is thinned to this many
-            hi_px=1000,             # the big picture of each still of an event (cut from the full-size frame while the video is there): width in px, 0 = none
+            hi_px=1400,             # the big picture of each still of an event (cut from the full-size frame while the video is there): width in px, 0 = none
             exit_car_kmh=90,        # a sign read while the car goes at least this fast ...
             exit_gap_kmh=20,        # ... and this much lower than the car is marked as probably an exit or side road
-            hi_quality=88,          # and its JPEG quality
+            hi_quality=82,          # and its JPEG quality
             sign_min_stills=2,      # a coloured sign (not a speed sign) must be seen in this many stills, or it is taken as noise
             works_gap_s=40,         # a speed sign that differs from the map this close in time to a road-work sign is marked as a temporary limit
             osm_fetch=True,         # fetch a missing OpenStreetMap tile (a few seconds) to compare a speed sign with the map's limit
