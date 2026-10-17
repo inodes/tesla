@@ -340,8 +340,39 @@ class Store:
         return _cached("alerts", app_alerts.deps(self.d) + [self.p("drives", "drives_master.csv"), self.p("charges", "charges_master.csv"), self.p("idles", "idles_master.csv")],
                        lambda: app_alerts.build(self.d, self.drives(), self.charges(), self.idles()))
 
+    def _charger_names(self, drives, charges, idles):
+        """A place that is not one of the saved places, where the car has just charged (or is charging), is named after the charger - exactly as the
+        charge is stored (the Supercharger's tesla.com name, another network's name) - instead of the street address Tessie has for it.
+        A drive's end: a charge started up to drives.charge_window_minutes after it, close by. A drive's start: a charge ended up to that long before
+        it. A parked spell: a charge that overlaps it (5 minutes either side). 'Close by' is app.drives.charger_name_m."""
+        W = app_config.get("drives.charge_window_minutes") * 60
+        R = app_config.get("drives.charger_name_m")
+        ch = [c for c in charges if c.get("place") and c.get("lat") is not None and c.get("lon") is not None]
+
+        def near(c, la, lo):
+            return la is not None and lo is not None and math.hypot((c["lat"] - la) * 111320.0, (c["lon"] - lo) * 111320.0 * math.cos(math.radians(la))) <= R
+
+        def saved(la, lo):
+            return la is not None and lo is not None and self.pl.saved_at(la, lo) is not None
+        for d in drives:
+            if not saved(d.get("lat1"), d.get("lon1")):
+                c = next((c for c in ch if d["t1"] - 300 <= c["t0"] <= d["t1"] + W and near(c, d.get("lat1"), d.get("lon1"))), None)
+                if c:
+                    d["to"] = c["place"]
+            if not saved(d.get("lat"), d.get("lon")):
+                c = next((c for c in ch if d["t0"] - W <= c["t1"] <= d["t0"] + 300 and near(c, d.get("lat"), d.get("lon"))), None)
+                if c:
+                    d["frm"] = c["place"]
+        for i in idles:
+            if not saved(i.get("lat"), i.get("lon")):
+                c = next((c for c in ch if c["t0"] <= i["t1"] + 300 and c["t1"] >= i["t0"] - 300 and near(c, i.get("lat"), i.get("lon"))), None)
+                if c:
+                    i["place"] = c["place"]
+
     def activity(self):
-        items = self.drives() + self.charges() + self.idles()
+        drives, charges, idles = [dict(x) for x in self.drives()], self.charges(), [dict(x) for x in self.idles()]
+        self._charger_names(drives, charges, idles)
+        items = drives + charges + idles
         sev = {"safety": 0, "attention": 1, "notice": 2, "info": 3}
         for it in items:
             it["al"], it["alsev"] = 0, ""
