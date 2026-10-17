@@ -22,6 +22,7 @@ clock, which is only what is shown.
 import bisect
 import datetime
 import json
+import re
 import math
 import os
 import statistics
@@ -46,6 +47,8 @@ OPTS = dict(accel_min_pct=5,        # accelerator at or above this (%) counts as
             event_after_s=15,       # ... to this long after it (28 stills with the one a second)
             max_event_stills=40,    # a longer event is thinned to this many
             hi_px=1000,             # the big picture of each still of an event (cut from the full-size frame while the video is there): width in px, 0 = none
+            exit_car_kmh=90,        # a sign read while the car goes at least this fast ...
+            exit_gap_kmh=20,        # ... and this much lower than the car is marked as probably an exit or side road
             hi_quality=88,          # and its JPEG quality
             steer_deg=15)           # the wheel moved this much around a switch-off = "steering"
 MODES = {0: "Manual", 1: "FSD", 2: "Autosteer", 3: "TACC"}
@@ -290,6 +293,11 @@ def look(ev, rows, front, base, stamp, o, stop, stills=None, signs=True):
                     crop = cv2.resize(crop, (max(1, int(crop.shape[1] * z)), max(1, int(crop.shape[0] * z))))
                 cv2.imwrite(os.path.join(base, "crops", name), crop, [cv2.IMWRITE_JPEG_QUALITY, 85])
                 g["f"] = name
+        for g in sgs:                                       # at highway speed a much lower limit is usually an exit or a side road, not this road
+            near = [r["v"] for r in rows if g["t0"] - 1 <= r["t"] <= g["t1"] + 1 and r["v"] is not None]
+            g["car"] = round(statistics.median(near)) if near else None
+            m = re.match(r"\d+", str(g["text"]))
+            g["anom"] = bool(m and g["car"] is not None and g["car"] >= o["exit_car_kmh"] and int(m.group(0)) <= g["car"] - o["exit_gap_kmh"])
         ev["signs"] = sgs
 
 

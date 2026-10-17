@@ -292,7 +292,7 @@ async function driveReviewPanel(host,stamp,lo,onResult){
       if(e.look_error)h+=`<div class="sub" style="color:var(--bad)">${esc(e.look_error)}</div>`;
       if(g){
         h+=`<div class="rvmain"><div><div id="rvbig" class="rvimg" style="${big(e,si)}" title="Click to enlarge"></div><div class="sub" id="rvcap" style="margin-top:4px"></div><div class="sub" id="rvst"></div></div>
-          <div><canvas id="rvc" class="rvcv"></canvas><div class="sgs">${(e.signs||[]).map(x=>`<span class="sgn" title="seen ${x.n} time(s), ${x.conf}% sure">${x.f?`<img src="/review/${encodeURIComponent(x.f)}" alt="">`:""}<b>${esc(x.text)}</b> <span class="sub">${hm(x.t)}</span></span>`).join("")}</div>
+          <div><canvas id="rvc" class="rvcv"></canvas><div class="sgs">${(e.signs||[]).map(x=>`<span class="sgn" style="${x.anom?"opacity:.55;border-style:dashed":""}" title="seen ${x.n} time(s), ${x.conf}% sure${x.anom?" · the car was doing "+n0(x.car)+" km/h: probably an exit or side road, not this road":""}">${x.f?`<img src="/review/${encodeURIComponent(x.f)}" alt="">`:""}<b>${esc(x.text)}</b> <span class="sub">${hm(x.t)}${x.anom?" · exit / side road?":""}</span></span>`).join("")}</div>
           <div class="sub" style="margin-top:4px">${(e.signs||[]).length?"Signs read in these stills (check each against its picture).":"No signs read in the stills."}</div></div></div>
           <div class="rvfilm">${e.shots.map((x,k)=>`<button class="rvc" data-k="${k}" style="${sprite(e,k)}" title="${x>0?"+":""}${n0(x)} s"></button>`).join("")}</div>
           <div class="sub" style="margin-top:6px">Click a still to light it up on the map, the chart and the video. ← → step through the stills, Shift + ← → through the events.</div>`}
