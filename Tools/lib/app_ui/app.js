@@ -250,7 +250,7 @@ async function driveReviewPanel(host,stamp,lo,onResult){
     if(cv.width!==Math.round(W*dpr)||cv.height!==Math.round(H*dpr)){cv.width=Math.round(W*dpr);cv.height=Math.round(H*dpr)}
     const c=cv.getContext("2d");c.setTransform(dpr,0,0,dpr,0,0);c.clearRect(0,0,W,H);
     const st=getComputedStyle(document.documentElement),css=n=>st.getPropertyValue(n).trim()||"#888",ink=css("--mut"),line=css("--line"),acc=css("--acc"),ok=css("--charge"),bad=css("--bad");
-    const LB=LANES.length*15+6,a=m.a,b=m.b,L=44,R=8,T=14,B=18+LB,X=i=>L+(W-L-R)*(i-a)/Math.max(1,b-a),i0=Math.max(0,Math.floor(a)),i1=Math.min(s.v.length-1,Math.ceil(b)),sw=Math.max(1,X(i0+1)-X(i0));
+    const LB=0,a=m.a,b=m.b,L=44,R=8,T=14,B=18+LB,X=i=>L+(W-L-R)*(i-a)/Math.max(1,b-a),i0=Math.max(0,Math.floor(a)),i1=Math.min(s.v.length-1,Math.ceil(b)),sw=Math.max(1,X(i0+1)-X(i0));
     // the speed zones of this section: each speed sign's limit from where it was seen to the next sign (a sign for an exit or side road is left out)
     const zs=(e.signs||[]).filter(g=>(g.cat||"speed")==="speed"&&!g.anom&&/^\d+/.test(g.text||"")).map(g=>({v:+String(g.text).match(/^\d+/)[0],i:base(e)+(g.t0!=null?g.t0:g.t)-e.t})).sort((p,q)=>p.i-q.i);
     let vm=40;for(let i=i0;i<=i1;i++)if(s.v[i]!=null&&s.v[i]>vm)vm=s.v[i];zs.forEach(z=>{if(z.v>vm)vm=z.v});vm=Math.ceil(vm/20)*20;const Y=v=>T+(H-T-B)*(1-v/vm);
@@ -262,13 +262,6 @@ async function driveReviewPanel(host,stamp,lo,onResult){
     c.fillStyle=ok;c.globalAlpha=.4;for(let i=i0;i<=i1;i++)if(s.accel[i]){const h=(H-T-B)*.4*Math.min(100,s.accel[i])/100;c.fillRect(X(i),H-B-h,sw,h)}c.globalAlpha=1;
     c.fillStyle=bad;c.globalAlpha=.5;for(let i=i0;i<=i1;i++)if(s.br[i])c.fillRect(X(i),H-B-3,sw,3);c.globalAlpha=1;
     c.beginPath();let on=false;for(let i=i0;i<=i1;i++){const v=s.v[i];if(v==null){on=false;continue}const x=X(i),y=Y(v);on?c.lineTo(x,y):c.moveTo(x,y);on=true}c.strokeStyle=acc;c.lineWidth=2;c.stroke();
-    // the lanes: one row for each kind of sign (and traffic in our lane), a chip from the first to the last still it was seen in
-    const lt=H-18-LB+6;c.font="10px system-ui";c.textBaseline="middle";
-    LANES.forEach((ln,k)=>{const y=lt+k*15+7;c.strokeStyle=line;c.lineWidth=1;c.beginPath();c.moveTo(L,y);c.lineTo(W-R,y);c.stroke();c.fillStyle=ink;c.textAlign="left";c.fillText(ln[0],3,y)});
-    const chip=(k,i0,i1,txt,col,hot)=>{const y=lt+k*15+7,x0=X(Math.max(a,i0)),x1=X(Math.min(b,i1)),w=Math.max(txt?26:14,x1-x0),x=(x0+x1)/2-w/2;if(i1<a||i0>b)return;c.fillStyle=col;c.beginPath();c.roundRect?c.roundRect(x,y-6,w,12,3):c.rect(x,y-6,w,12);c.fill();if(hot){c.strokeStyle="#111";c.lineWidth=1.5;c.stroke()}
-      else if(col==="#f4f4f5"){c.strokeStyle=ink;c.lineWidth=1;c.stroke()}
-      if(txt){c.fillStyle=col==="#f4f4f5"||col==="#d4a72c"?"#111":"#fff";c.textAlign="center";c.font="bold 10px system-ui";c.fillText(txt,x+w/2,y+.5);c.font="10px system-ui"}};
-    (e.signs||[]).forEach(g=>{const k=LANE_OF[g.cat||"speed"];if(k==null)return;const i0=base(e)+(g.t0!=null?g.t0:g.t)-e.t,i1=base(e)+(g.t1!=null?g.t1:g.t)-e.t;chip(k,i0,i1,(g.cat||"speed")==="speed"?g.text:"",LANES[k][1],g.temp||g.conflict)});
     c.textBaseline="alphabetic";c.textAlign="start";
     const hot=hv!=null?hv:si;m.xs=[];
     (geo(e)?e.shots:[]).forEach((x,k)=>{const px=X(stillI(e,k)),h=k===hot;m.xs.push(px);c.strokeStyle=c.fillStyle=h?"#f59e0b":KCOL[e.kind];c.globalAlpha=h?1:.45;c.lineWidth=h?2.5:1;c.beginPath();c.moveTo(px,T);c.lineTo(px,H-B);c.stroke();c.beginPath();c.arc(px,T,h?4.5:2.5,0,7);c.fill();c.globalAlpha=1});
@@ -288,6 +281,7 @@ async function driveReviewPanel(host,stamp,lo,onResult){
   const pick=(k,seek)=>{const e=list()[ei];if(!e||!geo(e))return;si=Math.max(0,Math.min(e.shots.length-1,k));hv=null;hot();
     if(RVAPI){RVAPI.cursor(stillI(e,si));if(seek)RVAPI.seek(stillI(e,si))}if(lb)lbShow()};
   const arrive=e=>{if(!RVAPI||!e)return;const g=geo(e),t=g?e.shots.map((x,j)=>stillI(e,j)):[];       // the chart under the map shows only this event's section (Review: nothing else), the map dot goes to it
+    RVAPI.lanes((e.signs||[]).map(g=>{const k=LANE_OF[g.cat||"speed"];return k==null?null:{k,a:base(e)+(g.t0!=null?g.t0:g.t)-e.t,b:base(e)+(g.t1!=null?g.t1:g.t)-e.t,txt:(g.cat||"speed")==="speed"?g.text:"",col:LANES[k][1],hot:!!(g.temp||g.conflict),tip:sgTitle(g)}}).filter(Boolean));
     RVAPI.focus({a:ea(e),b:eb(e),ticks:t,hot:si,col:KCOL[e.kind]});RVAPI.limit(Math.min(ea(e),t.length?t[0]:ea(e))-10,Math.max(eb(e),t.length?t[t.length-1]:eb(e))+10);RVAPI.map(Math.min(ea(e),t.length?t[0]:ea(e))-3,Math.max(eb(e),t.length?t[t.length-1]:eb(e))+3,(e.signs||[]).filter(x=>["speed","warning","roadwork"].includes(x.cat||"speed")).map(x=>({i:Math.round(base(e)+(x.t-e.t)),side:x.side,cat:x.cat||"speed",text:x.text,temp:x.temp,conflict:x.conflict,osm:x.osm,car:x.car})));RVAPI.cursor(g?stillI(e,si):ea(e));RVAPI.seek(g?stillI(e,si):ea(e))};      // the video below goes to the event too, not on playing from where it was
   const go=n=>{const L=list();if(!L.length)return;ei=Math.max(0,Math.min(L.length-1,n));const e=L[ei];si=geo(e)?k0(e):0;hv=null;viewer(true);arrive(e)};
   // the big picture
@@ -322,7 +316,7 @@ async function driveReviewPanel(host,stamp,lo,onResult){
       if(e.look_error)h+=`<div class="sub" style="color:var(--bad)">${esc(e.look_error)}</div>`;
       if(g){
         h+=`<div class="rvmain"><div><div id="rvbig" class="rvimg" style="${big(e,si)}" title="Click to enlarge"></div><div class="sub" id="rvcap" style="margin-top:4px"></div><div class="sub" id="rvst"></div></div>
-          <div><canvas id="rvc" class="rvcv"></canvas><div class="rvlg">${LANES.map((l,k)=>`<span><i style="background:${l[1]}${l[1]==="#f4f4f5"?";border:1px solid var(--mut)":""}"></i>${["Speed limit","Warning / works","Blue sign (information)","Green sign (directions)","White sign (regulatory)","Traffic in our lane (found by machine: a vehicle ahead in the middle of the picture)"][k]}</span>`).join("")}</div><div class="sgs">${(e.signs||[]).filter(x=>x.cat!=="traffic").map(sgChip).join("")}</div>
+          <div><canvas id="rvc" class="rvcv"></canvas><div class="sgs">${(e.signs||[]).filter(x=>x.cat!=="traffic").map(sgChip).join("")}</div>
           <div class="sub" style="margin-top:4px">${(e.signs||[]).filter(x=>x.cat!=="traffic").length?"Signs found in these stills: "+sgSum(e.signs.filter(x=>x.cat!=="traffic"))+". The kind comes from the sign's colour; check each reading against its picture.":"No signs found in the stills."}</div></div></div>
           <div class="rvfilm">${e.shots.map((x,k)=>`<button class="rvc" data-k="${k}" style="${sprite(e,k)}" title="${x>0?"+":""}${n0(x)} s">${badges(e,k)}</button>`).join("")}</div>
           <div class="sub" style="margin-top:6px">Click a still to light it up on the map, the chart and the video. ← → step through the stills, Shift + ← → through the events.</div>`}
@@ -408,7 +402,7 @@ async function pageDrive(stamp,tab){
         [...w.children].forEach(c=>{if(c.id!=="foot")c.style.display="none"})})};
     let bodyOn=false;
     const body=async()=>{
-    try{await teslaDriveBody($("#tdh"),"A",fetchSeg,pl.saved||[],{heading:false,review:null})}
+    try{await teslaDriveBody($("#tdh"),"A",fetchSeg,pl.saved||[],{heading:false,review:null,rvtab:rv})}
     catch(e){const h=$("#tdh");if(h)h.innerHTML=e.none?'<div class="card"><b>No dashcam footage or telemetry for this drive.</b><div class="sub" style="margin-top:6px">Nothing recorded on the Archive covers these times, and nothing was read from it before. If the Archive is not connected, connect it and open this tab again.</div></div>':errBox(e.message,"Could not rebuild this drive from the video")}};
     // Review: nothing but the Review card until the drive has been reviewed; then the map, chart, video and the events
     if(rv)driveReviewPanel($("#drr"),stamp,lo,has=>{if(has&&!bodyOn){bodyOn=true;body()}});else body();
@@ -1302,7 +1296,7 @@ async function pageTeslaCamDrive(role,id){
 // The map, telemetry chart and stitched six-camera video of one drive, moving together. `fetchSeg(budget)` returns the server's segment / window answer;
 // it is asked again while minutes are still being read. opts.heading=false leaves the title to the caller (the Footage tab of a Tessie drive).
 async function teslaDriveBody(host,role,fetchSeg,places,opts){
-  let d=await fetchSeg(0),player=null,map=null,chart=null,done=false,evShown=false,pendM=null;
+  let d=await fetchSeg(0),player=null,map=null,chart=null,done=false,evShown=false,pendM=null,pendL=null;
   const stop=()=>{done=true};addEventListener("hashchange",stop,{once:true});
   const it=()=>d.item,S=()=>d.series,live=()=>!done&&$("#tdb")&&host.contains($("#tdb"));
   host.innerHTML=`<div id="tdb"><h1 id="dh" ${opts.heading===false?"hidden":""}></h1><div class="sub" id="dsub"></div><div id="dpend"></div><div class="tiles" id="dtl"></div>
@@ -1320,15 +1314,15 @@ async function teslaDriveBody(host,role,fetchSeg,places,opts){
   // second i of the drive (UTC) -> the minute of footage that holds it and the second inside it; a hole in the footage goes to the next minute
   const seekIdx=i=>{if(!player)return;const ms=d.minutes.filter(m=>m.cams&&m.cams.length);let b=null;for(const m of ms){if(m.off<=i)b=m;else break}if(!b)b=ms[0];if(b)player.seekAt(b.stamp,Math.max(0,Math.min(59,i-b.off)))};
   const cursor=sec=>{const i=Math.max(0,Math.min(S().v.length-1,Math.round(sec)));if(map)map.cursor(i);if(chart)chart.cursor(i)};
-  const events=()=>{if(opts.review||evShown||!d.events||!d.events.length||!live())return;evShown=true;
+  const events=()=>{if(opts.rvtab||evShown||!d.events||!d.events.length||!live())return;evShown=true;
     $("#dev").innerHTML=`<h2>Saved clips and Sentry events in this drive</h2><div class="sub">Click one to jump the video there.</div><div class="evs">${d.events.map(v=>`<button class="evc" data-u="${v.t}">${v.thumb?`<img loading="lazy" src="/footage/${role}/${v.folder}/${v.id}/thumb.png" onerror="this.style.visibility='hidden'">`:'<div class="noimg"></div>'}<b>${hms(v.ts)}</b><span>${esc(v.folder==="SavedClips"?"Saved":"Sentry")} · ${esc(reason(v.reason))}</span><span>${esc(v.city||"")}</span></button>`).join("")}</div>`;
     $$("#dev .evc").forEach(b=>b.onclick=()=>{if(player){seekIdx(Math.round(+b.dataset.u-it().t0));$("#dvid").scrollIntoView({block:"nearest"})}})};
-  RVAPI={cursor:i=>cursor(i),seek:i=>seekIdx(i),series:()=>S(),t0:()=>it().t0,clk:i=>clk(i),focus:f=>{if(chart&&chart.focus)chart.focus(f)},zoom:(a,b)=>{if(chart&&chart.view)chart.view(a,b)},limit:(a,b)=>{if(chart&&chart.limit)chart.limit(a,b)},map:(a,b,p)=>{if(map&&map.section){map.section(a,b);map.pins(p||[])}else pendM=[a,b,p]},live:()=>live(),saved:()=>{const r=[];d.minutes.filter(m=>m.src==="saved").forEach(m=>{const a=it().t0+m.off,b=a+60,l=r[r.length-1];if(l&&a-l[1]<=2)l[1]=b;else r.push([a,b])});return r}};
+  RVAPI={cursor:i=>cursor(i),seek:i=>seekIdx(i),series:()=>S(),t0:()=>it().t0,clk:i=>clk(i),focus:f=>{if(chart&&chart.focus)chart.focus(f)},lanes:l=>{if(chart&&chart.lanes)chart.lanes(l);else pendL=l},zoom:(a,b)=>{if(chart&&chart.view)chart.view(a,b)},limit:(a,b)=>{if(chart&&chart.limit)chart.limit(a,b)},map:(a,b,p)=>{if(map&&map.section){map.section(a,b);map.pins(p||[])}else pendM=[a,b,p]},live:()=>live(),saved:()=>{const r=[];d.minutes.filter(m=>m.src==="saved").forEach(m=>{const a=it().t0+m.off,b=a+60,l=r[r.length-1];if(l&&a-l[1]<=2)l[1]=b;else r.push([a,b])});return r}};
   const build=()=>{if(!live())return;fill();const s=S(),idx=pts();
     if(RVOV)RVOV();
     if(!idx.length){$("#dmapc").hidden=$("#dchc").hidden=true}else{$("#dmapc").hidden=$("#dchc").hidden=false;
       if(!map)map=driveMap($("#dmap"),s,idx,seekIdx,$("#dleg"));else map.update(s,idx);if(pendM&&map.section){map.section(pendM[0],pendM[1]);map.pins(pendM[2]||[]);pendM=null}
-      if(!chart)chart=telemChart($("#dch"),$("#dtip"),s,seekIdx,clk);else chart.update(s)}
+      if(!chart){chart=telemChart($("#dch"),$("#dtip"),s,seekIdx,clk);if(pendL&&chart.lanes){chart.lanes(pendL);pendL=null}}else chart.update(s)}
     const playable=d.minutes.filter(m=>m.cams&&m.cams.length);
     if(!player&&playable.length){const mm=playable,cams={},meta={};mm.forEach(m=>{cams[m.stamp]=m.cams;meta[m.stamp]=m});
       player=clipPlayer($("#dvid"),{stamps:mm.map(m=>m.stamp),cams,view:"all",
@@ -1338,7 +1332,7 @@ async function teslaDriveBody(host,role,fetchSeg,places,opts){
     events()};
   // map size and telemetry size / hide, remembered
   const setMs=k=>{lsSet("tc.mapsz",k);$$("[data-ms]",host).forEach(b=>b.classList.toggle("on",b.dataset.ms===k));$("#dmap").style.height=(MSZ.find(x=>x[0]===k)||MSZ[2])[2];if(map&&map.resize){map.resize();map.refit(250)}};
-  const setTs=k=>{lsSet("tc.telsz",k);$$("[data-ts]",host).forEach(b=>b.classList.toggle("on",b.dataset.ts===k));const c=$("#dch");c.style.display=k==="h"?"none":"block";c.style.height=(TSZ.find(x=>x[0]===k)||TSZ[1])[2];dispatchEvent(new Event("resize"))};
+  const setTs=k=>{lsSet("tc.telsz",k);$$("[data-ts]",host).forEach(b=>b.classList.toggle("on",b.dataset.ts===k));const c=$("#dch");c.style.display=k==="h"?"none":"block";{const hh=(TSZ.find(x=>x[0]===k)||TSZ[1])[2];c.style.height=opts.rvtab&&hh!=="0"?"calc("+hh+" + 112px)":hh}dispatchEvent(new Event("resize"))};
   $$("[data-ms]",host).forEach(b=>b.onclick=()=>setMs(b.dataset.ms));$$("[data-ts]",host).forEach(b=>b.onclick=()=>setTs(b.dataset.ts));
   setMs(lsGet("tc.mapsz","l"));setTs(lsGet("tc.telsz","n"));
   $$("[data-cm]",host).forEach(b=>b.onclick=()=>{$$("[data-cm]",host).forEach(x=>x.classList.toggle("on",x===b));if(map)map.cursor&&map.mode(b.dataset.cm)});
@@ -1410,7 +1404,7 @@ function driveMap(el,s,idx,onPick,leg){
 function telemChart(cv,tip,s,onPick,t0){          // t0: i -> "HH:MM:SS" on the local clock (or a base time in ms, shown on this computer's clock)
   const lab=typeof t0==="function"?t0:i=>new Date(t0+i*1000).toTimeString().slice(0,8);
   // va/vb: the part of the drive shown (vb null = all of it); A/B the same, clamped, in seconds
-  let S=s,cur=null,hov=null,F=null,W=0,H=0,M={signs:[],steps:[]},ver=0,cache=null,ck="",va=0,vb=null,A=0,B=1,sel=null,selMode=false,LIM=null;const css=n=>getComputedStyle(document.documentElement).getPropertyValue(n).trim()||"#888";
+  let S=s,cur=null,hov=null,F=null,W=0,H=0,M={signs:[],steps:[]},ver=0,cache=null,ck="",va=0,vb=null,A=0,B=1,sel=null,selMode=false,LIM=null,LN=null;const css=n=>getComputedStyle(document.documentElement).getPropertyValue(n).trim()||"#888";
   const L=62,R=10,lanes=[{k:"v",t:"km/h",y:34,h:118},{k:"p",t:"pedals",y:164,h:46},{k:"s",t:"steering",y:218,h:40}];
   const norm=()=>{const N=S.v.length-1;if(N<1){A=0;B=1;return}if(vb==null){A=LIM?LIM.a:0;B=LIM?LIM.b:N}else{A=Math.max(0,Math.min(va,N-1));B=Math.max(A+1,Math.min(vb,N))}};
   const X=i=>L+(W-L-R)*(i-A)/Math.max(1,B-A),I=x=>Math.max(0,Math.min(S.v.length-1,Math.round(A+(x-L)/(W-L-R)*(B-A))));
@@ -1440,6 +1434,12 @@ function telemChart(cv,tip,s,onPick,t0){          // t0: i -> "HH:MM:SS" on the 
     // steering and blinkers
     const T=lanes[2],sm=Math.max(90,Math.ceil(Math.max(...S.steer.filter(x=>x!=null).map(Math.abs))/90)*90);c.fillStyle=ink;c.fillText("steering °",8,T.y+10);c.strokeStyle=line;c.beginPath();c.moveTo(L,T.y+T.h/2);c.lineTo(W-R,T.y+T.h/2);c.stroke();seg(S.steer,0,acc,0,v=>T.y+T.h/2-(v/sm)*(T.h/2));
     clipped(()=>{c.fillStyle="#f59e0b";for(let i=i0;i<=i1;i++)if(S.blk[i])c.fillRect(X(i),T.y+T.h-4,sw,4)});c.fillStyle="#f59e0b";c.fillRect(8,T.y+T.h-9,8,4);c.fillStyle=ink;c.fillText("indicator",20,T.y+T.h-4);
+    // review: one row for each kind of sign read in the stills (and traffic in our lane), a chip from the first to the last still it was seen in
+    if(LN){const y0=lanes[2].y+lanes[2].h+10,names=["Limit","Warn","Blue","Green","White","Traffic"];c.textBaseline="middle";
+      names.forEach((nm,k)=>{const y=y0+k*15+7;c.strokeStyle=line;c.lineWidth=1;c.beginPath();c.moveTo(L,y);c.lineTo(W-R,y);c.stroke();c.fillStyle=ink;c.fillText(nm,8,y)});
+      clipped(()=>LN.forEach(q=>{const y=y0+q.k*15+7,x0=X(q.a),x1=X(q.b),w=Math.max(q.txt?30:16,x1-x0),x=(x0+x1)/2-w/2;c.fillStyle=q.col;c.beginPath();c.roundRect?c.roundRect(x,y-6,w,12,3):c.rect(x,y-6,w,12);c.fill();
+        if(q.hot){c.strokeStyle="#111";c.lineWidth=1.5;c.stroke()}else if(q.col==="#f4f4f5"){c.strokeStyle=ink;c.lineWidth=1;c.stroke()}
+        if(q.txt){c.fillStyle=q.col==="#f4f4f5"||q.col==="#d4a72c"?"#111":"#fff";c.textAlign="center";c.font="bold 10px system-ui";c.fillText(q.txt,x+w/2,y+.5);c.font=F;c.textAlign="start"}}));c.textBaseline="alphabetic"}
     // clock axis
     c.fillStyle=ink;{const lad=[1,2,5,10,15,30,60,120,300,600,900,1800,3600,7200],want=Math.max(2,Math.floor((W-L-R)/(B-A>=60?80:100))),step=lad.find(x=>x>=(B-A)/want)||7200;
       for(let i=Math.ceil(A/step)*step;i<=B;i+=step){const t=lab(i);c.fillText(step<60?t.slice(0,8):t.slice(0,5),Math.max(L-12,Math.min(W-R-48,X(i)-(step<60?24:12))),H-4)}}
@@ -1478,7 +1478,7 @@ function telemChart(cv,tip,s,onPick,t0){          // t0: i -> "HH:MM:SS" on the 
     if(e.ctrlKey||e.metaKey){e.preventDefault();zoomAt(A+(e.clientX-r.left-L)/(W-L-R)*(B-A),e.deltaY<0?.8:1.25)}
     else if(zoomed()&&Math.abs(e.deltaX)>Math.abs(e.deltaY)){e.preventDefault();const d=(B-A)*e.deltaX/(W-L-R);setView(A+d,B+d)}},{passive:false});
   norm();ui();addEventListener("resize",draw);draw();
-  return{update(s2){S=s2;ver++;norm();ui();draw()},marks(m){M=m;ver++;draw()},focus(f){F=f;draw()},view(a,b){setView(a,b)},limit(a,b){const N=S.v.length-1;LIM=a==null?null:{a:Math.max(0,Math.min(a,N-1)),b:Math.max(1,Math.min(b,N))};va=0;vb=null;norm();ver++;ui();draw()},cursor(i){cur=i;if(zoomed()&&(i<A||i>B)){const w=B-A;setView(i-w*.2,i+w*.8)}if(hov==null)tip.textContent=read(i);draw()}};
+  return{update(s2){S=s2;ver++;norm();ui();draw()},marks(m){M=m;ver++;draw()},lanes(l){LN=l;ver++;draw()},focus(f){F=f;draw()},view(a,b){setView(a,b)},limit(a,b){const N=S.v.length-1;LIM=a==null?null:{a:Math.max(0,Math.min(a,N-1)),b:Math.max(1,Math.min(b,N))};va=0;vb=null;norm();ver++;ui();draw()},cursor(i){cur=i;if(zoomed()&&(i<A||i>B)){const w=B-A;setView(i-w*.2,i+w*.8)}if(hov==null)tip.textContent=read(i);draw()}};
 }
 // lasting changes of speed: the median of the 6 s before against the 6 s after, 10 km/h or more, both while moving; one per 20 s (the biggest wins)
 function speedSteps(v,minD=10){
