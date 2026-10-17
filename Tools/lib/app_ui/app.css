@@ -148,3 +148,9 @@ body{-webkit-user-select:text;user-select:text}
 .rvlb{position:fixed;inset:0;background:#000d;z-index:99;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;color:#fff;padding:16px}.rvlbi{background-color:#000;background-repeat:no-repeat;border-radius:8px}.rvlbn{display:flex;gap:10px}
 @media(max-width:900px){.rvmain{grid-template-columns:1fr}}
 .chip.on .sub{color:inherit;opacity:.8}
+
+.mpin{width:26px;height:26px;display:flex;align-items:center;justify-content:center;font:700 11px system-ui;color:#111;box-shadow:0 1px 4px rgba(0,0,0,.45);cursor:default}
+.mpin.sp{border-radius:50%;background:#fff;border:3px solid #dc2626}
+.mpin.wn{background:#facc15;border:2px solid #111;transform:rotate(45deg);width:22px;height:22px;border-radius:3px}.mpin.wn span{transform:rotate(-45deg)}
+.mpin.wn.rw{background:#f97316}
+.mpin.cf{outline:3px solid #7c3aed;outline-offset:1px}

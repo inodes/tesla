@@ -265,7 +265,7 @@ async function driveReviewPanel(host,stamp,lo,onResult){
   const pick=(k,seek)=>{const e=list()[ei];if(!e||!geo(e))return;si=Math.max(0,Math.min(e.shots.length-1,k));hv=null;hot();
     if(RVAPI){RVAPI.cursor(stillI(e,si));if(seek)RVAPI.seek(stillI(e,si)-1)}if(lb)lbShow()};
   const arrive=e=>{if(!RVAPI||!e)return;const g=geo(e),t=g?e.shots.map((x,j)=>stillI(e,j)):[];       // the chart under the map shows only this event's section (Review: nothing else), the map dot goes to it
-    RVAPI.focus({a:ea(e),b:eb(e),ticks:t,hot:si,col:KCOL[e.kind]});RVAPI.limit(Math.min(ea(e),t.length?t[0]:ea(e))-10,Math.max(eb(e),t.length?t[t.length-1]:eb(e))+10);RVAPI.cursor(g?stillI(e,si):ea(e));RVAPI.seek((g?stillI(e,si):ea(e))-1)};      // the video below goes to the event too, not on playing from where it was
+    RVAPI.focus({a:ea(e),b:eb(e),ticks:t,hot:si,col:KCOL[e.kind]});RVAPI.limit(Math.min(ea(e),t.length?t[0]:ea(e))-10,Math.max(eb(e),t.length?t[t.length-1]:eb(e))+10);RVAPI.map(Math.min(ea(e),t.length?t[0]:ea(e))-3,Math.max(eb(e),t.length?t[t.length-1]:eb(e))+3,(e.signs||[]).filter(x=>["speed","warning","roadwork"].includes(x.cat||"speed")).map(x=>({i:Math.round(base(e)+(x.t-e.t)),side:x.side,cat:x.cat||"speed",text:x.text,temp:x.temp,conflict:x.conflict,osm:x.osm,car:x.car})));RVAPI.cursor(g?stillI(e,si):ea(e));RVAPI.seek((g?stillI(e,si):ea(e))-1)};      // the video below goes to the event too, not on playing from where it was
   const go=n=>{const L=list();if(!L.length)return;ei=Math.max(0,Math.min(L.length-1,n));const e=L[ei];si=geo(e)?k0(e):0;hv=null;viewer(true);arrive(e)};
   // the big picture
   const lbShow=()=>{const e=list()[ei],o=document.getElementById("rvlb");if(!e||!o||!geo(e)){return}
@@ -1266,7 +1266,7 @@ async function pageTeslaCamDrive(role,id){
 // The map, telemetry chart and stitched six-camera video of one drive, moving together. `fetchSeg(budget)` returns the server's segment / window answer;
 // it is asked again while minutes are still being read. opts.heading=false leaves the title to the caller (the Footage tab of a Tessie drive).
 async function teslaDriveBody(host,role,fetchSeg,places,opts){
-  let d=await fetchSeg(0),player=null,map=null,chart=null,done=false,evShown=false;
+  let d=await fetchSeg(0),player=null,map=null,chart=null,done=false,evShown=false,pendM=null;
   const stop=()=>{done=true};addEventListener("hashchange",stop,{once:true});
   const it=()=>d.item,S=()=>d.series,live=()=>!done&&$("#tdb")&&host.contains($("#tdb"));
   host.innerHTML=`<div id="tdb"><h1 id="dh" ${opts.heading===false?"hidden":""}></h1><div class="sub" id="dsub"></div><div id="dpend"></div><div class="tiles" id="dtl"></div>
@@ -1287,10 +1287,10 @@ async function teslaDriveBody(host,role,fetchSeg,places,opts){
   const events=()=>{if(evShown||!d.events||!d.events.length||!live())return;evShown=true;
     $("#dev").innerHTML=`<h2>Saved clips and Sentry events in this drive</h2><div class="sub">Click one to jump the video there.</div><div class="evs">${d.events.map(v=>`<button class="evc" data-u="${v.t}">${v.thumb?`<img loading="lazy" src="/footage/${role}/${v.folder}/${v.id}/thumb.png" onerror="this.style.visibility='hidden'">`:'<div class="noimg"></div>'}<b>${hms(v.ts)}</b><span>${esc(v.folder==="SavedClips"?"Saved":"Sentry")} · ${esc(reason(v.reason))}</span><span>${esc(v.city||"")}</span></button>`).join("")}</div>`;
     $$("#dev .evc").forEach(b=>b.onclick=()=>{if(player){seekIdx(Math.round(+b.dataset.u-it().t0));$("#dvid").scrollIntoView({block:"nearest"})}})};
-  RVAPI={cursor:i=>cursor(i),seek:i=>seekIdx(i),series:()=>S(),t0:()=>it().t0,clk:i=>clk(i),focus:f=>{if(chart&&chart.focus)chart.focus(f)},zoom:(a,b)=>{if(chart&&chart.view)chart.view(a,b)},limit:(a,b)=>{if(chart&&chart.limit)chart.limit(a,b)},live:()=>live()};
+  RVAPI={cursor:i=>cursor(i),seek:i=>seekIdx(i),series:()=>S(),t0:()=>it().t0,clk:i=>clk(i),focus:f=>{if(chart&&chart.focus)chart.focus(f)},zoom:(a,b)=>{if(chart&&chart.view)chart.view(a,b)},limit:(a,b)=>{if(chart&&chart.limit)chart.limit(a,b)},map:(a,b,p)=>{if(map&&map.section){map.section(a,b);map.pins(p||[])}else pendM=[a,b,p]},live:()=>live()};
   const build=()=>{if(!live())return;fill();const s=S(),idx=pts();
     if(!idx.length){$("#dmapc").hidden=$("#dchc").hidden=true}else{$("#dmapc").hidden=$("#dchc").hidden=false;
-      if(!map)map=driveMap($("#dmap"),s,idx,seekIdx,$("#dleg"));else map.update(s,idx);
+      if(!map)map=driveMap($("#dmap"),s,idx,seekIdx,$("#dleg"));else map.update(s,idx);if(pendM&&map.section){map.section(pendM[0],pendM[1]);map.pins(pendM[2]||[]);pendM=null}
       if(!chart)chart=telemChart($("#dch"),$("#dtip"),s,seekIdx,clk);else chart.update(s)}
     const playable=d.minutes.filter(m=>m.cams&&m.cams.length);
     if(!player&&playable.length){const mm=playable,cams={},meta={};mm.forEach(m=>{cams[m.stamp]=m.cams;meta[m.stamp]=m});
@@ -1331,7 +1331,7 @@ async function teslaDriveBody(host,role,fetchSeg,places,opts){
   fill();if(opts.review&&rv)rvDraw();
 }
 function driveMap(el,s,idx,onPick,leg){
-  if(!window.maplibregl){el.innerHTML='<div class="empty">Map library not loaded (offline?).</div>';return{update(){},cursor(){},mode(){}}}
+  if(!window.maplibregl){el.innerHTML='<div class="empty">Map library not loaded (offline?).</div>';return{update(){},cursor(){},mode(){},section(){},pins(){}}}
   const dark=matchMedia("(prefers-color-scheme: dark)").matches,m=newMap({container:el,style:MAPSTYLE(dark),center:[idx.length?s.lon[idx[0]]:151,idx.length?s.lat[idx[0]]:-33],zoom:11,attributionControl:{compact:true}});
   mapNav(m,()=>fit(),"Show the whole route");
   let ready=false,mode="v",S=s,I=idx,first=true,latest=null;
@@ -1350,7 +1350,20 @@ function driveMap(el,s,idx,onPick,leg){
     m.addLayer({id:"cu",type:"circle",source:"cu",paint:{"circle-radius":8,"circle-color":"#f59e0b","circle-stroke-width":3,"circle-stroke-color":"#fff"}});
     m.on("click","rt",e=>onPick(e.features[0].properties.i));m.on("mouseenter","rt",()=>m.getCanvas().style.cursor="pointer");m.on("mouseleave","rt",()=>m.getCanvas().style.cursor="");
     draw();paint()});
-  return{update(s2,i2){S=s2;I=i2;draw()},fit,resize(){m.resize()},mode(x){mode=x;paint()},cursor(i){if(!ready)return;let j=i;while(j>=0&&(S.lat[j]==null||Math.abs(S.lat[j])<1))j--;if(j<0)return;m.getSource("cu").setData({type:"FeatureCollection",features:[{type:"Feature",properties:{},geometry:{type:"Point",coordinates:[S.lon[j],S.lat[j]]}}]})}};
+  // Review: the map goes to the section being looked at, and the speed / warning / road-work signs seen there stand beside the road (only while zoomed in)
+  const PINZ=13.5,mk=[];
+  const okp=j=>j>=0&&j<S.lat.length&&S.lat[j]!=null&&Math.abs(S.lat[j])>1;
+  const near=i=>{i=Math.max(0,Math.min(S.lat.length-1,i));for(let d=0;d<=6;d++){if(okp(i-d))return i-d;if(okp(i+d))return i+d}return -1};
+  const showPins=()=>{const on=m.getZoom()>=PINZ;mk.forEach(k=>{k.getElement().style.display=on?"":"none"})};
+  m.on("zoom",showPins);
+  const section=(a,b)=>{const bd=new maplibregl.LngLatBounds();let n=0;for(let i=Math.max(0,Math.floor(a));i<=Math.min(S.lat.length-1,Math.ceil(b));i++)if(okp(i)){bd.extend([S.lon[i],S.lat[i]]);n++}if(!n)return;first=false;m.fitBounds(bd,{padding:70,maxZoom:17,duration:500})};
+  const pins=list=>{mk.splice(0).forEach(k=>k.remove());
+    list.forEach(p=>{const i=near(p.i);if(i<0)return;const a=near(i-3),b=near(i+3);let h=null;if(a>=0&&b>=0&&a!==b){const dy=(S.lat[b]-S.lat[a])*110540,dx=(S.lon[b]-S.lon[a])*111320*Math.cos(S.lat[i]*Math.PI/180);if(Math.hypot(dx,dy)>=5)h=Math.atan2(dx,dy)}
+      const side=p.side==="R"?1:p.side==="L"?-1:0,d=side&&h!=null?15:0,br=(h||0)+side*Math.PI/2,la=S.lat[i]+d*Math.cos(br)/110540,lo=S.lon[i]+d*Math.sin(br)/(111320*Math.cos(S.lat[i]*Math.PI/180));
+      const el=document.createElement("div"),sp=p.cat==="speed";el.innerHTML=`<div class="mpin ${sp?"sp":p.cat==="roadwork"?"wn rw":"wn"}${p.conflict?" cf":""}">${sp?esc(p.text):"<span>!</span>"}</div>`;
+      el.title=(sp?"Speed limit "+p.text:p.cat==="roadwork"?"Road work sign":"Warning sign")+(p.osm!=null?" · the map says "+p.osm:"")+(p.conflict?" · differs from the map":"")+(p.temp?" · probably temporary":"");
+      mk.push(new maplibregl.Marker({element:el}).setLngLat([lo,la]).addTo(m))});showPins()};
+  return{section,pins,update(s2,i2){S=s2;I=i2;draw()},fit,resize(){m.resize()},mode(x){mode=x;paint()},cursor(i){if(!ready)return;let j=i;while(j>=0&&(S.lat[j]==null||Math.abs(S.lat[j])<1))j--;if(j<0)return;m.getSource("cu").setData({type:"FeatureCollection",features:[{type:"Feature",properties:{},geometry:{type:"Point",coordinates:[S.lon[j],S.lat[j]]}}]})}};
 }
 // speed, pedals and steering against time, with the autopilot state as a strip; hover reads it out, click or drag moves the video
 function telemChart(cv,tip,s,onPick,t0){          // t0: i -> "HH:MM:SS" on the local clock (or a base time in ms, shown on this computer's clock)
