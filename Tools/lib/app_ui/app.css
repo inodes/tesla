@@ -154,5 +154,6 @@ body{-webkit-user-select:text;user-select:text}
 .mpin.wn{background:#facc15;border:2px solid #111;transform:rotate(45deg);width:22px;height:22px;border-radius:3px}.mpin.wn span{transform:rotate(-45deg)}
 .mpin.wn.rw{background:#f97316}
 .mpin.cf{outline:3px solid #7c3aed;outline-offset:1px}
+tr.chl{cursor:pointer}tr.chl td{color:var(--bad);font-weight:600;font-size:12.5px;padding:3px 12px;border-top:2px solid var(--bad);border-bottom:2px solid var(--bad);background:transparent}tr.chl:hover td{background:var(--hover)}
 .chn{color:var(--charge);font-weight:600}
 .rvlg{display:flex;flex-wrap:wrap;gap:4px 14px;margin-top:4px;font-size:11.5px;color:var(--mut)}.rvlg i{display:inline-block;width:11px;height:11px;border-radius:3px;margin-right:5px;vertical-align:-1px}
