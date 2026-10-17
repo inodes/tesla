@@ -411,6 +411,8 @@ class H(BaseHTTPRequestHandler):
             return self.send_json(TC.scan_status())
         if name == "clipclock":                 # the car's clock as learned from the footage (clip_clock.py): runs of minutes with the offset from UTC
             return self.send_json(CC.status())
+        if name == "drivereview/all":           # {drive: percent of its events' stills looked at for signs}: the Reviewed column of the drives list
+            return self.send_json(DRV.reviewed())
         if name == "drivereview":               # drivereview?id=<drive folder>: its last review, the job state, the default speeds
             return self.send_json(drive_review_state(q.get("id", [""])[0]))
         if name == "review/scanned":            # every minute whose signs have been read: {UTC epoch s of the minute: signs found}
