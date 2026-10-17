@@ -158,5 +158,5 @@ tr.chline{cursor:pointer}tr.chline td{color:var(--bad);font-weight:600;font-size
 .rvb{position:absolute;left:5px;bottom:5px;display:flex;gap:4px;align-items:flex-end;pointer-events:none}.rvb i{font-style:normal;display:inline-flex;align-items:center;justify-content:center;box-shadow:0 0 0 1px rgba(0,0,0,.35)}
 .rvb .bsp{min-width:26px;height:26px;border-radius:50%;border:3px solid #dc2626;background:#fff;color:#111;font:700 11px system-ui}.rvb .bsp.w{border-style:dashed}
 .rvb .bk{min-width:20px;height:20px;border-radius:5px;color:#fff;font:700 12px system-ui;padding:0 2px}
-.chn{color:var(--charge);font-weight:600}
+.chn{color:var(--charge);font-weight:600;text-decoration:none}a.chn:hover{text-decoration:underline}
 .rvlg{display:flex;flex-wrap:wrap;gap:4px 14px;margin-top:4px;font-size:11.5px;color:var(--mut)}.rvlg i{display:inline-block;width:11px;height:11px;border-radius:3px;margin-right:5px;vertical-align:-1px}
