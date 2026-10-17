@@ -3850,12 +3850,14 @@ class DriveAnalyzer:
         """The stamp of a drive's folder: local start minute plus the zone abbreviation (AGENTS.md TODO-033)."""
         start_dt = target_drive.get("start_dt") or datetime.fromtimestamp(start_epoch)
         stamp = start_dt.strftime("%Y-%m-%d_%H-%M")
-        try:
-            _, abbr, _ = tztools.localize(start_epoch)
-            if abbr:
-                stamp = f"{stamp}_{abbr}"
-        except Exception:
-            pass
+        abbr = target_drive.get("start_tz_abbr")      # the zone the drive STARTED in (Queensland is AEST all year; Sydney is AEDT in summer)
+        if not abbr:
+            try:
+                _, abbr, _ = tztools.localize(start_epoch)
+            except Exception:
+                abbr = None
+        if abbr:
+            stamp = f"{stamp}_{abbr}"
         return stamp
 
     def fetch_drive_deepdive_from_api(self, target_drive):

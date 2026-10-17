@@ -576,6 +576,17 @@ def build_page(stamp, m, win, flips, recs, saved_ev, cov, clips_rel, folder, mwi
     frm = place_name(m, "Starting")
     to = place_name(m, "Ending")
     day = t0.strftime("%A %d %B %Y")
+    # each end of the drive on its own local clock with its zone (a drive can cross a time zone: 14:40 AEST - 17:35 AEDT); the master row has both
+    def _clock(key, fallback):
+        mt = re.search(r"(\d{2}:\d{2})(?::\d{2})?\s+([A-Za-z]{2,5})\s*$", (m or {}).get(key) or "")
+        return (mt.group(1), mt.group(2)) if mt else (fallback, "")
+    (s_hm, s_z), (e_hm, e_z) = _clock("Started At (Local)", start), _clock("Ended At (Local)", end)
+    if s_z and e_z and s_z != e_z:
+        span = "%s %s \u2013 %s %s" % (s_hm, s_z, e_hm, e_z)
+    elif s_z or e_z:
+        span = "%s\u2013%s %s" % (s_hm, e_hm, s_z or e_z)
+    else:
+        span = "%s\u2013%s" % (s_hm, e_hm)
     dist = f(m.get("Distance (km)")) if m else None
     dur = f(m.get("Duration (Minutes)")) if m else None
     if dist is None:
@@ -634,7 +645,7 @@ def build_page(stamp, m, win, flips, recs, saved_ev, cov, clips_rel, folder, mwi
     return f"""<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>{esc(title)}</title><link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/maplibre-gl/4.7.1/maplibre-gl.css"><script src="https://cdnjs.cloudflare.com/ajax/libs/maplibre-gl/4.7.1/maplibre-gl.js"></script><style>{CSS}{DC.CSS}{FU.CSS}#mapl{{width:100%;height:520px;border-radius:8px;overflow:hidden}}.maplibregl-popup-content{{color:#111;font:12px system-ui,sans-serif;padding:6px 9px}}</style></head><body><div class="wrap">
 <div class="sub"><a href="{up}index.html">All drives</a></div>
-<h1>{esc(frm)} → {esc(to)}</h1><div class="sub">{esc(day)} · {esc(start)}–{esc(end)} · folder {esc(stamp)}</div>
+<h1>{esc(frm)} → {esc(to)}</h1><div class="sub">{esc(day)} · {esc(span)} · folder {esc(stamp)}</div>
 {trip}<div class="card"><div class="stats">{stats}</div></div>
 <div class="two"><div class="card"><h2>Route<span id="mapbtns"></span></h2><div id="mapbox"><svg id="map" viewBox="0 0 1060 540" style="width:100%;height:auto"></svg></div>
 {MU.legend_html()}
