@@ -377,7 +377,7 @@ async function pageDrive(stamp,tab){
         [...w.children].forEach(c=>{if(c.id!=="foot")c.style.display="none"})})};
     let bodyOn=false;
     const body=async()=>{
-    try{await teslaDriveBody($("#tdh"),"A",fetchSeg,pl.saved||[],{heading:false,review:rv?{t0,t1,lo}:null})}
+    try{await teslaDriveBody($("#tdh"),"A",fetchSeg,pl.saved||[],{heading:false,review:null})}
     catch(e){const h=$("#tdh");if(h)h.innerHTML=e.none?'<div class="card"><b>No dashcam footage or telemetry for this drive.</b><div class="sub" style="margin-top:6px">Nothing recorded on the Archive covers these times, and nothing was read from it before. If the Archive is not connected, connect it and open this tab again.</div></div>':errBox(e.message,"Could not rebuild this drive from the video")}};
     // Review: nothing but the Review card until the drive has been reviewed; then the map, chart, video and the events
     if(rv)driveReviewPanel($("#drr"),stamp,lo,has=>{if(has&&!bodyOn){bodyOn=true;body()}});else body();
