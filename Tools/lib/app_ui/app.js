@@ -174,7 +174,7 @@ function fitFrame(fr,onDoc){fr.onload=()=>{try{const doc=fr.contentDocument;if(o
 // hide a heading and the cards that follow it, up to the next heading
 function hideSection(doc,title){$$(".wrap > h2",doc).forEach(h=>{if(h.textContent.startsWith(title)){let n=h;n.style.display="none";n=n.nextElementSibling;while(n&&n.tagName!=="H2"&&!n.classList.contains("sub")){n.style.display="none";n=n.nextElementSibling}}})}
 // ---------- the manual review of one drive (lib/app_drive_review.py): FSD interventions, accelerator pressed while FSD is on, speed changes while FSD is on
-let RVAPI=null;      // set by teslaDriveBody: what the review viewer may do to the page (cursor, video, chart)
+let RVAPI=null,RVOV=null;      // set by teslaDriveBody: what the review viewer may do to the page (cursor, video, chart)
 async function driveReviewPanel(host,stamp,lo,onResult){
   // an event's t is on the drive page's clock (Tessie's file, app.timezone) read as UTC seconds; it is SHOWN on the clock the drives list shows the drive on (lo)
   const hm=t=>{const po=S&&S.result&&S.result.poff!=null?S.result.poff:null;return lclock(po==null?t:t-po,lo==null?(po||0):lo)};
@@ -241,17 +241,23 @@ async function driveReviewPanel(host,stamp,lo,onResult){
     const c=cv.getContext("2d");c.setTransform(dpr,0,0,dpr,0,0);const st=getComputedStyle(document.documentElement),css=n=>st.getPropertyValue(n).trim()||"#888";
     const t0=R.t0!=null?R.t0:Math.min(...R.events.map(e=>e.t)),t1=Math.max(R.t1!=null?R.t1:t0+1,t0+1),X=t=>8+(W-16)*(t-t0)/(t1-t0);
     c.strokeStyle=css("--line");c.lineWidth=3;c.lineCap="round";c.beginPath();c.moveTo(8,H/2);c.lineTo(W-8,H/2);c.stroke();
+    if(RVAPI&&RVAPI.saved){const po=R.poff||0;c.strokeStyle="#9333ea";c.lineWidth=6;RVAPI.saved().forEach(([u0,u1])=>{const x0=X(Math.max(t0,u0+po)),x1=X(Math.min(t1,u1+po));if(x1>x0){c.beginPath();c.moveTo(x0,H/2);c.lineTo(Math.max(x1,x0+2),H/2);c.stroke()}})}     // where saved footage exists
     OV=L.map((e,k)=>({k,x:X(e.t)}));
     L.forEach((e,k)=>{const x=X(e.t),on=k===ei;c.fillStyle=KCOL[e.kind];c.beginPath();c.arc(x,H/2,on?7:4,0,7);c.fill();if(on){c.strokeStyle=css("--fg")||"#000";c.lineWidth=2;c.beginPath();c.arc(x,H/2,10,0,7);c.stroke()}})};
+  RVOV=ovDraw;
   // the strip of this event: speed, FSD, accelerator, the signs, a tick for every still (the picked one bold)
   const miniDraw=()=>{const m=MC;if(!m||!RVAPI)return;const cv=m.cv,e=m.e,s=RVAPI.series(),dpr=devicePixelRatio||1,W=cv.clientWidth,H=cv.clientHeight;if(!W||!H)return;
     if(cv.width!==Math.round(W*dpr)||cv.height!==Math.round(H*dpr)){cv.width=Math.round(W*dpr);cv.height=Math.round(H*dpr)}
     const c=cv.getContext("2d");c.setTransform(dpr,0,0,dpr,0,0);c.clearRect(0,0,W,H);
     const st=getComputedStyle(document.documentElement),css=n=>st.getPropertyValue(n).trim()||"#888",ink=css("--mut"),line=css("--line"),acc=css("--acc"),ok=css("--charge"),bad=css("--bad");
     const LB=LANES.length*15+6,a=m.a,b=m.b,L=44,R=8,T=14,B=18+LB,X=i=>L+(W-L-R)*(i-a)/Math.max(1,b-a),i0=Math.max(0,Math.floor(a)),i1=Math.min(s.v.length-1,Math.ceil(b)),sw=Math.max(1,X(i0+1)-X(i0));
-    let vm=40;for(let i=i0;i<=i1;i++)if(s.v[i]!=null&&s.v[i]>vm)vm=s.v[i];vm=Math.ceil(vm/20)*20;const Y=v=>T+(H-T-B)*(1-v/vm);
+    // the speed zones of this section: each speed sign's limit from where it was seen to the next sign (a sign for an exit or side road is left out)
+    const zs=(e.signs||[]).filter(g=>(g.cat||"speed")==="speed"&&!g.anom&&/^\d+/.test(g.text||"")).map(g=>({v:+String(g.text).match(/^\d+/)[0],i:base(e)+(g.t0!=null?g.t0:g.t)-e.t})).sort((p,q)=>p.i-q.i);
+    let vm=40;for(let i=i0;i<=i1;i++)if(s.v[i]!=null&&s.v[i]>vm)vm=s.v[i];zs.forEach(z=>{if(z.v>vm)vm=z.v});vm=Math.ceil(vm/20)*20;const Y=v=>T+(H-T-B)*(1-v/vm);
     c.fillStyle=KCOL[e.kind];c.globalAlpha=.14;c.fillRect(X(ea(e)),T,Math.max(3,X(eb(e))-X(ea(e))),H-T-B);c.globalAlpha=1;
-    c.font="11px system-ui";c.fillStyle=ink;c.strokeStyle=line;c.lineWidth=1;for(let v=0;v<=vm;v+=vm/2){c.beginPath();c.moveTo(L,Y(v));c.lineTo(W-R,Y(v));c.stroke();c.fillText(Math.round(v),3,Y(v)+4)}
+    c.font="11px system-ui";c.fillStyle=ink;c.strokeStyle=line;c.lineWidth=1;c.beginPath();c.moveTo(L,Y(0));c.lineTo(W-R,Y(0));c.stroke();c.fillText("0",3,Y(0)+4);c.fillText(vm,3,Y(vm)+4);
+    zs.forEach((z,k)=>{const x0=X(Math.max(a,z.i)),x1=X(k<zs.length-1?Math.min(b,zs[k+1].i):b);if(x1<=L||x0>=W-R||x1<=x0)return;c.strokeStyle="#b91c1c";c.lineWidth=1.5;c.setLineDash([5,3]);c.beginPath();c.moveTo(x0,Y(z.v));c.lineTo(x1,Y(z.v));c.stroke();c.setLineDash([]);
+      c.fillStyle="#b91c1c";c.font="bold 10px system-ui";c.fillText(z.v+" km/h",x0+3,Y(z.v)-3);c.font="11px system-ui";c.fillStyle=ink});
     for(let i=i0;i<=i1;i++){if(s.v[i]==null)continue;const q=s.ap[i];c.fillStyle=apCol(q>0&&q<4?APN[q]:"Manual");c.fillRect(X(i),1,sw,7)}
     c.fillStyle=ok;c.globalAlpha=.4;for(let i=i0;i<=i1;i++)if(s.accel[i]){const h=(H-T-B)*.4*Math.min(100,s.accel[i])/100;c.fillRect(X(i),H-B-h,sw,h)}c.globalAlpha=1;
     c.fillStyle=bad;c.globalAlpha=.5;for(let i=i0;i<=i1;i++)if(s.br[i])c.fillRect(X(i),H-B-3,sw,3);c.globalAlpha=1;
@@ -311,7 +317,7 @@ async function driveReviewPanel(host,stamp,lo,onResult){
       const dd=desc(e),g=geo(e);
       h+=`<div class="rvnav"><button class="btn" id="rvp" ${ei?"":"disabled"}>‹ Back</button><div style="flex:1;text-align:center;min-width:0"><b>${esc(e.id)}</b> · ${hm(e.t)}${dd.gm}<div class="sub">${esc(KNAME[e.kind])} · ${ei+1} of ${L.length}, in the order of the drive</div></div><button class="btn pri" id="rvn" ${ei<L.length-1?"":"disabled"}>Next ›</button></div>
         <canvas id="rvo" style="width:100%;height:26px;display:block;cursor:pointer" title="Where the events are in the drive; click one"></canvas>
-        <div class="rvlg" style="margin:0 0 4px">${Object.keys(KCOL).map(k=>`<span><i style="background:${KCOL[k]};border-radius:50%"></i>${KNAME[k]}</span>`).join("")}<span><i style="border:2px solid var(--fg);border-radius:50%;width:7px;height:7px"></i>this event</span><span>Along the drive, left to right; click a dot to go to it</span></div>
+        <div class="rvlg" style="margin:0 0 4px">${Object.keys(KCOL).map(k=>`<span><i style="background:${KCOL[k]};border-radius:50%"></i>${KNAME[k]}</span>`).join("")}<span><i style="border:2px solid var(--fg);border-radius:50%;width:7px;height:7px"></i>this event</span><span><i style="background:#9333ea;width:18px;height:5px;border-radius:3px"></i>Saved footage</span><span>Along the drive, left to right; click a dot to go to it</span></div>
         <div style="margin:8px 0 2px">${dd.h}</div><div>${dd.tags}</div>`;
       if(e.look_error)h+=`<div class="sub" style="color:var(--bad)">${esc(e.look_error)}</div>`;
       if(g){
@@ -1314,11 +1320,12 @@ async function teslaDriveBody(host,role,fetchSeg,places,opts){
   // second i of the drive (UTC) -> the minute of footage that holds it and the second inside it; a hole in the footage goes to the next minute
   const seekIdx=i=>{if(!player)return;const ms=d.minutes.filter(m=>m.cams&&m.cams.length);let b=null;for(const m of ms){if(m.off<=i)b=m;else break}if(!b)b=ms[0];if(b)player.seekAt(b.stamp,Math.max(0,Math.min(59,i-b.off)))};
   const cursor=sec=>{const i=Math.max(0,Math.min(S().v.length-1,Math.round(sec)));if(map)map.cursor(i);if(chart)chart.cursor(i)};
-  const events=()=>{if(evShown||!d.events||!d.events.length||!live())return;evShown=true;
+  const events=()=>{if(opts.review||evShown||!d.events||!d.events.length||!live())return;evShown=true;
     $("#dev").innerHTML=`<h2>Saved clips and Sentry events in this drive</h2><div class="sub">Click one to jump the video there.</div><div class="evs">${d.events.map(v=>`<button class="evc" data-u="${v.t}">${v.thumb?`<img loading="lazy" src="/footage/${role}/${v.folder}/${v.id}/thumb.png" onerror="this.style.visibility='hidden'">`:'<div class="noimg"></div>'}<b>${hms(v.ts)}</b><span>${esc(v.folder==="SavedClips"?"Saved":"Sentry")} · ${esc(reason(v.reason))}</span><span>${esc(v.city||"")}</span></button>`).join("")}</div>`;
     $$("#dev .evc").forEach(b=>b.onclick=()=>{if(player){seekIdx(Math.round(+b.dataset.u-it().t0));$("#dvid").scrollIntoView({block:"nearest"})}})};
-  RVAPI={cursor:i=>cursor(i),seek:i=>seekIdx(i),series:()=>S(),t0:()=>it().t0,clk:i=>clk(i),focus:f=>{if(chart&&chart.focus)chart.focus(f)},zoom:(a,b)=>{if(chart&&chart.view)chart.view(a,b)},limit:(a,b)=>{if(chart&&chart.limit)chart.limit(a,b)},map:(a,b,p)=>{if(map&&map.section){map.section(a,b);map.pins(p||[])}else pendM=[a,b,p]},live:()=>live()};
+  RVAPI={cursor:i=>cursor(i),seek:i=>seekIdx(i),series:()=>S(),t0:()=>it().t0,clk:i=>clk(i),focus:f=>{if(chart&&chart.focus)chart.focus(f)},zoom:(a,b)=>{if(chart&&chart.view)chart.view(a,b)},limit:(a,b)=>{if(chart&&chart.limit)chart.limit(a,b)},map:(a,b,p)=>{if(map&&map.section){map.section(a,b);map.pins(p||[])}else pendM=[a,b,p]},live:()=>live(),saved:()=>{const r=[];d.minutes.filter(m=>m.src==="saved").forEach(m=>{const a=it().t0+m.off,b=a+60,l=r[r.length-1];if(l&&a-l[1]<=2)l[1]=b;else r.push([a,b])});return r}};
   const build=()=>{if(!live())return;fill();const s=S(),idx=pts();
+    if(RVOV)RVOV();
     if(!idx.length){$("#dmapc").hidden=$("#dchc").hidden=true}else{$("#dmapc").hidden=$("#dchc").hidden=false;
       if(!map)map=driveMap($("#dmap"),s,idx,seekIdx,$("#dleg"));else map.update(s,idx);if(pendM&&map.section){map.section(pendM[0],pendM[1]);map.pins(pendM[2]||[]);pendM=null}
       if(!chart)chart=telemChart($("#dch"),$("#dtip"),s,seekIdx,clk);else chart.update(s)}
