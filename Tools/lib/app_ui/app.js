@@ -102,8 +102,8 @@ function actRow(x){
 }
 
 // ---------- generic sortable table
-function table(host,cols,rows,onRow,def){
-  let sk=def||cols[0].k,dir=-1;
+function table(host,cols,rows,onRow,def,dir0){
+  let sk=def||cols[0].k,dir=dir0||-1;
   const cmp=(x,y)=>typeof x==="string"&&typeof y==="string"?x.localeCompare(y):x<y?-1:x>y?1:0,byDay=sk0=>sk0==="t0"&&rows.length&&rows[0].day!==undefined;
   const draw=()=>{const rs=[...rows].sort((a,b)=>{const x=a[sk],y=b[sk];if(x==null||y==null)return (x==null)-(y==null);return dir*cmp(x,y)});
     host.innerHTML=`<table><thead><tr>${cols.map(c=>`<th class="${c.l?"l":""}" data-k="${c.k}">${c.t}${sk===c.k?(dir<0?" ▾":" ▴"):""}</th>`).join("")}</tr></thead><tbody>${rs.slice(0,500).map((r,i)=>`<tr data-i="${rows.indexOf(r)}">${cols.map(c=>`<td class="${c.l?"l":""}">${c.f?c.f(r):esc(r[c.k])}</td>`).join("")}</tr>`).join("")}</tbody></table>${rs.length>500?`<div class="sub" style="padding:8px">Showing the first 500 of ${rs.length}. Narrow the filter.</div>`:""}`;
@@ -151,15 +151,15 @@ async function pageDrives(){
   // how much of each drive has been reviewed (Review tab): the share of its events' stills that were looked at for signs
   const rvd=await fetch("/api/drivereview/all").then(r=>r.json()).catch(()=>({}));
   all.forEach(d=>{d.rvd=rvd[d.id]==null?null:rvd[d.id]});
-  // a drive "ends at a charge" when a charge starts within 30 min after it, "leaves a charge" when one ended within 30 min before it
-  const W=cfg("drives.charge_window_minutes")*60;
-  all.forEach(d=>{d.toCh=chg.find(c=>c.t0>=d.t1-300&&c.t0<=d.t1+W)||null;d.fromCh=chg.find(c=>c.t1<=d.t0+300&&c.t1>=d.t0-W)||null});
+  // a charge has one drive that ends at it (the last one before it) and one that leaves it (the first after it); the server decides which
+  const chById=new Map(chg.map(c=>[c.id,c]));
+  all.forEach(d=>{d.toCh=chById.get(d.to_ch)||null;d.fromCh=chById.get(d.from_ch)||null});
   const CHF={all:()=>true,to:x=>x.toCh,from:x=>x.fromCh,any:x=>x.toCh||x.fromCh,none:x=>!x.toCh&&!x.fromCh,low:x=>x.b1!=null&&x.b1<=cfg("drives.low_battery_pct")},
    EXF={all:()=>true,foot:x=>x.foot,fsd:x=>x.ap>0,al:x=>x.al>0,hwy:x=>x.km>=cfg("drives.long_highway_km")&&x.max>=cfg("drives.long_highway_fast_kmh")};
   const draw=()=>{const q=DP.q.toLowerCase(),rs=all.filter(x=>inRange(x,DP.r)&&(!q||driveTitle(x).toLowerCase().includes(q))&&CHF[DP.ch](x)&&EXF[DP.ex](x)&&x.km>=DP.mk&&(x.min?x.km/(x.min/60):0)>=DP.ma&&(DP.rp==="both"||(DP.rp==="repark")===!!x.repark)),
     km=rs.reduce((a,x)=>a+x.km,0),kwh=rs.reduce((a,x)=>a+(x.kwh||0),0),ap=rs.reduce((a,x)=>a+(x.ap||0),0),mn=rs.reduce((a,x)=>a+(x.min||0),0);
     $("#tl").innerHTML=tile(n0(rs.length),"drives")+tile(n0(km)+" km","distance")+tile(km?n0(kwh*1000/km)+" Wh/km":"–","average efficiency")+tile(km?n0(100*ap/km)+"%":"–","self-driving")+tile(dur(mn),"time driving")+tile(n0(Math.max(0,...rs.map(x=>x.max||0)))+" km/h","top speed");
-    table($("#tb"),[{k:"t0",t:"Date",l:1,f:r=>`${r.day} ${r.hm}`},{k:"frm",t:"Trip",l:1,f:r=>esc(driveTitle(r))+(r.repark?` <span class="pill" title="Under ${REPM()}: the car was only moved a little">re-park</span>`:"")+(r.toCh?` <span class="pill ok" title="A charge started right after this drive">to charge</span>`:"")+(r.fromCh?` <span class="pill" title="A charge ended just before this drive">from charge</span>`:"")},{k:"km",t:"km",f:r=>n0(r.km,1)},{k:"min",t:"Time",f:r=>dur(r.min)},{k:"whkm",t:"Wh/km",f:r=>n0(r.whkm)},{k:"max",t:"Max",f:r=>n0(r.max)},{k:"ap",t:"Self-driving",f:r=>r.km?n0(100*r.ap/r.km)+"%":"–"},{k:"b0",t:"Battery",f:r=>`${n0(r.b0)}→${n0(r.b1)}%`},{k:"foot",t:"Dashcam",f:r=>r.foot==null?"–":r.foot+"%"},{k:"rvd",t:"Reviewed",f:r=>r.rvd==null?"–":r.rvd+"%"}],rs,r=>{location.hash="#/drive/"+r.id},"t0")};
+    table($("#tb"),[{k:"t0",t:"Date",l:1,f:r=>`${r.day} ${r.hm}`},{k:"frm",t:"Trip",l:1,f:r=>(r.fromCh?`<span class="chn" title="Left a charge here">⚡ ${esc(r.frm||"?")}</span>`:esc(r.frm||"?"))+" → "+(r.toCh?`<span class="chn" title="Charged here">⚡ ${esc(r.to||"?")}</span>`:esc(r.to||"?"))+(r.repark?` <span class="pill" title="Under ${REPM()}: the car was only moved a little">re-park</span>`:"")+(r.toCh?` <span class="pill ok" title="A charge started right after this drive">to charge</span>`:"")+(r.fromCh?` <span class="pill" title="A charge ended just before this drive">from charge</span>`:"")},{k:"km",t:"km",f:r=>n0(r.km,1)},{k:"min",t:"Time",f:r=>dur(r.min)},{k:"whkm",t:"Wh/km",f:r=>n0(r.whkm)},{k:"max",t:"Max",f:r=>n0(r.max)},{k:"ap",t:"Self-driving",f:r=>r.km?n0(100*r.ap/r.km)+"%":"–"},{k:"b0",t:"Battery",f:r=>`${n0(r.b0)}→${n0(r.b1)}%`},{k:"foot",t:"Dashcam",f:r=>r.foot==null?"–":r.foot+"%"},{k:"rvd",t:"Reviewed",f:r=>r.rvd==null?"–":r.rvd+"%"}],rs,r=>{location.hash="#/drive/"+r.id},"t0",(()=>{const g=rangeOf(DP.r);return g&&g[0]===g[1]?1:-1})())};     // one day picked: first drive of the day on top
   main.innerHTML=`<h1>Drives</h1><div class="bar"><span id="rg"></span><select id="fc"><option value="all">Any charging</option><option value="to">Ending at a charge</option><option value="from">Leaving a charge</option><option value="any">Either end at a charge</option><option value="none">No charge at either end</option><option value="low">Finished at ${cfg("drives.low_battery_pct")}% or less</option></select><select id="fr"><option value="drive">Drives</option><option value="repark">Re-parks (under ${REPM()})</option><option value="both">Drives and re-parks</option></select><select id="fx"><option value="all">All drives</option><option value="hwy">Long highway (${cfg("drives.long_highway_km")} km+)</option><option value="fsd">Used self-driving</option><option value="foot">With dashcam footage</option><option value="al">With alerts</option></select><input type="number" id="mk" min="0" step="5" style="width:90px" placeholder="min km" title="Only drives at least this long" value="${DP.mk||""}"><input type="number" id="ma" min="0" step="5" style="width:130px" placeholder="min avg km/h" title="Only drives at least this fast on average (distance over time)" value="${DP.ma||""}"><button class="btn" id="rc" title="Long, fast drives that have footage: the ones worth a Review">Review candidates</button><input type="search" id="q" placeholder="Search a place…" value="${esc(DP.q)}"></div><div class="tiles" id="tl"></div><div id="tb"></div>`;
   rangePicker($("#rg"),DP.r,daysOf(all),draw);$("#q").oninput=e=>{DP.q=e.target.value;draw()};$("#mk").oninput=e=>{DP.mk=+e.target.value||0;draw()};$("#ma").oninput=e=>{DP.ma=+e.target.value||0;draw()};
   $("#rc").onclick=()=>{DP.mk=cfg("review.candidate_km");DP.ma=cfg("review.candidate_avg_kmh");DP.ex="foot";$("#mk").value=DP.mk;$("#ma").value=DP.ma;$("#fx").value="foot";draw()};$("#fc").value=DP.ch;$("#fc").onchange=e=>{DP.ch=e.target.value;draw()};$("#fr").value=DP.rp;$("#fr").onchange=e=>{DP.rp=e.target.value;draw()};$("#fx").value=DP.ex;$("#fx").onchange=e=>{DP.ex=e.target.value;draw()};draw();
@@ -1070,10 +1070,14 @@ function tlDays(host,items,o){
   // a spot that is not a saved place, where the car has just charged: the charger's name, as the charge is stored (not the street address)
   const CH=(o.chg||[]).filter(c=>c.place&&c.lat!=null),CR=cfg("drives.charger_name_m")||300,CW=cfg("drives.charge_window_minutes")*60;
   const chNear=(c,p)=>p&&p[0]!=null&&hav(p[0],p[1],c.lat,c.lon)<=CR;
+  // a charge has one drive that ends at it (the last one before) and one that leaves it (the first after); the others are named by where they really are
+  const DRV=rs.filter(v=>v._c==="drive"),chTo=new Map(),chFr=new Map();
+  CH.forEach(c=>{const a=DRV.filter(v=>v.t1>=c.t0-CW&&v.t1<=c.t0+300).sort((x,y)=>y.t1-x.t1)[0],b=DRV.filter(v=>v.t0>=c.t1-300&&v.t0<=c.t1+CW).sort((x,y)=>x.t0-y.t0)[0];if(a)chTo.set(c,a.id);if(b)chFr.set(c,b.id)});
   const chPick=(c,p)=>c&&(c.kind==="supercharger"||!nameAt(places,p))?c.place:"";       // a Supercharger's name always wins; another charger's only where no saved place covers the spot
-  const chStay=v=>{const p=v.p0||v.p1||v._pos;return chPick(CH.find(c=>c.t0<=v.t1+300&&c.t1>=v.t0-300&&chNear(c,p)),p)};
-  const chEnd=v=>chPick(CH.find(c=>c.t0>=v.t1-300&&c.t0<=v.t1+CW&&chNear(c,v.p1)),v.p1);
-  const chStart=v=>chPick(CH.find(c=>c.t1<=v.t0+300&&c.t1>=v.t0-CW&&chNear(c,v.p0)),v.p0);
+  const chLeft=c=>{const id=chFr.get(c),d=id&&DRV.find(x=>x.id===id);return d?d.t0:1e18};
+  const chStay=v=>{const p=v.p0||v.p1||v._pos;return chPick(CH.find(c=>c.t0<=v.t1+300&&c.t1>=v.t0-300&&v.t0<chLeft(c)&&chNear(c,p)),p)};
+  const chEnd=v=>chPick(CH.find(c=>chTo.get(c)===v.id&&chNear(c,v.p1)),v.p1);
+  const chStart=v=>chPick(CH.find(c=>chFr.get(c)===v.id&&chNear(c,v.p0)),v.p0);
   const stayAt=v=>{if(v._c==="parked"){const cn=chStay(v);if(cn)return cn}const n=nameAt(places,v.p0)||nameAt(places,v.p1)||nameAt(places,v._pos);if(n)return n;
     const cs=[v.city,v.street].filter(Boolean).join(" · ");if(v._c==="sentry"&&cs)return cs;
     const s0=v.t0,e0=v.t1,a=TS.filter(t=>t.to&&Math.abs(t.e-s0)<=WIN).sort((x,y)=>Math.abs(x.e-s0)-Math.abs(y.e-s0))[0];if(a)return a.to;
