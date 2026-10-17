@@ -25,6 +25,7 @@ the block). A change takes effect the next time the app or script reads it (the 
                                                    speed_tol_kmh of the one asked for matches); the wheel moving steer_deg degrees around an FSD switch-off counts as steering
   app.review.exit_car_kmh / exit_gap_kmh           a sign read at exit_car_kmh or more that is exit_gap_kmh or more below the car's speed is marked "probably an exit or side road" (shown dimmed)
   app.review.sign_min_stills                       a sign of a colour class (not a speed limit) must be seen in this many stills of an event or it is taken as noise
+  app.units.efficiency                              how energy use is shown: "kwh100" = kWh/100 km (the default), "whkm" = Wh/km
   app.review.works_gap_s                           a speed sign that differs from OpenStreetMap, within this many seconds of a road-work sign, is marked as a probably temporary limit
   app.review.traffic / traffic_conf / traffic_min_w   find the vehicles ahead in our own lane in each still (the Traffic lane under the telemetry): a small object detector run by OpenCV (no extra Python package);
                                                    traffic_conf = how sure it must be (0..1), traffic_min_w = narrower than this fraction of the picture is too far ahead to count
@@ -59,6 +60,7 @@ except ImportError:                      # imported as lib.app_config
 DEFAULTS = {
     "timezone": "Australia/Sydney",
     "clock": {"match_km": 0.5, "margin_km": 1.0, "reuse_hours": 36},
+    "units": {"efficiency": "kwh100"},
     "map": {"tiles_base": "https://tiles.openfreemap.org/styles/", "style_light": "positron", "style_dark": "dark", "places_max_lon": 160,
             "speed_colors": [[0, "#0000FF"], [10, "#008080"], [20, "#90EE90"], [30, "#008000"], [40, "#32CD32"], [50, "#ADFF2F"], [60, "#FFFF00"], [70, "#FFA500"], [80, "#FF8C00"], [90, "#FF4500"], [100, "#FF0000"], [110, "#8B0000"], [120, "#800080"]],
             "speed_over_color": "#000000",
