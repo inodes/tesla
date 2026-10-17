@@ -304,6 +304,7 @@ async function driveReviewPanel(host,stamp,lo,onResult){
       const dd=desc(e),g=geo(e);
       h+=`<div class="rvnav"><button class="btn" id="rvp" ${ei?"":"disabled"}>‹ Back</button><div style="flex:1;text-align:center;min-width:0"><b>${esc(e.id)}</b> · ${hm(e.t)}${dd.gm}<div class="sub">${esc(KNAME[e.kind])} · ${ei+1} of ${L.length}, in the order of the drive</div></div><button class="btn pri" id="rvn" ${ei<L.length-1?"":"disabled"}>Next ›</button></div>
         <canvas id="rvo" style="width:100%;height:26px;display:block;cursor:pointer" title="Where the events are in the drive; click one"></canvas>
+        <div class="rvlg" style="margin:0 0 4px">${Object.keys(KCOL).map(k=>`<span><i style="background:${KCOL[k]};border-radius:50%"></i>${KNAME[k]}</span>`).join("")}<span><i style="border:2px solid var(--fg);border-radius:50%;width:7px;height:7px"></i>this event</span><span>Along the drive, left to right; click a dot to go to it</span></div>
         <div style="margin:8px 0 2px">${dd.h}</div><div>${dd.tags}</div>`;
       if(e.look_error)h+=`<div class="sub" style="color:var(--bad)">${esc(e.look_error)}</div>`;
       if(g){
