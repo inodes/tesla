@@ -490,7 +490,7 @@ class DriveReview:
                 if res and res.get("clock") is not None:
                     evs = res.get("events") or []
                     tot = sum(e.get("n_stills") or 0 for e in evs)
-                    pct = 100 if not evs else (round(100.0 * sum(e.get("read") or 0 for e in evs) / tot) if tot else 0)
+                    pct = 100 if not evs else (round(100.0 * sum(e["read"] if "read" in e else (e.get("n_stills") or 0 if not res.get("note") else 0) for e in evs) / tot) if tot else 0)
                 hit = self._rv[path] = (mt, pct)
             if hit[1] is not None:
                 out[n[:-5]] = hit[1]
