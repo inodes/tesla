@@ -55,6 +55,7 @@ OPTS = dict(accel_min_pct=5,        # accelerator at or above this (%) counts as
             osm_fetch=True,         # fetch a missing OpenStreetMap tile (a few seconds) to compare a speed sign with the map's limit
             steer_deg=15)           # the wheel moved this much around a switch-off = "steering"
 MODES = {0: "Manual", 1: "FSD", 2: "Autosteer", 3: "TACC"}
+SIGN_VER = 2                        # bump when the sign finders change: the kept readings (signcache) are then made again
 MAXGAP = 3                          # seconds between two readings that are still consecutive
 _LOCK = threading.RLock()
 
@@ -250,6 +251,63 @@ def _roads(base, o):
     return _ROADS[key]
 
 
+class _SignCache:
+    """What was read in each full-size frame, kept so that a later review does not read the same frame again: <base>/signcache/<clip stamp>.json
+    holds {second in the clip: [sign]} (kind, text, side, sureness, name of its small picture in signcache/<clip stamp>/). A reading made with
+    other finders or another min_conf (key) is not used."""
+
+    def __init__(self, base, key):
+        self.dir = os.path.join(base, "signcache")
+        self.key = key
+        self.c = {}
+        self.dirty = set()
+
+    def _load(self, clip):
+        if clip not in self.c:
+            try:
+                with open(os.path.join(self.dir, clip + ".json"), encoding="utf-8") as fh:
+                    d = json.load(fh)
+            except (OSError, ValueError):
+                d = {}
+            self.c[clip] = d if d.get("key") == self.key else {"key": self.key, "s": {}}
+        return self.c[clip]
+
+    def has(self, clip, sec):
+        return str(sec) in self._load(clip)["s"]
+
+    def get(self, clip, sec):
+        out = []
+        for d in self._load(clip)["s"].get(str(sec), []):
+            out.append(dict(cat=d["cat"], text=d["text"], side=d["side"], conf=d["conf"], crop=os.path.join(self.dir, clip, d["f"]) if d.get("f") else None))
+        return out
+
+    def put(self, clip, sec, dets):
+        import cv2
+        rows = []
+        for n, d in enumerate(dets):
+            name = ""
+            crop = d.get("crop")
+            if crop is not None and crop.shape[0] > 0 and crop.shape[1] > 0:
+                if max(crop.shape[:2]) > 160:
+                    z = 160.0 / max(crop.shape[:2])
+                    crop = cv2.resize(crop, (max(1, int(crop.shape[1] * z)), max(1, int(crop.shape[0] * z))))
+                os.makedirs(os.path.join(self.dir, clip), exist_ok=True)
+                name = "%03d_%d.jpg" % (sec, n)
+                cv2.imwrite(os.path.join(self.dir, clip, name), crop, [cv2.IMWRITE_JPEG_QUALITY, 85])
+            rows.append(dict(cat=d["cat"], text=d["text"], side=d["side"], conf=d["conf"], f=name))
+        self._load(clip)["s"][str(sec)] = rows
+        self.dirty.add(clip)
+
+    def save(self):
+        for clip in sorted(self.dirty):
+            os.makedirs(self.dir, exist_ok=True)
+            tmp = os.path.join(self.dir, clip + ".json.tmp")
+            with open(tmp, "w", encoding="utf-8") as fh:
+                json.dump(self.c[clip], fh, separators=(",", ":"))
+            os.replace(tmp, os.path.join(self.dir, clip + ".json"))
+        self.dirty.clear()
+
+
 def look(ev, rows, front, base, stamp, o, stop, stills=None, signs=True):
     """The front-camera stills of one event. Sets ev["pics"] ([clip stamp, second in the clip] of each still, in time order), ev["shots"] (seconds from the
     event), ev["tile"] (shape of a still), ev["n_stills"] and, when the video is there and `signs`, ev["signs"] read from the full-size frames.
@@ -283,44 +341,59 @@ def look(ev, rows, front, base, stamp, o, stop, stills=None, signs=True):
         if im is not None:
             ev["tile"] = dict(w=int(im.shape[1]), h=int(im.shape[0]))
     ev["signs"] = []
-    ev["hi"] = []
-    wf = [w for w in want if w[1] in front]                 # signs are read from full-size frames, so only where the video is
-    shots = []                                              # (T, image)
+    ev["read"] = 0
+    folder = os.path.join(base, "events", stamp)
+    os.makedirs(folder, exist_ok=True)
+    where = {w[0]: k for k, w in enumerate(pics)}
+    hi_name = lambda clip, sec: "%s_%03d_%d.jpg" % (clip, sec, int(o["hi_px"]))
+    ev["hi"] = [""] * len(pics)
+    cache = _SignCache(base, "%s:%s" % (SIGN_VER, o_rv["min_conf"]))
+    # the video is opened only for the frames that still need it: no big picture kept yet, or (when signs are read) no reading kept yet
+    need = []
+    for w in want:
+        if w[1] not in front:
+            continue
+        k = where.get(w[0])
+        hi_ok = not o["hi_px"] or k is None or os.path.exists(os.path.join(folder, hi_name(w[1], w[2])))
+        if not (hi_ok and (not signs or cache.has(w[1], w[2]))):
+            need.append(w)
+    shots = []                                              # (T, clip, second, image)
     with tempfile.TemporaryDirectory() as tmp:
         k = 0
-        while k < len(wf):                                  # a run in one clip, in steps of `step` seconds
+        while k < len(need):                                # a run in one clip, in steps of `step` seconds
             j = k
-            while j + 1 < len(wf) and wf[j + 1][1] == wf[k][1] and wf[j + 1][2] - wf[j][2] == step:
+            while j + 1 < len(need) and need[j + 1][1] == need[k][1] and need[j + 1][2] - need[j][2] == step:
                 j += 1
-            files = _extract(front[wf[k][1]], wf[k][2], j - k + 1, step, tmp, "r%d" % k)
+            files = _extract(front[need[k][1]], need[k][2], j - k + 1, step, tmp, "r%d" % k)
             for n, f in enumerate(files[:j - k + 1]):
                 im = cv2.imread(f)
                 if im is not None:
-                    shots.append((wf[k + n][0], im))
+                    shots.append((need[k + n][0], need[k + n][1], need[k + n][2], im))
             k = j + 1
         if stop():
             return
         # the big pictures of this event: the full-size frames just read, kept at hi_px wide (the one-second stills of the store are small, for browsing)
-        if shots and o["hi_px"]:
-            folder = os.path.join(base, "events", stamp)
-            os.makedirs(folder, exist_ok=True)
-            where = {w[0]: k for k, w in enumerate(pics)}
-            ev["hi"] = [""] * len(pics)
-            for T, im in shots:
-                k = where.get(T)
-                if k is None:
+        if o["hi_px"]:
+            for T, clip, sec, im in shots:
+                if where.get(T) is None:
                     continue
                 if im.shape[1] > o["hi_px"]:
                     im = cv2.resize(im, (int(o["hi_px"]), max(1, int(im.shape[0] * o["hi_px"] / float(im.shape[1])))), interpolation=cv2.INTER_AREA)
-                name = "%s_%02d.jpg" % (ev["id"], k)
-                cv2.imwrite(os.path.join(folder, name), im, [cv2.IMWRITE_JPEG_QUALITY, int(o["hi_quality"])])
-                ev["hi"][k] = name
-        if not signs:
-            return
-        found = []
-        with ThreadPoolExecutor(max(1, int(o_rv["workers"]))) as ex:
-            for (T, im), lst in zip(shots, ex.map(lambda s: _read_signs(s[1], o_rv), shots)):
-                for d in lst:
+                cv2.imwrite(os.path.join(folder, hi_name(clip, sec)), im, [cv2.IMWRITE_JPEG_QUALITY, int(o["hi_quality"])])
+        for k, (T, clip, sec) in enumerate(pics):
+            if os.path.exists(os.path.join(folder, hi_name(clip, sec))):
+                ev["hi"][k] = hi_name(clip, sec)
+        if signs:
+            todo = [x for x in shots if not cache.has(x[1], x[2])]
+            with ThreadPoolExecutor(max(1, int(o_rv["workers"]))) as ex:
+                for x, lst in zip(todo, ex.map(lambda x: _read_signs(x[3], o_rv), todo)):
+                    cache.put(x[1], x[2], lst)
+        cache.save()
+        ev["read"] = sum(1 for _T, clip, sec in pics if cache.has(clip, sec))
+        found = []                                          # every reading of these frames: just made, or kept from an earlier review
+        for T, clip, sec in want:
+            if cache.has(clip, sec):
+                for d in cache.get(clip, sec):
                     found.append(dict(d, t=T))
         sgs = []
         for d in found:                                     # the same sign in following stills is one sign (a speed sign by its number, the others by kind and side)
@@ -339,6 +412,8 @@ def look(ev, rows, front, base, stamp, o, stop, stills=None, signs=True):
         os.makedirs(os.path.join(base, "crops"), exist_ok=True)
         for n, g in enumerate(sgs):
             crop = g.pop("crop")
+            if isinstance(crop, str):
+                crop = cv2.imread(crop)
             name = "%s_%s_%02d.jpg" % (stamp, ev["id"], n)
             if crop is not None and crop.shape[0] > 0 and crop.shape[1] > 0:
                 if max(crop.shape[:2]) > 160:
@@ -379,6 +454,7 @@ class DriveReview:
         self.tc = tc
         self.t = None
         self.stop_flag = False
+        self._rv = {}
         self.st = dict(running=False, stamp="", stage="", done=0, total=0, error="", t0=0)
 
     # ---- stored results
@@ -391,6 +467,34 @@ class DriveReview:
                 return json.load(fh)
         except (OSError, ValueError):
             return None
+
+    def reviewed(self):
+        """{drive stamp: percent} of the stills of the events of each reviewed drive that were looked at for signs (100 for a drive with no events)."""
+        out = {}
+        try:
+            names = os.listdir(os.path.join(self.base, "drives"))
+        except OSError:
+            return out
+        for n in names:
+            if not n.endswith(".json"):
+                continue
+            path = os.path.join(self.base, "drives", n)
+            try:
+                mt = os.path.getmtime(path)
+            except OSError:
+                continue
+            hit = self._rv.get(path)
+            if not hit or hit[0] != mt:
+                res = self.result(n[:-5])
+                pct = None
+                if res and res.get("clock") is not None:
+                    evs = res.get("events") or []
+                    tot = sum(e.get("n_stills") or 0 for e in evs)
+                    pct = 100 if not evs else (round(100.0 * sum(e.get("read") or 0 for e in evs) / tot) if tot else 0)
+                hit = self._rv[path] = (mt, pct)
+            if hit[1] is not None:
+                out[n[:-5]] = hit[1]
+        return out
 
     def _save(self, stamp, res):
         os.makedirs(os.path.dirname(self._path(stamp)), exist_ok=True)
