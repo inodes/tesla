@@ -11,6 +11,7 @@ Everything the app shows comes from the files the sync scripts already write int
 
 Nothing here writes anything. Results are cached in memory and rebuilt when a source file's mtime changes.
 """
+import bisect
 import csv
 import datetime
 import glob
@@ -344,8 +345,10 @@ class Store:
         """A place where the car has just charged (or is charging) is named after the charger - exactly as the
         charge is stored (the Supercharger's tesla.com name, another network's name) - instead of the street address Tessie has for it. A Supercharger's name wins over a saved place too; another
         charger's name is used only where no saved place covers the spot.
-        A drive's end: a charge started up to drives.charge_window_minutes after it, close by. A drive's start: a charge ended up to that long before
-        it. A parked spell: a charge that overlaps it (5 minutes either side). 'Close by' is app.drives.charger_name_m."""
+        Each charge has ONE drive that ends at it (the last real drive that ended up to drives.charge_window_minutes before the charge began: d["to_ch"] is
+        the charge's id) and ONE that leaves it (the first real drive that began up to that long after the charge ended: d["from_ch"]). Only those two
+        are named after the charger (when close by: app.drives.charger_name_m); once the car has moved, the place is just where it is - the address or the
+        saved place. A parked spell: a charge that overlaps it (5 minutes either side) and that the car has not yet left. Re-parks are not counted."""
         W = app_config.get("drives.charge_window_minutes") * 60
         R = app_config.get("drives.charger_name_m")
         ch = [c for c in charges if c.get("place") and c.get("lat") is not None and c.get("lon") is not None]
@@ -358,15 +361,30 @@ class Store:
         def use(c, la, lo):
             """A Supercharger's name always wins (the car did charge there); another charger's only where no saved place covers the spot."""
             return c if c and (c.get("kind") == "supercharger" or not saved(la, lo)) else None
-        for d in drives:
-            c = use(next((c for c in ch if d["t1"] - 300 <= c["t0"] <= d["t1"] + W and near(c, d.get("lat1"), d.get("lon1"))), None), d.get("lat1"), d.get("lon1"))
-            if c:
+        real = [d for d in drives if not d.get("repark")]
+        by_t1, by_t0 = sorted(real, key=lambda d: d["t1"]), sorted(real, key=lambda d: d["t0"])
+        k1, k0 = [d["t1"] for d in by_t1], [d["t0"] for d in by_t0]
+        left = {}                                           # charge id -> when the car left it (the start of the drive that leaves it)
+        for c in charges:
+            if c.get("t0") is None or c.get("t1") is None:
+                continue
+            a, b = bisect.bisect_left(k1, c["t0"] - W), bisect.bisect_right(k1, c["t0"] + 300)
+            if a < b:
+                by_t1[b - 1]["to_ch"] = c["id"]             # the last drive before the charge
+            a, b = bisect.bisect_left(k0, c["t1"] - 300), bisect.bisect_right(k0, c["t1"] + W)
+            if a < b:
+                by_t0[a]["from_ch"] = c["id"]               # the first drive after it
+                left[c["id"]] = by_t0[a]["t0"]
+        named = {c["id"]: c for c in ch}
+        for d in real:
+            c = named.get(d.get("to_ch"))
+            if c and near(c, d.get("lat1"), d.get("lon1")) and use(c, d.get("lat1"), d.get("lon1")):
                 d["to"] = c["place"]
-            c = use(next((c for c in ch if d["t0"] - W <= c["t1"] <= d["t0"] + 300 and near(c, d.get("lat"), d.get("lon"))), None), d.get("lat"), d.get("lon"))
-            if c:
+            c = named.get(d.get("from_ch"))
+            if c and near(c, d.get("lat"), d.get("lon")) and use(c, d.get("lat"), d.get("lon")):
                 d["frm"] = c["place"]
         for i in idles:
-            c = use(next((c for c in ch if c["t0"] <= i["t1"] + 300 and c["t1"] >= i["t0"] - 300 and near(c, i.get("lat"), i.get("lon"))), None), i.get("lat"), i.get("lon"))
+            c = use(next((c for c in ch if c["t0"] <= i["t1"] + 300 and c["t1"] >= i["t0"] - 300 and i["t0"] < left.get(c["id"], 1e18) and near(c, i.get("lat"), i.get("lon"))), None), i.get("lat"), i.get("lon"))
             if c:
                 i["place"] = c["place"]
 
