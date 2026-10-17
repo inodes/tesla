@@ -1070,16 +1070,17 @@ function tlDays(host,items,o){
   // a spot that is not a saved place, where the car has just charged: the charger's name, as the charge is stored (not the street address)
   const CH=(o.chg||[]).filter(c=>c.place&&c.lat!=null),CR=cfg("drives.charger_name_m")||300,CW=cfg("drives.charge_window_minutes")*60;
   const chNear=(c,p)=>p&&p[0]!=null&&hav(p[0],p[1],c.lat,c.lon)<=CR;
-  const chStay=v=>{const p=v.p0||v.p1||v._pos,c=CH.find(c=>c.t0<=v.t1+300&&c.t1>=v.t0-300&&chNear(c,p));return c?c.place:""};
-  const chEnd=v=>{const c=CH.find(c=>c.t0>=v.t1-300&&c.t0<=v.t1+CW&&chNear(c,v.p1));return c?c.place:""};
-  const chStart=v=>{const c=CH.find(c=>c.t1<=v.t0+300&&c.t1>=v.t0-CW&&chNear(c,v.p0));return c?c.place:""};
-  const stayAt=v=>{const n=nameAt(places,v.p0)||nameAt(places,v.p1)||nameAt(places,v._pos);if(n)return n;if(v._c==="parked"){const cn=chStay(v);if(cn)return cn}
+  const chPick=(c,p)=>c&&(c.kind==="supercharger"||!nameAt(places,p))?c.place:"";       // a Supercharger's name always wins; another charger's only where no saved place covers the spot
+  const chStay=v=>{const p=v.p0||v.p1||v._pos;return chPick(CH.find(c=>c.t0<=v.t1+300&&c.t1>=v.t0-300&&chNear(c,p)),p)};
+  const chEnd=v=>chPick(CH.find(c=>c.t0>=v.t1-300&&c.t0<=v.t1+CW&&chNear(c,v.p1)),v.p1);
+  const chStart=v=>chPick(CH.find(c=>c.t1<=v.t0+300&&c.t1>=v.t0-CW&&chNear(c,v.p0)),v.p0);
+  const stayAt=v=>{if(v._c==="parked"){const cn=chStay(v);if(cn)return cn}const n=nameAt(places,v.p0)||nameAt(places,v.p1)||nameAt(places,v._pos);if(n)return n;
     const cs=[v.city,v.street].filter(Boolean).join(" · ");if(v._c==="sentry"&&cs)return cs;
     const s0=v.t0,e0=v.t1,a=TS.filter(t=>t.to&&Math.abs(t.e-s0)<=WIN).sort((x,y)=>Math.abs(x.e-s0)-Math.abs(y.e-s0))[0];if(a)return a.to;
     const z=TS.filter(t=>t.frm&&Math.abs(t.s-e0)<=WIN).sort((x,y)=>Math.abs(x.s-e0)-Math.abs(y.s-e0))[0];return z?z.frm:cs};
   const chron=rs.slice().sort((a,b)=>a.t0-b.t0),stays=chron.filter(v=>v._c==="parked"||v._c==="sentry");
   const around=(v,end)=>{const t=end?v.t1:v.t0;let best=null,bd=WIN;for(const k of stays){const d=end?Math.abs(k.t0-t):Math.abs(k.t1-t);if(d<bd){const n=stayAt(k);if(n){bd=d;best=n}}}return best||""};
-  const ends=v=>{const t=tOver(v);return[nameAt(places,v.p0)||chStart(v)||(t&&t.frm)||around(v,false)||"Unknown",nameAt(places,v.p1)||chEnd(v)||(t&&t.to)||around(v,true)||"Unknown"]};
+  const ends=v=>{const t=tOver(v);return[chStart(v)||nameAt(places,v.p0)||(t&&t.frm)||around(v,false)||"Unknown",chEnd(v)||nameAt(places,v.p1)||(t&&t.to)||around(v,true)||"Unknown"]};
   const ico=c=>c==="drive"?"🚗":c==="parked"?"🅿️":c==="sentry"?'<i class="hal" title="Sentry"></i>':"🎬";
   const row=(v,d)=>{const c=v._c,id=esc(v.id),canTick=c==="drive"||!!v._pos,chk=c==="rec"?"<span></span>":`<label class="ck"><input type="checkbox" data-id="${id}" ${TLS.on[v.id]?"checked":""} ${canTick?"":"disabled"} title="${canTick?"Show on the map":"No position known"}"></label>`;
     const when=c==="sentry"?hms(v.trig||v.start).slice(0,5):tm(v),e2=c==="drive"?ends(v):null;
