@@ -185,11 +185,11 @@ async function driveReviewPanel(host,stamp,lo,onResult){
   let tab="all",ei=0,si=0,hv=null,vkey="",tries=0,MC=null,OV=null,lb=false;
   const KCOL={intervention:"#dc2626",accelerator:"#f59e0b",speed:"#2563eb"},KNAME={intervention:"FSD interventions",accelerator:"Accelerator pressed",speed:"Speed changes"};
   // road signs by kind (colour of the sign): what a sign is, and how a chip for it looks
-  const SCAT={speed:["Speed limit","#dc2626"],regulatory:["Regulatory","#b91c1c"],warning:["Warning","#ca8a04"],roadwork:["Road work","#ea580c"],info:["Information","#2563eb"],directional:["Directional","#16a34a"],safety:["Safety","#0891b2"]};
+  const SCAT={speed:["Speed limit","#dc2626"],regulatory:["Regulatory","#b91c1c"],traffic:["Traffic in our lane","#7c3aed"],warning:["Warning","#ca8a04"],roadwork:["Road work","#ea580c"],info:["Information","#2563eb"],directional:["Directional","#16a34a"],safety:["Safety","#0891b2"]};
   const sgCat=x=>SCAT[x.cat||"speed"]||SCAT.speed;
   // the lanes under the strip of an event (as in the old flip review): which lane a kind of sign goes in, and its colour
   const LANES=[["Limit","#b91c1c"],["Warn","#d4a72c"],["Blue","#2f5fbf"],["Green","#3f9d5f"],["White","#f4f4f5"],["Traffic","#7c3aed"]];
-  const LANE_OF={speed:0,warning:1,roadwork:1,info:2,safety:2,directional:3,regulatory:4};
+  const LANE_OF={speed:0,warning:1,roadwork:1,info:2,safety:2,directional:3,regulatory:4,traffic:5};
   const sgTitle=x=>`${sgCat(x)[0]} sign, seen ${x.n} time(s)${x.conf>0?", "+x.conf+"% sure of the reading":""}`+(x.anom?" · the car was doing "+n0(x.car)+" km/h: probably an exit or side road, not this road":"")+(x.osm!=null?" · the map says "+x.osm+(x.map?" on "+x.map:""):"")+(x.conflict?" · differs from the map":"")+(x.temp?(x.cat==="roadwork"?" · temporary road works":" · probably a temporary limit (road works nearby)"):"");
   const sgChip=x=>`<span class="sgn" style="border-left:4px solid ${sgCat(x)[1]};${x.anom?"opacity:.55;border-style:dashed;":""}" title="${esc(sgTitle(x))}">${x.f?`<img src="/review/${encodeURIComponent(x.f)}" alt="">`:""}<b>${esc(x.text||sgCat(x)[0])}</b> <span class="sub">${x.cat&&x.cat!=="speed"&&x.text?sgCat(x)[0]+" · ":""}${hm(x.t)}${x.anom?" · exit / side road?":""}${x.conflict?` · <span class="sgw">map ${x.osm}</span>`:x.osm!=null&&(x.cat||"speed")==="speed"?" · map agrees":""}${x.temp?' · <span class="sgw">temporary</span>':""}</span></span>`;
   const sgSum=L=>{const c={};L.forEach(x=>{const k=x.cat||"speed";c[k]=(c[k]||0)+1});return Object.keys(c).map(k=>c[k]+" "+(SCAT[k]||SCAT.speed)[0].toLowerCase()).join(", ")};
@@ -256,7 +256,6 @@ async function driveReviewPanel(host,stamp,lo,onResult){
       else if(col==="#f4f4f5"){c.strokeStyle=ink;c.lineWidth=1;c.stroke()}
       if(txt){c.fillStyle=col==="#f4f4f5"||col==="#d4a72c"?"#111":"#fff";c.textAlign="center";c.font="bold 10px system-ui";c.fillText(txt,x+w/2,y+.5);c.font="10px system-ui"}};
     (e.signs||[]).forEach(g=>{const k=LANE_OF[g.cat||"speed"];if(k==null)return;const i0=base(e)+(g.t0!=null?g.t0:g.t)-e.t,i1=base(e)+(g.t1!=null?g.t1:g.t)-e.t;chip(k,i0,i1,(g.cat||"speed")==="speed"?g.text:"",LANES[k][1],g.temp||g.conflict)});
-    (e.traffic||[]).forEach(q=>chip(5,base(e)+q.t0-e.t,base(e)+q.t1-e.t,"",LANES[5][1],false));
     c.textBaseline="alphabetic";c.textAlign="start";
     const hot=hv!=null?hv:si;m.xs=[];
     (geo(e)?e.shots:[]).forEach((x,k)=>{const px=X(stillI(e,k)),h=k===hot;m.xs.push(px);c.strokeStyle=c.fillStyle=h?"#f59e0b":KCOL[e.kind];c.globalAlpha=h?1:.45;c.lineWidth=h?2.5:1;c.beginPath();c.moveTo(px,T);c.lineTo(px,H-B);c.stroke();c.beginPath();c.arc(px,T,h?4.5:2.5,0,7);c.fill();c.globalAlpha=1});
@@ -309,8 +308,8 @@ async function driveReviewPanel(host,stamp,lo,onResult){
       if(e.look_error)h+=`<div class="sub" style="color:var(--bad)">${esc(e.look_error)}</div>`;
       if(g){
         h+=`<div class="rvmain"><div><div id="rvbig" class="rvimg" style="${big(e,si)}" title="Click to enlarge"></div><div class="sub" id="rvcap" style="margin-top:4px"></div><div class="sub" id="rvst"></div></div>
-          <div><canvas id="rvc" class="rvcv"></canvas><div class="rvlg">${LANES.map((l,k)=>`<span><i style="background:${l[1]}${l[1]==="#f4f4f5"?";border:1px solid var(--mut)":""}"></i>${["Speed limit","Warning / works","Blue sign (information)","Green sign (directions)","White sign (regulatory)","Traffic in our lane"][k]}</span>`).join("")}</div><div class="sgs">${(e.signs||[]).map(sgChip).join("")}</div>
-          <div class="sub" style="margin-top:4px">${(e.signs||[]).length?"Signs found in these stills: "+sgSum(e.signs)+". The kind comes from the sign's colour; check each reading against its picture.":"No signs found in the stills."}</div></div></div>
+          <div><canvas id="rvc" class="rvcv"></canvas><div class="rvlg">${LANES.map((l,k)=>`<span><i style="background:${l[1]}${l[1]==="#f4f4f5"?";border:1px solid var(--mut)":""}"></i>${["Speed limit","Warning / works","Blue sign (information)","Green sign (directions)","White sign (regulatory)","Traffic in our lane (found by machine: a vehicle ahead in the middle of the picture)"][k]}</span>`).join("")}</div><div class="sgs">${(e.signs||[]).filter(x=>x.cat!=="traffic").map(sgChip).join("")}</div>
+          <div class="sub" style="margin-top:4px">${(e.signs||[]).filter(x=>x.cat!=="traffic").length?"Signs found in these stills: "+sgSum(e.signs.filter(x=>x.cat!=="traffic"))+". The kind comes from the sign's colour; check each reading against its picture.":"No signs found in the stills."}</div></div></div>
           <div class="rvfilm">${e.shots.map((x,k)=>`<button class="rvc" data-k="${k}" style="${sprite(e,k)}" title="${x>0?"+":""}${n0(x)} s"></button>`).join("")}</div>
           <div class="sub" style="margin-top:6px">Click a still to light it up on the map, the chart and the video. ← → step through the stills, Shift + ← → through the events.</div>`}
       else if(e.sheet)h+=`<div style="margin-top:8px"><a href="/revev/${encodeURIComponent(R.stamp)}/${encodeURIComponent(e.sheet)}" target="_blank"><img class="rvsheet" src="/revev/${encodeURIComponent(R.stamp)}/${encodeURIComponent(e.sheet)}"></a><div class="sub">This review was run before the stills could be picked one by one. Run it again for that.</div></div>`;
