@@ -23,6 +23,7 @@ the block). A change takes effect the next time the app or script reads it (the 
                                                    the manual drive review (Review tab): an accelerator at or above accel_min_pct % is "pressed"; every lasting change
                                                    of speed_min_kmh or more with FSD on is a speed-change event (the page filters them, e.g. 100 -> 110; a speed within
                                                    speed_tol_kmh of the one asked for matches); the wheel moving steer_deg degrees around an FSD switch-off counts as steering
+  app.review.exit_car_kmh / exit_gap_kmh           a sign read at exit_car_kmh or more that is exit_gap_kmh or more below the car's speed is marked "probably an exit or side road" (shown dimmed)
   app.review.hi_px / hi_quality                    the big picture of each still of a review event (width in px, JPEG quality), cut from the full-size video frame while the video is there; 0 px = none
   app.review.event_before_s / event_after_s / max_event_stills
                                                    front-camera stills of one review event: one a second from event_before_s before to event_after_s after (thinned
@@ -60,7 +61,7 @@ DEFAULTS = {
     "teslacam": {"moving_kmh": 3.0, "run_gap_s": 75, "gap_min_s": 120, "same_place_m": 300, "same_place_est_m": 800, "same_minute_s": 30, "read_workers": 4, "days_newest_first": True, "rows_newest_first": True},
     "review": {"step_s": 1.0, "min_kmh": 30.0, "min_conf": 50.0, "workers": 3, "merge_s": 12.0, "candidate_km": 20, "candidate_avg_kmh": 60,
                "accel_min_pct": 5, "speed_min_kmh": 5, "speed_tol_kmh": 6,
-               "event_before_s": 12, "event_after_s": 15, "max_event_stills": 40, "hi_px": 1000, "hi_quality": 88, "steer_deg": 15},
+               "event_before_s": 12, "event_after_s": 15, "max_event_stills": 40, "hi_px": 1000, "hi_quality": 88, "exit_car_kmh": 90, "exit_gap_kmh": 20, "steer_deg": 15},
     "stills": {"width": 400, "quality": 6, "workers": 3},
     "drives": {"repark_max_km": 0.05, "repark_same_place_km": 0.3, "repark_same_place_m": 50, "repark_max_minutes": 10,
                "long_highway_km": 30, "long_highway_fast_kmh": 90, "long_highway_fast_minutes": 10,
