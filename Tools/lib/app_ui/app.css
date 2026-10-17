@@ -154,7 +154,7 @@ body{-webkit-user-select:text;user-select:text}
 .mpin.wn{background:#facc15;border:2px solid #111;transform:rotate(45deg);width:22px;height:22px;border-radius:3px}.mpin.wn span{transform:rotate(-45deg)}
 .mpin.wn.rw{background:#f97316}
 .mpin.cf{outline:3px solid #7c3aed;outline-offset:1px}
-tr.chl{cursor:pointer}tr.chl td{color:var(--bad);font-weight:600;font-size:12.5px;padding:3px 12px;border-top:2px solid var(--bad);border-bottom:2px solid var(--bad);background:transparent}tr.chl:hover td{background:var(--hover)}
+tr.chline{cursor:pointer}tr.chline td{color:var(--bad);font-weight:600;font-size:12.5px;padding:3px 12px;border-top:2px solid var(--bad);border-bottom:2px solid var(--bad);background:transparent}tr.chline:hover td{background:var(--hover)}
 .rvb{position:absolute;left:5px;bottom:5px;display:flex;gap:4px;align-items:flex-end;pointer-events:none}.rvb i{font-style:normal;display:inline-flex;align-items:center;justify-content:center;box-shadow:0 0 0 1px rgba(0,0,0,.35)}
 .rvb .bsp{min-width:26px;height:26px;border-radius:50%;border:3px solid #dc2626;background:#fff;color:#111;font:700 11px system-ui}.rvb .bsp.w{border-style:dashed}
 .rvb .bk{min-width:20px;height:20px;border-radius:5px;color:#fff;font:700 12px system-ui;padding:0 2px}

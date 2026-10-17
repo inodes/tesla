@@ -106,7 +106,7 @@ function table(host,cols,rows,onRow,def,dir0){
   let sk=def||cols[0].k,dir=dir0||-1;
   const cmp=(x,y)=>typeof x==="string"&&typeof y==="string"?x.localeCompare(y):x<y?-1:x>y?1:0,byDay=sk0=>sk0==="t0"&&rows.length&&rows[0].day!==undefined;
   const draw=()=>{const rs=rows.filter(r=>r.k!=="charge"||sk==="t0").sort((a,b)=>{const x=a[sk],y=b[sk];if(x==null||y==null)return (x==null)-(y==null);return dir*cmp(x,y)});
-    host.innerHTML=`<table><thead><tr>${cols.map(c=>`<th class="${c.l?"l":""}" data-k="${c.k}">${c.t}${sk===c.k?(dir<0?" ▾":" ▴"):""}</th>`).join("")}</tr></thead><tbody>${rs.slice(0,500).map((r,i)=>`<tr data-i="${rows.indexOf(r)}" ${r.k==="charge"?'class="chl"':""}>${cols.map(c=>`<td class="${c.l?"l":""}">${r.k==="charge"?(c.c?c.c(r):""):c.f?c.f(r):esc(r[c.k])}</td>`).join("")}</tr>`).join("")}</tbody></table>${rs.length>500?`<div class="sub" style="padding:8px">Showing the first 500 of ${rs.length}. Narrow the filter.</div>`:""}`;
+    host.innerHTML=`<table><thead><tr>${cols.map(c=>`<th class="${c.l?"l":""}" data-k="${c.k}">${c.t}${sk===c.k?(dir<0?" ▾":" ▴"):""}</th>`).join("")}</tr></thead><tbody>${rs.slice(0,500).map((r,i)=>`<tr data-i="${rows.indexOf(r)}" ${r.k==="charge"?'class="chline"':""}>${cols.map(c=>`<td class="${c.l?"l":""}">${r.k==="charge"?(c.c?c.c(r):""):c.f?c.f(r):esc(r[c.k])}</td>`).join("")}</tr>`).join("")}</tbody></table>${rs.length>500?`<div class="sub" style="padding:8px">Showing the first 500 of ${rs.length}. Narrow the filter.</div>`:""}`;
     $$("th",host).forEach(th=>th.onclick=()=>{if(sk===th.dataset.k)dir=-dir;else{sk=th.dataset.k;dir=-1}draw()});
     $$("tbody tr",host).forEach(tr=>tr.onclick=()=>onRow(rows[+tr.dataset.i]))};
   draw();
@@ -557,7 +557,7 @@ async function pageCharge(id,pid){
    <div class="sub">${dayName(v.day)} · ${v.hm} – ${end} · ${dur(part?part.min:p.span)}${multi&&!part?" plugged in":""} · ${esc(p.network||(p.kind==="supercharger"?"Supercharger":p.kind==="dc"?"DC fast charger":"AC charging"))} · ${esc(String(p.status||"").replace(/[^\x20-\x7e]/g,"").trim())}${raw.pkey?' · <a href="#/place/'+encodeURIComponent(raw.pkey)+'">what is around here</a>':""}</div>
    ${multi?`<div class="bar"><a class="chip ${part?"":"on"}" href="#/charge/${p.id}" style="text-decoration:none">Whole charge</a>${links}<span class="sub">Tessie recorded this plug-in as ${p.parts.length} sessions; it is one charge with one invoice.</span></div>`:""}
    ${await alertsHere(p)}
-   <div class="chgrid"><div class="chl">
+   <div class="chgrid"><div class="chline">
      <div class="card"><h2 style="margin-top:0">Charger power and battery</h2><div class="sub" style="margin-bottom:6px">${chartSub(p,part,cur)}</div><div id="tc"></div></div>
      <div class="card"><h2 style="margin-top:0">Pack temperature, current and voltage</h2><div id="tv"></div></div>
      <div class="card"><h2 style="margin-top:0">Power against state of charge</h2>${cur?`<div class="sub" style="margin-bottom:6px"><div class="cs">${[cur.hardware&&cur.tier?esc(cur.hardware)+" · "+esc(cur.tier)+(cur.cap?" · "+n0(cur.cap)+" kW cap":"")+(cur.stalls?" · "+cur.stalls+" stalls":""):"",esc(cur.caption||"")].filter(Boolean).map(x=>`<div class="cs-r">${x}</div>`).join("")}</div></div>`:""}<div id="cc"></div></div>
