@@ -50,6 +50,9 @@ OPTS = dict(accel_min_pct=5,        # accelerator at or above this (%) counts as
             exit_car_kmh=90,        # a sign read while the car goes at least this fast ...
             exit_gap_kmh=20,        # ... and this much lower than the car is marked as probably an exit or side road
             hi_quality=88,          # and its JPEG quality
+            sign_min_stills=2,      # a coloured sign (not a speed sign) must be seen in this many stills, or it is taken as noise
+            works_gap_s=40,         # a speed sign that differs from the map this close in time to a road-work sign is marked as a temporary limit
+            osm_fetch=True,         # fetch a missing OpenStreetMap tile (a few seconds) to compare a speed sign with the map's limit
             steer_deg=15)           # the wheel moved this much around a switch-off = "steering"
 MODES = {0: "Manual", 1: "FSD", 2: "Autosteer", 3: "TACC"}
 MAXGAP = 3                          # seconds between two readings that are still consecutive
@@ -190,15 +193,61 @@ def _end(ev):
     return ev["t"] if ev["kind"] == "intervention" else ev["t1"]
 
 
+def _side(x, w):
+    return "L" if x < 0.4 * w else "R" if x > 0.6 * w else "C"
+
+
 def _read_signs(im, o_rv):
+    """Every sign in one full-size frame -> [dict(cat, text, side, conf, crop)]. cat: speed (red ring, white face, read by sign_finder), then by colour
+    (sign_classes): regulatory, warning, roadwork, info, directional, safety."""
     import sign_finder as SF
+    import sign_classes as SC
     out = []
+    W = im.shape[1]
     for side, roi in (("L", SF.ROI_LEFT), ("R", SF.ROI_RIGHT)):
         for c in SF.find_signs(im, roi=roi):
             if c.get("ok") and c["conf"] >= o_rv["min_conf"] and c["text"]:
-                out.append(dict(text=c["text"], side=side, conf=round(c["conf"]), crop=c["crop"]))
+                out.append(dict(cat="speed", text=c["text"], side=side, conf=round(c["conf"]), crop=c["crop"]))
                 break
+    try:
+        found = SC.find_all(im)
+    except Exception:                                        # an odd frame must not stop the review
+        found = []
+    for d in found:
+        if d["cat"] == "regulatory" and d["col"] == "red" and any(x["cat"] == "speed" for x in out):
+            continue                                         # the red ring of a speed sign
+        txt = re.sub(r"[^A-Za-z0-9 /.\-]", "", d.get("text") or "").strip() if d.get("conf", 0) >= 50 else ""
+        out.append(dict(cat=d["cat"], text=txt, side=_side(d["x"] + d["w"] / 2.0, W), conf=int(d.get("conf", 0)), crop=d["crop"]))
     return out
+
+
+def _where(by_t, T):
+    """(lat, lon, heading) of the car at second T: the position then and the direction it moved over the seconds around it (None when it did not move)."""
+    import osm_roads
+    r = by_t.get(T)
+    if not r or r.get("la") is None or r.get("lo") is None:
+        return None
+    a = next((by_t[x] for x in (T - 3, T - 2, T - 1) if x in by_t and by_t[x].get("la") is not None), r)
+    b = next((by_t[x] for x in (T + 3, T + 2, T + 1) if x in by_t and by_t[x].get("la") is not None), r)
+    if a is b:
+        return None
+    dy, dx = (b["la"] - a["la"]) * 110540.0, (b["lo"] - a["lo"]) * 111320.0 * math.cos(math.radians(r["la"]))
+    if math.hypot(dx, dy) < 5:
+        return None
+    return r["la"], r["lo"], osm_roads._bearing(a["la"], a["lo"], b["la"], b["lo"])
+
+
+_ROADS = {}
+
+
+def _roads(base, o):
+    """The OpenStreetMap roads (osm_roads.py) from the tile cache the speed analysis keeps next to the drive data."""
+    import osm_roads
+    cache = os.path.join(os.path.dirname(base), "drives", "analysis", "osm_cache")
+    key = (cache, bool(o.get("osm_fetch")))
+    if key not in _ROADS:
+        _ROADS[key] = osm_roads.Roads(cache, fetch=bool(o.get("osm_fetch")))
+    return _ROADS[key]
 
 
 def look(ev, rows, front, base, stamp, o, stop, stills=None, signs=True):
@@ -274,15 +323,19 @@ def look(ev, rows, front, base, stamp, o, stop, stills=None, signs=True):
                 for d in lst:
                     found.append(dict(d, t=T))
         sgs = []
-        for d in found:
-            g = next((x for x in reversed(sgs) if x["text"] == d["text"] and x["side"] == d["side"] and d["t"] - x["t1"] <= o_rv["merge_s"]), None)
+        for d in found:                                     # the same sign in following stills is one sign (a speed sign by its number, the others by kind and side)
+            g = next((x for x in reversed(sgs) if x["cat"] == d["cat"] and x["side"] == d["side"] and (d["cat"] != "speed" or x["text"] == d["text"])
+                      and d["t"] - x["t1"] <= o_rv["merge_s"]), None)
             if g is None:
-                sgs.append(dict(text=d["text"], side=d["side"], t=d["t"], t0=d["t"], t1=d["t"], n=0, conf=-1, crop=None, f=""))
+                sgs.append(dict(cat=d["cat"], text=d["text"], side=d["side"], t=d["t"], t0=d["t"], t1=d["t"], n=0, conf=-1, crop=None, f=""))
                 g = sgs[-1]
             g["n"] += 1
             g["t1"] = d["t"]
-            if d["conf"] > g["conf"]:
+            if d["conf"] > g["conf"] or (d["cat"] != "speed" and not g["text"] and d["text"]):
                 g.update(conf=d["conf"], crop=d["crop"], t=d["t"])
+                if d["cat"] != "speed" or not g["text"]:
+                    g["text"] = d["text"]
+        sgs = [g for g in sgs if g["cat"] == "speed" or g["n"] >= o["sign_min_stills"]]       # a colour blob in one still only is mostly noise
         os.makedirs(os.path.join(base, "crops"), exist_ok=True)
         for n, g in enumerate(sgs):
             crop = g.pop("crop")
@@ -293,11 +346,28 @@ def look(ev, rows, front, base, stamp, o, stop, stills=None, signs=True):
                     crop = cv2.resize(crop, (max(1, int(crop.shape[1] * z)), max(1, int(crop.shape[0] * z))))
                 cv2.imwrite(os.path.join(base, "crops", name), crop, [cv2.IMWRITE_JPEG_QUALITY, 85])
                 g["f"] = name
-        for g in sgs:                                       # at highway speed a much lower limit is usually an exit or a side road, not this road
+        roads = _roads(base, o) if sgs else None
+        for g in sgs:
             near = [r["v"] for r in rows if g["t0"] - 1 <= r["t"] <= g["t1"] + 1 and r["v"] is not None]
             g["car"] = round(statistics.median(near)) if near else None
             m = re.match(r"\d+", str(g["text"]))
-            g["anom"] = bool(m and g["car"] is not None and g["car"] >= o["exit_car_kmh"] and int(m.group(0)) <= g["car"] - o["exit_gap_kmh"])
+            lim = int(m.group(0)) if (g["cat"] == "speed" and m) else None
+            # at highway speed a much lower limit is usually an exit or a side road, not this road
+            g["anom"] = bool(lim is not None and g["car"] is not None and g["car"] >= o["exit_car_kmh"] and lim <= g["car"] - o["exit_gap_kmh"])
+            # the map: what OpenStreetMap says the limit is where the sign was seen
+            g["osm"] = None
+            g["map"] = ""
+            pos = _where(by_t, int(g["t"])) if roads is not None else None
+            if pos:
+                hit = roads.at(*pos)
+                if hit:
+                    g["osm"] = hit["limit"]
+                    g["map"] = (hit["name"] or hit["ref"] or hit["hw"]) + (" (variable)" if hit["var"] else "")
+            g["conflict"] = bool(lim is not None and g["osm"] is not None and lim != g["osm"])
+        # a speed sign that differs from the map with road-work signs about is most likely a temporary limit
+        works = [g for g in sgs if g["cat"] == "roadwork"]
+        for g in sgs:
+            g["temp"] = bool(g["cat"] == "roadwork" or (g["conflict"] and any(abs(w["t"] - g["t"]) <= o["works_gap_s"] for w in works)))
         ev["signs"] = sgs
 
 
