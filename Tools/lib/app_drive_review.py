@@ -38,6 +38,7 @@ import drive_paths as DP
 import drive_fuse as DF
 import teslacam_stills as ST
 import teslacam_timeline as TL
+import traffic_finder
 
 OPTS = dict(accel_min_pct=5,        # accelerator at or above this (%) counts as pressed
             merge_s=3,              # presses / levels with a gap shorter than this are one
@@ -53,9 +54,14 @@ OPTS = dict(accel_min_pct=5,        # accelerator at or above this (%) counts as
             sign_min_stills=2,      # a coloured sign (not a speed sign) must be seen in this many stills, or it is taken as noise
             works_gap_s=40,         # a speed sign that differs from the map this close in time to a road-work sign is marked as a temporary limit
             osm_fetch=True,         # fetch a missing OpenStreetMap tile (a few seconds) to compare a speed sign with the map's limit
+            traffic=True,           # find the vehicles ahead in our own lane (traffic_finder.py: a small object detector run by OpenCV; the model file is fetched once)
+            traffic_conf=0.35,      # the detector must be at least this sure (0..1) that it is a vehicle
+            traffic_min_w=0.015,    # narrower than this fraction of the picture's width = too far ahead to count
+            traffic_model="",       # the model file (default <data>/models/yolov8n.onnx)
+            traffic_model_url="https://huggingface.co/unity/inference-engine-yolo/resolve/main/models/yolov8n.onnx",   # where it is fetched from when missing
             steer_deg=15)           # the wheel moved this much around a switch-off = "steering"
 MODES = {0: "Manual", 1: "FSD", 2: "Autosteer", 3: "TACC"}
-SIGN_VER = 2                        # bump when the sign finders change: the kept readings (signcache) are then made again
+SIGN_VER = 3                        # bump when the sign finders change: the kept readings (signcache) are then made again
 MAXGAP = 3                          # seconds between two readings that are still consecutive
 _LOCK = threading.RLock()
 
@@ -198,9 +204,9 @@ def _side(x, w):
     return "L" if x < 0.4 * w else "R" if x > 0.6 * w else "C"
 
 
-def _read_signs(im, o_rv):
+def _read_signs(im, o_rv, traffic=None):
     """Every sign in one full-size frame -> [dict(cat, text, side, conf, crop)]. cat: speed (red ring, white face, read by sign_finder), then by colour
-    (sign_classes): regulatory, warning, roadwork, info, directional, safety."""
+    (sign_classes): regulatory, warning, roadwork, info, directional, safety; and traffic: the vehicles ahead in our lane (when `traffic` is the model file)."""
     import sign_finder as SF
     import sign_classes as SC
     out = []
@@ -219,6 +225,9 @@ def _read_signs(im, o_rv):
             continue                                         # the red ring of a speed sign
         txt = re.sub(r"[^A-Za-z0-9 /.\-]", "", d.get("text") or "").strip() if d.get("conf", 0) >= 50 else ""
         out.append(dict(cat=d["cat"], text=txt, side=_side(d["x"] + d["w"] / 2.0, W), conf=int(d.get("conf", 0)), crop=d["crop"]))
+    if traffic:
+        for v in traffic_finder.find(im, traffic, o_rv.get("traffic_conf", 0.35), o_rv.get("traffic_min_w", 0.015)):
+            out.append(dict(cat="traffic", text=v["kind"], side="C", conf=int(round(100 * v["conf"])), crop=v["crop"], near=v["near"]))
     return out
 
 
@@ -278,7 +287,7 @@ class _SignCache:
     def get(self, clip, sec):
         out = []
         for d in self._load(clip)["s"].get(str(sec), []):
-            out.append(dict(cat=d["cat"], text=d["text"], side=d["side"], conf=d["conf"], crop=os.path.join(self.dir, clip, d["f"]) if d.get("f") else None))
+            out.append(dict(cat=d["cat"], text=d["text"], side=d["side"], conf=d["conf"], near=d.get("near"), crop=os.path.join(self.dir, clip, d["f"]) if d.get("f") else None))
         return out
 
     def put(self, clip, sec, dets):
@@ -294,7 +303,7 @@ class _SignCache:
                 os.makedirs(os.path.join(self.dir, clip), exist_ok=True)
                 name = "%03d_%d.jpg" % (sec, n)
                 cv2.imwrite(os.path.join(self.dir, clip, name), crop, [cv2.IMWRITE_JPEG_QUALITY, 85])
-            rows.append(dict(cat=d["cat"], text=d["text"], side=d["side"], conf=d["conf"], f=name))
+            rows.append(dict(cat=d["cat"], text=d["text"], side=d["side"], conf=d["conf"], f=name, near=d.get("near")))
         self._load(clip)["s"][str(sec)] = rows
         self.dirty.add(clip)
 
@@ -347,7 +356,14 @@ def look(ev, rows, front, base, stamp, o, stop, stills=None, signs=True):
     where = {w[0]: k for k, w in enumerate(pics)}
     hi_name = lambda clip, sec: "%s_%03d_%d.jpg" % (clip, sec, int(o["hi_px"]))
     ev["hi"] = [""] * len(pics)
-    cache = _SignCache(base, "%s:%s" % (SIGN_VER, o_rv["min_conf"]))
+    model = None
+    if signs and o.get("traffic"):
+        mp = o.get("traffic_model") or os.path.join(os.path.dirname(base), "models", "yolov8n.onnx")
+        model = mp if traffic_finder.ensure_model(mp, o.get("traffic_model_url")) else None
+        if model is None:
+            ev["traffic_error"] = "No traffic: the vehicle model (%s) is not there and could not be fetched." % os.path.basename(mp)
+    o_rv = dict(o_rv, traffic_conf=o.get("traffic_conf", 0.35), traffic_min_w=o.get("traffic_min_w", 0.015))
+    cache = _SignCache(base, "%s:%s:%d" % (SIGN_VER, o_rv["min_conf"], 1 if model else 0))
     # the video is opened only for the frames that still need it: no big picture kept yet, or (when signs are read) no reading kept yet
     need = []
     for w in want:
@@ -386,7 +402,7 @@ def look(ev, rows, front, base, stamp, o, stop, stills=None, signs=True):
         if signs:
             todo = [x for x in shots if not cache.has(x[1], x[2])]
             with ThreadPoolExecutor(max(1, int(o_rv["workers"]))) as ex:
-                for x, lst in zip(todo, ex.map(lambda x: _read_signs(x[3], o_rv), todo)):
+                for x, lst in zip(todo, ex.map(lambda x: _read_signs(x[3], o_rv, model), todo)):
                     cache.put(x[1], x[2], lst)
         cache.save()
         ev["read"] = sum(1 for _T, clip, sec in pics if cache.has(clip, sec))
@@ -398,12 +414,14 @@ def look(ev, rows, front, base, stamp, o, stop, stills=None, signs=True):
         sgs = []
         for d in found:                                     # the same sign in following stills is one sign (a speed sign by its number, the others by kind and side)
             g = next((x for x in reversed(sgs) if x["cat"] == d["cat"] and x["side"] == d["side"] and (d["cat"] != "speed" or x["text"] == d["text"])
-                      and d["t"] - x["t1"] <= o_rv["merge_s"]), None)
+                      and d["t"] - x["t1"] <= (2 if d["cat"] == "traffic" else o_rv["merge_s"])), None)
             if g is None:
                 sgs.append(dict(cat=d["cat"], text=d["text"], side=d["side"], t=d["t"], t0=d["t"], t1=d["t"], n=0, conf=-1, crop=None, f=""))
                 g = sgs[-1]
             g["n"] += 1
             g["t1"] = d["t"]
+            if d.get("near") is not None:
+                g["near"] = max(g.get("near") or 0, d["near"])
             if d["conf"] > g["conf"] or (d["cat"] != "speed" and not g["text"] and d["text"]):
                 g.update(conf=d["conf"], crop=d["crop"], t=d["t"])
                 if d["cat"] != "speed" or not g["text"]:
@@ -432,7 +450,7 @@ def look(ev, rows, front, base, stamp, o, stop, stills=None, signs=True):
             # the map: what OpenStreetMap says the limit is where the sign was seen
             g["osm"] = None
             g["map"] = ""
-            pos = _where(by_t, int(g["t"])) if roads is not None else None
+            pos = _where(by_t, int(g["t"])) if roads is not None and g["cat"] != "traffic" else None
             if pos:
                 hit = roads.at(*pos)
                 if hit:
