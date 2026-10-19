@@ -46,7 +46,8 @@ def load(data_dir):
             continue
         by.setdefault(r.get("Name", ""), []).append(dict(t=t, name=r.get("Name", ""), row=r, src="api"))
     for r in _rows(deps(data_dir)[1]):
-        t = _local_epoch(r.get("Timestamp (AEST)", ""))
+        # the export's time column is named for the zone the person exported in ("Timestamp (AEST)" or "(AEDT)"): take whichever is there
+        t = _local_epoch(next((v for k, v in r.items() if k.startswith("Timestamp (A")), ""))
         if t is None:
             continue
         lst = by.setdefault(r.get("Name", ""), [])

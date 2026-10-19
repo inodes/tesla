@@ -11,7 +11,7 @@
 # unnamed stop clusters show up.
 #
 # NOT covered yet: the other 4 confirmed-automatable Tessie endpoints
-# (idles, battery_health, tire_pressure, firmware_alerts - see TODO-011)
+# (idles, tire_pressure - see TODO-011; battery_health and firmware_alerts are run by this script)
 # have no sync script at all today; telemetry_stream stays permanently
 # manual (no historical-pull API exists).
 #
@@ -42,6 +42,8 @@ Steps run, in order:
   4. Battery health (vehicle-wide, not drives-specific - lives here since
      this runs regularly)
      (sync_api_tessie.py --battery-health)
+  5. Firmware alerts (vehicle-wide; the Alerts tab reads them)
+     (sync_api_tessie.py --firmware-alerts)
 EOF
     exit 0
 fi
@@ -60,6 +62,10 @@ echo "==> Drive summary pages (one drive.html per drive folder; picks up new foo
 echo
 echo "==> Battery health (vehicle-wide, not drives-specific - lives here since this runs regularly)"
 ./sync_api_tessie.py --battery-health
+
+echo
+echo "==> Firmware alerts (vehicle-wide)"
+./sync_api_tessie.py --firmware-alerts
 
 echo
 echo "==> Done."
