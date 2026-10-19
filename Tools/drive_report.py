@@ -65,6 +65,24 @@ def pdt(s):
     return datetime.datetime.strptime(s[:19], "%Y-%m-%d %H:%M:%S")
 
 
+def true_local(dt_syd, la=None, lo=None, zone=None):
+    """The working clock of this script is Sydney's (Tessie CSV, drives_master windows, footage offsets). A person reads the clock of the
+    place the car was: Queensland is on AEST while Sydney is on AEDT. dt_syd (naive, Sydney clock) -> (naive local datetime, zone abbreviation),
+    the zone found from the position (la, lo) when known, else `zone`."""
+    from zoneinfo import ZoneInfo
+    import tessie_timezone as TZ
+    u = dt_syd.replace(tzinfo=ZoneInfo("Australia/Sydney")).astimezone(ZoneInfo("UTC"))
+    z = zone
+    if la is not None and lo is not None:
+        try:
+            z = TZ.resolve_timezone(la, lo) or z
+        except Exception:
+            pass
+    z = z or "Australia/Sydney"
+    loc = u.astimezone(ZoneInfo(z))
+    return loc.replace(tzinfo=None), loc.tzname()
+
+
 # ----------------------------------------------------------------------------- inputs
 def load_master(data):
     """Sorted [(local start, local end, row)] - local times from the UTC epochs (Australia/Sydney), NOT from the
@@ -561,9 +579,14 @@ def build_page(stamp, m, win, flips, recs, saved_ev, cov, clips_rel, folder, mwi
     end = (mwin[1] if mwin else win[-1]["t"]).strftime("%H:%M")
     fl = []
     for e in flips:
-        fl.append(dict(id=e["id"], kind=e["flip"], time=e["time"], t=epoch(pdt(e["time"])), la=f(e["lat"]), lo=f(e["lon"]),
+        _lt, _lz = true_local(pdt(e["time"]), f(e["lat"]), f(e["lon"]), (m or {}).get("Started At TZ"))
+        fl.append(dict(id=e["id"], kind=e["flip"], time=_lt.strftime("%Y-%m-%d %H:%M:%S") + " " + (_lz or ""), t=epoch(pdt(e["time"])), la=f(e["lat"]), lo=f(e["lon"]),
                        road=e.get("road_before", ""), vb=e.get("speed_before"), va=e.get("speed_after"), osm=e.get("osm_class", "")))
-    sv = [dict(label=s["label"], time=s["time"], t=epoch(s["dt"]), la=s["la"], lo=s["lo"]) for s in saved_ev]
+    sv = []
+    for s in saved_ev:
+        _lt, _lz = true_local(s["dt"], s["la"], s["lo"], (m or {}).get("Started At TZ"))
+        s["time"] = _lt.strftime("%H:%M:%S") + " " + (_lz or "")
+        sv.append(dict(label=s["label"], time=s["time"], t=epoch(s["dt"]), la=s["la"], lo=s["lo"]))
     data = dict(pts=pts, flips=fl, saved=sv, start=start, end=end, stamp=stamp,
                 map=dict(base=CFG.get("map.tiles_base"), light=CFG.get("map.style_light"), dark=CFG.get("map.style_dark")))
     gps, ginfo = load_gps(folder, stamp, win[0]["t"], win[-1]["t"])
@@ -628,9 +651,14 @@ def build_page(stamp, m, win, flips, recs, saved_ev, cov, clips_rel, folder, mwi
         ad = ad if ad and ad != who else ""
         return (f'<div class="tp"><span class="dot" style="background:{col_}"></span><div><div class="w">{esc(when)}<i>battery {esc(b_)}</i></div>'
                 f'<b>{esc(who)}</b><div class="ad">{esc(ad)}</div></div></div>')
-    fmt_t = lambda d_: d_.strftime("%a %d %b %-I:%M %p").upper()
-    trip = ('<div class="card"><div class="trip">' + block("var(--ok)", fmt_t(mwin[0] if mwin else win[0]["t"]), frm, addr("Starting Location"), bat("Starting Battery (%)", 0)) +
-            block("var(--bad)", fmt_t(mwin[1] if mwin else win[-1]["t"]), to, addr("Ending Location"), bat("Ending Battery (%)", -1)) + '</div></div>')
+    def fmt_t(d_, key=None):
+        mt = re.match(r"(\d{4}-\d{2}-\d{2}) (\d{2}:\d{2})(?::\d{2})?\s+([A-Za-z]{2,5})\s*$", (m or {}).get(key) or "") if key else None
+        if mt:
+            d_ = datetime.datetime.strptime(mt.group(1) + " " + mt.group(2), "%Y-%m-%d %H:%M")
+            return d_.strftime("%a %d %b %-I:%M %p") + " " + mt.group(3)
+        return d_.strftime("%a %d %b %-I:%M %p")
+    trip = ('<div class="card"><div class="trip">' + block("var(--ok)", fmt_t(mwin[0] if mwin else win[0]["t"], "Started At (Local)"), frm, addr("Starting Location"), bat("Starting Battery (%)", 0)) +
+            block("var(--bad)", fmt_t(mwin[1] if mwin else win[-1]["t"], "Ended At (Local)"), to, addr("Ending Location"), bat("Ending Battery (%)", -1)) + '</div></div>')
     stats = "".join(f'<div class="stat"><b>{esc(v)}</b><span>{esc(k)}</span></div>' for k, v in st)
 
     svh = ""
@@ -639,7 +667,7 @@ def build_page(stamp, m, win, flips, recs, saved_ev, cov, clips_rel, folder, mwi
         svh += f'<div class="card"><div><b>{esc(s["time"])}</b> · {esc(s["label"])} · {esc(s["place"])}</div>{v}</div>'
     covh = '<div class="card" id="foot"></div>' if cov else ""
 
-    title = f"{t0.strftime('%a %d %b %H:%M')} {frm} → {to}"
+    title = f"{t0.strftime('%a %d %b')} {s_hm} {s_z} {frm} → {to}".replace("  ", " ")
     data['title'] = f"{frm} → {to}"
     up = "../../" if dp.DAY_RE.match(os.path.basename(os.path.dirname(folder))) else "../"        # the way back to deepdive/index.html from the drive's folder
     return f"""<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
