@@ -88,7 +88,7 @@ Each `sync_<thing>` works with whatever exists at that moment:
 The record is derived and kept in the data folder (one file per thing). It can be rebuilt from the stores, so it is never a source of truth.
 
 **Who does what with camera files.** Two things touch them and they never overlap:
-- **`sync_drives`** cares only about what the files *say*: it reads whatever camera files are reachable (any connected drive that holds footage, wherever it is) for their metadata, takes what drives need from them while they exist, and combines that with Tessie if present. It does not copy, move or delete footage.
+- **`sync_drives`** cares only about what the files *say*: it reads whatever camera files are reachable (any connected drive that holds footage, wherever it is) for their metadata, takes what drives need from them while they exist (the telemetry, the one-second stills of each clip, and the snapshots along each drive, all in one read of the clip), and combines that with Tessie if present. Stills and snapshots belong to drives. It does not copy, move or delete footage.
 - **`sync_camera`** cares only about where footage is *kept*: which drive holds which files, copying to the right place, freeing space, and the registry of drives. It never opens a clip for its content.
 They meet only through the coverage record: `sync_camera` deletes footage only when the record says the drives side already has what it needs from that footage.
 
