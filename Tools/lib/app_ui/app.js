@@ -322,7 +322,7 @@ async function driveReviewPanel(host,stamp,lo,onResult){
           <div class="rvfilm">${e.shots.map((x,k)=>`<button class="rvc" data-k="${k}" style="${sprite(e,k)}" title="${x>0?"+":""}${n0(x)} s">${badges(e,k)}</button>`).join("")}</div>
           <div class="sub" style="margin-top:6px">Click a still to light it up on the map, the chart and the video. ← → step through the stills, Shift + ← → through the events.</div>`}
       else if(e.sheet)h+=`<div style="margin-top:8px"><a href="/revev/${encodeURIComponent(R.stamp)}/${encodeURIComponent(e.sheet)}" target="_blank"><img class="rvsheet" src="/revev/${encodeURIComponent(R.stamp)}/${encodeURIComponent(e.sheet)}"></a><div class="sub">This review was run before the stills could be picked one by one. Run it again for that.</div></div>`;
-      else h+=`<div class="sub" style="margin-top:8px">${R.stills?"No stills for this event.":"No stills: the Archive was not connected when this review ran."}</div>`;
+      else h+=`<div class="sub" style="margin-top:8px">${R.stills?"No stills for this event.":"No stills: the drive holding this footage was not connected when this review ran."}</div>`;
       h+="</div>"}
     box.innerHTML=h;
     $$("[data-tab]",box).forEach(b=>b.onclick=()=>{tab=b.dataset.tab;ei=0;const x=list()[0];si=x&&geo(x)?k0(x):0;hv=null;viewer(true);if(x)arrive(x)});
@@ -644,11 +644,11 @@ async function pageParked(){
   const idleOf=v=>all.find(x=>x.ev.some(e=>e.id===v.id));
   const drawEvents=()=>{const q=IP.q.toLowerCase(),rs=evs.filter(v=>inRange({day:v.ts.slice(0,10)},IP.r)&&(!q||(v.city+" "+v.street+" "+reason(v.reason)).toLowerCase().includes(q))),byDay={};
     rs.forEach(v=>(byDay[v.ts.slice(0,10)]=byDay[v.ts.slice(0,10)]||[]).push(v));
-    $("#tl").innerHTML=tile(n0(rs.length),"saved Sentry events")+tile(n0(rs.filter(v=>idleOf(v)).length),"inside a recorded parked period")+tile(sn.connected?"Connected":"Not connected","Archive drive");
-    $("#tb").innerHTML=(sn.connected?'<div id="spl"></div>':'<div class="empty">The Archive drive is not connected.</div>')+Object.keys(byDay).sort().reverse().slice(0,60).map(d=>`<div class="day">${dayName(d)}<small>${byDay[d].length} event${byDay[d].length>1?"s":""}</small></div><div class="evs">${byDay[d].map(v=>`<button class="evc" data-id="${v.id}"><img loading="lazy" src="/footage/A/SentryClips/${v.id}/thumb.png" onerror="this.style.visibility='hidden'"><b>${hms(v.ts)}</b><span>${esc(reason(v.reason))}</span><span>${esc(v.city||"")}</span>${idleOf(v)?`<a href="#/parked/${idleOf(v).id}" onclick="event.stopPropagation()">parked period</a>`:""}</button>`).join("")}</div>`).join("");
+    $("#tl").innerHTML=tile(n0(rs.length),"saved Sentry events")+tile(n0(rs.filter(v=>idleOf(v)).length),"inside a recorded parked period")+tile(sn.connected?"Connected":"Not connected","TeslaCam drives");
+    $("#tb").innerHTML=(sn.connected?'<div id="spl"></div>':'<div class="empty">No TeslaCam drive is connected.</div>')+Object.keys(byDay).sort().reverse().slice(0,60).map(d=>`<div class="day">${dayName(d)}<small>${byDay[d].length} event${byDay[d].length>1?"s":""}</small></div><div class="evs">${byDay[d].map(v=>`<button class="evc" data-id="${v.id}"><img loading="lazy" src="/footage/${v.role||"A"}/SentryClips/${v.id}/thumb.png" onerror="this.style.visibility='hidden'"><b>${hms(v.ts)}</b><span>${esc(reason(v.reason))}</span><span>${esc(v.city||"")}</span>${idleOf(v)?`<a href="#/parked/${idleOf(v).id}" onclick="event.stopPropagation()">parked period</a>`:""}</button>`).join("")}</div>`).join("");
     $$(".evc").forEach(b=>b.onclick=()=>{$$(".evc").forEach(x=>x.classList.toggle("on",x===b));sentryPlayer($("#spl"),evs.find(v=>v.id===b.dataset.id));$("#spl").scrollIntoView({block:"nearest"})})};
   const draw=()=>{if(IP.tab==="events")return drawEvents();const q=IP.q.toLowerCase(),rs=all.filter(x=>inRange(x,IP.r)&&x.min>=IP.min&&(IP.sen==="all"||x.nev>0)&&(!q||place(x).toLowerCase().includes(q))),kwh=rs.reduce((a,x)=>a+(x.kwh||0),0),mn=rs.reduce((a,x)=>a+x.min,0);
-    $("#tl").innerHTML=tile(n0(rs.length),"parked periods")+tile(dur(mn),"time parked")+tile(n0(kwh,1)+" kWh","energy used while parked")+tile(mn?n0(kwh*1000/(mn/60))+" Wh/h":"–","average drain")+tile(n0(rs.reduce((a,x)=>a+x.nev,0)),"saved Sentry events here")+tile(sn.connected?n0(evs.length)+" ("+matched.size+" placed)":"Archive not connected","Sentry events on the Archive");
+    $("#tl").innerHTML=tile(n0(rs.length),"parked periods")+tile(dur(mn),"time parked")+tile(n0(kwh,1)+" kWh","energy used while parked")+tile(mn?n0(kwh*1000/(mn/60))+" Wh/h":"–","average drain")+tile(n0(rs.reduce((a,x)=>a+x.nev,0)),"saved Sentry events here")+tile(sn.connected?n0(evs.length)+" ("+matched.size+" placed)":"No drive connected","Sentry events on connected drives");
     table($("#tb"),[{k:"t0",t:"Date",l:1,f:r=>`${r.day} ${r.hm} <span class="sub">${esc(r.tz||"")}</span>`},{k:"place",t:"Where",l:1,f:whereLink},{k:"min",t:"Parked",f:r=>dur(r.min)},{k:"b0",t:"Battery",f:r=>`${n0(r.b0)}→${n0(r.b1)}%`},{k:"kwh",t:"kWh",f:r=>n0(r.kwh,2)},{k:"dr",t:"Wh/h",f:r=>r.min?n0(r.kwh*1000/(r.min/60)):"–"},{k:"nev",t:"Sentry clips",f:r=>r.nev?`<b>${r.nev}</b> ▶`:"–"},{k:"sentry",t:"In Sentry",f:r=>r.sentry>0.01?Math.round(r.sentry*100)+"%":"–"},{k:"climate",t:"Climate",f:r=>r.climate>0.01?Math.round(r.climate*100)+"%":"–"}],rs.map(r=>Object.assign({dr:r.min?r.kwh/(r.min/60):0},r)),r=>location.hash="#/parked/"+r.id,"t0")};
   main.innerHTML=`<h1>Parked</h1><div class="sub">Time spent parked: battery drain, Sentry and climate use. Open a parked period, or the All Sentry events tab, to watch saved Sentry footage.</div><div class="bar"><button class="chip" data-tb="periods">Parked periods</button><button class="chip" data-tb="events">All Sentry events</button><span id="rg"></span><select id="mn"><option value="0">Any length</option><option value="5">5 min or more</option><option value="60">1 h or more</option><option value="480">8 h or more</option></select><select id="sn"><option value="all">All parked periods</option><option value="y">Only with Sentry footage</option></select><input type="search" id="q" placeholder="Search a place…" value="${esc(IP.q)}"></div><div class="tiles" id="tl"></div><div id="tb"></div>`;
   const tabs=()=>{$$("[data-tb]").forEach(c=>c.classList.toggle("on",c.dataset.tb===IP.tab));["mn","sn"].forEach(i=>$("#"+i).style.display=IP.tab==="periods"?"":"none")};
@@ -663,9 +663,9 @@ async function pageParkedOne(id){
    <div class="card" style="margin-top:14px"><h2 style="margin-top:0">Where</h2><div class="map" id="mp"></div><div class="sub" style="margin-top:8px">${esc(x.addr||"")}</div></div>`;
   miniMap($("#mp"),x.lat,x.lon,"#8b5cf6");wireAlerts(main);
   const box=$("#sev");
-  if(!sn.connected){box.innerHTML='<div class="sub">The Archive drive is not connected, so saved Sentry clips cannot be shown.</div>';return}
+  if(!sn.connected){box.innerHTML='<div class="sub">No TeslaCam drive holding these clips is connected, so saved Sentry clips cannot be shown.</div>';return}
   if(!evs.length){box.innerHTML='<div class="sub">No saved Sentry events during this parked period.</div>';return}
-  box.innerHTML=`<div class="sub">${evs.length} saved event${evs.length>1?"s":""}. Pick one to watch.</div><div class="evs">${evs.map((v,i)=>`<button class="evc" data-i="${i}"><img loading="lazy" src="/footage/A/SentryClips/${v.id}/thumb.png" onerror="this.style.visibility='hidden'"><b>${hms(v.ts)}</b><span>${esc(reason(v.reason))}${v.cam?" · camera "+esc(v.cam):""}</span></button>`).join("")}</div>`;
+  box.innerHTML=`<div class="sub">${evs.length} saved event${evs.length>1?"s":""}. Pick one to watch.</div><div class="evs">${evs.map((v,i)=>`<button class="evc" data-i="${i}"><img loading="lazy" src="/footage/${v.role||"A"}/SentryClips/${v.id}/thumb.png" onerror="this.style.visibility='hidden'"><b>${hms(v.ts)}</b><span>${esc(reason(v.reason))}${v.cam?" · camera "+esc(v.cam):""}</span></button>`).join("")}</div>`;
   const pick=i=>{$$(".evc").forEach(b=>b.classList.toggle("on",+b.dataset.i===i));sentryPlayer($("#spl"),evs[i])};
   $$(".evc").forEach(b=>b.onclick=()=>pick(+b.dataset.i));pick(0);
 }
@@ -755,7 +755,7 @@ function clipPlayer(host,o){
     else{si=i;seek=Math.max(0,(ms-stMs(stamps[i]))/1000);if($("#stp"))$("#stp").value=si;vids()}}};
 }
 // one Sentry or Saved event folder (role = which drive, folder = SentryClips | SavedClips)
-function sentryPlayer(host,ev,role="A",folder="SentryClips"){
+function sentryPlayer(host,ev,role=ev&&ev.role||"A",folder="SentryClips"){
   const stamps=Object.keys(ev.clips),t=ev.ts,what=ev.reason?reason(ev.reason):folder==="SavedClips"?"Saved clip":"Sentry event";
   clipPlayer(host,{stamps,cams:ev.clips,loc:ev.loc,trig:Date.parse(ev.cts||t),view:EVCAM[ev.cam]||"all",url:(s,c)=>`/footage/${role}/${folder}/${ev.id}/${s}-${c}.mp4`,
     head:`${esc(what)} on ${dayName(t.slice(0,10))} at ${hms(t)}${ev.city?" · "+esc(ev.city):""}${ev.street&&folder==="SavedClips"?" · "+esc(ev.street):""}. One-minute clips, ${stamps.length} in this event; the next clip plays on its own. It opens at the moment it happened${EVCAM[ev.cam]?", on the "+CAMN[EVCAM[ev.cam]].toLowerCase()+" camera, which is the one that saw it":""}.`});
@@ -1520,7 +1520,7 @@ async function boot(){
   addEventListener("hashchange",route);
   try{SET=await (await fetch("/api/settings")).json()}catch(e){}
   try{const s=await api("summary");$("#veh").textContent=s.vehicle;$("#vsub").textContent=n0(s.km)+" km logged"}catch(e){}
-  const st=async()=>{try{const s=await (await fetch("/api/status")).json();$("#status").innerHTML=`<span class="dot ${s.roots.A?"on":"off"}"></span>Archive ${s.roots.A?"connected":"not connected"}${s.stale?'<div class="upd">The app was updated. Quit and reopen it to load the new version.</div>':""}`}catch(e){}};
+  const st=async()=>{try{const s=await (await fetch("/api/status")).json();const NM={A:"Archive",J:"JOWUA",U:"Tesla USB"};$("#status").innerHTML=["A","J","U"].filter(r=>r==="A"||s.roots[r]).map(r=>`<div><span class="dot ${s.roots[r]?"on":"off"}"></span>${NM[r]} ${s.roots[r]?"connected":"not connected"}</div>`).join("")+`${s.stale?'<div class="upd">The app was updated. Quit and reopen it to load the new version.</div>':""}`}catch(e){}};
   st();setInterval(st,30000);route();
 }
 addEventListener("keydown",e=>{if((e.metaKey||e.ctrlKey)&&e.key.toLowerCase()==="r"){e.preventDefault();location.reload()}});
