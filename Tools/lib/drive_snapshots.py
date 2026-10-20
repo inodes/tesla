@@ -92,6 +92,15 @@ def _hires(video, lo, n, px, quality):
     return out
 
 
+def _write_index(out, stamp, every, items, index):
+    os.makedirs(out, exist_ok=True)
+    with open(os.path.join(out, "index.json.tmp"), "w", encoding="utf-8") as fh:
+        json.dump(dict(stamp=stamp, made=datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"), every_s=every,
+                       events=[dict(id=i["id"] if "id" in i else "", kind=i["kind"], text=i["text"], utc=int(i["utc"])) for i in items],
+                       snapshots=index), fh, indent=1)
+    os.replace(os.path.join(out, "index.json.tmp"), os.path.join(out, "index.json"))
+
+
 def build(data_dir, stamp, tc, front, stills, stop=None):
     """Write the snapshots of one drive. Returns dict(n, events, note)."""
     o = AR._opts()
@@ -101,6 +110,7 @@ def build(data_dir, stamp, tc, front, stills, stop=None):
     t0, t1 = DF._t(sm["start"], "%Y-%m-%d %H:%M:%S"), DF._t(sm["end"], "%Y-%m-%d %H:%M:%S")
     tp = DF.tessie_points(folder)
     if len(tp) < 2:
+        _write_index(os.path.join(folder, "snapshots"), stamp, 0, [], [])      # recorded, so the drive is not looked at again on every run
         return dict(n=0, events=0, note="no sample file")
     store, _ = tc._tl("A")
     ts, las, los = [p["t"] for p in tp], [p["la"] for p in tp], [p["lo"] for p in tp]
@@ -204,11 +214,6 @@ def build(data_dir, stamp, tc, front, stills, stop=None):
             keep("events/%s/+00.jpg" % gid, item["stamp"], item["sec"], item["utc"], la, lo, gid, item["text"], item["v"])
     if stop and stop():
         return dict(n=n_img[0], events=len(items), note="stopped - run again to finish", done=False)
-    if index:
-        with open(os.path.join(out, "index.json.tmp"), "w", encoding="utf-8") as fh:
-            json.dump(dict(stamp=stamp, made=datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"), every_s=every,
-                           events=[dict(id=i["id"] if "id" in i else "", kind=i["kind"], text=i["text"], utc=int(i["utc"])) for i in items],
-                           snapshots=index), fh, indent=1)
-        os.replace(os.path.join(out, "index.json.tmp"), os.path.join(out, "index.json"))
+    _write_index(out, stamp, every, items, index)               # also when there is nothing to show: the drive then counts as done until dashcam telemetry for its days arrives
     note = "" if clock is not None else "no dashcam telemetry on this drive's route"
     return dict(n=n_img[0], events=len(items), note=note, done=True)

@@ -94,7 +94,13 @@ def camera_points(store, t0, t1, off=None):
     steering deg, indicator, brake, clip stamp, second in the clip)] by time. A clip is named by the car's clock; clip_clock turns that into UTC
     (minute by minute) and from there to the page's clock, so a drive and its footage are always compared as the same instant."""
     out = []
-    for st in sorted(store.stamps()):
+    # only the clips named within two days of the window are worked out (a clip's name is the car's clock, which is never two days from the
+    # page's clock); the exact test below is unchanged, this just stops every drive from reading every clip's name
+    names = sorted(store.stamps())
+    fmt = "%Y-%m-%d_%H-%M-%S"
+    lo_ = datetime.datetime.fromtimestamp(t0 - 2 * 86400, datetime.timezone.utc).strftime(fmt)
+    hi_ = datetime.datetime.fromtimestamp(t1 + 2 * 86400, datetime.timezone.utc).strftime(fmt)
+    for st in names[bisect.bisect_left(names, lo_):bisect.bisect_right(names, hi_)]:
         try:
             m = local(CC.utc(st), off)
         except ValueError:
