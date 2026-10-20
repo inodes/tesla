@@ -1,7 +1,8 @@
 #!/bin/bash
 # refresh_image.sh - overwrite the raw image with a fresh, UNREPAIRED copy of the disk, then attach it read-only and mount it read-only. Nothing is repaired; the disk is only read.
 #
-#   ./refresh_image.sh DISK IMAGE            e.g.  ./refresh_image.sh disk2 /Volumes/LaCie1/jowua-raw.img
+#   ./refresh_image.sh DISK IMAGE [--mount-only]     e.g.  ./refresh_image.sh disk2 /Volumes/LaCie1/jowua-raw.img
+#   --mount-only  skip the copy (steps 1-4): only attach the image that is already there, read-only, and mount it read-only
 #
 # Why: fix_image.sh's repair deleted the damaged directory entries from the image, and with them the clips from the listing. The disk still has them. This puts the original
 # back into the same image file (no extra space needed), mounted read-only exactly as the disk was, so sync_jowua_rescue.sh can copy what the repaired copy lost.
@@ -13,7 +14,7 @@ die() { echo "ERROR: $*" >&2; exit 1; }
 say() { echo "$(date '+%H:%M:%S') • $*"; }
 [ "$(uname)" = Darwin ] || die "this is for macOS"
 [ "$(id -u)" -eq 0 ] || exec sudo "$0" "$@"
-DISK="${1:-}" IMG="${2:-}"; [ -n "$DISK" ] && [ -n "$IMG" ] || { sed -n '2,12p' "$0" | sed 's/^# \{0,1\}//'; exit 1; }
+DISK="${1:-}" IMG="${2:-}" MOUNT_ONLY=0; [ "${3:-}" = "--mount-only" ] && MOUNT_ONLY=1; [ -n "$DISK" ] && [ -n "$IMG" ] || { sed -n '2,13p' "$0" | sed 's/^# \{0,1\}//'; exit 1; }
 DISK=${DISK#/dev/}; case "$DISK" in rdisk*) DISK=${DISK#r} ;; esac
 [[ "$DISK" =~ ^disk[0-9]+$ ]] || die "'$DISK' is not a whole disk like disk2"
 [ -f "$IMG" ] || die "no image file at $IMG (this refreshes an existing image)"
@@ -29,6 +30,7 @@ limited() { local secs=$1; shift; "$@" >/dev/null 2>&1 & local p=$! i=0
 
 run() {
 echo "=== refresh_image.sh $(date '+%Y-%m-%d %H:%M:%S') disk=$DISK ($SIZE bytes) image=$IMG  macOS $(sw_vers -productVersion)"
+if [ "$MOUNT_ONLY" -eq 0 ]; then
 say "Step 1/5: detach any attached copy of the image"
 for dev in $(hdiutil info | awk -v img="$IMG" '/^image-path/ {p=($0 ~ img)} p && /^\/dev\/disk[0-9]+[ \t]/ {print $1}' | sort -u); do
   say "  detaching $dev"; for m in $(diskutil list "$dev" 2>/dev/null | awk '/disk[0-9]+s[0-9]+$/ {print $NF}'); do diskutil unmount force "$m" >/dev/null 2>&1; done
@@ -66,8 +68,10 @@ if [ "$CUR" -lt "$SIZE" ]; then
   dd if="/dev/r$DISK" of="$IMG" bs=1m skip=$(( CUR / 1048576 )) seek=$(( CUR / 1048576 )) conv=notrunc 2>&1 | tail -2
   CUR=$(stat -f %z "$IMG")
 fi
-[ "$CUR" -eq "$SIZE" ] || die "the image is $CUR bytes, the disk $SIZE: not complete"
+# the last 1 MiB block is padded (conv=sync), so the image may be up to 4 MiB longer than the disk, never shorter
+if [ "$CUR" -lt "$SIZE" ] || [ "$CUR" -gt $(( SIZE + 4194304 )) ]; then die "the image is $CUR bytes, the disk $SIZE: not complete"; fi
 
+fi   # end of steps 1-4 (skipped with --mount-only)
 say "Step 5/5: attach read-only and mount read-only (no repair)"
 OUT=$(hdiutil attach -readonly -imagekey diskimage-class=CRawDiskImage -nomount -noverify "$IMG" 2>&1) || die "could not attach: $OUT"
 echo "$OUT"; WHOLE=$(echo "$OUT" | awk 'NR==1{print $1}'); PART=$(echo "$OUT" | awk '$1 ~ /s[0-9]+$/ {p=$1} END{print p}')
