@@ -153,6 +153,15 @@ import lib.charge_paths as CP
 from lib.analysis_deepdive_charts import write_interactive_chart, try_open_in_browser
 import lib.tessie_timezone as tztools
 
+
+def _gst_multiplier():
+    """1 + GST from the active power provider's own rates file ("gst" there, 0.10 = 10%); 1.10 when it cannot be read."""
+    try:
+        from providers_power import get_power_provider
+        return get_power_provider().gst_multiplier()
+    except Exception:
+        return 1.10
+
 from lib.table_formatter import (
     char_width,
     display_len,
@@ -1642,7 +1651,7 @@ class ChargingAnalyzer:
                     _nm = "Flat rate"
                 _prov = getattr(_pp, "display_name", None) or getattr(_pp, "name", None) or "Power"
                 return {
-                    "rate_per_kwh": round(_ex * 1.10, 4),
+                    "rate_per_kwh": round(_ex * _pp.gst_multiplier(), 4),
                     "schedule_name": f"{_prov} {_nm} from {_period.get('effective_from')} ({_ex * 100:.2f}c ex GST)",
                     "is_archived": False,
                     "timezone": "Australia/Sydney",
@@ -5148,7 +5157,7 @@ class ChargingAnalyzer:
  # on the grid-attributed share only, none on the solar-
  # attributed share (a GST-free opportunity-cost credit, not a
  # real charge).
-        GST_MULTIPLIER = 1.10
+        GST_MULTIPLIER = _gst_multiplier()
         pv_adjusted_cost = None
         pv_adjusted_cost_incl_gst = None
         if pv_solar_fraction is not None and result.get("kwh_total"):
@@ -5682,7 +5691,7 @@ class ChargingAnalyzer:
             note_l = f"    {C_DIM}(what our own registry's rate card says this SHOULD cost, for cross-checking against the real cost above - not what was actually billed){C_RESET}"
             for w_line in wrap_text_display(note_l, box_w - 4):
                 print(f"│{pad_display(w_line, box_w - 2, truncate=True)}│")
-            l12 = f"    • {C_BOLD}{'Expected Tariff Rate:':<{lw_fin}}{C_RESET}${s['expected_rate']:.2f}/kWh{sched_label}{tz_label}{arch_tag}"
+            l12 = f"    • {C_BOLD}{'Expected Tariff Rate:':<{lw_fin}}{C_RESET}${s['expected_rate']:.4f}/kWh{sched_label}{tz_label}{arch_tag}"
             print(f"│{pad_display(l12, box_w - 2, truncate=True)}│")
 
             if s.get("theoretical_cost") is not None:
@@ -5739,7 +5748,7 @@ class ChargingAnalyzer:
  # rather than KeyError-ing.
             base_cost_incl_gst = xcheck.get("base_cost_incl_gst")
             if base_cost_incl_gst is None:
-                base_cost_incl_gst = xcheck["base_cost"] * 1.10
+                base_cost_incl_gst = xcheck["base_cost"] * _gst_multiplier()
             x2 = f"    • {C_BOLD}{'AGL Base Cost (100% grid):':<{lw_x}}{C_RESET}${base_cost_incl_gst:.4f} AUD incl GST"
             print(f"│{pad_display(x2, box_w - 2, truncate=True)}│")
 
@@ -5780,7 +5789,7 @@ class ChargingAnalyzer:
  # from the ex-GST split this cache file does have.
                     solar_frac = xcheck["solar_pct"] / 100.0
                     grid_ex_gst = xcheck["evnex_adjusted_cost"] - xcheck["kwh_total"] * solar_frac * xcheck["solar_tier1_rate"]
-                    adj_incl_gst = grid_ex_gst * 1.10 + xcheck["kwh_total"] * solar_frac * xcheck["solar_tier1_rate"]
+                    adj_incl_gst = grid_ex_gst * _gst_multiplier() + xcheck["kwh_total"] * solar_frac * xcheck["solar_tier1_rate"]
                 x6 = f"    • {C_BOLD}{'Evnex Solar Split (fallback):':<{lw_x}}{C_RESET}{xcheck['solar_pct']:.1f}% solar / {100 - xcheck['solar_pct']:.1f}% grid -> ${adj_incl_gst:.4f} AUD incl GST"
             else:
                 x6 = f"    • {C_BOLD}{'Evnex Solar Split (fallback):':<{lw_x}}{C_RESET}{C_YELLOW}n/a (no distributionByTariff on this session){C_RESET}"
