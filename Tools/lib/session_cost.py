@@ -418,7 +418,7 @@ def load_tessie_home_charges(tessie_dir=None):
  # authoritative type=="home" field (or, failing that, the literal
  # string "home") is. Reusing that same hardened function here rather
  # than re-deriving a second, now-proven-fragile copy of the same check.
-    from analyse_drives import is_home_place, haversine_distance_m
+    from lib.drives.helpers import is_home_place, haversine_distance_m
     try:
         from places_manager import load_places  # B6: import failure must not break every caller
         places = load_places()

@@ -92,7 +92,7 @@ def do_copy(act, roots, apply):
 
 # ------------------------------------------------------------------ delete (flag)
 def do_delete(act, roots, apply, state):
-    import analyse_drives as AD
+    import lib.footage_keeping as AD
     for it in act["items"]:
         if it.get("src") != "recent":
             print("   ! %s is not RecentClips - delete only handles RecentClips; skipped" % it["rel"])
@@ -175,7 +175,7 @@ def do_save(act, roots, apply):
         subprocess.run(["ffmpeg", "-v", "error", "-y", "-ss", "30", "-i", fronts[-1], "-frames:v", "1", "-vf", "scale=480:-2",
                         os.path.join(folder, "thumb.png")], stdin=subprocess.DEVNULL, check=False)
     try:                                                    # keep the archive catalog in step so the move is not read as a deletion
-        import analyse_drives as AD
+        import lib.footage_keeping as AD
         AD.scan_or_update_drive_catalog(root, root, force_rescan=True)
     except Exception as e:
         print("   (catalog not refreshed: %s)" % e)
@@ -205,7 +205,7 @@ def run_actions(actions, apply, overrides=None, state=None):
 
 
 def run_purge(apply, overrides=None, with_secondary=False):
-    import analyse_drives as AD
+    import lib.footage_keeping as AD
     overrides = overrides or {}
     # Archive only by default: JOWUA / the USB are scrubbed the next time they are connected (their tombstones stay pending).
     dirs = [v for v in (overrides.get("A") or DR.find_root("A"),) if v]

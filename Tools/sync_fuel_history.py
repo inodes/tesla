@@ -263,9 +263,9 @@ def recompute_all(tessie_dir: Optional[str] = None):
 
 def compare_drive(target: str, vehicle_key: Optional[str] = None, tessie_dir: Optional[str] = None):
     try:
-        from analyse_drives import DriveAnalyzer
+        from lib.drives.analyzer import DriveAnalyzer
     except ImportError:
-        from Tools.analyse_drives import DriveAnalyzer
+        from Tools.lib.drives.analyzer import DriveAnalyzer
 
     analyzer = DriveAnalyzer(tessie_dir=tessie_dir)
     analyzer.inspect_drive(target, vehicle_key=vehicle_key)

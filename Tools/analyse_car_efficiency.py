@@ -100,7 +100,7 @@ import statistics
 from datetime import datetime
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from analyse_drives import DriveAnalyzer  # noqa: E402
+from lib.drives.analyzer import DriveAnalyzer  # noqa: E402
 from lib.tessie_api_common import load_vehicle_spec, load_config, get_vin  # noqa: E402
 
 # (lo, hi) km/h, half-open [lo, hi) except the last bucket.
