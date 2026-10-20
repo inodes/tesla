@@ -67,7 +67,7 @@ from lib.evnex_common import (  # noqa: E402
 )
 from lib.tessie_api_common import resolve_tessie_data_home  # noqa: E402
 import lib.charge_paths as CP  # noqa: E402
-import lib.tessie_timezone as tztools  # noqa: E402
+import lib.timezones as tztools  # noqa: E402
 
 
 def deepdive_dir():

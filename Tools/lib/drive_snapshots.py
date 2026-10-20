@@ -35,7 +35,7 @@ FMT = "%Y-%m-%d_%H-%M-%S"
 def _local(utc, la, lo):
     """(naive local datetime, zone abbreviation) at the place; the zone from the position, else Sydney."""
     from zoneinfo import ZoneInfo
-    import tessie_timezone as TZ
+    import timezones as TZ
     z = None
     if la is not None and lo is not None:
         try:

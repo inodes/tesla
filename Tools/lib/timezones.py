@@ -192,10 +192,10 @@ def normalize_row_timezone(row, lat_key, lon_key, start_key_prefix):
     one, so a normal consolidate run upgrades old and new rows alike
     with no separate migration step.
 
-    Shared by both tessie_drives_analyzer.py's consolidate_drives()
+    Shared by analyse_drives.py's consolidate_drives()
     (called twice per row, once for "Starting Latitude"/"Started At",
     once for "Ending Latitude"/"Ended At" - a drive has two distinct
-    locations) and tessie_charging_analyzer.py's
+    locations) and analyse_charging.py's
     consolidate_charges_master() (called twice per row too, but against
     the SAME single "Latitude"/"Longitude" pair both times - a charging
     session has only one location for its whole duration, unlike a

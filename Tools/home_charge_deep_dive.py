@@ -50,7 +50,7 @@ from tessie_api_common import (  # noqa: E402
     load_config,
     resolve_tessie_data_home,
 )
-import tessie_timezone as tztools  # noqa: E402
+import lib.timezones as tztools  # noqa: E402
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 

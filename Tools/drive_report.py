@@ -70,7 +70,7 @@ def true_local(dt_syd, la=None, lo=None, zone=None):
     place the car was: Queensland is on AEST while Sydney is on AEDT. dt_syd (naive, Sydney clock) -> (naive local datetime, zone abbreviation),
     the zone found from the position (la, lo) when known, else `zone`."""
     from zoneinfo import ZoneInfo
-    import tessie_timezone as TZ
+    import lib.timezones as TZ
     u = dt_syd.replace(tzinfo=ZoneInfo("Australia/Sydney")).astimezone(ZoneInfo("UTC"))
     z = zone
     if la is not None and lo is not None:

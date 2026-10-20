@@ -83,7 +83,7 @@ from lib.tessie_api_common import (
     DEFAULT_UNIT_PARAMS, REPO_ROOT, TOOLS_DIR, api_get, extract_json_records,
     get_token, get_vin, load_config, load_vehicle_spec, resolve_tessie_data_home,
 )
-import lib.tessie_timezone as tztools
+import lib.timezones as tztools
 
 CACHE_DIR = os.path.join(REPO_ROOT, "resources", "api_cache")
 
@@ -472,7 +472,7 @@ def _parse_battery_health_timestamp(ts):
     near-identical points 10 hours apart once merged/deduplicated by
     timestamp string, e.g. on a scatterplot. Now explicit UTC info
     (a "Z" suffix or a numeric +HH:MM/-HH:MM offset) is actually
-    converted to local time via tessie_timezone.localize() (this
+    converted to local time via timezones.localize() (this
     endpoint carries no lat/lon of its own to resolve an exact zone, so
     DEFAULT_TIMEZONE is used, same fallback convention as elsewhere in
     this repo) rather than just having its offset stripped; a NAIVE ISO

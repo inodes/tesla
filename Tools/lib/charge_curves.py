@@ -60,7 +60,7 @@ import csv
 import glob
 import json
 import os
-from lib.tessie_timezone import legacy_get as _legacy_get  # BUG-176
+from lib.timezones import legacy_get as _legacy_get  # BUG-176
 import re
 import sys
 

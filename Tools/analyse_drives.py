@@ -13,7 +13,7 @@ Tessie Drive Log Analyzer & Master Consolidator
 """
 
 import os
-from lib.tessie_timezone import legacy_get as _legacy_get  # BUG-176
+from lib.timezones import legacy_get as _legacy_get  # BUG-176
 import sys
 import re
 import csv
@@ -55,13 +55,13 @@ from lib.table_formatter import (
     bold_headers,
 )
 from lib.sei_inspector import inspect_mp4_clip, format_stream_banner
-import lib.tessie_timezone as tztools
+import lib.timezones as tztools
 import lib.tessie_api_common as tessie_api_common
 from lib.fuel_common import format_drive_fuel_comparison, SAMPLE_COMPARISON_VEHICLES
 
 
 # TODO-009 (2026-09-26): normalize_row_timezone() moved to the shared
-# lib/tessie_timezone.py (as tztools.normalize_row_timezone) so
+# lib/timezones.py (as tztools.normalize_row_timezone) so
 # tessie_charging_analyzer.py's own consolidate_charges_master() can
 # reuse the exact same logic instead of a drifting copy - see that
 # module's own docstring for the full explanation. Nothing below this

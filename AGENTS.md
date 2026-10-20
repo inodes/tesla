@@ -171,7 +171,7 @@ tesla/
 │   │   ├── pvoutput_common.py   # PVOutput config/auth/HTTP plumbing
 │   │   ├── table_formatter.py   # Shared terminal table/box-drawing formatter
 │   │   ├── tessie_api_common.py # Tessie API auth, config, and data-home path resolution
-│   │   └── tessie_timezone.py   # Per-event real-timezone resolution helpers
+│   │   └── timezones.py         # Time zones: GPS to zone, UTC to local time with the right abbreviation
 │   │
 │   ├── providers_chargers/     # Pluggable charging-network adapters (3.1) - one BaseChargerProvider
 │   │   │                      # subclass per network, ALL implementing the same interface
