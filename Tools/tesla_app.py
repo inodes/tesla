@@ -66,7 +66,8 @@ import app_data  # noqa: E402
 import app_sentry  # noqa: E402
 import app_teslacam  # noqa: E402
 import app_drive_review  # noqa: E402
-import app_footage  # noqa: E402
+import app_footage
+import app_keeper  # noqa: E402
 import app_charges  # noqa: E402
 import clip_clock as CC  # noqa: E402
 import app_sync  # noqa: E402
@@ -80,6 +81,7 @@ STORE = None
 SENTRY = None
 TC = None
 DRV = None                  # the manual drive review (lib/app_drive_review.py)
+KEEP = None                 # reads the connected TeslaCam drives in the background (lib/app_keeper.py)
 FG = None                   # the footage log and the one-second stills (lib/app_footage.py)
 SYNC = None
 BOOK = None
@@ -369,6 +371,8 @@ class H(BaseHTTPRequestHandler):
             if u.path == "/api/review":
                 role = body.get("role", "A")
                 return self.send_json(TC.review(role, footage_root(role), _utc_arg(body.get("t0", "")), _utc_arg(body.get("t1", "")), body.get("action", "start"), _lo_arg(body.get("lo"))))
+            if u.path == "/api/keeper":            # {action: pause|resume}
+                return self.send_json(KEEP.pause() if body.get("action") == "pause" else KEEP.resume())
             if u.path == "/api/footage":           # {action: log|stills|stop, roles: ["A","J"]}: update the log of the files / make the missing one-second stills
                 if body.get("action") == "stop":
                     return self.send_json(FG.stop())
@@ -404,6 +408,8 @@ class H(BaseHTTPRequestHandler):
             return self.send_json(S.analytics())
         if name == "status":
             return self.send_json(dict(roots={r: bool(footage_root(r)) for r in "AJU"}, data_dir=DATA_DIR, stale=code_updated()))
+        if name == "keeper":                    # what the background reading of the connected drives is doing
+            return self.send_json(KEEP.status())
         if name == "sentry":
             ev, ok = all_sentry()
             return self.send_json(dict(connected=ok, events=ev))
@@ -536,11 +542,12 @@ def serve(port, host="127.0.0.1"):
 
 
 def main():
-    global STORE, DATA_DIR, SENTRY, TC, DRV, SYNC, BOOK, FG
+    global STORE, DATA_DIR, SENTRY, TC, DRV, SYNC, BOOK, FG, KEEP
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--data-dir", default=DEFAULT_DATA)
     ap.add_argument("--port", type=int, default=int(app_config.get("window.port")))
     ap.add_argument("--no-window", action="store_true")
+    ap.add_argument("--no-background", action="store_true", help="do not read the connected TeslaCam drives in the background (see app.keeper)")
     ap.add_argument("--browser", action="store_true")
     a, extra = ap.parse_known_args()
     if extra:
@@ -554,6 +561,9 @@ def main():
     TC = app_teslacam.TeslaCam(DATA_DIR, SENTRY)
     DRV = app_drive_review.DriveReview(DATA_DIR, TC)
     FG = app_footage.Footage(DATA_DIR)
+    KEEP = app_keeper.Keeper(DATA_DIR, TC, FG, DRV, SENTRY, footage_roots)
+    if not a.no_background:
+        KEEP.start()
     BOOK = app_charges.ChargeBook(os.path.dirname(os.path.abspath(__file__)), DATA_DIR)
     BOOK.get()          # start reconciling the charges with their invoices in the background
     SYNC = app_sync.ChargerSync(os.path.dirname(os.path.abspath(__file__)), DATA_DIR)
