@@ -42,6 +42,43 @@ import drive_roles as DR  # noqa: E402
 import teslacam_deletable as TD  # noqa: E402
 
 
+def _gb(b):
+    return "%.1f GB" % (b / 1024 ** 3)
+
+
+WAITING = (("not_synced", "Newer than the last synced drive", "run ./sync_drives_all.sh"),
+           ("no_telemetry", "Waiting for telemetry", "run ./sync_teslacam.py --run"),
+           ("no_stills", "Waiting for stills", "run ./sync_teslacam.py --run"),
+           ("no_snapshots", "Waiting for drive snapshots", "run ./sync_teslacam.py --run"))
+KINDS = (("recent", "Recent"), ("saved", "Saved"), ("sentry", "Sentry"))
+
+
+def print_role(role, r, show):
+    name = DR.NAMES.get(role, role)
+    print("%s: %s minutes of video, %s%s" % (name, format(r["minutes"], ","), _gb(r["bytes"]), "" if r["listed_ok"] else "  (part of the drive could not be read)"))
+    print()
+    if role == "A":
+        w = 36
+        print("  %-*s %8s %10s" % (w, "", "minutes", "size"))
+        print("  %-*s %8s %10s" % (w, "Safe to delete now", format(r["ready"], ","), _gb(r["ready_bytes"])))
+        kinds = ", ".join("%s %s" % (lab, format(r["ready_kinds"][k]["minutes"], ",")) for k, lab in KINDS if k in r["ready_kinds"])
+        if kinds:
+            print("  %-*s %s" % (w, "", "(" + kinds + ")"))
+        for key, label, todo in WAITING:
+            b = r["blocked"].get(key)
+            if not b:
+                continue
+            extra = ""
+            print("  %-*s %8s %10s   %s%s to %s: %s" % (w, label, format(b["minutes"], ","), _gb(b["bytes"]), b["first"], "" if b["first"] == b["last"] else "", b["last"], todo + extra))
+    else:
+        print("  %-52s %8s" % ("Safe to delete (the Archive has the same files)", format(r["copy_on_archive"], ",")))
+        print("  %-52s %8s" % ("Not on the Archive yet (import first)", format(r["not_on_archive"], ",")))
+        if show and r["examples"].get("not_on_archive"):
+            ex = sorted(r["examples"]["not_on_archive"], reverse=True)[:show]
+            print("  newest not on the Archive: " + ", ".join(ex))
+    print()
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter, add_help=False, usage=argparse.SUPPRESS)
     ap.add_argument("-h", "--help", action="help", help=argparse.SUPPRESS)
@@ -67,22 +104,7 @@ def main():
     for role in sorted(rep, key=lambda r: "AJU".index(r) if r in "AJU" else 9):
         if role not in want and role != "A":
             continue
-        r = rep[role]
-        name = DR.NAMES.get(role, role)
-        print("%s: %s files in %s minutes%s" % (name, format(r["files"], ","), format(r["minutes"], ","), "" if r["listed_ok"] else "  (part of the drive could not be read)"))
-        if role == "A":
-            print("  safe to delete:            %7s" % format(r["ready"], ","))
-            print("  telemetry not kept:        %7s" % format(r["no_telemetry"], ","))
-            print("  stills not kept:           %7s" % format(r["no_stills"], ","))
-            print("  drive snapshots not built: %7s" % format(r["no_snapshots"], ","))
-            print("  newer than the last synced drive: %s  (sync drives first)" % format(r["not_synced"], ","))
-            print("  (a minute can be in more than one of these)")
-        else:
-            print("  safe to delete (Archive has the same files): %s" % format(r["copy_on_archive"], ","))
-            print("  not on the Archive (import first):           %s" % format(r["not_on_archive"], ","))
-        for k, lst in r["examples"].items():
-            if lst and a.show:
-                print("  e.g. %s: %s" % (k.replace("_", " "), ", ".join(sorted(lst, reverse=True)[:a.show])))
+        print_role(role, rep[role], a.show)
     return 0
 
 
