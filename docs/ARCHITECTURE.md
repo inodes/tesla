@@ -56,6 +56,8 @@ Two sources describing the same thing rarely describe it the same way. Merging t
 - Tesla Supercharging: the billed energy, price, idle fees and GST.
 Each is stored as an **observation of a charge event**; the reconcile step links observations that overlap in time and place into one event. Reports say which source answers which question: cost comes from the biller (Evnex/AGL/Tesla invoice), energy into the battery from the car, and the difference is the loss. An observation with no partner is shown as unmatched, never merged on a guess.
 
+**Today's consolidation is the baseline, not the thing being replaced.** The way drives, charges and footage are consolidated now works, and Glenn confirms it. Section 3a names and protects that behaviour; it does not redesign it. The reference results (section 8) are taken from the current consolidation first, and the reconcile step must reproduce them exactly before anything changes.
+
 **What this guards against.** Double counting (the same kWh from two sources), partial data presented as whole, one source silently overwriting another, and a match that is wrong with no way to see why. Each reconciled item keeps the list of observations behind it.
 
 ## 4. Layers
