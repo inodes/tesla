@@ -13,6 +13,8 @@ kept is skipped. Nothing on a drive is changed.
 """
 import collections
 import concurrent.futures as cf
+import datetime
+import json
 import glob
 import os
 
@@ -93,14 +95,30 @@ def run(pl, data, workers=None, stop=None, progress=None, limit=None):
     return tel_n, still_n
 
 
-def snapshots_stale(folder):
+def snapshots_stale(folder, data=None):
     """True when a drive folder has no snapshots yet, or its telemetry file (Tessie's samples) is newer than them. Rebuilding the drive page does not
-    count: it rewrites drive_summary.json with the same content."""
+    count: it rewrites drive_summary.json with the same content. A drive that had nothing to show (no dashcam telemetry on its route) is looked at
+    again only when telemetry for its days (the day before to the day after) has been added since."""
     idx = os.path.join(folder, "snapshots", "index.json")
     if not os.path.exists(idx):
         return True
     src = glob.glob(os.path.join(folder, "drive_deepdive_*.csv")) or [os.path.join(folder, "drive_summary.json")]
-    return os.path.getmtime(idx) < max(os.path.getmtime(f) for f in src if os.path.exists(f))
+    made = os.path.getmtime(idx)
+    if made < max(os.path.getmtime(f) for f in src if os.path.exists(f)):
+        return True
+    try:
+        with open(idx, encoding="utf-8") as fh:
+            empty = not json.load(fh).get("snapshots")
+    except (OSError, ValueError):
+        return True
+    if empty:
+        data = data or os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(folder))))
+        day = datetime.date.fromisoformat(os.path.basename(folder)[:10])
+        for d in (day - datetime.timedelta(days=1), day, day + datetime.timedelta(days=1)):
+            f = os.path.join(data, "teslacam_timeline", d.isoformat() + ".json")
+            if os.path.exists(f) and os.path.getmtime(f) > made:
+                return True
+    return False
 
 
 def pending_snapshots(data, since=None, only=None, force=False):
@@ -113,7 +131,7 @@ def pending_snapshots(data, since=None, only=None, force=False):
             continue
         if since and stamp[:10] < since:
             continue
-        if not force and not snapshots_stale(folder):
+        if not force and not snapshots_stale(folder, data):
             continue
         out.append(stamp)
     return out

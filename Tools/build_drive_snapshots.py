@@ -86,7 +86,7 @@ def main():
             continue
         if a.since and stamp[:10] < a.since:
             continue
-        if not a.force and not SY.snapshots_stale(folder):
+        if not a.force and not SY.snapshots_stale(folder, data):
             continue
         jobs.append(stamp)
     from progress import Bar
