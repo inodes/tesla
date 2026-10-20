@@ -7,6 +7,7 @@
 #   DEST     the new folder (default /Volumes/LaCie1/jowua-rescue); it gets a TeslaCam/ folder inside, the same layout as the Archive
 #   --dry-run  only work out how much would be copied and whether it fits
 #   --yes      do not ask before starting
+#   --since DATE  only clips and event folders dated DATE or later (2026-10-13): older ones are left out (use when they are already on the Archive and the space is short)
 #
 # Unlike sync_dashcam.sh this never deletes anything (no purge, no "make room", no tombstones, nothing is removed from SOURCE or from DEST) and it does not touch any other drive.
 # It stops before copying if the space is short. Resumable: run it again and only what is missing is copied. When it ends it checks that DEST is up to date and compares counts.
@@ -15,8 +16,11 @@ set -u -o pipefail
 say() { echo "$(date '+%H:%M:%S') • $*"; }
 die() { echo "ERROR: $*" >&2; exit 1; }
 
-SRC="" DST="" DRY=0 YES=0
-for a in "$@"; do case "$a" in --dry-run|-n) DRY=1 ;; --yes|-y) YES=1 ;; -h|--help) sed -n '2,13p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;; -*) die "unknown option: $a" ;; *) if [ -z "$SRC" ]; then SRC="$a"; elif [ -z "$DST" ]; then DST="$a"; else die "unexpected argument: $a"; fi ;; esac; done
+SRC="" DST="" DRY=0 YES=0 SINCE=""
+while [ $# -gt 0 ]; do a="$1"; shift; case "$a" in
+  --dry-run|-n) DRY=1 ;; --yes|-y) YES=1 ;; --since) SINCE="${1:-}"; shift ;; -h|--help) sed -n '2,15p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+  -*) die "unknown option: $a" ;; *) if [ -z "$SRC" ]; then SRC="$a"; elif [ -z "$DST" ]; then DST="$a"; else die "unexpected argument: $a"; fi ;; esac; done
+[ -z "$SINCE" ] || [[ "$SINCE" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]] || die "--since needs a date like 2026-10-13"
 SRC="${SRC:-/Volumes/TESLADRIVE 1}"; DST="${DST:-/Volumes/LaCie1/jowua-rescue}"; SRC="${SRC%/}"; DST="${DST%/}"
 [ -d "$SRC/TeslaCam" ] || die "no TeslaCam folder in '$SRC' (is the repaired copy mounted? run fix_image.sh first)"
 case "$DST" in "$SRC"|"$SRC"/*) die "the destination is inside the source" ;; esac
@@ -25,9 +29,19 @@ RSYNC_BIN=/usr/bin/rsync
 for r in /opt/homebrew/bin/rsync /usr/local/bin/rsync; do [ -x "$r" ] && { RSYNC_BIN="$r"; break; }; done
 LOGDIR="$HOME/Downloads"; [ -d "$LOGDIR" ] && [ -w "$LOGDIR" ] || LOGDIR=/tmp
 STAMP=$(date +%Y%m%d-%H%M%S); LOG="$LOGDIR/sync-jowua-rescue-$STAMP.log"; RLOG="$LOGDIR/sync-jowua-rescue-$STAMP.rsync.log"
+EXF=""
+if [ -n "$SINCE" ]; then   # leave out everything dated before SINCE: top-level names in RecentClips / SavedClips / SentryClips start with the date
+  EXF=$(mktemp /tmp/jowua-exclude.XXXXXX)
+  for k in RecentClips SavedClips SentryClips; do
+    [ -d "$SRC/TeslaCam/$k" ] || continue
+    ls "$SRC/TeslaCam/$k" | cut -c1-10 | grep -E '^[0-9]{4}-[0-9]{2}-[0-9]{2}$' | sort -u | while read -r d; do [[ "$d" < "$SINCE" ]] && echo "/$k/$d*"; done
+  done > "$EXF"
+fi
 OPTS=(-a --modify-window=2 --exclude=.Spotlight-V100 --exclude=.Trashes "--exclude=System Volume Information" --exclude=.fseventsd "--exclude=.*" "--exclude=._*" --exclude=Tools --exclude=Icons --exclude=TeslaCam_Exports --exclude=TeslaCam_Archive)
+[ -z "$EXF" ] || OPTS+=("--exclude-from=$EXF")
 
 main() {
+[ -z "$SINCE" ] || say "only clips dated $SINCE or later ($(wc -l < "$EXF" | tr -d ' ') day patterns left out)"
 say "sync_jowua_rescue: $SRC/TeslaCam/  ->  $DST/TeslaCam/   (rsync: $RSYNC_BIN $("$RSYNC_BIN" --version 2>&1 | head -1 | awk '{print $3}'), dry-run=$DRY)"
 CHK="$DST"; while [ ! -d "$CHK" ]; do CHK=$(dirname "$CHK"); done
 say "Calculating what has to be copied (reading the folder listings of the source)..."
