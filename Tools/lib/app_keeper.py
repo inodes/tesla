@@ -9,7 +9,7 @@ Keeper, one step at a time and only when nothing else is reading:
   4. stills     makes the one-second front-camera stills not made yet                                                   - app_footage (needs ffmpeg)
 
 so that a drive page, the timeline and the review still have their data and pictures when the disk is away. Nothing on a drive is changed. It can be paused
-(the sidebar) - pause before ejecting a disk - and switched off with app.keeper.background = false or `tesla_app.py --no-background`.
+(the sidebar) - pause before ejecting a disk - and off unless switched on with app.keeper.background = true in config.json (`tesla_app.py --no-background` forces it off).
 
   GET  /api/keeper                   what it is doing now
   POST /api/keeper {action: pause|resume}
@@ -63,7 +63,7 @@ class Keeper:
     # ---- settings
     @staticmethod
     def enabled():
-        return bool(app_config.get("keeper.background", True))
+        return bool(app_config.get("keeper.background", False))
 
     # ---- video playing: the drives are left alone while it does (six streams from one disk stall if something else is reading it)
     def playing_now(self):
