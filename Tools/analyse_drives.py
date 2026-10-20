@@ -3860,6 +3860,14 @@ class DriveAnalyzer:
             stamp = f"{stamp}_{abbr}"
         return stamp
 
+    def has_local_deepdive(self, target_drive):
+        """True when the drive's folder already holds its telemetry file (found by the drive's start minute, as fetch_drive_deepdive_from_api does),
+        even if match_detailed_drive() does not accept it (a partial capture, a collision). Such a drive needs no fetch."""
+        start_epoch = target_drive.get("start_utc_epoch")
+        if start_epoch is None or not self.drives_dirs:
+            return False
+        return bool(_drive_paths.find_csv(os.path.join(self.drives_dirs[0], "deepdive"), self._drive_stamp(target_drive, start_epoch)))
+
     def fetch_drive_deepdive_from_api(self, target_drive):
         """Auto-fetches this drive's detailed telemetry from Tessie's own
         GET /{vin}/states endpoint (AGENTS.md TODO-026) when no local

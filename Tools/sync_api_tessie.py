@@ -1286,7 +1286,7 @@ def _backfill_drive_deepdive(limit, pace_seconds, since_days, tessie_dir):
     for d in drives:
         if since_dt and d["start_dt"] < since_dt:
             continue
-        if analyzer.match_detailed_drive(d):
+        if analyzer.match_detailed_drive(d) or analyzer.has_local_deepdive(d):
             already_had += 1
             continue
         total_candidates += 1
