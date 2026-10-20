@@ -1201,6 +1201,7 @@ async function pageTeslaCam(role,id){
   loading();const [dr,act,pl]=await Promise.all([tcGet("teslacam"),api("activity"),api("places").catch(()=>({saved:[]}))]),drives=dr.drives,places=(pl.saved||[]);
   const head='<h1>TeslaCam</h1><div class="sub">The clips on any connected TeslaCam drive. A drive is recognised by what is on it, not by its name, and nothing on it is changed. A drive is only read once you pick it.</div>';
   if(!drives.length){main.innerHTML=head+'<div class="empty">No TeslaCam drive is connected.</div>';return}
+  if(!TCS.role)TCS.role=lsGet("tc.role",null);      // the drive looked at last time (the Archive ends on 12 Oct; JOWUA and the USB hold the newer days)
   if(!drives.some(d=>d.role===TCS.role))TCS.role=(drives.find(d=>d.role==="A")||drives[0]).role;
   const trips=act.filter(x=>x.k==="drive"&&!x.repark).map(x=>({id:x.id,t0:x.t0,t1:x.t0+x.min*60,ti:driveTitle(x)}));
   const tripOf=v=>{const a=v.t0!=null?v.t0:v.t,b=v.t1!=null?v.t1:(v.t||0)+60;return trips.find(d=>d.t0<b&&d.t1>a)};
@@ -1211,7 +1212,7 @@ async function pageTeslaCam(role,id){
     $("#tsr").innerHTML=TCS.kind==="clips"?'<span class="sub" style="margin:0 4px 0 0">Show:</span>'+Object.keys(TCSRC).map(k=>`<button class="chip ${TCS.src[k]?"on":""}" data-s="${k}">${TCSRC[k]}${data&&data[k]?" · "+data[k].length:""}</button>`).join("")+'<span class="sub" style="margin-left:6px">Pick one, two or all three: they are listed together, newest first.</span>':"";
     $$("#tsr [data-s]").forEach(b=>b.onclick=()=>{const on=Object.keys(TCSRC).filter(k=>TCS.src[k]);if(TCS.src[b.dataset.s]&&on.length<2)return;TCS.src[b.dataset.s]=TCS.src[b.dataset.s]?0:1;$("#spl").innerHTML="";chips();draw()});
     $("#tcn").textContent=TCS.role==="A"?"":"Not the Archive: its clips are read only as you open them. Stop playback and leave this page before ejecting it.";
-    $$("#tcd [data-r]").forEach(b=>b.onclick=()=>{TCS.role=b.dataset.r;$("#spl").innerHTML="";sentryList=null;chips();load()});
+    $$("#tcd [data-r]").forEach(b=>b.onclick=()=>{TCS.role=b.dataset.r;lsSet("tc.role",TCS.role);$("#spl").innerHTML="";sentryList=null;chips();load()});
     $$("#tck [data-k]").forEach(b=>b.onclick=()=>{TCS.kind=b.dataset.k;$("#spl").innerHTML="";chips();load()})};
   const load=async(quiet)=>{const my=++token;if(!quiet){data=null;$("#tl").innerHTML="";$("#ixb").innerHTML="";$("#tb").innerHTML='<div class="empty">Reading the drive…</div>'}
     try{if(TCS.kind==="clips"){const r=await Promise.all(["sentry","saved","recent"].map(k=>tcGet("teslacam/"+TCS.role+"/"+k)));if(my!==token)return;
@@ -1534,9 +1535,9 @@ async function boot(){
   const st=async()=>{try{const s=await (await fetch("/api/status")).json();const NM={A:"Archive",J:"JOWUA",U:"Tesla USB"};$("#status").innerHTML=["A","J","U"].filter(r=>r==="A"||s.roots[r]).map(r=>`<div><span class="dot ${s.roots[r]?"on":"off"}"></span>${NM[r]} ${s.roots[r]?"connected":"not connected"}</div>`).join("")+`${s.stale?'<div class="upd">The app was updated. Quit and reopen it to load the new version.</div>':""}`}catch(e){}};
   // the background reading of the connected drives (lib/app_keeper.py): what it is doing, and a button to pause it (before ejecting a disk)
   const kp=async()=>{try{const k=await (await fetch("/api/keeper")).json(),el=$("#keeper");
-      if(!k.enabled||(!k.working&&!k.paused&&!k.error)){el.hidden=true;return}
+      if(!k.enabled||(!k.working&&!k.paused&&!k.error&&!k.playing)){el.hidden=true;return}
       el.hidden=false;const pc=k.total?` · ${n0(k.done)} of ${n0(k.total)}`:"";
-      el.innerHTML=k.paused?`<div><span class="dot off"></span>Background reading paused <a href="#" id="kpr">Resume</a></div>`:k.working?`<div><span class="dot on"></span>${esc(k.text)}${pc} <a href="#" id="kpp">Pause</a></div>`:"";
+      el.innerHTML=k.playing&&!k.paused?`<div><span class="dot off"></span>Background reading waits while video plays</div>`:k.paused?`<div><span class="dot off"></span>Background reading paused <a href="#" id="kpr">Resume</a></div>`:k.working?`<div><span class="dot on"></span>${esc(k.text)}${pc} <a href="#" id="kpp">Pause</a></div>`:"";
       if(k.error)el.innerHTML+=`<div class="upd">${esc(k.error)}</div>`;
       const b=$("#kpp")||$("#kpr");if(b)b.onclick=async e=>{e.preventDefault();await fetch("/api/keeper",{method:"POST",body:JSON.stringify({action:k.paused?"resume":"pause"})});kp()}}catch(e){}};
   st();setInterval(st,30000);kp();setInterval(kp,4000);route();

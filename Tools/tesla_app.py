@@ -340,6 +340,8 @@ class H(BaseHTTPRequestHandler):
                     return self.send_bytes(b"drive not connected", "text/plain", 404)
                 p = safe_join(root, rel)
                 if p and os.path.isfile(p):
+                    if KEEP:
+                        KEEP.playing_now()          # the background reading steps aside while video plays
                     return self.send_file(p, cache=True)
                 return self.send_bytes(b"not found", "text/plain", 404)
             return self.send_bytes(b"not found", "text/plain", 404)
