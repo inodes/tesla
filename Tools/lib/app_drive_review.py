@@ -563,9 +563,10 @@ class DriveReview:
         if len(tp) < 2:
             raise ValueError("this drive has no sample file")
         store, _ = self.tc._tl("A")
+        role, teslacam = self.tc.pick_role(teslacam, DF.utc(t0), DF.utc(t1))      # teslacam = {role: folder} of every connected drive; use the one holding this footage
         front, mins = {}, []
         if teslacam:
-            recent, saved, _s = self.tc._sources("A", teslacam)
+            recent, saved, _s = self.tc._sources(role, teslacam)
             mins = TL.minutes(recent, saved)
             front = {m["stamp"]: self.tc._front(teslacam, m) for m in mins if "front" in m["cams"]}
         ts, las, los = [p["t"] for p in tp], [p["la"] for p in tp], [p["lo"] for p in tp]
@@ -583,7 +584,7 @@ class DriveReview:
             clock, cam = DF.clock_offset(ts, las, los, store, t0, t1, None, self.dir)
         if clock is None:
             res = dict(stamp=stamp, made=_now(), params=dict(o), clock=None, events=[], stills=False,
-                       note="No dashcam telemetry lies on this drive's route (the footage is not on a connected drive, or was never read).")
+                       note="No dashcam footage for this drive is on a connected drive (Archive, JOWUA or Tesla USB), and none of its telemetry was read earlier. Connect the drive that holds it and run the review again.")
             self._save(stamp, res)
             return
         rows = to_rows(cam)
@@ -594,9 +595,9 @@ class DriveReview:
         can_look = bool(front) and ST.have_ffmpeg() or bool(stills.stamps())      # stills come from the video or from the ones kept
         note = ""
         if not front and not stills.stamps():
-            note = "The Archive is not connected and no stills are kept, so the events are listed without stills."
+            note = "The drive holding this footage is not connected and no stills are kept, so the events are listed without stills."
         elif not front:
-            note = "The Archive is not connected: the stills are the kept ones, and no signs were read."
+            note = "The drive holding this footage is not connected: the stills are the kept ones, and no signs were read."
         elif not can_sign:
             note = "Sign reading needs: %s" % "; ".join(req["hint"])
         done_ev = 0
