@@ -68,7 +68,7 @@ def place_offset(u, lat, lon):
     if lat is None or lon is None:
         return local_offset(u)
     try:
-        import tessie_timezone as TZ
+        import timezones as TZ
         name = TZ.resolve_timezone(lat, lon)
         if name not in _PLACE:
             import zoneinfo

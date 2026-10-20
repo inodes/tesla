@@ -11,7 +11,7 @@ Tesla / Tessie Location Management & POI Lookup Engine
 """
 
 import os
-from lib.tessie_timezone import legacy_get as _legacy_get  # BUG-176
+from lib.timezones import legacy_get as _legacy_get  # BUG-176
 import sys
 import time
 import re

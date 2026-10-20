@@ -15,7 +15,7 @@ Tessie Charging & Supercharger Reconciliation Engine
 """
 
 import os
-from lib.tessie_timezone import legacy_get as _legacy_get  # BUG-176
+from lib.timezones import legacy_get as _legacy_get  # BUG-176
 import sys
 import time
 
@@ -151,7 +151,7 @@ if _tools_dir not in sys.path:
 from lib.archive_naming import next_archive_path
 import lib.charge_paths as CP
 from lib.analysis_deepdive_charts import write_interactive_chart, try_open_in_browser
-import lib.tessie_timezone as tztools
+import lib.timezones as tztools
 
 
 def _gst_multiplier():
@@ -1807,7 +1807,7 @@ class ChargingAnalyzer:
                                 stamp = dt.strftime('%Y-%m-%d_%H%M') if dt else None
                                 if dt:
                                     try:
-                                        import lib.tessie_timezone as _tztools
+                                        import lib.timezones as _tztools
                                         abbr = _tztools.abbr_for_naive_local(dt)
                                         dt_epoch = _tztools.epoch_for_naive_local(dt)
                                         if abbr:
@@ -1990,7 +1990,7 @@ class ChargingAnalyzer:
  # TODO-009 (charges side): self-healing real per-event UTC +
  # IANA timezone, exactly the same normalize_row_timezone()
  # tessie_drives_analyzer.py's consolidate_drives() already
- # uses (see lib/tessie_timezone.py) - a charging session has
+ # uses (see lib/timezones.py) - a charging session has
  # only ONE location for its whole duration, so both calls
  # share the same "Latitude"/"Longitude" pair (unlike a drive's
  # separate Starting/Ending coordinates). Idempotent: a no-op
@@ -2687,7 +2687,7 @@ class ChargingAnalyzer:
             return None
 
         try:
-            import lib.tessie_timezone as _tztools
+            import lib.timezones as _tztools
         except Exception:
             _tztools = None
 
@@ -2915,7 +2915,7 @@ class ChargingAnalyzer:
             return None
 
         try:
-            import lib.tessie_timezone as _tztools
+            import lib.timezones as _tztools
             local_tz = ZoneInfo(_tztools.DEFAULT_TIMEZONE)
         except Exception:
             local_tz = ZoneInfo("Australia/Sydney")
@@ -3887,7 +3887,7 @@ class ChargingAnalyzer:
 
         # TODO-009: self-healing UTC + real per-event timezone columns,
         # mirroring consolidate_drives()'s own migration exactly (see
-        # lib/tessie_timezone.py's normalize_row_timezone() docstring).
+        # lib/timezones.py's normalize_row_timezone() docstring).
         # A charging session has only ONE location for its whole
         # duration (unlike a drive's separate Starting/Ending
         # coordinates), so both calls share the same
