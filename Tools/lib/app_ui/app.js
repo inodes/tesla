@@ -354,8 +354,9 @@ async function driveReviewPanel(host,stamp,lo,onResult){
       h+=`<div style="margin-top:10px"><div class="sub">${esc(job.stage||"")}${job.total?" · "+n0(job.done)+" of "+n0(job.total)+" ("+pc+"%)":""}${el?" · "+dur(Math.max(1,Math.round(el/60)))+" so far":""}</div><div class="pbar${pc==null?" ind":""}"><i ${pc==null?"":`style="width:${pc}%"`}></i></div></div>`}
     if(job.error)h+=`<div class="sub" style="margin-top:8px;color:var(--bad);user-select:text">${esc(job.error)}</div>`;
     if(ms.py.length+ms.cmd.length)h+=`<div class="sub" style="margin-top:8px">Stills and sign reading need ${esc(ms.py.concat(ms.cmd).join(", "))} installed. <code>${esc((ms.hint||[]).join(" ; "))}</code></div>`;
-    else if(!S.connected&&!(R&&R.stills))h+=`<div class="sub" style="margin-top:8px">The Archive is not connected: events can be found from telemetry already read, but no stills.</div>`;
-    if(R){const c=R.counts||{};
+    else if(!S.connected&&!(R&&R.stills))h+=`<div class="sub" style="margin-top:8px">The drive holding this footage is not connected: events can be found from telemetry already read, but no stills.</div>`;
+    if(R&&R.clock==null&&!(R.events||[]).length){h+=`<div class="sub" style="margin-top:8px;user-select:text"><b>Not reviewed:</b> ${esc(R.note||"no dashcam telemetry matches this drive")}</div>`}
+    else if(R){const c=R.counts||{};
       h+=`<div class="sub" style="margin-top:8px">Last run ${new Date(R.made).toLocaleString()} · ${n0(c.intervention||0)} FSD interventions · ${n0(c.accelerator||0)} accelerator presses · ${n0(c.speed||0)} speed changes · dashcam telemetry covers ${R.coverage?n0(R.coverage.pct):0}% of the drive${R.stills?" · front-camera stills read":""}</div>`;
       if(R.note)h+=`<div class="sub" style="margin-top:4px;user-select:text">${esc(R.note)}</div>`}
     h+="</div>";
@@ -396,7 +397,7 @@ async function pageDrive(stamp,tab){
     const t0=d.t0,t1=d.t1||d.t0+d.min*60,lo=Math.round((Date.parse(d.day+"T"+d.hm+":00Z")/1000-d.t0)/900)*900,pl=await api("places").catch(()=>({saved:[]}));
     const rv=tab==="review";
     box.innerHTML=(rv?'<div id="drr"></div>':'')+'<div id="tdh"></div>'+(rv?'':'<details class="card" id="mg" style="margin-top:14px"><summary><b>Copy, save as a clip, or delete clips</b></summary><div id="mgb" style="margin-top:10px"></div></details>');
-    const fetchSeg=async b=>{const r=await fetch("/api/teslacam/A/window?t0="+t0+"&t1="+t1+"&lo="+lo+"&budget="+(b==null?20:b));
+    const fetchSeg=async b=>{const r=await fetch("/api/teslacam/auto/window?t0="+t0+"&t1="+t1+"&lo="+lo+"&budget="+(b==null?20:b));
       if(!r.ok){const e=(await r.json().catch(()=>({}))).error||("HTTP "+r.status);const x=new Error(e);x.none=r.status===404;throw x}return r.json()};
     if(!rv)$("#mg").ontoggle=()=>{if(!$("#mg").open||$("#mgb").innerHTML)return;$("#mgb").innerHTML=`<iframe class="drive" id="mf" src="/data/drives/deepdive/${encodeURIComponent(stamp)}/drive.html"></iframe>`;
       fitFrame($("#mf"),doc=>{const w=doc.querySelector(".wrap");if(!w)return;if(!doc.getElementById("foot")){$("#mgb").innerHTML='<div class="sub">No clip tools for this drive: the page was built without footage. Run <code>./drive_report.py</code> with the Archive connected.</div>';return}
@@ -404,7 +405,7 @@ async function pageDrive(stamp,tab){
     let bodyOn=false;
     const body=async()=>{
     try{await teslaDriveBody($("#tdh"),"A",fetchSeg,pl.saved||[],{heading:false,review:null,rvtab:rv})}
-    catch(e){const h=$("#tdh");if(h)h.innerHTML=e.none?'<div class="card"><b>No dashcam footage or telemetry for this drive.</b><div class="sub" style="margin-top:6px">Nothing recorded on the Archive covers these times, and nothing was read from it before. If the Archive is not connected, connect it and open this tab again.</div></div>':errBox(e.message,"Could not rebuild this drive from the video")}};
+    catch(e){const h=$("#tdh");if(h)h.innerHTML=e.none?'<div class="card"><b>No dashcam footage or telemetry for this drive.</b><div class="sub" style="margin-top:6px">No connected drive (Archive, JOWUA or Tesla USB) has footage for these times, and no telemetry for them was read earlier. Connect the drive that holds the footage and open this tab again.</div></div>':errBox(e.message,"Could not rebuild this drive from the video")}};
     // Review: nothing but the Review card until the drive has been reviewed; then the map, chart, video and the events
     if(rv)driveReviewPanel($("#drr"),stamp,lo,has=>{if(has&&!bodyOn){bodyOn=true;body()}});else body();
   }
@@ -1297,7 +1298,8 @@ async function pageTeslaCamDrive(role,id){
 // The map, telemetry chart and stitched six-camera video of one drive, moving together. `fetchSeg(budget)` returns the server's segment / window answer;
 // it is asked again while minutes are still being read. opts.heading=false leaves the title to the caller (the Footage tab of a Tessie drive).
 async function teslaDriveBody(host,role,fetchSeg,places,opts){
-  let d=await fetchSeg(0),player=null,map=null,chart=null,done=false,evShown=false,pendM=null,pendL=null;
+  let d=await fetchSeg(0);if(d&&d.role)role=d.role;       // the drive the footage is on (a drive page asks for "auto")
+  let player=null,map=null,chart=null,done=false,evShown=false,pendM=null,pendL=null;
   const stop=()=>{done=true};addEventListener("hashchange",stop,{once:true});
   const it=()=>d.item,S=()=>d.series,live=()=>!done&&$("#tdb")&&host.contains($("#tdb"));
   host.innerHTML=`<div id="tdb"><h1 id="dh" ${opts.heading===false?"hidden":""}></h1><div class="sub" id="dsub"></div><div id="dpend"></div><div class="tiles" id="dtl"></div>

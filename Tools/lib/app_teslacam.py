@@ -189,6 +189,22 @@ class TeslaCam:
         return ix.start(todo)
 
     # ------------------------------------------------------------------------------------------------- scan (teslacam_scan.py)
+    def pick_role(self, roots, t0, t1):
+        """(role, TeslaCam folder) of the connected drive holding the most minutes of footage for [t0, t1] (UTC); the Archive wins a tie.
+        None holds any: the Archive (or the first connected drive), so whatever was read before still shows."""
+        best, most = None, 0
+        for r in "AJU":
+            root = (roots or {}).get(r)
+            if not root:
+                continue
+            n = sum(1 for m in self.footage(r, root) if CC.maybe_in(m["stamp"], t0, t1))
+            if n > most:
+                best, most = (r, root), n
+        if best:
+            return best
+        first = next(((r, (roots or {})[r]) for r in "AJU" if (roots or {}).get(r)), None)
+        return ("A", roots["A"]) if roots and roots.get("A") else first or ("A", None)
+
     def footage(self, role, teslacam):
         """Every Recent and Saved minute on a drive (TL.minutes)."""
         c = self._scan(role, teslacam)

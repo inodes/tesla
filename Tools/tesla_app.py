@@ -96,7 +96,7 @@ def drive_review_state(stamp):
     import app_review
     job = DRV.status()
     return dict(result=DRV.result(stamp), job=job if job.get("stamp") == stamp else dict(running=False), defaults=DRV.defaults(),
-                connected=bool(footage_root("A")), missing=app_review.requirements())
+                connected=bool(footage_roots()), missing=app_review.requirements())
 
 
 def footage_root(role):
@@ -105,6 +105,11 @@ def footage_root(role):
         _ROOTS["v"] = {r: DR.find_root(r) for r in "AJU"}
         _ROOTS["t"] = time.time()
     return _ROOTS["v"].get(role)
+
+
+def footage_roots():
+    """{role: TeslaCam folder} of every connected drive."""
+    return {r: footage_root(r) for r in "AJU" if footage_root(r)}
 
 
 def code_updated():
@@ -341,7 +346,7 @@ class H(BaseHTTPRequestHandler):
                 if body.get("action") == "stop":
                     DRV.stop()
                 else:
-                    DRV.start(body.get("id", ""), footage_root("A"), {})
+                    DRV.start(body.get("id", ""), footage_roots(), {})
                 return self.send_json(drive_review_state(body.get("id", "")))
             if u.path == "/api/review":
                 role = body.get("role", "A")
@@ -437,7 +442,11 @@ class H(BaseHTTPRequestHandler):
                     t1 = _utc_arg(q.get("t1", [""])[0])
                 except ValueError:
                     return self.send_json({"error": "bad time"}, 400)
+                if role == "auto":                  # whichever connected drive holds the footage for these times
+                    role, root = TC.pick_role(footage_roots(), t0, t1)
                 d = TC.window(role, root, t0, t1, float(q.get("budget", ["20"])[0] or 20), _lo_arg(q.get("lo", [None])[0]))
+                if d:
+                    d["role"] = role
                 return self.send_json(d if d else {"error": "no footage or telemetry for this time"}, 200 if d else 404)
             if kind == "recent" and rid:
                 c = TC.run_clips(role, root, urllib.parse.unquote(rid))
