@@ -1197,7 +1197,7 @@ function footagePanel(box,drives){
   loadLog().then(()=>{paint();if(FGS.log&&FGS.log.job&&FGS.log.job.running)poll()});
 }
 async function pageTeslaCam(role,id){
-  if(role&&id)return /^sentry-/.test(id)?pageTeslaCamSentry(role,id.slice(7)):pageTeslaCamDrive(role,id);
+  if(role&&id)return /^sentry-/.test(id)?pageTeslaCamSentry(role,id.slice(7)):/^at-/.test(id)?pageTeslaCamAt(+id.slice(3)):pageTeslaCamDrive(role,id);
   loading();const [dr,act,pl]=await Promise.all([tcGet("teslacam"),api("activity"),api("places").catch(()=>({saved:[]}))]),drives=dr.drives,places=(pl.saved||[]);
   const head='<h1>TeslaCam</h1><div class="sub">The clips on any connected TeslaCam drive. A drive is recognised by what is on it, not by its name, and nothing on it is changed. A drive is only read once you pick it.</div>';
   if(!drives.length){main.innerHTML=head+'<div class="empty">No TeslaCam drive is connected.</div>';return}
@@ -1245,11 +1245,14 @@ async function pageTeslaCam(role,id){
     all.forEach(v=>(byDay[v.ts.slice(0,10)]=byDay[v.ts.slice(0,10)]||[]).push(v));
     const days=Object.keys(byDay).sort().reverse(),cnt=k=>all.filter(v=>v.ty===k).length,mins=all.reduce((a,v)=>a+(v.ty==="recent"?v.n:Object.keys(v.clips).length),0);
     $("#tl").innerHTML=srcs.map(k=>tile(n0(cnt(k)),k==="recent"?"continuous recordings":TCSRC[k]+" events")).join("")+tile(n0(mins),"minutes of video");
+    // the drive (Tessie's) the event was saved in, and the map and telemetry of it: a Saved clip is kept while driving, so it belongs to a drive
+    const evLinks=v=>{const t=v.t!=null?tripOf(v):null,st=e=>'onclick="event.stopPropagation()"';
+      return (t?`<span>${esc(t.ti)}</span><a href="#/drive/${t.id}" ${st()}>open the drive</a>`:"")+(v.ty==="saved"&&v.t!=null?`<a href="${t?"#/drive/"+t.id+"/footage":"#/teslacam/"+role+"/at-"+Math.round(v.t)}" ${st()}>map and telemetry</a>`:"")};
     const card=v=>{const bd=`<span class="srcb ${v.ty}">${TCSRC[v.ty]}</span>`;
       if(v.ty==="recent"){const t=tripOf(v);return `<button class="evc run" data-ty="recent" data-id="${esc(v.id)}">${vthumb("/footage/"+role+"/RecentClips/"+v.id+"-front.mp4")}${bd}<b>${hms(v.ts).slice(0,5)} – ${hms(v.end).slice(0,5)}</b><span>${v.n} minute${v.n>1?"s":""}${v.full<v.n?" · "+(v.n-v.full)+" with fewer than 6 cameras":""}</span>${t?`<span>${esc(t.ti)}</span><a href="#/drive/${t.id}" onclick="event.stopPropagation()">open the drive</a>`:""}<a href="#/teslacam/${role}/${esc(v.id)}" onclick="event.stopPropagation()">map and telemetry</a></button>`}
       const n=Object.keys(v.clips).length,folder=TCF[v.ty],ks=Object.keys(v.clips).sort(),tt=(v.cts||v.ts||"").replace("T","_").replace(/:/g,"-"),k0=ks.filter(x=>x<=tt).pop()||ks[0],      // the minute holding the trigger, not the first one (an event starts ten minutes earlier)
         k0t=Math.max(1,Math.min(58,Math.round((Date.parse((v.cts||v.ts||"").replace("T"," "))-Date.parse((k0||"").replace("_"," ").replace(/(\d\d)-(\d\d)-(\d\d)$/,"$1:$2:$3")))/1000)||2));
-      return `<button class="evc ${n?"":"faded"}" data-ty="${v.ty}" data-id="${v.id}">${k0&&v.clips[k0]&&v.clips[k0].includes("front")?vthumb(`/footage/${role}/${folder}/${v.id}/${k0}-front.mp4`,k0t):v.thumb?`<img loading="lazy" src="/footage/${role}/${folder}/${v.id}/thumb.png" onerror="this.style.visibility='hidden'">`:'<div class="noimg"></div>'}${bd}<b>${hms(v.ts)}</b><span>${esc(reason(v.reason))}</span><span>${esc([v.city,v.street].filter(Boolean).join(" · "))}</span><span>${n?n+" min of video":"no video"}</span></button>`};
+      return `<button class="evc ${n?"":"faded"}" data-ty="${v.ty}" data-id="${v.id}">${k0&&v.clips[k0]&&v.clips[k0].includes("front")?vthumb(`/footage/${role}/${folder}/${v.id}/${k0}-front.mp4`,k0t):v.thumb?`<img loading="lazy" src="/footage/${role}/${folder}/${v.id}/thumb.png" onerror="this.style.visibility='hidden'">`:'<div class="noimg"></div>'}${bd}<b>${hms(v.ts)}</b><span>${esc(reason(v.reason))}</span><span>${esc([v.city,v.street].filter(Boolean).join(" · "))}</span><span>${n?n+" min of video":"no video"}</span>${evLinks(v)}</button>`};
     $("#tb").innerHTML=(days.length?"":'<div class="empty">Nothing here for these dates.</div>')+days.slice(0,60).map(d=>`<div class="day">${dayName(d)}<small>${byDay[d].length} clip${byDay[d].length>1?"s":""}</small></div><div class="evs">${byDay[d].map(card).join("")}</div>`).join("")+(days.length>60?'<div class="sub">Showing the newest 60 days. Narrow the dates to see older ones.</div>':"");
     lazyThumbs($("#tb"));$$("#tb .evc").forEach(b=>b.onclick=async()=>{const ty=b.dataset.ty,sel=b.dataset.id;$$("#tb .evc").forEach(x=>x.classList.toggle("on",x===b));$("#spl").scrollIntoView({block:"nearest"});
       if(ty!=="recent")return sentryPlayer($("#spl"),data[ty].find(v=>v.id===sel),role,TCF[ty]);
@@ -1289,6 +1292,13 @@ async function pageTeslaCamSentry(role,ev){
     clipPlayer($("#dvid"),{stamps,cams:e.clips,loc:e.loc,trig:Date.parse(e.cts||e.ts),view:"all",hot:EVCAM[e.cam]||"front",url:(s,c)=>`/footage/${role}/SentryClips/${e.id}/${s}-${c}.mp4`,
       head:`${stamps.length} one-minute clip${stamps.length>1?"s":""}; the next plays on its own. It opens at the moment the car detected something, and the camera that saw it has a red border.`})
   }catch(err){host.innerHTML=errBox(err.message,"Could not open this Sentry event")}
+}
+// the minutes around one instant (a Saved clip's trigger) when no Tessie drive covers it: map, telemetry and video of whichever connected drive holds them
+async function pageTeslaCamAt(t){
+  loading();const pl=await api("places").catch(()=>({saved:[]}));
+  main.innerHTML=crumbs("#/teslacam","TeslaCam")+'<div id="tdh"></div>';
+  const fetchSeg=async b=>{const r=await fetch("/api/teslacam/auto/window?t0="+(t-90)+"&t1="+(t+150)+"&budget="+(b==null?20:b));if(!r.ok)throw new Error((await r.json().catch(()=>({}))).error||("HTTP "+r.status));return r.json()};
+  try{await teslaDriveBody($("#tdh"),"A",fetchSeg,pl.saved||[],{})}catch(e){const h=$("#tdh");if(h)h.innerHTML=errBox(e.message,"Could not open this moment")}
 }
 async function pageTeslaCamDrive(role,id){
   loading();const pl=await api("places").catch(()=>({saved:[]}));
