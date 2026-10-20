@@ -1,19 +1,16 @@
 """teslacam_stills.py - one still for every second of every front-camera clip, kept after the video is gone.
 
-    <data>/teslacam_stills/<day>/<clip stamp>.zip       00.jpg ... 59.jpg  (second N of the clip), 400 px wide     (just made)
-    <data>/teslacam_stills/<day>/<day>_<HH>.zip         HH-MM-SS/00.jpg ... (every clip of that hour)              (packed, ~24 a day)
+    <data>/teslacam_stills/<day>/<clip stamp>.zip       00.jpg ... 59.jpg  (second N of the clip), 400 px wide
 
-One file per minute-clip rather than 60 loose files, and pack() then folds the clips of each hour into one file: the same images,
-individually readable (the app shows each one on its own), but ~1,500 files for all the footage instead of ~650 thousand that iCloud
-would have to sync one by one. A zip is not compressed (a JPEG does not shrink) so reading one image is a seek, not an unpack.
-The hour is the car's clock, like the clip names.
+One file per minute-clip rather than 60 loose files: the same images, individually readable (the app shows each one on its own), but
+~10 thousand files for all the footage instead of ~650 thousand that iCloud would have to sync one by one. The zip is not compressed
+(a JPEG does not shrink) so reading one image is a seek, not an unpack.
 
 make(): decodes a clip once with ffmpeg (one frame a second, scaled) and writes the zip, nothing else. The same clip stamp on two drives
 (a copy) is made once, from the first drive in ORDER (Archive, JOWUA, Tesla USB). A clip that already has its zip is skipped, so the
 stills are never taken twice and stay when the video is deleted.
 """
 import os
-import re
 import shutil
 import subprocess
 import tempfile
@@ -25,8 +22,6 @@ DIRNAME = "teslacam_stills"
 WIDTH = 400
 QUALITY = 6                 # ffmpeg -q:v (2 best ... 31 worst)
 ORDER = "AJU?"
-_SINGLE = re.compile(r"^\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2}\.zip$")
-_HOUR = re.compile(r"^\d{4}-\d{2}-\d{2}_\d{2}\.zip$")
 
 
 class Stills:
@@ -34,61 +29,25 @@ class Stills:
         self.root = os.path.join(data_dir, DIRNAME)
         self.width = width
         self.quality = quality
-        self._cache = {}
 
     def path(self, stamp):
         return os.path.join(self.root, stamp[:10], stamp + ".zip")
 
-    def hour_path(self, stamp):
-        return os.path.join(self.root, stamp[:10], stamp[:13] + ".zip")
-
-    def _hour(self, stamp):
-        """{clip stamp: [image names]} held by the packed file of stamp's hour (cached until that file changes)."""
-        p = self.hour_path(stamp)
-        try:
-            st = os.stat(p)
-        except OSError:
-            return {}
-        key = (st.st_mtime_ns, st.st_size)
-        c = self._cache.get(p)
-        if c and c[0] == key:
-            return c[1]
-        out = {}
-        try:
-            with zipfile.ZipFile(p) as z:
-                for n in z.namelist():
-                    d, _, f = n.partition("/")
-                    if f:
-                        out.setdefault(stamp[:11] + d, []).append(f)
-        except (OSError, zipfile.BadZipFile):
-            return {}
-        if len(self._cache) > 64:
-            self._cache.clear()
-        self._cache[p] = (key, out)
-        return out
-
     def has(self, stamp):
-        return os.path.isfile(self.path(stamp)) or stamp in self._hour(stamp)
+        return os.path.isfile(self.path(stamp))
 
     def count(self, stamp):
         try:
             with zipfile.ZipFile(self.path(stamp)) as z:
                 return len(z.namelist())
         except (OSError, zipfile.BadZipFile):
-            return len(self._hour(stamp).get(stamp, []))
+            return 0
 
     def get(self, stamp, n):
         """JPEG bytes of second n of the clip, or None."""
         try:
             with zipfile.ZipFile(self.path(stamp)) as z:
                 return z.read("%02d.jpg" % n)
-        except (OSError, KeyError, zipfile.BadZipFile):
-            pass
-        if stamp not in self._hour(stamp):
-            return None
-        try:
-            with zipfile.ZipFile(self.hour_path(stamp)) as z:
-                return z.read("%s/%02d.jpg" % (stamp[11:], n))
         except (OSError, KeyError, zipfile.BadZipFile):
             return None
 
@@ -98,81 +57,10 @@ class Stills:
             for d in os.listdir(self.root):
                 p = os.path.join(self.root, d)
                 if os.path.isdir(p):
-                    for n in os.listdir(p):
-                        if _SINGLE.match(n):
-                            out.add(n[:-4])
-                        elif _HOUR.match(n):
-                            out.update(self._hour(n[:-4]))
+                    out.update(n[:-4] for n in os.listdir(p) if n.endswith(".zip"))
         except OSError:
             pass
         return out
-
-    def pack(self, stop=None, progress=None):
-        """Folds the single-clip zips into one file per hour (adding to an hour already packed). A single zip is removed only after its
-        images are in the packed file and that file has been checked. Returns (hours packed, clips packed). Safe to stop and repeat."""
-        hours = clips = 0
-        try:
-            days = sorted(os.listdir(self.root))
-        except OSError:
-            return 0, 0
-        for day in days:
-            dp = os.path.join(self.root, day)
-            if not os.path.isdir(dp):
-                continue
-            by_hour = {}
-            for n in sorted(os.listdir(dp)):
-                if _SINGLE.match(n):
-                    by_hour.setdefault(n[:13], []).append(n[:-4])
-            for hour, stamps in sorted(by_hour.items()):
-                if stop and stop():
-                    return hours, clips
-                good = {}                                       # stamp -> [(name, bytes)]  the clips that read cleanly
-                for st in stamps:
-                    try:
-                        with zipfile.ZipFile(self.path(st)) as z:
-                            good[st] = [(n, z.read(n)) for n in z.namelist()]
-                    except (OSError, zipfile.BadZipFile):
-                        continue                                # leave a damaged one where it is
-                if not good:
-                    continue
-                dest = os.path.join(dp, hour + ".zip")
-                part = dest + ".part"
-                want = set()
-                try:
-                    with zipfile.ZipFile(part, "w", zipfile.ZIP_STORED) as out:
-                        if os.path.isfile(dest):
-                            with zipfile.ZipFile(dest) as zin:
-                                for n in zin.namelist():
-                                    out.writestr(n, zin.read(n))
-                                    want.add(n)
-                        for st, items in good.items():
-                            for n, data in items:
-                                full = "%s/%s" % (st[11:], n)
-                                if full not in want:
-                                    out.writestr(full, data)
-                                    want.add(full)
-                    with zipfile.ZipFile(part) as z:
-                        ok = z.testzip() is None and want <= set(z.namelist())
-                except (OSError, zipfile.BadZipFile):
-                    ok = False
-                if not ok:
-                    try:
-                        os.remove(part)
-                    except OSError:
-                        pass
-                    continue
-                os.replace(part, dest)
-                self._cache.pop(dest, None)
-                for st in good:
-                    try:
-                        os.remove(self.path(st))
-                    except OSError:
-                        pass
-                hours += 1
-                clips += len(good)
-                if progress:
-                    progress(hours, hour, len(good))
-        return hours, clips
 
     def make(self, stamp, video):
         """Take the stills of one clip; returns how many (0 = nothing written)."""
