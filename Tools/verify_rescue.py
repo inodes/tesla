@@ -6,6 +6,7 @@
   SRC    the mounted source (default "/Volumes/TESLADRIVE 1")      DEST   the rescued copy (default /Volumes/LaCie1/jowua-rescue)
   --fix    copy every file that differs again from SRC (written to a temporary name, then renamed; SRC is never changed)
   --full   compare the whole file instead of the first MB, the last MB and 8 samples in between (reads everything: slow)
+  --from-log LOG  only the files listed as "DIFFERS" in an earlier log of this script (so a fix does not re-check all 12,000 files)
   --since  only files in names dated on or after this day (default: all of them)
 
 Why it exists: rsync skips a file whose size and time match, even if the first run copied it from a REPAIRED image whose data was wrong. This reads the same places in both
@@ -15,9 +16,10 @@ import os, sys, time, shutil
 
 def now(): return time.strftime("%H:%M:%S")
 args = sys.argv[1:]
-FIX = "--fix" in args; FULL = "--full" in args; SINCE = ""
+FIX = "--fix" in args; FULL = "--full" in args; SINCE = ""; FROMLOG = ""
+if "--from-log" in args: FROMLOG = os.path.expanduser(args[args.index("--from-log") + 1])
 if "--since" in args: SINCE = args[args.index("--since") + 1]
-pos = [a for i, a in enumerate(args) if not a.startswith("--") and (i == 0 or args[i - 1] != "--since")]
+pos = [a for i, a in enumerate(args) if not a.startswith("--") and (i == 0 or args[i - 1] not in ("--since", "--from-log"))]
 if "-h" in args or "--help" in args: print(__doc__); sys.exit(0)
 SRC = pos[0] if len(pos) > 0 else "/Volumes/TESLADRIVE 1"; DST = pos[1] if len(pos) > 1 else "/Volumes/LaCie1/jowua-rescue"
 logdir = os.path.expanduser("~/Downloads"); logdir = logdir if os.path.isdir(logdir) and os.access(logdir, os.W_OK) else "/tmp"
@@ -31,9 +33,9 @@ def positions(size):
     if FULL or size <= 3 * HEAD: return None
     ps = [0, size - HEAD] + [int(size * i / 9) for i in range(1, 9)]
     return sorted(set(max(0, min(p, size - HEAD)) for p in ps)), HEAD
-def same(a, b, size):
+def same(a, b, size, full=False):
     with open(a, "rb") as fa, open(b, "rb") as fb:
-        p = positions(size)
+        p = None if full else positions(size)
         if p is None:
             while True:
                 x = fa.read(4 << 20); y = fb.read(4 << 20)
@@ -46,7 +48,11 @@ def same(a, b, size):
     return True
 
 files = []
-for root, dirs, names in os.walk(os.path.join(DST, "TeslaCam")):
+if FROMLOG:
+    for line in open(FROMLOG, errors="replace"):
+        if "DIFFERS " in line: files.append(line.split("DIFFERS ", 1)[1].strip())
+    files = [f for f in files if os.path.exists(os.path.join(DST, f))]
+for root, dirs, names in (os.walk(os.path.join(DST, "TeslaCam")) if not FROMLOG else []):
     for n in names:
         if n.startswith(".") or n.endswith(".part"): continue
         full = os.path.join(root, n); rel = os.path.relpath(full, DST)
@@ -68,7 +74,9 @@ for i, rel in enumerate(files, 1):
             if FIX:
                 tmp = d + ".part"
                 with open(s, "rb") as fi, open(tmp, "wb") as fo: shutil.copyfileobj(fi, fo, 4 << 20)
-                os.replace(tmp, d); st = os.stat(s); os.utime(d, (st.st_atime, st.st_mtime)); fixed += 1
+                os.replace(tmp, d); st = os.stat(s); os.utime(d, (st.st_atime, st.st_mtime))
+                if same(s, d, ss, True): fixed += 1
+                else: say("STILL DIFFERS after re-copy (whole file compared): %s" % rel)
     except Exception as e:
         say("ERROR %s: %s" % (rel, e)); bad.append(rel)
     if i % 500 == 0 or i == len(files):
