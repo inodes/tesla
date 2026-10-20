@@ -66,6 +66,7 @@ if [ "$NOINV" -eq 0 ]; then
   [ -n "$INV" ] || die "no inventory log in ~/Downloads: run inventory_jowua.py first (nothing was erased)"
   [ -n "$(find "$INV" -mtime -3 2>/dev/null)" ] || die "the newest inventory log is older than 3 days ($INV): run inventory_jowua.py again"
   grep -q "RESULT: every footage file has a verified copy elsewhere" "$INV" || die "the inventory does not say every file is safe ($INV): nothing was erased"
+  MAN=$(ls -t "$HOME_DIR"/Downloads/jowua-manifest-*.json 2>/dev/null | head -1); [ -n "$MAN" ] || die "no manifest in ~/Downloads (inventory_jowua.py writes it): nothing was erased"
   say "Step 1/5: inventory $INV says every footage file has a verified copy elsewhere"
 else say "Step 1/5: inventory check skipped (--no-inventory-check)"; fi
 
@@ -84,7 +85,8 @@ PART="${DISK}s1"; MP=$(diskutil info "$PART" | sed -n 's|^ *Mount Point: *||p' |
 [ -n "$MP" ] && [ -d "$MP" ] || die "the new volume did not mount ($PART)"
 say "  new volume $PART mounted at $MP  (UUID $UUID)"
 mkdir -p "$MP/TeslaCam" && { [ "$MARKER" = none ] || mkdir -p "$MP/$MARKER"; }; touch "$MP/.metadata_never_index"
-say "Step 4/5: created TeslaCam/${MARKER:+ and $MARKER/}"
+say "Step 4/5: created TeslaCam/${MARKER:+ and $MARKER/}; checking the new file system"
+OUT=$(capture 300 diskutil verifyVolume "$PART"); VRC=$?; echo "$OUT" | tail -3; [ "$VRC" -eq 0 ] && say "  file system check: OK" || { say "  file system check FAILED (status $VRC)"; }
 
 # ---- 3. surface test
 STATUS=0
@@ -108,11 +110,12 @@ if [ "$TEST" = none ]; then say "Step 5/5: surface test skipped"; else
     [ $((i % 50)) -eq 0 ] && say "  checked $i GiB, $BAD bad, $SLOW slow ($(( i * 1073741824 / ($(date +%s) - R0 + 1) / 1000000 )) MB/s)"
   done
   rm -rf "$D" "$PAT"; sync
+  OUT=$(capture 300 diskutil verifyVolume "$PART"); VRC2=$?; echo "$OUT" | tail -2; [ "$VRC2" -eq 0 ] && say "  file system check after the test: OK" || { say "  file system check after the test FAILED (status $VRC2)"; STATUS=2; }
   say "surface test: $N GiB written; $BAD bad files; $SLOW slow reads"
   [ "$BAD" -eq 0 ] || STATUS=2
 fi
 say "free space now: $(df -h "$MP" | awk 'NR==2 {print $4}') of $(df -h "$MP" | awk 'NR==2 {print $2}')"
-if [ "$STATUS" -eq 0 ]; then say "RESULT: $DISK is a fresh exFAT drive named $LABEL at $MP, ready for the car. New volume UUID: $UUID (register it in the app). Log: $LOG"
+if [ "$STATUS" -eq 0 ]; then say "RESULT: $DISK is a fresh exFAT drive named $LABEL at $MP, ready for the car. New volume UUID: $UUID (register it in the app). Next: ./restore_drive.py --dest \"$MP\"   Log: $LOG"
 else say "RESULT: erased, but the surface test found problems: do not trust this drive for footage. Log: $LOG"; fi
 return "$STATUS"
 }
