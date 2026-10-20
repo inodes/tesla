@@ -50,7 +50,7 @@ def _show():
     if not ds:
         print("No TeslaCam drive is connected.")
     else:
-        print("%-10s %-8s %-8s %8s  %-38s %s" % ("Name", "For", "Key", "Size", "Volume ID", "Mounted as"))
+        print("%-10s %-8s %-8s %8s  %-38s %s" % ("Name", "For", "Key", "Size", "Volume ID", "Connected at (changes each time)"))
         for d in ds:
             note = "" if d["known"] else ("   <- not identified yet" if d["role"] == "?" else "   (from its marker folder; no volume ID to go on)")
             print("%-10s %-8s %-8s %6s GB  %-38s %s%s" % (d["label"] or "?", d["function"] or "?", d["role"], d["size_gb"] or "?", d["id"] or "-", d["path"], note))
@@ -61,8 +61,8 @@ def _show():
 
 def _ask(d):
     print("\nA TeslaCam drive that has not been seen before:")
-    print("  mounted as %s, %s GB, volume ID %s" % (d["path"], d["size_gb"] or "?", d["id"]))
-    print("  What is it for?   1 = car (goes in the car and records)   2 = archive (the master copy)   3 = copy (any other backup or transfer drive)")
+    print("  connected at %s (this changes each time), %s GB, volume ID %s (this is what identifies it)" % (d["path"], d["size_gb"] or "?", d["id"]))
+    print("  What is it for?   1 = car (goes in the car and records)   2 = archive (the master copy)   3 = copy (any other backup or transfer drive)\n  A car drive and a copy drive are treated the same, so a drive can be used either way; change it later with --set")
     fn = {"1": "car", "2": "archive", "3": "copy", "car": "car", "archive": "archive", "copy": "copy"}.get(input("  1, 2 or 3 (Enter to skip): ").strip().lower())
     if not fn:
         print("  Skipped. It stays unidentified and is not read.")
