@@ -95,16 +95,18 @@ def main():
     print("Reading %s minute(s), newest first. Ctrl-C stops; what is read is kept." % _n(total))
     store, _ = tc._tl("A")
 
+    from progress import Bar
+    bar = Bar(total, "Telemetry")
+
     def prog(n, stamp):
-        if n % 25 == 0 or n == total:
-            print("  %s of %s  (%s)" % (_n(n), _n(total), stamp.replace("_", " ")))
+        bar.update(n, stamp.replace("_", " "))
     try:
         n = TS.read(store, todo, data, progress=prog, limit=a.limit)
     except KeyboardInterrupt:
         store.flush()
         print("Stopped. What was read is kept.")
         return 130
-    print("Read %s minute(s)." % _n(n))
+    bar.done("Read %s minute(s)." % _n(n))
     return 0
 
 

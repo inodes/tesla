@@ -77,6 +77,7 @@ def main():
         print("The Archive is not connected: only the kept stills are used.")
     only = set(a.only.split(",")) if a.only else None
     t_start, done = time.time(), 0
+    jobs = []
     for sj in sorted(glob.glob(os.path.join(data, "drives", "deepdive", "*", "*", "drive_summary.json")), reverse=True):
         folder = os.path.dirname(sj)
         stamp = os.path.basename(folder)
@@ -87,17 +88,24 @@ def main():
         idx = os.path.join(folder, "snapshots", "index.json")
         if not a.force and os.path.exists(idx) and os.path.getmtime(idx) > os.path.getmtime(sj):
             continue
+        jobs.append(stamp)
+    from progress import Bar
+    bar = Bar(len(jobs), "Snapshots")
+    for i, stamp in enumerate(jobs):
         if time.time() - t_start > a.budget:
-            print("budget reached - run again to continue")
+            bar.note("budget reached - run again to continue")
             break
+        bar.update(i, stamp)
         try:
-            r = SN.build(data, stamp, tc, front, stills, stop=lambda: time.time() - t_start > a.budget)
+            r = SN.build(data, stamp, tc, front, stills)
         except Exception as e:                                  # one bad drive must not stop the rest
-            print("  %s: %s: %s" % (stamp, type(e).__name__, e))
+            bar.note("  %s: %s: %s" % (stamp, type(e).__name__, e))
             continue
-        done += 1 if r.get("done", True) else 0
-        print("  %s: %d snapshot(s), %d event(s)%s" % (stamp, r["n"], r["events"], " - " + r["note"] if r["note"] else ""))
-    print("%d drive(s) done" % done)
+        done += 1
+        if r["note"]:
+            bar.note("  %s: %s" % (stamp, r["note"]))
+    bar.update(len(jobs), "")
+    bar.done("%d drive(s) done" % done)
     return 0
 
 

@@ -1282,7 +1282,7 @@ def _backfill_drive_deepdive(limit, pace_seconds, since_days, tessie_dir):
 
     fetched, skipped_in_progress, already_had, failed = 0, 0, 0, 0
     total_candidates = 0
-
+    todo = []
     for d in drives:
         if since_dt and d["start_dt"] < since_dt:
             continue
@@ -1293,27 +1293,32 @@ def _backfill_drive_deepdive(limit, pace_seconds, since_days, tessie_dir):
         if analyzer._drive_is_in_progress(d):
             skipped_in_progress += 1
             continue
-        if limit is not None and fetched >= limit:
+        if limit is not None and len(todo) >= limit:
             break
+        todo.append(d)
 
-        label = f"{d['start_dt'].strftime('%Y-%m-%d %H:%M')} -> {d['end_dt'].strftime('%H:%M')} ({d['dist_km']:.1f} km)"
-        print(f"   [{fetched + failed + 1}] {label}")
-        path = analyzer.fetch_drive_deepdive_from_api(d)
-        if path:
-            fetched += 1
- # Keep detailed_drives in sync so match_detailed_drive() doesn't
- # re-fetch the same drive later in this same run - parse just
- # the ONE new file and append it rather than re-running the
- # full load_detailed_drives() rescan after every fetch, which
- # made each successive fetch progressively slower (O(n^2) over
- # a 1000+-drive run) when first tried this way.
-            parsed = analyzer.parse_detailed_drive_csv(path)
-            if parsed:
-                analyzer.detailed_drives.append(parsed)
-        else:
-            failed += 1
-        if pace_seconds:
-            time.sleep(pace_seconds)
+    if todo:
+        from lib.progress import Bar
+        bar = Bar(len(todo), "   Drive telemetry")
+        analyzer.quiet_fetch = True
+        for i, d in enumerate(todo, 1):
+            label = f"{d['start_dt'].strftime('%Y-%m-%d %H:%M')} -> {d['end_dt'].strftime('%H:%M')} ({d['dist_km']:.1f} km)"
+            bar.update(i - 1, label)
+            path = analyzer.fetch_drive_deepdive_from_api(d)
+            if path:
+                fetched += 1
+                # Keep detailed_drives in sync so match_detailed_drive() doesn't re-fetch the same drive later in this run - parse just
+                # the ONE new file and append it rather than re-running the full load_detailed_drives() rescan after every fetch
+                parsed = analyzer.parse_detailed_drive_csv(path)
+                if parsed:
+                    analyzer.detailed_drives.append(parsed)
+            else:
+                failed += 1
+                bar.note(f"   could not fetch the telemetry of {label}")
+            if pace_seconds:
+                time.sleep(pace_seconds)
+        bar.update(len(todo), "")
+        bar.done()
 
     since_note = f" starting {since_dt.date()}" if since_dt else ""
     print(f"   Checked {len(drives)} total drive(s) in drives_master.csv{since_note}.")

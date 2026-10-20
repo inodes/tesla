@@ -67,6 +67,7 @@ import app_config  # noqa: E402
 import drive_roles as DR  # noqa: E402
 import teslacam_ledger as TLG  # noqa: E402
 import teslacam_sync as SY  # noqa: E402
+from progress import Bar  # noqa: E402
 
 
 def _n(x):
@@ -75,16 +76,6 @@ def _n(x):
 
 def _gb(b):
     return "%.1f GB" % (b / 1024 ** 3)
-
-
-def _bar(n, total, t0, tail=""):
-    el = max(time.time() - t0, 1e-6)
-    rate = n / el
-    left = (total - n) / rate if rate else 0
-    w = 24
-    fill = int(w * n / total) if total else w
-    eta = "%dh%02dm" % (left // 3600, left % 3600 // 60) if left >= 3600 else "%dm%02ds" % (left // 60, left % 60)
-    return "[%s%s] %3d%%  %s of %s  %.1f/s  %s left  %s" % ("#" * fill, "-" * (w - fill), 100 * n // max(total, 1), _n(n), _n(total), rate, eta, tail)
 
 
 def main():
@@ -127,15 +118,6 @@ def main():
     if not ST.have_ffmpeg():
         print("ffmpeg is not installed.")
         return 1
-    tty = sys.stdout.isatty()
-
-    def line(s, end=False):
-        if tty:
-            sys.stdout.write("\r" + s + "\033[K" + ("\n" if end else ""))
-            sys.stdout.flush()
-        elif end:
-            print(s)
-
     # 1. file log
     if a.run:
         print("1. File log")
@@ -166,11 +148,14 @@ def main():
     total = min(len(todo), a.limit) if a.limit else len(todo)
     if total:
         print("Taking %s clip(s), newest first. Ctrl-C stops; what is kept stays." % _n(total))
+        bar = Bar(total, "   Clips")
         try:
-            tel_n, still_n = SY.run(pl, data, a.workers, progress=lambda n, tot, stamp: line(_bar(n, tot, t0, stamp.replace("_", " ")), n == tot), limit=a.limit)
+            tel_n, still_n = SY.run(pl, data, a.workers, progress=lambda n, tot, stamp: bar.update(n, stamp.replace("_", " ")), limit=a.limit)
         except KeyboardInterrupt:
-            print("\nStopped. What was kept stays.")
+            bar.note("")
+            print("Stopped. What was kept stays.")
             return 130
+        bar.done()
         print("   telemetry for %s minute(s), stills for %s clip(s)." % (_n(tel_n), _n(still_n)))
     # 3. snapshots
     if snaps:
@@ -181,20 +166,24 @@ def main():
         t1 = time.time()
         print("3. Snapshots for %s drive(s)" % _n(len(snaps)))
         done = 0
+        sbar = Bar(len(snaps), "   Snapshots")
         try:
-            for i, stamp in enumerate(snaps, 1):
+            for i, stamp in enumerate(snaps):
                 if time.time() - t1 > a.budget:
-                    print("\n   budget reached - run again to continue")
+                    sbar.note("   budget reached - run again to continue")
                     break
+                sbar.update(i, stamp)
                 try:
                     r = SN.build(data, stamp, tc, front, pl["stills"])
                 except Exception as e:                      # one bad drive must not stop the rest
-                    line("   %s: %s: %s" % (stamp, type(e).__name__, e), True)
+                    sbar.note("   %s: %s: %s" % (stamp, type(e).__name__, e))
                     continue
                 done += 1
-                line(_bar(i, len(snaps), t1, "%s (%d images)" % (stamp, r["n"])), i == len(snaps))
+            sbar.update(len(snaps), "")
+            sbar.done()
         except KeyboardInterrupt:
-            print("\nStopped. What was kept stays.")
+            sbar.note("")
+            print("Stopped. What was kept stays.")
             return 130
         print("   %s drive(s) done." % _n(done))
     # 4. report
@@ -237,7 +226,9 @@ def main():
                 print("   Not deleted.")
                 continue
             t2 = time.time()
-            nf, fb, errs = PG.delete(pl, progress=lambda n, tot, stamp: line(_bar(n, tot, t2, stamp.replace("_", " ")), n == tot))
+            dbar = Bar(len(pl["items"]), "   Deleting")
+            nf, fb, errs = PG.delete(pl, progress=lambda n, tot, stamp: dbar.update(n, stamp.replace("_", " ")))
+            dbar.done()
             print("   %s file(s) deleted, %s freed, %s error(s)." % (_n(nf), _gb(fb), _n(len(errs))))
             for e in errs[:5]:
                 print("     " + e)
