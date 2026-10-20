@@ -109,11 +109,11 @@ while kill -0 "$DDPID" 2>/dev/null; do
   CUR=$(stat -f %z "$IMG" 2>/dev/null || echo 0); NOW=$(date +%s); EL=$(( NOW - BEGIN )); [ "$EL" -lt 1 ] && EL=1
   RATE=$(( CUR / EL / 1048576 )); PCT=$(( CUR * 100 / SIZE ))
   if [ "$RATE" -gt 0 ]; then LEFT=$(( (SIZE - CUR) / 1048576 / RATE / 60 )); else LEFT="?"; fi
-  printf "  %3d%%  %d GiB  %d MB/s  %s min left  %d read error(s) so far\n" "$PCT" $(( CUR / 1073741824 )) "$RATE" "$LEFT" "$(grep -ci 'error' "$DDLOG")"
+  printf "  %3d%%  %d GiB  %d MB/s  %s min left  %d read error(s) so far\n" "$PCT" $(( CUR / 1073741824 )) "$RATE" "$LEFT" "$(grep -c '^dd:' "$DDLOG")"
 done
 wait "$DDPID"; RC=$?
 trap - INT TERM
-ERRS=$(grep -ci 'error' "$DDLOG")
+ERRS=$(grep -c '^dd:' "$DDLOG")
 echo "--- dd output ($DDLOG) ---"; cat "$DDLOG"; echo "---"
 SZ=$(stat -f %z "$IMG" 2>/dev/null || echo 0)
 say "dd finished with status $RC after $(( ($(date +%s) - BEGIN) / 60 )) min; $ERRS read error line(s); image $SZ bytes (disk $SIZE)"
