@@ -49,6 +49,7 @@ import app_teslacam  # noqa: E402
 import drive_roles as DR  # noqa: E402
 import drive_snapshots as SN  # noqa: E402
 import teslacam_stills as ST  # noqa: E402
+import teslacam_sync as SY  # noqa: E402
 
 
 def main():
@@ -85,8 +86,7 @@ def main():
             continue
         if a.since and stamp[:10] < a.since:
             continue
-        idx = os.path.join(folder, "snapshots", "index.json")
-        if not a.force and os.path.exists(idx) and os.path.getmtime(idx) > os.path.getmtime(sj):
+        if not a.force and not SY.snapshots_stale(folder):
             continue
         jobs.append(stamp)
     from progress import Bar

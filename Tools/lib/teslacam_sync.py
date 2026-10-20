@@ -93,6 +93,16 @@ def run(pl, data, workers=None, stop=None, progress=None, limit=None):
     return tel_n, still_n
 
 
+def snapshots_stale(folder):
+    """True when a drive folder has no snapshots yet, or its telemetry file (Tessie's samples) is newer than them. Rebuilding the drive page does not
+    count: it rewrites drive_summary.json with the same content."""
+    idx = os.path.join(folder, "snapshots", "index.json")
+    if not os.path.exists(idx):
+        return True
+    src = glob.glob(os.path.join(folder, "drive_deepdive_*.csv")) or [os.path.join(folder, "drive_summary.json")]
+    return os.path.getmtime(idx) < max(os.path.getmtime(f) for f in src if os.path.exists(f))
+
+
 def pending_snapshots(data, since=None, only=None, force=False):
     """Drive stamps (newest first) whose snapshots/ are missing or older than the drive summary."""
     out = []
@@ -103,8 +113,7 @@ def pending_snapshots(data, since=None, only=None, force=False):
             continue
         if since and stamp[:10] < since:
             continue
-        idx = os.path.join(folder, "snapshots", "index.json")
-        if not force and os.path.exists(idx) and os.path.getmtime(idx) > os.path.getmtime(sj):
+        if not force and not snapshots_stale(folder):
             continue
         out.append(stamp)
     return out
