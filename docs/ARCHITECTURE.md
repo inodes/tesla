@@ -101,7 +101,23 @@ They meet only through the coverage record: `sync_camera` deletes footage only w
 - Tesla's own files (camera footage and its metadata) are a source whenever a drive holding them is found.
 - **Backbone.** The first configured provider is the backbone: it says which drives and charges exist and gives the complete timeline, and the camera is an enrichment on top (video wins field by field where it covers, see section 3). With no provider configured the camera is the backbone, and a drive exists only where footage does. Which source is backbone is worked out from `config.json` every run, so adding a provider later changes it without any migration.
 - A provider is a plug-in that says which things it can supply (drives, charges, idles, battery...) and how complete it is. That Tessie happens to be the only provider today is a fact about this installation, not about the design; the same slot takes TeslaFi or any other.
-- Several providers at once are stored separately and combined in the view like any other overlap (section 3a). Their priority is the order they appear in `config.json` (open decision: confirm that is enough).
+- Several sources at once are all pulled in, stored separately and combined in the view (section 3a). There is no source ranking and no priority order: when two sources say different things, the question is what *kind of information* it is (next section).
+
+**When sources clash: decided by the kind of information.** Sources are not ranked. Each field of a thing has its own rule saying which source is more reliable for that kind of information, and under what condition. A secondary source can win a field. First draft for drives (to be corrected):
+
+| Information | Wins | Condition / note |
+|---|---|---|
+| Position (GPS track) | camera | per-second, follows the road; only when the car's clock is verified (clock learned from GPS against the other source's route); otherwise the provider's points |
+| Speed, accelerator, brake, steering, indicator, self-driving state | camera | only the camera has them; where it covers |
+| Which drives exist, start and end, whole-drive totals | the provider (e.g. Tessie) | records whole drives end to end; the camera has only what was recorded |
+| Distance and odometer | the provider | the camera's distance is a lower bound |
+| Energy, battery level, range, temperatures, elevation | the provider | the camera has none of these |
+| Time zone | worked out from GPS | one place (`lib/timezones.py`), never taken from a source's label |
+| Place names | our own places, chargers and Supercharger names | never from a source (section 3b naming order) |
+
+For charges the same idea: the car-side provider (e.g. Tessie) for battery energy and level, the charger's own record (e.g. Evnex) for energy delivered and session times, the Supercharging invoice for billed energy, price and fees; each answers its own question (section 3a).
+
+A clash beyond tolerance is not hidden: both values are kept, the one chosen by the rule is used, and the record notes the disagreement and its size, so a wrong clock or a bad GPS shows up instead of silently winning.
 
 ## 4. Layers
 
