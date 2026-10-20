@@ -163,3 +163,18 @@ Before any domain is restructured: capture reference results from the real data 
 - Package names and folder layout (section 6).
 - Domain order after the core (section 9).
 - Whether to run one cloud agent per domain once this is agreed.
+
+## 11. Drives domain: what is in the code today and the proposed split
+
+Findings (read-only, 2026-10-20). `Tools/analyse_drives.py` is 6,607 lines and is both a command and the library the rest of the code imports: `DriveAnalyzer` is used by `sync_api_tessie` (backfill and consolidation), `analyse_battery_health`, `analyse_car_efficiency`, `lib/ev_efficiency` and `sync_fuel_history`; `is_home_place` and `haversine_distance_m` by `lib/session_cost`; the footage functions by `drive_actions` (the app's footage queue). It holds three different jobs:
+
+| Part | Size | What it is | Proposed home |
+|---|---|---|---|
+| Drive logic: `DriveAnalyzer` (consolidate_drives, detailed-drive load and match, segments, rolling efficiency, deepdive fetch, place resolve) and its helpers | about 2,700 lines | the consolidation that works today | `lib/drives/` as cohesive modules, code moved verbatim, no logic change; reference results guard it |
+| Terminal browsing: day and month menus, timeline, drill-downs, footage listing and tables | about 1,700 lines | an interactive text version of what the app now shows | retire once confirmed the app covers it |
+| Keeping footage: catalog, tombstones, make room, purge, copy clips, flag and unflag, home-parked purge, package review | about 2,000 lines | the older camera-storage logic; overlaps `sync_dashcam.sh` (2,534 lines) and the new `lib/teslacam_*` (ledger, deletable, purge, drive registry) | the camera thing (`sync_camera`), built on the new libraries; the app's footage queue moves onto it, then the old code retires |
+| Entry point: `main`, `export_all_deepdives` | about 300 lines | the command | thin `sync_drives` / `analyse_drives` wrappers |
+
+There are at least four separate place lookups today (`DriveAnalyzer.resolve_place`, `drive_report.place_name`, `app_places.label`, and `places_manager`). They are not known to agree; the single resolver (section 3b naming order) replaces them only after the differences are listed and agreed, because that one changes output.
+
+Same pattern elsewhere (to be reviewed the same way): `analyse_charging.py` (7,341 lines, imported by the app's charge book and the cost reports), `places_manager.py` (3,785, imported by the app's places code and the charger finder), `charger_find.py` and `find_tesla_chargers.py` (about 7,000 together), `dashcam_flip_review.py` (612, imported by four scripts).
