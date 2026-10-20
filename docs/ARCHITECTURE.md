@@ -10,6 +10,7 @@ Status: DRAFT for Glenn to mark up. Nothing here is built. Companion to `COMMAND
 4. **Work is stored and not repeated.** Every processing step records what it has done and at which version; a later run skips it unless forced.
 5. **Nothing is deleted until its replacement reproduces today's results** (reference results, section 8).
 6. **A new top-level command needs agreement.** New work goes into a library and an existing task.
+7. **Sources overlap and disagree; never overwrite one with another.** Each source's records are kept as they came. What the app shows is a reconciled view built from them (section 3a), with the source visible and unmatched records shown as unmatched.
 
 ## 2. The line between core and providers
 
@@ -40,6 +41,22 @@ Charging and cost have no core source: the video carries no battery or charge da
 | Footage coverage, stills, events | yes | - | always core |
 
 Rules: every field remembers its source; where both have a value, a per-field rule decides (proposed: Tessie wins for distance, times and energy; video wins for anything second-by-second); a drive that exists only in Tessie (history from before the footage began) stays a provider-only record; a column no source supplies is simply empty, and every consumer must cope with that.
+
+## 3a. Overlapping data: observations, not overwrites
+
+Two sources describing the same thing rarely describe it the same way. Merging them into one row hides that, double counts, and breaks when one side is partial. So each source keeps its own records untouched, and a separate, re-runnable, versioned **reconcile** step links them into the thing the user sees, with a match rule and a confidence.
+
+**Drives.** Tessie records whole drives, start to finish, by its own detection. The video records only what the car recorded: it may begin or end mid-drive (recording started late, a clip missing, the USB full, Recent clips overwritten), and have gaps. A video "drive" is therefore a **recording segment**, not a drive.
+- With Tessie: the drive is Tessie's; video segments attach to it as coverage (footage %, first and last covered second). One Tessie drive can have several segments; one segment can span two Tessie drives (a short re-park between them).
+- Video only: drives are inferred from segments and gaps and **labelled partial** (may begin or end mid-drive, with the covered span shown). Their distance and times are lower bounds, never treated as a whole drive's totals, and not summed with complete drives without saying so.
+
+**Charging.** The same plug-in is recorded three different ways, and none is "the" truth:
+- Tessie (car side): state of charge start and end, energy added to the battery, location.
+- Evnex (charger side): energy delivered at the wall (more than the battery got, because of losses), session times from plug-in, not from charging.
+- Tesla Supercharging: the billed energy, price, idle fees and GST.
+Each is stored as an **observation of a charge event**; the reconcile step links observations that overlap in time and place into one event. Reports say which source answers which question: cost comes from the biller (Evnex/AGL/Tesla invoice), energy into the battery from the car, and the difference is the loss. An observation with no partner is shown as unmatched, never merged on a guess.
+
+**What this guards against.** Double counting (the same kWh from two sources), partial data presented as whole, one source silently overwriting another, and a match that is wrong with no way to see why. Each reconciled item keeps the list of observations behind it.
 
 ## 4. Layers
 
@@ -81,7 +98,7 @@ Before any domain is restructured: capture reference results from the real data 
 
 ## 10. Open decisions
 
-- Per-field merge rule when video and Tessie disagree (section 3).
+- Per-field merge rule when video and Tessie disagree (section 3), and the match rules and confidence for drives and charge events (section 3a).
 - Whether `drives_master.csv` keeps its name and columns, or becomes a store of per-day JSON with an export.
 - Package names and folder layout (section 6).
 - Domain order after the core (section 9).
