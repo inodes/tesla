@@ -71,11 +71,19 @@ def print_role(role, r, show):
             extra = ""
             print("  %-*s %8s %10s   %s%s to %s: %s" % (w, label, format(b["minutes"], ","), _gb(b["bytes"]), b["first"], "" if b["first"] == b["last"] else "", b["last"], todo + extra))
     else:
-        print("  %-52s %8s" % ("Safe to delete (the Archive has the same files)", format(r["copy_on_archive"], ",")))
-        print("  %-52s %8s" % ("Not on the Archive yet (import first)", format(r["not_on_archive"], ",")))
-        if show and r["examples"].get("not_on_archive"):
-            ex = sorted(r["examples"]["not_on_archive"], reverse=True)[:show]
-            print("  newest not on the Archive: " + ", ".join(ex))
+        w = 46
+        days = sorted(r["only_days"])
+        print("  %-*s %8s %10s" % (w, "", "minutes", "size"))
+        print("  %-*s %8s %10s" % (w, "Safe to delete (the Archive has the same)", format(r["copy_on_archive"], ","), _gb(r["copy_bytes"])))
+        print("  %-*s %8s %10s   %s" % (w, "Only on %s - import to the Archive first" % name, format(r["not_on_archive"], ","), _gb(r["only_bytes"]),
+                                       ("%s to %s" % (days[0], days[-1]) if len(days) > 1 else days[0]) if days else ""))
+        if show and days:
+            print()
+            print("  Only on %s, by day (newest first):" % name)
+            for d in sorted(days, reverse=True)[:show]:
+                print("    %s %7s min %10s" % (d, format(r["only_days"][d]["minutes"], ","), _gb(r["only_days"][d]["bytes"])))
+            if len(days) > show:
+                print("    ... and %d earlier day(s)" % (len(days) - show))
     print()
 
 
