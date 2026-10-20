@@ -127,6 +127,7 @@ def report(data, roots, detail=False):
     out = {}
     for role, (files, ok) in listed.items():
         r = dict(files=len(files), minutes=0, bytes=sum(f["size"] for f in files), ready=0, ready_bytes=0, ready_kinds={}, blocked={}, not_on_archive=0, copy_on_archive=0,
+                 copy_bytes=0, only_bytes=0, only_days={},
                  examples={}, listed_ok=ok, detail=[], drives_without_snapshots=sum(1 for w in windows if not w[2]))
         by_min = {}
         for f in files:
@@ -137,7 +138,13 @@ def report(data, roots, detail=False):
             if role != "A":                                  # a copy elsewhere: safe once the Archive has every file of the minute, same size
                 same = all(arch.get((f["src"], f["ev"], f["stamp"], f["cam"])) == f["size"] for f in fs)
                 r["copy_on_archive" if same else "not_on_archive"] += 1
-                if not same:
+                if same:
+                    r["copy_bytes"] += size
+                else:
+                    r["only_bytes"] += size
+                    dd = r["only_days"].setdefault(stamp[:10], dict(minutes=0, bytes=0))
+                    dd["minutes"] += 1
+                    dd["bytes"] += size
                     r["examples"].setdefault("not_on_archive", []).append(stamp)
                 _add(r, detail, roots[role], src, stamp, fs, same)
                 continue
