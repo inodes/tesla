@@ -17,6 +17,7 @@ import datetime
 import json
 import glob
 import os
+import time
 
 import app_config
 import teslacam_stills as ST
@@ -135,3 +136,73 @@ def pending_snapshots(data, since=None, only=None, force=False):
             continue
         out.append(stamp)
     return out
+
+_W = {}
+
+
+def _snap_init(data, front, width, quality):
+    """Worker process: its own view of the telemetry store and stills (nothing is shared between workers but the files)."""
+    import app_teslacam
+    _W["data"], _W["front"] = data, front
+    _W["tc"] = app_teslacam.TeslaCam(data, None)
+    _W["stills"] = ST.Stills(data, width, quality)
+
+
+def _snap_one(stamp):
+    import drive_snapshots as SN
+    t = time.time()
+    try:
+        r = SN.build(_W["data"], stamp, _W["tc"], _W["front"], _W["stills"])
+        return stamp, r, None, time.time() - t
+    except Exception as e:                                  # one bad drive must not stop the rest
+        return stamp, None, "%s: %s" % (type(e).__name__, e), time.time() - t
+
+
+def run_snapshots(data, stamps, front, workers=None, stop=None, progress=None, note=None, budget=None):
+    """Builds the snapshots of these drives (newest first), `workers` at a time. progress(n, total, stamp); note(text) for a drive that failed or had
+    nothing to show. Returns dict(done, seconds, video_s, busy_s): the drives finished, wall time, and the seconds spent reading video / building
+    (summed over workers) so a slow run shows where its time went."""
+    w = max(1, int(workers or app_config.get("stills.workers", 3)))
+    st = time.time()
+    done, video_s, busy_s, n = 0, 0.0, 0.0, 0
+    ex = cf.ProcessPoolExecutor(w, initializer=_snap_init, initargs=(data, front, app_config.get("stills.width", 400), app_config.get("stills.quality", 6)))
+    try:
+        win, it = collections.deque(), iter(stamps)
+        stopped = [False]
+
+        def fill():
+            while len(win) < w * 2 and not stopped[0]:
+                if budget is not None and time.time() - st > budget:
+                    stopped[0] = True
+                    if note:
+                        note("budget reached - run again to continue")
+                    return
+                s_ = next(it, None)
+                if s_ is None:
+                    return
+                win.append((s_, ex.submit(_snap_one, s_)))
+        fill()
+        while win:
+            s_, fut = win.popleft()
+            if stop and stop():
+                fut.cancel()
+                for _s, f in win:
+                    f.cancel()
+                break
+            stamp, r, err, secs = fut.result()
+            n += 1
+            busy_s += secs
+            if err:
+                if note:
+                    note("%s: %s" % (stamp, err))
+            else:
+                done += 1
+                video_s += r.get("video_s", 0.0)
+                if r.get("note") and note:
+                    note("%s: %s" % (stamp, r["note"]))
+            if progress:
+                progress(n, len(stamps), stamp)
+            fill()
+    finally:
+        ex.shutdown(wait=False, cancel_futures=True)
+    return dict(done=done, seconds=time.time() - st, video_s=video_s, busy_s=busy_s)

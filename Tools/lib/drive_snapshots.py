@@ -19,6 +19,7 @@ import json
 import os
 import re
 import subprocess
+import time
 import tempfile
 
 import app_config
@@ -80,15 +81,20 @@ def _still(stills, front, stamp, sec):
     return stills.get(stamp, sec) if stills.has(stamp) else None
 
 
+VIDEO_S = [0.0]                                             # seconds spent reading video in this process (build() reports the part used by one drive)
+
+
 def _hires(video, lo, n, px, quality):
     """{second in the clip: JPEG bytes} of seconds lo .. lo+n-1 of a front clip, `px` wide, cut from the full-size frames (for reading signs)."""
     out = {}
+    t_ = time.time()
     with tempfile.TemporaryDirectory() as tmp:
         subprocess.run(["ffmpeg", "-v", "error", "-ss", "%d" % lo, "-i", video, "-t", "%d" % n, "-vf", "fps=1,scale=%d:-2" % px, "-q:v", str(quality),
                         os.path.join(tmp, "f%03d.jpg")], stdin=subprocess.DEVNULL, capture_output=True, timeout=300)
         for k, f in enumerate(sorted(x for x in os.listdir(tmp) if x.endswith(".jpg"))):
             with open(os.path.join(tmp, f), "rb") as fh:
                 out[lo + k] = fh.read()
+    VIDEO_S[0] += time.time() - t_
     return out
 
 
@@ -103,6 +109,7 @@ def _write_index(out, stamp, every, items, index):
 
 def build(data_dir, stamp, tc, front, stills, stop=None):
     """Write the snapshots of one drive. Returns dict(n, events, note)."""
+    v0 = VIDEO_S[0]
     o = AR._opts()
     folder = DP.folder_for(os.path.join(data_dir, "drives", "deepdive"), stamp)
     with open(os.path.join(folder, "drive_summary.json"), encoding="utf-8") as fh:
@@ -216,4 +223,4 @@ def build(data_dir, stamp, tc, front, stills, stop=None):
         return dict(n=n_img[0], events=len(items), note="stopped - run again to finish", done=False)
     _write_index(out, stamp, every, items, index)               # also when there is nothing to show: the drive then counts as done until dashcam telemetry for its days arrives
     note = "" if clock is not None else "no dashcam telemetry on this drive's route"
-    return dict(n=n_img[0], events=len(items), note=note, done=True)
+    return dict(n=n_img[0], events=len(items), note=note, done=True, video_s=VIDEO_S[0] - v0)

@@ -25,6 +25,7 @@ OPTIONS
     --only STAMP[,..]    these drives, e.g. 2026-10-11_14-40_AEST
     --force              redo drives that already have snapshots
     --budget SECONDS     stop starting new drives after this long (run again to continue)
+    --workers N          drives built at once (default: app.stills.workers, 3)
     -h, --help           this text
 
 EXIT STATUS
@@ -60,6 +61,7 @@ def main():
     ap.add_argument("--only")
     ap.add_argument("--force", action="store_true")
     ap.add_argument("--budget", type=float, default=1e9)
+    ap.add_argument("--workers", type=int)
     a = ap.parse_args()
     if a.data_dir:
         data = os.path.abspath(os.path.expanduser(a.data_dir))
@@ -91,21 +93,9 @@ def main():
         jobs.append(stamp)
     from progress import Bar
     bar = Bar(len(jobs), "Snapshots")
-    for i, stamp in enumerate(jobs):
-        if time.time() - t_start > a.budget:
-            bar.note("budget reached - run again to continue")
-            break
-        bar.update(i, stamp)
-        try:
-            r = SN.build(data, stamp, tc, front, stills)
-        except Exception as e:                                  # one bad drive must not stop the rest
-            bar.note("  %s: %s: %s" % (stamp, type(e).__name__, e))
-            continue
-        done += 1
-        if r["note"]:
-            bar.note("  %s: %s" % (stamp, r["note"]))
+    r = SY.run_snapshots(data, jobs, front, workers=a.workers, budget=a.budget, note=bar.note, progress=lambda n, tot, st: bar.update(n, st))
     bar.update(len(jobs), "")
-    bar.done("%d drive(s) done" % done)
+    bar.done("%d drive(s) done in %d s; %d%% of the work was reading video" % (r["done"], r["seconds"], round(100.0 * r["video_s"] / r["busy_s"]) if r["busy_s"] else 0))
     return 0
 
 
