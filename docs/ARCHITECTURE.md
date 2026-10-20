@@ -92,6 +92,8 @@ The record is derived and kept in the data folder (one file per thing). It can b
 - **`sync_camera`** cares only about where footage is *kept*: which drive holds which files, copying to the right place, freeing space, and the registry of drives. It never opens a clip for its content.
 They meet only through the coverage record: `sync_camera` deletes footage only when the record says the drives side already has what it needs from that footage.
 
+**Filling in later.** A drive can be synced from Tessie alone and the camera files can arrive afterwards (a drive connected later, an old drive imported). Coverage then shows the camera source for that drive as a gap that can be filled when the source appears, and when it does, `sync_drives` fills in what was missing: telemetry, stills, snapshots, footage percentage, events. Everything that was derived from camera data (a drive page's footage figures, its snapshots) is marked out of date as soon as camera data for its days arrives, and redone; a drive that had nothing to show is not looked at again until then. The same holds for any thing and source pair: Tessie arriving after video, an invoice arriving after a charge.
+
 ## 4. Layers
 
 ```
