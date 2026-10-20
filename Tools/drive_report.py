@@ -666,6 +666,25 @@ def build_page(stamp, m, win, flips, recs, saved_ev, cov, clips_rel, folder, mwi
         v = f'<div style="margin-top:10px"><video controls preload="none" src="clips/{esc(s["mp4"])}"></video></div>' if s.get("mp4") else ""
         svh += f'<div class="card"><div><b>{esc(s["time"])}</b> · {esc(s["label"])} · {esc(s["place"])}</div>{v}</div>'
     covh = '<div class="card" id="foot"></div>' if cov else ""
+    snh = ""
+    try:
+        with open(os.path.join(folder, "snapshots", "index.json"), encoding="utf-8") as fh:
+            sn = json.load(fh)
+        tl = [x for x in sn["snapshots"] if x["group"] == "timeline"]
+        evs = {}
+        for x in sn["snapshots"]:
+            if x["group"] != "timeline":
+                evs.setdefault(x["group"], []).append(x)
+        snh = '<h2>Snapshots</h2><div class="card"><div class="sub">%d stills along the drive (one every %s s); %d events with a still every second (large, in snapshots/events/)</div>' % (len(tl), sn.get("every_s", 30), len(evs))
+        snh += '<div style="display:flex;flex-wrap:wrap;gap:4px;margin-top:8px">' + "".join(
+            '<a href="snapshots/%s" target="_blank" title="%s"><img loading="lazy" style="height:64px" src="snapshots/%s"></a>' % (esc(x["file"]), esc(x["local"]), esc(x["file"])) for x in tl) + "</div>"
+        for gid, lst in evs.items():
+            c = next((z for z in lst if z["file"].endswith("/+00.jpg")), lst[0])
+            snh += ('<div style="margin-top:10px"><b>%s</b> · %s · %s<div class="sub">%d stills, %s px wide</div><a href="snapshots/%s" target="_blank"><img loading="lazy" style="height:120px;margin-top:4px" src="snapshots/%s"></a></div>'
+                    % (esc(gid), esc(c["text"].split(" (")[0]), esc(c["local"]), len(lst), esc(c.get("px", "")), esc(c["file"]), esc(c["file"])))
+        snh += "</div>"
+    except (OSError, ValueError, KeyError):
+        pass
 
     title = f"{t0.strftime('%a %d %b')} {s_hm} {s_z} {frm} → {to}".replace("  ", " ")
     data['title'] = f"{frm} → {to}"
@@ -681,6 +700,7 @@ def build_page(stamp, m, win, flips, recs, saved_ev, cov, clips_rel, folder, mwi
 <div class="card" id="charts"></div></div>
 {covh}
 {('<h2>Saved clips</h2>'+svh) if svh else ''}
+{snh}
 <div class="sub">Generated {datetime.datetime.now().strftime('%Y-%m-%d %H:%M')} by drive_report.py from this folder's Tessie CSV{' and TeslaCam footage' if cov else ''}.</div>
 </div><div class="tip" id="tip"></div><script>const DATA={json.dumps(data, separators=(',', ':'))};{JS.replace('/*SC_JS*/', MU.sc_js())}{DC.JS}{FU.JS if cov else ''}</script></body></html>"""
 
