@@ -94,6 +94,8 @@ They meet only through the coverage record: `sync_camera` deletes footage only w
 
 **Filling in later.** A drive can be synced from Tessie alone and the camera files can arrive afterwards (a drive connected later, an old drive imported). Coverage then shows the camera source for that drive as a gap that can be filled when the source appears, and when it does, `sync_drives` fills in what was missing: telemetry, stills, snapshots, footage percentage, events. Everything that was derived from camera data (a drive page's footage figures, its snapshots) is marked out of date as soon as camera data for its days arrives, and redone; a drive that had nothing to show is not looked at again until then. The same holds for any thing and source pair: Tessie arriving after video, an invoice arriving after a charge.
 
+**A thing exists only if some source knows it.** With Tessie, the drives (and charges) are known from the start, so a missing camera source is a visible gap that can be filled later. Without Tessie, a drive does not exist until camera files for it do: nothing says what was driven, so there is nothing to report as missing, and the only gaps visible are inside the footage itself (a break between clips, a drive that starts or ends part way, marked partial, see section 3a). Gap reports are therefore always relative to what at least one connected or previously seen source has recorded, and never claim a complete picture of what happened.
+
 ## 4. Layers
 
 ```
