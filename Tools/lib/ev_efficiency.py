@@ -41,7 +41,7 @@ _TOOLS_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _TOOLS_DIR not in sys.path:
     sys.path.insert(0, _TOOLS_DIR)
 
-from analyse_drives import DriveAnalyzer  # noqa: E402
+from lib.drives.analyzer import DriveAnalyzer  # noqa: E402
 from analyse_car_efficiency import (  # noqa: E402
     grade_corrected_efficiency_kwh_per_100km,
     potential_energy_kwh,

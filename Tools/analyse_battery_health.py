@@ -66,7 +66,7 @@ import os
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from analyse_drives import DriveAnalyzer  # noqa: E402
+from lib.drives.analyzer import DriveAnalyzer  # noqa: E402
 from analyse_car_efficiency import load_battery_health_history  # noqa: E402
 
 # --- dataviz reference palette (light mode) - matches analyse_charge_curves.py

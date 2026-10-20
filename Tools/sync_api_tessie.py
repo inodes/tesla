@@ -1269,7 +1269,7 @@ def _since_cutoff(since_days):
 
 
 def _backfill_drive_deepdive(limit, pace_seconds, since_days, tessie_dir):
-    from analyse_drives import DriveAnalyzer  # noqa: E402 (deliberate - see backfill_deepdive_telemetry docstring)
+    from lib.drives.analyzer import DriveAnalyzer  # noqa: E402 (deliberate - see backfill_deepdive_telemetry docstring)
 
     print("   Looking for drives without deep-dive telemetry...")
     analyzer = DriveAnalyzer(tessie_dir=tessie_dir)
