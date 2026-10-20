@@ -61,6 +61,8 @@ Each is stored as an **observation of a charge event**; the view links observati
 
 **Today's consolidation is the baseline, not the thing being replaced.** The way drives, charges and footage are consolidated now works, and Glenn confirms it. Section 3a names and protects that behaviour; it does not redesign it. The reference results (section 8) are taken from the current consolidation first, and the new views must reproduce them exactly before anything changes.
 
+**Store facts, derive names.** A stored record holds what was measured: times (UTC), GPS, distances, readings. Place names are worked out from GPS and the current places list when shown, by one resolver, so renaming or adding a place corrects every past drive. Today `drive_summary.json` stores the names (`frm`, `to`) with no GPS, resolved once by a second copy of the place lookup in `drive_report.py`, and the app prefers that stored name over its own lookup. The fix is to store start/end GPS and the same-level facts only, and have the app and the drive pages call the one resolver in the places library. The same applies to every other stored name or label (and to `flips`, which is zero in every summary and is being renamed or dropped).
+
 **What this guards against.** Double counting (the same kWh from two sources), partial data presented as whole, one source silently overwriting another, and a match that is wrong with no way to see why. Each reconciled item keeps the list of observations behind it.
 
 ## 4. Layers
