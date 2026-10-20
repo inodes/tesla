@@ -96,7 +96,7 @@ def main():
         print("❌ No VIN found. Provide one via --vin or ensure Tessie/config.json has a \"vin\" key.")
         sys.exit(1)
 
-    print(f"\U0001f50e Testing Tessie API for VIN ...{vin[-6:]} (token not shown)\n")
+    print(f"\U0001f50e Testing Tessie API for VIN {'*' * max(len(vin) - 6, 0)}{vin[-6:]}, token {'*' * max(len(token) - 3, 0)}{token[-3:]}\n")
 
     since_ts = int(time.time()) - args.since_days * 86400
     any_ok = False

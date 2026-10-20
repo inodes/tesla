@@ -393,7 +393,7 @@ def main():
         print("❌ No VIN found. Provide one via --vin or ensure Tessie/config.json has a \"vin\" key.")
         sys.exit(1)
 
-    print(f"\U0001f50e Syncing Tessie API data for VIN ...{vin[-6:]} (token not shown)")
+    print(f"\U0001f50e Syncing Tessie API data for VIN {'*' * max(len(vin) - 6, 0)}{vin[-6:]}, token {'*' * max(len(token) - 3, 0)}{token[-3:]}")
     if args.dry_run:
         print("   (--dry-run: fetching and reporting only, writing nothing)")
     print()
