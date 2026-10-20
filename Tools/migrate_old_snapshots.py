@@ -184,8 +184,6 @@ def main():
         bycl[st].append((sec, cell))
     for st, items in bycl.items():
         dest = stills.path(st)
-        if not os.path.isfile(dest) and stills.has(st):         # already packed into its hour file: its stills are kept
-            continue
         os.makedirs(os.path.dirname(dest), exist_ok=True)
         with zipfile.ZipFile(dest, "a", zipfile.ZIP_STORED) as z:
             have = set(z.namelist())
