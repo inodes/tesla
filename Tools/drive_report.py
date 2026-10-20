@@ -923,8 +923,7 @@ def main():
                     foot.verified.append((datetime.datetime.strptime(j["start"], "%Y-%m-%d %H:%M:%S"), j["foot_off"]))
             except Exception:
                 pass
-    print(f"{len(master)} drives in master, {sum(len(v) for v in flips.values())} flips, {len(recs)} flips with footage, "
-          f"{len(foot.clips) if foot else 0} clips ({len(roots)} TeslaCam folder(s))", flush=True)
+    print(f"{len(master):,} drives, {len(foot.clips) if foot else 0:,} video clips on {len(roots)} TeslaCam drive(s)", flush=True)
     base_analysis = os.path.join(data, "drives", "analysis")
     only = set(x for x in a.only.split(",") if x)
     done, skipped, rows = 0, 0, []
