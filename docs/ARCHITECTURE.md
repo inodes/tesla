@@ -10,7 +10,7 @@ Status: DRAFT for Glenn to mark up. Nothing here is built. Companion to `COMMAND
 4. **Work is stored and not repeated.** Every processing step records what it has done and at which version; a later run skips it unless forced.
 5. **Nothing is deleted until its replacement reproduces today's results** (reference results, section 8).
 6. **A new top-level command needs agreement.** New work goes into a library and an existing task.
-7. **Sources overlap and disagree; never overwrite one with another.** Each source's records are kept as they came. What the app shows is a reconciled view built from them (section 3a), with the source visible and unmatched records shown as unmatched.
+7. **Store separately, consolidate in the view.** Each source's data is stored on its own and never changed by another source. Consolidation happens when something is viewed (a drive page, a report, a map), not in the stored data. Any cache of a consolidated result is disposable and rebuilt from the sources. Unmatched records show as unmatched, and the source of every value stays visible.
 
 ## 2. The line between core and providers
 
@@ -26,9 +26,9 @@ Status: DRAFT for Glenn to mark up. Nothing here is built. Companion to `COMMAND
 
 Charging and cost have no core source: the video carries no battery or charge data. Without a provider those features do not appear; the app shows what the files can give.
 
-## 3. The drive record: built from whatever is present
+## 3. The drive record: a view over whatever sources are present
 
-`drives_master.csv` (the name stays for now) is built from at least one source: video telemetry, Tessie, or both. For Glenn it is both; for most people it will be video only.
+There are at least one and up to two stored sources of drives: the video telemetry store (per-second readings of what was recorded) and Tessie's consolidated drive store (`drives_master.csv` and the per-drive samples). Neither is rewritten from the other. A drive as shown is a view over whichever are present. For Glenn that is both; for most people it will be video only.
 
 | Field | From video | From Tessie | Notes |
 |---|---|---|---|
@@ -40,13 +40,13 @@ Charging and cost have no core source: the video carries no battery or charge da
 | Address, saved place | OSM lookup (optional) | yes | |
 | Footage coverage, stills, events | yes | - | always core |
 
-Rules: every field remembers its source; where both have a value, a per-field rule decides (proposed: Tessie wins for distance, times and energy; video wins for anything second-by-second); a drive that exists only in Tessie (history from before the footage began) stays a provider-only record; a column no source supplies is simply empty, and every consumer must cope with that.
+Rule (it depends on what is asked, and matches how the app already combines them): video is more frequent and accurate, so wherever the footage covers an instant its per-second readings are used; Tessie is the more complete timeline, so it supplies the drive's boundaries, the stretches the video did not record, and everything the video cannot know (energy, battery, odometer). Every shown value remembers which source it came from. A drive that exists only in Tessie (history from before the footage began) stays a provider-only record; a column no source supplies is simply empty, and every consumer must cope with that.
 
 ## 3a. Overlapping data: observations, not overwrites
 
-Two sources describing the same thing rarely describe it the same way. Merging them into one row hides that, double counts, and breaks when one side is partial. So each source keeps its own records untouched, and a separate, re-runnable, versioned **reconcile** step links them into the thing the user sees, with a match rule and a confidence.
+Two sources describing the same thing rarely describe it the same way. Merging them into one row hides that, double counts, and breaks when one side is partial. So each source keeps its own records untouched, and the view links them into the thing the user sees, with a match rule and a confidence, each time it is asked for.
 
-**Drives.** Tessie records whole drives, start to finish, by its own detection. The video records only what the car recorded: it may begin or end mid-drive (recording started late, a clip missing, the USB full, Recent clips overwritten), and have gaps. A video "drive" is therefore a **recording segment**, not a drive.
+**Drives.** (Today's `drive_fuse` already does this at view time: Tessie's own points with the dashcam's per-second readings where they exist.) Tessie records whole drives, start to finish, by its own detection. The video records only what the car recorded: it may begin or end mid-drive (recording started late, a clip missing, the USB full, Recent clips overwritten), and have gaps. A video "drive" is therefore a **recording segment**, not a drive.
 - With Tessie: the drive is Tessie's; video segments attach to it as coverage (footage %, first and last covered second). One Tessie drive can have several segments; one segment can span two Tessie drives (a short re-park between them).
 - Video only: drives are inferred from segments and gaps and **labelled partial** (may begin or end mid-drive, with the covered span shown). Their distance and times are lower bounds, never treated as a whole drive's totals, and not summed with complete drives without saying so.
 
@@ -54,9 +54,9 @@ Two sources describing the same thing rarely describe it the same way. Merging t
 - Tessie (car side): state of charge start and end, energy added to the battery, location.
 - Evnex (charger side): energy delivered at the wall (more than the battery got, because of losses), session times from plug-in, not from charging.
 - Tesla Supercharging: the billed energy, price, idle fees and GST.
-Each is stored as an **observation of a charge event**; the reconcile step links observations that overlap in time and place into one event. Reports say which source answers which question: cost comes from the biller (Evnex/AGL/Tesla invoice), energy into the battery from the car, and the difference is the loss. An observation with no partner is shown as unmatched, never merged on a guess.
+Each is stored as an **observation of a charge event**; the view links observations that overlap in time and place into one event. Reports say which source answers which question: cost comes from the biller (Evnex/AGL/Tesla invoice), energy into the battery from the car, and the difference is the loss. An observation with no partner is shown as unmatched, never merged on a guess.
 
-**Today's consolidation is the baseline, not the thing being replaced.** The way drives, charges and footage are consolidated now works, and Glenn confirms it. Section 3a names and protects that behaviour; it does not redesign it. The reference results (section 8) are taken from the current consolidation first, and the reconcile step must reproduce them exactly before anything changes.
+**Today's consolidation is the baseline, not the thing being replaced.** The way drives, charges and footage are consolidated now works, and Glenn confirms it. Section 3a names and protects that behaviour; it does not redesign it. The reference results (section 8) are taken from the current consolidation first, and the new views must reproduce them exactly before anything changes.
 
 **What this guards against.** Double counting (the same kWh from two sources), partial data presented as whole, one source silently overwriting another, and a match that is wrong with no way to see why. Each reconciled item keeps the list of observations behind it.
 
@@ -100,8 +100,8 @@ Before any domain is restructured: capture reference results from the real data 
 
 ## 10. Open decisions
 
-- Per-field merge rule when video and Tessie disagree (section 3), and the match rules and confidence for drives and charge events (section 3a).
-- Whether `drives_master.csv` keeps its name and columns, or becomes a store of per-day JSON with an export.
+- Whether the per-instant rule in section 3 (video where it covers, Tessie elsewhere) is the full rule, and the match rules and confidence for drives and charge events (section 3a).
+- Whether `drives_master.csv` stays as Tessie's own store with its current name and columns (it is a source now, not the consolidated drive).
 - Package names and folder layout (section 6).
 - Domain order after the core (section 9).
 - Whether to run one cloud agent per domain once this is agreed.
