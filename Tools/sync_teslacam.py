@@ -111,7 +111,10 @@ def main():
         data = resolve_tessie_data_home()
     import clip_clock as CC
     CC.configure(data)
-    found = {r: p for p, r in DR.discover()}
+    found = {r: p for p, r in DR.discover() if r != "?"}
+    new = [d for d in DR.unidentified() if d["id"]]
+    if new:
+        print("%d connected TeslaCam drive(s) not identified yet and left alone - run ./manage_teslacam_drives.py --identify" % len(new))
     want = [r.strip().upper() for r in a.drive.split(",")] if a.drive else (list(found) if a.with_secondary else ["A"])
     for r in want:
         if r not in found:
