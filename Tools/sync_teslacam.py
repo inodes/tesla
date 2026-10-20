@@ -192,14 +192,9 @@ def main():
         import teslacam_deletable as TD
         print("4. Safe to delete")
         rep = TD.report(data, roots, detail=a.free is not None)
+        import check_teslacam_deletable as CK
         for role in sorted(rep, key=lambda r: "AJU".index(r) if r in "AJU" else 9):
-            r = rep[role]
-            if role == "A":
-                print("   %-8s %s minute(s): %s safe; missing: telemetry %s, stills %s, snapshots %s, drive not synced %s"
-                      % (DR.NAMES.get(role, role), _n(r["minutes"]), _n(r["ready"]), _n(r["no_telemetry"]), _n(r["no_stills"]), _n(r["no_snapshots"]), _n(r["not_synced"])))
-            else:
-                print("   %-8s %s minute(s): %s copied on the Archive (safe), %s not on the Archive (import first)"
-                      % (DR.NAMES.get(role, role), _n(r["minutes"]), _n(r["copy_on_archive"]), _n(r["not_on_archive"])))
+            CK.print_role(role, rep[role], 0)
     # 5. free space
     if a.free is not None and rep:
         import teslacam_purge as PG
