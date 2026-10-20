@@ -96,6 +96,13 @@ They meet only through the coverage record: `sync_camera` deletes footage only w
 
 **A thing exists only if some source knows it.** With Tessie, the drives (and charges) are known from the start, so a missing camera source is a visible gap that can be filled later. Without Tessie, a drive does not exist until camera files for it do: nothing says what was driven, so there is nothing to report as missing, and the only gaps visible are inside the footage itself (a break between clips, a drive that starts or ends part way, marked partial, see section 3a). Gap reports are therefore always relative to what at least one connected or previously seen source has recorded, and never claim a complete picture of what happened.
 
+**Sources are configuration, never assumed.** Nothing is taken for granted: not Tessie, not a camera.
+- A third-party provider (Tessie today; TeslaFi or another tomorrow) is a source only if it is set up in `config.json`. Not set up means it is not a source, and nothing mentions it or reports it missing.
+- Tesla's own files (camera footage and its metadata) are a source whenever a drive holding them is found.
+- **Backbone.** The first configured provider is the backbone: it says which drives and charges exist and gives the complete timeline, and the camera is an enrichment on top (video wins field by field where it covers, see section 3). With no provider configured the camera is the backbone, and a drive exists only where footage does. Which source is backbone is worked out from `config.json` every run, so adding a provider later changes it without any migration.
+- A provider is a plug-in that says which things it can supply (drives, charges, idles, battery...) and how complete it is. That Tessie happens to be the only provider today is a fact about this installation, not about the design; the same slot takes TeslaFi or any other.
+- Several providers at once are stored separately and combined in the view like any other overlap (section 3a). Their priority is the order they appear in `config.json` (open decision: confirm that is enough).
+
 ## 4. Layers
 
 ```
