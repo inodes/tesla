@@ -178,3 +178,23 @@ Findings (read-only, 2026-10-20). `Tools/analyse_drives.py` is 6,607 lines and i
 There are at least four separate place lookups today (`DriveAnalyzer.resolve_place`, `drive_report.place_name`, `app_places.label`, and `places_manager`). They are not known to agree; the single resolver (section 3b naming order) replaces them only after the differences are listed and agreed, because that one changes output.
 
 Same pattern elsewhere (to be reviewed the same way): `analyse_charging.py` (7,341 lines, imported by the app's charge book and the cost reports), `places_manager.py` (3,785, imported by the app's places code and the charger finder), `charger_find.py` and `find_tesla_chargers.py` (about 7,000 together), `dashcam_flip_review.py` (612, imported by four scripts).
+
+## 12. The app: Drives and TeslaCam become one (agreed 2026-10-20)
+
+Decided by Glenn. Today the app has two overlapping halves: Drives (only drives Tessie knows) and TeslaCam (a disk picker, its own timeline and its own drive page). A drive can be opened two ways, and a drive only the camera saw never appears under Drives.
+
+**One place for drives.** Drives lists every drive from every source. A row says where its data came from (Tessie, dashcam, both) and which drives hold its footage. A drive only the camera knows about is a drive; unread footage is a row that gets read, not a dead end. The Timeline becomes a "By day" view next to the List, with the map and the ticked drives, Sentry events and parked spells as now. There is one drive page (Overview, Footage, Review). The separate TeslaCam drive page goes away.
+
+**TeslaCam becomes "Footage".** Only the storage side remains: connected drives, the footage log, stills, copying to the Archive, freeing space, Sentry and Saved clips. In the sync terms, Drives is the `sync_drives` side and Footage is the `sync_camera` side.
+
+**Every connected drive is used, whether or not the Archive holds the footage.** Choosing a disk to look at goes away: the connected disks are one pool, and a small label says which disk a clip is on. Nothing in the app is tied to the Archive ("A"); the Drive Review and Footage tab were, and now pick the connected drive holding the footage (commit 76ce8ec). The rest of the app is to be checked for the same assumption.
+
+**What is kept so that a drive stays whole when its disk is away:**
+
+- (a) Metadata. All of it is pulled down and kept in the data folder as soon as a drive is connected, in the background, with progress shown once at the top. Not only the telemetry: the clip names, sizes, times and the drive each file is on.
+- (b) Images. The one-second stills of the front camera are kept for every connected drive, so the drive page, the review and the timeline can show pictures when no disk is connected.
+- (c) Video. The large files are not copied just to show them. When a clip is known to exist but no connected drive holds it, the player shows a black box naming the file that holds the footage and the drives it is on. If it is on several drives, the biggest drive is named first, then the next biggest, and so on. When every drive is away, the box is still shown, with the same names.
+
+Most of (c) is already known: the footage ledger (`teslacam_ledger`) records, for every file, which drives hold it, its size and when it was first and last seen, including drives since removed. The black box is a lookup there.
+
+**Order.** (1) Footage lookup that uses every connected drive everywhere in the app (started: Drive Review and Footage tab). (2) Background reading of metadata and stills for every connected drive, replacing the Scan and Read buttons. (3) The black box with file name and drives for clips on no connected drive. (4) The "By day" view inside Drives, the merged list and drive rows for camera-only drives (these touch the data side, so behind the reference tests). (5) TeslaCam renamed Footage with only the storage side left, and the second drive page removed.
