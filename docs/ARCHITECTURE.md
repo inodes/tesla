@@ -67,6 +67,26 @@ Each is stored as an **observation of a charge event**; the view links observati
 
 **What this guards against.** Double counting (the same kWh from two sources), partial data presented as whole, one source silently overwriting another, and a match that is wrong with no way to see why. Each reconciled item keeps the list of observations behind it.
 
+## 3b. Things, not sources: adaptive sync and known gaps
+
+Commands are organised by **thing** (drives, charges, events, camera, places and chargers, power, fuel, battery), never by source. TeslaCam, Tessie, Evnex and AGL are sources that feed things; a source is not a thing.
+
+Each `sync_<thing>` works with whatever exists at that moment:
+1. **Discover** the sources available now: connected drives (found by structure and volume UUID), a Tessie token, an Evnex login, a folder of invoices. A source that is not there is skipped without complaint, never an error.
+2. **Pull in** what is new from every available source, skipping what is already recorded as processed (unless forced).
+3. **Record coverage.**
+4. **Show the gaps.**
+
+**Coverage record.** For each thing, per day (with counts, and down to the item where needed), each source is in one of these states:
+- *have*: pulled in, with the processing version that did it (a changed version means redo).
+- *none exists*: the source was checked and has nothing for that day (e.g. no footage was recorded; Tessie has no telemetry before it started).
+- *not reachable*: the source is known to hold data we have not pulled (a drive that was not connected, an API that was down), with where it was last seen.
+- *lost*: the source's data no longer exists (footage deleted after its metadata, stills and snapshots were kept). What was kept stays and is marked as kept.
+
+**Gaps** are derived from that record and always split three ways: can be filled now (the source is connected, run the sync), needs a source (connect JOWUA, add the Evnex login), cannot be filled (lost, or never existed). The same record answers "is it safe to delete this footage?": only when its telemetry, stills and snapshots are all *have*. It also replaces the separate "processed record per day" idea, the file log and the skip checks, which are all the same bookkeeping.
+
+The record is derived and kept in the data folder (one file per thing). It can be rebuilt from the stores, so it is never a source of truth.
+
 ## 4. Layers
 
 ```
