@@ -28,7 +28,7 @@ Charging and cost have no core source: the video carries no battery or charge da
 
 ## 3. The drive record: a view over whatever sources are present
 
-There are at least one and up to two stored sources of drives: the video telemetry store (per-second readings of what was recorded) and Tessie's consolidated drive store (`drives_master.csv` and the per-drive samples). Neither is rewritten from the other. A drive as shown is a view over whichever are present. For Glenn that is both; for most people it will be video only.
+There are at least one and up to two stored sources of drives: the video telemetry store (per-second readings of what was recorded) and the Tessie master (`drives_master.csv` and the per-drive samples; it is Tessie's own consolidated store, not a master of all sources). Neither is rewritten from the other. A drive as shown is a view over whichever are present. For Glenn that is both; for most people it will be video only.
 
 | Field | From video | From Tessie | Notes |
 |---|---|---|---|
@@ -101,7 +101,7 @@ Before any domain is restructured: capture reference results from the real data 
 ## 10. Open decisions
 
 - Whether the per-instant rule in section 3 (video where it covers, Tessie elsewhere) is the full rule, and the match rules and confidence for drives and charge events (section 3a).
-- Whether `drives_master.csv` stays as Tessie's own store with its current name and columns (it is a source now, not the consolidated drive).
+- Naming: `drives_master.csv` is really the Tessie master, so it should live under the Tessie provider's own area and be named for it (and likewise AGL, Evnex, etc.), while the video stores sit under the core. Rename at the same time as the move, with the old path left readable until the app uses the new one.
 - Package names and folder layout (section 6).
 - Domain order after the core (section 9).
 - Whether to run one cloud agent per domain once this is agreed.
