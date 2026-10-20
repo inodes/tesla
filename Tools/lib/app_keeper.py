@@ -6,7 +6,7 @@ Keeper, one step at a time and only when nothing else is reading:
   1. log        lists the files on the drive into the footage log (which drive holds which file, how big, since when)   - app_footage / teslacam_ledger
   2. events     reads the Sentry and Saved events (when, where, why, which clips)                                       - app_teslacam.events
   3. telemetry  reads the speed, position, steering, pedals and autopilot of every minute not read yet                  - app_teslacam.scan_start
-  4. stills     makes the one-second front-camera stills not made yet                                                   - app_footage (needs ffmpeg)
+  4. stills     only if app.keeper.stills is true (default false): makes the one-second front-camera stills not made yet     - app_footage (ffmpeg)
 
 so that a drive page, the timeline and the review still have their data and pictures when the disk is away. Nothing on a drive is changed. It can be paused
 (the sidebar) - pause before ejecting a disk - and off unless switched on with app.keeper.background = true in config.json (`tesla_app.py --no-background` forces it off).
@@ -160,8 +160,10 @@ class Keeper:
         if stage == "telemetry":
             return self.tc.scan_todo(roots) > 0 and bool(self.tc.scan_start(roots).get("running"))
         if stage == "stills":
+            if not app_config.get("keeper.stills", False):      # stills decode video (ffmpeg): only ever on request, from the Footage panel or the command
+                return False
             rep = self.fg.stills_report(roots)
-            return bool(rep.get("to_make")) and bool(rep.get("ffmpeg")) and bool(self.fg.start("stills", roots).get("running"))
+            return bool(rep.get("to_make")) and bool(rep.get("ffmpeg")) and bool(self.fg.start("stills", roots, by="keeper").get("running"))
         return False
 
     def _scans(self):

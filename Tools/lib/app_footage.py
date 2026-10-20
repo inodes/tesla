@@ -59,7 +59,7 @@ class Footage:
         return self.stills.get(stamp, n)
 
     # ---- jobs ------------------------------------------------------------------------------------------------------
-    def start(self, action, roots):
+    def start(self, action, roots, by="page"):
         if self.t and self.t.is_alive():
             return self.status()
         self.stop_flag = False
@@ -67,7 +67,7 @@ class Footage:
             if not self._todo:
                 self.stills_report(roots)
             self.job = dict(running=True, kind="stills", done=0, total=len(self._todo), current="", error="", t0=time.time(), note="")
-            self.t = threading.Thread(target=self._run_stills, args=(list(self._todo),), daemon=True)
+            self.t = threading.Thread(target=self._run_stills, args=(list(self._todo), by), daemon=True)
         else:
             self.job = dict(running=True, kind="log", done=0, total=len([p for p in roots.values() if p]), current="", error="", t0=time.time(), note="")
             self.t = threading.Thread(target=self._run_log, args=({r: p for r, p in roots.items() if p},), daemon=True)
@@ -94,11 +94,11 @@ class Footage:
             self.job["error"] = "%s: %s" % (type(e).__name__, e)
         self.job["note"] = " ".join(notes)
 
-    def _run_stills(self, todo):
+    def _run_stills(self, todo, by="page"):
         def prog(n, stamp):
             self.job["done"], self.job["current"] = n, stamp
         try:
-            ST.make_many(self.stills, todo, app_config.get("stills.workers", 3), stop=lambda: self.stop_flag, progress=prog)
+            ST.make_many(self.stills, todo, app_config.get("stills.workers", 3), stop=lambda: self.stop_flag, progress=prog, by=by)
         except Exception as e:
             self.job["error"] = "%s: %s" % (type(e).__name__, e)
         self._todo = []

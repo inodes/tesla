@@ -10,8 +10,10 @@ make(): decodes a clip once with ffmpeg (one frame a second, scaled) and writes 
 (a copy) is made once, from the first drive in ORDER (Archive, JOWUA, Tesla USB). A clip that already has its zip is skipped, so the
 stills are never taken twice and stay when the video is deleted.
 """
+import datetime
 import os
 import shutil
+import signal
 import subprocess
 import tempfile
 import zipfile
@@ -24,9 +26,39 @@ QUALITY = 6                 # ffmpeg -q:v (2 best ... 31 worst)
 ORDER = "AJU?"
 
 
+FFMPEG_TIMEOUT_S = 120      # a clip is ~80 MB: a healthy drive decodes it in a second or two
+
+
+class DriveStalled(OSError):
+    """ffmpeg did not finish reading a clip: the drive is not answering (a disk that stalls leaves the reader stuck in the kernel, where nothing can kill it)."""
+
+
+def run_ffmpeg(cmd, timeout=FFMPEG_TIMEOUT_S):
+    """Run ffmpeg without ever waiting on it forever. subprocess.run() waits for the child again after killing it, and a child stuck reading a stalled disk cannot be
+    killed, so a stalled drive would freeze the caller (and every other reader of that drive) for good. Here the child is killed on time, given a few seconds to go,
+    and then given up on: DriveStalled is raised and the caller stops reading that drive."""
+    proc = subprocess.Popen(cmd, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, start_new_session=True)
+    try:
+        proc.communicate(timeout=timeout)
+        return proc.returncode
+    except subprocess.TimeoutExpired:
+        for _ in range(2):
+            try:
+                os.killpg(proc.pid, signal.SIGKILL)
+            except OSError:
+                pass
+            try:
+                proc.wait(timeout=5)
+                break
+            except subprocess.TimeoutExpired:
+                continue
+        raise DriveStalled("the drive did not answer within %d s (reading %s)" % (timeout, cmd[cmd.index("-i") + 1] if "-i" in cmd else "a clip"))
+
+
 class Stills:
     def __init__(self, data_dir, width=WIDTH, quality=QUALITY):
         self.root = os.path.join(data_dir, DIRNAME)
+        self.log_path = os.path.join(data_dir, "stills_runs.log")
         self.width = width
         self.quality = quality
 
@@ -51,6 +83,14 @@ class Stills:
         except (OSError, KeyError, zipfile.BadZipFile):
             return None
 
+    def note(self, text):
+        """One line in <data>/stills_runs.log for every run of stills: when, who started it, how many clips (so a run nobody asked for can be seen)."""
+        try:
+            with open(self.log_path, "a", encoding="utf-8") as f:
+                f.write("%s %s\n" % (datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"), text))
+        except OSError:
+            pass
+
     def stamps(self):
         out = set()
         try:
@@ -71,8 +111,8 @@ class Stills:
             for keyframes in (True, False):                 # the car writes a key frame every ~0.25 s: decoding only those is 3x faster; a clip with fewer is decoded whole
                 for f in os.listdir(tmp):
                     os.remove(os.path.join(tmp, f))
-                subprocess.run(["ffmpeg", "-v", "error"] + (["-skip_frame", "nokey"] if keyframes else []) + ["-i", video, "-vf", "fps=1,scale=%d:-2" % self.width,
-                                "-q:v", str(self.quality), os.path.join(tmp, "f%03d.jpg")], stdin=subprocess.DEVNULL, capture_output=True, timeout=300)
+                run_ffmpeg(["ffmpeg", "-v", "error"] + (["-skip_frame", "nokey"] if keyframes else []) + ["-i", video, "-vf", "fps=1,scale=%d:-2" % self.width,
+                           "-q:v", str(self.quality), os.path.join(tmp, "f%03d.jpg")])
                 frames = sorted(f for f in os.listdir(tmp) if f.startswith("f") and f.endswith(".jpg"))
                 if len(frames) >= 55:
                     break
@@ -119,17 +159,23 @@ def plan(stills, roots):
     return dict(drives=drives, todo=todo, kept=len(have))
 
 
-def make_many(stills, todo, workers=3, stop=None, progress=None, limit=None):
-    """Takes the stills of the planned clips (newest first), `workers` ffmpegs at a time; returns how many clips were made."""
+def make_many(stills, todo, workers=3, stop=None, progress=None, limit=None, by="command"):
+    """Takes the stills of the planned clips (newest first), `workers` ffmpegs at a time; returns how many clips were made.
+    `by` says who asked (recorded in stills_runs.log). A drive that stops answering ends the run: DriveStalled is raised once the running clips have finished."""
     from concurrent.futures import ThreadPoolExecutor
     jobs = todo[:limit] if limit else todo
     done = [0]
+    stalled = []
+    stills.note("started by %s: %d clip(s), first %s" % (by, len(jobs), jobs[0]["stamp"] if jobs else "-"))
 
     def one(x):
-        if stop and stop():
+        if (stop and stop()) or stalled:
             return 0
         try:
             n = stills.make(x["stamp"], x["path"])
+        except DriveStalled as e:
+            stalled.append(e)
+            return 0
         except (subprocess.SubprocessError, OSError):
             n = 0
         done[0] += 1
@@ -137,7 +183,11 @@ def make_many(stills, todo, workers=3, stop=None, progress=None, limit=None):
             progress(done[0], x["stamp"])
         return 1 if n else 0
     with ThreadPoolExecutor(max(1, workers)) as ex:
-        return sum(ex.map(one, jobs))
+        made = sum(ex.map(one, jobs))
+    stills.note("ended: %d made%s" % (made, "; STOPPED, %s" % stalled[0] if stalled else ""))
+    if stalled:
+        raise stalled[0]
+    return made
 
 
 def have_ffmpeg():
