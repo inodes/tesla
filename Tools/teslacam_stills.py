@@ -40,6 +40,7 @@ NOTES
 import argparse
 import os
 import sys
+import time
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
@@ -99,13 +100,32 @@ def main():
     total = min(len(todo), a.limit) if a.limit else len(todo)
     print("Making %s clip(s), newest first. Ctrl-C stops; what is made is kept." % _n(total))
 
+    t0 = time.time()
+    tty = sys.stdout.isatty()
+
     def prog(n, stamp):
-        if n % 20 == 0 or n == total:
-            print("  %s of %s  (%s)" % (_n(n), _n(total), stamp.replace("_", " ")))
+        """A one-line progress bar: percent, count, speed, time left, and the clip being made."""
+        if not tty and n % 100 and n != total:
+            return
+        el = max(time.time() - t0, 1e-6)
+        rate = n / el
+        left = (total - n) / rate if rate else 0
+        w = 24
+        fill = int(w * n / total) if total else w
+        line = "[%s%s] %3d%%  %s of %s  %.1f clips/s  %s left  %s" % ("#" * fill, "-" * (w - fill), 100 * n // max(total, 1), _n(n), _n(total), rate,
+                                                                   "%dh%02dm" % (left // 3600, left % 3600 // 60) if left >= 3600 else "%dm%02ds" % (left // 60, left % 60),
+                                                                   stamp.replace("_", " "))
+        if tty:
+            sys.stdout.write("\r" + line + "\033[K")
+            sys.stdout.flush()
+            if n == total:
+                sys.stdout.write("\n")
+        else:
+            print(line)
     try:
         n = ST.make_many(stills, todo, a.workers or app_config.get("stills.workers", 3), progress=prog, limit=a.limit)
     except KeyboardInterrupt:
-        print("Stopped. What was made is kept.")
+        print("\nStopped. What was made is kept.")
         return 130
     print("Made %s clip(s)." % _n(n))
     return 0
