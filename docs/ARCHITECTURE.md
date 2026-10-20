@@ -2,7 +2,10 @@
 
 Status: DRAFT for Glenn to mark up. Nothing here is built. Companion to `COMMANDS_AUDIT.md` (which it supersedes where they differ).
 
-## 1. Principles
+## 0. Scope: undo the mess, keep the logic
+
+What exists works: Tessie drives are enriched with the video's per-second readings (`drive_fuse`), charges and footage are consolidated, the reports and pages are right. This work reorganises scripts, commands, files and libraries and removes duplicates. **It does not change what any calculation or enrichment does**, and reference results taken from today's outputs prove that. Anything that changes behaviour is a separate, named feature agreed on its own - for example, drives built from video alone for someone without Tessie (section 3) is new and additive; it must not alter how Glenn's Tessie-plus-video drives come out.
+
 
 1. **Tesla files are the core; every third party is optional.** Anyone using this has Tesla video files. Tessie, AGL, Evnex, PVOutput, SolarEdge, ABRP, fuel prices and the charger finders are each an optional addition. Nothing in the core may import a provider.
 2. **The app is the main surface.** It calls libraries through one task runner. The command line is a thin second surface over the same tasks. Neither holds logic.
@@ -91,12 +94,11 @@ Before any domain is restructured: capture reference results from the real data 
 ## 9. Order of work (proposed)
 
 1. Agree this document.
-2. Reference results.
-3. Core TeslaCam + drives (video-built drives, registry, processing record) - the new heart.
-4. Tessie provider merged into the drive record.
-5. Charging domain and the remaining providers (AGL, Evnex, solar, fuel, chargers), one at a time.
-6. Task runner and Activity panel in the app; CLI wrappers generated from the same task definitions.
-7. Retire every old script once its task passes the reference results.
+2. Reference results from today's outputs (read-only snapshots to compare against).
+3. Clean-up with no logic change: group the existing code by domain, remove twins, move one-offs and tests out, one task per job, thin commands. Domain by domain, each step proving it reproduces the reference results. Charging and the remaining providers (AGL, Evnex, solar, fuel, chargers) follow the same way, one at a time.
+4. Task runner and Activity panel in the app; CLI wrappers generated from the same task definitions.
+5. Separate, additive features, each agreed on its own: processing record per day, drives from video alone for users without Tessie, further providers' reconcile views.
+6. Retire every old script once its task passes the reference results.
 
 ## 10. Open decisions
 
