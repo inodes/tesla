@@ -325,6 +325,14 @@ or pipes - not in `input()` text, not in a "Commands:"/"Options:" line, not in a
 and not when the list is built dynamically (`", ".join(actions)`). A single yes/no confirmation
 (`[y/N]`, `[Y/n]`) is fine on one line.
 
+### 3.4.1 Long runs: one progress bar, no chatter
+
+Standing rule: any command that loops over more than a handful of items (drives, clips, files, API fetches) uses
+`Tools/lib/progress.py` (`Bar`): one line that updates in place with percent, count, speed, time left and what is being
+done now. Per-item messages ("fetching...", "fetched...") are not printed; only what needs attention (an error, a skipped
+item) is, through `bar.note()`. Redirected output gets a plain line every ~5 %. Do not print what is obvious: show a masked
+VIN/token (`***686462`, `***xyz`), not "token not shown".
+
 ```
 Action:
   [o]pen chart in browser

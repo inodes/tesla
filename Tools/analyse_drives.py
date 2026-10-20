@@ -3921,7 +3921,8 @@ class DriveAnalyzer:
             "format": "csv",
         })
 
-        print("   ℹ️  No local deep-dive file for this drive - fetching detailed telemetry from Tessie...")
+        if not getattr(self, "quiet_fetch", False):                 # the backfill shows one progress bar instead
+            print("   ℹ️  No local deep-dive file for this drive - fetching detailed telemetry from Tessie...")
         status, body = api_get("states", vin, token, params)
         if status != 200:
             print(f"   ⚠️  Tessie /states fetch failed (HTTP {status}) - continuing without deep-dive telemetry.")
@@ -3957,7 +3958,8 @@ class DriveAnalyzer:
             print("   ⚠️  Tessie's response doesn't look like drive telemetry - continuing without deep-dive.")
             return None
 
-        print(f"   ✅ Fetched and saved: {os.path.basename(dest_path)} ({parsed.get('samples_count', 0)} samples)")
+        if not getattr(self, "quiet_fetch", False):
+            print(f"   ✅ Fetched and saved: {os.path.basename(dest_path)} ({parsed.get('samples_count', 0)} samples)")
         return dest_path
 
     def get_drive_deepdive(self, target_drive):
