@@ -930,21 +930,23 @@ def main():
     base_analysis = os.path.join(data, "drives", "analysis")
     only = set(x for x in a.only.split(",") if x)
     done, skipped, rows = 0, 0, []
-    for p in dp.list_csvs(root):
+    todo = [p for p in dp.list_csvs(root) if not (only and dp.stamp_of(p) not in only) and not (a.since and dp.stamp_of(p)[:10] < a.since)]
+    from progress import Bar
+    bar = Bar(len(todo), "Drive pages")
+    for i, p in enumerate(todo):
         stamp = dp.stamp_of(p)
-        if only and stamp not in only:
-            continue
-        if a.since and stamp[:10] < a.since:
-            continue
         if time.time() > a.deadline:
-            print("budget reached - run again to continue", flush=True)
+            bar.note("budget reached - run again to continue")
             break
+        bar.update(i, stamp)
         res = process_drive(p, master, flips, recs, foot, a, base_analysis)
         if res.startswith("ok"):
             done += 1
-            print(f"  {stamp}: {res}", flush=True)
+            bar.update(i, stamp + " - built" + (" with footage" if "footage" in res else ""))
         else:
             skipped += 1
+    bar.update(len(todo), "")
+    bar.done()
     # index (cheap; from each folder's drive_summary.json)
     for p in dp.list_csvs(root):
         folder = dp.drive_folder_of(p)
