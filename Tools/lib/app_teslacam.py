@@ -220,6 +220,11 @@ class TeslaCam:
         rep["job"] = self.scan_status()
         return rep
 
+    def scan_todo(self, roots):
+        """How many minutes of footage on these drives have no telemetry read yet."""
+        self.scan_report(roots)
+        return len(self._scan_todo)
+
     def scan_status(self):
         return self.scan_ix.status() if getattr(self, "scan_ix", None) else dict(running=False, done=0, total=0, current="", error="")
 

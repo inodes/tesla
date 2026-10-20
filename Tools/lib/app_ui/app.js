@@ -1532,7 +1532,14 @@ async function boot(){
   try{SET=await (await fetch("/api/settings")).json()}catch(e){}
   try{const s=await api("summary");$("#veh").textContent=s.vehicle;$("#vsub").textContent=n0(s.km)+" km logged"}catch(e){}
   const st=async()=>{try{const s=await (await fetch("/api/status")).json();const NM={A:"Archive",J:"JOWUA",U:"Tesla USB"};$("#status").innerHTML=["A","J","U"].filter(r=>r==="A"||s.roots[r]).map(r=>`<div><span class="dot ${s.roots[r]?"on":"off"}"></span>${NM[r]} ${s.roots[r]?"connected":"not connected"}</div>`).join("")+`${s.stale?'<div class="upd">The app was updated. Quit and reopen it to load the new version.</div>':""}`}catch(e){}};
-  st();setInterval(st,30000);route();
+  // the background reading of the connected drives (lib/app_keeper.py): what it is doing, and a button to pause it (before ejecting a disk)
+  const kp=async()=>{try{const k=await (await fetch("/api/keeper")).json(),el=$("#keeper");
+      if(!k.enabled||(!k.working&&!k.paused&&!k.error)){el.hidden=true;return}
+      el.hidden=false;const pc=k.total?` · ${n0(k.done)} of ${n0(k.total)}`:"";
+      el.innerHTML=k.paused?`<div><span class="dot off"></span>Background reading paused <a href="#" id="kpr">Resume</a></div>`:k.working?`<div><span class="dot on"></span>${esc(k.text)}${pc} <a href="#" id="kpp">Pause</a></div>`:"";
+      if(k.error)el.innerHTML+=`<div class="upd">${esc(k.error)}</div>`;
+      const b=$("#kpp")||$("#kpr");if(b)b.onclick=async e=>{e.preventDefault();await fetch("/api/keeper",{method:"POST",body:JSON.stringify({action:k.paused?"resume":"pause"})});kp()}}catch(e){}};
+  st();setInterval(st,30000);kp();setInterval(kp,4000);route();
 }
 addEventListener("keydown",e=>{if((e.metaKey||e.ctrlKey)&&e.key.toLowerCase()==="r"){e.preventDefault();location.reload()}});
 $("#rl").onclick=()=>location.reload();
