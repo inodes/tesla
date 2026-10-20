@@ -55,9 +55,15 @@ def _snap_ok(windows, starts, t):
     return True
 
 
-def report(data, roots, front_only=True):
+def _add(r, detail, root, src, stamp, fs, safe):
+    if detail:
+        r["detail"].append(dict(stamp=stamp, src=src, safe=safe, bytes=sum(f["size"] for f in fs), paths=[TF.front_path(root, f) for f in fs]))
+
+
+def report(data, roots, detail=False):
     """{role: dict(files, minutes, ready, no_telemetry, no_stills, no_snapshots, not_on_archive, copy_on_archive, examples)}.
-    Counted per minute (a stamp), which is what is deleted together; `files` counts every camera file."""
+    Counted per minute (a stamp), which is what is deleted together; `files` counts every camera file. With detail, r["detail"] lists every minute:
+    dict(stamp, src, safe, bytes, paths)."""
     CC.configure(data)
     store = TL.Store(os.path.join(data, "teslacam_timeline"))
     stills = ST.Stills(data)
@@ -72,19 +78,22 @@ def report(data, roots, front_only=True):
     kept_cache = {}
     out = {}
     for role, (files, ok) in listed.items():
-        r = dict(files=len(files), minutes=0, ready=0, no_telemetry=0, no_stills=0, no_snapshots=0, not_synced=0, not_on_archive=0, copy_on_archive=0, examples={}, listed_ok=ok)
+        r = dict(files=len(files), minutes=0, ready=0, no_telemetry=0, no_stills=0, no_snapshots=0, not_synced=0, not_on_archive=0, copy_on_archive=0, examples={}, listed_ok=ok, detail=[])
         by_min = {}
         for f in files:
             by_min.setdefault((f["src"], f["ev"], f["stamp"]), []).append(f)
         for (src, ev, stamp), fs in by_min.items():
             r["minutes"] += 1
+            safe = False
             if role != "A":                                  # a copy elsewhere: safe once the Archive has every file of the minute, same size
                 same = all(arch.get((f["src"], f["ev"], f["stamp"], f["cam"])) == f["size"] for f in fs)
                 if same:
                     r["copy_on_archive"] += 1
+                    _add(r, detail, roots[role], src, stamp, fs, True)
                     continue
                 r["not_on_archive"] += 1
                 r["examples"].setdefault("not_on_archive", []).append(stamp)
+                _add(r, detail, roots[role], src, stamp, fs, False)
                 continue
             if stamp not in kept_cache:
                 kept_cache[stamp] = (store.summary(stamp) is not None, stills.count(stamp) >= KEPT_MIN)
@@ -103,7 +112,9 @@ def report(data, roots, front_only=True):
             if late:
                 r["not_synced"] += 1
                 r["examples"].setdefault("not_synced", []).append(stamp)
-            if has_tel and has_stills and snap and not late:
+            safe = bool(has_tel and has_stills and snap and not late)
+            if safe:
                 r["ready"] += 1
+            _add(r, detail, roots[role], src, stamp, fs, safe)
         out[role] = r
     return out
