@@ -58,11 +58,22 @@ class Keeper:
         self._done_at = 0.0
         self._roles = []
         self._thread = None
+        self._played = 0.0              # when a clip was last served to the page (video playing)
 
     # ---- settings
     @staticmethod
     def enabled():
         return bool(app_config.get("keeper.background", True))
+
+    # ---- video playing: the drives are left alone while it does (six streams from one disk stall if something else is reading it)
+    def playing_now(self):
+        """Called whenever the page is sent video."""
+        self._played = time.time()
+        if self._started and self._stage is not None and self._stage < len(STAGES):      # stop at once, not at the next look
+            (self.tc.scan_stop if STAGES[self._stage] == "telemetry" else self.fg.stop)()
+
+    def playing(self):
+        return time.time() - self._played < float(app_config.get("keeper.play_wait_s", 30))
 
     # ---- running
     def start(self):
@@ -101,6 +112,12 @@ class Keeper:
 
     def tick(self):
         if not self.enabled() or self.paused:
+            return
+        if self.playing():                  # video is playing: stop what it was doing; the pass starts again from the top afterwards
+            if self._started:
+                st = STAGES[self._stage]
+                (self.tc.scan_stop if st == "telemetry" else self.fg.stop)()
+                self._started, self._stage, self._sig, self._done_at = False, None, None, 0.0
             return
         roots = {r: p for r, p in (self.roots_fn() or {}).items() if p}
         self._roles = sorted(roots)
@@ -156,7 +173,7 @@ class Keeper:
 
     # ---- what the page shows
     def status(self):
-        s = dict(enabled=self.enabled(), paused=self.paused, roles=self._roles, error=self.error, working=self._stage is not None, stage="", text="",
+        s = dict(enabled=self.enabled(), paused=self.paused, playing=self.playing(), roles=self._roles, error=self.error, working=self._stage is not None, stage="", text="",
                  done=0, total=0)
         if self._stage is not None and self._stage < len(STAGES):
             st = STAGES[self._stage]
