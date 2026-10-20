@@ -430,6 +430,9 @@ def saved_pool(folder):
 # ----------------------------------------------------------------------------- page
 _HERE = os.path.dirname(os.path.abspath(__file__))
 # a page older than this generator (or its chart / footage / map modules) is rebuilt on the next run
+# Bump RENDER_VERSION whenever a change alters what drive.html looks like or contains (this file's page code, lib/drive_charts.py, lib/footage_ui.py).
+# Editing anything else - a status line, drive_roles.py, a comment - must NOT rebuild every page (and so every drive's snapshots).
+RENDER_VERSION = "2026-10-20"
 CODE_MTIME = max(os.path.getmtime(f) for f in [os.path.abspath(__file__)] + [os.path.join(_HERE, "lib", n) for n in ("drive_charts.py", "footage_ui.py", "drive_roles.py")] if os.path.exists(f))
 
 CSS = r"""
@@ -725,7 +728,7 @@ def process_drive(csv_path, master, flips_by_file, recs, foot, args, base_analys
         return "too short"
     a, b = win[0]["t"], win[-1]["t"]
     # up to date = page newer than the CSV AND no new footage has appeared for this drive since it was built
-    if os.path.exists(out) and not args.force and os.path.getmtime(out) >= max(os.path.getmtime(csv_path), CODE_MTIME, gps_mtime(folder, os.path.basename(folder))):
+    if os.path.exists(out) and not args.force and os.path.getmtime(out) >= max(os.path.getmtime(csv_path), gps_mtime(folder, os.path.basename(folder))):
         sj, old = os.path.join(folder, "drive_summary.json"), {}
         try:
             old = json.load(open(sj))
@@ -737,7 +740,7 @@ def process_drive(csv_path, master, flips_by_file, recs, foot, args, base_analys
         n_now = len(foot.in_window(a, b, off_now)) if foot and foot.clips else 0
         vids_ok = old.get("videos", False) or args.no_video or not n_now
         off_old = old.get("foot_off", 0)
-        if n_now == n_old and vids_ok and off_now == off_old:
+        if n_now == n_old and vids_ok and off_now == off_old and old.get("render", RENDER_VERSION) == RENDER_VERSION:
             if "foot_how" not in old:
                 old["foot_off"], old["foot_how"] = off_now, foot.how if (foot and foot.clips) else ""
                 with open(sj, "w", encoding="utf-8") as fh:
@@ -857,7 +860,7 @@ def process_drive(csv_path, master, flips_by_file, recs, foot, args, base_analys
                 autopilot_km=(m or {}).get("Autopilot Distance (km)", ""),
                 flips=len(flips), flips_with_footage=sum(1 for e in flips if e["id"] in recs), saved_clip_events=len(saved_ev),
                 footage_clips=cov["n"] if cov else 0, footage_pct=round(cov["pct"]) if cov else 0,
-                videos=(not args.no_video) and not incomplete, foot_off=off, foot_how=foot.how if (foot and foot.clips) else "")
+                videos=(not args.no_video) and not incomplete, render=RENDER_VERSION, foot_off=off, foot_how=foot.how if (foot and foot.clips) else "")
     # times in the data are UTC; the zone and offset are kept so the local clock can be shown again (the day folder is the local date of the start)
     _u0, _u1 = CC.from_local(CC.naive(summ["start"].replace(" ", "_"))), CC.from_local(CC.naive(summ["end"].replace(" ", "_")))
     summ.update(t0=_u0, t1=_u1, tz=getattr(CC.zone(), "key", "UTC"), utc_offset_s=CC.local_offset(_u0))
