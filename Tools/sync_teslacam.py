@@ -120,25 +120,25 @@ def main():
         return 1
     # 1. file log
     if a.run:
-        print("1. File log")
+        print("File log")
         for r in sorted(roots, key=lambda x: "AJU?".index(x) if x in "AJU?" else 9):
             res = TLG.Ledger(data).scan(r, roots[r])
             print("   %-8s %s file(s): %s new, %s gone" % (DR.NAMES.get(r, r), _n(res["files"]), _n(res["new"]), _n(res["gone"])))
     # 2. clips
-    print("2. Clips (telemetry and stills together)")
+    print("Clips (telemetry and stills together)")
     pl = SY.plan(data, roots)
     tel = pl["tel"]["drives"]
     st = {d["role"]: d for d in pl["st"]["drives"]}
-    print("   %-10s %9s %12s %12s  %s" % ("Drive", "Clips", "Telemetry", "Stills", "to make"))
+    print("   %-10s %9s %18s %14s" % ("Drive", "Clips", "Telemetry to read", "Stills to make"))
     for d in tel:
         s = st.get(d["role"], {})
-        print("   %-10s %9s %12s %12s" % (d["name"], _n(s.get("clips", 0)), _n(d["to_read"]), _n(s.get("to_make", 0))))
+        print("   %-10s %9s %18s %14s" % (d["name"], _n(s.get("clips", 0)), _n(d["to_read"]), _n(s.get("to_make", 0))))
     todo = pl["todo"]
     print("   %s clip(s) to take." % _n(len(todo)))
     firsts = [d["first"] for d in tel if d["first"]]
     since = a.since or (min(firsts) if firsts else None)                # drives before the first footage have nothing to show
     snaps = [] if a.no_snapshots else SY.pending_snapshots(data, since)
-    print("3. Snapshots: %s drive(s) without snapshots%s." % (_n(len(snaps)), " (skipped)" if a.no_snapshots else ""))
+    print("Drive snapshots: %s drive(s) without snapshots%s." % (_n(len(snaps)), " (skipped)" if a.no_snapshots else ""))
     if not a.run and a.free is None:
         print("Run again with --run to do it.")
         return 0
@@ -164,7 +164,7 @@ def main():
         tc = app_teslacam.TeslaCam(data, None)
         front = SN.front_clips(tc, found.get("A")) if found.get("A") else {}
         t1 = time.time()
-        print("3. Snapshots for %s drive(s)" % _n(len(snaps)))
+        print("Drive snapshots for %s drive(s)" % _n(len(snaps)))
         done = 0
         sbar = Bar(len(snaps), "   Snapshots")
         try:
@@ -190,7 +190,7 @@ def main():
     rep = None
     if "A" in roots:
         import teslacam_deletable as TD
-        print("4. Safe to delete")
+        print("Safe to delete")
         rep = TD.report(data, roots, detail=a.free is not None)
         import check_teslacam_deletable as CK
         for role in sorted(rep, key=lambda r: "AJU".index(r) if r in "AJU" else 9):
@@ -199,7 +199,7 @@ def main():
     if a.free is not None and rep:
         import teslacam_purge as PG
         kinds = ("recent", "saved", "sentry") if a.include_saved else ("recent",)
-        print("5. Free %s GB on each drive" % ("%g" % a.free))
+        print("Free %s GB on each drive" % ("%g" % a.free))
         for role in sorted(roots, key=lambda x: "AJU".index(x) if x in "AJU" else 9):
             if role not in rep:
                 continue
