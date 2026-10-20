@@ -163,6 +163,17 @@ class BasePowerProvider:
  # Tariff / billing math - retailer + distributor specific.
  # ------------------------------------------------------------------
 
+    def gst_multiplier(self):
+        """1 + GST, from the "gst" field at the top of this provider's own tariff-rates JSON (a fraction: 0.10 is 10%).
+        Every ex-GST rate and charge is multiplied by this to get the price you pay; defaults to 0.10 when the file has no "gst"."""
+        import json
+        try:
+            with open(os.path.join(self.resolve_data_home(), self.tariff_rates_filename()), "r", encoding="utf-8") as f:
+                g = json.load(f).get("gst")
+            return 1.0 + float(g) if g is not None else 1.10
+        except (OSError, ValueError, TypeError):
+            return 1.10
+
     def load_rate_periods(self):
         """Sorted list of this provider's own dated tariff periods, from
         its real tariff-rates JSON (see tariff_rates_filename()) -

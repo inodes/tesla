@@ -275,7 +275,7 @@ class AGLProvider(BasePowerProvider):
 
     def demand_charge(self, kw_latched, billing_days, rate_per_kw_day):
         ex_gst = kw_latched * rate_per_kw_day * billing_days
-        incl_gst = ex_gst * 1.10
+        incl_gst = ex_gst * self.gst_multiplier()
         return round(ex_gst, 2), round(incl_gst, 2)
 
     def usage_rate_for_window(self, period, local_start, local_end):

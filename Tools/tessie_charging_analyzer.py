@@ -3341,7 +3341,7 @@ class TessieChargingAnalyzer:
             tz_label = f" (TZ: {s.get('timezone', 'Australia/Sydney')})"
             note_l = f"    {C_DIM}(what our own registry's rate card says this SHOULD cost, for cross-checking against the real cost above - not what was actually billed){C_RESET}"
             print(f"│{pad_display(note_l, box_w - 2, truncate=True)}│")
-            l12 = f"    • {C_BOLD}{'Expected Tariff Rate:':<{lw_fin}}{C_RESET}${s['expected_rate']:.2f}/kWh{sched_label}{tz_label}{arch_tag}"
+            l12 = f"    • {C_BOLD}{'Expected Tariff Rate:':<{lw_fin}}{C_RESET}${s['expected_rate']:.4f}/kWh{sched_label}{tz_label}{arch_tag}"
             print(f"│{pad_display(l12, box_w - 2, truncate=True)}│")
 
             if s.get("theoretical_cost") is not None:

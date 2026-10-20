@@ -222,7 +222,7 @@ def reconstruct_bill(start, end, data_home=None, periods=None, log=None):
  # provider-specific rather than assuming it stays universal.)
     charges_ex_gst = usage_ex_gst + supply_ex_gst + demand_ex_gst
     total_ex_gst = charges_ex_gst - solar_credit_total
-    total_incl_gst = round(charges_ex_gst * 1.10 - solar_credit_total, 2)
+    total_incl_gst = round(charges_ex_gst * provider.gst_multiplier() - solar_credit_total, 2)
 
     return {
         "days": days,
