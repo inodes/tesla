@@ -112,6 +112,24 @@ def footage_roots():
     return {r: footage_root(r) for r in "AJU" if footage_root(r)}
 
 
+def all_sentry():
+    """The saved Sentry events of every connected drive, each once: an event on several drives is listed on the one named first (Archive, then JOWUA,
+    then Tesla USB: the biggest drive first). Each carries `role` (where to play it from) and `roles` (every connected drive holding it)."""
+    seen, ok = {}, False
+    for r in "AJU":
+        root = footage_root(r)
+        if not root:
+            continue
+        ev, good = SENTRY.events(root) if r == "A" else TC.events(r, "sentry", root)
+        ok = ok or good
+        for e in ev:
+            if e["id"] in seen:
+                seen[e["id"]]["roles"].append(r)
+            else:
+                seen[e["id"]] = dict(e, role=r, roles=[r])
+    return sorted(seen.values(), key=lambda e: e["t"], reverse=True), ok
+
+
 def code_updated():
     """True when a program file changed after this server started (so a restart is needed to use it)."""
     newest = 0
@@ -385,9 +403,9 @@ class H(BaseHTTPRequestHandler):
         if name == "analytics":
             return self.send_json(S.analytics())
         if name == "status":
-            return self.send_json(dict(roots={"A": bool(footage_root("A"))}, data_dir=DATA_DIR, stale=code_updated()))
+            return self.send_json(dict(roots={r: bool(footage_root(r)) for r in "AJU"}, data_dir=DATA_DIR, stale=code_updated()))
         if name == "sentry":
-            ev, ok = SENTRY.events(footage_root("A"))
+            ev, ok = all_sentry()
             return self.send_json(dict(connected=ok, events=ev))
         if name == "review":                    # review?role=A&t0=<UTC epoch s>&t1=<UTC epoch s>: signs read so far + the job
             role = q.get("role", ["A"])[0]
