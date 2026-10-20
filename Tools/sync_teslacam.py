@@ -32,7 +32,7 @@ OPTIONS
     --with-secondary     every connected drive
     --run                do the work (otherwise only counts)
     --limit N            with --run, stop the clip step after N clips
-    --workers N          clips taken at once (default: app.stills.workers, 3)
+    --workers N          clips or drives taken at once (default: app.stills.workers, 3)
     --since YYYY-MM-DD   only snapshot drives starting on or after this date
     --no-snapshots       skip step 3
     --budget SECONDS     stop starting new snapshot drives after this long
@@ -68,6 +68,15 @@ import drive_roles as DR  # noqa: E402
 import teslacam_ledger as TLG  # noqa: E402
 import teslacam_sync as SY  # noqa: E402
 from progress import Bar  # noqa: E402
+
+
+def _dur(sec):
+    sec = int(sec)
+    return "%dh %02dm" % (sec // 3600, sec % 3600 // 60) if sec >= 3600 else "%dm %02ds" % (sec // 60, sec % 60)
+
+
+def _pct(part, whole):
+    return "%d%%" % round(100.0 * part / whole) if whole else "0%"
 
 
 def _n(x):
@@ -163,29 +172,18 @@ def main():
         import drive_snapshots as SN
         tc = app_teslacam.TeslaCam(data, None)
         front = SN.front_clips(tc, found.get("A")) if found.get("A") else {}
-        t1 = time.time()
         print("Drive snapshots for %s drive(s)" % _n(len(snaps)))
-        done = 0
         sbar = Bar(len(snaps), "   Snapshots")
         try:
-            for i, stamp in enumerate(snaps):
-                if time.time() - t1 > a.budget:
-                    sbar.note("   budget reached - run again to continue")
-                    break
-                sbar.update(i, stamp)
-                try:
-                    r = SN.build(data, stamp, tc, front, pl["stills"])
-                except Exception as e:                      # one bad drive must not stop the rest
-                    sbar.note("   %s: %s: %s" % (stamp, type(e).__name__, e))
-                    continue
-                done += 1
+            r = SY.run_snapshots(data, snaps, front, workers=a.workers, budget=a.budget, note=lambda t: sbar.note("   " + t),
+                                 progress=lambda n, tot, st: sbar.update(n, st))
             sbar.update(len(snaps), "")
             sbar.done()
         except KeyboardInterrupt:
             sbar.note("")
             print("Stopped. What was kept stays.")
             return 130
-        print("   %s drive(s) done." % _n(done))
+        print("   %s drive(s) done in %s; %s of the work was reading video." % (_n(r["done"]), _dur(r["seconds"]), _pct(r["video_s"], r["busy_s"])))
     # 4. report
     rep = None
     if "A" in roots:
