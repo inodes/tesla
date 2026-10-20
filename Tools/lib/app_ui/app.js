@@ -997,9 +997,9 @@ async function pageAlerts(){
 }
 
 // A thumbnail taken from the video itself (first frame of a clip), loaded only when it scrolls into view - Recent clips have no thumb.png
-const VT=window.IntersectionObserver?new IntersectionObserver(es=>es.forEach(e=>{if(e.isIntersecting){const v=e.target;VT.unobserve(v);v.src=v.dataset.src+"#t=2"}}),{rootMargin:"300px"}):null;
-const vthumb=url=>`<video class="vt" muted playsinline preload="metadata" data-src="${esc(url)}" onerror="this.outerHTML='<div class=\\'noimg\\'></div>'"></video>`;
-const lazyThumbs=host=>$$("video.vt",host).forEach(v=>{if(VT)VT.observe(v);else v.src=v.dataset.src+"#t=2"});
+const VT=window.IntersectionObserver?new IntersectionObserver(es=>es.forEach(e=>{if(e.isIntersecting){const v=e.target;VT.unobserve(v);v.src=v.dataset.src+"#t="+(v.dataset.t||2)}}),{rootMargin:"300px"}):null;
+const vthumb=(url,t)=>`<video class="vt" muted playsinline preload="metadata" data-src="${esc(url)}" data-t="${t||2}" onerror="this.outerHTML='<div class=\\'noimg\\'></div>'"></video>`;
+const lazyThumbs=host=>$$("video.vt",host).forEach(v=>{if(VT)VT.observe(v);else v.src=v.dataset.src+"#t="+(v.dataset.t||2)});
 // ---------- TeslaCam: the clips on any connected drive, and one continuous timeline built from the files alone
 let TCS={role:null,kind:"timeline",q:"",r:{p:"all"},src:{sentry:1,saved:1,recent:1}},TCPOLL=null,TLOFF=null;
 const tcGet=async p=>{const r=await fetch("/api/"+p);if(!r.ok)throw new Error(p+": "+r.status);return r.json()};
@@ -1247,8 +1247,9 @@ async function pageTeslaCam(role,id){
     $("#tl").innerHTML=srcs.map(k=>tile(n0(cnt(k)),k==="recent"?"continuous recordings":TCSRC[k]+" events")).join("")+tile(n0(mins),"minutes of video");
     const card=v=>{const bd=`<span class="srcb ${v.ty}">${TCSRC[v.ty]}</span>`;
       if(v.ty==="recent"){const t=tripOf(v);return `<button class="evc run" data-ty="recent" data-id="${esc(v.id)}">${vthumb("/footage/"+role+"/RecentClips/"+v.id+"-front.mp4")}${bd}<b>${hms(v.ts).slice(0,5)} – ${hms(v.end).slice(0,5)}</b><span>${v.n} minute${v.n>1?"s":""}${v.full<v.n?" · "+(v.n-v.full)+" with fewer than 6 cameras":""}</span>${t?`<span>${esc(t.ti)}</span><a href="#/drive/${t.id}" onclick="event.stopPropagation()">open the drive</a>`:""}<a href="#/teslacam/${role}/${esc(v.id)}" onclick="event.stopPropagation()">map and telemetry</a></button>`}
-      const n=Object.keys(v.clips).length,folder=TCF[v.ty],k0=Object.keys(v.clips)[0];
-      return `<button class="evc ${n?"":"faded"}" data-ty="${v.ty}" data-id="${v.id}">${v.thumb?`<img loading="lazy" src="/footage/${role}/${folder}/${v.id}/thumb.png" onerror="this.style.visibility='hidden'">`:k0&&v.clips[k0]&&v.clips[k0].includes("front")?vthumb(`/footage/${role}/${folder}/${v.id}/${k0}-front.mp4`):'<div class="noimg"></div>'}${bd}<b>${hms(v.ts)}</b><span>${esc(reason(v.reason))}</span><span>${esc([v.city,v.street].filter(Boolean).join(" · "))}</span><span>${n?n+" min of video":"no video"}</span></button>`};
+      const n=Object.keys(v.clips).length,folder=TCF[v.ty],ks=Object.keys(v.clips).sort(),tt=(v.cts||v.ts||"").replace("T","_").replace(/:/g,"-"),k0=ks.filter(x=>x<=tt).pop()||ks[0],      // the minute holding the trigger, not the first one (an event starts ten minutes earlier)
+        k0t=Math.max(1,Math.min(58,Math.round((Date.parse((v.cts||v.ts||"").replace("T"," "))-Date.parse((k0||"").replace("_"," ").replace(/(\d\d)-(\d\d)-(\d\d)$/,"$1:$2:$3")))/1000)||2));
+      return `<button class="evc ${n?"":"faded"}" data-ty="${v.ty}" data-id="${v.id}">${k0&&v.clips[k0]&&v.clips[k0].includes("front")?vthumb(`/footage/${role}/${folder}/${v.id}/${k0}-front.mp4`,k0t):v.thumb?`<img loading="lazy" src="/footage/${role}/${folder}/${v.id}/thumb.png" onerror="this.style.visibility='hidden'">`:'<div class="noimg"></div>'}${bd}<b>${hms(v.ts)}</b><span>${esc(reason(v.reason))}</span><span>${esc([v.city,v.street].filter(Boolean).join(" · "))}</span><span>${n?n+" min of video":"no video"}</span></button>`};
     $("#tb").innerHTML=(days.length?"":'<div class="empty">Nothing here for these dates.</div>')+days.slice(0,60).map(d=>`<div class="day">${dayName(d)}<small>${byDay[d].length} clip${byDay[d].length>1?"s":""}</small></div><div class="evs">${byDay[d].map(card).join("")}</div>`).join("")+(days.length>60?'<div class="sub">Showing the newest 60 days. Narrow the dates to see older ones.</div>':"");
     lazyThumbs($("#tb"));$$("#tb .evc").forEach(b=>b.onclick=async()=>{const ty=b.dataset.ty,sel=b.dataset.id;$$("#tb .evc").forEach(x=>x.classList.toggle("on",x===b));$("#spl").scrollIntoView({block:"nearest"});
       if(ty!=="recent")return sentryPlayer($("#spl"),data[ty].find(v=>v.id===sel),role,TCF[ty]);
