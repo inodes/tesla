@@ -8,13 +8,16 @@
   --rescue   the rescued copy (default /Volumes/LaCie1/jowua-rescue)
   --full     compare whole files (slow); the default compares the first MB, the last MB and 4 places between
   --tsv FILE where to write one line per file (default ~/Downloads/jowua-inventory-DATE.tsv)
+  --no-save-outside  do not copy the files outside TeslaCam (JOWUA_1TB, Tools, Icons...) into RESCUE/_outside (by default they are copied and checked, so they can be put back)
 
 For every file on JOWUA it looks for a copy with the same name and size in the Archive and in the rescue folder (same path first, then the same file name anywhere in
 TeslaCam), compares the contents, and reports: verified on the Archive, on the rescue copy, on both, ONLY ON JOWUA, or DIFFERENT. Files outside TeslaCam (JOWUA_1TB,
 Tools, Icons, system folders) are listed separately: nothing outside TeslaCam is ever counted as footage. Nothing is written to JOWUA, the Archive or the rescue folder.
+It also writes the MANIFEST that restore_drive.py puts everything back from: every folder and file of JOWUA with its size and time and where each verified copy is
+(~/Downloads/jowua-manifest-DATE.json, and a copy in RESCUE/_manifest/jowua-manifest.json).
 Log: ~/Downloads/jowua-inventory-DATE.log. Exit status 0 = every footage file has a verified copy elsewhere, 2 = some do not, 1 = could not start.
 """
-import os, sys, time, collections
+import os, sys, time, collections, json, shutil
 
 def now(): return time.strftime("%H:%M:%S")
 args = sys.argv[1:]
@@ -79,12 +82,27 @@ def find_copy(tag, rel, name, sz, s):
         except OSError: pass
     return ("different", cands[0])
 
+manifest = {"made": time.strftime("%Y-%m-%d %H:%M:%S"), "src": SRC, "dirs": [], "files": []}
+SAVE_OUT = "--no-save-outside" not in args
 rows = []; other = []; counts = collections.Counter(); bytes_ = collections.Counter(); only = []; diff = []; t0 = time.time(); i = 0
+for r_, dirs_, names_ in os.walk(SRC):
+    dirs_[:] = [d for d in dirs_ if d not in SKIP]
+    for d_ in dirs_: manifest["dirs"].append(os.path.relpath(os.path.join(r_, d_), SRC))
 for f in walk(SRC):
     rel = os.path.relpath(f, SRC)
     if not rel.startswith("TeslaCam" + os.sep):
-        try: other.append((rel, os.path.getsize(f)))
-        except OSError: other.append((rel, -1))
+        try: st_ = os.stat(f); other.append((rel, st_.st_size))
+        except OSError: other.append((rel, -1)); continue
+        # keep a copy beside the rescued footage so it can be put back
+        dst_ = os.path.join(RES, "_outside", rel); ok_ = False
+        if SAVE_OUT:
+            try:
+                os.makedirs(os.path.dirname(dst_), exist_ok=True)
+                if not (os.path.exists(dst_) and os.path.getsize(dst_) == st_.st_size and same(f, dst_, st_.st_size)):
+                    shutil.copyfile(f, dst_)
+                ok_ = same(f, dst_, st_.st_size)
+            except OSError as e: say("  cannot save %s: %s" % (rel, e))
+        manifest["files"].append({"path": rel, "size": st_.st_size, "mtime": st_.st_mtime, "copies": ({"X": dst_} if ok_ else {}), "footage": False})
         continue
     i += 1
     try: sz = os.path.getsize(f)
@@ -100,6 +118,9 @@ for f in walk(SRC):
     else: st = "ONLY_ON_JOWUA"; only.append((rel, sz))
     counts[st] += 1; bytes_[st] += sz
     rows.append((st, rel, sz, a[1] or r[1]))
+    try: mt = os.stat(f).st_mtime
+    except OSError: mt = 0
+    manifest["files"].append({"path": rel, "size": sz, "mtime": mt, "copies": {k: v[1] for k, v in (("A", a), ("R", r)) if v[0] == "ok"}, "footage": True})
     if i % 1000 == 0: say("%d footage files checked  (only on JOWUA so far: %d)  %.0f s" % (i, len(only), time.time() - t0))
 
 with open(TSV, "w") as o:
@@ -120,5 +141,14 @@ top = collections.Counter(r.split(os.sep)[0] for r, s in other)
 say("outside TeslaCam (not footage): %d files: %s" % (len(other), ", ".join("%s: %d" % kv for kv in sorted(top.items())) or "none"))
 for rel, sz in other[:20]: say("  OUTSIDE: %s (%d bytes)" % (rel, sz))
 bad = len(only) + len(diff) + counts["UNREADABLE"] + counts["ERROR"]
+unsaved = [m_["path"] for m_ in manifest["files"] if not m_["copies"]]
+if SAVE_OUT and any(not m_["footage"] and not m_["copies"] for m_ in manifest["files"]): say("WARNING: some files outside TeslaCam could not be saved: %s" % ", ".join(m_["path"] for m_ in manifest["files"] if not m_["footage"] and not m_["copies"])[:300]); bad += 1
+MAN = os.path.join(logdir, "jowua-manifest-%s.json" % stamp)
+json.dump(manifest, open(MAN, "w"))
+try:
+    os.makedirs(os.path.join(RES, "_manifest"), exist_ok=True); shutil.copyfile(MAN, os.path.join(RES, "_manifest", "jowua-manifest.json"))
+except OSError as e: say("WARNING: could not save the manifest beside the rescued footage: %s" % e)
+nA = sum(1 for m_ in manifest["files"] if "A" in m_["copies"]); nR = sum(1 for m_ in manifest["files"] if "R" in m_["copies"] and "A" not in m_["copies"]); nX = sum(1 for m_ in manifest["files"] if "X" in m_["copies"])
+say("restore plan: %d folders, %d files (%.1f GB) can be put back: %d from the Archive, %d from the rescue copy, %d saved from outside TeslaCam. Manifest: %s" % (len(manifest["dirs"]), len(manifest["files"]) - len(unsaved), sum(m_["size"] for m_ in manifest["files"]) / 1e9, nA, nR, nX, MAN))
 say("RESULT: %s. One line per file: %s. Log: %s" % ("every footage file has a verified copy elsewhere" if bad == 0 else "%d footage files do NOT have a verified copy elsewhere" % bad, TSV, logf.name))
 sys.exit(0 if bad == 0 else 2)
