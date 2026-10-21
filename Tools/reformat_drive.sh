@@ -57,6 +57,8 @@ f() { echo "$INFO" | sed -n "s|^ *$1: *||p" | head -1; }
 SIZE=$(echo "$INFO" | sed -n 's/.*Disk Size:.*(\([0-9]*\) Bytes).*/\1/p' | head -1)
 [ "$(f Whole)" = Yes ] || die "$DISK is not a whole disk"
 [ "$(f 'Device Location')" = External ] || die "$DISK is not an external disk"
+case "$(f Protocol)" in *"Disk Image"*) die "$DISK is a disk image (the rescue copy), not a physical drive" ;; esac
+[ "$(f Virtual)" != Yes ] || die "$DISK is a virtual disk, not a physical drive"
 say "Disk $DISK: $(f 'Device / Media Name'), $((SIZE / 1000000000)) GB, $(f Protocol)"
 diskutil list "$DISK" | sed 's/^/    /'
 
