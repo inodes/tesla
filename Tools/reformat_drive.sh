@@ -15,7 +15,7 @@
 #     The test files are deleted at the end. A new volume has a NEW volume UUID: register it again in the app.
 #
 # OPTIONS
-#     --label NAME          volume name (default JOWUA)
+#     --label NAME          volume name (default TESLADRIVE, the name the car gives)
 #     --marker NAME         empty folder created at the top (default JOWUA_1TB); none = no folder
 #     --test GB|all|none    how much to test (default all: about 1.5 hours for 1 TB)
 #     --yes                 do not ask for the typed confirmation (the inventory check still applies)
@@ -34,7 +34,7 @@ case "${1:-}" in -h|--help) usage 0 ;; esac
 [ "$(uname)" = Darwin ] || die "this is for macOS"
 [ "$(id -u)" -eq 0 ] || exec sudo "$0" "$@"
 
-DISK="" LABEL=JOWUA MARKER=JOWUA_1TB TEST=all YES=0 NOINV=0
+DISK="" LABEL=TESLADRIVE MARKER=JOWUA_1TB TEST=all YES=0 NOINV=0
 while [ $# -gt 0 ]; do a="$1"; shift; case "$a" in
   --label) LABEL="${1:-}"; shift ;; --marker) MARKER="${1:-}"; shift ;; --test) TEST="${1:-}"; shift ;; --yes|-y) YES=1 ;; --no-inventory-check) NOINV=1 ;;
   -h|--help) usage 0 ;; -*) die "unknown option: $a" ;; *) [ -z "$DISK" ] && DISK="$a" || die "unexpected argument: $a" ;; esac; done
