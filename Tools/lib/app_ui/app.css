@@ -204,3 +204,9 @@ tr.chline{cursor:pointer}tr.chline td{color:var(--bad);font-weight:600;font-size
  #tdb.side>*{grid-column:1/-1}#tdb.side>:empty{display:none}
  #tdb.side>#dmapc{grid-column:1;grid-row:5;margin-top:12px}#tdb.side>.dvc{grid-column:2;grid-row:5;margin-top:12px}#tdb.side>#dchc{grid-row:6}}
 @media (min-width:1100px){#tdb.side>#dmapc[hidden]~.dvc{grid-column:1/-1}}
+/* clip cards: tick box, size on the thumbnail (red for the big ones), and what is kept from the video */
+.evc{position:relative}.evc em{font-style:normal}
+.evk{position:absolute;top:12px;left:12px;z-index:2;width:20px;height:20px;border-radius:5px;border:2px solid #fff;background:rgba(0,0,0,.4);color:#fff;font-size:13px;line-height:16px;text-align:center;cursor:pointer}.evk.on{background:var(--accent)}
+.szb{position:absolute;top:12px;right:12px;z-index:2;font-size:11px;font-weight:700;padding:1px 7px;border-radius:9px;background:rgba(0,0,0,.62);color:#fff}.szb.big{background:#dc2626;box-shadow:0 0 0 2px #fff}
+.kst{display:flex;gap:4px;flex-wrap:wrap;margin:2px 0}.kc{font-style:normal;font-size:10.5px;padding:1px 6px;border-radius:9px;background:var(--line);color:var(--mut)}.kc.ok{background:rgba(22,163,74,.14);color:#16a34a}.kc.part{background:rgba(217,119,6,.16);color:#b45309}
+.selb{align-items:center;gap:10px;flex-wrap:wrap}.btn.bad{color:#dc2626;border-color:#dc2626}.noimg.camn{display:flex;align-items:center;justify-content:center;color:var(--mut);font-size:12px}
