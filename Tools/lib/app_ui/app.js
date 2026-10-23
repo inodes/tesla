@@ -2029,14 +2029,14 @@ function telemChart(cv,tip,s,onPick,t0){          // t0: i -> "HH:MM:SS" on the 
   zb("in").onclick=()=>zoomAt(mid(),.5);zb("out").onclick=()=>zoomAt(mid(),2);zb("full").onclick=()=>setView(0,1e9);
   zb("L").onclick=()=>setView(A-(B-A)/2,B-(B-A)/2);zb("R").onclick=()=>setView(A+(B-A)/2,B+(B-A)/2);
   zb("sel").onclick=()=>{selMode=!selMode;ui()};
-  cv.onmousemove=e=>{const r=cv.getBoundingClientRect();hov=I(e.clientX-r.left);tip.textContent=read(hov);if(sel)sel.b=hov;draw();if(e.buttons&1&&!sel)onPick(hov)};
+  cv.onmousemove=e=>{W=cv.clientWidth||W;const r=cv.getBoundingClientRect();hov=I(e.clientX-r.left);tip.textContent=read(hov);if(sel)sel.b=hov;draw();if(e.buttons&1&&!sel)onPick(hov)};
   cv.onmouseleave=()=>{hov=null;tip.textContent=cur!=null?read(cur):"";draw()};
-  cv.onmousedown=e=>{const r=cv.getBoundingClientRect(),i=I(e.clientX-r.left);if(selMode||e.shiftKey){sel={a:i,b:i};e.preventDefault();return}onPick(i)};
+  cv.onmousedown=e=>{W=cv.clientWidth||W;const r=cv.getBoundingClientRect(),i=I(e.clientX-r.left);if(selMode||e.shiftKey){sel={a:i,b:i};e.preventDefault();return}onPick(i)};
   addEventListener("mouseup",()=>{if(!sel)return;const a=Math.min(sel.a,sel.b),b=Math.max(sel.a,sel.b),px=X(b)-X(a);sel=null;selMode=false;if(px>=8&&b-a>=3)setView(a,b);else{ui();draw()}});     // a drag of a few pixels is a slip, not a selection
   cv.addEventListener("wheel",e=>{const r=cv.getBoundingClientRect();
     if(e.ctrlKey||e.metaKey){e.preventDefault();zoomAt(A+(e.clientX-r.left-L)/(W-L-R)*(B-A),e.deltaY<0?.8:1.25)}
     else if(zoomed()&&Math.abs(e.deltaX)>Math.abs(e.deltaY)){e.preventDefault();const d=(B-A)*e.deltaX/(W-L-R);setView(A+d,B+d)}},{passive:false});
-  norm();ui();addEventListener("resize",draw);draw();
+  norm();ui();addEventListener("resize",draw);if(window.ResizeObserver)new ResizeObserver(()=>draw()).observe(cv);draw();      // the chart is wider or narrower when the layout changes (side by side / stacked): redraw, and map the pointer on the new width
   return{update(s2){S=s2;ver++;norm();ui();draw()},marks(m){M=m;ver++;draw()},events(l){EV=l||[];ver++;draw()},lanes(l){LN=l;ver++;draw()},focus(f){F=f;draw()},view(a,b){setView(a,b)},limit(a,b){const N=S.v.length-1;LIM=a==null?null:{a:Math.max(0,Math.min(a,N-1)),b:Math.max(1,Math.min(b,N))};va=0;vb=null;norm();ver++;ui();draw()},cursor(i){cur=i;if(zoomed()&&(i<A||i>B)){const w=B-A;setView(i-w*.2,i+w*.8)}if(hov==null)tip.textContent=read(i);draw()}};
 }
 // lasting changes of speed: the median of the 6 s before against the 6 s after, 10 km/h or more, both while moving; one per 20 s (the biggest wins)
