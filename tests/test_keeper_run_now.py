@@ -55,6 +55,24 @@ class Drv:
         return {}
 
 
+class Pict:
+    def __init__(self):
+        self.started, self.alive = 0, False
+
+    def pictures_start(self, roots):
+        self.started += 1
+        return False
+
+    def pictures_running(self):
+        return self.alive
+
+    def stop(self):
+        pass
+
+    def job(self):
+        return {}
+
+
 class RunNow(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.mkdtemp()
@@ -104,6 +122,19 @@ class RunNow(unittest.TestCase):
         self.tc.scan_stop = lambda: None
         self.k.pause()
         self.assertEqual(got, [("telemetry", {"J": 2, "A": 0})])
+
+    def test_the_pictures_of_events_are_made_after_the_stills_and_by_make_stills(self):
+        self.k.pictures = Pict()
+        self.k.run_now(["stills"])
+        self.assertEqual(self.k._only, ("stills", "pictures"))
+        self.passes()
+        self.assertEqual(self.k.pictures.started, 1)
+
+    def test_not_asked_for_they_are_not_made(self):
+        self.k.pictures = Pict()
+        self.k.run_now(["log"])
+        self.passes()
+        self.assertEqual(self.k.pictures.started, 0)
 
 
 if __name__ == "__main__":

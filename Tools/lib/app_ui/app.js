@@ -1691,14 +1691,14 @@ async function pageTeslaCam(role,id){
       poll()});
     on("jobx",async()=>{try{await fetch("/api/clips/act",{method:"POST",body:JSON.stringify({action:"stop"})})}catch(e){}});
     if(jobT)jobPaint()};
-  const jobPaint=()=>{const t=$("#jobtx");if(!t||!jobT)return;const j=jobT,pr=j.action==="process"||!!j.reading,q=pr?(j.step_total?Math.round(100*j.step_done/j.step_total):0):(j.bytes?Math.round(100*j.bytes_done/j.bytes):0);
+  const jobPaint=()=>{const t=$("#jobtx");if(!t||!jobT)return;const j=jobT,pr=j.action==="process"||j.action==="pictures"||!!j.reading,q=pr?(j.step_total?Math.round(100*j.step_done/j.step_total):0):(j.bytes?Math.round(100*j.bytes_done/j.bytes):0);
     if(pr){t.innerHTML=`<b>${j.reading?"Before moving, reading what is missing · ":""}${esc(j.step||"Starting")}</b>${j.step_total?` · ${n0(j.step_done)} of ${n0(j.step_total)}`:""}<div style="height:6px;border-radius:3px;background:var(--line);margin:6px 0 0;overflow:hidden"><div style="height:100%;width:${q}%;background:var(--accent);transition:width .3s"></div></div><div class="sub" style="margin-top:4px">Videos cannot play while this reads from the drive.</div>`;return}
     t.innerHTML=`<b>${j.action==="move"?"Moving":"Deleting"} the video ${j.action==="move"?"from "+NMD[j.role]+" to the Archive":"from "+NMD[j.role]}</b> · ${n0(j.done)} of ${n0(j.files)} files · ${fmtGB(j.bytes_done)} of ${fmtGB(j.bytes)}<div style="height:6px;border-radius:3px;background:var(--line);margin:6px 0 0;overflow:hidden"><div style="height:100%;width:${q}%;background:var(--accent);transition:width .3s"></div></div>`};
   let polling=false;
   const poll=async()=>{if(polling)return;polling=true;try{await poll1()}finally{polling=false}};
   const poll1=async()=>{while(document.body.contains($("#selbar"))){let j;try{j=await (await fetch("/api/clips/job")).json()}catch(e){break}
       if(j.running){const first=!jobT;jobT=j;if(first)selbar();else jobPaint();await new Promise(r=>setTimeout(r,1500));continue}
-      if(jobT){jobT=null;const bad=(j.errors||[]).length,pr=j.action==="process";
+      if(jobT){jobT=null;const bad=(j.errors||[]).length,pr=j.action==="process"||j.action==="pictures";
         note=pr?((j.steps||[]).some(x=>x.total)?"Read what was missing"+(j.steps||[]).filter(x=>x.total).map(x=>" · "+x.step.toLowerCase()+" "+n0(x.total)).join(""):"Nothing more could be read from the video")+(bad?" · "+j.errors[0]:""):(j.action==="move"?"Moved ":"Deleted ")+n0(j.done)+" files"+(j.action==="delete"?", freed "+fmtGB(j.freed):"")+(bad?" · "+bad+" could not be handled: "+j.errors[0]:"");
         if(!pr)TCSEL.clear();bust("tc/clips");KPC=null;await load(true);loadKeep()}
       break}};
