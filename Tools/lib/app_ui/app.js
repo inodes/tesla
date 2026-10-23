@@ -962,10 +962,17 @@ function clipPlayer(host,o){
     else{si=i;seek=Math.max(0,(ms-stMs(stamps[i]))/1000);if($("#stp"))$("#stp").value=si;vids()}}};
 }
 // one Sentry or Saved event folder (role = which drive, folder = SentryClips | SavedClips)
-function sentryPlayer(host,ev,role=ev&&ev.role||"A",folder="SentryClips"){
-  const stamps=Object.keys(ev.clips),t=ev.ts,what=ev.reason?reason(ev.reason):folder==="SavedClips"?"Saved clip":"Sentry event";
-  clipPlayer(host,{stamps,cams:ev.clips,loc:ev.loc,trig:Date.parse(ev.cts||t),view:EVCAM[ev.cam]||"all",url:(s,c)=>`/footage/${role}/${folder}/${ev.id}/${s}-${c}.mp4`,
-    head:`${esc(what)} on ${dayName(t.slice(0,10))} at ${hms(t)}${ev.city?" · "+esc(ev.city):""}${ev.street&&folder==="SavedClips"?" · "+esc(ev.street):""}. One-minute clips, ${stamps.length} in this event; the next clip plays on its own. It plays from the start; press Detection to jump to the moment it happened${EVCAM[ev.cam]?" (the "+CAMN[EVCAM[ev.cam]].toLowerCase()+" camera saw it)":""}.`});
+async function sentryPlayer(host,ev,role=ev&&ev.role||"A",folder="SentryClips"){
+  let stamps=Object.keys(ev.clips).sort(),cams=ev.clips,loc=ev.loc,more=null;const t=ev.ts,what=ev.reason?reason(ev.reason):folder==="SavedClips"?"Saved clip":"Sentry event",trig=Date.parse(ev.cts||t);
+  // A Saved clip keeps a lot from before the moment it was saved and only a little after it; the dashcam went on recording, so as many minutes after as before
+  // are added from its continuous recording (when it is on a connected drive): the player then shows the same stretch on both sides of the moment
+  if(folder==="SavedClips"&&stamps.length){
+    const stMs=x=>Date.parse(x.slice(0,10)+"T"+x.slice(11).replace(/-/g,":")),before=stamps.filter(x=>stMs(x)<=trig).length,have=stamps.filter(x=>stMs(x)>trig).length,want=before-1-have;
+    if(want>0){try{const r=await fetch("/api/clips/after/"+encodeURIComponent(stamps[stamps.length-1])+"?n="+want+"&skip="+encodeURIComponent(stamps.join(",")));const d=r.ok?await r.json():null;
+      if(d&&d.clips&&Object.keys(d.clips).length){more=d;stamps=stamps.concat(Object.keys(d.clips).sort());cams=Object.assign({},ev.clips,d.clips);loc=Object.assign({},ev.loc||{},d.loc||{})}}catch(e){}}}
+  const extra=more?Object.keys(more.clips).length:0;
+  clipPlayer(host,{stamps,cams,loc,trig,view:EVCAM[ev.cam]||"all",url:(s,c)=>more&&more.play[s]?`/footage/${more.play[s]}/RecentClips/${s}-${c}.mp4`:`/footage/${role}/${folder}/${ev.id}/${s}-${c}.mp4`,
+    head:`${esc(what)} on ${dayName(t.slice(0,10))} at ${hms(t)}${ev.city?" · "+esc(ev.city):""}${ev.street&&folder==="SavedClips"?" · "+esc(ev.street):""}. One-minute clips, ${stamps.length} in this event${extra?` (${extra} after it from the continuous recording)`:""}; the next clip plays on its own. It plays from the start; press Detection to jump to the moment it happened${EVCAM[ev.cam]?" (the "+CAMN[EVCAM[ev.cam]].toLowerCase()+" camera saw it)":""}.`});
 }
 
 // ---------- Places (the places manager) and the page for one place

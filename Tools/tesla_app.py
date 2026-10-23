@@ -566,6 +566,13 @@ class H(BaseHTTPRequestHandler):
             return self.send_json(drivelist())
         if name == "clips":                     # every Recent run, Saved and Sentry event ever logged, whichever drives are connected; each says which drive holds it and whether it can be played
             return self.send_json(TC.clips_all({r: footage_root(r) for r in "AJU"}))
+        if name.startswith("clips/after/"):     # clips/after/<minute>?n=&skip=<minutes already shown, comma separated>: the continuous recording that follows an event
+            try:
+                n = max(0, min(60, int(q.get("n", ["10"])[0])))
+            except ValueError:
+                n = 10
+            skip = [x for x in (q.get("skip", [""])[0] or "").split(",") if x]
+            return self.send_json(TC.after_all(urllib.parse.unquote(name[12:]), n, {r: footage_root(r) for r in "AJU"}, skip))
         if name.startswith("clips/run/"):       # clips/run/<first minute>: the minutes of one Recent run, with the drive each can be played from
             d = TC.run_all(urllib.parse.unquote(name[10:]), {r: footage_root(r) for r in "AJU"})
             return self.send_json(d if d else {"error": "No such recording."}, 200 if d else 404)
