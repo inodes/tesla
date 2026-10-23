@@ -87,6 +87,14 @@ class RunNow(unittest.TestCase):
         self.k._plan = ["A", "J"]                         # the log: one step a drive
         self.assertEqual(self.k._by_drive("log", 1), {"A": dict(done=1, total=1), "J": dict(done=0, total=1)})
 
+    def test_a_pass_asked_for_from_a_page_does_not_wait_for_video(self):
+        self.k.playing_now()
+        self.assertTrue(self.k.playing())                 # background reading gives way to video
+        self.k.run_now()
+        self.assertFalse(self.k.playing())                # a button does not: the page has stopped its videos
+        self.k.playing_now()
+        self.assertFalse(self.k.status()["playing"])
+
 
 if __name__ == "__main__":
     unittest.main()
