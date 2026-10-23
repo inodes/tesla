@@ -1591,9 +1591,18 @@ async function pageTeslaCam(role,id){
   const head='<h1>TeslaCam</h1>';
   const trips=act.filter(x=>x.k==="drive"&&!x.repark).map(x=>({id:x.id,t0:x.t0,t1:x.t0+x.min*60,ti:driveTitle(x)}));
   const tripOf=v=>{const a=v.t0!=null?v.t0:v.t,b=v.t1!=null?v.t1:(v.t||0)+60;return trips.find(d=>d.t0<b&&d.t1>a)};
-  main.innerHTML=head+`<div id="fsb" style="margin-bottom:12px"></div><div class="bar" id="tsr"></div><div class="bar"><span id="rg"></span><input type="search" id="q" placeholder="Search…" value="${esc(TCS.q)}"></div><div id="selbar"></div><div class="tiles" id="tl"></div><div id="spl"></div><div id="tb"></div>`;
+  main.innerHTML=head+`<div id="fsb" style="margin-bottom:12px"></div><div id="thin"></div><div class="bar" id="tsr"></div><div class="bar"><span id="rg"></span><input type="search" id="q" placeholder="Search…" value="${esc(TCS.q)}"></div><div id="selbar"></div><div class="tiles" id="tl"></div><div id="spl"></div><div id="tb"></div>`;
   let data=null,sel=null,token=0,sentryList=null,vis=[],pend=null,jobT=null,note="";
   footageSync($("#fsb"),{table:true});
+  // the stills of ordinary driving (no event, no sign) can be made smaller; events and signs keep their full-size pictures
+  const thin=async()=>{const el=$("#thin");if(!el)return;let j;try{j=await (await fetch("/api/stills/thin")).json()}catch(e){return}
+    const q=j.total?Math.round(100*j.done/j.total):0;
+    if(j.running){el.innerHTML=`<div class="bar selb"><span class="sub" style="flex:1"><b>Making stills smaller</b> · ${n0(j.done)} of ${n0(j.total)} · ${fmtGB(j.saved)} freed<div style="height:6px;border-radius:3px;background:var(--line);margin:6px 0 0;overflow:hidden"><div style="height:100%;width:${q}%;background:var(--accent);transition:width .3s"></div></div></span><button class="btn sm" id="thx">Stop</button></div>`;
+      $("#thx").onclick=async()=>{await fetch("/api/stills/thin",{method:"POST",body:JSON.stringify({action:"stop"})})};setTimeout(thin,1500);return}
+    const done=j.last&&j.total?` Freed ${fmtGB(j.saved)}.`:"";
+    el.innerHTML=j.minutes>0?`<div class="bar selb"><span class="sub" style="flex:1">Stills of ordinary driving · ${n0(j.minutes)} minutes · ${fmtGB(j.bytes)}.${done}</span><button class="btn sm" id="thgo" title="Re-encodes them smaller. Minutes in an event or with a sign, and the full-size pictures kept for those, are left as they are">Make smaller</button></div>`:(done?`<div class="bar selb"><span class="sub">${done.trim()}</span></div>`:"");
+    const b=$("#thgo");if(b)b.onclick=async()=>{b.disabled=true;await fetch("/api/stills/thin",{method:"POST",body:JSON.stringify({action:"start"})});thin()}};
+  thin();
   const chips=()=>{
     $("#tsr").innerHTML='<span class="sub" style="margin:0 4px 0 0">Show:</span>'+Object.keys(TCSRC).map(k=>`<button class="chip ${TCS.src[k]?"on":""}" data-s="${k}">${TCSRC[k]}${data&&data[k]?" · "+data[k].length:""}</button>`).join("")+'';
     $$("#tsr [data-s]").forEach(b=>b.onclick=()=>{const on=Object.keys(TCSRC).filter(k=>TCS.src[k]);if(TCS.src[b.dataset.s]&&on.length<2)return;TCS.src[b.dataset.s]=TCS.src[b.dataset.s]?0:1;$("#spl").innerHTML="";chips();draw()});

@@ -140,6 +140,7 @@
       "min_conf": 50.0,
       "workers": 3,
       "merge_s": 12.0,
+      "crop_px": 320,
       "candidate_km": 20,
       "candidate_avg_kmh": 60,
       "accel_min_pct": 5,
@@ -154,6 +155,13 @@
       "steer_deg": 15,
       "sheet_cols": 7,
       "sheet_tile_px": 240
+    },
+    "stills": {
+      "width": 400,
+      "quality": 6,
+      "workers": 3,
+      "thin_width": 240,
+      "thin_quality": 10
     },
     "event_shots": {
       "quality": 2
