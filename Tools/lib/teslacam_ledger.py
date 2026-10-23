@@ -131,6 +131,30 @@ class Ledger:
         self._save_scans(sc)
         return res
 
+    # ---- what the app itself did to a drive (delete / move): noted at once, the next scan agrees ---------------------
+    def mark(self, role, key, size, present, at=None, flush=True):
+        """The app removed (present=False) or put (present=True) the file `key` on `role`: write it in the log now, so the pages show it without a new scan."""
+        at = at or now_iso()
+        day = key.split("|", 2)[2][:10]
+        d = self.day(day)
+        e = d.get(key)
+        if e is None:
+            if not present:
+                return day
+            e = d[key] = dict(size=size, drives={})
+        r = e["drives"].get(role)
+        if present:
+            e["size"] = size
+            if r is None:
+                e["drives"][role] = dict(first=at, last=at, gone=None)
+            else:
+                r["last"], r["gone"] = at, None
+        elif r is not None and not r.get("gone"):
+            r["gone"] = at
+        if flush:
+            self.flush({day})
+        return day
+
     # ---- asking --------------------------------------------------------------------------------------------------
     def _all(self):
         for day in self.days():

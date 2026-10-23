@@ -71,6 +71,7 @@ import app_drive_review  # noqa: E402
 import app_footage
 import drive_eject
 import footage_todo
+import clip_keep
 import app_keeper  # noqa: E402
 import app_charges  # noqa: E402
 import clip_clock as CC  # noqa: E402
@@ -93,6 +94,7 @@ TC = None
 DRV = None                  # the manual drive review (lib/app_drive_review.py)
 KEEP = None                 # reads the connected TeslaCam drives in the background (lib/app_keeper.py)
 TODO = None                 # what each connected drive still needs (lib/footage_todo.py)
+CKEEP = None                # per clip: what is kept from its video, and deleting / moving the video (lib/clip_keep.py)
 FG = None                   # the footage log and the one-second stills (lib/app_footage.py)
 SYNC = None
 TSYNC = None
@@ -447,6 +449,13 @@ class H(BaseHTTPRequestHandler):
             if u.path == "/api/keeper":            # {action: pause|resume|run}
                 act = body.get("action")
                 return self.send_json(KEEP.pause() if act == "pause" else KEEP.run_now(body.get("stages")) if act == "run" else KEEP.resume())
+            if u.path == "/api/clips/act":         # {action: delete|move|stop, role, items: [{kind, id}]}: remove the video of clips from a drive (after it is all kept), or move it to the Archive
+                if body.get("action") == "stop":
+                    return self.send_json(CKEEP.stop())
+                if KEEP._stage is not None or KEEP.busy():
+                    return self.send_json(dict(error="A job is reading the drives: stop it first."))
+                role = body.get("role")
+                return self.send_json(CKEEP.start(body.get("action"), role, body.get("items") or [], {r: footage_root(r) for r in "AJU"}))
             if u.path == "/api/eject":             # {role}: stop reading the drive, then eject it
                 role = body.get("role")
                 root = footage_root(role) if role in ("A", "J", "U") else None
@@ -565,6 +574,10 @@ class H(BaseHTTPRequestHandler):
             return self.send_json(dict(drives=TC.drives()))
         if name == "drivelist":                 # the Drives list: Tessie's drives and charges as the rows, the dashcam's drives attached (or alone when there is no Tessie)
             return self.send_json(drivelist())
+        if name == "clips/keep":                # per clip (Recent run, Saved, Sentry): what is kept from its video, and its size on each drive (nothing is read from a drive)
+            return self.send_json(CKEEP.status())
+        if name == "clips/job":                 # the delete / move being done to the drives, or the last one
+            return self.send_json(CKEEP.job())
         if name == "clips":                     # every Recent run, Saved and Sentry event ever logged, whichever drives are connected; each says which drive holds it and whether it can be played
             return self.send_json(TC.clips_all({r: footage_root(r) for r in "AJU"}))
         if name.startswith("clips/after/"):     # clips/after/<minute>?n=&skip=<minutes already shown, comma separated>: the continuous recording that follows an event
@@ -841,7 +854,7 @@ def _code_version():
 
 
 def main():
-    global KEPT, STORE, DATA_DIR, SENTRY, TC, DRV, SYNC, TSYNC, CSYNC, SOFT, CARW, BOOK, FG, KEEP, DRIVELIST, TODO
+    global KEPT, STORE, DATA_DIR, SENTRY, TC, DRV, SYNC, TSYNC, CSYNC, SOFT, CARW, BOOK, FG, KEEP, DRIVELIST, TODO, CKEEP
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--data-dir", default=DEFAULT_DATA)
     ap.add_argument("--port", type=int, default=int(app_config.get("window.port")))
@@ -871,6 +884,7 @@ def main():
     KEEP = app_keeper.Keeper(DATA_DIR, TC, FG, DRV, SENTRY, footage_roots)
     TODO = footage_todo.Todo(os.path.join(local_cache_dir(), "footage_todo.json"), DATA_DIR, TC, FG, footage_roots, lambda: KEEP._stage is None and not KEEP.busy())
     KEEP.on_progress = TODO.subtract
+    CKEEP = clip_keep.ClipKeep(DATA_DIR, TC, FG)
     if not a.no_background:
         KEEP.start()
     BOOK = app_charges.ChargeBook(os.path.dirname(os.path.abspath(__file__)), DATA_DIR)
