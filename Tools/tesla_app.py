@@ -833,7 +833,7 @@ def _code_version():
 
 
 def main():
-    global KEPT, STORE, DATA_DIR, SENTRY, TC, DRV, SYNC, TSYNC, CSYNC, SOFT, CARW, BOOK, FG, KEEP, DRIVELIST
+    global KEPT, STORE, DATA_DIR, SENTRY, TC, DRV, SYNC, TSYNC, CSYNC, SOFT, CARW, BOOK, FG, KEEP, DRIVELIST, TODO
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--data-dir", default=DEFAULT_DATA)
     ap.add_argument("--port", type=int, default=int(app_config.get("window.port")))
