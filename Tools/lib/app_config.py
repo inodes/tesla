@@ -42,6 +42,7 @@ the block). A change takes effect the next time the app or script reads it (the 
   app.drives.repark_same_place_km                  a drive that starts and ends at the same address or saved place is a re-park up to this long (and repark_max_minutes); with no address to compare, the two ends within repark_same_place_m metres count as the same place
   app.drives.long_highway_*                        a "long highway" drive (the Drives list's Long highway filter)
   app.drives.charge_window_minutes                 a charge within this long after / before a drive makes it "to charge" / "from charge"
+  app.drives.range_days_shown                      how many days of a long date range the Drives (new) list draws at once; "Show more days" adds the next 31
   app.drives.charger_name_m                        a stop, start or parked spell this close (m) to a charge that has just happened (or is happening) and is not at a saved place is named after the charger, exactly as the charge is stored
   app.drives.tessie_auto_sync_minutes              the app runs the Tessie drives sync by itself (sync_drives_all.sh) when the dashcam saw a drive Tessie has not given yet, at most this often; 0 = only when you press Sync from Tessie
   app.drives.tessie_fresh_minutes                  after a Tessie sync this long ago, with nothing missing, the Drives page has no Sync from Tessie button (it shows when the last sync was)
@@ -80,7 +81,7 @@ DEFAULTS = {
     "keeper": {"background": False, "stills": False, "interval_s": 20, "pass_gap_s": 300, "play_wait_s": 30},
     "drives": {"repark_max_km": 0.05, "repark_same_place_km": 0.3, "repark_same_place_m": 50, "repark_max_minutes": 10,
                "long_highway_km": 30, "long_highway_fast_kmh": 90, "long_highway_fast_minutes": 10,
-               "charge_window_minutes": 30, "charger_name_m": 300, "low_battery_pct": 20, "tessie_auto_sync_minutes": 0, "tessie_fresh_minutes": 60},
+               "charge_window_minutes": 30, "charger_name_m": 300, "range_days_shown": 31, "low_battery_pct": 20, "tessie_auto_sync_minutes": 0, "tessie_fresh_minutes": 60},
     "places": {"stay_min_seconds": 120, "save_radius_min_m": 100, "save_radius_margin_m": 25, "save_radius_cluster_m": 250},
     "nearby": {"overpass_endpoints": ["https://overpass.kumi.systems/api/interpreter", "https://overpass.private.coffee/api/interpreter",
                                       "https://overpass.openstreetmap.fr/api/interpreter", "https://lz4.overpass-api.de/api/interpreter",

@@ -384,6 +384,12 @@ class IndexTest(unittest.TestCase):
         self.assertNotIn("Dynamic Headlight Leveling", self.titles(c["skipped"]))
         self.assertIn("Powershare with Powerwall", self.titles(c["others"]))
 
+    def test_a_note_the_region_has_for_other_car_types_says_which(self):
+        c = self.ix.compare("2026.20.10", "2026.38.5.5", "ANZ", "model3", "TeslaAP4")
+        o = {x["title"]: x for x in c["others"]}
+        self.assertIn("Model S AI3", o["Speed Cameras on Route"]["region_cars"])          # listed in Australia, but not for a Model 3
+        self.assertNotIn("region_cars", o["Dynamic Headlight Leveling"])                  # no ANZ car type has it at all
+
     def test_a_newer_text_in_b_supersedes_what_was_in_between(self):
         c = self.ix.compare("2026.20.10", "2026.38.5.5", "ANZ")
         self.assertNotIn("FSD (Supervised) v14.3.9 Down Under", self.titles(c["skipped"]))      # b lists 14.3.12 instead
