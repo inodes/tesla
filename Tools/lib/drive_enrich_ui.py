@@ -62,6 +62,9 @@ let html="";
 {let n=0,prev=false,pt=null;for(let i=0;i<N;i++){if(!has(i)){prev=false;continue}const on=!!P[i][14];if(on&&!(prev&&pt!=null&&T[i]-pt<=GAP))n++;prev=on;pt=T[i]}
  const h=24,body=`<rect x="${L}" y="${pad}" width="${pw}" height="${h}" fill="var(--bd)" opacity=".25"/>`+strip(i=>P[i][14],v=>v?"#f59e0b":null,h);
  html+=panel("Indicator","on",[["Times switched on",String(n)]],h,body)}
+// the key under the map: how much of the route came from the dashcam and how much from Tessie
+{let cam=0;for(let i=0;i<N;i++)if(has(i))cam+=dur(i);const tot=t1-t0,pc=tot>0?Math.max(0,Math.min(100,Math.round(100*cam/tot))):0,mk=[...document.querySelectorAll(".legend")].find(e=>!root.contains(e));
+ if(mk&&!mk.querySelector(".srckey"))mk.insertAdjacentHTML("beforeend",`<span class="srckey" title="TeslaCam: a point every second from the dashcam telemetry. Tessie: its own points, about one every 30 s, used for the start, the end and any gap in the footage."><i style="background:var(--acc);height:8px;width:8px;border-radius:50%"></i>${pc}% data from TeslaCam, ${100-pc}% from Tessie</span>`)}
 const lg=root.querySelector(".legend");if(lg)lg.insertAdjacentHTML("beforebegin",html);else root.insertAdjacentHTML("beforeend",html);
 const tip=$("#tip"),idx=t=>{let lo=0,hi=N-1;while(lo<hi){const m=(lo+hi)>>1;if(T[m]<t)lo=m+1;else hi=m}return lo>0&&Math.abs(T[lo-1]-t)<Math.abs(T[lo]-t)?lo-1:lo};
 root.addEventListener("mousemove",ev=>{const sv=ev.target.closest&&ev.target.closest("svg.pn");if(!sv||tip.style.display!=="block")return;
@@ -70,6 +73,19 @@ root.addEventListener("mousemove",ev=>{const sv=ev.target.closest&&ev.target.clo
  tip.innerHTML+=`<br>${MN[p[11]]||"-"}${p[12]!=null?`<br>Accelerator ${Math.round(p[12])} %`:""}${p[13]!=null?`<br>Steering ${Math.round(p[13])}°`:""}${p[14]?"<br>Indicator on":""}${p[15]?"<br>Braking":""}`});
 })();
 """
+
+
+TICK = r"""
+(function(){const mk=[...document.querySelectorAll(".legend")].find(e=>!e.closest("#charts"));if(!mk||document.getElementById("enrk"))return;
+const on=/*ON*/;
+mk.insertAdjacentHTML("afterend",`<label id="enrk" style="display:flex;gap:6px;align-items:center;margin:8px 0;font-size:13px;cursor:pointer"><input type="checkbox" id="enr"${on?" checked":""}> Supplement with TeslaCam footage</label>`);
+document.getElementById("enr").onchange=e=>{try{localStorage.setItem("drv.enrich",e.target.checked?"1":"0")}catch(x){}const u=new URL(location.href);u.searchParams.set("enrich",e.target.checked?"1":"0");location.replace(u.toString())};
+})();
+"""
+
+
+def tick_js(on):
+    return TICK.replace("/*ON*/", "true" if on else "false")
 
 
 def js():

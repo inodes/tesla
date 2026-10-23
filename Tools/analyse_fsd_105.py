@@ -20,7 +20,7 @@ import csv,sys,glob,os,datetime,math,collections,json
 CLS={101:("100","std"),102:("100","std"),104:("100","hurry"),105:("100","hurry"),112:("110","std"),111:("110","std"),114:("110","hurry"),115:("110","hurry")}
 def load(f):
     out=[]
-    for r in csv.DictReader(open(f,encoding="utf-8")):
+    for r in _dpts.rows(f):
         try:
             sp=float(r["Speed (km/h)"]); lat=float(r["Latitude"]); lon=float(r["Longitude"]); od=float(r["Odometer (km)"])
         except: continue
@@ -73,10 +73,11 @@ if "--data-dir" in sys.argv:
 DEEPDIVE_DIR = os.path.join(_DATA, "drives", "deepdive")
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "lib"))
 import drive_paths as _dp   # REQ-193: per-drive folders + legacy flat files
+import drive_points as _dpts   # JSON or CSV telemetry
 OUT_DIR = os.path.join(_DATA, "drives", "analysis")
 os.makedirs(OUT_DIR, exist_ok=True)
 
-files=sorted(_dp.list_csvs(DEEPDIVE_DIR))
+files=sorted(_dp.list_data(DEEPDIVE_DIR))
 CELL=0.003
 grid=collections.defaultdict(list)   # cell -> (fileidx, lat, lon, band, bearing)
 sections=[]
@@ -130,7 +131,7 @@ with open(out,"w",newline="") as fh:
     w=csv.DictWriter(fh,fieldnames=list(res[0])); w.writeheader(); w.writerows(res)
 print(len(res),"sections written to",out)
 
-files_all = sorted(_dp.list_csvs(DEEPDIVE_DIR))
+files_all = sorted(_dp.list_data(DEEPDIVE_DIR))
 _rows105 = []
 for _fi, _rows, _i, _j in sections:
     _a, _z = _rows[_i], _rows[_j]
@@ -144,7 +145,7 @@ print(len(res), "sections of >=3 samples at 103-107 km/h;", round(sum(r["km"] fo
 
 # ---- highway stretches + map ----
 SINCE=sys.argv[sys.argv.index("--since")+1] if "--since" in sys.argv else "2026-10-01"
-files_hwy=[f for f in sorted(_dp.list_csvs(DEEPDIVE_DIR)) if os.path.basename(f)[15:25]>=SINCE]
+files_hwy=[f for f in sorted(_dp.list_data(DEEPDIVE_DIR)) if os.path.basename(f)[15:25]>=SINCE]
 geo=json.load(open(os.path.join(_DATA,"geo_cache.json")))
 pts=[]
 for k,v in geo.items():

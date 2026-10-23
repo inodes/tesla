@@ -34,7 +34,7 @@ EXAMPLES
 
 NOTES
     Only the Archive is read unless you ask for more (see AGENTS.md 3.5.1): a drive that is read stays "in use" until the
-    folder is disconnected from an agent session. Reading a minute opens its front clip. The same panel is on the
+    folder is disconnected from an agent session. Reading a minute opens its front clip (another camera's, if the front is missing: all carry the same telemetry). The same panel is on the
     TeslaCam page of tesla_app.py.
 """
 import argparse
@@ -82,7 +82,7 @@ def main():
     for d in rep["drives"]:
         print("%-10s %9s %9s %9s %11s  %s" % (d["name"], _n(d["minutes"]), _n(d["read"]), _n(d["to_read"]), _n(d["elsewhere"]), TS.days(d["first"], d["last"])))
         if d["no_front"]:
-            print("%-10s %s minute(s) have no front clip and cannot be read." % ("", _n(d["no_front"])))
+            print("%-10s %s minute(s) have no clip to read telemetry from." % ("", _n(d["no_front"])))
     print("Telemetry kept: %s minutes, %s of them with no footage on the scanned drive(s) (kept anyway)." % (_n(rep["kept"]), _n(rep["kept_orphans"])))
     todo = tc._scan_todo
     if not todo:
@@ -93,7 +93,7 @@ def main():
         return 0
     total = min(len(todo), a.limit) if a.limit else len(todo)
     print("Reading %s minute(s), newest first. Ctrl-C stops; what is read is kept." % _n(total))
-    store, _ = tc._tl("A")
+    store = tc._tl("A")
 
     from progress import Bar
     bar = Bar(total, "Telemetry")

@@ -36,14 +36,14 @@ EXAMPLES
         ./build_mac_app.sh
 
     ./tesla_app.py opens a native window if pywebview is installed, otherwise your browser. pywebview is in requirements.txt, so direnv
-    installs it into the repo venv on its own (never install it globally). ./build_mac_app.sh makes ~/Applications/Tesla.app to
+    installs it into the repo venv on its own (never install it globally). ./build_mac_app.sh makes ~/Applications/Tesellate.app to
     double-click (log: ~/Library/Logs/tesla_app.log). Stop the app by closing its window or Ctrl-C in the terminal.
 
 FILES
     lib/app_data.py  the data layer (read-only)   lib/app_ui/  the page (index.html, app.css, app.js)
     lib/app_places.py  places: saved places, Tesla names, nearby OpenStreetMap places. The only thing the app writes is
                      places.json, when you press Save / Delete on a place (a dated backup is kept first)
-    drive_actions.py runs the footage queue       build_mac_app.sh  makes a double-clickable Tesla.app
+    drive_actions.py runs the footage queue       build_mac_app.sh  makes a double-clickable Tesellate.app
 """
 import argparse
 import io
@@ -62,15 +62,22 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 sys.path.insert(0, os.path.join(HERE, "lib"))
 import app_config  # noqa: E402
+import config_backup  # noqa: E402
 import app_data  # noqa: E402
 import app_sentry  # noqa: E402
 import app_teslacam  # noqa: E402
+import app_drivelist  # noqa: E402
 import app_drive_review  # noqa: E402
 import app_footage
 import app_keeper  # noqa: E402
 import app_charges  # noqa: E402
 import clip_clock as CC  # noqa: E402
 import app_sync  # noqa: E402
+import app_software  # noqa: E402
+import car_watch  # noqa: E402
+import app_route  # noqa: E402
+import app_kept  # noqa: E402
+from fetch_ledger import FetchLedger  # noqa: E402
 import drive_roles as DR  # noqa: E402
 import drive_paths as DP  # noqa: E402
 
@@ -78,18 +85,23 @@ UI = os.path.join(HERE, "lib", "app_ui")
 DEFAULT_DATA = os.path.expanduser(os.environ.get("TESLA_DATA_DIR", "~/Library/Mobile Documents/com~apple~CloudDocs/Tesla"))
 mimetypes.add_type("text/javascript", ".js")
 STORE = None
+DRIVELIST = None
 SENTRY = None
 TC = None
 DRV = None                  # the manual drive review (lib/app_drive_review.py)
 KEEP = None                 # reads the connected TeslaCam drives in the background (lib/app_keeper.py)
 FG = None                   # the footage log and the one-second stills (lib/app_footage.py)
 SYNC = None
+TSYNC = None
+CSYNC = None     # the Charges page's Tessie sync (sync_charging_all.sh)
+SOFT = None      # the Software page's fetch of Teslascope's versions (lib/app_software.py)
+CARW = None      # looks at which software the car is on, every software.car_check_minutes (lib/car_watch.py)
 BOOK = None
 STARTED = time.time()
 DATA_DIR = DEFAULT_DATA
 FOOT_EXT = (".mp4", ".jpg", ".jpeg", ".png", ".json")
 _ACTION_LOCK = threading.Lock()
-_ROOTS = {"t": 0, "v": {}}
+_ROOTS = {"t": 0, "v": None}
 
 
 def drive_review_state(stamp):
@@ -103,9 +115,19 @@ def drive_review_state(stamp):
 
 def footage_root(role):
     """TeslaCam folder of the drive with this role (A Archive, J JOWUA, U USB); looked up at most every 20 s."""
-    if time.time() - _ROOTS["t"] > 20:
+    if _ROOTS["v"] is None:                                 # the first look waits for the answer
         _ROOTS["v"] = {r: DR.find_root(r) for r in "AJU"}
         _ROOTS["t"] = time.time()
+    elif time.time() - _ROOTS["t"] > 20 and not _ROOTS.get("busy"):
+        _ROOTS["busy"] = True                               # later looks answer from the last one and refresh it in the background (a slow drive must not hold a request)
+
+        def look():
+            try:
+                _ROOTS["v"] = {r: DR.find_root(r) for r in "AJU"}
+            finally:
+                _ROOTS["t"] = time.time()
+                _ROOTS["busy"] = False
+        threading.Thread(target=look, daemon=True).start()
     return _ROOTS["v"].get(role)
 
 
@@ -133,7 +155,8 @@ def all_sentry():
 
 
 def code_updated():
-    """True when a program file changed after this server started (so a restart is needed to use it)."""
+    """True when a program file changed after this server started (so a restart is needed to use it): the app's own files, and every module the
+    server has actually imported from this folder or lib/ (a library edited under it counts, not only the app_* files)."""
     newest = 0
     for d, pat in ((HERE, ".py"), (os.path.join(HERE, "lib"), ".py")):
         try:
@@ -142,7 +165,25 @@ def code_updated():
                     newest = max(newest, os.path.getmtime(os.path.join(d, f)))
         except OSError:
             pass
+    for m in list(sys.modules.values()):
+        f = getattr(m, "__file__", None) or ""
+        if f.endswith(".py") and os.path.abspath(f).startswith(HERE + os.sep):
+            try:
+                newest = max(newest, os.path.getmtime(f))
+            except OSError:
+                pass
     return newest > STARTED + 2
+
+
+def ui_stamp():
+    """Modified time of the page files (index.html, app.js, app.css): the page remembers the value it loaded with and says so when it changes."""
+    t = 0
+    for f in ("index.html", "app.js", "app.css"):
+        try:
+            t = max(t, os.path.getmtime(os.path.join(UI, f)))
+        except OSError:
+            pass
+    return round(t, 1)
 
 
 FLIP_LEGEND = ('<span><i style="background:#d4332b;height:8px;width:8px;border-radius:50%"></i>110→100</span>'
@@ -165,9 +206,11 @@ def drop_flips(h):
     return h.replace(FLIP_LEGEND, "")
 
 
-def fuse_into(h, p):
-    """Enrich with TeslaCam metadata: the page's points (Tessie's, about one every 30 s) become the dashcam's per-second readings where the footage
-    covers the drive, with accelerator / steering / indicator / FSD columns and the panels that draw them (drive_enrich_ui.py)."""
+def fuse_into(h, p, on=True):
+    """Supplement with TeslaCam footage. A drive page is made from Tessie (or another provider): the full picture, at low resolution. The dashcam can add
+    detail at a higher resolution, so the tick box under the map exists only when BOTH are there: the page is a provider's, and the dashcam has telemetry for
+    the drive (otherwise there is nothing to choose, no tick box). A drive with only the dashcam has no provider page and no tick box. Ticked, the page's points (Tessie's, about one every 30 s) become the dashcam's per-second readings, with
+    accelerator / steering / indicator / FSD columns and the panels that draw them (drive_enrich_ui.py)."""
     if TC is None:
         return h
     import drive_enrich_ui as EU
@@ -181,9 +224,12 @@ def fuse_into(h, p):
         return h
     if not new:
         return h
-    obj["pts"] = new["rows"]
-    h = h[:i] + "const DATA=" + json.dumps(obj, separators=(",", ":")) + h[end:]
-    return h.replace("</body>", "<script>%s</script></body>" % EU.js(), 1)
+    js = EU.tick_js(on)
+    if on:
+        obj["pts"] = new["rows"]
+        h = h[:i] + "const DATA=" + json.dumps(obj, separators=(",", ":")) + h[end:]
+        js = EU.js() + js
+    return h.replace("</body>", "<script>%s</script></body>" % js, 1)
 
 
 def drive_page(p, enrich=True):
@@ -194,8 +240,7 @@ def drive_page(p, enrich=True):
     import drive_map_ui
     h = drive_map_ui.patch(h)
     h = drop_flips(h)
-    if enrich:
-        h = fuse_into(h, p)
+    h = fuse_into(h, p, enrich)
     if "Show the whole route" in h or old not in h:
         return h
     return h.replace(old, 'const nav=new maplibregl.NavigationControl({showCompass:false});map.addControl(nav,"top-right");\n {const b=document.createElement("button");b.type="button";b.className="maplibregl-ctrl-icon";b.title="Show the whole route";b.setAttribute("aria-label","Show the whole route");b.innerHTML=\'<span style="display:block;text-align:center;font-size:18px;line-height:29px">\\u2922</span>\';\n  b.onclick=()=>map.fitBounds([[Math.min(...O),Math.min(...L)],[Math.max(...O),Math.max(...L)]],{padding:40,maxZoom:16});nav._container.appendChild(b)}')
@@ -303,8 +348,15 @@ class H(BaseHTTPRequestHandler):
                 return self.send_file(os.path.join(UI, "index.html"))
             if path in ("/app.js", "/app.css"):
                 return self.send_file(os.path.join(UI, path[1:]))
+            if path == "/icon.png":                 # the app icon, also the tab/window icon
+                return self.send_file(os.path.join(UI, "icon", "icon.png"), cache=True)
             if path.startswith("/api/"):
-                return self.api(path[5:], urllib.parse.parse_qs(u.query))
+                t_in = time.time()
+                try:
+                    return self.api(path[5:], urllib.parse.parse_qs(u.query))
+                finally:
+                    if time.time() - t_in > 2.0:                # what is slow shows in the log (~/Library/Logs/tesla_app.log)
+                        print("(slow: %s took %.1f s)" % (path, time.time() - t_in), flush=True)
             if path.startswith("/data/"):
                 p = safe_join(DATA_DIR, path[6:])
                 rel = path[6:].split("/")
@@ -373,8 +425,9 @@ class H(BaseHTTPRequestHandler):
             if u.path == "/api/review":
                 role = body.get("role", "A")
                 return self.send_json(TC.review(role, footage_root(role), _utc_arg(body.get("t0", "")), _utc_arg(body.get("t1", "")), body.get("action", "start"), _lo_arg(body.get("lo"))))
-            if u.path == "/api/keeper":            # {action: pause|resume}
-                return self.send_json(KEEP.pause() if body.get("action") == "pause" else KEEP.resume())
+            if u.path == "/api/keeper":            # {action: pause|resume|run}
+                act = body.get("action")
+                return self.send_json(KEEP.pause() if act == "pause" else KEEP.run_now() if act == "run" else KEEP.resume())
             if u.path == "/api/footage":           # {action: log|stills|stop, roles: ["A","J"]}: update the log of the files / make the missing one-second stills
                 if body.get("action") == "stop":
                     return self.send_json(FG.stop())
@@ -385,31 +438,61 @@ class H(BaseHTTPRequestHandler):
                     return self.send_json(TC.scan_stop())
                 roles = [r for r in (body.get("roles") or ["A"]) if r in ("A", "J", "U")]
                 return self.send_json(TC.scan_start({r: footage_root(r) for r in roles}))
-            if u.path == "/api/teslacam/index":
-                role = body.get("role", "A")
-                return self.send_json(TC.index(role, footage_root(role), body.get("action", "start")))
             if u.path == "/api/chargers/sync":
                 return self.send_json(SYNC.start())
             if u.path == "/api/chargers/sync/stop":
                 return self.send_json(SYNC.stop())
+            if u.path == "/api/tessie/sync":
+                if not app_sync.tessie_configured():
+                    return self.send_json(dict(ok=False, error="Tessie is not set up: add the access token and VIN to config.json (tessie.access_token, tessie.vin)."))
+                if urllib.parse.parse_qs(u.query).get("kind", [""])[0] == "charges":
+                    r = CSYNC.start()
+                    if r.get("ok") is not False and r.get("running"):
+                        charges_started()
+                    return self.send_json(r)
+                r = TSYNC.start()
+                if r.get("ok") is not False and r.get("running"):
+                    tessie_started()
+                return self.send_json(r)
+            if u.path == "/api/tessie/sync/stop":
+                return self.send_json((CSYNC if urllib.parse.parse_qs(u.query).get("kind", [""])[0] == "charges" else TSYNC).stop())
+            if u.path == "/api/software/sync":           # {since: 2026}: fetch what Teslascope has that is not held yet (lib/software/sync.py), in the background
+                return self.send_json(SOFT.start(body.get("since")))
+            if u.path == "/api/software/sync/stop":
+                return self.send_json(SOFT.stop())
             if u.path == "/api/queue/run":
                 return self.send_json(run_queue(body))
             return self.send_bytes(b"not found", "text/plain", 404)
         except Exception as e:
             self.send_json({"ok": False, "error": "%s: %s" % (type(e).__name__, e)}, 500)
 
+    def software(self, name, q):
+        g = lambda k, d="": (q.get(k, [d])[0] or d)
+        region, model, hw = g("region", "ANZ"), g("model") or None, g("hw") or None
+        try:
+            if name == "software/sync":
+                return SOFT.status()
+            if name == "software/version":
+                return app_software.detail(DATA_DIR, g("v"), region, model, hw)
+            if name == "software/timeline":
+                return app_software.timeline(DATA_DIR, region, model, hw)
+            if name == "software/first":
+                return app_software.first(DATA_DIR, g("q"), region)
+            if name == "software/compare":
+                return app_software.compare(DATA_DIR, g("a"), g("b"), region, model, hw)
+            return app_software.overview(DATA_DIR, region, model, hw)
+        except Exception as e:
+            return {"error": "%s: %s" % (type(e).__name__, e)}
+
     def api(self, name, q):
         S = STORE
-        if name == "summary":
-            return self.send_json(S.summary())
-        if name == "activity":
-            return self.send_json(S.activity())
-        if name == "battery":
-            return self.send_json(dict(readings=S.battery(), spec=S.spec()))
-        if name == "analytics":
-            return self.send_json(S.analytics())
+        if name in KEPT_LISTS:                  # answered at once from what was kept, refreshed behind (lib/app_kept.py); ?fresh=1 waits for the newest
+            raw, stale = KEPT.get(name, lambda: KEPT_LISTS[name](), q.get("fresh", [""])[0] == "1")
+            return self.send_bytes(raw, "application/json; charset=utf-8", 200, {"X-Stale": "1"} if stale else None)
         if name == "status":
-            return self.send_json(dict(roots={r: bool(footage_root(r)) for r in "AJU"}, data_dir=DATA_DIR, stale=code_updated()))
+            return self.send_json(dict(roots={r: bool(footage_root(r)) for r in "AJU"}, data_dir=DATA_DIR, stale=code_updated(), ui=ui_stamp()))
+        if name.startswith("software"):         # software[/version|/first|/compare|/sync]: the Teslascope versions held (lib/app_software.py)
+            return self.send_json(self.software(name, q))
         if name == "keeper":                    # what the background reading of the connected drives is doing
             return self.send_json(KEEP.status())
         if name == "sentry":
@@ -438,6 +521,8 @@ class H(BaseHTTPRequestHandler):
             return self.send_json(FG.status())
         if name == "clipstatus":                # clipstatus?stamps=a,b: kept on a drive / deleted / never logged, and whether its stills are kept
             return self.send_json(FG.clip_status([s for s in q.get("stamps", [""])[0].split(",") if re.match(r"^\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2}$", s)][:80]))
+        if name == "clipholders":               # clipholders?stamps=a,b: the files of each minute and the drives that hold them, biggest drive first, connected or not
+            return self.send_json(FG.clip_holders([s for s in q.get("stamps", [""])[0].split(",") if re.match(r"^\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2}$", s)][:80], [r for r in "AJU" if footage_root(r)]))
         if name == "scan/status":
             return self.send_json(TC.scan_status())
         if name == "clipclock":                 # the car's clock as learned from the footage (clip_clock.py): runs of minutes with the offset from UTC
@@ -451,17 +536,31 @@ class H(BaseHTTPRequestHandler):
         if name == "teslacam":                  # the drives that are connected right now (found by what is on them)
             _ROOTS["t"] = 0
             return self.send_json(dict(drives=TC.drives()))
+        if name == "drivelist":                 # the Drives list: Tessie's drives and charges as the rows, the dashcam's drives attached (or alone when there is no Tessie)
+            return self.send_json(drivelist())
+        if name == "clips":                     # every Recent run, Saved and Sentry event ever logged, whichever drives are connected; each says which drive holds it and whether it can be played
+            return self.send_json(TC.clips_all({r: footage_root(r) for r in "AJU"}))
+        if name.startswith("clips/run/"):       # clips/run/<first minute>: the minutes of one Recent run, with the drive each can be played from
+            d = TC.run_all(urllib.parse.unquote(name[10:]), {r: footage_root(r) for r in "AJU"})
+            return self.send_json(d if d else {"error": "No such recording."}, 200 if d else 404)
         if name.startswith("teslacam/"):        # teslacam/<role>/<sentry|saved|recent>[/<run>]
             role, _, rest = name[9:].partition("/")
             kind, _, rid = rest.partition("/")
             root = footage_root(role)
-            if kind == "timeline":
-                return self.send_json(TC.timeline(role, root))
-            if kind == "index":
-                return self.send_json(TC.index(role, root, "status"))
             if kind == "seg":
-                d = TC.segment(role, root, urllib.parse.unquote(rid), float(q.get("budget", ["20"])[0] or 20))
-                return self.send_json(d if d else {"error": "no such drive"}, 200 if d else 404)
+                sid = urllib.parse.unquote(rid)
+                if role == "auto":                  # whichever connected drive holds the footage of this drive (the Drives list does not know which drive it is on)
+                    try:
+                        t = app_teslacam.TL.secs(sid)
+                    except Exception:
+                        t = 0
+                    role, root = TC.pick_role(footage_roots(), t - 60, t + 60)
+                if not root:
+                    return self.send_json({"error": "The drive holding this footage is not connected."}, 404)
+                d = TC.segment(role, root, sid, float(q.get("budget", ["20"])[0] or 20))
+                if d:
+                    d["role"] = role
+                return self.send_json(d if d else {"error": "No drive starting at this time on the connected TeslaCam drive (%s)." % role}, 200 if d else 404)
             if kind == "window":                    # teslacam/<role>/window?t0=<UTC epoch s>&t1=<UTC epoch s>[&lo=<display offset s>][&budget=s]
                 try:
                     t0 = _utc_arg(q.get("t0", [""])[0])
@@ -470,7 +569,11 @@ class H(BaseHTTPRequestHandler):
                     return self.send_json({"error": "bad time"}, 400)
                 if role == "auto":                  # whichever connected drive holds the footage for these times
                     role, root = TC.pick_role(footage_roots(), t0, t1)
-                d = TC.window(role, root, t0, t1, float(q.get("budget", ["20"])[0] or 20), _lo_arg(q.get("lo", [None])[0]))
+                lo_arg = _lo_arg(q.get("lo", [None])[0])
+                d = TC.window(role, root, t0, t1, float(q.get("budget", ["20"])[0] or 20), lo_arg)
+                tid = q.get("id", [""])[0]
+                if tid:                             # the Drives list: Tessie's drive is the base, so its own route fills what the dashcam's telemetry does not cover
+                    d = tessie_filled(d, tid, t0, t1, lo_arg)
                 if d:
                     d["role"] = role
                 return self.send_json(d if d else {"error": "no footage or telemetry for this time"}, 200 if d else 404)
@@ -496,12 +599,31 @@ class H(BaseHTTPRequestHandler):
         if name.startswith("idle/"):
             i = next((x for x in S.idles() if x["id"] == name[5:]), None)
             return self.send_json(i if i else {"error": "no such idle"}, 200 if i else 404)
-        if name == "alerts":
-            return self.send_json(S.alerts())
-        if name == "places":
-            return self.send_json(S.pl.listing(S))
-        if name == "chargers":
-            return self.send_json(S.pl.charger_listing(S))
+        if name == "pathsources":                       # where the line on a drive's map comes from: Tessie's point file and the dashcam's telemetry (and any other drive's file that only touches this one)
+            try:
+                t0, t1 = _utc_arg(q.get("t0", [""])[0]), _utc_arg(q.get("t1", [""])[0])
+            except ValueError:
+                return self.send_json({"error": "bad time"}, 400)
+            stamp, lo_arg = q.get("id", [""])[0], _lo_arg(q.get("lo", [None])[0])
+            root = os.path.join(DATA_DIR, "drives", "deepdive")
+            fp = DP.find_data(root, stamp) if stamp else None
+            tess = dict(file=os.path.relpath(fp, DATA_DIR) if fp else None, **(app_route.describe(app_route.points(fp, lo_arg), t0, t1) if fp else dict(points=0)))
+            near = []
+            for j in STORE._summaries():
+                try:
+                    a0, a1 = float(j["t0"]), float(j["t1"])
+                except (KeyError, TypeError, ValueError):
+                    continue
+                ov = min(a1, t1) - max(a0, t0)
+                if j.get("stamp") != stamp and ov > 0:
+                    near.append(dict(stamp=j.get("stamp"), overlap_s=round(ov), start=j.get("start"), end=j.get("end")))
+            return self.send_json(dict(tessie=tess, dashcam=TC.path_sources(t0, t1), others=near[:6], t0=t0, t1=t1, has_page=bool(fp), fetched=FetchLedger(DATA_DIR).get("drive_path", "t%d" % int(t0))))
+        if name == "tessie" and q.get("kind", [""])[0] == "charges":
+            return self.send_json(dict(configured=app_sync.tessie_configured(), synced_at=charges_state().get("at"), fresh_minutes=app_config.get("drives.tessie_fresh_minutes"), **{k: v for k, v in CSYNC.status(0).items() if k != "lines"}))
+        if name == "tessie":
+            return self.send_json(dict(configured=app_sync.tessie_configured(), auto_minutes=app_config.get("drives.tessie_auto_sync_minutes"), synced_at=tessie_state().get("at"), fresh_minutes=app_config.get("drives.tessie_fresh_minutes"), **{k: v for k, v in TSYNC.status(0).items() if k != "lines"}))
+        if name == "tessie-sync":
+            return self.send_json((CSYNC if q.get("kind", [""])[0] == "charges" else TSYNC).status(int(q.get("since", ["0"])[0] or 0)))
         if name == "chargers-sync":
             return self.send_json(SYNC.status(int(q.get("since", ["0"])[0] or 0)))
         if name == "settings":
@@ -537,14 +659,155 @@ def run_queue(body):
     return {"ok": ok, "output": buf.getvalue()}
 
 
+class Server(ThreadingHTTPServer):
+    def handle_error(self, request, client_address):
+        """A page that moved on drops its requests half way (a connection reset or broken pipe): not an error, and it filled the log with 15,000 tracebacks."""
+        if isinstance(sys.exc_info()[1], (ConnectionResetError, BrokenPipeError, ConnectionAbortedError)):
+            return
+        super().handle_error(request, client_address)
+
+
 def serve(port, host="127.0.0.1"):
-    srv = ThreadingHTTPServer((host, port), H)
+    srv = Server((host, port), H)
     srv.daemon_threads = True
     return srv
 
 
+def tessie_filled(d, stamp, t0, t1, lo):
+    """The window's series stretched over the whole Tessie drive [t0, t1] and filled from Tessie's deep-dive points between the dashcam's seconds (nothing changes without that file)."""
+    csv_path = DP.find_data(os.path.join(DATA_DIR, "drives", "deepdive"), stamp)
+    pts = app_route.points(csv_path, lo) if csv_path else []
+    if not pts:
+        return d
+    ser = app_route.fill((d or {}).get("series"), t0, t1, pts)
+    TLm = app_teslacam.TL
+    if d is None:
+        d = dict(item=dict(lo=lo if lo is not None else 0), connected=False, minutes=[], pending=0, events=[])
+    d["series"] = ser
+    d["item"] = dict(d["item"], t0=ser["t0"], start=TLm.iso(ser["t0"], d["item"].get("lo") or 0))
+    return d
+
+
+def tessie_state():
+    try:
+        with open(os.path.join(DATA_DIR, "tessie_sync_state.json"), encoding="utf-8") as f:
+            return json.load(f)
+    except (OSError, ValueError):
+        return {}
+
+
+def charges_state():
+    try:
+        with open(os.path.join(DATA_DIR, "tessie_charges_state.json"), encoding="utf-8") as f:
+            return json.load(f)
+    except (OSError, ValueError):
+        return {}
+
+
+def charges_started():
+    """The Charges page started its Tessie sync: when it ends cleanly the time is kept, so the page can say how fresh the charges are."""
+    def after():
+        while CSYNC.running():
+            time.sleep(1)
+        if CSYNC.status(0).get("rc") != 0:
+            return
+        try:
+            with open(os.path.join(DATA_DIR, "tessie_charges_state.json"), "w", encoding="utf-8") as f:
+                json.dump(dict(at=time.time()), f)
+        except OSError:
+            pass
+    threading.Thread(target=after, daemon=True).start()
+
+
+def tessie_started():
+    """A Tessie sync was started: when it ends cleanly, what was missing then and is still missing is what Tessie does not have, so the page stops offering to fetch it."""
+    ids = list((drivelist().get("missing") or {}).get("ids") or [])
+
+    def after():
+        while TSYNC.running():
+            time.sleep(1)
+        if TSYNC.status(0).get("rc") != 0:
+            return
+        still = set((drivelist(True).get("missing") or {}).get("ids") or [])      # rebuilt with what the sync brought
+        tried = sorted(still & set(ids) | set(tessie_state().get("tried") or []))
+        try:
+            with open(os.path.join(DATA_DIR, "tessie_sync_state.json"), "w", encoding="utf-8") as f:
+                json.dump(dict(tried=tried, at=time.time()), f)
+        except OSError:
+            pass
+    threading.Thread(target=after, daemon=True).start()
+
+
+def local_cache_dir():
+    """A folder on this computer, outside the data folder (which iCloud shares between the Macs)."""
+    import hashlib
+    base = os.path.expanduser("~/Library/Caches/Tesellate" if sys.platform == "darwin" else "~/.cache/tesellate")
+    return os.path.join(base, hashlib.md5(os.path.abspath(DATA_DIR).encode()).hexdigest()[:8])
+
+
+def drivelist(wait=False):
+    """The merged Drives list (Tessie's drives and charges with the dashcam's attached), rebuilt only when a file it is built from changed."""
+    def build():
+        act = STORE.activity()
+        tess = [x for x in act if x["k"] == "drive"]
+        items = app_drivelist.merge(tess, [x for x in act if x["k"] == "charge"], TC.timeline_stored(None)["items"], [x for x in act if x["k"] == "idle"])
+        return dict(items=items, tessie=bool(tess), missing=app_drivelist.missing(items, time.time(), tried=set(tessie_state().get("tried") or []) | FetchLedger(DATA_DIR).settled("drive_path")))
+    d = os.path.join
+    watch = [d(DATA_DIR, "drives", "drives_master.csv"), d(DATA_DIR, "charges", "charges_master.csv"), d(DATA_DIR, "drives", "deepdive"), d(DATA_DIR, "tessie_sync_state.json"), d(DATA_DIR, "fetch_ledger.json"), d(DATA_DIR, "clip_clock.json"), d(DATA_DIR, "places.json"), d(DATA_DIR, "teslacam_timeline", "index.json"),
+             d(DATA_DIR, "teslacam_ledger"), d(DATA_DIR, "teslacam_provenance")] + [d(DATA_DIR, "teslacam_index_%s_%s.json" % (r, k)) for r in "AJU" for k in ("saved", "sentry")]
+    return DRIVELIST.get(app_drivelist.signature(watch), build, wait)
+
+
+def tessie_auto():
+    """With app.drives.tessie_auto_sync_minutes above 0 and Tessie set up: when the dashcam saw drives Tessie has not given yet, run the Drives sync, at most that often."""
+    last = 0.0
+    while True:
+        time.sleep(60)
+        try:
+            gap = float(app_config.get("drives.tessie_auto_sync_minutes") or 0) * 60
+            if gap <= 0 or TSYNC.running() or time.time() - last < gap or not app_sync.tessie_configured():
+                continue
+            m = drivelist(True).get("missing") or {}
+            if m.get("cam_only") or m.get("no_page"):
+                last = time.time()
+                TSYNC.start()
+        except Exception as e:
+            print("(Tessie auto sync: %s)" % e, flush=True)
+
+
+def _warm(port):
+    """Asks this server for the pages' data once, in the background, so the first page the window opens is not the one that waits for everything to load (the first
+    request after a start builds the lists; later ones answer from memory). Only what is kept here: nothing is read from a drive."""
+    import urllib.request
+    time.sleep(1)
+    for path in ("summary", "activity", "drivelist", "places", "alerts", "chargebook", "chargers", "battery", "analytics"):
+        try:
+            urllib.request.urlopen("http://127.0.0.1:%d/api/%s" % (port, path), timeout=300).read()
+        except Exception:
+            pass
+
+
+KEPT = None
+KEPT_LISTS = {          # the lists a page asks for first: answered from what was kept and refreshed behind (lib/app_kept.py)
+    "summary": lambda: STORE.summary(),
+    "activity": lambda: STORE.activity(),
+    "battery": lambda: dict(readings=STORE.battery(), spec=STORE.spec()),
+    "analytics": lambda: STORE.analytics(),
+    "alerts": lambda: STORE.alerts(),
+    "places": lambda: STORE.pl.listing(STORE),
+    "chargers": lambda: STORE.pl.charger_listing(STORE),
+}
+
+
+def _code_version():
+    """Changes when the program changes, so a list kept by older code is never shown by newer code."""
+    import glob
+    here = os.path.dirname(os.path.abspath(__file__))
+    return str(int(max([os.path.getmtime(f) for f in glob.glob(os.path.join(here, "*.py")) + glob.glob(os.path.join(here, "lib", "*.py"))] or [0])))
+
+
 def main():
-    global STORE, DATA_DIR, SENTRY, TC, DRV, SYNC, BOOK, FG, KEEP
+    global KEPT, STORE, DATA_DIR, SENTRY, TC, DRV, SYNC, TSYNC, CSYNC, SOFT, CARW, BOOK, FG, KEEP, DRIVELIST
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--data-dir", default=DEFAULT_DATA)
     ap.add_argument("--port", type=int, default=int(app_config.get("window.port")))
@@ -558,9 +821,17 @@ def main():
     if not os.path.isdir(DATA_DIR):
         print("Data folder not found: %s (use --data-dir)" % DATA_DIR)
         return 1
+    try:
+        config_backup.backup(app_config.path())             # a dated copy of config.json at every start, if it changed (it is not in git)
+    except OSError:
+        pass
     STORE = app_data.Store(DATA_DIR)
+    KEPT = app_kept.Kept(local_cache_dir(), _code_version())
+    DRIVELIST = app_drivelist.Cached(os.path.join(local_cache_dir(), "drivelist.json"))
     SENTRY = app_sentry.Sentry(DATA_DIR)
     TC = app_teslacam.TeslaCam(DATA_DIR, SENTRY)
+    threading.Thread(target=footage_roots, daemon=True).start()                   # which drives are connected, found before the first map asks (a slow drive takes seconds)
+    threading.Thread(target=lambda: drivelist(True), daemon=True).start()        # ready before the page asks (it only uses what is kept here)
     DRV = app_drive_review.DriveReview(DATA_DIR, TC)
     FG = app_footage.Footage(DATA_DIR)
     KEEP = app_keeper.Keeper(DATA_DIR, TC, FG, DRV, SENTRY, footage_roots)
@@ -569,12 +840,19 @@ def main():
     BOOK = app_charges.ChargeBook(os.path.dirname(os.path.abspath(__file__)), DATA_DIR)
     BOOK.get()          # start reconciling the charges with their invoices in the background
     SYNC = app_sync.ChargerSync(os.path.dirname(os.path.abspath(__file__)), DATA_DIR)
+    TSYNC = app_sync.ChargerSync(os.path.dirname(os.path.abspath(__file__)), DATA_DIR, "sync_drives_all.sh")
+    CSYNC = app_sync.ChargerSync(os.path.dirname(os.path.abspath(__file__)), DATA_DIR, "sync_charging_all.sh")
+    SOFT = app_software.SoftSync(DATA_DIR)
+    CARW = car_watch.Watch(DATA_DIR, lambda: app_software.S.load().get("car_check_minutes") if app_sync.tessie_configured() else 0)
+    CARW.start()
+    threading.Thread(target=tessie_auto, daemon=True).start()
     try:
         srv = serve(a.port)
     except OSError:
         srv = serve(0)      # port taken: any free one
     url = "http://127.0.0.1:%d/" % srv.server_address[1]
     print("Tesla app: %s   (data: %s)" % (url, DATA_DIR), flush=True)
+    threading.Thread(target=_warm, args=(srv.server_address[1],), daemon=True).start()
     if a.no_window:
         try:
             srv.serve_forever()
@@ -585,7 +863,12 @@ def main():
     if not a.browser:
         try:
             import webview      # optional: native window
-            webview.create_window("Tesla", url, width=int(app_config.get("window.width")), height=int(app_config.get("window.height")), min_size=(900, 600), text_select=True)
+            webview.create_window("Tesellate", url, width=int(app_config.get("window.width")), height=int(app_config.get("window.height")), min_size=(900, 600), text_select=True)
+            try:                # the Dock shows the app's icon even though python is the running program (needs pyobjc, which pywebview brings on a Mac)
+                import AppKit
+                AppKit.NSApplication.sharedApplication().setApplicationIconImage_(AppKit.NSImage.alloc().initWithContentsOfFile_(os.path.join(UI, "icon", "Tesellate_Icon.png")))
+            except Exception:
+                pass
             webview.start()
             return 0
         except ImportError:

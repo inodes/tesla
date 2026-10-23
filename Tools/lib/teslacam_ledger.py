@@ -194,3 +194,26 @@ class Ledger:
             gone = max((x["gone"] for e in hit for x in e["drives"].values() if x.get("gone")), default=None)
             out[st] = dict(state="kept" if live else "deleted", on=live, gone=gone, size=max(e["size"] for e in hit))
         return out
+
+    def holders(self, stamps):
+        """{minute stamp: dict(state, files=[dict(name, cam, size, drives=[role, ...])])}: the files of each minute and the drives that hold each now.
+        state: 'kept' (some drive holds a file of it), 'deleted' (logged, gone from every drive), 'unknown' (never logged). Front camera first."""
+        order = ("front", "back", "left_repeater", "right_repeater", "left_pillar", "right_pillar")
+        out = {}
+        for st in stamps:
+            files, seen = {}, False
+            for k, e in self.day(_day(st)).items():
+                tail = k.rsplit("|", 1)[-1]
+                if not tail.startswith(st + "-"):
+                    continue
+                seen = True
+                cam = tail[len(st) + 1:]
+                f = files.setdefault(cam, dict(name="%s-%s.mp4" % (st, cam), cam=cam, size=0, drives=[]))
+                f["size"] = max(f["size"], e["size"])
+                for r, x in e["drives"].items():
+                    if not x.get("gone") and r not in f["drives"]:
+                        f["drives"].append(r)
+            fl = sorted(files.values(), key=lambda f: order.index(f["cam"]) if f["cam"] in order else len(order))
+            held = [f for f in fl if f["drives"]]
+            out[st] = dict(state="kept" if held else "deleted" if seen else "unknown", files=held)
+        return out

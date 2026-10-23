@@ -88,6 +88,10 @@
 
 ## 2. Table Display & UI Formatting Standards
 
+Command naming, structure and the app's task runner follow `docs/COMMANDS_AUDIT.md`; read it before adding, renaming or removing a script, and update its Progress section in the same change.
+
+App UI (Tesellate) rules - functional wording only, progress on anything that waits, controls only when they apply, one fact once, Mac conventions - are in `docs/ui-guidelines.md`; read it before changing a page.
+
 All terminal tools (such as `Tools/analyse_drives.py` and `Tools/analyse_charging.py`) render rich Unicode box-drawing tables. The following rules are mandatory for all table implementations:
 
 1. **Dynamic Column Width Measurement (No Hardcoded Cell Sizing)**:
@@ -368,17 +372,22 @@ is a setting in `config.json`, never a literal buried in code. The app, report a
 add it to `DEFAULTS` in `app_config.py` and to `config.example.json` in the same change. Secrets stay in `config.json` / the environment and are
 never printed.
 
-### 3.5.1 Removable drives: identify by what is ON them; keep only the Archive connected
+### 3.5.1 Removable drives: identify by volume UUID; keep only the Archive connected
 
-Standing rule (2026-10-14).
+Standing rule (2026-10-14; identity changed to the volume UUID 2026-10-21).
 
 **Identity: never by mount name.** The volumes appear as `TESLADRIVE`, `TESLADRIVE 1`, `TESLADRIVE 2` in mount order, so
-the names are interchangeable and say nothing. A drive is identified by the marker folder in its root and, failing that,
-its size: `ARCHIVE_2TB` / `ARCHIVE` = the 2 TB **Archive** (master); `JOWUA_1TB` / `JOWUA` = the **JOWUA** 1 TB drive;
-`TESLA_USB_*` = the car's **Tesla USB**; no marker: > 1600 GB Archive, 700-1600 GB JOWUA, 30-700 GB USB.
-`Tools/lib/drive_roles.py` implements this (`role_of`, `discover`, `teslacam_roots`, `find_root`; roles A / J / U) and
-matches `analyse_drives.get_drive_identifier`'s marker step. Code must not hard-code `/Volumes/TESLADRIVE...` paths to mean a
-particular drive, and queue/action files carry the drive's role, not its name (`drive_actions.py` resolves the role at run time).
+the names are interchangeable and say nothing, and the car formats every drive with the same name. A drive is identified by
+its **volume UUID** (`diskutil info` calls it Volume UUID). The first time a drive is seen it is asked what it is for (car /
+archive / copy) and given a one-word name; the answer is kept in `config.json` under `teslacam.drives` with a key letter
+(role: A Archive, J JOWUA, U Tesla USB for the known drives). `Tools/lib/drive_registry.py` holds the registry (`lookup`,
+`register`, `forget`, `mounted_volumes`, `mount_of`, `ranked`) and `Tools/manage_teslacam_drives.py` lists and edits it.
+A marker folder in the root (`ARCHIVE_2TB`, `JOWUA_1TB`, `TESLA_USB_*`) only registers a drive the first time its UUID can be
+read; `Tools/lib/drive_roles.py` implements the lookups. A disk image mounted from a drive carries that drive's UUID and
+marker, so it looks like a second copy of it: detach it before judging what is connected. Code must not hard-code
+`/Volumes/TESLADRIVE...` paths to mean a particular drive, and queue/action files carry the drive's role, not its name
+(`drive_actions.py` resolves the role at run time). The write-up of the JOWUA recovery is in the Tesla project
+(`claude/jowua-recovery-2026-10-21.md`).
 
 **Connection: only the Archive stays connected to an agent session.** A connected folder is a share served by the Claude
 app's VM (`com.apple.Virtualization.VirtualMachine`); every file a script reads through it stays open on the Mac until the
@@ -389,12 +398,30 @@ folder is disconnected, so Finder cannot eject the volume ("in use"). A footage 
 
 ### 3.6 Backups go in `.bak_archive/`, never beside the file
 
-Standing rule (REQ-181): before editing a script or document, copy it to `.bak_archive/` (the one inside
+Standing rule (REQ-181, narrowed 2026-10-21): a file that is committed needs no copy, because git keeps its versions. Copy only
+a file that git does not hold (git-ignored or never committed: `config.json`, local data, notes) before editing it, to `.bak_archive/` (the one inside
 the folder being edited, e.g. `Tools/.bak_archive/`; repo-root files use `./.bak_archive/`) as
 `<name>.bak-<ticket>[-<timestamp>]`. `.bak_archive/` is git-ignored. Never leave `*.bak*` files next to
 the original - they clutter the folder, break shell tab-completion and sit in the same directory the
 scripts run from. Data-folder backups (`charges_master.csv` etc.) go in the data `archive/` folder with
 a name that does not contain "charges"/"drives", because the loaders read matching files there as data.
+
+`config.json` is not in git, so `Tools/lib/config_backup.py` copies it to `.bak_archive/config.json.bak-auto-<UTC time>`
+before the drive registry changes it and each time the app starts, unless the newest copy is identical. The newest 20 stay;
+older ones are moved (not deleted) to `.bak_archive/config.json.older/` and logged in `.bak_archive/archive_log.md`.
+
+### 3.7 Working method: nothing is deleted, claims are cited, gaps are stated
+
+Standing rule (2026-10-21).
+
+- **Never delete files.** To remove an obsolete file, move it to an archive folder (`Tools/archive/` for scripts,
+  `.bak_archive/` for backups) and write the reason in that folder's `archive_log.md`. Only the user deletes, on their own machine.
+- **Every factual statement about the repo or its documents names its source** as `[file > section]`, for example
+  `[AGENTS.md > 3.6]`, taken from the file as it is now, not from memory. Open a long file only for the part that is needed.
+- **If it is not in the files, say "Not found in documents"** and do not infer it. When two files disagree, say which two and
+  what each says.
+- **When a file is added, moved or removed, update what points at it** (README, this file, the command lists) in the same
+  change; see the Reference Sweep Check in Section 7.
 
 ---
 

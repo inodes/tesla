@@ -71,7 +71,7 @@ def build(data_dir, since, log=print):
     import analyse_fsd_osm_limits as O   # shared telemetry helpers (band, load, bearing, hav_m)
     out_dir = os.path.join(data_dir, "drives", "analysis")
     cache = os.path.join(out_dir, "osm_cache")
-    files = [f for f in sorted(_dp.list_csvs(os.path.join(data_dir, "drives", "deepdive")))
+    files = [f for f in sorted(_dp.list_data(os.path.join(data_dir, "drives", "deepdive")))
              if os.path.basename(f)[15:25] >= since]
 
     # --- OSM match per telemetry sample

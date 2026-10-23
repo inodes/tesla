@@ -41,7 +41,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 sys.path.insert(0, os.path.join(HERE, "lib"))
 import drive_paths as dp  # noqa: E402
-import clip_clock as CC  # noqa: E402
+import drive_points as dpts  # noqa: E402
 import dashcam_flip_review as D  # noqa: E402
 import footage_ui as FU  # noqa: E402
 import drive_roles as DR  # noqa: E402
@@ -180,7 +180,7 @@ def load_recs(data):
 
 
 def load_drive_csv(path):
-    rows = list(csv.reader(open(path, encoding="utf-8")))
+    rows = dpts.table(path)                       # JSON or CSV alike (lib/drive_points.py)
     if len(rows) < 2:
         return None
     h = rows[0]
@@ -862,8 +862,10 @@ def process_drive(csv_path, master, flips_by_file, recs, foot, args, base_analys
                 footage_clips=cov["n"] if cov else 0, footage_pct=round(cov["pct"]) if cov else 0,
                 videos=(not args.no_video) and not incomplete, render=RENDER_VERSION, foot_off=off, foot_how=foot.how if (foot and foot.clips) else "")
     # times in the data are UTC; the zone and offset are kept so the local clock can be shown again (the day folder is the local date of the start)
-    _u0, _u1 = CC.from_local(CC.naive(summ["start"].replace(" ", "_"))), CC.from_local(CC.naive(summ["end"].replace(" ", "_")))
-    summ.update(t0=_u0, t1=_u1, tz=getattr(CC.zone(), "key", "UTC"), utc_offset_s=CC.local_offset(_u0))
+    # (this file is a copy made from Tessie's points and the camera store: it can always be rebuilt from them, and nothing here is a source of truth)
+    _zt, _zone = dpts.text_zone(csv_path), dpts.zone_of(csv_path)             # the zone the clock text was written in; the drive's own zone, for showing it
+    _u0, _u1 = (dpts.tz.epoch_for_naive_local(datetime.datetime.strptime(summ[k], "%Y-%m-%d %H:%M:%S"), _zt) for k in ("start", "end"))
+    summ.update(t0=_u0, t1=_u1, tz=_zone, utc_offset_s=datetime.datetime.fromtimestamp(_u0, dpts.ZoneInfo(_zone)).utcoffset().total_seconds())
     with open(os.path.join(folder, "drive_summary.json"), "w", encoding="utf-8") as fh:
         json.dump(summ, fh, indent=1, ensure_ascii=False)
     with open(out + ".tmp", "w", encoding="utf-8") as fh:
@@ -930,7 +932,7 @@ def main():
     base_analysis = os.path.join(data, "drives", "analysis")
     only = set(x for x in a.only.split(",") if x)
     done, skipped, rows = 0, 0, []
-    todo = [p for p in dp.list_csvs(root) if not (only and dp.stamp_of(p) not in only) and not (a.since and dp.stamp_of(p)[:10] < a.since)]
+    todo = [p for p in dp.list_data(root) if not (only and dp.stamp_of(p) not in only) and not (a.since and dp.stamp_of(p)[:10] < a.since)]
     from progress import Bar
     bar = Bar(len(todo), "Drive pages")
     for i, p in enumerate(todo):
@@ -948,7 +950,7 @@ def main():
     bar.update(len(todo), "")
     bar.done()
     # index (cheap; from each folder's drive_summary.json)
-    for p in dp.list_csvs(root):
+    for p in dp.list_data(root):
         folder = dp.drive_folder_of(p)
         sj = os.path.join(folder, "drive_summary.json") if folder else ""
         if not sj or not os.path.exists(sj) or not os.path.exists(os.path.join(folder, "drive.html")):

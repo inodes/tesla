@@ -49,7 +49,9 @@ def drives():
 
 
 def _write(entries):
+    import config_backup
     path = config_path()
+    config_backup.backup(path)                                  # a dated copy first (config.json is not in git)
     cfg = _read()
     cfg.setdefault("teslacam", {})["drives"] = entries
     tmp = path + ".tmp"
@@ -109,6 +111,34 @@ def volume_id(path):
     return None
 
 
+def mounted_volumes(roots=("/Volumes",)):
+    """[(mount point, volume UUID)] of every volume mounted under /Volumes (a Claude session: ~/mnt as well), found by UUID, never by name."""
+    out = []
+    cand = []
+    for r in roots + (os.path.expanduser("~/mnt"),):
+        try:
+            cand += [os.path.join(r, n) for n in sorted(os.listdir(r))]
+        except OSError:
+            pass
+    for mp in cand:
+        if os.path.isdir(mp) and os.path.ismount(mp):
+            out.append((mp, volume_id(mp)))
+    return out
+
+
+def mount_of(vid):
+    """Mount points of the volumes with this UUID (normally one; a disk and a copy of its image mounted together give two)."""
+    return [mp for mp, v in mounted_volumes() if v and v == (vid or "").upper()]
+
+
+def ranked(roles, connected=()):
+    """[dict(role, label, size_gb, connected)] for these drive keys, the biggest drive first (then by name): how every list of "the drives that hold it"
+    is shown. A key not in the registry keeps itself as its name. `connected` = the keys of the drives connected right now."""
+    reg = {d["role"]: d for d in drives()}
+    out = [dict(role=r, label=(reg.get(r) or {}).get("label") or r, size_gb=(reg.get(r) or {}).get("size_gb") or 0, connected=r in connected) for r in roles]
+    return sorted(out, key=lambda x: (-x["size_gb"], x["label"]))
+
+
 def lookup(vid):
     return next((d for d in drives() if d["id"] == vid), None) if vid else None
 
@@ -128,6 +158,9 @@ def register(vid, label, function, size_gb=None, role=None):
     cur = drives()
     old = next((d for d in cur if d["id"] == vid), None)
     taken = {d["role"] for d in cur if d["id"] != vid}
+    if size_gb is None and not (old or {}).get("size_gb"):         # not given and not known yet: measure the volume if it is mounted now
+        mp = mount_of(vid)
+        size_gb = _total_gb(mp[0]) if mp else None
     entry = dict(id=vid, label=label, function=function, role=role or (old["role"] if old else _free_role(label, function, taken)),
                  size_gb=size_gb if size_gb is not None else (old or {}).get("size_gb"), first_seen=(old or {}).get("first_seen") or datetime.date.today().isoformat())
     _write([d for d in cur if d["id"] != vid] + [entry])
@@ -140,8 +173,12 @@ def forget(vid):
     return len(cur) != len(drives())
 
 
-def size_gb(path):
+def _total_gb(path):
     try:
         return round(shutil.disk_usage(drive_root(path)).total / 1024 ** 3)
     except OSError:
         return None
+
+
+def size_gb(path):
+    return _total_gb(path)

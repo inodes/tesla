@@ -21,7 +21,6 @@ t (epoch s, the drive page's local clock), la, lo, v (km/h), s (0 = Tessie, 1 = 
 """
 import bisect
 import calendar
-import csv
 import datetime
 import glob
 import os
@@ -29,6 +28,7 @@ import math
 
 import clip_clock as CC
 import drive_paths as DP
+import drive_points as DPT
 
 JOIN_S = 20.0       # a Tessie point this close to a camera second is left out
 MARGIN_S = 30.0     # camera seconds this far outside the Tessie drive still belong to it
@@ -54,29 +54,29 @@ def _f(r, i):
 
 
 def tessie_points(folder):
-    """The points of a Tessie drive (its drive_deepdive_*.csv): [{t, u, la, lo, v, el}] by time - t on the page's local clock, u in UTC."""
-    fs = sorted(glob.glob(os.path.join(folder, "drive_deepdive_*.csv")))
+    """The points of a Tessie drive (its drive_deepdive_* file, JSON or CSV): [{t, u, la, lo, v, el}] by time - t on the page's local clock, u in UTC."""
+    fs = sorted(glob.glob(os.path.join(folder, "drive_deepdive_*.json"))) or sorted(glob.glob(os.path.join(folder, "drive_deepdive_*.csv")))
     out = []
     if not fs:
         return out
-    with open(fs[0], newline="", encoding="utf-8-sig") as fh:
-        rd = csv.reader(fh)
-        head = next(rd, [])
-        ix = {n: i for i, n in enumerate(head)}
-        iL, iO, iE, iS = ix.get("Latitude"), ix.get("Longitude"), ix.get("Elevation (m)"), ix.get("Speed (km/h)")
-        if iL is None or iO is None:
-            return out
-        for r in rd:
-            try:
-                t = _t(r[0], "%Y-%m-%d %H:%M:%S")
-            except (ValueError, IndexError):
-                continue
-            la, lo = _f(r, iL), _f(r, iO)
-            if la is None or lo is None or (abs(la) < 1 and abs(lo) < 1):
-                continue
-            out.append(dict(t=t, u=CC.from_local(t), la=la, lo=lo, v=_f(r, iS), el=_f(r, iE)))
+    try:
+        pts = DPT.points_epoch(fs[0])
+    except OSError:
+        return out
+    for u, r in pts:
+        la, lo, = _fl(r.get("Latitude")), _fl(r.get("Longitude"))
+        if la is None or lo is None or (abs(la) < 1 and abs(lo) < 1):
+            continue
+        out.append(dict(t=CC.local_secs(u), u=u, la=la, lo=lo, v=_fl(r.get("Speed (km/h)")), el=_fl(r.get("Elevation (m)"))))
     out.sort(key=lambda p: p["t"])
     return out
+
+
+def _fl(v):
+    try:
+        return float(v)
+    except (TypeError, ValueError):
+        return None
 
 
 def utc(local, off=None):

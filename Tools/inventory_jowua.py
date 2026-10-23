@@ -3,8 +3,9 @@
 
   ./inventory_jowua.py [--src PATH] [--archive PATH] [--rescue PATH] [--full] [--tsv FILE]
 
-  --src      the JOWUA volume, read-only (default "/Volumes/TESLADRIVE 1": the unrepaired image mounted by refresh_image.sh)
-  --archive  the Archive volume (default: the volume under /Volumes that has an ARCHIVE_2TB folder)
+  --src      the JOWUA volume, read-only (default: the mounted volume whose UUID is the registered J drive's; the unrepaired image mounted by refresh_image.sh has it)
+  --archive  the Archive volume (default: the mounted volume whose UUID is the registered Archive's)
+  --src-uuid / --archive-uuid  choose by volume UUID instead (./manage_teslacam_drives.py lists them). Names like TESLADRIVE 1 are never used to decide.
   --rescue   the rescued copy (default /Volumes/LaCie1/jowua-rescue)
   --full     compare whole files (slow); the default compares the first MB, the last MB and 4 places between
   --tsv FILE where to write one line per file (default ~/Downloads/jowua-inventory-DATE.tsv)
@@ -24,15 +25,27 @@ args = sys.argv[1:]
 if "-h" in args or "--help" in args: print(__doc__); sys.exit(0)
 def opt(name, default=None):
     return args[args.index(name) + 1] if name in args else default
-SRC = opt("--src", "/Volumes/TESLADRIVE 1"); RES = opt("--rescue", "/Volumes/LaCie1/jowua-rescue"); ARC = opt("--archive"); FULL = "--full" in args
+SRC = opt("--src"); RES = opt("--rescue", "/Volumes/LaCie1/jowua-rescue"); ARC = opt("--archive"); FULL = "--full" in args
 stamp = time.strftime("%Y%m%d-%H%M%S"); logdir = os.path.expanduser("~/Downloads"); logdir = logdir if os.path.isdir(logdir) and os.access(logdir, os.W_OK) else "/tmp"
 TSV = os.path.expanduser(opt("--tsv", os.path.join(logdir, "jowua-inventory-%s.tsv" % stamp)))
 logf = open(os.path.join(logdir, "jowua-inventory-%s.log" % stamp), "a", buffering=1)
 def say(m): line = "%s • %s" % (now(), m); print(line, flush=True); logf.write(line + "\n")
 
-if not ARC:
-    for v in sorted(os.listdir("/Volumes")):
-        if os.path.isdir(os.path.join("/Volumes", v, "ARCHIVE_2TB")): ARC = os.path.join("/Volumes", v); break
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__))); sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "lib"))
+import drive_registry as REG
+def by_uuid(what, vid):
+    mps = REG.mount_of(vid)
+    if len(mps) != 1:
+        say("ERROR: the %s (UUID %s) is %s%s" % (what, vid, "not mounted" if not mps else "mounted more than once: ", ", ".join(mps)))
+        sys.exit(1)
+    return mps[0]
+reg = {d["role"]: d for d in REG.drives()}
+say("mounted volumes (identified by UUID, not by name):")
+for mp, vid in REG.mounted_volumes():
+    e = REG.lookup(vid)
+    if os.path.isdir(os.path.join(mp, "TeslaCam")) or e: say("  %-28s %s  %s" % (mp, vid, ("registered: %s (%s, role %s)" % (e["label"], e["function"], e["role"])) if e else "not registered"))
+if not SRC: SRC = by_uuid("JOWUA volume", opt("--src-uuid") or (reg.get("J") or {}).get("id") or "")
+if not ARC: ARC = by_uuid("Archive", opt("--archive-uuid") or (reg.get("A") or {}).get("id") or "")
 for name, p in (("source", SRC), ("rescue", RES), ("Archive", ARC)):
     if not p or not os.path.isdir(os.path.join(p, "TeslaCam")): say("ERROR: no TeslaCam folder in the %s (%s)" % (name, p)); sys.exit(1)
 say("inventory: JOWUA=%s  Archive=%s  rescue=%s  compare=%s" % (SRC, ARC, RES, "whole files" if FULL else "head, tail, 4 samples"))
@@ -42,7 +55,8 @@ def walk(root):
     for r, dirs, names in os.walk(root):
         dirs[:] = [d for d in dirs if d not in SKIP]
         for n in names:
-            if n.startswith("._") or n == ".DS_Store": continue
+            if n == ".DS_Store": continue
+            if n.startswith("._") and (os.sep + "TeslaCam" + os.sep) in (r + os.sep): continue   # a clip's companion file; the ones at the top of the drive carry icons and are kept
             yield os.path.join(r, n)
 
 # the other copies: by path and by (name, size)
@@ -82,7 +96,7 @@ def find_copy(tag, rel, name, sz, s):
         except OSError: pass
     return ("different", cands[0])
 
-manifest = {"made": time.strftime("%Y-%m-%d %H:%M:%S"), "src": SRC, "dirs": [], "files": []}
+manifest = {"made": time.strftime("%Y-%m-%d %H:%M:%S"), "src": SRC, "src_uuid": REG.volume_id(SRC), "archive_uuid": REG.volume_id(ARC), "dirs": [], "files": []}
 SAVE_OUT = "--no-save-outside" not in args
 rows = []; other = []; counts = collections.Counter(); bytes_ = collections.Counter(); only = []; diff = []; t0 = time.time(); i = 0
 for r_, dirs_, names_ in os.walk(SRC):

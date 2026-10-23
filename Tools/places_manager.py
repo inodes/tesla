@@ -64,6 +64,8 @@ _tools_dir = os.path.dirname(os.path.abspath(__file__))
 if _tools_dir not in sys.path:
     sys.path.insert(0, _tools_dir)
 
+import lib.drive_paths as _drive_paths
+import lib.drive_points as _dpts
 from lib.table_formatter import (
     char_width,
     display_len,
@@ -1588,7 +1590,7 @@ def find_candidate_drive_logs():
 
 
 def find_deepdive_files():
-    """Finds all drive_deepdive_*.csv files from configured directories and subdirectories."""
+    """Finds all drive_deepdive_* telemetry files (JSON or CSV) from configured directories and subdirectories."""
     config = load_config()
     tessie_dir = os.path.abspath(os.path.expanduser(config.get("directories", {}).get("data", "~/Library/Mobile Documents/com~apple~CloudDocs/Tesla")))
     
@@ -1602,9 +1604,7 @@ def find_deepdive_files():
         for sub in ["", "drives", "drives/deepdive", "deepdive", "archive", "drives/archive"]:
             p = os.path.join(d, sub)
             if os.path.isdir(p):
-                for f in (glob.glob(os.path.join(p, "drive_deepdive_*.csv"))
-                          + glob.glob(os.path.join(p, "*", "drive_deepdive_*.csv"))             # REQ-193 per-drive folders
-                          + glob.glob(os.path.join(p, "*", "*", "drive_deepdive_*.csv"))):      # day folders
+                for f in _drive_paths.list_data(p):                                         # JSON or CSV, every layout, each drive once
                     real = os.path.realpath(f)
                     if real not in seen:
                         seen.add(real)
@@ -2099,86 +2099,84 @@ def get_coords_pass_by_history(target_lat, target_lon, radius_m=150, places=None
 
     for fpath in deepdive_files:
         try:
-            with open(fpath, "r", encoding="utf-8-sig") as fp:
-                reader = csv.DictReader(fp)
-                fieldnames = reader.fieldnames or []
-                if "Latitude" not in fieldnames or "Longitude" not in fieldnames:
-                    continue
+            rows = _dpts.rows(fpath)                       # JSON or CSV, one shape (lib/drive_points.py)
+            fieldnames = list(rows[0].keys()) if rows else []
+            if "Latitude" not in fieldnames or "Longitude" not in fieldnames:
+                continue
 
-                rows = list(reader)
-                if len(rows) < 10:
-                    continue
+            if len(rows) < 10:
+                continue
 
-                first_row = rows[0]
-                last_row = rows[-1]
+            first_row = rows[0]
+            last_row = rows[-1]
 
+            try:
+                f_lat, f_lon = float(first_row.get("Latitude") or 0), float(first_row.get("Longitude") or 0)
+                l_lat, l_lon = float(last_row.get("Latitude") or 0), float(last_row.get("Longitude") or 0)
+            except ValueError:
+                continue
+
+            f_dist = haversine_distance(target_lat, target_lon, f_lat, f_lon)
+            l_dist = haversine_distance(target_lat, target_lon, l_lat, l_lon)
+
+ # Exclude if drive started or stopped within radius
+            if f_dist <= radius_m or l_dist <= radius_m:
+                continue
+
+            matched_row = None
+            min_pass_dist = float("inf")
+
+ # Skip the first 5 and last 5 rows to ensure we only capture genuine en-route passage
+            for idx, r in enumerate(rows[5:-5], 5):
                 try:
-                    f_lat, f_lon = float(first_row.get("Latitude") or 0), float(first_row.get("Longitude") or 0)
-                    l_lat, l_lon = float(last_row.get("Latitude") or 0), float(last_row.get("Longitude") or 0)
+                    r_lat = float(r.get("Latitude") or 0)
+                    r_lon = float(r.get("Longitude") or 0)
                 except ValueError:
                     continue
 
-                f_dist = haversine_distance(target_lat, target_lon, f_lat, f_lon)
-                l_dist = haversine_distance(target_lat, target_lon, l_lat, l_lon)
+                if min_lat <= r_lat <= max_lat and min_lon <= r_lon <= max_lon:
+                    d = haversine_distance(target_lat, target_lon, r_lat, r_lon)
+                    if d <= radius_m and d < min_pass_dist:
+                        min_pass_dist = d
+                        matched_row = r
 
- # Exclude if drive started or stopped within radius
-                if f_dist <= radius_m or l_dist <= radius_m:
-                    continue
-
-                matched_row = None
-                min_pass_dist = float("inf")
-
- # Skip the first 5 and last 5 rows to ensure we only capture genuine en-route passage
-                for idx, r in enumerate(rows[5:-5], 5):
-                    try:
-                        r_lat = float(r.get("Latitude") or 0)
-                        r_lon = float(r.get("Longitude") or 0)
-                    except ValueError:
-                        continue
-
-                    if min_lat <= r_lat <= max_lat and min_lon <= r_lon <= max_lon:
-                        d = haversine_distance(target_lat, target_lon, r_lat, r_lon)
-                        if d <= radius_m and d < min_pass_dist:
-                            min_pass_dist = d
-                            matched_row = r
-
-                if matched_row:
-                    pass_ts = _legacy_get(matched_row, "Timestamp") or matched_row.get("Timestamp (Local)") or matched_row.get("Timestamp")
-                    pass_dt = _parse_drive_ts(pass_ts)
+            if matched_row:
+                pass_ts = _legacy_get(matched_row, "Timestamp") or matched_row.get("Timestamp (Local)") or matched_row.get("Timestamp")
+                pass_dt = _parse_drive_ts(pass_ts)
 
  # Exclude if within 10 minutes of any recorded stop/visit at this target
-                    if pass_dt and any(abs((pass_dt - s_dt).total_seconds()) < 600 for s_dt in stop_dts):
-                        continue
+                if pass_dt and any(abs((pass_dt - s_dt).total_seconds()) < 600 for s_dt in stop_dts):
+                    continue
 
-                    matched_master = None
-                    if pass_dt:
-                        for dm in drives_master:
-                            if dm["start_dt"] and dm["end_dt"]:
-                                if dm["start_dt"] - timedelta(minutes=3) <= pass_dt <= dm["end_dt"] + timedelta(minutes=3):
-                                    matched_master = dm
-                                    break
+                matched_master = None
+                if pass_dt:
+                    for dm in drives_master:
+                        if dm["start_dt"] and dm["end_dt"]:
+                            if dm["start_dt"] - timedelta(minutes=3) <= pass_dt <= dm["end_dt"] + timedelta(minutes=3):
+                                matched_master = dm
+                                break
 
-                    if matched_master:
-                        orig = resolve_stop(matched_master["s_addr"], matched_master["s_saved"], matched_master["s_lat"], matched_master["s_lon"], places, chargers) or matched_master["s_saved"] or matched_master["s_addr"].split(",")[0] or "Unknown"
-                        dest = resolve_stop(matched_master["e_addr"], matched_master["e_saved"], matched_master["e_lat"], matched_master["e_lon"], places, chargers) or matched_master["e_saved"] or matched_master["e_addr"].split(",")[0] or "Unknown"
-                        dist_km = matched_master["dist_km"]
-                        date_str = matched_master["start_ts"][:16] if matched_master["start_ts"] else (pass_ts[:16] if pass_ts else "-")
-                    else:
-                        orig = resolve_stop(first_row.get("Starting Location", ""), "", f_lat, f_lon, places, chargers) or f"Start ({f_lat:.2f}, {f_lon:.2f})"
-                        dest = resolve_stop(last_row.get("Ending Location", ""), "", l_lat, l_lon, places, chargers) or f"End ({l_lat:.2f}, {l_lon:.2f})"
-                        dist_km = 0.0
-                        date_str = pass_ts[:16] if pass_ts else "-"
+                if matched_master:
+                    orig = resolve_stop(matched_master["s_addr"], matched_master["s_saved"], matched_master["s_lat"], matched_master["s_lon"], places, chargers) or matched_master["s_saved"] or matched_master["s_addr"].split(",")[0] or "Unknown"
+                    dest = resolve_stop(matched_master["e_addr"], matched_master["e_saved"], matched_master["e_lat"], matched_master["e_lon"], places, chargers) or matched_master["e_saved"] or matched_master["e_addr"].split(",")[0] or "Unknown"
+                    dist_km = matched_master["dist_km"]
+                    date_str = matched_master["start_ts"][:16] if matched_master["start_ts"] else (pass_ts[:16] if pass_ts else "-")
+                else:
+                    orig = resolve_stop(first_row.get("Starting Location", ""), "", f_lat, f_lon, places, chargers) or f"Start ({f_lat:.2f}, {f_lon:.2f})"
+                    dest = resolve_stop(last_row.get("Ending Location", ""), "", l_lat, l_lon, places, chargers) or f"End ({l_lat:.2f}, {l_lon:.2f})"
+                    dist_km = 0.0
+                    date_str = pass_ts[:16] if pass_ts else "-"
 
-                    pass_bys.append({
-                        "date_ts": date_str,
-                        "pass_ts": pass_ts,
-                        "origin": orig,
-                        "place": label,
-                        "destination": dest,
-                        "stay": "Pass by",
-                        "closest_dist_m": min_pass_dist,
-                        "dist_km": dist_km
-                    })
+                pass_bys.append({
+                    "date_ts": date_str,
+                    "pass_ts": pass_ts,
+                    "origin": orig,
+                    "place": label,
+                    "destination": dest,
+                    "stay": "Pass by",
+                    "closest_dist_m": min_pass_dist,
+                    "dist_km": dist_km
+                })
         except Exception:
             pass
 

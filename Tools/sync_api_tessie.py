@@ -1059,6 +1059,24 @@ def sync_tire_pressure(tessie_dir=None, since_days=35, dry_run=False, reset_cach
     return {"fetched": len(history_rows), "new_or_changed": new_or_changed, "added": added, "changed": changed, "total": total}
 
 
+def sync_car_version(tessie_dir=None):
+    """The software version the car is on now (Get Vehicle: vehicle_state.car_version) and its release notes (Get Release Notes), kept as a history in
+    <data>/car_versions.json (lib/car_versions.py). Tessie keeps no history, so a version is only known from the first look that sees it; the app also looks
+    on its own (lib/car_watch.py). The look itself is lib/car_watch.check()."""
+    from lib import car_watch
+    home = tessie_dir or resolve_tessie_data_home()
+    if not home:
+        print("❌ No Tessie data home configured - nothing to sync to.")
+        return None
+    r = car_watch.check(home)
+    if r.get("error"):
+        print("❌ car version: " + r["error"])
+        return None
+    print(f"🚗 car software {r['version']}" + (f", FSD {r['fsd']}" if r.get("fsd") else ", FSD version not named in the notes")
+          + (" (new)" if r["new"] else "") + (f"; update staged: {r['staged']}" if r.get("staged") else ""))
+    return {"version": r["version"], "new": r["new"]}
+
+
 def sync_firmware_alerts(tessie_dir=None, since_days=180, dry_run=False, reset_cache=False):
     """firmware_alerts: a real fetchable date-range history (from/to
     supported) but with NO native `id` (confirmed live) - dedup keyed on
@@ -1221,7 +1239,7 @@ def sync_battery_health(tessie_dir=None, since_days=1095):
 
 def backfill_deepdive_telemetry(kinds, limit=None, pace_seconds=1.5, since_days=None, tessie_dir=None):
     """Bulk-fetch deep-dive telemetry for every past drive and/or charging
-    session that doesn't already have a local drive_deepdive_*.csv /
+    session that doesn't already have a local drive_deepdive_* (JSON, or the older CSV) /
     charge_deepdive_*.csv, until the local store is caught up with what
     Tessie's own history actually has. `kinds` is a list containing
     "drives", "charges", or both.
@@ -1278,6 +1296,8 @@ def _backfill_drive_deepdive(limit, pace_seconds, since_days, tessie_dir):
         print("   No local drives_master.csv found - nothing to backfill (run a normal --drives sync first).")
         return 0, 0, 0, 0
     analyzer.load_detailed_drives()
+    import lib.fetch_ledger as FL
+    ledger = FL.FetchLedger(os.path.dirname(analyzer.drives_dirs[0]))
     since_dt = _since_cutoff(since_days)
 
     fetched, skipped_in_progress, already_had, failed = 0, 0, 0, 0
@@ -1288,6 +1308,9 @@ def _backfill_drive_deepdive(limit, pace_seconds, since_days, tessie_dir):
             continue
         if analyzer.match_detailed_drive(d) or analyzer.has_local_deepdive(d):
             already_had += 1
+            continue
+        if (ledger.get("drive_path", "t%d" % int(d["start_utc_epoch"])) or {}).get("status") == "empty":
+            already_had += 1                    # Tessie was asked and has no points for this drive (lib/fetch_ledger.py): not asked again
             continue
         total_candidates += 1
         if analyzer._drive_is_in_progress(d):
@@ -1428,7 +1451,7 @@ def main():
    or:  sync_api_tessie.py --consolidate [--drives | --charges]
    or:  sync_api_tessie.py --backfill-deepdive [--drives | --charges] [--limit N] [--pace SECONDS]
    or:  sync_api_tessie.py --battery-health [--battery-health-since-days N]
-   or:  sync_api_tessie.py [--idles] [--tire-pressure] [--firmware-alerts] [--dry-run] [--reset-cache]
+   or:  sync_api_tessie.py [--idles] [--tire-pressure] [--firmware-alerts] [--car-version] [--dry-run] [--reset-cache]
 """,
         description="""
 NAME
@@ -1447,6 +1470,7 @@ EXAMPLES
   sync_api_tessie.py --backfill-deepdive --limit 50 --pace 2
   sync_api_tessie.py --battery-health
   sync_api_tessie.py --idles --tire-pressure --firmware-alerts
+  sync_api_tessie.py --car-version
 """
     )
 
@@ -1478,7 +1502,7 @@ EXAMPLES
     g_deepdive.add_argument("--backfill-deepdive", action="store_true",
                          help="Bulk-fetch deep-dive telemetry from Tessie's /states API for every past "
                               "drive and/or charging session that doesn't have a local "
-                              "drive_deepdive_*.csv / charge_deepdive_*.csv yet (uses the same "
+                              "drive_deepdive_* / charge_deepdive_*.csv yet (uses the same "
                               "--drives/--charges selectors as the sync above - both, if neither is "
                               "given). Separate from the regular sync - re-run as many times as needed, "
                               "it only ever fetches what's still missing.")
@@ -1515,6 +1539,8 @@ EXAMPLES
     g_simple.add_argument("--firmware-alerts", action="store_true",
                          help="Sync vehicle firmware alert history into firmware_alerts_master.csv "
                               "(simple single-CSV-plus-archive format, incremental like --idles).")
+    g_simple.add_argument("--car-version", action="store_true",
+                         help="Record the software version the car is on, and its FSD version, into car_versions.json.")
     g_simple.add_argument("--firmware-alerts-since-days", type=int, default=180,
                          help="First-run backfill window in days for --firmware-alerts (default: 180).")
     args = parser.parse_args()
@@ -1523,7 +1549,7 @@ EXAMPLES
         sync_battery_health(tessie_dir=args.tessie_dir, since_days=args.battery_health_since_days)
         return
 
-    if args.idles or args.tire_pressure or args.firmware_alerts:
+    if args.idles or args.tire_pressure or args.firmware_alerts or args.car_version:
  # Same isolated-flag shape as --battery-health above (TODO-011): a
  # lightweight fetch+merge with no --consolidate subprocess/prompt to
  # coordinate, so these can run standalone or combined with each
@@ -1545,6 +1571,10 @@ EXAMPLES
             result = sync_firmware_alerts(tessie_dir=args.tessie_dir, since_days=args.firmware_alerts_since_days,
                                            dry_run=args.dry_run, reset_cache=args.reset_cache)
             if result is None:
+                any_failed = True
+            print()
+        if args.car_version:
+            if sync_car_version(tessie_dir=args.tessie_dir) is None:
                 any_failed = True
             print()
         sys.exit(1 if any_failed else 0)

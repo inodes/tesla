@@ -10,8 +10,30 @@ const dur=m=>m==null?"–":m>=120?Math.floor(m/60)+" h "+Math.round(m%60)+" min"
 const money=v=>v==null||isNaN(v)?"–":"$"+(+v).toFixed(2);
 const rate=v=>{if(v==null||isNaN(v))return"–";let s=(+v).toFixed(4);if(s.endsWith("00"))s=s.slice(0,-2);else if(s.endsWith("0"))s=s.slice(0,-1);return"$"+s};          // a price per kWh keeps its cents: $0.1752, not $0.18
 const cache={};
-const api=async p=>{if(cache[p])return cache[p];const r=await fetch("/api/"+p);if(!r.ok)throw new Error(p+": "+r.status);return cache[p]=await r.json()};
 const main=$("#main");
+// ---------- remembered pages: a list seen before is drawn at once from the browser's own copy and refreshed behind it; the page is redrawn only if the fresh data differs
+const IDB=(()=>{let db;const open=()=>db||(db=new Promise(res=>{try{const r=indexedDB.open("tesla-ui",1);r.onupgradeneeded=()=>r.result.createObjectStore("kv");r.onsuccess=()=>res(r.result);r.onerror=r.onblocked=()=>res(null)}catch(e){res(null)}}));
+  const tx=async(mode,f)=>{const d=await open();if(!d)return undefined;return new Promise(res=>{try{const t=d.transaction("kv",mode),rq=f(t.objectStore("kv"));t.oncomplete=()=>res(rq&&rq.result);t.onerror=t.onabort=()=>res(undefined)}catch(e){res(undefined)}})};
+  return{get:k=>tx("readonly",s=>s.get(k)),set:(k,v)=>tx("readwrite",s=>s.put(v,k)),del:k=>tx("readwrite",s=>s.delete(k)),clear:()=>tx("readwrite",s=>s.clear())}})();
+const UIV=fetch("/api/status").then(r=>r.json()).then(s=>String(s.ui)).catch(()=>"0");     // a changed page (app.js, app.css) forgets what was remembered
+const mkey=async p=>(await UIV)+"|"+p,same=(a,b)=>JSON.stringify(a)===JSON.stringify(b);
+let FRESHT=0;const STALEP=new Set();       // FRESHT: when the remembered lists were last forgotten (after a sync or an edit): for a minute the server is asked for the newest, not what it kept
+const fetchJ=async p=>{const q=Date.now()-FRESHT<60000?(p.includes("?")?"&":"?")+"fresh=1":"";const r=await fetch("/api/"+p+q);if(!r.ok)throw new Error(p+": "+r.status);if(r.headers.get("X-Stale")==="1")STALEP.add(p);else STALEP.delete(p);return r.json()};
+// the server answered from what it kept and is refreshing: ask again in a few seconds and redraw if the list changed
+const recheck=(p,shown,k=0)=>{if(k>4)return;setTimeout(async()=>{let n;try{n=await fetchJ(p)}catch(e){return}
+  if(!same(n,shown)){if(cache[p]===shown||cache[p]===undefined)cache[p]=n;mkey(p).then(key=>IDB.set(key,n));redrawQuietly()}else if(STALEP.has(p))recheck(p,shown,k+1)},4000)};
+const KEEPING=new Set(["summary","activity","places","alerts","battery","analytics","chargers"]),LISTS=new Set(["activity","driveslist","charges","parked","idles","places","alerts","battery","analytics","health","teslacam"]);
+let QUIET=false,QT=0;
+const redrawQuietly=()=>{clearTimeout(QT);QT=setTimeout(async()=>{const h=(location.hash||"#/activity").replace(/^#\//,"");if(!LISTS.has(h))return;const a=document.activeElement;
+  if(a&&main.contains(a)&&/^(INPUT|SELECT|TEXTAREA)$/.test(a.tagName))return;if($$("video",main).some(v=>!v.paused)||$(".stbar",main))return;
+  const y=main.scrollTop;QUIET=true;try{await route()}finally{QUIET=false}main.scrollTop=y},400)};
+// forget the remembered copies after an edit or a sync (one page, or all)
+const bust=p=>{FRESHT=Date.now();if(p){delete cache[p];mkey(p).then(IDB.del);return}Object.keys(cache).forEach(k=>delete cache[k]);IDB.clear()};
+const api=async p=>{if(cache[p])return cache[p];
+  if(!KEEPING.has(p))return cache[p]=await fetchJ(p);
+  const k=await mkey(p),old=await IDB.get(k);
+  if(old!==undefined){cache[p]=old;fetchJ(p).then(n=>{IDB.set(k,n);if(cache[p]===old&&!same(n,old)){cache[p]=n;redrawQuietly()}if(STALEP.has(p))recheck(p,n)}).catch(()=>{});return old}
+  const n=await fetchJ(p);IDB.set(k,n);if(STALEP.has(p))recheck(p,n);return cache[p]=n};
 const place=x=>x.place||x.addr||"Unknown place";
 const driveTitle=d=>(d.frm||"?")+" → "+(d.to||"?");
 // An error you can copy: the text is selectable and a button puts it on the clipboard.
@@ -21,7 +43,7 @@ document.addEventListener("click",e=>{const b=e.target.closest("[data-copy]");if
 // Settings come from the "app" block of config.json (see lib/app_config.py), loaded once at start.
 let SET={};const EFWH=()=>cfg("units.efficiency")==="whkm",EF=wh=>wh==null||isNaN(wh)?"–":EFWH()?n0(wh):n0(wh/10,1),EFU=()=>EFWH()?"Wh/km":"kWh/100 km";    // energy use: kWh/100 km by default, Wh/km when app.units.efficiency says so
 const cfg=k=>k.split(".").reduce((o,x)=>o&&o[x],SET),REPM=()=>Math.round(cfg("drives.repark_max_km")*1000)+" m",MAPSTYLE=dark=>cfg("map.tiles_base")+cfg(dark?"map.style_dark":"map.style_light");
-const loading=()=>main.innerHTML='<div class="empty">Loading…</div>';
+const loading=()=>{if(!QUIET)main.innerHTML='<div class="empty">Loading…</div>'};
 const QK="clipQueue",qget=()=>{try{return JSON.parse(localStorage.getItem(QK)||"[]")}catch(e){return[]}};
 
 // ---------- tooltip + map helpers
@@ -50,7 +72,26 @@ function miniMap(el,lat,lon,col){
   new maplibregl.Marker({color:col||"#3b6cf6"}).setLngLat([lon,lat]).addTo(m);
 }
 function tile(b,s){return `<div class="tile"><b>${b}</b><span>${s}</span></div>`}
-function crumbs(h,label){return `<div class="crumb"><a href="${h}">← ${label}</a></div>`}
+// Back links: the crumb at the top of a page goes back to the page the user came from (the path is kept per tab in sessionStorage), not to a fixed parent.
+// h and label are only the fallback, for a page opened directly. A main-menu click starts a new path; saving or deleting a place replaces the page it was done on.
+const NAVK="nav.stack",ROOTS={activity:"Activity",drives:"Drives",driveslist:"Drives (new)",charges:"Charges",parked:"Parked",idles:"Parked",places:"Places",alerts:"Alerts",software:"Software",battery:"Battery",health:"Health",analytics:"Analytics",teslacam:"TeslaCam",queue:"Queue"};
+let NAV=(()=>{try{return JSON.parse(sessionStorage.getItem(NAVK)||"[]")}catch(e){return[]}})(),NAVREPL=false,NAVRESET=false;
+const navSeg=h=>String(h).replace(/^#\//,"").split("/"),navPage=h=>navSeg(h).slice(0,2).join("/");
+const navLabel=h=>ROOTS[navSeg(h)[0]]||({drive:"Drive",charge:"Charge",place:"Place",idle:"Parked"})[navSeg(h)[0]]||"Back";
+function navTrack(){
+  const h=location.hash||"#/activity";let L=NAV.length;
+  if(L&&NAV[L-1].h!==h){const t=navSeg(NAV[L-1].h).length>1?(document.querySelector("#main h1, main h1")||{}).textContent:"";NAV[L-1].label=(t||"").trim().slice(0,40)||navLabel(NAV[L-1].h)}   // name the page being left
+  if(NAVRESET){NAV=[];NAVRESET=false}
+  L=NAV.length;
+  if(L&&NAV[L-1].h===h){}                                                          // a refresh
+  else if(L>1&&NAV[L-2].h===h)NAV.pop();                                           // went back
+  else if(L&&(NAVREPL||navPage(NAV[L-1].h)===navPage(h)))NAV[L-1]={h};            // the same page (another tab of it) or a replacement
+  else NAV.push({h});
+  NAVREPL=false;
+  if(NAV.length>1&&NAV[NAV.length-1].h===NAV[NAV.length-2].h)NAV.pop();
+  NAV=NAV.slice(-30);try{sessionStorage.setItem(NAVK,JSON.stringify(NAV))}catch(e){}
+}
+function crumbs(h,label){const p=NAV.length>1?NAV[NAV.length-2]:null;if(p&&p.h!==(location.hash||"")){h=p.h;label=esc(p.label||navLabel(p.h))}return `<div class="crumb"><a href="${h}">← ${label}</a></div>`}
 
 // ---------- stacked charts on one shared axis (charge pages)
 function stack(host,t,panels,xfmt){
@@ -123,6 +164,31 @@ function rangeOf(st){const t=new Date(),T=ymd(t),y=t.getFullYear();
 const inRange=(x,st)=>{const r=rangeOf(st);return !r||(x.day>=r[0]&&x.day<=r[1])};
 const rangeLabel=st=>{if(st.p==="custom"){const[a,b]=rangeOf(st);return a===b?dayName(a):dayName(a)+" – "+dayName(b)}return(PRESETS.find(p=>p[0]===st.p)||[0,"All time"])[1]};
 const daysOf=rows=>{const s=new Set();rows.forEach(x=>s.add(x.day));return s};
+// an item that runs over several days (a park of four days) belongs to every one of them, not only the day it starts or ends on
+const spanOf=v=>{const a=v.start.slice(0,10),e=(v.end||v.start).slice(0,10);return[a,e>=a?e:a]};
+const inSpan=(v,st)=>{const r=rangeOf(st);if(!r)return true;const[a,e]=spanOf(v);return a<=r[1]&&e>=r[0]};
+const spanDays=items=>{const s=new Set();items.forEach(v=>{const[a,e]=spanOf(v);for(let n=0,d=a;d<=e&&n<400;n++){s.add(d);d=new Date(Date.parse(d+"T00:00:00Z")+864e5).toISOString().slice(0,10)}});return s};
+// one day (or, with "Range" on, a first and last day) from a calendar drop-down: the days that have something are bold; a single day is one click
+function dayPicker(host,o){
+  let open=false,rng=!!o.range,pend=null,ym=o.cur.slice(0,7);
+  const draw=()=>{
+    host.innerHTML=`<span class="rngw"><button class="btn rng" type="button">▦ ${esc(o.text||o.label(o.cur))} ▾</button>${open?'<div class="rpop"><div class="rcal"></div></div>':""}</span>`;
+    $(".rng",host).onclick=e=>{e.stopPropagation();open=!open;pend=null;ym=o.cur.slice(0,7);draw()};
+    if(!open)return;
+    const [Y,M]=ym.split("-").map(Number),lead=(new Date(Y,M-1,1).getDay()+6)%7,dim=new Date(Y,M,0).getDate(),r=pend?[pend,pend]:(rng&&o.range)||[o.cur,o.cur];let g="";
+    for(let i=0;i<lead;i++)g+="<i></i>";
+    for(let d=1;d<=dim;d++){const k=Y+"-"+String(M).padStart(2,"0")+"-"+String(d).padStart(2,"0"),has=o.days.has(k),c=[has?"has":"fut",k>=r[0]&&k<=r[1]?"in":"",k===r[0]||k===r[1]?"sel":""].join(" ");g+=`<button type="button" class="${c}" data-d="${k}" ${has||rng?"":"disabled"}>${d}</button>`}
+    $(".rcal",host).innerHTML=`<div class="rhd"><button type="button" data-m="-1">‹</button><b>${MON[M-1]} ${Y}</b><button type="button" data-m="1">›</button><button type="button" class="chip ${rng?"on":""}" data-rg title="Pick a first and a last day">Range</button></div><div class="rdw"><i>M</i><i>T</i><i>W</i><i>T</i><i>F</i><i>S</i><i>S</i></div><div class="rgd">${g}</div><div class="sub" style="margin-top:6px">${rng?(pend?"Now the last day (or the same day again).":"Pick the first day."):"Days in bold have something to show."}</div>`;
+    $$(".rhd button[data-m]",host).forEach(b=>b.onclick=e=>{e.stopPropagation();ym=ymd(new Date(Y,M-1+ +b.dataset.m,1)).slice(0,7);draw()});
+    $(".rhd [data-rg]",host).onclick=e=>{e.stopPropagation();rng=!rng;pend=null;draw()};
+    $$(".rgd button",host).forEach(b=>b.onclick=e=>{e.stopPropagation();const k=b.dataset.d;
+      if(!rng){open=false;o.onPick(k);return}
+      if(!pend){pend=k;draw();return}
+      const a=pend<k?pend:k,z=pend<k?k:pend;open=false;pend=null;o.onRange(a,z)})};
+  if(!rangePicker.bound){rangePicker.bound=true;document.addEventListener("click",e=>{if(!e.target.closest(".rngw"))document.dispatchEvent(new CustomEvent("rngclose"))})}
+  const close=()=>{if(!document.body.contains(host)){document.removeEventListener("rngclose",close);return}if(open){open=false;pend=null;draw()}};
+  document.addEventListener("rngclose",close);
+  draw()}
 function rangePicker(host,st,days,onChange){
   let open=false,ym=null,pend=null;
   const first=()=>{const r=rangeOf(st);return r?r[1]:ymd(new Date())};
@@ -351,7 +417,7 @@ async function driveReviewPanel(host,stamp,lo,onResult){
       <div class="bar" style="margin:0">
       ${run?'<button class="btn" id="rvx">Stop</button>':`<button class="btn pri" id="rvg">${R?"Run again":"Run review"}</button>`}</div>`;
     if(run){const pc=job.total?Math.min(100,Math.round(100*(job.done||0)/job.total)):null,el=job.t0?Math.max(0,Math.round(Date.now()/1000-job.t0)):0;
-      h+=`<div style="margin-top:10px"><div class="sub">${esc(job.stage||"")}${job.total?" · "+n0(job.done)+" of "+n0(job.total)+" ("+pc+"%)":""}${el?" · "+dur(Math.max(1,Math.round(el/60)))+" so far":""}</div><div class="pbar${pc==null?" ind":""}"><i ${pc==null?"":`style="width:${pc}%"`}></i></div></div>`}
+      h+=`<div style="margin-top:10px"><div class="sub">${esc(job.stage||"")}${job.total?(job.pct?" · "+pc+"%":" · "+n0(job.done)+" of "+n0(job.total)+" ("+pc+"%)"):""}${el?" · "+dur(Math.max(1,Math.round(el/60)))+" so far":""}</div><div class="pbar${pc==null?" ind":""}"><i ${pc==null?"":`style="width:${pc}%"`}></i></div></div>`}
     if(job.error)h+=`<div class="sub" style="margin-top:8px;color:var(--bad);user-select:text">${esc(job.error)}</div>`;
     if(ms.py.length+ms.cmd.length)h+=`<div class="sub" style="margin-top:8px">Stills and sign reading need ${esc(ms.py.concat(ms.cmd).join(", "))} installed. <code>${esc((ms.hint||[]).join(" ; "))}</code></div>`;
     else if(!S.connected&&!(R&&R.stills))h+=`<div class="sub" style="margin-top:8px">The drive holding this footage is not connected: events can be found from telemetry already read, but no stills.</div>`;
@@ -371,60 +437,94 @@ async function driveReviewPanel(host,stamp,lo,onResult){
   host.innerHTML='<div class="sub">Loading…</div>';
   try{await get();draw();poll()}catch(e){host.innerHTML=errBox(e.message,"Could not load the drive review")}
 }
+// Where the line on a drive's map comes from: Tessie's point file for the drive, the dashcam's telemetry, and any other drive's file that only touches this one
+async function pathSources(host,d,lo){
+  if(!host)return;
+  let j;try{const r=await fetch("/api/pathsources?id="+encodeURIComponent(d.page?d.id:"")+"&t0="+d.t0+"&t1="+(d.t1||d.t0+d.min*60)+"&lo="+lo);if(!r.ok)throw new Error("HTTP "+r.status);j=await r.json()}catch(e){host.innerHTML="";return}
+  if(!document.body.contains(host))return;
+  const NM={A:"Archive",J:"JOWUA",U:"Tesla USB"},clk=t=>new Date((t+lo)*1000).toISOString().slice(11,19),T=j.tessie,C=j.dashcam,mm=s=>s<90?Math.round(s)+" s":n0(s/60,1)+" min",dur=Math.max(1,j.t1-j.t0);
+  const tp=T.points>0,dc=C.read>0,pct=tp?Math.min(100,Math.round(100*T.covered_s/dur)):0;
+  const tline=tp?`<b>Present.</b> ${n0(T.points)} points from ${clk(T.first)} to ${clk(T.last)}, one about every ${T.every_s} s${T.longest_gap_s>180?" (longest gap "+mm(T.longest_gap_s)+")":""}; they follow ${pct}% of the drive.${T.file?` <span class="sub" style="user-select:text">${esc(T.file)}</span>`:""}`
+    :T.file?`<b>The file has no points inside this drive.</b> <span class="sub" style="user-select:text">${esc(T.file)}</span>`:`<b>Not fetched.</b> There is no point file for this drive yet: Sync Tessie fetches it.`;
+  const hold=Object.entries(C.drives||{}).map(([r,v])=>`${NM[r]||r}: ${v.here?v.here+" min on the drive":""}${v.here&&v.gone?", ":""}${v.gone?v.gone+" min since removed":""}`).join(" · ");
+  const dline=dc?`<b>${n0(C.read)} of ${n0(C.minutes)} minute${C.minutes===1?"":"s"} read</b>${C.moving<C.read?` (${n0(C.moving)} with the car moving)`:""}. ${hold?`<span class="sub">Footage: ${esc(hold)}</span>`:""}`
+    :C.minutes?`<b>${n0(C.minutes)} minute${C.minutes===1?"":"s"} of footage, none read yet.</b> ${hold?`<span class="sub">Footage: ${esc(hold)}</span>`:""} <span class="sub">Sync footage reads the telemetry.</span>`:`<b>None.</b> <span class="sub">No dashcam footage or telemetry is kept for these times.</span>`;
+  const use=tp&&dc?"the dashcam's telemetry where it exists (a point a second), Tessie's points in between":dc?"the dashcam's telemetry only":tp?"Tessie's points only (a straight line between points about every "+T.every_s+" s)":"nothing: there is no path to draw";
+  const oth=(j.others||[]).map(o=>`<div class="sub">The file of the drive ${esc(o.stamp)} (${esc((o.start||"").slice(11,19))}–${esc((o.end||"").slice(11,19))}) runs ${mm(o.overlap_s)} into this one. It belongs to that drive and is not used here.</div>`).join("");
+  const fe=j.fetched,fd=fe?new Date(fe.at*1000).toLocaleString("en-AU",{day:"numeric",month:"short",year:"numeric",hour:"2-digit",minute:"2-digit"}):"",
+    fline=fe?`<div class="sub" style="margin-top:8px">Asked Tessie for this drive's path on ${esc(fd)}: ${fe.status==="complete"?"fetched in full.":fe.status==="empty"?"Tessie has no points for it, so it is not asked again.":"could not be fetched; the next sync tries again."}</div>`:"";
+  host.innerHTML=`<details class="card" ${tp||dc?"":"open"}><summary><b>Path sources</b> <span class="sub">· drawn from ${esc(use)}</span></summary>
+    <div style="display:grid;grid-template-columns:max-content minmax(0,1fr);gap:8px 16px;margin-top:10px"><span class="sub">Tessie's path file</span><span>${tline}</span><span class="sub">Dashcam telemetry</span><span>${dline}</span></div>${oth?`<div style="margin-top:8px">${oth}</div>`:""}${fline}</details>`;
+}
 async function pageDrive(stamp,tab){
   const act=await api("activity"),d=act.find(x=>x.k==="drive"&&x.id===stamp);
   const als=await alertsFor("drive",stamp);
-  if(d&&!d.page){driveLite(d,als);return}
-  if(tab==="flips")tab="review";tab=["footage","review"].includes(tab)?tab:"overview";
-  const tabs=[["overview","Overview"],["footage","Footage"+(d&&(d.foot||d.saved)?"":"")],["review","Review"]];
-  main.innerHTML=crumbs("#/drives","Drives")+alertsCard(als,"drive")+(d?`<div class="bar" id="dtabs">${tabs.map(([k,t])=>`<a class="chip ${k===tab?"on":""}" href="#/drive/${encodeURIComponent(stamp)}/${k}">${t}</a>`).join("")}</div>`:"")+'<div id="dtab"></div>';
+  if(tab==="flips")tab="review";tab=tab==="review"||(tab==="detail"&&d&&d.page)?tab:(d?"drive":"detail");       // "overview" and "footage" (older links) are the one drive view
+  const tabs=[["drive","Drive"],["review","Review"]].concat(d&&d.page?[["detail","Tessie detail"]]:[]);
+  main.innerHTML=crumbs("#/driveslist","Drives (new)")+alertsCard(als,"drive")+(d?`<div class="bar" id="dtabs">${tabs.map(([k,t])=>`<a class="chip ${k===tab?"on":""}" href="#/drive/${encodeURIComponent(stamp)}/${k}">${t}</a>`).join("")}</div>`:"")+'<div id="dtab"></div>';
   wireAlerts(main);const box=$("#dtab");
-  if(tab==="overview"||!d){
-    // "Enrich with TeslaCam metadata": the page draws the route from the dashcam telemetry (a point a second) where it covers the drive, instead of Tessie's one every ~30 s
+  if(tab==="detail"){
+    // Tessie's own page for the drive (its extra series, the enrichment tick box under the map); the footage and the flips are in the other tabs
     const pref=()=>{try{return localStorage.getItem("drv.enrich")!=="0"}catch(e){return true}},src=on=>`/data/drives/deepdive/${encodeURIComponent(stamp)}/drive.html?enrich=${on?1:0}`;
-    box.innerHTML=`<div id="fuseb" style="display:flex;gap:12px;align-items:baseline;flex-wrap:wrap;margin:0 0 8px"><label id="enrl" style="display:flex;gap:6px;align-items:center;opacity:.5"><input type="checkbox" id="enr" disabled> Enrich with TeslaCam metadata</label><span class="sub" id="enrn">checking…</span></div><iframe class="drive" id="fr"></iframe>`;
-    const note=(i,on)=>on?`Route drawn from the dashcam telemetry (a point every second) for ${i.cam_pct}% of this drive. Tessie's own points (every ${n0(i.tessie_every_s)} s) fill ${i.start_gap_s>5?"the first "+i.start_gap_s+" s":"the start"}${i.end_gap_s>5?" and the last "+i.end_gap_s+" s":""} and any hole in the footage.`:"Route drawn from Tessie's own points (one every "+n0(i.tessie_every_s)+" s).";
-    const load=on=>{const f=$("#fr");if(f)f.src=src(on)};
-    // greyed out only while no telemetry is kept for the drive (the Scan on the TeslaCam page reads what is missing); the video itself need not exist any more
-    api("drivefuse?id="+encodeURIComponent(stamp)+"&summary=1").then(r=>{const i=r.info,c=$("#enr");if(!c||!i||!i.cam_n)throw 0;
-      const on=pref();c.disabled=false;c.checked=on;$("#enrl").style.opacity="";$("#enrn").textContent=note(i,on);load(on);
-      c.onchange=()=>{try{localStorage.setItem("drv.enrich",c.checked?"1":"0")}catch(e){}$("#enrn").textContent=note(i,c.checked);load(c.checked)}})
-      .catch(()=>{const l=$("#enrl"),n=$("#enrn");if(l){l.title="No TeslaCam telemetry has been read for this drive";l.style.opacity=".5"}if(n)n.textContent="No TeslaCam telemetry is kept for this drive yet. Scan the connected drives on the TeslaCam page to read it.";load(false)});
+    box.innerHTML=`<iframe class="drive" id="fr"></iframe>`;
+    $("#fr").src=src(pref());
     fitFrame($("#fr"),doc=>{$$("a",doc).forEach(a=>{if(/^(\.\.\/)+index\.html$/.test(a.getAttribute("href")||"")){a.parentNode.style.display="none"}});
-      // the footage and the flips have their own tabs (the clips are watched in the Footage tab)
       const f=doc.getElementById("foot");if(f)f.style.display="none";hideSection(doc,"FSD speed changes");hideSection(doc,"Saved clips")});
-  }else{
-    const t0=d.t0,t1=d.t1||d.t0+d.min*60,lo=Math.round((Date.parse(d.day+"T"+d.hm+":00Z")/1000-d.t0)/900)*900,pl=await api("places").catch(()=>({saved:[]}));
-    const rv=tab==="review";
-    box.innerHTML=(rv?'<div id="drr"></div>':'')+'<div id="tdh"></div>'+(rv?'':'<details class="card" id="mg" style="margin-top:14px"><summary><b>Copy, save as a clip, or delete clips</b></summary><div id="mgb" style="margin-top:10px"></div></details>');
-    const fetchSeg=async b=>{const r=await fetch("/api/teslacam/auto/window?t0="+t0+"&t1="+t1+"&lo="+lo+"&budget="+(b==null?20:b));
-      if(!r.ok){const e=(await r.json().catch(()=>({}))).error||("HTTP "+r.status);const x=new Error(e);x.none=r.status===404;throw x}return r.json()};
-    if(!rv)$("#mg").ontoggle=()=>{if(!$("#mg").open||$("#mgb").innerHTML)return;$("#mgb").innerHTML=`<iframe class="drive" id="mf" src="/data/drives/deepdive/${encodeURIComponent(stamp)}/drive.html"></iframe>`;
-      fitFrame($("#mf"),doc=>{const w=doc.querySelector(".wrap");if(!w)return;if(!doc.getElementById("foot")){$("#mgb").innerHTML='<div class="sub">No clip tools for this drive: the page was built without footage. Run <code>./drive_report.py</code> with the Archive connected.</div>';return}
-        [...w.children].forEach(c=>{if(c.id!=="foot")c.style.display="none"})})};
-    let bodyOn=false;
-    const body=async()=>{
-    try{await teslaDriveBody($("#tdh"),"A",fetchSeg,pl.saved||[],{heading:false,review:null,rvtab:rv})}
-    catch(e){const h=$("#tdh");if(h)h.innerHTML=e.none?'<div class="card"><b>No dashcam footage or telemetry for this drive.</b><div class="sub" style="margin-top:6px">No connected drive (Archive, JOWUA or Tesla USB) has footage for these times, and no telemetry for them was read earlier. Connect the drive that holds the footage and open this tab again.</div></div>':errBox(e.message,"Could not rebuild this drive from the video")}};
-    // Review: nothing but the Review card until the drive has been reviewed; then the map, chart, video and the events
-    if(rv)driveReviewPanel($("#drr"),stamp,lo,has=>{if(has&&!bodyOn){bodyOn=true;body()}});else body();
+    return;
   }
+  const t0=d.t0,t1=d.t1||d.t0+d.min*60,lo=Math.round((Date.parse(d.day+"T"+d.hm+":00Z")/1000-d.t0)/900)*900,pl=await api("places").catch(()=>({saved:[]}));
+  const rv=tab==="review";
+  // the clip tools (copy, save as a clip, delete) belong to Tessie's page and exist only where that page was built with footage
+  const tools=!rv&&d.page&&(d.foot||d.saved);
+  box.innerHTML=(rv?'<div id="drr"></div>':'')+'<div id="tdh"></div>'+(rv?'':'<div id="psrc" style="margin-top:14px"></div>')+(tools?'<details class="card" id="mg" style="margin-top:14px"><summary><b>Copy, save as a clip, or delete clips</b></summary><div id="mgb" style="margin-top:10px"></div></details>':'');
+  const fetchSeg=async b=>{const r=await fetch("/api/teslacam/auto/window?t0="+t0+"&t1="+t1+"&lo="+lo+"&id="+encodeURIComponent(stamp)+"&budget="+(b==null?20:b));
+    if(!r.ok){const e=(await r.json().catch(()=>({}))).error||("HTTP "+r.status);const x=new Error(e);x.none=r.status===404;throw x}return r.json()};
+  if(tools)$("#mg").ontoggle=()=>{if(!$("#mg").open||$("#mgb").innerHTML)return;$("#mgb").innerHTML=`<iframe class="drive" id="mf" src="/data/drives/deepdive/${encodeURIComponent(stamp)}/drive.html"></iframe>`;
+    fitFrame($("#mf"),doc=>{const w=doc.querySelector(".wrap");if(!w)return;if(!doc.getElementById("foot")){$("#mg").remove();return}
+      [...w.children].forEach(c=>{if(c.id!=="foot")c.style.display="none"})})};
+  if(!rv)pathSources($("#psrc"),d,lo);
+  let bodyOn=false;
+  const body=async()=>{
+    try{await teslaDriveBody($("#tdh"),"A",fetchSeg,pl.saved||[],{heading:false,review:null,rvtab:rv,tessie:d})}
+    catch(e){const h=$("#tdh");if(!h)return;
+      if(e.none&&!rv){          // no footage or telemetry: Tessie's summary, its map and the sync
+        h.innerHTML=driveLiteBody(d);miniMap($("#mp"),d.lat,d.lon,"#3b6cf6");
+        tessieSync($("#tsb2"),{missing:{no_page:1},tried:LITETRIED[d.id],after:()=>liteSynced(d)});return}
+      h.innerHTML=e.none?'<div class="card"><b>No dashcam footage or telemetry for this drive.</b><div class="sub" style="margin-top:6px">No connected drive (Archive, JOWUA or Tesla USB) has footage for these times, and no telemetry for them was read earlier.</div></div>':errBox(e.message,"Could not rebuild this drive")}};
+  // Review: nothing but the Review card until the drive has been reviewed; then the map, chart, video and the events
+  if(rv)driveReviewPanel($("#drr"),stamp,lo,has=>{if(has&&!bodyOn){bodyOn=true;body()}});else body();
 }
 
 // A drive Tessie recorded that has no per-drive file (so no dashcam / deep-dive page): the summary from the drives list.
 function driveLite(d,als){
-  main.innerHTML=crumbs("#/drives","Drives")+`<h1>${esc(driveTitle(d))}</h1><div class="sub">${dayName(d.day)} · ${d.hm} – ${addMin(d.hm,d.min)} · ${dur(d.min)} · ${n0(d.km,1)} km</div>
-   <div class="tiles">${tile(n0(d.km,1)+" km","distance")}${tile(n0(d.kwh,1)+" kWh","energy used")}${tile(d.km?EF(d.whkm||d.kwh*1000/d.km)+" "+EFU():"–","efficiency")}${tile(n0(d.b0)+"% → "+n0(d.b1)+"%","battery")}${tile(n0(d.avg)+" / "+n0(d.max)+" km/h","average / top speed")}${tile(d.km?n0(100*(d.ap||0)/d.km)+"%":"–","self-driving")}</div>
-   ${alertsCard(als,"drive")}<div class="card"><h2 style="margin-top:0">Where</h2><div class="map" id="mp"></div><div class="sub" style="margin-top:8px">From ${esc(d.frm||"?")} to ${esc(d.to||"?")}${d.pkey1?' · <a href="#/place/'+encodeURIComponent(d.pkey1)+'">where it ended</a>':""}</div></div>
-   <div class="sub" style="margin-top:12px">Tessie has this drive but no per-drive file (route, dashcam footage) was saved for it, so only the summary is shown. Run <code>./sync_api_tessie.py</code> then <code>./drive_report.py</code> to build the full page if the data exists.</div>`;
+  main.innerHTML=crumbs("#/driveslist","Drives (new)")+driveLiteBody(d,als);
   wireAlerts(main);miniMap($("#mp"),d.lat,d.lon,"#3b6cf6");
+  tessieSync($("#tsb2"),{missing:{no_page:1},tried:LITETRIED[d.id],after:()=>liteSynced(d)});
+}
+// after a sync the drive has its own page under a new id: open that one
+const LITETRIED={};
+async function liteSynced(d){
+  bust();
+  const a=await api("activity").catch(()=>[]),x=a.find(v=>v.k==="drive"&&Math.abs(v.t0-d.t0)<=60);
+  if(!x||!x.page)LITETRIED[d.id]=1;               // synced and still no page: Tessie has nothing more, do not offer it again
+  const h="#/drive/"+encodeURIComponent(x?x.id:d.id);if(location.hash===h)route();else location.hash=h}
+function driveLiteBody(d,als){
+  return `<h1>${esc(driveTitle(d))}</h1><div class="sub">${dayName(d.day)} · ${d.hm} – ${addMin(d.hm,d.min)} · ${dur(d.min)} · ${n0(d.km,1)} km</div>
+   <div class="tiles">${tile(n0(d.km,1)+" km","distance")}${tile(n0(d.kwh,1)+" kWh","energy used")}${tile(d.km?EF(d.whkm||d.kwh*1000/d.km)+" "+EFU():"–","efficiency")}${tile(n0(d.b0)+"% → "+n0(d.b1)+"%","battery")}${tile(n0(d.avg)+" / "+n0(d.max)+" km/h","average / top speed")}${tile(d.km?n0(100*(d.ap||0)/d.km)+"%":"–","autopilot, per Tessie")}</div>
+   ${als?alertsCard(als,"drive"):""}<div class="card"><h2 style="margin-top:0">Where</h2><div class="map" id="mp"></div><div class="sub" style="margin-top:8px">From ${esc(d.frm||"?")} to ${esc(d.to||"?")}${d.pkey1?' · <a href="#/place/'+encodeURIComponent(d.pkey1)+'">where it ended</a>':""}</div></div>
+   <div class="sub" style="margin:12px 0 8px">Tessie's detailed record of this drive (its route points) has not been fetched yet. If the dashcam footage or telemetry for it is kept, the <b>Footage</b> tab shows the route and the video.</div><div id="tsb2"></div>`;
 }
 
 // ---------- Charges: the charge book (analyse_charging.py's reconcile - invoices, plug-ins, Tessie sync) (REQ-207)
 let CP={r:{p:"all"},kind:"all",q:"",inv:"all",tab:"charges",open:{},sk:"t0",dir:-1};
 const cmpv=(x,y)=>typeof x==="string"&&typeof y==="string"?x.localeCompare(y):x<y?-1:x>y?1:0;
-const getBook=async()=>{try{return await (await fetch("/api/chargebook")).json()}catch(e){return{status:"error",error:String(e),book:null}}};
-const SYNC_T={synced:["In Tessie","ok","Tessie already holds the invoice cost for every record of this charge."],pending:["Not in Tessie","warn","Tessie's cost differs from the invoice. To send the invoice cost run ./analyse_charging.py --sync-tessie-costs --apply (this app never changes Tessie)."],partial:["Part in Tessie","warn","Some records already hold the invoice cost, others do not. Run ./analyse_charging.py --sync-tessie-costs --apply to send the rest."]};
+let BOOKSEEN=false,BOOKFRESH=null;
+const getBook=async()=>{try{if(BOOKFRESH){const v=BOOKFRESH;BOOKFRESH=null;return v}
+  const k=await mkey("chargebook"),old=BOOKSEEN?undefined:await IDB.get(k);BOOKSEEN=true;
+  const fresh=async()=>{const j=await (await fetch("/api/chargebook")).json();if(j&&j.status==="ready"&&j.book)IDB.set(k,j);return j};
+  if(old!==undefined&&old.status==="ready"){fresh().then(n=>{if(n&&n.status==="ready"&&!same(n,old)){BOOKFRESH=n;redrawQuietly()}}).catch(()=>{});return old}
+  return await fresh()}catch(e){return{status:"error",error:String(e),book:null}}};
+const SYNC_T={synced:["Invoice in Tessie","ok","The charge is in Tessie, and Tessie already holds the invoice cost for every record of this charge."],pending:["Invoice not in Tessie","warn","The charge is in Tessie, but its cost differs from the invoice. To send the invoice cost run ./analyse_charging.py --sync-tessie-costs --apply (this app never changes Tessie)."],partial:["Invoice part in Tessie","warn","Some records already hold the invoice cost, others do not. Run ./analyse_charging.py --sync-tessie-costs --apply to send the rest."]};
 const syncPill=s=>SYNC_T[s]?`<span class="pill ${SYNC_T[s][1]}" title="${esc(SYNC_T[s][2])}">${SYNC_T[s][0]}</span>`:'<span class="sub">–</span>';
 const kindPill=k=>`<span class="pill ${k==="supercharger"?"sc":k}">${k==="supercharger"?"Supercharger":k==="dc"?"DC":"AC"}</span>`;
 const gstOf=t=>t==null?null:t/11;
@@ -458,12 +558,12 @@ async function pageCharges(){
     const val=(p,k)=>k==="where"?(p.where||"").toLowerCase():k==="invn"?invn(p):p[k];
     rs.sort((a,b)=>{const x=val(a,CP.sk),y=val(b,CP.sk);if(x==null||y==null)return (x==null)-(y==null);return CP.dir*cmpv(x,y)});
     const row=p=>{const multi=p.parts.length>1,op=CP.open[p.id];
-      let h=`<tr class="chr" data-id="${p.id}"><td class="l">${multi?`<span class="tg" data-tg="${p.id}" title="Show the ${p.parts.length} Tessie records">${op?"▾":"▸"}</span> `:""}${p.day} ${p.hm}${multi?` <span class="pill">${p.parts.length} parts</span>`:""}</td><td class="l">${whereLink({pkey:p.pkey,place:p.where,addr:p.addr})}</td><td>${kindPill(p.kind)}</td><td>${dur(p.min)}</td><td>${n0(p.b0)}→${n0(p.b1)}%</td><td>${p.peak==null?"–":n0(p.peak)}</td><td>${p.kmh==null?"–":n0(p.kmh)}</td><td>${p.disp==null?"–":n0(p.disp,1)}</td><td>${n0(p.kwh,1)}</td><td>${p.eff==null?"–":n0(p.eff)+"%"}</td><td>${p.rate==null?"–":rate(p.rate)}</td><td>${money(p.cost)}</td><td>${p.invoice?esc(p.invoice.number||"yes"):p.home?'<span class="sub">–</span>':'<span class="pill warn" title="No invoice matched this charge">none</span>'}</td><td>${syncPill(p.sync)}</td></tr>`;
+      let h=`<tr class="chr" data-id="${p.id}"><td class="l">${p.day} ${p.hm}${multi?` <span class="pill ptg" data-tg="${p.id}" title="${op?"Hide":"Show"} the ${p.parts.length} Tessie records">${op?"▾":"▸"} ${p.parts.length} parts</span>`:""}</td><td class="l">${whereLink({pkey:p.pkey,place:p.where,addr:p.addr})}</td><td>${kindPill(p.kind)}</td><td>${dur(p.min)}</td><td>${n0(p.b0)}→${n0(p.b1)}%</td><td>${p.peak==null?"–":n0(p.peak)}</td><td>${p.kmh==null?"–":n0(p.kmh)}</td><td>${p.disp==null?"–":n0(p.disp,1)}</td><td>${n0(p.kwh,1)}</td><td>${p.eff==null?"–":n0(p.eff)+"%"}</td><td>${p.rate==null?"–":rate(p.rate)}</td><td>${money(p.cost)}</td><td>${p.invoice?esc(p.invoice.number||"yes"):p.home?'<span class="sub">–</span>':'<span class="pill warn" title="No invoice matched this charge">none</span>'}</td><td>${syncPill(p.sync)}</td></tr>`;
       if(multi&&op)h+=p.parts.map(x=>`<tr class="chs" data-id="${x.id}"><td class="l" style="padding-left:30px">↳ ${x.day} ${x.hm}</td><td class="l sub">part of the charge above</td><td></td><td>${dur(x.min)}</td><td>${n0(x.b0)}→${n0(x.b1)}%</td><td>${x.peak==null?"–":n0(x.peak)}</td><td>${x.kmh==null?"–":n0(x.kmh)}</td><td>${x.disp==null?"–":n0(x.disp,1)}</td><td>${n0(x.kwh,1)}</td><td></td><td>${x.irate==null&&x.trate==null?"–":rate(x.irate!=null?x.irate:x.trate)}</td><td>${money(x.icost!=null?x.icost:x.tcost)}</td><td class="sub">${p.invoice?"same invoice":""}</td><td>${syncPill(x.sync)}</td></tr>`).join("");
       return h};
     $("#tb").innerHTML=`<table><thead><tr>${COLS.map(c=>`<th class="${c[2]?"l":""}" data-k="${c[0]}">${c[1]}${CP.sk===c[0]?(CP.dir<0?" ▾":" ▴"):""}</th>`).join("")}</tr></thead><tbody>${rs.map(row).join("")}</tbody></table>${rs.length?"":'<div class="empty">No charges here.</div>'}`;
     $$("#tb th").forEach(th=>th.onclick=()=>{const k=th.dataset.k;if(CP.sk===k)CP.dir=-CP.dir;else{CP.sk=k;CP.dir=k==="t0"||typeof P[0][k]==="number"?-1:1}draw()});
-    $$("#tb tr.chr,#tb tr.chs").forEach(tr=>tr.onclick=ev=>{const tg=ev.target.closest("[data-tg]");if(tg){CP.open[tg.dataset.tg]=!CP.open[tg.dataset.tg];draw();return}if(ev.target.closest("a"))return;location.hash="#/charge/"+tr.dataset.id});
+    $$("#tb tr.chr,#tb tr.chs").forEach(tr=>tr.onclick=ev=>{const tg=ev.target.closest("[data-tg]");if(tg){CP.open[tg.dataset.tg]=!CP.open[tg.dataset.tg];draw();return}if(ev.target.closest("a"))return;try{sessionStorage.setItem("chargeSet",JSON.stringify({ids:rs.slice().sort((a,b)=>a.t0-b.t0).map(p=>p.id),label:"the Charges list as shown"}))}catch(_){}location.hash="#/charge/"+tr.dataset.id});
   };
   const invoices=()=>{
     const I=B.invoices.filter(i=>inRange({day:i.date},CP.r)&&(!CP.q||((i.location||"")+" "+(i.network||"")+" "+(i.number||"")).toLowerCase().includes(CP.q.toLowerCase())));
@@ -473,10 +573,12 @@ async function pageCharges(){
   };
   const show=()=>{$$("[data-tab]").forEach(c=>c.classList.toggle("on",c.dataset.tab===CP.tab));$("#kd").style.display=$("#iv").style.display=CP.tab==="charges"?"":"none";CP.tab==="charges"?draw():invoices()};
   main.innerHTML=`<h1>Charges</h1><div class="sub">Every charge reconciled with its invoice, as in <code>./analyse_charging.py</code>. A plug-in that Tessie recorded as several sessions is one charge with its records as parts.${B0.status==="building"?" · refreshing in the background…":""}</div>
-   <div class="bar"><button class="chip" data-tab="charges">Charges</button><button class="chip" data-tab="invoices">Invoices (${B.invoices.length})</button><span id="rg"></span><select id="kd"><option value="all">All types</option><option value="ac">AC / home</option><option value="dc">DC fast</option><option value="supercharger">Supercharger</option></select><select id="iv"><option value="all">Any invoice state</option><option value="with">With an invoice</option><option value="without">Public, no invoice</option><option value="unsynced">Not yet in Tessie</option></select><input type="search" id="q" placeholder="Search a place or invoice…" value="${esc(CP.q)}"></div><div class="tiles" id="tl"></div><div id="tb" style="overflow-x:auto"></div>`;
+   <div id="tsb" style="margin:10px 0"></div>
+   <div class="bar"><button class="chip" data-tab="charges">Charges</button><button class="chip" data-tab="invoices">Invoices (${B.invoices.length})</button><span id="rg"></span><select id="kd"><option value="all">All types</option><option value="ac">AC / home</option><option value="dc">DC fast</option><option value="supercharger">Supercharger</option></select><select id="iv"><option value="all">Any invoice state</option><option value="with">With an invoice</option><option value="without">Public, no invoice</option><option value="unsynced">Invoice cost not in Tessie</option></select><input type="search" id="q" placeholder="Search a place or invoice…" value="${esc(CP.q)}"></div><div class="tiles" id="tl"></div><div id="tb" style="overflow-x:auto"></div>`;
   $("#kd").value=CP.kind;$("#iv").value=CP.inv;rangePicker($("#rg"),CP.r,daysOf(P),show);$("#kd").onchange=e=>{CP.kind=e.target.value;show()};$("#iv").onchange=e=>{CP.inv=e.target.value;show()};$("#q").oninput=e=>{CP.q=e.target.value;show()};
   $$("[data-tab]").forEach(c=>c.onclick=()=>{CP.tab=c.dataset.tab;show()});show();
   if(B0.status==="building")bookPoll("#/charges",pageCharges,true);
+  tessieSync($("#tsb"),{kind:"charges",steps:8,always:true,always_note:"Fetches new charges from Tessie, their charging curves and the invoices. It takes a few minutes.",after:()=>{bust();route()}});
 }
 
 // time-axis chart. series: [{k,name,unit,col,axis}], axes: {id:{side:"left"|"right",label,col,min,max}}. `sel` = part drawn solid (others dashed); strip = charging-state bar
@@ -548,6 +650,58 @@ function chartSub(p,part,cur){
   const paid=kw&&cost!=null?`<div class="cs-r"><b>${n0(kw,2)} kWh</b> for <b>$${n0(cost,2)}</b> AUD${rate?" · $"+n0(rate,2)+"/kWh":""}</div>`:"";
   return `<div class="cs">${rec}${win}${paid}</div>`;
 }
+// forward and back through a set of charges: the charges of one park, or the Charges list as filtered (kept by the page that opened this charge, dropped when the user leaves the charge pages)
+function chargeSet(id,pid){let s=null;try{s=JSON.parse(sessionStorage.getItem("chargeSet")||"null")}catch(e){}if(!s||!s.ids||s.ids.length<2)return null;
+  const i=s.ids.findIndex(x=>String(x)===String(id)||String(x)===String(pid));return i<0?null:{ids:s.ids,i,label:s.label}}
+const chargeNavHtml=c=>{if(!c)return "";const go=j=>`onclick="location.hash='#/charge/${encodeURIComponent(c.ids[j])}'"`;
+  return `<div class="bar cnav"><button class="chip" ${c.i>0?go(c.i-1):"disabled"} title="Earlier charge">‹</button><span class="sub">Charge ${c.i+1} of ${c.ids.length} · ${esc(c.label)}</span><button class="chip" ${c.i<c.ids.length-1?go(c.i+1):"disabled"} title="Later charge">›</button></div>`};
+// home (Evnex) charges: how much of the car's power was solar and how much was bought from the grid.
+// Same split the cost model uses (lib/pv_history_db.py): in each 15-minute meter reading, the share of the house's use that was met by its own solar (self-consumed / consumption),
+// applied to the car's power. The dashed line is the solar left over after the house in that reading, from the car's own energy and the meter. An estimate, labelled as one.
+// Evnex does not keep which mode a session ran in (its status call reports only the current one), so this is read from the car's recorded charger current:
+// a current that never moves is Override (or a fixed amp setting); a current that follows the sun is solar excess control, where the charger's own clamp sets the amps.
+function modeLine(segs){
+  const A=segs.flatMap(g=>g.t.map((t,i)=>g.state&&g.state[i]==="Charging"&&g.amps&&g.amps[i]!=null&&g.amps[i]>=5?Math.round(g.amps[i]):null)).filter(v=>v!=null);
+  if(A.length<10)return"";const lv=[...new Set(A)].sort((a,b)=>a-b),top=lv[lv.length-1];
+  return lv.length<=2?`Charger current held at ${top} A the whole time, which looks like Override (charge regardless of solar) or a fixed amp setting.`
+    :`Charger current moved between ${lv[0]} and ${top} A, which looks like solar excess control (the charger's clamp sets the amps from the spare solar).`}
+function solarCard(D,p,part){
+  const S=D.sources;if(!S||!S.buckets||!S.buckets.length)return"";
+  const segs=(D.segments||[]).filter(g=>(!part||g.part===part.id)&&g.t&&g.t.length>1);if(!segs.length)return"";
+  const Bk=S.buckets.map(b=>Object.assign({},b,{car:0,w:b.w||900})),bi=t=>Bk.find(b=>t>=b.t&&t<b.t+b.w);
+  let unk=0;
+  segs.forEach(g=>{for(let i=0;i<g.t.length-1;i++){const dt=g.t[i+1]-g.t[i],a=g.kw[i],c=g.kw[i+1];if(dt<=0||dt>900||a==null||c==null)continue;
+    const e=(a+c)/2*dt/3600,b=bi(g.t[i]);if(b)b.car+=e;if(!b||b.f==null)unk+=e}});
+  let sol=0,grid=0;
+  Bk.forEach(b=>{b.fs=b.f;if(b.car>0&&b.f!=null){b.so=b.car*b.f;b.gr=b.car-b.so;sol+=b.so;grid+=b.gr}});
+  const known=sol+grid;if(!(known+unk>0))return"";
+  const pc=known>0?100*sol/known:null;
+  const all=segs.flatMap(g=>g.t),t0=Math.min(...all),t1=Math.max(...all),W=720,H=210,T=14,Bt=26,L=50,R=14,
+    ymax=Math.max(1,...segs.flatMap(g=>g.kw.filter(v=>v!=null)))*1.1,X=t=>L+(t-t0)/((t1-t0)||1)*(W-L-R),Y=v=>T+(H-T-Bt)*(1-Math.min(v,ymax)/ymax),y0=Y(0);
+  const fm=new Intl.DateTimeFormat("en-AU",{hour:"2-digit",minute:"2-digit",hour12:false,timeZone:p.tz||"Australia/Sydney"}),hm=t=>fm.format(new Date(t*1000)).replace(/^24/,"00");
+  const SOL="#eab308",GRD="#2563eb",SPARE="#a16207";let h="";
+  for(let g=0;g<=4;g++){const v=ymax*g/4;h+=`<line class="grid" x1="${L}" x2="${W-R}" y1="${Y(v)}" y2="${Y(v)}"/><text x="${L-6}" y="${Y(v)+4}" text-anchor="end">${n0(v,ymax<12?1:0)}</text>`}
+  h+=`<text x="6" y="${T-3}" style="font-weight:600">Power (kW)</text>`;
+  segs.forEach(g=>{const P=g.t.map((t,i)=>[t,g.kw[i]]).filter(z=>z[1]!=null);if(P.length<2)return;
+    const top=P.map(z=>X(z[0]).toFixed(1)+","+Y(z[1]).toFixed(1)).join(" "),x1=X(P[P.length-1][0]).toFixed(1),x0=X(P[0][0]).toFixed(1);
+    h+=`<polygon points="${x0},${y0} ${top} ${x1},${y0}" fill="${GRD}" opacity=".85"/>`;
+    h+=`<polygon points="${x0},${y0} ${P.map(z=>{const b=bi(z[0]),f=b&&b.fs!=null?b.fs:0;return X(z[0]).toFixed(1)+","+Y(z[1]*f).toFixed(1)}).join(" ")} ${x1},${y0}" fill="${SOL}"/>`});
+  const sp=Bk.filter(b=>b.t+b.w>t0&&b.t<t1&&b.prod!=null&&b.cons!=null).map(b=>{const v=Math.max(0,b.prod-(b.cons-b.car))*3600/b.w,xa=X(Math.max(b.t,t0)),xb=X(Math.min(b.t+b.w,t1));return `M${xa.toFixed(1)},${Y(v).toFixed(1)}L${xb.toFixed(1)},${Y(v).toFixed(1)}`}).join("");
+  h+=`<path d="${sp}" fill="none" stroke="${SPARE}" stroke-width="1.6" stroke-dasharray="4 3"/>`;
+  Bk.forEach(b=>{const a=Math.max(b.t,t0),z=Math.min(b.t+b.w,t1);if(z<=a)return;
+    h+=`<rect x="${X(a)}" y="${T}" width="${X(z)-X(a)}" height="${H-T-Bt}" fill="transparent"><title>${hm(b.t)}–${hm(b.t+b.w)} · car ${n0(b.car,2)} kWh${b.fs!=null?": "+n0(b.so,2)+" solar, "+n0(b.gr,2)+" grid":""} · house with the car used ${n0(b.cons,2)} kWh · solar produced ${n0(b.prod,2)} kWh · bought from the grid ${n0(b.buy,2)} kWh</title></rect>`});
+  for(let i=0;i<=6;i++){const t=t0+(t1-t0)*i/6;h+=`<text x="${X(t)}" y="${H-6}" text-anchor="middle">${hm(t)}</text>`}
+  const c=S.cli||{},prov=(S.buckets[0]&&S.buckets[0].provider)||c.pv_provider_display_name||"the solar meter";
+  const lines=[modeLine(segs),`An estimate: ${esc(String(prov))} gives the share of the house's use that was solar in each 15 minutes, and that share is applied to the car's power, so the split changes in steps. This is the split the charge cost uses. The dashed line is the solar left after the house, which the car could have used.`,
+    unk>0.005?`${n0(unk,2)} kWh fell in minutes with no meter reading and is left out of the split.`:"",
+    c.solar_pct!=null?`Evnex reports ${n0(c.solar_pct)}% solar for this session.`:"",
+    c.base_cost_incl_gst!=null&&c.pv_adjusted_cost_incl_gst!=null?`Evnex's cost with solar: ${money(c.pv_adjusted_cost_incl_gst)} against ${money(c.base_cost_incl_gst)} from the grid alone.`:""].filter(Boolean);
+  const dot=(c,t)=>`<span style="margin-right:16px"><span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:${c};margin-right:5px"></span>${t}</span>`;
+  return `<div class="card"><h2 style="margin-top:0">Where the energy came from</h2>
+   <div class="tiles tiles2">${tile(n0(sol,2)+" kWh","from solar"+(pc!=null?" · "+n0(pc)+"%":""))}${tile(n0(grid,2)+" kWh","from the grid"+(pc!=null?" · "+n0(100-pc)+"%":""))}</div>
+   <svg viewBox="0 0 ${W} ${H}" style="width:100%;height:auto;display:block;margin-top:8px">${h}</svg>
+   <div class="sub" style="margin-top:4px">${dot(GRD,"Charger power from the grid")}${dot(SOL,"Charger power from solar")}${dot(SPARE,"Solar left after the house")}</div>
+   <div class="cs" style="margin-top:6px">${lines.map(x=>`<div class="cs-r">${x}</div>`).join("")}</div></div>`}
 async function pageCharge(id,pid){
   loading();const [B0,D]=await Promise.all([bookWithRaw(),fetch("/api/chargebook/"+encodeURIComponent(id)+(pid?"?part="+encodeURIComponent(pid):"")).then(r=>r.ok?r.json():null).catch(()=>null)]);
   if(!B0.book){bookWait(B0,"Charge",()=>pageCharge(id,pid));return}
@@ -557,18 +711,19 @@ async function pageCharge(id,pid){
   const eff=v.disp&&v.kwh?100*v.kwh/v.disp:null,costv=part?(part.icost!=null?part.icost:part.tcost):p.cost,ratev=part?(part.irate!=null?part.irate:part.trate):p.rate,minv=part?part.min:p.min;
   const links=multi?p.parts.map((x,i)=>`<a class="chip ${part&&part.id===x.id?"on":""}" href="#/charge/${p.id}/${x.id}" style="text-decoration:none">Part ${i+1} · ${x.hm}</a>`).join(" "):"";
   const amps=D.segments[0]&&D.segments[0].amps_src==="pack";
-  main.innerHTML=(part?crumbs("#/charge/"+p.id,"the whole charge ("+p.parts.length+" parts)"):crumbs("#/charges","Charges"))+`<h1>${whereLink({pkey:raw.pkey,place:where,addr:p.addr})}${part?` <span class="sub" style="font-size:15px">· part ${p.parts.indexOf(part)+1} of ${p.parts.length}</span>`:""}</h1>
+  main.innerHTML=(part?crumbs("#/charge/"+p.id,"the whole charge ("+p.parts.length+" parts)"):crumbs("#/charges","Charges"))+chargeNavHtml(chargeSet(id,p.id))+`<h1>${whereLink({pkey:raw.pkey,place:where,addr:p.addr})}${part?` <span class="sub" style="font-size:15px">· part ${p.parts.indexOf(part)+1} of ${p.parts.length}</span>`:""}</h1>
    <div class="sub">${dayName(v.day)} · ${v.hm} – ${end} · ${dur(part?part.min:p.span)}${multi&&!part?" plugged in":""} · ${esc(p.network||(p.kind==="supercharger"?"Supercharger":p.kind==="dc"?"DC fast charger":"AC charging"))} · ${esc(String(p.status||"").replace(/[^\x20-\x7e]/g,"").trim())}${raw.pkey?' · <a href="#/place/'+encodeURIComponent(raw.pkey)+'">what is around here</a>':""}</div>
    ${multi?`<div class="bar"><a class="chip ${part?"":"on"}" href="#/charge/${p.id}" style="text-decoration:none">Whole charge</a>${links}<span class="sub">Tessie recorded this plug-in as ${p.parts.length} sessions; it is one charge with one invoice.</span></div>`:""}
    ${await alertsHere(p)}
    <div class="chgrid"><div class="chl">
      <div class="card"><h2 style="margin-top:0">Charger power and battery</h2><div class="sub" style="margin-bottom:6px">${chartSub(p,part,cur)}</div><div id="tc"></div></div>
+     ${solarCard(D,p,part)}
      <div class="card"><h2 style="margin-top:0">Pack temperature, current and voltage</h2><div id="tv"></div></div>
      <div class="card"><h2 style="margin-top:0">Power against state of charge</h2>${cur?`<div class="sub" style="margin-bottom:6px"><div class="cs">${[cur.hardware&&cur.tier?esc(cur.hardware)+" · "+esc(cur.tier)+(cur.cap?" · "+n0(cur.cap)+" kW cap":"")+(cur.stalls?" · "+cur.stalls+" stalls":""):"",esc(cur.caption||"")].filter(Boolean).map(x=>`<div class="cs-r">${x}</div>`).join("")}</div></div>`:""}<div id="cc"></div></div>
      <div class="card"><h2 style="margin-top:0">Pack voltage and current, with history</h2><div id="pc"></div></div>
      <div class="card"><h2 style="margin-top:0">Where</h2><div class="map" id="mp"></div><div class="sub" style="margin-top:8px">${esc(p.addr||"")}</div></div>
    </div><div class="chr2">
-     <div class="tiles tiles2">${tile("+"+n0(v.kwh,1)+" kWh","into the battery")}${tile(n0(v.b0)+"% → "+n0(v.b1)+"%","battery")}${tile(money(costv),(ratev!=null?money(ratev)+"/kWh · ":"")+(inv&&!part?"invoice total":part&&v.icost!=null?"invoice share":"Tessie cost"))}${tile(v.disp!=null?n0(v.disp,1)+" kWh":"–","from the charger"+(inv&&!part?" (invoice)":""))}${tile(eff?n0(eff,1)+"%":"–","efficiency")}${tile(v.peak?n0(v.peak)+" kW":"–","peak"+(minv&&v.kwh?" · avg "+n0(v.kwh*60/minv)+" kW":""))}${tile(v.kmh?n0(v.kmh)+" km/h":"–","range recovered per hour")}${tile(syncPillText(part?part.sync:p.sync),"in Tessie")}</div>
+     <div class="tiles tiles2">${tile("+"+n0(v.kwh,1)+" kWh","into the battery")}${tile(n0(v.b0)+"% → "+n0(v.b1)+"%","battery")}${tile(money(costv),(ratev!=null?money(ratev)+"/kWh · ":"")+(inv&&!part?"invoice total":part&&v.icost!=null?"invoice share":"Tessie cost"))}${tile(v.disp!=null?n0(v.disp,1)+" kWh":"–","from the charger"+(inv&&!part?" (invoice)":""))}${tile(eff?n0(eff,1)+"%":"–","efficiency")}${tile(v.peak?n0(v.peak)+" kW":"–","peak"+(minv&&v.kwh?" · avg "+n0(v.kwh*60/minv)+" kW":""))}${tile(v.kmh?n0(v.kmh)+" km/h":"–","range recovered per hour")}${tile(syncPillText(part?part.sync:p.sync),"invoice cost in Tessie")}</div>
      ${multi&&!part?`<div class="card"><h2 style="margin-top:0">The ${p.parts.length} Tessie records</h2>${partsTable(p)}</div>`:""}
      <div class="card"><h2 style="margin-top:0">Invoice and Tessie</h2>${invoiceCard(p,part)}</div>
      <div class="card"><h2 style="margin-top:0">Where the energy went</h2>${energyCard(p,part)}</div>
@@ -619,7 +774,7 @@ function telCard(p,part){
 // the plain page, kept for a charge that is not in the book (e.g. the book could not be built)
 async function pageChargeBasic(id){
   loading();const d=await api("charge/"+id),c=d.charge;
-  main.innerHTML=crumbs("#/charges","Charges")+`<h1>${whereLink(c)}</h1><div class="sub">${dayName(c.day)} · ${c.hm} – ${addMin(c.hm,c.min)} · ${dur(c.min)} · ${c.kind==="supercharger"?"Supercharger":c.kind==="dc"?"DC fast charger":"AC charging"}${c.pkey?' · <a href="#/place/'+encodeURIComponent(c.pkey)+'">what is around here</a>':""}</div>
+  main.innerHTML=crumbs("#/charges","Charges")+chargeNavHtml(chargeSet(id))+`<h1>${whereLink(c)}</h1><div class="sub">${dayName(c.day)} · ${c.hm} – ${addMin(c.hm,c.min)} · ${dur(c.min)} · ${c.kind==="supercharger"?"Supercharger":c.kind==="dc"?"DC fast charger":"AC charging"}${c.pkey?' · <a href="#/place/'+encodeURIComponent(c.pkey)+'">what is around here</a>':""}</div>
    <div class="tiles">${tile("+"+n0(c.kwh,1)+" kWh","energy added")}${tile(n0(c.b0)+"% → "+n0(c.b1)+"%","battery")}${tile(money(c.cost),c.rate!=null?rate(c.rate)+"/kWh":"cost")}${tile(c.used!=null?n0(c.used,1)+" kWh":"–","energy drawn")}${tile(c.used&&c.kwh?n0(100*c.kwh/c.used)+"%":"–","charging efficiency")}${tile(c.min?n0(c.kwh*60/c.min,1)+" kW":"–","average power")}</div>
    ${alertsCard(await alertsFor("charge",id),"charge")}<div class="card"><h2 style="margin-top:0">Charge curve</h2><div id="ch"></div></div><div class="card" style="margin-top:14px"><h2 style="margin-top:0">Where</h2><div class="map" id="mp"></div><div class="sub" style="margin-top:8px">${esc(c.addr||"")}</div></div>`;
   miniMap($("#mp"),c.lat,c.lon,"#16a34a");wireAlerts(main);
@@ -669,6 +824,43 @@ async function pageParkedOne(id){
   const pick=i=>{$$(".evc").forEach(b=>b.classList.toggle("on",+b.dataset.i===i));sentryPlayer($("#spl"),evs[i])};
   $$(".evc").forEach(b=>b.onclick=()=>pick(+b.dataset.i));pick(0);
 }
+// ---------- clips whose video is not on a connected drive: the kept one-second stills, large, with arrows (the footage log says which drive held the video)
+const DRN={A:"the Archive",J:"JOWUA",U:"the Tesla USB"},drName=r=>DRN[r]||r;
+// a card's picture: the kept still first (the same for every card, whichever drive is connected); the video's first frame when no still is kept; an empty box when neither
+function stThumb(stamp,sec,vurl){return `<img loading="lazy" src="/still/${stamp}/${sec}.jpg" data-v="${esc(vurl||"")}" onerror="stFallback(this)">`}
+function stFallback(img){const u=img.dataset.v,p=img.parentNode;img.outerHTML=u?vthumb(u):'<div class="noimg"></div>';if(u&&p)lazyThumbs(p)}
+const stillSrc=(stamp,sec)=>`/still/${stamp}/${sec}.jpg`;
+function stillViewer(host,o){
+  const sts=o.stamps||[];if(!sts.length){host.innerHTML='<div class="sub">This has no clips.</div>';return}
+  const where=o.roles&&o.roles.length?o.roles.map(drName).join(" and "):"";
+  const banner=where?`The video of this footage is on ${esc(where)}, and none of ${o.roles.length>1?"these drives is":"that drive is"} connected, so its stills are shown. Reconnect ${o.roles.length>1?"one of them":"it"} to play the full video.`
+    :"The video of this footage has been deleted from every drive. Its stills are kept.";
+  host.innerHTML=`<div class="sp"><div class="stbanner">${banner}</div><div class="sub" style="margin:4px 0 8px">${o.head||""}</div><div id="stv"><div class="sub">Looking for the stills…</div></div></div>`;
+  const chunks=[];for(let i=0;i<sts.length;i+=80)chunks.push(sts.slice(i,i+80));
+  Promise.all(chunks.map(c=>fetch("/api/clipstatus?stamps="+c.join(",")).then(r=>r.json()).catch(()=>({})))).then(parts=>{
+    const have=Object.assign({},...parts),minutes=sts.filter(x=>have[x]&&have[x].stills);const box=$("#stv",host);if(!box)return;
+    if(!minutes.length){box.innerHTML=`<div class="sub">No stills were kept for this footage.${where?` Connect ${esc(where)} and press Sync footage to make them.`:""}</div>`;return}
+    const LOC=s=>(o.loc&&o.loc[s])||s.slice(0,10)+"T"+s.slice(11).replace(/-/g,":"),shownAt=(s,t)=>new Date(Date.parse(LOC(s)+"Z")+t*1000).toISOString().substr(11,8);
+    const stMs=s=>Date.parse(s.slice(0,10)+"T"+s.slice(11).replace(/-/g,":"));      // the clip's name, read the same way the player reads it (o.trig is on that clock too)
+    const inMin=t=>{const k=minutes.reduce((a,s,i)=>stMs(s)<=t?i:a,0);return [k,Math.max(0,Math.min(59,Math.floor((t-stMs(minutes[k]))/1000)))]};
+    let step=+lsGet("tc.ststep","1"),mi=0,sec=0;
+    if(o.trig)[mi,sec]=inMin(o.trig);      // an event opens at the moment it was detected
+    const seq=()=>{const out=[];minutes.forEach((m,i)=>{for(let t=0;t<60;t+=step)out.push([i,t])});return out};let frames=seq();
+    const pos=()=>{const k=frames.findIndex(f=>f[0]===mi&&f[1]>=sec);return k<0?frames.length-1:k};
+    const at=k=>{k=Math.max(0,Math.min(frames.length-1,k));mi=frames[k][0];sec=frames[k][1];paint()};
+    function paint(){const k=pos(),[i,t]=frames[k],m=minutes[i];
+      box.innerHTML=`<div class="stbar"><button class="btn" id="stp0">◀ Back</button><button class="btn" id="stn0">Next ▶</button><input type="range" id="stsk" min="0" max="${frames.length-1}" value="${k}">
+        <span>${shownAt(m,t)}</span><select id="stst">${[[1,"every second"],[5,"every 5 seconds"],[10,"every 10 seconds"],[60,"every minute"]].map(([v,l])=>`<option value="${v}" ${v===step?"selected":""}>${l}</option>`).join("")}</select>
+        ${o.trig?'<button class="btn" id="stdt">↧ Detection</button>':""}<span class="sub">${n0(k+1)} of ${n0(frames.length)} · arrow keys also step</span></div>
+        <img class="stimg" src="${stillSrc(m,t)}" alt="Front camera at ${shownAt(m,t)}">`;
+      $("#stp0",box).onclick=()=>at(pos()-1);$("#stn0",box).onclick=()=>at(pos()+1);$("#stsk",box).oninput=e=>at(+e.target.value);
+      $("#stst",box).onchange=e=>{step=+e.target.value;lsSet("tc.ststep",String(step));frames=seq();sec=Math.floor(sec/step)*step;paint()};
+      if($("#stdt",box))$("#stdt",box).onclick=()=>{[mi,sec]=inMin(o.trig);sec=Math.floor(sec/step)*step;paint()}}
+    paint();
+    const key=e=>{if(!document.body.contains(host)){removeEventListener("keydown",key);return}
+      if(/SELECT|TEXTAREA|INPUT/.test(e.target.tagName||"")&&e.target.type!=="range")return;
+      if(e.key==="ArrowRight"||e.key==="ArrowLeft"){e.preventDefault();at(pos()+(e.key==="ArrowRight"?1:-1))}};
+    if(window.__stk)removeEventListener("keydown",window.__stk);window.__stk=key;addEventListener("keydown",key)})}
 // ---------- Clip player (Sentry, Saved and Recent clips): all six cameras laid out like a drive page, or one camera big
 // event.json "camera" -> the camera that saw it (checked against the thumbnails and the clips: 0 and 1 front, 5 left repeater, 6 right repeater, 7 back; others unknown -> all six)
 const EVCAM={"0":"front","1":"front","5":"left_repeater","6":"right_repeater","7":"back"};
@@ -676,12 +868,24 @@ const MSZ=[["s","Small","260px"],["m","Medium","420px"],["l","Large","640px"],["
 const CORDER=["left_pillar","front","right_pillar","left_repeater","back","right_repeater"];
 const lsGet=(k,d)=>{try{return localStorage.getItem(k)||d}catch(e){return d}},lsSet=(k,v)=>{try{localStorage.setItem(k,v)}catch(e){}};
 // o = {head: html line above the video, stamps: [minute, ...], cams: {minute: [camera, ...]}, url: (minute, camera) => url, trig: epoch ms the event happened (start a little before it)}
+// A minute of video that is on no connected drive: a black box with the name of the file and the drives that hold it, the biggest drive first. It comes from the footage
+// log (/api/clipholders), so it answers with every drive away.
+const sizeGB=g=>g>=1000?(g/1000).toFixed(1).replace(/\.0$/,"")+" TB":(g||"?")+" GB";
+function lostBox(box,s){
+  box.className="vone";
+  box.innerHTML=`<figure class="lost"><div class="lostb"><b>${esc(s)}-front.mp4</b><span class="lostx">Looking up where this video is…</span></div><figcaption>Not on a connected drive</figcaption></figure>`;
+  const say=t=>{const el=box.querySelector(".lostx");if(el)el.textContent=t};
+  fetch("/api/clipholders?stamps="+encodeURIComponent(s)).then(r=>r.json()).then(m=>{const h=m[s]||{state:"unknown"};
+    if(h.state==="kept"){const f=h.files.find(x=>x.cam==="front")||h.files[0];
+      box.querySelector(".lostb b").textContent=f.name+(h.files.length>1?` and ${h.files.length-1} more camera${h.files.length>2?"s":""}`:"");
+      say("On "+f.drives.map(d=>`${d.label} (${sizeGB(d.size_gb)})`).join(", then ")+(f.drives.some(d=>d.connected)?"":". None of these drives is connected")+".")}
+    else say(h.state==="deleted"?"This video has been deleted from every drive. The stills are kept.":"This video was never logged on any drive.")}).catch(()=>say("Could not look up where this video is."))}
 function clipPlayer(host,o){
   const stamps=o.stamps;if(!stamps.length){host.innerHTML='<div class="sub">This has no video clips.</div>';return}
   // a clip's name is the car's clock (stMs: only used to place things that are on that same clock, like a Sentry trigger); what is SHOWN is the local clock (o.loc: stamp -> local text)
   const stMs=s=>Date.parse(s.slice(0,10)+"T"+s.slice(11).replace(/-/g,":")),LOC=s=>(o.loc&&o.loc[s])||s.slice(0,10)+"T"+s.slice(11).replace(/-/g,":"),clock=s=>LOC(s).slice(11,19),shownAt=(s,t)=>new Date(Date.parse(LOC(s)+"Z")+t*1000).toISOString().substr(11,8),fmt=t=>Math.floor(t/60)+":"+String(Math.floor(t%60)).padStart(2,"0");
   let si=0,seek=0,view=o.view||lsGet("tc.view","all"),rate=lsGet("tc.rate","1"),vs=[],mv=null;
-  if(o.trig){si=stamps.reduce((a,s,i)=>stMs(s)<=o.trig?i:a,0);seek=Math.max(0,(o.trig-stMs(stamps[si]))/1000)}
+  // a Sentry/Saved event opens at the START of its first clip and plays; the Detection button jumps to the moment it happened
   const toTrig=()=>{si=stamps.reduce((a,s,i)=>stMs(s)<=o.trig?i:a,0);seek=Math.max(0,(o.trig-stMs(stamps[si]))/1000);if($("#stp"))$("#stp").value=si;vids()};
   const shell=()=>{host.innerHTML=`<div class="sp"><div class="bar"><button class="chip ${view==="all"?"on":""}" data-c="all">All six</button>${Object.keys(CAMN).map(c=>`<button class="chip ${view===c?"on":""}" data-c="${c}">${CAMN[c]}</button>`).join("")}</div>
     <div class="sub" style="margin:4px 0 8px">${o.head}</div>
@@ -705,8 +909,10 @@ function clipPlayer(host,o){
     if(!mv)return;
     const cam=mv.parentNode.dataset.c;
     const ready=()=>{sk.max=mv.duration||60;vs.forEach(x=>x.playbackRate=+rate);if(seek){seekAll(seek);seek=0}};
-    if(mv.readyState>=1)ready();else mv.onloadedmetadata=()=>{ready();vs.forEach(x=>x.play().catch(()=>{}))};
-    mv.onplay=()=>pl.textContent="❚❚ Pause";mv.onpause=()=>{if(!mv.ended)pl.textContent="▶ Play"};
+    const go=()=>{ready();vs.forEach(x=>x.play().catch(()=>{}))};if(mv.readyState>=1)go();else mv.onloadedmetadata=go;
+    // the button always shows what pressing it does: Pause while playing, Play while paused (a clip that ended into the next minute counts as playing)
+    const lab=()=>{pl.textContent=(mv.paused||mv.ended)&&!(mv.ended&&si<stamps.length-1)?"▶ Play":"❚❚ Pause"};
+    ["play","playing","pause","ended","emptied"].forEach(n=>mv.addEventListener(n,lab));lab();
     mv.ontimeupdate=()=>{if(!document.contains(host)){dropAll();return}sk.value=mv.currentTime;if(o.onTime)o.onTime(stMs(stamps[si])+mv.currentTime*1000);if(o.onAt)o.onAt(stamps[si],mv.currentTime);tm.textContent=fmt(mv.currentTime)+" · "+shownAt(stamps[si],mv.currentTime);
       // keep the cameras together without seeking (a seek stalls that camera): a small drift is nudged out by speeding it up or slowing it down a little, only a large one is jumped
       vs.forEach(x=>{if(x===mv)return;const dr=x.currentTime-mv.currentTime;
@@ -728,8 +934,9 @@ function clipPlayer(host,o){
     vs=$$("#vids video");mv=vs.find(v=>v.parentNode.dataset.c==="front")||vs[0];wire();vs.forEach(x=>{x.playbackRate=+rate;x.play().catch(()=>{})})};
   const vids=()=>{dropAll();
     const s=stamps[si],have=o.cams[s]||[],all=view==="all",show=all?CORDER:[have.includes(view)?view:have.includes("front")?"front":have[0]];
-    const box=$("#vids");box.className=all?"vgrid":"vone";
-    box.innerHTML=show.map(c=>have.includes(c)?`<figure data-c="${c}" class="${o.hot===c?"hot":""}" ${all?'title="Click to see this camera large"':""}><video muted playsinline preload="auto" src="${o.url(s,c)}"></video><figcaption>${CAMN[c]}${o.hot===c?" · detected here":""}</figcaption></figure>`:`<figure class="none"><div>no file</div><figcaption>${CAMN[c]}</figcaption></figure>`).join("");
+    const box=$("#vids");if(!have.length){lostBox(box,s);vs=[];mv=null;return}
+    box.className=all?"vgrid":"vone";
+    box.innerHTML=show.map(c=>have.includes(c)?`<figure data-c="${c}" class="${o.hot===c?"hot":""}" ${all?'title="Click to see this camera large"':""}><video muted playsinline preload="auto" src="${o.url(s,c)}"></video><figcaption>${CAMN[c]}${o.hot===c?" · detected here":""}</figcaption></figure>`:`<figure class="none"><div>not recorded this minute</div><figcaption>${CAMN[c]}</figcaption></figure>`).join("");
     vs=$$("#vids video");mv=vs.find(v=>v.parentNode.dataset.c==="front")||vs[0];if(!mv){return}
     if(all)$$("#vids figure[data-c]").forEach(f=>f.onclick=()=>{view=f.dataset.c;seek=mv.currentTime;shell()});
     wire()};
@@ -758,7 +965,7 @@ function clipPlayer(host,o){
 function sentryPlayer(host,ev,role=ev&&ev.role||"A",folder="SentryClips"){
   const stamps=Object.keys(ev.clips),t=ev.ts,what=ev.reason?reason(ev.reason):folder==="SavedClips"?"Saved clip":"Sentry event";
   clipPlayer(host,{stamps,cams:ev.clips,loc:ev.loc,trig:Date.parse(ev.cts||t),view:EVCAM[ev.cam]||"all",url:(s,c)=>`/footage/${role}/${folder}/${ev.id}/${s}-${c}.mp4`,
-    head:`${esc(what)} on ${dayName(t.slice(0,10))} at ${hms(t)}${ev.city?" · "+esc(ev.city):""}${ev.street&&folder==="SavedClips"?" · "+esc(ev.street):""}. One-minute clips, ${stamps.length} in this event; the next clip plays on its own. It opens at the moment it happened${EVCAM[ev.cam]?", on the "+CAMN[EVCAM[ev.cam]].toLowerCase()+" camera, which is the one that saw it":""}.`});
+    head:`${esc(what)} on ${dayName(t.slice(0,10))} at ${hms(t)}${ev.city?" · "+esc(ev.city):""}${ev.street&&folder==="SavedClips"?" · "+esc(ev.street):""}. One-minute clips, ${stamps.length} in this event; the next clip plays on its own. It plays from the start; press Detection to jump to the moment it happened${EVCAM[ev.cam]?" (the "+CAMN[EVCAM[ev.cam]].toLowerCase()+" camera saw it)":""}.`});
 }
 
 // ---------- Places (the places manager) and the page for one place
@@ -849,7 +1056,7 @@ function syncPanel(host,done){
 const OSMG={};
 async function pagePlace(key){
   loading();
-  let p;if(key==="@new"){let pre={};try{pre=JSON.parse(sessionStorage.getItem("placePrefill")||"{}")}catch(e){}p=Object.assign({kind:"spot",key,name:"New place",lat:null,lon:null,radius:150,keywords:[],notes:"",visits:[],nvisits:0},pre,{radius:pre.radius_m||150,name:pre.name||"New place"})}
+  let p;if(key==="@new"){let pre={};try{pre=JSON.parse(sessionStorage.getItem("placePrefill")||"{}")}catch(e){}p=Object.assign({kind:"spot",key,name:"New place",lat:null,lon:null,radius:150,keywords:[],notes:"",visits:[],nvisits:0},pre,{radius:pre.radius_m||150,name:pre.name||"New place",lat:pre.lat===""||pre.lat==null||isNaN(+pre.lat)?null:+pre.lat,lon:pre.lon===""||pre.lon==null||isNaN(+pre.lon)?null:+pre.lon})}
   else{let nm="",ad="";try{if(key[0]==="@"){const q=JSON.parse(sessionStorage.getItem("placePrefill")||"{}");nm=q.name||"";ad=q.addr||""}}catch(e){}
     const r=await fetch("/api/place?key="+encodeURIComponent(key)+(nm?"&name="+encodeURIComponent(nm):"")+(ad?"&addr="+encodeURIComponent(ad):""));if(!r.ok){main.innerHTML=crumbs("#/places","Places")+'<div class="empty">That place is not in your places any more.</div>';return}p=await r.json()}
   const kinds={saved:"Saved place",supercharger:"Tesla Supercharger",charger:"Charger"+(p.network?" · "+p.network:""),spot:"Not saved yet"},vis=p.visits||[],n=k=>vis.filter(v=>v.k===k).length,editable=p.kind!=="supercharger"&&p.kind!=="charger";
@@ -862,7 +1069,7 @@ async function pagePlace(key){
   if(p.lat!=null)miniMap($("#mp"),p.lat,p.lon,p.kind==="supercharger"?"#e0201b":p.kind==="charger"?"#16a34a":"#3b6cf6");else $("#mp").outerHTML='<div class="sub">Enter coordinates below, or start from a stop in the Places list.</div>';
   const ed=$("#ed");
   if(editable){ed.innerHTML=`<h2 style="margin-top:0">${p.kind==="saved"?"Edit this place":"Save as a place"}</h2><div class="form">
-    <label class="w">Name<input id="f_name" value="${esc(p.kind==="spot"?(pre.name||""):p.name)}" placeholder="e.g. Corner Shop Chargers"></label>
+    <label class="w">Name<input id="f_name" value="${esc(p.kind==="spot"?specific(pre.name||"",p):p.name)}" placeholder="e.g. Corner Shop Chargers"></label>
     <label>Latitude<input id="f_lat" value="${p.lat==null?"":p.lat}"></label><label>Longitude<input id="f_lon" value="${p.lon==null?"":p.lon}"></label>
     <label>Radius (m)<input id="f_rad" value="${p.kind==="spot"&&pre.radius_m?pre.radius_m:(p.radius||150)}"></label>${p.kind==="spot"&&pre.radnote?`<div class="sub" style="align-self:end">${esc(pre.radnote)}</div>`:""}
     <label class="w">Keywords (addresses or names to match, comma separated)<input id="f_kw" value="${esc(kw)}"></label>
@@ -871,25 +1078,29 @@ async function pagePlace(key){
     <div class="sub">Saved places are written to places.json (a dated backup is kept first). The sync scripts use the same file.</div>`;
     $("#sv").onclick=async()=>{const m=$("#msg");m.textContent="Saving…";const body={old_name:p.kind==="saved"?p.name:"",name:$("#f_name").value,lat:$("#f_lat").value,lon:$("#f_lon").value,radius_m:$("#f_rad").value,keywords:$("#f_kw").value,notes:$("#f_notes").value};
       try{const j=await (await fetch("/api/places/save",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)})).json();
-        if(j.ok){Object.keys(cache).forEach(k=>delete cache[k]);sessionStorage.removeItem("placePrefill");location.hash="#/place/"+encodeURIComponent(j.key);route()}else m.textContent="Not saved: "+j.error}catch(e){m.textContent="Could not reach the app: "+e}};
+        if(j.ok){bust();sessionStorage.removeItem("placePrefill");NAVREPL=true;location.hash="#/place/"+encodeURIComponent(j.key);route()}else m.textContent="Not saved: "+j.error}catch(e){m.textContent="Could not reach the app: "+e}};
     if($("#dl"))$("#dl").onclick=async()=>{if(!confirm("Delete the saved place '"+p.name+"'? Past drives keep their addresses."))return;
       const j=await (await fetch("/api/places/delete",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({name:p.name})})).json();
-      if(j.ok){Object.keys(cache).forEach(k=>delete cache[k]);location.hash="#/places"}else $("#msg").textContent="Not deleted: "+j.error}}
+      if(j.ok){bust();NAVREPL=true;location.hash="#/places"}else $("#msg").textContent="Not deleted: "+j.error}}
   else ed.innerHTML=`<h2 style="margin-top:0">About this ${p.kind==="charger"?"charger":"Supercharger"}</h2><div class="sub">${p.kind==="charger"?"From the charger registry (sync_charger_all.sh). Use Sync chargers on the Places page to refresh it.":"The name is the one used on tesla.com."}</div><table class="kv">${p.kind==="charger"?`<tr><td>Network</td><td>${esc(p.network||"–")}</td></tr><tr><td>Connectors</td><td>${esc(p.conn||"–")}</td></tr><tr><td>Access</td><td>${esc(p.access||"–")}</td></tr>`:""}<tr><td>Stalls</td><td>${n0(p.stalls)}</td></tr><tr><td>Max power</td><td>${n0(p.kw)} kW${p.tier?" ("+esc(p.tier)+")":""}</td></tr><tr><td>Hours</td><td>${esc(p.hours||"–")}</td></tr><tr><td>Address</td><td>${esc(p.addr||"–")}</td></tr></table>${p.notes?`<div class="sub" style="margin-top:8px;white-space:pre-line">${esc(p.notes)}</div>`:""}`;
   $("#vs").innerHTML=vis.length?vis.filter(v=>!(v.k==="repark"&&v.in_stay)).map(v=>{const href=v.k==="charge"?"#/charge/"+v.id:v.k==="idle"?"#/parked/"+v.id:v.k==="stay"?"":v.id?"#/drive/"+v.id:"";
     return `<a class="row" ${href?`href="${href}"`:""}><span class="t">${v.day} ${v.hm}</span><span class="k ${v.k==="stay"?"idle":v.k==="repark"?"drive":v.k}"></span><div style="min-width:0"><div class="ti">${v.k==="charge"?"Charge":v.k==="idle"||v.k==="stay"?"Parked":v.k==="repark"?"Car moved a few metres":"Arrived"}</div><div class="st">${dur(v.min)}${v.k==="stay"&&v.reparks?" · "+v.reparks+" re-park"+(v.reparks>1?"s":""):""}${v.frm&&v.k==="drive"?" · from "+esc(v.frm):""}${v.parts&&v.parts.length>1?" · "+v.parts.length+" parts (Tessie recorded "+v.parts.length+" sessions)":""}</div></div><div class="nums">${v.k==="charge"?`<span>+${n0(v.kwh,1)}<small>kWh</small></span><span>${money(v.cost)}<small>cost</small></span>`:v.k==="drive"?`<span>${n0(v.km,1)}<small>km</small></span>`:v.k==="repark"?`<span>${n0(v.km*1000)}<small>m</small></span>`:v.k==="stay"?`<span>${v.reparks||0}<small>re-parks</small></span>`:`<span>${n0(v.kwh,2)}<small>kWh</small></span>`}</div></a>`+(v.parts&&v.parts.length>1?v.parts.map((x,i)=>`<a class="row nest" href="#/charge/${x.id}"><span class="t">${x.day} ${x.hm}</span><span class="k charge"></span><div style="min-width:0"><div class="st">↳ part ${i+1} · ${dur(x.min)} · ${n0(x.b0)}→${n0(x.b1)}%</div></div><div class="nums"><span>+${n0(x.kwh,1)}<small>kWh</small></span><span>${money(x.cost)}<small>cost</small></span></div></a>`).join(""):"")}).join(""):'<div class="empty">No recorded visits.</div>';
   if(p.lat==null){$("#osm").innerHTML='<div class="sub">Needs a location.</div>';return}
   osmBlock($("#osm"),p);
 }
+const OSM_FIRST="Supermarkets & Groceries";   // listed first: what the car is usually parked for
+// a name taken from OpenStreetMap ("Ampol") is made specific with the suburb and state of the spot ("Ampol, Ermington, NSW")
+const specific=(nm,p)=>nm&&p.suburb&&!nm.toLowerCase().includes(p.suburb.toLowerCase())?[nm,p.suburb,p.state].filter(Boolean).join(", "):nm;
 async function osmBlock(host,p){
-  let R=OSMG[p.key+"r"]||300,q="";
+  const ok=p.key[0]==="@"?p.key+"|"+(+p.lat).toFixed(5)+","+(+p.lon).toFixed(5):p.key;   // an unsaved spot is keyed @new / @lat,lon: the lookup is kept per position, never per key alone
+  let R=OSMG[ok+"r"]||300,q="";
   const load=async refresh=>{host.querySelector("#ol")&&(host.querySelector("#ol").innerHTML='<div class="sub">Asking OpenStreetMap…</div>');
-    try{const r=await fetch(`/api/place-osm?key=${encodeURIComponent(p.key)}&lat=${p.lat}&lon=${p.lon}&r=${R}${refresh?"&refresh=1":""}`),j=await r.json();OSMG[p.key]=j;paint()}catch(e){host.innerHTML='<div class="sub">Could not load: '+esc(e)+'</div>'}};
-  const paint=()=>{const j=OSMG[p.key]||{items:[]},its=j.items.filter(i=>!q||(i.name+" "+i.group+" "+i.category).toLowerCase().includes(q.toLowerCase())),by={};its.forEach(i=>(by[i.group]=by[i.group]||[]).push(i));
+    try{const r=await fetch(`/api/place-osm?key=${encodeURIComponent(p.key)}&lat=${p.lat}&lon=${p.lon}&r=${R}${refresh?"&refresh=1":""}`),j=await r.json();OSMG[ok]=j;paint()}catch(e){host.innerHTML='<div class="sub">Could not load: '+esc(e)+'</div>'}};
+  const paint=()=>{const j=OSMG[ok]||{items:[]},its=j.items.filter(i=>!q||(i.name+" "+i.group+" "+i.category).toLowerCase().includes(q.toLowerCase())),by={};its.forEach(i=>(by[i.group]=by[i.group]||[]).push(i));
     host.innerHTML=`<div class="bar"><select id="orad">${[100,300,500,1000].map(v=>`<option value="${v}" ${v===R?"selected":""}>within ${v} m</option>`).join("")}</select><input type="search" id="oq" placeholder="Filter these…" value="${esc(q)}"><button class="btn" id="orf">Refresh from OpenStreetMap</button><span class="sub">${its.length} places · ${esc(j.source||"")}${j.fetched?" · "+esc(String(j.fetched).slice(0,10)):""}</span></div>
-     <div id="ol">${its.length?Object.keys(by).sort().map(g=>`<div class="og"><h3>${esc(by[g][0].emoji||"")} ${esc(g)} <span>${by[g].length}</span></h3>${by[g].map(i=>`<div class="oi"><span class="on">${esc(i.name)}</span><span class="sub">${esc(i.category&&i.category!==g?i.category:"")}</span><span class="od">${i.dist_m==null?"":n0(i.dist_m)+" m"}</span>${i.lat!=null?`<a href="https://www.openstreetmap.org/?mlat=${i.lat}&mlon=${i.lon}#map=19/${i.lat}/${i.lon}" target="_blank">map</a><a href="#" data-sv="${esc(i.name)}|${i.lat}|${i.lon}|${esc(i.addr||"")}">save as place</a>`:""}</div>`).join("")}</div>`).join("")
+     <div id="ol">${its.length?Object.keys(by).sort((a,b)=>(b===OSM_FIRST)-(a===OSM_FIRST)||a.localeCompare(b)).map(g=>`<div class="og"><h3>${esc(by[g][0].emoji||"")} ${esc(g)} <span>${by[g].length}</span></h3>${by[g].map(i=>`<div class="oi"><span class="on">${esc(i.name)}</span><span class="sub">${esc(i.category&&i.category!==g?i.category:"")}</span><span class="od">${i.dist_m==null?"":n0(i.dist_m)+" m"}</span>${i.lat!=null?`<a href="https://www.openstreetmap.org/?mlat=${i.lat}&mlon=${i.lon}#map=19/${i.lat}/${i.lon}" target="_blank">map</a><a href="#" data-sv="${esc(i.name)}|${i.lat}|${i.lon}|${esc(i.addr||"")}">save as place</a>`:""}</div>`).join("")}</div>`).join("")
       :(j.error?errBox(j.error,"OpenStreetMap did not answer. This is the server being busy, not an empty street: press Refresh from OpenStreetMap to try again."):'<div class="sub">Nothing found within this radius. Try a wider radius or Refresh.</div>')}</div>`;
-    $("#orad").onchange=e=>{R=+e.target.value;OSMG[p.key+"r"]=R;load(false)};$("#oq").oninput=e=>{q=e.target.value;const pos=e.target.selectionStart;paint();const o=$("#oq");o.focus();o.setSelectionRange(pos,pos)};$("#orf").onclick=()=>load(true);
+    $("#orad").onchange=e=>{R=+e.target.value;OSMG[ok+"r"]=R;load(false)};$("#oq").oninput=e=>{q=e.target.value;const pos=e.target.selectionStart;paint();const o=$("#oq");o.focus();o.setSelectionRange(pos,pos)};$("#orf").onclick=()=>load(true);
     $$("[data-sv]",host).forEach(a=>a.onclick=ev=>{ev.preventDefault();const [name,la,lo,ad]=a.dataset.sv.split("|"),pts=[[p.lat,p.lon],...(p.pts||[])].filter(q=>q[0]!=null),far=Math.max(0,...pts.map(q=>hav(+la,+lo,q[0],q[1]))),rad=Math.min(5000,Math.max(cfg("places.save_radius_min_m"),Math.ceil((far+cfg("places.save_radius_margin_m"))/10)*10));sessionStorage.setItem("placePrefill",JSON.stringify({name,addr:ad||"",lat:+la,lon:+lo,radius_m:rad,radnote:far>0?"Radius reaches "+n0(far)+" m, to include where the car recorded stopping ("+pts.length+" recorded point"+(pts.length>1?"s":"")+" within "+cfg("places.save_radius_cluster_m")+" m)":""}));location.hash="#/place/"+encodeURIComponent("@"+(+la).toFixed(5)+","+(+lo).toFixed(5))})};
   load(false);
 }
@@ -908,11 +1119,11 @@ function scatter(host,pts,key,unit,col,dec){
   $$(".hit",host).forEach(c=>{const p=pts[+c.dataset.i];c.onmousemove=ev=>showTip(ev,`<b>${n0(p.odo)} km</b> · ${p.t.slice(0,10)}<br>${n0(p[key],dec)} ${unit}`);c.onmouseleave=hideTip});
   const d=ys[n-1]-ys[0];return `${n0(ys[0],dec)} → ${n0(ys[n-1],dec)} ${unit} (${d>=0?"+":""}${n0(d,dec)} ${unit}) across ${n} readings; trend ${m>=0?"+":""}${n0(m*10000,dec)} ${unit} per 10,000 km`;
 }
-async function pageHealth(){
-  loading();const b=await api("battery"),r=b.readings,sp=b.spec.battery||{},orig=sp.original_capacity_kwh,last=r[r.length-1],lastOdo=[...r].reverse().find(x=>x.odo!=null);
+function healthInto(host,b){          // the health charts, drawn under the Battery page's charge-level chart
+  const r=b.readings,sp=b.spec.battery||{},orig=sp.original_capacity_kwh,last=r[r.length-1],lastOdo=[...r].reverse().find(x=>x.odo!=null);
   const pts=r.filter(x=>x.odo!=null).map(x=>({odo:x.odo,cap:x.kwh,rng:x.range,t:x.t})).sort((a,c)=>a.odo-c.odo),rp=pts.filter(p=>p.rng!=null);
   const rec=r.slice(-7),avg=rec.length?rec.reduce((a,x)=>a+x.kwh,0)/rec.length:null;
-  main.innerHTML=`<h1>Battery health</h1><div class="sub">From Tessie: usable capacity and rated range against odometer, ${r.length} readings (${pts.length} with an odometer). The dashed line is the least-squares trend; single readings wobble by about ±1 kWh.</div>
+  host.innerHTML=`<h2 style="margin:26px 0 4px">Battery health</h2><div class="sub">From Tessie: usable capacity and rated range against odometer, ${r.length} readings (${pts.length} with an odometer). The dashed line is the least-squares trend; single readings wobble by about ±1 kWh.</div>
    <div class="tiles">${tile(last?n0(last.kwh,1)+" kWh":"–","latest capacity"+(last?" ("+last.t.slice(0,10)+")":""))}${tile(orig?n0(orig,1)+" kWh":"–","when new (reference)")}${tile(avg&&orig?n0(100*avg/orig,1)+"%":"–","capacity vs new (last 7 readings)")}${tile(last?n0(last.range)+" km":"–","max rated range")}${tile(lastOdo?n0(lastOdo.odo)+" km":"–","odometer")}${tile(sp.chemistry||"–","chemistry")}</div>
    <div class="card"><h2 style="margin-top:0">Usable capacity vs odometer</h2><div class="sub" id="s1"></div><div id="c1"></div></div>
    <div class="card" style="margin-top:14px"><h2 style="margin-top:0">Max rated range vs odometer</h2><div class="sub" id="s2"></div><div id="c2"></div></div>`;
@@ -920,7 +1131,8 @@ async function pageHealth(){
   if(a1)$("#s1").textContent=a1;if(a2)$("#s2").textContent=a2;
 }
 
-// ---------- Battery (Tessie's Battery page: where the charge level is now and how it moved; health is its own page)
+async function pageHealth(){location.replace("#/battery")}      // the health charts moved onto the Battery page; an old link lands there
+// ---------- Battery (Tessie's Battery page: where the charge level is now and how it moved, and below it the battery health)
 let BP={r:{p:"30"}};
 async function pageBattery(){
   loading();const act=await api("activity"),b=await api("battery"),hr=b.readings,lastH=hr[hr.length-1];
@@ -930,10 +1142,10 @@ async function pageBattery(){
   const id=act.filter(x=>x.k==="idle"&&x.t0>d30&&x.min>=30),hrs=id.reduce((a,x)=>a+x.min/60,0),drain=hrs?id.reduce((a,x)=>a+(x.kwh||0),0)*1000/hrs:null,pdrop=hrs?id.reduce((a,x)=>a+Math.max(0,(x.b0||0)-(x.b1||0)),0)/(hrs/24):null;
   const ch=act.filter(x=>x.k==="charge"&&x.b1!=null).slice(0,20).map(x=>x.b1).sort((a,c)=>a-c),lim=ch.length?ch[Math.floor(ch.length/2)]:null,lc=act.find(x=>x.k==="charge"&&(x.kwh||0)>=0.5);
   const lo=seg.filter(s=>s.t0>d30).reduce((a,s)=>Math.min(a,s.b0,s.b1),100);
-  main.innerHTML=`<h1>Battery</h1><div class="sub">Charge level over time from your drives, charges and parked periods. As at ${new Date(now.t1*1000).toLocaleString("en-AU",{dateStyle:"medium",timeStyle:"short"})} (the end of the latest period), so it is the last known level, not live. Capacity trend and range over the years are on <a href="#/health">Battery health</a>.</div>
+  main.innerHTML=`<h1>Battery</h1><div class="sub">Charge level over time from your drives, charges and parked periods. As at ${new Date(now.t1*1000).toLocaleString("en-AU",{dateStyle:"medium",timeStyle:"short"})} (the end of the latest period), so it is the last known level, not live. Below it: how the capacity and range have changed over the years.</div>
    <div class="tiles">${tile(n0(now.b1)+"%","battery level")}${tile(rng?n0(rng*now.b1/100)+" km":"–","rated range (estimated)")}${tile(cap?n0(cap*now.b1/100,1)+" kWh":"–","energy in the pack (estimated)")}${tile(drain!=null?n0(drain)+" Wh/h":"–","parked drain, last 30 days")}${tile(pdrop!=null?n0(pdrop,1)+"% / day":"–","parked loss, last 30 days")}${tile(lim!=null?n0(lim)+"%":"–","usual charge target (median of last 20)")}${tile(lc?n0(lc.b0)+"% → "+n0(lc.b1)+"%":"–","last charge"+(lc?" ("+lc.day+")":""))}${tile(lo<100?n0(lo)+"%":"–","lowest level, last 30 days")}</div>
    <div class="bar"><span id="rg"></span><span class="sub"><b style="color:#16a34a">━</b> charging &nbsp; <b style="color:#3b82f6">━</b> driving &nbsp; <b style="color:#94a3b8">━</b> parked</span></div>
-   <div class="card"><div id="bc"></div></div>`;
+   <div class="card"><div id="bc"></div></div><div id="bh"></div>`;
   const col={charge:"#16a34a",drive:"#3b82f6",idle:"#94a3b8"},kn={charge:"Charging",drive:"Driving",idle:"Parked"};
   const draw=()=>{const ss=seg.filter(s=>inRange(s.x,BP.r)),cut=0;if(!ss.length){$("#bc").innerHTML='<div class="sub">No periods in this range.</div>';return}
     const W=900,H=320,L=44,R=14,T=12,B=34,x0=Math.max(cut,ss[0].t0),x1=ss[ss.length-1].t1,X=t=>L+(t-x0)/((x1-x0)||1)*(W-L-R),Y=v=>T+(100-v)/100*(H-T-B);
@@ -944,6 +1156,7 @@ async function pageBattery(){
     $("#bc").innerHTML=`<svg viewBox="0 0 ${W} ${H}" style="width:100%;height:auto;display:block">${g}${path}${lines}</svg>`;
     $$(".hit",$("#bc")).forEach(l=>{const s=ss[+l.dataset.i],x=s.x;l.style.cursor="pointer";l.onmousemove=ev=>showTip(ev,`<b>${kn[s.k]}</b> · ${x.day} ${x.hm||""}<br>${n0(s.b0)}% → ${n0(s.b1)}%${x.min?" in "+dur(x.min):""}<br>${esc(s.k==="drive"?driveTitle(x):place(x))}`);l.onmouseleave=hideTip;l.onclick=()=>{location.hash="#/"+(s.k==="idle"?"parked":s.k+"s")+"/"+encodeURIComponent(x.id)}})};
   rangePicker($("#rg"),BP.r,daysOf(seg.map(s=>s.x)),draw);draw();
+  healthInto($("#bh"),b);
 }
 
 // ---------- Analytics
@@ -1001,10 +1214,16 @@ const VT=window.IntersectionObserver?new IntersectionObserver(es=>es.forEach(e=>
 const vthumb=(url,t)=>`<video class="vt" muted playsinline preload="metadata" data-src="${esc(url)}" data-t="${t||2}" onerror="this.outerHTML='<div class=\\'noimg\\'></div>'"></video>`;
 const lazyThumbs=host=>$$("video.vt",host).forEach(v=>{if(VT)VT.observe(v);else v.src=v.dataset.src+"#t="+(v.dataset.t||2)});
 // ---------- TeslaCam: the clips on any connected drive, and one continuous timeline built from the files alone
-let TCS={role:null,kind:"timeline",q:"",r:{p:"all"},src:{sentry:1,saved:1,recent:1}},TCPOLL=null,TLOFF=null;
-const tcGet=async p=>{const r=await fetch("/api/"+p);if(!r.ok)throw new Error(p+": "+r.status);return r.json()};
+let TCS={role:null,kind:"clips",q:"",r:{p:"all"},src:{sentry:1,saved:1,recent:1}},TLOFF=null;
+const SWRSEEN=new Set(),FRESH={};
+const tcGet=async p=>{if(p!=="drivelist"&&p!=="clips")return fetchJ(p);       // these two are remembered; the first read in a visit comes from the copy, later reads (polling, Refresh) are fresh
+  if(FRESH[p]){const v=FRESH[p];delete FRESH[p];return v}
+  if(SWRSEEN.has(p))return fetchJ(p);SWRSEEN.add(p);
+  const k=await mkey("tc/"+p),old=await IDB.get(k);
+  if(old===undefined){const n=await fetchJ(p);IDB.set(k,n);return n}
+  fetchJ(p).then(n=>{IDB.set(k,n);if(!same(n,old)){FRESH[p]=n;redrawQuietly()}}).catch(()=>{});return old};
 const tcPost=async(p,b)=>(await fetch("/api/"+p,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(b)})).json();
-const TCF={sentry:"SentryClips",saved:"SavedClips"},TCK={timeline:"Timeline",clips:"Clips"},TCSRC={sentry:"Sentry",saved:"Saved",recent:"Recent"};
+const TCF={sentry:"SentryClips",saved:"SavedClips"},TCSRC={sentry:"Sentry",saved:"Saved",recent:"Recent"};
 const isoMs=t=>Date.parse(t),mins=(a,b)=>Math.round((isoMs(b)-isoMs(a))/60000);
 const clockHM=t=>t.slice(11,16);
 // the saved place (or nothing) a position is inside
@@ -1012,10 +1231,10 @@ function nameAt(places,p){if(!p||p[0]==null)return "";let best="",bd=1e9;for(con
 // ---------- the TeslaCam timeline: for each day a map on the left, the day's drives, Sentry events and parked spells (tick boxes) on the right
 // Ticking a row shows it on that day's map: a drive as its route (speed gradient or who was driving), a Sentry event as a red dot, a parked spell as a 🅿️.
 // A drive row still opens the drive when clicked; a Sentry row plays its clips. A drive shorter than the re-park limits (settings app.drives) counts as parked.
-const TLR={},TLF={},TLS={on:{},mode:"v"};let TLQ=Promise.resolve();
+const TLR={},TLF={},TLS={on:{},sel:"none",range:null,mode:"v"};let TLQ=Promise.resolve();      // sel: what a day starts with (none / drives / all), kept while moving between days; on: rows ticked or unticked by hand
 function tlClass(v){
   const rp=v.kind==="drive"&&v.km<cfg("drives.repark_max_km")&&(v.t1-v.t0)/60<cfg("drives.repark_max_minutes");
-  return v.kind==="drive"&&!rp?"drive":v.kind==="sentry"?"sentry":(v.kind==="parked"||v.kind==="stopped"||rp)?"parked":v.kind==="recording"?"rec":null}
+  return v.kind==="drive"&&!rp?"drive":v.kind==="charge"?"charge":v.kind==="sentry"?"sentry":(v.kind==="parked"||v.kind==="stopped"||rp)?"parked":v.kind==="recording"?"rec":null}
 // where a parked spell was: its own position, else where the drive before it ended (or the next one began)
 function tlPos(items){
   const o=items.slice().sort((a,b)=>a.t0-b.t0);
@@ -1023,9 +1242,12 @@ function tlPos(items){
     for(let k=i-1;!p&&k>=0&&i-k<4;k--)if(o[k].p1&&o[k].p1[0]!=null)p=o[k].p1;
     for(let k=i+1;!p&&k<o.length&&k-i<4;k++)if(o[k].p0&&o[k].p0[0]!=null)p=o[k].p0;
     v._pos=p})}
-async function tlRoute(role,id){
+async function tlRoute(role,id,v){
   if(TLR[id]!==undefined)return TLR[id];
-  try{const d=await tcGet("teslacam/"+role+"/seg/"+encodeURIComponent(id)+"?budget=0");TLR[id]=d&&d.series?{S:d.series,start:d.item.start,u0:d.item.t0,lo:d.item.lo}:null;if(d&&d.pending)tlFill(role,id,d.pending)}catch(e){TLR[id]=null}
+  try{
+    if(role==="auto"&&v){      // the Drives list: the telemetry kept for the drive's time window (Tessie's, or the dashcam's own for a dashcam-only drive); nothing is read from a drive
+      const d=await tcGet("teslacam/auto/window?t0="+v.t0+"&t1="+v.t1+(v.lo!=null?"&lo="+v.lo:"")+(v.src&&v.src!=="cam"?"&id="+encodeURIComponent(v.id):"")+"&budget=0");TLR[id]=d&&d.series?{S:d.series,start:d.item.start,u0:d.item.t0,lo:d.item.lo}:null;return TLR[id]}
+    const d=await tcGet("teslacam/"+role+"/seg/"+encodeURIComponent(id)+"?budget=0");TLR[id]=d&&d.series?{S:d.series,start:d.item.start,u0:d.item.t0,lo:d.item.lo}:null;if(d&&d.pending)tlFill(role,id,d.pending)}catch(e){TLR[id]=null}
   return TLR[id]}
 // minutes of a drive not read yet leave holes in its line: read them in the background, one drive at a time, and tell the maps after each pass
 function tlFill(role,id,left){
@@ -1045,7 +1267,7 @@ function dayMap(el,role,hooks){
         if(prev>=0&&i-prev<=Math.max(5*step,600)){const a=pts[pts.length-2];F.push({type:"Feature",geometry:{type:"LineString",coordinates:[[a.x,a.y],[q.x,q.y]]},properties:{v:q.v,ap:q.ap,id:r.id}})}prev=i}});
     m.getSource("rt").setData({type:"FeatureCollection",features:F});
     mk.forEach(x=>x.remove());mk=[];
-    marks.forEach(k=>{if(!k.pos)return;const e=document.createElement("div");e.className="mk "+k.type;e.title=k.title;if(k.type==="parked")e.textContent="🅿️";e.onclick=()=>hooks.pick&&hooks.pick(k.id);
+    marks.forEach(k=>{if(!k.pos)return;const e=document.createElement("div");e.className="mk "+k.type;e.title=k.title;if(k.type==="parked")e.textContent="🅿️";if(k.type==="charge")e.textContent="⚡";e.onclick=()=>hooks.pick&&hooks.pick(k.id);
       mk.push(new maplibregl.Marker({element:e,anchor:"center"}).setLngLat([k.pos[1],k.pos[0]]).addTo(m));bounds.extend([k.pos[1],k.pos[0]]);any=true});
     hint.style.display=any?"none":"";if(!any)bounds=null;if(refit)fit()};
   m.on("load",()=>{ready=true;m.addSource("rt",{type:"geojson",tolerance:0,data:{type:"FeatureCollection",features:[]}});
@@ -1063,17 +1285,55 @@ function dayMap(el,role,hooks){
 function tlDays(host,items,o){
   items.forEach(v=>v._c=tlClass(v));tlPos(items);
   const rs=items.filter(v=>v._c),byDay={};
+  // Sentry events during a park belong to that park: one row for the park, with the events counted in it (and listed on click), not a row for each
+  let parks=rs.filter(v=>v._c==="parked").sort((a,b)=>a.t0-b.t0);
+  rs.forEach(v=>{v._sent=null;v._in=null;v._rec=null;v._chg=null});
+  // parks the dashcam timeline cut around a Sentry event are one stay: consecutive parks at one place with no drive or charge between them are joined (the first keeps the row)
+  {const hard=rs.filter(v=>v._c==="drive"||v._c==="charge"),keep=[];let a=null;
+    parks.forEach(b=>{const pa=a&&(a.p1||a.p0||a._pos),pb=b.p0||b.p1||b._pos,same=!pa||!pb||pa[0]==null||pb[0]==null||hav(pa[0],pa[1],pb[0],pb[1])<=150;
+      if(a&&same&&b.t0-a.t1<=3600&&!hard.some(h=>h.t1>a.t1&&h.t0<b.t0)){a.t1=Math.max(a.t1,b.t1);if(b.end>a.end)a.end=b.end;if(b.ongoing)a.ongoing=true;b._in=a.id}
+      else{keep.push(b);a=b}});parks=keep}
+  // a charge during a park belongs to that park: one row for the stay (parked, charged, parked again) with its charges counted on the row's button;
+  // a charge with no park beside it keeps its own row
+  {const chs=rs.filter(v=>v._c==="charge").sort((a,b)=>a.t0-b.t0),pp=k=>k.p0||k.p1||k._pos,cp=c=>c.p0||c.p1||c._pos,
+     hop=(t0,t1)=>rs.some(d=>d._c==="drive"&&d.t0>=t0&&d.t1<=t1),   // a drive between them: the car left, so they are not one stay
+     same=(k,c)=>{const a=pp(k),b=cp(c);return !a||!b||a[0]==null||b[0]==null||hav(a[0],a[1],b[0],b[1])<=300};
+    chs.forEach(c=>{const at=parks.filter(k=>same(k,c)),before=at.filter(k=>k.t0<=c.t0+60&&k.t1>=c.t0-600&&!hop(k.t1-30,c.t0+30)).sort((a,b)=>b.t1-a.t1)[0],
+        after=at.filter(k=>k!==before&&k.t0>=c.t0-60&&k.t0<=c.t1+600&&k.t1>=c.t1-60&&!hop(c.t1-30,k.t0+30)).sort((a,b)=>a.t0-b.t0)[0],host=before||after;
+      if(!host)return;
+      host.t0=Math.min(host.t0,c.t0);host.t1=Math.max(host.t1,c.t1);if(c.start<host.start)host.start=c.start;if(c.end>host.end)host.end=c.end;
+      if(before&&after){host.t1=Math.max(host.t1,after.t1);if(after.end>host.end)host.end=after.end;after._in=host.id;parks=parks.filter(k=>k!==after)}
+      (host._chg=host._chg||[]).push(c);c._in=host.id})}
+  // an event belongs to the park its trigger fell in (it can start a few minutes before the park does: the car was still going into Park); the clock text of an item is local, so the trigger is put on the epoch through the item's own offset
+  const trigAt=v=>{if(!v.trig)return v.t0;const off=v.t0-Date.parse(v.start+"Z")/1000;return Date.parse(v.trig+"Z")/1000+off};
+  const inPark=(t,k)=>k.t0-60<=t&&t<=(k.ongoing?Infinity:k.t1+60);
+  rs.forEach(v=>{if(v._c!=="sentry")return;const p=parks.find(k=>inPark(trigAt(v),k))||parks.find(k=>inPark(v.t0,k));if(p){(p._sent=p._sent||[]).push(v);v._in=p.id}});
+  // an event with no park around it (Tessie knows nothing of that time) still gets no line of its own: events a half hour apart or less are listed under one parked row made from them
+  {const loose=rs.filter(v=>v._c==="sentry"&&!v._in).sort((a,b)=>a.t0-b.t0);let g=null;
+    loose.forEach(v=>{if(g&&v.t0-g._last<=1800){g._sent.push(v);g._last=Math.max(g._last,v.t1);g.t1=g._last;g.end=v.end>g.end?v.end:g.end;v._in=g.id}
+      else{g={id:"sp:"+v.id,kind:"parked",_c:"parked",_syn:true,src:null,start:v.start,end:v.end,t0:v.t0,t1:v.t1,_last:v.t1,p0:v.p0||null,p1:null,_pos:v._pos||v.p0||null,city:v.city,street:v.street,_sent:[v],lo:v.lo};rs.push(g);parks.push(g);v._in=g.id}});
+    parks.sort((a,b)=>a.t0-b.t0)}
+  // dashcam minutes that lie inside a park (the car woke for a Sentry event and recorded, nothing moved) are part of that park
+  rs.forEach(v=>{if(v.kind!=="recording"&&v.kind!=="stopped")return;const p=parks.find(k=>k!==v&&k.kind==="parked"&&inPark(v.t0+30,k)&&inPark(v.t1-30,k));if(p){(p._rec=p._rec||[]).push(v);v._in=p.id}});
+  parks.forEach(p=>{if(p._sent)p._sent.sort((a,b)=>a.t0-b.t0)});
   const dd=(a,b)=>Math.round((Date.parse(b+"T00:00:00Z")-Date.parse(a+"T00:00:00Z"))/864e5),plus=(d,n)=>new Date(Date.parse(d+"T00:00:00Z")+n*864e5).toISOString().slice(0,10);
   // an event that crosses midnight is listed on every day it touches (whole, with a note), and is one and the same tick on all of them
-  rs.forEach(v=>{v._d0=v.start.slice(0,10);v._d1=v._c==="sentry"||!v.end||v.end<v.start?v._d0:v.end.slice(0,10);for(let n=0;n<=Math.min(dd(v._d0,v._d1),6);n++){const d=plus(v._d0,n);(byDay[d]=byDay[d]||[]).push(v)}});
-  if(TLS.dayDesc===undefined)TLS.dayDesc=cfg("teslacam.days_newest_first")!==false;if(TLS.rowDesc===undefined)TLS.rowDesc=cfg("teslacam.rows_newest_first")!==false;
-  const allDays=Object.keys(byDay).filter(d=>!o.dayOk||o.dayOk(d)).sort().reverse(),cur=TLS.day&&allDays.includes(TLS.day)?TLS.day:allDays[0],days=cur?[cur]:[],role=o.role,places=o.places;TLS.day=cur;
+  rs.filter(v=>!v._in).forEach(v=>{v._d0=v.start.slice(0,10);v._d1=v._c==="sentry"||!v.end||v.end<v.start?v._d0:v.end.slice(0,10);for(let n=0;n<=Math.min(dd(v._d0,v._d1),400);n++){const d=plus(v._d0,n);(byDay[d]=byDay[d]||[]).push(v)}});
+  if(TLS.wide===undefined){try{TLS.wide=localStorage.getItem("tlWide")==="1"}catch(e){TLS.wide=false}}if(TLS.dayDesc===undefined)TLS.dayDesc=cfg("teslacam.days_newest_first")!==false;if(TLS.rowDesc===undefined)TLS.rowDesc=cfg("teslacam.rows_newest_first")!==false;
+  const allDays=Object.keys(byDay).filter(d=>!o.dayOk||o.dayOk(d)).sort().reverse(),cur=TLS.day&&allDays.includes(TLS.day)?TLS.day:allDays[0],role=o.role,places=o.places;TLS.day=cur;
   // one day at a time: a picker (newest day first by default) with arrows to the earlier / later day
-  const asc=allDays.slice().reverse(),ci=asc.indexOf(cur),opts=(TLS.dayDesc?allDays:asc).map(d=>`<option value="${d}" ${d===cur?"selected":""}>${dayName(d)} (${byDay[d].length})</option>`).join("");
+  const asc=allDays.slice().reverse(),MAXD=31;
+  // a range of dates (TLS.range) shows its days one under the other; otherwise the one day
+  let selAsc=TLS.range?asc.filter(d=>d>=TLS.range[0]&&d<=TLS.range[1]):[];if(!selAsc.length){selAsc=cur?[cur]:[];TLS.range=null}
+  const cut=selAsc.length>MAXD;if(cut)selAsc=selAsc.slice(0,MAXD);
+  const days=TLS.dayDesc?selAsc.slice().reverse():selAsc,isRange=selAsc.length>1||!!TLS.range;
+  const i0=asc.indexOf(selAsc[0]),i1=asc.indexOf(selAsc[selAsc.length-1]),nn=selAsc.length||1,prevW=asc.slice(Math.max(0,i0-nn),Math.max(0,i0)),nextW=asc.slice(i1+1,i1+1+nn);
+  const win=w=>w.length?w[0]+","+w[w.length-1]:"",nItems=days.reduce((a,d)=>a+byDay[d].length,0);
   const key=(v,d)=>d>v._d0?"00:00:00":hms(v._c==="sentry"?(v.trig||v.start):v.start),rowsOf=d=>byDay[d].slice().sort((a,b)=>{const x=key(a,d),y=key(b,d);return(x<y?-1:x>y?1:a.t0-b.t0)*(TLS.rowDesc?-1:1)});
-  rs.forEach(v=>{if(TLS.on[v.id]===undefined)TLS.on[v.id]=v._c==="drive"});
+  const canTickV=v=>v._c==="drive"||!!v._pos;
+  const isOn=v=>TLS.on[v.id]!==undefined?TLS.on[v.id]:(TLS.sel==="all"?canTickV(v):TLS.sel==="drives"&&v._c==="drive");        // a hand choice wins; else what the day starts with
   const place=v=>nameAt(places,v.p0)||nameAt(places,v.p1)||nameAt(places,v._pos);
-  const tm=v=>clockHM(v.start)+" – "+clockHM(v.end),mins=v=>Math.max(1,Math.round((v.t1-v.t0)/60));
+  const tm=v=>clockHM(v.start)+" – "+(v.ongoing?"now":clockHM(v.end)),mins=v=>Math.max(1,Math.round(((v.ongoing?Math.max(v.t1,Date.now()/1000):v.t1)-v.t0)/60));
   // where things were: a saved place first; else what Tessie's own record of the drive says; else (Sentry) the city and street; a drive's ends are where the stopped spells next to it were
   const TS=(o.tess||[]).map(x=>({s:x.t0,e:x.t0+x.min*60,frm:x.frm||"",to:x.to||""})).sort((a,b)=>a.s-b.s),WIN=20*60;       // UTC seconds
   const tOver=v=>{const s0=v.t0,e0=v.t1;let b=null,bo=0;for(const t of TS){const ov=Math.min(e0,t.e)-Math.max(s0,t.s);if(ov>bo){bo=ov;b=t}}return b};
@@ -1089,53 +1349,165 @@ function tlDays(host,items,o){
   const chEnd=v=>chPick(CH.find(c=>chTo.get(c)===v.id&&chNear(c,v.p1)),v.p1);
   const chStart=v=>chPick(CH.find(c=>chFr.get(c)===v.id&&chNear(c,v.p0)),v.p0);
   const stayAt=v=>{if(v._c==="parked"){const cn=chStay(v);if(cn)return cn}const n=nameAt(places,v.p0)||nameAt(places,v.p1)||nameAt(places,v._pos);if(n)return n;
-    const cs=[v.city,v.street].filter(Boolean).join(" · ");if(v._c==="sentry"&&cs)return cs;
+    const cs=[v.city,v.street].filter(Boolean).join(" · ");if((v._c==="sentry"||v._syn)&&cs)return cs;
     const s0=v.t0,e0=v.t1,a=TS.filter(t=>t.to&&Math.abs(t.e-s0)<=WIN).sort((x,y)=>Math.abs(x.e-s0)-Math.abs(y.e-s0))[0];if(a)return a.to;
     const z=TS.filter(t=>t.frm&&Math.abs(t.s-e0)<=WIN).sort((x,y)=>Math.abs(x.s-e0)-Math.abs(y.s-e0))[0];return z?z.frm:cs};
   const chron=rs.slice().sort((a,b)=>a.t0-b.t0),stays=chron.filter(v=>v._c==="parked"||v._c==="sentry");
   const around=(v,end)=>{const t=end?v.t1:v.t0;let best=null,bd=WIN;for(const k of stays){const d=end?Math.abs(k.t0-t):Math.abs(k.t1-t);if(d<bd){const n=stayAt(k);if(n){bd=d;best=n}}}return best||""};
   const ends=v=>{const t=tOver(v);return[chStart(v)||nameAt(places,v.p0)||(t&&t.frm)||around(v,false)||"Unknown",chEnd(v)||nameAt(places,v.p1)||(t&&t.to)||around(v,true)||"Unknown"]};
-  const ico=c=>c==="drive"?"🚗":c==="parked"?"🅿️":c==="sentry"?'<i class="hal" title="Sentry"></i>':"🎬";
-  const row=(v,d)=>{const c=v._c,id=esc(v.id),canTick=c==="drive"||!!v._pos,chk=c==="rec"?"<span></span>":`<label class="ck"><input type="checkbox" data-id="${id}" ${TLS.on[v.id]?"checked":""} ${canTick?"":"disabled"} title="${canTick?"Show on the map":"No position known"}"></label>`;
-    const when=c==="sentry"?hms(v.trig||v.start).slice(0,5):tm(v),e2=c==="drive"?ends(v):null;
-    const where=c==="drive"?`${esc(e2[0])} <span class="ar">→</span> ${esc(e2[1])}`:c==="rec"?`Recording · ${v.n} clip${v.n>1?"s":""} <span class="sub">telemetry not read yet</span>`:esc(stayAt(v)||"Unknown location");
-    const go=c==="drive"?`#/teslacam/${role}/${encodeURIComponent(v.id)}`:c==="sentry"?`#/teslacam/${role}/sentry-${encodeURIComponent(v.ev)}`:c==="rec"?`#/teslacam/${role}/${encodeURIComponent(v.id)}`:"";
-    return `<div class="tr ${c}" data-id="${id}">${chk}<span class="tm">${when}</span><span class="ti">${ico(c)}</span><span class="tw">${where}</span><span class="td">${dur(mins(v))}</span><span class="to">${go?`<button class="btn sm" data-go="${go}">${c==="rec"?"Read":"Open"} ▸</button>`:""}</span></div>`};
-  host.innerHTML=days.length?`<div class="bar" style="margin:0 0 4px"><button class="chip ${TLS.mode==="v"?"on":""}" data-tm="v">Speed</button><button class="chip ${TLS.mode==="ap"?"on":""}" data-tm="ap">Autopilot / FSD</button><button class="chip" data-so="days" style="margin-left:10px">${TLS.dayDesc?"Days: newest first":"Days: oldest first"}</button><button class="chip" data-so="rows">${TLS.rowDesc?"Within a day: 23:59 → 00:00":"Within a day: 00:00 → 23:59"}</button><span class="sub" id="tlleg"></span><span class="sub" style="margin-left:auto;cursor:help" title="Tick a row to show it on the map. Click a drive to open it, a Sentry event to watch it. Hover a route for the moment under the pointer; click it to open the drive. Short drives under the re-park limits count as parked. An event that runs past midnight is shown whole on both days, and ticking it ticks it on both. Click a row to find it on the map; Open shows a drive or Sentry event in full.">ⓘ how this works</span></div>`
-    +days.map(d=>`<div class="dpick"><button class="chip" data-nav="${ci>0?asc[ci-1]:""}" ${ci>0?"":"disabled"} title="Earlier day">‹</button><select id="dsel">${opts}</select><button class="chip" data-nav="${ci<asc.length-1?asc[ci+1]:""}" ${ci<asc.length-1?"":"disabled"} title="Later day">›</button><small>${byDay[d].length} item${byDay[d].length>1?"s":""}</small><label class="dall"><input type="checkbox" data-day="${d}"> show all</label></div><div class="tday" data-day="${d}"><div class="tl2"><div class="tr trh"><span></span><span>Time</span><span></span><span>Where</span><span class="td">Duration</span><span></span></div>${rowsOf(d).map(v=>row(v,d)).join("")}</div><div class="tmap"></div></div>`).join("")
+  // a parked row says what the spot is: where a charge happened during the park, the charge ("Supercharger" / "Charger", opens the charging session); a saved place (opens it); else a button to save the spot.
+  // Being parked at a charger is not a charge, so a charger's listing is never offered from position alone
+  const CA=(o.chg||[]).filter(c=>c.t0!=null);
+  const near=(list,p,f)=>{let b=null,bd=1e9;for(const x of list){if(x.lat==null||Math.abs(x.lat-p[0])>.003)continue;const d=hav(p[0],p[1],x.lat,x.lon);if(d<=f(x)&&d<=bd){bd=d;b=x}}return b};
+  const placeBtn=v=>{if(v._c!=="parked"||(v.kind==="drive"&&!v._chg)||!o.sc)return "";       // a re-park (a tiny drive shown as a park) gets no place button
+    const p=v.p0||v.p1||v._pos;if(!p||p[0]==null)return "";
+    const cl=(v._chg||[]).slice().sort((a,b)=>a.t0-b.t0),sv=near(places,p,x=>Math.max(x.radius||100,60));
+    // the charges of this stay (Tessie's sessions): one opens it; several open the first, with arrows on the charge page to go through them
+    const ch1=cl.length?null:CA.find(c=>c.t0<=v.t1+300&&(c.t1||c.t0)>=v.t0-300&&v.t0<chLeft(c)&&(c.lat!=null?chNear(c,p):c.t0<=v.t1&&(c.t1||c.t0)>=v.t0));
+    const chB=cl.length?`<button class="btn sm" data-go="#/charge/${encodeURIComponent(cl[0].id)}"${cl.length>1?` data-cs="${esc(JSON.stringify({ids:cl.map(c=>c.id),label:"this park"}))}"`:""} title="${esc(cl.length>1?cl.length+" charges here, "+n0(cl.reduce((a,c)=>a+(c.kwh||0),0),1)+" kWh: the first opens, arrows go through them":(cl[0].place||"Charge")+" · +"+n0(cl[0].kwh,1)+" kWh")}">${cl.length>1?"Charges":"Charge"}</button>`
+      :ch1?`<button class="btn sm" data-go="#/charge/${encodeURIComponent(ch1.id)}" title="${esc((ch1.place||"Charge")+" · +"+n0(ch1.kwh,1)+" kWh")}">Charge</button>`:"";
+    return chB+(sv?`<button class="btn sm" data-pl="${esc(sv.key)}" title="${esc(sv.name)}">Saved</button>`:chB?"":`<button class="btn sm" data-save="${esc(JSON.stringify({name:stayAt(v)||"",lat:+p[0].toFixed(6),lon:+p[1].toFixed(6),radius_m:150}))}" title="Save this spot as a place">Save</button>`)};
+  // a charge row names what kind of place it is and opens it: a Supercharger or other charger's listing, or the saved place (the charge itself opens with Open)
+  const chargeBtn=v=>{const k=v.pkey||"";if(!k||k[0]==="@")return "";const t=k.startsWith("s:")?"Supercharger":k.startsWith("c:")?"Charger":k.startsWith("p:")?"Saved":"";
+    return t?`<button class="btn sm" data-go="#/place/${encodeURIComponent(k)}" title="${esc(v.place||"")}">${t}</button>`:""};
+  const ico=c=>c==="drive"?"":c==="charge"?"⚡":c==="parked"?"🅿️":c==="sentry"?'<i class="hal" title="Sentry"></i>':"🎬";
+  const wideCells=v=>{const c=v._c,cell=t=>`<span class="td xw">${t}</span>`,dash="";
+    if(c==="drive")return cell(n0(v.km,1)+" km")+cell(v.kwh!=null?n0(v.kwh,1)+" kWh":dash)+cell(v.km&&(v.whkm||v.kwh)?EF(v.whkm||v.kwh*1000/v.km)+" "+EFU():dash)+cell(v.b0!=null?n0(v.b0)+"→"+n0(v.b1)+"%":dash)+cell(v.km&&v.ap!=null?n0(100*v.ap/v.km)+"%":dash)+cell(v.vmax!=null?n0(v.vmax)+" km/h":dash);
+    if(c==="charge")return cell(dash)+cell("+"+n0(v.kwh,1)+" kWh")+cell(dash)+cell(v.b0!=null?n0(v.b0)+"→"+n0(v.b1)+"%":dash)+cell(dash)+cell(dash);
+    return cell(dash).repeat(6)};
+  // a park that runs over several days is one park, shown on each day as that day's part of it: 9:22–23:59 on the first, 00:00–23:59 (24 h) on the ones between, 00:00 to the end on the last
+  const slice=(v,d)=>{if(v._c!=="parked"||!(v._d1>v._d0))return null;const f=d===v._d0,l=d===v._d1,mn=t=>(+t.slice(11,13))*60+(+t.slice(14,16)),a=f?mn(v.start):0,e=l&&v.end?mn(v.end):1440;return{when:(f?clockHM(v.start):"00:00")+" – "+(l?(v.ongoing?"now":clockHM(v.end)):"23:59"),min:Math.max(1,e-a),sent:(v._sent||[]).filter(x=>String(x.trig||x.start).slice(0,10)===d),rec:(v._rec||[]).filter(x=>String(x.start).slice(0,10)===d)}};
+  const row=(v,d)=>{const sl=slice(v,d),rcs=sl?sl.rec:(v._rec||[]),sns=sl?sl.sent:(v._sent||[]),c=v._c,id=esc(v.id),canTick=c==="drive"||!!v._pos,chk=c==="rec"?"<span></span>":`<label class="ck"><input type="checkbox" data-id="${id}" ${isOn(v)?"checked":""} ${canTick?"":"disabled"} title="${canTick?"Show on the map":"No position known"}"></label>`;
+    const when=c==="sentry"?hms(v.trig||v.start).slice(0,5):sl?sl.when:tm(v),e2=c==="drive"?ends(v):null;
+    const foot=v.cam&&v.cam.length?` <span class="sub" title="Dashcam footage covers ${Math.round(v.cov*100)}% of this drive">🎬${v.cov<0.9?" "+Math.round(v.cov*100)+"%":""}</span>`:"",only=v.src==="cam"?' <span class="sub" title="The dashcam saw this drive; Tessie has no record of it (yet)">dashcam only</span>':"";
+    const where=c==="drive"?`${esc(e2[0])} <span class="ar">→</span> ${esc(e2[1])}${v.short?' <span class="sub" title="The car moved less than 200 m before going into Park again">short move</span>':""}${foot}${only}`:c==="charge"?`${esc(v.place||"Charge")} <span class="sub">+${n0(v.kwh,1)} kWh · ${n0(v.b0)}→${n0(v.b1)}%</span>`:c==="rec"?`Recording · ${v.n} clip${v.n>1?"s":""} <span class="sub">telemetry not read yet</span>`:esc(stayAt(v)||"Unknown location")+(rcs.length?` <span class="sub" title="The dashcam recorded ${rcs.length} minute${rcs.length>1?"s":""} while the car was parked here">🎬 ${rcs.length} min</span>`:"")+(sns.length?` <span class="pill sn" data-sn="${id}" role="button" tabindex="0" title="Sentry events during this park: click to list">${sns.length} Sentry ▾</span>`:"");
+    const go=o.go?o.go(v):c==="drive"?`#/teslacam/${role}/${encodeURIComponent(v.id)}`:c==="sentry"?`#/teslacam/${role}/sentry-${encodeURIComponent(v.ev)}`:c==="rec"?`#/teslacam/${role}/${encodeURIComponent(v.id)}`:"";
+    return `<div class="tr ${c}" data-id="${id}">${chk}<span class="tm">${when}</span><span class="ti"${c==="parked"&&(v._chg||[]).length?' title="Parked and charged"':""}>${c==="parked"&&(v._chg||[]).length?"⚡":ico(c)}</span><span class="tw">${where}</span><span class="td">${dur(sl?sl.min:mins(v))}</span>${TLS.wide?wideCells(v):""}<span class="to">${c==="charge"?chargeBtn(v):placeBtn(v)}${go?`<button class="btn sm" data-go="${go}">${c==="rec"?"Read":"Open"} ▸</button>`:""}</span></div>`+(sns.length?`<div class="sentl" data-for="${id}" hidden>${sns.map(s=>`<div class="tr sb"><span></span><span class="tm">${esc(hms(s.trig||s.start).slice(0,5))}</span><span class="ti"><i class="hal" title="Sentry"></i></span><span class="tw">${esc(s.reason?reason(s.reason):"Sentry event")}</span><span class="td">${n0(s.n)} min</span>${TLS.wide?'<span class="td xw"></span>'.repeat(6):""}<span class="to"><button class="btn sm" data-go="#/teslacam/${role}/sentry-${encodeURIComponent(s.ev)}">Open ▸</button></span></div>`).join("")}</div>`:"")};
+  host.innerHTML=days.length?`<div class="bar" style="margin:0 0 4px"><button class="chip ${TLS.mode==="v"?"on":""}" data-tm="v">Speed</button><button class="chip ${TLS.mode==="ap"?"on":""}" data-tm="ap">Autopilot / FSD</button><span class="sub" id="tlleg"></span><span class="sub" style="margin-left:auto;cursor:help" title="Tick a row to show it on the map. Click a drive to open it, a Sentry event to watch it. Hover a route for the moment under the pointer; click it to open the drive. Short drives under the re-park limits count as parked. An event that runs past midnight is shown whole on both days, and ticking it ticks it on both. Click a row to find it on the map; Open shows a drive or Sentry event in full.">ⓘ how this works</span></div>`
+    +days.map((d,di)=>(di?`<div class="dhd">${esc(dayName(d))}<small>${byDay[d].length} item${byDay[d].length>1?"s":""}</small></div>`:`<div class="dpick"><button class="chip" data-nav="${win(prevW)}" ${prevW.length?"":"disabled"} title="${isRange?"Earlier days":"Earlier day"}">‹</button><span id="dsel"></span><button class="chip" data-nav="${win(nextW)}" ${nextW.length?"":"disabled"} title="${isRange?"Later days":"Later day"}">›</button><small>${nItems} item${nItems>1?"s":""}${cut?" · first "+MAXD+" days of the range":""}</small><button class="chip ico ${TLS.wide?"on":""}" data-so="wide" aria-label="${TLS.wide?"Narrow table":"Wide table"}" title="${TLS.wide?"Narrow table":"Wide table: full width with distance, energy, efficiency, battery, self-driving, top speed"}" style="margin-left:auto">${TLS.wide?`<svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M14 6h-4V2M2 10h4v4M10 6l4.5-4.5M6 10l-4.5 4.5"/></svg>`:`<svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M10 2h4v4M6 14H2v-4M14 2L9.5 6.5M2 14l4.5-4.5"/></svg>`}</button></div>`)+`<div class="tday ${TLS.wide?"wide":""}" data-day="${d}"><div class="tl2"><div class="tr trh"><span class="ck"><button class="cyc" data-cyc="${d}" data-s="none" aria-label="Choose rows to show on the map" title="Click: tick the drives. Again: tick everything. Again: tick nothing."></button></span><span class="srt" data-so="rows" role="button" tabindex="0" title="Sort by time">Time ${TLS.rowDesc?"▼":"▲"}</span><span></span><span>Where</span><span class="td">Duration</span>${TLS.wide?'<span class="td xw">Distance</span><span class="td xw">Energy</span><span class="td xw">Efficiency</span><span class="td xw">Battery</span><span class="td xw">Self-driving</span><span class="td xw">Top speed</span>':""}<span></span></div>${rowsOf(d).map(v=>row(v,d)).join("")}</div><div class="tmap"></div></div>`).join("")
     :'<div class="empty">Nothing here for these dates.</div>';
   if(!days.length)return;
   const leg=()=>{$("#tlleg").innerHTML=TLS.mode==="v"?spdLegend():apLegend()};leg();
   const maps={},order=[];
   const dayItems=d=>byDay[d];
-  const populate=async d=>{const mp=maps[d];if(!mp)return;const tok=mp.tok=(mp.tok||0)+1,on=dayItems(d).filter(v=>TLS.on[v.id]&&(v._c==="drive"||v._pos));
-    const rt=(await Promise.all(on.filter(v=>v._c==="drive").map(async v=>{const r=await tlRoute(role,v.id);return r?{id:v.id,S:r.S,start:r.start,u0:r.u0,lo:r.lo}:null}))).filter(Boolean);
+  const populate=async d=>{const mp=maps[d];if(!mp)return;const tok=mp.tok=(mp.tok||0)+1,on=dayItems(d).filter(v=>isOn(v)&&(v._c==="drive"||v._pos));
+    const rt=(await Promise.all(on.filter(v=>v._c==="drive").map(async v=>{const r=await tlRoute(role,v.id,v);return r?{id:v.id,S:r.S,start:r.start,u0:r.u0,lo:r.lo}:null}))).filter(Boolean);
     if(mp.tok!==tok||!maps[d])return;
-    mp.m.set(rt,on.filter(v=>v._c!=="drive").map(v=>({id:v.id,type:v._c,pos:v._pos,title:v._c==="sentry"?"Sentry · "+reason(v.reason)+" · "+hms(v.trig||v.start):"Parked "+tm(v)})))};
+    mp.m.set(rt,on.filter(v=>v._c!=="drive").map(v=>({id:v.id,type:v._c,pos:v._pos,title:v._c==="sentry"?"Sentry · "+reason(v.reason)+" · "+hms(v.trig||v.start):v._c==="charge"?"Charge · "+(v.place||"")+" · "+tm(v):"Parked "+tm(v)})))};
   const build=d=>{if(maps[d])return;if(!window.maplibregl)return;if(order.length>=6){const old=order.shift();if(maps[old]){maps[old].m.destroy();delete maps[old];const e=$(`.tday[data-day="${old}"] .tmap`,host);if(e)e.innerHTML=""}}
-    const el=$(`.tday[data-day="${d}"] .tmap`,host);maps[d]={m:dayMap(el,role,{open:id=>{location.hash="#/teslacam/"+role+"/"+encodeURIComponent(id)},pick:id=>{const c=$(`input[data-id="${CSS.escape(id)}"]`,host);if(c)c.scrollIntoView({block:"center"})}})};order.push(d);populate(d)};
+    const el=$(`.tday[data-day="${d}"] .tmap`,host);maps[d]={m:dayMap(el,role,{open:id=>{const v=rs.find(x=>x.id===id),g=o.go&&v?o.go(v):"";location.hash=g||"#/teslacam/"+role+"/"+encodeURIComponent(id)},pick:id=>{const c=$(`input[data-id="${CSS.escape(id)}"]`,host);if(c)c.scrollIntoView({block:"center"})}})};order.push(d);populate(d)};
   const io=new IntersectionObserver(es=>es.forEach(e=>{if(e.isIntersecting)build(e.target.parentNode.dataset.day)}),{rootMargin:"300px"});
   $$(".tmap",host).forEach(e=>io.observe(e));
   const setOn=(ids,val)=>{const ds=new Set();ids.forEach(id=>{TLS.on[id]=val;$$(`input[data-id="${CSS.escape(id)}"]`,host).forEach(x=>{if(!x.disabled)x.checked=val;ds.add(x.closest(".tday").dataset.day)})});ds.forEach(populate);syncAll()};
   $$("input[data-id]",host).forEach(c=>c.onchange=()=>setOn([c.dataset.id],c.checked));
-  const onRoute=e=>{if(!TLS.on[e.detail])return;new Set($$(`input[data-id="${CSS.escape(e.detail)}"]`,host).map(x=>x.closest(".tday").dataset.day)).forEach(populate)};addEventListener("tlroute",onRoute);
-  $("#dsel",host).onchange=e=>{TLS.day=e.target.value;o.redraw&&o.redraw()};
-  $$("[data-nav]",host).forEach(b=>b.onclick=()=>{if(b.dataset.nav){TLS.day=b.dataset.nav;o.redraw&&o.redraw()}});
+  const onRoute=e=>{const v0=rs.find(x=>x.id===e.detail);if(!v0||!isOn(v0))return;new Set($$(`input[data-id="${CSS.escape(e.detail)}"]`,host).map(x=>x.closest(".tday").dataset.day)).forEach(populate)};addEventListener("tlroute",onRoute);
+  const rng=selAsc.length?[selAsc[0],selAsc[selAsc.length-1]]:null;
+  dayPicker($("#dsel",host),{cur:selAsc[0]||cur,range:isRange?rng:null,days:new Set(allDays),text:isRange?dayName(rng[0])+" – "+dayName(rng[1]):dayName(selAsc[0])+" ("+byDay[selAsc[0]].length+")",
+    onPick:d=>{TLS.day=d;TLS.range=null;o.redraw&&o.redraw()},onRange:(a,b)=>{TLS.range=a===b?null:[a,b];TLS.day=a;o.redraw&&o.redraw()}});
+  $$("[data-nav]",host).forEach(b=>b.onclick=()=>{const w=(b.dataset.nav||"").split(",");if(!w[0])return;if(isRange){TLS.range=w[0]===w[w.length-1]?null:[w[0],w[w.length-1]];TLS.day=w[0]}else{TLS.day=w[0];TLS.range=null}o.redraw&&o.redraw()});
   // the day's list and map are as tall as what is left of the window below them
   const fitH=()=>{const e=$(".tday",host);if(!e)return;e.style.setProperty("--tdh",Math.max(380,innerHeight-(e.getBoundingClientRect().top+scrollY)-16)+"px")};fitH();addEventListener("resize",fitH);
-  $$("[data-so]",host).forEach(b=>b.onclick=()=>{if(b.dataset.so==="days")TLS.dayDesc=!TLS.dayDesc;else TLS.rowDesc=!TLS.rowDesc;o.redraw&&o.redraw()});
-  const syncAll=()=>$$("input[data-day]",host).forEach(a=>{const bx=$$(`.tday[data-day="${a.dataset.day}"] input[data-id]:not(:disabled)`,host);a.checked=bx.length>0&&bx.every(x=>x.checked)});syncAll();
-  $$("input[data-day]",host).forEach(a=>a.onchange=()=>setOn($$(`.tday[data-day="${a.dataset.day}"] input[data-id]:not(:disabled)`,host).map(x=>x.dataset.id),a.checked));
+  $$("[data-so]",host).forEach(b=>{b.onkeydown=e=>{if(e.key==="Enter"||e.key===" "){e.preventDefault();b.click()}};b.onclick=()=>{if(b.dataset.so==="days")TLS.dayDesc=!TLS.dayDesc;else if(b.dataset.so==="wide"){TLS.wide=!TLS.wide;try{localStorage.setItem("tlWide",TLS.wide?"1":"")}catch(e){}}else TLS.rowDesc=!TLS.rowDesc;o.redraw&&o.redraw()}});
+  // one control above the tick column cycles a day: the drives, then everything, then nothing (ticking rows by hand works too)
+  const dayBoxes=d=>$$(`.tday[data-day="${d}"] input[data-id]:not(:disabled)`,host),isDrv=x=>{const v=rs.find(y=>y.id===x.dataset.id);return !!v&&v._c==="drive"};
+  const cycState=d=>{const bx=dayBoxes(d),on=bx.filter(x=>x.checked);if(!on.length)return "none";if(on.length===bx.length)return "all";const dr=bx.filter(isDrv);return dr.length&&on.length===dr.length&&on.every(isDrv)?"drives":"mix"};
+  const CYT={none:"Nothing ticked. Click to tick the drives.",drives:"Drives ticked. Click to tick everything.",all:"Everything ticked. Click to tick nothing.",mix:"Some rows ticked. Click to tick the drives."};
+  const syncAll=()=>$$("[data-cyc]",host).forEach(b=>{const st=cycState(b.dataset.cyc);b.dataset.s=st;b.title=CYT[st];b.setAttribute("aria-label",CYT[st])});syncAll();
+  $$("[data-cyc]",host).forEach(b=>b.onclick=e=>{e.stopPropagation();const d=b.dataset.cyc,bx=dayBoxes(d),dr=bx.filter(isDrv),st=cycState(d),nx=st==="all"?"none":st==="drives"?"all":(dr.length&&dr.length<bx.length?"drives":"all");
+    TLS.sel=nx;TLS.on={};                                  // the choice is for every day, now and as you move between days; hand choices start again
+    $$("input[data-id]:not(:disabled)",host).forEach(x=>{const v=rs.find(y=>y.id===x.dataset.id);x.checked=!!v&&isOn(v)});
+    $$(".tday",host).forEach(t=>populate(t.dataset.day));syncAll()})
   $$("[data-tm]",host).forEach(b=>b.onclick=()=>{TLS.mode=b.dataset.tm;$$("[data-tm]",host).forEach(x=>x.classList.toggle("on",x===b));leg();Object.values(maps).forEach(x=>x.m.mode(TLS.mode))});
-  $$("[data-go]",host).forEach(b=>b.onclick=e=>{e.stopPropagation();location.hash=b.dataset.go});
+  $$("[data-go]",host).forEach(b=>b.onclick=e=>{e.stopPropagation();try{if(b.dataset.cs)sessionStorage.setItem("chargeSet",b.dataset.cs);else sessionStorage.removeItem("chargeSet")}catch(_){}location.hash=b.dataset.go});
+  $$("[data-pl]",host).forEach(b=>b.onclick=e=>{e.stopPropagation();try{sessionStorage.removeItem("placePrefill")}catch(_){}location.hash="#/place/"+encodeURIComponent(b.dataset.pl)});
+  $$("[data-save]",host).forEach(b=>b.onclick=e=>{e.stopPropagation();try{sessionStorage.setItem("placePrefill",b.dataset.save)}catch(_){}location.hash="#/place/"+encodeURIComponent("@new")});
+  $$("[data-sn]",host).forEach(b=>{const t=e=>{e.stopPropagation();const x=$(`.sentl[data-for="${CSS.escape(b.dataset.sn)}"]`,host);if(x){x.hidden=!x.hidden;b.textContent=b.textContent.replace(/[▾▴]/,x.hidden?"▾":"▴");b.setAttribute("aria-expanded",x.hidden?"false":"true")}};b.onclick=t;b.onkeydown=e=>{if(e.key==="Enter"||e.key===" "){e.preventDefault();t(e)}}});
   // clicking a row ticks it and brings it up on the map
   $$(".tr[data-id]",host).forEach(r=>r.onclick=async e=>{if(e.target.closest("input,button,a,label"))return;const v=rs.find(x=>x.id===r.dataset.id);if(!v||!(v._c==="drive"||v._pos))return;
     $$(".tr.sel",host).forEach(x=>x.classList.remove("sel"));r.classList.add("sel");const c=$("input[data-id]",r);if(c&&!c.checked){c.checked=true;TLS.on[v.id]=true;syncAll()}
-    await populate(cur);const mp=maps[cur];if(mp)mp.m.focus(v.id)});
-  return()=>{removeEventListener("tlroute",onRoute);removeEventListener("resize",fitH);io.disconnect();Object.values(maps).forEach(x=>x.m.destroy())}}
+    const dd=r.closest(".tday").dataset.day;await populate(dd);const mp=maps[dd];if(mp)mp.m.focus(v.id)});
+  // ← and → move to the earlier / later day (or the same number of days again, with a range), as the ‹ › buttons do; not while typing in a box or choosing in a list
+  const onKey=e=>{if(e.altKey||e.ctrlKey||e.metaKey||e.shiftKey||(e.key!=="ArrowLeft"&&e.key!=="ArrowRight"))return;const t=e.target;if(t&&t.closest&&t.closest("input,select,textarea,[contenteditable]"))return;
+    if(!document.body.contains(host)||$(".rpop"))return;const b=$$("[data-nav]",host)[e.key==="ArrowLeft"?0:1];if(b&&!b.disabled){e.preventDefault();b.click()}};
+  document.addEventListener("keydown",onKey);
+  return()=>{document.removeEventListener("keydown",onKey);removeEventListener("tlroute",onRoute);removeEventListener("resize",fitH);io.disconnect();Object.values(maps).forEach(x=>x.m.destroy())}}
 
 function routeSvg(pts,w=64,h=40){if(!pts||pts.length<2)return "";const la=pts.map(p=>p[0]),lo=pts.map(p=>p[1]),a=Math.min(...la),b=Math.max(...la),c=Math.min(...lo),d=Math.max(...lo),k=Math.cos((a+b)/2*Math.PI/180),sx=(d-c)*k||1e-6,sy=(b-a)||1e-6,s=Math.min((w-6)/sx,(h-6)/sy),ox=(w-sx*s)/2,oy=(h-sy*s)/2;
   return `<svg class="rt" width="${w}" height="${h}" viewBox="0 0 ${w} ${h}"><polyline fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" stroke-linecap="round" points="${pts.map(p=>((p[1]-c)*k*s+ox).toFixed(1)+","+(h-((p[0]-a)*s+oy)).toFixed(1)).join(" ")}"/></svg>`}
+
+// ---------- Drives (new): one list from every source. Tessie's drives are the rows; the dashcam's attach by time; with no Tessie the dashcam alone makes it (lib/app_drivelist.py)
+let DLP={r:{p:"all"},q:"",src:"all"};
+// ---------- Tessie sync: the app runs sync_drives_all.sh itself (Tessie's drives, their detail, the drive pages) and shows how far it has got
+let TSPOLL=null;
+// what a sync step is called on screen (the scripts' own step names are for the log, not for the page)
+const STEPW=n=>/^Tessie drives/i.test(n)?"Fetching your drives from Tessie":/telemetry backfill/i.test(n)?"Fetching the path of each drive":/summary pages/i.test(n)?"Building the drive pages":/Battery health/i.test(n)?"Updating battery health":/Firmware alerts/i.test(n)?"Checking firmware alerts":/software and FSD/i.test(n)?"Checking the car's software version":n;
+async function tessieSync(host,o){
+  o=o||{};clearTimeout(TSPOLL);const alive=()=>document.body.contains(host);
+  const K=o.kind==="charges"?"?kind=charges":"";let info;try{info=await (await fetch("/api/tessie"+K)).json()}catch(e){host.innerHTML="";return}
+  const m=o.missing||{},n=m.cam_only||0,np=m.no_page||0,pl=(k,a,b)=>k+(k===1?a:b);
+  const what=o.what||[n?pl(n," drive the dashcam saw is not in Tessie yet"," drives the dashcam saw are not in Tessie yet"):"",np?pl(np," drive has no path from Tessie yet"," drives have no path from Tessie yet"):""].filter(Boolean).join("; ");
+  const cap=t=>t.charAt(0).toUpperCase()+t.slice(1);
+  let since=0,tail=[],was=false,err="",step=0,stepName="",pct=null;const STEPS=o.steps||6;
+  const barW=()=>Math.min(100,Math.round(100*((Math.max(step,1)-1)+(pct==null?0:pct/100))/STEPS));
+  const stepHead=()=>step?"Step "+Math.min(step,STEPS)+" of "+STEPS+": "+stepName+(pct!=null?" · "+pct+"%":""):"Syncing from Tessie…";
+  const paint=j=>{
+    if(!alive())return;
+    const run=!!(j&&j.running);
+    if(!info.configured){host.innerHTML=what?`<div class="card"><b>${esc(cap(what))}.</b><div class="sub" style="margin-top:6px">Tessie is not set up in this app, so only the dashcam can fill them in. Put your Tessie access token and VIN in config.json (<code>tessie.access_token</code>, <code>tessie.vin</code>) and the app will fetch them itself.</div></div>`:"";return}
+    if(run){host.innerHTML=`<div class="card ixb"><div style="flex:1;min-width:0"><b id="tsh">${esc(stepHead())}</b><div style="height:6px;border-radius:3px;background:var(--line,#ddd);margin:8px 0;overflow:hidden"><div id="tsp" style="height:100%;width:${barW()}%;background:var(--accent,#3b6cf6);transition:width .3s"></div></div></div><button class="btn" id="tsx">Stop</button></div>`;
+      $("#tsx",host).onclick=async()=>{await fetch("/api/tessie/sync/stop"+K,{method:"POST"});poll()};return}
+    let h="";
+    if(err)h+=`<div class="card"><b style="color:var(--bad)">${esc(err)}</b></div>`;
+    else if(j&&j.ended&&j.rc!==0)h+=`<div class="card"><b style="color:var(--bad)">The Tessie sync stopped (exit ${j.rc}).</b><pre class="out" style="max-height:200px;overflow:auto">${esc(tail.slice(-14).join("\n"))}</pre></div>`;
+    else if(j&&j.ended&&was)h+=`<div class="sub" style="margin-bottom:8px">Synced from Tessie.</div>`;
+    if(what&&o.tried)h+=`<div class="sub">Synced from Tessie: it has no detailed record for this drive${o.triedNote?" ("+esc(o.triedNote)+")":""}.</div>`;
+    else if(what)h+=`<div class="bar"><button class="btn" id="tsg">Sync Tessie</button><span class="sub"><b>${esc(cap(what))}.</b> ${esc(o.note||"Sync Tessie fetches them.")}</span></div>`;
+    else if(o.always&&info.synced_at&&Date.now()/1000-info.synced_at<(info.fresh_minutes||60)*60)h+=`<div class="sub">Tessie synced ${Math.max(1,Math.round((Date.now()/1000-info.synced_at)/60))} min ago</div>`;
+    else if(o.always)h+=`<div class="bar"><button class="btn" id="tsg">Sync Tessie</button><span class="sub">${esc(o.always_note||"Fetches new drives and their detail and pages from Tessie.")}${m.tried?" "+pl(m.tried," drive stays as the dashcam saw it: Tessie has no record of it."," drives stay as the dashcam saw them: Tessie has no record of them."):""}</span></div>`;
+    host.innerHTML=h;const g=$("#tsg",host);
+    if(g)g.onclick=async()=>{g.disabled=true;err="";tail=[];since=0;was=true;
+      let r;try{r=await (await fetch("/api/tessie/sync"+K,{method:"POST"})).json()}catch(e){r={ok:false,error:"Could not reach the app."}}
+      if(r.ok===false){err=r.error||"Could not start the sync.";was=false;paint(null);return}poll()}};
+  const poll=async()=>{
+    clearTimeout(TSPOLL);let j;try{j=await (await fetch("/api/tessie-sync?since="+since+(K?"&kind=charges":""))).json()}catch(e){return}
+    if(!alive())return;
+    if(j.lines&&j.lines.length){tail=tail.concat(j.lines).slice(-80);
+      j.lines.forEach(x=>{if(x.startsWith("==> ")){const nm=x.slice(4).replace(/\s*\(.*\)\s*$/,"");if(/^Done/.test(nm)){pct=100;return}step++;stepName=STEPW(nm);pct=null}else{const q=x.match(/(\d{1,3})%/);if(q)pct=+q[1]}});
+}
+    since=j.n;if(j.running)was=true;
+    if(j.running){if(!$("#tsh",host))paint(j);else{$("#tsh",host).textContent=stepHead();$("#tsp",host).style.width=barW()+"%"}TSPOLL=setTimeout(poll,1500);return}
+    if(was&&j.rc===0&&o.after){was=false;o.after();return}
+    paint(j);was=false};
+  paint(null);
+  if(info.running)poll()
+}
+async function pageDriveList(){
+  loading();const [dl,act,pl,chg]=await Promise.all([tcGet("drivelist"),api("activity"),api("places").catch(()=>({saved:[]})),api("chargers").catch(()=>({rows:[]}))]),places=pl.saved||[];
+  const open=v=>v.kind==="charge"?"#/charge/"+encodeURIComponent(v.id):v.kind==="drive"?(v.src==="cam"?"#/teslacam/auto/"+encodeURIComponent(v.id):"#/drive/"+encodeURIComponent(v.id)):v.kind==="sentry"?"#/teslacam/A/sentry-"+encodeURIComponent(v.ev):v.kind==="recording"||v.kind==="stopped"?"#/teslacam/auto/"+encodeURIComponent(v.id):"";
+  main.innerHTML=`<h1>Drives</h1><div class="sub">Source: ${dl.tessie?"Tessie + dashcam":"dashcam"} · 🎬 = dashcam video and route</div>
+   <div id="stl" class="sub" style="margin-top:8px" ${dl.stale?"":"hidden"}>Updating with the latest data…</div><div id="tsb" style="margin-top:10px"></div><div id="fsb"></div><div class="bar"><span id="rg"></span><select id="fs"><option value="all">All drives</option><option value="cam">With dashcam footage</option><option value="nocam">Without footage</option></select><input type="search" id="q" placeholder="Search a place…" value="${esc(DLP.q)}"></div><div class="tiles" id="tl"></div><div id="tb"></div>`;
+  const draw=()=>{if(TLOFF){TLOFF();TLOFF=null}const q=DLP.q.toLowerCase(),keep=v=>{if(v.kind==="drive"){if(DLP.src==="cam"&&!(v.cam&&v.cam.length))return false;if(DLP.src==="nocam"&&v.cam&&v.cam.length)return false}
+      return !q||((v.frm||"")+" "+(v.to||"")+" "+(v.place||"")+" "+(v.city||"")+" "+(v.street||"")+" "+nameAt(places,v.p0)+" "+nameAt(places,v.p1)).toLowerCase().includes(q)},
+     rs=dl.items.filter(v=>inSpan(v,DLP.r)&&keep(v)),dr=rs.filter(v=>v.kind==="drive"&&!v.short);
+    $("#tl").innerHTML=tile(n0(dr.length),"drives")+tile(n0(dr.reduce((a,v)=>a+(v.km||0),0))+" km","driven")+tile(n0(dr.filter(v=>v.cam&&v.cam.length).length),"with dashcam footage")+tile(n0(rs.filter(v=>v.kind==="charge").length),"charges")+tile(n0(dr.filter(v=>v.src==="cam").length),"dashcam only");
+    $("#tb").innerHTML='<div id="tlh"></div>';
+    TLOFF=tlDays($("#tlh"),rs,{role:"auto",places,sc:pl.superchargers||[],cg:chg.rows||[],tess:act.filter(x=>x.k==="drive"),chg:act.filter(x=>x.k==="charge"),dayOk:d=>inRange({day:d},DLP.r),redraw:draw,go:open,
+      onSentry:()=>{}})||null};
+  rangePicker($("#rg"),DLP.r,spanDays(dl.items),draw);$("#q").oninput=e=>{DLP.q=e.target.value;draw()};$("#fs").value=DLP.src;$("#fs").onchange=e=>{DLP.src=e.target.value;draw()};draw();
+  if(dl.stale){const again=async()=>{if(location.hash!=="#/driveslist")return;let j;try{j=await tcGet("drivelist")}catch(e){return}
+      if(!j.stale){bust("activity");pageDriveList()}else setTimeout(again,3000)};setTimeout(again,3000)}
+  tessieSync($("#tsb"),{missing:dl.missing,always:true,after:()=>{bust();route()}});
+  footageSync($("#fsb"));
+}
+// one button for the footage on the connected drives: lists the files, reads the events and the telemetry, makes the one-second stills (lib/app_keeper.py, a single pass)
+function footageSync(host){
+  if(!host)return;let until=0;
+  const paint=async()=>{if(!document.body.contains(host))return;let k;try{k=await (await fetch("/api/keeper")).json()}catch(e){return}
+    const run=!!k.working,pc=k.total?` · ${n0(k.done)} of ${n0(k.total)}`:"";
+    host.innerHTML=`<div class="bar"><button class="btn" id="fsg" ${run?"disabled":""}>Sync footage</button><span class="sub">${run?esc(k.text)+pc:"Lists the files on the connected drives, reads their events and telemetry, and makes the one-second stills."}</span></div>${k.error?errBox(k.error,"Syncing stopped"):""}`;
+    $("#fsg",host).onclick=async()=>{until=Date.now()+20000;try{await fetch("/api/keeper",{method:"POST",body:JSON.stringify({action:"run"})})}catch(e){}paint()};
+    if(run||Date.now()<until)setTimeout(paint,run?2000:1500)};
+  paint()}
 // ---------- the drive scan: footage on the drives you pick against the telemetry already kept; reads what is missing (lib/teslacam_scan.py, ./teslacam_scan.py)
 let SCN={roles:{A:1},rep:null,timer:null,err:""};
 function scanPanel(box,drives){
@@ -1146,7 +1518,7 @@ function scanPanel(box,drives){
       <div class="bar" style="margin:0 0 8px">${drives.map(d=>`<label class="chip ${SCN.roles[d.role]?"on":""}" style="cursor:pointer"><input type="checkbox" data-sr="${d.role}" ${SCN.roles[d.role]?"checked":""} ${run?"disabled":""} style="margin-right:6px">${esc(d.name)}</label>`).join("")}<button class="btn ${rep?"":"pri"}" id="scg" ${run||!picked().length?"disabled":""}>${rep?"Scan again":"Scan"}</button></div>`;
     if(SCN.err)h+=`<div class="sub" style="color:var(--bad);user-select:text">${esc(SCN.err)}</div>`;
     if(rep){
-      h+=`<table><thead><tr><th class="l">Drive</th><th>Minutes of video</th><th>Telemetry read</th><th>Still to read</th><th>Also on another picked drive</th><th class="l">Dates</th></tr></thead><tbody>${rep.drives.map(d=>`<tr><td class="l"><b>${esc(d.name)}</b>${d.no_front?`<div class="sub">${n0(d.no_front)} without a front clip: cannot be read</div>`:""}</td><td>${n0(d.minutes)}<div class="sub">${n0(d.recent)} Recent · ${n0(d.saved)} Saved</div></td><td>${n0(d.read)}</td><td>${d.to_read?`<b>${n0(d.to_read)}</b>`:"0"}</td><td>${n0(d.elsewhere)}</td><td class="l">${d.first?(d.first===d.last?dayName(d.first):dayName(d.first)+" to "+dayName(d.last)):""}</td></tr>`).join("")}</tbody></table>
+      h+=`<table><thead><tr><th class="l">Drive</th><th>Minutes of video</th><th>Telemetry read</th><th>Still to read</th><th>Also on another picked drive</th><th class="l">Dates</th></tr></thead><tbody>${rep.drives.map(d=>`<tr><td class="l"><b>${esc(d.name)}</b>${d.no_front?`<div class="sub">${n0(d.no_front)} with no clip to read telemetry from</div>`:""}</td><td>${n0(d.minutes)}<div class="sub">${n0(d.recent)} Recent · ${n0(d.saved)} Saved</div></td><td>${n0(d.read)}</td><td>${d.to_read?`<b>${n0(d.to_read)}</b>`:"0"}</td><td>${n0(d.elsewhere)}</td><td class="l">${d.first?(d.first===d.last?dayName(d.first):dayName(d.first)+" to "+dayName(d.last)):""}</td></tr>`).join("")}</tbody></table>
         <div class="sub" style="margin-top:8px">Telemetry kept: ${n0(rep.kept)} minutes${rep.kept_orphans?`, ${n0(rep.kept_orphans)} of them with no video on the picked drives (kept anyway)`:""}.</div>`;
       if(run)h+=`<div class="card ixb" style="margin-top:8px"><div>Reading ${n0(job.done)} of ${n0(job.total)}${job.current?", "+esc(job.current.replace("_"," ")):""}…</div><button class="btn" id="scx">Stop</button></div>`;
       else if(left)h+=`<div class="card ixb" style="margin-top:8px"><div><b>${n0(left)}</b> minutes of video have no telemetry yet.${job&&job.error?` <span style="color:var(--bad);user-select:text">${esc(job.error)}</span>`:""}</div><button class="btn pri" id="scr">Read ${n0(left)} minutes</button></div>`;
@@ -1199,67 +1571,48 @@ function footagePanel(box,drives){
 async function pageTeslaCam(role,id){
   if(role&&id)return /^sentry-/.test(id)?pageTeslaCamSentry(role,id.slice(7)):/^at-/.test(id)?pageTeslaCamAt(+id.slice(3)):pageTeslaCamDrive(role,id);
   loading();const [dr,act,pl]=await Promise.all([tcGet("teslacam"),api("activity"),api("places").catch(()=>({saved:[]}))]),drives=dr.drives,places=(pl.saved||[]);
-  const head='<h1>TeslaCam</h1><div class="sub">The clips on any connected TeslaCam drive. A drive is recognised by what is on it, not by its name, and nothing on it is changed. A drive is only read once you pick it.</div>';
-  if(!drives.length){main.innerHTML=head+'<div class="empty">No TeslaCam drive is connected.</div>';return}
-  if(!TCS.role)TCS.role=lsGet("tc.role",null);      // the drive looked at last time (the Archive ends on 12 Oct; JOWUA and the USB hold the newer days)
-  if(!drives.some(d=>d.role===TCS.role))TCS.role=(drives.find(d=>d.role==="A")||drives[0]).role;
+  const head='<h1>TeslaCam</h1><div class="sub">Every Recent recording, Saved clip and Sentry event ever logged, whichever drives are connected. Where the video is not on a connected drive, its kept stills are shown instead.</div>';
   const trips=act.filter(x=>x.k==="drive"&&!x.repark).map(x=>({id:x.id,t0:x.t0,t1:x.t0+x.min*60,ti:driveTitle(x)}));
   const tripOf=v=>{const a=v.t0!=null?v.t0:v.t,b=v.t1!=null?v.t1:(v.t||0)+60;return trips.find(d=>d.t0<b&&d.t1>a)};
-  main.innerHTML=head+`<details class="card" id="scn" style="margin-bottom:12px"><summary><b>Scan the connected drives for telemetry</b></summary><div id="scb"></div></details><details class="card" id="fgl" style="margin-bottom:12px"><summary><b>Footage log and one-second stills</b></summary><div id="fgb"></div></details><div class="bar" id="tcd"></div><div class="sub" id="tcn"></div><div class="bar" id="tck"></div><div class="bar" id="tsr"></div><div class="bar"><span id="rg"></span><input type="search" id="q" placeholder="Search…" value="${esc(TCS.q)}"></div><div id="ixb"></div><div class="tiles" id="tl"></div><div id="spl"></div><div id="tb"></div>`;
+  main.innerHTML=head+`<div id="fsb"></div><details class="card" id="scn" style="margin-bottom:12px"><summary><b>Scan the connected drives for telemetry</b></summary><div id="scb"></div></details><details class="card" id="fgl" style="margin-bottom:12px"><summary><b>Footage log and one-second stills</b></summary><div id="fgb"></div></details><div class="bar" id="tsr"></div><div class="bar"><span id="rg"></span><input type="search" id="q" placeholder="Search…" value="${esc(TCS.q)}"></div><div class="tiles" id="tl"></div><div id="spl"></div><div id="tb"></div>`;
   let data=null,sel=null,token=0,sentryList=null;
-  const chips=()=>{$("#tcd").innerHTML=drives.map(d=>`<button class="chip ${d.role===TCS.role?"on":""}" data-r="${d.role}"><span class="dot on" style="margin-right:6px"></span>${esc(d.name)}</button>`).join("");
-    $("#tck").innerHTML=Object.keys(TCK).map(k=>`<button class="chip ${k===TCS.kind?"on":""}" data-k="${k}">${TCK[k]}</button>`).join("");
-    $("#tsr").innerHTML=TCS.kind==="clips"?'<span class="sub" style="margin:0 4px 0 0">Show:</span>'+Object.keys(TCSRC).map(k=>`<button class="chip ${TCS.src[k]?"on":""}" data-s="${k}">${TCSRC[k]}${data&&data[k]?" · "+data[k].length:""}</button>`).join("")+'<span class="sub" style="margin-left:6px">Pick one, two or all three: they are listed together, newest first.</span>':"";
+  footageSync($("#fsb"));
+  const chips=()=>{
+    $("#tsr").innerHTML='<span class="sub" style="margin:0 4px 0 0">Show:</span>'+Object.keys(TCSRC).map(k=>`<button class="chip ${TCS.src[k]?"on":""}" data-s="${k}">${TCSRC[k]}${data&&data[k]?" · "+data[k].length:""}</button>`).join("")+'<span class="sub" style="margin-left:6px">Pick one, two or all three: they are listed together, newest first.</span>';
     $$("#tsr [data-s]").forEach(b=>b.onclick=()=>{const on=Object.keys(TCSRC).filter(k=>TCS.src[k]);if(TCS.src[b.dataset.s]&&on.length<2)return;TCS.src[b.dataset.s]=TCS.src[b.dataset.s]?0:1;$("#spl").innerHTML="";chips();draw()});
-    $("#tcn").textContent=TCS.role==="A"?"":"Not the Archive: its clips are read only as you open them. Stop playback and leave this page before ejecting it.";
-    $$("#tcd [data-r]").forEach(b=>b.onclick=()=>{TCS.role=b.dataset.r;lsSet("tc.role",TCS.role);$("#spl").innerHTML="";sentryList=null;chips();load()});
-    $$("#tck [data-k]").forEach(b=>b.onclick=()=>{TCS.kind=b.dataset.k;$("#spl").innerHTML="";chips();load()})};
-  const load=async(quiet)=>{const my=++token;if(!quiet){data=null;$("#tl").innerHTML="";$("#ixb").innerHTML="";$("#tb").innerHTML='<div class="empty">Reading the drive…</div>'}
-    try{if(TCS.kind==="clips"){const r=await Promise.all(["sentry","saved","recent"].map(k=>tcGet("teslacam/"+TCS.role+"/"+k)));if(my!==token)return;
-        data={connected:r.every(x=>x.connected),sentry:r[0].events||[],saved:r[1].events||[],recent:r[2].runs||[]}}
-      else{const d=await tcGet("teslacam/"+TCS.role+"/"+TCS.kind);if(my!==token)return;data=d}}catch(e){$("#tb").innerHTML=errBox(e.message,"Could not read the drive");return}
-    const list=TCS.kind==="clips"?[].concat(data.sentry,data.saved,data.recent):data.items;if(!quiet)rangePicker($("#rg"),TCS.r,daysOf((list||[]).map(v=>({day:(v.ts||v.start).slice(0,10)}))),draw);chips();draw()};
-  const ixBar=()=>{if(TCS.kind!=="timeline"||!data||!data.connected){$("#ixb").innerHTML="";return}
-    const ix=data.index||{},run=ix.running,left=data.minutes-data.read;
-    $("#ixb").innerHTML=`<div class="card ixb"><div><b>${n0(data.read)}</b> of ${n0(data.minutes)} minutes of Recent and Saved video read for telemetry (speed, GPS, steering, pedals, autopilot).${run?` Reading now: ${n0(ix.done)} of ${n0(ix.total)}, ${esc((ix.current||"").replace("_"," ").replace(/-/g,(m,i)=>i>12?":":"-"))}.`:left>0?` Each clip is read once, about a second each; opening a drive reads just that drive.`:" All read."}${ix.error?errBox(ix.error,"Reading stopped"):""}</div>
-      ${run?'<button class="btn" id="ixs">Stop</button>':left>0?'<button class="btn pri" id="ixg">Read all of it</button>':""}</div>`;
-    if($("#ixg"))$("#ixg").onclick=async()=>{await tcPost("teslacam/index",{role:TCS.role,action:"start"});poll()};
-    if($("#ixs"))$("#ixs").onclick=async()=>{await tcPost("teslacam/index",{role:TCS.role,action:"stop"})}};
-  const poll=()=>{if(TCPOLL)clearInterval(TCPOLL);TCPOLL=setInterval(async()=>{if(!$("#ixb")){clearInterval(TCPOLL);TCPOLL=null;return}
-    try{const ix=await tcGet("teslacam/"+TCS.role+"/index");if(data)data.index=ix;if(TCS.kind==="timeline")ixBar();if(!ix.running){clearInterval(TCPOLL);TCPOLL=null;load(true)}else if(ix.done%40===0&&TCS.kind==="timeline")load(true)}catch(e){}},3000)};
-  const itemRow=v=>{const t0=clockHM(v.start),t1=clockHM(v.end),m=Math.max(1,Math.round((v.t1-v.t0)/60));
-    if(v.kind==="sentry")return `<button class="trow sen" data-id="${esc(v.ev)}"><span class="tm">${hms(v.trig||v.start)}</span><span class="tk">Sentry</span><span class="tt"><b>${esc(reason(v.reason))}</b> · ${esc([v.city,v.street].filter(Boolean).join(" · "))}</span><span class="ts">${m} min parked, watched</span></button>`;
-    if(v.kind==="parked"||v.kind==="gap"){const w=nameAt(places,v.p1)||nameAt(places,v.p0);return `<div class="trow gap"><span class="tm">${t0}</span><span class="tk">${v.kind==="parked"?"Parked":"No footage"}</span><span class="tt">${v.kind==="parked"?esc(w||"same place before and after"):(v.km!=null?"the car moved "+n0(v.km,1)+" km":"nothing recorded")}</span><span class="ts">${dur(m)}</span></div>`}
-    const a=nameAt(places,v.p0),b=nameAt(places,v.p1),ti=a||b?`${esc(a||"?")} → ${esc(b||"?")}`:"",src=(v.recent?"Recent":"")+(v.recent&&v.saved?" + ":"")+(v.saved?"Saved":"");
-    if(v.kind==="drive")return `<a class="trow drv" href="#/teslacam/${TCS.role}/${esc(v.id)}"><span class="tm">${t0}</span><span class="tk">Drive</span><span class="tt">${routeSvg(v.thumb)}<span><b>${n0(v.km,1)} km</b> · max ${n0(v.vmax)} km/h${v.fsd?` · FSD ${Math.round(v.fsd*100)}%`:""}${v.aut?` · Autosteer/TACC ${Math.round(v.aut*100)}%`:""}<small>${ti}</small></span></span><span class="ts">${dur(m)} · ${src}</span></a>`;
-    return `<a class="trow ${v.kind==="stopped"?"stp":"rec"}" href="#/teslacam/${TCS.role}/${esc(v.id)}"><span class="tm">${t0}</span><span class="tk">${v.kind==="stopped"?"Stopped":"Recording"}</span><span class="tt">${v.kind==="stopped"?"recording, but not moving":"telemetry not read yet"}<small>${v.n} clip${v.n>1?"s":""}, ${src}</small></span><span class="ts">${dur(m)}</span></a>`};
-  const drawTimeline=()=>{if(TLOFF){TLOFF();TLOFF=null}const q=TCS.q.toLowerCase(),rs=data.items.filter(v=>(inRange({day:v.start.slice(0,10)},TCS.r)||inRange({day:(v.end||v.start).slice(0,10)},TCS.r))&&(!q||(v.kind+" "+(v.city||"")+" "+(v.street||"")+" "+reason(v.reason)+" "+nameAt(places,v.p0)+" "+nameAt(places,v.p1)).toLowerCase().includes(q)));
-    rs.forEach(v=>v._c=tlClass(v));const dr=rs.filter(v=>v._c==="drive");
-    $("#tl").innerHTML=tile(n0(dr.length),"drives with telemetry")+tile(n0(dr.reduce((a,v)=>a+v.km,0))+" km","driven (from the video)")+tile(n0(rs.filter(v=>v._c==="sentry").length),"Sentry events")+tile(n0(rs.filter(v=>v._c==="parked").length),"parked spells")+tile(n0(rs.filter(v=>v._c==="rec").length),"recordings not read yet");
-    $("#tb").innerHTML='<div id="tlh"></div>';
-    TLOFF=tlDays($("#tlh"),rs,{role:TCS.role,places,tess:act.filter(x=>x.k==="drive"),chg:act.filter(x=>x.k==="charge"),dayOk:d=>inRange({day:d},TCS.r),redraw:drawTimeline,onSentry:async ev=>{$("#spl").scrollIntoView({block:"nearest"});
-      try{if(!sentryList)sentryList=(await tcGet("teslacam/"+TCS.role+"/sentry")).events;sentryPlayer($("#spl"),sentryList.find(v=>v.id===ev),TCS.role,"SentryClips")}catch(e){$("#spl").innerHTML=errBox(e.message,"Could not read these clips")}}})||null};
-  const draw=()=>{if(!data)return;if(TCS.kind==="clips"?!data.sentry:!data.items&&data.connected!==false){return}if(!data.connected){$("#tb").innerHTML='<div class="empty">This drive is not connected.</div>';$("#ixb").innerHTML="";return}
-    if(TCS.kind==="timeline"){ixBar();return drawTimeline()}$("#ixb").innerHTML="";
-    const q=TCS.q.toLowerCase(),role=TCS.role,srcs=Object.keys(TCSRC).filter(k=>TCS.src[k]);
+    };
+  const load=async(quiet)=>{const my=++token;if(!quiet){data=null;$("#tl").innerHTML="";$("#tb").innerHTML='<div class="empty">Reading the drive…</div>'}
+    try{const d=await tcGet("clips");if(my!==token)return;data=d}catch(e){$("#tb").innerHTML=errBox(e.message,"Could not read the list of clips");return}
+    const list=[].concat(data.sentry,data.saved,data.recent);if(!quiet)rangePicker($("#rg"),TCS.r,daysOf((list||[]).map(v=>({day:(v.ts||v.start).slice(0,10)}))),draw);chips();draw()};
+  const draw=()=>{if(!data)return;if(!data.sentry){return}
+    const q=TCS.q.toLowerCase(),srcs=Object.keys(TCSRC).filter(k=>TCS.src[k]);
     const all=[].concat(...srcs.map(k=>data[k].map(v=>Object.assign({ty:k},v)))).filter(v=>inRange({day:v.ts.slice(0,10)},TCS.r)&&(!q||(v.ty==="recent"?((tripOf(v)||{}).ti||""):(v.city+" "+v.street+" "+reason(v.reason))).toLowerCase().includes(q)||TCSRC[v.ty].toLowerCase().includes(q))).sort((a,b)=>a.ts<b.ts?1:-1),byDay={};
     all.forEach(v=>(byDay[v.ts.slice(0,10)]=byDay[v.ts.slice(0,10)]||[]).push(v));
     const days=Object.keys(byDay).sort().reverse(),cnt=k=>all.filter(v=>v.ty===k).length,mins=all.reduce((a,v)=>a+(v.ty==="recent"?v.n:Object.keys(v.clips).length),0);
     $("#tl").innerHTML=srcs.map(k=>tile(n0(cnt(k)),k==="recent"?"continuous recordings":TCSRC[k]+" events")).join("")+tile(n0(mins),"minutes of video");
     // the drive (Tessie's) the event was saved in, and the map and telemetry of it: a Saved clip is kept while driving, so it belongs to a drive
     const evLinks=v=>{const t=v.t!=null?tripOf(v):null,st=e=>'onclick="event.stopPropagation()"';
-      return (t?`<span>${esc(t.ti)}</span><a href="#/drive/${t.id}" ${st()}>open the drive</a>`:"")+(v.ty==="saved"&&v.t!=null?`<a href="${t?"#/drive/"+t.id+"/footage":"#/teslacam/"+role+"/at-"+Math.round(v.t)}" ${st()}>map and telemetry</a>`:"")};
+      return (t?`<span>${esc(t.ti)}</span><a href="#/drive/${t.id}" ${st()}>open the drive</a>`:"")+(v.play&&v.ty==="saved"&&v.t!=null?`<a href="${t?"#/drive/"+t.id+"/footage":"#/teslacam/auto/at-"+Math.round(v.t)}" ${st()}>map and telemetry</a>`:"")};
+    // where the footage is: the drives that hold it, and when none of them is connected (or it is gone from all) say so
+    const held=v=>v.play?"":`<span class="mis">${v.roles.length?"Media missing · on "+v.roles.map(drName).join(", "):"Video deleted · stills kept"}</span>`;
     const card=v=>{const bd=`<span class="srcb ${v.ty}">${TCSRC[v.ty]}</span>`;
-      if(v.ty==="recent"){const t=tripOf(v);return `<button class="evc run" data-ty="recent" data-id="${esc(v.id)}">${vthumb("/footage/"+role+"/RecentClips/"+v.id+"-front.mp4")}${bd}<b>${hms(v.ts).slice(0,5)} – ${hms(v.end).slice(0,5)}</b><span>${v.n} minute${v.n>1?"s":""}${v.full<v.n?" · "+(v.n-v.full)+" with fewer than 6 cameras":""}</span>${t?`<span>${esc(t.ti)}</span><a href="#/drive/${t.id}" onclick="event.stopPropagation()">open the drive</a>`:""}<a href="#/teslacam/${role}/${esc(v.id)}" onclick="event.stopPropagation()">map and telemetry</a></button>`}
+      if(v.ty==="recent"){const t=tripOf(v);return `<button class="evc run" data-ty="recent" data-id="${esc(v.id)}">${stThumb(v.id,2,v.play?"/footage/"+v.play+"/RecentClips/"+v.id+"-front.mp4":"")}${bd}<b>${hms(v.ts).slice(0,5)} – ${hms(v.end).slice(0,5)}</b><span>${v.n} minute${v.n>1?"s":""}${v.full<v.n?" · "+(v.n-v.full)+" with fewer than 6 cameras":""}</span>${held(v)}${t?`<span>${esc(t.ti)}</span><a href="#/drive/${t.id}" onclick="event.stopPropagation()">open the drive</a>`:""}${v.play?`<a href="#/teslacam/auto/${esc(v.id)}" onclick="event.stopPropagation()">map and telemetry</a>`:""}</button>`}
       const n=Object.keys(v.clips).length,folder=TCF[v.ty],ks=Object.keys(v.clips).sort(),tt=(v.cts||v.ts||"").replace("T","_").replace(/:/g,"-"),k0=ks.filter(x=>x<=tt).pop()||ks[0],      // the minute holding the trigger, not the first one (an event starts ten minutes earlier)
         k0t=Math.max(1,Math.min(58,Math.round((Date.parse((v.cts||v.ts||"").replace("T"," "))-Date.parse((k0||"").replace("_"," ").replace(/(\d\d)-(\d\d)-(\d\d)$/,"$1:$2:$3")))/1000)||2));
-      return `<button class="evc ${n?"":"faded"}" data-ty="${v.ty}" data-id="${v.id}">${k0&&v.clips[k0]&&v.clips[k0].includes("front")?vthumb(`/footage/${role}/${folder}/${v.id}/${k0}-front.mp4`,k0t):v.thumb?`<img loading="lazy" src="/footage/${role}/${folder}/${v.id}/thumb.png" onerror="this.style.visibility='hidden'">`:'<div class="noimg"></div>'}${bd}<b>${hms(v.ts)}</b><span>${esc(reason(v.reason))}</span><span>${esc([v.city,v.street].filter(Boolean).join(" · "))}</span><span>${n?n+" min of video":"no video"}</span>${evLinks(v)}</button>`};
+      const have=(k0&&v.clips[k0])||[],cam=v.ty==="sentry"&&have.includes(EVCAM[v.cam])?EVCAM[v.cam]:have.includes("front")?"front":"";      // the camera that saw it (Sentry), at the moment it was detected
+      return `<button class="evc big" data-ty="${v.ty}" data-id="${v.id}">${k0?stThumb(k0,k0t,v.play&&cam?`/footage/${v.play}/${folder}/${v.id}/${k0}-${cam}.mp4`:"",k0t):'<div class="noimg"></div>'}${bd}<b>${hms(v.ts)}</b><span>${esc(reason(v.reason))}${v.ty==="sentry"&&cam?" · "+esc(CAMN[cam]):""}</span><span>${esc([v.city,v.street].filter(Boolean).join(" · "))}</span><span>${n?n+" min of video":"no video"}</span>${held(v)}${evLinks(v)}</button>`};
     $("#tb").innerHTML=(days.length?"":'<div class="empty">Nothing here for these dates.</div>')+days.slice(0,60).map(d=>`<div class="day">${dayName(d)}<small>${byDay[d].length} clip${byDay[d].length>1?"s":""}</small></div><div class="evs">${byDay[d].map(card).join("")}</div>`).join("")+(days.length>60?'<div class="sub">Showing the newest 60 days. Narrow the dates to see older ones.</div>':"");
     lazyThumbs($("#tb"));$$("#tb .evc").forEach(b=>b.onclick=async()=>{const ty=b.dataset.ty,sel=b.dataset.id;$$("#tb .evc").forEach(x=>x.classList.toggle("on",x===b));$("#spl").scrollIntoView({block:"nearest"});
-      if(ty!=="recent")return sentryPlayer($("#spl"),data[ty].find(v=>v.id===sel),role,TCF[ty]);
-      const run=data.recent.find(v=>v.id===sel);$("#spl").innerHTML='<div class="sub">Reading…</div>';
-      try{const rr=await tcGet("teslacam/"+role+"/recent/"+encodeURIComponent(sel)),c=rr.clips,stamps=Object.keys(c);
-        clipPlayer($("#spl"),{stamps,cams:c,loc:rr.loc,url:(s,k)=>`/footage/${role}/RecentClips/${s}-${k}.mp4`,head:`Continuous recording on ${dayName(run.ts.slice(0,10))}, ${hms(run.ts).slice(0,5)} to ${hms(run.end).slice(0,5)}, ${run.n} minute${run.n>1?"s":""}. The next minute plays on its own.`})}
+      const it=data[ty].find(v=>v.id===sel);
+      if(ty!=="recent"){
+        if(it.play)return sentryPlayer($("#spl"),it,it.play,TCF[ty]);
+        const what=it.reason?reason(it.reason):ty==="saved"?"Saved clip":"Sentry event";
+        return stillViewer($("#spl"),{stamps:Object.keys(it.clips).sort(),roles:it.roles,loc:it.loc,trig:Date.parse(it.cts||it.ts),head:`${esc(what)} on ${dayName(it.ts.slice(0,10))} at ${hms(it.ts)}${it.city?" · "+esc(it.city):""}`})}
+      $("#spl").innerHTML='<div class="sub">Reading…</div>';
+      try{const rr=await tcGet("clips/run/"+encodeURIComponent(sel)),stamps=Object.keys(rr.clips).sort(),head=`Continuous recording on ${dayName(it.ts.slice(0,10))}, ${hms(it.ts).slice(0,5)} to ${hms(it.end).slice(0,5)}, ${it.n} minute${it.n>1?"s":""}.`;
+        if(!it.playable)return stillViewer($("#spl"),{stamps,roles:it.roles,loc:rr.loc,head});
+        const cams={};stamps.forEach(x=>{cams[x]=rr.play[x]?rr.clips[x]:[]});      // a minute on no connected drive shows its box with the drives that hold it
+        clipPlayer($("#spl"),{stamps,cams,loc:rr.loc,url:(s,k)=>`/footage/${rr.play[s]}/RecentClips/${s}-${k}.mp4`,head:head+" The next minute plays on its own."+(it.playable<it.n?` ${it.n-it.playable} of the minutes are on no connected drive.`:"")})}
       catch(e){$("#spl").innerHTML=errBox(e.message,"Could not read these clips")}})};
   $("#q").oninput=e=>{TCS.q=e.target.value;draw()};chips();load();$("#scn").ontoggle=()=>{if($("#scn").open&&!$("#scb").innerHTML)scanPanel($("#scb"),drives)};$("#fgl").ontoggle=()=>{if($("#fgl").open&&!$("#fgb").innerHTML)footagePanel($("#fgb"),drives)};
 }
@@ -1272,15 +1625,21 @@ const spdStops=()=>cfg("map.speed_colors")||[[0,"#0000FF"],[60,"#FFFF00"],[120,"
 const spdOver=()=>cfg("map.speed_over_color")||"#000000";
 const spdExpr=()=>["interpolate",["linear"],["get","v"],...spdStops().flat(),spdTop()+0.5,spdOver()];
 const apExpr=()=>["match",["get","ap"],1,apCol("FSD"),2,apCol("Autosteer"),3,apCol("TACC"),apCol("Manual")];
-const spdLegend=()=>`<span style="background:linear-gradient(90deg,${spdStops().map(([a,c])=>c+" "+(100*a/spdTop())+"%").join(",")});display:inline-block;width:140px;height:8px;border-radius:4px;vertical-align:middle"></span> 0 → ${spdTop()} km/h <span style="background:${spdOver()};display:inline-block;width:10px;height:10px;border-radius:50%;vertical-align:middle;border:1px solid #888"></span> faster`;
+const spdLegend=()=>`<span style="display:inline-flex;width:150px;height:8px;border-radius:4px;overflow:hidden;vertical-align:middle"><span style="flex:0 0 87%;background:linear-gradient(90deg,${spdStops().map(([a,c])=>c+" "+(100*a/spdTop())+"%").join(",")})"></span><span style="flex:1;background:${spdOver()}"></span></span> 0 → ${spdTop()}+ km/h`;
 const apLegend=()=>["FSD","Autosteer","TACC","Manual"].map(k=>`<span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:${apCol(k)};vertical-align:middle"></span> ${k}`).join("  ");
 const spdAt=v=>{const st=spdStops();if((v||0)>spdTop())return spdOver();const t=Math.max(0,v||0);let i=0;while(i<st.length-2&&t>=st[i+1][0])i++;const a=st[i],b=st[i+1],f=(t-a[0])/((b[0]-a[0])||1),h=c=>[1,3,5].map(k=>parseInt(c.substr(k,2),16)),A=h(a[1]),B=h(b[1]);return "#"+A.map((x,k)=>Math.round(x+(B[k]-x)*f).toString(16).padStart(2,"0")).join("")};
 // One Sentry event in full: the same layout as a drive (map on top, then the six cameras); no telemetry, the camera that detected it has a red border
 async function pageTeslaCamSentry(role,ev){
   loading();main.innerHTML=crumbs("#/teslacam","TeslaCam")+'<div id="tdh"></div>';const host=$("#tdh");
   try{
-    const [lr,pl]=await Promise.all([tcGet("teslacam/"+role+"/sentry"),api("places").catch(()=>({saved:[]}))]),e=lr.events.find(v=>v.id===ev),places=pl.saved||[];
-    if(!e){host.innerHTML=errBox("This event is not on a connected drive.","Sentry event not found");return}
+    // the Drives list does not know which drive an event is on: look on the one asked for, then on the others (the kept lists answer when a drive is away)
+    let e=null;for(const r of [role].concat(["A","J","U"].filter(x=>x!==role))){try{const x=await tcGet("teslacam/"+r+"/sentry"),f=(x.events||[]).find(v=>v.id===ev);if(f){e=f;role=r;break}}catch(_){}}
+    const pl=await api("places").catch(()=>({saved:[]})),places=pl.saved||[];
+    if(!e){      // not on a connected drive: the kept list knows it, and its stills are kept
+      const all=await tcGet("clips"),k=(all.sentry||[]).find(v=>v.id===ev)||(all.saved||[]).find(v=>v.id===ev);
+      if(!k){host.innerHTML=errBox("This event is not in the footage log.","Sentry event not found");return}
+      host.innerHTML=`<h1><i class="hal big"></i> ${k.reason?esc(reason(k.reason)):"Event"} · ${dayName(k.ts.slice(0,10))} · ${hms(k.ts).slice(0,5)}</h1><div class="sub">${esc([k.city,k.street].filter(Boolean).join(" · "))}</div><div class="card" style="margin-top:12px" id="dvid"></div>`;
+      return stillViewer($("#dvid"),{stamps:Object.keys(k.clips).sort(),roles:k.roles,loc:k.loc,trig:Date.parse(k.cts||k.ts),head:""})}
     const stamps=Object.keys(e.clips),at=nameAt(places,[e.lat,e.lon])||[e.city,e.street].filter(Boolean).join(" · "),hasPos=e.lat!=null&&e.lon!=null&&Math.abs(+e.lat)>1;
     host.innerHTML=`<h1><i class="hal big"></i> Sentry · ${esc(e.reason?reason(e.reason):"event")} · ${dayName(e.ts.slice(0,10))} · ${hms(e.ts).slice(0,5)}</h1><div class="sub">${esc(at||"Location not recorded")}</div>
       <div class="tiles">${tile(hms(e.ts),"detected")}${tile(esc(e.reason?reason(e.reason):"-"),"reason")}${tile(n0(stamps.length)+" min","of clips")}</div>
@@ -1291,7 +1650,7 @@ async function pageTeslaCamSentry(role,ev){
       const setMs=k=>{lsSet("tc.mapsz.s",k);$$("[data-ms]",host).forEach(b=>b.classList.toggle("on",b.dataset.ms===k));$("#dmap").style.height=(MSZ.find(x=>x[0]===k)||MSZ[1])[2];m.resize();m.easeTo({center:pos,zoom:16,duration:200})};
       $$("[data-ms]",host).forEach(b=>b.onclick=()=>setMs(b.dataset.ms));setMs(lsGet("tc.mapsz.s","m"))}
     clipPlayer($("#dvid"),{stamps,cams:e.clips,loc:e.loc,trig:Date.parse(e.cts||e.ts),view:"all",hot:EVCAM[e.cam]||"front",url:(s,c)=>`/footage/${role}/SentryClips/${e.id}/${s}-${c}.mp4`,
-      head:`${stamps.length} one-minute clip${stamps.length>1?"s":""}; the next plays on its own. It opens at the moment the car detected something, and the camera that saw it has a red border.`})
+      head:`${stamps.length} one-minute clip${stamps.length>1?"s":""}; the next plays on its own. It plays from the start; press Detection to jump to the moment the car detected something. The camera that saw it has a red border.`})
   }catch(err){host.innerHTML=errBox(err.message,"Could not open this Sentry event")}
 }
 // the minutes around one instant (a Saved clip's trigger) when no Tessie drive covers it: map, telemetry and video of whichever connected drive holds them
@@ -1303,26 +1662,41 @@ async function pageTeslaCamAt(t){
 }
 async function pageTeslaCamDrive(role,id){
   loading();const pl=await api("places").catch(()=>({saved:[]}));
-  main.innerHTML=crumbs("#/teslacam","TeslaCam")+'<div id="tdh"></div>';
+  main.innerHTML=(role==="auto"?crumbs("#/driveslist","Drives (new)"):crumbs("#/teslacam","TeslaCam"))+'<div id="tdh"></div>';
+  if(role==="auto"){                // opened from the Drives list: the server says which connected drive holds it
+    try{const r=await fetch("/api/teslacam/auto/seg/"+encodeURIComponent(id)+"?budget=0"),j=await r.json().catch(()=>({}));if(!r.ok)throw new Error(j.error||("HTTP "+r.status));role=j.role||"A"}
+    catch(e){$("#tdh").innerHTML=errBox(e.message,"Could not open this drive");return}}
   const fetchSeg=async b=>{const r=await fetch("/api/teslacam/"+role+"/seg/"+encodeURIComponent(id)+(b!=null?"?budget="+b:""));if(!r.ok)throw new Error((await r.json().catch(()=>({}))).error||("HTTP "+r.status));return r.json()};
   try{await teslaDriveBody($("#tdh"),role,fetchSeg,pl.saved||[],{})}catch(e){const h=$("#tdh");if(h)h.innerHTML=errBox(e.message,"Could not rebuild this drive")}
 }
 // The map, telemetry chart and stitched six-camera video of one drive, moving together. `fetchSeg(budget)` returns the server's segment / window answer;
 // it is asked again while minutes are still being read. opts.heading=false leaves the title to the caller (the Footage tab of a Tessie drive).
+// the share of the distance driven on FSD / Autosteer / TACC, from the dashcam seconds that say which mode the car was in (Tessie-filled seconds carry no mode);
+// cover = the part of the distance those seconds make up
+function selfDrive(s){if(!s||!s.v)return null;let all=0,known=0,f=0,a=0;
+  for(let i=0;i<s.v.length;i++){const v=s.v[i];if(v==null||!(v>0))continue;all+=v;const p=s.ap?s.ap[i]:null;if(p==null)continue;known+=v;if(p===1)f+=v;else if(p===2||p===3)a+=v}
+  return known?{fsd:f/known,aut:a/known,cover:all?known/all:1}:null}
+// where the route's seconds came from: the dashcam (has a mode) or Tessie's points filled between them
+function dataSources(s){if(!s||!s.lat)return null;let c=0,t=0;for(let i=0;i<s.lat.length;i++){if(s.lat[i]==null)continue;if(s.ap&&s.ap[i]!=null)c++;else t++}const n=c+t;return n?{cam:c/n,tess:t/n}:null}
 async function teslaDriveBody(host,role,fetchSeg,places,opts){
   let d=await fetchSeg(0);if(d&&d.role)role=d.role;       // the drive the footage is on (a drive page asks for "auto")
   let player=null,map=null,chart=null,done=false,evShown=false,pendM=null,pendL=null;
   const stop=()=>{done=true};addEventListener("hashchange",stop,{once:true});
   const it=()=>d.item,S=()=>d.series,live=()=>!done&&$("#tdb")&&host.contains($("#tdb"));
-  host.innerHTML=`<div id="tdb"><h1 id="dh" ${opts.heading===false?"hidden":""}></h1><div class="sub" id="dsub"></div><div id="dpend"></div><div class="tiles" id="dtl"></div>
-    <div id="dmapc" class="card" style="padding:10px"><div class="bar" style="margin:0 0 8px"><button class="chip on" data-cm="v">Speed</button><button class="chip" data-cm="ap">Autopilot / FSD</button><span class="sub" id="dleg"></span><span style="margin-left:auto;display:flex;gap:6px;align-items:center"><span class="sub">Map</span>${MSZ.map(([k,t])=>`<button class="chip" data-ms="${k}">${t}</button>`).join("")}</span></div><div class="map big" id="dmap"></div></div>
+  host.innerHTML=`<div id="tdb"><h1 id="dh" ${opts.heading===false&&!opts.tessie?"hidden":""}></h1><div class="sub" id="dsub"></div><div id="dpend"></div><div class="tiles" id="dtl"></div>
+    <div id="dmapc" class="card" style="padding:10px"><div class="bar" style="margin:0 0 8px"><button class="chip on" data-cm="v">Speed</button><button class="chip" data-cm="ap">Autopilot / FSD</button><span class="sub" id="dleg"></span><span style="margin-left:auto;display:flex;gap:6px;align-items:center"><span class="sub">Map</span>${MSZ.map(([k,t])=>`<button class="chip" data-ms="${k}">${t}</button>`).join("")}</span></div><div class="map big" id="dmap"></div><div class="sub" id="dsrc" style="margin-top:6px"></div></div>
     <div id="drevw"></div><div id="drj"></div>
     <div id="dchc" class="card" style="margin-top:12px;padding:10px"><div class="bar" style="margin:0 0 6px"><b>Telemetry</b><span class="sub" id="dtip" style="min-height:18px;flex:1"></span><span style="display:flex;gap:6px;align-items:center">${TSZ.map(([k,t])=>`<button class="chip" data-ts="${k}">${t}</button>`).join("")}</span></div><canvas id="dch" style="width:100%;display:block"></canvas></div>
     <div class="card" style="margin-top:12px"><div id="dvid"></div></div><div id="drv"></div><div id="dev"></div></div>`;
   const fill=()=>{if(!live())return;const x=it(),m=Math.max(1,Math.round((x.t1-x.t0)/60)),a=nameAt(places,x.p0),b=nameAt(places,x.p1);
-    $("#dh").textContent=(x.kind==="drive"?"Drive":x.kind==="stopped"?"Stopped, recording":"Recording")+" · "+dayName(x.start.slice(0,10))+" · "+clockHM(x.start)+" – "+clockHM(x.end);
-    $("#dsub").textContent=(a||b&&opts.heading!==false?(a||"?")+" → "+(b||"?")+" · ":"")+(d.connected===false?"The drive these clips are on is not connected: the map and telemetry come from the copy kept when they were read, and there is no video. ":"")+"Rebuilt from the dashcam video alone (Recent and Saved clips stitched). Telemetry is only written while the car moves.";
-    $("#dtl").innerHTML=tile(dur(m),"time")+(x.kind==="drive"?tile(n0(x.km,1)+" km","distance")+tile(n0(x.vmax)+" km/h","top speed")+tile(Math.round((x.fsd+x.aut)*100)+"%","on autopilot / FSD"):"")+tile(n0(d.minutes.length),`clips · ${x.recent||0} Recent, ${x.saved||0} Saved`);
+    const T=opts.tessie,sd=selfDrive(S()),src=dataSources(S());
+    $("#dh").textContent=T?driveTitle(T):(x.kind==="drive"?"Drive":x.kind==="stopped"?"Stopped, recording":"Recording")+" · "+dayName(x.start.slice(0,10))+" · "+clockHM(x.start)+" – "+clockHM(x.end);
+    $("#dsub").innerHTML=(T?dayName(T.day)+" · "+T.hm+" – "+addMin(T.hm,T.min)+""+(T.pkey1?' · <a href="#/place/'+encodeURIComponent(T.pkey1)+'">where it ended</a>':"")
+      :(a||b&&opts.heading!==false?esc(a||"?")+" → "+esc(b||"?"):""))+(d.connected===false?" · The drive with these clips is not connected: the map and telemetry are the saved copy, and there is no video.":"");
+    const sdt=sd?tile(Math.round((sd.fsd+sd.aut)*100)+"%","self-driving · FSD "+Math.round(sd.fsd*100)+"%"+(sd.aut>=.005?" · Autosteer/TACC "+Math.round(sd.aut*100)+"%":"")+(sd.cover<.9?" · dashcam covers "+Math.round(sd.cover*100)+"% of the distance":"")):"";
+    $("#dtl").innerHTML=tile(dur(T?T.min:m),"time")+(T?tile(n0(T.km,1)+" km","distance")+tile(n0(T.kwh,1)+" kWh","energy used")+tile(T.km?EF(T.whkm||T.kwh*1000/T.km)+" "+EFU():"–","efficiency")+tile(n0(T.b0)+"% → "+n0(T.b1)+"%","battery")+tile(n0(T.avg)+" / "+n0(T.max)+" km/h","average / top speed")+sdt
+      :x.kind==="drive"?tile(n0(x.km,1)+" km","distance")+tile(n0(x.vmax)+" km/h","top speed")+sdt:"")+tile(n0(d.minutes.length),`clips · ${x.recent||0} Recent, ${x.saved||0} Saved`);
+    $("#dsrc").innerHTML=src&&src.tess>0?`Route and speed: ${Math.round(src.cam*100)}% from TeslaCam (a point every second), ${Math.round(src.tess*100)}% from Tessie (a point every ~30 s)`:"";
     $("#dpend").innerHTML=d.pending>0?`<div class="card ixb"><div>Reading the telemetry from the video (first time only): ${n0(d.pending)} of ${n0(d.minutes.length)} minutes still to read…</div></div>`:""};
   const pts=()=>{const s=S(),o=[];for(let i=0;i<s.v.length;i++)if(s.lat[i]!=null&&Math.abs(s.lat[i])>1)o.push(i);return o};
   const clk=i=>lclock(it().t0+i,it().lo);                              // the local clock text of second i of the drive (display only)
@@ -1343,6 +1717,8 @@ async function teslaDriveBody(host,role,fetchSeg,places,opts){
       player=clipPlayer($("#dvid"),{stamps:mm.map(m=>m.stamp),cams,view:"all",
         url:(st,c)=>meta[st].src==="saved"?`/footage/${role}/SavedClips/${meta[st].ref}/${st}-${c}.mp4`:`/footage/${role}/RecentClips/${st}-${c}.mp4`,
         loc:Object.fromEntries(mm.map(m=>[m.stamp,m.loc])),onAt:(st,sec)=>cursor(meta[st].off+sec),head:`${it().kind==="drive"?"Click the map or the chart to jump there; the dot and the line follow the video.":"The car was not moving, so there is no map."} Each minute plays on to the next, Recent and Saved alike.`})}
+    else if(!player&&!playable.length&&d.minutes.length){const mm=d.minutes,cams={};mm.forEach(m=>{cams[m.stamp]=[]});
+      player=clipPlayer($("#dvid"),{stamps:mm.map(m=>m.stamp),cams,view:"all",url:()=>"",loc:Object.fromEntries(mm.map(m=>[m.stamp,m.loc])),head:"The video of this drive is on no connected drive. Pick a minute to see which drives hold it."})}
     else if(!playable.length)$("#dvid").innerHTML='<div class="sub">No video for this time on a connected drive.</div>';
     events()};
   // map size and telemetry size / hide, remembered
@@ -1382,7 +1758,9 @@ function driveMap(el,s,idx,onPick,leg){
   const fitBtn=mapNav(m,()=>fit(),"Show the whole route");
   let ready=false,mode="v",S=s,I=idx,first=true,latest=null,SEC=null;      // SEC: the section Review is looking at: its own button (inward arrows) and the size buttons fit that; the outward arrows show the whole route
   const SPD=spdExpr(),AP=apExpr();
-  const feats=()=>{const f=[];for(let k=1;k<I.length;k++){const a=I[k-1],b=I[k];if(b-a>5)continue;f.push({type:"Feature",geometry:{type:"LineString",coordinates:[[S.lon[a],S.lat[a]],[S.lon[b],S.lat[b]]]},properties:{v:S.v[b]||0,ap:S.ap[b]||0,i:b}})}return{type:"FeatureCollection",features:f}};
+  // the line is drawn through the points smoothed over five seconds (the GPS wobbles a metre or three from one second to the next); the points themselves, the cursor and the clicks stay as recorded
+  const smooth=()=>{const P=I.map(i=>[S.lon[i],S.lat[i]]),W=[1,2,3,2,1],Q=P.map(p=>p.slice());for(let k=2;k<I.length-2;k++){if(I[k+2]-I[k-2]>8)continue;let x=0,y=0,w=0;for(let j=-2;j<=2;j++){x+=P[k+j][0]*W[j+2];y+=P[k+j][1]*W[j+2];w+=W[j+2]}Q[k]=[x/w,y/w]}return Q};
+  const feats=()=>{const f=[],Q=smooth();for(let k=1;k<I.length;k++){const a=I[k-1],b=I[k];if(b-a>5)continue;f.push({type:"Feature",geometry:{type:"LineString",coordinates:[Q[k-1],Q[k]]},properties:{v:S.v[b]||0,ap:S.ap[b]||0,i:b}})}return{type:"FeatureCollection",features:f}};
   const legend=()=>{leg.innerHTML=mode==="v"?spdLegend():apLegend()};
   const paint=()=>{if(ready){m.setPaintProperty("rt","line-color",mode==="v"?SPD:AP);legend()}};
   const draw=()=>{if(!ready)return;m.getSource("rt").setData(feats());
@@ -1519,20 +1897,173 @@ function pageQueue(){
 function badge(){const n=qget().length,b=$("#qn");b.hidden=!n;b.textContent=n}
 
 // ---------- router
-const ROUTES={activity:pageActivity,drives:pageDrives,charges:pageCharges,battery:pageBattery,health:pageHealth,analytics:pageAnalytics,teslacam:pageTeslaCam,queue:pageQueue,flips:pageDrives,review:pageDrives,dashcam:pageDrives,parked:pageParked,idles:pageParked,places:pagePlaces,alerts:pageAlerts};
+
+// ---------- Software: Tesla software versions from Teslascope (lib/app_software.py): the versions a region has, when a feature reached it, what a jump from one version to another brings
+let SWS={region:"ANZ",car:"",tab:"versions",q:"",a:"",b:"",since:"",fsd:""};
+try{Object.assign(SWS,JSON.parse(localStorage.getItem("sw.state")||"{}"))}catch(e){}
+const swSave=()=>{try{localStorage.setItem("sw.state",JSON.stringify(SWS))}catch(e){}};
+let SWPOLL=null;
+const swQ=(extra)=>{const[m,h]=(SWS.car||"|").split("|");return "region="+encodeURIComponent(SWS.region)+(m?"&model="+encodeURIComponent(m):"")+(h?"&hw="+encodeURIComponent(h):"")+(extra||"")};
+const swCountry=c=>{try{return new Intl.DisplayNames(["en"],{type:"region"}).of(String(c).toUpperCase())+" ("+String(c).toUpperCase()+")"}catch(e){return String(c).toUpperCase()}};
+const swKey=v=>String(v).split(".").map(x=>x.padStart(5,"0")).join(".");
+const swDate=iso=>iso?new Date(iso).toLocaleDateString("en-AU",{day:"numeric",month:"short",year:"numeric"}):"–";
+const swFsd=(c,hw)=>(c||[]).map(f=>`<span class="pill fsd" title="The FSD (Supervised) version this software includes${f.hw?" on "+esc(f.hw):""}">FSD ${/^\d+(\.\d+)*$/.test(f.v)?"v":""}${esc(f.v)}${f.hw&&!hw?" · "+esc(f.hw):""}</span>`).join(" ");
+const swMine=m=>m?'<span class="pill me" title="The software your car is on">Your car</span>':"";
+const swDiff=g=>g.map(x=>{const t=esc(x.text).replace(/\n/g,"<br>");return x.op==="add"?`<b class="add">${t}</b>`:x.op==="del"?`<s class="del">${t}</s>`:t}).join("");
+const swChanged=d=>!!d&&d.some(x=>x.op!=="same");
+// the text of a note: when it differs from the text it had just before in the chain, the new words are bold and the dropped words struck through
+const swBody=it=>swChanged(it.diff)?`<div class="sub" style="margin-bottom:4px">Compared with the text on ${esc(it.prev_tag)}: <b>bold</b> is new, <s>struck through</s> was removed.</div>${swDiff(it.diff)}${it.chain&&it.chain.length>2?`<details style="margin-top:6px"><summary class="sub">Each change on the way</summary>${it.chain.map(c=>`<div class="sub" style="margin:6px 0 2px"><b>${esc(c.tag)}</b></div>${c.diff?swDiff(c.diff):"<div>The text at the start.</div>"}`).join("")}</details>`:""}`:esc(it.text||it.description||"").replace(/\n/g,"<br>");
+function swNotes(items,empty){return items.length?items.map(it=>`<details class="swn"><summary><b>${esc(it.title)}</b> <span class="sub">${it.first_tag&&it.first_tag!==it.tag?"first listed "+esc(it.first_tag)+" · ":""}listed on ${esc(it.tag)}${it.was_tag?" · was "+esc(it.was_title)+" on "+esc(it.was_tag):swChanged(it.diff)?" · text changed since "+esc(it.prev_tag):""}${it.applies_to?" · applies to "+esc(it.applies_to.join(", ").toUpperCase()):""}${it.countries&&!it.applies_to&&it.countries[0]!=="*"?" · only "+esc(it.countries.join(", ").toUpperCase()):""}</span></summary><div class="swt">${swBody(it)}${it.versions?`<div class="sub" style="margin-top:6px">On ${it.versions.map(esc).join(", ")}${it.reaches_b?". Cars were seen going from one of these to the new version.":"."}</div>`:""}</div></details>`).join(""):`<div class="sub">${empty}</div>`}
+// the fetch from Teslascope, with a progress bar and what it is doing, in words
+function swSync(host,info,after){
+  clearTimeout(SWPOLL);let was=false;
+  const paint=j=>{if(!document.body.contains(host))return;
+    if(j&&j.running){const pct=j.total?Math.round(100*j.done/j.total):0;
+      host.innerHTML=`<div class="card ixb"><div style="flex:1;min-width:0"><b id="swh">${j.total?"Fetching version "+n0(Math.min(j.done+1,j.total))+" of "+n0(j.total)+(j.what?": "+esc(j.what):""):"Asking Teslascope for its list of versions…"}</b><div style="height:6px;border-radius:3px;background:var(--line,#ddd);margin:8px 0;overflow:hidden"><div id="swp" style="height:100%;width:${pct}%;background:var(--accent,#3b6cf6);transition:width .3s"></div></div></div><button class="btn" id="swx">Stop</button></div>`;
+      $("#swx",host).onclick=async()=>{await fetch("/api/software/sync/stop",{method:"POST"});poll()};return}
+    let h="";
+    if(j&&j.error)h+=errBox(j.error,"The fetch stopped");
+    else if(j&&j.ended&&was){const r=j.result||{};h+=`<div class="sub" style="margin-bottom:8px">${r.refused?"Teslascope refused the request. Nothing was changed; try again later.":r.list_ok===false?"Teslascope's list could not be read; the one held from last time was used.":"Fetched "+n0(r.asked||0)+" version"+((r.asked||0)===1?"":"s")+(r.failed?", "+n0(r.failed)+" could not be fetched":"")+(r.left?"; "+n0(r.left)+" more are not held yet":"")+"."}</div>`}
+    const left=info&&info.left;
+    h+=`<div class="bar"><button class="btn" id="swg">${left?"Fetch versions":"Check for new versions"}</button><span class="sub">${left?n0(left)+" version"+(left===1?" is":"s are")+" not held yet. Fetching asks Teslascope about one a second.":"Looks for new versions and for ones whose notes changed."}</span></div>`;
+    host.innerHTML=h;$("#swg",host).onclick=async()=>{$("#swg",host).disabled=true;was=true;let r;try{r=await (await fetch("/api/software/sync",{method:"POST",body:"{}"})).json()}catch(e){r={ok:false,error:"Could not reach the app."}}if(r.ok===false){paint({error:r.error});return}poll()}};
+  const poll=async()=>{clearTimeout(SWPOLL);let j;try{j=await (await fetch("/api/software/sync")).json()}catch(e){return}
+    if(!document.body.contains(host))return;
+    if(j.running){was=true;if(!$("#swh",host))paint(j);else{const pct=j.total?Math.round(100*j.done/j.total):0;$("#swh",host).textContent=j.total?"Fetching version "+n0(Math.min(j.done+1,j.total))+" of "+n0(j.total)+(j.what?": "+j.what:""):"Asking Teslascope for its list of versions…";$("#swp",host).style.width=pct+"%"}SWPOLL=setTimeout(poll,1200);return}
+    if(was&&j.ended){bust("software");paint(j);if(after&&!j.error)after();was=false;return}
+    paint(j.ended&&was?j:null)};
+  paint(null);poll()}
+// the car's own journey: each version it was on, with its FSD, since when, and a link that compares one step with the next
+function swJourneyBar(o,compare){
+  const J=o.journey||[];if(!J.length)return"";
+  const when=j=>j.between&&j.between[0]!==j.between[1]?"between "+swDate(j.between[0])+" and "+swDate(j.between[1]):"from "+swDate(j.from);
+  return `<div class="card swj" style="margin:10px 0"><b>Your car</b>${J.map((j,i)=>`${i?(compare&&J[i-1].held&&j.held?`<div><button class="chip nw" data-jc="${esc(J[i-1].version)}>${esc(j.version)}" title="What this update brought: compare ${esc(J[i-1].version)} with ${esc(j.version)}">⇄ compare</button></div>`:'<div class="sub">↓</div>'):""}<div class="swjv"><a href="#/software/${encodeURIComponent(j.version)}"><b>${esc(j.version)}</b></a> ${swFsd(j.fsd_chip,"")} <span class="sub" title="${esc(j.note||"")}">${when(j)}${j.current?" · now":""}</span></div>`).join("")}${o.staged?`<div class="sub">↓ update on the way: <a href="#/software/${encodeURIComponent(o.staged)}">${esc(o.staged)}</a></div>`:""}</div>`}
+const swPick=()=>`<span class="sub">Compare: from <b>${esc(SWS.a||"–")}</b> to <b>${esc(SWS.b||"–")}</b>. Use From and To on the rows below.</span> <button class="chip" id="swgo">Compare these</button>`;
+// versions over time: one lane per version (newest on top), a bar from the day it was first seen to the last day it still got installs, and a line for each upgrade step cars were seen taking
+function swChart(host,nodes,edges,mine,journey){
+  if(!nodes.length){host.innerHTML='<div class="empty">No versions match.</div>';return}
+  const DAY=864e5,J=(journey||[]).filter(j=>nodes.some(n=>n.version===j.version)),jt=J.map(j=>Date.parse(j.between&&j.between[0]||j.from)).filter(x=>!isNaN(x)),t0=Math.min(...nodes.map(n=>n.t0),...jt),t1=Math.max(...nodes.map(n=>n.t1),Date.now()),W=Math.max(host.clientWidth||0,820),L=118,R=120,T=30,RH=22,H=T+nodes.length*RH+10;
+  const X=t=>L+(t-t0)/(t1-t0||1)*(W-L-R),row=new Map(nodes.map((n,i)=>[n.version,i])),Y=v=>T+row.get(v)*RH+RH/2;
+  const byV=new Map(nodes.map(n=>[n.version,n])),ticks=[];for(let d=new Date(t0);d.getTime()<=t1;d=new Date(d.getFullYear(),d.getMonth()+1,1)){const m=new Date(d.getFullYear(),d.getMonth(),1);if(m.getTime()>=t0-DAY*31)ticks.push(m)}
+  const lines=edges.filter(e=>byV.has(e.src)&&byV.has(e.dst)&&e.installs>=3).map(e=>{const a=byV.get(e.src),b=byV.get(e.dst),x2=X(b.t0);let x1=Math.min(X(a.t1),x2-6);const y1=Y(e.src),y2=Y(e.dst),xm=(x1+x2)/2;
+    return `<path class="swe" data-s="${esc(e.src)}" data-d="${esc(e.dst)}" d="M${x1.toFixed(1)} ${y1} C${xm.toFixed(1)} ${y1} ${xm.toFixed(1)} ${y2} ${x2.toFixed(1)} ${y2}" fill="none" style="stroke:var(--mut);stroke-opacity:.28;stroke-width:${(.6+Math.log10(e.installs+1)*.9).toFixed(1)}"><title>${esc(e.src)} → ${esc(e.dst)}: ${n0(e.installs)} cars</title></path>`}).join("");
+  const bars=nodes.map(n=>{const x=X(n.t0),w=Math.max(6,X(n.t1)-x),y=Y(n.version),op=Math.max(.35,Math.min(1,.35+.65*(n.region_installs||0)/30));
+    return `<g class="swb" data-v="${esc(n.version)}" style="cursor:pointer"><text x="${L-8}" y="${y+4}" text-anchor="end" style="fill:var(--ink);font-size:12px;font-weight:${n.version===mine?700:400}">${esc(n.version)}</text>
+      <rect x="${x.toFixed(1)}" y="${y-7}" width="${w.toFixed(1)}" height="14" rx="4" style="fill:${n.fsd.length?"var(--acc)":"var(--mut)"};fill-opacity:${op};${n.version===mine?"stroke:var(--ink);stroke-width:1.5":""}"/>
+      ${n.fsd.length?`<text x="${(x+w+6).toFixed(1)}" y="${y+4}" style="fill:var(--mut);font-size:11px">FSD ${/^\d+(\.\d+)*$/.test(n.fsd[0].v)?"v":""}${esc(n.fsd[0].v)}</text>`:""}</g>`}).join("");
+  let lastX=-99;
+  const axis=ticks.map(m=>{const x=X(Math.max(m.getTime(),t0)),show=x-lastX>=56;if(show)lastX=x;return `<line x1="${x.toFixed(1)}" x2="${x.toFixed(1)}" y1="${T-6}" y2="${H-8}" style="stroke:var(--line)"/><text x="${(x+4).toFixed(1)}" y="${T-12}" style="fill:var(--mut);font-size:11px">${show?MON[m.getMonth()]+" "+m.getFullYear():""}</text>`}).join("");
+  // the car's own journey: the time it was on each version as an outlined span in that version's lane (a light band where only a window is known), joined from one to the next
+  const jx=t=>X(Date.parse(t)),jl=J.map((j,i)=>{const y=Y(j.version),xa=jx(j.from),xb=j.to?jx(j.to):X(Date.now()),w0=j.between&&j.between[0]!==j.between[1]?jx(j.between[0]):null;
+    const nx=J[i+1],link=nx?`<path d="M${xb.toFixed(1)} ${y} C${(xb+14).toFixed(1)} ${y} ${(xb+14).toFixed(1)} ${Y(nx.version)} ${jx(nx.from).toFixed(1)} ${Y(nx.version)}" fill="none" style="stroke:var(--ink);stroke-width:2.2"/>`:"";
+    return `${w0!=null?`<rect x="${w0.toFixed(1)}" y="${y-11}" width="${Math.max(3,xa-w0).toFixed(1)}" height="22" rx="3" style="fill:var(--ink);fill-opacity:.16"><title>The car got ${esc(j.version)} between ${swDate(j.between[0])} and ${swDate(j.between[1])}</title></rect>`:""}<rect x="${xa.toFixed(1)}" y="${y-10}" width="${Math.max(4,xb-xa).toFixed(1)}" height="20" rx="5" fill="none" style="stroke:var(--ink);stroke-width:2"><title>Your car on ${esc(j.version)}: ${swDate(j.from)} to ${j.to?swDate(j.to):"now"}</title></rect>${link}`}).join("");
+  host.innerHTML=`<div class="sub" style="margin-bottom:6px"><b style="color:var(--ink)">▭</b> your car on that version &nbsp; <span class="pill fsd">FSD</span> includes an FSD version &nbsp; <b style="color:var(--mut)">▬</b> no FSD &nbsp; faded: few cars in this region &nbsp; lines: cars seen going from one version to the next (thicker = more cars). Dates are when Teslascope saw the version on any car in any region; the region and car choose which versions and steps appear.</div>
+   <div style="overflow-x:auto"><svg width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" style="display:block">${axis}${lines}${bars}${jl}</svg></div>`;
+  $$(".swb",host).forEach(g=>{const n=byV.get(g.dataset.v);g.onclick=()=>location.hash="#/software/"+encodeURIComponent(n.version);
+    g.onmousemove=ev=>{showTip(ev,`<b>${esc(n.version)}</b>${n.fsd.length?" · FSD "+esc(n.fsd.map(f=>f.v).join(", ")):""}<br>First seen ${swDate(n.first)}<br>Last installs ${n.last?dayName(n.last):"–"}<br>${n0(n.region_installs)} cars in ${esc(SWS.region)}, ${n0(n.installs)} in all regions`);$$(".swe",host).forEach(p=>{p.style.strokeOpacity=p.dataset.s===n.version||p.dataset.d===n.version?".8":".08"})};
+    g.onmouseleave=()=>{hideTip();$$(".swe",host).forEach(p=>p.style.strokeOpacity=".28")}})}
+async function pageSoftware(arg){
+  if(arg)return pageSoftwareOne(decodeURIComponent(arg));
+  loading();const o=await fetchJ("software?"+swQ());
+  if(o.empty){main.innerHTML=`<h1>Software</h1><div class="sub">Tesla software versions, their release notes and who has them, from Teslascope. None are held yet.</div><div id="sws" style="margin-top:10px"></div>`;swSync($("#sws"),{left:1},()=>{bust("software");pageSoftware()});return}
+  if(o.error){main.innerHTML=`<h1>Software</h1>`+errBox(o.error,"Could not read the versions");return}
+  if(!o.choices.regions.some(r=>r.name===SWS.region)&&!o.choices.countries.some(c=>c.country===SWS.region)){SWS.region=o.choices.regions[0].name;swSave();return pageSoftware()}      // a remembered name that is no longer a region (it was "Down Under")
+  const ch=o.choices,vs=o.versions,keys=vs.map(v=>v.version);
+  if(!SWS.a||!keys.includes(SWS.a))SWS.a=keys[Math.min(keys.length-1,Math.max(0,keys.indexOf(o.mine)+3))]||keys[keys.length-1]||"";
+  if(!SWS.b||!keys.includes(SWS.b))SWS.b=o.mine&&keys.includes(o.mine)?o.mine:keys[0]||"";
+  const carOpts=`<option value="">All cars</option>`+ch.models.map(m=>`<option value="${esc(m.model+"|"+(m.hw||""))}">${esc(m.label)}</option>`).join("");
+  main.innerHTML=`<h1>Software</h1><div class="sub">Tesla software versions from Teslascope: ${n0(o.held.n)} held, from ${esc(o.held.oldest||"–")} to ${esc(o.held.newest||"–")}.${o.mine?" Your car is on "+esc(o.mine)+".":""} Car counts are cars Teslascope has seen, so they are a sample, not every car.</div>
+   <div id="sws" style="margin-top:8px"></div>
+   <div class="bar"><select id="swr"><optgroup label="Regions">${ch.regions.map(r=>`<option value="${esc(r.name)}">${esc(r.name)} (${r.countries.length})</option>`).join("")}</optgroup><optgroup label="Countries">${ch.countries.map(c=>`<option value="${esc(c.country)}">${esc(swCountry(c.country))}</option>`).join("")}</optgroup></select><select id="swc">${carOpts}</select>
+    <button class="chip ${SWS.tab==="versions"?"on":""}" data-t="versions">Versions</button><button class="chip ${SWS.tab==="timeline"?"on":""}" data-t="timeline">Timeline</button><button class="chip ${SWS.tab==="feature"?"on":""}" data-t="feature">When a feature arrived</button><button class="chip ${SWS.tab==="compare"?"on":""}" data-t="compare">Compare two versions</button></div>
+   <div class="bar" id="swfl"><label class="sub">First seen from <input type="date" id="swd" value="${esc(SWS.since)}"></label><button class="chip ${SWS.fsd===""?"on":""}" data-f="">Any FSD</button><button class="chip ${SWS.fsd==="yes"?"on":""}" data-f="yes">With FSD</button><button class="chip ${SWS.fsd==="no"?"on":""}" data-f="no">Without FSD</button><span class="sub" id="swsh"></span></div>
+   <div id="swb"></div>`;
+  $("#swr").value=SWS.region;$("#swc").value=SWS.car;
+  $("#swr").onchange=e=>{SWS.region=e.target.value;swSave();bust("software");pageSoftware()};$("#swc").onchange=e=>{SWS.car=e.target.value;swSave();pageSoftware()};
+  $$("[data-t]").forEach(b=>b.onclick=()=>{SWS.tab=b.dataset.t;swSave();$$("[data-t]").forEach(x=>x.classList.toggle("on",x===b));body()});
+  swSync($("#sws"),o,()=>{bust("software");pageSoftware()});
+  const carName=(SWS.car?(ch.models.find(m=>m.model+"|"+(m.hw||"")===SWS.car)||{}).label:"")||"any car";
+  const vf=()=>vs.filter(v=>(!SWS.since||(v.first||"").slice(0,10)>=SWS.since)&&(!SWS.fsd||(SWS.fsd==="yes")===(v.fsd.length>0)));
+  $("#swd").onchange=e=>{SWS.since=e.target.value;swSave();body()};
+  $$("[data-f]").forEach(b=>b.onclick=()=>{SWS.fsd=b.dataset.f;swSave();$$("[data-f]").forEach(x=>x.classList.toggle("on",x===b));body()});
+  const body=()=>{const host=$("#swb"),vl=vf(),pick=SWS.tab==="versions"||SWS.tab==="timeline";
+    $("#swfl").style.display=pick?"":"none";
+    $("#swsh").textContent=pick?"Showing only what "+carName+" in "+SWS.region+" can install: "+n0(vl.length)+" of "+n0(vs.length)+" versions.":"";
+    if(SWS.tab==="timeline"){
+      host.innerHTML='<div class="sub">Loading…</div>';
+      fetchJ("software/timeline?"+swQ()).then(t=>{if(!document.body.contains(host)||SWS.tab!=="timeline")return;
+        const mk=v=>({version:v.version,first:v.first,t0:Date.parse(v.first),last:t.last[v.version]||null,t1:Date.parse((t.last[v.version]||(v.first||"").slice(0,10))+"T23:59:59Z"),fsd:v.fsd,region_installs:v.region_installs,installs:v.installs});
+        const have=new Set(vl.map(v=>v.version)),inJ=t.journey.filter(j=>!SWS.since||!j.to||j.to.slice(0,10)>=SWS.since);
+        const nodes=vl.concat(inJ.filter(j=>!have.has(j.version)&&t.extra[j.version]).map(j=>t.extra[j.version])).map(mk).filter(n=>!isNaN(n.t0)).sort((a,b)=>b.t0-a.t0);
+        host.innerHTML=swJourneyBar(o,true)+'<div id="swch"></div>';swChart($("#swch"),nodes,t.edges,o.mine,inJ);
+        $$("[data-jc]",host).forEach(b=>b.onclick=()=>{const[a,z]=b.dataset.jc.split(">");SWS.a=a;SWS.b=z;SWS.tab="compare";swSave();$$("[data-t]").forEach(x=>x.classList.toggle("on",x.dataset.t==="compare"));body()})});return}
+    if(SWS.tab==="versions"){
+      host.innerHTML=`${swJourneyBar(o,true)}<div class="tiles">${tile(n0(vl.length),"versions for "+esc(SWS.region))}${tile(n0(vl.filter(v=>v.fsd.length).length),"include FSD")}${tile(vl[0]?esc(vl[0].version):"–","newest")}</div><div class="bar" id="swpick">${swPick()}</div><div id="swt"></div>`;
+      table($("#swt"),[{k:"vk",t:"Version",l:1,f:r=>`<b>${esc(r.version)}</b> ${swMine(r.mine)}`},{k:"fsdk",t:"FSD",l:1,f:r=>swFsd(r.fsd,(SWS.car.split("|")[1]||""))||'<span class="sub">–</span>'},{k:"first",t:"First seen",f:r=>swDate(r.first)},{k:"region_installs",t:"Cars in "+esc(SWS.region),f:r=>n0(r.region_installs)},{k:"installs",t:"Cars, all regions",f:r=>n0(r.installs)},{k:"cmp",t:"Compare",l:1,f:r=>`<a href="#" class="pill" data-cf="${esc(r.version)}" title="Compare from this version">From</a> <a href="#" class="pill" data-ct="${esc(r.version)}" title="Compare to this version">To</a>`},{k:"via",t:"Known from",l:1,f:r=>r.has_notes?(r.region_installs?"cars and notes":"notes"):"cars"}],
+        vl.map(v=>Object.assign({vk:swKey(v.version),fsdk:v.fsd.length?v.fsd[0].v:""},v)),r=>location.hash="#/software/"+encodeURIComponent(r.version),"vk");
+    }else if(SWS.tab==="feature"){
+      host.innerHTML=`<div class="bar"><input type="search" id="swq" placeholder="Search release notes, for example welcome animation" value="${esc(SWS.q)}" style="min-width:320px"></div><div id="swf"></div>`;
+      let tm=null;const go=async()=>{const q=SWS.q.trim();if(q.length<3){$("#swf").innerHTML='<div class="sub">Type at least three letters of a feature name.</div>';return}
+        const r=await fetchJ("software/first?region="+encodeURIComponent(SWS.region)+"&q="+encodeURIComponent(q));if(!document.body.contains($("#swf")))return;
+        if(!r.rows.length){$("#swf").innerHTML=`<div class="empty">No release note for ${esc(SWS.region)} mentions that.</div>`;return}
+        const by=new Map();r.rows.forEach(x=>{if(!by.has(x.note_key))by.set(x.note_key,[]);by.get(x.note_key).push(x)});
+        $("#swf").innerHTML=[...by.values()].map(g=>`<div class="card" style="margin-bottom:10px"><h2 style="margin-top:0">${esc(g[g.length-1].title)}</h2><div class="sub">First reached ${esc(SWS.region)} on ${esc(g[0].first_tag||g[0].first_page)}, seen ${swDate(g[0].first_seen)}.</div>
+          <table class="kv"><thead><tr><th class="l">Change</th><th class="l">Listed on</th><th class="l">First seen</th><th class="l">Countries</th><th class="l">Listed again on</th></tr></thead><tbody>${g.map(x=>`<tr><td class="l">${x.change==="new"?"Added":"Text changed"}</td><td class="l"><a href="#/software/${encodeURIComponent(x.first_tag||x.first_page)}">${esc(x.first_tag||x.first_page)}</a></td><td class="l">${swDate(x.first_seen)}</td><td class="l">${esc((x.countries||[]).join(", ").toUpperCase())}</td><td class="l">${(x.repeated_in||[]).slice(0,6).map(esc).join(", ")}${(x.repeated_in||[]).length>6?" +"+((x.repeated_in||[]).length-6):""}</td></tr><tr><td colspan="5" class="l sub">${swChanged(x.diff)?"Compared with "+esc(x.prev_tag)+": <b>bold</b> is new, <s>struck through</s> was removed.<br>"+swDiff(x.diff):esc((x.description||"").slice(0,400)).replace(/\n/g,"<br>")}</td></tr>`).join("")}</tbody></table></div>`).join("")};
+      $("#swq").oninput=e=>{SWS.q=e.target.value;swSave();clearTimeout(tm);tm=setTimeout(go,300)};go();
+    }else{
+      host.innerHTML=`<div class="bar"><span>From</span><input id="swa" list="swl" value="${esc(SWS.a)}" size="14" autocomplete="off" placeholder="2026.8.200"><span>to</span><input id="swb2" list="swl" value="${esc(SWS.b)}" size="14" autocomplete="off" placeholder="2026.38.5.5"><button class="chip" id="swsw" title="Swap the two versions">⇄</button><span class="sub">Any version held (${n0(o.all_versions.length)}), also ones ${esc(SWS.region)} never had: type it, or pick one on the Versions or Timeline tab.</span></div><datalist id="swl">${o.all_versions.map(k=>`<option value="${esc(k)}"></option>`).join("")}</datalist>${swJourneyBar(o,true)}<div id="swcmp"></div>`;
+      const run=async()=>{SWS.a=$("#swa").value.trim();SWS.b=$("#swb2").value.trim();swSave();const box=$("#swcmp");
+        const bad=[SWS.a,SWS.b].filter(v=>!o.all_versions.includes(v));
+        if(bad.length){box.innerHTML=`<div class="sub">${bad.map(esc).join(" and ")} ${bad.length>1?"are":"is"} not held. Fetch more versions above, or pick one from the list.</div>`;return}
+        if(swKey(SWS.a)>=swKey(SWS.b)){box.innerHTML='<div class="sub">Pick an older version first and a newer one second.</div>';return}
+        box.innerHTML='<div class="sub">Comparing…</div>';const r=await fetchJ("software/compare?a="+encodeURIComponent(SWS.a)+"&b="+encodeURIComponent(SWS.b)+"&"+swQ());if(!document.body.contains(box))return;
+        if(r.error){box.innerHTML=errBox(r.error,"Could not compare");return}
+        const nb=r.between_region.length;
+        box.innerHTML=`<div class="sub">${esc(SWS.region)} had ${n0(nb)} version${nb===1?"":"s"} between these two (${n0(r.between.length)} held in all regions). Open a feature to read its text.${r.a_page_lists_nothing_here?" No release notes for "+esc(SWS.region)+" were listed on "+esc(r.a)+" itself, so what it had is taken from the notes listed on the versions before it.":""}</div>
+         <h2>Added by ${esc(r.b)} <small class="sub">${n0(r.listed_new.length)}</small></h2>${swNotes(r.listed_new,"Nothing new is listed on "+esc(r.b)+".")}
+         <h2>Text changed <small class="sub">${n0(r.listed_revised.length)}</small></h2>${swNotes(r.listed_revised,"No feature was reworded.")}
+         <h2>Installed on the way, not in the notes of ${esc(r.b)} <small class="sub">${n0(r.skipped.length)}</small></h2><div class="sub" style="margin-bottom:6px">Listed on a version between the two for ${esc(SWS.region)}; ${esc(r.b)}'s own notes do not repeat them. Cars that went through those versions have them.</div>${swNotes(r.skipped,"Nothing was listed only on a version in between.")}
+         <h2>Listed again on ${esc(r.b)} <small class="sub">${n0(r.listed_again.length)}</small></h2><div class="sub" style="margin-bottom:6px">Already listed on ${esc(r.a)} with the same text.</div>${swNotes(r.listed_again,"None.")}
+         <h2>Only for other regions or cars <small class="sub">${n0(r.others.length)}</small></h2>${swNotes(r.others,"None.")}`};
+      $("#swa").onchange=run;$("#swb2").onchange=run;$("#swsw").onclick=()=>{const a=$("#swa").value;$("#swa").value=$("#swb2").value;$("#swb2").value=a;run()};run()}
+    $$("[data-jc]",host).forEach(b=>b.onclick=()=>{const[a,z]=b.dataset.jc.split(">");SWS.a=a;SWS.b=z;SWS.tab="compare";swSave();$$("[data-t]").forEach(x=>x.classList.toggle("on",x.dataset.t==="compare"));body()});
+    $$("[data-cf],[data-ct]",host).forEach(a=>a.onclick=e=>{e.preventDefault();e.stopPropagation();if(a.dataset.cf)SWS.a=a.dataset.cf;else SWS.b=a.dataset.ct;swSave();pickRefresh()});
+    const goCompare=()=>{SWS.tab="compare";swSave();$$("[data-t]").forEach(x=>x.classList.toggle("on",x.dataset.t==="compare"));body()};
+    function pickRefresh(){const x=$("#swpick",host);if(!x)return;x.innerHTML=swPick();$("#swgo",x).onclick=goCompare}pickRefresh();
+  };
+  body()}
+async function pageSoftwareOne(v){
+  loading();const d=await fetchJ("software/version?v="+encodeURIComponent(v)+"&"+swQ());
+  if(d.error){main.innerHTML=crumbs("#/software","Software")+`<h1>Software ${esc(v)}</h1>`+errBox(d.error,"Could not read this version");return}
+  const u=d.uptake,hw=(SWS.car.split("|")[1]||"");
+  main.innerHTML=crumbs("#/software","Software")+`<h1>Software ${esc(v)} ${swFsd(u.fsd,hw)}</h1><div class="sub">First seen ${swDate(u.first_spotted)}. ${esc(SWS.region)}${SWS.car?", "+esc((SWS.car.split("|")[0])):""}.</div>
+   <div class="bar"><button class="chip" id="cmpf">Compare from this version</button><button class="chip" id="cmpt">Compare to this version</button></div>
+   <div class="tiles">${tile(n0(u.installs),"cars seen on it")}${tile(u.region_installs==null?"–":n0(u.region_installs),"in "+esc(SWS.region))}${tile(n0(u.pending),"waiting for it")}${tile(n0(d.features.length),"features listed up to it")}</div>
+   <div class="card" style="margin-top:12px"><h2 style="margin-top:0">Features for ${esc(SWS.region)}</h2><div class="sub" style="margin-bottom:6px">The newest text of each feature listed on this version or any before it. Those not on this version's own page were listed earlier.</div>
+    ${swNotes(d.features.map(f=>Object.assign({},f,{tag:f.tag,text:f.description,was_tag:null,first_tag:f.listed_on_page?null:f.seen_on})),"No release notes are held for this version.")}</div>
+   <div class="chr2" style="margin-top:12px"><div class="card"><h2 style="margin-top:0">By country</h2><table class="kv"><tbody>${u.countries.slice(0,20).map(c=>`<tr><td class="l">${esc(String(c.country||"?").toUpperCase())}</td><td>${n0(c.installs)}</td></tr>`).join("")}</tbody></table></div>
+    <div class="card"><h2 style="margin-top:0">By car</h2><table class="kv"><tbody>${u.models.map(m=>`<tr><td class="l">${esc(m.label)}</td><td>${n0(m.installs)}</td></tr>`).join("")}</tbody></table></div>
+    <div class="card"><h2 style="margin-top:0">Cars came from</h2><table class="kv"><tbody>${u.from.length?u.from.slice(0,12).map(c=>`<tr ${c.region?"":'class="sub"'}><td class="l"><a href="#/software/${encodeURIComponent(c.version)}">${esc(c.version)}</a>${c.region?"":" <span class='sub'>other regions</span>"}</td><td>${n0(c.installs)}</td></tr>`).join(""):'<tr><td class="l sub">Not known.</td></tr>'}</tbody></table></div>
+    <div class="card"><h2 style="margin-top:0">Installs per day</h2><table class="kv"><tbody>${u.daily.slice(0,14).map(c=>`<tr><td class="l">${esc(dayName(c.day))}</td><td>${n0(c.installs)}</td></tr>`).join("")||'<tr><td class="l sub">Not known.</td></tr>'}</tbody></table></div></div>`;
+  const go=k=>()=>{SWS[k]=v;SWS.tab="compare";swSave();location.hash="#/software"};$("#cmpf").onclick=go("a");$("#cmpt").onclick=go("b")}
+
+const ROUTES={activity:pageActivity,drives:pageDrives,driveslist:pageDriveList,charges:pageCharges,battery:pageBattery,health:pageHealth,analytics:pageAnalytics,teslacam:pageTeslaCam,queue:pageQueue,flips:pageDrives,review:pageDrives,dashcam:pageDrives,parked:pageParked,idles:pageParked,places:pagePlaces,alerts:pageAlerts,software:pageSoftware};
 async function route(){
-  hideTip();if(TLOFF){TLOFF();TLOFF=null}if(TCPOLL){clearInterval(TCPOLL);TCPOLL=null}const h=(location.hash||"#/activity").replace(/^#\//,""),[p,arg,arg2]=h.split("/").map(decodeURIComponent);
-  $$("#nav>a").forEach(a=>a.classList.toggle("on",a.dataset.p===(({drive:"drives",charge:"charges",idle:"parked",idles:"parked",dashcam:"drives",flips:"drives",review:"drives",place:"places"})[p]||p)));
-  badge();main.scrollTop=0;
+  navTrack();hideTip();if(location.hash.indexOf("#/charge/")!==0){try{sessionStorage.removeItem("chargeSet")}catch(e){}}if(TLOFF){TLOFF();TLOFF=null}const h=(location.hash||"#/activity").replace(/^#\//,""),[p,arg,arg2]=h.split("/").map(decodeURIComponent);
+  // the side bar item lit is the list the page was reached from (a drive opened from Drives (new) lights Drives (new)), else the page's own section
+  const own=({drive:"drives",charge:"charges",idle:"parked",idles:"parked",dashcam:"drives",flips:"drives",review:"drives",place:"places"})[p]||p,from=NAV.length?(NAV[0].h||"").replace(/^#\//,"").split("/")[0]:"",lit=ROOTS[from]&&ROOTS[from]!==ROOTS[own]&&NAV.length>1?(({idles:"parked"})[from]||from):own;
+  $$("#nav>a").forEach(a=>a.classList.toggle("on",a.dataset.p===lit));
+  badge();if(!QUIET)main.scrollTop=0;
   try{
     if(p==="drive")await pageDrive(arg,arg2);else if(p==="charge")await pageCharge(arg,arg2);else if(p==="idle"||p==="parked"&&arg)await pageParkedOne(arg);else if(p==="place")await pagePlace(arg);else await (ROUTES[p]||pageActivity)(arg,arg2);
   }catch(e){main.innerHTML=errBox(e.stack||e.message,"Something went wrong")}
 }
 async function boot(){
   addEventListener("hashchange",route);
+  $$("#nav>a").forEach(a=>a.addEventListener("click",()=>{if(a.getAttribute("href")!==location.hash)NAVRESET=true}));
   try{SET=await (await fetch("/api/settings")).json()}catch(e){}
   try{const s=await api("summary");$("#veh").textContent=s.vehicle;$("#vsub").textContent=n0(s.km)+" km logged"}catch(e){}
-  const st=async()=>{try{const s=await (await fetch("/api/status")).json();const NM={A:"Archive",J:"JOWUA",U:"Tesla USB"};$("#status").innerHTML=["A","J","U"].filter(r=>r==="A"||s.roots[r]).map(r=>`<div><span class="dot ${s.roots[r]?"on":"off"}"></span>${NM[r]} ${s.roots[r]?"connected":"not connected"}</div>`).join("")+`${s.stale?'<div class="upd">The app was updated. Quit and reopen it to load the new version.</div>':""}`}catch(e){}};
+  const st=async()=>{try{const s=await (await fetch("/api/status")).json();if(window.UI0==null)window.UI0=s.ui;const NM={A:"Archive",J:"JOWUA",U:"Tesla USB"};$("#status").innerHTML=["A","J","U"].filter(r=>r==="A"||s.roots[r]).map(r=>`<div><span class="dot ${s.roots[r]?"on":"off"}"></span>${NM[r]} ${s.roots[r]?"connected":"not connected"}</div>`).join("")+`${s.stale?'<div class="upd">The app was updated. Quit and reopen it to load the new version.</div>':""}${s.ui!==window.UI0?'<div class="upd">The page was updated. <a href="#" onclick="location.reload();return false">Reload it</a> to load the new version.</div>':""}`}catch(e){}};
   // the background reading of the connected drives (lib/app_keeper.py): what it is doing, and a button to pause it (before ejecting a disk)
   const kp=async()=>{try{const k=await (await fetch("/api/keeper")).json(),el=$("#keeper");
       if(!k.enabled||(!k.working&&!k.paused&&!k.error&&!k.playing)){el.hidden=true;return}

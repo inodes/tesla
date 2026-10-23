@@ -4,14 +4,15 @@ Layout (day folders): every Tessie drive gets its own folder inside the folder o
 
     drives/deepdive/2026-06-01/                          the day (the date in the drive's stamp)
         2026-06-01_08-34_AEST/                           one drive, named by its start stamp
-            drive_deepdive_2026-06-01_08-34_AEST.csv     Tessie telemetry (UTC-based; the CSV header names the zone it was written in)
+            drive_deepdive_2026-06-01_08-34_AEST.json    Tessie telemetry, as Tessie sent it (UTC epoch per point, no zone anywhere inside; see lib/drive_points.py)
+                                                         (older drives hold the same as .csv, local clock text; both are read through lib/drive_points.py)
             drive_summary.json                           what drive_report.py found, incl. t0/t1 (UTC epoch seconds), tz and utc_offset_s
             drive.html                                   summary page (drive_report.py)
             clips/                                       event snippets + stills, when Recent/Saved footage overlaps the drive
 
 The day is the local date at the place the drive STARTED (the stamp's date), so a Queensland morning drive and the QLD/NSW border do not
 move a drive to another day; day_of(stamp) needs nothing but the stamp, so a drive is found without a lookup. Times inside the data are UTC;
-the zone and offset are stored with each drive for converting back.
+the drive's zone is worked out from where it began (lib/drive_points.zone_of) when a local clock is to be shown. drive_summary.json is a COPY made from Tessie's points and the camera store (rebuild it with drive_report.py --force); it is never the source of anything.
 
 Older layouts are still found (and listed once, the newest layout winning), so a half-migrated data home, or an older sync, never hides a
 drive: per-drive folders directly under deepdive/ (deepdive/<stamp>/) and flat files (deepdive/drive_deepdive_<stamp>.csv).
@@ -22,15 +23,18 @@ import os
 import re
 
 PREFIX = "drive_deepdive_"
+EXTS = (".json", ".csv")          # the stored forms of a drive's telemetry, newest form first
 STAMP_RE = re.compile(r"^\d{4}-\d{2}-\d{2}_\d{2}-\d{2}(_[A-Z]{3,4})?(_\d{2})?$")
 DAY_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 
 
 def stamp_of(path):
-    """'.../drive_deepdive_2026-06-01_08-34_AEST.csv' -> '2026-06-01_08-34_AEST'."""
+    """'.../drive_deepdive_2026-06-01_08-34_AEST.json' (or .csv) -> '2026-06-01_08-34_AEST'."""
     b = os.path.basename(path)
-    if b.startswith(PREFIX) and b.endswith(".csv"):
-        return b[len(PREFIX):-4]
+    if b.startswith(PREFIX):
+        for e in EXTS:
+            if b.endswith(e):
+                return b[len(PREFIX):-len(e)]
     return None
 
 
@@ -57,21 +61,30 @@ def folder_for(deepdive_root, stamp):
     return find_folder(deepdive_root, stamp) or folder_path(deepdive_root, stamp)
 
 
-def csv_path(deepdive_root, stamp, create=False):
-    """Where the CSV for `stamp` belongs: in its existing folder, else in the day layout."""
+def data_path(deepdive_root, stamp, create=False, ext=".json"):
+    """Where the telemetry file for `stamp` belongs: in its existing folder, else in the day layout. New files are JSON; a manual CSV export asks for ext='.csv'."""
     folder = folder_for(deepdive_root, stamp)
     if create:
         os.makedirs(folder, exist_ok=True)
-    return os.path.join(folder, f"{PREFIX}{stamp}.csv")
+    return os.path.join(folder, f"{PREFIX}{stamp}{ext}")
 
 
-def find_csv(deepdive_root, stamp):
-    """Existing CSV for stamp in any layout, else None."""
+def csv_path(deepdive_root, stamp, create=False):
+    """Where a CSV (manual export) for `stamp` belongs."""
+    return data_path(deepdive_root, stamp, create, ".csv")
+
+
+def find_data(deepdive_root, stamp):
+    """Existing telemetry file (JSON, else CSV) for stamp in any layout, else None."""
     f = find_folder(deepdive_root, stamp)
-    for p in ((os.path.join(f, f"{PREFIX}{stamp}.csv"),) if f else ()) + (os.path.join(deepdive_root, f"{PREFIX}{stamp}.csv"),):
-        if os.path.isfile(p):
-            return p
+    for e in EXTS:
+        for p in ((os.path.join(f, f"{PREFIX}{stamp}{e}"),) if f else ()) + (os.path.join(deepdive_root, f"{PREFIX}{stamp}{e}"),):
+            if os.path.isfile(p):
+                return p
     return None
+
+
+find_csv = find_data       # the old name; the file it finds may be JSON now
 
 
 def iter_folders(deepdive_root):
@@ -98,15 +111,20 @@ def iter_folders(deepdive_root):
     return sorted(seen.items())
 
 
-def list_csvs(deepdive_root):
-    """Every drive CSV under a deepdive dir, all layouts, each stamp once (the newest layout wins), sorted by stamp."""
+def list_data(deepdive_root):
+    """Every drive telemetry file (JSON or CSV) under a deepdive dir, all layouts, each stamp once (the newest layout wins, and JSON wins over CSV),
+    sorted by stamp."""
     found = {}
-    for pat in (os.path.join(deepdive_root, f"{PREFIX}*.csv"), os.path.join(deepdive_root, "*", f"{PREFIX}*.csv")):    # flat, per-drive
-        for p in glob.glob(pat):
+    for e in reversed(EXTS):                                                                                              # CSV first, so JSON overwrites it
+        for pat in (os.path.join(deepdive_root, f"{PREFIX}*{e}"), os.path.join(deepdive_root, "*", f"{PREFIX}*{e}")):    # flat, per-drive
+            for p in glob.glob(pat):
+                found[stamp_of(p)] = p
+        for p in glob.glob(os.path.join(deepdive_root, "*", "*", f"{PREFIX}*{e}")):                                      # day layout
             found[stamp_of(p)] = p
-    for p in glob.glob(os.path.join(deepdive_root, "*", "*", f"{PREFIX}*.csv")):                                          # day layout
-        found[stamp_of(p)] = p
     return sorted(found.values(), key=lambda p: (stamp_of(p) or "", p))
+
+
+list_csvs = list_data      # the old name; the files it lists may be JSON now
 
 
 def signature(deepdive_root):

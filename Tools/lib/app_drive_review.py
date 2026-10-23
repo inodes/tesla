@@ -61,7 +61,7 @@ OPTS = dict(accel_min_pct=5,        # accelerator at or above this (%) counts as
             traffic_model_url="https://huggingface.co/unity/inference-engine-yolo/resolve/main/models/yolov8n.onnx",   # where it is fetched from when missing
             steer_deg=15)           # the wheel moved this much around a switch-off = "steering"
 MODES = {0: "Manual", 1: "FSD", 2: "Autosteer", 3: "TACC"}
-SIGN_VER = 3                        # bump when the sign finders change: the kept readings (signcache) are then made again
+SIGN_VER = 4                        # bump when the sign finders change: the kept readings (signcache) are then made again
 MAXGAP = 3                          # seconds between two readings that are still consecutive
 _LOCK = threading.RLock()
 
@@ -224,7 +224,7 @@ def _read_signs(im, o_rv, traffic=None):
         if d["cat"] == "regulatory" and d["col"] == "red" and any(x["cat"] == "speed" for x in out):
             continue                                         # the red ring of a speed sign
         txt = re.sub(r"[^A-Za-z0-9 /.\-]", "", d.get("text") or "").strip() if d.get("conf", 0) >= 50 else ""
-        out.append(dict(cat=d["cat"], text=txt, side=_side(d["x"] + d["w"] / 2.0, W), conf=int(d.get("conf", 0)), crop=d["crop"]))
+        out.append(dict(cat=d["cat"], text=txt, side=_side(d["x"] + d["w"] / 2.0, W), conf=int(d.get("conf", 0)), crop=d["crop"], sym=bool(d.get("sym"))))
     if traffic:
         for v in traffic_finder.find(im, traffic, o_rv.get("traffic_conf", 0.35), o_rv.get("traffic_min_w", 0.015)):
             out.append(dict(cat="traffic", text=v["kind"], side="C", conf=int(round(100 * v["conf"])), crop=v["crop"], near=v["near"]))
@@ -287,7 +287,7 @@ class _SignCache:
     def get(self, clip, sec):
         out = []
         for d in self._load(clip)["s"].get(str(sec), []):
-            out.append(dict(cat=d["cat"], text=d["text"], side=d["side"], conf=d["conf"], near=d.get("near"), crop=os.path.join(self.dir, clip, d["f"]) if d.get("f") else None))
+            out.append(dict(cat=d["cat"], text=d["text"], side=d["side"], conf=d["conf"], near=d.get("near"), sym=bool(d.get("sym")), crop=os.path.join(self.dir, clip, d["f"]) if d.get("f") else None))
         return out
 
     def put(self, clip, sec, dets):
@@ -303,7 +303,7 @@ class _SignCache:
                 os.makedirs(os.path.join(self.dir, clip), exist_ok=True)
                 name = "%03d_%d.jpg" % (sec, n)
                 cv2.imwrite(os.path.join(self.dir, clip, name), crop, [cv2.IMWRITE_JPEG_QUALITY, 85])
-            rows.append(dict(cat=d["cat"], text=d["text"], side=d["side"], conf=d["conf"], f=name, near=d.get("near")))
+            rows.append(dict(cat=d["cat"], text=d["text"], side=d["side"], conf=d["conf"], f=name, near=d.get("near"), sym=bool(d.get("sym"))))
         self._load(clip)["s"][str(sec)] = rows
         self.dirty.add(clip)
 
@@ -317,7 +317,7 @@ class _SignCache:
         self.dirty.clear()
 
 
-def look(ev, rows, front, base, stamp, o, stop, stills=None, signs=True):
+def look(ev, rows, front, base, stamp, o, stop, stills=None, signs=True, prog=None):
     """The front-camera stills of one event. Sets ev["pics"] ([clip stamp, second in the clip] of each still, in time order), ev["shots"] (seconds from the
     event), ev["tile"] (shape of a still), ev["n_stills"] and, when the video is there and `signs`, ev["signs"] read from the full-size frames.
     The displayed stills come from the kept one-second stills (teslacam_stills): made from the video here if not yet, and still there after
@@ -325,6 +325,8 @@ def look(ev, rows, front, base, stamp, o, stop, stills=None, signs=True):
     import cv2
     import numpy as np
     from concurrent.futures import ThreadPoolExecutor
+    prog = prog or (lambda f, text: None)                  # prog(share of this event done 0..1, what it is doing now)
+    prog(0.0, "finding the stills")
     o_rv = dict(app_review.OPTS)
     t_a, t_b = ev["t"] - o["event_before_s"], _end(ev) + o["event_after_s"]
     span = t_b - t_a
@@ -336,9 +338,11 @@ def look(ev, rows, front, base, stamp, o, stop, stills=None, signs=True):
         if r and (r["stamp"] in front or (stills and stills.has(r["stamp"]))):
             want.append((T, r["stamp"], r["i"]))
     if stills:
-        for st in sorted({w[1] for w in want}):             # the stills of every clip involved, from the video while it is there
-            if st in front and not stills.has(st):
-                stills.make(st, front[st])
+        mk = [st for st in sorted({w[1] for w in want}) if st in front and not stills.has(st)]
+        for n, st in enumerate(mk):                         # the stills of every clip involved, from the video while it is there
+            prog(0.15 * n / len(mk), "making the stills of clip %d of %d" % (n + 1, len(mk)))
+            stills.make(st, front[st])
+    prog(0.15, "listing the stills")
     pics = [w for w in want if stills and stills.has(w[1])]
     ev["pics"] = [[st, i] for _T, st, i in pics]
     ev["shots"] = [round(T - ev["t"], 1) for T, _st, _i in pics]
@@ -380,6 +384,7 @@ def look(ev, rows, front, base, stamp, o, stop, stills=None, signs=True):
             j = k
             while j + 1 < len(need) and need[j + 1][1] == need[k][1] and need[j + 1][2] - need[j][2] == step:
                 j += 1
+            prog(0.15 + 0.25 * k / max(1, len(need)), "reading frames %d-%d of %d from the video" % (k + 1, j + 1, len(need)))
             files = _extract(front[need[k][1]], need[k][2], j - k + 1, step, tmp, "r%d" % k)
             for n, f in enumerate(files[:j - k + 1]):
                 im = cv2.imread(f)
@@ -389,6 +394,7 @@ def look(ev, rows, front, base, stamp, o, stop, stills=None, signs=True):
         if stop():
             return
         # the big pictures of this event: the full-size frames just read, kept at hi_px wide (the one-second stills of the store are small, for browsing)
+        prog(0.4, "keeping the big pictures")
         if o["hi_px"]:
             for T, clip, sec, im in shots:
                 if where.get(T) is None:
@@ -402,8 +408,9 @@ def look(ev, rows, front, base, stamp, o, stop, stills=None, signs=True):
         if signs:
             todo = [x for x in shots if not cache.has(x[1], x[2])]
             with ThreadPoolExecutor(max(1, int(o_rv["workers"]))) as ex:
-                for x, lst in zip(todo, ex.map(lambda x: _read_signs(x[3], o_rv, model), todo)):
+                for n, (x, lst) in enumerate(zip(todo, ex.map(lambda x: _read_signs(x[3], o_rv, model), todo))):
                     cache.put(x[1], x[2], lst)
+                    prog(0.5 + 0.45 * (n + 1) / len(todo), "reading signs, frame %d of %d" % (n + 1, len(todo)))
         cache.save()
         ev["read"] = sum(1 for _T, clip, sec in pics if cache.has(clip, sec))
         found = []                                          # every reading of these frames: just made, or kept from an earlier review
@@ -416,9 +423,10 @@ def look(ev, rows, front, base, stamp, o, stop, stills=None, signs=True):
             g = next((x for x in reversed(sgs) if x["cat"] == d["cat"] and x["side"] == d["side"] and (d["cat"] != "speed" or x["text"] == d["text"])
                       and d["t"] - x["t1"] <= (2 if d["cat"] == "traffic" else o_rv["merge_s"])), None)
             if g is None:
-                sgs.append(dict(cat=d["cat"], text=d["text"], side=d["side"], t=d["t"], t0=d["t"], t1=d["t"], n=0, conf=-1, crop=None, f=""))
+                sgs.append(dict(cat=d["cat"], text=d["text"], side=d["side"], t=d["t"], t0=d["t"], t1=d["t"], n=0, conf=-1, crop=None, f="", sym=False))
                 g = sgs[-1]
             g["n"] += 1
+            g["sym"] = g["sym"] or bool(d.get("sym"))
             g["t1"] = d["t"]
             if d.get("near") is not None:
                 g["near"] = max(g.get("near") or 0, d["near"])
@@ -426,7 +434,7 @@ def look(ev, rows, front, base, stamp, o, stop, stills=None, signs=True):
                 g.update(conf=d["conf"], crop=d["crop"], t=d["t"])
                 if d["cat"] != "speed" or not g["text"]:
                     g["text"] = d["text"]
-        sgs = [g for g in sgs if g["cat"] == "speed" or g["n"] >= o["sign_min_stills"]]       # a colour blob in one still only is mostly noise
+        sgs = [g for g in sgs if g["cat"] == "speed" or g.get("sym") or g["n"] >= o["sign_min_stills"]]       # a shape-matched sign counts at once       # a colour blob in one still only is mostly noise
         os.makedirs(os.path.join(base, "crops"), exist_ok=True)
         for n, g in enumerate(sgs):
             crop = g.pop("crop")
@@ -439,6 +447,7 @@ def look(ev, rows, front, base, stamp, o, stop, stills=None, signs=True):
                     crop = cv2.resize(crop, (max(1, int(crop.shape[1] * z)), max(1, int(crop.shape[0] * z))))
                 cv2.imwrite(os.path.join(base, "crops", name), crop, [cv2.IMWRITE_JPEG_QUALITY, 85])
                 g["f"] = name
+        prog(0.95, "checking the signs against the map")
         roads = _roads(base, o) if sgs else None
         for g in sgs:
             near = [r["v"] for r in rows if g["t0"] - 1 <= r["t"] <= g["t1"] + 1 and r["v"] is not None]
@@ -562,7 +571,7 @@ class DriveReview:
         tp = DF.tessie_points(folder)
         if len(tp) < 2:
             raise ValueError("this drive has no sample file")
-        store, _ = self.tc._tl("A")
+        store = self.tc._tl("A")
         role, teslacam = self.tc.pick_role(teslacam, DF.utc(t0), DF.utc(t1))      # teslacam = {role: folder} of every connected drive; use the one holding this footage
         front, mins = {}, []
         if teslacam:
@@ -601,13 +610,32 @@ class DriveReview:
         elif not can_sign:
             note = "Sign reading needs: %s" % "; ".join(req["hint"])
         done_ev = 0
+        if can_look and front and ST.have_ffmpeg():
+            # a still for every second of the whole drive, not only around the events: every front clip that overlaps it (the video's own stills; kept when the video is gone)
+            u0, u1 = DF.utc(t0), DF.utc(t1)
+            clips = sorted({r["stamp"] for r in rows} | {st for st in front if CC.maybe_in(st, u0 - 60, u1 + 60)})
+            mk = [st for st in clips if st in front and not stills.has(st)]
+            for n, st in enumerate(mk):
+                if self.stop_flag:
+                    return
+                self._stage("Making the stills of the whole drive: clip %d of %d" % (n + 1, len(mk)), n, len(mk))
+                try:
+                    stills.make(st, front[st])
+                except Exception as e:
+                    note = (note + " " if note else "") + "Stills of %s could not be made: %s." % (st, e)
+                    break
         if can_look:
             for ev in events:
                 if self.stop_flag:
                     return
-                self._stage("Looking at the front camera: %s" % ev["id"], done_ev, len(events))
+                nev = len(events)
+                def prog(f, text, _n=done_ev):                  # one overall bar over every event, moving as each event's stills, frames and signs are done
+                    self._stage("Event %d of %d (%s): %s" % (_n + 1, nev, ev["id"], text), int(1000 * (_n + max(0.0, min(1.0, f))) / nev), 1000)
+                    self.st["pct"] = True
+                self._stage("Event %d of %d (%s)" % (done_ev + 1, nev, ev["id"]), int(1000.0 * done_ev / nev), 1000)
+                self.st["pct"] = True
                 try:
-                    look(ev, rows, front, self.base, stamp, o, lambda: self.stop_flag, stills, can_sign)
+                    look(ev, rows, front, self.base, stamp, o, lambda: self.stop_flag, stills, can_sign, prog)
                 except Exception as e:
                     ev["look_error"] = "%s: %s" % (type(e).__name__, e)
                 done_ev += 1

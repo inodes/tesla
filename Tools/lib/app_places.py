@@ -139,13 +139,20 @@ class Places:
 
     # ---- who is at this spot --------------------------------------------------------------------------------------
     def saved_at(self, lat, lon):
+        defs = self.defs()
+        if defs is not getattr(self, "_sa_defs", None):      # the saved places changed: forget what was found
+            self._sa_defs, self._sa = defs, {}
+        k = (round(lat, 5), round(lon, 5))
+        if k in self._sa:
+            return self._sa[k]
         best = None
-        for p in self.defs():
+        for p in defs:
             d = hav(lat, lon, p["lat"], p["lon"])
             r = max(p["radius"], 40)
             if d <= r and (best is None or d / r < best[0]):
                 best = (d / r, p)
-        return best[1] if best else None
+        self._sa[k] = best[1] if best else None
+        return self._sa[k]
 
     def station_at(self, lat, lon, within=400):
         best = None
@@ -298,6 +305,28 @@ class Places:
         return out[:60]
 
     # ---- one place -----------------------------------------------------------------------------------------------
+    _STATES = {"New South Wales": "NSW", "Victoria": "VIC", "Queensland": "QLD", "South Australia": "SA", "Western Australia": "WA", "Tasmania": "TAS",
+               "Northern Territory": "NT", "Australian Capital Territory": "ACT"}
+
+    def suburb_state(self, lat, lon):
+        """(suburb, state abbreviation) of a point from Nominatim; ("", "") when it does not answer."""
+        sys.path.insert(0, os.path.dirname(HERE))
+        import places_manager as PM
+        ck = (round(lat, 4), round(lon, 4))
+        memo = self.__dict__.setdefault("_ss", {})
+        if ck not in memo:
+            try:
+                a = (PM.reverse_geocode(lat, lon) or {}).get("address") or {}
+            except Exception:
+                a = {}
+            sub = a.get("suburb") or a.get("city_district") or a.get("town") or a.get("village") or a.get("city") or ""
+            st = (a.get("ISO3166-2-lvl4") or "").split("-")[-1] or self._STATES.get(a.get("state") or "", a.get("state") or "")
+            if sub:
+                memo[ck] = (sub, st)
+            else:
+                return "", ""
+        return memo[ck]
+
     def spot_keywords(self, S, lat, lon, name="", addr=""):
         """Keywords for a place that is not saved yet, as places_manager.py suggests them: the street of the address (and its abbreviation) plus the
         place name. The address comes from OpenStreetMap: the one on the OSM place itself (addr), else what Nominatim says is at that point. Only when
@@ -355,6 +384,8 @@ class Places:
                 return self.detail(S, "p:" + sp["name"])
             kws, addr = self.spot_keywords(S, la, lo, name, addr)
             info = dict(kind="spot", name="Unnamed place", lat=la, lon=lo, radius=150, keywords=kws, notes="", addr=addr)
+            if name:                                    # a name suggested from an OpenStreetMap result: the suburb and state make it specific ("Ampol, Ermington, NSW")
+                info["suburb"], info["state"] = self.suburb_state(la, lo)
         if not info:
             return None
         info["key"] = key
@@ -461,6 +492,8 @@ class Places:
     def osm(self, key, lat, lon, radius=300, refresh=False):
         """OSM places around a spot: cached; a Tesla charger uses the facilities already collected; otherwise ask Overpass (and cache)."""
         ck = "%s|%d" % (key, radius)
+        if key.startswith("@"):         # an unsaved spot (@new, @lat,lon): the same key stands for different places, so keep it per position
+            ck = "@%.5f,%.5f|%d" % (lat, lon, radius)
         cache = self._cache()
         if not refresh:
             if ck in cache:

@@ -5,7 +5,7 @@ NAME
     restore_drive.py - copy a drive's files back from their verified copies and check every one
 
 SYNOPSIS
-    restore_drive.py --dest PATH [--manifest FILE] [--all] [--dry-run] [--no-verify]
+    restore_drive.py (--dest-uuid UUID | --dest PATH) [--manifest FILE] [--all] [--dry-run] [--no-verify]
 
 DESCRIPTION
     Reads the manifest (default: the newest ~/Downloads/jowua-manifest-*.json): every folder and file the old drive had, with its size and time and where its
@@ -17,7 +17,8 @@ DESCRIPTION
     Nothing is read from or written to the old drive. It stops at once if DEST is not a mounted volume.
 
 OPTIONS
-    --dest PATH      the new drive, mounted (for example /Volumes/JOWUA)
+    --dest-uuid UUID the new drive's volume UUID (./manage_teslacam_drives.py lists the connected drives with theirs); its name is never used
+    --dest PATH      the new drive by mount point instead
     --manifest FILE  the manifest to use
     --all            also put back the files that are already on the Archive
     --dry-run        check the plan only
@@ -35,7 +36,7 @@ def now(): return time.strftime("%H:%M:%S")
 args = sys.argv[1:]
 if "-h" in args or "--help" in args or not args: print(__doc__); sys.exit(0 if args else 1)
 def opt(n, d=None): return args[args.index(n) + 1] if n in args else d
-ALL = "--all" in args; DEST = opt("--dest"); DRY = "--dry-run" in args; VERIFY = "--no-verify" not in args
+ALL = "--all" in args; DEST = opt("--dest"); DUUID = (opt("--dest-uuid") or "").upper(); DRY = "--dry-run" in args; VERIFY = "--no-verify" not in args
 logdir = os.path.expanduser("~/Downloads"); logdir = logdir if os.path.isdir(logdir) and os.access(logdir, os.W_OK) else "/tmp"
 logf = open(os.path.join(logdir, "restore-drive-%s.log" % time.strftime("%Y%m%d-%H%M%S")), "a", buffering=1)
 def say(m): line = "%s • %s" % (now(), m); print(line, flush=True); logf.write(line + "\n")
@@ -44,9 +45,24 @@ if not MAN:
     c = sorted(glob.glob(os.path.join(logdir, "jowua-manifest-*.json")), key=os.path.getmtime)
     MAN = c[-1] if c else ""
 if not MAN or not os.path.exists(MAN): say("ERROR: no manifest (run inventory_jowua.py first)"); sys.exit(1)
-if not DEST or not os.path.isdir(DEST): say("ERROR: --dest must be a mounted drive"); sys.exit(1)
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__))); sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "lib"))
+import drive_registry as REG
+if DUUID:
+    mps = REG.mount_of(DUUID)
+    if len(mps) != 1: say("ERROR: the volume with UUID %s is %s" % (DUUID, "not mounted" if not mps else "mounted more than once: " + ", ".join(mps))); sys.exit(1)
+    DEST = mps[0]
+if not DEST or not os.path.isdir(DEST):
+    say("ERROR: give --dest-uuid (or --dest). Mounted volumes:")
+    for mp, vid in REG.mounted_volumes(): say("  %-28s %s" % (mp, vid))
+    sys.exit(1)
+DUUID = REG.volume_id(DEST) or DUUID
+_e = REG.lookup(DUUID)
+say("destination: %s  UUID %s  %s" % (DEST, DUUID, ("registered as %s (%s)" % (_e["label"], _e["function"])) if _e else "not registered yet"))
+if _e and _e["function"] == "archive": say("ERROR: that is the Archive: refusing to restore onto it"); sys.exit(1)
 if DEST.rstrip("/") in ("/", "/Volumes", os.path.expanduser("~")): say("ERROR: --dest looks wrong: %s" % DEST); sys.exit(1)
-m = json.load(open(MAN)); allfiles = m["files"]; alldirs = m["dirs"]
+m = json.load(open(MAN))
+if DUUID and DUUID in (m.get("src_uuid"), m.get("archive_uuid")): say("ERROR: the destination has the UUID of the drive the manifest was made from (or of the Archive): %s. Refusing" % DUUID); sys.exit(1)
+allfiles = m["files"]; alldirs = m["dirs"]
 onarc = [f for f in allfiles if "A" in f["copies"]]
 files = allfiles if ALL else [f for f in allfiles if "A" not in f["copies"]]
 keep = set(os.path.dirname(f["path"]) for f in files)
@@ -128,6 +144,34 @@ if VERIFY:
             else: vc += 1
         except Exception as e: bad.append(f["path"]); say("CANNOT CHECK %s: %s" % (f["path"], e))
         if i % 500 == 0 or i == len(plan): say("verify %d/%d  matching %d  bad %d  (%.0f s)" % (i, len(plan), vc, len(bad), time.time() - t1))
+
+# ---- the hidden "._" companion files at the top of the drive (they carry the drive's custom icon): copied as they are from the saved outside files
+ad = []
+try:
+    xs = [f["copies"]["X"] for f in files if "X" in f["copies"] and os.sep not in f["path"]]
+    outdir = os.path.dirname(xs[0]) if xs else ""
+    for n in (sorted(os.listdir(outdir)) if outdir else []):
+        if n.startswith("._") and os.path.isfile(os.path.join(outdir, n)): ad.append(os.path.join(outdir, n))
+except OSError: ad = []
+if ad and not DRY:
+    n_ok = 0
+    for a_ in ad:
+        try:
+            d_ = os.path.join(DEST, os.path.basename(a_)); shutil.copyfile(a_, d_); shutil.copystat(a_, d_)
+            if open(a_, "rb").read() == open(d_, "rb").read(): n_ok += 1
+        except OSError as e: say("COULD NOT COPY %s: %s" % (a_, e))
+    say("hidden companion files at the top of the drive (custom icon): %d of %d copied and checked. Eject and plug the drive in again to see the icon." % (n_ok, len(ad)))
+
+# macOS can tag each file it writes with an extended attribute (e.g. com.apple.provenance); on exFAT that becomes a "._name" file beside every clip.
+# They are not footage and they stop the TeslaCam folder looking like the car's, so remove them inside TeslaCam (the top-level icon companions stay).
+if not DRY:
+    n_dot = 0
+    for root_, _ds, fs_ in os.walk(os.path.join(DEST, "TeslaCam")):
+        for fn_ in fs_:
+            if fn_.startswith("._"):
+                try: os.remove(os.path.join(root_, fn_)); n_dot += 1
+                except OSError as e: say("COULD NOT REMOVE %s: %s" % (os.path.join(root_, fn_), e))
+    say("removed %d macOS '._' companion files inside TeslaCam (not footage)" % n_dot)
 
 # ---- the new drive against the manifest
 missing = [f["path"] for f in files if not os.path.exists(os.path.join(DEST, f["path"]))]

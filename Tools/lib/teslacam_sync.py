@@ -57,7 +57,7 @@ def plan(data, roots):
 def run(pl, data, workers=None, stop=None, progress=None, limit=None):
     """Takes the planned clips. progress(n, total, stamp). Returns (telemetry minutes read, clips whose stills were made)."""
     import clip_clock as CC
-    store, _ = pl["tc"]._tl("A")
+    store = pl["tc"]._tl("A")
     jobs = pl["todo"][:limit] if limit else pl["todo"]
     w = max(1, int(workers or app_config.get("stills.workers", 3)))
     st = pl["stills"]
@@ -103,7 +103,7 @@ def snapshots_stale(folder, data=None):
     idx = os.path.join(folder, "snapshots", "index.json")
     if not os.path.exists(idx):
         return True
-    src = glob.glob(os.path.join(folder, "drive_deepdive_*.csv")) or [os.path.join(folder, "drive_summary.json")]
+    src = glob.glob(os.path.join(folder, "drive_deepdive_*.json")) or glob.glob(os.path.join(folder, "drive_deepdive_*.csv")) or [os.path.join(folder, "drive_summary.json")]
     made = os.path.getmtime(idx)
     if made < max(os.path.getmtime(f) for f in src if os.path.exists(f)):
         return True

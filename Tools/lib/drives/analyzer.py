@@ -2,6 +2,8 @@
 
 
 import lib.drive_paths as _drive_paths
+import lib.drive_points as _dpts
+import lib.fetch_ledger as _FL
 from lib.timezones import legacy_get as _legacy_get
 import csv
 from datetime import datetime
@@ -10,6 +12,7 @@ from lib.fuel_common import format_drive_fuel_comparison
 import json
 from lib.archive_naming import next_archive_path
 import os
+import re
 from lib.table_formatter import pad_display
 import shutil
 import subprocess
@@ -708,71 +711,73 @@ class DriveAnalyzer:
         segment/grade analysis, not just a whole-trip aggregate) rather
         than collapsing straight to summary numbers."""
         try:
-            with open(filepath, "r", encoding="utf-8-sig", errors="ignore") as f:
-                reader = list(csv.DictReader(f))
-                if not reader:
+            reader = _dpts.rows(filepath)          # a drive's telemetry, JSON or CSV, in one shape (lib/drive_points.py)
+            eps = _dpts.epochs(filepath)
+            if not reader:
+                return None
+
+            header = set(reader[0].keys())
+            if "Speed (km/h)" not in header and "Shift State" not in header:
+                return None
+
+            raw_ts, raw_elev, raw_speed, raw_power, raw_odo, raw_erem = [], [], [], [], [], []
+            raw_lat, raw_lon = [], []
+            raw_current, raw_voltage = [], []
+            timestamps = []
+
+            def to_float(v):
+                try:
+                    return float(v) if v not in (None, "") else None
+                except Exception:
                     return None
 
-                header = set(reader[0].keys())
-                if "Speed (km/h)" not in header and "Shift State" not in header:
-                    return None
+            for row in reader:
+                ts_str = _legacy_get(row, "Timestamp") or row.get("Timestamp")
+                raw_ts.append(ts_str)
+                dt = self._deepdive_ts(ts_str) if ts_str else None
+                if dt:
+                    timestamps.append(dt)
+                raw_elev.append(to_float(row.get("Elevation (m)")))
+                raw_speed.append(to_float(row.get("Speed (km/h)")))
+                raw_power.append(to_float(row.get("Power (kW)")))
+                raw_odo.append(to_float(row.get("Odometer (km)")))
+                raw_erem.append(to_float(row.get("Energy Remaining (kWh)")))
+                raw_lat.append(to_float(row.get("Latitude")))
+                raw_lon.append(to_float(row.get("Longitude")))
+                raw_current.append(to_float(row.get("Pack Current (A)")))
+                raw_voltage.append(to_float(row.get("Pack Voltage (V)")))
 
-                raw_ts, raw_elev, raw_speed, raw_power, raw_odo, raw_erem = [], [], [], [], [], []
-                raw_lat, raw_lon = [], []
-                raw_current, raw_voltage = [], []
-                timestamps = []
+            if not timestamps:
+                return None
 
-                def to_float(v):
-                    try:
-                        return float(v) if v not in (None, "") else None
-                    except Exception:
-                        return None
+            min_dt, max_dt = min(timestamps), max(timestamps)
+            dur_mins = (max_dt - min_dt).total_seconds() / 60.0
+            odo_vals = [v for v in raw_odo if v is not None]
+            distance_km = (max(odo_vals) - min(odo_vals)) if len(odo_vals) >= 2 else None
 
-                for row in reader:
-                    ts_str = _legacy_get(row, "Timestamp") or row.get("Timestamp")
-                    raw_ts.append(ts_str)
-                    dt = self._deepdive_ts(ts_str) if ts_str else None
-                    if dt:
-                        timestamps.append(dt)
-                    raw_elev.append(to_float(row.get("Elevation (m)")))
-                    raw_speed.append(to_float(row.get("Speed (km/h)")))
-                    raw_power.append(to_float(row.get("Power (kW)")))
-                    raw_odo.append(to_float(row.get("Odometer (km)")))
-                    raw_erem.append(to_float(row.get("Energy Remaining (kWh)")))
-                    raw_lat.append(to_float(row.get("Latitude")))
-                    raw_lon.append(to_float(row.get("Longitude")))
-                    raw_current.append(to_float(row.get("Pack Current (A)")))
-                    raw_voltage.append(to_float(row.get("Pack Voltage (V)")))
-
-                if not timestamps:
-                    return None
-
-                min_dt, max_dt = min(timestamps), max(timestamps)
-                dur_mins = (max_dt - min_dt).total_seconds() / 60.0
-                odo_vals = [v for v in raw_odo if v is not None]
-                distance_km = (max(odo_vals) - min(odo_vals)) if len(odo_vals) >= 2 else None
-
-                return {
-                    "source_file": os.path.basename(filepath),
-                    "source_path": filepath,
-                    "start_datetime": min_dt,
-                    "end_datetime": max_dt,
-                    "duration_mins": dur_mins,
-                    "samples_count": len(reader),
-                    "distance_km": distance_km,
-                    "raw_samples": {
-                        "timestamp": raw_ts,
-                        "elevation_m": raw_elev,
-                        "speed_kmh": raw_speed,
-                        "power_kw": raw_power,
-                        "odometer_km": raw_odo,
-                        "energy_remaining_kwh": raw_erem,
-                        "latitude": raw_lat,
-                        "longitude": raw_lon,
-                        "pack_current_a": raw_current,
-                        "pack_voltage_v": raw_voltage,
-                    },
-                }
+            return {
+                "source_file": os.path.basename(filepath),
+                "source_path": filepath,
+                "start_datetime": min_dt,
+                "end_datetime": max_dt,
+                "start_epoch": min(eps) if eps else None,         # the same instants in UTC (what the matcher compares)
+                "end_epoch": max(eps) if eps else None,
+                "duration_mins": dur_mins,
+                "samples_count": len(reader),
+                "distance_km": distance_km,
+                "raw_samples": {
+                    "timestamp": raw_ts,
+                    "elevation_m": raw_elev,
+                    "speed_kmh": raw_speed,
+                    "power_kw": raw_power,
+                    "odometer_km": raw_odo,
+                    "energy_remaining_kwh": raw_erem,
+                    "latitude": raw_lat,
+                    "longitude": raw_lon,
+                    "pack_current_a": raw_current,
+                    "pack_voltage_v": raw_voltage,
+                },
+            }
         except Exception:
             return None
 
@@ -816,7 +821,7 @@ class DriveAnalyzer:
                 continue
             try:
                 for fname in os.listdir(s_dir):
-                    if not fname.endswith(".csv") or fname.startswith("."):
+                    if not fname.endswith((".csv", ".json")) or fname.startswith("."):
                         continue
                     if fname.startswith("drive_deepdive_"):
                         fpath = os.path.join(s_dir, fname)
@@ -826,7 +831,7 @@ class DriveAnalyzer:
                             candidates.append(real_p)
  # REQ-193: per-drive folders (deepdive/<stamp>/drive_deepdive_<stamp>.csv)
                 if os.path.basename(os.path.normpath(s_dir)) == "deepdive":
-                    for fpath in _drive_paths.list_csvs(s_dir):
+                    for fpath in _drive_paths.list_data(s_dir):
                         real_p = os.path.realpath(fpath)
                         if real_p not in seen_paths:
                             seen_paths.add(real_p)
@@ -834,6 +839,8 @@ class DriveAnalyzer:
             except Exception:
                 pass
 
+        have_json = {_drive_paths.stamp_of(c) for c in candidates if c.endswith(".json")}             # one file per drive: JSON wins over the older CSV
+        candidates = [c for c in candidates if c.endswith(".json") or _drive_paths.stamp_of(c) not in have_json]
         for cp in candidates:
             parsed = self.parse_detailed_drive_csv(cp)
             if parsed:
@@ -914,16 +921,21 @@ class DriveAnalyzer:
         best, best_ov = None, None
         for rec in self.detailed_drives:
             if _use_utc:
-                _rs = tztools.epoch_for_naive_local(rec["start_datetime"])
-                _re = tztools.epoch_for_naive_local(rec["end_datetime"])
+                _rs = rec.get("start_epoch") or tztools.epoch_for_naive_local(rec["start_datetime"])
+                _re = rec.get("end_epoch") or tztools.epoch_for_naive_local(rec["end_datetime"])
                 _overlap = _rs <= _de + _pad_s and _re >= _ds - _pad_s
                 _real = min(_re, _de) - max(_rs, _ds)
                 _near = abs(_rs - _ds) <= _pad_s
+                _rec_s, _drv_s = _re - _rs, _de - _ds
             else:
                 _overlap = rec["start_datetime"] <= d_end + pad and rec["end_datetime"] >= d_start - pad
                 _real = (min(rec["end_datetime"], d_end) - max(rec["start_datetime"], d_start)).total_seconds()
                 _near = abs((rec["start_datetime"] - d_start).total_seconds()) <= _pad_s
-            if _overlap and (_real >= 0 or _near):
+                _rec_s, _drv_s = (rec["end_datetime"] - rec["start_datetime"]).total_seconds(), (d_end - d_start).total_seconds()
+            # 2026-10-23: a record that only spills over into the NEXT drive (the telemetry of a drive runs a minute or two past
+            # Tessie's end of it) is not that drive's telemetry: unless it starts with the drive, the overlap must be at least half of
+            # the shorter of the two. Without this, 1,500 of 1,536 drives "had" telemetry and 100+ real drives never fetched theirs.
+            if _overlap and (_near or (_real >= 0 and _real >= 0.5 * min(_rec_s, _drv_s))):
                 if is_collision and drive_duration_min > 5:
                     rec_duration_min = (rec["end_datetime"] - rec["start_datetime"]).total_seconds() / 60.0
                     if rec_duration_min < 0.4 * drive_duration_min:
@@ -1514,7 +1526,7 @@ class DriveAnalyzer:
         start_epoch = target_drive.get("start_utc_epoch")
         if start_epoch is None or not self.drives_dirs:
             return False
-        return bool(_drive_paths.find_csv(os.path.join(self.drives_dirs[0], "deepdive"), self._drive_stamp(target_drive, start_epoch)))
+        return bool(_drive_paths.find_data(os.path.join(self.drives_dirs[0], "deepdive"), self._drive_stamp(target_drive, start_epoch)))
 
     def fetch_drive_deepdive_from_api(self, target_drive):
         """Auto-fetches this drive's detailed telemetry from Tessie's own
@@ -1549,7 +1561,7 @@ class DriveAnalyzer:
             return None
 
         try:
-            from lib.tessie_api_common import load_config, get_token, get_vin, api_get, DEFAULT_UNIT_PARAMS
+            from lib.tessie_api_common import load_config, get_token, get_vin, api_get, STATES_PARAMS
         except Exception:
             return None
 
@@ -1565,22 +1577,23 @@ class DriveAnalyzer:
  # second.
         # A drive is identified by the minute it started: when its folder already has telemetry there is nothing to fetch, and there is
         # never a second copy (no "_01" folders).
-        have = _drive_paths.find_csv(os.path.join(self.drives_dirs[0], "deepdive"), self._drive_stamp(target_drive, start_epoch))
+        have = _drive_paths.find_data(os.path.join(self.drives_dirs[0], "deepdive"), self._drive_stamp(target_drive, start_epoch))
         if have:
             return have
         pad = 120
-        params = dict(DEFAULT_UNIT_PARAMS)
+        params = dict(STATES_PARAMS)                   # always JSON, always UTC: the zone is a conversion done when reading, never part of the request
         params.update({
             "from": int(start_epoch) - pad,
             "to": int(end_epoch) + pad,
             "interval": 1,
-            "format": "csv",
         })
 
         if not getattr(self, "quiet_fetch", False):                 # the backfill shows one progress bar instead
             print("   ℹ️  No local deep-dive file for this drive - fetching detailed telemetry from Tessie...")
         status, body = api_get("states", vin, token, params)
+        led, lkey = _FL.FetchLedger(os.path.dirname(self.drives_dirs[0])), "t%d" % int(start_epoch)       # what was fetched and when (lib/fetch_ledger.py)
         if status != 200:
+            led.record("drive_path", lkey, "failed", "HTTP %s" % status)
             print(f"   ⚠️  Tessie /states fetch failed (HTTP {status}) - continuing without deep-dive telemetry.")
             return None
 
@@ -1591,8 +1604,12 @@ class DriveAnalyzer:
             return None
 
         stamp = self._drive_stamp(target_drive, start_epoch)
-        dest_path = _drive_paths.csv_path(dest_dir, stamp, create=True)       # one folder per drive, named by its start minute
+        dest_path = _drive_paths.data_path(dest_dir, stamp, create=True)      # one folder per drive, named by its start minute (+ zone); the file is Tessie's JSON, as sent
 
+        if not _dpts.parse_json_bytes(body):                       # not a points answer: nothing is written
+            led.record("drive_path", lkey, "empty", "Tessie answered without any points for this drive")
+            print("   ⚠️  Tessie's response doesn't look like drive telemetry - continuing without deep-dive.")
+            return None
         try:
             with open(dest_path, "wb") as f:
                 f.write(body)
@@ -1611,9 +1628,11 @@ class DriveAnalyzer:
                 os.remove(dest_path)
             except Exception:
                 pass
+            led.record("drive_path", lkey, "empty", "Tessie answered without any points for this drive")
             print("   ⚠️  Tessie's response doesn't look like drive telemetry - continuing without deep-dive.")
             return None
 
+        led.record("drive_path", lkey, "complete", "%s points" % parsed.get("samples_count", 0))
         if not getattr(self, "quiet_fetch", False):
             print(f"   ✅ Fetched and saved: {os.path.basename(dest_path)} ({parsed.get('samples_count', 0)} samples)")
         return dest_path

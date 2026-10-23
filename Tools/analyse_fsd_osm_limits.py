@@ -43,6 +43,7 @@ if "--since" in sys.argv:
 DEEPDIVE_DIR = os.path.join(_DATA, "drives", "deepdive")
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "lib"))
 import drive_paths as _dp   # REQ-193: per-drive folders + legacy flat files
+import drive_points as _dpts   # JSON or CSV telemetry
 OUT_DIR = os.path.join(_DATA, "drives", "analysis")
 CACHE = os.path.join(OUT_DIR, "osm_cache")
 os.makedirs(CACHE, exist_ok=True)
@@ -75,7 +76,7 @@ def bearing(a, b, c, d):
 
 def load(f):
     out = []
-    for r in csv.DictReader(open(f, encoding="utf-8")):
+    for r in _dpts.rows(f):
         try:
             sp = float(r["Speed (km/h)"]); lat = float(r["Latitude"]); lon = float(r["Longitude"]); od = float(r["Odometer (km)"])
         except Exception:
@@ -350,7 +351,7 @@ def log(m):
 def main():
     since = datetime.datetime.strptime(SINCE, "%Y-%m-%d")
     files = []
-    for f in sorted(_dp.list_csvs(DEEPDIVE_DIR)):
+    for f in sorted(_dp.list_data(DEEPDIVE_DIR)):
         m = re.search(r"drive_deepdive_(\d{4}-\d{2}-\d{2})_", os.path.basename(f))
         if m and datetime.datetime.strptime(m.group(1), "%Y-%m-%d") >= since:
             files.append(f)

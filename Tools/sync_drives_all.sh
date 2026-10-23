@@ -44,6 +44,8 @@ Steps run, in order:
      (sync_api_tessie.py --battery-health)
   5. Firmware alerts (vehicle-wide; the Alerts tab reads them)
      (sync_api_tessie.py --firmware-alerts)
+  6. Car software and FSD version (vehicle-wide; kept as a history)
+     (sync_api_tessie.py --car-version)
 EOF
     exit 0
 fi
@@ -66,6 +68,10 @@ echo "==> Battery health (vehicle-wide, not drives-specific - lives here since t
 echo
 echo "==> Firmware alerts (vehicle-wide)"
 ./sync_api_tessie.py --firmware-alerts
+
+echo
+echo "==> Car software and FSD version (vehicle-wide)"
+./sync_api_tessie.py --car-version
 
 echo
 echo "==> Done."

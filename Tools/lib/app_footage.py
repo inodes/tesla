@@ -12,6 +12,7 @@ import threading
 import time
 
 import app_config
+import drive_registry as REG
 import teslacam_ledger as TLG
 import teslacam_stills as ST
 
@@ -53,6 +54,15 @@ class Footage:
         out = led.status(stamps)
         for st, d in out.items():
             d["stills"] = self.stills.has(st)
+        return out
+
+    def clip_holders(self, stamps, connected=()):
+        """{minute stamp: dict(state, files=[dict(name, cam, size, drives=[dict(role, label, size_gb, connected)])])}: where the video of each minute is,
+        from the footage log, so it answers with every drive away. The drives are listed biggest first."""
+        out = TLG.Ledger(self.dir).holders(stamps)
+        for d in out.values():
+            for f in d["files"]:
+                f["drives"] = REG.ranked(f["drives"], connected)
         return out
 
     def still(self, stamp, n):

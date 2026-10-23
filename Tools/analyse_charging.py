@@ -150,6 +150,8 @@ if _tools_dir not in sys.path:
 
 from lib.archive_naming import next_archive_path
 import lib.charge_paths as CP
+import lib.drive_paths as _drive_paths
+import lib.drive_points as _dpts
 from lib.analysis_deepdive_charts import write_interactive_chart, try_open_in_browser
 import lib.timezones as tztools
 
@@ -2559,11 +2561,9 @@ class ChargingAnalyzer:
         stamp = f"{date_part}_{time_part.replace(':', '-')}_{tz_part}"
 
         for td in self.tessie_dirs:
-            for candidate in (os.path.join(td, "drives", "deepdive", stamp[:10], stamp, f"drive_deepdive_{stamp}.csv"),   # day folder
-                              os.path.join(td, "drives", "deepdive", stamp, f"drive_deepdive_{stamp}.csv"),   # REQ-193
-                              os.path.join(td, "drives", "deepdive", f"drive_deepdive_{stamp}.csv")):      # legacy flat
-                if os.path.isfile(candidate):
-                    return candidate
+            found = _drive_paths.find_data(os.path.join(td, "drives", "deepdive"), stamp)       # any layout; JSON, else the older CSV
+            if found:
+                return found
         return None
 
     def _detect_preconditioning(self, session):
@@ -2591,20 +2591,18 @@ class ChargingAnalyzer:
 
         rows = []
         try:
-            with open(deepdive_path, "r", encoding="utf-8-sig") as f:
-                reader = csv.DictReader(f)
-                for r in reader:
-                    ts_str = _legacy_get(r, "Timestamp") or r.get("Timestamp")
-                    row_dt = parse_flexible_date(ts_str) if ts_str else None
-                    if not row_dt:
-                        continue
-                    temp_str = r.get("Max Battery Module Temp (\u00b0C)")
-                    try:
-                        temp = float(temp_str) if temp_str not in (None, "") else None
-                    except (ValueError, TypeError):
-                        temp = None
-                    heater_on = str(r.get("Battery Heater", "")).strip() in ("1", "true", "True")
-                    rows.append((row_dt, temp, heater_on))
+            for r in _dpts.rows(deepdive_path):                # JSON or CSV (lib/drive_points.py)
+                ts_str = _legacy_get(r, "Timestamp") or r.get("Timestamp")
+                row_dt = parse_flexible_date(ts_str) if ts_str else None
+                if not row_dt:
+                    continue
+                temp_str = r.get("Max Battery Module Temp (\u00b0C)")
+                try:
+                    temp = float(temp_str) if temp_str not in (None, "") else None
+                except (ValueError, TypeError):
+                    temp = None
+                heater_on = str(r.get("Battery Heater", "")).strip() in ("1", "true", "True")
+                rows.append((row_dt, temp, heater_on))
         except (OSError, csv.Error):
             return None
         if not rows:
