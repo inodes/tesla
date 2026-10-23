@@ -266,12 +266,38 @@ class ClipKeep:
         if err:
             return dict(error=err)
         files = [(k, sz, f) for _, _, fs in plan for k, sz, f in fs]
+        clips = [dict(kind=k, id=c) for k, c, _ in plan]
+        read = None
+        if action == "move":                      # a move reads what its clips still lack first, so the Archive's clip is never ahead of what is kept from it
+            st = self.status(force=True)["clips"]
+            lack = [c for c in clips if st[c["kind"]][c["id"]].get("todo")]
+            if lack:
+                kind_of = {}
+                for it in lack:
+                    for stamp in self._groups.get((it["kind"], it["id"]), []):
+                        kind_of[stamp] = it["kind"]
+                paths = self._paths(TLG.Ledger(self.dir), set(kind_of), roots)
+                if paths and not self.tc._rv().status().get("running"):
+                    read = (kind_of, paths, [(it["kind"], it["id"]) for it in lack if it["kind"] != "recent"])
         self._stop = False
         self._job = dict(running=True, action=action, role=role, files=len(files), done=0, bytes=sum(sz for _, sz, _ in files), bytes_done=0, freed=0, errors=[], current="",
-                         clips=len(plan), t0=time.time())
-        self._thread = threading.Thread(target=self._run, args=(action, role, files, roots, [dict(kind=k, id=c) for k, c, _ in plan]), daemon=True)
+                         clips=len(plan), t0=time.time(), reading=bool(read), step="", step_done=0, step_total=0, steps=[])
+        if read:
+            self._thread = threading.Thread(target=self._read_then_run, args=(read, action, role, files, roots, clips), daemon=True)
+        else:
+            self._thread = threading.Thread(target=self._run, args=(action, role, files, roots, clips), daemon=True)
         self._thread.start()
         return self.job()
+
+    def _read_then_run(self, read, action, role, files, roots, clips):
+        """Reads what is missing (the same steps as `process`), then moves. Anything that could not be read stops the move: nothing has been copied or removed yet."""
+        j = self._job
+        self._process(*read)
+        j["reading"] = False
+        j["step"] = ""
+        if self._stop or j["errors"]:
+            return
+        self._run(action, role, files, roots, clips)
 
     # ---- reading what is missing, for the clips asked for ---------------------------------------------------------
     def _paths(self, led, stamps, roots):

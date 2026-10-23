@@ -219,3 +219,5 @@ tr.chline{cursor:pointer}tr.chline td{color:var(--bad);font-weight:600;font-size
 .shots a{display:block;position:relative;border-radius:6px;overflow:hidden;background:var(--line)}
 .shots img{display:block;width:100%;height:auto}
 .shots span{position:absolute;left:6px;bottom:6px;padding:1px 6px;border-radius:4px;background:rgba(0,0,0,.6);color:#fff;font-size:12px}
+
+.ind{animation:indm 1.2s ease-in-out infinite alternate}@keyframes indm{from{margin-left:0}to{margin-left:65%}}

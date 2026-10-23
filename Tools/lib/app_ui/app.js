@@ -1629,26 +1629,27 @@ async function pageTeslaCam(role,id){
   const todoOf=c=>c.todo!=null?c.todo:!c.ready,lacking=()=>picked().filter(it=>{const c=kpOf(it.kind,it.id);return todoOf(c)&&conn().some(r=>c.bytes[r]>0)});
   const sizeOn=(list,r)=>list.reduce((a,it)=>a+(kpOf(it.kind,it.id).bytes[r]||0),0);
   // the clip that is open: its status and a button to read what is missing, next to the video (the same job as the tick box + the bar)
-  let OPENK=null,phase="";
+  let OPENK=null,phase="",phasePc=null;
   // the one button: what is ticked, or when nothing is ticked every clip. Everything also lists the files on the drives first; then the video of each clip that still lacks something is read
   const wantRead=()=>{const o=[];Object.keys(KPC||{}).forEach(k=>Object.keys(KPC[k]).forEach(id=>{const c=KPC[k][id];if(todoOf(c)&&conn().some(r=>c.bytes[r]>0))o.push({kind:k,id})}));return o};
   const upd=async()=>{stopVideos();note="";
     const items=picked();
     if(items.length){const list=lacking();if(!list.length){note="Nothing to read for the clips ticked"+waitTx(items);selbar();ostrip();return}return runProc(list)}
-    phase="Listing the files on the drives…";selbar();const t0=Date.now();let seen=false;
+    phase="Listing the files on the drives…";phasePc=null;selbar();const t0=Date.now();let seen=false;
     try{await fetch("/api/keeper",{method:"POST",body:JSON.stringify({action:"run",stages:["log","events"]})})}catch(e){}
     while(phase&&document.body.contains($("#selbar"))){await new Promise(r=>setTimeout(r,1500));let k;try{k=await (await fetch("/api/keeper")).json()}catch(e){break}
-      if(k.working){seen=true;phase=(k.text||"Listing the files on the drives")+(k.total?" · "+n0(k.done)+" of "+n0(k.total):"");const t=$("#phtx");if(t)t.textContent=phase}
+      if(k.working){seen=true;phase=(k.text||"Listing the files on the drives")+(k.total?" · "+n0(k.done)+" of "+n0(k.total):"");phasePc=k.total?Math.round(100*k.done/k.total):null;selbar()}
       else if(seen||Date.now()-t0>6000)break}
     if(!phase)return;      // stopped
-    phase="";bust("tc/clips");KPC=null;await load(true);
+    phase="";phasePc=null;bust("tc/clips");KPC=null;await load(true);
     try{const r=await fetch("/api/clips/keep");if(r.ok)KPC=(await r.json()).clips}catch(e){}
     const list=wantRead();if(!list.length){note="Everything is up to date";draw();return}
     draw();runProc(list)};
   const waitTx=list=>{const n=list.reduce((a,it)=>a+((kpOf(it.kind,it.id)||{}).wait_n||0),0);return n?" · "+n0(n)+" minute"+(n>1?"s":"")+" of stills wait for the drive from Tessie":""};
   const procNote=(j,list)=>((j.steps||[]).some(x=>x.total)?"Read what was missing"+(j.steps||[]).filter(x=>x.total).map(x=>" · "+x.step.toLowerCase()+" "+n0(x.total)).join(""):"Nothing more could be read from the video"+waitTx(list||[]))+((j.errors||[]).length?" · "+j.errors[0]:"");
-  const runProc=async list=>{pend=null;note="";stopVideos();
+  const runProc=async list=>{pend=null;note="";stopVideos();phase="Starting…";phasePc=null;selbar();      // the bar is there at once, before the drive has answered
     let j;try{j=await (await fetch("/api/clips/act",{method:"POST",body:JSON.stringify({action:"process",items:list})})).json()}catch(e){j={error:e.message}}
+    phase="";
     if(j.error){note=j.error;selbar();ostrip();return}
     if(j.action==="process"&&!j.running){note=procNote(j,list);bust("tc/clips");KPC=null;await load(true);loadKeep();return}      // done before the page could look: nothing needed doing
     poll()};
@@ -1662,12 +1663,12 @@ async function pageTeslaCam(role,id){
     const items=picked(),cn=conn(),done=vis.filter(v=>{const c=kpOf(v.ty,v.id);return c&&c.ready&&cn.some(r=>c.bytes[r]>0)});
     const dsz=done.reduce((a,v)=>a+Math.max(...cn.map(r=>kpOf(v.ty,v.id).bytes[r]||0)),0);
     let h=`<div class="bar selb">`;
-    if(phase){h+=`<span id="phtx" class="sub" style="flex:1">${esc(phase)}</span><button class="btn sm" id="phx">Stop</button>`}
+    if(phase){const pp=phasePc;h+=`<span id="phtx" style="flex:1"><b>${esc(phase)}</b><div style="height:6px;border-radius:3px;background:var(--line);margin:6px 0 0;overflow:hidden"><div class="${pp==null?"ind":""}" style="height:100%;width:${pp==null?35:pp}%;background:var(--accent);transition:width .3s"></div></div></span><button class="btn sm" id="phx">Stop</button>`}
     else if(jobT){h+=`<span id="jobtx" class="sub" style="flex:1"></span><button class="btn sm" id="jobx">Stop</button>`}
     else if(pend){const list=allowed(pend.role,pend.action),gb=fmtGB(sizeOn(list,pend.role));
       const nf=list.reduce((a,it)=>a+((kpOf(it.kind,it.id).files||{})[pend.role]||0),0),na=list.reduce((a,it)=>a+((kpOf(it.kind,it.id).in_archive||{})[pend.role]||0),0),what=n0(list.length)+" clip"+(list.length>1?"s":"")+(nf?" ("+n0(nf)+" video file"+(nf>1?"s":"")+(pend.action==="move"&&na?", "+n0(na)+" already in the Archive":"")+")":"");
       h+=pend.action==="delete"?`<span style="flex:1"><b>Delete the video of ${what} from ${NMD[pend.role]}</b>, freeing ${gb}. Its metadata, stills and signs stay.${list.length<items.filter(it=>kpOf(it.kind,it.id).bytes[pend.role]>0).length?` The others are not all kept yet and are left alone.`:""}</span><button class="btn bad" id="kdo">Delete</button><button class="btn" id="kno">Cancel</button>`
-        :`<span style="flex:1"><b>Move the video of ${what} from ${NMD[pend.role]} to the Archive</b> (${gb}); it is copied, checked, and only then removed from ${NMD[pend.role]}.</span><button class="btn pri" id="kdo">Move</button><button class="btn" id="kno">Cancel</button>`}
+        :`<span style="flex:1"><b>Move the video of ${what} from ${NMD[pend.role]} to the Archive</b> (${gb}); what is missing is read first; it is copied, checked, and only then removed from ${NMD[pend.role]}.</span><button class="btn pri" id="kdo">Move</button><button class="btn" id="kno">Cancel</button>`}
     else{
       h+=items.length?`<b>${n0(items.length)} selected</b><span class="sub">${fmtGB(items.reduce((a,it)=>a+(kpOf(it.kind,it.id).size||0),0))}</span><button class="btn sm" id="kclr">Clear</button>`:"";
       h+=`<button class="btn sm pri" id="kupd">${items.length?"Update "+n0(items.length)+" selected":"Update everything"}</button>`;
@@ -1683,14 +1684,15 @@ async function pageTeslaCam(role,id){
     on("kupd",()=>upd());on("phx",async()=>{phase="";try{await fetch("/api/keeper",{method:"POST",body:JSON.stringify({action:"pause"})})}catch(e){}selbar()});
     ostrip()
     $$("[data-ka]",el).forEach(b=>b.onclick=()=>{const [a,r]=b.dataset.ka.split("|");pend={action:a,role:r};note="";selbar()});
-    on("kdo",async()=>{const p=pend,list=allowed(p.role,p.action);pend=null;stopVideos();
+    on("kdo",async()=>{const p=pend,list=allowed(p.role,p.action);pend=null;stopVideos();phase=p.action==="move"?"Starting the move…":"Deleting…";phasePc=null;selbar();
       let j;try{j=await (await fetch("/api/clips/act",{method:"POST",body:JSON.stringify({action:p.action,role:p.role,items:list,confirm:true})})).json()}catch(e){j={error:e.message}}
+      phase="";
       if(j.error){note=j.error;selbar();return}
       poll()});
     on("jobx",async()=>{try{await fetch("/api/clips/act",{method:"POST",body:JSON.stringify({action:"stop"})})}catch(e){}});
     if(jobT)jobPaint()};
-  const jobPaint=()=>{const t=$("#jobtx");if(!t||!jobT)return;const j=jobT,pr=j.action==="process",q=pr?(j.step_total?Math.round(100*j.step_done/j.step_total):0):(j.bytes?Math.round(100*j.bytes_done/j.bytes):0);
-    if(pr){t.innerHTML=`<b>${esc(j.step||"Starting")}</b>${j.step_total?` · ${n0(j.step_done)} of ${n0(j.step_total)}`:""}<div style="height:6px;border-radius:3px;background:var(--line);margin:6px 0 0;overflow:hidden"><div style="height:100%;width:${q}%;background:var(--accent);transition:width .3s"></div></div><div class="sub" style="margin-top:4px">Videos cannot play while this reads from the drive.</div>`;return}
+  const jobPaint=()=>{const t=$("#jobtx");if(!t||!jobT)return;const j=jobT,pr=j.action==="process"||!!j.reading,q=pr?(j.step_total?Math.round(100*j.step_done/j.step_total):0):(j.bytes?Math.round(100*j.bytes_done/j.bytes):0);
+    if(pr){t.innerHTML=`<b>${j.reading?"Before moving, reading what is missing · ":""}${esc(j.step||"Starting")}</b>${j.step_total?` · ${n0(j.step_done)} of ${n0(j.step_total)}`:""}<div style="height:6px;border-radius:3px;background:var(--line);margin:6px 0 0;overflow:hidden"><div style="height:100%;width:${q}%;background:var(--accent);transition:width .3s"></div></div><div class="sub" style="margin-top:4px">Videos cannot play while this reads from the drive.</div>`;return}
     t.innerHTML=`<b>${j.action==="move"?"Moving":"Deleting"} the video ${j.action==="move"?"from "+NMD[j.role]+" to the Archive":"from "+NMD[j.role]}</b> · ${n0(j.done)} of ${n0(j.files)} files · ${fmtGB(j.bytes_done)} of ${fmtGB(j.bytes)}<div style="height:6px;border-radius:3px;background:var(--line);margin:6px 0 0;overflow:hidden"><div style="height:100%;width:${q}%;background:var(--accent);transition:width .3s"></div></div>`};
   let polling=false;
   const poll=async()=>{if(polling)return;polling=true;try{await poll1()}finally{polling=false}};
