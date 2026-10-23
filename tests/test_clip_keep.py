@@ -83,6 +83,7 @@ class KeepTest(Base):
         self.assertEqual((r["n"], r["meta"], r["stills"], r["signs"], r["ready"]), (2, [0, 2], [0, 2], [0, 0], False))
         self.assertEqual(r["bytes"], {"J": 40})
         self.assertEqual(r["size"], 40)
+        self.assertTrue(r["todo"])
         self.assertEqual((r["files"], r["in_archive"]), ({"J": 4}, {}))              # 2 minutes x 2 cameras on JOWUA, none in the Archive yet
 
     def test_files_already_in_the_archive_are_counted(self):
@@ -94,6 +95,7 @@ class KeepTest(Base):
     def test_everything_kept_makes_it_ready(self):
         r = self.keep(read=[S1, S2], stills=[S1, S2], scanned=[S1, S2]).status()["clips"]["saved"]["ev1"]
         self.assertTrue(r["ready"])
+        self.assertFalse(r["todo"])
         self.assertEqual(r["signs"], [2, 2])                                      # both minutes went 60 km/h: both had their signs read
 
     def test_signs_count_only_minutes_that_were_driven_fast_enough(self):

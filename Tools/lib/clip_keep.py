@@ -12,7 +12,7 @@ Everything here is worked out from what is kept on this computer (the footage lo
 so the answer is the same with every drive away. Only start() touches a drive: it deletes the video files of the clips asked for, or copies them to the Archive
 and then deletes them from the drive they were on, after checking again that it is allowed.
 
-    ClipKeep(data_dir, tc, fg).status()      -> dict(clips={"recent"|"saved"|"sentry": {id: dict(n, bytes{role}, files{role}, in_archive{role}, size, meta[done, of], stills[...], signs[...], shots[...], shot_cams, ready, waiting)}})
+    ClipKeep(data_dir, tc, fg).status()      -> dict(clips={"recent"|"saved"|"sentry": {id: dict(n, bytes{role}, files{role}, in_archive{role}, size, meta[done, of], stills[...], signs[...], shots[...], shot_cams, ready, waiting, wait_n, todo [something a press of Read what is missing can still do])}})
     ClipKeep.start(action, role, items, roots)   action "delete" | "move"; items [{kind, id}]; returns the job status or dict(error=...)
     ClipKeep.start_process(items, roots)     reads what is missing for the clips: metadata, then stills, then signs (from the video on a connected drive)
     ClipKeep.job()                           -> the running or last job
@@ -140,7 +140,7 @@ class ClipKeep:
         self._groups = {k: sorted(v) for k, v in groups.items()}
         for (kind, cid), mins in groups.items():
             meta, st_, sg, sh = [0, 0], [0, 0], [0, 0], [0, 0]
-            waiting, nbytes, nfiles, narch = "", {}, {}, {}
+            waiting, wait_n, nbytes, nfiles, narch = "", 0, {}, {}, {}
             for st, node in mins.items():
                 for r, c in node["files"].items():
                     nfiles[r] = nfiles.get(r, 0) + c
@@ -159,8 +159,10 @@ class ClipKeep:
                         st_[0] += 1
                     elif st in stills and t > synced_until:
                         waiting = "waiting for the drive from Tessie"
+                        wait_n += 1
                     elif st in stills:
                         waiting = "waiting for the drive's snapshots"
+                        wait_n += 1
                 if isinstance(sm, dict) and sm.get("vmax", 0) >= min_kmh:
                     sg[1] += 1
                     sg[0] += st in scanned
@@ -171,7 +173,8 @@ class ClipKeep:
             elif have:
                 sh = [len(have), len(have)]
             out[kind][cid] = dict(n=len(mins), first=min(mins), bytes=nbytes, files=nfiles, in_archive=narch, size=max(nbytes.values()) if nbytes else 0, meta=meta, stills=st_, signs=sg, shots=sh,
-                                  shot_cams=sorted(have), ready=all(x[0] >= x[1] for x in (meta, st_, sg, sh)), waiting=waiting)
+                                  shot_cams=sorted(have), ready=all(x[0] >= x[1] for x in (meta, st_, sg, sh)), waiting=waiting, wait_n=wait_n,
+                                  todo=any(x[0] < x[1] for x in (meta, sg, sh)) or st_[0] + wait_n < st_[1])
         return dict(clips=out)
 
     # ---- the files of a clip on one drive -----------------------------------------------------------------------
