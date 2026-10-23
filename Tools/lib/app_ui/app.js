@@ -1634,7 +1634,7 @@ async function pageTeslaCam(role,id){
   const wantRead=()=>{const o=[];Object.keys(KPC||{}).forEach(k=>Object.keys(KPC[k]).forEach(id=>{const c=KPC[k][id];if(todoOf(c)&&conn().some(r=>c.bytes[r]>0))o.push({kind:k,id})}));return o};
   const upd=async()=>{stopVideos();note="";
     const items=picked();
-    if(items.length){const list=lacking();if(!list.length){note="Nothing to read for the clips ticked";selbar();return}return runProc(list)}
+    if(items.length){const list=lacking();if(!list.length){note="Nothing to read for the clips ticked"+waitTx(items);selbar();ostrip();return}return runProc(list)}
     phase="Listing the files on the drives…";selbar();const t0=Date.now();let seen=false;
     try{await fetch("/api/keeper",{method:"POST",body:JSON.stringify({action:"run",stages:["log","events"]})})}catch(e){}
     while(phase&&document.body.contains($("#selbar"))){await new Promise(r=>setTimeout(r,1500));let k;try{k=await (await fetch("/api/keeper")).json()}catch(e){break}
@@ -1645,9 +1645,12 @@ async function pageTeslaCam(role,id){
     try{const r=await fetch("/api/clips/keep");if(r.ok)KPC=(await r.json()).clips}catch(e){}
     const list=wantRead();if(!list.length){note="Everything is up to date";draw();return}
     draw();runProc(list)};
+  const waitTx=list=>{const n=list.reduce((a,it)=>a+((kpOf(it.kind,it.id)||{}).wait_n||0),0);return n?" · "+n0(n)+" minute"+(n>1?"s":"")+" of stills wait for the drive from Tessie":""};
+  const procNote=(j,list)=>((j.steps||[]).some(x=>x.total)?"Read what was missing"+(j.steps||[]).filter(x=>x.total).map(x=>" · "+x.step.toLowerCase()+" "+n0(x.total)).join(""):"Nothing more could be read from the video"+waitTx(list||[]))+((j.errors||[]).length?" · "+j.errors[0]:"");
   const runProc=async list=>{pend=null;note="";stopVideos();
     let j;try{j=await (await fetch("/api/clips/act",{method:"POST",body:JSON.stringify({action:"process",items:list})})).json()}catch(e){j={error:e.message}}
     if(j.error){note=j.error;selbar();ostrip();return}
+    if(j.action==="process"&&!j.running){note=procNote(j,list);bust("tc/clips");KPC=null;await load(true);loadKeep();return}      // done before the page could look: nothing needed doing
     poll()};
   const ostrip=()=>{const el=$("#ostrip");if(!el)return;const c=OPENK&&kpOf(OPENK.kind,OPENK.id);
     if(!c){el.innerHTML="";return}
