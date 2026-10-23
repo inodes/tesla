@@ -14,11 +14,12 @@ import clip_clock as CC  # noqa: E402
 import clip_keep as CK  # noqa: E402
 import teslacam_scan as TS  # noqa: E402
 import teslacam_stills as ST  # noqa: E402
+import event_shots as ES  # noqa: E402
 import teslacam_deletable as TD  # noqa: E402
 import teslacam_ledger as TLG  # noqa: E402
 
 LIVE = dict(first="2026-10-17T00:00:00Z", last="2026-10-17T00:00:00Z", gone=None)
-S1, S2 = "2026-10-16_15-40-07", "2026-10-16_15-41-07"
+S1, S2, S3 = "2026-10-16_15-40-07", "2026-10-16_15-41-07", "2026-10-16_15-42-07"
 
 
 class FakeStore:
@@ -165,7 +166,7 @@ class Rv:
         pass
 
 
-class ProcessTest(Base):
+class ProcBase(Base):
     def setUp(self):
         super().setUp()
         self.store, self.rv, self.stills = Store2(), Rv(), set()
@@ -193,12 +194,14 @@ class ProcessTest(Base):
         TS.read, ST.make_many = read, make
         self.addCleanup(lambda: (setattr(TS, "read", self._read), setattr(ST, "make_many", self._make)))
 
+
+class ProcessTest(ProcBase):
     def test_it_reads_the_metadata_then_the_stills_then_the_signs_of_the_selected_clip_and_nothing_else(self):
         out = self.k.start_process([dict(kind="saved", id="ev1")], self.roots)
         self.assertNotIn("error", out)
         self.k._thread.join(5)
         j = self.k.job()
-        self.assertEqual([x["step"] for x in j["steps"]], ["Reading metadata", "Making stills", "Reading signs"])
+        self.assertEqual([x["step"] for x in j["steps"]], ["Reading metadata", "Making stills", "Saving event pictures", "Reading signs"])
         self.assertEqual([c[0] for c in self.calls], ["read", "stills"])
         self.assertEqual(self.calls[0][1], [S2, S1])                                   # newest first
         self.assertEqual(self.calls[0][2], ["%s-front.mp4" % S2, "%s-front.mp4" % S1])
@@ -231,6 +234,75 @@ class ProcessTest(Base):
         self.k._thread.join(5)
         self.assertFalse(self.k.job()["running"])
         self.assertIn("drive gone", self.k.job()["errors"][0])
+
+
+class EventShotsTest(ProcBase):
+    """A horn (Saved) or a Sentry event keeps full-size pictures of its moment; the video may not be deleted before they exist."""
+    def setUp(self):
+        super().setUp()
+        self.ffmpeg = []
+
+        def run(cmd, timeout=0):
+            self.ffmpeg.append(cmd)
+            with open(cmd[-1], "wb") as f:
+                f.write(b"jpeg")
+            return 0
+        self._run = ST.run_ffmpeg
+        ST.run_ffmpeg = run
+        self.addCleanup(lambda: setattr(ST, "run_ffmpeg", self._run))
+
+    def index(self, reason, cam="0"):
+        with open(os.path.join(self.data, "teslacam_index_J_saved.json"), "w") as f:
+            json.dump({"ev1": dict(id="ev1", ts="2026-10-16T15:41:37", reason=reason, cam=cam)}, f)
+
+    def kept(self):
+        self.store.put(S1)
+        self.store.put(S2)
+        self.stills.update({S1, S2})
+        self.rv.done.update({S1: 0, S2: 0})
+
+    def test_the_moment_is_the_second_inside_the_clip_that_holds_the_event(self):
+        self.assertEqual(ES.moment(dict(ts="2026-10-16T15:41:37"), [S1, S2, S3]), (S2, 30))
+        self.assertEqual(ES.moment(dict(ts="2026-10-16T15:40:00"), [S1, S2]), None)
+
+    def test_which_cameras_a_horn_and_a_sentry_event_want(self):
+        self.assertEqual(ES.cams_for("saved", dict(reason="user_interaction_honk", cam="0")), list(ES.CAMS))
+        self.assertEqual(ES.cams_for("saved", dict(reason="user_interaction_dashcam_icon_tapped")), [])
+        self.assertEqual(ES.cams_for("sentry", dict(reason="sentry_aware_object_detection", cam="5")), ["left_repeater"])
+        self.assertEqual(ES.cams_for("sentry", dict(reason="sentry_accelerometer", cam="")), list(ES.CAMS))
+
+    def test_a_horn_is_not_ready_until_its_pictures_are_kept_and_then_the_video_may_go(self):
+        self.index("user_interaction_honk")
+        self.kept()
+        k = self.k
+        r = k.status(force=True)["clips"]["saved"]["ev1"]
+        self.assertEqual(r["shots"], [0, 2])                                          # front and back exist in this fixture, so those two
+        self.assertFalse(r["ready"])
+        self.assertIn("not all kept", k.start("delete", "J", [dict(kind="saved", id="ev1")], self.roots)["error"])
+        k.start_process([dict(kind="saved", id="ev1")], self.roots)
+        k._thread.join(5)
+        self.assertEqual(k.job()["errors"], [])
+        self.assertEqual(sorted(k.shots.have("saved", "ev1")), ["back", "front"])
+        self.assertEqual(self.ffmpeg[0][self.ffmpeg[0].index("-ss") + 1], "30")
+        self.assertIn("%s-front.mp4" % S2, self.ffmpeg[0][self.ffmpeg[0].index("-i") + 1])
+        r = k.status(force=True)["clips"]["saved"]["ev1"]
+        self.assertEqual((r["shots"], r["ready"], r["shot_cams"]), ([2, 2], True, ["back", "front"]))
+
+    def test_an_event_that_asks_for_nothing_is_ready_without_pictures(self):
+        self.index("user_interaction_dashcam_icon_tapped")
+        self.kept()
+        r = self.k.status(force=True)["clips"]["saved"]["ev1"]
+        self.assertEqual((r["shots"], r["ready"]), ([0, 0], True))
+
+    def test_pictures_already_kept_are_not_cut_again(self):
+        self.index("user_interaction_honk")
+        self.kept()
+        self.k.start_process([dict(kind="saved", id="ev1")], self.roots)
+        self.k._thread.join(5)
+        n = len(self.ffmpeg)
+        self.k.start_process([dict(kind="saved", id="ev1")], self.roots)
+        self.k._thread.join(5)
+        self.assertEqual(len(self.ffmpeg), n)
 
 
 if __name__ == "__main__":

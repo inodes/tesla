@@ -154,6 +154,9 @@
       "steer_deg": 15,
       "sheet_cols": 7,
       "sheet_tile_px": 240
+    },
+    "event_shots": {
+      "quality": 2
     }
   }
 }

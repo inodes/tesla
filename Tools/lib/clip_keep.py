@@ -6,16 +6,18 @@ A clip's video may go once what the app keeps from it exists (the rules are thos
   stills     the one-second stills of each minute are in <data>/teslacam_stills, the drive it lies in has its snapshots, and the minute is not newer than
              the last drive synced from Tessie (later video has no drive to keep snapshots in yet)
   signs      each minute the car went at review.min_kmh or more has been read for signs (app_review)
+  event      a horn or Sentry event has its full-size pictures of the moment (event_shots.py: all six cameras, or the one that saw it)
 
 Everything here is worked out from what is kept on this computer (the footage log, the telemetry store, the stills folder, the sign records): no drive is read,
 so the answer is the same with every drive away. Only start() touches a drive: it deletes the video files of the clips asked for, or copies them to the Archive
 and then deletes them from the drive they were on, after checking again that it is allowed.
 
-    ClipKeep(data_dir, tc, fg).status()      -> dict(clips={"recent"|"saved"|"sentry": {id: dict(n, bytes{role}, size, meta[done, of], stills[...], signs[...], ready, waiting)}})
+    ClipKeep(data_dir, tc, fg).status()      -> dict(clips={"recent"|"saved"|"sentry": {id: dict(n, bytes{role}, size, meta[done, of], stills[...], signs[...], shots[...], shot_cams, ready, waiting)}})
     ClipKeep.start(action, role, items, roots)   action "delete" | "move"; items [{kind, id}]; returns the job status or dict(error=...)
     ClipKeep.start_process(items, roots)     reads what is missing for the clips: metadata, then stills, then signs (from the video on a connected drive)
     ClipKeep.job()                           -> the running or last job
 """
+import json
 import os
 import re
 import shutil
@@ -24,6 +26,7 @@ import time
 
 import app_config
 import clip_clock as CC
+import event_shots as ES
 import teslacam_deletable as TD
 import teslacam_files as TF
 import teslacam_ledger as TLG
@@ -60,6 +63,7 @@ class ClipKeep:
         self._job = dict(running=False)
         self._thread = None
         self._stop = False
+        self.shots = ES.EventShots(data_dir)
 
     # ---- what is kept -------------------------------------------------------------------------------------------
     def status(self, force=False):
@@ -71,7 +75,37 @@ class ClipKeep:
             self._cache = (time.time(), res)
         return res
 
+    def _events(self):
+        """{(kind, event folder): event dict (ts, reason, cam)} from the lists of events kept for every drive; an entry that names a reason wins over one that does not."""
+        out = {}
+        for kind, files in (("sentry", ("sentry_index.json", "teslacam_index_A_sentry.json", "teslacam_index_J_sentry.json", "teslacam_index_U_sentry.json")),
+                            ("saved", ("teslacam_index_A_saved.json", "teslacam_index_J_saved.json", "teslacam_index_U_saved.json"))):
+            for fn in files:
+                try:
+                    with open(os.path.join(self.dir, fn), encoding="utf-8") as fh:
+                        idx = json.load(fh)
+                except (OSError, ValueError):
+                    continue
+                for eid, e in (idx.items() if isinstance(idx, dict) else ()):
+                    if isinstance(e, dict) and (not out.get((kind, eid)) or (e.get("reason") and not out[(kind, eid)].get("reason"))):
+                        out[(kind, eid)] = dict(e, id=eid)
+        return out
+
+    def _wanted(self, kind, cid, mins, ev):
+        """(clip stamp, second, [cameras still to be pictured], [cameras wanted]) for an event whose video is still on a drive; None when it needs no pictures."""
+        if not ev or kind == "recent":
+            return None
+        mom = ES.moment(ev, mins)
+        if mom is None:
+            return None
+        want = ES.wanted(kind, ev, mins[mom[0]]["cams"])
+        if not want:
+            return None
+        have = self.shots.have(kind, cid)
+        return mom[0], mom[1], [c for c in want if c not in have], want
+
     def _build(self):
+        events = self._events()
         store = self.tc._tl("A")
         stills = self.fg.stills.stamps()
         scanned = self.tc._rv().scanned()
@@ -101,7 +135,7 @@ class ClipKeep:
                 groups[(kind, ev)] = mins
         self._groups = {k: sorted(v) for k, v in groups.items()}
         for (kind, cid), mins in groups.items():
-            meta, st_, sg = [0, 0], [0, 0], [0, 0]
+            meta, st_, sg, sh = [0, 0], [0, 0], [0, 0], [0, 0]
             waiting, nbytes = "", {}
             for st, node in mins.items():
                 for r, b in node["bytes"].items():
@@ -122,8 +156,14 @@ class ClipKeep:
                 if isinstance(sm, dict) and sm.get("vmax", 0) >= min_kmh:
                     sg[1] += 1
                     sg[0] += st in scanned
-            out[kind][cid] = dict(n=len(mins), first=min(mins), bytes=nbytes, size=max(nbytes.values()) if nbytes else 0, meta=meta, stills=st_, signs=sg,
-                                  ready=all(x[0] >= x[1] for x in (meta, st_, sg)), waiting=waiting)
+            have = self.shots.have(kind, cid) if kind != "recent" else set()
+            w = self._wanted(kind, cid, mins, events.get((kind, cid))) if nbytes else None
+            if w:
+                sh = [len(w[3]) - len(w[2]), len(w[3])]
+            elif have:
+                sh = [len(have), len(have)]
+            out[kind][cid] = dict(n=len(mins), first=min(mins), bytes=nbytes, size=max(nbytes.values()) if nbytes else 0, meta=meta, stills=st_, signs=sg, shots=sh,
+                                  shot_cams=sorted(have), ready=all(x[0] >= x[1] for x in (meta, st_, sg, sh)), waiting=waiting)
         return dict(clips=out)
 
     # ---- the files of a clip on one drive -----------------------------------------------------------------------
@@ -146,6 +186,20 @@ class ClipKeep:
                 x = rec["drives"].get(role)
                 if m and m.group(1) in want and x is not None and not x.get("gone"):
                     out.append((key, rec.get("size", 0), dict(src=kind, ev=ev, stamp=m.group(1), cam=m.group(2))))
+        return out
+
+    def _cams_of(self, kind, cid):
+        """{stamp: cameras} the footage log holds for that clip on a drive (not gone)."""
+        out = {}
+        led = TLG.Ledger(self.dir)
+        want = set(self._groups.get((kind, cid), []))
+        pre = "%s|%s|" % (kind, "" if kind == "recent" else cid)
+        for day in sorted({s[:10] for s in want}):
+            for key, rec in led.day(day).items():
+                if key.startswith(pre):
+                    m = _FILE.match(key[len(pre):])
+                    if m and m.group(1) in want and any(not x.get("gone") for x in rec["drives"].values()):
+                        out.setdefault(m.group(1), []).append(m.group(2))
         return out
 
     def _archive_has(self, led, key, size):
@@ -239,12 +293,13 @@ class ClipKeep:
             for stamp in self._groups.get((it["kind"], it["id"]), []):
                 kind_of[stamp] = it["kind"]
         paths = self._paths(TLG.Ledger(self.dir), set(kind_of), roots)
+        evs = [(it["kind"], it["id"]) for it in items if it["kind"] != "recent"]
         if not paths:
             return dict(error="The video of these clips is on no connected drive.")
         self._stop = False
         self._job = dict(running=True, action="process", step="", step_done=0, step_total=0, steps=[], files=0, done=0, bytes=0, bytes_done=0, freed=0, errors=[], current="",
                          clips=len(items), t0=time.time())
-        self._thread = threading.Thread(target=self._process, args=(kind_of, paths), daemon=True)
+        self._thread = threading.Thread(target=self._process, args=(kind_of, paths, evs), daemon=True)
         self._thread.start()
         return self.job()
 
@@ -252,7 +307,7 @@ class ClipKeep:
         self._job.update(step=name, step_done=0, step_total=total, current="")
         self._job["steps"].append(dict(step=name, total=total))
 
-    def _process(self, kind_of, paths):
+    def _process(self, kind_of, paths, evs=()):
         j = self._job
         store = self.tc._tl("A")
         stills = self.fg.stills
@@ -270,6 +325,22 @@ class ClipKeep:
             self._step("Making stills", len(todo))
             if todo and not self._stop:
                 ST.make_many(stills, todo, int(app_config.get("stills.workers", 3)), stop=lambda: self._stop, progress=prog, by="clips")
+            events = self._events()
+            shots = []
+            for kind, cid in evs:
+                mins = {st: dict(cams=set(c)) for st, c in self._cams_of(kind, cid).items()}
+                w = self._wanted(kind, cid, mins, events.get((kind, cid))) if mins else None
+                got = {c: paths[w[0]][c] for c in (w[2] if w else ()) if w[0] in paths and c in paths[w[0]]}
+                if got:
+                    shots.append((kind, events[(kind, cid)], w[0], w[1], got))
+            self._step("Saving event pictures", sum(len(x[4]) for x in shots))
+            n = 0
+            for kind, ev, stamp, sec, got in shots:
+                if self._stop:
+                    break
+                j["current"] = ev["id"]
+                n += len(self.shots.make(kind, ev, stamp, sec, got, stop=lambda: self._stop))
+                j["step_done"] = n
             rv = self.tc._rv()
             min_kmh = float((app_config.get("review") or {}).get("min_kmh", 30.0))
             done = rv.scanned()
