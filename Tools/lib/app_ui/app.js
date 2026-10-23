@@ -1535,7 +1535,7 @@ function footageSync(host,opts){
     if(!conn.length)h+='<div class="bar"><span class="sub">No TeslaCam drive connected.</span></div>';
     else if(run)h+=`<div class="card ixb"><div style="flex:1;min-width:0"><b>${esc(k.text)}${k.total?" · "+n0(k.done)+" of "+n0(k.total):""}</b>${k.total?`<div style="height:6px;border-radius:3px;background:var(--line);margin:8px 0 0;overflow:hidden"><div style="height:100%;width:${pc}%;background:var(--accent);transition:width .3s"></div></div>`:""}</div><button class="btn" id="fsx">Stop</button></div>`;
     else if(kinds.length)h+=`<div class="bar">${kinds.length>1?'<button class="btn pri" id="fsg">Sync footage</button>':""}${kinds.map(x=>`<button class="btn ${kinds.length>1?"":"pri"}" data-st="${x[0]}">${x[1]}</button>`).join("")}</div>`;
-    else if(checking)h+='<div class="sub">Checking what the drives still need…</div>';
+    else if(checking)h+='<div class="sub">Checking for outstanding tasks...</div>';
     if(k.error)h+=errBox(k.error,"Syncing stopped");
     if(table&&lg&&lg.scans&&Object.keys(lg.scans).length){const t=lg.total,rs=Object.keys(lg.drives).sort();
       const todoCell=r=>{if(!roots[r])return'<span class="sub">Not connected</span>';const l=left(todo,r);if(!l)return todo?'<span class="sub">Checking…</span>':"";
