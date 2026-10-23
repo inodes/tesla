@@ -290,13 +290,36 @@ class TeslaCam:
         store = self._tl("A")
         known = sorted(TLG.Ledger(self.dir).scans())
         want = set(r for r in (roles or known) if r in known)
-        recent, _ = self._ledger_recent(want)
+        recent, hold = self._ledger_recent(want)
         lists = {kind: self._events_kept(kind, want) for kind in KINDS}
         items = TL.build(recent, lists["saved"], lists["sentry"], store)
+        self._held(items, want, hold)
         mins = TL.minutes(recent, lists["saved"])
         front = [m for m in mins if m.get("tcam")]
         read = sum(1 for m in front if store.summary(m["stamp"]) is not None)
         return dict(connected=True, stored=True, roles=sorted(want), items=items, minutes=len(front), read=read, no_front=len(mins) - len(front))
+
+    def _held(self, items, want, recent_holders):
+        """A recording (telemetry not read yet) says which drives hold the video of its minutes now (`held`, empty when it is gone from every drive), so the page offers
+        to read it only when one of them is connected. Worked out from the footage log and the kept event lists."""
+        rec = [x for x in items if x.get("kind") == "recording"]
+        if not rec:
+            return
+        at = []                                                        # [(UTC second, {roles})] of every minute that is on a drive now
+        for st, roles in recent_holders.items():
+            at.append((_secs(st), set(roles)))
+        for r in want:
+            for e in self._index(r, "saved").events(None)[0]:
+                if e.get("gone"):
+                    continue
+                for st in (e.get("clips") or {}):
+                    at.append((_secs(st), {r}))
+        for x in rec:
+            got = set()
+            for t, roles in at:
+                if x["t0"] - 1 <= t < x["t1"]:
+                    got |= roles
+            x["held"] = sorted(got)
 
     # ------------------------------------------------------------------------------------------------- scan (teslacam_scan.py)
     def path_sources(self, t0, t1):
