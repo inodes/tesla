@@ -1541,6 +1541,55 @@ function footageSync(host,opts){
     const x=$("#fsx",host);if(x)x.onclick=async()=>{try{await fetch("/api/keeper",{method:"POST",body:JSON.stringify({action:"pause"})})}catch(e){}paint()};
     if(run||checking||Date.now()<until)setTimeout(paint,run?2000:2500)};
   paint()}
+async function pageTeslaCam(role,id){
+  if(role&&id)return /^sentry-/.test(id)?pageTeslaCamSentry(role,id.slice(7)):/^at-/.test(id)?pageTeslaCamAt(+id.slice(3)):pageTeslaCamDrive(role,id);
+  loading();const [dr,act,pl]=await Promise.all([tcGet("teslacam"),api("activity"),api("places").catch(()=>({saved:[]}))]),drives=dr.drives,places=(pl.saved||[]);
+  const head='<h1>TeslaCam</h1>';
+  const trips=act.filter(x=>x.k==="drive"&&!x.repark).map(x=>({id:x.id,t0:x.t0,t1:x.t0+x.min*60,ti:driveTitle(x)}));
+  const tripOf=v=>{const a=v.t0!=null?v.t0:v.t,b=v.t1!=null?v.t1:(v.t||0)+60;return trips.find(d=>d.t0<b&&d.t1>a)};
+  main.innerHTML=head+`<div id="fsb" style="margin-bottom:12px"></div><div class="bar" id="tsr"></div><div class="bar"><span id="rg"></span><input type="search" id="q" placeholder="Search…" value="${esc(TCS.q)}"></div><div class="tiles" id="tl"></div><div id="spl"></div><div id="tb"></div>`;
+  let data=null,sel=null,token=0,sentryList=null;
+  footageSync($("#fsb"),{table:true});
+  const chips=()=>{
+    $("#tsr").innerHTML='<span class="sub" style="margin:0 4px 0 0">Show:</span>'+Object.keys(TCSRC).map(k=>`<button class="chip ${TCS.src[k]?"on":""}" data-s="${k}">${TCSRC[k]}${data&&data[k]?" · "+data[k].length:""}</button>`).join("")+'';
+    $$("#tsr [data-s]").forEach(b=>b.onclick=()=>{const on=Object.keys(TCSRC).filter(k=>TCS.src[k]);if(TCS.src[b.dataset.s]&&on.length<2)return;TCS.src[b.dataset.s]=TCS.src[b.dataset.s]?0:1;$("#spl").innerHTML="";chips();draw()});
+    };
+  const load=async(quiet)=>{const my=++token;if(!quiet){data=null;$("#tl").innerHTML="";$("#tb").innerHTML='<div class="empty">Reading the drive…</div>'}
+    try{const d=await tcGet("clips");if(my!==token)return;data=d}catch(e){$("#tb").innerHTML=errBox(e.message,"Could not read the list of clips");return}
+    const list=[].concat(data.sentry,data.saved,data.recent);if(!quiet)rangePicker($("#rg"),TCS.r,daysOf((list||[]).map(v=>({day:(v.ts||v.start).slice(0,10)}))),draw);chips();draw()};
+  const draw=()=>{if(!data)return;if(!data.sentry){return}
+    const q=TCS.q.toLowerCase(),srcs=Object.keys(TCSRC).filter(k=>TCS.src[k]);
+    const all=[].concat(...srcs.map(k=>data[k].map(v=>Object.assign({ty:k},v)))).filter(v=>inRange({day:v.ts.slice(0,10)},TCS.r)&&(!q||(v.ty==="recent"?((tripOf(v)||{}).ti||""):(v.city+" "+v.street+" "+reason(v.reason))).toLowerCase().includes(q)||TCSRC[v.ty].toLowerCase().includes(q))).sort((a,b)=>a.ts<b.ts?1:-1),byDay={};
+    all.forEach(v=>(byDay[v.ts.slice(0,10)]=byDay[v.ts.slice(0,10)]||[]).push(v));
+    const days=Object.keys(byDay).sort().reverse(),cnt=k=>all.filter(v=>v.ty===k).length,mins=all.reduce((a,v)=>a+(v.ty==="recent"?v.n:Object.keys(v.clips).length),0);
+    $("#tl").innerHTML=srcs.map(k=>tile(n0(cnt(k)),k==="recent"?"continuous recordings":TCSRC[k]+" events")).join("")+tile(n0(mins),"minutes of video");
+    // the drive (Tessie's) the event was saved in, and the map and telemetry of it: a Saved clip is kept while driving, so it belongs to a drive
+    const evLinks=v=>{const t=v.t!=null?tripOf(v):null,st=e=>'onclick="event.stopPropagation()"';
+      return (t?`<span>${esc(t.ti)}</span><a href="#/drive/${t.id}" ${st()}>open the drive</a>`:"")+(v.play&&v.ty==="saved"&&v.t!=null?`<a href="${t?"#/drive/"+t.id+"/footage":"#/teslacam/auto/at-"+Math.round(v.t)}" ${st()}>map and telemetry</a>`:"")};
+    // where the footage is: the drives that hold it, and when none of them is connected (or it is gone from all) say so
+    const held=v=>v.play?"":`<span class="mis">${v.roles.length?"Media missing · on "+v.roles.map(drName).join(", "):"Video deleted · stills kept"}</span>`;
+    const card=v=>{const bd=`<span class="srcb ${v.ty}">${TCSRC[v.ty]}</span>`;
+      if(v.ty==="recent"){const t=tripOf(v);return `<button class="evc run" data-ty="recent" data-id="${esc(v.id)}">${stThumb(v.id,2,v.play?"/footage/"+v.play+"/RecentClips/"+v.id+"-front.mp4":"")}${bd}<b>${hms(v.ts).slice(0,5)} – ${hms(v.end).slice(0,5)}</b><span>${v.n} minute${v.n>1?"s":""}${v.full<v.n?" · "+(v.n-v.full)+" with fewer than 6 cameras":""}</span>${held(v)}${t?`<span>${esc(t.ti)}</span><a href="#/drive/${t.id}" onclick="event.stopPropagation()">open the drive</a>`:""}${v.play?`<a href="#/teslacam/auto/${esc(v.id)}" onclick="event.stopPropagation()">map and telemetry</a>`:""}</button>`}
+      const n=Object.keys(v.clips).length,folder=TCF[v.ty],ks=Object.keys(v.clips).sort(),tt=(v.cts||v.ts||"").replace("T","_").replace(/:/g,"-"),k0=ks.filter(x=>x<=tt).pop()||ks[0],      // the minute holding the trigger, not the first one (an event starts ten minutes earlier)
+        k0t=Math.max(1,Math.min(58,Math.round((Date.parse((v.cts||v.ts||"").replace("T"," "))-Date.parse((k0||"").replace("_"," ").replace(/(\d\d)-(\d\d)-(\d\d)$/,"$1:$2:$3")))/1000)||2));
+      const have=(k0&&v.clips[k0])||[],cam=v.ty==="sentry"&&have.includes(EVCAM[v.cam])?EVCAM[v.cam]:have.includes("front")?"front":"";      // the camera that saw it (Sentry), at the moment it was detected
+      return `<button class="evc big" data-ty="${v.ty}" data-id="${v.id}">${k0?stThumb(k0,k0t,v.play&&cam?`/footage/${v.play}/${folder}/${v.id}/${k0}-${cam}.mp4`:"",k0t):'<div class="noimg"></div>'}${bd}<b>${hms(v.ts)}</b><span>${esc(reason(v.reason))}${v.ty==="sentry"&&cam?" · "+esc(CAMN[cam]):""}</span><span>${esc([v.city,v.street].filter(Boolean).join(" · "))}</span><span>${n?n+" min of video":"no video"}</span>${held(v)}${evLinks(v)}</button>`};
+    $("#tb").innerHTML=(days.length?"":'<div class="empty">Nothing here for these dates.</div>')+days.slice(0,60).map(d=>`<div class="day">${dayName(d)}<small>${byDay[d].length} clip${byDay[d].length>1?"s":""}</small></div><div class="evs">${byDay[d].map(card).join("")}</div>`).join("")+(days.length>60?'<div class="sub">Showing the newest 60 days. Narrow the dates to see older ones.</div>':"");
+    lazyThumbs($("#tb"));$$("#tb .evc").forEach(b=>b.onclick=async()=>{const ty=b.dataset.ty,sel=b.dataset.id;$$("#tb .evc").forEach(x=>x.classList.toggle("on",x===b));$("#spl").scrollIntoView({block:"nearest"});
+      const it=data[ty].find(v=>v.id===sel);
+      if(ty!=="recent"){
+        if(it.play)return sentryPlayer($("#spl"),it,it.play,TCF[ty]);
+        const what=it.reason?reason(it.reason):ty==="saved"?"Saved clip":"Sentry event";
+        return stillViewer($("#spl"),{stamps:Object.keys(it.clips).sort(),roles:it.roles,loc:it.loc,trig:Date.parse(it.cts||it.ts),head:`${esc(what)} on ${dayName(it.ts.slice(0,10))} at ${hms(it.ts)}${it.city?" · "+esc(it.city):""}`})}
+      $("#spl").innerHTML='<div class="sub">Reading…</div>';
+      try{const rr=await tcGet("clips/run/"+encodeURIComponent(sel)),stamps=Object.keys(rr.clips).sort(),head=`Continuous recording on ${dayName(it.ts.slice(0,10))}, ${hms(it.ts).slice(0,5)} to ${hms(it.end).slice(0,5)}, ${it.n} minute${it.n>1?"s":""}.`;
+        if(!it.playable)return stillViewer($("#spl"),{stamps,roles:it.roles,loc:rr.loc,head});
+        const cams={};stamps.forEach(x=>{cams[x]=rr.play[x]?rr.clips[x]:[]});      // a minute on no connected drive shows its box with the drives that hold it
+        clipPlayer($("#spl"),{stamps,cams,loc:rr.loc,url:(s,k)=>`/footage/${rr.play[s]}/RecentClips/${s}-${k}.mp4`,head:head+" The next minute plays on its own."+(it.playable<it.n?` ${it.n-it.playable} of the minutes are on no connected drive.`:"")})}
+      catch(e){$("#spl").innerHTML=errBox(e.message,"Could not read these clips")}})};
+  $("#q").oninput=e=>{TCS.q=e.target.value;draw()};chips();load();
+}
+
 // ---------- one drive rebuilt from the video: map, telemetry and the stitched footage, moving together
 // the colours every route map uses (settings app.map.speed_colors / autopilot_colors): speed as a gradient, and who was driving
 const APN={1:"FSD",2:"Autosteer",3:"TACC"},APD={FSD:"#3b6cf6",Autosteer:"#8b5cf6",TACC:"#14b8a6",Manual:"#94a3b8"};
