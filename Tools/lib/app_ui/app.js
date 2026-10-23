@@ -1545,7 +1545,7 @@ function footageSync(host,opts){
     else if(run)h+=table?"":`<div class="card ixb"><div style="flex:1;min-width:0"><b>${esc(k.text)}${k.total?" · "+n0(k.done)+" of "+n0(k.total):""}</b>${k.total?`<div style="height:6px;border-radius:3px;background:var(--line);margin:8px 0 0;overflow:hidden"><div style="height:100%;width:${pc}%;background:var(--accent);transition:width .3s"></div></div>`:""}</div><button class="btn" id="fsx">Stop</button></div>`;
     else if(checking){const g=g0,tx=chkTx,pc2=chkPc;      // in the table the bar is on each drive's row (Tasks)
       h+=table?"":`<div class="card ixb"><div style="flex:1;min-width:0"><b>${esc(tx)}${g?" · "+n0(g.done+1)+" of "+n0(g.total):""}</b><div style="height:6px;border-radius:3px;background:var(--line);margin:8px 0 0;overflow:hidden"><div style="height:100%;width:${pc2}%;background:var(--accent);transition:width .3s"></div></div></div></div>`}
-    else if(kinds.length)h+=`<div class="bar">${kinds.length>1?'<button class="btn pri" id="fsg">Sync footage</button>':""}${kinds.map(x=>`<button class="btn ${kinds.length>1?"":"pri"}" data-st="${x[0]}">${x[1]}</button>`).join("")}</div>`;
+    else if(kinds.length||(k.paused&&!table))h+=`<div class="bar">${k.paused&&!table?'<button class="btn pri" id="fsr">Resume</button>':""}${kinds.length>1?'<button class="btn pri" id="fsg">Sync footage</button>':""}${kinds.map(x=>`<button class="btn ${kinds.length>1?"":"pri"}" data-st="${x[0]}">${x[1]}</button>`).join("")}</div>`;
     if(k.error)h+=errBox(k.error,"Syncing stopped");
     if(todo&&todo.error&&!checking)h+=errBox(todo.error,"Could not check what is left to do");
     if(table&&lg&&lg.scans&&Object.keys(lg.scans).length){const t=lg.total,rs=Object.keys(lg.drives).sort();
@@ -1556,14 +1556,15 @@ function footageSync(host,opts){
         if(!run&&checking)return barOf(chkTx+(g0?" · "+n0(g0.done+1)+" of "+n0(g0.total):""),chkPc);const l=left(todo,r);if(!l)return todo?'<span class="sub">Checking…</span>':"";
         const p=[];if(l.log)p.push(n0(l.log)+" files to list");if(l.telemetry)p.push(n0(l.telemetry)+" minutes without telemetry");if(l.stills)p.push(n0(l.stills)+" clips without stills");
         return p.length?p.map(esc).join(" · "):'<span style="color:var(--ok)">Up to date</span>'};
-      h+=`<table style="margin-top:8px"><thead><tr><th class="l">Drive</th><th>Files</th><th>Size</th><th>Archived</th><th>Deleted</th><th class="l">Last updated</th><th class="l">Tasks</th><th>${run?'<button class="btn sm" id="fsx">Stop</button>':""}</th></tr></thead><tbody>${rs.map(r=>{const d=lg.drives[r],c=lg.scans[r]||{};return `<tr><td class="l"><b>${esc(NM[r]||r)}</b></td><td>${n0(d.listed)}</td><td>${gb(d.listed_bytes)}</td><td>${n0(d.archived)}</td><td>${n0(d.deleted)}</td><td class="l">${esc(localWhen(c.at))}</td><td class="l">${todoCell(r)}</td><td>${roots[r]?`<button class="btn sm" data-ej="${r}" ${busyEject?"disabled":""}>${busyEject===r?"Ejecting…":"Eject"}</button>`:""}</td></tr>`}).join("")}</tbody></table>
+      h+=`<table style="margin-top:8px"><thead><tr><th class="l">Drive</th><th>Files</th><th>Size</th><th>Archived</th><th>Deleted</th><th class="l">Last updated</th><th class="l">Tasks</th><th>${run?'<button class="btn sm" id="fsx">Stop</button>':k.paused?'<button class="btn sm pri" id="fsr">Resume</button>':""}</th></tr></thead><tbody>${rs.map(r=>{const d=lg.drives[r],c=lg.scans[r]||{};return `<tr><td class="l"><b>${esc(NM[r]||r)}</b></td><td>${n0(d.listed)}</td><td>${gb(d.listed_bytes)}</td><td>${n0(d.archived)}</td><td>${n0(d.deleted)}</td><td class="l">${esc(localWhen(c.at))}</td><td class="l">${todoCell(r)}</td><td>${roots[r]?`<button class="btn sm" data-ej="${r}" ${busyEject?"disabled":""}>${busyEject===r?"Ejecting…":"Eject"}</button>`:""}</td></tr>`}).join("")}</tbody></table>
         <div class="tiles" style="margin-top:8px">${tile(n0(t.files),"files logged · "+gb(t.bytes))}${tile(n0(t.deleted),"deleted from every drive · "+gb(t.deleted_bytes))}${tile(n0(t.only_secondary),"not on the Archive · "+gb(t.only_secondary_bytes))}${tile(n0(t.purgeable),"copies also on the Archive · "+gb(t.purgeable_bytes))}</div>`}
     if(msg)h+=`<div class="sub" style="margin-top:8px;${/ejected/.test(msg)?"color:var(--ok)":"color:var(--bad)"}">${esc(msg)}</div>`;
     host.innerHTML=h;
     const g=$("#fsg",host);if(g)g.onclick=()=>go(null);
     $$("[data-st]",host).forEach(b=>b.onclick=()=>go(STEP.find(x=>x[0]===b.dataset.st)[2]));
     $$("[data-ej]",host).forEach(b=>b.onclick=async()=>{busyEject=b.dataset.ej;msg="";paint();const r=await ejectDrive(busyEject);busyEject="";msg=r.text;paint()});
-    const x=$("#fsx",host);if(x)x.onclick=async()=>{try{await fetch("/api/keeper",{method:"POST",body:JSON.stringify({action:"pause"})})}catch(e){}paint()};
+    const x=$("#fsx",host);if(x)x.onclick=async()=>{try{await fetch("/api/keeper",{method:"POST",body:JSON.stringify({action:"pause"})})}catch(e){}until=Date.now()+20000;paint()};      // Stop; the numbers left are worked out again once the job has let go of the drive
+    const rs=$("#fsr",host);if(rs)rs.onclick=async()=>{try{await fetch("/api/keeper",{method:"POST",body:JSON.stringify({action:"resume"})})}catch(e){}until=Date.now()+20000;paint()};
     if(run||checking||Date.now()<until)setTimeout(paint,run?2000:2500)};
   paint()}
 async function pageTeslaCam(role,id){
@@ -2098,7 +2099,7 @@ async function boot(){
   // the background reading of the connected drives (lib/app_keeper.py): what it is doing, and a button to pause it (before ejecting a disk)
   const kp=async()=>{try{const k=await (await fetch("/api/keeper")).json(),el=$("#keeper");
       if(!k.enabled||(!k.working&&!k.paused&&!k.error&&!k.playing)){el.hidden=true;return}
-      if(k.working&&!k.paused&&!k.playing&&/^#\/teslacam/.test(location.hash)){el.hidden=true;return}      // the TeslaCam page shows it in its table
+      if((k.working||k.paused)&&!k.playing&&/^#\/teslacam/.test(location.hash)){el.hidden=true;return}      // the TeslaCam page shows it in its table
       el.hidden=false;const pc="",SB={log:"Listing files",events:"Reading events",telemetry:"Reading telemetry",stills:"Making stills"};
       el.innerHTML=k.playing&&!k.paused?`<div><span class="dot off"></span>Background reading waits while video plays</div>`:k.paused?`<div><span class="dot off"></span>Background reading paused <a href="#" id="kpr">Resume</a></div>`:k.working?`<div><span class="dot on"></span>${esc(SB[k.stage]||"Reading drives")}${pc} <a href="#" id="kpp">Pause</a></div>`:"";
       if(k.error)el.innerHTML+=`<div class="upd">${esc(k.error)}</div>`;
