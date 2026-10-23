@@ -38,7 +38,7 @@ class FakeTC:
         return self.store
 
     def _rv(self):
-        return SimpleNamespace(scanned=lambda: {s: 0 for s in self.sc})
+        return SimpleNamespace(scanned=lambda: {s: 0 for s in self.sc}, status=lambda: dict(running=True))      # signs being read elsewhere: a move does not read first
 
 
 class FakeFG:
@@ -223,6 +223,25 @@ class ProcBase(Base):
 
 
 class ProcessTest(ProcBase):
+    def test_a_move_reads_what_is_missing_first_and_then_moves(self):
+        out = self.k.start("move", "J", [dict(kind="saved", id="ev1")], self.roots, confirmed=True)
+        self.assertNotIn("error", out)
+        self.k._thread.join(5)
+        j = self.k.job()
+        self.assertEqual([c[0] for c in self.calls], ["read", "stills"])               # read first ...
+        self.assertEqual(j["errors"], [])
+        self.assertEqual(os.listdir(os.path.join(self.roots["J"], "SavedClips", "ev1")), [])      # ... then the video was moved off JOWUA
+        self.assertTrue(os.path.exists(os.path.join(self.roots["A"], "SavedClips", "ev1", "%s-front.mp4" % S1)))
+
+    def test_a_move_does_not_start_when_what_is_missing_could_not_be_read(self):
+        def bad(store, todo, data_dir=None, stop=None, progress=None, limit=None):
+            raise OSError("drive pulled out")
+        TS.read = bad
+        self.k.start("move", "J", [dict(kind="saved", id="ev1")], self.roots, confirmed=True)
+        self.k._thread.join(5)
+        self.assertIn("drive pulled out", self.k.job()["errors"][0])
+        self.assertTrue(os.listdir(os.path.join(self.roots["J"], "SavedClips", "ev1")))           # nothing was removed
+
     def test_it_reads_the_metadata_then_the_stills_then_the_signs_of_the_selected_clip_and_nothing_else(self):
         out = self.k.start_process([dict(kind="saved", id="ev1")], self.roots)
         self.assertNotIn("error", out)
