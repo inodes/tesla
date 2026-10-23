@@ -1,0 +1,77 @@
+"""test_clips_all.py - the Clips list is the same whatever drives are connected: every logged run and event, each saying which drive holds it and if it can be played.
+
+    python3 -m unittest tests/test_clips_all.py
+"""
+import json
+import os
+import shutil
+import sys
+import tempfile
+import unittest
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+for p in ("tests", "Tools", os.path.join("Tools", "lib")):
+    sys.path.insert(0, os.path.join(HERE, "..", p))
+import app_teslacam as AT  # noqa: E402
+
+LIVE = dict(first="2026-10-17T00:00:00Z", last="2026-10-17T00:00:00Z", gone=None)
+GONE = dict(first="2026-10-17T00:00:00Z", last="2026-10-17T00:00:00Z", gone="2026-10-18T00:00:00Z")
+CAMS = ["front", "back"]
+
+
+def dump(obj, path):
+    with open(path, "w") as f:
+        json.dump(obj, f)
+
+
+class ClipsAll(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        led = os.path.join(self.tmp, "teslacam_ledger")
+        os.makedirs(led)
+        day = {}
+        for st in ("2026-10-16_15-40-07", "2026-10-16_15-41-07"):                 # one run, on JOWUA
+            for c in CAMS:
+                day["recent||%s-%s" % (st, c)] = dict(drives=dict(J=LIVE), size=1)
+        for c in CAMS:                                                           # a later run, deleted from its drive
+            day["recent||2026-10-16_18-00-07-%s" % c] = dict(drives=dict(A=GONE), size=1)
+        dump(day, os.path.join(led, "2026-10-16.json"))
+        dump(dict(A=dict(at="x", files=1, bytes=1, ok=True), J=dict(at="x", files=1, bytes=1, ok=True)), os.path.join(led, "scans.json"))
+        ev = dict(id="2026-10-16_16-00-00", ts="2026-10-16T16:00:00", city="Ryde", street="", lat=-33.8, lon=151.1, reason="sentry_aware_object_detection", cam="5",
+                  clips={"2026-10-16_15-59-07": CAMS}, thumb=False)
+        dump({ev["id"]: ev}, os.path.join(self.tmp, "teslacam_index_A_sentry.json"))
+        self.tc = AT.TeslaCam(self.tmp)
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def test_nothing_connected_lists_everything(self):
+        d = self.tc.clips_all({})
+        self.assertEqual(d["connected"], [])
+        self.assertEqual(len(d["recent"]), 2)
+        by = {r["id"]: r for r in d["recent"]}
+        self.assertEqual(by["2026-10-16_15-40-07"]["roles"], ["J"])
+        self.assertIsNone(by["2026-10-16_15-40-07"]["play"])
+        self.assertEqual(by["2026-10-16_15-40-07"]["n"], 2)
+        self.assertEqual(by["2026-10-16_18-00-07"]["roles"], [])                  # gone from every drive: still listed, only stills are left
+        self.assertEqual(d["sentry"][0]["roles"], ["A"])
+        self.assertIsNone(d["sentry"][0]["play"])
+
+    def test_connected_drive_makes_it_playable(self):
+        d = self.tc.clips_all({"J": self.tmp})
+        by = {r["id"]: r for r in d["recent"]}
+        self.assertEqual(by["2026-10-16_15-40-07"]["play"], "J")
+        self.assertEqual(by["2026-10-16_15-40-07"]["playable"], 2)
+        self.assertIsNone(by["2026-10-16_18-00-07"]["play"])
+        self.assertEqual(d["connected"], ["J"])
+
+    def test_one_run_for_the_player(self):
+        r = self.tc.run_all("2026-10-16_15-40-07", {"J": self.tmp})
+        self.assertEqual(sorted(r["clips"]), ["2026-10-16_15-40-07", "2026-10-16_15-41-07"])
+        self.assertEqual(set(r["play"].values()), {"J"})
+        self.assertEqual(self.tc.run_all("2026-10-16_15-40-07", {})["play"]["2026-10-16_15-40-07"], None)
+        self.assertIsNone(self.tc.run_all("1999-01-01_00-00-00", {}))
+
+
+if __name__ == "__main__":
+    unittest.main()
