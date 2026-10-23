@@ -22,8 +22,8 @@ import time
 
 import app_config
 
-STAGES = ("log", "events", "telemetry", "stills")
-LABEL = dict(log="Listing the files on", events="Reading the events on", telemetry="Reading the telemetry on", stills="Making stills from")
+STAGES = ("log", "events", "telemetry", "stills", "pictures")
+LABEL = dict(log="Listing the files on", events="Reading the events on", telemetry="Reading the telemetry on", stills="Making stills from", pictures="Saving event pictures from")
 NAMES = {"A": "the Archive", "J": "JOWUA", "U": "the Tesla USB"}
 FOLDERS = ("RecentClips", "SavedClips", "SentryClips")
 
@@ -63,6 +63,7 @@ class Keeper:
         self._once = False              # a pass asked for from a page (Sync footage): runs once, stills included, then stops
         self._only = None               # that pass is only these stages (the Update log / Read telemetry / Make stills buttons)
         self._played = 0.0              # when a clip was last served to the page (video playing)
+        self.pictures = None            # lib/clip_keep.ClipKeep: pictures_start(roots) / pictures_running() / stop(): the full-size pictures of events, made after the stills
 
     # ---- settings
     @staticmethod
@@ -74,7 +75,7 @@ class Keeper:
         """Called whenever the page is sent video. A pass asked for from a page (a button) does not give way to it: the page stops its videos when the button is pressed."""
         self._played = time.time()
         if self._started and not self._once and self._stage is not None and self._stage < len(STAGES):      # stop at once, not at the next look
-            (self.tc.scan_stop if STAGES[self._stage] == "telemetry" else self.fg.stop)()
+            self._stop_stage(STAGES[self._stage])
 
     def playing(self):
         return not self._once and time.time() - self._played < float(app_config.get("keeper.play_wait_s", 30))
@@ -91,7 +92,8 @@ class Keeper:
         if self._stage is not None:         # a pass is under way: let it finish (the buttons are disabled meanwhile)
             return self.status()
         self.paused, self._played = False, 0.0
-        self._only = tuple(x for x in (stages or ()) if x in STAGES) or None
+        only = tuple(x for x in (stages or ()) if x in STAGES)
+        self._only = (only + ("pictures",) if "stills" in only and "pictures" not in only else only) or None      # Make stills also saves the pictures of events
         self._once, self._sig, self._done_at, self.error = True, None, 0.0, ""
         self.start()
         return self.status()
@@ -105,6 +107,15 @@ class Keeper:
                 self.error = "%s: %s" % (type(e).__name__, e)
                 self._stage, self._started, self._sig = None, False, self._cur
             time.sleep(5 if self._once else max(5, float(app_config.get("keeper.interval_s", 20))))
+
+    def _stop_stage(self, st):
+        if st == "telemetry":
+            self.tc.scan_stop()
+        elif st == "pictures":
+            if self.pictures:
+                self.pictures.stop()
+        else:
+            self.fg.stop()
 
     def busy(self):
         """Something else is reading a drive (a job started from a page, a review)."""
@@ -120,6 +131,8 @@ class Keeper:
             return bool(self.fg.status().get("running"))
         if st == "telemetry":
             return bool(self.tc.scan_status().get("running"))
+        if st == "pictures":
+            return bool(self.pictures and self.pictures.pictures_running())
         return False
 
     def tick(self):
@@ -128,7 +141,7 @@ class Keeper:
         if self.playing():                  # video is playing: stop what it was doing; the pass starts again from the top afterwards
             if self._started:
                 st = STAGES[self._stage]
-                (self.tc.scan_stop if st == "telemetry" else self.fg.stop)()
+                self._stop_stage(st)
                 self._report(st)
                 self._started, self._stage, self._sig, self._done_at = False, None, None, 0.0
             return
@@ -186,6 +199,11 @@ class Keeper:
             rep = self.fg.stills_report(roots)
             self._plan = [x["role"] for x in getattr(self.fg, "_todo", [])]
             return bool(rep.get("to_make")) and bool(rep.get("ffmpeg")) and bool(self.fg.start("stills", roots, by="keeper").get("running"))
+        if stage == "pictures":
+            if not (app_config.get("keeper.stills", False) or self._once) or self.pictures is None:      # ffmpeg again: the same switch as the stills
+                return False
+            self._plan = []
+            return bool(self.pictures.pictures_start(roots))
         return False
 
     def _scans(self):
@@ -201,18 +219,28 @@ class Keeper:
                  done=0, total=0)
         if self._stage is not None and self._stage < len(STAGES):
             st = STAGES[self._stage]
-            job = self.tc.scan_status() if st == "telemetry" else self.fg.status() if st in ("log", "stills") else {}
+            job = self._job_of(st)
             s.update(stage=st, done=job.get("done", 0), total=job.get("total", 0))
             where = " and ".join(NAMES.get(r, r) for r in self._roles) or "the connected drives"
             s["text"] = "%s %s" % (LABEL[st], where)
             s["drives"] = self._by_drive(st, s["done"])
         return s
 
+    def _job_of(self, st):
+        if st == "telemetry":
+            return self.tc.scan_status()
+        if st in ("log", "stills"):
+            return self.fg.status()
+        if st == "pictures" and self.pictures:
+            j = self.pictures.job()
+            return dict(done=j.get("step_done", 0), total=j.get("step_total", 0))
+        return {}
+
     def _report(self, stage):
         """A job ended or was stopped: tell what each drive got done, so the page shows the numbers left at once (they are worked out again afterwards)."""
         if not self.on_progress:
             return
-        job = self.tc.scan_status() if stage == "telemetry" else self.fg.status() if stage in ("log", "stills") else {}
+        job = self._job_of(stage)
         try:
             self.on_progress(stage, {r: d["done"] for r, d in self._by_drive(stage, job.get("done", 0)).items()})
         except Exception:
@@ -233,7 +261,7 @@ class Keeper:
         self.paused = True
         if self._started:
             st = STAGES[self._stage]
-            (self.tc.scan_stop if st == "telemetry" else self.fg.stop)()
+            self._stop_stage(st)
             self._report(st)
             self._started, self._stage = False, None
         return self.status()

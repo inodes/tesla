@@ -30,6 +30,9 @@ OPTS = dict(step_s=1.0,        # a still every this many seconds
             min_conf=50.0,     # tesseract confidence (0-100) below which a reading is dropped
             workers=3,         # stills looked at in parallel
             merge_s=12.0,      # the same number seen again within this many seconds is the same sign
+            refine_step_s=0.2, # the second look at a sign: a still this often ...
+            refine_pad_s=2.0,  # ... from this long before the first still it was seen in until this long after the last
+            refine_conf=85.0,  # a sign read this surely, in more than one still, with one number, is left as it is
             crop_px=320)       # the longest side of the picture kept of each sign: big enough to read the number from again once the video is gone
 _LOCK = threading.RLock()
 
@@ -88,6 +91,21 @@ class Review:
                 if fn.endswith(".json"):
                     for st, r in self._day(fn[:-5]).items():
                         out[st] = len(r.get("d", []))
+        return out
+
+    def unrefined(self):
+        """The minutes with signs that have not had the second look yet (refine)."""
+        out = set()
+        with _LOCK:
+            try:
+                names = os.listdir(self.base)
+            except OSError:
+                return out
+            for fn in names:
+                if fn.endswith(".json"):
+                    for st, r in self._day(fn[:-5]).items():
+                        if r.get("d") and not r.get("rf"):
+                            out.add(st)
         return out
 
     def forget(self, stamps):
@@ -154,6 +172,40 @@ class Review:
         self.t = threading.Thread(target=self._run, args=(todo,), daemon=True)
         self.t.start()
         return self.status()
+
+    def refine(self, items):
+        """The second look: items = [(stamp, front clip path)] of minutes with signs. Around every sign that was seen once, or read unsurely, or read as two different numbers, the video is
+        taken again every refine_step_s seconds, the number is voted on over all the stills, and the clearest pictures are kept. Done once per minute."""
+        if self.t and self.t.is_alive():
+            return self.status()
+        need = requirements()
+        if need["py"] or need["cmd"]:
+            self.st = dict(running=False, done=0, total=0, current="", found=0, error="Missing: " + ", ".join(need["py"] + need["cmd"]), t0=0)
+            return self.status()
+        with _LOCK:
+            todo = [i for i in items if (self._day(i[0][:10]).get(i[0]) or {}).get("d") and not self._day(i[0][:10])[i[0]].get("rf")]
+        self.stop_flag = False
+        self.st = dict(running=True, done=0, total=len(todo), current="", found=0, error="", t0=time.time())
+        self.t = threading.Thread(target=self._run_refine, args=(todo,), daemon=True)
+        self.t.start()
+        return self.status()
+
+    def _run_refine(self, todo):
+        try:
+            for n, (stamp, path) in enumerate(todo):
+                if self.stop_flag:
+                    break
+                self.st["current"] = stamp
+                with _LOCK:
+                    rec = json.loads(json.dumps(self._day(stamp[:10]).get(stamp) or {}))
+                new = refine_clip(path, stamp, rec, self.base)
+                with _LOCK:
+                    self._day(stamp[:10])[stamp] = new
+                    self._save(stamp[:10])
+                self.st["done"] = n + 1
+                self.st["found"] += len(new.get("d", []))
+        except Exception as e:
+            self.st["error"] = "%s: %s" % (type(e).__name__, e)
 
     def stop(self):
         self.stop_flag = True
@@ -225,3 +277,95 @@ def scan_clip(path, stamp, v, base):
                 d["f"] = name
             keep.append(d)
     return dict(n=len(fr), d=keep)
+
+
+def _spans(d, pad):
+    """[[side, from, to, [indexes into d]]]: the stretches of a minute to look at again, one per sign seen (overlapping ones joined), on the side it was seen on."""
+    out = []
+    for side in ("L", "R"):
+        for i in sorted((i for i, x in enumerate(d) if x["side"] == side), key=lambda i: d[i]["s"]):
+            a, b = d[i]["s"] - pad, d[i]["s"] + pad
+            if out and out[-1][0] == side and a <= out[-1][2]:
+                out[-1][2] = max(out[-1][2], b)
+                out[-1][3].append(i)
+            else:
+                out.append([side, a, b, [i]])
+    return out
+
+
+def _weak(d, ix):
+    """A sign worth a second look: seen in one still only, read unsurely, or read as different numbers."""
+    xs = [d[i] for i in ix]
+    return len(xs) == 1 or max(x["c"] for x in xs) < OPTS["refine_conf"] or len({x["text"] for x in xs}) > 1
+
+
+def _vote(old, new):
+    """The number the stills agree on (each reading counts as sure as it was read), the earlier readings of it, and the (at most three) clearest new ones: the biggest, surest rings."""
+    score = {}
+    for x in list(old) + list(new):
+        score[x["text"]] = score.get(x["text"], 0) + x["c"]
+    win = max(sorted(score), key=lambda t: score[t])
+    best = sorted((x for x in new if x["text"] == win), key=lambda x: -x["c"] * max(1, x.get("r", 1)))[:3]
+    return win, [x for x in old if x["text"] == win], best
+
+
+def _frames_at(path, start, dur, step, tmp):
+    """Stills from `start` for `dur` seconds of a clip, every `step` seconds, full size; [(second, file)]."""
+    os.makedirs(tmp, exist_ok=True)
+    subprocess.run(["ffmpeg", "-v", "error", "-ss", "%.2f" % max(0.0, start), "-t", "%.2f" % dur, "-i", path, "-vf", "fps=%g" % (1.0 / step), "-q:v", "2", os.path.join(tmp, "r%04d.jpg")],
+                   stdin=subprocess.DEVNULL, capture_output=True, timeout=120)
+    fs = sorted(f for f in os.listdir(tmp) if f.startswith("r") and f.endswith(".jpg"))
+    return [(max(0.0, start) + k * step, os.path.join(tmp, f)) for k, f in enumerate(fs)]
+
+
+def _look(im, side):
+    """The best reading of a round limit sign on one side of a still, or None."""
+    import sign_finder as SF
+    for c in SF.find_signs(im, roi=SF.ROI_LEFT if side == "L" else SF.ROI_RIGHT):
+        if c.get("ok") and c["conf"] >= OPTS["min_conf"] and c["text"]:
+            return c
+    return None
+
+
+def refine_clip(path, stamp, rec, base):
+    """The second look at one minute that already has signs (see Review.refine). Returns the new record, marked done (rf). A sign read in the first pass that the finer stills
+    outvote is dropped with its picture."""
+    import cv2
+    d = list(rec.get("d", []))
+    spans = [sp for sp in _spans(d, float(OPTS["refine_pad_s"])) if _weak(d, sp[3])]
+    drop, add, k = set(), [], 0
+    step = max(0.05, float(OPTS["refine_step_s"]))
+    with tempfile.TemporaryDirectory() as tmp:
+        for n, (side, a, b, ix) in enumerate(spans):
+            a, b = max(0.0, a), min(60.0, b)
+            new = []
+            for s, f in _frames_at(path, a, b - a, step, os.path.join(tmp, str(n))):
+                im = cv2.imread(f)
+                c = _look(im, side) if im is not None else None
+                if c:
+                    new.append(dict(s=round(s, 2), text=c["text"], c=round(c["conf"]), x=c["x"], y=c["y"], r=c["r"], side=side, crop=c["crop"]))
+            if not new:
+                continue
+            win, _keep, best = _vote([d[i] for i in ix], new)
+            drop |= {i for i in ix if d[i]["text"] != win}
+            os.makedirs(os.path.join(base, "crops"), exist_ok=True)
+            for x in best:
+                crop = x.pop("crop")
+                h, w = crop.shape[:2]
+                if h > 0 and w > 0:
+                    cpx = float(OPTS["crop_px"])
+                    if max(h, w) > cpx:
+                        z = cpx / max(h, w)
+                        crop = cv2.resize(crop, (max(1, int(w * z)), max(1, int(h * z))))
+                    x["f"] = "%s_r%02d.jpg" % (stamp, k)
+                    k += 1
+                    cv2.imwrite(os.path.join(base, "crops", x["f"]), crop, [cv2.IMWRITE_JPEG_QUALITY, 90])
+                add.append(x)
+    for i in drop:
+        if d[i].get("f"):
+            try:
+                os.remove(os.path.join(base, "crops", d[i]["f"]))
+            except OSError:
+                pass
+    kept = [x for i, x in enumerate(d) if i not in drop] + add
+    return dict(rec, d=sorted(kept, key=lambda x: x["s"]), rf=1)

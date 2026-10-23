@@ -109,6 +109,7 @@ class ClipKeep:
         store = self.tc._tl("A")
         stills = self.fg.stills.stamps()
         scanned = self.tc._rv().scanned()
+        unref = getattr(self.tc._rv(), "unrefined", lambda: set())()      # minutes with signs that have not had the second look
         windows = TD.drive_windows(self.dir)
         starts = [w[0] for w in windows]
         synced_until = max([w[1] for w in windows] or [0])
@@ -140,7 +141,7 @@ class ClipKeep:
         self._groups = {k: sorted(v) for k, v in groups.items()}
         for (kind, cid), mins in groups.items():
             meta, st_, sg, sh = [0, 0], [0, 0], [0, 0], [0, 0]
-            waiting, wait_n, nbytes, nfiles, narch = "", 0, {}, {}, {}
+            waiting, wait_n, refine_n, nbytes, nfiles, narch = "", 0, 0, {}, {}, {}
             for st, node in mins.items():
                 for r, c in node["files"].items():
                     nfiles[r] = nfiles.get(r, 0) + c
@@ -166,6 +167,8 @@ class ClipKeep:
                 if isinstance(sm, dict) and sm.get("vmax", 0) >= min_kmh:
                     sg[1] += 1
                     sg[0] += st in scanned
+                if st in unref:
+                    refine_n += 1
             have = self.shots.have(kind, cid) if kind != "recent" else set()
             w = self._wanted(kind, cid, mins, events.get((kind, cid))) if nbytes else None
             if w:
@@ -173,8 +176,8 @@ class ClipKeep:
             elif have:
                 sh = [len(have), len(have)]
             out[kind][cid] = dict(n=len(mins), first=min(mins), bytes=nbytes, files=nfiles, in_archive=narch, size=max(nbytes.values()) if nbytes else 0, meta=meta, stills=st_, signs=sg, shots=sh,
-                                  shot_cams=sorted(have), ready=all(x[0] >= x[1] for x in (meta, st_, sg, sh)), waiting=waiting, wait_n=wait_n,
-                                  todo=any(x[0] < x[1] for x in (meta, sg, sh)) or st_[0] + wait_n < st_[1])
+                                  shot_cams=sorted(have), ready=all(x[0] >= x[1] for x in (meta, st_, sg, sh)), waiting=waiting, wait_n=wait_n, refine_n=refine_n,
+                                  todo=any(x[0] < x[1] for x in (meta, sg, sh)) or st_[0] + wait_n < st_[1] or refine_n > 0)
         return dict(clips=out)
 
     # ---- the files of a clip on one drive -----------------------------------------------------------------------
@@ -343,6 +346,64 @@ class ClipKeep:
         self._thread.start()
         return self.job()
 
+    # ---- the full-size pictures of events, on their own: the Keeper's step after the stills ------------------------
+    def pictures_plan(self, roots):
+        """[(kind, event, stamp, second, {camera: video path})] of the Saved and Sentry events whose full-size pictures are missing and whose video is on a connected drive."""
+        st = self.status()["clips"]
+        events = self._events()
+        wants = []
+        for kind in ("saved", "sentry"):
+            for cid, r in st[kind].items():
+                if r["shots"][0] >= r["shots"][1] or (kind, cid) not in events:
+                    continue
+                mins = {s: dict(cams=set(c)) for s, c in self._cams_of(kind, cid).items()}
+                w = self._wanted(kind, cid, mins, events[(kind, cid)])
+                if w:
+                    wants.append((kind, cid, w))
+        if not wants:
+            return []
+        paths = self._paths(TLG.Ledger(self.dir), {w[0] for _k, _c, w in wants}, roots)
+        out = []
+        for kind, cid, w in wants:
+            got = {c: paths[w[0]][c] for c in w[2] if w[0] in paths and c in paths[w[0]]}
+            if got:
+                out.append((kind, events[(kind, cid)], w[0], w[1], got))
+        return out
+
+    def pictures_start(self, roots):
+        """Saves those pictures in the background. True when a job was started (False: nothing to save, or something else is being done to the drives)."""
+        if self._thread and self._thread.is_alive():
+            return False
+        plan = self.pictures_plan(roots)
+        if not plan:
+            return False
+        total = sum(len(x[4]) for x in plan)
+        self._stop = False
+        self._job = dict(running=True, action="pictures", step="Saving event pictures", step_done=0, step_total=total, steps=[dict(step="Saving event pictures", total=total)], files=0, done=0,
+                         bytes=0, bytes_done=0, freed=0, errors=[], current="", clips=len(plan), t0=time.time())
+        self._thread = threading.Thread(target=self._pictures, args=(plan,), daemon=True)
+        self._thread.start()
+        return True
+
+    def _pictures(self, plan):
+        j = self._job
+        n = 0
+        try:
+            for kind, ev, stamp, sec, got in plan:
+                if self._stop:
+                    break
+                j["current"] = ev["id"]
+                n += len(self.shots.make(kind, ev, stamp, sec, got, stop=lambda: self._stop))
+                j["step_done"] = n
+        except Exception as e:
+            j["errors"].append("%s: %s" % (type(e).__name__, e))
+        finally:
+            with self._lock:
+                self._cache = None
+
+    def pictures_running(self):
+        return bool(self._thread and self._thread.is_alive())
+
     def _step(self, name, total):
         self._job.update(step=name, step_done=0, step_total=total, current="")
         self._job["steps"].append(dict(step=name, total=total))
@@ -403,6 +464,22 @@ class ClipKeep:
                 j["step_done"] = rs.get("done", 0)
                 if rs.get("error"):
                     j["errors"].append(rs["error"])
+            if not self._stop and hasattr(rv, "refine"):          # the second look at the signs just read (and those read before it existed)
+                again = rv.unrefined()
+                items = [(s, paths[s]["front"]) for s in sorted(paths) if s in again and "front" in paths[s]]
+                self._step("Checking signs", len(items))
+                if items:
+                    rv.refine(items)
+                    while rv.status().get("running"):
+                        if self._stop:
+                            rv.stop()
+                        rs = rv.status()
+                        j["step_done"], j["current"] = rs.get("done", 0), rs.get("current", "")
+                        time.sleep(0.7)
+                    rs = rv.status()
+                    j["step_done"] = rs.get("done", 0)
+                    if rs.get("error"):
+                        j["errors"].append(rs["error"])
         except Exception as e:                      # a drive pulled out, a tool missing: say so and stop
             j["errors"].append("%s: %s" % (type(e).__name__, e))
         finally:

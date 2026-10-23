@@ -317,6 +317,19 @@ class EventShotsTest(ProcBase):
         self.assertEqual(ES.cams_for("sentry", dict(reason="sentry_aware_object_detection", cam="5")), ["left_repeater"])
         self.assertEqual(ES.cams_for("sentry", dict(reason="sentry_accelerometer", cam="")), list(ES.CAMS))
 
+    def test_the_pictures_are_saved_on_their_own_for_the_keeper_and_only_where_they_are_missing(self):
+        self.index("user_interaction_honk")
+        self.kept()
+        k = self.k
+        self.assertEqual(len(k.pictures_plan(self.roots)), 1)
+        self.assertTrue(k.pictures_start(self.roots))
+        k._thread.join(5)
+        j = k.job()
+        self.assertEqual((j["action"], j["step_done"], j["step_total"], j["errors"]), ("pictures", 2, 2, []))
+        self.assertEqual(k.shots.have("saved", "ev1"), {"front", "back"})
+        self.assertEqual(k.pictures_plan(self.roots), [])
+        self.assertFalse(k.pictures_start(self.roots))                                 # nothing left to save: no job
+
     def test_a_horn_is_not_ready_until_its_pictures_are_kept_and_then_the_video_may_go(self):
         self.index("user_interaction_honk")
         self.kept()
