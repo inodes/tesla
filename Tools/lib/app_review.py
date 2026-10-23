@@ -29,7 +29,8 @@ OPTS = dict(step_s=1.0,        # a still every this many seconds
             min_kmh=30.0,      # only look while the car goes at least this fast (signs matter on the road, not in a car park)
             min_conf=50.0,     # tesseract confidence (0-100) below which a reading is dropped
             workers=3,         # stills looked at in parallel
-            merge_s=12.0)      # the same number seen again within this many seconds is the same sign
+            merge_s=12.0,      # the same number seen again within this many seconds is the same sign
+            crop_px=320)       # the longest side of the picture kept of each sign: big enough to read the number from again once the video is gone
 _LOCK = threading.RLock()
 
 
@@ -216,10 +217,11 @@ def scan_clip(path, stamp, v, base):
             name = "%s_%02d.jpg" % (stamp, k)
             h, w = crop.shape[:2]
             if h > 0 and w > 0:
-                if max(h, w) > 160:
-                    z = 160.0 / max(h, w)
+                cpx = float(OPTS["crop_px"])
+                if max(h, w) > cpx:
+                    z = cpx / max(h, w)
                     crop = cv2.resize(crop, (max(1, int(w * z)), max(1, int(h * z))))
-                cv2.imwrite(os.path.join(base, "crops", name), crop, [cv2.IMWRITE_JPEG_QUALITY, 85])
+                cv2.imwrite(os.path.join(base, "crops", name), crop, [cv2.IMWRITE_JPEG_QUALITY, 90])
                 d["f"] = name
             keep.append(d)
     return dict(n=len(fr), d=keep)

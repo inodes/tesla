@@ -72,6 +72,7 @@ import app_footage
 import drive_eject
 import footage_todo
 import clip_keep
+import stills_thin
 import app_keeper  # noqa: E402
 import app_charges  # noqa: E402
 import clip_clock as CC  # noqa: E402
@@ -94,6 +95,7 @@ TC = None
 DRV = None                  # the manual drive review (lib/app_drive_review.py)
 KEEP = None                 # reads the connected TeslaCam drives in the background (lib/app_keeper.py)
 TODO = None                 # what each connected drive still needs (lib/footage_todo.py)
+STHIN = None                # making the stills of ordinary driving smaller (lib/stills_thin.py)
 CKEEP = None                # per clip: what is kept from its video, and deleting / moving the video (lib/clip_keep.py)
 FG = None                   # the footage log and the one-second stills (lib/app_footage.py)
 SYNC = None
@@ -465,6 +467,8 @@ class H(BaseHTTPRequestHandler):
                 if body.get("action") == "process":       # read what the clips still lack (metadata, stills, signs) from their video on the connected drives
                     return self.send_json(CKEEP.start_process(body.get("items") or [], roots))
                 return self.send_json(CKEEP.start(body.get("action"), role, body.get("items") or [], roots))
+            if u.path == "/api/stills/thin":       # {action: start|stop}: make the stills of minutes with no event and no sign smaller
+                return self.send_json(STHIN.stop() if body.get("action") == "stop" else STHIN.start())
             if u.path == "/api/eject":             # {role}: stop reading the drive, then eject it
                 role = body.get("role")
                 root = footage_root(role) if role in ("A", "J", "U") else None
@@ -583,6 +587,8 @@ class H(BaseHTTPRequestHandler):
             return self.send_json(dict(drives=TC.drives()))
         if name == "drivelist":                 # the Drives list: Tessie's drives and charges as the rows, the dashcam's drives attached (or alone when there is no Tessie)
             return self.send_json(drivelist())
+        if name == "stills/thin":               # how many minutes of ordinary driving have stills that could be smaller, what they take, and the job
+            return self.send_json(STHIN.status())
         if name == "clips/keep":                # per clip (Recent run, Saved, Sentry): what is kept from its video, and its size on each drive (nothing is read from a drive)
             return self.send_json(CKEEP.status())
         if name == "clips/job":                 # the delete / move being done to the drives, or the last one
@@ -868,7 +874,7 @@ def _code_version():
 
 
 def main():
-    global KEPT, STORE, DATA_DIR, SENTRY, TC, DRV, SYNC, TSYNC, CSYNC, SOFT, CARW, BOOK, FG, KEEP, DRIVELIST, TODO, CKEEP
+    global KEPT, STORE, DATA_DIR, SENTRY, TC, DRV, SYNC, TSYNC, CSYNC, SOFT, CARW, BOOK, FG, KEEP, DRIVELIST, TODO, CKEEP, STHIN
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--data-dir", default=DEFAULT_DATA)
     ap.add_argument("--port", type=int, default=int(app_config.get("window.port")))
@@ -899,6 +905,7 @@ def main():
     TODO = footage_todo.Todo(os.path.join(local_cache_dir(), "footage_todo.json"), DATA_DIR, TC, FG, footage_roots, lambda: KEEP._stage is None and not KEEP.busy())
     KEEP.on_progress = TODO.subtract
     CKEEP = clip_keep.ClipKeep(DATA_DIR, TC, FG)
+    STHIN = stills_thin.StillsThin(DATA_DIR, FG.stills, TC)
     if not a.no_background:
         KEEP.start()
     BOOK = app_charges.ChargeBook(os.path.dirname(os.path.abspath(__file__)), DATA_DIR)
