@@ -155,6 +155,7 @@ body{-webkit-user-select:text;user-select:text}
 .mpin.sp{border-radius:50%;background:#fff;border:3px solid #dc2626}
 .mpin.wn{background:#facc15;border:2px solid #111;transform:rotate(45deg);width:22px;height:22px;border-radius:3px}.mpin.wn span{transform:rotate(-45deg)}
 .mpin.wn.rw{background:#f97316}
+.mpin.ev{border-radius:50%;background:#dc2626;color:#fff;border:3px solid #fff;width:28px;height:28px}
 .mpin.cf{outline:3px solid #7c3aed;outline-offset:1px}
 tr.chline{cursor:pointer}tr.chline td{color:var(--bad);font-weight:600;font-size:12.5px;padding:3px 12px;border-top:2px solid var(--bad);border-bottom:2px solid var(--bad);background:transparent}tr.chline:hover td{background:var(--hover)}
 .rvb{position:absolute;left:5px;bottom:5px;display:flex;gap:4px;align-items:flex-end;pointer-events:none}.rvb i{font-style:normal;display:inline-flex;align-items:center;justify-content:center;box-shadow:0 0 0 1px rgba(0,0,0,.35)}
@@ -198,3 +199,8 @@ tr.chline{cursor:pointer}tr.chline td{color:var(--bad);font-weight:600;font-size
 .swl{display:flex;flex-wrap:wrap;gap:4px;align-items:center;margin-top:4px}.swl .pill{white-space:nowrap}.pill.in{color:var(--acc);border-color:var(--acc)}.pill.dim{opacity:.7}.swsep{width:6px}
 
 .eject{margin-left:6px;border:1px solid var(--line);background:var(--card);color:var(--ink);border-radius:6px;padding:0 6px;font-size:12px;cursor:pointer}.eject:hover{background:var(--hover)}
+/* a Saved clip on the TeslaCam page: map beside the video on a wide screen, the telemetry under both */
+@media (min-width:1100px){#tdb.side{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);column-gap:12px}
+ #tdb.side>*{grid-column:1/-1}#tdb.side>:empty{display:none}
+ #tdb.side>#dmapc{grid-column:1;grid-row:5;margin-top:12px}#tdb.side>.dvc{grid-column:2;grid-row:5;margin-top:12px}#tdb.side>#dchc{grid-row:6}}
+@media (min-width:1100px){#tdb.side>#dmapc[hidden]~.dvc{grid-column:1/-1}}
