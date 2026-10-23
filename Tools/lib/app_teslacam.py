@@ -414,7 +414,7 @@ class TeslaCam:
 
     @staticmethod
     def _front(teslacam, m):
-        sub = "RecentClips" if m["src"] == "recent" else os.path.join("SavedClips", m["ref"])
+        sub = "RecentClips" if m["src"] == "recent" else os.path.join("SentryClips" if m["src"] == "sentry" else "SavedClips", m["ref"])
         return os.path.join(teslacam, sub, "%s-%s.mp4" % (m["stamp"], m.get("tcam") or "front"))
 
     def segment(self, role, teslacam, sid, budget=20.0):
@@ -443,10 +443,11 @@ class TeslaCam:
             TL.read_many(store, todo, deadline=time.time() + budget)
         CC.refresh(self.dir, store, wait=True)
 
-    def window(self, role, teslacam, t0, t1, budget=20.0, lo=None):
+    def window(self, role, teslacam, t0, t1, budget=20.0, lo=None, sentry=None):
         """Everything recorded between two instants (t0, t1 = UTC epoch seconds - a Tessie drive): one item with telemetry and the clips, Recent and Saved
         stitched. With the drive not connected it still returns what was read before (map and charts, no video). lo = seconds the clock the times are
-        SHOWN on is ahead of UTC (the drive list shows a drive on the clock of where it was driven); without it, app.timezone's."""
+        SHOWN on is ahead of UTC (the drive list shows a drive on the clock of where it was driven); without it, app.timezone's.
+        sentry = the folder of a Sentry event: its minutes are part of the window too (they are not otherwise: a parked car has no drive to belong to)."""
         if teslacam:
             store = self._tl(role)
             self._settle(role, teslacam, store, t0, t1, budget)
@@ -458,13 +459,34 @@ class TeslaCam:
             sums = [store.summary(m["stamp"]) for m in mins]
             state = "move" if any(x and x["vmax"] >= TL.OPTS["moving_kmh"] for x in sums) else "unknown" if any(x is None for x in sums) else "still"
             return TL.drive_item([(m, state) for m in mins], store), mins
-        return self._finish(role, teslacam, pick, budget, events=(t0, t1), lo=lo)
+        return self._finish(role, teslacam, pick, budget, events=(t0, t1), lo=lo, extra=self._sentry_minutes(role, teslacam, sentry))
 
-    def _finish(self, role, teslacam, pick, budget, events=None, lo=None):
+    def _sentry_minutes(self, role, teslacam, ev_id):
+        """The minutes of one Sentry event as footage minutes (src "sentry"), those the continuous recording does not already hold."""
+        if not (teslacam and ev_id):
+            return []
+        recent, _saved, sentry = self._sources(role, teslacam)
+        e = next((x for x in sentry if x["id"] == ev_id), None)
+        if not e:
+            return []
+        import bisect
+        rt = sorted(TL.secs(st) for st in recent)
+        out = []
+        for st, cams in e["clips"].items():
+            t = TL.secs(st)
+            i = bisect.bisect(rt, t)
+            near = min([abs(rt[j] - t) for j in (i - 1, i) if 0 <= j < len(rt)] or [1e9])
+            if st not in recent and near > TL.OPTS["same_minute_s"]:
+                out.append(dict(stamp=st, t=t, src="sentry", ref=e["id"], cams=cams, tcam=TL.tcam(cams)))
+        return out
+
+    def _finish(self, role, teslacam, pick, budget, events=None, lo=None, extra=None):
         import time
         store = self._tl(role)
         recent, saved, sentry = self._sources(role, teslacam) if teslacam else ({}, [], [])
         allm = self.footage(role, teslacam) if teslacam else []
+        if extra:
+            allm = sorted(allm + extra, key=lambda m: m["t"])
         for rnd in range(2):
             r = pick(store, allm, saved, sentry)
             if not r:

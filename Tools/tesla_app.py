@@ -643,7 +643,7 @@ class H(BaseHTTPRequestHandler):
                 if role == "auto":                  # whichever connected drive holds the footage for these times
                     role, root = TC.pick_role(footage_roots(), t0, t1)
                 lo_arg = _lo_arg(q.get("lo", [None])[0])
-                d = TC.window(role, root, t0, t1, float(q.get("budget", ["20"])[0] or 20), lo_arg)
+                d = TC.window(role, root, t0, t1, float(q.get("budget", ["20"])[0] or 20), lo_arg, q.get("sentry", [""])[0] or None)
                 tid = q.get("id", [""])[0]
                 if tid:                             # the Drives list: Tessie's drive is the base, so its own route fills what the dashcam's telemetry does not cover
                     d = tessie_filled(d, tid, t0, t1, lo_arg)

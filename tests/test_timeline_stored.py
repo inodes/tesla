@@ -99,5 +99,35 @@ class Stored(unittest.TestCase):
         self.assertEqual(self.tc.events("A", "sentry", None), ([], False))
 
 
+
+class SentryWindow(unittest.TestCase):
+    """A Sentry event is footage with telemetry too: asked for with `sentry=<folder>`, its minutes are in the window, and found under SentryClips."""
+
+    def test_the_minutes_of_a_sentry_event_make_a_window_with_telemetry(self):
+        tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, tmp, True)
+        root = os.path.join(tmp, "TeslaCam")
+        ev = "2026-10-16_16-00-00"
+        stamps = ["2026-10-16_15-58-07", "2026-10-16_15-59-07"]
+        for st in stamps:
+            d = os.path.join(root, "SentryClips", ev)
+            os.makedirs(d, exist_ok=True)
+            for c in ("front", "back"):
+                open(os.path.join(d, "%s-%s.mp4" % (st, c)), "wb").close()
+        store = TL.Store(os.path.join(tmp, "teslacam_timeline"))
+        for i, st in enumerate(stamps):
+            store.put(st, series(0.0, -33.8 + i * 1e-4))
+        store.flush()
+        tc = AT.TeslaCam(tmp)
+        t0 = TL.secs(stamps[0])
+        d = tc.window("A", root, t0 - 30, t0 + 150, 0, None, ev)
+        self.assertIsNotNone(d)
+        self.assertEqual([(m["stamp"], m["src"], m["ref"]) for m in d["minutes"]], [(st, "sentry", ev) for st in stamps])
+        self.assertTrue(any(x is not None for x in d["series"]["lat"]))
+        self.assertTrue(AT.TeslaCam._front(root, d["minutes"][0] | dict(tcam="front")).endswith(os.path.join("SentryClips", ev, "%s-front.mp4" % stamps[0])))
+        self.assertIsNone(tc.window("A", root, t0 - 30, t0 + 150, 0, None, None))              # without it there is nothing recorded in that window
+
+
+
 if __name__ == "__main__":
     unittest.main()
