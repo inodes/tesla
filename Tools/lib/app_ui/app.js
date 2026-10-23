@@ -428,7 +428,7 @@ async function driveReviewPanel(host,stamp,lo,onResult){
     h+="</div>";
     host.innerHTML=h;
     const g=$("#rvg",host),x=$("#rvx",host);
-    if(g)g.onclick=async()=>{await post({action:"start"});draw();poll()};
+    if(g)g.onclick=async()=>{if(R&&!confirm("Run the review of this drive again? The earlier result is replaced."))return;await post({action:"start"});draw();poll()};
     if(x)x.onclick=async()=>{await post({action:"stop"});draw()};
     if(onResult)onResult(!!curRes());
     tries=0;viewer();
@@ -1097,7 +1097,7 @@ async function pagePlace(key){
       try{const j=await (await fetch("/api/places/save",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)})).json();
         if(j.ok){bust();sessionStorage.removeItem("placePrefill");NAVREPL=true;location.hash="#/place/"+encodeURIComponent(j.key);route()}else m.textContent="Not saved: "+j.error}catch(e){m.textContent="Could not reach the app: "+e}};
     if($("#dl"))$("#dl").onclick=async()=>{if(!confirm("Delete the saved place '"+p.name+"'? Past drives keep their addresses."))return;
-      const j=await (await fetch("/api/places/delete",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({name:p.name})})).json();
+      const j=await (await fetch("/api/places/delete",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({name:p.name,confirm:true})})).json();
       if(j.ok){bust();NAVREPL=true;location.hash="#/places"}else $("#msg").textContent="Not deleted: "+j.error}}
   else ed.innerHTML=`<h2 style="margin-top:0">About this ${p.kind==="charger"?"charger":"Supercharger"}</h2><div class="sub">${p.kind==="charger"?"From the charger registry (sync_charger_all.sh). Use Sync chargers on the Places page to refresh it.":"The name is the one used on tesla.com."}</div><table class="kv">${p.kind==="charger"?`<tr><td>Network</td><td>${esc(p.network||"–")}</td></tr><tr><td>Connectors</td><td>${esc(p.conn||"–")}</td></tr><tr><td>Access</td><td>${esc(p.access||"–")}</td></tr>`:""}<tr><td>Stalls</td><td>${n0(p.stalls)}</td></tr><tr><td>Max power</td><td>${n0(p.kw)} kW${p.tier?" ("+esc(p.tier)+")":""}</td></tr><tr><td>Hours</td><td>${esc(p.hours||"–")}</td></tr><tr><td>Address</td><td>${esc(p.addr||"–")}</td></tr></table>${p.notes?`<div class="sub" style="margin-top:8px;white-space:pre-line">${esc(p.notes)}</div>`:""}`;
   $("#vs").innerHTML=vis.length?vis.filter(v=>!(v.k==="repark"&&v.in_stay)).map(v=>{const href=v.k==="charge"?"#/charge/"+v.id:v.k==="idle"?"#/parked/"+v.id:v.k==="stay"?"":v.id?"#/drive/"+v.id:"";
@@ -1608,7 +1608,8 @@ async function pageTeslaCam(role,id){
       $("#thx").onclick=async()=>{await fetch("/api/stills/thin",{method:"POST",body:JSON.stringify({action:"stop"})})};setTimeout(thin,1500);return}
     const done=j.last&&j.total?` Freed ${fmtGB(j.saved)}.`:"";
     el.innerHTML=j.minutes>0?`<div class="bar selb"><span class="sub" style="flex:1">Stills of ordinary driving · ${n0(j.minutes)} minutes · ${fmtGB(j.bytes)}.${done}</span><button class="btn sm" id="thgo" title="Re-encodes them smaller. Minutes in an event or with a sign, and the full-size pictures kept for those, are left as they are">Make smaller</button></div>`:(done?`<div class="bar selb"><span class="sub">${done.trim()}</span></div>`:"");
-    const b=$("#thgo");if(b)b.onclick=async()=>{b.disabled=true;await fetch("/api/stills/thin",{method:"POST",body:JSON.stringify({action:"start"})});thin()}};
+    const b=$("#thgo");if(b)b.onclick=()=>{el.innerHTML=`<div class="bar selb"><span style="flex:1"><b>Make the stills of ${n0(j.minutes)} minutes smaller</b> (${fmtGB(j.bytes)} now). They are replaced by smaller copies and cannot be restored.</span><button class="btn pri" id="thok">Make smaller</button><button class="btn" id="thno">Cancel</button></div>`;
+      $("#thno").onclick=thin;$("#thok").onclick=async()=>{$("#thok").disabled=true;await fetch("/api/stills/thin",{method:"POST",body:JSON.stringify({action:"start",confirm:true})});thin()}}};
   thin();
   const chips=()=>{
     $("#tsr").innerHTML='<span class="sub" style="margin:0 4px 0 0">Show:</span>'+Object.keys(TCSRC).map(k=>`<button class="chip ${TCS.src[k]?"on":""}" data-s="${k}">${TCSRC[k]}${data&&data[k]?" · "+data[k].length:""}</button>`).join("")+'';
@@ -1650,7 +1651,7 @@ async function pageTeslaCam(role,id){
       poll()});
     $$("[data-ka]",el).forEach(b=>b.onclick=()=>{const [a,r]=b.dataset.ka.split("|");pend={action:a,role:r};note="";selbar()});
     on("kdo",async()=>{const p=pend,list=allowed(p.role,p.action);pend=null;stopVideos();
-      let j;try{j=await (await fetch("/api/clips/act",{method:"POST",body:JSON.stringify({action:p.action,role:p.role,items:list})})).json()}catch(e){j={error:e.message}}
+      let j;try{j=await (await fetch("/api/clips/act",{method:"POST",body:JSON.stringify({action:p.action,role:p.role,items:list,confirm:true})})).json()}catch(e){j={error:e.message}}
       if(j.error){note=j.error;selbar();return}
       poll()});
     on("jobx",async()=>{try{await fetch("/api/clips/act",{method:"POST",body:JSON.stringify({action:"stop"})})}catch(e){}});
@@ -1835,7 +1836,8 @@ async function teslaDriveBody(host,role,fetchSeg,places,opts){
     $("#drj").innerHTML=`<div class="card ixb" style="margin-top:12px"><div style="flex:1;min-width:240px"><b>Signs</b> · ${rv?(sc>=mn&&mn>0?`read in all ${n0(mn)} minutes of footage · ${n0(sg.length)} found`:sc?`read in ${n0(sc)} of ${n0(mn)} minutes · ${n0(sg.length)} found`:mn?`not read yet for this drive (${n0(mn)} minutes of footage)`:"no footage on a connected drive for this time"):"…"}${run?` · reading ${n0(job.done)} of ${n0(job.total)} minutes…`:""}${job.error&&!need?` · <span style="color:var(--bad)">${esc(job.error)}</span>`:""}
       <div class="sub" style="margin-top:4px">Round red-ringed speed-limit signs are found in a still every second while the car goes ${cfg("review.min_kmh")} km/h or more; numbers are read by machine, so check each against its picture.</div>${need?`<div class="sub" style="margin-top:6px;color:var(--bad)">This computer is missing ${esc(ms.py.concat(ms.cmd).join(", "))}. In Terminal run, then restart the app:<br><code>${ms.hint.map(esc).join("</code><br><code>")}</code></div>`:""}</div>
       ${run?'<button class="btn" id="rvx">Stop</button>':rv&&rv.connected&&mn&&!need?(sc>=mn?'<button class="btn" id="rvr">Read again</button>':'<button class="btn pri" id="rvs">Read the signs</button>'):""}</div>`;
-    const go=a=>async()=>{rv=await (await fetch("/api/review",{method:"POST",body:JSON.stringify({role,t0:opts.review.t0,t1:opts.review.t1,lo:opts.review.lo,action:a})})).json();rvDraw();rvPoll()};
+    const go=a=>async()=>{if(a==="redo"&&!confirm("Read the signs of this drive again? The signs read so far, and their pictures, are replaced."))return;
+      rv=await (await fetch("/api/review",{method:"POST",body:JSON.stringify({role,t0:opts.review.t0,t1:opts.review.t1,lo:opts.review.lo,action:a,confirm:a==="redo"})})).json();rvDraw();rvPoll()};
     if($("#rvs"))$("#rvs").onclick=go("start");if($("#rvr"))$("#rvr").onclick=go("redo");if($("#rvx"))$("#rvx").onclick=go("stop");
     rvMarks();
     const T=i=>clk(i);
@@ -1996,7 +1998,7 @@ function pageQueue(){
   $$("[data-rm]").forEach(b=>b.onclick=()=>{const n=qget();n.splice(+b.dataset.rm,1);localStorage.setItem(QK,JSON.stringify(n));pageQueue();badge()});
   $("#cl").onclick=()=>{localStorage.setItem(QK,"[]");pageQueue();badge()};
   const run=async apply=>{const o=$("#out");o.hidden=false;o.textContent=apply?"Running…":"Checking…";
-    try{const r=await fetch("/api/queue/run",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({actions:qget(),apply,purge:qget().some(a=>a.type==="delete")})}),j=await r.json();o.textContent=j.output||j.error||"(no output)";
+    try{const r=await fetch("/api/queue/run",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({actions:qget(),apply,purge:qget().some(a=>a.type==="delete"),confirm:apply})}),j=await r.json();o.textContent=j.output||j.error||"(no output)";
       if(apply&&j.ok){localStorage.setItem(QK,"[]");o.textContent+="\n\nDone. Queue cleared.";badge()}}catch(e){o.textContent="Could not reach the app: "+e}};
   $("#pv").onclick=()=>run(false);$("#rn").onclick=()=>{if(confirm("Run these actions for real? Deletes are flagged and then purged from the Archive."))run(true)};
 }

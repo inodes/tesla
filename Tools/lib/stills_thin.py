@@ -104,7 +104,10 @@ class StillsThin:
         return bool(self._thread and self._thread.is_alive())
 
     # ---- the job ---------------------------------------------------------------------------------------------------
-    def start(self):
+    def start(self, confirmed=False):
+        """Re-encoding replaces the stills and cannot be undone: it needs `confirmed`."""
+        if confirmed is not True:
+            return dict(self.status(), error="Not confirmed: nothing was changed.")
         if self.running():
             return self.status()
         todo = self.candidates()

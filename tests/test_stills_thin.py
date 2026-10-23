@@ -71,8 +71,14 @@ class ThinTest(unittest.TestCase):
     def test_only_minutes_with_nothing_taken_from_them_are_candidates(self):
         self.assertEqual(self.th.candidates(), [D, A])                             # newest first; not the event, the sign, the unread, the unscanned
 
+    def test_it_does_nothing_without_a_confirmation(self):
+        self.assertIn("Not confirmed", self.th.start()["error"])
+        self.assertFalse(self.th.running())
+        with zipfile.ZipFile(self.stills.path(A)) as z:
+            self.assertEqual(len(z.read("00.jpg")), 1000)
+
     def test_the_job_makes_them_smaller_remembers_it_and_leaves_the_others_alone(self):
-        self.th.start()
+        self.th.start(True)
         self.th._thread.join(5)
         j = self.th.status(force=True)
         self.assertEqual((j["done"], j["errors"], j["minutes"]), (2, [], 0))
@@ -83,7 +89,7 @@ class ThinTest(unittest.TestCase):
             self.assertEqual(len(z.read("00.jpg")), 1000)
         with open(os.path.join(self.stills.root, "thinned.json")) as f:
             self.assertEqual(sorted(json.load(f)), [A, D])
-        self.th.start()                                                            # nothing left to do
+        self.th.start(True)                                                            # nothing left to do
         self.th._thread.join(5)
         self.assertEqual(self.th.status(force=True)["total"], 0)
 
@@ -105,7 +111,7 @@ class ThinTest(unittest.TestCase):
 
     def test_a_failing_ffmpeg_is_reported_and_leaves_the_zip_unchanged(self):
         ST.run_ffmpeg = lambda cmd, timeout=0: 1
-        self.th.start()
+        self.th.start(True)
         self.th._thread.join(5)
         j = self.th.status(force=True)
         self.assertEqual(len(j["errors"]), 2)

@@ -245,7 +245,10 @@ class ClipKeep:
                 return None, "The Archive has %.1f GB free; this needs %.1f GB." % (free / 1024 ** 3, need / 1024 ** 3)
         return plan, ""
 
-    def start(self, action, role, items, roots):
+    def start(self, action, role, items, roots, confirmed=False):
+        """Deleting or moving needs `confirmed` (the page sends it only after its confirm bar was answered): a request without it removes nothing."""
+        if action in ("delete", "move") and confirmed is not True:
+            return dict(error="Not confirmed: nothing was removed.")
         if self._thread and self._thread.is_alive():
             return dict(error="Something is already being done to the drives.")
         plan, err = self.check(action, role, items, roots)
@@ -255,7 +258,7 @@ class ClipKeep:
         self._stop = False
         self._job = dict(running=True, action=action, role=role, files=len(files), done=0, bytes=sum(sz for _, sz, _ in files), bytes_done=0, freed=0, errors=[], current="",
                          clips=len(plan), t0=time.time())
-        self._thread = threading.Thread(target=self._run, args=(action, role, files, roots), daemon=True)
+        self._thread = threading.Thread(target=self._run, args=(action, role, files, roots, [dict(kind=k, id=c) for k, c, _ in plan]), daemon=True)
         self._thread.start()
         return self.job()
 
@@ -372,16 +375,21 @@ class ClipKeep:
     def job(self):
         j = dict(self._job)
         j["running"] = bool(self._thread and self._thread.is_alive())
+        if "action" not in j:                                  # nothing done since the app started: say what the last job removed
+            h = self.history(1)
+            if h:
+                j["last"] = h[0]
         return j
 
     def stop(self):
         self._stop = True
         return self.job()
 
-    def _run(self, action, role, files, roots):
+    def _run(self, action, role, files, roots, clips=()):
         led = TLG.Ledger(self.dir)
         touched = set()
         j = self._job
+        removed = []
         try:
             for key, size, f in files:
                 if self._stop:
@@ -402,6 +410,7 @@ class ClipKeep:
                     if action == "move" and not self._archive_has(led, key, size):
                         raise OSError("the Archive does not hold it")
                     os.remove(src)
+                    removed.append(os.path.basename(src))
                     j["freed"] += size
                     touched.add(led.mark(role, key, size, False, flush=False))
                 except FileNotFoundError:
@@ -414,5 +423,33 @@ class ClipKeep:
                     led.flush({d for d in touched if d})
         finally:
             led.flush({d for d in touched if d})
+            self._log(action, role, clips, removed, j)
             with self._lock:
                 self._cache = None
+
+    # ---- the record of what was removed (kept, so it can be checked after the app was restarted) -----------------------
+    LOG = "clip_delete_log.jsonl"
+
+    def _log(self, action, role, clips, removed, j):
+        """One line per delete / move job: when, what, which video files were removed from which drive, how much, and what could not be."""
+        try:
+            with open(os.path.join(self.dir, self.LOG), "a", encoding="utf-8") as fh:
+                fh.write(json.dumps(dict(t=time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), action=action, role=role, clips=list(clips), removed=len(removed), files=removed[:500],
+                                         freed=j.get("freed", 0), errors=j.get("errors", [])[:20], stopped=bool(self._stop)), ensure_ascii=False) + "\n")
+        except OSError:
+            pass
+
+    def history(self, n=20):
+        """The last `n` delete / move jobs, newest first."""
+        try:
+            with open(os.path.join(self.dir, self.LOG), encoding="utf-8") as fh:
+                lines = fh.readlines()[-n:]
+        except OSError:
+            return []
+        out = []
+        for ln in reversed(lines):
+            try:
+                out.append(json.loads(ln))
+            except ValueError:
+                pass
+        return out
