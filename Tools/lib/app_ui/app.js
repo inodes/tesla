@@ -1698,12 +1698,8 @@ async function pageTeslaCam(role,id){
         if(it.play)return ty==="saved"&&it.t?savedDrive($("#spl"),it,places):sentryPlayer($("#spl"),it,it.play,TCF[ty]);
         const what=it.reason?reason(it.reason):ty==="saved"?"Saved clip":"Sentry event";
         return stillViewer($("#spl"),{stamps:Object.keys(it.clips).sort(),roles:it.roles,loc:it.loc,trig:Date.parse(it.cts||it.ts),head:`${esc(what)} on ${dayName(it.ts.slice(0,10))} at ${hms(it.ts)}${it.city?" · "+esc(it.city):""}`})}
-      $("#spl").innerHTML='<div class="sub">Reading…</div>';
-      try{const rr=await tcGet("clips/run/"+encodeURIComponent(sel)),stamps=Object.keys(rr.clips).sort(),head=`Continuous recording on ${dayName(it.ts.slice(0,10))}, ${hms(it.ts).slice(0,5)} to ${hms(it.end).slice(0,5)}, ${it.n} minute${it.n>1?"s":""}.`;
-        if(!it.playable)return stillViewer($("#spl"),{stamps,roles:it.roles,loc:rr.loc,head});
-        const cams={};stamps.forEach(x=>{cams[x]=rr.play[x]?rr.clips[x]:[]});      // a minute on no connected drive shows its box with the drives that hold it
-        clipPlayer($("#spl"),{stamps,cams,loc:rr.loc,url:(s,k)=>`/footage/${rr.play[s]}/RecentClips/${s}-${k}.mp4`,head:head+" The next minute plays on its own."+(it.playable<it.n?` ${it.n-it.playable} of the minutes are on no connected drive.`:"")})}
-      catch(e){$("#spl").innerHTML=errBox(e.message,"Could not read these clips")}})};
+      if(it.playable&&it.t0!=null)return recentDrive($("#spl"),it,places);      // video with its map and telemetry beside it
+      recentClips($("#spl"),it,sel)})};
   $("#q").oninput=e=>{TCS.q=e.target.value;draw()};chips();load();poll();
 }
 
@@ -1722,6 +1718,21 @@ const spdAt=v=>{const st=spdStops();if((v||0)>spdTop())return spdOver();const t=
 // A Saved clip on the TeslaCam page: the map and route, the telemetry and the video together (side by side on a wide screen), over as much time after the moment it was
 // saved as before it, with a red line on the telemetry and a red mark on the map at that moment (the horn, a tap on the screen). Without telemetry for that time the
 // clips alone play, as before.
+// a continuous recording (Recent): the clips only, or the minutes that are on no connected drive as their stills
+async function recentClips(host,it,sel=it.id){
+  host.innerHTML='<div class="sub">Reading…</div>';
+  try{const rr=await tcGet("clips/run/"+encodeURIComponent(sel)),stamps=Object.keys(rr.clips).sort(),head=`Continuous recording on ${dayName(it.ts.slice(0,10))}, ${hms(it.ts).slice(0,5)} to ${hms(it.end).slice(0,5)}, ${it.n} minute${it.n>1?"s":""}.`;
+    if(!it.playable)return stillViewer(host,{stamps,roles:it.roles,loc:rr.loc,head});
+    const cams={};stamps.forEach(x=>{cams[x]=rr.play[x]?rr.clips[x]:[]});      // a minute on no connected drive shows its box with the drives that hold it
+    clipPlayer(host,{stamps,cams,loc:rr.loc,url:(s,k)=>`/footage/${rr.play[s]}/RecentClips/${s}-${k}.mp4`,head:head+" The next minute plays on its own."+(it.playable<it.n?` ${it.n-it.playable} of the minutes are on no connected drive.`:"")})}
+  catch(e){host.innerHTML=errBox(e.message,"Could not read these clips")}}
+// the same recording with its map and telemetry (the dashcam's own, read from the video), the camera and the map side by side; the clips alone when there is no telemetry for it
+async function recentDrive(host,it,places){
+  host.innerHTML=`<h2 style="margin:14px 0 4px">Continuous recording · ${dayName(it.ts.slice(0,10))} · ${hms(it.ts).slice(0,5)} to ${hms(it.end).slice(0,5)} · ${n0(it.n)} minute${it.n>1?"s":""}</h2><div id="evd"></div>`;
+  const fetchSeg=async b=>{const r=await fetch("/api/teslacam/auto/window?t0="+Math.round(it.t0)+"&t1="+Math.round(it.t1)+"&budget="+(b==null?20:b));if(!r.ok)throw new Error((await r.json().catch(()=>({}))).error||("HTTP "+r.status));return r.json()};
+  try{await teslaDriveBody($("#evd"),"A",fetchSeg,places,{heading:false})}
+  catch(e){const h=$("#evd");if(h&&host.contains(h))recentClips(h,it)}
+}
 async function savedDrive(host,it,places){
   const stamps=Object.keys(it.clips).sort(),stMs=x=>Date.parse(x.slice(0,10)+"T"+x.slice(11).replace(/-/g,":")),trig=Date.parse(it.cts||it.ts),span=Math.max(300,Math.round((trig-stMs(stamps[0]))/1000)+60),what=it.reason?reason(it.reason):"Saved clip";
   host.innerHTML=`<h2 style="margin:14px 0 4px">${esc(what)} · ${dayName(it.ts.slice(0,10))} at ${hms(it.ts)}${it.city?" · "+esc(it.city):""}${it.street?" · "+esc(it.street):""}</h2><div id="evd"></div>`;
