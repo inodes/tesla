@@ -26,7 +26,7 @@ h1{font-size:22px;margin:0 0 4px;font-weight:650}h2{font-size:14px;color:var(--m
 .chip.on{background:var(--acc);border-color:var(--acc);color:#fff}
 .chip.nw{padding:3px 10px;font-size:12px}.chip.nw b{font-weight:600;color:var(--mut);margin-left:2px}.chip.nw.off{opacity:.45;text-decoration:line-through}
 input[type=search],select{font:inherit;border:1px solid var(--line);background:var(--card);color:var(--ink);border-radius:8px;padding:5px 10px}
-button.btn{font:inherit;border:1px solid var(--line);background:var(--card);color:var(--ink);border-radius:8px;padding:5px 12px;cursor:pointer}button.btn.pri{background:var(--acc);border-color:var(--acc);color:#fff}button.btn.bad{background:var(--bad);border-color:var(--bad);color:#fff}
+button.btn:disabled,button.chip:disabled{opacity:.42;cursor:not-allowed}button.btn{font:inherit;border:1px solid var(--line);background:var(--card);color:var(--ink);border-radius:8px;padding:5px 12px;cursor:pointer}button.btn.pri{background:var(--acc);border-color:var(--acc);color:#fff}button.btn.bad{background:var(--bad);border-color:var(--bad);color:#fff}
 .day{position:sticky;top:-22px;background:var(--bg);padding:14px 0 6px;font-weight:650;display:flex;gap:10px;align-items:baseline;z-index:2}.day small{font-weight:400;color:var(--mut)}
 .row{display:grid;grid-template-columns:96px 14px minmax(0,1fr) auto;gap:10px;align-items:center;padding:10px 12px;background:var(--card);border:1px solid var(--line);border-radius:10px;margin-bottom:6px;cursor:pointer;color:inherit}
 .row:hover{background:var(--hover);text-decoration:none}.row .t{color:var(--mut);font-variant-numeric:tabular-nums;font-size:13px}

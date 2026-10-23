@@ -1541,7 +1541,7 @@ async function ejectDrive(role){stopVideos();try{return await (await fetch("/api
 // the footage on the connected drives (lib/app_keeper.py does the work in the background, lib/footage_todo.py says what is left): all connected drives, nothing to pick.
 // opts.table: a row per drive with what the log holds and what is left to do, an Eject button, and a button only for the work that is left
 function footageSync(host,opts){
-  if(!host)return;const table=!!(opts&&opts.table);let until=0,was=false,lg=null,msg="",busyEject="";
+  if(!host)return;const table=!!(opts&&opts.table);let until=0,was=false,lg=null,msg="",busyEject="",done0=null,note="";
   const gb=b=>b>=1073741824?(b/1073741824).toFixed(1)+" GB":Math.round(b/1048576)+" MB",NM={A:"Archive",J:"JOWUA",U:"Tesla USB"};
   const STEP=[["log","Update log",["log","events"],"Lists the files on the connected drives, so the footage log and the Saved and Sentry events are up to date"],["telemetry","Read telemetry",["telemetry"],"Reads the speed, position and steering from the video, so drives show on the map"],["stills","Make stills",["stills"],"Takes a picture every second of each clip, kept after the video is deleted"]];
   const left=(t,r)=>{const d=t&&t.drives&&t.drives[r];return d?{log:d.log_new+d.log_gone,telemetry:d.telemetry,stills:d.stills}:null};
@@ -1551,7 +1551,7 @@ function footageSync(host,opts){
     const run=!!k.working,pc=k.total?Math.round(100*k.done/k.total):0,conn=Object.keys(roots).filter(r=>roots[r]);
     if((was&&!run)||(table&&!lg)){try{lg=await tcGet("footage/log")}catch(e){}}was=run;
     const tot={log:0,telemetry:0,stills:0};const checking=!!(todo&&todo.checking);let unknown=!todo;conn.forEach(r=>{const l=left(todo,r);if(!l){unknown=true;return}tot.log+=l.log;tot.telemetry+=l.telemetry;tot.stills+=l.stills});
-    const kinds=unknown?STEP:STEP.filter(x=>tot[x[0]]>0),go=async list=>{stopVideos();until=Date.now()+20000;try{await fetch("/api/keeper",{method:"POST",body:JSON.stringify({action:"run",stages:list})})}catch(e){}paint()};
+    const kinds=unknown?STEP:STEP.filter(x=>tot[x[0]]>0),go=async list=>{stopVideos();until=Date.now()+20000;note="";done0={keys:list?STEP.filter(x=>x[2].some(s=>list.includes(s))).map(x=>x[0]):STEP.map(x=>x[0]),before:Object.assign({},tot),t:Date.now()};try{await fetch("/api/keeper",{method:"POST",body:JSON.stringify({action:"run",stages:list})})}catch(e){}paint()};
     const g0=todo&&todo.progress,chkTx=!g0?"Checking for outstanding tasks...":g0.step==="list"?"Checking the "+(NM[g0.role]||g0.role)+" for new files":g0.step==="telemetry"?"Checking for minutes without telemetry":"Checking for clips without stills",chkPc=g0?Math.round(100*(g0.done+.4)/g0.total):3;      // a bar whenever something is being checked
     const barOf=(txt,q)=>`<div style="min-width:170px"><div>${esc(txt)}</div><div style="height:6px;border-radius:3px;background:var(--line);margin-top:5px;overflow:hidden"><div style="height:100%;width:${q}%;background:var(--accent);transition:width .3s"></div></div></div>`;
     let h="";
@@ -1574,6 +1574,10 @@ function footageSync(host,opts){
         return p.length?p.map(esc).join(" · "):'<span style="color:var(--ok)">Up to date</span>'};
       h+=`<table style="margin-top:8px"><thead><tr><th class="l">Drive</th><th>Files</th><th>Size</th><th>Archived</th><th>Deleted</th><th class="l">Last updated</th><th class="l">Tasks</th><th>${run?'<button class="btn sm" id="fsx">Stop</button>':k.paused?'<button class="btn sm pri" id="fsr">Resume</button>':""}</th></tr></thead><tbody>${rs.map(r=>{const d=lg.drives[r],c=lg.scans[r]||{};return `<tr><td class="l"><b>${esc(NM[r]||r)}</b></td><td>${n0(d.listed)}</td><td>${gb(d.listed_bytes)}</td><td>${n0(d.archived)}</td><td>${n0(d.deleted)}</td><td class="l">${esc(localWhen(c.at))}</td><td class="l">${todoCell(r)}</td><td>${roots[r]?`<button class="btn sm" data-ej="${r}" ${busyEject?"disabled":""}>${busyEject===r?"Ejecting…":"Eject"}</button>`:""}</td></tr>`}).join("")}</tbody></table>
         <div class="tiles" style="margin-top:8px">${tile(n0(t.files),"files logged · "+gb(t.bytes))}${tile(n0(t.deleted),"deleted from every drive · "+gb(t.deleted_bytes))}${tile(n0(t.only_secondary),"not on the Archive · "+gb(t.only_secondary_bytes))}${tile(n0(t.purgeable),"copies also on the Archive · "+gb(t.purgeable_bytes))}</div>`}
+    if(done0&&!run&&!checking&&todo&&!unknown&&Date.now()>done0.t+4000){      // what the buttons just did, said once the job has ended and the numbers are worked out again
+      const L={log:["files listed","No new files"],telemetry:["minutes read","No minutes to read"],stills:["clips given stills","No clips to give stills"]};
+      note=done0.keys.map(k=>{const b=done0.before[k],a=tot[k];return b<=0?L[k][1]:b>a?n0(b-a)+" "+L[k][0]:"No "+L[k][0]}).join(" · ");done0=null}
+    if(note)h+=`<div class="sub" style="margin-top:8px;color:var(--ok)">${esc(note)}</div>`;
     if(msg)h+=`<div class="sub" style="margin-top:8px;${/ejected/.test(msg)?"color:var(--ok)":"color:var(--bad)"}">${esc(msg)}</div>`;
     host.innerHTML=h;
     const g=$("#fsg",host);if(g)g.onclick=()=>go(null);
