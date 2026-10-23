@@ -57,6 +57,7 @@ class Keeper:
         self._cur = None                # what the running pass is for
         self._done_at = 0.0
         self._roles = []
+        self.on_progress = None         # f(stage, {role: done}) when a job ends or is stopped: what is left to do is then shown at once, and worked out afresh after
         self._plan = []                 # the drive each item of the running job belongs to, in the order the job takes them (what each drive's progress is counted from)
         self._thread = None
         self._once = False              # a pass asked for from a page (Sync footage): runs once, stills included, then stops
@@ -128,6 +129,7 @@ class Keeper:
             if self._started:
                 st = STAGES[self._stage]
                 (self.tc.scan_stop if st == "telemetry" else self.fg.stop)()
+                self._report(st)
                 self._started, self._stage, self._sig, self._done_at = False, None, None, 0.0
             return
         roots = {r: p for r, p in (self.roots_fn() or {}).items() if p}
@@ -139,6 +141,7 @@ class Keeper:
             if self._running_ours():
                 return
             self._started = False
+            self._report(STAGES[self._stage])
             self._stage += 1
         elif self.busy():
             return
@@ -205,6 +208,16 @@ class Keeper:
             s["drives"] = self._by_drive(st, s["done"])
         return s
 
+    def _report(self, stage):
+        """A job ended or was stopped: tell what each drive got done, so the page shows the numbers left at once (they are worked out again afterwards)."""
+        if not self.on_progress:
+            return
+        job = self.tc.scan_status() if stage == "telemetry" else self.fg.status() if stage in ("log", "stills") else {}
+        try:
+            self.on_progress(stage, {r: d["done"] for r, d in self._by_drive(stage, job.get("done", 0)).items()})
+        except Exception:
+            pass
+
     def _by_drive(self, stage, done):
         """{role: dict(done, total)} for the job running now: each drive's share of it, counted from the order the job takes its items in (newest first for minutes and
         clips, drive by drive for the log). The page shows it as a bar on each drive's row."""
@@ -221,6 +234,7 @@ class Keeper:
         if self._started:
             st = STAGES[self._stage]
             (self.tc.scan_stop if st == "telemetry" else self.fg.stop)()
+            self._report(st)
             self._started, self._stage = False, None
         return self.status()
 

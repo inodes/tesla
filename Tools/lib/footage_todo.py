@@ -85,6 +85,28 @@ class Todo:
             drives[r] = dict(d) if d else None
         return dict(checking=working or stale, progress=dict(self._prog) if working and self._prog else None, drives=drives, error=self.error)
 
+    def subtract(self, stage, done_by_role):
+        """A job did some of the work (or was stopped part way): take it off what is left for each drive now. The next look at the drives (the signature has changed)
+        works the numbers out afresh."""
+        field = dict(telemetry="telemetry", stills="stills").get(stage)
+        if not self._lock.acquire(blocking=False):                  # being worked out right now: that answer is the fresh one
+            return
+        try:
+            drives = self._mem.get("drives") or {}
+            for r, n in (done_by_role or {}).items():
+                d = drives.get(r)
+                if not d:
+                    continue
+                if stage == "log":
+                    if n:
+                        d["log_new"] = d["log_gone"] = 0
+                elif field:
+                    d[field] = max(0, d.get(field, 0) - n)
+            self._mem["drives"] = drives
+            self._save()
+        finally:
+            self._lock.release()
+
     def _work(self, roots, sig):
         try:
             with self._lock:

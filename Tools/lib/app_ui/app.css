@@ -12,7 +12,7 @@ a{color:var(--acc);text-decoration:none}a:hover{text-decoration:underline}
 .brand{display:flex;gap:10px;align-items:center;padding:4px 8px 16px}.brand b{display:block}.brand small{color:var(--mut);display:block;font-size:12px}
 .logo{width:34px;height:34px;border-radius:8px;object-fit:contain}
 .grow{flex:1}.status{font-size:12px;color:var(--mut);padding:8px 10px;line-height:1.6}
-.dot{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:6px;background:var(--mut)}.dot.on{background:var(--ok)}.dot.off{background:var(--bad)}
+.dot{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:6px;background:var(--mut)}.dot.on{background:var(--ok)}.dot.off{background:var(--bad)}.dot.busy{background:#f59e0b}
 .badge{background:var(--acc);color:#fff;border-radius:10px;font-size:11px;padding:0 6px;margin-left:auto}
 main{overflow:auto;padding:22px 28px 60px;min-width:0}
 h1{font-size:22px;margin:0 0 4px;font-weight:650}h2{font-size:14px;color:var(--mut);margin:22px 0 8px;font-weight:600}

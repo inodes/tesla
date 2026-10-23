@@ -136,6 +136,7 @@ def footage_root(role):
 
 def eject_drive(role, root):
     """Everything the app is reading from the drives is stopped first (the Keeper, the log, the stills, the telemetry scan), then the drive is ejected."""
+    was = KEEP.paused
     KEEP.pause()
     FG.stop()
     TC.scan_stop()
@@ -145,7 +146,7 @@ def eject_drive(role, root):
     res = drive_eject.eject(root)
     _ROOTS["v"] = {r: DR.find_root(r) for r in "AJU"}        # look again now, not in 20 s
     _ROOTS["t"] = time.time()
-    KEEP.resume()
+    KEEP.paused = was                                         # as it was: an eject must not start a pass over the other drives
     return res
 
 
@@ -869,6 +870,7 @@ def main():
     FG = app_footage.Footage(DATA_DIR)
     KEEP = app_keeper.Keeper(DATA_DIR, TC, FG, DRV, SENTRY, footage_roots)
     TODO = footage_todo.Todo(os.path.join(local_cache_dir(), "footage_todo.json"), DATA_DIR, TC, FG, footage_roots, lambda: KEEP._stage is None and not KEEP.busy())
+    KEEP.on_progress = TODO.subtract
     if not a.no_background:
         KEEP.start()
     BOOK = app_charges.ChargeBook(os.path.dirname(os.path.abspath(__file__)), DATA_DIR)

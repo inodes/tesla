@@ -95,6 +95,16 @@ class TodoTest(unittest.TestCase):
         self.assertTrue(s["error"])
         self.assertFalse(s["checking"])                                  # not asked again for a minute
 
+    def test_what_a_job_did_is_taken_off_at_once(self):
+        self.todo.snapshot()
+        self.wait()
+        self.todo.subtract("stills", {"J": 2})
+        self.todo.subtract("telemetry", {"J": 10})                       # more than was left: never below nothing
+        d = self.todo.snapshot()["drives"]["J"]
+        self.assertEqual((d["stills"], d["telemetry"]), (3, 0))
+        self.todo.subtract("log", {"J": 1})
+        self.assertEqual(self.todo.snapshot()["drives"]["J"]["log_new"], 0)
+
     def test_nothing_is_worked_out_while_a_job_reads_a_drive(self):
         busy = FT.Todo(os.path.join(self.t, "c2.json"), self.data, self.tc, self.fg, lambda: {"J": self.cam}, lambda: False)
         s = busy.snapshot()

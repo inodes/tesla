@@ -95,6 +95,16 @@ class RunNow(unittest.TestCase):
         self.k.playing_now()
         self.assertFalse(self.k.status()["playing"])
 
+    def test_a_stopped_job_reports_what_each_drive_got_done(self):
+        got = []
+        self.k.on_progress = lambda st, d: got.append((st, d))
+        self.k._plan = ["J", "J", "A"]
+        self.k._stage, self.k._started = AK.STAGES.index("telemetry"), True
+        self.tc.scan_status = lambda: dict(running=True, done=2, total=3)
+        self.tc.scan_stop = lambda: None
+        self.k.pause()
+        self.assertEqual(got, [("telemetry", {"J": 2, "A": 0})])
+
 
 if __name__ == "__main__":
     unittest.main()
