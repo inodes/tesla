@@ -4,7 +4,8 @@ The page shows it next to each drive so a button is only offered when there is s
 one background thread and the answer is kept (in the local cache folder) against a signature of each drive and of what has been kept from it; it is
 worked out again only when that signature changes (a drive changed, a job finished) and nothing is reading a drive.
 
-  Todo(cache_file, data_dir, tc, fg, roots_fn, idle_fn).snapshot() -> dict(checking, drives={role: dict(log_new, log_gone, telemetry, stills, at)})
+  Todo(cache_file, data_dir, tc, fg, roots_fn, idle_fn).snapshot() -> dict(checking, progress, drives={role: dict(log_new, log_gone, telemetry, stills, at)}, error)
+progress = None, or dict(done, total, step, role) while it works: one step per drive listed, then the telemetry count, then the stills count
 """
 import json
 import os
@@ -34,6 +35,8 @@ class Todo:
         self._thread = None
         self._mem = self._load()
         self.error = ""
+        self._err_at = 0.0
+        self._prog = None
 
     def _load(self):
         try:
@@ -70,7 +73,8 @@ class Todo:
         sig = self._sig(roots) if roots else None
         cur = self._mem.get("sig")
         working = bool(self._thread and self._thread.is_alive())
-        stale = bool(roots) and sig != cur
+        retry = time.time() - self._err_at < 60                  # after a failure (a drive pulled out) wait a minute before looking again
+        stale = bool(roots) and sig != cur and not retry
         if stale and not working and self.idle_fn():
             self._thread = threading.Thread(target=self._work, args=(roots, sig), daemon=True)
             self._thread.start()
@@ -79,14 +83,16 @@ class Todo:
         for r in roots:
             d = (self._mem.get("drives") or {}).get(r)
             drives[r] = dict(d) if d else None
-        return dict(checking=working or stale, drives=drives, error=self.error)
+        return dict(checking=working or stale, progress=dict(self._prog) if working and self._prog else None, drives=drives, error=self.error)
 
     def _work(self, roots, sig):
         try:
             with self._lock:
                 led = TLG.Ledger(self.dir)
                 out = {}
-                for r, p in roots.items():
+                total = len(roots) + 2
+                for n, (r, p) in enumerate(sorted(roots.items())):
+                    self._prog = dict(done=n, total=total, step="list", role=r)
                     files, ok = TF.walk(p)
                     present = {}
                     for f in files:
@@ -107,8 +113,10 @@ class Todo:
                                 if x is not None and x.get("gone") is None and k not in here:
                                     gone += 1
                     out[r] = dict(log_new=new, log_gone=gone, telemetry=0, stills=0, at=time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()))
+                self._prog = dict(done=len(roots), total=total, step="telemetry", role="")
                 for d in self.tc.scan_report(roots)["drives"]:          # with every connected drive together: a minute two drives hold is read once
                     out[d["role"]]["telemetry"] = d["to_read"]
+                self._prog = dict(done=len(roots) + 1, total=total, step="stills", role="")
                 rep = self.fg.stills_report(roots)
                 for d in rep["drives"]:
                     out[d["role"]]["stills"] = d["to_make"]
@@ -117,4 +125,7 @@ class Todo:
                 self._save()
         except Exception as e:                                  # a drive pulled out in the middle: say so and try again at the next look
             self.error = "%s: %s" % (type(e).__name__, e)
+            self._err_at = time.time()
             self._mem = dict(self._mem, sig=None)
+        finally:
+            self._prog = None
