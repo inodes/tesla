@@ -1773,6 +1773,10 @@ async function savedDrive(host,it,places){
   catch(e){const h=$("#evd");if(h&&host.contains(h)){h.innerHTML="";sentryPlayer(h,it,it.play,"SavedClips")}}
 }
 let SMAP=null;
+// a Sentry event with the car's own telemetry: the window around its clips (Sentry minutes included), asked for on the drive that holds it
+async function sentryWindow(role,e,b){const st=Object.keys(e.clips).sort(),sm=x=>Date.parse(x.slice(0,10)+"T"+x.slice(11).replace(/-/g,":")),trig=Date.parse(e.cts||e.ts);
+  const a=Math.round(e.t-(trig-sm(st[0]))/1000),z=Math.round(e.t+(sm(st[st.length-1])+60000-trig)/1000);
+  const r=await fetch(`/api/teslacam/${role}/window?t0=${a}&t1=${z}&budget=${b==null?20:b}&sentry=${encodeURIComponent(e.id)}`);if(!r.ok)throw new Error((await r.json().catch(()=>({}))).error||("HTTP "+r.status));return r.json()}
 async function pageTeslaCamSentry(role,ev){
   loading();main.innerHTML=crumbs("#/teslacam","TeslaCam")+'<div id="tdh"></div>';const host=$("#tdh");
   try{
@@ -1784,6 +1788,12 @@ async function pageTeslaCamSentry(role,ev){
       if(!k){host.innerHTML=errBox("This event is not in the footage log.","Sentry event not found");return}
       host.innerHTML=`<h1><i class="hal big"></i> ${k.reason?esc(reason(k.reason)):"Event"} · ${dayName(k.ts.slice(0,10))} · ${hms(k.ts).slice(0,5)}</h1><div class="sub">${esc([k.city,k.street].filter(Boolean).join(" · "))}</div><div class="card" style="margin-top:12px" id="dvid"></div>`;
       return stillViewer($("#dvid"),{stamps:Object.keys(k.clips).sort(),roles:k.roles,loc:k.loc,trig:Date.parse(k.cts||k.ts),head:""})}
+    // the car was moving (a Sentry clip that started while driving, or one kept by the horn): the same view as a Saved clip, with map, telemetry and the video together
+    if(e.t>0){let d=null;try{d=await sentryWindow(role,e,15)}catch(_){}
+      if(d&&d.item&&d.item.kind==="drive"){const what=e.reason?reason(e.reason):"Sentry event";
+        host.innerHTML=`<h1><i class="hal big"></i> Sentry · ${esc(what)} · ${dayName(e.ts.slice(0,10))} · ${hms(e.ts).slice(0,5)}</h1><div id="evd"></div>`;
+        const trig=Date.parse(e.cts||e.ts);
+        try{return await teslaDriveBody($("#evd"),role,async b=>sentryWindow(role,e,b),places,{heading:false,side:true,trig,hot:EVCAM[e.cam]||"front",events:[{u:e.t,label:what}]})}catch(_){host.innerHTML=""}}}
     const stamps=Object.keys(e.clips),at=nameAt(places,[e.lat,e.lon])||[e.city,e.street].filter(Boolean).join(" · "),hasPos=e.lat!=null&&e.lon!=null&&Math.abs(+e.lat)>1;
     host.innerHTML=`<div id="tdb"${hasPos?' class="side"':""}><h1><i class="hal big"></i> Sentry · ${esc(e.reason?reason(e.reason):"event")} · ${dayName(e.ts.slice(0,10))} · ${hms(e.ts).slice(0,5)}</h1><div class="sub">${esc(at||"Location not recorded")}</div>
       <div class="tiles">${tile(hms(e.ts),"detected")}${tile(esc(e.reason?reason(e.reason):"-"),"reason")}${tile(n0(stamps.length)+" min","of clips")}</div>
@@ -1861,7 +1871,8 @@ async function teslaDriveBody(host,role,fetchSeg,places,opts){
     const playable=d.minutes.filter(m=>m.cams&&m.cams.length);
     if(!player&&playable.length){const mm=playable,cams={},meta={};mm.forEach(m=>{cams[m.stamp]=m.cams;meta[m.stamp]=m});
       player=clipPlayer($("#dvid"),{stamps:mm.map(m=>m.stamp),cams,view:"all",trig:opts.trig,
-        url:(st,c)=>meta[st].src==="saved"?`/footage/${role}/SavedClips/${meta[st].ref}/${st}-${c}.mp4`:`/footage/${role}/RecentClips/${st}-${c}.mp4`,
+        hot:opts.hot,
+        url:(st,c)=>meta[st].src==="saved"?`/footage/${role}/SavedClips/${meta[st].ref}/${st}-${c}.mp4`:meta[st].src==="sentry"?`/footage/${role}/SentryClips/${meta[st].ref}/${st}-${c}.mp4`:`/footage/${role}/RecentClips/${st}-${c}.mp4`,
         loc:Object.fromEntries(mm.map(m=>[m.stamp,m.loc])),onAt:(st,sec)=>cursor(meta[st].off+sec),head:`${it().kind==="drive"?"Click the map or the chart to jump there; the dot and the line follow the video.":"The car was not moving, so there is no map."} Each minute plays on to the next, Recent and Saved alike.`})}
     else if(!player&&!playable.length&&d.minutes.length){const mm=d.minutes,cams={};mm.forEach(m=>{cams[m.stamp]=[]});
       player=clipPlayer($("#dvid"),{stamps:mm.map(m=>m.stamp),cams,view:"all",url:()=>"",loc:Object.fromEntries(mm.map(m=>[m.stamp,m.loc])),head:"The video of this drive is on no connected drive. Pick a minute to see which drives hold it."})}
