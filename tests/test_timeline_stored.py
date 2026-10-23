@@ -70,6 +70,17 @@ class Stored(unittest.TestCase):
         self.assertEqual(drive["n"], 4)
         self.assertGreater(drive["km"], 2.0)                                         # 4 minutes at 50 km/h from the kept telemetry
 
+    def test_a_recording_says_which_drives_hold_its_video(self):
+        led = os.path.join(self.tmp, "teslacam_ledger")
+        dump(dict(A=dict(at="x", files=1, bytes=1, ok=True), J=dict(at="x", files=1, bytes=1, ok=True)), os.path.join(led, "scans.json"))
+        here, away = "2026-10-16_17-10-07", "2026-10-16_18-10-07"
+        dump({"e1": dict(id="e1", ts="2026-10-16T17:10:30", reason="user_interaction_honk", cam="0", clips={here: CAMS}, thumb=False),
+              "e2": dict(id="e2", ts="2026-10-16T18:10:30", reason="user_interaction_honk", cam="0", clips={away: CAMS}, thumb=False, gone="2026-10-18T00:00:00Z")},
+             os.path.join(self.tmp, "teslacam_index_J_saved.json"))
+        rec = {it["id"]: it for it in self.tc.timeline_stored()["items"] if it["kind"] == "recording"}
+        self.assertEqual(rec[here]["held"], ["J"])                                     # on JOWUA: readable when JOWUA is connected
+        self.assertEqual(rec[away]["held"], [])                                        # gone from every drive: nothing can read it
+
     def test_limited_to_one_drive(self):
         self.assertEqual(self.tc.timeline_stored(["U"])["items"], [])                # the USB holds nothing
         self.assertEqual(self.tc.timeline_stored(["A"])["roles"], ["A"])
