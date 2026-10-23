@@ -1504,86 +1504,42 @@ async function pageDriveList(){
   tessieSync($("#tsb"),{missing:dl.missing,always:true,after:()=>{bust();route()}});
   footageSync($("#fsb"));
 }
-// one button for the footage on the connected drives: lists the files, reads the events and the telemetry, makes the one-second stills (lib/app_keeper.py, a single pass)
-function footageSync(host){
-  if(!host)return;let until=0;
-  const paint=async()=>{if(!document.body.contains(host))return;let k;try{k=await (await fetch("/api/keeper")).json()}catch(e){return}
-    const run=!!k.working,pc=k.total?` · ${n0(k.done)} of ${n0(k.total)}`:"";
-    host.innerHTML=`<div class="bar"><button class="btn" id="fsg" ${run?"disabled":""}>Sync footage</button><span class="sub">${run?esc(k.text)+pc:"Lists the files on the connected drives, reads their events and telemetry, and makes the one-second stills."}</span></div>${k.error?errBox(k.error,"Syncing stopped"):""}`;
-    $("#fsg",host).onclick=async()=>{until=Date.now()+20000;try{await fetch("/api/keeper",{method:"POST",body:JSON.stringify({action:"run"})})}catch(e){}paint()};
+const localWhen=iso=>iso?new Date(iso).toLocaleString("en-AU",{day:"numeric",month:"short",year:"numeric",hour:"2-digit",minute:"2-digit"}):"Never";      // stored in UTC, shown on this computer's clock
+// what the footage log holds, per drive (GET /api/footage/log)
+async function footageLog(host){
+  if(!host)return;let lg;try{lg=await tcGet("footage/log")}catch(e){host.innerHTML=errBox(e.message,"Could not read the footage log");return}
+  if(!document.body.contains(host))return;
+  const gb=b=>b>=1073741824?(b/1073741824).toFixed(1)+" GB":Math.round(b/1048576)+" MB",NM={A:"Archive",J:"JOWUA",U:"Tesla USB"},t=lg.total;
+  if(!lg.scans||!Object.keys(lg.scans).length){host.innerHTML='<div class="sub">The log is empty.</div>';return}
+  host.innerHTML=`<table><thead><tr><th class="l">Drive</th><th>Files</th><th>Size</th><th>Archived</th><th>Deleted</th><th class="l">Last updated</th></tr></thead><tbody>${Object.keys(lg.drives).sort().map(r=>{const d=lg.drives[r],c=lg.scans[r]||{};return `<tr><td class="l"><b>${esc(NM[r]||r)}</b></td><td>${n0(d.listed)}</td><td>${gb(d.listed_bytes)}</td><td>${n0(d.archived)}</td><td>${n0(d.deleted)}</td><td class="l">${esc(localWhen(c.at))}</td></tr>`}).join("")}</tbody></table>
+    <div class="tiles" style="margin-top:8px">${tile(n0(t.files),"files logged · "+gb(t.bytes))}${tile(n0(t.deleted),"deleted from every drive · "+gb(t.deleted_bytes))}${tile(n0(t.only_secondary),"not on the Archive · "+gb(t.only_secondary_bytes))}${tile(n0(t.purgeable),"copies also on the Archive · "+gb(t.purgeable_bytes))}</div>`}
+// the footage on the connected drives (lib/app_keeper.py, one pass in the background): Sync footage does every step; with steps:true each step has its own button.
+// All connected drives are used; nothing to pick.
+function footageSync(host,opts){
+  if(!host)return;const steps=!!(opts&&opts.steps);let until=0,was=false;
+  const STEP=[["log","Update log",["log","events"]],["telemetry","Read telemetry",["telemetry"]],["stills","Make stills",["stills"]]];
+  const paint=async()=>{if(!document.body.contains(host))return;let k,roots={};try{k=await (await fetch("/api/keeper")).json();roots=(await (await fetch("/api/status")).json()).roots||{}}catch(e){return}
+    const run=!!k.working,pc=k.total?Math.round(100*k.done/k.total):0,any=Object.values(roots).some(Boolean);if(was&&!run&&opts&&opts.after)opts.after();was=run;
+    const go=async list=>{until=Date.now()+20000;try{await fetch("/api/keeper",{method:"POST",body:JSON.stringify({action:"run",stages:list})})}catch(e){}paint()};
+    if(!any)host.innerHTML='<div class="bar"><span class="sub">No TeslaCam drive connected.</span></div>';
+    else if(run)host.innerHTML=`<div class="card ixb"><div style="flex:1;min-width:0"><b>${esc(k.text)}${k.total?" · "+n0(k.done)+" of "+n0(k.total):""}</b>${k.total?`<div style="height:6px;border-radius:3px;background:var(--line);margin:8px 0 0;overflow:hidden"><div style="height:100%;width:${pc}%;background:var(--accent);transition:width .3s"></div></div>`:""}</div><button class="btn" id="fsx">Stop</button></div>`;
+    else host.innerHTML=`<div class="bar"><button class="btn" id="fsg">Sync footage</button>${steps?STEP.map(x=>`<button class="btn" data-st="${x[0]}">${x[1]}</button>`).join(""):""}</div>${k.error?errBox(k.error,"Syncing stopped"):""}`;
+    const g=$("#fsg",host);if(g)g.onclick=()=>go(null);
+    $$("[data-st]",host).forEach(b=>b.onclick=()=>go(STEP.find(x=>x[0]===b.dataset.st)[2]));
+    const x=$("#fsx",host);if(x)x.onclick=async()=>{try{await fetch("/api/keeper",{method:"POST",body:JSON.stringify({action:"pause"})})}catch(e){}paint()};
     if(run||Date.now()<until)setTimeout(paint,run?2000:1500)};
   paint()}
-// ---------- the drive scan: footage on the drives you pick against the telemetry already kept; reads what is missing (lib/teslacam_scan.py, ./teslacam_scan.py)
-let SCN={roles:{A:1},rep:null,timer:null,err:""};
-function scanPanel(box,drives){
-  const picked=()=>drives.filter(d=>SCN.roles[d.role]).map(d=>d.role),alive=()=>document.body.contains(box);
-  const get=async()=>{SCN.err="";try{SCN.rep=await tcGet("scan?roles="+picked().join(","))}catch(e){SCN.err=e.message}};
-  const paint=()=>{if(!alive())return;const rep=SCN.rep,job=rep?rep.job:null,run=!!(job&&job.running),left=rep?rep.drives.reduce((a,d)=>a+d.to_read,0):0;
-    let h=`<div class="sub" style="margin:8px 0">Compares the footage on the drives you pick with the telemetry already kept (speed, GPS, steering, pedals, autopilot) and reads what is missing. The kept telemetry stays when the video is deleted, so those drives can still be drawn from it. A drive is only read when you pick it.</div>
-      <div class="bar" style="margin:0 0 8px">${drives.map(d=>`<label class="chip ${SCN.roles[d.role]?"on":""}" style="cursor:pointer"><input type="checkbox" data-sr="${d.role}" ${SCN.roles[d.role]?"checked":""} ${run?"disabled":""} style="margin-right:6px">${esc(d.name)}</label>`).join("")}<button class="btn ${rep?"":"pri"}" id="scg" ${run||!picked().length?"disabled":""}>${rep?"Scan again":"Scan"}</button></div>`;
-    if(SCN.err)h+=`<div class="sub" style="color:var(--bad);user-select:text">${esc(SCN.err)}</div>`;
-    if(rep){
-      h+=`<table><thead><tr><th class="l">Drive</th><th>Minutes of video</th><th>Telemetry read</th><th>Still to read</th><th>Also on another picked drive</th><th class="l">Dates</th></tr></thead><tbody>${rep.drives.map(d=>`<tr><td class="l"><b>${esc(d.name)}</b>${d.no_front?`<div class="sub">${n0(d.no_front)} with no clip to read telemetry from</div>`:""}</td><td>${n0(d.minutes)}<div class="sub">${n0(d.recent)} Recent · ${n0(d.saved)} Saved</div></td><td>${n0(d.read)}</td><td>${d.to_read?`<b>${n0(d.to_read)}</b>`:"0"}</td><td>${n0(d.elsewhere)}</td><td class="l">${d.first?(d.first===d.last?dayName(d.first):dayName(d.first)+" to "+dayName(d.last)):""}</td></tr>`).join("")}</tbody></table>
-        <div class="sub" style="margin-top:8px">Telemetry kept: ${n0(rep.kept)} minutes${rep.kept_orphans?`, ${n0(rep.kept_orphans)} of them with no video on the picked drives (kept anyway)`:""}.</div>`;
-      if(run)h+=`<div class="card ixb" style="margin-top:8px"><div>Reading ${n0(job.done)} of ${n0(job.total)}${job.current?", "+esc(job.current.replace("_"," ")):""}…</div><button class="btn" id="scx">Stop</button></div>`;
-      else if(left)h+=`<div class="card ixb" style="margin-top:8px"><div><b>${n0(left)}</b> minutes of video have no telemetry yet.${job&&job.error?` <span style="color:var(--bad);user-select:text">${esc(job.error)}</span>`:""}</div><button class="btn pri" id="scr">Read ${n0(left)} minutes</button></div>`;
-      else h+=`<div class="sub" style="margin-top:8px">Every minute with a front clip on the picked drives has its telemetry.${job&&job.done?` Read ${n0(job.done)} just now.`:""}</div>`}
-    box.innerHTML=h;
-    $$("[data-sr]",box).forEach(c=>c.onchange=()=>{SCN.roles[c.dataset.sr]=c.checked?1:0;SCN.rep=null;paint()});
-    const g=$("#scg",box),r=$("#scr",box),x=$("#scx",box);
-    if(g)g.onclick=async()=>{g.disabled=true;g.textContent="Scanning…";await get();paint()};
-    if(r)r.onclick=async()=>{await tcPost("scan",{action:"start",roles:picked()});await get();paint();poll()};
-    if(x)x.onclick=async()=>{await tcPost("scan",{action:"stop"});await get();paint()}};
-  const poll=()=>{clearTimeout(SCN.timer);if(!alive())return;SCN.timer=setTimeout(async()=>{try{const j=await tcGet("scan/status");if(SCN.rep)SCN.rep.job=j;
-      if(j.running){const l=$("#scn .ixb div");if(l)l.textContent="Reading "+n0(j.done)+" of "+n0(j.total)+(j.current?", "+j.current.replace("_"," "):"")+"…";poll()}else{await get();paint()}}catch(e){}},2000)};
-  paint();if(SCN.rep&&SCN.rep.job&&SCN.rep.job.running)poll();
-}
-let FGS={roles:{A:1},log:null,st:null,timer:null,err:""};
-function footagePanel(box,drives){
-  const picked=()=>drives.filter(d=>FGS.roles[d.role]).map(d=>d.role),alive=()=>document.body.contains(box),NM=r=>(drives.find(d=>d.role===r)||{name:({A:"Archive",J:"JOWUA",U:"Tesla USB"})[r]||r}).name;
-  const gb=b=>b>=1073741824?(b/1073741824).toFixed(1)+" GB":Math.round(b/1048576)+" MB";
-  const loadLog=async()=>{FGS.err="";try{FGS.log=await tcGet("footage/log")}catch(e){FGS.err=e.message}};
-  const loadSt=async()=>{FGS.err="";try{FGS.st=await tcGet("footage/stills?roles="+picked().join(","))}catch(e){FGS.err=e.message}};
-  const paint=()=>{if(!alive())return;const lg=FGS.log,st=FGS.st,job=(lg&&lg.job)||(st&&st.job)||null,run=!!(job&&job.running);
-    let h=`<div class="sub" style="margin:8px 0">A log of every TeslaCam video file (which drive has it, how big, when it was deleted), and a still for every second of the front camera, kept after the video is gone. Reviews show those stills one by one. A drive is only read when you pick it.</div>
-      <div class="bar" style="margin:0 0 8px">${drives.map(d=>`<label class="chip ${FGS.roles[d.role]?"on":""}" style="cursor:pointer"><input type="checkbox" data-fr="${d.role}" ${FGS.roles[d.role]?"checked":""} ${run?"disabled":""} style="margin-right:6px">${esc(d.name)}</label>`).join("")}
-      <button class="btn pri" id="fgl1" ${run||!picked().length?"disabled":""}>Update the log</button><button class="btn" id="fgs1" ${run||!picked().length?"disabled":""}>Check the stills</button></div>`;
-    if(FGS.err)h+=`<div class="sub" style="color:var(--bad);user-select:text">${esc(FGS.err)}</div>`;
-    if(run)h+=`<div class="card ixb" style="margin-top:8px"><div>${job.kind==="stills"?`Making stills: ${n0(job.done)} of ${n0(job.total)} minutes${job.current?", "+esc(job.current.replace("_"," ")):""}…`:`Listing ${esc(NM(job.current)||"")}… ${n0(job.done)} of ${n0(job.total)} drives`}</div><button class="btn" id="fgx">Stop</button></div>`;
-    else if(job&&job.error)h+=`<div class="sub" style="color:var(--bad);user-select:text">${esc(job.error)}</div>`;
-    else if(job&&job.note)h+=`<div class="sub" style="user-select:text">${esc(job.note)}</div>`;
-    if(lg&&lg.scans&&Object.keys(lg.scans).length){const t=lg.total;
-      h+=`<h3 style="margin:12px 0 4px">The log</h3><table><thead><tr><th class="l">Drive</th><th>Files listed</th><th>Size</th><th>Gone</th><th class="l">Last listed (UTC)</th></tr></thead><tbody>${Object.keys(lg.drives).sort().map(r=>{const d=lg.drives[r],s=lg.scans[r]||{};return `<tr><td class="l"><b>${esc(NM(r))}</b></td><td>${n0(d.listed)}</td><td>${gb(d.listed_bytes)}</td><td>${n0(d.gone)}</td><td class="l">${esc((s.at||"never").replace("T"," ").replace("Z",""))}</td></tr>`}).join("")}</tbody></table>
-        <div class="sub" style="margin-top:6px">${n0(t.files)} files ever logged (${gb(t.bytes)}). <b>${n0(t.deleted)}</b> deleted from every drive (${gb(t.deleted_bytes)}), their stills and telemetry kept. <b>${n0(t.only_secondary)}</b> only on a drive other than the Archive (${gb(t.only_secondary_bytes)}), not imported yet. <b>${n0(t.purgeable)}</b> copies also on the Archive can be purged (${gb(t.purgeable_bytes)}); nothing is deleted from here.</div>`}
-    else if(lg)h+=`<div class="sub" style="margin-top:8px">The log is empty. Update it from a drive.</div>`;
-    if(st){const left=st.to_make||0;
-      h+=`<h3 style="margin:12px 0 4px">The stills</h3><table><thead><tr><th class="l">Drive</th><th>Front clips</th><th>Stills kept</th><th>To make</th><th>Also on another picked drive</th><th class="l">Dates</th></tr></thead><tbody>${st.drives.map(d=>`<tr><td class="l"><b>${esc(NM(d.role))}</b></td><td>${n0(d.clips)}</td><td>${n0(d.done)}</td><td>${d.to_make?`<b>${n0(d.to_make)}</b>`:"0"}</td><td>${n0(d.elsewhere)}</td><td class="l">${d.first?(d.first===d.last?dayName(d.first):dayName(d.first)+" to "+dayName(d.last)):""}</td></tr>`).join("")}</tbody></table>
-        <div class="sub" style="margin-top:6px">Stills kept: ${n0(st.kept)} minutes, including video that is gone.</div>`;
-      if(!run&&left)h+=`<div class="card ixb" style="margin-top:8px"><div><b>${n0(left)}</b> minutes of front video have no stills yet (about ${gb(left*750000)}).${st.ffmpeg?"":` <span style="color:var(--bad)">ffmpeg is not installed.</span>`}</div><button class="btn pri" id="fgm" ${st.ffmpeg?"":"disabled"}>Make ${n0(left)} minutes of stills</button></div>`;
-      else if(!run)h+=`<div class="sub" style="margin-top:8px">Every front clip on the picked drives has its stills.</div>`}
-    box.innerHTML=h;
-    $$("[data-fr]",box).forEach(c=>c.onchange=()=>{FGS.roles[c.dataset.fr]=c.checked?1:0;FGS.st=null;paint()});
-    const b1=$("#fgl1",box),b2=$("#fgs1",box),b3=$("#fgm",box),bx=$("#fgx",box);
-    if(b1)b1.onclick=async()=>{await tcPost("footage",{action:"log",roles:picked()});await loadLog();paint();poll()};
-    if(b2)b2.onclick=async()=>{b2.disabled=true;b2.textContent="Checking…";await loadSt();paint()};
-    if(b3)b3.onclick=async()=>{await tcPost("footage",{action:"stills",roles:picked()});await loadLog();paint();poll()};
-    if(bx)bx.onclick=async()=>{await tcPost("footage",{action:"stop"});await loadLog();paint()}};
-  const poll=()=>{clearTimeout(FGS.timer);if(!alive())return;FGS.timer=setTimeout(async()=>{try{const j=await tcGet("footage/status");
-      if(j.running){const l=$("#fgl .ixb div");if(l)l.textContent=j.kind==="stills"?"Making stills: "+n0(j.done)+" of "+n0(j.total)+" minutes"+(j.current?", "+j.current.replace("_"," "):"")+"…":"Listing drives… "+n0(j.done)+" of "+n0(j.total);poll()}
-      else{await loadLog();if(FGS.st)await loadSt();paint()}}catch(e){}},2000)};
-  loadLog().then(()=>{paint();if(FGS.log&&FGS.log.job&&FGS.log.job.running)poll()});
-}
 async function pageTeslaCam(role,id){
   if(role&&id)return /^sentry-/.test(id)?pageTeslaCamSentry(role,id.slice(7)):/^at-/.test(id)?pageTeslaCamAt(+id.slice(3)):pageTeslaCamDrive(role,id);
   loading();const [dr,act,pl]=await Promise.all([tcGet("teslacam"),api("activity"),api("places").catch(()=>({saved:[]}))]),drives=dr.drives,places=(pl.saved||[]);
-  const head='<h1>TeslaCam</h1><div class="sub">Every Recent recording, Saved clip and Sentry event ever logged, whichever drives are connected. Where the video is not on a connected drive, its kept stills are shown instead.</div>';
+  const head='<h1>TeslaCam</h1>';
   const trips=act.filter(x=>x.k==="drive"&&!x.repark).map(x=>({id:x.id,t0:x.t0,t1:x.t0+x.min*60,ti:driveTitle(x)}));
   const tripOf=v=>{const a=v.t0!=null?v.t0:v.t,b=v.t1!=null?v.t1:(v.t||0)+60;return trips.find(d=>d.t0<b&&d.t1>a)};
-  main.innerHTML=head+`<div id="fsb"></div><details class="card" id="scn" style="margin-bottom:12px"><summary><b>Scan the connected drives for telemetry</b></summary><div id="scb"></div></details><details class="card" id="fgl" style="margin-bottom:12px"><summary><b>Footage log and one-second stills</b></summary><div id="fgb"></div></details><div class="bar" id="tsr"></div><div class="bar"><span id="rg"></span><input type="search" id="q" placeholder="Search…" value="${esc(TCS.q)}"></div><div class="tiles" id="tl"></div><div id="spl"></div><div id="tb"></div>`;
+  main.innerHTML=head+`<div id="fsb"></div><div id="fgb" style="margin-bottom:12px"></div><div class="bar" id="tsr"></div><div class="bar"><span id="rg"></span><input type="search" id="q" placeholder="Search…" value="${esc(TCS.q)}"></div><div class="tiles" id="tl"></div><div id="spl"></div><div id="tb"></div>`;
   let data=null,sel=null,token=0,sentryList=null;
-  footageSync($("#fsb"));
+  footageSync($("#fsb"),{steps:true,after:()=>footageLog($("#fgb"))});footageLog($("#fgb"));
   const chips=()=>{
-    $("#tsr").innerHTML='<span class="sub" style="margin:0 4px 0 0">Show:</span>'+Object.keys(TCSRC).map(k=>`<button class="chip ${TCS.src[k]?"on":""}" data-s="${k}">${TCSRC[k]}${data&&data[k]?" · "+data[k].length:""}</button>`).join("")+'<span class="sub" style="margin-left:6px">Pick one, two or all three: they are listed together, newest first.</span>';
+    $("#tsr").innerHTML='<span class="sub" style="margin:0 4px 0 0">Show:</span>'+Object.keys(TCSRC).map(k=>`<button class="chip ${TCS.src[k]?"on":""}" data-s="${k}">${TCSRC[k]}${data&&data[k]?" · "+data[k].length:""}</button>`).join("")+'';
     $$("#tsr [data-s]").forEach(b=>b.onclick=()=>{const on=Object.keys(TCSRC).filter(k=>TCS.src[k]);if(TCS.src[b.dataset.s]&&on.length<2)return;TCS.src[b.dataset.s]=TCS.src[b.dataset.s]?0:1;$("#spl").innerHTML="";chips();draw()});
     };
   const load=async(quiet)=>{const my=++token;if(!quiet){data=null;$("#tl").innerHTML="";$("#tb").innerHTML='<div class="empty">Reading the drive…</div>'}
@@ -1619,7 +1575,7 @@ async function pageTeslaCam(role,id){
         const cams={};stamps.forEach(x=>{cams[x]=rr.play[x]?rr.clips[x]:[]});      // a minute on no connected drive shows its box with the drives that hold it
         clipPlayer($("#spl"),{stamps,cams,loc:rr.loc,url:(s,k)=>`/footage/${rr.play[s]}/RecentClips/${s}-${k}.mp4`,head:head+" The next minute plays on its own."+(it.playable<it.n?` ${it.n-it.playable} of the minutes are on no connected drive.`:"")})}
       catch(e){$("#spl").innerHTML=errBox(e.message,"Could not read these clips")}})};
-  $("#q").oninput=e=>{TCS.q=e.target.value;draw()};chips();load();$("#scn").ontoggle=()=>{if($("#scn").open&&!$("#scb").innerHTML)scanPanel($("#scb"),drives)};$("#fgl").ontoggle=()=>{if($("#fgl").open&&!$("#fgb").innerHTML)footagePanel($("#fgb"),drives)};
+  $("#q").oninput=e=>{TCS.q=e.target.value;draw()};chips();load();
 }
 
 // ---------- one drive rebuilt from the video: map, telemetry and the stitched footage, moving together
@@ -1958,7 +1914,7 @@ function swJourneyBar(o,compare){
   const J=o.journey||[];if(!J.length)return"";
   const when=j=>j.between&&j.between[0]!==j.between[1]?"between "+swDate(j.between[0])+" and "+swDate(j.between[1]):"from "+swDate(j.from);
   return `<div class="card swj" style="margin:10px 0"><b>Your car</b>${J.map((j,i)=>`${i?(compare&&J[i-1].held&&j.held?`<div><button class="chip nw" data-jc="${esc(J[i-1].version)}>${esc(j.version)}" title="What this update brought: compare ${esc(J[i-1].version)} with ${esc(j.version)}">⇄ compare</button></div>`:'<div class="sub">↓</div>'):""}<div class="swjv"><a href="#/software/${encodeURIComponent(j.version)}"><b>${esc(j.version)}</b></a> ${swFsd(j.fsd_chip,"")} <span class="sub" title="${esc(j.note||"")}">${when(j)}${j.current?" · now":""}</span></div>`).join("")}${o.staged?`<div class="sub">↓ update on the way: <a href="#/software/${encodeURIComponent(o.staged)}">${esc(o.staged)}</a></div>`:""}</div>`}
-const swPick=()=>`<span class="sub">Compare: from <b>${esc(SWS.a||"–")}</b> to <b>${esc(SWS.b||"–")}</b>. Use From and To on the rows below.</span> <button class="chip" id="swgo">Compare these</button>`;
+const swPick=()=>`<span class="sub"><b>${esc(SWS.a||"–")}</b> → <b>${esc(SWS.b||"–")}</b></span> <button class="chip" id="swgo">Compare</button>`;
 // versions over time: one lane per version (newest on top), a bar from the day it was first seen to the last day it still got installs, and a line for each upgrade step cars were seen taking
 function swChart(host,nodes,edges,mine,journey){
   if(!nodes.length){host.innerHTML='<div class="empty">No versions match.</div>';return}
@@ -2031,7 +1987,7 @@ async function pageSoftware(arg){
           <table class="kv"><thead><tr><th class="l">Change</th><th class="l">Listed on</th><th class="l">First seen</th><th class="l">Countries</th><th class="l">Listed again on</th></tr></thead><tbody>${g.map(x=>`<tr><td class="l">${x.change==="new"?"Added":"Text changed"}</td><td class="l"><a href="#/software/${encodeURIComponent(x.first_tag||x.first_page)}">${esc(x.first_tag||x.first_page)}</a></td><td class="l">${swDate(x.first_seen)}</td><td class="l">${esc((x.countries||[]).join(", ").toUpperCase())}</td><td class="l">${(x.repeated_in||[]).slice(0,6).map(esc).join(", ")}${(x.repeated_in||[]).length>6?" +"+((x.repeated_in||[]).length-6):""}</td></tr><tr><td colspan="5" class="l sub">${swChanged(x.diff)?"Compared with "+esc(x.prev_tag)+": <b>bold</b> is new, <s>struck through</s> was removed.<br>"+swDiff(x.diff):esc((x.description||"").slice(0,400)).replace(/\n/g,"<br>")}</td></tr>`).join("")}</tbody></table></div>`).join("")};
       $("#swq").oninput=e=>{SWS.q=e.target.value;swSave();clearTimeout(tm);tm=setTimeout(go,300)};go();
     }else{
-      host.innerHTML=`<div class="bar"><span>From</span><input id="swa" list="swl" value="${esc(SWS.a)}" size="14" autocomplete="off" placeholder="2026.8.200"><span>to</span><input id="swb2" list="swl" value="${esc(SWS.b)}" size="14" autocomplete="off" placeholder="2026.38.5.5"><button class="chip" id="swsw" title="Swap the two versions">⇄</button><span class="sub">Any version held (${n0(o.all_versions.length)}), also ones ${esc(SWS.region)} never had: type it, or pick one on the Versions or Timeline tab.</span></div><datalist id="swl">${o.all_versions.map(k=>`<option value="${esc(k)}"></option>`).join("")}</datalist>${swJourneyBar(o,true)}<div id="swcmp"></div>`;
+      host.innerHTML=`<div class="bar"><span>From</span><input id="swa" list="swl" value="${esc(SWS.a)}" size="14" autocomplete="off" placeholder="2026.8.200"><span>to</span><input id="swb2" list="swl" value="${esc(SWS.b)}" size="14" autocomplete="off" placeholder="2026.38.5.5"><button class="chip" id="swsw" title="Swap the two versions">⇄</button></div><datalist id="swl">${o.all_versions.map(k=>`<option value="${esc(k)}"></option>`).join("")}</datalist>${swJourneyBar(o,true)}<div id="swcmp"></div>`;
       const run=async()=>{SWS.a=$("#swa").value.trim();SWS.b=$("#swb2").value.trim();swSave();const box=$("#swcmp");
         const bad=[SWS.a,SWS.b].filter(v=>!o.all_versions.includes(v));
         if(bad.length){box.innerHTML=`<div class="sub">${bad.map(esc).join(" and ")} ${bad.length>1?"are":"is"} not held. Fetch more versions above, or pick one from the list.</div>`;return}
@@ -2039,12 +1995,12 @@ async function pageSoftware(arg){
         box.innerHTML='<div class="sub">Comparing…</div>';const r=await fetchJ("software/compare?a="+encodeURIComponent(SWS.a)+"&b="+encodeURIComponent(SWS.b)+"&"+swQ());if(!document.body.contains(box))return;
         if(r.error){box.innerHTML=errBox(r.error,"Could not compare");return}
         SWRC=r.countries||SWRC;const nb=r.between_region.length;
-        box.innerHTML=`<div class="sub">${esc(SWS.region)} had ${n0(nb)} version${nb===1?"":"s"} between these two (${n0(r.between.length)} held in all regions). Open a feature to read its text.${r.a_page_lists_nothing_here?" No release notes for "+esc(SWS.region)+" were listed on "+esc(r.a)+" itself, so what it had is taken from the notes listed on the versions before it.":""}</div>
+        box.innerHTML=`<div class="sub">${esc(SWS.region)} had ${n0(nb)} version${nb===1?"":"s"} between these two (${n0(r.between.length)} held in all regions).${r.a_page_lists_nothing_here?" No release notes for "+esc(SWS.region)+" were listed on "+esc(r.a)+" itself, so what it had is taken from the notes listed on the versions before it.":""}</div>
          <h2>Added by ${esc(r.b)} <small class="sub">${n0(r.listed_new.length)}</small></h2>${swNotes(r.listed_new,"Nothing new is listed on "+esc(r.b)+".")}
          <h2>Text changed <small class="sub">${n0(r.listed_revised.length)}</small></h2>${swNotes(r.listed_revised,"No feature was reworded.")}
          <h2>Installed on the way, not in the notes of ${esc(r.b)} <small class="sub">${n0(r.skipped.length)}</small></h2><div class="sub" style="margin-bottom:6px">Listed on a version between the two for ${esc(SWS.region)}; ${esc(r.b)}'s own notes do not repeat them. Cars that went through those versions have them.</div>${swNotes(r.skipped,"Nothing was listed only on a version in between.")}
          <h2>Listed again on ${esc(r.b)} <small class="sub">${n0(r.listed_again.length)}</small></h2><div class="sub" style="margin-bottom:6px">Already listed on ${esc(r.a)} with the same text.</div>${swNotes(r.listed_again,"None.")}
-         ${(()=>{const car=r.others.filter(x=>x.region_cars),elsewhere=r.others.filter(x=>!x.region_cars);return `<h2>Listed for ${esc(SWS.region)}, but for other car types <small class="sub">${n0(car.length)}</small></h2><div class="sub" style="margin-bottom:6px">Teslascope lists these in ${esc(SWS.region)} only on the car types named, not on the car chosen above. Choose "All cars" to see them as part of the jump.</div>${swNotes(car,"None.")}<h2>Only listed in other regions <small class="sub">${n0(elsewhere.length)}</small></h2>${swNotes(elsewhere,"None.")}`})()}`};
+         ${(()=>{const car=r.others.filter(x=>x.region_cars),elsewhere=r.others.filter(x=>!x.region_cars);return `<h2>Listed for ${esc(SWS.region)}, but for other car types <small class="sub">${n0(car.length)}</small></h2>${swNotes(car,"None.")}<h2>Only listed in other regions <small class="sub">${n0(elsewhere.length)}</small></h2>${swNotes(elsewhere,"None.")}`})()}`};
       $("#swa").onchange=run;$("#swb2").onchange=run;$("#swsw").onclick=()=>{const a=$("#swa").value;$("#swa").value=$("#swb2").value;$("#swb2").value=a;run()};run()}
     $$("[data-jc]",host).forEach(b=>b.onclick=()=>{const[a,z]=b.dataset.jc.split(">");SWS.a=a;SWS.b=z;SWS.tab="compare";swSave();$$("[data-t]").forEach(x=>x.classList.toggle("on",x.dataset.t==="compare"));body()});
     $$("[data-cf],[data-ct]",host).forEach(a=>a.onclick=e=>{e.preventDefault();e.stopPropagation();if(a.dataset.cf)SWS.a=a.dataset.cf;else SWS.b=a.dataset.ct;swSave();pickRefresh()});
