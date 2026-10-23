@@ -2097,16 +2097,9 @@ async function boot(){
   $$("#nav>a").forEach(a=>a.addEventListener("click",()=>{if(a.getAttribute("href")!==location.hash)NAVRESET=true}));
   try{SET=await (await fetch("/api/settings")).json()}catch(e){}
   try{const s=await api("summary");$("#veh").textContent=s.vehicle;$("#vsub").textContent=n0(s.km)+" km logged"}catch(e){}
-  const st=async()=>{try{const s=await (await fetch("/api/status")).json();if(window.UI0==null)window.UI0=s.ui;const NM={A:"Archive",J:"JOWUA",U:"Tesla USB"};$("#status").innerHTML=["A","J","U"].filter(r=>r==="A"||s.roots[r]).map(r=>`<div><span class="dot ${s.roots[r]?"on":"off"}"></span>${NM[r]} ${s.roots[r]?"connected":"not connected"}${s.roots[r]?`<button class="eject" data-ej="${r}" title="Eject ${NM[r]}" aria-label="Eject ${NM[r]}">⏏</button>`:""}</div>`).join("")+(window.EJMSG&&Date.now()<window.EJMSG.until?`<div class="${window.EJMSG.ok?"":"upd"}" style="font-size:12px">${esc(window.EJMSG.text)}</div>`:"")+`${s.stale?'<div class="upd">The app was updated. Quit and reopen it to load the new version.</div>':""}${s.ui!==window.UI0?'<div class="upd">The page was updated. <a href="#" onclick="location.reload();return false">Reload it</a> to load the new version.</div>':""}`;$$("#status [data-ej]").forEach(b=>b.onclick=async()=>{b.disabled=true;const r=await ejectDrive(b.dataset.ej);window.EJMSG={text:r.text,ok:r.ok,until:Date.now()+15000};st()})}catch(e){}};
-  // the background reading of the connected drives (lib/app_keeper.py): what it is doing, and a button to pause it (before ejecting a disk)
-  const kp=async()=>{try{const k=await (await fetch("/api/keeper")).json(),el=$("#keeper");
-      if(!k.enabled||(!k.working&&!k.paused&&!k.error&&!k.playing)){el.hidden=true;return}
-      if((k.working||k.paused)&&!k.playing&&/^#\/teslacam/.test(location.hash)){el.hidden=true;return}      // the TeslaCam page shows it in its table
-      el.hidden=false;const pc="",SB={log:"Listing files",events:"Reading events",telemetry:"Reading telemetry",stills:"Making stills"};
-      el.innerHTML=k.playing&&!k.paused?`<div><span class="dot off"></span>Background reading waits while video plays</div>`:k.paused?`<div><span class="dot off"></span>Background reading paused <a href="#" id="kpr">Resume</a></div>`:k.working?`<div><span class="dot on"></span>${esc(SB[k.stage]||"Reading drives")}${pc} <a href="#" id="kpp">Pause</a></div>`:"";
-      if(k.error)el.innerHTML+=`<div class="upd">${esc(k.error)}</div>`;
-      const b=$("#kpp")||$("#kpr");if(b)b.onclick=async e=>{e.preventDefault();await fetch("/api/keeper",{method:"POST",body:JSON.stringify({action:k.paused?"resume":"pause"})});kp()}}catch(e){}};
-  st();setInterval(st,30000);kp();setInterval(kp,4000);route();
+  const st=async()=>{try{const s=await (await fetch("/api/status")).json();if(window.UI0==null)window.UI0=s.ui;      // the corner holds only what needs the person to act (a new version); statuses belong on the pages
+    $("#status").innerHTML=`${s.stale?'<div class="upd">The app was updated. Quit and reopen it to load the new version.</div>':""}${s.ui!==window.UI0?'<div class="upd">The page was updated. <a href="#" onclick="location.reload();return false">Reload it</a> to load the new version.</div>':""}`}catch(e){}};
+  st();setInterval(st,30000);route();
 }
 addEventListener("keydown",e=>{if((e.metaKey||e.ctrlKey)&&e.key.toLowerCase()==="r"){e.preventDefault();location.reload()}});
 $("#rl").onclick=()=>location.reload();
