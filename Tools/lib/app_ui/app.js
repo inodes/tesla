@@ -1531,7 +1531,7 @@ async function ejectDrive(role){stopVideos();try{return await (await fetch("/api
 function footageSync(host,opts){
   if(!host)return;const table=!!(opts&&opts.table);let until=0,was=false,lg=null,msg="",busyEject="";
   const gb=b=>b>=1073741824?(b/1073741824).toFixed(1)+" GB":Math.round(b/1048576)+" MB",NM={A:"Archive",J:"JOWUA",U:"Tesla USB"};
-  const STEP=[["log","Update log",["log","events"]],["telemetry","Read telemetry",["telemetry"]],["stills","Make stills",["stills"]]];
+  const STEP=[["log","Update log",["log","events"],"Lists the files on the connected drives, so the footage log and the Saved and Sentry events are up to date"],["telemetry","Read telemetry",["telemetry"],"Reads the speed, position and steering from the video, so drives show on the map"],["stills","Make stills",["stills"],"Takes a picture every second of each clip, kept after the video is deleted"]];
   const left=(t,r)=>{const d=t&&t.drives&&t.drives[r];return d?{log:d.log_new+d.log_gone,telemetry:d.telemetry,stills:d.stills}:null};
   const paint=async()=>{if(!document.body.contains(host))return;let k,roots={},todo=null;
     try{k=await (await fetch("/api/keeper")).json();roots=(await (await fetch("/api/status")).json()).roots||{}}catch(e){return}
@@ -1544,10 +1544,12 @@ function footageSync(host,opts){
     const barOf=(txt,q)=>`<div style="min-width:170px"><div>${esc(txt)}</div><div style="height:6px;border-radius:3px;background:var(--line);margin-top:5px;overflow:hidden"><div style="height:100%;width:${q}%;background:var(--accent);transition:width .3s"></div></div></div>`;
     let h="";
     if(!conn.length)h+='<div class="bar"><span class="sub">No TeslaCam drive connected.</span></div>';
-    else if(run)h+=table?"":`<div class="card ixb"><div style="flex:1;min-width:0"><b>${esc(k.text)}${k.total?" · "+n0(k.done)+" of "+n0(k.total):""}</b>${k.total?`<div style="height:6px;border-radius:3px;background:var(--line);margin:8px 0 0;overflow:hidden"><div style="height:100%;width:${pc}%;background:var(--accent);transition:width .3s"></div></div>`:""}</div><button class="btn" id="fsx">Stop</button></div>`;
-    else if(checking){const g=g0,tx=chkTx,pc2=chkPc;      // in the table the bar is on each drive's row (Tasks)
-      h+=table?"":`<div class="card ixb"><div style="flex:1;min-width:0"><b>${esc(tx)}${g?" · "+n0(g.done+1)+" of "+n0(g.total):""}</b><div style="height:6px;border-radius:3px;background:var(--line);margin:8px 0 0;overflow:hidden"><div style="height:100%;width:${pc2}%;background:var(--accent);transition:width .3s"></div></div></div></div>`}
-    else if(kinds.length||(k.paused&&!table))h+=`<div class="bar">${k.paused&&!table?'<button class="btn pri" id="fsr">Resume</button>':""}${kinds.length>1?'<button class="btn pri" id="fsg">Sync footage</button>':""}${kinds.map(x=>`<button class="btn ${kinds.length>1?"":"pri"}" data-st="${x[0]}">${x[1]}</button>`).join("")}</div>`;
+    else if(run&&!table)h+=`<div class="card ixb"><div style="flex:1;min-width:0"><b>${esc(k.text)}${k.total?" · "+n0(k.done)+" of "+n0(k.total):""}</b>${k.total?`<div style="height:6px;border-radius:3px;background:var(--line);margin:8px 0 0;overflow:hidden"><div style="height:100%;width:${pc}%;background:var(--accent);transition:width .3s"></div></div>`:""}</div><button class="btn" id="fsx">Stop</button></div>`;
+    else if(checking&&!table){const g=g0,tx=chkTx,pc2=chkPc;      // in the table the bar is on each drive's row (Tasks)
+      h+=`<div class="card ixb"><div style="flex:1;min-width:0"><b>${esc(tx)}${g?" · "+n0(g.done+1)+" of "+n0(g.total):""}</b><div style="height:6px;border-radius:3px;background:var(--line);margin:8px 0 0;overflow:hidden"><div style="height:100%;width:${pc2}%;background:var(--accent);transition:width .3s"></div></div></div></div>`}
+    else{      // the same four buttons always; one with nothing left to do is greyed out (and so is everything while a job runs or the check is under way)
+      const busy=run||checking,left0=x=>unknown||tot[x[0]]>0,dis=(x)=>busy||!left0(x),any=STEP.some(left0),tip=x=>dis(x)&&!busy?"Nothing left to do":x[3];
+      h+=`<div class="bar">${k.paused&&!table?'<button class="btn pri" id="fsr">Resume</button>':""}<button class="btn" id="fsg" ${busy||!any?"disabled":""} title="${busy?"":any?"Does all of these, one after the other":"Nothing left to do"}">Sync footage</button>${STEP.map(x=>`<button class="btn" data-st="${x[0]}" ${dis(x)?"disabled":""} title="${esc(tip(x))}">${x[1]}</button>`).join("")}</div>`}
     if(k.error)h+=errBox(k.error,"Syncing stopped");
     if(todo&&todo.error&&!checking)h+=errBox(todo.error,"Could not check what is left to do");
     if(table&&lg&&lg.scans&&Object.keys(lg.scans).length){const t=lg.total,rs=Object.keys(lg.drives).sort();
