@@ -347,9 +347,11 @@ class TeslaCam:
     def scan_status(self):
         return self.scan_ix.status() if getattr(self, "scan_ix", None) else dict(running=False, done=0, total=0, current="", error="")
 
-    def scan_start(self, roots):
+    def scan_start(self, roots, reuse=False):
+        """Start reading what the picked drives lack. reuse: scan_todo / scan_report has just worked it out (a walk of the drives is slow): do not walk again."""
         store = self._tl("A")
-        self.scan_report(roots)
+        if not (reuse and getattr(self, "_scan_todo", None) is not None):
+            self.scan_report(roots)
         if getattr(self, "scan_ix", None) is None:
             self.scan_ix = TL.Indexer(store)
         return self.scan_ix.start([(x["stamp"], x["path"]) for x in self._scan_todo])

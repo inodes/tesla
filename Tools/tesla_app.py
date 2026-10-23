@@ -427,7 +427,7 @@ class H(BaseHTTPRequestHandler):
                 return self.send_json(TC.review(role, footage_root(role), _utc_arg(body.get("t0", "")), _utc_arg(body.get("t1", "")), body.get("action", "start"), _lo_arg(body.get("lo"))))
             if u.path == "/api/keeper":            # {action: pause|resume|run}
                 act = body.get("action")
-                return self.send_json(KEEP.pause() if act == "pause" else KEEP.run_now() if act == "run" else KEEP.resume())
+                return self.send_json(KEEP.pause() if act == "pause" else KEEP.run_now(body.get("stages")) if act == "run" else KEEP.resume())
             if u.path == "/api/footage":           # {action: log|stills|stop, roles: ["A","J"]}: update the log of the files / make the missing one-second stills
                 if body.get("action") == "stop":
                     return self.send_json(FG.stop())

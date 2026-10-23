@@ -7,6 +7,7 @@ decides something here.
 ## 1. Text on screen: functional, not narrative
 
 - State what the thing is or does. No explanations of how it works, no stories, no apologies. If it needs a paragraph, it belongs in help, not on the page.
+- Design the control so it needs no sentence. If a line is needed to say how to use it ("Pick one, two or all three", "A drive is only read when you pick it", "Use From and To on the rows below"), change the control until it is obvious (a toggle that shows on/off, a button that names its action, a disabled button with the reason as its label) and delete the line. A column or button label is one plain word the user already uses (Archived, Deleted), never a state name of ours ("Gone").
 - Plain words the user already uses (drive, charge, parked, Sync from Tessie). No internal names (script names, file names, "stale", "ledger") in the UI.
 - Labels for actions say the exact action ("Run review", "Sync from Tessie"), not "Go" or "Submit".
 - One short line under a page title at most: source, scope, legend. Example: `Source: Tessie + dashcam · 🎬 = dashcam video and route`.

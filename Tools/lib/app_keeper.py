@@ -12,7 +12,7 @@ so that a drive page, the timeline and the review still have their data and pict
 (the sidebar) - pause before ejecting a disk - and off unless switched on with app.keeper.background = true in config.json (`tesla_app.py --no-background` forces it off).
 
   GET  /api/keeper                   what it is doing now
-  POST /api/keeper {action: pause|resume|run}      run = one full pass now (including stills), whether or not the background reading is switched on
+  POST /api/keeper {action: pause|resume|run, stages: [...]}      run = one pass now (all four steps including stills, or only the named stages), whether or not the background reading is switched on
 """
 import calendar
 import json
@@ -59,6 +59,7 @@ class Keeper:
         self._roles = []
         self._thread = None
         self._once = False              # a pass asked for from a page (Sync footage): runs once, stills included, then stops
+        self._only = None               # that pass is only these stages (the Update log / Read telemetry / Make stills buttons)
         self._played = 0.0              # when a clip was last served to the page (video playing)
 
     # ---- settings
@@ -83,9 +84,12 @@ class Keeper:
         self._thread = threading.Thread(target=self._loop, daemon=True)
         self._thread.start()
 
-    def run_now(self):
-        """One full pass over the connected drives now - log, events, telemetry and the stills - even when the background reading is off."""
+    def run_now(self, stages=None):
+        """One pass over the connected drives now - log, events, telemetry and the stills, or only `stages` - even when the background reading is off."""
+        if self._stage is not None:         # a pass is under way: let it finish (the buttons are disabled meanwhile)
+            return self.status()
         self.paused = False
+        self._only = tuple(x for x in (stages or ()) if x in STAGES) or None
         self._once, self._sig, self._done_at, self.error = True, None, 0.0, ""
         self.start()
         return self.status()
@@ -128,7 +132,7 @@ class Keeper:
         roots = {r: p for r, p in (self.roots_fn() or {}).items() if p}
         self._roles = sorted(roots)
         if not roots:
-            self._sig, self._stage, self._started, self._once = None, None, False, False
+            self._sig, self._stage, self._started, self._once, self._only = None, None, False, False, None
             return
         if self._started:
             if self._running_ours():
@@ -148,13 +152,15 @@ class Keeper:
                 return
             self._stage += 1
         self._sig, self._stage, self._done_at = self._cur, None, time.time()
-        self._once = False
+        self._once, self._only = False, None
 
     def _run_stage(self, stage, roots):
         """Start the stage; True when a background job was started (the next tick waits for it), False when there was nothing to do or it was done here."""
+        if self._only and stage not in self._only:
+            return False
         if stage == "log":
             scans = self._scans()
-            need = {r: p for r, p in roots.items() if _mtime(p) > _epoch((scans.get(r) or {}).get("at"))}
+            need = roots if self._only else {r: p for r, p in roots.items() if _mtime(p) > _epoch((scans.get(r) or {}).get("at"))}
             return bool(need) and bool(self.fg.start("log", need).get("running"))
         if stage == "events":
             for r, p in roots.items():
@@ -165,7 +171,7 @@ class Keeper:
                         self.tc.events(r, kind, p)
             return False
         if stage == "telemetry":
-            return self.tc.scan_todo(roots) > 0 and bool(self.tc.scan_start(roots).get("running"))
+            return self.tc.scan_todo(roots) > 0 and bool(self.tc.scan_start(roots, reuse=True).get("running"))
         if stage == "stills":
             if not (app_config.get("keeper.stills", False) or self._once):      # stills decode video (ffmpeg): only ever on request (Sync footage, the Footage panel or the command)
                 return False
@@ -182,7 +188,7 @@ class Keeper:
 
     # ---- what the page shows
     def status(self):
-        s = dict(enabled=self.enabled() or self._once, paused=self.paused, playing=self.playing(), roles=self._roles, error=self.error, working=self._stage is not None, stage="", text="",
+        s = dict(enabled=self.enabled() or self._once, only=list(self._only or ()), paused=self.paused, playing=self.playing(), roles=self._roles, error=self.error, working=self._stage is not None, stage="", text="",
                  done=0, total=0)
         if self._stage is not None and self._stage < len(STAGES):
             st = STAGES[self._stage]

@@ -146,9 +146,10 @@ class Ledger:
             total["bytes"] += e["size"]
             live = [r for r, x in dr.items() if not x.get("gone")]
             for r, x in dr.items():
-                p = per.setdefault(r, dict(listed=0, listed_bytes=0, gone=0))
+                p = per.setdefault(r, dict(listed=0, listed_bytes=0, gone=0, archived=0, deleted=0))
                 if x.get("gone"):
                     p["gone"] += 1
+                    p["archived" if live else "deleted"] += 1          # no longer on this drive: still on another one (moved / copied away), or on none (deleted)
                 else:
                     p["listed"] += 1
                     p["listed_bytes"] += e["size"]
