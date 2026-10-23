@@ -1529,14 +1529,16 @@ function footageSync(host,opts){
     try{const r=await fetch("/api/footage/todo");todo=r.ok?await r.json():null}catch(e){}      // an older server has no such answer: every button is offered
     const run=!!k.working,pc=k.total?Math.round(100*k.done/k.total):0,conn=Object.keys(roots).filter(r=>roots[r]);
     if((was&&!run)||(table&&!lg)){try{lg=await tcGet("footage/log")}catch(e){}}was=run;
-    const tot={log:0,telemetry:0,stills:0};let checking=!!(todo&&todo.checking);conn.forEach(r=>{const l=left(todo,r);if(!l){checking=!!todo;return}tot.log+=l.log;tot.telemetry+=l.telemetry;tot.stills+=l.stills});
-    const kinds=todo?STEP.filter(x=>tot[x[0]]>0):STEP,go=async list=>{until=Date.now()+20000;try{await fetch("/api/keeper",{method:"POST",body:JSON.stringify({action:"run",stages:list})})}catch(e){}paint()};
+    const tot={log:0,telemetry:0,stills:0};const checking=!!(todo&&todo.checking);let unknown=!todo;conn.forEach(r=>{const l=left(todo,r);if(!l){unknown=true;return}tot.log+=l.log;tot.telemetry+=l.telemetry;tot.stills+=l.stills});
+    const kinds=unknown?STEP:STEP.filter(x=>tot[x[0]]>0),go=async list=>{until=Date.now()+20000;try{await fetch("/api/keeper",{method:"POST",body:JSON.stringify({action:"run",stages:list})})}catch(e){}paint()};
     let h="";
     if(!conn.length)h+='<div class="bar"><span class="sub">No TeslaCam drive connected.</span></div>';
     else if(run)h+=`<div class="card ixb"><div style="flex:1;min-width:0"><b>${esc(k.text)}${k.total?" · "+n0(k.done)+" of "+n0(k.total):""}</b>${k.total?`<div style="height:6px;border-radius:3px;background:var(--line);margin:8px 0 0;overflow:hidden"><div style="height:100%;width:${pc}%;background:var(--accent);transition:width .3s"></div></div>`:""}</div><button class="btn" id="fsx">Stop</button></div>`;
+    else if(checking){const g=todo&&todo.progress,tx=!g?"Checking for outstanding tasks...":g.step==="list"?"Checking the "+(NM[g.role]||g.role)+" for new files":g.step==="telemetry"?"Checking for minutes without telemetry":"Checking for clips without stills",pc2=g?Math.round(100*(g.done+.4)/g.total):3;      // a bar whenever something is being checked
+      h+=`<div class="card ixb"><div style="flex:1;min-width:0"><b>${esc(tx)}${g?" · "+n0(g.done+1)+" of "+n0(g.total):""}</b><div style="height:6px;border-radius:3px;background:var(--line);margin:8px 0 0;overflow:hidden"><div style="height:100%;width:${pc2}%;background:var(--accent);transition:width .3s"></div></div></div></div>`}
     else if(kinds.length)h+=`<div class="bar">${kinds.length>1?'<button class="btn pri" id="fsg">Sync footage</button>':""}${kinds.map(x=>`<button class="btn ${kinds.length>1?"":"pri"}" data-st="${x[0]}">${x[1]}</button>`).join("")}</div>`;
-    else if(checking)h+='<div class="sub">Checking for outstanding tasks...</div>';
     if(k.error)h+=errBox(k.error,"Syncing stopped");
+    if(todo&&todo.error&&!checking)h+=errBox(todo.error,"Could not check what is left to do");
     if(table&&lg&&lg.scans&&Object.keys(lg.scans).length){const t=lg.total,rs=Object.keys(lg.drives).sort();
       const todoCell=r=>{if(!roots[r])return'<span class="sub">Not connected</span>';const l=left(todo,r);if(!l)return todo?'<span class="sub">Checking…</span>':"";
         const p=[];if(l.log)p.push(n0(l.log)+" files to list");if(l.telemetry)p.push(n0(l.telemetry)+" minutes without telemetry");if(l.stills)p.push(n0(l.stills)+" clips without stills");

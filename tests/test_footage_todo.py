@@ -76,6 +76,25 @@ class TodoTest(unittest.TestCase):
         self.assertFalse(again.snapshot()["checking"])                  # after a restart too
         self.assertEqual(self.tc.calls, 1)
 
+    def test_progress_is_reported_while_it_works_and_a_failure_is_not_retried_at_once(self):
+        seen = []
+        orig = self.tc.scan_report
+        self.tc.scan_report = lambda roots: (seen.append(self.todo.snapshot()["progress"]), orig(roots))[1]
+        self.todo.snapshot()
+        self.wait()
+        self.assertEqual(seen[0]["step"], "telemetry")
+        self.assertEqual((seen[0]["done"], seen[0]["total"]), (1, 3))
+        self.assertIsNone(self.todo.snapshot()["progress"])
+        bad = FT.Todo(os.path.join(self.t, "c3.json"), self.data, SimpleNamespace(_tl=None), self.fg, lambda: {"J": self.cam})
+        bad.snapshot()
+        for _ in range(100):
+            if not bad._thread.is_alive():
+                break
+            time.sleep(0.05)
+        s = bad.snapshot()
+        self.assertTrue(s["error"])
+        self.assertFalse(s["checking"])                                  # not asked again for a minute
+
     def test_nothing_is_worked_out_while_a_job_reads_a_drive(self):
         busy = FT.Todo(os.path.join(self.t, "c2.json"), self.data, self.tc, self.fg, lambda: {"J": self.cam}, lambda: False)
         s = busy.snapshot()
