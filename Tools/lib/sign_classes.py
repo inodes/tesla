@@ -88,6 +88,100 @@ def _light(gray_crop, thr=150):
     return float((gray_crop >= thr).mean())
 
 
+TS = 1.0                            # the triangle search runs at full size: its red ring is only a pixel or two thick when small
+CK = 7
+def _tri_signs(bgr):
+    """Give-way signs (a red-bordered triangle point down, white inside), and the roundabout one (dark circling arrows inside). The red ring is looked for by its outline,
+    not as a filled blob, so the white inside does not matter; the loose red / low-saturation limits allow for sun on the sign."""
+    H0, W0 = bgr.shape[:2]
+    y1 = int(H0 * 0.62)
+    sm = cv2.resize(bgr[:y1], None, fx=TS, fy=TS, interpolation=cv2.INTER_AREA)
+    hsv = cv2.cvtColor(sm, cv2.COLOR_BGR2HSV)
+    h, s, v = hsv[..., 0], hsv[..., 1], hsv[..., 2]
+    m = ((((h <= 10) | (h >= 164)) & (s >= 55) & (v >= 70))).astype(np.uint8) * 255
+    m = cv2.morphologyEx(m, cv2.MORPH_CLOSE, np.ones((CK, CK), np.uint8))
+    cnts, _ = cv2.findContours(m, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    gray = cv2.cvtColor(sm, cv2.COLOR_BGR2GRAY)
+    out = []
+    for c in cnts:
+        x, y, w, hh = cv2.boundingRect(c)
+        if w < 12 * TS / .5 or hh < 10 * TS / .5 or w > 0.12 * sm.shape[1]:
+            continue
+        if not 1.0 <= w / float(hh) <= 1.5:
+            continue
+        ap = cv2.approxPolyDP(c, 0.07 * cv2.arcLength(c, True), True)
+        if len(ap) != 3:
+            continue
+        fill = cv2.contourArea(c) / float(w * hh)
+        if not 0.42 <= fill <= 0.62:
+            continue
+        pts = ap.reshape(-1, 2)
+        if (pts[:, 1] <= y + 0.25 * hh).sum() != 2:             # two corners along the top, one at the bottom: point down
+            continue
+        # inside: pale (white face), not red all through (a cone) and not dark
+        tri = np.zeros(m.shape, np.uint8)
+        cv2.fillPoly(tri, [pts.astype(np.int32)], 255)
+        k = max(2, int(0.18 * w))
+        inner = cv2.erode(tri, np.ones((2 * k + 1, 2 * k + 1), np.uint8))
+        if inner.sum() == 0:
+            continue
+        ins = inner > 0
+        if float((s[ins] < 90).mean()) < 0.6 or float(np.median(v[ins])) < 90:
+            continue
+        # arrows circling = dark marks spread round the middle of the face, not at its centre
+        g = gray[ins].astype(float)
+        dark = g < (np.median(g) - 35)
+        ys, xs = np.nonzero(ins)
+        cx, cy = xs.mean(), ys.mean()
+        r = np.hypot(xs - cx, ys - cy)
+        ring = False
+        if dark.sum() >= 0.05 * ins.sum():
+            rr = r[dark]
+            ring = float((rr > 0.3 * r.max()).mean()) > 0.7 and float((rr < 0.25 * r.max()).mean()) < 0.15
+        out.append(dict(cat="regulatory", col="red", text="Roundabout (give way)" if ring else "Give way", conf=100,
+                        x=int(x / TS), y=int(y / TS), w=int(w / TS), h=int(hh / TS), crop=None))
+    return out
+
+
+def _diamond_signs(bgr):
+    """Yellow diamond warning signs (speed hump, ...). Looked for by outline: the yellow is taken loosely (sun washes it out), the black symbol is filled in, thin
+    necks (a pole, a plate touching the tip) are cut, and what is left must be a square standing on its corner. A dark dome across the middle is a speed hump."""
+    H0, W0 = bgr.shape[:2]
+    sm = cv2.resize(bgr[:int(H0 * ROI_Y[1])], None, fx=SCALE, fy=SCALE, interpolation=cv2.INTER_AREA)
+    hsv = cv2.cvtColor(sm, cv2.COLOR_BGR2HSV)
+    h, s, v = hsv[..., 0], hsv[..., 1], hsv[..., 2]
+    m = ((h >= 14) & (h <= 36) & (s >= 70) & (v >= 95)).astype(np.uint8) * 255
+    m = cv2.morphologyEx(m, cv2.MORPH_CLOSE, np.ones((5, 5), np.uint8))
+    cn, _ = cv2.findContours(m, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    f = np.zeros_like(m)
+    cv2.drawContours(f, cn, -1, 255, -1)
+    f = cv2.morphologyEx(f, cv2.MORPH_OPEN, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (7, 7)))
+    cn, _ = cv2.findContours(f, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    gray = sm[..., 2]                                   # the red channel: yellow is bright in it even when sun makes it dull, black is not
+    out = []
+    for c in cn:
+        a = cv2.contourArea(c)
+        (cx, cy), (rw, rh), ang = cv2.minAreaRect(c)
+        if a < 120 or min(rw, rh) < 9 or not 0.8 <= rw / float(rh) <= 1.25 or not 28 <= ang % 90 <= 62:
+            continue
+        if a / max(1.0, cv2.contourArea(cv2.convexHull(c))) < 0.9 or a / (rw * rh) < 0.5:
+            continue
+        x, y, w, hh = cv2.boundingRect(c)
+        msk = np.zeros(f.shape, np.uint8)
+        cv2.drawContours(msk, [c], -1, 255, -1)
+        ins = msk > 0
+        g = gray[ins].astype(float)
+        dark = np.zeros(f.shape, bool)
+        dark[ins] = g < np.median(g) - 30
+        hump = False
+        if dark.sum() >= 0.04 * ins.sum():
+            ys, xs = np.nonzero(dark)
+            hump = (xs.max() - xs.min()) >= 0.5 * w and (ys.max() - ys.min()) <= 0.4 * hh and abs(ys.mean() - (y + hh / 2.0)) <= 0.25 * hh
+        out.append(dict(cat="warning", col="yellow", text="Speed hump" if hump else "Warning", conf=100,
+                        x=int(x / SCALE), y=int(y / SCALE), w=int(w / SCALE), h=int(hh / SCALE), crop=None))
+    return out
+
+
 def find_all(bgr, speed=True):
     H0, W0 = bgr.shape[:2]
     y0, y1 = int(H0 * ROI_Y[0]), int(H0 * ROI_Y[1])
@@ -154,4 +248,22 @@ def find_all(bgr, speed=True):
         if d["col"] == "blue" and d["ink"] > 0.5:
             d["cat"] = "safety"                                   # blue and white in about equal parts
         res.append(d)
+    # signs known by their shape: yellow diamonds, and the give-way / roundabout triangle (the sun washes colours out, so these go by outline). A shape that sits on
+    # a blob the colour pass already found replaces it.
+    def inside(a, b):
+        cx, cy = a["x"] + a["w"] / 2.0, a["y"] + a["h"] / 2.0
+        return b["x"] <= cx <= b["x"] + b["w"] and b["y"] <= cy <= b["y"] + b["h"]
+    extra = []
+    for fn in (_diamond_signs, _tri_signs):
+        try:
+            extra += fn(bgr)
+        except Exception:
+            pass
+    if extra:
+        res = [r for r in res if not any(inside(r, e) for e in extra)]
+        for e in extra:
+            pad = max(2, int(0.15 * max(e["w"], e["h"])))
+            e["crop"] = bgr[max(0, e["y"] - pad):e["y"] + e["h"] + pad, max(0, e["x"] - pad):e["x"] + e["w"] + pad]
+            e.update(shape="shape", ink=0, solid=1, rf=1, sym=True)
+            res.append(e)
     return res

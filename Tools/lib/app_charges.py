@@ -112,7 +112,9 @@ class ChargeBook:
         """Serves the cached book at once and starts a background rebuild when it is missing or out of date."""
         with self.lock:
             self._load_cache()
-            sig = self._inputs()
+            if time.time() - getattr(self, "sig_t", 0) > 10:        # looking at the files (the invoice folder, thousands of deep-dive files) takes seconds: not for every request
+                self.sig, self.sig_t = self._inputs(), time.time()
+            sig = self.sig
             stale = self.book is None or self.book.get("sig") != sig
             running = self.thread is not None and self.thread.is_alive()
             if stale and not running and self.tools and time.time() - getattr(self, "fail_t", 0) > 120:
@@ -353,7 +355,54 @@ class ChargeBook:
                 s["i"] = i
                 s["file"] = f
                 segs.append(s)
-        return dict(plug=p, part=part, segments=segs, curves=self.curves(p, part))
+        return dict(plug=p, part=part, segments=segs, curves=self.curves(p, part), sources=self.sources(p, segs))
+
+    def sources(self, p, segs):
+        """Where a home charge's energy came from: the site's solar meter (<data>/PV/pv_history.db, 15-minute readings) as each interval's share of the house's use
+        that was solar. The page applies that share to the car's own power curve. None when it is not a home charge or the meter has nothing for those minutes."""
+        if not p.get("home"):
+            return None
+        import sqlite3
+        from zoneinfo import ZoneInfo
+        from lib.pv_history_db import pv_intraday_cached
+        db = os.path.join(self.data, "PV", "pv_history.db")
+        if not os.path.isfile(db):
+            return None
+        tzn = p.get("tz") or "Australia/Sydney"
+        z = ZoneInfo(tzn)
+        try:
+            # the app only reads this file: no schema work, no sync (get_pv_db_connection() would do both)
+            con = sqlite3.connect("file:" + db + "?mode=ro", uri=True, timeout=3)
+            con.row_factory = sqlite3.Row
+            try:
+                w0 = datetime.datetime.fromtimestamp(int(p["t0"]) - 1800, z).replace(tzinfo=None)
+                w1 = datetime.datetime.fromtimestamp(int(p.get("t1") or p["t0"]) + 1800, z).replace(tzinfo=None)
+                rows = pv_intraday_cached(con, w0, w1)
+            finally:
+                con.close()
+        except Exception:
+            return None
+        out = []
+        for r in rows:
+            e = int(r["start"].replace(tzinfo=z).timestamp())
+            out.append(dict(t=e, w=900, prod=r["production_kwh"], cons=r["consumption_kwh"], buy=r["purchased_kwh"], feed=r["feedin_kwh"],
+                            f=r["solar_fraction"], provider=r["provider"]))
+        if not out:
+            return None
+        cli = {}
+        try:
+            for x in p.get("parts") or []:
+                fp = (x.get("tel") or {}).get("path")
+                if fp and os.path.isfile(fp):
+                    for n in os.listdir(os.path.dirname(fp)):
+                        if n.endswith("_Evnex_Home_sources.json") and os.path.basename(fp)[:-4].endswith("_Evnex_Home"):
+                            with open(os.path.join(os.path.dirname(fp), n), encoding="utf-8") as fh:
+                                j = json.load(fh)
+                            cli = {k: j.get(k) for k in ("solar_pct", "pv_solar_fraction", "pv_adjusted_cost_incl_gst", "base_cost_incl_gst", "pv_provider_display_name")}
+                    break
+        except (OSError, ValueError):
+            pass
+        return dict(buckets=out, cli=cli)
 
     # ---- curves (lib/charge_curves: power vs SoC and the electrical profile, with dashed history) -------------------
     def _pool(self):

@@ -68,6 +68,16 @@ DEFAULT_UNIT_PARAMS = {
     "timezone": "Australia/Sydney",
 }
 
+# What the app asks of /states for a DRIVE: Tessie's JSON, with UTC epoch timestamps. The zone is a conversion done when the file is read
+# (lib/drive_points.py), never part of the request, so a drive that crosses a border is one set of points and a point can never be stored twice.
+STATES_PARAMS = {
+    "distance_format": "km",
+    "temperature_format": "c",
+    "timezone": "UTC",
+    "format": "json",
+    "condense": "false",          # a list of points; the default is parallel arrays (still read, see drive_points._uncondense)
+}
+
 
 # config.json restructure (2026-09-21, user request): directories/tessie/
 # evnex/pvoutput/power got their own nested blocks, matching how abrp/osm

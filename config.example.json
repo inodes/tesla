@@ -54,6 +54,13 @@
   "pv": {
     "provider": "solaredge"
   },
+  "software": {
+    "_comment": "Tesla software version tracker (Teslascope's public API, no token). regions: a name -> country codes; labels turn Teslascope's car type ids into names.",
+    "regions": {"ANZ": ["au", "nz"], "North America": ["us", "ca", "mx", "pr"], "United Kingdom and Ireland": ["gb", "ie"]},
+    "settle_days": 14,
+    "refetch_hours": 6,
+    "pace_seconds": 1.0
+  },
   "app": {
     "_comment": "Settings of Tools/tesla_app.py, drive_report.py and the places lookups (lib/app_config.py). Every value is optional: delete any you do not want to change and the default applies. map.style_light/style_dark: an OpenFreeMap style (positron, dark, liberty = 3D, bright, fiord). drives.repark_*: a drive shorter than both is a re-park (the car was only shuffled). nearby.*: Overpass servers/time limits and the Photon fallback for 'what is around here'. places.save_radius_*: when you save a place from an OpenStreetMap result, the radius is at least min_m and otherwise reaches every stop the car recorded within cluster_m of the stop, plus margin_m.",
     "timezone": "Australia/Sydney",

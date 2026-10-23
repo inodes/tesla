@@ -8,6 +8,7 @@ on a drive, and a drive is only read when the page asks for it (an Archive-only 
 import os
 import re
 import threading
+import time
 
 import app_sentry
 import drive_roles as DR
@@ -16,6 +17,7 @@ import clip_clock as CC
 import teslacam_timeline as TL
 import teslacam_scan as TS
 import app_review
+import teslacam_ledger as TLG
 
 KINDS = {"sentry": "SentryClips", "saved": "SavedClips"}
 _REC = re.compile(r"^(\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2})-(%s)\.mp4$" % "|".join(app_sentry.CAMS))
@@ -40,8 +42,9 @@ class TeslaCam:
         if sentry:
             self.ev[("A", "sentry")] = sentry   # the Parked page shares this index
         self.rec = {}                       # role -> dict(mt, runs, clips)
+        self._foot = {}                     # role -> (what it was made from, footage list)
+        self._rt = 0.0                      # when the clock was last asked to refresh (see _tl)
         self.store = None                   # telemetry read from clips, shared by every drive (see _tl)
-        self.ix = {}                        # role -> Indexer
         self.rv = None                      # signs read from the video (see app_review.py)
         self.scan_ix = None                 # the reading job of the drive scan (teslacam_scan.py)
         self._scan_todo = []
@@ -52,21 +55,28 @@ class TeslaCam:
     def events(self, role, kind, teslacam):
         if kind not in KINDS:
             return [], False
+        ev, ok = self._index(role, kind).events(teslacam)
+        return (ev if ok else []), ok
+
+    def _index(self, role, kind):
+        """The kept list of a drive's Saved or Sentry events (teslacam_index_<role>_<kind>.json); it answers from the file when the drive is away."""
         with _LOCK:
             s = self.ev.get((role, kind))
             if s is None:
                 s = self.ev[(role, kind)] = app_sentry.Sentry(self.dir, "teslacam_index_%s_%s.json" % (role, kind), KINDS[kind])
-        ev, ok = s.events(teslacam)
-        return (ev if ok else []), ok
+        return s
 
     def _scan(self, role, teslacam):
         root = os.path.join(teslacam, "RecentClips")
+        c = self.rec.get(role)
+        if c and c["root"] == root and c.get("cv") == CC.version() and time.time() - c.get("chk", 0) < 3:
+            return c                                    # looked at a moment ago: a stat of a slow drive per request adds up (the Drives list asks for every drive)
         try:
             mt = os.path.getmtime(root)
         except OSError:
             return None
-        c = self.rec.get(role)
         if c and c["mt"] == mt and c["root"] == root and c.get("cv") == CC.version():
+            c["chk"] = time.time()
             return c
         clips = {}
         try:
@@ -90,7 +100,7 @@ class TeslaCam:
             a, b = r["stamps"][0], r["stamps"][-1]
             out.append(dict(id=a, ts=_ts(a), end=_ts(b), t0=_secs(a), t1=_secs(b) + 60, n=len(r["stamps"]), stamps=r["stamps"],
                             full=sum(1 for s in r["stamps"] if len(clips[s]) == 6)))
-        c = self.rec[role] = dict(mt=mt, root=root, cv=CC.version(), runs=sorted(out, key=lambda x: x["t0"], reverse=True), clips=clips)
+        c = self.rec[role] = dict(mt=mt, root=root, cv=CC.version(), chk=time.time(), runs=sorted(out, key=lambda x: x["t0"], reverse=True), clips=clips)
         return c
 
     def recent(self, role, teslacam):
@@ -121,10 +131,10 @@ class TeslaCam:
             self.store = TL.Store(base)
             self._migrate(base)
             CC.configure(self.dir)
-        CC.refresh(self.dir, self.store)                # learns the car's clock again in the background when the telemetry or the drives changed
-        if role not in self.ix:
-            self.ix[role] = TL.Indexer(self.store)
-        return self.store, self.ix[role]
+        if time.time() - self._rt > 3:                  # looking at what changed means stat calls: not for every request of a list
+            self._rt = time.time()
+            CC.refresh(self.dir, self.store)            # learns the car's clock again in the background when the telemetry or the drives changed
+        return self.store
 
     @staticmethod
     def _migrate(base):
@@ -167,28 +177,131 @@ class TeslaCam:
         sentry, _ = self.events(role, "sentry", teslacam)
         return recent, saved, sentry
 
-    def timeline(self, role, teslacam):
-        if not teslacam:
-            return dict(connected=False, items=[])
-        store, ix = self._tl(role)
-        recent, saved, sentry = self._sources(role, teslacam)
-        items = TL.build(recent, saved, sentry, store)
-        mins = TL.minutes(recent, saved)
-        read = sum(1 for m in mins if store.summary(m["stamp"]) is not None)
-        return dict(connected=True, items=items, minutes=len(mins), read=read, index=ix.status())
+    def _ledger_recent(self, want=None):
+        """The RecentClips minutes in the footage log: ({stamp: [cameras]}, {stamp: {roles that hold it now}}). `want` limits it to those drives; with None every minute
+        ever logged is listed, also one that is gone from every drive (its holders are then empty: only its stills are left)."""
+        led = TLG.Ledger(self.dir)
+        cams, holders = {}, {}
+        for day in led.days():
+            for key, rec in led.day(day).items():
+                if not key.startswith("recent|"):
+                    continue
+                now = {r for r, d in (rec.get("drives") or {}).items() if not d.get("gone")}
+                if want is not None and not (now & want):
+                    continue
+                m = _REC.match(key.split("|", 2)[2] + ".mp4")
+                if m:
+                    cams.setdefault(m.group(1), []).append(m.group(2))
+                    holders.setdefault(m.group(1), set()).update(now if want is None else now & want)
+        return {st: sorted(c, key=app_sentry.CAMS.index) for st, c in cams.items()}, holders
 
-    def index(self, role, teslacam, action):
-        """Start / stop reading the telemetry of every minute not read yet (newest first), or just report."""
-        store, ix = self._tl(role)
-        if action == "stop":
-            return ix.stop()
-        if action != "start" or not teslacam:
-            return ix.status()
-        recent, saved, _ = self._sources(role, teslacam)
-        todo = [(m["stamp"], self._front(teslacam, m)) for m in reversed(TL.minutes(recent, saved)) if "front" in m["cams"]]
-        return ix.start(todo)
+    def _events_kept(self, kind, want, roots=None):
+        """The Saved or Sentry events of those drives, one entry per event (with `roles` = the drives that list it). A connected drive (in `roots`) is read
+        afresh; a drive that is away answers from its kept list. The same event on two drives is one, with the minutes of both."""
+        by = {}
+        for r in sorted(want):
+            evs, ok = self.events(r, kind, roots[r]) if roots and roots.get(r) else ([], False)
+            if not ok:
+                evs = self._index(r, kind).events(None)[0]              # away (or not readable now): the kept list
+            for e in evs:
+                got = by.get(e["id"])
+                if got is None:
+                    by[e["id"]] = dict(e, roles=[r])
+                    continue
+                clips = dict(got.get("clips") or {})                    # the same event kept on two drives: the minutes of both
+                for st, cams in (e.get("clips") or {}).items():
+                    clips[st] = sorted(set(clips.get(st, [])) | set(cams), key=app_sentry.CAMS.index)
+                by[e["id"]] = dict(got, clips=clips, roles=got["roles"] + [r])
+        return list(by.values())
+
+    def clips_all(self, roots):
+        """The Clips list, the same whatever drives are connected: every Recent run, Saved event and Sentry event ever logged. Each carries `roles` (the drives that hold it now,
+        empty when it is gone from every drive) and `play` (a connected one to play it from, or None: then only its stills can be shown)."""
+        known = sorted(set(TLG.Ledger(self.dir).scans()) | set(roots))
+        want = set(known)
+        out = dict(connected=sorted(r for r in roots if roots[r]), sentry=[], saved=[], recent=[])
+        for kind in KINDS:
+            evs = self._events_kept(kind, want, roots)
+            for e in evs:
+                e["play"] = next((r for r in e["roles"] if roots.get(r)), None)
+            out[kind] = evs
+        cams, holders = self._ledger_recent(None)
+        runs, cur = [], None
+        for st in sorted(cams):
+            t = _secs(st)
+            if cur and t - cur["t1"] <= GAP:
+                cur["stamps"].append(st)
+                cur["t1"] = t
+            else:
+                cur = dict(t1=t, stamps=[st])
+                runs.append(cur)
+        for r in runs:
+            sts = r["stamps"]
+            a, b = sts[0], sts[-1]
+            roles = sorted(set().union(*(holders[x] for x in sts)))
+            minute_play = {x: next((q for q in sorted(holders[x]) if roots.get(q)), None) for x in sts}
+            out["recent"].append(dict(id=a, ts=_ts(a), end=_ts(b), t0=_secs(a), t1=_secs(b) + 60, n=len(sts), full=sum(1 for x in sts if len(cams[x]) == 6),
+                                      roles=roles, play=minute_play[a] or next((q for q in minute_play.values() if q), None), playable=sum(1 for q in minute_play.values() if q)))
+        out["recent"].sort(key=lambda x: x["t0"], reverse=True)
+        return out
+
+    def run_all(self, rid, roots):
+        """One Recent run for the player: {clips: {minute: [cameras]}, loc, play: {minute: connected drive or None}, roles: {minute: [drives]}}; None if there is no such run."""
+        cams, holders = self._ledger_recent(None)
+        sts = sorted(cams)
+        if rid not in cams:
+            return None
+        run, last = [], None
+        for st in sts:
+            t = _secs(st)
+            if last is not None and t - last > GAP:
+                if rid in run:
+                    break
+                run = []
+            run.append(st)
+            last = t
+        if rid not in run:
+            return None
+        return dict(clips={x: cams[x] for x in run}, loc=self.loc_of(run), roles={x: sorted(holders[x]) for x in run},
+                    play={x: next((q for q in sorted(holders[x]) if roots.get(q)), None) for x in run})
+
+    def timeline_stored(self, roles=None):
+        """The same timeline built only from what is kept on this computer, so a drive being away changes nothing: the minutes of Recent clips come from the
+        footage log, the Saved and Sentry events from the kept event lists, the telemetry from the shared store. `roles` limits it to what those drives
+        hold (default: every drive ever seen). Nothing is read from a drive."""
+        store = self._tl("A")
+        known = sorted(TLG.Ledger(self.dir).scans())
+        want = set(r for r in (roles or known) if r in known)
+        recent, _ = self._ledger_recent(want)
+        lists = {kind: self._events_kept(kind, want) for kind in KINDS}
+        items = TL.build(recent, lists["saved"], lists["sentry"], store)
+        mins = TL.minutes(recent, lists["saved"])
+        front = [m for m in mins if m.get("tcam")]
+        read = sum(1 for m in front if store.summary(m["stamp"]) is not None)
+        return dict(connected=True, stored=True, roles=sorted(want), items=items, minutes=len(front), read=read, no_front=len(mins) - len(front))
 
     # ------------------------------------------------------------------------------------------------- scan (teslacam_scan.py)
+    def path_sources(self, t0, t1):
+        """What the dashcam's telemetry holds for [t0, t1] (UTC): the minutes of footage the shared store knows there, how many were read (and had motion), and which
+        drives hold (or once held) each minute's footage. Nothing is read from a drive."""
+        store = self._tl("A")
+        mins = TL.cached_minutes(store, t0, t1)
+        sums = {m["stamp"]: store.summary(m["stamp"]) for m in mins}
+        read = [st for st, x in sums.items() if isinstance(x, dict)]
+        moving = [st for st in read if sums[st].get("vmax", 0) >= TL.OPTS["moving_kmh"]]
+        led = TLG.Ledger(self.dir)
+        held = {}
+        for day in sorted({m["stamp"][:10] for m in mins}):
+            for key, rec in led.day(day).items():
+                if not key.startswith("recent|"):
+                    continue
+                mm = _REC.match(key.split("|", 2)[2] + ".mp4")
+                if mm and mm.group(1) in sums:
+                    for r, d in (rec.get("drives") or {}).items():
+                        h = held.setdefault(r, dict(here=set(), gone=set()))
+                        h["gone" if d.get("gone") else "here"].add(mm.group(1))
+        return dict(minutes=len(mins), read=len(read), moving=len(moving), drives={r: dict(here=len(v["here"]), gone=len(v["gone"])) for r, v in sorted(held.items())})
+
     def pick_role(self, roots, t0, t1):
         """(role, TeslaCam folder) of the connected drive holding the most minutes of footage for [t0, t1] (UTC); the Archive wins a tie.
         None holds any: the Archive (or the first connected drive), so whatever was read before still shows."""
@@ -197,7 +310,7 @@ class TeslaCam:
             root = (roots or {}).get(r)
             if not root:
                 continue
-            n = sum(1 for m in self.footage(r, root) if CC.maybe_in(m["stamp"], t0, t1))
+            n = sum(1 for m in self.footage(r, root) if t0 - 60000 <= m["t"] <= t1 + 60000 and CC.maybe_in(m["stamp"], t0, t1))      # m["t"] is the car's own clock: only those within a day of the window can match
             if n > most:
                 best, most = (r, root), n
         if best:
@@ -209,11 +322,17 @@ class TeslaCam:
         """Every Recent and Saved minute on a drive (TL.minutes)."""
         c = self._scan(role, teslacam)
         saved, _ok = self.events(role, "saved", teslacam)
-        return TL.minutes(c["clips"] if c else {}, saved)
+        key = (id(c), id(saved), len(saved), CC.version())
+        memo = self._foot.get(role)
+        if memo and memo[0] == key:
+            return memo[1]                              # the same listing as a moment ago
+        out = TL.minutes(c["clips"] if c else {}, saved)
+        self._foot[role] = (key, out)
+        return out
 
     def scan_report(self, roots):
         """Footage of the drives in roots {role: TeslaCam folder} against the telemetry kept; also what the reading job is doing."""
-        store, _ = self._tl("A")
+        store = self._tl("A")
         mins = {r: self.footage(r, p) for r, p in roots.items() if p}
         rep = TS.plan(store, mins, lambda r, m: self._front(roots[r], m))
         self._scan_todo = rep.pop("todo")
@@ -229,7 +348,7 @@ class TeslaCam:
         return self.scan_ix.status() if getattr(self, "scan_ix", None) else dict(running=False, done=0, total=0, current="", error="")
 
     def scan_start(self, roots):
-        store, _ = self._tl("A")
+        store = self._tl("A")
         self.scan_report(roots)
         if getattr(self, "scan_ix", None) is None:
             self.scan_ix = TL.Indexer(store)
@@ -241,19 +360,19 @@ class TeslaCam:
     def fuse(self, stamp):
         """The finer track of a Tessie drive (drive_fuse.py): its own points, with the dashcam's per-second readings where they exist."""
         import drive_fuse
-        store, _ = self._tl("A")
+        store = self._tl("A")
         return drive_fuse.fuse_drive(self.dir, stamp, store)
 
     def enrich(self, rows):
         """The points of a drive page with the dashcam's readings put in (drive_fuse.enrich); None when the footage's telemetry does not cover it."""
         import drive_fuse
-        store, _ = self._tl("A")
+        store = self._tl("A")
         return drive_fuse.enrich(rows, store, None, self.dir)
 
     @staticmethod
     def _front(teslacam, m):
         sub = "RecentClips" if m["src"] == "recent" else os.path.join("SavedClips", m["ref"])
-        return os.path.join(teslacam, sub, "%s-front.mp4" % m["stamp"])
+        return os.path.join(teslacam, sub, "%s-%s.mp4" % (m["stamp"], m.get("tcam") or "front"))
 
     def segment(self, role, teslacam, sid, budget=20.0):
         """One drive of the timeline with its telemetry; reads the minutes not read yet (up to `budget` seconds, the page asks again while `pending`)."""
@@ -264,7 +383,7 @@ class TeslaCam:
         def pick(store, allm, saved, sentry):
             items = TL.build({m["stamp"]: m["cams"] for m in allm if m["src"] == "recent"}, saved, [], store)
             it = next((x for x in items if x["kind"] in ("drive", "stopped", "recording") and x["t0"] <= t_id < x["t1"]), None)
-            return (it, [m for m in allm if it["t0"] <= m["t"] < it["t1"]]) if it else None
+            return (it, [m for m in allm if m["t"] + 60 > it["t0"] and m["t"] < it["t1"]]) if it else None
         return self._finish(role, teslacam, pick, budget)
 
     def _settle(self, role, teslacam, store, t0, t1, budget):
@@ -272,7 +391,7 @@ class TeslaCam:
         Tessie drive. Then the minutes that could fall in the window under ANY offset the car's clock may have had are read first (they decide it),
         and the clock is learned, so the right minutes are the ones used. Once a minute near it is known this does nothing."""
         recent, saved, _s = self._sources(role, teslacam)
-        unsure = [m for m in TL.minutes(recent, saved) if "front" in m["cams"] and not CC.known(m["stamp"]) and CC.maybe_in(m["stamp"], t0, t1)]
+        unsure = [m for m in TL.minutes(recent, saved) if m.get("tcam") and not CC.known(m["stamp"]) and CC.maybe_in(m["stamp"], t0, t1)]
         if not unsure:
             return
         import time
@@ -286,7 +405,7 @@ class TeslaCam:
         stitched. With the drive not connected it still returns what was read before (map and charts, no video). lo = seconds the clock the times are
         SHOWN on is ahead of UTC (the drive list shows a drive on the clock of where it was driven); without it, app.timezone's."""
         if teslacam:
-            store, _ = self._tl(role)
+            store = self._tl(role)
             self._settle(role, teslacam, store, t0, t1, budget)
 
         def pick(store, allm, saved, sentry):
@@ -300,15 +419,15 @@ class TeslaCam:
 
     def _finish(self, role, teslacam, pick, budget, events=None, lo=None):
         import time
-        store, ix = self._tl(role)
+        store = self._tl(role)
         recent, saved, sentry = self._sources(role, teslacam) if teslacam else ({}, [], [])
-        allm = TL.minutes(recent, saved) if teslacam else []
+        allm = self.footage(role, teslacam) if teslacam else []
         for rnd in range(2):
             r = pick(store, allm, saved, sentry)
             if not r:
                 return None
             it, mins = r
-            todo = [m for m in mins if store.summary(m["stamp"]) is None and "front" in m["cams"]]
+            todo = [m for m in mins if store.summary(m["stamp"]) is None and m.get("tcam")]
             if not todo or rnd == 1 or not teslacam:
                 break
             if budget > 0:
@@ -338,7 +457,7 @@ class TeslaCam:
         return self.rv
 
     def _review_mins(self, role, teslacam, t0, t1):
-        store, _ = self._tl(role)
+        store = self._tl(role)
         if teslacam:
             recent, saved, _s = self._sources(role, teslacam)
             mins = [m for m in TL.minutes(recent, saved) if m["t"] + 60 > t0 and m["t"] < t1]
@@ -350,7 +469,7 @@ class TeslaCam:
         """The signs read so far in a time window (a Tessie drive), and the state of the reading job. action: status | start | redo | stop."""
         rv = self._rv()
         store, mins = self._review_mins(role, teslacam, t0, t1)
-        front = [m for m in mins if "front" in m["cams"]] if teslacam else []
+        front = [m for m in mins if m.get("tcam")] if teslacam else []
         if action == "stop":
             rv.stop()
         elif action in ("start", "redo") and teslacam:

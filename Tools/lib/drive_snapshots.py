@@ -119,7 +119,7 @@ def build(data_dir, stamp, tc, front, stills, stop=None):
     if len(tp) < 2:
         _write_index(os.path.join(folder, "snapshots"), stamp, 0, [], [])      # recorded, so the drive is not looked at again on every run
         return dict(n=0, events=0, note="no sample file")
-    store, _ = tc._tl("A")
+    store = tc._tl("A")
     ts, las, los = [p["t"] for p in tp], [p["la"] for p in tp], [p["lo"] for p in tp]
     clock, cam = DF.clock_offset(ts, las, los, store, t0, t1, None, data_dir)
     rows = []

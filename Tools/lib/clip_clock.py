@@ -26,6 +26,7 @@ of the configured zone (daylight saving included). Nothing is changed on a drive
 import bisect
 import calendar
 import datetime
+import functools
 import json
 import math
 import os
@@ -84,6 +85,7 @@ def std_offset(u):
     return (dt.utcoffset() - (dt.dst() or datetime.timedelta(0))).total_seconds()
 
 
+@functools.lru_cache(maxsize=60000)
 def naive(text):
     """A clock reading as seconds read as if it were UTC (calendar.timegm): the dashcam name, or an ISO text, whatever the time zone."""
     t = text.strip().replace("T", "_", 1).replace(" ", "_", 1)
@@ -128,7 +130,10 @@ def candidates(n):
     """The offsets (seconds ahead of UTC) the car's clock could have at the reading n: standard time, daylight time, and the local clock."""
     u = from_local(n)
     std = std_offset(u)
-    return sorted({std, std + 3600.0, local_offset(u)})
+    out = {std, local_offset(u)}
+    if any(local_offset(u + d * 86400.0) != std_offset(u + d * 86400.0) for d in (0, -14, -28)):      # the car may keep summer time for a while after the clocks go back,
+        out.add(std + 3600.0)                                                                           # never in the middle of winter (one minute said so once and moved a drive an hour)
+    return sorted(out)
 
 
 def _lookup(n):
@@ -337,9 +342,11 @@ def learn(data_dir, store, stop=None):
         _S.update(ev={}, ev_drives=len(drives), routes={})
     seen = _S["ev"]                                           # stamp -> offset or None, so a pass only looks at minutes it has not seen
     ev = {}
-    for a, b, o in list(_S["runs"]):                         # what was learned before still counts at its edges
-        ev[a] = o
-        ev[b] = o
+    for a, b, o in list(_S["runs"]):                         # what was learned before still counts at its edges (unless the clock could not have been that)
+        if o in candidates(a):
+            ev[a] = o
+        if o in candidates(b):
+            ev[b] = o
     n_new = 0
     for st in stamps:
         if stop and stop():

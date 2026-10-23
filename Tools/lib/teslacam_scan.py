@@ -33,7 +33,7 @@ def plan(store, minutes_by_role, front):
                  first=_day(mins[0]["stamp"]) if mins else None, last=_day(mins[-1]["stamp"]) if mins else None)
         for m in mins:
             seen.add(m["stamp"])
-            if "front" not in m["cams"]:
+            if not m.get("tcam"):
                 d["no_front"] += 1
             elif store.summary(m["stamp"]) is not None:
                 d["read"] += 1

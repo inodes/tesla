@@ -97,7 +97,7 @@ function view(c,s,auto){const v=$("#fview");vids.forEach(x=>{x.pause();x.removeA
  <button id="fpl">▶ Play</button><input type="range" id="fsk" min="0" max="60" step="0.1" value="0"><span id="ftm">0:00</span>
  <select id="fsp"><option value="0.5">0.5×</option><option value="1" selected>1×</option><option value="2">2×</option><option value="4">4×</option></select>
  <label><input type="checkbox" id="fau" checked> carry on into the next minute</label></div>
- <div class="fgrid ${mode}">${order.map(k=>has(c,k)?`<div class="fc" data-k="${k}"><video muted playsinline preload="auto" src="${url(c,k)}"></video><b>${CAML[k]}</b></div>`:`<div class="fc none"><b>${CAML[k]}</b> no file</div>`).join("")}</div>
+ <div class="fgrid ${mode}">${order.map(k=>has(c,k)?`<div class="fc" data-k="${k}"><video muted playsinline preload="auto" src="${url(c,k)}"></video><b>${CAML[k]}</b></div>`:`<div class="fc none"><b>${CAML[k]}</b> not recorded this minute</div>`).join("")}</div>
  <div class="sub" id="fmsg"></div>`;
  vids=[...v.querySelectorAll("video")];main=vids.find(x=>x.parentNode.dataset.k==="0")||vids[0];if(!main)return;
  const sk=$("#fsk"),pl=$("#fpl"),tm=$("#ftm"),sp=$("#fsp"),au=$("#fau");

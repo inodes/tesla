@@ -8,6 +8,7 @@ import json
 import os
 import re
 import threading
+import time
 
 import clip_clock as CC
 
@@ -44,6 +45,7 @@ class Sentry:
         self.f = os.path.join(data_dir, index)
         self.folder = folder                    # SentryClips or SavedClips: both hold one folder per event
         self.mem = None
+        self.memo = None                        # (teslacam, when, events, connected) of the last answer
 
     def _load(self):
         if self.mem is None:
@@ -55,10 +57,20 @@ class Sentry:
         return self.mem
 
     def events(self, teslacam):
-        """Every event folder (newest first). teslacam = a drive's TeslaCam folder, or None when it is not connected."""
+        """Every event folder (newest first). teslacam = a drive's TeslaCam folder, or None when it is not connected.
+        Nothing the index has learnt is ever dropped: an event whose folder is no longer on the connected drive (deleted to make room, say) is marked
+        gone (`gone` = when it was first found missing), stays in the kept file, and is left out of the answer while that drive is connected; with no
+        drive connected, every kept event is answered. A folder that comes back is un-marked."""
         with _LOCK:
             idx = self._load()
             root = os.path.join(teslacam, self.folder) if teslacam else None
+            try:
+                dm = os.stat(root).st_mtime_ns if root else None
+            except OSError:
+                dm = None
+            m = self.memo
+            if m and m[0] == (teslacam, dm) and time.time() - m[1] < 30 and (dm is None or m[1] - dm / 1e9 > 2):
+                return m[2], m[3]                   # the folder is as it was a moment ago (a list of drives asks once per drive): the same answer, no listing again
             if root and os.path.isdir(root):
                 try:
                     names = sorted(n for n in os.listdir(root) if re.match(r"\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2}$", n))
@@ -69,9 +81,17 @@ class Sentry:
                     r = self._read(os.path.join(root, n), n)
                     if r:
                         idx[n] = r
-                for n in [k for k in idx if k not in set(names)]:
-                    del idx[n]                      # the folder was deleted from the Archive
-                if new or len(idx) != len(names):
+                changed = bool(new)
+                if names:                           # a drive that listed nothing may be a glitch: nothing is marked from an empty listing
+                    here, now = set(names), time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+                    for n, e in idx.items():
+                        if n in here and e.get("gone"):
+                            del e["gone"]
+                            changed = True
+                        elif n not in here and not e.get("gone"):
+                            e["gone"] = now
+                            changed = True
+                if changed:
                     try:
                         tmp = self.f + ".tmp"
                         with open(tmp, "w", encoding="utf-8") as fh:
@@ -79,8 +99,11 @@ class Sentry:
                         os.replace(tmp, self.f)
                     except OSError:
                         pass
-            shown = [_shown(e) for e in idx.values()]
-            return sorted(shown, key=lambda e: e["t"], reverse=True), bool(root and os.path.isdir(root))
+            connected = bool(root and os.path.isdir(root))
+            shown = [_shown(e) for e in idx.values() if not (connected and e.get("gone"))]
+            out = sorted(shown, key=lambda e: e["t"], reverse=True)
+            self.memo = ((teslacam, dm), time.time(), out, connected)
+            return out, connected
 
     def _read(self, path, name):
         try:

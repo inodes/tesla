@@ -20,6 +20,7 @@ import math
 import os
 import re
 import threading
+import time
 
 import app_alerts
 import drive_paths as DP
@@ -44,22 +45,31 @@ def _num(v, d=None):
         return d
 
 
+_STATE = re.compile(r"\s+(New South Wales|Victoria|Queensland|South Australia|Western Australia|Tasmania|Northern Territory|Australian Capital Territory|NSW|VIC|QLD|SA|WA|TAS|NT|ACT)(\s+\d{4})?\s*$", re.I)
+
+
 def _short(addr):
-    """'1 Example Street, Sampletown New South Wales 2000, Australia' -> '1 Example Street, Sampletown'"""
+    """'1 Example Street, Sampletown New South Wales 2000, Australia' -> '1 Example Street, Sampletown' (the street and the suburb: a street alone is not enough to place it)"""
     p = [x.strip() for x in (addr or "").split(",")]
-    return ", ".join(p[:2]) if p and p[0] else ""
+    if not p or not p[0]:
+        return ""
+    return ", ".join([p[0]] + ([_STATE.sub("", p[1]).strip()] if len(p) > 1 and _STATE.sub("", p[1]).strip() else []))
 
 
-def _stat_key(paths):
-    """What changed since last time: each path's mtime and, for a folder, the newest mtime among its sub-folders - so a new drive or charge
-    folder inside an existing day folder (deepdive/<day>/<stamp>/) is noticed, not only a new day."""
-    out = []
-    for p in paths:
-        try:
-            m = os.path.getmtime(p)
-        except OSError:
-            out.append((p, 0))
-            continue
+_SK = {}                    # path -> (when, what was found): the same folder asked about again within a moment is not looked at again
+SK_TTL = 3.0
+
+
+def _stat_one(p):
+    now = time.time()
+    hit = _SK.get(p)
+    if hit and now - hit[0] < SK_TTL:
+        return hit[1]
+    try:
+        m = os.path.getmtime(p)
+    except OSError:
+        res = (p, 0)
+    else:
         sub = 0
         if os.path.isdir(p):
             try:
@@ -69,20 +79,41 @@ def _stat_key(paths):
                             sub = max(sub, e.stat().st_mtime)
             except OSError:
                 pass
-        out.append((p, m, sub))
-    return tuple(out)
+        res = (p, m, sub)
+    if len(_SK) > 8000:
+        _SK.clear()
+    _SK[p] = (time.time(), res)
+    return res
+
+
+def _stat_key(paths):
+    """What changed since last time: each path's mtime and, for a folder, the newest mtime among its sub-folders - so a new drive or charge
+    folder inside an existing day folder (deepdive/<day>/<stamp>/) is noticed, not only a new day. Each folder is looked at once per few
+    seconds, however many lists ask (a page asks for several at once and each one checked every folder)."""
+    return tuple(_stat_one(p) for p in paths)
+
+
+_BUILD = {}
 
 
 def _cached(name, deps, build):
+    """The kept value while the files it is built from are unchanged. One build per name at a time: a page that asks for the same thing as the
+    background warm-up waits for that build instead of making its own (three at once took three times as long as one)."""
     key = _stat_key(deps)
     with _LOCK:
         hit = _CACHE.get(name)
         if hit and hit[0] == key:
             return hit[1]
-    val = build()
-    with _LOCK:
-        _CACHE[name] = (key, val)
-    return val
+        lk = _BUILD.setdefault(name, threading.RLock())
+    with lk:
+        with _LOCK:
+            hit = _CACHE.get(name)
+            if hit and hit[0] == key:
+                return hit[1]
+        val = build()
+        with _LOCK:
+            _CACHE[name] = (key, val)
+        return val
 
 
 def _rows(path):
@@ -112,10 +143,11 @@ class Store:
     # ---- drives -------------------------------------------------------------------------------------------------
     def _summaries(self):
         root = self.p("drives", "deepdive")
+        folders = list(DP.iter_folders(root))               # listed once for both the check and the build
 
         def build():
             out = []
-            for _stamp, folder in DP.iter_folders(root):
+            for _stamp, folder in folders:
                 f = os.path.join(folder, "drive_summary.json")
                 try:
                     j = json.load(open(f, encoding="utf-8"))
@@ -125,7 +157,7 @@ class Store:
                     out.append(j)
             return out
         dirs = [root]
-        for _stamp, folder in DP.iter_folders(root):         # a day folder changes when a drive appears, a drive folder when its summary is rewritten
+        for _stamp, folder in folders:                       # a day folder changes when a drive appears, a drive folder when its summary is rewritten
             dirs += [os.path.dirname(folder), folder]
         return _cached("summ", list(dict.fromkeys(dirs)), build)
 
@@ -143,21 +175,28 @@ class Store:
                     times.append(datetime.datetime.strptime("%s %s:%s" % m.groups(), "%Y-%m-%d %H:%M"))
                 for day in {t.strftime("%Y-%m-%d") for t in times}:
                     summ.setdefault(day, []).append((times, j))
-            used = set()
-            out = []
+            # The pages go to the rows they fit best, nearest start first and, for two rows starting together (Tessie records an empty
+            # "drive" with the same start as the real one), the longer drive first - not to whichever row comes first in the file.
+            rows = []
             for r in _rows(master):
                 dt, tz = _local(r.get("Started At (Local)"))
-                if not dt:
-                    continue
-                st, gap = None, 151
+                if dt:
+                    rows.append((r, dt, tz))
+            cand = []
+            for i, (r, dt, tz) in enumerate(rows):
                 for times, j in summ.get(dt.strftime("%Y-%m-%d"), []):
-                    if j["stamp"] in used:
-                        continue
                     g = min(abs((t - dt).total_seconds()) for t in times)
-                    if g < gap:
-                        st, gap = j, g
-                if st:
-                    used.add(st["stamp"])       # one page per drive
+                    if g < 151:
+                        cand.append((g, -(_num(r.get("Distance (km)"), 0) or 0), -(_num(r.get("Duration (Minutes)"), 0) or 0), i, j["stamp"], j))
+            cand.sort(key=lambda c: c[:5])
+            match, used = {}, set()
+            for _g, _k, _m, i, stamp, j in cand:
+                if i not in match and stamp not in used:
+                    match[i] = j
+                    used.add(stamp)             # one page per drive
+            out = []
+            for i, (r, dt, tz) in enumerate(rows):
+                st = match.get(i)
                 t0 = int(_num(r.get("Started At (UTC)"), 0))
                 t1 = int(_num(r.get("Ended At (UTC)"), t0))
                 km = _num(r.get("Distance (km)"), 0)
@@ -172,7 +211,7 @@ class Store:
                 quick = mins <= app_config.get("drives.repark_max_minutes")
                 repark = quick and (km < app_config.get("drives.repark_max_km") or (same and km < app_config.get("drives.repark_same_place_km")))
                 out.append(dict(k="drive", repark=repark, id=st["stamp"] if st else "t%d" % t0, page=bool(st), t0=t0, t1=t1, day=dt.strftime("%Y-%m-%d"), hm=dt.strftime("%H:%M"),
-                                tz=tz, frm=(st or {}).get("frm") or r.get("Starting Saved Location") or _short(r.get("Starting Location")), to=(st or {}).get("to") or r.get("Ending Saved Location") or _short(r.get("Ending Location")),
+                                tz=tz, frm=self._end_name(r, "Starting"), to=self._end_name(r, "Ending"),
                                 min=_num(r.get("Duration (Minutes)"), 0), km=km, kwh=_num(r.get("Total Energy Used (kWh)"), 0), whkm=_num(r.get("Average Energy Used (Wh/km)")),
                                 avg=_num(r.get("Average Speed (km/h)")), max=_num(r.get("Max Speed (km/h)")), b0=_num(r.get("Starting Battery (%)")), b1=_num(r.get("Ending Battery (%)")),
                                 ap=_num(r.get("Autopilot Distance (km)"), 0), lat=_num(r.get("Starting Latitude")), lon=_num(r.get("Starting Longitude")),
@@ -387,6 +426,12 @@ class Store:
             c = use(next((c for c in ch if c["t0"] <= i["t1"] + 300 and c["t1"] >= i["t0"] - 300 and i["t0"] < left.get(c["id"], 1e18) and near(c, i.get("lat"), i.get("lon"))), None), i.get("lat"), i.get("lon"))
             if c:
                 i["place"] = c["place"]
+
+    def _end_name(self, r, side):
+        """Where a drive began or ended: a saved place (by position, as saved now), else the street and suburb. Not taken from the drive's page: a page built while
+        the drive was still being recorded, or before a place was saved, would name the wrong place."""
+        n = self.pl.label(_num(r.get(side + " Latitude")), _num(r.get(side + " Longitude")), False, r.get(side + " Saved Location") or "")[0]
+        return n or _short(r.get(side + " Location"))
 
     def activity(self):
         drives, charges, idles = [dict(x) for x in self.drives()], self.charges(), [dict(x) for x in self.idles()]

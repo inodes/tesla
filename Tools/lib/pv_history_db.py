@@ -320,10 +320,17 @@ def pv_interval_series(conn, local_start, local_end, provider, api_key, account_
     except Exception:
         return []
 
-    interval = timedelta(minutes=provider.intraday_interval_minutes or 15)
+    return pv_intraday_cached(conn, local_start, local_end, provider.intraday_interval_minutes or 15)
+
+
+def pv_intraday_cached(conn, local_start, local_end, interval_minutes=15):
+    """The cached 15-minute rows (no sync, no network) overlapping the naive-local window [local_start, local_end), oldest first.
+    Each row: {start, end, consumption_kwh, self_consumed_kwh, solar_fraction, production_kwh, feedin_kwh, purchased_kwh, provider}.
+    solar_fraction is self_consumed_kwh/consumption_kwh (None if consumption is not positive). This is the one place that definition lives:
+    pv_interval_series() above and the app's charge page both read through it. conn needs sqlite3.Row as its row_factory."""
+    interval = timedelta(minutes=interval_minutes)
     rows = conn.execute(
-        "SELECT timestamp, consumption_kwh, self_consumption_kwh FROM pv_intraday "
-        "WHERE timestamp >= ? AND timestamp < ? ORDER BY timestamp",
+        "SELECT * FROM pv_intraday WHERE timestamp >= ? AND timestamp < ? ORDER BY timestamp",
         (
             (local_start - interval).strftime("%Y-%m-%d %H:%M:%S"),
             local_end.strftime("%Y-%m-%d %H:%M:%S"),
@@ -333,14 +340,14 @@ def pv_interval_series(conn, local_start, local_end, provider, api_key, account_
     out = []
     for r in rows:
         i_start = datetime.strptime(r["timestamp"], "%Y-%m-%d %H:%M:%S")
-        i_end = i_start + interval
         cons = r["consumption_kwh"] or 0.0
         self_c = r["self_consumption_kwh"] or 0.0
-        solar_fraction = (self_c / cons) if cons > 0 else None
         out.append({
-            "start": i_start, "end": i_end,
+            "start": i_start, "end": i_start + interval,
             "consumption_kwh": cons, "self_consumed_kwh": self_c,
-            "solar_fraction": solar_fraction,
+            "solar_fraction": (self_c / cons) if cons > 0 else None,
+            "production_kwh": r["production_kwh"], "feedin_kwh": r["feedin_kwh"], "purchased_kwh": r["purchased_kwh"],
+            "provider": r["provider"] if "provider" in r.keys() else None,
         })
     return out
 

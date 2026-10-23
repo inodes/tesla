@@ -161,7 +161,7 @@ def write_mirror(out_dir, src_csv, path, info):
     """Tessie's rows unchanged + a row per dashcam fix, same file name, same columns, extra columns on the right."""
     os.makedirs(out_dir, exist_ok=True)
     if info["verdict"] == "used":
-        rows = list(csv.reader(open(src_csv, encoding="utf-8")))
+        rows = DRV.dpts.table(src_csv)                  # Tessie's points, JSON or CSV alike
         head = rows[0]
         ix = {n: i for i, n in enumerate(head)}
         tess = []
@@ -185,7 +185,7 @@ def write_mirror(out_dir, src_csv, path, info):
             r += ["dashcam", round(p["hd"]), p["ap"], p["br"], round(p["accel"]), round(p["steer"], 1), BLINK.get(p["blk"], ""), p["clip"]]
             new.append((sec, 1, r))
         merged = sorted(tess + new, key=lambda x: (x[0], x[1]))
-        with open(os.path.join(out_dir, os.path.basename(src_csv)), "w", newline="", encoding="utf-8") as fh:
+        with open(os.path.join(out_dir, "drive_deepdive_%s.csv" % DRV.dp.stamp_of(src_csv)), "w", newline="", encoding="utf-8") as fh:      # the mirror stays a CSV (local clock text)
             w = csv.writer(fh)
             w.writerow(head + EXTRA)
             for _, _, r in merged:
@@ -196,10 +196,10 @@ def write_mirror(out_dir, src_csv, path, info):
 
 
 def do_drive(folder, out_dir, master, foot, a):
-    csvs = [n for n in os.listdir(folder) if n.startswith("drive_deepdive_") and n.endswith(".csv")]
-    if not csvs:
+    names = sorted(n for n in os.listdir(folder) if n.startswith("drive_deepdive_") and n.endswith((".json", ".csv")))
+    if not names:
         return "no csv"
-    src_csv = os.path.join(folder, csvs[0])
+    src_csv = os.path.join(folder, next((n for n in names if n.endswith(".json")), names[0]))       # JSON, else the older CSV
     pts = DRV.load_drive_csv(src_csv)
     if not pts:
         return "empty csv"

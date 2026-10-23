@@ -34,9 +34,13 @@ import dashcam_series as DS
 # thresholds (the app overrides them from config.json -> app.teslacam, see app_config.py)
 OPTS = dict(moving_kmh=3.0,           # a minute whose top speed is under this is not moving
             run_gap_s=75,             # minutes this close belong to one continuous recording
+            join_max_s=300,           # a longer hole than run_gap_s (the car skipped a few seconds) still joins two MOVING minutes whose positions fit: up to this long ...
+            join_slack_m=300,         # ... when the two positions are no further apart than this plus the distance the car could have covered in the hole (at 1.5 x its top speed)
             gap_min_s=120,            # a hole shorter than this is not shown
             same_place_m=300,         # parked: last and next position this close ...
             same_place_est_m=800,     # ... (this far when one of them is a Sentry event's approximate position)
+            blip_kmh=1.0,             # a shift out of Park whose top speed stays under this did not move the car: a blip (nothing), not a drive or even a re-park
+            short_m=200,              # a drive shorter than this is marked short (a re-park: the car was only moved a little)
             same_minute_s=30,         # a Saved minute this close to a Recent one is the same minute
             read_workers=4)           # clips read at once (the reading is CPU work)
 _LOCK = threading.RLock()
@@ -123,7 +127,10 @@ class Store:
             v = ser["v"]
             pos = [(a, b) for a, b in zip(ser["lat"], ser["lon"]) if _valid(a, b)]
             sm[stamp] = dict(n=m, vmax=max(v), km=round(sum(v) / 3600.0, 3), mov=sum(1 for x in v if x >= OPTS["moving_kmh"]),
-                             fsd=sum(1 for x in ser["ap"] if x == 1), aut=sum(1 for x in ser["ap"] if x in (2, 3)),
+                             fsd=sum(1 for x, y in zip(ser["ap"], v) if x == 1 and y >= OPTS["moving_kmh"]),
+                             aut=sum(1 for x, y in zip(ser["ap"], v) if x in (2, 3) and y >= OPTS["moving_kmh"]),
+                             fsdk=round(sum(y for x, y in zip(ser["ap"], v) if x == 1) / 3600.0, 3),
+                             autk=round(sum(y for x, y in zip(ser["ap"], v) if x in (2, 3)) / 3600.0, 3),
                              p0=list(pos[0]) if pos else None, p1=list(pos[-1]) if pos else None)
             day = stamp[:10]
             self.series(stamp)                  # loads the day
@@ -238,12 +245,20 @@ class Indexer:
 
 
 # ---------------------------------------------------------------------------------------------------------- timeline
+TELEM_CAMS = ("front", "back", "left_repeater", "right_repeater", "left_pillar", "right_pillar")
+
+
+def tcam(cams):
+    """The camera whose clip the telemetry is read from: the front, else any other (the car writes the same speed, GPS and pedals into all six)."""
+    return next((c for c in TELEM_CAMS if c in cams), None)
+
+
 def minutes(recent, saved):
     """Every Recent and Saved minute, oldest first, each once (a Saved minute that is also in Recent is left out)."""
     import bisect
     mins = {}
     for st, cams in recent.items():
-        mins[st] = dict(stamp=st, t=secs(st), src="recent", ref="", cams=cams)
+        mins[st] = dict(stamp=st, t=secs(st), src="recent", ref="", cams=cams, tcam=tcam(cams))
     rt = sorted(m["t"] for m in mins.values())
     for ev in saved:
         for st, cams in ev["clips"].items():
@@ -251,7 +266,7 @@ def minutes(recent, saved):
             i = bisect.bisect(rt, t)
             near = min([abs(rt[j] - t) for j in (i - 1, i) if 0 <= j < len(rt)] or [1e9])
             if near > OPTS["same_minute_s"] and st not in mins:
-                mins[st] = dict(stamp=st, t=t, src="saved", ref=ev["id"], cams=cams)
+                mins[st] = dict(stamp=st, t=t, src="saved", ref=ev["id"], cams=cams, tcam=tcam(cams))
     return sorted(mins.values(), key=lambda m: m["t"])
 
 
@@ -262,14 +277,17 @@ def build(recent, saved, sentry, store):
     ms = minutes(recent, saved)
     runs, cur = [], None
     for m in ms:
-        if cur and m["t"] - cur[-1]["t"] <= OPTS["run_gap_s"]:
+        if cur and (m["t"] - cur[-1]["t"] <= OPTS["run_gap_s"] or _continues(cur[-1], m, store)):
             cur.append(m)
         else:
             cur = [m]
             runs.append(cur)
     for run in runs:
+        seq = []
         for part in _split(run, store):
-            items.append(drive_item(part, store))
+            seq += _part_items(part, store)
+        _butt(seq)
+        items += seq
     for ev in sentry:
         if not ev["clips"]:
             continue
@@ -290,18 +308,63 @@ def build(recent, saved, sentry, store):
     return sorted(out, key=lambda x: x["t0"], reverse=True)
 
 
+def _continues(a, b, store):
+    """True when minute b follows minute a after a hole in the recording (more than run_gap_s, up to join_max_s) and the drive did not stop in between: the car was not in
+    Park at the end of a nor at the start of b (the car's own gear; a drive ends when it goes into Park). Where the gear is not known (no telemetry read, or none in the
+    clip) it falls back to the car moving at both ends and being where it could have got to (top speed x 1.5 over the hole, plus join_slack_m)."""
+    dt = b["t"] - a["t"]
+    if dt > OPTS["join_max_s"]:
+        return False
+    ga, gb = gear_of(a, store), gear_of(b, store)
+    if ga is not None and gb is not None:
+        return ga[1] != 0 and gb[0] != 0
+    sa, sb = store.summary(a["stamp"]), store.summary(b["stamp"])
+    if not sa or not sb or sa["vmax"] < OPTS["moving_kmh"] or sb["vmax"] < OPTS["moving_kmh"]:
+        return False
+    p, q = sa.get("p1"), sb.get("p0")
+    if not p or not q or not _valid(p[0], p[1]) or not _valid(q[0], q[1]):
+        return False
+    d = math.hypot((q[0] - p[0]) * 111320.0, (q[1] - p[1]) * 111320.0 * math.cos(math.radians(p[0])))
+    can = OPTS["join_slack_m"] + max(0, dt - 60) * max(sa["vmax"], sb["vmax"]) / 3.6 * 1.5
+    return d <= can
+
+
+def gear_of(m, store):
+    """(first, last, any_in_gear) of the car's gear over a minute: 0 = Park, 1 = Drive, 2 = Reverse, 3 = Neutral; None when the minute has no telemetry series. The car's own
+    gear is what says a drive has stopped: Park ends a drive, while a stop at a light or in a queue stays in Drive and is still the drive."""
+    ser = store.series(m["stamp"]) if m["stamp"] and store.summary(m["stamp"]) else None
+    g = (ser or {}).get("gear")
+    if not g:
+        return None
+    return g[0], g[-1], any(x != 0 for x in g)
+
+
 def _state(m, store):
     s = store.summary(m["stamp"])
     if s is None:
         return "unknown"
+    g = gear_of(m, store) if s else None
+    if g is not None:
+        return "move" if g[2] else "still"                  # in gear at any moment of the minute = driving; all Park = parked
     return "move" if s and s["vmax"] >= OPTS["moving_kmh"] else "still"
 
 
 def _split(run, store):
     st = [_state(m, store) for m in run]
-    for i in range(1, len(st) - 1):                     # one still minute between two moving ones (a red light) is part of the drive
-        if st[i] in ("still", "unknown") and st[i - 1] == "move" and st[i + 1] == "move":
+    for i in range(1, len(st) - 1):                     # one still minute between two moving ones (a red light) is part of the drive - where the gear is not known:
+        if st[i] in ("still", "unknown") and st[i - 1] == "move" and st[i + 1] == "move" and gear_of(run[i], store) is None and _glitch(run, i, store):
             st[i] = "move"
+    i = 0
+    while i < len(st):                                  # minutes in gear only for a blip (no movement) are a stop, not a drive
+        if st[i] != "move":
+            i += 1
+            continue
+        j = i
+        while j < len(st) and st[j] == "move":
+            j += 1
+        if _moves(run[i:j], store) == []:
+            st[i:j] = ["still"] * (j - i)
+        i = j
     parts, cur = [], []
     for m, s in zip(run, st):
         if cur and cur[-1][1] != s:
@@ -311,6 +374,110 @@ def _split(run, store):
     if cur:
         parts.append(cur)
     return [[(m, s) for m, s in p] for p in parts]
+
+
+def _glitch(run, i, store):
+    """True when minute i, which has no gear of its own (no telemetry in it, or not read yet), sits inside a drive: the car was in gear at the end of the minute before and at the start
+    of the one after. A car in Park writes no telemetry after a few seconds, so a minute without any between a Park and a drive is the stop. Where the neighbours' gear is not known: yes."""
+    ga, gb = gear_of(run[i - 1], store), gear_of(run[i + 1], store)
+    return ga is None or gb is None or (ga[1] != 0 and gb[0] != 0)
+
+
+def _samples(mm, store):
+    """Every second of these minutes as (t, gear, v, lat, lon, ap, minute index), oldest first; None when a minute has no gear series (not read, or none in the clip)."""
+    out = []
+    for k, m in enumerate(mm):
+        ser = store.series(m["stamp"]) if m["stamp"] and store.summary(m["stamp"]) else None
+        g = (ser or {}).get("gear")
+        if not g:
+            return None
+        n = len(g)
+        v, la, lo, ap = ser["v"], ser.get("lat") or [None] * n, ser.get("lon") or [None] * n, ser.get("ap") or [0] * n
+        out += [(m["t"] + i, g[i], v[i], la[i], lo[i], ap[i], k) for i in range(n)]
+    return out
+
+
+def _excursions(S):
+    """[(a, b)] sample indexes of every stretch out of Park in which the car moved (top speed OPTS blip_kmh or more). Park ends one; what follows it is another. A stretch with
+    no movement - a shift out of Park and back - is a blip and is left out. A stop at a light stays in Drive, so it stays inside its stretch."""
+    out, cur = [], None
+    for k, s in enumerate(S):
+        if s[1] != 0:
+            cur = [k, k, 0.0] if cur is None else cur
+            cur[1] = k
+            cur[2] = max(cur[2], abs(s[2] or 0))
+        elif cur:
+            out.append(cur)
+            cur = None
+    if cur:
+        out.append(cur)
+    return [(a, b) for a, b, v in out if v >= OPTS["blip_kmh"]]
+
+
+def _moves(mm, store):
+    """The drives inside these minutes cut by the car's gear: a list of (a, b) (see _excursions), empty when it only shifted gear; None when the gear is not known for them all."""
+    S = _samples(mm, store)
+    return None if S is None else _excursions(S)
+
+
+def _part_items(part, store):
+    """The items of one part of a run: a moving part is cut to the second into its drives where the gear is known, else it is one item of whole minutes."""
+    if part[0][1] == "move":
+        mm = [m for m, _ in part]
+        S = _samples(mm, store)
+        ex = _excursions(S) if S is not None else []
+        if ex:
+            return [seg_item(mm, S, a, b) for a, b in ex]
+    return [drive_item(part, store)]
+
+
+def _label(m, t):
+    """A name in the form of a clip's, for the second t inside minute m: its own name when t is the minute's start, else the name plus the seconds (an id only)."""
+    k = int(round(t - m["t"]))
+    if not k:
+        return m["stamp"]
+    import datetime
+    d = datetime.datetime.strptime(m["stamp"], "%Y-%m-%d_%H-%M-%S") + datetime.timedelta(seconds=k)
+    return d.strftime("%Y-%m-%d_%H-%M-%S")
+
+
+def seg_item(mm, S, a, b):
+    """One drive from second a to second b of the samples S of the minutes mm: starts the second the car left Park, ends the second it went into Park."""
+    q = S[a:b + 1]
+    t0, t1 = q[0][0], q[-1][0] + 1
+    ms = sorted({s[6] for s in q})
+    mine = [mm[k] for k in ms]
+    v = [s[2] or 0 for s in q]
+    pts = [(s[3], s[4]) for s in q if s[3] is not None and _valid(s[3], s[4])]
+    mov = sum(1 for x in v if x >= OPTS["moving_kmh"])
+    fsd = sum(1 for s in q if s[5] == 1)
+    aut = sum(1 for s in q if s[5] in (2, 3))
+    km = sum(v) / 3600.0
+    it = dict(id=_label(mm[ms[0]], t0), kind="drive", start=iso(t0), end=iso(t1), t0=t0, t1=t1, n=len(mine), recent=sum(1 for m in mine if m["src"] == "recent"),
+              saved=sum(1 for m in mine if m["src"] == "saved"), read=len(mine), km=round(km, 1), vmax=round(max(v)), fsd=min(1.0, round(fsd / mov, 2)) if mov else 0,
+              aut=min(1.0, round(aut / mov, 2)) if mov else 0, p0=[round(pts[0][0], 5), round(pts[0][1], 5)] if pts else None,
+              p1=[round(pts[-1][0], 5), round(pts[-1][1], 5)] if pts else None, short=km * 1000.0 < OPTS["short_m"])
+    it["thumb"] = _thumb_pts(pts[::6])
+    return it
+
+
+def _butt(seq):
+    """A stop beside a drive that begins or ends within a minute runs up to the second the drive begins / ended (no sliver between them)."""
+    for i, s in enumerate(seq):
+        if s["kind"] != "stopped":
+            continue
+        p, n = (seq[i - 1] if i else None), (seq[i + 1] if i + 1 < len(seq) else None)
+        if p and p["kind"] == "drive" and abs(s["t0"] - p["t1"]) < 60 and p["t1"] < s["t1"]:
+            s["t0"] = p["t1"]
+        if n and n["kind"] == "drive" and abs(n["t0"] - s["t1"]) < 60 and n["t0"] > s["t0"]:     # a clip shorter than 60 s can leave its minute overlapping the next drive
+            s["t1"] = n["t0"]
+
+
+def _share(sums, nkey, kkey, km, n, mov):
+    """The share of the drive on a driving mode: by distance when every minute has it (stored from the speeds), else by moving seconds (older stored minutes); never above 1."""
+    if km and all(kkey in x for x in sums):
+        return min(1.0, round(sum(x[kkey] for x in sums) / km, 2))
+    return min(1.0, round(n / mov, 2)) if mov else 0
 
 
 def drive_item(part, store):
@@ -328,7 +495,7 @@ def drive_item(part, store):
     p1 = next((s["p1"] for s in reversed(sums) if s["p1"]), None)
     it = dict(id=mm[0]["stamp"], kind=kind, start=iso(t0), end=iso(t1), t0=t0, t1=t1, n=len(mm), recent=sum(1 for m in mm if m["src"] == "recent"),
               saved=sum(1 for m in mm if m["src"] == "saved"), read=len(sums), km=round(km, 1), vmax=round(max([s["vmax"] for s in sums] or [0])),
-              fsd=min(1.0, round(fsd / mov, 2)) if mov else 0, aut=min(1.0, round(aut / mov, 2)) if mov else 0, p0=p0, p1=p1)
+              fsd=_share(sums, "fsd", "fsdk", km, fsd, mov), aut=_share(sums, "aut", "autk", km, aut, mov), p0=p0, p1=p1)
     if kind == "drive" and sums:                # a minute that could not be read (or is still to be read) does not stop the route being drawn
         it["thumb"] = _thumb(mm, store)
     return it
@@ -340,6 +507,10 @@ def _thumb(mm, store, k=40):
         ser = store.series(m["stamp"])
         if ser:
             pts += [(a, b) for a, b in zip(ser["lat"][::6], ser["lon"][::6]) if _valid(a, b)]
+    return _thumb_pts(pts, k)
+
+
+def _thumb_pts(pts, k=40):
     if len(pts) > k:
         step = len(pts) / float(k)
         pts = [pts[int(i * step)] for i in range(k)] + [pts[-1]]
@@ -360,7 +531,15 @@ def _gap(a, b):
 
 def cached_minutes(store, t0, t1):
     """The minutes already read that overlap [t0, t1) - for when the drive they came from is not connected (telemetry only, no video)."""
-    return [dict(stamp=st, t=secs(st), src="cache", ref="", cams=[]) for st in sorted(store.stamps()) if secs(st) + 60 > t0 and secs(st) < t1]
+    lo, hi = t0 - 60000, t1 + 60000                 # the car's clock is within +-15 h of UTC: only the minutes near the window need their offset worked out
+    out = []
+    for st in sorted(store.stamps()):
+        if not lo < CC.naive(st) < hi:
+            continue
+        t = secs(st)
+        if t + 60 > t0 and t < t1:
+            out.append(dict(stamp=st, t=t, src="cache", ref="", cams=[]))
+    return out
 
 
 def detail(mins, store, item):
@@ -368,9 +547,10 @@ def detail(mins, store, item):
     out = dict(t0=item["t0"], v=[], lat=[], lon=[], hd=[], ap=[], steer=[], accel=[], br=[], blk=[], gear=[])
     keys = ("v", "lat", "lon", "hd", "ap", "steer", "accel", "br", "blk", "gear")
     pending = 0
+    base = min([m["t"] for m in mins] + [item["t0"]])           # the first minute starts at or before the item (a drive begins within a minute)
     for m in mins:
         ser = store.series(m["stamp"])
-        off = int(round(m["t"] - item["t0"]))
+        off = int(round(m["t"] - base))
         while len(out["v"]) < off:
             for k in keys:
                 out[k].append(None)
@@ -385,5 +565,8 @@ def detail(mins, store, item):
                 pending += 1
             for k in keys:
                 out[k] += [None] * 60
+    lo, hi = int(round(item["t0"] - base)), int(round(item["t1"] - base))
+    for k in keys:
+        out[k] = out[k][lo:hi]
     out["pending"] = pending
     return out
