@@ -265,6 +265,24 @@ class TeslaCam:
         return dict(clips={x: cams[x] for x in run}, loc=self.loc_of(run), roles={x: sorted(holders[x]) for x in run},
                     play={x: next((q for q in sorted(holders[x]) if roots.get(q)), None) for x in run})
 
+    def after_all(self, stamp, n, roots, skip=()):
+        """Up to `n` minutes of continuous (Recent) recording that follow the minute `stamp`, one after the other with no gap and each playable from a connected drive, minus
+        those in `skip`: {clips, loc, play} like run_all. A Saved clip keeps only a little after the moment it was saved; the dashcam went on recording, so the minutes
+        after the event are shown from there."""
+        cams, holders = self._ledger_recent(None)
+        out, last, t0 = [], _secs(stamp), _secs(stamp)
+        for st in sorted(cams):
+            t = _secs(st)
+            if t <= t0 or st in skip:
+                continue
+            if t - last > GAP or len(out) >= n:
+                break
+            if not any(roots.get(q) for q in holders[st]):
+                break
+            out.append(st)
+            last = t
+        return dict(clips={x: cams[x] for x in out}, loc=self.loc_of(out), play={x: next((q for q in sorted(holders[x]) if roots.get(q)), None) for x in out})
+
     def timeline_stored(self, roles=None):
         """The same timeline built only from what is kept on this computer, so a drive being away changes nothing: the minutes of Recent clips come from the
         footage log, the Saved and Sentry events from the kept event lists, the telemetry from the shared store. `roles` limits it to what those drives

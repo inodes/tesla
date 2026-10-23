@@ -72,6 +72,14 @@ class ClipsAll(unittest.TestCase):
         self.assertEqual(self.tc.run_all("2026-10-16_15-40-07", {})["play"]["2026-10-16_15-40-07"], None)
         self.assertIsNone(self.tc.run_all("1999-01-01_00-00-00", {}))
 
+    def test_minutes_after_an_event_come_from_the_continuous_recording(self):
+        r = self.tc.after_all("2026-10-16_15-40-07", 5, {"J": self.tmp})
+        self.assertEqual(list(r["clips"]), ["2026-10-16_15-41-07"])               # the next minute only: the later run is a gap away (and on no connected drive)
+        self.assertEqual(r["play"], {"2026-10-16_15-41-07": "J"})
+        self.assertEqual(self.tc.after_all("2026-10-16_15-40-07", 0, {"J": self.tmp})["clips"], {})
+        self.assertEqual(self.tc.after_all("2026-10-16_15-40-07", 5, {})["clips"], {})        # not playable: nothing to add
+        self.assertEqual(self.tc.after_all("2026-10-16_15-40-07", 5, {"J": self.tmp}, skip=["2026-10-16_15-41-07"])["clips"], {})
+
 
 if __name__ == "__main__":
     unittest.main()
