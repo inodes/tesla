@@ -1547,7 +1547,10 @@ function footageSync(host,opts){
     if(k.error)h+=errBox(k.error,"Syncing stopped");
     if(todo&&todo.error&&!checking)h+=errBox(todo.error,"Could not check what is left to do");
     if(table&&lg&&lg.scans&&Object.keys(lg.scans).length){const t=lg.total,rs=Object.keys(lg.drives).sort();
-      const todoCell=r=>{if(!roots[r])return'<span class="sub">Not connected</span>';const l=left(todo,r);if(!l)return todo?'<span class="sub">Checking…</span>':"";
+      const VERB={log:"Listing files",telemetry:"Reading telemetry",stills:"Making stills"};
+      const todoCell=r=>{if(!roots[r])return'<span class="sub">Not connected</span>';
+        const dp=run&&k.drives&&k.drives[r];      // this drive's share of the job running now: its own bar
+        if(dp&&dp.total){const q=Math.round(100*dp.done/dp.total);return `<div style="min-width:170px"><div>${esc(VERB[k.stage]||"Working")} ${n0(Math.min(dp.total,dp.done+1))} of ${n0(dp.total)}</div><div style="height:6px;border-radius:3px;background:var(--line);margin-top:5px;overflow:hidden"><div style="height:100%;width:${q}%;background:var(--accent);transition:width .3s"></div></div></div>`}const l=left(todo,r);if(!l)return todo?'<span class="sub">Checking…</span>':"";
         const p=[];if(l.log)p.push(n0(l.log)+" files to list");if(l.telemetry)p.push(n0(l.telemetry)+" minutes without telemetry");if(l.stills)p.push(n0(l.stills)+" clips without stills");
         return p.length?p.map(esc).join(" · "):'<span style="color:var(--ok)">Up to date</span>'};
       h+=`<table style="margin-top:8px"><thead><tr><th class="l">Drive</th><th>Files</th><th>Size</th><th>Archived</th><th>Deleted</th><th class="l">Last updated</th><th class="l">To do</th><th></th></tr></thead><tbody>${rs.map(r=>{const d=lg.drives[r],c=lg.scans[r]||{};return `<tr><td class="l"><b>${esc(NM[r]||r)}</b></td><td>${n0(d.listed)}</td><td>${gb(d.listed_bytes)}</td><td>${n0(d.archived)}</td><td>${n0(d.deleted)}</td><td class="l">${esc(localWhen(c.at))}</td><td class="l">${todoCell(r)}</td><td>${roots[r]?`<button class="btn sm" data-ej="${r}" ${busyEject?"disabled":""}>${busyEject===r?"Ejecting…":"Eject"}</button>`:""}</td></tr>`}).join("")}</tbody></table>
