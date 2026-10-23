@@ -65,7 +65,9 @@ def choices(ix):
     for r in seen:
         hw = r["hw"] if r["hw"] not in (None, "None", "") else None
         models.append(dict(model=r["model"], hw=hw, label=ix.label(r["model"], hw), installs=r["n"]))
-    return dict(regions=ix.regions(), countries=ix.countries_seen(), models=models, model_names=cfg["model_labels"])
+    mc = cfg.get("my_car") or {}
+    my = dict(model=mc.get("model"), hw=mc.get("hw") or None, label=ix.label(mc.get("model"), mc.get("hw"))) if mc.get("model") else None
+    return dict(regions=ix.regions(), countries=ix.countries_seen(), models=models, model_names=cfg["model_labels"], my_car=my)
 
 
 def held(data_dir):
@@ -124,7 +126,7 @@ def detail(data_dir, version, region, model=None, hw=None):
         u[k + "_all"] = len(u.get(k) or [])
         u[k] = [dict(e, region=e["version"] in mine) for e in (u.get(k) or [])]
         u[k + "_region"] = [e for e in u[k] if e["region"]]
-    return dict(version=version, features=f["features"], uptake=u)
+    return dict(version=version, features=f["features"], uptake=u, region_countries=ix.resolve(region), my_car=choices(ix)["my_car"])
 
 
 def timeline(data_dir, region, model=None, hw=None):

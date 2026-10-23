@@ -57,6 +57,7 @@
   "software": {
     "_comment": "Tesla software version tracker (Teslascope's public API, no token). regions: a name -> country codes; labels turn Teslascope's car type ids into names.",
     "regions": {"ANZ": ["au", "nz"], "North America": ["us", "ca", "mx", "pr"], "United Kingdom and Ireland": ["gb", "ie"]},
+    "my_car": {"model": "modely", "hw": "TeslaAP4"},
     "settle_days": 14,
     "refetch_hours": 6,
     "pace_seconds": 1.0
