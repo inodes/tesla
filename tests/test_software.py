@@ -9,6 +9,8 @@ import sys
 import tempfile
 import unittest
 from contextlib import redirect_stdout
+from types import SimpleNamespace
+from unittest import mock
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 FIX = os.path.join(HERE, "fixtures", "software")
@@ -20,6 +22,7 @@ from lib.software import notes as N  # noqa: E402
 from lib.software import settings as S  # noqa: E402
 from lib.software import sync as SY  # noqa: E402
 from lib.software import teslascope as T  # noqa: E402
+from lib import fetch_ledger as FL  # noqa: E402
 from lib.software import versions as V  # noqa: E402
 
 NOW = T.iso("2026-10-23T10:00:00Z")
@@ -143,7 +146,7 @@ class SyncTest(unittest.TestCase):
 
     def run_sync(self, now=NOW, **kw):
         buf = io.StringIO()
-        with redirect_stdout(buf):
+        with redirect_stdout(buf), mock.patch.object(FL, "time", SimpleNamespace(time=lambda: now)):         # the ledger stamps its marks with the sync's own clock
             r = SY.sync(self.d, get=self.src, sleep=lambda s: None, now=now, pace=0, bar=False, say=lambda t: None, **kw)
         return r
 
@@ -389,6 +392,15 @@ class IndexTest(unittest.TestCase):
         o = {x["title"]: x for x in c["others"]}
         self.assertIn("Model S AI3", o["Speed Cameras on Route"]["region_cars"])          # listed in Australia, but not for a Model 3
         self.assertNotIn("region_cars", o["Dynamic Headlight Leveling"])                  # no ANZ car type has it at all
+
+    def test_every_note_says_which_car_types_and_countries_list_it(self):
+        c = self.ix.compare("2026.20.10", "2026.38.5.5", "ANZ", "model3", "TeslaAP4")
+        o = {x["title"]: x for x in c["others"]}
+        sc = o["Speed Cameras on Route"]["scope"]
+        self.assertIn("au", sc["countries"])
+        self.assertFalse(sc["all_countries"])
+        self.assertIn("Model X AI3", [x["label"] for x in sc["cars"]])
+        self.assertTrue(all("scope" in x for x in c["listed_new"] + c["skipped"]))
 
     def test_a_newer_text_in_b_supersedes_what_was_in_between(self):
         c = self.ix.compare("2026.20.10", "2026.38.5.5", "ANZ")

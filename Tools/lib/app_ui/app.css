@@ -194,3 +194,5 @@ tr.chline{cursor:pointer}tr.chline td{color:var(--bad);font-weight:600;font-size
 .swn{border-top:1px solid var(--line);padding:6px 0}.swn summary{cursor:pointer}.swt{padding:6px 0 4px 16px;color:var(--ink);font-size:13px;max-width:900px}
 .swt b.add,.swn b.add,#swf b.add{font-weight:700}.del{text-decoration:line-through;color:var(--mut)}
 .swj{display:flex;flex-direction:column;gap:4px;align-items:flex-start}.swj .pill{white-space:nowrap}.swjv{display:flex;gap:8px;align-items:baseline;flex-wrap:wrap}
+
+.swl{display:flex;flex-wrap:wrap;gap:4px;align-items:center;margin-top:4px}.swl .pill{white-space:nowrap}.pill.in{color:var(--acc);border-color:var(--acc)}.pill.dim{opacity:.7}.swsep{width:6px}

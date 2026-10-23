@@ -1917,7 +1917,22 @@ const swDiff=g=>g.map(x=>{const t=esc(x.text).replace(/\n/g,"<br>");return x.op=
 const swChanged=d=>!!d&&d.some(x=>x.op!=="same");
 // the text of a note: when it differs from the text it had just before in the chain, the new words are bold and the dropped words struck through
 const swBody=it=>swChanged(it.diff)?`<div class="sub" style="margin-bottom:4px">Compared with the text on ${esc(it.prev_tag)}: <b>bold</b> is new, <s>struck through</s> was removed.</div>${swDiff(it.diff)}${it.chain&&it.chain.length>2?`<details style="margin-top:6px"><summary class="sub">Each change on the way</summary>${it.chain.map(c=>`<div class="sub" style="margin:6px 0 2px"><b>${esc(c.tag)}</b></div>${c.diff?swDiff(c.diff):"<div>The text at the start.</div>"}`).join("")}</details>`:""}`:esc(it.text||it.description||"").replace(/\n/g,"<br>");
-function swNotes(items,empty){return items.length?items.map(it=>`<details class="swn"><summary><b>${esc(it.title)}</b> <span class="sub">${it.first_tag&&it.first_tag!==it.tag?"first listed "+esc(it.first_tag)+" · ":""}listed on ${esc(it.tag)}${it.was_tag?" · was "+esc(it.was_title)+" on "+esc(it.was_tag):swChanged(it.diff)?" · text changed since "+esc(it.prev_tag):""}${it.applies_to?" · applies to "+esc(it.applies_to.join(", ").toUpperCase()):""}${it.region_cars?" · in "+esc(SWS.region)+" only on "+esc(it.region_cars.join(", ")):it.countries&&!it.applies_to&&it.countries[0]!=="*"?" · only "+esc(it.countries.join(", ").toUpperCase()):""}</span></summary><div class="swt">${swBody(it)}${it.versions?`<div class="sub" style="margin-top:6px">On ${it.versions.map(esc).join(", ")}${it.reaches_b?". Cars were seen going from one of these to the new version.":"."}</div>`:""}</div></details>`).join(""):`<div class="sub">${empty}</div>`}
+// where a note is listed: car-type and country lozenges (the chosen car and the chosen region's countries first and in the accent colour)
+let SWRC=[];
+// the page opens on your car (config software.my_car) until a car has been chosen by hand
+function swDefaultCar(my){if(!SWS.carSet&&my&&my.model){SWS.car=my.model+"|"+(my.hw||"");SWS.carSet=1;swSave()}}
+function swScope(it){
+  const sc=it.scope;if(!sc)return"";
+  const [m0,h0]=(SWS.car||"|").split("|"),mm=m0||"",hh=h0||"";
+  const isMine=c=>mm?(c.model===mm&&(!hh||!c.hw||c.hw===hh)):false;
+  const cars=sc.all_cars?[]:sc.cars.slice().sort((a,b)=>isMine(b)-isMine(a));
+  const MAXC=3,MAXN=8;
+  const carPills=sc.all_cars?'<span class="pill" title="Listed for every car type">All cars</span>':cars.slice(0,MAXC).map(c=>`<span class="pill ${isMine(c)?"in":""}" title="${isMine(c)?"Your car":"Car type"}">${esc(c.label)}</span>`).join("")+(cars.length>MAXC?`<span class="pill dim" title="${esc(cars.slice(MAXC).map(c=>c.label).join(", "))}">+${cars.length-MAXC} car types</span>`:"");
+  const rc=new Set(SWRC),cs=sc.all_countries?[]:sc.countries.slice().sort((a,b)=>(rc.has(b)-rc.has(a))||a.localeCompare(b));
+  const cl=c=>`<span class="pill ${rc.has(c)?"in":"dim"}" title="${esc(swCountry(c))}">${esc(c.toUpperCase())}</span>`;
+  const ctPills=sc.all_countries?'<span class="pill" title="Listed in every country Teslascope reports">All countries</span>':cs.slice(0,MAXN).map(cl).join("")+(cs.length>MAXN?`<span class="pill dim" title="${esc(cs.slice(MAXN).map(swCountry).join(", "))}">+${cs.length-MAXN} countries</span>`:"");
+  return `<div class="swl">${carPills}<span class="swsep"></span>${ctPills}</div>`}
+function swNotes(items,empty){return items.length?items.map(it=>`<details class="swn"><summary><b>${esc(it.title)}</b> <span class="sub">${it.first_tag&&it.first_tag!==it.tag?"first listed "+esc(it.first_tag)+" · ":""}listed on ${esc(it.tag)}${it.was_tag?" · was "+esc(it.was_title)+" on "+esc(it.was_tag):swChanged(it.diff)?" · text changed since "+esc(it.prev_tag):""}</span>${swScope(it)}</summary><div class="swt">${swBody(it)}${it.versions?`<div class="sub" style="margin-top:6px">On ${it.versions.map(esc).join(", ")}${it.reaches_b?". Cars were seen going from one of these to the new version.":"."}</div>`:""}</div></details>`).join(""):`<div class="sub">${empty}</div>`}
 // the fetch from Teslascope, with a progress bar and what it is doing, in words
 function swSync(host,info,after){
   clearTimeout(SWPOLL);let was=false;
@@ -1972,10 +1987,10 @@ async function pageSoftware(arg){
   if(o.empty){main.innerHTML=`<h1>Software</h1><div class="sub">Tesla software versions, their release notes and who has them, from Teslascope. None are held yet.</div><div id="sws" style="margin-top:10px"></div>`;swSync($("#sws"),{left:1},()=>{bust("software");pageSoftware()});return}
   if(o.error){main.innerHTML=`<h1>Software</h1>`+errBox(o.error,"Could not read the versions");return}
   if(!o.choices.regions.some(r=>r.name===SWS.region)&&!o.choices.countries.some(c=>c.country===SWS.region)){SWS.region=o.choices.regions[0].name;swSave();return pageSoftware()}      // a remembered name that is no longer a region (it was "Down Under")
-  const ch=o.choices,vs=o.versions,keys=vs.map(v=>v.version);
+  const ch=o.choices,vs=o.versions,keys=vs.map(v=>v.version);swDefaultCar(ch.my_car&&ch.models.some(m=>m.model===ch.my_car.model&&(m.hw||"")===(ch.my_car.hw||""))?ch.my_car:null);{const rg=ch.regions.find(r=>r.name===SWS.region);SWRC=rg?rg.countries:[SWS.region]}
   if(!SWS.a||!keys.includes(SWS.a))SWS.a=keys[Math.min(keys.length-1,Math.max(0,keys.indexOf(o.mine)+3))]||keys[keys.length-1]||"";
   if(!SWS.b||!keys.includes(SWS.b))SWS.b=o.mine&&keys.includes(o.mine)?o.mine:keys[0]||"";
-  const carOpts=`<option value="">All cars</option>`+ch.models.map(m=>`<option value="${esc(m.model+"|"+(m.hw||""))}">${esc(m.label)}</option>`).join("");
+  const carOpts=`<option value="">All cars</option>`+ch.models.map(m=>`<option value="${esc(m.model+"|"+(m.hw||""))}">${esc(m.label)}${ch.my_car&&m.model===ch.my_car.model&&(m.hw||"")===(ch.my_car.hw||"")?" (my car)":""}</option>`).join("");
   main.innerHTML=`<h1>Software</h1><div class="sub">Tesla software versions from Teslascope: ${n0(o.held.n)} held, from ${esc(o.held.oldest||"–")} to ${esc(o.held.newest||"–")}.${o.mine?" Your car is on "+esc(o.mine)+".":""} Car counts are cars Teslascope has seen, so they are a sample, not every car.</div>
    <div id="sws" style="margin-top:8px"></div>
    <div class="bar"><select id="swr"><optgroup label="Regions">${ch.regions.map(r=>`<option value="${esc(r.name)}">${esc(r.name)} (${r.countries.length})</option>`).join("")}</optgroup><optgroup label="Countries">${ch.countries.map(c=>`<option value="${esc(c.country)}">${esc(swCountry(c.country))}</option>`).join("")}</optgroup></select><select id="swc">${carOpts}</select>
@@ -1983,7 +1998,7 @@ async function pageSoftware(arg){
    <div class="bar" id="swfl"><label class="sub">First seen from <input type="date" id="swd" value="${esc(SWS.since)}"></label><button class="chip ${SWS.fsd===""?"on":""}" data-f="">Any FSD</button><button class="chip ${SWS.fsd==="yes"?"on":""}" data-f="yes">With FSD</button><button class="chip ${SWS.fsd==="no"?"on":""}" data-f="no">Without FSD</button><span class="sub" id="swsh"></span></div>
    <div id="swb"></div>`;
   $("#swr").value=SWS.region;$("#swc").value=SWS.car;
-  $("#swr").onchange=e=>{SWS.region=e.target.value;swSave();bust("software");pageSoftware()};$("#swc").onchange=e=>{SWS.car=e.target.value;swSave();pageSoftware()};
+  $("#swr").onchange=e=>{SWS.region=e.target.value;swSave();bust("software");pageSoftware()};$("#swc").onchange=e=>{SWS.car=e.target.value;SWS.carSet=1;swSave();pageSoftware()};
   $$("[data-t]").forEach(b=>b.onclick=()=>{SWS.tab=b.dataset.t;swSave();$$("[data-t]").forEach(x=>x.classList.toggle("on",x===b));body()});
   swSync($("#sws"),o,()=>{bust("software");pageSoftware()});
   const carName=(SWS.car?(ch.models.find(m=>m.model+"|"+(m.hw||"")===SWS.car)||{}).label:"")||"any car";
@@ -2022,7 +2037,7 @@ async function pageSoftware(arg){
         if(swKey(SWS.a)>=swKey(SWS.b)){box.innerHTML='<div class="sub">Pick an older version first and a newer one second.</div>';return}
         box.innerHTML='<div class="sub">Comparing…</div>';const r=await fetchJ("software/compare?a="+encodeURIComponent(SWS.a)+"&b="+encodeURIComponent(SWS.b)+"&"+swQ());if(!document.body.contains(box))return;
         if(r.error){box.innerHTML=errBox(r.error,"Could not compare");return}
-        const nb=r.between_region.length;
+        SWRC=r.countries||SWRC;const nb=r.between_region.length;
         box.innerHTML=`<div class="sub">${esc(SWS.region)} had ${n0(nb)} version${nb===1?"":"s"} between these two (${n0(r.between.length)} held in all regions). Open a feature to read its text.${r.a_page_lists_nothing_here?" No release notes for "+esc(SWS.region)+" were listed on "+esc(r.a)+" itself, so what it had is taken from the notes listed on the versions before it.":""}</div>
          <h2>Added by ${esc(r.b)} <small class="sub">${n0(r.listed_new.length)}</small></h2>${swNotes(r.listed_new,"Nothing new is listed on "+esc(r.b)+".")}
          <h2>Text changed <small class="sub">${n0(r.listed_revised.length)}</small></h2>${swNotes(r.listed_revised,"No feature was reworded.")}
@@ -2039,7 +2054,7 @@ async function pageSoftware(arg){
 async function pageSoftwareOne(v){
   loading();const d=await fetchJ("software/version?v="+encodeURIComponent(v)+"&"+swQ());
   if(d.error){main.innerHTML=crumbs("#/software","Software")+`<h1>Software ${esc(v)}</h1>`+errBox(d.error,"Could not read this version");return}
-  const u=d.uptake,hw=(SWS.car.split("|")[1]||"");
+  SWRC=d.region_countries||[];swDefaultCar(d.my_car);const u=d.uptake,hw=(SWS.car.split("|")[1]||"");
   main.innerHTML=crumbs("#/software","Software")+`<h1>Software ${esc(v)} ${swFsd(u.fsd,hw)}</h1><div class="sub">First seen ${swDate(u.first_spotted)}. ${esc(SWS.region)}${SWS.car?", "+esc((SWS.car.split("|")[0])):""}.</div>
    <div class="bar"><button class="chip" id="cmpf">Compare from this version</button><button class="chip" id="cmpt">Compare to this version</button></div>
    <div class="tiles">${tile(n0(u.installs),"cars seen on it")}${tile(u.region_installs==null?"–":n0(u.region_installs),"in "+esc(SWS.region))}${tile(n0(u.pending),"waiting for it")}${tile(n0(d.features.length),"features listed up to it")}</div>

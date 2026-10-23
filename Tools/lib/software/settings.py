@@ -8,6 +8,7 @@
         "settle_days": 14,                                  a version nobody has taken for this long, with none waiting, is not asked about again
         "refetch_hours": 6,                                 a version still moving is asked about at most this often
         "pace_seconds": 1.0,                                pause between requests to Teslascope
+        "my_car": {"model": "modely", "hw": "TeslaAP4"},    Teslascope's car type of your car (Model Y L is "modely"): the page opens on it
         "car_check_minutes": 30                             how often the app asks Tessie which software the car is on (0 = never; the drives sync asks too)
     }
 """
@@ -32,6 +33,7 @@ DEFAULTS = {
     "refetch_hours": 6,
     "pace_seconds": 1.0,
     "car_check_minutes": 30,
+    "my_car": {"model": "modely", "hw": "TeslaAP4"},
 }
 
 

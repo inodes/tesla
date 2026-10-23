@@ -327,6 +327,7 @@ class Index:
                 if prev is not None:
                     row["prev_tag"], row["diff"] = prev["first_tag"], N.diff(prev["description"], row["description"])
                 prev = row
+        self.scopes(out)
         return out
 
     def _chain(self, key, countries):
@@ -410,6 +411,7 @@ class Index:
             t = self.q("SELECT description FROM note_text WHERE note_key=? AND hash=?", (r["note_key"], r["hash"]))
             out.append(dict(note_key=r["note_key"], title=r["title"], tag=r["tag"], hash=r["hash"], listed_on_page=(r["note_key"], r["hash"]) in page,
                             seen_on=r["version"], description=t[0]["description"] if t else "", **(self.changed_from(r["note_key"], r["hash"], cs) or {})))
+        self.scopes(out)
         return {"version": version, "features": out}
 
     def _path(self, src, dst, depth=3, only=None):
@@ -526,11 +528,32 @@ class Index:
             it.update(self.changed_from(it["note_key"], it["hash"], cs) or {})
         for it in skipped + others:
             it.update(self.changed_from(it["note_key"], it["hash"], cs) or {})
+        self.scopes(new + revised + again + skipped + others)
         return {"a": a, "b": b, "countries": cs, "model": model, "hw": hw, "a_page_lists_nothing_here": not a_own,
                 "listed_new": new, "listed_revised": revised, "listed_again": again,
                 "skipped": sorted(skipped, key=key_f, reverse=True), "others": sorted(others, key=key_f, reverse=True),
                 "between": [r["version"] for r in self.q("SELECT version FROM versions WHERE k > ? AND k < ? ORDER BY k", (ka, kb))],
                 "between_region": sorted([v["version"] for v in self.versions_for(cs, model, hw) if ka < V.sortkey(v["version"]) < kb], key=V.key)}
+
+    def scopes(self, items):
+        """Adds `scope` to every note dict in items (each with note_key and hash): where Teslascope lists exactly that text, over all versions and regions.
+           -> {countries: [codes], cars: [{model, hw, label}], all_countries, all_cars}. `*` in Teslascope's data means unspecified, i.e. all."""
+        seen_all = {r["country"] for r in self.countries_seen()}
+        cache = {}
+        for it in items:
+            k = (it["note_key"], it["hash"])
+            if k not in cache:
+                rows = self.q("""SELECT DISTINCT s.country, s.model, s.hw FROM occurrences o JOIN scope s ON s.version=o.version AND s.fid=o.fid
+                                 WHERE o.note_key=? AND o.hash=?""", k)
+                cs = {r["country"] for r in rows}
+                cars = {(r["model"], r["hw"]) for r in rows}
+                all_c = ALL in cs or (bool(seen_all) and seen_all <= cs)
+                all_k = (ALL, ALL) in cars or any(m == ALL for m, h in cars) and not any(m != ALL for m, h in cars)
+                cache[k] = dict(countries=sorted(c for c in cs if c != ALL), all_countries=all_c, all_cars=all_k,
+                                cars=[] if all_k else [dict(model=m, hw=None if h in (ALL, "None", "") else h, label=self.label(m, None if h in (ALL, "None", "") else h))
+                                                      for m, h in sorted(cars) if m != ALL])
+            it["scope"] = cache[k]
+        return items
 
     @staticmethod
     def _desc(r):
