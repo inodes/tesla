@@ -1602,7 +1602,7 @@ async function pageTeslaCam(role,id){
   const head='<h1>TeslaCam</h1>';
   const trips=act.filter(x=>x.k==="drive"&&!x.repark).map(x=>({id:x.id,t0:x.t0,t1:x.t0+x.min*60,ti:driveTitle(x)}));
   const tripOf=v=>{const a=v.t0!=null?v.t0:v.t,b=v.t1!=null?v.t1:(v.t||0)+60;return trips.find(d=>d.t0<b&&d.t1>a)};
-  main.innerHTML=head+`<div id="fsb" style="margin-bottom:12px"></div><div id="thin"></div><div class="bar" id="tsr"></div><div class="bar"><span id="rg"></span><input type="search" id="q" placeholder="Search…" value="${esc(TCS.q)}"></div><div id="selbar"></div><div class="tiles" id="tl"></div><div id="spl"></div><div id="tb"></div>`;
+  main.innerHTML=head+`<div id="fsb" style="margin-bottom:12px"></div><div id="thin"></div><div class="bar" id="tsr"></div><div class="bar"><span id="rg"></span><input type="search" id="q" placeholder="Search…" value="${esc(TCS.q)}"></div><div id="selbar"></div><div class="tiles" id="tl"></div><div id="ostrip"></div><div id="spl"></div><div id="tb"></div>`;
   let data=null,sel=null,token=0,sentryList=null,vis=[],pend=null,jobT=null,note="";
   footageSync($("#fsb"),{table:true});
   // the stills of ordinary driving (no event, no sign) can be made smaller; events and signs keep their full-size pictures
@@ -1628,6 +1628,17 @@ async function pageTeslaCam(role,id){
   const allowed=(r,act)=>picked().filter(it=>{const c=kpOf(it.kind,it.id);return c.bytes[r]>0&&(act==="move"?r!=="A":(c.ready||(r!=="A"&&c.bytes.A>0)))});
   const lacking=()=>picked().filter(it=>{const c=kpOf(it.kind,it.id);return !c.ready&&conn().some(r=>c.bytes[r]>0)});
   const sizeOn=(list,r)=>list.reduce((a,it)=>a+(kpOf(it.kind,it.id).bytes[r]||0),0);
+  // the clip that is open: its status and a button to read what is missing, next to the video (the same job as the tick box + the bar)
+  let OPENK=null;
+  const runProc=async list=>{pend=null;note="";stopVideos();
+    let j;try{j=await (await fetch("/api/clips/act",{method:"POST",body:JSON.stringify({action:"process",items:list})})).json()}catch(e){j={error:e.message}}
+    if(j.error){note=j.error;selbar();ostrip();return}
+    poll()};
+  const ostrip=()=>{const el=$("#ostrip");if(!el)return;const c=OPENK&&kpOf(OPENK.kind,OPENK.id);
+    if(!c||jobT){el.innerHTML="";return}
+    const need=!c.ready&&conn().some(r=>c.bytes[r]>0);
+    el.innerHTML=`<div class="bar selb">${kpChips(c)}${need?`<button class="btn sm pri" id="ostgo" title="Reads the metadata, makes the stills and reads the signs this clip is still missing, from its video on the connected drives">Read what is missing</button>`:""}${note?`<span class="sub" style="flex:1;${/rror|not /.test(note)?"color:var(--bad)":"color:var(--ok)"}">${esc(note)}</span>`:""}</div>`;
+    const b=$("#ostgo",el);if(b)b.onclick=()=>runProc([OPENK])};
   const selbar=()=>{const el=$("#selbar");if(!el)return;if(!KPC){el.innerHTML="";return}
     const items=picked(),cn=conn(),done=vis.filter(v=>{const c=kpOf(v.ty,v.id);return c&&c.ready&&cn.some(r=>c.bytes[r]>0)});
     const dsz=done.reduce((a,v)=>a+Math.max(...cn.map(r=>kpOf(v.ty,v.id).bytes[r]||0)),0);
@@ -1640,6 +1651,8 @@ async function pageTeslaCam(role,id){
       h+=items.length?`<b>${n0(items.length)} selected</b><span class="sub">${fmtGB(items.reduce((a,it)=>a+(kpOf(it.kind,it.id).size||0),0))}</span><button class="btn sm" id="kclr">Clear</button>`:"";
       h+=`<button class="btn sm" id="kall" ${done.length?"":"disabled"} title="Ticks every clip below whose metadata, stills and signs are all kept (${n0(done.length)} clips, ${fmtGB(dsz)})">Select all that are done${done.length?" · "+n0(done.length):""}</button>`;
       const lk=lacking();
+      const lkAll=items.length?[]:vis.filter(v=>{const c=kpOf(v.ty,v.id);return c&&!c.ready&&cn.some(r=>c.bytes[r]>0)}).map(v=>({kind:v.ty,id:v.id}));      // nothing ticked: every clip shown that lacks something
+      if(lkAll.length)h+=`<button class="btn sm pri" data-kall="1" title="Reads the metadata, makes the stills and reads the signs that the clips below are still missing, from their video on the connected drives">Read what is missing · all ${n0(lkAll.length)} clip${lkAll.length>1?"s":""} shown</button>`;
       if(lk.length)h+=`<button class="btn sm pri" data-kproc="1" title="Reads the metadata, makes the stills and reads the signs that these clips are still missing, from their video on the connected drives">Read what is missing · ${n0(lk.length)} clip${lk.length>1?"s":""}</button>`;
       cn.forEach(r=>{const d=allowed(r,"delete");if(items.length&&d.length)h+=`<button class="btn sm bad" data-ka="delete|${r}">Delete from ${NMD[r]} · ${fmtGB(sizeOn(d,r))}</button>`;
         const m=allowed(r,"move");if(items.length&&m.length&&r!=="A"&&cn.includes("A"))h+=`<button class="btn sm" data-ka="move|${r}">Move to Archive · ${fmtGB(sizeOn(m,r))}</button>`});
@@ -1649,10 +1662,9 @@ async function pageTeslaCam(role,id){
     on("kclr",()=>{TCSEL.clear();note="";$$("#tb [data-sel]").forEach(b=>{b.classList.remove("on");b.textContent=""});selbar()});
     on("kall",()=>{done.forEach(v=>TCSEL.add(v.ty+"|"+v.id));note="";draw()});
     on("kno",()=>{pend=null;selbar()});
-    $$("[data-kproc]",el).forEach(b=>b.onclick=async()=>{const list=lacking();pend=null;note="";stopVideos();
-      let j;try{j=await (await fetch("/api/clips/act",{method:"POST",body:JSON.stringify({action:"process",items:list})})).json()}catch(e){j={error:e.message}}
-      if(j.error){note=j.error;selbar();return}
-      poll()});
+    $$("[data-kproc]",el).forEach(b=>b.onclick=()=>runProc(lacking()));
+    $$("[data-kall]",el).forEach(b=>b.onclick=()=>runProc(vis.filter(v=>{const c=kpOf(v.ty,v.id);return c&&!c.ready&&conn().some(r=>c.bytes[r]>0)}).map(v=>({kind:v.ty,id:v.id}))));
+    ostrip()
     $$("[data-ka]",el).forEach(b=>b.onclick=()=>{const [a,r]=b.dataset.ka.split("|");pend={action:a,role:r};note="";selbar()});
     on("kdo",async()=>{const p=pend,list=allowed(p.role,p.action);pend=null;stopVideos();
       let j;try{j=await (await fetch("/api/clips/act",{method:"POST",body:JSON.stringify({action:p.action,role:p.role,items:list,confirm:true})})).json()}catch(e){j={error:e.message}}
@@ -1694,6 +1706,7 @@ async function pageTeslaCam(role,id){
     vis=all;$$("#tb [data-sel]").forEach(b=>b.onclick=e=>{e.stopPropagation();const k=b.dataset.sel;TCSEL.has(k)?TCSEL.delete(k):TCSEL.add(k);b.classList.toggle("on",TCSEL.has(k));b.textContent=TCSEL.has(k)?"✓":"";pend=null;selbar()});selbar();
     lazyThumbs($("#tb"));$$("#tb .evc").forEach(b=>b.onclick=async()=>{const ty=b.dataset.ty,sel=b.dataset.id;$$("#tb .evc").forEach(x=>x.classList.toggle("on",x===b));$("#spl").scrollIntoView({block:"nearest"});
       const it=data[ty].find(v=>v.id===sel);
+      OPENK={kind:ty,id:sel};ostrip();
       if(ty!=="recent"){
         if(it.play)return ty==="saved"&&it.t?savedDrive($("#spl"),it,places):sentryPlayer($("#spl"),it,it.play,TCF[ty]);
         const what=it.reason?reason(it.reason):ty==="saved"?"Saved clip":"Sentry event";
