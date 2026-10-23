@@ -1656,9 +1656,9 @@ async function pageTeslaCam(role,id){
   const ostrip=()=>{const el=$("#ostrip");if(!el)return;const c=OPENK&&kpOf(OPENK.kind,OPENK.id);
     if(!c){el.innerHTML="";return}
     if(jobT){el.innerHTML='<div class="bar selb"><span class="sub">Reading from the drive: videos cannot play until it has finished.</span></div>';return}
-    const wn=c.wait_n||0;
-    el.innerHTML=`<div class="bar selb">${kpChips(c)}${wn?`<span class="sub">${n0(wn)} minute${wn>1?"s":""} of stills ${esc(c.waiting||"are waiting")}. Nothing to read for those yet.</span>`:""}</div>`;
-  };
+    const wn=c.wait_n||0,need=todoOf(c)&&conn().some(r=>c.bytes[r]>0);
+    el.innerHTML=`<div class="bar selb">${kpChips(c)}${need?'<button class="btn sm pri" id="ostgo">Update this clip</button>':""}${wn?`<span class="sub">${n0(wn)} minute${wn>1?"s":""} of stills ${esc(c.waiting||"are waiting")}. Nothing to read for those yet.</span>`:""}</div>`;
+    const b=$("#ostgo",el);if(b)b.onclick=()=>runProc([OPENK])};
   const selbar=()=>{const el=$("#selbar");if(!el)return;if(!KPC){el.innerHTML="";return}
     const items=picked(),cn=conn(),done=vis.filter(v=>{const c=kpOf(v.ty,v.id);return c&&c.ready&&cn.some(r=>c.bytes[r]>0)});
     const dsz=done.reduce((a,v)=>a+Math.max(...cn.map(r=>kpOf(v.ty,v.id).bytes[r]||0)),0);
