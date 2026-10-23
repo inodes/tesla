@@ -36,6 +36,7 @@ the block). A change takes effect the next time the app or script reads it (the 
                                                    front-camera stills of one review event: one a second from event_before_s before to event_after_s after (thinned
                                                    to max_event_stills), each its own picture (from the kept stills, see app.stills)
   app.stills.width / quality / workers             one-second stills of the front-camera video (teslacam_stills.py): width in px, JPEG quality (ffmpeg -q:v, 2 best .. 31 worst), clips made at once
+  app.event_shots.quality                         JPEG quality (ffmpeg -q:v, 2 best .. 31 worst) of the full-size pictures kept of a horn / Sentry event's moment (event_shots.py)
   app.keeper.background / stills / interval_s / pass_gap_s / play_wait_s read every connected TeslaCam drive in the background (the file log, the events, the telemetry, the one-second stills; lib/app_keeper.py):
                                                    off by default; true = on; stills = also make stills in the background (ffmpeg on the video; off, and only ever on request, unless true); how often (s) it looks for work; the least time (s) between two passes over the same drives; how long (s) it leaves the drives alone after video was last played
   app.drives.repark_max_km / repark_max_minutes    a drive shorter than both is a "re-park" (the car was shuffled), not a drive
@@ -78,6 +79,7 @@ DEFAULTS = {
                "accel_min_pct": 5, "speed_min_kmh": 5, "speed_tol_kmh": 6,
                "event_before_s": 12, "event_after_s": 15, "max_event_stills": 40, "hi_px": 1400, "hi_quality": 82, "exit_car_kmh": 90, "exit_gap_kmh": 20, "sign_min_stills": 2, "works_gap_s": 40, "osm_fetch": True, "traffic": True, "traffic_conf": 0.35, "traffic_min_w": 0.015, "traffic_model": "", "traffic_model_url": "https://huggingface.co/unity/inference-engine-yolo/resolve/main/models/yolov8n.onnx", "steer_deg": 15},
     "stills": {"width": 400, "quality": 6, "workers": 3},
+    "event_shots": {"quality": 2},
     "keeper": {"background": False, "stills": False, "interval_s": 20, "pass_gap_s": 300, "play_wait_s": 30},
     "drives": {"repark_max_km": 0.05, "repark_same_place_km": 0.3, "repark_same_place_m": 50, "repark_max_minutes": 10,
                "long_highway_km": 30, "long_highway_fast_kmh": 90, "long_highway_fast_minutes": 10,

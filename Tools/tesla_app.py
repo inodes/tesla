@@ -401,6 +401,12 @@ class H(BaseHTTPRequestHandler):
                 if b:
                     return self.send_bytes(b, "image/jpeg", extra={"Cache-Control": "public, max-age=31536000"})
                 return self.send_bytes(b"not found", "text/plain", 404)
+            if path.startswith("/eventshot/"):      # a full-size picture of the moment of an event: /eventshot/<saved|sentry>/<event folder>/<camera>.jpg
+                m = re.match(r"^/eventshot/(saved|sentry)/(\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2})/([a-z_]+)\.jpg$", path)
+                p = CKEEP.shots.path(m.group(1), m.group(2), m.group(3)) if m else ""
+                if p:
+                    return self.send_file(p, cache=True)
+                return self.send_bytes(b"not found", "text/plain", 404)
             if path.startswith("/revev/"):          # the contact sheet of a drive review event: /revev/<drive stamp>/<event>.jpg
                 p = safe_join(os.path.join(DATA_DIR, "drive_review", "events"), path[7:])
                 if p and os.path.isfile(p) and p.endswith(".jpg"):
@@ -583,6 +589,11 @@ class H(BaseHTTPRequestHandler):
             return self.send_json(CKEEP.job())
         if name == "clips":                     # every Recent run, Saved and Sentry event ever logged, whichever drives are connected; each says which drive holds it and whether it can be played
             return self.send_json(TC.clips_all({r: footage_root(r) for r in "AJU"}))
+        if name.startswith("clips/shots/"):     # clips/shots/<saved|sentry>/<event folder>: the cameras that have a full-size picture of the moment, and which second of which clip it is
+            m = re.match(r"^clips/shots/(saved|sentry)/(\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2})$", name)
+            if not m:
+                return self.send_json(dict(cams=[]))
+            return self.send_json(dict(CKEEP.shots.info(m.group(1), m.group(2)), cams=sorted(CKEEP.shots.have(m.group(1), m.group(2)))))
         if name.startswith("clips/after/"):     # clips/after/<minute>?n=&skip=<minutes already shown, comma separated>: the continuous recording that follows an event
             try:
                 n = max(0, min(60, int(q.get("n", ["10"])[0])))
