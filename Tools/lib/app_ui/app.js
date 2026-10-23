@@ -1522,8 +1522,10 @@ async function pageDriveList(){
   footageSync($("#fsb"));
 }
 const localWhen=iso=>iso?new Date(iso).toLocaleString("en-AU",{day:"numeric",month:"short",year:"numeric",hour:"2-digit",minute:"2-digit"}):"Never";      // stored in UTC, shown on this computer's clock
+// pressing an action that reads or ejects a drive stops every video on the page first (a playing video holds the drive and slows what is asked for)
+function stopVideos(){$$("video").forEach(v=>{try{v.pause();v.removeAttribute("src");v.querySelectorAll("source").forEach(x=>x.remove());v.load()}catch(e){}})}
 // eject a drive from the app: the app stops reading it first (POST /api/eject); -> {ok, text}
-async function ejectDrive(role){try{return await (await fetch("/api/eject",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({role})})).json()}catch(e){return{ok:false,text:e.message}}}
+async function ejectDrive(role){stopVideos();try{return await (await fetch("/api/eject",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({role})})).json()}catch(e){return{ok:false,text:e.message}}}
 // the footage on the connected drives (lib/app_keeper.py does the work in the background, lib/footage_todo.py says what is left): all connected drives, nothing to pick.
 // opts.table: a row per drive with what the log holds and what is left to do, an Eject button, and a button only for the work that is left
 function footageSync(host,opts){
@@ -1537,7 +1539,7 @@ function footageSync(host,opts){
     const run=!!k.working,pc=k.total?Math.round(100*k.done/k.total):0,conn=Object.keys(roots).filter(r=>roots[r]);
     if((was&&!run)||(table&&!lg)){try{lg=await tcGet("footage/log")}catch(e){}}was=run;
     const tot={log:0,telemetry:0,stills:0};const checking=!!(todo&&todo.checking);let unknown=!todo;conn.forEach(r=>{const l=left(todo,r);if(!l){unknown=true;return}tot.log+=l.log;tot.telemetry+=l.telemetry;tot.stills+=l.stills});
-    const kinds=unknown?STEP:STEP.filter(x=>tot[x[0]]>0),go=async list=>{until=Date.now()+20000;try{await fetch("/api/keeper",{method:"POST",body:JSON.stringify({action:"run",stages:list})})}catch(e){}paint()};
+    const kinds=unknown?STEP:STEP.filter(x=>tot[x[0]]>0),go=async list=>{stopVideos();until=Date.now()+20000;try{await fetch("/api/keeper",{method:"POST",body:JSON.stringify({action:"run",stages:list})})}catch(e){}paint()};
     const g0=todo&&todo.progress,chkTx=!g0?"Checking for outstanding tasks...":g0.step==="list"?"Checking the "+(NM[g0.role]||g0.role)+" for new files":g0.step==="telemetry"?"Checking for minutes without telemetry":"Checking for clips without stills",chkPc=g0?Math.round(100*(g0.done+.4)/g0.total):3;      // a bar whenever something is being checked
     const barOf=(txt,q)=>`<div style="min-width:170px"><div>${esc(txt)}</div><div style="height:6px;border-radius:3px;background:var(--line);margin-top:5px;overflow:hidden"><div style="height:100%;width:${q}%;background:var(--accent);transition:width .3s"></div></div></div>`;
     let h="";
@@ -1564,7 +1566,7 @@ function footageSync(host,opts){
     $$("[data-st]",host).forEach(b=>b.onclick=()=>go(STEP.find(x=>x[0]===b.dataset.st)[2]));
     $$("[data-ej]",host).forEach(b=>b.onclick=async()=>{busyEject=b.dataset.ej;msg="";paint();const r=await ejectDrive(busyEject);busyEject="";msg=r.text;paint()});
     const x=$("#fsx",host);if(x)x.onclick=async()=>{try{await fetch("/api/keeper",{method:"POST",body:JSON.stringify({action:"pause"})})}catch(e){}until=Date.now()+20000;paint()};      // Stop; the numbers left are worked out again once the job has let go of the drive
-    const rs=$("#fsr",host);if(rs)rs.onclick=async()=>{try{await fetch("/api/keeper",{method:"POST",body:JSON.stringify({action:"resume"})})}catch(e){}until=Date.now()+20000;paint()};
+    const rs=$("#fsr",host);if(rs)rs.onclick=async()=>{stopVideos();try{await fetch("/api/keeper",{method:"POST",body:JSON.stringify({action:"resume"})})}catch(e){}until=Date.now()+20000;paint()};
     if(run||checking||Date.now()<until)setTimeout(paint,run?2000:2500)};
   paint()}
 async function pageTeslaCam(role,id){

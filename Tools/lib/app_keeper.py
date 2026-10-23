@@ -70,13 +70,13 @@ class Keeper:
 
     # ---- video playing: the drives are left alone while it does (six streams from one disk stall if something else is reading it)
     def playing_now(self):
-        """Called whenever the page is sent video."""
+        """Called whenever the page is sent video. A pass asked for from a page (a button) does not give way to it: the page stops its videos when the button is pressed."""
         self._played = time.time()
-        if self._started and self._stage is not None and self._stage < len(STAGES):      # stop at once, not at the next look
+        if self._started and not self._once and self._stage is not None and self._stage < len(STAGES):      # stop at once, not at the next look
             (self.tc.scan_stop if STAGES[self._stage] == "telemetry" else self.fg.stop)()
 
     def playing(self):
-        return time.time() - self._played < float(app_config.get("keeper.play_wait_s", 30))
+        return not self._once and time.time() - self._played < float(app_config.get("keeper.play_wait_s", 30))
 
     # ---- running
     def start(self):
@@ -89,7 +89,7 @@ class Keeper:
         """One pass over the connected drives now - log, events, telemetry and the stills, or only `stages` - even when the background reading is off."""
         if self._stage is not None:         # a pass is under way: let it finish (the buttons are disabled meanwhile)
             return self.status()
-        self.paused = False
+        self.paused, self._played = False, 0.0
         self._only = tuple(x for x in (stages or ()) if x in STAGES) or None
         self._once, self._sig, self._done_at, self.error = True, None, 0.0, ""
         self.start()
@@ -225,6 +225,6 @@ class Keeper:
         return self.status()
 
     def resume(self):
-        self.paused = False
+        self.paused, self._played = False, 0.0
         self._sig = None
         return self.status()
