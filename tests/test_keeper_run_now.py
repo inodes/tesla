@@ -80,6 +80,13 @@ class RunNow(unittest.TestCase):
         self.assertFalse(self.k._once)                   # and it stops after the one pass
         self.assertFalse(self.k.status()["enabled"])
 
+    def test_each_drive_gets_its_share_of_the_running_job(self):
+        self.k._plan = ["A", "J", "J", "A", "J"]         # newest first: the order the job takes them
+        self.assertEqual(self.k._by_drive("telemetry", 3), {"A": dict(done=1, total=2), "J": dict(done=2, total=3)})
+        self.assertEqual(self.k._by_drive("telemetry", 0), {"A": dict(done=0, total=2), "J": dict(done=0, total=3)})
+        self.k._plan = ["A", "J"]                         # the log: one step a drive
+        self.assertEqual(self.k._by_drive("log", 1), {"A": dict(done=1, total=1), "J": dict(done=0, total=1)})
+
 
 if __name__ == "__main__":
     unittest.main()

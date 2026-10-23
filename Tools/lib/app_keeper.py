@@ -57,6 +57,7 @@ class Keeper:
         self._cur = None                # what the running pass is for
         self._done_at = 0.0
         self._roles = []
+        self._plan = []                 # the drive each item of the running job belongs to, in the order the job takes them (what each drive's progress is counted from)
         self._thread = None
         self._once = False              # a pass asked for from a page (Sync footage): runs once, stills included, then stops
         self._only = None               # that pass is only these stages (the Update log / Read telemetry / Make stills buttons)
@@ -161,6 +162,7 @@ class Keeper:
         if stage == "log":
             scans = self._scans()
             need = roots if self._only else {r: p for r, p in roots.items() if _mtime(p) > _epoch((scans.get(r) or {}).get("at"))}
+            self._plan = sorted(need, key=lambda r: "AJU?".index(r) if r in "AJU?" else 9)       # the order Footage._run_log takes them
             return bool(need) and bool(self.fg.start("log", need).get("running"))
         if stage == "events":
             for r, p in roots.items():
@@ -171,11 +173,15 @@ class Keeper:
                         self.tc.events(r, kind, p)
             return False
         if stage == "telemetry":
-            return self.tc.scan_todo(roots) > 0 and bool(self.tc.scan_start(roots, reuse=True).get("running"))
+            if self.tc.scan_todo(roots) <= 0:
+                return False
+            self._plan = [x["role"] for x in getattr(self.tc, "_scan_todo", [])]
+            return bool(self.tc.scan_start(roots, reuse=True).get("running"))
         if stage == "stills":
             if not (app_config.get("keeper.stills", False) or self._once):      # stills decode video (ffmpeg): only ever on request (Sync footage, the Footage panel or the command)
                 return False
             rep = self.fg.stills_report(roots)
+            self._plan = [x["role"] for x in getattr(self.fg, "_todo", [])]
             return bool(rep.get("to_make")) and bool(rep.get("ffmpeg")) and bool(self.fg.start("stills", roots, by="keeper").get("running"))
         return False
 
@@ -196,7 +202,19 @@ class Keeper:
             s.update(stage=st, done=job.get("done", 0), total=job.get("total", 0))
             where = " and ".join(NAMES.get(r, r) for r in self._roles) or "the connected drives"
             s["text"] = "%s %s" % (LABEL[st], where)
+            s["drives"] = self._by_drive(st, s["done"])
         return s
+
+    def _by_drive(self, stage, done):
+        """{role: dict(done, total)} for the job running now: each drive's share of it, counted from the order the job takes its items in (newest first for minutes and
+        clips, drive by drive for the log). The page shows it as a bar on each drive's row."""
+        out = {}
+        for i, r in enumerate(self._plan):
+            d = out.setdefault(r, dict(done=0, total=0))
+            d["total"] += 1
+            if i < done:
+                d["done"] += 1
+        return out
 
     def pause(self):
         self.paused = True
