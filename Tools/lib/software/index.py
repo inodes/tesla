@@ -434,7 +434,7 @@ class Index:
            listed_again     on both pages with the same text, tagged again on b: nothing new to a car on a, listed for cars coming from older versions
            skipped          listed for the region on a version between a and b (or tagged between them) and not on b's page: installed all the same
                             when b's build contains it, but b's notes do not say so. `reaches_b`: cars were seen going from that version to b
-           others           listed between a and b only for countries / car types outside the choice
+           others           listed between a and b only for countries / car types outside the choice (`region_cars`: the car types the chosen region does have it for)
            between / between_region   every version held between a and b / those the region has had cars or notes on
            Every note carries first_tag / first_seen: the first version that listed that text for the region."""
         cs = self.resolve(region)
@@ -459,9 +459,11 @@ class Index:
         groups = {}
         for r in mid:
             g = groups.setdefault((r["note_key"], r["hash"]), {"title": r["title"], "tag": r["tag"], "tag_k": r["tag_k"], "versions": set(), "countries": set(),
-                                                              "applies": set(), "applies_v": set()})
+                                                              "applies": set(), "applies_v": set(), "region_cars": set()})
             g["versions"].add(r["version"])
             g["countries"].add(r["country"])
+            if r["country"] in cs or r["country"] == ALL:
+                g["region_cars"].add((r["model"], r["hw"]))
             if in_region(r):
                 g["applies"].add(r["country"])
                 g["applies_v"].add(r["version"])
@@ -514,6 +516,8 @@ class Index:
                 item["reaches_b"] = any(reaches(v) for v in item["versions"])
                 skipped.append(item)
             else:
+                if g["region_cars"]:        # the region does get it, but for other car types than the one chosen
+                    item["region_cars"] = sorted({self.label(m, h) if m != ALL else "all cars" for m, h in g["region_cars"]})
                 others.append(item)
         key_f = lambda x: V.sortkey(x["tag"])
         for it in revised:                                  # compared with the text just before it in the chain a -> b, and each step on the way

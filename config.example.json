@@ -95,6 +95,7 @@
       "long_highway_fast_kmh": 90,
       "long_highway_fast_minutes": 10,
       "charge_window_minutes": 30,
+      "range_days_shown": 31,
       "low_battery_pct": 20
     },
     "places": {
