@@ -96,20 +96,38 @@ class KeepTest(Base):
 
     def test_delete_is_refused_until_it_is_all_kept_then_removes_only_the_video(self):
         k = self.keep(read=[S1], stills=[S1, S2])
-        out = k.start("delete", "J", [dict(kind="saved", id="ev1")], self.roots)
+        out = k.start("delete", "J", [dict(kind="saved", id="ev1")], self.roots, confirmed=True)
         self.assertIn("not all kept", out["error"])
         self.assertTrue(os.path.exists(os.path.join(self.roots["J"], "SavedClips", "ev1", "%s-front.mp4" % S1)))
         k = self.keep(read=[S1, S2], stills=[S1, S2], scanned=[S1, S2])
-        k.start("delete", "J", [dict(kind="saved", id="ev1")], self.roots)
+        k.start("delete", "J", [dict(kind="saved", id="ev1")], self.roots, confirmed=True)
         k._thread.join(5)
         self.assertEqual(os.listdir(os.path.join(self.roots["J"], "SavedClips", "ev1")), [])
         j = k.job()
         self.assertEqual((j["done"], j["freed"], j["errors"]), (4, 40, []))
         self.assertEqual(k.status(force=True)["clips"]["saved"]["ev1"]["bytes"], {})      # the log knows at once
 
+    def test_nothing_is_removed_without_a_confirmation(self):
+        k = self.keep(read=[S1, S2], stills=[S1, S2], scanned=[S1, S2])
+        for act in ("delete", "move"):
+            self.assertIn("Not confirmed", k.start(act, "J", [dict(kind="saved", id="ev1")], self.roots)["error"])
+        self.assertEqual(len(os.listdir(os.path.join(self.roots["J"], "SavedClips", "ev1"))), 4)
+
+    def test_what_was_removed_is_kept_in_a_log_that_outlives_the_app(self):
+        k = self.keep(read=[S1, S2], stills=[S1, S2], scanned=[S1, S2])
+        self.assertEqual(k.job(), dict(running=False))                              # nothing done yet, nothing logged
+        k.start("delete", "J", [dict(kind="saved", id="ev1")], self.roots, confirmed=True)
+        k._thread.join(5)
+        h = k.history()
+        self.assertEqual((h[0]["action"], h[0]["role"], h[0]["removed"], h[0]["freed"], h[0]["errors"]), ("delete", "J", 4, 40, []))
+        self.assertEqual(sorted(h[0]["files"])[0], "%s-back.mp4" % S1)
+        self.assertEqual(h[0]["clips"], [dict(kind="saved", id="ev1")])
+        again = CK.ClipKeep(self.data, k.tc, k.fg)                                  # the app was restarted
+        self.assertEqual(again.job()["last"]["removed"], 4)
+
     def test_move_copies_to_the_archive_first_and_then_removes_it_from_the_drive(self):
         k = self.keep()
-        out = k.start("move", "J", [dict(kind="saved", id="ev1")], self.roots)                # nothing kept yet: a move is still allowed, nothing is lost
+        out = k.start("move", "J", [dict(kind="saved", id="ev1")], self.roots, confirmed=True)                # nothing kept yet: a move is still allowed, nothing is lost
         self.assertNotIn("error", out)
         k._thread.join(5)
         self.assertEqual(sorted(os.listdir(os.path.join(self.roots["A"], "SavedClips", "ev1"))), sorted(["%s-%s.mp4" % (st, c) for st in (S1, S2) for c in ("front", "back")]))
@@ -122,15 +140,15 @@ class KeepTest(Base):
             for cam in ("front", "back"):
                 led.mark("A", "saved|ev1|%s-%s" % (st, cam), 10, True)
         k = self.keep()
-        out = k.start("delete", "J", [dict(kind="saved", id="ev1")], self.roots)
+        out = k.start("delete", "J", [dict(kind="saved", id="ev1")], self.roots, confirmed=True)
         self.assertNotIn("error", out)
         k._thread.join(5)
         self.assertEqual(os.listdir(os.path.join(self.roots["J"], "SavedClips", "ev1")), [])
 
     def test_a_drive_that_is_not_connected_or_the_archive_itself_is_refused_for_a_move(self):
         k = self.keep()
-        self.assertIn("not connected", k.start("delete", "U", [dict(kind="saved", id="ev1")], self.roots)["error"])
-        self.assertIn("Archive", k.start("move", "A", [dict(kind="saved", id="ev1")], self.roots)["error"])
+        self.assertIn("not connected", k.start("delete", "U", [dict(kind="saved", id="ev1")], self.roots, confirmed=True)["error"])
+        self.assertIn("Archive", k.start("move", "A", [dict(kind="saved", id="ev1")], self.roots, confirmed=True)["error"])
 
 
 class Store2:
@@ -278,7 +296,7 @@ class EventShotsTest(ProcBase):
         r = k.status(force=True)["clips"]["saved"]["ev1"]
         self.assertEqual(r["shots"], [0, 2])                                          # front and back exist in this fixture, so those two
         self.assertFalse(r["ready"])
-        self.assertIn("not all kept", k.start("delete", "J", [dict(kind="saved", id="ev1")], self.roots)["error"])
+        self.assertIn("not all kept", k.start("delete", "J", [dict(kind="saved", id="ev1")], self.roots, confirmed=True)["error"])
         k.start_process([dict(kind="saved", id="ev1")], self.roots)
         k._thread.join(5)
         self.assertEqual(k.job()["errors"], [])

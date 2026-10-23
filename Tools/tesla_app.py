@@ -444,6 +444,8 @@ class H(BaseHTTPRequestHandler):
                     return self.send_json(STORE.pl.save(body))
             if u.path == "/api/places/delete":
                 with _ACTION_LOCK:
+                    if body.get("confirm") is not True:
+                        return self.send_json(dict(ok=False, error="Not confirmed: nothing was deleted."))
                     return self.send_json(STORE.pl.delete(body.get("name", "")))
             if u.path == "/api/drivereview":       # {id, action: start|stop}: the manual review of one drive
                 if body.get("action") == "stop":
@@ -453,6 +455,8 @@ class H(BaseHTTPRequestHandler):
                 return self.send_json(drive_review_state(body.get("id", "")))
             if u.path == "/api/review":
                 role = body.get("role", "A")
+                if body.get("action") == "redo" and body.get("confirm") is not True:         # reading again forgets what was read: ask first
+                    return self.send_json(dict(error="Not confirmed: nothing was changed."))
                 return self.send_json(TC.review(role, footage_root(role), _utc_arg(body.get("t0", "")), _utc_arg(body.get("t1", "")), body.get("action", "start"), _lo_arg(body.get("lo"))))
             if u.path == "/api/keeper":            # {action: pause|resume|run}
                 act = body.get("action")
@@ -466,9 +470,9 @@ class H(BaseHTTPRequestHandler):
                 roots = {r: footage_root(r) for r in "AJU"}
                 if body.get("action") == "process":       # read what the clips still lack (metadata, stills, signs) from their video on the connected drives
                     return self.send_json(CKEEP.start_process(body.get("items") or [], roots))
-                return self.send_json(CKEEP.start(body.get("action"), role, body.get("items") or [], roots))
+                return self.send_json(CKEEP.start(body.get("action"), role, body.get("items") or [], roots, confirmed=body.get("confirm") is True))
             if u.path == "/api/stills/thin":       # {action: start|stop}: make the stills of minutes with no event and no sign smaller
-                return self.send_json(STHIN.stop() if body.get("action") == "stop" else STHIN.start())
+                return self.send_json(STHIN.stop() if body.get("action") == "stop" else STHIN.start(confirmed=body.get("confirm") is True))
             if u.path == "/api/eject":             # {role}: stop reading the drive, then eject it
                 role = body.get("role")
                 root = footage_root(role) if role in ("A", "J", "U") else None
@@ -593,6 +597,8 @@ class H(BaseHTTPRequestHandler):
             return self.send_json(CKEEP.status())
         if name == "clips/job":                 # the delete / move being done to the drives, or the last one
             return self.send_json(CKEEP.job())
+        if name == "clips/history":             # what the last deletes and moves removed (kept across restarts)
+            return self.send_json(dict(jobs=CKEEP.history(30)))
         if name == "clips":                     # every Recent run, Saved and Sentry event ever logged, whichever drives are connected; each says which drive holds it and whether it can be played
             return self.send_json(TC.clips_all({r: footage_root(r) for r in "AJU"}))
         if name.startswith("clips/shots/"):     # clips/shots/<saved|sentry>/<event folder>: the cameras that have a full-size picture of the moment, and which second of which clip it is
@@ -712,6 +718,8 @@ def run_queue(body):
     import drive_actions as DA
     actions = body.get("actions") or []
     apply = bool(body.get("apply"))
+    if apply and any(a.get("type") == "delete" for a in actions) and body.get("confirm") is not True:
+        return {"ok": False, "output": "Not confirmed: nothing was deleted."}
     buf = io.StringIO()
     with _ACTION_LOCK, redirect_stdout(buf):
         print("%s\n" % ("APPLYING" if apply else "PREVIEW - nothing is changed"))
