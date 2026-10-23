@@ -1600,6 +1600,7 @@ async function pageTeslaCam(role,id){
   const NMD={A:"Archive",J:"JOWUA",U:"Tesla USB"},conn=()=>(data&&data.connected)||[];
   const picked=()=>[...TCSEL].map(k=>{const i=k.indexOf("|");return {kind:k.slice(0,i),id:k.slice(i+1)}}).filter(it=>kpOf(it.kind,it.id));
   const allowed=(r,act)=>picked().filter(it=>{const c=kpOf(it.kind,it.id);return c.bytes[r]>0&&(act==="move"?r!=="A":(c.ready||(r!=="A"&&c.bytes.A>0)))});
+  const lacking=()=>picked().filter(it=>{const c=kpOf(it.kind,it.id);return !c.ready&&conn().some(r=>c.bytes[r]>0)});
   const sizeOn=(list,r)=>list.reduce((a,it)=>a+(kpOf(it.kind,it.id).bytes[r]||0),0);
   const selbar=()=>{const el=$("#selbar");if(!el)return;if(!KPC){el.innerHTML="";return}
     const items=picked(),cn=conn(),done=vis.filter(v=>{const c=kpOf(v.ty,v.id);return c&&c.ready&&cn.some(r=>c.bytes[r]>0)});
@@ -1612,6 +1613,8 @@ async function pageTeslaCam(role,id){
     else{
       h+=items.length?`<b>${n0(items.length)} selected</b><span class="sub">${fmtGB(items.reduce((a,it)=>a+(kpOf(it.kind,it.id).size||0),0))}</span><button class="btn sm" id="kclr">Clear</button>`:"";
       h+=`<button class="btn sm" id="kall" ${done.length?"":"disabled"} title="Ticks every clip below whose metadata, stills and signs are all kept (${n0(done.length)} clips, ${fmtGB(dsz)})">Select all that are done${done.length?" · "+n0(done.length):""}</button>`;
+      const lk=lacking();
+      if(lk.length)h+=`<button class="btn sm pri" data-kproc="1" title="Reads the metadata, makes the stills and reads the signs that these clips are still missing, from their video on the connected drives">Read what is missing · ${n0(lk.length)} clip${lk.length>1?"s":""}</button>`;
       cn.forEach(r=>{const d=allowed(r,"delete");if(items.length&&d.length)h+=`<button class="btn sm bad" data-ka="delete|${r}">Delete from ${NMD[r]} · ${fmtGB(sizeOn(d,r))}</button>`;
         const m=allowed(r,"move");if(items.length&&m.length&&r!=="A"&&cn.includes("A"))h+=`<button class="btn sm" data-ka="move|${r}">Move to Archive · ${fmtGB(sizeOn(m,r))}</button>`});
       if(note)h+=`<span class="sub" style="flex:1;${/rror|not /.test(note)?"color:var(--bad)":"color:var(--ok)"}">${esc(note)}</span>`}
@@ -1620,6 +1623,10 @@ async function pageTeslaCam(role,id){
     on("kclr",()=>{TCSEL.clear();note="";$$("#tb [data-sel]").forEach(b=>{b.classList.remove("on");b.textContent=""});selbar()});
     on("kall",()=>{done.forEach(v=>TCSEL.add(v.ty+"|"+v.id));note="";draw()});
     on("kno",()=>{pend=null;selbar()});
+    $$("[data-kproc]",el).forEach(b=>b.onclick=async()=>{const list=lacking();pend=null;note="";stopVideos();
+      let j;try{j=await (await fetch("/api/clips/act",{method:"POST",body:JSON.stringify({action:"process",items:list})})).json()}catch(e){j={error:e.message}}
+      if(j.error){note=j.error;selbar();return}
+      poll()});
     $$("[data-ka]",el).forEach(b=>b.onclick=()=>{const [a,r]=b.dataset.ka.split("|");pend={action:a,role:r};note="";selbar()});
     on("kdo",async()=>{const p=pend,list=allowed(p.role,p.action);pend=null;stopVideos();
       let j;try{j=await (await fetch("/api/clips/act",{method:"POST",body:JSON.stringify({action:p.action,role:p.role,items:list})})).json()}catch(e){j={error:e.message}}
@@ -1627,14 +1634,18 @@ async function pageTeslaCam(role,id){
       poll()});
     on("jobx",async()=>{try{await fetch("/api/clips/act",{method:"POST",body:JSON.stringify({action:"stop"})})}catch(e){}});
     if(jobT)jobPaint()};
-  const jobPaint=()=>{const t=$("#jobtx");if(!t||!jobT)return;const j=jobT,q=j.bytes?Math.round(100*j.bytes_done/j.bytes):0;
+  const jobPaint=()=>{const t=$("#jobtx");if(!t||!jobT)return;const j=jobT,pr=j.action==="process",q=pr?(j.step_total?Math.round(100*j.step_done/j.step_total):0):(j.bytes?Math.round(100*j.bytes_done/j.bytes):0);
+    if(pr){t.innerHTML=`<b>${esc(j.step||"Starting")}</b>${j.step_total?` · ${n0(j.step_done)} of ${n0(j.step_total)}`:""}<div style="height:6px;border-radius:3px;background:var(--line);margin:6px 0 0;overflow:hidden"><div style="height:100%;width:${q}%;background:var(--accent);transition:width .3s"></div></div>`;return}
     t.innerHTML=`<b>${j.action==="move"?"Moving":"Deleting"} the video ${j.action==="move"?"from "+NMD[j.role]+" to the Archive":"from "+NMD[j.role]}</b> · ${n0(j.done)} of ${n0(j.files)} files · ${fmtGB(j.bytes_done)} of ${fmtGB(j.bytes)}<div style="height:6px;border-radius:3px;background:var(--line);margin:6px 0 0;overflow:hidden"><div style="height:100%;width:${q}%;background:var(--accent);transition:width .3s"></div></div>`};
-  const poll=async()=>{while(document.body.contains($("#selbar"))){let j;try{j=await (await fetch("/api/clips/job")).json()}catch(e){break}
+  let polling=false;
+  const poll=async()=>{if(polling)return;polling=true;try{await poll1()}finally{polling=false}};
+  const poll1=async()=>{while(document.body.contains($("#selbar"))){let j;try{j=await (await fetch("/api/clips/job")).json()}catch(e){break}
       if(j.running){const first=!jobT;jobT=j;if(first)selbar();else jobPaint();await new Promise(r=>setTimeout(r,1500));continue}
-      if(jobT){jobT=null;const bad=(j.errors||[]).length;note=(j.action==="move"?"Moved ":"Deleted ")+n0(j.done)+" files"+(j.action==="delete"?", freed "+fmtGB(j.freed):"")+(bad?" · "+bad+" could not be handled: "+j.errors[0]:"");
-        TCSEL.clear();bust("tc/clips");KPC=null;await load(true);loadKeep()}
+      if(jobT){jobT=null;const bad=(j.errors||[]).length,pr=j.action==="process";
+        note=pr?"Read what was missing"+(j.steps||[]).filter(x=>x.total).map(x=>" · "+x.step.toLowerCase()+" "+n0(x.total)).join("")+(bad?" · "+j.errors[0]:""):(j.action==="move"?"Moved ":"Deleted ")+n0(j.done)+" files"+(j.action==="delete"?", freed "+fmtGB(j.freed):"")+(bad?" · "+bad+" could not be handled: "+j.errors[0]:"");
+        if(!pr)TCSEL.clear();bust("tc/clips");KPC=null;await load(true);loadKeep()}
       break}};
-  const loadKeep=async()=>{try{const r=await fetch("/api/clips/keep");if(r.ok){KPC=(await r.json()).clips;draw()}}catch(e){}};
+  const loadKeep=async()=>{try{const r=await fetch("/api/clips/keep");if(r.ok){KPC=(await r.json()).clips;draw();poll()}}catch(e){}};
   const draw=()=>{if(!data)return;if(!data.sentry){return}
     const q=TCS.q.toLowerCase(),srcs=Object.keys(TCSRC).filter(k=>TCS.src[k]);
     const all=[].concat(...srcs.map(k=>data[k].map(v=>Object.assign({ty:k},v)))).filter(v=>inRange({day:v.ts.slice(0,10)},TCS.r)&&(!q||(v.ty==="recent"?((tripOf(v)||{}).ti||""):(v.city+" "+v.street+" "+reason(v.reason))).toLowerCase().includes(q)||TCSRC[v.ty].toLowerCase().includes(q))).sort((a,b)=>a.ts<b.ts?1:-1),byDay={};

@@ -449,13 +449,16 @@ class H(BaseHTTPRequestHandler):
             if u.path == "/api/keeper":            # {action: pause|resume|run}
                 act = body.get("action")
                 return self.send_json(KEEP.pause() if act == "pause" else KEEP.run_now(body.get("stages")) if act == "run" else KEEP.resume())
-            if u.path == "/api/clips/act":         # {action: delete|move|stop, role, items: [{kind, id}]}: remove the video of clips from a drive (after it is all kept), or move it to the Archive
+            if u.path == "/api/clips/act":         # {action: delete|move|process|stop, role, items: [{kind, id}]}: remove the video of clips from a drive (after it is all kept), move it to the Archive, or read what the clips still lack from their video
                 if body.get("action") == "stop":
                     return self.send_json(CKEEP.stop())
                 if KEEP._stage is not None or KEEP.busy():
                     return self.send_json(dict(error="A job is reading the drives: stop it first."))
                 role = body.get("role")
-                return self.send_json(CKEEP.start(body.get("action"), role, body.get("items") or [], {r: footage_root(r) for r in "AJU"}))
+                roots = {r: footage_root(r) for r in "AJU"}
+                if body.get("action") == "process":       # read what the clips still lack (metadata, stills, signs) from their video on the connected drives
+                    return self.send_json(CKEEP.start_process(body.get("items") or [], roots))
+                return self.send_json(CKEEP.start(body.get("action"), role, body.get("items") or [], roots))
             if u.path == "/api/eject":             # {role}: stop reading the drive, then eject it
                 role = body.get("role")
                 root = footage_root(role) if role in ("A", "J", "U") else None

@@ -12,6 +12,8 @@ for p in ("tests", "Tools", os.path.join("Tools", "lib")):
     sys.path.insert(0, os.path.join(HERE, "..", p))
 import clip_clock as CC  # noqa: E402
 import clip_keep as CK  # noqa: E402
+import teslacam_scan as TS  # noqa: E402
+import teslacam_stills as ST  # noqa: E402
 import teslacam_deletable as TD  # noqa: E402
 import teslacam_ledger as TLG  # noqa: E402
 
@@ -43,7 +45,7 @@ class FakeFG:
         self.stills = SimpleNamespace(stamps=lambda: set(stills))
 
 
-class KeepTest(unittest.TestCase):
+class Base(unittest.TestCase):
     def setUp(self):
         self.t = tempfile.mkdtemp()
         self.data = os.path.join(self.t, "data")
@@ -73,6 +75,8 @@ class KeepTest(unittest.TestCase):
     def keep(self, read=(), stills=(), scanned=()):
         return CK.ClipKeep(self.data, FakeTC(set(read), set(scanned)), FakeFG(stills))
 
+
+class KeepTest(Base):
     def test_a_clip_with_nothing_kept_is_not_ready_and_says_what_is_missing(self):
         r = self.keep().status()["clips"]["saved"]["ev1"]
         self.assertEqual((r["n"], r["meta"], r["stills"], r["signs"], r["ready"]), (2, [0, 2], [0, 2], [0, 0], False))
@@ -126,6 +130,107 @@ class KeepTest(unittest.TestCase):
         k = self.keep()
         self.assertIn("not connected", k.start("delete", "U", [dict(kind="saved", id="ev1")], self.roots)["error"])
         self.assertIn("Archive", k.start("move", "A", [dict(kind="saved", id="ev1")], self.roots)["error"])
+
+
+class Store2:
+    """A telemetry store that can be filled: summary() is None until put()."""
+    def __init__(self, vmax=60):
+        self.d, self.vmax = {}, vmax
+
+    def put(self, st):
+        self.d[st] = dict(vmax=self.vmax)
+
+    def summary(self, st):
+        return self.d.get(st)
+
+    def series(self, st):
+        return dict(v=[self.vmax] * 60) if st in self.d else None
+
+
+class Rv:
+    def __init__(self):
+        self.done, self.started, self.run = {}, None, False
+
+    def scanned(self):
+        return dict(self.done)
+
+    def status(self):
+        return dict(running=self.run, done=len(self.started or []), current="", error="")
+
+    def start(self, items):
+        self.started = items
+        self.done.update({i[0]: 0 for i in items})
+
+    def stop(self):
+        pass
+
+
+class ProcessTest(Base):
+    def setUp(self):
+        super().setUp()
+        self.store, self.rv, self.stills = Store2(), Rv(), set()
+        self.calls = []
+        tc = SimpleNamespace(_tl=lambda r: self.store, _rv=lambda: self.rv)
+        st = SimpleNamespace(stamps=lambda: set(self.stills), has=lambda s: s in self.stills, width=0, quality=0)
+        import teslacam_deletable as TD
+        self._dw = TD.drive_windows
+        TD.drive_windows = lambda d: [(0, 2 ** 40, True)]
+        self.addCleanup(lambda: setattr(TD, "drive_windows", self._dw))
+        self.k = CK.ClipKeep(self.data, tc, SimpleNamespace(stills=st))
+        self._read, self._make = TS.read, ST.make_many
+
+        def read(store, todo, data_dir=None, stop=None, progress=None, limit=None):
+            self.calls.append(("read", [x["stamp"] for x in todo], [os.path.basename(x["path"]) for x in todo]))
+            for n, x in enumerate(todo, 1):
+                store.put(x["stamp"])
+                progress(n, x["stamp"])
+
+        def make(stills, todo, workers=3, stop=None, progress=None, limit=None, by="command"):
+            self.calls.append(("stills", [x["stamp"] for x in todo], by))
+            for n, x in enumerate(todo, 1):
+                self.stills.add(x["stamp"])
+                progress(n, x["stamp"])
+        TS.read, ST.make_many = read, make
+        self.addCleanup(lambda: (setattr(TS, "read", self._read), setattr(ST, "make_many", self._make)))
+
+    def test_it_reads_the_metadata_then_the_stills_then_the_signs_of_the_selected_clip_and_nothing_else(self):
+        out = self.k.start_process([dict(kind="saved", id="ev1")], self.roots)
+        self.assertNotIn("error", out)
+        self.k._thread.join(5)
+        j = self.k.job()
+        self.assertEqual([x["step"] for x in j["steps"]], ["Reading metadata", "Making stills", "Reading signs"])
+        self.assertEqual([c[0] for c in self.calls], ["read", "stills"])
+        self.assertEqual(self.calls[0][1], [S2, S1])                                   # newest first
+        self.assertEqual(self.calls[0][2], ["%s-front.mp4" % S2, "%s-front.mp4" % S1])
+        self.assertEqual(sorted(i[0] for i in self.rv.started), [S1, S2])
+        self.assertEqual(j["errors"], [])
+        self.assertTrue(self.k.status(force=True)["clips"]["saved"]["ev1"]["ready"])
+
+    def test_what_is_already_kept_is_not_read_again(self):
+        self.store.put(S1)
+        self.stills.add(S1)
+        self.rv.done[S1] = 0
+        self.k.start_process([dict(kind="saved", id="ev1")], self.roots)
+        self.k._thread.join(5)
+        self.assertEqual(self.calls[0][1], [S2])
+        self.assertEqual(self.calls[1][1], [S2])
+        self.assertEqual([i[0] for i in self.rv.started], [S2])
+
+    def test_it_is_refused_while_something_else_is_done_to_the_drives_or_there_is_no_video_to_read(self):
+        self.rv.run = True
+        self.assertIn("Signs are being read", self.k.start_process([dict(kind="saved", id="ev1")], self.roots)["error"])
+        self.rv.run = False
+        self.assertIn("no connected drive", self.k.start_process([dict(kind="saved", id="ev1")], dict(A=self.roots["A"]))["error"])
+        self.assertIn("not in the footage log", self.k.start_process([dict(kind="saved", id="nope")], self.roots)["error"])
+
+    def test_a_failing_tool_is_reported_and_the_job_ends(self):
+        def bad(*a, **k):
+            raise OSError("drive gone")
+        TS.read = bad
+        self.k.start_process([dict(kind="saved", id="ev1")], self.roots)
+        self.k._thread.join(5)
+        self.assertFalse(self.k.job()["running"])
+        self.assertIn("drive gone", self.k.job()["errors"][0])
 
 
 if __name__ == "__main__":

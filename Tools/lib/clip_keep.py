@@ -13,6 +13,7 @@ and then deletes them from the drive they were on, after checking again that it 
 
     ClipKeep(data_dir, tc, fg).status()      -> dict(clips={"recent"|"saved"|"sentry": {id: dict(n, bytes{role}, size, meta[done, of], stills[...], signs[...], ready, waiting)}})
     ClipKeep.start(action, role, items, roots)   action "delete" | "move"; items [{kind, id}]; returns the job status or dict(error=...)
+    ClipKeep.start_process(items, roots)     reads what is missing for the clips: metadata, then stills, then signs (from the video on a connected drive)
     ClipKeep.job()                           -> the running or last job
 """
 import os
@@ -26,6 +27,8 @@ import clip_clock as CC
 import teslacam_deletable as TD
 import teslacam_files as TF
 import teslacam_ledger as TLG
+import teslacam_scan as TS
+import teslacam_stills as ST
 
 GAP = 75                      # seconds between two minutes that still belong to one Recent run (as in app_teslacam)
 TTL = 8.0                     # seconds an answer is reused
@@ -201,6 +204,99 @@ class ClipKeep:
         self._thread = threading.Thread(target=self._run, args=(action, role, files, roots), daemon=True)
         self._thread.start()
         return self.job()
+
+    # ---- reading what is missing, for the clips asked for ---------------------------------------------------------
+    def _paths(self, led, stamps, roots):
+        """{stamp: {camera: path}} of the video of those minutes on the connected drives (the first drive in Archive, JOWUA, Tesla USB order that holds each file)."""
+        out = {}
+        days = sorted({s[:10] for s in stamps})
+        for day in days:
+            for key, rec in led.day(day).items():
+                kind, ev, rest = key.split("|", 2)
+                m = _FILE.match(rest)
+                if not m or m.group(1) not in stamps or kind not in KINDS:
+                    continue
+                for r in "AJU":
+                    x = rec["drives"].get(r)
+                    if x is not None and not x.get("gone") and roots.get(r):
+                        out.setdefault(m.group(1), {}).setdefault(m.group(2), TF.front_path(roots[r], dict(src=kind, ev=ev, stamp=m.group(1), cam=m.group(2))))
+                        break
+        return out
+
+    def start_process(self, items, roots):
+        """Reads what the clips still lack from their video on the connected drives: the metadata of each minute, then its stills, then its signs (the signs are looked for
+        only in the minutes driven fast enough, so they come last). A clip whose video is on no connected drive is left as it is."""
+        if self._thread and self._thread.is_alive():
+            return dict(error="Something is already being done to the drives.")
+        rv = self.tc._rv()
+        if rv.status().get("running"):
+            return dict(error="Signs are being read for a drive: wait for it or stop it.")
+        st = self.status(force=True)["clips"]
+        kind_of = {}
+        for it in items:
+            if it.get("id") not in (st.get(it.get("kind")) or {}):
+                return dict(error="A selected clip is not in the footage log.")
+            for stamp in self._groups.get((it["kind"], it["id"]), []):
+                kind_of[stamp] = it["kind"]
+        paths = self._paths(TLG.Ledger(self.dir), set(kind_of), roots)
+        if not paths:
+            return dict(error="The video of these clips is on no connected drive.")
+        self._stop = False
+        self._job = dict(running=True, action="process", step="", step_done=0, step_total=0, steps=[], files=0, done=0, bytes=0, bytes_done=0, freed=0, errors=[], current="",
+                         clips=len(items), t0=time.time())
+        self._thread = threading.Thread(target=self._process, args=(kind_of, paths), daemon=True)
+        self._thread.start()
+        return self.job()
+
+    def _step(self, name, total):
+        self._job.update(step=name, step_done=0, step_total=total, current="")
+        self._job["steps"].append(dict(step=name, total=total))
+
+    def _process(self, kind_of, paths):
+        j = self._job
+        store = self.tc._tl("A")
+        stills = self.fg.stills
+        stills.width, stills.quality = app_config.get("stills.width", 400), app_config.get("stills.quality", 6)
+        first = lambda s: paths[s].get("front") or next(iter(paths[s].values()))      # telemetry is read from another camera when there is no front clip
+
+        def prog(n, stamp):
+            j["step_done"], j["current"] = n, stamp
+        try:
+            todo = [dict(stamp=s, path=first(s)) for s in sorted(paths, reverse=True) if kind_of[s] != "sentry" and store.summary(s) is None]
+            self._step("Reading metadata", len(todo))
+            if todo and not self._stop:
+                TS.read(store, todo, self.dir, stop=lambda: self._stop, progress=prog)
+            todo = [dict(stamp=s, role="", path=paths[s]["front"]) for s in sorted(paths, reverse=True) if "front" in paths[s] and not stills.has(s)]
+            self._step("Making stills", len(todo))
+            if todo and not self._stop:
+                ST.make_many(stills, todo, int(app_config.get("stills.workers", 3)), stop=lambda: self._stop, progress=prog, by="clips")
+            rv = self.tc._rv()
+            min_kmh = float((app_config.get("review") or {}).get("min_kmh", 30.0))
+            done = rv.scanned()
+            items = []
+            for s in sorted(paths):
+                sm = store.summary(s)
+                if "front" in paths[s] and isinstance(sm, dict) and sm.get("vmax", 0) >= min_kmh and s not in done:
+                    ser = store.series(s)
+                    items.append((s, paths[s]["front"], ser["v"] if ser else None))
+            self._step("Reading signs", len(items))
+            if items and not self._stop:
+                rv.start(items)
+                while rv.status().get("running"):
+                    if self._stop:
+                        rv.stop()
+                    rs = rv.status()
+                    j["step_done"], j["current"] = rs.get("done", 0), rs.get("current", "")
+                    time.sleep(0.7)
+                rs = rv.status()
+                j["step_done"] = rs.get("done", 0)
+                if rs.get("error"):
+                    j["errors"].append(rs["error"])
+        except Exception as e:                      # a drive pulled out, a tool missing: say so and stop
+            j["errors"].append("%s: %s" % (type(e).__name__, e))
+        finally:
+            with self._lock:
+                self._cache = None
 
     def job(self):
         j = dict(self._job)
