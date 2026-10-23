@@ -2050,8 +2050,8 @@ async function pageSoftwareOne(v){
 const ROUTES={activity:pageActivity,drives:pageDrives,driveslist:pageDriveList,charges:pageCharges,battery:pageBattery,health:pageHealth,analytics:pageAnalytics,teslacam:pageTeslaCam,queue:pageQueue,flips:pageDrives,review:pageDrives,dashcam:pageDrives,parked:pageParked,idles:pageParked,places:pagePlaces,alerts:pageAlerts,software:pageSoftware};
 async function route(){
   navTrack();hideTip();if(location.hash.indexOf("#/charge/")!==0){try{sessionStorage.removeItem("chargeSet")}catch(e){}}if(TLOFF){TLOFF();TLOFF=null}const h=(location.hash||"#/activity").replace(/^#\//,""),[p,arg,arg2]=h.split("/").map(decodeURIComponent);
-  // the side bar item lit is the list the page was reached from (a drive opened from Drives (new) lights Drives (new)), else the page's own section
-  const own=({drive:"drives",charge:"charges",idle:"parked",idles:"parked",dashcam:"drives",flips:"drives",review:"drives",place:"places"})[p]||p,from=NAV.length?(NAV[0].h||"").replace(/^#\//,"").split("/")[0]:"",lit=ROOTS[from]&&ROOTS[from]!==ROOTS[own]&&NAV.length>1?(({idles:"parked"})[from]||from):own;
+  // the side bar item lit is the list a detail page was reached from (a drive opened from Drives (new) lights Drives (new)); a section's own page (Software, Battery, ...) always lights itself, whatever the path that led to it
+  const own=({drive:"drives",charge:"charges",idle:"parked",idles:"parked",dashcam:"drives",flips:"drives",review:"drives",place:"places"})[p]||p,from=NAV.length?(NAV[0].h||"").replace(/^#\//,"").split("/")[0]:"",lit=own!==p&&ROOTS[from]&&ROOTS[from]!==ROOTS[own]&&NAV.length>1?(({idles:"parked"})[from]||from):own;
   $$("#nav>a").forEach(a=>a.classList.toggle("on",a.dataset.p===lit));
   badge();if(!QUIET)main.scrollTop=0;
   try{
