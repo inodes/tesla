@@ -1597,7 +1597,7 @@ async function pageTeslaCam(role,id){
     lazyThumbs($("#tb"));$$("#tb .evc").forEach(b=>b.onclick=async()=>{const ty=b.dataset.ty,sel=b.dataset.id;$$("#tb .evc").forEach(x=>x.classList.toggle("on",x===b));$("#spl").scrollIntoView({block:"nearest"});
       const it=data[ty].find(v=>v.id===sel);
       if(ty!=="recent"){
-        if(it.play)return sentryPlayer($("#spl"),it,it.play,TCF[ty]);
+        if(it.play)return ty==="saved"&&it.t?savedDrive($("#spl"),it,places):sentryPlayer($("#spl"),it,it.play,TCF[ty]);
         const what=it.reason?reason(it.reason):ty==="saved"?"Saved clip":"Sentry event";
         return stillViewer($("#spl"),{stamps:Object.keys(it.clips).sort(),roles:it.roles,loc:it.loc,trig:Date.parse(it.cts||it.ts),head:`${esc(what)} on ${dayName(it.ts.slice(0,10))} at ${hms(it.ts)}${it.city?" · "+esc(it.city):""}`})}
       $("#spl").innerHTML='<div class="sub">Reading…</div>';
@@ -1621,6 +1621,16 @@ const spdLegend=()=>`<span style="display:inline-flex;width:150px;height:8px;bor
 const apLegend=()=>["FSD","Autosteer","TACC","Manual"].map(k=>`<span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:${apCol(k)};vertical-align:middle"></span> ${k}`).join("  ");
 const spdAt=v=>{const st=spdStops();if((v||0)>spdTop())return spdOver();const t=Math.max(0,v||0);let i=0;while(i<st.length-2&&t>=st[i+1][0])i++;const a=st[i],b=st[i+1],f=(t-a[0])/((b[0]-a[0])||1),h=c=>[1,3,5].map(k=>parseInt(c.substr(k,2),16)),A=h(a[1]),B=h(b[1]);return "#"+A.map((x,k)=>Math.round(x+(B[k]-x)*f).toString(16).padStart(2,"0")).join("")};
 // One Sentry event in full: the same layout as a drive (map on top, then the six cameras); no telemetry, the camera that detected it has a red border
+// A Saved clip on the TeslaCam page: the map and route, the telemetry and the video together (side by side on a wide screen), over as much time after the moment it was
+// saved as before it, with a red line on the telemetry and a red mark on the map at that moment (the horn, a tap on the screen). Without telemetry for that time the
+// clips alone play, as before.
+async function savedDrive(host,it,places){
+  const stamps=Object.keys(it.clips).sort(),stMs=x=>Date.parse(x.slice(0,10)+"T"+x.slice(11).replace(/-/g,":")),trig=Date.parse(it.cts||it.ts),span=Math.max(300,Math.round((trig-stMs(stamps[0]))/1000)+60),what=it.reason?reason(it.reason):"Saved clip";
+  host.innerHTML=`<h2 style="margin:14px 0 4px">${esc(what)} · ${dayName(it.ts.slice(0,10))} at ${hms(it.ts)}${it.city?" · "+esc(it.city):""}${it.street?" · "+esc(it.street):""}</h2><div id="evd"></div>`;
+  const fetchSeg=async b=>{const r=await fetch("/api/teslacam/auto/window?t0="+Math.round(it.t-span)+"&t1="+Math.round(it.t+span)+"&budget="+(b==null?20:b));if(!r.ok)throw new Error((await r.json().catch(()=>({}))).error||("HTTP "+r.status));return r.json()};
+  try{await teslaDriveBody($("#evd"),"A",fetchSeg,places,{heading:false,side:true,trig,events:[{u:it.t,label:what}]})}
+  catch(e){const h=$("#evd");if(h&&host.contains(h)){h.innerHTML="";sentryPlayer(h,it,it.play,"SavedClips")}}
+}
 async function pageTeslaCamSentry(role,ev){
   loading();main.innerHTML=crumbs("#/teslacam","TeslaCam")+'<div id="tdh"></div>';const host=$("#tdh");
   try{
@@ -1675,11 +1685,11 @@ async function teslaDriveBody(host,role,fetchSeg,places,opts){
   let player=null,map=null,chart=null,done=false,evShown=false,pendM=null,pendL=null;
   const stop=()=>{done=true};addEventListener("hashchange",stop,{once:true});
   const it=()=>d.item,S=()=>d.series,live=()=>!done&&$("#tdb")&&host.contains($("#tdb"));
-  host.innerHTML=`<div id="tdb"><h1 id="dh" ${opts.heading===false&&!opts.tessie?"hidden":""}></h1><div class="sub" id="dsub"></div><div id="dpend"></div><div class="tiles" id="dtl"></div>
+  host.innerHTML=`<div id="tdb"${opts.side?' class="side"':""}><h1 id="dh" ${opts.heading===false&&!opts.tessie?"hidden":""}></h1><div class="sub" id="dsub"></div><div id="dpend"></div><div class="tiles" id="dtl"></div>
     <div id="dmapc" class="card" style="padding:10px"><div class="bar" style="margin:0 0 8px"><button class="chip on" data-cm="v">Speed</button><button class="chip" data-cm="ap">Autopilot / FSD</button><span class="sub" id="dleg"></span><span style="margin-left:auto;display:flex;gap:6px;align-items:center"><span class="sub">Map</span>${MSZ.map(([k,t])=>`<button class="chip" data-ms="${k}">${t}</button>`).join("")}</span></div><div class="map big" id="dmap"></div><div class="sub" id="dsrc" style="margin-top:6px"></div></div>
     <div id="drevw"></div><div id="drj"></div>
     <div id="dchc" class="card" style="margin-top:12px;padding:10px"><div class="bar" style="margin:0 0 6px"><b>Telemetry</b><span class="sub" id="dtip" style="min-height:18px;flex:1"></span><span style="display:flex;gap:6px;align-items:center">${TSZ.map(([k,t])=>`<button class="chip" data-ts="${k}">${t}</button>`).join("")}</span></div><canvas id="dch" style="width:100%;display:block"></canvas></div>
-    <div class="card" style="margin-top:12px"><div id="dvid"></div></div><div id="drv"></div><div id="dev"></div></div>`;
+    <div class="card dvc" style="margin-top:12px"><div id="dvid"></div></div><div id="drv"></div><div id="dev"></div></div>`;
   const fill=()=>{if(!live())return;const x=it(),m=Math.max(1,Math.round((x.t1-x.t0)/60)),a=nameAt(places,x.p0),b=nameAt(places,x.p1);
     const T=opts.tessie,sd=selfDrive(S()),src=dataSources(S());
     $("#dh").textContent=T?driveTitle(T):(x.kind==="drive"?"Drive":x.kind==="stopped"?"Stopped, recording":"Recording")+" · "+dayName(x.start.slice(0,10))+" · "+clockHM(x.start)+" – "+clockHM(x.end);
@@ -1703,10 +1713,11 @@ async function teslaDriveBody(host,role,fetchSeg,places,opts){
     if(RVOV)RVOV();
     if(!idx.length){$("#dmapc").hidden=$("#dchc").hidden=true}else{$("#dmapc").hidden=$("#dchc").hidden=false;
       if(!map)map=driveMap($("#dmap"),s,idx,seekIdx,$("#dleg"));else map.update(s,idx);if(pendM&&map.section){map.section(pendM[0],pendM[1]);map.pins(pendM[2]||[]);pendM=null}
-      if(!chart){chart=telemChart($("#dch"),$("#dtip"),s,seekIdx,clk);if(pendL&&chart.lanes){chart.lanes(pendL);pendL=null}}else chart.update(s)}
+      if(!chart){chart=telemChart($("#dch"),$("#dtip"),s,seekIdx,clk);if(pendL&&chart.lanes){chart.lanes(pendL);pendL=null}}else chart.update(s);
+      const em=(opts.events||[]).map(e=>({i:Math.round(e.u-it().t0),label:e.label}));chart.events&&chart.events(em);map.events&&map.events(em)}
     const playable=d.minutes.filter(m=>m.cams&&m.cams.length);
     if(!player&&playable.length){const mm=playable,cams={},meta={};mm.forEach(m=>{cams[m.stamp]=m.cams;meta[m.stamp]=m});
-      player=clipPlayer($("#dvid"),{stamps:mm.map(m=>m.stamp),cams,view:"all",
+      player=clipPlayer($("#dvid"),{stamps:mm.map(m=>m.stamp),cams,view:"all",trig:opts.trig,
         url:(st,c)=>meta[st].src==="saved"?`/footage/${role}/SavedClips/${meta[st].ref}/${st}-${c}.mp4`:`/footage/${role}/RecentClips/${st}-${c}.mp4`,
         loc:Object.fromEntries(mm.map(m=>[m.stamp,m.loc])),onAt:(st,sec)=>cursor(meta[st].off+sec),head:`${it().kind==="drive"?"Click the map or the chart to jump there; the dot and the line follow the video.":"The car was not moving, so there is no map."} Each minute plays on to the next, Recent and Saved alike.`})}
     else if(!player&&!playable.length&&d.minutes.length){const mm=d.minutes,cams={};mm.forEach(m=>{cams[m.stamp]=[]});
@@ -1745,7 +1756,7 @@ async function teslaDriveBody(host,role,fetchSeg,places,opts){
   fill();if(opts.review&&rv)rvDraw();
 }
 function driveMap(el,s,idx,onPick,leg){
-  if(!window.maplibregl){el.innerHTML='<div class="empty">Map library not loaded (offline?).</div>';return{update(){},cursor(){},mode(){},section(){},pins(){},refit(){}}}
+  if(!window.maplibregl){el.innerHTML='<div class="empty">Map library not loaded (offline?).</div>';return{update(){},cursor(){},mode(){},section(){},pins(){},events(){},refit(){}}}
   const dark=matchMedia("(prefers-color-scheme: dark)").matches,m=newMap({container:el,style:MAPSTYLE(dark),center:[idx.length?s.lon[idx[0]]:151,idx.length?s.lat[idx[0]]:-33],zoom:11,attributionControl:{compact:true}});
   const fitBtn=mapNav(m,()=>fit(),"Show the whole route");
   let ready=false,mode="v",S=s,I=idx,first=true,latest=null,SEC=null;      // SEC: the section Review is looking at: its own button (inward arrows) and the size buttons fit that; the outward arrows show the whole route
@@ -1783,13 +1794,16 @@ function driveMap(el,s,idx,onPick,leg){
       const el=document.createElement("div"),sp=p.cat==="speed";el.innerHTML=`<div class="mpin ${sp?"sp":p.cat==="roadwork"?"wn rw":"wn"}${p.conflict?" cf":""}">${sp?esc(p.text):"<span>!</span>"}</div>`;
       el.title=(sp?"Speed limit "+p.text:p.cat==="roadwork"?"Road work sign":"Warning sign")+(p.osm!=null?" · the map says "+p.osm:"")+(p.conflict?" · differs from the map":"")+(p.temp?" · probably temporary":"");
       mk.push(new maplibregl.Marker({element:el}).setLngLat([lo,la]).addTo(m))});showPins()};
-  return{section,pins,refit:dur=>SEC?secFit(dur):fit(dur),update(s2,i2){S=s2;I=i2;draw()},fit,resize(){m.resize()},mode(x){mode=x;paint()},cursor(i){if(!ready)return;let j=i;while(j>=0&&(S.lat[j]==null||Math.abs(S.lat[j])<1))j--;if(j<0)return;m.getSource("cu").setData({type:"FeatureCollection",features:[{type:"Feature",properties:{},geometry:{type:"Point",coordinates:[S.lon[j],S.lat[j]]}}]})}};
+  const ek=[];      // red markers where Saved clips were saved: events [{i, label}] (i = second of the drive)
+  const events=list=>{ek.splice(0).forEach(k=>k.remove());
+    (list||[]).forEach(e=>{const i=near(e.i);if(i<0)return;const el=document.createElement("div");el.innerHTML='<div class="mpin ev"><span>!</span></div>';el.title=e.label||"Event";ek.push(new maplibregl.Marker({element:el}).setLngLat([S.lon[i],S.lat[i]]).addTo(m))})};
+  return{section,pins,events,refit:dur=>SEC?secFit(dur):fit(dur),update(s2,i2){S=s2;I=i2;draw()},fit,resize(){m.resize()},mode(x){mode=x;paint()},cursor(i){if(!ready)return;let j=i;while(j>=0&&(S.lat[j]==null||Math.abs(S.lat[j])<1))j--;if(j<0)return;m.getSource("cu").setData({type:"FeatureCollection",features:[{type:"Feature",properties:{},geometry:{type:"Point",coordinates:[S.lon[j],S.lat[j]]}}]})}};
 }
 // speed, pedals and steering against time, with the autopilot state as a strip; hover reads it out, click or drag moves the video
 function telemChart(cv,tip,s,onPick,t0){          // t0: i -> "HH:MM:SS" on the local clock (or a base time in ms, shown on this computer's clock)
   const lab=typeof t0==="function"?t0:i=>new Date(t0+i*1000).toTimeString().slice(0,8);
   // va/vb: the part of the drive shown (vb null = all of it); A/B the same, clamped, in seconds
-  let S=s,cur=null,hov=null,F=null,W=0,H=0,M={signs:[],steps:[]},ver=0,cache=null,ck="",va=0,vb=null,A=0,B=1,sel=null,selMode=false,LIM=null,LN=null;const css=n=>getComputedStyle(document.documentElement).getPropertyValue(n).trim()||"#888";
+  let S=s,cur=null,hov=null,F=null,W=0,H=0,M={signs:[],steps:[]},EV=[],ver=0,cache=null,ck="",va=0,vb=null,A=0,B=1,sel=null,selMode=false,LIM=null,LN=null;const css=n=>getComputedStyle(document.documentElement).getPropertyValue(n).trim()||"#888";
   const L=62,R=10,lanes=[{k:"v",t:"km/h",y:34,h:118},{k:"p",t:"pedals",y:164,h:46},{k:"s",t:"steering",y:218,h:40}];
   const norm=()=>{const N=S.v.length-1;if(N<1){A=0;B=1;return}if(vb==null){A=LIM?LIM.a:0;B=LIM?LIM.b:N}else{A=Math.max(0,Math.min(va,N-1));B=Math.max(A+1,Math.min(vb,N))}};
   const X=i=>L+(W-L-R)*(i-A)/Math.max(1,B-A),I=x=>Math.max(0,Math.min(S.v.length-1,Math.round(A+(x-L)/(W-L-R)*(B-A))));
@@ -1812,6 +1826,10 @@ function telemChart(cv,tip,s,onPick,t0){          // t0: i -> "HH:MM:SS" on the 
     M.signs.forEach(g=>{if(g.i<0||g.i>=n||g.i<A-12||g.i>B+12)return;const x=X(g.i),y=Math.max(lanes[0].y+6,vy(+g.text));c.beginPath();c.arc(x,y,9,0,7);c.fillStyle="#fff";c.fill();c.lineWidth=2.2;c.strokeStyle=g.side==="R"?"#94a3b8":"#dc2626";c.stroke();c.fillStyle="#111";c.font="bold 8.5px system-ui";c.textAlign="center";c.fillText(g.text,x,y+3);c.textAlign="start"});
     c.font=F;
     M.steps.forEach(x=>{if(x.i<A-6||x.i>B+6)return;const px=X(x.i),py=lanes[0].y+lanes[0].h;c.fillStyle=x.d<0?"#dc2626":"#16a34a";c.beginPath();c.moveTo(px,py-9);c.lineTo(px-5,py);c.lineTo(px+5,py);c.fill()});
+    // the moments of Saved clips (a horn, a tap on the screen): a red line down every lane, named at the foot of the speed lane
+    EV.forEach(e=>{if(e.i<A-1||e.i>B+1)return;const x=X(e.i),y1=lanes[2].y+lanes[2].h;c.save();c.strokeStyle="#dc2626";c.lineWidth=2;c.beginPath();c.moveTo(x,lanes[0].y-14);c.lineTo(x,y1);c.stroke();
+      if(e.label){c.font="bold 11px "+ff;const w=c.measureText(e.label).width+10,lx=Math.min(x+4,W-R-w);c.fillStyle="#dc2626";c.beginPath();c.roundRect?c.roundRect(lx,lanes[0].y+lanes[0].h-20,w,16,3):c.rect(lx,lanes[0].y+lanes[0].h-20,w,16);c.fill();c.fillStyle="#fff";c.textBaseline="middle";c.fillText(e.label,lx+5,lanes[0].y+lanes[0].h-12)}c.restore()});
+    c.font=F;c.textBaseline="alphabetic";
     // brake marks over the speed lane
     clipped(()=>{c.fillStyle=bad;c.globalAlpha=.18;for(let i=i0;i<=i1;i++)if(S.br[i])c.fillRect(X(i),lanes[0].y,sw,lanes[0].h);c.globalAlpha=1});
     // pedals
@@ -1863,7 +1881,7 @@ function telemChart(cv,tip,s,onPick,t0){          // t0: i -> "HH:MM:SS" on the 
     if(e.ctrlKey||e.metaKey){e.preventDefault();zoomAt(A+(e.clientX-r.left-L)/(W-L-R)*(B-A),e.deltaY<0?.8:1.25)}
     else if(zoomed()&&Math.abs(e.deltaX)>Math.abs(e.deltaY)){e.preventDefault();const d=(B-A)*e.deltaX/(W-L-R);setView(A+d,B+d)}},{passive:false});
   norm();ui();addEventListener("resize",draw);draw();
-  return{update(s2){S=s2;ver++;norm();ui();draw()},marks(m){M=m;ver++;draw()},lanes(l){LN=l;ver++;draw()},focus(f){F=f;draw()},view(a,b){setView(a,b)},limit(a,b){const N=S.v.length-1;LIM=a==null?null:{a:Math.max(0,Math.min(a,N-1)),b:Math.max(1,Math.min(b,N))};va=0;vb=null;norm();ver++;ui();draw()},cursor(i){cur=i;if(zoomed()&&(i<A||i>B)){const w=B-A;setView(i-w*.2,i+w*.8)}if(hov==null)tip.textContent=read(i);draw()}};
+  return{update(s2){S=s2;ver++;norm();ui();draw()},marks(m){M=m;ver++;draw()},events(l){EV=l||[];ver++;draw()},lanes(l){LN=l;ver++;draw()},focus(f){F=f;draw()},view(a,b){setView(a,b)},limit(a,b){const N=S.v.length-1;LIM=a==null?null:{a:Math.max(0,Math.min(a,N-1)),b:Math.max(1,Math.min(b,N))};va=0;vb=null;norm();ver++;ui();draw()},cursor(i){cur=i;if(zoomed()&&(i<A||i>B)){const w=B-A;setView(i-w*.2,i+w*.8)}if(hov==null)tip.textContent=read(i);draw()}};
 }
 // lasting changes of speed: the median of the 6 s before against the 6 s after, 10 km/h or more, both while moving; one per 20 s (the biggest wins)
 function speedSteps(v,minD=10){
