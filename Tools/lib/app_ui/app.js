@@ -1497,7 +1497,8 @@ async function pageDriveList(){
     $("#tb").innerHTML='<div id="tlh"></div>';
     TLOFF=tlDays($("#tlh"),rs,{role:"auto",places,sc:pl.superchargers||[],cg:chg.rows||[],tess:act.filter(x=>x.k==="drive"),chg:act.filter(x=>x.k==="charge"),dayOk:d=>inRange({day:d},DLP.r),redraw:draw,go:open,
       onSentry:()=>{}})||null};
-  rangePicker($("#rg"),DLP.r,spanDays(dl.items),draw);$("#q").oninput=e=>{DLP.q=e.target.value;draw()};$("#fs").value=DLP.src;$("#fs").onchange=e=>{DLP.src=e.target.value;draw()};draw();
+  rangePicker($("#rg"),DLP.r,spanDays(dl.items),()=>{       // a range chosen here is the range listed: its days one under the other, not only its newest day
+    const r=rangeOf(DLP.r),a=r?r[0]:"0000-01-01",z=r?r[1]:"9999-12-31";TLS.range=a===z?null:[a,z];if(a===z)TLS.day=a;draw()});$("#q").oninput=e=>{DLP.q=e.target.value;draw()};$("#fs").value=DLP.src;$("#fs").onchange=e=>{DLP.src=e.target.value;draw()};draw();
   if(dl.stale){const again=async()=>{if(location.hash!=="#/driveslist")return;let j;try{j=await tcGet("drivelist")}catch(e){return}
       if(!j.stale){bust("activity");pageDriveList()}else setTimeout(again,3000)};setTimeout(again,3000)}
   tessieSync($("#tsb"),{missing:dl.missing,always:true,after:()=>{bust();route()}});
