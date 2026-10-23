@@ -1505,79 +1505,42 @@ async function pageDriveList(){
   footageSync($("#fsb"));
 }
 const localWhen=iso=>iso?new Date(iso).toLocaleString("en-AU",{day:"numeric",month:"short",year:"numeric",hour:"2-digit",minute:"2-digit"}):"Never";      // stored in UTC, shown on this computer's clock
-// what the footage log holds, per drive (GET /api/footage/log)
-async function footageLog(host){
-  if(!host)return;let lg;try{lg=await tcGet("footage/log")}catch(e){host.innerHTML=errBox(e.message,"Could not read the footage log");return}
-  if(!document.body.contains(host))return;
-  const gb=b=>b>=1073741824?(b/1073741824).toFixed(1)+" GB":Math.round(b/1048576)+" MB",NM={A:"Archive",J:"JOWUA",U:"Tesla USB"},t=lg.total;
-  if(!lg.scans||!Object.keys(lg.scans).length){host.innerHTML='<div class="sub">The log is empty.</div>';return}
-  host.innerHTML=`<table><thead><tr><th class="l">Drive</th><th>Files</th><th>Size</th><th>Archived</th><th>Deleted</th><th class="l">Last updated</th></tr></thead><tbody>${Object.keys(lg.drives).sort().map(r=>{const d=lg.drives[r],c=lg.scans[r]||{};return `<tr><td class="l"><b>${esc(NM[r]||r)}</b></td><td>${n0(d.listed)}</td><td>${gb(d.listed_bytes)}</td><td>${n0(d.archived)}</td><td>${n0(d.deleted)}</td><td class="l">${esc(localWhen(c.at))}</td></tr>`}).join("")}</tbody></table>
-    <div class="tiles" style="margin-top:8px">${tile(n0(t.files),"files logged · "+gb(t.bytes))}${tile(n0(t.deleted),"deleted from every drive · "+gb(t.deleted_bytes))}${tile(n0(t.only_secondary),"not on the Archive · "+gb(t.only_secondary_bytes))}${tile(n0(t.purgeable),"copies also on the Archive · "+gb(t.purgeable_bytes))}</div>`}
-// the footage on the connected drives (lib/app_keeper.py, one pass in the background): Sync footage does every step; with steps:true each step has its own button.
-// All connected drives are used; nothing to pick.
+// eject a drive from the app: the app stops reading it first (POST /api/eject); -> {ok, text}
+async function ejectDrive(role){try{return await (await fetch("/api/eject",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({role})})).json()}catch(e){return{ok:false,text:e.message}}}
+// the footage on the connected drives (lib/app_keeper.py does the work in the background, lib/footage_todo.py says what is left): all connected drives, nothing to pick.
+// opts.table: a row per drive with what the log holds and what is left to do, an Eject button, and a button only for the work that is left
 function footageSync(host,opts){
-  if(!host)return;const steps=!!(opts&&opts.steps);let until=0,was=false;
+  if(!host)return;const table=!!(opts&&opts.table);let until=0,was=false,lg=null,msg="",busyEject="";
+  const gb=b=>b>=1073741824?(b/1073741824).toFixed(1)+" GB":Math.round(b/1048576)+" MB",NM={A:"Archive",J:"JOWUA",U:"Tesla USB"};
   const STEP=[["log","Update log",["log","events"]],["telemetry","Read telemetry",["telemetry"]],["stills","Make stills",["stills"]]];
-  const paint=async()=>{if(!document.body.contains(host))return;let k,roots={};try{k=await (await fetch("/api/keeper")).json();roots=(await (await fetch("/api/status")).json()).roots||{}}catch(e){return}
-    const run=!!k.working,pc=k.total?Math.round(100*k.done/k.total):0,any=Object.values(roots).some(Boolean);if(was&&!run&&opts&&opts.after)opts.after();was=run;
-    const go=async list=>{until=Date.now()+20000;try{await fetch("/api/keeper",{method:"POST",body:JSON.stringify({action:"run",stages:list})})}catch(e){}paint()};
-    if(!any)host.innerHTML='<div class="bar"><span class="sub">No TeslaCam drive connected.</span></div>';
-    else if(run)host.innerHTML=`<div class="card ixb"><div style="flex:1;min-width:0"><b>${esc(k.text)}${k.total?" · "+n0(k.done)+" of "+n0(k.total):""}</b>${k.total?`<div style="height:6px;border-radius:3px;background:var(--line);margin:8px 0 0;overflow:hidden"><div style="height:100%;width:${pc}%;background:var(--accent);transition:width .3s"></div></div>`:""}</div><button class="btn" id="fsx">Stop</button></div>`;
-    else host.innerHTML=`<div class="bar"><button class="btn" id="fsg">Sync footage</button>${steps?STEP.map(x=>`<button class="btn" data-st="${x[0]}">${x[1]}</button>`).join(""):""}</div>${k.error?errBox(k.error,"Syncing stopped"):""}`;
+  const left=(t,r)=>{const d=t&&t.drives&&t.drives[r];return d?{log:d.log_new+d.log_gone,telemetry:d.telemetry,stills:d.stills}:null};
+  const paint=async()=>{if(!document.body.contains(host))return;let k,roots={},todo=null;
+    try{k=await (await fetch("/api/keeper")).json();roots=(await (await fetch("/api/status")).json()).roots||{}}catch(e){return}
+    try{const r=await fetch("/api/footage/todo");todo=r.ok?await r.json():null}catch(e){}      // an older server has no such answer: every button is offered
+    const run=!!k.working,pc=k.total?Math.round(100*k.done/k.total):0,conn=Object.keys(roots).filter(r=>roots[r]);
+    if((was&&!run)||(table&&!lg)){try{lg=await tcGet("footage/log")}catch(e){}}was=run;
+    const tot={log:0,telemetry:0,stills:0};let checking=!!(todo&&todo.checking);conn.forEach(r=>{const l=left(todo,r);if(!l){checking=!!todo;return}tot.log+=l.log;tot.telemetry+=l.telemetry;tot.stills+=l.stills});
+    const kinds=todo?STEP.filter(x=>tot[x[0]]>0):STEP,go=async list=>{until=Date.now()+20000;try{await fetch("/api/keeper",{method:"POST",body:JSON.stringify({action:"run",stages:list})})}catch(e){}paint()};
+    let h="";
+    if(!conn.length)h+='<div class="bar"><span class="sub">No TeslaCam drive connected.</span></div>';
+    else if(run)h+=`<div class="card ixb"><div style="flex:1;min-width:0"><b>${esc(k.text)}${k.total?" · "+n0(k.done)+" of "+n0(k.total):""}</b>${k.total?`<div style="height:6px;border-radius:3px;background:var(--line);margin:8px 0 0;overflow:hidden"><div style="height:100%;width:${pc}%;background:var(--accent);transition:width .3s"></div></div>`:""}</div><button class="btn" id="fsx">Stop</button></div>`;
+    else if(kinds.length)h+=`<div class="bar">${kinds.length>1?'<button class="btn pri" id="fsg">Sync footage</button>':""}${kinds.map(x=>`<button class="btn ${kinds.length>1?"":"pri"}" data-st="${x[0]}">${x[1]}</button>`).join("")}</div>`;
+    else if(checking)h+='<div class="sub">Checking what the drives still need…</div>';
+    if(k.error)h+=errBox(k.error,"Syncing stopped");
+    if(table&&lg&&lg.scans&&Object.keys(lg.scans).length){const t=lg.total,rs=Object.keys(lg.drives).sort();
+      const todoCell=r=>{if(!roots[r])return'<span class="sub">Not connected</span>';const l=left(todo,r);if(!l)return todo?'<span class="sub">Checking…</span>':"";
+        const p=[];if(l.log)p.push(n0(l.log)+" files to list");if(l.telemetry)p.push(n0(l.telemetry)+" minutes without telemetry");if(l.stills)p.push(n0(l.stills)+" clips without stills");
+        return p.length?p.map(esc).join(" · "):'<span style="color:var(--ok)">Up to date</span>'};
+      h+=`<table style="margin-top:8px"><thead><tr><th class="l">Drive</th><th>Files</th><th>Size</th><th>Archived</th><th>Deleted</th><th class="l">Last updated</th><th class="l">To do</th><th></th></tr></thead><tbody>${rs.map(r=>{const d=lg.drives[r],c=lg.scans[r]||{};return `<tr><td class="l"><b>${esc(NM[r]||r)}</b></td><td>${n0(d.listed)}</td><td>${gb(d.listed_bytes)}</td><td>${n0(d.archived)}</td><td>${n0(d.deleted)}</td><td class="l">${esc(localWhen(c.at))}</td><td class="l">${todoCell(r)}</td><td>${roots[r]?`<button class="btn sm" data-ej="${r}" ${busyEject?"disabled":""}>${busyEject===r?"Ejecting…":"Eject"}</button>`:""}</td></tr>`}).join("")}</tbody></table>
+        <div class="tiles" style="margin-top:8px">${tile(n0(t.files),"files logged · "+gb(t.bytes))}${tile(n0(t.deleted),"deleted from every drive · "+gb(t.deleted_bytes))}${tile(n0(t.only_secondary),"not on the Archive · "+gb(t.only_secondary_bytes))}${tile(n0(t.purgeable),"copies also on the Archive · "+gb(t.purgeable_bytes))}</div>`}
+    if(msg)h+=`<div class="sub" style="margin-top:8px;${/ejected/.test(msg)?"color:var(--ok)":"color:var(--bad)"}">${esc(msg)}</div>`;
+    host.innerHTML=h;
     const g=$("#fsg",host);if(g)g.onclick=()=>go(null);
     $$("[data-st]",host).forEach(b=>b.onclick=()=>go(STEP.find(x=>x[0]===b.dataset.st)[2]));
+    $$("[data-ej]",host).forEach(b=>b.onclick=async()=>{busyEject=b.dataset.ej;msg="";paint();const r=await ejectDrive(busyEject);busyEject="";msg=r.text;paint()});
     const x=$("#fsx",host);if(x)x.onclick=async()=>{try{await fetch("/api/keeper",{method:"POST",body:JSON.stringify({action:"pause"})})}catch(e){}paint()};
-    if(run||Date.now()<until)setTimeout(paint,run?2000:1500)};
+    if(run||checking||Date.now()<until)setTimeout(paint,run?2000:2500)};
   paint()}
-async function pageTeslaCam(role,id){
-  if(role&&id)return /^sentry-/.test(id)?pageTeslaCamSentry(role,id.slice(7)):/^at-/.test(id)?pageTeslaCamAt(+id.slice(3)):pageTeslaCamDrive(role,id);
-  loading();const [dr,act,pl]=await Promise.all([tcGet("teslacam"),api("activity"),api("places").catch(()=>({saved:[]}))]),drives=dr.drives,places=(pl.saved||[]);
-  const head='<h1>TeslaCam</h1>';
-  const trips=act.filter(x=>x.k==="drive"&&!x.repark).map(x=>({id:x.id,t0:x.t0,t1:x.t0+x.min*60,ti:driveTitle(x)}));
-  const tripOf=v=>{const a=v.t0!=null?v.t0:v.t,b=v.t1!=null?v.t1:(v.t||0)+60;return trips.find(d=>d.t0<b&&d.t1>a)};
-  main.innerHTML=head+`<div id="fsb"></div><div id="fgb" style="margin-bottom:12px"></div><div class="bar" id="tsr"></div><div class="bar"><span id="rg"></span><input type="search" id="q" placeholder="Search…" value="${esc(TCS.q)}"></div><div class="tiles" id="tl"></div><div id="spl"></div><div id="tb"></div>`;
-  let data=null,sel=null,token=0,sentryList=null;
-  footageSync($("#fsb"),{steps:true,after:()=>footageLog($("#fgb"))});footageLog($("#fgb"));
-  const chips=()=>{
-    $("#tsr").innerHTML='<span class="sub" style="margin:0 4px 0 0">Show:</span>'+Object.keys(TCSRC).map(k=>`<button class="chip ${TCS.src[k]?"on":""}" data-s="${k}">${TCSRC[k]}${data&&data[k]?" · "+data[k].length:""}</button>`).join("")+'';
-    $$("#tsr [data-s]").forEach(b=>b.onclick=()=>{const on=Object.keys(TCSRC).filter(k=>TCS.src[k]);if(TCS.src[b.dataset.s]&&on.length<2)return;TCS.src[b.dataset.s]=TCS.src[b.dataset.s]?0:1;$("#spl").innerHTML="";chips();draw()});
-    };
-  const load=async(quiet)=>{const my=++token;if(!quiet){data=null;$("#tl").innerHTML="";$("#tb").innerHTML='<div class="empty">Reading the drive…</div>'}
-    try{const d=await tcGet("clips");if(my!==token)return;data=d}catch(e){$("#tb").innerHTML=errBox(e.message,"Could not read the list of clips");return}
-    const list=[].concat(data.sentry,data.saved,data.recent);if(!quiet)rangePicker($("#rg"),TCS.r,daysOf((list||[]).map(v=>({day:(v.ts||v.start).slice(0,10)}))),draw);chips();draw()};
-  const draw=()=>{if(!data)return;if(!data.sentry){return}
-    const q=TCS.q.toLowerCase(),srcs=Object.keys(TCSRC).filter(k=>TCS.src[k]);
-    const all=[].concat(...srcs.map(k=>data[k].map(v=>Object.assign({ty:k},v)))).filter(v=>inRange({day:v.ts.slice(0,10)},TCS.r)&&(!q||(v.ty==="recent"?((tripOf(v)||{}).ti||""):(v.city+" "+v.street+" "+reason(v.reason))).toLowerCase().includes(q)||TCSRC[v.ty].toLowerCase().includes(q))).sort((a,b)=>a.ts<b.ts?1:-1),byDay={};
-    all.forEach(v=>(byDay[v.ts.slice(0,10)]=byDay[v.ts.slice(0,10)]||[]).push(v));
-    const days=Object.keys(byDay).sort().reverse(),cnt=k=>all.filter(v=>v.ty===k).length,mins=all.reduce((a,v)=>a+(v.ty==="recent"?v.n:Object.keys(v.clips).length),0);
-    $("#tl").innerHTML=srcs.map(k=>tile(n0(cnt(k)),k==="recent"?"continuous recordings":TCSRC[k]+" events")).join("")+tile(n0(mins),"minutes of video");
-    // the drive (Tessie's) the event was saved in, and the map and telemetry of it: a Saved clip is kept while driving, so it belongs to a drive
-    const evLinks=v=>{const t=v.t!=null?tripOf(v):null,st=e=>'onclick="event.stopPropagation()"';
-      return (t?`<span>${esc(t.ti)}</span><a href="#/drive/${t.id}" ${st()}>open the drive</a>`:"")+(v.play&&v.ty==="saved"&&v.t!=null?`<a href="${t?"#/drive/"+t.id+"/footage":"#/teslacam/auto/at-"+Math.round(v.t)}" ${st()}>map and telemetry</a>`:"")};
-    // where the footage is: the drives that hold it, and when none of them is connected (or it is gone from all) say so
-    const held=v=>v.play?"":`<span class="mis">${v.roles.length?"Media missing · on "+v.roles.map(drName).join(", "):"Video deleted · stills kept"}</span>`;
-    const card=v=>{const bd=`<span class="srcb ${v.ty}">${TCSRC[v.ty]}</span>`;
-      if(v.ty==="recent"){const t=tripOf(v);return `<button class="evc run" data-ty="recent" data-id="${esc(v.id)}">${stThumb(v.id,2,v.play?"/footage/"+v.play+"/RecentClips/"+v.id+"-front.mp4":"")}${bd}<b>${hms(v.ts).slice(0,5)} – ${hms(v.end).slice(0,5)}</b><span>${v.n} minute${v.n>1?"s":""}${v.full<v.n?" · "+(v.n-v.full)+" with fewer than 6 cameras":""}</span>${held(v)}${t?`<span>${esc(t.ti)}</span><a href="#/drive/${t.id}" onclick="event.stopPropagation()">open the drive</a>`:""}${v.play?`<a href="#/teslacam/auto/${esc(v.id)}" onclick="event.stopPropagation()">map and telemetry</a>`:""}</button>`}
-      const n=Object.keys(v.clips).length,folder=TCF[v.ty],ks=Object.keys(v.clips).sort(),tt=(v.cts||v.ts||"").replace("T","_").replace(/:/g,"-"),k0=ks.filter(x=>x<=tt).pop()||ks[0],      // the minute holding the trigger, not the first one (an event starts ten minutes earlier)
-        k0t=Math.max(1,Math.min(58,Math.round((Date.parse((v.cts||v.ts||"").replace("T"," "))-Date.parse((k0||"").replace("_"," ").replace(/(\d\d)-(\d\d)-(\d\d)$/,"$1:$2:$3")))/1000)||2));
-      const have=(k0&&v.clips[k0])||[],cam=v.ty==="sentry"&&have.includes(EVCAM[v.cam])?EVCAM[v.cam]:have.includes("front")?"front":"";      // the camera that saw it (Sentry), at the moment it was detected
-      return `<button class="evc big" data-ty="${v.ty}" data-id="${v.id}">${k0?stThumb(k0,k0t,v.play&&cam?`/footage/${v.play}/${folder}/${v.id}/${k0}-${cam}.mp4`:"",k0t):'<div class="noimg"></div>'}${bd}<b>${hms(v.ts)}</b><span>${esc(reason(v.reason))}${v.ty==="sentry"&&cam?" · "+esc(CAMN[cam]):""}</span><span>${esc([v.city,v.street].filter(Boolean).join(" · "))}</span><span>${n?n+" min of video":"no video"}</span>${held(v)}${evLinks(v)}</button>`};
-    $("#tb").innerHTML=(days.length?"":'<div class="empty">Nothing here for these dates.</div>')+days.slice(0,60).map(d=>`<div class="day">${dayName(d)}<small>${byDay[d].length} clip${byDay[d].length>1?"s":""}</small></div><div class="evs">${byDay[d].map(card).join("")}</div>`).join("")+(days.length>60?'<div class="sub">Showing the newest 60 days. Narrow the dates to see older ones.</div>':"");
-    lazyThumbs($("#tb"));$$("#tb .evc").forEach(b=>b.onclick=async()=>{const ty=b.dataset.ty,sel=b.dataset.id;$$("#tb .evc").forEach(x=>x.classList.toggle("on",x===b));$("#spl").scrollIntoView({block:"nearest"});
-      const it=data[ty].find(v=>v.id===sel);
-      if(ty!=="recent"){
-        if(it.play)return sentryPlayer($("#spl"),it,it.play,TCF[ty]);
-        const what=it.reason?reason(it.reason):ty==="saved"?"Saved clip":"Sentry event";
-        return stillViewer($("#spl"),{stamps:Object.keys(it.clips).sort(),roles:it.roles,loc:it.loc,trig:Date.parse(it.cts||it.ts),head:`${esc(what)} on ${dayName(it.ts.slice(0,10))} at ${hms(it.ts)}${it.city?" · "+esc(it.city):""}`})}
-      $("#spl").innerHTML='<div class="sub">Reading…</div>';
-      try{const rr=await tcGet("clips/run/"+encodeURIComponent(sel)),stamps=Object.keys(rr.clips).sort(),head=`Continuous recording on ${dayName(it.ts.slice(0,10))}, ${hms(it.ts).slice(0,5)} to ${hms(it.end).slice(0,5)}, ${it.n} minute${it.n>1?"s":""}.`;
-        if(!it.playable)return stillViewer($("#spl"),{stamps,roles:it.roles,loc:rr.loc,head});
-        const cams={};stamps.forEach(x=>{cams[x]=rr.play[x]?rr.clips[x]:[]});      // a minute on no connected drive shows its box with the drives that hold it
-        clipPlayer($("#spl"),{stamps,cams,loc:rr.loc,url:(s,k)=>`/footage/${rr.play[s]}/RecentClips/${s}-${k}.mp4`,head:head+" The next minute plays on its own."+(it.playable<it.n?` ${it.n-it.playable} of the minutes are on no connected drive.`:"")})}
-      catch(e){$("#spl").innerHTML=errBox(e.message,"Could not read these clips")}})};
-  $("#q").oninput=e=>{TCS.q=e.target.value;draw()};chips();load();
-}
-
 // ---------- one drive rebuilt from the video: map, telemetry and the stitched footage, moving together
 // the colours every route map uses (settings app.map.speed_colors / autopilot_colors): speed as a gradient, and who was driving
 const APN={1:"FSD",2:"Autosteer",3:"TACC"},APD={FSD:"#3b6cf6",Autosteer:"#8b5cf6",TACC:"#14b8a6",Manual:"#94a3b8"};
@@ -2039,7 +2002,7 @@ async function boot(){
   $$("#nav>a").forEach(a=>a.addEventListener("click",()=>{if(a.getAttribute("href")!==location.hash)NAVRESET=true}));
   try{SET=await (await fetch("/api/settings")).json()}catch(e){}
   try{const s=await api("summary");$("#veh").textContent=s.vehicle;$("#vsub").textContent=n0(s.km)+" km logged"}catch(e){}
-  const st=async()=>{try{const s=await (await fetch("/api/status")).json();if(window.UI0==null)window.UI0=s.ui;const NM={A:"Archive",J:"JOWUA",U:"Tesla USB"};$("#status").innerHTML=["A","J","U"].filter(r=>r==="A"||s.roots[r]).map(r=>`<div><span class="dot ${s.roots[r]?"on":"off"}"></span>${NM[r]} ${s.roots[r]?"connected":"not connected"}</div>`).join("")+`${s.stale?'<div class="upd">The app was updated. Quit and reopen it to load the new version.</div>':""}${s.ui!==window.UI0?'<div class="upd">The page was updated. <a href="#" onclick="location.reload();return false">Reload it</a> to load the new version.</div>':""}`}catch(e){}};
+  const st=async()=>{try{const s=await (await fetch("/api/status")).json();if(window.UI0==null)window.UI0=s.ui;const NM={A:"Archive",J:"JOWUA",U:"Tesla USB"};$("#status").innerHTML=["A","J","U"].filter(r=>r==="A"||s.roots[r]).map(r=>`<div><span class="dot ${s.roots[r]?"on":"off"}"></span>${NM[r]} ${s.roots[r]?"connected":"not connected"}${s.roots[r]?`<button class="eject" data-ej="${r}" title="Eject ${NM[r]}" aria-label="Eject ${NM[r]}">⏏</button>`:""}</div>`).join("")+(window.EJMSG&&Date.now()<window.EJMSG.until?`<div class="${window.EJMSG.ok?"":"upd"}" style="font-size:12px">${esc(window.EJMSG.text)}</div>`:"")+`${s.stale?'<div class="upd">The app was updated. Quit and reopen it to load the new version.</div>':""}${s.ui!==window.UI0?'<div class="upd">The page was updated. <a href="#" onclick="location.reload();return false">Reload it</a> to load the new version.</div>':""}`;$$("#status [data-ej]").forEach(b=>b.onclick=async()=>{b.disabled=true;const r=await ejectDrive(b.dataset.ej);window.EJMSG={text:r.text,ok:r.ok,until:Date.now()+15000};st()})}catch(e){}};
   // the background reading of the connected drives (lib/app_keeper.py): what it is doing, and a button to pause it (before ejecting a disk)
   const kp=async()=>{try{const k=await (await fetch("/api/keeper")).json(),el=$("#keeper");
       if(!k.enabled||(!k.working&&!k.paused&&!k.error&&!k.playing)){el.hidden=true;return}

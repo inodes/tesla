@@ -69,6 +69,8 @@ import app_teslacam  # noqa: E402
 import app_drivelist  # noqa: E402
 import app_drive_review  # noqa: E402
 import app_footage
+import drive_eject
+import footage_todo
 import app_keeper  # noqa: E402
 import app_charges  # noqa: E402
 import clip_clock as CC  # noqa: E402
@@ -90,6 +92,7 @@ SENTRY = None
 TC = None
 DRV = None                  # the manual drive review (lib/app_drive_review.py)
 KEEP = None                 # reads the connected TeslaCam drives in the background (lib/app_keeper.py)
+TODO = None                 # what each connected drive still needs (lib/footage_todo.py)
 FG = None                   # the footage log and the one-second stills (lib/app_footage.py)
 SYNC = None
 TSYNC = None
@@ -129,6 +132,21 @@ def footage_root(role):
                 _ROOTS["busy"] = False
         threading.Thread(target=look, daemon=True).start()
     return _ROOTS["v"].get(role)
+
+
+def eject_drive(role, root):
+    """Everything the app is reading from the drives is stopped first (the Keeper, the log, the stills, the telemetry scan), then the drive is ejected."""
+    KEEP.pause()
+    FG.stop()
+    TC.scan_stop()
+    end = time.time() + 10
+    while time.time() < end and (FG.status().get("running") or TC.scan_status().get("running")):
+        time.sleep(0.3)
+    res = drive_eject.eject(root)
+    _ROOTS["v"] = {r: DR.find_root(r) for r in "AJU"}        # look again now, not in 20 s
+    _ROOTS["t"] = time.time()
+    KEEP.resume()
+    return res
 
 
 def footage_roots():
@@ -428,6 +446,12 @@ class H(BaseHTTPRequestHandler):
             if u.path == "/api/keeper":            # {action: pause|resume|run}
                 act = body.get("action")
                 return self.send_json(KEEP.pause() if act == "pause" else KEEP.run_now(body.get("stages")) if act == "run" else KEEP.resume())
+            if u.path == "/api/eject":             # {role}: stop reading the drive, then eject it
+                role = body.get("role")
+                root = footage_root(role) if role in ("A", "J", "U") else None
+                if not root:
+                    return self.send_json(dict(ok=False, text="That drive is not connected."))
+                return self.send_json(eject_drive(role, root))
             if u.path == "/api/footage":           # {action: log|stills|stop, roles: ["A","J"]}: update the log of the files / make the missing one-second stills
                 if body.get("action") == "stop":
                     return self.send_json(FG.stop())
@@ -517,6 +541,8 @@ class H(BaseHTTPRequestHandler):
         if name == "footage/stills":            # footage/stills?roles=A,J: the front clips on those drives against the stills kept (nothing is made)
             roles = [r for r in q.get("roles", ["A"])[0].split(",") if r in ("A", "J", "U")]
             return self.send_json(FG.stills_report({r: footage_root(r) for r in roles}))
+        if name == "footage/todo":              # what each connected drive still needs: files not in the log, minutes without telemetry, clips without stills
+            return self.send_json(TODO.snapshot())
         if name == "footage/status":
             return self.send_json(FG.status())
         if name == "clipstatus":                # clipstatus?stamps=a,b: kept on a drive / deleted / never logged, and whether its stills are kept
@@ -835,6 +861,7 @@ def main():
     DRV = app_drive_review.DriveReview(DATA_DIR, TC)
     FG = app_footage.Footage(DATA_DIR)
     KEEP = app_keeper.Keeper(DATA_DIR, TC, FG, DRV, SENTRY, footage_roots)
+    TODO = footage_todo.Todo(os.path.join(local_cache_dir(), "footage_todo.json"), DATA_DIR, TC, FG, footage_roots, lambda: KEEP._stage is None and not KEEP.busy())
     if not a.no_background:
         KEEP.start()
     BOOK = app_charges.ChargeBook(os.path.dirname(os.path.abspath(__file__)), DATA_DIR)
