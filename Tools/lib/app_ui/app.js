@@ -1645,7 +1645,7 @@ async function pageTeslaCam(role,id){
     let h=`<div class="bar selb">`;
     if(jobT){h+=`<span id="jobtx" class="sub" style="flex:1"></span><button class="btn sm" id="jobx">Stop</button>`}
     else if(pend){const list=allowed(pend.role,pend.action),gb=fmtGB(sizeOn(list,pend.role));
-      const mn=list.reduce((a,it)=>{const v=((data||{})[it.kind]||[]).find(x=>x.id===it.id);return a+(v?(it.kind==="recent"?v.n:Object.keys(v.clips||{}).length):0)},0),what=n0(list.length)+" clip"+(list.length>1?"s":"")+(mn?" ("+n0(mn)+" minute"+(mn>1?"s":"")+", every camera)":"");
+      const nf=list.reduce((a,it)=>a+((kpOf(it.kind,it.id).files||{})[pend.role]||0),0),na=list.reduce((a,it)=>a+((kpOf(it.kind,it.id).in_archive||{})[pend.role]||0),0),what=n0(list.length)+" clip"+(list.length>1?"s":"")+(nf?" ("+n0(nf)+" video file"+(nf>1?"s":"")+(pend.action==="move"&&na?", "+n0(na)+" already in the Archive":"")+")":"");
       h+=pend.action==="delete"?`<span style="flex:1"><b>Delete the video of ${what} from ${NMD[pend.role]}</b>, freeing ${gb}. Its metadata, stills and signs stay.${list.length<items.filter(it=>kpOf(it.kind,it.id).bytes[pend.role]>0).length?` The others are not all kept yet and are left alone.`:""}</span><button class="btn bad" id="kdo">Delete</button><button class="btn" id="kno">Cancel</button>`
         :`<span style="flex:1"><b>Move the video of ${what} from ${NMD[pend.role]} to the Archive</b> (${gb}); it is copied, checked, and only then removed from ${NMD[pend.role]}.</span><button class="btn pri" id="kdo">Move</button><button class="btn" id="kno">Cancel</button>`}
     else{

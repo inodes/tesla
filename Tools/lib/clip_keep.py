@@ -12,7 +12,7 @@ Everything here is worked out from what is kept on this computer (the footage lo
 so the answer is the same with every drive away. Only start() touches a drive: it deletes the video files of the clips asked for, or copies them to the Archive
 and then deletes them from the drive they were on, after checking again that it is allowed.
 
-    ClipKeep(data_dir, tc, fg).status()      -> dict(clips={"recent"|"saved"|"sentry": {id: dict(n, bytes{role}, size, meta[done, of], stills[...], signs[...], shots[...], shot_cams, ready, waiting)}})
+    ClipKeep(data_dir, tc, fg).status()      -> dict(clips={"recent"|"saved"|"sentry": {id: dict(n, bytes{role}, files{role}, in_archive{role}, size, meta[done, of], stills[...], signs[...], shots[...], shot_cams, ready, waiting)}})
     ClipKeep.start(action, role, items, roots)   action "delete" | "move"; items [{kind, id}]; returns the job status or dict(error=...)
     ClipKeep.start_process(items, roots)     reads what is missing for the clips: metadata, then stills, then signs (from the video on a connected drive)
     ClipKeep.job()                           -> the running or last job
@@ -121,11 +121,15 @@ class ClipKeep:
                 m = _FILE.match(rest)
                 if not m or kind not in KINDS:
                     continue
-                node = found.setdefault((kind, ev), {}).setdefault(m.group(1), dict(cams=set(), bytes={}))
+                node = found.setdefault((kind, ev), {}).setdefault(m.group(1), dict(cams=set(), bytes={}, files={}, arch={}))
                 node["cams"].add(m.group(2))
+                a_has = bool(rec["drives"].get("A") and not rec["drives"]["A"].get("gone"))
                 for r, x in rec["drives"].items():
                     if not x.get("gone"):
                         node["bytes"][r] = node["bytes"].get(r, 0) + rec.get("size", 0)
+                        node["files"][r] = node["files"].get(r, 0) + 1
+                        if r != "A" and a_has:
+                            node["arch"][r] = node["arch"].get(r, 0) + 1
         groups, out = {}, {k: {} for k in KINDS}
         for (kind, ev), mins in found.items():
             if kind == "recent":
@@ -136,8 +140,12 @@ class ClipKeep:
         self._groups = {k: sorted(v) for k, v in groups.items()}
         for (kind, cid), mins in groups.items():
             meta, st_, sg, sh = [0, 0], [0, 0], [0, 0], [0, 0]
-            waiting, nbytes = "", {}
+            waiting, nbytes, nfiles, narch = "", {}, {}, {}
             for st, node in mins.items():
+                for r, c in node["files"].items():
+                    nfiles[r] = nfiles.get(r, 0) + c
+                for r, c in node["arch"].items():
+                    narch[r] = narch.get(r, 0) + c
                 for r, b in node["bytes"].items():
                     nbytes[r] = nbytes.get(r, 0) + b
                 sm = store.summary(st)
@@ -162,7 +170,7 @@ class ClipKeep:
                 sh = [len(w[3]) - len(w[2]), len(w[3])]
             elif have:
                 sh = [len(have), len(have)]
-            out[kind][cid] = dict(n=len(mins), first=min(mins), bytes=nbytes, size=max(nbytes.values()) if nbytes else 0, meta=meta, stills=st_, signs=sg, shots=sh,
+            out[kind][cid] = dict(n=len(mins), first=min(mins), bytes=nbytes, files=nfiles, in_archive=narch, size=max(nbytes.values()) if nbytes else 0, meta=meta, stills=st_, signs=sg, shots=sh,
                                   shot_cams=sorted(have), ready=all(x[0] >= x[1] for x in (meta, st_, sg, sh)), waiting=waiting)
         return dict(clips=out)
 
