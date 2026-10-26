@@ -81,6 +81,7 @@ import app_software  # noqa: E402
 import car_watch  # noqa: E402
 import app_route  # noqa: E402
 import app_kept  # noqa: E402
+import app_reach  # noqa: E402
 from fetch_ledger import FetchLedger  # noqa: E402
 import drive_roles as DR  # noqa: E402
 import drive_paths as DP  # noqa: E402
@@ -99,6 +100,7 @@ STHIN = None                # making the stills of ordinary driving smaller (lib
 CKEEP = None                # per clip: what is kept from its video, and deleting / moving the video (lib/clip_keep.py)
 FG = None                   # the footage log and the one-second stills (lib/app_footage.py)
 SYNC = None
+REACH = None                # the Places map's range shading and coverage gaps (lib/app_reach.py)
 TSYNC = None
 CSYNC = None     # the Charges page's Tessie sync (sync_charging_all.sh)
 SOFT = None      # the Software page's fetch of Teslascope's versions (lib/app_software.py)
@@ -489,6 +491,10 @@ class H(BaseHTTPRequestHandler):
                     return self.send_json(TC.scan_stop())
                 roles = [r for r in (body.get("roles") or ["A"]) if r in ("A", "J", "U")]
                 return self.send_json(TC.scan_start({r: footage_root(r) for r in roles}))
+            if u.path == "/api/reach":             # {pts, mode, frac, reserve, basis, bbox, size}: a picture to lay over the Places map
+                return self.send_json(REACH.compute(body))
+            if u.path == "/api/reach/build":
+                return self.send_json(REACH.start_build())
             if u.path == "/api/chargers/sync":
                 return self.send_json(SYNC.start())
             if u.path == "/api/chargers/sync/stop":
@@ -697,6 +703,8 @@ class H(BaseHTTPRequestHandler):
             return self.send_json(dict(configured=app_sync.tessie_configured(), auto_minutes=app_config.get("drives.tessie_auto_sync_minutes"), synced_at=tessie_state().get("at"), fresh_minutes=app_config.get("drives.tessie_fresh_minutes"), **{k: v for k, v in TSYNC.status(0).items() if k != "lines"}))
         if name == "tessie-sync":
             return self.send_json((CSYNC if q.get("kind", [""])[0] == "charges" else TSYNC).status(int(q.get("since", ["0"])[0] or 0)))
+        if name == "reach":
+            return self.send_json(REACH.status())
         if name == "chargers-sync":
             return self.send_json(SYNC.status(int(q.get("since", ["0"])[0] or 0)))
         if name == "settings":
@@ -882,7 +890,7 @@ def _code_version():
 
 
 def main():
-    global KEPT, STORE, DATA_DIR, SENTRY, TC, DRV, SYNC, TSYNC, CSYNC, SOFT, CARW, BOOK, FG, KEEP, DRIVELIST, TODO, CKEEP, STHIN
+    global KEPT, STORE, DATA_DIR, SENTRY, TC, DRV, SYNC, TSYNC, CSYNC, REACH, SOFT, CARW, BOOK, FG, KEEP, DRIVELIST, TODO, CKEEP, STHIN
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--data-dir", default=DEFAULT_DATA)
     ap.add_argument("--port", type=int, default=int(app_config.get("window.port")))
@@ -926,6 +934,7 @@ def main():
     BOOK = app_charges.ChargeBook(os.path.dirname(os.path.abspath(__file__)), DATA_DIR)
     BOOK.get()          # start reconciling the charges with their invoices in the background
     SYNC = app_sync.ChargerSync(os.path.dirname(os.path.abspath(__file__)), DATA_DIR)
+    REACH = app_reach.ReachService(os.path.dirname(os.path.abspath(__file__)), DATA_DIR)
     TSYNC = app_sync.ChargerSync(os.path.dirname(os.path.abspath(__file__)), DATA_DIR, "sync_drives_all.sh")
     CSYNC = app_sync.ChargerSync(os.path.dirname(os.path.abspath(__file__)), DATA_DIR, "sync_charging_all.sh")
     SOFT = app_software.SoftSync(DATA_DIR)

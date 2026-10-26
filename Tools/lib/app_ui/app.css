@@ -229,3 +229,4 @@ tr.chline{cursor:pointer}tr.chline td{color:var(--bad);font-weight:600;font-size
 .sitegrid table.kv td:first-child{width:130px}.sitegrid table.kv td{overflow-wrap:anywhere}.tw{overflow-x:auto}.tw th.r,.tw td.r{text-align:right}
 .busy{display:grid;grid-template-columns:34px repeat(24,minmax(0,1fr));gap:2px;margin-top:8px;align-items:center}.busy i{height:18px;border-radius:3px;display:block}.busy .bd,.busy small{font-size:11px;color:var(--mut)}
 .sitegrid span.chip{cursor:default}
+.rgb{display:inline-block;width:110px;height:9px;border-radius:5px;vertical-align:middle;margin-right:4px;background:linear-gradient(90deg,rgba(165,205,250,.9),rgba(29,78,216,.95))}.rgb.gaps{width:34px;background:linear-gradient(90deg,#f59e0b,#dc2626)}

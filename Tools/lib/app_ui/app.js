@@ -997,6 +997,58 @@ async function sentryPlayer(host,ev,role=ev&&ev.role||"A",folder="SentryClips"){
 let PL={tab:"saved",q:"",visited:false,net:"all",state:"all",view:"list"},SYNCPOLL=null,PLM=null;
 // A map of the rows of the current Places tab (same filters as the list). Dots are small so they do not hide each other;
 // places you have used are solid, the rest faded. New Zealand is left out for now.
+// ---------- range on the Places map (lib/app_reach.py): pick chargers, see where a car leaving them with some charge can get to by road, or which roads are far from any charger
+const RG={on:false,tab:"",sel:new Set(),out:new Set(),frac:100,reserve:null,basis:"km",gaps:false,st:null,tok:0,pts:{},T:null,note:""};
+const rgMap=()=>PLM&&PLM.m&&PLM.m.isStyleLoaded()?PLM.m:null;
+function rgHide(){const m=rgMap();if(m&&m.getLayer("rg"))m.setLayoutProperty("rg","visibility","none")}
+function rgShow(r){const m=rgMap();if(!m)return;const c=[[r.bbox[1],r.bbox[2]],[r.bbox[3],r.bbox[2]],[r.bbox[3],r.bbox[0]],[r.bbox[1],r.bbox[0]]],s=m.getSource("rg");
+  if(s)s.updateImage({url:r.img,coordinates:c});else{m.addSource("rg",{type:"image",url:r.img,coordinates:c});m.addLayer({id:"rg",type:"raster",source:"rg",paint:{"raster-opacity":.9,"raster-fade-duration":0}},m.getLayer("pl")?"pl":undefined)}
+  m.setLayoutProperty("rg","visibility","visible")}
+function rgSel(){const m=rgMap();if(!m||!m.getSource("sel"))return;
+  m.getSource("sel").setData({type:"FeatureCollection",features:[...RG.sel].filter(k=>RG.pts[k]).map(k=>({type:"Feature",geometry:{type:"Point",coordinates:[RG.pts[k][1],RG.pts[k][0]]},properties:{o:RG.out.has(k)?1:0}}))})}
+function rgPick(keys){keys.forEach(k=>RG.sel.has(k)?RG.sel.delete(k):RG.sel.add(k));RG.out=new Set();rgSel();rgPanel();rgRun()}
+function rgRun(){clearTimeout(RG.T);RG.T=setTimeout(rgGo,250)}
+async function rgGo(){
+  const m=rgMap(),tok=++RG.tok;if(!m)return;
+  const F=PLM.feats?PLM.feats():[],keys=RG.sel.size?[...RG.sel]:(RG.gaps?F.map(f=>f.properties.key):[]),pts=keys.filter(k=>RG.pts[k]).map(k=>[RG.pts[k][0],RG.pts[k][1],k]);
+  if(!RG.on||!pts.length||!RG.st||!RG.st.built){rgHide();RG.note="";rgNote();return}
+  const b=m.getBounds(),dy=(b.getNorth()-b.getSouth())*.1,dx=(b.getEast()-b.getWest())*.1,bbox=[Math.max(-80,b.getSouth()-dy),Math.max(-180,b.getWest()-dx),Math.min(80,b.getNorth()+dy),Math.min(180,b.getEast()+dx)];
+  RG.note="Calculating…";rgNote();let r;
+  try{r=await (await fetch("/api/reach",{method:"POST",body:JSON.stringify({pts,mode:RG.gaps?"gaps":"reach",frac:RG.frac/100,reserve:(RG.reserve==null?RG.st.reserve:RG.reserve)/100,basis:RG.basis,bbox,size:cfg("reach.image_px")})})).json()}catch(e){r={error:String(e)}}
+  if(tok!==RG.tok)return;
+  if(r.error||r.empty){rgHide();RG.note=r.error==="needs_graph"?"":(r.error||"");rgNote();return}
+  RG.out=new Set(r.outline||[]);rgSel();rgShow(r);
+  RG.note=r.mode==="gaps"?`<i class="rgb gaps"></i> beyond ${n0(r.safe/2)} ${r.unit} from a charger · red beyond ${n0(r.safe)} ${r.unit}`:`<i class="rgb"></i> 0 – ${n0(r.vmax)} ${r.unit} left · ${n0(r.n)} chargers`;rgNote()}
+function rgNote(){const e=$("#rgs");if(e)e.innerHTML=RG.note}
+async function rgStatus(){try{RG.st=await (await fetch("/api/reach")).json()}catch(e){RG.st={built:false,error:String(e)}}rgPanel();if(RG.st.job&&RG.st.job.running)setTimeout(rgStatus,1500);else rgRun()}
+function rgPanel(){
+  const el=$("#rg");if(!el)return;
+  if(!RG.on){el.innerHTML='<button class="chip" id="rgon">Range</button>';$("#rgon").onclick=()=>{RG.on=true;if(!RG.st)rgStatus();rgPanel()};return}
+  const st=RG.st||{built:true,reserve:10},j=st.job||{};
+  let h='<button class="chip on" id="rgon">Range</button>';
+  if(!st.built){h+=j.running?`<span class="sub">${esc(j.step||"")}${j.total>1?" "+n0(j.done)+" of "+n0(j.total):""}</span>`:`<button class="btn" id="rgbuild">Build road network</button>${j.error?`<span class="sub" style="color:var(--bad);user-select:text">${esc(j.error)}</span>`:""}`}
+  else h+=`<span class="sub">${RG.sel.size} selected</span><button class="chip" id="rgall">All shown</button><button class="chip" id="rgnone">Clear</button>
+    <label class="sub">Charge <input type="number" id="rgf" min="5" max="100" step="5" value="${RG.frac}" style="width:56px"> %</label>
+    <label class="sub">Reserve <input type="number" id="rgr" min="0" max="80" step="5" value="${RG.reserve==null?st.reserve:RG.reserve}" style="width:56px"> %</label>
+    <select id="rgb"><option value="km">Distance</option><option value="kwh">Energy</option></select><label class="sub"><input type="checkbox" id="rggap"${RG.gaps?" checked":""}> Coverage gaps</label><span class="sub" id="rgs">${RG.note}</span>`;
+  el.innerHTML=h;$("#rgon").onclick=()=>{RG.on=false;RG.tok++;rgHide();const m=rgMap();if(m&&m.getSource("sel"))m.getSource("sel").setData({type:"FeatureCollection",features:[]});rgPanel()};
+  const bd=$("#rgbuild");if(bd)bd.onclick=async()=>{await fetch("/api/reach/build",{method:"POST",body:"{}"});RG.st={built:false,job:{running:true,step:"Starting"}};rgPanel();setTimeout(rgStatus,800)};
+  if(!st.built)return;
+  $("#rgall").onclick=()=>{(PLM.feats?PLM.feats():[]).forEach(f=>RG.sel.add(f.properties.key));RG.out=new Set();rgSel();rgPanel();rgRun()};
+  $("#rgnone").onclick=()=>{RG.sel=new Set();RG.out=new Set();rgSel();rgPanel();rgRun()};
+  $("#rgf").onchange=e=>{RG.frac=Math.min(100,Math.max(5,+e.target.value||100));rgRun()};$("#rgr").onchange=e=>{RG.reserve=Math.min(80,Math.max(0,+e.target.value||0));rgRun()};
+  $("#rgb").value=RG.basis;$("#rgb").onchange=e=>{RG.basis=e.target.value;rgRun()};$("#rggap").onchange=e=>{RG.gaps=e.target.checked;rgRun()}}
+// called each time the Places map is drawn: the panel, and (once per map) the box select and the redraw after the map has moved
+function rgInit(){
+  if(RG.tab!==PLM.tab){RG.tab=PLM.tab;RG.sel=new Set();RG.out=new Set();rgHide()}
+  rgPanel();if(PLM.rgBound)return;PLM.rgBound=true;const m=PLM.m,c=m.getCanvasContainer();
+  m.on("moveend",()=>{if(RG.on)rgRun()});
+  c.addEventListener("mousedown",e=>{if(!(RG.on&&e.shiftKey&&e.button===0))return;e.preventDefault();e.stopPropagation();m.dragPan.disable();
+    const r=c.getBoundingClientRect(),x0=e.clientX-r.left,y0=e.clientY-r.top,bx=document.createElement("div");bx.style.cssText="position:absolute;border:1.5px solid #2563eb;background:rgba(37,99,235,.12);pointer-events:none;z-index:3";c.appendChild(bx);
+    const mv=ev=>{const x=ev.clientX-r.left,y=ev.clientY-r.top;bx.style.left=Math.min(x,x0)+"px";bx.style.top=Math.min(y,y0)+"px";bx.style.width=Math.abs(x-x0)+"px";bx.style.height=Math.abs(y-y0)+"px"};
+    const up=ev=>{removeEventListener("mousemove",mv);removeEventListener("mouseup",up);bx.remove();m.dragPan.enable();const x=ev.clientX-r.left,y=ev.clientY-r.top;
+      const ks=[...new Set(m.queryRenderedFeatures([[Math.min(x,x0),Math.min(y,y0)],[Math.max(x,x0),Math.max(y,y0)]],{layers:["pl"]}).map(f=>f.properties.key))];if(ks.length){ks.forEach(k=>RG.sel.add(k));RG.out=new Set();rgSel();rgPanel();rgRun()}};
+    addEventListener("mousemove",mv);addEventListener("mouseup",up)},true)}
 function placesMap(host,rows,tab){
   const COL={saved:"#3b6cf6",sc:"#e0201b",chargers:"#16a34a",found:"#f59e0b"}[tab]||"#3b6cf6",byNet=tab==="chargers"||tab==="sc",ALIAS={"Tesla Supercharger":"Tesla","Evie Networks":"Evie"};
   const netName=r=>{const n=r.network||(tab==="sc"?"Tesla":"Other");return ALIAS[n]||n};
@@ -1010,24 +1062,27 @@ function placesMap(host,rows,tab){
     $$("[data-nw]",host).forEach(b=>b.onclick=()=>{const n=b.dataset.nw;hidden.has(n)?hidden.delete(n):hidden.add(n);PLM.hidden=hidden;PLM.update(false);legend()})};
   const dark=matchMedia("(prefers-color-scheme: dark)").matches;
   if(PLM&&PLM.tab===tab&&PLM.el&&PLM.dark===dark){
-    if(!host.contains(PLM.el)){host.innerHTML=`<div class="sub" style="margin-bottom:6px">Solid dot = used, faded = not used. Dots grow and get names as you zoom in. Click a dot for details.</div>${byNet?'<div class="bar" id="nl"></div>':""}<div class="map big" id="pm"></div>`;$("#pm",host).replaceWith(PLM.el);PLM.m.resize()}
-    PLM.update(!QUIET,rows);legend();return}
+    if(!host.contains(PLM.el)){host.innerHTML=`<div class="sub" style="margin-bottom:6px">Solid dot = used, faded = not used. Dots grow and get names as you zoom in. Click a dot for details.</div>${byNet?'<div class="bar" id="nl"></div><div class="bar" id="rg"></div>':""}<div class="map big" id="pm"></div>`;$("#pm",host).replaceWith(PLM.el);PLM.m.resize()}
+    PLM.update(!QUIET,rows);legend();if(byNet)rgInit();return}
   if(PLM){try{PLM.m.remove()}catch(e){}PLM=null}
   if(!window.maplibregl){host.innerHTML='<div class="empty">Map library not loaded (offline?).</div>';return}
-  host.innerHTML=`<div class="sub" style="margin-bottom:6px">Solid dot = used, faded = not used. Dots grow and get names as you zoom in. Click a dot for details.</div>${byNet?'<div class="bar" id="nl"></div>':""}<div class="map big" id="pm"></div>`;
+  host.innerHTML=`<div class="sub" style="margin-bottom:6px">Solid dot = used, faded = not used. Dots grow and get names as you zoom in. Click a dot for details.</div>${byNet?'<div class="bar" id="nl"></div><div class="bar" id="rg"></div>':""}<div class="map big" id="pm"></div>`;
   const el=$("#pm"),m=newMap({container:el,style:MAPSTYLE(dark),center:[151.2,-33.8],zoom:8,attributionControl:{compact:true}});
   mapNav(m,()=>update(true),"Show every place");
   let ready=false,first=true;
-  const update=(refit,rs)=>{if(rs)rows=rs;const F=feats();$("#cnt").textContent=F.length+" on the map";if(!ready)return;m.getSource("pl").setData({type:"FeatureCollection",features:F});
+  const update=(refit,rs)=>{if(rs)rows=rs;const F=feats();F.forEach(f=>RG.pts[f.properties.key]=[f.properties.lat,f.properties.lon]);$("#cnt").textContent=F.length+" on the map";if(!ready)return;m.getSource("pl").setData({type:"FeatureCollection",features:F});
     if((refit||first)&&F.length){first=false;const b=new maplibregl.LngLatBounds();F.forEach(f=>b.extend(f.geometry.coordinates));m.fitBounds(b,{padding:50,maxZoom:13,duration:400})}};
-  PLM={m,el,update,tab,hidden,dark};legend();
+  PLM={m,el,update,tab,hidden,dark,feats};legend();if(byNet)rgInit();
   m.on("load",()=>{ready=true;m.addSource("pl",{type:"geojson",data:{type:"FeatureCollection",features:[]}});
     // the dot grows with the zoom, so it stays as easy to see against the detailed street map as against the plain country map
     const R=["interpolate",["linear"],["zoom"],...[[3,2.5],[8,4],[12,7],[15,10],[18,13]].flatMap(([z,r])=>[z,["case",["==",["get","u"],1],r*1.35,r]])];
     m.addLayer({id:"pl",type:"circle",source:"pl",layout:{"circle-sort-key":["get","u"]},paint:{"circle-color":["get","c"],"circle-radius":R,"circle-opacity":["case",["==",["get","u"],1],1,0.7],"circle-stroke-width":["interpolate",["linear"],["zoom"],3,0.75,12,1.5,16,2.5],"circle-stroke-color":dark?"#111":"#fff"}});
     m.addLayer({id:"pl-name",type:"symbol",source:"pl",minzoom:12.5,layout:{"text-field":["get","name"],"text-font":["Noto Sans Regular"],"text-size":12,"text-anchor":"top","text-offset":[0,1.1],"text-optional":true,"text-max-width":9},paint:{"text-color":dark?"#e5e7eb":"#1f2937","text-halo-color":dark?"#111":"#fff","text-halo-width":1.5}});
+    m.addSource("sel",{type:"geojson",data:{type:"FeatureCollection",features:[]}});
+    m.addLayer({id:"pl-sel",type:"circle",source:"sel",paint:{"circle-color":"rgba(0,0,0,0)","circle-radius":["interpolate",["linear"],["zoom"],3,6,8,9,12,13,15,17,18,21],"circle-stroke-width":2.5,"circle-stroke-color":["case",["==",["get","o"],1],"#f59e0b","#2563eb"]}});
+    if(RG.on)rgSel();
     m.on("mouseenter","pl",()=>m.getCanvas().style.cursor="pointer");m.on("mouseleave","pl",()=>m.getCanvas().style.cursor="");
-    m.on("click","pl",e=>{const p=e.features[0].properties;new maplibregl.Popup({offset:10,maxWidth:"300px"}).setLngLat(e.features[0].geometry.coordinates).setHTML(`<div style="font:13px system-ui;color:#111"><b>${esc(p.name)}</b><div style="color:#555;margin:3px 0 6px">${esc(p.sub)}</div>${p.det?`<div style="color:#555;margin:0 0 6px">${esc(p.det)}</div>`:""}<a href="#/place/${encodeURIComponent(p.key)}">${tab==="sc"||tab==="chargers"?"Site details":"Open place"}</a><div style="margin-top:6px;font-size:12px">${mapLinks(p.lat,p.lon,p.name)}</div></div>`).addTo(m)});
+    m.on("click","pl",e=>{const p=e.features[0].properties;if(RG.on&&RG.st&&RG.st.built){rgPick([p.key]);return}new maplibregl.Popup({offset:10,maxWidth:"300px"}).setLngLat(e.features[0].geometry.coordinates).setHTML(`<div style="font:13px system-ui;color:#111"><b>${esc(p.name)}</b><div style="color:#555;margin:3px 0 6px">${esc(p.sub)}</div>${p.det?`<div style="color:#555;margin:0 0 6px">${esc(p.det)}</div>`:""}<a href="#/place/${encodeURIComponent(p.key)}">${tab==="sc"||tab==="chargers"?"Site details":"Open place"}</a><div style="margin-top:6px;font-size:12px">${mapLinks(p.lat,p.lon,p.name)}</div></div>`).addTo(m)});
     update(true)});
   update(false);
 }
