@@ -105,7 +105,78 @@ def site_info(rec, busy=None, facilities=None):
         checked=prov.get("last_verified_utc") or "", sources=sources, source_names=[SRC.get(s, _label(s)) for s in prov.get("sources") or []])
 
 
-def personal_info(name, rec):
+MONTHS = ("Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec")
+
+
+def _hm(h):
+    return "%02d:00" % h
+
+
+def _row(label, start, end, days, months, ex, gst):
+    return dict(label=label, start=start, end=end, days=days, months=months, rate=round(ex * gst, 4), net=round(ex, 4), tax=round(ex * (gst - 1), 4))
+
+
+def agl_tariff(periods, gst, today, provider="AGL", plan=""):
+    """What a home charge costs is the household electricity tariff (the scripts price home charges with it too, not the charger's own rate card): the period in
+    force on `today` as rate rows (gross = ex-GST x gst, as the charge pages show), its fixed charges and feed-in, and every earlier period as a history."""
+    cur = None
+    for p in periods:
+        if (p.get("effective_from") or "") <= today and (not p.get("effective_to") or p["effective_to"] >= today):
+            cur = p
+    if cur is None:
+        return None
+    all_m, wk, every = list(MONTHS), ["Mon", "Tue", "Wed", "Thu", "Fri"], list(("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"))
+    rows, tt = [], cur.get("tariff_type")
+    if tt == "tou":
+        pm = [MONTHS[m - 1] for m in sorted(cur.get("peak_months") or [])]
+        om = [m for m in all_m if m not in pm]
+        a, b = cur["peak_hour_start"], cur["peak_hour_end"]
+        pk, op = cur["peak_rate_per_kwh"], cur["offpeak_rate_per_kwh"]
+        rows.append(_row("Peak", _hm(a), _hm(b), every, pm, pk, gst))
+        rows.append(_row("Off-peak", _hm(0), _hm(a), every, pm, op, gst))
+        rows.append(_row("Off-peak", _hm(b), "24:00", every, pm, op, gst))
+        if om:
+            rows.append(_row("Off-peak (all day)", _hm(0), "24:00", every, om, op, gst))
+        model = "time_of_use"
+    elif tt == "tou3" and len({cur.get("peak_rate_per_kwh"), cur.get("shoulder_rate_per_kwh"), cur.get("offpeak_rate_per_kwh")}) > 1:
+        a, b = cur["peak_hour_start"], cur["peak_hour_end"]
+        rows.append(_row("Peak", _hm(a), _hm(b), wk, [], cur["peak_rate_per_kwh"], gst))
+        for w0, w1 in cur.get("shoulder_weekday_windows") or []:
+            rows.append(_row("Shoulder", _hm(w0), _hm(w1), wk, [], cur["shoulder_rate_per_kwh"], gst))
+        rows.append(_row("Shoulder", _hm(cur.get("shoulder_weekend_hour_start", 7)), _hm(cur.get("shoulder_weekend_hour_end", 22)), ["Sat", "Sun"], [], cur["shoulder_rate_per_kwh"], gst))
+        rows.append(_row("Off-peak", "", "", every, [], cur["offpeak_rate_per_kwh"], gst))
+        model = "time_of_use"
+    else:
+        ex = cur.get("usage_rate_per_kwh") if cur.get("usage_rate_per_kwh") is not None else cur.get("offpeak_rate_per_kwh")
+        rows.append(_row("All day", _hm(0), "24:00", every, [], ex, gst) if ex is not None else None)
+        rows = [r for r in rows if r]
+        model = "flat"
+    rates = [r["rate"] for r in rows]
+    fixed = []
+    if cur.get("supply_charge_per_day") is not None:
+        fixed.append(["Supply charge", "$%.4f/day" % (cur["supply_charge_per_day"] * gst)])
+    if cur.get("controlled_load_2_rate_per_kwh") is not None:
+        fixed.append(["Controlled load 2", "$%.4f/kWh" % (cur["controlled_load_2_rate_per_kwh"] * gst)])
+    if cur.get("demand_rate_per_kw_day"):
+        fixed.append(["Demand charge", "$%.4f/kW/day" % (cur["demand_rate_per_kw_day"] * gst)])
+    if cur.get("solar_feed_in_tier1_rate_per_kwh") is not None:
+        fixed.append(["Solar feed-in", "$%.2f/kWh first tier, $%.2f/kWh after" % (cur["solar_feed_in_tier1_rate_per_kwh"], cur.get("solar_feed_in_tier2_rate_per_kwh") or 0)])
+    hist = []
+    for p in sorted(periods, key=lambda x: x.get("effective_from") or "", reverse=True):
+        pk = p.get("peak_rate_per_kwh") if p.get("peak_rate_per_kwh") is not None else p.get("usage_rate_per_kwh")
+        op = p.get("offpeak_rate_per_kwh") if p.get("offpeak_rate_per_kwh") is not None else p.get("usage_rate_per_kwh")
+        if pk is None and p.get("supply_charge_per_day") is None:
+            continue
+        hist.append(dict(frm=p.get("effective_from"), to=p.get("effective_to") or "", peak=None if pk is None else round(pk * gst, 4), offpeak=None if op is None else round(op * gst, 4),
+                         supply=None if p.get("supply_charge_per_day") is None else round(p["supply_charge_per_day"] * gst, 4), feed_in=p.get("solar_feed_in_tier1_rate_per_kwh"),
+                         kind=p.get("tariff_type") or "flat"))
+    return dict(currency="AUD", model=model, tou=model == "time_of_use", tax_name="GST", tax_rate=round(gst - 1, 4), tax_included=True,
+                range=("$%.4f - $%.4f/kWh" % (min(rates), max(rates))) if len(set(rates)) > 1 else None, per_kwh=rates[0] if len(set(rates)) == 1 else None,
+                per_kwh_net=None, idle=None, congestion=None, parking=None, schedule=rows, members=[], members_model=None, non_tesla=[], non_tesla_supported=None, non_tesla_model=None,
+                retailer="%s%s" % (provider, " " + plan if plan else ""), since=cur.get("effective_from"), fixed=fixed, history=hist)
+
+
+def personal_info(name, rec, agl=None):
     """The same shape as site_info for one of your own chargers (<data>/chargers/personal_chargers.json: a home or workplace charger)."""
     hw, cp, co = (rec.get(k) or {} for k in ("hardware", "compatibility", "costs"))
     sched = _sched([dict(label=r.get("name"), start_time=r.get("start_time"), end_time=r.get("end_time"), days=r.get("days"), months=r.get("months"), rate_per_kwh=r.get("rate_per_kwh"))
@@ -114,6 +185,8 @@ def personal_info(name, rec):
     t = dict(currency=co.get("currency"), model=co.get("pricing_model"), tou=co.get("pricing_model") == "time_of_use", tax_name=None, tax_rate=None, tax_included=None,
              range=("$%.2f - $%.2f/kWh" % (min(rates), max(rates))) if len(set(rates)) > 1 else None, per_kwh=(rates[0] if len(set(rates)) == 1 else (co.get("flat_per_kwh") or None) if not rates else None),
              per_kwh_net=None, idle=None, congestion=None, parking=None, schedule=sched, members=[], members_model=None, non_tesla=[], non_tesla_supported=None, non_tesla_model=None)
+    if agl:
+        t = agl
     if co.get("per_minute"):
         t["parking"] = "$%.2f/min" % co["per_minute"]
     if co.get("per_session"):
