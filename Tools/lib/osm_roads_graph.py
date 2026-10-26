@@ -305,14 +305,19 @@ class RoadGraph:
             return out
         who = np.full(self.N, -1, np.int64)
         who[a["knode"]] = kwho
-        who[a["snode"]] = np.where(v1 <= v2, kwho[np.asarray(a["ca"])[c]], kwho[np.asarray(a["cb"])[c]])
+        e1, e2 = (np.asarray(a["ca"])[c], np.asarray(a["cb"])[c]) if not back else (np.asarray(a["cb"])[c], np.asarray(a["ca"])[c])       # the end each of v1, v2 goes by
+        who[a["snode"]] = np.where(v1 <= v2, kwho[e1], kwho[e2])
         return out, who
 
-    def _fix_chargers(self, cost, st, basis, back):
+    def _fix_chargers(self, cost, st, basis, back, who=None):
         """A charger in the middle of a chain: the bends of that chain are worth the direct run to or from it, not the run round by the chain's ends.
-        st: [(road point, cost at the charger itself)]."""
-        for node, base in st:
-            cost[node] = min(cost[node], base)
+        st: [(road point, cost at the charger itself)] or [(road point, cost, charger number)]; with `who` (a charger number per road point) the numbers are kept up to date."""
+        for e in st:
+            node, base = e[0], e[1]
+            if base < cost[node]:
+                cost[node] = base
+                if who is not None:
+                    who[node] = e[2]
             s = int(self.sid[node])
             if s < 0:
                 continue
@@ -326,8 +331,34 @@ class RoadGraph:
             else:
                 ok = ((d <= 0) & (one >= 0)) | ((d >= 0) & (one <= 0))        # driving bend -> charger must be allowed
             nodes = np.asarray(self.a["snode"][lo:hi])
-            cost[nodes] = np.minimum(cost[nodes], np.where(ok, base + np.abs(d), np.inf))
+            new = np.where(ok, base + np.abs(d), np.inf)
+            better = new < cost[nodes]
+            cost[nodes] = np.where(better, new, cost[nodes])
+            if who is not None:
+                who[nodes] = np.where(better, e[2], who[nodes])
         return cost
+
+    def _who(self, pred, ent_k, ent_w, ent_who):
+        """Which of the points gave each junction its value: follow the predecessors of the search up to the virtual source's neighbour (pointer jumping)."""
+        K = self.K
+        who_of = np.full(K + 1, -1, np.int64)
+        best = {}
+        for kk, w, k in zip(np.asarray(ent_k).tolist(), ent_w, ent_who):
+            if kk not in best or w < best[kk][0]:
+                best[kk] = (w, k)
+        for kk, (_w, k) in best.items():
+            who_of[kk] = k
+        p = pred.astype(np.int64)
+        root = p == K
+        p[p < 0] = K
+        p[root] = np.flatnonzero(root)
+        p[K] = K
+        for _ in range(48):
+            q = p[p]
+            if np.array_equal(q, p):
+                break
+            p = q
+        return who_of[p[:K]]
 
     # ---- the two searches
     def reach(self, points, basis="km", full=None):
@@ -362,25 +393,7 @@ class RoadGraph:
         indptr = np.concatenate([m.indptr, [m.indptr[-1] + len(ent_k)]])
         aug = csr_matrix((np.concatenate([m.data, np.maximum(ent_w, 1e-9)]), np.concatenate([m.indices, ent_k]), indptr), shape=(K + 1, K + 1))
         dist, pred = dijkstra(aug, directed=True, indices=K, limit=R, return_predecessors=True)
-        # who gave each junction its charge: follow the predecessors up to the virtual source's neighbour (pointer jumping)
-        who_of = np.full(K + 1, -1, np.int64)
-        best = {}
-        for kk, w, k in zip(ent_k.tolist(), ent_w, ent_who):
-            if kk not in best or w < best[kk][0]:
-                best[kk] = (w, k)
-        for kk, (_w, k) in best.items():
-            who_of[kk] = k
-        p = pred.astype(np.int64)
-        root = p == K
-        p[p < 0] = K
-        p[root] = np.flatnonzero(root)
-        p[K] = K
-        for _ in range(48):
-            q = p[p]
-            if np.array_equal(q, p):
-                break
-            p = q
-        who = who_of[p[:K]]
+        who = self._who(pred, ent_k, ent_w, ent_who)
         kd = dist[:K]
         cost, pwho = self._bends(kd, basis, False, who)
         cost = self._fix_chargers(cost, fixes, basis, False)
@@ -389,12 +402,13 @@ class RoadGraph:
         outline = sorted({int(x) for x in np.unique(pwho[edge]) if x >= 0})
         return dict(left=left.astype(np.float32), full=R, who=who.astype(np.int32), outline=outline)
 
-    def nearest(self, points, basis="km"):
-        """Cost (km or kWh) from every road point to the nearest of the points [(lat, lon)], roads taken the way a car drives them to the charger. inf = unreachable."""
+    def nearest(self, points, basis="km", want_who=False):
+        """Cost (km or kWh) from every road point to the nearest of the points [(lat, lon)], roads taken the way a car drives them to the charger. inf = unreachable.
+        want_who: (cost, who) with `who` the index in points of that nearest one at every road point (-1 = none)."""
         from scipy.sparse import csr_matrix
         from scipy.sparse.csgraph import dijkstra
-        ent_k, ent_w, fixes = [], [], []
-        for la, lo in points:
+        ent_k, ent_w, ent_who, fixes = [], [], [], []
+        for n, (la, lo) in enumerate(points):
             nd, m = self.snap(la, lo)
             if nd is None:
                 continue
@@ -402,14 +416,133 @@ class RoadGraph:
             for kk, cost in self._entries(nd, basis, True):
                 ent_k.append(kk)
                 ent_w.append(acc + cost)
-            fixes.append((nd, acc))
+                ent_who.append(n)
+            fixes.append((nd, acc, n))
         m = self._graph(basis, True)
         K = self.K
         ent_k = np.array(ent_k, np.int64)
         indptr = np.concatenate([m.indptr, [m.indptr[-1] + len(ent_k)]])
         aug = csr_matrix((np.concatenate([m.data, np.maximum(ent_w, 1e-9)]), np.concatenate([m.indices, ent_k]), indptr), shape=(K + 1, K + 1))
-        d = dijkstra(aug, directed=True, indices=K)[:K]
-        return self._fix_chargers(self._bends(d, basis, True), fixes, basis, True)
+        if not want_who:
+            d = dijkstra(aug, directed=True, indices=K)[:K]
+            return self._fix_chargers(self._bends(d, basis, True), fixes, basis, True)
+        d, pred = dijkstra(aug, directed=True, indices=K, return_predecessors=True)
+        cost, who = self._bends(d[:K], basis, True, self._who(pred, ent_k, ent_w, ent_who))
+        cost = self._fix_chargers(cost, fixes, basis, True, who)
+        return cost, who
+
+    def stretches(self, cost, who, basis="km"):
+        """The runs of road between two chargers that have no other charger on them: [(a, b, cost, road point)] largest first, one per pair of neighbouring chargers (a < b are
+        indexes into the points of nearest(); cost = the way from one to the other by the shortest road between them, the point is where the two meet). Roads taken as two-way."""
+        a = self.a
+        sc, so = np.asarray(a["sc"]), np.asarray(a["soff"], np.float64)
+        ca, cb = np.asarray(a["ca"]), np.asarray(a["cb"])
+        kn, sn = np.asarray(a["knode"]), np.asarray(a["snode"])
+        ln = np.asarray(a["clen"], np.float64)
+        fc = self._f(basis, np.asarray(a["ckmh"]))
+        nb = len(sc)
+        P, Q, seg = [], [], []
+        if nb:                                                   # bend to the next bend of the same chain, the chain's first bend from its a end, its last bend to its b end
+            same = sc[1:] == sc[:-1]
+            i = np.flatnonzero(same)
+            P.append(sn[i]); Q.append(sn[i + 1]); seg.append((so[i + 1] - so[i]) / 1000.0 * fc[sc[i]])
+            first = np.flatnonzero(np.concatenate([[True], ~same]))
+            P.append(kn[ca[sc[first]]]); Q.append(sn[first]); seg.append(so[first] / 1000.0 * fc[sc[first]])
+            last = np.flatnonzero(np.concatenate([~same, [True]]))
+            P.append(sn[last]); Q.append(kn[cb[sc[last]]]); seg.append((ln[sc[last]] - so[last]) / 1000.0 * fc[sc[last]])
+        bare = np.flatnonzero(np.bincount(sc, minlength=len(ln)) == 0)               # chains with no bends
+        P.append(kn[ca[bare]]); Q.append(kn[cb[bare]]); seg.append(ln[bare] / 1000.0 * fc[bare])
+        P, Q, seg = np.concatenate(P), np.concatenate(Q), np.concatenate(seg)
+        wp, wq = who[P], who[Q]
+        m = (wp >= 0) & (wq >= 0) & (wp != wq)
+        P, Q, seg, wp, wq = P[m], Q[m], seg[m], wp[m], wq[m]
+        g = cost[P] + seg + cost[Q]
+        ok = np.isfinite(g)
+        P, g, wp, wq = P[ok], g[ok], wp[ok], wq[ok]
+        lo, hi = np.minimum(wp, wq).astype(np.int64), np.maximum(wp, wq).astype(np.int64)
+        key = lo * (int(who.max()) + 2) + hi
+        order = np.argsort(g, kind="stable")
+        _u, first = np.unique(key[order], return_index=True)
+        pick = order[first]
+        pick = pick[np.argsort(-g[pick], kind="stable")]
+        return [(int(lo[j]), int(hi[j]), float(g[j]), int(P[j])) for j in pick]
+
+    def prepare(self, points, basis="km"):
+        """The chargers [(lat, lon)] put on the roads once, for `at`: where each joins the junctions and what the way in costs."""
+        ek, ew, ei, direct = [], [], [], []
+        for n, (la, lo) in enumerate(points):
+            nd, m = self.snap(la, lo)
+            if nd is None:
+                continue
+            acc = self.access(m, basis)
+            for kk, cost in self._entries(nd, basis, True):
+                ek.append(kk); ew.append(acc + cost); ei.append(n)
+            if self.sid[nd] >= 0:
+                direct.append((n, nd, acc))
+        return dict(k=np.array(ek, np.int64), w=np.array(ew, np.float64), i=np.array(ei, np.int64), direct=direct, n=len(points), xy=np.array(points, np.float64).reshape(-1, 2))
+
+    def at(self, lat, lon, prep, basis="km", limit=None, many=4):
+        """What is around a spot: the road point it lies on and the chargers a car there can drive to, nearest first, each with the cost and the way it leaves the spot
+        (side). None when no road is near. -> dict(lat, lon, snap_m, found=[(charger index, cost, side)], back=the nearest one in about the opposite direction to the first)."""
+        from scipy.sparse.csgraph import dijkstra
+        nd, mt = self.snap(lat, lon)
+        if nd is None:
+            return None
+        src = []                                                                     # (junction, cost to get there, side)
+        w = self.weights(basis)
+        kx = int(self.kid[nd])
+        if kx >= 0:
+            ip = self.a["indptr"]
+            src.append((kx, 0.0, -1))
+            for j in range(int(ip[kx]), int(ip[kx + 1])):
+                src.append((int(self.a["dst"][j]), float(w[j]), j - int(ip[kx])))
+        else:                                                                        # side 0: out along the chain toward its a end, side 1: toward its b end
+            sx = int(self.sid[nd])
+            cx = int(self.a["sc"][sx])
+            offx, lnx, onex = float(self.a["soff"][sx]), float(self.a["clen"][cx]), int(self.a["cone"][cx])
+            fx = float(self._f(basis, [self.a["ckmh"][cx]])[0])
+            if onex <= 0:
+                src.append((int(self.a["ca"][cx]), offx / 1000.0 * fx, 0))
+            if onex >= 0:
+                src.append((int(self.a["cb"][cx]), (lnx - offx) / 1000.0 * fx, 1))
+        n = prep["n"]
+        best = np.full(n, np.inf)
+        side_of = np.full(n, -2, np.int64)
+        if src:
+            D = dijkstra(self._graph(basis, False), directed=True, indices=[x[0] for x in src], limit=limit if limit else np.inf)
+            for r, (_kk, off, side) in enumerate(src):
+                if len(prep["k"]):
+                    t = D[r][prep["k"]] + prep["w"] + off
+                    row = np.full(n, np.inf)
+                    np.minimum.at(row, prep["i"], t)
+                    upd = row < best
+                    best[upd], side_of[upd] = row[upd], side
+        if self.sid[nd] >= 0:                                                        # chargers on the same stretch of road run straight to
+            s = int(self.sid[nd])
+            c = int(self.a["sc"][s])
+            f = float(self._f(basis, [self.a["ckmh"][c]])[0])
+            one = int(self.a["cone"][c])
+            for k, cn, acc in prep["direct"]:
+                s2 = int(self.sid[cn])
+                if int(self.a["sc"][s2]) != c:
+                    continue
+                dd = (float(self.a["soff"][s2]) - float(self.a["soff"][s])) / 1000.0 * f
+                if (dd >= 0 and one >= 0) or (dd <= 0 and one <= 0):
+                    t = abs(dd) + acc
+                    if t < best[k]:
+                        best[k], side_of[k] = t, (1 if dd >= 0 else 0)
+        order = [int(i) for i in np.argsort(best)[:many] if np.isfinite(best[i])]
+        found = [(i, float(best[i]), int(side_of[i])) for i in order]
+        back = None
+        if found:                                                                    # the nearest one in about the opposite direction (as the crow flies) from the nearest
+            xy = prep["xy"]
+            brg = np.arctan2((xy[:, 1] - lon) * math.cos(math.radians(lat)), xy[:, 0] - lat)
+            diff = np.abs((brg - brg[found[0][0]] + math.pi) % (2 * math.pi) - math.pi)
+            ok = np.isfinite(best) & (diff > math.radians(100))
+            if ok.any():
+                j = int(np.flatnonzero(ok)[np.argmin(best[ok])])
+                back = (j, float(best[j]), int(side_of[j]))
+        return dict(lat=float(self.lat[nd]), lon=float(self.lon[nd]), snap_m=mt, found=found, back=back)
 
     # ---- drawing
     def raster(self, val, vmax, bbox, size=512, buf_km=None):

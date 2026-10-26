@@ -493,6 +493,8 @@ class H(BaseHTTPRequestHandler):
                 return self.send_json(TC.scan_start({r: footage_root(r) for r in roles}))
             if u.path == "/api/reach":             # {pts, mode, frac, reserve, basis, bbox, size}: a picture to lay over the Places map
                 return self.send_json(REACH.compute(body))
+            if u.path == "/api/reach/at":          # {pts, lat, lon, basis, frac, reserve}: the nearest chargers on the roads from a spot
+                return self.send_json(REACH.at(body))
             if u.path == "/api/reach/build":
                 return self.send_json(REACH.start_build())
             if u.path == "/api/chargers/sync":

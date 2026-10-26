@@ -998,7 +998,7 @@ let PL={tab:"saved",q:"",visited:false,net:"all",state:"all",view:"list"},SYNCPO
 // A map of the rows of the current Places tab (same filters as the list). Dots are small so they do not hide each other;
 // places you have used are solid, the rest faded. New Zealand is left out for now.
 // ---------- range on the Places map (lib/app_reach.py): pick chargers, see where a car leaving them with some charge can get to by road, or which roads are far from any charger
-const RG={on:false,tab:"",sel:new Set(),out:new Set(),frac:100,reserve:null,basis:"km",gaps:false,st:null,tok:0,pts:{},T:null,note:""};
+const RG={on:false,tab:"",sel:new Set(),out:new Set(),frac:100,reserve:null,basis:"km",gaps:false,st:null,tok:0,pts:{},names:{},stretches:[],unit:"km",listOpen:false,T:null,note:""};
 const rgMap=()=>PLM&&PLM.m&&PLM.m.isStyleLoaded()?PLM.m:null;
 function rgHide(){const m=rgMap();if(m&&m.getLayer("rg"))m.setLayoutProperty("rg","visibility","none")}
 function rgShow(r){const m=rgMap();if(!m)return;const c=[[r.bbox[1],r.bbox[2]],[r.bbox[3],r.bbox[2]],[r.bbox[3],r.bbox[0]],[r.bbox[1],r.bbox[0]]],s=m.getSource("rg");
@@ -1011,14 +1011,29 @@ function rgRun(){clearTimeout(RG.T);RG.T=setTimeout(rgGo,250)}
 async function rgGo(){
   const m=rgMap(),tok=++RG.tok;if(!m)return;
   const F=PLM.feats?PLM.feats():[],keys=RG.sel.size?[...RG.sel]:(RG.gaps?F.map(f=>f.properties.key):[]),pts=keys.filter(k=>RG.pts[k]).map(k=>[RG.pts[k][0],RG.pts[k][1],k]);
-  if(!RG.on||!pts.length||!RG.st||!RG.st.built){rgHide();RG.note="";rgNote();return}
+  if(!RG.on||!pts.length||!RG.st||!RG.st.built){rgHide();RG.note="";rgNote();RG.stretches=[];rgList();return}
   const b=m.getBounds(),dy=(b.getNorth()-b.getSouth())*.1,dx=(b.getEast()-b.getWest())*.1,bbox=[Math.max(-80,b.getSouth()-dy),Math.max(-180,b.getWest()-dx),Math.min(80,b.getNorth()+dy),Math.min(180,b.getEast()+dx)];
   RG.note="Calculating…";rgNote();let r;
   try{r=await (await fetch("/api/reach",{method:"POST",body:JSON.stringify({pts,mode:RG.gaps?"gaps":"reach",frac:RG.frac/100,reserve:(RG.reserve==null?RG.st.reserve:RG.reserve)/100,basis:RG.basis,bbox,size:cfg("reach.image_px")})})).json()}catch(e){r={error:String(e)}}
   if(tok!==RG.tok)return;
   if(r.error||r.empty){rgHide();RG.note=r.error==="needs_graph"?"":(r.error||"");rgNote();return}
-  RG.out=new Set(r.outline||[]);rgSel();rgShow(r);
+  RG.out=new Set(r.outline||[]);RG.stretches=r.mode==="gaps"?(r.stretches||[]):[];RG.unit=r.unit;rgList();rgSel();rgShow(r);
   RG.note=r.mode==="gaps"?`<i class="rgb gaps"></i> beyond ${n0(r.safe/2)} ${r.unit} from a charger · red beyond ${n0(r.safe)} ${r.unit}`:`<i class="rgb"></i> 0 – ${n0(r.vmax)} ${r.unit} left · ${n0(r.n)} chargers`;rgNote()}
+function pmFit(){const e=PLM&&PLM.el;if(!e||!e.isConnected)return;const h=Math.max(380,Math.floor(innerHeight-e.getBoundingClientRect().top-14));if(Math.abs(e.offsetHeight-h)>2){e.style.height=h+"px";try{PLM.m.resize()}catch(x){}}}
+addEventListener("resize",()=>pmFit());
+function rgList(){const el=$("#rgl");if(!el)return;const L=RG.on&&RG.gaps?RG.stretches:[],nm=k=>esc(RG.names[k]||k);
+  el.innerHTML=L.length?`<details class="card rgstr"${RG.listOpen?" open":""}><summary><b>Longest stretches without a charger</b></summary>${L.map((x,i)=>`<div><a href="#" data-sl="${i}">${nm(x.a)} → ${nm(x.b)}</a> <span class="sub">${n0(x.cost)} ${esc(RG.unit)}</span></div>`).join("")}</details>`:"";
+  const d=$("details",el);if(d)d.ontoggle=()=>{RG.listOpen=d.open};
+  $$("[data-sl]",el).forEach(a=>a.onclick=ev=>{ev.preventDefault();const x=L[+a.dataset.sl],m=rgMap();if(m&&x)m.flyTo({center:[x.lon,x.lat],zoom:6.5,duration:600})})}
+async function rgAt(e){
+  const m=rgMap();if(!RG.on||!RG.st||!RG.st.built||!m)return;
+  if(m.getLayer("pl")&&m.queryRenderedFeatures(e.point,{layers:["pl"]}).length)return;
+  const F=PLM.feats?PLM.feats():[],keys=RG.sel.size?[...RG.sel]:F.map(f=>f.properties.key),pts=keys.filter(k=>RG.pts[k]).map(k=>[RG.pts[k][0],RG.pts[k][1],k]);
+  if(!pts.length)return;
+  const pop=new maplibregl.Popup({offset:6,maxWidth:"320px"}).setLngLat(e.lngLat).setHTML('<div style="font:13px system-ui;color:#111">Calculating…</div>').addTo(m);
+  let r;try{r=await (await fetch("/api/reach/at",{method:"POST",body:JSON.stringify({pts,lat:e.lngLat.lat,lon:e.lngLat.lng,basis:RG.basis,frac:RG.frac/100,reserve:(RG.reserve==null?RG.st.reserve:RG.reserve)/100})})).json()}catch(x){r={error:String(x)}}
+  const nm=k=>esc(RG.names[k]||k),u=esc(r.unit||RG.unit),row=(t,k,c)=>`<div style="margin:2px 0"><span style="color:#555">${t}</span> <b>${nm(k)}</b> · ${n0(c)} ${u}</div>`;
+  pop.setHTML(`<div style="font:13px system-ui;color:#111">${r.error?esc(r.error==="needs_graph"?"":r.error):!(r.near||[]).length?"No charger within reach of the roads here.":row("Nearest charger",r.near[0].key,r.near[0].cost)+(r.other?row("The other way",r.other.key,r.other.cost)+`<div style="margin:2px 0;color:#555">Between them ${n0(r.between)} ${u}</div>`:"")+(r.left!=null?`<div style="margin:2px 0;color:#555">Charge left here ${n0(r.left)} ${u}</div>`:"")}</div>`)}
 function rgNote(){const e=$("#rgs");if(e)e.innerHTML=RG.note}
 async function rgStatus(){try{RG.st=await (await fetch("/api/reach")).json()}catch(e){RG.st={built:false,error:String(e)}}rgPanel();if(RG.st.job&&RG.st.job.running)setTimeout(rgStatus,1500);else rgRun()}
 function rgPanel(){
@@ -1031,7 +1046,7 @@ function rgPanel(){
     <label class="sub">Charge <input type="number" id="rgf" min="5" max="100" step="5" value="${RG.frac}" style="width:56px"> %</label>
     <label class="sub">Reserve <input type="number" id="rgr" min="0" max="80" step="5" value="${RG.reserve==null?st.reserve:RG.reserve}" style="width:56px"> %</label>
     <select id="rgb"><option value="km">Distance</option><option value="kwh">Energy</option></select><label class="sub"><input type="checkbox" id="rggap"${RG.gaps?" checked":""}> Coverage gaps</label><span class="sub" id="rgs">${RG.note}</span>`;
-  el.innerHTML=h;$("#rgon").onclick=()=>{RG.on=false;RG.tok++;rgHide();const m=rgMap();if(m&&m.getSource("sel"))m.getSource("sel").setData({type:"FeatureCollection",features:[]});rgPanel()};
+  el.innerHTML=h;pmFit();$("#rgon").onclick=()=>{RG.on=false;RG.tok++;rgHide();rgList();const m=rgMap();if(m&&m.getSource("sel"))m.getSource("sel").setData({type:"FeatureCollection",features:[]});rgPanel()};
   const bd=$("#rgbuild");if(bd)bd.onclick=async()=>{await fetch("/api/reach/build",{method:"POST",body:"{}"});RG.st={built:false,job:{running:true,step:"Starting"}};rgPanel();setTimeout(rgStatus,800)};
   if(!st.built)return;
   $("#rgall").onclick=()=>{(PLM.feats?PLM.feats():[]).forEach(f=>RG.sel.add(f.properties.key));RG.out=new Set();rgSel();rgPanel();rgRun()};
@@ -1042,7 +1057,7 @@ function rgPanel(){
 function rgInit(){
   if(RG.tab!==PLM.tab){RG.tab=PLM.tab;RG.sel=new Set();RG.out=new Set();rgHide()}
   rgPanel();if(PLM.rgBound)return;PLM.rgBound=true;const m=PLM.m,c=m.getCanvasContainer();
-  m.on("moveend",()=>{if(RG.on)rgRun()});
+  m.on("moveend",()=>{if(RG.on)rgRun()});m.on("click",rgAt);
   c.addEventListener("mousedown",e=>{if(!(RG.on&&e.shiftKey&&e.button===0))return;e.preventDefault();e.stopPropagation();m.dragPan.disable();
     const r=c.getBoundingClientRect(),x0=e.clientX-r.left,y0=e.clientY-r.top,bx=document.createElement("div");bx.style.cssText="position:absolute;border:1.5px solid #2563eb;background:rgba(37,99,235,.12);pointer-events:none;z-index:3";c.appendChild(bx);
     const mv=ev=>{const x=ev.clientX-r.left,y=ev.clientY-r.top;bx.style.left=Math.min(x,x0)+"px";bx.style.top=Math.min(y,y0)+"px";bx.style.width=Math.abs(x-x0)+"px";bx.style.height=Math.abs(y-y0)+"px"};
@@ -1059,20 +1074,20 @@ function placesMap(host,rows,tab){
     det:[r.stalls?r.stalls+" stalls":"",r.kw?n0(r.kw)+" kW"+(r.tier?" "+r.tier:""):"",r.conn||"",r.hours||""].filter(Boolean).join(" · "),sub:[r.network||(tab==="sc"?"Supercharger":tab==="saved"?"Saved place":tab==="found"?"Stop to review":""),r.addr||"",r.charges?r.charges+" charge"+(r.charges>1?"s":"")+" · "+n0(r.kwh,1)+" kWh":(tab==="found"?r.visits+" days there":"")].filter(Boolean).join(" · ")}})).sort((x,y)=>x.properties.u-y.properties.u);
   const legend=()=>{if(!byNet)return;const cnt={};rows.forEach(r=>{if(r.lat!=null&&+r.lon<cfg("map.places_max_lon"))cnt[netName(r)]=(cnt[netName(r)]||0)+1});
     $("#nl").innerHTML=Object.entries(cnt).sort((a,b)=>b[1]-a[1]).map(([n,c])=>`<button class="chip nw${hidden.has(n)?" off":""}" data-nw="${esc(n)}" title="Show / hide ${esc(n)}"><i style="display:inline-block;width:10px;height:10px;border-radius:50%;background:${netCol(n)};margin-right:6px"></i>${esc(n)} <b>${n0(c)}</b></button>`).join("");
-    $$("[data-nw]",host).forEach(b=>b.onclick=()=>{const n=b.dataset.nw;hidden.has(n)?hidden.delete(n):hidden.add(n);PLM.hidden=hidden;PLM.update(false);legend()})};
+    $$("[data-nw]",host).forEach(b=>b.onclick=()=>{const n=b.dataset.nw;hidden.has(n)?hidden.delete(n):hidden.add(n);PLM.hidden=hidden;PLM.update(false);legend()});pmFit()};
   const dark=matchMedia("(prefers-color-scheme: dark)").matches;
   if(PLM&&PLM.tab===tab&&PLM.el&&PLM.dark===dark){
-    if(!host.contains(PLM.el)){host.innerHTML=`<div class="sub" style="margin-bottom:6px">Solid dot = used, faded = not used. Dots grow and get names as you zoom in. Click a dot for details.</div>${byNet?'<div class="bar" id="nl"></div><div class="bar" id="rg"></div>':""}<div class="map big" id="pm"></div>`;$("#pm",host).replaceWith(PLM.el);PLM.m.resize()}
+    if(!host.contains(PLM.el)){host.innerHTML=`<div class="sub" style="margin-bottom:6px">Solid dot = used, faded = not used. Dots grow and get names as you zoom in. Click a dot for details.</div>${byNet?'<div class="bar" id="nl"></div><div class="bar" id="rg"></div><div id="rgl"></div>':""}<div class="map big" id="pm"></div>`;$("#pm",host).replaceWith(PLM.el);PLM.m.resize();pmFit()}
     PLM.update(!QUIET,rows);legend();if(byNet)rgInit();return}
   if(PLM){try{PLM.m.remove()}catch(e){}PLM=null}
   if(!window.maplibregl){host.innerHTML='<div class="empty">Map library not loaded (offline?).</div>';return}
-  host.innerHTML=`<div class="sub" style="margin-bottom:6px">Solid dot = used, faded = not used. Dots grow and get names as you zoom in. Click a dot for details.</div>${byNet?'<div class="bar" id="nl"></div><div class="bar" id="rg"></div>':""}<div class="map big" id="pm"></div>`;
+  host.innerHTML=`<div class="sub" style="margin-bottom:6px">Solid dot = used, faded = not used. Dots grow and get names as you zoom in. Click a dot for details.</div>${byNet?'<div class="bar" id="nl"></div><div class="bar" id="rg"></div><div id="rgl"></div>':""}<div class="map big" id="pm"></div>`;
   const el=$("#pm"),m=newMap({container:el,style:MAPSTYLE(dark),center:[151.2,-33.8],zoom:8,attributionControl:{compact:true}});
   mapNav(m,()=>update(true),"Show every place");
   let ready=false,first=true;
-  const update=(refit,rs)=>{if(rs)rows=rs;const F=feats();F.forEach(f=>RG.pts[f.properties.key]=[f.properties.lat,f.properties.lon]);$("#cnt").textContent=F.length+" on the map";if(!ready)return;m.getSource("pl").setData({type:"FeatureCollection",features:F});
+  const update=(refit,rs)=>{if(rs)rows=rs;const F=feats();F.forEach(f=>{RG.pts[f.properties.key]=[f.properties.lat,f.properties.lon];RG.names[f.properties.key]=f.properties.name});$("#cnt").textContent=F.length+" on the map";if(!ready)return;m.getSource("pl").setData({type:"FeatureCollection",features:F});
     if((refit||first)&&F.length){first=false;const b=new maplibregl.LngLatBounds();F.forEach(f=>b.extend(f.geometry.coordinates));m.fitBounds(b,{padding:50,maxZoom:13,duration:400})}};
-  PLM={m,el,update,tab,hidden,dark,feats};legend();if(byNet)rgInit();
+  PLM={m,el,update,tab,hidden,dark,feats};legend();if(byNet)rgInit();pmFit();
   m.on("load",()=>{ready=true;m.addSource("pl",{type:"geojson",data:{type:"FeatureCollection",features:[]}});
     // the dot grows with the zoom, so it stays as easy to see against the detailed street map as against the plain country map
     const R=["interpolate",["linear"],["zoom"],...[[3,2.5],[8,4],[12,7],[15,10],[18,13]].flatMap(([z,r])=>[z,["case",["==",["get","u"],1],r*1.35,r]])];
