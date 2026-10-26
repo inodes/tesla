@@ -5,6 +5,7 @@
   g.reach(points, basis)                  the best charge left at every road point, from chargers that each start with their own charge
   g.nearest(points, basis)                the cost from every road point to the nearest of the chargers
   g.raster(values, vmax, bbox, size, km)  a result drawn as a grid (0 = nothing, 1..255 = share of vmax)
+  g.shade(values, vmax, bbox, size, km)   the same as a soft shade: (grid, alpha) - the value spreads about km around the roads and fades out, nothing where no road is near
 
 Roads: motorway, trunk, primary, secondary, tertiary and unclassified with their links. One-way roads, roundabouts and motorways run one way only.
 The network is kept the way a router wants it: only the road ends and junctions are graph nodes ("key" nodes) and the road between two of them is one chain; the
@@ -545,6 +546,28 @@ class RoadGraph:
         return dict(lat=float(self.lat[nd]), lon=float(self.lon[nd]), snap_m=mt, found=found, back=back)
 
     # ---- drawing
+    def shade(self, val, vmax, bbox, size=512, km=8.0):
+        """raster() as a soft shade, not lines: (grid, alpha). The value of the roads spreads about `km` around them (at least two cells); alpha is 1 where roads are close
+        together and fades out over the same distance, and is 0 farther from any road than that, so land with no road to drive on stays clear."""
+        from scipy.ndimage import gaussian_filter, maximum_filter
+        grid = self.raster(val, vmax, bbox, size)
+        s, w, nn, e = bbox
+        H, W = grid.shape
+        ky = (nn - s) * 111.0 / H
+        kx = (e - w) * 111.0 * math.cos(math.radians((s + nn) / 2)) / W
+        r = int(min(24, max(2, round(km / max(kx, ky, 1e-6)))))
+        yy, xx = np.mgrid[-r:r + 1, -r:r + 1]
+        val_g = maximum_filter(grid, footprint=(yy * yy + xx * xx) <= r * r + 1)
+        sg = max(1.0, r * 0.6)
+        a = gaussian_filter((grid > 0).astype(np.float32), sigma=sg) * (math.sqrt(2 * math.pi) * sg)
+        alpha = np.clip(a, 0.0, 1.0)
+        alpha[alpha < 0.08] = 0.0
+        val_g = np.rint(gaussian_filter(val_g.astype(np.float32), sigma=max(1.0, r * 0.5))).astype(np.uint8)   # the spread of colour fades too, no disc edges
+        val_g[alpha == 0] = 0
+        val_g[(alpha > 0) & (val_g == 0)] = 1
+        return val_g, (alpha * 230).astype(np.uint8)
+
+    # ---- drawing
     def raster(self, val, vmax, bbox, size=512, buf_km=None):
         """Road points with a value as a grid laid over bbox=(south, west, north, east) the way a web map lays an image (rows even in Mercator y): 0 = nothing there,
         1..255 = value / vmax. Each point paints about buf_km around itself so a road reads as a band (default: two cells, between 0.2 and 4 km)."""
@@ -564,6 +587,6 @@ class RoadGraph:
         kx = (e - w) * 111.0 * math.cos(math.radians((s + nn) / 2)) / W
         b = buf_km if buf_km is not None else min(4.0, max(0.2, 2.0 * max(kx, ky)))
         ry, rx = int(round(b / max(ky, 1e-6))), int(round(b / max(kx, 1e-6)))
-        if ry >= 1 or rx >= 1:
+        if b > 0 and (ry >= 1 or rx >= 1):
             grid = maximum_filter(grid, size=(2 * ry + 1, 2 * rx + 1))
         return grid

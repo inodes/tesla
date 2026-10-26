@@ -53,11 +53,11 @@ def _lut_reach():
 
 
 def _lut_gaps():
-    """Distance to the nearest charger as a share of 1.5 x the safe range: clear up to half of it, amber up to all of it, red beyond."""
+    """Distance to the nearest charger as a share of 1.5 x the safe range: clear up to half of it, light amber up to all of it, light red beyond."""
     lut = np.zeros((256, 4), np.uint8)
     for i in range(1, 256):
         q = (i - 1) / 254.0 * 1.5                        # in units of the safe range
-        lut[i] = (0, 0, 0, 0) if q < 0.5 else ((245, 158, 11, 170) if q < 1.0 else (220, 38, 38, 190))
+        lut[i] = (0, 0, 0, 0) if q < 0.5 else ((247, 190, 70, 125) if q < 1.0 else (232, 84, 84, 150))
     return lut
 
 
@@ -215,8 +215,10 @@ class ReachService:
             if len(self.cache) >= 4:
                 self.cache.pop(next(iter(self.cache)))
             self.cache[key] = hit
-        grid = g.raster(hit["val"], hit["vmax"], bbox, size)
-        img = png_bytes(self.luts[mode][grid])
+        grid, alpha = g.shade(hit["val"], hit["vmax"], bbox, size, km=(app_config.get("reach.gaps_shade_km") if mode == "gaps" else app_config.get("reach.shade_km")) or 8)
+        rgba = self.luts[mode][grid].copy()
+        rgba[..., 3] = (rgba[..., 3].astype(np.uint16) * alpha // 255).astype(np.uint8)
+        img = png_bytes(rgba)
         return dict(img="data:image/png;base64," + base64.b64encode(img).decode(), bbox=bbox, mode=mode, unit="kWh" if basis == "kwh" else "km", full=round(full, 1),
                     vmax=round(hit["vmax"], 1), safe=round(hit.get("safe", 0), 1), outline=hit["outline"], n=len(pts), stretches=hit.get("stretches", []), took=round(time.time() - t0, 2))
 
