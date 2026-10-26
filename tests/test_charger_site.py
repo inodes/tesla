@@ -60,6 +60,24 @@ class Site(unittest.TestCase):
         self.assertEqual(s["tariffs"]["range"], "$0.12 - $0.29/kWh")
         self.assertIsNone(s["tariffs"]["per_kwh"])
 
+    def test_home_is_priced_with_the_household_tariff(self):
+        import charger_site
+        periods = [
+            {"effective_from": "1970-01-01", "usage_rate_per_kwh": 0.25, "supply_charge_per_day": 1.0, "solar_feed_in_tier1_rate_per_kwh": 0.12, "effective_to": "2026-09-06"},
+            {"effective_from": "2026-09-07", "effective_to": None, "tariff_type": "tou", "peak_rate_per_kwh": 0.25, "offpeak_rate_per_kwh": 0.15, "peak_months": [11, 12, 1],
+             "peak_hour_start": 15, "peak_hour_end": 21, "supply_charge_per_day": 2.0, "solar_feed_in_tier1_rate_per_kwh": 0.1, "solar_feed_in_tier2_rate_per_kwh": 0.04}]
+        t = charger_site.agl_tariff(periods, 1.1, "2026-10-12", "AGL", "Solar VIP")
+        self.assertEqual((t["retailer"], t["since"], t["model"]), ("AGL Solar VIP", "2026-09-07", "time_of_use"))
+        peak = t["schedule"][0]
+        self.assertEqual((peak["label"], peak["start"], peak["end"], peak["months"], peak["rate"], peak["net"]), ("Peak", "15:00", "21:00", ["Jan", "Nov", "Dec"], 0.275, 0.25))
+        self.assertEqual(t["schedule"][-1]["months"][0], "Feb")            # every other month is off-peak all day
+        self.assertEqual([h["frm"] for h in t["history"]], ["2026-09-07", "1970-01-01"])
+        self.assertEqual(t["history"][1]["peak"], 0.275)                   # an older flat period shows its one rate as both
+        self.assertIn(["Supply charge", "$2.2000/day"], t["fixed"])
+        self.assertIsNone(charger_site.agl_tariff(periods, 1.1, "1960-01-01"))
+        own = charger_site.personal_info("Home", {"name": "Home", "type": "home", "costs": {"rate_schedules": [{"name": "Old card", "rate_per_kwh": 0.29}]}}, t)
+        self.assertEqual(own["tariffs"]["retailer"], "AGL Solar VIP")      # not the charger's hand-entered card
+
     def test_unknown_keys_have_no_site(self):
         self.assertIsNone(self.pl.site("s:Nowhere"))
         self.assertIsNone(self.pl.site("p:Cafe"))

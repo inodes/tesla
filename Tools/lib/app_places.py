@@ -127,6 +127,15 @@ class Places:
             return dict(rows=out, updated=j.get("updated_at") or "", sources=j.get("sources") or [], by_id={x["id"]: x for x in out})
         return _memo("chargers", [self.f_stations], build)
 
+    @staticmethod
+    def _plan(pp):
+        """The plan name a retailer's tariff-rates file declares ("Solar VIP")."""
+        try:
+            with open(os.path.join(pp.resolve_data_home(), pp.tariff_rates_filename()), encoding="utf-8") as f:
+                return (json.load(f).get("plan") or "").strip()
+        except Exception:
+            return ""
+
     def site(self, key):
         """Everything known about a charging site (charger_site.site_info) from its charging_stations.json record, or None."""
         def build():
@@ -140,7 +149,18 @@ class Places:
         by_id, by_name = _memo("raw", [self.f_stations], build)
         if key.startswith("p:"):
             own = _load(self.f_personal) or {}
-            return CS.personal_info(key[2:], own[key[2:]]) if isinstance(own.get(key[2:]), dict) else None
+            rec = own.get(key[2:])
+            if not isinstance(rec, dict):
+                return None
+            agl = None
+            if (rec.get("type") or "").lower() == "home":     # a home charge costs the household tariff (as the scripts price it), not the charger's own rate card
+                try:
+                    from providers_power import get_power_provider
+                    pp = get_power_provider()
+                    agl = CS.agl_tariff(pp.load_rate_periods(), pp.gst_multiplier(), datetime.date.today().isoformat(), getattr(pp, "display_name", "") or "", self._plan(pp))
+                except Exception:
+                    agl = None
+            return CS.personal_info(key[2:], rec, agl)
         rec = by_name.get(key[2:]) if key.startswith("s:") else by_id.get(key[2:]) if key.startswith("c:") else None
         if not rec:
             return None
