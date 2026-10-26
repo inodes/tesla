@@ -137,6 +137,27 @@ def pending_snapshots(data, since=None, only=None, force=False):
         out.append(stamp)
     return out
 
+def snapshots_for(data, stamps):
+    """Drive stamps (newest first) whose snapshots are missing or stale and whose drive overlaps one of these clip minutes (names as clip stamps)."""
+    import bisect
+    import clip_clock as CC
+    import drive_fuse as DF
+    ts = sorted(CC.utc(x) for x in stamps)
+    out = []
+    for sj in sorted(glob.glob(os.path.join(data, "drives", "deepdive", "*", "*", "drive_summary.json")), reverse=True):
+        folder = os.path.dirname(sj)
+        try:
+            with open(sj, encoding="utf-8") as fh:
+                sm = json.load(fh)
+            a, b = DF.utc(DF._t(sm["start"], "%Y-%m-%d %H:%M:%S")), DF.utc(DF._t(sm["end"], "%Y-%m-%d %H:%M:%S"))
+        except (OSError, ValueError, KeyError, TypeError):
+            continue
+        k = bisect.bisect_left(ts, a - 60)
+        if k < len(ts) and ts[k] <= b + 60 and snapshots_stale(folder, data):
+            out.append(os.path.basename(folder))
+    return out
+
+
 _W = {}
 
 
@@ -158,9 +179,8 @@ def _snap_one(stamp):
         return stamp, None, "%s: %s" % (type(e).__name__, e), time.time() - t
 
 
-def run_snapshots(data, stamps, front, workers=None, stop=None, progress=None, note=None, budget=None):
-    """Builds the snapshots of these drives (newest first), `workers` at a time. progress(n, total, stamp); note(text) for a drive that failed or had
-    nothing to show. Returns dict(done, seconds, video_s, busy_s): the drives finished, wall time, and the seconds spent reading video / building
+def run_snapshots(data, stamps, front, workers=None, stop=None, progress=None, note=None, budget=None, error=None):
+    """Builds the snapshots of these drives (newest first), `workers` at a time. progress(n, total, stamp); note(text) for a drive that had nothing to show (and, without `error`, one that failed; error(text) is for a drive that failed). Returns dict(done, seconds, video_s, busy_s): the drives finished, wall time, and the seconds spent reading video / building
     (summed over workers) so a slow run shows where its time went."""
     w = max(1, int(workers or app_config.get("stills.workers", 3)))
     st = time.time()
@@ -193,7 +213,9 @@ def run_snapshots(data, stamps, front, workers=None, stop=None, progress=None, n
             n += 1
             busy_s += secs
             if err:
-                if note:
+                if error:
+                    error("%s: %s" % (stamp, err))
+                elif note:
                     note("%s: %s" % (stamp, err))
             else:
                 done += 1

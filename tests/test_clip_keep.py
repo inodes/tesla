@@ -247,7 +247,7 @@ class ProcessTest(ProcBase):
         self.assertNotIn("error", out)
         self.k._thread.join(5)
         j = self.k.job()
-        self.assertEqual([x["step"] for x in j["steps"]], ["Reading metadata", "Making stills", "Saving event pictures", "Reading signs"])
+        self.assertEqual([x["step"] for x in j["steps"]], ["Reading metadata", "Making stills", "Building drive snapshots", "Saving event pictures", "Reading signs"])
         self.assertEqual([c[0] for c in self.calls], ["read", "stills"])
         self.assertEqual(self.calls[0][1], [S2, S1])                                   # newest first
         self.assertEqual(self.calls[0][2], ["%s-front.mp4" % S2, "%s-front.mp4" % S1])

@@ -1670,7 +1670,7 @@ let TCSEL=new Set(),KPC=null,THINHTML="";      // TCSEL: "kind|id" of the clips 
 const fmtGB=b=>b>=1073741824?(b/1073741824).toFixed(b>=10737418240?0:1)+" GB":Math.max(1,Math.round(b/1048576))+" MB";
 const kpOf=(ty,id)=>KPC&&KPC[ty]&&KPC[ty][id]||null;
 const kpChips=r=>{if(!r)return"";const c=(lab,x,tip)=>x[1]?`<i class="kc ${x[0]>=x[1]?"ok":x[0]?"part":"no"}" title="${esc(tip)}">${lab} ${x[0]>=x[1]?"✓":n0(x[0])+"/"+n0(x[1])}</i>`:"";
-  return `<div class="kst">${c("Metadata",r.meta,"Speed, position and steering read from the video: "+r.meta[0]+" of "+r.meta[1]+" minutes")}${c("Stills",r.stills,"A picture every second kept: "+r.stills[0]+" of "+r.stills[1]+" minutes"+(r.waiting?" · "+r.waiting:""))}${c("Signs",r.signs,"Signs read in the minutes driven fast enough: "+r.signs[0]+" of "+r.signs[1])}${c("Pictures",r.shots||[0,0],"Full-size pictures of the moment it happened: "+(r.shots||[0,0])[0]+" of "+(r.shots||[0,0])[1]+" cameras")}</div>`};
+  return `<div class="kst">${c("Metadata",r.meta,"Speed, position and steering read from the video: "+r.meta[0]+" of "+r.meta[1]+" minutes")}${c("Stills",r.stills,"A picture every second kept: "+r.stills[0]+" of "+r.stills[1]+" minutes"+(r.waiting?" · "+r.waiting:""))}${r.signs[1]||r.sign_n?`<i class="kc ${r.signs[0]>=r.signs[1]?"ok":r.signs[0]?"part":"no"}" title="${esc("Signs read in the minutes driven fast enough: "+r.signs[0]+" of "+r.signs[1]+" minutes · "+(r.sign_n||0)+" signs found")}">Signs ${r.signs[0]>=r.signs[1]?"✓":n0(r.signs[0])+"/"+n0(r.signs[1])} · ${n0(r.sign_n||0)} found</i>`:""}${r.snap_n?`<i class="kc part" title="${esc("The snapshots of the drive this clip lies in are not built yet: "+r.snap_n+" minutes")}">Snapshots ${n0(r.snap_n)} to build</i>`:""}${c("Pictures",r.shots||[0,0],"Full-size pictures of the moment it happened: "+(r.shots||[0,0])[0]+" of "+(r.shots||[0,0])[1]+" cameras")}</div>`};
 // the size of the video on the thumbnail (red when it is one of the big ones of its kind) and the tick box
 const kpBig=(ty)=>{const a=Object.values((KPC&&KPC[ty])||{}).map(r=>r.size).filter(x=>x>0).sort((x,y)=>x-y);return a.length>3?Math.max(a[Math.floor(a.length/2)]*2,536870912):1e18};
 const kpTop=(ty,id)=>{const r=kpOf(ty,id),k=ty+"|"+id;return `<em class="evk ${TCSEL.has(k)?"on":""}" data-sel="${esc(k)}" role="checkbox" aria-checked="${TCSEL.has(k)}" title="Select">${TCSEL.has(k)?"✓":""}</em>`+(r&&r.size?`<em class="szb ${r.size>=kpBig(ty)?"big":""}" title="${esc(Object.keys(r.bytes).map(x=>drName(x)+" "+fmtGB(r.bytes[x])).join(" · "))}">${fmtGB(r.size)}</em>`:"")};
@@ -1711,7 +1711,8 @@ async function pageTeslaCam(role,id){
   const allowed=(r,act)=>picked().filter(it=>{const c=kpOf(it.kind,it.id);return c.bytes[r]>0&&(act==="move"?r!=="A":(c.ready||(r!=="A"&&c.bytes.A>0)))});
   const PSTEPS=[
     ["meta","Metadata",c=>Math.max(0,c.meta[1]-c.meta[0]),"Read speed, position and steering from the video"],
-    ["stills","Stills",c=>Math.max(0,c.stills[1]-c.stills[0]-(c.wait_n||0)),"Take a picture every second of each minute"],
+    ["stills","Stills",c=>Math.max(0,c.stills[1]-c.stills[0]-(c.wait_n||0)-(c.snap_n||0)),"Take a picture every second of each minute"],
+    ["snapshots","Snapshots",c=>c.snap_n||0,"Build the snapshots of the drives these clips lie in"],
     ["signs","Signs",c=>Math.max(0,c.signs[1]-c.signs[0])+(c.refine_n||0),"Read speed-limit signs in the minutes driven fast enough"],
     ["pictures","Pictures",c=>Math.max(0,((c.shots||[0,0])[1]||0)-((c.shots||[0,0])[0]||0)),"Save full-size pictures of the moment of Saved and Sentry events"]
   ];
@@ -1738,7 +1739,7 @@ async function pageTeslaCam(role,id){
     const list=wantRead();if(!list.length){note="Everything is up to date";draw();return}
     draw();runProc(list)};
   const waitTx=list=>{const n=list.reduce((a,it)=>a+((kpOf(it.kind,it.id)||{}).wait_n||0),0);return n?" · "+n0(n)+" minute"+(n>1?"s":"")+" of stills wait for the drive from Tessie":""};
-  const procNote=(j,list)=>((j.steps||[]).some(x=>x.total)?"Read what was missing"+(j.steps||[]).filter(x=>x.total).map(x=>" · "+x.step.toLowerCase()+" "+n0(x.total)).join(""):"Nothing more could be read from the video"+waitTx(list||[]))+((j.errors||[]).length?" · "+j.errors[0]:"");
+  const procNote=(j,list)=>((j.steps||[]).some(x=>x.total)?"Read what was missing"+(j.steps||[]).filter(x=>x.total).map(x=>" · "+x.step.toLowerCase()+" "+n0(x.total)).join("")+waitTx(list||[]):"Nothing more could be read from the video"+waitTx(list||[]))+((j.errors||[]).length?" · "+j.errors[0]:"");
   const runProc=async(list,steps)=>{pend=null;note="";stopVideos();phase="Starting…";phasePc=5;selbar();      // the bar is there at once, before the drive has answered
     let j;try{j=await (await fetch("/api/clips/act",{method:"POST",body:JSON.stringify({action:"process",items:list,steps})})).json()}catch(e){j={error:e.message}}
     phase="";
@@ -1749,7 +1750,7 @@ async function pageTeslaCam(role,id){
     if(!c){el.innerHTML="";return}
     if(jobT){el.innerHTML='<div class="bar selb"><span class="sub">Reading from the drive: videos cannot play until it has finished.</span></div>';return}
     const wn=c.wait_n||0,onDrv=conn().some(r=>c.bytes[r]>0),need=todoOf(c)&&onDrv,stBtns="";
-    el.innerHTML=`<div class="bar selb">${kpChips(c)}${need?`<button class="btn sm pri" id="ostgo">Update this clip</button>`:todoOf(c)?`<span class="sub">${Object.keys(c.bytes||{}).some(r=>c.bytes[r]>0)?"Cannot be read now: its video is on "+Object.keys(c.bytes).filter(r=>c.bytes[r]>0).map(drName).join(", ")+", which is not connected.":"Cannot be read: its video is gone from every drive."}</span>`:""}${wn?`<span class="sub">${n0(wn)} minute${wn>1?"s":""} of stills ${esc(c.waiting||"are waiting")}. Nothing to read for those yet.</span>`:""}</div>`;
+    el.innerHTML=`<div class="bar selb">${kpChips(c)}${need?`<button class="btn sm pri" id="ostgo">Update this clip</button>`:todoOf(c)?`<span class="sub">${Object.keys(c.bytes||{}).some(r=>c.bytes[r]>0)?"Cannot be read now: its video is on "+Object.keys(c.bytes).filter(r=>c.bytes[r]>0).map(drName).join(", ")+", which is not connected.":"Cannot be read: its video is gone from every drive."}</span>`:""}${wn?`<span class="sub">${n0(wn)} minute${wn>1?"s":""} of stills wait for the drive from Tessie. Nothing to read for those yet.</span>`:""}</div>`;
     const b=$("#ostgo",el);if(b)b.onclick=()=>runProc([OPENK])};
   const selbar=()=>{const el=$("#selbar");if(!el)return;if(!KPC){el.innerHTML="";return}
     if(phase&&$("#phtx",el)){$("b",$("#phtx",el)).textContent=phase;setPbar($("#phtx",el),phasePc);return}
@@ -1795,7 +1796,7 @@ async function pageTeslaCam(role,id){
   const poll1=async()=>{while(document.body.contains($("#selbar"))){let j;try{j=await (await fetch("/api/clips/job")).json()}catch(e){break}
       if(j.running){const first=!jobT;jobT=j;if(first)selbar();else jobPaint();await new Promise(r=>setTimeout(r,1000));continue}
       if(jobT){jobT=null;const bad=(j.errors||[]).length,pr=j.action==="process"||j.action==="pictures";
-        note=pr?((j.steps||[]).some(x=>x.total)?"Read what was missing"+(j.steps||[]).filter(x=>x.total).map(x=>" · "+x.step.toLowerCase()+" "+n0(x.total)).join(""):"Nothing more could be read from the video")+(bad?" · "+j.errors[0]:""):(j.action==="move"?"Moved ":"Deleted ")+n0(j.done)+" files"+(j.action==="delete"?", freed "+fmtGB(j.freed):"")+(bad?" · "+bad+" could not be handled: "+j.errors[0]:"");
+        note=pr?((j.steps||[]).some(x=>x.total)?"Read what was missing"+(j.steps||[]).filter(x=>x.total).map(x=>" · "+x.step.toLowerCase()+" "+n0(x.total)).join("")+waitTx(Object.keys(KPC||{}).flatMap(k=>Object.keys(KPC[k]).map(id=>({kind:k,id})))):"Nothing more could be read from the video")+(bad?" · "+j.errors[0]:""):(j.action==="move"?"Moved ":"Deleted ")+n0(j.done)+" files"+(j.action==="delete"?", freed "+fmtGB(j.freed):"")+(bad?" · "+bad+" could not be handled: "+j.errors[0]:"");
         if(!pr)TCSEL.clear();bust("tc/clips");KPC=null;await load(true);loadKeep()}
       break}};
   const loadKeep=async()=>{try{const r=await fetch("/api/clips/keep");if(r.ok){const nj=(await r.json()).clips,ch=!same(nj,KPC);KPC=nj;if(ch)draw();else selbar();poll()}}catch(e){}};
