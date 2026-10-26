@@ -357,6 +357,42 @@ class ChargeBook:
                 segs.append(s)
         return dict(plug=p, part=part, segments=segs, curves=self.curves(p, part), sources=self.sources(p, segs))
 
+    pv_fetch = True            # off in tests: no call to SolarEdge
+
+    def _pv_provider(self):
+        from providers_pv import get_pv_provider
+        pr = get_pv_provider()
+        key, acct = pr.resolve_credentials(self.cfg_pv())
+        return (pr, key, acct) if key else None
+
+    def cfg_pv(self):
+        from lib.tessie_api_common import load_config
+        return load_config()
+
+    def _refresh_pv(self, db, d0, d1):
+        """Fetches the site's 15-minute readings for the days of a home charge the meter file does not hold yet (the charging analysis does the same), so a charge
+        made after the last sync still gets its solar graph. One try per range is remembered by lib/pv_history_db; no credentials or no network leaves the file as it is."""
+        if not self.pv_fetch:
+            return
+        import sqlite3
+        from lib.pv_history_db import _collapse_missing
+        con = sqlite3.connect("file:" + db + "?mode=ro", uri=True, timeout=3)
+        try:
+            have = {r[0][:10] for r in con.execute("SELECT timestamp FROM pv_intraday")}
+        finally:
+            con.close()
+        if not _collapse_missing(d0, d1, have, datetime.date.today()):
+            return
+        pv = self._pv_provider()
+        if not pv:
+            return
+        from lib.pv_history_db import get_pv_db_connection, sync_intraday_range
+        c = get_pv_db_connection(os.path.dirname(db))
+        try:
+            sync_intraday_range(c, d0, d1, pv[0], pv[1], pv[2], log=lambda *_a: None)
+        finally:
+            c.close()
+
     def sources(self, p, segs):
         """Where a home charge's energy came from: the site's solar meter (<data>/PV/pv_history.db, 15-minute readings) as each interval's share of the house's use
         that was solar. The page applies that share to the car's own power curve. None when it is not a home charge or the meter has nothing for those minutes."""
@@ -371,7 +407,12 @@ class ChargeBook:
         tzn = p.get("tz") or "Australia/Sydney"
         z = ZoneInfo(tzn)
         try:
-            # the app only reads this file: no schema work, no sync (get_pv_db_connection() would do both)
+            self._refresh_pv(db, datetime.datetime.fromtimestamp(int(p["t0"]) - 1800, z).date(),
+                             datetime.datetime.fromtimestamp(int(p.get("t1") or p["t0"]) + 1800, z).date())
+        except Exception:
+            pass
+        try:
+            # reading only: no schema work (get_pv_db_connection() would do that)
             con = sqlite3.connect("file:" + db + "?mode=ro", uri=True, timeout=3)
             con.row_factory = sqlite3.Row
             try:
