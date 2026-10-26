@@ -1528,6 +1528,26 @@ class DriveAnalyzer:
             return False
         return bool(_drive_paths.find_data(os.path.join(self.drives_dirs[0], "deepdive"), self._drive_stamp(target_drive, start_epoch)))
 
+    def has_own_telemetry(self, target_drive):
+        """True when this drive has its own telemetry: its folder holds it, or an overlapping record that is not the folder of another drive.
+        match_detailed_drive() alone also accepts a record that belongs to the drive just before (it starts within the two-minute padding), which left such a
+        drive forever "covered" and never fetched, while the Drives page (one page per drive, named by its start minute) showed it without a path."""
+        if self.has_local_deepdive(target_drive):
+            return True
+        rec = self.match_detailed_drive(target_drive)
+        if not rec:
+            return False
+        owners = getattr(self, "_stamp_owner", None)
+        if owners is None:
+            owners = self._stamp_owner = {}
+            for d in self.drives:
+                e = d.get("start_utc_epoch")
+                if e is not None:
+                    owners.setdefault(self._drive_stamp(d, e), e)
+        stamp = os.path.basename(os.path.dirname(rec.get("source_path") or ""))
+        owner = owners.get(stamp)
+        return owner is None or owner == target_drive.get("start_utc_epoch")
+
     def fetch_drive_deepdive_from_api(self, target_drive):
         """Auto-fetches this drive's detailed telemetry from Tessie's own
         GET /{vin}/states endpoint (AGENTS.md TODO-026) when no local

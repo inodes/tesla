@@ -205,9 +205,11 @@ def configure(data_dir):
 def _set_runs(runs, bump=True):
     runs = sorted([list(map(float, r)) for r in runs])
     with _LOCK:
-        if bump and runs != _S["runs"]:
+        changed = runs != _S["runs"]
+        if bump and changed:
             _S["version"] += 1
         _S.update(runs=runs, firsts=[r[0] for r in runs])
+        return changed
 
 
 def _save():
@@ -332,6 +334,10 @@ def _runs_of(ev):
     return runs
 
 
+def _sig(data_dir, stamps):
+    return (len(stamps), max(stamps) if stamps else "", DP.signature(os.path.join(data_dir, "drives", "deepdive")))
+
+
 def learn(data_dir, store, stop=None):
     """Learn (or refresh) the car's clock from the telemetry in `store` and the Tessie drives in <data>/drives/deepdive. Returns the number of
     minutes that gave evidence."""
@@ -366,11 +372,12 @@ def learn(data_dir, store, stop=None):
         if o is not None:
             ev[naive(st)] = o
             n_new += 1
-    _set_runs(_runs_of(list(ev.items())))
+    changed = _set_runs(_runs_of(list(ev.items())))
+    sig = _sig(data_dir, stamps)
     with _LOCK:
-        _S.update(evidence=n_new, learned_at=datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
-                  sig=(len(stamps), stamps[-1] if stamps else "", len(drives)))
-        _save()
+        _S.update(evidence=n_new, learned_at=datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"), sig=sig)
+        if changed or not os.path.exists(os.path.join(data_dir, "clip_clock.json")):
+            _save()
     return n_new
 
 
@@ -381,7 +388,7 @@ def refresh(data_dir, store, wait=False):
     if wait and th and th.is_alive():
         th.join(120)                                          # a pass is already running: wait for it rather than skip
     stamps = store.stamps()
-    sig = (len(stamps), max(stamps) if stamps else "", DP.signature(os.path.join(data_dir, "drives", "deepdive")))
+    sig = _sig(data_dir, stamps)
     with _LOCK:
         if sig == _S["sig"] or (_S["thread"] and _S["thread"].is_alive()):
             return False

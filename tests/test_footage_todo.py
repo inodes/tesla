@@ -27,7 +27,7 @@ class FakeTC:
 class FakeFG:
     stills = SimpleNamespace(stamps=lambda: {"a"})
 
-    def stills_report(self, roots):
+    def stills_report(self, roots, walked=None):
         return dict(drives=[dict(role=r, to_make=5) for r in roots])
 
 
@@ -57,6 +57,7 @@ class TodoTest(unittest.TestCase):
         self.assertFalse(s["checking"])
         d = s["drives"]["J"]
         self.assertEqual((d["log_new"], d["log_gone"], d["telemetry"], d["stills"]), (2, 0, 3, 5))
+        self.assertEqual(sum(d["new_days"].values()), 2)                 # which days the new files are from, so a number that looks too big can be checked
 
     def test_a_listed_drive_has_nothing_to_list_and_a_gone_file_is_counted(self):
         led = TLG.Ledger(self.data)
@@ -110,6 +111,25 @@ class TodoTest(unittest.TestCase):
         s = busy.snapshot()
         self.assertTrue(s["checking"])
         self.assertEqual(self.tc.calls, 0)
+
+    def test_an_unchanged_drive_is_not_walked_again_when_only_telemetry_or_stills_change(self):
+        import teslacam_files as TF
+        self.assertEqual([TF.key(f) for f in TF.walk(self.cam, stat=False)[0]], [TF.key(f) for f in TF.walk(self.cam, stat=True)[0]])
+        walks, got_walked = [], []
+        real_walk = TF.walk
+        TF.walk = lambda p, stat=True: (walks.append((p, stat)), real_walk(p, stat))[1]
+        self.fg.stills_report = lambda roots, walked=None: (got_walked.append(walked), dict(drives=[dict(role=r, to_make=5) for r in roots]))[1]
+        try:
+            self.todo.snapshot()
+            self.wait()
+            self.assertEqual(walks, [(self.cam, False)])             # listed once, without per-file stat
+            self.assertIn("J", got_walked[-1])                       # stills_report reused the same listing
+            self.fg.stills = SimpleNamespace(stamps=lambda: {"a", "b"})
+            self.todo.snapshot()                                     # stills count changed, the drive did not
+            self.wait()
+            self.assertEqual(len(walks), 1)                          # the drive was not walked again
+        finally:
+            TF.walk = real_walk
 
 
 class EjectTest(unittest.TestCase):

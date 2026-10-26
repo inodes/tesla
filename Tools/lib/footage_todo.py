@@ -28,12 +28,23 @@ def _mtime(root):
     return best
 
 
+def _mtime_ns(root):
+    out = []
+    for f in FOLDERS:
+        try:
+            out.append(os.stat(os.path.join(root, f)).st_mtime_ns)
+        except OSError:
+            out.append(0)
+    return tuple(out)
+
+
 class Todo:
     def __init__(self, cache_file, data_dir, tc, fg, roots_fn, idle_fn=lambda: True):
         self.cache_file, self.dir, self.tc, self.fg, self.roots_fn, self.idle_fn = cache_file, data_dir, tc, fg, roots_fn, idle_fn
         self._lock = threading.Lock()
         self._thread = None
         self._mem = self._load()
+        self._walked = {}               # role -> (drive_key, files, ok, log_new, log_gone, days_new), kept while the drive's folders and scan time are unchanged
         self.error = ""
         self._err_at = 0.0
         self._prog = None
@@ -85,6 +96,11 @@ class Todo:
             drives[r] = dict(d) if d else None
         return dict(checking=working or stale, progress=dict(self._prog) if working and self._prog else None, drives=drives, error=self.error)
 
+    def forget(self):
+        """What is on the drives changed under the cached look (clips moved or deleted by the app): the next look walks the drives again."""
+        self._walked.clear()
+        self._mem = dict(self._mem, sig=None)
+
     def subtract(self, stage, done_by_role):
         """A job did some of the work (or was stopped part way): take it off what is left for each drive now. The next look at the drives (the signature has changed)
         works the numbers out afresh."""
@@ -110,36 +126,52 @@ class Todo:
     def _work(self, roots, sig):
         try:
             with self._lock:
-                led = TLG.Ledger(self.dir)
-                out = {}
-                total = len(roots) + 2
-                for n, (r, p) in enumerate(sorted(roots.items())):
-                    self._prog = dict(done=n, total=total, step="list", role=r)
-                    files, ok = TF.walk(p)
-                    present = {}
-                    for f in files:
-                        present.setdefault(f["stamp"][:10], set()).add(TF.key(f))
-                    new = gone = 0
-                    for day, keys in present.items():
-                        d = led.day(day)
-                        for k in keys:
-                            e = d.get(k)
-                            r_ = e["drives"].get(r) if e else None
-                            if r_ is None or r_.get("gone"):
-                                new += 1
-                    if ok:
-                        for day in led.days():
-                            here = present.get(day, set())
-                            for k, e in led.day(day).items():
-                                x = e["drives"].get(r)
-                                if x is not None and x.get("gone") is None and k not in here:
-                                    gone += 1
-                    out[r] = dict(log_new=new, log_gone=gone, telemetry=0, stills=0, at=time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()))
-                self._prog = dict(done=len(roots), total=total, step="telemetry", role="")
+                scans = TLG.Ledger(self.dir).scans()
+                led = None
+                out, walked = {}, {}
+                keys_by_role = {r: (p, _mtime_ns(p), (scans.get(r) or {}).get("at") or "") for r, p in roots.items()}
+                need = [r for r in sorted(roots) if (self._walked.get(r) or (None,))[0] != keys_by_role[r]]
+                total = len(need) + 2
+                step_i = 0
+                for r, p in sorted(roots.items()):
+                    cached = self._walked.get(r)
+                    if cached and cached[0] == keys_by_role[r]:
+                        _, files, ok, new, gone, days_new = cached
+                    else:
+                        self._prog = dict(done=step_i, total=total, step="list", role=r, pct=round(100 * (step_i + 0.2) / total))
+                        files, ok = TF.walk(p, stat=False)
+                        self._prog = dict(done=step_i, total=total, step="list", role=r, pct=round(100 * (step_i + 0.65) / total))
+                        step_i += 1
+                        if led is None:
+                            led = TLG.Ledger(self.dir)
+                        present = {}
+                        for f in files:
+                            present.setdefault(f["stamp"][:10], set()).add(TF.key(f))
+                        new = gone = 0
+                        days_new = {}
+                        for day, keys in present.items():
+                            d = led.day(day)
+                            for k in keys:
+                                e = d.get(k)
+                                r_ = e["drives"].get(r) if e else None
+                                if r_ is None or r_.get("gone"):
+                                    new += 1
+                                    days_new[day] = days_new.get(day, 0) + 1
+                        if ok:
+                            for day in led.days():
+                                here = present.get(day, set())
+                                for k, e in led.day(day).items():
+                                    x = e["drives"].get(r)
+                                    if x is not None and x.get("gone") is None and k not in here:
+                                        gone += 1
+                        self._walked[r] = (keys_by_role[r], files, ok, new, gone, days_new)
+                    walked[r] = (files, ok)
+                    out[r] = dict(log_new=new, log_gone=gone, new_days=dict(sorted(days_new.items(), reverse=True)[:5]), telemetry=0, stills=0, at=time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()))
+                self._prog = dict(done=len(need), total=total, step="telemetry", role="", pct=round(100 * (len(need) + 0.4) / total))
                 for d in self.tc.scan_report(roots)["drives"]:          # with every connected drive together: a minute two drives hold is read once
                     out[d["role"]]["telemetry"] = d["to_read"]
-                self._prog = dict(done=len(roots) + 1, total=total, step="stills", role="")
-                rep = self.fg.stills_report(roots)
+                self._prog = dict(done=len(need) + 1, total=total, step="stills", role="", pct=round(100 * (len(need) + 1.4) / total))
+                rep = self.fg.stills_report(roots, walked)
                 for d in rep["drives"]:
                     out[d["role"]]["stills"] = d["to_make"]
                 self._mem = dict(sig=sig, drives=out)

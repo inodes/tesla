@@ -253,8 +253,8 @@ def tcam(cams):
     return next((c for c in TELEM_CAMS if c in cams), None)
 
 
-def minutes(recent, saved):
-    """Every Recent and Saved minute, oldest first, each once (a Saved minute that is also in Recent is left out)."""
+def minutes(recent, saved, all_saved=False):
+    """Every Recent and Saved minute, oldest first, each once (a Saved minute that is also in Recent is left out unless `all_saved` asks for every distinct stamp)."""
     import bisect
     mins = {}
     for st, cams in recent.items():
@@ -265,7 +265,7 @@ def minutes(recent, saved):
             t = secs(st)
             i = bisect.bisect(rt, t)
             near = min([abs(rt[j] - t) for j in (i - 1, i) if 0 <= j < len(rt)] or [1e9])
-            if near > OPTS["same_minute_s"] and st not in mins:
+            if (all_saved or near > OPTS["same_minute_s"]) and st not in mins:
                 mins[st] = dict(stamp=st, t=t, src="saved", ref=ev["id"], cams=cams, tcam=tcam(cams))
     return sorted(mins.values(), key=lambda m: m["t"])
 

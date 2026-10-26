@@ -70,5 +70,27 @@ class JsonMatchTest(unittest.TestCase):
                 self.assertIsNone(a.match_detailed_drive(later), zone)
 
 
+class OwnTelemetryTest(unittest.TestCase):
+    """The sync decides what to fetch with has_own_telemetry(): a file filed under another drive's folder is not this drive's telemetry."""
+
+    def an(self, folder, drives, rec_epochs):
+        a = DriveAnalyzer.__new__(DriveAnalyzer)
+        a.drives_dirs = ["/nonexistent"]
+        a.drives = [dict(start_utc_epoch=e) for e in drives]
+        a._drive_stamp = staticmethod(lambda d, e: "S%d" % e)
+        a.has_local_deepdive = lambda d: False
+        a.match_detailed_drive = lambda d: dict(start_epoch=rec_epochs, source_path="/x/%s/f.json" % folder)
+        return a
+
+    def test_a_file_in_the_folder_of_the_drive_before_is_not_its_telemetry(self):
+        a = self.an("S1000", [1000, 1120], 1070)           # the file starts between the two, but its folder is the first drive's
+        self.assertTrue(a.has_own_telemetry(dict(start_utc_epoch=1000)))
+        self.assertFalse(a.has_own_telemetry(dict(start_utc_epoch=1120)))
+
+    def test_a_file_in_no_drive_folder_still_counts(self):
+        a = self.an("other", [1000], 1000)
+        self.assertTrue(a.has_own_telemetry(dict(start_utc_epoch=1000)))
+
+
 if __name__ == "__main__":
     unittest.main()

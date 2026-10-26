@@ -128,14 +128,14 @@ class Stills:
             return len(frames)
 
 
-def plan(stills, roots):
-    """roots {role: TeslaCam folder}. Returns dict(drives=[per drive counts], todo=[dict(stamp, role, path)] newest first).
+def plan(stills, roots, walked=None):
+    """roots {role: TeslaCam folder}. walked: optional {role: (files, ok)} already listed. Returns dict(drives=[per drive counts], todo=[dict(stamp, role, path)] newest first).
     Per drive: clips (front, distinct stamps), done (stills kept), to_make, elsewhere (an earlier drive makes it), no_front is not needed:
     only front clips are listed."""
     drives, todo, taken = [], [], set()
     have = stills.stamps()
     for role in sorted(roots, key=lambda r: ORDER.index(r) if r in ORDER else 9):
-        files, ok = TF.walk(roots[role])
+        files, ok = walked[role] if walked and role in walked else TF.walk(roots[role], stat=False)
         best = {}
         for f in files:
             if f["cam"] != "front":

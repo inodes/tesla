@@ -39,10 +39,10 @@ class Footage:
         s["job"] = self.status()
         return s
 
-    def stills_report(self, roots):
+    def stills_report(self, roots, walked=None):
         self.stills.width = app_config.get("stills.width", 400)
         self.stills.quality = app_config.get("stills.quality", 6)
-        rep = ST.plan(self.stills, {r: p for r, p in roots.items() if p})
+        rep = ST.plan(self.stills, {r: p for r, p in roots.items() if p}, walked=walked)
         self._todo = rep.pop("todo")
         rep["to_make"] = len(self._todo)
         rep["job"] = self.status()
