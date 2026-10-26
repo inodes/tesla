@@ -20,6 +20,7 @@ import threading
 import time
 
 import app_config
+import charger_site as CS
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 _LOCK = threading.Lock()
@@ -70,6 +71,8 @@ class Places:
         self.f_places = os.path.join(data_dir, "places.json")
         self.f_stations = os.path.join(data_dir, "charging_stations.json")
         self.f_fac = os.path.join(data_dir, "station_facilities.json")
+        self.f_personal = os.path.join(data_dir, "chargers", "personal_chargers.json")
+        self.f_busy = os.path.join(data_dir, "chargers", "tesla_busy_times.json")
         self.f_ignored = os.path.join(data_dir, "ignored_places.json")
         self.f_cache = os.path.join(data_dir, "places_osm_cache.json")
 
@@ -123,6 +126,27 @@ class Places:
                                 access=cp.get("access") or "", hours=ac.get("hours") or "", note=(ac.get("description") or "").split("\n", 1)[-1].strip()))
             return dict(rows=out, updated=j.get("updated_at") or "", sources=j.get("sources") or [], by_id={x["id"]: x for x in out})
         return _memo("chargers", [self.f_stations], build)
+
+    def site(self, key):
+        """Everything known about a charging site (charger_site.site_info) from its charging_stations.json record, or None."""
+        def build():
+            j = _load(self.f_stations) or {}
+            by_id, by_name = {}, {}
+            for sid, v in (j.get("stations") or {}).items():
+                by_id[v.get("id") or sid] = v
+                if v.get("network") == "Tesla":
+                    by_name[v.get("name") or v.get("id") or sid] = v
+            return by_id, by_name
+        by_id, by_name = _memo("raw", [self.f_stations], build)
+        if key.startswith("p:"):
+            own = _load(self.f_personal) or {}
+            return CS.personal_info(key[2:], own[key[2:]]) if isinstance(own.get(key[2:]), dict) else None
+        rec = by_name.get(key[2:]) if key.startswith("s:") else by_id.get(key[2:]) if key.startswith("c:") else None
+        if not rec:
+            return None
+        busy = _memo("busy", [self.f_busy], lambda: _load(self.f_busy) or {})
+        fac = _memo("fac", [self.f_fac], lambda: _load(self.f_fac) or {})
+        return CS.site_info(rec, busy, fac)
 
     def charger_at(self, lat, lon, within=150):
         """The nearest charger of any network within a distance (metres)."""
@@ -242,7 +266,7 @@ class Places:
                             kwh=round(sum(e.get("kwh") or 0 for e in es if e["k"] == "charge"), 1), cost=round(sum(e.get("cost") or 0 for e in es if e["k"] == "charge"), 2),
                             last=CC.local_iso(last)[:10] if last else "", t_last=last)
             saved = [dict(key="p:" + p["name"], name=p["name"], lat=p["lat"], lon=p["lon"], radius=p["radius"], notes=p["notes"], **stat("p:" + p["name"])) for p in self.defs()]
-            sc = [dict(key="s:" + s["name"], name=s["name"], lat=s["lat"], lon=s["lon"], addr=s["addr"], stalls=s["stalls"], kw=s["kw"], tier=s["tier"], **stat("s:" + s["name"])) for s in self.stations()]
+            sc = [dict(key="s:" + s["name"], name=s["name"], lat=s["lat"], lon=s["lon"], addr=s["addr"], stalls=s["stalls"], kw=s["kw"], tier=s["tier"], hours=s["hours"], **stat("s:" + s["name"])) for s in self.stations()]
             return dict(saved=saved, superchargers=sc, found=self.discover(S, ev), charger_count=len(self.chargers()["rows"]))
         return _memo("listing", self.deps() + [os.path.join(S.d, "drives", "drives_master.csv"), os.path.join(S.d, "charges", "charges_master.csv"), os.path.join(S.d, "charges", "app_chargebook.json"), os.path.join(S.d, "idles", "idles_master.csv"), self.f_ignored], build)
 
@@ -258,7 +282,7 @@ class Places:
             for c in C["rows"]:
                 es = by.get(c["key"], [])
                 last = max((e["t0"] for e in es), default=0)
-                r = {k: c[k] for k in ("key", "name", "network", "addr", "suburb", "state", "lat", "lon", "stalls", "kw", "tier", "conn", "access", "tesla_only")}
+                r = {k: c[k] for k in ("key", "name", "network", "addr", "suburb", "state", "lat", "lon", "stalls", "kw", "tier", "conn", "access", "tesla_only", "hours")}
                 r.update(charges=len(es), kwh=round(sum(e.get("kwh") or 0 for e in es), 1), cost=round(sum(e.get("cost") or 0 for e in es), 2),
                          last=CC.local_iso(last)[:10] if last else "")
                 rows.append(r)
@@ -389,6 +413,11 @@ class Places:
         if not info:
             return None
         info["key"] = key
+        if key[:2] in ("s:", "c:", "p:"):
+            try:
+                info["site"] = self.site(key)
+            except Exception:
+                info["site"] = None
         if key.startswith("@"):
             visits = []
             for c in S.charges():

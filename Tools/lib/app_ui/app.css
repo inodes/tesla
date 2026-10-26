@@ -224,3 +224,8 @@ tr.chline{cursor:pointer}tr.chline td{color:var(--bad);font-weight:600;font-size
 #selbar{position:sticky;top:-22px;z-index:3;background:var(--bg);padding:6px 0}#selbar~#tb .day{top:34px}
 
 .dayk{display:inline-block;width:18px;height:18px;border-radius:5px;border:2px solid var(--mut);color:#fff;font-size:12px;line-height:14px;text-align:center;cursor:pointer;align-self:center;flex:none}.dayk.on,.dayk.part{background:var(--acc);border-color:var(--acc)}.day .dcnt.sel,.day small{white-space:nowrap}
+
+.sitegrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(340px,1fr));gap:14px;margin-top:14px}.sitegrid .card{min-width:0;overflow-x:auto}.sitegrid h3{margin:12px 0 4px;font-size:13px}
+.sitegrid table.kv td:first-child{width:130px}.sitegrid table.kv td{overflow-wrap:anywhere}.tw{overflow-x:auto}.tw th.r,.tw td.r{text-align:right}
+.busy{display:grid;grid-template-columns:34px repeat(24,minmax(0,1fr));gap:2px;margin-top:8px;align-items:center}.busy i{height:18px;border-radius:3px;display:block}.busy .bd,.busy small{font-size:11px;color:var(--mut)}
+.sitegrid span.chip{cursor:default}
