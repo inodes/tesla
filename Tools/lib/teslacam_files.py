@@ -22,9 +22,10 @@ def _listing(path):
         return None
 
 
-def walk(teslacam):
+def walk(teslacam, stat=True):
     """(files, ok): files = [dict(src, ev, stamp, cam, size, mtime)] of every clip under the TeslaCam folder; ok is False when a
-    top-level folder could not be read at all (so a missing file must not be taken as deleted)."""
+    top-level folder could not be read at all (so a missing file must not be taken as deleted). With stat=False, size and mtime are 0
+    (no stat per file on the drive)."""
     out, ok = [], True
     seen_any = False
     for sub, src in SOURCES:
@@ -38,29 +39,33 @@ def walk(teslacam):
         for e in ents:
             if e.name.startswith("."):
                 continue
-            if e.is_dir(follow_symlinks=False):
-                if src == "recent":
-                    continue
+            if src == "recent":
+                _add(out, e, src, "", stat)
+            elif e.is_dir(follow_symlinks=False):
                 inner = _listing(e.path)
                 if inner is None:
                     ok = False
                     continue
                 for f in inner:
-                    _add(out, f, src, e.name)
+                    _add(out, f, src, e.name, stat)
             else:
-                _add(out, e, src, "")
+                _add(out, e, src, "", stat)
     return out, ok and seen_any
 
 
-def _add(out, e, src, ev):
+def _add(out, e, src, ev, stat=True):
     m = CLIP_RE.match(e.name)
     if not m:
         return
-    try:
-        st = e.stat()
-    except OSError:
-        return
-    out.append(dict(src=src, ev=ev, stamp=m.group(1), cam=m.group(2), size=st.st_size, mtime=int(st.st_mtime)))
+    if stat:
+        try:
+            st = e.stat()
+        except OSError:
+            return
+        size, mt = st.st_size, int(st.st_mtime)
+    else:
+        size = mt = 0
+    out.append(dict(src=src, ev=ev, stamp=m.group(1), cam=m.group(2), size=size, mtime=mt))
 
 
 def key(f):

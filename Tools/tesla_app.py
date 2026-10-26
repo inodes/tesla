@@ -468,8 +468,8 @@ class H(BaseHTTPRequestHandler):
                     return self.send_json(dict(error="A job is reading the drives: stop it first."))
                 role = body.get("role")
                 roots = {r: footage_root(r) for r in "AJU"}
-                if body.get("action") == "process":       # read what the clips still lack (metadata, stills, signs) from their video on the connected drives
-                    return self.send_json(CKEEP.start_process(body.get("items") or [], roots))
+                if body.get("action") == "process":       # read what the clips still lack (metadata, stills, pictures, signs, or only `steps`) from their video on the connected drives
+                    return self.send_json(CKEEP.start_process(body.get("items") or [], roots, steps=body.get("steps")))
                 return self.send_json(CKEEP.start(body.get("action"), role, body.get("items") or [], roots, confirmed=body.get("confirm") is True))
             if u.path == "/api/stills/thin":       # {action: start|stop}: make the stills of minutes with no event and no sign smaller
                 return self.send_json(STHIN.stop() if body.get("action") == "stop" else STHIN.start(confirmed=body.get("confirm") is True))
@@ -795,8 +795,8 @@ def charges_started():
 
 
 def tessie_started():
-    """A Tessie sync was started: when it ends cleanly, what was missing then and is still missing is what Tessie does not have, so the page stops offering to fetch it."""
-    ids = list((drivelist().get("missing") or {}).get("ids") or [])
+    """A Tessie sync was started: when it ends cleanly, dashcam-only drives that were missing then and are still missing are what Tessie has no record of, so the page stops offering to fetch them (Tessie's own drives record their path outcome in FetchLedger when asked)."""
+    ids = [i for i in ((drivelist().get("missing") or {}).get("ids") or []) if not str(i).startswith("t")]
 
     def after():
         while TSYNC.running():
@@ -913,6 +913,7 @@ def main():
     TODO = footage_todo.Todo(os.path.join(local_cache_dir(), "footage_todo.json"), DATA_DIR, TC, FG, footage_roots, lambda: KEEP._stage is None and not KEEP.busy())
     KEEP.on_progress = TODO.subtract
     CKEEP = clip_keep.ClipKeep(DATA_DIR, TC, FG)
+    CKEEP.on_change = TODO.forget
     KEEP.pictures = CKEEP          # the Keeper saves the pictures of events after the stills
     STHIN = stills_thin.StillsThin(DATA_DIR, FG.stills, TC)
     if not a.no_background:

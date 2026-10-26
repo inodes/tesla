@@ -265,6 +265,15 @@ class ProcessTest(ProcBase):
         self.assertEqual(self.calls[1][1], [S2])
         self.assertEqual([i[0] for i in self.rv.started], [S2])
 
+    def test_a_single_step_may_be_run_on_its_own(self):
+        self.rv.run = True                                                              # sign scanner busy elsewhere: stills alone still run
+        out = self.k.start_process([dict(kind="saved", id="ev1")], self.roots, steps=["stills"])
+        self.assertNotIn("error", out)
+        self.k._thread.join(5)
+        self.assertEqual([x["step"] for x in self.k.job()["steps"]], ["Making stills"])
+        self.assertEqual([c[0] for c in self.calls], ["stills"])
+        self.assertIsNone(self.rv.started)
+
     def test_it_is_refused_while_something_else_is_done_to_the_drives_or_there_is_no_video_to_read(self):
         self.rv.run = True
         self.assertIn("Signs are being read", self.k.start_process([dict(kind="saved", id="ev1")], self.roots)["error"])

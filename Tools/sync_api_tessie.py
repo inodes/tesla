@@ -1306,8 +1306,10 @@ def _backfill_drive_deepdive(limit, pace_seconds, since_days, tessie_dir):
     for d in drives:
         if since_dt and d["start_dt"] < since_dt:
             continue
-        if analyzer.match_detailed_drive(d) or analyzer.has_local_deepdive(d):
+        if analyzer.has_own_telemetry(d):
             already_had += 1
+            if analyzer.has_local_deepdive(d) and not ledger.get("drive_path", "t%d" % int(d["start_utc_epoch"])):
+                ledger.record("drive_path", "t%d" % int(d["start_utc_epoch"]), "complete", "path already on disk", source="disk")      # the Drives page then knows it is settled even when its page is filed under a neighbouring drive
             continue
         if (ledger.get("drive_path", "t%d" % int(d["start_utc_epoch"])) or {}).get("status") == "empty":
             already_had += 1                    # Tessie was asked and has no points for this drive (lib/fetch_ledger.py): not asked again

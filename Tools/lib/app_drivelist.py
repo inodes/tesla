@@ -191,6 +191,7 @@ def join_parks(items, now=None):
 
 def missing(items, now, recent_days=None, tried=()):
     """What Tessie has not given yet: drives the dashcam saw that Tessie has no record of (a real move: a minute or 300 m), and Tessie drives with no detailed page (path file), of any age (`recent_days` limits it to the last few days).
+    A Tessie drive that ended less than ten minutes ago is left out: `sync_api_tessie.py --backfill-deepdive` waits ten minutes (`DRIVE_FINALIZE_GRACE_SECONDS`) before asking Tessie for its path so a drive still settling is not saved half-done.
     -> dict(cam_only=n, no_page=n, ids=[...], since=earliest start or None). Short moves and re-parks do not count."""
     cam, nop, gone = [], [], 0
     for v in items:
@@ -200,7 +201,7 @@ def missing(items, now, recent_days=None, tried=()):
         if v.get("src") == "cam":
             if (v["t1"] - v["t0"]) >= 60 or (v.get("km") or 0) >= 0.3:
                 want = cam
-        elif not v.get("page") and (recent_days is None or v["t0"] >= now - recent_days * 86400):
+        elif not v.get("page") and v["t1"] <= now - 600 and (recent_days is None or v["t0"] >= now - recent_days * 86400):
             want = nop
         if want is None:
             continue

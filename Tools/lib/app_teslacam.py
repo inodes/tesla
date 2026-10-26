@@ -359,10 +359,12 @@ class TeslaCam:
         first = next(((r, (roots or {})[r]) for r in "AJU" if (roots or {}).get(r)), None)
         return ("A", roots["A"]) if roots and roots.get("A") else first or ("A", None)
 
-    def footage(self, role, teslacam):
-        """Every Recent and Saved minute on a drive (TL.minutes)."""
+    def footage(self, role, teslacam, all_saved=False):
+        """Every Recent and Saved minute on a drive (TL.minutes). With `all_saved`, Saved minutes within 30 s of a Recent clip are kept too so their telemetry is read."""
         c = self._scan(role, teslacam)
         saved, _ok = self.events(role, "saved", teslacam)
+        if all_saved:
+            return TL.minutes(c["clips"] if c else {}, saved, all_saved=True)
         key = (id(c), id(saved), len(saved), CC.version())
         memo = self._foot.get(role)
         if memo and memo[0] == key:
@@ -374,7 +376,7 @@ class TeslaCam:
     def scan_report(self, roots):
         """Footage of the drives in roots {role: TeslaCam folder} against the telemetry kept; also what the reading job is doing."""
         store = self._tl("A")
-        mins = {r: self.footage(r, p) for r, p in roots.items() if p}
+        mins = {r: self.footage(r, p, all_saved=True) for r, p in roots.items() if p}
         rep = TS.plan(store, mins, lambda r, m: self._front(roots[r], m))
         self._scan_todo = rep.pop("todo")
         rep["job"] = self.scan_status()
@@ -426,7 +428,10 @@ class TeslaCam:
         def pick(store, allm, saved, sentry):
             items = TL.build({m["stamp"]: m["cams"] for m in allm if m["src"] == "recent"}, saved, [], store)
             it = next((x for x in items if x["kind"] in ("drive", "stopped", "recording") and x["t0"] <= t_id < x["t1"]), None)
-            return (it, [m for m in allm if m["t"] + 60 > it["t0"] and m["t"] < it["t1"]]) if it else None
+            if not it:
+                return None
+            full = self.footage(role, teslacam, all_saved=True) if teslacam else allm
+            return it, [m for m in full if m["t"] + 60 > it["t0"] and m["t"] < it["t1"]]
         return self._finish(role, teslacam, pick, budget)
 
     def _settle(self, role, teslacam, store, t0, t1, budget):
