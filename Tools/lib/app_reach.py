@@ -44,9 +44,9 @@ def png_bytes(rgba):
 
 
 def _lut_reach():
-    """Charge left, 1 (the edge of what can be reached) .. 255 (full): light blue to deep blue."""
+    """Charge left, 1 (the edge of what can be reached) .. 255 (full): pale mint to light teal, light so the chargers (red, green, blue) stay the strongest colours."""
     t = np.linspace(0, 1, 256)[:, None]
-    c0, c1 = np.array([165, 205, 250, 150]), np.array([29, 78, 216, 185])
+    c0, c1 = np.array([205, 240, 230, 105]), np.array([95, 195, 180, 150])
     lut = (c0 + (c1 - c0) * t).astype(np.uint8)
     lut[0] = 0
     return lut
