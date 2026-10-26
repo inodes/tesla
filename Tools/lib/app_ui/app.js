@@ -999,7 +999,7 @@ let PL={tab:"saved",q:"",visited:false,net:"all",state:"all",view:"list"},SYNCPO
 // places you have used are solid, the rest faded. New Zealand is left out for now.
 // ---------- range on the Places map (lib/app_reach.py): pick chargers, see where a car leaving them with some charge can get to by road, or which roads are far from any charger
 const RG={on:false,tab:"",sel:new Set(),out:new Set(),frac:100,reserve:null,basis:"km",gaps:false,st:null,tok:0,pts:{},names:{},stretches:[],unit:"km",listOpen:false,T:null,note:""};
-const rgMap=()=>PLM&&PLM.m&&PLM.m.isStyleLoaded()?PLM.m:null;
+const rgMap=()=>{try{return PLM&&PLM.m&&PLM.m.getLayer("pl")?PLM.m:null}catch(e){return null}};      // the map is ready once its own layers are in (it is never "loaded" while tiles are still coming)
 function rgHide(){const m=rgMap();if(m&&m.getLayer("rg"))m.setLayoutProperty("rg","visibility","none")}
 function rgShow(r){const m=rgMap();if(!m)return;const c=[[r.bbox[1],r.bbox[2]],[r.bbox[3],r.bbox[2]],[r.bbox[3],r.bbox[0]],[r.bbox[1],r.bbox[0]]],s=m.getSource("rg");
   if(s)s.updateImage({url:r.img,coordinates:c});else{m.addSource("rg",{type:"image",url:r.img,coordinates:c});m.addLayer({id:"rg",type:"raster",source:"rg",paint:{"raster-opacity":.9,"raster-fade-duration":0}},m.getLayer("pl")?"pl":undefined)}
@@ -1019,7 +1019,7 @@ async function rgGo(){
   if(r.error||r.empty){rgHide();RG.note=r.error==="needs_graph"?"":(r.error||"");rgNote();return}
   RG.out=new Set(r.outline||[]);RG.stretches=r.mode==="gaps"?(r.stretches||[]):[];RG.unit=r.unit;rgList();rgSel();rgShow(r);
   RG.note=r.mode==="gaps"?`<i class="rgb gaps"></i> beyond ${n0(r.safe/2)} ${r.unit} from a charger · red beyond ${n0(r.safe)} ${r.unit}`:`<i class="rgb"></i> 0 – ${n0(r.vmax)} ${r.unit} left · ${n0(r.n)} chargers`;rgNote()}
-function pmFit(){const e=PLM&&PLM.el;if(!e||!e.isConnected)return;const h=Math.max(380,Math.floor(innerHeight-e.getBoundingClientRect().top-14));if(Math.abs(e.offsetHeight-h)>2){e.style.height=h+"px";try{PLM.m.resize()}catch(x){}}}
+function pmFit(){const e=PLM&&PLM.el;if(!e||!e.isConnected)return;const h=Math.max(300,Math.floor(innerHeight-e.getBoundingClientRect().top-14));if(Math.abs(e.offsetHeight-h)>2){e.style.height=h+"px";try{PLM.m.resize()}catch(x){}}}
 addEventListener("resize",()=>pmFit());
 function rgList(){const el=$("#rgl");if(!el)return;const L=RG.on&&RG.gaps?RG.stretches:[],nm=k=>esc(RG.names[k]||k);
   el.innerHTML=L.length?`<details class="card rgstr"${RG.listOpen?" open":""}><summary><b>Longest stretches without a charger</b></summary>${L.map((x,i)=>`<div><a href="#" data-sl="${i}">${nm(x.a)} → ${nm(x.b)}</a> <span class="sub">${n0(x.cost)} ${esc(RG.unit)}</span></div>`).join("")}</details>`:"";
@@ -1077,11 +1077,11 @@ function placesMap(host,rows,tab){
     $$("[data-nw]",host).forEach(b=>b.onclick=()=>{const n=b.dataset.nw;hidden.has(n)?hidden.delete(n):hidden.add(n);PLM.hidden=hidden;PLM.update(false);legend()});pmFit()};
   const dark=matchMedia("(prefers-color-scheme: dark)").matches;
   if(PLM&&PLM.tab===tab&&PLM.el&&PLM.dark===dark){
-    if(!host.contains(PLM.el)){host.innerHTML=`<div class="sub" style="margin-bottom:6px">Solid dot = used, faded = not used. Dots grow and get names as you zoom in. Click a dot for details.</div>${byNet?'<div class="bar" id="nl"></div><div class="bar" id="rg"></div><div id="rgl"></div>':""}<div class="map big" id="pm"></div>`;$("#pm",host).replaceWith(PLM.el);PLM.m.resize();pmFit()}
+    if(!host.contains(PLM.el)){host.innerHTML=`${byNet?'<div class="bar" id="nl"></div><div class="bar" id="rg"></div><div id="rgl"></div>':""}<div class="map big" id="pm" title="Solid dot = used, faded = not used. Dots grow and get names as you zoom in. Click a dot for details."></div>`;$("#pm",host).replaceWith(PLM.el);PLM.m.resize();pmFit()}
     PLM.update(!QUIET,rows);legend();if(byNet)rgInit();return}
   if(PLM){try{PLM.m.remove()}catch(e){}PLM=null}
   if(!window.maplibregl){host.innerHTML='<div class="empty">Map library not loaded (offline?).</div>';return}
-  host.innerHTML=`<div class="sub" style="margin-bottom:6px">Solid dot = used, faded = not used. Dots grow and get names as you zoom in. Click a dot for details.</div>${byNet?'<div class="bar" id="nl"></div><div class="bar" id="rg"></div><div id="rgl"></div>':""}<div class="map big" id="pm"></div>`;
+  host.innerHTML=`${byNet?'<div class="bar" id="nl"></div><div class="bar" id="rg"></div><div id="rgl"></div>':""}<div class="map big" id="pm" title="Solid dot = used, faded = not used. Dots grow and get names as you zoom in. Click a dot for details."></div>`;
   const el=$("#pm"),m=newMap({container:el,style:MAPSTYLE(dark),center:[151.2,-33.8],zoom:8,attributionControl:{compact:true}});
   mapNav(m,()=>update(true),"Show every place");
   let ready=false,first=true;
@@ -1118,11 +1118,11 @@ async function pagePlaces(){
     if(PL.view==="map"){placesMap(host,rows,PL.tab);return}
     table(host,cols,rows,r=>{sessionStorage.removeItem("placePrefill");location.hash="#/place/"+encodeURIComponent(r.key)},PL.tab==="found"?"visits":PL.tab==="sc"||PL.tab==="chargers"?"charges":"last");
     $("#cnt").textContent=rows.length+" shown"};
-  main.innerHTML=`<h1>Places</h1><div class="sub">Your saved places, the Tesla Superchargers (named as on tesla.com) and stops worth naming. Open one to see what is around it on OpenStreetMap.</div>
-   <div class="tiles">${tile(L.saved.length,"saved places")}${tile(L.superchargers.filter(s=>s.charges).length+" of "+L.superchargers.length,"Superchargers used")}${tile(L.found.length,"stops to review")}</div>
+  main.innerHTML=`<h1>Places</h1><div class="sub" id="pli">Your saved places, the Tesla Superchargers (named as on tesla.com) and stops worth naming. Open one to see what is around it on OpenStreetMap.</div>
+   <div class="tiles" id="pltl">${tile(L.saved.length,"saved places")}${tile(L.superchargers.filter(s=>s.charges).length+" of "+L.superchargers.length,"Superchargers used")}${tile(L.found.length,"stops to review")}</div>
    <div class="bar"><button class="chip" data-t="saved">Saved places</button><button class="chip" data-t="sc">Superchargers</button><button class="chip" data-t="chargers">Chargers</button><button class="chip" data-t="found">Stops to review</button><span class="vw"><button class="chip" data-v="list">List</button><button class="chip" data-v="map">Map</button></span>
    <select id="cn"></select><select id="cs"></select><label class="sub" id="vl"><input type="checkbox" id="vis"> used only</label><button class="btn" id="sy">Sync chargers…</button><input type="search" id="q" placeholder="Search…" value="${esc(PL.q)}"><button class="btn pri" id="add">+ New place</button><span class="sub" id="cnt"></span></div><div id="sp"></div><div id="tb"></div>`;
-  const tabs=()=>{$$("[data-t]").forEach(c=>c.classList.toggle("on",c.dataset.t===PL.tab));const ch=PL.tab==="chargers";$("#vl").style.display=PL.tab==="sc"||ch?"":"none";$$("[data-v]").forEach(c=>c.classList.toggle("on",c.dataset.v===PL.view));$("#cn").style.display=$("#cs").style.display=$("#sy").style.display=ch?"":"none";$("#vis").checked=PL.visited;
+  const tabs=()=>{$("#pli").style.display=$("#pltl").style.display=PL.view==="map"?"none":"";$$("[data-t]").forEach(c=>c.classList.toggle("on",c.dataset.t===PL.tab));const ch=PL.tab==="chargers";$("#vl").style.display=PL.tab==="sc"||ch?"":"none";$$("[data-v]").forEach(c=>c.classList.toggle("on",c.dataset.v===PL.view));$("#cn").style.display=$("#cs").style.display=$("#sy").style.display=ch?"":"none";$("#vis").checked=PL.visited;
     if(ch&&C){$("#cn").innerHTML='<option value="all">All networks</option>'+C.networks.map(([n,c])=>`<option value="${esc(n)}">${esc(n||"Other")} (${n0(c)})</option>`).join("");$("#cn").value=PL.net;
       const st=[...new Set(C.rows.map(r=>r.state).filter(Boolean))].sort();$("#cs").innerHTML='<option value="all">All states</option>'+st.map(x=>`<option>${esc(x)}</option>`).join("");$("#cs").value=PL.state}};
   $$("[data-t]").forEach(c=>c.onclick=async()=>{PL.tab=c.dataset.t;if(PL.tab==="chargers")await need();tabs();draw()});
