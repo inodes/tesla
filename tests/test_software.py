@@ -492,6 +492,29 @@ class SyntheticTest(unittest.TestCase):
         self.assertEqual(rows[0]["repeated_in"], ["2026.11.1"])
         shutil.rmtree(d)
 
+    def test_a_version_shows_what_it_brings_and_names_where_the_rest_was_released(self):
+        d = self.make({"2026.10.1": [("Glow", "it glows", "2026.10.1", ["au"]), ("Speed Profiles", "three modes", "2026.10.1", ["au"]), ("Security Improvements", "fixes", "2026.10.1", ["au"])],
+                       "2026.10.2": [("Glow", "it glows", "2026.10.2", ["au"]), ("Speed Profiles", "four modes", "2026.10.2", ["au"]), ("Security Improvements", "fixes", "2026.10.2", ["au"]),
+                                     ("Horn", "it honks", "2026.10.2", ["au"])]})
+        ix = I.Index(d, cache_dir=d)
+        o = ix.own_notes("2026.10.2", "au")
+        self.assertEqual(o["scope"], "car")
+        self.assertEqual({(i["title"], i["status"]) for i in o["items"]}, {("Speed Profiles", "revised"), ("Security Improvements", "new"), ("Horn", "new")})
+        self.assertEqual([(r["title"], r["first"], r["last"]) for r in o["repeated"]], [("Glow", "2026.10.1", "2026.10.1")])
+        first = ix.own_notes("2026.10.1", "au")
+        self.assertEqual(len(first["items"]), 3)                                           # the first page repeats nothing
+        self.assertEqual(first["repeated"], [])
+        shutil.rmtree(d)
+
+    def test_a_car_the_notes_are_not_for_is_told_so(self):
+        d = self.make({"2026.10.1": [("Glow", "it glows", "2026.10.1", ["au"])]})
+        ix = I.Index(d, cache_dir=d)
+        o = ix.own_notes("2026.10.1", "au", "modely", "TeslaAP3")                         # the made-up notes are for modely AI4
+        self.assertEqual((o["scope"], len(o["items"])), ("region", 1))
+        self.assertEqual(ix.own_notes("2026.10.1", "au", "modely", "TeslaAP4")["scope"], "car")
+        self.assertEqual(ix.own_notes("2026.10.1", "nz")["scope"], "none")
+        shutil.rmtree(d)
+
     def test_a_note_with_no_countries_is_for_everyone(self):
         d = self.make({"2026.10.1": [("Glow", "it glows", "2026.10.1", [])]})
         ix = I.Index(d, cache_dir=d)

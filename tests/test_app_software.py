@@ -142,6 +142,15 @@ class PageTest(unittest.TestCase):
         self.assertNotIn("2026.38.5.5", {v["version"] for v in A.overview(self.d, "ANZ", "modely", "TeslaAP3")["versions"]})
         self.assertIn("2026.38.5.5", {v["version"] for v in A.overview(self.d, "ANZ", "modely", "TeslaAP4")["versions"]})
 
+    def test_the_version_page_leaves_out_what_the_version_only_repeats(self):
+        o = A.detail(self.d, "2026.38.5.5", "ANZ", "modely", "TeslaAP4")["own"]
+        self.assertEqual(o["scope"], "car")
+        titles = {i["title"] for i in o["items"]}
+        self.assertTrue(titles.isdisjoint({r["title"] for r in o["repeated"]}))
+        self.assertTrue(all(r["first"] and r["last"] for r in o["repeated"]))
+        self.assertEqual(A.detail(self.d, "2026.38.5.5", "ANZ", "modely", "TeslaAP3")["own"]["scope"], "region")
+        self.assertEqual(A.detail(self.d, "2026.38.5.5", "ANZ", "modely", "TeslaAP3")["car_label"], "Model Y AI3")
+
     def test_the_timeline_has_days_and_steps_inside_the_region(self):
         t = A.timeline(self.d, "ANZ")
         mine = {v["version"] for v in A.overview(self.d, "ANZ")["versions"]}
