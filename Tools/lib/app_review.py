@@ -104,7 +104,7 @@ class Review:
             for fn in names:
                 if fn.endswith(".json"):
                     for st, r in self._day(fn[:-5]).items():
-                        if r.get("d") and not r.get("rf"):
+                        if not r.get("rf") and any(x.get("kind") != "school" or not x.get("tm") for x in r.get("d", [])):
                             out.add(st)
         return out
 
@@ -136,13 +136,18 @@ class Review:
         for d in raw:
             g = next((o for o in reversed(out) if o["text"] == d["text"] and o["side"] == d["side"] and d["t"] - o["t1"] <= OPTS["merge_s"]), None)
             if g is None:
-                out.append(dict(text=d["text"], side=d["side"], t0=d["t"], t1=d["t"], n=0, conf=-1, crop="", t=d["t"]))
+                out.append(dict(text=d["text"], side=d["side"], t0=d["t"], t1=d["t"], n=0, conf=-1, crop="", t=d["t"], kind=d.get("kind", ""), _sc=-1, _tm={}))
                 g = out[-1]
             g["n"] += 1
             g["t1"] = d["t"]
-            if d["c"] > g["conf"]:
-                g.update(conf=d["c"], crop=d.get("f", ""), t=d["t"])
+            sc = 1000 + d.get("tc", 0) if d.get("tm") else d["c"]     # a school zone sign is shown from the still its plate was read best in
+            if d.get("tm"):
+                g["_tm"][tuple(d["tm"])] = g["_tm"].get(tuple(d["tm"]), 0) + max(1, d.get("tc", 0))
+            if sc > g["_sc"]:
+                g.update(conf=d["c"], crop=d.get("f", ""), t=d["t"], _sc=sc)
         for g in out:
+            g["times"] = list(max(g["_tm"], key=lambda k: g["_tm"][k])) if g["_tm"] else []     # the hours most of the stills agree on
+            del g["_sc"], g["_tm"]
             g["u"], g["u0"], g["u1"] = g["t"], g["t0"], g["t1"]                    # UTC epoch seconds: what the page compares and seeks with
             for k in ("t", "t0", "t1"):
                 g[k] = CC.local_iso(g[k], lo)                                       # local clock text (lo = seconds ahead of UTC, else app.timezone), display only
@@ -183,7 +188,8 @@ class Review:
             self.st = dict(running=False, done=0, total=0, current="", found=0, error="Missing: " + ", ".join(need["py"] + need["cmd"]), t0=0)
             return self.status()
         with _LOCK:
-            todo = [i for i in items if (self._day(i[0][:10]).get(i[0]) or {}).get("d") and not self._day(i[0][:10])[i[0]].get("rf")]
+            un = self.unrefined()
+            todo = [i for i in items if i[0] in un]
         self.stop_flag = False
         self.st = dict(running=True, done=0, total=len(todo), current="", found=0, error="", t0=time.time())
         self.t = threading.Thread(target=self._run_refine, args=(todo,), daemon=True)
@@ -238,6 +244,7 @@ def _frames(path, step, tmp):
 def scan_clip(path, stamp, v, base):
     """Look through one minute. Returns {n: stills looked at, d: [{s, text, c, x, y, r, side, f}]}."""
     import cv2
+    import sign_classes as SC
     import sign_finder as SF
     from concurrent.futures import ThreadPoolExecutor
     step = max(0.25, float(OPTS["step_s"]))
@@ -258,6 +265,8 @@ def scan_clip(path, stamp, v, base):
                     if c.get("ok") and c["conf"] >= OPTS["min_conf"] and c["text"]:
                         out.append(dict(s=s, text=c["text"], c=round(c["conf"]), x=c["x"], y=c["y"], r=c["r"], side=side, crop=c["crop"]))
                         break               # the best reading per side and still
+            for c in SC.find_school(im):    # a school zone board, and the hours on its plate when they could be read
+                out.append(dict(s=s, text=c["text"], kind="school", c=c["conf"], x=c["x"], y=c["y"], r=c["r"], side=c["side"], tm=c["times"], tc=c["tconf"], crop=c["crop"]))
             return out
         with ThreadPoolExecutor(max(1, int(OPTS["workers"]))) as ex:
             for lst in ex.map(one, fr):
@@ -283,7 +292,7 @@ def _spans(d, pad):
     """[[side, from, to, [indexes into d]]]: the stretches of a minute to look at again, one per sign seen (overlapping ones joined), on the side it was seen on."""
     out = []
     for side in ("L", "R"):
-        for i in sorted((i for i, x in enumerate(d) if x["side"] == side), key=lambda i: d[i]["s"]):
+        for i in sorted((i for i, x in enumerate(d) if x["side"] == side and x.get("kind") != "school"), key=lambda i: d[i]["s"]):
             a, b = d[i]["s"] - pad, d[i]["s"] + pad
             if out and out[-1][0] == side and a <= out[-1][2]:
                 out[-1][2] = max(out[-1][2], b)
@@ -331,6 +340,7 @@ def refine_clip(path, stamp, rec, base):
     """The second look at one minute that already has signs (see Review.refine). Returns the new record, marked done (rf). A sign read in the first pass that the finer stills
     outvote is dropped with its picture."""
     import cv2
+    import sign_classes as SC
     d = list(rec.get("d", []))
     spans = [sp for sp in _spans(d, float(OPTS["refine_pad_s"])) if _weak(d, sp[3])]
     drop, add, k = set(), [], 0
@@ -359,6 +369,37 @@ def refine_clip(path, stamp, rec, base):
                         crop = cv2.resize(crop, (max(1, int(w * z)), max(1, int(h * z))))
                     x["f"] = "%s_r%02d.jpg" % (stamp, k)
                     k += 1
+                    cv2.imwrite(os.path.join(base, "crops", x["f"]), crop, [cv2.IMWRITE_JPEG_QUALITY, 90])
+                add.append(x)
+    # school zone signs seen without their hours: the plate is only readable close up, so the video is taken again finely around them
+    sz = sorted(x["s"] for x in d if x.get("kind") == "school" and not x.get("tm"))
+    wins = []
+    for t in sz:
+        if wins and t - wins[-1][1] <= 2 * float(OPTS["refine_pad_s"]):
+            wins[-1][1] = t
+        else:
+            wins.append([t, t])
+    kz = 0
+    with tempfile.TemporaryDirectory() as tmp:
+        for n, (a, b) in enumerate(wins):
+            a, b = max(0.0, a - float(OPTS["refine_pad_s"])), min(60.0, b + float(OPTS["refine_pad_s"]))
+            got = []
+            for s_, f in _frames_at(path, a, b - a, step, os.path.join(tmp, "z%d" % n)):
+                im = cv2.imread(f)
+                for c in (SC.find_school(im) if im is not None else []):
+                    if c["times"]:
+                        got.append(dict(s=round(s_, 2), text=c["text"], kind="school", c=c["conf"], x=c["x"], y=c["y"], r=c["r"], side=c["side"], tm=c["times"], tc=c["tconf"], crop=c["crop"]))
+            for x in sorted(got, key=lambda x: -x["tc"])[:2]:
+                crop = x.pop("crop")
+                h, w = crop.shape[:2]
+                if h > 0 and w > 0:
+                    cpx = float(OPTS["crop_px"])
+                    if max(h, w) > cpx:
+                        z = cpx / max(h, w)
+                        crop = cv2.resize(crop, (max(1, int(w * z)), max(1, int(h * z))))
+                    x["f"] = "%s_z%02d.jpg" % (stamp, kz)
+                    kz += 1
+                    os.makedirs(os.path.join(base, "crops"), exist_ok=True)
                     cv2.imwrite(os.path.join(base, "crops", x["f"]), crop, [cv2.IMWRITE_JPEG_QUALITY, 90])
                 add.append(x)
     for i in drop:

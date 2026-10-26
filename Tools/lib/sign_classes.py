@@ -10,12 +10,15 @@ Classes (Australian signs are told apart by colour first):
   info         blue with white writing (services, tourist, route information)
   directional  green with white writing (destinations, exits)
   safety       white and blue together (e.g. rest-area, emergency, keep-left style signs)
+  school zone  find_school(): the yellow-green SCHOOL ZONE board and the hours on its plate (see the section at the end)
 
 Signs are searched for in the part of the frame above the road, at half size; a blob must look like a sign (a filled, rectangular or diamond
 shape of a sensible size with writing in it) so that trees, sky, cars and cones drop out. Text is read with tesseract; for the
 white signs a reading is required, since white boxes are everywhere (vehicles, markers).
 """
+import difflib
 import os
+import re
 import subprocess
 import tempfile
 
@@ -247,6 +250,8 @@ def find_all(bgr, speed=True):
             continue                                             # white boxes are everywhere: only keep the ones with readable writing
         if d["col"] == "blue" and d["ink"] > 0.5:
             d["cat"] = "safety"                                   # blue and white in about equal parts
+        if d["col"] in ("green", "yellow") and is_school([(w, conf) for w in txt.split()]):
+            d["cat"], d["text"] = "school", "School zone"          # the fluorescent yellow-green board (find_school reads its hours)
         res.append(d)
     # signs known by their shape: yellow diamonds, and the give-way / roundabout triangle (the sun washes colours out, so these go by outline). A shape that sits on
     # a blob the colour pass already found replaces it.
@@ -267,3 +272,158 @@ def find_all(bgr, speed=True):
             e.update(shape="shape", ink=0, solid=1, rf=1, sym=True)
             res.append(e)
     return res
+
+
+# ---- school zone signs: the board, and the hours on the plate under it -----------------------------------------------------------------------------------------
+# An NSW school zone sign is a fluorescent yellow-green board reading SCHOOL ZONE, with a plate under it giving the hours the 40 limit applies ("8-9:30 / 2:30-4") next to
+# the red-ringed 40. The board is found by colour and shape and must read as SCHOOL / ZONE (fuzzy: a few letters wrong is fine; a yellow diamond or a leaf is not). The row
+# under it is then read for the hours: the red ring is blanked, the writing enlarged and read as digits, and what was read becomes 24-hour ranges (parse_times). Hours are
+# given only when they read as real ones (one to three ranges, 20 minutes to 4 hours long): a plate too small or blurred to read gives no hours, never guessed ones.
+SZ_ROI_Y = (0.10, 0.75)              # rows of the frame searched (fractions of the height): above the road, below the sky
+SZ_MIN_W = 24                        # narrowest board (pixels of the frame) worth reading
+SZ_OCR_H = 110                       # the board is enlarged to about this height for reading
+SZ_PLATE_H = 90                      # the plate's writing is enlarged to about this height
+
+
+def _tsv(gray, psm, whitelist=None):
+    """[(word, confidence)] tesseract read in a grayscale image."""
+    with tempfile.TemporaryDirectory() as td:
+        p = os.path.join(td, "a.png")
+        cv2.imwrite(p, gray)
+        cmd = ["tesseract", p, "stdout", "--psm", str(psm)]
+        if whitelist:
+            cmd += ["-c", "tessedit_char_whitelist=" + whitelist]
+        r = subprocess.run(cmd + ["tsv"], capture_output=True, text=True, stdin=subprocess.DEVNULL)
+    out = []
+    for ln in r.stdout.splitlines()[1:]:
+        f = ln.split("\t")
+        if len(f) >= 12 and f[11].strip():
+            try:
+                c = float(f[10])
+            except ValueError:
+                continue
+            if c >= 0:
+                out.append((f[11].strip(), c))
+    return out
+
+
+def is_school(words):
+    """True when the words read off a board say SCHOOL (or ZONE): letters may be wrong, so each is compared by similarity."""
+    hit = 0
+    for w, _c in words:
+        w = re.sub(r"[^A-Za-z]", "", w).upper()
+        if len(w) >= 3 and (difflib.SequenceMatcher(None, w, "SCHOOL").ratio() >= 0.66 or difflib.SequenceMatcher(None, w, "ZONE").ratio() >= 0.75):
+            hit += 1
+    return hit >= 1
+
+
+_RANGE = re.compile(r"(\d{1,2})(?:[:.](\d{2}))?\s*(a\.?m\.?|p\.?m\.?)?\s*-\s*(\d{1,2})(?:[:.](\d{2}))?\s*(a\.?m\.?|p\.?m\.?)?", re.I)
+
+
+def parse_times(text):
+    """Hours on a school zone plate as sorted 24-hour ranges ["08:00-09:30", "14:30-16:00"] ([] when what was read is not hours).
+    "8-9:30 2:30-4", "8.00 - 9.30AM 2.30 - 4.00PM" and "8:00am-9:30am / 2:30pm-4:00pm" all read the same. A range with no am/pm takes the one of the other end; with
+    neither, the first range is the morning one (when it starts at 6 or later) and the next is the afternoon."""
+    t = re.sub(r"[‐-―−_~]+", "-", text or "")
+    out = []
+    for m in _RANGE.finditer(t):
+        h0, m0, a0, h1, m1, a1 = m.groups()
+        h0, h1, m0, m1 = int(h0), int(h1), int(m0 or 0), int(m1 or 0)
+        if not (0 < h0 <= 12 and 0 < h1 <= 12 and m0 < 60 and m1 < 60 and m0 % 5 == 0 and m1 % 5 == 0):
+            continue
+        a0, a1 = (a0 or "").lower()[:1], (a1 or "").lower()[:1]
+        if not a0 and not a1:
+            a0 = a1 = "a" if (not out and (h0 >= 6 or h0 == 12) and h1 <= 12 and (h1 > h0 or h1 < 7 or h0 == 12) and h0 < 12) else "p"
+        elif not a0:
+            a0 = "a" if (a1 == "p" and h0 > h1) else a1
+        elif not a1:
+            a1 = a0
+        s, e = (h0 % 12 + (12 if a0 == "p" else 0)) * 60 + m0, (h1 % 12 + (12 if a1 == "p" else 0)) * 60 + m1
+        if not 20 <= e - s <= 240:
+            continue
+        r = "%02d:%02d-%02d:%02d" % (s // 60, s % 60, e // 60, e % 60)
+        if r not in out:
+            out.append(r)
+    return sorted(out)[:3]
+
+
+def _sz_boards(bgr):
+    """[(x, y, w, h)] of fluorescent yellow-green rectangles in the part of the frame that signs hang in."""
+    H, W = bgr.shape[:2]
+    y0, y1 = int(H * SZ_ROI_Y[0]), int(H * SZ_ROI_Y[1])
+    hsv = cv2.cvtColor(bgr[y0:y1], cv2.COLOR_BGR2HSV)
+    h, s, v = hsv[..., 0], hsv[..., 1], hsv[..., 2]
+    m = (((h >= 28) & (h <= 62) & (s >= 100) & (v >= 140)).astype(np.uint8)) * 255
+    m = cv2.morphologyEx(m, cv2.MORPH_CLOSE, np.ones((3, 3), np.uint8))
+    n, _lab, st, _c = cv2.connectedComponentsWithStats(m, 8)
+    out = []
+    for i in range(1, n):
+        x, y, w, hh, a = st[i]
+        if w < SZ_MIN_W * 0.6 or hh < 6 or a < 0.55 * w * hh or not 1.2 <= w / float(hh) <= 4.5 or w > 0.3 * W:
+            continue
+        out.append((int(x), int(y + y0), int(w), int(hh), int(a)))
+    out.sort(key=lambda b: -b[4])
+    return [b[:4] for b in out[:4]]
+
+
+def _enlarge(gray, height):
+    z = max(1.0, float(height) / max(1, gray.shape[0]))
+    return cv2.resize(gray, None, fx=z, fy=z, interpolation=cv2.INTER_CUBIC) if z > 1.0 else gray
+
+
+def read_plate(bgr, box):
+    """(["08:00-09:30", ...], confidence) for the plate under a school zone board, or ([], 0). The red ring of the limit beside the plate is blanked first."""
+    x, y, w, h = box
+    H, W = bgr.shape[:2]
+    xa, xb = max(0, int(x - 0.15 * w)), min(W, int(x + 1.15 * w))
+    ya, yb = min(H - 1, y + h), min(H, int(y + h + 1.25 * h))
+    row = bgr[ya:yb, xa:xb].copy()
+    if row.shape[0] < 8 or row.shape[1] < 16:
+        return [], 0.0
+    hsv = cv2.cvtColor(row, cv2.COLOR_BGR2HSV)
+    red = ((((hsv[..., 0] <= 8) | (hsv[..., 0] >= 170)) & (hsv[..., 1] >= 110) & (hsv[..., 2] >= 70)).astype(np.uint8)) * 255
+    n, _l, st, _c = cv2.connectedComponentsWithStats(cv2.dilate(red, np.ones((5, 5), np.uint8)), 8)
+    for i in range(1, n):                                           # the limit's ring: blank its square so the 40 is not read as an hour
+        rx, ry, rw, rh, ra = st[i]
+        if ra > 0.15 * rw * rh and rw >= 6 and rh >= 6:
+            row[max(0, ry - 2):ry + rh + 2, max(0, rx - 2):rx + rw + 2] = 255
+    g = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(4, 4)).apply(_enlarge(cv2.cvtColor(row, cv2.COLOR_BGR2GRAY), SZ_PLATE_H))
+    best, bconf = [], 0.0
+    for thr in ("otsu", "raw"):
+        im = cv2.threshold(g, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)[1] if thr == "otsu" else g
+        if float((im < 128).mean()) > 0.5:                          # a dark plate: the writing is light, so flip
+            im = 255 - im
+        im = cv2.copyMakeBorder(im, 12, 12, 12, 12, cv2.BORDER_CONSTANT, value=255)
+        for psm in (6, 4, 11):
+            words = _tsv(im, psm, "0123456789:.-AMPamp ")
+            tm = parse_times(" ".join(wd for wd, _c in words))
+            if tm:
+                conf = sum(c for _w, c in words) / max(1, len(words))
+                if len(tm) > len(best) or (len(tm) == len(best) and conf > bconf):
+                    best, bconf = tm, conf
+        if len(best) >= 2:
+            break
+    return best, round(bconf)
+
+
+def find_school(bgr, read_times=True):
+    """School zone signs in a frame -> [dict(x, y, w, h, r, conf, text, times, tconf, side, crop)] (pixels of the frame given). `times` is the 24-hour ranges read from the
+    plate, empty when it could not be read; `crop` is the board with the plate and limit under it."""
+    H, W = bgr.shape[:2]
+    out = []
+    for (x, y, w, h) in _sz_boards(bgr):
+        pad = max(2, int(0.2 * max(w, h)))
+        g = _enlarge(cv2.cvtColor(bgr[max(0, y - pad):y + h + pad, max(0, x - pad):x + w + pad], cv2.COLOR_BGR2GRAY), SZ_OCR_H)
+        words = []
+        for im in (255 - g, g):                                        # dark writing on the green, or (sun) the other way round
+            words = _tsv(cv2.copyMakeBorder(im, 10, 10, 10, 10, cv2.BORDER_CONSTANT, value=int(im[0, 0])), 6)
+            if is_school(words):
+                break
+        if not is_school(words):
+            continue
+        letters = [c for wd, c in words if re.search(r"[A-Za-z]", wd)]
+        times, tconf = read_plate(bgr, (x, y, w, h)) if read_times and w >= 40 else ([], 0)
+        cx = x + w / 2.0
+        out.append(dict(x=int(cx), y=int(y + h / 2.0), w=w, h=h, r=int(w / 2), conf=round(sum(letters) / max(1, len(letters))), text="School zone", times=times, tconf=tconf,
+                        side="L" if cx < W / 2.0 else "R", crop=bgr[max(0, y - pad):min(H, int(y + 2.6 * h + pad)), max(0, int(x - 0.3 * w)):min(W, int(x + 1.3 * w))]))
+    return out
