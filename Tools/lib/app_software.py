@@ -216,7 +216,7 @@ def detail(data_dir, version, region, model=None, hw=None):
         u[k + "_all"] = len(u.get(k) or [])
         u[k] = [dict(e, region=e["version"] in mine) for e in (u.get(k) or [])]
         u[k + "_region"] = [e for e in u[k] if e["region"]]
-    return dict(version=version, features=f["features"], uptake=u, region_countries=ix.resolve(region), my_car=choices(ix)["my_car"])
+    return dict(version=version, features=f["features"], own=ix.own_notes(version, region, model, hw), car_label=ix.label(model, hw) if model else "", uptake=u, region_countries=ix.resolve(region), my_car=choices(ix)["my_car"])
 
 
 def timeline(data_dir, region, model=None, hw=None):

@@ -362,10 +362,11 @@ class Index:
             return []
         return [dict(tag=c["tag"], hash=c["hash"], diff=(N.diff(ch[n - 1]["text"], c["text"]) if n > ia else None)) for n, c in enumerate(ch) if ia <= n <= ib]
 
-    def _scoped_notes(self, version, countries, model, hw):
+    def _scoped_notes(self, version, countries, model, hw, own=False):
+        """The notes of a version's page for the countries and car; own: only those the page lists itself, not the earlier ones it carries along."""
         sql, args = self._scope_sql(countries, model, hw)
         return self.q("""SELECT DISTINCT o.note_key, o.hash, o.title, o.tag, o.tag_k, o.version FROM occurrences o
-                         JOIN scope s ON s.version=o.version AND s.fid=o.fid WHERE o.version=? AND %s""" % sql, [version] + args)
+                         JOIN scope s ON s.version=o.version AND s.fid=o.fid WHERE o.version=? %s AND %s""" % ("AND o.prior=0" if own else "", sql), [version] + args)
 
     def _cumulative(self, version, countries, model, hw):
         """What a car on `version` has had listed for it: the newest text of each note listed for the region on that version or any before it, in the shape of
@@ -413,6 +414,34 @@ class Index:
                             seen_on=r["version"], description=t[0]["description"] if t else "", **(self.changed_from(r["note_key"], r["hash"], cs) or {})))
         self.scopes(out)
         return {"version": version, "features": out}
+
+    def own_notes(self, version, region, model=None, hw=None):
+        """What this version's own page brings, not what it repeats. -> dict(scope, items, repeated): items are the notes of the page whose text was not on an earlier
+        page (status "new") or is a rewrite of a note an earlier page had (status "revised", with the diff); repeated are the ones whose identical text was listed before
+        ([{title, first, last}]: the first and the latest earlier page that listed it, in any region). Security notes are always new: each release fixes other bugs.
+        scope: "car" (the page's notes for this region and car), "region" (the page lists none for this car, so these are the region's: they are for other cars) or "none"."""
+        cs = self.resolve(region)
+        scope, notes = "car", self._scoped_notes(version, cs, model, hw, own=True)
+        if not notes and (model or hw):
+            scope, notes = "region", self._scoped_notes(version, cs, None, None, own=True)
+        if not notes:
+            return dict(scope="none", items=[], repeated=[])
+        kx = V.sortkey(version)
+        items, rep = [], []
+        for n in sorted(notes, key=lambda r: r["title"].lower()):
+            key, h = n["note_key"], n["hash"]
+            same = self.q("""SELECT o.version, o.tag, o.tag_k, v.k FROM occurrences o JOIN versions v ON v.version=o.version
+                             WHERE o.note_key=? AND o.hash=? AND v.k < ? ORDER BY v.k""", (key, h, kx))
+            other = self.q("""SELECT 1 FROM occurrences o JOIN versions v ON v.version=o.version WHERE o.note_key=? AND o.hash<>? AND v.k < ? LIMIT 1""", (key, h, kx))
+            if same and not key.startswith("security"):
+                rep.append(dict(note_key=key, title=n["title"], first=min(same, key=lambda r: r["tag_k"])["tag"], last=same[-1]["version"]))
+                continue
+            t = self.q("SELECT description FROM note_text WHERE note_key=? AND hash=?", (key, h))
+            it = dict(note_key=key, title=n["title"], tag=n["tag"], hash=h, description=t[0]["description"] if t else "", status="revised" if other and not same else "new",
+                      **(self.changed_from(key, h, cs) or {}))
+            items.append(it)
+        self.scopes(items)
+        return dict(scope=scope, items=items, repeated=rep)
 
     def _path(self, src, dst, depth=3, only=None):
         """True when cars were seen going src -> dst, directly or through up to `depth` steps. With `only` (a set of versions) the steps stay on those versions:
