@@ -257,15 +257,15 @@ async function driveReviewPanel(host,stamp,lo,onResult){
   let tab="all",ei=0,si=0,hv=null,vkey="",tries=0,MC=null,OV=null,lb=false;
   const KCOL={intervention:"#dc2626",accelerator:"#f59e0b",speed:"#2563eb"},KNAME={intervention:"FSD interventions",accelerator:"Accelerator pressed",speed:"Speed changes"};
   // road signs by kind (colour of the sign): what a sign is, and how a chip for it looks
-  const SCAT={speed:["Speed limit","#dc2626"],regulatory:["Regulatory","#b91c1c"],traffic:["Traffic in our lane","#7c3aed"],warning:["Warning","#ca8a04"],roadwork:["Road work","#ea580c"],info:["Information","#2563eb"],directional:["Directional","#16a34a"],safety:["Safety","#0891b2"]};
+  const SCAT={speed:["Speed limit","#dc2626"],regulatory:["Regulatory","#b91c1c"],traffic:["Traffic in our lane","#7c3aed"],warning:["Warning","#ca8a04"],roadwork:["Road work","#ea580c"],info:["Information","#2563eb"],directional:["Directional","#16a34a"],safety:["Safety","#0891b2"],school:["School zone","#84cc16"]};
   const sgCat=x=>SCAT[x.cat||"speed"]||SCAT.speed;
   // the lanes under the strip of an event (as in the old flip review): which lane a kind of sign goes in, and its colour
   const LANES=[["Limit","#b91c1c"],["Warn","#d4a72c"],["Blue","#2f5fbf"],["Green","#3f9d5f"],["White","#f4f4f5"],["Traffic","#7c3aed"]];
-  const LANE_OF={speed:0,warning:1,roadwork:1,info:2,safety:2,directional:3,regulatory:4,traffic:5};
+  const LANE_OF={speed:0,warning:1,roadwork:1,info:2,safety:2,directional:3,regulatory:4,traffic:5,school:3};
   const sgTitle=x=>`${sgCat(x)[0]} sign, seen ${x.n} time(s)${x.conf>0?", "+x.conf+"% sure of the reading":""}`+(x.anom?" · the car was doing "+n0(x.car)+" km/h: probably an exit or side road, not this road":"")+(x.osm!=null?" · the map says "+x.osm+(x.map?" on "+x.map:""):"")+(x.conflict?" · differs from the map":"")+(x.temp?(x.cat==="roadwork"?" · temporary road works":" · probably a temporary limit (road works nearby)"):"");
   const sgChip=x=>`<span class="sgn" style="border-left:4px solid ${sgCat(x)[1]};${x.anom?"opacity:.55;border-style:dashed;":""}" title="${esc(sgTitle(x))}">${x.f?`<img src="/review/${encodeURIComponent(x.f)}" alt="">`:""}<b>${esc(x.text||sgCat(x)[0])}</b> <span class="sub">${x.cat&&x.cat!=="speed"&&x.text?sgCat(x)[0]+" · ":""}${hm(x.t)}${x.anom?" · exit / side road?":""}${x.conflict?` · <span class="sgw">map ${x.osm}</span>`:x.osm!=null&&(x.cat||"speed")==="speed"?" · map agrees":""}${x.temp?' · <span class="sgw">temporary</span>':""}</span></span>`;
   // the badges on a thumbnail, as on the old flip review: a speed limit as its red ring, the other kinds as a small coloured sign, traffic in our lane as a car
-  const GLY={info:"i",safety:"i",directional:"➜",warning:"!",roadwork:"!",regulatory:"",traffic:"🚗"};
+  const GLY={info:"i",safety:"i",school:"S",directional:"➜",warning:"!",roadwork:"!",regulatory:"",traffic:"🚗"};
   const badges=(e,k)=>{const r=e.shots[k],h=Math.max(.6,(e.shots.length>1?(e.shots[e.shots.length-1]-e.shots[0])/(e.shots.length-1):1)/2+.05);
     const L=(e.signs||[]).filter(g=>{const a=(g.t0!=null?g.t0:g.t)-e.t,b=(g.t1!=null?g.t1:g.t)-e.t;return r>=a-h&&r<=b+h});
     return L.length?`<span class="rvb">${L.map(g=>(g.cat||"speed")==="speed"?`<i class="bsp${g.temp||g.conflict?" w":""}" title="${esc(sgTitle(g))}">${esc(g.text||"")}</i>`:`<i class="bk" style="background:${sgCat(g)[1]}${g.cat==="regulatory"?";border:2px solid #b91c1c;background:#fff;color:#b91c1c":""}" title="${esc(sgTitle(g))}">${GLY[g.cat]||""}</i>`).join("")}</span>`:""};
@@ -1085,6 +1085,8 @@ function syncPanel(host,done){
 }
 const OSMG={};
 // the site page of a Supercharger / charger: everything the charger registry holds, grouped (place, access, hardware, pricing, busy times, surroundings, sources)
+// the hours on a school zone plate: ["08:00-09:30","14:30-16:00"] -> "8–9:30 am · 2:30–4 pm"
+const schoolHours=t=>(t||[]).map(r=>{const f=x=>{let [h,m]=x.split(":").map(Number);const ap=h>=12?"pm":"am";h=h%12||12;return [h+(m?":"+String(m).padStart(2,"0"):""),ap]},[a,b]=r.split("-").map(f);return a[1]===b[1]?a[0]+"–"+b[0]+" "+b[1]:a[0]+" "+a[1]+"–"+b[0]+" "+b[1]}).join(" · ");
 const kvRows=rows=>`<table class="kv">${rows.filter(r=>r&&r[1]!=null&&r[1]!=="").map(r=>`<tr><td>${esc(r[0])}</td><td>${r[2]?r[1]:esc(r[1])}</td></tr>`).join("")}</table>`;
 const DAYS7=["Mon","Tue","Wed","Thu","Fri","Sat","Sun"];
 const dayText=d=>!d||!d.length||d.length>=7?"Every day":d.join(", ");
@@ -1986,7 +1988,7 @@ async function teslaDriveBody(host,role,fetchSeg,places,opts){
   // ---- Review: the signs read from the video and the speed changes, drawn on the chart and listed
   let rv=null,steps=[],rvUrl=null;
   const idxOf=g=>Math.round(g.u-it().t0);                              // second of the drive a sign was seen at (both UTC)
-  const rvMarks=()=>{if(!chart||!chart.marks)return;const sg=(rv?rv.signs:[]).map(g=>Object.assign({i:idxOf(g)},g));chart.marks({signs:sg,steps})};
+  const rvMarks=()=>{if(!chart||!chart.marks)return;const sg=(rv?rv.signs:[]).filter(g=>g.kind!=="school").map(g=>Object.assign({i:idxOf(g)},g));chart.marks({signs:sg,steps})};
   const rvDraw=()=>{if(!live()||!opts.review)return;const sg=rv?rv.signs:[],S0=S(),job=rv?rv.job:{},mn=rv?rv.minutes:0,sc=rv?rv.scanned:0,run=job.running,pc=run&&job.total?Math.round(100*(job.done+(job.done<job.total?.35:0))/job.total):null;const ms=rv&&rv.missing?rv.missing:{py:[],cmd:[],hint:[]},need=ms.py.length+ms.cmd.length>0;
     steps=S0.v.length&&d.pending===0?speedSteps(S0.v):[];
     const hd=`<b>Signs</b> · ${rv?(()=>{const sl=rv.slow||0,k=cfg("review.min_kmh"),sk=sl?` · ${n0(sl)} slower minute${sl>1?"s":""} skipped`:"";return sc>=mn&&mn>0?`read in ${mn>1?"all "+n0(mn)+" minutes":"the 1 minute"} driven at ${k} km/h or more · ${n0(sg.length)} found${sk}`:sc?`read in ${n0(sc)} of ${n0(mn)} minutes driven at ${k} km/h or more · ${n0(sg.length)} found${sk}`:mn?`not read yet for this drive (${n0(mn)} minute${mn>1?"s":""} driven at ${k} km/h or more${sk})`:sl?`the car did not reach ${k} km/h in this footage (${n0(sl)} minute${sl>1?"s":""}): no signs read`:"no footage on a connected drive for this time"})():"…"}${run?` · reading ${n0(job.done)} of ${n0(job.total)} minutes…`:""}${job.error&&!need?` · <span style="color:var(--bad)">${esc(job.error)}</span>`:""}`;
@@ -1999,8 +2001,8 @@ async function teslaDriveBody(host,role,fetchSeg,places,opts){
       if($("#rvs"))$("#rvs").onclick=go("start");if($("#rvr"))$("#rvr").onclick=go("redo");if($("#rvx"))$("#rvx").onclick=go("stop");
       rvMarks()}
     const T=i=>clk(i);
-    const near=x=>sg.filter(g=>g.side==="L").map(g=>({g,dt:idxOf(g)-x.i})).filter(o=>o.dt>=-30&&o.dt<=10).sort((a,b)=>Math.abs(a.dt)-Math.abs(b.dt))[0];
-    $("#drv").innerHTML=(sg.length?`<h2>Signs read (${n0(sg.length)})</h2><div class="sub">Click one to jump the video to it. Dim ones were seen in a single still only.</div><div class="evs">${sg.slice(0,120).map(g=>{const i=idxOf(g),v=S0.v[i];return `<button class="evc ${g.n<2?"faded":""}" data-u="${g.u}">${g.crop?`<img loading="lazy" src="/review/${esc(g.crop)}" onerror="this.style.visibility='hidden'">`:'<div class="noimg"></div>'}<b>${esc(g.text)}${g.side==="R"?" (right side)":""}</b><span>${hms(g.t)}${v!=null?` · car ${n0(v)} km/h`:""}${S0.ap[i]?` · ${APN[S0.ap[i]]||""}`:""}</span><span>seen ${g.n}× · sure ${n0(g.conf)}%</span></button>`}).join("")}</div>${sg.length>120?`<div class="sub">The first 120 of ${n0(sg.length)} are shown.</div>`:""}`:"")
+    const near=x=>sg.filter(g=>g.side==="L"&&g.kind!=="school").map(g=>({g,dt:idxOf(g)-x.i})).filter(o=>o.dt>=-30&&o.dt<=10).sort((a,b)=>Math.abs(a.dt)-Math.abs(b.dt))[0];
+    $("#drv").innerHTML=(sg.length?`<h2>Signs read (${n0(sg.length)})</h2><div class="sub">Click one to jump the video to it. Dim ones were seen in a single still only.</div><div class="evs">${sg.slice(0,120).map(g=>{const i=idxOf(g),v=S0.v[i];return `<button class="evc ${g.n<2?"faded":""}" data-u="${g.u}">${g.crop?`<img loading="lazy" src="/review/${esc(g.crop)}" onerror="this.style.visibility='hidden'">`:'<div class="noimg"></div>'}<b>${esc(g.text)}${g.side==="R"?" (right side)":""}</b>${g.kind==="school"?`<span>${g.times&&g.times.length?esc(schoolHours(g.times)):"hours not readable"}</span>`:""}<span>${hms(g.t)}${v!=null?` · car ${n0(v)} km/h`:""}${S0.ap[i]?` · ${APN[S0.ap[i]]||""}`:""}</span><span>seen ${g.n}× · sure ${n0(g.conf)}%</span></button>`}).join("")}</div>${sg.length>120?`<div class="sub">The first 120 of ${n0(sg.length)} are shown.</div>`:""}`:"")
 ;
     $$("#drv .evc").forEach(b=>b.onclick=()=>{if(player){seekIdx(Math.round(+b.dataset.u-it().t0)-3);$("#dvid").scrollIntoView({block:"nearest"})}});
     $$("#drv .trow").forEach(b=>b.onclick=()=>{if(player){seekIdx(+b.dataset.i-6);$("#dvid").scrollIntoView({block:"nearest"})}})};
