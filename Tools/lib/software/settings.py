@@ -5,6 +5,8 @@
                                                     is put in a group called "Other" so it is never lost, and every country can also be chosen by itself
         "model_labels": {"model3": "Model 3", ...},         Teslascope's car_type id before the "_" -> the name shown
         "hardware_labels": {"TeslaAP4": "AI4", ...},        the id after the "_" -> the name shown
+        "fsd_ai4_from": 13,                                 FSD from this major version on needs an AI4 computer (earlier FSD, v12, also ran on AI3); FSD Lite is for AI3
+        "fsd_hw_share_pct": 5,                              a version the notes say a computer cannot take stays on its list when at least this share of its installs were that computer
         "settle_days": 14,                                  a version nobody has taken for this long, with none waiting, is not asked about again
         "refetch_hours": 6,                                 a version still moving is asked about at most this often
         "pace_seconds": 1.0,                                pause between requests to Teslascope
@@ -29,6 +31,8 @@ DEFAULTS = {
         "lychee": "Model S (Refresh)", "tamarind": "Model X (Refresh)",
     },
     "hardware_labels": {"TeslaAP4": "AI4", "TeslaAP3": "AI3", "ParkerPascal2_5": "HW2.5", "MonoCam": "MonoCam"},
+    "fsd_ai4_from": 13,
+    "fsd_hw_share_pct": 5,
     "settle_days": 14,
     "refetch_hours": 6,
     "pace_seconds": 1.0,

@@ -3,6 +3,7 @@
     key("FSD (Supervised) v14.3.12 Down Under")  -> "fsd (supervised) down under"   the same note whatever FSD version it names
     text_hash(description, subtitle)             -> 16 hex characters of the text with spacing and bullets normalised
     fsd_version(title, description)              -> "14.3.12" when the note names one, else None
+    fsd_note(title)                              -> ("fsd", "14.3.12") / ("lite", "14.3") / ("fsd", "") for an FSD note, None for any other
     diff(old, new)                               -> [{op: same|add|del, text}]: what the new text added and what it dropped, word by word
 
 The key says WHICH note it is; the hash says WHAT IT SAYS. Same key and same hash in a later release = the note is listed again.
@@ -39,6 +40,21 @@ def fsd_version(title, description=""):
             if m:
                 return m.group(1)
     return None
+
+
+_V = re.compile(r"\bv(\d{1,2}(?:\.\d+){0,3})\b", re.I)
+
+
+def fsd_note(title):
+    """What FSD a note's title announces: ("fsd", "14.3.12") for "FSD (Supervised) v14.3.12 Down Under", ("lite", "14.3") for "FSD (Supervised) v14.3 Lite",
+    ("fsd", "") for the bare "FSD (Supervised)". None when the title is not an FSD note, and for the generic "Full Self-Driving (Supervised)" that is listed beside the
+    specific one (it says nothing about which kind)."""
+    t = _flat(title)
+    if not re.match(r"fsd\b", t, re.I):
+        return None
+    m = _V.search(t)
+    ver = m.group(1) if m else ""
+    return ("lite" if re.search(r"\blite\b", t, re.I) else "fsd", ver)
 
 
 def diff(old, new):

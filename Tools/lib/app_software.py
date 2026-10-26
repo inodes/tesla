@@ -7,9 +7,13 @@
     first(data_dir, text, region)  when a feature first reached a region
     compare(data_dir, a, b, region, model, hw)     what a jump from a to b brings and what it leaves out
 
+FSD and FSD Lite are two different things: FSD needs an AI4 computer and FSD Lite an AI3 one (fsd_kinds, hidden_for). A car picked as AI3 never sees a version that only
+has FSD, one picked as AI4 never sees a version that only has FSD Lite; a version with both is for both.
+
 Nothing here fetches except SoftSync; the questions are answered from the index lib/software/index.py keeps in the local cache folder.
 """
 import os
+import re
 import threading
 import time
 
@@ -31,31 +35,116 @@ def _index(data_dir):
     return ix
 
 
+def _major(v):
+    try:
+        return int(str(v).split(".")[0])
+    except ValueError:
+        return None
+
+
 def fsd_chip(row, hw=None, labels=None):
-    """The FSD versions a version includes, for the chip on its row: [{v: "14.3.12", hw: "AI4"}], one per computer that has its own. [] when it includes none.
-    With a computer chosen, only that one."""
+    """The FSD versions a version includes, for the chip on its row: [{v: "14.3.12", kind: "fsd", hw: "AI4"}], one per computer that has its own; FSD Lite (the AI3
+    one, Teslascope writes "14.3 Lite") has kind "lite". [] when it includes none. With a computer chosen, only that one."""
     labels = labels or S.load()["hardware_labels"]
     out = []
     for key, code in (("fsd_hw4", "TeslaAP4"), ("fsd_hw3", "TeslaAP3")):
         v = row.get(key)
         if v and (not hw or hw == code):
-            out.append(dict(v=str(v), hw=labels.get(code, code)))
-    if len(out) == 2 and out[0]["v"] == out[1]["v"]:
-        out = [dict(v=out[0]["v"], hw="")]
+            s = str(v).strip()
+            lite = bool(re.search(r"\blite\b", s, re.I))
+            out.append(dict(v=re.sub(r"\s*\blite\b\s*", "", s, flags=re.I).strip(), kind="lite" if lite else "fsd", hw=labels.get(code, code)))
+    if len(out) == 2 and out[0]["v"] == out[1]["v"] and out[0]["kind"] == out[1]["kind"]:
+        out = [dict(v=out[0]["v"], kind=out[0]["kind"], hw="")]
     return out
 
 
-def notes_fsd(ix, region, model=None, hw=None):
-    """{version: "14.3.9"}: the FSD version a note first listed on that version names (title like "FSD (Supervised) v14.3.9 Down Under") for this region and car.
-    Teslascope fills its own FSD field only for some versions (2026.28.5 names v14.3.9 in its notes, the field is empty), so the notes fill the gaps."""
+def notes_chips(ix, region, model=None, hw=None):
+    """{version: [chip]}: the FSD the notes first listed on that version name (titles like "FSD (Supervised) v14.3.9 Down Under", "FSD (Supervised) v14.3 Lite") for this
+    region and car. Teslascope fills its own FSD field only for some versions (2026.28.5 names v14.3.9 in its notes, the field is empty), so the notes fill the gaps."""
     sql, args = ix._scope_sql(ix.resolve(region), model, hw)
     rows = ix.q("SELECT DISTINCT o.version, o.title FROM occurrences o JOIN scope s ON s.version=o.version AND s.fid=o.fid WHERE o.tag=o.version AND " + sql, args)
     out = {}
     for r in rows:
-        v = N.fsd_version(r["title"])
-        if v:
-            out.setdefault(r["version"], v)
+        k = N.fsd_note(r["title"])
+        if k and k[1]:
+            c = dict(v=k[1], kind=k[0], hw="")
+            if c not in out.setdefault(r["version"], []):
+                out[r["version"]].append(c)
+    return {v: sorted(cs, key=lambda c: c["kind"]) for v, cs in out.items()}
+
+
+def fsd_kinds(ix):
+    """{version: {fsd, lite, legacy}}: what FSD each version carries whichever region it is for (the computer a version needs does not depend on the country).
+    fsd = FSD from v13 on (AI4 only), lite = FSD Lite (AI3 only), legacy = FSD before v13, which AI3 cars had too. From the notes' titles and Teslascope's fields."""
+    first = int(ix.cfg.get("fsd_ai4_from") or 13)
+    out, bare = {}, set()
+
+    def put(v, kind, ver):
+        e = out.setdefault(v, dict(fsd=False, lite=False, legacy=False))
+        m = _major(ver)
+        if kind == "lite":
+            e["lite"] = True
+        elif m is not None and m < first:
+            e["legacy"] = True
+        else:
+            e["fsd"] = True
+    for r in ix.q("SELECT DISTINCT version, title FROM occurrences WHERE tag=version AND (title LIKE 'FSD%')"):
+        k = N.fsd_note(r["title"])
+        if not k:
+            continue
+        if k[1]:
+            put(r["version"], k[0], k[1])
+        else:
+            bare.add(r["version"])
+    for r in ix.q("SELECT version, fsd_hw3, fsd_hw4 FROM versions WHERE fsd_hw3 IS NOT NULL OR fsd_hw4 IS NOT NULL"):
+        if r["fsd_hw4"]:
+            put(r["version"], "fsd", r["fsd_hw4"])
+        if r["fsd_hw3"]:
+            h3 = str(r["fsd_hw3"])
+            put(r["version"], "lite" if re.search(r"\blite\b", h3, re.I) else "fsd", re.sub(r"[^0-9.]", "", h3) if re.search(r"\d", h3) else "")
+    for v in bare:                                                  # "FSD (Supervised)" with no version says only that it is there: FSD
+        if v not in out:
+            out[v] = dict(fsd=True, lite=False, legacy=False)
     return out
+
+
+def hidden_for(kinds, hw):
+    """True when a version with these kinds cannot be installed on that computer: FSD only (no Lite, no older FSD) on AI3, FSD Lite only on AI4."""
+    if not kinds:
+        return False
+    if hw == "TeslaAP3":
+        return kinds["fsd"] and not kinds["lite"] and not kinds["legacy"]
+    if hw == "TeslaAP4":
+        return kinds["lite"] and not kinds["fsd"]
+    return False
+
+
+def hidden_versions(ix, model, hw):
+    """The versions the chosen computer cannot install because of the FSD they carry (hidden_for), as a set; empty when no computer is chosen. Cars of that
+    computer that did install a version (at least `fsd_hw_share_pct` of its installs) keep it on the list: the notes only say what FSD it carries."""
+    if hw not in ("TeslaAP3", "TeslaAP4"):
+        return set()
+    sql, args = "SELECT version, SUM(CASE WHEN hw=? THEN installs ELSE 0 END) h, SUM(installs) n FROM version_models" + (" WHERE model=?" if model else "") + " GROUP BY version", [hw] + ([model] if model else [])
+    share = {r["version"]: (100.0 * r["h"] / r["n"] if r["n"] else 0.0) for r in ix.q(sql, args)}
+    need = float(ix.cfg.get("fsd_hw_share_pct") if ix.cfg.get("fsd_hw_share_pct") is not None else 5)
+    return {v for v, k in fsd_kinds(ix).items() if hidden_for(k, hw) and share.get(v, 0.0) < need}
+
+
+def chip_fits(c, hw, first=13):
+    """A chip belongs to the computer chosen: FSD v13+ to AI4, FSD Lite and older FSD to AI3 (hw "" = no computer chosen: all)."""
+    if hw == "TeslaAP4":
+        return c["kind"] == "fsd" and (_major(c["v"]) is None or _major(c["v"]) >= first)
+    if hw == "TeslaAP3":
+        return c["kind"] == "lite" or (_major(c["v"]) is not None and _major(c["v"]) < first)
+    return True
+
+
+def chips_for(ix, row, nf, hw):
+    first = int(ix.cfg.get("fsd_ai4_from") or 13)
+    chips = fsd_chip(row, hw, ix.cfg["hardware_labels"])
+    if not chips:
+        chips = [c for c in nf.get(row["version"], []) if chip_fits(c, hw, first)]
+    return chips
 
 
 def choices(ix):
@@ -88,7 +177,7 @@ def car_journey(ix, data_dir):
     for j in car_versions.journey(data_dir):
         r = ix.q("SELECT first_spotted, fsd_hw3, fsd_hw4 FROM versions WHERE version=?", (j["version"],))
         sp = r[0] if r else {}
-        fsd = [dict(v=j["fsd"], hw="")] if j.get("fsd") else fsd_chip(sp, None, ix.cfg["hardware_labels"])
+        fsd = [dict(v=j["fsd"], kind="fsd", hw="")] if j.get("fsd") else fsd_chip(sp, (ix.cfg.get("my_car") or {}).get("hw") or None, ix.cfg["hardware_labels"])
         out.append(dict(j, fsd_chip=fsd, spotted=sp.get("first_spotted"), held=j["version"] in held))
     return out
 
@@ -99,11 +188,12 @@ def overview(data_dir, region="ANZ", model=None, hw=None):
     ix = _index(data_dir)
     car = car_versions.load(data_dir)
     mine = car.get("current")
-    rows = ix.versions_for(region, model, hw)
-    nf = notes_fsd(ix, region, model, hw)
+    nope = hidden_versions(ix, model, hw)
+    rows = [r for r in ix.versions_for(region, model, hw) if r["version"] not in nope]
+    nf = notes_chips(ix, region, model, hw)
     out = []
     for r in rows:
-        chip = fsd_chip(r, hw, ix.cfg["hardware_labels"]) or ([dict(v=nf[r["version"]], hw="")] if r["version"] in nf else [])
+        chip = chips_for(ix, r, nf, hw)
         out.append(dict(version=r["version"], first=r["first_spotted"], installs=r["installs"], region_installs=r["region_installs"], has_notes=bool(r["has_notes"]),
                         via=r["via"], fsd=chip, mine=r["version"] == mine))
     st = SY.status_text(data_dir, FetchLedger(data_dir), time.time())
@@ -118,8 +208,8 @@ def detail(data_dir, version, region, model=None, hw=None):
     u = ix.uptake(version, region)
     if u.get("error"):
         return dict(error=u["error"])
-    nf = notes_fsd(ix, region, model, hw)
-    u["fsd"] = fsd_chip(u, hw, ix.cfg["hardware_labels"]) or ([dict(v=nf[version], hw="")] if version in nf else [])
+    nf = notes_chips(ix, region, model, hw)
+    u["fsd"] = chips_for(ix, u, nf, hw)
     # Teslascope keeps the upgrade steps for every country together; this region's path is the steps from and to versions it has had itself
     mine = {v["version"] for v in ix.versions_for(region)}
     for k in ("from", "to"):
@@ -134,7 +224,8 @@ def timeline(data_dir, region, model=None, hw=None):
     region + car has had (cars seen going from one to the other). The days are Teslascope's for all regions together; the region decides which versions and steps
     are here, and `region_installs` (in overview) says how many of the cars were its own."""
     ix = _index(data_dir)
-    mine = {v["version"] for v in ix.versions_for(region, model, hw)}
+    nope = hidden_versions(ix, model, hw)
+    mine = {v["version"] for v in ix.versions_for(region, model, hw) if v["version"] not in nope}
     last = {r["version"]: r["last"] for r in ix.q("SELECT version, MAX(day) AS last FROM daily WHERE installs > 0 GROUP BY version") if r["version"] in mine}
     edges = [dict(src=r["src"], dst=r["dst"], installs=r["installs"]) for r in ix.q("SELECT src, dst, installs FROM upgrades") if r["src"] in mine and r["dst"] in mine]
     journey = car_journey(ix, data_dir)

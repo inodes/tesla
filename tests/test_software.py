@@ -100,6 +100,15 @@ class NoteTest(unittest.TestCase):
         self.assertEqual(N.fsd_version("FSD (Supervised) v14.3.12 Down Under"), "14.3.12")
         self.assertIsNone(N.fsd_version("Speed Profiles"))
 
+    def test_fsd_and_fsd_lite_notes_are_told_apart(self):
+        self.assertEqual(N.fsd_note("FSD (Supervised) v14.3.12 Down Under"), ("fsd", "14.3.12"))
+        self.assertEqual(N.fsd_note("FSD (Supervised) v14.3 Lite"), ("lite", "14.3"))
+        self.assertEqual(N.fsd_note("FSD (Supervised) v14 Lite"), ("lite", "14"))
+        self.assertEqual(N.fsd_note("FSD (Supervised)"), ("fsd", ""))
+        self.assertIsNone(N.fsd_note("Full Self-Driving (Supervised)"))
+        self.assertIsNone(N.fsd_note("Self-Driving Stats"))
+        self.assertIsNone(N.fsd_note("Satellite View"))
+
     def test_quotes_and_spacing_do_not_make_a_new_note(self):
         self.assertEqual(N.key('"Hey Grok"'), N.key("Hey  Grok"))
         self.assertEqual(N.text_hash("a  b\n c"), N.text_hash("a b c"))
