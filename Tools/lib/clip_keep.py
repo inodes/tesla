@@ -109,7 +109,8 @@ class ClipKeep:
         events = self._events()
         store = self.tc._tl("A")
         stills = self.fg.stills.stamps()
-        scanned = self.tc._rv().scanned()
+        rv = self.tc._rv()
+        scanned = rv.scanned()
         unref = getattr(self.tc._rv(), "unrefined", lambda: set())()      # minutes with signs that have not had the second look
         windows = TD.drive_windows(self.dir)
         starts = [w[0] for w in windows]
@@ -142,7 +143,7 @@ class ClipKeep:
         self._groups = {k: sorted(v) for k, v in groups.items()}
         for (kind, cid), mins in groups.items():
             meta, st_, sg, sh = [0, 0], [0, 0], [0, 0], [0, 0]
-            waiting, wait_n, refine_n, nbytes, nfiles, narch = "", 0, 0, {}, {}, {}
+            waiting, wait_n, snap_n, refine_n, nbytes, nfiles, narch = "", 0, 0, 0, {}, {}, {}
             for st, node in mins.items():
                 for r, c in node["files"].items():
                     nfiles[r] = nfiles.get(r, 0) + c
@@ -163,13 +164,15 @@ class ClipKeep:
                         waiting = "waiting for the drive from Tessie"
                         wait_n += 1
                     elif st in stills:
-                        waiting = "waiting for the drive's snapshots"
-                        wait_n += 1
+                        waiting = "drive snapshots not built yet"
+                        snap_n += 1
                 if isinstance(sm, dict) and sm.get("vmax", 0) >= min_kmh:
                     sg[1] += 1
                     sg[0] += st in scanned
                 if st in unref:
                     refine_n += 1
+            read = [st for st in mins if scanned.get(st)]
+            sign_n = len(rv.signs(read)) if read else 0                          # the signs read in the clip (one sign seen in several stills is one)
             have = self.shots.have(kind, cid) if kind != "recent" else set()
             w = self._wanted(kind, cid, mins, events.get((kind, cid))) if nbytes else None
             if w:
@@ -177,8 +180,8 @@ class ClipKeep:
             elif have:
                 sh = [len(have), len(have)]
             out[kind][cid] = dict(n=len(mins), first=min(mins), bytes=nbytes, files=nfiles, in_archive=narch, size=max(nbytes.values()) if nbytes else 0, meta=meta, stills=st_, signs=sg, shots=sh,
-                                  shot_cams=sorted(have), ready=all(x[0] >= x[1] for x in (meta, st_, sg, sh)) and refine_n == 0, waiting=waiting, wait_n=wait_n, refine_n=refine_n,
-                                  todo=any(x[0] < x[1] for x in (meta, sg, sh)) or st_[0] + wait_n < st_[1] or refine_n > 0)
+                                  shot_cams=sorted(have), ready=all(x[0] >= x[1] for x in (meta, st_, sg, sh)) and refine_n == 0, waiting=waiting, wait_n=wait_n, snap_n=snap_n, refine_n=refine_n,
+                                  sign_n=sign_n, todo=any(x[0] < x[1] for x in (meta, sg, sh)) or st_[0] + wait_n < st_[1] or refine_n > 0)
         return dict(clips=out)
 
     # ---- the files of a clip on one drive -----------------------------------------------------------------------
@@ -284,6 +287,7 @@ class ClipKeep:
                 if paths and not self.tc._rv().status().get("running"):
                     read = (kind_of, paths, [(it["kind"], it["id"]) for it in lack if it["kind"] != "recent"])
         self._stop = False
+        self._roots = roots
         self._job = dict(running=True, action=action, role=role, files=len(files), done=0, bytes=sum(sz for _, sz, _ in files), bytes_done=0, freed=0, errors=[], current="",
                          clips=len(plan), t0=time.time(), reading=bool(read), step="", step_done=0, step_total=0, steps=[])
         if read:
@@ -321,11 +325,11 @@ class ClipKeep:
                         break
         return out
 
-    STEPS = ("meta", "stills", "pictures", "signs")
+    STEPS = ("meta", "stills", "snapshots", "pictures", "signs")
 
     def start_process(self, items, roots, steps=None):
-        """Reads what the clips still lack from their video on the connected drives: the metadata of each minute, then its stills, then its event pictures, then its signs
-        (or only the steps in `steps`: "meta", "stills", "pictures", "signs"). A clip whose video is on no connected drive is left as it is."""
+        """Reads what the clips still lack from their video on the connected drives: the metadata of each minute, then its stills, then the snapshots of the drives it lies in, then its event pictures, then its signs
+        (or only the steps in `steps`: "meta", "stills", "snapshots", "pictures", "signs"). A clip whose video is on no connected drive is left as it is."""
         want = set(steps) & set(self.STEPS) if steps else set(self.STEPS)
         if not want:
             return dict(error="Nothing was asked for.")
@@ -346,6 +350,7 @@ class ClipKeep:
         if not paths:
             return dict(error="The video of these clips is on no connected drive.")
         self._stop = False
+        self._roots = roots
         self._job = dict(running=True, action="process", step="", step_done=0, step_total=0, steps=[], files=0, done=0, bytes=0, bytes_done=0, freed=0, errors=[], current="",
                          clips=len(items), t0=time.time())
         self._thread = threading.Thread(target=self._process, args=(kind_of, paths, evs, want), daemon=True)
@@ -444,6 +449,15 @@ class ClipKeep:
                 self._step("Making stills", len(todo))
                 if todo and not self._stop:
                     ST.make_many(stills, todo, int(app_config.get("stills.workers", 3)), stop=lambda: self._stop, progress=prog, by="clips")
+            if "snapshots" in want:
+                import drive_snapshots as SN
+                import teslacam_sync as SY
+                drives = SY.snapshots_for(self.dir, set(paths))
+                self._step("Building drive snapshots", len(drives))
+                if drives and not self._stop:
+                    root = (getattr(self, "_roots", None) or {}).get("A")
+                    front = SN.front_clips(self.tc, root) if root else {}
+                    SY.run_snapshots(self.dir, drives, front, stop=lambda: self._stop, progress=lambda n, tot, st: prog(n, st), note=lambda t: None, error=j["errors"].append)
             if "pictures" in want:
                 events = self._events()
                 shots = []
