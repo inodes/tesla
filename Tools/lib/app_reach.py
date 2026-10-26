@@ -53,11 +53,13 @@ def _lut_reach():
 
 
 def _lut_gaps():
-    """Distance to the nearest charger as a share of 1.5 x the safe range: clear up to half of it, light amber up to all of it, light red beyond."""
+    """Distance to the nearest charger as a share of 1.5 x the range of a charge: clear while a charge gets there, then light orange shading to light red."""
     lut = np.zeros((256, 4), np.uint8)
+    c0, c1 = np.array([250, 185, 85, 120]), np.array([232, 84, 84, 160])
     for i in range(1, 256):
-        q = (i - 1) / 254.0 * 1.5                        # in units of the safe range
-        lut[i] = (0, 0, 0, 0) if q < 0.5 else ((247, 190, 70, 125) if q < 1.0 else (232, 84, 84, 150))
+        q = (i - 1) / 254.0 * 1.5                        # in units of the range of a charge
+        if q >= 1.0:
+            lut[i] = (c0 + (c1 - c0) * min(1.0, (q - 1.0) / 0.5)).astype(np.uint8)
     return lut
 
 
@@ -209,7 +211,7 @@ class ReachService:
                 hit = dict(val=r["left"], vmax=r["full"], outline=[pts[i][2] for i in r["outline"] if i < len(pts) and pts[i][2]], full=full)
             else:
                 d, who = g.nearest([(p[0], p[1]) for p in pts], basis, want_who=True)
-                safe = (1.0 - reserve) * full
+                safe = max(frac - reserve, 0.05) * full
                 st = [dict(a=pts[a][2], b=pts[b][2], cost=round(c, 1), lat=round(float(g.lat[nd]), 5), lon=round(float(g.lon[nd]), 5)) for a, b, c, nd in g.stretches(d, who, basis)[:12]]
                 hit = dict(val=np.where(np.isfinite(d), d, -1.0), vmax=1.5 * safe, outline=[], full=full, safe=safe, stretches=st)
             if len(self.cache) >= 4:

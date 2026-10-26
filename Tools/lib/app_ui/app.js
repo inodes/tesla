@@ -998,30 +998,35 @@ let PL={tab:"saved",q:"",visited:false,net:"all",state:"all",view:"list"},SYNCPO
 // A map of the rows of the current Places tab (same filters as the list). Dots are small so they do not hide each other;
 // places you have used are solid, the rest faded. New Zealand is left out for now.
 // ---------- range on the Places map (lib/app_reach.py): pick chargers, see where a car leaving them with some charge can get to by road, or which roads are far from any charger
-const RG={on:false,tab:"",sel:new Set(),out:new Set(),frac:100,reserve:null,basis:"km",gaps:false,st:null,tok:0,pts:{},names:{},stretches:[],unit:"km",listOpen:false,T:null,note:""};
+const RG={on:false,tab:"",sel:new Set(),out:new Set(),frac:100,reserve:null,basis:"km",can:true,cannot:false,st:null,tok:0,pts:{},names:{},stretches:[],unit:"km",listOpen:false,T:null,note:""};
 const rgMap=()=>{try{return PLM&&PLM.m&&PLM.m.getLayer("pl")?PLM.m:null}catch(e){return null}};      // the map is ready once its own layers are in (it is never "loaded" while tiles are still coming)
-function rgHide(){const m=rgMap();if(m&&m.getLayer("rg"))m.setLayoutProperty("rg","visibility","none")}
-function rgShow(r){const m=rgMap();if(!m)return;const c=[[r.bbox[1],r.bbox[2]],[r.bbox[3],r.bbox[2]],[r.bbox[3],r.bbox[0]],[r.bbox[1],r.bbox[0]]],s=m.getSource("rg");
-  if(s)s.updateImage({url:r.img,coordinates:c});else{m.addSource("rg",{type:"image",url:r.img,coordinates:c});m.addLayer({id:"rg",type:"raster",source:"rg",paint:{"raster-opacity":.9,"raster-fade-duration":0}},m.getLayer("pl")?"pl":undefined)}
-  m.setLayoutProperty("rg","visibility","visible")}
+function rgHide(ids){const m=rgMap();if(!m)return;(ids||["rg","rgg"]).forEach(i=>{if(m.getLayer(i))m.setLayoutProperty(i,"visibility","none")})}
+function rgShow(r){const m=rgMap();if(!m)return;const c=[[r.bbox[1],r.bbox[2]],[r.bbox[3],r.bbox[2]],[r.bbox[3],r.bbox[0]],[r.bbox[1],r.bbox[0]]],id=r.mode==="gaps"?"rgg":"rg",s=m.getSource(id);
+  if(s)s.updateImage({url:r.img,coordinates:c});else{m.addSource(id,{type:"image",url:r.img,coordinates:c});m.addLayer({id,type:"raster",source:id,paint:{"raster-opacity":.9,"raster-fade-duration":0}},m.getLayer("pl")?"pl":undefined)}
+  m.setLayoutProperty(id,"visibility","visible")}
 function rgSel(){const m=rgMap();if(!m||!m.getSource("sel"))return;
   m.getSource("sel").setData({type:"FeatureCollection",features:[...RG.sel].filter(k=>RG.pts[k]).map(k=>({type:"Feature",geometry:{type:"Point",coordinates:[RG.pts[k][1],RG.pts[k][0]]},properties:{o:RG.out.has(k)?1:0}}))})}
 function rgPick(keys){keys.forEach(k=>RG.sel.has(k)?RG.sel.delete(k):RG.sel.add(k));RG.out=new Set();rgSel();rgPanel();rgRun()}
 function rgRun(){clearTimeout(RG.T);RG.T=setTimeout(rgGo,250)}
 async function rgGo(){
   const m=rgMap(),tok=++RG.tok;if(!m)return;
-  const F=PLM.feats?PLM.feats():[],keys=RG.sel.size?[...RG.sel]:(RG.gaps?F.map(f=>f.properties.key):[]),pts=keys.filter(k=>RG.pts[k]).map(k=>[RG.pts[k][0],RG.pts[k][1],k]);
-  if(!RG.on||!pts.length||!RG.st||!RG.st.built){rgHide();RG.note="";rgNote();RG.stretches=[];rgList();return}
+  const F=PLM.feats?PLM.feats():[],keys=RG.sel.size?[...RG.sel]:F.map(f=>f.properties.key),pts=keys.filter(k=>RG.pts[k]).map(k=>[RG.pts[k][0],RG.pts[k][1],k]),modes=[RG.can?"reach":"",RG.cannot?"gaps":""].filter(Boolean);
+  if(!RG.cannot)RG.stretches=[];
+  if(!RG.can)rgHide(["rg"]);if(!RG.cannot)rgHide(["rgg"]);
+  if(!RG.on||!pts.length||!modes.length||!RG.st||!RG.st.built){if(!RG.on||!modes.length||!pts.length)rgHide();RG.note="";rgNote();rgList();return}
   const b=m.getBounds(),dy=(b.getNorth()-b.getSouth())*.1,dx=(b.getEast()-b.getWest())*.1,bbox=[Math.max(-80,b.getSouth()-dy),Math.max(-180,b.getWest()-dx),Math.min(80,b.getNorth()+dy),Math.min(180,b.getEast()+dx)];
-  RG.note="Calculating…";rgNote();let r;
-  try{r=await (await fetch("/api/reach",{method:"POST",body:JSON.stringify({pts,mode:RG.gaps?"gaps":"reach",frac:RG.frac/100,reserve:(RG.reserve==null?RG.st.reserve:RG.reserve)/100,basis:RG.basis,bbox,size:cfg("reach.image_px")})})).json()}catch(e){r={error:String(e)}}
-  if(tok!==RG.tok)return;
-  if(r.error||r.empty){rgHide();RG.note=r.error==="needs_graph"?"":(r.error||"");rgNote();return}
-  RG.out=new Set(r.outline||[]);RG.stretches=r.mode==="gaps"?(r.stretches||[]):[];RG.unit=r.unit;rgList();rgSel();rgShow(r);
-  RG.note=r.mode==="gaps"?`<i class="rgb gaps"></i> beyond ${n0(r.safe/2)} ${r.unit} from a charger · red beyond ${n0(r.safe)} ${r.unit}`:`<i class="rgb"></i> 0 – ${n0(r.vmax)} ${r.unit} left · ${n0(r.n)} chargers`;rgNote()}
+  RG.note="Calculating…";rgNote();const notes=[];
+  for(const mode of modes){
+    let r;try{r=await (await fetch("/api/reach",{method:"POST",body:JSON.stringify({pts,mode,frac:RG.frac/100,reserve:(RG.reserve==null?RG.st.reserve:RG.reserve)/100,basis:RG.basis,bbox,size:cfg("reach.image_px")})})).json()}catch(e){r={error:String(e)}}
+    if(tok!==RG.tok)return;
+    if(r.error||r.empty){rgHide([mode==="gaps"?"rgg":"rg"]);if(r.error&&r.error!=="needs_graph")notes.push(esc(r.error));continue}
+    if(mode==="reach")RG.out=new Set(r.outline||[]);else RG.stretches=r.stretches||[];
+    RG.unit=r.unit;rgShow(r);
+    notes.push(mode==="gaps"?`<i class="rgb gaps"></i> further than ${n0(r.safe)} ${r.unit} from a charger`:`<i class="rgb"></i> 0 – ${n0(r.vmax)} ${r.unit} left · ${n0(r.n)} chargers`)}
+  rgList();rgSel();RG.note=notes.join(" &nbsp; ");rgNote()}
 function pmFit(){const e=PLM&&PLM.el;if(!e||!e.isConnected)return;const h=Math.max(300,Math.floor(innerHeight-e.getBoundingClientRect().top-14));if(Math.abs(e.offsetHeight-h)>2){e.style.height=h+"px";try{PLM.m.resize()}catch(x){}}}
 addEventListener("resize",()=>pmFit());
-function rgList(){const el=$("#rgl");if(!el)return;const L=RG.on&&RG.gaps?RG.stretches:[],nm=k=>esc(RG.names[k]||k);
+function rgList(){const el=$("#rgl");if(!el)return;const L=RG.on&&RG.cannot?RG.stretches:[],nm=k=>esc(RG.names[k]||k);
   el.innerHTML=L.length?`<details class="card rgstr"${RG.listOpen?" open":""}><summary><b>Longest stretches without a charger</b></summary>${L.map((x,i)=>`<div><a href="#" data-sl="${i}">${nm(x.a)} → ${nm(x.b)}</a> <span class="sub">${n0(x.cost)} ${esc(RG.unit)}</span></div>`).join("")}</details>`:"";
   const d=$("details",el);if(d)d.ontoggle=()=>{RG.listOpen=d.open};
   $$("[data-sl]",el).forEach(a=>a.onclick=ev=>{ev.preventDefault();const x=L[+a.dataset.sl],m=rgMap();if(m&&x)m.flyTo({center:[x.lon,x.lat],zoom:6.5,duration:600})})}
@@ -1045,14 +1050,14 @@ function rgPanel(){
   else h+=`<span class="sub">${RG.sel.size} selected</span><button class="chip" id="rgall">All shown</button><button class="chip" id="rgnone">Clear</button>
     <label class="sub">Charge <input type="number" id="rgf" min="5" max="100" step="5" value="${RG.frac}" style="width:56px"> %</label>
     <label class="sub">Reserve <input type="number" id="rgr" min="0" max="80" step="5" value="${RG.reserve==null?st.reserve:RG.reserve}" style="width:56px"> %</label>
-    <label class="sub"><input type="checkbox" id="rggap"${RG.gaps?" checked":""}> Coverage gaps</label><span class="sub" id="rgs">${RG.note}</span>`;
+    <label class="sub"><input type="checkbox" id="rgcan"${RG.can?" checked":""}> Can drive</label><label class="sub"><input type="checkbox" id="rgcnt"${RG.cannot?" checked":""}> Cannot drive</label><span class="sub" id="rgs">${RG.note}</span>`;
   el.innerHTML=h;pmFit();$("#rgon").onclick=()=>{RG.on=false;RG.tok++;rgHide();rgList();const m=rgMap();if(m&&m.getSource("sel"))m.getSource("sel").setData({type:"FeatureCollection",features:[]});rgPanel()};
   const bd=$("#rgbuild");if(bd)bd.onclick=async()=>{await fetch("/api/reach/build",{method:"POST",body:"{}"});RG.st={built:false,job:{running:true,step:"Starting"}};rgPanel();setTimeout(rgStatus,800)};
   if(!st.built)return;
   $("#rgall").onclick=()=>{(PLM.feats?PLM.feats():[]).forEach(f=>RG.sel.add(f.properties.key));RG.out=new Set();rgSel();rgPanel();rgRun()};
   $("#rgnone").onclick=()=>{RG.sel=new Set();RG.out=new Set();rgSel();rgPanel();rgRun()};
   $("#rgf").onchange=e=>{RG.frac=Math.min(100,Math.max(5,+e.target.value||100));rgRun()};$("#rgr").onchange=e=>{RG.reserve=Math.min(80,Math.max(0,+e.target.value||0));rgRun()};
-  $("#rggap").onchange=e=>{RG.gaps=e.target.checked;rgRun()}}
+  $("#rgcan").onchange=e=>{RG.can=e.target.checked;rgRun()};$("#rgcnt").onchange=e=>{RG.cannot=e.target.checked;rgRun()}}
 // called each time the Places map is drawn: the panel, and (once per map) the box select and the redraw after the map has moved
 function rgInit(){
   if(RG.tab!==PLM.tab){RG.tab=PLM.tab;RG.sel=new Set();RG.out=new Set();rgHide()}
