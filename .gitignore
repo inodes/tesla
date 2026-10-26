@@ -80,3 +80,10 @@ Claude outputs/
 .venv/
 
 .bak_archive/
+
+# Data the app keeps lives in the data folder (directories.data), never in the repository
+/teslacam_index_*.json
+/sentry_index.json
+/footage_log*
+/teslacam_ledger/
+/teslacam_timeline/

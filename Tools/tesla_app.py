@@ -896,6 +896,11 @@ def main():
     if not os.path.isdir(DATA_DIR):
         print("Data folder not found: %s (use --data-dir)" % DATA_DIR)
         return 1
+    repo = os.path.realpath(os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
+    here = os.path.realpath(DATA_DIR)
+    if here == repo or here.startswith(repo + os.sep):
+        print("The data folder is inside the code folder (%s): no data is kept in the repository. Use --data-dir with the data folder." % repo)
+        return 1
     try:
         config_backup.backup(app_config.path())             # a dated copy of config.json at every start, if it changed (it is not in git)
     except OSError:
