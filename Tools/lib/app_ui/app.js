@@ -1045,14 +1045,14 @@ function rgPanel(){
   else h+=`<span class="sub">${RG.sel.size} selected</span><button class="chip" id="rgall">All shown</button><button class="chip" id="rgnone">Clear</button>
     <label class="sub">Charge <input type="number" id="rgf" min="5" max="100" step="5" value="${RG.frac}" style="width:56px"> %</label>
     <label class="sub">Reserve <input type="number" id="rgr" min="0" max="80" step="5" value="${RG.reserve==null?st.reserve:RG.reserve}" style="width:56px"> %</label>
-    <select id="rgb"><option value="km">Distance</option><option value="kwh">Energy</option></select><label class="sub"><input type="checkbox" id="rggap"${RG.gaps?" checked":""}> Coverage gaps</label><span class="sub" id="rgs">${RG.note}</span>`;
+    <label class="sub"><input type="checkbox" id="rggap"${RG.gaps?" checked":""}> Coverage gaps</label><span class="sub" id="rgs">${RG.note}</span>`;
   el.innerHTML=h;pmFit();$("#rgon").onclick=()=>{RG.on=false;RG.tok++;rgHide();rgList();const m=rgMap();if(m&&m.getSource("sel"))m.getSource("sel").setData({type:"FeatureCollection",features:[]});rgPanel()};
   const bd=$("#rgbuild");if(bd)bd.onclick=async()=>{await fetch("/api/reach/build",{method:"POST",body:"{}"});RG.st={built:false,job:{running:true,step:"Starting"}};rgPanel();setTimeout(rgStatus,800)};
   if(!st.built)return;
   $("#rgall").onclick=()=>{(PLM.feats?PLM.feats():[]).forEach(f=>RG.sel.add(f.properties.key));RG.out=new Set();rgSel();rgPanel();rgRun()};
   $("#rgnone").onclick=()=>{RG.sel=new Set();RG.out=new Set();rgSel();rgPanel();rgRun()};
   $("#rgf").onchange=e=>{RG.frac=Math.min(100,Math.max(5,+e.target.value||100));rgRun()};$("#rgr").onchange=e=>{RG.reserve=Math.min(80,Math.max(0,+e.target.value||0));rgRun()};
-  $("#rgb").value=RG.basis;$("#rgb").onchange=e=>{RG.basis=e.target.value;rgRun()};$("#rggap").onchange=e=>{RG.gaps=e.target.checked;rgRun()}}
+  $("#rggap").onchange=e=>{RG.gaps=e.target.checked;rgRun()}}
 // called each time the Places map is drawn: the panel, and (once per map) the box select and the redraw after the map has moved
 function rgInit(){
   if(RG.tab!==PLM.tab){RG.tab=PLM.tab;RG.sel=new Set();RG.out=new Set();rgHide()}
@@ -1094,7 +1094,6 @@ function placesMap(host,rows,tab){
     m.addLayer({id:"pl",type:"circle",source:"pl",layout:{"circle-sort-key":["get","u"]},paint:{"circle-color":["get","c"],"circle-radius":R,"circle-opacity":["case",["==",["get","u"],1],1,0.7],"circle-stroke-width":["interpolate",["linear"],["zoom"],3,0.75,12,1.5,16,2.5],"circle-stroke-color":dark?"#111":"#fff"}});
     m.addLayer({id:"pl-name",type:"symbol",source:"pl",minzoom:12.5,layout:{"text-field":["get","name"],"text-font":["Noto Sans Regular"],"text-size":12,"text-anchor":"top","text-offset":[0,1.1],"text-optional":true,"text-max-width":9},paint:{"text-color":dark?"#e5e7eb":"#1f2937","text-halo-color":dark?"#111":"#fff","text-halo-width":1.5}});
     m.addSource("sel",{type:"geojson",data:{type:"FeatureCollection",features:[]}});
-    m.addLayer({id:"pl-sel",type:"circle",source:"sel",paint:{"circle-color":"rgba(0,0,0,0)","circle-radius":["interpolate",["linear"],["zoom"],3,6,8,9,12,13,15,17,18,21],"circle-stroke-width":2.5,"circle-stroke-color":["case",["==",["get","o"],1],"#f59e0b","#2563eb"]}});
     if(RG.on)rgSel();
     m.on("mouseenter","pl",()=>m.getCanvas().style.cursor="pointer");m.on("mouseleave","pl",()=>m.getCanvas().style.cursor="");
     m.on("click","pl",e=>{const p=e.features[0].properties;if(RG.on&&RG.st&&RG.st.built){rgPick([p.key]);return}new maplibregl.Popup({offset:10,maxWidth:"300px"}).setLngLat(e.features[0].geometry.coordinates).setHTML(`<div style="font:13px system-ui;color:#111"><b>${esc(p.name)}</b><div style="color:#555;margin:3px 0 6px">${esc(p.sub)}</div>${p.det?`<div style="color:#555;margin:0 0 6px">${esc(p.det)}</div>`:""}<a href="#/place/${encodeURIComponent(p.key)}">${tab==="sc"||tab==="chargers"?"Site details":"Open place"}</a><div style="margin-top:6px;font-size:12px">${mapLinks(p.lat,p.lon,p.name)}</div></div>`).addTo(m)});

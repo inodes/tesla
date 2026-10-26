@@ -53,7 +53,7 @@ the block). A change takes effect the next time the app or script reads it (the 
   app.places.stay_min_seconds                      a gap between real drives shorter than this is not a parked period
   app.places.save_radius_*                         radius suggested when saving an OpenStreetMap place: at least min_m, else far enough to reach every stop the car
                                                    recorded within cluster_m of the stop, plus margin_m
-  app.reach.reserve_pct / image_px / idle_unload_min / pbf_url
+  app.reach.reserve_pct / image_px / shade_km / gaps_shade_km / idle_unload_min / pbf_url
                                                    the Places map's range shading: the share of the battery kept back (the shading shows where the car arrives with more than this), the size
                                                    of the picture laid over the map, minutes unused before the road network is let go from memory, and where the country's road data is fetched from
   app.nearby.*                                     OpenStreetMap lookups for "what is around here" (Overpass servers, time limits, Photon fallback)
@@ -90,7 +90,7 @@ DEFAULTS = {
                "long_highway_km": 30, "long_highway_fast_kmh": 90, "long_highway_fast_minutes": 10,
                "charge_window_minutes": 30, "charger_name_m": 300, "range_days_shown": 31, "low_battery_pct": 20, "tessie_auto_sync_minutes": 0, "tessie_fresh_minutes": 60},
     "places": {"stay_min_seconds": 120, "save_radius_min_m": 100, "save_radius_margin_m": 25, "save_radius_cluster_m": 250},
-    "reach": {"reserve_pct": 10, "image_px": 800, "idle_unload_min": 15, "pbf_url": "https://download.geofabrik.de/australia-oceania/australia-latest.osm.pbf"},
+    "reach": {"reserve_pct": 10, "image_px": 800, "shade_km": 8, "gaps_shade_km": 15, "idle_unload_min": 15, "pbf_url": "https://download.geofabrik.de/australia-oceania/australia-latest.osm.pbf"},
     "nearby": {"overpass_endpoints": ["https://overpass.kumi.systems/api/interpreter", "https://overpass.private.coffee/api/interpreter",
                                       "https://overpass.openstreetmap.fr/api/interpreter", "https://lz4.overpass-api.de/api/interpreter",
                                       "https://overpass-api.de/api/interpreter"],

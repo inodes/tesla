@@ -136,6 +136,19 @@ class GraphTest(unittest.TestCase):
         self.assertEqual([f[0] for f in r["found"]], [1])
         self.assertIsNone(r["back"])
 
+    def test_the_shade_spreads_a_little_round_the_roads_and_leaves_the_rest(self):
+        nodes = line(6)
+        g, ids = make([([1, 2, 3, 4, 5, 6], 0, 60)], nodes)
+        val = np.full(g.N, -1.0, np.float32)
+        val[:] = 3.0
+        bbox = (LAT0 - 0.3, LON0 - 0.6, LAT0 + 0.3, LON0 + 0.6)
+        grid, alpha = g.shade(val, 5.0, bbox, 100, km=6.0)
+        on = np.argwhere(alpha > 200)
+        self.assertGreater(len(on), 0)
+        self.assertTrue((grid[alpha == 0] == 0).all())                                 # no value where nothing is shaded
+        self.assertEqual(alpha[0, 0], 0)                                               # a corner far from the road: clear
+        self.assertGreater(int((alpha > 0).sum()), int((grid > 0).sum()) // 2)
+
 
 if __name__ == "__main__":
     unittest.main()
