@@ -12,3 +12,8 @@ pywebview>=5.0
 #   brew install ffmpeg tesseract
 opencv-python-headless>=4.8
 numpy>=1.26
+
+# optional: the Places map's range shading and coverage gaps (lib/app_reach.py, lib/osm_roads_graph.py): the road network is built once from the country's OpenStreetMap
+# extract (osmium reads it); scipy does the searches
+osmium>=4.0
+scipy>=1.11
