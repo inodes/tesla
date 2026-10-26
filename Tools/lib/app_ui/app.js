@@ -1574,7 +1574,7 @@ function footageSync(host,opts){
   if(!host)return;const table=!!(opts&&opts.table),hk=table?"t":"b";let until=0,was=false,lg=null,msg="",busyEject="",done0=null,note="";
   const gb=b=>b>=1073741824?(b/1073741824).toFixed(1)+" GB":Math.round(b/1048576)+" MB",NM={A:"Archive",J:"JOWUA",U:"Tesla USB"};
   const STEP=[["log","Update log",["log","events"],"Lists the files on the connected drives, so the footage log and the Saved and Sentry events are up to date"],["telemetry","Read telemetry",["telemetry"],"Reads the speed, position and steering from the video, so drives show on the map"],["stills","Make stills",["stills"],"Takes a picture every second of each clip, kept after the video is deleted"]];
-  const left=(t,r)=>{const d=t&&t.drives&&t.drives[r];return d?{log:d.log_new+d.log_gone,telemetry:d.telemetry,stills:d.stills}:null};
+  const left=(t,r)=>{const d=t&&t.drives&&t.drives[r];return d?{log:d.log_new+d.log_gone,lnew:d.log_new,lgone:d.log_gone,telemetry:d.telemetry,stills:d.stills}:null};
   const wire=()=>{const g=$("#fsg",host);if(g)g.onclick=()=>go(null);
     $$("[data-st]",host).forEach(b=>b.onclick=()=>go(STEP.find(x=>x[0]===b.dataset.st)[2]));
     $$("[data-ej]",host).forEach(b=>b.onclick=async()=>{busyEject=b.dataset.ej;msg="";paint();const r=await ejectDrive(busyEject);busyEject="";msg=r.text;paint()});
@@ -1610,7 +1610,8 @@ function footageSync(host,opts){
         const dp=run&&k.drives&&k.drives[r];      // this drive's share of the job running now: its own bar
         if(dp&&dp.total){const pct=Math.round(100*(dp.done+(dp.done<dp.total?.35:0))/dp.total),tx=(VERB[k.stage]||"Working")+" "+n0(dp.done)+" of "+n0(dp.total)+" ("+pct+"%)";return{tx,q:pct,h:barOf(tx,pct)}}
         if(!run&&checking)return{tx:chkFull,q:chkPc,h:barOf(chkFull,chkPc)};const l=left(todo,r);if(!l)return{h:todo?'<span class="sub">Checking…</span>':""};
-        const p=[];if(l.log){const nd=((todo&&todo.drives&&todo.drives[r])||{}).new_days||{},ks=Object.keys(nd).sort().reverse();p.push(n0(l.log)+" files to list"+(ks.length?" ("+ks.slice(0,3).map(d=>dayName(d)+": "+n0(nd[d])).join(", ")+(ks.length>3?", …":"")+")":""))}if(l.telemetry)p.push(n0(l.telemetry)+" minutes without telemetry");if(l.stills)p.push(n0(l.stills)+" clips without stills");
+        const p=[];if(l.lnew){const nd=((todo&&todo.drives&&todo.drives[r])||{}).new_days||{},ks=Object.keys(nd).sort().reverse();p.push(n0(l.lnew)+" new file"+(l.lnew>1?"s":"")+(ks.length?" ("+ks.slice(0,3).map(d=>dayName(d)+": "+n0(nd[d])).join(", ")+(ks.length>3?", …":"")+")":""))}
+        if(l.lgone)p.push(n0(l.lgone)+" file"+(l.lgone>1?"s":"")+" removed from the drive since");if(l.telemetry)p.push(n0(l.telemetry)+" minutes without telemetry");if(l.stills)p.push(n0(l.stills)+" clips without stills");
         return{h:p.length?p.map(esc).join(" · "):'<span style="color:var(--ok)">Up to date</span>'}};
       if((run||checking)&&$$("[data-todo]",host).length===rs.length&&!!$("#fsx",host)===run&&!k.error&&!note&&!msg){
         rs.forEach(r=>{const td=$(`[data-todo="${r}"]`,host),inf=todoInfo(r);if(!td)return;if(inf.tx!=null&&$(".tbt",td)){$(".tbt",td).textContent=inf.tx;setPbar(td,inf.q)}else if(td.innerHTML!==inf.h)td.innerHTML=inf.h});
