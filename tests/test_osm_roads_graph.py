@@ -103,6 +103,39 @@ class GraphTest(unittest.TestCase):
         self.assertEqual(r["outline"], [0, 2])                              # the small circle in the middle lies inside the other two: it shapes nothing at the edge
         self.assertEqual(int(r["who"][int(g.kid[0])]), 0)
 
+    def test_nearest_says_which_charger_and_stretches_run_between_neighbours(self):
+        nodes = line(9)
+        g, ids = make([(list(range(1, 10)), 0, 60)], nodes)
+        pts = [(nodes[n][0], nodes[n][1]) for n in (1, 4, 9)]
+        d, who = g.nearest(pts, "km", want_who=True)
+        for n, w in ((2, 0), (3, 1), (5, 1), (7, 2), (4, 1)):
+            self.assertEqual(int(who[int(np.searchsorted(ids, n))]), w, n)
+        st = g.stretches(d, who, "km")
+        self.assertEqual([(a, b) for a, b, _c, _p in st], [(1, 2), (0, 1)])           # longest first: 4 to 9 then 1 to 4
+        self.assertAlmostEqual(st[0][2], km(nodes[4], nodes[9]), places=2)
+        self.assertAlmostEqual(st[1][2], km(nodes[1], nodes[4]), places=2)
+
+    def test_a_spot_sees_the_nearest_charger_each_way(self):
+        nodes = line(9)
+        g, ids = make([(list(range(1, 10)), 0, 60)], nodes)
+        pts = [(nodes[n][0], nodes[n][1]) for n in (1, 4, 9)]
+        prep = g.prepare(pts, "km")
+        r = g.at(nodes[6][0], nodes[6][1], prep, "km")
+        self.assertEqual([f[0] for f in r["found"]], [1, 2, 0])
+        self.assertAlmostEqual(r["found"][0][1], km(nodes[6], nodes[4]), places=2)
+        self.assertEqual(r["back"][0], 2)                                              # the other way from the nearest is the one at 9
+        self.assertAlmostEqual(r["back"][1], km(nodes[6], nodes[9]), places=2)
+        self.assertNotEqual(r["found"][0][2], r["back"][2])
+        self.assertIsNone(g.at(10.0, 10.0, prep, "km"))
+
+    def test_one_way_spot_only_sees_chargers_ahead(self):
+        nodes = line(5)
+        g, ids = make([([1, 2, 3, 4, 5], 1, 60)], nodes)
+        prep = g.prepare([(nodes[1][0], nodes[1][1]), (nodes[5][0], nodes[5][1])], "km")
+        r = g.at(nodes[3][0], nodes[3][1], prep, "km")
+        self.assertEqual([f[0] for f in r["found"]], [1])
+        self.assertIsNone(r["back"])
+
 
 if __name__ == "__main__":
     unittest.main()
