@@ -2230,7 +2230,8 @@ const swQ=(extra)=>{const[m,h]=(SWS.car||"|").split("|");return "region="+encode
 const swCountry=c=>{try{return new Intl.DisplayNames(["en"],{type:"region"}).of(String(c).toUpperCase())+" ("+String(c).toUpperCase()+")"}catch(e){return String(c).toUpperCase()}};
 const swKey=v=>String(v).split(".").map(x=>x.padStart(5,"0")).join(".");
 const swDate=iso=>iso?new Date(iso).toLocaleDateString("en-AU",{day:"numeric",month:"short",year:"numeric"}):"–";
-const swFsd=(c,hw)=>(c||[]).map(f=>`<span class="pill fsd" title="The FSD (Supervised) version this software includes${f.hw?" on "+esc(f.hw):""}">FSD ${/^\d+(\.\d+)*$/.test(f.v)?"v":""}${esc(f.v)}${f.hw&&!hw?" · "+esc(f.hw):""}</span>`).join(" ");
+const swFsdTxt=f=>(f.kind==="lite"?"FSD Lite ":"FSD ")+(/^\d+(\.\d+)*$/.test(f.v)?"v":"")+f.v;
+const swFsd=(c,hw)=>(c||[]).map(f=>`<span class="pill fsd" title="The ${f.kind==="lite"?"FSD Lite":"FSD"} (Supervised) version this software includes${f.hw?" on "+esc(f.hw):""}">${esc(swFsdTxt(f))}${f.hw&&!hw?" · "+esc(f.hw):""}</span>`).join(" ");
 const swMine=m=>m?'<span class="pill me" title="The software your car is on">Your car</span>':"";
 const swDiff=g=>g.map(x=>{const t=esc(x.text).replace(/\n/g,"<br>");return x.op==="add"?`<b class="add">${t}</b>`:x.op==="del"?`<s class="del">${t}</s>`:t}).join("");
 const swChanged=d=>!!d&&d.some(x=>x.op!=="same");
@@ -2277,6 +2278,8 @@ function swJourneyBar(o,compare){
   const J=o.journey||[];if(!J.length)return"";
   const when=j=>j.between&&j.between[0]!==j.between[1]?"between "+swDate(j.between[0])+" and "+swDate(j.between[1]):"from "+swDate(j.from);
   return `<div class="card swj" style="margin:10px 0"><b>Your car</b>${J.map((j,i)=>`${i?(compare&&J[i-1].held&&j.held?`<div><button class="chip nw" data-jc="${esc(J[i-1].version)}>${esc(j.version)}" title="What this update brought: compare ${esc(J[i-1].version)} with ${esc(j.version)}">⇄ compare</button></div>`:'<div class="sub">↓</div>'):""}<div class="swjv"><a href="#/software/${encodeURIComponent(j.version)}"><b>${esc(j.version)}</b></a> ${swFsd(j.fsd_chip,"")} <span class="sub" title="${esc(j.note||"")}">${when(j)}${j.current?" · now":""}</span></div>`).join("")}${o.staged?`<div class="sub">↓ update on the way: <a href="#/software/${encodeURIComponent(o.staged)}">${esc(o.staged)}</a></div>`:""}</div>`}
+const swHw=()=>SWS.car.split("|")[1]||"";
+const swFsdOk=v=>!SWS.fsd||(SWS.fsd==="no"?!v.fsd.length:SWS.fsd==="yes"?v.fsd.length>0:v.fsd.some(f=>f.kind===SWS.fsd));
 const swPick=()=>`<span class="sub"><b>${esc(SWS.a||"–")}</b> → <b>${esc(SWS.b||"–")}</b></span> <button class="chip" id="swgo">Compare</button>`;
 // versions over time: one lane per version (newest on top), a bar from the day it was first seen to the last day it still got installs, and a line for each upgrade step cars were seen taking
 function swChart(host,nodes,edges,mine,journey){
@@ -2289,17 +2292,17 @@ function swChart(host,nodes,edges,mine,journey){
   const bars=nodes.map(n=>{const x=X(n.t0),w=Math.max(6,X(n.t1)-x),y=Y(n.version),op=Math.max(.35,Math.min(1,.35+.65*(n.region_installs||0)/30));
     return `<g class="swb" data-v="${esc(n.version)}" style="cursor:pointer"><text x="${L-8}" y="${y+4}" text-anchor="end" style="fill:var(--ink);font-size:12px;font-weight:${n.version===mine?700:400}">${esc(n.version)}</text>
       <rect x="${x.toFixed(1)}" y="${y-7}" width="${w.toFixed(1)}" height="14" rx="4" style="fill:${n.fsd.length?"var(--acc)":"var(--mut)"};fill-opacity:${op};${n.version===mine?"stroke:var(--ink);stroke-width:1.5":""}"/>
-      ${n.fsd.length?`<text x="${(x+w+6).toFixed(1)}" y="${y+4}" style="fill:var(--mut);font-size:11px">FSD ${/^\d+(\.\d+)*$/.test(n.fsd[0].v)?"v":""}${esc(n.fsd[0].v)}</text>`:""}</g>`}).join("");
+      ${n.fsd.length?`<text x="${(x+w+6).toFixed(1)}" y="${y+4}" style="fill:var(--mut);font-size:11px">${esc(n.fsd.map(swFsdTxt).join(" · "))}</text>`:""}</g>`}).join("");
   let lastX=-99;
   const axis=ticks.map(m=>{const x=X(Math.max(m.getTime(),t0)),show=x-lastX>=56;if(show)lastX=x;return `<line x1="${x.toFixed(1)}" x2="${x.toFixed(1)}" y1="${T-6}" y2="${H-8}" style="stroke:var(--line)"/><text x="${(x+4).toFixed(1)}" y="${T-12}" style="fill:var(--mut);font-size:11px">${show?MON[m.getMonth()]+" "+m.getFullYear():""}</text>`}).join("");
   // the car's own journey: the time it was on each version as an outlined span in that version's lane (a light band where only a window is known), joined from one to the next
   const jx=t=>X(Date.parse(t)),jl=J.map((j,i)=>{const y=Y(j.version),xa=jx(j.from),xb=j.to?jx(j.to):X(Date.now()),w0=j.between&&j.between[0]!==j.between[1]?jx(j.between[0]):null;
     const nx=J[i+1],link=nx?`<path d="M${xb.toFixed(1)} ${y} C${(xb+14).toFixed(1)} ${y} ${(xb+14).toFixed(1)} ${Y(nx.version)} ${jx(nx.from).toFixed(1)} ${Y(nx.version)}" fill="none" style="stroke:var(--ink);stroke-width:2.2"/>`:"";
     return `${w0!=null?`<rect x="${w0.toFixed(1)}" y="${y-11}" width="${Math.max(3,xa-w0).toFixed(1)}" height="22" rx="3" style="fill:var(--ink);fill-opacity:.16"><title>The car got ${esc(j.version)} between ${swDate(j.between[0])} and ${swDate(j.between[1])}</title></rect>`:""}<rect x="${xa.toFixed(1)}" y="${y-10}" width="${Math.max(4,xb-xa).toFixed(1)}" height="20" rx="5" fill="none" style="stroke:var(--ink);stroke-width:2"><title>Your car on ${esc(j.version)}: ${swDate(j.from)} to ${j.to?swDate(j.to):"now"}</title></rect>${link}`}).join("");
-  host.innerHTML=`<div class="sub" style="margin-bottom:6px"><b style="color:var(--ink)">▭</b> your car on that version &nbsp; <span class="pill fsd">FSD</span> includes an FSD version &nbsp; <b style="color:var(--mut)">▬</b> no FSD &nbsp; faded: few cars in this region &nbsp; lines: cars seen going from one version to the next (thicker = more cars). Dates are when Teslascope saw the version on any car in any region; the region and car choose which versions and steps appear.</div>
+  host.innerHTML=`<div class="sub" style="margin-bottom:6px"><b style="color:var(--ink)">▭</b> your car on that version &nbsp; <span class="pill fsd">FSD</span> includes FSD or FSD Lite &nbsp; <b style="color:var(--mut)">▬</b> no FSD &nbsp; faded: few cars in this region &nbsp; lines: cars seen going from one version to the next (thicker = more cars). Dates are when Teslascope saw the version on any car in any region; the region and car choose which versions and steps appear.</div>
    <div style="overflow-x:auto"><svg width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" style="display:block">${axis}${lines}${bars}${jl}</svg></div>`;
   $$(".swb",host).forEach(g=>{const n=byV.get(g.dataset.v);g.onclick=()=>location.hash="#/software/"+encodeURIComponent(n.version);
-    g.onmousemove=ev=>{showTip(ev,`<b>${esc(n.version)}</b>${n.fsd.length?" · FSD "+esc(n.fsd.map(f=>f.v).join(", ")):""}<br>First seen ${swDate(n.first)}<br>Last installs ${n.last?dayName(n.last):"–"}<br>${n0(n.region_installs)} cars in ${esc(SWS.region)}, ${n0(n.installs)} in all regions`);$$(".swe",host).forEach(p=>{p.style.strokeOpacity=p.dataset.s===n.version||p.dataset.d===n.version?".8":".08"})};
+    g.onmousemove=ev=>{showTip(ev,`<b>${esc(n.version)}</b>${n.fsd.length?" · "+esc(n.fsd.map(swFsdTxt).join(", ")):""}<br>First seen ${swDate(n.first)}<br>Last installs ${n.last?dayName(n.last):"–"}<br>${n0(n.region_installs)} cars in ${esc(SWS.region)}, ${n0(n.installs)} in all regions`);$$(".swe",host).forEach(p=>{p.style.strokeOpacity=p.dataset.s===n.version||p.dataset.d===n.version?".8":".08"})};
     g.onmouseleave=()=>{hideTip();$$(".swe",host).forEach(p=>p.style.strokeOpacity=".28")}})}
 async function pageSoftware(arg){
   if(arg)return pageSoftwareOne(decodeURIComponent(arg));
@@ -2310,19 +2313,20 @@ async function pageSoftware(arg){
   const ch=o.choices,vs=o.versions,keys=vs.map(v=>v.version);swDefaultCar(ch.my_car&&ch.models.some(m=>m.model===ch.my_car.model&&(m.hw||"")===(ch.my_car.hw||""))?ch.my_car:null);{const rg=ch.regions.find(r=>r.name===SWS.region);SWRC=rg?rg.countries:[SWS.region]}
   if(!SWS.a||!keys.includes(SWS.a))SWS.a=keys[Math.min(keys.length-1,Math.max(0,keys.indexOf(o.mine)+3))]||keys[keys.length-1]||"";
   if(!SWS.b||!keys.includes(SWS.b))SWS.b=o.mine&&keys.includes(o.mine)?o.mine:keys[0]||"";
+  if((SWS.fsd==="fsd"&&swHw()==="TeslaAP3")||(SWS.fsd==="lite"&&swHw()==="TeslaAP4"))SWS.fsd="";
   const carOpts=`<option value="">All cars</option>`+ch.models.map(m=>`<option value="${esc(m.model+"|"+(m.hw||""))}">${esc(m.label)}${ch.my_car&&m.model===ch.my_car.model&&(m.hw||"")===(ch.my_car.hw||"")?" (my car)":""}</option>`).join("");
   main.innerHTML=`<h1>Software</h1><div class="sub">Tesla software versions from Teslascope: ${n0(o.held.n)} held, from ${esc(o.held.oldest||"–")} to ${esc(o.held.newest||"–")}.${o.mine?" Your car is on "+esc(o.mine)+".":""} Car counts are cars Teslascope has seen, so they are a sample, not every car.</div>
    <div id="sws" style="margin-top:8px"></div>
    <div class="bar"><select id="swr"><optgroup label="Regions">${ch.regions.map(r=>`<option value="${esc(r.name)}">${esc(r.name)} (${r.countries.length})</option>`).join("")}</optgroup><optgroup label="Countries">${ch.countries.map(c=>`<option value="${esc(c.country)}">${esc(swCountry(c.country))}</option>`).join("")}</optgroup></select><select id="swc">${carOpts}</select>
     <button class="chip ${SWS.tab==="versions"?"on":""}" data-t="versions">Versions</button><button class="chip ${SWS.tab==="timeline"?"on":""}" data-t="timeline">Timeline</button><button class="chip ${SWS.tab==="feature"?"on":""}" data-t="feature">When a feature arrived</button><button class="chip ${SWS.tab==="compare"?"on":""}" data-t="compare">Compare two versions</button></div>
-   <div class="bar" id="swfl"><label class="sub">First seen from <input type="date" id="swd" value="${esc(SWS.since)}"></label><button class="chip ${SWS.fsd===""?"on":""}" data-f="">Any FSD</button><button class="chip ${SWS.fsd==="yes"?"on":""}" data-f="yes">With FSD</button><button class="chip ${SWS.fsd==="no"?"on":""}" data-f="no">Without FSD</button><span class="sub" id="swsh"></span></div>
+   <div class="bar" id="swfl"><label class="sub">First seen from <input type="date" id="swd" value="${esc(SWS.since)}"></label>${[["","Any"],["fsd","FSD"],["lite","FSD Lite"],["no","No FSD"]].filter(f=>!(f[0]==="fsd"&&swHw()==="TeslaAP3")&&!(f[0]==="lite"&&swHw()==="TeslaAP4")).map(f=>`<button class="chip ${SWS.fsd===f[0]?"on":""}" data-f="${f[0]}">${f[1]}</button>`).join("")}<span class="sub" id="swsh"></span></div>
    <div id="swb"></div>`;
   $("#swr").value=SWS.region;$("#swc").value=SWS.car;
   $("#swr").onchange=e=>{SWS.region=e.target.value;swSave();bust("software");pageSoftware()};$("#swc").onchange=e=>{SWS.car=e.target.value;SWS.carSet=1;swSave();pageSoftware()};
   $$("[data-t]").forEach(b=>b.onclick=()=>{SWS.tab=b.dataset.t;swSave();$$("[data-t]").forEach(x=>x.classList.toggle("on",x===b));body()});
   swSync($("#sws"),o,()=>{bust("software");pageSoftware()});
   const carName=(SWS.car?(ch.models.find(m=>m.model+"|"+(m.hw||"")===SWS.car)||{}).label:"")||"any car";
-  const vf=()=>vs.filter(v=>(!SWS.since||(v.first||"").slice(0,10)>=SWS.since)&&(!SWS.fsd||(SWS.fsd==="yes")===(v.fsd.length>0)));
+  const vf=()=>vs.filter(v=>(!SWS.since||(v.first||"").slice(0,10)>=SWS.since)&&swFsdOk(v));
   $("#swd").onchange=e=>{SWS.since=e.target.value;swSave();body()};
   $$("[data-f]").forEach(b=>b.onclick=()=>{SWS.fsd=b.dataset.f;swSave();$$("[data-f]").forEach(x=>x.classList.toggle("on",x===b));body()});
   const body=()=>{const host=$("#swb"),vl=vf(),pick=SWS.tab==="versions"||SWS.tab==="timeline";
@@ -2337,7 +2341,7 @@ async function pageSoftware(arg){
         host.innerHTML=swJourneyBar(o,true)+'<div id="swch"></div>';swChart($("#swch"),nodes,t.edges,o.mine,inJ);
         $$("[data-jc]",host).forEach(b=>b.onclick=()=>{const[a,z]=b.dataset.jc.split(">");SWS.a=a;SWS.b=z;SWS.tab="compare";swSave();$$("[data-t]").forEach(x=>x.classList.toggle("on",x.dataset.t==="compare"));body()})});return}
     if(SWS.tab==="versions"){
-      host.innerHTML=`${swJourneyBar(o,true)}<div class="tiles">${tile(n0(vl.length),"versions for "+esc(SWS.region))}${tile(n0(vl.filter(v=>v.fsd.length).length),"include FSD")}${tile(vl[0]?esc(vl[0].version):"–","newest")}</div><div class="bar" id="swpick">${swPick()}</div><div id="swt"></div>`;
+      host.innerHTML=`${swJourneyBar(o,true)}<div class="tiles">${tile(n0(vl.length),"versions for "+esc(SWS.region))}${tile(n0(vl.filter(v=>v.fsd.some(f=>f.kind!=="lite")).length),"include FSD")}${swHw()==="TeslaAP4"?"":tile(n0(vl.filter(v=>v.fsd.some(f=>f.kind==="lite")).length),"include FSD Lite")}${tile(vl[0]?esc(vl[0].version):"–","newest")}</div><div class="bar" id="swpick">${swPick()}</div><div id="swt"></div>`;
       table($("#swt"),[{k:"vk",t:"Version",l:1,f:r=>`<b>${esc(r.version)}</b> ${swMine(r.mine)}`},{k:"fsdk",t:"FSD",l:1,f:r=>swFsd(r.fsd,(SWS.car.split("|")[1]||""))||'<span class="sub">–</span>'},{k:"first",t:"First seen",f:r=>swDate(r.first)},{k:"region_installs",t:"Cars in "+esc(SWS.region),f:r=>n0(r.region_installs)},{k:"installs",t:"Cars, all regions",f:r=>n0(r.installs)},{k:"cmp",t:"Compare",l:1,f:r=>`<a href="#" class="pill" data-cf="${esc(r.version)}" title="Compare from this version">From</a> <a href="#" class="pill" data-ct="${esc(r.version)}" title="Compare to this version">To</a>`},{k:"via",t:"Known from",l:1,f:r=>r.has_notes?(r.region_installs?"cars and notes":"notes"):"cars"}],
         vl.map(v=>Object.assign({vk:swKey(v.version),fsdk:v.fsd.length?v.fsd[0].v:""},v)),r=>location.hash="#/software/"+encodeURIComponent(r.version),"vk");
     }else if(SWS.tab==="feature"){
