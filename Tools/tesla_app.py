@@ -156,6 +156,18 @@ def eject_drive(role, root):
     return res
 
 
+def thin_scope(items):
+    """The clips named by the page ([{kind, id}]) -> ({(kind, id)}, {their minutes}), or (None, None) for no scope: shrinking then covers everything."""
+    items = [(str(x.get("kind")), str(x.get("id"))) for x in (items or []) if isinstance(x, dict) and x.get("kind") in ("recent", "saved", "sentry") and x.get("id")]
+    if not items:
+        return None, None
+    CKEEP.status()
+    stamps = set()
+    for k in items:
+        stamps.update(CKEEP._groups.get(k, ()))
+    return set(items), stamps
+
+
 def footage_roots():
     """{role: TeslaCam folder} of every connected drive."""
     return {r: footage_root(r) for r in "AJU" if footage_root(r)}
@@ -473,8 +485,11 @@ class H(BaseHTTPRequestHandler):
                 if body.get("action") == "process":       # read what the clips still lack (metadata, stills, pictures, signs, or only `steps`) from their video on the connected drives
                     return self.send_json(CKEEP.start_process(body.get("items") or [], roots, steps=body.get("steps")))
                 return self.send_json(CKEEP.start(body.get("action"), role, body.get("items") or [], roots, confirmed=body.get("confirm") is True))
-            if u.path == "/api/stills/thin":       # {action: start|stop}: make the stills of minutes with no event and no sign smaller
-                return self.send_json(STHIN.stop() if body.get("action") == "stop" else STHIN.start(confirmed=body.get("confirm") is True))
+            if u.path == "/api/stills/thin":       # {action: start|stop, events: normal|shrunk}: make the stills of minutes with no event and no sign smaller, or the pictures around events
+                if body.get("action") == "stop":
+                    return self.send_json(STHIN.stop())
+                clips, stamps = thin_scope(body.get("clips"))
+                return self.send_json(STHIN.start(confirmed=body.get("confirm") is True, events=body.get("events") or None, clips=clips, stamps=stamps))
             if u.path == "/api/eject":             # {role}: stop reading the drive, then eject it
                 role = body.get("role")
                 root = footage_root(role) if role in ("A", "J", "U") else None
@@ -600,7 +615,8 @@ class H(BaseHTTPRequestHandler):
         if name == "drivelist":                 # the Drives list: Tessie's drives and charges as the rows, the dashcam's drives attached (or alone when there is no Tessie)
             return self.send_json(drivelist())
         if name == "stills/thin":               # how many minutes of ordinary driving have stills that could be smaller, what they take, and the job
-            return self.send_json(STHIN.status())
+            clips, stamps = thin_scope([dict(kind=x.partition("|")[0], id=x.partition("|")[2]) for x in q.get("clips", [""])[0].split(",") if "|" in x])
+            return self.send_json(STHIN.scope_status(sorted(clips), stamps) if clips else STHIN.status())
         if name == "clips/keep":                # per clip (Recent run, Saved, Sentry): what is kept from its video, and its size on each drive (nothing is read from a drive)
             return self.send_json(CKEEP.status())
         if name == "clips/job":                 # the delete / move being done to the drives, or the last one
