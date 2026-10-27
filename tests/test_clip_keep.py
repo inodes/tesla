@@ -299,6 +299,11 @@ class EventShotsTest(ProcBase):
 
         def run(cmd, timeout=0):
             self.ffmpeg.append(cmd)
+            if "%03d" in cmd[-1]:                                   # a run of pictures: one a second for -t seconds
+                for i in range(int(cmd[cmd.index("-t") + 1])):
+                    with open(cmd[-1] % i, "wb") as f:
+                        f.write(b"jpeg")
+                return 0
             with open(cmd[-1], "wb") as f:
                 f.write(b"jpeg")
             return 0
@@ -334,8 +339,9 @@ class EventShotsTest(ProcBase):
         self.assertTrue(k.pictures_start(self.roots))
         k._thread.join(5)
         j = k.job()
-        self.assertEqual((j["action"], j["step_done"], j["step_total"], j["errors"]), ("pictures", 2, 2, []))
+        self.assertEqual((j["action"], j["step_done"], j["step_total"], j["errors"]), ("pictures", 3, 3, []))                  # two cameras of the moment and the seconds around it
         self.assertEqual(k.shots.have("saved", "ev1"), {"front", "back"})
+        self.assertTrue(k.evst.info("saved", "ev1")["n"])
         self.assertEqual(k.pictures_plan(self.roots), [])
         self.assertFalse(k.pictures_start(self.roots))                                 # nothing left to save: no job
 
@@ -354,13 +360,17 @@ class EventShotsTest(ProcBase):
         self.assertEqual(self.ffmpeg[0][self.ffmpeg[0].index("-ss") + 1], "30")
         self.assertIn("%s-front.mp4" % S2, self.ffmpeg[0][self.ffmpeg[0].index("-i") + 1])
         r = k.status(force=True)["clips"]["saved"]["ev1"]
-        self.assertEqual((r["shots"], r["ready"], r["shot_cams"]), ([2, 2], True, ["back", "front"]))
+        self.assertEqual((r["shots"], r["window"], r["ready"], r["shot_cams"]), ([2, 2], [1, 1], True, ["back", "front"]))
 
-    def test_an_event_that_asks_for_nothing_is_ready_without_pictures(self):
+    def test_an_event_that_asks_for_no_camera_pictures_still_wants_the_seconds_around_it(self):
         self.index("user_interaction_dashcam_icon_tapped")
         self.kept()
         r = self.k.status(force=True)["clips"]["saved"]["ev1"]
-        self.assertEqual((r["shots"], r["ready"]), ([0, 0], True))
+        self.assertEqual((r["shots"], r["window"], r["ready"]), ([0, 0], [0, 1], False))
+        self.k.start_process([dict(kind="saved", id="ev1")], self.roots)
+        self.k._thread.join(5)
+        r = self.k.status(force=True)["clips"]["saved"]["ev1"]
+        self.assertEqual((r["window"], r["ready"], r["tier"]), ([1, 1], True, "high"))
 
     def test_pictures_already_kept_are_not_cut_again(self):
         self.index("user_interaction_honk")

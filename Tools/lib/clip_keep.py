@@ -7,6 +7,7 @@ A clip's video may go once what the app keeps from it exists (the rules are thos
              the last drive synced from Tessie (later video has no drive to keep snapshots in yet)
   signs      each minute the car went at review.min_kmh or more has been read for signs (app_review)
   event      a horn or Sentry event has its full-size pictures of the moment (event_shots.py: all six cameras, or the one that saw it)
+  window     a Saved or Sentry event has the pictures around its moment, one a second, 30 s either side, from the camera that saw it (event_stills.py)
 
 Everything here is worked out from what is kept on this computer (the footage log, the telemetry store, the stills folder, the sign records): no drive is read,
 so the answer is the same with every drive away. Only start() touches a drive: it deletes the video files of the clips asked for, or copies them to the Archive
@@ -27,6 +28,7 @@ import time
 import app_config
 import clip_clock as CC
 import event_shots as ES
+import event_stills as EV
 import teslacam_deletable as TD
 import teslacam_files as TF
 import teslacam_ledger as TLG
@@ -65,6 +67,7 @@ class ClipKeep:
         self._thread = None
         self._stop = False
         self.shots = ES.EventShots(data_dir)
+        self.evst = EV.EventStills(data_dir)
 
     # ---- what is kept -------------------------------------------------------------------------------------------
     def status(self, force=False):
@@ -104,6 +107,14 @@ class ClipKeep:
             return None
         have = self.shots.have(kind, cid)
         return mom[0], mom[1], [c for c in want if c not in have], want
+
+    def _hi(self, kind, cid, mins, ev):
+        """(camera, [(clip stamp, first second, last second)]) of the pictures wanted around an event whose video is on a drive; None when it needs none."""
+        if not ev or kind == "recent":
+            return None
+        cam = EV.camera(kind, ev)
+        win = EV.window(ev, {s: n["cams"] for s, n in mins.items()}, cam)
+        return (cam, win) if win else None
 
     def _build(self):
         events = self._events()
@@ -179,9 +190,14 @@ class ClipKeep:
                 sh = [len(w[3]) - len(w[2]), len(w[3])]
             elif have:
                 sh = [len(have), len(have)]
-            out[kind][cid] = dict(n=len(mins), first=min(mins), bytes=nbytes, files=nfiles, in_archive=narch, size=max(nbytes.values()) if nbytes else 0, meta=meta, stills=st_, signs=sg, shots=sh,
-                                  shot_cams=sorted(have), ready=all(x[0] >= x[1] for x in (meta, st_, sg, sh)) and refine_n == 0, waiting=waiting, wait_n=wait_n, snap_n=snap_n, refine_n=refine_n,
-                                  sign_n=sign_n, todo=any(x[0] < x[1] for x in (meta, sg, sh)) or st_[0] + wait_n < st_[1] or refine_n > 0)
+            hi = [0, 0]                                                          # the pictures around the event: one set, made or not
+            if kind != "recent":
+                got = self.evst.info(kind, cid).get("n")
+                hw = self._hi(kind, cid, mins, events.get((kind, cid))) if nbytes else None
+                hi = [1, 1] if got else ([0, 1] if hw else [0, 0])
+            out[kind][cid] = dict(n=len(mins), first=min(mins), bytes=nbytes, files=nfiles, in_archive=narch, size=max(nbytes.values()) if nbytes else 0, meta=meta, stills=st_, signs=sg, shots=sh, window=hi, tier=self.evst.info(kind, cid).get("tier", "") if kind != "recent" else "",
+                                  shot_cams=sorted(have), ready=all(x[0] >= x[1] for x in (meta, st_, sg, sh, hi)) and refine_n == 0, waiting=waiting, wait_n=wait_n, snap_n=snap_n, refine_n=refine_n,
+                                  sign_n=sign_n, todo=any(x[0] < x[1] for x in (meta, sg, sh, hi)) or st_[0] + wait_n < st_[1] or refine_n > 0)
         return dict(clips=out)
 
     # ---- the files of a clip on one drive -----------------------------------------------------------------------
@@ -381,22 +397,47 @@ class ClipKeep:
                 out.append((kind, events[(kind, cid)], w[0], w[1], got))
         return out
 
+    def windows_plan(self, roots, only=None):
+        """[(kind, event, window, {clip stamp: video path of the camera})] of the Saved and Sentry events whose pictures around the moment are missing and whose video is on a connected
+        drive (only those in `only`, [(kind, id)], when given)."""
+        st = self.status()["clips"]
+        events = self._events()
+        wants = []
+        for kind in ("saved", "sentry"):
+            for cid, r in st[kind].items():
+                if r["window"][0] >= r["window"][1] or (kind, cid) not in events or (only is not None and (kind, cid) not in only):
+                    continue
+                mins = {s: dict(cams=set(c)) for s, c in self._cams_of(kind, cid).items()}
+                h = self._hi(kind, cid, mins, events[(kind, cid)])
+                if h:
+                    wants.append((kind, events[(kind, cid)], h[0], h[1]))
+        if not wants:
+            return []
+        paths = self._paths(TLG.Ledger(self.dir), {w[0] for _k, _e, _c, win in wants for w in win}, roots)
+        out = []
+        for kind, ev, cam, win in wants:
+            got = {w[0]: paths[w[0]][cam] for w in win if w[0] in paths and cam in paths[w[0]]}
+            if got:
+                out.append((kind, ev, [w for w in win if w[0] in got], got))
+        return out
+
     def pictures_start(self, roots):
         """Saves those pictures in the background. True when a job was started (False: nothing to save, or something else is being done to the drives)."""
         if self._thread and self._thread.is_alive():
             return False
         plan = self.pictures_plan(roots)
-        if not plan:
+        wplan = self.windows_plan(roots)
+        if not plan and not wplan:
             return False
-        total = sum(len(x[4]) for x in plan)
+        total = sum(len(x[4]) for x in plan) + len(wplan)
         self._stop = False
         self._job = dict(running=True, action="pictures", step="Saving event pictures", step_done=0, step_total=total, steps=[dict(step="Saving event pictures", total=total)], files=0, done=0,
-                         bytes=0, bytes_done=0, freed=0, errors=[], current="", clips=len(plan), t0=time.time())
-        self._thread = threading.Thread(target=self._pictures, args=(plan,), daemon=True)
+                         bytes=0, bytes_done=0, freed=0, errors=[], current="", clips=len(plan) + len(wplan), t0=time.time())
+        self._thread = threading.Thread(target=self._pictures, args=(plan, wplan), daemon=True)
         self._thread.start()
         return True
 
-    def _pictures(self, plan):
+    def _pictures(self, plan, wplan=()):
         j = self._job
         n = 0
         try:
@@ -405,6 +446,13 @@ class ClipKeep:
                     break
                 j["current"] = ev["id"]
                 n += len(self.shots.make(kind, ev, stamp, sec, got, stop=lambda: self._stop))
+                j["step_done"] = n
+            for kind, ev, win, got in wplan:
+                if self._stop:
+                    break
+                j["current"] = ev["id"]
+                self.evst.make(kind, ev, win, got, stop=lambda: self._stop)
+                n += 1
                 j["step_done"] = n
         except Exception as e:
             j["errors"].append("%s: %s" % (type(e).__name__, e))
@@ -467,13 +515,21 @@ class ClipKeep:
                     got = {c: paths[w[0]][c] for c in (w[2] if w else ()) if w[0] in paths and c in paths[w[0]]}
                     if got:
                         shots.append((kind, events[(kind, cid)], w[0], w[1], got))
-                self._step("Saving event pictures", sum(len(x[4]) for x in shots))
+                wins = [x for x in self.windows_plan(getattr(self, "_roots", None) or {}, only=set(evs))]
+                self._step("Saving event pictures", sum(len(x[4]) for x in shots) + len(wins))
                 n = 0
                 for kind, ev, stamp, sec, got in shots:
                     if self._stop:
                         break
                     j["current"] = ev["id"]
                     n += len(self.shots.make(kind, ev, stamp, sec, got, stop=lambda: self._stop))
+                    j["step_done"] = n
+                for kind, ev, win, got in wins:
+                    if self._stop:
+                        break
+                    j["current"] = ev["id"]
+                    self.evst.make(kind, ev, win, got, stop=lambda: self._stop)
+                    n += 1
                     j["step_done"] = n
             if "signs" in want:
                 rv = self.tc._rv()

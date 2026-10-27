@@ -120,6 +120,43 @@ class ThinTest(unittest.TestCase):
         self.assertEqual(self.th.candidates(), [D, A])
         self.assertEqual([f for f in os.listdir(os.path.dirname(self.stills.path(A))) if f.endswith(".thin")], [])
 
+    def test_a_clip_on_its_own_is_counted_and_shrunk_without_touching_the_rest(self):
+        st = self.th.scope_status([("recent", A)], {A})
+        self.assertEqual((st["scoped"], st["clips"], st["driving"]["minutes"], st["driving"]["pictures"]), (True, 1, 1, 3))
+        self.assertEqual(st["driving"]["bytes"], os.path.getsize(self.stills.path(A)))
+        self.assertLess(st["driving"]["after"], st["driving"]["bytes"] * 0.6)                  # worked out by shrinking a scratch copy
+        with zipfile.ZipFile(self.stills.path(A)) as z:
+            self.assertEqual(len(z.read("00.jpg")), 1000)                                      # nothing was changed by looking
+        self.assertEqual(self.th.scope_status([("recent", C)], {C})["driving"]["minutes"], 0)  # a minute with a sign is not shrunk
+        self.th.start(True, stamps={A})
+        self.th._thread.join(5)
+        self.assertEqual(self.th.status(force=True)["done"], 1)
+        with zipfile.ZipFile(self.stills.path(D)) as z:
+            self.assertEqual(len(z.read("00.jpg")), 1000)
+
+    def test_the_pictures_around_an_event_are_counted_and_shrunk_a_level_at_a_time(self):
+        import event_stills as EV
+        es = EV.EventStills(self.data)
+        os.makedirs(es.folder("saved", "ev1"))
+        with zipfile.ZipFile(os.path.join(es.folder("saved", "ev1"), "front.zip"), "w", zipfile.ZIP_STORED) as z:
+            for i in range(4):
+                z.writestr("%s_%02d.jpg" % (B, i), b"y" * 2000)
+        with open(os.path.join(es.folder("saved", "ev1"), "info.json"), "w") as f:
+            json.dump(dict(cam="front", tier="high", width=1280, quality=3, n=4), f)
+        st = self.th.scope_status([("saved", "ev1")], {B})
+        self.assertEqual((st["events"]["high"], st["events"]["pictures"], st["events"]["normal_n"], st["events"]["minute_stills"]), (1, 4, 1, 3))
+        self.assertLess(st["events"]["normal_after"], st["events"]["bytes"])
+        self.th.start(True, events="normal", clips={("saved", "ev1")})
+        self.th._thread.join(5)
+        self.assertEqual(es.info("saved", "ev1")["tier"], "normal")
+        with zipfile.ZipFile(self.stills.path(B)) as z:
+            self.assertEqual(len(z.read("00.jpg")), 1000)                                     # the minute's own stills stay at "normal"
+        self.th.start(True, events="shrunk", clips={("saved", "ev1")})
+        self.th._thread.join(5)
+        self.assertEqual(es.info("saved", "ev1")["tier"], "shrunk")
+        with zipfile.ZipFile(self.stills.path(B)) as z:
+            self.assertEqual(len(z.read("00.jpg")), 500)                                      # at "shrunk" they go with it
+
 
 if __name__ == "__main__":
     unittest.main()

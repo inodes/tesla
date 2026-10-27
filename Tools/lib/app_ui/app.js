@@ -1764,11 +1764,11 @@ function footageSync(host,opts){
     setTimeout(watch,3000)};
   paint();watch()}
 // ---- what is kept from each clip's video (lib/clip_keep.py): tick boxes, a status strip, the size, and deleting / moving the video once it is all kept
-let TCSEL=new Set(),KPC=null,THINHTML="";      // TCSEL: "kind|id" of the clips ticked; KPC: GET /api/clips/keep
+let TCSEL=new Set(),KPC=null,THINHTML="",THKEY="",OPENC=null;      // OPENC: the clip open under the tiles, {kind, id}      // TCSEL: "kind|id" of the clips ticked; KPC: GET /api/clips/keep
 const fmtGB=b=>b>=1073741824?(b/1073741824).toFixed(b>=10737418240?0:1)+" GB":Math.max(1,Math.round(b/1048576))+" MB";
 const kpOf=(ty,id)=>KPC&&KPC[ty]&&KPC[ty][id]||null;
 const kpChips=r=>{if(!r)return"";const c=(lab,x,tip)=>x[1]?`<i class="kc ${x[0]>=x[1]?"ok":x[0]?"part":"no"}" title="${esc(tip)}">${lab} ${x[0]>=x[1]?"✓":n0(x[0])+"/"+n0(x[1])}</i>`:"";
-  return `<div class="kst">${c("Metadata",r.meta,"Speed, position and steering read from the video: "+r.meta[0]+" of "+r.meta[1]+" minutes")}${c("Stills",r.stills,"A picture every second kept: "+r.stills[0]+" of "+r.stills[1]+" minutes"+(r.waiting?" · "+r.waiting:""))}${r.signs[1]||r.sign_n?`<i class="kc ${r.signs[0]>=r.signs[1]?"ok":r.signs[0]?"part":"no"}" title="${esc("Signs read in the minutes driven fast enough: "+r.signs[0]+" of "+r.signs[1]+" minutes · "+(r.sign_n||0)+" signs found")}">Signs ${r.signs[0]>=r.signs[1]?"✓":n0(r.signs[0])+"/"+n0(r.signs[1])} · ${n0(r.sign_n||0)} found</i>`:""}${r.snap_n?`<i class="kc part" title="${esc("The snapshots of the drive this clip lies in are not built yet: "+r.snap_n+" minutes")}">Snapshots ${n0(r.snap_n)} to build</i>`:""}${c("Pictures",r.shots||[0,0],"Full-size pictures of the moment it happened: "+(r.shots||[0,0])[0]+" of "+(r.shots||[0,0])[1]+" cameras")}</div>`};
+  return `<div class="kst">${c("Metadata",r.meta,"Speed, position and steering read from the video: "+r.meta[0]+" of "+r.meta[1]+" minutes")}${c("Stills",r.stills,"A picture every second kept: "+r.stills[0]+" of "+r.stills[1]+" minutes"+(r.waiting?" · "+r.waiting:""))}${r.signs[1]||r.sign_n?`<i class="kc ${r.signs[0]>=r.signs[1]?"ok":r.signs[0]?"part":"no"}" title="${esc("Signs read in the minutes driven fast enough: "+r.signs[0]+" of "+r.signs[1]+" minutes · "+(r.sign_n||0)+" signs found")}">Signs ${r.signs[0]>=r.signs[1]?"✓":n0(r.signs[0])+"/"+n0(r.signs[1])} · ${n0(r.sign_n||0)} found</i>`:""}${r.snap_n?`<i class="kc part" title="${esc("The snapshots of the drive this clip lies in are not built yet: "+r.snap_n+" minutes")}">Snapshots ${n0(r.snap_n)} to build</i>`:""}${c("Pictures",[(r.shots||[0,0])[0]+(r.window||[0,0])[0],(r.shots||[0,0])[1]+(r.window||[0,0])[1]],"Full-size pictures of the moment it happened: "+(r.shots||[0,0])[0]+" of "+(r.shots||[0,0])[1]+" cameras"+((r.window||[0,0])[1]?" · the seconds around it: "+((r.window||[0,0])[0]?"kept"+(r.tier&&r.tier!=="high"?" ("+(r.tier==="normal"?"normal size":"smaller")+")":""):"not yet"):""))}</div>`};
 // the size of the video on the thumbnail (red when it is one of the big ones of its kind) and the tick box
 const kpBig=(ty)=>{const a=Object.values((KPC&&KPC[ty])||{}).map(r=>r.size).filter(x=>x>0).sort((x,y)=>x-y);return a.length>3?Math.max(a[Math.floor(a.length/2)]*2,536870912):1e18};
 const kpTop=(ty,id)=>{const r=kpOf(ty,id),k=ty+"|"+id;return `<em class="evk ${TCSEL.has(k)?"on":""}" data-sel="${esc(k)}" role="checkbox" aria-checked="${TCSEL.has(k)}" title="Select">${TCSEL.has(k)?"✓":""}</em>`+(r&&r.size?`<em class="szb ${r.size>=kpBig(ty)?"big":""}" title="${esc(Object.keys(r.bytes).map(x=>drName(x)+" "+fmtGB(r.bytes[x])).join(" · "))}">${fmtGB(r.size)}</em>`:"")};
@@ -1787,14 +1787,29 @@ async function pageTeslaCam(role,id){
       c.textContent=l.length+" clip"+(l.length>1?"s":"")+(n?" · "+n+" selected":"")})};
   footageSync($("#fsb"),{table:true,after:()=>{bust("tc/clips");KPC=null;load(true)}});
   // the stills of ordinary driving (no event, no sign) can be made smaller; events and signs keep their full-size pictures
-  const thin=async()=>{const el=$("#thin");if(!el)return;let j;try{j=await (await fetch("/api/stills/thin")).json()}catch(e){return}
-    const q=j.total?Math.round(100*(j.done+(j.done<j.total?.35:0))/j.total):null,tx=`<b>Shrinking stills</b> · ${n0(j.done)} of ${n0(j.total)} · ${fmtGB(j.saved)} freed`;
-    if(j.running){if($("#thtx",el)){$("#thtx",el).innerHTML=tx;setPbar(el,q);THINHTML=el.innerHTML}else{THINHTML=el.innerHTML=`<div class="card ixb"><div style="flex:1;min-width:0"><div id="thtx">${tx}</div>${pbar(q)}</div><button class="btn sm" id="thx">Stop</button></div>`;
-      $("#thx").onclick=async()=>{await fetch("/api/stills/thin",{method:"POST",body:JSON.stringify({action:"stop"})})}}setTimeout(thin,1500);return}
-    const done=j.last&&j.total?` Freed ${fmtGB(j.saved)} last time.`:"";
-    THINHTML=el.innerHTML=j.minutes>0?`<div class="card ixb" style="margin:12px 0"><div style="flex:1;min-width:0"><b>Stills kept: ${n0(j.minutes)} minutes of ordinary driving · ${fmtGB(j.bytes)}</b><div class="sub" style="margin-top:4px">A picture a second, kept after the video is deleted. Shrinking saves them again at a lower quality to free disk space; minutes with an event or a sign are not touched. It cannot be undone.${done}</div></div><button class="btn sm" id="thgo">Shrink stills</button></div>`:(done?`<div class="sub" style="margin:12px 0">${done.trim()}</div>`:"");
-    const b=$("#thgo");if(b)b.onclick=()=>{el.innerHTML=`<div class="card ixb" style="margin:12px 0"><span style="flex:1"><b>Shrink the stills of ${n0(j.minutes)} minutes?</b> (${fmtGB(j.bytes)} now). Each is replaced by a smaller copy and cannot be restored.</span><button class="btn pri" id="thok">Shrink</button><button class="btn" id="thno">Cancel</button></div>`;
-      $("#thno").onclick=thin;$("#thok").onclick=async()=>{$("#thok").disabled=true;await fetch("/api/stills/thin",{method:"POST",body:JSON.stringify({action:"start",confirm:true})});thin()}}};
+  const thinScope=()=>{const l=[...TCSEL].map(k=>{const q=k.indexOf("|");return{kind:k.slice(0,q),id:k.slice(q+1)}});return l.length?l:(OPENC?[OPENC]:[])};
+  const thinPost=async b=>{await fetch("/api/stills/thin",{method:"POST",body:JSON.stringify(Object.assign({action:"start",confirm:true},b))});thin()};
+  const thin=async()=>{const el=$("#thin");if(!el)return;const sc=thinScope(),key=sc.map(x=>x.kind+"|"+x.id).join(",");THKEY=key;let j;
+    try{j=await (await fetch("/api/stills/thin"+(key?"?clips="+encodeURIComponent(key):""))).json()}catch(e){return}
+    if(key!==THKEY||!document.body.contains(el))return;
+    const q=j.total?Math.round(100*(j.done+(j.done<j.total?.35:0))/j.total):null,tx=`<b>Shrinking ${j.what==="events"?"event pictures":"stills"}</b> · ${n0(j.done)} of ${n0(j.total)} · ${fmtGB(j.saved)} freed`;
+    if(j.running){if($("#thtx",el)){$("#thtx",el).innerHTML=tx;setPbar(el,q);if(!key)THINHTML=el.innerHTML}else{el.innerHTML=`<div class="card ixb"><div style="flex:1;min-width:0"><div id="thtx">${tx}</div>${pbar(q)}</div><button class="btn sm" id="thx">Stop</button></div>`;if(!key)THINHTML=el.innerHTML;
+      $("#thx").onclick=async()=>{await fetch("/api/stills/thin",{method:"POST",body:JSON.stringify({action:"stop"})})}}setTimeout(()=>{if(THKEY===key)thin()},1500);return}
+    const confirmCard=(text,btn,body)=>{el.innerHTML=`<div class="card ixb" style="margin:12px 0"><span style="flex:1">${text}</span><button class="btn pri" id="thok">${btn}</button><button class="btn" id="thno">Cancel</button></div>`;
+      $("#thno").onclick=thin;$("#thok").onclick=()=>{$("#thok").disabled=true;thinPost(body)}};
+    if(j.scoped){      // the clips ticked (or the one open): the numbers are theirs alone
+      const who=j.clips===1?"this clip":n0(j.clips)+" clips",d=j.driving,e=j.events,rows=[];
+      if(d.minutes>0)rows.push(`<div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap"><span style="flex:1;min-width:220px"><b>Stills of ${who}: ${n0(d.pictures)} pictures · ${fmtGB(d.bytes)}</b><span class="sub" style="display:block;margin-top:2px">Shrinking keeps a picture a second at a lower quality: about ${fmtGB(Math.max(0,d.bytes-d.after))} freed. It cannot be undone.</span></span><button class="btn sm" data-th="driving">Shrink stills</button></div>`);
+      if(e.pictures>0){const lvl=e.high?"full size":e.normal?"normal size":"smaller";
+        rows.push(`<div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap"><span style="flex:1;min-width:220px"><b>Pictures around the event in ${who}: ${n0(e.pictures)} · ${fmtGB(e.bytes)}</b><span class="sub" style="display:block;margin-top:2px">${lvl}${e.normal_n?` · to normal size frees about ${fmtGB(Math.max(0,e.bytes-e.normal_after))}`:""}${e.shrunk_n?` · smaller frees about ${fmtGB(Math.max(0,e.bytes-e.shrunk_after))} and shrinks the ${n0(e.minute_stills)} stills of its minutes too`:""}. It cannot be undone.</span></span>${e.normal_n?'<button class="btn sm" data-th="normal">Normal size</button>':""}${e.shrunk_n?'<button class="btn sm" data-th="shrunk">Smaller</button>':""}</div>`)}
+      el.innerHTML=rows.length?`<div class="card" style="margin:12px 0;display:flex;flex-direction:column;gap:10px">${rows.join("")}</div>`:`<div class="sub" style="margin:12px 0">Nothing to shrink in ${who}.</div>`;
+      $$("[data-th]",el).forEach(b=>b.onclick=()=>{const w=b.dataset.th;
+        if(w==="driving")confirmCard(`<b>Shrink the stills of ${who}?</b> (${n0(d.pictures)} pictures, ${fmtGB(d.bytes)} now). Each is replaced by a smaller copy and cannot be restored.`,"Shrink",{clips:sc});
+        else confirmCard(`<b>Shrink the pictures around the event in ${who} to ${w==="normal"?"normal":"the smaller"} size?</b> (${fmtGB(e.bytes)} now). They are replaced by smaller copies and cannot be restored.`,"Shrink",{clips:sc,events:w})});
+      return}
+    const done=j.last&&j.total?` Freed ${fmtGB(j.saved)} last time.`:"",ev=j.events||{},evn=(ev.high||0)+(ev.normal||0);
+    THINHTML=el.innerHTML=j.minutes>0?`<div class="card ixb" style="margin:12px 0"><div style="flex:1;min-width:0"><b>Stills kept: ${n0(j.minutes)} minutes of ordinary driving · ${fmtGB(j.bytes)}</b><div class="sub" style="margin-top:4px">A picture a second, kept after the video is deleted. Shrinking saves them again at a lower quality to free disk space; minutes with an event or a sign are not touched. Tick a clip to see just that one. It cannot be undone.${done}</div></div><button class="btn sm" id="thgo">Shrink stills</button></div>`:(done?`<div class="sub" style="margin:12px 0">${done.trim()}</div>`:"");
+    const b=$("#thgo");if(b)b.onclick=()=>confirmCard(`<b>Shrink the stills of ${n0(j.minutes)} minutes?</b> (${fmtGB(j.bytes)} now). Each is replaced by a smaller copy and cannot be restored.`,"Shrink",{})};
   thin();
   const chips=()=>{
     $("#tsr").innerHTML='<span class="sub" style="margin:0 4px 0 0">Show:</span>'+Object.keys(TCSRC).map(k=>`<button class="chip ${TCS.src[k]?"on":""}" data-s="${k}">${TCSRC[k]}${data&&data[k]?" · "+data[k].length:""}</button>`).join("")+'';
@@ -1812,7 +1827,7 @@ async function pageTeslaCam(role,id){
     ["stills","Stills",c=>Math.max(0,c.stills[1]-c.stills[0]-(c.wait_n||0)-(c.snap_n||0)),"Take a picture every second of each minute"],
     ["snapshots","Snapshots",c=>c.snap_n||0,"Build the snapshots of the drives these clips lie in"],
     ["signs","Signs",c=>Math.max(0,c.signs[1]-c.signs[0])+(c.refine_n||0),"Read speed-limit signs in the minutes driven fast enough"],
-    ["pictures","Pictures",c=>Math.max(0,((c.shots||[0,0])[1]||0)-((c.shots||[0,0])[0]||0)),"Save full-size pictures of the moment of Saved and Sentry events"]
+    ["pictures","Pictures",c=>Math.max(0,((c.shots||[0,0])[1]||0)-((c.shots||[0,0])[0]||0))+Math.max(0,((c.window||[0,0])[1]||0)-((c.window||[0,0])[0]||0)),"Save full-size pictures of the moment of Saved and Sentry events, and the seconds around it"]
   ];
   const todoOf=c=>c.todo!=null?c.todo:!c.ready,stepCnt=(c,st)=>st?PSTEPS.find(x=>x[0]===st)[2](c):(todoOf(c)?1:0);
   const lacking=st=>picked().filter(it=>{const c=kpOf(it.kind,it.id);return stepCnt(c,st)>0&&conn().some(r=>c.bytes[r]>0)});
@@ -1850,7 +1865,7 @@ async function pageTeslaCam(role,id){
     const wn=c.wait_n||0,onDrv=conn().some(r=>c.bytes[r]>0),need=todoOf(c)&&onDrv,stBtns="";
     el.innerHTML=`<div class="bar selb">${kpChips(c)}${need?`<button class="btn sm pri" id="ostgo">Update this clip</button>`:todoOf(c)?`<span class="sub">${Object.keys(c.bytes||{}).some(r=>c.bytes[r]>0)?"Cannot be read now: its video is on "+Object.keys(c.bytes).filter(r=>c.bytes[r]>0).map(drName).join(", ")+", which is not connected.":"Cannot be read: its video is gone from every drive."}</span>`:""}${wn?`<span class="sub">${n0(wn)} minute${wn>1?"s":""} of stills wait for the drive from Tessie. Nothing to read for those yet.</span>`:""}</div>`;
     const b=$("#ostgo",el);if(b)b.onclick=()=>runProc([OPENK])};
-  const selbar=()=>{const el=$("#selbar");if(!el)return;if(!KPC){el.innerHTML="";return}
+  const selbar=()=>{const el=$("#selbar");if(!el)return;if(thinScope().map(x=>x.kind+"|"+x.id).join(",")!==THKEY)thin();if(!KPC){el.innerHTML="";return}
     if(phase&&$("#phtx",el)){$("b",$("#phtx",el)).textContent=phase;setPbar($("#phtx",el),phasePc);return}
     const items=picked(),cn=conn(),done=vis.filter(v=>{const c=kpOf(v.ty,v.id);return c&&c.ready&&cn.some(r=>c.bytes[r]>0)});
     const dsz=done.reduce((a,v)=>a+Math.max(...cn.map(r=>kpOf(v.ty,v.id).bytes[r]||0)),0);
@@ -1919,7 +1934,7 @@ async function pageTeslaCam(role,id){
     $("#tb").innerHTML=(days.length?"":'<div class="empty">Nothing here for these dates.</div>')+days.slice(0,60).map(d=>`<div class="day" data-day="${d}"><em class="dayk" role="checkbox" title="Tick every clip of this day"></em>${dayName(d)}<small class="dcnt">${byDay[d].length} clip${byDay[d].length>1?"s":""}</small></div><div class="evs">${byDay[d].map(card).join("")}</div>`).join("")+(days.length>60?'<div class="sub">Showing the newest 60 days. Narrow the dates to see older ones.</div>':"");
     vis=all;dayList=byDay;$$("#tb [data-sel]").forEach(b=>b.onclick=e=>{e.stopPropagation();const k=b.dataset.sel;TCSEL.has(k)?TCSEL.delete(k):TCSEL.add(k);pend=null;paintTicks();selbar()});
     $$("#tb .dayk").forEach(b=>b.onclick=e=>{const l=dayList[b.parentNode.dataset.day]||[],all=l.every(v=>TCSEL.has(v.ty+"|"+v.id));l.forEach(v=>all?TCSEL.delete(v.ty+"|"+v.id):TCSEL.add(v.ty+"|"+v.id));pend=null;paintTicks();selbar()});paintTicks();selbar();
-    lazyThumbs($("#tb"));$$("#tb .evc").forEach(b=>b.onclick=async()=>{const ty=b.dataset.ty,sel=b.dataset.id;$$("#tb .evc").forEach(x=>x.classList.toggle("on",x===b));$("#spl").scrollIntoView({block:"nearest"});
+    lazyThumbs($("#tb"));$$("#tb .evc").forEach(b=>b.onclick=async()=>{const ty=b.dataset.ty,sel=b.dataset.id;OPENC={kind:ty,id:sel};thin();$$("#tb .evc").forEach(x=>x.classList.toggle("on",x===b));$("#spl").scrollIntoView({block:"nearest"});
       const it=data[ty].find(v=>v.id===sel);
       OPENK={kind:ty,id:sel};ostrip();
       if(ty!=="recent"){
