@@ -355,8 +355,13 @@ async function driveReviewPanel(host,stamp,lo,onResult){
     RVAPI.focus({a:ea(e),b:eb(e),ticks:t,hot:si,col:KCOL[e.kind]});RVAPI.limit(Math.min(ea(e),t.length?t[0]:ea(e))-10,Math.max(eb(e),t.length?t[t.length-1]:eb(e))+10);RVAPI.map(Math.min(ea(e),t.length?t[0]:ea(e))-3,Math.max(eb(e),t.length?t[t.length-1]:eb(e))+3,(e.signs||[]).filter(x=>["speed","warning","roadwork"].includes(x.cat||"speed")).map(x=>({i:Math.round(base(e)+(x.t-e.t)),side:x.side,cat:x.cat||"speed",text:x.text,temp:x.temp,conflict:x.conflict,osm:x.osm,car:x.car})));RVAPI.cursor(g?stillI(e,si):ea(e));RVAPI.seek(g?stillI(e,si):ea(e))};      // the video below goes to the event too, not on playing from where it was
   const go=n=>{const L=list();if(!L.length)return;ei=Math.max(0,Math.min(L.length-1,n));const e=L[ei];si=geo(e)?k0(e):0;hv=null;viewer(true);arrive(e)};
   // the big picture
+  const LBP=new Map(),lbPre=st=>{const m=/url\(([^)]*)\)/.exec(st);if(!m)return null;const u=m[1];if(!LBP.has(u)){const im=new Image();im.src=u;LBP.set(u,im);if(LBP.size>14)LBP.delete(LBP.keys().next().value)}return LBP.get(u)};
+  let lbWant=0;       // the picture on screen stays until the next one has arrived, so stepping never shows an empty frame
   const lbShow=()=>{const e=list()[ei],o=document.getElementById("rvlb");if(!e||!o||!geo(e)){return}
-    o.querySelector(".rvlbi").setAttribute("style",big(e,si)+";width:min(92vw,"+(e.hi&&e.hi[si]?1600:e.tile.w*2.2)+"px,calc(78vh*"+e.tile.w+"/"+e.tile.h+"))");o.querySelector(".rvlbc").textContent=e.id+" · "+info(e,si)+" · "+(si+1)+" of "+e.shots.length};
+    const st=big(e,si)+";width:min(92vw,"+(e.hi&&e.hi[si]?1600:e.tile.w*2.2)+"px,calc(78vh*"+e.tile.w+"/"+e.tile.h+"))",im=lbPre(st),n=++lbWant,txt=e.id+" · "+info(e,si)+" · "+(si+1)+" of "+e.shots.length,
+      put=()=>{if(n!==lbWant)return;const x=document.getElementById("rvlb");if(!x)return;x.querySelector(".rvlbi").setAttribute("style",st);x.querySelector(".rvlbc").textContent=txt};
+    [1,-1,2].forEach(d=>{if(e.shots[si+d]!==undefined)lbPre(big(e,si+d))});
+    if(!im||im.complete||!o.querySelector(".rvlbi").getAttribute("style"))put();else{im.onload=im.onerror=put}};
   const lbClose=()=>{lb=false;const o=document.getElementById("rvlb");if(o)o.remove()};
   const lbOpen=()=>{const e=list()[ei];if(!e||!geo(e))return;lbClose();lb=true;const o=document.createElement("div");o.id="rvlb";o.className="rvlb";
     o.innerHTML='<div class="rvlbi"></div><div class="rvlbc"></div><div class="rvlbn"><button class="btn" data-d="-1">‹ Earlier</button><button class="btn" data-d="1">Later ›</button><button class="btn" data-d="0">Close</button></div>';
@@ -856,18 +861,35 @@ function stillViewer(host,o){
     const seq=()=>{const out=[];minutes.forEach((m,i)=>{for(let t=0;t<60;t+=step)out.push([i,t])});return out};let frames=seq();
     const pos=()=>{const k=frames.findIndex(f=>f[0]===mi&&f[1]>=sec);return k<0?frames.length-1:k};
     const at=k=>{k=Math.max(0,Math.min(frames.length-1,k));mi=frames[k][0];sec=frames[k][1];paint()};
-    function paint(){const k=pos(),[i,t]=frames[k],m=minutes[i];
-      box.innerHTML=`<div class="stbar"><button class="btn" id="stp0">◀ Back</button><button class="btn" id="stn0">Next ▶</button><input type="range" id="stsk" min="0" max="${frames.length-1}" value="${k}">
-        <span>${shownAt(m,t)}</span><select id="stst">${[[1,"every second"],[5,"every 5 seconds"],[10,"every 10 seconds"],[60,"every minute"]].map(([v,l])=>`<option value="${v}" ${v===step?"selected":""}>${l}</option>`).join("")}</select>
-        ${o.trig?'<button class="btn" id="stdt">↧ Detection</button>':""}<span class="sub">${n0(k+1)} of ${n0(frames.length)} · arrow keys also step</span></div>
-        <img class="stimg" src="${stillSrc(m,t)}" alt="Front camera at ${shownAt(m,t)}">`;
-      $("#stp0",box).onclick=()=>at(pos()-1);$("#stn0",box).onclick=()=>at(pos()+1);$("#stsk",box).oninput=e=>at(+e.target.value);
-      $("#stst",box).onchange=e=>{step=+e.target.value;lsSet("tc.ststep",String(step));frames=seq();sec=Math.floor(sec/step)*step;paint()};
-      if($("#stdt",box))$("#stdt",box).onclick=()=>{[mi,sec]=inMin(o.trig);sec=Math.floor(sec/step)*step;paint()}}
+    // the bar and the picture frame are built once; stepping only changes the numbers and swaps the picture when the next one is ready, so there is never an empty frame in between
+    box.innerHTML=`<div class="stbar"><button class="btn" id="stp0">◀ Back</button><button class="btn" id="stpl">▶ Play</button><button class="btn" id="stn0">Next ▶</button><input type="range" id="stsk" min="0" max="0" value="0">
+      <span id="sttm"></span><select id="stst">${[[1,"every second"],[5,"every 5 seconds"],[10,"every 10 seconds"],[60,"every minute"]].map(([v,l])=>`<option value="${v}" ${v===step?"selected":""}>${l}</option>`).join("")}</select>
+      ${o.trig?'<button class="btn" id="stdt">↧ Detection</button>':""}<span class="sub" id="stct"></span></div>
+      <div class="stfr"><img class="stimg" alt=""></div>`;
+    const img=$(".stimg",box),fr=$(".stfr",box),ahead=new Map();let want="",ratio=false;
+    const pre=u=>{if(ahead.has(u))return ahead.get(u);const im=new Image();im.decoding="async";im.src=u;ahead.set(u,im);if(ahead.size>14)ahead.delete(ahead.keys().next().value);return im};
+    const swap=(u,alt)=>{want=u;const im=pre(u),go=()=>{if(want!==u)return;if(!ratio&&im.naturalWidth){fr.style.aspectRatio=im.naturalWidth+" / "+im.naturalHeight;ratio=true}img.src=u;img.alt=alt};
+      if(im.complete)go();else{im.onload=go;im.onerror=go}}      // the old picture stays on screen until the new one has arrived
+    function paint(){const k=pos(),[i,t]=frames[k],m=minutes[i],sk=$("#stsk",box);
+      sk.max=frames.length-1;sk.value=k;$("#sttm",box).textContent=shownAt(m,t);$("#stct",box).textContent=`${n0(k+1)} of ${n0(frames.length)} · arrow keys also step`;$("#stst",box).value=step;
+      swap(stillSrc(m,t),"Front camera at "+shownAt(m,t));
+      [1,2,3,-1].forEach(d=>{const f=frames[k+d];if(f)pre(stillSrc(minutes[f[0]],f[1]))})}
+    // Play steps on by itself at the pace of the pictures (one a second at "every second", faster for a longer step), waiting for each picture to arrive; any step, drag or key stops it
+    let tm=0;const playing=()=>!!tm,stop=()=>{if(tm){clearTimeout(tm);tm=0}const b=$("#stpl",box);if(b)b.textContent="▶ Play"};
+    const tick=()=>{if(!tm)return;if(!document.body.contains(box)){tm=0;return}const k=pos();if(k>=frames.length-1){stop();return}
+      const f=frames[k+1],im=pre(stillSrc(minutes[f[0]],f[1])),t0=Date.now(),go=()=>{if(!tm)return;at(k+1);tm=setTimeout(tick,Math.max(0,PACE()-(Date.now()-t0)))};
+      if(im.complete)go();else{im.onload=im.onerror=go}};
+    const PACE=()=>Math.max(120,Math.min(1000,1000/Math.max(1,step/2)));
+    $("#stpl",box).onclick=()=>{if(playing()){stop();return}if(pos()>=frames.length-1)at(0);$("#stpl",box).textContent="❚❚ Pause";tm=setTimeout(tick,PACE())};
+    const user=f=>(...a)=>{stop();return f(...a)};
+    $("#stp0",box).onclick=user(()=>at(pos()-1));$("#stn0",box).onclick=user(()=>at(pos()+1));$("#stsk",box).oninput=e=>{stop();at(+e.target.value)};
+    $("#stst",box).onchange=e=>{stop();step=+e.target.value;lsSet("tc.ststep",String(step));frames=seq();sec=Math.floor(sec/step)*step;paint()};
+    if($("#stdt",box))$("#stdt",box).onclick=()=>{stop();[mi,sec]=inMin(o.trig);sec=Math.floor(sec/step)*step;paint()};
     paint();
     const key=e=>{if(!document.body.contains(host)){removeEventListener("keydown",key);return}
       if(/SELECT|TEXTAREA|INPUT/.test(e.target.tagName||"")&&e.target.type!=="range")return;
-      if(e.key==="ArrowRight"||e.key==="ArrowLeft"){e.preventDefault();at(pos()+(e.key==="ArrowRight"?1:-1))}};
+      if(e.key===" "&&!/BUTTON/.test(e.target.tagName||"")){e.preventDefault();$("#stpl",box).click();return}
+      if(e.key==="ArrowRight"||e.key==="ArrowLeft"){e.preventDefault();stop();at(pos()+(e.key==="ArrowRight"?1:-1))}};
     if(window.__stk)removeEventListener("keydown",window.__stk);window.__stk=key;addEventListener("keydown",key)})}
 // ---------- Clip player (Sentry, Saved and Recent clips): all six cameras laid out like a drive page, or one camera big
 // event.json "camera" -> the camera that saw it (checked against the thumbnails and the clips: 0 and 1 front, 5 left repeater, 6 right repeater, 7 back; others unknown -> all six)

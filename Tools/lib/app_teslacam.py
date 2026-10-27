@@ -181,6 +181,15 @@ class TeslaCam:
         """The RecentClips minutes in the footage log: ({stamp: [cameras]}, {stamp: {roles that hold it now}}). `want` limits it to those drives; with None every minute
         ever logged is listed, also one that is gone from every drive (its holders are then empty: only its stills are left)."""
         led = TLG.Ledger(self.dir)
+        sig = None
+        if want is None:                                # the whole log is only read again when one of its day files has changed (they are many and the lists ask often)
+            try:
+                sig = tuple(sorted((e.name, e.stat().st_mtime_ns, e.stat().st_size) for e in os.scandir(led.root) if e.name.endswith(".json")))
+            except OSError:
+                sig = None
+            hit = getattr(self, "_lr", None)
+            if sig is not None and hit and hit[0] == sig:
+                return hit[1]
         cams, holders = {}, {}
         for day in led.days():
             for key, rec in led.day(day).items():
@@ -193,7 +202,10 @@ class TeslaCam:
                 if m:
                     cams.setdefault(m.group(1), []).append(m.group(2))
                     holders.setdefault(m.group(1), set()).update(now if want is None else now & want)
-        return {st: sorted(c, key=app_sentry.CAMS.index) for st, c in cams.items()}, holders
+        out = {st: sorted(c, key=app_sentry.CAMS.index) for st, c in cams.items()}, holders
+        if sig is not None:
+            self._lr = (sig, out)
+        return out
 
     def _events_kept(self, kind, want, roots=None):
         """The Saved or Sentry events of those drives, one entry per event (with `roles` = the drives that list it). A connected drive (in `roots`) is read

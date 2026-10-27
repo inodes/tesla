@@ -1,6 +1,7 @@
 import os
 import sys
 import tempfile
+import time
 import unittest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "Tools", "lib"))
@@ -19,6 +20,21 @@ class LedgerTest(unittest.TestCase):
             self.assertIsNone(L.get("drive_path", "t9"))
             L.record("drive_path", "t3", "complete")
             self.assertEqual(FetchLedger(d).settled("drive_path"), {"t1", "t2", "t3"})
+
+    def test_a_read_is_remembered_until_the_file_changes(self):
+        import json
+        with tempfile.TemporaryDirectory() as d:
+            L = FetchLedger(d)
+            L.record("k", "a", "complete")
+            first = L._load()
+            self.assertIs(L._load(), first)                      # not read again
+            self.assertIsNot(L._load(fresh=True), first)         # a writer gets its own copy
+            L.record("k", "b", "empty")                          # a write is seen by the next read
+            self.assertEqual(L.settled("k"), {"a", "b"})
+            time.sleep(0.01)
+            with open(L.path, "w") as f:                         # another program changed the file
+                json.dump({"k": {"z": {"status": "complete"}}}, f)
+            self.assertEqual(L.settled("k"), {"z"})
 
 
 if __name__ == "__main__":
