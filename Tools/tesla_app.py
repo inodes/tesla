@@ -417,6 +417,12 @@ class H(BaseHTTPRequestHandler):
                 if b:
                     return self.send_bytes(b, "image/jpeg", extra={"Cache-Control": "public, max-age=31536000"})
                 return self.send_bytes(b"not found", "text/plain", 404)
+            if path.startswith("/evstill/"):        # one picture around an event: /evstill/<saved|sentry>/<event folder>/<clip stamp>/<second>.jpg (the video need not exist any more)
+                m = re.match(r"^/evstill/(saved|sentry)/(\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2})/(\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2})/(\d{1,2})\.jpg$", path)
+                b = CKEEP.evst.get(m.group(1), m.group(2), m.group(3), int(m.group(4))) if m else None
+                if b:
+                    return self.send_bytes(b, "image/jpeg", extra={"Cache-Control": "public, max-age=31536000"})
+                return self.send_bytes(b"not found", "text/plain", 404)
             if path.startswith("/eventshot/"):      # a full-size picture of the moment of an event: /eventshot/<saved|sentry>/<event folder>/<camera>.jpg
                 m = re.match(r"^/eventshot/(saved|sentry)/(\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2})/([a-z_]+)\.jpg$", path)
                 p = CKEEP.shots.path(m.group(1), m.group(2), m.group(3)) if m else ""
@@ -595,6 +601,14 @@ class H(BaseHTTPRequestHandler):
             return self.send_json(TODO.snapshot())
         if name == "footage/status":
             return self.send_json(FG.status())
+        if name == "evstills":                  # evstills?kind=saved|sentry&id=<event folder>: the pictures kept around the event: camera, level and the seconds of each minute
+            kind, eid = q.get("kind", [""])[0], q.get("id", [""])[0]
+            if kind not in ("saved", "sentry") or not re.match(r"^\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2}$", eid):
+                return self.send_json({})
+            i = CKEEP.evst.info(kind, eid)
+            return self.send_json(dict(cam=i.get("cam"), tier=i.get("tier"), width=i.get("width"), trigger=i.get("trigger"), secs=CKEEP.evst.seconds(kind, eid)) if i.get("n") else {})
+        if name == "signs":                     # signs?stamps=a,b: the signs read in those minutes {clip stamp: [sign]} (lib/app_review.py minute_signs)
+            return self.send_json(TC._rv().minute_signs([s for s in q.get("stamps", [""])[0].split(",") if re.match(r"^\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2}$", s)][:80]))
         if name == "clipstatus":                # clipstatus?stamps=a,b: kept on a drive / deleted / never logged, and whether its stills are kept
             return self.send_json(FG.clip_status([s for s in q.get("stamps", [""])[0].split(",") if re.match(r"^\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2}$", s)][:80]))
         if name == "clipholders":               # clipholders?stamps=a,b: the files of each minute and the drives that hold them, biggest drive first, connected or not

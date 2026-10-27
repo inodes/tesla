@@ -154,6 +154,27 @@ class Review:
             g["conf"] = round(g["conf"])
         return out
 
+    def minute_signs(self, stamps):
+        """{clip stamp: [sign]} for the minutes read that held signs; a sign is one reading seen in several stills (same text and side within merge_s):
+        dict(text, side, kind, s0, s1 (seconds into the minute), n, conf, f (the picture of it, /review/<f>))."""
+        out = {}
+        with _LOCK:
+            for st in stamps:
+                rows = sorted(((self._day(st[:10]).get(st) or {}).get("d", [])), key=lambda d: d["s"])
+                groups = []
+                for d in rows:
+                    g = next((o for o in reversed(groups) if o["text"] == d["text"] and o["side"] == d["side"] and d["s"] - o["s1"] <= OPTS["merge_s"]), None)
+                    if g is None:
+                        g = dict(text=d["text"], side=d["side"], kind=d.get("kind", ""), s0=d["s"], s1=d["s"], n=0, conf=-1, f="")
+                        groups.append(g)
+                    g["n"] += 1
+                    g["s1"] = d["s"]
+                    if d["c"] > g["conf"]:
+                        g.update(conf=round(d["c"]), f=d.get("f", ""))
+                if groups:
+                    out[st] = groups
+        return out
+
     # -------------------------------------------------------------------------------------------------------- job
     def status(self):
         s = dict(self.st)
