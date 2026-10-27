@@ -9,8 +9,13 @@ One file per minute-clip rather than 60 loose files: the same images, individual
 make(): decodes a clip once with ffmpeg (one frame a second, scaled) and writes the zip, nothing else. The same clip stamp on two drives
 (a copy) is made once, from the first drive in ORDER (Archive, JOWUA, Tesla USB). A clip that already has its zip is skipped, so the
 stills are never taken twice and stay when the video is deleted.
+
+A stamp can have more than one video file (the same minute inside two Sentry events: one a few hundred KB cut short, one whole): every one is tried until a picture
+comes out. A file that gives none is written down in <data>/teslacam_stills/unreadable.json ({"<role>|<path inside TeslaCam>": size}) and is not tried again, and a clip
+whose every file is written down is counted as unreadable, not as waiting for stills.
 """
 import datetime
+import json
 import os
 import shutil
 import signal
@@ -67,6 +72,26 @@ class Stills:
 
     def has(self, stamp):
         return os.path.isfile(self.path(stamp))
+
+    def _bad_path(self):
+        return os.path.join(self.root, "unreadable.json")
+
+    def unreadable(self):
+        """{"<role>|<path inside TeslaCam>": size in bytes} of the video files that gave no picture."""
+        try:
+            with open(self._bad_path(), encoding="utf-8") as f:
+                j = json.load(f)
+                return j if isinstance(j, dict) else {}
+        except (OSError, ValueError):
+            return {}
+
+    def mark_unreadable(self, key, size):
+        bad = self.unreadable()
+        bad[key] = size
+        os.makedirs(self.root, exist_ok=True)
+        with open(self._bad_path() + ".tmp", "w", encoding="utf-8") as f:
+            json.dump(bad, f, separators=(",", ":"))
+        os.replace(self._bad_path() + ".tmp", self._bad_path())
 
     def count(self, stamp):
         try:
@@ -134,26 +159,32 @@ def plan(stills, roots, walked=None):
     only front clips are listed."""
     drives, todo, taken = [], [], set()
     have = stills.stamps()
+    bad = stills.unreadable()
     for role in sorted(roots, key=lambda r: ORDER.index(r) if r in ORDER else 9):
         files, ok = walked[role] if walked and role in walked else TF.walk(roots[role], stat=False)
-        best = {}
+        best, alts = {}, {}
         for f in files:
             if f["cam"] != "front":
                 continue
+            alts.setdefault(f["stamp"], []).append(f)
             cur = best.get(f["stamp"])
             if cur is None or TF.ORDER[f["src"]] < TF.ORDER[cur["src"]]:
                 best[f["stamp"]] = f
-        d = dict(role=role, clips=len(best), done=0, to_make=0, elsewhere=0, ok=ok,
+        d = dict(role=role, clips=len(best), done=0, to_make=0, elsewhere=0, unreadable=0, ok=ok,
                  first=min(best)[:10] if best else None, last=max(best)[:10] if best else None)
         for st, f in best.items():
+            paths = [TF.front_path(roots[role], x) for x in sorted(alts[st], key=lambda x: TF.ORDER[x["src"]])]
+            keys = [role + "|" + os.path.relpath(p, roots[role]) for p in paths]
             if st in have:
                 d["done"] += 1
             elif st in taken:
                 d["elsewhere"] += 1
+            elif all(k in bad for k in keys):
+                d["unreadable"] += 1                       # every file of this minute was tried and gave no picture
             else:
                 taken.add(st)
                 d["to_make"] += 1
-                todo.append(dict(stamp=st, role=role, path=TF.front_path(roots[role], f)))
+                todo.append(dict(stamp=st, role=role, root=roots[role], path=next(p for p, k in zip(paths, keys) if k not in bad), alts=[p for p, k in zip(paths, keys) if k not in bad][1:]))
         drives.append(d)
     todo.sort(key=lambda x: x["stamp"], reverse=True)
     return dict(drives=drives, todo=todo, kept=len(have))
@@ -173,6 +204,18 @@ def make_many(stills, todo, workers=3, stop=None, progress=None, limit=None, by=
             return 0
         try:
             n = stills.make(x["stamp"], x["path"])
+            tried = [x["path"]]
+            for alt in ([] if n else x.get("alts") or []):          # another file of the same minute (the same minute kept in two events)
+                n = stills.make(x["stamp"], alt)
+                tried.append(alt)
+                if n:
+                    break
+            if not n and x.get("role") and x.get("root"):            # nothing came out of any file: not tried again
+                for pth in tried:
+                    try:
+                        stills.mark_unreadable(x["role"] + "|" + os.path.relpath(pth, x["root"]), os.path.getsize(pth))
+                    except OSError:
+                        pass
         except DriveStalled as e:
             stalled.append(e)
             return 0
