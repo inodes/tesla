@@ -865,19 +865,32 @@ function stillViewer(host,o){
     box.innerHTML=`<div class="stbar"><button class="btn" id="stp0">◀ Back</button><button class="btn" id="stpl">▶ Play</button><button class="btn" id="stn0">Next ▶</button><input type="range" id="stsk" min="0" max="0" value="0">
       <span id="sttm"></span><select id="stst">${[[1,"every second"],[5,"every 5 seconds"],[10,"every 10 seconds"],[60,"every minute"]].map(([v,l])=>`<option value="${v}" ${v===step?"selected":""}>${l}</option>`).join("")}</select>
       ${o.trig?'<button class="btn" id="stdt">↧ Detection</button>':""}<span class="sub" id="stct"></span></div>
-      <div class="stfr"><img class="stimg" alt=""></div>`;
+      <div class="stfr"><img class="stimg" alt=""><span class="rvb" id="stbg"></span><span class="stcam" id="stcm" hidden></span></div><div class="sgs" id="stsg" style="margin-top:8px"></div>`;
     const img=$(".stimg",box),fr=$(".stfr",box),ahead=new Map();let want="",ratio=false;
     const pre=u=>{if(ahead.has(u))return ahead.get(u);const im=new Image();im.decoding="async";im.src=u;ahead.set(u,im);if(ahead.size>14)ahead.delete(ahead.keys().next().value);return im};
     const swap=(u,alt)=>{want=u;const im=pre(u),go=()=>{if(want!==u)return;if(!ratio&&im.naturalWidth){fr.style.aspectRatio=im.naturalWidth+" / "+im.naturalHeight;ratio=true}img.src=u;img.alt=alt};
       if(im.complete)go();else{im.onload=go;im.onerror=go}}      // the old picture stays on screen until the new one has arrived
+    // the pictures around an event (higher resolution, the camera that saw it) where they were kept, the ordinary front stills elsewhere; the signs read in each minute
+    let hi=null,SG={};const CAML={front:"Front",back:"Back",left_repeater:"Left repeater",right_repeater:"Right repeater",left_pillar:"Left pillar",right_pillar:"Right pillar"};
+    const isHi=(m,t)=>!!(hi&&hi.secs&&hi.secs[m]&&hi.secs[m].includes(t)),srcOf=(m,t)=>isHi(m,t)?`/evstill/${o.ev.kind}/${encodeURIComponent(o.ev.id)}/${m}/${t}.jpg`:stillSrc(m,t);
+    const signsAt=(m,t)=>(SG[m]||[]).filter(g=>t>=g.s0-1&&t<=g.s1+1);
+    const badge=g=>`<i class="bsp" title="${esc("Speed limit "+g.text+(g.conf>0?", "+g.conf+"% sure":"")+" · seen "+g.n+" time(s)")}">${esc(g.text)}</i>`;
     function paint(){const k=pos(),[i,t]=frames[k],m=minutes[i],sk=$("#stsk",box);
       sk.max=frames.length-1;sk.value=k;$("#sttm",box).textContent=shownAt(m,t);$("#stct",box).textContent=`${n0(k+1)} of ${n0(frames.length)} · arrow keys also step`;$("#stst",box).value=step;
-      swap(stillSrc(m,t),"Front camera at "+shownAt(m,t));
-      [1,2,3,-1].forEach(d=>{const f=frames[k+d];if(f)pre(stillSrc(minutes[f[0]],f[1]))})}
+      const h=isHi(m,t),cam=CAML[(hi&&hi.cam)||"front"]||"Front";
+      swap(srcOf(m,t),(h?cam:"Front")+" camera at "+shownAt(m,t));
+      const cm=$("#stcm",box);cm.hidden=!h;if(h)cm.textContent=cam+" camera"+(hi.tier==="high"?" · full detail":"");
+      $("#stbg",box).innerHTML=signsAt(m,t).map(badge).join("");
+      [1,2,3,-1].forEach(d=>{const f=frames[k+d];if(f)pre(srcOf(minutes[f[0]],f[1]))})}
+    const signList=()=>{const el=$("#stsg",box);if(!el)return;const L=[];minutes.forEach((m,i)=>(SG[m]||[]).forEach(g=>L.push([i,g])));
+      el.innerHTML=L.length?`<span class="sub">Signs read in these pictures:</span> `+L.slice(0,60).map(([i,g],j)=>`<button class="sgn" data-sg="${j}" title="${esc("Go to "+shownAt(minutes[i],Math.floor(g.s0)))}">${g.f?`<img src="/review/${encodeURIComponent(g.f)}" alt="">`:""}<b>${esc(g.text)}</b> <span class="sub">${shownAt(minutes[i],Math.floor(g.s0))}</span></button>`).join("")+(L.length>60?`<span class="sub">+${n0(L.length-60)} more</span>`:""):"";
+      $$("[data-sg]",el).forEach(b=>b.onclick=()=>{const [i,g]=L[+b.dataset.sg],t=Math.floor(g.s0);stop();mi=i;sec=t;paint()})};
+    if(o.ev)fetch("/api/evstills?kind="+o.ev.kind+"&id="+encodeURIComponent(o.ev.id)).then(r=>r.json()).then(j=>{if(j&&j.secs&&document.body.contains(box)){hi=j;paint()}}).catch(()=>{});
+    Promise.all(Array.from({length:Math.ceil(minutes.length/80)},(_,c)=>fetch("/api/signs?stamps="+minutes.slice(c*80,c*80+80).join(",")).then(r=>r.json()).catch(()=>({})))).then(parts=>{if(!document.body.contains(box))return;SG=Object.assign({},...parts);signList();paint()});
     // Play steps on by itself at the pace of the pictures (one a second at "every second", faster for a longer step), waiting for each picture to arrive; any step, drag or key stops it
     let tm=0;const playing=()=>!!tm,stop=()=>{if(tm){clearTimeout(tm);tm=0}const b=$("#stpl",box);if(b)b.textContent="▶ Play"};
     const tick=()=>{if(!tm)return;if(!document.body.contains(box)){tm=0;return}const k=pos();if(k>=frames.length-1){stop();return}
-      const f=frames[k+1],im=pre(stillSrc(minutes[f[0]],f[1])),t0=Date.now(),go=()=>{if(!tm)return;at(k+1);tm=setTimeout(tick,Math.max(0,PACE()-(Date.now()-t0)))};
+      const f=frames[k+1],im=pre(srcOf(minutes[f[0]],f[1])),t0=Date.now(),go=()=>{if(!tm)return;at(k+1);tm=setTimeout(tick,Math.max(0,PACE()-(Date.now()-t0)))};
       if(im.complete)go();else{im.onload=im.onerror=go}};
     const PACE=()=>Math.max(120,Math.min(1000,1000/Math.max(1,step/2)));
     $("#stpl",box).onclick=()=>{if(playing()){stop();return}if(pos()>=frames.length-1)at(0);$("#stpl",box).textContent="❚❚ Pause";tm=setTimeout(tick,PACE())};
@@ -924,7 +937,7 @@ function clipPlayer(host,o){
   const toTrig=()=>{si=stamps.reduce((a,s,i)=>stMs(s)<=o.trig?i:a,0);seek=Math.max(0,(o.trig-stMs(stamps[si]))/1000);if($("#stp"))$("#stp").value=si;vids()};
   const shell=()=>{host.innerHTML=`<div class="sp"><div class="bar"><button class="chip ${view==="all"?"on":""}" data-c="all">All six</button>${Object.keys(CAMN).map(c=>`<button class="chip ${view===c?"on":""}" data-c="${c}">${CAMN[c]}</button>`).join("")}</div>
     <div class="sub" style="margin:4px 0 8px">${o.head}</div>
-    <div class="vbar"><button class="btn" id="vpl">❚❚ Pause</button>${o.trig?'<button class="btn" id="vtr" title="Go back to the moment it was detected">↧ Detection</button>':""}<input type="range" id="vsk" min="0" max="60" step="0.1" value="0"><span id="vtm">0:00</span>
+    <div class="vbar"><button class="btn" id="vpl">❚❚ Pause</button>${o.trig?'<button class="btn" id="vtr" title="Go back to the moment it was detected">↧ Detection</button>':""}<input type="range" id="vsk" min="0" max="60" step="0.1" value="0"><span id="vtm">0:00</span><span class="vsg" id="vsg"></span>
      <select id="vsp">${["0.5","1","2","4"].map(r=>`<option value="${r}" ${r===rate?"selected":""}>${r}×</option>`).join("")}</select>
      ${stamps.length>1?`<select id="stp">${stamps.map((s,i)=>`<option value="${i}" ${i===si?"selected":""}>${clock(s)}${o.trig&&stMs(s)<=o.trig&&o.trig<stMs(s)+60000?"  ◀ happened":""}</option>`).join("")}</select>`:""}</div>
     <div id="vids"></div></div>`;
@@ -933,6 +946,10 @@ function clipPlayer(host,o){
     if($("#stp"))$("#stp").onchange=e=>{si=+e.target.value;seek=0;vids()};
     if($("#vtr"))$("#vtr").onclick=toTrig;
     vids()};
+  // the signs read in these minutes (speed limits): shown beside the time while the video is at them
+  let SGV={};const vsigns=()=>{const el=$("#vsg");if(!el||!mv)return;const t=mv.currentTime,L=(SGV[stamps[si]]||[]).filter(g=>t>=g.s0-1.5&&t<=g.s1+1.5);
+    const h=L.map(g=>`<i class="bsp" title="${esc("Speed limit "+g.text+(g.conf>0?", "+g.conf+"% sure":""))}">${esc(g.text)}</i>`).join("");if(el.innerHTML!==h)el.innerHTML=h};
+  Promise.all(Array.from({length:Math.ceil(stamps.length/80)},(_,c)=>fetch("/api/signs?stamps="+stamps.slice(c*80,c*80+80).join(",")).then(r=>r.json()).catch(()=>({})))).then(parts=>{if(document.contains(host)){SGV=Object.assign({},...parts);vsigns()}});
   // The next minute is loaded in the background (last 25 s of this one) and swapped in when this one ends, so there is no wait between minutes.
   let nx=null,offp=false;
   // A video element keeps its decoder and its buffered minute until its source is removed, and a browser only has a few decoders: six per minute, never released, and after
@@ -948,7 +965,7 @@ function clipPlayer(host,o){
     // the button always shows what pressing it does: Pause while playing, Play while paused (a clip that ended into the next minute counts as playing)
     const lab=()=>{pl.textContent=(mv.paused||mv.ended)&&!(mv.ended&&si<stamps.length-1)?"▶ Play":"❚❚ Pause"};
     ["play","playing","pause","ended","emptied"].forEach(n=>mv.addEventListener(n,lab));lab();
-    mv.ontimeupdate=()=>{if(!document.contains(host)){dropAll();return}sk.value=mv.currentTime;if(o.onTime)o.onTime(stMs(stamps[si])+mv.currentTime*1000);if(o.onAt)o.onAt(stamps[si],mv.currentTime);tm.textContent=fmt(mv.currentTime)+" · "+shownAt(stamps[si],mv.currentTime);
+    mv.ontimeupdate=()=>{if(!document.contains(host)){dropAll();return}vsigns();sk.value=mv.currentTime;if(o.onTime)o.onTime(stMs(stamps[si])+mv.currentTime*1000);if(o.onAt)o.onAt(stamps[si],mv.currentTime);tm.textContent=fmt(mv.currentTime)+" · "+shownAt(stamps[si],mv.currentTime);
       // keep the cameras together without seeking (a seek stalls that camera): a small drift is nudged out by speeding it up or slowing it down a little, only a large one is jumped
       vs.forEach(x=>{if(x===mv)return;const dr=x.currentTime-mv.currentTime;
         if(Math.abs(dr)>1.2){try{x.currentTime=mv.currentTime}catch(e){}x.playbackRate=+rate}
@@ -1940,7 +1957,7 @@ async function pageTeslaCam(role,id){
       if(ty!=="recent"){
         if(it.play)return ty==="saved"&&it.t?savedDrive($("#spl"),it,places):sentryPlayer($("#spl"),it,it.play,TCF[ty]);
         const what=it.reason?reason(it.reason):ty==="saved"?"Saved clip":"Sentry event";
-        return stillViewer($("#spl"),{stamps:Object.keys(it.clips).sort(),roles:it.roles,loc:it.loc,trig:Date.parse(it.cts||it.ts),head:`${esc(what)} on ${dayName(it.ts.slice(0,10))} at ${hms(it.ts)}${it.city?" · "+esc(it.city):""}`})}
+        return stillViewer($("#spl"),{stamps:Object.keys(it.clips).sort(),roles:it.roles,loc:it.loc,trig:Date.parse(it.cts||it.ts),ev:{kind:ty,id:it.id},head:`${esc(what)} on ${dayName(it.ts.slice(0,10))} at ${hms(it.ts)}${it.city?" · "+esc(it.city):""}`})}
       if(it.playable&&it.t0!=null)return recentDrive($("#spl"),it,places);      // video with its map and telemetry beside it
       recentClips($("#spl"),it,sel)})};
   $("#q").oninput=e=>{TCS.q=e.target.value;draw()};chips();load();poll();
@@ -1998,7 +2015,7 @@ async function pageTeslaCamSentry(role,ev){
       const all=await tcGet("clips"),k=(all.sentry||[]).find(v=>v.id===ev)||(all.saved||[]).find(v=>v.id===ev);
       if(!k){host.innerHTML=errBox("This event is not in the footage log.","Sentry event not found");return}
       host.innerHTML=`<h1><i class="hal big"></i> ${k.reason?esc(reason(k.reason)):"Event"} · ${dayName(k.ts.slice(0,10))} · ${hms(k.ts).slice(0,5)}</h1><div class="sub">${esc([k.city,k.street].filter(Boolean).join(" · "))}</div><div class="card" style="margin-top:12px" id="dvid"></div>`;
-      return stillViewer($("#dvid"),{stamps:Object.keys(k.clips).sort(),roles:k.roles,loc:k.loc,trig:Date.parse(k.cts||k.ts),head:""})}
+      return stillViewer($("#dvid"),{stamps:Object.keys(k.clips).sort(),roles:k.roles,loc:k.loc,trig:Date.parse(k.cts||k.ts),ev:{kind:(all.sentry||[]).includes(k)?"sentry":"saved",id:k.id},head:""})}
     // the car was moving (a Sentry clip that started while driving, or one kept by the horn): the same view as a Saved clip, with map, telemetry and the video together
     if(e.t>0){let d=null;try{d=await sentryWindow(role,e,15)}catch(_){}
       if(d&&d.item&&d.item.kind==="drive"){const what=e.reason?reason(e.reason):"Sentry event";
