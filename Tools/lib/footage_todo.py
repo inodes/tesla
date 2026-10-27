@@ -44,6 +44,8 @@ class Todo:
         self._lock = threading.Lock()
         self._thread = None
         self._mem = self._load()
+        self._lcache = os.path.join(os.path.dirname(cache_file), "folder_listings.json")
+        TF.load_cache(self._lcache)         # the folders listed in an earlier run: a folder not changed since is not listed again
         self._walked = {}               # role -> (drive_key, files, ok, log_new, log_gone, days_new), kept while the drive's folders and scan time are unchanged
         self.error = ""
         self._err_at = 0.0
@@ -140,6 +142,7 @@ class Todo:
                     else:
                         self._prog = dict(done=step_i, total=total, step="list", role=r, pct=round(100 * (step_i + 0.2) / total))
                         files, ok = TF.walk(p, stat=False)
+                        TF.save_cache(self._lcache)
                         self._prog = dict(done=step_i, total=total, step="list", role=r, pct=round(100 * (step_i + 0.65) / total))
                         step_i += 1
                         if led is None:
