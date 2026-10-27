@@ -18,6 +18,7 @@ import teslacam_timeline as TL
 import teslacam_scan as TS
 import app_review
 import teslacam_ledger as TLG
+import teslacam_files as TF
 
 KINDS = {"sentry": "SentryClips", "saved": "SavedClips"}
 _REC = re.compile(r"^(\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2})-(%s)\.mp4$" % "|".join(app_sentry.CAMS))
@@ -79,13 +80,13 @@ class TeslaCam:
             c["chk"] = time.time()
             return c
         clips = {}
-        try:
-            for fn in os.listdir(root):
-                m = _REC.match(fn)
-                if m:
-                    clips.setdefault(m.group(1), []).append(m.group(2))
-        except OSError:
+        names = TF.clip_names(root)                     # from the listing the footage check just made, while the folder is unchanged
+        if names is None:
             return None
+        for fn in names:
+            m = _REC.match(fn)
+            if m:
+                clips.setdefault(m.group(1), []).append(m.group(2))
         runs, cur = [], None
         for st in sorted(clips):
             t = _secs(st)
