@@ -25,11 +25,23 @@ class FetchLedger:
     def __init__(self, data_dir):
         self.path = os.path.join(data_dir, "fetch_ledger.json")
 
-    def _load(self):
+    _MEM = {}                  # path -> (mtime_ns, size, data): the file is read again only when it has changed (a page asks about hundreds of records)
+
+    def _load(self, fresh=False):
+        """-> the whole ledger. Shared with other readers (do not change it), unless fresh=True: then it is read from the file and is the caller's own."""
         try:
+            st = os.stat(self.path)
+            sig = (st.st_mtime_ns, st.st_size)
+            if not fresh:
+                hit = FetchLedger._MEM.get(self.path)
+                if hit and hit[0] == sig:
+                    return hit[1]
             with open(self.path, encoding="utf-8") as f:
                 j = json.load(f)
-                return j if isinstance(j, dict) else {}
+            j = j if isinstance(j, dict) else {}
+            if not fresh:
+                FetchLedger._MEM[self.path] = (sig, j)
+            return j
         except (OSError, ValueError):
             return {}
 
@@ -41,7 +53,7 @@ class FetchLedger:
 
     def record(self, kind, key, status, note="", source="Tessie"):
         with _LOCK:
-            j = self._load()
+            j = self._load(fresh=True)
             j.setdefault(kind, {})[key] = dict(at=int(time.time()), status=status, source=source, note=note)
             tmp = self.path + ".tmp"
             try:

@@ -187,7 +187,7 @@ tr.chline{cursor:pointer}tr.chline td{color:var(--bad);font-weight:600;font-size
 .evc .mis{color:var(--warn,#b45309);font-weight:600}
 .stbanner{border:1px solid var(--warn,#b45309);background:var(--hover);border-radius:8px;padding:8px 12px;margin:0 0 8px}
 .stbar{display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin:0 0 8px}.stbar input[type=range]{flex:1;min-width:160px}
-.stimg{display:block;width:100%;max-height:calc(100vh - 220px);object-fit:contain;background:#000;border-radius:8px}
+.stfr{position:relative;width:100%;aspect-ratio:4 / 3;max-height:calc(100vh - 220px);background:#000;border-radius:8px;overflow:hidden}.stimg{position:absolute;inset:0;width:100%;height:100%;object-fit:contain}
 
 .dhd{font-weight:700;color:var(--ink);padding:14px 0 2px}.dhd small{font-weight:400;color:var(--mut);margin-left:8px}.rhd .chip{margin-left:auto;width:auto;padding:0 10px}
 
