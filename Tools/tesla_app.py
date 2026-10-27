@@ -570,7 +570,10 @@ class H(BaseHTTPRequestHandler):
             raw, stale = KEPT.get(name, lambda: KEPT_LISTS[name](), q.get("fresh", [""])[0] == "1")
             return self.send_bytes(raw, "application/json; charset=utf-8", 200, {"X-Stale": "1"} if stale else None)
         if name == "status":
-            known = sorted({d["role"] for d in DR.REG.drives() if d["role"] in "AJU"} | {"A"})        # the registered drives stay in the list while they are away
+            try:
+                known = sorted({d["role"] for d in DR.REG.drives() if d["role"] in "AJU"} | {"A"})      # the registered drives stay in the list while they are away
+            except Exception:
+                known = ["A"]
             return self.send_json(dict(roots={r: bool(footage_root(r)) for r in "AJU"}, known=known, data_dir=DATA_DIR, stale=code_updated(), ui=ui_stamp()))
         if name.startswith("software"):         # software[/version|/first|/compare|/sync]: the Teslascope versions held (lib/app_software.py)
             return self.send_json(self.software(name, q))
