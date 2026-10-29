@@ -11,6 +11,8 @@ const money=v=>v==null||isNaN(v)?"–":"$"+(+v).toFixed(2);
 const rate=v=>{if(v==null||isNaN(v))return"–";let s=(+v).toFixed(4);if(s.endsWith("00"))s=s.slice(0,-2);else if(s.endsWith("0"))s=s.slice(0,-1);return"$"+s};          // a price per kWh keeps its cents: $0.1752, not $0.18
 const cache={};
 const main=$("#main");
+// icon-only buttons are named by their title for screen readers
+{let lt=0;const nm=()=>$$("button[title]:not([aria-label])",main).forEach(b=>b.setAttribute("aria-label",b.title));new MutationObserver(()=>{clearTimeout(lt);lt=setTimeout(nm,60)}).observe(main,{childList:true,subtree:true})}
 // ---------- remembered pages: a list seen before is drawn at once from the browser's own copy and refreshed behind it; the page is redrawn only if the fresh data differs
 const IDB=(()=>{let db;const open=()=>db||(db=new Promise(res=>{try{const r=indexedDB.open("tesla-ui",1);r.onupgradeneeded=()=>r.result.createObjectStore("kv");r.onsuccess=()=>res(r.result);r.onerror=r.onblocked=()=>res(null)}catch(e){res(null)}}));
   const tx=async(mode,f)=>{const d=await open();if(!d)return undefined;return new Promise(res=>{try{const t=d.transaction("kv",mode),rq=f(t.objectStore("kv"));t.oncomplete=()=>res(rq&&rq.result);t.onerror=t.onabort=()=>res(undefined)}catch(e){res(undefined)}})};
@@ -45,7 +47,15 @@ document.addEventListener("click",e=>{const b=e.target.closest("[data-copy]");if
 let SET={};const EFWH=()=>cfg("units.efficiency")==="whkm",EF=wh=>wh==null||isNaN(wh)?"–":EFWH()?n0(wh):n0(wh/10,1),EFU=()=>EFWH()?"Wh/km":"kWh/100 km";    // energy use: kWh/100 km by default, Wh/km when app.units.efficiency says so
 const cfg=k=>k.split(".").reduce((o,x)=>o&&o[x],SET),REPM=()=>Math.round(cfg("drives.repark_max_km")*1000)+" m",MAPSTYLE=dark=>cfg("map.tiles_base")+cfg(dark?"map.style_dark":"map.style_light");
 // a page that is still loading shows blocks of its usual size (a title, a row of tiles, the body) until the content replaces them
-const loading=()=>{if(!QUIET)main.innerHTML='<div class="ph" style="--ph:28px;width:180px;margin:0 0 14px"></div><div class="ph" style="--ph:64px;margin-bottom:12px"></div><div class="ph" style="--ph:320px"></div>'};
+const skb=(h,w,x)=>`<div class="ph" style="--ph:${h}px${w?";width:"+w:""}${x||""}"></div>`,skTiles=n=>`<div class="tiles">${'<div class="ph" style="--ph:62px;border-radius:12px"></div>'.repeat(n)}</div>`;
+// each kind is sized like the page that replaces it: "table" (title, filter bar, tiles, rows), "detail" (title, tiles, map and graph), "cards" (title, panel, filter bar, grid of cards); anything else gets a title, a row and a body
+const SKEL={
+  table:()=>skb(27,"150px","")+skb(34,"",";margin-top:14px;max-width:560px")+skTiles(6)+skb(34,"")+'<div>'+'<div class="ph skr"></div>'.repeat(14)+'</div>',
+  detail:()=>skb(16,"120px")+skb(27,"280px")+skTiles(6)+'<div class="two"><div class="ph" style="--ph:340px"></div><div class="ph" style="--ph:340px"></div></div>'+skb(220,"",";margin-top:12px"),
+  cards:()=>skb(27,"150px")+skb(120,"")+skb(34,"",";max-width:560px")+'<div class="evs">'+'<div class="ph" style="--ph:236px;border-radius:10px"></div>'.repeat(12)+'</div>',
+  page:()=>skb(28,"180px",";margin:0 0 14px")+skb(64,"")+skb(320,"")
+};
+const loading=kind=>{if(!QUIET)main.innerHTML='<div class="sk" role="status" aria-label="Loading">'+(SKEL[kind]||SKEL.page)()+'</div>'};
 const QK="clipQueue",qget=()=>{try{return JSON.parse(localStorage.getItem(QK)||"[]")}catch(e){return[]}};
 
 // ---------- tooltip + map helpers
@@ -222,7 +232,7 @@ function rangeBar(host,key,st,days,onChange){
 // ---------- Drives
 let DP={r:{p:"all"},q:"",ch:"all",ex:"all",rp:"drive",mk:0,ma:0};
 async function pageDrives(){
-  loading();const [act,rvd]=await Promise.all([api("activity"),api("drivereview/all").catch(()=>({}))]),all=act.filter(x=>x.k==="drive"),chg=act.filter(x=>x.k==="charge");
+  loading("table");const [act,rvd]=await Promise.all([api("activity"),api("drivereview/all").catch(()=>({}))]),all=act.filter(x=>x.k==="drive"),chg=act.filter(x=>x.k==="charge");
   // how much of each drive has been reviewed (Review tab): the share of its events' stills that were looked at for signs
   all.forEach(d=>{d.rvd=rvd[d.id]==null?null:rvd[d.id]});
   // a charge has one drive that ends at it (the last one before it) and one that leaves it (the first after it); the server decides which
@@ -559,7 +569,7 @@ function bookPoll(prefix,again,fromBuilding,cur){
   setTimeout(tick,3000);
 }
 async function pageCharges(){
-  loading();const B0=await bookWithRaw();if(!B0.book){bookWait(B0,"Charges",pageCharges);return}
+  loading("table");const B0=await bookWithRaw();if(!B0.book){bookWait(B0,"Charges",pageCharges);return}
   const B=B0.book,P=B.plugs;
   const COLS=[["t0","Date",1],["where","Where",1],["kind","Type"],["min","Time"],["b0","Battery"],["peak","Peak kW"],["kmh","km/h"],["disp","Dispenser kWh"],["kwh","Battery kWh"],["eff","Eff %"],["rate","$/kWh"],["cost","Cost"],["invn","Invoice"],["sync","Tessie"]];
   const invn=p=>p.invoice&&p.invoice.number||(p.invoice_only?"":null);
@@ -574,7 +584,7 @@ async function pageCharges(){
     rs.sort((a,b)=>{const x=val(a,CP.sk),y=val(b,CP.sk);if(x==null||y==null)return (x==null)-(y==null);return CP.dir*cmpv(x,y)});
     const row=p=>{const multi=p.parts.length>1,op=CP.open[p.id];
       let h=`<tr class="chr" data-id="${p.id}"><td class="l">${p.day} ${p.hm}${multi?` <span class="pill ptg" data-tg="${p.id}" title="${op?"Hide":"Show"} the ${p.parts.length} Tessie records">${op?"▾":"▸"} ${p.parts.length} parts</span>`:""}</td><td class="l">${whereLink({pkey:p.pkey,place:p.where,addr:p.addr})}</td><td>${kindPill(p.kind)}</td><td>${dur(p.min)}</td><td>${n0(p.b0)}→${n0(p.b1)}%</td><td>${p.peak==null?"–":n0(p.peak)}</td><td>${p.kmh==null?"–":n0(p.kmh)}</td><td>${p.disp==null?"–":n0(p.disp,1)}</td><td>${n0(p.kwh,1)}</td><td>${p.eff==null?"–":n0(p.eff)+"%"}</td><td>${p.rate==null?"–":rate(p.rate)}</td><td>${money(p.cost)}</td><td>${p.invoice?esc(p.invoice.number||"yes"):p.home?'<span class="sub">–</span>':'<span class="pill warn" title="No invoice matched this charge">none</span>'}</td><td>${syncPill(p.sync)}</td></tr>`;
-      if(multi&&op)h+=p.parts.map(x=>`<tr class="chs" data-id="${x.id}"><td class="l" style="padding-left:30px">↳ ${x.day} ${x.hm}</td><td class="l sub">part of the charge above</td><td></td><td>${dur(x.min)}</td><td>${n0(x.b0)}→${n0(x.b1)}%</td><td>${x.peak==null?"–":n0(x.peak)}</td><td>${x.kmh==null?"–":n0(x.kmh)}</td><td>${x.disp==null?"–":n0(x.disp,1)}</td><td>${n0(x.kwh,1)}</td><td></td><td>${x.irate==null&&x.trate==null?"–":rate(x.irate!=null?x.irate:x.trate)}</td><td>${money(x.icost!=null?x.icost:x.tcost)}</td><td class="sub">${p.invoice?"same invoice":""}</td><td>${syncPill(x.sync)}</td></tr>`).join("");
+      if(multi&&op)h+=p.parts.map(x=>`<tr class="chs" data-id="${x.id}"><td class="l" style="padding-left:30px">↳ ${x.day} ${x.hm}</td><td class="l sub">part of the charge above</td><td></td><td>${dur(x.min)}</td><td>${n0(x.b0)}→${n0(x.b1)}%</td><td>${x.peak==null?"–":n0(x.peak)}</td><td>${x.kmh==null?"–":n0(x.kmh)}</td><td>${x.disp==null?"–":n0(x.disp,1)}</td><td>${n0(x.kwh,1)}</td><td></td><td>${x.irate==null&&x.trate==null?"–":rate(x.irate!=null?x.irate:x.trate)}</td><td>${money(x.icost!=null?x.icost:x.ocost!=null?x.ocost:x.tcost)}</td><td class="sub">${p.invoice?"same invoice":""}</td><td>${syncPill(x.sync)}</td></tr>`).join("");
       return h};
     $("#tb").innerHTML=`<table><thead><tr>${COLS.map(c=>`<th class="${c[2]?"l":""}" data-k="${c[0]}">${c[1]}${CP.sk===c[0]?(CP.dir<0?" ▾":" ▴"):""}</th>`).join("")}</tr></thead><tbody>${rs.map(row).join("")}</tbody></table>${rs.length?"":'<div class="empty">No charges here.</div>'}`;
     $$("#tb th").forEach(th=>th.onclick=()=>{const k=th.dataset.k;if(CP.sk===k)CP.dir=-CP.dir;else{CP.sk=k;CP.dir=k==="t0"||typeof P[0][k]==="number"?-1:1}draw()});
@@ -660,7 +670,7 @@ function winBlock(w,lo=20,hi=80){
 }
 function chartSub(p,part,cur){
   const xs=(part?[part]:p.parts).filter(x=>x.tel),n=xs.reduce((a,x)=>a+(+x.tel.samples||0),0),mn=xs.reduce((a,x)=>a+(x.tel.min||0),0),pk=Math.max(0,...xs.map(x=>x.tel.peak||0)),av=xs.length&&mn?xs.reduce((a,x)=>a+(x.tel.avg||0)*(x.tel.min||0),0)/mn:null;
-  const cost=part?(part.icost!=null?part.icost:part.tcost):p.cost,rate=part?(part.irate!=null?part.irate:part.trate):p.rate,kw=part?(part.disp||part.kwh):(p.disp||p.kwh);
+  const cost=part?(part.icost!=null?part.icost:part.ocost!=null?part.ocost:part.tcost):p.cost,rate=part?(part.irate!=null?part.irate:part.ocost!=null?part.orate:part.trate):p.rate,kw=part?(part.disp||part.kwh):(p.disp||p.kwh);
   const rec=n?`<div class="cs-r">${n} samples over ${n0(mn,1)} min · peak <b>${n0(pk,1)} kW</b>${av?" · average <b>"+n0(av,1)+" kW</b>":""}</div>`:"";
   const win=cur?(cur.winfo?winBlock(cur.winfo):cur.window?`<div class="cs-r">${esc(cur.window)}</div>`:""):"";
   const paid=kw&&cost!=null?`<div class="cs-r"><b>${n0(kw,2)} kWh</b> for <b>$${n0(cost,2)}</b> AUD${rate?" · $"+n0(rate,2)+"/kWh":""}</div>`:"";
@@ -719,12 +729,12 @@ function solarCard(D,p,part){
    <div class="sub" style="margin-top:4px">${dot(GRD,"Charger power from the grid")}${dot(SOL,"Charger power from solar")}${dot(SPARE,"Solar left after the house")}</div>
    <div class="cs" style="margin-top:6px">${lines.map(x=>`<div class="cs-r">${x}</div>`).join("")}</div></div>`}
 async function pageCharge(id,pid){
-  loading();const [B0,D]=await Promise.all([bookWithRaw(),fetch("/api/chargebook/"+encodeURIComponent(id)+(pid?"?part="+encodeURIComponent(pid):"")).then(r=>r.ok?r.json():null).catch(()=>null)]);
+  loading("detail");const [B0,D]=await Promise.all([bookWithRaw(),fetch("/api/chargebook/"+encodeURIComponent(id)+(pid?"?part="+encodeURIComponent(pid):"")).then(r=>r.ok?r.json():null).catch(()=>null)]);
   if(!B0.book){bookWait(B0,"Charge",()=>pageCharge(id,pid));return}
   if(!D||!D.plug){return pageChargeBasic(id)}
   const p=D.plug,part=D.part&&p.parts.find(x=>x.id===D.part),v=part||p,multi=p.parts.length>1,raw=B0.book.plugs.find(z=>z.id===p.id)||p;
   const where=raw.where||p.place,end=addMin(v.hm,part?part.min:p.span),inv=p.invoice,cur=D.curves&&!D.curves.error?D.curves:null;
-  const eff=v.disp&&v.kwh?100*v.kwh/v.disp:null,costv=part?(part.icost!=null?part.icost:part.tcost):p.cost,ratev=part?(part.irate!=null?part.irate:part.trate):p.rate,minv=part?part.min:p.min;
+  const eff=v.disp&&v.kwh?100*v.kwh/v.disp:null,costv=part?(part.icost!=null?part.icost:part.ocost!=null?part.ocost:part.tcost):p.cost,ratev=part?(part.irate!=null?part.irate:part.ocost!=null?part.orate:part.trate):p.rate,minv=part?part.min:p.min;
   const links=multi?p.parts.map((x,i)=>`<a class="chip ${part&&part.id===x.id?"on":""}" href="#/charge/${p.id}/${x.id}" style="text-decoration:none">Part ${i+1} · ${x.hm}</a>`).join(" "):"";
   const amps=D.segments[0]&&D.segments[0].amps_src==="pack";
   main.innerHTML=(part?crumbs("#/charge/"+p.id,"the whole charge ("+p.parts.length+" parts)"):crumbs("#/charges","Charges"))+chargeNavHtml(chargeSet(id,p.id))+`<h1>${whereLink({pkey:raw.pkey,place:where,addr:p.addr})}${part?` <span class="sub" style="font-size:15px">· part ${p.parts.indexOf(part)+1} of ${p.parts.length}</span>`:""}</h1>
@@ -739,7 +749,7 @@ async function pageCharge(id,pid){
      <div class="card"><h2 style="margin-top:0">Pack voltage and current, with history</h2><div id="pc"></div></div>
      <div class="card"><h2 style="margin-top:0">Where</h2><div class="map" id="mp"></div><div class="sub" style="margin-top:8px">${esc(p.addr||"")}</div></div>
    </div><div class="chr2">
-     <div class="tiles tiles2">${tile("+"+n0(v.kwh,1)+" kWh","into the battery")}${tile(n0(v.b0)+"% → "+n0(v.b1)+"%","battery")}${tile(money(costv),(ratev!=null?money(ratev)+"/kWh · ":"")+(inv&&!part?"invoice total":part&&v.icost!=null?"invoice share":"Tessie cost"))}${tile(v.disp!=null?n0(v.disp,1)+" kWh":"–","from the charger"+(inv&&!part?" (invoice)":""))}${tile(eff?n0(eff,1)+"%":"–","efficiency")}${tile(v.peak?n0(v.peak)+" kW":"–","peak"+(minv&&v.kwh?" · avg "+n0(v.kwh*60/minv)+" kW":""))}${tile(v.kmh?n0(v.kmh)+" km/h":"–","range recovered per hour")}${tile(syncPillText(part?part.sync:p.sync),"invoice cost in Tessie")}</div>
+     <div class="tiles tiles2">${tile("+"+n0(v.kwh,1)+" kWh","into the battery")}${tile(n0(v.b0)+"% → "+n0(v.b1)+"%","battery")}${tile(money(costv),(ratev!=null?money(ratev)+"/kWh · ":"")+(inv&&!part?"invoice total":part&&v.icost!=null?"invoice share":(part?part.ocost!=null:p.ocost!=null)?"opportunity cost":"Tessie cost"))}${tile(v.disp!=null?n0(v.disp,1)+" kWh":"–","from the charger"+(inv&&!part?" (invoice)":""))}${tile(eff?n0(eff,1)+"%":"–","efficiency")}${tile(v.peak?n0(v.peak)+" kW":"–","peak"+(minv&&v.kwh?" · avg "+n0(v.kwh*60/minv)+" kW":""))}${tile(v.kmh?n0(v.kmh)+" km/h":"–","range recovered per hour")}${tile(syncPillText(part?part.sync:p.sync),"invoice cost in Tessie")}</div>
      ${multi&&!part?`<div class="card"><h2 style="margin-top:0">The ${p.parts.length} Tessie records</h2>${partsTable(p)}</div>`:""}
      <div class="card"><h2 style="margin-top:0">Invoice and Tessie</h2>${invoiceCard(p,part)}</div>
      <div class="card"><h2 style="margin-top:0">Where the energy went</h2>${energyCard(p,part)}</div>
@@ -760,18 +770,19 @@ const syncPillText=s=>s==="synced"?"Yes":s==="pending"?"No":s==="partial"?"Partl
 async function alertsHere(p){const out=[];for(const id of [p.id,...p.parts.map(x=>x.id)]){(await alertsFor("charge",id)).forEach(e=>out.push(e))}return alertsCard([...new Map(out.map(e=>[e.id,e])).values()].sort((a,b)=>b.t0-a.t0),"charge")}
 function partsTable(p){
   const rows=p.parts.map((x,i)=>{const gap=i?`<tr><td colspan="7" class="sub" style="text-align:center">paused ${dur((x.t0-p.parts[i-1].t1)/60)} - the plug stayed in</td></tr>`:"";
-    return gap+`<tr class="chs" data-go="${x.id}" style="cursor:pointer"><td class="l">Part ${i+1} · ${x.hm}</td><td>${dur(x.min)}</td><td>${n0(x.b0)}→${n0(x.b1)}%</td><td>${x.peak==null?"–":n0(x.peak)}</td><td>${n0(x.kwh,2)}</td><td>${money(x.icost!=null?x.icost:x.tcost)}</td><td>${syncPill(x.sync)}</td></tr>`}).join("");
+    return gap+`<tr class="chs" data-go="${x.id}" style="cursor:pointer"><td class="l">Part ${i+1} · ${x.hm}</td><td>${dur(x.min)}</td><td>${n0(x.b0)}→${n0(x.b1)}%</td><td>${x.peak==null?"–":n0(x.peak)}</td><td>${n0(x.kwh,2)}</td><td>${money(x.icost!=null?x.icost:x.ocost!=null?x.ocost:x.tcost)}</td><td>${syncPill(x.sync)}</td></tr>`}).join("");
   setTimeout(()=>$$("[data-go]").forEach(tr=>tr.onclick=()=>location.hash="#/charge/"+tr.dataset.go),0);
   return `<table><thead><tr><th class="l">Record</th><th>Time</th><th>Battery</th><th>Peak kW</th><th>kWh</th><th>Cost</th><th>Tessie</th></tr></thead><tbody>${rows}<tr><td class="l"><b>Whole charge</b></td><td><b>${dur(p.min)}</b></td><td><b>${n0(p.b0)}→${n0(p.b1)}%</b></td><td><b>${p.peak==null?"–":n0(p.peak)}</b></td><td><b>${n0(p.kwh,2)}</b></td><td><b>${money(p.cost)}</b></td><td>${syncPill(p.sync)}</td></tr></tbody></table>`;
 }
 function invoiceCard(p,part){
   const inv=p.invoice,kv=(a,b)=>b==null||b===""?"":`<tr><td>${a}</td><td>${b}</td></tr>`;
+  const oms=(part?[part]:p.parts).map(x=>x.omodel).filter(Boolean),omLine=m=>[m.tier1_kwh>0.005?`${n0(m.tier1_kwh,2)} kWh solar at ${rate(m.tier1_rate)}/kWh`:"",m.tier2_kwh>0.005?`${n0(m.tier2_kwh,2)} kWh solar at ${rate(m.tier2_rate)}/kWh`:"",m.grid_kwh>0.005?`${n0(m.grid_kwh,2)} kWh grid at ${rate(m.usage_rate)}/kWh + GST`:""].filter(Boolean).join(" · ")+(m.before_kwh!=null?` · ${n0(m.before_kwh,2)} kWh already exported that day`:"");
   let h="";
   if(inv){h+=`<table class="kv"><tbody>${kv("Invoice",esc(inv.number||""))}${kv("Date",esc(inv.date||""))}${kv("Network",esc(inv.network||""))}${kv("Location",esc(inv.location||""))}${kv("Energy invoiced",inv.kwh!=null?n0(inv.kwh,2)+" kWh":"")}${kv("Rate",inv.rate!=null?rate(inv.rate)+"/kWh"+(inv.gross_rate!=null&&inv.gross_rate!==inv.rate?" (gross "+rate(inv.gross_rate)+")":""):"")}${kv("GST included",money(gstOf(inv.total)))}${kv("Total",`<b>${money(inv.total)}</b>`)}${inv.file?kv("File",`<a href="/api/invoice/${encodeURIComponent(inv.file)}" target="_blank">${esc(inv.file)}</a>`):""}</tbody></table>`}
-  else h+=`<div class="sub">${p.home?"Home charging is not invoiced; the cost here is the Tessie estimate.":p.invoice_only?"":"No invoice has been matched to this charge."}</div>`;
+  else h+=`<div class="sub">${p.home?(oms.length?"Home charging is not invoiced; the cost is the feed-in credit the solar share would have earned, plus the grid share at the usage rate.":"Home charging is not invoiced; the cost here is the Tessie estimate."):p.invoice_only?"":"No invoice has been matched to this charge."}</div>`;
   if(!p.home){h+=`<h2>Tessie</h2><table><thead><tr><th class="l">Record</th><th>Tessie id</th><th>Tessie's cost at last sync</th><th>Sent by us</th><th>${inv?"Invoice share":"Our figure"}</th><th>Status</th></tr></thead><tbody>${p.parts.map((x,i)=>`<tr${part&&part.id!==x.id?' style="opacity:.55"':""}><td class="l">${multi1(p)?"Part "+(i+1)+" · ":""}${x.hm}</td><td>${x.tessie_id||"–"}</td><td>${x.tessie_cost_now!=null?money(x.tessie_cost_now):"–"}</td><td>${x.ledger!=null?money(x.ledger):"–"}</td><td>${x.icost!=null?money(x.icost):"–"}</td><td>${syncPill(x.sync)} <span class="sub">${esc(x.sync_why||"")}</span></td></tr>`).join("")}</tbody></table>
     <div class="sub" style="margin-top:8px">${p.sync==="synced"?"Tessie holds the invoice cost for this charge.":p.sync==="na"?"Nothing to send yet.":"The invoice cost is not in Tessie."}</div>`}
-  else h+=`<div class="sub" style="margin-top:8px">Tessie cost ${money(p.tcost)}${p.trate!=null?"":""}.</div>`;
+  else h+=(oms.length?`<table class="kv"><tbody>${oms.map((m,i)=>kv(oms.length>1?"Part "+(i+1):"Cost",`<b>${money(m.cost)}</b> · ${esc(omLine(m))}`)).join("")}</tbody></table>`:"")+`<div class="sub" style="margin-top:8px">Tessie cost ${money(part?part.tcost:p.tcost)}.</div>`;
   return h;
 }
 const multi1=p=>p.parts.length>1;
@@ -789,7 +800,7 @@ function telCard(p,part){
 
 // the plain page, kept for a charge that is not in the book (e.g. the book could not be built)
 async function pageChargeBasic(id){
-  loading();const d=await api("charge/"+id),c=d.charge;
+  loading("detail");const d=await api("charge/"+id),c=d.charge;
   main.innerHTML=crumbs("#/charges","Charges")+chargeNavHtml(chargeSet(id))+`<h1>${whereLink(c)}</h1><div class="sub">${dayName(c.day)} · ${c.hm} – ${addMin(c.hm,c.min)} · ${dur(c.min)} · ${c.kind==="supercharger"?"Supercharger":c.kind==="dc"?"DC fast charger":"AC charging"}${c.pkey?' · <a href="#/place/'+encodeURIComponent(c.pkey)+'">what is around here</a>':""}</div>
    <div class="tiles">${tile("+"+n0(c.kwh,1)+" kWh","energy added")}${tile(n0(c.b0)+"% → "+n0(c.b1)+"%","battery")}${tile(money(c.cost),c.rate!=null?rate(c.rate)+"/kWh":"cost")}${tile(c.used!=null?n0(c.used,1)+" kWh":"–","energy drawn")}${tile(c.used&&c.kwh?n0(100*c.kwh/c.used)+"%":"–","charging efficiency")}${tile(c.min?n0(c.kwh*60/c.min,1)+" kW":"–","average power")}</div>
    ${alertsCard(await alertsFor("charge",id),"charge")}<div class="card"><h2 style="margin-top:0">Charge curve</h2><div id="ch"></div></div><div class="card" style="margin-top:14px"><h2 style="margin-top:0">Where</h2><div class="map" id="mp"></div><div class="sub" style="margin-top:8px">${esc(c.addr||"")}</div></div>`;
@@ -810,7 +821,7 @@ const CAMN={front:"Front",back:"Back",left_repeater:"Left repeater",right_repeat
 const hms=ts=>ts.slice(11,19);
 let IP={r:{p:"all"},q:"",min:5,sen:"all",tab:"periods"};
 async function pageParked(){
-  loading();const [all0,sn]=await Promise.all([api("activity"),getSentry()]),evs=sn.events,all=all0.filter(x=>x.k==="idle").map(x=>Object.assign({},x,{ev:sentryOf(x,evs)}));
+  loading("table");const [all0,sn]=await Promise.all([api("activity"),getSentry()]),evs=sn.events,all=all0.filter(x=>x.k==="idle").map(x=>Object.assign({},x,{ev:sentryOf(x,evs)}));
   all.forEach(x=>x.nev=x.ev.length);const matched=new Set(all.flatMap(x=>x.ev.map(v=>v.id)));
   const idleOf=v=>all.find(x=>x.ev.some(e=>e.id===v.id));
   const drawEvents=()=>{const q=IP.q.toLowerCase(),rs=evs.filter(v=>inRange({day:v.ts.slice(0,10)},IP.r)&&(!q||(v.city+" "+v.street+" "+reason(v.reason)).toLowerCase().includes(q))),byDay={};
@@ -844,12 +855,12 @@ async function pageParkedOne(id){
 const DRX={};      // the names of the registered folder drives (a rescue copy kept in a folder), from the status
 const DRN={A:"the Archive",J:"JOWUA",U:"the Tesla USB"},drName=r=>DRN[r]||DRX[r]||r;
 // a card's picture: the kept still first (the same for every card, whichever drive is connected); the video's first frame when no still is kept; an empty box when neither
-function stThumb(stamp,sec,vurl){return `<img loading="lazy" src="/still/${stamp}/${sec}.jpg" data-v="${esc(vurl||"")}" data-t="${sec}" onerror="stFallback(this)">`}
+function stThumb(stamp,sec,vurl){return `<img alt="" decoding="async" loading="lazy" src="/still/${stamp}/${sec}.jpg" data-v="${esc(vurl||"")}" data-t="${sec}" onerror="stFallback(this)">`}
 function stFallback(img){const u=img.dataset.v,p=img.parentNode;img.outerHTML=u?vthumb(u,+img.dataset.t||2):'<div class="noimg"></div>';if(u&&p)lazyThumbs(p)}
 // the picture of a Sentry event: the camera that saw it, at the second it was detected (the car's own thumb.png is neither). Needs lazyThumbs(host) after it is drawn.
 function sentryThumb(v,folder="SentryClips"){
   const role=v.role||"A",ks=Object.keys(v.clips||{}).sort(),tt=(v.cts||v.ts||"").replace("T","_").replace(/:/g,"-"),k0=ks.filter(x=>x<=tt).pop()||ks[0];
-  if(!k0)return `<img loading="lazy" src="/footage/${role}/${folder}/${v.id}/thumb.png" onerror="this.style.visibility='hidden'">`;
+  if(!k0)return `<img alt="" decoding="async" loading="lazy" src="/footage/${role}/${folder}/${v.id}/thumb.png" onerror="this.style.visibility='hidden'">`;
   const sec=Math.max(1,Math.min(58,Math.round((Date.parse((v.cts||v.ts||"").replace("T"," "))-Date.parse(k0.replace("_"," ").replace(/(\d\d)-(\d\d)-(\d\d)$/,"$1:$2:$3")))/1000)||2)),
     have=v.clips[k0]||[],cam=folder==="SentryClips"&&have.includes(EVCAM[v.cam])?EVCAM[v.cam]:have.includes("front")?"front":have[0]||"",       // a Saved clip is pictured by the front camera
     vu=cam?`/footage/${role}/${folder}/${v.id}/${k0}-${cam}.mp4`:"";
@@ -1051,7 +1062,7 @@ async function sentryPlayer(host,ev,role=ev&&ev.role||"A",folder="SentryClips"){
   const ty=folder==="SavedClips"?"saved":"sentry";let sh=null;
   try{const r=await fetch("/api/clips/shots/"+ty+"/"+encodeURIComponent(ev.id));sh=r.ok?await r.json():null}catch(e){}
   if(sh&&sh.cams&&sh.cams.length){const d=document.createElement("div");d.className="shots";
-    d.innerHTML=sh.cams.map(c=>`<a href="/eventshot/${ty}/${esc(ev.id)}/${c}.jpg" target="_blank"><img loading="lazy" src="/eventshot/${ty}/${esc(ev.id)}/${c}.jpg"><span>${esc(CAMN[c]||c)}</span></a>`).join("");host.appendChild(d)}
+    d.innerHTML=sh.cams.map(c=>`<a href="/eventshot/${ty}/${esc(ev.id)}/${c}.jpg" target="_blank"><img alt="" decoding="async" loading="lazy" src="/eventshot/${ty}/${esc(ev.id)}/${c}.jpg"><span>${esc(CAMN[c]||c)}</span></a>`).join("");host.appendChild(d)}
 }
 
 // ---------- Places (the places manager) and the page for one place
@@ -1707,7 +1718,7 @@ let DLPOLL=0;
 function drivelistPoll(cur){clearTimeout(DLPOLL);DLPOLL=setTimeout(async()=>{if(location.hash!=="#/driveslist")return;let j;try{j=await tcGet("drivelist",true)}catch(e){return}
   if(!j.stale){if($("#stl"))$("#stl").hidden=true;if(!sameData(j,cur)){FRESH.drivelist=j;bust("activity");redrawQuietly()}}else drivelistPoll(cur)},3000)}
 async function pageDriveList(){
-  loading();const [dl,act,pl,chg]=await Promise.all([tcGet("drivelist"),api("activity"),api("places").catch(()=>({saved:[]})),api("chargers").catch(()=>({rows:[]}))]),places=pl.saved||[];
+  loading("table");const [dl,act,pl,chg]=await Promise.all([tcGet("drivelist"),api("activity"),api("places").catch(()=>({saved:[]})),api("chargers").catch(()=>({rows:[]}))]),places=pl.saved||[];
   const open=v=>v.kind==="charge"?"#/charge/"+encodeURIComponent(v.id):v.kind==="drive"?(v.src==="cam"?"#/teslacam/auto/"+encodeURIComponent(v.id):"#/drive/"+encodeURIComponent(v.id)):v.kind==="sentry"?"#/teslacam/A/sentry-"+encodeURIComponent(v.ev):v.kind==="recording"||v.kind==="stopped"?"#/teslacam/auto/"+encodeURIComponent(v.id):"";
   main.innerHTML=`<h1>Drives</h1><div class="sub">Source: ${dl.tessie?"Tessie + dashcam":"dashcam"} · 🎬 = dashcam video and route</div>
    <div id="stl" class="sub" style="margin-top:6px" ${dl.stale?"":"hidden"}>Updating with the latest data…</div><div id="tsb" style="margin-top:10px"></div><div id="fsb"></div><div class="bar"><span id="rg"></span><select id="fs"><option value="all">All drives</option><option value="cam">With dashcam footage</option><option value="nocam">Without footage</option></select><input type="search" id="q" placeholder="Search a place…" value="${esc(DLP.q)}"></div><div class="tiles" id="tl"></div><div id="tb"></div>`;
@@ -1804,7 +1815,7 @@ const kpBig=(ty)=>{const a=Object.values((KPC&&KPC[ty])||{}).map(r=>r.size).filt
 const kpTop=(ty,id)=>{const r=kpOf(ty,id),k=ty+"|"+id;return `<em class="evk ${TCSEL.has(k)?"on":""}" data-sel="${esc(k)}" role="checkbox" aria-checked="${TCSEL.has(k)}" title="Select">${TCSEL.has(k)?"✓":""}</em>`+(r&&r.size?`<em class="szb ${r.size>=kpBig(ty)?"big":""}" title="${esc(Object.keys(r.bytes).map(x=>drName(x)+" "+fmtGB(r.bytes[x])).join(" · "))}">${fmtGB(r.size)}</em>`:"")};
 async function pageTeslaCam(role,id){
   if(role&&id)return /^sentry-/.test(id)?pageTeslaCamSentry(role,id.slice(7)):/^at-/.test(id)?pageTeslaCamAt(+id.slice(3)):pageTeslaCamDrive(role,id);
-  loading();const [dr,act,pl]=await Promise.all([tcGet("teslacam"),api("activity"),api("places").catch(()=>({saved:[]}))]),drives=dr.drives,places=(pl.saved||[]);
+  loading("cards");const [dr,act,pl]=await Promise.all([tcGet("teslacam"),api("activity"),api("places").catch(()=>({saved:[]}))]),drives=dr.drives,places=(pl.saved||[]);
   const head='<h1>TeslaCam</h1>';
   const trips=act.filter(x=>x.k==="drive"&&!x.repark).map(x=>({id:x.id,t0:x.t0,t1:x.t0+x.min*60,ti:driveTitle(x)}));
   // where an item was: the saved place it is at (a Recent recording only counts while parked, a drive begins and ends elsewhere); "" when at none
@@ -1984,7 +1995,7 @@ async function pageTeslaCam(role,id){
         k0t=Math.max(1,Math.min(58,Math.round((Date.parse((v.cts||v.ts||"").replace("T"," "))-Date.parse((k0||"").replace("_"," ").replace(/(\d\d)-(\d\d)-(\d\d)$/,"$1:$2:$3")))/1000)||2));
       const have=(k0&&v.clips[k0])||[],cam=v.ty==="sentry"&&have.includes(EVCAM[v.cam])?EVCAM[v.cam]:have.includes("front")?"front":"";      // the camera that saw it (Sentry), at the moment it was detected
       const vu=v.play&&cam?`/footage/${v.play}/${folder}/${v.id}/${k0}-${cam}.mp4`:"",side=v.ty==="sentry"&&cam&&cam!=="front";      // the stills are of the front camera: a detection on another camera shows that camera's video, never the front
-      return `<button class="evc big" data-ty="${v.ty}" data-id="${v.id}">${kpTop(v.ty,v.id)}${k0?(side?(vu?vthumb(vu,k0t):(kpOf(v.ty,v.id)||{}).shot_cams&&kpOf(v.ty,v.id).shot_cams.includes(cam)?`<img loading="lazy" src="/eventshot/${v.ty}/${esc(v.id)}/${cam}.jpg">`:`<div class="noimg camn">${esc(CAMN[cam])}</div>`):stThumb(k0,k0t,vu,k0t)):'<div class="noimg"></div>'}${bd}${kpChips(kpOf(v.ty,v.id))}<b>${hms(v.ts)}</b><span>${esc(reason(v.reason))}${v.ty==="sentry"&&cam?" · "+esc(CAMN[cam]):""}</span><span>${esc([v.city,v.street].filter(Boolean).join(" · "))}</span><span>${n?n+" min of video":"no video"}</span>${held(v)}${evLinks(v)}</button>`};
+      return `<button class="evc big" data-ty="${v.ty}" data-id="${v.id}">${kpTop(v.ty,v.id)}${k0?(side?(vu?vthumb(vu,k0t):(kpOf(v.ty,v.id)||{}).shot_cams&&kpOf(v.ty,v.id).shot_cams.includes(cam)?`<img alt="" decoding="async" loading="lazy" src="/eventshot/${v.ty}/${esc(v.id)}/${cam}.jpg">`:`<div class="noimg camn">${esc(CAMN[cam])}</div>`):stThumb(k0,k0t,vu,k0t)):'<div class="noimg"></div>'}${bd}${kpChips(kpOf(v.ty,v.id))}<b>${hms(v.ts)}</b><span>${esc(reason(v.reason))}${v.ty==="sentry"&&cam?" · "+esc(CAMN[cam]):""}</span><span>${esc([v.city,v.street].filter(Boolean).join(" · "))}</span><span>${n?n+" min of video":"no video"}</span>${held(v)}${evLinks(v)}</button>`};
     $("#tb").innerHTML=(days.length?"":'<div class="empty">Nothing here for these dates.</div>')+days.slice(0,60).map(d=>`<div class="day" data-day="${d}"><em class="dayk" role="checkbox" title="Tick every clip of this day"></em>${dayName(d)}<small class="dcnt">${byDay[d].length} clip${byDay[d].length>1?"s":""}</small></div><div class="evs">${byDay[d].map(card).join("")}</div>`).join("")+(days.length>60?'<div class="sub">Showing the newest 60 days. Narrow the dates to see older ones.</div>':"");
     vis=all;dayList=byDay;$$("#tb [data-sel]").forEach(b=>b.onclick=e=>{e.stopPropagation();const k=b.dataset.sel;TCSEL.has(k)?TCSEL.delete(k):TCSEL.add(k);pend=null;paintTicks();selbar()});
     $$("#tb .dayk").forEach(b=>b.onclick=e=>{const l=dayList[b.parentNode.dataset.day]||[],all=l.every(v=>TCSEL.has(v.ty+"|"+v.id));l.forEach(v=>all?TCSEL.delete(v.ty+"|"+v.id):TCSEL.add(v.ty+"|"+v.id));pend=null;paintTicks();selbar()});paintTicks();selbar();
@@ -2126,7 +2137,7 @@ async function teslaDriveBody(host,role,fetchSeg,places,opts){
   const seekIdx=i=>{if(!player)return;const ms=d.minutes.filter(m=>m.cams&&m.cams.length);let b=null;for(const m of ms){if(m.off<=i)b=m;else break}if(!b)b=ms[0];if(b)player.seekAt(b.stamp,Math.max(0,Math.min(59,i-b.off)))};
   const cursor=sec=>{const i=Math.max(0,Math.min(S().v.length-1,Math.round(sec)));if(map)map.cursor(i);if(chart)chart.cursor(i)};
   const events=()=>{if(opts.rvtab||evShown||!d.events||!d.events.length||!live())return;evShown=true;
-    $("#dev").innerHTML=`<h2>Saved clips and Sentry events in this drive</h2><div class="sub">Click one to jump the video there.</div><div class="evs">${d.events.map(v=>`<button class="evc" data-u="${v.t}">${v.clips?sentryThumb(Object.assign({},v,{role}),v.folder):v.thumb?`<img loading="lazy" src="/footage/${role}/${v.folder}/${v.id}/thumb.png" onerror="this.style.visibility='hidden'">`:'<div class="noimg"></div>'}<b>${hms(v.ts)}</b><span>${esc(v.folder==="SavedClips"?"Saved":"Sentry")} · ${esc(reason(v.reason))}</span><span>${esc(v.city||"")}</span></button>`).join("")}</div>`;
+    $("#dev").innerHTML=`<h2>Saved clips and Sentry events in this drive</h2><div class="sub">Click one to jump the video there.</div><div class="evs">${d.events.map(v=>`<button class="evc" data-u="${v.t}">${v.clips?sentryThumb(Object.assign({},v,{role}),v.folder):v.thumb?`<img alt="" decoding="async" loading="lazy" src="/footage/${role}/${v.folder}/${v.id}/thumb.png" onerror="this.style.visibility='hidden'">`:'<div class="noimg"></div>'}<b>${hms(v.ts)}</b><span>${esc(v.folder==="SavedClips"?"Saved":"Sentry")} · ${esc(reason(v.reason))}</span><span>${esc(v.city||"")}</span></button>`).join("")}</div>`;
     lazyThumbs($("#dev"));    $$("#dev .evc").forEach(b=>b.onclick=()=>{if(player){seekIdx(Math.round(+b.dataset.u-it().t0));$("#dvid").scrollIntoView({block:"nearest"})}})};
   RVAPI={cursor:i=>cursor(i),seek:i=>seekIdx(i),series:()=>S(),t0:()=>it().t0,clk:i=>clk(i),focus:f=>{if(chart&&chart.focus)chart.focus(f)},lanes:l=>{if(chart&&chart.lanes)chart.lanes(l);else pendL=l},zoom:(a,b)=>{if(chart&&chart.view)chart.view(a,b)},limit:(a,b)=>{if(chart&&chart.limit)chart.limit(a,b)},map:(a,b,p)=>{if(map&&map.section){map.section(a,b);map.pins(p||[])}else pendM=[a,b,p]},live:()=>live(),saved:()=>{const r=[];d.minutes.filter(m=>m.src==="saved").forEach(m=>{const a=it().t0+m.off,b=a+60,l=r[r.length-1];if(l&&a-l[1]<=2)l[1]=b;else r.push([a,b])});return r}};
   const build=()=>{if(!live())return;fill();const s=S(),idx=pts();
@@ -2169,7 +2180,7 @@ async function teslaDriveBody(host,role,fetchSeg,places,opts){
       rvMarks()}
     const T=i=>clk(i);
     const near=x=>sg.filter(g=>g.side==="L"&&g.kind!=="school").map(g=>({g,dt:idxOf(g)-x.i})).filter(o=>o.dt>=-30&&o.dt<=10).sort((a,b)=>Math.abs(a.dt)-Math.abs(b.dt))[0];
-    $("#drv").innerHTML=(sg.length?`<h2>Signs read (${n0(sg.length)})</h2><div class="sub">Click one to jump the video to it. Dim ones were seen in a single still only.</div><div class="evs">${sg.slice(0,120).map(g=>{const i=idxOf(g),v=S0.v[i];return `<button class="evc ${g.n<2?"faded":""}" data-u="${g.u}">${g.crop?`<img loading="lazy" src="/review/${esc(g.crop)}" onerror="this.style.visibility='hidden'">`:'<div class="noimg"></div>'}<b>${esc(g.text)}${g.side==="R"?" (right side)":""}</b>${g.kind==="school"?`<span>${g.times&&g.times.length?esc(schoolHours(g.times)):"hours not readable"}</span>`:""}<span>${hms(g.t)}${v!=null?` · car ${n0(v)} km/h`:""}${S0.ap[i]?` · ${APN[S0.ap[i]]||""}`:""}</span><span>seen ${g.n}× · sure ${n0(g.conf)}%</span></button>`}).join("")}</div>${sg.length>120?`<div class="sub">The first 120 of ${n0(sg.length)} are shown.</div>`:""}`:"")
+    $("#drv").innerHTML=(sg.length?`<h2>Signs read (${n0(sg.length)})</h2><div class="sub">Click one to jump the video to it. Dim ones were seen in a single still only.</div><div class="evs">${sg.slice(0,120).map(g=>{const i=idxOf(g),v=S0.v[i];return `<button class="evc ${g.n<2?"faded":""}" data-u="${g.u}">${g.crop?`<img alt="" decoding="async" loading="lazy" src="/review/${esc(g.crop)}" onerror="this.style.visibility='hidden'">`:'<div class="noimg"></div>'}<b>${esc(g.text)}${g.side==="R"?" (right side)":""}</b>${g.kind==="school"?`<span>${g.times&&g.times.length?esc(schoolHours(g.times)):"hours not readable"}</span>`:""}<span>${hms(g.t)}${v!=null?` · car ${n0(v)} km/h`:""}${S0.ap[i]?` · ${APN[S0.ap[i]]||""}`:""}</span><span>seen ${g.n}× · sure ${n0(g.conf)}%</span></button>`}).join("")}</div>${sg.length>120?`<div class="sub">The first 120 of ${n0(sg.length)} are shown.</div>`:""}`:"")
 ;
     $$("#drv .evc").forEach(b=>b.onclick=()=>{if(player){seekIdx(Math.round(+b.dataset.u-it().t0)-3);$("#dvid").scrollIntoView({block:"nearest"})}});
     $$("#drv .trow").forEach(b=>b.onclick=()=>{if(player){seekIdx(+b.dataset.i-6);$("#dvid").scrollIntoView({block:"nearest"})}})};

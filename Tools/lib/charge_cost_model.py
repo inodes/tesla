@@ -96,7 +96,50 @@ def find_cache_record_by_epoch(by_epoch, target_epoch, tolerance_s=120):
     return best
 
 
-def compute_all_charge_costs(analyzer):
+def home_charge_cost(raw, periods=None):
+    """The cost of ONE Home charge as the scripts work it out: the solar share
+    priced as the feed-in it replaced (tier 1 for what is left of that
+    calendar day's first 10 kWh of export, tier 2 after), the grid share at the
+    usage rate, GST on the grid part. `raw` is the Tessie charge row
+    (started_at, ended_at, energy_used_kwh / energy_added_kwh, cost, cost_per_kwh).
+    One place for this: analyse_charging --sync-tessie-costs, the reports and the
+    app all call it. Returns dict(cost, source, notes, pv_pct, result) where
+    `result` is lib.session_cost.evaluate_tessie_charge's full breakdown."""
+    from lib.session_cost import evaluate_tessie_charge
+    from power_demand_calculator import load_rate_periods
+    if periods is None:
+        periods = load_rate_periods()
+    notes = []
+    # B3 (2026-09-30 review): Energy Used can be 0/blank on a real
+    # charge (reconcile() already falls back to Energy Added for it);
+    # pricing 0 kWh produced a $0.00 cost that could be pushed to Tessie.
+    kwh_for_cost = raw.get("energy_used_kwh") or raw.get("energy_added_kwh") or 0
+    if not raw.get("energy_used_kwh") and raw.get("energy_added_kwh"):
+        notes.append("Energy Used missing - priced on Energy Added")
+    tessie_row = {
+        "started": raw["started_at"],
+        "ended": raw["ended_at"],
+        "kwh": kwh_for_cost,
+        "tessie_cost": raw["cost"],
+        "tessie_cost_per_kwh": raw["cost_per_kwh"],
+    }
+    result = evaluate_tessie_charge(tessie_row, periods)
+    if result["real_cost_incl_gst"] is not None:
+        cost = result["real_cost_incl_gst"]
+        source = "tiered_solar_model"
+    else:
+        cost = result["base_cost_incl_gst"]
+        source = "flat_rate_fallback(no_pv_data)"
+        notes.append("no PV data for this window - priced as 100% grid import")
+    if result.get("used_flat_tier1_fallback"):
+        notes.append("no cumulative-export figure available - assumed flat tier-1")
+    if result.get("pv_coverage") is not None and result["pv_coverage"] < 0.9:
+        notes.append(f"low PV data coverage ({result['pv_coverage']:.0%})")
+    return {"cost": cost, "source": source, "notes": notes,
+            "pv_pct": result.get("pv_solar_fraction"), "result": result}
+
+
+def compute_all_charge_costs(analyzer, sessions=None):
     """Runs analyzer.reconcile() (assumes analyzer.charges has ALREADY
     been filtered to the live charges_master.csv only - see both
     callers' own dedup step, needed because analyse_charging.py's
@@ -109,10 +152,10 @@ def compute_all_charge_costs(analyzer):
       real Tessie numeric `id` a caller needs for set_cost), pv_pct,
       notes (list of str).
     """
-    from lib.session_cost import evaluate_tessie_charge
     from power_demand_calculator import load_rate_periods
 
-    sessions = analyzer.reconcile()
+    if sessions is None:
+        sessions = analyzer.reconcile()
     plugin_shares = analyzer.plugin_invoice_shares(sessions)
     cache_records, cache_by_epoch = load_raw_tessie_cache(analyzer.repo_root)
     periods = load_rate_periods()
@@ -140,32 +183,10 @@ def compute_all_charge_costs(analyzer):
             our_cost_source = "unknown(in progress)"
             notes.append("charge still in progress (no end time) - not priced")
         elif is_home:
-            # B3 (2026-09-30 review): Energy Used can be 0/blank on a real
-            # charge (reconcile() already falls back to Energy Added for it);
-            # pricing 0 kWh produced a $0.00 cost that could be pushed to Tessie.
-            kwh_for_cost = raw.get("energy_used_kwh") or raw.get("energy_added_kwh") or 0
-            if not raw.get("energy_used_kwh") and raw.get("energy_added_kwh"):
-                notes.append("Energy Used missing - priced on Energy Added")
-            tessie_row = {
-                "started": raw["started_at"],
-                "ended": raw["ended_at"],
-                "kwh": kwh_for_cost,
-                "tessie_cost": raw["cost"],
-                "tessie_cost_per_kwh": raw["cost_per_kwh"],
-            }
-            result = evaluate_tessie_charge(tessie_row, periods)
-            if result["real_cost_incl_gst"] is not None:
-                our_cost = result["real_cost_incl_gst"]
-                our_cost_source = "tiered_solar_model"
-            else:
-                our_cost = result["base_cost_incl_gst"]
-                our_cost_source = "flat_rate_fallback(no_pv_data)"
-                notes.append("no PV data for this window - priced as 100% grid import")
-            if result.get("used_flat_tier1_fallback"):
-                notes.append("no cumulative-export figure available - assumed flat tier-1")
-            if result.get("pv_coverage") is not None and result["pv_coverage"] < 0.9:
-                notes.append(f"low PV data coverage ({result['pv_coverage']:.0%})")
-            pv_pct = result.get("pv_solar_fraction")
+            priced = home_charge_cost(raw, periods)
+            our_cost, our_cost_source = priced["cost"], priced["source"]
+            notes.extend(priced["notes"])
+            pv_pct = priced["pv_pct"]
         else:
             if id(s) in plugin_shares:
                 # REQ-183: one invoice covers a multi-record plug-in; this
