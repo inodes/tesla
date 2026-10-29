@@ -91,5 +91,27 @@ class SendState(unittest.TestCase):
         self.assertEqual(AC.send_state(0.32, None, dict(cost=0.32), False)[0], "synced")                    # Tessie's own figure already is it
 
 
+class Placeholders(unittest.TestCase):
+    def peer(self, kwh, mn, b0, b1, rng):
+        return dict(kind="dc", kwh=kwh, min=mn, b0=b0, b1=b1, range=rng, invoice_only=False)
+
+    def test_an_invoice_with_no_tessie_record_gets_labelled_averages_and_nothing_real_changes(self):
+        lone = dict(kind="dc", kwh=12.0, min=0, b0=0, b1=0, range=0, invoice_only=True)
+        real = self.peer(10.0, 10, 20, 40, 60)                              # 60 kW, 50 kWh pack, 6 km per kWh
+        done = self.peer(20.0, 20, 40, 80, 120)
+        AC.placeholders([lone, real, done])
+        self.assertEqual(lone["est"], dict(min=12, pct=24, range=72, n=2))
+        self.assertEqual((lone["min"], lone["b1"], lone["range"]), (0, 0, 0))
+        self.assertNotIn("est", real)
+
+    def test_nothing_is_made_up_without_charges_of_that_kind_or_for_a_real_charge(self):
+        lone = dict(kind="supercharger", kwh=12.0, min=0, b0=0, b1=0, range=0, invoice_only=True)
+        AC.placeholders([lone, self.peer(10.0, 10, 20, 40, 60)])
+        self.assertNotIn("est", lone)
+        timed = dict(kind="dc", kwh=12.0, min=9, b0=10, b1=30, range=50, invoice_only=True)
+        AC.placeholders([timed, self.peer(10.0, 10, 20, 40, 60)])
+        self.assertNotIn("est", timed)
+
+
 if __name__ == "__main__":
     unittest.main()
