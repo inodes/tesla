@@ -1726,7 +1726,7 @@ async function pageDriveList(){
 }
 const localWhen=iso=>iso?new Date(iso).toLocaleString("en-AU",{day:"numeric",month:"short",year:"numeric",hour:"2-digit",minute:"2-digit"}):"Never";      // stored in UTC, shown on this computer's clock
 // pressing an action that reads or ejects a drive stops every video on the page first (a playing video holds the drive and slows what is asked for)
-function stopVideos(){$$("video").forEach(v=>{try{v.pause();v.removeAttribute("src");v.querySelectorAll("source").forEach(x=>x.remove());v.load()}catch(e){}})}
+function stopVideos(){$$("video:not(.vt)").forEach(v=>{try{v.pause();v.removeAttribute("src");v.querySelectorAll("source").forEach(x=>x.remove());v.load()}catch(e){}})}
 // eject a drive from the app: the app stops reading it first (POST /api/eject); -> {ok, text}
 async function ejectDrive(role){stopVideos();try{return await (await fetch("/api/eject",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({role})})).json()}catch(e){return{ok:false,text:e.message}}}
 // the footage on the connected drives (lib/app_keeper.py does the work in the background, lib/footage_todo.py says what is left): all connected drives, nothing to pick.
