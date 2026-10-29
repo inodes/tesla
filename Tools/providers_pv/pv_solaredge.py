@@ -17,6 +17,7 @@ from lib.solaredge_common import (
     get_api_key,
     get_site_id,
 )
+from lib import solaredge_v2 as SE2
 from providers_pv.pv_base import BasePvProvider
 
 # REQ-127: confirmed live - a QUARTER_OF_AN_HOUR request over ~2 months
@@ -87,9 +88,15 @@ class SolarEdgeProvider(BasePvProvider):
     intraday_interval_minutes = 15
 
     def resolve_credentials(self, config):
+        # V1 (api_key in the URL) is retired 2026-11-01/03. With a V2 grant (or a Fleet key) the "key" handed on is SE2.SENTINEL and every call below goes to lib/solaredge_v2.
+        if SE2.active(config):
+            return SE2.SENTINEL, get_site_id(None, config)
         return get_api_key(None, config), get_site_id(None, config)
 
     def install_date(self, api_key, site_id):
+        if api_key == SE2.SENTINEL:
+            d = SE2.installation_date(site_id)
+            return d.date() if d else None
         status, parsed, _body = api_get(f"site/{site_id}/details", api_key)
         if status == 200 and parsed:
             d = parsed.get("details", {}).get("installationDate")
@@ -98,12 +105,18 @@ class SolarEdgeProvider(BasePvProvider):
         return None
 
     def fetch_daily_range(self, date_from, date_to, api_key, site_id):
+        if api_key == SE2.SENTINEL:
+            rows, err = SE2.meter_rows(site_id, date_from, date_to, "DAY", days_per_call=31)
+            return [{"day": r["ts"].date(), **{k: r[k] for k in ("production_kwh", "consumption_kwh", "feedin_kwh", "purchased_kwh", "self_consumption_kwh")}} for r in rows], err
         rows, err = fetch_energy_details_range(date_from, date_to, api_key, site_id)
         return [{"day": r["day"], **{k: r[k] for k in
                  ("production_kwh", "consumption_kwh", "feedin_kwh", "purchased_kwh", "self_consumption_kwh")}}
                 for r in rows], err
 
     def fetch_intraday_range(self, date_from, date_to, api_key, site_id):
+        if api_key == SE2.SENTINEL:
+            rows, err = SE2.meter_rows(site_id, date_from, date_to, "QUARTER_HOUR", days_per_call=7)
+            return [{"timestamp": r["ts"], **{k: r[k] for k in ("production_kwh", "consumption_kwh", "feedin_kwh", "purchased_kwh", "self_consumption_kwh")}} for r in rows], err
         rows, err = _fetch_energy_details_range_at(
             date_from, date_to, api_key, site_id,
             time_unit="QUARTER_OF_AN_HOUR", max_days_per_call=MAX_INTRADAY_DAYS_PER_CALL,

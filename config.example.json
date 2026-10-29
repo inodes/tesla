@@ -49,7 +49,9 @@
   },
   "solaredge": {
     "api_key": "YOUR_SOLAREDGE_MONITORING_API_KEY_HERE",
-    "site_id": "YOUR_SOLAREDGE_SITE_ID_HERE"
+    "site_id": "YOUR_SOLAREDGE_SITE_ID_HERE",
+    "client_id": "YOUR_SOLAREDGE_V2_CLIENT_ID_HERE",
+    "client_secret": "YOUR_SOLAREDGE_V2_CLIENT_SECRET_HERE"
   },
   "pv": {
     "provider": "solaredge"
