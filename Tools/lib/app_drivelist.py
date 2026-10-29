@@ -193,7 +193,7 @@ def missing(items, now, recent_days=None, tried=()):
     """What Tessie has not given yet: drives the dashcam saw that Tessie has no record of (a real move: a minute or 300 m), and Tessie drives with no detailed page (path file), of any age (`recent_days` limits it to the last few days).
     A Tessie drive that ended less than ten minutes ago is left out: `sync_api_tessie.py --backfill-deepdive` waits ten minutes (`DRIVE_FINALIZE_GRACE_SECONDS`) before asking Tessie for its path so a drive still settling is not saved half-done.
     -> dict(cam_only=n, no_page=n, ids=[...], since=earliest start or None). Short moves and re-parks do not count."""
-    cam, nop, gone = [], [], 0
+    cam, nop, gone, gone_cam, gone_nop = [], [], 0, 0, 0
     for v in items:
         if v.get("kind") != "drive" or v.get("short"):
             continue
@@ -207,10 +207,14 @@ def missing(items, now, recent_days=None, tried=()):
             continue
         if v["id"] in tried:
             gone += 1                           # a sync already ran with this one missing: Tessie has nothing more for it
+            if want is cam:
+                gone_cam += 1                   # the dashcam saw it and Tessie has no drive for it
+            else:
+                gone_nop += 1                   # Tessie has the drive but gave no route for it
         else:
             want.append(v)
     both = cam + nop
-    return dict(cam_only=len(cam), no_page=len(nop), tried=gone, ids=[v["id"] for v in both[:500]], since=min((v["t0"] for v in both), default=None))
+    return dict(cam_only=len(cam), no_page=len(nop), tried=gone, tried_cam=gone_cam, tried_no_page=gone_nop, ids=[v["id"] for v in both[:500]], since=min((v["t0"] for v in both), default=None))
 
 
 class Cached:

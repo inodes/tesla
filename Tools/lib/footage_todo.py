@@ -166,7 +166,7 @@ class Todo:
                 for r, p in sorted(roots.items()):
                     cached = self._walked.get(r)
                     if cached and cached[0] == keys_by_role[r]:
-                        _, files, ok, new, gone, days_new = cached
+                        _, files, ok, new, gone, days_new, ghosts, sample = cached
                     else:
                         self._prog = dict(done=step_i, total=total, step="list", role=r, pct=round(100 * (step_i + 0.2) / total))
                         files, ok = TF.walk(p, stat=False)
@@ -177,17 +177,22 @@ class Todo:
                             led = TLG.Ledger(self.dir)
                         present = {}
                         for f in files:
-                            present.setdefault(f["stamp"][:10], set()).add(TF.key(f))
-                        new = gone = 0
-                        days_new = {}
+                            present.setdefault(f["stamp"][:10], {})[TF.key(f)] = f
+                        new = gone = ghosts = 0
+                        days_new, sample = {}, []
                         for day, keys in present.items():
                             d = led.day(day)
-                            for k in keys:
+                            for k, f in keys.items():
                                 e = d.get(k)
                                 r_ = e["drives"].get(r) if e else None
                                 if r_ is None or r_.get("gone"):
+                                    if not os.path.isfile(TF.front_path(p, f)):         # a name the folder still lists but the file is not there (a deleted clip the drive has not let go of): not a new file
+                                        ghosts += 1
+                                        continue
                                     new += 1
                                     days_new[day] = days_new.get(day, 0) + 1
+                                    if len(sample) < 4:
+                                        sample.append(k)
                         if ok:
                             for day in led.days():
                                 here = present.get(day, set())
@@ -195,9 +200,9 @@ class Todo:
                                     x = e["drives"].get(r)
                                     if x is not None and x.get("gone") is None and k not in here:
                                         gone += 1
-                        self._walked[r] = (keys_by_role[r], files, ok, new, gone, days_new)
+                        self._walked[r] = (keys_by_role[r], files, ok, new, gone, days_new, ghosts, sample)
                     walked[r] = (files, ok)
-                    out[r] = dict(log_new=new, log_gone=gone, new_days=dict(sorted(days_new.items(), reverse=True)[:5]), telemetry=0, stills=0, signs=0, at=time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()))
+                    out[r] = dict(log_new=new, log_gone=gone, ghosts=ghosts, new_sample=sample, new_days=dict(sorted(days_new.items(), reverse=True)[:5]), telemetry=0, stills=0, signs=0, at=time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()))
                 self._prog = dict(done=len(need), total=total, step="telemetry", role="", pct=round(100 * (len(need) + 0.4) / total))
                 for d in self.tc.scan_report(roots)["drives"]:          # with every connected drive together: a minute two drives hold is read once
                     out[d["role"]]["telemetry"] = d["to_read"]
