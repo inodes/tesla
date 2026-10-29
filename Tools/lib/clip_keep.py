@@ -473,7 +473,7 @@ class ClipKeep:
         return bool(self._thread and self._thread.is_alive())
 
     def _step(self, name, total):
-        self._job.update(step=name, step_done=0, step_total=total, current="")
+        self._job.update(step=name, step_done=0, step_total=total, current="", step_t0=time.time())
         self._job["steps"].append(dict(step=name, total=total))
 
     def _process(self, kind_of, paths, evs=(), want=None):
