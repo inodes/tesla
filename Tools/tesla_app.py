@@ -49,6 +49,7 @@ import argparse
 import io
 import json
 import mimetypes
+import html
 import os
 import re
 import sys
@@ -381,6 +382,29 @@ class H(BaseHTTPRequestHandler):
     def do_HEAD(self):
         self.do_GET()
 
+    def solaredge_oauth(self, path, q):
+        from lib import solaredge_v2 as SE2
+        page = lambda title, body: self.send_bytes(("<!doctype html><meta charset=utf-8><meta name=viewport content='width=device-width'><title>%s</title><style>body{font:16px system-ui;max-width:560px;margin:12vh auto;padding:0 16px;color:#14171f}a{color:#3b6cf6}</style><h1>%s</h1>%s" % (title, title, body)).encode("utf-8"), "text/html; charset=utf-8")
+        if path == "/solaredge/connect":
+            try:
+                url = SE2.authorize_url()
+            except SE2.V2Error as e:
+                return page("SolarEdge", "<p>%s</p>" % html.escape(e.detail))
+            self.send_response(302)
+            self.send_header("Location", url)
+            self.end_headers()
+            return None
+        code, site = (q.get("code") or [""])[0], (q.get("site_id") or [""])[0]
+        if not code:
+            return page("SolarEdge", "<p>Not approved: %s</p><p><a href='/solaredge/connect'>Connect again</a></p>" % html.escape((q.get("error_description") or q.get("error") or ["no code came back"])[0]))
+        try:
+            SE2.exchange_code(code, site or None)
+        except SE2.V2Error as e:
+            return page("SolarEdge", "<p>%s</p><p><a href='/solaredge/connect'>Connect again</a></p>" % html.escape(e.detail))
+        mine = str(SE2.status().get("site_id") or "")
+        warn = "<p>Approved site %s, configured site is %s.</p>" % (html.escape(site), html.escape(mine)) if site and mine and site != mine else ""
+        return page("SolarEdge connected", "<p>Site %s.</p>%s<p><a href='/#/charges'>Back to the app</a></p>" % (html.escape(site or mine), warn))
+
     def do_GET(self):
         u = urllib.parse.urlparse(self.path)
         path = urllib.parse.unquote(u.path)
@@ -391,6 +415,8 @@ class H(BaseHTTPRequestHandler):
                 return self.send_file(os.path.join(UI, path[1:]))
             if path == "/icon.png":                 # the app icon, also the tab/window icon
                 return self.send_file(os.path.join(UI, "icon", "icon.png"), cache=True)
+            if path in ("/solaredge/connect", "/solaredge/callback"):      # SolarEdge V2: the site owner approves the app here (lib/solaredge_v2.py)
+                return self.solaredge_oauth(path, urllib.parse.parse_qs(u.query))
             if path.startswith("/api/"):
                 t_in = time.time()
                 try:
@@ -557,6 +583,9 @@ class H(BaseHTTPRequestHandler):
         g = lambda k, d="": (q.get(k, [d])[0] or d)
         region, model, hw = g("region", "ANZ"), g("model") or None, g("hw") or None
         try:
+            if name == "solaredge":
+                from lib import solaredge_v2 as SE2
+                return SE2.status()
             if name == "software/sync":
                 return SOFT.status()
             if name == "software/version":
