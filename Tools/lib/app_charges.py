@@ -59,6 +59,24 @@ def send_state(target, held, rec, invoice_only, what="invoice share"):
     return "pending", "Tessie shows %s, %s is $%.2f" % ("$%.2f" % rec["cost"] if rec and rec.get("cost") is not None else "no cost", what, target)
 
 
+def placeholders(plugs):
+    """An invoice for a charge Tessie has no record of (before Tessie, or one it missed) has the energy and the cost but no time, battery or range: it gets `est`, the average of the
+    other charges of its kind (the charger's power, the battery's size, the range per kWh), for the page to show as placeholder values and say so. Nothing real is overwritten."""
+    for p in plugs:
+        if not p.get("invoice_only") or not p.get("kwh") or p.get("min"):
+            continue
+        peers = [x for x in plugs if not x.get("invoice_only") and x.get("kind") == p.get("kind") and (x.get("min") or 0) > 0 and (x.get("kwh") or 0) > 0 and not x.get("home")]
+        if not peers:
+            continue
+        hours = sum(x["min"] for x in peers) / 60.0
+        kw = sum(x["kwh"] for x in peers) / hours if hours else 0
+        gain = [(x["kwh"], (x["b1"] or 0) - (x["b0"] or 0)) for x in peers if (x.get("b1") or 0) > (x.get("b0") or 0)]
+        pack = sum(k for k, _g in gain) / (sum(g for _k, g in gain) / 100.0) if gain else 0
+        rng = [(x["kwh"], x.get("range") or 0) for x in peers if (x.get("range") or 0) > 0]
+        per = sum(r for _k, r in rng) / sum(k for k, _r in rng) if rng else 0
+        p["est"] = dict(min=round(p["kwh"] / kw * 60.0) if kw else None, pct=round(100.0 * p["kwh"] / pack) if pack else None, range=round(p["kwh"] * per) if per else None, n=len(peers))
+
+
 def home_model(ccm, raw, now=None):
     """What the scripts say a Home charge costs (lib.charge_cost_model.home_charge_cost: solar share at the feed-in it replaced, tier 1 then tier 2, grid share at the usage rate, GST on the grid part),
     reduced to what the app shows. -> dict(cost, kwh, rate, solar_kwh, grid_kwh, tier1_kwh, tier2_kwh, tier1_rate, tier2_rate, usage_rate, before_kwh) or None when it is not a priced charge or there
@@ -302,6 +320,7 @@ class ChargeBook:
             plug["rate"] = _r(plug["rate"], 3)
             plugs.append(plug)
         plugs.sort(key=lambda p: -p["t0"])
+        placeholders(plugs)
         by_num = {p["invoice"]["number"]: p["id"] for p in plugs if p["invoice"] and p["invoice"]["number"]}
         invs = []
         for i in a.invoices:
