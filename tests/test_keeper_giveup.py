@@ -42,6 +42,28 @@ class GiveUp(unittest.TestCase):
         self.assertEqual(shots.have("sentry", "ev1"), set())
 
 
+class LastFrame(unittest.TestCase):
+    def test_a_moment_past_the_end_of_a_short_clip_gets_its_last_frame(self):
+        d = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, d, True)
+        shots = ES.EventShots(d)
+        seen = []
+
+        def ffmpeg(cmd, *a, **k):
+            seen.append(cmd)
+            if "-sseof" in cmd:
+                with open(cmd[-1], "wb") as f:
+                    f.write(b"jpg")
+        real = ST.run_ffmpeg
+        ST.run_ffmpeg = ffmpeg
+        self.addCleanup(setattr, ST, "run_ffmpeg", real)
+        made = shots.make("sentry", dict(id="ev1", ts="2026-10-01T10:00:00"), "2026-10-01_09-59-00", 59, {"front": "x.mp4"})
+        self.assertEqual(made, ["front"])
+        self.assertIn("-ss", seen[0])
+        self.assertIn("-sseof", seen[1])
+        self.assertEqual(shots.tried("sentry", "ev1"), set())
+
+
 class DayFiles(unittest.TestCase):
     def test_the_copy_icloud_makes_of_a_days_file_does_not_count(self):
         d = tempfile.mkdtemp()
