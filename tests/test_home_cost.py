@@ -79,5 +79,17 @@ class HomeCostTest(unittest.TestCase):
         self.assertIsNone(AC.home_model(CCM, {}))
 
 
+class SendState(unittest.TestCase):
+    def test_what_there_is_nothing_to_send_for_is_not_pending(self):
+        self.assertEqual(AC.send_state(None, None, None, False)[0], "na")                                   # no invoice
+        self.assertEqual(AC.send_state(7.19, None, None, True), ("na", "not in Tessie"))                    # an invoice for a charge Tessie has no record of
+        self.assertEqual(AC.send_state(7.19, None, dict(cost=3.0), True)[0], "pending")                     # the same invoice once Tessie has the record
+        self.assertEqual(AC.send_state(7.19, None, None, False)[0], "pending")                              # a normal charge not (yet) in the cache
+
+    def test_what_tessie_holds_is_synced(self):
+        self.assertEqual(AC.send_state(0.32, 0.32, dict(cost=0.94), False)[0], "synced")                    # sent by us
+        self.assertEqual(AC.send_state(0.32, None, dict(cost=0.32), False)[0], "synced")                    # Tessie's own figure already is it
+
+
 if __name__ == "__main__":
     unittest.main()
