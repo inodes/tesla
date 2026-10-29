@@ -941,11 +941,13 @@ function clipPlayer(host,o){
   // a clip's name is the car's clock (stMs: only used to place things that are on that same clock, like a Sentry trigger); what is SHOWN is the local clock (o.loc: stamp -> local text)
   const stMs=s=>Date.parse(s.slice(0,10)+"T"+s.slice(11).replace(/-/g,":")),LOC=s=>(o.loc&&o.loc[s])||s.slice(0,10)+"T"+s.slice(11).replace(/-/g,":"),clock=s=>LOC(s).slice(11,19),shownAt=(s,t)=>new Date(Date.parse(LOC(s)+"Z")+t*1000).toISOString().substr(11,8),fmt=t=>Math.floor(t/60)+":"+String(Math.floor(t%60)).padStart(2,"0");
   let si=0,seek=0,view=o.view||lsGet("tc.view","all"),rate=lsGet("tc.rate","1"),vs=[],mv=null;
-  // a Sentry/Saved event opens at the START of its first clip and plays; the Detection button jumps to the moment it happened
-  const toTrig=()=>{si=stamps.reduce((a,s,i)=>stMs(s)<=o.trig?i:a,0);seek=Math.max(0,(o.trig-stMs(stamps[si]))/1000);if($("#stp"))$("#stp").value=si;vids()};
+  // a Saved clip opens at the START of its first clip and plays; a Sentry event (o.at="trig") opens at the moment it was detected. Detection jumps to that moment, From Start to the first clip.
+  const trigAt=()=>{si=stamps.reduce((a,s,i)=>stMs(s)<=o.trig?i:a,0);seek=Math.max(0,(o.trig-stMs(stamps[si]))/1000)};
+  const toTrig=()=>{trigAt();if($("#stp"))$("#stp").value=si;vids()},toStart=()=>{si=0;seek=0;if($("#stp"))$("#stp").value=si;vids()};
+  if(o.at==="trig"&&o.trig)trigAt();
   const shell=()=>{host.innerHTML=`<div class="sp"><div class="bar"><button class="chip ${view==="all"?"on":""}" data-c="all">All six</button>${Object.keys(CAMN).map(c=>`<button class="chip ${view===c?"on":""}" data-c="${c}">${CAMN[c]}</button>`).join("")}</div>
     <div class="sub" style="margin:4px 0 8px">${o.head}</div>
-    <div class="vbar"><button class="btn" id="vpl">❚❚ Pause</button>${o.trig?'<button class="btn" id="vtr" title="Go back to the moment it was detected">↧ Detection</button>':""}<input type="range" id="vsk" min="0" max="60" step="0.1" value="0"><span id="vtm">0:00</span><span class="vsg" id="vsg"></span>
+    <div class="vbar"><button class="btn" id="vpl">❚❚ Pause</button>${o.trig?'<button class="btn" id="vtr" title="Go to the moment it was detected">↧ Detection</button>':""}${o.trig&&o.at==="trig"?'<button class="btn" id="vfs" title="Go to the start of the first clip">⇤ From Start</button>':""}<input type="range" id="vsk" min="0" max="60" step="0.1" value="0"><span id="vtm">0:00</span><span class="vsg" id="vsg"></span>
      <select id="vsp">${["0.5","1","2","4"].map(r=>`<option value="${r}" ${r===rate?"selected":""}>${r}×</option>`).join("")}</select>
      ${stamps.length>1?`<select id="stp">${stamps.map((s,i)=>`<option value="${i}" ${i===si?"selected":""}>${clock(s)}${o.trig&&stMs(s)<=o.trig&&o.trig<stMs(s)+60000?"  ◀ happened":""}</option>`).join("")}</select>`:""}</div>
     <div id="vids"></div></div>`;
@@ -953,6 +955,7 @@ function clipPlayer(host,o){
     $("#vsp").onchange=e=>{rate=e.target.value;lsSet("tc.rate",rate);vs.forEach(v=>v.playbackRate=+rate)};
     if($("#stp"))$("#stp").onchange=e=>{si=+e.target.value;seek=0;vids()};
     if($("#vtr"))$("#vtr").onclick=toTrig;
+    if($("#vfs"))$("#vfs").onclick=toStart;
     vids()};
   // the signs read in these minutes (speed limits): shown beside the time while the video is at them
   let SGV={};const vsigns=()=>{const el=$("#vsg");if(!el||!mv)return;const t=mv.currentTime,L=(SGV[stamps[si]]||[]).filter(g=>t>=g.s0-1.5&&t<=g.s1+1.5);
@@ -1031,8 +1034,8 @@ async function sentryPlayer(host,ev,role=ev&&ev.role||"A",folder="SentryClips"){
     if(want>0){try{const r=await fetch("/api/clips/after/"+encodeURIComponent(stamps[stamps.length-1])+"?n="+want+"&skip="+encodeURIComponent(stamps.join(",")));const d=r.ok?await r.json():null;
       if(d&&d.clips&&Object.keys(d.clips).length){more=d;stamps=stamps.concat(Object.keys(d.clips).sort());cams=Object.assign({},ev.clips,d.clips);loc=Object.assign({},ev.loc||{},d.loc||{})}}catch(e){}}}
   const extra=more?Object.keys(more.clips).length:0;
-  clipPlayer(host,{stamps,cams,loc,trig,view:EVCAM[ev.cam]||"all",url:(s,c)=>more&&more.play[s]?`/footage/${more.play[s]}/RecentClips/${s}-${c}.mp4`:`/footage/${role}/${folder}/${ev.id}/${s}-${c}.mp4`,
-    head:`${esc(what)} on ${dayName(t.slice(0,10))} at ${hms(t)}${ev.city?" · "+esc(ev.city):""}${ev.street&&folder==="SavedClips"?" · "+esc(ev.street):""}. One-minute clips, ${stamps.length} in this event${extra?` (${extra} after it from the continuous recording)`:""}; the next clip plays on its own. It plays from the start; press Detection to jump to the moment it happened${EVCAM[ev.cam]?" (the "+CAMN[EVCAM[ev.cam]].toLowerCase()+" camera saw it)":""}.`});
+  clipPlayer(host,{stamps,cams,loc,trig,at:folder==="SentryClips"?"trig":"",view:EVCAM[ev.cam]||"all",url:(s,c)=>more&&more.play[s]?`/footage/${more.play[s]}/RecentClips/${s}-${c}.mp4`:`/footage/${role}/${folder}/${ev.id}/${s}-${c}.mp4`,
+    head:`${esc(what)} on ${dayName(t.slice(0,10))} at ${hms(t)}${ev.city?" · "+esc(ev.city):""}${ev.street&&folder==="SavedClips"?" · "+esc(ev.street):""}. One-minute clips, ${stamps.length} in this event${extra?` (${extra} after it from the continuous recording)`:""}; the next clip plays on its own. ${folder==="SentryClips"?"It plays from the moment it was detected; press From Start for the first clip":"It plays from the start; press Detection to jump to the moment it happened"}${EVCAM[ev.cam]?" (the "+CAMN[EVCAM[ev.cam]].toLowerCase()+" camera saw it)":""}.`});
   // the full-size pictures kept of the moment (they stay when the video is deleted)
   const ty=folder==="SavedClips"?"saved":"sentry";let sh=null;
   try{const r=await fetch("/api/clips/shots/"+ty+"/"+encodeURIComponent(ev.id));sh=r.ok?await r.json():null}catch(e){}
@@ -2041,8 +2044,8 @@ async function pageTeslaCamSentry(role,ev){
       SMAP=m;mapNav(m,()=>m.easeTo({center:pos,zoom:16}),"Back to the car");const el=document.createElement("i");el.className="hal big";new maplibregl.Marker({element:el}).setLngLat(pos).addTo(m);
       const setMs=k=>{lsSet("tc.mapsz.s",k);$$("[data-ms]",host).forEach(b=>b.classList.toggle("on",b.dataset.ms===k));$("#dmap").style.height=(MSZ.find(x=>x[0]===k)||MSZ[1])[2];m.resize();m.easeTo({center:pos,zoom:16,duration:200})};
       $$("[data-ms]",host).forEach(b=>b.onclick=()=>setMs(b.dataset.ms));setMs(lsGet("tc.mapsz.s","m"))}
-    clipPlayer($("#dvid"),{stamps,cams:e.clips,loc:e.loc,trig:Date.parse(e.cts||e.ts),view:"all",hot:EVCAM[e.cam]||"front",url:(s,c)=>`/footage/${role}/SentryClips/${e.id}/${s}-${c}.mp4`,
-      head:`${stamps.length} one-minute clip${stamps.length>1?"s":""}; the next plays on its own. It plays from the start; press Detection to jump to the moment the car detected something. The camera that saw it has a red border.`})
+    clipPlayer($("#dvid"),{stamps,cams:e.clips,loc:e.loc,trig:Date.parse(e.cts||e.ts),at:"trig",view:"all",hot:EVCAM[e.cam]||"front",url:(s,c)=>`/footage/${role}/SentryClips/${e.id}/${s}-${c}.mp4`,
+      head:`${stamps.length} one-minute clip${stamps.length>1?"s":""}; the next plays on its own. It plays from the moment the car detected something; press From Start for the first clip. The camera that saw it has a red border.`})
   }catch(err){host.innerHTML=errBox(err.message,"Could not open this Sentry event")}
 }
 // the minutes around one instant (a Saved clip's trigger) when no Tessie drive covers it: map, telemetry and video of whichever connected drive holds them
