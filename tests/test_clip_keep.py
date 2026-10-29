@@ -1,6 +1,7 @@
 """clip_keep.ClipKeep: what is kept from each clip's video, and deleting / moving the video once it is all kept."""
 import json
 import os
+import time
 import shutil
 import sys
 import tempfile
@@ -381,6 +382,17 @@ class EventShotsTest(ProcBase):
         self.k.start_process([dict(kind="saved", id="ev1")], self.roots)
         self.k._thread.join(5)
         self.assertEqual(len(self.ffmpeg), n)
+
+
+class StepClockTest(ProcBase):
+    def test_a_step_records_when_it_started_so_the_page_can_say_how_long_is_left(self):
+        before = time.time()
+        self.k._job["steps"] = []
+        self.k._step("Reading signs", 230)
+        j = self.k.job()
+        self.assertEqual((j["step"], j["step_done"], j["step_total"]), ("Reading signs", 0, 230))
+        self.assertGreaterEqual(j["step_t0"], before)
+        self.assertLessEqual(j["step_t0"], time.time())
 
 
 if __name__ == "__main__":
