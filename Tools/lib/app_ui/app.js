@@ -813,8 +813,8 @@ async function pageParked(){
   const drawEvents=()=>{const q=IP.q.toLowerCase(),rs=evs.filter(v=>inRange({day:v.ts.slice(0,10)},IP.r)&&(!q||(v.city+" "+v.street+" "+reason(v.reason)).toLowerCase().includes(q))),byDay={};
     rs.forEach(v=>(byDay[v.ts.slice(0,10)]=byDay[v.ts.slice(0,10)]||[]).push(v));
     $("#tl").innerHTML=tile(n0(rs.length),"saved Sentry events")+tile(n0(rs.filter(v=>idleOf(v)).length),"inside a recorded parked period")+tile(sn.connected?"Connected":"Not connected","TeslaCam drives");
-    $("#tb").innerHTML=(sn.connected?'<div id="spl"></div>':'<div class="empty">No TeslaCam drive is connected.</div>')+Object.keys(byDay).sort().reverse().slice(0,60).map(d=>`<div class="day">${dayName(d)}<small>${byDay[d].length} event${byDay[d].length>1?"s":""}</small></div><div class="evs">${byDay[d].map(v=>`<button class="evc" data-id="${v.id}"><img loading="lazy" src="/footage/${v.role||"A"}/SentryClips/${v.id}/thumb.png" onerror="this.style.visibility='hidden'"><b>${hms(v.ts)}</b><span>${esc(reason(v.reason))}</span><span>${esc(v.city||"")}</span>${idleOf(v)?`<a href="#/parked/${idleOf(v).id}" onclick="event.stopPropagation()">parked period</a>`:""}</button>`).join("")}</div>`).join("");
-    $$(".evc").forEach(b=>b.onclick=()=>{$$(".evc").forEach(x=>x.classList.toggle("on",x===b));sentryPlayer($("#spl"),evs.find(v=>v.id===b.dataset.id));$("#spl").scrollIntoView({block:"nearest"})})};
+    $("#tb").innerHTML=(sn.connected?'<div id="spl"></div>':'<div class="empty">No TeslaCam drive is connected.</div>')+Object.keys(byDay).sort().reverse().slice(0,60).map(d=>`<div class="day">${dayName(d)}<small>${byDay[d].length} event${byDay[d].length>1?"s":""}</small></div><div class="evs">${byDay[d].map(v=>`<button class="evc" data-id="${v.id}">${sentryThumb(v)}<b>${hms(v.ts)}</b><span>${esc(reason(v.reason))}</span><span>${esc(v.city||"")}</span>${idleOf(v)?`<a href="#/parked/${idleOf(v).id}" onclick="event.stopPropagation()">parked period</a>`:""}</button>`).join("")}</div>`).join("");
+    lazyThumbs($("#tb"));$$(".evc").forEach(b=>b.onclick=()=>{$$(".evc").forEach(x=>x.classList.toggle("on",x===b));sentryPlayer($("#spl"),evs.find(v=>v.id===b.dataset.id));$("#spl").scrollIntoView({block:"nearest"})})};
   const draw=()=>{if(IP.tab==="events")return drawEvents();const q=IP.q.toLowerCase(),rs=all.filter(x=>inRange(x,IP.r)&&x.min>=IP.min&&(IP.sen==="all"||x.nev>0)&&(!q||place(x).toLowerCase().includes(q))),kwh=rs.reduce((a,x)=>a+(x.kwh||0),0),mn=rs.reduce((a,x)=>a+x.min,0);
     $("#tl").innerHTML=tile(n0(rs.length),"parked periods")+tile(dur(mn),"time parked")+tile(n0(kwh,1)+" kWh","energy used while parked")+tile(mn?n0(kwh*1000/(mn/60))+" Wh/h":"–","average drain")+tile(n0(rs.reduce((a,x)=>a+x.nev,0)),"saved Sentry events here")+tile(sn.connected?n0(evs.length)+" ("+matched.size+" placed)":"No drive connected","Sentry events on connected drives");
     table($("#tb"),[{k:"t0",t:"Date",l:1,f:r=>`${r.day} ${r.hm} <span class="sub">${esc(r.tz||"")}</span>`},{k:"place",t:"Where",l:1,f:whereLink},{k:"min",t:"Parked",f:r=>dur(r.min)},{k:"b0",t:"Battery",f:r=>`${n0(r.b0)}→${n0(r.b1)}%`},{k:"kwh",t:"kWh",f:r=>n0(r.kwh,2)},{k:"dr",t:"Wh/h",f:r=>r.min?n0(r.kwh*1000/(r.min/60)):"–"},{k:"nev",t:"Sentry clips",f:r=>r.nev?`<b>${r.nev}</b> ▶`:"–"},{k:"sentry",t:"In Sentry",f:r=>r.sentry>0.01?Math.round(r.sentry*100)+"%":"–"},{k:"climate",t:"Climate",f:r=>r.climate>0.01?Math.round(r.climate*100)+"%":"–"}],rs.map(r=>Object.assign({dr:r.min?r.kwh/(r.min/60):0},r)),r=>location.hash="#/parked/"+r.id,"t0")};
@@ -833,15 +833,23 @@ async function pageParkedOne(id){
   const box=$("#sev");
   if(!sn.connected){box.innerHTML='<div class="sub">No TeslaCam drive holding these clips is connected, so saved Sentry clips cannot be shown.</div>';return}
   if(!evs.length){box.innerHTML='<div class="sub">No saved Sentry events during this parked period.</div>';return}
-  box.innerHTML=`<div class="sub">${evs.length} saved event${evs.length>1?"s":""}. Pick one to watch.</div><div class="evs">${evs.map((v,i)=>`<button class="evc" data-i="${i}"><img loading="lazy" src="/footage/${v.role||"A"}/SentryClips/${v.id}/thumb.png" onerror="this.style.visibility='hidden'"><b>${hms(v.ts)}</b><span>${esc(reason(v.reason))}${v.cam?" · camera "+esc(v.cam):""}</span></button>`).join("")}</div>`;
-  const pick=i=>{$$(".evc").forEach(b=>b.classList.toggle("on",+b.dataset.i===i));sentryPlayer($("#spl"),evs[i])};
+  box.innerHTML=`<div class="sub">${evs.length} saved event${evs.length>1?"s":""}. Pick one to watch.</div><div class="evs">${evs.map((v,i)=>`<button class="evc" data-i="${i}">${sentryThumb(v)}<b>${hms(v.ts)}</b><span>${esc(reason(v.reason))}${v.cam?" · camera "+esc(v.cam):""}</span></button>`).join("")}</div>`;
+  lazyThumbs(box);const pick=i=>{$$(".evc").forEach(b=>b.classList.toggle("on",+b.dataset.i===i));sentryPlayer($("#spl"),evs[i])};
   $$(".evc").forEach(b=>b.onclick=()=>pick(+b.dataset.i));pick(0);
 }
 // ---------- clips whose video is not on a connected drive: the kept one-second stills, large, with arrows (the footage log says which drive held the video)
 const DRN={A:"the Archive",J:"JOWUA",U:"the Tesla USB"},drName=r=>DRN[r]||r;
 // a card's picture: the kept still first (the same for every card, whichever drive is connected); the video's first frame when no still is kept; an empty box when neither
-function stThumb(stamp,sec,vurl){return `<img loading="lazy" src="/still/${stamp}/${sec}.jpg" data-v="${esc(vurl||"")}" onerror="stFallback(this)">`}
-function stFallback(img){const u=img.dataset.v,p=img.parentNode;img.outerHTML=u?vthumb(u):'<div class="noimg"></div>';if(u&&p)lazyThumbs(p)}
+function stThumb(stamp,sec,vurl){return `<img loading="lazy" src="/still/${stamp}/${sec}.jpg" data-v="${esc(vurl||"")}" data-t="${sec}" onerror="stFallback(this)">`}
+function stFallback(img){const u=img.dataset.v,p=img.parentNode;img.outerHTML=u?vthumb(u,+img.dataset.t||2):'<div class="noimg"></div>';if(u&&p)lazyThumbs(p)}
+// the picture of a Sentry event: the camera that saw it, at the second it was detected (the car's own thumb.png is neither). Needs lazyThumbs(host) after it is drawn.
+function sentryThumb(v){
+  const role=v.role||"A",ks=Object.keys(v.clips||{}).sort(),tt=(v.cts||v.ts||"").replace("T","_").replace(/:/g,"-"),k0=ks.filter(x=>x<=tt).pop()||ks[0];
+  if(!k0)return `<img loading="lazy" src="/footage/${role}/SentryClips/${v.id}/thumb.png" onerror="this.style.visibility='hidden'">`;
+  const sec=Math.max(1,Math.min(58,Math.round((Date.parse((v.cts||v.ts||"").replace("T"," "))-Date.parse(k0.replace("_"," ").replace(/(\d\d)-(\d\d)-(\d\d)$/,"$1:$2:$3")))/1000)||2)),
+    have=v.clips[k0]||[],cam=have.includes(EVCAM[v.cam])?EVCAM[v.cam]:have.includes("front")?"front":have[0]||"",
+    vu=cam?`/footage/${role}/SentryClips/${v.id}/${k0}-${cam}.mp4`:"";
+  return cam&&cam!=="front"?vthumb(vu,sec):stThumb(k0,sec,vu)}
 const stillSrc=(stamp,sec)=>`/still/${stamp}/${sec}.jpg`;
 function stillViewer(host,o){
   const sts=o.stamps||[];if(!sts.length){host.innerHTML='<div class="sub">This has no clips.</div>';return}
@@ -1390,9 +1398,10 @@ async function pageAlerts(){
 }
 
 // A thumbnail taken from the video itself (first frame of a clip), loaded only when it scrolls into view - Recent clips have no thumb.png
-const VT=window.IntersectionObserver?new IntersectionObserver(es=>es.forEach(e=>{if(e.isIntersecting){const v=e.target;VT.unobserve(v);v.src=v.dataset.src+"#t="+(v.dataset.t||2)}}),{rootMargin:"300px"}):null;
+const vtLoad=v=>{const t=+v.dataset.t||2;v.addEventListener("loadedmetadata",()=>{try{if(Math.abs(v.currentTime-t)>0.5)v.currentTime=t}catch(e){}},{once:true});v.src=v.dataset.src+"#t="+t};       // a player that ignores the #t= fragment is told where to look
+const VT=window.IntersectionObserver?new IntersectionObserver(es=>es.forEach(e=>{if(e.isIntersecting){const v=e.target;VT.unobserve(v);vtLoad(v)}}),{rootMargin:"300px"}):null;
 const vthumb=(url,t)=>`<video class="vt" muted playsinline preload="metadata" data-src="${esc(url)}" data-t="${t||2}" onerror="this.outerHTML='<div class=\\'noimg\\'></div>'"></video>`;
-const lazyThumbs=host=>$$("video.vt",host).forEach(v=>{if(VT)VT.observe(v);else v.src=v.dataset.src+"#t="+(v.dataset.t||2)});
+const lazyThumbs=host=>$$("video.vt",host).forEach(v=>{if(VT)VT.observe(v);else vtLoad(v)});
 // ---------- TeslaCam: the clips on any connected drive, and one continuous timeline built from the files alone
 let TCS={role:null,kind:"clips",q:"",r:{p:"all"},src:{sentry:1,saved:1,recent:1}},TLOFF=null;
 const SWRSEEN=new Set(),FRESH={};
