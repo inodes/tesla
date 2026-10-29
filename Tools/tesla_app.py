@@ -108,6 +108,7 @@ SYNC = None
 REACH = None                # the Places map's range shading and coverage gaps (lib/app_reach.py)
 TSYNC = None
 CSYNC = None     # the Charges page's Tessie sync (sync_charging_all.sh)
+CCOST = None     # sending the charges' costs to Tessie (analyse_charging.py --sync-tessie-costs --apply)
 SOFT = None      # the Software page's fetch of Teslascope's versions (lib/app_software.py)
 CARW = None      # looks at which software the car is on, every software.car_check_minutes (lib/car_watch.py)
 BOOK = None
@@ -567,6 +568,14 @@ class H(BaseHTTPRequestHandler):
                 if r.get("ok") is not False and r.get("running"):
                     tessie_started()
                 return self.send_json(r)
+            if u.path == "/api/charges/send-costs":       # write each charge's cost (Home: the scripts' cost; public: invoice share) to Tessie where it differs
+                if not app_sync.tessie_configured():
+                    return self.send_json(dict(ok=False, error="Tessie is not set up: add the access token and VIN to config.json (tessie.access_token, tessie.vin)."))
+                if CSYNC.running():
+                    return self.send_json(dict(ok=False, error="The Tessie sync is running; try again when it has finished."))
+                return self.send_json(CCOST.start())
+            if u.path == "/api/charges/send-costs/stop":
+                return self.send_json(CCOST.stop())
             if u.path == "/api/tessie/sync/stop":
                 return self.send_json((CSYNC if urllib.parse.parse_qs(u.query).get("kind", [""])[0] == "charges" else TSYNC).stop())
             if u.path == "/api/software/sync":           # {since: 2026}: fetch what Teslascope has that is not held yet (lib/software/sync.py), in the background
@@ -775,6 +784,8 @@ class H(BaseHTTPRequestHandler):
             return self.send_json(dict(configured=app_sync.tessie_configured(), synced_at=charges_state().get("at"), fresh_minutes=app_config.get("drives.tessie_fresh_minutes"), **{k: v for k, v in CSYNC.status(0).items() if k != "lines"}))
         if name == "tessie":
             return self.send_json(dict(configured=app_sync.tessie_configured(), auto_minutes=app_config.get("drives.tessie_auto_sync_minutes"), synced_at=tessie_state().get("at"), fresh_minutes=app_config.get("drives.tessie_fresh_minutes"), **{k: v for k, v in TSYNC.status(0).items() if k != "lines"}))
+        if name == "charges/send-costs":
+            return self.send_json(CCOST.status(int(q.get("since", ["0"])[0] or 0)))
         if name == "tessie-sync":
             return self.send_json((CSYNC if q.get("kind", [""])[0] == "charges" else TSYNC).status(int(q.get("since", ["0"])[0] or 0)))
         if name == "reach":
@@ -969,7 +980,7 @@ def _code_version():
 
 
 def main():
-    global KEPT, STORE, DATA_DIR, SENTRY, TC, DRV, SYNC, TSYNC, CSYNC, REACH, SOFT, CARW, BOOK, FG, KEEP, DRIVELIST, TODO, CKEEP, STHIN
+    global KEPT, STORE, DATA_DIR, SENTRY, TC, DRV, SYNC, TSYNC, CSYNC, CCOST, REACH, SOFT, CARW, BOOK, FG, KEEP, DRIVELIST, TODO, CKEEP, STHIN
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--data-dir", default=DEFAULT_DATA)
     ap.add_argument("--port", type=int, default=int(app_config.get("window.port")))
@@ -1021,6 +1032,8 @@ def main():
     REACH = app_reach.ReachService(os.path.dirname(os.path.abspath(__file__)), DATA_DIR)
     TSYNC = app_sync.ChargerSync(os.path.dirname(os.path.abspath(__file__)), DATA_DIR, "sync_drives_all.sh")
     CSYNC = app_sync.ChargerSync(os.path.dirname(os.path.abspath(__file__)), DATA_DIR, "sync_charging_all.sh")
+    CCOST = app_sync.ChargerSync(os.path.dirname(os.path.abspath(__file__)), DATA_DIR, "analyse_charging.py",
+                                 argv=[sys.executable, "analyse_charging.py", "--sync-tessie-costs", "--apply", "--only-confident"])
     SOFT = app_software.SoftSync(DATA_DIR)
     CARW = car_watch.Watch(DATA_DIR, lambda: app_software.S.load().get("car_check_minutes") if app_sync.tessie_configured() else 0)
     CARW.start()

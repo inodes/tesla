@@ -579,7 +579,7 @@ async function pageCharges(){
       &&(CP.inv==="all"||(CP.inv==="with"&&p.invoice)||(CP.inv==="without"&&!p.invoice&&!p.home)||(CP.inv==="unsynced"&&(p.sync==="pending"||p.sync==="partial"))));
     const kwh=rs.reduce((a,x)=>a+(x.kwh||0),0),disp=rs.reduce((a,x)=>a+(x.disp||x.kwh||0),0),cost=rs.reduce((a,x)=>a+(x.cost||0),0),recs=rs.reduce((a,x)=>a+x.parts.length,0);
     const withInv=rs.filter(x=>x.invoice).length,billed=rs.filter(x=>!x.home).length,uns=rs.filter(x=>x.sync==="pending"||x.sync==="partial").length;
-    $("#tl").innerHTML=tile(n0(rs.length),"charges"+(recs!==rs.length?" ("+recs+" Tessie records)":""))+tile(n0(kwh)+" kWh","battery energy added")+tile(money(cost),"cost")+tile(kwh?money(cost/kwh)+"/kWh":"–","average price")+tile(withInv+" of "+billed,"public charges with an invoice")+tile(uns?uns+" to send":"all sent",uns?"costs not yet in Tessie":"costs are in Tessie");
+    sendCosts($("#csb"),P.filter(x=>x.sync==="pending"||x.sync==="partial").length);$("#tl").innerHTML=tile(n0(rs.length),"charges"+(recs!==rs.length?" ("+recs+" Tessie records)":""))+tile(n0(kwh)+" kWh","battery energy added")+tile(money(cost),"cost")+tile(kwh?money(cost/kwh)+"/kWh":"–","average price")+tile(withInv+" of "+billed,"public charges with an invoice")+tile(uns?uns+" to send":"all sent",uns?"costs not yet in Tessie":"costs are in Tessie");
     const val=(p,k)=>k==="where"?(p.where||"").toLowerCase():k==="invn"?invn(p):p[k];
     rs.sort((a,b)=>{const x=val(a,CP.sk),y=val(b,CP.sk);if(x==null||y==null)return (x==null)-(y==null);return CP.dir*cmpv(x,y)});
     const row=p=>{const multi=p.parts.length>1,op=CP.open[p.id];
@@ -600,6 +600,7 @@ async function pageCharges(){
   main.innerHTML=`<h1>Charges</h1><div class="sub">Every charge reconciled with its invoice. A plug-in that Tessie recorded as several sessions is one charge with its records as parts.</div>
    <div id="cstl" class="sub" style="margin-top:6px" ${B0.status==="building"?"":"hidden"}>Refreshing charges and invoices in the background…</div>
    <div id="tsb" style="margin:10px 0"></div>
+   <div id="csb"></div>
    <div class="bar"><button class="chip" data-tab="charges">Charges</button><button class="chip" data-tab="invoices">Invoices (${B.invoices.length})</button><span id="rg"></span><select id="kd"><option value="all">All types</option><option value="ac">AC / home</option><option value="dc">DC fast</option><option value="supercharger">Supercharger</option></select><select id="iv"><option value="all">Any invoice state</option><option value="with">With an invoice</option><option value="without">Public, no invoice</option><option value="unsynced">Invoice cost not in Tessie</option></select><input type="search" id="q" placeholder="Search a place or invoice…" value="${esc(CP.q)}"></div><div class="tiles" id="tl"></div><div id="tb" style="overflow-x:auto"></div>`;
   $("#kd").value=CP.kind;$("#iv").value=CP.inv;rangeBar($("#rg"),"charges",CP.r,daysOf(P),show);$("#kd").onchange=e=>{CP.kind=e.target.value;show()};$("#iv").onchange=e=>{CP.inv=e.target.value;show()};$("#q").oninput=e=>{CP.q=e.target.value;show()};
   $$("[data-tab]").forEach(c=>c.onclick=()=>{CP.tab=c.dataset.tab;show()});show();
@@ -1673,6 +1674,26 @@ let DLP={r:{p:"all"},q:"",src:"all"};
 let TSPOLL=null;const TSHTML={};
 // what a sync step is called on screen (the scripts' own step names are for the log, not for the page)
 const STEPW=n=>/^Tessie drives/i.test(n)?"Fetching your drives from Tessie":/telemetry backfill/i.test(n)?"Fetching the path of each drive":/summary pages/i.test(n)?"Building the drive pages":/Battery health/i.test(n)?"Updating battery health":/Firmware alerts/i.test(n)?"Checking firmware alerts":/software and FSD/i.test(n)?"Checking the car's software version":n;
+
+// Charges: write the costs Tessie does not hold yet to Tessie (a Home charge's cost, a public charge's invoice share), with progress
+const CST={run:false,since:0,tail:[],done:null,t:0};
+async function sendCosts(host,n){
+  if(!host)return;clearTimeout(CST.t);
+  const paint=()=>{if(!document.body.contains(host))return;
+    if(CST.run){host.innerHTML=`<div class="card ixb"><div style="flex:1;min-width:0"><b>Sending costs to Tessie…</b><div class="sub">${esc(CST.tail.slice(-1)[0]||"")}</div></div><button class="btn" id="csx">Stop</button></div>`;$("#csx",host).onclick=()=>fetch("/api/charges/send-costs/stop",{method:"POST"});return}
+    let h="";
+    if(CST.done)h+=`<div class="sub" style="margin-bottom:8px">${CST.done.rc===0?esc(CST.done.msg):`<b style="color:var(--bad)">${esc(CST.done.msg||"Sending stopped (exit "+CST.done.rc+").")}</b>`}</div>`;
+    if(n)h+=`<div class="bar"><button class="btn" id="csg">Send ${n===1?"1 cost":n+" costs"} to Tessie</button><span class="sub">${n===1?"1 charge has":n+" charges have"} a cost Tessie does not hold.</span></div>`;
+    host.innerHTML=h;const g=$("#csg",host);
+    if(g)g.onclick=async()=>{g.disabled=true;let r;try{r=await (await fetch("/api/charges/send-costs",{method:"POST"})).json()}catch(e){r={ok:false,error:"Could not reach the app."}}
+      if(r.ok===false){CST.done={rc:1,msg:r.error};paint();return}CST.run=true;CST.since=0;CST.tail=[];CST.done=null;paint();poll()}};
+  const poll=async()=>{let j;try{j=await (await fetch("/api/charges/send-costs?since="+CST.since)).json()}catch(e){return}
+    CST.since=j.n;CST.tail.push(...(j.lines||[]));
+    if(j.running){CST.run=true;paint();CST.t=setTimeout(poll,1500);return}
+    if(CST.run){CST.run=false;const m=CST.tail.map(l=>l.match(/Done: (\d+) pushed successfully, (\d+) failed/)).filter(Boolean).pop();
+      CST.done={rc:j.rc,msg:j.rc===0?(m?m[1]+" sent to Tessie"+(m[2]!=="0"?", "+m[2]+" failed":"")+".":"Done."):"Sending stopped (exit "+j.rc+")."};bust();route();return}
+    paint()};
+  paint();poll()}
 async function tessieSync(host,o){
   o=o||{};clearTimeout(TSPOLL);const alive=()=>document.body.contains(host),hk=(o.kind||"drives")+"|"+(o.always?1:0);
   if(!host.innerHTML&&TSHTML[hk])host.innerHTML=TSHTML[hk];
@@ -1785,7 +1806,7 @@ function footageSync(host,opts){
         if(dp&&dp.total){const pct=Math.round(100*(dp.done+(dp.done<dp.total?.35:0))/dp.total),tx=(VERB[k.stage]||"Working")+" "+n0(dp.done)+" of "+n0(dp.total)+" ("+pct+"%)";return{tx,q:pct,h:barOf(tx,pct)}}
         if(!run&&checking)return{tx:chkFull,q:chkPc,h:barOf(chkFull,chkPc)};const l=left(todo,r);if(!l)return{h:todo?'<span class="sub">Checking…</span>':""};
         const p=[];if(l.lnew){const nd=((todo&&todo.drives&&todo.drives[r])||{}).new_days||{},ks=Object.keys(nd).sort().reverse();p.push(n0(l.lnew)+" new file"+(l.lnew>1?"s":"")+(ks.length?" ("+ks.slice(0,3).map(d=>dayName(d)+": "+n0(nd[d])).join(", ")+(ks.length>3?", …":"")+")":""))}
-        if(l.lgone)p.push(n0(l.lgone)+" file"+(l.lgone>1?"s":"")+" removed from the drive since");if(l.telemetry)p.push(n0(l.telemetry)+" minutes without telemetry");if(l.stills)p.push(n0(l.stills)+" clips without stills");if(l.signs)p.push(n0(l.signs)+" minutes without signs read");
+        if(l.lgone)p.push(n0(l.lgone)+" file"+(l.lgone>1?"s":"")+" removed from the drive since");if(l.telemetry)p.push(n0(l.telemetry)+" minute"+(l.telemetry>1?"s":"")+" without telemetry");if(l.stills)p.push(n0(l.stills)+" clip"+(l.stills>1?"s":"")+" without stills");if(l.signs)p.push(n0(l.signs)+" minute"+(l.signs>1?"s":"")+" without signs read");
         return{h:p.length?p.map(esc).join(" · "):'<span style="color:var(--ok)">Up to date</span>'}};
       if((run||checking)&&$$("[data-todo]",host).length===rs.length&&!!$("#fsx",host)===run&&!k.error&&!note&&!msg){
         rs.forEach(r=>{const td=$(`[data-todo="${r}"]`,host),inf=todoInfo(r);if(!td)return;if(inf.tx!=null&&$(".tbt",td)){$(".tbt",td).textContent=inf.tx;setPbar(td,inf.q)}else if(td.innerHTML!==inf.h)td.innerHTML=inf.h});
