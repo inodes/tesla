@@ -38,7 +38,7 @@ def _ocr(gray, psm=6):
     with tempfile.TemporaryDirectory() as td:
         p = os.path.join(td, "a.png")
         cv2.imwrite(p, gray)
-        r = subprocess.run(["tesseract", p, "stdout", "--psm", str(psm), "tsv"], capture_output=True, text=True)
+        r = subprocess.run(["tesseract", p, "stdout", "--psm", str(psm), "tsv"], capture_output=True, text=True, env=sign_finder.ONE_THREAD)
     words, confs = [], []
     for ln in r.stdout.splitlines()[1:]:
         f = ln.split("\t")
@@ -283,6 +283,7 @@ SZ_ROI_Y = (0.10, 0.75)              # rows of the frame searched (fractions of 
 SZ_MIN_W = 24                        # narrowest board (pixels of the frame) worth reading
 SZ_OCR_H = 110                       # the board is enlarged to about this height for reading
 SZ_PLATE_H = 90                      # the plate's writing is enlarged to about this height
+SZ_MIN_BLOBS = 3                     # letter-sized dark shapes a board must show before it is read: a board has two rows of letters, leaves and paint have none or one
 
 
 def _tsv(gray, psm, whitelist=None):
@@ -293,7 +294,7 @@ def _tsv(gray, psm, whitelist=None):
         cmd = ["tesseract", p, "stdout", "--psm", str(psm)]
         if whitelist:
             cmd += ["-c", "tessedit_char_whitelist=" + whitelist]
-        r = subprocess.run(cmd + ["tsv"], capture_output=True, text=True, stdin=subprocess.DEVNULL)
+        r = subprocess.run(cmd + ["tsv"], capture_output=True, text=True, stdin=subprocess.DEVNULL, env=sign_finder.ONE_THREAD)
     out = []
     for ln in r.stdout.splitlines()[1:]:
         f = ln.split("\t")
@@ -366,6 +367,17 @@ def _sz_boards(bgr):
     return [b[:4] for b in out[:4]]
 
 
+def _letter_blobs(bgr, box):
+    """How many letter-sized dark shapes lie on a board (SCHOOL / ZONE are eight or more; leaves, a yellow line or a distant blur give none to two). A look at the pixels
+    that costs a millisecond, where reading the board costs two runs of tesseract."""
+    x, y, w, h = box
+    g = _enlarge(cv2.cvtColor(bgr[y:y + h, x:x + w], cv2.COLOR_BGR2GRAY), 60)
+    ink = (cv2.threshold(g, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)[1] == 0).astype(np.uint8)
+    n, _l, st, _c = cv2.connectedComponentsWithStats(ink, 8)
+    gh = g.shape[0]
+    return sum(1 for i in range(1, n) if 0.12 * gh <= st[i][3] <= 0.6 * gh and st[i][2] <= 0.5 * gh + 5 and st[i][4] >= 8)
+
+
 def _enlarge(gray, height):
     z = max(1.0, float(height) / max(1, gray.shape[0]))
     return cv2.resize(gray, None, fx=z, fy=z, interpolation=cv2.INTER_CUBIC) if z > 1.0 else gray
@@ -412,6 +424,8 @@ def find_school(bgr, read_times=True):
     H, W = bgr.shape[:2]
     out = []
     for (x, y, w, h) in _sz_boards(bgr):
+        if _letter_blobs(bgr, (x, y, w, h)) < SZ_MIN_BLOBS:
+            continue
         pad = max(2, int(0.2 * max(w, h)))
         g = _enlarge(cv2.cvtColor(bgr[max(0, y - pad):y + h + pad, max(0, x - pad):x + w + pad], cv2.COLOR_BGR2GRAY), SZ_OCR_H)
         words = []
