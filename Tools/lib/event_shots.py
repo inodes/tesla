@@ -78,6 +78,23 @@ class EventShots:
         except OSError:
             return set()
 
+    def remove(self, kind, eid):
+        """Deletes everything kept for the event; returns the bytes freed."""
+        d = self.folder(kind, eid)
+        freed = 0
+        try:
+            for fn in os.listdir(d):
+                fp = os.path.join(d, fn)
+                try:
+                    freed += os.path.getsize(fp)
+                    os.remove(fp)
+                except OSError:
+                    pass
+            os.rmdir(d)
+        except OSError:
+            pass
+        return freed
+
     def info(self, kind, eid):
         try:
             with open(os.path.join(self.folder(kind, eid), "shots.json"), encoding="utf-8") as fh:

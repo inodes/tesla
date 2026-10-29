@@ -8,6 +8,7 @@ named by its first minute everywhere, as before.
     update(stamps, items) -> works the cuts out from the timeline's items (kind drive | stopped | parked | recording, t0, t1), keeps them in the file
     is_cut(stamp)         -> True when a run starts at this minute although the minute before it is close enough to belong to the same run
     kind(stamp), pos(stamp) -> what the section that starts at this minute is: "drive" or "park" ("" when not known), and where (lat, lon) when known
+    section(stamp)        -> (kind, lat, lon) of the section any minute lies in; None when the minute is in no section worked out
     version()             -> changes whenever the cuts do
 
 A minute is told apart by its middle. A minute with no reading (kind "recording": the telemetry has not been read) takes the section it follows, so it
@@ -22,7 +23,8 @@ import clip_clock as CC
 
 GAP = 75                    # as in app_teslacam: minutes this close are one run
 _LOCK = threading.RLock()
-_S = {}                     # first minute of a section -> [kind, lat, lon, cut]
+_S = {}                     # first minute of a section -> [kind, lat, lon, cut, UTC time of its last minute]
+_IX = (None, [], [])        # (version, start times, start stamps) for section()
 _PATH = None
 _VER = 0
 _ON_CHANGE = []
@@ -57,6 +59,23 @@ def is_cut(stamp):
 def kind(stamp):
     s = _S.get(stamp)
     return s[0] if s else ""
+
+
+def section(stamp):
+    global _IX
+    with _LOCK:
+        if _IX[0] != _VER:
+            ks = sorted(_S, key=CC.utc)
+            _IX = (_VER, [CC.utc(k) for k in ks], ks)
+        _v, ts, ks = _IX
+        t = CC.utc(stamp)
+        i = bisect.bisect_right(ts, t) - 1
+        if i < 0:
+            return None
+        s = _S[ks[i]]
+        if len(s) < 5 or s[4] is None or t > s[4]:
+            return None
+        return s[0], s[1], s[2]
 
 
 def pos(stamp):
@@ -107,6 +126,8 @@ def compute(stamps, items):
             out[sec][0], out[sec][1], out[sec][2] = k[0], la, lo
             ref[sec] = it
         last = t
+        if sec in out:
+            out[sec][4:] = [t]                            # the last minute of the section so far
     # a parked spell has no position of its own: it is where the drive before it ended, or where the drive after it began (in the same run)
     order = sorted(out, key=CC.utc)
     for n, st in enumerate(order):

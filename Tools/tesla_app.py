@@ -67,6 +67,7 @@ import app_data  # noqa: E402
 import app_sentry  # noqa: E402
 import app_teslacam  # noqa: E402
 import app_drivelist  # noqa: E402
+import home_ignore  # noqa: E402
 import run_cuts  # noqa: E402
 import mac_shell  # noqa: E402
 import app_drive_review  # noqa: E402
@@ -493,6 +494,8 @@ class H(BaseHTTPRequestHandler):
                 roots = {r: footage_root(r) for r in "AJU"}
                 if body.get("action") == "process":       # read what the clips still lack (metadata, stills, pictures, signs, or only `steps`) from their video on the connected drives
                     return self.send_json(CKEEP.start_process(body.get("items") or [], roots, steps=body.get("steps")))
+                if body.get("action") == "purge":         # delete chosen kinds (video, metadata, stills, pictures, signs) of the clips; video that is not all kept needs force
+                    return self.send_json(CKEEP.purge(body.get("items") or [], body.get("types") or [], roots, confirmed=body.get("confirm") is True, force=body.get("force") is True))
                 return self.send_json(CKEEP.start(body.get("action"), role, body.get("items") or [], roots, confirmed=body.get("confirm") is True))
             if u.path == "/api/stills/thin":       # {action: start|stop, events: normal|shrunk}: make the stills of minutes with no event and no sign smaller, or the pictures around events
                 if body.get("action") == "stop":
@@ -960,6 +963,7 @@ def main():
     except OSError:
         pass
     STORE = app_data.Store(DATA_DIR)
+    home_ignore.set_places(lambda: STORE.pl.defs())          # the saved places: where a parked recording is left alone (Home)
     KEPT = app_kept.Kept(local_cache_dir(), _code_version())
     DRIVELIST = app_drivelist.Cached(os.path.join(local_cache_dir(), "drivelist.json"))
     run_cuts.set_file(os.path.join(local_cache_dir(), "run_cuts.json"))

@@ -53,5 +53,19 @@ class UnreadableTest(unittest.TestCase):
         self.assertEqual((rep["drives"][0]["to_make"], rep["drives"][0]["unreadable"], rep["todo"]), (0, 1, []))
 
 
+    def test_a_minute_that_is_left_alone_is_not_planned(self):
+        clip(self.root, "2026-09-11_09-46-36", 5000)
+        rep = ST.plan(self.stills, {"A": self.root}, skip=lambda st: st == S)
+        self.assertEqual((rep["drives"][0]["to_make"], rep["todo"]), (0, []))
+        self.assertEqual(len(ST.plan(self.stills, {"A": self.root})["todo"]), 1)
+
+    def test_stills_are_removed_by_minute(self):
+        os.makedirs(os.path.dirname(self.stills.path(S)), exist_ok=True)
+        with open(self.stills.path(S), "wb") as f:
+            f.write(b"12345")
+        self.assertEqual(self.stills.remove([S, "2026-09-11_09-46-35"]), (1, 5))
+        self.assertFalse(self.stills.has(S))
+
+
 if __name__ == "__main__":
     unittest.main()

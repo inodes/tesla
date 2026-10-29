@@ -433,6 +433,92 @@ class ParkedStillsTest(Base):
         self.assertEqual(r["wait_n"], 2)
 
 
+class PurgeFakeTC(FakeTC):
+    def __init__(self, read, scanned):
+        super().__init__(read, scanned)
+        self.forgot = {"meta": [], "signs": []}
+        self.store.forget = lambda stamps: self.forgot["meta"].extend(stamps)
+        self._r = SimpleNamespace(scanned=lambda: {s: 0 for s in self.sc}, status=lambda: dict(running=False), forget=lambda stamps: self.forgot["signs"].extend(stamps),
+                                  signs=lambda stamps: [], unrefined=lambda: set())
+
+    def _rv(self):
+        return self._r
+
+
+class PurgeTest(Base):
+    def setUp(self):
+        super().setUp()
+        self.stills = ST.Stills(self.data)
+        for st in (S1, S2):
+            os.makedirs(os.path.dirname(self.stills.path(st)), exist_ok=True)
+            with open(self.stills.path(st), "wb") as f:
+                f.write(b"z" * 7)
+        self.fg = SimpleNamespace(stills=self.stills)
+        self.fg.stills.stamps = self.stills.stamps
+
+    def keeper(self, read=(), scanned=()):
+        return CK.ClipKeep(self.data, PurgeTest.tc(read, scanned), self.fg)
+
+    @staticmethod
+    def tc(read, scanned):
+        return PurgeFakeTC(set(read), set(scanned))
+
+    def wait(self, k):
+        for _ in range(200):
+            if not k.job().get("running"):
+                break
+            time.sleep(0.02)
+        return k.job()
+
+    def test_chosen_kinds_only_are_deleted(self):
+        k = self.keeper(read=[S1, S2], scanned=[S1, S2])
+        out = k.purge([dict(kind="saved", id="ev1")], ["stills", "metadata"], self.roots, confirmed=True)
+        self.assertNotIn("error", out)
+        j = self.wait(k)
+        self.assertEqual(sorted(k.tc.forgot["meta"]), [S1, S2])
+        self.assertEqual(k.tc.forgot["signs"], [])
+        self.assertFalse(self.stills.has(S1) or self.stills.has(S2))
+        self.assertEqual(j["data_freed"], 14)
+        self.assertTrue(os.path.isfile(os.path.join(self.roots["J"], "SavedClips", "ev1", "%s-front.mp4" % S1)))      # the video stays
+
+    def test_nothing_is_deleted_without_a_confirmation(self):
+        k = self.keeper()
+        self.assertIn("Not confirmed", k.purge([dict(kind="saved", id="ev1")], ["stills"], self.roots)["error"])
+        self.assertTrue(self.stills.has(S1))
+
+    def test_video_that_is_not_all_kept_needs_force(self):
+        k = self.keeper()
+        out = k.purge([dict(kind="saved", id="ev1")], ["video"], self.roots, confirmed=True)
+        self.assertTrue(out.get("needs_force"))
+        self.assertTrue(os.path.isfile(os.path.join(self.roots["J"], "SavedClips", "ev1", "%s-front.mp4" % S1)))
+        out = k.purge([dict(kind="saved", id="ev1")], ["video"], self.roots, confirmed=True, force=True)
+        self.assertNotIn("error", out)
+        self.wait(k)
+        self.assertFalse(os.path.exists(os.path.join(self.roots["J"], "SavedClips", "ev1", "%s-front.mp4" % S1)))
+
+    def test_everything_at_home_is_deleted_without_force(self):
+        real = CK.IGN.at
+        CK.IGN.at = lambda lat, lon: True                                        # every Sentry event is at Home
+        self.addCleanup(lambda: setattr(CK.IGN, "at", real))
+        led = os.path.join(self.data, "teslacam_ledger", "2026-10-16.json")
+        with open(led) as f:
+            day = json.load(f)
+        with open(led, "w") as f:
+            json.dump({k.replace("saved|ev1", "sentry|ev1"): v for k, v in day.items()}, f)
+        os.rename(os.path.join(self.roots["J"], "SavedClips"), os.path.join(self.roots["J"], "SentryClips"))
+        k = self.keeper()
+        k._events = lambda: {("sentry", "ev1"): dict(id="ev1", lat=-33.8, lon=151.1)}
+        r = k.status(force=True)["clips"]["sentry"]["ev1"]
+        self.assertTrue(r["ignored"])
+        self.assertEqual((r["meta"], r["stills"], r["signs"], r["ready"], r["todo"]), ([0, 0], [0, 0], [0, 0], True, False))
+        self.assertTrue(CK.IGN.has(S1))
+        out = k.purge([dict(kind="sentry", id="ev1")], list(k.TYPES), self.roots, confirmed=True)
+        self.assertNotIn("error", out)
+        self.wait(k)
+        self.assertFalse(os.path.exists(os.path.join(self.roots["J"], "SentryClips", "ev1", "%s-front.mp4" % S1)))
+        self.assertFalse(self.stills.has(S1))
+
+
 class StaleStatusTest(Base):
     def test_an_old_answer_is_returned_at_once_and_rebuilt_behind(self):
         k = self.keep()
