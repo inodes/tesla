@@ -62,6 +62,7 @@ class ClipKeep:
     def __init__(self, data_dir, tc, fg):
         self.dir, self.tc, self.fg = data_dir, tc, fg
         self._cache = None
+        self._gen = 0                   # counts the times what is kept changed: a build that began before the last change is not kept
         self._building = False
         self.on_change = None           # f() when a job ends: files moved, deleted or kept
         self._groups = {}
@@ -87,10 +88,21 @@ class ClipKeep:
                 return c[1]
         return self._rebuild()
 
-    def _rebuild(self):
-        res = self._build()
+    def invalidate(self):
+        """What is kept changed (a delete, a move, new cuts): the next look builds again, and a build already under way is not kept (it may have read the old state)."""
         with self._lock:
-            self._cache = (time.time(), res)
+            self._gen += 1
+            self._cache = None
+
+    def _rebuild(self):
+        for _ in range(3):
+            with self._lock:
+                g = self._gen
+            res = self._build()
+            with self._lock:
+                if g == self._gen:
+                    self._cache = (time.time(), res)
+                    return res
         return res
 
     def _refresh(self):
@@ -428,6 +440,7 @@ class ClipKeep:
                 self._run("delete", role, vfiles[role], roots, clips)
         finally:
             with self._lock:
+                self._gen += 1
                 self._cache = None
             self._changed()
 
@@ -581,6 +594,7 @@ class ClipKeep:
             j["errors"].append("%s: %s" % (type(e).__name__, e))
         finally:
             with self._lock:
+                self._gen += 1
                 self._cache = None
             self._changed()
 
@@ -697,6 +711,7 @@ class ClipKeep:
             j["errors"].append("%s: %s" % (type(e).__name__, e))
         finally:
             with self._lock:
+                self._gen += 1
                 self._cache = None
             self._changed()
 
@@ -753,6 +768,7 @@ class ClipKeep:
             led.flush({d for d in touched if d})
             self._log(action, role, clips, removed, j)
             with self._lock:
+                self._gen += 1
                 self._cache = None
             self._changed()
 
