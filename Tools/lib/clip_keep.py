@@ -147,7 +147,7 @@ class ClipKeep:
         unref = getattr(self.tc._rv(), "unrefined", lambda: set())()      # minutes with signs that have not had the second look
         windows = TD.drive_windows(self.dir)
         starts = [w[0] for w in windows]
-        synced_until = max([w[1] for w in windows] or [0])
+        synced_until = TD.synced_to(self.dir, windows)
         min_kmh = float((app_config.get("review") or {}).get("min_kmh", 30.0))
         led = TLG.Ledger(self.dir)
         found = {}                                           # (kind, event) -> {stamp: dict(cams, bytes)}

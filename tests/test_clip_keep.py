@@ -417,6 +417,22 @@ class ParkedStillsTest(Base):
         self.assertEqual((r["stills"], r["wait_n"]), ([2, 2], 0))                       # parked: the stills count as done
 
 
+    def test_stills_do_not_wait_once_a_sync_ran_after_the_minutes(self):
+        self._recent()
+        TD.drive_windows = lambda d: [(0, 5, True)]
+        old = RC._S
+        self.addCleanup(lambda: setattr(RC, "_S", old))
+        RC._S = {}
+        with open(os.path.join(self.data, "tessie_sync_state.json"), "w") as f:
+            json.dump(dict(at=CC.utc(S2) + 3600), f)                            # Tessie was synced an hour after the clip: no drive of it is still to come
+        r = self.keep(read=[S1, S2], stills=[S1, S2]).status()["clips"]["recent"][S1]
+        self.assertEqual((r["stills"], r["wait_n"]), ([2, 2], 0))
+        with open(os.path.join(self.data, "tessie_sync_state.json"), "w") as f:
+            json.dump(dict(at=CC.utc(S2) + 60), f)                              # a minute later: the drive may not be published yet
+        r = self.keep(read=[S1, S2], stills=[S1, S2]).status()["clips"]["recent"][S1]
+        self.assertEqual(r["wait_n"], 2)
+
+
 class StaleStatusTest(Base):
     def test_an_old_answer_is_returned_at_once_and_rebuilt_behind(self):
         k = self.keep()

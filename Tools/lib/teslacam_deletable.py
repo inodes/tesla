@@ -46,6 +46,25 @@ def drive_windows(data):
     return out
 
 
+SYNC_MARGIN = 900            # a minute this close to the end of a sync may be a drive Tessie had not published yet
+
+
+def synced_to(data, windows):
+    """UTC time up to which Tessie's drives are known: the end of the last drive it gave, or the end of the last sync that finished (a stretch the car sat parked after the
+    last drive is then complete too, instead of waiting for a next drive that only comes once the car moves)."""
+    at = 0
+    try:
+        with open(os.path.join(data, "tessie_sync_state.json"), encoding="utf-8") as fh:
+            at = float(json.load(fh).get("at") or 0)
+    except (OSError, ValueError, TypeError, AttributeError):
+        pass
+    try:
+        at = max(at, os.path.getmtime(os.path.join(data, "drives", "drives_master.csv")))
+    except OSError:
+        pass
+    return max([w[1] for w in windows] + [at - SYNC_MARGIN] if windows or at else [0])
+
+
 def _snap_ok(windows, starts, t):
     """True when minute at UTC t is in no drive, or in a drive whose snapshots are built."""
     k = bisect.bisect_right(starts, t + 60) - 1
@@ -118,7 +137,7 @@ def report(data, roots, detail=False):
     durations = _Durations(data)
     windows = drive_windows(data)
     starts = [w[0] for w in windows]
-    synced_until = max([w[1] for w in windows] or [0])         # drives are synced from Tessie up to here; later video has no drive yet
+    synced_until = synced_to(data, windows)     # drives are synced from Tessie up to here; later video may have a drive Tessie has not given yet
     listed = {}
     for role, root in roots.items():
         files, ok = TF.walk(root)
