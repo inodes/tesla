@@ -592,7 +592,7 @@ async function pageCharges(){
     const rs=P.filter(p=>inRange(p,CP.r)&&(CP.kind==="all"||p.kind===CP.kind)&&(!q||((p.where||"")+" "+(p.addr||"")+" "+(p.network||"")+" "+(p.invoice&&p.invoice.number||"")).toLowerCase().includes(q))
       &&(CP.inv==="all"||(CP.inv==="with"&&p.invoice)||(CP.inv==="without"&&!p.invoice&&!p.home)||(CP.inv==="unsynced"&&(p.sync==="pending"||p.sync==="partial"))));
     const kwh=rs.reduce((a,x)=>a+(x.kwh||0),0),disp=rs.reduce((a,x)=>a+(x.disp||x.kwh||0),0),cost=rs.reduce((a,x)=>a+(x.cost||0),0),recs=rs.reduce((a,x)=>a+x.parts.length,0);
-    const withInv=rs.filter(x=>x.invoice).length,billed=rs.filter(x=>!x.home).length,uns=rs.filter(x=>x.sync==="pending"||x.sync==="partial").length;
+    const withInv=rs.filter(x=>x.invoice).length,billed=rs.filter(x=>!x.home&&!/UNBILLED/.test(x.status||"")).length,uns=rs.filter(x=>x.sync==="pending"||x.sync==="partial").length;
     sendCosts($("#csb"),P.filter(x=>x.sync==="pending"||x.sync==="partial").length);$("#tl").innerHTML=tile(n0(rs.length),"charges"+(recs!==rs.length?" ("+recs+" Tessie records)":""))+tile(n0(kwh)+" kWh","battery energy added")+tile(money(cost),"cost")+tile(kwh?money(cost/kwh)+"/kWh":"–","average price")+tile(withInv+" of "+billed,"public charges with an invoice")+tile(uns?uns+" to send":"all sent",uns?"costs not yet in Tessie":"costs are in Tessie");
     const val=(p,k)=>k==="where"?(p.where||"").toLowerCase():k==="invn"?invn(p):p[k];
     rs.sort((a,b)=>{const x=val(a,CP.sk),y=val(b,CP.sk);if(x==null||y==null)return (x==null)-(y==null);return CP.dir*cmpv(x,y)});

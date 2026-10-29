@@ -45,6 +45,20 @@ def _r(v, n=2):
 _HOME_MEMO = {}
 
 
+def send_state(target, held, rec, invoice_only, what="invoice share"):
+    """(state, reason) of a charge's cost in Tessie: "na" when there is nothing to send (no invoice, or an invoice for a charge Tessie has no record of), "synced" when
+    Tessie holds the figure (sent by us, or already its own), else "pending"."""
+    if target is None:
+        return "na", "no invoice"
+    if invoice_only and rec is None:
+        return "na", "not in Tessie"
+    if held is not None and abs(float(held) - target) < 0.005:
+        return "synced", "Tessie was sent $%.2f" % held
+    if rec and rec.get("cost") is not None and abs(float(rec["cost"]) - target) < 0.005:
+        return "synced", "Tessie already shows $%.2f" % rec["cost"]
+    return "pending", "Tessie shows %s, %s is $%.2f" % ("$%.2f" % rec["cost"] if rec and rec.get("cost") is not None else "no cost", what, target)
+
+
 def home_model(ccm, raw, now=None):
     """What the scripts say a Home charge costs (lib.charge_cost_model.home_charge_cost: solar share at the feed-in it replaced, tier 1 then tier 2, grid share at the usage rate, GST on the grid part),
     reduced to what the app shows. -> dict(cost, kwh, rate, solar_kwh, grid_kwh, tier1_kwh, tier2_kwh, tier1_rate, tier2_rate, usage_rate, before_kwh) or None when it is not a priced charge or there
@@ -228,14 +242,7 @@ class ChargeBook:
             what = "invoice share"
             if target is None and hm:                                   # a Home charge: what Tessie should hold is the scripts' cost (analyse_charging --sync-tessie-costs sends it)
                 target, what = round(hm["cost"], 2), "our cost"
-            if target is None:
-                st, why = "na", "no invoice"
-            elif held is not None and abs(float(held) - target) < 0.005:
-                st, why = "synced", "Tessie was sent $%.2f" % held
-            elif rec and rec.get("cost") is not None and abs(float(rec["cost"]) - target) < 0.005:
-                st, why = "synced", "Tessie already shows $%.2f" % rec["cost"]
-            else:
-                st, why = "pending", "Tessie shows %s, %s is $%.2f" % ("$%.2f" % rec["cost"] if rec and rec.get("cost") is not None else "no cost", what, target)
+            st, why = send_state(target, held, rec, s.get("is_invoice_only_entry"), what)
             tel = s.get("detailed_telemetry") or {}
             dt = s.get("datetime")
             return dict(
