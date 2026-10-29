@@ -549,7 +549,7 @@ const getBook=async(fresh)=>{try{if(BOOKFRESH){const v=BOOKFRESH;BOOKFRESH=null;
   const old=cache.chargebook||(BOOKSEEN?undefined:await IDB.get(k));BOOKSEEN=true;
   if(old!==undefined&&old.book){cache.chargebook=old;f().then(n=>{if(n&&n.book&&!sameData(n,old)){BOOKFRESH=n;redrawQuietly()}}).catch(()=>{});return old}
   return await f()}catch(e){return{status:"error",error:String(e),book:null}}};
-const SYNC_T={synced:["Invoice in Tessie","ok","The charge is in Tessie, and Tessie already holds the invoice cost for every record of this charge."],pending:["Invoice not in Tessie","warn","The charge is in Tessie, but its cost differs from the invoice."],partial:["Invoice part in Tessie","warn","Some records already hold the invoice cost, others do not."]};
+const SYNC_T={synced:["Cost in Tessie","ok","The charge is in Tessie, and Tessie already holds the cost for every record of this charge."],pending:["Cost not in Tessie","warn","The charge is in Tessie, but its cost differs from the invoice or our cost."],partial:["Cost part in Tessie","warn","Some records already hold the invoice cost, others do not."]};
 const syncPill=s=>SYNC_T[s]?`<span class="pill ${SYNC_T[s][1]}" title="${esc(SYNC_T[s][2])}">${SYNC_T[s][0]}</span>`:'<span class="sub">–</span>';
 const kindPill=k=>`<span class="pill ${k==="supercharger"?"sc":k}">${k==="supercharger"?"Supercharger":k==="dc"?"DC":"AC"}</span>`;
 const gstOf=t=>t==null?null:t/11;
@@ -579,7 +579,7 @@ async function pageCharges(){
       &&(CP.inv==="all"||(CP.inv==="with"&&p.invoice)||(CP.inv==="without"&&!p.invoice&&!p.home)||(CP.inv==="unsynced"&&(p.sync==="pending"||p.sync==="partial"))));
     const kwh=rs.reduce((a,x)=>a+(x.kwh||0),0),disp=rs.reduce((a,x)=>a+(x.disp||x.kwh||0),0),cost=rs.reduce((a,x)=>a+(x.cost||0),0),recs=rs.reduce((a,x)=>a+x.parts.length,0);
     const withInv=rs.filter(x=>x.invoice).length,billed=rs.filter(x=>!x.home).length,uns=rs.filter(x=>x.sync==="pending"||x.sync==="partial").length;
-    $("#tl").innerHTML=tile(n0(rs.length),"charges"+(recs!==rs.length?" ("+recs+" Tessie records)":""))+tile(n0(kwh)+" kWh","battery energy added")+tile(money(cost),"cost")+tile(kwh?money(cost/kwh)+"/kWh":"–","average price")+tile(withInv+" of "+billed,"public charges with an invoice")+tile(uns?uns+" to send":"all sent",uns?"invoice costs not yet in Tessie":"invoice costs are in Tessie");
+    $("#tl").innerHTML=tile(n0(rs.length),"charges"+(recs!==rs.length?" ("+recs+" Tessie records)":""))+tile(n0(kwh)+" kWh","battery energy added")+tile(money(cost),"cost")+tile(kwh?money(cost/kwh)+"/kWh":"–","average price")+tile(withInv+" of "+billed,"public charges with an invoice")+tile(uns?uns+" to send":"all sent",uns?"costs not yet in Tessie":"costs are in Tessie");
     const val=(p,k)=>k==="where"?(p.where||"").toLowerCase():k==="invn"?invn(p):p[k];
     rs.sort((a,b)=>{const x=val(a,CP.sk),y=val(b,CP.sk);if(x==null||y==null)return (x==null)-(y==null);return CP.dir*cmpv(x,y)});
     const row=p=>{const multi=p.parts.length>1,op=CP.open[p.id];
@@ -749,7 +749,7 @@ async function pageCharge(id,pid){
      <div class="card"><h2 style="margin-top:0">Pack voltage and current, with history</h2><div id="pc"></div></div>
      <div class="card"><h2 style="margin-top:0">Where</h2><div class="map" id="mp"></div><div class="sub" style="margin-top:8px">${esc(p.addr||"")}</div></div>
    </div><div class="chr2">
-     <div class="tiles tiles2">${tile("+"+n0(v.kwh,1)+" kWh","into the battery")}${tile(n0(v.b0)+"% → "+n0(v.b1)+"%","battery")}${tile(money(costv),(ratev!=null?money(ratev)+"/kWh · ":"")+(inv&&!part?"invoice total":part&&v.icost!=null?"invoice share":(part?part.ocost!=null:p.ocost!=null)?"opportunity cost":"Tessie cost"))}${tile(v.disp!=null?n0(v.disp,1)+" kWh":"–","from the charger"+(inv&&!part?" (invoice)":""))}${tile(eff?n0(eff,1)+"%":"–","efficiency")}${tile(v.peak?n0(v.peak)+" kW":"–","peak"+(minv&&v.kwh?" · avg "+n0(v.kwh*60/minv)+" kW":""))}${tile(v.kmh?n0(v.kmh)+" km/h":"–","range recovered per hour")}${tile(syncPillText(part?part.sync:p.sync),"invoice cost in Tessie")}</div>
+     <div class="tiles tiles2">${tile("+"+n0(v.kwh,1)+" kWh","into the battery")}${tile(n0(v.b0)+"% → "+n0(v.b1)+"%","battery")}${tile(money(costv),(ratev!=null?money(ratev)+"/kWh · ":"")+(inv&&!part?"invoice total":part&&v.icost!=null?"invoice share":(part?part.ocost!=null:p.ocost!=null)?"opportunity cost":"Tessie cost"))}${tile(v.disp!=null?n0(v.disp,1)+" kWh":"–","from the charger"+(inv&&!part?" (invoice)":""))}${tile(eff?n0(eff,1)+"%":"–","efficiency")}${tile(v.peak?n0(v.peak)+" kW":"–","peak"+(minv&&v.kwh?" · avg "+n0(v.kwh*60/minv)+" kW":""))}${tile(v.kmh?n0(v.kmh)+" km/h":"–","range recovered per hour")}${tile(syncPillText(part?part.sync:p.sync),"cost in Tessie")}</div>
      ${multi&&!part?`<div class="card"><h2 style="margin-top:0">The ${p.parts.length} Tessie records</h2>${partsTable(p)}</div>`:""}
      <div class="card"><h2 style="margin-top:0">Invoice and Tessie</h2>${invoiceCard(p,part)}</div>
      <div class="card"><h2 style="margin-top:0">Where the energy went</h2>${energyCard(p,part)}</div>
@@ -782,7 +782,7 @@ function invoiceCard(p,part){
   else h+=`<div class="sub">${p.home?(oms.length?"Home charging is not invoiced; the cost is the feed-in credit the solar share would have earned, plus the grid share at the usage rate.":"Home charging is not invoiced; the cost here is the Tessie estimate."):p.invoice_only?"":"No invoice has been matched to this charge."}</div>`;
   if(!p.home){h+=`<h2>Tessie</h2><table><thead><tr><th class="l">Record</th><th>Tessie id</th><th>Tessie's cost at last sync</th><th>Sent by us</th><th>${inv?"Invoice share":"Our figure"}</th><th>Status</th></tr></thead><tbody>${p.parts.map((x,i)=>`<tr${part&&part.id!==x.id?' style="opacity:.55"':""}><td class="l">${multi1(p)?"Part "+(i+1)+" · ":""}${x.hm}</td><td>${x.tessie_id||"–"}</td><td>${x.tessie_cost_now!=null?money(x.tessie_cost_now):"–"}</td><td>${x.ledger!=null?money(x.ledger):"–"}</td><td>${x.icost!=null?money(x.icost):"–"}</td><td>${syncPill(x.sync)} <span class="sub">${esc(x.sync_why||"")}</span></td></tr>`).join("")}</tbody></table>
     <div class="sub" style="margin-top:8px">${p.sync==="synced"?"Tessie holds the invoice cost for this charge.":p.sync==="na"?"Nothing to send yet.":"The invoice cost is not in Tessie."}</div>`}
-  else h+=(oms.length?`<table class="kv"><tbody>${oms.map((m,i)=>kv(oms.length>1?"Part "+(i+1):"Cost",`<b>${money(m.cost)}</b> · ${esc(omLine(m))}`)).join("")}</tbody></table>`:"")+`<div class="sub" style="margin-top:8px">Tessie cost ${money(part?part.tcost:p.tcost)}.</div>`;
+  else h+=(oms.length?`<table class="kv"><tbody>${oms.map((m,i)=>kv(oms.length>1?"Part "+(i+1):"Cost",`<b>${money(m.cost)}</b> · ${esc(omLine(m))}`)).join("")}</tbody></table>`:"")+`<div class="sub" style="margin-top:8px">Tessie cost ${money(part?part.tcost:p.tcost)}${oms.length?` · ${syncPill((part||p).sync)} ${esc((part||p).sync_why||"")}`:""}.</div>`;
   return h;
 }
 const multi1=p=>p.parts.length>1;

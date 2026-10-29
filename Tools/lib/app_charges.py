@@ -223,7 +223,11 @@ class ChargeBook:
             rec = ccm.find_cache_record_by_epoch(by_epoch, t0)
             tid = rec.get("id") if rec else None
             held = ledger.get(str(tid)) if tid is not None else None
+            hm = None if s.get("invoice_cost") is not None or s.get("emoji") != ccm.HOME_EMOJI else home_model(ccm, raw)
             target = s.get("invoice_cost")
+            what = "invoice share"
+            if target is None and hm:                                   # a Home charge: what Tessie should hold is the scripts' cost (analyse_charging --sync-tessie-costs sends it)
+                target, what = round(hm["cost"], 2), "our cost"
             if target is None:
                 st, why = "na", "no invoice"
             elif held is not None and abs(float(held) - target) < 0.005:
@@ -231,10 +235,9 @@ class ChargeBook:
             elif rec and rec.get("cost") is not None and abs(float(rec["cost"]) - target) < 0.005:
                 st, why = "synced", "Tessie already shows $%.2f" % rec["cost"]
             else:
-                st, why = "pending", "Tessie shows %s, invoice share is $%.2f" % ("$%.2f" % rec["cost"] if rec and rec.get("cost") is not None else "no cost", target)
+                st, why = "pending", "Tessie shows %s, %s is $%.2f" % ("$%.2f" % rec["cost"] if rec and rec.get("cost") is not None else "no cost", what, target)
             tel = s.get("detailed_telemetry") or {}
             dt = s.get("datetime")
-            hm = None if s.get("invoice_cost") is not None or s.get("emoji") != ccm.HOME_EMOJI else home_model(ccm, raw)
             return dict(
                 ocost=_r(hm["cost"]) if hm else None, orate=_r(hm["rate"], 3) if hm and hm["rate"] is not None else None, omodel=hm,
                 id=str(t0), t0=t0, t1=int(s.get("end_utc_epoch") or t0), tz=s.get("timezone") or s.get("start_tz") or "", tzabbr=s.get("start_tz_abbr") or "",
