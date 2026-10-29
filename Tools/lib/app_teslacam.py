@@ -15,6 +15,7 @@ import drive_roles as DR
 import app_config
 import clip_clock as CC
 import run_cuts as RC
+import clips_purged as PG
 import teslacam_timeline as TL
 import teslacam_scan as TS
 import app_review
@@ -235,13 +236,13 @@ class TeslaCam:
         want = set(known)
         out = dict(connected=sorted(r for r in roots if roots[r]), sentry=[], saved=[], recent=[])
         for kind in KINDS:
-            evs = self._events_kept(kind, want, roots)
+            evs = [e for e in self._events_kept(kind, want, roots) if not PG.has_event(kind, e["id"])]      # an event deleted with everything is no longer listed
             for e in evs:
                 e["play"] = next((r for r in e["roles"] if roots.get(r)), None)
             out[kind] = evs
         cams, holders = self._ledger_recent(None)
         runs, cur = [], None
-        for st in sorted(cams):
+        for st in sorted(x for x in cams if not PG.has(x)):
             t = _secs(st)
             if cur and t - cur["t1"] <= GAP and not RC.is_cut(st):
                 cur["stamps"].append(st)

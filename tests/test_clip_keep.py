@@ -496,6 +496,29 @@ class PurgeTest(Base):
         self.wait(k)
         self.assertFalse(os.path.exists(os.path.join(self.roots["J"], "SavedClips", "ev1", "%s-front.mp4" % S1)))
 
+
+    def test_a_clip_deleted_with_everything_leaves_the_list(self):
+        import clips_purged as PG
+        PG.set_file(os.path.join(self.data, "teslacam_purged.json"))
+        self.addCleanup(lambda: PG.set_file(None))
+        k = self.keeper()
+        self.assertIn("ev1", k.status(force=True)["clips"]["saved"])
+        k.purge([dict(kind="saved", id="ev1")], list(k.TYPES), self.roots, confirmed=True, force=True)
+        self.wait(k)
+        self.assertTrue(PG.has_event("saved", "ev1"))
+        self.assertNotIn("ev1", k.status(force=True)["clips"]["saved"])
+        PG.set_file(os.path.join(self.data, "teslacam_purged.json"))              # kept across a restart
+        self.assertTrue(PG.has_event("saved", "ev1"))
+
+    def test_deleting_some_kinds_keeps_the_clip_listed(self):
+        import clips_purged as PG
+        PG.set_file(os.path.join(self.data, "teslacam_purged.json"))
+        self.addCleanup(lambda: PG.set_file(None))
+        k = self.keeper()
+        k.purge([dict(kind="saved", id="ev1")], ["stills", "metadata", "signs", "pictures"], self.roots, confirmed=True)
+        self.wait(k)
+        self.assertIn("ev1", k.status(force=True)["clips"]["saved"])
+
     def test_everything_at_home_is_deleted_without_force(self):
         real = CK.IGN.at
         CK.IGN.at = lambda lat, lon: True                                        # every Sentry event is at Home

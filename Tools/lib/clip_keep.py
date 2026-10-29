@@ -29,6 +29,7 @@ import app_config
 import clip_clock as CC
 import run_cuts as RC
 import home_ignore as IGN
+import clips_purged as PG
 import event_shots as ES
 import event_stills as EV
 import teslacam_deletable as TD
@@ -168,7 +169,7 @@ class ClipKeep:
             for key, rec in led.day(day).items():
                 kind, ev, rest = key.split("|", 2)
                 m = _FILE.match(rest)
-                if not m or kind not in KINDS:
+                if not m or kind not in KINDS or (kind == "recent" and PG.has(m.group(1))) or (kind != "recent" and PG.has_event(kind, ev)):
                     continue
                 node = found.setdefault((kind, ev), {}).setdefault(m.group(1), dict(cams=set(), bytes={}, files={}, arch={}))
                 node["cams"].add(m.group(2))
@@ -438,6 +439,8 @@ class ClipKeep:
                 if self._stop:
                     break
                 self._run("delete", role, vfiles[role], roots, clips)
+            if not self._stop and not j["errors"] and all(t in types for t in self.TYPES):     # everything deleted: the clip leaves the list
+                PG.add([s for k, c, _r in plan if k == "recent" for s in self._groups.get((k, c), [])], [(k, c) for k, c, _r in plan if k != "recent"])
         finally:
             with self._lock:
                 self._gen += 1

@@ -68,6 +68,7 @@ import app_sentry  # noqa: E402
 import app_teslacam  # noqa: E402
 import app_drivelist  # noqa: E402
 import home_ignore  # noqa: E402
+import clips_purged  # noqa: E402
 import run_cuts  # noqa: E402
 import mac_shell  # noqa: E402
 import app_drive_review  # noqa: E402
@@ -967,6 +968,7 @@ def main():
     KEPT = app_kept.Kept(local_cache_dir(), _code_version())
     DRIVELIST = app_drivelist.Cached(os.path.join(local_cache_dir(), "drivelist.json"))
     run_cuts.set_file(os.path.join(local_cache_dir(), "run_cuts.json"))
+    clips_purged.set_file(os.path.join(DATA_DIR, "teslacam_purged.json"))
     SENTRY = app_sentry.Sentry(DATA_DIR)
     TC = app_teslacam.TeslaCam(DATA_DIR, SENTRY)
     threading.Thread(target=footage_roots, daemon=True).start()                   # which drives are connected, found before the first map asks (a slow drive takes seconds)
