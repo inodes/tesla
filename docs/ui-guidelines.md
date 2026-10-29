@@ -20,6 +20,7 @@ decides something here.
 - The bar moves smoothly: report progress inside long steps, not once per big item. A bar that sits still looks hung.
 - Show the result when it ends (counts, what changed) and clear the "needs doing" prompt that caused it. A banner must not reappear after the action it asked for.
 - Content that is still loading shows a neutral placeholder, never black or empty tiles.
+- Every region (tiles, tables, filter rows, thumbnails, videos, maps) is on screen from the first paint as a placeholder block of its final size (class `ph`, height in `--ph`), and the text, picture or video replaces it in place. Nothing below it moves when the data arrives. What was shown last time is drawn first (remembered in the browser) and refreshed behind it.
 - Slow pages show what they have first (stale-while-revalidate) and say that it is refreshing.
 
 ## 3. Control and error prevention (NN 3, 5, 9)
