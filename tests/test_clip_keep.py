@@ -1,6 +1,7 @@
 """clip_keep.ClipKeep: what is kept from each clip's video, and deleting / moving the video once it is all kept."""
 import json
 import os
+import threading
 import time
 import shutil
 import sys
@@ -575,6 +576,46 @@ class StaleStatusTest(Base):
         k._build = slow
         k.status(force=True)
         self.assertEqual(len(calls), 2)                                         # it was built again, so what is kept is not the state before the change
+
+    def test_requests_that_arrive_together_share_one_build(self):
+        k = self.keep()
+        calls = []
+        real = k._build
+
+        def slow():
+            calls.append(1)
+            time.sleep(0.3)
+            return real()
+        k._build = slow
+        out = []
+        ts = [threading.Thread(target=lambda: out.append(k.status())) for _ in range(4)]
+        for t in ts:
+            t.start()
+        for t in ts:
+            t.join()
+        self.assertEqual(len(calls), 1)                                         # not one 12 s read of the drive per request
+        self.assertTrue(all(o is out[0] for o in out))
+
+    def test_a_job_builds_again_before_it_ends_so_the_next_look_waits_for_nothing(self):
+        k = self.keep()
+        first = k.status()
+        k._settle()
+        calls = []
+        real = k._build
+        k._build = lambda: (calls.append(1), real())[1]
+        self.assertIsNot(k.status(), first)                                     # built again, not the old look
+        self.assertEqual(calls, [])                                             # and found ready
+
+    def test_a_change_of_cuts_keeps_the_old_look_for_the_page_while_it_is_built_again(self):
+        k = self.keep()
+        first = k.status()
+        k.invalidate()
+        self.assertIs(k.status(), first)                                        # answered at once
+        for _ in range(100):
+            if not k._building:
+                break
+            time.sleep(0.05)
+        self.assertIsNot(k.status(), first)
 
 
 if __name__ == "__main__":

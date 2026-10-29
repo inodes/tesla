@@ -65,6 +65,7 @@ class ClipKeep:
         self._cache = None
         self._gen = 0                   # counts the times what is kept changed: a build that began before the last change is not kept
         self._building = False
+        self._flight = threading.Lock()
         self.on_change = None           # f() when a job ends: files moved, deleted or kept
         self._groups = {}
         self._lock = threading.Lock()
@@ -90,21 +91,40 @@ class ClipKeep:
         return self._rebuild()
 
     def invalidate(self):
-        """What is kept changed (a delete, a move, new cuts): the next look builds again, and a build already under way is not kept (it may have read the old state)."""
+        """What is kept changed (new cuts): the look already built is kept but counts as old, so it is answered at once and built again behind; a build already
+        under way is not kept (it may have read the old state)."""
+        with self._lock:
+            self._gen += 1
+            if self._cache:
+                self._cache = (0, self._cache[1])
+
+    def _settle(self):
+        """A job changed what is on the drives: the old look is dropped and built again here, before the job counts as finished, so the page's next look finds it
+        at once and no request has to start its own build."""
         with self._lock:
             self._gen += 1
             self._cache = None
+        try:
+            self._rebuild()
+        except Exception:
+            pass
 
     def _rebuild(self):
-        for _ in range(3):
+        t0 = time.time()
+        with self._flight:                                   # one build at a time: whoever waited finds the one that finished meanwhile
             with self._lock:
-                g = self._gen
-            res = self._build()
-            with self._lock:
-                if g == self._gen:
-                    self._cache = (time.time(), res)
-                    return res
-        return res
+                c = self._cache
+                if c and c[0] >= t0:
+                    return c[1]
+            for _ in range(3):
+                with self._lock:
+                    g = self._gen
+                res = self._build()
+                with self._lock:
+                    if g == self._gen:
+                        self._cache = (time.time(), res)
+                        return res
+            return res
 
     def _refresh(self):
         try:
@@ -442,10 +462,8 @@ class ClipKeep:
             if not self._stop and not j["errors"] and all(t in types for t in self.TYPES):     # everything deleted: the clip leaves the list
                 PG.add([s for k, c, _r in plan if k == "recent" for s in self._groups.get((k, c), [])], [(k, c) for k, c, _r in plan if k != "recent"])
         finally:
-            with self._lock:
-                self._gen += 1
-                self._cache = None
             self._changed()
+            self._settle()
 
     def _read_then_run(self, read, action, role, files, roots, clips):
         """Reads what is missing (the same steps as `process`), then moves. Anything that could not be read stops the move: nothing has been copied or removed yet."""
@@ -596,10 +614,8 @@ class ClipKeep:
         except Exception as e:
             j["errors"].append("%s: %s" % (type(e).__name__, e))
         finally:
-            with self._lock:
-                self._gen += 1
-                self._cache = None
             self._changed()
+            self._settle()
 
     def _changed(self):
         """A job changed what is on the drives (files moved or deleted) or what is kept: whoever caches a look at the drives is told."""
@@ -713,10 +729,8 @@ class ClipKeep:
         except Exception as e:                      # a drive pulled out, a tool missing: say so and stop
             j["errors"].append("%s: %s" % (type(e).__name__, e))
         finally:
-            with self._lock:
-                self._gen += 1
-                self._cache = None
             self._changed()
+            self._settle()
 
     def job(self):
         j = dict(self._job)
@@ -770,10 +784,8 @@ class ClipKeep:
         finally:
             led.flush({d for d in touched if d})
             self._log(action, role, clips, removed, j)
-            with self._lock:
-                self._gen += 1
-                self._cache = None
             self._changed()
+            self._settle()
 
     # ---- the record of what was removed (kept, so it can be checked after the app was restarted) -----------------------
     LOG = "clip_delete_log.jsonl"
