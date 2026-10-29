@@ -45,7 +45,7 @@ class Todo:
         self._thread = None
         self._mem = self._load()
         self._lcache = os.path.join(os.path.dirname(cache_file), "folder_listings.json")
-        TF.load_cache(self._lcache)         # the folders listed in an earlier run: a folder not changed since is not listed again
+        TF.set_cache_file(self._lcache)     # the folders listed in an earlier run: a folder not changed since is not listed again (the footage log scan uses them too)
         self._walked = {}               # role -> (drive_key, files, ok, log_new, log_gone, days_new), kept while the drive's folders and scan time are unchanged
         self.error = ""
         self._err_at = 0.0

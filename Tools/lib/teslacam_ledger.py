@@ -86,7 +86,8 @@ class Ledger:
     def scan(self, role, teslacam, at=None):
         """List the drive and update the log. Returns dict(ok, files, bytes, new, gone, back, note)."""
         at = at or now_iso()
-        files, ok = TF.walk(teslacam)
+        files, ok = TF.walk(teslacam, cached=True)          # a folder not changed since it was last listed is not read again
+        TF.save_cache()
         last = self.scans().get(role) or {}
         res = dict(ok=ok, files=len(files), bytes=sum(f["size"] for f in files), new=0, gone=0, back=0, note="")
         can_mark_gone = ok
