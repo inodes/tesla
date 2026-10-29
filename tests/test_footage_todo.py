@@ -85,6 +85,23 @@ class TodoTest(unittest.TestCase):
         d = self.todo.snapshot()["drives"]["J"]
         self.assertEqual((d["log_new"], d["log_gone"]), (0, 1))
 
+    def test_a_name_the_folder_still_lists_but_whose_file_is_not_there_is_not_a_new_file(self):
+        led = TLG.Ledger(self.data)
+        led.scan("J", self.cam)
+        gone = os.path.join(self.cam, "RecentClips", "2026-10-11_16-13-14-front.mp4")
+        os.remove(gone)
+        led.scan("J", self.cam)                                          # the log has it as gone
+        real = FT.TF.walk
+        FT.TF.walk = lambda p, stat=True, cached=False: ([dict(src="recent", ev="", stamp="2026-10-11_16-13-14", cam="front", size=0, mtime=0),
+                                                           dict(src="recent", ev="", stamp="2026-10-11_16-12-14", cam="front", size=0, mtime=0)], True)      # the drive still lists both names
+        try:
+            self.todo.snapshot()
+            self.wait()
+        finally:
+            FT.TF.walk = real
+        d = self.todo.snapshot()["drives"]["J"]
+        self.assertEqual((d["log_new"], d["ghosts"]), (0, 1))
+
     def test_the_answer_is_kept_until_the_drive_or_what_is_kept_from_it_changes(self):
         self.todo.snapshot()
         self.wait()

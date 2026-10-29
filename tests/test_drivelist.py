@@ -151,6 +151,7 @@ class Parked(unittest.TestCase):
         ids = DL.missing(r, T + 20000)["ids"]
         m = DL.missing(r, T + 20000, tried=set(ids))
         self.assertEqual((m["cam_only"], m["no_page"], m["tried"], m["ids"]), (0, 0, 2, []))
+        self.assertEqual((m["tried_cam"], m["tried_no_page"]), (1, 1))                  # said apart: "Tessie has no record" is true of one, "no route" of the other
 
     def test_a_changed_source_gives_the_old_list_at_once_and_rebuilds_in_the_background(self):
         import threading
