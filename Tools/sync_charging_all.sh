@@ -35,6 +35,11 @@
 # after step 5, because the cross-check reads AGL's usage master data
 # and should see whatever step 5 just consolidated.
 # (analyse_charging.py --precompute-sources)
+# 7. Costs back to Tessie -> every charge's cost (a Home charge's solar
+# opportunity cost + grid share, a public charge's invoice share) is
+# written to Tessie, skipping what Tessie already holds and any Home
+# charge with no solar data yet (analyse_charging.py
+# --sync-tessie-costs --apply --only-confident)
 #
 # NOT covered yet ("potentially more" from REQ-033):
 # - AGL invoice PDFs (TODO-012: a Python port of the old aglstatement.sc
@@ -84,6 +89,10 @@ Steps run, in order:
      cross-check cache for every home Evnex session, so --inspect never
      waits on a live fetch later; runs last so it sees step 5's AGL data
      (analyse_charging.py --precompute-sources)
+  7. Costs back to Tessie - a Home charge's solar opportunity cost plus grid
+     share, a public charge's invoice share; what Tessie already holds and
+     Home charges with no solar data yet are left alone
+     (analyse_charging.py --sync-tessie-costs --apply --only-confident)
 
 NOT covered yet: AGL invoice PDFs (TODO-012), Solaredge solar-monitoring
 data (mentioned in REQ-027, nothing automated exists yet). See this file's
@@ -121,6 +130,10 @@ echo "==> AGL usage export consolidation"
 echo
 echo "==> Energy-source cross-check prep (PVOutput/AGL/Evnex)"
 ./analyse_charging.py --precompute-sources
+
+echo
+echo "==> Costs back to Tessie (Home: solar opportunity cost + grid; public: invoice share)"
+./analyse_charging.py --sync-tessie-costs --apply --only-confident
 
 echo
 echo "==> Done."
