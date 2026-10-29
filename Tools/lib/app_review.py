@@ -169,8 +169,11 @@ class Review:
                         groups.append(g)
                     g["n"] += 1
                     g["s1"] = d["s"]
-                    if d["c"] > g["conf"]:
-                        g.update(conf=round(d["c"]), f=d.get("f", ""))
+                    sc = d["c"] + 0.25 * min(d.get("r", 0), 80)          # the picture shown is the one read surely AND biggest (closest to the sign): more pixels to read it from
+                    if sc > g.get("_sc", -1):
+                        g.update(conf=round(d["c"]), f=d.get("f", ""), _sc=sc)
+                for g in groups:
+                    g.pop("_sc", None)
                 if groups:
                     out[st] = groups
         return out
