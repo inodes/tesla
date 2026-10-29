@@ -128,6 +128,8 @@ class EventShots:
             tmp = os.path.join(out, cam + ".part.jpg")
             try:
                 ST.run_ffmpeg(["ffmpeg", "-v", "error", "-y", "-ss", str(sec), "-i", src, "-frames:v", "1", "-q:v", str(q), tmp])
+                if not (os.path.isfile(tmp) and os.path.getsize(tmp) > 0):         # the moment is past the end of a clip cut short: its last frame is the nearest picture
+                    ST.run_ffmpeg(["ffmpeg", "-v", "error", "-y", "-sseof", "-0.5", "-i", src, "-frames:v", "1", "-q:v", str(q), tmp])
                 if os.path.isfile(tmp) and os.path.getsize(tmp) > 0:
                     os.replace(tmp, os.path.join(out, cam + ".jpg"))
                     made.append(cam)
