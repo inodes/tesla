@@ -39,6 +39,8 @@ def _mtime_ns(root):
     return tuple(out)
 
 
+CODE_VER = 2        # raise when the way the answer is worked out changes, so a cached answer from before is looked at again
+
 class Todo:
     def __init__(self, cache_file, data_dir, tc, fg, roots_fn, idle_fn=lambda: True):
         self.cache_file, self.dir, self.tc, self.fg, self.roots_fn, self.idle_fn = cache_file, data_dir, tc, fg, roots_fn, idle_fn
@@ -80,7 +82,7 @@ class Todo:
             stills = len(self.fg.stills.stamps())
         except Exception:
             stills = -1
-        return [[r, round(_mtime(p)), (scans.get(r) or {}).get("at") or ""] for r, p in sorted(roots.items())] + [tele, stills, self._signs_token()]
+        return [[r, round(_mtime(p)), (scans.get(r) or {}).get("at") or ""] for r, p in sorted(roots.items())] + [tele, stills, self._signs_token(), CODE_VER]
 
     def _signs_token(self):
         """How much of the signs has been read: the newest change among the day files the sign review keeps (a file changes as minutes are added to it)."""

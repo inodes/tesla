@@ -13,6 +13,9 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 for p in ("tests", "Tools", os.path.join("Tools", "lib")):
     sys.path.insert(0, os.path.join(HERE, "..", p))
 import app_teslacam as AT  # noqa: E402
+import clips_purged as PG  # noqa: E402
+import home_ignore as IGN  # noqa: E402
+import run_cuts as RC  # noqa: E402
 
 LIVE = dict(first="2026-10-17T00:00:00Z", last="2026-10-17T00:00:00Z", gone=None)
 GONE = dict(first="2026-10-17T00:00:00Z", last="2026-10-17T00:00:00Z", gone="2026-10-18T00:00:00Z")
@@ -79,6 +82,43 @@ class ClipsAll(unittest.TestCase):
         self.assertEqual(self.tc.after_all("2026-10-16_15-40-07", 0, {"J": self.tmp})["clips"], {})
         self.assertEqual(self.tc.after_all("2026-10-16_15-40-07", 5, {})["clips"], {})        # not playable: nothing to add
         self.assertEqual(self.tc.after_all("2026-10-16_15-40-07", 5, {"J": self.tmp}, skip=["2026-10-16_15-41-07"])["clips"], {})
+
+
+
+class ParkedAtHome(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        led = os.path.join(self.tmp, "teslacam_ledger")
+        os.makedirs(led)
+        day = {}
+        for st in ("2026-10-29_10-47-02", "2026-10-29_10-48-02"):
+            for c in CAMS:
+                day["recent||%s-%s" % (st, c)] = dict(drives=dict(A=GONE), size=1)
+        for c in CAMS:
+            day["recent||2026-10-29_15-00-02-%s" % c] = dict(drives=dict(A=GONE), size=1)          # parked elsewhere, also gone
+        dump(day, os.path.join(led, "2026-10-29.json"))
+        dump(dict(A=dict(at="x", files=1, bytes=1, ok=True)), os.path.join(led, "scans.json"))
+        self.saved = (dict(RC._S), IGN._PLACES)
+        RC._S.clear()
+        RC._S["2026-10-29_10-47-02"] = ["park", -33.8, 151.1, False, 0]
+        RC._S["2026-10-29_15-00-02"] = ["park", -33.0, 150.0, False, 0]
+        IGN.set_places(lambda: [dict(name="Home", lat=-33.8, lon=151.1, radius=100)])
+        PG.set_file(os.path.join(self.tmp, "purged.json"))
+        self.tc = AT.TeslaCam(self.tmp)
+
+    def tearDown(self):
+        RC._S.clear()
+        RC._S.update(self.saved[0])
+        IGN.set_places(self.saved[1])
+        PG.set_file(None)
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def test_a_run_parked_at_home_and_gone_from_every_drive_leaves_the_list_for_good(self):
+        ids = [r["id"] for r in self.tc.clips_all({})["recent"]]
+        self.assertEqual(ids, ["2026-10-29_15-00-02"])                           # parked elsewhere: still listed as video deleted
+        self.assertTrue(PG.has("2026-10-29_10-47-02") and PG.has("2026-10-29_10-48-02"))
+        self.assertFalse(PG.has("2026-10-29_15-00-02"))
+        self.assertEqual([r["id"] for r in self.tc.clips_all({})["recent"]], ["2026-10-29_15-00-02"])
 
 
 if __name__ == "__main__":

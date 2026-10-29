@@ -111,6 +111,14 @@ class TodoTest(unittest.TestCase):
         self.assertFalse(again.snapshot()["checking"])                  # after a restart too
         self.assertEqual(self.tc.calls, 1)
 
+    def test_an_answer_worked_out_by_older_code_is_looked_at_again(self):
+        self.todo.snapshot()
+        self.wait()
+        self.assertEqual(self.todo._sig({"J": self.cam})[-1], FT.CODE_VER)
+        self.todo._mem = dict(self.todo._mem, sig=self.todo._sig({"J": self.cam})[:-1])      # as saved before the version was part of it
+        self.assertTrue(self.todo.snapshot()["checking"])
+        self.wait()
+
     def test_progress_is_reported_while_it_works_and_a_failure_is_not_retried_at_once(self):
         seen = []
         orig = self.tc.scan_report

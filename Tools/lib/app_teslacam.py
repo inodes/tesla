@@ -16,6 +16,7 @@ import app_config
 import clip_clock as CC
 import run_cuts as RC
 import clips_purged as PG
+import home_ignore as IGN
 import teslacam_timeline as TL
 import teslacam_scan as TS
 import app_review
@@ -250,14 +251,22 @@ class TeslaCam:
             else:
                 cur = dict(t1=t, stamps=[st])
                 runs.append(cur)
+        gone_home = []
         for r in runs:
             sts = r["stamps"]
             a, b = sts[0], sts[-1]
             roles = sorted(set().union(*(holders[x] for x in sts)))
+            if not roles and RC.kind(a) == "park":
+                p0 = RC.pos(a)
+                if p0 and IGN.at(p0[0], p0[1]):              # parked at an ignored place (Home) and gone from every drive: nothing is kept from it, so its record goes with the video
+                    gone_home.extend(sts)
+                    continue
             minute_play = {x: next((q for q in sorted(holders[x]) if roots.get(q)), None) for x in sts}
             out["recent"].append(dict(id=a, ts=_ts(a), end=_ts(b), t0=_secs(a), t1=_secs(b) + 60, part=RC.kind(a), pos=RC.pos(a), n=len(sts), full=sum(1 for x in sts if len(cams[x]) == 6),
                                       roles=roles, play=minute_play[a] or next((q for q in minute_play.values() if q), None), playable=sum(1 for q in minute_play.values() if q)))
         out["recent"].sort(key=lambda x: x["t0"], reverse=True)
+        if gone_home:
+            PG.add(gone_home)
         return out
 
     def run_all(self, rid, roots):

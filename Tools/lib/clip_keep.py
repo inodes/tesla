@@ -472,7 +472,7 @@ class ClipKeep:
                 if self._stop:
                     break
                 self._run("delete", role, vfiles[role], roots, clips)
-            if not self._stop and not j["errors"] and all(t in types for t in self.TYPES):     # everything deleted: the clip leaves the list
+            if not self._stop and not j["errors"] and (("video" in types and all(rec.get("ignored") for _k, _c, rec in plan)) or all(t in types for t in self.TYPES)):     # everything deleted (or the video of what is parked at Home, nothing else is kept from it): the clip leaves the list
                 PG.add([s for k, c, _r in plan if k == "recent" for s in self._groups.get((k, c), [])], [(k, c) for k, c, _r in plan if k != "recent"])
         finally:
             self._changed()
