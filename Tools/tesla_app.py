@@ -68,6 +68,7 @@ import app_sentry  # noqa: E402
 import app_teslacam  # noqa: E402
 import app_drivelist  # noqa: E402
 import run_cuts  # noqa: E402
+import mac_shell  # noqa: E402
 import app_drive_review  # noqa: E402
 import app_footage
 import drive_eject
@@ -1005,13 +1006,15 @@ def main():
     if not a.browser:
         try:
             import webview      # optional: native window
-            webview.create_window("Tesellate", url, width=int(app_config.get("window.width")), height=int(app_config.get("window.height")), min_size=(900, 600), text_select=True)
+            win = webview.create_window("Tesellate", url, width=int(app_config.get("window.width")), height=int(app_config.get("window.height")), min_size=(900, 600), text_select=True)
+            menu = mac_shell.build_menu(win) if sys.platform == "darwin" else None            # the pages in the menu bar
+            mac_shell.start(KEEP.status, CKEEP.job)                                            # the job's share on the Dock icon, and a notification when a long job ends
             try:                # the Dock shows the app's icon even though python is the running program (needs pyobjc, which pywebview brings on a Mac)
                 import AppKit
                 AppKit.NSApplication.sharedApplication().setApplicationIconImage_(AppKit.NSImage.alloc().initWithContentsOfFile_(os.path.join(UI, "icon", "Tesellate_Icon.png")))
             except Exception:
                 pass
-            webview.start()
+            webview.start(menu=menu) if menu else webview.start()
             return 0
         except ImportError:
             print("(pywebview not installed: opening your browser instead. For a native window: pip install pywebview)")

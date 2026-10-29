@@ -2508,5 +2508,7 @@ async function boot(){
   st();setInterval(st,30000);kp();setInterval(kp,4000);route();
 }
 addEventListener("keydown",e=>{if((e.metaKey||e.ctrlKey)&&e.key.toLowerCase()==="r"){e.preventDefault();location.reload()}});
+// Cmd-1 to Cmd-9, and Cmd-0, open the pages of the side bar in the order they are listed there
+addEventListener("keydown",e=>{if(!e.metaKey||e.altKey||e.shiftKey||e.ctrlKey||!/^[0-9]$/.test(e.key))return;const l=$$("#nav>a[data-p]"),a=l[e.key==="0"?9:+e.key-1];if(!a)return;e.preventDefault();a.click()});
 $("#rl").onclick=()=>location.reload();
 boot();
