@@ -85,6 +85,25 @@ class FolderListings(unittest.TestCase):
         self.assertEqual(len(self.keys()), 3)
         self.assertEqual(self.top(), ["SavedClips", "SentryClips"])
 
+    def test_sizes_come_from_the_kept_listing_once_the_folder_has_settled(self):
+        rec = os.path.join(self.tc, "RecentClips")
+        old(rec, 600)                                      # settled: more than two minutes ago
+        full = {TF.key(f): (f["size"], f["mtime"]) for f in TF.walk(self.tc, stat=True)[0]}
+        got = {TF.key(f): (f["size"], f["mtime"]) for f in TF.walk(self.tc, cached=True)[0]}
+        self.assertEqual(got, full)
+        open(os.path.join(rec, "2026-10-11_16-12-14-front.mp4"), "w").write("x" * 10)     # grows without the folder changing
+        again = {TF.key(f): f["size"] for f in TF.walk(self.tc, cached=True)[0]}
+        self.assertEqual(again["recent||2026-10-11_16-12-14-front"], 0)                  # the kept listing is used
+        fresh = {TF.key(f): f["size"] for f in TF.walk(self.tc, stat=True)[0]}
+        self.assertEqual(fresh["recent||2026-10-11_16-12-14-front"], 10)                 # a decision about a size still reads the drive
+
+    def test_a_folder_changed_a_minute_ago_is_listed_with_sizes_every_time(self):
+        rec = os.path.join(self.tc, "RecentClips")
+        import time
+        os.utime(rec, (time.time() - 30, time.time() - 30))
+        TF.walk(self.tc, cached=True)
+        self.assertNotIn("s|" + rec, TF._CACHE)
+
     def test_a_damaged_cache_file_is_ignored(self):
         f = os.path.join(self.d, "bad.json")
         open(f, "w").write("{nope")

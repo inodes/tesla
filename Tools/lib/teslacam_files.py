@@ -24,9 +24,17 @@ def _listing(path):
         return None
 
 
-_CACHE = {}              # folder -> (its modification time in ns, [clip file names in it]): a folder that has not changed is not listed again
+_CACHE = {}              # folder -> (its modification time in ns, [clip file names in it]); "s|folder" -> (time, [[name, size, mtime]]): a folder not changed is not listed again
 _SETTLE_S = 5            # a folder changed less than this long ago may change again within the same timestamp: not remembered yet
+_SETTLE_STAT_S = 120     # with sizes: a clip being recorded grows without the folder changing, so a folder is remembered once its newest clip is surely finished
 _DIRTY = [False]
+_FILE = [None]
+
+
+def set_cache_file(path):
+    """The file the folder listings are kept in between runs; takes what is in it now."""
+    _FILE[0] = path
+    load_cache(path)
 
 
 def load_cache(path):
@@ -41,9 +49,10 @@ def load_cache(path):
         pass
 
 
-def save_cache(path):
+def save_cache(path=None):
     """Keeps the folder listings, but only when a listing was added or dropped since the last save."""
-    if not _DIRTY[0]:
+    path = path or _FILE[0]
+    if not path or not _DIRTY[0]:
         return
     _DIRTY[0] = False
     try:
@@ -55,57 +64,77 @@ def save_cache(path):
         pass
 
 
+def _entries(path, mt, stat):
+    """The clips of one folder: names, or [name, size, mtime] with `stat`; None when it cannot be read. From the kept listing while the folder's modification time is the one it was made at."""
+    key = ("s|" if stat else "") + path
+    hit = _CACHE.get(key)
+    if hit and hit[0] == mt:
+        return hit[1]
+    out = []
+    try:
+        with os.scandir(path) as it:
+            for e in it:
+                if not CLIP_RE.match(e.name):
+                    continue
+                if stat:
+                    try:
+                        st = e.stat()
+                    except OSError:
+                        continue
+                    out.append([e.name, st.st_size, int(st.st_mtime)])
+                else:
+                    out.append(e.name)
+    except OSError:
+        return None
+    if time.time() - mt / 1e9 > (_SETTLE_STAT_S if stat else _SETTLE_S):
+        _CACHE[key] = (mt, out)
+        _DIRTY[0] = True
+    return out
+
+
 def clip_names(path, mt=None):
-    """The clip file names (the car's names only) in a folder, or None when it cannot be read. Answered from the kept listing while the folder's own modification
-    time is the one the listing was made at. `mt` is that time in ns when the caller has it already."""
+    """The clip file names (the car's names only) in a folder, or None when it cannot be read. `mt` is the folder's modification time in ns when the caller has it already."""
     try:
         if mt is None:
             mt = os.stat(path).st_mtime_ns
     except OSError:
         return None
-    hit = _CACHE.get(path)
-    if hit and hit[0] == mt:
-        return hit[1]
-    try:
-        with os.scandir(path) as it:
-            names = [e.name for e in it if CLIP_RE.match(e.name)]
-    except OSError:
-        return None
-    if time.time() - mt / 1e9 > _SETTLE_S:
-        _CACHE[path] = (mt, names)
-        _DIRTY[0] = True
-    return names
+    return _entries(path, mt, False)
 
 
 def _forget_unseen(root, seen):
     """After a whole drive was listed: drop the kept listings of folders under it that are no longer there."""
     pre = root.rstrip(os.sep) + os.sep
-    for k in [k for k in dict(_CACHE) if k.startswith(pre) and k not in seen]:
+    for k in [k for k in dict(_CACHE) if (k[2:] if k.startswith("s|") else k).startswith(pre) and (k[2:] if k.startswith("s|") else k) not in seen]:
         _CACHE.pop(k, None)
         _DIRTY[0] = True
 
 
-def _walk_names(teslacam):
-    """walk(stat=False) from the kept listings: only a folder that changed is listed again. Returns (files, ok)."""
+def _walk_cached(teslacam, stat):
+    """walk() from the kept listings: only a folder that changed is listed again. With `stat` the sizes and times come from the listing too (kept once a folder has settled)."""
     out, ok, seen_any, seen = [], True, False, set()
 
-    def add(names, src, ev):
-        for n in names:
-            m = CLIP_RE.match(n)
+    def add(items, src, ev):
+        for n in items:
+            name, size, mt = (n, 0, 0) if isinstance(n, str) else n
+            m = CLIP_RE.match(name)
             if m:
-                out.append(dict(src=src, ev=ev, stamp=m.group(1), cam=m.group(2), size=0, mtime=0))
+                out.append(dict(src=src, ev=ev, stamp=m.group(1), cam=m.group(2), size=size, mtime=mt))
 
     for sub, src in SOURCES:
         top = os.path.join(teslacam, sub)
         if src == "recent":
-            names = clip_names(top)
-            if names is None:
-                if os.path.isdir(top):
-                    ok = False
+            try:
+                mt = os.stat(top).st_mtime_ns
+            except OSError:
+                continue
+            items = _entries(top, mt, stat)
+            if items is None:
+                ok = False
                 continue
             seen_any = True
             seen.add(top)
-            add(names, src, "")
+            add(items, src, "")
             continue
         ents = _listing(top)
         if ents is None:
@@ -122,25 +151,30 @@ def _walk_names(teslacam):
                 except OSError:
                     ok = False
                     continue
-                names = clip_names(e.path, mt)
-                if names is None:
+                items = _entries(e.path, mt, stat)
+                if items is None:
                     ok = False
                     continue
                 seen.add(e.path)
-                add(names, src, e.name)
-            else:
-                add([e.name], src, "")
+                add(items, src, e.name)
+            elif CLIP_RE.match(e.name):
+                try:
+                    st = e.stat() if stat else None
+                except OSError:
+                    continue
+                add([[e.name, st.st_size, int(st.st_mtime)] if stat else e.name], src, "")
     if ok and seen_any:
         _forget_unseen(teslacam, seen)
     return out, ok and seen_any
 
 
-def walk(teslacam, stat=True):
+def walk(teslacam, stat=True, cached=False):
     """(files, ok): files = [dict(src, ev, stamp, cam, size, mtime)] of every clip under the TeslaCam folder; ok is False when a
     top-level folder could not be read at all (so a missing file must not be taken as deleted). With stat=False, size and mtime are 0
-    (no stat per file on the drive), and a folder that has not changed since it was last listed is answered from the kept listing (clip_names)."""
-    if not stat:
-        return _walk_names(teslacam)
+    (no stat per file on the drive). With cached=True (or stat=False) a folder that has not changed since it was last listed is answered from the kept
+    listing: for the footage log, which needs sizes but not the very latest one of a clip still being recorded. A decision about a file's size (delete, move) uses neither."""
+    if cached or not stat:
+        return _walk_cached(teslacam, stat)
     out, ok = [], True
     seen_any = False
     for sub, src in SOURCES:
