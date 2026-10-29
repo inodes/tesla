@@ -17,7 +17,12 @@ class FakeTC:
         self.calls = 0
 
     def _tl(self, role):
-        return SimpleNamespace(stamps=lambda: {"a", "b"})
+        return SimpleNamespace(stamps=lambda: {"a", "b"}, summary=lambda st: dict(vmax=50) if st.endswith("16-12-14") else dict(vmax=2) if st.endswith("16-13-14") else None)
+
+    def _rv(self):
+        return SimpleNamespace(base=os.path.join(tempfile.mkdtemp(), "drive_review"), scanned=lambda: self.scanned, unrefined=lambda: self.unrefined)
+
+    scanned, unrefined = {}, set()
 
     def scan_report(self, roots):
         self.calls += 1
@@ -56,8 +61,20 @@ class TodoTest(unittest.TestCase):
         s = self.todo.snapshot()
         self.assertFalse(s["checking"])
         d = s["drives"]["J"]
-        self.assertEqual((d["log_new"], d["log_gone"], d["telemetry"], d["stills"]), (2, 0, 3, 5))
+        self.assertEqual((d["log_new"], d["log_gone"], d["telemetry"], d["stills"], d["signs"]), (2, 0, 3, 5, 1))     # one minute driven fast enough, signs not read
         self.assertEqual(sum(d["new_days"].values()), 2)                 # which days the new files are from, so a number that looks too big can be checked
+
+    def test_signs_are_counted_until_read_and_until_given_the_second_look(self):
+        self.tc.scanned, self.tc.unrefined = {"2026-10-11_16-12-14": 2}, set()
+        self.todo.snapshot()
+        self.wait()
+        self.assertEqual(self.todo.snapshot()["drives"]["J"]["signs"], 0)                       # read and nothing to look at again
+        self.tc.unrefined = {"2026-10-11_16-12-14"}
+        self.todo.forget()
+        self.todo.snapshot()
+        self.wait()
+        self.assertEqual(self.todo.snapshot()["drives"]["J"]["signs"], 1)                       # read, but the second look is still to do
+        self.tc.scanned, self.tc.unrefined = {}, set()
 
     def test_a_listed_drive_has_nothing_to_list_and_a_gone_file_is_counted(self):
         led = TLG.Ledger(self.data)
@@ -84,7 +101,7 @@ class TodoTest(unittest.TestCase):
         self.todo.snapshot()
         self.wait()
         self.assertEqual(seen[0]["step"], "telemetry")
-        self.assertEqual((seen[0]["done"], seen[0]["total"]), (1, 3))
+        self.assertEqual((seen[0]["done"], seen[0]["total"]), (1, 4))
         self.assertIsNone(self.todo.snapshot()["progress"])
         bad = FT.Todo(os.path.join(self.t, "c3.json"), self.data, SimpleNamespace(_tl=None), self.fg, lambda: {"J": self.cam})
         bad.snapshot()
