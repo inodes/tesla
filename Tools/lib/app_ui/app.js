@@ -172,27 +172,6 @@ const daysOf=rows=>{const s=new Set();rows.forEach(x=>s.add(x.day));return s};
 const spanOf=v=>{const a=v.start.slice(0,10),e=(v.end||v.start).slice(0,10);return[a,e>=a?e:a]};
 const inSpan=(v,st)=>{const r=rangeOf(st);if(!r)return true;const[a,e]=spanOf(v);return a<=r[1]&&e>=r[0]};
 const spanDays=items=>{const s=new Set();items.forEach(v=>{const[a,e]=spanOf(v);for(let n=0,d=a;d<=e&&n<400;n++){s.add(d);d=new Date(Date.parse(d+"T00:00:00Z")+864e5).toISOString().slice(0,10)}});return s};
-// one day (or, with "Range" on, a first and last day) from a calendar drop-down: the days that have something are bold; a single day is one click
-function dayPicker(host,o){
-  let open=false,rng=!!o.range,pend=null,ym=o.cur.slice(0,7);
-  const draw=()=>{
-    host.innerHTML=`<span class="rngw"><button class="btn rng" type="button">▦ ${esc(o.text||o.label(o.cur))} ▾</button>${open?'<div class="rpop"><div class="rcal"></div></div>':""}</span>`;
-    $(".rng",host).onclick=e=>{e.stopPropagation();open=!open;pend=null;ym=o.cur.slice(0,7);draw()};
-    if(!open)return;
-    const [Y,M]=ym.split("-").map(Number),lead=(new Date(Y,M-1,1).getDay()+6)%7,dim=new Date(Y,M,0).getDate(),r=pend?[pend,pend]:(rng&&o.range)||[o.cur,o.cur];let g="";
-    for(let i=0;i<lead;i++)g+="<i></i>";
-    for(let d=1;d<=dim;d++){const k=Y+"-"+String(M).padStart(2,"0")+"-"+String(d).padStart(2,"0"),has=o.days.has(k),c=[has?"has":"fut",k>=r[0]&&k<=r[1]?"in":"",k===r[0]||k===r[1]?"sel":""].join(" ");g+=`<button type="button" class="${c}" data-d="${k}" ${has||rng?"":"disabled"}>${d}</button>`}
-    $(".rcal",host).innerHTML=`<div class="rhd"><button type="button" data-m="-1">‹</button><b>${MON[M-1]} ${Y}</b><button type="button" data-m="1">›</button><button type="button" class="chip ${rng?"on":""}" data-rg title="Pick a first and a last day">Range</button></div><div class="rdw"><i>M</i><i>T</i><i>W</i><i>T</i><i>F</i><i>S</i><i>S</i></div><div class="rgd">${g}</div><div class="sub" style="margin-top:6px">${rng?(pend?"Now the last day (or the same day again).":"Pick the first day."):"Days in bold have something to show."}</div>`;
-    $$(".rhd button[data-m]",host).forEach(b=>b.onclick=e=>{e.stopPropagation();ym=ymd(new Date(Y,M-1+ +b.dataset.m,1)).slice(0,7);draw()});
-    $(".rhd [data-rg]",host).onclick=e=>{e.stopPropagation();rng=!rng;pend=null;draw()};
-    $$(".rgd button",host).forEach(b=>b.onclick=e=>{e.stopPropagation();const k=b.dataset.d;
-      if(!rng){open=false;o.onPick(k);return}
-      if(!pend){pend=k;draw();return}
-      const a=pend<k?pend:k,z=pend<k?k:pend;open=false;pend=null;o.onRange(a,z)})};
-  if(!rangePicker.bound){rangePicker.bound=true;document.addEventListener("click",e=>{if(!e.target.closest(".rngw"))document.dispatchEvent(new CustomEvent("rngclose"))})}
-  const close=()=>{if(!document.body.contains(host)){document.removeEventListener("rngclose",close);return}if(open){open=false;pend=null;draw()}};
-  document.addEventListener("rngclose",close);
-  draw()}
 function rangePicker(host,st,days,onChange){
   let open=false,ym=null,pend=null;
   const first=()=>{const r=rangeOf(st);return r?r[1]:ymd(new Date())};
@@ -216,6 +195,29 @@ function rangePicker(host,st,days,onChange){
   draw();
 }
 
+// the date bar over a list: ‹ day or range ▾ › . The arrows step one day to the next day that has something, or a range by its own length; today is the start, and a choice made here is kept for the page (a kept "today" is whatever today is when the page opens)
+function rangeBar(host,key,st,days,onChange){
+  const K="rng:"+key,sorted=[...days].sort(),lo=sorted[0],hi=sorted[sorted.length-1],T=()=>ymd(new Date());
+  if(!st._r){st._r=1;let k=null;try{k=JSON.parse(localStorage.getItem(K)||"null")}catch(e){}
+    if(k&&k.p){st.p=k.p;st.a=k.a;st.b=k.b}else{st.p="today";st.a=st.b=undefined}}
+  const save=()=>{try{localStorage.setItem(K,JSON.stringify({p:st.p,a:st.a,b:st.b}))}catch(e){}};
+  const shift=(d,n)=>new Date(Date.parse(d+"T00:00:00Z")+n*864e5).toISOString().slice(0,10),
+    span=r=>Math.round((Date.parse(r[1]+"T00:00:00Z")-Date.parse(r[0]+"T00:00:00Z"))/864e5)+1;
+  const can=dir=>{const r=rangeOf(st);if(!r||!sorted.length)return false;return dir<0?r[0]>lo:r[1]<hi};
+  const step=dir=>{const r=rangeOf(st);if(!r||!can(dir))return;const n=span(r);let a,b;
+    if(n===1){const o=dir<0?sorted.filter(d=>d<r[0]).pop():sorted.find(d=>d>r[1]);if(!o)return;a=b=o}else{a=shift(r[0],dir*n);b=shift(r[1],dir*n)}
+    if(a===b&&a===T()){st.p="today"}else{st.p="custom";st.a=a;st.b=b}
+    save();paint();onChange()};
+  const paint=()=>{host.innerHTML='<span class="rnav"><button class="chip" type="button" data-n="-1" aria-label="Earlier" title="Earlier">‹</button><span class="rpk"></span><button class="chip" type="button" data-n="1" aria-label="Later" title="Later">›</button></span>';
+    rangePicker($(".rpk",host),st,days,()=>{save();paint();onChange()});
+    $$("[data-n]",host).forEach(b=>{const d=+b.dataset.n;b.disabled=!can(d);b.onclick=()=>step(d)})};
+  // ← and → do the same, unless typing, playing a video or choosing from a list
+  const onKey=e=>{if(!document.body.contains(host)){document.removeEventListener("keydown",onKey);return}
+    if(e.altKey||e.ctrlKey||e.metaKey||e.shiftKey||(e.key!=="ArrowLeft"&&e.key!=="ArrowRight"))return;const t=e.target;if(t&&t.closest&&t.closest("input,select,textarea,video,[contenteditable]"))return;
+    if($(".rpop"))return;const b=$$("[data-n]",host)[e.key==="ArrowLeft"?0:1];if(b&&!b.disabled){e.preventDefault();b.click()}};
+  document.addEventListener("keydown",onKey);
+  paint()}
+
 // ---------- Drives
 let DP={r:{p:"all"},q:"",ch:"all",ex:"all",rp:"drive",mk:0,ma:0};
 async function pageDrives(){
@@ -233,7 +235,7 @@ async function pageDrives(){
     $("#tl").innerHTML=tile(n0(rs.length),"drives")+tile(n0(km)+" km","distance")+tile(km?EF(kwh*1000/km)+" "+EFU():"–","average efficiency")+tile(km?n0(100*ap/km)+"%":"–","self-driving")+tile(dur(mn),"time driving")+tile(n0(Math.max(0,...rs.map(x=>x.max||0)))+" km/h","top speed");
     table($("#tb"),[{k:"t0",t:"Date",l:1,c:r=>`${r.day} ${r.hm} <span class="sub">${esc(r.tz||"")}</span>`,f:r=>`${r.day} ${r.hm} <span class="sub">${esc(r.tz||"")}</span>`},{k:"frm",t:"Trip",l:1,c:r=>`<b>Charging</b> · ${esc(r.place||"?")} · +${n0(r.kwh,1)} kWh`,f:r=>(r.fromCh?`<span class="pill" title="A charge ended just before this drive">from charge</span> `:"")+(r.fromCh?`<a class="chn" href="#/charge/${encodeURIComponent(r.fromCh.id)}" title="Left a charge here - open the charge">⚡ ${esc(r.frm||"?")}</a>`:esc(r.frm||"?"))+" → "+(r.toCh?`<a class="chn" href="#/charge/${encodeURIComponent(r.toCh.id)}" title="Charged here - open the charge">⚡ ${esc(r.to||"?")}</a>`:esc(r.to||"?"))+(r.toCh?` <span class="pill ok" title="A charge started right after this drive">to charge</span>`:"")+(r.repark?` <span class="pill" title="Under ${REPM()}: the car was only moved a little">re-park</span>`:"")},{k:"km",t:"km",f:r=>n0(r.km,1)},{k:"min",t:"Time",c:r=>dur(r.min),f:r=>dur(r.min)},{k:"whkm",t:EFU(),f:r=>EF(r.whkm)},{k:"max",t:"Max",f:r=>n0(r.max)},{k:"ap",t:"Self-driving",f:r=>r.km?n0(100*r.ap/r.km)+"%":"–"},{k:"b0",t:"Battery",c:r=>`${n0(r.b0)}→${n0(r.b1)}%`,f:r=>`${n0(r.b0)}→${n0(r.b1)}%`},{k:"foot",t:"Dashcam",f:r=>r.foot==null?"–":r.foot+"%"},{k:"rvd",t:"Reviewed",f:r=>r.rvd==null?"–":r.rvd+"%"}],rs.concat(plain?chg.filter(c=>inRange(c,DP.r)):[]),r=>{location.hash=(r.k==="charge"?"#/charge/":"#/drive/")+r.id},"t0",(()=>{const g=rangeOf(DP.r);return g&&g[0]===g[1]?1:-1})())};     // one day picked: first drive of the day on top
   main.innerHTML=`<h1>Drives</h1><div class="bar"><span id="rg"></span><select id="fc"><option value="all">Any charging</option><option value="to">Ending at a charge</option><option value="from">Leaving a charge</option><option value="any">Either end at a charge</option><option value="none">No charge at either end</option><option value="low">Finished at ${cfg("drives.low_battery_pct")}% or less</option></select><select id="fr"><option value="drive">Drives</option><option value="repark">Re-parks (under ${REPM()})</option><option value="both">Drives and re-parks</option></select><select id="fx"><option value="all">All drives</option><option value="hwy">Long highway (${cfg("drives.long_highway_km")} km+)</option><option value="fsd">Used self-driving</option><option value="foot">With dashcam footage</option><option value="al">With alerts</option></select><input type="number" id="mk" min="0" step="5" style="width:90px" placeholder="min km" title="Only drives at least this long" value="${DP.mk||""}"><input type="number" id="ma" min="0" step="5" style="width:130px" placeholder="min avg km/h" title="Only drives at least this fast on average (distance over time)" value="${DP.ma||""}"><button class="btn" id="rc" title="Long, fast drives that have footage: the ones worth a Review">Review candidates</button><input type="search" id="q" placeholder="Search a place…" value="${esc(DP.q)}"></div><div class="tiles" id="tl"></div><div id="tb"></div>`;
-  rangePicker($("#rg"),DP.r,daysOf(all),draw);$("#q").oninput=e=>{DP.q=e.target.value;draw()};$("#mk").oninput=e=>{DP.mk=+e.target.value||0;draw()};$("#ma").oninput=e=>{DP.ma=+e.target.value||0;draw()};
+  rangeBar($("#rg"),"drives",DP.r,daysOf(all),draw);$("#q").oninput=e=>{DP.q=e.target.value;draw()};$("#mk").oninput=e=>{DP.mk=+e.target.value||0;draw()};$("#ma").oninput=e=>{DP.ma=+e.target.value||0;draw()};
   $("#rc").onclick=()=>{DP.mk=cfg("review.candidate_km");DP.ma=cfg("review.candidate_avg_kmh");DP.ex="foot";$("#mk").value=DP.mk;$("#ma").value=DP.ma;$("#fx").value="foot";draw()};$("#fc").value=DP.ch;$("#fc").onchange=e=>{DP.ch=e.target.value;draw()};$("#fr").value=DP.rp;$("#fr").onchange=e=>{DP.rp=e.target.value;draw()};$("#fx").value=DP.ex;$("#fx").onchange=e=>{DP.ex=e.target.value;draw()};draw();
 }
 // UTC is the clock everywhere; the local clock is only for showing. lo = seconds the local clock is ahead of UTC (the server sends it with a drive).
@@ -588,7 +590,7 @@ async function pageCharges(){
    <div id="cstl" class="sub" style="margin-top:6px" ${B0.status==="building"?"":"hidden"}>Refreshing charges and invoices in the background…</div>
    <div id="tsb" style="margin:10px 0"></div>
    <div class="bar"><button class="chip" data-tab="charges">Charges</button><button class="chip" data-tab="invoices">Invoices (${B.invoices.length})</button><span id="rg"></span><select id="kd"><option value="all">All types</option><option value="ac">AC / home</option><option value="dc">DC fast</option><option value="supercharger">Supercharger</option></select><select id="iv"><option value="all">Any invoice state</option><option value="with">With an invoice</option><option value="without">Public, no invoice</option><option value="unsynced">Invoice cost not in Tessie</option></select><input type="search" id="q" placeholder="Search a place or invoice…" value="${esc(CP.q)}"></div><div class="tiles" id="tl"></div><div id="tb" style="overflow-x:auto"></div>`;
-  $("#kd").value=CP.kind;$("#iv").value=CP.inv;rangePicker($("#rg"),CP.r,daysOf(P),show);$("#kd").onchange=e=>{CP.kind=e.target.value;show()};$("#iv").onchange=e=>{CP.inv=e.target.value;show()};$("#q").oninput=e=>{CP.q=e.target.value;show()};
+  $("#kd").value=CP.kind;$("#iv").value=CP.inv;rangeBar($("#rg"),"charges",CP.r,daysOf(P),show);$("#kd").onchange=e=>{CP.kind=e.target.value;show()};$("#iv").onchange=e=>{CP.inv=e.target.value;show()};$("#q").oninput=e=>{CP.q=e.target.value;show()};
   $$("[data-tab]").forEach(c=>c.onclick=()=>{CP.tab=c.dataset.tab;show()});show();
   if(B0.status==="building")bookPoll("#/charges",pageCharges,true,B0);
   tessieSync($("#tsb"),{kind:"charges",steps:8,always:true,always_note:"Fetches new charges from Tessie, their charging curves and the invoices. It takes a few minutes.",after:()=>{bust();route()}});
@@ -821,7 +823,7 @@ async function pageParked(){
   main.innerHTML=`<h1>Parked</h1><div class="sub">Time spent parked: battery drain, Sentry and climate use. Open a parked period, or the All Sentry events tab, to watch saved Sentry footage.</div><div class="bar"><button class="chip" data-tb="periods">Parked periods</button><button class="chip" data-tb="events">All Sentry events</button><span id="rg"></span><select id="mn"><option value="0">Any length</option><option value="5">5 min or more</option><option value="60">1 h or more</option><option value="480">8 h or more</option></select><select id="sn"><option value="all">All parked periods</option><option value="y">Only with Sentry footage</option></select><input type="search" id="q" placeholder="Search a place…" value="${esc(IP.q)}"></div><div class="tiles" id="tl"></div><div id="tb"></div>`;
   const tabs=()=>{$$("[data-tb]").forEach(c=>c.classList.toggle("on",c.dataset.tb===IP.tab));["mn","sn"].forEach(i=>$("#"+i).style.display=IP.tab==="periods"?"":"none")};
   $$("[data-tb]").forEach(c=>c.onclick=()=>{IP.tab=c.dataset.tb;tabs();draw()});
-  $("#mn").value=String(IP.min);$("#sn").value=IP.sen;rangePicker($("#rg"),IP.r,daysOf(all.concat(evs.map(v=>({day:v.ts.slice(0,10)})))),draw);$("#mn").onchange=e=>{IP.min=+e.target.value;draw()};$("#sn").onchange=e=>{IP.sen=e.target.value;draw()};$("#q").oninput=e=>{IP.q=e.target.value;draw()};tabs();draw();
+  $("#mn").value=String(IP.min);$("#sn").value=IP.sen;rangeBar($("#rg"),"parked",IP.r,daysOf(all.concat(evs.map(v=>({day:v.ts.slice(0,10)})))),draw);$("#mn").onchange=e=>{IP.min=+e.target.value;draw()};$("#sn").onchange=e=>{IP.sen=e.target.value;draw()};$("#q").oninput=e=>{IP.q=e.target.value;draw()};tabs();draw();
 }
 async function pageParkedOne(id){
   loading();const [x,sn]=await Promise.all([api("idle/"+id),getSentry()]),h=x.min/60,evs=sentryOf(x,sn.events).sort((a,b)=>a.ts<b.ts?1:-1);
@@ -1531,18 +1533,16 @@ function tlDays(host,items,o){
   // an event that crosses midnight is listed on every day it touches (whole, with a note), and is one and the same tick on all of them
   rs.filter(v=>!v._in).forEach(v=>{v._d0=v.start.slice(0,10);v._d1=v._c==="sentry"||!v.end||v.end<v.start?v._d0:v.end.slice(0,10);for(let n=0;n<=Math.min(dd(v._d0,v._d1),400);n++){const d=plus(v._d0,n);(byDay[d]=byDay[d]||[]).push(v)}});
   if(TLS.wide===undefined){try{TLS.wide=localStorage.getItem("tlWide")==="1"}catch(e){TLS.wide=false}}if(TLS.dayDesc===undefined)TLS.dayDesc=cfg("teslacam.days_newest_first")!==false;if(TLS.rowDesc===undefined)TLS.rowDesc=cfg("teslacam.rows_newest_first")!==false;
-  const allDays=Object.keys(byDay).filter(d=>!o.dayOk||o.dayOk(d)).sort().reverse(),cur=TLS.day&&allDays.includes(TLS.day)?TLS.day:allDays[0],role=o.role,places=o.places;TLS.day=cur;
+  const allDays=Object.keys(byDay).filter(d=>!o.dayOk||o.dayOk(d)).sort().reverse(),role=o.role,places=o.places;
   // one day at a time: a picker (newest day first by default) with arrows to the earlier / later day
   const asc=allDays.slice().reverse();
-  // a range of dates (TLS.range) shows its days one under the other; otherwise the one day. A long range is drawn a block of days at a time (drives.range_days_shown, 31 by default), the end the list starts at first; "Show more days" adds the next block
-  let selAsc=TLS.range?asc.filter(d=>d>=TLS.range[0]&&d<=TLS.range[1]):[];if(!selAsc.length){selAsc=cur?[cur]:[];TLS.range=null}
-  const rk=TLS.range?TLS.range.join():"";if(TLS.rk!==rk){TLS.rk=rk;TLS.more=0}
-  const MAXD=Math.max(1,+cfg("drives.range_days_shown")||31)+(TLS.more||0),allSel=selAsc,cut=allSel.length>MAXD;
+  // the dates chosen in the bar over the page are the days listed: one day, or a range with its days one under the other in one list and on one map. A long range is drawn a block of days at a time (drives.range_days_shown, 31 by default), the end the list starts at first; "Show more days" adds the next block
+  const rk=allDays.length?allDays[0]+"|"+allDays[allDays.length-1]:"";if(TLS.rk!==rk){TLS.rk=rk;TLS.more=0}
+  const MAXD=Math.max(1,+cfg("drives.range_days_shown")||31)+(TLS.more||0),allSel=asc,cut=allSel.length>MAXD;
   const shownAsc=cut?(TLS.dayDesc?allSel.slice(-MAXD):allSel.slice(0,MAXD)):allSel;
-  const days=TLS.dayDesc?shownAsc.slice().reverse():shownAsc,isRange=allSel.length>1||!!TLS.range;
-  selAsc=allSel;
-  const i0=asc.indexOf(selAsc[0]),i1=asc.indexOf(selAsc[selAsc.length-1]),nn=selAsc.length||1,prevW=asc.slice(Math.max(0,i0-nn),Math.max(0,i0)),nextW=asc.slice(i1+1,i1+1+nn);
-  const win=w=>w.length?w[0]+","+w[w.length-1]:"",nItems=days.reduce((a,d)=>a+byDay[d].length,0);
+  const days=TLS.dayDesc?shownAsc.slice().reverse():shownAsc,isRange=days.length>1,gk=isRange?"range":days[0];
+  if(isRange){const seen=new Set();byDay.range=[];days.forEach(d=>byDay[d].forEach(v=>{if(!seen.has(v.id)){seen.add(v.id);byDay.range.push(v)}}))}
+  const nItems=gk?byDay[gk].length:0;
   const key=(v,d)=>d>v._d0?"00:00:00":hms(v._c==="sentry"?(v.trig||v.start):v.start),rowsOf=d=>byDay[d].slice().sort((a,b)=>{const x=key(a,d),y=key(b,d);return(x<y?-1:x>y?1:a.t0-b.t0)*(TLS.rowDesc?-1:1)});
   const canTickV=v=>v._c==="drive"||!!v._pos;
   const isOn=v=>TLS.on[v.id]!==undefined?TLS.on[v.id]:(TLS.sel==="all"?canTickV(v):TLS.sel==="drives"&&v._c==="drive");        // a hand choice wins; else what the day starts with
@@ -1598,7 +1598,7 @@ function tlDays(host,items,o){
     const go=o.go?o.go(v):c==="drive"?`#/teslacam/${role}/${encodeURIComponent(v.id)}`:c==="sentry"?`#/teslacam/${role}/sentry-${encodeURIComponent(v.ev)}`:c==="rec"?`#/teslacam/${role}/${encodeURIComponent(v.id)}`:"";
     return `<div class="tr ${c}" data-id="${id}">${chk}<span class="tm">${when}</span><span class="ti"${c==="parked"&&(v._chg||[]).length?' title="Parked and charged"':""}>${c==="parked"&&(v._chg||[]).length?"⚡":ico(c)}</span><span class="tw">${where}</span><span class="td">${dur(sl?sl.min:mins(v))}</span>${TLS.wide?wideCells(v):""}<span class="to">${c==="charge"?chargeBtn(v):placeBtn(v)}${c==="rec"?(recRole(v)?`<button class="btn sm" data-rd="${esc(v.id)}" data-rdr="${recRole(v)}" title="Reads the speed, position and steering of this recording from the dashcam drive, so it shows as a drive or a stop">Read telemetry</button>`:""):go?`<button class="btn sm" data-go="${go}">Open ▸</button>`:""}</span></div>`+(sns.length?`<div class="sentl" data-for="${id}" hidden>${sns.map(s=>`<div class="tr sb"><span></span><span class="tm">${esc(hms(s.trig||s.start).slice(0,5))}</span><span class="ti"><i class="hal" title="Sentry"></i></span><span class="tw">${esc(s.reason?reason(s.reason):"Sentry event")}</span><span class="td">${n0(s.n)} min</span>${TLS.wide?'<span class="td xw"></span>'.repeat(6):""}<span class="to"><button class="btn sm" data-go="#/teslacam/${role}/sentry-${encodeURIComponent(s.ev)}">Open ▸</button></span></div>`).join("")}</div>`:"")};
   host.innerHTML=days.length?`<div class="bar" style="margin:0 0 4px"><button class="chip ${TLS.mode==="v"?"on":""}" data-tm="v">Speed</button><button class="chip ${TLS.mode==="ap"?"on":""}" data-tm="ap">Autopilot / FSD</button><span class="sub" id="tlleg"></span><span class="sub" style="margin-left:auto;cursor:help" title="Tick a row to show it on the map. Click a drive to open it, a Sentry event to watch it. Hover a route for the moment under the pointer; click it to open the drive. Short drives under the re-park limits count as parked. An event that runs past midnight is shown whole on both days, and ticking it ticks it on both. Click a row to find it on the map; Open shows a drive or Sentry event in full.">ⓘ how this works</span></div>`
-    +days.map((d,di)=>(di?`<div class="dhd">${esc(dayName(d))}<small>${byDay[d].length} item${byDay[d].length>1?"s":""}</small></div>`:`<div class="dpick"><button class="chip" data-nav="${win(prevW)}" ${prevW.length?"":"disabled"} title="${isRange?"Earlier days":"Earlier day"}">‹</button><span id="dsel"></span><button class="chip" data-nav="${win(nextW)}" ${nextW.length?"":"disabled"} title="${isRange?"Later days":"Later day"}">›</button><small>${nItems} item${nItems>1?"s":""}${cut?" · "+(TLS.dayDesc?"newest ":"first ")+MAXD+" of "+allSel.length+" days shown":""}</small><button class="chip ico ${TLS.wide?"on":""}" data-so="wide" aria-label="${TLS.wide?"Narrow table":"Wide table"}" title="${TLS.wide?"Narrow table":"Wide table: full width with distance, energy, efficiency, battery, self-driving, top speed"}" style="margin-left:auto">${TLS.wide?`<svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M14 6h-4V2M2 10h4v4M10 6l4.5-4.5M6 10l-4.5 4.5"/></svg>`:`<svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M10 2h4v4M6 14H2v-4M14 2L9.5 6.5M2 14l4.5-4.5"/></svg>`}</button></div>`)+`<div class="tday ${TLS.wide?"wide":""}" data-day="${d}"><div class="tl2"><div class="tr trh"><span class="ck"><button class="cyc" data-cyc="${d}" data-s="none" aria-label="Choose rows to show on the map" title="Click: tick the drives. Again: tick everything. Again: tick nothing."></button></span><span class="srt" data-so="rows" role="button" tabindex="0" title="Sort by time">Time ${TLS.rowDesc?"▼":"▲"}</span><span></span><span>Where</span><span class="td">Duration</span>${TLS.wide?'<span class="td xw">Distance</span><span class="td xw">Energy</span><span class="td xw">Efficiency</span><span class="td xw">Battery</span><span class="td xw">Self-driving</span><span class="td xw">Top speed</span>':""}<span></span></div>${rowsOf(d).map(v=>row(v,d)).join("")}</div><div class="tmap"></div></div>`).join("")+(cut?`<div class="bar" style="margin:10px 0"><button class="btn" id="tlmore">Show ${Math.min(31,allSel.length-MAXD)} more days</button><span class="sub">${MAXD} of ${allSel.length} days in the range are shown</span></div>`:"")
+    +`<div class="dpick"><small>${nItems} item${nItems>1?"s":""}${cut?" · "+(TLS.dayDesc?"newest ":"first ")+MAXD+" of "+allSel.length+" days shown":""}</small><button class="chip ico ${TLS.wide?"on":""}" data-so="wide" aria-label="${TLS.wide?"Narrow table":"Wide table"}" title="${TLS.wide?"Narrow table":"Wide table: full width with distance, energy, efficiency, battery, self-driving, top speed"}" style="margin-left:auto">${TLS.wide?`<svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M14 6h-4V2M2 10h4v4M10 6l4.5-4.5M6 10l-4.5 4.5"/></svg>`:`<svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M10 2h4v4M6 14H2v-4M14 2L9.5 6.5M2 14l4.5-4.5"/></svg>`}</button></div><div class="tday ${TLS.wide?"wide":""}" data-day="${gk}"><div class="tl2"><div class="tr trh"><span class="ck"><button class="cyc" data-cyc="${gk}" data-s="none" aria-label="Choose rows to show on the map" title="Click: tick the drives. Again: tick everything. Again: tick nothing."></button></span><span class="srt" data-so="rows" role="button" tabindex="0" title="Sort by time">Time ${TLS.rowDesc?"▼":"▲"}</span><span></span><span>Where</span><span class="td">Duration</span>${TLS.wide?'<span class="td xw">Distance</span><span class="td xw">Energy</span><span class="td xw">Efficiency</span><span class="td xw">Battery</span><span class="td xw">Self-driving</span><span class="td xw">Top speed</span>':""}<span></span></div>${days.map(d=>(isRange?`<div class="dhd">${esc(dayName(d))}<small>${byDay[d].length} item${byDay[d].length>1?"s":""}</small></div>`:"")+rowsOf(d).map(v=>row(v,d)).join("")).join("")}</div><div class="tmap"></div></div>`+(cut?`<div class="bar" style="margin:10px 0"><button class="btn" id="tlmore">Show ${Math.min(31,allSel.length-MAXD)} more days</button><span class="sub">${MAXD} of ${allSel.length} days in the range are shown</span></div>`:"")
     :'<div class="empty">Nothing here for these dates.</div>';
   if(!days.length)return;
   if($("#tlmore",host))$("#tlmore",host).onclick=()=>{TLS.more=(TLS.more||0)+31;o.redraw&&o.redraw()};
@@ -1610,7 +1610,7 @@ function tlDays(host,items,o){
     if(mp.tok!==tok||!maps[d])return;
     mp.m.set(rt,on.filter(v=>v._c!=="drive").map(v=>({id:v.id,type:v._c,pos:v._pos,title:v._c==="sentry"?"Sentry · "+reason(v.reason)+" · "+hms(v.trig||v.start):v._c==="charge"?"Charge · "+(v.place||"")+" · "+tm(v):"Parked "+tm(v)})))};
   const build=d=>{if(maps[d])return;if(!window.maplibregl)return;
-    const dark=matchMedia("(prefers-color-scheme: dark)").matches,key=role+"|"+d,hk={open:id=>{const v=rs.find(x=>x.id===id),g=o.go&&v?o.go(v):"";location.hash=g||"#/teslacam/"+role+"/"+encodeURIComponent(id)},pick:id=>{const c=$(`input[data-id="${CSS.escape(id)}"]`,host);if(c)c.scrollIntoView({block:"center"})}};
+    const dark=matchMedia("(prefers-color-scheme: dark)").matches,key=role+"|"+d+(d==="range"?days[days.length-1]+days[0]:""),hk={open:id=>{const v=rs.find(x=>x.id===id),g=o.go&&v?o.go(v):"";location.hash=g||"#/teslacam/"+role+"/"+encodeURIComponent(id)},pick:id=>{const c=$(`input[data-id="${CSS.escape(id)}"]`,host);if(c)c.scrollIntoView({block:"center"})}};
     const slot=$(`.tday[data-day="${d}"] .tmap`,host),reuse=TLMAPS[key];
     if(reuse&&reuse.dark===dark){slot.replaceWith(reuse.el);reuse.m.setHooks(hk);reuse.m.mode(TLS.mode);reuse.m.resize();maps[d]={m:reuse.m,el:reuse.el};populate(d);return}
     if(reuse){reuse.m.destroy();delete TLMAPS[key];const i=TLORDER.indexOf(key);if(i>=0)TLORDER.splice(i,1)}
@@ -1621,10 +1621,6 @@ function tlDays(host,items,o){
   const setOn=(ids,val)=>{const ds=new Set();ids.forEach(id=>{TLS.on[id]=val;$$(`input[data-id="${CSS.escape(id)}"]`,host).forEach(x=>{if(!x.disabled)x.checked=val;ds.add(x.closest(".tday").dataset.day)})});ds.forEach(populate);syncAll()};
   $$("input[data-id]",host).forEach(c=>c.onchange=()=>setOn([c.dataset.id],c.checked));
   const onRoute=e=>{const v0=rs.find(x=>x.id===e.detail);if(!v0||!isOn(v0))return;new Set($$(`input[data-id="${CSS.escape(e.detail)}"]`,host).map(x=>x.closest(".tday").dataset.day)).forEach(populate)};addEventListener("tlroute",onRoute);
-  const rng=selAsc.length?[selAsc[0],selAsc[selAsc.length-1]]:null;
-  dayPicker($("#dsel",host),{cur:selAsc[0]||cur,range:isRange?rng:null,days:new Set(allDays),text:isRange?dayName(rng[0])+" – "+dayName(rng[1]):dayName(selAsc[0])+" ("+byDay[selAsc[0]].length+")",
-    onPick:d=>{TLS.day=d;TLS.range=null;o.redraw&&o.redraw()},onRange:(a,b)=>{TLS.range=a===b?null:[a,b];TLS.day=a;o.redraw&&o.redraw()}});
-  $$("[data-nav]",host).forEach(b=>b.onclick=()=>{const w=(b.dataset.nav||"").split(",");if(!w[0])return;if(isRange){TLS.range=w[0]===w[w.length-1]?null:[w[0],w[w.length-1]];TLS.day=w[0]}else{TLS.day=w[0];TLS.range=null}o.redraw&&o.redraw()});
   // the day's list and map are as tall as what is left of the window below them
   const fitH=()=>{const e=$(".tday",host);if(!e)return;e.style.setProperty("--tdh",Math.max(380,innerHeight-(e.getBoundingClientRect().top+scrollY)-16)+"px")};fitH();addEventListener("resize",fitH);
   $$("[data-so]",host).forEach(b=>{b.onkeydown=e=>{if(e.key==="Enter"||e.key===" "){e.preventDefault();b.click()}};b.onclick=()=>{if(b.dataset.so==="days")TLS.dayDesc=!TLS.dayDesc;else if(b.dataset.so==="wide"){TLS.wide=!TLS.wide;try{localStorage.setItem("tlWide",TLS.wide?"1":"")}catch(e){}}else TLS.rowDesc=!TLS.rowDesc;o.redraw&&o.redraw()}});
@@ -1647,11 +1643,7 @@ function tlDays(host,items,o){
   $$(".tr[data-id]",host).forEach(r=>r.onclick=async e=>{if(e.target.closest("input,button,a,label"))return;const v=rs.find(x=>x.id===r.dataset.id);if(!v||!(v._c==="drive"||v._pos))return;
     $$(".tr.sel",host).forEach(x=>x.classList.remove("sel"));r.classList.add("sel");const c=$("input[data-id]",r);if(c&&!c.checked){c.checked=true;TLS.on[v.id]=true;syncAll()}
     const dd=r.closest(".tday").dataset.day;await populate(dd);const mp=maps[dd];if(mp)mp.m.focus(v.id)});
-  // ← and → move to the earlier / later day (or the same number of days again, with a range), as the ‹ › buttons do; not while typing in a box or choosing in a list
-  const onKey=e=>{if(e.altKey||e.ctrlKey||e.metaKey||e.shiftKey||(e.key!=="ArrowLeft"&&e.key!=="ArrowRight"))return;const t=e.target;if(t&&t.closest&&t.closest("input,select,textarea,[contenteditable]"))return;
-    if(!document.body.contains(host)||$(".rpop"))return;const b=$$("[data-nav]",host)[e.key==="ArrowLeft"?0:1];if(b&&!b.disabled){e.preventDefault();b.click()}};
-  document.addEventListener("keydown",onKey);
-  return()=>{document.removeEventListener("keydown",onKey);removeEventListener("tlroute",onRoute);removeEventListener("resize",fitH);io.disconnect();Object.values(maps).forEach(x=>{if(x.el&&x.el.parentNode)x.el.parentNode.removeChild(x.el)})}}
+  return()=>{removeEventListener("tlroute",onRoute);removeEventListener("resize",fitH);io.disconnect();Object.values(maps).forEach(x=>{if(x.el&&x.el.parentNode)x.el.parentNode.removeChild(x.el)})}}
 
 function routeSvg(pts,w=64,h=40){if(!pts||pts.length<2)return "";const la=pts.map(p=>p[0]),lo=pts.map(p=>p[1]),a=Math.min(...la),b=Math.max(...la),c=Math.min(...lo),d=Math.max(...lo),k=Math.cos((a+b)/2*Math.PI/180),sx=(d-c)*k||1e-6,sy=(b-a)||1e-6,s=Math.min((w-6)/sx,(h-6)/sy),ox=(w-sx*s)/2,oy=(h-sy*s)/2;
   return `<svg class="rt" width="${w}" height="${h}" viewBox="0 0 ${w} ${h}"><polyline fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" stroke-linecap="round" points="${pts.map(p=>((p[1]-c)*k*s+ox).toFixed(1)+","+(h-((p[0]-a)*s+oy)).toFixed(1)).join(" ")}"/></svg>`}
@@ -1718,8 +1710,8 @@ async function pageDriveList(){
     $("#tb").innerHTML='<div id="tlh"></div>';
     TLOFF=tlDays($("#tlh"),rs,{role:"auto",places,sc:pl.superchargers||[],cg:chg.rows||[],tess:act.filter(x=>x.k==="drive"),chg:act.filter(x=>x.k==="charge"),dayOk:d=>inRange({day:d},DLP.r),redraw:draw,go:open,
       onSentry:()=>{}})||null};
-  rangePicker($("#rg"),DLP.r,spanDays(dl.items),()=>{       // a range chosen here is the range listed: its days one under the other, not only its newest day
-    const r=rangeOf(DLP.r),a=r?r[0]:"0000-01-01",z=r?r[1]:"9999-12-31";TLS.range=a===z?null:[a,z];if(a===z)TLS.day=a;draw()});$("#q").oninput=e=>{DLP.q=e.target.value;draw()};$("#fs").value=DLP.src;$("#fs").onchange=e=>{DLP.src=e.target.value;draw()};draw();
+  rangeBar($("#rg"),"driveslist",DLP.r,spanDays(dl.items),draw);
+  $("#q").oninput=e=>{DLP.q=e.target.value;draw()};$("#fs").value=DLP.src;$("#fs").onchange=e=>{DLP.src=e.target.value;draw()};draw();
   if(dl.stale)drivelistPoll(dl);
   tessieSync($("#tsb"),{missing:dl.missing,always:true,after:()=>{bust();route()}});
   footageSync($("#fsb"),{after:()=>{bust("tc/drivelist");bust("activity");drivelistPoll(dl)}});
@@ -1846,7 +1838,7 @@ async function pageTeslaCam(role,id){
     };
   const load=async(quiet)=>{const my=++token;if(!quiet&&!QUIET&&!cache["tc/clips"]){data=null;$("#tl").innerHTML="";$("#tb").innerHTML='<div class="empty">Reading the drive…</div>'}
     try{const d=await tcGet("clips");if(my!==token)return;data=d}catch(e){$("#tb").innerHTML=errBox(e.message,"Could not read the list of clips");return}
-    const list=[].concat(data.sentry,data.saved,data.recent);if(!quiet)rangePicker($("#rg"),TCS.r,daysOf((list||[]).map(v=>({day:(v.ts||v.start).slice(0,10)}))),draw);chips();draw();loadKeep()};
+    const list=[].concat(data.sentry,data.saved,data.recent);if(!quiet)rangeBar($("#rg"),"teslacam",TCS.r,daysOf((list||[]).map(v=>({day:(v.ts||v.start).slice(0,10)}))),draw);chips();draw();loadKeep()};
   // the bar over the list: what is ticked, what it would free, and deleting its video from a drive (or moving it to the Archive) once everything is kept from it
   const NMD={A:"Archive",J:"JOWUA",U:"Tesla USB"},conn=()=>(data&&data.connected)||[];
   const picked=()=>[...TCSEL].map(k=>{const i=k.indexOf("|");return {kind:k.slice(0,i),id:k.slice(i+1)}}).filter(it=>kpOf(it.kind,it.id));
