@@ -27,6 +27,7 @@ import time
 
 import app_config
 import clip_clock as CC
+import run_cuts as RC
 import event_shots as ES
 import event_stills as EV
 import teslacam_deletable as TD
@@ -46,7 +47,7 @@ def _runs(stamps):
     out, cur, last = [], [], None
     for st in sorted(stamps, key=CC.utc):
         t = CC.utc(st)
-        if cur and t - last > GAP:
+        if cur and (t - last > GAP or RC.is_cut(st)):
             out.append(cur)
             cur = []
         cur.append(st)

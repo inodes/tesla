@@ -1941,14 +1941,14 @@ async function pageTeslaCam(role,id){
     const all=[].concat(...srcs.map(k=>data[k].map(v=>Object.assign({ty:k},v)))).filter(v=>inRange({day:v.ts.slice(0,10)},TCS.r)&&(!q||(v.ty==="recent"?((tripOf(v)||{}).ti||""):(v.city+" "+v.street+" "+reason(v.reason))).toLowerCase().includes(q)||TCSRC[v.ty].toLowerCase().includes(q))).sort((a,b)=>a.ts<b.ts?1:-1),byDay={};
     all.forEach(v=>(byDay[v.ts.slice(0,10)]=byDay[v.ts.slice(0,10)]||[]).push(v));
     const days=Object.keys(byDay).sort().reverse(),cnt=k=>all.filter(v=>v.ty===k).length,mins=all.reduce((a,v)=>a+(v.ty==="recent"?v.n:Object.keys(v.clips).length),0);
-    $("#tl").innerHTML=srcs.map(k=>tile(n0(cnt(k)),k==="recent"?"continuous recordings":TCSRC[k]+" events")).join("")+tile(n0(mins),"minutes of video");
+    $("#tl").innerHTML=srcs.map(k=>tile(n0(cnt(k)),k==="recent"?"recordings":TCSRC[k]+" events")).join("")+tile(n0(mins),"minutes of video");
     // the drive (Tessie's) the event was saved in, and the map and telemetry of it: a Saved clip is kept while driving, so it belongs to a drive
     const evLinks=v=>{const t=v.t!=null?tripOf(v):null,st=e=>'onclick="event.stopPropagation()"';
       return (t?`<span>${esc(t.ti)}</span><a href="#/drive/${t.id}" ${st()}>open the drive</a>`:"")+(v.play&&v.ty==="saved"&&v.t!=null?`<a href="${t?"#/drive/"+t.id+"/footage":"#/teslacam/auto/at-"+Math.round(v.t)}" ${st()}>map and telemetry</a>`:"")};
     // where the footage is: the drives that hold it, and when none of them is connected (or it is gone from all) say so
     const held=v=>v.play?"":`<span class="mis">${v.roles.length?"Media missing · on "+v.roles.map(drName).join(", "):"Video deleted · stills kept"}</span>`;
     const card=v=>{const bd=`<span class="srcb ${v.ty}">${TCSRC[v.ty]}</span>`;
-      if(v.ty==="recent"){const t=tripOf(v);return `<button class="evc run" data-ty="recent" data-id="${esc(v.id)}">${kpTop("recent",v.id)}${stThumb(v.id,2,v.play?"/footage/"+v.play+"/RecentClips/"+v.id+"-front.mp4":"")}${bd}${kpChips(kpOf("recent",v.id))}<b>${hms(v.ts).slice(0,5)} – ${hms(v.end).slice(0,5)}</b><span>${v.n} minute${v.n>1?"s":""}${v.full<v.n?" · "+(v.n-v.full)+" with fewer than 6 cameras":""}</span>${held(v)}${t?`<span>${esc(t.ti)}</span><a href="#/drive/${t.id}" onclick="event.stopPropagation()">open the drive</a>`:""}${v.play?`<a href="#/teslacam/auto/${esc(v.id)}" onclick="event.stopPropagation()">map and telemetry</a>`:""}</button>`}
+      if(v.ty==="recent"){const pk=v.part==="park",t=pk?null:tripOf(v),pl=pk?(nameAt(places,v.pos)||""):"";const sn=pk?(data.sentry||[]).filter(e=>e.t!=null&&e.t>=v.t0-60&&e.t<=v.t1+60).length:0;return `<button class="evc run" data-ty="recent" data-id="${esc(v.id)}">${kpTop("recent",v.id)}${stThumb(v.id,2,v.play?"/footage/"+v.play+"/RecentClips/"+v.id+"-front.mp4":"")}${bd}${kpChips(kpOf("recent",v.id))}<b>${hms(v.ts).slice(0,5)} – ${hms(v.end).slice(0,5)}</b>${pk?`<span>Parked${pl?" · "+esc(pl):""}${sn?" · "+sn+" Sentry event"+(sn>1?"s":""):""}</span>`:""}<span>${v.n} minute${v.n>1?"s":""}${v.full<v.n?" · "+(v.n-v.full)+" with fewer than 6 cameras":""}</span>${held(v)}${t?`<span>${esc(t.ti)}</span><a href="#/drive/${t.id}" onclick="event.stopPropagation()">open the drive</a>`:""}${v.play&&!pk?`<a href="#/teslacam/auto/${esc(v.id)}" onclick="event.stopPropagation()">map and telemetry</a>`:""}</button>`}
       const n=Object.keys(v.clips).length,folder=TCF[v.ty],ks=Object.keys(v.clips).sort(),tt=(v.cts||v.ts||"").replace("T","_").replace(/:/g,"-"),k0=ks.filter(x=>x<=tt).pop()||ks[0],      // the minute holding the trigger, not the first one (an event starts ten minutes earlier)
         k0t=Math.max(1,Math.min(58,Math.round((Date.parse((v.cts||v.ts||"").replace("T"," "))-Date.parse((k0||"").replace("_"," ").replace(/(\d\d)-(\d\d)-(\d\d)$/,"$1:$2:$3")))/1000)||2));
       const have=(k0&&v.clips[k0])||[],cam=v.ty==="sentry"&&have.includes(EVCAM[v.cam])?EVCAM[v.cam]:have.includes("front")?"front":"";      // the camera that saw it (Sentry), at the moment it was detected
@@ -1985,16 +1985,18 @@ const spdAt=v=>{const st=spdStops();if((v||0)>spdTop())return spdOver();const t=
 // saved as before it, with a red line on the telemetry and a red mark on the map at that moment (the horn, a tap on the screen). Without telemetry for that time the
 // clips alone play, as before.
 // a continuous recording (Recent): the clips only, or the minutes that are on no connected drive as their stills
+// a Recent recording is cut into its parked and drive sections (lib/run_cuts.py); one that is not known to be either is a continuous recording
+const recWhat=it=>it.part==="park"?"Parked":it.part==="drive"?"Drive":"Continuous recording";
 async function recentClips(host,it,sel=it.id){
   host.innerHTML='<div class="sub">Reading…</div>';
-  try{const rr=await tcGet("clips/run/"+encodeURIComponent(sel)),stamps=Object.keys(rr.clips).sort(),head=`Continuous recording on ${dayName(it.ts.slice(0,10))}, ${hms(it.ts).slice(0,5)} to ${hms(it.end).slice(0,5)}, ${it.n} minute${it.n>1?"s":""}.`;
+  try{const rr=await tcGet("clips/run/"+encodeURIComponent(sel)),stamps=Object.keys(rr.clips).sort(),head=`${recWhat(it)} on ${dayName(it.ts.slice(0,10))}, ${hms(it.ts).slice(0,5)} to ${hms(it.end).slice(0,5)}, ${it.n} minute${it.n>1?"s":""}.`;
     if(!it.playable)return stillViewer(host,{stamps,roles:it.roles,loc:rr.loc,head});
     const cams={};stamps.forEach(x=>{cams[x]=rr.play[x]?rr.clips[x]:[]});      // a minute on no connected drive shows its box with the drives that hold it
     clipPlayer(host,{stamps,cams,loc:rr.loc,url:(s,k)=>`/footage/${rr.play[s]}/RecentClips/${s}-${k}.mp4`,head:head+" The next minute plays on its own."+(it.playable<it.n?` ${it.n-it.playable} of the minutes are on no connected drive.`:"")})}
   catch(e){host.innerHTML=errBox(e.message,"Could not read these clips")}}
 // the same recording with its map and telemetry (the dashcam's own, read from the video), the camera and the map side by side; the clips alone when there is no telemetry for it
 async function recentDrive(host,it,places){
-  host.innerHTML=`<h2 style="margin:14px 0 4px">Continuous recording · ${dayName(it.ts.slice(0,10))} · ${hms(it.ts).slice(0,5)} to ${hms(it.end).slice(0,5)} · ${n0(it.n)} minute${it.n>1?"s":""}</h2><div id="evd"></div>`;
+  host.innerHTML=`<h2 style="margin:14px 0 4px">${recWhat(it)}${it.part==="park"&&nameAt(places,it.pos)?" · "+esc(nameAt(places,it.pos)):""} · ${dayName(it.ts.slice(0,10))} · ${hms(it.ts).slice(0,5)} to ${hms(it.end).slice(0,5)} · ${n0(it.n)} minute${it.n>1?"s":""}</h2><div id="evd"></div>`;
   const fetchSeg=async b=>{const r=await fetch("/api/teslacam/auto/window?t0="+Math.round(it.t0)+"&t1="+Math.round(it.t1)+"&budget="+(b==null?20:b));if(!r.ok)throw new Error((await r.json().catch(()=>({}))).error||("HTTP "+r.status));return r.json()};
   try{await teslaDriveBody($("#evd"),"A",fetchSeg,places,{heading:false})}
   catch(e){const h=$("#evd");if(h&&host.contains(h))recentClips(h,it)}
