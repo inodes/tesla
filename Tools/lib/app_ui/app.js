@@ -984,15 +984,16 @@ function clipPlayer(host,o){
         if(Math.abs(dr)>1.2){try{x.currentTime=mv.currentTime}catch(e){}x.playbackRate=+rate}
         else if(Math.abs(dr)>.25&&!mv.paused)x.playbackRate=+rate*(dr>0?.94:1.06);
         else if(x.playbackRate!==+rate)x.playbackRate=+rate});
-      if(!nx&&mv.duration&&mv.currentTime>mv.duration-25)prep()};
-    mv.onended=()=>{if(si>=stamps.length-1)return;si++;seek=0;if(nx&&nx.i===si&&nx.m[cam]){swap()}else vids()};
+      if(!nx&&mv.duration&&(mv.duration-mv.currentTime)/Math.max(1,+rate)<(vs.length>2?8:25))prep()};      // the next minute is loaded ahead: 8 s before the end with all cameras (twelve decoders at once stall), 25 s with one or two
+    mv.onended=()=>{if(si>=stamps.length-1)return;si++;seek=0;                  // the last frame of this minute stays on screen until the next one is loaded behind it, then they swap
+      if(!(nx&&nx.i===si))prep(si);if(nx&&nx.i===si&&nx.m[cam]){const f=nx.m[cam],t0=Date.now(),go=()=>{if(!document.contains(host))return;if(f.readyState>=3||Date.now()-t0>2500)swap();else setTimeout(go,30)};go()}else vids()};
     mv.onerror=()=>box.insertAdjacentHTML("afterbegin",'<div class="sub">This clip could not be played (missing, or the drive was disconnected).</div>');
     pl.onclick=()=>{if(mv.paused)vs.forEach(x=>x.play().catch(()=>{}));else vs.forEach(x=>x.pause())};
     sk.oninput=()=>seekAll(+sk.value)};
-  // Loading the next minute ahead doubles the decoders (12 streams of 2896x1876 with all six cameras), which is what makes cameras stall: only done for one or two cameras.
-  const prep=()=>{if(nx||si>=stamps.length-1||vs.length>2)return;const s2=stamps[si+1],have=o.cams[s2]||[],m={};
+  // Loading the next minute ahead doubles the decoders (12 streams of 2896x1876 with all six cameras), which can make cameras stall: with all six it starts only in the last seconds.
+  const prep=(i=si+1)=>{if(nx||i>=stamps.length)return;const s2=stamps[i],have=o.cams[s2]||[],m={};
     $$("#vids figure[data-c]").forEach(f=>{const c=f.dataset.c;if(have.includes(c)){const v=document.createElement("video");v.muted=true;v.playsInline=true;v.preload="auto";v.src=o.url(s2,c);v.load();m[c]=v}});
-    nx={i:si+1,m}};
+    nx={i,m}};
   const swap=()=>{const m=nx.m;nx=null;vs.forEach(drop);
     $$("#vids figure[data-c]").forEach(f=>{const nv=m[f.dataset.c],old=f.querySelector("video");if(nv&&old)f.replaceChild(nv,old)});
     if($("#stp"))$("#stp").value=si;
