@@ -28,6 +28,7 @@ import time
 import app_config
 import clip_clock as CC
 import run_cuts as RC
+import home_ignore as IGN
 import event_shots as ES
 import event_stills as EV
 import teslacam_deletable as TD
@@ -174,10 +175,20 @@ class ClipKeep:
             else:
                 groups[(kind, ev)] = mins
         self._groups = {k: sorted(v) for k, v in groups.items()}
+        ignored = set()                                      # the minutes of what is parked at an ignored place (Home): left alone
         for (kind, cid), mins in groups.items():
             meta, st_, sg, sh = [0, 0], [0, 0], [0, 0], [0, 0]
             waiting, wait_n, snap_n, refine_n, nbytes, nfiles, narch = "", 0, 0, 0, {}, {}, {}
             parked = kind == "recent" and RC.kind(min(mins, key=CC.utc)) == "park"        # a parked section lies in no drive: its stills never wait for Tessie's drive or its snapshots
+            ign = False
+            if kind == "recent" and parked:
+                p0 = RC.pos(min(mins, key=CC.utc))
+                ign = bool(p0) and IGN.at(p0[0], p0[1])
+            elif kind == "sentry":
+                ev0 = events.get((kind, cid)) or {}
+                ign = IGN.at(ev0.get("lat"), ev0.get("lon"))
+            if ign:
+                ignored.update(mins)
             for st, node in mins.items():
                 for r, c in node["files"].items():
                     nfiles[r] = nfiles.get(r, 0) + c
@@ -205,10 +216,12 @@ class ClipKeep:
                     sg[0] += st in scanned
                 if st in unref:
                     refine_n += 1
+            if ign:                                          # nothing is kept from it and nothing is missing: it can only be deleted
+                meta, st_, sg, waiting, wait_n, snap_n, refine_n = [0, 0], [0, 0], [0, 0], "", 0, 0, 0
             read = [st for st in mins if scanned.get(st)]
             sign_n = len(rv.signs(read)) if read else 0                          # the signs read in the clip (one sign seen in several stills is one)
             have = self.shots.have(kind, cid) if kind != "recent" else set()
-            w = self._wanted(kind, cid, mins, events.get((kind, cid))) if nbytes else None
+            w = self._wanted(kind, cid, mins, events.get((kind, cid))) if nbytes and not ign else None
             if w:
                 sh = [len(w[3]) - len(w[2]), len(w[3])]
             elif have:
@@ -216,11 +229,12 @@ class ClipKeep:
             hi = [0, 0]                                                          # the pictures around the event: one set, made or not
             if kind != "recent":
                 got = self.evst.info(kind, cid).get("n")
-                hw = self._hi(kind, cid, mins, events.get((kind, cid))) if nbytes else None
+                hw = self._hi(kind, cid, mins, events.get((kind, cid))) if nbytes and not ign else None
                 hi = [1, 1] if got else ([0, 1] if hw else [0, 0])
             out[kind][cid] = dict(n=len(mins), first=min(mins), bytes=nbytes, files=nfiles, in_archive=narch, size=max(nbytes.values()) if nbytes else 0, meta=meta, stills=st_, signs=sg, shots=sh, window=hi, tier=self.evst.info(kind, cid).get("tier", "") if kind != "recent" else "",
                                   shot_cams=sorted(have), ready=all(x[0] >= x[1] for x in (meta, st_, sg, sh, hi)) and refine_n == 0, waiting=waiting, wait_n=wait_n, snap_n=snap_n, refine_n=refine_n,
-                                  sign_n=sign_n, todo=any(x[0] < x[1] for x in (meta, sg, sh, hi)) or st_[0] + wait_n < st_[1] or refine_n > 0)
+                                  sign_n=sign_n, todo=any(x[0] < x[1] for x in (meta, sg, sh, hi)) or st_[0] + wait_n < st_[1] or refine_n > 0, ignored=ign)
+        IGN.set_stamps(ignored)
         return dict(clips=out)
 
     # ---- the files of a clip on one drive -----------------------------------------------------------------------
@@ -336,6 +350,87 @@ class ClipKeep:
         self._thread.start()
         return self.job()
 
+    # ---- delete by kind: the video, the metadata, the stills, the event pictures, the signs ----------------------------------
+    TYPES = ("video", "metadata", "stills", "pictures", "signs")
+
+    def purge(self, items, types, roots, confirmed=False, force=False):
+        """Deletes the chosen kinds of what is kept for the clips (needs `confirmed`, as every delete): "video" from every connected drive, "metadata" (speed, position, steering),
+        "stills", the event "pictures", and the "signs" read. Video of a clip that is not all kept yet (and has no copy on the Archive) needs `force`, which the page sends only
+        after saying what is missing; what is parked at an ignored place (Home) needs neither. Returns the job or dict(error=...)."""
+        if confirmed is not True:
+            return dict(error="Not confirmed: nothing was removed.")
+        types = [t for t in self.TYPES if t in (types or [])]
+        if not types:
+            return dict(error="Nothing was chosen to delete.")
+        if not items:
+            return dict(error="Nothing is selected.")
+        if self._thread and self._thread.is_alive():
+            return dict(error="Something is already being done to the drives.")
+        if "signs" in types and self.tc._rv().status().get("running"):
+            return dict(error="Signs are being read for a drive: wait for it or stop it.")
+        st = self.status(force=True)["clips"]
+        plan = []
+        for it in items:
+            rec = (st.get(it.get("kind")) or {}).get(it.get("id"))
+            if rec is None:
+                return dict(error="A selected clip is not in the footage log.")
+            plan.append((it["kind"], it["id"], rec))
+        led = TLG.Ledger(self.dir)
+        vfiles, unkept = {}, []
+        if "video" in types:
+            for kind, cid, rec in plan:
+                for role in sorted(roots):
+                    if not roots[role]:
+                        continue
+                    fs = self.files(kind, cid, role, led)
+                    if not fs:
+                        continue
+                    on_archive = role != "A" and all(self._archive_has(led, k, sz) for k, sz, _ in fs)
+                    if not (rec["ready"] or rec.get("ignored") or on_archive):
+                        unkept.append((kind, cid))
+                    vfiles.setdefault(role, []).extend(fs)
+        if unkept and not force:
+            return dict(error="The video of %d clip(s) is not all kept yet (metadata, stills, signs) and the Archive holds no copy." % len({u for u in unkept}), needs_force=True)
+        files = [x for fs in vfiles.values() for x in fs]
+        clips = [dict(kind=k, id=c) for k, c, _ in plan]
+        self._stop = False
+        self._roots = roots
+        self._job = dict(running=True, action="purge", types=types, files=len(files), done=0, bytes=sum(sz for _, sz, _ in files), bytes_done=0, freed=0, data_freed=0, errors=[], current="",
+                         clips=len(plan), t0=time.time(), step="", step_done=0, step_total=0, steps=[])
+        self._thread = threading.Thread(target=self._purge, args=(plan, types, vfiles, roots, clips), daemon=True)
+        self._thread.start()
+        return self.job()
+
+    def _purge(self, plan, types, vfiles, roots, clips):
+        j = self._job
+        removed = []
+        try:
+            stamps = sorted({s for k, c, _r in plan for s in self._groups.get((k, c), [])})
+            if "signs" in types:
+                j["current"] = "signs"
+                self.tc._rv().forget(stamps)
+            if "metadata" in types:
+                j["current"] = "metadata"
+                self.tc._tl("A").forget(stamps)
+            if "stills" in types:
+                j["current"] = "stills"
+                _n, b = self.fg.stills.remove(stamps)
+                j["data_freed"] += b
+            if "pictures" in types:
+                j["current"] = "pictures"
+                for k, c, _r in plan:
+                    if k != "recent":
+                        j["data_freed"] += self.shots.remove(k, c) + self.evst.remove(k, c)
+            self._log("purge:" + ",".join(t for t in types if t != "video"), "", clips, removed, dict(j, freed=j["data_freed"]))
+            for role in sorted(vfiles):
+                if self._stop:
+                    break
+                self._run("delete", role, vfiles[role], roots, clips)
+        finally:
+            with self._lock:
+                self._cache = None
+            self._changed()
+
     def _read_then_run(self, read, action, role, files, roots, clips):
         """Reads what is missing (the same steps as `process`), then moves. Anything that could not be read stops the move: nothing has been copied or removed yet."""
         j = self._job
@@ -382,8 +477,13 @@ class ClipKeep:
         for it in items:
             if it.get("id") not in (st.get(it.get("kind")) or {}):
                 return dict(error="A selected clip is not in the footage log.")
+            if st[it["kind"]][it["id"]].get("ignored"):          # parked at Home: nothing is made from it
+                continue
             for stamp in self._groups.get((it["kind"], it["id"]), []):
                 kind_of[stamp] = it["kind"]
+        items = [it for it in items if not st[it["kind"]][it["id"]].get("ignored")]
+        if not items:
+            return dict(error="These are parked at Home: nothing is read from them.")
         paths = self._paths(TLG.Ledger(self.dir), set(kind_of), roots)
         evs = [(it["kind"], it["id"]) for it in items if it["kind"] != "recent"]
         if not paths:

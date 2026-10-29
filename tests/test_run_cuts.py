@@ -74,6 +74,13 @@ class CutsTest(unittest.TestCase):
         RC.update(self.sts, [])
         self.assertEqual([len(r) for r in CK._runs(self.sts)], [30])
 
+    def test_any_minute_knows_the_section_it_lies_in(self):
+        RC.update(self.sts, self.items)
+        self.assertEqual(RC.section(self.sts[4])[0], "park")
+        self.assertEqual(RC.section(self.sts[12])[0], "drive")
+        self.assertEqual(RC.section(self.sts[25])[:1], ("park",))
+        self.assertIsNone(RC.section(stamps(200, 1)[0]))                      # a minute after the last section: no section known
+
 
 if __name__ == "__main__":
     unittest.main()

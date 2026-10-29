@@ -93,6 +93,20 @@ class Stills:
             json.dump(bad, f, separators=(",", ":"))
         os.replace(self._bad_path() + ".tmp", self._bad_path())
 
+    def remove(self, stamps):
+        """Deletes the stills of these minutes; returns (clips removed, bytes freed)."""
+        n = b = 0
+        for st in stamps:
+            p = self.path(st)
+            try:
+                size = os.path.getsize(p)
+                os.remove(p)
+                n += 1
+                b += size
+            except OSError:
+                pass
+        return n, b
+
     def count(self, stamp):
         try:
             with zipfile.ZipFile(self.path(stamp)) as z:
@@ -153,10 +167,10 @@ class Stills:
             return len(frames)
 
 
-def plan(stills, roots, walked=None):
+def plan(stills, roots, walked=None, skip=None):
     """roots {role: TeslaCam folder}. walked: optional {role: (files, ok)} already listed. Returns dict(drives=[per drive counts], todo=[dict(stamp, role, path)] newest first).
     Per drive: clips (front, distinct stamps), done (stills kept), to_make, elsewhere (an earlier drive makes it), no_front is not needed:
-    only front clips are listed."""
+    only front clips are listed. skip: f(stamp) -> True for a minute that is left alone (parked at Home): it is not counted and not planned."""
     drives, todo, taken = [], [], set()
     have = stills.stamps()
     bad = stills.unreadable()
@@ -173,6 +187,8 @@ def plan(stills, roots, walked=None):
         d = dict(role=role, clips=len(best), done=0, to_make=0, elsewhere=0, unreadable=0, ok=ok,
                  first=min(best)[:10] if best else None, last=max(best)[:10] if best else None)
         for st, f in best.items():
+            if skip and skip(st):
+                continue
             paths = [TF.front_path(roots[role], x) for x in sorted(alts[st], key=lambda x: TF.ORDER[x["src"]])]
             keys = [role + "|" + os.path.relpath(p, roots[role]) for p in paths]
             if st in have:

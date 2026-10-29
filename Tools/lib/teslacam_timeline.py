@@ -137,6 +137,21 @@ class Store:
             self.days[day][stamp] = ser
             self._dirty.add(day)
 
+    def forget(self, stamps):
+        """Drops what was read for these minutes (their summary and per-second series). Returns how many had something."""
+        n = 0
+        with _LOCK:
+            sm = self._load_sum()
+            for st in stamps:
+                if sm.pop(st, None) is not None:
+                    n += 1
+                day = st[:10]
+                self.series(st)                     # loads the day
+                if self.days.get(day, {}).pop(st, None) is not None:
+                    self._dirty.add(day)
+            self.flush()
+        return n
+
     def stamps(self):
         with _LOCK:
             return list(self._load_sum().keys())

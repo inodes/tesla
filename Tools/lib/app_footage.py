@@ -15,6 +15,7 @@ import app_config
 import drive_registry as REG
 import teslacam_ledger as TLG
 import teslacam_stills as ST
+import home_ignore as IGN
 
 
 class Footage:
@@ -42,7 +43,7 @@ class Footage:
     def stills_report(self, roots, walked=None):
         self.stills.width = app_config.get("stills.width", 400)
         self.stills.quality = app_config.get("stills.quality", 6)
-        rep = ST.plan(self.stills, {r: p for r, p in roots.items() if p}, walked=walked)
+        rep = ST.plan(self.stills, {r: p for r, p in roots.items() if p}, walked=walked, skip=IGN.has)
         self._todo = rep.pop("todo")
         rep["to_make"] = len(self._todo)
         rep["job"] = self.status()
