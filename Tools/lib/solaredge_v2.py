@@ -168,20 +168,43 @@ def _headers(config=None, force=False):
 
 # ---- requests -----------------------------------------------------------------------------------------------------------------------------------------------
 
+_CALLS = []                                      # when this process made its recent calls (the free tier allows 10 a minute)
+
+
+def _pace(config=None):
+    cpm = int((load_config().get("solaredge") or {}).get("calls_per_minute") or 10) if config is None else int(((config.get("solaredge") or {}).get("calls_per_minute")) or 10)
+    now = time.time()
+    _CALLS[:] = [t for t in _CALLS if now - t < 60]
+    if len(_CALLS) >= cpm:
+        time.sleep(max(0.0, 60.5 - (now - _CALLS[0])))
+        now = time.time()
+        _CALLS[:] = [t for t in _CALLS if now - t < 60]
+    _CALLS.append(time.time())
+
+
 def get(path, params=None, config=None, timeout=30):
-    """GET {BASE}{path}?params -> (status, parsed_json_or_None, raw_bytes). Same shape as lib.solaredge_common.api_get. Refreshes the token once on a 401."""
+    """GET {BASE}{path}?params -> (status, parsed_json_or_None, raw_bytes). Same shape as lib.solaredge_common.api_get. Refreshes the token once on a 401; waits out a
+    per-minute 429 (SolarEdge says when) and tries again; a monthly-credit 429 (minute allowance not used up) is returned as it is."""
     url = BASE + path + (("?" + urllib.parse.urlencode(params)) if params else "")
-    for attempt in (0, 1):
+    refreshed, waits = False, 0
+    while True:
         try:
-            req = urllib.request.Request(url, headers=_headers(config, force=attempt == 1))
+            req = urllib.request.Request(url, headers=_headers(config, force=refreshed))
         except V2Error as e:
             return e.status or None, {"detail": e.detail}, e.detail.encode()
+        _pace(config)
         try:
             with urllib.request.urlopen(req, timeout=timeout) as r:
                 body, st = r.read(), r.status
         except urllib.error.HTTPError as e:
             body, st = e.read(), e.code
-            if st == 401 and attempt == 0 and not _cfg(config)["fleet_key"]:
+            if st == 401 and not refreshed and not _cfg(config)["fleet_key"]:
+                refreshed = True
+                continue
+            if st == 429 and waits < 2 and (e.headers.get("x-ratelimit-remaining-minute") == "0" or e.headers.get("retry-after")):
+                waits += 1
+                ra = e.headers.get("retry-after")
+                time.sleep(min(65.0, float(ra) if ra and ra.replace(".", "", 1).isdigit() else 30.0))
                 continue
         except Exception as e:
             return None, None, str(e).encode()
@@ -189,12 +212,32 @@ def get(path, params=None, config=None, timeout=30):
             return st, json.loads(body), body
         except ValueError:
             return st, None, body
-    return st, None, body
 
 
-def _stamp(dt):
-    """ISO 8601 with the machine's UTC offset: V2 answers 400 to a time with no zone. A naive datetime is taken as local time (the site's)."""
-    return (dt if dt.tzinfo else dt.astimezone()).isoformat(timespec="seconds")
+_TZ = {}
+
+
+def site_tz(site_id, config=None):
+    """the site's own time zone (GET /sites/{id} location.timezone, asked once per run), else this machine's"""
+    if site_id not in _TZ:
+        tz = None
+        st, parsed, _ = get("/sites/%s" % site_id, None, config)
+        name = ((parsed or {}).get("location") or {}).get("timezone") if st == 200 and isinstance(parsed, dict) else None
+        if name:
+            try:
+                from zoneinfo import ZoneInfo
+                tz = ZoneInfo(name)
+            except Exception:
+                tz = None
+        _TZ[site_id] = tz
+    return _TZ[site_id]
+
+
+def _stamp(dt, tz=None):
+    """ISO 8601 with a UTC offset: V2 answers 400 to a time with no zone. A naive datetime is a wall-clock time at the site (tz), else on this machine."""
+    if dt.tzinfo:
+        return dt.isoformat(timespec="seconds")
+    return (dt.replace(tzinfo=tz) if tz else dt.astimezone()).isoformat(timespec="seconds")
 
 
 def _when(s):
@@ -263,6 +306,8 @@ def parse_meter_telemetry(body, step_hours):
 def _derive(rec):
     """the five PV numbers from what the meters gave. Self-consumption = what was produced and not exported."""
     prod, cons, exp, imp = rec.get("production"), rec.get("consumption"), rec.get("export"), rec.get("import")
+    if prod is None and cons is not None and exp is not None and imp is not None:
+        prod = cons - imp + exp
     if cons is None and prod is not None and exp is not None and imp is not None:
         cons = prod - exp + imp
     self_c = (prod - exp) if prod is not None and exp is not None else None
@@ -282,20 +327,27 @@ def meter_rows(site_id, date_from, date_to, resolution="QUARTER_HOUR", config=No
         d = e + timedelta(days=1)
     while todo:
         a, b = todo.pop(0)
-        st, parsed, raw = get("/sites/%s/meters/telemetry" % site_id, dict(resolution=resolution, **{"from": _stamp(datetime.combine(a, datetime.min.time())),
-                              "to": _stamp(datetime.combine(b + timedelta(days=1), datetime.min.time()))}), config)
-        if st == 400 and b > a:
+        tz = site_tz(site_id, config)
+        win = {"from": _stamp(datetime.combine(a, datetime.min.time()), tz), "to": _stamp(datetime.combine(b + timedelta(days=1), datetime.min.time()), tz)}
+        st, parsed, raw = get("/sites/%s/meters/telemetry" % site_id, dict(resolution=resolution, **win), config)
+        st2, prod, raw2 = get("/sites/%s/energy" % site_id, dict(resolution=resolution, unit="WH", **win), config)       # production is the site's own series: this site has no production meter
+        if (st == 400 or st2 == 400) and b > a:
             mid = a + (b - a) // 2
             todo[:0] = [(a, mid), (mid + timedelta(days=1), b)]
             continue
-        if st != 200 or not isinstance(parsed, dict):
-            detail = (parsed or {}).get("detail") or (parsed or {}).get("message") or raw[:200]
-            errors.append("%s..%s: HTTP %s: %s" % (a, b, st, detail))
-            if st == 429:
+        bad = [(x, y, z) for x, y, z in ((st, parsed, raw), (st2, prod, raw2)) if x != 200 or not isinstance(y, dict)]
+        if bad:
+            x, y, z = bad[0]
+            errors.append("%s..%s: HTTP %s: %s" % (a, b, x, (y or {}).get("detail") or (y or {}).get("message") or z[:200]))
+            if x == 429:
                 break
             continue
         for ts, rec in parse_meter_telemetry(parsed, step).items():
             merged.setdefault(ts, {}).update(rec)
+        unit, vals = _series(prod)
+        for ts, v in vals:
+            if v is not None:
+                merged.setdefault(ts, {})["production"] = _wh(v, unit) / 1000.0
     rows = [dict(ts=ts, **_derive(rec)) for ts, rec in sorted(merged.items())]
     return rows, ("; ".join(errors) if errors else None)
 

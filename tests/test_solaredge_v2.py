@@ -101,6 +101,8 @@ class V2Test(unittest.TestCase):
         seen = []
 
         def get(path, params=None, config=None, timeout=30):
+            if params is None:
+                return 200, {}, b""                                            # the site's time zone
             seen.append((params["from"][:10], params["to"][:10]))
             if len(seen) == 1:
                 return 400, {"detail": "span too long"}, b""
@@ -111,7 +113,28 @@ class V2Test(unittest.TestCase):
         finally:
             pass
         self.assertIsNone(err)
-        self.assertEqual(len(seen), 3)
+        self.assertEqual(len(seen), 6)                                      # a long span (2 calls) then two halves (2 calls each)
+
+    def test_production_comes_from_the_site_energy_series(self):
+        def get(path, params=None, config=None, timeout=30):
+            if path.endswith("/meters/telemetry"):
+                return 200, {"meters": {"M": {"exportEnergy": series("WH", [400]), "importEnergy": series("WH", [100])}, "CONSUMPTION": {"consumptionEnergy": series("WH", [700])}}}, b""
+            if path.endswith("/energy"):
+                return 200, series("WH", [1000]), b""
+            return 200, {"location": {"timezone": "Australia/Sydney"}}, b""
+        SE.get = get
+        rows, err = SE.meter_rows("1", date(2026, 10, 29), date(2026, 10, 29), "QUARTER_HOUR")
+        self.assertIsNone(err)
+        (r,) = rows
+        self.assertAlmostEqual(r["production_kwh"], 1.0)
+        self.assertAlmostEqual(r["feedin_kwh"], 0.4)
+        self.assertAlmostEqual(r["purchased_kwh"], 0.1)
+        self.assertAlmostEqual(r["consumption_kwh"], 0.7)
+        self.assertAlmostEqual(r["self_consumption_kwh"], 0.6)
+
+    def test_production_falls_back_to_the_energy_balance(self):
+        d = SE._derive(dict(consumption=0.7, export=0.4, **{"import": 0.1}))
+        self.assertAlmostEqual(d["production_kwh"], 1.0)
 
     def test_timestamps_carry_a_zone(self):
         self.assertRegex(SE._stamp(datetime(2026, 10, 29, 0, 0)), r"T00:00:00[+-]\d\d:\d\d$")
