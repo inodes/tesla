@@ -6,6 +6,8 @@ mentions a drive.
 """
 import os
 
+import drive_roles as DR
+
 ORDER = "AJU?"                  # a minute held by several drives is read from the first of these that is connected
 KIND_DIR = {"sentry": "SentryClips", "saved": "SavedClips"}
 
@@ -27,7 +29,7 @@ def day_minutes(ledger, day):
         src, ev, name = key.split("|", 2)
         if src not in ("recent", "saved"):
             continue
-        roles = sorted((r for r, d in (rec.get("drives") or {}).items() if not d.get("gone")), key=lambda r: ORDER.find(r))
+        roles = sorted((r for r, d in (rec.get("drives") or {}).items() if not d.get("gone")), key=DR.rank)
         if not roles:
             continue
         stamp = name[:-len("-front")]
@@ -48,7 +50,7 @@ class Locator:
     def event(self, kind, ev, stamp, cam):
         """Path of one camera's clip of a Sentry / Saved event on the first connected drive that holds it, or None."""
         rec = self.led.day(stamp[:10]).get("%s|%s|%s-%s" % (kind, ev["id"], stamp, cam)) or {}
-        for r in sorted(rec.get("drives") or {}, key=lambda x: ORDER.find(x)):
+        for r in sorted(rec.get("drives") or {}, key=DR.rank):
             if not rec["drives"][r].get("gone") and self.roots.get(r):
                 return os.path.join(self.roots[r], KIND_DIR[kind], ev["id"], "%s-%s.mp4" % (stamp, cam))
         return None

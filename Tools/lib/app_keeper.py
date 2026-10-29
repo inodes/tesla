@@ -250,7 +250,7 @@ class Keeper:
             st = STAGES[self._stage]
             job = self._job_of(st)
             s.update(stage=st, done=job.get("done", 0), total=job.get("total", 0))
-            where = " and ".join(NAMES.get(r, r) for r in self._roles) or "the connected drives"
+            where = " and ".join(NAMES.get(r) or __import__("drive_roles").NAMES.get(r, r) for r in self._roles) or "the connected drives"
             s["text"] = "%s %s" % (LABEL[st], where)
             s["drives"] = self._by_drive(st, s["done"])
         return s

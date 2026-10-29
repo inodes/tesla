@@ -129,14 +129,14 @@ def drive_review_state(stamp):
 def footage_root(role):
     """TeslaCam folder of the drive with this role (A Archive, J JOWUA, U USB); looked up at most every 20 s."""
     if _ROOTS["v"] is None:                                 # the first look waits for the answer
-        _ROOTS["v"] = {r: DR.find_root(r) for r in "AJU"}
+        _ROOTS["v"] = {r: DR.find_root(r) for r in DR.read_roles()}
         _ROOTS["t"] = time.time()
     elif time.time() - _ROOTS["t"] > 20 and not _ROOTS.get("busy"):
         _ROOTS["busy"] = True                               # later looks answer from the last one and refresh it in the background (a slow drive must not hold a request)
 
         def look():
             try:
-                _ROOTS["v"] = {r: DR.find_root(r) for r in "AJU"}
+                _ROOTS["v"] = {r: DR.find_root(r) for r in DR.read_roles()}
             finally:
                 _ROOTS["t"] = time.time()
                 _ROOTS["busy"] = False
@@ -154,7 +154,7 @@ def eject_drive(role, root):
     while time.time() < end and (FG.status().get("running") or TC.scan_status().get("running")):
         time.sleep(0.3)
     res = drive_eject.eject(root)
-    _ROOTS["v"] = {r: DR.find_root(r) for r in "AJU"}        # look again now, not in 20 s
+    _ROOTS["v"] = {r: DR.find_root(r) for r in DR.read_roles()}        # look again now, not in 20 s
     _ROOTS["t"] = time.time()
     KEEP.paused = was                                         # as it was: an eject must not start a pass over the other drives
     return res
@@ -174,14 +174,14 @@ def thin_scope(items):
 
 def footage_roots():
     """{role: TeslaCam folder} of every connected drive."""
-    return {r: footage_root(r) for r in "AJU" if footage_root(r)}
+    return {r: footage_root(r) for r in DR.read_roles() if footage_root(r)}
 
 
 def all_sentry():
     """The saved Sentry events of every connected drive, each once: an event on several drives is listed on the one named first (Archive, then JOWUA,
     then Tesla USB: the biggest drive first). Each carries `role` (where to play it from) and `roles` (every connected drive holding it)."""
     seen, ok = {}, False
-    for r in "AJU":
+    for r in DR.read_roles():
         root = footage_root(r)
         if not root:
             continue
@@ -492,7 +492,7 @@ class H(BaseHTTPRequestHandler):
                 if held:
                     return self.send_json(dict(error="%s is reading the drives: stop it first." % held))
                 role = body.get("role")
-                roots = {r: footage_root(r) for r in "AJU"}
+                roots = footage_roots()
                 if body.get("action") == "process":       # read what the clips still lack (metadata, stills, pictures, signs, or only `steps`) from their video on the connected drives
                     return self.send_json(CKEEP.start_process(body.get("items") or [], roots, steps=body.get("steps")))
                 if body.get("action") == "purge":         # delete chosen kinds (video, metadata, stills, pictures, signs) of the clips; video that is not all kept needs force
@@ -512,12 +512,12 @@ class H(BaseHTTPRequestHandler):
             if u.path == "/api/footage":           # {action: log|stills|stop, roles: ["A","J"]}: update the log of the files / make the missing one-second stills
                 if body.get("action") == "stop":
                     return self.send_json(FG.stop())
-                roles = [r for r in (body.get("roles") or ["A"]) if r in ("A", "J", "U")]
+                roles = [r for r in (body.get("roles") or ["A"]) if r in DR.read_roles()]
                 return self.send_json(FG.start("stills" if body.get("action") == "stills" else "log", {r: footage_root(r) for r in roles}))
             if u.path == "/api/scan":              # {action: start|stop, roles: ["A","J"]}: read the telemetry the picked drives still lack
                 if body.get("action") == "stop":
                     return self.send_json(TC.scan_stop())
-                roles = [r for r in (body.get("roles") or ["A"]) if r in ("A", "J", "U")]
+                roles = [r for r in (body.get("roles") or ["A"]) if r in DR.read_roles()]
                 return self.send_json(TC.scan_start({r: footage_root(r) for r in roles}))
             if u.path == "/api/reach":             # {pts, mode, frac, reserve, basis, bbox, size}: a picture to lay over the Places map
                 return self.send_json(REACH.compute(body))
@@ -578,10 +578,10 @@ class H(BaseHTTPRequestHandler):
             return self.send_bytes(raw, "application/json; charset=utf-8", 200, {"X-Stale": "1"} if stale else None)
         if name == "status":
             try:
-                known = sorted({d["role"] for d in DR.REG.drives() if d["role"] in "AJU"} | {"A"})      # the registered drives stay in the list while they are away
+                known = sorted({d["role"] for d in DR.REG.drives() if d["role"] in DR.read_roles()} | {"A"})      # the registered drives stay in the list while they are away
             except Exception:
                 known = ["A"]
-            return self.send_json(dict(roots={r: bool(footage_root(r)) for r in "AJU"}, known=known, data_dir=DATA_DIR, stale=code_updated(), ui=ui_stamp()))
+            return self.send_json(dict(roots={r: bool(footage_root(r)) for r in DR.read_roles()}, known=known, names={d["role"]: d["label"] for d in DR.REG.drives() if d["role"] in DR.read_roles()}, data_dir=DATA_DIR, stale=code_updated(), ui=ui_stamp()))
         if name.startswith("software"):         # software[/version|/first|/compare|/sync]: the Teslascope versions held (lib/app_software.py)
             return self.send_json(self.software(name, q))
         if name == "keeper":                    # what the background reading of the connected drives is doing
@@ -601,12 +601,12 @@ class H(BaseHTTPRequestHandler):
                 return self.send_json({"error": "no sample file for this drive"}, 404)
             return self.send_json(dict(info=r["info"]) if q.get("summary") else r)
         if name == "scan":                      # scan?roles=A,J: the footage on those drives against the telemetry kept (nothing is read)
-            roles = [r for r in q.get("roles", ["A"])[0].split(",") if r in ("A", "J", "U")]
+            roles = [r for r in q.get("roles", ["A"])[0].split(",") if r in DR.read_roles()]
             return self.send_json(TC.scan_report({r: footage_root(r) for r in roles}))
         if name == "footage/log":               # the log of every TeslaCam file as it stands
             return self.send_json(FG.log())
         if name == "footage/stills":            # footage/stills?roles=A,J: the front clips on those drives against the stills kept (nothing is made)
-            roles = [r for r in q.get("roles", ["A"])[0].split(",") if r in ("A", "J", "U")]
+            roles = [r for r in q.get("roles", ["A"])[0].split(",") if r in DR.read_roles()]
             return self.send_json(FG.stills_report({r: footage_root(r) for r in roles}))
         if name == "footage/todo":              # what each connected drive still needs: files not in the log, minutes without telemetry, clips without stills
             return self.send_json(TODO.snapshot())
@@ -623,7 +623,7 @@ class H(BaseHTTPRequestHandler):
         if name == "clipstatus":                # clipstatus?stamps=a,b: kept on a drive / deleted / never logged, and whether its stills are kept
             return self.send_json(FG.clip_status([s for s in q.get("stamps", [""])[0].split(",") if re.match(r"^\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2}$", s)][:80]))
         if name == "clipholders":               # clipholders?stamps=a,b: the files of each minute and the drives that hold them, biggest drive first, connected or not
-            return self.send_json(FG.clip_holders([s for s in q.get("stamps", [""])[0].split(",") if re.match(r"^\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2}$", s)][:80], [r for r in "AJU" if footage_root(r)]))
+            return self.send_json(FG.clip_holders([s for s in q.get("stamps", [""])[0].split(",") if re.match(r"^\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2}$", s)][:80], [r for r in DR.read_roles() if footage_root(r)]))
         if name == "scan/status":
             return self.send_json(TC.scan_status())
         if name == "clipclock":                 # the car's clock as learned from the footage (clip_clock.py): runs of minutes with the offset from UTC
@@ -651,7 +651,7 @@ class H(BaseHTTPRequestHandler):
         if name == "clips":                     # every Recent run, Saved and Sentry event ever logged, whichever drives are connected; each says which drive holds it and whether it can be played
             if DRIVELIST.has():                 # the cuts between the drive and parked sections of a recording are worked out (kept from the last time): refreshed behind, never waited for
                 drivelist()
-            return self.send_json(TC.clips_all({r: footage_root(r) for r in "AJU"}))
+            return self.send_json(TC.clips_all(footage_roots()))
         if name.startswith("clips/shots/"):     # clips/shots/<saved|sentry>/<event folder>: the cameras that have a full-size picture of the moment, and which second of which clip it is
             m = re.match(r"^clips/shots/(saved|sentry)/(\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2})$", name)
             if not m:
@@ -663,9 +663,9 @@ class H(BaseHTTPRequestHandler):
             except ValueError:
                 n = 10
             skip = [x for x in (q.get("skip", [""])[0] or "").split(",") if x]
-            return self.send_json(TC.after_all(urllib.parse.unquote(name[12:]), n, {r: footage_root(r) for r in "AJU"}, skip))
+            return self.send_json(TC.after_all(urllib.parse.unquote(name[12:]), n, footage_roots(), skip))
         if name.startswith("clips/run/"):       # clips/run/<first minute>: the minutes of one Recent run, with the drive each can be played from
-            d = TC.run_all(urllib.parse.unquote(name[10:]), {r: footage_root(r) for r in "AJU"})
+            d = TC.run_all(urllib.parse.unquote(name[10:]), footage_roots())
             return self.send_json(d if d else {"error": "No such recording."}, 200 if d else 404)
         if name.startswith("teslacam/"):        # teslacam/<role>/<sentry|saved|recent>[/<run>]
             role, _, rest = name[9:].partition("/")
@@ -887,7 +887,7 @@ def drivelist(wait=False):
         return dict(items=items, tessie=bool(tess), missing=app_drivelist.missing(items, time.time(), tried=set(tessie_state().get("tried") or []) | FetchLedger(DATA_DIR).settled("drive_path")))
     d = os.path.join
     watch = [d(DATA_DIR, "drives", "drives_master.csv"), d(DATA_DIR, "charges", "charges_master.csv"), d(DATA_DIR, "drives", "deepdive"), d(DATA_DIR, "tessie_sync_state.json"), d(DATA_DIR, "fetch_ledger.json"), d(DATA_DIR, "clip_clock.json"), d(DATA_DIR, "places.json"), d(DATA_DIR, "teslacam_timeline", "index.json"),
-             d(DATA_DIR, "teslacam_ledger"), d(DATA_DIR, "teslacam_provenance"), d(DATA_DIR, "teslacam_timeline", "index.json")] + [d(DATA_DIR, "teslacam_index_%s_%s.json" % (r, k)) for r in "AJU" for k in ("saved", "sentry")]
+             d(DATA_DIR, "teslacam_ledger"), d(DATA_DIR, "teslacam_provenance"), d(DATA_DIR, "teslacam_timeline", "index.json")] + [d(DATA_DIR, "teslacam_index_%s_%s.json" % (r, k)) for r in DR.read_roles() for k in ("saved", "sentry")]
     return DRIVELIST.get(app_drivelist.signature(watch), build, wait)
 
 

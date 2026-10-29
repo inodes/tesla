@@ -27,6 +27,7 @@ import time
 
 import app_config
 import clip_clock as CC
+import drive_roles as DR
 import run_cuts as RC
 import home_ignore as IGN
 import clips_purged as PG
@@ -57,6 +58,9 @@ def _runs(stamps):
     if cur:
         out.append(cur)
     return out
+
+
+WRITABLE = "AJU"      # the drives the app moves video from and deletes from; any other drive (a folder drive, a rescue copy) is only read
 
 
 class ClipKeep:
@@ -318,6 +322,8 @@ class ClipKeep:
             return None, "Unknown action."
         if role not in roots or not roots[role]:
             return None, "That drive is not connected."
+        if role not in WRITABLE:
+            return None, "That drive is only read: nothing is moved from it or deleted from it."
         if action == "move" and (role == "A" or not roots.get("A")):
             return None, "Moving needs the Archive connected, and a clip not already on it."
         if not items:
@@ -413,7 +419,7 @@ class ClipKeep:
         if "video" in types:
             for kind, cid, rec in plan:
                 for role in sorted(roots):
-                    if not roots[role]:
+                    if not roots[role] or role not in WRITABLE:                # a folder drive (a rescue copy) is only read
                         continue
                     fs = self.files(kind, cid, role, led)
                     if not fs:
@@ -486,7 +492,7 @@ class ClipKeep:
                 m = _FILE.match(rest)
                 if not m or m.group(1) not in stamps or kind not in KINDS:
                     continue
-                for r in "AJU":
+                for r in DR.read_roles():
                     x = rec["drives"].get(r)
                     if x is not None and not x.get("gone") and roots.get(r):
                         out.setdefault(m.group(1), {}).setdefault(m.group(2), TF.front_path(roots[r], dict(src=kind, ev=ev, stamp=m.group(1), cam=m.group(2))))

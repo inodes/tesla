@@ -341,7 +341,7 @@ async function driveReviewPanel(host,stamp,lo,onResult){
     c.strokeStyle=KCOL[e.kind];c.lineWidth=1.5;c.setLineDash([4,3]);c.beginPath();c.moveTo(X(base(e)),T);c.lineTo(X(base(e)),H-B);c.stroke();c.setLineDash([]);
     c.fillStyle=ink;c.font="11px system-ui";for(let k=0;k<=4;k++){const i=a+(b-a)*k/4,t=RVAPI.clk(Math.round(i)).slice(0,8);c.fillText(t,Math.max(2,Math.min(W-52,X(i)-24)),H-4)}};
   // is the video of this event still on a drive? (the log of the TeslaCam files); the stills stay either way
-  const DRN={A:"the Archive",J:"JOWUA",U:"the Tesla USB"};
+  const DRN={A:"the Archive",J:"JOWUA",U:"the Tesla USB",...DRX};
   const vstat=e=>{if(!e.pics||!e.pics.length)return;const sts=[...new Set(e.pics.map(p=>p[0]))];
     fetch("/api/clipstatus?stamps="+sts.join(",")).then(r=>r.json()).then(m=>{const el=$("#rvst");if(!el||list()[ei]!==e)return;
       const v=sts.map(s=>m[s]||{state:"unknown"}),del=v.filter(x=>x.state==="deleted"),kept=v.filter(x=>x.state==="kept"),on=[...new Set(kept.flatMap(x=>x.on||[]))].map(r=>DRN[r]||r);
@@ -455,7 +455,7 @@ async function pathSources(host,d,lo){
   if(!host)return;
   let j;try{const r=await fetch("/api/pathsources?id="+encodeURIComponent(d.page?d.id:"")+"&t0="+d.t0+"&t1="+(d.t1||d.t0+d.min*60)+"&lo="+lo);if(!r.ok)throw new Error("HTTP "+r.status);j=await r.json()}catch(e){host.innerHTML="";return}
   if(!document.body.contains(host))return;
-  const NM={A:"Archive",J:"JOWUA",U:"Tesla USB"},clk=t=>new Date((t+lo)*1000).toISOString().slice(11,19),T=j.tessie,C=j.dashcam,mm=s=>s<90?Math.round(s)+" s":n0(s/60,1)+" min",dur=Math.max(1,j.t1-j.t0);
+  const NM={A:"Archive",J:"JOWUA",U:"Tesla USB",...DRX},clk=t=>new Date((t+lo)*1000).toISOString().slice(11,19),T=j.tessie,C=j.dashcam,mm=s=>s<90?Math.round(s)+" s":n0(s/60,1)+" min",dur=Math.max(1,j.t1-j.t0);
   const tp=T.points>0,dc=C.read>0,pct=tp?Math.min(100,Math.round(100*T.covered_s/dur)):0;
   const tline=tp?`<b>Present.</b> ${n0(T.points)} points from ${clk(T.first)} to ${clk(T.last)}, one about every ${T.every_s} s${T.longest_gap_s>180?" (longest gap "+mm(T.longest_gap_s)+")":""}; they follow ${pct}% of the drive.${T.file?` <span class="sub" style="user-select:text">${esc(T.file)}</span>`:""}`
     :T.file?`<b>The file has no points inside this drive.</b> <span class="sub" style="user-select:text">${esc(T.file)}</span>`:`<b>Not fetched.</b> There is no point file for this drive yet: Sync Tessie fetches it.`;
@@ -841,7 +841,8 @@ async function pageParkedOne(id){
   $$(".evc").forEach(b=>b.onclick=()=>pick(+b.dataset.i));pick(0);
 }
 // ---------- clips whose video is not on a connected drive: the kept one-second stills, large, with arrows (the footage log says which drive held the video)
-const DRN={A:"the Archive",J:"JOWUA",U:"the Tesla USB"},drName=r=>DRN[r]||r;
+const DRX={};      // the names of the registered folder drives (a rescue copy kept in a folder), from the status
+const DRN={A:"the Archive",J:"JOWUA",U:"the Tesla USB"},drName=r=>DRN[r]||DRX[r]||r;
 // a card's picture: the kept still first (the same for every card, whichever drive is connected); the video's first frame when no still is kept; an empty box when neither
 function stThumb(stamp,sec,vurl){return `<img loading="lazy" src="/still/${stamp}/${sec}.jpg" data-v="${esc(vurl||"")}" data-t="${sec}" onerror="stFallback(this)">`}
 function stFallback(img){const u=img.dataset.v,p=img.parentNode;img.outerHTML=u?vthumb(u,+img.dataset.t||2):'<div class="noimg"></div>';if(u&&p)lazyThumbs(p)}
@@ -1733,7 +1734,7 @@ async function ejectDrive(role){stopVideos();try{return await (await fetch("/api
 const FSHTML={};
 function footageSync(host,opts){
   if(!host)return;const table=!!(opts&&opts.table),hk=table?"t":"b";let until=0,was=false,lg=null,msg="",busyEject="",done0=null,note="";
-  const gb=b=>b>=1073741824?(b/1073741824).toFixed(1)+" GB":Math.round(b/1048576)+" MB",NM={A:"Archive",J:"JOWUA",U:"Tesla USB"};
+  const gb=b=>b>=1073741824?(b/1073741824).toFixed(1)+" GB":Math.round(b/1048576)+" MB",NM={A:"Archive",J:"JOWUA",U:"Tesla USB",...DRX};
   const STEP=[["log","Update log",["log","events"],"Lists the files on the connected drives, so the footage log and the Saved and Sentry events are up to date"],["telemetry","Read telemetry",["telemetry"],"Reads the speed, position and steering from the video, so drives show on the map"],["stills","Make stills",["stills"],"Takes a picture every second of each clip, kept after the video is deleted"]];
   const left=(t,r)=>{const d=t&&t.drives&&t.drives[r];return d?{log:d.log_new+d.log_gone,lnew:d.log_new,lgone:d.log_gone,telemetry:d.telemetry,stills:d.stills,signs:d.signs||0}:null};
   const wire=()=>{const g=$("#fsg",host);if(g)g.onclick=()=>go(null);
@@ -1853,7 +1854,7 @@ async function pageTeslaCam(role,id){
     try{const d=await tcGet("clips");if(my!==token)return;data=d}catch(e){$("#tb").innerHTML=errBox(e.message,"Could not read the list of clips");return}
     const list=[].concat(data.sentry,data.saved,data.recent);if(!quiet)rangeBar($("#rg"),"teslacam",TCS.r,daysOf((list||[]).map(v=>({day:(v.ts||v.start).slice(0,10)}))),draw);chips();draw();loadKeep(!quiet)};
   // the bar over the list: what is ticked, what it would free, and deleting its video from a drive (or moving it to the Archive) once everything is kept from it
-  const NMD={A:"Archive",J:"JOWUA",U:"Tesla USB"},conn=()=>(data&&data.connected)||[];
+  const NMD={A:"Archive",J:"JOWUA",U:"Tesla USB",...DRX},conn=()=>(data&&data.connected)||[];
   const picked=()=>[...TCSEL].map(k=>{const i=k.indexOf("|");return {kind:k.slice(0,i),id:k.slice(i+1)}}).filter(it=>kpOf(it.kind,it.id));
   const allowed=(r,act)=>picked().filter(it=>{const c=kpOf(it.kind,it.id);return c.bytes[r]>0&&(act==="move"?r!=="A":(c.ready||(r!=="A"&&c.bytes.A>0)))});
   const PSTEPS=[
@@ -1926,7 +1927,7 @@ async function pageTeslaCam(role,id){
       h+=`<button class="btn sm pri" id="kupd" ${items.length&&!needN?"disabled":""} title="${items.length?"Reads what is missing from the video of the ticked clips: metadata, stills, signs and pictures":"Looks for new files on the drives, then reads what is missing from the video of every clip: metadata, stills, signs and pictures"}">${(items.length?"Selected":"All")+" - "+(needN?n0(needN)+" update"+(needN>1?"s":"")+" needed":items.length?"no updates needed":"check for updates")}</button>`;
       h+=`<span class="sub" style="margin-left:6px">Select:</span><button class="btn sm" data-sset="all" ${vis.length?"":"disabled"} title="Ticks every clip shown below (or tick single thumbnails, or a whole day from its heading)">All shown · ${n0(vis.length)}</button><button class="btn sm" data-sset="need" ${needV.length?"":"disabled"} title="Ticks the clips that still lack metadata, stills, signs or pictures">Need updating · ${n0(needV.length)}</button>${ignV.length?`<button class="btn sm" data-sset="ign" title="Ticks the clips parked at Home, which are left alone">Ignored · ${n0(ignV.length)}</button>`:""}<button class="btn sm" data-sset="done" ${done.length?"":"disabled"} title="Ticks every clip whose metadata, stills and signs are all kept, so its video can be moved or deleted (${n0(done.length)} clips, ${fmtGB(dsz)})">Finished · ${n0(done.length)}</button>`;
       if(items.length)h+=`<button class="btn sm bad" data-ka="purge|" title="Choose what to delete from the ticked clips: video, metadata, stills, event pictures, signs">Delete…</button>`;
-      cn.forEach(r=>{const d=allowed(r,"delete");if(items.length&&d.length)h+=`<button class="btn sm bad" data-ka="delete|${r}">Delete from ${NMD[r]} · ${fmtGB(sizeOn(d,r))}</button>`;
+      cn.filter(r=>"AJU".includes(r)).forEach(r=>{const d=allowed(r,"delete");if(items.length&&d.length)h+=`<button class="btn sm bad" data-ka="delete|${r}">Delete from ${NMD[r]} · ${fmtGB(sizeOn(d,r))}</button>`;
         const m=allowed(r,"move");if(items.length&&m.length&&r!=="A"&&cn.includes("A"))h+=`<button class="btn sm" data-ka="move|${r}">Move to Archive · ${fmtGB(sizeOn(m,r))}</button>`});
       if(note)h+=`<span class="sub" style="flex:1;${/rror|not /.test(note)?"color:var(--bad)":"color:var(--ok)"}">${esc(note)}</span>`}
     h+="</div>";el.innerHTML=h;
@@ -2523,8 +2524,8 @@ async function boot(){
   // the corner: one line a drive, a dot and its name. Green = connected, amber = something is reading it, red = not connected; ⏏ only while connected (and not just ejected)
   window.EJD={};window.KBUSY=[];const NM={A:"Archive",J:"JOWUA",U:"Tesla USB"};
   const st=async()=>{try{const s=await (await fetch("/api/status")).json();if(window.UI0==null)window.UI0=s.ui;
-    window.ROOTS=s.roots;const up=r=>s.roots[r]&&!(EJD[r]&&Date.now()-EJD[r]<20000);
-    $("#status").innerHTML=["A","J","U"].filter(r=>r==="A"||up(r)||(s.known||[]).includes(r)).map(r=>`<div class="${up(r)?"":"away"}"><span class="dot ${!up(r)?"off":KBUSY.includes(r)?"rd":"on"}" data-r="${r}" title="${!up(r)?"Not connected":KBUSY.includes(r)?"Being read":"Connected"}"></span><span class="dn">${NM[r]}</span>${up(r)?`<button class="eject" data-ej="${r}" title="Eject ${NM[r]}" aria-label="Eject ${NM[r]}">⏏</button>`:'<span class="gone">not connected</span>'}</div>`).join("");
+    window.ROOTS=s.roots;Object.entries(s.names||{}).forEach(([r,l])=>{if(!"AJU".includes(r)){DRX[r]=l;NM[r]=l}});const up=r=>s.roots[r]&&!(EJD[r]&&Date.now()-EJD[r]<20000);
+    $("#status").innerHTML=["A","J","U",...Object.keys(DRX)].filter(r=>r==="A"||up(r)||(s.known||[]).includes(r)).map(r=>`<div class="${up(r)?"":"away"}"><span class="dot ${!up(r)?"off":KBUSY.includes(r)?"rd":"on"}" data-r="${r}" title="${!up(r)?"Not connected":KBUSY.includes(r)?"Being read":"Connected"}"></span><span class="dn">${NM[r]}</span>${up(r)?("AJU".includes(r)?`<button class="eject" data-ej="${r}" title="Eject ${NM[r]}" aria-label="Eject ${NM[r]}">⏏</button>`:""):'<span class="gone">not connected</span>'}</div>`).join("");
     $("#upd").innerHTML=((window.EJMSG&&Date.now()<window.EJMSG.until?`<div class="${window.EJMSG.ok?"":"upd"}" style="font-size:12px">${esc(window.EJMSG.text)}</div>`:"")+`${s.stale?'<div class="upd">The app was updated. Quit and reopen it to load the new version.</div>':""}${s.ui!==window.UI0?'<div class="upd">The page was updated. <a href="#" onclick="location.reload();return false">Reload it</a> to load the new version.</div>':""}`);
     $$("#status [data-ej]").forEach(b=>b.onclick=async()=>{b.disabled=true;const r=await ejectDrive(b.dataset.ej);if(r.ok)EJD[b.dataset.ej]=Date.now();window.EJMSG={text:r.text,ok:r.ok,until:Date.now()+15000};st()})}catch(e){}};
   // amber while the Keeper (or a button) is reading a drive: asked often, and only the dots are touched
