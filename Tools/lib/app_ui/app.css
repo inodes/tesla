@@ -1,5 +1,5 @@
-:root{--bg:#f4f5f8;--card:#fff;--ink:#14171f;--fg:var(--ink);--mut:#6a7385;--line:#e3e6ee;--acc:#3b6cf6;--accent:var(--acc);--drive:#3b82f6;--charge:#16a34a;--idle:#8b5cf6;--ok:#16a34a;--warn:#d98a00;--bad:#d4332b;--side:#fff;--hover:#eef1f8;--shadow:0 1px 2px rgba(20,23,31,.05)}
-@media (prefers-color-scheme:dark){:root{--bg:#0e1015;--card:#171a22;--ink:#e8ebf2;--fg:var(--ink);--mut:#8b94a8;--line:#262b37;--acc:#6b93ff;--accent:var(--acc);--drive:#5b9bff;--charge:#34c46a;--idle:#a78bfa;--side:#13161d;--hover:#1e2330;--shadow:none;color-scheme:dark}}
+:root{--shim:#ffffffb0;--bg:#f4f5f8;--card:#fff;--ink:#14171f;--fg:var(--ink);--mut:#5f687a;--line:#e3e6ee;--acc:#3b6cf6;--accent:var(--acc);--drive:#3b82f6;--charge:#16a34a;--idle:#8b5cf6;--ok:#16a34a;--warn:#a86400;--bad:#d4332b;--side:#fff;--hover:#eef1f8;--shadow:0 1px 2px rgba(20,23,31,.05)}
+@media (prefers-color-scheme:dark){:root{--shim:#ffffff18;--bg:#0e1015;--card:#171a22;--ink:#e8ebf2;--fg:var(--ink);--mut:#8b94a8;--line:#262b37;--acc:#6b93ff;--accent:var(--acc);--drive:#5b9bff;--charge:#34c46a;--idle:#a78bfa;--side:#13161d;--hover:#1e2330;--shadow:none;color-scheme:dark}}
 *{box-sizing:border-box}html,body{margin:0;height:100%}
 body{background:var(--bg);color:var(--ink);font:14px/1.45 -apple-system,BlinkMacSystemFont,"SF Pro Text","Inter",system-ui,sans-serif}
 a{color:var(--acc);text-decoration:none}a:hover{text-decoration:underline}
@@ -40,8 +40,17 @@ th{font-size:12.5px;font-weight:600;color:var(--mut);cursor:pointer;user-select:
 tbody tr{cursor:pointer}tbody tr:hover{background:var(--hover)}td.l{max-width:360px;overflow:hidden;text-overflow:ellipsis}
 .pill{display:inline-block;border-radius:999px;padding:1px 9px;font-size:12px;border:1px solid var(--line);color:var(--mut)}.pill.sc{color:#e0201b;border-color:#e0201b55}.pill.ac{color:var(--charge);border-color:#16a34a55}.pill.dc{color:var(--warn);border-color:#d98a0055}
 .empty{color:var(--mut);padding:40px;text-align:center}
-/* placeholders: a region that is still loading is a block of its final size (--ph is its height), so nothing moves when the content arrives */
-.ph{min-height:var(--ph,0)}.ph:empty{background:var(--line);opacity:.45;border-radius:10px;animation:rvld 1.1s ease-in-out infinite alternate}#rg.ph{display:inline-block}
+/* placeholders: a region that is still loading is a block of its final size (--ph is its height), so nothing moves when the content arrives.
+   A light sweep crosses each block every few seconds and then rests; it stops for people who ask for less motion. */
+.ph{min-height:var(--ph,0)}.ph:empty{position:relative;overflow:hidden;background:var(--line);opacity:.55;border-radius:10px}
+.ph:empty::after{content:"";position:absolute;inset:0;background:linear-gradient(100deg,transparent 30%,var(--shim) 50%,transparent 70%);transform:translateX(-100%);animation:shim 2.6s ease-in-out infinite}
+@keyframes shim{0%{transform:translateX(-100%)}50%,100%{transform:translateX(100%)}}
+@media (prefers-reduced-motion:reduce){.ph:empty::after{animation:none}.rvimg,.rvc{animation:none}}
+#rg.ph{display:inline-block}
+.sk{display:block}.sk .ph{margin-bottom:12px}.sk .tiles .ph{margin:0}.sk .tiles{margin:14px 0}
+.sk .skr{margin:0 0 1px;border-radius:0;--ph:35px}.sk .skr:first-of-type{border-radius:10px 10px 0 0}.sk .skr:last-child{border-radius:0 0 10px 10px}
+.sk .evs .ph{margin:0}
+:focus-visible{outline:2px solid var(--acc);outline-offset:2px;border-radius:4px}
 iframe.drive{width:100%;border:0;min-height:900px;background:transparent}
 .cp{margin:6px 0}.cp h3{margin:0;font-size:13px}.cp h3 span{color:var(--mut);font-weight:400}
 svg text{fill:var(--mut);font-size:11px}svg .grid{stroke:var(--line)}svg .cl{stroke:var(--ink);opacity:.45}

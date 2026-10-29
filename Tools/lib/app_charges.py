@@ -41,6 +41,34 @@ def _r(v, n=2):
     return None if v is None else round(v, n)
 
 
+
+_HOME_MEMO = {}
+
+
+def home_model(ccm, raw, now=None):
+    """What the scripts say a Home charge costs (lib.charge_cost_model.home_charge_cost: solar share at the feed-in it replaced, tier 1 then tier 2, grid share at the usage rate, GST on the grid part),
+    reduced to what the app shows. -> dict(cost, kwh, rate, solar_kwh, grid_kwh, tier1_kwh, tier2_kwh, tier1_rate, tier2_rate, usage_rate, before_kwh) or None when it is not a priced charge or there
+    is no solar data for it (then 100% grid is only a ceiling, not the opportunity cost). Held in memory per charge; a charge that could not be priced is tried again after an hour."""
+    if not raw or not raw.get("ended_at") or not raw.get("started_at"):
+        return None
+    now = time.time() if now is None else now
+    key = (str(raw.get("started_at")), str(raw.get("ended_at")), raw.get("energy_used_kwh"), raw.get("energy_added_kwh"))
+    hit = _HOME_MEMO.get(key)
+    if hit and (hit[1] is not None or now - hit[0] < 3600):
+        return hit[1]
+    try:
+        priced = ccm.home_charge_cost(raw)
+    except Exception:
+        priced = None
+    out = None
+    if priced and priced["source"] == "tiered_solar_model":
+        r = priced["result"]
+        kwh = r.get("kwh_total") or 0
+        out = dict(cost=priced["cost"], kwh=kwh, rate=(priced["cost"] / kwh) if kwh else None, solar_kwh=r.get("solar_kwh"), grid_kwh=r.get("grid_kwh"), tier1_kwh=r.get("tier1_kwh"),
+                   tier2_kwh=r.get("tier2_kwh"), tier1_rate=r.get("tier1_rate"), tier2_rate=r.get("tier2_rate"), usage_rate=r.get("usage_rate"), before_kwh=r.get("cumulative_export_before_kwh"))
+    _HOME_MEMO[key] = (now, out)
+    return out
+
 class ChargeBook:
     def __init__(self, tools_dir, data_dir):
         self.tools = tools_dir
@@ -149,6 +177,10 @@ class ChargeBook:
         try:
             import analyse_charging as ac
             from lib import charge_cost_model as ccm
+            try:
+                import lib.session_cost  # noqa: F401  its providers and PV store load relative to Tools/; load them here
+            except Exception:
+                pass
         finally:
             os.chdir(cwd)
         return ac, ccm
@@ -202,7 +234,9 @@ class ChargeBook:
                 st, why = "pending", "Tessie shows %s, invoice share is $%.2f" % ("$%.2f" % rec["cost"] if rec and rec.get("cost") is not None else "no cost", target)
             tel = s.get("detailed_telemetry") or {}
             dt = s.get("datetime")
+            hm = None if s.get("invoice_cost") is not None or s.get("emoji") != ccm.HOME_EMOJI else home_model(ccm, raw)
             return dict(
+                ocost=_r(hm["cost"]) if hm else None, orate=_r(hm["rate"], 3) if hm and hm["rate"] is not None else None, omodel=hm,
                 id=str(t0), t0=t0, t1=int(s.get("end_utc_epoch") or t0), tz=s.get("timezone") or s.get("start_tz") or "", tzabbr=s.get("start_tz_abbr") or "",
                 day=dt.strftime("%Y-%m-%d") if dt else "", hm=dt.strftime("%H:%M") if dt else "", min=s.get("duration_mins"),
                 b0=s.get("start_soc"), b1=s.get("end_soc"), kwh=_r(s.get("battery_kwh")), disp=_r(s.get("tessie_car_kwh") if multi and s.get("tessie_car_kwh") else s.get("dispenser_kwh")), used=_r(s.get("tessie_car_kwh")),
@@ -235,7 +269,10 @@ class ChargeBook:
                 sync = "partial"
             first, last = parts[0], parts[-1]
             peaks = [p["peak"] for p in parts if p["peak"]]
+            ocost = [p["ocost"] for p in parts if p["ocost"] is not None]
+            use_o = not icost and len(ocost) == len(parts)                  # a Home charge the scripts priced for every part: their cost, not Tessie's flat rate
             plug = dict(
+                ocost=_r(sum(ocost)) if use_o else None,
                 id=first["id"], t0=first["t0"], t1=last["t1"], tz=first["tz"], tzabbr=first["tzabbr"], day=first["day"], hm=first["hm"],
                 span=round((last["t1"] - first["t0"]) / 60.0, 1), min=sum((p["min"] or 0) for p in parts), b0=first["b0"], b1=last["b1"],
                 kwh=_r(bat), disp=_r(disp), eff=_r(100.0 * bat / disp, 1) if disp else None, loss=_r(disp - bat) if disp else None,
@@ -245,8 +282,8 @@ class ChargeBook:
                 kind="supercharger" if s.get("is_supercharger") else "dc" if s.get("is_fast_charger") else "ac",
                 home=("HOME" in (s.get("status") or "")), lat=(s.get("raw_charge") or {}).get("latitude"), lon=(s.get("raw_charge") or {}).get("longitude"),
                 addr=(s.get("raw_charge") or {}).get("location_raw") or "",
-                tcost=_r(tcost), icost=_r(sum(icost)) if icost else None, cost=_r(sum(icost)) if icost else _r(tcost),
-                rate=s.get("invoice_rate") if s.get("invoice_rate") is not None else s.get("tessie_rate"),
+                tcost=_r(tcost), icost=_r(sum(icost)) if icost else None, cost=_r(sum(icost)) if icost else _r(sum(ocost)) if use_o else _r(tcost),
+                rate=s.get("invoice_rate") if s.get("invoice_rate") is not None else (sum(ocost) / sum((p["omodel"] or {}).get("kwh") or 0 for p in parts) if use_o and sum((p["omodel"] or {}).get("kwh") or 0 for p in parts) else s.get("tessie_rate")),
                 expected_rate=s.get("expected_rate"), schedule=s.get("expected_schedule_name"), theory=_r(s.get("theoretical_cost")), gst=_r(s.get("theoretical_gst")),
                 sync=sync, invoice_only=bool(s.get("is_invoice_only_entry")), parts=parts,
                 invoice=dict(number=inv.get("invoice_number"), file=inv.get("source_file"), date=str(inv.get("date") or "")[:10], network=inv.get("network"),
