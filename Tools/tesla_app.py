@@ -484,8 +484,9 @@ class H(BaseHTTPRequestHandler):
             if u.path == "/api/clips/act":         # {action: delete|move|process|stop, role, items: [{kind, id}]}: remove the video of clips from a drive (after it is all kept), move it to the Archive, or read what the clips still lack from their video
                 if body.get("action") == "stop":
                     return self.send_json(CKEEP.stop())
-                if KEEP._stage is not None or KEEP.busy():
-                    return self.send_json(dict(error="A job is reading the drives: stop it first."))
+                held = KEEP.stand_down()           # the Keeper's own pass gives way to a button pressed here
+                if held:
+                    return self.send_json(dict(error="%s is reading the drives: stop it first." % held))
                 role = body.get("role")
                 roots = {r: footage_root(r) for r in "AJU"}
                 if body.get("action") == "process":       # read what the clips still lack (metadata, stills, pictures, signs, or only `steps`) from their video on the connected drives
@@ -963,6 +964,7 @@ def main():
     KEEP.on_progress = TODO.subtract
     CKEEP = clip_keep.ClipKeep(DATA_DIR, TC, FG)
     CKEEP.on_change = TODO.forget
+    KEEP.page_job = lambda: bool(CKEEP.job().get("running"))
     KEEP.pictures = CKEEP          # the Keeper saves the pictures of events after the stills
     STHIN = stills_thin.StillsThin(DATA_DIR, FG.stills, TC)
     if not a.no_background:
