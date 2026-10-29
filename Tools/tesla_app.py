@@ -67,6 +67,7 @@ import app_data  # noqa: E402
 import app_sentry  # noqa: E402
 import app_teslacam  # noqa: E402
 import app_drivelist  # noqa: E402
+import run_cuts  # noqa: E402
 import app_drive_review  # noqa: E402
 import app_footage
 import drive_eject
@@ -643,6 +644,7 @@ class H(BaseHTTPRequestHandler):
         if name == "clips/history":             # what the last deletes and moves removed (kept across restarts)
             return self.send_json(dict(jobs=CKEEP.history(30)))
         if name == "clips":                     # every Recent run, Saved and Sentry event ever logged, whichever drives are connected; each says which drive holds it and whether it can be played
+            drivelist()                         # makes sure the cuts between the drive and parked sections of a recording are worked out (kept from the last time)
             return self.send_json(TC.clips_all({r: footage_root(r) for r in "AJU"}))
         if name.startswith("clips/shots/"):     # clips/shots/<saved|sentry>/<event folder>: the cameras that have a full-size picture of the moment, and which second of which clip it is
             m = re.match(r"^clips/shots/(saved|sentry)/(\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2})$", name)
@@ -870,7 +872,12 @@ def drivelist(wait=False):
     def build():
         act = STORE.activity()
         tess = [x for x in act if x["k"] == "drive"]
-        items = app_drivelist.merge(tess, [x for x in act if x["k"] == "charge"], TC.timeline_stored(None)["items"], [x for x in act if x["k"] == "idle"])
+        cam = TC.timeline_stored(None)["items"]
+        try:
+            run_cuts.update(TC._ledger_recent(None)[0], cam)         # where a Recent recording is cut into its drive and parked sections (the TeslaCam list)
+        except Exception:
+            pass
+        items = app_drivelist.merge(tess, [x for x in act if x["k"] == "charge"], cam, [x for x in act if x["k"] == "idle"])
         return dict(items=items, tessie=bool(tess), missing=app_drivelist.missing(items, time.time(), tried=set(tessie_state().get("tried") or []) | FetchLedger(DATA_DIR).settled("drive_path")))
     d = os.path.join
     watch = [d(DATA_DIR, "drives", "drives_master.csv"), d(DATA_DIR, "charges", "charges_master.csv"), d(DATA_DIR, "drives", "deepdive"), d(DATA_DIR, "tessie_sync_state.json"), d(DATA_DIR, "fetch_ledger.json"), d(DATA_DIR, "clip_clock.json"), d(DATA_DIR, "places.json"), d(DATA_DIR, "teslacam_timeline", "index.json"),
@@ -953,6 +960,7 @@ def main():
     STORE = app_data.Store(DATA_DIR)
     KEPT = app_kept.Kept(local_cache_dir(), _code_version())
     DRIVELIST = app_drivelist.Cached(os.path.join(local_cache_dir(), "drivelist.json"))
+    run_cuts.set_file(os.path.join(local_cache_dir(), "run_cuts.json"))
     SENTRY = app_sentry.Sentry(DATA_DIR)
     TC = app_teslacam.TeslaCam(DATA_DIR, SENTRY)
     threading.Thread(target=footage_roots, daemon=True).start()                   # which drives are connected, found before the first map asks (a slow drive takes seconds)
@@ -963,6 +971,7 @@ def main():
     TODO = footage_todo.Todo(os.path.join(local_cache_dir(), "footage_todo.json"), DATA_DIR, TC, FG, footage_roots, lambda: KEEP._stage is None and not KEEP.busy())
     KEEP.on_progress = TODO.subtract
     CKEEP = clip_keep.ClipKeep(DATA_DIR, TC, FG)
+    run_cuts.on_change(lambda: setattr(CKEEP, "_cache", None))          # what is kept is grouped by the same runs
     CKEEP.on_change = TODO.forget
     KEEP.page_job = lambda: bool(CKEEP.job().get("running"))
     KEEP.pictures = CKEEP          # the Keeper saves the pictures of events after the stills

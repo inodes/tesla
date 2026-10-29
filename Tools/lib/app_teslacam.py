@@ -14,6 +14,7 @@ import app_sentry
 import drive_roles as DR
 import app_config
 import clip_clock as CC
+import run_cuts as RC
 import teslacam_timeline as TL
 import teslacam_scan as TS
 import app_review
@@ -70,13 +71,13 @@ class TeslaCam:
     def _scan(self, role, teslacam):
         root = os.path.join(teslacam, "RecentClips")
         c = self.rec.get(role)
-        if c and c["root"] == root and c.get("cv") == CC.version() and time.time() - c.get("chk", 0) < 3:
+        if c and c["root"] == root and c.get("cv") == (CC.version(), RC.version()) and time.time() - c.get("chk", 0) < 3:
             return c                                    # looked at a moment ago: a stat of a slow drive per request adds up (the Drives list asks for every drive)
         try:
             mt = os.path.getmtime(root)
         except OSError:
             return None
-        if c and c["mt"] == mt and c["root"] == root and c.get("cv") == CC.version():
+        if c and c["mt"] == mt and c["root"] == root and c.get("cv") == (CC.version(), RC.version()):
             c["chk"] = time.time()
             return c
         clips = {}
@@ -90,7 +91,7 @@ class TeslaCam:
         runs, cur = [], None
         for st in sorted(clips):
             t = _secs(st)
-            if cur and t - cur["t1"] <= GAP:
+            if cur and t - cur["t1"] <= GAP and not RC.is_cut(st):
                 cur["stamps"].append(st)
                 cur["t1"] = t
             else:
@@ -101,7 +102,7 @@ class TeslaCam:
             a, b = r["stamps"][0], r["stamps"][-1]
             out.append(dict(id=a, ts=_ts(a), end=_ts(b), t0=_secs(a), t1=_secs(b) + 60, n=len(r["stamps"]), stamps=r["stamps"],
                             full=sum(1 for s in r["stamps"] if len(clips[s]) == 6)))
-        c = self.rec[role] = dict(mt=mt, root=root, cv=CC.version(), chk=time.time(), runs=sorted(out, key=lambda x: x["t0"], reverse=True), clips=clips)
+        c = self.rec[role] = dict(mt=mt, root=root, cv=(CC.version(), RC.version()), chk=time.time(), runs=sorted(out, key=lambda x: x["t0"], reverse=True), clips=clips)
         return c
 
     def recent(self, role, teslacam):
@@ -242,7 +243,7 @@ class TeslaCam:
         runs, cur = [], None
         for st in sorted(cams):
             t = _secs(st)
-            if cur and t - cur["t1"] <= GAP:
+            if cur and t - cur["t1"] <= GAP and not RC.is_cut(st):
                 cur["stamps"].append(st)
                 cur["t1"] = t
             else:
@@ -253,7 +254,7 @@ class TeslaCam:
             a, b = sts[0], sts[-1]
             roles = sorted(set().union(*(holders[x] for x in sts)))
             minute_play = {x: next((q for q in sorted(holders[x]) if roots.get(q)), None) for x in sts}
-            out["recent"].append(dict(id=a, ts=_ts(a), end=_ts(b), t0=_secs(a), t1=_secs(b) + 60, n=len(sts), full=sum(1 for x in sts if len(cams[x]) == 6),
+            out["recent"].append(dict(id=a, ts=_ts(a), end=_ts(b), t0=_secs(a), t1=_secs(b) + 60, part=RC.kind(a), pos=RC.pos(a), n=len(sts), full=sum(1 for x in sts if len(cams[x]) == 6),
                                       roles=roles, play=minute_play[a] or next((q for q in minute_play.values() if q), None), playable=sum(1 for q in minute_play.values() if q)))
         out["recent"].sort(key=lambda x: x["t0"], reverse=True)
         return out
@@ -267,7 +268,7 @@ class TeslaCam:
         run, last = [], None
         for st in sts:
             t = _secs(st)
-            if last is not None and t - last > GAP:
+            if last is not None and (t - last > GAP or RC.is_cut(st)):
                 if rid in run:
                     break
                 run = []
