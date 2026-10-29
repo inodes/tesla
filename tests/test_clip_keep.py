@@ -13,6 +13,7 @@ for p in ("tests", "Tools", os.path.join("Tools", "lib")):
     sys.path.insert(0, os.path.join(HERE, "..", p))
 import clip_clock as CC  # noqa: E402
 import clip_keep as CK  # noqa: E402
+import run_cuts as RC  # noqa: E402
 import teslacam_scan as TS  # noqa: E402
 import teslacam_stills as ST  # noqa: E402
 import event_shots as ES  # noqa: E402
@@ -393,6 +394,27 @@ class StepClockTest(ProcBase):
         self.assertEqual((j["step"], j["step_done"], j["step_total"]), ("Reading signs", 0, 230))
         self.assertGreaterEqual(j["step_t0"], before)
         self.assertLessEqual(j["step_t0"], time.time())
+
+
+class ParkedStillsTest(Base):
+    def _recent(self):
+        f = os.path.join(self.data, "teslacam_ledger", "2026-10-16.json")
+        day = json.load(open(f))
+        for st in (S1, S2):
+            day["recent||%s-front" % st] = dict(size=10, drives=dict(J=dict(LIVE)))
+        json.dump(day, open(f, "w"))
+
+    def test_stills_of_a_parked_section_do_not_wait_for_a_drive_from_tessie(self):
+        self._recent()
+        TD.drive_windows = lambda d: [(0, 5, True)]                              # the last drive Tessie gave ended long before these minutes
+        old = RC._S
+        self.addCleanup(lambda: setattr(RC, "_S", old))
+        RC._S = {}
+        r = self.keep(read=[S1, S2], stills=[S1, S2]).status()["clips"]["recent"][S1]
+        self.assertEqual((r["stills"], r["wait_n"]), ([0, 2], 2))     # driving or unread: held until the drive arrives
+        RC._S = {S1: ["park", None, None, False]}
+        r = self.keep(read=[S1, S2], stills=[S1, S2]).status()["clips"]["recent"][S1]
+        self.assertEqual((r["stills"], r["wait_n"]), ([2, 2], 0))                       # parked: the stills count as done
 
 
 if __name__ == "__main__":

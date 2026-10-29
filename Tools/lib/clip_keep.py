@@ -156,6 +156,7 @@ class ClipKeep:
         for (kind, cid), mins in groups.items():
             meta, st_, sg, sh = [0, 0], [0, 0], [0, 0], [0, 0]
             waiting, wait_n, snap_n, refine_n, nbytes, nfiles, narch = "", 0, 0, 0, {}, {}, {}
+            parked = kind == "recent" and RC.kind(min(mins, key=CC.utc)) == "park"        # a parked section lies in no drive: its stills never wait for Tessie's drive or its snapshots
             for st, node in mins.items():
                 for r, c in node["files"].items():
                     nfiles[r] = nfiles.get(r, 0) + c
@@ -170,7 +171,7 @@ class ClipKeep:
                 if "front" in node["cams"]:
                     st_[1] += 1
                     t = CC.utc(st)
-                    if st in stills and TD._snap_ok(windows, starts, t) and t <= synced_until:
+                    if st in stills and (parked or (TD._snap_ok(windows, starts, t) and t <= synced_until)):
                         st_[0] += 1
                     elif st in stills and t > synced_until:
                         waiting = "waiting for the drive from Tessie"
