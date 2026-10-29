@@ -89,7 +89,7 @@ def intraday_days_present(conn):
     this repo doesn't chase individual missing 15-minute slots within
     an otherwise-synced day, since a real gap there is a genuine
     provider-side absence, same as any other field)."""
-    return {r[0][:10] for r in conn.execute("SELECT timestamp FROM pv_intraday")}
+    return {r[0] for r in conn.execute("SELECT DISTINCT substr(timestamp, 1, 10) FROM pv_intraday")}
 
 
 def upsert_daily(conn, rows, provider):
