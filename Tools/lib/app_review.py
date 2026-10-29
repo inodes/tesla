@@ -12,6 +12,7 @@ how sure the reading was, so it can be judged by eye in the page.
 import importlib.util
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -35,6 +36,7 @@ OPTS = dict(step_s=1.0,        # a still every this many seconds
             refine_conf=85.0,  # a sign read this surely, in more than one still, with one number, is left as it is
             crop_px=320)       # the longest side of the picture kept of each sign: big enough to read the number from again once the video is gone
 _LOCK = threading.RLock()
+_DAYFILE = re.compile(r"^\d{4}-\d\d-\d\d\.json$")      # a day's file: not the copy iCloud makes when two Macs save at once ("2026-09-16 2.json"), whose old minutes would count as never read
 
 
 def requirements():
@@ -88,7 +90,7 @@ class Review:
             return out
         with _LOCK:
             for fn in names:
-                if fn.endswith(".json"):
+                if _DAYFILE.match(fn):
                     for st, r in self._day(fn[:-5]).items():
                         out[st] = len(r.get("d", []))
         return out
@@ -102,7 +104,7 @@ class Review:
             except OSError:
                 return out
             for fn in names:
-                if fn.endswith(".json"):
+                if _DAYFILE.match(fn):
                     for st, r in self._day(fn[:-5]).items():
                         if not r.get("rf") and any(x.get("kind") != "school" or not x.get("tm") for x in r.get("d", [])):
                             out.add(st)

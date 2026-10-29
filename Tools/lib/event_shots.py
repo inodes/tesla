@@ -78,6 +78,15 @@ class EventShots:
         except OSError:
             return set()
 
+    def tried(self, kind, eid):
+        """The cameras whose picture was asked for and could not be cut (no frame came out of the video): not asked for again."""
+        try:
+            with open(os.path.join(self.folder(kind, eid), "tried.json"), encoding="utf-8") as fh:
+                j = json.load(fh)
+                return {c for c in j if c in CAMS} if isinstance(j, list) else set()
+        except (OSError, ValueError):
+            return set()
+
     def remove(self, kind, eid):
         """Deletes everything kept for the event; returns the bytes freed."""
         d = self.folder(kind, eid)
@@ -127,6 +136,10 @@ class EventShots:
             finally:
                 if os.path.exists(tmp):
                     os.remove(tmp)
+            if cam not in made and not (stop and stop()) and not os.path.isfile(os.path.join(out, cam + ".jpg")):
+                miss = self.tried(kind, ev["id"]) | {cam}
+                with open(os.path.join(out, "tried.json"), "w", encoding="utf-8") as fh:
+                    json.dump(sorted(miss), fh)
         if made:
             with open(os.path.join(out, "shots.json"), "w", encoding="utf-8") as fh:
                 json.dump(dict(clip=stamp, sec=sec, reason=ev.get("reason") or "", t=ev.get("ts") or ""), fh)
