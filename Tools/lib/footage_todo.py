@@ -1,17 +1,18 @@
-"""footage_todo.py - what each connected TeslaCam drive still needs: files not in the footage log yet, minutes without telemetry, clips without stills.
+"""footage_todo.py - what each connected TeslaCam drive still needs: files not in the footage log yet, minutes without telemetry, clips without stills, minutes whose signs were not read.
 
 The page shows it next to each drive so a button is only offered when there is something to do. Working it out walks the drives (slow), so it runs in
 one background thread and the answer is kept (in the local cache folder) against a signature of each drive and of what has been kept from it; it is
 worked out again only when that signature changes (a drive changed, a job finished) and nothing is reading a drive.
 
-  Todo(cache_file, data_dir, tc, fg, roots_fn, idle_fn).snapshot() -> dict(checking, progress, drives={role: dict(log_new, log_gone, telemetry, stills, at)}, error)
-progress = None, or dict(done, total, step, role) while it works: one step per drive listed, then the telemetry count, then the stills count
+  Todo(cache_file, data_dir, tc, fg, roots_fn, idle_fn).snapshot() -> dict(checking, progress, drives={role: dict(log_new, log_gone, telemetry, stills, signs, at)}, error)
+progress = None, or dict(done, total, step, role) while it works: one step per drive listed, then the telemetry count, the stills count, then the signs count
 """
 import json
 import os
 import threading
 import time
 
+import app_config
 import teslacam_files as TF
 import teslacam_ledger as TLG
 
@@ -79,7 +80,34 @@ class Todo:
             stills = len(self.fg.stills.stamps())
         except Exception:
             stills = -1
-        return [[r, round(_mtime(p)), (scans.get(r) or {}).get("at") or ""] for r, p in sorted(roots.items())] + [tele, stills]
+        return [[r, round(_mtime(p)), (scans.get(r) or {}).get("at") or ""] for r, p in sorted(roots.items())] + [tele, stills, self._signs_token()]
+
+    def _signs_token(self):
+        """How much of the signs has been read: the newest change among the day files the sign review keeps (a file changes as minutes are added to it)."""
+        try:
+            base = self.tc._rv().base
+            return round(sum(os.path.getmtime(os.path.join(base, f)) for f in os.listdir(base) if f.endswith(".json")))
+        except Exception:
+            return -1
+
+    def _signs_left(self, walked):
+        """{role: minutes whose signs were not read yet, or not had the second look}: the minutes with a front clip on that drive, read for telemetry, driven fast enough."""
+        rv, store = self.tc._rv(), self.tc._tl("A")
+        done = rv.scanned()
+        again = rv.unrefined() if hasattr(rv, "unrefined") else set()
+        min_kmh = float((app_config.get("review") or {}).get("min_kmh", 30.0))
+        out = {}
+        for r, (files, ok) in walked.items():
+            n = 0
+            for st in {f["stamp"] for f in files if f["cam"] == "front"}:
+                if st in done:
+                    n += st in again
+                    continue
+                sm = store.summary(st)
+                if isinstance(sm, dict) and sm.get("vmax", 0) >= min_kmh:
+                    n += 1
+            out[r] = n
+        return out
 
     def snapshot(self):
         roots = {r: p for r, p in (self.roots_fn() or {}).items() if p}
@@ -133,7 +161,7 @@ class Todo:
                 out, walked = {}, {}
                 keys_by_role = {r: (p, _mtime_ns(p), (scans.get(r) or {}).get("at") or "") for r, p in roots.items()}
                 need = [r for r in sorted(roots) if (self._walked.get(r) or (None,))[0] != keys_by_role[r]]
-                total = len(need) + 2
+                total = len(need) + 3
                 step_i = 0
                 for r, p in sorted(roots.items()):
                     cached = self._walked.get(r)
@@ -169,7 +197,7 @@ class Todo:
                                         gone += 1
                         self._walked[r] = (keys_by_role[r], files, ok, new, gone, days_new)
                     walked[r] = (files, ok)
-                    out[r] = dict(log_new=new, log_gone=gone, new_days=dict(sorted(days_new.items(), reverse=True)[:5]), telemetry=0, stills=0, at=time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()))
+                    out[r] = dict(log_new=new, log_gone=gone, new_days=dict(sorted(days_new.items(), reverse=True)[:5]), telemetry=0, stills=0, signs=0, at=time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()))
                 self._prog = dict(done=len(need), total=total, step="telemetry", role="", pct=round(100 * (len(need) + 0.4) / total))
                 for d in self.tc.scan_report(roots)["drives"]:          # with every connected drive together: a minute two drives hold is read once
                     out[d["role"]]["telemetry"] = d["to_read"]
@@ -177,6 +205,9 @@ class Todo:
                 rep = self.fg.stills_report(roots, walked)
                 for d in rep["drives"]:
                     out[d["role"]]["stills"] = d["to_make"]
+                self._prog = dict(done=len(need) + 2, total=total, step="signs", role="", pct=round(100 * (len(need) + 2.4) / total))
+                for r, n in self._signs_left(walked).items():
+                    out[r]["signs"] = n
                 self._mem = dict(sig=sig, drives=out)
                 self.error = ""
                 self._save()
