@@ -41,6 +41,13 @@ class RunnerTests(unittest.TestCase):
         self.assertFalse(r["ok"])
         self.assertIn("nope.sh", r["error"])
 
+    def test_a_given_command_runs_instead_of_a_script(self):
+        s = app_sync.ChargerSync(self.d, "/data", "tool.py", argv=[sys.executable, "-c", "import sys;print('args', len(sys.argv))"])
+        self.assertTrue(s.start()["ok"])                      # the script file need not exist
+        self.wait(s)
+        st = s.status(0)
+        self.assertEqual((st["rc"], st["lines"]), (0, ["args 1"]))
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -14,10 +14,11 @@ import time
 
 
 class ChargerSync:
-    def __init__(self, tools_dir, data_dir, script="sync_charger_all.sh"):
+    def __init__(self, tools_dir, data_dir, script="sync_charger_all.sh", argv=None):
         self.tools, self.data = tools_dir, data_dir
         self.name = script
         self.script = os.path.join(tools_dir, script)
+        self.argv = argv              # a command to run instead of `bash <script>`
         self.lines = collections.deque(maxlen=4000)
         self.n = 0                    # lines ever received (the poll cursor)
         self.proc = None
@@ -41,14 +42,14 @@ class ChargerSync:
         with self.lock:
             if self.running():
                 return self.status_locked(0)
-        if not os.path.isfile(self.script):
+        if not self.argv and not os.path.isfile(self.script):
             return dict(ok=False, error=self.name + " not found in " + self.tools)
         env = dict(os.environ, TESLA_DATA_DIR=self.data, PYTHONUNBUFFERED="1")
         env["PATH"] = os.path.dirname(sys.executable) + os.pathsep + env.get("PATH", "")      # the repo venv first, as direnv would
         with self.lock:
             self.lines.clear()
             self.n, self.rc, self.ended, self.started = 0, None, None, time.time()
-        self.proc = subprocess.Popen(["bash", self.script], cwd=self.tools, env=env, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+        self.proc = subprocess.Popen(self.argv or ["bash", self.script], cwd=self.tools, env=env, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
                                      stderr=subprocess.STDOUT, text=True, bufsize=1, start_new_session=True)
         threading.Thread(target=self._pump, args=(self.proc,), daemon=True).start()
         return self.status(0)
