@@ -36,7 +36,7 @@ def main():
     print("site: HTTP %s %s" % (s, (parsed or {}).get("name") if isinstance(parsed, dict) else raw[:120]))
     day = datetime.strptime(a.day, "%Y-%m-%d").date() if a.day else date.today() - timedelta(days=1)
     if a.raw:
-        s, parsed, raw = SE2.get("/sites/%s/meters/telemetry" % site, dict(resolution="QUARTER_HOUR", **{"from": SE2._stamp(datetime.combine(day, datetime.min.time())), "to": SE2._stamp(datetime.combine(day + timedelta(days=1), datetime.min.time()))}))
+        s, parsed, raw = SE2.get("/sites/%s/meters/telemetry" % site, dict(resolution="QUARTER_HOUR", **{"from": SE2._stamp(datetime.combine(day, datetime.min.time()), SE2.site_tz(site)), "to": SE2._stamp(datetime.combine(day + timedelta(days=1), datetime.min.time()), SE2.site_tz(site))}))
         print("raw: HTTP %s\n%s" % (s, json.dumps(parsed, indent=1)[:2500] if parsed else raw[:600]))
     rows, err = SE2.meter_rows(site, day, day, "QUARTER_HOUR")
     print("%s: %d quarter-hours%s" % (day, len(rows), "  ERROR: " + err if err else ""))
