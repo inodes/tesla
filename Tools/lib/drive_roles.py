@@ -14,6 +14,7 @@ disconnected.
 """
 import glob
 import os
+import time
 
 import drive_registry as REG
 
@@ -33,6 +34,9 @@ def _marker_role(root):
 
 def role_of(path):
     """The role of the drive holding this TeslaCam folder ('?' when it has not been identified)."""
+    f = REG.folder_of(path)
+    if f:
+        return f["role"]
     root = drive_root(path)
     e = REG.lookup(REG.volume_id(root))
     if e:
@@ -70,7 +74,37 @@ def details():
     for d in out:
         if d["id"] and ids.count(d["id"]) > 1:
             d.update(role="?", label="", function="", known=False)
+    for e in REG.folders():                                         # a folder on a disk, found by the disk's UUID wherever it is mounted
+        for mp in REG.mount_of(e["id"]):
+            p = os.path.join(mp, e["folder"])
+            rp = os.path.realpath(p)
+            if rp in seen or not REG.structure_ok(p):
+                continue
+            seen.add(rp)
+            NAMES[e["role"]] = e["label"]
+            out.append(dict(path=p, role=e["role"], id=e["id"], label=e["label"], function=e["function"], known=True, size_gb=REG.size_gb(p), folder=True))
     return sorted(out, key=lambda d: ("A" != d["role"], "JU".index(d["role"]) if d["role"] in "JU" else 9, d["role"]))
+
+
+_RR = [0.0, "AJU"]
+
+
+def read_roles():
+    """The keys of every drive the app reads footage from, in the order a minute held by several is read: Archive, JOWUA, Tesla USB, then the folder drives
+    registered (a rescue copy, say). The app writes to, moves from and deletes from A, J and U only. Looked up at most every 5 s."""
+    if time.time() - _RR[0] > 5:
+        try:
+            _RR[1] = "AJU" + "".join(sorted({e["role"] for e in REG.folders() if e["role"] not in "AJU?"}))
+        except Exception:
+            _RR[1] = "AJU"
+        _RR[0] = time.time()
+    return _RR[1]
+
+
+def rank(role):
+    """Where a drive comes in the order a minute held by several drives is read from (unidentified drives last)."""
+    o = read_roles() + "?"
+    return o.index(role) if role in o else 99
 
 
 def discover():

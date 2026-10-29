@@ -13,6 +13,10 @@ with a one-word name of their own (Archive, JOWUA, ...). That goes in config.jso
 
     "teslacam": {"drives": [{"id": "<volume UUID>", "label": "Archive", "function": "archive", "role": "A", "size_gb": 1862, "first_seen": "2026-10-20"}]}
 
+A drive can also be a FOLDER on a volume (for example a rescue copy kept in a folder of an ordinary disk): the entry then has `folder`, the path of its
+TeslaCam folder from the volume's root ("jowua-rescue/TeslaCam"), and is found wherever that volume is mounted. A folder may take any function; one that is not the
+Archive, JOWUA or the Tesla USB is only read by the app: played, read for stills and signs, never written to, moved from or deleted from.
+
 `role` is the short stable key the commands use on their command lines (--drive A,J). The first archive is "A"; others take the first letter of
 their label when free. Nothing is ever written to a drive.
 """
@@ -43,7 +47,7 @@ def _read():
 
 
 def drives():
-    """The registered drives [dict(id, label, function, role, size_gb, first_seen)]."""
+    """The registered drives [dict(id, label, function, role, size_gb, first_seen[, folder])]."""
     d = _read().get("teslacam", {}).get("drives", [])
     return [x for x in d if isinstance(x, dict) and x.get("id") and x.get("role")]
 
@@ -140,7 +144,31 @@ def ranked(roles, connected=()):
 
 
 def lookup(vid):
-    return next((d for d in drives() if d["id"] == vid), None) if vid else None
+    """The registered drive whose whole volume this is (a folder on the volume is a different entry: see folders)."""
+    return next((d for d in drives() if d["id"] == vid and not d.get("folder")), None) if vid else None
+
+
+def folders():
+    """The registered drives that are a folder on a volume."""
+    return [d for d in drives() if d.get("folder")]
+
+
+def folder_of(path):
+    """The registered folder drive whose TeslaCam folder this path is (or lies in), or None."""
+    rp = os.path.realpath(os.path.expanduser(path))
+    for d in folders():
+        for mp in mount_of(d["id"]):
+            top = os.path.realpath(os.path.join(mp, d["folder"]))
+            if rp == top or rp.startswith(top + os.sep):
+                return d
+    return None
+
+
+def folder_entry_for(path):
+    """(volume UUID, folder path from the volume's root) of a folder: what a folder drive is registered by."""
+    rp = os.path.realpath(os.path.expanduser(path))
+    mp = _mount_point(rp)
+    return volume_id(mp), os.path.relpath(rp, mp).replace(os.sep, "/")
 
 
 def _free_role(label, function, taken):
@@ -150,26 +178,30 @@ def _free_role(label, function, taken):
     return next(c for c in cands if c not in taken and c != "?")
 
 
-def register(vid, label, function, size_gb=None, role=None):
-    """Remember a drive (or change what it is). Returns the entry. One word labels are kept as typed."""
+def register(vid, label, function, size_gb=None, role=None, folder=None):
+    """Remember a drive (or change what it is). Returns the entry. One word labels are kept as typed. `folder` = the TeslaCam folder from the volume's root,
+    for a drive that is a folder on a volume."""
     if function not in FUNCTIONS:
         raise ValueError("function must be one of %s" % ", ".join(FUNCTIONS))
     label = (label or "").strip().split()[0] if (label or "").strip() else function.capitalize()
     cur = drives()
-    old = next((d for d in cur if d["id"] == vid), None)
-    taken = {d["role"] for d in cur if d["id"] != vid}
+    same = lambda d: d["id"] == vid and (d.get("folder") or None) == (folder or None)
+    old = next((d for d in cur if same(d)), None)
+    taken = {d["role"] for d in cur if not same(d)}
     if size_gb is None and not (old or {}).get("size_gb"):         # not given and not known yet: measure the volume if it is mounted now
         mp = mount_of(vid)
         size_gb = _total_gb(mp[0]) if mp else None
     entry = dict(id=vid, label=label, function=function, role=role or (old["role"] if old else _free_role(label, function, taken)),
                  size_gb=size_gb if size_gb is not None else (old or {}).get("size_gb"), first_seen=(old or {}).get("first_seen") or datetime.date.today().isoformat())
-    _write([d for d in cur if d["id"] != vid] + [entry])
+    if folder:
+        entry["folder"] = folder.strip("/")
+    _write([d for d in cur if not same(d)] + [entry])
     return entry
 
 
-def forget(vid):
+def forget(vid, folder=None):
     cur = drives()
-    _write([d for d in cur if d["id"] != vid])
+    _write([d for d in cur if not (d["id"] == vid and (d.get("folder") or None) == (folder or None))])
     return len(cur) != len(drives())
 
 

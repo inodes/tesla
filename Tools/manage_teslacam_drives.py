@@ -5,7 +5,7 @@ NAME
     manage_teslacam_drives.py - list the connected TeslaCam drives and identify new ones
 
 SYNOPSIS
-    manage_teslacam_drives.py [--identify] [--set ID --label WORD --function car|archive|copy] [--forget ID]
+    manage_teslacam_drives.py [--identify] [--set ID --label WORD --function car|archive|copy] [--add-folder PATH --label WORD [--function F]] [--forget ID] [--forget-folder PATH]
 
 DESCRIPTION
     A volume is a TeslaCam drive when it holds a TeslaCam folder shaped like the car's. Which drive it is comes from the volume's own UUID, never
@@ -16,12 +16,18 @@ DESCRIPTION
         archive   the master copy: footage is imported to it and judged against it before anything is deleted
         copy      any other backup or transfer drive
 
+    A TeslaCam folder inside an ordinary disk (a rescue copy, say /Volumes/LaCie1/jowua-rescue/TeslaCam) can be one too: add it with --add-folder. It is found by
+    its disk's UUID plus the folder's place on it, so it is known wherever the disk is mounted. A folder that is not the Archive, JOWUA or the Tesla USB is only
+    read by the app (played, read for stills and signs); nothing is ever copied to it, moved from it or deleted from it.
+
     The answer goes in config.json under teslacam.drives. Nothing is ever written to a drive. Without options this lists the connected drives.
 
 OPTIONS
     --identify                  ask about each connected drive that is not identified yet
     --set ID --label W --function F   record a drive without being asked (ID is the volume UUID shown by the list)
+    --add-folder PATH --label W [--function F]   record a TeslaCam folder on a disk (the function defaults to copy)
     --forget ID                 remove a drive from the list
+    --forget-folder PATH        remove a folder drive from the list
     -h, --help                  this text
 
 EXIT STATUS
@@ -54,7 +60,7 @@ def _show():
         for d in ds:
             note = "" if d["known"] else ("   <- not identified yet" if d["role"] == "?" else "   (from its marker folder; no volume ID to go on)")
             print("%-10s %-8s %-8s %6s GB  %-38s %s%s" % (d["label"] or "?", d["function"] or "?", d["role"], d["size_gb"] or "?", d["id"] or "-", d["path"], note))
-    gone = [e for e in REG.drives() if e["id"] not in {d["id"] for d in ds}]
+    gone = [e for e in REG.drives() if (e["id"], e["role"]) not in {(d["id"], d["role"]) for d in ds}]
     for e in gone:
         print("%-10s %-8s %-8s %6s GB  %-38s (not connected)" % (e["label"], e["function"], e["role"], e.get("size_gb") or "?", e["id"]))
 
@@ -80,7 +86,31 @@ def main():
     ap.add_argument("--label")
     ap.add_argument("--function")
     ap.add_argument("--forget")
+    ap.add_argument("--add-folder")
+    ap.add_argument("--forget-folder")
     a = ap.parse_args()
+    if a.add_folder or a.forget_folder:
+        path = os.path.expanduser(a.add_folder or a.forget_folder)
+        if not os.path.isdir(path):
+            print("%s is not a folder." % path)
+            return 1
+        vid, rel = REG.folder_entry_for(path)
+        if not vid:
+            print("The system cannot say which disk %s is on (no volume UUID)." % path)
+            return 1
+        if a.forget_folder:
+            print("Removed." if REG.forget(vid, rel) else "No such folder in the list.")
+            return 0
+        if not REG.structure_ok(path):
+            print("%s is not shaped like a TeslaCam folder (RecentClips / SavedClips / SentryClips with the car's file names)." % path)
+            return 1
+        fn = a.function or "copy"
+        if fn not in REG.FUNCTIONS:
+            print("--function must be one of: %s" % ", ".join(REG.FUNCTIONS))
+            return 1
+        e = REG.register(vid, a.label, fn, folder=rel)
+        print("Saved: %s (%s), key %s, folder %s on volume %s." % (e["label"], e["function"], e["role"], e["folder"], e["id"]))
+        return 0
     if a.forget:
         print("Removed." if REG.forget(a.forget) else "No such drive in the list.")
         return 0

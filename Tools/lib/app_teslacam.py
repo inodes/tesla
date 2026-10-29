@@ -362,7 +362,7 @@ class TeslaCam:
         """(role, TeslaCam folder) of the connected drive holding the most minutes of footage for [t0, t1] (UTC); the Archive wins a tie.
         None holds any: the Archive (or the first connected drive), so whatever was read before still shows."""
         best, most = None, 0
-        for r in "AJU":
+        for r in DR.read_roles():
             root = (roots or {}).get(r)
             if not root:
                 continue
@@ -371,7 +371,7 @@ class TeslaCam:
                 best, most = (r, root), n
         if best:
             return best
-        first = next(((r, (roots or {})[r]) for r in "AJU" if (roots or {}).get(r)), None)
+        first = next(((r, (roots or {})[r]) for r in DR.read_roles() if (roots or {}).get(r)), None)
         return ("A", roots["A"]) if roots and roots.get("A") else first or ("A", None)
 
     def footage(self, role, teslacam, all_saved=False):

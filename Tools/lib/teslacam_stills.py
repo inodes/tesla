@@ -23,6 +23,7 @@ import subprocess
 import tempfile
 import zipfile
 
+import drive_roles as DR
 import teslacam_files as TF
 
 DIRNAME = "teslacam_stills"
@@ -174,7 +175,7 @@ def plan(stills, roots, walked=None, skip=None):
     drives, todo, taken = [], [], set()
     have = stills.stamps()
     bad = stills.unreadable()
-    for role in sorted(roots, key=lambda r: ORDER.index(r) if r in ORDER else 9):
+    for role in sorted(roots, key=DR.rank):
         files, ok = walked[role] if walked and role in walked else TF.walk(roots[role], stat=False)
         best, alts = {}, {}
         for f in files:

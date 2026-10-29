@@ -24,7 +24,7 @@ def plan(store, minutes_by_role, front):
     """minutes_by_role {role: TL.minutes(...)}; front(role, minute) -> path of its front clip.
     Returns dict(drives=[...], todo=[dict(stamp, role, path, t)] newest first, kept, kept_orphans).
     Per drive: minutes, recent, saved, no_front, read, unread, to_read, elsewhere, first, last (days)."""
-    roles = sorted(minutes_by_role, key=lambda r: ORDER.index(r) if r in ORDER else 9)
+    roles = sorted(minutes_by_role, key=DR.rank)
     taken, todo, drives, seen = set(), [], [], set()
     for role in roles:
         mins = minutes_by_role[role]
