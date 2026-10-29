@@ -213,7 +213,12 @@ class ClipKeep:
                 groups[(kind, ev)] = mins
         self._groups = {k: sorted(v) for k, v in groups.items()}
         ignored = set()                                      # the minutes of what is parked at an ignored place (Home): left alone
+        husks = []                                           # clips with nothing left: no video on any drive, nothing kept
         for (kind, cid), mins in groups.items():
+            if not any(node["bytes"] for node in mins.values()) and not any(st in stills or st in scanned or store.summary(st) is not None for st in mins) \
+                    and not (kind != "recent" and (self.shots.have(kind, cid) or self.evst.info(kind, cid).get("n"))):
+                husks.append((kind, cid, mins))
+                continue
             meta, st_, sg, sh = [0, 0], [0, 0], [0, 0], [0, 0]
             waiting, wait_n, snap_n, refine_n, nbytes, nfiles, narch = "", 0, 0, 0, {}, {}, {}
             parked = kind == "recent" and RC.kind(min(mins, key=CC.utc)) == "park"        # a parked section lies in no drive: its stills never wait for Tessie's drive or its snapshots
@@ -272,6 +277,8 @@ class ClipKeep:
                                   shot_cams=sorted(have), ready=all(x[0] >= x[1] for x in (meta, st_, sg, sh, hi)) and refine_n == 0, waiting=waiting, wait_n=wait_n, snap_n=snap_n, refine_n=refine_n,
                                   sign_n=sign_n, todo=any(x[0] < x[1] for x in (meta, sg, sh, hi)) or st_[0] + wait_n < st_[1] or refine_n > 0, ignored=ign)
         IGN.set_stamps(ignored)
+        if husks:                                            # what is left of a clip deleted piece by piece: its record goes too (the footage log keeps its lines)
+            PG.add([st for k, _c, mins in husks if k == "recent" for st in mins], [(k, c) for k, c, _m in husks if k != "recent"])
         return dict(clips=out)
 
     # ---- the files of a clip on one drive -----------------------------------------------------------------------

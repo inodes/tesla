@@ -507,6 +507,29 @@ class PurgeTest(Base):
         k.purge([dict(kind="saved", id="ev1")], list(k.TYPES), self.roots, confirmed=True, force=True)
         self.wait(k)
         self.assertTrue(PG.has_event("saved", "ev1"))
+
+    def test_a_clip_whose_video_went_first_and_whose_rest_is_deleted_later_leaves_the_list_too(self):
+        import clips_purged as PG
+        PG.set_file(os.path.join(self.data, "teslacam_purged.json"))
+        self.addCleanup(lambda: PG.set_file(None))
+        k = self.keeper()
+        k.purge([dict(kind="saved", id="ev1")], ["video"], self.roots, confirmed=True, force=True)       # the video on its own, as Delete from JOWUA does
+        self.wait(k)
+        self.assertFalse(PG.has_event("saved", "ev1"))                                                 # still has its stills and metadata: it stays
+        self.assertIn("ev1", k.status(force=True)["clips"]["saved"])
+        k.purge([dict(kind="saved", id="ev1")], ["metadata", "stills", "pictures", "signs"], self.roots, confirmed=True, force=True)
+        self.wait(k)
+        self.assertTrue(PG.has_event("saved", "ev1"))
+        self.assertNotIn("ev1", k.status(force=True)["clips"]["saved"])
+
+    def test_a_clip_with_nothing_left_at_all_is_dropped_from_the_list_when_it_is_next_looked_at(self):
+        import clips_purged as PG
+        PG.set_file(os.path.join(self.data, "teslacam_purged.json"))
+        self.addCleanup(lambda: PG.set_file(None))
+        k = self.keeper()
+        k.purge([dict(kind="saved", id="ev1")], ["video", "stills"], self.roots, confirmed=True, force=True)      # video and stills gone, no metadata or signs were ever read
+        self.wait(k)
+        self.assertTrue(PG.has_event("saved", "ev1"))
         self.assertNotIn("ev1", k.status(force=True)["clips"]["saved"])
         PG.set_file(os.path.join(self.data, "teslacam_purged.json"))              # kept across a restart
         self.assertTrue(PG.has_event("saved", "ev1"))
