@@ -165,12 +165,12 @@ class ClipKeep:
         want = ES.wanted(kind, ev, mins[mom[0]]["cams"])
         if not want:
             return None
-        have = self.shots.have(kind, cid)
+        have = self.shots.have(kind, cid) | self.shots.tried(kind, cid)
         return mom[0], mom[1], [c for c in want if c not in have], want
 
     def _hi(self, kind, cid, mins, ev):
         """(camera, [(clip stamp, first second, last second)]) of the pictures wanted around an event whose video is on a drive; None when it needs none."""
-        if not ev or kind == "recent":
+        if not ev or kind == "recent" or self.evst.info(kind, cid).get("tried"):
             return None
         cam = EV.camera(kind, ev)
         win = EV.window(ev, {s: n["cams"] for s, n in mins.items()}, cam)
@@ -180,6 +180,8 @@ class ClipKeep:
         events = self._events()
         store = self.tc._tl("A")
         stills = self.fg.stills.stamps()
+        nostill = {k[6:] for k in getattr(self.fg.stills, "unreadable", dict)() if k.startswith("stamp|")}      # minutes whose video gave no picture when tried: not counted as missing
+        stl = set(stills) | nostill
         rv = self.tc._rv()
         scanned = rv.scanned()
         unref = getattr(self.tc._rv(), "unrefined", lambda: set())()      # minutes with signs that have not had the second look
@@ -245,12 +247,12 @@ class ClipKeep:
                 if "front" in node["cams"]:
                     st_[1] += 1
                     t = CC.utc(st)
-                    if st in stills and (parked or (TD._snap_ok(windows, starts, t) and t <= synced_until)):
+                    if st in stl and (parked or (TD._snap_ok(windows, starts, t) and t <= synced_until)):
                         st_[0] += 1
-                    elif st in stills and t > synced_until:
+                    elif st in stl and t > synced_until:
                         waiting = "waiting for the drive from Tessie"
                         wait_n += 1
-                    elif st in stills:
+                    elif st in stl:
                         waiting = "drive snapshots not built yet"
                         snap_n += 1
                 if isinstance(sm, dict) and sm.get("vmax", 0) >= min_kmh:
@@ -662,7 +664,8 @@ class ClipKeep:
                 if todo and not self._stop:
                     TS.read(store, todo, self.dir, stop=lambda: self._stop, progress=prog)
             if "stills" in want:
-                todo = [dict(stamp=s, role="", path=paths[s]["front"]) for s in sorted(paths, reverse=True) if "front" in paths[s] and not stills.has(s)]
+                bad = getattr(stills, "unreadable", dict)()
+                todo = [dict(stamp=s, role="", path=paths[s]["front"], mark_stamp=True) for s in sorted(paths, reverse=True) if "front" in paths[s] and not stills.has(s) and "stamp|" + s not in bad]
                 self._step("Making stills", len(todo))
                 if todo and not self._stop:
                     ST.make_many(stills, todo, int(app_config.get("stills.workers", 3)), stop=lambda: self._stop, progress=prog, by="clips")

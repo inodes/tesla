@@ -147,6 +147,9 @@ class EventStills:
                     f = "%s%03d.jpg" % (pre, i)
                     if os.path.isfile(f) and os.path.getsize(f) > 0:
                         names.append((f, "%s_%02d.jpg" % (stamp, a + i)))
+            if not names and not (stop and stop()) and win:
+                with open(os.path.join(out, "info.json"), "w", encoding="utf-8") as fh:      # nothing came out of the video: not asked for again
+                    json.dump(dict(cam=cam, n=0, tried=1), fh)
             if not names or (stop and stop()):
                 return 0
             part = os.path.join(out, cam + ".zip.part")

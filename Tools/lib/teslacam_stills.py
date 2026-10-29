@@ -227,6 +227,11 @@ def make_many(stills, todo, workers=3, stop=None, progress=None, limit=None, by=
                 tried.append(alt)
                 if n:
                     break
+            if not n and x.get("mark_stamp") and not stalled:           # asked for by the Keeper, which does not know the drive's folder: the minute itself is marked
+                try:
+                    stills.mark_unreadable("stamp|" + x["stamp"], os.path.getsize(x["path"]))
+                except OSError:
+                    pass
             if not n and x.get("role") and x.get("root"):            # nothing came out of any file: not tried again
                 for pth in tried:
                     try:
