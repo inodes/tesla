@@ -63,6 +63,7 @@ class Keeper:
         self._once = False              # a pass asked for from a page (Sync footage): runs once, stills included, then stops
         self._only = None               # that pass is only these stages (the Update log / Read telemetry / Make stills buttons)
         self._played = 0.0              # when a clip was last served to the page (video playing)
+        self.page_job = lambda: False   # True while a job asked for from a page (Update on the TeslaCam page) is reading the drives: the Keeper does not start a pass meanwhile
         self.pictures = None            # lib/clip_keep.ClipKeep: pictures_start(roots) / pictures_running() / stop(): the full-size pictures of events, made after the stills
 
     # ---- settings
@@ -117,6 +118,34 @@ class Keeper:
         else:
             self.fg.stop()
 
+    def holder(self):
+        """What is reading the drives, in words ('' when nothing): a job started from a page, the telemetry scan or a drive review."""
+        if self.fg.status().get("running") and not self._started:
+            return "The %s" % ("stills job" if (self.fg.status().get("kind") == "stills") else "footage log job")
+        if self.tc.scan_status().get("running") and not self._started:
+            return "The telemetry reading"
+        if (self.drv.status() or {}).get("running"):
+            return "A drive review"
+        return ""
+
+    def stand_down(self, wait=8.0):
+        """A page asks for the drives (Update, Move, Delete): the pass under way, started by the Keeper itself, ends (it starts again from the top by itself afterwards, from
+        what is then left) and its jobs are waited for. Returns what is still reading the drives, '' when they are free."""
+        if self._stage is not None:
+            if self._started and self._stage < len(STAGES):
+                st = STAGES[self._stage]
+                self._stop_stage(st)
+                self._report(st)
+            self._started, self._stage, self._sig, self._done_at, self._once, self._only = False, None, None, 0.0, False, None
+        end = time.time() + wait
+        while time.time() < end and (self.busy() or self._running_ours_any()):
+            time.sleep(0.25)
+        return self.holder()
+
+    def _running_ours_any(self):
+        """A job of any stage is still winding down (the Keeper has let go of it)."""
+        return bool(self.fg.status().get("running") or self.tc.scan_status().get("running") or (self.pictures and self.pictures.pictures_running()))
+
     def busy(self):
         """Something else is reading a drive (a job started from a page, a review)."""
         if self.fg.status().get("running") and not self._started:
@@ -156,7 +185,7 @@ class Keeper:
             self._started = False
             self._report(STAGES[self._stage])
             self._stage += 1
-        elif self.busy():
+        elif self.busy() or self.page_job():
             return
         if self._stage is None:
             sig = tuple((r, round(_mtime(p))) for r, p in sorted(roots.items()))

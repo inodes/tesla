@@ -136,6 +136,40 @@ class RunNow(unittest.TestCase):
         self.passes()
         self.assertEqual(self.k.pictures.started, 0)
 
+    def test_a_page_button_ends_a_pass_left_under_way(self):
+        self.k._stage, self.k._started, self.k._once, self.k._only = AK.STAGES.index("telemetry"), False, True, ("log",)     # a pass left marked as under way
+        self.assertEqual(self.k.stand_down(wait=0), "")
+        self.assertIsNone(self.k._stage)
+        self.assertFalse(self.k._once)
+        self.assertIsNone(self.k._only)
+
+    def test_a_page_button_stops_a_running_stage_and_waits_for_it(self):
+        got, state = [], dict(run=True)
+        self.k.on_progress = lambda st, d: got.append(st)
+        self.k._plan = ["J"]
+        self.k._stage, self.k._started = AK.STAGES.index("telemetry"), True
+        self.tc.scan_status = lambda: dict(running=state["run"], done=1, total=3)
+        self.tc.scan_stop = lambda: state.update(run=False)
+        self.assertEqual(self.k.stand_down(wait=2), "")
+        self.assertEqual(got, ["telemetry"])
+        self.assertIsNone(self.k._stage)
+
+    def test_what_else_is_reading_the_drives_is_named(self):
+        self.k.drv = type("D", (), {"status": lambda s: dict(running=True)})()
+        self.assertEqual(self.k.stand_down(wait=0), "A drive review")
+        self.k.drv = Drv()
+        self.fg.status = lambda: dict(running=True, kind="stills")
+        self.assertEqual(self.k.stand_down(wait=0), "The stills job")
+
+    def test_no_pass_starts_while_a_job_from_a_page_runs(self):
+        self.k.run_now()
+        self.k.page_job = lambda: True
+        self.passes()
+        self.assertEqual(self.fg.calls, [])
+        self.k.page_job = lambda: False
+        self.passes()
+        self.assertIn("stills_report", self.fg.calls)
+
 
 if __name__ == "__main__":
     unittest.main()
