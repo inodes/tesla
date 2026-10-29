@@ -47,13 +47,26 @@ document.addEventListener("click",e=>{const b=e.target.closest("[data-copy]");if
 let SET={};const EFWH=()=>cfg("units.efficiency")==="whkm",EF=wh=>wh==null||isNaN(wh)?"–":EFWH()?n0(wh):n0(wh/10,1),EFU=()=>EFWH()?"Wh/km":"kWh/100 km";    // energy use: kWh/100 km by default, Wh/km when app.units.efficiency says so
 const cfg=k=>k.split(".").reduce((o,x)=>o&&o[x],SET),REPM=()=>Math.round(cfg("drives.repark_max_km")*1000)+" m",MAPSTYLE=dark=>cfg("map.tiles_base")+cfg(dark?"map.style_dark":"map.style_light");
 // a page that is still loading shows blocks of its usual size (a title, a row of tiles, the body) until the content replaces them
-const skb=(h,w,x)=>`<div class="ph" style="--ph:${h}px${w?";width:"+w:""}${x||""}"></div>`,skTiles=n=>`<div class="tiles">${'<div class="ph" style="--ph:62px;border-radius:12px"></div>'.repeat(n)}</div>`;
-// each kind is sized like the page that replaces it: "table" (title, filter bar, tiles, rows), "detail" (title, tiles, map and graph), "cards" (title, panel, filter bar, grid of cards); anything else gets a title, a row and a body
+const skb=(h,w,x)=>`<div class="ph" style="--ph:${h}px${w?";width:"+w:""}${x||""}"></div>`,skTiles=(n,h)=>`<div class="tiles">${('<div class="ph" style="--ph:'+(h||75)+'px;border-radius:12px"></div>').repeat(n)}</div>`;
+// the blocks a page is made of, at the sizes the real ones measure (title 32 px, a line of text 19, a row of filters 32, tiles 75-100, cards, table rows 35), with the same gaps
+const skH=()=>skb(32,"170px",";margin:0 0 4px"),skS=(h,w,m)=>skb(h||19,w||"min(560px,70%)",";margin:0 0 "+(m==null?12:m)+"px"),skBar=(h)=>`<div class="bar" style="min-height:${h||32}px">${[110,90,130,80].map(w=>skb(h||32,w+"px",";margin:0")).join("")}</div>`,
+  skCard=h=>skb(h,"",";margin:12px 0"),skRows=n=>'<div>'+'<div class="ph skr"></div>'.repeat(n)+'</div>';
+// each kind is sized like the page that replaces it (measured on each tab): drives, dlist (the new drive list), chg (charges), plc, alr, sw, bat, ana, act (activity), tc (TeslaCam), drv (a drive), detail (a charge); anything else gets a title, a line, a row of filters and rows
 const SKEL={
-  table:()=>skb(27,"150px","")+skb(34,"",";margin-top:14px;max-width:560px")+skTiles(6)+skb(34,"")+'<div>'+'<div class="ph skr"></div>'.repeat(14)+'</div>',
-  detail:()=>skb(16,"120px")+skb(27,"280px")+skTiles(6)+'<div class="two"><div class="ph" style="--ph:340px"></div><div class="ph" style="--ph:340px"></div></div>'+skb(220,"",";margin-top:12px"),
-  cards:()=>skb(27,"150px")+skb(120,"")+skb(34,"",";max-width:560px")+'<div class="evs">'+'<div class="ph" style="--ph:236px;border-radius:10px"></div>'.repeat(12)+'</div>',
-  page:()=>skb(28,"180px",";margin:0 0 14px")+skb(64,"")+skb(320,"")
+  act:()=>skH()+skS()+skBar()+skRows(18),
+  drives:()=>skH()+skBar(73)+skTiles(6)+skRows(14),
+  table:()=>skH()+skS()+skBar()+skTiles(6)+skRows(14),
+  dlist:()=>skH()+skS()+skBar()+skBar()+skBar()+skTiles(5)+skRows(12),
+  chg:()=>skH()+skS(19,null,6)+skS()+skBar()+skBar()+skBar()+skTiles(6,96)+skRows(12),
+  plc:()=>skH()+skS()+skTiles(3)+skBar()+skRows(10),
+  alr:()=>skH()+skS(38)+skTiles(5,96)+skBar()+skRows(12),
+  sw:()=>skH()+skS()+skBar()+skBar(31)+skBar(29)+skRows(14),
+  bat:()=>skH()+skS(38)+skTiles(8,95)+skBar()+skCard(435)+skCard(300),
+  ana:()=>skH()+skS()+skTiles(6,104)+skBar(29)+skCard(220)+skCard(260),
+  drv:()=>skb(19,"220px",";margin:0 0 12px")+skBar(29)+skTiles(8)+skCard(420)+skCard(300),
+  detail:()=>skb(19,"180px",";margin:0 0 10px")+skH()+skS()+'<div class="chgrid"><div class="chl">'+skb(230,"",";margin:0")+skb(420,"",";margin:0")+skb(520,"",";margin:0")+'</div><div class="chr2">'+skb(320,"",";margin:0")+skb(520,"",";margin:0")+'</div></div>',
+  cards:()=>skH()+skb(208,"",";margin:0 0 12px")+skBar(34)+skBar(34)+skb(90,"",";margin:0 0 14px")+skTiles(4)+'<div class="evs">'+'<div class="ph" style="--ph:236px;border-radius:10px"></div>'.repeat(12)+'</div>',
+  page:()=>skH()+skS()+skBar()+skRows(10)
 };
 const loading=kind=>{if(!QUIET)main.innerHTML='<div class="sk" role="status" aria-label="Loading">'+(SKEL[kind]||SKEL.page)()+'</div>'};
 const QK="clipQueue",qget=()=>{try{return JSON.parse(localStorage.getItem(QK)||"[]")}catch(e){return[]}};
@@ -132,7 +145,7 @@ function stack(host,t,panels,xfmt){
 // ---------- Activity
 const AF={drive:true,repark:false,charge:true,idle:true,q:"",days:30,r:{p:"all"}};
 async function pageActivity(){
-  loading();const act=await api("activity");
+  loading("act");const act=await api("activity");
   const draw=()=>{
     const q=AF.q.toLowerCase(),rows=act.filter(x=>AF[x.k==="drive"&&x.repark?"repark":x.k]&&inRange(x,AF.r)&&(!q||(driveTitle(x)+place(x)+(x.addr||"")).toLowerCase().includes(q)));
     const byDay=new Map();rows.forEach(x=>{if(!byDay.has(x.day))byDay.set(x.day,[]);byDay.get(x.day).push(x)});
@@ -232,7 +245,7 @@ function rangeBar(host,key,st,days,onChange){
 // ---------- Drives
 let DP={r:{p:"all"},q:"",ch:"all",ex:"all",rp:"drive",mk:0,ma:0};
 async function pageDrives(){
-  loading("table");const [act,rvd]=await Promise.all([api("activity"),api("drivereview/all").catch(()=>({}))]),all=act.filter(x=>x.k==="drive"),chg=act.filter(x=>x.k==="charge");
+  loading("drives");const [act,rvd]=await Promise.all([api("activity"),api("drivereview/all").catch(()=>({}))]),all=act.filter(x=>x.k==="drive"),chg=act.filter(x=>x.k==="charge");
   // how much of each drive has been reviewed (Review tab): the share of its events' stills that were looked at for signs
   all.forEach(d=>{d.rvd=rvd[d.id]==null?null:rvd[d.id]});
   // a charge has one drive that ends at it (the last one before it) and one that leaves it (the first after it); the server decides which
@@ -480,6 +493,7 @@ async function pathSources(host,d,lo){
     <div style="display:grid;grid-template-columns:max-content minmax(0,1fr);gap:8px 16px;margin-top:10px"><span class="sub">Tessie's path file</span><span>${tline}</span><span class="sub">Dashcam telemetry</span><span>${dline}</span></div>${oth?`<div style="margin-top:8px">${oth}</div>`:""}${fline}</details>`;
 }
 async function pageDrive(stamp,tab){
+  loading("drv");
   const act=await api("activity"),d=act.find(x=>x.k==="drive"&&x.id===stamp);
   const als=await alertsFor("drive",stamp);
   if(tab==="flips")tab="review";tab=tab==="review"||(tab==="detail"&&d&&d.page)?tab:(d?"drive":"detail");       // "overview" and "footage" (older links) are the one drive view
@@ -569,7 +583,7 @@ function bookPoll(prefix,again,fromBuilding,cur){
   setTimeout(tick,3000);
 }
 async function pageCharges(){
-  loading("table");const B0=await bookWithRaw();if(!B0.book){bookWait(B0,"Charges",pageCharges);return}
+  loading("chg");const B0=await bookWithRaw();if(!B0.book){bookWait(B0,"Charges",pageCharges);return}
   const B=B0.book,P=B.plugs;
   const COLS=[["t0","Date",1],["where","Where",1],["kind","Type"],["min","Time"],["b0","Battery"],["peak","Peak kW"],["kmh","km/h"],["disp","Dispenser kWh"],["kwh","Battery kWh"],["eff","Eff %"],["rate","$/kWh"],["cost","Cost"],["invn","Invoice"],["sync","Tessie"]];
   const invn=p=>p.invoice&&p.invoice.number||(p.invoice_only?"":null);
@@ -1181,7 +1195,7 @@ function placesMap(host,rows,tab){
 const AU_STATES={"new south wales":"NSW","victoria":"VIC","queensland":"QLD","south australia":"SA","western australia":"WA","tasmania":"TAS","australian capital territory":"ACT","northern territory":"NT"};
 function stateCode(q){q=q.trim();if(!q)return null;const l=q.toLowerCase();return AU_STATES[l]||(Object.values(AU_STATES).includes(q.toUpperCase())?q.toUpperCase():null)}
 async function pagePlaces(){
-  loading();const L=await api("places");let C=null;const need=async()=>{if(!C)C=await api("chargers")};if(PL.tab==="chargers")await need();
+  loading("plc");const L=await api("places");let C=null;const need=async()=>{if(!C)C=await api("chargers")};if(PL.tab==="chargers")await need();
   const draw=()=>{const q=PL.q.toLowerCase(),host=$("#tb"),qs=stateCode(q);let rows,cols;     // a search that is just a state ("Victoria", "vic") means that state, not streets named after it
     const stat=[{k:"charges",t:"Charges"},{k:"idles",t:"Parked"},{k:"drives",t:"Arrivals"}];
     if(PL.tab==="saved"){rows=L.saved.filter(p=>!q||(p.name+" "+p.notes).toLowerCase().includes(q));
@@ -1349,7 +1363,7 @@ async function pageHealth(){location.replace("#/battery")}      // the health ch
 // ---------- Battery (Tessie's Battery page: where the charge level is now and how it moved, and below it the battery health)
 let BP={r:{p:"30"}};
 async function pageBattery(){
-  loading();const act=await api("activity"),b=await api("battery"),hr=b.readings,lastH=hr[hr.length-1];
+  loading("bat");const act=await api("activity"),b=await api("battery"),hr=b.readings,lastH=hr[hr.length-1];
   const T1=x=>x.t1||x.t0+(x.min||0)*60,seg=act.filter(x=>x.b0!=null&&x.b1!=null).map(x=>({x,k:x.k,t0:x.t0,t1:Math.max(T1(x),x.t0),b0:x.b0,b1:x.b1})).sort((a,c)=>a.t0-c.t0);
   if(!seg.length){main.innerHTML='<h1>Battery</h1><div class="empty">No battery levels in the drives, charges or parked periods yet.</div>';return}
   const now=seg.reduce((a,s)=>s.t1>a.t1?s:a,seg[0]),cap=lastH?lastH.kwh:null,rng=lastH?lastH.range:null,d30=Date.now()/1000-30*86400;
@@ -1377,7 +1391,7 @@ async function pageBattery(){
 let AM="km";
 const METRICS={km:["Distance","km",0],kwh:["Energy used driving","kWh",0],whkm:["Efficiency","Wh/km",0],ap_pct:["Self-driving","% of distance",0],added:["Energy charged","kWh",0],cost:["Charging cost","$",0],cost_km:["Cost per 100 km","$",2],drives:["Drives","",0],idle_kwh:["Parked drain","kWh",1],max:["Top speed","km/h",0]};
 async function pageAnalytics(){
-  loading();const m=await api("analytics"),rows=m.slice(-36).map(x=>({...x,whkm:x.whkm==null||EFWH()?x.whkm:x.whkm/10}));METRICS.whkm=["Efficiency",EFU(),EFWH()?0:1];
+  loading("ana");const m=await api("analytics"),rows=m.slice(-36).map(x=>({...x,whkm:x.whkm==null||EFWH()?x.whkm:x.whkm/10}));METRICS.whkm=["Efficiency",EFU(),EFWH()?0:1];
   const draw=()=>{const [t,u,dec]=METRICS[AM],vals=rows.map(x=>x[AM]),mx=Math.max(...vals.map(v=>v||0),1e-9);
     $("#bars").innerHTML=`<div class="bars">${rows.map(x=>`<div style="height:${Math.max(2,100*(x[AM]||0)/mx)}%" data-m="${x.month}"><span>${x.month.slice(5)}${x.month.endsWith("-01")?"<br>"+x.month.slice(0,4):""}</span></div>`).join("")}</div><div style="height:30px"></div>`;
     $$("#bars .bars div").forEach(b=>{const x=rows.find(r=>r.month===b.dataset.m);b.onmousemove=ev=>showTip(ev,`<b>${x.month}</b><br>${t}: ${x[AM]==null?"–":n0(x[AM],dec)+" "+u}`);b.onmouseleave=hideTip});
@@ -1404,7 +1418,7 @@ function alertsCard(es,what){if(!es.length)return"";const w=es.filter(e=>e.sever
 function wireAlerts(host){$$(".alh",host).forEach(h=>h.onclick=()=>h.parentNode.classList.toggle("open"))}
 let ALP={tab:"timeline",sev:{safety:true,attention:true,notice:true,info:false},cat:"all",q:"",days:30};
 async function pageAlerts(){
-  loading();const A=await api("alerts"),cats=[...new Set(A.episodes.map(e=>e.category))].sort();
+  loading("alr");const A=await api("alerts"),cats=[...new Set(A.episodes.map(e=>e.category))].sort();
   const draw=()=>{const q=ALP.q.toLowerCase();
     if(ALP.tab==="types"){$("#tb").innerHTML=`<table><thead><tr><th class="l">Alert</th><th class="l">What it means</th><th>Seen</th><th>Last</th><th>Fleet</th></tr></thead><tbody>${A.types.filter(t=>(ALP.cat==="all"||t.category===ALP.cat)&&(!q||(t.title+t.what+t.name).toLowerCase().includes(q))).map(t=>`<tr><td class="l" style="white-space:normal;min-width:220px">${sevDot(t.severity)} <b>${esc(t.title)}</b><div class="sub">${esc(t.category)} · <code>${esc(t.name)}</code></div></td><td class="l" style="white-space:normal;min-width:320px">${esc(t.what)}${t.advice?`<div class="sub"><b>What to do:</b> ${esc(t.advice)}</div>`:""}</td><td>${t.episodes}</td><td>${new Date(t.last*1000).toISOString().slice(0,10)}</td><td>${t.rate?esc(String(t.rate).replace(/%?$/,"%")):"–"}</td></tr>`).join("")}</tbody></table>`;return}
     const rs=A.episodes.filter(e=>ALP.sev[e.severity]&&(ALP.cat==="all"||e.category===ALP.cat)&&(!q||(e.title+e.what+e.name+ctxText(e.ctx)).toLowerCase().includes(q))),by=new Map();
@@ -1739,7 +1753,7 @@ let DLPOLL=0;
 function drivelistPoll(cur){clearTimeout(DLPOLL);DLPOLL=setTimeout(async()=>{if(location.hash!=="#/driveslist")return;let j;try{j=await tcGet("drivelist",true)}catch(e){return}
   if(!j.stale){if($("#stl"))$("#stl").hidden=true;if(!sameData(j,cur)){FRESH.drivelist=j;bust("activity");redrawQuietly()}}else drivelistPoll(cur)},3000)}
 async function pageDriveList(){
-  loading("table");const [dl,act,pl,chg]=await Promise.all([tcGet("drivelist"),api("activity"),api("places").catch(()=>({saved:[]})),api("chargers").catch(()=>({rows:[]}))]),places=pl.saved||[];
+  loading("dlist");const [dl,act,pl,chg]=await Promise.all([tcGet("drivelist"),api("activity"),api("places").catch(()=>({saved:[]})),api("chargers").catch(()=>({rows:[]}))]),places=pl.saved||[];
   const open=v=>v.kind==="charge"?"#/charge/"+encodeURIComponent(v.id):v.kind==="drive"?(v.src==="cam"?"#/teslacam/auto/"+encodeURIComponent(v.id):"#/drive/"+encodeURIComponent(v.id)):v.kind==="sentry"?"#/teslacam/A/sentry-"+encodeURIComponent(v.ev):v.kind==="recording"||v.kind==="stopped"?"#/teslacam/auto/"+encodeURIComponent(v.id):"";
   main.innerHTML=`<h1>Drives</h1><div class="sub">Source: ${dl.tessie?"Tessie + dashcam":"dashcam"} · 🎬 = dashcam video and route</div>
    <div id="stl" class="sub" style="margin-top:6px" ${dl.stale?"":"hidden"}>Updating with the latest data…</div><div id="tsb" style="margin-top:10px"></div><div id="fsb"></div><div class="bar"><span id="rg"></span><select id="fs"><option value="all">All drives</option><option value="cam">With dashcam footage</option><option value="nocam">Without footage</option></select><input type="search" id="q" placeholder="Search a place…" value="${esc(DLP.q)}"></div><div class="tiles" id="tl"></div><div id="tb"></div>`;
@@ -2450,7 +2464,7 @@ function swChart(host,nodes,edges,mine,journey){
     g.onmouseleave=()=>{hideTip();$$(".swe",host).forEach(p=>p.style.strokeOpacity=".28")}})}
 async function pageSoftware(arg){
   if(arg)return pageSoftwareOne(decodeURIComponent(arg));
-  loading();const o=await fetchJ("software?"+swQ());
+  loading("sw");const o=await fetchJ("software?"+swQ());
   if(o.empty){main.innerHTML=`<h1>Software</h1><div class="sub">Tesla software versions, their release notes and who has them, from Teslascope. None are held yet.</div><div id="sws" style="margin-top:10px"></div>`;swSync($("#sws"),{left:1},()=>{bust("software");pageSoftware()});return}
   if(o.error){main.innerHTML=`<h1>Software</h1>`+errBox(o.error,"Could not read the versions");return}
   if(!o.choices.regions.some(r=>r.name===SWS.region)&&!o.choices.countries.some(c=>c.country===SWS.region)){SWS.region=o.choices.regions[0].name;swSave();return pageSoftware()}      // a remembered name that is no longer a region (it was "Down Under")
