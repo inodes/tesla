@@ -843,12 +843,12 @@ const DRN={A:"the Archive",J:"JOWUA",U:"the Tesla USB"},drName=r=>DRN[r]||r;
 function stThumb(stamp,sec,vurl){return `<img loading="lazy" src="/still/${stamp}/${sec}.jpg" data-v="${esc(vurl||"")}" data-t="${sec}" onerror="stFallback(this)">`}
 function stFallback(img){const u=img.dataset.v,p=img.parentNode;img.outerHTML=u?vthumb(u,+img.dataset.t||2):'<div class="noimg"></div>';if(u&&p)lazyThumbs(p)}
 // the picture of a Sentry event: the camera that saw it, at the second it was detected (the car's own thumb.png is neither). Needs lazyThumbs(host) after it is drawn.
-function sentryThumb(v){
+function sentryThumb(v,folder="SentryClips"){
   const role=v.role||"A",ks=Object.keys(v.clips||{}).sort(),tt=(v.cts||v.ts||"").replace("T","_").replace(/:/g,"-"),k0=ks.filter(x=>x<=tt).pop()||ks[0];
-  if(!k0)return `<img loading="lazy" src="/footage/${role}/SentryClips/${v.id}/thumb.png" onerror="this.style.visibility='hidden'">`;
+  if(!k0)return `<img loading="lazy" src="/footage/${role}/${folder}/${v.id}/thumb.png" onerror="this.style.visibility='hidden'">`;
   const sec=Math.max(1,Math.min(58,Math.round((Date.parse((v.cts||v.ts||"").replace("T"," "))-Date.parse(k0.replace("_"," ").replace(/(\d\d)-(\d\d)-(\d\d)$/,"$1:$2:$3")))/1000)||2)),
-    have=v.clips[k0]||[],cam=have.includes(EVCAM[v.cam])?EVCAM[v.cam]:have.includes("front")?"front":have[0]||"",
-    vu=cam?`/footage/${role}/SentryClips/${v.id}/${k0}-${cam}.mp4`:"";
+    have=v.clips[k0]||[],cam=folder==="SentryClips"&&have.includes(EVCAM[v.cam])?EVCAM[v.cam]:have.includes("front")?"front":have[0]||"",       // a Saved clip is pictured by the front camera
+    vu=cam?`/footage/${role}/${folder}/${v.id}/${k0}-${cam}.mp4`:"";
   return cam&&cam!=="front"?vthumb(vu,sec):stThumb(k0,sec,vu)}
 const stillSrc=(stamp,sec)=>`/still/${stamp}/${sec}.jpg`;
 function stillViewer(host,o){
@@ -2096,8 +2096,8 @@ async function teslaDriveBody(host,role,fetchSeg,places,opts){
   const seekIdx=i=>{if(!player)return;const ms=d.minutes.filter(m=>m.cams&&m.cams.length);let b=null;for(const m of ms){if(m.off<=i)b=m;else break}if(!b)b=ms[0];if(b)player.seekAt(b.stamp,Math.max(0,Math.min(59,i-b.off)))};
   const cursor=sec=>{const i=Math.max(0,Math.min(S().v.length-1,Math.round(sec)));if(map)map.cursor(i);if(chart)chart.cursor(i)};
   const events=()=>{if(opts.rvtab||evShown||!d.events||!d.events.length||!live())return;evShown=true;
-    $("#dev").innerHTML=`<h2>Saved clips and Sentry events in this drive</h2><div class="sub">Click one to jump the video there.</div><div class="evs">${d.events.map(v=>`<button class="evc" data-u="${v.t}">${v.thumb?`<img loading="lazy" src="/footage/${role}/${v.folder}/${v.id}/thumb.png" onerror="this.style.visibility='hidden'">`:'<div class="noimg"></div>'}<b>${hms(v.ts)}</b><span>${esc(v.folder==="SavedClips"?"Saved":"Sentry")} · ${esc(reason(v.reason))}</span><span>${esc(v.city||"")}</span></button>`).join("")}</div>`;
-    $$("#dev .evc").forEach(b=>b.onclick=()=>{if(player){seekIdx(Math.round(+b.dataset.u-it().t0));$("#dvid").scrollIntoView({block:"nearest"})}})};
+    $("#dev").innerHTML=`<h2>Saved clips and Sentry events in this drive</h2><div class="sub">Click one to jump the video there.</div><div class="evs">${d.events.map(v=>`<button class="evc" data-u="${v.t}">${v.clips?sentryThumb(Object.assign({},v,{role}),v.folder):v.thumb?`<img loading="lazy" src="/footage/${role}/${v.folder}/${v.id}/thumb.png" onerror="this.style.visibility='hidden'">`:'<div class="noimg"></div>'}<b>${hms(v.ts)}</b><span>${esc(v.folder==="SavedClips"?"Saved":"Sentry")} · ${esc(reason(v.reason))}</span><span>${esc(v.city||"")}</span></button>`).join("")}</div>`;
+    lazyThumbs($("#dev"));    $$("#dev .evc").forEach(b=>b.onclick=()=>{if(player){seekIdx(Math.round(+b.dataset.u-it().t0));$("#dvid").scrollIntoView({block:"nearest"})}})};
   RVAPI={cursor:i=>cursor(i),seek:i=>seekIdx(i),series:()=>S(),t0:()=>it().t0,clk:i=>clk(i),focus:f=>{if(chart&&chart.focus)chart.focus(f)},lanes:l=>{if(chart&&chart.lanes)chart.lanes(l);else pendL=l},zoom:(a,b)=>{if(chart&&chart.view)chart.view(a,b)},limit:(a,b)=>{if(chart&&chart.limit)chart.limit(a,b)},map:(a,b,p)=>{if(map&&map.section){map.section(a,b);map.pins(p||[])}else pendM=[a,b,p]},live:()=>live(),saved:()=>{const r=[];d.minutes.filter(m=>m.src==="saved").forEach(m=>{const a=it().t0+m.off,b=a+60,l=r[r.length-1];if(l&&a-l[1]<=2)l[1]=b;else r.push([a,b])});return r}};
   const build=()=>{if(!live())return;fill();const s=S(),idx=pts();
     if(RVOV)RVOV();

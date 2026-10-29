@@ -527,7 +527,7 @@ class TeslaCam:
                 for e in lst:
                     ts = [TL.secs(k) for k in e["clips"]]
                     if ts and any(t + 60 > a and t < b for t in ts) and (folder == "SavedClips" or a - 120 <= e["t"] <= b + 120):
-                        ev.append(dict(id=e["id"], folder=folder, ts=TL.iso(e["t"], lo), t=e["t"], reason=e.get("reason", ""), city=e.get("city", ""), cam=e.get("cam", ""), thumb=e.get("thumb", False),
+                        ev.append(dict(id=e["id"], folder=folder, ts=TL.iso(e["t"], lo), t=e["t"], reason=e.get("reason", ""), city=e.get("city", ""), cam=e.get("cam", ""), thumb=e.get("thumb", False), cts=e.get("cts", ""), clips=e["clips"],
                                        front=("front" in e["clips"][sorted(e["clips"])[0]])))
             out["events"] = sorted(ev, key=lambda x: x["t"])
         return out
