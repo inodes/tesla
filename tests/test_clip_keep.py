@@ -538,5 +538,21 @@ class StaleStatusTest(Base):
         self.assertIsNot(k.status(), first)                                     # after a job the caller waits for a fresh one
 
 
+    def test_a_build_that_began_before_a_change_is_not_kept(self):
+        k = self.keep()
+        real = k._build
+        calls = []
+
+        def slow():
+            calls.append(1)
+            res = real()
+            if len(calls) == 1:
+                k.invalidate()                                                  # a delete finished while this build was reading
+            return res
+        k._build = slow
+        k.status(force=True)
+        self.assertEqual(len(calls), 2)                                         # it was built again, so what is kept is not the state before the change
+
+
 if __name__ == "__main__":
     unittest.main()
