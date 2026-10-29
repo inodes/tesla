@@ -2203,7 +2203,7 @@ function telemChart(cv,tip,s,onPick,t0){          // t0: i -> "HH:MM:SS" on the 
   // va/vb: the part of the drive shown (vb null = all of it); A/B the same, clamped, in seconds
   let S=s,cur=null,hov=null,F=null,W=0,H=0,M={signs:[],steps:[]},EV=[],ver=0,cache=null,ck="",va=0,vb=null,A=0,B=1,sel=null,selMode=false,LIM=null,LN=null;const css=n=>getComputedStyle(document.documentElement).getPropertyValue(n).trim()||"#888";
   const L=62,R=10,lanes=[{k:"v",t:"km/h",y:34,h:118},{k:"p",t:"pedals",y:164,h:46},{k:"s",t:"steering",y:218,h:40}];
-  const norm=()=>{const N=S.v.length-1;if(N<1){A=0;B=1;return}if(vb==null){A=LIM?LIM.a:0;B=LIM?LIM.b:N}else{A=Math.max(0,Math.min(va,N-1));B=Math.max(A+1,Math.min(vb,N))}};
+  const norm=()=>{const N=S.v.length-1;if(N<1){A=0;B=1;return}if(vb==null){if(LIM){A=LIM.a;B=LIM.b}else{let a=0,b=N;while(a<b&&S.v[a]==null)a++;while(b>a&&S.v[b]==null)b--;A=b>a?a:0;B=b>a?b:N}}else{A=Math.max(0,Math.min(va,N-1));B=Math.max(A+1,Math.min(vb,N))}};
   const X=i=>L+(W-L-R)*(i-A)/Math.max(1,B-A),I=x=>Math.max(0,Math.min(S.v.length-1,Math.round(A+(x-L)/(W-L-R)*(B-A))));
   const paintBase=(c,dpr)=>{c.setTransform(dpr,0,0,dpr,0,0);c.clearRect(0,0,W,H);
     const ink=css("--mut"),line=css("--line"),acc=css("--acc"),bad=css("--bad"),ok=css("--charge"),n=S.v.length;if(!n)return;
