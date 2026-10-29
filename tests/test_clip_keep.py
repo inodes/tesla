@@ -417,5 +417,24 @@ class ParkedStillsTest(Base):
         self.assertEqual((r["stills"], r["wait_n"]), ([2, 2], 0))                       # parked: the stills count as done
 
 
+class StaleStatusTest(Base):
+    def test_an_old_answer_is_returned_at_once_and_rebuilt_behind(self):
+        k = self.keep()
+        first = k.status()
+        calls = []
+        real = k._build
+        k._build = lambda: (calls.append(1), real())[1]
+        k._cache = (time.time() - 60, first)                                    # older than the time an answer is reused
+        self.assertIs(k.status(), first)                                        # no waiting for the build
+        for _ in range(100):
+            if k._cache[0] > time.time() - 5 and not k._building:
+                break
+            time.sleep(0.05)
+        self.assertEqual(len(calls), 1)
+        self.assertIsNot(k.status(), first)                                     # the rebuilt one
+        k._cache = None
+        self.assertIsNot(k.status(), first)                                     # after a job the caller waits for a fresh one
+
+
 if __name__ == "__main__":
     unittest.main()
