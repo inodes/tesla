@@ -1410,10 +1410,9 @@ const lazyThumbs=host=>$$("video.vt",host).forEach(v=>{if(VT)VT.observe(v);else 
 // ---------- TeslaCam: the clips on any connected drive, and one continuous timeline built from the files alone
 let TCS={role:null,kind:"clips",q:"",r:{p:"all"},at:{},src:{sentry:1,saved:1,recent:1}},TLOFF=null;
 const SWRSEEN=new Set(),FRESH={};
-const tcGet=async(p,fresh)=>{if(p!=="drivelist"&&p!=="clips"&&p!=="teslacam")return fetchJ(p);       // remembered in memory (and drivelist/clips in IndexedDB); fresh=true forces a server check
+const tcGet=async(p,fresh)=>{if(p!=="drivelist"&&p!=="clips"&&p!=="teslacam")return fetchJ(p);       // remembered in memory and in IndexedDB (drawn at once, refreshed behind); fresh=true forces a server check
   const ck="tc/"+p;
   if(FRESH[p]){const v=FRESH[p];delete FRESH[p];return cache[ck]=v}
-  if(p==="teslacam"){if(!fresh&&cache[ck])return cache[ck];return cache[ck]=await fetchJ(p)}
   const k=await mkey(ck);
   if(fresh){const n=await fetchJ(p);if(!n.stale)IDB.set(k,clean(n));return cache[ck]=n}
   if(cache[ck]&&SWRSEEN.has(p))return cache[ck];
@@ -1842,7 +1841,7 @@ async function pageTeslaCam(role,id){
     };
   const load=async(quiet)=>{const my=++token;if(!quiet&&!QUIET&&!cache["tc/clips"]){data=null;$("#tl").innerHTML="";$("#tb").innerHTML='<div class="empty">Reading the drive…</div>'}
     try{const d=await tcGet("clips");if(my!==token)return;data=d}catch(e){$("#tb").innerHTML=errBox(e.message,"Could not read the list of clips");return}
-    const list=[].concat(data.sentry,data.saved,data.recent);if(!quiet)rangeBar($("#rg"),"teslacam",TCS.r,daysOf((list||[]).map(v=>({day:(v.ts||v.start).slice(0,10)}))),draw);chips();draw();loadKeep()};
+    const list=[].concat(data.sentry,data.saved,data.recent);if(!quiet)rangeBar($("#rg"),"teslacam",TCS.r,daysOf((list||[]).map(v=>({day:(v.ts||v.start).slice(0,10)}))),draw);chips();draw();loadKeep(!quiet)};
   // the bar over the list: what is ticked, what it would free, and deleting its video from a drive (or moving it to the Archive) once everything is kept from it
   const NMD={A:"Archive",J:"JOWUA",U:"Tesla USB"},conn=()=>(data&&data.connected)||[];
   const picked=()=>[...TCSEL].map(k=>{const i=k.indexOf("|");return {kind:k.slice(0,i),id:k.slice(i+1)}}).filter(it=>kpOf(it.kind,it.id));
@@ -1940,7 +1939,9 @@ async function pageTeslaCam(role,id){
         note=pr?((j.steps||[]).some(x=>x.total)?"Read what was missing"+(j.steps||[]).filter(x=>x.total).map(x=>" · "+x.step.toLowerCase()+" "+n0(x.total)).join("")+waitTx(Object.keys(KPC||{}).flatMap(k=>Object.keys(KPC[k]).map(id=>({kind:k,id})))):"Nothing more could be read from the video")+(bad?" · "+j.errors[0]:""):(j.action==="move"?"Moved ":"Deleted ")+n0(j.done)+" files"+(j.action==="delete"?", freed "+fmtGB(j.freed):"")+(bad?" · "+bad+" could not be handled: "+j.errors[0]:"");
         if(!pr)TCSEL.clear();bust("tc/clips");KPC=null;await load(true);loadKeep()}
       break}};
-  const loadKeep=async()=>{try{const r=await fetch("/api/clips/keep");if(r.ok){const nj=(await r.json()).clips,ch=!same(nj,KPC);KPC=nj;if(ch)draw();else selbar();poll()}}catch(e){}};
+  const loadKeep=async(remembered)=>{const k=await mkey("tc/keep");
+    if(remembered&&!KPC){const old=await IDB.get(k);if(old&&!KPC&&document.body.contains($("#tb"))){KPC=old;draw()}}     // what was kept last time is drawn at once; the fresh answer replaces it
+    try{const r=await fetch("/api/clips/keep");if(r.ok){const nj=(await r.json()).clips,ch=!same(nj,KPC);KPC=nj;IDB.set(k,nj);if(ch)draw();else selbar();poll()}}catch(e){}};
   const draw=()=>{if(!data)return;if(!data.sentry){return}
     const q=TCS.q.toLowerCase(),srcs=Object.keys(TCSRC).filter(k=>TCS.src[k]);
     const onAt=atNames().filter(n=>TCS.at[n]);
