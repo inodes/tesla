@@ -233,3 +233,5 @@ tr.chline{cursor:pointer}tr.chline td{color:var(--bad);font-weight:600;font-size
 .rgstr{padding:8px 10px;margin:6px 0}.rgstr div{padding:2px 0}.rgstr summary{cursor:pointer}
 
 .vsg{display:inline-flex;gap:4px;align-items:center}.vsg .bsp{display:inline-flex;align-items:center;justify-content:center;font-style:normal;min-width:26px;height:26px;border-radius:50%;border:3px solid #dc2626;background:#fff;color:#111;font:700 11px system-ui;box-shadow:0 0 0 1px rgba(0,0,0,.35)}
+
+.rnav{display:inline-flex;align-items:center;gap:6px}
