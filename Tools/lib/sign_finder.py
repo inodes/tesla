@@ -12,6 +12,7 @@ import os
 import cv2
 import numpy as np
 
+ONE_THREAD = dict(os.environ, OMP_THREAD_LIMIT="1")      # tesseract starts a thread per core by default: with several stills read at once that is slower than one thread each
 LIMITS = {"40", "50", "60", "70", "80", "90", "100", "110", "120", "130"}
 
 
@@ -21,7 +22,7 @@ def _ocr(gray):
         p = os.path.join(td, "a.png")
         cv2.imwrite(p, gray)
         r = subprocess.run(["tesseract", p, "stdout", "--psm", "7", "-c", "tessedit_char_whitelist=0123456789", "tsv"],
-                           capture_output=True, text=True)
+                           capture_output=True, text=True, env=ONE_THREAD)
     best = ("", 0.0)
     for ln in r.stdout.splitlines()[1:]:
         f = ln.split("\t")

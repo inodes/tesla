@@ -258,10 +258,20 @@ class Review:
 
 
 def _frames(path, step, tmp):
-    """Stills of a clip every `step` seconds into tmp, full size; returns [(second, file)]. Needs ffmpeg."""
-    subprocess.run(["ffmpeg", "-v", "error", "-i", path, "-vf", "fps=%g" % (1.0 / step), "-q:v", "2", os.path.join(tmp, "f%04d.jpg")],
-                   stdin=subprocess.DEVNULL, capture_output=True, timeout=180)
-    fs = sorted(f for f in os.listdir(tmp) if f.startswith("f") and f.endswith(".jpg"))
+    """Stills of a clip every `step` seconds into tmp, full size; returns [(second, file)]. Needs ffmpeg. Only the clip's key frames are decoded (the car writes four a second):
+    a still is then at most a quarter second off its second, and the work is a fifth of decoding every frame. A clip with fewer key frames than that (the same picture
+    repeated for several stills) is taken again frame by frame."""
+    def run(extra):
+        for f in os.listdir(tmp):
+            if f.startswith("f") and f.endswith(".jpg"):
+                os.remove(os.path.join(tmp, f))
+        subprocess.run(["ffmpeg", "-v", "error"] + extra + ["-i", path, "-vf", "fps=%g" % (1.0 / step), "-q:v", "2", os.path.join(tmp, "f%04d.jpg")],
+                       stdin=subprocess.DEVNULL, capture_output=True, timeout=180)
+        return sorted(f for f in os.listdir(tmp) if f.startswith("f") and f.endswith(".jpg"))
+    fs = run(["-skip_frame", "nokey"])
+    same = sum(1 for a, b in zip(fs, fs[1:]) if os.path.getsize(os.path.join(tmp, a)) == os.path.getsize(os.path.join(tmp, b)))
+    if len(fs) < 2 or same > 0.25 * len(fs):
+        fs = run([])
     return [(k * step, os.path.join(tmp, f)) for k, f in enumerate(fs)]
 
 

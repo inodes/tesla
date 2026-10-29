@@ -64,6 +64,27 @@ class Frame(unittest.TestCase):
         r = SC.find_school(self.sign(0.5))
         self.assertTrue(all(x["times"] == [] for x in r))
 
+    def test_a_yellow_green_patch_with_no_letters_is_not_read_at_all(self):
+        import cv2
+        import numpy as np
+        im = np.full((700, 1000, 3), (110, 125, 120), np.uint8)
+        lime = cv2.cvtColor(np.uint8([[[44, 210, 235]]]), cv2.COLOR_HSV2BGR)[0, 0].tolist()
+        cv2.rectangle(im, (600, 250), (750, 325), lime, -1)
+        self.assertEqual(len(SC._sz_boards(im)), 1)                          # it looks like a board ...
+        self.assertLess(SC._letter_blobs(im, SC._sz_boards(im)[0][:4]), SC.SZ_MIN_BLOBS)
+        real = SC._tsv
+        SC._tsv = lambda *a, **k: self.fail("tesseract was started for a patch with no letters")
+        try:
+            self.assertEqual(SC.find_school(im), [])
+        finally:
+            SC._tsv = real
+        b = SC._sz_boards(self.sign(1.0))[0][:4]
+        self.assertGreaterEqual(SC._letter_blobs(self.sign(1.0), b), SC.SZ_MIN_BLOBS)    # ... a real board has its letters
+
+    def test_tesseract_is_run_on_one_thread_so_stills_read_side_by_side_do_not_fight_for_the_cores(self):
+        import sign_finder
+        self.assertEqual(sign_finder.ONE_THREAD["OMP_THREAD_LIMIT"], "1")
+
     def test_a_frame_without_one_gives_nothing(self):
         import numpy as np
         self.assertEqual(SC.find_school(np.full((700, 1000, 3), (110, 125, 120), np.uint8)), [])
