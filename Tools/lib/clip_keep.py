@@ -61,6 +61,7 @@ class ClipKeep:
     def __init__(self, data_dir, tc, fg):
         self.dir, self.tc, self.fg = data_dir, tc, fg
         self._cache = None
+        self._building = False
         self.on_change = None           # f() when a job ends: files moved, deleted or kept
         self._groups = {}
         self._lock = threading.Lock()
@@ -72,13 +73,33 @@ class ClipKeep:
 
     # ---- what is kept -------------------------------------------------------------------------------------------
     def status(self, force=False):
+        """What is kept per clip. An answer older than TTL is returned at once and rebuilt behind (the build takes seconds on a big library); after a job, or with
+        nothing built yet, or with force, the caller waits for the build."""
         with self._lock:
-            if not force and self._cache and time.time() - self._cache[0] < TTL:
-                return self._cache[1]
+            c = self._cache
+            if not force and c:
+                if time.time() - c[0] < TTL:
+                    return c[1]
+                if not self._building:
+                    self._building = True
+                    threading.Thread(target=self._refresh, daemon=True).start()
+                return c[1]
+        return self._rebuild()
+
+    def _rebuild(self):
         res = self._build()
         with self._lock:
             self._cache = (time.time(), res)
         return res
+
+    def _refresh(self):
+        try:
+            self._rebuild()
+        except Exception:
+            pass
+        finally:
+            with self._lock:
+                self._building = False
 
     def _events(self):
         """{(kind, event folder): event dict (ts, reason, cam)} from the lists of events kept for every drive; an entry that names a reason wins over one that does not."""

@@ -394,7 +394,7 @@ class H(BaseHTTPRequestHandler):
                 try:
                     return self.api(path[5:], urllib.parse.parse_qs(u.query))
                 finally:
-                    if time.time() - t_in > 2.0:                # what is slow shows in the log (~/Library/Logs/tesla_app.log)
+                    if time.time() - t_in > 0.5:                # what is slow shows in the log (~/Library/Logs/tesla_app.log)
                         print("(slow: %s took %.1f s)" % (path, time.time() - t_in), flush=True)
             if path.startswith("/data/"):
                 p = safe_join(DATA_DIR, path[6:])
@@ -645,7 +645,8 @@ class H(BaseHTTPRequestHandler):
         if name == "clips/history":             # what the last deletes and moves removed (kept across restarts)
             return self.send_json(dict(jobs=CKEEP.history(30)))
         if name == "clips":                     # every Recent run, Saved and Sentry event ever logged, whichever drives are connected; each says which drive holds it and whether it can be played
-            drivelist()                         # makes sure the cuts between the drive and parked sections of a recording are worked out (kept from the last time)
+            if DRIVELIST.has():                 # the cuts between the drive and parked sections of a recording are worked out (kept from the last time): refreshed behind, never waited for
+                drivelist()
             return self.send_json(TC.clips_all({r: footage_root(r) for r in "AJU"}))
         if name.startswith("clips/shots/"):     # clips/shots/<saved|sentry>/<event folder>: the cameras that have a full-size picture of the moment, and which second of which clip it is
             m = re.match(r"^clips/shots/(saved|sentry)/(\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2})$", name)
@@ -908,7 +909,7 @@ def _warm(port):
     request after a start builds the lists; later ones answer from memory). Only what is kept here: nothing is read from a drive."""
     import urllib.request
     time.sleep(1)
-    for path in ("summary", "activity", "drivelist", "places", "alerts", "chargebook", "chargers", "battery", "analytics"):
+    for path in ("summary", "activity", "drivelist", "places", "alerts", "chargebook", "chargers", "battery", "analytics", "teslacam", "clips", "clips/keep"):
         try:
             urllib.request.urlopen("http://127.0.0.1:%d/api/%s" % (port, path), timeout=300).read()
         except Exception:

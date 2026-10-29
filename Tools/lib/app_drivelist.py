@@ -260,6 +260,11 @@ class Cached:
             with self._lock:
                 self._busy = False
 
+    def has(self):
+        """True when a list is kept (built, or from an earlier run)."""
+        with self._lock:
+            return self._val is not None
+
     def get(self, sig, build, wait=False):
         """A current list. Without wait, a stale one (marked) is returned at once while the rebuild runs; with nothing kept yet, or wait=True, it waits for the build."""
         with self._lock:
