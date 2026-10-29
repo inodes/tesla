@@ -44,7 +44,8 @@ document.addEventListener("click",e=>{const b=e.target.closest("[data-copy]");if
 // Settings come from the "app" block of config.json (see lib/app_config.py), loaded once at start.
 let SET={};const EFWH=()=>cfg("units.efficiency")==="whkm",EF=wh=>wh==null||isNaN(wh)?"–":EFWH()?n0(wh):n0(wh/10,1),EFU=()=>EFWH()?"Wh/km":"kWh/100 km";    // energy use: kWh/100 km by default, Wh/km when app.units.efficiency says so
 const cfg=k=>k.split(".").reduce((o,x)=>o&&o[x],SET),REPM=()=>Math.round(cfg("drives.repark_max_km")*1000)+" m",MAPSTYLE=dark=>cfg("map.tiles_base")+cfg(dark?"map.style_dark":"map.style_light");
-const loading=()=>{if(!QUIET)main.innerHTML='<div class="empty">Loading…</div>'};
+// a page that is still loading shows blocks of its usual size (a title, a row of tiles, the body) until the content replaces them
+const loading=()=>{if(!QUIET)main.innerHTML='<div class="ph" style="--ph:28px;width:180px;margin:0 0 14px"></div><div class="ph" style="--ph:64px;margin-bottom:12px"></div><div class="ph" style="--ph:320px"></div>'};
 const QK="clipQueue",qget=()=>{try{return JSON.parse(localStorage.getItem(QK)||"[]")}catch(e){return[]}};
 
 // ---------- tooltip + map helpers
@@ -1736,6 +1737,7 @@ function footageSync(host,opts){
     const rs=$("#fsr",host);if(rs)rs.onclick=async()=>{stopVideos();try{await fetch("/api/keeper",{method:"POST",body:JSON.stringify({action:"resume"})})}catch(e){}until=Date.now()+20000;paint()}};
   let go=()=>{};
   if(!host.innerHTML&&FSHTML[hk]){host.innerHTML=FSHTML[hk];wire()}
+  else if(!host.innerHTML)mkey("fs|"+hk).then(k=>IDB.get(k)).then(h=>{if(h&&!host.innerHTML){host.innerHTML=h;wire()}});         // what it looked like last time, until the answer arrives
   const paint=async()=>{if(!document.body.contains(host))return;let k,roots={},todo=null;
     try{k=await (await fetch("/api/keeper")).json();roots=(await (await fetch("/api/status")).json()).roots||{}}catch(e){return}
     try{const r=await fetch("/api/footage/todo");todo=r.ok?await r.json():null}catch(e){}      // an older server has no such answer: every button is offered
@@ -1777,7 +1779,7 @@ function footageSync(host,opts){
       note=done0.keys.map(k=>{const b=done0.before[k],a=tot[k];return b<=0?L[k][1]:b>a?n0(b-a)+" "+L[k][0]:"No "+L[k][0]}).join(" · ");done0=null}
     if(note)h+=`<div class="sub" style="margin-top:8px;color:var(--ok)">${esc(note)}</div>`;
     if(msg)h+=`<div class="sub" style="margin-top:8px;${/ejected/.test(msg)?"color:var(--ok)":"color:var(--bad)"}">${esc(msg)}</div>`;
-    FSHTML[hk]=h;if(host.innerHTML!==h){host.innerHTML=h;wire()}
+    FSHTML[hk]=h;mkey("fs|"+hk).then(k=>IDB.set(k,h));host.classList.remove("ph");if(host.innerHTML!==h){host.innerHTML=h;wire()}
     if(run||checking||Date.now()<until)setTimeout(paint,run||checking?1000:2500)};
   let wk=null;const watch=async()=>{if(!document.body.contains(host))return;      // a drive plugged in or ejected: the rows, the buttons and the clips below follow without a reload
     try{const r=(await (await fetch("/api/status")).json()).roots||{},key=Object.keys(r).filter(x=>r[x]).sort().join(",");
@@ -1802,7 +1804,7 @@ async function pageTeslaCam(role,id){
   const atOf=v=>nameAt(places,v.ty==="recent"?(v.part==="park"?v.pos:null):(v.lat!=null&&v.lon!=null?[v.lat,v.lon]:null));
   const atNames=()=>cfg("teslacam.place_filters")||[];
   const tripOf=v=>{const a=v.t0!=null?v.t0:v.t,b=v.t1!=null?v.t1:(v.t||0)+60;return trips.find(d=>d.t0<b&&d.t1>a)};
-  main.innerHTML=head+`<div id="fsb" style="margin-bottom:12px"></div><div class="bar" id="tsr"></div><div class="bar"><span id="rg"></span><input type="search" id="q" placeholder="Search…" value="${esc(TCS.q)}"></div><div id="selbar"></div><div class="tiles" id="tl"></div><div id="thin">${THINHTML}</div><div id="ostrip"></div><div id="spl"></div><div id="tb"></div>`;
+  main.innerHTML=head+`<div id="fsb" class="ph" style="--ph:216px;margin-bottom:12px"></div><div class="bar ph" id="tsr" style="--ph:34px"></div><div class="bar"><span id="rg" class="ph" style="--ph:34px;min-width:190px"></span><input type="search" id="q" placeholder="Search…" value="${esc(TCS.q)}"></div><div id="selbar" class="ph" style="--ph:40px"></div><div class="tiles ph" id="tl" style="--ph:64px"></div><div id="thin" class="${THINHTML?"":"ph"}" style="--ph:56px">${THINHTML}</div><div id="ostrip"></div><div id="spl"></div><div id="tb"></div>`;
   let data=null,sel=null,token=0,sentryList=null,vis=[],pend=null,jobT=null,note="",dayList={};
   // the ticks on the thumbnails and on the day headings (with how many of the day are ticked), from what is in TCSEL
   const paintTicks=()=>{$$("#tb [data-sel]").forEach(b=>{const on=TCSEL.has(b.dataset.sel);b.classList.toggle("on",on);b.setAttribute("aria-checked",on);b.textContent=on?"✓":""});
@@ -1816,6 +1818,7 @@ async function pageTeslaCam(role,id){
   const thin=async()=>{const el=$("#thin");if(!el)return;const sc=thinScope(),key=sc.map(x=>x.kind+"|"+x.id).join(",");THKEY=key;let j;
     try{j=await (await fetch("/api/stills/thin"+(key?"?clips="+encodeURIComponent(key):""))).json()}catch(e){return}
     if(key!==THKEY||!document.body.contains(el))return;
+    el.classList.remove("ph");
     const q=j.total?Math.round(100*(j.done+(j.done<j.total?.35:0))/j.total):null,tx=`<b>Shrinking ${j.what==="events"?"event pictures":"stills"}</b> · ${n0(j.done)} of ${n0(j.total)} · ${fmtGB(j.saved)} freed`;
     if(j.running){if($("#thtx",el)){$("#thtx",el).innerHTML=tx;setPbar(el,q);if(!key)THINHTML=el.innerHTML}else{el.innerHTML=`<div class="card ixb"><div style="flex:1;min-width:0"><div id="thtx">${tx}</div>${pbar(q)}</div><button class="btn sm" id="thx">Stop</button></div>`;if(!key)THINHTML=el.innerHTML;
       $("#thx").onclick=async()=>{await fetch("/api/stills/thin",{method:"POST",body:JSON.stringify({action:"stop"})})}}setTimeout(()=>{if(THKEY===key)thin()},1500);return}
@@ -1955,7 +1958,7 @@ async function pageTeslaCam(role,id){
       break}};
   const loadKeep=async(remembered)=>{const k=await mkey("tc/keep");
     if(remembered&&!KPC){const old=await IDB.get(k);if(old&&!KPC&&document.body.contains($("#tb"))){KPC=old;draw()}}     // what was kept last time is drawn at once; the fresh answer replaces it
-    try{const r=await fetch("/api/clips/keep");if(r.ok){const nj=(await r.json()).clips,ch=!same(nj,KPC);KPC=nj;IDB.set(k,nj);if(ch)draw();else selbar();poll()}}catch(e){}};
+    try{const r=await fetch("/api/clips/keep");if(r.ok){const nj=(await r.json()).clips,ch=!same(nj,KPC);KPC=nj;IDB.set(k,nj);if(ch)draw();else selbar();poll()}else{const sb=$("#selbar");if(sb)sb.classList.remove("ph")}}catch(e){const sb=$("#selbar");if(sb)sb.classList.remove("ph")}};
   const draw=()=>{if(!data)return;if(!data.sentry){return}
     const q=TCS.q.toLowerCase(),srcs=Object.keys(TCSRC).filter(k=>TCS.src[k]);
     const onAt=atNames().filter(n=>TCS.at[n]);
