@@ -26,6 +26,17 @@ class MinuteSignsTest(unittest.TestCase):
         self.assertEqual((a["text"], a["s0"], a["s1"], a["n"], a["conf"], a["f"]), ("60", 9.0, 9.8, 3, 95, "d.jpg"))
         self.assertEqual((b["text"], b["side"], b["s0"], b["n"]), ("80", "L", 30.0, 1))
 
+    def test_the_picture_of_a_sign_is_the_biggest_one_that_was_read_surely(self):
+        d = tempfile.mkdtemp()
+        os.makedirs(os.path.join(d, "drive_review"))
+        rows = [dict(s=9.0, text="60", c=90, side="L", r=20, f="far.jpg"), dict(s=10.0, text="60", c=85, side="L", r=60, f="near.jpg"),
+                dict(s=11.0, text="60", c=40, side="L", r=90, f="blur.jpg")]
+        with open(os.path.join(d, "drive_review", "2026-10-26.json"), "w") as f:
+            json.dump({ST: dict(n=14, d=rows)}, f)
+        g = AR.Review(d).minute_signs([ST])[ST][0]
+        self.assertEqual((g["f"], g["conf"]), ("near.jpg", 85))                       # not the far one, and not a big blurred one
+        self.assertNotIn("_sc", g)
+
 
 if __name__ == "__main__":
     unittest.main()

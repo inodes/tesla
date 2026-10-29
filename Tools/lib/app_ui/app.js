@@ -876,7 +876,7 @@ function stillViewer(host,o){
     box.innerHTML=`<div class="stbar"><button class="btn" id="stp0">◀ Back</button><button class="btn" id="stpl">▶ Play</button><button class="btn" id="stn0">Next ▶</button><input type="range" id="stsk" min="0" max="0" value="0">
       <span id="sttm"></span><select id="stst">${[[1,"every second"],[5,"every 5 seconds"],[10,"every 10 seconds"],[60,"every minute"]].map(([v,l])=>`<option value="${v}" ${v===step?"selected":""}>${l}</option>`).join("")}</select>
       ${o.trig?'<button class="btn" id="stdt">↧ Detection</button>':""}<span class="sub" id="stct"></span></div>
-      <div class="stfr"><img class="stimg" alt=""><span class="rvb" id="stbg"></span><span class="stcam" id="stcm" hidden></span></div><div class="sgs" id="stsg" style="margin-top:8px"></div>`;
+      <div class="stfr"><img class="stimg" alt=""><span class="rvb" id="stbg"></span><span class="stcam" id="stcm" hidden></span><div class="sgbig" id="stsb" hidden></div></div><div class="sgs" id="stsg" style="margin-top:8px"></div>`;
     const img=$(".stimg",box),fr=$(".stfr",box),ahead=new Map();let want="",ratio=false;
     const pre=u=>{if(ahead.has(u))return ahead.get(u);const im=new Image();im.decoding="async";im.src=u;ahead.set(u,im);if(ahead.size>14)ahead.delete(ahead.keys().next().value);return im};
     const swap=(u,alt)=>{want=u;const im=pre(u),go=()=>{if(want!==u)return;if(!ratio&&im.naturalWidth){fr.style.aspectRatio=im.naturalWidth+" / "+im.naturalHeight;ratio=true}img.src=u;img.alt=alt};
@@ -891,7 +891,10 @@ function stillViewer(host,o){
       const h=isHi(m,t),cam=CAML[(hi&&hi.cam)||"front"]||"Front";
       swap(srcOf(m,t),(h?cam:"Front")+" camera at "+shownAt(m,t));
       const cm=$("#stcm",box);cm.hidden=!h;if(h)cm.textContent=cam+" camera"+(hi.tier==="high"?" · full detail":"");
-      $("#stbg",box).innerHTML=signsAt(m,t).map(badge).join("");
+      const sa=signsAt(m,t);$("#stbg",box).innerHTML=sa.map(badge).join("");
+      // the picture is a small still: the sign itself is shown beside it as it was cut from the full-size frame (the best one read), as large as the screen allows
+      const sb=$("#stsb",box),big=sa.filter(g=>g.f);sb.hidden=!big.length;
+      const hh=big.map(g=>`<figure><img src="/review/${encodeURIComponent(g.f)}" alt="Speed limit ${esc(g.text)}"><figcaption>${esc(g.text)}${g.conf>0?" · "+g.conf+"% sure":""}</figcaption></figure>`).join("");if(sb.innerHTML!==hh)sb.innerHTML=hh;
       [1,2,3,-1].forEach(d=>{const f=frames[k+d];if(f)pre(srcOf(minutes[f[0]],f[1]))})}
     const signList=()=>{const el=$("#stsg",box);if(!el)return;const L=[];minutes.forEach((m,i)=>(SG[m]||[]).forEach(g=>L.push([i,g])));
       el.innerHTML=L.length?`<span class="sub">Signs read in these pictures:</span> `+L.slice(0,60).map(([i,g],j)=>`<button class="sgn" data-sg="${j}" title="${esc("Go to "+shownAt(minutes[i],Math.floor(g.s0)))}">${g.f?`<img src="/review/${encodeURIComponent(g.f)}" alt="">`:""}<b>${esc(g.text)}</b> <span class="sub">${shownAt(minutes[i],Math.floor(g.s0))}</span></button>`).join("")+(L.length>60?`<span class="sub">+${n0(L.length-60)} more</span>`:""):"";
