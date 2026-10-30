@@ -241,10 +241,11 @@ class ClipKeep:
                 for r, b in node["bytes"].items():
                     nbytes[r] = nbytes.get(r, 0) + b
                 sm = store.summary(st)
-                if kind != "sentry" and node["cams"]:                      # a parked Sentry clip has no telemetry to read
+                vid = bool(node["bytes"])                                  # video of this minute is on a drive: a minute whose video is gone everywhere cannot be read any more, so it is not missing anything
+                if kind != "sentry" and node["cams"] and (vid or sm is not None):      # a parked Sentry clip has no telemetry to read
                     meta[1] += 1
                     meta[0] += sm is not None
-                if "front" in node["cams"]:
+                if "front" in node["cams"] and (vid or st in stl):
                     st_[1] += 1
                     t = CC.utc(st)
                     if st in stl and (parked or (TD._snap_ok(windows, starts, t) and t <= synced_until)):
@@ -255,10 +256,10 @@ class ClipKeep:
                     elif st in stl:
                         waiting = "drive snapshots not built yet"
                         snap_n += 1
-                if isinstance(sm, dict) and sm.get("vmax", 0) >= min_kmh:
+                if isinstance(sm, dict) and sm.get("vmax", 0) >= min_kmh and (vid or st in scanned):
                     sg[1] += 1
                     sg[0] += st in scanned
-                if st in unref:
+                if st in unref and vid:
                     refine_n += 1
             if ign:                                          # nothing is kept from it and nothing is missing: it can only be deleted
                 meta, st_, sg, waiting, wait_n, snap_n, refine_n = [0, 0], [0, 0], [0, 0], "", 0, 0, 0

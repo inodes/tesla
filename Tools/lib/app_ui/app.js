@@ -65,7 +65,7 @@ const SKEL={
   ana:()=>skH()+skS()+skTiles(6,104)+skBar(29)+skCard(220)+skCard(260),
   drv:()=>skb(19,"220px",";margin:0 0 12px")+skBar(29)+skTiles(8)+skCard(420)+skCard(300),
   detail:()=>skb(19,"180px",";margin:0 0 10px")+skH()+skS()+'<div class="chgrid"><div class="chl">'+skb(230,"",";margin:0")+skb(420,"",";margin:0")+skb(520,"",";margin:0")+'</div><div class="chr2">'+skb(320,"",";margin:0")+skb(520,"",";margin:0")+'</div></div>',
-  cards:()=>skH()+skb(208,"",";margin:0 0 12px")+skBar(34)+skBar(34)+skb(90,"",";margin:0 0 14px")+skTiles(4)+'<div class="evs">'+'<div class="ph" style="--ph:236px;border-radius:10px"></div>'.repeat(12)+'</div>',
+  cards:()=>skH()+skb(284,"",";margin:0 0 12px")+skBar(34)+skBar(34)+skb(61,"",";margin:0 0 12px")+skTiles(4)+skb(84,"",";margin:12px 0")+skb(22,"170px",";margin:0 0 18px")+'<div class="evs">'+'<div class="ph" style="--ph:385px;border-radius:10px"></div>'.repeat(4)+'</div>',
   page:()=>skH()+skS()+skBar()+skRows(10)
 };
 const loading=kind=>{if(!QUIET)main.innerHTML='<div class="sk" role="status" aria-label="Loading">'+(SKEL[kind]||SKEL.page)()+'</div>'};
@@ -1858,7 +1858,7 @@ async function pageTeslaCam(role,id){
   const atOf=v=>nameAt(places,v.ty==="recent"?(v.part==="park"?v.pos:null):(v.lat!=null&&v.lon!=null?[v.lat,v.lon]:null));
   const atNames=()=>cfg("teslacam.place_filters")||[];
   const tripOf=v=>{const a=v.t0!=null?v.t0:v.t,b=v.t1!=null?v.t1:(v.t||0)+60;return trips.find(d=>d.t0<b&&d.t1>a)};
-  main.innerHTML=head+`<div id="fsb" class="ph" style="--ph:${100+36*Math.max(1,drives.length)}px;margin-bottom:12px"></div><div class="bar ph" id="tsr" style="--ph:34px"></div><div class="bar"><span id="rg" class="ph" style="--ph:34px;min-width:190px"></span><input type="search" id="q" placeholder="Search…" value="${esc(TCS.q)}"></div><div id="selbar" class="ph" style="--ph:40px"></div><div class="tiles ph" id="tl" style="--ph:64px"></div><div id="thin" class="${THINHTML?"":"ph"}" style="--ph:56px">${THINHTML}</div><div id="ostrip"></div><div id="splx"></div><div id="spl"></div><div id="tb"></div>`;
+  main.innerHTML=head+`<div id="fsb" class="ph" style="--ph:${116+42*Math.max(1,drives.length)}px;margin-bottom:12px"></div><div class="bar ph" id="tsr" style="--ph:34px"></div><div class="bar"><span id="rg" class="ph" style="--ph:34px;min-width:190px"></span><input type="search" id="q" placeholder="Search…" value="${esc(TCS.q)}"></div><div id="selbar" class="ph" style="--ph:61px"></div><div class="tiles ph" id="tl" style="--ph:75px"></div><div id="thin" class="${THINHTML?"":"ph"}" style="--ph:84px">${THINHTML}</div><div id="ostrip"></div><div id="splx"></div><div id="spl"></div><div id="tb"></div>`;
   let data=null,sel=null,token=0,sentryList=null,vis=[],pend=null,jobT=null,note="",dayList={};
   // the ticks on the thumbnails and on the day headings (with how many of the day are ticked), from what is in TCSEL
   const paintTicks=()=>{$$("#tb [data-sel]").forEach(b=>{const on=TCSEL.has(b.dataset.sel);b.classList.toggle("on",on);b.setAttribute("aria-checked",on);b.textContent=on?"✓":""});
