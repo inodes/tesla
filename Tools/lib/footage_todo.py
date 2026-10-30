@@ -13,6 +13,8 @@ import threading
 import time
 
 import app_config
+import clips_purged as PG
+import home_ignore as IGN
 import teslacam_files as TF
 import teslacam_ledger as TLG
 
@@ -39,7 +41,7 @@ def _mtime_ns(root):
     return tuple(out)
 
 
-CODE_VER = 2        # raise when the way the answer is worked out changes, so a cached answer from before is looked at again
+CODE_VER = 3        # raise when the way the answer is worked out changes, so a cached answer from before is looked at again
 
 class Todo:
     def __init__(self, cache_file, data_dir, tc, fg, roots_fn, idle_fn=lambda: True):
@@ -102,6 +104,8 @@ class Todo:
         for r, (files, ok) in walked.items():
             n = 0
             for st in {f["stamp"] for f in files if f["cam"] == "front"}:
+                if IGN.has(st) or PG.has(st):               # parked at Home, or a clip taken off the log: nothing is read from them
+                    continue
                 if st in done:
                     n += st in again
                     continue

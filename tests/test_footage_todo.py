@@ -76,6 +76,14 @@ class TodoTest(unittest.TestCase):
         self.assertEqual(self.todo.snapshot()["drives"]["J"]["signs"], 1)                       # read, but the second look is still to do
         self.tc.scanned, self.tc.unrefined = {}, set()
 
+    def test_minutes_parked_at_home_or_taken_off_the_log_are_not_counted_for_signs(self):
+        import home_ignore as IGN
+        IGN.set_stamps({"2026-10-11_16-12-14"})
+        self.addCleanup(lambda: IGN.set_stamps(()))
+        self.todo.snapshot()
+        self.wait()
+        self.assertEqual(self.todo.snapshot()["drives"]["J"]["signs"], 0)
+
     def test_a_listed_drive_has_nothing_to_list_and_a_gone_file_is_counted(self):
         led = TLG.Ledger(self.data)
         led.scan("J", self.cam)

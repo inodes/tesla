@@ -101,6 +101,16 @@ class KeepTest(Base):
         self.assertFalse(r["todo"])
         self.assertEqual(r["signs"], [2, 2])                                      # both minutes went 60 km/h: both had their signs read
 
+    def test_a_minute_whose_video_is_gone_from_every_drive_is_not_counted_as_missing_anything(self):
+        led = os.path.join(self.data, "teslacam_ledger", "2026-10-16.json")
+        day = json.load(open(led))
+        for cam in ("front", "back"):                                              # the second minute's video was lost, nothing was made from it
+            day["saved|ev1|%s-%s" % (S2, cam)]["drives"]["J"]["gone"] = "2026-10-18T00:00:00Z"
+        json.dump(day, open(led, "w"))
+        r = self.keep(read=[S1], stills=[S1], scanned=[S1]).status()["clips"]["saved"]["ev1"]
+        self.assertEqual((r["meta"], r["stills"], r["signs"]), ([1, 1], [1, 1], [1, 1]))
+        self.assertTrue(r["ready"])
+
     def test_signs_count_only_minutes_that_were_driven_fast_enough(self):
         r = self.keep(read=[S1, S2], stills=[S1, S2], scanned=[S1]).status()["clips"]["saved"]["ev1"]
         self.assertEqual(r["signs"], [1, 2])
