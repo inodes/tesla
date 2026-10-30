@@ -1008,6 +1008,7 @@ def main():
     KEPT = app_kept.Kept(local_cache_dir(), _code_version())
     DRIVELIST = app_drivelist.Cached(os.path.join(local_cache_dir(), "drivelist.json"))
     run_cuts.set_file(os.path.join(local_cache_dir(), "run_cuts.json"))
+    home_ignore.set_file(os.path.join(local_cache_dir(), "home_ignore.json"))
     clips_purged.set_file(os.path.join(DATA_DIR, "teslacam_purged.json"))
     SENTRY = app_sentry.Sentry(DATA_DIR)
     TC = app_teslacam.TeslaCam(DATA_DIR, SENTRY)

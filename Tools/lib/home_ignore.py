@@ -8,12 +8,15 @@ in, or counting as "needs updating". The saved places named in app.teslacam.igno
     set_stamps(stamps)          the minutes of the Recent sections and Sentry events found to be at such a place (ClipKeep keeps this up to date)
     has(stamp)    -> bool       True for one of those minutes: the planners that make stills leave it out
 """
+import json
 import math
+import os
 
 import app_config
 
 _PLACES = lambda: []            # noqa: E731
 _STAMPS = frozenset()
+_PATH = None
 MIN_RADIUS = 60                 # metres: as the pages name a place (nameAt in app.js)
 
 
@@ -57,9 +60,35 @@ def at(lat, lon):
     return bool(n) and n.strip().lower() in names()
 
 
+def set_file(path):
+    """Where the minutes found to be at an ignored place are kept between runs of the app, so the first look at what needs doing after a start already leaves them out; loads them."""
+    global _PATH, _STAMPS
+    _PATH = path
+    try:
+        with open(path, encoding="utf-8") as f:
+            _STAMPS = frozenset(json.load(f))
+    except (OSError, ValueError, TypeError):
+        pass
+
+
 def set_stamps(stamps):
     global _STAMPS
-    _STAMPS = frozenset(stamps)
+    new = frozenset(stamps)
+    if new == _STAMPS:
+        return
+    _STAMPS = new
+    if _PATH:
+        try:
+            with open(_PATH + ".tmp", "w", encoding="utf-8") as f:
+                json.dump(sorted(new), f, separators=(",", ":"))
+            os.replace(_PATH + ".tmp", _PATH)
+        except OSError:
+            pass
+
+
+def version():
+    """Changes when the set of ignored minutes does (a cached answer worked out with another set is looked at again)."""
+    return len(_STAMPS)
 
 
 def has(stamp):

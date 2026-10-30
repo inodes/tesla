@@ -93,6 +93,16 @@ class Refine(unittest.TestCase):
         self.assertEqual((out["rf"], [x["text"] for x in out["d"]]), (1, ["60"]))
 
 
+class Picture(unittest.TestCase):
+    def test_the_picture_of_a_sign_is_the_biggest_one_it_was_read_surely_in(self):
+        tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, tmp, True)
+        rv = AR.Review(tmp)
+        rv._day("2026-10-16")["2026-10-16_15-40-07"] = dict(n=60, d=[det(10, "60", 95, r=15, f="far.jpg"), det(11, "60", 85, r=40, f="near.jpg"), det(12, "60", 90, r=25, f="mid.jpg")])
+        self.assertEqual(rv.minute_signs(["2026-10-16_15-40-07"])["2026-10-16_15-40-07"][0]["f"], "near.jpg")
+        self.assertEqual(rv.signs(["2026-10-16_15-40-07"])[0]["crop"], "near.jpg")
+
+
 class Job(unittest.TestCase):
     def test_refine_runs_once_per_minute_and_unrefined_lists_the_rest(self):
         tmp = tempfile.mkdtemp()
