@@ -84,7 +84,7 @@ class Todo:
             stills = len(self.fg.stills.stamps())
         except Exception:
             stills = -1
-        return [[r, round(_mtime(p)), (scans.get(r) or {}).get("at") or ""] for r, p in sorted(roots.items())] + [tele, stills, self._signs_token(), CODE_VER]
+        return [[r, round(_mtime(p)), (scans.get(r) or {}).get("at") or ""] for r, p in sorted(roots.items())] + [tele, stills, self._signs_token(), IGN.version(), CODE_VER]
 
     def _signs_token(self):
         """How much of the signs has been read: the newest change among the day files the sign review keeps (a file changes as minutes are added to it)."""

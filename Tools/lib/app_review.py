@@ -142,7 +142,7 @@ class Review:
                 g = out[-1]
             g["n"] += 1
             g["t1"] = d["t"]
-            sc = 1000 + d.get("tc", 0) if d.get("tm") else d["c"]     # a school zone sign is shown from the still its plate was read best in
+            sc = 1000 + d.get("tc", 0) if d.get("tm") else d["c"] + 1.5 * min(d.get("r", 0), 120)     # a school zone sign is shown from the still its plate was read best in; any other from the biggest (closest) still it was read surely in
             if d.get("tm"):
                 g["_tm"][tuple(d["tm"])] = g["_tm"].get(tuple(d["tm"]), 0) + max(1, d.get("tc", 0))
             if sc > g["_sc"]:
@@ -171,7 +171,7 @@ class Review:
                         groups.append(g)
                     g["n"] += 1
                     g["s1"] = d["s"]
-                    sc = d["c"] + 0.25 * min(d.get("r", 0), 80)          # the picture shown is the one read surely AND biggest (closest to the sign): more pixels to read it from
+                    sc = d["c"] + 1.5 * min(d.get("r", 0), 120)          # the picture shown is the biggest (closest to the sign) of those read surely: the most pixels to read it from
                     if sc > g.get("_sc", -1):
                         g.update(conf=round(d["c"]), f=d.get("f", ""), _sc=sc)
                 for g in groups:

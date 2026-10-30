@@ -84,6 +84,19 @@ class TodoTest(unittest.TestCase):
         self.wait()
         self.assertEqual(self.todo.snapshot()["drives"]["J"]["signs"], 0)
 
+    def test_the_minutes_left_alone_at_home_are_kept_between_runs_so_the_first_count_after_a_start_leaves_them_out(self):
+        import home_ignore as IGN
+        f = os.path.join(self.t, "home_ignore.json")
+        self.addCleanup(lambda: (IGN.set_file(None), IGN.set_stamps(())))
+        IGN.set_file(f)
+        IGN.set_stamps({"2026-10-11_16-12-14"})
+        IGN.set_stamps(())
+        IGN.set_stamps({"2026-10-11_16-12-14", "2026-10-11_16-13-14"})
+        IGN._STAMPS = frozenset()                                       # a new start: nothing in memory
+        IGN.set_file(f)
+        self.assertTrue(IGN.has("2026-10-11_16-13-14"))
+        self.assertEqual(IGN.version(), 2)
+
     def test_a_listed_drive_has_nothing_to_list_and_a_gone_file_is_counted(self):
         led = TLG.Ledger(self.data)
         led.scan("J", self.cam)

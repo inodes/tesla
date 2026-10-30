@@ -400,7 +400,7 @@ class TeslaCam:
     def scan_report(self, roots):
         """Footage of the drives in roots {role: TeslaCam folder} against the telemetry kept; also what the reading job is doing."""
         store = self._tl("A")
-        mins = {r: self.footage(r, p, all_saved=True) for r, p in roots.items() if p}
+        mins = {r: [m for m in self.footage(r, p, all_saved=True) if not (IGN.has(m["stamp"]) or PG.has(m["stamp"]))] for r, p in roots.items() if p}      # what is parked at Home, or was taken off the log, is left alone
         rep = TS.plan(store, mins, lambda r, m: self._front(roots[r], m))
         self._scan_todo = rep.pop("todo")
         rep["job"] = self.scan_status()
@@ -488,7 +488,10 @@ class TeslaCam:
             sums = [store.summary(m["stamp"]) for m in mins]
             state = "move" if any(x and x["vmax"] >= TL.OPTS["moving_kmh"] for x in sums) else "unknown" if any(x is None for x in sums) else "still"
             return TL.drive_item([(m, state) for m in mins], store), mins
-        return self._finish(role, teslacam, pick, budget, events=(t0, t1), lo=lo, extra=self._sentry_minutes(role, teslacam, sentry))
+        out = self._finish(role, teslacam, pick, budget, events=(t0, t1), lo=lo, extra=self._sentry_minutes(role, teslacam, sentry))
+        if out is None and teslacam:          # the connected drive holds none of it (the video is on a drive that is away): the telemetry read before still shows, with no video
+            return self.window(role, None, t0, t1, budget, lo, sentry)
+        return out
 
     def _sentry_minutes(self, role, teslacam, ev_id):
         """The minutes of one Sentry event as footage minutes (src "sentry"), those the continuous recording does not already hold."""
