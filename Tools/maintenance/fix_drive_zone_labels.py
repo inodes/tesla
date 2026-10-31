@@ -31,6 +31,7 @@ EXAMPLES
     ./fix_drive_zone_labels.py
     ./fix_drive_zone_labels.py --apply
 """
+import os as _os, sys as _sys; _sys.path.insert(0, _os.path.dirname(_os.path.dirname(_os.path.abspath(__file__))))      # Tools/: this one-off lives in Tools/maintenance/
 import argparse
 import csv
 import glob

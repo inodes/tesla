@@ -282,7 +282,7 @@ def main():
     if evnex_dump_path:
         print(f"Using Evnex dump: {evnex_dump_path} ({len(evnex_sessions)} session(s) loaded)")
     else:
-        print("No evnex_explore.py dump found - run ./Tools/evnex_explore.py first for Evnex cross-referencing. Continuing with Tessie-only data.")
+        print("No evnex_explore.py dump found - run ./Tools/maintenance/evnex_explore.py first for Evnex cross-referencing. Continuing with Tessie-only data.")
 
     os.makedirs(args.output_dir, exist_ok=True)
     pad = args.pad_minutes * 60

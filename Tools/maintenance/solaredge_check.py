@@ -13,7 +13,7 @@ import os
 import sys
 from datetime import date, datetime, timedelta
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from lib import solaredge_v2 as SE2  # noqa: E402
 
 

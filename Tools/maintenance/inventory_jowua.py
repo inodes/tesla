@@ -31,7 +31,7 @@ TSV = os.path.expanduser(opt("--tsv", os.path.join(logdir, "jowua-inventory-%s.t
 logf = open(os.path.join(logdir, "jowua-inventory-%s.log" % stamp), "a", buffering=1)
 def say(m): line = "%s • %s" % (now(), m); print(line, flush=True); logf.write(line + "\n")
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__))); sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "lib"))
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__)))); sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "lib"))
 import drive_registry as REG
 def by_uuid(what, vid):
     mps = REG.mount_of(vid)

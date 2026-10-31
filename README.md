@@ -54,7 +54,7 @@ tesla/
 │   ├── sync_dashcam.sh             # Multi-drive TeslaCam sync, audit & prune engine
 │   ├── teslacam_stills.py          # One-second stills of every front clip, kept after the video is deleted
 │   ├── teslacam_ledger.py          # Log of every TeslaCam file: which drive, size, deleted when; what can be purged
-│   ├── migrate_charge_folders.py   # Move charges/deepdive files into <day>/<start>/ folders (like drives)
+│   ├── maintenance/migrate_charge_folders.py   # Move charges/deepdive files into <day>/<start>/ folders (like drives)
 │   ├── dashcam_exportdash.sh       # Local ExportDash web player launcher
 │   ├── sync_drives_all.sh          # One command: Tessie drives, fetch + consolidate
 │   ├── sync_charging_all.sh        # One command: Tessie charges + Evnex + invoices + AGL usage + PVOutput/AGL/Evnex cross-check prep, fetch + consolidate
@@ -151,7 +151,7 @@ tesla/
 ```bash
 # Turn any newly-completed Evnex session into its own deep-dive file
 # (charges/deepdive/<day>/<start>/charge_deepdive_<local-time>_NN_Evnex_Home.json - one folder per charge inside its day, like drives;
-# ./Tools/migrate_charge_folders.py moves older flat files into it,
+# ./Tools/maintenance/migrate_charge_folders.py moves older flat files into it,
 # NN a zero-padded position starting at "00") -
 # idempotent (safe to re-run; keyed on Evnex's own session id, never on
 # the filename), skips sessions still actively charging.

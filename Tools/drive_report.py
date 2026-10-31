@@ -715,7 +715,7 @@ def process_drive(csv_path, master, flips_by_file, recs, foot, args, base_analys
     stamp = dp.stamp_of(csv_path)
     folder = dp.drive_folder_of(csv_path)
     if not folder:
-        return "skip (flat file - run migrate_drive_folders.py)"
+        return "skip (flat file - run maintenance/migrate_drive_folders.py)"
     out = os.path.join(folder, "drive.html")
     pts = load_drive_csv(csv_path)
     if not pts:
