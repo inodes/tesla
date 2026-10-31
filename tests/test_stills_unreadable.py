@@ -43,6 +43,12 @@ class UnreadableTest(unittest.TestCase):
         self.assertEqual((rep["drives"][0]["to_make"], rep["drives"][0]["unreadable"], rep["drives"][0]["done"]), (0, 0, 1))
         self.assertEqual(self.stills.unreadable(), {})
 
+    def test_a_minute_of_an_event_taken_off_the_list_is_not_counted(self):
+        clip(self.root, "2026-09-11_09-45-36", 5000)
+        clip(self.root, "2026-09-11_09-46-36", 5000, "2026-09-11_09-46-35")
+        rep = ST.plan(self.stills, {"A": self.root}, skip_ev=lambda src, ev: ev == "2026-09-11_09-45-36")
+        self.assertEqual((rep["drives"][0]["to_make"], [t["stamp"] for t in rep["todo"]]), (1, ["2026-09-11_09-46-35"]))
+
     def test_a_minute_no_file_of_gives_a_picture_is_counted_as_unreadable_and_not_tried_again(self):
         clip(self.root, "2026-09-11_13-51-21", 500, "2026-09-11_13-51-20")
         rep = ST.plan(self.stills, {"A": self.root})

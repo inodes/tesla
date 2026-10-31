@@ -400,7 +400,7 @@ class TeslaCam:
     def scan_report(self, roots):
         """Footage of the drives in roots {role: TeslaCam folder} against the telemetry kept; also what the reading job is doing."""
         store = self._tl("A")
-        mins = {r: [m for m in self.footage(r, p, all_saved=True) if not (IGN.has(m["stamp"]) or PG.has(m["stamp"]))] for r, p in roots.items() if p}      # what is parked at Home, or was taken off the log, is left alone
+        mins = {r: [m for m in self.footage(r, p, all_saved=True) if not (IGN.has(m["stamp"]) or PG.has(m["stamp"]) or (m["src"] in ("saved", "sentry") and PG.has_event(m["src"], m.get("ref"))))] for r, p in roots.items() if p}      # what is parked at Home, or was taken off the log, is left alone
         rep = TS.plan(store, mins, lambda r, m: self._front(roots[r], m))
         self._scan_todo = rep.pop("todo")
         rep["job"] = self.scan_status()

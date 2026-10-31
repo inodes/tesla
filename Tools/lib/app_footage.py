@@ -44,7 +44,7 @@ class Footage:
     def stills_report(self, roots, walked=None):
         self.stills.width = app_config.get("stills.width", 400)
         self.stills.quality = app_config.get("stills.quality", 6)
-        rep = ST.plan(self.stills, {r: p for r, p in roots.items() if p}, walked=walked, skip=lambda st: IGN.has(st) or PG.has(st))
+        rep = ST.plan(self.stills, {r: p for r, p in roots.items() if p}, walked=walked, skip=lambda st: IGN.has(st) or PG.has(st), skip_ev=PG.has_event)
         self._todo = rep.pop("todo")
         rep["to_make"] = len(self._todo)
         rep["job"] = self.status()

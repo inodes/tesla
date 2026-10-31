@@ -103,7 +103,11 @@ class Todo:
         out = {}
         for r, (files, ok) in walked.items():
             n = 0
-            for st in {f["stamp"] for f in files if f["cam"] == "front"}:
+            live = {}
+            for f in files:
+                if f["cam"] == "front":
+                    live[f["stamp"]] = live.get(f["stamp"], False) or f["src"] == "recent" or not PG.has_event(f["src"], f["ev"])      # a minute only in events taken off the list is left alone
+            for st in {s for s, ok in live.items() if ok}:
                 if IGN.has(st) or PG.has(st):               # parked at Home, or a clip taken off the log: nothing is read from them
                     continue
                 if st in done:
