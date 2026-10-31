@@ -61,6 +61,8 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
+CMDS = os.path.join(HERE, "commands")          # the command-line scripts the app runs or imports (drive_actions, the syncs)
+sys.path.insert(1, CMDS)
 sys.path.insert(0, os.path.join(HERE, "lib"))
 import app_config  # noqa: E402
 import config_backup  # noqa: E402
@@ -984,7 +986,7 @@ def _code_version():
     """Changes when the program changes, so a list kept by older code is never shown by newer code."""
     import glob
     here = os.path.dirname(os.path.abspath(__file__))
-    return str(int(max([os.path.getmtime(f) for f in glob.glob(os.path.join(here, "*.py")) + glob.glob(os.path.join(here, "lib", "*.py"))] or [0])))
+    return str(int(max([os.path.getmtime(f) for f in glob.glob(os.path.join(here, "*.py")) + glob.glob(os.path.join(here, "lib", "*.py")) + glob.glob(os.path.join(here, "commands", "*.py"))] or [0])))
 
 
 def main():
@@ -1037,11 +1039,11 @@ def main():
     if not a.no_background:
         KEEP.start()
     BOOK = app_charges.ChargeBook(os.path.dirname(os.path.abspath(__file__)), DATA_DIR)
-    SYNC = app_sync.ChargerSync(os.path.dirname(os.path.abspath(__file__)), DATA_DIR)
+    SYNC = app_sync.ChargerSync(CMDS, DATA_DIR)
     REACH = app_reach.ReachService(os.path.dirname(os.path.abspath(__file__)), DATA_DIR)
-    TSYNC = app_sync.ChargerSync(os.path.dirname(os.path.abspath(__file__)), DATA_DIR, "sync_drives_all.sh")
-    CSYNC = app_sync.ChargerSync(os.path.dirname(os.path.abspath(__file__)), DATA_DIR, "sync_charging_all.sh")
-    CCOST = app_sync.ChargerSync(os.path.dirname(os.path.abspath(__file__)), DATA_DIR, "analyse_charging.py",
+    TSYNC = app_sync.ChargerSync(CMDS, DATA_DIR, "sync_drives_all.sh")
+    CSYNC = app_sync.ChargerSync(CMDS, DATA_DIR, "sync_charging_all.sh")
+    CCOST = app_sync.ChargerSync(CMDS, DATA_DIR, "analyse_charging.py",
                                  argv=[sys.executable, "analyse_charging.py", "--sync-tessie-costs", "--apply", "--only-confident"])
     SOFT = app_software.SoftSync(DATA_DIR)
     CARW = car_watch.Watch(DATA_DIR, lambda: app_software.S.load().get("car_check_minutes") if app_sync.tessie_configured() else 0)

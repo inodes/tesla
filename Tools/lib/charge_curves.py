@@ -67,6 +67,8 @@ import sys
 _TOOLS_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _TOOLS_DIR not in sys.path:
     sys.path.insert(0, _TOOLS_DIR)
+if os.path.join(_TOOLS_DIR, "commands") not in sys.path:
+    sys.path.insert(0, os.path.join(_TOOLS_DIR, "commands"))         # the command scripts it uses (Tools/commands/)
 REPO_ROOT = os.path.dirname(_TOOLS_DIR)
 
 import lib.charge_paths as CP

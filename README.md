@@ -26,7 +26,7 @@ tesla/
 │   ├── places.example.json         # Generic template for custom place nicknames
 │   └── README.md                   # Full Tessie documentation
 │
-├── Tools/                          # 🛠️ Executable scripts for multi-drive deployment
+├── Tools/                          # 🛠️ tesla (every command: ./Tools/tesla lists them), tesla_app.py (the app), commands/, lib/, maintenance/
 │   ├── archive/                    # Archived one-off / exploratory test scripts
 │   ├── lib/                        # Shared library modules imported by the scripts below (not run
 │   │                                #   directly) - sei_inspector.py, table_formatter.py, tessie_api_common.py,
@@ -71,32 +71,32 @@ tesla/
 
 ## ⚡ Quick Start
 
-👉 *In a hurry? `./Tools/sync_all.sh` runs the Drives, Charging Sessions, and Charger Discovery one-command syncs below (2, 3, 4) back to back - it's just a thin wrapper around them, not a replacement for running one on its own. Doesn't include TeslaCam sync (1) - that needs physical drives connected.*
+👉 *In a hurry? `./Tools/tesla sync all` runs the Drives, Charging Sessions, and Charger Discovery one-command syncs below (2, 3, 4) back to back - it's just a thin wrapper around them, not a replacement for running one on its own. Doesn't include TeslaCam sync (1) - that needs physical drives connected.*
 
 ### 1. Multi-Drive TeslaCam Backup
 ```bash
 # Automatically detect all connected Tesla drives and sync to Master Archive SSD
-./Tools/sync_dashcam.sh
+./Tools/tesla sync dashcam
 
 # Check storage breakdown and archive status
-./Tools/sync_dashcam.sh --status
+./Tools/tesla sync dashcam --status
 ```
 👉 *See [dashcam/README.md](dashcam/README.md) for full documentation on drive tiers and pruning rules.*
 
 ### 2. Tessie Drive Log Analysis & Place Matching
 ```bash
 # Consolidate newly-exported Tessie CSVs into drives_master.csv
-./Tools/analyse_drives.py --consolidate
+./Tools/tesla analyse drives --consolidate
 
 # ...or the one-command version: fetch new drives from the Tessie API and
 # consolidate in one step (requires config.json's API token/VIN)
-./Tools/sync_drives_all.sh
+./Tools/tesla sync drives
 
 # Interactive drives overview and time-period selector
-./Tools/analyse_drives.py --drives
+./Tools/tesla analyse drives --drives
 
 # Filter trips since a specific date or weekday
-./Tools/analyse_drives.py --since wednesday
+./Tools/tesla analyse drives --since wednesday
 ```
 
 ### 3. Charging & Supercharger Invoice Reconciliation
@@ -110,16 +110,16 @@ tesla/
 # cache for every home session (so a later --inspect never waits on a live
 # fetch) - see AGENTS.md REQ-033 for what's covered and what's still
 # manual (AGL invoices, Solaredge)
-./Tools/sync_charging_all.sh
+./Tools/tesla sync charges
 
 # Reconcile Supercharger invoices against Tessie charging sessions
-./Tools/analyse_charging.py --superchargers
+./Tools/tesla analyse charges --superchargers
 
 # Reconcile 3rd-party fast-charging sessions (Chargefox, Evie, BP Pulse, Jolt)
-./Tools/analyse_charging.py --third-party
+./Tools/tesla analyse charges --third-party
 
 # Inspect charging efficiency loss and TOU tariff rate for a session
-./Tools/analyse_charging.py --inspect 142
+./Tools/tesla analyse charges --inspect 142
 ```
 
 ### 4. Charger Discovery
@@ -127,22 +127,22 @@ tesla/
 # The one command to pull fresh charger data near Home (50km) for all
 # registries this repo tracks - see AGENTS.md REQ-033 for why it's scoped
 # to Home rather than state/nationwide (PlugShare rate-limiting, BUG-008)
-./Tools/sync_charger_all.sh
+./Tools/tesla sync chargers
 
 # Find all Tesla Superchargers near a place (or nationwide with --state)
-./Tools/charger_find.py --near Home --sc --radius 25
+./Tools/tesla chargers find --near Home --sc --radius 25
 
 # Find cheapest chargers sorted by price (with secondary distance sorting)
-./Tools/charger_find.py --near Home --sort price --radius 25
+./Tools/tesla chargers find --near Home --sort price --radius 25
 
 # Find high-power DC Fast Chargers (Tesla + 3rd-party networks >= 25kW)
-./Tools/charger_find.py --near Parramatta --dc --sort power --radius 30
+./Tools/tesla chargers find --near Parramatta --dc --sort power --radius 30
 
 # Discover chargers along a highway route corridor (with live Tessie battery SoC, arrival SoC projection, and 1-click ABRP road trip links):
-./Tools/charger_find.py --from "Sydney" --to "Brisbane" --sc
-./Tools/charger_find.py --from "Sydney" --to "Brisbane" --sc --sort score --limit 10
-./Tools/charger_find.py --from Home --to "Canberra" --via "Goulburn" --dc --min-kw 150 --soc 90
-./Tools/charger_find.py --from "Sydney" --to "Melbourne" --network ampcharge --sort price --corridor 10
+./Tools/tesla chargers find --from "Sydney" --to "Brisbane" --sc
+./Tools/tesla chargers find --from "Sydney" --to "Brisbane" --sc --sort score --limit 10
+./Tools/tesla chargers find --from Home --to "Canberra" --via "Goulburn" --dc --min-kw 150 --soc 90
+./Tools/tesla chargers find --from "Sydney" --to "Melbourne" --network ampcharge --sort price --corridor 10
 ```
 👉 *See [Tessie/README.md](Tessie/README.md) for full documentation on drives, charging reconciliation, invoices, tariffs, places, ABRP EV route planning, and charger discovery.*
 
@@ -155,35 +155,35 @@ tesla/
 # NN a zero-padded position starting at "00") -
 # idempotent (safe to re-run; keyed on Evnex's own session id, never on
 # the filename), skips sessions still actively charging.
-./Tools/sync_api_evnex.py
+./Tools/tesla sync evnex
 ```
-👉 *This is also run as part of `./Tools/sync_charging_all.sh` (see section 3) - run it standalone only if you want just the Evnex step.*
+👉 *This is also run as part of `./Tools/tesla sync charges` (see section 3) - run it standalone only if you want just the Evnex step.*
 
 ### 6. NSW FuelCheck Historical Pricing & Green Vehicle Guide (GVG) Comparison
 
 ```bash
 # The one command to sync the NSW FuelCheck monthly historical pricing datasets:
-./Tools/sync_fuel_all.sh
+./Tools/tesla sync fuel
 
 # Check database status, indexed date range, and current reference fuel prices:
-./Tools/sync_fuel_history.py --status
+./Tools/tesla sync fuel-prices --status
 
 # Query historical fuel price averages and benchmark vehicle costs for a specific date:
-./Tools/sync_fuel_history.py --query --date 2024-06-15
+./Tools/tesla sync fuel-prices --query --date 2024-06-15
 
 # View official Australian Green Vehicle Guide (GVG) Top 20 Best-Selling Vehicles:
-./Tools/analyse_charging.py --gvg-top20
+./Tools/tesla analyse charges --gvg-top20
 
 # Search comparison vehicles by make, model, category, or fuel type:
-./Tools/analyse_charging.py --search-vehicles "hybrid"
-./Tools/analyse_charging.py --search-vehicles "ranger"
+./Tools/tesla analyse charges --search-vehicles "hybrid"
+./Tools/tesla analyse charges --search-vehicles "ranger"
 
 # Compare EV charging costs against any specific GVG vehicle (e.g. Ford Ranger, RAV4 Hybrid):
-./Tools/analyse_charging.py --vehicle ford_ranger_diesel
-./Tools/analyse_charging.py --vehicle rav4_hybrid
+./Tools/tesla analyse charges --vehicle ford_ranger_diesel
+./Tools/tesla analyse charges --vehicle rav4_hybrid
 
 # Generate side-by-side net savings matrix against all benchmark comparison vehicles:
-./Tools/analyse_charging.py --compare-all
+./Tools/tesla analyse charges --compare-all
 ```
 👉 *Historical pricing is indexed into `<tessie_data_home>/fuel/fuel_history.db` (SQLite) with microsecond queries and zero external dependencies. Comparison vehicles and running costs (maintenance & tyres) are sourced from the Australian Green Vehicle Guide (ADR 81/02) and fully configurable in `Tessie/comparison_vehicles.json`.*
 
@@ -192,16 +192,16 @@ tesla/
 
 ```bash
 # Preview unstandardized PDFs across default directories (~/Downloads, PDF/AGL):
-./Tools/sync_invoices.py --scan --dry-run
+./Tools/tesla sync invoices --scan --dry-run
 
 # Deep-dive inspect any invoice PDF and extract structured metadata:
-./Tools/sync_invoices.py --inspect ~/Downloads/invoice.pdf
+./Tools/tesla sync invoices --inspect ~/Downloads/invoice.pdf
 
 # Rename and standardize AGL statements in-place:
-./Tools/sync_invoices.py --scan "~/Library/Mobile Documents/com~apple~CloudDocs/PDF/AGL" --rename
+./Tools/tesla sync invoices --scan "~/Library/Mobile Documents/com~apple~CloudDocs/PDF/AGL" --rename
 
 # Move and import discovered invoices into canonical provider directories:
-./Tools/sync_invoices.py --scan ~/Downloads --import
+./Tools/tesla sync invoices --scan ~/Downloads --import
 ```
 👉 *Supports AGL energy statements (`Statement_electricity_YYYYMMDD.pdf`), EV charging receipts (`YYYYMMDD_HHMM_Network_Inv_Place.pdf`), and generic invoices with zero external dependencies.*
 
@@ -209,7 +209,7 @@ tesla/
 
 ```bash
 # Automatically install/update sync_dashcam.sh to /Volumes/*/Tools/ across all mounted drives
-./Tools/sync_dashcam.sh --install-tools
+./Tools/tesla sync dashcam --install-tools
 ```
 
 ---

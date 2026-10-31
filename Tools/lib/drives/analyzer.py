@@ -1875,7 +1875,7 @@ class DriveAnalyzer:
         if not is_stale:
             return False
 
-        sync_script = os.path.join(self.script_dir, "sync_api_tessie.py")
+        sync_script = os.path.join(self.script_dir, "commands", "sync_api_tessie.py")
         if not os.path.isfile(sync_script):
             return False
 

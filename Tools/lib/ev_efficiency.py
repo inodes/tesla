@@ -40,6 +40,8 @@ import sys
 _TOOLS_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _TOOLS_DIR not in sys.path:
     sys.path.insert(0, _TOOLS_DIR)
+if os.path.join(_TOOLS_DIR, "commands") not in sys.path:
+    sys.path.insert(0, os.path.join(_TOOLS_DIR, "commands"))         # the command scripts it uses (Tools/commands/)
 
 from lib.drives.analyzer import DriveAnalyzer  # noqa: E402
 from analyse_car_efficiency import (  # noqa: E402

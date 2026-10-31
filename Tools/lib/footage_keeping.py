@@ -1830,7 +1830,7 @@ def refresh_drives_for_home_purge(analyzer):
     cached = getattr(analyzer, "_home_purge_synced_at", None)
     if cached is not None:
         return cached
-    sync_script = os.path.join(analyzer.script_dir, "sync_api_tessie.py")
+    sync_script = os.path.join(analyzer.script_dir, "commands", "sync_api_tessie.py")
     if not os.path.isfile(sync_script):
         print("⚠️  Home + Recent: can't confirm the latest drives (sync_api_tessie.py missing) - nothing will be deleted.")
         return None

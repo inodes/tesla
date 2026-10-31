@@ -1,0 +1,147 @@
+#!/usr/bin/env python3
+"""tesla - every command of the Tesla tools, in one place.
+
+NAME
+    tesla - run a Tesla tools command
+
+SYNOPSIS
+    ./tesla                         list the commands
+    ./tesla <group> <command> [options]
+    ./tesla <group> <command> -h    that command's own help
+    ./tesla <old script name> [options]   (e.g. ./tesla sync_api_tessie.py --drives) still works
+
+DESCRIPTION
+    The scripts themselves live in Tools/commands/ (one-off tools in Tools/maintenance/). The app (tesla_app.py) runs the
+    same code, so a command here and a button in the app do the same thing.
+"""
+import os
+import sys
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+CMDS = os.path.join(HERE, "commands")
+
+# group -> [(command, script, what it does)]
+GROUPS = [
+    ("sync", "Bring data in", [
+        ("all", "sync_all.sh", "every sync below, in order"),
+        ("drives", "sync_drives_all.sh", "Tessie drives, their telemetry, drive pages, battery health, alerts, car version"),
+        ("charges", "sync_charging_all.sh", "Tessie charges, Evnex sessions, invoices, curves, costs"),
+        ("chargers", "sync_charger_all.sh", "charger networks (Tesla, Chargefox, EVX, Evie, bp, PlugShare, ...)"),
+        ("fuel", "sync_fuel_all.sh", "NSW fuel prices"),
+        ("fuel-prices", "sync_fuel_history.py", "NSW fuel price history (single steps)"),
+        ("tessie", "sync_api_tessie.py", "Tessie API: drives, charges, alerts, idles, tyres, battery (single steps)"),
+        ("evnex", "sync_api_evnex.py", "Evnex home-charger sessions"),
+        ("abrp", "sync_api_abrp.py", "ABRP telemetry and vehicle profile"),
+        ("power-usage", "sync_power_usage.py", "power provider usage exports"),
+        ("power-rates", "sync_agl_rates.py", "power tariff rates from the bills"),
+        ("agl-usage", "agl_usage_sync.py", "AGL half-hourly usage CSVs"),
+        ("supercharger-rates", "sync_supercharger_rates.py", "Supercharger rates from the invoices"),
+        ("invoices", "sync_invoices.py", "PDF invoices (power and charging)"),
+        ("teslacam", "sync_teslacam.py", "everything the app needs from the TeslaCam drives"),
+        ("dashcam", "sync_dashcam.sh", "copy and tidy TeslaCam drives (older tool)"),
+    ]),
+    ("analyse", "Look into the data", [
+        ("drives", "analyse_drives.py", "drive log analysis and consolidation"),
+        ("charges", "analyse_charging.py", "charges, Supercharger costs, invoices, curves"),
+        ("battery", "analyse_battery_health.py", "battery health over time"),
+        ("efficiency", "analyse_car_efficiency.py", "speed against efficiency and range"),
+        ("fsd-plateaus", "analyse_fsd_105.py", "FSD speed plateaus"),
+        ("fsd-limits", "analyse_fsd_osm_limits.py", "FSD plateaus against posted limits"),
+    ]),
+    ("report", "Reports", [
+        ("power-cost", "power_cost_calculator.py", "electricity bill rebuilt from usage"),
+        ("power-demand", "power_demand_calculator.py", "the provider's demand charge"),
+        ("power-coverage", "power_coverage_report.py", "how well usage data covers each month"),
+        ("power-invoice", "power_invoice_report.py", "a real bill against the model"),
+        ("power-roi", "power_roi_report.py", "solar payback"),
+        ("power-solar", "power_solar_report.py", "energy report (solar, grid, car)"),
+        ("agl-bill", "agl_cost_calculator.py", "AGL bill rebuilt"),
+        ("agl-demand", "agl_demand_calculator.py", "AGL demand charge"),
+        ("prices", "price_history_report.py", "fuel and electricity prices over time"),
+        ("cost-per-100km", "cost_per_100km_report.py", "fuel car against EV, per 100 km"),
+        ("charges-cost", "report_all_charges_cost.py", "our cost against Tessie's, every charge"),
+        ("charge-session-cost", "ev_session_cost.py", "one charging session's cost"),
+        ("home-charges", "audit_home_charges.py", "every Home charge's cost checked"),
+        ("home-charge-sample", "home_charge_deep_dive.py", "sample Home charges in detail"),
+    ]),
+    ("build", "Pages and maps", [
+        ("drive-pages", "drive_report.py", "a page per drive"),
+        ("drive-gps", "drive_gps.py", "street-accurate drive paths from the dashcam"),
+        ("drive-snapshots", "build_drive_snapshots.py", "a still for every event of each drive"),
+        ("fsd-map", "build_fsd_map.py", "FSD highway map"),
+        ("deepdive-charts", "deepdive_charts.py", "telemetry charts"),
+        ("drive-actions", "drive_actions.py", "carry out the footage actions queued on drive pages"),
+    ]),
+    ("teslacam", "TeslaCam drives", [
+        ("files", "teslacam_ledger.py", "the log of every TeslaCam video"),
+        ("telemetry", "teslacam_scan.py", "read the telemetry the drives still lack"),
+        ("stills", "teslacam_stills.py", "a still for every second of front video"),
+        ("deletable", "check_teslacam_deletable.py", "which video is safe to delete"),
+        ("drives", "manage_teslacam_drives.py", "what each drive is for"),
+        ("export", "dashcam_exportdash.sh", "web viewer and stitcher"),
+        ("flips", "dashcam_flip_review.py", "review FSD flips"),
+        ("signs", "sign_scan.py", "speed signs around flips"),
+        ("signs-auto", "sign_auto.py", "location signs in the flip sheets"),
+        ("tessie-vs-cam", "tessie_vs_cam.py", "why Tessie and the dashcam disagree"),
+    ]),
+    ("chargers", "Charging stations", [
+        ("find", "charger_find.py", "find chargers on every network"),
+        ("tesla", "find_tesla_chargers.py", "Tesla chargers"),
+        ("plugshare", "find_plugshare_chargers.py", "PlugShare chargers"),
+        ("audit-plugshare", "charger_plugshare_auditor.py", "PlugShare errors"),
+    ]),
+    ("places", "Saved places", [
+        ("manage", "places_manager.py", "saved places and their review"),
+        ("osm", "places_osm_editor.py", "OpenStreetMap amenities"),
+    ]),
+]
+
+
+def listing():
+    out = ["Usage: ./tesla <group> <command> [options]     (-h after a command for its own help)", ""]
+    for g, title, cmds in GROUPS:
+        out.append("%s - %s" % (g, title))
+        for c, _s, what in cmds:
+            out.append("    %-22s %s" % (c, what))
+        out.append("")
+    out.append("One-off tools: Tools/maintenance/.  The app: Tools/tesla_app.py.")
+    return "\n".join(out)
+
+
+def find(args):
+    """(script, the rest of the arguments) for these arguments, or (None, message)."""
+    if args and (args[0].endswith(".py") or args[0].endswith(".sh")):        # an old script name
+        name = os.path.basename(args[0])
+        if os.path.isfile(os.path.join(CMDS, name)):
+            return name, args[1:]
+        return None, "No command script named %s." % name
+    if len(args) < 2:
+        g = args[0] if args else None
+        for gg, title, cmds in GROUPS:
+            if gg == g:
+                return None, "%s - %s:\n" % (gg, title) + "\n".join("    %-22s %s" % (c, w) for c, _s, w in cmds)
+        return None, listing()
+    for gg, _t, cmds in GROUPS:
+        if gg == args[0]:
+            for c, s, _w in cmds:
+                if c == args[1]:
+                    return s, args[2:]
+            return None, "No command '%s' in %s. %s commands: %s" % (args[1], gg, gg, ", ".join(c for c, _s, _w in cmds))
+    return None, "No group '%s'.\n\n%s" % (args[0], listing())
+
+
+def main(argv):
+    if argv[:1] in (["-h"], ["--help"], ["help"]):
+        print(__doc__.strip() + "\n\n" + listing())
+        return 0
+    script, rest = find(argv)
+    if not script:
+        print(rest)
+        return 0 if not argv else 2
+    path = os.path.join(CMDS, script)
+    cmd = (["bash", path] if script.endswith(".sh") else [sys.executable, path]) + list(rest)
+    os.execvp(cmd[0], cmd)
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

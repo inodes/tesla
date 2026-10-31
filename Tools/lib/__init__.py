@@ -19,3 +19,6 @@ import sys as _sys
 _HERE = _os.path.dirname(_os.path.abspath(__file__))
 if _HERE not in _sys.path:          # a module in here imports another by its plain name (import tessie_api_common): found here, whatever folder started the program
     _sys.path.append(_HERE)
+_CMDS = _os.path.join(_os.path.dirname(_HERE), "commands")
+if _CMDS not in _sys.path:          # and the command scripts some of them use (import analyse_charging)
+    _sys.path.append(_CMDS)

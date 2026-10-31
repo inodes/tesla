@@ -26,6 +26,7 @@ SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 # -> _repo_root) so REPO_ROOT still resolves to the actual repo root, not Tools/.
 TOOLS_DIR = os.path.dirname(SCRIPT_DIR)
 REPO_ROOT = os.path.dirname(TOOLS_DIR)
+COMMANDS_DIR = os.path.join(TOOLS_DIR, "commands")          # the command-line scripts (run them with Tools/tesla)
 
 # TODO-034 (2026-09-15, AGENTS.local.md): config.json moved from Tessie/ to
 # the repo root - the project outgrew being "a Tessie connector" a long time
