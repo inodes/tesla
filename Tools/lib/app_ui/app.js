@@ -12,19 +12,20 @@ const rate=v=>{if(v==null||isNaN(v))return"–";let s=(+v).toFixed(4);if(s.endsW
 const cache={};
 const main=$("#main");
 // a page asks the server and draws when the answer comes; if the person moved to another page meanwhile (RGEN counts the pages opened), the answer is dropped, so the page left never draws over the page opened
-let RGEN=0;
-const fresh_=f=>async(...a)=>{const n=RGEN;let v;try{v=await f(...a)}catch(e){if(n!==RGEN)await new Promise(()=>{});throw e}if(n!==RGEN)await new Promise(()=>{});return v};
+// only what a page asks for while it is opening is dropped: a request made at any other time (the page version, the drives' status, a poll) always gets its answer
+let RGEN=0,RLOAD=0;
+const fresh_=f=>async(...a)=>{const n=RGEN;if(!RLOAD||RLOAD!==n)return f(...a);let v;try{v=await f(...a)}catch(e){if(n!==RGEN)await new Promise(()=>{});throw e}if(n!==RGEN)await new Promise(()=>{});return v};
 const fetch0=window.fetch.bind(window);
 window.fetch=(u,o)=>{const r=fetch0(u,o);return(typeof u==="string"&&u.startsWith("/api/")&&!(o&&o.method&&o.method!=="GET"))?fresh_(()=>r)():r};
 // icon-only buttons are named by their title for screen readers
 {let lt=0;const nm=()=>$$("button[title]:not([aria-label])",main).forEach(b=>b.setAttribute("aria-label",b.title));new MutationObserver(()=>{clearTimeout(lt);lt=setTimeout(nm,60)}).observe(main,{childList:true,subtree:true})}
 // ---------- remembered pages: a list seen before is drawn at once from the browser's own copy and refreshed behind it; the page is redrawn only if the fresh data differs
 const IDB=(()=>{let db;const open=()=>db||(db=new Promise(res=>{try{const r=indexedDB.open("tesla-ui",1);r.onupgradeneeded=()=>r.result.createObjectStore("kv");r.onsuccess=()=>res(r.result);r.onerror=r.onblocked=()=>res(null)}catch(e){res(null)}}));
-  const tx=async(mode,f)=>{const d=await open();if(!d)return undefined;return new Promise(res=>{try{const t=d.transaction("kv",mode),rq=f(t.objectStore("kv"));t.oncomplete=()=>res(rq&&rq.result);t.onerror=t.onabort=()=>res(undefined)}catch(e){res(undefined)}})};
+  const tx=async(mode,f)=>{const d=await Promise.race([open(),new Promise(r=>setTimeout(()=>r(null),1500))]);if(!d)return undefined;return new Promise(res=>{setTimeout(()=>res(undefined),1500);try{const t=d.transaction("kv",mode),rq=f(t.objectStore("kv"));t.oncomplete=()=>res(rq&&rq.result);t.onerror=t.onabort=()=>res(undefined)}catch(e){res(undefined)}})};
   const lastK=k=>{const i=String(k).indexOf("|");return i>0&&/^[\d.]+$/.test(k.slice(0,i))?"last"+k.slice(i):null};          // "<page version>|list" is also kept as "last|list": a changed page shows the copy the earlier page kept, then refreshes it
   return{get:async k=>{const v=await tx("readonly",s=>s.get(k));if(v!==undefined)return v;const l=lastK(k);return l?tx("readonly",s=>s.get(l)):undefined},
     set:(k,v)=>{const l=lastK(k);if(l)tx("readwrite",s=>s.put(v,l));return tx("readwrite",s=>s.put(v,k))},del:k=>tx("readwrite",s=>s.delete(k)),clear:()=>tx("readwrite",s=>s.clear())}})();
-const UIV=fetch("/api/status").then(r=>r.json()).then(s=>String(s.ui)).catch(()=>"0");     // a changed page (app.js, app.css) forgets what was remembered
+const UIV=fetch0("/api/status").then(r=>r.json()).then(s=>String(s.ui)).catch(()=>"0");     // a changed page (app.js, app.css) forgets what was remembered
 const mkey=async p=>(await UIV)+"|"+p,same=(a,b)=>JSON.stringify(a)===JSON.stringify(b);
 const clean=x=>x&&typeof x==="object"&&("stale" in x||"status" in x)?Object.assign({},x,{stale:undefined,status:undefined}):x,sameData=(a,b)=>same(clean(a),clean(b));
 let FRESHT=0;const STALEP=new Set();       // FRESHT: when the remembered lists were last forgotten (after a sync or an edit): for a minute the server is asked for the newest, not what it kept
@@ -98,7 +99,7 @@ const geoWatch=()=>new MutationObserver(()=>{if(!GEOT)GEOT=setTimeout(geoSave,18
 // the last screen of each page: kept when the page has settled, drawn at once the next time the page is opened (also after the app was started again), replaced as soon as the page has its own answer
 const SNAP={},snapKey=()=>"scr|"+(location.hash||"#/activity"),SNAPMAX=600000;
 const snapSave=()=>{try{let h=main.innerHTML;if(h.length>SNAPMAX)return;h=h.replace(/<video[\s\S]*?<\/video>/g,"").replace(/<canvas[\s\S]*?<\/canvas>/g,"");SNAP[snapKey()]=h;IDB.set(snapKey(),h)}catch(e){}};
-const snapLoad=async()=>{const k=snapKey();if(SNAP[k]===undefined){const v=await IDB.get(k);SNAP[k]=typeof v==="string"?v:null}};
+const snapLoad=async()=>{const k=snapKey();if(SNAP[k]===undefined){const v=await Promise.race([IDB.get(k),new Promise(r=>setTimeout(r,250))]);SNAP[k]=typeof v==="string"?v:null}};
 const loading=kind=>{if(QUIET)return;if(SNAP[snapKey()]){main.innerHTML='<div class="snap" aria-busy="true">'+SNAP[snapKey()]+'</div>';return}const g=GEO[GEOK()],ok=g&&Math.abs(g.w-GEOW())<=2&&g.k&&g.k.length;main.innerHTML='<div class="sk" role="status" aria-label="Loading">'+(ok?geoHtml(g.k,"block",g.w):(SKEL[kind]||SKEL.page)())+'</div>'};
 const QK="clipQueue",qget=()=>{try{return JSON.parse(localStorage.getItem(QK)||"[]")}catch(e){return[]}};
 
@@ -2616,7 +2617,7 @@ async function pageSoftwareOne(v){
 
 const ROUTES={activity:pageActivity,drives:pageDrives,driveslist:pageDriveList,charges:pageCharges,battery:pageBattery,health:pageHealth,analytics:pageAnalytics,teslacam:pageTeslaCam,queue:pageQueue,flips:pageDrives,review:pageDrives,dashcam:pageDrives,parked:pageParked,idles:pageParked,places:pagePlaces,alerts:pageAlerts,software:pageSoftware};
 async function route(){
-  if(!QUIET)RGEN++;
+  if(!QUIET){RGEN++;RLOAD=RGEN}const myGen=RGEN;
   navTrack();hideTip();if(location.hash.indexOf("#/charge/")!==0){try{sessionStorage.removeItem("chargeSet")}catch(e){}}if(TLOFF){TLOFF();TLOFF=null}const h=(location.hash||"#/activity").replace(/^#\//,""),[p,arg,arg2]=h.split("/").map(decodeURIComponent);
   // the side bar item lit is the list a detail page was reached from (a drive opened from Drives (new) lights Drives (new)); a section's own page (Software, Battery, ...) always lights itself, whatever the path that led to it
   const own=({drive:"drives",charge:"charges",idle:"parked",idles:"parked",dashcam:"drives",flips:"drives",review:"drives",place:"places"})[p]||p,from=NAV.length?(NAV[0].h||"").replace(/^#\//,"").split("/")[0]:"",lit=own!==p&&ROOTS[from]&&ROOTS[from]!==ROOTS[own]&&NAV.length>1?(({idles:"parked"})[from]||from):own;
@@ -2626,6 +2627,7 @@ async function route(){
   try{
     if(p==="drive")await pageDrive(arg,arg2);else if(p==="charge")await pageCharge(arg,arg2);else if(p==="idle"||p==="parked"&&arg)await pageParkedOne(arg);else if(p==="place")await pagePlace(arg);else await (ROUTES[p]||pageActivity)(arg,arg2);
   }catch(e){main.innerHTML=errBox(e.stack||e.message,"Something went wrong")}
+  finally{if(RLOAD===myGen)RLOAD=0}
 }
 async function boot(){
   geoWatch();
