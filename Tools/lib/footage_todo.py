@@ -41,7 +41,19 @@ def _mtime_ns(root):
     return tuple(out)
 
 
-CODE_VER = 3        # raise when the way the answer is worked out changes, so a cached answer from before is looked at again
+CODE_VER = 4        # raise when the way the answer is worked out changes, so a cached answer from before is looked at again
+
+
+def _code_stamp():
+    """The newest change among the program files as they were when this run started: an answer kept by another version of the program is worked out again."""
+    d = os.path.dirname(os.path.abspath(__file__))
+    try:
+        return round(max(os.path.getmtime(os.path.join(d, f)) for f in os.listdir(d) if f.endswith(".py")))
+    except (OSError, ValueError):
+        return 0
+
+
+CODE_STAMP = _code_stamp()
 
 class Todo:
     def __init__(self, cache_file, data_dir, tc, fg, roots_fn, idle_fn=lambda: True):
@@ -53,6 +65,7 @@ class Todo:
         TF.set_cache_file(self._lcache)     # the folders listed in an earlier run: a folder not changed since is not listed again (the footage log scan uses them too)
         self._walked = {}               # role -> (drive_key, files, ok, log_new, log_gone, days_new), kept while the drive's folders and scan time are unchanged
         self.error = ""
+        self._gen = 0                   # counts the times what is on the drives was said to have changed
         self._err_at = 0.0
         self._prog = None
 
@@ -84,7 +97,7 @@ class Todo:
             stills = len(self.fg.stills.stamps())
         except Exception:
             stills = -1
-        return [[r, round(_mtime(p)), (scans.get(r) or {}).get("at") or ""] for r, p in sorted(roots.items())] + [tele, stills, self._signs_token(), IGN.version(), CODE_VER]
+        return [[r, round(_mtime(p)), (scans.get(r) or {}).get("at") or ""] for r, p in sorted(roots.items())] + [tele, stills, self._signs_token(), IGN.version(), PG.version(), CODE_VER, CODE_STAMP]
 
     def _signs_token(self):
         """How much of the signs has been read: the newest change among the day files the sign review keeps (a file changes as minutes are added to it)."""
@@ -138,6 +151,7 @@ class Todo:
 
     def forget(self):
         """What is on the drives changed under the cached look (clips moved or deleted by the app): the next look walks the drives again."""
+        self._gen += 1
         self._walked.clear()
         self._mem = dict(self._mem, sig=None)
 
@@ -165,6 +179,7 @@ class Todo:
 
     def _work(self, roots, sig):
         try:
+            gen = self._gen
             with self._lock:
                 scans = TLG.Ledger(self.dir).scans()
                 led = None
@@ -223,7 +238,7 @@ class Todo:
                 self._prog = dict(done=len(need) + 2, total=total, step="signs", role="", pct=round(100 * (len(need) + 2.4) / total))
                 for r, n in self._signs_left(walked).items():
                     out[r]["signs"] = n
-                self._mem = dict(sig=sig, drives=out)
+                self._mem = dict(sig=sig if gen == self._gen else None, drives=out)         # said to have changed while it was being worked out: looked at again
                 self.error = ""
                 self._save()
         except Exception as e:                                  # a drive pulled out in the middle: say so and try again at the next look

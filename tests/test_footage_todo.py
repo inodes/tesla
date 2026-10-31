@@ -1,7 +1,9 @@
 """footage_todo.Todo and drive_eject.eject."""
+import json
 import os
 import sys
 import tempfile
+import threading
 import time
 import unittest
 from types import SimpleNamespace
@@ -135,7 +137,7 @@ class TodoTest(unittest.TestCase):
     def test_an_answer_worked_out_by_older_code_is_looked_at_again(self):
         self.todo.snapshot()
         self.wait()
-        self.assertEqual(self.todo._sig({"J": self.cam})[-1], FT.CODE_VER)
+        self.assertEqual(self.todo._sig({"J": self.cam})[-2], FT.CODE_VER)
         self.todo._mem = dict(self.todo._mem, sig=self.todo._sig({"J": self.cam})[:-1])      # as saved before the version was part of it
         self.assertTrue(self.todo.snapshot()["checking"])
         self.wait()
@@ -193,6 +195,53 @@ class TodoTest(unittest.TestCase):
             self.assertEqual(len(walks), 1)                          # the drive was not walked again
         finally:
             TF.walk = real_walk
+
+    def test_purging_a_clip_makes_the_answer_worked_out_again(self):
+        import clips_purged as PG
+        self.todo.snapshot()
+        self.wait()
+        before = self.todo._mem["sig"]
+        PG.add([], [("sentry", "2026-08-15_09-27-11")])
+        try:
+            self.assertNotEqual(self.todo._sig({"J": self.cam}), before)
+        finally:
+            PG._E.discard(("sentry", "2026-08-15_09-27-11"))
+
+    def test_a_change_said_while_it_is_worked_out_is_not_lost(self):
+        started, go = threading.Event(), threading.Event()
+        real = self.tc.scan_report
+
+        def slow(roots):
+            started.set()
+            go.wait(5)
+            return real(roots)
+        self.tc.scan_report = slow
+        self.todo.snapshot()
+        self.assertTrue(started.wait(5))
+        self.todo.forget()                                          # a job ended while the look was running
+        go.set()
+        self.wait()
+        self.assertIsNone(self.todo._mem["sig"])                    # so the next look works it out again
+
+    def test_a_purged_list_that_cannot_be_read_at_first_is_read_again(self):
+        import clips_purged as PG
+        f = os.path.join(self.t, "purged.json")
+        json.dump(dict(stamps=["2026-08-15_09-27-11"], events=[["sentry", "x"]]), open(f, "w"))
+        real_open, fails = open, [2]
+
+        def flaky(path, *a, **k):
+            if path == f and fails[0] > 0:
+                fails[0] -= 1
+                raise OSError(35, "Resource deadlock avoided")
+            return real_open(path, *a, **k)
+        import builtins
+        builtins.open = flaky
+        try:
+            PG.set_file(f)
+        finally:
+            builtins.open = real_open
+            PG.set_file(os.path.join(self.t, "none.json"))
+        self.assertEqual(fails[0], 0)
 
 
 class EjectTest(unittest.TestCase):

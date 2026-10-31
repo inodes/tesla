@@ -11,6 +11,7 @@ the list leaves them out.
 import json
 import os
 import threading
+import time
 
 _LOCK = threading.Lock()
 _PATH = None
@@ -22,13 +23,20 @@ def set_file(path):
     global _PATH, _S, _E
     with _LOCK:
         _PATH = path
-        try:
-            with open(path, encoding="utf-8") as f:
-                j = json.load(f)
-            _S = set(j.get("stamps") or [])
-            _E = {tuple(x) for x in (j.get("events") or []) if len(x) == 2}
-        except (OSError, ValueError, AttributeError, TypeError):
-            _S, _E = set(), set()
+        for attempt in range(10):                       # a file the sync service has not let go of yet is asked for again, not taken as empty
+            try:
+                with open(path, encoding="utf-8") as f:
+                    j = json.load(f)
+                _S = set(j.get("stamps") or [])
+                _E = {tuple(x) for x in (j.get("events") or []) if len(x) == 2}
+                return
+            except FileNotFoundError:
+                break
+            except OSError:
+                time.sleep(0.3)
+            except (ValueError, AttributeError, TypeError):
+                break
+        _S, _E = set(), set()
 
 
 def add(stamps, events=()):
@@ -53,3 +61,8 @@ def has(stamp):
 
 def has_event(kind, eid):
     return (kind, eid) in _E
+
+
+def version():
+    """Changes when the set of clips taken off the list does (a cached answer worked out with another set is looked at again)."""
+    return len(_S) * 100003 + len(_E)

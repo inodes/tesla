@@ -1802,7 +1802,7 @@ function stopVideos(){$$("video:not(.vt)").forEach(v=>{try{v.pause();v.removeAtt
 async function ejectDrive(role){stopVideos();try{return await (await fetch("/api/eject",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({role})})).json()}catch(e){return{ok:false,text:e.message}}}
 // the footage on the connected drives (lib/app_keeper.py does the work in the background, lib/footage_todo.py says what is left): all connected drives, nothing to pick.
 // opts.table: a row per drive with what the log holds and what is left to do, an Eject button, and a button only for the work that is left
-const FSHTML={};
+const FSHTML={},FSKICK={};      // FSKICK: look at the drives' tasks again now (a job that changed the drives has ended)
 function footageSync(host,opts){
   if(!host)return;const table=!!(opts&&opts.table),hk=table?"t":"b";let until=0,was=false,lg=null,msg="",busyEject="",done0=null,note="";
   const gb=b=>b>=1073741824?(b/1073741824).toFixed(1)+" GB":Math.round(b/1048576)+" MB",NM={A:"Archive",J:"JOWUA",U:"Tesla USB",...DRX};
@@ -1863,6 +1863,7 @@ function footageSync(host,opts){
     try{const r=(await (await fetch("/api/status")).json()).roots||{},key=Object.keys(r).filter(x=>r[x]).sort().join(",");
       if(wk!==null&&key!==wk){wk=key;until=Date.now()+30000;FSHTML[hk]="";paint();if(opts&&opts.after)opts.after()}else wk=key}catch(e){}
     setTimeout(watch,3000)};
+  FSKICK[hk]=()=>{if(document.body.contains(host)){until=Date.now()+60000;paint()}};
   paint();watch()}
 // ---- what is kept from each clip's video (lib/clip_keep.py): tick boxes, a status strip, the size, and deleting / moving the video once it is all kept
 let TCSEL=new Set(),KPC=null,THINHTML="",THKEY="",OPENC=null;      // OPENC: the clip open under the tiles, {kind, id}      // TCSEL: "kind|id" of the clips ticked; KPC: GET /api/clips/keep
@@ -2032,7 +2033,7 @@ async function pageTeslaCam(role,id){
       if(j.running){const first=!jobT;jobT=j;if(first)selbar();else jobPaint();await new Promise(r=>setTimeout(r,1000));continue}
       if(jobT){jobT=null;const bad=(j.errors||[]).length,pr=j.action==="process"||j.action==="pictures";
         note=pr?((j.steps||[]).some(x=>x.total)?"Read what was missing"+(j.steps||[]).filter(x=>x.total).map(x=>" · "+x.step.toLowerCase()+" "+n0(x.total)).join("")+waitTx(Object.keys(KPC||{}).flatMap(k=>Object.keys(KPC[k]).map(id=>({kind:k,id})))):"Nothing more could be read from the video")+(bad?" · "+j.errors[0]:""):j.action==="purge"?"Deleted "+(j.types||[]).join(", ")+" · freed "+fmtGB((j.freed||0)+(j.data_freed||0)):(j.action==="move"?"Moved ":"Deleted ")+n0(j.done)+" files"+(j.action==="delete"?", freed "+fmtGB(j.freed):"")+(bad?" · "+bad+" could not be handled: "+j.errors[0]:"");
-        if(!pr)TCSEL.clear();bust("tc/clips");KPC=null;await load(true);loadKeep()}
+        if(!pr)TCSEL.clear();bust("tc/clips");KPC=null;Object.values(FSKICK).forEach(f=>f());await load(true);loadKeep()}
       break}};
   const loadKeep=async(remembered)=>{const k=await mkey("tc/keep");
     if(remembered&&!KPC){const old=await IDB.get(k);if(old&&!KPC&&document.body.contains($("#tb"))){KPC=old;draw()}}     // what was kept last time is drawn at once; the fresh answer replaces it
