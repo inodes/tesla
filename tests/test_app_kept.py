@@ -32,6 +32,7 @@ class KeptTest(unittest.TestCase):
         time.sleep(0.1)
         self.assertEqual(new.get("activity", build)[0], b'["new"]')
         self.assertTrue(os.path.isfile(os.path.join(d, "api_activity_200.5.json")))
+        self.assertFalse(os.path.exists(os.path.join(d, "api_activity_100.5.json")))      # the earlier version's copy is gone once this one has its own
 
     def test_nothing_kept_builds_it(self):
         raw, stale = AK.Kept(tempfile.mkdtemp(), "1").get("x", lambda: [1])

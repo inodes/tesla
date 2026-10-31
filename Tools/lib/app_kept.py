@@ -38,6 +38,12 @@ class Kept:
                 with open(tmp, "wb") as f:
                     f.write(raw)
                 os.replace(tmp, self._path(name))
+                for old in glob.glob(os.path.join(self.dir, "api_%s_*.json" % name)):      # the copies kept by earlier versions of the program are not needed once this one has its own
+                    if old != self._path(name) and re.fullmatch(r"api_%s_[\d.]+\.json" % re.escape(name), os.path.basename(old)):
+                        try:
+                            os.remove(old)
+                        except OSError:
+                            pass
             except OSError:
                 pass
         return raw

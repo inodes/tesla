@@ -625,11 +625,18 @@ class Places:
         return dict(ok=True)
 
     def _backup(self):
+        """A copy of places.json before a change, in <data>/.bak_archive/ (not beside it); the three newest are kept."""
+        bak = os.path.join(self.d, ".bak_archive")
         if os.path.isfile(self.f_places):
-            shutil.copy2(self.f_places, "%s.bak-%s" % (self.f_places, time.strftime("%Y%m%d-%H%M%S")))
-        old = sorted(x for x in os.listdir(self.d) if x.startswith("places.json.bak-"))
-        for x in old[:-10]:                     # keep the ten newest
+            os.makedirs(bak, exist_ok=True)
+            shutil.copy2(self.f_places, os.path.join(bak, "places.json.bak-%s" % time.strftime("%Y%m%d-%H%M%S")))
+        for folder in (self.d, bak):            # older copies kept beside places.json are tidied away too
             try:
-                os.remove(os.path.join(self.d, x))
+                old = sorted(x for x in os.listdir(folder) if x.startswith("places.json.bak-"))
             except OSError:
-                pass
+                continue
+            for x in old[:-3] if folder == bak else old:
+                try:
+                    os.remove(os.path.join(folder, x))
+                except OSError:
+                    pass
