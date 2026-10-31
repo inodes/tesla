@@ -91,9 +91,9 @@ import sys
 from datetime import datetime, timedelta, timezone
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from agl_common import resolve_agl_data_home  # noqa: E402
+from lib.agl_common import resolve_agl_data_home  # noqa: E402
 from agl_demand_calculator import load_rate_periods, rate_for_date  # noqa: E402
-from tessie_api_common import resolve_tessie_data_home  # noqa: E402
+from lib.tessie_api_common import resolve_tessie_data_home  # noqa: E402
 from zoneinfo import ZoneInfo  # noqa: E402
 
 DEEPDIVE_DIR = os.path.join(resolve_tessie_data_home(), "charges", "deepdive")

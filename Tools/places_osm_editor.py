@@ -893,7 +893,7 @@ def _inspect_location(query: str, radius_m: int):
             pass
 
     if lat is None:
-        from tessie_api_common import load_tessie_superchargers
+        from lib.tessie_api_common import load_tessie_superchargers
         scs = load_tessie_superchargers()
         for k, v in scs.items():
             if query.lower() in k.lower() or query.lower() in v.get("name", "").lower():

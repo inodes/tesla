@@ -35,7 +35,7 @@ import sys
 from datetime import datetime
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from agl_common import resolve_agl_data_home, in_demand_window  # noqa: E402
+from lib.agl_common import resolve_agl_data_home, in_demand_window  # noqa: E402
 
 def _rates_path():
     """Where agl_tariff_rates.json actually lives - the AGL data home

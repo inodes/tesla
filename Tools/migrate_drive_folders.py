@@ -60,7 +60,7 @@ SIDE = re.compile(r"^drive_deepdive_(?P<stamp>.+?)(?P<suffix>_profile\.html|\.cs
 
 def default_data_dir():
     try:
-        from tessie_api_common import resolve_tessie_data_home
+        from lib.tessie_api_common import resolve_tessie_data_home
         return resolve_tessie_data_home()
     except Exception:
         return os.path.expanduser("~/Library/Mobile Documents/com~apple~CloudDocs/Tesla")

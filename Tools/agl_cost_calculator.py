@@ -37,7 +37,7 @@ import sys
 from datetime import date, datetime, timedelta
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from agl_common import resolve_agl_data_home  # noqa: E402
+from lib.agl_common import resolve_agl_data_home  # noqa: E402
 from agl_demand_calculator import load_rate_periods, rate_for_date, monthly_latched_kw, demand_charge  # noqa: E402
 
 TIER2_RATE = 0.04  # flat $0.04/kWh beyond the daily cap - unchanged across every period observed so far

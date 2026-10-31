@@ -107,7 +107,7 @@ def main():
     if a.data_dir:
         data = os.path.abspath(os.path.expanduser(a.data_dir))
     else:
-        from tessie_api_common import resolve_tessie_data_home
+        from lib.tessie_api_common import resolve_tessie_data_home
         data = resolve_tessie_data_home()
     import clip_clock as CC
     CC.configure(data)

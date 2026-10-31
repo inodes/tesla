@@ -41,7 +41,7 @@ import sys
 from datetime import datetime, timezone
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from tessie_api_common import (  # noqa: E402
+from lib.tessie_api_common import (  # noqa: E402
     DEFAULT_UNIT_PARAMS,
     api_get,
     extract_json_records,
