@@ -935,6 +935,9 @@ class DriveAnalyzer:
             # 2026-10-23: a record that only spills over into the NEXT drive (the telemetry of a drive runs a minute or two past
             # Tessie's end of it) is not that drive's telemetry: unless it starts with the drive, the overlap must be at least half of
             # the shorter of the two. Without this, 1,500 of 1,536 drives "had" telemetry and 100+ real drives never fetched theirs.
+            # TODO-063 (2026-10-31): a record that starts within the padding but ENDS before the drive begins (the short drive just before it,
+            # 12:13 for 1 min against a 99 km drive at 12:15) is not this drive's telemetry: a near start must also share some time with the drive.
+            _near = _near and (_real > 0 or _drv_s < 120)
             if _overlap and (_near or (_real >= 0 and _real >= 0.5 * min(_rec_s, _drv_s))):
                 if is_collision and drive_duration_min > 5:
                     rec_duration_min = (rec["end_datetime"] - rec["start_datetime"]).total_seconds() / 60.0
