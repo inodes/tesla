@@ -70,7 +70,7 @@ class StillsThin:
         """The minutes whose stills can be made smaller, newest first."""
         store = self.tc._tl("A")
         scanned = self.tc._rv().scanned()
-        min_kmh = float((app_config.get("review") or {}).get("min_kmh", 30.0))
+        min_kmh = float((app_config.get("review") or {}).get("min_kmh", 10.0))
         keep, marks = self._event_stamps(), self._marks()
         out = []
         for st in sorted(self.stills.stamps(), reverse=True):

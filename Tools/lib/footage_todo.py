@@ -101,7 +101,7 @@ class Todo:
         rv, store = self.tc._rv(), self.tc._tl("A")
         done = rv.scanned()
         again = rv.unrefined() if hasattr(rv, "unrefined") else set()
-        min_kmh = float((app_config.get("review") or {}).get("min_kmh", 30.0))
+        min_kmh = float((app_config.get("review") or {}).get("min_kmh", 10.0))
         out = {}
         for r, (files, ok) in walked.items():
             n = 0

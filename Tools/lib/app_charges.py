@@ -130,10 +130,11 @@ class ChargeBook:
             except OSError:
                 sig.append(os.path.basename(f) + ":-")
         dd = p("charges", "deepdive")
-        try:
-            names = [n for n in CP.names(dd) if n.endswith(".csv")]
-            sig.append("dd:%d:%d" % (len(names), CP.signature(dd)[1]))
-        except OSError:
+        try:                    # a new charge's files come with its row in charges_master.csv (above): the day folders' own times are enough, no file is listed
+            st = os.stat(dd)
+            days = [n for n in os.listdir(dd) if CP.DAY_RE.match(n)]
+            sig.append("dd:%d:%d" % (len(days), int(max([st.st_mtime] + [os.path.getmtime(os.path.join(dd, n)) for n in sorted(days)[-40:]]))))
+        except (OSError, AttributeError):
             sig.append("dd:-")
         for d in self._invoice_dirs_cfg():
             try:

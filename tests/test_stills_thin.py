@@ -57,7 +57,7 @@ class ThinTest(unittest.TestCase):
         with open(os.path.join(led, "2026-10-16.json"), "w") as f:
             json.dump({"saved|ev1|%s-front" % B: dict(size=1, drives=dict(J=dict(LIVE)))}, f)
         # A: slow, no sign     B: in an event     C: fast, signs found     D: fast, scanned, no sign     E: fast, not scanned yet     F: nothing read
-        self.store = Store({A: dict(vmax=10), B: dict(vmax=10), C: dict(vmax=60), D: dict(vmax=60), E: dict(vmax=60)})
+        self.store = Store({A: dict(vmax=5), B: dict(vmax=5), C: dict(vmax=60), D: dict(vmax=60), E: dict(vmax=60)})
         self.scanned = {C: 2, D: 0}
         tc = SimpleNamespace(_tl=lambda r: self.store, _rv=lambda: SimpleNamespace(scanned=lambda: dict(self.scanned)))
         self.th = TH.StillsThin(self.data, self.stills, tc)

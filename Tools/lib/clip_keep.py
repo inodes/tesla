@@ -190,7 +190,7 @@ class ClipKeep:
         windows = TD.drive_windows(self.dir)
         starts = [w[0] for w in windows]
         synced_until = TD.synced_to(self.dir, windows)
-        min_kmh = float((app_config.get("review") or {}).get("min_kmh", 30.0))
+        min_kmh = float((app_config.get("review") or {}).get("min_kmh", 10.0))
         led = TLG.Ledger(self.dir)
         found = {}                                           # (kind, event) -> {stamp: dict(cams, bytes)}
         for day in led.days():
@@ -708,7 +708,7 @@ class ClipKeep:
                     j["step_done"] = n
             if "signs" in want:
                 rv = self.tc._rv()
-                min_kmh = float((app_config.get("review") or {}).get("min_kmh", 30.0))
+                min_kmh = float((app_config.get("review") or {}).get("min_kmh", 10.0))
                 done = rv.scanned()
                 items = []
                 for s in sorted(paths):
