@@ -122,6 +122,12 @@ All terminal tools (such as `Tools/analyse_drives.py` and `Tools/analyse_chargin
 
 ## 3. Repository Architecture & Layout
 
+**Commands (2026-10-31):** every command-line script lives in `Tools/commands/` and is run through one entry point, `Tools/tesla`
+(`./Tools/tesla` lists them by group: sync, analyse, report, build, teslacam, chargers, places; `./Tools/tesla sync drives`,
+`./Tools/tesla analyse charges --inspect 142`; an old script name still works: `./Tools/tesla sync_api_tessie.py --drives`).
+A new command is added to `Tools/commands/` AND to the GROUPS table in `Tools/tesla`. One-off tools go to `Tools/maintenance/`.
+`Tools/` itself holds only `tesla`, `tesla_app.py`, `build_mac_app.sh`, `restart_app.command`, `fix_exec_bits.sh` and the folders.
+
 ```
 tesla/
 ├── AGENTS.md                  # This document (generic AI instructions & standards - committed)

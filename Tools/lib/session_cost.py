@@ -137,6 +137,8 @@ from datetime import date, datetime, timedelta, timezone
 _TOOLS_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _TOOLS_DIR not in sys.path:
     sys.path.insert(0, _TOOLS_DIR)
+if os.path.join(_TOOLS_DIR, "commands") not in sys.path:
+    sys.path.insert(0, os.path.join(_TOOLS_DIR, "commands"))         # the command scripts it uses (Tools/commands/)
 from providers_power import get_power_provider  # noqa: E402
 from power_demand_calculator import load_rate_periods, rate_for_date  # noqa: E402
 from lib.power_usage_db import get_usage_db_connection, resolve_usage_db_path, iter_rows  # noqa: E402
