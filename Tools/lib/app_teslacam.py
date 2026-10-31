@@ -262,7 +262,7 @@ class TeslaCam:
                     gone_home.extend(sts)
                     continue
             minute_play = {x: next((q for q in sorted(holders[x]) if roots.get(q)), None) for x in sts}
-            out["recent"].append(dict(id=a, ts=_ts(a), end=_ts(b), t0=_secs(a), t1=_secs(b) + 60, part=RC.kind(a), pos=RC.pos(a), n=len(sts), full=sum(1 for x in sts if len(cams[x]) == 6),
+            out["recent"].append(dict(id=a, ts=_ts(a), end=_ts(b), t0=_secs(a), t1=_secs(b) + 60, part=RC.kind(a), pos=RC.pos(a), pos_est=RC.pos_est(a), n=len(sts), full=sum(1 for x in sts if len(cams[x]) == 6),
                                       roles=roles, play=minute_play[a] or next((q for q in minute_play.values() if q), None), playable=sum(1 for q in minute_play.values() if q)))
         out["recent"].sort(key=lambda x: x["t0"], reverse=True)
         if gone_home:
