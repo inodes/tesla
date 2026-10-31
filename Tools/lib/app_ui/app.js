@@ -1894,7 +1894,7 @@ async function pageTeslaCam(role,id){
   const head='<h1>TeslaCam</h1>';
   const trips=act.filter(x=>x.k==="drive"&&!x.repark).map(x=>({id:x.id,t0:x.t0,t1:x.t0+x.min*60,ti:driveTitle(x)}));
   // where an item was: the saved place it is at (a Recent recording only counts while parked, a drive begins and ends elsewhere); "" when at none
-  const atOf=v=>nameAt(places,v.ty==="recent"?(v.part==="park"?v.pos:null):(v.lat!=null&&v.lon!=null?[v.lat,v.lon]:null));
+  const atOf=v=>nameAt(places,v.ty==="recent"?(v.part==="park"?v.pos:null):v.ty==="saved"&&tripOf(v)?null:(v.lat!=null&&v.lon!=null?[v.lat,v.lon]:null));      // a place filter is where the car was parked: a clip saved while driving is at no place
   const atNames=()=>cfg("teslacam.place_filters")||[];
   const tripOf=v=>{const a=v.t0!=null?v.t0:v.t,b=v.t1!=null?v.t1:(v.t||0)+60;return trips.find(d=>d.t0<b&&d.t1>a)};
   main.innerHTML=head+`<div id="fsb" class="ph" style="--ph:${116+42*Math.max(1,drives.length)}px;margin-bottom:12px"></div><div class="bar ph" id="tsr" style="--ph:34px"></div><div class="bar"><span id="rg" class="ph" style="--ph:34px;min-width:190px"></span><input type="search" id="q" placeholder="Search…" value="${esc(TCS.q)}"></div><div id="selbar" class="ph" style="--ph:61px"></div><div class="tiles ph" id="tl" style="--ph:75px"></div><div id="thin" class="${THINHTML?"":"ph"}" style="--ph:84px">${THINHTML}</div><div id="ostrip"></div><div id="splx"></div><div id="spl"></div><div id="tb"></div>`;

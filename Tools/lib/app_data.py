@@ -60,9 +60,9 @@ _SK = {}                    # path -> (when, what was found): the same folder as
 SK_TTL = 3.0
 
 
-def _stat_one(p):
+def _stat_one(p, deep=True):
     now = time.time()
-    hit = _SK.get(p)
+    hit = _SK.get((p, deep))
     if hit and now - hit[0] < SK_TTL:
         return hit[1]
     try:
@@ -71,7 +71,7 @@ def _stat_one(p):
         res = (p, 0)
     else:
         sub = 0
-        if os.path.isdir(p):
+        if deep and os.path.isdir(p):
             try:
                 with os.scandir(p) as it:
                     for e in it:
@@ -82,24 +82,24 @@ def _stat_one(p):
         res = (p, m, sub)
     if len(_SK) > 8000:
         _SK.clear()
-    _SK[p] = (time.time(), res)
+    _SK[(p, deep)] = (time.time(), res)
     return res
 
 
-def _stat_key(paths):
+def _stat_key(paths, shallow=()):
     """What changed since last time: each path's mtime and, for a folder, the newest mtime among its sub-folders - so a new drive or charge
     folder inside an existing day folder (deepdive/<day>/<stamp>/) is noticed, not only a new day. Each folder is looked at once per few
     seconds, however many lists ask (a page asks for several at once and each one checked every folder)."""
-    return tuple(_stat_one(p) for p in paths)
+    return tuple(_stat_one(p, p not in shallow) for p in paths)
 
 
 _BUILD = {}
 
 
-def _cached(name, deps, build):
+def _cached(name, deps, build, shallow=()):
     """The kept value while the files it is built from are unchanged. One build per name at a time: a page that asks for the same thing as the
     background warm-up waits for that build instead of making its own (three at once took three times as long as one)."""
-    key = _stat_key(deps)
+    key = _stat_key(deps, shallow)
     with _LOCK:
         hit = _CACHE.get(name)
         if hit and hit[0] == key:
@@ -140,26 +140,63 @@ class Store:
     def p(self, *a):
         return os.path.join(self.d, *a)
 
+    local = None            # a folder on this computer (not the shared data folder) where what was read is kept between runs; set by the app
+
+    def _local_json(self, name):
+        if not self.local:
+            return {}
+        try:
+            with open(os.path.join(self.local, name), encoding="utf-8") as f:
+                v = json.load(f)
+            return v if isinstance(v, dict) else {}
+        except (OSError, ValueError):
+            return {}
+
+    def _local_save(self, name, v):
+        if not self.local:
+            return
+        try:
+            os.makedirs(self.local, exist_ok=True)
+            tmp = os.path.join(self.local, name + ".tmp")
+            with open(tmp, "w", encoding="utf-8") as f:
+                json.dump(v, f, separators=(",", ":"))
+            os.replace(tmp, os.path.join(self.local, name))
+        except OSError:
+            pass
+
     # ---- drives -------------------------------------------------------------------------------------------------
     def _summaries(self):
         root = self.p("drives", "deepdive")
         folders = list(DP.iter_folders(root))               # listed once for both the check and the build
 
         def build():
-            out = []
+            kept = self._local_json("drive_summaries.json")      # {folder: [its mtime, its summary]} from the last build: only a folder changed since is read again
+            out, now = [], {}
             for _stamp, folder in folders:
-                f = os.path.join(folder, "drive_summary.json")
                 try:
-                    j = json.load(open(f, encoding="utf-8"))
-                except (OSError, ValueError):
+                    m = os.path.getmtime(folder)
+                except OSError:
                     continue
+                k = kept.get(folder)
+                if k and k[0] == m:
+                    j = k[1]
+                else:
+                    try:
+                        with open(os.path.join(folder, "drive_summary.json"), encoding="utf-8") as fh:
+                            j = json.load(fh)
+                    except (OSError, ValueError):
+                        continue
+                now[folder] = [m, j]
                 if j.get("start"):
                     out.append(j)
+            if now != kept:
+                self._local_save("drive_summaries.json", now)
             return out
         dirs = [root]
         for _stamp, folder in folders:                       # a day folder changes when a drive appears, a drive folder when its summary is rewritten
             dirs += [os.path.dirname(folder), folder]
-        return _cached("summ", list(dict.fromkeys(dirs)), build)
+        leaves = {f for _s, f in folders}                    # a drive folder: its own time is enough (its summary is replaced inside it)
+        return _cached("summ", list(dict.fromkeys(dirs)), build, leaves)
 
     def drives(self):
         master = self.p("drives", "drives_master.csv")
