@@ -104,6 +104,15 @@ def compute(stamps, items, moves=None, moves_upto=0):
                 return its[j]
         return None
 
+    def moving(t):
+        """The drive any second of the minute starting at t belongs to: a clip is a whole minute, so a minute the car moved in is part of the drive (it cannot be cut to the second)."""
+        k = bisect.bisect_left(t0s, t + 60) - 1                  # the last item that begins before the minute ends
+        for j in range(k, max(k - 3, -1), -1):
+            x = its[j]
+            if x["kind"] == "drive" and x["t0"] < t + 60 and x["t1"] > t:
+                return x
+        return None
+
     def where(it, kd):
         p = (it.get("p0") or it.get("p1")) if it else None
         return (p[0], p[1]) if p and p[0] is not None else (None, None)
@@ -112,7 +121,7 @@ def compute(stamps, items, moves=None, moves_upto=0):
     ref = {}                                          # first minute of a section -> the timeline item it began in
     for st in sorted(stamps, key=CC.utc):
         t = CC.utc(st)
-        it = at(t + 30)
+        it = moving(t) or at(t + 30)
         k = None
         if it and it["kind"] == "drive":
             k = ("drive", it["id"])

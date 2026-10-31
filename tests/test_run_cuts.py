@@ -92,6 +92,15 @@ class CutsTest(unittest.TestCase):
         self.assertEqual((c[park_before[0]][1:3], c[park_before[0]][5:]), ([-33.80, 151.10], []))    # next to the start of the drive
         self.assertEqual(c[far[0]][5:], [True])                                                       # far from it: carried, an estimate
 
+    def test_a_minute_the_car_moved_in_belongs_to_the_drive(self):
+        sts = stamps(0, 6)                                          # 08:00 .. 08:05, stamps at :07 seconds
+        t = CC.utc(sts[2])
+        items = [dict(id="p1", kind="stopped", t0=CC.utc(sts[0]), t1=t + 50),                     # parked until 08:02:57
+                 dict(id="d1", kind="drive", t0=t + 50, t1=CC.utc(sts[3]) + 10, p0=[1, 1], p1=[2, 2]),   # drove from 08:02:57 to 08:03:17
+                 dict(id="p2", kind="stopped", t0=CC.utc(sts[3]) + 10, t1=CC.utc(sts[5]) + 60)]
+        c = RC.compute(sts, items)
+        self.assertEqual([(k, v[0]) for k, v in sorted(c.items())], [(sts[0], "park"), (sts[2], "drive"), (sts[4], "park")])    # 08:02 and 08:03 hold movement: the drive; 08:04 is parked again
+
     def test_a_gap_starts_a_run_without_a_cut(self):
         sts = stamps(0, 5) + stamps(20, 5)
         c = RC.compute(sts, [item("stopped", sts[0], sts[-1])])
