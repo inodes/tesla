@@ -562,7 +562,7 @@ for vol in /Volumes/*; do
 done
 
 # 4. Interactive fallback if standard TESLADRIVE volumes are NOT auto-detected
-if [[ -z "$VOL_TESLA_USB" && -z "$VOL_JOWUA" && -z "$VOL_2TB" && -t 0 && ASSUME_YES == 0 ]]; then
+if [[ -z "$VOL_TESLA_USB" && -z "$VOL_JOWUA" && -z "$VOL_2TB" && -t 0 && "$ASSUME_YES" -eq 0 ]]; then
   echo "=========================================================================="
   echo "                🔍 No 'TESLADRIVE' Volumes Auto-Detected                 "
   echo "=========================================================================="

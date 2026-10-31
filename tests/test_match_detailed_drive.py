@@ -36,6 +36,10 @@ class MatchTest(unittest.TestCase):
         a = self.an([rec(5, 6)])
         self.assertIsNotNone(a.match_detailed_drive(drive(2, 30)))
 
+    def test_the_short_drive_just_before_is_not_the_long_drives_telemetry(self):
+        a = self.an([rec(0, 1)])                         # 08:00 for 1 min: the short drive before
+        self.assertIsNone(a.match_detailed_drive(drive(2, 60)))         # 08:02 for an hour: starts within the padding but shares no time
+
     def test_a_file_starting_with_the_drive_matches(self):
         a = self.an([rec(0, 3)])
         self.assertIsNotNone(a.match_detailed_drive(drive(0, 30)))
