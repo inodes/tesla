@@ -100,7 +100,7 @@ class Keeper:
         return self.status()
 
     def _loop(self):
-        time.sleep(3)
+        time.sleep(15)                  # the window's first pages go first
         while True:
             try:
                 self.tick()

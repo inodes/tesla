@@ -1022,7 +1022,7 @@ def main():
     SENTRY = app_sentry.Sentry(DATA_DIR)
     TC = app_teslacam.TeslaCam(DATA_DIR, SENTRY)
     threading.Thread(target=footage_roots, daemon=True).start()                   # which drives are connected, found before the first map asks (a slow drive takes seconds)
-    threading.Thread(target=lambda: drivelist(True), daemon=True).start()        # ready before the page asks (it only uses what is kept here)
+    threading.Thread(target=lambda: (time.sleep(10) if DRIVELIST.has() else None, drivelist(True)), daemon=True).start()        # ready before the page asks; with a list kept from the last run the window's first page goes first
     DRV = app_drive_review.DriveReview(DATA_DIR, TC)
     FG = app_footage.Footage(DATA_DIR)
     KEEP = app_keeper.Keeper(DATA_DIR, TC, FG, DRV, SENTRY, footage_roots)
