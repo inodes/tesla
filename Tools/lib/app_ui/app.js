@@ -2640,7 +2640,7 @@ async function boot(){
   const st=async()=>{try{const s=await (await fetch("/api/status")).json();if(window.UI0==null)window.UI0=s.ui;
     window.ROOTS=s.roots;{let ch=false;Object.entries(s.names||{}).forEach(([r,l])=>{if(!"AJU".includes(r)){if(DRX[r]!==l)ch=true;DRX[r]=l;NM[r]=l}});if(ch){try{localStorage.setItem("drx",JSON.stringify(DRX))}catch(e){}if(window.UI0!=null&&typeof redrawQuietly==="function")redrawQuietly()}}const up=r=>s.roots[r]&&!(EJD[r]&&Date.now()-EJD[r]<20000);
     $("#status").innerHTML=["A","J","U",...Object.keys(DRX)].filter(r=>r==="A"||up(r)||(s.known||[]).includes(r)).map(r=>`<div class="${up(r)?"":"away"}"><span class="dot ${!up(r)?"off":KBUSY.includes(r)?"rd":"on"}" data-r="${r}" title="${!up(r)?"Not connected":KBUSY.includes(r)?"Being read":"Connected"}"></span><span class="dn">${NM[r]}</span>${up(r)?("AJU".includes(r)?`<button class="eject" data-ej="${r}" title="Eject ${NM[r]}" aria-label="Eject ${NM[r]}">⏏</button>`:""):'<span class="gone">not connected</span>'}</div>`).join("");
-    $("#upd").innerHTML=((window.EJMSG&&Date.now()<window.EJMSG.until?`<div class="${window.EJMSG.ok?"":"upd"}" style="font-size:12px">${esc(window.EJMSG.text)}</div>`:"")+`${s.stale?'<div class="upd">The app was updated. Quit and reopen it to load the new version.</div>':""}${s.ui!==window.UI0?'<div class="upd">The page was updated. <a href="#" onclick="location.reload();return false">Reload it</a> to load the new version.</div>':""}`);
+    $("#upd").innerHTML=((window.EJMSG&&Date.now()<window.EJMSG.until?`<div class="${window.EJMSG.ok?"":"upd"}" style="font-size:12px">${esc(window.EJMSG.text)}</div>`:"")+`${s.stale?'<div class="upd">App updated · <a href="#" onclick="appRestart();return false">Restart</a></div>':""}${s.ui!==window.UI0?'<div class="upd">The page was updated. <a href="#" onclick="location.reload();return false">Reload it</a> to load the new version.</div>':""}`);
     $$("#status [data-ej]").forEach(b=>b.onclick=async()=>{b.disabled=true;const r=await ejectDrive(b.dataset.ej);if(r.ok)EJD[b.dataset.ej]=Date.now();window.EJMSG={text:r.text,ok:r.ok,until:Date.now()+15000};st()})}catch(e){}};
   // amber while the Keeper (or a button) is reading a drive: asked often, and only the dots are touched
   const kp=async()=>{try{const k=await (await fetch("/api/keeper")).json();window.KBUSY=k.working?(Object.keys(k.drives||{}).length?Object.keys(k.drives):k.roles||[]):[];
@@ -2651,4 +2651,7 @@ addEventListener("keydown",e=>{if((e.metaKey||e.ctrlKey)&&e.key.toLowerCase()===
 // Cmd-1 to Cmd-9, and Cmd-0, open the pages of the side bar in the order they are listed there
 addEventListener("keydown",e=>{if(!e.metaKey||e.altKey||e.shiftKey||e.ctrlKey||!/^[0-9]$/.test(e.key))return;const l=$$("#nav>a[data-p]"),a=l[e.key==="0"?9:+e.key-1];if(!a)return;e.preventDefault();a.click()});
 $("#rl").onclick=()=>location.reload();
+// quit the app and start it again (the program as it is on disk now); the page waits for it and reloads (in its own window the new one opens by itself)
+async function appRestart(){const u=$("#upd");if(u)u.innerHTML='<div class="upd">Restarting…</div>';try{await fetch0("/api/app/restart",{method:"POST",body:"{}"})}catch(e){}
+  setTimeout(async function wait(){try{const r=await fetch0("/api/status");if(r.ok){location.reload();return}}catch(e){}setTimeout(wait,1000)},2500)}
 boot();
