@@ -39,7 +39,7 @@ import datetime
 import os
 import sys
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from lib.pvoutput_common import (  # noqa: F401 - shared with any later real sync script, see Tessie/PVOUTPUT_API.md
     api_get,
     get_api_key,

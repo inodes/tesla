@@ -45,7 +45,7 @@ if not MAN:
     c = sorted(glob.glob(os.path.join(logdir, "jowua-manifest-*.json")), key=os.path.getmtime)
     MAN = c[-1] if c else ""
 if not MAN or not os.path.exists(MAN): say("ERROR: no manifest (run inventory_jowua.py first)"); sys.exit(1)
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__))); sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "lib"))
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__)))); sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "lib"))
 import drive_registry as REG
 if DUUID:
     mps = REG.mount_of(DUUID)

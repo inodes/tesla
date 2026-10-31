@@ -16,10 +16,10 @@ import os
 import sys
 from datetime import datetime, timezone
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from lib.tessie_api_common import api_get, get_token, get_vin, load_config  # noqa: E402
 
-CACHE = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "resources", "api_cache", "charges.json")
+CACHE = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "resources", "api_cache", "charges.json")
 
 
 def main():
