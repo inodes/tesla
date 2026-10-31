@@ -532,6 +532,58 @@ def _thumb_pts(pts, k=40):
     return [[round(a, 4), round(b, 4)] for a, b in pts]
 
 
+PLACE_ADJ_S = 300           # a stop this close to a drive (before or after it) is where that drive ended or began
+PLACE_CARRY_S = 86400       # a stop with no drive beside it is where the last known position was, when that was no longer ago than this (an estimate)
+
+
+def fill_places(items, moves=None, moves_upto=0):
+    """The stops and recordings the dashcam made while the car was parked have no GPS in them. Gives each the position it must have had, from the best source:
+      1. a drive that ended just before it or began just after it (assumed, not an estimate);
+      2. another record's drives (Tessie: `moves` = [dict(t0, t1, p0, p1)], complete up to `moves_upto`): the drive that ended since the last known position, else the last
+         known position when that record shows no drive since (confirmed);
+      3. the last known position alone, no more than PLACE_CARRY_S before (an estimate: pest=True).
+    Returns new items (those that got a position are copies with p0, p1 and pest); the rest are as they were."""
+    asc = sorted(items, key=lambda x: (x["t0"], x["t1"]))
+    ok = lambda p: bool(p) and p[0] is not None
+    drives = [x for x in asc if x["kind"] == "drive"]
+    known = None                                        # (position, time it was last there, was it an estimate)
+    out = []
+    for it in asc:
+        if it["kind"] == "drive":
+            if ok(it.get("p1")):
+                known = (it["p1"], it["t1"], False)
+            out.append(it)
+            continue
+        if it["kind"] not in ("stopped", "recording") or ok(it.get("p0")) or ok(it.get("p1")):
+            if ok(it.get("p1")) and it["kind"] not in ("sentry", "gap"):
+                known = (it["p1"], it["t1"], bool(it.get("pest")))
+            out.append(it)
+            continue
+        pos, est = None, False
+        prev = [d for d in drives if d["t1"] <= it["t0"] + 1 and it["t0"] - d["t1"] <= PLACE_ADJ_S and ok(d.get("p1"))]
+        nxt = [d for d in drives if d["t0"] >= it["t1"] - 1 and d["t0"] - it["t1"] <= PLACE_ADJ_S and ok(d.get("p0"))]
+        if prev:
+            pos = prev[-1]["p1"]
+        elif nxt:
+            pos = nxt[0]["p0"]
+        else:
+            mv = [m for m in (moves or []) if ok(m.get("p1")) and m["t1"] <= it["t0"]]
+            since = [m for m in mv if known is None or m["t1"] > known[1]]
+            complete = bool(moves) and moves_upto >= it["t0"]
+            if since:
+                pos = max(since, key=lambda m: m["t1"])["p1"]
+            elif known and it["t0"] - known[1] <= PLACE_CARRY_S:
+                pos, est = known[0], known[2] or not complete
+            elif known is None and complete and mv:
+                pos = max(mv, key=lambda m: m["t1"])["p1"]
+        if pos:
+            it = dict(it, p0=list(pos), p1=list(pos), pest=est)
+            if not est:
+                known = (pos, it["t1"], False)                  # an estimate does not make the last known place any newer
+        out.append(it)
+    return out
+
+
 def _gap(a, b):
     t0, t1 = a["t1"], b["t0"]
     pa, pb = a.get("p1"), b.get("p0")
