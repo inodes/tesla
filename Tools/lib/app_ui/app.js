@@ -21,7 +21,9 @@ window.fetch=(u,o)=>{const r=fetch0(u,o);return(typeof u==="string"&&u.startsWit
 // ---------- remembered pages: a list seen before is drawn at once from the browser's own copy and refreshed behind it; the page is redrawn only if the fresh data differs
 const IDB=(()=>{let db;const open=()=>db||(db=new Promise(res=>{try{const r=indexedDB.open("tesla-ui",1);r.onupgradeneeded=()=>r.result.createObjectStore("kv");r.onsuccess=()=>res(r.result);r.onerror=r.onblocked=()=>res(null)}catch(e){res(null)}}));
   const tx=async(mode,f)=>{const d=await open();if(!d)return undefined;return new Promise(res=>{try{const t=d.transaction("kv",mode),rq=f(t.objectStore("kv"));t.oncomplete=()=>res(rq&&rq.result);t.onerror=t.onabort=()=>res(undefined)}catch(e){res(undefined)}})};
-  return{get:k=>tx("readonly",s=>s.get(k)),set:(k,v)=>tx("readwrite",s=>s.put(v,k)),del:k=>tx("readwrite",s=>s.delete(k)),clear:()=>tx("readwrite",s=>s.clear())}})();
+  const lastK=k=>{const i=String(k).indexOf("|");return i>0&&/^[\d.]+$/.test(k.slice(0,i))?"last"+k.slice(i):null};          // "<page version>|list" is also kept as "last|list": a changed page shows the copy the earlier page kept, then refreshes it
+  return{get:async k=>{const v=await tx("readonly",s=>s.get(k));if(v!==undefined)return v;const l=lastK(k);return l?tx("readonly",s=>s.get(l)):undefined},
+    set:(k,v)=>{const l=lastK(k);if(l)tx("readwrite",s=>s.put(v,l));return tx("readwrite",s=>s.put(v,k))},del:k=>tx("readwrite",s=>s.delete(k)),clear:()=>tx("readwrite",s=>s.clear())}})();
 const UIV=fetch("/api/status").then(r=>r.json()).then(s=>String(s.ui)).catch(()=>"0");     // a changed page (app.js, app.css) forgets what was remembered
 const mkey=async p=>(await UIV)+"|"+p,same=(a,b)=>JSON.stringify(a)===JSON.stringify(b);
 const clean=x=>x&&typeof x==="object"&&("stale" in x||"status" in x)?Object.assign({},x,{stale:undefined,status:undefined}):x,sameData=(a,b)=>same(clean(a),clean(b));
@@ -89,10 +91,15 @@ function geoHtml(ks,pd,pw){return ks.map(o=>{const n=o.n||1,m=`margin:${o.mt}px 
   return one.repeat(n)}).join("")}
 let GEOT=0,GEOS="";
 const geoSave=()=>{GEOT=0;if(QUIET||document.hidden||$(".sk",main)||!main.children.length||$(".ph:empty",main)||/Loading|Reading the drive|Updating with the latest/.test(main.textContent.slice(0,600)))return;
+  snapSave();
   const k=geoOf2();if(!k)return;const j=JSON.stringify(k);if(j===GEOS)return;GEOS=j;GEO[GEOK()]=k;const ks=Object.keys(GEO);if(ks.length>40)delete GEO[ks[0]];try{localStorage.setItem("geo",JSON.stringify(GEO))}catch(e){}};
 const geoOf2=()=>{const ks=[...main.children].map(c=>geoOf(c,1)).filter(Boolean);return ks.length?{w:GEOW(),k:geoRle(ks)}:null};
 const geoWatch=()=>new MutationObserver(()=>{if(!GEOT)GEOT=setTimeout(geoSave,1800)}).observe(main,{childList:true,subtree:true,characterData:true});
-const loading=kind=>{if(QUIET)return;const g=GEO[GEOK()],ok=g&&Math.abs(g.w-GEOW())<=2&&g.k&&g.k.length;main.innerHTML='<div class="sk" role="status" aria-label="Loading">'+(ok?geoHtml(g.k,"block",g.w):(SKEL[kind]||SKEL.page)())+'</div>'};
+// the last screen of each page: kept when the page has settled, drawn at once the next time the page is opened (also after the app was started again), replaced as soon as the page has its own answer
+const SNAP={},snapKey=()=>"scr|"+(location.hash||"#/activity"),SNAPMAX=600000;
+const snapSave=()=>{try{let h=main.innerHTML;if(h.length>SNAPMAX)return;h=h.replace(/<video[\s\S]*?<\/video>/g,"").replace(/<canvas[\s\S]*?<\/canvas>/g,"");SNAP[snapKey()]=h;IDB.set(snapKey(),h)}catch(e){}};
+const snapLoad=async()=>{const k=snapKey();if(SNAP[k]===undefined){const v=await IDB.get(k);SNAP[k]=typeof v==="string"?v:null}};
+const loading=kind=>{if(QUIET)return;if(SNAP[snapKey()]){main.innerHTML='<div class="snap" aria-busy="true">'+SNAP[snapKey()]+'</div>';return}const g=GEO[GEOK()],ok=g&&Math.abs(g.w-GEOW())<=2&&g.k&&g.k.length;main.innerHTML='<div class="sk" role="status" aria-label="Loading">'+(ok?geoHtml(g.k,"block",g.w):(SKEL[kind]||SKEL.page)())+'</div>'};
 const QK="clipQueue",qget=()=>{try{return JSON.parse(localStorage.getItem(QK)||"[]")}catch(e){return[]}};
 
 // ---------- tooltip + map helpers
@@ -2614,6 +2621,7 @@ async function route(){
   const own=({drive:"drives",charge:"charges",idle:"parked",idles:"parked",dashcam:"drives",flips:"drives",review:"drives",place:"places"})[p]||p,from=NAV.length?(NAV[0].h||"").replace(/^#\//,"").split("/")[0]:"",lit=own!==p&&ROOTS[from]&&ROOTS[from]!==ROOTS[own]&&NAV.length>1?(({idles:"parked"})[from]||from):own;
   $$("#nav>a").forEach(a=>a.classList.toggle("on",a.dataset.p===lit));
   badge();if(!QUIET)main.scrollTop=0;
+  if(!QUIET)await snapLoad();
   try{
     if(p==="drive")await pageDrive(arg,arg2);else if(p==="charge")await pageCharge(arg,arg2);else if(p==="idle"||p==="parked"&&arg)await pageParkedOne(arg);else if(p==="place")await pagePlace(arg);else await (ROUTES[p]||pageActivity)(arg,arg2);
   }catch(e){main.innerHTML=errBox(e.stack||e.message,"Something went wrong")}

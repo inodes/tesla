@@ -7,8 +7,10 @@ the answer is marked stale while it runs and the page asks again a few seconds l
 
     Kept(folder, version).get(name, build, fresh=False) -> (json bytes, stale)
 """
+import glob
 import json
 import os
+import re
 import threading
 import time
 
@@ -54,7 +56,13 @@ class Kept:
             lk = self.locks.setdefault(name, threading.Lock())
         if ent is None and not fresh:
             try:
-                with open(self._path(name), "rb") as f:
+                path = self._path(name)
+                if not os.path.isfile(path):                                  # kept by an earlier version of the program: shown now, built again at once behind it
+                    older = sorted(glob.glob(os.path.join(self.dir, "api_%s_*.json" % name)), key=os.path.getmtime)
+                    older = [p for p in older if re.fullmatch(r"api_%s_[\d.]+\.json" % re.escape(name), os.path.basename(p))]
+                    if older:
+                        path = older[-1]
+                with open(path, "rb") as f:
                     raw = f.read()
                 json.loads(raw)
                 with self.lock:

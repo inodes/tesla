@@ -137,7 +137,7 @@ class TodoTest(unittest.TestCase):
     def test_an_answer_worked_out_by_older_code_is_looked_at_again(self):
         self.todo.snapshot()
         self.wait()
-        self.assertEqual(self.todo._sig({"J": self.cam})[-2], FT.CODE_VER)
+        self.assertEqual(self.todo._sig({"J": self.cam})[-1], FT.CODE_VER)
         self.todo._mem = dict(self.todo._mem, sig=self.todo._sig({"J": self.cam})[:-1])      # as saved before the version was part of it
         self.assertTrue(self.todo.snapshot()["checking"])
         self.wait()

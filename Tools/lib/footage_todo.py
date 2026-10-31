@@ -44,17 +44,6 @@ def _mtime_ns(root):
 CODE_VER = 4        # raise when the way the answer is worked out changes, so a cached answer from before is looked at again
 
 
-def _code_stamp():
-    """The newest change among the program files as they were when this run started: an answer kept by another version of the program is worked out again."""
-    d = os.path.dirname(os.path.abspath(__file__))
-    try:
-        return round(max(os.path.getmtime(os.path.join(d, f)) for f in os.listdir(d) if f.endswith(".py")))
-    except (OSError, ValueError):
-        return 0
-
-
-CODE_STAMP = _code_stamp()
-
 class Todo:
     def __init__(self, cache_file, data_dir, tc, fg, roots_fn, idle_fn=lambda: True):
         self.cache_file, self.dir, self.tc, self.fg, self.roots_fn, self.idle_fn = cache_file, data_dir, tc, fg, roots_fn, idle_fn
@@ -97,7 +86,7 @@ class Todo:
             stills = len(self.fg.stills.stamps())
         except Exception:
             stills = -1
-        return [[r, round(_mtime(p)), (scans.get(r) or {}).get("at") or ""] for r, p in sorted(roots.items())] + [tele, stills, self._signs_token(), IGN.version(), PG.version(), CODE_VER, CODE_STAMP]
+        return [[r, round(_mtime(p)), (scans.get(r) or {}).get("at") or ""] for r, p in sorted(roots.items())] + [tele, stills, self._signs_token(), IGN.version(), PG.version(), CODE_VER]
 
     def _signs_token(self):
         """How much of the signs has been read: the newest change among the day files the sign review keeps (a file changes as minutes are added to it)."""
