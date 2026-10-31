@@ -39,11 +39,19 @@ class CutsTest(unittest.TestCase):
         self.assertEqual(c[self.sts[0]][1:3], [-33.80, 151.10])    # before the drive: where it began
         self.assertEqual(c[self.sts[20]][1:3], [-33.81, 151.11])   # after it: where it ended
 
-    def test_minutes_not_read_never_make_a_cut(self):
+    def test_minutes_not_read_after_a_drive_are_the_car_parked_when_there_are_a_few_of_them(self):
         items = [item("drive", self.sts[0], self.sts[9], p0=[1.0, 2.0], p1=[1.1, 2.1]), item("recording", self.sts[10], self.sts[14]),
                  item("stopped", self.sts[15], self.sts[29])]
         c = RC.compute(self.sts, items)
-        self.assertEqual([(k, v[0], v[3]) for k, v in sorted(c.items())], [(self.sts[0], "drive", False), (self.sts[15], "park", True)])   # the unread minutes stay with the drive
+        self.assertEqual([(k, v[0], v[3]) for k, v in sorted(c.items())], [(self.sts[0], "drive", False), (self.sts[10], "park", True)])    # parked at Home: never read, so no telemetry of its own
+
+    def test_between_two_drives_the_unread_minutes_are_a_parked_section_and_a_short_hole_is_not(self):
+        items = [item("drive", self.sts[0], self.sts[9], p0=[1.0, 2.0], p1=[1.1, 2.1]), item("recording", self.sts[10], self.sts[19]), item("drive", self.sts[20], self.sts[29])]
+        c = RC.compute(self.sts, items)
+        self.assertEqual([(k, v[0], v[3]) for k, v in sorted(c.items())], [(self.sts[0], "drive", False), (self.sts[10], "park", True), (self.sts[20], "drive", True)])
+        items = [item("drive", self.sts[0], self.sts[9]), item("recording", self.sts[10], self.sts[11]), item("drive", self.sts[12], self.sts[29])]
+        c = RC.compute(self.sts, items)
+        self.assertEqual([k for k in sorted(c)], [self.sts[0], self.sts[12]])                         # two minutes between: a hole; the drives are cut as before
 
     def test_a_drive_after_another_drive_is_cut_between_them(self):
         items = [item("drive", self.sts[0], self.sts[9]), item("drive", self.sts[10], self.sts[29])]

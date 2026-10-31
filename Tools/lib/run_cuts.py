@@ -21,6 +21,7 @@ import threading
 
 import clip_clock as CC
 
+MIN_UNREAD = 180            # seconds: an unread stretch this long after a drive is a parked section (a shorter one is a hole in the drive)
 GAP = 75                    # as in app_teslacam: minutes this close are one run
 _LOCK = threading.RLock()
 _S = {}                     # first minute of a section -> [kind, lat, lon, cut, UTC time of its last minute]
@@ -109,6 +110,8 @@ def compute(stamps, items):
             k = ("drive", it["id"])
         elif it and it["kind"] in ("stopped", "parked"):
             k = ("park", "")
+        elif it and it["kind"] == "recording" and key is not None and key[0] == "drive" and it["t1"] - it["t0"] >= MIN_UNREAD:
+            k = ("park", "")                              # minutes nobody read after a drive (parked at Home: they are left alone, so never read) are the car parked, not more of the drive
         new = last is None or t - last > GAP
         cut = False
         if not new and k is not None and key is not None and k != key:

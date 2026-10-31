@@ -255,3 +255,6 @@ tr.chline{cursor:pointer}tr.chline td{color:var(--bad);font-weight:600;font-size
 
 /* the stills and video players carry their own Close, first in their button bar: the floating one beside the date is hidden while it shows */
 main:has(#spl .stbar,#spl .vbar) #splx{display:none}
+
+/* what the car was doing as it passed a sign: its speed and the limit before it; red when over */
+.sgi{background:rgba(0,0,0,.65);color:#fff;font:600 11px system-ui;padding:2px 7px;border-radius:9px;white-space:nowrap}.sgi.over{background:#dc2626}.vsg{flex-wrap:wrap}
