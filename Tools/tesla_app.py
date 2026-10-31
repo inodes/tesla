@@ -52,6 +52,7 @@ import mimetypes
 import html
 import os
 import re
+import subprocess
 import sys
 import threading
 import time
@@ -493,6 +494,8 @@ class H(BaseHTTPRequestHandler):
         try:
             n = int(self.headers.get("Content-Length") or 0)
             body = json.loads(self.rfile.read(n) or b"{}")
+            if u.path in ("/api/app/quit", "/api/app/restart"):      # quit the app, or start it again with the program as it is on disk
+                return self.send_json(app_exit(u.path.endswith("restart")))
             if u.path == "/api/places/save":
                 with _ACTION_LOCK:
                     return self.send_json(STORE.pl.save(body))
@@ -970,6 +973,32 @@ def _warm(port):
             pass
 
 
+WIN = None                  # the app's window (pywebview), when it has one
+
+
+def app_exit(restart=False):
+    """Quit the app, or quit and start it again (the new start loads the program as it is on disk now). From the app's own window
+    (started by Tesellate.app) the restart opens the app again by its bundle id once this one has gone; started from a terminal it
+    starts this same command again in place."""
+    def go():
+        time.sleep(0.4)                     # the answer reaches the page first
+        bundled = os.environ.get("__CFBundleIdentifier") == "net.inodes.tesellate"
+        if restart and bundled:
+            subprocess.Popen(["/bin/sh", "-c", "sleep 1.5; open -b net.inodes.tesellate"], start_new_session=True,
+                             stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        if restart and not bundled:
+            os.execv(sys.executable, [sys.executable] + sys.argv)
+        try:
+            if WIN is not None:
+                WIN.destroy()
+        except Exception:
+            pass
+        time.sleep(0.5)
+        os._exit(0)
+    threading.Thread(target=go, daemon=True).start()
+    return dict(ok=True)
+
+
 KEPT = None
 KEPT_LISTS = {          # the lists a page asks for first: answered from what was kept and refreshed behind (lib/app_kept.py)
     "summary": lambda: STORE.summary(),
@@ -1066,7 +1095,8 @@ def main():
     if not a.browser:
         try:
             import webview      # optional: native window
-            win = webview.create_window("Tesellate", url, width=int(app_config.get("window.width")), height=int(app_config.get("window.height")), min_size=(900, 600), text_select=True)
+            global WIN
+            WIN = win = webview.create_window("Tesellate", url, width=int(app_config.get("window.width")), height=int(app_config.get("window.height")), min_size=(900, 600), text_select=True)
             menu = mac_shell.build_menu(win) if sys.platform == "darwin" else None            # the pages in the menu bar
             mac_shell.start(KEEP.status, CKEEP.job)                                            # the job's share on the Dock icon, and a notification when a long job ends
             try:                # the Dock shows the app's icon even though python is the running program (needs pyobjc, which pywebview brings on a Mac)
