@@ -36,7 +36,7 @@ class Kept(unittest.TestCase):
             json.dump(dict(timestamp=e.replace("_", "T", 1)[:11] + e[11:].replace("-", ":"), city="Ryde", reason="sentry_aware_object_detection", camera="5"), f)
 
     def kept(self):
-        with open(os.path.join(self.tmp, "idx.json")) as f:
+        with open(os.path.join(self.tmp, "teslacam_events", "idx.json")) as f:
             return json.load(f)
 
     def ids(self, root):
@@ -84,6 +84,16 @@ class Kept(unittest.TestCase):
         before = self.kept()
         self.assertEqual(self.s.events(None)[1], False)
         self.assertEqual(self.kept(), before)
+
+    def test_a_list_at_the_top_of_the_data_folder_is_moved_into_teslacam_events(self):
+        import app_sentry as AS
+        d = tempfile.mkdtemp()
+        with open(os.path.join(d, "teslacam_index_A_saved.json"), "w") as f:
+            f.write("{}")
+        p = AS.index_path(d, "teslacam_index_A_saved.json")
+        self.assertEqual(p, os.path.join(d, "teslacam_events", "teslacam_index_A_saved.json"))
+        self.assertTrue(os.path.isfile(p))
+        self.assertFalse(os.path.exists(os.path.join(d, "teslacam_index_A_saved.json")))
 
 
 if __name__ == "__main__":

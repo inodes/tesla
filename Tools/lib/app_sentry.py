@@ -2,13 +2,28 @@
 
 TeslaCam/SentryClips/<event folder>/ holds one-minute clips per camera (<stamp>-<camera>.mp4), event.json (when it
 triggered, the reason, an approximate place) and thumb.png. This reads those, remembers the answer in
-<data>/sentry_index.json (only folders not seen before are read again), and never changes anything on the drive.
+<data>/teslacam_events/sentry_index.json (only folders not seen before are read again), and never changes anything on the drive.
 """
 import json
 import os
 import re
 import threading
 import time
+
+EVENTS_DIR = "teslacam_events"          # the kept lists of every drive's Saved and Sentry events: <data>/teslacam_events/<file>
+
+
+def index_path(data_dir, name):
+    """Where a kept event list lives: in the teslacam_events folder of the data folder. One still at the top of the data folder (where they were kept before) is moved in."""
+    new = os.path.join(data_dir, EVENTS_DIR, name)
+    old = os.path.join(data_dir, name)
+    if not os.path.exists(new) and os.path.exists(old):
+        try:
+            os.makedirs(os.path.dirname(new), exist_ok=True)
+            os.replace(old, new)
+        except OSError:
+            return old
+    return new
 
 import clip_clock as CC
 
@@ -42,13 +57,15 @@ def _shown(e):
 
 class Sentry:
     def __init__(self, data_dir, index="sentry_index.json", folder="SentryClips"):
-        self.f = os.path.join(data_dir, index)
+        self.dir, self.name = data_dir, index
+        self.f = index_path(data_dir, index)
         self.folder = folder                    # SentryClips or SavedClips: both hold one folder per event
         self.mem = None
         self.memo = None                        # (teslacam, when, events, connected) of the last answer
 
     def _load(self):
         if self.mem is None:
+            self.f = index_path(self.dir, self.name)
             try:
                 with open(self.f, encoding="utf-8") as fh:
                     self.mem = json.load(fh)
@@ -93,6 +110,7 @@ class Sentry:
                             changed = True
                 if changed:
                     try:
+                        os.makedirs(os.path.dirname(self.f), exist_ok=True)
                         tmp = self.f + ".tmp"
                         with open(tmp, "w", encoding="utf-8") as fh:
                             json.dump(idx, fh, ensure_ascii=False)
