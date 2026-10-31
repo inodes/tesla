@@ -920,7 +920,8 @@ def drivelist(wait=False):
         tess = [x for x in act if x["k"] == "drive"]
         cam = TC.timeline_stored(None)["items"]
         try:
-            run_cuts.update(TC._ledger_recent(None)[0], cam)         # where a Recent recording is cut into its drive and parked sections (the TeslaCam list)
+            moves = [dict(t0=x["t0"], t1=x["t1"], p0=[x.get("lat"), x.get("lon")], p1=[x.get("lat1"), x.get("lon1")]) for x in tess if x.get("t0") and x.get("t1")] or None       # Tessie's drives, when there are any: where the car went when no clip shows it
+            run_cuts.update(TC._ledger_recent(None)[0], cam, moves, float(tessie_state().get("at") or 0))         # where a Recent recording is cut into its drive and parked sections (the TeslaCam list)
         except Exception:
             pass
         items = app_drivelist.merge(tess, [x for x in act if x["k"] == "charge"], cam, [x for x in act if x["k"] == "idle"])

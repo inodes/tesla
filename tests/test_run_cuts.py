@@ -66,6 +66,20 @@ class CutsTest(unittest.TestCase):
         self.assertEqual(c[later][1:3], [-33.81, 151.11])           # the park before it ended there
         self.assertEqual(c[far][1:3], [None, None])                 # more than a day after the section before it: not guessed
 
+    def test_a_carried_position_is_marked_as_an_estimate_unless_another_record_confirms_it(self):
+        later = stamps(0, 1, hour=19)[0]
+        items = self.items + [item("parked", later, later)]
+        t = CC.utc(later)
+        c = RC.compute(self.sts + [later], items)
+        self.assertEqual((c[later][1:3], c[later][5:]), ([-33.81, 151.11], [True]))        # dashcam alone: an estimate
+        c = RC.compute(self.sts + [later], items, [dict(t0=1, t1=2, p0=[0, 0], p1=[1, 1])], t + 60)
+        self.assertEqual((c[later][1:3], c[later][5:]), ([-33.81, 151.11], []))            # Tessie is complete to here and has no drive since: confirmed
+        moved = dict(t0=CC.utc(self.sts[29]) + 600, t1=CC.utc(self.sts[29]) + 1200, p0=[-33.81, 151.11], p1=[-33.5, 151.0])
+        c = RC.compute(self.sts + [later], items, [moved], t + 60)
+        self.assertEqual((c[later][1:3], c[later][5:]), ([-33.5, 151.0], []))              # it moved without a clip showing it: where that drive ended
+        c = RC.compute(self.sts + [later], items, [dict(t0=1, t1=2, p0=[0, 0], p1=[1, 1])], t - 3600)
+        self.assertEqual(c[later][5:], [True])                                             # Tessie not complete to here: still an estimate
+
     def test_a_gap_starts_a_run_without_a_cut(self):
         sts = stamps(0, 5) + stamps(20, 5)
         c = RC.compute(sts, [item("stopped", sts[0], sts[-1])])

@@ -80,13 +80,19 @@ def section(stamp):
         return s[0], s[1], s[2]
 
 
+def pos_est(stamp):
+    s = _S.get(stamp)
+    return bool(s and len(s) > 5 and s[5])
+
+
 def pos(stamp):
     s = _S.get(stamp)
     return [s[1], s[2]] if s and s[1] is not None else None
 
 
-def compute(stamps, items):
-    """{first minute of every section: [kind, lat, lon, cut]} for these minutes and the timeline's items."""
+def compute(stamps, items, moves=None, moves_upto=0):
+    """{first minute of every section: [kind, lat, lon, cut, last minute, estimated]} for these minutes and the timeline's items.
+    moves: the drives some other record (Tessie) has, [dict(t0, t1, p0, p1)], or None when there is none; moves_upto: the time up to which that record is complete."""
     its = sorted((i for i in items if i.get("kind") in ("drive", "stopped", "parked", "recording")), key=lambda i: i["t0"])
     t0s = [i["t0"] for i in its]
 
@@ -145,21 +151,50 @@ def compute(stamps, items):
             p = nx.get("p0") or nx.get("p1")
         if p and p[0] is not None:
             v[1], v[2] = p[0], p[1]
-        elif n and CC.utc(st) - (out[order[n - 1]][4] if len(out[order[n - 1]]) > 4 else 0) <= CARRY_S:
-            # a parked minute on its own (a clip the car wrote while parked, hours after the last drive): the car has not been recorded moving since, so it is where the section before ended
-            q, r = out[order[n - 1]], ref.get(order[n - 1])
-            if q[0] == "park" and q[1] is not None:
-                v[1], v[2] = q[1], q[2]
-            elif q[0] == "drive" and r and (r.get("p1") or r.get("p0")) and (r.get("p1") or r.get("p0"))[0] is not None:
-                pp = r.get("p1") or r.get("p0")
-                v[1], v[2] = pp[0], pp[1]
+        else:
+            _carry(v, st, n, order, out, ref, moves, moves_upto)
     return out
 
 
-def update(stamps, items):
+def _carry(v, st, n, order, out, ref, moves, moves_upto):
+    """A parked minute on its own (a clip written while parked, hours after the last drive) has no position in its video. Where it is, best source first:
+    a drive of the other record that ended since the section before it (the car moved: it is where that ended); the section before it, when the other record is complete
+    up to this minute and has no drive since (confirmed); the section before it alone, within CARRY_S (an estimate, marked as one). Nothing else is guessed."""
+    t = CC.utc(st)
+    q = out[order[n - 1]] if n else None
+    r = ref.get(order[n - 1]) if n else None
+    ap = None                                                   # where the section before it ended
+    te = None
+    if q and len(q) > 4 and q[4] is not None:
+        te = q[4]
+        if q[0] == "park" and q[1] is not None:
+            ap = (q[1], q[2])
+        elif q[0] == "drive" and r:
+            pp = r.get("p1") or r.get("p0")
+            if pp and pp[0] is not None:
+                ap = (pp[0], pp[1])
+    if moves:
+        since = [m for m in moves if m.get("p1") and m["p1"][0] is not None and m["t1"] <= t and (te is None or m["t1"] > te)]
+        if since:
+            m = max(since, key=lambda x: x["t1"])
+            v[1], v[2] = m["p1"][0], m["p1"][1]
+            return
+        if ap is None and moves_upto >= t:                      # the other record says where the car last was, and that it has not moved since
+            before = [m for m in moves if m.get("p1") and m["p1"][0] is not None and m["t1"] <= t]
+            if before:
+                m = max(before, key=lambda x: x["t1"])
+                v[1], v[2] = m["p1"][0], m["p1"][1]
+                return
+    if ap is not None and te is not None and t - te <= CARRY_S:
+        v[1], v[2] = ap
+        if (q and len(q) > 5 and q[5]) or not (moves is not None and moves_upto >= t):         # nothing confirms the car stayed
+            v[5:] = [True]
+
+
+def update(stamps, items, moves=None, moves_upto=0):
     """Work the cuts out again; keeps them, and tells the listeners when they changed."""
     global _S, _VER
-    new = compute(stamps, items)
+    new = compute(stamps, items, moves, moves_upto)
     with _LOCK:
         if new == _S:
             return False
