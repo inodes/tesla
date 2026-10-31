@@ -80,6 +80,18 @@ class CutsTest(unittest.TestCase):
         c = RC.compute(self.sts + [later], items, [dict(t0=1, t1=2, p0=[0, 0], p1=[1, 1])], t - 3600)
         self.assertEqual(c[later][5:], [True])                                             # Tessie not complete to here: still an estimate
 
+    def test_a_parked_section_next_to_a_drive_in_another_run_is_where_the_drive_ended_or_began(self):
+        drive = stamps(0, 5, hour=9)                                # 09:00 .. 09:04, a drive
+        park_after = stamps(7, 3, hour=9)                           # 09:07 .. 09:09: two minutes after it, a run of its own
+        park_before = stamps(57, 2, hour=8)                        # 08:57, 08:58: just before it
+        far = stamps(50, 1, hour=9)                                 # 09:50: long after
+        items = [item("drive", drive[0], drive[-1], p0=[-33.80, 151.10], p1=[-33.81, 151.11]),
+                 item("parked", park_after[0], park_after[-1]), item("parked", park_before[0], park_before[-1]), item("parked", far[0], far[0])]
+        c = RC.compute(drive + park_after + park_before + far, items)
+        self.assertEqual((c[park_after[0]][1:3], c[park_after[0]][5:]), ([-33.81, 151.11], []))      # next to the end of the drive: assumed, not an estimate
+        self.assertEqual((c[park_before[0]][1:3], c[park_before[0]][5:]), ([-33.80, 151.10], []))    # next to the start of the drive
+        self.assertEqual(c[far[0]][5:], [True])                                                       # far from it: carried, an estimate
+
     def test_a_gap_starts_a_run_without_a_cut(self):
         sts = stamps(0, 5) + stamps(20, 5)
         c = RC.compute(sts, [item("stopped", sts[0], sts[-1])])
