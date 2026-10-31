@@ -60,7 +60,9 @@ def _runs(stamps):
     return out
 
 
-WRITABLE = "AJU"      # the drives the app moves video from and deletes from; any other drive (a folder drive, a rescue copy) is only read
+def writable(role):
+    """The drives the app moves video from and deletes from: every drive it reads (a folder drive such as a rescue copy included)."""
+    return role in DR.read_roles()
 
 
 class ClipKeep:
@@ -332,8 +334,8 @@ class ClipKeep:
             return None, "Unknown action."
         if role not in roots or not roots[role]:
             return None, "That drive is not connected."
-        if role not in WRITABLE:
-            return None, "That drive is only read: nothing is moved from it or deleted from it."
+        if not writable(role):
+            return None, "That drive is not one the app handles."
         if action == "move" and (role == "A" or not roots.get("A")):
             return None, "Moving needs the Archive connected, and a clip not already on it."
         if not items:
@@ -429,7 +431,7 @@ class ClipKeep:
         if "video" in types:
             for kind, cid, rec in plan:
                 for role in sorted(roots):
-                    if not roots[role] or role not in WRITABLE:                # a folder drive (a rescue copy) is only read
+                    if not roots[role] or not writable(role):
                         continue
                     fs = self.files(kind, cid, role, led)
                     if not fs:

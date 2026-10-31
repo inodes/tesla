@@ -244,3 +244,4 @@ Log (newest first):
 - 2026-10-31: Recent cuts: a minute in which the car moved at all belongs to the drive (the clips are whole minutes and cannot be cut to the second); a park is every stretch in Park between drives.
 - 2026-10-31: TeslaCam: a registered folder drive (LaCie) is named from the first screen (its name is kept in the browser and looked up when used), not shown as its letter.
 - 2026-10-31: TeslaCam: the 'Stills kept' bar is one line (minutes and size); the explanation is on hover.
+- 2026-10-31: TeslaCam: a folder drive (LaCie) is deleted from and moved from like the Archive, JOWUA and the Tesla USB; it is no longer treated as read-only.
