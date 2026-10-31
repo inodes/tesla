@@ -1012,6 +1012,7 @@ def main():
     except OSError:
         pass
     STORE = app_data.Store(DATA_DIR)
+    STORE.local = local_cache_dir()
     home_ignore.set_places(lambda: STORE.pl.defs())          # the saved places: where a parked recording is left alone (Home)
     KEPT = app_kept.Kept(local_cache_dir(), _code_version())
     DRIVELIST = app_drivelist.Cached(os.path.join(local_cache_dir(), "drivelist.json"))
