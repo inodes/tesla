@@ -960,8 +960,8 @@ def _warm(port):
     """Asks this server for the pages' data once, in the background, so the first page the window opens is not the one that waits for everything to load (the first
     request after a start builds the lists; later ones answer from memory). Only what is kept here: nothing is read from a drive."""
     import urllib.request
-    time.sleep(1)
-    for path in ("summary", "activity", "drivelist", "places", "alerts", "chargebook", "chargers", "battery", "analytics", "teslacam", "clips", "clips/keep"):
+    time.sleep(8)                   # the window's first page goes first; what it asks for is answered from what was kept
+    for path in ("summary", "activity", "drivelist", "places", "alerts", "chargers", "battery", "analytics", "teslacam", "clips", "clips/keep"):      # the charge book is looked at only when the Charges page asks for it
         try:
             urllib.request.urlopen("http://127.0.0.1:%d/api/%s" % (port, path), timeout=300).read()
         except Exception:
@@ -1036,7 +1036,6 @@ def main():
     if not a.no_background:
         KEEP.start()
     BOOK = app_charges.ChargeBook(os.path.dirname(os.path.abspath(__file__)), DATA_DIR)
-    BOOK.get()          # start reconciling the charges with their invoices in the background
     SYNC = app_sync.ChargerSync(os.path.dirname(os.path.abspath(__file__)), DATA_DIR)
     REACH = app_reach.ReachService(os.path.dirname(os.path.abspath(__file__)), DATA_DIR)
     TSYNC = app_sync.ChargerSync(os.path.dirname(os.path.abspath(__file__)), DATA_DIR, "sync_drives_all.sh")

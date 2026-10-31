@@ -173,7 +173,15 @@ class ChargeBook:
         with self.lock:
             self._load_cache()
             if time.time() - getattr(self, "sig_t", 0) > 10:        # looking at the files (the invoice folder, thousands of deep-dive files) takes seconds: not for every request
-                self.sig, self.sig_t = self._inputs(), time.time()
+                if self.book is None or not getattr(self, "sig", None):
+                    self.sig, self.sig_t = self._inputs(), time.time()      # nothing kept yet: nothing to show until the files have been looked at
+                else:
+                    if not getattr(self, "sig_thread", None) or not self.sig_thread.is_alive():
+                        self.sig_thread = threading.Thread(target=self._look, daemon=True)         # something is kept: it is served now and the files are looked at behind it
+                        self.sig_thread.start()
+                    self.sig_t = time.time()
+            if not getattr(self, "sig", None):
+                self.sig = self.book.get("sig") if self.book else None
             sig = self.sig
             stale = self.book is None or self.book.get("sig") != sig
             running = self.thread is not None and self.thread.is_alive()
@@ -185,6 +193,15 @@ class ChargeBook:
             if self.book is None:
                 return dict(status="error" if self.err and not running else "building", error=self.err, book=None)
             return dict(status="building" if running else "ready", error=self.err, book=self.book)
+
+    def _look(self):
+        """Looks at the files the book is made from (seconds) and keeps what it saw; the next request starts a rebuild if they differ from the book."""
+        try:
+            sig = self._inputs()
+        except Exception:
+            return
+        with self.lock:
+            self.sig = sig
 
     def _build_bg(self, sig):
         try:
