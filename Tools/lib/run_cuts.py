@@ -22,6 +22,7 @@ import threading
 import clip_clock as CC
 
 MIN_UNREAD = 180            # seconds: an unread stretch this long after a drive is a parked section (a shorter one is a hole in the drive)
+CARRY_S = 86400             # seconds: a parked minute with no position of its own takes the one of the section before it when that ended no longer ago than this
 GAP = 75                    # as in app_teslacam: minutes this close are one run
 _LOCK = threading.RLock()
 _S = {}                     # first minute of a section -> [kind, lat, lon, cut, UTC time of its last minute]
@@ -144,6 +145,14 @@ def compute(stamps, items):
             p = nx.get("p0") or nx.get("p1")
         if p and p[0] is not None:
             v[1], v[2] = p[0], p[1]
+        elif n and CC.utc(st) - (out[order[n - 1]][4] if len(out[order[n - 1]]) > 4 else 0) <= CARRY_S:
+            # a parked minute on its own (a clip the car wrote while parked, hours after the last drive): the car has not been recorded moving since, so it is where the section before ended
+            q, r = out[order[n - 1]], ref.get(order[n - 1])
+            if q[0] == "park" and q[1] is not None:
+                v[1], v[2] = q[1], q[2]
+            elif q[0] == "drive" and r and (r.get("p1") or r.get("p0")) and (r.get("p1") or r.get("p0"))[0] is not None:
+                pp = r.get("p1") or r.get("p0")
+                v[1], v[2] = pp[0], pp[1]
     return out
 
 

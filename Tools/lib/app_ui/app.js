@@ -11,6 +11,11 @@ const money=v=>v==null||isNaN(v)?"–":"$"+(+v).toFixed(2);
 const rate=v=>{if(v==null||isNaN(v))return"–";let s=(+v).toFixed(4);if(s.endsWith("00"))s=s.slice(0,-2);else if(s.endsWith("0"))s=s.slice(0,-1);return"$"+s};          // a price per kWh keeps its cents: $0.1752, not $0.18
 const cache={};
 const main=$("#main");
+// a page asks the server and draws when the answer comes; if the person moved to another page meanwhile (RGEN counts the pages opened), the answer is dropped, so the page left never draws over the page opened
+let RGEN=0;
+const fresh_=f=>async(...a)=>{const n=RGEN;let v;try{v=await f(...a)}catch(e){if(n!==RGEN)await new Promise(()=>{});throw e}if(n!==RGEN)await new Promise(()=>{});return v};
+const fetch0=window.fetch.bind(window);
+window.fetch=(u,o)=>{const r=fetch0(u,o);return(typeof u==="string"&&u.startsWith("/api/")&&!(o&&o.method&&o.method!=="GET"))?fresh_(()=>r)():r};
 // icon-only buttons are named by their title for screen readers
 {let lt=0;const nm=()=>$$("button[title]:not([aria-label])",main).forEach(b=>b.setAttribute("aria-label",b.title));new MutationObserver(()=>{clearTimeout(lt);lt=setTimeout(nm,60)}).observe(main,{childList:true,subtree:true})}
 // ---------- remembered pages: a list seen before is drawn at once from the browser's own copy and refreshed behind it; the page is redrawn only if the fresh data differs
@@ -21,7 +26,7 @@ const UIV=fetch("/api/status").then(r=>r.json()).then(s=>String(s.ui)).catch(()=
 const mkey=async p=>(await UIV)+"|"+p,same=(a,b)=>JSON.stringify(a)===JSON.stringify(b);
 const clean=x=>x&&typeof x==="object"&&("stale" in x||"status" in x)?Object.assign({},x,{stale:undefined,status:undefined}):x,sameData=(a,b)=>same(clean(a),clean(b));
 let FRESHT=0;const STALEP=new Set();       // FRESHT: when the remembered lists were last forgotten (after a sync or an edit): for a minute the server is asked for the newest, not what it kept
-const fetchJ=async p=>{const q=Date.now()-FRESHT<60000?(p.includes("?")?"&":"?")+"fresh=1":"";const r=await fetch("/api/"+p+q);if(!r.ok)throw new Error(p+": "+r.status);if(r.headers.get("X-Stale")==="1")STALEP.add(p);else STALEP.delete(p);return r.json()};
+const fetchJ=fresh_(async p=>{const q=Date.now()-FRESHT<60000?(p.includes("?")?"&":"?")+"fresh=1":"";const r=await fetch("/api/"+p+q);if(!r.ok)throw new Error(p+": "+r.status);if(r.headers.get("X-Stale")==="1")STALEP.add(p);else STALEP.delete(p);return r.json()});
 // the server answered from what it kept and is refreshing: ask again in a few seconds and redraw if the list changed
 const recheck=(p,shown,k=0)=>{if(k>4)return;setTimeout(async()=>{let n;try{n=await fetchJ(p)}catch(e){return}
   if(!sameData(n,shown)){if(cache[p]===shown||cache[p]===undefined)cache[p]=n;mkey(p).then(key=>IDB.set(key,n));redrawQuietly()}else if(STALEP.has(p))recheck(p,shown,k+1)},4000)};
@@ -2603,6 +2608,7 @@ async function pageSoftwareOne(v){
 
 const ROUTES={activity:pageActivity,drives:pageDrives,driveslist:pageDriveList,charges:pageCharges,battery:pageBattery,health:pageHealth,analytics:pageAnalytics,teslacam:pageTeslaCam,queue:pageQueue,flips:pageDrives,review:pageDrives,dashcam:pageDrives,parked:pageParked,idles:pageParked,places:pagePlaces,alerts:pageAlerts,software:pageSoftware};
 async function route(){
+  if(!QUIET)RGEN++;
   navTrack();hideTip();if(location.hash.indexOf("#/charge/")!==0){try{sessionStorage.removeItem("chargeSet")}catch(e){}}if(TLOFF){TLOFF();TLOFF=null}const h=(location.hash||"#/activity").replace(/^#\//,""),[p,arg,arg2]=h.split("/").map(decodeURIComponent);
   // the side bar item lit is the list a detail page was reached from (a drive opened from Drives (new) lights Drives (new)); a section's own page (Software, Battery, ...) always lights itself, whatever the path that led to it
   const own=({drive:"drives",charge:"charges",idle:"parked",idles:"parked",dashcam:"drives",flips:"drives",review:"drives",place:"places"})[p]||p,from=NAV.length?(NAV[0].h||"").replace(/^#\//,"").split("/")[0]:"",lit=own!==p&&ROOTS[from]&&ROOTS[from]!==ROOTS[own]&&NAV.length>1?(({idles:"parked"})[from]||from):own;
@@ -2616,8 +2622,8 @@ async function boot(){
   geoWatch();
   addEventListener("hashchange",route);
   $$("#nav>a").forEach(a=>a.addEventListener("click",()=>{if(a.getAttribute("href")!==location.hash)NAVRESET=true}));
-  try{SET=await (await fetch("/api/settings")).json()}catch(e){}
-  try{const s=await api("summary");$("#veh").textContent=s.vehicle;$("#vsub").textContent=n0(s.km)+" km logged"}catch(e){}
+  try{SET=await (await fetch0("/api/settings")).json()}catch(e){}
+  try{const s=cache.summary=await (await fetch0("/api/summary")).json();$("#veh").textContent=s.vehicle;$("#vsub").textContent=n0(s.km)+" km logged"}catch(e){}
   // the corner: one line a drive, a dot and its name. Green = connected, amber = something is reading it, red = not connected; ⏏ only while connected (and not just ejected)
   window.EJD={};window.KBUSY=[];const NM={A:"Archive",J:"JOWUA",U:"Tesla USB"};
   const st=async()=>{try{const s=await (await fetch("/api/status")).json();if(window.UI0==null)window.UI0=s.ui;

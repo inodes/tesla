@@ -58,6 +58,14 @@ class CutsTest(unittest.TestCase):
         c = RC.compute(self.sts, items)
         self.assertEqual([(k, v[3]) for k, v in sorted(c.items())], [(self.sts[0], False), (self.sts[10], True)])
 
+    def test_a_lone_parked_minute_is_where_the_section_before_it_ended(self):
+        later = stamps(0, 1, hour=19)[0]                            # 19:00, hours after the last section: a clip of its own
+        far = "2026-10-31_10-15-43"                                 # the next morning
+        items = self.items + [item("parked", later, later), item("parked", far, far)]
+        c = RC.compute(self.sts + [later, far], items)
+        self.assertEqual(c[later][1:3], [-33.81, 151.11])           # the park before it ended there
+        self.assertEqual(c[far][1:3], [None, None])                 # more than a day after the section before it: not guessed
+
     def test_a_gap_starts_a_run_without_a_cut(self):
         sts = stamps(0, 5) + stamps(20, 5)
         c = RC.compute(sts, [item("stopped", sts[0], sts[-1])])
