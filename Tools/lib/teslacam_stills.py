@@ -168,10 +168,10 @@ class Stills:
             return len(frames)
 
 
-def plan(stills, roots, walked=None, skip=None):
+def plan(stills, roots, walked=None, skip=None, skip_ev=None):
     """roots {role: TeslaCam folder}. walked: optional {role: (files, ok)} already listed. Returns dict(drives=[per drive counts], todo=[dict(stamp, role, path)] newest first).
     Per drive: clips (front, distinct stamps), done (stills kept), to_make, elsewhere (an earlier drive makes it), no_front is not needed:
-    only front clips are listed. skip: f(stamp) -> True for a minute that is left alone (parked at Home): it is not counted and not planned."""
+    only front clips are listed. skip: f(stamp) -> True for a minute that is left alone (parked at Home): it is not counted and not planned. skip_ev: f(src, event) -> True for an event taken off the list."""
     drives, todo, taken = [], [], set()
     have = stills.stamps()
     bad = stills.unreadable()
@@ -189,6 +189,8 @@ def plan(stills, roots, walked=None, skip=None):
                  first=min(best)[:10] if best else None, last=max(best)[:10] if best else None)
         for st, f in best.items():
             if skip and skip(st):
+                continue
+            if skip_ev and all(x["src"] != "recent" and skip_ev(x["src"], x["ev"]) for x in alts[st]):      # every file of this minute belongs to an event taken off the list
                 continue
             paths = [TF.front_path(roots[role], x) for x in sorted(alts[st], key=lambda x: TF.ORDER[x["src"]])]
             keys = [role + "|" + os.path.relpath(p, roots[role]) for p in paths]
