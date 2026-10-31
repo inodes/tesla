@@ -578,7 +578,7 @@ class TeslaCam:
         done = rv.scanned()
         stamps = [m["stamp"] for m in mins]
         # signs are looked for only while the car goes min_kmh or more: a minute that never did is not counted as one to read
-        min_kmh = float((app_config.get("review") or {}).get("min_kmh", 30.0))
+        min_kmh = float((app_config.get("review") or {}).get("min_kmh", 10.0))
         fast = [m for m in front if (lambda sm: not isinstance(sm, dict) or sm.get("vmax", 0) >= min_kmh)(store.summary(m["stamp"]))]
         return dict(signs=rv.signs(stamps, lo), minutes=len(fast), slow=len(front) - len(fast), scanned=sum(1 for m in fast if m["stamp"] in done),
                     connected=bool(teslacam), job=rv.status(), missing=app_review.requirements())

@@ -27,7 +27,7 @@ for _d in ("/opt/homebrew/bin", "/usr/local/bin"):      # an app started from th
         os.environ["PATH"] = os.environ.get("PATH", "") + os.pathsep + _d
 
 OPTS = dict(step_s=1.0,        # a still every this many seconds
-            min_kmh=30.0,      # only look while the car goes at least this fast (signs matter on the road, not in a car park)
+            min_kmh=10.0,      # only look while the car goes at least this fast (signs matter on the road, not in a car park; a sign passed while slowing to turn in still counts)
             min_conf=50.0,     # tesseract confidence (0-100) below which a reading is dropped
             workers=3,         # stills looked at in parallel
             merge_s=12.0,      # the same number seen again within this many seconds is the same sign
