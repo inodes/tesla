@@ -243,3 +243,4 @@ Log (newest first):
 - 2026-10-31: Startup: a list kept by an earlier version of the program (server lists, the page's saved lists) is shown at once and refreshed behind it instead of being thrown away at every program change; each page's last screen is kept and drawn while the page loads its own; the footage to-do is no longer recomputed at every program change.
 - 2026-10-31: Recent cuts: a minute in which the car moved at all belongs to the drive (the clips are whole minutes and cannot be cut to the second); a park is every stretch in Park between drives.
 - 2026-10-31: TeslaCam: a registered folder drive (LaCie) is named from the first screen (its name is kept in the browser and looked up when used), not shown as its letter.
+- 2026-10-31: TeslaCam: the 'Stills kept' bar is one line (minutes and size); the explanation is on hover.
