@@ -144,11 +144,13 @@ class ClipKeep:
     def _events(self):
         """{(kind, event folder): event dict (ts, reason, cam)} from the lists of events kept for every drive; an entry that names a reason wins over one that does not."""
         out = {}
-        for kind, files in (("sentry", ("sentry_index.json", "teslacam_index_A_sentry.json", "teslacam_index_J_sentry.json", "teslacam_index_U_sentry.json")),
-                            ("saved", ("teslacam_index_A_saved.json", "teslacam_index_J_saved.json", "teslacam_index_U_saved.json"))):
+        import app_sentry
+        roles = DR.read_roles()
+        for kind, files in (("sentry", ["sentry_index.json"] + ["teslacam_index_%s_sentry.json" % r for r in roles]),
+                            ("saved", ["teslacam_index_%s_saved.json" % r for r in roles])):
             for fn in files:
                 try:
-                    with open(os.path.join(self.dir, fn), encoding="utf-8") as fh:
+                    with open(app_sentry.index_path(self.dir, fn), encoding="utf-8") as fh:
                         idx = json.load(fh)
                 except (OSError, ValueError):
                     continue
