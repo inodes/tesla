@@ -70,6 +70,7 @@ import app_teslacam  # noqa: E402
 import app_drivelist  # noqa: E402
 import home_ignore  # noqa: E402
 import clips_purged  # noqa: E402
+import teslacam_timeline as TLN  # noqa: E402
 import run_cuts  # noqa: E402
 import mac_shell  # noqa: E402
 import app_drive_review  # noqa: E402
@@ -919,9 +920,15 @@ def drivelist(wait=False):
         act = STORE.activity()
         tess = [x for x in act if x["k"] == "drive"]
         cam = TC.timeline_stored(None)["items"]
+        moves = [dict(t0=x["t0"], t1=x["t1"], p0=[x.get("lat"), x.get("lon")], p1=[x.get("lat1"), x.get("lon1")]) for x in tess if x.get("t0") and x.get("t1")] or None       # Tessie's drives, when there are any: where the car went when no clip shows it
+        upto = float(tessie_state().get("at") or 0)
         try:
-            moves = [dict(t0=x["t0"], t1=x["t1"], p0=[x.get("lat"), x.get("lon")], p1=[x.get("lat1"), x.get("lon1")]) for x in tess if x.get("t0") and x.get("t1")] or None       # Tessie's drives, when there are any: where the car went when no clip shows it
-            run_cuts.update(TC._ledger_recent(None)[0], cam, moves, float(tessie_state().get("at") or 0))         # where a Recent recording is cut into its drive and parked sections (the TeslaCam list)
+            cam = TLN.fill_places(cam, moves, upto)         # the stops the dashcam made while parked have no GPS: the place comes from the drive beside them, Tessie's drives, or the last known place
+            cam.sort(key=lambda x: x["t0"], reverse=True)
+        except Exception:
+            pass
+        try:
+            run_cuts.update(TC._ledger_recent(None)[0], cam, moves, upto)         # where a Recent recording is cut into its drive and parked sections (the TeslaCam list)
         except Exception:
             pass
         items = app_drivelist.merge(tess, [x for x in act if x["k"] == "charge"], cam, [x for x in act if x["k"] == "idle"])

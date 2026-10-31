@@ -156,6 +156,9 @@ def compute(stamps, items, moves=None, moves_upto=0):
             v[1], v[2] = p[0], p[1]
         else:
             _carry(v, st, n, order, out, ref, moves, moves_upto)
+    for st, v in out.items():                         # a position the timeline carried from far away is an estimate here too
+        if v[1] is not None and len(v) < 6 and (ref.get(st) or {}).get("pest"):
+            v[5:] = [True]
     return out
 
 
