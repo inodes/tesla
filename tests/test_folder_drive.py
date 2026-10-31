@@ -59,11 +59,15 @@ class FolderDriveTest(unittest.TestCase):
         self.assertTrue(REG.forget(VID, "jowua-rescue/TeslaCam"))
         self.assertEqual(REG.drives(), [])
 
-    def test_a_folder_drive_is_never_deleted_from_or_moved_from(self):
+    def test_a_folder_drive_is_deleted_from_and_moved_from_like_the_others(self):
+        REG.register(VID, "LaCie", "copy", size_gb=1, folder="jowua-rescue/TeslaCam")
+        DR._RR[0] = 0
+        self.assertTrue(CK.writable("L"))
+        self.assertTrue(CK.writable("J"))
+        self.assertFalse(CK.writable("?"))
         for action in ("delete", "move"):
-            plan, err = CK.ClipKeep.check(object(), action, "L", [dict(kind="recent", id="x")], {"L": "/x", "A": "/a"})
-            self.assertIsNone(plan)
-            self.assertIn("only read", err)
+            plan, err = CK.ClipKeep.check(object(), action, "L", [], {"L": "/x", "A": "/a"})
+            self.assertNotIn("only read", err or "")                                # it gets as far as asking what is selected
 
 
 if __name__ == "__main__":
