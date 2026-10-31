@@ -40,7 +40,7 @@ import os
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from pvoutput_common import (  # noqa: F401 - shared with any later real sync script, see Tessie/PVOUTPUT_API.md
+from lib.pvoutput_common import (  # noqa: F401 - shared with any later real sync script, see Tessie/PVOUTPUT_API.md
     api_get,
     get_api_key,
     get_system_id,

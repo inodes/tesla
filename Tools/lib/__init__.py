@@ -12,3 +12,10 @@ argparse or __main__ of its own (table_formatter.py's __main__ is a
 self-test, not a CLI). See AGENTS.md Section 3 for the full repo layout
 and the rule this package exists to enforce.
 """
+
+import os as _os
+import sys as _sys
+
+_HERE = _os.path.dirname(_os.path.abspath(__file__))
+if _HERE not in _sys.path:          # a module in here imports another by its plain name (import tessie_api_common): found here, whatever folder started the program
+    _sys.path.append(_HERE)

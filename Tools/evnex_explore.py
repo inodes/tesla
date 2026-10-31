@@ -35,7 +35,7 @@ import sys
 from datetime import datetime, timezone
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from evnex_common import get_authenticated_client, EvnexCredentialsError  # noqa: E402
+from lib.evnex_common import get_authenticated_client, EvnexCredentialsError  # noqa: E402
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DEFAULT_OUTPUT_DIR = os.path.join(REPO_ROOT, "Tessie")
