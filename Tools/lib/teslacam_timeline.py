@@ -97,10 +97,16 @@ class Store:
 
     def summary(self, stamp):
         """None = not read yet, 0 = read, no telemetry in it, dict = summary."""
+        sm = self.sum
+        if sm is not None:                  # loaded: a dict lookup needs no lock (asked tens of thousands of times for one timeline)
+            return sm.get(stamp)
         with _LOCK:
             return self._load_sum().get(stamp)
 
     def series(self, stamp):
+        d = self.days.get(stamp[:10])
+        if d is not None:
+            return d.get(stamp)
         with _LOCK:
             day = stamp[:10]
             if day not in self.days:
