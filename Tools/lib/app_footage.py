@@ -47,6 +47,7 @@ class Footage:
         rep = ST.plan(self.stills, {r: p for r, p in roots.items() if p}, walked=walked, skip=lambda st: IGN.has(st) or PG.has(st), skip_ev=PG.has_event)
         self._todo = rep.pop("todo")
         rep["to_make"] = len(self._todo)
+        rep["sample"] = [dict(stamp=x["stamp"], role=x["role"], path=x["path"]) for x in self._todo[:20]]
         rep["job"] = self.status()
         rep["ffmpeg"] = ST.have_ffmpeg()
         return rep
