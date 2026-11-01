@@ -68,6 +68,12 @@ class ClipsAll(unittest.TestCase):
         self.assertIsNone(by["2026-10-16_18-00-07"]["play"])
         self.assertEqual(d["connected"], ["J"])
 
+    def test_an_event_says_whether_the_car_moved_in_it(self):
+        self.assertFalse(self.tc.clips_all({})["sentry"][0]["moved"])            # no telemetry: parked
+        store = self.tc._tl("A")
+        store._load_sum()["2026-10-16_15-59-07"] = dict(n=60, vmax=45.0, km=0.3, mov=40, fsd=0, aut=0, p0=None, p1=None)
+        self.assertTrue(self.tc.clips_all({})["sentry"][0]["moved"])             # a drive into Home is a drive, not parked at Home
+
     def test_one_run_for_the_player(self):
         r = self.tc.run_all("2026-10-16_15-40-07", {"J": self.tmp})
         self.assertEqual(sorted(r["clips"]), ["2026-10-16_15-40-07", "2026-10-16_15-41-07"])
