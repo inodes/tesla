@@ -238,8 +238,11 @@ class TeslaCam:
         out = dict(connected=sorted(r for r in roots if roots[r]), sentry=[], saved=[], recent=[])
         for kind in KINDS:
             evs = [e for e in self._events_kept(kind, want, roots) if not PG.has_event(kind, e["id"])]      # an event deleted with everything is no longer listed
+            store = self._tl("A")
             for e in evs:
                 e["play"] = next((r for r in e["roles"] if roots.get(r)), None)
+                # the car moved in the clip's minutes (a Saved clip taken on a drive, even one that ends parked at Home): it is a drive, at no place
+                e["moved"] = any(isinstance(sm, dict) and sm.get("vmax", 0) >= TL.OPTS["moving_kmh"] for sm in (store.summary(st) for st in (e.get("clips") or {})))
             out[kind] = evs
         cams, holders = self._ledger_recent(None)
         runs, cur = [], None
