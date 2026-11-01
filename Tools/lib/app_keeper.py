@@ -189,7 +189,8 @@ class Keeper:
             return
         if self._stage is None:
             sig = tuple((r, round(_mtime(p))) for r, p in sorted(roots.items()))
-            if sig == self._sig or time.time() - self._done_at < float(app_config.get("keeper.pass_gap_s", 300)):
+            new_drive = {r for r, _m in sig} - {r for r, _m in (self._sig or ())}          # a drive plugged in since the last pass: read now, not after the gap
+            if sig == self._sig or (not new_drive and time.time() - self._done_at < float(app_config.get("keeper.pass_gap_s", 300))):
                 return
             self._cur, self._stage, self.error = sig, 0, ""
         while self._stage < len(STAGES):

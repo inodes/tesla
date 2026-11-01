@@ -84,6 +84,26 @@ class RunNow(unittest.TestCase):
         for _ in range(n):
             self.k.tick()
 
+    def test_a_drive_plugged_in_is_read_without_waiting_for_the_gap(self):
+        import time as _t
+        self.k.enabled = lambda: True
+        self.k._sig, self.k._done_at = (("A", 1),), _t.time()          # a pass just finished with only the Archive
+        self.passes()
+        self.assertIn(("J", "saved"), self.tc.ev)                        # JOWUA is new: a pass over it ran now
+
+    def test_the_same_drives_wait_for_the_gap(self):
+        import time as _t
+        self.k.enabled = lambda: True
+        self.k._sig, self.k._done_at = (("J", 999),), _t.time()         # J was there at the last pass (only its folders changed)
+        self.k.roots_fn = lambda: {"J": self.tmp}
+        real = AK._mtime
+        AK._mtime = lambda p: 999 if p == self.tmp else real(p)
+        try:
+            self.passes()
+        finally:
+            AK._mtime = real
+        self.assertEqual(self.tc.ev, [])
+
     def test_off_does_nothing(self):
         self.passes()
         self.assertEqual(self.fg.calls, [])
