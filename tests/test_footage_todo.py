@@ -139,7 +139,35 @@ class TodoTest(unittest.TestCase):
         self.wait()
         self.assertEqual(self.todo._sig({"J": self.cam})[-1], FT.CODE_VER)
         self.todo._mem = dict(self.todo._mem, sig=self.todo._sig({"J": self.cam})[:-1])      # as saved before the version was part of it
+        n = self.tc.calls
+        self.todo.snapshot()
+        self.wait()
+        self.assertEqual(self.tc.calls, n + 1)                          # counted again at once (quietly: the drive itself did not change)
+
+    def test_a_connected_unchanged_drive_is_counted_again_quietly_and_not_often(self):
+        self.todo.snapshot()
+        self.wait()
+        n = self.tc.calls
+        self.fg.stills = SimpleNamespace(stamps=lambda: {"a", "b", "c"})   # a job made stills: only the counts changed
+        s = self.todo.snapshot()
+        self.assertFalse(s["checking"])
+        self.assertEqual(self.tc.calls, n)                               # not before QUICK_GAP_S
+        self.todo._done_t -= FT.Todo.QUICK_GAP_S + 1
+        self.assertFalse(self.todo.snapshot()["checking"])                # counted again, without "Checking for outstanding tasks"
+        self.wait()
+        self.assertEqual(self.tc.calls, n + 1)
+
+    def test_a_drive_plugged_in_says_it_is_checking(self):
+        self.todo.snapshot()
+        self.wait()
+        cam2 = os.path.join(self.t, "U", "TeslaCam")
+        os.makedirs(os.path.join(cam2, "RecentClips"))
+        self.todo.roots_fn = lambda: {"J": self.cam, "U": cam2}
+        started = threading.Event()
+        real = self.tc.scan_report
+        self.tc.scan_report = lambda roots: (started.wait(2), real(roots))[1]
         self.assertTrue(self.todo.snapshot()["checking"])
+        started.set()
         self.wait()
 
     def test_progress_is_reported_while_it_works_and_a_failure_is_not_retried_at_once(self):
