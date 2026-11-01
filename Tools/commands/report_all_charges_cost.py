@@ -30,6 +30,8 @@ Output: a CSV written next to charges_master.csv itself
 (<data_home>/charges/reports/all_charges_cost_comparison_<UTCSTAMP>.csv).
 """
 import os as _os, sys as _sys; _sys.path[:0] = [p for p in (_os.path.dirname(_os.path.abspath(__file__)), _os.path.dirname(_os.path.dirname(_os.path.abspath(__file__)))) if p not in _sys.path]      # the commands beside it, and Tools/ (lib, providers)
+if any(a in ("-h", "--help") for a in _sys.argv[1:]):          # its help, and nothing else (the work starts on import)
+    print(__doc__.strip()); _sys.exit(0)
 import csv
 import os
 import sys

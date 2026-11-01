@@ -22,6 +22,8 @@ Usage: analyse_fsd_osm_limits.py [--data-dir DIR] [--since YYYY-MM-DD] [--fetch-
 (--budget stops tile fetching after that many seconds and exits, re-run to resume - for hosts that cap command time.)
 """
 import os as _os, sys as _sys; _sys.path[:0] = [p for p in (_os.path.dirname(_os.path.abspath(__file__)), _os.path.dirname(_os.path.dirname(_os.path.abspath(__file__)))) if p not in _sys.path]      # the commands beside it, and Tools/ (lib, providers)
+if any(a in ("-h", "--help") for a in _sys.argv[1:]):          # its help, and nothing else (the work starts on import)
+    print(__doc__.strip()); _sys.exit(0)
 import csv, sys, glob, os, re, json, math, time, subprocess, collections, datetime
 
 try:

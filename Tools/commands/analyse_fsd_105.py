@@ -17,6 +17,8 @@ and fsd_highway_map.html (route map coloured by speed band, with the 105 section
 Usage: analyse_fsd_105.py [--data-dir DIR] [--since YYYY-MM-DD]
 """
 import os as _os, sys as _sys; _sys.path[:0] = [p for p in (_os.path.dirname(_os.path.abspath(__file__)), _os.path.dirname(_os.path.dirname(_os.path.abspath(__file__)))) if p not in _sys.path]      # the commands beside it, and Tools/ (lib, providers)
+if any(a in ("-h", "--help") for a in _sys.argv[1:]):          # its help, and nothing else (the work starts on import)
+    print(__doc__.strip()); _sys.exit(0)
 import csv,sys,glob,os,datetime,math,collections,json
 CLS={101:("100","std"),102:("100","std"),104:("100","hurry"),105:("100","hurry"),112:("110","std"),111:("110","std"),114:("110","hurry"),115:("110","hurry")}
 def load(f):
