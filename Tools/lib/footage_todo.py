@@ -55,6 +55,7 @@ class Todo:
         self._walked = {}               # role -> (drive_key, files, ok, log_new, log_gone, days_new), kept while the drive's folders and scan time are unchanged
         self.error = ""
         self._force, self._done_t, self._deep_now = False, 0.0, False
+        self.keep = None                    # clip_keep.ClipKeep: when set, the counts are what an update of the clips would still do (TODO-068)
         self._gen = 0                   # counts the times what is on the drives was said to have changed
         self._err_at = 0.0
         self._prog = None
@@ -247,15 +248,22 @@ class Todo:
                     walked[r] = (files, ok)
                     out[r] = dict(log_new=new, log_gone=gone, ghosts=ghosts, new_sample=sample, new_days=dict(sorted(days_new.items(), reverse=True)[:5]), telemetry=0, stills=0, signs=0, at=time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()))
                 self._prog = dict(done=len(need), total=total, step="telemetry", role="", pct=round(100 * (len(need) + 0.4) / total))
-                for d in self.tc.scan_report(roots)["drives"]:          # with every connected drive together: a minute two drives hold is read once
-                    out[d["role"]]["telemetry"] = d["to_read"]
-                self._prog = dict(done=len(need) + 1, total=total, step="stills", role="", pct=round(100 * (len(need) + 1.4) / total))
-                rep = self.fg.stills_report(roots, walked)
-                for d in rep["drives"]:
-                    out[d["role"]]["stills"] = d["to_make"]
-                self._prog = dict(done=len(need) + 2, total=total, step="signs", role="", pct=round(100 * (len(need) + 2.4) / total))
-                for r, n in self._signs_left(walked).items():
-                    out[r]["signs"] = n
+                if self.keep is not None:
+                    # TODO-068: one definition with the TeslaCam page's "N updates needed": what an update of the clips would still do, each clip on the
+                    # first connected drive that holds it (clip_keep.needs_by_drive). Files not in the footage log yet are the log counts above.
+                    for r, n in self.keep.needs_by_drive(roots).items():
+                        if r in out:
+                            out[r].update(n)
+                else:
+                    for d in self.tc.scan_report(roots)["drives"]:          # with every connected drive together: a minute two drives hold is read once
+                        out[d["role"]]["telemetry"] = d["to_read"]
+                    self._prog = dict(done=len(need) + 1, total=total, step="stills", role="", pct=round(100 * (len(need) + 1.4) / total))
+                    rep = self.fg.stills_report(roots, walked)
+                    for d in rep["drives"]:
+                        out[d["role"]]["stills"] = d["to_make"]
+                    self._prog = dict(done=len(need) + 2, total=total, step="signs", role="", pct=round(100 * (len(need) + 2.4) / total))
+                    for r, n in self._signs_left(walked).items():
+                        out[r]["signs"] = n
                 self._mem = dict(sig=sig if gen == self._gen else None, drives=out)
                 self._done_t = time.time()         # said to have changed while it was being worked out: looked at again
                 self.error = ""

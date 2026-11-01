@@ -1128,6 +1128,7 @@ def main():
     CKEEP = clip_keep.ClipKeep(DATA_DIR, TC, FG)
     run_cuts.on_change(lambda: CKEEP.invalidate())          # what is kept is grouped by the same runs
     CKEEP.on_change = TODO.forget
+    TODO.keep = CKEEP                  # the drives' Tasks count what an update would still do: one definition with TeslaCam's button (TODO-068)
     KEEP.page_job = lambda: bool(CKEEP.job().get("running"))
     KEEP.pictures = CKEEP          # the Keeper saves the pictures of events after the stills
     STHIN = stills_thin.StillsThin(DATA_DIR, FG.stills, TC)

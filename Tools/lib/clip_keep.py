@@ -82,6 +82,36 @@ class ClipKeep:
         self.evst = EV.EventStills(data_dir)
 
     # ---- what is kept -------------------------------------------------------------------------------------------
+    # the steps of an update and what each still has to do for one clip: the same numbers as the TeslaCam page's buttons (PSTEPS in app.js)
+    STEP_LEFT = (
+        ("telemetry", lambda c: max(0, c["meta"][1] - c["meta"][0])),
+        ("stills", lambda c: max(0, c["stills"][1] - c["stills"][0] - (c.get("wait_n") or 0) - (c.get("snap_n") or 0))),
+        ("snapshots", lambda c: c.get("snap_n") or 0),
+        ("signs", lambda c: max(0, c["signs"][1] - c["signs"][0]) + (c.get("refine_n") or 0)),
+        ("pictures", lambda c: max(0, (c.get("shots") or [0, 0])[1] - (c.get("shots") or [0, 0])[0]) + max(0, (c.get("window") or [0, 0])[1] - (c.get("window") or [0, 0])[0])),
+    )
+
+    def needs_by_drive(self, roots, clips=None):
+        """{role: dict(clips, telemetry, stills, snapshots, signs, pictures)}: what an update would still do, per connected drive. One definition with the
+        page's "N updates needed": a clip counts once, on the first connected drive (in read order) that holds its video, as the update reads it from there;
+        a clip parked at Home (ignored) or with no video on a connected drive counts nowhere."""
+        clips = (self.status() if clips is None else dict(clips=clips))["clips"]
+        conn = [r for r in DR.read_roles() if (roots or {}).get(r)]
+        out = {r: dict(clips=0, **{k: 0 for k, _f in self.STEP_LEFT}) for r in conn}
+        for kind in clips:
+            for c in clips[kind].values():
+                if c.get("ignored"):
+                    continue
+                r = next((x for x in conn if (c.get("bytes") or {}).get(x)), None)
+                if r is None:
+                    continue
+                left = {k: f(c) for k, f in self.STEP_LEFT}
+                if any(left.values()):
+                    out[r]["clips"] += 1
+                    for k, v in left.items():
+                        out[r][k] += v
+        return out
+
     def status(self, force=False):
         """What is kept per clip. An answer older than TTL is returned at once and rebuilt behind (the build takes seconds on a big library); after a job, or with
         nothing built yet, or with force, the caller waits for the build."""
