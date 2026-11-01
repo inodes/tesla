@@ -225,7 +225,7 @@ Requests tables once closed out, and prune this list then.
   `?access_token=` query param, generated at https://dash.tessie.com/settings/api;
   `/{vin}/drives` and `/{vin}/charges`; `format=csv` shortcut; open questions around
   pagination/rate limits/exact CSV column parity - not a client library, points back
-  to the official reference for anything not covered) and `Tools/test_tessie_api.py`
+  to the official reference for anything not covered) and `Tools/maintenance/test_tessie_api.py`
   (one-shot connectivity/shape check, writes nothing unless `--save-csv`). Answered
   the user's direct question: recommended config key is `"tessie_access_token"` in
   `Tessie/config.json` (added to `Tessie/config.example.json` as a placeholder,
@@ -242,7 +242,7 @@ Requests tables once closed out, and prune this list then.
   live API's actual shape/limits - see BUG-015 in `AGENTS.md`. **Not yet committed**
   - awaiting the user's go-ahead per the standing commit-approval rule in §2 above.
 - **Tessie API live-verified by the user (REQ-022 follow-up)**: user ran
-  `./Tools/test_tessie_api.py` on their own Mac with a real token and it worked -
+  `./Tools/maintenance/test_tessie_api.py` on their own Mac with a real token and it worked -
   both `/drives` and `/charges` returned 5 real records each with real field names
   (see `Tessie/TESSIE_API.md`'s "Confirmed field names" section for the full lists).
   Key takeaway logged there: these are `snake_case` API fields (`odometer_distance`,
