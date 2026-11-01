@@ -166,7 +166,7 @@ Before any domain is restructured: capture reference results from the real data 
 
 ## 11. Drives domain: what is in the code today and the proposed split
 
-Findings (read-only, 2026-10-20). `Tools/analyse_drives.py` is 6,607 lines and is both a command and the library the rest of the code imports: `DriveAnalyzer` is used by `sync_api_tessie` (backfill and consolidation), `analyse_battery_health`, `analyse_car_efficiency`, `lib/ev_efficiency` and `sync_fuel_history`; `is_home_place` and `haversine_distance_m` by `lib/session_cost`; the footage functions by `drive_actions` (the app's footage queue). It holds three different jobs:
+Findings (read-only, 2026-10-20). `Tools/commands/analyse_drives.py` is 6,607 lines and is both a command and the library the rest of the code imports: `DriveAnalyzer` is used by `sync_api_tessie` (backfill and consolidation), `analyse_battery_health`, `analyse_car_efficiency`, `lib/ev_efficiency` and `sync_fuel_history`; `is_home_place` and `haversine_distance_m` by `lib/session_cost`; the footage functions by `drive_actions` (the app's footage queue). It holds three different jobs:
 
 | Part | Size | What it is | Proposed home |
 |---|---|---|---|

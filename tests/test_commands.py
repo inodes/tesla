@@ -9,6 +9,7 @@ import importlib.machinery
 import importlib.util
 import os
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -57,13 +58,33 @@ class CommandsTest(unittest.TestCase):
             r = _run([sys.executable, TESLA, g, c, "-h"], work)
             return row, r
         bad = []
+        def runnable(row):                  # a shell script whose shell is not on this computer (zsh on Linux) is checked where it runs
+            path = os.path.join(CMDS, row[2])
+            if not row[2].endswith(".sh"):
+                return True
+            with open(path, encoding="utf-8", errors="ignore") as fh:
+                first = fh.readline().strip()
+            return not first.startswith("#!") or os.path.exists(first[2:].split()[0])
         with concurrent.futures.ThreadPoolExecutor(6) as ex:
-            for (g, c, s), r in ex.map(one, self.table):
+            for (g, c, s), r in ex.map(one, [row for row in self.table if runnable(row)]):
                 out = (r.stdout + r.stderr).strip()
                 if r.returncode != 0 or not out or "Traceback" in out:
                     bad.append("%s %s (%s): rc=%s %s" % (g, c, s, r.returncode, out.splitlines()[-1] if out else "no output"))
         self.assertEqual(bad, [])
         self.assertEqual(os.listdir(work), [], "a command's help wrote files")
+
+    def test_a_shell_script_runs_in_the_shell_its_first_line_names(self):
+        T = self.T
+        captured = []
+        real = os.execvp
+        os.execvp = lambda prog, args: captured.append(args)
+        try:
+            T.main(["sync", "dashcam", "--status"])
+            T.main(["sync", "drives", "-h"])
+        finally:
+            os.execvp = real
+        self.assertEqual(captured[0][0], "/bin/zsh")                 # sync_dashcam.sh is a zsh script
+        self.assertEqual(captured[1][:2], ["/usr/bin/env", "bash"])
 
     def test_an_old_script_name_still_runs_and_a_wrong_name_says_so(self):
         work = tempfile.mkdtemp()
@@ -92,7 +113,12 @@ class CommandsTest(unittest.TestCase):
         for d in (CMDS, MAINT, TOOLS):
             for f in os.listdir(d):
                 if f.endswith(".sh"):
-                    r = subprocess.run(["bash", "-n", os.path.join(d, f)], capture_output=True, text=True)
+                    with open(os.path.join(d, f), encoding="utf-8", errors="ignore") as fh:
+                        first = fh.readline()
+                    sh = "zsh" if "zsh" in first else "bash"          # each in the shell its first line names
+                    if not shutil.which(sh):
+                        continue
+                    r = subprocess.run([sh, "-n", os.path.join(d, f)], capture_output=True, text=True)
                     self.assertEqual(r.returncode, 0, "%s: %s" % (f, r.stderr))
 
     def test_paths_worked_out_from_a_script_point_above_commands(self):

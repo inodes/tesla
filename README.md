@@ -26,41 +26,25 @@ tesla/
 │   ├── places.example.json         # Generic template for custom place nicknames
 │   └── README.md                   # Full Tessie documentation
 │
-├── Tools/                          # 🛠️ tesla (every command: ./Tools/tesla lists them), tesla_app.py (the app), commands/, lib/, maintenance/
-│   ├── archive/                    # Archived one-off / exploratory test scripts
-│   ├── lib/                        # Shared library modules imported by the scripts below (not run
-│   │                                #   directly) - sei_inspector.py, table_formatter.py, tessie_api_common.py,
-│   │                                #   session_cost.py (REQ-154, per-session EV cost), charge_curves.py
-│   │                                #   (REQ-154, charging-curve charts) etc.
-│   ├── providers_chargers/         # Pluggable charging-network adapters (Tesla/Chargefox/EVX/Evie/
-│   │                                #   BP Pulse/AmpCharge/Exploren/Jolt/NRMA/PlugShare),
-│   │                                #   orchestrated by charger_find.py
-│   ├── providers_power/            # Pluggable power-retailer/distributor billing providers - one
-│   │                                #   BasePowerProvider subclass per retailer (currently just AGL),
-│   │                                #   swappable via config.json's "power_provider" key
-│   ├── analyse_battery_health.py   # Longitudinal battery capacity & degradation analyser
-│   ├── analyse_car_efficiency.py   # Vehicle speed & temperature efficiency curve analyser
-│   ├── analyse_charging.py         # Charging reconciliation & invoice parser
-│   ├── analyse_drives.py           # Drives explorer, footage linker, and master consolidator
-│   ├── charger_find.py            # Unified multi-network EV charger discovery, pricing & sync engine
-│   ├── places_manager.py           # Place tagging, geocoding, and stop-cluster review utility
-│   ├── power_cost_calculator.py    # Full electricity-bill reconstruction (usage + supply + solar credit + demand)
-│   ├── power_demand_calculator.py  # Reproduce the active power provider's residential demand charge (AGL: Ausgrid EA025)
-│   ├── sync_api_evnex.py           # Idempotent sync: new completed Evnex sessions -> charges/deepdive/*.json
-│   ├── sync_api_tessie.py          # Direct Tessie REST API fetch & sync engine for drives, charges, and telemetry
-│   ├── sync_fuel_history.py        # NSW FuelCheck historical & live dataset harvester and SQLite database manager
-│   ├── sync_invoices.py            # Generic PDF invoice ingestion, discovery, inspection, and standardization tool
-│   ├── sync_power_usage.py         # Consolidate the active power provider's usage-export CSVs into one master CSV
-│   ├── sync_dashcam.sh             # Multi-drive TeslaCam sync, audit & prune engine
-│   ├── teslacam_stills.py          # One-second stills of every front clip, kept after the video is deleted
-│   ├── teslacam_ledger.py          # Log of every TeslaCam file: which drive, size, deleted when; what can be purged
-│   ├── maintenance/migrate_charge_folders.py   # Move charges/deepdive files into <day>/<start>/ folders (like drives)
-│   ├── dashcam_exportdash.sh       # Local ExportDash web player launcher
-│   ├── sync_drives_all.sh          # One command: Tessie drives, fetch + consolidate
-│   ├── sync_charging_all.sh        # One command: Tessie charges + Evnex + invoices + AGL usage + PVOutput/AGL/Evnex cross-check prep, fetch + consolidate
-│   ├── sync_charger_all.sh         # One command: fetch new charger hardware across every network, near Home
-│   ├── sync_fuel_all.sh            # One command: sync NSW FuelCheck historical archives & live prices
-│   └── sync_all.sh                 # Runs all 4 domains above in one command (not dashcam - see its own header)
+├── Tools/
+│   ├── tesla                       # ⭐ every command in one place: ./Tools/tesla lists them, ./Tools/tesla sync drives runs one
+│   ├── tesla_app.py                # the app (Tesellate): a window over the same code
+│   ├── build_mac_app.sh            # builds ~/Applications/Tesellate.app
+│   ├── restart_app.command         # quit, rebuild and reopen the app (double-click)
+│   ├── fix_exec_bits.sh            # repairs missing u+x bits on scripts
+│   ├── commands/                   # the command scripts ./Tools/tesla runs, in seven groups:
+│   │                                #   sync (all, drives, charges, chargers, fuel, tessie, evnex, abrp, power, invoices, teslacam, dashcam),
+│   │                                #   analyse (drives, charges, battery, efficiency), report (power, AGL, prices, cost per 100 km),
+│   │                                #   build (drive pages, drive GPS, drive snapshots, drive actions), teslacam (files, telemetry, stills,
+│   │                                #   deletable, drives, export, flips), chargers (find, tesla, plugshare, audit), places (manage, osm)
+│   ├── maintenance/                # one-off fixes, migrations, recovery tools, API checks and finished investigations (run by hand)
+│   ├── lib/                        # shared library modules (not run directly): the app's modules (app_*), TeslaCam, drives,
+│   │                                #   charges, places, tessie_api_common.py, table_formatter.py, session_cost.py, charge_curves.py ...
+│   ├── providers_chargers/         # pluggable charging-network adapters (Tesla/Chargefox/EVX/Evie/BP Pulse/AmpCharge/Exploren/
+│   │                                #   Jolt/NRMA/PlugShare), used by ./Tools/tesla chargers find
+│   ├── providers_power/            # pluggable power-retailer billing providers (currently AGL), chosen by config.json "power_provider"
+│   ├── providers_pv/               # solar data providers
+│   └── archive/                    # retired scripts, kept for reference
 │
 ├── .github/                        # GitHub Actions CI & community standards
 ├── LICENSE                         # MIT License
@@ -70,6 +54,8 @@ tesla/
 ---
 
 ## ⚡ Quick Start
+
+Every command runs through one entry point: `./Tools/tesla` lists them by group (sync, analyse, report, build, teslacam, chargers, places) and `./Tools/tesla <group> <command> -h` shows a command's own help. An old script name still works (`./Tools/tesla sync_api_tessie.py --drives`).
 
 👉 *In a hurry? `./Tools/tesla sync all` runs the Drives, Charging Sessions, and Charger Discovery one-command syncs below (2, 3, 4) back to back - it's just a thin wrapper around them, not a replacement for running one on its own. Doesn't include TeslaCam sync (1) - that needs physical drives connected.*
 
@@ -240,8 +226,8 @@ Optional double-clickable app in `~/Applications` (a launcher around `tesla_app.
 
 Battery (charge level over time, parked drain, usual charge target, and under it the battery health: usable capacity and range against odometer, as `analyse_battery_health.py`) is one page. Software (Tesla software versions from Teslascope, with the FSD version each includes, a timeline, when a feature reached a region, and what a jump between two versions brings) is a page too. Every listing runs newest to oldest, ordered by the UTC time (which never repeats or skips) and shown in local time. Activity, Drives, Charges, Parked and Battery have a Tessie-style date picker (presets and a calendar; days with records are bold) that selects by local day.
 
-Charges: every charge reconciled with its invoice as in `./analyse_charging.py` (a plug-in Tessie recorded as several sessions is one charge with its records as parts; invoice details, whether Tessie holds the invoice cost, losses, telemetry, charging curves). Invoices tab lists every invoice. Reading only - to send invoice costs to Tessie use `./analyse_charging.py --sync-tessie-costs --apply`.
-Places (saved places, Superchargers named as on tesla.com, a Chargers tab with every charger from `charging_stations.json` and a **Sync chargers** button that runs `./sync_charger_all.sh`, nearby OpenStreetMap places, add / edit) is in the sidebar; parks are rows in Drives (a park that spans days is listed on each day), and the Parked pages with saved Sentry footage open from links. Street-accurate drive paths: `./drive_gps.py --budget 600` (newest drives first, safe to re-run) writes a mirror of each Tessie drive CSV with the dashcam's GPS fixes added, then `./drive_report.py` redraws the maps.
+Charges: every charge reconciled with its invoice as in `./Tools/tesla analyse charges` (a plug-in Tessie recorded as several sessions is one charge with its records as parts; invoice details, whether Tessie holds the invoice cost, losses, telemetry, charging curves). Invoices tab lists every invoice. Reading only - to send invoice costs to Tessie use `./analyse_charging.py --sync-tessie-costs --apply`.
+Places (saved places, Superchargers named as on tesla.com, a Chargers tab with every charger from `charging_stations.json` and a **Sync chargers** button that runs `./Tools/tesla sync chargers`, nearby OpenStreetMap places, add / edit) is in the sidebar; parks are rows in Drives (a park that spans days is listed on each day), and the Parked pages with saved Sentry footage open from links. Street-accurate drive paths: `./drive_gps.py --budget 600` (newest drives first, safe to re-run) writes a mirror of each Tessie drive CSV with the dashcam's GPS fixes added, then `./drive_report.py` redraws the maps.
 
 Drives shorter than 50 m (and 10 min) are **re-parks**: Tessie records every shuffle of the car in a car park as a drive, so the app keeps them apart. Drives and Activity hide them by default (a Re-parks filter / chip shows them), and a place counts them separately instead of as arrivals. The time between arriving at a place and the next real drive leaving it is a parked period (a "stay") unless Tessie already has a parked or charge record for it. The limits are settings: `app.drives.repark_max_km` / `repark_max_minutes` in `config.json` (all app, map and lookup settings live in its `app` block; see `config.example.json`). Places also have a List / Map toggle, and "what is around here" says when OpenStreetMap's servers did not answer instead of showing an empty street.
 

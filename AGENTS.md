@@ -92,7 +92,7 @@ Command naming, structure and the app's task runner follow `docs/COMMANDS_AUDIT.
 
 App UI (Tesellate) rules - functional wording only, progress on anything that waits, controls only when they apply, one fact once, Mac conventions - are in `docs/ui-guidelines.md`; read it before changing a page.
 
-All terminal tools (such as `Tools/analyse_drives.py` and `Tools/analyse_charging.py`) render rich Unicode box-drawing tables. The following rules are mandatory for all table implementations:
+All terminal tools (such as `Tools/commands/analyse_drives.py` and `Tools/commands/analyse_charging.py`) render rich Unicode box-drawing tables. The following rules are mandatory for all table implementations:
 
 1. **Dynamic Column Width Measurement (No Hardcoded Cell Sizing)**:
    - Never hardcode column widths for dynamic text columns (e.g., `Notable Destinations`, `Route`, `Station / Location`, `Address`).
@@ -325,7 +325,7 @@ in this repo MUST follow it. Checklist - an agent adding or changing a script or
 
 Python scripts render this from their argparse parser via a shared helper (so SYNOPSIS/OPTIONS can't drift
 from the real flags); each script supplies only NAME, DESCRIPTION, EXIT STATUS, FILES, EXAMPLES, SEE ALSO.
-Reference implementation: `Tools/sync_dashcam.sh -h`.
+Reference implementation: `Tools/commands/sync_dashcam.sh -h`.
 
 ### 3.4 Interactive menus: one option per line
 
@@ -387,7 +387,7 @@ the names are interchangeable and say nothing, and the car formats every drive w
 its **volume UUID** (`diskutil info` calls it Volume UUID). The first time a drive is seen it is asked what it is for (car /
 archive / copy) and given a one-word name; the answer is kept in `config.json` under `teslacam.drives` with a key letter
 (role: A Archive, J JOWUA, U Tesla USB for the known drives). `Tools/lib/drive_registry.py` holds the registry (`lookup`,
-`register`, `forget`, `mounted_volumes`, `mount_of`, `ranked`) and `Tools/manage_teslacam_drives.py` lists and edits it.
+`register`, `forget`, `mounted_volumes`, `mount_of`, `ranked`) and `Tools/commands/manage_teslacam_drives.py` lists and edits it.
 A marker folder in the root (`ARCHIVE_2TB`, `JOWUA_1TB`, `TESLA_USB_*`) only registers a drive the first time its UUID can be
 read; `Tools/lib/drive_roles.py` implements the lookups. A disk image mounted from a drive carries that drive's UUID and
 marker, so it looks like a second copy of it: detach it before judging what is connected. Code must not hard-code

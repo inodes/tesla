@@ -128,7 +128,13 @@ def main(argv):
         print(rest)
         return 0 if not argv else 2
     path = os.path.join(CMDS, script)
-    cmd = (["bash", path] if script.endswith(".sh") else [sys.executable, path]) + list(rest)
+    if script.endswith(".sh"):          # a shell script runs in the shell its first line names (sync_dashcam.sh is zsh)
+        with open(path, encoding="utf-8", errors="ignore") as f:
+            first = f.readline().strip()
+        shell = first[2:].split() if first.startswith("#!") else ["bash"]
+        cmd = shell + [path] + list(rest)
+    else:
+        cmd = [sys.executable, path] + list(rest)
     os.execvp(cmd[0], cmd)
 
 
