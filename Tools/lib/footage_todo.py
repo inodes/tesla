@@ -54,6 +54,7 @@ class Todo:
         TF.set_cache_file(self._lcache)     # the folders listed in an earlier run: a folder not changed since is not listed again (the footage log scan uses them too)
         self._walked = {}               # role -> (drive_key, files, ok, log_new, log_gone, days_new), kept while the drive's folders and scan time are unchanged
         self.error = ""
+        self._force, self._done_t, self._deep_now = False, 0.0, False
         self._gen = 0                   # counts the times what is on the drives was said to have changed
         self._err_at = 0.0
         self._prog = None
@@ -121,27 +122,55 @@ class Todo:
             out[r] = n
         return out
 
+    QUICK_GAP_S = 60        # a drive that stays connected and unchanged: what is left is counted again at most this often (telemetry, stills and signs kept change while jobs run)
+
+    @staticmethod
+    def _count_idx(roots):
+        """Where in the signature the kept telemetry, stills and signs counts are (they change while jobs run): after one entry per drive."""
+        n = len(roots)
+        return {n, n + 1, n + 2}
+
+    def _deep(self, roots):
+        """True when a drive must be listed again: newly connected, or its folders changed since it was last listed (a quick look at three folders)."""
+        scans = None
+        for r, p in roots.items():
+            w = self._walked.get(r)
+            if not w:
+                return True
+            if scans is None:
+                scans = TLG.Ledger(self.dir).scans()
+            if w[0] != (p, _mtime_ns(p), (scans.get(r) or {}).get("at") or ""):
+                return True
+        return False
+
     def snapshot(self):
         roots = {r: p for r, p in (self.roots_fn() or {}).items() if p}
         sig = self._sig(roots) if roots else None
         cur = self._mem.get("sig")
         working = bool(self._thread and self._thread.is_alive())
         retry = time.time() - self._err_at < 60                  # after a failure (a drive pulled out) wait a minute before looking again
-        stale = bool(roots) and sig != cur and not retry
+        deep = bool(roots) and (self._deep(roots) or not self._mem.get("drives"))
+        # a drive plugged in or changed is looked at now and says so; drives that stay connected and unchanged are only counted again quietly, at most every QUICK_GAP_S
+        counts_only = bool(cur) and sig is not None and len(cur) == len(sig) and all(x == y for i, (x, y) in enumerate(zip(cur, sig)) if i not in self._count_idx(roots))
+        stale = bool(roots) and sig != cur and not retry and (deep or self._force or not counts_only or time.time() - self._done_t >= self.QUICK_GAP_S)
         if stale and not working and self.idle_fn():
+            self._force = False
             self._thread = threading.Thread(target=self._work, args=(roots, sig), daemon=True)
             self._thread.start()
+            self._deep_now = deep
             working = True
         drives = {}
         for r in roots:
             d = (self._mem.get("drives") or {}).get(r)
             drives[r] = dict(d) if d else None
-        return dict(checking=working or stale, progress=dict(self._prog) if working and self._prog else None, drives=drives, error=self.error)
+        missing = any(not (self._mem.get("drives") or {}).get(r) for r in roots)
+        shown = (working and self._deep_now) or (stale and missing)        # a drive being listed, or one with no answer yet; waiting for a running job shows the counts kept
+        return dict(checking=shown, progress=dict(self._prog) if shown and working and self._prog else None, drives=drives, error=self.error)
 
     def forget(self):
         """What is on the drives changed under the cached look (clips moved or deleted by the app): the next look walks the drives again."""
         self._gen += 1
-        self._walked.clear()
+        self._force = True                  # counted again now; a drive whose folders changed (clips moved or deleted) is listed again because its folders' times changed
         self._mem = dict(self._mem, sig=None)
 
     def subtract(self, stage, done_by_role):
@@ -227,7 +256,8 @@ class Todo:
                 self._prog = dict(done=len(need) + 2, total=total, step="signs", role="", pct=round(100 * (len(need) + 2.4) / total))
                 for r, n in self._signs_left(walked).items():
                     out[r]["signs"] = n
-                self._mem = dict(sig=sig if gen == self._gen else None, drives=out)         # said to have changed while it was being worked out: looked at again
+                self._mem = dict(sig=sig if gen == self._gen else None, drives=out)
+                self._done_t = time.time()         # said to have changed while it was being worked out: looked at again
                 self.error = ""
                 self._save()
         except Exception as e:                                  # a drive pulled out in the middle: say so and try again at the next look

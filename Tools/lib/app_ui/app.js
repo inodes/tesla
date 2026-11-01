@@ -1825,23 +1825,23 @@ function footageSync(host,opts){
   const wire=()=>{const g=$("#fsg",host);if(g)g.onclick=()=>go(null);
     $$("[data-st]",host).forEach(b=>b.onclick=()=>go(STEP.find(x=>x[0]===b.dataset.st)[2]));
     $$("[data-ej]",host).forEach(b=>b.onclick=async()=>{busyEject=b.dataset.ej;msg="";paint();const r=await ejectDrive(busyEject);busyEject="";msg=r.text;paint()});
-    const x=$("#fsx",host);if(x)x.onclick=async()=>{try{await fetch("/api/keeper",{method:"POST",body:JSON.stringify({action:"pause"})})}catch(e){}until=Date.now()+20000;paint()};      // Stop; the numbers left are worked out again once the job has let go of the drive
-    const rs=$("#fsr",host);if(rs)rs.onclick=async()=>{stopVideos();try{await fetch("/api/keeper",{method:"POST",body:JSON.stringify({action:"resume"})})}catch(e){}until=Date.now()+20000;paint()}};
+    const x=$("#fsx",host);if(x)x.onclick=async()=>{try{await fetch0("/api/keeper",{method:"POST",body:JSON.stringify({action:"pause"})})}catch(e){}until=Date.now()+20000;paint()};      // Stop; the numbers left are worked out again once the job has let go of the drive
+    const rs=$("#fsr",host);if(rs)rs.onclick=async()=>{stopVideos();try{await fetch0("/api/keeper",{method:"POST",body:JSON.stringify({action:"resume"})})}catch(e){}until=Date.now()+20000;paint()}};
   let go=()=>{};
   if(!host.innerHTML&&FSHTML[hk]){host.innerHTML=FSHTML[hk];wire()}
   else if(!host.innerHTML)mkey("fs|"+hk).then(k=>IDB.get(k)).then(h=>{if(h&&!host.innerHTML){host.innerHTML=h;wire()}});         // what it looked like last time, until the answer arrives
-  const paint=async()=>{if(!document.body.contains(host))return;let k,roots={},todo=null;
-    try{k=await (await fetch("/api/keeper")).json();roots=(await (await fetch("/api/status")).json()).roots||{}}catch(e){return}
-    try{const r=await fetch("/api/footage/todo");todo=r.ok?await r.json():null}catch(e){}      // an older server has no such answer: every button is offered
+  const paint=async()=>{if(!document.body.contains(host))return;lastP=Date.now();let k,roots={},todo=null;
+    try{k=await (await fetch0("/api/keeper")).json();roots=(await (await fetch0("/api/status")).json()).roots||{}}catch(e){return}
+    try{const r=await fetch0("/api/footage/todo");todo=r.ok?await r.json():null}catch(e){}      // an older server has no such answer: every button is offered
     const run=!!k.working,pc=k.total?Math.round(100*(k.done+(k.done<k.total?.35:0))/k.total):null,conn=Object.keys(roots).filter(r=>roots[r]);
     if((was&&!run)||(table&&!lg)){try{lg=await tcGet("footage/log")}catch(e){}}if(was&&!run&&opts&&opts.after)opts.after();was=run;
     const tot={log:0,telemetry:0,stills:0};const checking=!!(todo&&todo.checking);let unknown=!todo;conn.forEach(r=>{const l=left(todo,r);if(!l){unknown=true;return}tot.log+=l.log;tot.telemetry+=l.telemetry;tot.stills+=l.stills});
-    const kinds=unknown?STEP:STEP.filter(x=>tot[x[0]]>0);go=async list=>{stopVideos();until=Date.now()+20000;note="";done0={keys:list?STEP.filter(x=>x[2].some(s=>list.includes(s))).map(x=>x[0]):STEP.map(x=>x[0]),before:Object.assign({},tot),t:Date.now()};try{await fetch("/api/keeper",{method:"POST",body:JSON.stringify({action:"run",stages:list})})}catch(e){}paint()};
+    const kinds=unknown?STEP:STEP.filter(x=>tot[x[0]]>0);go=async list=>{stopVideos();until=Date.now()+20000;note="";done0={keys:list?STEP.filter(x=>x[2].some(s=>list.includes(s))).map(x=>x[0]):STEP.map(x=>x[0]),before:Object.assign({},tot),t:Date.now()};try{await fetch0("/api/keeper",{method:"POST",body:JSON.stringify({action:"run",stages:list})})}catch(e){}paint()};
     const g0=todo&&todo.progress,chkTx=!g0?"Checking for outstanding tasks...":g0.step==="list"?"Checking the "+(NM[g0.role]||g0.role)+" for new files":g0.step==="telemetry"?"Checking for minutes without telemetry":g0.step==="signs"?"Checking for minutes without signs read":"Checking for clips without stills",chkPc=g0?(g0.pct!=null?g0.pct:Math.round(100*(g0.done+.4)/g0.total)):null;      // a bar whenever something is being checked
     const runTx=(k.text||"Working")+(k.total?" · "+n0(k.done)+" of "+n0(k.total):""),chkFull=chkTx+(g0?" · "+n0(g0.done+1)+" of "+n0(g0.total):"");
     if(!table&&conn.length&&!k.error&&!(todo&&todo.error&&!checking)&&!note&&!msg){
-      if(run&&$("#fsh",host)&&$("#fsx",host)){$("#fsh",host).textContent=runTx;setPbar(host,pc);FSHTML[hk]=host.innerHTML;setTimeout(paint,1000);return}
-      if(!run&&checking&&$("#fsh",host)&&!$("#fsx",host)){$("#fsh",host).textContent=chkFull;setPbar(host,chkPc);FSHTML[hk]=host.innerHTML;setTimeout(paint,1000);return}}
+      if(run&&$("#fsh",host)&&$("#fsx",host)){$("#fsh",host).textContent=runTx;setPbar(host,pc);FSHTML[hk]=host.innerHTML;lastBusy=true;setTimeout(paint,1000);return}
+      if(!run&&checking&&$("#fsh",host)&&!$("#fsx",host)){$("#fsh",host).textContent=chkFull;setPbar(host,chkPc);FSHTML[hk]=host.innerHTML;lastBusy=true;setTimeout(paint,1000);return}}
     const barOf=(txt,q)=>`<div class="tbar"><div class="tbt">${esc(txt)}</div>${pbar(q)}</div>`;
     let h="";
     if(!conn.length)h+='<div class="bar"><span class="sub">No TeslaCam drive connected.</span></div>';
@@ -1863,7 +1863,7 @@ function footageSync(host,opts){
         return{h:p.length?p.map(esc).join(" · "):'<span style="color:var(--ok)">Up to date</span>'}};
       if((run||checking)&&$$("[data-todo]",host).length===rs.length&&!!$("#fsx",host)===run&&!k.error&&!note&&!msg){
         rs.forEach(r=>{const td=$(`[data-todo="${r}"]`,host),inf=todoInfo(r);if(!td)return;if(inf.tx!=null&&$(".tbt",td)){$(".tbt",td).textContent=inf.tx;setPbar(td,inf.q)}else if(td.innerHTML!==inf.h)td.innerHTML=inf.h});
-        FSHTML[hk]=host.innerHTML;setTimeout(paint,1000);return}
+        FSHTML[hk]=host.innerHTML;lastBusy=true;setTimeout(paint,1000);return}
       h+=`<table style="margin-top:8px"><thead><tr><th class="l">Drive</th><th>Files</th><th>Size</th><th>Archived</th><th>Deleted</th><th class="l">Last updated</th><th class="l">Tasks</th><th>${run?'<button class="btn sm" id="fsx">Stop</button>':k.paused?'<button class="btn sm pri" id="fsr">Resume</button>':""}</th></tr></thead><tbody>${rs.map(r=>{const d=lg.drives[r],c=lg.scans[r]||{};return `<tr><td class="l"><b>${esc(NM[r]||r)}</b></td><td>${n0(d.listed)}</td><td>${gb(d.listed_bytes)}</td><td>${n0(d.archived)}</td><td>${n0(d.deleted)}</td><td class="l">${esc(localWhen(c.at))}</td><td class="l" data-todo="${r}">${todoInfo(r).h}</td><td>${roots[r]?`<button class="btn sm" data-ej="${r}" ${busyEject?"disabled":""}>${busyEject===r?"Ejecting…":"Eject"}</button>`:""}</td></tr>`}).join("")}</tbody></table>
         <div class="tiles" style="margin-top:8px">${tile(n0(t.files),"files logged · "+gb(t.bytes))}${tile(n0(t.deleted),"deleted from every drive · "+gb(t.deleted_bytes))}${tile(n0(t.only_secondary),"not on the Archive · "+gb(t.only_secondary_bytes))}${tile(n0(t.purgeable),"copies also on the Archive · "+gb(t.purgeable_bytes))}</div>`}
     if(done0&&!run&&!checking&&todo&&!unknown&&Date.now()>done0.t+4000){      // what the buttons just did, said once the job has ended and the numbers are worked out again
@@ -1872,9 +1872,10 @@ function footageSync(host,opts){
     if(note)h+=`<div class="sub" style="margin-top:8px;color:var(--ok)">${esc(note)}</div>`;
     if(msg)h+=`<div class="sub" style="margin-top:8px;${/ejected/.test(msg)?"color:var(--ok)":"color:var(--bad)"}">${esc(msg)}</div>`;
     FSHTML[hk]=h;mkey("fs|"+hk).then(k=>IDB.set(k,h));host.classList.remove("ph");if(host.innerHTML!==h){host.innerHTML=h;wire()}
-    if(run||checking||Date.now()<until)setTimeout(paint,run||checking?1000:2500)};
-  let wk=null;const watch=async()=>{if(!document.body.contains(host))return;      // a drive plugged in or ejected: the rows, the buttons and the clips below follow without a reload
-    try{const r=(await (await fetch("/api/status")).json()).roots||{},key=Object.keys(r).filter(x=>r[x]).sort().join(",");
+    lastBusy=run||checking;if(run||checking||Date.now()<until)setTimeout(paint,run||checking?1000:2500)};
+  let wk=null,lastP=0,lastBusy=false;const watch=async()=>{if(!document.body.contains(host))return;if(lastBusy&&Date.now()-lastP>15000)paint();      // a look that never came back must not leave the strip as it was
+      // a drive plugged in or ejected: the rows, the buttons and the clips below follow without a reload
+    try{const r=(await (await fetch0("/api/status")).json()).roots||{},key=Object.keys(r).filter(x=>r[x]).sort().join(",");
       if(wk!==null&&key!==wk){wk=key;until=Date.now()+30000;FSHTML[hk]="";paint();if(opts&&opts.after)opts.after()}else wk=key}catch(e){}
     setTimeout(watch,3000)};
   FSKICK[hk]=()=>{if(document.body.contains(host)){until=Date.now()+60000;paint()}};
