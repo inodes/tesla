@@ -9,6 +9,8 @@ bands only). Called at the end of analyse_fsd_osm_limits.py; can also be run alo
     build_fsd_map.py [--data-dir DIR] [--since YYYY-MM-DD]
 """
 import os as _os, sys as _sys; _sys.path[:0] = [p for p in (_os.path.dirname(_os.path.abspath(__file__)), _os.path.dirname(_os.path.dirname(_os.path.abspath(__file__)))) if p not in _sys.path]      # the commands beside it, and Tools/ (lib, providers)
+if any(a in ("-h", "--help") for a in _sys.argv[1:]):          # its help, and nothing else (the work starts on import)
+    print(__doc__.strip()); _sys.exit(0)
 import bisect, calendar, collections, csv, datetime, glob, json, math, os, sys
 
 HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))

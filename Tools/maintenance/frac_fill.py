@@ -3,6 +3,7 @@
 Usage: frac_fill.py [--data-dir DIR] [--budget S]   (re-run until it says 0 left)"""
 import argparse, csv, json, os, sys, time, datetime
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "commands"))      # dashcam_flip_review lives in Tools/commands/
 import dashcam_flip_review as D
 ap = argparse.ArgumentParser(); ap.add_argument("--data-dir", default=D.DEFAULT_DATA); ap.add_argument("--budget", type=float, default=85)
 a = ap.parse_args(); t0 = time.time()

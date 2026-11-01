@@ -69,7 +69,6 @@ GROUPS = [
         ("drive-gps", "drive_gps.py", "street-accurate drive paths from the dashcam"),
         ("drive-snapshots", "build_drive_snapshots.py", "a still for every event of each drive"),
         ("fsd-map", "build_fsd_map.py", "FSD highway map"),
-        ("deepdive-charts", "deepdive_charts.py", "telemetry charts"),
         ("drive-actions", "drive_actions.py", "carry out the footage actions queued on drive pages"),
     ]),
     ("teslacam", "TeslaCam drives", [
