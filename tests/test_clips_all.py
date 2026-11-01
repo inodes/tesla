@@ -68,11 +68,20 @@ class ClipsAll(unittest.TestCase):
         self.assertIsNone(by["2026-10-16_18-00-07"]["play"])
         self.assertEqual(d["connected"], ["J"])
 
-    def test_an_event_says_whether_the_car_moved_in_it(self):
-        self.assertFalse(self.tc.clips_all({})["sentry"][0]["moved"])            # no telemetry: parked
+    def test_a_saved_clip_says_whether_the_car_moved_in_it_and_sentry_is_always_parked(self):
+        ev = dict(id="2026-10-16_19-37-44", ts="2026-10-16T19:37:43", city="West Ryde", street="Victoria Rd", lat=-33.8, lon=151.1, reason="user_interaction_dashcam_icon_tapped",
+                  cam="5", clips={"2026-10-16_19-33-54": CAMS}, thumb=False)
+        dump({ev["id"]: ev}, os.path.join(self.tmp, "teslacam_index_A_saved.json"))
+        self.tc = AT.TeslaCam(self.tmp)
         store = self.tc._tl("A")
-        store._load_sum()["2026-10-16_15-59-07"] = dict(n=60, vmax=45.0, km=0.3, mov=40, fsd=0, aut=0, p0=None, p1=None)
-        self.assertTrue(self.tc.clips_all({})["sentry"][0]["moved"])             # a drive into Home is a drive, not parked at Home
+        d = self.tc.clips_all({})
+        self.assertFalse(d["saved"][0]["moved"])                                 # no telemetry read: not known to have moved
+        moving = dict(n=60, vmax=45.0, km=0.3, mov=40, fsd=0, aut=0, p0=None, p1=None)
+        store._load_sum()["2026-10-16_19-33-54"] = moving
+        store._load_sum()["2026-10-16_15-59-07"] = moving
+        d = self.tc.clips_all({})
+        self.assertTrue(d["saved"][0]["moved"])                                  # the drive into Home: a drive, not parked at Home
+        self.assertFalse(d["sentry"][0]["moved"])                                # Sentry only records parked
 
     def test_one_run_for_the_player(self):
         r = self.tc.run_all("2026-10-16_15-40-07", {"J": self.tmp})

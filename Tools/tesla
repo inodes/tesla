@@ -45,8 +45,6 @@ GROUPS = [
         ("charges", "analyse_charging.py", "charges, Supercharger costs, invoices, curves"),
         ("battery", "analyse_battery_health.py", "battery health over time"),
         ("efficiency", "analyse_car_efficiency.py", "speed against efficiency and range"),
-        ("fsd-plateaus", "analyse_fsd_105.py", "FSD speed plateaus"),
-        ("fsd-limits", "analyse_fsd_osm_limits.py", "FSD plateaus against posted limits"),
     ]),
     ("report", "Reports", [
         ("power-cost", "power_cost_calculator.py", "electricity bill rebuilt from usage"),
@@ -59,16 +57,11 @@ GROUPS = [
         ("agl-demand", "agl_demand_calculator.py", "AGL demand charge"),
         ("prices", "price_history_report.py", "fuel and electricity prices over time"),
         ("cost-per-100km", "cost_per_100km_report.py", "fuel car against EV, per 100 km"),
-        ("charges-cost", "report_all_charges_cost.py", "our cost against Tessie's, every charge"),
-        ("charge-session-cost", "ev_session_cost.py", "one charging session's cost"),
-        ("home-charges", "audit_home_charges.py", "every Home charge's cost checked"),
-        ("home-charge-sample", "home_charge_deep_dive.py", "sample Home charges in detail"),
     ]),
     ("build", "Pages and maps", [
         ("drive-pages", "drive_report.py", "a page per drive"),
         ("drive-gps", "drive_gps.py", "street-accurate drive paths from the dashcam"),
         ("drive-snapshots", "build_drive_snapshots.py", "a still for every event of each drive"),
-        ("fsd-map", "build_fsd_map.py", "FSD highway map"),
         ("drive-actions", "drive_actions.py", "carry out the footage actions queued on drive pages"),
     ]),
     ("teslacam", "TeslaCam drives", [
@@ -79,9 +72,6 @@ GROUPS = [
         ("drives", "manage_teslacam_drives.py", "what each drive is for"),
         ("export", "dashcam_exportdash.sh", "web viewer and stitcher"),
         ("flips", "dashcam_flip_review.py", "review FSD flips"),
-        ("signs", "sign_scan.py", "speed signs around flips"),
-        ("signs-auto", "sign_auto.py", "location signs in the flip sheets"),
-        ("tessie-vs-cam", "tessie_vs_cam.py", "why Tessie and the dashcam disagree"),
     ]),
     ("chargers", "Charging stations", [
         ("find", "charger_find.py", "find chargers on every network"),

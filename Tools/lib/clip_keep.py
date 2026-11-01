@@ -264,8 +264,7 @@ class ClipKeep:
                 ign = bool(p0) and IGN.at(p0[0], p0[1])
             elif kind == "sentry":
                 ev0 = events.get((kind, cid)) or {}
-                moved = any(isinstance(sm, dict) and sm.get("vmax", 0) >= 3.0 for sm in (store.summary(x) for x in mins))      # started while driving: not parked at Home
-                ign = IGN.at(ev0.get("lat"), ev0.get("lon")) and not moved
+                ign = IGN.at(ev0.get("lat"), ev0.get("lon"))           # Sentry only records parked
             if ign:
                 ignored.update(mins)
             for st, node in mins.items():

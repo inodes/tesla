@@ -16,7 +16,7 @@ Also writes fsd_highway_stretches.csv (every highway stretch since --since, defa
 and fsd_highway_map.html (route map coloured by speed band, with the 105 sections).
 Usage: analyse_fsd_105.py [--data-dir DIR] [--since YYYY-MM-DD]
 """
-import os as _os, sys as _sys; _sys.path[:0] = [p for p in (_os.path.dirname(_os.path.abspath(__file__)), _os.path.dirname(_os.path.dirname(_os.path.abspath(__file__)))) if p not in _sys.path]      # the commands beside it, and Tools/ (lib, providers)
+import os as _os, sys as _sys; _sys.path[:0] = [p for p in (_os.path.dirname(_os.path.abspath(__file__)), _os.path.join(_os.path.dirname(_os.path.dirname(_os.path.abspath(__file__))), "commands"), _os.path.dirname(_os.path.dirname(_os.path.abspath(__file__)))) if p not in _sys.path]      # the tools beside it, the commands, and Tools/ (lib, providers)
 if any(a in ("-h", "--help") for a in _sys.argv[1:]):          # its help, and nothing else (the work starts on import)
     print(__doc__.strip()); _sys.exit(0)
 import csv,sys,glob,os,datetime,math,collections,json
