@@ -2637,7 +2637,8 @@ async function boot(){
   try{const s=cache.summary=await (await fetch0("/api/summary")).json();$("#veh").textContent=s.vehicle;$("#vsub").textContent=n0(s.km)+" km logged"}catch(e){}
   // the corner: one line a drive, a dot and its name. Green = connected, amber = something is reading it, red = not connected; ⏏ only while connected (and not just ejected)
   window.EJD={};window.KBUSY=[];const NM={A:"Archive",J:"JOWUA",U:"Tesla USB"};
-  const st=async()=>{try{const s=await (await fetch("/api/status")).json();if(window.UI0==null)window.UI0=s.ui;
+  let stLast="";
+  const st=async()=>{try{const s=await (await fetch("/api/status")).json();const sj=JSON.stringify(s)+JSON.stringify(window.EJMSG||null)+JSON.stringify(EJD);if(sj===stLast)return;stLast=sj;if(window.UI0==null)window.UI0=s.ui;
     window.ROOTS=s.roots;{let ch=false;Object.entries(s.names||{}).forEach(([r,l])=>{if(!"AJU".includes(r)){if(DRX[r]!==l)ch=true;DRX[r]=l;NM[r]=l}});if(ch){try{localStorage.setItem("drx",JSON.stringify(DRX))}catch(e){}if(window.UI0!=null&&typeof redrawQuietly==="function")redrawQuietly()}}const up=r=>s.roots[r]&&!(EJD[r]&&Date.now()-EJD[r]<20000);
     $("#status").innerHTML=["A","J","U",...Object.keys(DRX)].filter(r=>r==="A"||up(r)||(s.known||[]).includes(r)).map(r=>`<div class="${up(r)?"":"away"}"><span class="dot ${!up(r)?"off":KBUSY.includes(r)?"rd":"on"}" data-r="${r}" title="${!up(r)?"Not connected":KBUSY.includes(r)?"Being read":"Connected"}"></span><span class="dn">${NM[r]}</span>${up(r)?("AJU".includes(r)?`<button class="eject" data-ej="${r}" title="Eject ${NM[r]}" aria-label="Eject ${NM[r]}">⏏</button>`:""):'<span class="gone">not connected</span>'}</div>`).join("");
     $("#upd").innerHTML=((window.EJMSG&&Date.now()<window.EJMSG.until?`<div class="${window.EJMSG.ok?"":"upd"}" style="font-size:12px">${esc(window.EJMSG.text)}</div>`:"")+`${s.stale?'<div class="upd">App updated · <a href="#" onclick="appRestart();return false">Restart</a></div>':""}${s.ui!==window.UI0?'<div class="upd">The page was updated. <a href="#" onclick="location.reload();return false">Reload it</a> to load the new version.</div>':""}`);
@@ -2645,7 +2646,7 @@ async function boot(){
   // amber while the Keeper (or a button) is reading a drive: asked often, and only the dots are touched
   const kp=async()=>{try{const k=await (await fetch("/api/keeper")).json();window.KBUSY=k.working?(Object.keys(k.drives||{}).length?Object.keys(k.drives):k.roles||[]):[];
     $$("#status .dot[data-r]").forEach(d=>{if(d.classList.contains("off"))return;const b=KBUSY.includes(d.dataset.r);d.classList.toggle("rd",b);d.classList.toggle("on",!b);d.title=b?"Being read":"Connected"})}catch(e){}};
-  st();setInterval(st,30000);kp();setInterval(kp,4000);route();
+  st();setInterval(st,5000);kp();setInterval(kp,4000);route();
 }
 addEventListener("keydown",e=>{if((e.metaKey||e.ctrlKey)&&e.key.toLowerCase()==="r"){e.preventDefault();location.reload()}});
 // Cmd-1 to Cmd-9, and Cmd-0, open the pages of the side bar in the order they are listed there

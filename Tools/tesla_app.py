@@ -132,12 +132,30 @@ def drive_review_state(stamp):
                 connected=bool(footage_roots()), missing=app_review.requirements())
 
 
+_VOLS = [None]
+
+
+def _volumes_changed():
+    """True once each time the mounted volumes change (/Volumes changes when a drive is plugged in or ejected)."""
+    try:
+        m = os.stat("/Volumes").st_mtime
+    except OSError:
+        return False
+    if _VOLS[0] is None:
+        _VOLS[0] = m
+        return False
+    if m != _VOLS[0]:
+        _VOLS[0] = m
+        return True
+    return False
+
+
 def footage_root(role):
     """TeslaCam folder of the drive with this role (A Archive, J JOWUA, U USB); looked up at most every 20 s."""
     if _ROOTS["v"] is None:                                 # the first look waits for the answer
         _ROOTS["v"] = {r: DR.find_root(r) for r in DR.read_roles()}
         _ROOTS["t"] = time.time()
-    elif time.time() - _ROOTS["t"] > 20 and not _ROOTS.get("busy"):
+    elif (time.time() - _ROOTS["t"] > 20 or _volumes_changed()) and not _ROOTS.get("busy"):      # a drive plugged in or out changes /Volumes: looked at again at once
         _ROOTS["busy"] = True                               # later looks answer from the last one and refresh it in the background (a slow drive must not hold a request)
 
         def look():
