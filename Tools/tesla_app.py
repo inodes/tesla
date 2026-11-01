@@ -992,6 +992,54 @@ def _warm(port):
 
 
 WIN = None                  # the app's window (pywebview), when it has one
+_WGEO = {}
+_WGEO_T = [None]
+
+
+def _wgeo_path():
+    return os.path.join(local_cache_dir(), "window.json")
+
+
+def window_place(webview):
+    """Size and place of the window as it was when last moved or resized (kept on this computer); the configured size the first time,
+    and the configured size in the default place when the remembered place is on no screen now (a display unplugged)."""
+    out = dict(width=int(app_config.get("window.width")), height=int(app_config.get("window.height")))
+    try:
+        with open(_wgeo_path(), encoding="utf-8") as f:
+            g = json.load(f)
+    except (OSError, ValueError):
+        return out
+    _WGEO.update(g if isinstance(g, dict) else {})
+    if _WGEO.get("w", 0) >= 900 and _WGEO.get("h", 0) >= 600:
+        out.update(width=int(_WGEO["w"]), height=int(_WGEO["h"]))
+    x, y = _WGEO.get("x"), _WGEO.get("y")
+    if x is not None and y is not None:
+        try:
+            scr = list(webview.screens or [])
+        except Exception:
+            scr = []
+        if not scr or any(sc.x - 50 <= x < sc.x + sc.width - 100 and sc.y - 50 <= y < sc.y + sc.height - 100 for sc in scr):
+            out.update(x=int(x), y=int(y))
+    return out
+
+
+def window_keep(**kw):
+    """The window was moved or resized: remembered a moment later (a drag sends many of these)."""
+    _WGEO.update({k: int(v) for k, v in kw.items() if v is not None})
+    if _WGEO_T[0]:
+        _WGEO_T[0].cancel()
+
+    def save():
+        try:
+            os.makedirs(os.path.dirname(_wgeo_path()), exist_ok=True)
+            with open(_wgeo_path() + ".tmp", "w", encoding="utf-8") as f:
+                json.dump(_WGEO, f)
+            os.replace(_wgeo_path() + ".tmp", _wgeo_path())
+        except OSError:
+            pass
+    _WGEO_T[0] = threading.Timer(1.0, save)
+    _WGEO_T[0].daemon = True
+    _WGEO_T[0].start()
 
 
 def app_exit(restart=False):
@@ -1114,7 +1162,9 @@ def main():
         try:
             import webview      # optional: native window
             global WIN
-            WIN = win = webview.create_window("Tesellate", url, width=int(app_config.get("window.width")), height=int(app_config.get("window.height")), min_size=(900, 600), text_select=True)
+            WIN = win = webview.create_window("Tesellate", url, min_size=(900, 600), text_select=True, **window_place(webview))
+            win.events.resized += lambda w, h: window_keep(w=w, h=h)
+            win.events.moved += lambda x, y: window_keep(x=x, y=y)
             menu = mac_shell.build_menu(win) if sys.platform == "darwin" else None            # the pages in the menu bar
             mac_shell.start(KEEP.status, CKEEP.job)                                            # the job's share on the Dock icon, and a notification when a long job ends
             try:                # the Dock shows the app's icon even though python is the running program (needs pyobjc, which pywebview brings on a Mac)
