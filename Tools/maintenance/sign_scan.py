@@ -8,7 +8,7 @@ to 4 s after the speed change (every 0.5 s), finds round red-ringed signs (lib/s
 OCR on motion-blurred signs is unreliable, so the strips are meant to be read by eye (or by Claude); the page shows them.
 Usage: sign_scan.py [--data-dir DIR] [--teslacam DIR] [--budget SECONDS]
 """
-import os as _os, sys as _sys; _sys.path[:0] = [p for p in (_os.path.dirname(_os.path.abspath(__file__)), _os.path.dirname(_os.path.dirname(_os.path.abspath(__file__)))) if p not in _sys.path]      # the commands beside it, and Tools/ (lib, providers)
+import os as _os, sys as _sys; _sys.path[:0] = [p for p in (_os.path.dirname(_os.path.abspath(__file__)), _os.path.join(_os.path.dirname(_os.path.dirname(_os.path.abspath(__file__))), "commands"), _os.path.dirname(_os.path.dirname(_os.path.abspath(__file__)))) if p not in _sys.path]      # the tools beside it, the commands, and Tools/ (lib, providers)
 import argparse, bisect, datetime, glob, json, os, subprocess, sys, time
 from concurrent.futures import ThreadPoolExecutor
 import cv2

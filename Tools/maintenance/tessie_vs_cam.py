@@ -9,7 +9,7 @@ speed, odometer) and find where the dashcam GPS track passes the same spot. That
 Writes <data>/drives/analysis/tessie_vs_cam.csv and prints a summary per day.
 Usage: tessie_vs_cam.py [--data-dir DIR] [--teslacam DIR]
 """
-import os as _os, sys as _sys; _sys.path[:0] = [p for p in (_os.path.dirname(_os.path.abspath(__file__)), _os.path.dirname(_os.path.dirname(_os.path.abspath(__file__)))) if p not in _sys.path]      # the commands beside it, and Tools/ (lib, providers)
+import os as _os, sys as _sys; _sys.path[:0] = [p for p in (_os.path.dirname(_os.path.abspath(__file__)), _os.path.join(_os.path.dirname(_os.path.dirname(_os.path.abspath(__file__))), "commands"), _os.path.dirname(_os.path.dirname(_os.path.abspath(__file__)))) if p not in _sys.path]      # the tools beside it, the commands, and Tools/ (lib, providers)
 import argparse, csv, datetime, glob, json, math, os, statistics, sys
 HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, HERE)

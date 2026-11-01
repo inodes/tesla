@@ -241,8 +241,8 @@ class TeslaCam:
             store = self._tl("A")
             for e in evs:
                 e["play"] = next((r for r in e["roles"] if roots.get(r)), None)
-                # the car moved in the clip's minutes (a Saved clip taken on a drive, even one that ends parked at Home): it is a drive, at no place
-                e["moved"] = any(isinstance(sm, dict) and sm.get("vmax", 0) >= TL.OPTS["moving_kmh"] for sm in (store.summary(st) for st in (e.get("clips") or {})))
+                # the car moved in a Saved clip's minutes (taken on a drive, even one that ends parked at Home): it is a drive, at no place. Sentry only records parked.
+                e["moved"] = kind == "saved" and any(isinstance(sm, dict) and sm.get("vmax", 0) >= TL.OPTS["moving_kmh"] for sm in (store.summary(st) for st in (e.get("clips") or {})))
             out[kind] = evs
         cams, holders = self._ledger_recent(None)
         runs, cur = [], None
