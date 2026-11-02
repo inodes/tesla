@@ -821,6 +821,9 @@ class H(BaseHTTPRequestHandler):
         if name == "place":
             d = S.pl.detail(S, q.get("key", [""])[0], q.get("name", [""])[0], q.get("addr", [""])[0])
             return self.send_json(d if d else {"error": "no such place"}, 200 if d else 404)
+        if name == "site":                       # what the charger registry knows about one charging site (the map's charger card)
+            d = S.pl.site(q.get("key", [""])[0])
+            return self.send_json(d if d else {"error": "no such site"}, 200 if d else 404)
         if name == "place-osm":
             g = lambda k, dv="": q.get(k, [dv])[0]
             try:

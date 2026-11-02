@@ -1175,14 +1175,53 @@ function rgInit(){
     const up=ev=>{removeEventListener("mousemove",mv);removeEventListener("mouseup",up);bx.remove();m.dragPan.enable();const x=ev.clientX-r.left,y=ev.clientY-r.top;
       const ks=[...new Set(m.queryRenderedFeatures([[Math.min(x,x0),Math.min(y,y0)],[Math.max(x,x0),Math.max(y,y0)]],{layers:["pl"]}).map(f=>f.properties.key))];if(ks.length){ks.forEach(k=>RG.sel.add(k));RG.out=new Set();rgSel();rgPanel();rgRun()}};
     addEventListener("mousemove",mv);addEventListener("mouseup",up)},true)}
+// ---------- the card of a charging site on a map: only what that network tells (Tesla's sites tell a lot, a PlugShare one little); every line is left out when unknown
+const CONN={iec_62196_type2:"Type 2","iec 62196 type 2":"Type 2",ccs_combo2:"CCS2",chademo:"CHAdeMO","nacs (tesla)":"NACS","wall (au/nz)":"Wall plug","three phase (5-pin)":"3-phase","caravan mains (15a)":"15 A outlet"};
+const SPEED={supercharger:"Supercharger",dc_fast:"DC fast",ac_destination:"AC"};
+const ccHours=h=>!h?"":/^(available |open )?24\/7$/i.test(h.trim())?"24/7":/varies/i.test(h)?"":h.replace(/^Daily /,"");
+const ccNow=tz=>{try{const f=new Intl.DateTimeFormat("en-AU",{timeZone:tz||undefined,weekday:"short",hour:"2-digit",minute:"2-digit",hour12:false}).formatToParts(new Date()),g=t=>(f.find(x=>x.type===t)||{}).value;return{day:g("weekday"),hm:(g("hour")==="24"?"00":g("hour"))+":"+g("minute"),mon:new Date().toLocaleString("en-AU",{month:"short",timeZone:tz||undefined})}}catch(e){return null}};
+const ccRateNow=(rows,tz)=>{const n=ccNow(tz);if(!n||!rows||!rows.length)return null;return rows.find(r=>(!r.days.length||r.days.includes(n.day))&&(!r.months.length||r.months.includes(n.mon))&&(!r.start||(r.start<=n.hm&&n.hm<(r.end||"24:00"))))||null};
+const ccMoney=v=>v==null?"":"$"+(+v).toFixed(2);
+function chargerCard(S,o){
+  o=o||{};const h=S.hardware||{},a=S.access||{},t=S.tariffs||{},pl=S.place||{},tz=pl.timezone;
+  const pill=(txt,tip)=>txt?`<span class="ccp"${tip?` title="${esc(tip)}"`:""}>${esc(txt)}</span>`:"";
+  const conns=[...new Set((h.connectors||[]).map(c=>CONN[String(c).toLowerCase()]||c))];
+  const pills=[h.kw?pill(n0(h.kw)+" kW",SPEED[h.speed]||""):pill(SPEED[h.speed]||""),h.tier&&h.tier!==h.speed?pill(h.tier,"Hardware"):"",
+    h.stalls?pill(n0(h.stalls)+(h.stalls===1?" stall":" stalls")+(h.available!=null?" · "+n0(h.available)+" free":""),h.available!=null?"Free when last checked":""):"",
+    conns.length?pill(conns.join(" · "),"Connectors"):"",h.tethered===true?pill("Cable attached"):"",
+    a.tesla_only?pill("Tesla only"):S.network==="Tesla"&&a.open_to_all?pill("Open to all EVs"):"",pill(ccHours(a.hours),"Hours")].join("");
+  // price: now, the day's range, and the fees; members and non-Tesla prices when the network gives both
+  const sched=t.schedule&&t.schedule.length?t.schedule:t.members&&t.members.length?t.members:[],now=ccRateNow(sched,tz),rates=sched.map(r=>r.rate).filter(x=>x!=null);
+  const lo=rates.length?Math.min(...rates):null,hi=rates.length?Math.max(...rates):null;
+  const nt=t.non_tesla&&t.non_tesla.length?ccRateNow(t.non_tesla,tz)||t.non_tesla[0]:null;
+  let price=now&&now.rate!=null?`<b>${ccMoney(now.rate)}</b>/kWh now${lo!=null&&hi!==lo?` <span class="ccs">· ${ccMoney(lo)}–${ccMoney(hi)} by time</span>`:""}`:t.per_kwh!=null?`<b>${ccMoney(t.per_kwh)}</b>/kWh`:t.range?esc(t.range):"";
+  const fees=[nt&&nt.rate!=null&&S.network==="Tesla"&&!(now&&now.rate===nt.rate)?"non-Tesla "+ccMoney(nt.rate)+"/kWh":"",t.idle>0?"idle "+ccMoney(t.idle)+"/min":"",t.congestion>0?"busy fee "+ccMoney(t.congestion)+"/min":"",t.parking?"parking "+(typeof t.parking==="number"?ccMoney(t.parking):esc(String(t.parking))):""].filter(Boolean);
+  const schedTip=sched.map(r=>`${r.label||""} ${r.start||""}–${r.end||""} ${ccMoney(r.rate)}`).join("\n");
+  // busy (Tesla): today's hours as small bars, this hour marked
+  let busy="";const B=S.busy;if(B&&B.days){const n=ccNow(tz),di=["Mon","Tue","Wed","Thu","Fri","Sat","Sun"].indexOf(n&&n.day),hrs=(B.days[di<0?0:di]||{}).hours||[],ch=n?+n.hm.slice(0,2):-1,mx=Math.max(.01,...hrs);
+    if(hrs.length)busy=`<div class="ccb" title="${esc(B.text||"")}">${hrs.map((v,i)=>`<i style="height:${Math.max(2,Math.round(22*v/mx))}px"${i===ch?' class="on"':""}></i>`).join("")}</div><div class="ccs">${esc(B.text||"Busy by hour today")}</div>`}
+  const F=S.facilities,am=(S.amenities||[]);
+  const near=F&&F.rating?`<span title="${esc(Object.entries(F.categories||{}).map(([k,v])=>k+": "+v.slice(0,3).join(", ")).join("\n"))}">${esc((F.badge||"").split("·").pop().trim())} ${esc(F.rating)} nearby</span>`:"";
+  const use=o.charges?`You: ${n0(o.charges)} charge${o.charges>1?"s":""}${o.kwh?" · "+n0(o.kwh)+" kWh":""}${o.cost?" · "+money(o.cost):""}`:"";
+  const addr=[pl.street||pl.address,pl.suburb,pl.state].filter(Boolean).filter((x,i,A)=>A.indexOf(x)===i).join(", ");
+  const chk=S.checked?new Date(S.checked).toLocaleDateString("en-AU",{day:"numeric",month:"short",year:"numeric"}):"";
+  return `<div class="cc"><b class="cch">${esc(S.name||o.name||"")}</b>
+    <div class="ccs"><i class="ccd" style="background:${o.col||"#888"}"></i>${esc(S.network||"")}${S.operator&&S.operator!==S.network?" · "+esc(S.operator):""}${addr?" · "+esc(addr):""}</div>
+    ${pills.trim()?`<div class="ccf">${pills}</div>`:""}
+    ${price||fees.length?`<div class="ccr"${schedTip?` title="${esc(schedTip)}"`:""}>${price}${fees.length?`<div class="ccs">${fees.join(" · ")}</div>`:""}</div>`:""}
+    ${busy}${near||am.length?`<div class="ccs">${[near,am.length?esc(am.join(" · ")):""].filter(Boolean).join(" · ")}</div>`:""}
+    ${use?`<div class="ccu">${use}</div>`:""}
+    <div class="ccl"><a href="#/place/${encodeURIComponent(o.key||"")}">Site details</a> · ${mapLinks(pl.lat!=null?pl.lat:o.lat,pl.lon!=null?pl.lon:o.lon,S.name,true)}</div>
+    ${chk||(S.source_names||[]).length?`<div class="ccs ccc">${chk?"Checked "+chk:""}${(S.source_names||[]).length?(chk?" · ":"")+esc(S.source_names.join(", ")):""}</div>`:""}</div>`;
+}
 function placesMap(host,rows,tab){
   const COL={saved:"#3b6cf6",sc:"#e0201b",chargers:"#16a34a",found:"#f59e0b"}[tab]||"#3b6cf6",byNet=tab==="chargers"||tab==="sc",ALIAS={"Tesla Supercharger":"Tesla","Evie Networks":"Evie"};
   const netName=r=>{const n=r.network||(tab==="sc"?"Tesla":"Other");return ALIAS[n]||n};
   const netCol=n=>{const c=cfg("map.network_colors")||{};if(c[n])return c[n];let h=0;for(const ch of n)h=(h*31+ch.charCodeAt(0))%360;return `hsl(${h},62%,42%)`};
   const used=r=>tab==="found"?true:tab==="saved"?(r.charges||r.idles||r.drives)>0:r.charges>0;
   const hidden=(PLM&&PLM.tab===tab&&PLM.hidden)||new Set();
-  const feats=()=>rows.filter(r=>r.lat!=null&&r.lon!=null&&+r.lon<cfg("map.places_max_lon")&&!(byNet&&hidden.has(netName(r)))).map(r=>({type:"Feature",geometry:{type:"Point",coordinates:[+r.lon,+r.lat]},properties:{u:used(r)?1:0,key:r.key,name:r.name||r.addr||"Unnamed stop",lat:+r.lat,lon:+r.lon,c:byNet?netCol(netName(r)):COL,
-    det:[r.stalls?r.stalls+" stalls":"",r.kw?n0(r.kw)+" kW"+(r.tier?" "+r.tier:""):"",r.conn||"",r.hours||""].filter(Boolean).join(" · "),sub:[r.network||(tab==="sc"?"Supercharger":tab==="saved"?"Saved place":tab==="found"?"Stop to review":""),r.addr||"",r.charges?r.charges+" charge"+(r.charges>1?"s":"")+" · "+n0(r.kwh,1)+" kWh":(tab==="found"?r.visits+" days there":"")].filter(Boolean).join(" · ")}})).sort((x,y)=>x.properties.u-y.properties.u);
+  const feats=()=>rows.filter(r=>r.lat!=null&&r.lon!=null&&+r.lon<cfg("map.places_max_lon")&&!(byNet&&hidden.has(netName(r)))).map(r=>({type:"Feature",geometry:{type:"Point",coordinates:[+r.lon,+r.lat]},properties:{u:used(r)?1:0,key:r.key,ch:r.charges||0,kwh:r.kwh||0,cost:r.cost||0,name:r.name||r.addr||"Unnamed stop",lat:+r.lat,lon:+r.lon,c:byNet?netCol(netName(r)):COL,
+    det:[r.stalls?r.stalls+" stalls":"",r.kw?n0(r.kw)+" kW"+(r.tier?" "+(SPEED[r.tier]||r.tier):""):"",r.conn||"",r.hours||""].filter(Boolean).join(" · "),sub:[r.network||(tab==="sc"?"Supercharger":tab==="saved"?"Saved place":tab==="found"?"Stop to review":""),r.addr||"",r.charges?r.charges+" charge"+(r.charges>1?"s":"")+" · "+n0(r.kwh,1)+" kWh":(tab==="found"?r.visits+" days there":"")].filter(Boolean).join(" · ")}})).sort((x,y)=>x.properties.u-y.properties.u);
   const legend=()=>{if(!byNet)return;const cnt={};rows.forEach(r=>{if(r.lat!=null&&+r.lon<cfg("map.places_max_lon"))cnt[netName(r)]=(cnt[netName(r)]||0)+1});
     $("#nl").innerHTML=Object.entries(cnt).sort((a,b)=>b[1]-a[1]).map(([n,c])=>`<button class="chip nw${hidden.has(n)?" off":""}" data-nw="${esc(n)}" title="Show / hide ${esc(n)}"><i style="display:inline-block;width:10px;height:10px;border-radius:50%;background:${netCol(n)};margin-right:6px"></i>${esc(n)} <b>${n0(c)}</b></button>`).join("");
     $$("[data-nw]",host).forEach(b=>b.onclick=()=>{const n=b.dataset.nw;hidden.has(n)?hidden.delete(n):hidden.add(n);PLM.hidden=hidden;PLM.update(false);legend()});pmFit()};
@@ -1207,7 +1246,9 @@ function placesMap(host,rows,tab){
     m.addSource("sel",{type:"geojson",data:{type:"FeatureCollection",features:[]}});
     if(RG.on)rgSel();
     m.on("mouseenter","pl",()=>m.getCanvas().style.cursor="pointer");m.on("mouseleave","pl",()=>m.getCanvas().style.cursor="");
-    m.on("click","pl",e=>{const p=e.features[0].properties;if(RG.on&&RG.st&&RG.st.built){rgPick([p.key]);return}new maplibregl.Popup({offset:10,maxWidth:"300px"}).setLngLat(e.features[0].geometry.coordinates).setHTML(`<div style="font:13px system-ui;color:#111"><b>${esc(p.name)}</b><div style="color:#555;margin:3px 0 6px">${esc(p.sub)}</div>${p.det?`<div style="color:#555;margin:0 0 6px">${esc(p.det)}</div>`:""}<a href="#/place/${encodeURIComponent(p.key)}">${tab==="sc"||tab==="chargers"?"Site details":"Open place"}</a><div style="margin-top:6px;font-size:12px">${mapLinks(p.lat,p.lon,p.name)}</div></div>`).addTo(m)});
+    m.on("click","pl",e=>{const p=e.features[0].properties;if(RG.on&&RG.st&&RG.st.built){rgPick([p.key]);return}
+      const pop=new maplibregl.Popup({offset:10,maxWidth:"320px"}).setLngLat(e.features[0].geometry.coordinates).setHTML(`<div style="font:13px system-ui;color:#111"><b>${esc(p.name)}</b><div style="color:#555;margin:3px 0 6px">${esc(p.sub)}</div>${p.det?`<div style="color:#555;margin:0 0 6px">${esc(p.det)}</div>`:""}<a href="#/place/${encodeURIComponent(p.key)}">${tab==="sc"||tab==="chargers"?"Site details":"Open place"}</a><div style="margin-top:6px;font-size:12px">${mapLinks(p.lat,p.lon,p.name)}</div></div>`).addTo(m);
+      if(tab==="sc"||tab==="chargers")fetch("/api/site?key="+encodeURIComponent(p.key)).then(r=>r.ok?r.json():null).then(S=>{if(S&&!S.error&&pop.isOpen())pop.setHTML(chargerCard(S,{key:p.key,name:p.name,lat:p.lat,lon:p.lon,col:p.c,charges:p.ch,kwh:p.kwh,cost:p.cost}))}).catch(()=>{})});
     update(true)});
   update(false);
 }

@@ -261,3 +261,18 @@ main:has(#spl .stbar,#spl .vbar) #splx{display:none}
 
 /* the last screen of a page, shown while the page loads its own */
 .snap{pointer-events:none;user-select:none}
+
+/* the charger card on a map (chargerCard) */
+.cc{font:13px system-ui,sans-serif;color:#111;display:grid;gap:6px;min-width:230px}
+.cc .cch{font-size:14px;line-height:1.25}
+.cc .ccs{color:#555;font-size:12px}
+.cc .ccd{display:inline-block;width:9px;height:9px;border-radius:50%;margin-right:5px;vertical-align:0}
+.cc .ccf{display:flex;flex-wrap:wrap;gap:4px}
+.cc .ccp{background:#f1f3f6;border:1px solid #e3e6eb;border-radius:999px;padding:1px 8px;font-size:12px;white-space:nowrap}
+.cc .ccr b{font-size:15px}
+.cc .ccb{display:flex;align-items:flex-end;gap:1px;height:24px}
+.cc .ccb i{flex:1;background:#cbd5e1;border-radius:1px}
+.cc .ccb i.on{background:#e0201b}
+.cc .ccu{font-size:12px;color:#111;font-weight:600}
+.cc .ccl{font-size:12px}
+.cc .ccc{font-size:11px;color:#888}
