@@ -87,14 +87,17 @@ class StillsThin:
     def event_levels(self):
         """{tier: number of events} and the bytes the pictures around events take, for Saved and Sentry events with pictures kept."""
         import event_stills as EV
-        n, size = {t: 0 for t in EV.TIERS}, 0
-        for kind, eid, info in EV.EventStills(self.dir).events():
+        n, size, extra, xbytes = {t: 0 for t in EV.TIERS}, 0, 0, 0
+        es = EV.EventStills(self.dir)
+        for kind, eid, info in es.events():
             n[info.get("tier") if info.get("tier") in n else "high"] += 1
-            try:
-                size += os.path.getsize(os.path.join(EV.EventStills(self.dir).folder(kind, eid), info.get("cam", "") + ".zip"))
-            except OSError:
-                pass
-        return dict(n, bytes=size)
+            tot = es.size(kind, eid)
+            size += tot
+            main = self._size(es._zip(kind, eid))
+            if tot > main:                                                      # other cameras or half-second pictures kept as well
+                extra += 1
+                xbytes += tot - main
+        return dict(n, bytes=size, extra=extra, extra_bytes=xbytes)
 
     def _event_minutes(self):
         """{(kind, event folder): {clip stamps}} from the footage log."""
@@ -119,7 +122,7 @@ class StillsThin:
         marks = self._marks()
         mins = self._event_minutes()
         ev = {t: 0 for t in EV.TIERS}
-        epics = ebytes = 0
+        epics = ebytes = ex_n = ex_b = 0
         paths = []
         for kind, eid in clips:
             i = es.info(kind, eid)
@@ -127,12 +130,16 @@ class StillsThin:
                 continue
             ev[i.get("tier") if i.get("tier") in ev else "high"] += 1
             epics += i["n"]
-            z = os.path.join(es.folder(kind, eid), i["cam"] + ".zip")
-            ebytes += self._size(z)
+            z = es._zip(kind, eid)
+            tot = es.size(kind, eid)
+            ebytes += tot
+            if tot > self._size(z):
+                ex_n += 1
+                ex_b += tot - self._size(z)
             paths.append((z, i.get("tier") or "high"))
         wd = EV._widths(), EV._quality()
         out = dict(scoped=True, clips=len(clips), driving=dict(minutes=len(cand), pictures=pics, bytes=size, after=after),
-                   events=dict(ev, pictures=epics, bytes=ebytes))
+                   events=dict(ev, pictures=epics, bytes=ebytes, extra=ex_n, extra_bytes=ex_b))
         for lvl in ("normal", "shrunk"):
             todo = [z for z, t in paths if EV.TIERS.index(t) < EV.TIERS.index(lvl)]
             tot = sum(self._size(z) for z in todo)
@@ -195,13 +202,17 @@ class StillsThin:
             return dict(self.status(), error="Not confirmed: nothing was changed.")
         if self.running():
             return self.status()
-        if events not in (None, "normal", "shrunk"):
+        if events not in (None, "normal", "shrunk", "front"):
             return dict(self.status(), error="Unknown level.")
         self._stop = False
         if events:
             import event_stills as EV
             tiers = EV.TIERS
-            todo = [(k, e) for k, e, i in EV.EventStills(self.dir).events() if tiers.index(i.get("tier") or "high") < tiers.index(events) and (clips is None or (k, e) in clips)]
+            es = EV.EventStills(self.dir)
+            if events == "front":                                              # only the main camera, one a second: drops the other cameras and the half-second pictures
+                todo = [(k, e) for k, e, i in es.events() if es.size(k, e) > self._size(es._zip(k, e)) and (clips is None or (k, e) in clips)]
+            else:
+                todo = [(k, e) for k, e, i in es.events() if tiers.index(i.get("tier") or "high") < tiers.index(events) and (clips is None or (k, e) in clips)]
             self._job = dict(done=0, total=len(todo), saved=0, errors=[], current="", last=None, what="events")
             self._thread = threading.Thread(target=self._run_events, args=(todo, events), daemon=True)
         else:
@@ -257,6 +268,10 @@ class StillsThin:
                     break
                 j["current"] = eid
                 try:
+                    if level == "front":
+                        j["saved"] += es.reduce(kind, eid) or 0
+                        j["done"] += 1
+                        continue
                     r = es.shrink(kind, eid, level)
                     if r:
                         j["saved"] += max(0, r[0] - r[1])

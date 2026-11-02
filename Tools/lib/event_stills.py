@@ -36,6 +36,13 @@ from lib import teslacam_stills as ST
 DIRNAME = "teslacam_event_stills"
 HALF_S = 30
 CLIP_S = 60
+DENSE_S = 10        # seconds either side of the moment that get a picture every half second (front camera only)
+CAMS = ("front", "left_pillar", "right_pillar", "left_repeater", "back", "right_repeater")
+
+
+class Paths(dict):
+    """{clip stamp: video file of the main camera}, with `all` = {clip stamp: {camera: video file}} when the other cameras are on the drive too."""
+    all = None
 TIERS = ("high", "normal", "shrunk")
 
 
@@ -63,11 +70,11 @@ def window(ev, cams_by_stamp, cam, half=HALF_S):
 
 
 def _widths():
-    return {"high": int(app_config.get("stills.event_width", 1280)), "normal": int(app_config.get("stills.width", 400)), "shrunk": int(app_config.get("stills.thin_width", 240))}
+    return {"high": int(app_config.get("stills.event_width", 1280)), "normal": int(app_config.get("stills.width", 400)), "shrunk": int(app_config.get("stills.thin_width", 240)), "side": int(app_config.get("stills.event_side_width", 800))}
 
 
 def _quality():
-    return {"high": int(app_config.get("stills.event_quality", 3)), "normal": int(app_config.get("stills.quality", 6)), "shrunk": int(app_config.get("stills.thin_quality", 10))}
+    return {"high": int(app_config.get("stills.event_quality", 3)), "normal": int(app_config.get("stills.quality", 6)), "shrunk": int(app_config.get("stills.thin_quality", 10)), "side": int(app_config.get("stills.event_side_quality", 4))}
 
 
 class EventStills:
@@ -102,12 +109,41 @@ class EventStills:
         except (OSError, ValueError):
             return {}
 
-    def _zip(self, kind, eid, cam=None):
+    def _zip(self, kind, eid, cam=None, half=False):
         cam = cam or self.info(kind, eid).get("cam") or ""
-        return os.path.join(self.folder(kind, eid), cam + ".zip") if cam else ""
+        return os.path.join(self.folder(kind, eid), cam + (".h" if half else "") + ".zip") if cam else ""
 
-    def seconds(self, kind, eid):
-        z = self._zip(kind, eid)
+    def cams(self, kind, eid):
+        """The cameras with pictures kept for the event (the main one first)."""
+        i = self.info(kind, eid)
+        got = [c for c in (i.get("cams") or [i.get("cam")]) if c and os.path.isfile(self._zip(kind, eid, c))]
+        return got
+
+    def halves(self, kind, eid):
+        """The camera whose half-second pictures are kept, or ""."""
+        c = self.info(kind, eid).get("cam") or ""
+        return c if c and os.path.isfile(self._zip(kind, eid, c, True)) else ""
+
+    def size(self, kind, eid):
+        """Bytes the event's pictures take."""
+        d, n = self.folder(kind, eid), 0
+        try:
+            for fn in os.listdir(d):
+                if fn.endswith(".zip"):
+                    n += os.path.getsize(os.path.join(d, fn))
+        except OSError:
+            pass
+        return n
+
+    def zips(self, kind, eid):
+        d = self.folder(kind, eid)
+        try:
+            return [os.path.join(d, fn) for fn in sorted(os.listdir(d)) if fn.endswith(".zip")]
+        except OSError:
+            return []
+
+    def seconds(self, kind, eid, cam=None, half=False):
+        z = self._zip(kind, eid, cam, half)
         out = {}
         try:
             with zipfile.ZipFile(z) as zf:
@@ -118,20 +154,33 @@ class EventStills:
             return {}
         return {k: sorted(v) for k, v in out.items()}
 
-    def get(self, kind, eid, stamp, sec):
-        z = self._zip(kind, eid)
+    def get(self, kind, eid, stamp, sec, cam=None, half=False):
+        z = self._zip(kind, eid, cam, half)
         try:
             with zipfile.ZipFile(z) as zf:
                 return zf.read("%s_%02d.jpg" % (stamp, sec))
         except (OSError, KeyError, zipfile.BadZipFile):
             return None
 
+    def wants_more(self, kind, eid):
+        """True when the event's pictures could still get the other cameras and the half-second pictures (a "high" event that was not reduced to the front camera)."""
+        i = self.info(kind, eid)
+        return bool(i.get("n")) and (i.get("tier") or "high") == "high" and not i.get("reduced") and not (i.get("more") or i.get("more_tried"))
+
     def make(self, kind, ev, win, paths, stop=None):
         """Cuts the pictures of the window from the clips in `paths` ({clip stamp: video file}); a window already made is left alone. Returns how many pictures were made.
         A drive that stops answering raises teslacam_stills.DriveStalled."""
         eid = ev["id"]
-        if self.info(kind, eid).get("n"):
-            return 0
+        got = getattr(paths, "all", None)
+        n = 0
+        if not self.info(kind, eid).get("n"):
+            n = self._make_main(kind, ev, win, paths, stop)
+        if got and not (stop and stop()) and self.wants_more(kind, eid):
+            n += self.make_more(kind, ev, got, stop)
+        return n
+
+    def _make_main(self, kind, ev, win, paths, stop=None):
+        eid = ev["id"]
         cam = camera(kind, ev)
         wd, q = _widths()["high"], _quality()["high"]
         out = self.folder(kind, eid)
@@ -159,11 +208,95 @@ class EventStills:
             os.replace(part, os.path.join(out, cam + ".zip"))
             n = len(names)
         mom = ES.moment(ev, [w[0] for w in win]) or ("", 0)
-        info = dict(cam=cam, tier="high", width=wd, quality=q, trigger=list(mom), t=ev.get("ts") or "", first=names[0][1][:-4], last=names[-1][1][:-4], n=n)
-        with open(os.path.join(out, "info.json.part"), "w", encoding="utf-8") as fh:
-            json.dump(info, fh)
-        os.replace(os.path.join(out, "info.json.part"), os.path.join(out, "info.json"))
+        info = dict(cam=cam, cams=[cam], tier="high", width=wd, quality=q, trigger=list(mom), t=ev.get("ts") or "", first=names[0][1][:-4], last=names[-1][1][:-4], n=n)
+        self._save_info(kind, eid, info)
         return n
+
+    def _save_info(self, kind, eid, info):
+        p = os.path.join(self.folder(kind, eid), "info.json")
+        with open(p + ".part", "w", encoding="utf-8") as fh:
+            json.dump(info, fh)
+        os.replace(p + ".part", p)
+
+    def _cut(self, tmp, tag, path, a, n, wd, q, fps, off=0.0):
+        """Cuts `n` pictures from second `a`+`off` of the video; returns the files made."""
+        pre = os.path.join(tmp, tag + "_")
+        if n < 1:
+            return []
+        ST.run_ffmpeg(["ffmpeg", "-v", "error", "-ss", "%g" % (a + off), "-t", str(n), "-i", path, "-vf", "fps=%s,scale=%d:-2" % (fps, wd), "-q:v", str(q), "-start_number", "0", pre + "%03d.jpg"])
+        fs = ["%s%03d.jpg" % (pre, i) for i in range(n)]
+        return [f if os.path.isfile(f) and os.path.getsize(f) > 0 else None for f in fs]
+
+    def _write_zip(self, path, files):
+        part = path + ".part"
+        with zipfile.ZipFile(part, "w", zipfile.ZIP_STORED) as z:
+            for f, nm in files:
+                z.write(f, nm)
+        os.replace(part, path)
+
+    def make_more(self, kind, ev, allp, stop=None):
+        """The other five cameras at app.stills.event_side_width, one a second over the same window as the main camera, and the half-second pictures of the main camera within DENSE_S of the moment.
+        `allp` = {clip stamp: {camera: video file}}. A part whose video is not there is left out; nothing more is asked for once this has run (info "more"). Returns pictures made."""
+        eid = ev["id"]
+        info = self.info(kind, eid)
+        cam = info.get("cam") or camera(kind, ev)
+        cams = {s: set(c) for s, c in allp.items()}
+        win = window(ev, cams, cam)
+        if not win:
+            return 0
+        out, made, n = self.folder(kind, eid), list(info.get("cams") or [cam]), 0
+        wd, q = _widths(), _quality()
+        with tempfile.TemporaryDirectory() as tmp:
+            for c in CAMS:
+                if c == cam or (stop and stop()):
+                    continue
+                files = []
+                for stamp, a, b in window(ev, cams, c):
+                    if stop and stop():
+                        break
+                    if c not in allp.get(stamp, {}):
+                        continue
+                    got = self._cut(tmp, "%s_%s" % (c, stamp), allp[stamp][c], a, b - a + 1, wd["side"], q["side"], 1)
+                    files += [(f, "%s_%02d.jpg" % (stamp, a + i)) for i, f in enumerate(got) if f]
+                if files and not (stop and stop()):
+                    self._write_zip(os.path.join(out, c + ".zip"), files)
+                    made.append(c)
+                    n += len(files)
+            half = []
+            for stamp, a, b in window(ev, cams, cam, DENSE_S):
+                if (stop and stop()) or cam not in allp.get(stamp, {}):
+                    continue
+                got = self._cut(tmp, "h_" + stamp, allp[stamp][cam], a, b - a, wd["high"], q["high"], 1, 0.5)
+                half += [(f, "%s_%02d.jpg" % (stamp, a + i)) for i, f in enumerate(got)]
+            if half and not (stop and stop()):
+                self._write_zip(os.path.join(out, cam + ".h.zip"), half)
+                n += len(half)
+        if stop and stop():
+            return n
+        info = self.info(kind, eid)
+        info.update(cams=made, side_width=wd["side"], dense=DENSE_S if half else 0)
+        info["more" if len(made) > 1 or half else "more_tried"] = 1
+        self._save_info(kind, eid, info)
+        return n
+
+    def reduce(self, kind, eid):
+        """Keeps only the main camera's one-a-second pictures of the event: deletes the other cameras and the half-second pictures. Returns the bytes freed (None when there was nothing to reduce)."""
+        info = self.info(kind, eid)
+        keep = self._zip(kind, eid)
+        freed = 0
+        for z in self.zips(kind, eid):
+            if z != keep:
+                try:
+                    freed += os.path.getsize(z)
+                    os.remove(z)
+                except OSError:
+                    pass
+        if not freed and info.get("reduced"):
+            return None
+        info.update(cams=[info.get("cam")], dense=0, reduced=1)
+        info.pop("more", None)
+        self._save_info(kind, eid, info)
+        return freed
 
     def shrink(self, kind, eid, tier):
         """Re-encodes the pictures of the event at the width of `tier` ("normal" or "shrunk"); a picture is never made larger. Only ever one step down: high -> normal -> shrunk
@@ -171,8 +304,12 @@ class EventStills:
         info = self.info(kind, eid)
         if tier not in TIERS[1:] or not info.get("n") or TIERS.index(info.get("tier") or "high") >= TIERS.index(tier):
             return None
-        z = self._zip(kind, eid)
-        old, new = STH.thin_zip(z, _widths()[tier], _quality()[tier])
+        old = new = self.reduce(kind, eid) or 0         # shrinking keeps the main camera only
+        old += new
+        new = 0
+        for z in self.zips(kind, eid):
+            o, nw = STH.thin_zip(z, _widths()[tier], _quality()[tier])
+            old, new = old + o, new + nw
         info.update(tier=tier, width=min(_widths()[tier], info.get("width") or 9999), quality=_quality()[tier])
         p = os.path.join(self.folder(kind, eid), "info.json")
         with open(p + ".part", "w", encoding="utf-8") as fh:
