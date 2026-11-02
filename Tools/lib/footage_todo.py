@@ -42,7 +42,7 @@ def _mtime_ns(root):
     return tuple(out)
 
 
-CODE_VER = 5        # raise when the way the answer is worked out changes, so a cached answer from before is looked at again
+CODE_VER = 6        # raise when the way the answer is worked out changes, so a cached answer from before is looked at again
 
 
 class Todo:
@@ -251,7 +251,7 @@ class Todo:
                 if self.keep is not None:
                     # TODO-068: one definition with the TeslaCam page's "N updates needed": what an update of the clips would still do, each clip on the
                     # first connected drive that holds it (clip_keep.needs_by_drive). Files not in the footage log yet are the log counts above.
-                    for r, n in self.keep.needs_by_drive(roots).items():
+                    for r, n in self.keep.needs_by_drive(roots, fresh=True).items():
                         if r in out:
                             out[r].update(n)
                 else:

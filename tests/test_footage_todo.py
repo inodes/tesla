@@ -252,12 +252,14 @@ class TodoTest(unittest.TestCase):
         self.assertIsNone(self.todo._mem["sig"])                    # so the next look works it out again
 
     def test_with_the_clip_keeper_the_counts_are_what_an_update_would_do(self):
-        self.todo.keep = SimpleNamespace(needs_by_drive=lambda roots: {"J": dict(clips=2, telemetry=3, stills=4, snapshots=0, signs=1, pictures=0)})
+        asked = []
+        self.todo.keep = SimpleNamespace(needs_by_drive=lambda roots, **kw: (asked.append(kw), {"J": dict(clips=2, telemetry=3, stills=4, snapshots=0, signs=1, pictures=0)})[1])
         self.todo.snapshot()
         self.wait()
         d = self.todo.snapshot()["drives"]["J"]
         self.assertEqual((d["clips"], d["telemetry"], d["stills"], d["signs"]), (2, 3, 4, 1))
         self.assertEqual(self.tc.calls, 0)                            # the older separate counts are not worked out
+        self.assertTrue(all(k.get("fresh") for k in asked))           # counted from a look built now, never the one kept from before (the count is kept until the drives change)
 
     def test_a_purged_list_that_cannot_be_read_at_first_is_read_again(self):
         import clips_purged as PG

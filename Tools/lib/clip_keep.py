@@ -92,11 +92,11 @@ class ClipKeep:
         ("pictures", lambda c: max(0, (c.get("shots") or [0, 0])[1] - (c.get("shots") or [0, 0])[0]) + max(0, (c.get("window") or [0, 0])[1] - (c.get("window") or [0, 0])[0])),
     )
 
-    def needs_by_drive(self, roots, clips=None):
+    def needs_by_drive(self, roots, clips=None, fresh=False):
         """{role: dict(clips, telemetry, stills, snapshots, signs, pictures)}: what an update would still do, per connected drive. One definition with the
         page's "N updates needed": a clip counts once, on the first connected drive (in read order) that holds its video, as the update reads it from there;
         a clip parked at Home (ignored) or with no video on a connected drive counts nowhere."""
-        clips = (self.status() if clips is None else dict(clips=clips))["clips"]
+        clips = (self.status(force=fresh) if clips is None else dict(clips=clips))["clips"]      # fresh: built now, not the answer kept from before (a count worked out once and kept must not come from an old look)
         conn = [r for r in DR.read_roles() if (roots or {}).get(r)]
         out = {r: dict(clips=0, **{k: 0 for k, _f in self.STEP_LEFT}) for r in conn}
         for kind in clips:
