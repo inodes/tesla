@@ -25,8 +25,8 @@ import time
 import zipfile
 
 import app_config
-import teslacam_ledger as TLG
-import teslacam_stills as ST
+from lib import teslacam_ledger as TLG
+from lib import teslacam_stills as ST
 import sign_speed as SS
 
 MARK = "thinned.json"

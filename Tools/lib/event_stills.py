@@ -31,7 +31,7 @@ import app_config
 import clip_clock as CC
 import event_shots as ES
 import stills_thin as STH
-import teslacam_stills as ST
+from lib import teslacam_stills as ST
 
 DIRNAME = "teslacam_event_stills"
 HALF_S = 30

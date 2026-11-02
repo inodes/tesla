@@ -13,8 +13,8 @@ for p in ("tests", "Tools", os.path.join("Tools", "lib")):
     sys.path.insert(0, os.path.join(HERE, "..", p))
 import clip_clock as CC  # noqa: E402
 import stills_thin as TH  # noqa: E402
-import teslacam_ledger as TLG  # noqa: E402
-import teslacam_stills as ST  # noqa: E402
+from lib import teslacam_ledger as TLG  # noqa: E402
+from lib import teslacam_stills as ST  # noqa: E402
 
 LIVE = dict(first="2026-10-17T00:00:00Z", last="2026-10-17T00:00:00Z", gone=None)
 A, B, C, D, E, F = ["2026-10-16_15-%02d-07" % m for m in (40, 41, 42, 43, 44, 45)]

@@ -9,7 +9,7 @@ import zipfile
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "Tools", "lib"))
 import clip_clock as CC  # noqa: E402
 import event_stills as EV  # noqa: E402
-import teslacam_stills as ST  # noqa: E402
+from lib import teslacam_stills as ST  # noqa: E402
 
 S1, S2, S3 = "2026-10-16_15-40-07", "2026-10-16_15-41-07", "2026-10-16_15-42-07"
 

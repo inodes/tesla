@@ -179,6 +179,8 @@ There are at least four separate place lookups today (`DriveAnalyzer.resolve_pla
 
 Same pattern elsewhere (to be reviewed the same way): `analyse_charging.py` (7,341 lines, imported by the app's charge book and the cost reports), `places_manager.py` (3,785, imported by the app's places code and the charger finder), `charger_find.py` and `find_tesla_chargers.py` (about 7,000 together), `dashcam_flip_review.py` (612, imported by four scripts).
 
+Done 2026-11-02 for the shared parts (code moved verbatim, no logic change; see docs/COMMANDS_AUDIT.md): `analyse_charging.py`'s ChargingAnalyzer is `lib/charging_analyzer.py`; what the app, the charger finder and other lib modules used from `places_manager.py` is `lib/places_common.py`; the power commands' shared code is `lib/power_demand.py` and `lib/power_bill.py`; `analyse_car_efficiency.py`'s is `lib/car_efficiency.py` and `lib/battery_health.py`; `drive_actions.py`'s footage queue is `lib/footage_actions.py`; `dashcam_flip_review.py`'s and `drive_report.py`'s shared parts are `lib/dashcam_clips.py` and `lib/drive_footage.py`. Nothing in lib/, the providers or the app imports a command now (tests/test_lib_no_commands.py).
+
 ## 12. The app: Drives and TeslaCam become one (agreed 2026-10-20)
 
 Decided by Glenn. Today the app has two overlapping halves: Drives (only drives Tessie knows) and TeslaCam (a disk picker, its own timeline and its own drive page). A drive can be opened two ways, and a drive only the camera saw never appears under Drives.

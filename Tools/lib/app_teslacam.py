@@ -18,9 +18,9 @@ import run_cuts as RC
 import clips_purged as PG
 import home_ignore as IGN
 import teslacam_timeline as TL
-import teslacam_scan as TS
+from lib import teslacam_scan as TS
 import app_review
-import teslacam_ledger as TLG
+from lib import teslacam_ledger as TLG
 import sign_speed as SS
 import teslacam_files as TF
 

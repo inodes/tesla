@@ -20,7 +20,7 @@ import os
 import time
 
 import app_config
-import teslacam_stills as ST
+from lib import teslacam_stills as ST
 import teslacam_timeline as TL
 
 

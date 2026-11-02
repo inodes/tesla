@@ -54,7 +54,7 @@ def main():
     a = ap.parse_args()
     t0 = time.time()
     analyzer = load_deduped_analyzer()
-    from power_demand_calculator import load_rate_periods
+    from lib.power_demand import load_rate_periods
     periods = load_rate_periods()
     reports = os.path.join(analyzer.charges_dirs[0], "reports")
     os.makedirs(reports, exist_ok=True)

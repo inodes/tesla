@@ -718,14 +718,14 @@ class FacilitiesRegistry:
         "needs_live_refetch_names": [str, ...]}.
         """
         try:
-            from places_manager import classify_poi_group
+            from lib.places_common import classify_poi_group
         except ImportError:
             import sys as _sys
             import os as _os
             _tools_dir = _os.path.dirname(_os.path.dirname(_os.path.abspath(__file__)))
             if _tools_dir not in _sys.path:
                 _sys.path.insert(0, _tools_dir)
-            from places_manager import classify_poi_group
+            from lib.places_common import classify_poi_group
 
         self.load()
         reclassified = 0

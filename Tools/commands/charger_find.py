@@ -103,7 +103,7 @@ def geocode_address(address_str: str) -> Tuple[Optional[float], Optional[float],
 
  # Primary: Delegate to places_manager's geocode_candidates
     try:
-        from places_manager import geocode_candidates
+        from lib.places_common import geocode_candidates
         cands = geocode_candidates(clean, limit=5)
         if cands:
             top = cands[0]
@@ -236,7 +236,7 @@ def resolve_reference_coords(near_query: str) -> Tuple[Optional[float], Optional
 
  # 3. Online geocoding with smart disambiguation for suburb, city, or street address
     try:
-        from places_manager import resolve_location_disambiguated
+        from lib.places_common import resolve_location_disambiguated
         g_lat, g_lon, g_label = resolve_location_disambiguated(q_clean, anchor_coords=home_coords, interactive=True)
         if g_lat is not None and g_lon is not None:
             return g_lat, g_lon, g_label or q_clean
@@ -2019,7 +2019,7 @@ def sync_facilities_for_stations(stations: list, radius_m: int = 500, delay_s: f
     "still_failed_names": [str, ...], "total_candidates": int}.
     """
     try:
-        from places_manager import query_overpass_pois
+        from lib.places_common import query_overpass_pois
         try:
             from lib.station_facilities_common import get_facilities_registry, resolve_station_physical_coords
         except ImportError:
@@ -2188,7 +2188,7 @@ def display_nearby_facilities(station: UnifiedStationRecord, radius_m: int = 500
         print(f"{C_GRAY}   Looking up live - this can take a few seconds...{C_RESET}")
 
         try:
-            from places_manager import query_overpass_pois
+            from lib.places_common import query_overpass_pois
         except ImportError as e:
             print(f"{C_RED}❌ Could not load the facilities lookup (Tools/places_manager.py): {e}{C_RESET}")
             return

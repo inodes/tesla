@@ -2483,7 +2483,7 @@ class TeslaChargerExplorer:
             print(f"{C_GRAY}   Looking up live - this can take a few seconds...{C_RESET}")
 
             try:
-                from places_manager import query_overpass_pois
+                from lib.places_common import query_overpass_pois
             except ImportError as e:
                 print(f"{C_RED}❌ Could not load the facilities lookup (Tools/places_manager.py): {e}{C_RESET}")
                 return
@@ -2969,7 +2969,7 @@ def resolve_reference_coordinates(ref_str: str, repo_root: str = None) -> tuple:
 
  # Online Geocoding for address/suburb with smart disambiguation
     try:
-        from places_manager import resolve_location_disambiguated
+        from lib.places_common import resolve_location_disambiguated
         geo_lat, geo_lon, geo_label = resolve_location_disambiguated(clean, interactive=True)
         if geo_lat is not None and geo_lon is not None:
             return geo_lat, geo_lon, geo_label
