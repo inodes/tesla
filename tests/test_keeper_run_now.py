@@ -75,6 +75,9 @@ class Pict:
 
 class RunNow(unittest.TestCase):
     def setUp(self):
+        real = AK.app_config.get                         # these tests are about the switches being off; the defaults (on) are checked below
+        AK.app_config.get = lambda k, *a, **kw: False if k in ("keeper.background", "keeper.stills") else real(k, *a, **kw)
+        self.addCleanup(lambda: setattr(AK.app_config, "get", real))
         self.tmp = tempfile.mkdtemp()
         self.fg, self.tc = Fg(), Tc()
         self.k = AK.Keeper(self.tmp, self.tc, self.fg, Drv(), None, lambda: {"J": self.tmp})
@@ -103,6 +106,11 @@ class RunNow(unittest.TestCase):
         finally:
             AK._mtime = real
         self.assertEqual(self.tc.ev, [])
+
+    def test_the_defaults_make_thumbnails_by_themselves(self):
+        AK.app_config.get = AK.app_config.get.__closure__[0].cell_contents     # the real reader, back for this test
+        self.assertTrue(AK.app_config.get("keeper.background"))
+        self.assertTrue(AK.app_config.get("keeper.stills"))
 
     def test_off_does_nothing(self):
         self.passes()
