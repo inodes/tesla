@@ -62,7 +62,7 @@ incline down can be also factored in"):
     never merged into or replacing the strict flat-only figures, and is
     explicitly caveated on the assumed mass used (Tessie/vehicle_spec.json's
     mass.assumed_driving_mass_kg when configured - see
-    vehicle_mass_kg_for_profile() below - else a generic fallback).
+    vehicle_mass_kg_for_profile() below - else not worked out at all).
 
 Usable battery capacity: prefers a LIVE reading over a historical
 estimate. sync_api_tessie.py --battery-health (AGENTS.md TODO-031)
@@ -102,7 +102,7 @@ from datetime import datetime
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from lib.drives.analyzer import DriveAnalyzer  # noqa: E402
 from lib.tessie_api_common import load_vehicle_spec, load_config, get_vin  # noqa: E402
-from lib.car_efficiency import FALLBACK_VEHICLE_MASS_KG, confidence_for_distance, grade_corrected_efficiency_kwh_per_100km, potential_energy_kwh, vehicle_mass_kg_for_profile  # noqa: E402
+from lib.car_efficiency import confidence_for_distance, grade_corrected_efficiency_kwh_per_100km, potential_energy_kwh, vehicle_mass_kg_for_profile  # noqa: E402
 from lib.battery_health import load_battery_health_history  # noqa: E402
 
 # (lo, hi) km/h, half-open [lo, hi) except the last bucket.
@@ -436,7 +436,7 @@ def build_profile(tessie_dir=None, vehicle_mass_kg=None):
             "table - it assumes {vehicle_mass_kg:.0f}kg for this car "
             "(source_data.vehicle_mass_kg_assumed_for_grade_correction - "
             "from Tessie/vehicle_spec.json's mass.assumed_driving_mass_kg "
-            "when configured, else a generic fallback; override per-run "
+            "when configured, else the table is empty; override per-run "
             "with --vehicle-mass-kg) and roughly treats regen on a "
             "descent as 100% efficient, so treat it as a rough "
             "supplementary estimate, most useful for filling in a "
@@ -590,8 +590,8 @@ EXAMPLES
     parser.add_argument("--vehicle-mass-kg", type=float, default=None,
                          help="Vehicle mass used for the grade-corrected efficiency estimate - "
                               "overrides Tessie/vehicle_spec.json's mass.assumed_driving_mass_kg "
-                              f"for this run only (falls back to {FALLBACK_VEHICLE_MASS_KG}kg if "
-                              "neither is set)")
+                              "for this run only (with neither, the grade-corrected table is "
+                              "left empty)")
     args = parser.parse_args()
 
     analyzer_probe = DriveAnalyzer(tessie_dir=args.tessie_dir)
@@ -638,7 +638,8 @@ EXAMPLES
 
     resolved_mass_kg = profile["source_data"]["vehicle_mass_kg_assumed_for_grade_correction"]
     print()
-    print(f"== Grade-corrected (ALL segments, assumed mass {resolved_mass_kg:.0f}kg) ==")
+    mass_s = f"assumed mass {resolved_mass_kg:.0f}kg" if resolved_mass_kg is not None else "mass not known: set mass.assumed_driving_mass_kg in vehicle_spec.json or give --vehicle-mass-kg"
+    print(f"== Grade-corrected (ALL segments, {mass_s}) ==")
     print(f"{'Speed (km/h)':<14}{'Segments':>9}{'Dist (km)':>11}{'Eff (kWh/100km)':>17}{'Range (km)':>12}{'Confidence':>12}")
     for row in profile["speed_vs_efficiency_grade_corrected"]:
         lo, hi = row["speed_range_kmh"]

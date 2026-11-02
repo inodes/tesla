@@ -148,8 +148,8 @@ def parse_evx_location_record(loc: Dict[str, Any]) -> Dict[str, Any]:
     lat = float(loc.get("loc_lat") or 0.0)
     lon = float(loc.get("loc_long") or 0.0)
 
- # EVX standard pricing
-    rate_val = 0.50  # Typical standard rate
+ # The EVX location feed carries no price, so none is stored (a typed-in $0.39 / $0.50 day-night table used to be written here and
+ # costed as if EVX had published it). The rate is unknown until a real price is entered for the site.
     now_utc = datetime.now(timezone.utc).isoformat()
 
     desc = loc.get("description", "").strip()
@@ -205,64 +205,15 @@ def parse_evx_location_record(loc: Dict[str, Any]) -> Dict[str, Any]:
             "tax_name": "GST",
             "tax_rate": 0.10,
             "tax_included_in_listed_price": True,
-            "pricing_model": "time_of_use",
-            "has_tou_pricing": True,
-            "per_kwh_gross": 0.50,
-            "per_kwh_net": round(0.50 / 1.10, 4),
-            "tax_per_kwh": round(0.50 - (0.50 / 1.10), 4),
-            "idle_fee_per_min_gross": 0.20,
-            "idle_fee_per_min_net": round(0.20 / 1.10, 4),
-            "rate_range": "$0.39 - $0.50/kWh",
-            "schedule": [
-                {
-                    "name": "Off-Peak",
-                    "start": "20:00",
-                    "end": "08:00",
-                    "rate": 0.39,
-                    "rate_per_kwh": 0.39,
-                    "days": ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
-                },
-                {
-                    "name": "Peak / Day",
-                    "start": "08:00",
-                    "end": "20:00",
-                    "rate": 0.50,
-                    "rate_per_kwh": 0.50,
-                    "days": ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
-                }
-            ]
-        },
-        "tessie_cost_config": {
-            "currency": "AUD",
-            "pricing_model": "time_of_use",
-            "per_kwh_flat": 0.0,
-            "per_minute": 0.0,
-            "per_session": 0.0,
-            "idle_fee_per_min": 0.20,
-            "rate_schedules": [
-                {
-                    "label": "Off-Peak",
-                    "start_time": "20:00",
-                    "end_time": "08:00",
-                    "rate_per_kwh": 0.39,
-                    "rate_per_kwh_gross": 0.39,
-                    "rate_per_kwh_net": round(0.39 / 1.10, 4),
-                    "tax_amount": round(0.39 - (0.39 / 1.10), 4),
-                    "days": ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"],
-                    "months": ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
-                },
-                {
-                    "label": "Peak / Day",
-                    "start_time": "08:00",
-                    "end_time": "20:00",
-                    "rate_per_kwh": 0.50,
-                    "rate_per_kwh_gross": 0.50,
-                    "rate_per_kwh_net": round(0.50 / 1.10, 4),
-                    "tax_amount": round(0.50 - (0.50 / 1.10), 4),
-                    "days": ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"],
-                    "months": ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
-                }
-            ]
+            "pricing_model": "unknown",
+            "has_tou_pricing": False,
+            "per_kwh_gross": None,
+            "per_kwh_net": None,
+            "tax_per_kwh": None,
+            "idle_fee_per_min_gross": None,
+            "idle_fee_per_min_net": None,
+            "rate_range": "",
+            "schedule": []
         },
         "amenities": {},
         "keywords": ["evx", "polecharger", "kerbside", "ac", "type 2", suburb.lower(), pole_id.lower()],
@@ -354,11 +305,11 @@ class EVXProvider(BaseChargerProvider):
                 plugs=hw_data.get("connector_types", ["Type 2"]),
                 tethered=False,
                 hardware_model=hw_data.get("hardware_models", ["Polecharger"])[0] if hw_data.get("hardware_models") else "Polecharger",
-                pricing_model=tariffs.get("pricing_model", "time_of_use"),
-                current_rate_per_kwh=tariffs.get("per_kwh_gross", 0.50),
-                rate_range=tariffs.get("rate_range", "$0.39 - $0.50/kWh"),
+                pricing_model=tariffs.get("pricing_model", "unknown"),
+                current_rate_per_kwh=tariffs.get("per_kwh_gross"),
+                rate_range=tariffs.get("rate_range", ""),
                 schedule=tariffs.get("schedule", []),
-                idle_fee_per_min=tariffs.get("idle_fee_per_min_gross", 0.20),
+                idle_fee_per_min=tariffs.get("idle_fee_per_min_gross"),
                 currency=tariffs.get("currency", "AUD"),
                 tier=1,
                 source="evx",
@@ -481,10 +432,10 @@ class EVXProvider(BaseChargerProvider):
                     plugs=hw_data.get("connector_types", ["Type 2"]),
                     tethered=hw_data.get("tethered", False),
                     hardware_model=hw_data.get("hardware_models", ["Polecharger"])[0] if hw_data.get("hardware_models") else "Polecharger",
-                    pricing_model=tariffs.get("pricing_model", "time_of_use"),
-                    current_rate_per_kwh=tariffs.get("per_kwh_gross", 0.50),
+                    pricing_model=tariffs.get("pricing_model", "unknown"),
+                    current_rate_per_kwh=tariffs.get("per_kwh_gross"),
                     schedule=tariffs.get("schedule") or tariffs.get("rate_schedules") or tariffs.get("tesla_members", {}).get("rate_schedules") or s_data.get("tessie_cost_config", {}).get("rate_schedules") or [],
-                    idle_fee_per_min=tariffs.get("idle_fee_per_min_gross", 0.20),
+                    idle_fee_per_min=tariffs.get("idle_fee_per_min_gross"),
                     currency=tariffs.get("currency", "AUD"),
                     tier=1,
                     source="evx",

@@ -41,8 +41,8 @@ from tessie_api_common import (
 )
 
 DEFAULT_VEHICLE_TYPECODE = "tesla:myl:25:88:dual:ccs"  # Tesla Model YL AWD (LG 5N NMC 88.2 kWh gross)
-DEFAULT_USABLE_KWH = 85.0  # ~85.0 kWh usable capacity (LG pack)
-DEFAULT_CONSUMPTION_WH_KM = 171.1  # ~17.1 kWh/100km calibrated reference consumption from ABRP
+# The pack's usable kWh and the car's Wh/km come from the car's own data (config override, battery health readings, drives), never a typed-in
+# figure; see car_usable_kwh() and car_consumption_wh_km(). When neither is known the arrival battery % is not estimated (None).
 ABRP_MIN_INTERVAL_SEC = 0.5  # 2 requests / sec rate limit per key
 
 _last_abrp_request_time = 0.0
@@ -176,13 +176,8 @@ def load_abrp_config() -> Dict[str, Any]:
     spec = load_vehicle_spec() or {}
     spec_veh = spec.get("vehicle", {})
     spec_battery = spec.get("battery", {})
-    spec_wltp = spec.get("wltp", {})
-    spec_gvg = spec.get("gvg_reference", {})
 
-    usable_kwh = (
-        float(abrp_cfg["usable_kwh"]) if "usable_kwh" in abrp_cfg
-        else (float(spec_battery.get("usable_kwh")) if spec_battery.get("usable_kwh") else DEFAULT_USABLE_KWH)
-    )
+    usable_kwh = car_usable_kwh(abrp_cfg, spec_battery)
 
     # Dynamic telemetry pull from ABRP if credentials exist
     tlm_result = None
@@ -214,19 +209,7 @@ def load_abrp_config() -> Dict[str, Any]:
         else:
             v_name = model
 
-    # Reference consumption (Wh/km): prefer ABRP calibrated live reference, then config, then GVG/spec
-    if "consumption_wh_km" in abrp_cfg:
-        consumption_wh_km = float(abrp_cfg["consumption_wh_km"])
-    elif tlm_result and (tlm_result.get("telemetry") or {}).get("calib_ref_cons"):
-        consumption_wh_km = round(float(tlm_result["telemetry"]["calib_ref_cons"]), 1)
-    elif spec_gvg.get("real_world_efficiency_kwh_per_100km"):
-        base_kwh_100 = float(spec_gvg["real_world_efficiency_kwh_per_100km"])
-        consumption_wh_km = round(base_kwh_100 * 10.0 * 1.15, 1)
-    elif spec_wltp.get("efficiency_kwh_per_100km"):
-        base_kwh_100 = float(spec_wltp["efficiency_kwh_per_100km"])
-        consumption_wh_km = round(base_kwh_100 * 10.0 * 1.25, 1)
-    else:
-        consumption_wh_km = DEFAULT_CONSUMPTION_WH_KM
+    consumption_wh_km = car_consumption_wh_km(abrp_cfg, tlm_result)
 
     client_id = (
         abrp_cfg.get("client_id")
@@ -248,6 +231,53 @@ def load_abrp_config() -> Dict[str, Any]:
         "usable_kwh": usable_kwh,
         "live_telemetry": tlm_result.get("telemetry") if tlm_result else None,
     }
+
+
+def _data_dir():
+    try:
+        from tessie_api_common import resolve_tessie_data_home
+        return resolve_tessie_data_home()
+    except Exception:
+        return None
+
+
+def _car_figures():
+    try:
+        from lib import car_figures
+    except ImportError:
+        import car_figures
+    return car_figures
+
+
+def car_usable_kwh(abrp_cfg: Dict[str, Any], spec_battery: Optional[Dict[str, Any]] = None, data_dir: Optional[str] = None) -> Optional[float]:
+    """The pack's usable kWh: config.json abrp.usable_kwh, else the newest battery health reading, else vehicle_spec.json's
+    battery.usable_kwh. None when none of them is there."""
+    if abrp_cfg.get("usable_kwh"):
+        return float(abrp_cfg["usable_kwh"])
+    try:
+        v = _car_figures().usable_kwh(data_dir or _data_dir())
+    except Exception:
+        v = None
+    if v:
+        return float(v)
+    if spec_battery and spec_battery.get("usable_kwh"):
+        return float(spec_battery["usable_kwh"])
+    return None
+
+
+def car_consumption_wh_km(abrp_cfg: Dict[str, Any], tlm_result: Optional[Dict[str, Any]] = None, data_dir: Optional[str] = None) -> Optional[float]:
+    """Wh/km for route planning: config.json abrp.consumption_wh_km, else ABRP's reference calibrated from this car's own driving,
+    else the car's logged drives (energy used / distance). None when none of them is there."""
+    if abrp_cfg.get("consumption_wh_km"):
+        return float(abrp_cfg["consumption_wh_km"])
+    calib = ((tlm_result or {}).get("telemetry") or {}).get("calib_ref_cons")
+    if calib:
+        return round(float(calib), 1)
+    try:
+        v = _car_figures().driving_wh_per_km(data_dir or _data_dir())
+    except Exception:
+        v = None
+    return round(v, 1) if v else None
 
 
 def fetch_oauth_token(client_id: str, api_key: str, auth_code: str, state: Optional[str] = None) -> Tuple[Optional[str], Dict[str, Any]]:
@@ -352,7 +382,7 @@ def fetch_live_battery_soc(timeout: int = 5) -> Tuple[Optional[int], Dict[str, A
     return None, {"error": "No battery_level field in response"}
 
 
-def resolve_departure_soc(cli_soc_arg: Optional[str] = None) -> Tuple[int, str, Optional[Dict[str, Any]]]:
+def resolve_departure_soc(cli_soc_arg: Optional[str] = None) -> Tuple[Optional[int], str, Optional[Dict[str, Any]]]:
     """
     Resolves effective departure SoC % based on CLI override and config defaults.
     Returns: (soc_pct, source_label, live_details_or_none)
@@ -365,10 +395,8 @@ def resolve_departure_soc(cli_soc_arg: Optional[str] = None) -> Tuple[int, str, 
         live_soc, details = fetch_live_battery_soc(timeout=4)
         if live_soc is not None:
             return live_soc, "Tessie Live", details
-        else:
-            # Fallback when offline
-            fallback_soc = 90
-            return fallback_soc, "Default (Tessie Offline)", None
+        # Tessie unreachable: the battery level is not known (no assumed %); give --departure-soc to set one.
+        return None, "unknown (Tessie offline)", None
 
     # Parse numeric value
     try:
@@ -376,20 +404,25 @@ def resolve_departure_soc(cli_soc_arg: Optional[str] = None) -> Tuple[int, str, 
         clamped = max(1, min(100, val))
         return clamped, "CLI / Config Override" if cli_soc_arg is not None else "Config Default", None
     except (ValueError, TypeError):
-        return 90, "Fallback", None
+        return None, "unknown (unreadable default_departure_soc)", None
 
 
 def estimate_arrival_soc(
-    departure_soc: float,
+    departure_soc: Optional[float],
     distance_km: float,
     detour_km: float = 0.0,
-    consumption_wh_km: float = DEFAULT_CONSUMPTION_WH_KM,
-    usable_kwh: float = DEFAULT_USABLE_KWH
-) -> Tuple[float, float]:
+    consumption_wh_km: Optional[float] = None,
+    usable_kwh: Optional[float] = None
+) -> Tuple[Optional[float], Optional[float]]:
     """
     Calculates arrival SoC % and total energy consumed (kWh) for a given distance and detour.
-    Returns: (arrival_soc_pct, energy_consumed_kwh)
+    Returns: (arrival_soc_pct, energy_consumed_kwh); arrival is None when the departure %, the
+    consumption or the pack size is not known, energy is None without a consumption.
     """
+    if consumption_wh_km is None or distance_km is None:
+        return None, None
+    if departure_soc is None or not usable_kwh:
+        return None, (max(0.0, distance_km + (detour_km or 0.0)) * consumption_wh_km) / 1000.0
     total_km = max(0.0, distance_km + detour_km)
     energy_consumed_kwh = (total_km * consumption_wh_km) / 1000.0
     initial_kwh = (departure_soc / 100.0) * usable_kwh
@@ -443,17 +476,18 @@ def generate_abrp_deep_link(
     """
     abrp_cfg = load_abrp_config()
     v_type = vehicle_typecode or abrp_cfg.get("vehicle_typecode", DEFAULT_VEHICLE_TYPECODE)
-    dep_soc = departure_soc if departure_soc is not None else 90
+    dep_soc = departure_soc          # None: ABRP is not told a starting %, it uses its own
     arr_soc = target_soc if target_soc is not None else int(abrp_cfg.get("target_arrival_soc", 10))
 
     params = {
         "origin": f"{origin_coords[0]:.6f},{origin_coords[1]:.6f}",
         "destination": f"{dest_coords[0]:.6f},{dest_coords[1]:.6f}",
-        "origin_soc": str(dep_soc),
         "target_soc": str(arr_soc),
         "vehicle_model": v_type,
     }
 
+    if dep_soc is not None:
+        params["origin_soc"] = str(dep_soc)
     if via_coords:
         via_str = "|".join(f"{lat:.6f},{lon:.6f}" for lat, lon in via_coords)
         params["via"] = via_str

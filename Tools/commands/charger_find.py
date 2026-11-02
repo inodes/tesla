@@ -485,6 +485,8 @@ def render_stations_table(
             live_detail = route_info.get("live_detail") or {}
             range_info = f" (~{live_detail['battery_range_km']:.0f} km range)" if live_detail.get("battery_range_km") else ""
             print(f"│{pad_display(f' 🔋 {C_GREEN}Departure Battery:{C_RESET} {dep_soc}% [{dep_src}{range_info}]  |  {C_YELLOW}Target Min:{C_RESET} {tgt_soc:.0f}%  |  {C_CYAN}Max Charge:{C_RESET} {max_soc:.0f}%', total_inner_w, 'left')}│")
+        elif dep_src and not route_info.get("no_soc"):
+            print(f"│{pad_display(f' 🔋 {C_YELLOW}Departure Battery:{C_RESET} {dep_src} - arrival % not estimated; give --departure-soc', total_inner_w, 'left')}│")
 
         c_rad = route_info.get("corridor_radius_km", 5.0)
         sort_str = f" [Sorted by: {sort_mode}]" if sort_mode else ""
@@ -1401,11 +1403,14 @@ def display_station_inspection_card(station: UnifiedStationRecord, eval_time: Op
                 dep_soc,
                 station.route_progress_km,
                 station.detour_km,
-                ab_cfg.get("consumption_wh_km", 165.0),
-                ab_cfg.get("usable_kwh", 60.0)
+                ab_cfg.get("consumption_wh_km"),
+                ab_cfg.get("usable_kwh")
             )
-            soc_badge, _ = format_soc_badge(arr_soc, ab_cfg.get("target_arrival_soc", 10.0))
-            _field("🔋", "Projected Arrival SoC", f"{soc_badge} (from {dep_soc}% departure | ~{energy_kwh:.1f} kWh consumed)")
+            if arr_soc is not None:
+                soc_badge, _ = format_soc_badge(arr_soc, ab_cfg.get("target_arrival_soc", 10.0))
+                _field("🔋", "Projected Arrival SoC", f"{soc_badge} (from {dep_soc}% departure | ~{energy_kwh:.1f} kWh consumed)")
+            else:
+                _field("🔋", "Projected Arrival SoC", "unknown (" + ("battery level not known" if dep_soc is None else "the car's Wh/km or pack size not known") + ")")
         except Exception:
             pass
     elif station.distance_km is not None:
@@ -1494,7 +1499,7 @@ def display_station_inspection_card(station: UnifiedStationRecord, eval_time: Op
         _field("🚦", "Congestion Rule", "Applies when busy over 80% SoC or charging ends (5 min grace)")
     elif station.idle_fee_per_min and station.idle_fee_per_min > 0:
         if station.speed_tier == "supercharger":
-            _field("⏱️", "Idle Charge", f"${station.idle_fee_per_min:.2f}/min ($2.00/min at 100% occupancy)")
+            _field("⏱️", "Idle Charge", f"${station.idle_fee_per_min:.2f}/min (${2 * station.idle_fee_per_min:.2f}/min at 100% occupancy: Tesla doubles it)")
             _field("⏱️", "Idle Rule", "Applies after charging ends when ≥50% occupied (5 min grace)")
         else:
             grace = meta.get("idle_fee_grace_min")
@@ -3141,8 +3146,6 @@ DESCRIPTION
             resolve_departure_soc,
             generate_abrp_deep_link,
             estimate_arrival_soc,
-            DEFAULT_CONSUMPTION_WH_KM,
-            DEFAULT_USABLE_KWH
         )
         abrp_cfg = load_abrp_config()
         # REQ-175: -r/--radius given on a route sets the corridor width too
@@ -3202,8 +3205,9 @@ DESCRIPTION
         # fallback instead of a hardcoded specific car (abrp_cfg always sets
         # "vehicle_name" itself - see load_abrp_config() - so this fallback
         # is last-resort only).
-        route_info["consumption_wh_km"] = abrp_cfg.get("consumption_wh_km", DEFAULT_CONSUMPTION_WH_KM)
-        route_info["usable_kwh"] = abrp_cfg.get("usable_kwh", DEFAULT_USABLE_KWH)
+        # Both from the car's own data (load_abrp_config: config override, battery health, drives); None when not known.
+        route_info["consumption_wh_km"] = abrp_cfg.get("consumption_wh_km")
+        route_info["usable_kwh"] = abrp_cfg.get("usable_kwh")
         route_info["vehicle_name"] = abrp_cfg.get("vehicle_name", "Tesla Model Y")
 
         # --charger-stops (2026-09-21): multi-leg re-plan through user-chosen
@@ -3257,7 +3261,7 @@ DESCRIPTION
                     getattr(stop, "detour_km", 0.0) or 0.0,
                     route_info["consumption_wh_km"], route_info["usable_kwh"]
                 )
-                if arr_here < 0:
+                if arr_here is not None and arr_here < 0:
                     print(f"⚠️  Leg to '{stop.name}' needs ~{-arr_here:.0f}% more battery than available departing the previous stop at {leg_start_soc:.0f}% - not reachable as chosen.", file=sys.stderr)
                 stop.leg_arrival_soc = arr_here
                 stop.stop_dep_soc = stop_charge_target
