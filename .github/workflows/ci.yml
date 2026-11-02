@@ -23,7 +23,7 @@ jobs:
 
       - name: Install what the tests use
         # only what the tests import; the optional pieces (timezonefinder, osmium, evnex, pvlib) are not needed: tests that use them skip
-        run: python3 -m pip install numpy scipy matplotlib pypdf opencv-python-headless
+        run: python3 -m pip install numpy scipy pandas matplotlib pypdf opencv-python-headless
 
       - name: Every Python file compiles
         run: |
