@@ -65,7 +65,9 @@ class HomeCostTest(unittest.TestCase):
     def test_app_shows_model_and_remembers_it(self):
         seen = []
         sys.modules["lib.session_cost"] = stub(TIERED, seen)
-        m = AC.home_model(CCM, RAW)
+        from unittest import mock
+        with mock.patch("lib.power_demand.load_rate_periods", return_value=[]):      # never the real tariff file: the test runs the same with no data folder (cloud, CI)
+            m = AC.home_model(CCM, RAW)
         self.assertAlmostEqual(m["cost"], 0.3229, 4)
         self.assertAlmostEqual(m["rate"], 0.3229 / 7.85, 4)
         self.assertEqual((m["tier2_rate"], m["before_kwh"], m["usage_rate"]), (0.04, 13.8452, 0.1593))

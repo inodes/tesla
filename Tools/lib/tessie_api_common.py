@@ -48,7 +48,9 @@ def resolve_config_path():
     else the pre-TODO-034 Tessie/ location (so an old checkout/backup that
     hasn't moved its real file yet still works), else the root path (so a
     fresh install's error messages point at the CURRENT convention, not the
-    retired one)."""
+    retired one). TESLA_CONFIG names another file instead (tests, CI and cloud sessions use config.example.json, never the real one)."""
+    if os.environ.get("TESLA_CONFIG"):
+        return os.path.abspath(os.path.expanduser(os.environ["TESLA_CONFIG"]))
     if os.path.isfile(ROOT_CONFIG_PATH):
         return ROOT_CONFIG_PATH
     if os.path.isfile(_LEGACY_TESSIE_CONFIG_PATH):
