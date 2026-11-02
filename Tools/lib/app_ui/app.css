@@ -283,3 +283,5 @@ main:has(#spl .stbar,#spl .vbar) #splx{display:none}
 .evg.open .evkid{display:flex}.evg.open.s{border-color:#dc2626}.evg.open.v{border-color:#2563eb}.evg.open.s.v{border-color:#dc2626 #2563eb #2563eb #dc2626}
 .evc .gchip{display:inline-block;align-self:flex-start;font-size:10.5px;font-weight:600;padding:1px 7px;border-radius:9px;margin:2px 4px 0 0;cursor:pointer;color:var(--mut)}
 .evc .gchip.sentry{background:rgba(220,38,38,.14);color:#dc2626}.evc .gchip.saved{background:rgba(37,99,235,.14);color:#2563eb}
+
+.evc .gchip.more{background:var(--line);color:var(--mut)}

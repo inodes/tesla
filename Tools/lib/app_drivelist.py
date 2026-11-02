@@ -101,11 +101,27 @@ def merge(tessie, charges, cam_items, idles=(), slack=SLACK_S, now=None):
             continue                                                    # Tessie says where the car was then: a stop at a charger is the charge, the rest is its parked row
         if c["kind"] in ("stopped", "parked"):
             stops.append(c)
+        elif c["kind"] == "recording" and _absorb(c, out):
+            continue
         else:
             out.append(dict(c))
     for c in _coalesce(stops):
         out.append(TL.show(c))
     return join_parks(sorted(out, key=lambda x: (-x["t0"], -x["t1"])), now)
+
+
+def _absorb(rec, out):
+    """A recording (footage whose telemetry is not read yet) over time Tessie knows is not a row of its own: the drives it touches say `tmiss` (minutes of footage with no telemetry
+    read, `held` = the TeslaCam drives holding it), and a park or charge it touches already shows its footage. True when Tessie has something there."""
+    hit = [x for x in out if x.get("src") != "cam" and x["kind"] in ("drive", "charge", "parked", "gap") and _ov(rec["t0"], rec["t1"], x["t0"], x["t1"]) > 0]
+    for x in hit:
+        if x["kind"] != "drive":
+            continue
+        mins = max(1, int(round(_ov(rec["t0"], rec["t1"], x["t0"], x["t1"]) / 60.0)))
+        m = x.setdefault("tmiss", dict(min=0, held=[]))
+        m["min"] += min(mins, rec.get("n") or mins)
+        m["held"] = sorted(set(m["held"]) | set(rec.get("held") or []))
+    return bool(hit)
 
 
 PARKISH = ("parked", "stopped")
@@ -291,7 +307,7 @@ def page_rows(act):
     return dict(tess=[x for x in act if x.get("k") == "drive"], chg=[x for x in act if x.get("k") == "charge"])
 
 
-VERSION = 5                                         # bump when merge() or what the list carries changes: a list kept from the older code is then built again
+VERSION = 6                                         # bump when merge() or what the list carries changes: a list kept from the older code is then built again
 
 
 def signature(paths):
