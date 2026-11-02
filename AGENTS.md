@@ -84,6 +84,9 @@
    genuinely not yet run against real data, say exactly that ("implemented, not yet tested live") rather
    than "verified" - `py_compile` passing, or the code merely existing, is not verification.
 
+10. **Australian State and Territory Boundaries Come from the ABS** (added 2026-11-02): which state or territory a point (or an address) is in is decided by the boundaries the Australian Government prescribes, published by the Australian Bureau of Statistics in the Australian Statistical Geography Standard (ASGS Edition 3, July 2021 - June 2026), Digital Boundary Files: <https://www.abs.gov.au/statistics/standards/australian-statistical-geography-standard-asgs/edition-3-july-2021-june-2026/access-and-downloads/digital-boundary-files>.
+   Use those boundaries (or data derived from them) for state, territory and time-zone decisions; do not guess a state from a street or place name (a street can be named after another state) or from rough latitude/longitude boxes.
+
 ---
 
 ## 2. Table Display & UI Formatting Standards
