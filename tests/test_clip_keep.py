@@ -79,6 +79,28 @@ class Base(unittest.TestCase):
     def keep(self, read=(), stills=(), scanned=()):
         return CK.ClipKeep(self.data, FakeTC(set(read), set(scanned)), FakeFG(stills))
 
+    def test_signs_wait_when_a_drive_appears(self):
+        k = self.keep()
+        k._roots = {"J": self.roots["J"]}
+        k._job = dict(t0=time.time())
+        k.roots_now = lambda: {"J": self.roots["J"]}
+        self.assertFalse(k._new_footage())                                      # nothing new: signs go on
+        k.roots_now = lambda: {"J": self.roots["J"], "A": self.roots["J"]}      # a drive appeared
+        self.assertTrue(k._new_footage())
+        stopped = []
+        rv = SimpleNamespace(stop=lambda: stopped.append(1))
+        j = {}
+        k._signs_yield(rv, j)
+        self.assertTrue(k._stop and stopped and j["paused"])                    # signs end; the next update makes the new pictures first
+
+    def test_signs_wait_when_a_drive_changes(self):
+        k = self.keep()
+        k._roots = {"J": self.roots["J"]}
+        k._job = dict(t0=time.time() - 100)
+        k.roots_now = lambda: {"J": self.roots["J"]}
+        os.utime(os.path.join(self.roots["J"], "SavedClips"), None)             # clips added since the job began
+        self.assertTrue(k._new_footage())
+
 
 class KeepTest(Base):
     def test_a_clip_with_nothing_kept_is_not_ready_and_says_what_is_missing(self):

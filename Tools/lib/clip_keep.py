@@ -751,6 +751,7 @@ class ClipKeep:
                 if items and not self._stop:
                     rv.start(items)
                     while rv.status().get("running"):
+                        self._signs_yield(rv, j)
                         if self._stop:
                             rv.stop()
                         rs = rv.status()
@@ -767,6 +768,7 @@ class ClipKeep:
                     if items:
                         rv.refine(items)
                         while rv.status().get("running"):
+                            self._signs_yield(rv, j)
                             if self._stop:
                                 rv.stop()
                             rs = rv.status()
@@ -781,6 +783,40 @@ class ClipKeep:
         finally:
             self._changed()
             self._settle()
+
+    def _new_footage(self):
+        """True when a drive has appeared, or changed, since this job began: its pictures and telemetry come before more reading of signs."""
+        fn = getattr(self, "roots_now", None)
+        if not fn:
+            return False
+        try:
+            now = {r: p for r, p in (fn() or {}).items() if p}
+        except Exception:
+            return False
+        base = set(getattr(self, "_roots", None) or {})
+        t0 = (self._job or {}).get("t0", time.time())
+        for r, p in now.items():
+            if r not in base:
+                return True
+            for f in ("RecentClips", "SavedClips", "SentryClips"):
+                try:
+                    if os.path.getmtime(os.path.join(p, f)) > t0:
+                        return True
+                except OSError:
+                    pass
+        return False
+
+    def _signs_yield(self, rv, j):
+        """Reading signs is the lowest priority: when new footage appears, stop it (every few seconds look) so the pictures and telemetry of the new footage can be made first;
+        what is left of the signs is counted again and read by the next update."""
+        now = time.time()
+        if self._stop or now - getattr(self, "_yield_chk", 0) < 3:
+            return
+        self._yield_chk = now
+        if self._new_footage():
+            j["paused"], j["current"] = True, "new footage: signs wait"
+            self._stop = True
+            rv.stop()
 
     def job(self):
         j = dict(self._job)

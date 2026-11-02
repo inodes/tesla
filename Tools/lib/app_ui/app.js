@@ -1648,7 +1648,7 @@ function tlDays(host,items,o){
   const dd=(a,b)=>Math.round((Date.parse(b+"T00:00:00Z")-Date.parse(a+"T00:00:00Z"))/864e5),plus=(d,n)=>new Date(Date.parse(d+"T00:00:00Z")+n*864e5).toISOString().slice(0,10);
   // an event that crosses midnight is listed on every day it touches (whole, with a note), and is one and the same tick on all of them
   rs.filter(v=>!v._in).forEach(v=>{v._d0=v.start.slice(0,10);v._d1=v._c==="sentry"||!v.end||v.end<v.start?v._d0:v.end.slice(0,10);for(let n=0;n<=Math.min(dd(v._d0,v._d1),400);n++){const d=plus(v._d0,n);(byDay[d]=byDay[d]||[]).push(v)}});
-  if(TLS.wide===undefined){try{TLS.wide=localStorage.getItem("tlWide")==="1"}catch(e){TLS.wide=false}}if(TLS.dayDesc===undefined)TLS.dayDesc=cfg("teslacam.days_newest_first")!==false;if(TLS.rowDesc===undefined)TLS.rowDesc=cfg("teslacam.rows_newest_first")!==false;
+  if(TLS.wide===undefined){try{TLS.wide=localStorage.getItem("tlWide")==="1"}catch(e){TLS.wide=false}}if(TLS.dayDesc===undefined)TLS.dayDesc=cfg("teslacam.days_newest_first")!==false;if(TLS.rowDesc===undefined)TLS.rowDesc=cfg("teslacam.rows_newest_first")===true;
   const allDays=Object.keys(byDay).filter(d=>!o.dayOk||o.dayOk(d)).sort().reverse(),role=o.role,places=o.places;
   // one day at a time: a picker (newest day first by default) with arrows to the earlier / later day
   const asc=allDays.slice().reverse();

@@ -134,7 +134,7 @@
       "same_minute_s": 30,
       "read_workers": 4,
       "days_newest_first": true,
-      "rows_newest_first": true
+      "rows_newest_first": false
     },
     "review": {
       "step_s": 1.0,
