@@ -285,3 +285,6 @@ main:has(#spl .stbar,#spl .vbar) #splx{display:none}
 .evc .gchip.sentry{background:rgba(220,38,38,.14);color:#dc2626}.evc .gchip.saved{background:rgba(37,99,235,.14);color:#2563eb}
 
 .evc .gchip.more{background:var(--line);color:var(--mut)}
+
+.sp figure.blk{position:relative;overflow:hidden}.sp figure.blk .blkimg{position:absolute;inset:0;width:100%;height:100%;object-fit:contain;border-radius:8px}.sp figure.blk .lostb{padding:4px}.sp figure.blk .lostb span{font-size:11px}.vgrid figure.blk{cursor:zoom-in}
+.covbar{display:flex;height:14px;gap:1px;border-radius:7px;overflow:hidden;margin:2px 0 0}.covbar i{display:block;cursor:pointer;min-width:2px}.covbar i.on{background:var(--acc,#3b6cf6);opacity:.75}.covbar i.off{background:#000}
