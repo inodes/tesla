@@ -227,7 +227,7 @@ def code_updated():
     for d, pat in ((HERE, ".py"), (os.path.join(HERE, "lib"), ".py")):
         try:
             for f in os.listdir(d):
-                if f.endswith(pat) and (f.startswith("app_") or f in ("tesla_app.py", "drive_actions.py", "places_manager.py")):
+                if f.endswith(pat) and (f.startswith("app_") or f in ("tesla_app.py", "drive_actions.py", "places_common.py")):
                     newest = max(newest, os.path.getmtime(os.path.join(d, f)))
         except OSError:
             pass

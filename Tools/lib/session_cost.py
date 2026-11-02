@@ -422,7 +422,7 @@ def load_tessie_home_charges(tessie_dir=None):
  # than re-deriving a second, now-proven-fragile copy of the same check.
     from lib.drives.helpers import is_home_place, haversine_distance_m
     try:
-        from places_manager import load_places  # B6: import failure must not break every caller
+        from lib.places_common import load_places  # B6: import failure must not break every caller
         places = load_places()
     except Exception:
         places = {}
