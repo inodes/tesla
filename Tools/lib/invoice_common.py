@@ -185,7 +185,7 @@ class PDFTextExtractor:
                                 lit_c = lit_item.replace(b"\\(", b"(").replace(b"\\)", b")").replace(b"\\\\", b"\\")
                                 if len(lit_c) >= 2 and len(lit_c) % 2 == 0 and any(cmap.get(int.from_bytes(lit_c[i:i+2], "big")) for i in range(0, min(10, len(lit_c)), 2)):
                                     for i in range(0, len(lit_c), 2):
-                                        cid = int(lit_c[i:i+2], "big")
+                                        cid = int.from_bytes(lit_c[i:i+2], "big")
                                         chunks.append(cmap.get(cid, chr(cid) if 32 <= cid < 128 else ""))
                                 else:
                                     for b in lit_c:
@@ -226,7 +226,7 @@ class BaseInvoiceExtractor:
     def _parse_flexible_date(s: str) -> Optional[str]:
         s = s.strip()
         for fmt in (
-            "%Y/%m/%d", "%Y-%m-%d", "%d/%m/%Y", "%d/%m/%y",
+            "%Y/%m/%d", "%Y-%m-%d", "%d/%m/%Y", "%d-%m-%Y", "%d/%m/%y",
             "%d %b %Y", "%d %B %Y", "%d %b %y",
             "%d/%m/%Y %I:%M:%S %p", "%d/%m/%Y %I:%M %p",
             "%Y/%m/%d %I:%M:%S %p", "%Y/%m/%d %I:%M %p",
@@ -1190,7 +1190,7 @@ class ChargefoxInvoiceExtractor(BaseInvoiceExtractor):
                     pass
 
  # 3. Location
-        loc_m = re.search(r"(?:Station|Location|Site)[:\s]*([^\n\r]+)", text, re.IGNORECASE)
+        loc_m = re.search(r"\b(?:Station|Location|Site)\b[:\s]*([^\n\r]+)", text, re.IGNORECASE)
         if loc_m:
             data["location_name"] = loc_m.group(1).strip()
             data["place_safe"] = self._clean_place_name(data["location_name"])

@@ -85,9 +85,8 @@ class ExtractorTest(unittest.TestCase):
         self.assertEqual((d["issue_date"], d["session_time"]), ("2026-03-14", "2205"))
         self.assertEqual(ext.generate_filename(d, name), os.path.basename(name))   # already named: unchanged
 
-    @unittest.expectedFailure
     def test_tesla_date_with_dashes(self):
-        """BUG (found by this test): the Tesla date pattern accepts 14-03-2026 (day-month-year with dashes), but
+        """Was a bug (found by this test, fixed 2026-11-02): the Tesla date pattern accepts 14-03-2026 (day-month-year with dashes), but
         _parse_flexible_date has no '%d-%m-%Y' format, so the date is matched and then silently dropped
         (issue_date None, and the file name falls back to the original)."""
         d = IC.TeslaInvoiceExtractor().extract(TESLA_TEXT.replace("2026/03/14", "14-03-2026"), "/x/a.pdf")
@@ -118,9 +117,8 @@ class ExtractorTest(unittest.TestCase):
         self.assertEqual((d["energy_kwh"], d["total_amount"]), (22.4, 14.56))
         self.assertEqual(ext.generate_filename(d, "/x/c.pdf"), "20260314_0910_Chargefox_CF-12345_Example_Station_Testville.pdf")
 
-    @unittest.expectedFailure
     def test_chargefox_location_not_taken_from_website(self):
-        """BUG (found by this test): the location pattern (Station|Location|Site) is not anchored to a word, so
+        """Was a bug (found by this test, fixed 2026-11-02): the location pattern (Station|Location|Site) is not anchored to a word, so
         'website' in a footer line above the real 'Location:' line is taken as the location."""
         text = CHARGEFOX_TEXT.replace("Chargefox\n", "Chargefox\nQuestions? Visit our website help.example\n")
         d = IC.ChargefoxInvoiceExtractor().extract(text, "/x/c.pdf")
@@ -234,9 +232,8 @@ class PdfTextTest(unittest.TestCase):
         txt = self.read(make_pdf(b"BT /F1 12 Tf [<0001> -120 <0002>] TJ ET", CMAP))
         self.assertEqual(txt, "AB")
 
-    @unittest.expectedFailure
     def test_tj_array_of_two_byte_literals(self):
-        """BUG (found by this test): a 2-byte (Identity-H) literal string inside a TJ array is decoded with
+        """Was a bug (found by this test, fixed 2026-11-02): a 2-byte (Identity-H) literal string inside a TJ array is decoded with
         int(bytes, "big") instead of int.from_bytes(bytes, "big"), which raises TypeError and stops the whole
         pure-Python reader (used when pypdf and pdfplumber are not installed)."""
         txt = self.read(make_pdf(b"BT /F1 12 Tf [(\x00\x01\x00\x02)] TJ ET", CMAP))
@@ -279,9 +276,8 @@ class AnalyzerInvoiceTextTest(unittest.TestCase):
         self.assertIsNone(CA.TeslaInvoiceParser.parse_invoice_text(""))
         self.assertIsNone(CA.TeslaInvoiceParser.parse_invoice_text("hello\nworld"))
 
-    @unittest.expectedFailure
     def test_total_on_the_same_line_as_its_label(self):
-        """BUG (found by this test): when the total's label and value are on one line ('Total Amount (AUD) 23.35',
+        """Was a bug (found by this test, fixed 2026-11-02): when the total's label and value are on one line ('Total Amount (AUD) 23.35',
         as lib/invoice_common's Tesla extractor expects), the line loop takes the NEXT line's number instead -
         here the GST, 2.12 - so the charge is priced at its GST."""
         text = self.LINES.replace("Total Amount (AUD)\n23.35\nTotal GST\n2.12", "Total Amount (AUD) 23.35\nTotal GST 2.12")

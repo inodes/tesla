@@ -440,6 +440,16 @@ class TeslaInvoiceParser:
             return cls.parse_invoice_csv_or_text(file_path)
         return None
 
+    @staticmethod
+    def _amount_after(line, key):
+        """The amount written after `key` on the same line ("Total Amount (AUD) 23.35" -> 23.35), or None when the label is alone on its line."""
+        pos = line.lower().find(key)
+        m = re.search(r"(\d[\d,]*(?:\.\d+)?)", line[pos + len(key):]) if pos >= 0 else None
+        try:
+            return float(m.group(1).replace(",", "")) if m else None
+        except ValueError:
+            return None
+
     @classmethod
     def parse_invoice_text(cls, text, source_file=""):
         if not text:
@@ -575,7 +585,12 @@ class TeslaInvoiceParser:
  # 5. Total Cost
         total_cost = None
         for idx, line in enumerate(lines):
-            if any(k in line.lower() for k in ["total amount (aud)", "total amount", "total aud", "total due", "total for payment", "total incl. tax", "total incl tax"]):
+            key = next((k for k in ["total amount (aud)", "total amount", "total aud", "total due", "total for payment", "total incl. tax", "total incl tax"] if k in line.lower()), None)
+            if key:
+                same = TeslaInvoiceParser._amount_after(line, key)             # the value on the label's own line, else the line below it
+                if same is not None:
+                    total_cost = same
+                    break
                 if idx + 1 < len(lines):
                     val_s = re.sub(r"[^\d.]", "", lines[idx + 1])
                     try:
@@ -591,7 +606,12 @@ class TeslaInvoiceParser:
  # 6. GST
         gst = None
         for idx, line in enumerate(lines):
-            if any(k in line.lower() for k in ["total gst", "gst (10%)", "gst:", "tax 10%"]):
+            key = next((k for k in ["total gst", "gst (10%)", "gst:", "tax 10%"] if k in line.lower()), None)
+            if key:
+                same = TeslaInvoiceParser._amount_after(line, key)
+                if same is not None:
+                    gst = same
+                    break
                 if idx + 1 < len(lines):
                     val_s = re.sub(r"[^\d.]", "", lines[idx + 1])
                     try:
