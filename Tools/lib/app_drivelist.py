@@ -307,7 +307,7 @@ def page_rows(act):
     return dict(tess=[x for x in act if x.get("k") == "drive"], chg=[x for x in act if x.get("k") == "charge"])
 
 
-VERSION = 6                                         # bump when merge() or what the list carries changes: a list kept from the older code is then built again
+VERSION = 7                                         # bump when merge() or what the list carries changes: a list kept from the older code is then built again
 
 
 def signature(paths):
