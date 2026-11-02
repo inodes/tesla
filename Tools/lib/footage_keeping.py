@@ -565,9 +565,10 @@ def reconcile_archive_catalog_and_tombstones(master_dir, secondary_dirs=None, fo
 
     added_to_catalog = sum(1 for k in new_pkgs if k not in old_pkgs)
 
- # Clean any tombstoned items that were restored or re-added
+ # Clean any tombstoned items that were restored or re-added. A package only FLAGGED for deletion is still on the Archive by design:
+ # it keeps its flag until it is purged (A5, 2026-09-30 review - it used to un-flag itself here).
     for k in new_pkgs:
-        if k in tombs:
+        if k in tombs and tombs[k].get("status") != "flagged":
             del tombs[k]
 
     save_tombstones(tombstones_data, master_dir)
@@ -581,7 +582,7 @@ def reconcile_archive_catalog_and_tombstones(master_dir, secondary_dirs=None, fo
     return added_to_catalog, promoted_tombstones
 
 
-def scrub_pending_tombstones_for_drive(drive_path, master_dir=None, dry_run=False):
+def scrub_pending_tombstones_for_drive(drive_path, master_dir=None, dry_run=False, only=None):
     """
     Purges deleted packages from a connected secondary drive (e.g. JOWUA) matching active tombstones.
     Clears the drive from pending_drives, and retires tombstones once scrubbed everywhere.
@@ -608,6 +609,8 @@ def scrub_pending_tombstones_for_drive(drive_path, master_dir=None, dry_run=Fals
     retired_count = 0
 
     for key, info in list(tombs.items()):
+        if only is not None and key not in only:          # A6: a purge of what was just flagged leaves the other tombstones alone
+            continue
         pending = info.get("pending_drives", [])
         if drive_id in pending or not pending:
             target_dir = os.path.join(tc_dir, key)
@@ -974,6 +977,14 @@ def tombs_known_drives(master_dir, secondary_dirs=None):
     return known
 
 
+def package_tombstone_key(p):
+    """The key a footage package is flagged under in the tombstones file."""
+    if p.get("is_folder", False):
+        return f"{p['cat']}Clips/{os.path.basename(p['folder'])}"
+    dt = p.get("dt")
+    return f"RecentClips/{dt.strftime('%Y-%m-%d_%H-%M-%S') if dt else 'recent'}"
+
+
 def flag_footage_packages_for_deletion(packages, analyzer):
     """
     Stages packages for deletion in .TeslaCam_tombstones.json with status='flagged'.
@@ -1077,10 +1088,11 @@ def unflag_footage_packages(packages, analyzer):
     return count_unflagged
 
 
-def purge_flagged_tombstones_across_drives(teslacam_dirs, repo_root=None, dry_run=False):
+def purge_flagged_tombstones_across_drives(teslacam_dirs, repo_root=None, dry_run=False, only=None):
     """
     Permanently deletes flagged and active tombstones across Master Archive and connected secondary drives.
     Returns (total_files_deleted, total_bytes_freed, total_retired_tombstones).
+    only: a set of tombstone keys - only those are purged (A6: the Home+Recent purge must not take every pending tombstone with it).
     """
     master_dir = resolve_master_teslacam_dir(teslacam_dirs)
     if not master_dir or not os.path.isdir(master_dir):
@@ -1101,6 +1113,8 @@ def purge_flagged_tombstones_across_drives(teslacam_dirs, repo_root=None, dry_ru
  # 1. Unlink files from Master Archive
     if master_dir and os.path.isdir(master_dir):
         for key, info in list(tombs.items()):
+            if only is not None and key not in only:
+                continue
             target_dir = os.path.join(master_dir, key)
             if os.path.isdir(target_dir):
                 for root, dirs, files in os.walk(target_dir, topdown=False):
@@ -1147,7 +1161,7 @@ def purge_flagged_tombstones_across_drives(teslacam_dirs, repo_root=None, dry_ru
     for d in teslacam_dirs:
         drv_id = get_drive_identifier(d, master_dir)
         if drv_id != "MASTER":
-            n_f, b_f, n_r = scrub_pending_tombstones_for_drive(d, master_dir, dry_run=dry_run)
+            n_f, b_f, n_r = scrub_pending_tombstones_for_drive(d, master_dir, dry_run=dry_run, only=only)
             total_files += n_f
             total_bytes += b_f
             total_retired += n_r
@@ -1157,6 +1171,8 @@ def purge_flagged_tombstones_across_drives(teslacam_dirs, repo_root=None, dry_ru
         fresh_tombs = load_tombstones(master_dir)
         t_dict = fresh_tombs.get("tombstones", {})
         for k in list(t_dict.keys()):
+            if only is not None and k not in only:
+                continue
             if not t_dict[k].get("pending_drives"):
                 del t_dict[k]
                 total_retired += 1
@@ -1698,15 +1714,41 @@ def build_timeline_footage_packages(event, compute_sizes=False):
     return packages
 
 
+def size_on_all_drives(files, roots):
+    """(bytes, drives) the same clips take on every drive in roots that holds them: a file's path under its own drive root, looked up on each root."""
+    roots = [os.path.abspath(r) for r in (roots or []) if r]
+    total, held = 0, set()
+    for f in files:
+        fa = os.path.abspath(f)
+        own = next((r for r in roots if fa.startswith(r.rstrip(os.sep) + os.sep)), None)
+        if own is None:
+            try:
+                total += os.path.getsize(fa)
+                held.add("")
+            except OSError:
+                pass
+            continue
+        rel = os.path.relpath(fa, own)
+        for r in roots:
+            try:
+                total += os.path.getsize(os.path.join(r, rel))
+                held.add(r)
+            except OSError:
+                pass
+    return total, len(held)
+
+
 def render_staging_preview_table(packages_to_process, title_desc, analyzer):
     """Renders a 100% pixel-perfect Unicode preview table for packages being staged."""
     ensure_package_sizes(packages_to_process)
-    n_drives = max(1, len(analyzer.teslacam_dirs))
     tot_bytes = sum(p["tot_size"] for p in packages_to_process)
     tot_files = sum(p["files_count"] for p in packages_to_process)
     tot_mb = tot_bytes / (1024 * 1024)
     tot_sz = f"{tot_mb/1024:.1f} GB" if tot_mb >= 1024 else f"{tot_mb:.0f} MB"
-    mult_mb = (tot_bytes * n_drives) / (1024 * 1024)
+    # A10 (2026-09-30 review): what the clips take on every drive that actually holds them, not the size times the number of connected drives
+    mult_bytes, n_drives = size_on_all_drives([f for p in packages_to_process for f in p.get("files", [])], analyzer.teslacam_dirs)
+    mult_mb = (mult_bytes or tot_bytes) / (1024 * 1024)
+    n_drives = n_drives or 1
     mult_sz = f"{mult_mb/1024:.1f} GB" if mult_mb >= 1024 else f"{mult_mb:.0f} MB"
 
     w_idx = 5
@@ -1752,7 +1794,7 @@ def render_staging_preview_table(packages_to_process, title_desc, analyzer):
         print(format_row([c_i, c_ev, c_act, c_rng, c_path, c_fl, c_sz], col_widths, col_aligns))
 
     print(format_box_line("├", "┴", "┤", col_widths))
-    tot_msg = f" Total Reclaimable: {len(packages_to_process)} package(s), {tot_files} files (~{tot_sz}/drive ➔ ~{mult_sz} across {n_drives} drive(s))"
+    tot_msg = f" Total Reclaimable: {len(packages_to_process)} package(s), {tot_files} files (~{tot_sz} on one drive ➔ ~{mult_sz} on the {n_drives} drive(s) holding them)"
     print(f"│{pad_display(tot_msg, total_inner, 'left')}│")
     print(format_box_line("└", "─", "┘", [total_inner]))
 
@@ -1966,7 +2008,7 @@ def purge_home_recent_cli(analyzer, target_dates=None, stage_only=False, dry_run
         return n_flag, b_flag
 
     print("\n🗑️  Executing multi-drive purge of flagged Home Recent packages...")
-    n_del, b_del, n_tombs = purge_flagged_tombstones_across_drives(analyzer.teslacam_dirs, analyzer.repo_root)
+    n_del, b_del, n_tombs = purge_flagged_tombstones_across_drives(analyzer.teslacam_dirs, analyzer.repo_root, only={package_tombstone_key(p) for p in pkgs})
     analyzer._indexed = False
     f_mb = b_del / (1024 * 1024)
     f_sz = f"{f_mb/1024:.1f} GB" if f_mb >= 1024 else f"{f_mb:.0f} MB"

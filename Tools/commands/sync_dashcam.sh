@@ -2047,6 +2047,10 @@ if [[ "$HOME_RECENT_PURGE_MODE" -eq 1 ]]; then
   if (( rc != 0 )) || [[ "$DRY_RUN" -eq 1 || -n "$PURGE_MODE" || "$STATUS_MODE" -eq 1 ]]; then
     exit $rc
   fi
+  # A7 (2026-09-30 review): nothing to sync from with only the Archive connected - stop here instead of failing on "no recording drive"
+  if [[ -z "$VOL_TESLA_USB" && -z "$VOL_JOWUA" ]]; then
+    exit 0
+  fi
   if [[ "$ASSUME_YES" -ne 1 && -t 0 ]]; then
     echo ""
     printf " Continue with the multi-drive sync now? [Y/n]: "
@@ -2460,7 +2464,8 @@ echo ""
 # without reopening the newer-footage safety gap the post-sync purge
 # below was specifically built to close). Same "archive destination
 # connected" gate as every other purge in this script.
-if [[ -n "$VOL_2TB" || -n "$LOCAL_SYNC_DIR" ]]; then
+# A7: after -phr [days] the Home+Recent purge has been done as asked; the sync does not run its own (which ignores the days).
+if [[ "$HOME_RECENT_PURGE_MODE" -ne 1 ]] && [[ -n "$VOL_2TB" || -n "$LOCAL_SYNC_DIR" ]]; then
   purge_home_recent_backlog "$VOL_TESLA_USB" "$VOL_JOWUA" "$VOL_2TB" "$LOCAL_SYNC_DIR"
   echo ""
 fi
@@ -2525,7 +2530,7 @@ fi
 # synced first (a little wasted transfer) rather than skipped - judged
 # worth it for the safety guarantee. Still gated on an archive
 # destination being connected, same rule as before.
-if [[ -n "$VOL_2TB" || -n "$LOCAL_SYNC_DIR" ]]; then
+if [[ "$HOME_RECENT_PURGE_MODE" -ne 1 ]] && [[ -n "$VOL_2TB" || -n "$LOCAL_SYNC_DIR" ]]; then
   echo ""
   prompt_home_recent_purge "$VOL_TESLA_USB" "$VOL_JOWUA" "$VOL_2TB" "$LOCAL_SYNC_DIR"
 fi
