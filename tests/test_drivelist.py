@@ -185,7 +185,7 @@ class Parked(unittest.TestCase):
 
 
 class JoinParksTest(unittest.TestCase):
-    H = [-33.8066, 151.0796]
+    H = [-33.8066, 151.0500]
 
     def _it(self, id, kind, t0, t1, **kw):
         return dict(id=id, kind=kind, t0=t0, t1=t1, p0=kw.pop("p0", self.H), p1=kw.pop("p1", self.H), **kw)

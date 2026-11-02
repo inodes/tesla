@@ -125,7 +125,7 @@ def is_home_place(place_str, places_dict=None):
  # 2026-09-28: found via a real cross-check on charges_master.csv's
  # raw "Saved Location" field (Tessie's own, never run through this
  # repo's resolve_place() pipeline) - the Home place's own `keywords`
- # list (e.g. "1108 Victoria" for an address Tessie itself used to
+ # list (e.g. "Example Street" for an address Tessie itself used to
  # label this charger before the user renamed it to "Home" in the
  # Tessie app) was never consulted here, only exact name/short_name/
  # location_name/nickname matches - so any RAW, unresolved string

@@ -11,8 +11,8 @@ import app_drivelist as DL  # noqa: E402
 import app_route as AR  # noqa: E402
 
 T0 = 1793000000
-TESSIE = dict(id="2026-10-30_17-00_AEDT", t0=T0, t1=T0 + 720, km=3.8, max=61, kwh=0.4, frm="Top Ryde", to="Home", lat=-33.8125, lon=151.106, lat1=-33.8065, lon1=151.0796, min=12)
-CAM = dict(id="2026-10-30_17-00-43", kind="drive", t0=T0 + 20, t1=T0 + 700, km=3.7, vmax=60, p0=[-33.8125, 151.106], p1=[-33.8065, 151.0796], lo=39600)
+TESSIE = dict(id="2026-10-30_17-00_AEDT", t0=T0, t1=T0 + 720, km=3.8, max=61, kwh=0.4, frm="Top Ryde", to="Home", lat=-33.8125, lon=151.106, lat1=-33.7000, lon1=151.0500, min=12)
+CAM = dict(id="2026-10-30_17-00-43", kind="drive", t0=T0 + 20, t1=T0 + 700, km=3.7, vmax=60, p0=[-33.8125, 151.106], p1=[-33.7000, 151.0500], lo=39600)
 
 
 def drives(items):
