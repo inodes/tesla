@@ -2684,7 +2684,7 @@ async function boot(){
   addEventListener("hashchange",route);
   $$("#nav>a").forEach(a=>a.addEventListener("click",()=>{if(a.getAttribute("href")!==location.hash)NAVRESET=true}));
   try{SET=await (await fetch0("/api/settings")).json()}catch(e){}
-  try{const s=cache.summary=await (await fetch0("/api/summary")).json();$("#veh").textContent=s.vehicle;$("#vsub").textContent=n0(s.km)+" km logged"}catch(e){}
+  try{const s=cache.summary=await (await fetch0("/api/summary")).json();$("#veh").textContent=s.vehicle;$("#vsub").textContent=n0(s.odo||s.km)+" km";$("#vsub").title=s.odo?n0(s.km)+" km in logged drives; the rest was driven before logging started or is not in any drive":""}catch(e){}
   // the corner: one line a drive, a dot and its name. Green = connected, amber = something is reading it, red = not connected; ⏏ only while connected (and not just ejected)
   window.EJD={};window.KBUSY=[];const NM={A:"Archive",J:"JOWUA",U:"Tesla USB"};
   let stLast="";

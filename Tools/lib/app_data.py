@@ -253,7 +253,7 @@ class Store:
                                 avg=_num(r.get("Average Speed (km/h)")), max=_num(r.get("Max Speed (km/h)")), b0=_num(r.get("Starting Battery (%)")), b1=_num(r.get("Ending Battery (%)")),
                                 ap=_num(r.get("Autopilot Distance (km)"), 0), lat=_num(r.get("Starting Latitude")), lon=_num(r.get("Starting Longitude")),
                                 addr1=r.get("Ending Location") or "", pkey1=self.pl.label(_num(r.get("Ending Latitude")), _num(r.get("Ending Longitude")), False, r.get("Ending Saved Location") or "")[1],
-                                lat1=_num(r.get("Ending Latitude")), lon1=_num(r.get("Ending Longitude")), odo=_num(r.get("Starting Odometer (km)")),
+                                lat1=_num(r.get("Ending Latitude")), lon1=_num(r.get("Ending Longitude")), odo=_num(r.get("Starting Odometer (km)")), odo1=_num(r.get("Ending Odometer (km)")),
                                 tin=_num(r.get("Average Inside Temperature (°C)")), tout=_num(r.get("Average Outside Temperature (°C)")),
                                 foot=(st or {}).get("footage_pct"), clips=(st or {}).get("footage_clips"), saved=(st or {}).get("saved_clip_events") or 0,
                                 flips=(st or {}).get("flips") or 0))
@@ -552,5 +552,7 @@ class Store:
     def summary(self):
         dr, ch, idl = self.drives(), self.charges(), self.idles()
         last = max([x["t0"] for x in dr + ch + idl] or [0])
-        return dict(drives=len(dr), charges=len(ch), idles=len(idl), km=round(sum(d["km"] or 0 for d in dr)), last=last,
+        # odo: the car's odometer as last seen (latest drive end or charge); km: distance of the logged drives only
+        odo = max([d.get("odo1") or 0 for d in dr] + [c.get("odo") or 0 for c in ch] or [0])
+        return dict(drives=len(dr), charges=len(ch), idles=len(idl), km=round(sum(d["km"] or 0 for d in dr)), odo=round(odo) or None, last=last,
                     vehicle=(self.spec().get("vehicle") or {}).get("model", "Tesla"), data_dir=self.d)
