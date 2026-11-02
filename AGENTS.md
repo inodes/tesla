@@ -175,9 +175,18 @@ tesla/
 │   │   ├── __init__.py
 │   │   ├── archive_naming.py    # Shared timestamp-archived filename scheme
 │   │   ├── analysis_deepdive_charts.py   # Self-contained interactive HTML line-chart renderer
+│   │   ├── battery_health.py    # Battery health history (Tessie battery CSVs + battery_health_log.json)
+│   │   ├── car_efficiency.py    # Car mass, grade-corrected kWh/100 km, distance confidence
+│   │   ├── charging_analyzer.py # ChargingAnalyzer + TeslaInvoiceParser (analyse_charging is its CLI)
+│   │   ├── dashcam_clips.py     # TeslaCam clip list, hour offsets, clip cache and telemetry timeline
+│   │   ├── drive_footage.py     # One drive's master row, Tessie CSV, window and the footage covering it
 │   │   ├── evnex_common.py      # Evnex credential loading + client bootstrap
+│   │   ├── footage_actions.py   # Footage queue from drive pages: copy, flag for delete, save, purge
 │   │   ├── fuel_common.py       # NSW FuelCheck CKAN harvesting, streaming XLSX parser, and price DB
 │   │   ├── invoice_common.py    # Zero-dep Deflate & CMap/Identity-H PDF parser + multi-provider extractors
+│   │   ├── places_common.py     # places.json, geocoding, distances, Overpass look-up (places_manager is its CLI)
+│   │   ├── power_bill.py        # Power bill rebuilt from usage + rates; the real bills it is checked against
+│   │   ├── power_demand.py      # Power rate periods and the demand charge
 │   │   ├── pvoutput_common.py   # PVOutput config/auth/HTTP plumbing
 │   │   ├── table_formatter.py   # Shared terminal table/box-drawing formatter
 │   │   ├── tessie_api_common.py # Tessie API auth, config, and data-home path resolution
@@ -267,9 +276,14 @@ file or moving an existing one - the answer decides where it lives and how it's 
   `providers_vehicle/` package for exactly this reason: there's only ever been one data source, so there's
   nothing yet to make pluggable - adding one preemptively would be structure without a use.
 
-A file that is BOTH a real CLI script AND imported by other scripts for its functions (e.g.
-`power_demand_calculator.py`, imported by `power_cost_calculator.py`) stays in `Tools/` as a CLI script -
-the CLI-entry-point test is "does it have its own argparse + `__main__`", not "is it ever imported".
+A CLI script keeps only its own argparse, menus and output; any function or class another script, a lib
+module, a provider or the app needs is moved into `Tools/lib/` and imported from there by every user,
+the script itself included (2026-11-02: e.g. `power_demand_calculator.py`'s rate periods live in
+`lib/power_demand.py`, `analyse_charging.py`'s ChargingAnalyzer in `lib/charging_analyzer.py`). Nothing in
+`Tools/lib/`, `Tools/providers_*/` or `Tools/tesla_app.py` imports from `Tools/commands/`, and none of them
+puts `Tools/commands/` on `sys.path`; a name that is both a lib module and a command
+(`teslacam_ledger`, `teslacam_scan`, `teslacam_stills`) is imported as `from lib import teslacam_<x>`.
+`tests/test_lib_no_commands.py` checks all three.
 
 ### 3.2 Naming & grouping convention
 
