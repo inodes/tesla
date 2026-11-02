@@ -86,9 +86,8 @@ class BusyProfileTest(unittest.TestCase):
             p["days"][d][0] = 0.6
         self.assertEqual(BT.busy_summary(p)["some_window"], (23, 1))
 
-    @unittest.expectedFailure
     def test_busy_all_day(self):
-        """BUG (found by this test): when every hour is at or above SOME_AVAILABLE_FROM the busy window wraps right round,
+        """Was a bug, fixed 2026-11-02 (found by this test): when every hour is at or above SOME_AVAILABLE_FROM the busy window wraps right round,
         and the text reads 'Some chargers available 1am–1am, most at other times' - there are no other times."""
         s = BT.busy_summary(flat_profile(0.7, offset_s=0))
         self.assertNotIn("most at other times", s["text"])
