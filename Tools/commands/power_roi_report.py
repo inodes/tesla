@@ -10,12 +10,9 @@ and AGL data (power_solar_report.py, REQ-118/119; power_invoice_report.py,
 REQ-120).
 
 User pasted the standard Australian solar-ROI formulas and asked for a
-proper payback/ROI breakdown, then supplied the actual signed install
-contract (Soltek Energy, quote Stewart-1019): 30x LG Neon2 350W panels
-(10.5kW), SolarEdge SE10000H inverter w/ MODBUS, $14,200.00 fully
-installed after the STC rebate (GST inclusive) - and corrected the
-system's first day of operation to 2019-11-28 (the contract was signed
-2019-11-04, four days into a lead time before actual switch-on).
+proper payback/ROI breakdown. The real system figures (panels, inverter,
+installed cost after the STC rebate, first day of operation) are in the
+user's own Solar/solar_system.json, never in this file.
 
 Formula (unchanged from the user's own paste, config.json's own AGL
 electricity tariffs standing in for R_import/R_fit):
