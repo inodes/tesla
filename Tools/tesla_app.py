@@ -1143,8 +1143,10 @@ def main():
     TODO = footage_todo.Todo(os.path.join(local_cache_dir(), "footage_todo.json"), DATA_DIR, TC, FG, footage_roots, lambda: KEEP._stage is None and not KEEP.busy())
     KEEP.on_progress = TODO.subtract
     CKEEP = clip_keep.ClipKeep(DATA_DIR, TC, FG)
+    CKEEP.roots_now = footage_roots          # a drive that appears while signs are read: the signs wait (clip_keep._signs_yield)
     run_cuts.on_change(lambda: CKEEP.invalidate())          # what is kept is grouped by the same runs
     CKEEP.on_change = TODO.forget
+    CKEEP.roots_now = footage_roots                 # a drive that appears while signs are read: its pictures come first (lib/clip_keep.py _signs_yield)
     TODO.keep = CKEEP                  # the drives' Tasks count what an update would still do: one definition with TeslaCam's button (TODO-068)
     KEEP.page_job = lambda: bool(CKEEP.job().get("running"))
     KEEP.pictures = CKEEP          # the Keeper saves the pictures of events after the stills

@@ -82,7 +82,7 @@ DEFAULTS = {
             "autopilot_colors": {"FSD": "#3b6cf6", "Autosteer": "#8b5cf6", "TACC": "#14b8a6", "Manual": "#94a3b8"},
             "network_colors": {"Tesla": "#e0201b", "Tesla Destination": "#f97316", "Chargefox": "#16a34a", "Evie": "#7c3aed", "EVX": "#eab308", "Exploren": "#db2777",
                               "NRMA": "#2563eb", "AmpCharge": "#84cc16", "Jolt": "#14b8a6", "BP Pulse": "#0891b2", "3rd-Party": "#6b7280", "WA EV Network": "#9333ea"}},
-    "teslacam": {"moving_kmh": 3.0, "run_gap_s": 75, "gap_min_s": 120, "same_place_m": 300, "same_place_est_m": 800, "same_minute_s": 30, "read_workers": 4, "days_newest_first": True, "rows_newest_first": True, "place_filters": ["Home"], "ignore_places": ["Home"]},
+    "teslacam": {"moving_kmh": 3.0, "run_gap_s": 75, "gap_min_s": 120, "same_place_m": 300, "same_place_est_m": 800, "same_minute_s": 30, "read_workers": 4, "days_newest_first": True, "rows_newest_first": False, "place_filters": ["Home"], "ignore_places": ["Home"]},
     "review": {"step_s": 1.0, "min_kmh": 30.0, "end_kmh": 10.0, "end_s": 180, "min_conf": 50.0, "workers": 3, "merge_s": 12.0, "crop_px": 320, "refine_step_s": 0.2, "refine_pad_s": 2.0, "refine_conf": 85.0, "candidate_km": 20, "candidate_avg_kmh": 60,
                "accel_min_pct": 5, "speed_min_kmh": 5, "speed_tol_kmh": 6,
                "event_before_s": 12, "event_after_s": 15, "max_event_stills": 40, "hi_px": 1400, "hi_quality": 82, "exit_car_kmh": 90, "exit_gap_kmh": 20, "sign_min_stills": 2, "works_gap_s": 40, "osm_fetch": True, "traffic": True, "traffic_conf": 0.35, "traffic_min_w": 0.015, "traffic_model": "", "traffic_model_url": "https://huggingface.co/unity/inference-engine-yolo/resolve/main/models/yolov8n.onnx", "steer_deg": 15},
