@@ -109,12 +109,15 @@ class StateFromTextTest(unittest.TestCase):
     def test_nothing_known(self):
         self.assertEqual(GC.extract_au_state_from_text("Example Charger", "no clue here"), "Other")
 
-    @unittest.expectedFailure
     def test_street_named_after_a_state(self):
-        """BUG (found by this test): a state code is only looked for in the title, and full state names are
-        matched as bare substrings of the address before its own state code and postcode are read, so a street
-        named Victoria (or Queensland, Tasmania...) wins over 'NSW 2999' in the same address."""
+        """Was a bug (fixed in the second test-gap pass): full state names were matched as bare substrings
+        before the address's own state code and postcode, so a street named Victoria won over 'NSW 2999'. Now
+        whichever state signal comes last in the address wins."""
         self.assertEqual(GC.extract_au_state_from_text("Example Charger", "1 Victoria Street, Testville NSW 2999"), "NSW")
+        self.assertEqual(GC.extract_au_state_from_text("Example Charger", "1 Queensland Road, Testville 2999"), "NSW")
+        self.assertEqual(GC.extract_au_state_from_text("Example Charger", "1 Tasmania Lane, Testville, Victoria"), "VIC")
+        # a four-digit street number is not taken for the postcode when the state name comes after it
+        self.assertEqual(GC.extract_au_state_from_text("Example Charger", "3000 Example Hwy, Testville, Western Australia"), "WA")
 
     def test_names(self):
         self.assertEqual(GC.clean_station_short_name("  Example -- Plaza (Level 2) "), "Example_Plaza_Level_2")
@@ -175,14 +178,15 @@ class StateFromCoordsTest(unittest.TestCase):
             self.assertEqual(GC.state_from_coords(-42.0, 146.5), ("TAS", None))   # inside its safe box
         self.geocode.assert_not_called()
 
-    @unittest.expectedFailure
     def test_north_coast_of_tasmania(self):
-        """BUG (found by this test): with resources/state_boundaries.json, a point on Tasmania's north coast
-        (made-up point 40.75 S, 145.2 E: north of the TAS safe box, which stops at 40.8 S) reaches the geometric
-        fallback, where the NSW/VIC line (141-150 E) is checked first and calls everything south of it VIC. The
-        'lat < -39.5 -> TAS' line after it is never reached for 141-150 E (also King Island, Flinders Island)."""
+        """Was a bug (fixed in the second test-gap pass): a point on Tasmania's north coast (made-up point
+        40.75 S, 145.2 E, north of the TAS safe box) reached the geometric fallback, where the NSW/VIC line was
+        checked first and called everything south of it VIC. South of 39.2 S is now TAS before that line."""
         with mock.patch.object(GC, "load_state_boundaries", REAL_LOAD_BOUNDARIES):
             self.assertEqual(GC.state_from_coords(-40.75, 145.2), ("TAS", None))
+            self.assertEqual(GC.state_from_coords(-39.9, 144.0), ("TAS", None))    # King Island area
+            self.assertEqual(GC.state_from_coords(-40.0, 148.0), ("TAS", None))    # Flinders Island area
+            self.assertEqual(GC.state_from_coords(-38.3, 144.5), ("VIC", None))    # south-coast VIC stays VIC
 
     def test_station_time_zone(self):
         self.assertEqual(CA.resolve_location_timezone("NSW"), "Australia/Sydney")

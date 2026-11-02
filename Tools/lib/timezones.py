@@ -62,6 +62,22 @@ def timezonefinder_available():
     return _get_timezonefinder() is not None
 
 
+# The QLD/NSW border as (lon, lat) points, west to east - the same line as QLD_NSW in
+# resources/state_boundaries.json (29 S out to 149 E, then the Dumaresq/McPherson Range up to 28.16 S at the coast).
+_QLD_NSW_BORDER = [(141.0, -29.0), (149.0, -29.0), (150.3, -28.6), (151.93, -28.92), (152.8, -28.35), (153.55, -28.16)]
+
+
+def _qld_nsw_border_lat(lon):
+    """Latitude of the QLD/NSW border at this longitude (east of 141 E), by straight lines between the points."""
+    pts = _QLD_NSW_BORDER
+    if lon <= pts[0][0]:
+        return pts[0][1]
+    for (x1, y1), (x2, y2) in zip(pts, pts[1:]):
+        if lon <= x2:
+            return y1 + (y2 - y1) * (lon - x1) / (x2 - x1)
+    return pts[-1][1]
+
+
 def _heuristic_timezone(lat, lon):
     """Approximate Australia state/territory lookup by lat/lon. Good
     enough for real mainland road-trip driving; does NOT know about
@@ -75,7 +91,7 @@ def _heuristic_timezone(lat, lon):
         return "Australia/Darwin"         # NT
     if lon < 141.0 and lat <= -26.0:
         return "Australia/Adelaide"       # SA
-    if lat > -29.0:
+    if lat > _qld_nsw_border_lat(lon):
         return "Australia/Brisbane"       # QLD
     if lon < 149.5 and lat < -39.2:
         return "Australia/Hobart"         # TAS

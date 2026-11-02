@@ -133,12 +133,15 @@ class ZoneGuessTest(unittest.TestCase):
             with self.subTest(lat=lat, lon=lon):
                 self.assertEqual(TZ._heuristic_timezone(lat, lon), zone)
 
-    @unittest.expectedFailure
     def test_far_north_nsw_is_not_queensland(self):
-        """BUG (found by this test): every point north of 29 S east of 141 E is called Brisbane, but the NSW/QLD
-        border on the coast is near 28.2 S, so a point in far-north NSW (here a made-up rural point near 28.8 S,
-        153.3 E) gets Brisbane time - an hour wrong while NSW is on daylight saving."""
-        self.assertEqual(TZ._heuristic_timezone(-28.8, 153.3), "Australia/Sydney")
+        """Was a bug (fixed in the second test-gap pass): every point north of 29 S east of 141 E was called
+        Brisbane, but the coastal NSW/QLD border is near 28.2 S. The fallback now follows the same border line
+        as resources/state_boundaries.json."""
+        self.assertEqual(TZ._heuristic_timezone(-28.8, 153.3), "Australia/Sydney")   # far-north NSW coast
+        self.assertEqual(TZ._heuristic_timezone(-29.2, 151.5), "Australia/Sydney")   # NSW tablelands
+        self.assertEqual(TZ._heuristic_timezone(-28.0, 153.3), "Australia/Brisbane") # QLD side of the coast
+        self.assertEqual(TZ._heuristic_timezone(-28.8, 145.0), "Australia/Brisbane") # inland QLD, north of 29 S
+        self.assertEqual(TZ._heuristic_timezone(-29.2, 145.0), "Australia/Sydney")   # inland NSW, south of 29 S
 
 
 if __name__ == "__main__":
