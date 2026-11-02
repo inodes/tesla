@@ -468,3 +468,16 @@ Before completing any prompt or task, every agent must perform the following che
 8. **Claim-Honesty Check** (added 2026-09-21, BUG-122/BUG-126): Before writing "verified"/"complete"/a
    specific accuracy number anywhere (a tracker row, a handover doc, a commit message), confirm you
    actually ran it against real data and can point to the real output - see Section 1 item 9.
+
+## 8. Cloud sessions: reporting back
+
+The cloud sandbox has no `config.json` and no real data. The owner runs the same repo on his Mac, where both exist, and pastes what you ask for into a chat with the reviewing Claude. So:
+
+1. Run everything that can run in the sandbox with `TESLA_CONFIG=config.example.json TESLA_DATA_DIR=/tmp/nodata`. Say plainly what that left untested ("implemented, not tested on real data").
+2. End the PR description (and your final message) with a block headed **Paste back**, in this order:
+   - **Done**: what changed, one line per change, with file names.
+   - **Not run on real data**: each thing, and why.
+   - **Run on your Mac** (from `~/repos/tesla`, branch checked out): a fenced code block of exact commands, each followed by a line saying what a good result looks like. Prefer commands that print short, self-checking output (counts, PASS/FAIL, a diff against the old behaviour) over long dumps. Use real data and `config.json` as they are: do not copy either into the repo or the PR.
+   - **Risks**: anything a reviewer should look at first (data written, files moved or deleted, anything that touches money, dates or time zones).
+3. Never print or ask for secrets, tokens, addresses or coordinates. If a command's output might contain them, tell the owner to trim it before pasting.
+4. Never push to `merged`: push your branch and open a PR into it.
