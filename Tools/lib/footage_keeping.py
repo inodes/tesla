@@ -1807,7 +1807,7 @@ def render_staging_preview_table(packages_to_process, title_desc, analyzer):
 # The old check trusted the day timeline: it extended wherever the last
 # drive in drives_master.csv ended right up to "Now", only refreshed Tessie
 # when a day had NO drives, and decided "Home" by substring-matching place
-# keywords (one of which is "Hay Street") against the location text. If a
+# keywords (one of which is "Example Street") against the location text. If a
 # later drive hadn't reached drives_master.csv yet, its RecentClips were
 # "parked at Home" and deleted from every drive, Archive included.
 #

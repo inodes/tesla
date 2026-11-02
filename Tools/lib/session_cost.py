@@ -412,7 +412,7 @@ def load_tessie_home_charges(tessie_dir=None):
  # 2026-09-28: found via the new tessie_match_status watermark check -
  # this used to require Saved Location == "Home" EXACTLY, which
  # silently dropped 178 of this account's real 244 home charges (the
- # Tessie place was renamed from "1108 Victoria Rd" to "Home" at some
+ # Tessie place was renamed from "Example Rd" to "Home" at some
  # point; everything charged before that rename has the OLD label and
  # was being excluded here). Same class of bug BUG-102 already fixed
  # for is_home_place() elsewhere (analyse_drives.py) - a place's NAME
