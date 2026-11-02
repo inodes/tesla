@@ -15,7 +15,7 @@ VID = "AAAA-1111"
 
 class FolderDriveTest(unittest.TestCase):
     def setUp(self):
-        self.t = tempfile.mkdtemp()
+        self.t = os.path.realpath(tempfile.mkdtemp())                               # macOS temp folders sit behind /var -> /private/var; a real mount point is already resolved
         self.vol = os.path.join(self.t, "LaCie1")                                   # an ordinary disk with a TeslaCam folder in a folder
         rec = os.path.join(self.vol, "jowua-rescue", "TeslaCam", "RecentClips")
         os.makedirs(rec)
