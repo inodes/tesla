@@ -1374,7 +1374,7 @@ class DriveAnalyzer:
             return None
 
         try:
-            from places_manager import reverse_geocode, haversine_distance
+            from lib.places_common import reverse_geocode, haversine_distance
         except ImportError:
             return None
 
