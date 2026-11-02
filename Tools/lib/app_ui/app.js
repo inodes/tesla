@@ -40,11 +40,12 @@ const redrawQuietly=()=>{clearTimeout(QT);QT=setTimeout(async()=>{const h=(locat
   const y=main.scrollTop;QUIET=true;try{await route()}finally{QUIET=false}main.scrollTop=y},400)};
 // forget the remembered copies after an edit or a sync (one page, or all)
 const bust=p=>{FRESHT=Date.now();if(p){delete cache[p];SWRSEEN.delete(p.replace(/^tc\//,""));if(p==="chargebook")BOOKSEEN=false;mkey(p).then(IDB.del);return}Object.keys(cache).forEach(k=>delete cache[k]);SWRSEEN.clear();BOOKSEEN=false;IDB.clear()};
-const api=async p=>{if(cache[p])return cache[p];
+// a page opened and left before its answer came never draws it: this includes the remembered copy (read from the browser's own store, not by fetch) and a late failure
+const api=fresh_(async p=>{if(cache[p])return cache[p];
   if(!KEEPING.has(p))return cache[p]=await fetchJ(p);
   const k=await mkey(p),old=await IDB.get(k);
   if(old!==undefined){cache[p]=old;fetchJ(p).then(n=>{IDB.set(k,n);if(cache[p]===old&&!sameData(n,old)){cache[p]=n;redrawQuietly()}if(STALEP.has(p))recheck(p,n)}).catch(()=>{});return old}
-  const n=await fetchJ(p);IDB.set(k,n);if(STALEP.has(p))recheck(p,n);return cache[p]=n};
+  const n=await fetchJ(p);IDB.set(k,n);if(STALEP.has(p))recheck(p,n);return cache[p]=n});
 const place=x=>x.place||x.addr||"Unknown place";
 const driveTitle=d=>(d.frm||"?")+" → "+(d.to||"?");
 // An error you can copy: the text is selectable and a button puts it on the clipboard.
@@ -909,55 +910,66 @@ function stillViewer(host,o){
     const LOC=s=>(o.loc&&o.loc[s])||s.slice(0,10)+"T"+s.slice(11).replace(/-/g,":"),shownAt=(s,t)=>new Date(Date.parse(LOC(s)+"Z")+t*1000).toISOString().substr(11,8);
     const stMs=s=>Date.parse(s.slice(0,10)+"T"+s.slice(11).replace(/-/g,":"));      // the clip's name, read the same way the player reads it (o.trig is on that clock too)
     const inMin=t=>{const k=minutes.reduce((a,s,i)=>stMs(s)<=t?i:a,0);return [k,Math.max(0,Math.min(59,Math.floor((t-stMs(minutes[k]))/1000)))]};
-    let step=+lsGet("tc.ststep","1"),mi=0,sec=0;
+    let step=+lsGet("tc.ststep","1"),mi=0,sec=0,hi=null,hf=0,camSel=null;      // hf: 1 = half a second after `sec` (near an event); camSel: another camera of the event, or "all"
     if(o.trig)[mi,sec]=inMin(o.trig);      // an event opens at the moment it was detected
-    const seq=()=>{const out=[];minutes.forEach((m,i)=>{for(let t=0;t<60;t+=step)out.push([i,t])});return out};let frames=seq();
-    const pos=()=>{const k=frames.findIndex(f=>f[0]===mi&&f[1]>=sec);return k<0?frames.length-1:k};
-    const at=k=>{k=Math.max(0,Math.min(frames.length-1,k));mi=frames[k][0];sec=frames[k][1];paint()};
+    const seq=()=>{const out=[];if(step<1){minutes.forEach((m,i)=>((hi&&hi.half&&hi.half[m])||[]).forEach(t=>{out.push([i,t,0]);out.push([i,t,1])}));if(out.length)return out}
+      const sp=Math.max(1,step);minutes.forEach((m,i)=>{for(let t=0;t<60;t+=sp)out.push([i,t])});return out};let frames=seq();
+    const pos=()=>{const k=frames.findIndex(f=>f[0]===mi&&(f[1]>sec||(f[1]===sec&&(f[2]||0)>=hf)));return k<0?frames.length-1:k};
+    const at=k=>{k=Math.max(0,Math.min(frames.length-1,k));mi=frames[k][0];sec=frames[k][1];hf=frames[k][2]||0;paint()};
     // the bar and the picture frame are built once; stepping only changes the numbers and swaps the picture when the next one is ready, so there is never an empty frame in between
     box.innerHTML=`<div class="stbar">${$("#splc")?'<button class="btn" id="stcl" title="Close (Esc)">✕ Close</button>':""}<button class="btn" id="stp0">◀ Back</button><button class="btn" id="stpl">▶ Play</button><button class="btn" id="stn0">Next ▶</button><input type="range" id="stsk" min="0" max="0" value="0">
       <span id="sttm"></span><select id="stst">${[[1,"every second"],[5,"every 5 seconds"],[10,"every 10 seconds"],[60,"every minute"]].map(([v,l])=>`<option value="${v}" ${v===step?"selected":""}>${l}</option>`).join("")}</select>
       ${o.trig?'<button class="btn" id="stdt">↧ Detection</button>':""}<span class="sub" id="stct"></span></div>
-      <div class="sgs" id="stsg" style="margin:0 0 8px"></div><div class="stfr"><img class="stimg" alt=""><span class="rvb" id="stbg"></span><span class="stcam" id="stcm" hidden></span><div class="sgbig" id="stsb" hidden></div></div>`;
+      <div id="stcams" style="display:flex;gap:6px;flex-wrap:wrap;margin:0 0 8px"></div><div class="sgs" id="stsg" style="margin:0 0 8px"></div><div id="stall" hidden style="display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:6px"></div><div class="stfr"><img class="stimg" alt=""><span class="rvb" id="stbg"></span><span class="stcam" id="stcm" hidden></span><div class="sgbig" id="stsb" hidden></div></div>`;
     if($("#stcl",box))$("#stcl",box).onclick=()=>{const c=$("#splc");if(c)c.click()};const img=$(".stimg",box),fr=$(".stfr",box),ahead=new Map();let want="",ratio=false;
     const pre=u=>{if(ahead.has(u))return ahead.get(u);const im=new Image();im.decoding="async";im.src=u;ahead.set(u,im);if(ahead.size>14)ahead.delete(ahead.keys().next().value);return im};
     const swap=(u,alt)=>{want=u;const im=pre(u),go=()=>{if(want!==u)return;if(!ratio&&im.naturalWidth){fr.style.aspectRatio=im.naturalWidth+" / "+im.naturalHeight;ratio=true}img.src=u;img.alt=alt};
       if(im.complete)go();else{im.onload=go;im.onerror=go}}      // the old picture stays on screen until the new one has arrived
     // the pictures around an event (higher resolution, the camera that saw it) where they were kept, the ordinary front stills elsewhere; the signs read in each minute
-    let hi=null,SG={},SELG=null;const CAML={front:"Front",back:"Back",left_repeater:"Left repeater",right_repeater:"Right repeater",left_pillar:"Left pillar",right_pillar:"Right pillar"};
-    const isHi=(m,t)=>!!(hi&&hi.secs&&hi.secs[m]&&hi.secs[m].includes(t)),srcOf=(m,t)=>isHi(m,t)?`/evstill/${o.ev.kind}/${encodeURIComponent(o.ev.id)}/${m}/${t}.jpg`:stillSrc(m,t);
+    let SG={},SELG=null;const CAML={front:"Front",back:"Back",left_repeater:"Left repeater",right_repeater:"Right repeater",left_pillar:"Left pillar",right_pillar:"Right pillar"};
+    const evu=(m,t,c,h)=>`/evstill/${o.ev.kind}/${encodeURIComponent(o.ev.id)}/${m}/${c&&c!==hi.cam?c+"/":""}${t}${h?"h":""}.jpg`;
+    const hasCam=(m,t,c)=>!!(hi&&hi.secs&&(!c||c===hi.cam?hi.secs[m]&&hi.secs[m].includes(t):hi.others&&hi.others[c]&&hi.others[c][m]&&hi.others[c][m].includes(t)));
+    const curCam=()=>camSel&&camSel!=="all"?camSel:null,isHi=(m,t)=>hasCam(m,t,curCam());
+    const srcOf=(m,t,h)=>{const c=curCam();return isHi(m,t)?evu(m,t,c,h&&(!c||c===hi.cam)&&hi.half&&hi.half[m]&&hi.half[m].includes(t)):stillSrc(m,t)};
+    const camBar=()=>{const el=$("#stcams",box);if(!el)return;const cs=(hi&&hi.cams)||[];if(cs.length<2){el.innerHTML="";return}
+      el.innerHTML=cs.map(c=>`<button class="btn sm${(camSel||hi.cam)===c?" pri":""}" data-c="${c}">${CAML[c]||c}</button>`).join("")+`<button class="btn sm${camSel==="all"?" pri":""}" data-c="all">${cs.length===6?"All six":"All"}</button>`;
+      $$("[data-c]",el).forEach(b=>b.onclick=()=>{stop();camSel=b.dataset.c===hi.cam?null:b.dataset.c;camBar();paint()})};
     const signsAt=(m,t)=>(SG[m]||[]).filter(g=>t>=g.s0-1&&t<=g.s1+1);
     const badge=g=>`<i class="bsp" title="${esc("Speed limit "+g.text+(g.conf>0?", "+g.conf+"% sure":"")+" · seen "+g.n+" time(s)")}">${esc(g.text)}</i>`;
     function paint(){const k=pos(),[i,t]=frames[k],m=minutes[i],sk=$("#stsk",box);
-      sk.max=frames.length-1;sk.value=k;$("#sttm",box).textContent=shownAt(m,t);$("#stct",box).textContent=`${n0(k+1)} of ${n0(frames.length)} · arrow keys also step`;$("#stst",box).value=step;
-      const h=isHi(m,t),cam=CAML[(hi&&hi.cam)||"front"]||"Front";
-      swap(srcOf(m,t),(h?cam:"Front")+" camera at "+shownAt(m,t));
+      sk.max=frames.length-1;sk.value=k;$("#sttm",box).textContent=shownAt(m,t)+(hf?" +½s":"");$("#stct",box).textContent=`${n0(k+1)} of ${n0(frames.length)} · arrow keys also step`;$("#stst",box).value=step;
+      const h=isHi(m,t),cam=CAML[curCam()||(hi&&hi.cam)||"front"]||"Front";
+      const al=camSel==="all"&&hi&&hi.cams&&hi.cams.length>1,ag=$("#stall",box);ag.hidden=!al;$(".stfr",box).hidden=al;
+      if(al)ag.innerHTML=hi.cams.filter(c=>hasCam(m,t,c)).map(c=>`<figure style="margin:0;position:relative"><img src="${evu(m,t,c,0)}" alt="${esc(CAML[c]||c)} camera" style="width:100%;display:block;border-radius:6px"><figcaption class="stcam">${esc(CAML[c]||c)}</figcaption></figure>`).join("");
+      else swap(srcOf(m,t,hf),(h?cam:"Front")+" camera at "+shownAt(m,t));
       const cm=$("#stcm",box);cm.hidden=!h;if(h)cm.textContent=cam+" camera"+(hi.tier==="high"?" · full detail":"");
       const sa=signsAt(m,t);$("#stbg",box).innerHTML=sa.map(badge).join("")+(o.signInfo?sa.map(g=>o.signInfo(m,g)).join(""):"");
       // the picture is a small still: the sign itself is shown beside it as it was cut from the full-size frame (the best one read), as large as the screen allows
       const sb=$("#stsb",box),big=sa.filter(g=>g.f);sb.hidden=!big.length;
       const hh=big.map(g=>`<figure><img src="/review/${encodeURIComponent(g.f)}" alt="Speed limit ${esc(g.text)}"><figcaption>${esc(g.text)}${g.conf>0?" · "+g.conf+"% sure":""}</figcaption></figure>`).join("");if(sb.innerHTML!==hh)sb.innerHTML=hh;
       if(o.onAt)o.onAt(m,t);
-      [1,2,3,-1].forEach(d=>{const f=frames[k+d];if(f)pre(srcOf(minutes[f[0]],f[1]))})}
+      [1,2,3,-1].forEach(d=>{const f=frames[k+d];if(f)pre(srcOf(minutes[f[0]],f[1],f[2]))})}
     const signList=()=>{const el=$("#stsg",box);if(!el)return;const L=[];minutes.forEach((m,i)=>(SG[m]||[]).forEach(g=>L.push([i,g])));
       el.innerHTML=L.length?`<div class="sub" style="margin-bottom:4px">Signs read in these pictures:</div><select id="stsel"><option value="">${n0(L.length)} read</option>${L.map(([i,g],j)=>`<option value="${j}">${shownAt(minutes[i],Math.floor(g.s0))} - ${esc(g.text)}</option>`).join("")}</select>`:"";
       const sl=$("#stsel",el);if(sl)sl.onchange=()=>{if(sl.value===""){if(o.onSign)o.onSign(null);return}const [i,g]=L[+sl.value],t=Math.max(0,Math.min(59,Math.floor(((g.s0||0)+(g.s1!=null?g.s1:g.s0||0))/2)));      // the picture it was seen in, one a second so it is there
         stop();if(step>1){step=1;lsSet("tc.ststep","1");frames=seq();$("#stst",box).value="1"}mi=i;sec=t;SELG=g;paint();if(o.onSign)o.onSign(minutes[i],t,g)}};
-    if(o.ev)fetch("/api/evstills?kind="+o.ev.kind+"&id="+encodeURIComponent(o.ev.id)).then(r=>r.json()).then(j=>{if(j&&j.secs&&document.body.contains(box)){hi=j;paint()}}).catch(()=>{});
+    if(o.ev)fetch("/api/evstills?kind="+o.ev.kind+"&id="+encodeURIComponent(o.ev.id)).then(r=>r.json()).then(j=>{if(j&&j.secs&&document.body.contains(box)){hi=j;camBar();
+      if(j.half&&Object.keys(j.half).length&&!$('#stst option[value="0.5"]',box))$("#stst",box).insertAdjacentHTML("afterbegin",'<option value="0.5">every half second (near the moment)</option>');
+      frames=seq();paint()}}).catch(()=>{});
     Promise.all(Array.from({length:Math.ceil(minutes.length/80)},(_,c)=>fetch("/api/signs?stamps="+minutes.slice(c*80,c*80+80).join(",")).then(r=>r.json()).catch(()=>({})))).then(parts=>{if(!document.body.contains(box))return;SG=Object.assign({},...parts);signList();paint()});
     // Play steps on by itself at the pace of the pictures (one a second at "every second", faster for a longer step), waiting for each picture to arrive; any step, drag or key stops it
     let tm=0;const playing=()=>!!tm,stop=()=>{if(tm){clearTimeout(tm);tm=0}const b=$("#stpl",box);if(b)b.textContent="▶ Play"};
     const tick=()=>{if(!tm)return;if(!document.body.contains(box)){tm=0;return}const k=pos();if(k>=frames.length-1){stop();return}
-      const f=frames[k+1],im=pre(srcOf(minutes[f[0]],f[1])),t0=Date.now(),go=()=>{if(!tm)return;at(k+1);tm=setTimeout(tick,Math.max(0,PACE()-(Date.now()-t0)))};
+      const f=frames[k+1],im=pre(srcOf(minutes[f[0]],f[1],f[2])),t0=Date.now(),go=()=>{if(!tm)return;at(k+1);tm=setTimeout(tick,Math.max(0,PACE()-(Date.now()-t0)))};
       if(im.complete)go();else{im.onload=im.onerror=go}};
     const PACE=()=>Math.max(120,Math.min(1000,1000/Math.max(1,step/2)));
     $("#stpl",box).onclick=()=>{if(playing()){stop();return}if(pos()>=frames.length-1)at(0);$("#stpl",box).textContent="❚❚ Pause";tm=setTimeout(tick,PACE())};
     const user=f=>(...a)=>{stop();return f(...a)};
     $("#stp0",box).onclick=user(()=>at(pos()-1));$("#stn0",box).onclick=user(()=>at(pos()+1));$("#stsk",box).oninput=e=>{stop();at(+e.target.value)};
-    $("#stst",box).onchange=e=>{stop();step=+e.target.value;lsSet("tc.ststep",String(step));frames=seq();sec=Math.floor(sec/step)*step;paint()};
-    if($("#stdt",box))$("#stdt",box).onclick=()=>{stop();[mi,sec]=inMin(o.trig);sec=Math.floor(sec/step)*step;paint()};
+    $("#stst",box).onchange=e=>{stop();step=+e.target.value;lsSet("tc.ststep",String(step));frames=seq();sec=Math.floor(sec/Math.max(1,step))*Math.max(1,step);hf=0;paint()};
+    if($("#stdt",box))$("#stdt",box).onclick=()=>{stop();[mi,sec]=inMin(o.trig);sec=Math.floor(sec/Math.max(1,step))*Math.max(1,step);hf=0;paint()};
     paint();RF=paint;
-    H=(st,s0)=>{const i=minutes.indexOf(st);if(i<0)return;stop();mi=i;sec=Math.floor(Math.max(0,s0)/step)*step;paint()};if(PEND){H(PEND[0],PEND[1]);PEND=null}
+    H=(st,s0)=>{const i=minutes.indexOf(st);if(i<0)return;stop();mi=i;sec=Math.floor(Math.max(0,s0)/Math.max(1,step))*Math.max(1,step);hf=0;paint()};if(PEND){H(PEND[0],PEND[1]);PEND=null}
     const key=e=>{if(!document.body.contains(host)){removeEventListener("keydown",key);return}
       if(/SELECT|TEXTAREA|INPUT/.test(e.target.tagName||"")&&e.target.type!=="range")return;
       if(e.key===" "&&!/BUTTON/.test(e.target.tagName||"")){e.preventDefault();$("#stpl",box).click();return}
@@ -1775,7 +1787,10 @@ function tlDays(host,items,o){
   $$("input[data-id]",host).forEach(c=>c.onchange=()=>setOn([c.dataset.id],c.checked));
   const onRoute=e=>{const v0=rs.find(x=>x.id===e.detail);if(!v0||!isOn(v0))return;new Set($$(`input[data-id="${CSS.escape(e.detail)}"]`,host).map(x=>x.closest(".tday").dataset.day)).forEach(populate)};addEventListener("tlroute",onRoute);
   // the day's list and map are as tall as what is left of the window below them
-  const fitH=()=>{const e=$(".tday",host);if(!e)return;e.style.setProperty("--tdh",Math.max(380,innerHeight-(e.getBoundingClientRect().top+scrollY)-16)+"px")};fitH();addEventListener("resize",fitH);
+  // measured against the scrolling area (main), not the window: where the day starts in it, whatever is above it (a banner, the filters), so the map ends at the bottom of the window with no scrolling;
+  // measured again when the window is resized and when something above changes
+  const fitH=()=>{const e=$(".tday",host);if(!e)return;const top=e.getBoundingClientRect().top-main.getBoundingClientRect().top+main.scrollTop;e.style.setProperty("--tdh",Math.max(380,Math.floor(main.clientHeight-top-34))+"px")};fitH();addEventListener("resize",fitH);
+  let fitQ=0;const fitMo=new MutationObserver(()=>{cancelAnimationFrame(fitQ);fitQ=requestAnimationFrame(fitH)});fitMo.observe(main,{childList:true,subtree:true});
   $$("[data-so]",host).forEach(b=>{b.onkeydown=e=>{if(e.key==="Enter"||e.key===" "){e.preventDefault();b.click()}};b.onclick=()=>{if(b.dataset.so==="days")TLS.dayDesc=!TLS.dayDesc;else if(b.dataset.so==="wide"){TLS.wide=!TLS.wide;try{localStorage.setItem("tlWide",TLS.wide?"1":"")}catch(e){}}else TLS.rowDesc=!TLS.rowDesc;o.redraw&&o.redraw()}});
   // one control above the tick column cycles a day: the drives, then everything, then nothing (ticking rows by hand works too)
   const dayBoxes=d=>$$(`.tday[data-day="${d}"] input[data-id]:not(:disabled)`,host),isDrv=x=>{const v=rs.find(y=>y.id===x.dataset.id);return !!v&&v._c==="drive"};
@@ -1797,7 +1812,7 @@ function tlDays(host,items,o){
   $$(".tr[data-id]",host).forEach(r=>r.onclick=async e=>{if(e.target.closest("input,button,a,label"))return;const v=rs.find(x=>x.id===r.dataset.id);if(!v||!(v._c==="drive"||v._pos))return;
     $$(".tr.sel",host).forEach(x=>x.classList.remove("sel"));r.classList.add("sel");const c=$("input[data-id]",r);if(c&&!c.checked){c.checked=true;TLS.on[v.id]=true;syncAll()}
     const dd=r.closest(".tday").dataset.day;await populate(dd);const mp=maps[dd];if(mp)mp.m.focus(v.id)});
-  return()=>{removeEventListener("tlroute",onRoute);removeEventListener("resize",fitH);io.disconnect();Object.values(maps).forEach(x=>{if(x.el&&x.el.parentNode)x.el.parentNode.removeChild(x.el)})}}
+  return()=>{removeEventListener("tlroute",onRoute);removeEventListener("resize",fitH);fitMo.disconnect();cancelAnimationFrame(fitQ);io.disconnect();Object.values(maps).forEach(x=>{if(x.el&&x.el.parentNode)x.el.parentNode.removeChild(x.el)})}}
 
 function routeSvg(pts,w=64,h=40){if(!pts||pts.length<2)return "";const la=pts.map(p=>p[0]),lo=pts.map(p=>p[1]),a=Math.min(...la),b=Math.max(...la),c=Math.min(...lo),d=Math.max(...lo),k=Math.cos((a+b)/2*Math.PI/180),sx=(d-c)*k||1e-6,sy=(b-a)||1e-6,s=Math.min((w-6)/sx,(h-6)/sy),ox=(w-sx*s)/2,oy=(h-sy*s)/2;
   return `<svg class="rt" width="${w}" height="${h}" viewBox="0 0 ${w} ${h}"><polyline fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" stroke-linecap="round" points="${pts.map(p=>((p[1]-c)*k*s+ox).toFixed(1)+","+(h-((p[0]-a)*s+oy)).toFixed(1)).join(" ")}"/></svg>`}
@@ -2010,14 +2025,16 @@ async function pageTeslaCam(role,id){
       const who=j.clips===1?"this clip":n0(j.clips)+" clips",d=j.driving,e=j.events,rows=[];
       if(d.minutes>0)rows.push(`<div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap"><span style="flex:1;min-width:220px"><b>Stills of ${who}: ${n0(d.pictures)} pictures · ${fmtGB(d.bytes)}</b><span class="sub" style="display:block;margin-top:2px">Shrinking keeps a picture a second at a lower quality: about ${fmtGB(Math.max(0,d.bytes-d.after))} freed. It cannot be undone.</span></span><button class="btn sm" data-th="driving">Shrink stills</button></div>`);
       if(e.pictures>0){const lvl=e.high?"full size":e.normal?"normal size":"smaller";
-        rows.push(`<div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap"><span style="flex:1;min-width:220px"><b>Pictures around the event in ${who}: ${n0(e.pictures)} · ${fmtGB(e.bytes)}</b><span class="sub" style="display:block;margin-top:2px">${lvl}${e.normal_n?` · to normal size frees about ${fmtGB(Math.max(0,e.bytes-e.normal_after))}`:""}${e.shrunk_n?` · smaller frees about ${fmtGB(Math.max(0,e.bytes-e.shrunk_after))} and shrinks the ${n0(e.minute_stills)} stills of its minutes too`:""}. It cannot be undone.</span></span>${e.normal_n?'<button class="btn sm" data-th="normal">Normal size</button>':""}${e.shrunk_n?'<button class="btn sm" data-th="shrunk">Smaller</button>':""}</div>`)}
+        rows.push(`<div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap"><span style="flex:1;min-width:220px"><b>Pictures around the event in ${who}: ${n0(e.pictures)} · ${fmtGB(e.bytes)}</b><span class="sub" style="display:block;margin-top:2px">${lvl}${e.normal_n?` · to normal size frees about ${fmtGB(Math.max(0,e.bytes-e.normal_after))}`:""}${e.extra>0?` · the other cameras and half-second pictures take ${fmtGB(e.extra_bytes)}`:""}${e.shrunk_n?` · smaller frees about ${fmtGB(Math.max(0,e.bytes-e.shrunk_after))} and shrinks the ${n0(e.minute_stills)} stills of its minutes too`:""}. It cannot be undone.</span></span>${e.normal_n?'<button class="btn sm" data-th="normal">Normal size</button>':""}${e.shrunk_n?'<button class="btn sm" data-th="shrunk">Smaller</button>':""}${e.extra>0?'<button class="btn sm" data-th="front">Main camera only</button>':""}</div>`)}
       el.innerHTML=rows.length?`<div class="card" style="margin:12px 0;display:flex;flex-direction:column;gap:10px">${rows.join("")}</div>`:`<div class="sub" style="margin:12px 0">Nothing to shrink in ${who}.</div>`;
       $$("[data-th]",el).forEach(b=>b.onclick=()=>{const w=b.dataset.th;
         if(w==="driving")confirmCard(`<b>Shrink the stills of ${who}?</b> (${n0(d.pictures)} pictures, ${fmtGB(d.bytes)} now). Each is replaced by a smaller copy and cannot be restored.`,"Shrink",{clips:sc});
+        else if(w==="front")confirmCard(`<b>Keep only the main camera of ${who}?</b> (${fmtGB(e.extra_bytes)} freed). The other cameras and the half-second pictures are deleted and cannot be restored.`,"Delete",{clips:sc,events:"front"});
         else confirmCard(`<b>Shrink the pictures around the event in ${who} to ${w==="normal"?"normal":"the smaller"} size?</b> (${fmtGB(e.bytes)} now). They are replaced by smaller copies and cannot be restored.`,"Shrink",{clips:sc,events:w})});
       return}
-    const done=j.last&&j.total?` Freed ${fmtGB(j.saved)} last time.`:"",ev=j.events||{},evn=(ev.high||0)+(ev.normal||0);
-    THINHTML=el.innerHTML=j.minutes>0?`<div class="card ixb" style="margin:12px 0"><div style="flex:1;min-width:0"><b title="A picture a second, kept after the video is deleted. Shrinking saves them again at a lower quality; minutes with an event or a sign are not touched. Tick a clip to shrink just that one. It cannot be undone.">Stills kept: ${n0(j.minutes)} minutes · ${fmtGB(j.bytes)}</b>${done?`<div class="sub" style="margin-top:4px">${done.trim()}</div>`:""}</div><button class="btn sm" id="thgo" title="Save the stills again at a lower quality (cannot be undone)">Shrink stills</button></div>`:(done?`<div class="sub" style="margin:12px 0">${done.trim()}</div>`:"");
+    const done=j.last&&j.total?` Freed ${fmtGB(j.saved)} last time.`:"",ev=j.events||{},evn=(ev.high||0)+(ev.normal||0),fr=ev.extra>0?`<div class="card ixb" style="margin:12px 0"><div style="flex:1;min-width:0"><b title="Saved and Sentry events keep the other cameras and a picture every half second near the moment. Keeping only the main camera, a picture a second, frees this space. It cannot be undone.">Other cameras and half-second pictures of ${n0(ev.extra)} events: ${fmtGB(ev.extra_bytes)}</b></div><button class="btn sm" id="thfr">Main camera only</button></div>`:"";
+    THINHTML=el.innerHTML=fr+(j.minutes>0?`<div class="card ixb" style="margin:12px 0"><div style="flex:1;min-width:0"><b title="A picture a second, kept after the video is deleted. Shrinking saves them again at a lower quality; minutes with an event or a sign are not touched. Tick a clip to shrink just that one. It cannot be undone.">Stills kept: ${n0(j.minutes)} minutes · ${fmtGB(j.bytes)}</b>${done?`<div class="sub" style="margin-top:4px">${done.trim()}</div>`:""}</div><button class="btn sm" id="thgo" title="Save the stills again at a lower quality (cannot be undone)">Shrink stills</button></div>`:(done?`<div class="sub" style="margin:12px 0">${done.trim()}</div>`:""));
+    const fb=$("#thfr");if(fb)fb.onclick=()=>confirmCard(`<b>Keep only the main camera of ${n0(ev.extra)} events?</b> (${fmtGB(ev.extra_bytes)} freed). The other cameras and the half-second pictures are deleted and cannot be restored.`,"Delete",{events:"front"});
     const b=$("#thgo");if(b)b.onclick=()=>confirmCard(`<b>Shrink the stills of ${n0(j.minutes)} minutes?</b> (${fmtGB(j.bytes)} now). Each is replaced by a smaller copy and cannot be restored.`,"Shrink",{})};
   thin();
   const chips=()=>{
@@ -2759,7 +2776,7 @@ async function route(){
   if(!QUIET)await snapLoad();
   try{
     if(p==="drive")await pageDrive(arg,arg2);else if(p==="charge")await pageCharge(arg,arg2);else if(p==="idle"||p==="parked"&&arg)await pageParkedOne(arg);else if(p==="place")await pagePlace(arg);else await (ROUTES[p]||pageActivity)(arg,arg2);
-  }catch(e){main.innerHTML=errBox(e.stack||e.message,"Something went wrong")}
+  }catch(e){if(myGen===RGEN)main.innerHTML=errBox(e.stack||e.message,"Something went wrong")}      // a page already left does not show its error over the page opened
   finally{if(RLOAD===myGen)RLOAD=0}
 }
 async function boot(){
