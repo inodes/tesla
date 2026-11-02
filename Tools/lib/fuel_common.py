@@ -1271,11 +1271,12 @@ def get_fuel_price(
     fuel_type: str = "U91",
     region: str = "all",
     tessie_dir: Optional[str] = None
-) -> float:
+) -> Optional[float]:
     """
-    Returns the average fuel price in AUD ($/L) for a given date.
-    Falls back gracefully to the monthly average, nearest recorded date,
-    or default ($1.95/L) if no data exists.
+    Returns the average NSW FuelCheck price in AUD ($/L) for a given date:
+    that day's average, else that month's, else the nearest recorded day.
+    None when the fuel database holds nothing for this fuel and region
+    (never a typed-in price).
     """
     fuel_code = normalize_fuel_code(fuel_type)
     if isinstance(date_val, datetime.date) or isinstance(date_val, datetime.datetime):
@@ -1314,8 +1315,7 @@ def get_fuel_price(
     if row and row[0]:
         return row[0] / 100.0
 
-    defaults = {"U91": 1.95, "P95": 2.10, "P98": 2.20, "DL": 2.05, "E10": 1.90, "LPG": 1.10}
-    return defaults.get(fuel_code, 1.95)
+    return None
 
 
 def compute_drive_urban_highway_split(
@@ -1384,6 +1384,17 @@ def compute_drive_urban_highway_split(
     return u_pct, h_pct, desc
 
 
+def vehicle_l_per_100km(vehicle_spec: Dict[str, Any]) -> Tuple[Optional[float], Optional[float], Optional[float]]:
+    """(combined, urban, highway) L/100km from the vehicle's published figures; urban/highway fall back to combined.
+    (None, None, None) when the spec gives no consumption at all."""
+    consumption = vehicle_spec.get("consumption")
+    for src in ((consumption if isinstance(consumption, dict) else {}), vehicle_spec):
+        combined = src.get("combined_l_per_100km") or src.get("l_per_100km")
+        if combined:
+            return float(combined), float(src.get("urban_l_per_100km") or combined), float(src.get("highway_l_per_100km") or combined)
+    return None, None, None
+
+
 def calculate_single_vehicle_running_cost(
     vehicle_spec: Dict[str, Any],
     distance_km: float,
@@ -1401,15 +1412,7 @@ def calculate_single_vehicle_running_cost(
     fuel_type = vehicle_spec.get("fuel_type", "U91")
     price_per_l = get_fuel_price(start_date, fuel_type=fuel_type, tessie_dir=tessie_dir)
 
-    consumption = vehicle_spec.get("consumption", {})
-    if isinstance(consumption, dict):
-        combined_l = consumption.get("combined_l_per_100km") or consumption.get("l_per_100km") or 8.5
-        urban_l = consumption.get("urban_l_per_100km", combined_l)
-        highway_l = consumption.get("highway_l_per_100km", combined_l)
-    else:
-        combined_l = vehicle_spec.get("l_per_100km", 8.5)
-        urban_l = vehicle_spec.get("urban_l_per_100km", combined_l)
-        highway_l = vehicle_spec.get("highway_l_per_100km", combined_l)
+    combined_l, urban_l, highway_l = vehicle_l_per_100km(vehicle_spec)
 
     if urban_pct is None or highway_pct is None:
         u_p, h_p, split_desc = compute_drive_urban_highway_split(
@@ -1419,9 +1422,10 @@ def calculate_single_vehicle_running_cost(
         u_p, h_p = urban_pct, highway_pct
         split_desc = f"{u_p*100:.0f}% Urban / {h_p*100:.0f}% Hwy"
 
-    effective_l_per_100km = (u_p * urban_l) + (h_p * highway_l)
-    litres_used = (distance_km / 100.0) * effective_l_per_100km
-    fuel_cost = litres_used * price_per_l
+    # No consumption figure for the vehicle, or no FuelCheck price for the date: litres / cost are None (shown as unknown), never a guess.
+    effective_l_per_100km = (u_p * urban_l) + (h_p * highway_l) if combined_l is not None else None
+    litres_used = (distance_km / 100.0) * effective_l_per_100km if effective_l_per_100km is not None else None
+    fuel_cost = litres_used * price_per_l if (litres_used is not None and price_per_l is not None) else None
 
     running_costs = vehicle_spec.get("running_costs", {})
     maint_per_km = running_costs.get("service_maintenance_per_km", 0.0) if isinstance(running_costs, dict) else 0.0
@@ -1449,7 +1453,7 @@ def calculate_single_vehicle_running_cost(
         "maintenance_cost": distance_km * maint_per_km,
         "tyre_cost": distance_km * tyres_per_km,
         "non_fuel_cost": non_fuel_cost,
-        "total_running_cost": fuel_cost + non_fuel_cost,
+        "total_running_cost": (fuel_cost + non_fuel_cost) if fuel_cost is not None else None,
         "estimated_cost": fuel_cost,  # standard alias for fuel cost
     }
 
@@ -1480,6 +1484,11 @@ def calculate_ice_comparison_costs(
     for key, spec in vehicles.items():
         results[key] = calculate_single_vehicle_running_cost(spec, distance_km, start_date, tessie_dir=tessie_dir)
     return results
+
+
+def fmt_price_per_l(p: Optional[float]) -> str:
+    """"$2.05/L", or "no price" when FuelCheck holds none."""
+    return f"${p:.2f}/L" if p is not None else "no price"
 
 
 SAMPLE_COMPARISON_VEHICLES = [
@@ -1542,7 +1551,7 @@ def format_drive_fuel_comparison(
     lines = []
     lines.append(f"{indent}\033[1m\033[93m⛽ COMPARATIVE ICE FUEL RUNNING COSTS\033[0m \033[90m(Historical AU Baseline on {d_str} · {split_desc})\033[0m:")
     
-    price_hdr = f"{indent}   \033[90mRef Fuel Prices: U91: ${p_u91:.2f}/L  |  P98: ${p_p98:.2f}/L  |  Diesel: ${p_dl:.2f}/L\033[0m"
+    price_hdr = f"{indent}   \033[90mRef Fuel Prices: U91: {fmt_price_per_l(p_u91)}  |  P98: {fmt_price_per_l(p_p98)}  |  Diesel: {fmt_price_per_l(p_dl)}\033[0m"
     if ev_cost is not None and kwh_used is not None:
         price_hdr += f"   \033[36m⚡ EV Energy: {kwh_used:.2f} kWh (~${ev_cost:.2f})\033[0m"
     lines.append(price_hdr)
@@ -1569,7 +1578,7 @@ def format_drive_fuel_comparison(
         fp = c["fuel_price_per_l"]
         fc = c["fuel_cost"]
 
-        if ev_cost is not None and fc > 0:
+        if ev_cost is not None and fc is not None and fc > 0:
             diff = fc - ev_cost
             pct = (diff / fc * 100.0)
             if diff > 0:
@@ -1594,7 +1603,10 @@ def format_drive_fuel_comparison(
         else:
             badge = "🚘 "
 
-        row = f"{indent}   • {badge}\033[1m{name:<44}\033[0m \033[90m({ft:<6} · {eff_l:4.1f} L/100km)\033[0m: {litres:5.2f} L @ ${fp:4.2f}/L = \033[1m${fc:5.2f}\033[0m{sav_str}"
+        eff_s = f"{eff_l:4.1f} L/100km" if eff_l is not None else "L/100km unknown"
+        litres_s = f"{litres:5.2f} L" if litres is not None else "? L"
+        fc_s = f"${fc:5.2f}" if fc is not None else "no price"
+        row = f"{indent}   • {badge}\033[1m{name:<44}\033[0m \033[90m({ft:<6} · {eff_s})\033[0m: {litres_s} @ {fmt_price_per_l(fp)} = \033[1m{fc_s}\033[0m{sav_str}"
         lines.append(row)
 
     lines.append(f"{indent}   \033[90m* Assumes NSW FuelCheck daily average as national reference pricing for Australian drives.\033[0m")

@@ -29,12 +29,12 @@ def station_arrival_soc(st, route_info: Optional[Dict[str, Any]]) -> Optional[fl
     """Predicted arrival battery % at this station, leg-aware when
     --charger-stops re-planned the trip. None when it can't be estimated.
     Shared by the terminal table and the email report."""
-    from lib.abrp_common import DEFAULT_CONSUMPTION_WH_KM, DEFAULT_USABLE_KWH, estimate_arrival_soc
+    from lib.abrp_common import estimate_arrival_soc
     prog_val = getattr(st, "route_progress_km", st.distance_km)
     ri = route_info or {}
-    dep_soc = ri.get("departure_soc", 90)
-    c_wh_km = ri.get("consumption_wh_km", DEFAULT_CONSUMPTION_WH_KM)
-    u_kwh = ri.get("usable_kwh", DEFAULT_USABLE_KWH)
+    dep_soc = ri.get("departure_soc")          # None when not known: no arrival % (never an assumed starting %, pack or Wh/km)
+    c_wh_km = ri.get("consumption_wh_km")
+    u_kwh = ri.get("usable_kwh")
     leg_dep = getattr(st, "leg_departure_soc", None)
     leg_dist = getattr(st, "leg_distance_km", None)
     eff_dep = leg_dep if leg_dep is not None else dep_soc

@@ -1283,8 +1283,8 @@ class TeslaChargerExplorer:
         pricebooks = charger_payload.get("effectivePricebooks", []) if charger_payload else []
         tesla_raw_tou = []
         non_tesla_raw_tou = []
-        idle_fee = 1.00
-        congestion_fee = 0.50
+        idle_fee = None          # only what Tesla's pricebook gives; None (unknown) otherwise, never an assumed fee
+        congestion_fee = None
 
         for pb in pricebooks:
             fee_type = pb.get("feeType", "").upper()
@@ -2026,7 +2026,8 @@ class TeslaChargerExplorer:
         conn_label = "Type 2" if not is_sc else "CCS2"
         non_t_str = f"{C_GREEN}YES (Open to {conn_label} EVs){C_RESET}" if comp.get("open_to_non_tesla") else f"{C_RED}NO (Tesla Only){C_RESET}"
         _field("🚗", "Non-Tesla Access", non_t_str)
-        _field("⏱️ ", "Idle / Congestion", f"${tariffs.get('idle_fee_per_min', 0):.2f}/min Idle | ${tariffs.get('congestion_fee_per_min', 0):.2f}/min Congestion")
+        _fee = lambda v: f"${v:.2f}/min" if v is not None else "unknown"
+        _field("⏱️ ", "Idle / Congestion", f"{_fee(tariffs.get('idle_fee_per_min'))} Idle | {_fee(tariffs.get('congestion_fee_per_min'))} Congestion")
         if data.get("valid_from"):
             _field("🕒", "Effective Date", f"{data.get('valid_from')} (Verified: {data.get('last_verified', 'N/A')})")
 

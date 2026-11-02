@@ -212,15 +212,9 @@ def parse_bppulse_location(basic: Dict[str, Any], detail: Optional[Dict[str, Any
     speed_tier = "dc_fast" if max_pwr >= 25.0 else "ac_destination"
     hw_tier = f"{int(max_pwr)}kW" if max_pwr.is_integer() else f"{max_pwr:.0f}kW"
 
- # Default bp pulse Australia tariff ($0.65/kWh for 75kW, $0.69/kWh for 150kW, $0.72/kWh for 300kW)
-    if max_pwr >= 300.0:
-        base_rate = 0.72
-    elif max_pwr >= 150.0:
-        base_rate = 0.69
-    else:
-        base_rate = 0.65
-
-    gross_r, net_r, tax_r, tax_n, tax_pct = compute_tax_breakdown(base_rate, "Australia")
+ # The bp pulse feed carries no price, so none is stored (it used to be a typed-in $0.65/0.69/0.72 by power, shown and costed as if
+ # bp pulse had published it). The rate is unknown until a real price is entered for the site.
+    gross_r, net_r, tax_r, tax_n, tax_pct = compute_tax_breakdown(None, "Australia")
 
     station_key = f"BPPulse_{bp_id}"
     clean_name = f"bp pulse - {city}" if city else f"bp pulse Station #{bp_id}"
@@ -309,21 +303,15 @@ def parse_bppulse_location(basic: Dict[str, Any], detail: Optional[Dict[str, Any
             "tax_name": tax_n,
             "tax_rate": tax_pct,
             "tax_included_in_listed_price": True,
-            "pricing_model": "flat",
+            "pricing_model": "unknown",
             "has_tou_pricing": False,
             "per_kwh_gross": gross_r,
             "per_kwh_net": net_r,
             "tax_per_kwh": tax_r,
-            "rate_range": f"${gross_r:.2f}/kWh",
-            "schedule": [{
-                "name": "Standard Rate",
-                "start": "00:00",
-                "end": "24:00",
-                "rate": gross_r,
-                "days": ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
-            }],
-            "idle_fee_per_min_gross": 0.0,
-            "idle_fee_per_min_net": 0.0,
+            "rate_range": "",
+            "schedule": [],
+            "idle_fee_per_min_gross": None,
+            "idle_fee_per_min_net": None,
             "parking_fee": None
         },
         "amenities": {
@@ -600,8 +588,8 @@ class BPPulseProvider(BaseChargerProvider):
                 tethered=hw.get("tethered", True),
                 hardware_model=hw.get("hardware_models", ["bp pulse DC Fast Charger"])[0] if hw.get("hardware_models") else "bp pulse DC Fast Charger",
                 pricing_model=tariffs.get("pricing_model", "flat"),
-                current_rate_per_kwh=tariffs.get("per_kwh_gross", 0.65),
-                rate_range=tariffs.get("rate_range", "$0.65/kWh"),
+                current_rate_per_kwh=tariffs.get("per_kwh_gross"),
+                rate_range=tariffs.get("rate_range", ""),
                 schedule=tariffs.get("schedule", []),
                 currency=tariffs.get("currency", "AUD"),
                 tier=1,

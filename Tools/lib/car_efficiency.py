@@ -8,15 +8,9 @@ CONFIDENCE_LOW_KM = 5.0
 CONFIDENCE_MEDIUM_KM = 20.0
 
 
-# Fallback vehicle mass for the physics-based grade correction (mass *
-# 9.81 * elevation_change_m, converted J -> kWh via /3.6e6) - used ONLY
-# if Tessie/vehicle_spec.json doesn't exist yet or has no mass.
-# assumed_driving_mass_kg set (see load_vehicle_spec()/
-# vehicle_mass_kg_for_profile() below). NOT a confirmed as-tested kerb
-# weight for any specific VIN - a generic round Model Y estimate.
-# Override with --vehicle-mass-kg, or (preferred - no code/CLI needed)
-# by editing Tessie/vehicle_spec.json's mass.assumed_driving_mass_kg.
-FALLBACK_VEHICLE_MASS_KG = 2200
+# No fallback vehicle mass: the physics-based grade correction (mass * 9.81 * elevation_change_m, J -> kWh via /3.6e6) needs the car's mass
+# from --vehicle-mass-kg or vehicle_spec.json's mass.assumed_driving_mass_kg. Without either the grade-corrected figures are None (left out),
+# never worked out from an assumed weight (this used to be a generic 2200 kg).
 
 
 def vehicle_mass_kg_for_profile(spec, cli_override_kg=None):
@@ -24,13 +18,13 @@ def vehicle_mass_kg_for_profile(spec, cli_override_kg=None):
     outright; otherwise Tessie/vehicle_spec.json's own
     mass.assumed_driving_mass_kg (the user's own real curb weight plus
     an assumed typical occupant/cargo load - see vehicle_spec.example.json
-    for the field's own note); otherwise FALLBACK_VEHICLE_MASS_KG."""
+    for the field's own note); otherwise None (mass not known)."""
     if cli_override_kg is not None:
         return cli_override_kg
     spec_mass = (spec or {}).get("mass", {}).get("assumed_driving_mass_kg")
     if spec_mass:
         return spec_mass
-    return FALLBACK_VEHICLE_MASS_KG
+    return None
 
 
 def confidence_for_distance(dist_km):
@@ -42,7 +36,9 @@ def confidence_for_distance(dist_km):
 
 
 def potential_energy_kwh(mass_kg, elevation_change_m):
-    """PE = m * g * h (Joules), converted to kWh (/3.6e6)."""
+    """PE = m * g * h (Joules), converted to kWh (/3.6e6). None when the mass is not known."""
+    if mass_kg is None:
+        return None
     return (mass_kg * 9.81 * elevation_change_m) / 3_600_000.0
 
 
@@ -50,7 +46,9 @@ def grade_corrected_efficiency_kwh_per_100km(seg, mass_kg):
     """The segment's real measured efficiency with the potential-energy
     component of its own elevation change removed - an estimate of what
     the efficiency would have been on the flat. Returns None if the
-    segment has no usable energy/distance figure."""
+    segment has no usable energy/distance figure, or the mass is not known."""
+    if mass_kg is None:
+        return None
     energy_kwh = seg.get("energy_kwh")
     dist_km = seg.get("distance_km", 0.0)
     if energy_kwh is None or dist_km <= 0.15:
