@@ -1501,7 +1501,8 @@ def format_drive_fuel_comparison(
     vehicle_key: Optional[str] = None,
     tessie_dir: Optional[str] = None,
     box_width: int = 145,
-    indent: str = "  "
+    indent: str = "  ",
+    start_epoch: Optional[float] = None
 ) -> List[str]:
     """
     Renders an executive, ANSI/width-aware terminal block comparing a drive's
@@ -1527,9 +1528,16 @@ def format_drive_fuel_comparison(
     p_p98 = get_fuel_price(d_str, "P98", tessie_dir=tessie_dir)
     p_dl = get_fuel_price(d_str, "Diesel", tessie_dir=tessie_dir)
 
- # Estimate EV electricity charging cost (default to ~0.28 $/kWh home/off-peak)
-    ev_rate = 0.28
-    ev_cost = (kwh_used * ev_rate) if (kwh_used is not None and kwh_used > 0) else None
+    # The EV's own cost: the drive's kWh at what the energy in the battery cost at that moment (lib/battery_cost_basis.py, from the real
+    # charges). No price (None) when the drive's time or the charges are not known: never an assumed rate.
+    ev_rate = None
+    if start_epoch is not None and tessie_dir:
+        try:
+            from lib.battery_cost_basis import for_dir
+            ev_rate = for_dir(tessie_dir).rate_at(start_epoch)
+        except Exception:
+            ev_rate = None
+    ev_cost = (kwh_used * ev_rate) if (kwh_used is not None and kwh_used > 0 and ev_rate is not None) else None
 
     lines = []
     lines.append(f"{indent}\033[1m\033[93m⛽ COMPARATIVE ICE FUEL RUNNING COSTS\033[0m \033[90m(Historical AU Baseline on {d_str} · {split_desc})\033[0m:")
