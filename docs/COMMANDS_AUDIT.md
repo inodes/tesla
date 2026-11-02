@@ -321,3 +321,4 @@ Log (newest first):
 - 2026-11-02: config.example.json's one-line _comment (3,400 characters) is now a sentence; the notes for each key moved to docs/CONFIG.md.
 - 2026-11-02: power_roi_report.py's docstring no longer names the solar installer, the quote reference, the panel and inverter model or the contract dates (the real figures live in the user's Solar/solar_system.json); the public repo's earlier commits still hold them.
 - 2026-11-02: CI installs pandas too (lib/shading_model.py imports it and tests/test_drive_review_events.py needs it; the first CI run failed on that import), and requirements.txt lists pandas.
+- 2026-11-02: Removed the old PlugShare audit report and CSV from the repo root (generated 2026-09-23; nothing referred to them).
