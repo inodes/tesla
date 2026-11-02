@@ -1271,11 +1271,12 @@ def get_fuel_price(
     fuel_type: str = "U91",
     region: str = "all",
     tessie_dir: Optional[str] = None
-) -> float:
+) -> Optional[float]:
     """
     Returns the average fuel price in AUD ($/L) for a given date.
-    Falls back gracefully to the monthly average, nearest recorded date,
-    or default ($1.95/L) if no data exists.
+    Falls back to the monthly average, then the nearest recorded date.
+    Returns None when no fuel price data is held for this fuel type at all -
+    callers show no cost rather than a guessed one.
     """
     fuel_code = normalize_fuel_code(fuel_type)
     if isinstance(date_val, datetime.date) or isinstance(date_val, datetime.datetime):
@@ -1314,8 +1315,7 @@ def get_fuel_price(
     if row and row[0]:
         return row[0] / 100.0
 
-    defaults = {"U91": 1.95, "P95": 2.10, "P98": 2.20, "DL": 2.05, "E10": 1.90, "LPG": 1.10}
-    return defaults.get(fuel_code, 1.95)
+    return None
 
 
 def compute_drive_urban_highway_split(
@@ -1421,7 +1421,8 @@ def calculate_single_vehicle_running_cost(
 
     effective_l_per_100km = (u_p * urban_l) + (h_p * highway_l)
     litres_used = (distance_km / 100.0) * effective_l_per_100km
-    fuel_cost = litres_used * price_per_l
+    # No fuel price held: no cost (None), not a guess.
+    fuel_cost = (litres_used * price_per_l) if price_per_l is not None else None
 
     running_costs = vehicle_spec.get("running_costs", {})
     maint_per_km = running_costs.get("service_maintenance_per_km", 0.0) if isinstance(running_costs, dict) else 0.0
@@ -1449,7 +1450,7 @@ def calculate_single_vehicle_running_cost(
         "maintenance_cost": distance_km * maint_per_km,
         "tyre_cost": distance_km * tyres_per_km,
         "non_fuel_cost": non_fuel_cost,
-        "total_running_cost": fuel_cost + non_fuel_cost,
+        "total_running_cost": (fuel_cost + non_fuel_cost) if fuel_cost is not None else None,
         "estimated_cost": fuel_cost,  # standard alias for fuel cost
     }
 
@@ -1533,8 +1534,15 @@ def format_drive_fuel_comparison(
 
     lines = []
     lines.append(f"{indent}\033[1m\033[93m⛽ COMPARATIVE ICE FUEL RUNNING COSTS\033[0m \033[90m(Historical AU Baseline on {d_str} · {split_desc})\033[0m:")
-    
-    price_hdr = f"{indent}   \033[90mRef Fuel Prices: U91: ${p_u91:.2f}/L  |  P98: ${p_p98:.2f}/L  |  Diesel: ${p_dl:.2f}/L\033[0m"
+
+    if p_u91 is None and p_p98 is None and p_dl is None:
+        lines.append(f"{indent}   \033[90mNo fuel prices held, so no fuel cost to compare. Run ./Tools/tesla sync fuel to fetch them.\033[0m")
+        return lines
+
+    def _ref(p):
+        return f"${p:.2f}/L" if p is not None else "no price"
+
+    price_hdr = f"{indent}   \033[90mRef Fuel Prices: U91: {_ref(p_u91)}  |  P98: {_ref(p_p98)}  |  Diesel: {_ref(p_dl)}\033[0m"
     if ev_cost is not None and kwh_used is not None:
         price_hdr += f"   \033[36m⚡ EV Energy: {kwh_used:.2f} kWh (~${ev_cost:.2f})\033[0m"
     lines.append(price_hdr)
@@ -1561,7 +1569,7 @@ def format_drive_fuel_comparison(
         fp = c["fuel_price_per_l"]
         fc = c["fuel_cost"]
 
-        if ev_cost is not None and fc > 0:
+        if fc is not None and ev_cost is not None and fc > 0:
             diff = fc - ev_cost
             pct = (diff / fc * 100.0)
             if diff > 0:
@@ -1586,7 +1594,11 @@ def format_drive_fuel_comparison(
         else:
             badge = "🚘 "
 
-        row = f"{indent}   • {badge}\033[1m{name:<44}\033[0m \033[90m({ft:<6} · {eff_l:4.1f} L/100km)\033[0m: {litres:5.2f} L @ ${fp:4.2f}/L = \033[1m${fc:5.2f}\033[0m{sav_str}"
+        if fc is None:
+            cost_str = f"{litres:5.2f} L \033[90m· no fuel price\033[0m"
+        else:
+            cost_str = f"{litres:5.2f} L @ ${fp:4.2f}/L = \033[1m${fc:5.2f}\033[0m"
+        row = f"{indent}   • {badge}\033[1m{name:<44}\033[0m \033[90m({ft:<6} · {eff_l:4.1f} L/100km)\033[0m: {cost_str}{sav_str}"
         lines.append(row)
 
     lines.append(f"{indent}   \033[90m* Assumes NSW FuelCheck daily average as national reference pricing for Australian drives.\033[0m")

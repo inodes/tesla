@@ -77,6 +77,11 @@ def print_banner(title: str, min_width: int = 80):
     print("└" + "─" * (total_w - 2) + "┘")
 
 
+def _fmt_price(p: Optional[float], digits: int = 2) -> str:
+    """A $/L price, or "no price" when none is held (never a guessed one)."""
+    return f"${p:.{digits}f}/L" if p is not None else "no price"
+
+
 def print_status(tessie_dir: Optional[str] = None):
     summary = get_sync_status_summary(tessie_dir)
     fuel_dir = resolve_fuel_dir(tessie_dir)
@@ -97,9 +102,12 @@ def print_status(tessie_dir: Optional[str] = None):
         f"🏪 Station Registry:  {summary['station_count']:,} unique service stations indexed",
         f"📅 Historical Range:  {summary['date_range']} ({summary['daily_records']:,} daily averages)",
     ]
-    section2 = [
-        f"📊 Latest Reference Prices:  U91: ${u91_p:.2f}/L  |  P98: ${p98_p:.2f}/L  |  Diesel: ${dl_p:.2f}/L"
-    ]
+    if u91_p is None and p98_p is None and dl_p is None:
+        section2 = ["📊 Latest Reference Prices:  none held yet (run --sync-all)"]
+    else:
+        section2 = [
+            f"📊 Latest Reference Prices:  U91: {_fmt_price(u91_p)}  |  P98: {_fmt_price(p98_p)}  |  Diesel: {_fmt_price(dl_p)}"
+        ]
 
     all_lines = [title] + section1 + section2
     max_w = max(display_len(line) for line in all_lines)
@@ -206,7 +214,10 @@ def sync_resources(
 
 def query_price(date_str: str, fuel_type: str = "U91", region: str = "all", tessie_dir: Optional[str] = None):
     price = get_fuel_price(date_str, fuel_type, region, tessie_dir)
-    print(f"\n⛽ Reference Fuel Price for {date_str} [{fuel_type.upper()}] ({region}): ${price:.3f}/L")
+    if price is None:
+        print(f"\n⛽ Reference Fuel Price for {date_str} [{fuel_type.upper()}] ({region}): no price held (run --sync-all)")
+    else:
+        print(f"\n⛽ Reference Fuel Price for {date_str} [{fuel_type.upper()}] ({region}): {_fmt_price(price, 3)}")
 
  # Also show multi-vehicle ICE comparison for standard 100km trip
     print("\n🚗 Benchmark Vehicle 100km Fuel Cost Comparison on this date:")
@@ -215,9 +226,10 @@ def query_price(date_str: str, fuel_type: str = "U91", region: str = "all", tess
         name = v.get("name") or v.get("label") or k
         f_type = v.get("fuel_type", "U91")
         l_100 = v.get("l_per_100km", 8.5)
-        f_price = v.get("fuel_price_per_l", 1.95)
-        f_cost = v.get("estimated_cost", (l_100 * f_price))
-        print(f"  • {name:<46}: {l_100:>4.1f} L/100km [{f_type:<4} @ ${f_price:.2f}/L] = ${f_cost:.2f}")
+        f_price = v.get("fuel_price_per_l")
+        f_cost = v.get("estimated_cost")
+        cost_str = f"${f_cost:.2f}" if f_cost is not None else "no cost (no fuel price)"
+        print(f"  • {name:<46}: {l_100:>4.1f} L/100km [{f_type:<4} @ {_fmt_price(f_price)}] = {cost_str}")
 
 
 def recompute_all(tessie_dir: Optional[str] = None):

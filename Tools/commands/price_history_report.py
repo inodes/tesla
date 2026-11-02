@@ -151,9 +151,10 @@ def build_fuel_series(conn, fuel_code, region, dates):
     by_date = {row[0]: row[1] / 100.0 for row in cur.fetchall() if row[1]}
     if not by_date:
         # No real rows at all for this fuel/region. This used to fall back
-        # to get_fuel_price(), whose last resort is a hard-coded default
+        # to get_fuel_price(), whose last resort was then a hard-coded default
         # ($1.95 U91 etc.) - drawn as if it were FuelCheck data (2026-09-30
-        # review, D6). Show nothing instead.
+        # review, D6). Show nothing instead. (get_fuel_price() now returns
+        # None in that case too.)
         return [None for _ in dates]
 
     known = sorted(by_date.keys())
