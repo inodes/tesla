@@ -6,10 +6,10 @@ Keeper, one step at a time and only when nothing else is reading:
   1. log        lists the files on the drive into the footage log (which drive holds which file, how big, since when)   - app_footage / teslacam_ledger
   2. events     reads the Sentry and Saved events (when, where, why, which clips)                                       - app_teslacam.events
   3. telemetry  reads the speed, position, steering, pedals and autopilot of every minute not read yet                  - app_teslacam.scan_start
-  4. stills     only if app.keeper.stills is true (default false): makes the one-second front-camera stills not made yet     - app_footage (ffmpeg)
+  4. stills     unless app.keeper.stills is false (default true: thumbnails come first): makes the one-second front-camera stills not made yet     - app_footage (ffmpeg)
 
 so that a drive page, the timeline and the review still have their data and pictures when the disk is away. Nothing on a drive is changed. It can be paused
-(the sidebar) - pause before ejecting a disk - and off unless switched on with app.keeper.background = true in config.json (`tesla_app.py --no-background` forces it off).
+(the sidebar) - pause before ejecting a disk - and on by default (switch off with app.keeper.background = false in config.json `tesla_app.py --no-background` forces it off).
 
   GET  /api/keeper                   what it is doing now
   POST /api/keeper {action: pause|resume|run, stages: [...]}      run = one pass now (all four steps including stills, or only the named stages), whether or not the background reading is switched on
@@ -69,7 +69,7 @@ class Keeper:
     # ---- settings
     @staticmethod
     def enabled():
-        return bool(app_config.get("keeper.background", False))
+        return bool(app_config.get("keeper.background", True))
 
     # ---- video playing: the drives are left alone while it does (six streams from one disk stall if something else is reading it)
     def playing_now(self):
@@ -224,13 +224,13 @@ class Keeper:
             self._plan = [x["role"] for x in getattr(self.tc, "_scan_todo", [])]
             return bool(self.tc.scan_start(roots, reuse=True).get("running"))
         if stage == "stills":
-            if not (app_config.get("keeper.stills", False) or self._once):      # stills decode video (ffmpeg): only ever on request (Sync footage, the Footage panel or the command)
+            if not (app_config.get("keeper.stills", True) or self._once):      # stills decode video (ffmpeg): only ever on request (Sync footage, the Footage panel or the command)
                 return False
             rep = self.fg.stills_report(roots)
             self._plan = [x["role"] for x in getattr(self.fg, "_todo", [])]
             return bool(rep.get("to_make")) and bool(rep.get("ffmpeg")) and bool(self.fg.start("stills", roots, by="keeper").get("running"))
         if stage == "pictures":
-            if not (app_config.get("keeper.stills", False) or self._once) or self.pictures is None:      # ffmpeg again: the same switch as the stills
+            if not (app_config.get("keeper.stills", True) or self._once) or self.pictures is None:      # ffmpeg again: the same switch as the stills
                 return False
             self._plan = []
             return bool(self.pictures.pictures_start(roots))
