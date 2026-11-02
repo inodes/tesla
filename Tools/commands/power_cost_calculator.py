@@ -12,9 +12,9 @@ guess.
 REQ-070 (2026-09-15): generalized from agl_cost_calculator.py - the
 retailer-specific rules this file used to hardcode (AGL's pooled
 tiered solar credit, the Ausgrid EA025 demand charge, the GST handling)
-now live in Tools/providers_power/power_agl.py's AGLProvider, the first
+now live in Tools/providers/power/power_agl.py's AGLProvider, the first
 and so far only BasePowerProvider implementation (get_power_provider(),
-default "agl" - see providers_power/__init__.py). This file itself
+default "agl" - see providers/power/__init__.py). This file itself
 contains no AGL-specific numbers; every provider-specific rule is
 delegated. The design notes below describe AGL's own real billing
 behaviour (still true, still how the self-test below is verified), not

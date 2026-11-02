@@ -775,7 +775,7 @@ class ChargerDiscoveryManager:
             except Exception:
                 pass
             if not tessie_home:
-                tools_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+                tools_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))  # Tools/
                 repo_root = os.path.dirname(tools_dir)
                 tessie_home = os.path.join(repo_root, "resources")
             target_path = os.path.join(tessie_home, "charging_stations.json")
@@ -826,7 +826,7 @@ class ChargerDiscoveryManager:
         }
 
         target_candidates = [target_path]
-        tools_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        tools_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))  # Tools/
         repo_root = os.path.dirname(tools_dir)
         local_fallback = os.path.join(repo_root, "resources", "charging_stations.json")
         if local_fallback not in target_candidates:

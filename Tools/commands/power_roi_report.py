@@ -5,7 +5,7 @@ ROI for the solar SYSTEM ITSELF (not one invoice, not one calendar
 period) - Solar/solar_system.json (net upfront cost after the
 STC rebate, install/commissioning date, assumed lifetime) plus the REAL
 annualized savings rate this repo already computes from the active PV
-provider (SolarEdge via providers_pv, REQ-140 - was PVOutput before it)
+provider (SolarEdge via providers/pv, REQ-140 - was PVOutput before it)
 and AGL data (power_solar_report.py, REQ-118/119; power_invoice_report.py,
 REQ-120).
 
@@ -46,11 +46,11 @@ import sys
 from datetime import date, datetime, timedelta
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from providers_power import get_power_provider  # noqa: E402
+from providers.power import get_power_provider  # noqa: E402
 from lib.tessie_api_common import load_config  # noqa: E402
 from lib.solar_system_config import load_solar_system_config  # noqa: E402
 from lib.power_usage_db import get_usage_db_connection  # noqa: E402
-from providers_pv import get_pv_provider  # noqa: E402
+from providers.pv import get_pv_provider  # noqa: E402
 from lib.pv_history_db import get_pv_db_connection, sync_daily_range, query_daily_range  # noqa: E402
 from lib.power_bill import reconstruct_bill  # noqa: E402
 from lib.power_demand import load_rate_periods  # noqa: E402

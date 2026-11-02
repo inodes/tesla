@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 pv_history_db.py - REQ-127: local SQLite cache of a PV provider's
-daily AND 15-minute intraday figures (providers_pv/'s get_pv_provider()),
+daily AND 15-minute intraday figures (providers/pv/'s get_pv_provider()),
 generalized from the SolarEdge-specific lib/solaredge_history_db.py
 (REQ-125) at the user's own request: "create a pv database to store
 all finer resolution data - everything you can get. If you have all
@@ -11,7 +11,7 @@ future". Mirrors lib/pvoutput_history_db.py's own TRUNCATE-journal
 pattern (see that file's docstring, and AGENTS.local.md REQ-115/118).
 
 Two tables, both provider-agnostic (column names are the five generic
-PV_FIELDS from providers_pv/pv_base.py, never a vendor-specific meter
+PV_FIELDS from providers.pv/pv_base.py, never a vendor-specific meter
 name):
   - pv_daily: one row per calendar day - what power_solar_report.py /
     power_roi_report.py actually need for period totals.
@@ -209,7 +209,7 @@ def pv_window_split(conn, local_start, local_end, provider, api_key, account_id,
     this trusts the provider's own real per-interval self_consumption_kwh/
     feedin_kwh/purchased_kwh fields directly. SolarEdge's energyDetails
     API reports all five PV_FIELDS as independently-metered figures per
-    15-minute interval (confirmed live, providers_pv/pv_solaredge.py), so
+    15-minute interval (confirmed live, providers/pv/pv_solaredge.py), so
     no delta/approximation math is needed here at all - just proration of
     each cached interval's own real values by its overlap with the
     requested window (same overlap-fraction shape as PVOutput's

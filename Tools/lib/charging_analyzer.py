@@ -92,7 +92,7 @@ def resolve_location_timezone(state: str = None, country: str = None, lat: float
 def _gst_multiplier():
     """1 + GST from the active power provider's own rates file ("gst" there, 0.10 = 10%); 1.10 when it cannot be read."""
     try:
-        from providers_power import get_power_provider
+        from providers.power import get_power_provider
         return get_power_provider().gst_multiplier()
     except Exception:
         return 1.10
@@ -1007,7 +1007,7 @@ class ChargingAnalyzer:
         "lng", no "keywords", no "network") don't match the normalized
         schema _candidate_geo()/_candidate_keywords()/_candidate_result()
         expect either - full support needs that provider's own normalizer
-        (see Tools/providers_chargers/), not just this loader. This only guarantees
+        (see Tools/providers/chargers/), not just this loader. This only guarantees
         the loader itself never crashes the rest of the pipeline."""
         data = {}
         for td in (dirs if dirs is not None else self.tessie_dirs):
@@ -1581,7 +1581,7 @@ class ChargingAnalyzer:
         # every other rate shown here.
         if (target_obj.get("type") or "").lower() == "home":
             try:
-                from providers_power import get_power_provider
+                from providers.power import get_power_provider
                 _pp = get_power_provider()
                 _local = dt.replace(tzinfo=None) if dt.tzinfo else dt
                 _period = _pp.rate_for_date(_local.date(), _pp.load_rate_periods())
@@ -5024,7 +5024,7 @@ class ChargingAnalyzer:
             return None
 
  # PV provider cross-check - now the PRIMARY source (REQ-071;
- # REQ-140 moved this from PVOutput to the providers_pv/SolarEdge
+ # REQ-140 moved this from PVOutput to the providers/pv/SolarEdge
  # abstraction) for this session's own solar-vs-grid cost split,
  # using the provider's own real per-interval generation/
  # consumption/self-consumption meters via pv_window_split()'s
@@ -5044,7 +5044,7 @@ class ChargingAnalyzer:
         pv_agl_conflict = False  # default, in case the import/call below never runs at all
         pv_provider_name = "PV"  # default label, in case get_pv_provider() itself never runs
         try:
-            from providers_pv import get_pv_provider
+            from providers.pv import get_pv_provider
             from lib.pv_history_db import get_pv_db_connection, pv_window_split as _pv_window_split
             from lib.pvoutput_common import pv_agl_import_conflict as _pv_agl_import_conflict
             from lib.tessie_api_common import load_config as _pv_load_config
@@ -5689,7 +5689,7 @@ class ChargingAnalyzer:
             x2 = f"    • {C_BOLD}{'AGL Base Cost (100% grid):':<{lw_x}}{C_RESET}${base_cost_incl_gst:.4f} AUD incl GST"
             print(f"│{pad_display(x2, box_w - 2, truncate=True)}│")
 
- # REQ-071 (REQ-140: now SolarEdge via providers_pv, was
+ # REQ-071 (REQ-140: now SolarEdge via providers/pv, was
  # PVOutput): the active PV provider is the PRIMARY solar-vs-grid
  # split (real generation+consumption+self-consumption meters,
  # not a configured schedule) - shown first and labelled PRIMARY;

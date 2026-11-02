@@ -1,7 +1,7 @@
 """
 Tools/lib/ - shared library modules for this repo's CLI scripts.
 
-Not "providers" (Tools/providers_chargers/ - pluggable BaseChargerProvider
+Not "providers" (Tools/providers/ - e.g. pluggable BaseChargerProvider
 subclasses implementing one shared interface, swappable per charging
 network) and not stand-alone CLI entry points (the *.py scripts in
 Tools/commands/, each with its own argparse-based --help). Nothing here

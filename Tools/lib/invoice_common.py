@@ -746,7 +746,7 @@ class AGLInvoiceExtractor(BaseInvoiceExtractor):
     def resolve_target_dir(self, data: Dict[str, Any], original_path: str) -> Optional[str]:
         # BUG-131 follow-up (2026-09-21): the hardcoded iCloud fallback
         # this used to have (duplicated independently in sync_invoices.py
-        # and providers_power/power_base.py) is gone - config.json's
+        # and providers/power/power_base.py) is gone - config.json's
         # directories.power_invoices is genuinely optional now; if unset,
         # a renamed AGL PDF is simply left beside its original file.
         try:

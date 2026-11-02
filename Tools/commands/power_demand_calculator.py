@@ -8,15 +8,15 @@ provider's own dated tariff rates.
 REQ-070 (2026-09-15): generalized from agl_demand_calculator.py - this
 script no longer knows one retailer's own rules (the season-aware
 demand window, the NSW holiday calendar, the GST multiplier). Those now
-live in Tools/providers_power/power_agl.py's AGLProvider, the first and
+live in Tools/providers/power/power_agl.py's AGLProvider, the first and
 so far only BasePowerProvider implementation - see
-providers_power/__init__.py's get_power_provider(), which resolves
+providers/power/__init__.py's get_power_provider(), which resolves
 config.json's "power_provider" key (default "agl", this household's
 real current retailer). Every function below delegates to whichever
 provider that resolves to; nothing here hardcodes AGL by name.
 
 Method (unchanged from the original AGL-only version - see
-providers_power/power_agl.py's own docstring for how this was derived
+providers/power/power_agl.py's own docstring for how this was derived
 and verified): for each calendar month, take every half-hour "import"
 reading that falls in the provider's own season-appropriate demand
 window and find its maximum. kWh * 2 = kW (a half-hour average). That
@@ -45,7 +45,7 @@ import sys
 from datetime import datetime
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from providers_power import get_power_provider  # noqa: E402
+from providers.power import get_power_provider  # noqa: E402
 from lib.power_demand import demand_charge, load_rate_periods, monthly_latched_kw, rate_for_date  # noqa: E402
 
 
@@ -95,7 +95,7 @@ NAME
 
 DESCRIPTION
     Reproduces the active power provider's demand charge (e.g. AGL's Ausgrid
-    EA025 Residential Demand charge - see Tools/providers_power/power_agl.py)
+    EA025 Residential Demand charge - see Tools/providers/power/power_agl.py)
     from the consolidated usage master (sync_power_usage.py) and the
     provider's own dated tariff rates: finds the provider's own
     season-appropriate demand window's maximum half-hourly import for the

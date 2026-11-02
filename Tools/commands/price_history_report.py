@@ -21,10 +21,10 @@ registry --vehicle already selects from elsewhere in this repo
 
 Electricity price: the real AGL usage rate in effect on each date,
 resolved through the SAME rate-resolution helper every other cost
-figure in this repo goes through (providers_power's own
+figure in this repo goes through (providers/power's own
 usage_rate_for_window()) rather than a raw usage_rate_per_kwh field
 read - deliberately, because the newest real tariff period
-(2026-09-07 onward - see providers_power/power_agl.py's own
+(2026-09-07 onward - see providers/power/power_agl.py's own
 usage_rate_for_window() docstring, REQ-155) has NO flat usage_rate_per_kwh at all,
 only a genuine peak/off-peak time-of-use split, so a raw field read
 would silently come back empty for it. One representative blended
@@ -67,7 +67,7 @@ from lib.fuel_common import (  # noqa: E402
     get_comparison_vehicle,
 )
 from lib.power_demand import load_rate_periods  # noqa: E402
-from providers_power import get_power_provider  # noqa: E402
+from providers.power import get_power_provider  # noqa: E402
 from lib.analysis_deepdive_charts import write_interactive_chart  # noqa: E402
 
 # --- dataviz reference palette (light mode) - matches power_solar_report.py,

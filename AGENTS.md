@@ -156,11 +156,11 @@ tesla/
 │                              #   this repo entirely) is its own flat, domain-named siblings, one
 │                              #   per data source - drives/, charges/, chargers/, battery/, ... for
 │                              #   Tesla/Tessie vehicle telemetry (the ONE vehicle data source today -
-│                              #   no providers_vehicle/ package exists because nothing yet needs it
+│                              #   no providers/vehicle/ package exists because nothing yet needs it
 │                              #   pluggable); AGL/ for billing/tariff data; Solar/ for the physical
 │                              #   panel-install geometry/ROI metadata (REQ-150); PVOutput/, SolarEdge/ -
 │                              #   one folder per PV-monitoring provider that has ever been active
-│                              #   (providers_pv/, 3.1); archive/ shared across domains.
+│                              #   (providers/pv/, 3.1); archive/ shared across domains.
 ├── Tools/                     # CLI entry points ONLY - every *.py here is a real, user-invoked script
 │   │                          # with its own argparse-based --help (see 3.1); every *.sh here is a real,
 │   │                          # user-invoked script with its own -h/--help guard (see 3.3). Nothing in
@@ -171,7 +171,7 @@ tesla/
 │   │   │                      # one or more CLI scripts import. No argparse, no user-facing --help
 │   │   │                      # (table_formatter.py's __main__ is a self-test, not a CLI). Package-
 │   │   │                      # relative imports internally (`from .tessie_api_common import ...`);
-│   │   │                      # `from lib.X import Y` from anywhere in Tools/ or Tools/providers_chargers/.
+│   │   │                      # `from lib.X import Y` from anywhere in Tools/ or Tools/providers/.
 │   │   ├── __init__.py
 │   │   ├── archive_naming.py    # Shared timestamp-archived filename scheme
 │   │   ├── analysis_deepdive_charts.py   # Self-contained interactive HTML line-chart renderer
@@ -192,44 +192,51 @@ tesla/
 │   │   ├── tessie_api_common.py # Tessie API auth, config, and data-home path resolution
 │   │   └── timezones.py         # Time zones: GPS to zone, UTC to local time with the right abbreviation
 │   │
-│   ├── providers_chargers/     # Pluggable charging-network adapters (3.1) - one BaseChargerProvider
-│   │   │                      # subclass per network, ALL implementing the same interface
-│   │   │                      # (search_nearby/search_by_text/get_station_details/load_cached_registry),
-│   │   │                      # swappable/interchangeable by design - this is what earns them a shared
-│   │   │                      # `chargers_` prefix AND their own directory, unlike lib/'s grab-bag of
-│   │   │                      # otherwise-unrelated helpers.
+│   ├── providers/              # Pluggable provider adapters (3.1), one subpackage per domain. Imported as
+│   │   │                      # `from providers.chargers import ...`, `from providers.power import ...`,
+│   │   │                      # `from providers.pv import ...` (Tools/ on sys.path). The package's own
+│   │   │                      # __init__.py imports nothing, so loading one domain never loads another.
 │   │   ├── __init__.py
-│   │   ├── chargers_base.py    # BaseChargerProvider / UnifiedStationRecord + shared filter/dedup logic
-│   │   ├── chargers_manager.py # ChargerDiscoveryManager - orchestrates all registered providers
-│   │   └── chargers_tesla.py / chargers_chargefox.py / chargers_evx.py / chargers_evie.py /
-│   │       chargers_bppulse.py / chargers_plugshare.py / chargers_ampcharge.py /
-│   │       chargers_exploren.py / chargers_jolt.py / chargers_nrma.py   # one adapter per network
-│   │
-│   ├── providers_power/    # Pluggable power-retailer/distributor billing providers (3.1, REQ-070) -
-│   │   │                      # one BasePowerProvider subclass per retailer, ALL implementing the same
-│   │   │                      # interface (resolve_data_home/load_rate_periods/rate_for_date/
-│   │   │                      # in_demand_window/solar_credit/demand_charge/...). Shaped differently
-│   │   │                      # from providers_chargers/ above: only ONE power provider is ever active for a
-│   │   │                      # household at a time (unlike chargers, queried many-at-once and merged),
-│   │   │                      # so there's no "manager" here, just get_power_provider()'s factory - see
-│   │   │                      # power_base.py's own docstring for the full reasoning.
-│   │   ├── __init__.py
-│   │   └── power_base.py / power_agl.py   # BasePowerProvider interface + the AGL implementation
-│   │
-│   ├── providers_pv/       # Pluggable PV-monitoring providers (3.1, REQ-127) - one BasePvProvider
-│   │   │                      # subclass per monitoring account, ALL implementing the same interface
-│   │   │                      # (resolve_credentials/install_date/fetch_daily_range/fetch_intraday_range).
-│   │   │                      # Shaped like providers_power/ above (one active provider at a time -
-│   │   │                      # config.json's pv.provider, default "solaredge" - not queried many-at-
-│   │   │                      # once like chargers), for the same reason: a household has one PV
-│   │   │                      # monitoring account active at a time. PVOutput was the original access
-│   │   │                      # path before this package existed; it turned out to be a relay of this
-│   │   │                      # SAME SolarEdge account (confirmed 2026-09-25 - PVOutput's own
-│   │   │                      # "Automatic Uploads" settings show SolarEdge as both its Primary and
-│   │   │                      # Secondary upload device), not an independent measurement, so it added
-│   │   │                      # an extra hop with no unique data - see AGENTS.local.md.
-│   │   ├── __init__.py
-│   │   └── pv_base.py / pv_solaredge.py   # BasePvProvider interface + the SolarEdge implementation
+│   │   │
+│   │   ├── chargers/          # Charging-network adapters (3.1) - one BaseChargerProvider subclass
+│   │   │   │                  # per network, ALL implementing the same interface
+│   │   │   │                  # (search_nearby/search_by_text/get_station_details/load_cached_registry),
+│   │   │   │                  # swappable/interchangeable by design - this is what earns them a shared
+│   │   │   │                  # `chargers_` prefix AND their own directory, unlike lib/'s grab-bag of
+│   │   │   │                  # otherwise-unrelated helpers.
+│   │   │   ├── __init__.py
+│   │   │   ├── chargers_base.py    # BaseChargerProvider / UnifiedStationRecord + shared filter/dedup logic
+│   │   │   ├── chargers_manager.py # ChargerDiscoveryManager - orchestrates all registered providers
+│   │   │   └── chargers_tesla.py / chargers_chargefox.py / chargers_evx.py / chargers_evie.py /
+│   │   │       chargers_bppulse.py / chargers_plugshare.py / chargers_ampcharge.py /
+│   │   │       chargers_exploren.py / chargers_jolt.py / chargers_nrma.py   # one adapter per network
+│   │   │
+│   │   ├── power/             # Power-retailer/distributor billing providers (3.1, REQ-070) - one
+│   │   │   │                  # BasePowerProvider subclass per retailer, ALL implementing the same
+│   │   │   │                  # interface (resolve_data_home/load_rate_periods/rate_for_date/
+│   │   │   │                  # in_demand_window/solar_credit/demand_charge/...). Shaped differently
+│   │   │   │                  # from chargers/ above: only ONE power provider is ever active for a
+│   │   │   │                  # household at a time (unlike chargers, queried many-at-once and merged),
+│   │   │   │                  # so there's no "manager" here, just get_power_provider()'s factory - see
+│   │   │   │                  # power_base.py's own docstring for the full reasoning.
+│   │   │   ├── __init__.py
+│   │   │   ├── agl_tariff_rates.example.json
+│   │   │   └── power_base.py / power_agl.py   # BasePowerProvider interface + the AGL implementation
+│   │   │
+│   │   └── pv/                # PV-monitoring providers (3.1, REQ-127) - one BasePvProvider subclass
+│   │       │                  # per monitoring account, ALL implementing the same interface
+│   │       │                  # (resolve_credentials/install_date/fetch_daily_range/fetch_intraday_range).
+│   │       │                  # Shaped like power/ above (one active provider at a time -
+│   │       │                  # config.json's pv.provider, default "solaredge" - not queried many-at-
+│   │       │                  # once like chargers), for the same reason: a household has one PV
+│   │       │                  # monitoring account active at a time. PVOutput was the original access
+│   │       │                  # path before this package existed; it turned out to be a relay of this
+│   │       │                  # SAME SolarEdge account (confirmed 2026-09-25 - PVOutput's own
+│   │       │                  # "Automatic Uploads" settings show SolarEdge as both its Primary and
+│   │       │                  # Secondary upload device), not an independent measurement, so it added
+│   │       │                  # an extra hop with no unique data - see AGENTS.local.md.
+│   │       ├── __init__.py
+│   │       └── pv_base.py / pv_solaredge.py   # BasePvProvider interface + the SolarEdge implementation
 │   │
 │   ├── analyse_drives.py            # Drives explorer, footage linker, and master consolidator
 │   ├── analyse_charging.py          # 3-way charging reconciler, tariff auditor, and invoice matcher
@@ -257,30 +264,30 @@ file or moving an existing one - the answer decides where it lives and how it's 
   `run_self_test()` doesn't make it a CLI - a self-test isn't a user-facing command. If two or more
   otherwise-unrelated CLI scripts need the same logic, it belongs here, not copy-pasted or left sitting
   in whichever script happened to need it first.
-- **Provider adapter** (`Tools/providers_chargers/`, `Tools/providers_power/`, `Tools/providers_pv/`):
+- **Provider adapter** (`Tools/providers/chargers/`, `Tools/providers/power/`, `Tools/providers/pv/`):
   specifically a subclass implementing one shared interface for one interchangeable implementation -
   `BaseChargerProvider` for a charging network, `BasePowerProvider` (REQ-070) for a power
   retailer/distributor, `BasePvProvider` (REQ-127) for a PV-monitoring account. This is a narrower
   category than "library module" - it's reserved for genuinely pluggable, interchangeable implementations
   of one abstract interface, which is why the chargers family additionally shares the `chargers_` filename
   prefix (REQ-063) on top of living in its own directory (the power and PV families' own CLI scripts
-  share a `power_`/`pv_` prefix instead - see providers_power/power_base.py's own docstring for why those
-  packages aren't shaped identically to providers_chargers/). A shared helper that ISN'T an interchangeable
+  share a `power_`/`pv_` prefix instead - see providers/power/power_base.py's own docstring for why those
+  packages aren't shaped identically to providers/chargers/). A shared helper that ISN'T an interchangeable
   adapter (`table_formatter.py`, `analysis_deepdive_charts.py`) is a library module, not a provider, even
   when the charging/power/PV domain is what it's used for. This one-active-provider-at-a-time,
   config-key-selected pattern (`chargers_manager.py`'s many-at-once merge is the one exception, since
   charging networks are genuinely queried together, unlike power/PV) is this repo's settled answer to
   TODO-035's "separate data sources into distinct domains" ask - a new domain gets its own
-  `providers_<domain>/` package + its own `config.json` top-level section when (and only when) more than
+  `providers/<domain>/` subpackage + its own `config.json` top-level section when (and only when) more than
   one real, interchangeable implementation exists for it. Vehicle telemetry (Tessie/Tesla) has no
-  `providers_vehicle/` package for exactly this reason: there's only ever been one data source, so there's
+  `providers/vehicle/` subpackage for exactly this reason: there's only ever been one data source, so there's
   nothing yet to make pluggable - adding one preemptively would be structure without a use.
 
 A CLI script keeps only its own argparse, menus and output; any function or class another script, a lib
 module, a provider or the app needs is moved into `Tools/lib/` and imported from there by every user,
 the script itself included (2026-11-02: e.g. `power_demand_calculator.py`'s rate periods live in
 `lib/power_demand.py`, `analyse_charging.py`'s ChargingAnalyzer in `lib/charging_analyzer.py`). Nothing in
-`Tools/lib/`, `Tools/providers_*/` or `Tools/tesla_app.py` imports from `Tools/commands/`, and none of them
+`Tools/lib/`, `Tools/providers/` or `Tools/tesla_app.py` imports from `Tools/commands/`, and none of them
 puts `Tools/commands/` on `sys.path`; a name that is both a lib module and a command
 (`teslacam_ledger`, `teslacam_scan`, `teslacam_stills`) is imported as `from lib import teslacam_<x>`.
 `tests/test_lib_no_commands.py` checks all three.
@@ -289,7 +296,7 @@ puts `Tools/commands/` on `sys.path`; a name that is both a lib module and a com
 
 Prefer a shared **prefix** over a shared suffix for a family of related files, so they group together in a
 plain alphabetical listing (`ls Tools/chargers_*`, `ls Tools/lib/`) without needing `ls | grep`. `chargers_`
-(REQ-063) is the existing precedent for the providers_chargers/ family. When starting a new file that clearly belongs
+(REQ-063) is the existing precedent for the providers/chargers/ family. When starting a new file that clearly belongs
 to an existing family (another chart renderer, another sync wrapper, another provider), prefix it to match
 rather than inventing a new pattern - and if a naming decision is genuinely ambiguous (which family it
 belongs to, or whether a NEW prefix is warranted), settle it explicitly with the user before renaming

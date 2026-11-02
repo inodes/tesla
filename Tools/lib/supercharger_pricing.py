@@ -39,7 +39,7 @@ changes two things:
    while an earlier regime that's already been written to
    charges/supercharger_rate_history.json (via sync_supercharger_rates.py
    - see that script) stays fixed at its own historical rate, exactly the
-   way providers_power's own dated periods never retroactively change.
+   way providers/power's own dated periods never retroactively change.
 
 2. sync_supercharger_rates.py (new, sibling script to sync_agl_rates.py)
    is the tool that actually watches real session data over time and
@@ -52,7 +52,7 @@ changes two things:
    file catching up with real price changes as they happen.
 
 Two real price sources, combined into one step-function history exactly
-the way providers_power/power_agl.py's own rate_for_date() works (a
+the way providers/power/power_agl.py's own rate_for_date() works (a
 sorted list of dated periods, each held flat until the next one):
 
 1. charges/supercharger_rate_history.json's own "periods" list - real,
