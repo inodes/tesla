@@ -113,30 +113,44 @@ def extract_au_state_from_text(title: str, address_str: str = "") -> str:
     for st_code in ["NSW", "VIC", "QLD", "WA", "SA", "TAS", "ACT", "NT"]:
         if re.search(rf"\b{st_code}\b", title):
             return st_code
+    # In the address, the state code, full state name or postcode that comes LAST wins: an address ends with
+    # its state and postcode, so a street named after a state ("1 Victoria Street, Testville NSW 2999") or a
+    # four-digit street number does not win over them.
+    signals = []
+    for m in re.finditer(r"\b(NSW|VIC|QLD|WA|SA|TAS|ACT|NT)\b", address_str or ""):
+        signals.append((len(title) + 1 + m.start(), m.group(1)))
     text_lower = text.lower()
     for full_name, code in AU_STATE_REVERSE_MAP.items():
-        if full_name in text_lower:
-            return code
-    postcode_match = re.search(r"\b(\d{4})\b", text)
-    if postcode_match:
-        pc = int(postcode_match.group(1))
-        if 2000 <= pc <= 2599 or 2619 <= pc <= 2899 or 2921 <= pc <= 2999:
-            return "NSW"
-        elif 3000 <= pc <= 3999 or 8000 <= pc <= 8999:
-            return "VIC"
-        elif 4000 <= pc <= 4999 or 9000 <= pc <= 9999:
-            return "QLD"
-        elif 5000 <= pc <= 5799 or 5800 <= pc <= 5999:
-            return "SA"
-        elif 6000 <= pc <= 6797 or 6800 <= pc <= 6999:
-            return "WA"
-        elif 7000 <= pc <= 7799 or 7800 <= pc <= 7999:
-            return "TAS"
-        elif 2600 <= pc <= 2618 or 2900 <= pc <= 2920:
-            return "ACT"
-        elif 800 <= pc <= 899 or 900 <= pc <= 999:
-            return "NT"
+        for m in re.finditer(rf"\b{re.escape(full_name)}\b", text_lower):
+            signals.append((m.start(), code))
+    for m in re.finditer(r"\b(\d{4})\b", text):
+        code = _au_state_from_postcode(int(m.group(1)))
+        if code:
+            signals.append((m.start(), code))
+    if signals:
+        return max(signals)[1]
     return "Other"
+
+
+def _au_state_from_postcode(pc: int) -> Optional[str]:
+    """State code for an Australian postcode, or None if it is not in any state's range."""
+    if 2000 <= pc <= 2599 or 2619 <= pc <= 2899 or 2921 <= pc <= 2999:
+        return "NSW"
+    if 3000 <= pc <= 3999 or 8000 <= pc <= 8999:
+        return "VIC"
+    if 4000 <= pc <= 4999 or 9000 <= pc <= 9999:
+        return "QLD"
+    if 5000 <= pc <= 5999:
+        return "SA"
+    if 6000 <= pc <= 6797 or 6800 <= pc <= 6999:
+        return "WA"
+    if 7000 <= pc <= 7999:
+        return "TAS"
+    if 2600 <= pc <= 2618 or 2900 <= pc <= 2920:
+        return "ACT"
+    if 800 <= pc <= 999:
+        return "NT"
+    return None
 
 
 def load_state_boundaries(repo_root: Optional[str] = None) -> dict:
@@ -334,6 +348,11 @@ def state_from_coords(lat: float, lon: float, country: str = "Australia", repo_r
     if 138.0 <= lon < 141.0:
         if lat > -26.0: return "QLD", None
         return "SA", None
+
+ # TAS (and King/Flinders Islands): everything south of Bass Strait. Checked before the NSW/VIC line,
+ # which would otherwise call every point south of it VIC. Mainland Victoria ends near 39.14 S.
+    if lat < -39.2:
+        return "TAS", None
 
  # NSW vs VIC (Murray River & Black-Allan Line)
     nsw_vic = country_config.get("borders", {}).get("NSW_VIC", [])
