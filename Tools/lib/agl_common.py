@@ -107,6 +107,21 @@ def _with_weekend_substitute(d):
     return {d}
 
 
+def _christmas_holidays(year):
+    """Christmas Day and Boxing Day with their substitutes. Each one that falls on a weekend moves to the next weekday that is not already a holiday:
+    Christmas on a Saturday: Mon 27 and Tue 28; on a Sunday: Boxing Day is Mon 26 and Christmas Day moves to Tue 27; Boxing Day on a Saturday (Christmas on a Friday): Mon 28."""
+    xmas = date(year, 12, 25)
+    out = {xmas, xmas + timedelta(days=1)}
+    wd = xmas.weekday()
+    if wd == 4:                       # Friday: Boxing Day is a Saturday
+        out.add(xmas + timedelta(days=3))
+    elif wd == 5:                     # Saturday: Christmas Day -> Mon, Boxing Day (Sunday) -> Tue
+        out |= {xmas + timedelta(days=2), xmas + timedelta(days=3)}
+    elif wd == 6:                     # Sunday: Boxing Day is the Monday, Christmas Day -> Tue
+        out.add(xmas + timedelta(days=2))
+    return out
+
+
 def nsw_public_holidays(year):
     """Set of date() objects - NSW statutory public holidays for `year`."""
     holidays = set()
@@ -119,8 +134,7 @@ def nsw_public_holidays(year):
     holidays.add(easter + timedelta(days=1))                   # Easter Monday
     holidays.add(_nth_weekday(year, 6, 0, 2))                  # King's/Queen's Birthday: 2nd Mon of June
     holidays.add(_nth_weekday(year, 10, 0, 1))                 # Labour Day: 1st Mon of October
-    holidays |= _with_weekend_substitute(date(year, 12, 25))  # Christmas Day
-    holidays |= _with_weekend_substitute(date(year, 12, 26))  # Boxing Day
+    holidays |= _christmas_holidays(year)                     # Christmas Day and Boxing Day, with their substitutes
     return holidays
 
 

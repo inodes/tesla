@@ -52,18 +52,16 @@ class HolidaysTest(unittest.TestCase):
                 self.assertIn(date(2025, 1, 27), cal(2025))   # Australia Day 2025 is a Sunday
                 self.assertIn(date(2022, 1, 3), cal(2022))    # New Year's Day 2022 is a Saturday
 
-    @unittest.expectedFailure
     def test_christmas_saturday_boxing_day_sunday(self):
-        """BUG (found by this test): when Christmas falls on a Saturday (2021, 2027) NSW adds Monday 27th for
+        """Was a bug (found by this test, fixed 2026-11-02): when Christmas falls on a Saturday (2021, 2027) NSW adds Monday 27th for
         Christmas and Tuesday 28th for Boxing Day. Both substitutes are computed as 'the next Monday', so the
         Tuesday is lost, and a weekday afternoon in the summer demand window is wrongly counted toward demand."""
         for name, cal in self.CALENDARS:
             with self.subTest(name):
                 self.assertTrue({date(2027, 12, 27), date(2027, 12, 28)} <= cal(2027))
 
-    @unittest.expectedFailure
     def test_christmas_sunday(self):
-        """BUG (found by this test): Christmas on a Sunday (2022): Boxing Day is Monday 26th, so Christmas's own
+        """Was a bug (found by this test, fixed 2026-11-02): Christmas on a Sunday (2022): Boxing Day is Monday 26th, so Christmas's own
         substitute is Tuesday 27th. The code gives Monday 26th twice and misses the 27th."""
         for name, cal in self.CALENDARS:
             with self.subTest(name):

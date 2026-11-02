@@ -180,6 +180,21 @@ class AGLProvider(BasePowerProvider):
             return {d, d + timedelta(days=1)}
         return {d}
 
+    @staticmethod
+    def _christmas_holidays(year):
+        """Christmas Day and Boxing Day with their substitutes. Christmas on a Saturday: Mon 27 and Tue 28; on a Sunday: Boxing Day is Mon 26 and
+        Christmas Day moves to Tue 27; on a Friday: Boxing Day (Saturday) moves to Mon 28."""
+        xmas = date(year, 12, 25)
+        out = {xmas, xmas + timedelta(days=1)}
+        wd = xmas.weekday()
+        if wd == 4:
+            out.add(xmas + timedelta(days=3))
+        elif wd == 5:
+            out |= {xmas + timedelta(days=2), xmas + timedelta(days=3)}
+        elif wd == 6:
+            out.add(xmas + timedelta(days=2))
+        return out
+
     @classmethod
     def nsw_public_holidays(cls, year):
         """Set of date() objects - NSW statutory public holidays for
@@ -194,8 +209,7 @@ class AGLProvider(BasePowerProvider):
         holidays.add(easter + timedelta(days=1))                       # Easter Monday
         holidays.add(cls._nth_weekday(year, 6, 0, 2))                  # King's/Queen's Birthday: 2nd Mon of June
         holidays.add(cls._nth_weekday(year, 10, 0, 1))                 # Labour Day: 1st Mon of October
-        holidays |= cls._with_weekend_substitute(date(year, 12, 25))  # Christmas Day
-        holidays |= cls._with_weekend_substitute(date(year, 12, 26))  # Boxing Day
+        holidays |= cls._christmas_holidays(year)                     # Christmas Day and Boxing Day, with their substitutes
         return holidays
 
     @classmethod
