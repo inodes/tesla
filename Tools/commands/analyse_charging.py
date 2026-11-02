@@ -5010,7 +5010,7 @@ class ChargingAnalyzer:
         Returns a dict (cached or freshly computed), or None if this
         isn't an Evnex session, no matching Evnex deep-dive JSON can be
         found for it, or the real AGL tariff-rates file isn't present on
-        this machine (power_demand_calculator.load_rate_periods() - a
+        this machine (lib.power_demand.load_rate_periods() - a
         real, gitignored, per-account file; its absence is a normal
         "not configured on this machine" case, not an error)."""
         if s.get("network") != "Evnex":
@@ -5018,7 +5018,7 @@ class ChargingAnalyzer:
 
         try:
             import lib.session_cost as _evc
-            from power_demand_calculator import load_rate_periods
+            from lib.power_demand import load_rate_periods
         except Exception:
             return None
 
