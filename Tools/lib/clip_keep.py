@@ -5,7 +5,7 @@ A clip's video may go once what the app keeps from it exists (the rules are thos
   metadata   the speed / position / steering of each minute is in <data>/teslacam_timeline (a parked Sentry clip has none to read)
   stills     the one-second stills of each minute are in <data>/teslacam_stills, the drive it lies in has its snapshots, and the minute is not newer than
              the last drive synced from Tessie (later video has no drive to keep snapshots in yet)
-  signs      each minute the car went at review.min_kmh or more has been read for signs (app_review)
+  signs      each minute the car went at review.min_kmh or more (end_kmh in a drive's last end_s) has been read for signs (app_review)
   event      a horn or Sentry event has its full-size pictures of the moment (event_shots.py: all six cameras, or the one that saw it)
   window     a Saved or Sentry event has the pictures around its moment, one a second, 30 s either side, from the camera that saw it (event_stills.py)
 
@@ -38,6 +38,7 @@ import teslacam_files as TF
 import teslacam_ledger as TLG
 import teslacam_scan as TS
 import teslacam_stills as ST
+import sign_speed as SS
 
 GAP = 75                      # seconds between two minutes that still belong to one Recent run (as in app_teslacam)
 TTL = 8.0                     # seconds an answer is reused
@@ -222,7 +223,6 @@ class ClipKeep:
         windows = TD.drive_windows(self.dir)
         starts = [w[0] for w in windows]
         synced_until = TD.synced_to(self.dir, windows)
-        min_kmh = float((app_config.get("review") or {}).get("min_kmh", 10.0))
         led = TLG.Ledger(self.dir)
         found = {}                                           # (kind, event) -> {stamp: dict(cams, bytes)}
         for day in led.days():
@@ -290,7 +290,7 @@ class ClipKeep:
                     elif st in stl:
                         waiting = "drive snapshots not built yet"
                         snap_n += 1
-                if isinstance(sm, dict) and sm.get("vmax", 0) >= min_kmh and (vid or st in scanned):
+                if SS.wanted(st, sm) and (vid or st in scanned):
                     sg[1] += 1
                     sg[0] += st in scanned
                 if st in unref and vid:
@@ -740,12 +740,11 @@ class ClipKeep:
                     j["step_done"] = n
             if "signs" in want:
                 rv = self.tc._rv()
-                min_kmh = float((app_config.get("review") or {}).get("min_kmh", 10.0))
                 done = rv.scanned()
                 items = []
                 for s in sorted(paths):
                     sm = store.summary(s)
-                    if "front" in paths[s] and isinstance(sm, dict) and sm.get("vmax", 0) >= min_kmh and s not in done:
+                    if "front" in paths[s] and SS.wanted(s, sm) and s not in done:
                         ser = store.series(s)
                         items.append((s, paths[s]["front"], ser["v"] if ser else None))
                 self._step("Reading signs", len(items))
