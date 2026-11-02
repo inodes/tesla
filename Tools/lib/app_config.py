@@ -47,7 +47,7 @@ the block). A change takes effect the next time the app or script reads it (the 
   app.drives.repark_same_place_km                  a drive that starts and ends at the same address or saved place is a re-park up to this long (and repark_max_minutes); with no address to compare, the two ends within repark_same_place_m metres count as the same place
   app.drives.long_highway_*                        a "long highway" drive (the Drives list's Long highway filter)
   app.drives.charge_window_minutes                 a charge within this long after / before a drive makes it "to charge" / "from charge"
-  app.drives.range_days_shown                      how many days of a long date range the Drives (new) list draws at once; "Show more days" adds the next 31
+  app.drives.range_days_shown                      how many days of a long date range the Drives list draws at once; "Show more days" adds the next 31
   app.drives.charger_name_m                        a stop, start or parked spell this close (m) to a charge that has just happened (or is happening) and is not at a saved place is named after the charger, exactly as the charge is stored
   app.drives.tessie_auto_sync_minutes              the app runs the Tessie drives sync by itself (sync_drives_all.sh) when the dashcam saw a drive Tessie has not given yet, at most this often; 0 = only when you press Sync from Tessie
   app.drives.tessie_fresh_minutes                  after a Tessie sync this long ago, with nothing missing, the Drives page has no Sync from Tessie button (it shows when the last sync was)

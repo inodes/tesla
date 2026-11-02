@@ -33,7 +33,7 @@ const fetchJ=fresh_(async p=>{const q=Date.now()-FRESHT<60000?(p.includes("?")?"
 // the server answered from what it kept and is refreshing: ask again in a few seconds and redraw if the list changed
 const recheck=(p,shown,k=0)=>{if(k>4)return;setTimeout(async()=>{let n;try{n=await fetchJ(p)}catch(e){return}
   if(!sameData(n,shown)){if(cache[p]===shown||cache[p]===undefined)cache[p]=n;mkey(p).then(key=>IDB.set(key,n));redrawQuietly()}else if(STALEP.has(p))recheck(p,shown,k+1)},4000)};
-const KEEPING=new Set(["summary","activity","places","alerts","battery","analytics","chargers","drivereview/all"]),LISTS=new Set(["activity","drives","driveslist","charges","parked","idles","places","alerts","battery","analytics","health","teslacam"]);
+const KEEPING=new Set(["summary","activity","places","alerts","battery","analytics","chargers"]),LISTS=new Set(["activity","drives","driveslist","charges","parked","idles","places","alerts","battery","analytics","health","teslacam"]);
 let QUIET=false,QT=0;
 const redrawQuietly=()=>{clearTimeout(QT);QT=setTimeout(async()=>{const h=(location.hash||"#/activity").replace(/^#\//,"");if(!LISTS.has(h))return;const a=document.activeElement;
   if(a&&main.contains(a)&&/^(INPUT|SELECT|TEXTAREA)$/.test(a.tagName))return;if($$("video",main).some(v=>!v.paused)||$(".stbar",main))return;
@@ -134,7 +134,7 @@ const pbar=pct=>`<div class="pbar${pct==null?" ind":""}"><i${pct==null?"":` styl
 const setPbar=(r,pct)=>{const b=$(".pbar",r),i=b&&$("i",b);if(!b||!i)return false;b.classList.toggle("ind",pct==null);i.style.width=pct==null?"":Math.max(4,Math.min(100,Math.round(pct)))+"%";return true};
 // Back links: the crumb at the top of a page goes back to the page the user came from (the path is kept per tab in sessionStorage), not to a fixed parent.
 // h and label are only the fallback, for a page opened directly. A main-menu click starts a new path; saving or deleting a place replaces the page it was done on.
-const NAVK="nav.stack",ROOTS={activity:"Activity",drives:"Drives",driveslist:"Drives (new)",charges:"Charges",parked:"Parked",idles:"Parked",places:"Places",alerts:"Alerts",software:"Software",battery:"Battery",health:"Health",analytics:"Analytics",teslacam:"TeslaCam",queue:"Queue"};
+const NAVK="nav.stack",ROOTS={activity:"Activity",drives:"Drives",driveslist:"Drives",charges:"Charges",parked:"Parked",idles:"Parked",places:"Places",alerts:"Alerts",software:"Software",battery:"Battery",health:"Health",analytics:"Analytics",teslacam:"TeslaCam",queue:"Queue"};
 let NAV=(()=>{try{return JSON.parse(sessionStorage.getItem(NAVK)||"[]")}catch(e){return[]}})(),NAVREPL=false,NAVRESET=false;
 const navSeg=h=>String(h).replace(/^#\//,"").split("/"),navPage=h=>navSeg(h).slice(0,2).join("/");
 const navLabel=h=>ROOTS[navSeg(h)[0]]||({drive:"Drive",charge:"Charge",place:"Place",idle:"Parked"})[navSeg(h)[0]]||"Back";
@@ -274,26 +274,6 @@ function rangeBar(host,key,st,days,onChange){
   document.addEventListener("keydown",onKey);
   paint()}
 
-// ---------- Drives
-let DP={r:{p:"all"},q:"",ch:"all",ex:"all",rp:"drive",mk:0,ma:0};
-async function pageDrives(){
-  loading("drives");const [act,rvd]=await Promise.all([api("activity"),api("drivereview/all").catch(()=>({}))]),all=act.filter(x=>x.k==="drive"),chg=act.filter(x=>x.k==="charge");
-  // how much of each drive has been reviewed (Review tab): the share of its events' stills that were looked at for signs
-  all.forEach(d=>{d.rvd=rvd[d.id]==null?null:rvd[d.id]});
-  // a charge has one drive that ends at it (the last one before it) and one that leaves it (the first after it); the server decides which
-  const chById=new Map(chg.map(c=>[c.id,c]));
-  all.forEach(d=>{d.toCh=chById.get(d.to_ch)||null;d.fromCh=chById.get(d.from_ch)||null});
-  const CHF={all:()=>true,to:x=>x.toCh,from:x=>x.fromCh,any:x=>x.toCh||x.fromCh,none:x=>!x.toCh&&!x.fromCh,low:x=>x.b1!=null&&x.b1<=cfg("drives.low_battery_pct")},
-   EXF={all:()=>true,foot:x=>x.foot,fsd:x=>x.ap>0,al:x=>x.al>0,hwy:x=>x.km>=cfg("drives.long_highway_km")&&x.max>=cfg("drives.long_highway_fast_kmh")};
-  const draw=()=>{const q=DP.q.toLowerCase(),rs=all.filter(x=>inRange(x,DP.r)&&(!q||driveTitle(x).toLowerCase().includes(q))&&CHF[DP.ch](x)&&EXF[DP.ex](x)&&x.km>=DP.mk&&(x.min?x.km/(x.min/60):0)>=DP.ma&&(DP.rp==="both"||(DP.rp==="repark")===!!x.repark)),
-    plain=!DP.q&&!DP.mk&&!DP.ma&&DP.ch==="all"&&DP.ex==="all",     // no filter but the dates: the charges show as a line between the drives
-    km=rs.reduce((a,x)=>a+x.km,0),kwh=rs.reduce((a,x)=>a+(x.kwh||0),0),ap=rs.reduce((a,x)=>a+(x.ap||0),0),mn=rs.reduce((a,x)=>a+(x.min||0),0);
-    $("#tl").innerHTML=tile(n0(rs.length),"drives")+tile(n0(km)+" km","distance")+tile(km?EF(kwh*1000/km)+" "+EFU():"–","average efficiency")+tile(km?n0(100*ap/km)+"%":"–","self-driving")+tile(dur(mn),"time driving")+tile(n0(Math.max(0,...rs.map(x=>x.max||0)))+" km/h","top speed");
-    table($("#tb"),[{k:"t0",t:"Date",l:1,c:r=>`${r.day} ${r.hm} <span class="sub">${esc(r.tz||"")}</span>`,f:r=>`${r.day} ${r.hm} <span class="sub">${esc(r.tz||"")}</span>`},{k:"frm",t:"Trip",l:1,c:r=>`<b>Charging</b> · ${esc(r.place||"?")} · +${n0(r.kwh,1)} kWh`,f:r=>(r.fromCh?`<span class="pill" title="A charge ended just before this drive">from charge</span> `:"")+(r.fromCh?`<a class="chn" href="#/charge/${encodeURIComponent(r.fromCh.id)}" title="Left a charge here - open the charge">⚡ ${esc(r.frm||"?")}</a>`:esc(r.frm||"?"))+" → "+(r.toCh?`<a class="chn" href="#/charge/${encodeURIComponent(r.toCh.id)}" title="Charged here - open the charge">⚡ ${esc(r.to||"?")}</a>`:esc(r.to||"?"))+(r.toCh?` <span class="pill ok" title="A charge started right after this drive">to charge</span>`:"")+(r.repark?` <span class="pill" title="Under ${REPM()}: the car was only moved a little">re-park</span>`:"")},{k:"km",t:"km",f:r=>n0(r.km,1)},{k:"min",t:"Time",c:r=>dur(r.min),f:r=>dur(r.min)},{k:"whkm",t:EFU(),f:r=>EF(r.whkm)},{k:"max",t:"Max",f:r=>n0(r.max)},{k:"ap",t:"Self-driving",f:r=>r.km?n0(100*r.ap/r.km)+"%":"–"},{k:"b0",t:"Battery",c:r=>`${n0(r.b0)}→${n0(r.b1)}%`,f:r=>`${n0(r.b0)}→${n0(r.b1)}%`},{k:"foot",t:"Dashcam",f:r=>r.foot==null?"–":r.foot+"%"},{k:"rvd",t:"Reviewed",f:r=>r.rvd==null?"–":r.rvd+"%"}],rs.concat(plain?chg.filter(c=>inRange(c,DP.r)):[]),r=>{location.hash=(r.k==="charge"?"#/charge/":"#/drive/")+r.id},"t0",(()=>{const g=rangeOf(DP.r);return g&&g[0]===g[1]?1:-1})())};     // one day picked: first drive of the day on top
-  main.innerHTML=`<h1>Drives</h1><div class="bar"><span id="rg"></span><select id="fc"><option value="all">Any charging</option><option value="to">Ending at a charge</option><option value="from">Leaving a charge</option><option value="any">Either end at a charge</option><option value="none">No charge at either end</option><option value="low">Finished at ${cfg("drives.low_battery_pct")}% or less</option></select><select id="fr"><option value="drive">Drives</option><option value="repark">Re-parks (under ${REPM()})</option><option value="both">Drives and re-parks</option></select><select id="fx"><option value="all">All drives</option><option value="hwy">Long highway (${cfg("drives.long_highway_km")} km+)</option><option value="fsd">Used self-driving</option><option value="foot">With dashcam footage</option><option value="al">With alerts</option></select><input type="number" id="mk" min="0" step="5" style="width:90px" placeholder="min km" title="Only drives at least this long" value="${DP.mk||""}"><input type="number" id="ma" min="0" step="5" style="width:130px" placeholder="min avg km/h" title="Only drives at least this fast on average (distance over time)" value="${DP.ma||""}"><button class="btn" id="rc" title="Long, fast drives that have footage: the ones worth a Review">Review candidates</button><input type="search" id="q" placeholder="Search a place…" value="${esc(DP.q)}"></div><div class="tiles" id="tl"></div><div id="tb"></div>`;
-  rangeBar($("#rg"),"drives",DP.r,daysOf(all),draw);$("#q").oninput=e=>{DP.q=e.target.value;draw()};$("#mk").oninput=e=>{DP.mk=+e.target.value||0;draw()};$("#ma").oninput=e=>{DP.ma=+e.target.value||0;draw()};
-  $("#rc").onclick=()=>{DP.mk=cfg("review.candidate_km");DP.ma=cfg("review.candidate_avg_kmh");DP.ex="foot";$("#mk").value=DP.mk;$("#ma").value=DP.ma;$("#fx").value="foot";draw()};$("#fc").value=DP.ch;$("#fc").onchange=e=>{DP.ch=e.target.value;draw()};$("#fr").value=DP.rp;$("#fr").onchange=e=>{DP.rp=e.target.value;draw()};$("#fx").value=DP.ex;$("#fx").onchange=e=>{DP.ex=e.target.value;draw()};draw();
-}
 // UTC is the clock everywhere; the local clock is only for showing. lo = seconds the local clock is ahead of UTC (the server sends it with a drive).
 const lclock=(u,lo)=>new Date((u+lo)*1000).toISOString().substr(11,8);
 const localISO=ms=>{const t=new Date(ms),z=n=>String(n).padStart(2,"0");return `${t.getFullYear()}-${z(t.getMonth()+1)}-${z(t.getDate())}T${z(t.getHours())}:${z(t.getMinutes())}:${z(t.getSeconds())}`};
@@ -530,7 +510,7 @@ async function pageDrive(stamp,tab){
   const als=await alertsFor("drive",stamp);
   if(tab==="flips")tab="review";tab=tab==="review"||(tab==="detail"&&d&&d.page)?tab:(d?"drive":"detail");       // "overview" and "footage" (older links) are the one drive view
   const tabs=[["drive","Drive"],["review","Review"]].concat(d&&d.page?[["detail","Tessie detail"]]:[]);
-  main.innerHTML=crumbs("#/driveslist","Drives (new)")+alertsCard(als,"drive")+(d?`<div class="bar" id="dtabs">${tabs.map(([k,t])=>`<a class="chip ${k===tab?"on":""}" href="#/drive/${encodeURIComponent(stamp)}/${k}">${t}</a>`).join("")}</div>`:"")+'<div id="dtab"></div>';
+  main.innerHTML=crumbs("#/drives","Drives")+alertsCard(als,"drive")+(d?`<div class="bar" id="dtabs">${tabs.map(([k,t])=>`<a class="chip ${k===tab?"on":""}" href="#/drive/${encodeURIComponent(stamp)}/${k}">${t}</a>`).join("")}</div>`:"")+'<div id="dtab"></div>';
   wireAlerts(main);const box=$("#dtab");
   if(tab==="detail"){
     // Tessie's own page for the drive (its extra series, the enrichment tick box under the map); the footage and the flips are in the other tabs
@@ -566,7 +546,7 @@ async function pageDrive(stamp,tab){
 
 // A drive Tessie recorded that has no per-drive file (so no dashcam / deep-dive page): the summary from the drives list.
 function driveLite(d,als){
-  main.innerHTML=crumbs("#/driveslist","Drives (new)")+driveLiteBody(d,als);
+  main.innerHTML=crumbs("#/drives","Drives")+driveLiteBody(d,als);
   wireAlerts(main);miniMap($("#mp"),d.lat,d.lon,"#3b6cf6");
   tessieSync($("#tsb2"),{missing:{no_page:1},tried:LITETRIED[d.id],after:()=>liteSynced(d)});
 }
@@ -1721,7 +1701,7 @@ function tlDays(host,items,o){
 function routeSvg(pts,w=64,h=40){if(!pts||pts.length<2)return "";const la=pts.map(p=>p[0]),lo=pts.map(p=>p[1]),a=Math.min(...la),b=Math.max(...la),c=Math.min(...lo),d=Math.max(...lo),k=Math.cos((a+b)/2*Math.PI/180),sx=(d-c)*k||1e-6,sy=(b-a)||1e-6,s=Math.min((w-6)/sx,(h-6)/sy),ox=(w-sx*s)/2,oy=(h-sy*s)/2;
   return `<svg class="rt" width="${w}" height="${h}" viewBox="0 0 ${w} ${h}"><polyline fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" stroke-linecap="round" points="${pts.map(p=>((p[1]-c)*k*s+ox).toFixed(1)+","+(h-((p[0]-a)*s+oy)).toFixed(1)).join(" ")}"/></svg>`}
 
-// ---------- Drives (new): one list from every source. Tessie's drives are the rows; the dashcam's attach by time; with no Tessie the dashcam alone makes it (lib/app_drivelist.py)
+// ---------- Drives: one list from every source. Tessie's drives are the rows; the dashcam's attach by time; with no Tessie the dashcam alone makes it (lib/app_drivelist.py)
 let DLP={r:{p:"all"},q:"",src:"all"};
 // ---------- Tessie sync: the app runs sync_drives_all.sh itself (Tessie's drives, their detail, the drive pages) and shows how far it has got
 let TSPOLL=null;const TSHTML={};
@@ -1789,7 +1769,7 @@ async function tessieSync(host,o){
   if(info.running){paint({running:true});poll()}else paint(null)
 }
 let DLPOLL=0;
-function drivelistPoll(cur){clearTimeout(DLPOLL);DLPOLL=setTimeout(async()=>{if(location.hash!=="#/driveslist")return;let j;try{j=await tcGet("drivelist",true)}catch(e){return}
+function drivelistPoll(cur){clearTimeout(DLPOLL);DLPOLL=setTimeout(async()=>{if(!["#/drives","#/driveslist"].includes(location.hash))return;let j;try{j=await tcGet("drivelist",true)}catch(e){return}
   if(!j.stale){if($("#stl"))$("#stl").hidden=true;if(!sameData(j,cur)){FRESH.drivelist=j;bust("activity");redrawQuietly()}}else drivelistPoll(cur)},3000)}
 async function pageDriveList(){
   loading("dlist");const [dl,act,pl,chg]=await Promise.all([tcGet("drivelist"),api("activity"),api("places").catch(()=>({saved:[]})),api("chargers").catch(()=>({rows:[]}))]),places=pl.saved||[];
@@ -2182,7 +2162,7 @@ async function pageTeslaCamAt(t){
 }
 async function pageTeslaCamDrive(role,id){
   loading();const pl=await api("places").catch(()=>({saved:[]}));
-  main.innerHTML=(role==="auto"?crumbs("#/driveslist","Drives (new)"):crumbs("#/teslacam","TeslaCam"))+'<div id="tdh"></div>';
+  main.innerHTML=(role==="auto"?crumbs("#/drives","Drives"):crumbs("#/teslacam","TeslaCam"))+'<div id="tdh"></div>';
   if(role==="auto"){                // opened from the Drives list: the server says which connected drive holds it
     try{const r=await fetch("/api/teslacam/auto/seg/"+encodeURIComponent(id)+"?budget=0"),j=await r.json().catch(()=>({}));if(!r.ok)throw new Error(j.error||("HTTP "+r.status));role=j.role||"A"}
     catch(e){$("#tdh").innerHTML=errBox(e.message,"Could not open this drive");return}}
@@ -2622,12 +2602,12 @@ async function pageSoftwareOne(v){
     <div class="card"><h2 style="margin-top:0">Installs per day</h2><table class="kv"><tbody>${u.daily.slice(0,14).map(c=>`<tr><td class="l">${esc(dayName(c.day))}</td><td>${n0(c.installs)}</td></tr>`).join("")||'<tr><td class="l sub">Not known.</td></tr>'}</tbody></table></div></div>`;
   const go=k=>()=>{SWS[k]=v;SWS.tab="compare";swSave();location.hash="#/software"};$("#cmpf").onclick=go("a");$("#cmpt").onclick=go("b")}
 
-const ROUTES={activity:pageActivity,drives:pageDrives,driveslist:pageDriveList,charges:pageCharges,battery:pageBattery,health:pageHealth,analytics:pageAnalytics,teslacam:pageTeslaCam,queue:pageQueue,flips:pageDrives,review:pageDrives,dashcam:pageDrives,parked:pageParked,idles:pageParked,places:pagePlaces,alerts:pageAlerts,software:pageSoftware};
+const ROUTES={activity:pageActivity,drives:pageDriveList,driveslist:pageDriveList,charges:pageCharges,battery:pageBattery,health:pageHealth,analytics:pageAnalytics,teslacam:pageTeslaCam,queue:pageQueue,flips:pageDriveList,review:pageDriveList,dashcam:pageDriveList,parked:pageParked,idles:pageParked,places:pagePlaces,alerts:pageAlerts,software:pageSoftware};
 async function route(){
   if(!QUIET){RGEN++;RLOAD=RGEN}const myGen=RGEN;
   navTrack();hideTip();if(location.hash.indexOf("#/charge/")!==0){try{sessionStorage.removeItem("chargeSet")}catch(e){}}if(TLOFF){TLOFF();TLOFF=null}const h=(location.hash||"#/activity").replace(/^#\//,""),[p,arg,arg2]=h.split("/").map(decodeURIComponent);
-  // the side bar item lit is the list a detail page was reached from (a drive opened from Drives (new) lights Drives (new)); a section's own page (Software, Battery, ...) always lights itself, whatever the path that led to it
-  const own=({drive:"drives",charge:"charges",idle:"parked",idles:"parked",dashcam:"drives",flips:"drives",review:"drives",place:"places"})[p]||p,from=NAV.length?(NAV[0].h||"").replace(/^#\//,"").split("/")[0]:"",lit=own!==p&&ROOTS[from]&&ROOTS[from]!==ROOTS[own]&&NAV.length>1?(({idles:"parked"})[from]||from):own;
+  // the side bar item lit is the list a detail page was reached from (a drive opened from Drives lights Drives); a section's own page (Software, Battery, ...) always lights itself, whatever the path that led to it
+  const own=({drive:"drives",driveslist:"drives",charge:"charges",idle:"parked",idles:"parked",dashcam:"drives",flips:"drives",review:"drives",place:"places"})[p]||p,from=NAV.length?(NAV[0].h||"").replace(/^#\//,"").split("/")[0]:"",lit=own!==p&&ROOTS[from]&&ROOTS[from]!==ROOTS[own]&&NAV.length>1?(({idles:"parked"})[from]||from):own;
   $$("#nav>a").forEach(a=>a.classList.toggle("on",a.dataset.p===lit));
   badge();if(!QUIET)main.scrollTop=0;
   if(!QUIET)await snapLoad();
