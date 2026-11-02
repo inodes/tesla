@@ -16,7 +16,7 @@ import numpy as np
 HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(HERE, "lib"))
 sys.path.insert(0, HERE)
-import dashcam_flip_review as D  # noqa: E402
+from lib import dashcam_clips as D  # noqa: E402
 import sign_finder  # noqa: E402
 
 REL = [x * 0.5 for x in range(-28, 27)]    # -14 s .. +13 s around the speed change

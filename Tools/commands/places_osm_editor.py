@@ -66,7 +66,7 @@ from lib.osm_templates_common import (
     build_osm_tags,
     derive_tesla_ref,
 )
-from places_manager import query_overpass_pois
+from lib.places_common import query_overpass_pois
 from providers_chargers.chargers_base import haversine_km
 
 C_GREEN = "\033[92m"

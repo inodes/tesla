@@ -36,7 +36,7 @@ import app_review
 import clip_clock as CC
 import drive_paths as DP
 import drive_fuse as DF
-import teslacam_stills as ST
+from lib import teslacam_stills as ST
 import teslacam_timeline as TL
 import traffic_finder
 

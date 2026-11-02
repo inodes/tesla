@@ -27,7 +27,7 @@ import app_drive_review as AR
 import clip_clock as CC
 import drive_fuse as DF
 import drive_paths as DP
-import teslacam_stills as ST
+from lib import teslacam_stills as ST
 import teslacam_timeline as TL
 
 FMT = "%Y-%m-%d_%H-%M-%S"

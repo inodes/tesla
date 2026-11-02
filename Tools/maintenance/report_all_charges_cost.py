@@ -40,7 +40,7 @@ from datetime import datetime, timezone
 TOOLS_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, TOOLS_DIR)
 
-from analyse_charging import ChargingAnalyzer  # noqa: E402
+from lib.charging_analyzer import ChargingAnalyzer  # noqa: E402
 from lib.charge_cost_model import compute_all_charge_costs  # noqa: E402
 
 
