@@ -6,11 +6,24 @@ folder (TESLA_DATA_DIR is set to the app's data folder). It needs the network, c
 """
 import collections
 import os
+import re
 import signal
 import subprocess
 import sys
 import threading
 import time
+
+
+_ANSI = re.compile(r"\x1b\[[0-9;?]*[ -/]*[@-~]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)|\x1b[@-Z\\-_]")
+
+
+def clean(line):
+    """A line of a script's output as text for the page: no colour codes, and of a line redrawn with carriage returns only what it ended as."""
+    line = _ANSI.sub("", line.rstrip("\n"))
+    if "\r" in line:
+        parts = [x for x in line.split("\r") if x.strip()]
+        line = parts[-1] if parts else ""
+    return line
 
 
 class ChargerSync:
@@ -29,7 +42,7 @@ class ChargerSync:
     def _pump(self, proc):
         for line in proc.stdout:
             with self.lock:
-                self.lines.append(line.rstrip("\n"))
+                self.lines.append(clean(line))
                 self.n += 1
         proc.wait()
         with self.lock:
@@ -44,7 +57,7 @@ class ChargerSync:
                 return self.status_locked(0)
         if not self.argv and not os.path.isfile(self.script):
             return dict(ok=False, error=self.name + " not found in " + self.tools)
-        env = dict(os.environ, TESLA_DATA_DIR=self.data, PYTHONUNBUFFERED="1")
+        env = dict(os.environ, TESLA_DATA_DIR=self.data, PYTHONUNBUFFERED="1", NO_COLOR="1", TERM="dumb")
         env["PATH"] = os.path.dirname(sys.executable) + os.pathsep + env.get("PATH", "")      # the repo venv first, as direnv would
         with self.lock:
             self.lines.clear()
