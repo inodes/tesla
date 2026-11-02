@@ -132,6 +132,56 @@ def _local(s):
     return datetime.datetime.strptime(m.group(1), "%Y-%m-%d %H:%M") + datetime.timedelta(seconds=int(m.group(2) or 0)), m.group(3)
 
 
+def _wavg(a, wa, b, wb):
+    if a is None or b is None:
+        return a if b is None else b
+    return (a * wa + b * wb) / (wa + wb) if wa + wb > 0 else a
+
+
+def join_short_stops(drives, gap_s, same_m):
+    """Drives of Tessie's split by a stop of `gap_s` seconds or less where the second starts within `same_m` metres of where the first ended are one drive (the car was in
+    Park for a moment: a pick-up, a drop-off, a boom gate). The joined drive starts and ends where the whole trip did, adds up the distance and energy, and keeps what it
+    was made of: `parts` (the drive ids, the first is its id) and `stops` (when, how long the records were apart, where). A re-park is never joined: the Drives list folds it
+    into the park next to it. `gap_s` 0 turns it off. Order and everything else is as it was."""
+    if not gap_s or len(drives) < 2:
+        return drives
+    desc = drives[0].get("t0", 0) > drives[-1].get("t0", 0)
+    seq = sorted(drives, key=lambda d: d.get("t0", 0))
+    out = []
+    for d in seq:
+        a = out[-1] if out else None
+        if (a is not None and not a.get("repark") and not d.get("repark") and 0 <= d["t0"] - a["t1"] <= gap_s
+                and None not in (a.get("lat1"), a.get("lon1"), d.get("lat"), d.get("lon"))
+                and math.hypot((d["lat"] - a["lat1"]) * 111320.0, (d["lon"] - a["lon1"]) * 111320.0 * math.cos(math.radians(a["lat1"]))) <= same_m):
+            out[-1] = _join_two(a, d)
+        else:
+            out.append(d)
+    return out[::-1] if desc else out
+
+
+def _join_two(a, b):
+    ma, mb = a.get("min") or 0, b.get("min") or 0
+    gap = b["t0"] - a["t1"]
+    j = dict(a)
+    j["parts"] = (a.get("parts") or [dict(id=a["id"], t0=a["t0"], t1=a["t1"], page=a.get("page"))]) + [dict(id=b["id"], t0=b["t0"], t1=b["t1"], page=b.get("page"))]
+    j["stops"] = (a.get("stops") or []) + [dict(t=a["t1"], secs=gap, lat=a.get("lat1"), lon=a.get("lon1"), at=a.get("to"))]
+    j["t1"] = b["t1"]
+    j["min"] = ma + mb + gap / 60.0
+    j["to"], j["addr1"], j["pkey1"], j["lat1"], j["lon1"], j["odo1"], j["b1"] = (b.get(k) for k in ("to", "addr1", "pkey1", "lat1", "lon1", "odo1", "b1"))
+    j["km"] = (a.get("km") or 0) + (b.get("km") or 0)
+    j["kwh"] = (a.get("kwh") or 0) + (b.get("kwh") or 0)
+    j["whkm"] = round(j["kwh"] * 1000.0 / j["km"]) if j["km"] and j["kwh"] else a.get("whkm")
+    j["avg"] = round(j["km"] / (j["min"] / 60.0), 1) if j["min"] else a.get("avg")
+    j["max"] = max(x for x in (a.get("max"), b.get("max"), 0) if x is not None)
+    j["ap"] = (a.get("ap") or 0) + (b.get("ap") or 0)
+    j["tin"], j["tout"] = _wavg(a.get("tin"), ma, b.get("tin"), mb), _wavg(a.get("tout"), ma, b.get("tout"), mb)
+    j["clips"] = (a.get("clips") or 0) + (b.get("clips") or 0) or a.get("clips")
+    j["saved"] = (a.get("saved") or 0) + (b.get("saved") or 0)
+    j["flips"] = (a.get("flips") or 0) + (b.get("flips") or 0)
+    j["foot"] = _wavg(a.get("foot"), ma, b.get("foot"), mb)
+    return j                                                    # `page` stays the first drive's: the id is its id
+
+
 class Store:
     def __init__(self, data_dir):
         self.d = data_dir
@@ -260,7 +310,7 @@ class Store:
                                 tin=_num(r.get("Average Inside Temperature (°C)")), tout=_num(r.get("Average Outside Temperature (°C)")),
                                 foot=(st or {}).get("footage_pct"), clips=(st or {}).get("footage_clips"), saved=(st or {}).get("saved_clip_events") or 0,
                                 flips=(st or {}).get("flips") or 0))
-            return out
+            return join_short_stops(out, app_config.get("drives.join_gap_s"), app_config.get("drives.repark_same_place_m"))
         return _cached("drives", [master, self.p("places.json"), app_config.path()] + [self.p("drives", "deepdive")], build)
 
     # ---- charges ------------------------------------------------------------------------------------------------

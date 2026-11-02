@@ -94,6 +94,7 @@
     "drives": {
       "repark_max_km": 0.05,
       "repark_max_minutes": 10,
+      "join_gap_s": 120,
       "long_highway_km": 30,
       "long_highway_fast_kmh": 90,
       "long_highway_fast_minutes": 10,

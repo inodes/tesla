@@ -870,8 +870,11 @@ def serve(port, host="127.0.0.1"):
 
 def tessie_filled(d, stamp, t0, t1, lo):
     """The window's series stretched over the whole Tessie drive [t0, t1] and filled from Tessie's deep-dive points between the dashcam's seconds (nothing changes without that file)."""
-    csv_path = DP.find_data(os.path.join(DATA_DIR, "drives", "deepdive"), stamp)
-    pts = app_route.points(csv_path, lo) if csv_path else []
+    pts = []
+    for one in str(stamp).split(","):                  # a drive joined from several of Tessie's (comma between their ids): the points of every part, once
+        csv_path = DP.find_data(os.path.join(DATA_DIR, "drives", "deepdive"), one)
+        pts += app_route.points(csv_path, lo) if csv_path else []
+    pts = sorted(set(pts))
     if not pts:
         return d
     ser = app_route.fill((d or {}).get("series"), t0, t1, pts)

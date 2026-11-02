@@ -70,6 +70,8 @@ def merge(tessie, charges, cam_items, idles=(), slack=SLACK_S, now=None):
                   b0=t.get("b0"), b1=t.get("b1"), ap=t.get("ap"), frm=t.get("frm"), to=t.get("to"), p0=_pos(t.get("lat"), t.get("lon")), p1=_pos(t.get("lat1"), t.get("lon1")),
                   cam=[c["id"] for c in cs], cov=round(cov, 2), short=bool(t.get("repark")), page=bool(t.get("page")), al=t.get("al", 0), min=t.get("min"), avg=t.get("avg"),
                   foot=t.get("foot"))
+        if t.get("parts"):
+            it["parts"], it["stops"] = t["parts"], t.get("stops") or []             # joined from several of Tessie's drives (a stop of a moment between them)
         out.append(TL.show(it))
     for c in lone:
         it = dict(c, src="cam", cam=[c["id"]], cov=1.0)
@@ -307,7 +309,7 @@ def page_rows(act):
     return dict(tess=[x for x in act if x.get("k") == "drive"], chg=[x for x in act if x.get("k") == "charge"])
 
 
-VERSION = 7                                         # bump when merge() or what the list carries changes: a list kept from the older code is then built again
+VERSION = 8                                         # bump when merge() or what the list carries changes: a list kept from the older code is then built again
 
 
 def signature(paths):
