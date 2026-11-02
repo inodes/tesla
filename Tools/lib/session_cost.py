@@ -530,7 +530,7 @@ def evaluate_tessie_charge(tessie_row, periods, data_home=DATA_HOME):
     period = rate_for_date(local_start.date(), periods)
     usage_rate, usage_rate_breakdown = _POWER_PROVIDER.usage_rate_for_window(period, local_start, local_end)
     tier1_rate = period["solar_feed_in_tier1_rate_per_kwh"]
-    GST_MULTIPLIER = 1.10
+    GST_MULTIPLIER = _POWER_PROVIDER.gst_multiplier()       # the tariff file's own "gst" (10% when the file gives none)
 
     base_cost = kwh_total * usage_rate
     base_cost_incl_gst = base_cost * GST_MULTIPLIER
@@ -726,7 +726,7 @@ def evaluate_session(session, periods, data_home=DATA_HOME):
  # calculation by hand and it didn't match a GST-inclusive figure
  # shown right next to it in analyse_charging.py's own
  # inspect_session() box.
-    GST_MULTIPLIER = 1.10
+    GST_MULTIPLIER = _POWER_PROVIDER.gst_multiplier()       # the tariff file's own "gst" (10% when the file gives none)
 
     base_cost = kwh_total * usage_rate
     base_cost_incl_gst = base_cost * GST_MULTIPLIER

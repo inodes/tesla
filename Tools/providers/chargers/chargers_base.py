@@ -556,10 +556,10 @@ class UnifiedStationRecord:
         tessie_cost_config = {
             "currency": self.currency,
             "pricing_model": self.pricing_model,
-            "per_kwh_flat": gross_r if self.pricing_model == "flat" else 0.0,
+            "per_kwh_flat": gross_r if self.pricing_model == "flat" else None,     # None, not 0: a station with no known flat rate is not free
             "per_minute": 0.0,
             "per_session": 0.0,
-            "idle_fee_per_min": gross_idle or 0.0,
+            "idle_fee_per_min": gross_idle,
             "rate_schedules": enriched_schedules
         }
 

@@ -64,6 +64,8 @@ def _lut_gaps():
 
 
 class ReachService:
+    NO_FIT = "The car's kWh per km by speed is not known (car_profile.json has no measured speed bands)."
+
     def __init__(self, tools_dir, data_dir):
         self.tools, self.data = tools_dir, data_dir
         self.root = os.path.join(data_dir, "roads")
@@ -86,23 +88,43 @@ class ReachService:
             return None
 
     def car(self):
-        """The car's full range in km and usable energy in kWh (car_profile.json: what the battery reports now)."""
-        out = dict(km=560.0, kwh=85.0, fit=None)
+        """The car's full range in km and usable energy in kWh: car_profile.json (what the battery reports), else the newest battery
+        health reading (lib/car_figures). None for what neither holds: never an assumed pack or range."""
+        out = dict(km=None, kwh=None, fit=None)
         try:
             with open(os.path.join(self.data, "car_profile.json"), encoding="utf-8") as f:
                 j = json.load(f)
             p = next(iter(j.values()))
             u = p.get("usable_battery_capacity_kwh") or {}
-            out["kwh"] = float(u.get("kwh_used_for_range") or out["kwh"])
-            out["km"] = float((u.get("live_reading") or {}).get("max_range_km") or out["km"])
+            out["kwh"] = float(u["kwh_used_for_range"]) if u.get("kwh_used_for_range") else None
+            mr = (u.get("live_reading") or {}).get("max_range_km")
+            out["km"] = float(mr) if mr else None
             out["profile"] = p
-        except (OSError, ValueError, StopIteration, TypeError):
+        except (OSError, ValueError, StopIteration, TypeError, AttributeError):
             pass
+        if out["kwh"] is None or out["km"] is None:
+            try:
+                from lib.car_figures import latest_battery
+                b = latest_battery(self.data) or {}
+            except Exception:
+                b = {}
+            out["kwh"] = out["kwh"] if out["kwh"] is not None else b.get("capacity_kwh")
+            out["km"] = out["km"] if out["km"] is not None else b.get("max_range_km")
         return out
+
+    @staticmethod
+    def _unknown(c, basis):
+        """The error to show when the figure a picture needs is not in the car's data, else None."""
+        if basis == "kwh" and c["kwh"] is None:
+            return "The battery's usable kWh is not known (no car_profile.json or battery health reading)."
+        if basis == "km" and c["km"] is None:
+            return "The car's full range is not known (no car_profile.json or battery health reading)."
+        return None
 
     def status(self):
         c = self.car()
-        return dict(built=self.meta() is not None, meta=self.meta(), job=dict(self.job), km=round(c["km"]), kwh=round(c["kwh"], 1),
+        return dict(built=self.meta() is not None, meta=self.meta(), job=dict(self.job), km=round(c["km"]) if c["km"] is not None else None,
+                    kwh=round(c["kwh"], 1) if c["kwh"] is not None else None,
                     reserve=app_config.get("reach.reserve_pct"))
 
     # ---- building the network
@@ -198,9 +220,13 @@ class ReachService:
         if not pts:
             return dict(empty=True)
         c = self.car()
+        if self._unknown(c, basis):
+            return dict(error=self._unknown(c, basis))
         full = c["kwh"] if basis == "kwh" else c["km"]
         key = hashlib.sha1(json.dumps([mode, basis, round(frac, 3), round(reserve, 3), [(round(p[0], 5), round(p[1], 5)) for p in pts]]).encode()).hexdigest()
         g = self._graph()
+        if basis == "kwh" and g.fit is None:
+            return dict(error=self.NO_FIT)
         hit = self.cache.get(key)
         if hit is None:
             if mode == "reach":
@@ -234,8 +260,12 @@ class ReachService:
             return dict(empty=True)
         basis = "kwh" if b.get("basis") == "kwh" else "km"
         c = self.car()
+        if self._unknown(c, basis):
+            return dict(error=self._unknown(c, basis))
         full = c["kwh"] if basis == "kwh" else c["km"]
         g = self._graph()
+        if basis == "kwh" and g.fit is None:
+            return dict(error=self.NO_FIT)
         pk = hashlib.sha1(json.dumps([basis, [(round(p[0], 5), round(p[1], 5)) for p in pts]]).encode()).hexdigest()
         prep = self.prep.get(pk)
         if prep is None:

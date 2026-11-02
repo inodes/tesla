@@ -24,7 +24,7 @@ already-live-verified machinery:
   by-speed-bucket table.
 - vehicle_mass_kg_for_profile() - same mass resolution order (CLI
   override > Tessie/vehicle_spec.json's assumed_driving_mass_kg >
-  FALLBACK_VEHICLE_MASS_KG).
+  None: grade-corrected figures are then left out).
 - confidence_for_distance() - same low/medium/high distance-based
   confidence label used throughout analyse_car_efficiency.py's output.
 

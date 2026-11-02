@@ -66,7 +66,7 @@ def resolve_solar_config():
     except FileNotFoundError as e:
         raise SystemExit(str(e))
     install_date = datetime.strptime(solar["install_date"], "%Y-%m-%d").date()
-    return install_date, float(solar["net_upfront_cost_aud"]), int(solar.get("lifetime_years", 25)), float(solar.get("system_size_kw") or 0)
+    return install_date, float(solar["net_upfront_cost_aud"]), (int(solar["lifetime_years"]) if solar.get("lifetime_years") else None), float(solar.get("system_size_kw") or 0)
 
 
 def resolve_roi_period(args, install_date):
@@ -148,7 +148,8 @@ def main():
             return
 
         payback_years = net_cost / annual_savings
-        lifetime_roi_pct = ((annual_savings * lifetime_years - net_cost) / net_cost) * 100
+        # The system's lifetime is the owner's own figure in solar_system.json (no assumed 25 years); without it there is no lifetime ROI.
+        lifetime_roi_pct = ((annual_savings * lifetime_years - net_cost) / net_cost) * 100 if lifetime_years else None
         years_remaining = payback_years - years_elapsed
 
         print(f"\nSimple payback period:   {payback_years:.1f} years  (net cost / annual savings run-rate)")
@@ -157,8 +158,11 @@ def main():
                   f"at this savings rate ({years_elapsed:.1f} years in vs. a {payback_years:.1f}-year payback)")
         else:
             print(f"Status:                  {years_elapsed:.1f} years in, ~{years_remaining:.1f} years to go to full payback")
-        print(f"Lifetime ROI ({lifetime_years} years): {lifetime_roi_pct:,.0f}%  "
-              f"((annual savings x {lifetime_years} - net cost) / net cost)")
+        if lifetime_roi_pct is not None:
+            print(f"Lifetime ROI ({lifetime_years} years): {lifetime_roi_pct:,.0f}%  "
+                  f"((annual savings x {lifetime_years} - net cost) / net cost)")
+        else:
+            print("Lifetime ROI:            unknown (no lifetime_years in solar_system.json)")
         print("\n(Not financial advice - a real-data estimate of this system's own payback, not a "
               "forecast: future tariffs, feed-in rates and household usage will all move the actual number.)")
     finally:
