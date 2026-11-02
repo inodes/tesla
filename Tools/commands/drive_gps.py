@@ -47,7 +47,9 @@ import time
 HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, HERE)
 sys.path.insert(0, os.path.join(HERE, "lib"))
-import drive_report as DRV  # noqa: E402
+from lib import drive_footage as DRV  # noqa: E402
+import drive_paths as dp  # noqa: E402
+import drive_points as dpts  # noqa: E402
 import dashcam_series as DS  # noqa: E402
 import drive_roles as DR  # noqa: E402
 
@@ -162,7 +164,7 @@ def write_mirror(out_dir, src_csv, path, info):
     """Tessie's rows unchanged + a row per dashcam fix, same file name, same columns, extra columns on the right."""
     os.makedirs(out_dir, exist_ok=True)
     if info["verdict"] == "used":
-        rows = DRV.dpts.table(src_csv)                  # Tessie's points, JSON or CSV alike
+        rows = dpts.table(src_csv)                  # Tessie's points, JSON or CSV alike
         head = rows[0]
         ix = {n: i for i, n in enumerate(head)}
         tess = []
@@ -186,7 +188,7 @@ def write_mirror(out_dir, src_csv, path, info):
             r += ["dashcam", round(p["hd"]), p["ap"], p["br"], round(p["accel"]), round(p["steer"], 1), BLINK.get(p["blk"], ""), p["clip"]]
             new.append((sec, 1, r))
         merged = sorted(tess + new, key=lambda x: (x[0], x[1]))
-        with open(os.path.join(out_dir, "drive_deepdive_%s.csv" % DRV.dp.stamp_of(src_csv)), "w", newline="", encoding="utf-8") as fh:      # the mirror stays a CSV (local clock text)
+        with open(os.path.join(out_dir, "drive_deepdive_%s.csv" % dp.stamp_of(src_csv)), "w", newline="", encoding="utf-8") as fh:      # the mirror stays a CSV (local clock text)
             w = csv.writer(fh)
             w.writerow(head + EXTRA)
             for _, _, r in merged:
@@ -243,7 +245,7 @@ def main():
     master = DRV.load_master(data)
     foot = DRV.Footage(roots, a.since)
     t_end = time.time() + a.budget if a.budget else 1e18
-    found = dict(DRV.dp.iter_folders(root))                  # {stamp: folder} in any layout
+    found = dict(dp.iter_folders(root))                  # {stamp: folder} in any layout
     names = sorted((n for n in found if n[:10] >= a.since and (not a.only or n == a.only)), reverse=True)
     done = skipped = 0
     for n in names:
