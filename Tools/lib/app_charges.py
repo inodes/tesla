@@ -6,7 +6,7 @@ invoice, a plug-in that Tessie split into several records shown ONCE with the re
 (number, date, kWh, rate, GST, total, file) and whether Tessie already holds the invoice cost, the losses, the
 expected tariff, the telemetry summary and the charging curves.
 
-The numbers come from analyse_charging.ChargingAnalyzer itself (same matching, same plug-in grouping), run
+The numbers come from lib/charging_analyzer.ChargingAnalyzer itself (same matching, same plug-in grouping), run
 quietly and read-only; nothing in the data folder or in Tessie is changed. The reconcile takes ~20 s, so the
 result is cached in <data>/charges/app_chargebook.json and rebuilt in the background when its inputs change
 (charges_master.csv, deepdive telemetry, invoice files, Tessie caches); until then the previous book is served.
@@ -225,7 +225,7 @@ class ChargeBook:
         cwd = os.getcwd()
         os.chdir(self.tools)
         try:
-            import analyse_charging as ac
+            from lib import charging_analyzer as ac
             from lib import charge_cost_model as ccm
             try:
                 import lib.session_cost  # noqa: F401  its providers and PV store load relative to Tools/; load them here

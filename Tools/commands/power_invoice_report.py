@@ -49,8 +49,8 @@ from lib.power_usage_db import get_usage_db_connection  # noqa: E402
 from providers_pv import get_pv_provider  # noqa: E402
 from lib.pv_history_db import get_pv_db_connection, sync_daily_range, query_daily_range  # noqa: E402
 from lib.invoice_common import AGLInvoiceExtractor  # noqa: E402
-from power_cost_calculator import reconstruct_bill  # noqa: E402
-from power_demand_calculator import load_rate_periods  # noqa: E402
+from lib.power_bill import reconstruct_bill  # noqa: E402
+from lib.power_demand import load_rate_periods  # noqa: E402
 from sync_agl_rates import find_agl_bill_pdfs, resolve_landing_dir  # noqa: E402
 import power_solar_report as psr  # noqa: E402
 

@@ -57,8 +57,8 @@ from lib.power_usage_db import get_usage_db_connection  # noqa: E402
 from providers_pv import get_pv_provider  # noqa: E402
 from lib.pv_history_db import get_pv_db_connection, sync_daily_range, query_daily_range  # noqa: E402
 from lib.analysis_deepdive_charts import write_interactive_chart  # noqa: E402
-from power_cost_calculator import reconstruct_bill  # noqa: E402
-from power_demand_calculator import load_rate_periods  # noqa: E402
+from lib.power_bill import reconstruct_bill  # noqa: E402
+from lib.power_demand import load_rate_periods  # noqa: E402
 
 # --- dataviz reference palette (light mode) - see AGENTS.md / dataviz skill ---
 SURFACE = "#fcfcfb"
@@ -186,7 +186,7 @@ def self_consumption_savings(daily, periods, provider):
     each day via provider.usage_rate_for_window() over that whole
     calendar day, a wall-clock-time-weighted blend - a real
     approximation, not the per-real-interval precision
-    power_cost_calculator.py's usage_cost_for_range() now has for the
+    lib/power_bill.py's usage_cost_for_range() now has for the
     whole-household usage charge, since self-consumption here is only
     available as a DAILY total, not per-interval. Stated plainly since
     solar self-consumption skews toward daylight hours, not evenly

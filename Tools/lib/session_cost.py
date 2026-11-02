@@ -137,10 +137,8 @@ from datetime import date, datetime, timedelta, timezone
 _TOOLS_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _TOOLS_DIR not in sys.path:
     sys.path.insert(0, _TOOLS_DIR)
-if os.path.join(_TOOLS_DIR, "commands") not in sys.path:
-    sys.path.insert(0, os.path.join(_TOOLS_DIR, "commands"))         # the command scripts it uses (Tools/commands/)
 from providers_power import get_power_provider  # noqa: E402
-from power_demand_calculator import load_rate_periods, rate_for_date  # noqa: E402
+from lib.power_demand import load_rate_periods, rate_for_date  # noqa: E402
 from lib.power_usage_db import get_usage_db_connection, resolve_usage_db_path, iter_rows  # noqa: E402
 from lib.evnex_common import is_real_charging_session  # noqa: E402
 from lib.tessie_api_common import resolve_tessie_data_home, load_config  # noqa: E402
@@ -422,7 +420,7 @@ def load_tessie_home_charges(tessie_dir=None):
  # than re-deriving a second, now-proven-fragile copy of the same check.
     from lib.drives.helpers import is_home_place, haversine_distance_m
     try:
-        from places_manager import load_places  # B6: import failure must not break every caller
+        from lib.places_common import load_places  # B6: import failure must not break every caller
         places = load_places()
     except Exception:
         places = {}
@@ -1014,7 +1012,7 @@ def review_unmatched_evnex_sessions(deepdive_dir=None, interactive=True):
 
 def reconcile_against_invoices(deepdive_dir=None, data_home=DATA_HOME, periods=None, log=print):
     """Cross-references AGL's real invoiced totals
-    (power_cost_calculator.REAL_INVOICE_CYCLES - already self-tested
+    (lib.power_bill.REAL_INVOICE_CYCLES - already self-tested
     against reconstruct_bill() there) against this file's own computed
     per-session EV charging costs, for each known real billing cycle
     (REQ-071 - the user's own "AGL invoices can be used to cross
@@ -1047,7 +1045,7 @@ def reconcile_against_invoices(deepdive_dir=None, data_home=DATA_HOME, periods=N
 
     Returns True if every cycle's bound (#3) held (or was skipped for
     lack of data), False if any cycle's bound was actually violated."""
-    from power_cost_calculator import reconstruct_bill, sum_kwh, REAL_INVOICE_CYCLES
+    from lib.power_bill import reconstruct_bill, sum_kwh, REAL_INVOICE_CYCLES
 
     periods = periods or load_rate_periods()
     all_sessions = load_evnex_deepdive_sessions(deepdive_dir=deepdive_dir)
