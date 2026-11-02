@@ -608,7 +608,7 @@ class DriveReview:
         elif not front:
             note = "The drive holding this footage is not connected: the stills are the kept ones, and no signs were read."
         elif not can_sign:
-            note = "Sign reading needs: %s" % "; ".join(req["hint"])
+            note = "Sign reading needs %s installed on this computer." % ", ".join(req["py"] + req["cmd"])
         done_ev = 0
         if can_look and front and ST.have_ffmpeg():
             # a still for every second of the whole drive, not only around the events: every front clip that overlaps it (the video's own stills; kept when the video is gone)
