@@ -4058,23 +4058,35 @@ class ChargingAnalyzer:
                 v_l_per_100km = v_spec.get("l_per_100km", 8.2)
 
         total_km_added = sum(s["range_added_km"] for s in sessions)
+        # Fuel-car equivalent cost. Only when every session has a real fuel
+        # price; otherwise None and the summary says there is no fuel price
+        # (no guessed $/L).
         petrol_equiv_spend = 0.0
         fuel_price_samples = []
+        all_priced = bool(sessions) and get_fuel_price is not None
         for s in sessions:
+            if not all_priced:
+                break
             s_km = s.get("range_added_km") or 0.0
             if s_km <= 0:
                 s_kwh = s.get("battery_kwh") or 0.0
                 s_km = (s_kwh / 0.15) if s_kwh > 0 else 0.0
-            
+
             s_dt = s.get("datetime")
-            p_price = 1.95
-            if get_fuel_price and s_dt:
-                p_price = get_fuel_price(s_dt, fuel_type=v_fuel_type, tessie_dir=self.tessie_data_home)
-                fuel_price_samples.append(p_price)
+            p_price = get_fuel_price(s_dt, fuel_type=v_fuel_type, tessie_dir=self.tessie_data_home) if s_dt else None
+            if p_price is None:
+                all_priced = False
+                break
+            fuel_price_samples.append(p_price)
             petrol_equiv_spend += (s_km / 100.0) * v_l_per_100km * p_price
 
-        avg_petrol_price = (sum(fuel_price_samples) / len(fuel_price_samples)) if fuel_price_samples else 1.95
-        savings = max(0.0, petrol_equiv_spend - total_spend)
+        if all_priced and fuel_price_samples:
+            avg_petrol_price = sum(fuel_price_samples) / len(fuel_price_samples)
+            savings = max(0.0, petrol_equiv_spend - total_spend)
+        else:
+            petrol_equiv_spend = None
+            avg_petrol_price = None
+            savings = None
 
  # Real km travelled (from drives_master.csv, not the rated-range
  # "added" figure above) over the exact same window these sessions
@@ -4104,8 +4116,9 @@ class ChargingAnalyzer:
                 annualize_ratio = 365.25 / period_days
                 projected_annual_km = km_travelled * annualize_ratio
                 projected_annual_spend = total_spend * annualize_ratio
-                projected_annual_petrol_equiv = (projected_annual_km / 100.0) * PETROL_L_PER_100KM * avg_petrol_price
-                projected_annual_savings = max(0.0, projected_annual_petrol_equiv - projected_annual_spend)
+                if avg_petrol_price is not None:
+                    projected_annual_petrol_equiv = (projected_annual_km / 100.0) * PETROL_L_PER_100KM * avg_petrol_price
+                    projected_annual_savings = max(0.0, projected_annual_petrol_equiv - projected_annual_spend)
 
         fully_matched_fast = sum(1 for s in sessions if (s["is_supercharger"] or s["is_fast_charger"]) and s["status"] == "MATCHED ✅")
         mismatched_fast = sum(1 for s in sessions if (s["is_supercharger"] or s["is_fast_charger"]) and "MISMATCH" in s["status"])
@@ -4132,7 +4145,10 @@ class ChargingAnalyzer:
         print(f"│{pad_display(kpi_l4, box_w - 2)}│")
 
         v_summary_tag = f"[{v_fuel_type}, {v_l_per_100km:.1f}L/100km - {v_name}]"
-        kpi_l5 = f"  {C_BOLD}Estimated ICE Equivalent:{C_RESET} ${petrol_equiv_spend:,.2f} (@ ~${avg_petrol_price:.2f}/L {v_summary_tag})  │  {C_GREEN}{C_BOLD}Net Savings:{C_RESET} ${savings:,.2f} AUD"
+        if petrol_equiv_spend is None:
+            kpi_l5 = f"  {C_BOLD}Estimated ICE Equivalent:{C_RESET} {C_ORANGE}No fuel price held{C_RESET} {v_summary_tag}  │  {C_BOLD}Net Savings:{C_RESET} n/a"
+        else:
+            kpi_l5 = f"  {C_BOLD}Estimated ICE Equivalent:{C_RESET} ${petrol_equiv_spend:,.2f} (@ ~${avg_petrol_price:.2f}/L {v_summary_tag})  │  {C_GREEN}{C_BOLD}Net Savings:{C_RESET} ${savings:,.2f} AUD"
         print(f"│{pad_display(kpi_l5, box_w - 2, truncate=True)}│")
 
         if mismatched_fast > 0:
@@ -4162,8 +4178,12 @@ class ChargingAnalyzer:
             print(f"│{pad_display(kpi_l9, box_w - 2)}│")
 
             annualize_caveat = " (short window - rough)" if period_days and period_days < 30 else ""
-            kpi_l10 = (f"  {C_GREEN}{C_BOLD}Projected Annual Savings vs {v_name.split('(')[0].strip()}:{C_RESET} "
-                       f"${projected_annual_savings:,.2f} AUD/yr{annualize_caveat}")
+            if projected_annual_savings is None:
+                kpi_l10 = (f"  {C_BOLD}Projected Annual Savings vs {v_name.split('(')[0].strip()}:{C_RESET} "
+                           f"{C_ORANGE}No fuel price held{C_RESET}")
+            else:
+                kpi_l10 = (f"  {C_GREEN}{C_BOLD}Projected Annual Savings vs {v_name.split('(')[0].strip()}:{C_RESET} "
+                           f"${projected_annual_savings:,.2f} AUD/yr{annualize_caveat}")
             print(f"│{pad_display(kpi_l10, box_w - 2, truncate=True)}│")
         else:
             kpi_l8 = f"  {C_BOLD}Distance Travelled:{C_RESET} {C_ORANGE}No Tessie measurement for this session{C_RESET}"
@@ -4269,13 +4289,18 @@ class ChargingAnalyzer:
                     s_kwh = s.get("battery_kwh") or 0.0
                     s_km = (s_kwh / 0.15) if s_kwh > 0 else 0.0
                 s_dt = s.get("datetime")
-                p = get_fuel_price(s_dt, fuel_type=v_fuel, tessie_dir=self.tessie_data_home)
+                p = get_fuel_price(s_dt, fuel_type=v_fuel, tessie_dir=self.tessie_data_home) if s_dt else None
+                if p is None:
+                    prices = None
+                    break
                 prices.append(p)
                 fuel_costs.append((s_km / 100.0) * v_l_100km * p)
 
-            v_spend = sum(fuel_costs)
-            v_avg_price = (sum(prices) / len(prices)) if prices else 1.95
-            v_savings = v_spend - total_spend
+            # No fuel price for this vehicle's fuel: show no cost, not a guess.
+            priced = bool(prices)
+            v_spend = sum(fuel_costs) if priced else None
+            v_avg_price = (sum(prices) / len(prices)) if priced else None
+            v_savings = (v_spend - total_spend) if priced else None
 
             running_costs = v_spec.get("running_costs", {})
             maint_km = running_costs.get("service_maintenance_per_km", 0.0) if isinstance(running_costs, dict) else 0.0
@@ -4283,7 +4308,7 @@ class ChargingAnalyzer:
             running_per_km_str = f"${(maint_km + tyre_km):.3f}/km" if (maint_km + tyre_km) > 0 else "N/A"
 
             ann_savings_str = "N/A"
-            if km_travelled and km_travelled > 0 and period_days and period_days > 0:
+            if priced and km_travelled and km_travelled > 0 and period_days and period_days > 0:
                 ann_ratio = 365.25 / period_days
                 ann_km = km_travelled * ann_ratio
                 ann_ev_spend = total_spend * ann_ratio
@@ -4296,9 +4321,10 @@ class ChargingAnalyzer:
                 "category": v_spec.get("category", "-"),
                 "fuel": v_fuel,
                 "l_100km": f"{v_l_100km:.1f} L",
-                "avg_price": f"${v_avg_price:.2f}/L",
-                "equiv_spend": f"${v_spend:,.2f}",
-                "savings": f"+${v_savings:,.2f}" if v_savings >= 0 else f"-${abs(v_savings):,.2f}",
+                "avg_price": f"${v_avg_price:.2f}/L" if priced else "no price",
+                "equiv_spend": f"${v_spend:,.2f}" if priced else "n/a",
+                "savings": ("n/a" if not priced else
+                            f"+${v_savings:,.2f}" if v_savings >= 0 else f"-${abs(v_savings):,.2f}"),
                 "running_km": running_per_km_str,
                 "ann_savings": ann_savings_str
             })
@@ -4315,7 +4341,7 @@ class ChargingAnalyzer:
         print("├" + "┼".join("─" * w for w in m_widths) + "┤")
 
         for r in rows_data:
-            s_color = C_GREEN if r["savings"].startswith("+") else C_RED
+            s_color = C_GREEN if r["savings"].startswith("+") else ("" if r["savings"] == "n/a" else C_RED)
             print("│" + "│".join([
                 pad_display(f" {r['name']}", m_widths[0], "left", truncate=True),
                 pad_display(f" {r['category']}", m_widths[1], "left", truncate=True),
