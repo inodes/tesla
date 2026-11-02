@@ -1100,7 +1100,8 @@ async function sentryPlayer(host,ev,role=ev&&ev.role||"A",folder="SentryClips"){
 }
 
 // ---------- Places (the places manager) and the page for one place
-let PL={tab:"saved",q:"",visited:false,net:"all",state:"all",view:"list"},SYNCPOLL=null,PLM=null;
+const SOON=/coming soon/i;      // a charger listed before it opens (PlugShare, Chargefox, Evie ... put it in the name)
+let PL={tab:"saved",q:"",visited:false,soon:false,net:"all",state:"all",view:"list"},SYNCPOLL=null,PLM=null;
 // A map of the rows of the current Places tab (same filters as the list). Dots are small so they do not hide each other;
 // places you have used are solid, the rest faded. New Zealand is left out for now.
 // ---------- range on the Places map (lib/app_reach.py): pick chargers, see where a car leaving them with some charge can get to by road, or which roads are far from any charger
@@ -1260,9 +1261,9 @@ async function pagePlaces(){
     const stat=[{k:"charges",t:"Charges"},{k:"idles",t:"Parked"},{k:"drives",t:"Arrivals"}];
     if(PL.tab==="saved"){rows=L.saved.filter(p=>!q||(p.name+" "+p.notes).toLowerCase().includes(q));
       cols=[{k:"name",t:"Place",l:1},{k:"notes",t:"Notes",l:1},...stat,{k:"reparks",t:"Re-parks"},{k:"kwh",t:"kWh charged",f:r=>r.charges?n0(r.kwh,1):"–"},{k:"last",t:"Last visit",f:r=>r.last||"–"},{k:"radius",t:"Radius",f:r=>n0(r.radius)+" m"}]}
-    else if(PL.tab==="sc"){rows=L.superchargers.filter(p=>(!PL.visited||p.charges)&&(!q||(qs?p.name.endsWith(", "+qs):(p.name+" "+p.addr).toLowerCase().includes(q))));
+    else if(PL.tab==="sc"){rows=L.superchargers.filter(p=>(!PL.visited||p.charges)&&(PL.soon||!SOON.test(p.name||""))&&(!q||(qs?p.name.endsWith(", "+qs):(p.name+" "+p.addr).toLowerCase().includes(q))));
       cols=[{k:"name",t:"Supercharger (name on tesla.com)",l:1},{k:"addr",t:"Address",l:1},{k:"stalls",t:"Stalls"},{k:"kw",t:"Max kW",f:r=>n0(r.kw)},{k:"charges",t:"Charges"},{k:"kwh",t:"kWh",f:r=>r.charges?n0(r.kwh,1):"–"},{k:"cost",t:"Cost",f:r=>r.charges?money(r.cost):"–"},{k:"last",t:"Last visit",f:r=>r.last||"–"}]}
-    else if(PL.tab==="chargers"){rows=C.rows.filter(p=>(PL.net==="all"||p.network===PL.net)&&(PL.state==="all"||p.state===PL.state)&&(!PL.visited||p.charges)&&(!q||(qs?p.state===qs:(p.name+" "+p.addr+" "+p.network+" "+p.suburb).toLowerCase().includes(q))));
+    else if(PL.tab==="chargers"){rows=C.rows.filter(p=>(PL.net==="all"||p.network===PL.net)&&(PL.soon||!SOON.test(p.name||""))&&(PL.state==="all"||p.state===PL.state)&&(!PL.visited||p.charges)&&(!q||(qs?p.state===qs:(p.name+" "+p.addr+" "+p.network+" "+p.suburb).toLowerCase().includes(q))));
       cols=[{k:"name",t:"Charger",l:1},{k:"network",t:"Network",l:1},{k:"addr",t:"Address",l:1,f:r=>esc(r.addr||r.suburb||"")},{k:"state",t:"State"},{k:"stalls",t:"Stalls",f:r=>r.stalls==null?"–":n0(r.stalls)},{k:"kw",t:"Max kW",f:r=>r.kw?n0(r.kw):"–"},{k:"tier",t:"Type",l:1,f:r=>esc((r.tier||"").replace(/_/g," "))},{k:"conn",t:"Connectors",l:1},{k:"charges",t:"Charges"},{k:"kwh",t:"kWh",f:r=>r.charges?n0(r.kwh,1):"–"},{k:"last",t:"Last charge",f:r=>r.last||"–"}]}
     else{rows=L.found.filter(p=>!q||(p.addr||"").toLowerCase().includes(q));
       cols=[{k:"addr",t:"Address of a place you return to, not saved yet",l:1,f:r=>esc(r.addr||(r.lat.toFixed(4)+", "+r.lon.toFixed(4)))},{k:"lat",t:"Lat, Lon",l:1,f:r=>`${(+r.lat).toFixed(5)}, ${(+r.lon).toFixed(5)}`},{k:"map",t:"Open in",l:1,f:r=>mapLinks(r.lat,r.lon,r.addr,1)},{k:"visits",t:"Days there"},{k:"last",t:"Last"}]}
@@ -1272,14 +1273,14 @@ async function pagePlaces(){
   main.innerHTML=`<h1>Places</h1><div class="sub" id="pli">Your saved places, the Tesla Superchargers (named as on tesla.com) and stops worth naming. Open one to see what is around it on OpenStreetMap.</div>
    <div class="tiles" id="pltl">${tile(L.saved.length,"saved places")}${tile(L.superchargers.filter(s=>s.charges).length+" of "+L.superchargers.length,"Superchargers used")}${tile(L.found.length,"stops to review")}</div>
    <div class="bar"><button class="chip" data-t="saved">Saved places</button><button class="chip" data-t="sc">Superchargers</button><button class="chip" data-t="chargers">Chargers</button><button class="chip" data-t="found">Stops to review</button><span class="vw"><button class="chip" data-v="list">List</button><button class="chip" data-v="map">Map</button></span>
-   <select id="cn"></select><select id="cs"></select><label class="sub" id="vl"><input type="checkbox" id="vis"> used only</label><button class="btn" id="sy">Sync chargers…</button><input type="search" id="q" placeholder="Search…" value="${esc(PL.q)}"><button class="btn pri" id="add">+ New place</button><span class="sub" id="cnt"></span></div><div id="sp"></div><div id="tb"></div>`;
-  const tabs=()=>{$("#pli").style.display=$("#pltl").style.display=PL.view==="map"?"none":"";$$("[data-t]").forEach(c=>c.classList.toggle("on",c.dataset.t===PL.tab));const ch=PL.tab==="chargers";$("#vl").style.display=PL.tab==="sc"||ch?"":"none";$$("[data-v]").forEach(c=>c.classList.toggle("on",c.dataset.v===PL.view));$("#cn").style.display=$("#cs").style.display=$("#sy").style.display=ch?"":"none";$("#vis").checked=PL.visited;
+   <select id="cn"></select><select id="cs"></select><label class="sub" id="vl"><input type="checkbox" id="vis"> used only</label><label class="sub" id="sl"><input type="checkbox" id="soon"> show coming soon</label><button class="btn" id="sy">Sync chargers…</button><input type="search" id="q" placeholder="Search…" value="${esc(PL.q)}"><button class="btn pri" id="add">+ New place</button><span class="sub" id="cnt"></span></div><div id="sp"></div><div id="tb"></div>`;
+  const tabs=()=>{$("#pli").style.display=$("#pltl").style.display=PL.view==="map"?"none":"";$$("[data-t]").forEach(c=>c.classList.toggle("on",c.dataset.t===PL.tab));const ch=PL.tab==="chargers";$("#vl").style.display=$("#sl").style.display=PL.tab==="sc"||ch?"":"none";$$("[data-v]").forEach(c=>c.classList.toggle("on",c.dataset.v===PL.view));$("#cn").style.display=$("#cs").style.display=$("#sy").style.display=ch?"":"none";$("#vis").checked=PL.visited;
     if(ch&&C){$("#cn").innerHTML='<option value="all">All networks</option>'+C.networks.map(([n,c])=>`<option value="${esc(n)}">${esc(n||"Other")} (${n0(c)})</option>`).join("");$("#cn").value=PL.net;
       const st=[...new Set(C.rows.map(r=>r.state).filter(Boolean))].sort();$("#cs").innerHTML='<option value="all">All states</option>'+st.map(x=>`<option>${esc(x)}</option>`).join("");$("#cs").value=PL.state}};
   $$("[data-t]").forEach(c=>c.onclick=async()=>{PL.tab=c.dataset.t;if(PL.tab==="chargers")await need();tabs();draw()});
   $$("[data-v]").forEach(c=>c.onclick=()=>{PL.view=c.dataset.v;tabs();draw()});
   $("#cn").onchange=e=>{PL.net=e.target.value;draw()};$("#cs").onchange=e=>{PL.state=e.target.value;draw()};
-  $("#sy").onclick=()=>syncPanel($("#sp"),async()=>{cache.chargers=null;cache.places=null;C=await api("chargers");tabs();draw()});$("#vis").onchange=e=>{PL.visited=e.target.checked;draw()};$("#q").oninput=e=>{PL.q=e.target.value;draw()};
+  $("#sy").onclick=()=>syncPanel($("#sp"),async()=>{cache.chargers=null;cache.places=null;C=await api("chargers");tabs();draw()});$("#vis").onchange=e=>{PL.visited=e.target.checked;draw()};$("#soon").checked=PL.soon;$("#soon").onchange=e=>{PL.soon=e.target.checked;draw()};$("#q").oninput=e=>{PL.q=e.target.value;draw()};
   $("#add").onclick=()=>{sessionStorage.setItem("placePrefill",JSON.stringify({name:"",lat:"",lon:"",radius_m:150}));location.hash="#/place/"+encodeURIComponent("@new")};tabs();draw();
 }
 // ---------- a job run from the app, shown as its steps (one row each: done / running / failed, and the short result the step printed); the raw output only under Details
