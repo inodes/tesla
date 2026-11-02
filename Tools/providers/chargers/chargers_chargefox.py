@@ -408,9 +408,7 @@ class ChargefoxProvider(BaseChargerProvider):
                     current_rate = float(m.group(1))
                     pricing_model = "flat" if "-" not in e_desc else "time_of_use"
 
-        if not rate_range and net == "NRMA":
-            rate_range = "$0.54 - $0.60/kWh"
-            pricing_model = "flat"
+        # No price in the feed: none is shown (an NRMA site used to get a typed-in "$0.54 - $0.60/kWh").
 
  # Clean address components
         addr_obj = node.get("address") or {}

@@ -394,7 +394,7 @@ def run_audit(network_filter: Optional[str] = None, state_filter: Optional[str] 
                     "ps_id": ps_id,
                     "ps_name": ps_meta.get("name"),
                     "ps_price": "$0.00 / Unlisted",
-                    "expected_price": _fmt_price(s.current_rate_per_kwh) if not s.schedule else f"${s.schedule[0].get('rate', 0.39):.2f} - ${s.schedule[-1].get('rate', 0.50):.2f}/kWh (TOU)",
+                    "expected_price": _fmt_price(s.current_rate_per_kwh) if not s.schedule else f"{_fmt_price(s.schedule[0].get('rate'))} - {_fmt_price(s.schedule[-1].get('rate'))} (TOU)",
                     "ps_url": ps_url,
                     "auth_status": auth_status,
                     "ps_age_days": ps_age_days,

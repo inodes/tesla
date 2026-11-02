@@ -91,6 +91,12 @@ from lib.table_formatter import (
     format_box_line,
 )
 from lib.charging_analyzer import C_BOLD, C_CYAN, C_DIM, C_GREEN, C_RESET, C_YELLOW, ChargingAnalyzer, TeslaInvoiceParser, parse_flexible_date  # noqa: E402
+from lib.fuel_common import vehicle_l_per_100km  # noqa: E402
+
+
+def _litres(v):
+    """A table cell for an L/100km figure; "-" when the vehicle has none published."""
+    return f"{v:.1f} L " if v is not None else "- "
 
 C_WHITE   = "\033[97m"
 
@@ -295,15 +301,7 @@ def display_comparison_vehicles_table(tessie_dir=None):
         name = spec.get("name") or spec.get("label") or key
         category = spec.get("category", "-")
         fuel = spec.get("fuel_type", "U91")
-        consumption = spec.get("consumption", {})
-        if isinstance(consumption, dict):
-            comb = consumption.get("combined_l_per_100km") or consumption.get("l_per_100km") or 8.5
-            urban = consumption.get("urban_l_per_100km", comb)
-            hwy = consumption.get("highway_l_per_100km", comb)
-        else:
-            comb = spec.get("l_per_100km", 8.5)
-            urban = spec.get("urban_l_per_100km", comb)
-            hwy = spec.get("highway_l_per_100km", comb)
+        comb, urban, hwy = vehicle_l_per_100km(spec)      # None when the vehicle has no published figure: shown as "-"
 
         running_costs = spec.get("running_costs", {})
         maint = running_costs.get("service_maintenance_per_km", 0.0) if isinstance(running_costs, dict) else 0.0
@@ -315,9 +313,9 @@ def display_comparison_vehicles_table(tessie_dir=None):
             pad_display(f" {name}", widths[1], "left", truncate=True),
             pad_display(f" {category}", widths[2], "left", truncate=True),
             pad_display(fuel, widths[3], "center", truncate=True),
-            pad_display(f"{comb:.1f} L ", widths[4], "right", truncate=True),
-            pad_display(f"{urban:.1f} L ", widths[5], "right", truncate=True),
-            pad_display(f"{hwy:.1f} L ", widths[6], "right", truncate=True),
+            pad_display(_litres(comb), widths[4], "right", truncate=True),
+            pad_display(_litres(urban), widths[5], "right", truncate=True),
+            pad_display(_litres(hwy), widths[6], "right", truncate=True),
             pad_display(f"${maint:.3f} " if maint > 0 else "- ", widths[7], "right", truncate=True),
             pad_display(f"${tyres:.3f} " if tyres > 0 else "- ", widths[8], "right", truncate=True),
             pad_display(is_default, widths[9], "center", truncate=True),
@@ -375,8 +373,7 @@ def display_gvg_top20_table(tessie_dir=None):
         co2 = spec.get("co2_g_per_km", "-")
         co2_s = f"{co2} g" if co2 != "-" else "-"
 
-        consumption = spec.get("consumption", {})
-        comb = consumption.get("combined_l_per_100km", 8.5) if isinstance(consumption, dict) else 8.5
+        comb = vehicle_l_per_100km(spec)[0]
 
         running_costs = spec.get("running_costs", {})
         maint = running_costs.get("service_maintenance_per_km", 0.0) if isinstance(running_costs, dict) else 0.0
@@ -391,7 +388,7 @@ def display_gvg_top20_table(tessie_dir=None):
             pad_display(f" {name}", widths[2], "left", truncate=True),
             pad_display(f" {category}", widths[3], "left", truncate=True),
             pad_display(fuel, widths[4], "center", truncate=True),
-            pad_display(f"{comb:.1f} L ", widths[5], "right", truncate=True),
+            pad_display(_litres(comb), widths[5], "right", truncate=True),
             pad_display(f"{co2_s} ", widths[6], "right", truncate=True),
             pad_display(f"${maint:.3f} " if maint > 0 else "- ", widths[7], "right", truncate=True),
             pad_display(f"${tyres:.3f} " if tyres > 0 else "- ", widths[8], "right", truncate=True),
@@ -426,10 +423,7 @@ def search_and_display_vehicles(query_str, tessie_dir=None):
         name = spec.get("name", key)
         cat = spec.get("category", "-")
         fuel = spec.get("fuel_type", "U91")
-        cons = spec.get("consumption", {})
-        comb = cons.get("combined_l_per_100km", 0.0) if isinstance(cons, dict) else 0.0
-        urban = cons.get("urban_l_per_100km", comb) if isinstance(cons, dict) else comb
-        hwy = cons.get("highway_l_per_100km", comb) if isinstance(cons, dict) else comb
+        comb, urban, hwy = vehicle_l_per_100km(spec)
         co2 = spec.get("co2_g_per_km")
         co2_s = f", {co2} g CO2/km" if co2 else ""
 
@@ -438,7 +432,7 @@ def search_and_display_vehicles(query_str, tessie_dir=None):
         tyres = rc.get("tyres_per_km", 0.0) if isinstance(rc, dict) else 0.0
 
         print(f"  • {C_GREEN}{C_BOLD}{key}{C_RESET}: {name} ({cat})")
-        print(f"    {C_DIM}Fuel:{C_RESET} {fuel} | {C_DIM}ADR Consumption:{C_RESET} {comb:.1f} L/100km combined ({urban:.1f} urban / {hwy:.1f} hwy){co2_s}")
+        print(f"    {C_DIM}Fuel:{C_RESET} {fuel} | {C_DIM}ADR Consumption:{C_RESET} " + (f"{comb:.1f} L/100km combined ({urban:.1f} urban / {hwy:.1f} hwy)" if comb is not None else "not published") + f"{co2_s}")
         print(f"    {C_DIM}Running Costs:{C_RESET} ${maint:.3f}/km service/maint + ${tyres:.3f}/km tyres = ${maint+tyres:.3f}/km total")
         print(f"    {C_DIM}Command:{C_RESET} {C_CYAN}./Tools/analyse_charging.py --vehicle {key}{C_RESET}\n")
 

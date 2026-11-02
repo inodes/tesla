@@ -185,20 +185,27 @@ def kwh_per_100km_fit(profile):
                 bands.append(((lo + hi) / 2.0, float(r["avg_efficiency_kwh_per_100km"]), float(r["total_distance_km"])))
     except (KeyError, TypeError, ValueError):
         pass
+    # No typed-in curve: with no usable band the consumption is not known (None, and the kWh view says so); with fewer than three bands,
+    # or a fit that is not physical (negative terms), the distance-weighted average of the bands there are, the same at every speed.
+    if not bands:
+        return None
+    flat = (float(np.average([b[1] for b in bands], weights=[b[2] for b in bands])), 0.0)
     if len(bands) < 3:
-        return 11.0, 0.0010
+        return flat
     v = np.array([b[0] for b in bands])
     e = np.array([b[1] for b in bands])
     w = np.sqrt([b[2] for b in bands])
     A = np.stack([np.ones_like(v), v * v], 1) * w[:, None]
     c, *_ = np.linalg.lstsq(A, e * w, rcond=None)
-    return max(float(c[0]), 6.0), max(float(c[1]), 0.0004)
+    if c[0] <= 0 or c[1] < 0:
+        return flat
+    return float(c[0]), float(c[1])
 
 
 # ---- the graph -------------------------------------------------------------------------------------------------------------------
 
 class RoadGraph:
-    def __init__(self, d, fit=(11.0, 0.0010)):
+    def __init__(self, d, fit=None):
         self.dir = d
         self.fit = fit
         self.a = {k: np.load(os.path.join(d, k + ".npy"), mmap_mode="r") for k in FILES}
@@ -221,6 +228,8 @@ class RoadGraph:
     # cost factors: a chain's metres become km, or kWh at the chain's speed
     def _f(self, basis, kmh):
         kmh = np.asarray(kmh, np.float64)
+        if basis != "km" and self.fit is None:
+            raise ValueError("consumption unknown")
         return np.ones_like(kmh) if basis == "km" else (self.fit[0] + self.fit[1] * kmh * kmh) / 100.0
 
     def weights(self, basis):

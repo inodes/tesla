@@ -246,7 +246,7 @@ class RouteScoreTest(unittest.TestCase):
 
 class CarEfficiencyTest(unittest.TestCase):
     def test_mass(self):
-        self.assertEqual(CE.vehicle_mass_kg_for_profile(None), CE.FALLBACK_VEHICLE_MASS_KG)
+        self.assertIsNone(CE.vehicle_mass_kg_for_profile(None))           # no assumed mass: unknown
         self.assertEqual(CE.vehicle_mass_kg_for_profile({"mass": {"assumed_driving_mass_kg": 2100}}), 2100)
         self.assertEqual(CE.vehicle_mass_kg_for_profile({"mass": {"assumed_driving_mass_kg": 2100}}, 1900), 1900)
 

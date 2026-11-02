@@ -780,6 +780,21 @@ class TeslaInvoiceParser:
         return records
 
 
+
+def _money_signed(v, decimals=2):
+    """"+$12.34" / "-$5.00"."""
+    return ("+" if v >= 0 else "-") + f"${abs(v):,.{decimals}f}"
+
+
+def format_ice_equivalent(ice, v_name, v_fuel_type, v_l_per_100km, savings):
+    """The summary's ICE line: the spend, the price and vehicle it uses and the net saving; "unknown (why)" when a figure is missing."""
+    if ice["spend"] is None:
+        return f"unknown ({ice['reason']})" + (f" - {v_name}" if v_name else "")
+    short = (v_name or "").split("(")[0].strip()
+    left = f", {ice['left_out']} without battery kWh left out" if ice["left_out"] else ""
+    return (f"${ice['spend']:,.2f} ({short}: {v_fuel_type} ~${ice['avg_price']:.2f}/L, {v_l_per_100km:.1f} L/100km; car {ice['wh_per_km']:.0f} Wh/km{left})  │  "
+            f"{C_GREEN}{C_BOLD}Net Savings:{C_RESET} {_money_signed(savings)} AUD")
+
 class ChargingAnalyzer:
     def __init__(self, config_path=None, tessie_dir=None, invoices_dir=None, tolerance_mins=None, tolerance_kwh=None):
         self.script_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -2597,6 +2612,60 @@ class ChargingAnalyzer:
             "deepdive_path": deepdive_path,
         }
 
+    def _real_wh_per_km(self, drive_totals):
+        """The car's real Wh/km: the drives in the window (drives_master.csv energy used / distance), else all logged drives
+        (lib/car_figures). None when no drive has both figures."""
+        if drive_totals and drive_totals.get("distance_km") and drive_totals.get("energy_used_kwh"):
+            return drive_totals["energy_used_kwh"] * 1000.0 / drive_totals["distance_km"]
+        try:
+            from lib.car_figures import driving_wh_per_km
+            for td in self.tessie_dirs:
+                w = driving_wh_per_km(td)
+                if w:
+                    return w
+        except Exception:
+            pass
+        return None
+
+    def _ice_equivalent(self, sessions, l_per_100km, fuel_type, wh_per_km, get_fuel_price):
+        """What a petrol/diesel car would have spent on fuel for the distance these charges' energy drives the car:
+        each charge's battery kWh / the car's real Wh/km = km, x the vehicle's L/100km x FuelCheck's price on the charge's date.
+        Charges with no battery kWh (an invoice Tessie never saw) are left out of both sides. -> dict(spend, avg_price, ev_spend,
+        counted, left_out, reason): spend and avg_price None, with `reason`, when a figure is missing (never a guessed number)."""
+        out = dict(spend=None, avg_price=None, ev_spend=0.0, counted=0, left_out=0, reason=None)
+        used = []
+        for s in sessions:
+            if (s.get("battery_kwh") or 0) > 0:
+                used.append(s)
+            else:
+                out["left_out"] += 1
+        out["counted"] = len(used)
+        out["ev_spend"] = sum((s["invoice_cost"] if s.get("invoice_cost") is not None else (s.get("tessie_cost") or 0.0)) for s in used)
+        if not used:
+            out["reason"] = "no charge with a battery kWh"
+            return out
+        if not get_fuel_price:
+            out["reason"] = "fuel prices not available"
+            return out
+        prices = []
+        for s in used:
+            p = get_fuel_price(s["datetime"], fuel_type=fuel_type, tessie_dir=self.tessie_data_home) if s.get("datetime") else None
+            prices.append(p)
+        known = [p for p in prices if p is not None]
+        out["avg_price"] = sum(known) / len(known) if known and len(known) == len(prices) else None
+        if l_per_100km is None:
+            out["reason"] = "no L/100km for the vehicle"
+            return out
+        if wh_per_km is None:
+            out["reason"] = "no drive with distance and energy to turn kWh into km"
+            return out
+        if out["avg_price"] is None:
+            out["reason"] = "no FuelCheck price for every charge date"
+            return out
+        out["spend"] = sum((s["battery_kwh"] * 1000.0 / wh_per_km) / 100.0 * l_per_100km * p for s, p in zip(used, prices))
+        out["wh_per_km"] = wh_per_km
+        return out
+
     def _load_drive_totals_in_period(self, start_dt, end_dt):
         """Real per-drive totals from drives_master.csv within
         [start_dt, end_dt] (naive LOCAL datetimes, same convention
@@ -4038,7 +4107,7 @@ class ChargingAnalyzer:
         overall_eff_pct = (total_battery_kwh / total_dispenser_kwh * 100.0) if total_dispenser_kwh > 0 else 100.0
         
         total_spend = sum((s["invoice_cost"] if s["invoice_cost"] is not None else s["tessie_cost"]) for s in sessions)
-        avg_cost_kwh = (total_spend / total_dispenser_kwh) if total_dispenser_kwh > 0 else 0.0
+        avg_cost_kwh = (total_spend / total_dispenser_kwh) if total_dispenser_kwh > 0 else None
 
  # Dynamic dated fuel prices & comparison vehicle mapping (TODO-030 / TODO-042)
         try:
@@ -4062,46 +4131,17 @@ class ChargingAnalyzer:
                 load_comparison_vehicles = None
                 calculate_single_vehicle_running_cost = None
 
- # Resolve chosen comparison vehicle (or default)
-        v_key = "petrol_standard"
-        v_name = "Medium Petrol SUV (Mazda CX-5 G25)"
-        v_fuel_type = "U91"
-        v_l_per_100km = 8.2
+ # Resolve chosen comparison vehicle (or default). Its L/100km is its published figure; None when the spec has none.
+        v_key, v_name, v_fuel_type, v_l_per_100km = None, "Comparison Vehicle", None, None
         if get_comparison_vehicle:
+            from lib.fuel_common import vehicle_l_per_100km
             v_key, v_spec = get_comparison_vehicle(selected_vehicle, tessie_dir=self.tessie_data_home)
             v_name = v_spec.get("name") or v_spec.get("label") or "Comparison Vehicle"
             v_fuel_type = v_spec.get("fuel_type", "U91")
-            consumption = v_spec.get("consumption", {})
-            if isinstance(consumption, dict):
-                v_l_per_100km = consumption.get("combined_l_per_100km") or consumption.get("l_per_100km") or 8.2
-            else:
-                v_l_per_100km = v_spec.get("l_per_100km", 8.2)
+            v_l_per_100km = vehicle_l_per_100km(v_spec)[0]
 
-        total_km_added = sum(s["range_added_km"] for s in sessions)
-        petrol_equiv_spend = 0.0
-        fuel_price_samples = []
-        for s in sessions:
-            s_km = s.get("range_added_km") or 0.0
-            if s_km <= 0:
-                s_kwh = s.get("battery_kwh") or 0.0
-                s_km = (s_kwh / 0.15) if s_kwh > 0 else 0.0
-            
-            s_dt = s.get("datetime")
-            p_price = 1.95
-            if get_fuel_price and s_dt:
-                p_price = get_fuel_price(s_dt, fuel_type=v_fuel_type, tessie_dir=self.tessie_data_home)
-                fuel_price_samples.append(p_price)
-            petrol_equiv_spend += (s_km / 100.0) * v_l_per_100km * p_price
-
-        avg_petrol_price = (sum(fuel_price_samples) / len(fuel_price_samples)) if fuel_price_samples else 1.95
-        savings = max(0.0, petrol_equiv_spend - total_spend)
-
- # Real km travelled (from drives_master.csv, not the rated-range
- # "added" figure above) over the exact same window these sessions
- # cover, plus the derived cost/efficiency/annualized figures that
- # only mean anything once anchored to real distance driven.
-        PETROL_L_PER_100KM = v_l_per_100km
-        PETROL_PRICE_PER_L = avg_petrol_price
+ # Real km travelled (from drives_master.csv) over the exact same window these sessions cover, the car's real Wh/km
+ # over those drives (all logged drives when the window has none), and the cost/efficiency/annualized figures built on them.
         session_dts = [s["datetime"] for s in sessions if s.get("datetime")]
         km_travelled = None
         period_days = None
@@ -4110,22 +4150,31 @@ class ChargingAnalyzer:
         cost_per_km = None
         projected_annual_km = None
         projected_annual_savings = None
+        drive_totals = None
         if session_dts:
             period_start = min(session_dts)
             period_end = max(session_dts)
             period_days = max((period_end - period_start).days, 1)
             drive_totals = self._load_drive_totals_in_period(period_start, period_end)
             km_travelled = drive_totals["distance_km"] if drive_totals else None
-            if km_travelled and km_travelled > 0:
-                real_kwh_used = drive_totals.get("energy_used_kwh") or 0.0
-                driving_efficiency_kwh_per_100km = (real_kwh_used / km_travelled) * 100.0 if real_kwh_used > 0 else None
-                charging_loss_kwh_per_100km = (total_loss_kwh / km_travelled) * 100.0
-                cost_per_km = total_spend / km_travelled
-                annualize_ratio = 365.25 / period_days
-                projected_annual_km = km_travelled * annualize_ratio
-                projected_annual_spend = total_spend * annualize_ratio
-                projected_annual_petrol_equiv = (projected_annual_km / 100.0) * PETROL_L_PER_100KM * avg_petrol_price
-                projected_annual_savings = max(0.0, projected_annual_petrol_equiv - projected_annual_spend)
+        wh_per_km = self._real_wh_per_km(drive_totals)
+
+        ice = self._ice_equivalent(sessions, v_l_per_100km, v_fuel_type, wh_per_km, get_fuel_price)
+        petrol_equiv_spend = ice["spend"]
+        avg_petrol_price = ice["avg_price"]
+        savings = (petrol_equiv_spend - ice["ev_spend"]) if petrol_equiv_spend is not None else None
+
+        if km_travelled and km_travelled > 0:
+            real_kwh_used = drive_totals.get("energy_used_kwh") or 0.0
+            driving_efficiency_kwh_per_100km = (real_kwh_used / km_travelled) * 100.0 if real_kwh_used > 0 else None
+            charging_loss_kwh_per_100km = (total_loss_kwh / km_travelled) * 100.0
+            cost_per_km = total_spend / km_travelled
+            annualize_ratio = 365.25 / period_days
+            projected_annual_km = km_travelled * annualize_ratio
+            projected_annual_spend = total_spend * annualize_ratio
+            if v_l_per_100km is not None and avg_petrol_price is not None:
+                projected_annual_petrol_equiv = (projected_annual_km / 100.0) * v_l_per_100km * avg_petrol_price
+                projected_annual_savings = projected_annual_petrol_equiv - projected_annual_spend
 
         fully_matched_fast = sum(1 for s in sessions if (s["is_supercharger"] or s["is_fast_charger"]) and s["status"] == "MATCHED ✅")
         mismatched_fast = sum(1 for s in sessions if (s["is_supercharger"] or s["is_fast_charger"]) and "MISMATCH" in s["status"])
@@ -4148,11 +4197,11 @@ class ChargingAnalyzer:
         kpi_l3 = f"  {C_BOLD}Charging Efficiency Loss:{C_RESET} {total_loss_kwh:,.2f} kWh  ({eff_color}{overall_eff_pct:.1f}% Dispenser-to-Battery{C_RESET})"
         print(f"│{pad_display(kpi_l3, box_w - 2)}│")
 
-        kpi_l4 = f"  {C_BOLD}Total Electricity Spend:{C_RESET} ${total_spend:,.2f} AUD  │  {C_BOLD}Average Cost:{C_RESET} ${avg_cost_kwh:.2f}/kWh"
+        avg_cost_s = f"${avg_cost_kwh:.2f}/kWh" if avg_cost_kwh is not None else "unknown (no metered kWh)"
+        kpi_l4 = f"  {C_BOLD}Total Electricity Spend:{C_RESET} ${total_spend:,.2f} AUD  │  {C_BOLD}Average Cost:{C_RESET} {avg_cost_s}"
         print(f"│{pad_display(kpi_l4, box_w - 2)}│")
 
-        v_summary_tag = f"[{v_fuel_type}, {v_l_per_100km:.1f}L/100km - {v_name}]"
-        kpi_l5 = f"  {C_BOLD}Estimated ICE Equivalent:{C_RESET} ${petrol_equiv_spend:,.2f} (@ ~${avg_petrol_price:.2f}/L {v_summary_tag})  │  {C_GREEN}{C_BOLD}Net Savings:{C_RESET} ${savings:,.2f} AUD"
+        kpi_l5 = f"  {C_BOLD}Estimated ICE Equivalent:{C_RESET} " + format_ice_equivalent(ice, v_name, v_fuel_type, v_l_per_100km, savings)
         print(f"│{pad_display(kpi_l5, box_w - 2, truncate=True)}│")
 
         if mismatched_fast > 0:
@@ -4182,8 +4231,9 @@ class ChargingAnalyzer:
             print(f"│{pad_display(kpi_l9, box_w - 2)}│")
 
             annualize_caveat = " (short window - rough)" if period_days and period_days < 30 else ""
+            ann_s = _money_signed(projected_annual_savings) + " AUD/yr" if projected_annual_savings is not None else "unknown (no fuel price or L/100km)"
             kpi_l10 = (f"  {C_GREEN}{C_BOLD}Projected Annual Savings vs {v_name.split('(')[0].strip()}:{C_RESET} "
-                       f"${projected_annual_savings:,.2f} AUD/yr{annualize_caveat}")
+                       f"{ann_s}{annualize_caveat if projected_annual_savings is not None else ''}")
             print(f"│{pad_display(kpi_l10, box_w - 2, truncate=True)}│")
         else:
             kpi_l8 = f"  {C_BOLD}Distance Travelled:{C_RESET} {C_ORANGE}No Tessie measurement for this session{C_RESET}"
@@ -4269,56 +4319,43 @@ class ChargingAnalyzer:
         if not vehicles:
             return
 
-        total_km_added = sum(s["range_added_km"] for s in sessions)
+        from lib.fuel_common import vehicle_l_per_100km
+        drive_totals = None
+        dts = [s["datetime"] for s in sessions if s.get("datetime")]
+        if dts:
+            drive_totals = self._load_drive_totals_in_period(min(dts), max(dts))
+        wh_per_km = self._real_wh_per_km(drive_totals)
         rows_data = []
 
         for v_key, v_spec in vehicles.items():
             v_name = v_spec.get("name") or v_spec.get("label") or v_key
             v_fuel = v_spec.get("fuel_type", "U91")
-            consumption = v_spec.get("consumption", {})
-            if isinstance(consumption, dict):
-                v_l_100km = consumption.get("combined_l_per_100km") or consumption.get("l_per_100km") or 8.5
-            else:
-                v_l_100km = v_spec.get("l_per_100km", 8.5)
-
-            fuel_costs = []
-            prices = []
-            for s in sessions:
-                s_km = s.get("range_added_km") or 0.0
-                if s_km <= 0:
-                    s_kwh = s.get("battery_kwh") or 0.0
-                    s_km = (s_kwh / 0.15) if s_kwh > 0 else 0.0
-                s_dt = s.get("datetime")
-                p = get_fuel_price(s_dt, fuel_type=v_fuel, tessie_dir=self.tessie_data_home)
-                prices.append(p)
-                fuel_costs.append((s_km / 100.0) * v_l_100km * p)
-
-            v_spend = sum(fuel_costs)
-            v_avg_price = (sum(prices) / len(prices)) if prices else 1.95
-            v_savings = v_spend - total_spend
+            v_l_100km = vehicle_l_per_100km(v_spec)[0]
+            ice = self._ice_equivalent(sessions, v_l_100km, v_fuel, wh_per_km, get_fuel_price)
+            v_spend, v_avg_price = ice["spend"], ice["avg_price"]
+            v_savings = (v_spend - ice["ev_spend"]) if v_spend is not None else None
 
             running_costs = v_spec.get("running_costs", {})
             maint_km = running_costs.get("service_maintenance_per_km", 0.0) if isinstance(running_costs, dict) else 0.0
             tyre_km = running_costs.get("tyres_per_km", 0.0) if isinstance(running_costs, dict) else 0.0
             running_per_km_str = f"${(maint_km + tyre_km):.3f}/km" if (maint_km + tyre_km) > 0 else "N/A"
 
-            ann_savings_str = "N/A"
-            if km_travelled and km_travelled > 0 and period_days and period_days > 0:
+            ann_savings_str = "unknown"
+            if km_travelled and km_travelled > 0 and period_days and period_days > 0 and v_l_100km is not None and v_avg_price is not None:
                 ann_ratio = 365.25 / period_days
                 ann_km = km_travelled * ann_ratio
                 ann_ev_spend = total_spend * ann_ratio
                 ann_v_spend = (ann_km / 100.0) * v_l_100km * v_avg_price
-                ann_savings = max(0.0, ann_v_spend - ann_ev_spend)
-                ann_savings_str = f"${ann_savings:,.0f}/yr"
+                ann_savings_str = _money_signed(ann_v_spend - ann_ev_spend, 0) + "/yr"
 
             rows_data.append({
                 "name": v_name,
                 "category": v_spec.get("category", "-"),
                 "fuel": v_fuel,
-                "l_100km": f"{v_l_100km:.1f} L",
-                "avg_price": f"${v_avg_price:.2f}/L",
-                "equiv_spend": f"${v_spend:,.2f}",
-                "savings": f"+${v_savings:,.2f}" if v_savings >= 0 else f"-${abs(v_savings):,.2f}",
+                "l_100km": f"{v_l_100km:.1f} L" if v_l_100km is not None else "-",
+                "avg_price": f"${v_avg_price:.2f}/L" if v_avg_price is not None else "no price",
+                "equiv_spend": f"${v_spend:,.2f}" if v_spend is not None else "unknown",
+                "savings": _money_signed(v_savings) if v_savings is not None else "unknown",
                 "running_km": running_per_km_str,
                 "ann_savings": ann_savings_str
             })

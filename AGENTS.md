@@ -180,6 +180,7 @@ tesla/
 │   │   ├── analysis_deepdive_charts.py   # Self-contained interactive HTML line-chart renderer
 │   │   ├── battery_health.py    # Battery health history (Tessie battery CSVs + battery_health_log.json)
 │   │   ├── car_efficiency.py    # Car mass, grade-corrected kWh/100 km, distance confidence
+│   │   ├── car_figures.py       # The car's usable kWh, full range (battery health) and Wh/km (drives); None when unknown
 │   │   ├── charging_analyzer.py # ChargingAnalyzer + TeslaInvoiceParser (analyse_charging is its CLI)
 │   │   ├── dashcam_clips.py     # TeslaCam clip list, hour offsets, clip cache and telemetry timeline
 │   │   ├── drive_footage.py     # One drive's master row, Tessie CSV, window and the footage covering it
