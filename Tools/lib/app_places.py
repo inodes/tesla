@@ -154,7 +154,7 @@ class Places:
             agl = None
             if (rec.get("type") or "").lower() == "home":     # a home charge costs the household tariff (as the scripts price it), not the charger's own rate card
                 try:
-                    from providers_power import get_power_provider
+                    from providers.power import get_power_provider
                     pp = get_power_provider()
                     agl = CS.agl_tariff(pp.load_rate_periods(), pp.gst_multiplier(), datetime.date.today().isoformat(), getattr(pp, "display_name", "") or "", self._plan(pp))
                 except Exception:

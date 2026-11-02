@@ -41,7 +41,7 @@ from .chargers_base import (
 )
 
 _script_dir = os.path.dirname(os.path.abspath(__file__))
-_tools_dir = os.path.dirname(_script_dir)
+_tools_dir = os.path.dirname(os.path.dirname(_script_dir))      # Tools/ (this file is in providers/chargers/)
 _repo_root = os.path.dirname(_tools_dir)
 
 # -----------------------------------------------------------------------------

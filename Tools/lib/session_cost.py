@@ -16,7 +16,7 @@ real home-charging session, what did it actually cost - not Tessie's own
 real dated rates), and not a share of the monthly demand charge (per the
 user's explicit steer at the end of REQ-031, that stays a separate,
 whole-account number in power_demand_calculator.py/power_cost_calculator.py
-(providers_power/power_agl.py's AGLProvider, REQ-070),
+(providers/power/power_agl.py's AGLProvider, REQ-070),
 never attributed to one session here).
 
 Three cost figures are printed for every session:
@@ -25,7 +25,7 @@ Three cost figures are printed for every session:
      i.e. what it would have cost if 100% grid-imported. Always computed.
 
   2. "<PV provider>-adjusted" (REQ-071, 2026-09-15, PRIMARY; REQ-140,
-     2026-09-25, migrated from PVOutput to providers_pv/SolarEdge -
+     2026-09-25, migrated from PVOutput to providers/pv/SolarEdge -
      PVOutput on this account turned out to be a pure relay of this
      SAME SolarEdge account's own API, confirmed both by near-identical
      historical readings and by the user's own PVOutput "Edit System"
@@ -137,13 +137,13 @@ from datetime import date, datetime, timedelta, timezone
 _TOOLS_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _TOOLS_DIR not in sys.path:
     sys.path.insert(0, _TOOLS_DIR)
-from providers_power import get_power_provider  # noqa: E402
+from providers.power import get_power_provider  # noqa: E402
 from lib.power_demand import load_rate_periods, rate_for_date  # noqa: E402
 from lib.power_usage_db import get_usage_db_connection, resolve_usage_db_path, iter_rows  # noqa: E402
 from lib.evnex_common import is_real_charging_session  # noqa: E402
 from lib.tessie_api_common import resolve_tessie_data_home, load_config  # noqa: E402
 import lib.charge_paths as CP  # noqa: E402
-from providers_pv import get_pv_provider  # noqa: E402
+from providers.pv import get_pv_provider  # noqa: E402
 from lib.pv_history_db import get_pv_db_connection, pv_window_split  # noqa: E402
 from lib.pvoutput_common import pv_agl_import_conflict  # noqa: E402
 from zoneinfo import ZoneInfo  # noqa: E402
@@ -153,7 +153,7 @@ _POWER_PROVIDER = get_power_provider()
 DATA_HOME = _POWER_PROVIDER.resolve_data_home()
 
 # REQ-071 (2026-09-15, PVOutput-based originally)/REQ-140 (2026-09-25,
-# migrated to providers_pv/SolarEdge - PVOutput turned out to be a pure
+# migrated to providers/pv/SolarEdge - PVOutput turned out to be a pure
 # relay of this SAME SolarEdge account's own API, not an independent
 # measurement, see AGENTS.local.md's REQ-140 entry): the active PV
 # provider's credentials and a single persistent pv_history.db

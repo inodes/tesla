@@ -53,7 +53,7 @@ from lib.table_formatter import (
     clean_station_short_name
 )
 
-from providers_chargers import (
+from providers.chargers import (
     ChargerDiscoveryManager,
     UnifiedStationRecord,
     TeslaProvider,
@@ -1836,7 +1836,7 @@ def interactive_station_actions(station: UnifiedStationRecord) -> None:
             break
         elif choice in ("u", "update", "refresh"):
             try:
-                from providers_chargers.chargers_manager import ChargerDiscoveryManager
+                from providers.chargers.chargers_manager import ChargerDiscoveryManager
  # BUG (found 2026-09-29, drive-by while wiring the confirmed-not-found
  # removal flow): ChargerDiscoveryManager has no load_all_providers()
  # method at all - __init__ already loads every provider unconditionally
@@ -1964,7 +1964,7 @@ def sync_busy_times_for_stations(stations: list, delay_s: float = 1.0) -> dict:
     print(f"\n🚦 Fetching Tesla Busy Times for {len(tesla_sc)} Supercharger(s)...")
     if not tesla_sc:
         return {"saved": 0, "failed": 0}
-    from providers_chargers.chargers_tesla import TeslaChargerExplorer
+    from providers.chargers.chargers_tesla import TeslaChargerExplorer
     from lib.tesla_busy_times import extract_busy_profile, save_busy_profile, busy_summary
     import lib.tesla_busy_times as _busy_mod
     try:
@@ -2604,7 +2604,7 @@ DESCRIPTION
 
         print("🚀 [1/11] Starting Full Network Sync: Tesla Superchargers & Destination Chargers...")
         try:
-            from providers_chargers.chargers_tesla import TeslaChargerExplorer
+            from providers.chargers.chargers_tesla import TeslaChargerExplorer
             explorer = TeslaChargerExplorer()
             ref_lat, ref_lon, ref_label = (None, None, None)
             if args.near:
@@ -2616,7 +2616,7 @@ DESCRIPTION
                 print(f"  {C_CYAN}⚡ Fetching Tesla {t_lbl}...{C_RESET}")
                 t_stations = explorer.fetch_station_list(country=args.country or "Australia", charger_type=c_type)
                 if ref_lat is not None and ref_lon is not None:
-                    from providers_chargers.chargers_base import haversine_km
+                    from providers.chargers.chargers_base import haversine_km
                     t_stations = [s for s in t_stations if s.get("_lat") is not None and s.get("_lon") is not None and haversine_km(ref_lat, ref_lon, s["_lat"], s["_lon"]) <= radius]
                 explorer.scrape_all_stations(t_stations, subset_filter="new", pacing_delay=args.delay, timeout_sec=args.timeout, max_retries=args.retries)
             sync_results.append(("Tesla", True))
@@ -2760,7 +2760,7 @@ DESCRIPTION
         return
 
     if args.sync_tesla:
-        from providers_chargers.chargers_tesla import TeslaChargerExplorer
+        from providers.chargers.chargers_tesla import TeslaChargerExplorer
         explorer = TeslaChargerExplorer()
         charger_types = []
         if args.sc:
@@ -2788,7 +2788,7 @@ DESCRIPTION
                 ref_lat, ref_lon, ref_label = resolve_reference_coords(args.near)
                 if ref_lat is not None and ref_lon is not None:
                     radius = args.radius or 50.0
-                    from providers_chargers.chargers_base import haversine_km
+                    from providers.chargers.chargers_base import haversine_km
                     scoped = []
                     for s in stations:
                         s_lat = s.get("_lat")
@@ -3000,7 +3000,7 @@ DESCRIPTION
     if args.live and not args.query and not args.near:
         net_lower = (args.network or "").strip().lower()
         if args.sc or net_lower == "tesla":
-            from providers_chargers.chargers_tesla import TeslaChargerExplorer, browse_stations_by_type
+            from providers.chargers.chargers_tesla import TeslaChargerExplorer, browse_stations_by_type
             types_to_fetch = []
             if args.sc or args.tesla_sc:
                 types_to_fetch.append("superchargers")

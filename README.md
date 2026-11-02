@@ -40,10 +40,11 @@ tesla/
 │   ├── maintenance/                # one-off fixes, migrations, recovery tools, API checks and finished investigations (run by hand)
 │   ├── lib/                        # shared library modules (not run directly): the app's modules (app_*), TeslaCam, drives,
 │   │                                #   charges, places, tessie_api_common.py, table_formatter.py, session_cost.py, charge_curves.py ...
-│   ├── providers_chargers/         # pluggable charging-network adapters (Tesla/Chargefox/EVX/Evie/BP Pulse/AmpCharge/Exploren/
-│   │                                #   Jolt/NRMA/PlugShare), used by ./Tools/tesla chargers find
-│   ├── providers_power/            # pluggable power-retailer billing providers (currently AGL), chosen by config.json "power_provider"
-│   ├── providers_pv/               # solar data providers
+│   ├── providers/                  # pluggable data-source adapters, one subpackage per domain (from providers.<domain> import ...):
+│   │   ├── chargers/               #   charging-network adapters (Tesla/Chargefox/EVX/Evie/BP Pulse/AmpCharge/Exploren/
+│   │   │                            #   Jolt/NRMA/PlugShare), used by ./Tools/tesla chargers find
+│   │   ├── power/                  #   power-retailer billing providers (currently AGL), chosen by config.json "power_provider"
+│   │   └── pv/                     #   solar data providers
 │   └── archive/                    # retired scripts, kept for reference
 │
 ├── .github/                        # GitHub Actions CI & community standards

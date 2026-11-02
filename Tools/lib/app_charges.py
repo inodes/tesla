@@ -444,7 +444,7 @@ class ChargeBook:
     pv_fetch = True            # off in tests: no call to SolarEdge
 
     def _pv_provider(self):
-        from providers_pv import get_pv_provider
+        from providers.pv import get_pv_provider
         pr = get_pv_provider()
         key, acct = pr.resolve_credentials(self.cfg_pv())
         return (pr, key, acct) if key else None

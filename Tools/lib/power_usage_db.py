@@ -33,7 +33,7 @@ import os
 import sqlite3
 from datetime import datetime
 
-from providers_power import MASTER_FIELDS
+from providers.power import MASTER_FIELDS
 
 
 def resolve_usage_db_path(provider, data_home=None):
