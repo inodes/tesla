@@ -112,6 +112,7 @@ SYNC = None
 REACH = None                # the Places map's range shading and coverage gaps (lib/app_reach.py)
 TSYNC = None
 CSYNC = None     # the Charges page's Tessie sync (sync_charging_all.sh)
+FSYNC = None     # fetches a newly published month of FuelCheck prices (fuel_auto)
 CCOST = None     # sending the charges' costs to Tessie (analyse_charging.py --sync-tessie-costs --apply)
 SOFT = None      # the Software page's fetch of Teslascope's versions (lib/app_software.py)
 CARW = None      # looks at which software the car is on, every software.car_check_minutes (lib/car_watch.py)
@@ -982,6 +983,20 @@ def tessie_auto():
             print("(Tessie auto sync: %s)" % e, flush=True)
 
 
+def fuel_auto():
+    """Every app.fuel.auto_sync_hours (default 12; 0 = never): when last month's FuelCheck prices are not held yet, fetch them (lib/fuel_auto.py)."""
+    import fuel_auto
+    time.sleep(120)
+    while True:
+        try:
+            hours = float(app_config.get("fuel.auto_sync_hours") if app_config.get("fuel.auto_sync_hours") is not None else 12)
+            if hours > 0 and not FSYNC.running() and fuel_auto.due(DATA_DIR):
+                FSYNC.start()
+        except Exception as e:
+            print("(fuel auto sync: %s)" % e, flush=True)
+        time.sleep(max(1.0, hours if hours > 0 else 12) * 3600)
+
+
 def _warm(port):
     """Asks this server for the pages' data once, in the background, so the first page the window opens is not the one that waits for everything to load (the first
     request after a start builds the lists; later ones answer from memory). Only what is kept here: nothing is read from a drive."""
@@ -1088,7 +1103,7 @@ def _code_version():
 
 
 def main():
-    global KEPT, STORE, DATA_DIR, SENTRY, TC, DRV, SYNC, TSYNC, CSYNC, CCOST, REACH, SOFT, CARW, BOOK, FG, KEEP, DRIVELIST, TODO, CKEEP, STHIN
+    global KEPT, STORE, DATA_DIR, SENTRY, TC, DRV, SYNC, TSYNC, CSYNC, CCOST, FSYNC, REACH, SOFT, CARW, BOOK, FG, KEEP, DRIVELIST, TODO, CKEEP, STHIN
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--data-dir", default=DEFAULT_DATA)
     ap.add_argument("--port", type=int, default=int(app_config.get("window.port")))
@@ -1147,7 +1162,9 @@ def main():
     SOFT = app_software.SoftSync(DATA_DIR)
     CARW = car_watch.Watch(DATA_DIR, lambda: app_software.S.load().get("car_check_minutes") if app_sync.tessie_configured() else 0)
     CARW.start()
+    FSYNC = app_sync.ChargerSync(CMDS, DATA_DIR, "sync_fuel_history.py", argv=[sys.executable, "sync_fuel_history.py", "--sync-all"])
     threading.Thread(target=tessie_auto, daemon=True).start()
+    threading.Thread(target=fuel_auto, daemon=True).start()
     try:
         srv = serve(a.port)
     except OSError:
