@@ -46,6 +46,7 @@ the block). A change takes effect the next time the app or script reads it (the 
                                                    on by default (false = off); stills = also make stills in the background (ffmpeg on the video; on by default, so a new drive gets its thumbnails first; false = only on request); how often (s) it looks for work; the least time (s) between two passes over the same drives; how long (s) it leaves the drives alone after video was last played
   app.drives.repark_max_km / repark_max_minutes    a drive shorter than both is a "re-park" (the car was shuffled), not a drive
   app.drives.repark_same_place_km                  a drive that starts and ends at the same address or saved place is a re-park up to this long (and repark_max_minutes); with no address to compare, the two ends within repark_same_place_m metres count as the same place
+  app.drives.join_gap_s                            two drives of Tessie's with this many seconds or fewer between them (the car was put in Park for a moment: a pick-up, a drop-off, a gate) and the second starting within repark_same_place_m metres of where the first ended are one drive; the stop is kept on it (0 = never join)
   app.drives.long_highway_*                        a "long highway" drive (the Drives list's Long highway filter)
   app.drives.charge_window_minutes                 a charge within this long after / before a drive makes it "to charge" / "from charge"
   app.drives.range_days_shown                      how many days of a long date range the Drives list draws at once; "Show more days" adds the next 31
@@ -90,7 +91,7 @@ DEFAULTS = {
     "event_shots": {"quality": 2},
     "fuel": {"auto_sync_hours": 12},
     "keeper": {"background": True, "stills": True, "interval_s": 20, "pass_gap_s": 300, "play_wait_s": 30},
-    "drives": {"repark_max_km": 0.05, "repark_same_place_km": 0.3, "repark_same_place_m": 50, "repark_max_minutes": 10,
+    "drives": {"repark_max_km": 0.05, "repark_same_place_km": 0.3, "repark_same_place_m": 50, "repark_max_minutes": 10, "join_gap_s": 120,
                "long_highway_km": 30, "long_highway_fast_kmh": 90, "long_highway_fast_minutes": 10,
                "charge_window_minutes": 30, "charger_name_m": 300, "range_days_shown": 31, "low_battery_pct": 20, "tessie_auto_sync_minutes": 0, "tessie_fresh_minutes": 60},
     "places": {"stay_min_seconds": 120, "save_radius_min_m": 100, "save_radius_margin_m": 25, "save_radius_cluster_m": 250},
