@@ -291,24 +291,41 @@ def minutes(recent, saved, all_saved=False):
     return sorted(mins.values(), key=lambda m: m["t"])
 
 
-def build(recent, saved, sentry, store):
+def build(recent, saved, sentry, store, cache=None):
     """recent {stamp: [cams]}; saved / sentry = lists of events (id, ts, clips {stamp: [cams]}, cam, reason, city, street, lat, lon).
-    Returns the items of one continuous timeline, newest first: drive, stopped, recording (telemetry not read yet), sentry, parked, gap."""
+    Returns the items of one continuous timeline, newest first: drive, stopped, recording (telemetry not read yet), sentry, parked, gap.
+    With `cache` (a DayCache) only the recordings on days whose sources changed since the last build are worked out again; the other days are taken from
+    that build. The answer is the same either way (tests/test_timeline_days.py)."""
+    if cache is None:
+        return _build(recent, saved, sentry, store, None)
+    with cache.lock:                                    # one build at a time uses the cache
+        return _build(recent, saved, sentry, store, cache)
+
+
+def _build(recent, saved, sentry, store, cache):
     items = []
     ms = minutes(recent, saved)
+    if cache is not None:
+        cache.begin(ms, store)
     runs, cur = [], None
     for m in ms:
-        if cur and (m["t"] - cur[-1]["t"] <= OPTS["run_gap_s"] or _continues(cur[-1], m, store)):
+        if cur and (m["t"] - cur[-1]["t"] <= OPTS["run_gap_s"] or (cache.joins(cur[-1], m, store) if cache is not None else _continues(cur[-1], m, store))):
             cur.append(m)
         else:
             cur = [m]
             runs.append(cur)
     for run in runs:
-        seq = []
-        for part in _split(run, store):
-            seq += _part_items(part, store)
-        _butt(seq)
+        seq = cache.kept_run(run) if cache is not None else None
+        if seq is None:
+            seq = []
+            for part in _split(run, store):
+                seq += _part_items(part, store)
+            _butt(seq)
+            if cache is not None:
+                cache.keep_run(run, seq)
         items += seq
+    if cache is not None:
+        cache.end()
     for ev in sentry:
         if not ev["clips"]:
             continue
@@ -327,6 +344,141 @@ def build(recent, saved, sentry, store):
     for it in out:                                      # shown on the clock of where it was (a drive that began in Queensland reads on Queensland's clock)
         show(it)
     return sorted(out, key=lambda x: x["t0"], reverse=True)
+
+
+_CODE = []
+
+
+def _code_print():
+    """What the code that makes the items is: a different version of this file (or of the cache) means nothing kept can be used."""
+    if not _CODE:
+        import hashlib
+        try:
+            with open(os.path.abspath(__file__), "rb") as fh:
+                _CODE.append(hashlib.md5(fh.read()).hexdigest())
+        except OSError:
+            _CODE.append("?")
+    return "%d:%s" % (DayCache.VERSION, _CODE[0])
+
+
+class DayCache:
+    """The timeline's recordings from the last build, by the day (the car's clock) of their minutes, so a build works out again only the days whose sources changed.
+
+    A day's sources are its minutes (name, UTC time, Recent or Saved, cameras), the summary kept for each, and its file of per-second readings (<day>.json, by its
+    time and size; a day read in this program and not yet written out counts as changed). A recording that touches a changed day, or that is not the same list
+    of minutes as before, is worked out again; so is a join over a short hole between two minutes when either day changed. Sentry events, the holes between
+    items and the clock they are shown on are always done afresh (they are quick). A change to the thresholds (OPTS) or to this code starts again from nothing.
+
+    `path` keeps a copy on this computer (a local cache folder, not the data folder), so a start of the app has the last build to begin from."""
+
+    VERSION = 1
+
+    def __init__(self, path=None):
+        self.path = path
+        self.lock = threading.RLock()
+        self._val = None                    # {"key", "days": {day: print}, "joins": {"a|b": bool}, "runs": {first stamp: {"stamps", "items"}}}
+        self._clean = set()
+        self._new = self._old = None
+        self._changed = False
+        self.stats = dict(days=0, rebuilt_days=0, runs=0, rebuilt_runs=0)
+
+    def _load(self):
+        if self._val is None:
+            self._val = {}
+            if self.path:
+                try:
+                    with open(self.path, encoding="utf-8") as fh:
+                        self._val = json.load(fh)
+                except (OSError, ValueError):
+                    self._val = {}
+        return self._val
+
+    @staticmethod
+    def _key():
+        return [_code_print(), json.dumps(OPTS, sort_keys=True)]
+
+    @staticmethod
+    def day_prints(ms, store):
+        """{day: a short print of everything a build reads for that day}; None for a day that is always worked out again."""
+        import hashlib
+        by = {}
+        for m in ms:
+            by.setdefault(m["stamp"][:10], []).append([m["stamp"], m["t"], m["src"], m["ref"], list(m["cams"]), m["tcam"], store.summary(m["stamp"])])
+        base, dirty = getattr(store, "base", None), getattr(store, "_dirty", None) or set()
+        out = {}
+        for day, rows in by.items():
+            if day in dirty:
+                out[day] = None                         # read here and not written out yet: always worked out again
+                continue
+            if base is not None:
+                try:
+                    st = os.stat(os.path.join(base, day + ".json"))
+                    rows.append([st.st_mtime_ns, st.st_size])
+                except OSError:
+                    rows.append(None)
+            else:                                       # a store with no files (tests): the readings themselves
+                rows.append([store.series(r[0]) for r in rows])
+            out[day] = hashlib.md5(json.dumps(rows, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+        return out
+
+    def begin(self, ms, store):
+        old = self._load()
+        key = self._key()
+        if old.get("key") != key:
+            old = dict(key=key, days={}, joins={}, runs={})
+        prints = self.day_prints(ms, store)
+        self._clean = {d for d, p in prints.items() if p is not None and old.get("days", {}).get(d) == p}
+        self._old = old
+        self._new = dict(key=key, days=prints, joins={}, runs={})
+        self._changed = old is not self._val or set(prints) != set(old.get("days") or {}) or len(self._clean) != len(prints)
+        self.stats = dict(days=len(prints), rebuilt_days=len(prints) - len(self._clean), runs=0, rebuilt_runs=0)
+
+    def joins(self, a, b, store):
+        """_continues(a, b), taken from the last build when both minutes' days are unchanged."""
+        if b["t"] - a["t"] > OPTS["join_max_s"]:
+            return False                                # never joined: nothing to keep
+        k = a["stamp"] + "|" + b["stamp"]
+        got = self._old["joins"].get(k)
+        if got is None or a["stamp"][:10] not in self._clean or b["stamp"][:10] not in self._clean:
+            got = _continues(a, b, store)
+            self._changed = self._changed or self._old["joins"].get(k) != got
+        self._new["joins"][k] = got
+        return got
+
+    def kept_run(self, run):
+        """The items of this recording from the last build (copies), or None when it has to be worked out."""
+        self.stats["runs"] += 1
+        sts = [m["stamp"] for m in run]
+        got = self._old["runs"].get(sts[0])
+        if got is None or got["stamps"] != sts or any(st[:10] not in self._clean for st in sts):
+            self.stats["rebuilt_runs"] += 1
+            return None
+        self._new["runs"][sts[0]] = got
+        return json.loads(json.dumps(got["items"]))
+
+    def keep_run(self, run, seq):
+        sts = [m["stamp"] for m in run]
+        self._new["runs"][sts[0]] = dict(stamps=sts, items=json.loads(json.dumps(seq)))
+        self._changed = True
+
+    def end(self):
+        new, old = self._new, self._old
+        if self._changed or set(new["runs"]) != set(old.get("runs") or {}) or set(new["joins"]) != set(old.get("joins") or {}):
+            self._save(new)
+        self._val = new
+        self._new = self._old = None
+
+    def _save(self, val):
+        if not self.path:
+            return
+        try:
+            os.makedirs(os.path.dirname(self.path), exist_ok=True)
+            tmp = self.path + ".tmp"
+            with open(tmp, "w", encoding="utf-8") as fh:
+                json.dump(val, fh, separators=(",", ":"))
+            os.replace(tmp, self.path)
+        except (OSError, TypeError, ValueError):
+            pass
 
 
 def _continues(a, b, store):

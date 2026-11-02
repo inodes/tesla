@@ -1835,7 +1835,8 @@ let DLPOLL=0;
 function drivelistPoll(cur){clearTimeout(DLPOLL);DLPOLL=setTimeout(async()=>{if(!["#/drives","#/driveslist"].includes(location.hash))return;let j;try{j=await tcGet("drivelist",true)}catch(e){return}
   if(!j.stale){if($("#stl"))$("#stl").hidden=true;if(!sameData(j,cur)){FRESH.drivelist=j;bust("activity");redrawQuietly()}}else drivelistPoll(cur)},3000)}
 async function pageDriveList(){
-  loading("dlist");const [dl,act,pl,chg]=await Promise.all([tcGet("drivelist"),api("activity"),api("places").catch(()=>({saved:[]})),api("chargers").catch(()=>({rows:[]}))]),places=pl.saved||[];
+  loading("dlist");const [dl,pl,chg]=await Promise.all([tcGet("drivelist"),api("places").catch(()=>({saved:[]})),api("chargers").catch(()=>({rows:[]}))]),places=pl.saved||[];
+  const act=dl.tess&&dl.chg?null:await api("activity"),tess=dl.tess||act.filter(x=>x.k==="drive"),chgs=dl.chg||act.filter(x=>x.k==="charge");      // the list carries Tessie's drives and charges; one kept by an older version does not
   const open=v=>v.kind==="charge"?"#/charge/"+encodeURIComponent(v.id):v.kind==="drive"?(v.src==="cam"?"#/teslacam/auto/"+encodeURIComponent(v.id):"#/drive/"+encodeURIComponent(v.id)):v.kind==="sentry"?"#/teslacam/A/sentry-"+encodeURIComponent(v.ev):v.kind==="recording"||v.kind==="stopped"?"#/teslacam/auto/"+encodeURIComponent(v.id):"";
   main.innerHTML=`<h1>Drives</h1><div class="sub">Source: ${dl.tessie?"Tessie + dashcam":"dashcam"} · 🎬 = dashcam video and route</div>
    <div id="stl" class="sub" style="margin-top:6px" ${dl.stale?"":"hidden"}>Updating with the latest data…</div><div id="tsb" style="margin-top:10px"></div><div id="fsb"></div><div class="bar"><span id="rg"></span><select id="fs"><option value="all">All drives</option><option value="cam">With dashcam footage</option><option value="nocam">Without footage</option></select><input type="search" id="q" placeholder="Search a place…" value="${esc(DLP.q)}"></div><div class="tiles" id="tl"></div><div id="tb"></div>`;
@@ -1844,7 +1845,7 @@ async function pageDriveList(){
      rs=dl.items.filter(v=>inSpan(v,DLP.r)&&keep(v)),dr=rs.filter(v=>v.kind==="drive"&&!v.short);
     $("#tl").innerHTML=tile(n0(dr.length),"drives")+tile(n0(dr.reduce((a,v)=>a+(v.km||0),0))+" km","driven")+tile(n0(dr.filter(v=>v.cam&&v.cam.length).length),"with dashcam footage")+tile(n0(rs.filter(v=>v.kind==="charge").length),"charges")+tile(n0(dr.filter(v=>v.src==="cam").length),"dashcam only");
     $("#tb").innerHTML='<div id="tlh"></div>';
-    TLOFF=tlDays($("#tlh"),rs,{role:"auto",places,sc:pl.superchargers||[],cg:chg.rows||[],tess:act.filter(x=>x.k==="drive"),chg:act.filter(x=>x.k==="charge"),dayOk:d=>inRange({day:d},DLP.r),redraw:draw,go:open,
+    TLOFF=tlDays($("#tlh"),rs,{role:"auto",places,sc:pl.superchargers||[],cg:chg.rows||[],tess,chg:chgs,dayOk:d=>inRange({day:d},DLP.r),redraw:draw,go:open,
       onSentry:()=>{}})||null};
   rangeBar($("#rg"),"driveslist",DLP.r,spanDays(dl.items),draw);
   $("#q").oninput=e=>{DLP.q=e.target.value;draw()};$("#fs").value=DLP.src;$("#fs").onchange=e=>{DLP.src=e.target.value;draw()};draw();
