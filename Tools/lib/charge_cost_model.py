@@ -106,7 +106,7 @@ def home_charge_cost(raw, periods=None):
     app all call it. Returns dict(cost, source, notes, pv_pct, result) where
     `result` is lib.session_cost.evaluate_tessie_charge's full breakdown."""
     from lib.session_cost import evaluate_tessie_charge
-    from power_demand_calculator import load_rate_periods
+    from lib.power_demand import load_rate_periods
     if periods is None:
         periods = load_rate_periods()
     notes = []
@@ -152,7 +152,7 @@ def compute_all_charge_costs(analyzer, sessions=None):
       real Tessie numeric `id` a caller needs for set_cost), pv_pct,
       notes (list of str).
     """
-    from power_demand_calculator import load_rate_periods
+    from lib.power_demand import load_rate_periods
 
     if sessions is None:
         sessions = analyzer.reconcile()
