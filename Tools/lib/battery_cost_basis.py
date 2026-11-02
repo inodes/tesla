@@ -3,7 +3,8 @@
 Every charge is known (kWh added, what it cost, the battery level before it) and so is every drive (kWh used). The energy in the battery is
 priced by the weighted average of what was paid for it: a charge mixes its kWh, at its real cost, into the energy already in the pack
 (battery level before it x the pack's size, at the average so far); a drive uses its energy at the average at that time. Nothing is
-assumed: the pack's size is read from the charges themselves, and a drive has no price (None) until the energy from before the first charges
+assumed: the pack's size is the battery health reading in force at the time (it changes as the battery ages; the charges' own kWh per % only
+when there is no health reading at all), and a drive has no price (None) until the energy from before the first charges
 is mostly replaced by charges whose cost is known.
 
     BatteryCostBasis(tessie_dir).rate_at(epoch)  ->  $/kWh in the battery at that moment, or None
@@ -36,16 +37,39 @@ def pack_kwh(charges):
 UNKNOWN_MAX = 0.10          # no price while more than this share of the pack is energy whose cost is not known (before the first charges, or gaps)
 
 
+def capacity_series(tessie_dir):
+    """[(epoch, usable kWh)] from the battery health readings (battery_health_log.json and any exported history), oldest first; [] when none."""
+    try:
+        from lib.battery_health import load_battery_health_history
+        from lib.timezones import epoch_for_naive_local
+        import datetime
+        hist = load_battery_health_history(tessie_dir) or []
+        out = [(epoch_for_naive_local(datetime.datetime.fromisoformat(h["synced_at"])), float(h["capacity_kwh"])) for h in hist if h.get("capacity_kwh")]
+    except Exception:
+        return []
+    return sorted(out)
+
+
+def pack_at(series, epoch, fallback=None):
+    """The pack's usable kWh at that moment: the latest health reading before it (the first one when it is earlier than all of them); `fallback` with none."""
+    if not series:
+        return fallback
+    i = bisect.bisect_right([t for t, _ in series], epoch) - 1
+    return series[max(i, 0)][1]
+
+
 def build_steps(charges, pack):
     """[(epoch, average $/kWh of the energy in the battery whose cost is known, or None while too much of it is unknown)], one per charge, oldest first.
-    `charges` are dicts with t0, kwh, cost, b0 (% before). The energy in the pack when the first charge began has no known cost; later charges
+    `charges` are dicts with t0, kwh, cost, b0 (% before). `pack` is a number
+    (kWh) or a function of the charge's epoch. The energy in the pack when the first charge began has no known cost; later charges
     replace it (drives use known and unknown energy alike), so the price appears once it is mostly gone."""
     steps, known_kwh, known_usd, unknown = [], 0.0, 0.0, 0.0
     first = True
     for c in sorted(charges, key=lambda c: c["t0"]):
         if c["kwh"] <= 0 or c["cost"] is None:
             continue
-        before = pack * c["b0"] / 100.0                     # the pack's energy when this charge began
+        size = pack(c["t0"]) if callable(pack) else pack
+        before = size * c["b0"] / 100.0                    # the pack's energy when this charge began
         if first:
             unknown, first = before, False
         else:
@@ -66,8 +90,10 @@ class BatteryCostBasis:
     def __init__(self, tessie_dir):
         self.dir, self.skipped = tessie_dir, 0
         ch = self._charges()
-        self.pack = pack_kwh(ch)
-        self.steps = build_steps(ch, self.pack) if self.pack else []
+        self.capacity = capacity_series(tessie_dir)
+        derived = pack_kwh(ch)                              # only used with no health reading at all
+        self.pack = pack_at(self.capacity, 10 ** 12, derived)           # the latest size
+        self.steps = build_steps(ch, lambda t: pack_at(self.capacity, t, derived)) if self.pack else []
         self._t = [t for t, _ in self.steps]
 
     def _book_costs(self):

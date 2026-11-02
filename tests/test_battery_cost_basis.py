@@ -31,6 +31,20 @@ class BasisTest(unittest.TestCase):
         b = B.BatteryCostBasis(make_dir(ROWS))
         self.assertAlmostEqual(b.pack, 100.0)
 
+    def test_pack_size_follows_the_battery_health_readings_over_time(self):
+        import json
+        d = make_dir(ROWS)
+        with open(os.path.join(d, "battery_health_log.json"), "w") as f:
+            json.dump([dict(synced_at="2026-01-01T00:00:00", capacity_kwh=80.0), dict(synced_at="2026-06-01T00:00:00", capacity_kwh=78.0)], f)
+        b = B.BatteryCostBasis(d)
+        s = B.capacity_series(d)
+        self.assertEqual([k for _, k in s], [80.0, 78.0])
+        self.assertEqual(B.pack_at(s, s[0][0] + 1), 80.0)
+        self.assertEqual(B.pack_at(s, s[1][0] + 1), 78.0)
+        self.assertEqual(B.pack_at(s, s[0][0] - 10 ** 6), 80.0)         # before the first reading: the first one
+        self.assertEqual(b.pack, 78.0)                                  # the latest
+        self.assertEqual(B.pack_at([], 5, 100.0), 100.0)                # no reading at all: the charges' own estimate
+
     def test_no_price_while_the_energy_from_before_is_still_most_of_the_pack(self):
         b = B.BatteryCostBasis(make_dir(ROWS))
         self.assertIsNone(b.rate_at(500))           # before any charge
