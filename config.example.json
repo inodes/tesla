@@ -73,7 +73,7 @@
       "style_light": "positron",
       "style_dark": "dark",
       "places_max_lon": 160,
-      "speed_colors": [[0, "#0000FF"], [10, "#008080"], [20, "#90EE90"], [30, "#008000"], [40, "#32CD32"], [50, "#ADFF2F"], [60, "#FFFF00"], [70, "#FFA500"], [80, "#FF8C00"], [90, "#FF4500"], [100, "#FF0000"], [110, "#8B0000"], [120, "#800080"]],
+      "speed_colors": [[0, "#1565C0"], [40, "#00ACC1"], [50, "#26C6DA"], [60, "#43A047"], [70, "#9CCC65"], [80, "#FDD835"], [90, "#FFB300"], [100, "#FB8C00"], [110, "#E53935"], [120, "#B71C1C"], [130, "#8E24AA"]],
       "speed_over_color": "#000000",
       "autopilot_colors": {"FSD": "#3b6cf6", "Autosteer": "#8b5cf6", "TACC": "#14b8a6", "Manual": "#94a3b8"},
       "network_colors": {
