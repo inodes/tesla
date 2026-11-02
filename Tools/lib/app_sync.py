@@ -56,7 +56,7 @@ class ChargerSync:
             if self.running():
                 return self.status_locked(0)
         if not self.argv and not os.path.isfile(self.script):
-            return dict(ok=False, error=self.name + " not found in " + self.tools)
+            return dict(ok=False, error="Could not start: part of the app is missing. Update the app and try again.")
         env = dict(os.environ, TESLA_DATA_DIR=self.data, PYTHONUNBUFFERED="1", NO_COLOR="1", TERM="dumb")
         env["PATH"] = os.path.dirname(sys.executable) + os.pathsep + env.get("PATH", "")      # the repo venv first, as direnv would
         with self.lock:
