@@ -220,5 +220,27 @@ class JoinParksTest(unittest.TestCase):
         self.assertNotIn("ongoing", out[1])
 
 
+class MissingTelemetry(unittest.TestCase):
+    def rec(self, a, b, **kw):
+        return cam(9, a, b, kind="recording", n=int((b - a) / 60), held=["J"], **kw)
+
+    def test_a_recording_over_a_drive_and_a_park_is_a_button_on_the_drive_not_a_row(self):
+        items = DL.merge([tess(1, 0, 300), tess(2, 1500, 1800)], [], [self.rec(0, 840)])
+        self.assertEqual(by(items, "recording"), [])
+        d = next(i for i in by(items, "drive") if i["id"] == "d1")
+        self.assertEqual(d["tmiss"], dict(min=5, held=["J"]))
+        self.assertNotIn("tmiss", next(i for i in by(items, "drive") if i["id"] == "d2"))
+        self.assertTrue(all("tmiss" not in i for i in items if i["kind"] != "drive"))
+
+    def test_a_recording_over_a_park_only_adds_nothing(self):
+        items = DL.merge([tess(1, 0, 300), tess(2, 1500, 1800)], [], [self.rec(400, 900)])
+        self.assertEqual(by(items, "recording"), [])
+        self.assertTrue(all("tmiss" not in i for i in items))
+
+    def test_a_recording_where_tessie_has_nothing_stays_a_row(self):
+        items = DL.merge([tess(1, 0, 300)], [], [self.rec(5000, 5300)])
+        self.assertEqual(len(by(items, "recording")), 1)
+
+
 if __name__ == "__main__":
     unittest.main()

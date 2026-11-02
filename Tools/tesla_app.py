@@ -746,7 +746,7 @@ class H(BaseHTTPRequestHandler):
                 d = TC.segment(role, root, sid, float(q.get("budget", ["20"])[0] or 20))
                 if d:
                     d["role"] = role
-                return self.send_json(d if d else {"error": "No drive starting at this time on the connected TeslaCam drive (%s)." % role}, 200 if d else 404)
+                return self.send_json(d if d else {"error": "TeslaCam drive %s is connected, but it has no recording starting at this time." % role}, 200 if d else 404)
             if kind == "window":                    # teslacam/<role>/window?t0=<UTC epoch s>&t1=<UTC epoch s>[&lo=<display offset s>][&budget=s]
                 try:
                     t0 = _utc_arg(q.get("t0", [""])[0])
