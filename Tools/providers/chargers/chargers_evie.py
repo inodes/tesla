@@ -31,7 +31,7 @@ from .chargers_base import (
 from .chargers_chargefox import resolve_au_state
 
 _script_dir = os.path.dirname(os.path.abspath(__file__))
-_tools_dir = os.path.dirname(_script_dir)
+_tools_dir = os.path.dirname(os.path.dirname(_script_dir))      # Tools/ (this file is in providers/chargers/)
 _repo_root = os.path.dirname(_tools_dir)
 
 EVIE_STORE_SEARCH_URL = "https://evie.com.au/wp-admin/admin-ajax.php?action=store_search&lat=-25.2744&lng=133.77514&max_results=500&search_radius=5000&autoload=1"

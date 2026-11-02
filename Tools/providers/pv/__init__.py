@@ -1,7 +1,7 @@
 """
-providers_pv - REQ-127: pluggable PV-monitoring providers (SolarEdge
+providers/pv - REQ-127: pluggable PV-monitoring providers (SolarEdge
 today; PVOutput, or a future different SolarEdge site, could join
-later) - mirrors providers_power/__init__.py's own factory shape (see
+later) - mirrors providers/power/__init__.py's own factory shape (see
 pv_base.py's docstring for the full reasoning).
 """
 

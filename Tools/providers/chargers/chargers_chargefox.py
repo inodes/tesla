@@ -20,7 +20,7 @@ from datetime import datetime, timezone
 from .chargers_base import RegistryReadError, BaseChargerProvider, UnifiedStationRecord, haversine_km, filter_station_records, detect_station_changes, archive_station_record, save_json_with_fallback, merge_with_staleness, resolve_scan_state_path, run_priority_box_scan
 
 _script_dir = os.path.dirname(os.path.abspath(__file__))
-_tools_dir = os.path.dirname(_script_dir)
+_tools_dir = os.path.dirname(os.path.dirname(_script_dir))      # Tools/ (this file is in providers/chargers/)
 _repo_root = os.path.dirname(_tools_dir)
 if _tools_dir not in sys.path:
     sys.path.insert(0, _tools_dir)

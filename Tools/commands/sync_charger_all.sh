@@ -72,7 +72,7 @@ fi
 echo "==> Tesla Superchargers"
 # Tesla goes through charger_find.py --sync-tesla like every other network
 # (REQ-095 tracks moving the scraper it calls out of archive/ into
-# providers_chargers/chargers_tesla.py, so nothing needs archive/ at all).
+# providers/chargers/chargers_tesla.py, so nothing needs archive/ at all).
 ./charger_find.py --sync-tesla --sc
 
 echo

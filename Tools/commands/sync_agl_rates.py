@@ -5,7 +5,7 @@ configured invoices folder, PLUS the landing/Downloads folder - a fresh
 bill often sits there before being filed away by hand) for their actual
 dated tariff rates, and proposes new dated entries for the active power
 provider's tariff-rates JSON (agl_tariff_rates.json's "periods" array -
-see providers_power/power_base.py's load_rate_periods_from_file()).
+see providers/power/power_base.py's load_rate_periods_from_file()).
 
 Why this exists: the AGL usage-export CSV (sync_power_usage.py) only ever
 carries half-hourly METER READINGS - it has no idea what you're actually
@@ -40,7 +40,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from lib.invoice_common import PDFTextExtractor, AGLInvoiceExtractor  # noqa: E402
 from lib.tessie_api_common import load_config  # noqa: E402
 from lib.archive_naming import next_archive_path  # noqa: E402
-from providers_power import get_power_provider  # noqa: E402
+from providers.power import get_power_provider  # noqa: E402
 
 RATE_FIELDS = (
     "usage_rate_per_kwh",

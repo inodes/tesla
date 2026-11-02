@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 pv_solaredge.py - REQ-127: SolarEdgeProvider, the first (and currently
-only) real providers_pv/ implementation. Thin adapter over
+only) real providers/pv/ implementation. Thin adapter over
 lib/solaredge_common.py's already-built, already-live-tested API
 client (REQ-125) - this file's job is only to satisfy BasePvProvider's
 interface, not to re-implement the HTTP/parsing logic.
@@ -18,7 +18,7 @@ from lib.solaredge_common import (
     get_site_id,
 )
 from lib import solaredge_v2 as SE2
-from providers_pv.pv_base import BasePvProvider
+from providers.pv.pv_base import BasePvProvider
 
 # REQ-127: confirmed live - a QUARTER_OF_AN_HOUR request over ~2 months
 # gets a 400 "Data range interval exceeds one month" (the DAY-level cap,

@@ -2,7 +2,7 @@
 
 import calendar
 from datetime import date
-from providers_power import get_power_provider
+from providers.power import get_power_provider
 from lib.power_usage_db import get_usage_db_connection, iter_rows
 
 

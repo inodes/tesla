@@ -3,7 +3,7 @@
 pv_base.py - REQ-127: BasePvProvider, the interface a solar-monitoring
 provider implementation must supply, so the local PV history cache
 (lib/pv_history_db.py) and any report built on it never hardcodes one
-monitoring vendor's API. Mirrors providers_power/power_base.py's own
+monitoring vendor's API. Mirrors providers/power/power_base.py's own
 "one active provider at a time, resolved by a factory" shape
 deliberately (see that file's docstring) - a household has one PV
 monitoring account active at a time, same as one power retailer.
@@ -16,7 +16,7 @@ cap). The user asked for this to be "flexible to move to different
 system in future" rather than hardcoding SolarEdge - e.g. a future
 Fronius/Enphase/Growatt system, or simply a different SolarEdge site -
 so every PV-specific API call lives in a provider subclass, and every
-caller goes through get_pv_provider() (providers_pv/__init__.py)
+caller goes through get_pv_provider() (providers/pv/__init__.py)
 instead of importing lib/solaredge_common.py directly.
 
 Five real per-interval fields, common to any grid-tied PV+consumption
@@ -33,7 +33,7 @@ PV_FIELDS = ("production_kwh", "consumption_kwh", "feedin_kwh", "purchased_kwh",
 
 class BasePvProvider:
     """A PV provider's own `name` (lowercase, e.g. "solaredge") is both
-    its registry key (providers_pv/__init__.py's get_pv_provider()) and
+    its registry key (providers/pv/__init__.py's get_pv_provider()) and
     the config.json `pv.provider` value that selects it."""
 
     name = "base"

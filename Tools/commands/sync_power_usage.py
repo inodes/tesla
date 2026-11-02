@@ -8,9 +8,9 @@ that provider's own data home (get_power_provider().resolve_data_home()).
 REQ-070 (2026-09-15): generalized from agl_usage_sync.py - the
 retailer-specific bits (which files count as a usage export, how to
 parse its timestamp format, its register-code -> role mapping, how to
-read one export CSV) now live in Tools/providers_power/power_agl.py's
+read one export CSV) now live in Tools/providers/power/power_agl.py's
 AGLProvider, the first and so far only BasePowerProvider implementation
-(get_power_provider(), default "agl" - see providers_power/__init__.py).
+(get_power_provider(), default "agl" - see providers/power/__init__.py).
 This script's own job - find export files, merge them, keep one
 canonical dataset - is the same for any provider.
 
@@ -94,7 +94,7 @@ import sys
 from datetime import datetime
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from providers_power import get_power_provider  # noqa: E402
+from providers.power import get_power_provider  # noqa: E402
 from lib.archive_naming import next_archive_path  # noqa: E402
 from lib.tessie_api_common import load_config  # noqa: E402
 from lib.power_usage_db import (  # noqa: E402

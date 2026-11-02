@@ -3,11 +3,11 @@ power_base.py - BasePowerProvider: the interface a power retailer/
 distributor implementation must provide, so the generic power_*.py CLI
 scripts (Tools/) never hardcode one retailer's billing rules.
 
-Why this is shaped differently from Tools/providers_chargers/'s BaseChargerProvider
+Why this is shaped differently from Tools/providers/chargers/'s BaseChargerProvider
 (REQ-063): chargers are queried MANY-at-once and merged (every network
 that might have a station near you); a household only ever has ONE power
 retailer/distributor combination active at a time, so there's no
-"manager" that merges providers here - providers_power/__init__.py's
+"manager" that merges providers here - providers/power/__init__.py's
 get_power_provider() just resolves config.json's chosen provider (or a
 caller override) and returns ONE instance.
 
@@ -24,12 +24,12 @@ stretching this one class further - don't build that split speculatively
 before there's a second real data point.
 
 REQ-069/AGENTS.md 3.1: this file has no argparse/__main__ - it's a
-library module living in Tools/providers_power/ rather than Tools/lib/
+library module living in Tools/providers/power/ rather than Tools/lib/
 because it's specifically an ABSTRACT INTERFACE for interchangeable
 power-provider implementations, the same "provider adapter" category
-Tools/providers_chargers/'s BaseChargerProvider occupies for chargers - just a
+Tools/providers/chargers/'s BaseChargerProvider occupies for chargers - just a
 separate package, since the two domains share no real code and
-AGENTS.md's own existing description of Tools/providers_chargers/ is written
+AGENTS.md's own existing description of Tools/providers/chargers/ is written
 specifically in terms of charging networks.
 """
 
@@ -41,7 +41,7 @@ MASTER_FIELDS = ["StartDate", "EndDate", "RegisterCode", "Role", "kWh", "SourceF
 
 class BasePowerProvider:
     """A power provider's own `name` (lowercase, e.g. "agl") is both its
-    registry key (providers_power/__init__.py's get_power_provider()) and
+    registry key (providers/power/__init__.py's get_power_provider()) and
     the value a real tariff-rates JSON file's own top-level "provider"
     field must match - see load_rate_periods_from_file() below."""
 
