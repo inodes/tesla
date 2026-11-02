@@ -44,7 +44,7 @@ from .chargers_base import (
 from .chargers_chargefox import resolve_au_state
 
 _script_dir = os.path.dirname(os.path.abspath(__file__))
-_tools_dir = os.path.dirname(_script_dir)
+_tools_dir = os.path.dirname(os.path.dirname(_script_dir))      # Tools/ (this file is in providers/chargers/)
 _repo_root = os.path.dirname(_tools_dir)
 
 EXPLOREN_FIND_A_CHARGER_URL = "https://exploren.com.au/find-a-charger/"

@@ -56,7 +56,7 @@ def load_rate_periods():
             f"agl_tariff_rates.json not found at {rates_path}. This file holds "
             f"real account tariff data and is never committed to the repo (see "
             f"AGENTS.md REQ-034) - copy your own rates file there, or start from "
-            f"Tools/providers_power/agl_tariff_rates.example.json's schema."
+            f"Tools/providers/power/agl_tariff_rates.example.json's schema."
         )
     with open(rates_path, "r", encoding="utf-8") as f:
         data = json.load(f)

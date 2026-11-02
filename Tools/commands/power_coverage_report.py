@@ -62,7 +62,7 @@ import sys
 from datetime import date, datetime, timedelta
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from providers_power import get_power_provider  # noqa: E402
+from providers.power import get_power_provider  # noqa: E402
 from lib.power_usage_db import get_usage_db_connection  # noqa: E402
 from lib.invoice_common import PDFTextExtractor, AGLInvoiceExtractor  # noqa: E402
 from sync_agl_rates import find_agl_bill_pdfs, resolve_landing_dir  # noqa: E402

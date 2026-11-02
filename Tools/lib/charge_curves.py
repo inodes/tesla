@@ -82,13 +82,13 @@ except Exception:
 # analyse_session_cost.py already trusts for its own whole-session solar
 # split (REQ-071/REQ-140) - never re-derived or approximated differently
 # here, just applied at finer (per-interval) granularity. Guarded the same
-# defensive way as resolve_tessie_data_home() above: if lib/providers_pv
+# defensive way as resolve_tessie_data_home() above: if lib/providers/pv
 # aren't importable (or no PV credentials are configured), home sessions
 # still get their charts - just without the solar/grid split, per-total-
 # power only (see render_home_curve_chart's split=None fallback).
 try:
     from datetime import datetime as _dt, timedelta as _timedelta
-    from providers_pv import get_pv_provider
+    from providers.pv import get_pv_provider
     from lib.pv_history_db import get_pv_db_connection, pv_window_split, pv_interval_series
     from lib.tessie_api_common import load_config as _load_config
     _PV_PROVIDER = get_pv_provider()

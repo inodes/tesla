@@ -3,7 +3,7 @@
 power_solar_report.py - REQ-118 (2026-09-24): a holistic energy report
 correlating AGL's real billed import/export (lib/power_usage_db.py,
 REQ-115) with the active PV provider's real generation/consumption
-(lib/pv_history_db.py; SolarEdge via providers_pv as of REQ-140, was
+(lib/pv_history_db.py; SolarEdge via providers/pv as of REQ-140, was
 PVOutput's lib/pvoutput_history_db.py before it - PVOutput on this
 account turned out to be a pure relay of this SAME SolarEdge account's
 own API, see AGENTS.local.md's REQ-140 entry) over any period of choice.
@@ -25,7 +25,7 @@ consumption meters (a real self_consumption_kwh field on SolarEdge -
 REQ-140 - not derived here from two CT clamps the way the original
 PVOutput-based version had to). This script adds that missing half:
 self-consumption savings = self-consumed kWh valued at the AGL usage
-rate in effect on the day it happened (providers_power's own
+rate in effect on the day it happened (providers/power's own
 rate_for_date()) - the grid cost solar avoided by being used directly
 rather than exported and bought back.
 
@@ -51,10 +51,10 @@ import sys
 from datetime import date, datetime, timedelta
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from providers_power import get_power_provider  # noqa: E402
+from providers.power import get_power_provider  # noqa: E402
 from lib.tessie_api_common import load_config, resolve_tessie_data_home  # noqa: E402
 from lib.power_usage_db import get_usage_db_connection  # noqa: E402
-from providers_pv import get_pv_provider  # noqa: E402
+from providers.pv import get_pv_provider  # noqa: E402
 from lib.pv_history_db import get_pv_db_connection, sync_daily_range, query_daily_range  # noqa: E402
 from lib.analysis_deepdive_charts import write_interactive_chart  # noqa: E402
 from lib.power_bill import reconstruct_bill  # noqa: E402

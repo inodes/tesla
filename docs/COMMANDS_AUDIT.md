@@ -46,7 +46,7 @@ Audit of `Tools/` as of 2026-10-19: 79 top-level scripts. Decisions so far: name
 | teslacam_scan.py | scan_teslacam_telemetry.py | |
 | teslacam_ledger.py | scan_teslacam_files.py | |
 | teslacam_stills.py | make_teslacam_stills.py | |
-| charger_find.py, find_tesla_chargers.py, find_plugshare_chargers.py | find_chargers.py (one command, providers in `providers_chargers/`) | |
+| charger_find.py, find_tesla_chargers.py, find_plugshare_chargers.py | find_chargers.py (one command, providers in `providers/chargers/`) | |
 | charger_plugshare_auditor.py | audit_chargers_plugshare.py | |
 | places_manager.py (and tessie_places.py) | manage_places.py | |
 | places_osm_editor.py | edit_places_osm.py | |
@@ -290,3 +290,4 @@ Log (newest first):
 - 2026-11-02: Personal data out of the code: Home's position in two tests and Home's address in three code comments replaced with made-up values (the repository is public). Tokens, passwords, API keys and the VIN were never committed (config.json is ignored and absent from history).
 - 2026-11-02: Tests without real config: env TESLA_CONFIG points the whole app and every command at another config file (e.g. config.example.json), and test_home_cost no longer reads the real tariff file. Run the suite anywhere with `TESLA_CONFIG=config.example.json TESLA_DATA_DIR=/tmp/nodata python3 -m unittest discover -s tests`.
 - 2026-11-02: App header shows the car's odometer (latest drive end or charge, /api/summary `odo`) instead of the sum of logged drive distances; hover gives the logged-drive km. tests/test_summary_odo.py.
+- 2026-11-02: Provider packages merged: Tools/providers_chargers, Tools/providers_power and Tools/providers_pv moved to one Tools/providers package with chargers/, power/ and pv/ subpackages (git mv, file names unchanged). Every import now reads `from providers.chargers|power|pv import ...`; the charger modules' Tools/ and repo-root paths are computed one level deeper so they resolve to the same folders as before. tests/test_lib_no_commands.py scans Tools/providers. README, AGENTS.md 3 and 3.1, docs/ARCHITECTURE.md 6 updated. No script added or renamed; every --help unchanged except the folder name in the three power/solar help texts that mention it (power_demand_calculator, power_roi_report, power_solar_report).

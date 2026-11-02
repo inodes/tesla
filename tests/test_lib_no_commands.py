@@ -34,8 +34,7 @@ def imports(path):
 
 def shared_code_files():
     files = glob.glob(os.path.join(TOOLS, "lib", "**", "*.py"), recursive=True)
-    for pkg in glob.glob(os.path.join(TOOLS, "providers_*")):
-        files += glob.glob(os.path.join(pkg, "**", "*.py"), recursive=True)
+    files += glob.glob(os.path.join(TOOLS, "providers", "**", "*.py"), recursive=True)
     return files + [os.path.join(TOOLS, "tesla_app.py")]
 
 

@@ -39,7 +39,7 @@ def resolve_pvoutput_data_home():
     """config.json's directories.pvoutput, or <Tesla data home>/PVOutput
     by default - the same directories.<key>-first, sensible-default-
     second pattern every provider's own resolve_data_home() already
-    follows (providers_power/power_base.py)."""
+    follows (providers/power/power_base.py)."""
     cfg_dir = load_config().get("directories", {}).get("pvoutput")
     if cfg_dir:
         return os.path.abspath(os.path.expanduser(cfg_dir))

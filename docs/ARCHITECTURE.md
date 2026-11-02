@@ -139,6 +139,8 @@ The car's clock is not UTC. Today it is learned by matching video GPS to Tessie 
 
 `core/` (drives, footage, events, places, stills, registry, clock, delete rules), `providers/<name>/`, `services/` (tasks), `app/` (HTTP + UI), `cli/` (wrappers), `data/` (storage). The current `lib/` and the 60,000 lines inside the large scripts are redistributed into these; twins are diffed and removed; one-offs and tests go to `archive/` and `tests/`.
 
+Done 2026-11-02 for the provider packages that already existed: `Tools/providers_chargers`, `Tools/providers_power` and `Tools/providers_pv` are one package, `Tools/providers/`, with `chargers/`, `power/` and `pv/` subpackages (`from providers.chargers import ...`, `from providers.power import get_power_provider`, `from providers.pv import get_pv_provider`). File names inside them are unchanged; no logic changed. Tessie, Evnex, ABRP and fuel are not providers yet (they live in `lib/`).
+
 ## 7. Storage
 
 Follows Glenn's earlier direction: per-day JSON for derived metadata, CSV where Tessie provides CSV. Processing record per day: which steps (telemetry, stills, events, signs, traffic, snapshots) ran at which version; later runs skip them unless forced.

@@ -1,7 +1,7 @@
 """power_bill.py - a power bill rebuilt from the usage data and the provider's rates (usage, supply, demand, solar credit), and the real bills it is checked against."""
 
 from datetime import date, timedelta
-from providers_power import get_power_provider
+from providers.power import get_power_provider
 from lib.power_demand import load_rate_periods, rate_for_date, monthly_latched_kw, demand_charge
 from lib.power_usage_db import get_usage_db_connection, iter_rows
 
@@ -96,7 +96,7 @@ def demand_month_for_cycle_end(end):
     """The calendar month billed on an invoice ending on `end` - the
     most recently fully completed calendar month as of that date. This
     arrears-timing rule is the same for every provider observed so far,
-    so it stays here rather than in providers_power/."""
+    so it stays here rather than in providers/power/."""
     first_of_end_month = end.replace(day=1)
     last_month_end = first_of_end_month - timedelta(days=1)
     return last_month_end.year, last_month_end.month

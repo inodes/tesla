@@ -67,7 +67,7 @@ from lib.osm_templates_common import (
     derive_tesla_ref,
 )
 from lib.places_common import query_overpass_pois
-from providers_chargers.chargers_base import haversine_km
+from providers.chargers.chargers_base import haversine_km
 
 C_GREEN = "\033[92m"
 C_YELLOW = "\033[93m"
@@ -650,7 +650,7 @@ def _display_changeset_rationale(
             c_lat, c_lon = coords
             o_lat, o_lon = orig_coords
             if round(c_lat, 6) != round(o_lat, 6) or round(c_lon, 6) != round(o_lon, 6):
-                from providers_chargers.chargers_base import haversine_km
+                from providers.chargers.chargers_base import haversine_km
                 move_dist_m = haversine_km(o_lat, o_lon, c_lat, c_lon) * 1000.0
                 print(f"• Position: Repositioned pin from ({o_lat:.6f}, {o_lon:.6f}) to ({c_lat:.6f}, {c_lon:.6f}) (~{move_dist_m:.1f}m adjustment to physical stalls).")
 
@@ -1746,8 +1746,8 @@ def _audit_tesla_station(
     open_browser: bool = True,
     preselected_station=None,
 ):
-    from providers_chargers.chargers_tesla import TeslaProvider
-    from providers_chargers.chargers_base import haversine_km
+    from providers.chargers.chargers_tesla import TeslaProvider
+    from providers.chargers.chargers_base import haversine_km
     from lib.supercharge_common import find_supercharge_site
 
     p = TeslaProvider()
@@ -2562,7 +2562,7 @@ def _source_and_audit_supercharge(
     gmaps_audited_info: Optional[Dict] = None,
 ):
     from lib.supercharge_common import search_supercharge_sites, fetch_site_changes
-    from providers_chargers.chargers_base import haversine_km
+    from providers.chargers.chargers_base import haversine_km
 
     if not gmaps_audited_info and ("maps.app.goo.gl" in query.lower() or "goo.gl/maps" in query.lower() or "google.com/maps" in query.lower()):
         gmaps_audited_info = resolve_gmaps_url(query)
@@ -2744,7 +2744,7 @@ def _source_and_audit_supercharge(
     # Check local Tesla Registry for co-located destination chargers if available
     nearby_dest_registry = []
     try:
-        from providers_chargers.chargers_tesla import TeslaProvider
+        from providers.chargers.chargers_tesla import TeslaProvider
         p = TeslaProvider()
         stations = p.load_cached_registry() or []
         for s in stations:

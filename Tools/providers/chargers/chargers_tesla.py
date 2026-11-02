@@ -24,7 +24,7 @@ from typing import Dict, List, Optional, Any
 from .chargers_base import BaseChargerProvider, UnifiedStationRecord, haversine_km, filter_station_records
 
 _script_dir = os.path.dirname(os.path.abspath(__file__))
-_tools_dir = os.path.dirname(_script_dir)
+_tools_dir = os.path.dirname(os.path.dirname(_script_dir))      # Tools/ (this file is in providers/chargers/)
 _repo_root = os.path.dirname(_tools_dir)
 if _tools_dir not in sys.path:
     sys.path.insert(0, _tools_dir)
@@ -2851,7 +2851,7 @@ def get_current_gps_location(repo_root: str = None) -> tuple:
     3. Fallback: Fast IP-based geolocation
     """
     if not repo_root:
-        repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        repo_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))  # Tools/, as before the move to providers/chargers/
 
     tessie_home = None
     try:
@@ -2952,7 +2952,7 @@ def resolve_reference_coordinates(ref_str: str, repo_root: str = None) -> tuple:
             pass
 
     if not repo_root:
-        repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        repo_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))  # Tools/, as before the move to providers/chargers/
 
  # Search Tessie/places.json
     places_p = os.path.join(repo_root, "Tessie", "places.json")
