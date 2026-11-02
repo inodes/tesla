@@ -1110,7 +1110,7 @@ async function sentryPlayer(host,ev,role=ev&&ev.role||"A",folder="SentryClips"){
     if(want>0){try{const r=await fetch("/api/clips/after/"+encodeURIComponent(stamps[stamps.length-1])+"?n="+want+"&skip="+encodeURIComponent(stamps.join(",")));const d=r.ok?await r.json():null;
       if(d&&d.clips&&Object.keys(d.clips).length){more=d;stamps=stamps.concat(Object.keys(d.clips).sort());cams=Object.assign({},ev.clips,d.clips);loc=Object.assign({},ev.loc||{},d.loc||{})}}catch(e){}}}
   const extra=more?Object.keys(more.clips).length:0;
-  clipPlayer(host,{stamps,cams,loc,trig,at:folder==="SentryClips"?"trig":"",url:(s,c)=>more&&more.play[s]?`/footage/${more.play[s]}/RecentClips/${s}-${c}.mp4`:`/footage/${role}/${folder}/${ev.id}/${s}-${c}.mp4`,
+  clipPlayer(host,{stamps,cams,loc,trig,at:folder==="SentryClips"?"trig":"",hot:folder==="SentryClips"?EVCAM[ev.cam]||"":"",url:(s,c)=>more&&more.play[s]?`/footage/${more.play[s]}/RecentClips/${s}-${c}.mp4`:`/footage/${role}/${folder}/${ev.id}/${s}-${c}.mp4`,
     head:`${esc(what)} on ${dayName(t.slice(0,10))} at ${hms(t)}${ev.city?" · "+esc(ev.city):""}${ev.street&&folder==="SavedClips"?" · "+esc(ev.street):""}. One-minute clips, ${stamps.length} in this event${extra?` (${extra} after it from the continuous recording)`:""}; the next clip plays on its own. ${folder==="SentryClips"?"It plays from the moment it was detected; press From Start for the first clip":"It plays from the start; press Detection to jump to the moment it happened"}${EVCAM[ev.cam]?" (the "+CAMN[EVCAM[ev.cam]].toLowerCase()+" camera saw it)":""}.`});
   // the full-size pictures kept of the moment (they stay when the video is deleted)
   const ty=folder==="SavedClips"?"saved":"sentry";let sh=null;
