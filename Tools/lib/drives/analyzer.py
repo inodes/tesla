@@ -1766,7 +1766,8 @@ class DriveAnalyzer:
         fuel_lines = format_drive_fuel_comparison(
             dist_km, target_drive["start_dt"], kwh_used=kwh,
             duration_mins=dur_mins, raw_samples=raw_samples,
-            vehicle_key=vehicle_key, tessie_dir=td_home, box_width=box_w, indent="  "
+            vehicle_key=vehicle_key, tessie_dir=td_home, box_width=box_w, indent="  ",
+            start_epoch=target_drive.get("start_utc_epoch")
         )
         if fuel_lines:
             print(f"├{'─' * (box_w - 2)}┤")

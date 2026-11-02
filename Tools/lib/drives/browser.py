@@ -739,7 +739,7 @@ def display_footage_details(trip, analyzer):
     fuel_lines = format_drive_fuel_comparison(
         dist_km, start_dt, kwh_used=kwh,
         duration_mins=dur_mins, raw_samples=raw_samples,
-        tessie_dir=td_home, indent="   "
+        tessie_dir=td_home, indent="   ", start_epoch=trip.get("start_utc_epoch")
     )
     if fuel_lines:
         print()
