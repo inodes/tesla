@@ -1241,24 +1241,45 @@ async function pagePlaces(){
   $("#sy").onclick=()=>syncPanel($("#sp"),async()=>{cache.chargers=null;cache.places=null;C=await api("chargers");tabs();draw()});$("#vis").onchange=e=>{PL.visited=e.target.checked;draw()};$("#q").oninput=e=>{PL.q=e.target.value;draw()};
   $("#add").onclick=()=>{sessionStorage.setItem("placePrefill",JSON.stringify({name:"",lat:"",lon:"",radius_m:150}));location.hash="#/place/"+encodeURIComponent("@new")};tabs();draw();
 }
-// ---------- sync_charger_all.sh from the app: Run, live log, Stop
+// ---------- a job run from the app, shown as its steps (one row each: done / running / failed, and the short result the step printed); the raw output only under Details
+// JobSteps(host) -> {feed(lines), reset(), paint(running, rc)}; a script marks a step with a line "==> Name" (sync_*_all.sh)
+const JOBNAME=n=>n.replace(/\s*\(.*\)\s*$/,"").replace(/\s+(network|networks)$/i,"").trim();
+const JOBRES=/\b\d[\d,]*\b[^\n]*\b(new|added|updated|listed|removed|moved|renamed|stations?|chargers?|sites?|found|saved|kept|match(?:es)?|priced|merged|exported|written)\b/i;
+const JOBBAD=/\b(error|failed|traceback|exception)\b/i;
+function JobSteps(host){
+  let steps=[],raw=[],open=false;
+  const tidy=x=>x.replace(/^[\s\W_]+/u,"").replace(/[.…]+$/,"").replace(/\s+/g," ").trim();
+  const feed=lines=>lines.forEach(x=>{raw.push(x);if(raw.length>3000)raw.shift();
+    if(x.startsWith("==> ")){const nm=x.slice(4).trim();if(/^Done/i.test(nm))return;steps.push({name:JOBNAME(nm),res:"",bad:""});return}
+    const st=steps[steps.length-1];if(!st)return;
+    if(JOBBAD.test(x)&&!/\b0 (errors?|failed)\b/i.test(x))st.bad=tidy(x).slice(0,160);
+    else if(JOBRES.test(x))st.res=tidy(x).slice(0,90)});
+  let last="";
+  const paint=(running,rc)=>{const n=steps.length,k=raw.length+"|"+running+"|"+rc;if(k===last)return;last=k;
+    host.innerHTML=(n?`<table class="kv jobs"><tbody>${steps.map((st,i)=>{const cur=running&&i===n-1,fail=!running&&rc&&rc!==0&&i===n-1;
+      return `<tr><td class="l">${cur?'<span class="dot rd"></span>':fail||st.bad?'<b style="color:var(--bad)">!</b>':'<span style="color:var(--good,#16a34a)">✓</span>'} ${esc(st.name)}</td><td class="sub"${st.bad?` title="${esc(st.bad)}"`:""}>${cur?"…":esc(st.res||(st.bad?"problem - see Details":""))}</td></tr>`}).join("")}</tbody></table>`:"")+
+      (raw.length?`<details class="sub" style="margin-top:6px"${open?" open":""}><summary>Details</summary><pre class="out" style="max-height:300px">${esc(raw.join("\n"))}</pre></details>`:"");
+    const d=$("details",host);if(d)d.ontoggle=()=>{open=d.open}};
+  return {feed,paint,reset:()=>{steps=[];raw=[];last=""},count:()=>steps.length,current:()=>steps.length?steps[steps.length-1].name:""};
+}
+// ---------- the charger registry update, run from the app
 function syncPanel(host,done){
   if(host.firstChild){host.innerHTML="";if(SYNCPOLL){clearInterval(SYNCPOLL);SYNCPOLL=null}return}
-  host.innerHTML=`<div class="card"><h2 style="margin-top:0">Sync chargers</h2><div class="sub">Updates the charger registry: Tesla Superchargers and Destination chargers (near Home, 50 km), then Chargefox, EVX, Evie, bp pulse, PlugShare (near Home), AmpCharge, Exploren, Jolt and NRMA. It needs the network and can take many minutes. Existing entries are kept; new ones are added.</div>
-    <div class="bar"><button class="btn pri" id="sr">Run now</button><button class="btn bad" id="ss" disabled>Stop</button><span class="sub" id="sm"></span></div><div id="spb" hidden>${pbar(null)}</div><pre class="out" id="slog" style="max-height:340px;overflow:auto" hidden></pre></div>`;
-  const log=$("#slog"),pb=$("#spb");let since=0,was=false,step=0,stepName="",STEPS=12;
+  host.innerHTML=`<div class="card"><h2 style="margin-top:0">Sync chargers</h2><div class="sub" title="Tesla Superchargers and Destination chargers, Chargefox, EVX, Evie, bp pulse, PlugShare (50 km around Home), AmpCharge, Exploren, Jolt and NRMA. Existing entries are kept; new ones are added.">Updates every charger network. Takes several minutes.</div>
+    <div class="bar"><button class="btn pri" id="sr">Run now</button><button class="btn bad" id="ss" disabled>Stop</button><span class="sub" id="sm"></span></div><div id="spb" hidden>${pbar(null)}</div><div id="sjob"></div></div>`;
+  const pb=$("#spb"),job=JobSteps($("#sjob"));let since=0,was=false,STEPS=12;
   const poll=async()=>{let j;try{j=await (await fetch("/api/chargers-sync?since="+since)).json()}catch(e){$("#sm").textContent="Could not reach the app.";return}
-    if(!document.body.contains(log)){clearInterval(SYNCPOLL);SYNCPOLL=null;return}
-    if(j.lines&&j.lines.length){log.hidden=false;const bot=log.scrollTop+log.clientHeight>=log.scrollHeight-20;log.textContent+=(log.textContent?"\n":"")+j.lines.join("\n");if(bot)log.scrollTop=log.scrollHeight;
-      j.lines.forEach(x=>{if(x.startsWith("==> ")){const nm=x.slice(4).trim();if(/^Done/i.test(nm))return;step++;stepName=nm}})}
-    since=j.n;$("#sr").disabled=j.running;$("#ss").disabled=!j.running;
+    if(!document.body.contains(pb)){clearInterval(SYNCPOLL);SYNCPOLL=null;return}
+    if(j.lines&&j.lines.length)job.feed(j.lines);
+    since=j.n;$("#sr").disabled=j.running;$("#ss").disabled=!j.running;const step=job.count();
     if(pb){pb.hidden=!j.running;if(j.running)setPbar(pb,step?Math.min(100,Math.round(100*(Math.min(step,STEPS)-.6)/STEPS)):null)}
-    $("#sm").textContent=j.running?(step?"Step "+Math.min(step,STEPS)+" of "+STEPS+": "+stepName:"Running…"):j.started?(j.rc===0?"Finished.":"Stopped or failed (exit "+j.rc+").")+"":"";
+    $("#sm").textContent=j.running?(step?"Step "+Math.min(step,STEPS)+" of "+STEPS:"Starting…"):j.started?(j.rc===0?"Done.":"Stopped (exit "+j.rc+")."):"";
+    job.paint(j.running,j.rc);
     if(j.running)was=true;
     if(!j.running&&was){was=false;clearInterval(SYNCPOLL);SYNCPOLL=null;done()}
     if(!j.running&&!was&&SYNCPOLL&&!j.started){clearInterval(SYNCPOLL);SYNCPOLL=null}};
   const go=()=>{if(!SYNCPOLL)SYNCPOLL=setInterval(poll,2000);poll()};
-  $("#sr").onclick=async()=>{if(!confirm("Update the charger registry now? It contacts the charger networks and PlugShare and can take many minutes."))return;log.textContent="";since=0;step=0;stepName="";was=true;
+  $("#sr").onclick=async()=>{job.reset();since=0;was=true;
     const j=await (await fetch("/api/chargers/sync",{method:"POST"})).json();if(j.ok===false){$("#sm").textContent=j.error;return}go()};
   $("#ss").onclick=async()=>{await fetch("/api/chargers/sync/stop",{method:"POST"});go()};
   poll();fetch("/api/chargers-sync?since=0").then(r=>r.json()).then(j=>{if(j.running)go()}).catch(()=>{});
@@ -1746,7 +1767,7 @@ async function tessieSync(host,o){
       $("#tsx",host).onclick=async()=>{await fetch("/api/tessie/sync/stop"+K,{method:"POST"});poll()};return}
     let h="";
     if(err)h+=`<div class="card"><b style="color:var(--bad)">${esc(err)}</b></div>`;
-    else if(j&&j.ended&&j.rc!==0)h+=`<div class="card"><b style="color:var(--bad)">The Tessie sync stopped (exit ${j.rc}).</b><pre class="out" style="max-height:200px;overflow:auto">${esc(tail.slice(-14).join("\n"))}</pre></div>`;
+    else if(j&&j.ended&&j.rc!==0)h+=`<div class="card"><b style="color:var(--bad)">The Tessie sync stopped (exit ${j.rc}).</b><details class="sub" style="margin-top:6px"><summary>Details</summary><pre class="out" style="max-height:200px;overflow:auto">${esc(tail.slice(-14).join("\n"))}</pre></details></div>`;
     else if(j&&j.ended&&was)h+=`<div class="sub" style="margin-bottom:8px">Synced from Tessie.</div>`;
     if(what&&o.tried)h+=`<div class="sub">Synced from Tessie: it has no detailed record for this drive${o.triedNote?" ("+esc(o.triedNote)+")":""}.</div>`;
     else if(what)h+=`<div class="bar"><button class="btn" id="tsg">Sync Tessie</button><span class="sub"><b>${esc(cap(what))}.</b> ${esc(o.note||"Sync Tessie fetches them.")}</span></div>`;
