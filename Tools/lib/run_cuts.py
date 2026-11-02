@@ -9,6 +9,7 @@ named by its first minute everywhere, as before.
     is_cut(stamp)         -> True when a run starts at this minute although the minute before it is close enough to belong to the same run
     kind(stamp), pos(stamp) -> what the section that starts at this minute is: "drive" or "park" ("" when not known), and where (lat, lon) when known
     section(stamp)        -> (kind, lat, lon) of the section any minute lies in; None when the minute is in no section worked out
+    section_last(stamp)   -> UTC time of the last minute of that section
     version()             -> changes whenever the cuts do
 
 A minute is told apart by its middle. A minute with no reading (kind "recording": the telemetry has not been read) takes the section it follows, so it
@@ -79,6 +80,19 @@ def section(stamp):
         if len(s) < 5 or s[4] is None or t > s[4]:
             return None
         return s[0], s[1], s[2]
+
+
+def section_last(stamp):
+    """UTC time of the last minute of the section this minute lies in; None when it lies in none."""
+    with _LOCK:
+        section(stamp)
+        _v, ts, ks = _IX
+        t = CC.utc(stamp)
+        i = bisect.bisect_right(ts, t) - 1
+        if i < 0:
+            return None
+        s = _S[ks[i]]
+        return s[4] if len(s) >= 5 and s[4] is not None and t <= s[4] else None
 
 
 def pos_est(stamp):

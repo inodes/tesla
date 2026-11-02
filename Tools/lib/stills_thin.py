@@ -27,6 +27,7 @@ import zipfile
 import app_config
 import teslacam_ledger as TLG
 import teslacam_stills as ST
+import sign_speed as SS
 
 MARK = "thinned.json"
 TTL = 60.0
@@ -70,7 +71,6 @@ class StillsThin:
         """The minutes whose stills can be made smaller, newest first."""
         store = self.tc._tl("A")
         scanned = self.tc._rv().scanned()
-        min_kmh = float((app_config.get("review") or {}).get("min_kmh", 10.0))
         keep, marks = self._event_stamps(), self._marks()
         out = []
         for st in sorted(self.stills.stamps(), reverse=True):
@@ -79,7 +79,7 @@ class StillsThin:
             sm = store.summary(st)
             if not isinstance(sm, dict):
                 continue
-            if sm.get("vmax", 0) >= min_kmh and (st not in scanned or scanned[st] > 0):
+            if SS.wanted(st, sm) and (st not in scanned or scanned[st] > 0):
                 continue                                                  # driven fast enough for signs: not read yet, or a sign was found
             out.append(st)
         return out

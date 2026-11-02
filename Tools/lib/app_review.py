@@ -27,7 +27,7 @@ for _d in ("/opt/homebrew/bin", "/usr/local/bin"):      # an app started from th
         os.environ["PATH"] = os.environ.get("PATH", "") + os.pathsep + _d
 
 OPTS = dict(step_s=1.0,        # a still every this many seconds
-            min_kmh=10.0,      # only look while the car goes at least this fast (signs matter on the road, not in a car park; a sign passed while slowing to turn in still counts)
+            min_kmh=30.0,      # only look while the car goes at least this fast (signs matter on the road, not in a car park); end_kmh near a drive's end (sign_speed)
             min_conf=50.0,     # tesseract confidence (0-100) below which a reading is dropped
             workers=3,         # stills looked at in parallel
             merge_s=12.0,      # the same number seen again within this many seconds is the same sign
@@ -288,7 +288,9 @@ def scan_clip(path, stamp, v, base):
     with tempfile.TemporaryDirectory() as tmp:
         fr = _frames(path, step, tmp)
         if v:   # only while moving fast enough
-            fr = [(s, f) for s, f in fr if int(s) < len(v) and v[int(s)] is not None and v[int(s)] >= OPTS["min_kmh"]]
+            import sign_speed as SS
+            e = SS._drive_end(stamp)
+            fr = [(s, f) for s, f in fr if int(s) < len(v) and v[int(s)] is not None and v[int(s)] >= SS.floor_at(stamp, s, e)]
 
         def one(a):
             s, f = a

@@ -17,6 +17,7 @@ import clips_purged as PG
 import home_ignore as IGN
 import teslacam_files as TF
 import teslacam_ledger as TLG
+import sign_speed as SS
 
 FOLDERS = ("RecentClips", "SavedClips", "SentryClips")
 
@@ -41,7 +42,7 @@ def _mtime_ns(root):
     return tuple(out)
 
 
-CODE_VER = 4        # raise when the way the answer is worked out changes, so a cached answer from before is looked at again
+CODE_VER = 5        # raise when the way the answer is worked out changes, so a cached answer from before is looked at again
 
 
 class Todo:
@@ -103,7 +104,6 @@ class Todo:
         rv, store = self.tc._rv(), self.tc._tl("A")
         done = rv.scanned()
         again = rv.unrefined() if hasattr(rv, "unrefined") else set()
-        min_kmh = float((app_config.get("review") or {}).get("min_kmh", 10.0))
         out = {}
         for r, (files, ok) in walked.items():
             n = 0
@@ -118,7 +118,7 @@ class Todo:
                     n += st in again
                     continue
                 sm = store.summary(st)
-                if isinstance(sm, dict) and sm.get("vmax", 0) >= min_kmh:
+                if SS.wanted(st, sm):
                     n += 1
             out[r] = n
         return out
