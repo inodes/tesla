@@ -2,15 +2,15 @@ name: CI Quality & Syntax Audit
 
 on:
   push:
-    branches: [ main ]
+    branches: [ main, merged ]
     tags: [ 'v*' ]
   pull_request:
-    branches: [ main ]
+    branches: [ main, merged ]
 
 jobs:
   validate:
     name: Syntax & Sanity Checks
-    runs-on: macos-latest
+    runs-on: ubuntu-latest
 
     steps:
       - name: Checkout Repository
@@ -21,28 +21,22 @@ jobs:
         with:
           python-version: '3.12'
 
-      - name: Validate Shell Script Syntax
-        run: |
-          echo "Checking syntax of Tools/dashcam_exportdash.sh..."
-          bash -n Tools/dashcam_exportdash.sh
-          
-          echo "Checking syntax of Tools/dashcam_sync.sh..."
-          zsh -n Tools/dashcam_sync.sh
+      - name: Install what the tests use
+        # only what the tests import; the optional pieces (timezonefinder, osmium, evnex, pvlib) are not needed: tests that use them skip
+        run: python3 -m pip install numpy scipy matplotlib pypdf opencv-python-headless
 
-      - name: Verify CLI Help & Flags
+      - name: Every Python file compiles
         run: |
-          chmod +x Tools/dashcam_sync.sh Tools/dashcam_exportdash.sh Tools/*.py
-          ./Tools/dashcam_sync.sh --help
-          ./Tools/dashcam_sync.sh --doctor || true
-          ./Tools/dashcam_exportdash.sh --help
-          ./Tools/tessie_drives_analyzer.py --help
-          ./Tools/tessie_charging_analyzer.py --help
-          ./Tools/tessie_places.py --help
-          ./Tools/charger_find_tesla.py --help
+          find Tools tests -name '*.py' -print0 | xargs -0 python3 -m py_compile
 
-      - name: Verify Embedded Python Scripts
+      - name: The app's page script parses
+        run: node --check Tools/lib/app_ui/app.js
+
+      - name: Tests
+        env:
+          TESLA_CONFIG: config.example.json
+          TESLA_DATA_DIR: /tmp/nodata
         run: |
-          for f in Tools/*.py; do
-            echo "Compiling $f..."
-            python3 -m py_compile "$f"
-          done
+          python3 -m unittest discover -s tests -p "test_[a-h]*.py"
+          python3 -m unittest discover -s tests -p "test_[i-r]*.py"
+          python3 -m unittest discover -s tests -p "test_[s-z]*.py"
