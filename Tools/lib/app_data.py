@@ -245,6 +245,9 @@ class Store:
                     la0, lo0, la1, lo1 = (_num(r.get(k)) for k in ("Starting Latitude", "Starting Longitude", "Ending Latitude", "Ending Longitude"))
                     if None not in (la0, lo0, la1, lo1):
                         same = math.hypot((la1 - la0) * 111320.0, (lo1 - lo0) * 111320.0 * math.cos(math.radians(la0))) <= app_config.get("drives.repark_same_place_m")
+                pk0 = self.pl.label(_num(r.get("Starting Latitude")), _num(r.get("Starting Longitude")), False, r.get("Starting Saved Location") or "")[1]
+                pk1 = self.pl.label(_num(r.get("Ending Latitude")), _num(r.get("Ending Longitude")), False, r.get("Ending Saved Location") or "")[1]
+                same = same or bool(pk0 and pk0 == pk1 and pk0[:2] == "p:")      # both ends are in one place you saved (a car park with several street addresses)
                 quick = mins <= app_config.get("drives.repark_max_minutes")
                 repark = quick and (km < app_config.get("drives.repark_max_km") or (same and km < app_config.get("drives.repark_same_place_km")))
                 out.append(dict(k="drive", repark=repark, id=st["stamp"] if st else "t%d" % t0, page=bool(st), t0=t0, t1=t1, day=dt.strftime("%Y-%m-%d"), hm=dt.strftime("%H:%M"),
