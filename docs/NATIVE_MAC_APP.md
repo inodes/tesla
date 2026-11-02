@@ -14,7 +14,7 @@ Glenn wants the app as native to macOS as possible. Today Tesellate is a Python 
 ## Order of work
 1. Shell: Swift app that launches and supervises the engine, a window with a web view of the current UI (replaces pywebview and the launcher script), menu bar, Dock, notifications.
 2. Video player: AVPlayer for each camera, one master clock, speeds 0.5x to 16x, frame stepping, the six cameras in one view; the clip list with thumbnails from AVAssetImageGenerator.
-3. Lists: TeslaCam (Recent / Saved / Sentry cards with the place filter and date bar), Drives (new), Parked, Charges.
+3. Lists: TeslaCam (Recent / Saved / Sentry cards with the place filter and date bar), Drives, Parked, Charges.
 4. Drive page: telemetry charts (Swift Charts), the map (MapKit or MapLibre Native), the analysis screen (docs/DRIVE_ANALYSIS_SCREEN.md).
 5. Keep / delete jobs, Tasks and sync progress as native progress and notifications.
 6. Quick Look and drag and drop of clips, Shortcuts / App Intents if wanted.
