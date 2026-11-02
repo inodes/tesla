@@ -62,7 +62,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
-CMDS = os.path.join(HERE, "commands")          # the command-line scripts the app runs or imports (drive_actions, the syncs)
+CMDS = os.path.join(HERE, "commands")          # the command-line scripts the app runs (the syncs)
 sys.path.insert(1, CMDS)
 sys.path.insert(0, os.path.join(HERE, "lib"))
 import app_config  # noqa: E402
@@ -227,7 +227,7 @@ def code_updated():
     for d, pat in ((HERE, ".py"), (os.path.join(HERE, "lib"), ".py")):
         try:
             for f in os.listdir(d):
-                if f.endswith(pat) and (f.startswith("app_") or f in ("tesla_app.py", "drive_actions.py", "places_common.py")):
+                if f.endswith(pat) and (f.startswith("app_") or f in ("tesla_app.py", "footage_actions.py", "places_common.py")):
                     newest = max(newest, os.path.getmtime(os.path.join(d, f)))
         except OSError:
             pass
@@ -835,8 +835,8 @@ class H(BaseHTTPRequestHandler):
 
 
 def run_queue(body):
-    """Run the footage actions queued on the drive pages (drive_actions.py). apply=False only describes what would happen."""
-    import drive_actions as DA
+    """Run the footage actions queued on the drive pages (lib/footage_actions.py, as drive_actions.py does). apply=False only describes what would happen."""
+    import footage_actions as DA
     actions = body.get("actions") or []
     apply = bool(body.get("apply"))
     if apply and any(a.get("type") == "delete" for a in actions) and body.get("confirm") is not True:
