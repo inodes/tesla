@@ -46,7 +46,7 @@ HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, HERE)
 sys.path.insert(0, os.path.join(HERE, "lib"))
 import drive_roles as DR  # noqa: E402
-import teslacam_scan as TS  # noqa: E402
+from lib import teslacam_scan as TS  # noqa: E402
 
 
 def _n(x):

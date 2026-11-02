@@ -15,11 +15,11 @@ for p in ("tests", "Tools", os.path.join("Tools", "lib")):
 import clip_clock as CC  # noqa: E402
 import clip_keep as CK  # noqa: E402
 import run_cuts as RC  # noqa: E402
-import teslacam_scan as TS  # noqa: E402
-import teslacam_stills as ST  # noqa: E402
+from lib import teslacam_scan as TS  # noqa: E402
+from lib import teslacam_stills as ST  # noqa: E402
 import event_shots as ES  # noqa: E402
 import teslacam_deletable as TD  # noqa: E402
-import teslacam_ledger as TLG  # noqa: E402
+from lib import teslacam_ledger as TLG  # noqa: E402
 
 LIVE = dict(first="2026-10-17T00:00:00Z", last="2026-10-17T00:00:00Z", gone=None)
 S1, S2, S3 = "2026-10-16_15-40-07", "2026-10-16_15-41-07", "2026-10-16_15-42-07"

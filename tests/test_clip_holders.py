@@ -11,7 +11,7 @@ import unittest
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.join(HERE, "..", "Tools"))
 sys.path.insert(0, os.path.join(HERE, "..", "Tools", "lib"))
-import teslacam_ledger as L  # noqa: E402
+from lib import teslacam_ledger as L  # noqa: E402
 
 ST = "2026-10-16_15-44-07"
 LIVE = dict(first="2026-10-17T00:00:00Z", last="2026-10-17T00:00:00Z", gone=None)

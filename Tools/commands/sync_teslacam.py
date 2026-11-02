@@ -66,7 +66,7 @@ sys.path.insert(0, HERE)
 sys.path.insert(0, os.path.join(HERE, "lib"))
 import app_config  # noqa: E402
 import drive_roles as DR  # noqa: E402
-import teslacam_ledger as TLG  # noqa: E402
+from lib import teslacam_ledger as TLG  # noqa: E402
 import teslacam_sync as SY  # noqa: E402
 from progress import Bar  # noqa: E402
 
@@ -124,7 +124,7 @@ def main():
     if not roots:
         print("No TeslaCam drive to take.")
         return 1
-    import teslacam_stills as ST
+    from lib import teslacam_stills as ST
     if not ST.have_ffmpeg():
         print("ffmpeg is not installed.")
         return 1

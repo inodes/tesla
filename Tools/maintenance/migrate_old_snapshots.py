@@ -48,7 +48,7 @@ sys.path.insert(0, HERE)
 sys.path.insert(0, os.path.join(HERE, "lib"))
 import drive_roles as DR  # noqa: E402
 import teslacam_files as TF  # noqa: E402
-import teslacam_stills as ST  # noqa: E402
+from lib import teslacam_stills as ST  # noqa: E402
 import app_config  # noqa: E402
 
 COLS, ROWS = 5, 6                    # the old contact sheet layout (dashcam_flip_review.py)

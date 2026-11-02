@@ -23,7 +23,7 @@ import subprocess
 
 import app_config
 import clip_clock as CC
-import teslacam_stills as ST
+from lib import teslacam_stills as ST
 
 DIRNAME = "teslacam_event_shots"
 CAMS = ("front", "back", "left_repeater", "right_repeater", "left_pillar", "right_pillar")
