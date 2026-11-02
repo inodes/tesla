@@ -1519,7 +1519,7 @@ class ChargingAnalyzer:
                 # 10-11 hours on a tariff-change day.
                 v_from = _aware_to_local_naive(v_from)
                 v_to = _aware_to_local_naive(v_to)
-                check_dt = dt.replace(tzinfo=None) if dt.tzinfo else dt
+                check_dt = _aware_to_local_naive(dt)       # an aware charge time is turned to local time too, never just stripped of its zone
                 if v_from <= check_dt <= v_to:
                     target_obj = cand
                     is_archived = True
@@ -1583,7 +1583,7 @@ class ChargingAnalyzer:
                     v_to = v_to_dt if v_to_dt is not None else datetime.max
                     v_from = _aware_to_local_naive(v_from)  # B7: UTC -> local
                     v_to = _aware_to_local_naive(v_to)
-                    check_dt = dt.replace(tzinfo=None) if dt.tzinfo else dt
+                    check_dt = _aware_to_local_naive(dt)       # an aware charge time is turned to local time too, never just stripped of its zone
                     if v_from <= check_dt <= v_to:
                         target_obj = cand
                         is_archived = True
