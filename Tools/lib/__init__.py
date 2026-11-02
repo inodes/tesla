@@ -3,8 +3,9 @@ Tools/lib/ - shared library modules for this repo's CLI scripts.
 
 Not "providers" (Tools/providers_chargers/ - pluggable BaseChargerProvider
 subclasses implementing one shared interface, swappable per charging
-network) and not stand-alone CLI entry points (the *.py scripts one level
-up in Tools/, each with its own argparse-based --help). Everything here is
+network) and not stand-alone CLI entry points (the *.py scripts in
+Tools/commands/, each with its own argparse-based --help). Nothing here
+imports from Tools/commands/ (tests/test_lib_no_commands.py). Everything here is
 a plain function/helper library that one or more CLI scripts import -
 config/data-home path resolution, shared formatting, shared chart
 rendering, timezone helpers, and similar cross-cutting plumbing with no
@@ -19,6 +20,3 @@ import sys as _sys
 _HERE = _os.path.dirname(_os.path.abspath(__file__))
 if _HERE not in _sys.path:          # a module in here imports another by its plain name (import tessie_api_common): found here, whatever folder started the program
     _sys.path.append(_HERE)
-_CMDS = _os.path.join(_os.path.dirname(_HERE), "commands")
-if _CMDS not in _sys.path:          # and the command scripts some of them use (import analyse_charging)
-    _sys.path.append(_CMDS)

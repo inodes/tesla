@@ -62,8 +62,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
-CMDS = os.path.join(HERE, "commands")          # the command-line scripts the app runs (the syncs)
-sys.path.insert(1, CMDS)
+CMDS = os.path.join(HERE, "commands")          # the command-line scripts the app runs (the syncs); nothing is imported from there
 sys.path.insert(0, os.path.join(HERE, "lib"))
 import app_config  # noqa: E402
 import config_backup  # noqa: E402
