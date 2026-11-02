@@ -6,7 +6,7 @@ evnex>=0.7.0,<0.8.0
 matplotlib>=3.8.0
 
 # optional: native window for Tools/tesla_app.py (without it the app opens in your browser)
-pywebview>=5.0
+pywebview>=5.0; sys_platform == "darwin"
 
 # optional: reading speed-limit signs from dashcam video (the Review tab of Tools/tesla_app.py, sign_scan.py); also needs ffmpeg and tesseract
 #   brew install ffmpeg tesseract
