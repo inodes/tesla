@@ -13,8 +13,8 @@ import time
 
 import app_config
 import drive_registry as REG
-import teslacam_ledger as TLG
-import teslacam_stills as ST
+from lib import teslacam_ledger as TLG
+from lib import teslacam_stills as ST
 import clips_purged as PG
 import home_ignore as IGN
 

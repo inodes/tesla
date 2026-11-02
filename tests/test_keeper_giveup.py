@@ -14,7 +14,7 @@ for p in ("Tools", os.path.join("Tools", "lib")):
     sys.path.insert(0, os.path.join(HERE, "..", p))
 import app_review as AR  # noqa: E402
 import event_shots as ES  # noqa: E402
-import teslacam_stills as ST  # noqa: E402
+from lib import teslacam_stills as ST  # noqa: E402
 
 
 class GiveUp(unittest.TestCase):

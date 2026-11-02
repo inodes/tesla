@@ -35,9 +35,9 @@ import event_shots as ES
 import event_stills as EV
 import teslacam_deletable as TD
 import teslacam_files as TF
-import teslacam_ledger as TLG
-import teslacam_scan as TS
-import teslacam_stills as ST
+from lib import teslacam_ledger as TLG
+from lib import teslacam_scan as TS
+from lib import teslacam_stills as ST
 import sign_speed as SS
 
 GAP = 75                      # seconds between two minutes that still belong to one Recent run (as in app_teslacam)

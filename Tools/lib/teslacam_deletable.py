@@ -21,7 +21,7 @@ import clip_clock as CC
 import drive_fuse as DF
 import drive_roles as DR
 import teslacam_files as TF
-import teslacam_stills as ST
+from lib import teslacam_stills as ST
 import teslacam_timeline as TL
 
 KEPT_MIN = 55                # a clip's stills are complete from this many (a clip is ~59-60 s)

@@ -24,7 +24,7 @@ import threading
 import time
 import zipfile
 
-import teslacam_stills as ST
+from lib import teslacam_stills as ST
 import teslacam_timeline as TL
 
 DIRNAME = "teslacam_thumbs"

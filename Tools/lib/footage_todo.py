@@ -16,7 +16,7 @@ import app_config
 import clips_purged as PG
 import home_ignore as IGN
 import teslacam_files as TF
-import teslacam_ledger as TLG
+from lib import teslacam_ledger as TLG
 import sign_speed as SS
 
 FOLDERS = ("RecentClips", "SavedClips", "SentryClips")

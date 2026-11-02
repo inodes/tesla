@@ -11,7 +11,7 @@ from types import SimpleNamespace
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "Tools", "lib"))
 import drive_eject as DE  # noqa: E402
 import footage_todo as FT  # noqa: E402
-import teslacam_ledger as TLG  # noqa: E402
+from lib import teslacam_ledger as TLG  # noqa: E402
 
 
 class FakeTC:

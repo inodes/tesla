@@ -15,7 +15,7 @@ sys.path.insert(0, os.path.join(HERE, "..", "Tools"))
 sys.path.insert(0, os.path.join(HERE, "..", "Tools", "lib"))
 import teslacam_ingest as IN  # noqa: E402
 import clip_clock as CC  # noqa: E402
-import teslacam_ledger as L  # noqa: E402
+from lib import teslacam_ledger as L  # noqa: E402
 import teslacam_locate as LOC  # noqa: E402
 import teslacam_timeline as TL  # noqa: E402
 
