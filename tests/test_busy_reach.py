@@ -148,6 +148,7 @@ CONFIG = {"reach.reserve_pct": 10, "reach.image_px": 200, "reach.shade_km": 8, "
 class FakeGraph:
     lat = np.array([-33.0, -34.0])
     lon = np.array([150.0, 151.0])
+    fit = (12.0, 0.002)                    # kWh/100 km = a + b * speed^2, fitted from measured speed bands (None: too few measured)
 
     def __init__(self):
         self.reach_calls = []
@@ -174,11 +175,16 @@ class ReachTest(unittest.TestCase):
         p.start()
         self.addCleanup(p.stop)
         self.R = AR.ReachService(os.path.join(HERE, "..", "Tools"), self.tmp)
+        self._profile(560, 85.0)                           # the car's own figures: the service assumes none
         self.g = FakeGraph()
         for name, value in (("meta", lambda: {"built": "made-up"}), ("_graph", lambda: self.g)):
             p = mock.patch.object(self.R, name, value)
             p.start()
             self.addCleanup(p.stop)
+
+    def _profile(self, km, kwh):
+        with open(os.path.join(self.tmp, "car_profile.json"), "w") as f:
+            json.dump({"VIN-MADE-UP": {"usable_battery_capacity_kwh": {"kwh_used_for_range": kwh, "live_reading": {"max_range_km": km}}}}, f)
 
     def test_png(self):
         rgba = np.zeros((3, 2, 4), np.uint8)
@@ -198,23 +204,32 @@ class ReachTest(unittest.TestCase):
         self.assertEqual(tuple(gaps[255]), (232, 84, 84, 160))
 
     def test_car_figures(self):
-        self.assertEqual((self.R.car()["km"], self.R.car()["kwh"]), (560.0, 85.0))      # defaults with no profile
-        with open(os.path.join(self.tmp, "car_profile.json"), "w") as f:
-            json.dump({"VIN-MADE-UP": {"usable_battery_capacity_kwh": {"kwh_used_for_range": 78.5,
-                                                                       "live_reading": {"max_range_km": 512}}}}, f)
+        os.remove(os.path.join(self.tmp, "car_profile.json"))
+        self.assertEqual((self.R.car()["km"], self.R.car()["kwh"]), (None, None))        # no profile, no battery reading: nothing is assumed
+        self._profile(512, 78.5)
         c = self.R.car()
         self.assertEqual((c["km"], c["kwh"]), (512.0, 78.5))
         with open(os.path.join(self.tmp, "car_profile.json"), "w") as f:
             f.write("{broken")
-        self.assertEqual(self.R.car()["km"], 560.0)
+        self.assertEqual(self.R.car()["km"], None)
 
-    @unittest.expectedFailure
     def test_car_profile_that_is_not_an_object(self):
-        """BUG (found by this test, minor): car() falls back to its defaults for an unreadable car_profile.json, but one that
-        holds a list instead of an object raises AttributeError (not in its except list), so the range map fails instead."""
+        """A car_profile.json holding a list instead of an object is read as no profile (it used to raise AttributeError)."""
         with open(os.path.join(self.tmp, "car_profile.json"), "w") as f:
             f.write("[]")
-        self.assertEqual(self.R.car()["km"], 560.0)
+        self.assertEqual(self.R.car()["km"], None)
+
+    def test_the_kwh_picture_needs_a_measured_consumption_curve(self):
+        self.g.fit = None
+        out = self.R.compute(dict(pts=[[-33.0, 150.0, "A"]], frac=0.8, reserve=0.1, basis="kwh"))
+        self.assertEqual(out["error"], AR.ReachService.NO_FIT)
+        self.assertEqual(self.g.reach_calls, [])
+
+    def test_reach_needs_the_cars_own_range(self):
+        os.remove(os.path.join(self.tmp, "car_profile.json"))
+        out = self.R.compute(dict(pts=[[-33.0, 150.0, "A"]], frac=0.8, reserve=0.1, basis="km"))
+        self.assertIn("not known", out["error"])
+        self.assertEqual(self.g.reach_calls, [])
 
     def test_reach_uses_the_charge_above_the_reserve_and_keeps_the_result(self):
         body = dict(pts=[[-33.0, 150.0, "A"], [-34.0, 151.0], [None, 1]], frac=0.8, reserve=0.1, basis="km")
@@ -258,7 +273,9 @@ class AbrpTest(unittest.TestCase):
         self.assertAlmostEqual(soc, 58.0)
         soc, kwh = AB.estimate_arrival_soc(50, -20, consumption_wh_km=150, usable_kwh=75)   # a negative distance is no distance
         self.assertEqual((soc, kwh), (50.0, 0.0))
-        self.assertLess(AB.estimate_arrival_soc(10, 500)[0], 0)
+        self.assertLess(AB.estimate_arrival_soc(10, 500, consumption_wh_km=150, usable_kwh=75)[0], 0)
+        self.assertEqual(AB.estimate_arrival_soc(10, 500), (None, None))               # no consumption: nothing is guessed
+        self.assertEqual(AB.estimate_arrival_soc(None, 100, consumption_wh_km=150, usable_kwh=75)[0], None)
 
     def test_badges(self):
         cases = [(25, "ok"), (24.6, "ok"), (24.4, "warning"), (10, "warning"), (9.4, "critical"), (-0.4, "critical"), (-0.6, "unreachable")]
@@ -272,7 +289,7 @@ class AbrpTest(unittest.TestCase):
         with mock.patch.object(AB, "load_abrp_config", return_value={"vehicle_typecode": "made:up", "target_arrival_soc": 15}):
             url = AB.generate_abrp_deep_link((-33.1234567, 150.0), (-34.0, 151.0), via_coords=[(-33.5, 150.5)], max_soc=90)
         q = dict(urllib.parse.parse_qsl(urllib.parse.urlparse(url).query))
-        self.assertEqual(q, {"origin": "-33.123457,150.000000", "destination": "-34.000000,151.000000", "origin_soc": "90",
+        self.assertEqual(q, {"origin": "-33.123457,150.000000", "destination": "-34.000000,151.000000",      # no departure % given: ABRP is not told one
                              "target_soc": "15", "vehicle_model": "made:up", "via": "-33.500000,150.500000", "max_soc": "90"})
         with mock.patch.object(AB, "load_abrp_config", return_value={}):
             q = dict(urllib.parse.parse_qsl(urllib.parse.urlparse(AB.generate_abrp_deep_link((0, 0), (1, 1), departure_soc=55)).query))
