@@ -53,6 +53,7 @@ class TeslaCam:
         self.rv = None                      # signs read from the video (see app_review.py)
         self.scan_ix = None                 # the reading job of the drive scan (teslacam_scan.py)
         self._scan_todo = []
+        self.tl_days = TL.DayCache()        # the full timeline's recordings by day from the last build (the app gives it a file on this computer)
 
     def drives(self):
         return [dict(role=r, name=DR.NAMES.get(r, r), kind="archive" if r == "A" else "other") for p, r in DR.discover()]
@@ -320,7 +321,7 @@ class TeslaCam:
         want = set(r for r in (roles or known) if r in known)
         recent, hold = self._ledger_recent(want)
         lists = {kind: self._events_kept(kind, want) for kind in KINDS}
-        items = TL.build(recent, lists["saved"], lists["sentry"], store)
+        items = TL.build(recent, lists["saved"], lists["sentry"], store, cache=self.tl_days if roles is None else None)      # every drive: only the days that changed are worked out again
         self._held(items, want, hold)
         mins = TL.minutes(recent, lists["saved"])
         front = [m for m in mins if m.get("tcam")]

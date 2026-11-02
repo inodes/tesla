@@ -285,7 +285,13 @@ class Cached:
         return dict(val, stale=True)
 
 
-VERSION = 4                                         # bump when merge() changes: a list kept from the older code is then built again
+def page_rows(act):
+    """The rows of the activity list the Drives page also draws from (Tessie's drives and charges, as /api/activity gives them), so the page needs one request:
+    dict(tess=[drive rows], chg=[charge rows])."""
+    return dict(tess=[x for x in act if x.get("k") == "drive"], chg=[x for x in act if x.get("k") == "charge"])
+
+
+VERSION = 5                                         # bump when merge() or what the list carries changes: a list kept from the older code is then built again
 
 
 def signature(paths):

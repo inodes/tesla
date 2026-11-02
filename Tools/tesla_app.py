@@ -958,7 +958,7 @@ def drivelist(wait=False):
         except Exception:
             pass
         items = app_drivelist.merge(tess, [x for x in act if x["k"] == "charge"], cam, [x for x in act if x["k"] == "idle"])
-        return dict(items=items, tessie=bool(tess), missing=app_drivelist.missing(items, time.time(), tried=set(tessie_state().get("tried") or []) | FetchLedger(DATA_DIR).settled("drive_path")))
+        return dict(items=items, tessie=bool(tess), **app_drivelist.page_rows(act), missing=app_drivelist.missing(items, time.time(), tried=set(tessie_state().get("tried") or []) | FetchLedger(DATA_DIR).settled("drive_path")))
     d = os.path.join
     watch = [d(DATA_DIR, "drives", "drives_master.csv"), d(DATA_DIR, "charges", "charges_master.csv"), d(DATA_DIR, "drives", "deepdive"), d(DATA_DIR, "tessie_sync_state.json"), d(DATA_DIR, "fetch_ledger.json"), d(DATA_DIR, "clip_clock.json"), d(DATA_DIR, "places.json"), d(DATA_DIR, "teslacam_timeline", "index.json"),
              d(DATA_DIR, "teslacam_ledger"), d(DATA_DIR, "teslacam_provenance"), d(DATA_DIR, "teslacam_timeline", "index.json")] + [app_sentry.index_path(DATA_DIR, "teslacam_index_%s_%s.json" % (r, k)) for r in DR.read_roles() for k in ("saved", "sentry")]
@@ -1135,6 +1135,7 @@ def main():
     clips_purged.set_file(os.path.join(DATA_DIR, "teslacam_purged.json"))
     SENTRY = app_sentry.Sentry(DATA_DIR)
     TC = app_teslacam.TeslaCam(DATA_DIR, SENTRY)
+    TC.tl_days = TLN.DayCache(os.path.join(local_cache_dir(), "timeline_days.json"))      # the Drives timeline by day: a start rebuilds only the days that changed
     threading.Thread(target=footage_roots, daemon=True).start()                   # which drives are connected, found before the first map asks (a slow drive takes seconds)
     threading.Thread(target=lambda: (time.sleep(10) if DRIVELIST.has() else None, drivelist(True)), daemon=True).start()        # ready before the page asks; with a list kept from the last run the window's first page goes first
     DRV = app_drive_review.DriveReview(DATA_DIR, TC)
