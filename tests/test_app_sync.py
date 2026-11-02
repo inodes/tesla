@@ -36,10 +36,12 @@ class RunnerTests(unittest.TestCase):
         self.assertEqual(st["lines"], ["one", "two /data"])
         self.assertEqual(s.status(1)["lines"], ["two /data"])
 
-    def test_a_missing_script_is_named_in_the_error(self):
+    def test_a_missing_script_gives_an_error_that_does_not_name_it(self):
+        # the error is shown in the app, and app text never names a script (docs/ui-guidelines.md section 1)
         r = app_sync.ChargerSync(self.d, "/data", "nope.sh").start()
         self.assertFalse(r["ok"])
-        self.assertIn("nope.sh", r["error"])
+        self.assertTrue(r["error"])
+        self.assertNotIn("nope.sh", r["error"])
 
     def test_a_given_command_runs_instead_of_a_script(self):
         s = app_sync.ChargerSync(self.d, "/data", "tool.py", argv=[sys.executable, "-c", "import sys;print('args', len(sys.argv))"])
