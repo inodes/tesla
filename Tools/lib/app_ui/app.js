@@ -2226,7 +2226,7 @@ async function pageTeslaCam(role,id){
 // the colours every route map uses (settings app.map.speed_colors / autopilot_colors): speed as a gradient, and who was driving
 const APN={1:"FSD",2:"Autosteer",3:"TACC"},APD={FSD:"#3b6cf6",Autosteer:"#8b5cf6",TACC:"#14b8a6",Manual:"#94a3b8"};
 const apCol=k=>(cfg("map.autopilot_colors")||{})[k]||APD[k],APC=new Proxy({},{get:(_,a)=>apCol(APN[a]||"Manual")});
-const spdStops=()=>cfg("map.speed_colors")||[[0,"#0000FF"],[60,"#FFFF00"],[120,"#800080"]],spdTop=()=>spdStops()[spdStops().length-1][0];
+const spdStops=()=>cfg("map.speed_colors")||[[0,"#1565C0"],[60,"#43A047"],[80,"#FDD835"],[110,"#E53935"],[130,"#8E24AA"]],spdTop=()=>spdStops()[spdStops().length-1][0];
 const spdOver=()=>cfg("map.speed_over_color")||"#000000";
 const spdExpr=()=>["interpolate",["linear"],["get","v"],...spdStops().flat(),spdTop()+0.5,spdOver()];
 const apExpr=()=>["match",["get","ap"],1,apCol("FSD"),2,apCol("Autosteer"),3,apCol("TACC"),apCol("Manual")];
