@@ -153,9 +153,8 @@ class SeiInspectorTest(unittest.TestCase):
         self.assertIsNone(SEI._decode_sei_telemetry(field(2, 1, "varint")))   # no version field: not telemetry
         self.assertEqual(SEI._parse_protobuf(field(11, 1.0, "double")[:-2]), {})  # cut short: stops
 
-    @unittest.expectedFailure
     def test_autopilot_state_names_match_dashcam_proto(self):
-        """BUG (found by this test): sei_inspector names AutopilotState 1 "Available" and 3 "Active / Engaged" (autopilot_active
+        """Was a bug, fixed 2026-11-02 (found by this test): sei_inspector names AutopilotState 1 "Available" and 3 "Active / Engaged" (autopilot_active
         only for 3), but dashcam.proto - as lib/dashcam_series.py and lib/app_drive_review.py both read it - has 0 none,
         1 FSD (SELF_DRIVING), 2 Autosteer, 3 TACC. So the stream banner shows FSD as "AP: Available" and TACC as engaged
         autopilot. Display only (the drives browser and footage keeping banners)."""

@@ -183,7 +183,10 @@ def busy_summary(profile: Dict[str, Any], weekday=None) -> Dict[str, Any]:
             s1 = (s1 + 1) % 24
         win = (s0, (s1 + 1) % 24)
         lvl = "some"
-        text = (f"{LEVEL_TEXT['some']} {_hour_label(win[0])}–{_hour_label(win[1])}, "
-                f"most at other times ({peak})")
+        if len(some_hours) == 24:      # busy every hour: there are no "other times"
+            text = f"{LEVEL_TEXT['some']} all day ({peak})"
+        else:
+            text = (f"{LEVEL_TEXT['some']} {_hour_label(win[0])}–{_hour_label(win[1])}, "
+                    f"most at other times ({peak})")
     return {"level": lvl, "peak_hour": peak_h, "peak_pct": round(top * 100), "some_window": win,
             "spark": sparkline(vals), "text": text, "values": vals}

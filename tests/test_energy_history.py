@@ -269,9 +269,8 @@ class PVWindowSplitTest(unittest.TestCase):
         self.assertIsNone(s["generation_kwh"])
         self.assertIn("HTTP 401", s["error"])
 
-    @unittest.expectedFailure
     def test_a_window_over_three_days_reads_the_middle_day(self):
-        """BUG (found by this test): only the first and last calendar day of the window are fetched, so a window from
+        """Was a bug, fixed 2026-11-02 (found by this test): only the first and last calendar day of the window are fetched, so a window from
         one evening to the morning two days later leaves out the whole middle day (coverage drops, energy is missing).
         No current caller (lib/pv_history_db.py's own pv_window_split replaced this one for charging sessions)."""
         PV.pv_window_split(datetime(2026, 6, 1, 20, 0), datetime(2026, 6, 3, 8, 0), "k", "s")

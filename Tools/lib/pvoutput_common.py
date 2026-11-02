@@ -314,7 +314,9 @@ def pv_window_split(local_start, local_end, api_key, system_id, day_cache=None):
     returns real numbers plus a coverage fraction < 1.0 so the caller
     can decide whether to trust it."""
     day_cache = day_cache if day_cache is not None else {}
-    dates_needed = sorted({local_start.date(), local_end.date()})
+    # every calendar day the window touches, not just the first and last
+    first, last = local_start.date(), local_end.date()
+    dates_needed = [first + timedelta(days=i) for i in range((last - first).days + 1)]
     intervals = []
     errors = []
     for d in dates_needed:

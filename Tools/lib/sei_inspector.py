@@ -110,13 +110,13 @@ def _decode_sei_telemetry(payload: bytes) -> Optional[Dict[str, Any]]:
     if 9 in fields:
         telemetry["brake_applied"] = bool(fields[9])
 
-    # Autopilot / FSD state
-    ap_map = {0: "Unavailable", 1: "Available", 2: "Standby", 3: "Active / Engaged", 4: "Hands-on Warning", 5: "Abort"}
+    # Autopilot / FSD state (dashcam.proto AutopilotState, same names as dashcam_series.AP_NAMES and app_drive_review.MODES)
+    ap_map = {0: "Off", 1: "FSD", 2: "Autosteer", 3: "TACC"}
     if 10 in fields:
         raw = fields[10]
         if isinstance(raw, int):
             telemetry["autopilot_state"] = ap_map.get(raw, f"State({raw})")
-            telemetry["autopilot_active"] = (raw == 3)
+            telemetry["autopilot_active"] = raw in (1, 2, 3)
 
     # GPS coordinates
     if 11 in fields:
