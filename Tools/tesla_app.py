@@ -470,9 +470,9 @@ class H(BaseHTTPRequestHandler):
                 if b:
                     return self.send_bytes(b, "image/jpeg", extra={"Cache-Control": "public, max-age=31536000"})
                 return self.send_bytes(b"not found", "text/plain", 404)
-            if path.startswith("/evstill/"):        # one picture around an event: /evstill/<saved|sentry>/<event folder>/<clip stamp>/<second>.jpg (the video need not exist any more)
-                m = re.match(r"^/evstill/(saved|sentry)/(\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2})/(\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2})/(\d{1,2})\.jpg$", path)
-                b = CKEEP.evst.get(m.group(1), m.group(2), m.group(3), int(m.group(4))) if m else None
+            if path.startswith("/evstill/"):        # one picture around an event: /evstill/<saved|sentry>/<event folder>/<clip stamp>/[<camera>/]<second>[h].jpg (h: half a second later; the video need not exist any more)
+                m = re.match(r"^/evstill/(saved|sentry)/(\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2})/(\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2})/(?:([a-z_]+)/)?(\d{1,2})(h?)\.jpg$", path)
+                b = CKEEP.evst.get(m.group(1), m.group(2), m.group(3), int(m.group(5)), cam=m.group(4), half=bool(m.group(6))) if m else None
                 if b:
                     return self.send_bytes(b, "image/jpeg", extra={"Cache-Control": "public, max-age=31536000"})
                 return self.send_bytes(b"not found", "text/plain", 404)
@@ -549,7 +549,7 @@ class H(BaseHTTPRequestHandler):
                 if body.get("action") == "purge":         # delete chosen kinds (video, metadata, stills, pictures, signs) of the clips; video that is not all kept needs force
                     return self.send_json(CKEEP.purge(body.get("items") or [], body.get("types") or [], roots, confirmed=body.get("confirm") is True, force=body.get("force") is True))
                 return self.send_json(CKEEP.start(body.get("action"), role, body.get("items") or [], roots, confirmed=body.get("confirm") is True))
-            if u.path == "/api/stills/thin":       # {action: start|stop, events: normal|shrunk}: make the stills of minutes with no event and no sign smaller, or the pictures around events
+            if u.path == "/api/stills/thin":       # {action: start|stop, events: normal|shrunk|front}: make the stills of minutes with no event and no sign smaller, or the pictures around events
                 if body.get("action") == "stop":
                     return self.send_json(STHIN.stop())
                 clips, stamps = thin_scope(body.get("clips"))
@@ -679,7 +679,10 @@ class H(BaseHTTPRequestHandler):
             if kind not in ("saved", "sentry") or not re.match(r"^\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2}$", eid):
                 return self.send_json({})
             i = CKEEP.evst.info(kind, eid)
-            return self.send_json(dict(cam=i.get("cam"), tier=i.get("tier"), width=i.get("width"), trigger=i.get("trigger"), secs=CKEEP.evst.seconds(kind, eid)) if i.get("n") else {})
+            es = CKEEP.evst
+            return self.send_json(dict(cam=i.get("cam"), tier=i.get("tier"), width=i.get("width"), trigger=i.get("trigger"), secs=es.seconds(kind, eid),
+                                       cams=es.cams(kind, eid), others={c: es.seconds(kind, eid, c) for c in es.cams(kind, eid) if c != i.get("cam")},
+                                       half=es.seconds(kind, eid, half=True) if es.halves(kind, eid) else {}) if i.get("n") else {})
         if name == "signs":                     # signs?stamps=a,b: the signs read in those minutes {clip stamp: [sign]} (lib/app_review.py minute_signs)
             return self.send_json(TC._rv().minute_signs([s for s in q.get("stamps", [""])[0].split(",") if re.match(r"^\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2}$", s)][:80]))
         if name == "clipstatus":                # clipstatus?stamps=a,b: kept on a drive / deleted / never logged, and whether its stills are kept

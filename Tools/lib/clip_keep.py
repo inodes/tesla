@@ -7,7 +7,7 @@ A clip's video may go once what the app keeps from it exists (the rules are thos
              the last drive synced from Tessie (later video has no drive to keep snapshots in yet)
   signs      each minute the car went at review.min_kmh or more (end_kmh in a drive's last end_s) has been read for signs (app_review)
   event      a horn or Sentry event has its full-size pictures of the moment (event_shots.py: all six cameras, or the one that saw it)
-  window     a Saved or Sentry event has the pictures around its moment, one a second, 30 s either side, from the camera that saw it (event_stills.py)
+  window     a Saved or Sentry event has the pictures around its moment, one a second, 30 s either side, from the camera that saw it, the other cameras too and a picture every half second near the moment (event_stills.py)
 
 Everything here is worked out from what is kept on this computer (the footage log, the telemetry store, the stills folder, the sign records): no drive is read,
 so the answer is the same with every drive away. Only start() touches a drive: it deletes the video files of the clips asked for, or copies them to the Archive
@@ -207,6 +207,8 @@ class ClipKeep:
         """(camera, [(clip stamp, first second, last second)]) of the pictures wanted around an event whose video is on a drive; None when it needs none."""
         if not ev or kind == "recent" or self.evst.info(kind, cid).get("tried"):
             return None
+        if self.evst.info(kind, cid).get("n") and not self.evst.wants_more(kind, cid):
+            return None
         cam = EV.camera(kind, ev)
         win = EV.window(ev, {s: n["cams"] for s, n in mins.items()}, cam)
         return (cam, win) if win else None
@@ -309,7 +311,7 @@ class ClipKeep:
             if kind != "recent":
                 got = self.evst.info(kind, cid).get("n")
                 hw = self._hi(kind, cid, mins, events.get((kind, cid))) if nbytes and not ign else None
-                hi = [1, 1] if got else ([0, 1] if hw else [0, 0])
+                hi = [0, 1] if hw else ([1, 1] if got else [0, 0])                  # still wanted: the pictures, or (for an event that has them) its other cameras and half-second pictures
             out[kind][cid] = dict(n=len(mins), first=min(mins), bytes=nbytes, files=nfiles, in_archive=narch, size=max(nbytes.values()) if nbytes else 0, meta=meta, stills=st_, signs=sg, shots=sh, window=hi, tier=self.evst.info(kind, cid).get("tier", "") if kind != "recent" else "",
                                   shot_cams=sorted(have), ready=all(x[0] >= x[1] for x in (meta, st_, sg, sh, hi)) and refine_n == 0, waiting=waiting, wait_n=wait_n, snap_n=snap_n, refine_n=refine_n,
                                   sign_n=sign_n, todo=any(x[0] < x[1] for x in (meta, sg, sh, hi)) or st_[0] + wait_n < st_[1] or refine_n > 0, ignored=ign)
@@ -623,7 +625,8 @@ class ClipKeep:
         paths = self._paths(TLG.Ledger(self.dir), {w[0] for _k, _e, _c, win in wants for w in win}, roots)
         out = []
         for kind, ev, cam, win in wants:
-            got = {w[0]: paths[w[0]][cam] for w in win if w[0] in paths and cam in paths[w[0]]}
+            got = EV.Paths({w[0]: paths[w[0]][cam] for w in win if w[0] in paths and cam in paths[w[0]]})
+            got.all = {w[0]: paths[w[0]] for w in win if w[0] in paths}
             if got:
                 out.append((kind, ev, [w for w in win if w[0] in got], got))
         return out

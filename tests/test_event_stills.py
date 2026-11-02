@@ -6,6 +6,7 @@ import time
 import unittest
 import zipfile
 
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "Tools"))
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "Tools", "lib"))
 import clip_clock as CC  # noqa: E402
 import event_stills as EV  # noqa: E402
@@ -86,6 +87,77 @@ class EventStillsTest(unittest.TestCase):
         self.assertEqual(self.st.info("saved", "ev1")["tier"], "shrunk")
         self.assertEqual(len(self.st.seconds("saved", "ev1")[S2]), 60)
         self.assertEqual([(k, e) for k, e, _ in self.st.events()], [("saved", "ev1")])
+
+    def _all(self, cams=EV.CAMS, stamps=(S1, S2, S3)):
+        allp = {st: {c: "/v/%s-%s.mp4" % (st, c) for c in cams} for st in stamps}
+        paths = EV.Paths({st: allp[st]["front"] for st in stamps})
+        paths.all = allp
+        return paths
+
+    def test_the_other_cameras_and_the_half_second_pictures_are_cut_once_after_the_main_ones(self):
+        paths = self._all()
+        win = EV.window(self.ev, {s: set(EV.CAMS) for s in paths}, "front")
+        ev = dict(self.ev, cam="0")
+        n = self.st.make("sentry", ev, win, paths)
+        i = self.st.info("sentry", "ev1")
+        self.assertEqual(i["cam"], "front")
+        self.assertEqual(sorted(i["cams"]), sorted(EV.CAMS))
+        self.assertEqual(i["dense"], EV.DENSE_S)
+        for c in EV.CAMS[1:]:
+            self.assertEqual(len(self.st.seconds("sentry", "ev1", c)[S2]), 60)
+        half = self.st.seconds("sentry", "ev1", half=True)
+        self.assertEqual(half[S2], list(range(20, 40)))                                   # 10 s either side of second 30
+        self.assertEqual(len(self.st.get("sentry", "ev1", S2, 30, half=True)), 300)
+        self.assertIsNotNone(self.st.get("sentry", "ev1", S2, 30, cam="back"))
+        self.assertEqual(self.st.halves("sentry", "ev1"), "front")
+        side = [c for c in self.calls if "scale=800:-2" in c[c.index("-vf") + 1]]
+        self.assertEqual(len(side), 5 * 2)                                                # five cameras, two minutes each (S2, S3)
+        self.assertFalse(self.st.wants_more("sentry", "ev1"))
+        before = len(self.calls)
+        self.assertEqual(self.st.make("sentry", ev, win, paths), 0)
+        self.assertEqual(len(self.calls), before)
+        self.assertTrue(n > 61)
+
+    def test_an_event_made_with_the_main_camera_only_is_upgraded_later(self):
+        win = EV.window(self.ev, {S2: {"front"}}, "front")
+        ev = dict(self.ev, cam="0")
+        self.st.make("sentry", ev, win, EV.Paths({S2: "/v/a.mp4"}))
+        self.assertTrue(self.st.wants_more("sentry", "ev1"))
+        paths = self._all(stamps=(S2,))
+        self.assertGreater(self.st.make("sentry", ev, win, paths), 0)
+        self.assertEqual(len(self.st.cams("sentry", "ev1")), 6)
+
+    def test_reducing_keeps_only_the_main_camera_and_the_event_is_not_upgraded_again(self):
+        paths = self._all(stamps=(S2,))
+        ev = dict(self.ev, cam="0")
+        win = EV.window(ev, {S2: set(EV.CAMS)}, "front")
+        self.st.make("sentry", ev, win, paths)
+        total = self.st.size("sentry", "ev1")
+        freed = self.st.reduce("sentry", "ev1")
+        self.assertGreater(freed, 0)
+        self.assertEqual(self.st.size("sentry", "ev1"), total - freed)
+        self.assertEqual(self.st.cams("sentry", "ev1"), ["front"])
+        self.assertEqual(self.st.halves("sentry", "ev1"), "")
+        self.assertFalse(self.st.wants_more("sentry", "ev1"))
+        self.assertEqual(self.st.make("sentry", ev, win, paths), 0)
+        self.assertIsNone(self.st.reduce("sentry", "ev1"))
+
+    def test_shrinking_an_event_drops_the_other_cameras_first(self):
+        paths = self._all(stamps=(S2,))
+        ev = dict(self.ev, cam="0")
+        self.st.make("sentry", ev, EV.window(ev, {S2: set(EV.CAMS)}, "front"), paths)
+        old, new = self.st.shrink("sentry", "ev1", "normal")
+        self.assertLess(new, old)
+        self.assertEqual(self.st.cams("sentry", "ev1"), ["front"])
+        self.assertEqual(len(self.st.zips("sentry", "ev1")), 1)
+
+    def test_an_event_missing_the_other_cameras_in_its_video_is_not_asked_again(self):
+        paths = self._all(cams=("front",), stamps=(S2,))
+        ev = dict(self.ev, cam="0")
+        self.st.make("sentry", ev, EV.window(ev, {S2: {"front"}}, "front"), paths)
+        self.assertEqual(self.st.cams("sentry", "ev1"), ["front"])
+        self.assertFalse(self.st.wants_more("sentry", "ev1"))
+        self.assertTrue(self.st.info("sentry", "ev1").get("more"))                          # the half-second pictures of the front camera were made
 
 
 if __name__ == "__main__":
