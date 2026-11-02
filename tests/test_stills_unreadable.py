@@ -4,7 +4,7 @@ import tempfile
 import unittest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "Tools", "lib"))
-import teslacam_stills as ST  # noqa: E402
+from lib import teslacam_stills as ST  # noqa: E402
 
 S = "2026-09-11_09-45-35"
 

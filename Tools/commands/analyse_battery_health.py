@@ -68,7 +68,7 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from lib.drives.analyzer import DriveAnalyzer  # noqa: E402
-from analyse_car_efficiency import load_battery_health_history  # noqa: E402
+from lib.battery_health import load_battery_health_history  # noqa: E402
 
 # --- dataviz reference palette (light mode) - matches analyse_charge_curves.py
 # so every chart in this repo reads as one system (AGENTS.md / dataviz skill).

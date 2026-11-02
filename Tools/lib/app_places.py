@@ -15,7 +15,6 @@ import json
 import math
 import os
 import shutil
-import sys
 import threading
 import time
 
@@ -354,8 +353,7 @@ class Places:
 
     def suburb_state(self, lat, lon):
         """(suburb, state abbreviation) of a point from Nominatim; ("", "") when it does not answer."""
-        sys.path.insert(0, os.path.dirname(HERE))
-        import places_manager as PM
+        import places_common as PM
         ck = (round(lat, 4), round(lon, 4))
         memo = self.__dict__.setdefault("_ss", {})
         if ck not in memo:
@@ -375,8 +373,7 @@ class Places:
         """Keywords for a place that is not saved yet, as places_manager.py suggests them: the street of the address (and its abbreviation) plus the
         place name. The address comes from OpenStreetMap: the one on the OSM place itself (addr), else what Nominatim says is at that point. Only when
         OSM has no street there is the address Tessie recorded used, and only if it has a street (Tessie sometimes has just "12, Pialba")."""
-        sys.path.insert(0, os.path.dirname(HERE))
-        import places_manager as PM
+        import places_common as PM
         usable = lambda a: bool(a) and not (a.split(",")[0].strip().replace("/", "").replace("-", "").isdigit())
         if not usable(addr):
             addr = ""
@@ -551,8 +548,7 @@ class Places:
                 f = self._facilities(key[2:])
                 if f:
                     return dict(f, cached=True)
-        sys.path.insert(0, os.path.dirname(HERE))
-        import places_manager as PM
+        import places_common as PM
         PM.OVERPASS_ERROR = ""
         res = PM.query_overpass_pois(lat, lon, radius)
         if not res and PM.OVERPASS_ERROR:
@@ -584,8 +580,7 @@ class Places:
     # ---- editing places.json ---------------------------------------------------------------------------------------
     def save(self, body):
         """Create / change a saved place. Keeps a dated backup of places.json first."""
-        sys.path.insert(0, os.path.dirname(HERE))
-        import places_manager as PM
+        import places_common as PM
         name = (body.get("name") or "").strip()
         old = (body.get("old_name") or "").strip()
         ok, why = PM.validate_place_name(name)
@@ -614,8 +609,7 @@ class Places:
         return dict(ok=True, key="p:" + name)
 
     def delete(self, name):
-        sys.path.insert(0, os.path.dirname(HERE))
-        import places_manager as PM
+        import places_common as PM
         places = PM.load_places(self.f_places)
         if name not in places:
             return dict(ok=False, error="no such place")

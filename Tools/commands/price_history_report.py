@@ -66,7 +66,7 @@ from lib.fuel_common import (  # noqa: E402
     normalize_fuel_code,
     get_comparison_vehicle,
 )
-from power_demand_calculator import load_rate_periods  # noqa: E402
+from lib.power_demand import load_rate_periods  # noqa: E402
 from providers_power import get_power_provider  # noqa: E402
 from lib.analysis_deepdive_charts import write_interactive_chart  # noqa: E402
 

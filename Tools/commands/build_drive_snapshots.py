@@ -50,7 +50,7 @@ import app_config  # noqa: E402
 import app_teslacam  # noqa: E402
 import drive_roles as DR  # noqa: E402
 import drive_snapshots as SN  # noqa: E402
-import teslacam_stills as ST  # noqa: E402
+from lib import teslacam_stills as ST  # noqa: E402
 import teslacam_sync as SY  # noqa: E402
 
 

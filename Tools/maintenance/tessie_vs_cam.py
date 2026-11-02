@@ -13,7 +13,7 @@ import os as _os, sys as _sys; _sys.path[:0] = [p for p in (_os.path.dirname(_os
 import argparse, csv, datetime, glob, json, math, os, statistics, sys
 HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, HERE)
-import dashcam_flip_review as D  # noqa: E402
+from lib import dashcam_clips as D  # noqa: E402
 
 
 def load_drive(path, cache={}):
