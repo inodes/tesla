@@ -1357,7 +1357,7 @@ def _backfill_drive_deepdive(limit, pace_seconds, since_days, tessie_dir):
 
 
 def _backfill_charge_deepdive(limit, pace_seconds, since_days, tessie_dir):
-    from analyse_charging import ChargingAnalyzer  # noqa: E402 (deliberate - see backfill_deepdive_telemetry docstring)
+    from lib.charging_analyzer import ChargingAnalyzer  # noqa: E402 (deliberate - see backfill_deepdive_telemetry docstring)
 
     print("   Looking for charges without deep-dive telemetry...")
     analyzer = ChargingAnalyzer(tessie_dir=tessie_dir)

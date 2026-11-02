@@ -4,18 +4,17 @@ computation (REQ-147/148), used by both report_all_charges_cost.py (a
 read-only local report) and analyse_charging.py's --sync-tessie-costs
 (which pushes the same figures back to Tessie's own live account via
 set_cost). Kept in lib/ rather than in either of those two files so
-neither has to import the other - report_all_charges_cost.py already
-imports ChargingAnalyzer FROM analyse_charging.py, so the reverse
-import would be circular.
+neither has to import the other (both take ChargingAnalyzer from
+lib/charging_analyzer.py).
 
 Method (unchanged from REQ-147's own report):
-  - Home charges (emoji "🏠", via analyse_charging.py's own GPS/registry-
+  - Home charges (emoji "🏠", via ChargingAnalyzer's own GPS/registry-
     based resolve_location() - not the raw "Saved Location" CSV text)
     are priced with lib/session_cost.py's real tiered/solar-aware
     opportunity-cost model (evaluate_tessie_charge()), applied directly
     to Tessie's own Started/Ended At window and Energy Used (kWh).
   - DC/public charges are priced from the real matched invoice
-    (analyse_charging.py's own reconcile()) - falling back to the
+    (ChargingAnalyzer's own reconcile()) - falling back to the
     expected-tariff-rate theoretical cost only when no invoice matched.
   - "Tessie's own reported cost" comes from the raw, un-patched Tessie
     API cache (resources/api_cache/charges.json), matched by UTC epoch -
