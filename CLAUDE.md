@@ -33,7 +33,7 @@
   data — the user's own browser/terminal is the only reliable source for that.
 - “`~`-relative config paths do NOT resolve inside this VM (confirmed again, BUG-025,
   2026-09-07)”: `device_bash`'s own `$HOME` is a session-specific sandbox home, not
-  `/Users/glenn`. Only the specific connected folders are bridged in, as `~/mnt/<name>`
+  `/Users/<user>`. Only the specific connected folders are bridged in, as `~/mnt/<name>`
   (currently `tesla`, `Tessie`, `Downloads`, `charging_invoices`). `config.json`'s
   own settings (`tessie_directory: "~/iCloud/Tesla/Tessie"`, `invoices_directory`,
   `landing_directory: "~/Downloads"`) all `os.path.expanduser()` to a non-existent path
@@ -303,7 +303,7 @@ in the data folder outside the repo.
   downloads entirely, whenever the user wants to build one - not yet started.
 - **Row-level verification, not just headers (2026-09-06)**: user asked to compare
   against the REAL master files at the canonical iCloud location
-  (`/Users/glenn/Library/Mobile Documents/com~apple~CloudDocs/Tesla/Tessie`, not the
+  (`/Users/<user>/Library/Mobile Documents/com~apple~CloudDocs/Tesla/Tessie`, not the
   repo's own possibly-stale copy) - requested and was granted folder access via
   `device_request_folder_access` (the plain `~/iCloud/...` symlink path was refused;
   the canonical `Library/Mobile Documents` path worked). That real location has 1055
@@ -475,7 +475,7 @@ in the data folder outside the repo.
   confirmation the pending CSVs were redundant - a false negative, not a real result.
   Root cause: `~/Downloads` (from `Tessie/config.json`) expands inside that shell to ITS
   OWN home directory, which has no `Downloads` folder at all - the real
-  `/Users/glenn/Downloads` only exists there via a `~/mnt/Downloads` mount alias that a
+  `/Users/<user>/Downloads` only exists there via a `~/mnt/Downloads` mount alias that a
   subprocess launched from `tessie_api_sync.py` can't see. So the analyzer scripts found
   zero landing files to ingest; "+0 new" meant "0 files processed", not "0 new among
   files genuinely processed", and nothing was archived because nothing was read. The user
@@ -538,7 +538,7 @@ in the data folder outside the repo.
   sorting/display) that needs a scoping discussion before starting, not a quick patch.
 - **BUG-022: third-party place/network trusted Tessie's own guess over the paid invoice
   (2026-09-07)**: user's `--third-party` output showed all 3 sessions as "Bunnings
-  Gladesville", but invoice 0000533887's own filename/printed content says "Bunnings
+  Gladesville", but invoice 0000000001's own filename/printed content says "Bunnings
   Rydalmere" - a different store. Root cause: a matched session's displayed place/network
   was computed once at charge-load time from Tessie's own Saved Location CSV field, never
   revisited even after reconciliation had already identified which invoice paid for it -
@@ -562,7 +562,7 @@ in the data folder outside the repo.
   count == 1" check - fixed by counting keyword uniqueness by distinct NORMALIZED display
   name (stripping a trailing "(...)" suffix) instead of raw entry count. Verified against
   the real invoice PDFs/registries: all 3 third-party sessions now resolve correctly
-  (0000533887 -> Bunnings Rydalmere/Exploren, 0000545157/0000555286 -> Bunnings
+  (0000000001 -> Bunnings Rydalmere/Exploren, 0000000002/0000000003 -> Bunnings
   Gladesville/Exploren), all 5 Supercharger sessions unaffected, and invoice_locations.json
   was written correctly for all 8 loaded invoices. Documented in Tessie/TESSIE_API.md and
   AGENTS.md (BUG-022). **Not yet committed** - same accumulated batch.

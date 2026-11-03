@@ -186,7 +186,7 @@ column value-for-value.
 last consolidated from a manual export taken at some point in the past;
 `Saved Location` values in that snapshot are already-stale Tessie-app
 labels frozen at export time (e.g. blank, or a raw street address). The live API reflects Tessie's *current* saved-location
-state (e.g. `"Home"`, `"Goulding Hill Preschool"`, `"REIN Garage"`) - names
+state (e.g. `"Home"`, `"School"`, `"Garage"`) - names
 the user has since added/renamed in the Tessie app itself. This is exactly
 the BUG-016 concern in `AGENTS.md`: Tessie's saved-location text is mutable
 and can drift out of sync with any point-in-time snapshot, which is why
@@ -526,7 +526,7 @@ timezone (not one global default), with an explicit numeric offset shown
 ### BUG-022: third-party location/network trusted Tessie's own guess over the paid invoice (2026-09-07)
 
 User's `--third-party` output showed all 3 sessions as **"Bunnings
-Gladesville"**, including invoice `0000533887` - but that invoice's own
+Gladesville"**, including invoice `0000000001` - but that invoice's own
 filename and printed content (`Location: Rydalmere, Bunnings Rydalmere`)
 say **"Bunnings Rydalmere"**, a different store. User's own suggested
 design: since an invoice (Tesla's or a third party's like Exploren) always
@@ -591,8 +591,8 @@ Verified against the real invoice PDFs and registries (`--invoices-dir`
 pointed at the real, mounted `charging_invoices` folder - see BUG-020's
 `~`-path lesson for why an explicit path is needed here rather than the
 config default when testing from this session): all 3 third-party
-sessions now resolve correctly - `0000533887` -> Bunnings Rydalmere /
-Exploren, `0000545157` and `0000555286` -> Bunnings Gladesville /
+sessions now resolve correctly - `0000000001` -> Bunnings Rydalmere /
+Exploren, `0000000002` and `0000000003` -> Bunnings Gladesville /
 Exploren - and all 5 Supercharger sessions still resolve correctly with no
 regression. `invoice_locations.json` was written to the real invoices
 folder with the correct entries for all 8 loaded invoices.

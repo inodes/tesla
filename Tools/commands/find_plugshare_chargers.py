@@ -138,9 +138,13 @@ def geocode_address(address_str, country_hint="Australia"):
         return _GEOCODE_CACHE[clean]
     try:
         q_str = clean if country_hint.lower() in clean.lower() else f"{clean}, {country_hint}"
-        params = urllib.parse.urlencode({"q": q_str, "format": "json", "limit": 1, "email": "glenn@inodes.org"})
+        _contact = os.environ.get("TESLA_CONTACT_EMAIL", "").strip()     # optional: sent to the geocoder as a contact
+        _q = {"q": q_str, "format": "json", "limit": 1}
+        if _contact:
+            _q["email"] = _contact
+        params = urllib.parse.urlencode(_q)
         url = f"https://nominatim.openstreetmap.org/search?{params}"
-        req = urllib.request.Request(url, headers={"User-Agent": "PlugShareChargerExplorer/1.0 (glenn@inodes.org)"})
+        req = urllib.request.Request(url, headers={"User-Agent": "PlugShareChargerExplorer/1.0" + (f" ({_contact})" if _contact else "")})
         with urllib.request.urlopen(req, timeout=3.5) as resp:
             data = json.loads(resp.read().decode("utf-8"))
             if data:
