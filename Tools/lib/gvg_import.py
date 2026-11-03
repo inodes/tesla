@@ -178,8 +178,9 @@ def choose(rows, rule, pick=None):
     return None, c, "%d different rows" % len({_figures(r) for r in c})
 
 
-def apply_row(spec, row):
-    """The car's entry with the guide's figures. Running costs and everything else stay as they were."""
+def apply_row(spec, row, use_label=False):
+    """The car's entry with the guide's label figures in adr_consumption (and co2). The label figure is a lab test, so
+    consumption (what the cost reports use) changes only when use_label is set. Running costs stay as they were."""
     comb, urb, extra, co2 = _figures(row)
     new = copy.deepcopy(spec)
     cons = {"combined_l_per_100km": comb}
@@ -187,7 +188,8 @@ def apply_row(spec, row):
         cons["urban_l_per_100km"] = urb
     if extra is not None:
         cons["highway_l_per_100km"] = extra
-    new["consumption"] = cons
+    if use_label:
+        new["consumption"] = dict(cons)
     new["adr_consumption"] = dict(cons)
     if co2 is not None:
         new["co2_g_per_km"] = int(co2)

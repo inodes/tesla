@@ -94,8 +94,9 @@ class ApplyTest(unittest.TestCase):
         r = ROWS[0]
         r = dict(r, _file="GVG-SearchResults-20261103203613.csv", _date="2026-11-03")
         new = G.apply_row(self.SPEC, r)
-        self.assertEqual(new["consumption"], dict(combined_l_per_100km=6.0, urban_l_per_100km=6.9, highway_l_per_100km=5.5))
-        self.assertEqual(new["adr_consumption"], new["consumption"])
+        self.assertEqual(new["adr_consumption"], dict(combined_l_per_100km=6.0, urban_l_per_100km=6.9, highway_l_per_100km=5.5))
+        self.assertEqual(new["consumption"], dict(combined_l_per_100km=7.5))                    # the lab figure does not replace it
+        self.assertEqual(G.apply_row(self.SPEC, r, use_label=True)["consumption"], new["adr_consumption"])
         self.assertEqual((new["co2_g_per_km"], new["fuel_type"], new["running_costs"]), (158, "Diesel", dict(tyres_per_km=0.026)))
         self.assertEqual((new["gvg"]["downloaded"], new["gvg"]["variant"]), ("2026-11-03", "AWD"))
         self.assertEqual(self.SPEC["consumption"], dict(combined_l_per_100km=7.5))                # the original is untouched
@@ -152,8 +153,9 @@ class CommandTest(unittest.TestCase):
             self.assertIn("corolla_hybrid", done)
             with open(os.path.join(d, "comparison_vehicles.json")) as f:
                 data = json.load(f)["vehicles"]
-            self.assertEqual(data["mazda_cx8_diesel"]["consumption"]["combined_l_per_100km"], 6.0)
-            self.assertEqual(data["corolla_hybrid"]["consumption"]["combined_l_per_100km"], 3.5)
+            self.assertEqual(data["mazda_cx8_diesel"]["adr_consumption"]["combined_l_per_100km"], 6.0)
+            self.assertEqual(data["mazda_cx8_diesel"]["consumption"]["combined_l_per_100km"], 7.5)    # typed figure kept
+            self.assertEqual(data["corolla_hybrid"]["adr_consumption"]["combined_l_per_100km"], 3.5)
             self.assertIn("running_costs", data["mazda_cx8_diesel"])
 
 
