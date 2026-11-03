@@ -5,13 +5,15 @@ NAME
     import_gvg_fuel_economy.py - set the comparison cars' fuel figures from the Green Vehicle Guide
 
 SYNOPSIS
-    ./Tools/tesla sync fuel-economy [CSV or folder ...] [--write] [--pick car=N ...] [--data-dir DIR]
+    ./Tools/tesla sync fuel-economy [CSV or folder ...] [--write] [--use-label] [--pick car=N ...] [--data-dir DIR]
 
 DESCRIPTION
     On greenvehicleguide.gov.au search for a make and use "Download as CSV". With no files given this reads
     GVG-*.csv from <data folder>/GVG and from Downloads. Each comparison car gets the guide's combined, urban
     and extra-urban L/100km and CO2. A car with no row, or with several different rows, is listed and left
-    alone; choose a row with --pick car=N (N is the number in the list). Running costs are not changed.
+    alone; choose a row with --pick car=N (N is the number in the list). The guide's figures are lab (label) figures, so
+    they are saved as adr_consumption and the consumption the cost reports use is left as it is; --use-label sets
+    consumption to the label figure too. Running costs are not changed.
     Without --write it only prints before and after. With --write it saves comparison_vehicles.json in the
     data folder (never the repo).
 """
@@ -32,12 +34,12 @@ def _data_dir(arg):
     return resolve_tessie_data_home()
 
 
-def _fig(spec):
-    c = (spec.get("consumption") or {}).get("combined_l_per_100km")
+def _fig(spec, block="consumption"):
+    c = (spec.get(block) or {}).get("combined_l_per_100km")
     return "%.1f" % c if isinstance(c, (int, float)) else "-"
 
 
-def run(files, data_dir, write=False, picks=None, out=print):
+def run(files, data_dir, write=False, picks=None, out=print, use_label=False):
     """Returns (changed car keys, left alone car keys)."""
     rows = G.read_rows(files)
     out("%d row%s from %d file%s" % (len(rows), "" if len(rows) == 1 else "s", len(files), "" if len(files) == 1 else "s"))
@@ -62,10 +64,10 @@ def run(files, data_dir, write=False, picks=None, out=print):
                         i, r.get("ModelReleaseYear"), r.get("Make"), r.get("Model"), r.get("Variant"),
                         r.get("TransmissionTypeDescription"), f[0], f[1], f[2], f[3]))
             continue
-        new[key] = G.apply_row(current[key], row)
+        new[key] = G.apply_row(current[key], row, use_label)
         g = new[key]["gvg"]
-        out("  %-24s %s -> %s L/100km  (%s %s %s %s; %s)" % (
-            key, _fig(current[key]), _fig(new[key]), g["model_year"], g["make"], g["model"], g["variant"], note))
+        out("  %-24s label %s (was %s), used %s L/100km  (%s %s %s %s; %s)" % (
+            key, _fig(new[key], "adr_consumption"), _fig(current[key], "adr_consumption"), _fig(new[key]), g["model_year"], g["make"], g["model"], g["variant"], note))
     out("")
     out("%d car%s set, %d left alone." % (len(new), "" if len(new) == 1 else "s", len(left)))
     if new and write:
@@ -81,6 +83,7 @@ def main(argv=None):
     ap.add_argument("files", nargs="*", help="CSV files or folders (default: GVG-*.csv in the data folder's GVG folder and Downloads)")
     ap.add_argument("--data-dir", help="the data folder (default: the usual one)")
     ap.add_argument("--write", action="store_true", help="save comparison_vehicles.json in the data folder")
+    ap.add_argument("--use-label", action="store_true", help="also set consumption (used by the cost reports) to the label figure")
     ap.add_argument("--pick", action="append", default=[], metavar="CAR=N", help="row number for a car with several rows")
     a = ap.parse_args(argv)
     picks = {}
@@ -90,7 +93,7 @@ def main(argv=None):
             ap.error("--pick wants car=N, e.g. --pick corolla_hybrid=2")
         picks[k] = int(n)
     d = _data_dir(a.data_dir)
-    run(G.find_files(a.files, d), d, a.write, picks)
+    run(G.find_files(a.files, d), d, a.write, picks, use_label=a.use_label)
     return 0
 
 
