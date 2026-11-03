@@ -288,14 +288,18 @@ class TeslaCam:
         store = self._tl("A")
 
         def edge_pos(i):
-            """Where a parked run with no position of its own was: where the drive just before it ended, else where the drive just after it began (estimated)."""
+            """(position, estimated) of a parked run with no position of its own: where the drive just before it ended and the drive just after it began (both, no further
+            apart than same_place_m: sandwiched, not estimated), else either one alone (estimated)."""
+            ends = {}
             for j, side in ((i - 1, "p1"), (i + 1, "p0")):
                 if 0 <= j < len(runs) and RC.kind(runs[j]["stamps"][0]) == "drive":
                     sm = store.summary(runs[j]["stamps"][-1 if side == "p1" else 0])
                     q = sm.get(side) if isinstance(sm, dict) else None
                     if q and q[0] is not None:
-                        return [q[0], q[1]]
-            return None
+                        ends[side] = [q[0], q[1]]
+            if "p1" in ends and "p0" in ends:
+                return ends["p1"], TL.hav(ends["p1"][0], ends["p1"][1], ends["p0"][0], ends["p0"][1]) > TL.OPTS["same_place_m"]
+            return (ends.get("p1") or ends.get("p0")), True
         for i, r in enumerate(runs):
             sts = r["stamps"]
             a, b = sts[0], sts[-1]
@@ -306,7 +310,8 @@ class TeslaCam:
                     gone_home.extend(sts)
                     continue
             minute_play = {x: next((q for q in sorted(holders[x]) if roots.get(q)), None) for x in sts}
-            out["recent"].append(dict(id=a, ts=_ts(a), end=_ts(b), t0=_secs(a), t1=_secs(b) + 60, part=RC.kind(a), pos=RC.pos(a) or (edge_pos(i) if RC.kind(a) == "park" else None), pos_est=RC.pos_est(a) or (RC.pos(a) is None and RC.kind(a) == "park"), n=len(sts), full=sum(1 for x in sts if len(cams[x]) == 6),
+            own = (RC.pos(a), RC.pos_est(a)) if RC.pos(a) is not None or RC.kind(a) != "park" else edge_pos(i)
+            out["recent"].append(dict(id=a, ts=_ts(a), end=_ts(b), t0=_secs(a), t1=_secs(b) + 60, part=RC.kind(a), pos=own[0], pos_est=own[1], n=len(sts), full=sum(1 for x in sts if len(cams[x]) == 6),
                                       roles=roles, play=minute_play[a] or next((q for q in minute_play.values() if q), None), playable=sum(1 for q in minute_play.values() if q)))
         out["recent"].sort(key=lambda x: x["t0"], reverse=True)
         if gone_home:
