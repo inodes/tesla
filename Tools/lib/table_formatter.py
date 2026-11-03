@@ -357,7 +357,9 @@ def truncate_display(s: str, max_width: int, ellipsis: str = "…") -> str:
         return s
         
     el_w = display_len(ellipsis)
-    target_w = max(1, max_width - el_w)
+    if el_w > max_width:
+        ellipsis, el_w = "", 0  # no room for the ellipsis itself: cut the text only
+    target_w = max_width - el_w  # may be 0: then only the ellipsis is shown, never wider than max_width
     
  # Split by ANSI/OSC-8 escape sequences to preserve color styling and hyperlinks
     tokens = re.split(f"({ESCAPE_REGEX.pattern})", str(s))

@@ -1421,6 +1421,7 @@ def parse_range_selection(raw_str, max_val):
     if raw_str in ("all", "*"):
         return list(range(1, max_val + 1))
     results = set()
+    raw_str = re.sub(r"\s*-\s*", "-", raw_str)  # "3 - 5" is the range 3-5, not 3 and 5
     parts = raw_str.replace(" ", ",").split(",")
     for p in parts:
         p = p.strip()

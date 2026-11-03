@@ -215,12 +215,17 @@ class GmapsUrlTest(unittest.TestCase):
         r = self._resolve("https://maps.app.goo.gl/xyz", urlopen=boom)
         self.assertEqual((r["resolved_url"], r["name"]), ("https://maps.app.goo.gl/xyz", "Unnamed Location"))
 
-    @unittest.expectedFailure
     def test_query_name_is_read(self):
-        # BUG: the check is `"[?&]q=" in final_url`, a regex written as a plain substring test, so it is never true and a
-        # "?q=<name>" link always comes back "Unnamed Location".
+        # Was a bug: the check was `"[?&]q=" in final_url`, a regex written as a plain substring test, so it was never
+        # true and a "?q=<name>" link always came back "Unnamed Location".
         r = self._resolve("https://www.google.com/maps?q=Testville+Bakery")
         self.assertEqual(r["name"], "Testville Bakery")
+
+    def test_query_name_after_other_params_and_encoded(self):
+        r = self._resolve("https://www.google.com/maps?hl=en&q=Caf%C3%A9+One%2C+Testville&z=3")
+        self.assertEqual((r["name"], r["latitude"]), ("Café One, Testville", None))
+        r = self._resolve("https://www.google.com/maps?faq=Not+This")         # "faq=" is not "q="
+        self.assertEqual(r["name"], "Unnamed Location")
 
 
 class InferTagsTest(unittest.TestCase):
@@ -243,10 +248,15 @@ class InferTagsTest(unittest.TestCase):
     def test_unknown_gets_a_description_only(self):
         self.assertEqual(OC.infer_osm_tags_from_name("Something"), {"name": "Something", "description": "Something"})
 
-    @unittest.expectedFailure
     def test_words_are_matched_whole(self):
-        # BUG: keywords are matched as bare substrings, so "wc" inside "NeWCastle" makes a coffee roaster public toilets.
+        # Was a bug: keywords were matched as bare substrings, so "wc" inside "NeWCastle" made a coffee roaster public toilets.
         self.assertEqual(OC.infer_osm_tags_from_name("Newcastle Coffee Roasters").get("amenity"), "cafe")
+
+    def test_whole_words_still_match(self):
+        self.assertEqual(OC.infer_osm_tags_from_name("Testville WC").get("amenity"), "toilets")
+        self.assertEqual(OC.infer_osm_tags_from_name("Testville Burgers").get("amenity"), "restaurant")   # plural "s"
+        self.assertEqual(OC.infer_osm_tags_from_name("IGA Testville").get("shop"), "supermarket")
+        self.assertNotEqual(OC.infer_osm_tags_from_name("Rigatoni House").get("shop"), "supermarket")   # "iga" inside a word
 
 
 class OsmTokenTest(unittest.TestCase):
@@ -415,12 +425,18 @@ class TemplatesTest(unittest.TestCase):
         self.assertEqual(OT.derive_tesla_ref(url="https://www.tesla.com/en_AU/findus/location/supercharger/testville123"), "testville123")
         self.assertEqual(OT.derive_tesla_ref(name="!!!"), "")
 
-    @unittest.expectedFailure
     def test_brand_matched_on_whole_words(self):
-        # BUG: brands are matched as bare substrings, so "iga" inside "RIGAtoni" makes a restaurant an IGA supermarket.
+        # Was a bug: brands were matched as bare substrings, so "iga" inside "RIGAtoni" made a restaurant an IGA supermarket.
         tags, tid, _k = OT.build_osm_tags("Rigatoni House")
         self.assertNotEqual(tid, "supermarket")
         self.assertNotEqual(tags.get("brand"), "IGA")
+
+    def test_whole_word_brands_still_match(self):
+        tags, tid, _k = OT.build_osm_tags("IGA Testville")
+        self.assertEqual((tid, tags.get("brand")), ("supermarket", "IGA"))
+        self.assertEqual(OT.build_osm_tags("7-Eleven Testville")[0].get("brand"), "7-Eleven")   # brand with a hyphen
+        self.assertEqual(OT.build_osm_tags("BP Testville")[0].get("brand"), "BP")
+        self.assertNotIn("brand", OT.build_osm_tags("Kubpa Testville")[0])          # "bp" inside a word is not BP
 
 
 # ------------------------------------------------------------------------------------------------------ supercharge_common
@@ -480,13 +496,14 @@ class SuperchargeTest(unittest.TestCase):
             self.assertIsNone(SC.find_supercharge_site("Nowhere", -30.0, 140.005))                     # close, wrong name
             self.assertEqual(SC.find_supercharge_site("Faraway, WA")["id"], 103)                       # no position: name only
 
-    @unittest.expectedFailure
     def test_find_with_position_does_not_fall_back_to_a_far_name_match(self):
-        # BUG: the name-only fallback ("if no coordinates") runs even when a position is given, so a site with the right
-        # name 2,600 km away is returned - the wrong-site match BUG-152 tightened the distance rule to avoid.
+        # Was a bug: the name-only fallback ("if no coordinates") ran even when a position was given, so a site with the
+        # right name 2,600 km away was returned - the wrong-site match BUG-152 tightened the distance rule to avoid.
         self._cache(SITES, 60)
         with mock.patch.object(SC.urllib.request, "urlopen", side_effect=no_network):
             self.assertIsNone(SC.find_supercharge_site("Faraway", -30.0, 140.005))
+            self.assertIsNone(SC.find_supercharge_site("Faraway, WA", -30.0, 140.005))         # exact name, still too far
+            self.assertEqual(SC.find_supercharge_site("Faraway, WA", -31.01, 117.01)["id"], 103)  # same name, nearby
 
     def test_search(self):
         self._cache(SITES, 60)

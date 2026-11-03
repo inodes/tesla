@@ -566,10 +566,11 @@ def resolve_gmaps_url(url_or_query: str) -> Dict[str, Any]:
     if m_name:
         raw_name = urllib.parse.unquote_plus(m_name.group(1))
         name = raw_name.replace("+", " ").strip()
-    elif "[?&]q=" in final_url and not lat:
-        m_qn = re.search(r"[?&]q=([^&]+)", final_url)
-        if m_qn:
-            name = urllib.parse.unquote_plus(m_qn.group(1)).replace("+", " ").strip()
+    elif lat is None:
+        # A "?q=<name>" link (coordinates in q= were already read in step 3).
+        q_vals = urllib.parse.parse_qs(urllib.parse.urlsplit(final_url).query).get("q")
+        if q_vals and q_vals[0].strip():
+            name = q_vals[0].strip()
 
     return {
         "original_url": url,
@@ -578,6 +579,12 @@ def resolve_gmaps_url(url_or_query: str) -> Dict[str, Any]:
         "latitude": lat,
         "longitude": lon,
     }
+
+
+def _has_word(text: str, keywords: List[str]) -> bool:
+    """True when any keyword appears in text as whole word(s), so "wc" does not match inside "Newcastle".
+    A plural "s" on the last word still counts ("Burgers" matches "burger")."""
+    return any(re.search(r"(?<!\w)" + re.escape(k) + r"s?(?!\w)", text) for k in keywords)
 
 
 def infer_osm_tags_from_name(name: str, hint: str = "") -> Dict[str, str]:
@@ -594,92 +601,92 @@ def infer_osm_tags_from_name(name: str, hint: str = "") -> Dict[str, str]:
     }
 
     # Sports & Recreation
-    if any(k in combined for k in ["basket ball", "basketball", "hoop", "half court"]):
+    if _has_word(combined, ["basket ball", "basketball", "hoop", "half court"]):
         tags.update({
             "leisure": "pitch",
             "sport": "basketball",
             "access": "yes",
         })
-    elif any(k in combined for k in ["tennis", "tennis court"]):
+    elif _has_word(combined, ["tennis", "tennis court"]):
         tags.update({
             "leisure": "pitch",
             "sport": "tennis",
             "access": "yes",
         })
-    elif any(k in combined for k in ["pickleball"]):
+    elif _has_word(combined, ["pickleball"]):
         tags.update({
             "leisure": "pitch",
             "sport": "pickleball",
             "access": "yes",
         })
-    elif any(k in combined for k in ["skate park", "skatepark"]):
+    elif _has_word(combined, ["skate park", "skatepark"]):
         tags.update({
             "leisure": "pitch",
             "sport": "skateboard",
             "access": "yes",
         })
-    elif any(k in combined for k in ["playground", "play area", "play space", "kids play"]):
+    elif _has_word(combined, ["playground", "play area", "play space", "kids play"]):
         tags.update({
             "leisure": "playground",
             "access": "yes",
         })
-    elif any(k in combined for k in ["dog park", "off leash", "off-leash"]):
+    elif _has_word(combined, ["dog park", "off leash", "off-leash"]):
         tags.update({
             "leisure": "dog_park",
             "access": "yes",
         })
-    elif any(k in combined for k in ["park", "reserve", "gardens"]) and not any(k in combined for k in ["car park", "business park"]):
+    elif _has_word(combined, ["park", "reserve", "gardens"]) and not _has_word(combined, ["car park", "business park"]):
         tags.update({
             "leisure": "park",
         })
     # Public Facilities & Amenities
-    elif any(k in combined for k in ["toilet", "toilets", "restroom", "restrooms", "bathroom", "amenities block", "wc"]):
+    elif _has_word(combined, ["toilet", "toilets", "restroom", "restrooms", "bathroom", "amenities block", "wc"]):
         tags.update({
             "amenity": "toilets",
             "access": "yes",
             "fee": "no",
         })
-    elif any(k in combined for k in ["drinking water", "water bubbler", "water fountain", "water refill"]):
+    elif _has_word(combined, ["drinking water", "water bubbler", "water fountain", "water refill"]):
         tags.update({
             "amenity": "drinking_water",
         })
-    elif any(k in combined for k in ["picnic table", "picnic area", "picnic shelter"]):
+    elif _has_word(combined, ["picnic table", "picnic area", "picnic shelter"]):
         tags.update({
             "leisure": "picnic_table",
         })
-    elif any(k in combined for k in ["barbecue", "bbq"]):
+    elif _has_word(combined, ["barbecue", "bbq"]):
         tags.update({
             "amenity": "bbq",
         })
     # Supermarkets & Groceries
-    elif any(k in combined for k in ["iga", "supa iga", "coles", "woolworths", "woolies", "aldi", "supermarket", "grocer"]):
+    elif _has_word(combined, ["iga", "supa iga", "coles", "woolworths", "woolies", "aldi", "supermarket", "grocer"]):
         tags.update({
             "shop": "supermarket",
         })
     # Dining & Drinks
-    elif any(k in combined for k in ["cafe", "coffee", "espresso", "roastery"]):
+    elif _has_word(combined, ["cafe", "coffee", "espresso", "roastery"]):
         tags.update({
             "amenity": "cafe",
         })
-    elif any(k in combined for k in ["bakery", "bakehouse", "bakers delight"]):
+    elif _has_word(combined, ["bakery", "bakehouse", "bakers delight"]):
         tags.update({
             "shop": "bakery",
         })
-    elif any(k in combined for k in ["pizzeria", "pizza", "burger", "grill", "bistro", "restaurant", "dining"]):
+    elif _has_word(combined, ["pizzeria", "pizza", "burger", "grill", "bistro", "restaurant", "dining"]):
         tags.update({
             "amenity": "restaurant",
         })
-    elif any(k in combined for k in ["mcdonald's", "maccas", "kfc", "hungry jack", "subway", "red rooster"]):
+    elif _has_word(combined, ["mcdonald's", "maccas", "kfc", "hungry jack", "subway", "red rooster"]):
         tags.update({
             "amenity": "fast_food",
         })
     # Health & Retail
-    elif any(k in combined for k in ["chemist", "pharmacy", "priceline", "terrywhite"]):
+    elif _has_word(combined, ["chemist", "pharmacy", "priceline", "terrywhite"]):
         tags.update({
             "amenity": "pharmacy",
         })
     # EV Charging
-    elif any(k in combined for k in ["supercharger", "ev charging", "tesla charger", "chargefox", "evie"]):
+    elif _has_word(combined, ["supercharger", "ev charging", "tesla charger", "chargefox", "evie"]):
         tags.update({
             "amenity": "charging_station",
             "fee": "yes",
