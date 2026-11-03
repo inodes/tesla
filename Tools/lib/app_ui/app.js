@@ -1002,7 +1002,13 @@ function lostBox(box,s){
     else say(h.state==="deleted"?"This video has been deleted from every drive. The stills are kept.":"This video was never logged on any drive.")}).catch(()=>say("Could not look up where this video is."))}
 // HUD begin: the overlay on a drive's front camera: the speed limit last read from a sign, the car's speed, and the indicators
 // the limit the car is under: the latest speed sign read at or before this moment (up to an hour of minutes back); a school-zone sign (it has times) is not a limit to hold. -> km/h or null
-const hudLimit=(SGV,stamps,si,t)=>{for(let i=si;i>=0&&i>=si-60;i--){const L=(SGV[stamps[i]]||[]).filter(g=>g.kind!=="school"&&/^\d{2,3}$/.test(String(g.text))&&(i<si||g.s0<=t+.5));if(L.length)return +L.reduce((a,g)=>g.s0>=a.s0?g:a).text}return null};
+// A sign the car did not answer: it is read at least a quarter below the speed the car holds, and the car is still at that speed (within a tenth) for the next dozen seconds. A side road's or an exit's
+// limit, seen from the main road, reads like that. spd(k) = the car's speed k seconds from the sign (km/h, null where not read). -> true / false, or null when too little of the speed is known to say.
+const hudDoubt=(lim,spd)=>{const a=[],b=[];for(let k=-8;k<=0;k++){const x=spd(k);if(x!=null)a.push(x)}for(let k=2;k<=14;k++){const x=spd(k);if(x!=null)b.push(x)}
+  if(a.length<4||b.length<4)return null;const before=a.reduce((p,q)=>p+q,0)/a.length,keep=Math.min(...b);return before>=50&&lim<=before*.75&&keep>=before*.9};
+// doubt(stamp, sign) says whether a sign was one the car did not answer (not held as the limit); the answer is kept on the sign once it can be given
+const hudLimit=(SGV,stamps,si,t,doubt)=>{for(let i=si;i>=0&&i>=si-60;i--){const L=(SGV[stamps[i]]||[]).filter(g=>g.kind!=="school"&&/^\d{2,3}$/.test(String(g.text))&&(i<si||g.s0<=t+.5)&&!hudDoubtOf(doubt,stamps[i],g)).sort((a,b)=>b.s0-a.s0);if(L.length)return +L[0].text}return null};
+const hudDoubtOf=(doubt,st,g)=>{if(!doubt)return false;if(g._d===undefined){const r=doubt(st,g);if(r===null||r===undefined)return false;g._d=!!r}return g._d};
 // the indicator bits of a second (1 left, 2 right, both = hazards) -> which arrows flash
 const hudBlink=b=>({l:!!(+b&1),r:!!(+b&2)});
 // where the picture is inside its video box (the video keeps its shape, so a tall box has bars above and below it): {x,y,w,h} in the box's pixels
@@ -1040,7 +1046,7 @@ function clipPlayer(host,o){
     if(!hudOn()){if(h)h.remove();return}
     if(!h){h=document.createElement("div");h.className="hud";h.innerHTML='<div class="hsg" hidden><b></b></div><div class="hsp" hidden><b></b><small>km/h</small></div><svg class="hbk hl" viewBox="0 0 24 24"><path d="M2 12l9-8v5h11v6H11v5z"/></svg><svg class="hbk hr" viewBox="0 0 24 24"><path d="M2 12l9-8v5h11v6H11v5z"/></svg>';fig.appendChild(h)}
     const b=hudBox(vd.clientWidth,vd.clientHeight,vd.videoWidth,vd.videoHeight),st=h.style;st.left=(vd.offsetLeft+b.x)+"px";st.top=(vd.offsetTop+b.y)+"px";st.width=b.w+"px";st.height=b.h+"px";st.fontSize=(b.w/100)+"px";
-    const T=o.tele(stamps[si],mv.currentTime),lim=hudLimit(SGV,stamps,si,mv.currentTime),sg=h.querySelector(".hsg"),sp=h.querySelector(".hsp"),bk=hudBlink(T?T.blk:0);
+    const T=o.tele(stamps[si],mv.currentTime),lim=hudLimit(SGV,stamps,si,mv.currentTime,o.doubt),sg=h.querySelector(".hsg"),sp=h.querySelector(".hsp"),bk=hudBlink(T?T.blk:0);
     sg.hidden=lim==null;if(lim!=null){const n=sg.firstChild;if(n.textContent!==String(lim)){n.textContent=lim;sg.classList.toggle("d3",lim>=100)}}
     sp.hidden=!T||T.v==null;if(T&&T.v!=null)sp.firstChild.textContent=Math.round(T.v);
     h.querySelector(".hl").classList.toggle("on",bk.l);h.querySelector(".hr").classList.toggle("on",bk.r)};
@@ -2409,7 +2415,8 @@ async function teslaDriveBody(host,role,fetchSeg,places,opts){
     const allM=cont(),blackDrive=!playable.length&&!d.minutes.length&&allM.length>0;      // a drive Tessie knows, with no footage at all: all black
     if(!player&&(playable.length||blackDrive)){const mm=allM,cams={},meta={},syn={},len={};mm.forEach(m=>{cams[m.stamp]=m.cams||[];meta[m.stamp]=m;if(m.syn){syn[m.stamp]=1;len[m.stamp]=m.len}});covStrip(mm);
       player=clipPlayer($("#dvid"),{stamps:mm.map(m=>m.stamp),cams,syn,len,still:stillSrc,trig:opts.trig,
-        hot:opts.hot,signInfo,tele:(st,sec)=>{const sr=S(),m=meta[st];if(!sr||!m)return null;const i=m.off+Math.floor(sec);return sr.v[i]==null?null:{v:sr.v[i],blk:sr.blk[i]||0}},
+        hot:opts.hot,signInfo,doubt:(st,g)=>{const sr=S(),m=meta[st];if(!sr||!m)return null;const t=m.off+g.s0;return hudDoubt(+g.text,k=>{const x=sr.v[Math.round(t+k)];return x==null?null:x})},
+        tele:(st,sec)=>{const sr=S(),m=meta[st];if(!sr||!m)return null;const i=m.off+Math.floor(sec);return sr.v[i]==null?null:{v:sr.v[i],blk:sr.blk[i]||0}},
         url:(st,c)=>meta[st].src==="saved"?`/footage/${role}/SavedClips/${meta[st].ref}/${st}-${c}.mp4`:meta[st].src==="sentry"?`/footage/${role}/SentryClips/${meta[st].ref}/${st}-${c}.mp4`:`/footage/${role}/RecentClips/${st}-${c}.mp4`,
         loc:Object.fromEntries(mm.map(m=>[m.stamp,m.loc])),onAt:(st,sec)=>cursor(meta[st].off+sec),head:`${it().kind==="drive"?"Click the map or the chart to jump there; the dot and the line follow the video.":"The car was not moving, so there is no map."} Each minute plays on to the next, Recent and Saved alike; where there is no video the cameras are black and the clock runs on.`})}
     else if(!player&&!playable.length&&d.minutes.length){const mm=d.minutes,meta={};mm.forEach(m=>{meta[m.stamp]=m});      // the video is on no connected drive: its stills play in the same place, one picture where the video shows six, with the same map and chart
@@ -2425,16 +2432,19 @@ async function teslaDriveBody(host,role,fetchSeg,places,opts){
     allPins=()=>{if(map&&map.pins)map.pins(L.filter(([m,g])=>g.text).map(([m,g])=>({i:Math.round(m.off+g.s0),cat:g.kind==="school"?"school":"speed",text:g.text,side:g.side})))};allPins();
     // each sign with the speed the car was doing as it passed it and the limit before it: over the limit that was in force (the sign before, else its own) by more than SPEEDTOL km/h is speeding
     const SL=L.filter(([m,g])=>g.text&&g.kind!=="school").sort((a,b)=>(a[0].off+a[1].s0)-(b[0].off+b[1].s0)),V=S().v;
-    SL.forEach(([m,g],k)=>{const t=m.off+g.s0;let pr=null;for(let q=k-1;q>=0;q--){const d=t-(SL[q][0].off+SL[q][1].s0);if(d>1200)break;if(d>3||SL[q][1].text!==g.text){pr=SL[q][1].text;break}}
+    // a sign the car did not answer (read well below the speed it holds, and it holds it: a side road's or an exit's limit seen from the main road) is not a limit the car was under: it is not the "prior" limit
+    // of the next sign and it is not speeding
+    const dbtOf=(m,g)=>hudDoubt(+g.text,k=>{const x=V[Math.round(m.off+g.s0+k)];return x==null?null:x})===true,DB=new Map(SL.map(e=>[e[1],dbtOf(e[0],e[1])])),SLK=SL.filter(e=>!DB.get(e[1]));
+    SL.forEach(([m,g])=>{const t=m.off+g.s0,dbt=DB.get(g);let pr=null;for(let q=SLK.length-1;q>=0;q--){const e=SLK[q];if(e[1]===g)continue;const d=t-(e[0].off+e[1].s0);if(d<0)continue;if(d>1200)break;if(d>3||e[1].text!==g.text){pr=e[1].text;break}}
       let sp=null;for(const dd of [0,1,-1,2,-2]){const x=V[Math.round(t)+dd];if(x!=null){sp=x;break}}
-      SGCTX.set(m.stamp+"|"+g.s0+"|"+g.text+"|"+g.side,{sp,pr,over:sp!=null&&sp>(+(pr||g.text)||999)+SPEEDTOL})});
+      SGCTX.set(m.stamp+"|"+g.s0+"|"+g.text+"|"+g.side,{sp,pr,dbt,over:!dbt&&sp!=null&&sp>(+(pr||g.text)||999)+SPEEDTOL})});
     if(player&&player.refresh)player.refresh();
     const el=$("#dsgl");if(!list||!el)return;
     const at=(m,g)=>new Date(Date.parse(((m.loc)||m.stamp.slice(0,10)+"T"+m.stamp.slice(11).replace(/-/g,":"))+"Z")+Math.floor(g.s0)*1000).toISOString().substr(11,8);
-    el.innerHTML=`<div class="sub" style="width:100%;margin-bottom:4px">Signs read in this video:</div><select id="dsel"><option value="">${n0(L.length)} read</option>${L.map(([m,g],j)=>`<option value="${j}">${at(m,g)} - ${esc(g.text)}</option>`).join("")}</select>`;
+    el.innerHTML=`<div class="sub" style="width:100%;margin-bottom:4px">Signs read in this video:</div><select id="dsel"><option value="">${n0(L.length)} read</option>${L.map(([m,g],j)=>`<option value="${j}">${at(m,g)} - ${esc(g.text)}${(SGCTX.get(m.stamp+"|"+g.s0+"|"+g.text+"|"+g.side)||{}).dbt?" (car did not slow)":""}</option>`).join("")}</select>`;
     const sl=$("#dsel",el);sl.onchange=()=>{if(sl.value===""){allPins();return}const [m,g]=L[+sl.value];if(player)player.seekAt(m.stamp,Math.max(0,Math.floor(g.s0)));cursor(m.off+Math.floor(g.s0));if(map&&map.pins)map.pins([{i:Math.round(m.off+g.s0),cat:g.kind==="school"?"school":"speed",text:g.text,side:g.side}])}};
   const SPEEDTOL=3,SGCTX=new Map();let allPins=()=>{};
-  const signInfo=(st,g)=>{const c=SGCTX.get(st+"|"+g.s0+"|"+g.text+"|"+g.side);if(!c||c.sp==null)return "";return `<span class="sgi${c.over?" over":""}">${n0(c.sp)} km/h${c.pr?" · prior "+esc(c.pr):""}${c.over?" · speeding":""}</span>`};
+  const signInfo=(st,g)=>{const c=SGCTX.get(st+"|"+g.s0+"|"+g.text+"|"+g.side);if(!c||c.sp==null)return "";return `<span class="sgi${c.over?" over":""}${c.dbt?" dbt":""}"${c.dbt?' title="The car did not slow for this sign: it is probably a side road\'s or an exit\'s limit, not the road the car was on"':""}>${n0(c.sp)} km/h${c.pr?" · prior "+esc(c.pr):""}${c.over?" · speeding":""}${c.dbt?" · car did not slow":""}</span>`};
   // map size and telemetry size / hide, remembered
   const setMs=k=>{lsSet("tc.mapsz",k);$$("[data-ms]",host).forEach(b=>b.classList.toggle("on",b.dataset.ms===k));$("#dmap").style.height=(MSZ.find(x=>x[0]===k)||MSZ[2])[2];if(map&&map.resize){map.resize();map.refit(250)}};
   const setTs=k=>{lsSet("tc.telsz",k);$$("[data-ts]",host).forEach(b=>b.classList.toggle("on",b.dataset.ts===k));const c=$("#dch");c.style.display=k==="h"?"none":"block";{const hh=(TSZ.find(x=>x[0]===k)||TSZ[1])[2];c.style.height=opts.rvtab&&hh!=="0"?"calc("+hh+" + 112px)":hh}dispatchEvent(new Event("resize"))};

@@ -305,3 +305,4 @@ main:has(#spl .stbar,#spl .vbar) #splx{display:none}
 .hud .hl{left:2em}.hud .hr{right:2em;transform:scaleX(-1)}
 .hud .hbk.on{display:block;animation:hudfl .74s steps(1) infinite}
 @keyframes hudfl{0%{opacity:1}50%{opacity:.12}}
+.sgi.dbt{background:#6b7280}
