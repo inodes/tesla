@@ -10,6 +10,26 @@ Tessie Drive Log Analyzer & Master Consolidator
     No local footage (Missing / not archived)
 - Consolidates & deduplicates raw Tessie CSVs into drives_master.csv
 - PII-safe Known Place nicknames
+
+NAME
+    analyse_drives.py - drive log analysis, timelines and drives_master.csv consolidation
+
+SYNOPSIS
+    ./Tools/tesla analyse drives [--drives] [--today | --yesterday | --month YYYY-MM | --since DATE | --days N]
+                                 [--place NAME]
+    ./Tools/tesla analyse drives --timeline [DATE]
+    ./Tools/tesla analyse drives --inspect-drive INDEX_OR_DATE
+    ./Tools/tesla analyse drives --consolidate [CSV]
+    ./Tools/tesla analyse drives --sync | --no-sync
+    ./Tools/tesla analyse drives [--purge-home-recent | --stage-home-recent] [--dry-run] [--yes]
+    ./Tools/tesla analyse drives --export-deepdives DEST_DIR
+
+DESCRIPTION
+    Reads drives_master.csv in the Tessie data folder and lets you browse the drives by place, day
+    and trip, with the TeslaCam footage found for each trip. --timeline prints one day's drives,
+    charges and camera events in time order; --inspect-drive shows one drive in detail.
+    --consolidate merges new Tessie drive CSVs into drives_master.csv. The Home camera options stage
+    or delete RecentClips recorded while parked at Home. The full list of options is in -h.
 """
 import os as _os, sys as _sys; _sys.path[:0] = [p for p in (_os.path.dirname(_os.path.abspath(__file__)), _os.path.dirname(_os.path.dirname(_os.path.abspath(__file__)))) if p not in _sys.path]      # the commands beside it, and Tools/ (lib, providers)
 

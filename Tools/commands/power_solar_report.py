@@ -8,39 +8,54 @@ PVOutput's lib/pvoutput_history_db.py before it - PVOutput on this
 account turned out to be a pure relay of this SAME SolarEdge account's
 own API, see AGENTS.local.md's REQ-140 entry) over any period of choice.
 
-User: "How difficult would it be to have a script that could correlate
-the PVOutput and AGL data and report and graph periods of choice -
-including calculating the amounts earned by solar export, amount saved
-by self consumption and costing. Basically a holistic grapher, auditor
-and financial calculator."
+NAME
+    power_solar_report.py - energy report of solar, grid and cost for a period
 
-Why both sources are needed, not just one: AGL only sees what crosses
-its meter - real import and real export - which is why
-power_cost_calculator.py's reconstruct_bill() can already compute usage
-cost, supply charge and solar EXPORT credit from AGL data alone (reused
-here unchanged). But AGL has no idea how much solar you actually USED
-yourselves, because self-consumed power never crosses the meter at
-all - that's only visible to the PV provider's own generation and
-consumption meters (a real self_consumption_kwh field on SolarEdge -
-REQ-140 - not derived here from two CT clamps the way the original
-PVOutput-based version had to). This script adds that missing half:
-self-consumption savings = self-consumed kWh valued at the AGL usage
-rate in effect on the day it happened (providers/power's own
-rate_for_date()) - the grid cost solar avoided by being used directly
-rather than exported and bought back.
+SYNOPSIS
+    ./Tools/tesla report power-solar [--month YYYY-MM | --year YYYY | --from YYYY-MM-DD --to YYYY-MM-DD]
+                                     [--no-fetch] [--out-dir DIR]
 
-"Auditor": AGL's and the PV provider's export figures are two
-independent real meters measuring almost the same physical export - a
-material daily disagreement between them is a data-quality flag worth
-surfacing (same spirit as pvoutput_common.py's own
-pv_agl_import_conflict(), generalized here to export).
+DESCRIPTION
+    For the period (the last full calendar month by default) puts the power provider's metered
+    import and export beside the solar (PV) provider's generation and use, and prints the bill
+    rebuilt from usage, the export credit, the savings from self-consumed solar and the days the two
+    export meters disagree. Fetches missing days from the PV provider unless --no-fetch. Writes
+    energy_report_<label>.html and a monthly PNG (when matplotlib is installed) to
+    <data folder>/energy_reports (or --out-dir).
 
-Usage:
-    ./power_solar_report.py                        # last full calendar month (default)
-    ./power_solar_report.py --month 2026-08
-    ./power_solar_report.py --year 2026
-    ./power_solar_report.py --from 2026-01-01 --to 2026-08-31
-    ./power_solar_report.py --month 2026-08 --no-fetch   # cache-only, no PV provider API calls
+    User: "How difficult would it be to have a script that could correlate
+    the PVOutput and AGL data and report and graph periods of choice -
+    including calculating the amounts earned by solar export, amount saved
+    by self consumption and costing. Basically a holistic grapher, auditor
+    and financial calculator."
+
+    Why both sources are needed, not just one: AGL only sees what crosses
+    its meter - real import and real export - which is why
+    power_cost_calculator.py's reconstruct_bill() can already compute usage
+    cost, supply charge and solar EXPORT credit from AGL data alone (reused
+    here unchanged). But AGL has no idea how much solar you actually USED
+    yourselves, because self-consumed power never crosses the meter at
+    all - that's only visible to the PV provider's own generation and
+    consumption meters (a real self_consumption_kwh field on SolarEdge -
+    REQ-140 - not derived here from two CT clamps the way the original
+    PVOutput-based version had to). This script adds that missing half:
+    self-consumption savings = self-consumed kWh valued at the AGL usage
+    rate in effect on the day it happened (providers/power's own
+    rate_for_date()) - the grid cost solar avoided by being used directly
+    rather than exported and bought back.
+
+    "Auditor": AGL's and the PV provider's export figures are two
+    independent real meters measuring almost the same physical export - a
+    material daily disagreement between them is a data-quality flag worth
+    surfacing (same spirit as pvoutput_common.py's own
+    pv_agl_import_conflict(), generalized here to export).
+
+    Usage:
+        ./power_solar_report.py                        # last full calendar month (default)
+        ./power_solar_report.py --month 2026-08
+        ./power_solar_report.py --year 2026
+        ./power_solar_report.py --from 2026-01-01 --to 2026-08-31
+        ./power_solar_report.py --month 2026-08 --no-fetch   # cache-only, no PV provider API calls
 """
 import os as _os, sys as _sys; _sys.path[:0] = [p for p in (_os.path.dirname(_os.path.abspath(__file__)), _os.path.dirname(_os.path.dirname(_os.path.abspath(__file__)))) if p not in _sys.path]      # the commands beside it, and Tools/ (lib, providers)
 

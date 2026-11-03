@@ -1,13 +1,25 @@
 #!/usr/bin/env python3
 """backfill_charges_cache.py - add the Tessie charges from before the raw cache starts to resources/api_cache/charges.json.
 
-The cache is filled from the first sync forward, so a charge older than that has no Tessie id and its cost cannot be written back (analyse_charging.py --sync-tessie-costs
-skips it: "predates raw API cache"). This asks Tessie for the charges between two dates and adds the ones the cache does not hold; nothing already in the cache changes and
-nothing is written to Tessie.
+NAME
+    backfill_charges_cache.py - add older Tessie charges to the raw API cache
 
-    ./backfill_charges_cache.py --from 2026-05-01 [--to 2026-06-10] [--apply]
+SYNOPSIS
+    ./Tools/maintenance/backfill_charges_cache.py --from YYYY-MM-DD [--to YYYY-MM-DD] [--apply]
 
-Without --apply it only lists what would be added.
+DESCRIPTION
+    Fetches the Tessie charges between --from and --to (UTC; --to defaults to the day the cache
+    starts) and adds those it lacks to resources/api_cache/charges.json in the repo folder. Without --apply it
+    only lists what would be added. Records already in the cache are not changed and nothing is
+    sent to Tessie.
+
+    The cache is filled from the first sync forward, so a charge older than that has no Tessie id and its cost cannot be written back (analyse_charging.py --sync-tessie-costs
+    skips it: "predates raw API cache"). This asks Tessie for the charges between two dates and adds the ones the cache does not hold; nothing already in the cache changes and
+    nothing is written to Tessie.
+
+        ./backfill_charges_cache.py --from 2026-05-01 [--to 2026-06-10] [--apply]
+
+    Without --apply it only lists what would be added.
 """
 import argparse
 import calendar

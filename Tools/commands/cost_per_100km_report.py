@@ -4,65 +4,80 @@ cost_per_100km_report.py - fuel car vs EV, cost per 100km over time,
 urban and highway (HTML + PNG), REQ-157 (2026-09-28) + REQ-160
 (2026-09-28 correction below).
 
-User: "as a separate type of graph plot a selected example fuel car
-and my EV simulating the cost per 100km over time for urban & highway.
-This would be 4 lines over time. a) cost per km for fuel car on
-highway at set fuel price (NSW prices) b) cost per km for fuel car on
-urban at set fuel price (NSW prices) c) cost per km for EV car on
-highway at set electricity price d) cost per km for EV car on urban at
-set electricity price."
+NAME
+    cost_per_100km_report.py - fuel car against EV, cost per 100 km over time, urban and highway
 
-REQ-160 correction: the first version priced BOTH EV lines off the
-real AGL home usage rate, which the user correctly called out - "Why
-is cost on highway so low. I think what is genuinely required is
-using highway against Tesla Supercharging costs." The real-world
-driving pattern this models: home (AGL) charging for urban/around-town
-use, Supercharging on an actual highway trip. So as of REQ-160:
-- EV Urban still prices against the real AGL home usage rate
-  (price_history_report.build_electricity_series() unchanged).
-- EV Highway now prices against lib.supercharger_pricing's real AU
-  Supercharger rate history instead - the user's own 3 historical
-  anchor points (Jan 2019 $0.35, late Jan 2019 $0.42, Oct 2020 $0.52)
-  plus published price-change coverage found by web search, stepping
-  forward to this account's own real, empirically-observed current
-  daytime Supercharger rate once real sessions exist (see
-  lib/supercharger_pricing.py's own module docstring for full
-  citations and the daytime-vs-night split found in this account's
-  own real data).
+SYNOPSIS
+    ./Tools/tesla report cost-per-100km [--vehicle NAME] [--region all | metro | regional]
+                                        [--from YYYY-MM-DD] [--to YYYY-MM-DD] [--out-dir DIR]
 
-Four lines, all in $/100km (one shared axis - dataviz: never a dual
-axis):
-- <fuel car> Urban / Highway = that vehicle's own real urban/highway
-  L/100km (lib.fuel_common's comparison_vehicles registry -
-  get_comparison_vehicle(), same --vehicle selection as
-  price_history_report.py) x the real NSW fuel price for its own fuel
-  type on each date (reuses price_history_report.build_fuel_series()
-  unchanged - fuel is bought at the same market rate regardless of
-  urban/highway driving, so no correction needed on this side).
-- <EV> Urban = this account's own real, empirically-measured urban
-  kWh/100km (lib.ev_efficiency.compute_ev_urban_highway_efficiency() -
-  task #56/REQ-159) x the real AGL home usage rate on each date.
-- <EV> Highway = this account's own real, empirically-measured highway
-  kWh/100km x the real/published Supercharger rate on each date
-  (lib.supercharger_pricing.supercharger_rate_for_date() - REQ-160).
+DESCRIPTION
+    Draws four lines in $/100 km over the date range: the comparison fuel car urban and highway
+    (its L/100 km times the NSW fuel price on each day), and the EV urban (measured kWh/100 km times
+    the home electricity rate) and highway (measured kWh/100 km times the Supercharger rate).
+    Writes cost_per_100km_<from>_to_<to>.html and a PNG to <data folder>/price_reports (or
+    --out-dir) and prints the range of each line. Exits 1 when the car has no urban and highway
+    figures or there is not enough drive telemetry for the EV figures.
 
-Deliberately a FIXED consumption/efficiency figure for each vehicle
-multiplied by a real price that moves over time, not a re-measured
-efficiency per date - matches the user's own "at set fuel price"/"at
-set electricity price" framing: this chart isolates how much of the
-cost swing is pure price movement, holding both vehicles' own real
-efficiency constant.
+    User: "as a separate type of graph plot a selected example fuel car
+    and my EV simulating the cost per 100km over time for urban & highway.
+    This would be 4 lines over time. a) cost per km for fuel car on
+    highway at set fuel price (NSW prices) b) cost per km for fuel car on
+    urban at set fuel price (NSW prices) c) cost per km for EV car on
+    highway at set electricity price d) cost per km for EV car on urban at
+    set electricity price."
 
-Date range: same default as price_history_report.py (2020-03-06,
-AGL's real confirmed rate history start, through today) - override
-with --from/--to. lib.supercharger_pricing's own published rate
-history reaches back further (2017) for anyone who widens --from past
-2020-03-06.
+    REQ-160 correction: the first version priced BOTH EV lines off the
+    real AGL home usage rate, which the user correctly called out - "Why
+    is cost on highway so low. I think what is genuinely required is
+    using highway against Tesla Supercharging costs." The real-world
+    driving pattern this models: home (AGL) charging for urban/around-town
+    use, Supercharging on an actual highway trip. So as of REQ-160:
+    - EV Urban still prices against the real AGL home usage rate
+      (price_history_report.build_electricity_series() unchanged).
+    - EV Highway now prices against lib.supercharger_pricing's real AU
+      Supercharger rate history instead - the user's own 3 historical
+      anchor points (Jan 2019 $0.35, late Jan 2019 $0.42, Oct 2020 $0.52)
+      plus published price-change coverage found by web search, stepping
+      forward to this account's own real, empirically-observed current
+      daytime Supercharger rate once real sessions exist (see
+      lib/supercharger_pricing.py's own module docstring for full
+      citations and the daytime-vs-night split found in this account's
+      own real data).
 
-Usage:
-    ./cost_per_100km_report.py
-    ./cost_per_100km_report.py --vehicle "ranger"
-    ./cost_per_100km_report.py --from 2021-01-01 --to 2025-01-01
+    Four lines, all in $/100km (one shared axis - dataviz: never a dual
+    axis):
+    - <fuel car> Urban / Highway = that vehicle's own real urban/highway
+      L/100km (lib.fuel_common's comparison_vehicles registry -
+      get_comparison_vehicle(), same --vehicle selection as
+      price_history_report.py) x the real NSW fuel price for its own fuel
+      type on each date (reuses price_history_report.build_fuel_series()
+      unchanged - fuel is bought at the same market rate regardless of
+      urban/highway driving, so no correction needed on this side).
+    - <EV> Urban = this account's own real, empirically-measured urban
+      kWh/100km (lib.ev_efficiency.compute_ev_urban_highway_efficiency() -
+      task #56/REQ-159) x the real AGL home usage rate on each date.
+    - <EV> Highway = this account's own real, empirically-measured highway
+      kWh/100km x the real/published Supercharger rate on each date
+      (lib.supercharger_pricing.supercharger_rate_for_date() - REQ-160).
+
+    Deliberately a FIXED consumption/efficiency figure for each vehicle
+    multiplied by a real price that moves over time, not a re-measured
+    efficiency per date - matches the user's own "at set fuel price"/"at
+    set electricity price" framing: this chart isolates how much of the
+    cost swing is pure price movement, holding both vehicles' own real
+    efficiency constant.
+
+    Date range: same default as price_history_report.py (2020-03-06,
+    AGL's real confirmed rate history start, through today) - override
+    with --from/--to. lib.supercharger_pricing's own published rate
+    history reaches back further (2017) for anyone who widens --from past
+    2020-03-06.
+
+    Usage:
+        ./cost_per_100km_report.py
+        ./cost_per_100km_report.py --vehicle "ranger"
+        ./cost_per_100km_report.py --from 2021-01-01 --to 2025-01-01
 """
 import os as _os, sys as _sys; _sys.path[:0] = [p for p in (_os.path.dirname(_os.path.abspath(__file__)), _os.path.dirname(_os.path.dirname(_os.path.abspath(__file__)))) if p not in _sys.path]      # the commands beside it, and Tools/ (lib, providers)
 

@@ -5,23 +5,39 @@ sync_invoices.py - Generic PDF Invoice Ingestion & Extraction Tool
 Discovers, inspects, extracts structured metadata from, and standardizes
 the filenames and locations of PDF invoices and statements.
 
-Includes dedicated extractors for:
-  - AGL Energy statements & tax invoices (Statement_{service}_{YYYYMMDD}.pdf)
-  - Tesla Supercharging tax invoices ({YYYYMMDD}_{HHMM}_Tesla_{InvoiceNo}_{Place}.pdf)
-  - Exploren EV charging receipts ({YYYYMMDD}_{HHMM}_Exploren_{InvoiceNo}_{Place}.pdf)
-  - Chargefox EV charging receipts ({YYYYMMDD}_{HHMM}_Chargefox_{InvoiceNo}_{Place}.pdf)
-  - Generic EV Charging & generic PDF invoices
+NAME
+    sync_invoices.py - find, read, rename and file PDF invoices
 
-Usage:
-  ./sync_invoices.py --scan                                  # Scan default invoice directories (AGL, Tesla/Exploren, Downloads)
-  ./sync_invoices.py --scan ~/Downloads                      # Scan specific folder
-  ./sync_invoices.py --scan --provider tesla                 # Filter Tesla Supercharger invoices
-  ./sync_invoices.py --scan --provider exploren              # Filter Exploren charging receipts
-  ./sync_invoices.py --scan --provider agl                   # Filter AGL power statements
-  ./sync_invoices.py --scan ~/Downloads --rename             # Rename in-place
-  ./sync_invoices.py --scan ~/Downloads --import             # Move to canonical data home
-  ./sync_invoices.py --inspect path/to/invoice.pdf           # Deep-dive inspect single PDF
-  ./sync_invoices.py --scan --json                           # Dump structured JSON
+SYNOPSIS
+    ./Tools/tesla sync invoices [--scan [DIR_OR_PDF]] [--recursive] [--provider NAME]
+                                [--rename] [--import] [--dry-run] [--json]
+    ./Tools/tesla sync invoices --inspect PDF [--provider NAME]
+
+DESCRIPTION
+    Scans the folder or PDF given (by default the invoice folders and Downloads) for invoice PDFs
+    (AGL, Tesla Supercharging, Exploren, Chargefox and other charging receipts), reads each one's
+    provider, number, date, place and amount, and prints them. Nothing on disk changes unless
+    --rename (standard file names, in place) or --import (move into the provider's folder in the
+    data folder) is given; --dry-run then only previews. --inspect shows everything read from one
+    PDF.
+
+    Includes dedicated extractors for:
+      - AGL Energy statements & tax invoices (Statement_{service}_{YYYYMMDD}.pdf)
+      - Tesla Supercharging tax invoices ({YYYYMMDD}_{HHMM}_Tesla_{InvoiceNo}_{Place}.pdf)
+      - Exploren EV charging receipts ({YYYYMMDD}_{HHMM}_Exploren_{InvoiceNo}_{Place}.pdf)
+      - Chargefox EV charging receipts ({YYYYMMDD}_{HHMM}_Chargefox_{InvoiceNo}_{Place}.pdf)
+      - Generic EV Charging & generic PDF invoices
+
+    Usage:
+      ./sync_invoices.py --scan                                  # Scan default invoice directories (AGL, Tesla/Exploren, Downloads)
+      ./sync_invoices.py --scan ~/Downloads                      # Scan specific folder
+      ./sync_invoices.py --scan --provider tesla                 # Filter Tesla Supercharger invoices
+      ./sync_invoices.py --scan --provider exploren              # Filter Exploren charging receipts
+      ./sync_invoices.py --scan --provider agl                   # Filter AGL power statements
+      ./sync_invoices.py --scan ~/Downloads --rename             # Rename in-place
+      ./sync_invoices.py --scan ~/Downloads --import             # Move to canonical data home
+      ./sync_invoices.py --inspect path/to/invoice.pdf           # Deep-dive inspect single PDF
+      ./sync_invoices.py --scan --json                           # Dump structured JSON
 """
 import os as _os, sys as _sys; _sys.path[:0] = [p for p in (_os.path.dirname(_os.path.abspath(__file__)), _os.path.dirname(_os.path.dirname(_os.path.abspath(__file__)))) if p not in _sys.path]      # the commands beside it, and Tools/ (lib, providers)
 

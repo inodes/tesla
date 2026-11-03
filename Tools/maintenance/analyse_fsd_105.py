@@ -1,20 +1,32 @@
 #!/usr/bin/env python3
 """FSD / speed-plateau finder (REQ-190).
 
-Finds every stretch of at least 3 consecutive samples at about 105 km/h (the
-"hurry on a perceived 100" plateau) in the drive deep-dive telemetry and, for
-each, what the car did on every OTHER pass of the same road (same or opposite
-direction). Sections whose other passes ran at 110/115 are the candidates where
-FSD's map or sign data may have under-read a 110 zone as 100.
+NAME
+    analyse_fsd_105.py - find the 105 km/h plateaus and how the same road was driven on other passes
 
-Tessie records speed as whole mph converted to km/h, so the useful values are
-101-102 (standard in a 100), 104-106 (hurry in a 100, the "105"), 112
-(standard in a 110) and 114-115 (hurry in a 110).
+SYNOPSIS
+    ./Tools/maintenance/analyse_fsd_105.py [--data-dir DIR] [--since YYYY-MM-DD]
 
-Writes <data>/drives/analysis/fsd_105_sections.csv and fsd_105_cross_passes.csv.
-Also writes fsd_highway_stretches.csv (every highway stretch since --since, default 2026-10-01)
-and fsd_highway_map.html (route map coloured by speed band, with the 105 sections).
-Usage: analyse_fsd_105.py [--data-dir DIR] [--since YYYY-MM-DD]
+DESCRIPTION
+    Reads the drive deep-dive telemetry in the data folder, finds every stretch at about 105 km/h
+    and compares it with the other passes of the same road. Writes the CSV files and the map page
+    listed below to <data>/drives/analysis/. --since (default 2026-10-01) is the first day of the
+    highway stretches and the map. A one-off investigation, run by hand.
+
+    Finds every stretch of at least 3 consecutive samples at about 105 km/h (the
+    "hurry on a perceived 100" plateau) in the drive deep-dive telemetry and, for
+    each, what the car did on every OTHER pass of the same road (same or opposite
+    direction). Sections whose other passes ran at 110/115 are the candidates where
+    FSD's map or sign data may have under-read a 110 zone as 100.
+
+    Tessie records speed as whole mph converted to km/h, so the useful values are
+    101-102 (standard in a 100), 104-106 (hurry in a 100, the "105"), 112
+    (standard in a 110) and 114-115 (hurry in a 110).
+
+    Writes <data>/drives/analysis/fsd_105_sections.csv and fsd_105_cross_passes.csv.
+    Also writes fsd_highway_stretches.csv (every highway stretch since --since, default 2026-10-01)
+    and fsd_highway_map.html (route map coloured by speed band, with the 105 sections).
+    Usage: analyse_fsd_105.py [--data-dir DIR] [--since YYYY-MM-DD]
 """
 import os as _os, sys as _sys; _sys.path[:0] = [p for p in (_os.path.dirname(_os.path.abspath(__file__)), _os.path.join(_os.path.dirname(_os.path.dirname(_os.path.abspath(__file__))), "commands"), _os.path.dirname(_os.path.dirname(_os.path.abspath(__file__)))) if p not in _sys.path]      # the tools beside it, the commands, and Tools/ (lib, providers)
 if any(a in ("-h", "--help") for a in _sys.argv[1:]):          # its help, and nothing else (the work starts on import)

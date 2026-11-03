@@ -2,10 +2,23 @@
 """solaredge_check.py - is the SolarEdge V2 connection working? Shows how SolarEdge is connected (Site Access approval or Fleet key), the site, and one day of 15-minute
 meter readings as the PV cache will keep them (lib/solaredge_v2.py).
 
-  ./solaredge_check.py                 status, the site, yesterday's readings
-  ./solaredge_check.py --day 2026-10-28
-  ./solaredge_check.py --url           the address to open to approve the site (or http://127.0.0.1:8765/solaredge/connect while the app runs)
-  ./solaredge_check.py --raw           also the first part of SolarEdge's own answer for the day
+NAME
+    solaredge_check.py - check that the SolarEdge connection works
+
+SYNOPSIS
+    ./Tools/maintenance/solaredge_check.py [--day YYYY-MM-DD] [--raw]
+    ./Tools/maintenance/solaredge_check.py --url
+
+DESCRIPTION
+    Prints how SolarEdge is connected, the site, and one day's 15-minute meter readings (yesterday
+    by default) as the PV cache keeps them, with the day's totals. --raw also prints the start of
+    SolarEdge's own answer. --url prints the address that approves the site. Exit status: 0 readings
+    found, 1 not connected or no readings.
+
+      ./solaredge_check.py                 status, the site, yesterday's readings
+      ./solaredge_check.py --day 2026-10-28
+      ./solaredge_check.py --url           the address to open to approve the site (or http://127.0.0.1:8765/solaredge/connect while the app runs)
+      ./solaredge_check.py --raw           also the first part of SolarEdge's own answer for the day
 """
 import argparse
 import json

@@ -1,22 +1,38 @@
 #!/usr/bin/env python3
 """inventory_jowua.py - before the JOWUA disk is wiped: is EVERY file on it also safely somewhere else, and where?
 
-  ./inventory_jowua.py [--src PATH] [--archive PATH] [--rescue PATH] [--full] [--tsv FILE]
+NAME
+    inventory_jowua.py - check that every file on the JOWUA drive has a verified copy elsewhere
 
-  --src      the JOWUA volume, read-only (default: the mounted volume whose UUID is the registered J drive's; the unrepaired image mounted by refresh_image.sh has it)
-  --archive  the Archive volume (default: the mounted volume whose UUID is the registered Archive's)
-  --src-uuid / --archive-uuid  choose by volume UUID instead (./manage_teslacam_drives.py lists them). Names like TESLADRIVE 1 are never used to decide.
-  --rescue   the rescued copy (default /Volumes/LaCie1/jowua-rescue)
-  --full     compare whole files (slow); the default compares the first MB, the last MB and 4 places between
-  --tsv FILE where to write one line per file (default ~/Downloads/jowua-inventory-DATE.tsv)
-  --no-save-outside  do not copy the files outside TeslaCam (JOWUA_1TB, Tools, Icons...) into RESCUE/_outside (by default they are copied and checked, so they can be put back)
+SYNOPSIS
+    ./Tools/maintenance/inventory_jowua.py [--src PATH | --src-uuid UUID] [--archive PATH | --archive-uuid UUID]
+                                           [--rescue PATH] [--full] [--tsv FILE] [--no-save-outside]
 
-For every file on JOWUA it looks for a copy with the same name and size in the Archive and in the rescue folder (same path first, then the same file name anywhere in
-TeslaCam), compares the contents, and reports: verified on the Archive, on the rescue copy, on both, ONLY ON JOWUA, or DIFFERENT. Files outside TeslaCam (JOWUA_1TB,
-Tools, Icons, system folders) are listed separately: nothing outside TeslaCam is ever counted as footage. Nothing is written to JOWUA, the Archive or the rescue folder.
-It also writes the MANIFEST that restore_drive.py puts everything back from: every folder and file of JOWUA with its size and time and where each verified copy is
-(~/Downloads/jowua-manifest-DATE.json, and a copy in RESCUE/_manifest/jowua-manifest.json).
-Log: ~/Downloads/jowua-inventory-DATE.log. Exit status 0 = every footage file has a verified copy elsewhere, 2 = some do not, 1 = could not start.
+DESCRIPTION
+    Before the JOWUA drive is wiped: looks for each of its files on the Archive and in the rescue
+    copy, compares the contents and reports each as verified on the Archive, the rescue copy or
+    both, only on JOWUA, or different. Writes the TSV list, a log and the manifest that
+    restore_drive.py restores from (in Downloads, with a copy of the manifest under the rescue
+    folder). Files outside TeslaCam are copied into RESCUE/_outside unless --no-save-outside.
+    JOWUA and the Archive are only read. Exit status: 0 every footage file has a verified copy,
+    2 some do not, 1 could not start. Options are described below.
+
+      ./inventory_jowua.py [--src PATH] [--archive PATH] [--rescue PATH] [--full] [--tsv FILE]
+
+      --src      the JOWUA volume, read-only (default: the mounted volume whose UUID is the registered J drive's; the unrepaired image mounted by refresh_image.sh has it)
+      --archive  the Archive volume (default: the mounted volume whose UUID is the registered Archive's)
+      --src-uuid / --archive-uuid  choose by volume UUID instead (./manage_teslacam_drives.py lists them). Names like TESLADRIVE 1 are never used to decide.
+      --rescue   the rescued copy (default /Volumes/LaCie1/jowua-rescue)
+      --full     compare whole files (slow); the default compares the first MB, the last MB and 4 places between
+      --tsv FILE where to write one line per file (default ~/Downloads/jowua-inventory-DATE.tsv)
+      --no-save-outside  do not copy the files outside TeslaCam (JOWUA_1TB, Tools, Icons...) into RESCUE/_outside (by default they are copied and checked, so they can be put back)
+
+    For every file on JOWUA it looks for a copy with the same name and size in the Archive and in the rescue folder (same path first, then the same file name anywhere in
+    TeslaCam), compares the contents, and reports: verified on the Archive, on the rescue copy, on both, ONLY ON JOWUA, or DIFFERENT. Files outside TeslaCam (JOWUA_1TB,
+    Tools, Icons, system folders) are listed separately: nothing outside TeslaCam is ever counted as footage. Nothing is written to JOWUA, the Archive or the rescue folder.
+    It also writes the MANIFEST that restore_drive.py puts everything back from: every folder and file of JOWUA with its size and time and where each verified copy is
+    (~/Downloads/jowua-manifest-DATE.json, and a copy in RESCUE/_manifest/jowua-manifest.json).
+    Log: ~/Downloads/jowua-inventory-DATE.log. Exit status 0 = every footage file has a verified copy elsewhere, 2 = some do not, 1 = could not start.
 """
 import os, sys, time, collections, json, shutil
 

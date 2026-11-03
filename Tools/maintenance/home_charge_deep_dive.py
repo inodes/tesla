@@ -17,19 +17,35 @@ matching Evnex charging-session record) into one file per session, with
 clearly-marked blank spots for Solaredge/AGL figures to be added by hand
 for now (both APIs are a later step - see AGENTS.md REQ-026/onwards).
 
-Home-session detection: this dataset's non-Supercharger, non-fast-charger
-charges are ALL at one address (two text variants of the same home street -
-verified: 193/193 such rows share just those two Location strings) - so
-"not a Supercharger and not a 3rd-party fast charger" is used as the home
-filter rather than a GPS/`resolve_place()` check. Simple and correct for
-this data today; would need revisiting if a non-home AC destination
-charger session ever gets recorded.
+NAME
+    home_charge_deep_dive.py - one file per home charge with its Tessie history and Evnex session
 
-Usage:
-    ./home_charge_deep_dive.py --list                  # show the sample pool, most recent first
-    ./home_charge_deep_dive.py --sample 3               # deep-dive the 3 most recent home sessions
-    ./home_charge_deep_dive.py --rows 1,5,12            # deep-dive specific pool rows (see --list numbering)
-    ./home_charge_deep_dive.py --sample 3 --pad-minutes 15
+SYNOPSIS
+    ./Tools/maintenance/home_charge_deep_dive.py --list [--include-in-progress]
+    ./Tools/maintenance/home_charge_deep_dive.py [--sample N | --rows N[,N...]] [--pad-minutes N] [--interval SECONDS]
+                                                 [--evnex-file FILE] [--output-dir DIR] [--include-in-progress]
+                                                 [--token TOKEN] [--vin VIN]
+
+DESCRIPTION
+    Picks home charges from charges_master.csv (the 3 newest by default, or the --rows of --list),
+    fetches the car's Tessie state history over each charge (--pad-minutes either side) and the
+    matching session from an evnex_explore.py dump, and writes one JSON bundle per charge to
+    <Tessie data folder>/home_charge_deep_dive/ (or --output-dir), with blank fields for solar and
+    meter figures. Works out no cost. Needs a Tessie token and VIN.
+
+    Home-session detection: this dataset's non-Supercharger, non-fast-charger
+    charges are ALL at one address (two text variants of the same home street -
+    verified: 193/193 such rows share just those two Location strings) - so
+    "not a Supercharger and not a 3rd-party fast charger" is used as the home
+    filter rather than a GPS/`resolve_place()` check. Simple and correct for
+    this data today; would need revisiting if a non-home AC destination
+    charger session ever gets recorded.
+
+    Usage:
+        ./home_charge_deep_dive.py --list                  # show the sample pool, most recent first
+        ./home_charge_deep_dive.py --sample 3               # deep-dive the 3 most recent home sessions
+        ./home_charge_deep_dive.py --rows 1,5,12            # deep-dive specific pool rows (see --list numbering)
+        ./home_charge_deep_dive.py --sample 3 --pad-minutes 15
 """
 import os as _os, sys as _sys; _sys.path[:0] = [p for p in (_os.path.dirname(_os.path.abspath(__file__)), _os.path.join(_os.path.dirname(_os.path.dirname(_os.path.abspath(__file__))), "commands"), _os.path.dirname(_os.path.dirname(_os.path.abspath(__file__)))) if p not in _sys.path]      # the tools beside it, the commands, and Tools/ (lib, providers)
 

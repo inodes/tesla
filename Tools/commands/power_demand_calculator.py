@@ -5,37 +5,52 @@ charge (e.g. AGL's Ausgrid EA025 Residential Demand charge) from the
 consolidated usage master (sync_power_usage.py) and the active
 provider's own dated tariff rates.
 
-REQ-070 (2026-09-15): generalized from agl_demand_calculator.py - this
-script no longer knows one retailer's own rules (the season-aware
-demand window, the NSW holiday calendar, the GST multiplier). Those now
-live in Tools/providers/power/power_agl.py's AGLProvider, the first and
-so far only BasePowerProvider implementation - see
-providers/power/__init__.py's get_power_provider(), which resolves
-config.json's "power_provider" key (default "agl", this household's
-real current retailer). Every function below delegates to whichever
-provider that resolves to; nothing here hardcodes AGL by name.
+NAME
+    power_demand_calculator.py - the active power provider's demand charge for a month
 
-Method (unchanged from the original AGL-only version - see
-providers/power/power_agl.py's own docstring for how this was derived
-and verified): for each calendar month, take every half-hour "import"
-reading that falls in the provider's own season-appropriate demand
-window and find its maximum. kWh * 2 = kW (a half-hour average). That
-single latched kW value is billed - in ARREARS, on the invoice cycle
-that closes after the calendar month ends - at
-demand_rate_per_kw_day * kW * the INVOICING cycle's day count,
-GST-inclusive at the end (provider.demand_charge()).
+SYNOPSIS
+    ./Tools/tesla report power-demand --month YYYY-MM [--days N]
+    ./Tools/tesla report power-demand --self-test
+    ./Tools/tesla report power-demand
 
-Self-test (run this file directly): reproduces June and July 2026's
-already-invoiced AGL demand charges exactly from the real usage data,
-and projects August 2026 (not yet invoiced at time of writing). This is
-the whole point of the self-test - if the actual billed figure ever
-stops matching what this file computes, that's a sign either the
-tariff rate changed again or the provider's window logic needs
-revisiting, not something to silently trust.
+DESCRIPTION
+    With --month, reads the provider's usage data and prints that month's highest half-hour import
+    in the provider's demand window, as kW. With --days as well, it also prints the charge for a
+    billing cycle of that many days, at the demand rate in force on the first of the month, ex and
+    incl GST. --self-test checks past months against the billed figures; it exits 0 when they
+    match, 1 otherwise. With no options it prints this help.
 
-Usage:
-    ./power_demand_calculator.py --self-test
-    ./power_demand_calculator.py --month 2026-08 --days 31
+    REQ-070 (2026-09-15): generalized from agl_demand_calculator.py - this
+    script no longer knows one retailer's own rules (the season-aware
+    demand window, the NSW holiday calendar, the GST multiplier). Those now
+    live in Tools/providers/power/power_agl.py's AGLProvider, the first and
+    so far only BasePowerProvider implementation - see
+    providers/power/__init__.py's get_power_provider(), which resolves
+    config.json's "power_provider" key (default "agl", this household's
+    real current retailer). Every function below delegates to whichever
+    provider that resolves to; nothing here hardcodes AGL by name.
+
+    Method (unchanged from the original AGL-only version - see
+    providers/power/power_agl.py's own docstring for how this was derived
+    and verified): for each calendar month, take every half-hour "import"
+    reading that falls in the provider's own season-appropriate demand
+    window and find its maximum. kWh * 2 = kW (a half-hour average). That
+    single latched kW value is billed - in ARREARS, on the invoice cycle
+    that closes after the calendar month ends - at
+    demand_rate_per_kw_day * kW * the INVOICING cycle's day count,
+    GST-inclusive at the end (provider.demand_charge()).
+
+    Self-test (run this file directly): reproduces June and July 2026's
+    already-invoiced AGL demand charges exactly from the real usage data,
+    and projects August 2026 (not yet invoiced at time of writing). This is
+    the whole point of the self-test - if the actual billed figure ever
+    stops matching what this file computes, that's a sign either the
+    tariff rate changed again or the provider's window logic needs
+    revisiting, not something to silently trust.
+
+    Usage:
+        ./power_demand_calculator.py --self-test
+        ./power_demand_calculator.py --month 2026-08 --days 31
 """
 import os as _os, sys as _sys; _sys.path[:0] = [p for p in (_os.path.dirname(_os.path.abspath(__file__)), _os.path.dirname(_os.path.dirname(_os.path.abspath(__file__)))) if p not in _sys.path]      # the commands beside it, and Tools/ (lib, providers)
 
