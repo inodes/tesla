@@ -113,7 +113,10 @@ def find_supercharge_site(
         candidates.sort(key=lambda x: x[0])
         return candidates[0][1]
 
-    # 3. Fallback name-only search if no coordinates
+    # 3. Fallback name-only search, only when no position was given: with a position, a same-named site far
+    # away is a different site (the wrong-site match BUG-152 tightened the distance rule to avoid).
+    if lat is not None and lon is not None:
+        return None
     for s in sites:
         s_name = s.get("name", "").lower().replace(",", "").strip()
         if name_clean and (name_clean == s_name or name_clean in s_name):
