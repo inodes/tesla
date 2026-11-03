@@ -17,7 +17,7 @@
 - **Known limitation**: this session's `device_bash` egress is blocked by a proxy
   allowlist for `api.plugshare.com` (confirmed via direct `curl` — returns
   `403 Forbidden` / `X-Proxy-Error: blocked-by-allowlist`). This means:
-  - Running `find_plugshare_chargers.py --plugshare <id>` (or anything else that hits
+  - Running `./Tools/tesla chargers plugshare --plugshare <id>` (or anything else that hits
     the live PlugShare API) from this session will silently report "not found" or
     empty data **even when the ID is valid**, because `PlugShareClient._get()`
     swallows non-404 HTTP errors (including this 403) and returns `None` — visually
@@ -34,11 +34,11 @@
 - “`~`-relative config paths do NOT resolve inside this VM (confirmed again, BUG-025,
   2026-09-07)”: `device_bash`'s own `$HOME` is a session-specific sandbox home, not
   `/Users/glenn`. Only the specific connected folders are bridged in, as `~/mnt/<name>`
-  (currently `tesla`, `Tessie`, `Downloads`, `charging_invoices`). `Tessie/config.json`'s
+  (currently `tesla`, `Tessie`, `Downloads`, `charging_invoices`). `config.json`'s
   own settings (`tessie_directory: "~/iCloud/Tesla/Tessie"`, `invoices_directory`,
   `landing_directory: "~/Downloads"`) all `os.path.expanduser()` to a non-existent path
   INSIDE this VM even though they're correct on the user's real machine — confirmed live
-  by instantiating `TessieAnalyzer()` here and printing `self.tessie_data_home`, which
+  by instantiating the drives analyzer (now `DriveAnalyzer` in `Tools/lib/drives/analyzer.py`) here and printing `self.tessie_data_home`, which
   came back as `/sessions/<session-id>/iCloud/Tesla/Tessie` (`exists: False`). Running a
   script's default/config-driven path from this shell is therefore **not** a valid test,
   same lesson as BUG-020/BUG-023/BUG-024 — it either silently no-ops ("No drive records
@@ -48,7 +48,7 @@
   script's own override parameter pointing STRAIGHT at the correctly-mounted alias,
   bypassing config.json's `~/iCloud/...` string entirely — e.g.
   `analyzer.consolidate_drives(master_dir=os.path.expanduser("~/mnt/Tessie/drives"), verbose=True)`
-  or `TessieChargingAnalyzer(...).consolidate_charges_master(output_dir=os.path.expanduser("~/mnt/Tessie/charges"))`.
+  or `ChargingAnalyzer(...).consolidate_charges_master(output_dir=os.path.expanduser("~/mnt/Tessie/charges"))`.
   `~/mnt/Tessie` is a real, live, bidirectional mount of the user's actual iCloud folder
   (a different thing from the config path resolving inside the VM), so writes through it
   are genuinely real and genuinely safe to verify — this is how BUG-025's dedup-key fix
@@ -69,7 +69,8 @@
 - Per `AGENTS.md` §1.2, **never commit without first describing the change and the
   exact proposed commit message(s) to the user and getting a go-ahead** — this
   applies even though Claude, not Gemini Antigravity, is now the agent doing the work.
-- `Tessie/*.json` (except `.example.json` templates) is gitignored, real personal
+- Real data files (`config.json`, `places.json`, anything in the data folder; `resources/*.json`
+  except the `.example.json` templates is gitignored too) are real personal
   data — treat as PII, never propose committing it, never paste its contents back to
   the user in full.
 
@@ -78,6 +79,17 @@
 Keep this section short — a running list of *in-flight* investigations that would
 otherwise be lost between sessions. Move resolved items into `AGENTS.md`'s own Bugs /
 Requests tables once closed out, and prune this list then.
+
+The entries below are a dated log and keep the names used at the time. Current names
+(2026-11-03): `tessie_drives_analyzer.py` -> `Tools/commands/analyse_drives.py`
+(`./Tools/tesla analyse drives`); `tessie_charging_analyzer.py` -> `Tools/commands/analyse_charging.py`
+(`./Tools/tesla analyse charges`); `tessie_places.py` -> `Tools/commands/places_manager.py`
+(`./Tools/tesla places manage`); `Tools/tessie_api_sync.py` -> `Tools/commands/sync_api_tessie.py`
+(`./Tools/tesla sync tessie`); `Tools/tessie_api_common.py` -> `Tools/lib/tessie_api_common.py`;
+`find_tesla_chargers.py` / `find_plugshare_chargers.py` -> `Tools/commands/` (`./Tools/tesla chargers
+tesla|plugshare`). The old scripts are in `Tools/archive/`. The repo's `Tessie/` folder is now
+`resources/` (templates and API notes; `TESSIE_API.md` is `resources/TESSIE_API.md`); real data lives
+in the data folder outside the repo.
 
 - **Bunnings Gladesville (PlugShare charger) — RESOLVED**: turned out both PlugShare
   IDs (`801149` and `1517863`) are real, distinct chargers ~70m apart (a public 120kW
