@@ -49,6 +49,34 @@ class PlacesTest(unittest.TestCase):
         r = by_id(TL.fill_places(items, moved, 11 * H))
         self.assertEqual((r["s%d" % (10 * H)]["p0"], r["s%d" % (10 * H)]["pest"]), (SHOP, False))      # it moved without a clip showing it
 
+    def test_a_stop_between_two_drives_at_one_place_is_confirmed_by_both(self):
+        items = [drive(H, 2 * H - 60), stop(2 * H, 2 * H + 3 * H), drive(5 * H + 60, 6 * H, p0=HOME, p1=SHOP)]
+        r = by_id(TL.fill_places(items))["s%d" % (2 * H)]
+        self.assertEqual((r["p0"], r["pest"], r["psrc"]), (HOME, False, "both"))
+
+    def test_drives_that_disagree_give_the_one_before_and_say_so(self):
+        items = [drive(H, 2 * H - 60), stop(2 * H, 3 * H), drive(3 * H + 60, 4 * H, p0=SHOP, p1=HOME)]
+        r = by_id(TL.fill_places(items))["s%d" % (2 * H)]
+        self.assertEqual((r["p0"], r["psrc"]), (HOME, "before"))
+        r = by_id(TL.fill_places([stop(2 * H, 3 * H), drive(3 * H + 60, 4 * H, p0=SHOP, p1=HOME)]))["s%d" % (2 * H)]
+        self.assertEqual((r["p0"], r["psrc"]), (SHOP, "after"))
+
+    def test_a_stop_reads_on_the_clock_of_the_place_it_was_at(self):
+        gold_coast, sydney_t = [-27.98, 153.42], 1791693034                    # 11 Oct 2026 04:30 UTC: Queensland 14:30, Sydney 15:30
+        s0 = TL.show(dict(id="s", kind="stopped", t0=sydney_t, t1=sydney_t + 600, p0=None, p1=None))
+        self.assertEqual(s0["start"][11:16], "15:30")                          # no position: the app's clock
+        d = dict(id="d", kind="drive", t0=sydney_t + 600, t1=sydney_t + 3600, p0=gold_coast, p1=gold_coast)
+        r = by_id(TL.fill_places([s0, d]))["s"]
+        self.assertEqual((r["start"][11:16], r["psrc"]), ("14:30", "after"))   # the drive after it began at the Gold Coast
+
+    def test_stops_that_follow_on_are_one_stay(self):
+        items = [stop(H, H + 600), stop(H + 660, H + 1200), drive(H + 1260, 3 * H, p0=SHOP, p1=HOME)]
+        r = by_id(TL.fill_places(items))
+        self.assertEqual((r["s%d" % H]["p0"], r["s%d" % H]["psrc"]), (SHOP, "stay"))
+        self.assertEqual((r["s%d" % (H + 660)]["p0"], r["s%d" % (H + 660)]["psrc"]), (SHOP, "after"))
+        far = [stop(H, H + 600), stop(H + 5 * H, H + 6 * H), drive(H + 6 * H + 60, 9 * H, p0=SHOP, p1=HOME)]
+        self.assertIsNone(by_id(TL.fill_places(far))["s%d" % H]["p0"])                   # hours apart: not one stay
+
     def test_a_position_already_known_is_kept(self):
         it = dict(stop(H, H + 60), p0=SHOP, p1=SHOP)
         self.assertEqual(TL.fill_places([it, drive(2 * H, 3 * H)])[0]["p0"], SHOP)
