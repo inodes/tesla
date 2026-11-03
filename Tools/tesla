@@ -29,6 +29,7 @@ GROUPS = [
         ("chargers", "sync_charger_all.sh", "charger networks (Tesla, Chargefox, EVX, Evie, bp, PlugShare, ...)"),
         ("fuel", "sync_fuel_all.sh", "NSW fuel prices"),
         ("fuel-prices", "sync_fuel_history.py", "NSW fuel price history (single steps)"),
+        ("fuel-economy", "import_gvg_fuel_economy.py", "comparison cars' L/100km and CO2 from Green Vehicle Guide CSV exports"),
         ("tessie", "sync_api_tessie.py", "Tessie API: drives, charges, alerts, idles, tyres, battery (single steps)"),
         ("evnex", "sync_api_evnex.py", "Evnex home-charger sessions"),
         ("abrp", "sync_api_abrp.py", "ABRP telemetry and vehicle profile"),
