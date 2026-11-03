@@ -61,6 +61,30 @@ class HudTest(unittest.TestCase):
         self.assertAlmostEqual(narrow["x"], (2000 - narrow["w"]) / 2)
         self.assertEqual(run("hudBox(1000,800,0,0)")["w"], 1000)                  # video size not known yet: the usual shape
 
+    # a sign the car did not answer (a side road's or an exit's limit seen from the main road): a 60 read while the car holds 99-109 km/h
+    def test_a_60_read_at_motorway_speed_that_the_car_ignores_is_doubtful(self):
+        self.assertTrue(run("hudDoubt(60,k=>99)"))                                  # 13:12 on 11 Oct: 60 read, 99 before and after
+        self.assertTrue(run("hudDoubt(60,k=>k<0?109:108)"))                         # 13:24: 109 before, 106-109 after
+        self.assertTrue(run("hudDoubt(60,k=>k<0?98:93)"))                           # eases a little, not by a tenth
+
+    def test_a_sign_the_car_slows_for_is_not_doubtful(self):
+        self.assertFalse(run("hudDoubt(40,k=>k<0?71:(k>5?26:50))"))                 # 16:32: 71 before, down to 26 after
+        self.assertFalse(run("hudDoubt(60,k=>k<0?78:65)"))                          # 78 to 65: slowing for it
+        self.assertFalse(run("hudDoubt(60,k=>60)"))                                 # the car is at the limit already
+        self.assertFalse(run("hudDoubt(80,k=>99)"))                                 # 80 against 99 is not a quarter below
+        self.assertFalse(run("hudDoubt(30,k=>40)"))                                 # too slow a car to say
+
+    def test_not_enough_speed_known_is_no_answer(self):
+        self.assertIsNone(run("hudDoubt(60,k=>null)"))
+        self.assertIsNone(run("hudDoubt(60,k=>k<0?99:null)"))
+
+    def test_the_limit_held_skips_a_sign_the_car_did_not_answer(self):
+        sg = '{"a":[{"text":"100","kind":"","s0":10},{"text":"60","kind":"","s0":20}]}'
+        self.assertEqual(run('hudLimit(%s,["a"],0,30,(st,g)=>g.text==="60")' % sg), 100)    # the 60 was a side road: still 100
+        self.assertEqual(run('hudLimit(%s,["a"],0,30,(st,g)=>false)' % sg), 60)
+        self.assertEqual(run('hudLimit(%s,["a"],0,30)' % sg), 60)                          # no way to tell: the sign is taken
+        self.assertEqual(run('hudLimit(%s,["a"],0,30,(st,g)=>null)' % sg), 60)             # not enough speed read yet
+
     def test_style_for_every_part(self):
         with open(APP_CSS, encoding="utf-8") as f:
             css = f.read()
