@@ -1,4 +1,4 @@
-"""A drive end that is not a saved place is shown as the street and the suburb: a street alone cannot be placed."""
+"""A drive end that is not a saved place is shown as the street, the suburb and the state: a street alone cannot be placed, and the state says which side of a border."""
 import os
 import sys
 import unittest
@@ -10,11 +10,11 @@ import app_data  # noqa: E402
 
 class Short(unittest.TestCase):
     def test_street_and_suburb(self):
-        self.assertEqual(app_data._short("205 Military Road, Dover Heights New South Wales 2030, Australia"), "205 Military Road, Dover Heights")
-        self.assertEqual(app_data._short("9 B Rd, Ryde NSW 2112"), "9 B Rd, Ryde")
+        self.assertEqual(app_data._short("205 Military Road, Dover Heights New South Wales 2030, Australia"), "205 Military Road, Dover Heights, NSW")
+        self.assertEqual(app_data._short("9 B Rd, Ryde NSW 2112"), "9 B Rd, Ryde, NSW")
 
     def test_a_suburb_named_like_a_state_is_kept(self):
-        self.assertEqual(app_data._short("1 A St, East Victoria Park Western Australia 6101, Australia"), "1 A St, East Victoria Park")
+        self.assertEqual(app_data._short("1 A St, East Victoria Park Western Australia 6101, Australia"), "1 A St, East Victoria Park, WA")
 
     def test_nothing(self):
         self.assertEqual(app_data._short(""), "")

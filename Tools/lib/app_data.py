@@ -48,12 +48,23 @@ def _num(v, d=None):
 _STATE = re.compile(r"\s+(New South Wales|Victoria|Queensland|South Australia|Western Australia|Tasmania|Northern Territory|Australian Capital Territory|NSW|VIC|QLD|SA|WA|TAS|NT|ACT)(\s+\d{4})?\s*$", re.I)
 
 
+_ABBR = {"new south wales": "NSW", "victoria": "VIC", "queensland": "QLD", "south australia": "SA", "western australia": "WA", "tasmania": "TAS",
+         "northern territory": "NT", "australian capital territory": "ACT"}
+
+
 def _short(addr):
-    """'1 Example Street, Sampletown New South Wales 2000, Australia' -> '1 Example Street, Sampletown' (the street and the suburb: a street alone is not enough to place it)"""
+    """'1 Example Street, Sampletown New South Wales 2000, Australia' -> '1 Example Street, Sampletown, NSW' (the street, the suburb and the state: a street alone is
+    not enough to place it, and a state tells which side of a border it is). A place you saved is named by its own name, never by this."""
     p = [x.strip() for x in (addr or "").split(",")]
     if not p or not p[0]:
         return ""
-    return ", ".join([p[0]] + ([_STATE.sub("", p[1]).strip()] if len(p) > 1 and _STATE.sub("", p[1]).strip() else []))
+    sub, st = "", ""
+    if len(p) > 1:
+        m = _STATE.search(p[1])
+        if m:
+            st = _ABBR.get(m.group(1).lower(), m.group(1).upper())
+        sub = _STATE.sub("", p[1]).strip()
+    return ", ".join([p[0]] + ([sub] if sub else []) + ([st] if st else []))
 
 
 _SK = {}                    # path -> (when, what was found): the same folder asked about again within a moment is not looked at again

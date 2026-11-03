@@ -57,12 +57,16 @@ def iso(t, lo=None):
 
 
 def show(it, lo=None):
-    """Sets the display fields of a timeline item (start, end, lo) from its UTC t0 / t1: on the clock of where it began (its first position),
-    else app.timezone's. lo = a clock to use instead. Display only - nothing is ever compared on these texts."""
+    """Sets the display fields of a timeline item (start, end, lo, lo1) from its UTC t0 / t1: the start on the clock of where it began (its first position), else
+    app.timezone's, and the end on the clock of where it ended (its last position), so a drive that crosses a border reads 14:40 to 17:35, not 14:40 to 16:35.
+    lo / lo1 = the start's and the end's offsets from UTC in seconds. lo given = one clock for both. Display only - nothing is ever compared on these texts."""
+    lo1 = lo
     if lo is None:
         p = it.get("p0") or it.get("p1")
         lo = CC.place_offset(it["t0"], p[0], p[1]) if p and p[0] is not None else CC.local_offset(it["t0"])
-    it.update(lo=lo, start=CC.local_iso(it["t0"], lo), end=CC.local_iso(it["t1"], lo))
+        q = it.get("p1") or it.get("p0")
+        lo1 = CC.place_offset(it["t1"], q[0], q[1]) if q and q[0] is not None else lo
+    it.update(lo=lo, lo1=lo1, start=CC.local_iso(it["t0"], lo), end=CC.local_iso(it["t1"], lo1))
     return it
 
 
