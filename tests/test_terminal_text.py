@@ -61,10 +61,16 @@ class WidthTest(unittest.TestCase):
         self.assertEqual(TF.truncate_display("\033[1mabcdef\033[0m", 4), "\033[1mabc…\033[0m")    # colour kept and closed
         self.assertEqual(TF.truncate_display("abc", 0), "")
 
-    @unittest.expectedFailure
     def test_truncate_never_wider_than_asked(self):
-        # BUG: target width is max(1, max_width - 1), so a 1-cell limit gives "a…", 2 cells.
+        # Was a bug: target width was max(1, max_width - 1), so a 1-cell limit gave "a…", 2 cells.
         self.assertLessEqual(TF.display_len(TF.truncate_display("abc", 1)), 1)
+
+    def test_truncate_width_limit_holds_for_every_width(self):
+        self.assertEqual(TF.truncate_display("abc", 1), "…")
+        self.assertEqual(TF.truncate_display("abcdef", 2, ellipsis="..."), "ab")     # ellipsis wider than the limit
+        for text in ("abcdef", "🚗🚗🚗", "\033[1mabcdef\033[0m"):
+            for w in range(1, 7):
+                self.assertLessEqual(TF.display_len(TF.truncate_display(text, w)), w, (text, w))
 
     def test_row_and_lines(self):
         row = TF.format_row(["🚗 Drive", 12.5, TF.hyperlink("link", "https://example.invalid")], [10, 6, 6], ["left", "right", "center"])
@@ -143,11 +149,16 @@ class BrowserParsingTest(unittest.TestCase):
         self.assertEqual(B.parse_range_selection("5-3", 9), [3, 4, 5])
         self.assertEqual(B.parse_range_selection("0,-1,99", 9), [])
 
-    @unittest.expectedFailure
     def test_range_with_spaces_is_a_range(self):
-        # BUG: spaces are turned into commas before ranges are read, so "3 - 5" is 3 and 5 only (the batch flag/unflag then
-        # touches two events, not three). parse_selection_indices reads the same text as 3, 4, 5.
+        # Was a bug: spaces were turned into commas before ranges were read, so "3 - 5" was 3 and 5 only (the batch
+        # flag/unflag then touched two events, not three). parse_selection_indices reads the same text as 3, 4, 5.
         self.assertEqual(B.parse_range_selection("3 - 5", 9), [3, 4, 5])
+
+    def test_range_spacing_variants(self):
+        for text in ("3 -5", "3- 5", "3  -  5"):
+            self.assertEqual(B.parse_range_selection(text, 9), [3, 4, 5], text)
+        self.assertEqual(B.parse_range_selection("1, 3 - 5 8", 9), [1, 3, 4, 5, 8])
+        self.assertEqual(B.parse_range_selection("1 3", 9), [1, 3])                  # a plain space still separates
 
     def test_event_slug(self):
         ev = {"start_dt": datetime(2026, 1, 15, 12, 5), "type": "drive", "drive": {"start_place": "Home Base", "end_place": "Shop/Mall #2"}}
