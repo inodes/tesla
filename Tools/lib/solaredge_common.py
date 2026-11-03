@@ -14,7 +14,7 @@ gives a MUCH better shape of the same real data for free:
     and SelfConsumption - so self-consumption doesn't need to be
     DERIVED (generation - exported) the way it does from PVOutput; it's
     a real meter SolarEdge itself already computed.
-  - Confirmed live: dataPeriod for this real site (1393211) spans the
+  - Confirmed live: dataPeriod for this real site spans the
     exact install date (2019-11-28) through today - the full history
     genuinely exists, matching what the user could already see in the
     SolarEdge UI.

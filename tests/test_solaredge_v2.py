@@ -15,7 +15,7 @@ for p in ("tests", "Tools", os.path.join("Tools", "lib")):
     sys.path.insert(0, os.path.join(HERE, "..", p))
 from lib import solaredge_v2 as SE  # noqa: E402
 
-CFG = {"solaredge": {"api_key": "old", "site_id": "1393211", "client_id": "cid", "client_secret": "sec"}}
+CFG = {"solaredge": {"api_key": "old", "site_id": "1234567", "client_id": "cid", "client_secret": "sec"}}
 
 
 def series(unit, vals):
@@ -50,8 +50,8 @@ class V2Test(unittest.TestCase):
             n = len(calls)
             return 200, dict(access_token="a%d" % n, refresh_token="r%d" % n, expires_in=7200)
         SE._post_token = post
-        SE.exchange_code("code1", "1393211", CFG)
-        self.assertEqual(SE.load_tokens()["site_id"], "1393211")
+        SE.exchange_code("code1", "1234567", CFG)
+        self.assertEqual(SE.load_tokens()["site_id"], "1234567")
         self.assertEqual(SE._access_token(CFG), "a1")                       # still valid: no call
         self.assertEqual(len(calls), 1)
         t = SE.load_tokens()

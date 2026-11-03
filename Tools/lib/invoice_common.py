@@ -949,7 +949,7 @@ class TeslaInvoiceExtractor(BaseInvoiceExtractor):
 class ExplorenInvoiceExtractor(BaseInvoiceExtractor):
     """
     Exploren EV Fast Charging Receipt & Tax Invoice Extractor.
-    Extracts Receipt/Invoice No (e.g. 0000533887), Session Started DateTime,
+    Extracts Receipt/Invoice No (e.g. 0000000042), Session Started DateTime,
     Location (e.g. Bunnings Rydalmere), Energy kWh, Unit Rate, Total AUD, and GST.
     Formats filename as: {YYYYMMDD}_{HHMM}_Exploren_{InvoiceNo}_{Place}.pdf
     """
@@ -990,7 +990,7 @@ class ExplorenInvoiceExtractor(BaseInvoiceExtractor):
             "transaction_ref": None,
         }
 
- # 1. Receipt / Invoice Number (e.g. 0000533887)
+ # 1. Receipt / Invoice Number (e.g. 0000000042)
         rec_m = re.search(r"(?:Receipt\s*No\.?\s*|Invoice\s*#?\s*)([0-9]{8,12})", text, re.IGNORECASE)
         if rec_m:
             data["invoice_number"] = rec_m.group(1)
