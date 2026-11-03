@@ -146,6 +146,26 @@ def _is_repark(x):
     return bool(not p or not q or p[0] is None or q[0] is None or TL.hav(p[0], p[1], q[0], q[1]) <= 150.0)
 
 
+def _fold_move(d, m, end):
+    """A short move (the car shuffled a few metres) that is part of the drive next to it: the drive now ends (`end`) or starts (not `end`) where the move did. It keeps what it was
+    made of: `parts` (the records, in time order) and `moves` (the move's id)."""
+    parts = d.get("parts") or [dict(id=d["id"], t0=d["t0"], t1=d["t1"], page=d.get("page"))]
+    mp = dict(id=m["id"], t0=m["t0"], t1=m["t1"], page=m.get("page"))
+    d["parts"] = parts + [mp] if end else [mp] + parts
+    d["moves"] = (d.get("moves") or []) + [m["id"]]
+    if end:
+        d["t1"], d["p1"] = max(d["t1"], m["t1"]), m.get("p1") or d.get("p1")
+        d["to"] = m.get("to") or d.get("to")
+    else:
+        d["t0"], d["p0"] = min(d["t0"], m["t0"]), m.get("p0") or d.get("p0")
+        d["frm"] = m.get("frm") or d.get("frm")
+    for k in ("km", "kwh"):
+        if m.get(k) is not None:
+            d[k] = round((d.get(k) or 0) + m[k], 2)
+    d["cam"] = (d.get("cam") or []) + [c for c in (m.get("cam") or []) if c not in (d.get("cam") or [])]
+    return d
+
+
 def join_parks(items, now=None):
     """One park per stay: parks that follow one another at one place are a single park, and a re-park (the car shuffled a few metres) inside a stay does not split it.
     The newest park has no known end (nothing came after it), so it is marked `ongoing` and runs to now. Items come and go newest first."""
@@ -187,6 +207,21 @@ def join_parks(items, now=None):
             prev["moves"] = (prev.get("moves") or []) + [x["id"]]
             continue
         res.append(x)
+    # a short move right after a drive, at the place that drive ended, is the end of that drive; right before one, at the place it began, the start of it
+    # (a few metres to the charger's bay): not a drive of its own
+    mv = []
+    for i, x in enumerate(res):
+        prev = mv[-1] if mv else None
+        nxt = res[i + 1] if i + 1 < len(res) else None
+        if _is_repark(x):
+            if prev and prev["kind"] == "drive" and not prev.get("short") and 0 <= x["t0"] - prev["t1"] <= JOIN_GAP_S and _at(prev, x, 150.0):
+                _fold_move(prev, x, True)
+                continue
+            if nxt and nxt["kind"] == "drive" and not nxt.get("short") and 0 <= nxt["t0"] - x["t1"] <= JOIN_GAP_S and _at(x, nxt, 150.0):
+                _fold_move(nxt, x, False)
+                continue
+        mv.append(x)
+    res = mv
     # the absorbed re-park may now sit between two parks: join those as well
     fin = []
     for x in res:
