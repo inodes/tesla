@@ -2342,7 +2342,8 @@ async function teslaDriveBody(host,role,fetchSeg,places,opts){
   const fill=()=>{if(!live())return;const x=it(),m=Math.max(1,Math.round((x.t1-x.t0)/60)),a=nameAt(places,x.p0),b=nameAt(places,x.p1);
     const T=opts.tessie,sd=selfDrive(S()),src=dataSources(S());
     $("#dh").textContent=T?driveTitle(T):(x.kind==="drive"?"Drive":x.kind==="stopped"?"Stopped, recording":"Recording")+" · "+dayName(x.start.slice(0,10))+" · "+clockHM(x.start)+" – "+clockHM(x.end);
-    $("#dsub").innerHTML=(T?dayName(T.day)+" · "+T.hm+" – "+addMin(T.hm,T.min)+""+(T.pkey1?' · <a href="#/place/'+encodeURIComponent(T.pkey1)+'">where it ended</a>':"")
+    const e1=T&&(T.t1||T.t0)&&x.lo1!=null?lclock(T.t1||T.t0+T.min*60,x.lo1).slice(0,5):T?addMin(T.hm,T.min):"",zc=x.lo!=null&&x.lo1!=null&&x.lo1!==x.lo?` <span class="sub clkc" title="The clock changed during this drive: ${zlab(x.lo)} to ${zlab(x.lo1)}. The start is on ${zlab(x.lo)}, the end on ${zlab(x.lo1)}.">${clkSvg} ${zlab(x.lo)} → ${zlab(x.lo1)}</span>`:"";
+    $("#dsub").innerHTML=(T?dayName(T.day)+" · "+T.hm+" – "+e1+zc+""+(T.pkey1?' · <a href="#/place/'+encodeURIComponent(T.pkey1)+'">where it ended</a>':"")
       :(a||b&&opts.heading!==false?esc(a||"?")+" → "+esc(b||"?"):""))+(d.connected===false?" · The drive with these clips is not connected: the map and telemetry are the saved copy, and there is no video.":"");
     const sdt=sd?tile(Math.round((sd.fsd+sd.aut)*100)+"%","self-driving · FSD "+Math.round(sd.fsd*100)+"%"+(sd.aut>=.005?" · Autosteer/TACC "+Math.round(sd.aut*100)+"%":"")+(sd.cover<.9?" · dashcam covers "+Math.round(sd.cover*100)+"% of the distance":"")):"";
     $("#dtl").innerHTML=tile(dur(T?T.min:m),"time")+(T?tile(n0(T.km,1)+" km","distance")+tile(n0(T.kwh,1)+" kWh","energy used")+tile(T.km?EF(T.whkm||T.kwh*1000/T.km)+" "+EFU():"–","efficiency")+tile(n0(T.b0)+"% → "+n0(T.b1)+"%","battery")+tile(n0(T.avg)+" / "+n0(T.max)+" km/h","average / top speed")+sdt

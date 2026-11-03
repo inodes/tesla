@@ -581,7 +581,7 @@ class TeslaCam:
             if budget > 0:
                 TL.read_many(store, [(m["stamp"], self._front(teslacam, m)) for m in todo], deadline=time.time() + budget)
         ser = TL.detail(mins, store, it)
-        TL.show(it, lo)                                          # the clock the times are shown on (display only): everything below that is compared stays UTC
+        TL.show(it, lo, own_end=True)                                          # the clock the times are shown on (display only): everything below that is compared stays UTC
         lo = it["lo"]
         out = dict(item=it, connected=bool(teslacam), minutes=[dict(stamp=m["stamp"], src=m["src"], ref=m["ref"], cams=m["cams"], off=round(m["t"] - it["t0"]), loc=TL.iso(m["t"], lo)) for m in mins],
                    series=ser, pending=ser["pending"])
