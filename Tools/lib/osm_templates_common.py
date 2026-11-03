@@ -40,13 +40,18 @@ def get_template(template_id: str) -> Optional[Dict[str, Any]]:
     return OSM_TEMPLATES.get(template_id.lower().replace("-", "_").replace(" ", "_"))
 
 
+def _brand_in(brand_key: str, text: str) -> bool:
+    """True when the brand appears in text as whole word(s), so "iga" does not match inside "Rigatoni"."""
+    return re.search(r"(?<!\w)" + re.escape(brand_key) + r"(?!\w)", text) is not None
+
+
 def match_template(name: str, hint: str = "") -> Optional[Tuple[str, Dict[str, Any]]]:
     """Matches the best template for a given place name and optional category hint."""
     combined = f"{name.lower()} {hint.lower()}".strip()
     
     # 1. Check direct brand catalog first
     for brand_key, brand_tags in BRAND_CATALOG.items():
-        if brand_key in combined:
+        if _brand_in(brand_key, combined):
             if "supercharger" in brand_key:
                 return "tesla_supercharger", OSM_TEMPLATES.get("tesla_supercharger", {})
             elif "destination" in brand_key:
@@ -104,7 +109,7 @@ def build_osm_tags(
     # 2. Apply Australian brand metadata if recognized
     n_lower = name.lower()
     for brand_key, brand_tags in BRAND_CATALOG.items():
-        if brand_key in n_lower:
+        if _brand_in(brand_key, n_lower):
             tags.update(brand_tags)
             break
 
