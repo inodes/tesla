@@ -1,15 +1,28 @@
 #!/usr/bin/env python3
 """audit_home_charges.py - check every Home charge's cost against the model, Tessie and the master CSV.
 
-For each Home charge: the cost the scripts work out now (lib/charge_cost_model.home_charge_cost: solar share at the feed-in it replaced, grid share at the usage rate
-+ GST), what Tessie holds, what charges_master.csv holds, the solar share, and what looks wrong (no solar data so priced as all grid, low data coverage, no cumulative
-export figure, Energy Used missing, a model cost that differs from Tessie's by more than the tolerance, a charge not found in Tessie's cache).
+NAME
+    audit_home_charges.py - check every Home charge's cost against the model, Tessie and the master CSV
 
-Working a charge out reads a lot of solar data, so the run is resumable: every answer is kept in <data_home>/charges/reports/home_audit_progress.json and a run stops
-after --budget seconds; run it again to carry on. --fresh starts over (a changed model or new solar readings). Writes <data_home>/charges/reports/home_charges_audit_<stamp>.csv
-when every charge has an answer, and prints the charges that need a look.
+SYNOPSIS
+    ./Tools/maintenance/audit_home_charges.py [--budget SECONDS] [--fresh] [--tolerance DOLLARS]
 
-    ./audit_home_charges.py [--budget 150] [--fresh] [--tolerance 0.05]
+DESCRIPTION
+    For each Home charge, works out its cost from the solar and grid share and prints it beside
+    the cost Tessie and charges_master.csv hold, flagging the charges that look wrong. Resumable:
+    stops after --budget seconds (default 150) and keeps its answers; run it again to carry on.
+    Writes a CSV report to <data_home>/charges/reports/ once every charge has an answer. Reads
+    only; costs are not written back.
+
+    For each Home charge: the cost the scripts work out now (lib/charge_cost_model.home_charge_cost: solar share at the feed-in it replaced, grid share at the usage rate
+    + GST), what Tessie holds, what charges_master.csv holds, the solar share, and what looks wrong (no solar data so priced as all grid, low data coverage, no cumulative
+    export figure, Energy Used missing, a model cost that differs from Tessie's by more than the tolerance, a charge not found in Tessie's cache).
+
+    Working a charge out reads a lot of solar data, so the run is resumable: every answer is kept in <data_home>/charges/reports/home_audit_progress.json and a run stops
+    after --budget seconds; run it again to carry on. --fresh starts over (a changed model or new solar readings). Writes <data_home>/charges/reports/home_charges_audit_<stamp>.csv
+    when every charge has an answer, and prints the charges that need a look.
+
+        ./audit_home_charges.py [--budget 150] [--fresh] [--tolerance 0.05]
 """
 import os as _os, sys as _sys; _sys.path[:0] = [p for p in (_os.path.dirname(_os.path.abspath(__file__)), _os.path.join(_os.path.dirname(_os.path.dirname(_os.path.abspath(__file__))), "commands"), _os.path.dirname(_os.path.dirname(_os.path.abspath(__file__)))) if p not in _sys.path]      # the tools beside it, the commands, and Tools/ (lib, providers)
 import argparse

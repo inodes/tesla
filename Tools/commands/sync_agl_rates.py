@@ -7,26 +7,38 @@ dated tariff rates, and proposes new dated entries for the active power
 provider's tariff-rates JSON (agl_tariff_rates.json's "periods" array -
 see providers/power/power_base.py's load_rate_periods_from_file()).
 
-Why this exists: the AGL usage-export CSV (sync_power_usage.py) only ever
-carries half-hourly METER READINGS - it has no idea what you're actually
-charged per kWh. Only the bill PDF itself carries that. Rates were
-previously entered by hand after reading an invoice - this instead reads
-every real bill PDF's own "Usage and supply charges" table (via
-lib.invoice_common.AGLInvoiceExtractor.extract_rates()) and reports
-whichever real rate combinations aren't already recorded, so a genuine
-tariff change gets caught automatically instead of only when someone
-happens to reread a bill by hand.
+NAME
+    sync_agl_rates.py - find tariff rates in the AGL bill PDFs that the rates file lacks
 
-This NEVER touches an EXISTING period in the real rates file - it only
-proposes appending genuinely new ones (a rate combination not already
-present), and only when --apply is passed; the default is report-only.
-Same 2-point safety net already established for the usage master and
-drives/charges masters elsewhere in this repo: back up before writing,
-sanity-check (re-read + count) after.
+SYNOPSIS
+    ./Tools/tesla sync power-rates [--apply]
 
-Usage:
-    ./sync_agl_rates.py              # scan every real bill PDF, report only
-    ./sync_agl_rates.py --apply      # also append genuinely new period(s)
+DESCRIPTION
+    Reads the rate tables of every AGL bill PDF in the invoices folder and the Downloads (landing)
+    folder, prints each distinct rate period found with the bills it came from, and lists the ones
+    not yet in the provider's tariff rates file in the data folder. Report only by default; --apply
+    appends the new periods after copying the file first. An existing period is never changed.
+
+    Why this exists: the AGL usage-export CSV (sync_power_usage.py) only ever
+    carries half-hourly METER READINGS - it has no idea what you're actually
+    charged per kWh. Only the bill PDF itself carries that. Rates were
+    previously entered by hand after reading an invoice - this instead reads
+    every real bill PDF's own "Usage and supply charges" table (via
+    lib.invoice_common.AGLInvoiceExtractor.extract_rates()) and reports
+    whichever real rate combinations aren't already recorded, so a genuine
+    tariff change gets caught automatically instead of only when someone
+    happens to reread a bill by hand.
+
+    This NEVER touches an EXISTING period in the real rates file - it only
+    proposes appending genuinely new ones (a rate combination not already
+    present), and only when --apply is passed; the default is report-only.
+    Same 2-point safety net already established for the usage master and
+    drives/charges masters elsewhere in this repo: back up before writing,
+    sanity-check (re-read + count) after.
+
+    Usage:
+        ./sync_agl_rates.py              # scan every real bill PDF, report only
+        ./sync_agl_rates.py --apply      # also append genuinely new period(s)
 """
 import os as _os, sys as _sys; _sys.path[:0] = [p for p in (_os.path.dirname(_os.path.abspath(__file__)), _os.path.dirname(_os.path.dirname(_os.path.abspath(__file__)))) if p not in _sys.path]      # the commands beside it, and Tools/ (lib, providers)
 

@@ -5,39 +5,52 @@ own real Supercharger sessions (charges_master.csv, via
 lib.supercharger_pricing) for rate regimes and proposes new/updated
 dated entries for charges/supercharger_rate_history.json.
 
-User: "I would be good to get averages from all superchargers moving
-forward and if they differ a lot, recording it as a new
-supercharger_rate_history.json entry."
+NAME
+    sync_supercharger_rates.py - keep the Supercharger rate history up to date from your sessions
 
-Mirrors sync_agl_rates.py's own established pattern (report-only by
-default, --apply to write, backup first via lib.archive_naming, sanity-
-check the write after) but reads real charging SESSIONS instead of bill
-PDFs - there's no invoice to extract a Supercharger rate from (REQ-160's
-own module docstring: Supercharger AU pricing is a single network rate,
-not billed per-account).
+SYNOPSIS
+    ./Tools/tesla sync supercharger-rates [--apply] [--tolerance DOLLARS_PER_KWH]
 
-Regime detection (lib.supercharger_pricing.detect_real_rate_regimes()):
-daytime-only real sessions (6am-6pm local, matching this account's own
-observed real day/night price split - REQ-160) are segmented into
-consecutive regimes wherever a session's rate strays by more than
-DEFAULT_REGIME_TOLERANCE_PER_KWH ($0.03/kWh) from its regime's running
-mean - see that function's own module for why $0.03 was picked.
+DESCRIPTION
+    Reads the daytime Supercharger sessions in charges_master.csv, groups them into periods of
+    steady $/kWh rate, and compares each with charges/supercharger_rate_history.json in the data
+    folder: a period still open gets its average and count refreshed, a rate that differs by more
+    than --tolerance is proposed as a new period. Report only by default; --apply writes the change
+    after copying the file first.
 
-Each detected regime is compared against the rate-history file's own
-last entry (whichever came before it chronologically in this run):
-  - within tolerance of a still-open "real_account_data" period ->
-    UPDATE that period's rate_per_kwh/session_count in place (more
-    sessions have arrived for the SAME regime, refining the average -
-    never duplicated as a new period).
-  - within tolerance of a fixed historical period (published or an
-    already-closed-out real one) -> nothing to do, already correct.
-  - diverges by more than the tolerance -> genuinely a NEW regime ->
-    proposed as a new period to APPEND.
+    User: "I would be good to get averages from all superchargers moving
+    forward and if they differ a lot, recording it as a new
+    supercharger_rate_history.json entry."
 
-Usage:
-    ./sync_supercharger_rates.py             # scan real sessions, report only
-    ./sync_supercharger_rates.py --apply      # also write the change(s)
-    ./sync_supercharger_rates.py --tolerance 0.05   # override the divergence threshold
+    Mirrors sync_agl_rates.py's own established pattern (report-only by
+    default, --apply to write, backup first via lib.archive_naming, sanity-
+    check the write after) but reads real charging SESSIONS instead of bill
+    PDFs - there's no invoice to extract a Supercharger rate from (REQ-160's
+    own module docstring: Supercharger AU pricing is a single network rate,
+    not billed per-account).
+
+    Regime detection (lib.supercharger_pricing.detect_real_rate_regimes()):
+    daytime-only real sessions (6am-6pm local, matching this account's own
+    observed real day/night price split - REQ-160) are segmented into
+    consecutive regimes wherever a session's rate strays by more than
+    DEFAULT_REGIME_TOLERANCE_PER_KWH ($0.03/kWh) from its regime's running
+    mean - see that function's own module for why $0.03 was picked.
+
+    Each detected regime is compared against the rate-history file's own
+    last entry (whichever came before it chronologically in this run):
+      - within tolerance of a still-open "real_account_data" period ->
+        UPDATE that period's rate_per_kwh/session_count in place (more
+        sessions have arrived for the SAME regime, refining the average -
+        never duplicated as a new period).
+      - within tolerance of a fixed historical period (published or an
+        already-closed-out real one) -> nothing to do, already correct.
+      - diverges by more than the tolerance -> genuinely a NEW regime ->
+        proposed as a new period to APPEND.
+
+    Usage:
+        ./sync_supercharger_rates.py             # scan real sessions, report only
+        ./sync_supercharger_rates.py --apply      # also write the change(s)
+        ./sync_supercharger_rates.py --tolerance 0.05   # override the divergence threshold
 """
 import os as _os, sys as _sys; _sys.path[:0] = [p for p in (_os.path.dirname(_os.path.abspath(__file__)), _os.path.dirname(_os.path.dirname(_os.path.abspath(__file__)))) if p not in _sys.path]      # the commands beside it, and Tools/ (lib, providers)
 

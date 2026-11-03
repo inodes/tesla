@@ -4,27 +4,42 @@ agl_demand_calculator.py - Reproduce AGL's Ausgrid EA025 Residential
 Demand charge from the consolidated usage master (agl_usage_sync.py)
 and the dated tariff rates (agl_tariff_rates.json).
 
-Method (see agl_common.py / AGENTS.md REQ-031 for how this was derived
-and verified): for each calendar month, take every half-hour "import"
-(E1) reading that falls in the season-appropriate demand window
-(weekdays, NSW public holidays excluded, summer 2pm-8pm Nov-Mar, winter
-5pm-9pm Jun-Aug, zero charge in shoulder months) and find its maximum.
-kWh * 2 = kW (a half-hour average). That single latched kW value is
-billed - in ARREARS, on the invoice cycle that closes after the
-calendar month ends - at demand_rate_per_kw_day * kW * the INVOICING
-cycle's day count, GST-inclusive at the end (x1.10).
+NAME
+    agl_demand_calculator.py - the AGL demand charge for a month, from the usage master
 
-Self-test (run this file directly): reproduces June and July 2026's
-already-invoiced demand charges exactly from the real usage data, and
-projects August 2026 (not yet invoiced at time of writing). This is the
-whole point of the self-test - if AGL's actual billed figure ever stops
-matching what this file computes, that's a sign either the tariff rate
-changed again or the window logic needs revisiting, not something to
-silently trust.
+SYNOPSIS
+    ./Tools/tesla report agl-demand --month YYYY-MM [--days N]
+    ./Tools/tesla report agl-demand --self-test
+    ./Tools/tesla report agl-demand
 
-Usage:
-    ./agl_demand_calculator.py --self-test
-    ./agl_demand_calculator.py --month 2026-08 --days 31
+DESCRIPTION
+    With --month, reads usage/agl_usage_master.csv in the AGL data folder and prints that month's
+    highest half-hour import in the demand window, as kW. With --days as well, it also prints the
+    charge for a billing cycle of that many days, at the demand rate in force on the first of the
+    month, ex and incl GST. --self-test checks past months against the billed figures; it exits 0
+    when they match, 1 otherwise. With no options it prints this help.
+
+    Method (see agl_common.py / AGENTS.md REQ-031 for how this was derived
+    and verified): for each calendar month, take every half-hour "import"
+    (E1) reading that falls in the season-appropriate demand window
+    (weekdays, NSW public holidays excluded, summer 2pm-8pm Nov-Mar, winter
+    5pm-9pm Jun-Aug, zero charge in shoulder months) and find its maximum.
+    kWh * 2 = kW (a half-hour average). That single latched kW value is
+    billed - in ARREARS, on the invoice cycle that closes after the
+    calendar month ends - at demand_rate_per_kw_day * kW * the INVOICING
+    cycle's day count, GST-inclusive at the end (x1.10).
+
+    Self-test (run this file directly): reproduces June and July 2026's
+    already-invoiced demand charges exactly from the real usage data, and
+    projects August 2026 (not yet invoiced at time of writing). This is the
+    whole point of the self-test - if AGL's actual billed figure ever stops
+    matching what this file computes, that's a sign either the tariff rate
+    changed again or the window logic needs revisiting, not something to
+    silently trust.
+
+    Usage:
+        ./agl_demand_calculator.py --self-test
+        ./agl_demand_calculator.py --month 2026-08 --days 31
 """
 import os as _os, sys as _sys; _sys.path[:0] = [p for p in (_os.path.dirname(_os.path.abspath(__file__)), _os.path.dirname(_os.path.dirname(_os.path.abspath(__file__)))) if p not in _sys.path]      # the commands beside it, and Tools/ (lib, providers)
 

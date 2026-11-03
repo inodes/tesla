@@ -9,31 +9,44 @@ provider (SolarEdge via providers/pv, REQ-140 - was PVOutput before it)
 and AGL data (power_solar_report.py, REQ-118/119; power_invoice_report.py,
 REQ-120).
 
-User pasted the standard Australian solar-ROI formulas and asked for a
-proper payback/ROI breakdown. The real system figures (panels, inverter,
-installed cost after the STC rebate, first day of operation) are in the
-user's own Solar/solar_system.json, never in this file.
+NAME
+    power_roi_report.py - payback period and lifetime return of the solar system
 
-Formula (unchanged from the user's own paste, config.json's own AGL
-electricity tariffs standing in for R_import/R_fit):
-    Payback (years) = Net Upfront Cost / Annual Savings
-    Annual Savings   = (E_self x R_import) + (E_export x R_fit) - Opex
-    Lifetime ROI (%) = ((Annual Savings x Lifetime - Net Upfront Cost) / Net Upfront Cost) x 100
+SYNOPSIS
+    ./Tools/tesla report power-roi [--year YYYY | --from YYYY-MM-DD --to YYYY-MM-DD] [--no-fetch]
 
-The one substitution versus a generic online calculator: Annual Savings
-is not an industry-average guess - it's this system's own real
-self-consumption savings and export credit (power_cost_calculator.py's
-reconstruct_bill() + power_solar_report.py's PV-provider correlation),
-annualized separately because the two components have different real
-coverage - self-consumption needs the PV provider (which has real gaps
-this system's history), export credit only needs AGL's own meter data
-(which doesn't) - rather than annualizing a single blended total.
+DESCRIPTION
+    Reads the system's cost, install date and lifetime from Solar/solar_system.json in the data
+    folder, works out the self-consumption savings and export credit over a period (the last 365
+    days by default, never before the install date), scales each to a year and prints the payback
+    in years and the lifetime return. Fetches missing days from the solar (PV) provider unless
+    --no-fetch. Prints only; writes no report file.
 
-Usage:
-    ./power_roi_report.py                       # trailing 365 days ending today (clamped to install date)
-    ./power_roi_report.py --year 2026
-    ./power_roi_report.py --from 2026-01-01 --to 2026-09-24
-    ./power_roi_report.py --no-fetch
+    User pasted the standard Australian solar-ROI formulas and asked for a
+    proper payback/ROI breakdown. The real system figures (panels, inverter,
+    installed cost after the STC rebate, first day of operation) are in the
+    user's own Solar/solar_system.json, never in this file.
+
+    Formula (unchanged from the user's own paste, config.json's own AGL
+    electricity tariffs standing in for R_import/R_fit):
+        Payback (years) = Net Upfront Cost / Annual Savings
+        Annual Savings   = (E_self x R_import) + (E_export x R_fit) - Opex
+        Lifetime ROI (%) = ((Annual Savings x Lifetime - Net Upfront Cost) / Net Upfront Cost) x 100
+
+    The one substitution versus a generic online calculator: Annual Savings
+    is not an industry-average guess - it's this system's own real
+    self-consumption savings and export credit (power_cost_calculator.py's
+    reconstruct_bill() + power_solar_report.py's PV-provider correlation),
+    annualized separately because the two components have different real
+    coverage - self-consumption needs the PV provider (which has real gaps
+    this system's history), export credit only needs AGL's own meter data
+    (which doesn't) - rather than annualizing a single blended total.
+
+    Usage:
+        ./power_roi_report.py                       # trailing 365 days ending today (clamped to install date)
+        ./power_roi_report.py --year 2026
+        ./power_roi_report.py --from 2026-01-01 --to 2026-09-24
+        ./power_roi_report.py --no-fetch
 """
 import os as _os, sys as _sys; _sys.path[:0] = [p for p in (_os.path.dirname(_os.path.abspath(__file__)), _os.path.dirname(_os.path.dirname(_os.path.abspath(__file__)))) if p not in _sys.path]      # the commands beside it, and Tools/ (lib, providers)
 

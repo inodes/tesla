@@ -1,26 +1,42 @@
 #!/usr/bin/env python3
 """drive_report.py - one summary page per drive, written into that drive's own folder (REQ-193).
 
-    <data>/drives/deepdive/<stamp>/drive.html     self-contained page: stats, route map, speed/power/elevation graph,
-                                                  saved-clip events, dashcam coverage
-    <data>/drives/deepdive/<stamp>/clips/         only when RecentClips / SavedClips footage overlaps the drive:
-                                                  E###.jpg (1 s stills), E###.mp4 (short front snippet),
-                                                  saved_<folder>.mp4 (front snippet around the saved event)
-    <data>/drives/deepdive/index.html             every drive on one page (day by day, filterable)
+NAME
+    drive_report.py - one summary page per drive, written into that drive's own folder
 
-Usage:
-  drive_report.py [--data-dir DIR] [--teslacam DIR ...] [--since YYYY-MM-DD] [--only STAMP[,STAMP]]
-                  [--no-video] [--force] [--budget SECONDS]
-  --since     only (re)build drives starting on/after this date (default: all)
-  --only      comma list of drive stamps, e.g. 2026-10-11_15-45_AEDT
-  --no-video  write pages and stills but skip the mp4 snippets
-  --force     rebuild pages that are already up to date (default skips a page that is newer than its CSV and this script, and has no new footage)
-  --budget    stop starting new drives after this many seconds (use ~85 on the device bridge, then run again)
+SYNOPSIS
+    ./Tools/tesla build drive-pages [--data-dir DIR] [--teslacam DIR ...] [--with-secondary]
+                                    [--since YYYY-MM-DD] [--footage-since YYYY-MM-DD] [--only STAMP[,STAMP]]
+                                    [--no-video] [--force] [--budget SECONDS]
 
-Data used: the drive's own Tessie CSV (route, speed, power, elevation, battery), drives_master.csv (totals), the FSD
-flip analysis (analyse_fsd_osm_limits.py -> fsd_transitions.csv + dashcam_flip_review/), and TeslaCam footage when it
-exists. Tessie has no FSD state; where footage exists, the flip rows show the car's own state from the clip.
-Footage only exists for drives since the last time the car kept RecentClips (24 h rolling when not synced).
+DESCRIPTION
+    For each drive in <data>/drives/deepdive/ builds drive.html (stats, route map, graphs, saved
+    clips and dashcam coverage) and, where TeslaCam footage overlaps the drive, stills and short
+    video snippets in its clips/ folder; then writes the index page of every drive. A page that is
+    already up to date is skipped. Reads the Archive drive unless --teslacam or --with-secondary is
+    given. --footage-since sets the oldest TeslaCam folder date scanned (default 2026-08-01). The
+    files written and the other options are listed below.
+
+        <data>/drives/deepdive/<stamp>/drive.html     self-contained page: stats, route map, speed/power/elevation graph,
+                                                      saved-clip events, dashcam coverage
+        <data>/drives/deepdive/<stamp>/clips/         only when RecentClips / SavedClips footage overlaps the drive:
+                                                      E###.jpg (1 s stills), E###.mp4 (short front snippet),
+                                                      saved_<folder>.mp4 (front snippet around the saved event)
+        <data>/drives/deepdive/index.html             every drive on one page (day by day, filterable)
+
+    Usage:
+      drive_report.py [--data-dir DIR] [--teslacam DIR ...] [--since YYYY-MM-DD] [--only STAMP[,STAMP]]
+                      [--no-video] [--force] [--budget SECONDS]
+      --since     only (re)build drives starting on/after this date (default: all)
+      --only      comma list of drive stamps, e.g. 2026-10-11_15-45_AEDT
+      --no-video  write pages and stills but skip the mp4 snippets
+      --force     rebuild pages that are already up to date (default skips a page that is newer than its CSV and this script, and has no new footage)
+      --budget    stop starting new drives after this many seconds (use ~85 on the device bridge, then run again)
+
+    Data used: the drive's own Tessie CSV (route, speed, power, elevation, battery), drives_master.csv (totals), the FSD
+    flip analysis (analyse_fsd_osm_limits.py -> fsd_transitions.csv + dashcam_flip_review/), and TeslaCam footage when it
+    exists. Tessie has no FSD state; where footage exists, the flip rows show the car's own state from the clip.
+    Footage only exists for drives since the last time the car kept RecentClips (24 h rolling when not synced).
 """
 import os as _os, sys as _sys; _sys.path[:0] = [p for p in (_os.path.dirname(_os.path.abspath(__file__)), _os.path.dirname(_os.path.dirname(_os.path.abspath(__file__)))) if p not in _sys.path]      # the commands beside it, and Tools/ (lib, providers)
 import argparse

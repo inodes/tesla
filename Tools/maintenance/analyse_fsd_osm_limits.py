@@ -1,25 +1,40 @@
 #!/usr/bin/env python3
 """FSD 105 plateau vs OpenStreetMap posted limits (REQ-190 follow-up).
 
-For every highway sample in the drive deep-dive telemetry since --since (default 2026-10-01)
-this finds the OpenStreetMap road the car was on (nearest way, honouring one-way / carriageway
-direction by the car's bearing) and reads its posted limit (`maxspeed`, `maxspeed:forward` /
-`:backward` for the direction travelled). It then compares that with what the car did.
+NAME
+    analyse_fsd_osm_limits.py - compare highway speeds with OpenStreetMap posted limits
 
-What the driver did is the best proxy for the signed limit: STANDARD mode runs about 102 in a
-100 zone and 112 in a 110 zone, so a 100s/110s stretch tells us what was really posted. The
-105 "hurry" plateau is ambiguous (hurry in a 100 or hurry in a 110 that FSD read as 100), so for
-those OSM is the tie-breaker: an OSM 110 under a 105 section is a candidate where the car's map
-data (or OSM) is wrong, and the stretch is worth a TomTom MapShare check.
+SYNOPSIS
+    ./Tools/maintenance/analyse_fsd_osm_limits.py [--data-dir DIR] [--since YYYY-MM-DD]
+                                                  [--fetch-only | --no-fetch] [--budget SECONDS]
 
-Outputs in <data>/drives/analysis/:
-  fsd_osm_limit_samples.csv    every matched highway sample
-  fsd_osm_105_sections.csv     each 105 section with OSM limit mix and verdict
-  fsd_osm_calibration.csv      how often OSM agrees with the driver's STANDARD-mode speed
-  fsd_osm_disagreements.csv    stretches where the car's perceived limit and OSM differ
-  osm_cache/                   Overpass tiles (re-runs only fetch what is missing)
-Usage: analyse_fsd_osm_limits.py [--data-dir DIR] [--since YYYY-MM-DD] [--fetch-only] [--budget SECONDS] [--no-fetch]
-(--budget stops tile fetching after that many seconds and exits, re-run to resume - for hosts that cap command time.)
+DESCRIPTION
+    Matches every highway sample of the drive deep-dive telemetry since --since (default
+    2026-10-01) to an OpenStreetMap road, reads its posted limit and compares it with the speed
+    driven. Fetches the missing Overpass tiles first (kept in osm_cache/; --no-fetch uses only those
+    already kept, --fetch-only stops after fetching, --budget stops fetching after that many
+    seconds). Writes the CSV files listed below to <data>/drives/analysis/ and rebuilds the FSD map
+    page. A one-off investigation, run by hand.
+
+    For every highway sample in the drive deep-dive telemetry since --since (default 2026-10-01)
+    this finds the OpenStreetMap road the car was on (nearest way, honouring one-way / carriageway
+    direction by the car's bearing) and reads its posted limit (`maxspeed`, `maxspeed:forward` /
+    `:backward` for the direction travelled). It then compares that with what the car did.
+
+    What the driver did is the best proxy for the signed limit: STANDARD mode runs about 102 in a
+    100 zone and 112 in a 110 zone, so a 100s/110s stretch tells us what was really posted. The
+    105 "hurry" plateau is ambiguous (hurry in a 100 or hurry in a 110 that FSD read as 100), so for
+    those OSM is the tie-breaker: an OSM 110 under a 105 section is a candidate where the car's map
+    data (or OSM) is wrong, and the stretch is worth a TomTom MapShare check.
+
+    Outputs in <data>/drives/analysis/:
+      fsd_osm_limit_samples.csv    every matched highway sample
+      fsd_osm_105_sections.csv     each 105 section with OSM limit mix and verdict
+      fsd_osm_calibration.csv      how often OSM agrees with the driver's STANDARD-mode speed
+      fsd_osm_disagreements.csv    stretches where the car's perceived limit and OSM differ
+      osm_cache/                   Overpass tiles (re-runs only fetch what is missing)
+    Usage: analyse_fsd_osm_limits.py [--data-dir DIR] [--since YYYY-MM-DD] [--fetch-only] [--budget SECONDS] [--no-fetch]
+    (--budget stops tile fetching after that many seconds and exits, re-run to resume - for hosts that cap command time.)
 """
 import os as _os, sys as _sys; _sys.path[:0] = [p for p in (_os.path.dirname(_os.path.abspath(__file__)), _os.path.join(_os.path.dirname(_os.path.dirname(_os.path.abspath(__file__))), "commands"), _os.path.dirname(_os.path.dirname(_os.path.abspath(__file__)))) if p not in _sys.path]      # the tools beside it, the commands, and Tools/ (lib, providers)
 if any(a in ("-h", "--help") for a in _sys.argv[1:]):          # its help, and nothing else (the work starts on import)

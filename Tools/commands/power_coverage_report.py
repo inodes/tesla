@@ -5,53 +5,68 @@ this repo's own power-billing data actually covers real history, so a
 gap doesn't silently produce a wrong tariff-period boundary or a wrong
 reconstructed bill.
 
-Why this exists: REQ-115's database migration made every reader's OWN
-usage figures reliable, and REQ-113's `sync_agl_rates.py` can derive real
-rate periods from bill PDFs - but neither one shows whether the
-UNDERLYING evidence actually has gaps. User: "there is potential for
-incorrect calculations if there are gaps. Maybe there is a way to script
-a summary of years and months that we can drill down to listing which
-periods have csv's which periods have invoices covered (partially and
-fully) and which are missing." Prompted directly by re-running
-`sync_agl_rates.py` against all 25 real bill PDFs and finding TWO
-previously-unnoticed invoice gaps (Apr 2022-Aug 2023, and Nov 2023-Dec
-2024) on top of the one already flagged in REQ-113's own notes (Jan-Nov
-2025) - exactly the kind of thing this report is meant to surface
-without having to re-derive it by hand each time.
+NAME
+    power_coverage_report.py - which months have usage data and which have bills
 
-Two independent coverage dimensions, each scored per calendar month:
+SYNOPSIS
+    ./Tools/tesla report power-coverage
+    ./Tools/tesla report power-coverage --year YYYY
+    ./Tools/tesla report power-coverage --gaps
 
-  USAGE  - half-hourly meter readings in the usage database
-           (lib/power_usage_db.py, REQ-115). "full" = the month's own
-           row count (role="import") is within 2% of days_in_month*48;
-           "partial" = some rows but short of that; "none" = zero rows.
-           The half-hour grid is what every kWh figure in this repo is
-           actually built from - a gap here means reconstruct_bill()/
-           power_demand_calculator.py have nothing to sum for that
-           stretch, not a wrong number, a MISSING one (see AGENTS.md
-           REQ-031's own known 2022-05-31 to 2024-09-07 export gap).
+DESCRIPTION
+    For every calendar month, scores two things as full, partial or none: the half-hour usage
+    readings in the usage database, and the days covered by the bill PDFs found in the invoices and
+    Downloads folders. With no options it prints a Jan-Dec grid per year. --year shows each month of
+    one year in detail; --gaps lists every month that is not full on both. Reads only; writes
+    nothing.
 
-  INVOICE - real bill PDFs (scanned the same way `sync_agl_rates.py`
-            does - by content, not just filename, across both the
-            invoices folder and the landing/Downloads folder), using
-            each bill's own extracted `period_start`/`period_end` (this
-            works across every bill layout this repo has seen, 2020
-            through today - unlike rate-table extraction, which only
-            parses the newer 2023+ layout). "full" = every day of the
-            month falls inside the UNION of all bill periods; "partial"
-            = some days do; "none" = zero days do. AGL's billing cycle
-            almost never aligns to calendar-month boundaries (a ~25th-
-            to-24th cycle), so "full" here means the union of adjacent
-            bills covers the whole month, not that one single bill does.
+    Why this exists: REQ-115's database migration made every reader's OWN
+    usage figures reliable, and REQ-113's `sync_agl_rates.py` can derive real
+    rate periods from bill PDFs - but neither one shows whether the
+    UNDERLYING evidence actually has gaps. User: "there is potential for
+    incorrect calculations if there are gaps. Maybe there is a way to script
+    a summary of years and months that we can drill down to listing which
+    periods have csv's which periods have invoices covered (partially and
+    fully) and which are missing." Prompted directly by re-running
+    `sync_agl_rates.py` against all 25 real bill PDFs and finding TWO
+    previously-unnoticed invoice gaps (Apr 2022-Aug 2023, and Nov 2023-Dec
+    2024) on top of the one already flagged in REQ-113's own notes (Jan-Nov
+    2025) - exactly the kind of thing this report is meant to surface
+    without having to re-derive it by hand each time.
 
-A month with good USAGE coverage but missing INVOICE coverage is exactly
-the situation that made REQ-113's rate work risky: we can compute a real
-kWh figure for that month but have no bill to confirm what rate applied.
+    Two independent coverage dimensions, each scored per calendar month:
 
-Usage:
-    ./power_coverage_report.py                 # one line per year, Jan-Dec coverage grid for both dimensions
-    ./power_coverage_report.py --year 2023      # day-level detail for every month in that year
-    ./power_coverage_report.py --gaps           # list every month that ISN'T "full" on both dimensions, across all years
+      USAGE  - half-hourly meter readings in the usage database
+               (lib/power_usage_db.py, REQ-115). "full" = the month's own
+               row count (role="import") is within 2% of days_in_month*48;
+               "partial" = some rows but short of that; "none" = zero rows.
+               The half-hour grid is what every kWh figure in this repo is
+               actually built from - a gap here means reconstruct_bill()/
+               power_demand_calculator.py have nothing to sum for that
+               stretch, not a wrong number, a MISSING one (see AGENTS.md
+               REQ-031's own known 2022-05-31 to 2024-09-07 export gap).
+
+      INVOICE - real bill PDFs (scanned the same way `sync_agl_rates.py`
+                does - by content, not just filename, across both the
+                invoices folder and the landing/Downloads folder), using
+                each bill's own extracted `period_start`/`period_end` (this
+                works across every bill layout this repo has seen, 2020
+                through today - unlike rate-table extraction, which only
+                parses the newer 2023+ layout). "full" = every day of the
+                month falls inside the UNION of all bill periods; "partial"
+                = some days do; "none" = zero days do. AGL's billing cycle
+                almost never aligns to calendar-month boundaries (a ~25th-
+                to-24th cycle), so "full" here means the union of adjacent
+                bills covers the whole month, not that one single bill does.
+
+    A month with good USAGE coverage but missing INVOICE coverage is exactly
+    the situation that made REQ-113's rate work risky: we can compute a real
+    kWh figure for that month but have no bill to confirm what rate applied.
+
+    Usage:
+        ./power_coverage_report.py                 # one line per year, Jan-Dec coverage grid for both dimensions
+        ./power_coverage_report.py --year 2023      # day-level detail for every month in that year
+        ./power_coverage_report.py --gaps           # list every month that ISN'T "full" on both dimensions, across all years
 """
 import os as _os, sys as _sys; _sys.path[:0] = [p for p in (_os.path.dirname(_os.path.abspath(__file__)), _os.path.dirname(_os.path.dirname(_os.path.abspath(__file__)))) if p not in _sys.path]      # the commands beside it, and Tools/ (lib, providers)
 

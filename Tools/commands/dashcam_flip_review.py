@@ -1,22 +1,37 @@
 #!/usr/bin/env python3
 """Dashcam flip review (REQ-192): shows what the car did, and what the road showed, at every 100/110 flip.
 
-For each 100<->110 flip found by analyse_fsd_osm_limits.py (fsd_transitions.csv) that has TeslaCam front
-footage, this reads the per-frame telemetry embedded in the clip (speed, FSD state, brake, GPS; see
-lib/dashcam_series.py), finds the exact moment the speed starts to change, and pulls 20 stills (one per second) from
-12 s before to 12 s after. Everything is written as one page:
+NAME
+    dashcam_flip_review.py - a review page of the dashcam at every 100/110 km/h FSD flip
 
-    <data>/drives/analysis/dashcam_flip_review/index.html   (+ frames_1s/E###.jpg, one 5x4 contact sheet per event, a still every second)
-    <data>/drives/analysis/dashcam_flip_events.csv
+SYNOPSIS
+    ./Tools/tesla teslacam flips [--data-dir DIR] [--teslacam DIR ...] [--with-secondary] [--since YYYY-MM-DD]
+                                 [--only 110->100 | 100->110 | all] [--mac-root DIR]
+                                 [--budget SECONDS] [--force] [--no-frames]
 
-so each event can be judged by eye: real 100 sign / traffic / 110 sign but the car slowed anyway / no sign.
-Review choices are kept in the browser (and can be exported from the page).
+DESCRIPTION
+    Reads the flips in <data>/drives/analysis/fsd_transitions.csv, finds the TeslaCam front clip of
+    each, reads the speed and FSD state from the clip and cuts a contact sheet of stills around the
+    moment the speed changes. Writes the page, stills and dashcam_flip_events.csv under
+    <data>/drives/analysis/. Reads the Archive drive unless --teslacam or --with-secondary is given.
+    Sheets already made are skipped. Exits 1 when no TeslaCam folder is found.
 
-Usage:
-    dashcam_flip_review.py [--data-dir DIR] [--teslacam DIR] [--since YYYY-MM-DD]
-                           [--budget SECONDS] [--force] [--no-frames]
-Re-running is cheap: finished contact sheets are skipped. --budget stops extracting new ones after N seconds
-(use ~85 on the device bridge, then run again).
+    For each 100<->110 flip found by analyse_fsd_osm_limits.py (fsd_transitions.csv) that has TeslaCam front
+    footage, this reads the per-frame telemetry embedded in the clip (speed, FSD state, brake, GPS; see
+    lib/dashcam_series.py), finds the exact moment the speed starts to change, and pulls 20 stills (one per second) from
+    12 s before to 12 s after. Everything is written as one page:
+
+        <data>/drives/analysis/dashcam_flip_review/index.html   (+ frames_1s/E###.jpg, one 5x4 contact sheet per event, a still every second)
+        <data>/drives/analysis/dashcam_flip_events.csv
+
+    so each event can be judged by eye: real 100 sign / traffic / 110 sign but the car slowed anyway / no sign.
+    Review choices are kept in the browser (and can be exported from the page).
+
+    Usage:
+        dashcam_flip_review.py [--data-dir DIR] [--teslacam DIR] [--since YYYY-MM-DD]
+                               [--budget SECONDS] [--force] [--no-frames]
+    Re-running is cheap: finished contact sheets are skipped. --budget stops extracting new ones after N seconds
+    (use ~85 on the device bridge, then run again).
 """
 import os as _os, sys as _sys; _sys.path[:0] = [p for p in (_os.path.dirname(_os.path.abspath(__file__)), _os.path.dirname(_os.path.dirname(_os.path.abspath(__file__)))) if p not in _sys.path]      # the commands beside it, and Tools/ (lib, providers)
 import argparse

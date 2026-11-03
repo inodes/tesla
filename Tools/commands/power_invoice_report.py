@@ -10,30 +10,44 @@ the grid) and how much exporting the excess earned (the feed-in credit -
 already a real line on the bill, called out here rather than buried in
 the total).
 
-User: "Is there a way to print out a similar report to any give AGL
-invoice showing how the charges were done - but also insight into self
-consumption also included. [...] 1. Self consuming is the saving of what
-would have been paid to grid without solar. 2. Excess - the amount
-earned for feed in tariffs. This is an effective ROI on Solar."
+NAME
+    power_invoice_report.py - one electricity bill's charges and the solar savings in its cycle
 
-This is deliberately a thin wrapper around REQ-118/119's
-power_solar_report.py rather than a new calculation engine: the only new
-piece is resolving a period from a REAL invoice PDF instead of a
-calendar month/year/date range, and printing that invoice's own
-extracted total as a ground-truth cross-check against
-power_cost_calculator.py's reconstruct_bill() (already validated to
-within cents-level rounding across REAL_INVOICE_CYCLES - see
-power_cost_calculator.py's self_test()). Everything else - the PV
-provider correlation, the self-consumption savings math, the HTML/PNG
-charts - is power_solar_report.py's existing, already-tested code,
-called with the invoice's own period_start/period_end.
+SYNOPSIS
+    ./Tools/tesla report power-invoice [--invoice NUMBER_OR_FILENAME_PART] [--no-fetch] [--out-dir DIR]
+    ./Tools/tesla report power-invoice --list
 
-Usage:
-    ./power_invoice_report.py --list                  # show every invoice this repo can find
-    ./power_invoice_report.py                          # most recent electricity invoice
-    ./power_invoice_report.py --invoice 494808436       # match by invoice number
-    ./power_invoice_report.py --invoice 20260625        # match by filename fragment
-    ./power_invoice_report.py --invoice 494808436 --no-fetch
+DESCRIPTION
+    Finds the electricity bill PDFs, takes the newest one (or the one --invoice matches) and prints
+    its charges as billed beside the bill rebuilt from usage data, then the solar savings for that
+    billing cycle: what self-consumed solar saved and what export earned. Fetches missing days from
+    the solar (PV) provider unless --no-fetch. Writes invoice_report_<label>.html and a PNG to
+    <data folder>/energy_reports (or --out-dir). --list prints every bill found and exits.
+
+    User: "Is there a way to print out a similar report to any give AGL
+    invoice showing how the charges were done - but also insight into self
+    consumption also included. [...] 1. Self consuming is the saving of what
+    would have been paid to grid without solar. 2. Excess - the amount
+    earned for feed in tariffs. This is an effective ROI on Solar."
+
+    This is deliberately a thin wrapper around REQ-118/119's
+    power_solar_report.py rather than a new calculation engine: the only new
+    piece is resolving a period from a REAL invoice PDF instead of a
+    calendar month/year/date range, and printing that invoice's own
+    extracted total as a ground-truth cross-check against
+    power_cost_calculator.py's reconstruct_bill() (already validated to
+    within cents-level rounding across REAL_INVOICE_CYCLES - see
+    power_cost_calculator.py's self_test()). Everything else - the PV
+    provider correlation, the self-consumption savings math, the HTML/PNG
+    charts - is power_solar_report.py's existing, already-tested code,
+    called with the invoice's own period_start/period_end.
+
+    Usage:
+        ./power_invoice_report.py --list                  # show every invoice this repo can find
+        ./power_invoice_report.py                          # most recent electricity invoice
+        ./power_invoice_report.py --invoice 494808436       # match by invoice number
+        ./power_invoice_report.py --invoice 20260625        # match by filename fragment
+        ./power_invoice_report.py --invoice 494808436 --no-fetch
 """
 import os as _os, sys as _sys; _sys.path[:0] = [p for p in (_os.path.dirname(_os.path.abspath(__file__)), _os.path.dirname(_os.path.dirname(_os.path.abspath(__file__)))) if p not in _sys.path]      # the commands beside it, and Tools/ (lib, providers)
 

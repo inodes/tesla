@@ -12,24 +12,39 @@ identify:
 3. Hardware / Power / Stall discrepancies
 4. Missing Stations (First-party stations not yet listed on PlugShare)
 
-REQ (2026-09-15, AGENTS.local.md): user, having just seen AmpCharge added
-as a new Tier 1 provider - "I also would like to go back to the feature
-request - that any tier 1 info that contradicts plugshare data is able to
-be seen. The goal is to work to updating and improving stale data directly
-with plugshare myself." Originally this only checked EVX and Chargefox by
-name (a hardcoded if/elif per provider) and only flagged pricing that was
-entirely missing on PlugShare, never a genuine mismatch, and never flagged
-a hardware/power/stall difference despite the module docstring claiming it
-did. Generalized here: NETWORK_ALIASES + network_matches() replace the
-hardcoded per-provider branches (works for any current or future Tier 1
-provider automatically, since the manager's own dedup already resolved
-"the truth" onto the merged UnifiedStationRecord's own fields - only
-PlugShare's own idiosyncratic nested view schema still needs its own
-parsing), pricing now also flags a live mismatch (not just $0.00/unlisted),
-and a new hardware/power/stalls check was actually implemented rather than
-just documented.
+NAME
+    charger_plugshare_auditor.py - list where PlugShare disagrees with the networks' own data
 
-Generates terminal tables and Markdown reports with direct clickable PlugShare edit URLs.
+SYNOPSIS
+    ./Tools/tesla chargers audit-plugshare [--network NAME] [--state ST] [--report FILE]
+    ./Tools/tesla chargers audit-plugshare --query TEXT
+
+DESCRIPTION
+    Compares each network's own station registry (Tesla, Chargefox, NRMA, JOLT, Exploren, EVX, Evie,
+    bp pulse, AmpCharge) with the PlugShare listing of the same site and lists wrong networks,
+    missing or different prices, different power or stall counts, and stations missing from
+    PlugShare. Prints tables and writes a Markdown report with PlugShare edit links to --report, or
+    to scratch/plugshare_audit_report.md in the repo when --report is not given.
+    --query shows the network and PlugShare views of the matching stations instead.
+
+    REQ (2026-09-15, AGENTS.local.md): user, having just seen AmpCharge added
+    as a new Tier 1 provider - "I also would like to go back to the feature
+    request - that any tier 1 info that contradicts plugshare data is able to
+    be seen. The goal is to work to updating and improving stale data directly
+    with plugshare myself." Originally this only checked EVX and Chargefox by
+    name (a hardcoded if/elif per provider) and only flagged pricing that was
+    entirely missing on PlugShare, never a genuine mismatch, and never flagged
+    a hardware/power/stall difference despite the module docstring claiming it
+    did. Generalized here: NETWORK_ALIASES + network_matches() replace the
+    hardcoded per-provider branches (works for any current or future Tier 1
+    provider automatically, since the manager's own dedup already resolved
+    "the truth" onto the merged UnifiedStationRecord's own fields - only
+    PlugShare's own idiosyncratic nested view schema still needs its own
+    parsing), pricing now also flags a live mismatch (not just $0.00/unlisted),
+    and a new hardware/power/stalls check was actually implemented rather than
+    just documented.
+
+    Generates terminal tables and Markdown reports with direct clickable PlugShare edit URLs.
 """
 import os as _os, sys as _sys; _sys.path[:0] = [p for p in (_os.path.dirname(_os.path.abspath(__file__)), _os.path.dirname(_os.path.dirname(_os.path.abspath(__file__)))) if p not in _sys.path]      # the commands beside it, and Tools/ (lib, providers)
 
