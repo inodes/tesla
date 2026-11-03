@@ -29,7 +29,7 @@
      - Never include local usernames in documentation or scripts; always use `$USER`, `$HOME`, or `~`.
      - PII includes: Personal addresses, residential coordinates, trip/drive logs, tariff/billing rates tied to a real account, or any CSV files (all Tessie CSVs are classified as PII).
      - Non-PII includes: Public JSON files scraped from public websites (such as Tesla chargers or PlugShare registries) and sanitized `.example.json` templates.
-     - Never commit `places.json`, `config.json`, or `Tessie/invoices/*.pdf`.
+     - Never commit `places.json`, `config.json`, or invoice PDFs (`*.pdf`).
    - **PII Never Lives in the Repo Working Tree At All** (found via REQ-034 - `agl_tariff_rates.json`, real account tariff data, was being written directly into `Tools/`): this is stronger than "never commit" - a real/PII data file must never even be CREATED under `~/repos/tesla` (or its iCloud symlink), regardless of `.gitignore` status, because a file sitting there is one `git add -A` away from being committed and the whole point is to not depend on remembering to exclude it. Every script that reads/writes real data MUST resolve its path through that domain's own `resolve_*_data_home()` helper (e.g. `resolve_tessie_data_home()`, or a `BasePowerProvider.resolve_data_home()` implementation - REQ-070 generalized the AGL-specific `resolve_agl_data_home()` this rule originally named into that interface) - NEVER a path built from `os.path.dirname(__file__)` or otherwise hardcoded beside the script. `.gitignore` entries for real files (`config.json`, `places.json`, etc.) are a defense-in-depth backstop only, not the primary control - if a real file is ever found inside the repo tree at all, that is itself the bug to fix (relocate the file AND fix the code path that put it there), not just an ignore-list gap to patch.
    - **Credential & Secret Protection**: If any string resembles an API token, password, or secret, flag it immediately for inclusion in `.gitignore`.
    - **Cadence**: Regular `git status` checks and tidy, logical git commits should occur.
@@ -106,8 +106,8 @@ All terminal tools (such as `Tools/commands/analyse_drives.py` and `Tools/comman
    - Standard Python `len()` counts UTF-8 code points, which breaks alignment when emojis (e.g., 🏠, 🕒, 🛡️, 📹, ⚡, 🔴) or wide Asian characters are displayed.
    - Always calculate visual widths using `display_len()` and format cells with `pad_display(text, target_width, align="left"|"right"|"center")`.
 
-3. **Centralized Table & Display Standards (`Tools/table_formatter.py`)**:
-   - All tools MUST import formatting utilities from `Tools/table_formatter.py` (`char_width`, `display_len`, `pad_display`, `truncate_display`, `format_row`, `format_title_line`, `format_box_line`).
+3. **Centralized Table & Display Standards (`Tools/lib/table_formatter.py`)**:
+   - All tools MUST import formatting utilities from `Tools/lib/table_formatter.py` (`char_width`, `display_len`, `pad_display`, `truncate_display`, `format_row`, `format_title_line`, `format_box_line`).
    - **Emoji 0 vs 1 vs 2 Spaces Handling**:
      - `0 spaces`: Variation selectors (`\ufe0f`, `\ufe0e`), zero-width joiners/spaces (`\u200d`, `\u200b`, `\u200c`), and combining marks.
      - `1 space`: Standard ASCII, Latin, box drawing (`│`, `─`, `┌`, etc.), arrows (`➔`, `→`), bullets (`•`, `·`), standalone enclosed alphanumerics (`🅿`), and monospace emojis whose cursor advance in macOS Terminal libc is 1 cell (`🗓️`, `🛡️`, `⚙️`, `⚠️`, `⏱`, `🛠️`, `🏷️`, `🗺️`, `✔`, `🇦🇺`).
@@ -164,11 +164,11 @@ tesla/
 │                              #   panel-install geometry/ROI metadata (REQ-150); PVOutput/, SolarEdge/ -
 │                              #   one folder per PV-monitoring provider that has ever been active
 │                              #   (providers/pv/, 3.1); archive/ shared across domains.
-├── Tools/                     # CLI entry points ONLY - every *.py here is a real, user-invoked script
-│   │                          # with its own argparse-based --help (see 3.1); every *.sh here is a real,
-│   │                          # user-invoked script with its own -h/--help guard (see 3.3). Nothing in
-│   │                          # this directory is imported BY another script in this directory - if it
-│   │                          # is, it belongs in lib/ or providers/ instead (see 3.1).
+├── Tools/                     # tesla (the one entry point), tesla_app.py, build_mac_app.sh,
+│   │                          # restart_app.command, fix_exec_bits.sh and the folders below. Every
+│   │                          # command script is in commands/, with its own argparse-based --help
+│   │                          # (see 3.1) or -h/--help guard for *.sh (see 3.3). Nothing imports from
+│   │                          # commands/ - shared code belongs in lib/ or providers/ (see 3.1).
 │   │
 │   ├── lib/                   # Shared library modules (3.1) - plain function/helper collections that
 │   │   │                      # one or more CLI scripts import. No argparse, no user-facing --help
@@ -242,16 +242,19 @@ tesla/
 │   │       ├── __init__.py
 │   │       └── pv_base.py / pv_solaredge.py   # BasePvProvider interface + the SolarEdge implementation
 │   │
-│   ├── analyse_drives.py            # Drives explorer, footage linker, and master consolidator
-│   ├── analyse_charging.py          # 3-way charging reconciler, tariff auditor, and invoice matcher
-│   ├── places_manager.py            # Place tagging and geocoding utility
-│   ├── sync_charger_all.sh          # One-command CHARGERS-domain sync (hardware/station registries)
-│   ├── sync_charging_all.sh         # One-command CHARGING-SESSIONS-domain sync (Tessie/Evnex/invoices/AGL/cross-check prep)
-│   ├── sync_drives_all.sh           # One-command DRIVES-domain sync
-│   ├── sync_fuel_all.sh             # One-command FUEL-domain sync (NSW FuelCheck historical & live)
-│   ├── sync_fuel_history.py         # NSW FuelCheck discovery, download, and SQLite aggregator CLI
-│   ├── sync_invoices.py             # Multi-provider PDF invoice parser, renamer, and importer CLI
-│   └── ...                          # every other CLI script - analyse_*.py, charger_*.py, power_*.py, sync_*.py, etc.
+│   ├── commands/              # every user-run command script, run as ./Tools/tesla <group> <command>
+│   │   ├── analyse_drives.py            # Drives explorer, footage linker, and master consolidator
+│   │   ├── analyse_charging.py          # 3-way charging reconciler, tariff auditor, and invoice matcher
+│   │   ├── places_manager.py            # Place tagging and geocoding utility
+│   │   ├── sync_charger_all.sh          # One-command CHARGERS-domain sync (hardware/station registries)
+│   │   ├── sync_charging_all.sh         # One-command CHARGING-SESSIONS-domain sync (Tessie/Evnex/invoices/AGL/cross-check prep)
+│   │   ├── sync_drives_all.sh           # One-command DRIVES-domain sync
+│   │   ├── sync_fuel_all.sh             # One-command FUEL-domain sync (NSW FuelCheck historical & live)
+│   │   ├── sync_fuel_history.py         # NSW FuelCheck discovery, download, and SQLite aggregator CLI
+│   │   ├── sync_invoices.py             # Multi-provider PDF invoice parser, renamer, and importer CLI
+│   │   └── ...                          # every other command - analyse_*.py, charger_*.py, power_*.py, sync_*.py, etc.
+│   ├── maintenance/           # one-off fixes, migrations and API checks, run by hand
+│   └── archive/               # retired scripts (archive_log.md says why each was moved)
 └── dashcam/                    # TeslaCam clips and sentry event utilities
 ```
 
@@ -260,7 +263,7 @@ tesla/
 Every `.py` file under `Tools/` is exactly one of these three things. Decide which BEFORE creating a new
 file or moving an existing one - the answer decides where it lives and how it's named:
 
-- **CLI entry point** (stays directly in `Tools/`): has its own `argparse.ArgumentParser` and a real
+- **CLI entry point** (lives in `Tools/commands/`, listed in `Tools/tesla`'s GROUPS): has its own `argparse.ArgumentParser` and a real
   `if __name__ == "__main__":` that a person runs directly (`./script.py ...`). Gets a comprehensive,
   man-page-style `-h`/`--help` (3.3) - non-negotiable, every one, always kept current.
 - **Shared library module** (`Tools/lib/`): no argparse, no user-facing CLI - a collection of functions
@@ -299,7 +302,7 @@ puts `Tools/commands/` on `sys.path`; a name that is both a lib module and a com
 ### 3.2 Naming & grouping convention
 
 Prefer a shared **prefix** over a shared suffix for a family of related files, so they group together in a
-plain alphabetical listing (`ls Tools/chargers_*`, `ls Tools/lib/`) without needing `ls | grep`. `chargers_`
+plain alphabetical listing (`ls Tools/providers/chargers/chargers_*`, `ls Tools/lib/`) without needing `ls | grep`. `chargers_`
 (REQ-063) is the existing precedent for the providers/chargers/ family. When starting a new file that clearly belongs
 to an existing family (another chart renderer, another sync wrapper, another provider), prefix it to match
 rather than inventing a new pattern - and if a naming decision is genuinely ambiguous (which family it

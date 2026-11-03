@@ -6,7 +6,7 @@
 
 A modular suite of automation tools for Tesla owners on macOS:
 - **Dashcam Suite (`dashcam/`):** High-speed multi-drive sync, storage auditing, safe two-tier auto-pruning, and local browser video playback.
-- **Tessie Suite (`Tessie/`):** Drive & charging analysis, spatial geofencing for known place nicknames, entry/exit dashcam footage linking, and public charger discovery (Tesla Superchargers/Destination Chargers and PlugShare-listed 3rd-party chargers).
+- **Tessie Suite (`Tools/commands/`, templates and API notes in `resources/`):** Drive & charging analysis, spatial geofencing for known place nicknames, entry/exit dashcam footage linking, and public charger discovery (Tesla Superchargers/Destination Chargers and PlugShare-listed 3rd-party chargers).
 
 ---
 
@@ -22,9 +22,12 @@ tesla/
 │   ├── exportdash.cam/             # Next.js 4-camera browser player
 │   └── README.md                   # Full Dashcam documentation
 │
-├── Tessie/                         # 🗺️ Tessie documentation & examples
+├── resources/                      # 🗺️ Tessie documentation, API notes & *.example.json templates (was Tessie/)
 │   ├── places.example.json         # Generic template for custom place nicknames
 │   └── README.md                   # Full Tessie documentation
+│
+├── docs/                           # Design notes, command audit, config keys (docs/CONFIG.md)
+├── tests/                          # Unit tests (python3 -m unittest discover -s tests)
 │
 ├── Tools/
 │   ├── tesla                       # ⭐ every command in one place: ./Tools/tesla lists them, ./Tools/tesla sync drives runs one
@@ -43,7 +46,7 @@ tesla/
 │   ├── providers/                  # pluggable data-source adapters, one subpackage per domain (from providers.<domain> import ...):
 │   │   ├── chargers/               #   charging-network adapters (Tesla/Chargefox/EVX/Evie/BP Pulse/AmpCharge/Exploren/
 │   │   │                            #   Jolt/NRMA/PlugShare), used by ./Tools/tesla chargers find
-│   │   ├── power/                  #   power-retailer billing providers (currently AGL), chosen by config.json "power_provider"
+│   │   ├── power/                  #   power-retailer billing providers (currently AGL), chosen by config.json "power.provider"
 │   │   └── pv/                     #   solar data providers
 │   └── archive/                    # retired scripts, kept for reference
 │
@@ -131,7 +134,7 @@ Every command runs through one entry point: `./Tools/tesla` lists them by group 
 ./Tools/tesla chargers find --from Home --to "Canberra" --via "Goulburn" --dc --min-kw 150 --soc 90
 ./Tools/tesla chargers find --from "Sydney" --to "Melbourne" --network ampcharge --sort price --corridor 10
 ```
-👉 *See [Tessie/README.md](Tessie/README.md) for full documentation on drives, charging reconciliation, invoices, tariffs, places, ABRP EV route planning, and charger discovery.*
+👉 *See [resources/README.md](resources/README.md) for full documentation on drives, charging reconciliation, invoices, tariffs, places, ABRP EV route planning, and charger discovery.*
 
 ### 5. Home Charger (Evnex) Sync
 
@@ -172,7 +175,7 @@ Every command runs through one entry point: `./Tools/tesla` lists them by group 
 # Generate side-by-side net savings matrix against all benchmark comparison vehicles:
 ./Tools/tesla analyse charges --compare-all
 ```
-👉 *Historical pricing is indexed into `<tessie_data_home>/fuel/fuel_history.db` (SQLite) with microsecond queries and zero external dependencies. Comparison vehicles and running costs (maintenance & tyres) are sourced from the Australian Green Vehicle Guide (ADR 81/02) and fully configurable in `Tessie/comparison_vehicles.json`.*
+👉 *Historical pricing is indexed into `<tessie_data_home>/fuel/fuel_history.db` (SQLite) with microsecond queries and zero external dependencies. Comparison vehicles and running costs (maintenance & tyres) are sourced from the Australian Green Vehicle Guide (ADR 81/02) and fully configurable in `comparison_vehicles.json` in your data folder (template: `resources/comparison_vehicles.example.json`).*
 
 
 ### 7. Generic PDF Invoice Ingestion & AGL Extractor
@@ -195,7 +198,7 @@ Every command runs through one entry point: `./Tools/tesla` lists them by group 
 ### 8. Deploy Scripts to External Drives
 
 ```bash
-# Automatically install/update sync_dashcam.sh to /Volumes/*/Tools/ across all mounted drives
+# Automatically install/update Tools/commands/sync_dashcam.sh to /Volumes/*/Tools/ across all mounted drives
 ./Tools/tesla sync dashcam --install-tools
 ```
 
@@ -222,13 +225,13 @@ pip install -r requirements.txt
 Optional double-clickable app in `~/Applications` (a launcher around `tesla_app.py`, no Xcode; rebuild only if you move the repo; log in `~/Library/Logs/tesla_app.log`):
 
 ```bash
-./build_mac_app.sh
+./Tools/build_mac_app.sh
 ```
 
 Battery (charge level over time, parked drain, usual charge target, and under it the battery health: usable capacity and range against odometer, as `analyse_battery_health.py`) is one page. Software (Tesla software versions from Teslascope, with the FSD version each includes, a timeline, when a feature reached a region, and what a jump between two versions brings) is a page too. Every listing runs newest to oldest, ordered by the UTC time (which never repeats or skips) and shown in local time. Activity, Drives, Charges, Parked and Battery have a Tessie-style date picker (presets and a calendar; days with records are bold) that selects by local day.
 
-Charges: every charge reconciled with its invoice as in `./Tools/tesla analyse charges` (a plug-in Tessie recorded as several sessions is one charge with its records as parts; invoice details, whether Tessie holds the invoice cost, losses, telemetry, charging curves). Invoices tab lists every invoice. Reading only - to send invoice costs to Tessie use `./analyse_charging.py --sync-tessie-costs --apply`.
-Places (saved places, Superchargers named as on tesla.com, a Chargers tab with every charger from `charging_stations.json` and a **Sync chargers** button that runs `./Tools/tesla sync chargers`, nearby OpenStreetMap places, add / edit) is in the sidebar; parks are rows in Drives (a park that spans days is listed on each day), and the Parked pages with saved Sentry footage open from links. Street-accurate drive paths: `./drive_gps.py --budget 600` (newest drives first, safe to re-run) writes a mirror of each Tessie drive CSV with the dashcam's GPS fixes added, then `./drive_report.py` redraws the maps.
+Charges: every charge reconciled with its invoice as in `./Tools/tesla analyse charges` (a plug-in Tessie recorded as several sessions is one charge with its records as parts; invoice details, whether Tessie holds the invoice cost, losses, telemetry, charging curves). Invoices tab lists every invoice. Reading only - to send invoice costs to Tessie use `./Tools/tesla analyse charges --sync-tessie-costs --apply`.
+Places (saved places, Superchargers named as on tesla.com, a Chargers tab with every charger from `charging_stations.json` and a **Sync chargers** button that runs `./Tools/tesla sync chargers`, nearby OpenStreetMap places, add / edit) is in the sidebar; parks are rows in Drives (a park that spans days is listed on each day), and the Parked pages with saved Sentry footage open from links. Street-accurate drive paths: `./Tools/tesla build drive-gps --budget 600` (newest drives first, safe to re-run) writes a mirror of each Tessie drive CSV with the dashcam's GPS fixes added, then `./Tools/tesla build drive-pages` redraws the maps.
 
 Drives shorter than 50 m (and 10 min) are **re-parks**: Tessie records every shuffle of the car in a car park as a drive, so the app keeps them apart. Drives and Activity hide them by default (a Re-parks filter / chip shows them), and a place counts them separately instead of as arrivals. The time between arriving at a place and the next real drive leaving it is a parked period (a "stay") unless Tessie already has a parked or charge record for it. The limits are settings: `app.drives.repark_max_km` / `repark_max_minutes` in `config.json` (all app, map and lookup settings live in its `app` block; see `config.example.json`). Places also have a List / Map toggle, and "what is around here" says when OpenStreetMap's servers did not answer instead of showing an empty street.
 

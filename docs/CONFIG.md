@@ -1,6 +1,6 @@
 # config.json
 
-Copy `config.example.json` to `config.json` (or `resources/config.json`) and edit it. `config.json` is git-ignored: keep passwords and API keys there, never in a committed file. The `app.*` keys are described at the top of `Tools/lib/app_config.py`.
+Copy `config.example.json` to `config.json` in the repo root and edit it (an older `Tessie/config.json` is still read when the root one is missing; `TESLA_CONFIG` names another file). `config.json` is git-ignored: keep passwords and API keys there, never in a committed file. The `app.*` keys are described at the top of `Tools/lib/app_config.py`.
 
 | Key | What it is |
 |---|---|
