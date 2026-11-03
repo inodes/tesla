@@ -291,3 +291,17 @@ main:has(#spl .stbar,#spl .vbar) #splx{display:none}
 
 .clkchg{display:flex;align-items:center;gap:8px;margin:2px 8px;color:var(--mut);font-size:12px}.clkchg:before,.clkchg:after{content:"";flex:1;border-top:1px dashed var(--mut);opacity:.6}.clkchg svg{flex:none}
 .clkc svg{vertical-align:-2px}
+
+/* the overlay on a drive's front camera (sized in 1 % of the picture's width: its font-size is set by the page) */
+.sp figure[data-c=front]{position:relative}
+.hud{position:absolute;pointer-events:none;z-index:2;color:#fff}
+.hud .hsg{position:absolute;top:2em;left:50%;transform:translateX(-50%);width:9em;height:9em;box-sizing:border-box;border:1.1em solid #d6201b;border-radius:50%;background:#fff;color:#111;display:flex;align-items:center;justify-content:center;box-shadow:0 0 .4em rgba(0,0,0,.5)}
+.hud .hsg b{font:800 4.2em/1 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;letter-spacing:-.03em}
+.hud .hsg.d3 b{font-size:3.3em}
+.hud .hsp{position:absolute;bottom:2em;left:50%;transform:translateX(-50%);background:rgba(0,0,0,.55);border-radius:1.2em;padding:.3em 1.4em;display:flex;align-items:baseline;gap:.6em;white-space:nowrap}
+.hud .hsp b{font:700 4.6em/1.1 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;font-variant-numeric:tabular-nums}
+.hud .hsp small{font-size:1.8em;opacity:.85}
+.hud .hbk{position:absolute;top:2em;width:6em;height:6em;fill:#f59e0b;display:none;filter:drop-shadow(0 0 .3em rgba(0,0,0,.7))}
+.hud .hl{left:2em}.hud .hr{right:2em;transform:scaleX(-1)}
+.hud .hbk.on{display:block;animation:hudfl .74s steps(1) infinite}
+@keyframes hudfl{0%{opacity:1}50%{opacity:.12}}
