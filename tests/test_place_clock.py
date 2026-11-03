@@ -45,6 +45,15 @@ class DriveClockTest(unittest.TestCase):
         it = TL.show(dict(t0=T0, t1=T1, p0=MAIN_BEACH, p1=NEW_ITALY), lo=AEST)
         self.assertEqual((it["lo"], it["lo1"], it["end"]), (AEST, AEST, "2026-10-11T16:35:00"))
 
+    def test_window_start_clock_given_end_still_on_its_own_clock(self):
+        # the drive page asks for the window on the start's clock; the end must still read 17:35, not 16:35
+        it = TL.show(dict(t0=T0, t1=T1, p0=MAIN_BEACH, p1=NEW_ITALY), lo=AEST, own_end=True)
+        self.assertEqual((it["lo"], it["lo1"], it["end"]), (AEST, AEDT, "2026-10-11T17:35:00"))
+
+    def test_window_without_end_position_keeps_the_given_clock(self):
+        it = TL.show(dict(t0=T0, t1=T1), lo=AEST, own_end=True)
+        self.assertEqual((it["lo"], it["lo1"]), (AEST, AEST))
+
     def test_no_position_falls_back_to_the_app_clock(self):
         it = TL.show(dict(t0=T0, t1=T1))
         self.assertEqual(it["lo"], it["lo1"])
