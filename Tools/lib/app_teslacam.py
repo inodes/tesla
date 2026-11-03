@@ -5,6 +5,7 @@ thumb.png), read by app_sentry.Sentry. RecentClips is one flat folder of <stamp>
 grouped here into continuous runs (minutes less than 75 s apart), which is what a drive looks like. Nothing is changed
 on a drive, and a drive is only read when the page asks for it (an Archive-only default, see drive_roles.py).
 """
+import bisect
 import os
 import re
 import threading
@@ -27,6 +28,31 @@ import teslacam_files as TF
 KINDS = {"sentry": "SentryClips", "saved": "SavedClips"}
 _REC = re.compile(r"^(\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2})-(%s)\.mp4$" % "|".join(app_sentry.CAMS))
 GAP = 75                                    # seconds between two minutes that still belong to one run
+
+
+def hole_filled(last_stamp, next_stamp, fill):
+    """True when the hole between two Recent runs is one drive or one park: both ends lie in the same section of the timeline (run_cuts) and the minutes missing between
+    them are the minutes of Saved clips (a drive) or Sentry clips (a park) cut from them - the car kept those minutes in another folder, so the footage is one
+    recording with a part moved. `fill` = sorted UTC seconds of every Saved and Sentry minute."""
+    ta, tb = _secs(last_stamp) + 60, _secs(next_stamp)
+    sa, sb = RC.section(last_stamp), RC.section(next_stamp)
+    if not sa or not sb or sa != sb or sa[0] not in ("drive", "park"):
+        return False
+    need = (tb - ta) / 60.0
+    have = bisect.bisect_left(fill, tb + 30) - bisect.bisect_left(fill, ta - 30)
+    return have >= need - 1
+
+
+def join_runs(runs, fill):
+    """Runs (each {stamps, t1}, oldest first) with the ones a filled hole separates made one."""
+    out = []
+    for r in runs:
+        if out and hole_filled(out[-1]["stamps"][-1], r["stamps"][0], fill):
+            out[-1]["stamps"] += r["stamps"]
+            out[-1]["t1"] = r["t1"]
+        else:
+            out.append(r)
+    return out
 _LOCK = threading.Lock()
 
 
@@ -256,8 +282,21 @@ class TeslaCam:
             else:
                 cur = dict(t1=t, stamps=[st])
                 runs.append(cur)
+        fill = sorted(_secs(st) for kind in KINDS for e in out[kind] for st in (e.get("clips") or {}))
+        runs = join_runs(runs, fill)
         gone_home = []
-        for r in runs:
+        store = self._tl("A")
+
+        def edge_pos(i):
+            """Where a parked run with no position of its own was: where the drive just before it ended, else where the drive just after it began (estimated)."""
+            for j, side in ((i - 1, "p1"), (i + 1, "p0")):
+                if 0 <= j < len(runs) and RC.kind(runs[j]["stamps"][0]) == "drive":
+                    sm = store.summary(runs[j]["stamps"][-1 if side == "p1" else 0])
+                    q = sm.get(side) if isinstance(sm, dict) else None
+                    if q and q[0] is not None:
+                        return [q[0], q[1]]
+            return None
+        for i, r in enumerate(runs):
             sts = r["stamps"]
             a, b = sts[0], sts[-1]
             roles = sorted(set().union(*(holders[x] for x in sts)))
@@ -267,7 +306,7 @@ class TeslaCam:
                     gone_home.extend(sts)
                     continue
             minute_play = {x: next((q for q in sorted(holders[x]) if roots.get(q)), None) for x in sts}
-            out["recent"].append(dict(id=a, ts=_ts(a), end=_ts(b), t0=_secs(a), t1=_secs(b) + 60, part=RC.kind(a), pos=RC.pos(a), pos_est=RC.pos_est(a), n=len(sts), full=sum(1 for x in sts if len(cams[x]) == 6),
+            out["recent"].append(dict(id=a, ts=_ts(a), end=_ts(b), t0=_secs(a), t1=_secs(b) + 60, part=RC.kind(a), pos=RC.pos(a) or (edge_pos(i) if RC.kind(a) == "park" else None), pos_est=RC.pos_est(a) or (RC.pos(a) is None and RC.kind(a) == "park"), n=len(sts), full=sum(1 for x in sts if len(cams[x]) == 6),
                                       roles=roles, play=minute_play[a] or next((q for q in minute_play.values() if q), None), playable=sum(1 for q in minute_play.values() if q)))
         out["recent"].sort(key=lambda x: x["t0"], reverse=True)
         if gone_home:
@@ -280,10 +319,12 @@ class TeslaCam:
         sts = sorted(cams)
         if rid not in cams:
             return None
+        known = sorted(TLG.Ledger(self.dir).scans())
+        fill = sorted(_secs(st) for kind in KINDS for e in self._events_kept(kind, set(known)) for st in (e.get("clips") or {}))
         run, last = [], None
         for st in sts:
             t = _secs(st)
-            if last is not None and (t - last > GAP or RC.is_cut(st)):
+            if last is not None and (t - last > GAP or RC.is_cut(st)) and not hole_filled(run[-1], st, fill):
                 if rid in run:
                     break
                 run = []
