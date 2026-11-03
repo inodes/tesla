@@ -1000,6 +1000,14 @@ function lostBox(box,s){
       box.querySelector(".lostb b").textContent=f.name+(h.files.length>1?` and ${h.files.length-1} more camera${h.files.length>2?"s":""}`:"");
       say("On "+f.drives.map(d=>`${d.label} (${sizeGB(d.size_gb)})`).join(", then ")+(f.drives.some(d=>d.connected)?"":". None of these drives is connected")+".")}
     else say(h.state==="deleted"?"This video has been deleted from every drive. The stills are kept.":"This video was never logged on any drive.")}).catch(()=>say("Could not look up where this video is."))}
+// HUD begin: the overlay on a drive's front camera: the speed limit last read from a sign, the car's speed, and the indicators
+// the limit the car is under: the latest speed sign read at or before this moment (up to an hour of minutes back); a school-zone sign (it has times) is not a limit to hold. -> km/h or null
+const hudLimit=(SGV,stamps,si,t)=>{for(let i=si;i>=0&&i>=si-60;i--){const L=(SGV[stamps[i]]||[]).filter(g=>g.kind!=="school"&&/^\d{2,3}$/.test(String(g.text))&&(i<si||g.s0<=t+.5));if(L.length)return +L.reduce((a,g)=>g.s0>=a.s0?g:a).text}return null};
+// the indicator bits of a second (1 left, 2 right, both = hazards) -> which arrows flash
+const hudBlink=b=>({l:!!(+b&1),r:!!(+b&2)});
+// where the picture is inside its video box (the video keeps its shape, so a tall box has bars above and below it): {x,y,w,h} in the box's pixels
+const hudBox=(bw,bh,vw,vh)=>{const r=vw>0&&vh>0?vw/vh:2896/1876,w=Math.min(bw,bh*r),h=w/r;return{x:(bw-w)/2,y:(bh-h)/2,w,h}};
+// HUD end
 function clipPlayer(host,o){
   const stamps=o.stamps;if(!stamps.length){host.innerHTML='<div class="sub">This has no video clips.</div>';return}
   // a clip's name is the car's clock (stMs: only used to place things that are on that same clock, like a Sentry trigger); what is SHOWN is the local clock (o.loc: stamp -> local text)
@@ -1014,7 +1022,7 @@ function clipPlayer(host,o){
   if(o.at==="trig"&&o.trig)trigAt();
   const shell=()=>{host.innerHTML=`<div class="sp"><div class="bar"><button class="chip ${view==="all"?"on":""}" data-c="all">All six</button>${Object.keys(CAMN).map(c=>`<button class="chip ${view===c?"on":""}" data-c="${c}">${CAMN[c]}</button>`).join("")}</div>
     <div class="sub" style="margin:4px 0 8px">${o.head}</div>
-    <div class="vbar">${$("#splc")?'<button class="btn" id="vcl" title="Close (Esc)">✕ Close</button>':""}<button class="btn" id="vpl">❚❚ Pause</button>${o.trig?'<button class="btn" id="vtr" title="Go to the moment it was detected">↧ Detection</button>':""}${o.trig&&o.at==="trig"?'<button class="btn" id="vfs" title="Go to the start of the first clip">⇤ From Start</button>':""}<input type="range" id="vsk" min="0" max="60" step="0.1" value="0"><span id="vtm">0:00</span><span class="vsg" id="vsg"></span>
+    <div class="vbar">${$("#splc")?'<button class="btn" id="vcl" title="Close (Esc)">✕ Close</button>':""}<button class="btn" id="vpl">❚❚ Pause</button>${o.tele?`<button class="chip ${hudOn()?"on":""}" id="vhud" title="The speed limit sign, the speed and the indicators over the front camera">Overlay</button>`:""}${o.trig?'<button class="btn" id="vtr" title="Go to the moment it was detected">↧ Detection</button>':""}${o.trig&&o.at==="trig"?'<button class="btn" id="vfs" title="Go to the start of the first clip">⇤ From Start</button>':""}<input type="range" id="vsk" min="0" max="60" step="0.1" value="0"><span id="vtm">0:00</span><span class="vsg" id="vsg"></span>
      <select id="vsp">${["0.5","1","2","4","8","16"].map(r=>`<option value="${r}" ${r===rate?"selected":""}>${r}×</option>`).join("")}</select>
      ${stamps.length>1?`<select id="stp">${stamps.map((s,i)=>`<option value="${i}" ${i===si?"selected":""}>${clock(s)}${(o.cams[s]||[]).length?"":"  · no video"}${o.trig&&stMs(s)<=o.trig&&o.trig<stMs(s)+60000?"  ◀ happened":""}</option>`).join("")}</select>`:""}</div>
     <div id="vids"></div></div>`;
@@ -1022,8 +1030,20 @@ function clipPlayer(host,o){
     $("#vsp").onchange=e=>{rate=e.target.value;lsSet("tc.rate",rate);vs.forEach(v=>v.playbackRate=+rate)};
     if($("#stp"))$("#stp").onchange=e=>{si=+e.target.value;seek=0;vids()};
     if($("#vtr"))$("#vtr").onclick=toTrig;
+    if($("#vhud"))$("#vhud").onclick=()=>{lsSet("tc.hud",hudOn()?"0":"1");$("#vhud").classList.toggle("on",hudOn());hudUpd()};
     if($("#vfs"))$("#vfs").onclick=toStart;
     vids()};
+  // the overlay on the front camera: the speed limit sign (top middle), the speed (bottom middle) and the indicators (top corners, flashing while they are on). It is sized in 1 % of the picture's width
+  // (its font-size), so it scales with the video; where the video is not on screen (a minute with no video) there is none.
+  function hudOn(){return lsGet("tc.hud","1")==="1"}
+  const hudUpd=()=>{if(!o.tele||!mv)return;const fig=$('#vids figure[data-c="front"]'),vd=fig&&fig.querySelector("video");if(!vd)return;let h=fig.querySelector(".hud");
+    if(!hudOn()){if(h)h.remove();return}
+    if(!h){h=document.createElement("div");h.className="hud";h.innerHTML='<div class="hsg" hidden><b></b></div><div class="hsp" hidden><b></b><small>km/h</small></div><svg class="hbk hl" viewBox="0 0 24 24"><path d="M2 12l9-8v5h11v6H11v5z"/></svg><svg class="hbk hr" viewBox="0 0 24 24"><path d="M2 12l9-8v5h11v6H11v5z"/></svg>';fig.appendChild(h)}
+    const b=hudBox(vd.clientWidth,vd.clientHeight,vd.videoWidth,vd.videoHeight),st=h.style;st.left=(vd.offsetLeft+b.x)+"px";st.top=(vd.offsetTop+b.y)+"px";st.width=b.w+"px";st.height=b.h+"px";st.fontSize=(b.w/100)+"px";
+    const T=o.tele(stamps[si],mv.currentTime),lim=hudLimit(SGV,stamps,si,mv.currentTime),sg=h.querySelector(".hsg"),sp=h.querySelector(".hsp"),bk=hudBlink(T?T.blk:0);
+    sg.hidden=lim==null;if(lim!=null){const n=sg.firstChild;if(n.textContent!==String(lim)){n.textContent=lim;sg.classList.toggle("d3",lim>=100)}}
+    sp.hidden=!T||T.v==null;if(T&&T.v!=null)sp.firstChild.textContent=Math.round(T.v);
+    h.querySelector(".hl").classList.toggle("on",bk.l);h.querySelector(".hr").classList.toggle("on",bk.r)};
   // the signs read in these minutes (speed limits): shown beside the time while the video is at them
   let SGV={};const vsigns=()=>{const el=$("#vsg");if(!el||!mv)return;const t=mv.currentTime,L=(SGV[stamps[si]]||[]).filter(g=>t>=g.s0-1.5&&t<=g.s1+1.5);
     const h=L.map(g=>`<i class="bsp" title="${esc("Speed limit "+g.text+(g.conf>0?", "+g.conf+"% sure":""))}">${esc(g.text)}</i>`).join("")+(o.signInfo?L.map(g=>o.signInfo(stamps[si],g)).join(""):"");if(el.innerHTML!==h)el.innerHTML=h};
@@ -1043,7 +1063,7 @@ function clipPlayer(host,o){
     // the button always shows what pressing it does: Pause while playing, Play while paused (a clip that ended into the next minute counts as playing)
     const lab=()=>{pl.textContent=(mv.paused||mv.ended)&&!(mv.ended&&si<stamps.length-1)?"▶ Play":"❚❚ Pause"};
     ["play","playing","pause","ended","emptied"].forEach(n=>mv.addEventListener(n,lab));lab();
-    mv.ontimeupdate=()=>{if(!document.contains(host)){dropAll();return}vsigns();hotUpd();sk.value=mv.currentTime;if(o.onTime)o.onTime(stMs(stamps[si])+mv.currentTime*1000);if(o.onAt)o.onAt(stamps[si],mv.currentTime);tm.textContent=fmt(mv.currentTime)+" · "+shownAt(stamps[si],mv.currentTime);
+    mv.ontimeupdate=()=>{if(!document.contains(host)){dropAll();return}vsigns();hotUpd();hudUpd();sk.value=mv.currentTime;if(o.onTime)o.onTime(stMs(stamps[si])+mv.currentTime*1000);if(o.onAt)o.onAt(stamps[si],mv.currentTime);tm.textContent=fmt(mv.currentTime)+" · "+shownAt(stamps[si],mv.currentTime);
       // keep the cameras together without seeking (a seek stalls that camera): a small drift is nudged out by speeding it up or slowing it down a little, only a large one is jumped
       vs.forEach(x=>{if(x===mv)return;const dr=x.currentTime-mv.currentTime;
         if(Math.abs(dr)>1.2){try{x.currentTime=mv.currentTime}catch(e){}x.playbackRate=+rate}
@@ -2389,7 +2409,7 @@ async function teslaDriveBody(host,role,fetchSeg,places,opts){
     const allM=cont(),blackDrive=!playable.length&&!d.minutes.length&&allM.length>0;      // a drive Tessie knows, with no footage at all: all black
     if(!player&&(playable.length||blackDrive)){const mm=allM,cams={},meta={},syn={},len={};mm.forEach(m=>{cams[m.stamp]=m.cams||[];meta[m.stamp]=m;if(m.syn){syn[m.stamp]=1;len[m.stamp]=m.len}});covStrip(mm);
       player=clipPlayer($("#dvid"),{stamps:mm.map(m=>m.stamp),cams,syn,len,still:stillSrc,trig:opts.trig,
-        hot:opts.hot,signInfo,
+        hot:opts.hot,signInfo,tele:(st,sec)=>{const sr=S(),m=meta[st];if(!sr||!m)return null;const i=m.off+Math.floor(sec);return sr.v[i]==null?null:{v:sr.v[i],blk:sr.blk[i]||0}},
         url:(st,c)=>meta[st].src==="saved"?`/footage/${role}/SavedClips/${meta[st].ref}/${st}-${c}.mp4`:meta[st].src==="sentry"?`/footage/${role}/SentryClips/${meta[st].ref}/${st}-${c}.mp4`:`/footage/${role}/RecentClips/${st}-${c}.mp4`,
         loc:Object.fromEntries(mm.map(m=>[m.stamp,m.loc])),onAt:(st,sec)=>cursor(meta[st].off+sec),head:`${it().kind==="drive"?"Click the map or the chart to jump there; the dot and the line follow the video.":"The car was not moving, so there is no map."} Each minute plays on to the next, Recent and Saved alike; where there is no video the cameras are black and the clock runs on.`})}
     else if(!player&&!playable.length&&d.minutes.length){const mm=d.minutes,meta={};mm.forEach(m=>{meta[m.stamp]=m});      // the video is on no connected drive: its stills play in the same place, one picture where the video shows six, with the same map and chart
