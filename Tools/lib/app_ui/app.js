@@ -1710,7 +1710,7 @@ function tlDays(host,items,o){
   const place=v=>nameAt(places,v.p0)||nameAt(places,v.p1)||nameAt(places,v._pos);
   const tm=v=>clockHM(v.start)+" – "+(v.ongoing?"now":clockHM(v.end)),mins=v=>Math.max(1,Math.round(((v.ongoing?Math.max(v.t1,Date.now()/1000):v.t1)-v.t0)/60));
   // where things were: a saved place first; else what Tessie's own record of the drive says; else (Sentry) the city and street; a drive's ends are where the stopped spells next to it were
-  const TS=(o.tess||[]).map(x=>({s:x.t0,e:x.t0+x.min*60,frm:x.frm||"",to:x.to||""})).sort((a,b)=>a.s-b.s),WIN=20*60;       // UTC seconds
+  const TS=(o.tess||[]).map(x=>({s:x.t0,e:x.t1||x.t0+x.min*60,frm:x.frm||"",to:x.to||""})).sort((a,b)=>a.s-b.s),WIN=20*60;       // UTC seconds
   const tOver=v=>{const s0=v.t0,e0=v.t1;let b=null,bo=0;for(const t of TS){const ov=Math.min(e0,t.e)-Math.max(s0,t.s);if(ov>bo){bo=ov;b=t}}return b};
   // a spot that is not a saved place, where the car has just charged: the charger's name, as the charge is stored (not the street address)
   const CH=(o.chg||[]).filter(c=>c.place&&c.lat!=null),CR=cfg("drives.charger_name_m")||300,CW=cfg("drives.charge_window_minutes")*60;
@@ -1728,7 +1728,8 @@ function tlDays(host,items,o){
     const s0=v.t0,e0=v.t1,a=TS.filter(t=>t.to&&Math.abs(t.e-s0)<=WIN).sort((x,y)=>Math.abs(x.e-s0)-Math.abs(y.e-s0))[0];if(a)return a.to;
     const z=TS.filter(t=>t.frm&&Math.abs(t.s-e0)<=WIN).sort((x,y)=>Math.abs(x.s-e0)-Math.abs(y.s-e0))[0];return z?z.frm:cs};
   const chron=rs.slice().sort((a,b)=>a.t0-b.t0),stays=chron.filter(v=>v._c==="parked"||v._c==="sentry");
-  const around=(v,end)=>{const t=end?v.t1:v.t0;let best=null,bd=WIN;for(const k of stays){const d=end?Math.abs(k.t0-t):Math.abs(k.t1-t);if(d<bd){const n=stayAt(k);if(n){bd=d;best=n}}}return best||""};
+  const around=(v,end)=>{const t=end?v.t1:v.t0;let best=null,bd=WIN;const pv=end?v.p1:v.p0;for(const k of stays){const d=end?Math.abs(k.t0-t):Math.abs(k.t1-t),pk=end?k.p0:k.p1;if(pv&&pk&&pv[0]!=null&&pk[0]!=null&&hav(pv[0],pv[1],pk[0],pk[1])>500)continue;      // a stay somewhere else is not where this drive was
+      if(d<bd){const n=stayAt(k);if(n){bd=d;best=n}}}return best||""};
   const ends=v=>{const t=tOver(v);return[chStart(v)||nameAt(places,v.p0)||(t&&t.frm)||around(v,false)||"Unknown",chEnd(v)||nameAt(places,v.p1)||(t&&t.to)||around(v,true)||"Unknown"]};
   // a parked row says what the spot is: where a charge happened during the park, the charge ("Supercharger" / "Charger", opens the charging session); a saved place (opens it); else a button to save the spot.
   // Being parked at a charger is not a charge, so a charger's listing is never offered from position alone

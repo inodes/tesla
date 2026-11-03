@@ -207,6 +207,33 @@ class JoinParksTest(unittest.TestCase):
         self.assertEqual((out[0]["t0"], out[0]["t1"]), (1000, 5000))
         self.assertEqual(out[0]["moves"], ["m"])
 
+    def test_a_short_move_after_a_drive_at_a_charger_is_the_end_of_that_drive(self):
+        # 22:18-22:25 drive, 22:25-22:26 shuffle into the bay, then the charge: one drive, not a drive and a "short move"
+        A, B = [-30.3098, 153.0977], [-30.2813, 153.1316]
+        items = [self._it("c", "charge", 1060, 3000, p0=B, p1=B), self._it("m", "drive", 1000, 1060, short=True, p0=B, p1=B, km=0.06, frm="Plaza", to="Plaza"),
+                 self._it("d", "drive", 0, 1000, km=5.47, p0=A, p1=B, frm="Motel", to="Coffs Harbour")]
+        out = DL.join_parks(items)
+        self.assertEqual([x["kind"] for x in out], ["charge", "drive"])
+        d = out[1]
+        self.assertEqual((d["t0"], d["t1"], d["km"], d["to"]), (0, 1060, 5.53, "Plaza"))
+        self.assertEqual([p["id"] for p in d["parts"]], ["d", "m"])
+        self.assertEqual(d["moves"], ["m"])
+        self.assertFalse(d.get("short"))
+
+    def test_a_short_move_right_before_a_drive_is_the_start_of_that_drive(self):
+        A, B = [-30.2813, 153.1316], [-30.3098, 153.0977]
+        items = [self._it("d", "drive", 1060, 2000, km=6.4, p0=A, p1=B, frm="Charger", to="Motel"), self._it("m", "drive", 1000, 1060, short=True, p0=A, p1=A, km=0.02),
+                 self._it("c", "charge", 0, 1000, p0=A, p1=A)]
+        out = DL.join_parks(items)
+        self.assertEqual([x["kind"] for x in out], ["drive", "charge"])
+        self.assertEqual((out[0]["t0"], out[0]["t1"]), (1000, 2000))
+        self.assertEqual([p["id"] for p in out[0]["parts"]], ["m", "d"])
+
+    def test_a_short_move_far_from_where_the_drive_ended_stays_its_own_row(self):
+        A, B, C = [-30.3098, 153.0977], [-30.2813, 153.1316], [-30.2000, 153.2000]
+        items = [self._it("m", "drive", 1010, 1070, short=True, p0=C, p1=C), self._it("d", "drive", 0, 1000, km=5.0, p0=A, p1=B)]
+        self.assertEqual(len(DL.join_parks(items)), 2)
+
     def test_a_short_move_that_ends_elsewhere_is_not_absorbed(self):
         far = [-33.9, 151.2]
         items = [self._it("p", "parked", 1060, 5000, p0=far, p1=far), self._it("m", "drive", 1000, 1060, short=True, p1=self.H, p0=self.H)]
