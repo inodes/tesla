@@ -661,7 +661,13 @@ class ClipKeep:
                 if self._stop:
                     break
                 j["current"] = ev["id"]
-                self.evst.make(kind, ev, win, got, stop=lambda: self._stop)
+                try:
+                    self.evst.make(kind, ev, win, got, stop=lambda: self._stop)
+                except ST.DriveStalled:
+                    raise                                       # the drive stopped answering: the run stops, as before
+                except Exception as e:                          # one event that cannot be read does not stop the rest
+                    if len(j["errors"]) < 20:
+                        j["errors"].append("%s %s: %s: %s" % (kind, ev["id"], type(e).__name__, e))
                 n += 1
                 j["step_done"] = n
         except Exception as e:

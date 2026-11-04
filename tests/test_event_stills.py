@@ -94,6 +94,24 @@ class EventStillsTest(unittest.TestCase):
         paths.all = allp
         return paths
 
+    def test_a_half_second_picture_the_video_did_not_give_does_not_stop_the_event(self):
+        """The last half-second frame of a minute can be past the end of the video: ffmpeg makes one picture fewer. That must leave it out, not abort the event (a None in the zip's list)."""
+        base = ST.run_ffmpeg
+
+        def run(cmd, timeout=0):
+            r = base(cmd, timeout)
+            if cmd[cmd.index("-ss") + 1].endswith(".5") and "%03d" in cmd[-1]:       # a half-second run: drop its last picture
+                n = int(cmd[cmd.index("-t") + 1])
+                os.remove(cmd[-1] % (n - 1))
+            return r
+        ST.run_ffmpeg = run
+        paths = self._all()
+        win = EV.window(self.ev, {s: set(EV.CAMS) for s in paths}, "front")
+        self.st.make("sentry", dict(self.ev, cam="0"), win, paths)                        # no TypeError from a missing picture
+        i = self.st.info("sentry", "ev1")
+        self.assertTrue(i.get("more"))
+        self.assertTrue(self.st.seconds("sentry", "ev1", half=True)[S2])                  # the half-second pictures that were made are kept
+
     def test_the_other_cameras_and_the_half_second_pictures_are_cut_once_after_the_main_ones(self):
         paths = self._all()
         win = EV.window(self.ev, {s: set(EV.CAMS) for s in paths}, "front")
