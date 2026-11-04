@@ -1,28 +1,40 @@
 #!/usr/bin/env python3
 """drive_actions.py - carry out the footage actions queued on a drive page (REQ-194).
 
-The drive pages (drive_report.py) cannot touch files themselves. Their footage section queues actions and
-"Download queue" writes tesla_clip_queue_<time>.json to your Downloads folder. This script reads those files:
+NAME
+    drive_actions.py - carry out the footage actions queued on the drive pages
 
-    copy    copy the chosen clips (all cameras you ticked) to a folder
-    delete  flag the chosen RecentClips minutes in .TeslaCam_tombstones.json (same registry analyse_drives.py and
-            sync_dashcam.sh use). Files stay until a purge; add --purge to run the normal purge now.
-    save    make a SavedClips entry from RecentClips minutes: SavedClips/<YYYY-MM-DD_hh-mm-ss>/ with the files
-            moved in and an event.json (reason user_interaction_dashcam_launcher_action_tapped)
+SYNOPSIS
+    ./Tools/tesla build drive-actions [QUEUE.json ...] [--apply] [--purge [--with-secondary]] [--root ROLE=DIR ...]
 
-Usage:
-  drive_actions.py [QUEUE.json ...] [--apply] [--purge] [--root NAME=TeslaCamDir ...]
+DESCRIPTION
+    Reads each queue file named, or every ~/Downloads/tesla_clip_queue*.json not yet done, and
+    carries out its copy, delete and save actions on the TeslaCam drives. Without --apply it only
+    prints what each action would do. With --apply each finished queue file is renamed to
+    *.done.json. Options are described below.
 
-  QUEUE.json   queue file(s); default: every ~/Downloads/tesla_clip_queue*.json not yet done
-  --apply      really do it. Without it nothing changes: you only see what each action would do (dry run).
-  --purge      after flagging deletes, run the standard purge (analyse_drives.purge_flagged_tombstones_across_drives).
-               Careful: that purges EVERYTHING flagged in the registry, not just this queue. Dry run lists it first.
-  --root       override where a drive lives, e.g. --root "A=/Volumes/Something/TeslaCam" (A Archive, J JOWUA, U Tesla USB).
-               Default: found by what is ON each mounted drive (marker folder ARCHIVE_2TB / JOWUA_1TB / TESLA_USB_*, else size),
-               because volume names (TESLADRIVE, TESLADRIVE 1, ...) are interchangeable and say nothing. See lib/drive_roles.py.
+    The drive pages (drive_report.py) cannot touch files themselves. Their footage section queues actions and
+    "Download queue" writes tesla_clip_queue_<time>.json to your Downloads folder. This script reads those files:
 
-Finished queue files are renamed to *.done.json (never deleted). Nothing is ever deleted except by --purge.
-Delete and save only work on RecentClips minutes on the Archive (master) drive; SavedClips/Sentry are copy-only.
+        copy    copy the chosen clips (all cameras you ticked) to a folder
+        delete  flag the chosen RecentClips minutes in .TeslaCam_tombstones.json (same registry analyse_drives.py and
+                sync_dashcam.sh use). Files stay until a purge; add --purge to run the normal purge now.
+        save    make a SavedClips entry from RecentClips minutes: SavedClips/<YYYY-MM-DD_hh-mm-ss>/ with the files
+                moved in and an event.json (reason user_interaction_dashcam_launcher_action_tapped)
+
+    Usage:
+      drive_actions.py [QUEUE.json ...] [--apply] [--purge] [--root NAME=TeslaCamDir ...]
+
+      QUEUE.json   queue file(s); default: every ~/Downloads/tesla_clip_queue*.json not yet done
+      --apply      really do it. Without it nothing changes: you only see what each action would do (dry run).
+      --purge      after flagging deletes, run the standard purge (analyse_drives.purge_flagged_tombstones_across_drives).
+                   Careful: that purges EVERYTHING flagged in the registry, not just this queue. Dry run lists it first.
+      --root       override where a drive lives, e.g. --root "A=/Volumes/Something/TeslaCam" (A Archive, J JOWUA, U Tesla USB).
+                   Default: found by what is ON each mounted drive (marker folder ARCHIVE_2TB / JOWUA_1TB / TESLA_USB_*, else size),
+                   because volume names (TESLADRIVE, TESLADRIVE 1, ...) are interchangeable and say nothing. See lib/drive_roles.py.
+
+    Finished queue files are renamed to *.done.json (never deleted). Nothing is ever deleted except by --purge.
+    Delete and save only work on RecentClips minutes on the Archive (master) drive; SavedClips/Sentry are copy-only.
 """
 import os as _os, sys as _sys; _sys.path[:0] = [p for p in (_os.path.dirname(_os.path.abspath(__file__)), _os.path.dirname(_os.path.dirname(_os.path.abspath(__file__)))) if p not in _sys.path]      # the commands beside it, and Tools/ (lib, providers)
 import argparse

@@ -3,31 +3,43 @@
 report_all_charges_cost.py - "Our calculated/known cost" vs "Tessie's own
 reported cost" for every real Tessie charge record (REQ-147).
 
-User's request (2026-09-26, verbatim): "go through all the charges in
-Tessie (including DC charging). For Home charging, you'll need to work
-it out. For DC charging you know the amounts from invoice. Do a table
-for all with our calculated or known cost vs Tessie."
+NAME
+    report_all_charges_cost.py - known or worked-out cost of every charge against Tessie's cost
 
-The actual per-charge cost computation lives in lib/charge_cost_model.py
-(shared with analyse_charging.py's --sync-tessie-costs, REQ-148, which
-pushes these same figures back to Tessie's own live account via
-set_cost) - this script is just the read-only local report over it.
+SYNOPSIS
+    ./Tools/maintenance/report_all_charges_cost.py
 
-Data-quality note (handled in lib/charge_cost_model.py, kept here for
-visibility): analyse_charging.py's own load_charges() merges the live
-charges_master.csv together with several old archived/pre-migration
-master backups under charges/archive/ that use slightly different
-"Started At" text formats, producing near-duplicate (same underlying
-charge, different dedup key) entries when loaded unmodified - confirmed
-live (478 raw charges loaded vs 239 real rows in the live
-charges_master.csv). This script loads charges/invoices/detailed
-telemetry once, then FILTERS self.charges down to only rows whose
-source_file is the live charges_master.csv before calling reconcile() -
-avoiding both the duplication and any risk of the invoice-matching step
-handing one real invoice to a duplicate row instead of the real one.
+DESCRIPTION
+    Loads the charges in the live charges_master.csv with their invoices and telemetry, takes each
+    charge's cost from its invoice (paid charging) or works it out (Home charging), and writes it
+    beside the cost Tessie reports, one row per charge, as a CSV in <data_home>/charges/reports/.
+    Prints the totals for Home and paid charging. Takes no options. Changes nothing in Tessie.
 
-Output: a CSV written next to charges_master.csv itself
-(<data_home>/charges/reports/all_charges_cost_comparison_<UTCSTAMP>.csv).
+    User's request (2026-09-26, verbatim): "go through all the charges in
+    Tessie (including DC charging). For Home charging, you'll need to work
+    it out. For DC charging you know the amounts from invoice. Do a table
+    for all with our calculated or known cost vs Tessie."
+
+    The actual per-charge cost computation lives in lib/charge_cost_model.py
+    (shared with analyse_charging.py's --sync-tessie-costs, REQ-148, which
+    pushes these same figures back to Tessie's own live account via
+    set_cost) - this script is just the read-only local report over it.
+
+    Data-quality note (handled in lib/charge_cost_model.py, kept here for
+    visibility): analyse_charging.py's own load_charges() merges the live
+    charges_master.csv together with several old archived/pre-migration
+    master backups under charges/archive/ that use slightly different
+    "Started At" text formats, producing near-duplicate (same underlying
+    charge, different dedup key) entries when loaded unmodified - confirmed
+    live (478 raw charges loaded vs 239 real rows in the live
+    charges_master.csv). This script loads charges/invoices/detailed
+    telemetry once, then FILTERS self.charges down to only rows whose
+    source_file is the live charges_master.csv before calling reconcile() -
+    avoiding both the duplication and any risk of the invoice-matching step
+    handing one real invoice to a duplicate row instead of the real one.
+
+    Output: a CSV written next to charges_master.csv itself
+    (<data_home>/charges/reports/all_charges_cost_comparison_<UTCSTAMP>.csv).
 """
 import os as _os, sys as _sys; _sys.path[:0] = [p for p in (_os.path.dirname(_os.path.abspath(__file__)), _os.path.join(_os.path.dirname(_os.path.dirname(_os.path.abspath(__file__))), "commands"), _os.path.dirname(_os.path.dirname(_os.path.abspath(__file__)))) if p not in _sys.path]      # the tools beside it, the commands, and Tools/ (lib, providers)
 if any(a in ("-h", "--help") for a in _sys.argv[1:]):          # its help, and nothing else (the work starts on import)

@@ -7,48 +7,61 @@ evnex_api_downloader.py so every source-consolidation script in this
 repo uses the same verb - "sync" covers both an API pull (this one,
 Tessie's) and a manually-dropped-in export (AGL's) equally well.
 
-Distinct from evnex_explore.py (a read-only, human-driven diagnostic dump
-of everything Evnex can see, written into the repo's own Tessie/ folder
-for manual inspection) - this script calls the Evnex API directly itself
-rather than depending on a possibly-stale evnex_explore.py dump file, is
-meant to run unattended, and only ever WRITES new files - it never
-modifies or deletes an existing one.
+NAME
+    sync_api_evnex.py - sync completed Evnex home-charging sessions into deep-dive files
 
-Idempotency / dedup: keyed on Evnex's own session `id` (a UUID) - not on
-a timestamp or filename. A filename is for humans to browse (Spotlight,
-Finder); code must never trust it as the source of truth for "is this
-the same session" - see AGENTS.md REQ-030 for the full reasoning (the
-same principle TODO-009 already established for CSV columns, extended
-to filenames). Every existing charge_deepdive_*_Evnex_Home.json file
-already on disk is scanned once at startup and its own
-"evnex_session_id" field collected into a seen-set before deciding
-what's new.
+SYNOPSIS
+    ./Tools/tesla sync evnex [--dry-run] [--limit N] [--quiet]
 
-In-progress sessions are always skipped (Evnex's own sessionStatus ==
-"Active", or a still-null chargingStopped/endDate) - their energy/cost
-figures aren't final yet. Re-run this again later and a since-completed
-session is picked up normally, no special handling needed.
+DESCRIPTION
+    Fetches the charging sessions from the Evnex API and writes each completed session not yet on
+    disk as a charge_deepdive_*_Evnex_Home.json file under charges/deepdive/ in the data folder.
+    Sessions still running and plug-ins that delivered no energy are skipped. Never changes or
+    deletes an existing file. Credentials come from config.json or the EVNEX_CLIENT_USERNAME and
+    EVNEX_CLIENT_PASSWORD environment variables.
 
-REQ-153: a completed session that delivered ~zero energy (0 kWh) is a
-connection BLIP, not a charge - Evnex records every cable plug-in/unplug
-event as its own "session", so plugging in and then deciding not to
-charge (and unplugging) produces exactly this shape. These are
-evaluated (via is_real_charging_session()) and permanently ignored -
-NOT written as a charge_deepdive_*_Evnex_Home.json file at all, since
-that file format represents a real charging session - and their ids are
-instead recorded in a tiny separate .evnex_blip_ids.json file (see
-load_ignored_blip_ids()/save_ignored_blip_ids()) purely so the same blip
-is never re-evaluated on a future run.
+    Distinct from evnex_explore.py (a read-only, human-driven diagnostic dump
+    of everything Evnex can see, written into the repo's own Tessie/ folder
+    for manual inspection) - this script calls the Evnex API directly itself
+    rather than depending on a possibly-stale evnex_explore.py dump file, is
+    meant to run unattended, and only ever WRITES new files - it never
+    modifies or deletes an existing one.
 
-Credentials come from evnex_common.py (config.json or
-EVNEX_CLIENT_USERNAME/EVNEX_CLIENT_PASSWORD env vars) - nothing this
-script prints or writes includes the Evnex username/password.
+    Idempotency / dedup: keyed on Evnex's own session `id` (a UUID) - not on
+    a timestamp or filename. A filename is for humans to browse (Spotlight,
+    Finder); code must never trust it as the source of truth for "is this
+    the same session" - see AGENTS.md REQ-030 for the full reasoning (the
+    same principle TODO-009 already established for CSV columns, extended
+    to filenames). Every existing charge_deepdive_*_Evnex_Home.json file
+    already on disk is scanned once at startup and its own
+    "evnex_session_id" field collected into a seen-set before deciding
+    what's new.
 
-Usage:
-    ./sync_api_evnex.py                # write any new completed sessions
-    ./sync_api_evnex.py --dry-run       # show what would be written, write nothing
-    ./sync_api_evnex.py --limit 5       # cap how many new files get written this run
-    ./sync_api_evnex.py --quiet         # summary only
+    In-progress sessions are always skipped (Evnex's own sessionStatus ==
+    "Active", or a still-null chargingStopped/endDate) - their energy/cost
+    figures aren't final yet. Re-run this again later and a since-completed
+    session is picked up normally, no special handling needed.
+
+    REQ-153: a completed session that delivered ~zero energy (0 kWh) is a
+    connection BLIP, not a charge - Evnex records every cable plug-in/unplug
+    event as its own "session", so plugging in and then deciding not to
+    charge (and unplugging) produces exactly this shape. These are
+    evaluated (via is_real_charging_session()) and permanently ignored -
+    NOT written as a charge_deepdive_*_Evnex_Home.json file at all, since
+    that file format represents a real charging session - and their ids are
+    instead recorded in a tiny separate .evnex_blip_ids.json file (see
+    load_ignored_blip_ids()/save_ignored_blip_ids()) purely so the same blip
+    is never re-evaluated on a future run.
+
+    Credentials come from evnex_common.py (config.json or
+    EVNEX_CLIENT_USERNAME/EVNEX_CLIENT_PASSWORD env vars) - nothing this
+    script prints or writes includes the Evnex username/password.
+
+    Usage:
+        ./sync_api_evnex.py                # write any new completed sessions
+        ./sync_api_evnex.py --dry-run       # show what would be written, write nothing
+        ./sync_api_evnex.py --limit 5       # cap how many new files get written this run
+        ./sync_api_evnex.py --quiet         # summary only
 """
 import os as _os, sys as _sys; _sys.path[:0] = [p for p in (_os.path.dirname(_os.path.abspath(__file__)), _os.path.dirname(_os.path.dirname(_os.path.abspath(__file__)))) if p not in _sys.path]      # the commands beside it, and Tools/ (lib, providers)
 

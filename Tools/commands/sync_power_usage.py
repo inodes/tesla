@@ -5,85 +5,98 @@ half-hourly usage-export CSVs (e.g. AGL's, downloaded manually from its
 "My Usage" portal - see below) into a queryable SQLite database, under
 that provider's own data home (get_power_provider().resolve_data_home()).
 
-REQ-070 (2026-09-15): generalized from agl_usage_sync.py - the
-retailer-specific bits (which files count as a usage export, how to
-parse its timestamp format, its register-code -> role mapping, how to
-read one export CSV) now live in Tools/providers/power/power_agl.py's
-AGLProvider, the first and so far only BasePowerProvider implementation
-(get_power_provider(), default "agl" - see providers/power/__init__.py).
-This script's own job - find export files, merge them, keep one
-canonical dataset - is the same for any provider.
+NAME
+    sync_power_usage.py - consolidate the active power provider's usage-export CSVs into a queryable database
 
-REQ-115 (2026-09-24): the canonical store used to be one single,
-ever-growing agl_usage_master.csv, hand-loaded by every reader via
-csv.DictReader. User: "can they be written in this format rather than
-one massive csv? AGL_YYYYMM.csv. Then store any of the entries in db
-file similar to fuel_history.db" - now mirrors lib/fuel_common.py's own
-fuel_history.db exactly: a SQLite `usage_readings` table (same
-StartDate/EndDate/RegisterCode dedup key as always, now the real
-PRIMARY KEY) is the actual source of truth every reader queries
-(lib/power_usage_db.py), and a plain-text `AGL_<YYYYMM>.csv` per
-calendar month (in the provider's invoices folder, beside its bill
-PDFs - REQ-117) is written FROM the database as a
-human-readable/portable mirror - nothing in this repo re-parses those
-monthly files, they're for you to open directly if you ever want to.
-Any pre-existing single agl_usage_master.csv is migrated into the
-database once, automatically, the first time this runs after the
-upgrade (see migrate_legacy_master() below) - never deleted, moved into
-usage/archive/ instead so nothing is lost.
+SYNOPSIS
+    ./Tools/tesla sync power-usage [--dry-run]
 
-AGL doesn't offer a usage-history API for residential accounts (unlike
-Tessie/Evnex) - this stays a manual download, dropped into the AGL
-invoices folder (get_power_provider().resolve_invoices_dir(),
-currently ~/iCloud/PDF/AGL) as-is, then this script picks up every
-file the active provider recognises as its own usage export (AGL:
-"*Usage*.csv"/"AGL_Usage_*.csv").
+DESCRIPTION
+    Reads the power provider's half-hourly usage CSV exports in its invoices folder and in
+    Downloads, and adds their readings to usage/<provider>_usage_history.db in the provider's data
+    folder, with one CSV per calendar month written beside it as a readable copy. A reading already
+    held is not added twice. --dry-run shows what would be added and writes nothing. Ends with a
+    reminder when the newest reading is older than power_usage_staleness_days.
 
-To get a fresh AGL export: visit
-  https://myaccount.agl.com.au/usage?c=<account>&billPeriod=<from>/<to>
-(the account's own usage page) with the date range adjusted to cover
-what you need - a year at a time is the practical granularity - and
-save the CSV into the AGL invoices folder above, or just leave it in
-Downloads (REQ-112 - scanned there too, and REQ-114 - filed away into
-the invoices folder automatically once ingested).
+    REQ-070 (2026-09-15): generalized from agl_usage_sync.py - the
+    retailer-specific bits (which files count as a usage export, how to
+    parse its timestamp format, its register-code -> role mapping, how to
+    read one export CSV) now live in Tools/providers/power/power_agl.py's
+    AGLProvider, the first and so far only BasePowerProvider implementation
+    (get_power_provider(), default "agl" - see providers/power/__init__.py).
+    This script's own job - find export files, merge them, keep one
+    canonical dataset - is the same for any provider.
 
-Register semantics (confirmed against real bills - see AGENTS.md
-REQ-031, for AGL specifically): RegisterCode "...#E1" is grid IMPORT
-(billed as Usage charges; its RateTypeDescription has drifted across
-exports - "Generalusage", "SeasonTimeofUse", plain "Usage" - all mean
-the same E1 import register, never trust the description text, only
-the register CODE). "...#B1" is Solar EXPORT (feeds the solar credit).
-"...#E2" is Controlled Load (a separate circuit/tariff this repo
-doesn't model a charge for yet - kept in the database for completeness).
-See AGLProvider.register_role() for the actual mapping; a future
-provider with a different register scheme implements its own.
+    REQ-115 (2026-09-24): the canonical store used to be one single,
+    ever-growing agl_usage_master.csv, hand-loaded by every reader via
+    csv.DictReader. User: "can they be written in this format rather than
+    one massive csv? AGL_YYYYMM.csv. Then store any of the entries in db
+    file similar to fuel_history.db" - now mirrors lib/fuel_common.py's own
+    fuel_history.db exactly: a SQLite `usage_readings` table (same
+    StartDate/EndDate/RegisterCode dedup key as always, now the real
+    PRIMARY KEY) is the actual source of truth every reader queries
+    (lib/power_usage_db.py), and a plain-text `AGL_<YYYYMM>.csv` per
+    calendar month (in the provider's invoices folder, beside its bill
+    PDFs - REQ-117) is written FROM the database as a
+    human-readable/portable mirror - nothing in this repo re-parses those
+    monthly files, they're for you to open directly if you ever want to.
+    Any pre-existing single agl_usage_master.csv is migrated into the
+    database once, automatically, the first time this runs after the
+    upgrade (see migrate_legacy_master() below) - never deleted, moved into
+    usage/archive/ instead so nothing is lost.
 
-Row identity / dedup key: (StartDate, EndDate, RegisterCode) - a
-half-hour interval reading is uniquely identified by its window and
-register; two overlapping exports covering the same period produce
-identical keys and collapse to one row, never a duplicate - now
-enforced by the database's own PRIMARY KEY rather than an in-memory
-dict.
+    AGL doesn't offer a usage-history API for residential accounts (unlike
+    Tessie/Evnex) - this stays a manual download, dropped into the AGL
+    invoices folder (get_power_provider().resolve_invoices_dir(),
+    currently ~/iCloud/PDF/AGL) as-is, then this script picks up every
+    file the active provider recognises as its own usage export (AGL:
+    "*Usage*.csv"/"AGL_Usage_*.csv").
 
-Same safety net already established for drives/charges/the old
-master: back up the database file before writing, sanity-check the row
-count after writing, and report what changed.
+    To get a fresh AGL export: visit
+      https://myaccount.agl.com.au/usage?c=<account>&billPeriod=<from>/<to>
+    (the account's own usage page) with the date range adjusted to cover
+    what you need - a year at a time is the practical granularity - and
+    save the CSV into the AGL invoices folder above, or just leave it in
+    Downloads (REQ-112 - scanned there too, and REQ-114 - filed away into
+    the invoices folder automatically once ingested).
 
-REQ-071 (2026-09-15): every run now ends with a non-blocking staleness
-reminder (check_staleness() below) for a manual-sync provider
-(provider.manual_usage_sync - AGL, currently the only one) - the user's
-own framing of the three-source picture this repo integrates ("AGL is
-manual at the moment, but the other two [Evnex, PVOutput] are not...
-AGL is a nice to have to correlate... it would be nice to have a
-reminder to get csv's if there are gaps") - reported even when nothing
-new was found to consolidate, since staleness isn't about whether a
-FILE showed up, it's about how old the newest DATA already in the
-database is. Threshold: config.json's "power_usage_staleness_days"
-(default DEFAULT_STALENESS_DAYS below).
+    Register semantics (confirmed against real bills - see AGENTS.md
+    REQ-031, for AGL specifically): RegisterCode "...#E1" is grid IMPORT
+    (billed as Usage charges; its RateTypeDescription has drifted across
+    exports - "Generalusage", "SeasonTimeofUse", plain "Usage" - all mean
+    the same E1 import register, never trust the description text, only
+    the register CODE). "...#B1" is Solar EXPORT (feeds the solar credit).
+    "...#E2" is Controlled Load (a separate circuit/tariff this repo
+    doesn't model a charge for yet - kept in the database for completeness).
+    See AGLProvider.register_role() for the actual mapping; a future
+    provider with a different register scheme implements its own.
 
-Usage:
-    ./sync_power_usage.py              # consolidate, write the database + monthly CSVs, report staleness
-    ./sync_power_usage.py --dry-run    # show what would happen, write nothing (still reports staleness)
+    Row identity / dedup key: (StartDate, EndDate, RegisterCode) - a
+    half-hour interval reading is uniquely identified by its window and
+    register; two overlapping exports covering the same period produce
+    identical keys and collapse to one row, never a duplicate - now
+    enforced by the database's own PRIMARY KEY rather than an in-memory
+    dict.
+
+    Same safety net already established for drives/charges/the old
+    master: back up the database file before writing, sanity-check the row
+    count after writing, and report what changed.
+
+    REQ-071 (2026-09-15): every run now ends with a non-blocking staleness
+    reminder (check_staleness() below) for a manual-sync provider
+    (provider.manual_usage_sync - AGL, currently the only one) - the user's
+    own framing of the three-source picture this repo integrates ("AGL is
+    manual at the moment, but the other two [Evnex, PVOutput] are not...
+    AGL is a nice to have to correlate... it would be nice to have a
+    reminder to get csv's if there are gaps") - reported even when nothing
+    new was found to consolidate, since staleness isn't about whether a
+    FILE showed up, it's about how old the newest DATA already in the
+    database is. Threshold: config.json's "power_usage_staleness_days"
+    (default DEFAULT_STALENESS_DAYS below).
+
+    Usage:
+        ./sync_power_usage.py              # consolidate, write the database + monthly CSVs, report staleness
+        ./sync_power_usage.py --dry-run    # show what would happen, write nothing (still reports staleness)
 """
 import os as _os, sys as _sys; _sys.path[:0] = [p for p in (_os.path.dirname(_os.path.abspath(__file__)), _os.path.dirname(_os.path.dirname(_os.path.abspath(__file__)))) if p not in _sys.path]      # the commands beside it, and Tools/ (lib, providers)
 

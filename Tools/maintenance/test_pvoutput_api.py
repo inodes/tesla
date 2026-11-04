@@ -9,29 +9,42 @@ readings (getstatus.jsp?h=1), and prints the raw field layout so it can be
 compared against Tessie/PVOUTPUT_API.md's still-unconfirmed notes on field
 order, rate-limit header names, and account tier.
 
-This is a TEST/exploration script, not a production sync tool - read-only,
-makes no writes to disk or to PVOutput (never touches addstatus.jsp/
-addoutput.jsp), same pattern as test_tessie_api.py and evnex_explore.py.
+NAME
+    test_pvoutput_api.py - check that a PVOutput API key and system ID work
 
-Auth - reads the API key + system ID from, in priority order:
-  1. --api-key / --system-id CLI args
-  2. PVOUTPUT_API_KEY / PVOUTPUT_SYSTEM_ID environment variables
-  3. "pvoutput_api_key" / "pvoutput_system_id" keys in Tessie/config.json
-     (gitignored - never committed)
-Never hardcode a key in this file, in git, or paste one into chat.
+SYNOPSIS
+    ./Tools/maintenance/test_pvoutput_api.py [--api-key KEY] [--system-id ID] [--date YYYYMMDD] [--show-values]
 
-Generate a key at: https://pvoutput.org/account.jsp (Settings -> API)
+DESCRIPTION
+    Fetches the system's details and one day of readings (yesterday by default) from the PVOutput
+    API and prints the layout of the fields; --show-values prints the values too. Reads only;
+    writes nothing to disk or to PVOutput. The key and ID come from the options, the
+    PVOUTPUT_API_KEY and PVOUTPUT_SYSTEM_ID environment variables, or config.json. Exits 1 when
+    no key or ID is set or no request succeeds.
 
-Usage:
-    export PVOUTPUT_API_KEY=your_key_here
-    export PVOUTPUT_SYSTEM_ID=your_system_id_here
-    ./test_pvoutput_api.py
-    ./test_pvoutput_api.py --date 20260901
-    ./test_pvoutput_api.py --show-values
+    This is a TEST/exploration script, not a production sync tool - read-only,
+    makes no writes to disk or to PVOutput (never touches addstatus.jsp/
+    addoutput.jsp), same pattern as test_tessie_api.py and evnex_explore.py.
 
-See Tessie/PVOUTPUT_API.md for endpoint/field notes and known limitations -
-several items there ("What still needs verifying") can only be settled by
-this script's real output.
+    Auth - reads the API key + system ID from, in priority order:
+      1. --api-key / --system-id CLI args
+      2. PVOUTPUT_API_KEY / PVOUTPUT_SYSTEM_ID environment variables
+      3. "pvoutput_api_key" / "pvoutput_system_id" keys in Tessie/config.json
+         (gitignored - never committed)
+    Never hardcode a key in this file, in git, or paste one into chat.
+
+    Generate a key at: https://pvoutput.org/account.jsp (Settings -> API)
+
+    Usage:
+        export PVOUTPUT_API_KEY=your_key_here
+        export PVOUTPUT_SYSTEM_ID=your_system_id_here
+        ./test_pvoutput_api.py
+        ./test_pvoutput_api.py --date 20260901
+        ./test_pvoutput_api.py --show-values
+
+    See Tessie/PVOUTPUT_API.md for endpoint/field notes and known limitations -
+    several items there ("What still needs verifying") can only be settled by
+    this script's real output.
 """
 
 import argparse

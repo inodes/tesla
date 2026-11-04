@@ -8,31 +8,47 @@ works, pulls a small sample of /drives and /charges, and shows what
 fields come back so they can be compared against the existing Tessie CSV
 export columns this repo's tools already parse.
 
-This is a TEST/exploration script, not a production sync tool - it makes
-no changes to any registry or master CSV, and (unless --save-csv is
-passed) writes nothing to disk at all.
+NAME
+    test_tessie_api.py - check that a Tessie API token works and show what drives and charges return
 
-Auth - reads the access token from, in priority order:
-  1. --token CLI arg
-  2. TESSIE_ACCESS_TOKEN environment variable
-  3. "tessie_access_token" key in Tessie/config.json (gitignored - never
-     committed, same as the "vin" key already stored there)
-Never hardcode a token in this file, in git, or paste one into chat.
+SYNOPSIS
+    ./Tools/maintenance/test_tessie_api.py [--token TOKEN] [--vin VIN] [--limit N] [--since-days N]
+                                           [--save-csv] [--show-values]
+                                           [--distance-format km | mi] [--temperature-format c | f] [--timezone ZONE]
 
-Generate a token at: https://dash.tessie.com/settings/api
+DESCRIPTION
+    Fetches a few drives and charges (5 each from the last 30 days by default) from the Tessie
+    API and prints the fields they carry; --show-values prints the first record's values too.
+    Writes nothing unless --save-csv, which also fetches them as CSV and saves a sample per
+    endpoint to Tessie/api_test_samples/ in the repo folder. The token comes from --token, the
+    TESSIE_ACCESS_TOKEN environment variable or config.json. Exits 1 when no token or VIN is set or
+    no request succeeds.
 
-Note: the API defaults to miles/Celsius/UTC unless told otherwise via
-distance_format/temperature_format/timezone params - this script requests
-km/C/Australia-Sydney by default (--distance-format/--temperature-format/
---timezone to override) to match this repo's existing CSV convention.
+    This is a TEST/exploration script, not a production sync tool - it makes
+    no changes to any registry or master CSV, and (unless --save-csv is
+    passed) writes nothing to disk at all.
 
-Usage:
-    export TESSIE_ACCESS_TOKEN=your_token_here
-    ./test_tessie_api.py
-    ./test_tessie_api.py --limit 3 --since-days 7 --save-csv
-    ./test_tessie_api.py --show-values     # prints real field values too
+    Auth - reads the access token from, in priority order:
+      1. --token CLI arg
+      2. TESSIE_ACCESS_TOKEN environment variable
+      3. "tessie_access_token" key in Tessie/config.json (gitignored - never
+         committed, same as the "vin" key already stored there)
+    Never hardcode a token in this file, in git, or paste one into chat.
 
-See Tessie/TESSIE_API.md for endpoint/field notes and known limitations.
+    Generate a token at: https://dash.tessie.com/settings/api
+
+    Note: the API defaults to miles/Celsius/UTC unless told otherwise via
+    distance_format/temperature_format/timezone params - this script requests
+    km/C/Australia-Sydney by default (--distance-format/--temperature-format/
+    --timezone to override) to match this repo's existing CSV convention.
+
+    Usage:
+        export TESSIE_ACCESS_TOKEN=your_token_here
+        ./test_tessie_api.py
+        ./test_tessie_api.py --limit 3 --since-days 7 --save-csv
+        ./test_tessie_api.py --show-values     # prints real field values too
+
+    See Tessie/TESSIE_API.md for endpoint/field notes and known limitations.
 """
 
 import argparse

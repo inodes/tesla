@@ -11,75 +11,90 @@ user's explicit steer at the end of REQ-031, that stays a separate,
 whole-account number in agl_demand_calculator.py/agl_cost_calculator.py,
 never attributed to one session here).
 
-Two cost figures are printed for every session:
+NAME
+    ev_session_cost.py - what each Evnex home-charging session cost at the dated AGL rates
 
-  1. "base cost" - kWh x that date's dated usage rate (agl_tariff_rates.json),
-     i.e. what it would have cost if 100% grid-imported. Always computed.
+SYNOPSIS
+    ./Tools/maintenance/ev_session_cost.py [--limit N | --all] [--since-days N]
+                                           [--deepdive-dir DIR] [--usage-master CSV]
+    ./Tools/maintenance/ev_session_cost.py --session-id UUID [--deepdive-dir DIR] [--usage-master CSV]
 
-  2. "Evnex-adjusted" - splits the session's own kWh by Evnex's own
-     `distributionByTariff`. IMPORTANT (user-confirmed, AGENTS.md REQ-040):
-     this is NOT the charger's real CT-clamp solar reading - the Evnex
-     charger genuinely DOES have CT clamps and a real solar-aware charging
-     mode (only auto-starts once export passes a configured minimum, ~1.5kWh,
-     of solar export), but `distributionByTariff` itself comes from a
-     separate, simpler "tariff hours" schedule entered on Evnex's own
-     website (which hours count as "solar" vs "flat") - a configured
-     assumption, not that session's own real CT-clamp measurement. Then
-     values the "solar" share as an OPPORTUNITY COST at that period's
-     tier-1 feed-in rate rather than $0 - self-consuming that energy for
-     charging meant not exporting it for a credit, so the true cost isn't
-     free, it's what the credit would have been. (Uses the tier-1 rate as
-     a flat approximation - see module docstring caveat below on why the
-     real tiered/pooled cap isn't attributed per session.)
+DESCRIPTION
+    For the newest Evnex sessions (20 by default) in charges/deepdive/ of the Tessie data folder,
+    prints the base cost (all kWh at that day's usage rate) and a cost using Evnex's solar/flat
+    split, with the solar share priced at the feed-in rate it replaced, and flags sessions where
+    the AGL meter (usage/agl_usage_master.csv) shows grid import in a window Evnex called solar.
+    Reads only; writes nothing.
 
-For every session this ALSO cross-checks Evnex's tariff-period claim
-against AGL's own real smart-meter half-hourly readings
-(agl_usage_master.csv) for the exact overlapping window(s) - real import
-kWh recorded during a session Evnex called mostly-solar is flagged as a
-conflict worth a second look, rather than silently trusted. One confirmed,
-plausible explanation for a flagged conflict (AGENTS.md REQ-040): the user
-can manually override the charger's own real solar-export-threshold
-auto-start feature and force a charge regardless of real solar export -
-"that's where the expensive charges come from" - which would show up here
-as real grid import during a window still labelled "solar" by the tariff-
-hours schedule. This tool doesn't (yet) distinguish an override from any
-other explanation; it just surfaces the mismatch.
+    Two cost figures are printed for every session:
 
-Deliberately NOT attempted here (left for a future PVOutput-based pass,
-per Tessie/PVOUTPUT_API.md's "Fit with existing AGL/solar work" section):
-disaggregating a session's own share of a half-hour's total household
-import/export from everything else drawing power in the house at the
-same time. AGL's smart meter reports one net figure per half-hour for
-the WHOLE HOUSE, not per-device, so "real AGL meter" figures below are
-the household total for that window, not proof of what the EV alone
-drew - they're a plausibility check on Evnex's own claim, not a
-replacement measurement.
+      1. "base cost" - kWh x that date's dated usage rate (agl_tariff_rates.json),
+         i.e. what it would have cost if 100% grid-imported. Always computed.
 
-Tier caveat: AGL's real solar credit is a POOLED per-billing-period cap
-(10 kWh/day x days-in-period at the tier-1 rate, everything beyond that
-at a flat, lower tier-2 rate - see agl_cost_calculator.py's own
-docstring). Attributing a fair tier-1-vs-tier-2 split to one session
-would require knowing the whole period's running solar-export total up
-to that moment, which this tool doesn't track. Every "Evnex-adjusted"
-figure below assumes tier-1 pricing for its solar share as a simplifying
-approximation - usually close, since most days don't push the period's
-pooled export past the daily-averaged cap, but not exact once they do.
+      2. "Evnex-adjusted" - splits the session's own kWh by Evnex's own
+         `distributionByTariff`. IMPORTANT (user-confirmed, AGENTS.md REQ-040):
+         this is NOT the charger's real CT-clamp solar reading - the Evnex
+         charger genuinely DOES have CT clamps and a real solar-aware charging
+         mode (only auto-starts once export passes a configured minimum, ~1.5kWh,
+         of solar export), but `distributionByTariff` itself comes from a
+         separate, simpler "tariff hours" schedule entered on Evnex's own
+         website (which hours count as "solar" vs "flat") - a configured
+         assumption, not that session's own real CT-clamp measurement. Then
+         values the "solar" share as an OPPORTUNITY COST at that period's
+         tier-1 feed-in rate rather than $0 - self-consuming that energy for
+         charging meant not exporting it for a credit, so the true cost isn't
+         free, it's what the credit would have been. (Uses the tier-1 rate as
+         a flat approximation - see module docstring caveat below on why the
+         real tiered/pooled cap isn't attributed per session.)
 
-Data sources (both already built by earlier work - nothing new fetched
-here):
-  - Tessie/charges/deepdive/*_Evnex_Home*.json (REQ-030's auto-synced
-    completed Evnex sessions - kWh, real UTC start/stop, tariff split)
-  - AGL/usage/agl_usage_master.csv (REQ-031's consolidated half-hourly
-    smart-meter import/export data)
-  - AGL/agl_tariff_rates.json (REQ-031's dated tariff periods - PII,
-    never committed, see agl_demand_calculator.py's own note)
+    For every session this ALSO cross-checks Evnex's tariff-period claim
+    against AGL's own real smart-meter half-hourly readings
+    (agl_usage_master.csv) for the exact overlapping window(s) - real import
+    kWh recorded during a session Evnex called mostly-solar is flagged as a
+    conflict worth a second look, rather than silently trusted. One confirmed,
+    plausible explanation for a flagged conflict (AGENTS.md REQ-040): the user
+    can manually override the charger's own real solar-export-threshold
+    auto-start feature and force a charge regardless of real solar export -
+    "that's where the expensive charges come from" - which would show up here
+    as real grid import during a window still labelled "solar" by the tariff-
+    hours schedule. This tool doesn't (yet) distinguish an override from any
+    other explanation; it just surfaces the mismatch.
 
-Usage:
-    ./ev_session_cost.py                       # 20 most recent sessions
-    ./ev_session_cost.py --limit 5
-    ./ev_session_cost.py --since-days 30
-    ./ev_session_cost.py --all
-    ./ev_session_cost.py --session-id 525f9c52-429b-496a-901d-eb1c002afee1
+    Deliberately NOT attempted here (left for a future PVOutput-based pass,
+    per Tessie/PVOUTPUT_API.md's "Fit with existing AGL/solar work" section):
+    disaggregating a session's own share of a half-hour's total household
+    import/export from everything else drawing power in the house at the
+    same time. AGL's smart meter reports one net figure per half-hour for
+    the WHOLE HOUSE, not per-device, so "real AGL meter" figures below are
+    the household total for that window, not proof of what the EV alone
+    drew - they're a plausibility check on Evnex's own claim, not a
+    replacement measurement.
+
+    Tier caveat: AGL's real solar credit is a POOLED per-billing-period cap
+    (10 kWh/day x days-in-period at the tier-1 rate, everything beyond that
+    at a flat, lower tier-2 rate - see agl_cost_calculator.py's own
+    docstring). Attributing a fair tier-1-vs-tier-2 split to one session
+    would require knowing the whole period's running solar-export total up
+    to that moment, which this tool doesn't track. Every "Evnex-adjusted"
+    figure below assumes tier-1 pricing for its solar share as a simplifying
+    approximation - usually close, since most days don't push the period's
+    pooled export past the daily-averaged cap, but not exact once they do.
+
+    Data sources (both already built by earlier work - nothing new fetched
+    here):
+      - Tessie/charges/deepdive/*_Evnex_Home*.json (REQ-030's auto-synced
+        completed Evnex sessions - kWh, real UTC start/stop, tariff split)
+      - AGL/usage/agl_usage_master.csv (REQ-031's consolidated half-hourly
+        smart-meter import/export data)
+      - AGL/agl_tariff_rates.json (REQ-031's dated tariff periods - PII,
+        never committed, see agl_demand_calculator.py's own note)
+
+    Usage:
+        ./ev_session_cost.py                       # 20 most recent sessions
+        ./ev_session_cost.py --limit 5
+        ./ev_session_cost.py --since-days 30
+        ./ev_session_cost.py --all
+        ./ev_session_cost.py --session-id 525f9c52-429b-496a-901d-eb1c002afee1
 """
 import os as _os, sys as _sys; _sys.path[:0] = [p for p in (_os.path.dirname(_os.path.abspath(__file__)), _os.path.join(_os.path.dirname(_os.path.dirname(_os.path.abspath(__file__))), "commands"), _os.path.dirname(_os.path.dirname(_os.path.abspath(__file__)))) if p not in _sys.path]      # the tools beside it, the commands, and Tools/ (lib, providers)
 

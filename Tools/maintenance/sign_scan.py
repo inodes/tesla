@@ -1,12 +1,25 @@
 #!/usr/bin/env python3
 """Look for round speed-limit signs in the dashcam footage around each flip (REQ-192).
 
-For every event in dashcam_flip_review/cache3 this decodes full-resolution front-camera frames from 14 s before
-to 4 s after the speed change (every 0.5 s), finds round red-ringed signs (lib/sign_finder.py) and writes
-    <data>/drives/analysis/dashcam_flip_review/signs/E###.json   (every candidate: time, position, size, OCR text)
-    <data>/drives/analysis/dashcam_flip_review/signs/E###.jpg    (a strip of the best candidate crops, nearest-first)
-OCR on motion-blurred signs is unreliable, so the strips are meant to be read by eye (or by Claude); the page shows them.
-Usage: sign_scan.py [--data-dir DIR] [--teslacam DIR] [--budget SECONDS]
+NAME
+    sign_scan.py - look for round speed-limit signs in the dashcam footage around each flip
+
+SYNOPSIS
+    ./Tools/maintenance/sign_scan.py [--data-dir DIR] [--teslacam DIR] [--budget SECONDS] [--ids E###[,E###...]] [--hough]
+
+DESCRIPTION
+    For each flip event in <data>/drives/analysis/dashcam_flip_review/cache7/ with a clip, decodes
+    the front camera around the speed change, finds round red-ringed signs and writes a JSON list
+    and a JPG strip of the best crops per event to dashcam_flip_review/signs/. Events already
+    scanned are skipped unless named in --ids. Stops after --budget seconds (default 95); run it
+    again to carry on. --hough also uses the low-light circle detector. A one-off investigation.
+
+    For every event in dashcam_flip_review/cache3 this decodes full-resolution front-camera frames from 14 s before
+    to 4 s after the speed change (every 0.5 s), finds round red-ringed signs (lib/sign_finder.py) and writes
+        <data>/drives/analysis/dashcam_flip_review/signs/E###.json   (every candidate: time, position, size, OCR text)
+        <data>/drives/analysis/dashcam_flip_review/signs/E###.jpg    (a strip of the best candidate crops, nearest-first)
+    OCR on motion-blurred signs is unreliable, so the strips are meant to be read by eye (or by Claude); the page shows them.
+    Usage: sign_scan.py [--data-dir DIR] [--teslacam DIR] [--budget SECONDS]
 """
 import os as _os, sys as _sys; _sys.path[:0] = [p for p in (_os.path.dirname(_os.path.abspath(__file__)), _os.path.join(_os.path.dirname(_os.path.dirname(_os.path.abspath(__file__))), "commands"), _os.path.dirname(_os.path.dirname(_os.path.abspath(__file__)))) if p not in _sys.path]      # the tools beside it, the commands, and Tools/ (lib, providers)
 import argparse, bisect, datetime, glob, json, os, subprocess, sys, time

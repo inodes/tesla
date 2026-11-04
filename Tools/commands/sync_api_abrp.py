@@ -10,31 +10,47 @@ the repo calls it automatically. Run it by hand whenever you need to
 underlying library, lib/abrp_common.py, IS genuinely used by charger_find.py
 for live range/SoC estimation - that part is unaffected by this note.
 
-Communicates with the ABRP (A Better Routeplanner / Iternio) Telemetry API:
-- Validates client_id, api_key, and user_token configured in config.json
-- Queries live battery level, health, calibrated consumption, and vehicle profile
-- Generates OAuth authorization links and handles code exchanges
+NAME
+    sync_api_abrp.py - set up ABRP access and show the vehicle profile ABRP sees
 
-Usage:
-  ./Tools/sync_api_abrp.py                 # Query vehicle telemetry & profile
-  ./Tools/sync_api_abrp.py --auth-url      # Generate 1-click ABRP login link
-  ./Tools/sync_api_abrp.py --code <auth_code>   # Exchange code and inspect vehicle profile
-  ./Tools/sync_api_abrp.py --token <token>      # Query user info & custom vehicle directly (this run only)
-  ./Tools/sync_api_abrp.py --token <token> --save-token  # ...and cache it for future runs
+SYNOPSIS
+    ./Tools/tesla sync abrp
+    ./Tools/tesla sync abrp --auth-url [--redirect-uri URI] [--open]
+    ./Tools/tesla sync abrp --code CODE_OR_REDIRECT_URL
+    ./Tools/tesla sync abrp --token TOKEN [--save-token]
 
-Token storage (BUG-141-style safety, applied here too):
-  The one-time, manually-generated ABRP telemetry token (from
-  https://abetterrouteplanner.com/home/app/api-keys/telemetry) never expires
-  and never needs regenerating - the recommended place for it is directly in
-  config.json's "abrp": {"user_token": "..."} block, which load_abrp_config()
-  always checks FIRST. In that setup, .abrp_token.json is never touched.
-  .abrp_token.json exists only to cache the OAuth access_token produced by
-  --code - that one genuinely cannot be re-derived from client_id/api_key
-  alone (it requires a one-time browser consent step), so it has to persist
-  somewhere between runs. --token alone NEVER writes to that cache (or to
-  config.json) - it only affects the current invocation, so inspecting or
-  testing a token can't silently overwrite your real one; pass --save-token
-  to actually persist it.
+DESCRIPTION
+    Checks the ABRP (A Better Routeplanner) settings in config.json's "abrp" block and, with a
+    token, prints the live battery level, health, consumption and vehicle profile from the ABRP
+    telemetry API. With no token it prints the OAuth login link, as --auth-url does; --code
+    exchanges the code from that login (or the whole redirect URL) for a token, kept in
+    .abrp_token.json. Not run by the sync_*_all.sh scripts.
+
+    Communicates with the ABRP (A Better Routeplanner / Iternio) Telemetry API:
+    - Validates client_id, api_key, and user_token configured in config.json
+    - Queries live battery level, health, calibrated consumption, and vehicle profile
+    - Generates OAuth authorization links and handles code exchanges
+
+    Usage:
+      ./Tools/sync_api_abrp.py                 # Query vehicle telemetry & profile
+      ./Tools/sync_api_abrp.py --auth-url      # Generate 1-click ABRP login link
+      ./Tools/sync_api_abrp.py --code <auth_code>   # Exchange code and inspect vehicle profile
+      ./Tools/sync_api_abrp.py --token <token>      # Query user info & custom vehicle directly (this run only)
+      ./Tools/sync_api_abrp.py --token <token> --save-token  # ...and cache it for future runs
+
+    Token storage (BUG-141-style safety, applied here too):
+      The one-time, manually-generated ABRP telemetry token (from
+      https://abetterrouteplanner.com/home/app/api-keys/telemetry) never expires
+      and never needs regenerating - the recommended place for it is directly in
+      config.json's "abrp": {"user_token": "..."} block, which load_abrp_config()
+      always checks FIRST. In that setup, .abrp_token.json is never touched.
+      .abrp_token.json exists only to cache the OAuth access_token produced by
+      --code - that one genuinely cannot be re-derived from client_id/api_key
+      alone (it requires a one-time browser consent step), so it has to persist
+      somewhere between runs. --token alone NEVER writes to that cache (or to
+      config.json) - it only affects the current invocation, so inspecting or
+      testing a token can't silently overwrite your real one; pass --save-token
+      to actually persist it.
 """
 import os as _os, sys as _sys; _sys.path[:0] = [p for p in (_os.path.dirname(_os.path.abspath(__file__)), _os.path.dirname(_os.path.dirname(_os.path.abspath(__file__)))) if p not in _sys.path]      # the commands beside it, and Tools/ (lib, providers)
 

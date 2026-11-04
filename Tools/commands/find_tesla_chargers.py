@@ -8,6 +8,29 @@ Hierarchical explorer and live scraper for Tesla charging infrastructure:
 - 🇦🇺 Comprehensive Australian state normalization (NSW, VIC, QLD, WA, SA, TAS, ACT, NT)
 - 📊 Instantaneous extraction via SSR __NEXT_DATA__ & WebKit API interception
 - 💾 Automatic registry integration (tesla_superchargers.json & tesla_chargers.json)
+
+NAME
+    find_tesla_chargers.py - list, search and scrape Tesla Superchargers and Destination Chargers
+
+SYNOPSIS
+    ./Tools/tesla chargers tesla --interactive
+    ./Tools/tesla chargers tesla [--near PLACE | --gps | --coords LAT,LON] [--radius-km KM]
+                                 [--region NAME] [--country NAME] [--state ST] [--suburb NAME] [--search TEXT]
+                                 [--sc | --dc | --all-types] [--tier TIER] [--tesla-only | --non-tesla]
+                                 [--max-price PRICE] [--min-stalls N] [--filter EXPR] [--time HH:MM]
+                                 [--status STATUS] [--new] [--stale] [--unpriced]
+                                 [--sort KEY] [--limit N] [--list] [--json]
+    ./Tools/tesla chargers tesla --inspect NAME | --url URL [--live] [--save] [--headful]
+    ./Tools/tesla chargers tesla --all [--delay S] [--timeout S] [--retries N] [--save]
+
+DESCRIPTION
+    Fetches Tesla's station list for the country from its Find Us pages (needs Playwright), marks
+    each station against the local registries (Tessie/tesla_superchargers.json and
+    Tessie/tesla_chargers.json in the repo folder) and lists them with tier, stalls and the price at
+    a given time, filtered by place, state, type and price. Superchargers only unless --dc or
+    --all-types. --interactive walks region, country, type and state. --inspect or --url shows one
+    station from the registry, or scraped live with --live; --save writes the result to the
+    registry. --all scrapes every matching station.
 """
 import os as _os, sys as _sys; _sys.path[:0] = [p for p in (_os.path.dirname(_os.path.abspath(__file__)), _os.path.dirname(_os.path.dirname(_os.path.abspath(__file__)))) if p not in _sys.path]      # the commands beside it, and Tools/ (lib, providers)
 

@@ -2,94 +2,108 @@
 """
 analyse_car_efficiency.py - AGENTS.md TODO-031
 
-Builds a speed-vs-efficiency / speed-vs-range "fact sheet" for this
-vehicle from REAL deep-dive drive telemetry (drive_deepdive_*.csv files
-- AGENTS.md TODO-026), meant to be handed to an LLM (or combined with an
-ABRP trip estimate) alongside a question like "given I'll be driving
-mostly at 100km/h, what efficiency and range should I expect".
+NAME
+    analyse_car_efficiency.py - build the speed-vs-efficiency/range car profile
 
-Design (per the user's own TODO-031 writeup):
-  1. For a given speed, what efficiency should we expect?
-  2. For a given speed, what range should we expect?
-  3. This is a PROFILE, not a one-off report - re-running it as more
-     drives accumulate deep-dive telemetry (see --backfill-deepdive in
-     sync_api_tessie.py) makes it more accurate over time. Every run
-     fully regenerates the output from whatever real data currently
-     exists - there is no incremental/manual state to merge, so it can
-     never drift from what the data actually shows.
+SYNOPSIS
+    ./Tools/tesla analyse efficiency [--tessie-dir DIR] [--out-dir DIR] [--vehicle-mass-kg KG]
 
-Method
-------
-Reuses DriveAnalyzer (analyse_drives.py) for all the real-data
-plumbing already proven by REQ-036/037 and TODO-026:
-  - load_drives() / load_detailed_drives() to find every drive and every
-    local drive_deepdive_*.csv.
-  - compute_drive_segments() to break each drive's raw telemetry into
-    contiguous climbing/level/descending/stationary segments, with
-    per-segment efficiency computed from the REAL Odometer/Energy
-    Remaining delta (not a Power(kW) integration - REQ-037), already
-    guarded against quantization noise (0.15km minimum distance).
+DESCRIPTION
+    Reads the drives and their deep-dive telemetry in the Tessie data folder, splits each drive into
+    flat, climbing and descending stretches, and groups them by speed. For each speed band it gives
+    the average efficiency (kWh/100 km) and the range that means, on flat road only, and a second
+    table corrected for climbs and descents when the car's mass is known. Writes car_profile.json and
+    car_profile.csv to the Tessie data folder (or --out-dir) and prints the tables.
+    --vehicle-mass-kg sets the mass for the corrected table for this run only.
 
-Flat filter and grade correction (per the user's efficiency-legitimacy
-feedback on the first version of this tool - "I'd question the
-legitimacy of efficiency above 120 and the outlier in 90-100 / I think
-you have to look at the inclines these were calculated on ... These
-speeds should be calculated on the flat / However an incline up and an
-incline down can be also factored in"):
+    Builds a speed-vs-efficiency / speed-vs-range "fact sheet" for this
+    vehicle from REAL deep-dive drive telemetry (drive_deepdive_*.csv files
+    - AGENTS.md TODO-026), meant to be handed to an LLM (or combined with an
+    ABRP trip estimate) alongside a question like "given I'll be driving
+    mostly at 100km/h, what efficiency and range should I expect".
 
-  - compute_drive_segments()'s own +/-2% grade threshold decides
-    climbing/level/descending PER INTERVAL before merging into segments;
-    that's loose enough that a merged "level" segment's own NET grade
-    (elevation_change_m / distance_km) can still be a non-trivial slope,
-    especially for the short, thin segments that make up the highest
-    speed buckets. STRICT_FLAT_GRADE_PCT below is a second, stricter
-    check applied HERE, on each merged segment's own net grade, purely
-    for the speed-vs-efficiency buckets - segments that don't pass it are
-    excluded from the "flat-only" columns (speed_vs_efficiency_and_range)
-    exactly as the user asked ("these speeds should be calculated on the
-    flat"). How much this tightening excluded is reported in
-    source_data so it's visible when a bucket goes thin/disappears
-    because of it, rather than silently.
-  - Separately, EVERY non-stationary segment (flat, climbing, AND
-    descending) also gets a physics-based grade-corrected efficiency:
-    the segment's real measured energy_kwh has the potential-energy
-    component (mass * 9.81 * elevation_change_m, converted to kWh)
-    removed, isolating the speed/aero/rolling-resistance component so a
-    steep climb or descent segment can still contribute a usable,
-    flat-equivalent estimate to a speed bucket - this is the "an incline
-    up and incline down can be also factored in" ask. It is reported as
-    an ADDITIONAL set of columns (speed_vs_efficiency_grade_corrected),
-    never merged into or replacing the strict flat-only figures, and is
-    explicitly caveated on the assumed mass used (Tessie/vehicle_spec.json's
-    mass.assumed_driving_mass_kg when configured - see
-    vehicle_mass_kg_for_profile() below - else not worked out at all).
+    Design (per the user's own TODO-031 writeup):
+      1. For a given speed, what efficiency should we expect?
+      2. For a given speed, what range should we expect?
+      3. This is a PROFILE, not a one-off report - re-running it as more
+         drives accumulate deep-dive telemetry (see --backfill-deepdive in
+         sync_api_tessie.py) makes it more accurate over time. Every run
+         fully regenerates the output from whatever real data currently
+         exists - there is no incremental/manual state to merge, so it can
+         never drift from what the data actually shows.
 
-Usable battery capacity: prefers a LIVE reading over a historical
-estimate. sync_api_tessie.py --battery-health (AGENTS.md TODO-031)
-polls Tessie's own battery_health endpoint on a regular basis and logs
-every reading to battery_health_log.json in the Tessie data home; the
-MOST RECENT logged capacity_kwh is used here whenever that file exists,
-since it reflects the car's actual current degradation, not a snapshot
-from whenever historical drives happened to occur. If that log doesn't
-exist yet (battery-health sync has never been run), this falls back to
-the original empirical estimate: for every drive in drives_master.csv
-with a Battery % delta >= 5 points and a real Total Energy Used (kWh)
-figure, capacity_kwh = kwh_used / (pct_delta / 100), median of all such
-per-drive estimates. Both figures are always reported in the output
-(usable_battery_capacity_kwh) even when only one is used for the actual
-range column, so the two can be sanity-checked against each other.
+    Method
+    ------
+    Reuses DriveAnalyzer (analyse_drives.py) for all the real-data
+    plumbing already proven by REQ-036/037 and TODO-026:
+      - load_drives() / load_detailed_drives() to find every drive and every
+        local drive_deepdive_*.csv.
+      - compute_drive_segments() to break each drive's raw telemetry into
+        contiguous climbing/level/descending/stationary segments, with
+        per-segment efficiency computed from the REAL Odometer/Energy
+        Remaining delta (not a Power(kW) integration - REQ-037), already
+        guarded against quantization noise (0.15km minimum distance).
 
-Output
-------
-Writes BOTH a machine-readable JSON (the actual "fact sheet" meant for
-an LLM/ABRP combination) and a flat CSV (the same buckets, for a quick
-look in a spreadsheet) into the resolved Tessie data home - same
-"PII never lives in the repo working tree" rule as drives_master.csv
-itself (AGENTS.md Section 1): this is an AGGREGATE, no addresses/
-coordinates/per-trip rows, but it's still real personal driving data
-and stays out of the git tree on principle, resolved via
-DriveAnalyzer's own tessie_data_home (never hardcoded beside this
-script).
+    Flat filter and grade correction (per the user's efficiency-legitimacy
+    feedback on the first version of this tool - "I'd question the
+    legitimacy of efficiency above 120 and the outlier in 90-100 / I think
+    you have to look at the inclines these were calculated on ... These
+    speeds should be calculated on the flat / However an incline up and an
+    incline down can be also factored in"):
+
+      - compute_drive_segments()'s own +/-2% grade threshold decides
+        climbing/level/descending PER INTERVAL before merging into segments;
+        that's loose enough that a merged "level" segment's own NET grade
+        (elevation_change_m / distance_km) can still be a non-trivial slope,
+        especially for the short, thin segments that make up the highest
+        speed buckets. STRICT_FLAT_GRADE_PCT below is a second, stricter
+        check applied HERE, on each merged segment's own net grade, purely
+        for the speed-vs-efficiency buckets - segments that don't pass it are
+        excluded from the "flat-only" columns (speed_vs_efficiency_and_range)
+        exactly as the user asked ("these speeds should be calculated on the
+        flat"). How much this tightening excluded is reported in
+        source_data so it's visible when a bucket goes thin/disappears
+        because of it, rather than silently.
+      - Separately, EVERY non-stationary segment (flat, climbing, AND
+        descending) also gets a physics-based grade-corrected efficiency:
+        the segment's real measured energy_kwh has the potential-energy
+        component (mass * 9.81 * elevation_change_m, converted to kWh)
+        removed, isolating the speed/aero/rolling-resistance component so a
+        steep climb or descent segment can still contribute a usable,
+        flat-equivalent estimate to a speed bucket - this is the "an incline
+        up and incline down can be also factored in" ask. It is reported as
+        an ADDITIONAL set of columns (speed_vs_efficiency_grade_corrected),
+        never merged into or replacing the strict flat-only figures, and is
+        explicitly caveated on the assumed mass used (Tessie/vehicle_spec.json's
+        mass.assumed_driving_mass_kg when configured - see
+        vehicle_mass_kg_for_profile() below - else not worked out at all).
+
+    Usable battery capacity: prefers a LIVE reading over a historical
+    estimate. sync_api_tessie.py --battery-health (AGENTS.md TODO-031)
+    polls Tessie's own battery_health endpoint on a regular basis and logs
+    every reading to battery_health_log.json in the Tessie data home; the
+    MOST RECENT logged capacity_kwh is used here whenever that file exists,
+    since it reflects the car's actual current degradation, not a snapshot
+    from whenever historical drives happened to occur. If that log doesn't
+    exist yet (battery-health sync has never been run), this falls back to
+    the original empirical estimate: for every drive in drives_master.csv
+    with a Battery % delta >= 5 points and a real Total Energy Used (kWh)
+    figure, capacity_kwh = kwh_used / (pct_delta / 100), median of all such
+    per-drive estimates. Both figures are always reported in the output
+    (usable_battery_capacity_kwh) even when only one is used for the actual
+    range column, so the two can be sanity-checked against each other.
+
+    Output
+    ------
+    Writes BOTH a machine-readable JSON (the actual "fact sheet" meant for
+    an LLM/ABRP combination) and a flat CSV (the same buckets, for a quick
+    look in a spreadsheet) into the resolved Tessie data home - same
+    "PII never lives in the repo working tree" rule as drives_master.csv
+    itself (AGENTS.md Section 1): this is an AGGREGATE, no addresses/
+    coordinates/per-trip rows, but it's still real personal driving data
+    and stays out of the git tree on principle, resolved via
+    DriveAnalyzer's own tessie_data_home (never hardcoded beside this
+    script).
 """
 import os as _os, sys as _sys; _sys.path[:0] = [p for p in (_os.path.dirname(_os.path.abspath(__file__)), _os.path.dirname(_os.path.dirname(_os.path.abspath(__file__)))) if p not in _sys.path]      # the commands beside it, and Tools/ (lib, providers)
 import os

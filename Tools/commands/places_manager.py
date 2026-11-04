@@ -8,6 +8,30 @@ Tesla / Tessie Location Management & POI Lookup Engine
 - Drive stop clustering and interactive discovery from drives_master.csv (ignores charging stops)
 - Automatic POI center coordinate resolution and custom coordinate/address override
 - Strict Zero-PII compliance across all documentation and examples
+
+NAME
+    places_manager.py - manage saved places and review unnamed drive stops
+
+SYNOPSIS
+    ./Tools/tesla places manage list    [--near PLACE] [--search TEXT] [--sort visits | name | radius | dist]
+    ./Tools/tesla places manage inspect NAME
+    ./Tools/tesla places manage edit    [NAME] [--search TEXT] [--near PLACE]
+    ./Tools/tesla places manage lookup  [QUERY ...] [--radius METRES]
+    ./Tools/tesla places manage review  [--min-stops N]
+    ./Tools/tesla places manage ignored
+    ./Tools/tesla places manage add     NAME [--address ADDR | --lat LAT --lon LON] [--radius METRES]
+                                        [--keywords WORD ...] [--notes TEXT]
+    ./Tools/tesla places manage update  NAME [--radius METRES] [--address ADDR | --lat LAT --lon LON]
+                                        [--add-keyword WORD ...] [--remove-keyword WORD ...] [--notes TEXT]
+    ./Tools/tesla places manage alias   NAME [--address ADDR] [--keywords WORD ...] [--expand-radius]
+    ./Tools/tesla places manage remove  NAME
+    ./Tools/tesla places manage rename  OLD_NAME NEW_NAME
+
+DESCRIPTION
+    Lists, adds, changes and removes the named places in places.json (charging stations are left
+    alone). lookup finds an address or coordinates on OpenStreetMap. review groups the drive stops
+    in drives_master.csv that match no saved place and lets you name or ignore each group; ignored
+    shows the groups ignored before. 'COMMAND -h' gives each command's options.
 """
 import os as _os, sys as _sys; _sys.path[:0] = [p for p in (_os.path.dirname(_os.path.abspath(__file__)), _os.path.dirname(_os.path.dirname(_os.path.abspath(__file__)))) if p not in _sys.path]      # the commands beside it, and Tools/ (lib, providers)
 

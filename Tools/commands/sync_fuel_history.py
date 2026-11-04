@@ -6,12 +6,31 @@ Discovers and downloads monthly historical fuel price archives from Data.NSW CKA
 (August 2016 – present), parses station records, and maintains an indexed SQLite
 database with daily and monthly regional averages for EV vs ICE cost reconciliation.
 
-Usage:
-  ./sync_fuel_history.py --status
-  ./sync_fuel_history.py --sync-all
-  ./sync_fuel_history.py --sync-month 2026-08
-  ./sync_fuel_history.py --query --date 2026-08-15 --fuel-type U91
-  ./sync_fuel_history.py --recompute-aggregates
+NAME
+    sync_fuel_history.py - download NSW fuel price history and keep its database
+
+SYNOPSIS
+    ./Tools/tesla sync fuel-prices [--status] [--tessie-dir DIR]
+    ./Tools/tesla sync fuel-prices --sync-all [--limit N] [--force] [--pace SECONDS]
+    ./Tools/tesla sync fuel-prices --sync-month YYYY-MM [--force] [--pace SECONDS]
+    ./Tools/tesla sync fuel-prices --query [--date YYYY-MM-DD] [--fuel-type TYPE] [--region all | metro | regional]
+    ./Tools/tesla sync fuel-prices --compare-drive INDEX_OR_DATE [--vehicle KEY]
+    ./Tools/tesla sync fuel-prices --list-vehicles
+    ./Tools/tesla sync fuel-prices --set-default-vehicle KEY
+    ./Tools/tesla sync fuel-prices --recompute-aggregates
+
+DESCRIPTION
+    Downloads the monthly NSW fuel price files from Data.NSW and keeps station prices and daily and
+    monthly averages in <data folder>/fuel/fuel_history.db. With no action it prints the database's
+    status. --query prints the price for a date; --compare-drive prices one drive against fuel at
+    the time; the vehicle options list or set the comparison cars.
+
+    Usage:
+      ./sync_fuel_history.py --status
+      ./sync_fuel_history.py --sync-all
+      ./sync_fuel_history.py --sync-month 2026-08
+      ./sync_fuel_history.py --query --date 2026-08-15 --fuel-type U91
+      ./sync_fuel_history.py --recompute-aggregates
 """
 import os as _os, sys as _sys; _sys.path[:0] = [p for p in (_os.path.dirname(_os.path.abspath(__file__)), _os.path.dirname(_os.path.dirname(_os.path.abspath(__file__)))) if p not in _sys.path]      # the commands beside it, and Tools/ (lib, providers)
 

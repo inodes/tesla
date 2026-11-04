@@ -5,20 +5,42 @@ places_osm_editor.py - OpenStreetMap Amenities Inspector & Live Editor
 CLI tool to inspect, verify, and update OpenStreetMap amenities, restrooms,
 and shopping centres around EV charging stations and places.
 
-Usage:
-  # 1. Authorize with OpenStreetMap (one-time):
-  ./Tools/places_osm_editor.py --auth-url
-  ./Tools/places_osm_editor.py --code <authorization_code>
-  ./Tools/places_osm_editor.py --whoami
+NAME
+    places_osm_editor.py - inspect OpenStreetMap around a place and edit its tags
 
-  # 2. Inspect raw OSM data around a charging station:
-  ./Tools/places_osm_editor.py --inspect "Thrumster, NSW"
+SYNOPSIS
+    ./Tools/tesla places osm --auth-url | --code CODE | --whoami
+    ./Tools/tesla places osm --inspect NAME_OR_LAT,LON [--radius METRES]
+    ./Tools/tesla places osm --from-gmaps URL
+    ./Tools/tesla places osm --audit-tesla QUERY [--fix-node | --fix-tags | --reposition] [--gpsupdate LAT,LON]
+                             [--save-registry] [--live]
+    ./Tools/tesla places osm --tag-way ID --tags KEY=VALUE ... --comment TEXT [--live]
+    ./Tools/tesla places osm --add-toilets --at LAT,LON --comment TEXT [--live]
+    ./Tools/tesla places osm --add-place --at LAT,LON --name NAME --tags KEY=VALUE ... --comment TEXT [--live]
+    ./Tools/tesla places osm --note TEXT --at LAT,LON
+    ./Tools/tesla places osm --list-templates
 
-  # 3. Add missing public toilets node:
-  ./Tools/places_osm_editor.py --add-toilets --at -31.4578,152.8282 --comment "Add indoor public toilets at Sovereign Place Town Centre"
+DESCRIPTION
+    Shows the OpenStreetMap elements near a station or place and checks Tesla chargers against
+    OSM. The edit options change tags, move a charger node or add a node. Every edit is a preview
+    unless --live is given, and --dry-run always wins over --live. Logging in uses OSM OAuth with
+    the client details in config.json's "osm" block; with no saved token and no --inspect or --note
+    it prints the login URL. --token uses a token for this run only; --save-token keeps it.
 
-  # 4. Add or update tags on an OSM Way / Building:
-  ./Tools/places_osm_editor.py --tag-way 747162527 --tags "shop=mall" "toilets=yes" --comment "Tag Sovereign Place as shopping mall with restrooms"
+    Usage:
+      # 1. Authorize with OpenStreetMap (one-time):
+      ./Tools/places_osm_editor.py --auth-url
+      ./Tools/places_osm_editor.py --code <authorization_code>
+      ./Tools/places_osm_editor.py --whoami
+
+      # 2. Inspect raw OSM data around a charging station:
+      ./Tools/places_osm_editor.py --inspect "Thrumster, NSW"
+
+      # 3. Add missing public toilets node:
+      ./Tools/places_osm_editor.py --add-toilets --at -31.4578,152.8282 --comment "Add indoor public toilets at Sovereign Place Town Centre"
+
+      # 4. Add or update tags on an OSM Way / Building:
+      ./Tools/places_osm_editor.py --tag-way 747162527 --tags "shop=mall" "toilets=yes" --comment "Tag Sovereign Place as shopping mall with restrooms"
 """
 import os as _os, sys as _sys; _sys.path[:0] = [p for p in (_os.path.dirname(_os.path.abspath(__file__)), _os.path.dirname(_os.path.dirname(_os.path.abspath(__file__)))) if p not in _sys.path]      # the commands beside it, and Tools/ (lib, providers)
 

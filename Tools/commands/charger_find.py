@@ -7,11 +7,34 @@ Finds, compares, and explores EV charging stations across all public networks:
 - 🦊 Chargefox, NRMA, WA EV Network, QLD Electric Highway (Tier 1 First-Party)
 - 🕊️ Evie, BP Pulse, AmpCharge, Exploren, Chargepoint, Engie (Tier 2 Aggregator)
 
-Key Features:
-- Spatial Deduplication (R <= 60m) & First-Party Truth Hierarchy (Tier 1 > Tier 2)
-- Unified Sorting by Distance, Active $/kWh Price, Max kW Power, or Stall Count
-- Time-of-Use (TOU) Tariff Evaluation (-t HH:MM)
-- Interactive Drill-Down with Google Maps Integration & Live Status Inspection
+NAME
+    charger_find.py - find and compare EV chargers across every network
+
+SYNOPSIS
+    ./Tools/tesla chargers find [--near PLACE | --all | --query TEXT] [--state ST]
+                                [--sc | --dc | --ac] [--network NAME] [--min-kw KW]
+                                [--sort KEY] [--time HH:MM] [--limit N] [--json]
+    ./Tools/tesla chargers find --from PLACE --to PLACE [--via PLACE ...] [--soc PCT | --no-soc]
+    ./Tools/tesla chargers find --sync-all | --sync-tesla | --sync-chargefox | --sync-evx | --sync-evie |
+                                --sync-bppulse | --sync-plugshare | --sync-ampcharge | --sync-exploren |
+                                --sync-jolt | --sync-nrma | --export-consolidated
+    ./Tools/tesla chargers find --live [--sc] [--network tesla | chargefox] [--country NAME]
+    ./Tools/tesla chargers find --inspect QUERY [--live] [--save]
+    ./Tools/tesla chargers find --plugshare ID[,ID...] [--save]
+
+DESCRIPTION
+    Searches the local charger registries of every network (Tesla, Chargefox and NRMA, PlugShare
+    and the networks it lists) near a place, along a route or across a state, and prints one list
+    sorted by distance, price, power or stalls. A site listed by several networks appears once.
+    The --sync-* options download a network's stations into its registry; --live, --inspect and
+    --plugshare look at a station's live upstream record. With no options it prints this help and exits 1.
+    The full list of options is in -h.
+
+    Key Features:
+    - Spatial Deduplication (R <= 60m) & First-Party Truth Hierarchy (Tier 1 > Tier 2)
+    - Unified Sorting by Distance, Active $/kWh Price, Max kW Power, or Stall Count
+    - Time-of-Use (TOU) Tariff Evaluation (-t HH:MM)
+    - Interactive Drill-Down with Google Maps Integration & Live Status Inspection
 """
 import os as _os, sys as _sys; _sys.path[:0] = [p for p in (_os.path.dirname(_os.path.abspath(__file__)), _os.path.dirname(_os.path.dirname(_os.path.abspath(__file__)))) if p not in _sys.path]      # the commands beside it, and Tools/ (lib, providers)
 
