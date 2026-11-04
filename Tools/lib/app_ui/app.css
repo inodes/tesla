@@ -306,7 +306,7 @@ main:has(#spl .stbar,#spl .vbar) #splx{display:none}
 .hud .hsp{position:absolute;bottom:2em;left:50%;transform:translateX(-50%);background:rgba(0,0,0,.55);border-radius:1.2em;padding:.3em 1.4em;display:flex;align-items:baseline;gap:.6em;white-space:nowrap}
 .hud .hsp b{font:700 4.6em/1.1 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;font-variant-numeric:tabular-nums}
 .hud .hsp small{font-size:1.8em;opacity:.85}
-.hud .hin{position:absolute;left:2em;bottom:2em;height:5.66em;display:flex;flex-direction:column;justify-content:space-between;color:#fff;font:500 2.1em/1.1 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;text-shadow:0 0 .25em rgba(0,0,0,.9),0 .05em .2em rgba(0,0,0,.8);opacity:.9;white-space:nowrap}.hud .hin b{font-weight:600}.hud .hin [hidden]{display:none}
+.hud .hin{position:absolute;left:.95em;bottom:.95em;height:2.7em;display:flex;flex-direction:column;justify-content:space-between;color:#fff;font:500 2.1em/1.1 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;text-shadow:0 0 .25em rgba(0,0,0,.9),0 .05em .2em rgba(0,0,0,.8);opacity:.9;white-space:nowrap}.hud .hin b{font-weight:600}.hud .hin [hidden]{display:none}
 .hud .hbk{position:absolute;top:2em;width:6em;height:6em;fill:#f59e0b;display:none;filter:drop-shadow(0 0 .3em rgba(0,0,0,.7))}
 .hud .hl{left:2em}.hud .hr{right:2em;transform:scaleX(-1)}
 .hud .hbk.on{display:block;animation:hudfl .74s steps(1) infinite}
