@@ -2099,7 +2099,7 @@ const kpChips=r=>{if(!r)return"";if(r.ignored)return `<div class="kst"><i class=
 const kpBig=(ty)=>{const a=Object.values((KPC&&KPC[ty])||{}).map(r=>r.size).filter(x=>x>0).sort((x,y)=>x-y);return a.length>3?Math.max(a[Math.floor(a.length/2)]*2,536870912):1e18};
 const kpTop=(ty,id)=>{const r=kpOf(ty,id),k=ty+"|"+id;return `<em class="evk ${TCSEL.has(k)?"on":""}" data-sel="${esc(k)}" role="checkbox" aria-checked="${TCSEL.has(k)}" title="Select">${TCSEL.has(k)?"✓":""}</em>`+(r&&r.size?`<em class="szb ${r.size>=kpBig(ty)?"big":""}" title="${esc(Object.keys(r.bytes).map(x=>drName(x)+" "+fmtGB(r.bytes[x])).join(" · "))}">${fmtGB(r.size)}</em>`:"")};
 async function pageTeslaCam(role,id){
-  if(role&&id)return /^sentry-/.test(id)?pageTeslaCamSentry(role,id.slice(7)):/^at-/.test(id)?pageTeslaCamAt(+id.slice(3)):/^win-/.test(id)?pageTeslaCamAt(...(([w,tid])=>(([a,b,l,k])=>[+a,+b,l==="n"?null:+l,k,tid?decodeURIComponent(tid):null])(w.split("-")))(id.slice(4).split("~"))):pageTeslaCamDrive(role,id);
+  if(role&&id)return /^sentry-/.test(id)?pageTeslaCamSentry(role,id.slice(7)):/^at-/.test(id)?pageTeslaCamMoment(+id.slice(3)):/^win-/.test(id)?pageTeslaCamAt(...(([w,tid])=>(([a,b,l,k])=>[+a,+b,l==="n"?null:+l,k,tid?decodeURIComponent(tid):null])(w.split("-")))(id.slice(4).split("~"))):pageTeslaCamDrive(role,id);
   if(TCS.rowDesc===undefined)TCS.rowDesc=cfg("teslacam.rows_newest_first")===true;
   loading("cards");const [dr,act,pl,dlist]=await Promise.all([tcGet("teslacam"),api("activity"),api("places").catch(()=>({saved:[]})),api("drivelist").catch(()=>({items:[]}))]),drives=dr.drives,places=(pl.saved||[]);
   const head='<h1>TeslaCam</h1>';
@@ -2431,6 +2431,14 @@ async function pageTeslaCamSentry(role,ev){
   }catch(err){host.innerHTML=errBox(err.message,"Could not open this Sentry event")}
 }
 // the minutes around one instant (a Saved clip's trigger) when no Tessie drive covers it: map, telemetry and video of whichever connected drive holds them
+// the page of the drive (or park) of the Drives list that holds a moment; a window around the moment when no row does
+async function rowHashAt(u){
+  try{const dl=await api("drivelist"),L=(dl.items||[]).filter(v=>v.t0!=null&&v.t1!=null&&v.t0<=u&&u<=v.t1&&["drive","parked","stopped","recording"].includes(v.kind)),v=L.find(x=>x.kind==="drive")||L[0];
+    if(v){const park=v.kind!=="drive"&&v.kind!=="recording";return "#/teslacam/auto/win-"+Math.round(v.t0)+"-"+Math.round(v.t1)+"-"+(v.lo!=null?Math.round(v.lo):"n")+"-"+(park?"p":"d")+(v.kind==="drive"&&v.src&&v.src!=="cam"?"~"+encodeURIComponent(v.id):"")}}catch(e){}
+  return ""}
+async function goMoment(u){location.hash=(await rowHashAt(u))||"#/teslacam/auto/at-"+Math.round(u)}
+// a moment (#/teslacam/auto/at-<t>) opens the page of the drive or park that holds it (Tessie's times, to the second, name it: "from → to"); only a moment no row holds gets a window around it
+async function pageTeslaCamMoment(u){const h=await rowHashAt(u);if(h){location.replace(location.pathname+location.search+h);return}return pageTeslaCamAt(u)}
 async function pageTeslaCamAt(t,t1,lo,k,tid){      // t alone: the moment (a window around it); t and t1: that span of time (a row of the Drives list)
   loading();const pl=await api("places").catch(()=>({saved:[]}));
   main.innerHTML=crumbs("#/teslacam","TeslaCam")+pnBar(tid?`<a class="chip" href="#/drive/${encodeURIComponent(tid)}" title="Tessie's page of this drive">The drive</a><a class="chip" href="#/drive/${encodeURIComponent(tid)}/footage" title="Its map and telemetry as Tessie has them, with the footage">Map and telemetry</a>`:"")+'<div id="tdh"></div>';
@@ -2441,6 +2449,7 @@ async function pageTeslaCamAt(t,t1,lo,k,tid){      // t alone: the moment (a win
       const sr=j.series;if(sr&&sr.lat&&sr.lon){const i0=a-j.item.t0,i1=z-j.item.t0;for(let i=0;i<sr.lat.length;i++)if(i<i0||i>i1){sr.lat[i]=null;sr.lon[i]=null}}}      // the map is only the row's own seconds: the minute of a clip beside it (the car moving off, or arriving) is not part of a park
       // a park: its telemetry bar is the WHOLE parked time (hours), empty where there is no clip; the series is padded with blanks out to the end of the park
       if(t1&&j&&j.item&&k==="p"&&j.series&&j.series.v){const sr=j.series,need=z-j.item.t0+1,n=sr.v.length;if(n<need)Object.keys(sr).forEach(f=>{const x=sr[f];if(Array.isArray(x)&&x.length===n)while(x.length<need)x.push(null)});j.item.span=[Math.max(0,a-j.item.t0),Math.max(1,z-j.item.t0)]}
+    if(t1&&j&&Array.isArray(j.events))j.events=j.events.filter(v=>v.t>=a-30&&v.t<=z+30);      // the Saved clips and Sentry events of THIS row: a Saved clip keeps minutes from before it was saved, so the drive before it is not the drive it happened in
     return j};
   try{await teslaDriveBody($("#tdh"),"A",fetchSeg,pl.saved||[],{})}catch(e){const h=$("#tdh");if(h)h.innerHTML=errBox(e.message,"Could not open this moment")}
 }
@@ -2508,7 +2517,7 @@ async function teslaDriveBody(host,role,fetchSeg,places,opts){
   const cursor=sec=>{const i=Math.max(0,Math.min(S().v.length-1,Math.round(sec)));if(map)map.cursor(i);if(chart)chart.cursor(i)};
   const events=()=>{if(opts.rvtab||evShown||!d.events||!d.events.length||!live())return;evShown=true;
     $("#dev").innerHTML=`<h2>Saved clips and Sentry events in this drive</h2><div class="sub">Click one to jump the video there.</div><div class="evs">${d.events.map(v=>`<button class="evc" data-u="${v.t}">${v.clips?sentryThumb(Object.assign({},v,{role}),v.folder):v.thumb?`<img alt="" decoding="async" loading="lazy" src="/footage/${role}/${v.folder}/${v.id}/thumb.png" onerror="this.style.visibility='hidden'">`:'<div class="noimg"></div>'}<b>${hms(v.ts)}</b><span>${esc(v.folder==="SavedClips"?"Saved":"Sentry")} · ${esc(reason(v.reason))}</span><span>${esc(v.city||"")}</span></button>`).join("")}</div>`;
-    lazyThumbs($("#dev"));    $$("#dev .evc").forEach(b=>b.onclick=()=>{const ix=Math.round(+b.dataset.u-it().t0);if(ix<0||ix>=S().v.length){location.hash="#/teslacam/auto/at-"+Math.round(+b.dataset.u);return}      // a saved clip keeps minutes from before it was saved: one that was saved after this drive ended is not in this video, its own page is
+    lazyThumbs($("#dev"));    $$("#dev .evc").forEach(b=>b.onclick=()=>{const ix=Math.round(+b.dataset.u-it().t0);if(ix<0||ix>=S().v.length){goMoment(+b.dataset.u);return}      // a saved clip keeps minutes from before it was saved: one that was saved after this drive ended is not in this video, its own page is
     if(player){seekIdx(ix);$("#dvid").scrollIntoView({block:"nearest"})}})};
   RVAPI={cursor:i=>cursor(i),seek:i=>seekIdx(i),series:()=>S(),t0:()=>it().t0,clk:i=>clk(i),focus:f=>{if(chart&&chart.focus)chart.focus(f)},lanes:l=>{if(chart&&chart.lanes)chart.lanes(l);else pendL=l},zoom:(a,b)=>{if(chart&&chart.view)chart.view(a,b)},limit:(a,b)=>{if(chart&&chart.limit)chart.limit(a,b)},map:(a,b,p)=>{if(map&&map.section){map.section(a,b);map.pins(p||[])}else pendM=[a,b,p]},live:()=>live(),saved:()=>{const r=[];d.minutes.filter(m=>m.src==="saved").forEach(m=>{const a=it().t0+m.off,b=a+60,l=r[r.length-1];if(l&&a-l[1]<=2)l[1]=b;else r.push([a,b])});return r}};
   // what the telemetry bar covers: the whole period (a drive, or the whole parked time) or only the time of the video clips; where the two are the same the button is hidden
