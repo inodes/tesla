@@ -1,6 +1,6 @@
 """minute_kind.py - what a Recent minute says about the car, from the clip itself (the dashcam first, no other record).
 
-"go" = telemetry with the car in gear or moving, "pk" = telemetry with the car in Park at 0 km/h (awake and stationary), "" = no telemetry (parked). A minute whose telemetry has not been
+"go" = telemetry with the car moving (3 km/h or more), "pk" = telemetry with the car standing still (Park, or a gear touched; awake and stationary), "" = no telemetry (parked). A minute whose telemetry has not been
 read yet (the Metadata step has not run) is told by walking its front camera file (dashcam_series.telemetry_kind), once; the answer is kept. The six cameras of a minute stay together
 and a file is never cut: the minute is the unit. run_cuts turns the minutes into drives and parks.
 

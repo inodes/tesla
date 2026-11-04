@@ -88,10 +88,10 @@ def _movie_duration(f, start, end):
     return None
 
 
-def telemetry_kind(path, max_nals=None, moving_kmh=1.0):
-    """What a clip says about the car, from its telemetry (one SEI NAL unit per frame): "go" when the car is in gear or moving at any point of the minute, "pk" when there is telemetry but
-    the car stays in Park at 0 km/h throughout (awake and stationary), "" when there is none (written while parked), None when the file cannot be read as a movie. A clip is a whole
-    minute that is never cut, so a drive that begins or ends part-way through it is "go". Hops over the NAL units without reading the pictures and stops at the first frame in gear or moving."""
+def telemetry_kind(path, max_nals=None, moving_kmh=3.0):
+    """What a clip says about the car, from its telemetry (one SEI NAL unit per frame): "go" when the car moves (at least moving_kmh, the app's own "moving") at any point of the minute, "pk" when there is telemetry but
+    the car does not move (Park, or in gear but standing: a gear touched, the lights; awake and stationary), "" when there is none (written while parked), None when the file cannot be read as a movie. A clip is a whole
+    minute that is never cut, so a drive that begins or ends part-way through it is "go". Hops over the NAL units without reading the pictures and stops at the first frame that is moving."""
     seen_tele = False
     try:
         with open(path, "rb") as f:
@@ -121,7 +121,7 @@ def telemetry_kind(path, max_nals=None, moving_kmh=1.0):
                                     m = {}
                                 if m:
                                     seen_tele = True
-                                    if int(m.get(2, 0)) != 0 or abs(float(m.get(4, 0.0)) * 3.6) > moving_kmh:
+                                    if abs(float(m.get(4, 0.0)) * 3.6) >= moving_kmh:
                                         return "go"
                     p += 4 + ln
                     seen += 1
