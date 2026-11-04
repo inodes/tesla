@@ -281,7 +281,7 @@ main:has(#spl .stbar,#spl .vbar) #splx{display:none}
 .evg{display:contents}.evg .evkid{display:none}
 /* opened: the clips of a drive or park appear right after its card, in the same row (to the right), not in a box of their own above or below */
 .evg.open .evkid{display:flex}.evg.open .evc.clu{border-color:var(--ink)}
-.evg.open .evkid[data-ty=sentry]{border-color:#dc2626}.evg.open .evkid[data-ty=saved]{border-color:#2563eb}.evg.open .evkid[data-ty=recent]{border-style:dashed}
+.evg.open .evkid[data-ty=sentry]{border:2px solid #dc2626}.evg.open .evkid[data-ty=saved]{border:2px solid #2563eb}.evg.open .evkid{animation:evin .18s ease-out}@keyframes evin{from{opacity:0;transform:translateX(-14px)}to{opacity:1;transform:none}}.evg.open .evkid[data-ty=recent]{border-style:dashed}
 .evc .gchip{display:inline-block;align-self:flex-start;font-size:10.5px;font-weight:600;padding:1px 7px;border-radius:9px;margin:2px 4px 0 0;cursor:pointer;color:var(--mut)}
 .evc .gchip.sentry{background:rgba(220,38,38,.14);color:#dc2626}.evc .gchip.saved{background:rgba(37,99,235,.14);color:#2563eb}
 
