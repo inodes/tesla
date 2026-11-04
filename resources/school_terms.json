@@ -1,0 +1,10 @@
+{
+  "_note": "Student term dates by state, for the school zone speed signs ('SCHOOL DAYS'). A date inside a term, on a weekday that is not a public holiday, is a school day. A state or year not listed here is unknown: the app then shows the plain speed sign and does not guess. Add a year when the state publishes it.",
+  "NSW": {
+    "source": "https://education.nsw.gov.au/schooling/calendars (public schools, Eastern division; the Western division starts Term 1 a week later: 2026-02-09, 2027-02-10)",
+    "terms": {
+      "2026": [["2026-02-02", "2026-04-02"], ["2026-04-22", "2026-07-03"], ["2026-07-21", "2026-09-25"], ["2026-10-13", "2026-12-17"]],
+      "2027": [["2027-02-03", "2027-04-09"], ["2027-04-29", "2027-07-02"], ["2027-07-20", "2027-09-24"], ["2027-10-11", "2027-12-17"]]
+    }
+  }
+}

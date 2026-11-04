@@ -24,6 +24,7 @@ resources/*.json
 resources/api_cache/
 resources/invoices/*
 !resources/invoices/.gitkeep
+!resources/school_terms.json
 !resources/places.example.json
 !resources/charging.example.json
 !resources/charging_archived.example.json
