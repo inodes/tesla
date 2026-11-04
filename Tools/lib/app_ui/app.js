@@ -2472,8 +2472,9 @@ async function teslaDriveBody(host,role,fetchSeg,places,opts){
   const seekIdx=i=>{if(!player)return;const ms=cont();let b=null;for(const m of ms){if(m.off<=i)b=m;else break}if(!b)b=ms[0];if(b)player.seekAt(b.stamp,Math.max(0,Math.min(59,i-b.off)))};
   // a strip of the span: coloured where there is video, black where there is none; click to go there
   const covStrip=ms=>{const el=$("#dcov");if(!el)return;const tot=ms.reduce((a,m)=>a+(m.len||60),0);
-    if(!ms.some(m=>m.syn||!(m.cams&&m.cams.length))){el.innerHTML="";return}
-    el.innerHTML=`<div class="covbar" title="Black: no video for this time">${ms.map(m=>`<i class="${m.cams&&m.cams.length?"on":"off"}" style="flex:${m.len||60}" data-o="${m.off}" title="${esc(clockHM(m.loc)+(m.cams&&m.cams.length?"":" · no video"))}"></i>`).join("")}</div><div class="sub" style="margin:2px 0 6px">The black parts of the bar have no video; the map and telemetry still cover them.</div>`;
+    if(ms.length<2){el.innerHTML="";return}
+    const gaps=ms.some(m=>m.syn||!(m.cams&&m.cams.length));      // the bar is always there (one block a minute: click one to play it); the note about black parts only where there are some
+    el.innerHTML=`<div class="covbar" title="${gaps?"Black: no video for this time":"One block for each minute of video: click one to play it"}">${ms.map(m=>`<i class="${m.cams&&m.cams.length?"on":"off"}" style="flex:${m.len||60}" data-o="${m.off}" title="${esc(clockHM(m.loc)+(m.cams&&m.cams.length?"":" · no video"))}"></i>`).join("")}</div>${gaps?'<div class="sub" style="margin:2px 0 6px">The black parts of the bar have no video; the map and telemetry still cover them.</div>':""}`;
     $$("#dcov i",host).forEach(b=>b.onclick=()=>seekIdx(+b.dataset.o))};
   const cursor=sec=>{const i=Math.max(0,Math.min(S().v.length-1,Math.round(sec)));if(map)map.cursor(i);if(chart)chart.cursor(i)};
   const events=()=>{if(opts.rvtab||evShown||!d.events||!d.events.length||!live())return;evShown=true;
