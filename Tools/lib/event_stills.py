@@ -267,7 +267,7 @@ class EventStills:
                 if (stop and stop()) or cam not in allp.get(stamp, {}):
                     continue
                 got = self._cut(tmp, "h_" + stamp, allp[stamp][cam], a, b - a, wd["high"], q["high"], 1, 0.5)
-                half += [(f, "%s_%02d.jpg" % (stamp, a + i)) for i, f in enumerate(got)]
+                half += [(f, "%s_%02d.jpg" % (stamp, a + i)) for i, f in enumerate(got) if f]      # a picture the video did not give (past its last frame) is left out
             if half and not (stop and stop()):
                 self._write_zip(os.path.join(out, cam + ".h.zip"), half)
                 n += len(half)
