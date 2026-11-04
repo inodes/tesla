@@ -26,6 +26,8 @@ MIN_UNREAD = 180            # seconds: an unread stretch this long after a drive
 ADJ_S = 300                 # seconds: a parked section this close to a drive (before or after it) is where that drive ended or began
 CARRY_S = 86400             # seconds: a parked minute with no position of its own takes the one of the section before it when that ended no longer ago than this
 GAP = 75                    # as in app_teslacam: minutes this close are one run
+PAUSE_MIN = 5               # minutes: a spell with telemetry but the car in Park at 0 km/h, between two minutes in gear or moving, is a pause in that drive (a door to open, a child to put in)
+SHIFT_MAX = 3               # minutes (clips): how far the other record (Tessie) may move the start or end of a drive found from the clips
 _LOCK = threading.RLock()
 _S = {}                     # first minute of a section -> [kind, lat, lon, cut, UTC time of its last minute]
 _IX = (None, [], [])        # (version, start times, start stamps) for section()
@@ -105,11 +107,84 @@ def pos(stamp):
     return [s[1], s[2]] if s and s[1] is not None else None
 
 
+def _cls(v):
+    """A minute's class: "go" (telemetry, in gear or moving), "pk" (telemetry, Park at 0 km/h), "" (no telemetry), None (not known). True / False are "go" / ""."""
+    return "go" if v is True else "" if v is False else v
+
+
+def minute_sections(stamps, kinds, moves=None, moves_upto=0):
+    """{stamp: "drive" | "park"} for the minutes that have a class in `kinds`, from the clips themselves, in this order:
+    1. a minute in gear or moving is a drive, and every other minute is parked;
+    2. a spell of Park-at-0-km/h-with-telemetry minutes (never a minute with no telemetry), PAUSE_MIN minutes at most, between two drive minutes is a pause: the drive goes on;
+    3. the six cameras of a minute stay together and a file is never cut: the minute is the unit.
+    Then the other record, when it has the drive: a drive found from the clips that a drive of Tessie's overlaps takes its start and end from Tessie's, when that moves either edge by no more than
+    SHIFT_MAX minutes (the clips may begin a block early, or end a block late); where it has no drive, or the edges are further apart, the clips stand."""
+    runs, cur = [], []
+    for st in sorted((x for x in stamps if _cls(kinds.get(x)) is not None), key=CC.utc):
+        if cur and CC.utc(st) - CC.utc(cur[-1]) > GAP:
+            runs.append(cur)
+            cur = []
+        cur.append(st)
+    if cur:
+        runs.append(cur)
+    mv = sorted((m for m in (moves or []) if m.get("t0") and m.get("t1")), key=lambda m: m["t0"])
+    out = {}
+    for run in runs:
+        c = [_cls(kinds[st]) for st in run]
+        d = [x == "go" for x in c]
+        i = 0
+        while i < len(c):                                     # a pause between two minutes in gear
+            if c[i] == "pk":
+                j = i
+                while j < len(c) and c[j] == "pk":
+                    j += 1
+                if 0 < i and j < len(c) and d[i - 1] and d[j] and j - i <= PAUSE_MIN:
+                    for q in range(i, j):
+                        d[q] = True
+                i = j
+            else:
+                i += 1
+        ts = [CC.utc(st) for st in run]
+        blocks, i = [], 0
+        while i < len(d):
+            if d[i]:
+                j = i
+                while j + 1 < len(d) and d[j + 1]:
+                    j += 1
+                blocks.append([i, j])
+                i = j + 1
+            else:
+                i += 1
+        for bi, (i0, i1) in enumerate(blocks):                # the other record, where it has the drive
+            lo, hi = ts[i0], ts[i1] + 60
+            if not mv or moves_upto < hi:
+                continue
+            hit = [m for m in mv if min(m["t1"], hi) - max(m["t0"], lo) >= 30]
+            if not hit:
+                continue
+            if any(min(m["t1"], ts[j1] + 60) - max(m["t0"], ts[j0]) >= 30 for m in hit for q, (j0, j1) in enumerate(blocks) if q != bi):
+                continue                                      # one trip of Tessie's across two drives of the clips: they disagree, the clips stand
+            a = max((q for q in range(len(ts)) if ts[q] <= hit[0]["t0"]), default=0)
+            b = max((q for q in range(len(ts)) if ts[q] <= hit[-1]["t1"]), default=len(ts) - 1)
+            floor = blocks[bi - 1][1] + 1 if bi else 0
+            ceil = blocks[bi + 1][0] - 1 if bi + 1 < len(blocks) else len(ts) - 1
+            a, b = max(a, floor), min(b, ceil)
+            if a <= b and abs(a - i0) <= SHIFT_MAX and abs(b - i1) <= SHIFT_MAX:
+                for q in range(i0, i1 + 1):
+                    d[q] = False
+                for q in range(a, b + 1):
+                    d[q] = True
+                blocks[bi] = [a, b]
+        for st, x in zip(run, d):
+            out[st] = "drive" if x else "park"
+    return out
+
+
 def compute(stamps, items, moves=None, moves_upto=0, kinds=None):
     """{first minute of every section: [kind, lat, lon, cut, last minute, estimated]} for these minutes and the timeline's items.
     moves: the drives some other record (Tessie) has, [dict(t0, t1, p0, p1)], or None when there is none; moves_upto: the time up to which that record is complete.
-    kinds: {stamp: True (the clip carries telemetry: a drive) | False (none: parked)} for minutes whose telemetry is not read yet (minute_kind), told from the clip itself. The dashcam comes first:
-    the other record only gives a position to a park and is never what cuts a run."""
+    kinds: {stamp: "go" | "pk" | ""} what each minute's own clip says (minute_sections): the dashcam comes first. A minute that has a class is a drive or a park by that; the other record
+    (Tessie) only moves the edges of a drive by up to SHIFT_MAX minutes and gives a position, and a minute with none falls back on the timeline's items."""
     its = sorted((i for i in items if i.get("kind") in ("drive", "stopped", "parked", "recording")), key=lambda i: i["t0"])
     t0s = [i["t0"] for i in its]
 
@@ -133,16 +208,27 @@ def compute(stamps, items, moves=None, moves_upto=0, kinds=None):
         p = (it.get("p0") or it.get("p1")) if it else None
         return (p[0], p[1]) if p and p[0] is not None else (None, None)
 
+    own = minute_sections(stamps, kinds or {}, moves, moves_upto) if kinds else {}
+
+    def move_item(t):
+        for m in sorted((m for m in (moves or []) if m.get("t0") and m.get("t1")), key=lambda m: m["t0"]):
+            if m["t0"] < t + 60 and m["t1"] > t:
+                return dict(kind="drive", id="t%d" % m["t0"], t0=m["t0"], t1=m["t1"], p0=m.get("p0"), p1=m.get("p1"))
+        return None
+
     out, key, last, sec, secit = {}, None, None, None, None
     ref = {}                                          # first minute of a section -> the timeline item it began in
     for st in sorted(stamps, key=CC.utc):
         t = CC.utc(st)
         it = moving(t) or at(t + 30)
-        pk = kinds.get(st) if kinds and (it is None or it["kind"] == "recording") else None       # an unread minute: its own file says
-        if pk is not None:
-            it = dict(kind="drive" if pk else "stopped", id="clip", t0=t, t1=t + 60)
         k = None
-        if it and it["kind"] == "drive":
+        if st in own:                                     # the clips say: a drive or a park; the timeline's item and Tessie's drive only give the position
+            k = ("drive", "c") if own[st] == "drive" else ("park", "")
+            if k[0] == "drive" and not (it and it["kind"] == "drive"):
+                it = move_item(t) or it
+            elif k[0] == "park" and it and it["kind"] == "drive":
+                it = dict(it, kind="stopped")             # not a drive by its clips: the timeline's drive item gives only its place
+        elif it and it["kind"] == "drive":
             k = ("drive", it["id"])
         elif it and it["kind"] in ("stopped", "parked"):
             k = ("park", "")
@@ -150,8 +236,6 @@ def compute(stamps, items, moves=None, moves_upto=0, kinds=None):
             k = ("park", "")                              # minutes nobody read after a drive (parked at Home: they are left alone, so never read) are the car parked, not more of the drive
         new = last is None or t - last > GAP
         cut = False
-        if k is not None and key is not None and k != key and k[0] == "drive" and key[0] == "drive" and "clip" in (k[1], key[1]):
-            k = key if key[1] != "clip" else k                  # a drive known only from its clips and the same drive read in part: one drive
         if not new and k is not None and key is not None and k != key:
             cut = True
         if new or cut:
@@ -229,12 +313,13 @@ def _carry(v, st, n, order, out, ref, moves, moves_upto):
 
 def disagreements(kinds, moves, moves_upto, margin_s=150, park_s=45):
     """Where the other record (Tessie) does not confirm what the clips say: [(stamp, "clip drive, no drive of Tessie's" | "clip parked, Tessie drove")] for the minutes Tessie is complete for
-    (up to moves_upto). kinds = {stamp: True drive / False parked}, the clips' own answer for each minute. The car sends telemetry from when it is awake in gear, a little before Tessie's trip
+    (up to moves_upto). kinds = {stamp: "go" | "pk" | ""}, the clips' own answer for each minute. The car sends telemetry from when it is awake in gear, a little before Tessie's trip
     starts and after it ends, so a clip drive within `margin_s` of a drive of Tessie's is confirmed; a clip parked is contradicted only when a drive of Tessie's covers `park_s` seconds of it.
     The cuts are the clips' own; this says when the two disagree, so the logic can be looked at where it is wrong."""
     mv = sorted((m for m in (moves or []) if m.get("t0") and m.get("t1")), key=lambda m: m["t0"])
     out = []
-    for st, drive in sorted(kinds.items(), key=lambda kv: CC.utc(kv[0])):
+    own = minute_sections(list(kinds), kinds)                  # what the clips alone say
+    for st, drive in sorted(((st, own.get(st) == "drive") for st in kinds if st in own), key=lambda kv: CC.utc(kv[0])):
         t = CC.utc(st)
         if t + 60 > moves_upto:
             continue
