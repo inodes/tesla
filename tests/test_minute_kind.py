@@ -28,9 +28,10 @@ class TelemetryKindTest(TempDirTest):
     def kind(self, nals, **kw):
         return DS.telemetry_kind(self.write("a.mp4", clip(nals)), **kw)
 
-    def test_in_gear_or_moving_is_go(self):
+    def test_moving_is_go_and_in_gear_but_standing_is_not(self):
         self.assertEqual(self.kind([MOVING, SLICE]), "go")
-        self.assertEqual(self.kind([sei_nal(reading(speed_ms=0.0, gear=1))]), "go")            # Drive at 0 km/h (at the lights)
+        self.assertEqual(self.kind([sei_nal(reading(speed_ms=0.0, gear=1))]), "pk")            # a gear touched, standing (4 Nov 08:52: Drive for 8 s at 0 km/h)
+        self.assertEqual(self.kind([sei_nal(reading(speed_ms=0.3, gear=1))]), "pk")            # creeping under 3 km/h
         self.assertEqual(self.kind([sei_nal(reading(speed_ms=5.0, gear=0))]), "go")            # moving in Park (rolling)
 
     def test_telemetry_with_the_car_in_park_at_zero_is_pk(self):

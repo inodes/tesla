@@ -26,7 +26,7 @@ MIN_UNREAD = 180            # seconds: an unread stretch this long after a drive
 ADJ_S = 300                 # seconds: a parked section this close to a drive (before or after it) is where that drive ended or began
 CARRY_S = 86400             # seconds: a parked minute with no position of its own takes the one of the section before it when that ended no longer ago than this
 GAP = 75                    # as in app_teslacam: minutes this close are one run
-PAUSE_MIN = 5               # minutes: a spell with telemetry but the car in Park at 0 km/h, between two minutes in gear or moving, is a pause in that drive (a door to open, a child to put in)
+PAUSE_MIN = 5               # minutes: a spell with telemetry but the car standing still, between two minutes moving, is a pause in that drive (a door to open, a child to put in)
 SHIFT_MAX = 3               # minutes (clips): how far the other record (Tessie) may move the start or end of a drive found from the clips
 _LOCK = threading.RLock()
 _S = {}                     # first minute of a section -> [kind, lat, lon, cut, UTC time of its last minute]
@@ -108,13 +108,13 @@ def pos(stamp):
 
 
 def _cls(v):
-    """A minute's class: "go" (telemetry, in gear or moving), "pk" (telemetry, Park at 0 km/h), "" (no telemetry), None (not known). True / False are "go" / ""."""
+    """A minute's class: "go" (telemetry, moving), "pk" (telemetry, standing still), "" (no telemetry), None (not known). True / False are "go" / ""."""
     return "go" if v is True else "" if v is False else v
 
 
 def minute_sections(stamps, kinds, moves=None, moves_upto=0):
     """{stamp: "drive" | "park"} for the minutes that have a class in `kinds`, from the clips themselves, in this order:
-    1. a minute in gear or moving is a drive, and every other minute is parked;
+    1. a minute with the car moving is a drive, and every other minute is parked;
     2. a spell of Park-at-0-km/h-with-telemetry minutes (never a minute with no telemetry), PAUSE_MIN minutes at most, between two drive minutes is a pause: the drive goes on;
     3. the six cameras of a minute stay together and a file is never cut: the minute is the unit.
     Then the other record, when it has the drive: a drive found from the clips that a drive of Tessie's overlaps takes its start and end from Tessie's, when that moves either edge by no more than
