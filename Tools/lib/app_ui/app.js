@@ -2278,13 +2278,17 @@ async function pageTeslaCam(role,id){
     // a day's cards in the order of the Drives list: a card that is a drive or park sits at that drive's or park's start
     const ordOf=v=>{const cl=leadOf[v.ty+"|"+v.id];return cl?cl.item.start:v.ts};
     Object.keys(byDay).forEach(d=>{byDay[d].sort((a,b)=>{const x=ordOf(a),y=ordOf(b);return (x<y?-1:x>y?1:0)*(TCS.rowDesc?-1:1)})});
+    {const sp0=$("#spl");if(sp0&&$("#tb").contains(sp0))$("#tb").before(sp0)}      // the open clip is kept out of the tiles while they are drawn again
     $("#tb").innerHTML=(days.length?"":'<div class="empty">Nothing here for these dates.</div>')+days.slice(0,60).map(d=>`<div class="day" data-day="${d}"><em class="dayk" role="checkbox" title="Tick every clip of this day"></em>${dayName(d)}<small class="dcnt">${byDay[d].length} clip${byDay[d].length>1?"s":""}</small></div><div class="evs">${byDay[d].filter(v=>!folded.has(v.ty+"|"+v.id)&&!hiddenIn.has(ek(v))).map(unit).join("")}</div>`).join("")+(days.length>60?'<div class="sub">Showing the newest 60 days. Narrow the dates to see older ones.</div>':"");
     vis=all;dayList=byDay;$$("#tb [data-sel]").forEach(b=>b.onclick=e=>{e.stopPropagation();const k=b.dataset.sel;TCSEL.has(k)?TCSEL.delete(k):TCSEL.add(k);pend=null;paintTicks();selbar()});
     $$("#tb .dayk").forEach(b=>b.onclick=e=>{const l=dayList[b.parentNode.dataset.day]||[],all=l.every(v=>TCSEL.has(v.ty+"|"+v.id));l.forEach(v=>all?TCSEL.delete(v.ty+"|"+v.id):TCSEL.add(v.ty+"|"+v.id));pend=null;paintTicks();selbar()});paintTicks();selbar();
     lazyThumbs($("#tb"));$$("#tb .gchip.ev").forEach(c=>c.onclick=e=>{e.stopPropagation();const b=$(`#tb .evc[data-ty="${c.dataset.ty}"][data-id="${c.dataset.id}"]`);if(b)b.click()});
     $$("#tb .gchip.more").forEach(c=>c.onclick=e=>{e.stopPropagation();const g=c.closest(".evg");if(g){foldOthers(g);const o=g.classList.toggle("open");o?TCGX.add(g.dataset.g):TCGX.delete(g.dataset.g)}});
     const foldOthers=el=>$$("#tb .evg.open").forEach(g=>{if(!g.contains(el)){g.classList.remove("open");TCGX.delete(g.dataset.g)}});      // a click anywhere else folds the clips back into their own thumbnail
-    $$("#tb .evc").forEach(b=>b.onclick=async()=>{const ty=b.dataset.ty,sel=b.dataset.id;foldOthers(b);{const g=b.closest(".evg");if(g&&b.classList.contains("clu")){if(g.classList.contains("open")&&OPENC&&OPENC.kind===ty&&OPENC.id===sel){g.classList.remove("open");TCGX.delete(sel);return}g.classList.add("open");TCGX.add(sel)}}OPENC={kind:ty,id:sel};thin();showClose();$$("#tb .evc").forEach(x=>x.classList.toggle("on",x===b));$("#spl").scrollIntoView({block:"nearest"});
+    // the open clip (video, map, telemetry) sits right under the row of the tile that was clicked, across the whole width: nothing above it moves
+    const placeSpl=b=>{const sp=$("#spl"),g=b&&b.closest(".evs");if(!sp||!g)return;const y=b.offsetTop,row=[...g.querySelectorAll(".evc")].filter(c=>c.offsetParent&&c.offsetTop===y);(row[row.length-1]||b).after(sp)};
+    if(OPENC){const ob=$(`#tb .evc[data-ty="${OPENC.kind}"][data-id="${OPENC.id}"]`);if(ob)placeSpl(ob)}
+    $$("#tb .evc").forEach(b=>b.onclick=async()=>{const ty=b.dataset.ty,sel=b.dataset.id;foldOthers(b);{const g=b.closest(".evg");if(g&&b.classList.contains("clu")){if(g.classList.contains("open")&&OPENC&&OPENC.kind===ty&&OPENC.id===sel){g.classList.remove("open");TCGX.delete(sel);return}g.classList.add("open");TCGX.add(sel)}}OPENC={kind:ty,id:sel};thin();showClose();$$("#tb .evc").forEach(x=>x.classList.toggle("on",x===b));placeSpl(b);b.scrollIntoView({block:"start",behavior:"smooth"});
       const it=data[ty].find(v=>v.id===sel);
       OPENK={kind:ty,id:sel};ostrip();
       if(ty!=="recent"){
