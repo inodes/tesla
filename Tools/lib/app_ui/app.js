@@ -1081,12 +1081,12 @@ function clipPlayer(host,o){
     const h=L.map(g=>`<i class="bsp" title="${esc("Speed limit "+g.text+(g.conf>0?", "+g.conf+"% sure":""))}">${esc(g.text)}</i>`).join("")+(o.signInfo?L.map(g=>o.signInfo(stamps[si],g)).join(""):"");if(el.innerHTML!==h)el.innerHTML=h};
   Promise.all(Array.from({length:Math.ceil(stamps.length/80)},(_,c)=>fetch("/api/signs?stamps="+stamps.slice(c*80,c*80+80).join(",")).then(r=>r.json()).catch(()=>({})))).then(parts=>{if(document.contains(host)){SGV=Object.assign({},...parts);vsigns()}});
   // The next minute is loaded in the background (last 25 s of this one) and swapped in when this one ends, so there is no wait between minutes.
-  let nx=null,offp=false;
+  let nx=null,offp=false,swT=0;
   // A video element keeps its decoder and its buffered minute until its source is removed, and a browser only has a few decoders: six per minute, never released, and after
   // a while only one camera loads. So every element that is let go (the minute that ended, a minute loaded ahead and then not used, everything when the page is left) is emptied.
   const drop=x=>{try{x.pause();x.removeAttribute("src");x.load()}catch(e){}};
   const dropNext=()=>{if(nx){Object.keys(nx.m).forEach(c=>drop(nx.m[c]));nx=null}};
-  const dropAll=()=>{vs.forEach(drop);dropNext()};
+  const dropAll=()=>{clearTimeout(swT);swT=0;vs.forEach(drop);dropNext()};
   const wire=()=>{if($("#vcl"))$("#vcl").onclick=()=>{const c=$("#splc");if(c)c.click()};const sk=$("#vsk"),pl=$("#vpl"),tm=$("#vtm"),box=$("#vids"),seekAll=t=>vs.forEach(x=>{try{x.currentTime=t}catch(e){}});
     if(!mv)return;
     const cam=mv.parentNode.dataset.c;
@@ -1101,7 +1101,9 @@ function clipPlayer(host,o){
         if(Math.abs(dr)>1.2){try{x.currentTime=mv.currentTime}catch(e){}x.playbackRate=+rate}
         else if(Math.abs(dr)>.25&&!mv.paused)x.playbackRate=+rate*(dr>0?.94:1.06);
         else if(x.playbackRate!==+rate)x.playbackRate=+rate});
-      if(!nx&&mv.duration&&(mv.duration-mv.currentTime)/Math.max(1,+rate)<(vs.length>2?8:25))prep()};      // the next minute is loaded ahead: 8 s before the end with all cameras (twelve decoders at once stall), 25 s with one or two
+      if(!nx&&mv.duration&&(mv.duration-mv.currentTime)/Math.max(1,+rate)<(vs.length>2?14:30))prep();
+      // within a second of the end, with the next minute's front camera ready, the swap is made ON the clock instead of waiting for 'ended': no gap
+      if(nx&&!swT&&nx.i===si+1&&mv.duration){const rem=(mv.duration-mv.currentTime)/Math.max(.25,+rate);if(rem<.8)swT=setTimeout(early,Math.max(0,rem*1000-60))}};      // the next minute is loaded ahead: 8 s before the end with all cameras (twelve decoders at once stall), 25 s with one or two
     mv.onended=()=>{if(si>=stamps.length-1)return;si++;seek=0;                  // the last frame of this minute stays on screen until the next one is loaded behind it, then they swap
       if(!(nx&&nx.i===si))prep(si);if(nx&&nx.i===si&&nx.m[cam]){const f=nx.m[cam],t0=Date.now(),go=()=>{if(!document.contains(host))return;if(f.readyState>=3||Date.now()-t0>2500)swap();else setTimeout(go,30)};go()}else vids()};
     mv.onerror=()=>box.insertAdjacentHTML("afterbegin",'<div class="sub">This clip could not be played (missing, or the drive was disconnected).</div>');
@@ -1111,10 +1113,19 @@ function clipPlayer(host,o){
   const prep=(i=si+1)=>{if(nx||i>=stamps.length)return;const s2=stamps[i],have=o.cams[s2]||[],m={};
     $$("#vids figure[data-c]").forEach(f=>{const c=f.dataset.c;if(have.includes(c)){const v=document.createElement("video");v.muted=true;v.playsInline=true;v.preload="auto";v.src=o.url(s2,c);v.load();m[c]=v}});
     nx={i,m}};
-  const swap=()=>{const m=nx.m;nx=null;vs.forEach(drop);
-    $$("#vids figure[data-c]").forEach(f=>{const nv=m[f.dataset.c],old=f.querySelector("video");if(nv&&old)f.replaceChild(nv,old)});
+  // The next minute's videos are laid ON TOP of this minute's (same place, same size) and start playing; this minute's are taken away only once the new ones have shown their first
+  // picture, so the screen never goes blank or flashes between minutes (it looks like one continuous recording).
+  const swap=()=>{const m=nx.m;nx=null;clearTimeout(swT);swT=0;const olds=vs,used=[];olds.forEach(x=>{x.onended=null;x.ontimeupdate=null;x.onerror=null});      // the minute that is being left must not fire 'ended' into the next one
+    $$("#vids figure[data-c]").forEach(f=>{const nv=m[f.dataset.c],old=f.querySelector("video");
+      if(!nv||!old)return;used.push(nv);f.style.position="relative";nv.style.cssText="position:absolute;top:0;left:0;z-index:1";nv.playbackRate=+rate;f.insertBefore(nv,old.nextSibling);
+      const done=()=>{if(nv._ok)return;nv._ok=1;nv.style.cssText="";if(old.parentNode===f)f.removeChild(old);drop(old)};
+      const p=nv.play();if(p&&p.then)p.then(()=>{if(nv.requestVideoFrameCallback)nv.requestVideoFrameCallback(()=>done());else setTimeout(done,120)}).catch(done);
+      setTimeout(done,900)});
+    olds.forEach(x=>{const f=x.parentNode;if(f&&!m[f.dataset.c])drop(x)});
     if($("#stp"))$("#stp").value=si;
-    vs=$$("#vids video");mv=vs.find(v=>v.parentNode.dataset.c==="front")||vs[0];wire();vs.forEach(x=>{x.playbackRate=+rate;x.play().catch(()=>{})})};
+    vs=$$("#vids figure[data-c]").map(f=>m[f.dataset.c]).filter(Boolean);mv=vs.find(v=>v.parentNode.dataset.c==="front")||vs[0];wire();vs.forEach(x=>{x.playbackRate=+rate;x.play().catch(()=>{})})};
+  const early=()=>{swT=0;if(!mv||mv.paused||!nx||nx.i!==si+1||si>=stamps.length-1)return;const f=nx.m[mv.parentNode.dataset.c];
+    if(!f||f.readyState<3||(mv.duration-mv.currentTime)>1.2*Math.max(1,+rate))return;si++;seek=0;swap()};
   // A minute with no video (the dashcam did not record it, the car was asleep, or its video is on no connected drive) is shown as the same black boxes, one for each camera, and
   // runs on by the clock so the minutes after it follow: the time is continuous. The front box shows its still of each second where stills were kept.
   const stopBlack=()=>{if(bt){clearInterval(bt);bt=0}};
@@ -2397,6 +2408,8 @@ async function pageTeslaCamAt(t,t1,lo,k,tid){      // t alone: the moment (a win
     if(t1&&j&&j.item){      // the row's own start and end (Tessie's, to the second) are what is shown and what the page is called; the footage is the minutes that overlap them
       const L=lo!=null&&!isNaN(lo)?lo:(j.item.lo!=null?j.item.lo:0);j.item.shown=[lclock(a,L),lclock(z,L)];if(k==="p")j.item.kind="stopped";else if(k==="d")j.item.kind="drive";
       const sr=j.series;if(sr&&sr.lat&&sr.lon){const i0=a-j.item.t0,i1=z-j.item.t0;for(let i=0;i<sr.lat.length;i++)if(i<i0||i>i1){sr.lat[i]=null;sr.lon[i]=null}}}      // the map is only the row's own seconds: the minute of a clip beside it (the car moving off, or arriving) is not part of a park
+      // a park: its telemetry bar is the WHOLE parked time (hours), empty where there is no clip; the series is padded with blanks out to the end of the park
+      if(t1&&j&&j.item&&k==="p"&&j.series&&j.series.v){const sr=j.series,need=z-j.item.t0+1,n=sr.v.length;if(n<need)Object.keys(sr).forEach(f=>{const x=sr[f];if(Array.isArray(x)&&x.length===n)while(x.length<need)x.push(null)});j.item.span=[Math.max(0,a-j.item.t0),Math.max(1,z-j.item.t0)]}
     return j};
   try{await teslaDriveBody($("#tdh"),"A",fetchSeg,pl.saved||[],{})}catch(e){const h=$("#tdh");if(h)h.innerHTML=errBox(e.message,"Could not open this moment")}
 }
@@ -2426,7 +2439,7 @@ async function teslaDriveBody(host,role,fetchSeg,places,opts){
   host.innerHTML=`<div id="tdb" class="side"><h1 id="dh" ${opts.heading===false&&!opts.tessie?"hidden":""}></h1><div class="sub" id="dsub"></div><div id="dpend"></div><div class="tiles" id="dtl"></div>
     <div id="dmapc" class="card" style="padding:10px"><div class="bar" style="margin:0 0 8px"><button class="chip on" data-cm="v">Speed</button><button class="chip" data-cm="ap">Autopilot / FSD</button><span class="sub" id="dleg"></span><span style="margin-left:auto;display:flex;gap:6px;align-items:center">${LAYBAR}<span class="sub">Map</span>${MSZ.map(([k,t])=>`<button class="chip" data-ms="${k}">${t}</button>`).join("")}</span></div><div class="map big" id="dmap"></div><div class="sub" id="dsrc" style="margin-top:6px"></div></div>
     <div id="drevw"></div><div id="drj"></div>
-    <div id="dchc" class="card" style="margin-top:12px;padding:10px"><div class="bar" style="margin:0 0 6px"><b>Telemetry</b><span class="sub" id="dtip" style="min-height:18px;flex:1"></span><span style="display:flex;gap:6px;align-items:center">${TSZ.map(([k,t])=>`<button class="chip" data-ts="${k}">${t}</button>`).join("")}</span></div><canvas id="dch" style="width:100%;display:block"></canvas></div>
+    <div id="dchc" class="card" style="margin-top:12px;padding:10px"><div class="bar" style="margin:0 0 6px"><b>Telemetry</b><span class="sub" id="dtip" style="min-height:18px;flex:1"></span><span style="display:flex;gap:6px;align-items:center"><button class="chip" id="dfit" hidden title="What the telemetry bar covers: the whole drive or parked time, or only the time of the video clips (click to switch)"></button>${TSZ.map(([k,t])=>`<button class="chip" data-ts="${k}">${t}</button>`).join("")}</span></div><canvas id="dch" style="width:100%;display:block"></canvas></div>
     <div class="card dvc" style="margin-top:12px"><div id="dsgl" class="sgs" style="margin:0 0 8px"></div><div id="dcov"></div><div id="dvid"></div></div><div id="drv"></div><div id="dev"></div></div>`;
   const fill=()=>{if(!live())return;const x=it(),m=Math.max(1,Math.round((x.t1-x.t0)/60)),a=nameAt(places,x.p0),b=nameAt(places,x.p1);
     const T=opts.tessie,sd=selfDrive(S()),src=dataSources(S());
@@ -2465,6 +2478,13 @@ async function teslaDriveBody(host,role,fetchSeg,places,opts){
     $("#dev").innerHTML=`<h2>Saved clips and Sentry events in this drive</h2><div class="sub">Click one to jump the video there.</div><div class="evs">${d.events.map(v=>`<button class="evc" data-u="${v.t}">${v.clips?sentryThumb(Object.assign({},v,{role}),v.folder):v.thumb?`<img alt="" decoding="async" loading="lazy" src="/footage/${role}/${v.folder}/${v.id}/thumb.png" onerror="this.style.visibility='hidden'">`:'<div class="noimg"></div>'}<b>${hms(v.ts)}</b><span>${esc(v.folder==="SavedClips"?"Saved":"Sentry")} · ${esc(reason(v.reason))}</span><span>${esc(v.city||"")}</span></button>`).join("")}</div>`;
     lazyThumbs($("#dev"));    $$("#dev .evc").forEach(b=>b.onclick=()=>{if(player){seekIdx(Math.round(+b.dataset.u-it().t0));$("#dvid").scrollIntoView({block:"nearest"})}})};
   RVAPI={cursor:i=>cursor(i),seek:i=>seekIdx(i),series:()=>S(),t0:()=>it().t0,clk:i=>clk(i),focus:f=>{if(chart&&chart.focus)chart.focus(f)},lanes:l=>{if(chart&&chart.lanes)chart.lanes(l);else pendL=l},zoom:(a,b)=>{if(chart&&chart.view)chart.view(a,b)},limit:(a,b)=>{if(chart&&chart.limit)chart.limit(a,b)},map:(a,b,p)=>{if(map&&map.section){map.section(a,b);map.pins(p||[])}else pendM=[a,b,p]},live:()=>live(),saved:()=>{const r=[];d.minutes.filter(m=>m.src==="saved").forEach(m=>{const a=it().t0+m.off,b=a+60,l=r[r.length-1];if(l&&a-l[1]<=2)l[1]=b;else r.push([a,b])});return r}};
+  // what the telemetry bar covers: the whole period (a drive, or the whole parked time) or only the time of the video clips; where the two are the same the button is hidden
+  let fit=lsGet("tc.fit","full");
+  const applyFit=()=>{if(!chart||!chart.limit)return;const rm=d.minutes.filter(m=>m.cams&&m.cams.length&&!m.syn),full=it().span||null,N=S().v.length-1,
+      clips=rm.length?[Math.min(...rm.map(m=>m.off)),Math.max(...rm.map(m=>m.off+(m.len||60)))]:null,
+      diff=!!clips&&(full?(clips[0]>full[0]+2||clips[1]<full[1]-2):(clips[0]>2||clips[1]<N-2)),b=$("#dfit"),on=diff&&fit==="clips";
+    if(b){b.hidden=!diff;b.textContent=on?"Showing: video only":"Showing: whole period";b.classList.toggle("on",on);b.onclick=()=>{fit=fit==="clips"?"full":"clips";lsSet("tc.fit",fit);applyFit()}}
+    const sp=on?clips:full;if(sp)chart.limit(sp[0],sp[1]);else chart.limit(null)};
   const build=()=>{if(!live())return;fill();const s=S(),idx=pts();
     if(RVOV)RVOV();
     const hasTel=!!(s&&s.v&&s.v.length>1);      // the telemetry bar stays for a park too (nothing moves, but it is the time line: pick a point on it to watch from there)
@@ -2472,6 +2492,7 @@ async function teslaDriveBody(host,role,fetchSeg,places,opts){
     if(idx.length){if(!map)map=driveMap($("#dmap"),s,idx,seekIdx,$("#dleg"));else map.update(s,idx);if(pendM&&map.section){map.section(pendM[0],pendM[1]);map.pins(pendM[2]||[]);pendM=null}}
     if(hasTel){if(!chart){chart=telemChart($("#dch"),$("#dtip"),s,seekIdx,clk);if(pendL&&chart.lanes){chart.lanes(pendL);pendL=null}}else chart.update(s)}
     {const em=(opts.events||[]).map(e=>({i:Math.round(e.u-it().t0),label:e.label}));chart&&chart.events&&chart.events(em);map&&map.events&&map.events(em)}
+    applyFit();
     const playable=d.minutes.filter(m=>m.cams&&m.cams.length);
     const allM=cont(),blackDrive=!playable.length&&!d.minutes.length&&allM.length>0;      // a drive Tessie knows, with no footage at all: all black
     if(!player&&(playable.length||blackDrive)){const mm=allM,cams={},meta={},syn={},len={};mm.forEach(m=>{cams[m.stamp]=m.cams||[];meta[m.stamp]=m;if(m.syn){syn[m.stamp]=1;len[m.stamp]=m.len}});covStrip(mm);
