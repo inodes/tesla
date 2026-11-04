@@ -360,3 +360,4 @@ Log (newest first):
 - 2026-11-04: every unread minute (Sentry/Saved minutes too) is read in the background, 4 at a time, and the kept file is watched so the lists rebuild with it (before: 8 s of reading per rebuild, the rest blank, the list never rebuilt); a drive's or park's window includes its Sentry minutes, so it has its map and telemetry (15:50-15:54 Princes St -> Devlin St read as 5 minutes, 303 samples).
 - 2026-11-04: opened Sentry/Saved clips flow inline with the other thumbnails; clicking any thumbnail outside the group folds them back into theirs.
 - 2026-11-04: a thumbnail that holds Sentry/Saved clips shows the total size of all of them ("N GB total"); each clip opened from it shows its own size.
+- 2026-11-04: the open clip on the TeslaCam page (video, map, telemetry) sits in a panel right under the row of the tile clicked, not above all the tiles; nothing above it moves.

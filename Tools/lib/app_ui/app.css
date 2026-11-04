@@ -311,3 +311,6 @@ main:has(#spl .stbar,#spl .vbar) #splx{display:none}
 .hud .hbk.on{display:block;animation:hudfl .74s steps(1) infinite}
 @keyframes hudfl{0%{opacity:1}50%{opacity:.12}}
 .sgi.dbt{background:#6b7280}
+
+/* TeslaCam page: the open clip is a panel under the row of the tile that was clicked (the whole row wide), in the same style as a drive's page */
+#tb #spl{grid-column:1/-1;min-width:0}#tb #spl:not(:empty){border:1px solid var(--line);border-radius:12px;background:var(--card);padding:10px;margin:2px 0 6px}
