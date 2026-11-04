@@ -634,6 +634,19 @@ class TeslaCam:
                 out.append(dict(stamp=st, t=t, src="sentry", ref=e["id"], cams=cams, tcam=TL.tcam(cams)))
         return out
 
+    @staticmethod
+    def _short_where(store, stamp):
+        """The short place of a minute for the label on the video: the suburb the car wrote into its clip and the state of where it was ("Main Beach, QLD"); the suburb alone when no position was read."""
+        import au_state
+        sub = CC.where_parts(stamp)[1]
+        try:
+            sm = store.summary(stamp)
+            p = (sm or {}).get("p0") if isinstance(sm, dict) else None
+        except Exception:
+            p = None
+        st = au_state.state(p[0], p[1]) if p and p[0] is not None else None
+        return ", ".join(x for x in (sub, st) if x)
+
     def _finish(self, role, teslacam, pick, budget, events=None, lo=None, extra=None):
         import time
         store = self._tl(role)
@@ -654,8 +667,10 @@ class TeslaCam:
         ser = TL.detail(mins, store, it)
         TL.show(it, lo, own_end=True)                                          # the clock the times are shown on (display only): everything below that is compared stays UTC
         lo = it["lo"]
-        out = dict(item=it, connected=bool(teslacam), minutes=[dict(stamp=m["stamp"], src=m["src"], ref=m["ref"], cams=m["cams"], off=round(m["t"] - it["t0"]), loc=TL.iso(m["t"], lo)) for m in mins],
+        out = dict(item=it, connected=bool(teslacam), minutes=[dict(stamp=m["stamp"], src=m["src"], ref=m["ref"], cams=m["cams"], off=round(m["t"] - it["t0"]), loc=TL.iso(m["t"], lo), at=self._short_where(store, m["stamp"])) for m in mins],
                    series=ser, pending=ser["pending"])
+        if mins:
+            out["item"]["start_at"] = CC.where(mins[0]["stamp"])          # what the car wrote about where the first clip was: names the start of a drive whose beginning is not on the footage
         if events:
             a, b = events
             ev = []

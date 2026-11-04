@@ -71,5 +71,24 @@ class FillTests(unittest.TestCase):
         self.assertEqual(pts[1][3], 12.0)
 
 
+class RebaseMinutesTests(unittest.TestCase):
+    """The footage begins 21 minutes after Tessie's start (the start was overwritten): once the series is stretched back to Tessie's start the minutes are that much later from it, so the
+    black (no video) is at the START of the bar and the video runs on to the end - not the other way round."""
+
+    def test_the_minutes_move_later_by_how_far_the_series_was_stretched_back(self):
+        t_start, first_clip = T, T + 21 * 60
+        s = R.fill(cam(first_clip, 55 * 60), t_start, first_clip + 55 * 60, [(t_start, -33.8, 151.1, 0.0), (first_clip + 55 * 60, -33.9, 151.2, 0.0)])
+        self.assertEqual(s["t0"], t_start)
+        mins = [dict(stamp="a", off=0), dict(stamp="b", off=60)]
+        got = R.rebase_minutes(mins, first_clip, s["t0"])
+        self.assertEqual([m["off"] for m in got], [21 * 60, 22 * 60])
+        self.assertEqual([m["off"] for m in mins], [0, 60])                 # the answer is a copy
+
+    def test_no_change_when_the_series_starts_where_it_did(self):
+        mins = [dict(stamp="a", off=0)]
+        self.assertEqual(R.rebase_minutes(mins, T, T), mins)
+        self.assertEqual(R.rebase_minutes(None, T, T - 5), [])
+
+
 if __name__ == "__main__":
     unittest.main()

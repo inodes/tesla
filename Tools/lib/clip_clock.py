@@ -41,7 +41,7 @@ import drive_paths as DP
 _STAMP = "%Y-%m-%d_%H-%M-%S"
 _LOCK = threading.RLock()
 _S = dict(dir=None, runs=[], firsts=[], version=0, sig=None, thread=None, error="", learned_at=None, evidence=0, routes={}, drives=None, ev={}, ev_drives=-1)
-_SK = dict(map={}, dur={}, sig=None, at=0.0)              # stamp -> UTC of the clip's own recording time, for the clips whose name is out by SKEW_MIN seconds or more
+_SK = dict(map={}, dur={}, where={}, sig=None, at=0.0)              # stamp -> UTC of the clip's own recording time, for the clips whose name is out by SKEW_MIN seconds or more
 SKEW_MIN = 3.0
 _FRONT = re.compile(r"(\d{4}-\d\d-\d\d_\d\d-\d\d-\d\d)-front$")
 
@@ -171,6 +171,19 @@ def duration(stamp):
     return _SK["dur"].get(stamp)
 
 
+def where_parts(stamp):
+    """(street, suburb) the car wrote into the clip named `stamp`; empty strings when it wrote none."""
+    _skews_refresh()
+    return _SK["where"].get(stamp, ("", ""))
+
+
+def where(stamp):
+    """What the car itself wrote into the clip named `stamp` about where it was: "Street, Suburb" (either may be missing), or "" when the clip says nothing."""
+    _skews_refresh()
+    st, sub = _SK["where"].get(stamp, ("", ""))
+    return ", ".join(x for x in (st, sub) if x)
+
+
 def car_offset(n):
     """Seconds the car's clock was ahead of UTC at the reading n."""
     with _LOCK:
@@ -214,7 +227,7 @@ def _prov_files(data_dir):
         return []
 
 
-def _read_skews(data_dir, durs=None):
+def _read_skews(data_dir, durs=None, where=None):
     """{stamp: UTC of the clip's own recording time} for the clips whose name is out from it by SKEW_MIN seconds or more beyond the car's offset
     (which is a multiple of 15 minutes: the time zone, learned from the file itself: name - created). One entry per front clip in the provenance files."""
     out = {}
@@ -229,6 +242,8 @@ def _read_skews(data_dir, durs=None):
             r = v[0] if isinstance(v, list) and v else v if isinstance(v, dict) else None
             if not m or not isinstance(r, dict) or r.get("created") is None or r.get("name_stamp") is None:
                 continue
+            if where is not None and (r.get("street") or r.get("suburb")) and m.group(1) not in where:
+                where[m.group(1)] = (str(r.get("street") or "").strip(), str(r.get("suburb") or "").strip())
             if durs is not None and r.get("modified") is not None:
                 durs[m.group(1)] = max(0.0, float(r["modified"]) - float(r["created"]))
             raw = float(r["name_stamp"]) - float(r["created"])
@@ -254,11 +269,12 @@ def _skews_refresh(force=False):
             pass
     if sig == _SK["sig"] and not force:
         return
-    durs = {}
-    new = _read_skews(d, durs)
+    durs, where = {}, {}
+    new = _read_skews(d, durs, where)
     with _LOCK:
         _SK["sig"] = sig
         _SK["dur"] = durs
+        _SK["where"] = where
         if new != _SK["map"]:
             _SK["map"] = new
             _S["version"] += 1
@@ -282,7 +298,7 @@ def configure(data_dir):
             _set_runs([r for r in j.get("runs", []) if len(r) == 3], bump=False)
         except (OSError, ValueError):
             _set_runs([], bump=False)
-        _SK.update(map={}, dur={}, sig=None, at=0.0)
+        _SK.update(map={}, dur={}, where={}, sig=None, at=0.0)
     _skews_refresh(force=True)
 
 
