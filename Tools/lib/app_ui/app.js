@@ -1169,6 +1169,15 @@ function clipPlayer(host,o){
       x._rv=(x._rv||[]).filter(t=>now-t<60000);if(x._rv.length>=4)return;x._rv.push(now);x._still=0;
       const src=x.getAttribute("src"),t=Math.max(0,(x===mv?at:mv.currentTime)),r=+rate;
       try{x.pause();x.removeAttribute("src");x.load();x.addEventListener("loadedmetadata",()=>{try{x.currentTime=t}catch(e){}x.playbackRate=r;x.play().catch(()=>{})},{once:true});x.src=src;x.load()}catch(e){}})},1500);
+  // Right-click on a video: show it in Finder, or copy it (this minute, or every minute here, all cameras) to a folder. The videos are named by the address they play from; the server turns them into files.
+  const cfUrls=ss=>ss.flatMap(x=>(o.cams[x]||[]).map(c=>o.url(x,c)));
+  host.addEventListener("contextmenu",e=>{const fg=e.target.closest&&e.target.closest("#vids figure[data-c]");if(!fg||fg.classList.contains("blk")||fg.classList.contains("none")||!stamps[si])return;
+    e.preventDefault();const st=stamps[si],c=fg.dataset.c,all=stamps.filter(x=>(o.cams[x]||[]).length),here=(o.cams[st]||[]).length,nm=a=>"TeslaCam "+a[0]+(a.length>1?" to "+a[a.length-1].slice(11):"");
+    cfMenu(e.clientX,e.clientY,[
+      [`Show this ${CAMN[c].toLowerCase()} video in Finder`,()=>cfAct({action:"reveal",urls:[o.url(st,c)]})],
+      here>1?[`Show this minute's ${here} videos in Finder`,()=>cfAct({action:"reveal",urls:cfUrls([st])})]:null,
+      [`Copy this minute (${here} video${here>1?"s":""}) to a folder…`,()=>cfAct({action:"copy",urls:cfUrls([st]),name:nm([st])})],
+      all.length>1?[`Copy all ${all.length} minutes here (${cfUrls(all).length} videos) to a folder…`,()=>cfAct({action:"copy",urls:cfUrls(all),name:nm(all)})]:null])});
   shell();
   // the page can move the video to a clock time (clicking the map or the chart)
   return {refresh:()=>vsigns(),seekAt:(st,sec)=>{const i=stamps.indexOf(st);if(i<0)return;                 // a minute and a second in it (the page works these out in UTC)
@@ -1178,6 +1187,26 @@ function clipPlayer(host,o){
     if(i===si&&mv&&mv.readyState>0){vs.forEach(x=>{try{x.currentTime=(ms-stMs(stamps[i]))/1000}catch(e){}})}
     else{si=i;seek=Math.max(0,(ms-stMs(stamps[i]))/1000);if($("#stp"))$("#stp").value=si;vids()}}};
 }
+// The right-click menu of a video (items: [[text, action] | null]) and the small note of a copy: asked for, progress, done (with a button to open the folder).
+function cfMenu(x,y,items){$$(".cfm").forEach(m=>m.remove());const m=document.createElement("div");m.className="cfm";
+  items.filter(Boolean).forEach(([t,fn])=>{const b=document.createElement("button");b.textContent=t;b.onclick=()=>{off();fn()};m.appendChild(b)});
+  document.body.appendChild(m);m.style.left=Math.max(4,Math.min(x,innerWidth-m.offsetWidth-4))+"px";m.style.top=Math.max(4,Math.min(y,innerHeight-m.offsetHeight-4))+"px";
+  const ev=["mousedown","keydown","scroll","blur"],h=e=>{if(e.type==="keydown"&&e.key!=="Escape")return;if(e.type==="mousedown"&&m.contains(e.target))return;off()};
+  function off(){m.remove();ev.forEach(n=>removeEventListener(n,h,true))}
+  setTimeout(()=>ev.forEach(n=>addEventListener(n,h,true)),0)}
+function cfNote(html,ms){let n=$("#cfn");if(!n){n=document.createElement("div");n.id="cfn";n.className="cfn";document.body.appendChild(n)}n.innerHTML=html;n.hidden=false;clearTimeout(n._t);if(ms)n._t=setTimeout(()=>{n.hidden=true},ms);return n}
+async function cfAct(b){const gb=x=>(x/1e9).toFixed(1)+" GB";
+  try{if(b.action==="copy")cfNote("Choose a folder to copy to…");
+    const r=await (await fetch("/api/clipfiles",{method:"POST",body:JSON.stringify(b)})).json();
+    if(r.cancelled){cfNote("",1);return}
+    if(!r.ok){cfNote(esc(r.error||"That did not work."),6000);return}
+    if(b.action==="reveal"){cfNote("",1);return}
+    const fin=st=>{const fl=st.failed&&st.failed.length;cfNote(`${st.state==="error"?"Could not copy the videos.":`Copied ${st.done-(fl||0)} video${st.done-(fl||0)===1?"":"s"} (${gb(st.bytes_done)}) to <b>${esc(st.dest.split("/").slice(-2).join("/"))}</b>`}${fl?` · ${fl} failed`:""}<button class="btn" id="cfo">Show in Finder</button>`,20000);
+      const o=$("#cfo");if(o)o.onclick=()=>fetch("/api/clipfiles",{method:"POST",body:JSON.stringify({action:"open",job:r.job})})};
+    for(let st=r;;){if(st.state!=="running"){fin(st);return}
+      cfNote(`Copying ${st.done} of ${st.n} videos · ${gb(st.bytes_done)} of ${gb(st.bytes)}<progress max="${st.bytes||1}" value="${st.bytes_done}"></progress>`);
+      await new Promise(z=>setTimeout(z,600));st=await (await fetch("/api/clipfiles",{method:"POST",body:JSON.stringify({action:"status",job:r.job})})).json()}
+  }catch(e){cfNote(esc(String(e.message||e)),6000)}}
 // one Sentry or Saved event folder (role = which drive, folder = SentryClips | SavedClips)
 async function sentryPlayer(host,ev,role=ev&&ev.role||"A",folder="SentryClips"){
   let stamps=Object.keys(ev.clips).sort(),cams=ev.clips,loc=ev.loc,more=null;const t=ev.ts,what=ev.reason?reason(ev.reason):folder==="SavedClips"?"Saved clip":"Sentry event",trig=Date.parse(ev.cts||t);
@@ -2479,7 +2508,8 @@ async function teslaDriveBody(host,role,fetchSeg,places,opts){
   const cursor=sec=>{const i=Math.max(0,Math.min(S().v.length-1,Math.round(sec)));if(map)map.cursor(i);if(chart)chart.cursor(i)};
   const events=()=>{if(opts.rvtab||evShown||!d.events||!d.events.length||!live())return;evShown=true;
     $("#dev").innerHTML=`<h2>Saved clips and Sentry events in this drive</h2><div class="sub">Click one to jump the video there.</div><div class="evs">${d.events.map(v=>`<button class="evc" data-u="${v.t}">${v.clips?sentryThumb(Object.assign({},v,{role}),v.folder):v.thumb?`<img alt="" decoding="async" loading="lazy" src="/footage/${role}/${v.folder}/${v.id}/thumb.png" onerror="this.style.visibility='hidden'">`:'<div class="noimg"></div>'}<b>${hms(v.ts)}</b><span>${esc(v.folder==="SavedClips"?"Saved":"Sentry")} · ${esc(reason(v.reason))}</span><span>${esc(v.city||"")}</span></button>`).join("")}</div>`;
-    lazyThumbs($("#dev"));    $$("#dev .evc").forEach(b=>b.onclick=()=>{if(player){seekIdx(Math.round(+b.dataset.u-it().t0));$("#dvid").scrollIntoView({block:"nearest"})}})};
+    lazyThumbs($("#dev"));    $$("#dev .evc").forEach(b=>b.onclick=()=>{const ix=Math.round(+b.dataset.u-it().t0);if(ix<0||ix>=S().v.length){location.hash="#/teslacam/auto/at-"+Math.round(+b.dataset.u);return}      // a saved clip keeps minutes from before it was saved: one that was saved after this drive ended is not in this video, its own page is
+    if(player){seekIdx(ix);$("#dvid").scrollIntoView({block:"nearest"})}})};
   RVAPI={cursor:i=>cursor(i),seek:i=>seekIdx(i),series:()=>S(),t0:()=>it().t0,clk:i=>clk(i),focus:f=>{if(chart&&chart.focus)chart.focus(f)},lanes:l=>{if(chart&&chart.lanes)chart.lanes(l);else pendL=l},zoom:(a,b)=>{if(chart&&chart.view)chart.view(a,b)},limit:(a,b)=>{if(chart&&chart.limit)chart.limit(a,b)},map:(a,b,p)=>{if(map&&map.section){map.section(a,b);map.pins(p||[])}else pendM=[a,b,p]},live:()=>live(),saved:()=>{const r=[];d.minutes.filter(m=>m.src==="saved").forEach(m=>{const a=it().t0+m.off,b=a+60,l=r[r.length-1];if(l&&a-l[1]<=2)l[1]=b;else r.push([a,b])});return r}};
   // what the telemetry bar covers: the whole period (a drive, or the whole parked time) or only the time of the video clips; where the two are the same the button is hidden
   let fit=lsGet("tc.fit","full");
@@ -2496,7 +2526,8 @@ async function teslaDriveBody(host,role,fetchSeg,places,opts){
     $("#dmapc").hidden=!idx.length;$("#dchc").hidden=!hasTel;
     if(idx.length){if(!map)map=driveMap($("#dmap"),s,idx,seekIdx,$("#dleg"));else map.update(s,idx);if(pendM&&map.section){map.section(pendM[0],pendM[1]);map.pins(pendM[2]||[]);pendM=null}}
     if(hasTel){if(!chart){chart=telemChart($("#dch"),$("#dtip"),s,seekIdx,clk);if(pendL&&chart.lanes){chart.lanes(pendL);pendL=null}}else chart.update(s)}
-    {const em=(opts.events||[]).map(e=>({i:Math.round(e.u-it().t0),label:e.label}));chart&&chart.events&&chart.events(em);map&&map.events&&map.events(em)}
+    {const ev=opts.events||(d.events||[]).map(v=>({u:v.t,label:(v.folder==="SavedClips"?"Saved":"Sentry")+(v.reason?" · "+reason(v.reason):"")})),em=ev.map(e=>({i:Math.round(e.u-it().t0),label:e.label})).filter(e=>e.i>=0&&e.i<S().v.length);      // the red lines: Saved clips and Sentry events, where they happened (a page that is not told which, shows those the server found for it)
+    chart&&chart.events&&chart.events(em);map&&map.events&&map.events(em)}
     applyFit();
     const playable=d.minutes.filter(m=>m.cams&&m.cams.length);
     const allM=cont(),blackDrive=!playable.length&&!d.minutes.length&&allM.length>0;      // a drive Tessie knows, with no footage at all: all black

@@ -318,3 +318,6 @@ main:has(#spl .stbar,#spl .vbar) #splx{display:none}
 /* TeslaCam tiles: picking a tile shows its Open button (the page of that drive or park), bottom right */
 .evc{container-type:inline-size}.evc .opn{display:none;position:absolute;right:8px;top:calc(16px + 56.25cqw);background:var(--acc);color:#fff;font-weight:600;font-size:13px;padding:5px 12px;border-radius:8px;cursor:pointer;box-shadow:0 1px 4px #0003}
 .evc.on .opn{display:inline-block}
+
+.cfm{position:fixed;z-index:9999;background:var(--card);border:1px solid var(--line);border-radius:8px;box-shadow:0 6px 24px #0003;padding:4px;display:flex;flex-direction:column;min-width:260px}.cfm button{text-align:left;background:none;border:0;padding:7px 10px;border-radius:6px;font:inherit;color:var(--ink);cursor:pointer}.cfm button:hover{background:var(--hover)}
+.cfn{position:fixed;right:16px;bottom:16px;z-index:9999;background:var(--card);border:1px solid var(--line);border-radius:10px;box-shadow:0 6px 24px #0003;padding:10px 14px;max-width:440px;font-size:13px;color:var(--ink)}.cfn[hidden]{display:none}.cfn progress{display:block;width:100%;margin-top:6px}.cfn .btn{margin-left:10px}

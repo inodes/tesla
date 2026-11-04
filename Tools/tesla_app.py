@@ -81,6 +81,7 @@ import app_footage
 import drive_eject
 import footage_todo
 import clip_keep
+import clip_files
 import stills_thin
 import app_keeper  # noqa: E402
 import app_charges  # noqa: E402
@@ -329,6 +330,9 @@ def _utc_arg(txt):
     return CC.parse_local(txt)
 
 
+COPIER = clip_files.Copier()
+
+
 def safe_join(root, rel):
     p = os.path.realpath(os.path.join(root, rel))
     r = os.path.realpath(root)
@@ -558,6 +562,23 @@ class H(BaseHTTPRequestHandler):
                     return self.send_json(STHIN.stop())
                 clips, stamps = thin_scope(body.get("clips"))
                 return self.send_json(STHIN.start(confirmed=body.get("confirm") is True, events=body.get("events") or None, clips=clips, stamps=stamps))
+            if u.path == "/api/clipfiles":         # the videos on screen as files: {action: reveal|copy|status|open, urls, name, job}
+                act = body.get("action")
+                if act == "status":
+                    return self.send_json(COPIER.status(str(body.get("job", ""))))
+                if act == "open":                  # the folder a finished copy went to
+                    return self.send_json(clip_files.open_folder(COPIER.dest_of(str(body.get("job", "")))))
+                paths = clip_files.resolve(body.get("urls"), footage_root, safe_join)
+                if act == "reveal":
+                    return self.send_json(clip_files.reveal(paths))
+                if act == "copy":
+                    if not paths:
+                        return self.send_json(dict(ok=False, error="None of those videos is on a connected drive."))
+                    folder = clip_files.choose_folder("Copy %d video%s (%.1f GB) to which folder?" % (len(paths), "" if len(paths) == 1 else "s", sum(os.path.getsize(p) for p in paths) / 1e9))
+                    if not folder:
+                        return self.send_json(dict(ok=False, cancelled=True))
+                    return self.send_json(COPIER.start(paths, folder, str(body.get("name") or "TeslaCam clips")))
+                return self.send_json(dict(ok=False, error="Unknown action."))
             if u.path == "/api/eject":             # {role}: stop reading the drive, then eject it
                 role = body.get("role")
                 root = footage_root(role) if role in ("A", "J", "U") else None
