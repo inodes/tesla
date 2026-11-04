@@ -71,7 +71,7 @@ class FuelPriceTest(unittest.TestCase):
 
     def test_drive_comparison_says_no_price(self):
         text = "\n".join(FC.format_drive_fuel_comparison(20.0, "2026-06-01", kwh_used=3.0, tessie_dir=self.d))
-        self.assertIn("no price", text)
+        self.assertIn(FC.NO_FUEL_PRICE, text)
         for made_up in ("$1.95", "$2.20", "$2.05"):
             self.assertNotIn(made_up, text)
 
@@ -121,15 +121,16 @@ class IceEquivalentTest(unittest.TestCase):
     def test_unknown_not_zero(self):
         a = self.analyzer(tempfile.mkdtemp())
         price = lambda dt, fuel_type, tessie_dir: 2.0          # noqa: E731
-        cases = [(a._ice_equivalent(self.sessions(), 8.0, "U91", 200.0, lambda *x, **k: None), "FuelCheck"),
+        cases = [(a._ice_equivalent(self.sessions(), 8.0, "U91", 200.0, lambda *x, **k: None), "no fuel price data"),
                  (a._ice_equivalent(self.sessions(), None, "U91", 200.0, price), "L/100km"),
                  (a._ice_equivalent(self.sessions(), 8.0, "U91", None, price), "kWh into km"),
                  (a._ice_equivalent([self.sessions()[2]], 8.0, "U91", 200.0, price), "battery kWh")]
         for ice, why in cases:
             self.assertIsNone(ice["spend"])
             line = format_ice_equivalent(ice, "Car", "U91", 8.0, None)
-            self.assertIn("unknown", line)
             self.assertIn(why, line)
+            if why != "no fuel price data":
+                self.assertIn("unknown", line)
             self.assertNotIn("$0.00", line)
 
     def test_real_wh_per_km(self):

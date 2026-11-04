@@ -17,16 +17,16 @@ New shared helper: `Tools/lib/car_figures.py` - the car's usable kWh and full ra
 
 | file:line | value (before) | purpose | verdict | action |
 |---|---|---|---|---|
-| `Tools/lib/fuel_common.py:1269` (`get_fuel_price`) | U91 $1.95, P95 $2.10, P98 $2.20, Diesel $2.05, E10 $1.90, LPG $1.10 /L | last resort when the FuelCheck database has nothing | made up | returns `None`; every caller prints "no price" |
+| `Tools/lib/fuel_common.py:1269` (`get_fuel_price`) | U91 $1.95, P95 $2.10, P98 $2.20, Diesel $2.05, E10 $1.90, LPG $1.10 /L | last resort when the FuelCheck database has nothing | made up | returns `None`; every caller says "no fuel price data" (`NO_FUEL_PRICE`, `:1495`; see the 2026-11-03 caller check below) |
 | `Tools/lib/fuel_common.py:1387` (`vehicle_l_per_100km`), `:1426` | `or 8.5` L/100km | comparison car with no consumption figure | made up | `None`; litres and fuel cost `None` |
-| `Tools/lib/fuel_common.py:1489`, `format_drive_fuel_comparison` | `${p:.2f}` of the default above | "Ref Fuel Prices" line and each car's row in the drive view | showed the made-up price | "no price" / "L/100km unknown" |
+| `Tools/lib/fuel_common.py:1524`, `format_drive_fuel_comparison` | `${p:.2f}` of the default above | "Ref Fuel Prices" line and each car's row in the drive view | showed the made-up price | "no fuel price data" / "L/100km unknown" |
 | `Tools/lib/charging_analyzer.py:4141` | 8.2 L/100km, "petrol_standard", U91 | `print_summary` comparison car before the registry is read | made up | `None` until the vehicle spec gives it |
 | `Tools/lib/charging_analyzer.py:2630` (`_ice_equivalent`) | km = Tesla's rated range added, or battery kWh / 0.15 kWh/km; $1.95/L when no fuel price | "Estimated ICE Equivalent" in `analyse charges` and `--compare-all` | 0.15 and 1.95 made up; rated range is Tesla's rated consumption, not this car's | km = battery kWh / the car's real Wh/km over the drives in the window (`_real_wh_per_km`, `:2615`; all logged drives when the window has none); FuelCheck price per charge date; charges without battery kWh are left out of both sides and counted |
-| `Tools/lib/charging_analyzer.py:789` (`format_ice_equivalent`) | `$0.00` printed when nothing could be worked out | summary line | a zero standing in for unknown | "unknown (reason)": no FuelCheck price, no L/100km, no drives to turn kWh into km, no charge with battery kWh |
+| `Tools/lib/charging_analyzer.py:789` (`format_ice_equivalent`) | `$0.00` printed when nothing could be worked out | summary line | a zero standing in for unknown | "no fuel price data", or "unknown (reason)": no L/100km, no drives to turn kWh into km, no charge with battery kWh, a charge with no date |
 | `Tools/lib/charging_analyzer.py:4110` | `0.0` $/kWh | "Average Cost" with no metered kWh | zero standing in for unknown | "unknown (no metered kWh)" |
 | `Tools/lib/charging_analyzer.py:4172`, `:4333` | `max(0.0, ...)` | net / annual savings | hid a loss as $0 | signed figure (+/-); "unknown" when fuel price or L/100km missing |
 | `Tools/commands/analyse_charging.py:304`, `:97` | `8.5`, `0.0` L/100km | `--list-vehicles`, `--gvg-top20`, `--search-vehicles` tables | made up | "-" / "not published" |
-| `Tools/commands/sync_fuel_history.py:80`, `:222` | `$1.95/L`, `8.5` L/100km | `--status` reference prices, `--query` 100 km table | made up | "no price" / "L/100km unknown" |
+| `Tools/commands/sync_fuel_history.py:86`, `:215` | `$1.95/L`, `8.5` L/100km | `--status` reference prices, `--query` 100 km table | made up | "no fuel price data" / "L/100km unknown" |
 | `Tools/lib/abrp_common.py:252` (`car_usable_kwh`) | 85.0 kWh (`DEFAULT_USABLE_KWH`, removed) | arrival battery % on routes | made up | config `abrp.usable_kwh`, else newest battery health reading, else `vehicle_spec.json`; `None` otherwise |
 | `Tools/lib/abrp_common.py:268` (`car_consumption_wh_km`) | 171.1 Wh/km (`DEFAULT_CONSUMPTION_WH_KM`, removed); GVG x1.15 and WLTP x1.25 uplifts | same | made up (both the constant and the uplift factors) | config `abrp.consumption_wh_km`, else ABRP's calibrated reference for this car, else Wh/km from `drives_master.csv`; `None` otherwise |
 | `Tools/lib/abrp_common.py:399` | 90 % departure battery when Tessie is offline or the setting is unreadable | route plans | made up | `None`, labelled "unknown (Tessie offline)"; `charger_find` says to give `--departure-soc` (`Tools/commands/charger_find.py:489`) |
@@ -52,7 +52,7 @@ New shared helper: `Tools/lib/car_figures.py` - the car's usable kWh and full ra
 |---|---|---|---|---|
 | `Tools/lib/fuel_common.py:48` `DEFAULT_COMPARISON_VEHICLES` (22 cars), also seeded into the fuel DB (`:511`) and `resources/comparison_vehicles.example.json` | `consumption` L/100km per car (e.g. CX-8 7.5 / 10.0 / 6.0) | the ICE side of every comparison | other cars' figures: no owner data can exist. Only the CX-8 also has `adr_consumption` (6.0 / 7.0 / 5.5, `:60`), which differs from its `consumption`, so the `consumption` figures look like unsourced "real-world" uplifts | needs a source per car (greenvehicleguide.gov.au) or the owner's own `comparison_vehicles.json`; changing them changes every savings figure |
 | `Tools/lib/fuel_common.py:65` (each car) | `running_costs`: service $0.026-0.065/km, tyres $0.017-0.035/km | "total running cost", matrix "Running/km" | unsourced estimates | same three places hold them (code, DB seed, example JSON); removing only the code copy would not remove them |
-| `Tools/lib/fuel_common.py:1312` | nearest recorded day's price, however far away | fuel price for a date outside the synced range | real data, but from another date | a cap on the distance is a new constant; owner to decide (e.g. same month only) |
+| `Tools/lib/fuel_common.py:1316` | nearest recorded day's price, however far away; a date SQLite cannot read ("", "None") gets the first row stored | fuel price for a date outside the synced range | real data, but from another date (or from no date) | a cap on the distance is a new constant; owner to decide. Options and the checked behaviour: section 5 |
 | `Tools/lib/fuel_common.py:1376` | urban/highway split by average speed: 35 / 85 km/h, 0.95 | weights urban vs highway L/100km | model assumption (ADR 81/02 cycle speeds) | not a price; replacing it needs a different model; `raw_samples` path already uses real speeds |
 | `Tools/lib/fuel_common.py:1325`, `Tools/lib/ev_efficiency.py:53` | 70 km/h urban threshold | same split | model setting | candidate for `config.json` (`app` block), not a data stand-in |
 | `Tools/lib/abrp_common.py:43` | `tesla:myl:25:88:dual:ccs`, "Tesla Model Y" | ABRP vehicle model when config and ABRP give none | names one car model (ABRP then uses its own range model) | should come from config / vehicle_spec; not a number in our calculations |
@@ -95,6 +95,49 @@ New shared helper: `Tools/lib/car_figures.py` - the car's usable kWh and full ra
 ## 4. Not run on real data
 
 Everything above was run in the cloud sandbox with `TESLA_CONFIG=config.example.json TESLA_DATA_DIR=/tmp/nodata` and on a made-up data folder
-(two charges, two drives, one FuelCheck price): the summary prints "unknown (no FuelCheck price for every charge date)" with no fuel data and
+(two charges, two drives, one FuelCheck price): the summary prints "unknown (no FuelCheck price for every charge date)" with no fuel data (since 2026-11-03: "no fuel price data") and
 "$46.88 (Mazda CX-8: Diesel ~$2.00/L, 7.5 L/100km; car 160 Wh/km) │ Net Savings: +$31.88" with it (50 kWh / 160 Wh/km = 312.5 km x 7.5 L/100km x $2.00).
 Not tested on the owner's charges, drives, battery health, fuel database or charger registries.
+
+## 5. `get_fuel_price` callers and the nearest-day fallback (checked 2026-11-03)
+
+`get_fuel_price` (`Tools/lib/fuel_common.py:1269`) returns `None` when the fuel database holds no price for the fuel and region; it no longer
+has a typed-in $/L. Every caller and every figure built on its result, and what each shows with no price:
+
+| caller | figure | with no price |
+|---|---|---|
+| `fuel_common.calculate_single_vehicle_running_cost` (`:1403`) | `fuel_price_per_l`, `fuel_cost`, `estimated_cost`, `total_running_cost` | all `None` (litres still worked out) |
+| `fuel_common.calculate_ice_comparison_costs` (`:1466`) | the above for every comparison car | same |
+| `fuel_common.format_drive_fuel_comparison` (`:1524`; `analyse drives` drive detail and the drive browser) | "Ref Fuel Prices", each car's cost and "Saved $" | "Ref Fuel Prices: no fuel price data" (or per fuel when only some are held); row "1.92 L · no fuel price data"; no "Saved" |
+| `sync_fuel_history.print_status` (`--status`) | "Latest Reference Prices" | "no fuel price data (run --sync-all)" |
+| `sync_fuel_history.query_price` (`--query`) | the date's price and the 100 km table | "no fuel price data (run --sync-all)"; each car "[Diesel] · no fuel price data" |
+| `charging_analyzer._ice_equivalent` (`:2643`) via `print_summary` | "Estimated ICE Equivalent", "Net Savings" | "no fuel price data - <car>"; a charge without a date: "unknown (no fuel price for 1 of 2 charges)" |
+| `charging_analyzer.print_summary` | "Projected Annual Savings" | "no fuel price data" (`annual_savings_unknown`, `:803`) |
+| `charging_analyzer._print_multi_vehicle_comparison_matrix` (`--compare-all`) | Avg Price, Equiv Spend, Net Savings, Annual Savings | "no data" / "unknown", and under the table "No fuel price data for Diesel, U91, ..." |
+| `price_history_report.build_fuel_series`, `cost_per_100km_report` | price and cost charts | do not call `get_fuel_price` (own query, gaps over 7 days left empty); unchanged |
+
+With fuel data every figure is the same as before (checked line for line on made-up prices). `get_fuel_price` now also closes its database
+connection. Tests: `tests/test_fuel_no_price.py`.
+
+**Nearest-day fallback (not changed).** Order: the day's average, else the month's average, else the nearest held day by
+`ABS(julianday(date) - julianday(asked))` with no limit. Checked on made-up rows (2020-03-06 and 2026-05-20, month 2026-04):
+
+| date asked | price returned |
+|---|---|
+| 2026-05-20 | that day |
+| 2026-04-02 | April's monthly average |
+| 2030-01-01 | 2026-05-20 (3.6 years away) |
+| 2019-01-01 | 2020-03-06 |
+| `""`, `None`, `"garbage"` | the first row stored (`julianday` gives NULL, so the order means nothing) |
+
+So a date outside the synced range is priced with the first or last price held, with nothing on screen saying the price is from another
+date. A drive with no start time can reach this through the drive browser (`drives/browser.py:739` passes `trip.get("start_dt")`).
+`price_history_report` (`MAX_FILL_DAYS = 7`, `:133`) leaves such dates empty instead, so the chart and the cost comparisons disagree there.
+
+Options for the owner (none chosen):
+
+1. Leave as is.
+2. Return `None` for a date it cannot read (no limit needed; it removes the "price for no date" case only).
+3. A cap in days, set by the owner in `config.json` (e.g. reuse 7 from `price_history_report`, or 31), `None` beyond it.
+4. Same calendar month only (the daily and monthly lookups already do that; drop the nearest-day step).
+5. Keep the nearest day but return its date too, so callers show "(price from 2026-05-20)".

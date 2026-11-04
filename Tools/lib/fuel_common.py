@@ -1276,7 +1276,10 @@ def get_fuel_price(
     Returns the average NSW FuelCheck price in AUD ($/L) for a given date:
     that day's average, else that month's, else the nearest recorded day.
     None when the fuel database holds nothing for this fuel and region
-    (never a typed-in price).
+    (never a typed-in price); callers show NO_FUEL_PRICE instead of a cost.
+    The nearest recorded day has no distance limit: a date years outside the
+    synced range gets the first or last price held. A date SQLite cannot read
+    (empty, "None") also gets a price, the first row stored.
     """
     fuel_code = normalize_fuel_code(fuel_type)
     if isinstance(date_val, datetime.date) or isinstance(date_val, datetime.datetime):
@@ -1288,34 +1291,36 @@ def get_fuel_price(
         ym_str = s[:7]
 
     conn = get_db_connection(tessie_dir)
-    cur = conn.cursor()
+    try:
+        cur = conn.cursor()
 
-    cur.execute("""
-    SELECT avg_price_cents FROM fuel_daily_averages
-    WHERE date = ? AND fuel_type = ? AND region = ?
-    """, (date_str, fuel_code, region))
-    row = cur.fetchone()
-    if row and row[0]:
-        return row[0] / 100.0
+        cur.execute("""
+        SELECT avg_price_cents FROM fuel_daily_averages
+        WHERE date = ? AND fuel_type = ? AND region = ?
+        """, (date_str, fuel_code, region))
+        row = cur.fetchone()
+        if row and row[0]:
+            return row[0] / 100.0
 
-    cur.execute("""
-    SELECT avg_price_cents FROM fuel_monthly_averages
-    WHERE year_month = ? AND fuel_type = ? AND region = ?
-    """, (ym_str, fuel_code, region))
-    row = cur.fetchone()
-    if row and row[0]:
-        return row[0] / 100.0
+        cur.execute("""
+        SELECT avg_price_cents FROM fuel_monthly_averages
+        WHERE year_month = ? AND fuel_type = ? AND region = ?
+        """, (ym_str, fuel_code, region))
+        row = cur.fetchone()
+        if row and row[0]:
+            return row[0] / 100.0
 
-    cur.execute("""
-    SELECT avg_price_cents FROM fuel_daily_averages
-    WHERE fuel_type = ? AND region = ?
-    ORDER BY ABS(julianday(date) - julianday(?)) ASC LIMIT 1
-    """, (fuel_code, region, date_str))
-    row = cur.fetchone()
-    if row and row[0]:
-        return row[0] / 100.0
-
-    return None
+        cur.execute("""
+        SELECT avg_price_cents FROM fuel_daily_averages
+        WHERE fuel_type = ? AND region = ?
+        ORDER BY ABS(julianday(date) - julianday(?)) ASC LIMIT 1
+        """, (fuel_code, region, date_str))
+        row = cur.fetchone()
+        if row and row[0]:
+            return row[0] / 100.0
+        return None
+    finally:
+        conn.close()
 
 
 def compute_drive_urban_highway_split(
@@ -1486,9 +1491,24 @@ def calculate_ice_comparison_costs(
     return results
 
 
+# What every caller shows instead of a fuel cost when get_fuel_price() gives None.
+NO_FUEL_PRICE = "no fuel price data"
+
+
 def fmt_price_per_l(p: Optional[float]) -> str:
-    """"$2.05/L", or "no price" when FuelCheck holds none."""
-    return f"${p:.2f}/L" if p is not None else "no price"
+    """"$2.05/L", or NO_FUEL_PRICE when FuelCheck holds none."""
+    return f"${p:.2f}/L" if p is not None else NO_FUEL_PRICE
+
+
+def fmt_fuel_cost(cost: Optional[float], price_per_l: Optional[float], l_per_100km: Optional[float], width: int = 0) -> str:
+    """A fuel cost as "$12.34", or why there is none: NO_FUEL_PRICE, or "unknown (no L/100km)" (never $0.00)."""
+    if cost is not None:
+        return f"${cost:{width}.2f}" if width else f"${cost:.2f}"
+    if price_per_l is None:
+        return NO_FUEL_PRICE
+    if l_per_100km is None:
+        return "unknown (no L/100km)"
+    return "unknown"
 
 
 SAMPLE_COMPARISON_VEHICLES = [
@@ -1551,7 +1571,11 @@ def format_drive_fuel_comparison(
     lines = []
     lines.append(f"{indent}\033[1m\033[93m⛽ COMPARATIVE ICE FUEL RUNNING COSTS\033[0m \033[90m(Historical AU Baseline on {d_str} · {split_desc})\033[0m:")
     
-    price_hdr = f"{indent}   \033[90mRef Fuel Prices: U91: {fmt_price_per_l(p_u91)}  |  P98: {fmt_price_per_l(p_p98)}  |  Diesel: {fmt_price_per_l(p_dl)}\033[0m"
+    if p_u91 is None and p_p98 is None and p_dl is None:
+        refs = NO_FUEL_PRICE
+    else:
+        refs = f"U91: {fmt_price_per_l(p_u91)}  |  P98: {fmt_price_per_l(p_p98)}  |  Diesel: {fmt_price_per_l(p_dl)}"
+    price_hdr = f"{indent}   \033[90mRef Fuel Prices: {refs}\033[0m"
     if ev_cost is not None and kwh_used is not None:
         price_hdr += f"   \033[36m⚡ EV Energy: {kwh_used:.2f} kWh (~${ev_cost:.2f})\033[0m"
     lines.append(price_hdr)
@@ -1605,8 +1629,12 @@ def format_drive_fuel_comparison(
 
         eff_s = f"{eff_l:4.1f} L/100km" if eff_l is not None else "L/100km unknown"
         litres_s = f"{litres:5.2f} L" if litres is not None else "? L"
-        fc_s = f"${fc:5.2f}" if fc is not None else "no price"
-        row = f"{indent}   • {badge}\033[1m{name:<44}\033[0m \033[90m({ft:<6} · {eff_s})\033[0m: {litres_s} @ {fmt_price_per_l(fp)} = \033[1m{fc_s}\033[0m{sav_str}"
+        fc_s = fmt_fuel_cost(fc, fp, eff_l, width=5)
+        if fp is None:
+            cost_s = f"{litres_s} · \033[1m{fc_s}\033[0m"
+        else:
+            cost_s = f"{litres_s} @ {fmt_price_per_l(fp)} = \033[1m{fc_s}\033[0m"
+        row = f"{indent}   • {badge}\033[1m{name:<44}\033[0m \033[90m({ft:<6} · {eff_s})\033[0m: {cost_s}{sav_str}"
         lines.append(row)
 
     lines.append(f"{indent}   \033[90m* Assumes NSW FuelCheck daily average as national reference pricing for Australian drives.\033[0m")
