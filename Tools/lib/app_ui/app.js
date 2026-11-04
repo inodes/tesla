@@ -2487,13 +2487,15 @@ async function teslaDriveBody(host,role,fetchSeg,places,opts){
     <div id="drevw"></div><div id="drj"></div>
     <div id="dchc" class="card" style="margin-top:12px;padding:10px"><div class="bar" style="margin:0 0 6px"><b>Telemetry</b><span class="sub" id="dtip" style="min-height:18px;flex:1"></span><span style="display:flex;gap:6px;align-items:center"><button class="chip" id="dfit" hidden title="What the telemetry bar covers: the whole drive or parked time, or only the time of the video clips (click to switch)"></button>${TSZ.map(([k,t])=>`<button class="chip" data-ts="${k}">${t}</button>`).join("")}</span></div><canvas id="dch" style="width:100%;display:block"></canvas></div>
     <div class="card dvc" style="margin-top:12px"><div id="dsgl" class="sgs" style="margin:0 0 8px"></div><div id="dcov"></div><div id="dvid"></div></div><div id="drv"></div><div id="dev"></div></div>`;
-  // "from → to" of a drive page opened from the Drives list. Tessie's names win when Tessie has the drive. With the dashcam alone the start is the first frame: the saved place, else the street and
-  // suburb the car wrote into the first clip; in italics when the car was already moving at that frame (the start of the drive is not on the footage: this is where the footage begins, not the drive).
-  const driveNames=(x,a,b)=>{const R=opts.row;
-    if(R&&(R.frm||R.to))return esc(R.frm||a||"?")+" → "+esc(R.to||b||"?");
-    const s=S(),i0=s&&s.v?s.v.findIndex(v=>v!=null):-1,inc=i0>=0&&s.v[i0]>=10&&!(s.gear&&s.gear[i0]===0),f=a||x.start_at||"";
-    if(!f&&!b)return "";
-    return (f?(inc?`<i title="The video starts partway through this drive: the car was already moving at the first frame. This is where the first clip was, not where the drive began.">${esc(f)}</i>`:esc(f)):"?")+" → "+esc(b||"?")};
+  // "from → to" of a drive page opened from the Drives list. TeslaCam first: the footage has its own GPS, so both ends are named from it, the saved place at the first / last frame, else the street and
+  // suburb the car wrote into the first / last clip. Tessie is only asked for what the footage cannot say: where the drive began when the video starts partway through it (the start was overwritten);
+  // with the dashcam alone that start is the first clip's place in italics (the car was already moving: where the footage begins, not where the drive did).
+  const driveNames=(x,a,b)=>{const R=opts.row,s=S(),real=(d.minutes||[]).filter(m=>m.cams&&m.cams.length&&!m.syn).sort((p,q)=>p.off-q.off),f0=real.length?Math.max(0,real[0].off):0;
+    let i0=-1;if(s&&s.v)for(let i=f0;i<s.v.length;i++)if(s.v[i]!=null){i0=i;break}
+    const span=x.span||[0,0],lead=real.length?real[0].off-span[0]:0,moving=i0>=0&&s.v[i0]>=10&&!(s.gear&&s.gear[i0]===0),inc=lead>=120||moving,f=a||x.start_at||"",t=b||x.end_at||(R&&R.to)||"";
+    if(!f&&!t&&!(inc&&R&&R.frm))return "";
+    const from=inc&&R&&R.frm?esc(R.frm):f?(inc?`<i title="The video starts partway through this drive: the car was already moving at the first frame. This is where the first clip was, not where the drive began.">${esc(f)}</i>`:esc(f)):"?";
+    return from+" → "+(t?esc(t):"?")};
   // under the title: what Tessie calls this drive when it keeps it as several, and how much of the timeline is Tessie's record alone (no video)
   const driveNote=x=>{if(x.kind!=="drive"||opts.heading===false)return "";const R=opts.row,L=x.lo!=null?x.lo:0;let h="";
     const real=(d.minutes||[]).filter(m=>m.cams&&m.cams.length&&!m.syn).sort((p,q)=>p.off-q.off),span=x.span||[0,Math.round(x.t1-x.t0)],lead=real.length?Math.round(real[0].off-span[0]):0;
