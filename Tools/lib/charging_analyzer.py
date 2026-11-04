@@ -781,6 +781,10 @@ class TeslaInvoiceParser:
 
 
 
+# Same words as lib/fuel_common.NO_FUEL_PRICE (kept here so this module still loads when fuel_common does not import).
+NO_FUEL_PRICE = "no fuel price data"
+
+
 def _money_signed(v, decimals=2):
     """"+$12.34" / "-$5.00"."""
     return ("+" if v >= 0 else "-") + f"${abs(v):,.{decimals}f}"
@@ -789,11 +793,20 @@ def _money_signed(v, decimals=2):
 def format_ice_equivalent(ice, v_name, v_fuel_type, v_l_per_100km, savings):
     """The summary's ICE line: the spend, the price and vehicle it uses and the net saving; "unknown (why)" when a figure is missing."""
     if ice["spend"] is None:
-        return f"unknown ({ice['reason']})" + (f" - {v_name}" if v_name else "")
+        why = ice["reason"] if ice["reason"] == NO_FUEL_PRICE else f"unknown ({ice['reason']})"
+        return why + (f" - {v_name}" if v_name else "")
     short = (v_name or "").split("(")[0].strip()
     left = f", {ice['left_out']} without battery kWh left out" if ice["left_out"] else ""
     return (f"${ice['spend']:,.2f} ({short}: {v_fuel_type} ~${ice['avg_price']:.2f}/L, {v_l_per_100km:.1f} L/100km; car {ice['wh_per_km']:.0f} Wh/km{left})  │  "
             f"{C_GREEN}{C_BOLD}Net Savings:{C_RESET} {_money_signed(savings)} AUD")
+
+def annual_savings_unknown(v_l_per_100km, ice):
+    """Why the projected annual savings has no figure: "unknown (no L/100km)", NO_FUEL_PRICE, or the ICE reason."""
+    if v_l_per_100km is None:
+        return "unknown (no L/100km)"
+    why = ice.get("price_reason") or ice.get("reason")
+    return why if why == NO_FUEL_PRICE else f"unknown ({why or 'no fuel price'})"
+
 
 class ChargingAnalyzer:
     def __init__(self, config_path=None, tessie_dir=None, invoices_dir=None, tolerance_mins=None, tolerance_kwh=None):
@@ -2632,7 +2645,7 @@ class ChargingAnalyzer:
         each charge's battery kWh / the car's real Wh/km = km, x the vehicle's L/100km x FuelCheck's price on the charge's date.
         Charges with no battery kWh (an invoice Tessie never saw) are left out of both sides. -> dict(spend, avg_price, ev_spend,
         counted, left_out, reason): spend and avg_price None, with `reason`, when a figure is missing (never a guessed number)."""
-        out = dict(spend=None, avg_price=None, ev_spend=0.0, counted=0, left_out=0, reason=None)
+        out = dict(spend=None, avg_price=None, ev_spend=0.0, counted=0, left_out=0, reason=None, price_reason=None)
         used = []
         for s in sessions:
             if (s.get("battery_kwh") or 0) > 0:
@@ -2642,10 +2655,10 @@ class ChargingAnalyzer:
         out["counted"] = len(used)
         out["ev_spend"] = sum((s["invoice_cost"] if s.get("invoice_cost") is not None else (s.get("tessie_cost") or 0.0)) for s in used)
         if not used:
-            out["reason"] = "no charge with a battery kWh"
+            out["reason"] = out["price_reason"] = "no charge with a battery kWh"
             return out
         if not get_fuel_price:
-            out["reason"] = "fuel prices not available"
+            out["reason"] = out["price_reason"] = "fuel prices not available"
             return out
         prices = []
         for s in used:
@@ -2653,6 +2666,11 @@ class ChargingAnalyzer:
             prices.append(p)
         known = [p for p in prices if p is not None]
         out["avg_price"] = sum(known) / len(known) if known and len(known) == len(prices) else None
+        if not known:
+            out["price_reason"] = NO_FUEL_PRICE
+        elif len(known) < len(prices):
+            # get_fuel_price gives every dated charge a price once any is held, so these are charges without a date.
+            out["price_reason"] = f"no fuel price for {len(prices) - len(known)} of {len(prices)} charges"
         if l_per_100km is None:
             out["reason"] = "no L/100km for the vehicle"
             return out
@@ -2660,7 +2678,7 @@ class ChargingAnalyzer:
             out["reason"] = "no drive with distance and energy to turn kWh into km"
             return out
         if out["avg_price"] is None:
-            out["reason"] = "no FuelCheck price for every charge date"
+            out["reason"] = out["price_reason"]
             return out
         out["spend"] = sum((s["battery_kwh"] * 1000.0 / wh_per_km) / 100.0 * l_per_100km * p for s, p in zip(used, prices))
         out["wh_per_km"] = wh_per_km
@@ -4231,7 +4249,7 @@ class ChargingAnalyzer:
             print(f"│{pad_display(kpi_l9, box_w - 2)}│")
 
             annualize_caveat = " (short window - rough)" if period_days and period_days < 30 else ""
-            ann_s = _money_signed(projected_annual_savings) + " AUD/yr" if projected_annual_savings is not None else "unknown (no fuel price or L/100km)"
+            ann_s = _money_signed(projected_annual_savings) + " AUD/yr" if projected_annual_savings is not None else annual_savings_unknown(v_l_per_100km, ice)
             kpi_l10 = (f"  {C_GREEN}{C_BOLD}Projected Annual Savings vs {v_name.split('(')[0].strip()}:{C_RESET} "
                        f"{ann_s}{annualize_caveat if projected_annual_savings is not None else ''}")
             print(f"│{pad_display(kpi_l10, box_w - 2, truncate=True)}│")
@@ -4326,6 +4344,7 @@ class ChargingAnalyzer:
             drive_totals = self._load_drive_totals_in_period(min(dts), max(dts))
         wh_per_km = self._real_wh_per_km(drive_totals)
         rows_data = []
+        no_price_fuels = []
 
         for v_key, v_spec in vehicles.items():
             v_name = v_spec.get("name") or v_spec.get("label") or v_key
@@ -4340,6 +4359,8 @@ class ChargingAnalyzer:
             tyre_km = running_costs.get("tyres_per_km", 0.0) if isinstance(running_costs, dict) else 0.0
             running_per_km_str = f"${(maint_km + tyre_km):.3f}/km" if (maint_km + tyre_km) > 0 else "N/A"
 
+            if ice["price_reason"] == NO_FUEL_PRICE and v_fuel not in no_price_fuels:
+                no_price_fuels.append(v_fuel)
             ann_savings_str = "unknown"
             if km_travelled and km_travelled > 0 and period_days and period_days > 0 and v_l_100km is not None and v_avg_price is not None:
                 ann_ratio = 365.25 / period_days
@@ -4353,7 +4374,7 @@ class ChargingAnalyzer:
                 "category": v_spec.get("category", "-"),
                 "fuel": v_fuel,
                 "l_100km": f"{v_l_100km:.1f} L" if v_l_100km is not None else "-",
-                "avg_price": f"${v_avg_price:.2f}/L" if v_avg_price is not None else "no price",
+                "avg_price": f"${v_avg_price:.2f}/L" if v_avg_price is not None else "no data",
                 "equiv_spend": f"${v_spend:,.2f}" if v_spend is not None else "unknown",
                 "savings": _money_signed(v_savings) if v_savings is not None else "unknown",
                 "running_km": running_per_km_str,
@@ -4372,7 +4393,7 @@ class ChargingAnalyzer:
         print("├" + "┼".join("─" * w for w in m_widths) + "┤")
 
         for r in rows_data:
-            s_color = C_GREEN if r["savings"].startswith("+") else C_RED
+            s_color = C_GREEN if r["savings"].startswith("+") else (C_RED if r["savings"].startswith("-") else C_DIM)
             print("│" + "│".join([
                 pad_display(f" {r['name']}", m_widths[0], "left", truncate=True),
                 pad_display(f" {r['category']}", m_widths[1], "left", truncate=True),
@@ -4385,6 +4406,8 @@ class ChargingAnalyzer:
             ]) + "│")
 
         print("└" + "┴".join("─" * w for w in m_widths) + "┘")
+        if no_price_fuels:
+            print(f"⛽ {C_YELLOW}No fuel price data for {', '.join(no_price_fuels)}{C_RESET} {C_DIM}(./Tools/tesla sync fuel fetches NSW FuelCheck prices){C_RESET}")
         print(f"👉 {C_DIM}Configure benchmark vehicle profiles and running costs in Tessie/comparison_vehicles.json{C_RESET}\n")
 
     @staticmethod
