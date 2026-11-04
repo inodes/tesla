@@ -17,6 +17,7 @@ New shared helper: `Tools/lib/car_figures.py` - the car's usable kWh and full ra
 
 | file:line | value (before) | purpose | verdict | action |
 |---|---|---|---|---|
+| `Tools/lib/fuel_common.py` (`get_fuel_price_dated`, 2026-11-04) | nearest recorded day's price, however far away, not dated; an unreadable date got the first row stored | fuel price for a date outside the synced range | real data from another date, shown as that date's | refreshed first, then dated: section 5 (decision) |
 | `Tools/lib/fuel_common.py:1269` (`get_fuel_price`) | U91 $1.95, P95 $2.10, P98 $2.20, Diesel $2.05, E10 $1.90, LPG $1.10 /L | last resort when the FuelCheck database has nothing | made up | returns `None`; every caller says "no fuel price data" (`NO_FUEL_PRICE`, `:1495`; see the 2026-11-03 caller check below) |
 | `Tools/lib/fuel_common.py:1387` (`vehicle_l_per_100km`), `:1426` | `or 8.5` L/100km | comparison car with no consumption figure | made up | `None`; litres and fuel cost `None` |
 | `Tools/lib/fuel_common.py:1524`, `format_drive_fuel_comparison` | `${p:.2f}` of the default above | "Ref Fuel Prices" line and each car's row in the drive view | showed the made-up price | "no fuel price data" / "L/100km unknown" |
@@ -52,7 +53,6 @@ New shared helper: `Tools/lib/car_figures.py` - the car's usable kWh and full ra
 |---|---|---|---|---|
 | `Tools/lib/fuel_common.py:48` `DEFAULT_COMPARISON_VEHICLES` (22 cars), also seeded into the fuel DB (`:511`) and `resources/comparison_vehicles.example.json` | `consumption` L/100km per car (e.g. CX-8 7.5 / 10.0 / 6.0) | the ICE side of every comparison | other cars' figures: no owner data can exist. Only the CX-8 also has `adr_consumption` (6.0 / 7.0 / 5.5, `:60`), which differs from its `consumption`, so the `consumption` figures look like unsourced "real-world" uplifts | needs a source per car (greenvehicleguide.gov.au) or the owner's own `comparison_vehicles.json`; changing them changes every savings figure |
 | `Tools/lib/fuel_common.py:65` (each car) | `running_costs`: service $0.026-0.065/km, tyres $0.017-0.035/km | "total running cost", matrix "Running/km" | unsourced estimates | same three places hold them (code, DB seed, example JSON); removing only the code copy would not remove them |
-| `Tools/lib/fuel_common.py:1316` | nearest recorded day's price, however far away; a date SQLite cannot read ("", "None") gets the first row stored | fuel price for a date outside the synced range | real data, but from another date (or from no date) | a cap on the distance is a new constant; owner to decide. Options and the checked behaviour: section 5 |
 | `Tools/lib/fuel_common.py:1376` | urban/highway split by average speed: 35 / 85 km/h, 0.95 | weights urban vs highway L/100km | model assumption (ADR 81/02 cycle speeds) | not a price; replacing it needs a different model; `raw_samples` path already uses real speeds |
 | `Tools/lib/fuel_common.py:1325`, `Tools/lib/ev_efficiency.py:53` | 70 km/h urban threshold | same split | model setting | candidate for `config.json` (`app` block), not a data stand-in |
 | `Tools/lib/abrp_common.py:43` | `tesla:myl:25:88:dual:ccs`, "Tesla Model Y" | ABRP vehicle model when config and ABRP give none | names one car model (ABRP then uses its own range model) | should come from config / vehicle_spec; not a number in our calculations |
@@ -134,10 +134,38 @@ So a date outside the synced range is priced with the first or last price held, 
 date. A drive with no start time can reach this through the drive browser (`drives/browser.py:739` passes `trip.get("start_dt")`).
 `price_history_report` (`MAX_FILL_DAYS = 7`, `:133`) leaves such dates empty instead, so the chart and the cost comparisons disagree there.
 
-Options for the owner (none chosen):
+Options for the owner (option 5 chosen, refined, 2026-11-04; decision below):
 
 1. Leave as is.
 2. Return `None` for a date it cannot read (no limit needed; it removes the "price for no date" case only).
 3. A cap in days, set by the owner in `config.json` (e.g. reuse 7 from `price_history_report`, or 31), `None` beyond it.
 4. Same calendar month only (the daily and monthly lookups already do that; drop the nearest-day step).
 5. Keep the nearest day but return its date too, so callers show "(price from 2026-05-20)".
+
+**Decision (owner, 2026-11-04): option 5, refined.** The nearest-day fallback stays, but it is never silent:
+
+- `get_fuel_price_dated(date, fuel, region, data_dir)` returns `dict(price, price_date, basis)`: basis `day`, `month` (price_date
+  `YYYY-MM`) or `nearest` (the day the price is from). A date it cannot read (`""`, `None`, `"garbage"`) gives `None`, never the first row.
+  A date after the newest price held, a future one too, gets the newest price with basis `nearest` and its real date.
+  `get_fuel_price` is built on it and still returns the float or `None`.
+- Current: the price's own day, the month's average for the month asked, or a day within `app.fuel.stale_days` (default 7, the same
+  limit as `price_history_report.MAX_FILL_DAYS`, which now reads it) of min(date asked, today). A current price prints exactly as before.
+- Out of date: the prices are refreshed first with `sync_fuel_history.py --sync-all` (what the app's fuel sync runs), in its own
+  process, then looked up again. At most once a run, not again within `app.fuel.refetch_hours` (default 6; last attempt in
+  `<data>/fuel/refresh_state.json`), only where the sync has set up the prices (a synced month), never for a future date, never from inside
+  the sync itself. No network or a failed fetch: "Fuel price refresh failed." on stderr, then carry on.
+- Still out of date: the price shows its date, `fmt_price_basis`: "(price of 2026-05-20)" or "(price of month 2026-05)". Shown in the
+  drive fuel comparison (Ref Fuel Prices line, each car's row), `sync fuel-prices --query` and `--status`, the charging summary's ICE line
+  and Projected Annual Savings, and `--compare-all` Avg Price; with several charges, the oldest out-of-date date used.
+
+Checked again on made-up rows (2020-03-06 and 2026-05-20, month 2026-04, today 2026-11-04):
+
+| date asked | price returned | shown |
+|---|---|---|
+| 2026-05-20 | that day | no note |
+| 2026-04-02 | April's monthly average | no note |
+| 2030-01-01 | 2026-05-20 | refresh not tried (future); "(price of 2026-05-20)" |
+| 2019-01-01 | 2020-03-06 | refresh, then "(price of 2020-03-06)" |
+| `""`, `None`, `"garbage"` | `None` | "no fuel price data" |
+
+Tests: `tests/test_fuel_price_dates.py`.

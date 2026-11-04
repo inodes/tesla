@@ -79,6 +79,7 @@ from lib.fuel_common import (  # noqa: E402
     get_fuel_price,
     normalize_fuel_code,
     get_comparison_vehicle,
+    fuel_stale_days,
 )
 from lib.power_demand import load_rate_periods  # noqa: E402
 from providers.power import get_power_provider  # noqa: E402
@@ -143,8 +144,8 @@ def daterange(start, end):
 # isolated day in July 2022 - 14 days total across the whole U91/P98/DL
 # x 2020-03-06-to-today range, so this costs almost nothing in coverage).
 MIN_SAMPLE_COUNT = 30
-# Longest gap (days) bridged with the nearest real reading - see build_fuel_series.
-MAX_FILL_DAYS = 7
+# Longest gap (days) bridged with the nearest real reading - see build_fuel_series. Same limit as an out-of-date fuel price (app.fuel.stale_days).
+MAX_FILL_DAYS = fuel_stale_days()
 
 
 def build_fuel_series(conn, fuel_code, region, dates):

@@ -79,7 +79,8 @@ class BasisTest(unittest.TestCase):
 
 class DriveFuelTest(unittest.TestCase):
     def setUp(self):
-        p = mock.patch.object(FC, "get_fuel_price", return_value=2.0)       # a price held, so the block is drawn; never the real fuel database
+        p = mock.patch.object(FC, "get_fuel_price_dated",                     # a price held, so the block is drawn; never the real fuel database
+                              return_value=dict(price=2.0, price_date="2026-06-01", basis="day"))
         p.start()
         self.addCleanup(p.stop)
 
