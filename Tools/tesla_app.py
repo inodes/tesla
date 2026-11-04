@@ -16,13 +16,13 @@ DESCRIPTION
     clip) run from the Queue page: a preview first, then for real.
 
     The window is a native one when the optional package pywebview is installed (pip install pywebview); otherwise the app
-    opens in your default browser. Either way it is the same local page.
+    only serves (it never opens a browser by itself; open the printed URL yourself).
 
 OPTIONS
     --data-dir DIR   Tesla data folder (default: TESLA_DATA_DIR or the iCloud "Tesla" folder)
     --port N         port to listen on (default 8765, or app.window.port in config.json; 0 = any free port)
     --no-window      only run the server (open http://127.0.0.1:PORT yourself)
-    --browser        use the default browser even if pywebview is installed
+    --browser        no native window, just serve (same as --no-window but the app keeps running quietly)
 
 EXAMPLES
     Put each command on its own line. Do not paste a trailing "# comment" after a command: an interactive zsh does not
@@ -35,7 +35,7 @@ EXAMPLES
         pip install -r ../requirements.txt
         ./build_mac_app.sh
 
-    ./tesla_app.py opens a native window if pywebview is installed, otherwise your browser. pywebview is in requirements.txt, so direnv
+    ./tesla_app.py opens a native window if pywebview is installed, otherwise nothing opens (it never launches a browser). pywebview is in requirements.txt, so direnv
     installs it into the repo venv on its own (never install it globally). ./build_mac_app.sh makes ~/Applications/Tesellate.app to
     double-click (log: ~/Library/Logs/tesla_app.log). Stop the app by closing its window or Ctrl-C in the terminal.
 
@@ -1236,11 +1236,11 @@ def main():
             webview.start(menu=menu) if menu else webview.start()
             return 0
         except ImportError:
-            print("(pywebview not installed: opening your browser instead. For a native window: pip install pywebview)")
+            print("(pywebview not installed: no window. For a native window: pip install pywebview)")
         except Exception as e:
-            print("(window failed: %s; opening your browser)" % e)
-    import webbrowser
-    webbrowser.open(url)
+            print("(window failed: %s; serving without a window)" % e)
+    # never open a browser by ourselves (a restart must not pop a tab): the URL is printed above, the server just keeps running
+    print("Serving without a window; open %s yourself if you want it in a browser." % url, flush=True)
     try:
         while True:
             time.sleep(3600)

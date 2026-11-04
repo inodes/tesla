@@ -8,7 +8,7 @@
 #
 # The app is a tiny launcher: it runs this repo's Tools/tesla_app.py through your login shell (the repo's .direnv venv
 # python if it exists, else the python3 on your PATH, so pywebview is found). Update the repo and the app is updated; rebuild it
-# only if you move the repo.  Optional native window:  pip install pywebview   (without it the app opens your browser)
+# only if you move the repo.  Optional native window:  pip install pywebview   (without it the app only serves; it never opens your browser)
 set -e
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
 APP="${1:-$HOME/Applications/Tesellate.app}"
