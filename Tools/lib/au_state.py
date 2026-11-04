@@ -48,3 +48,11 @@ def state(lat, lon):
     if lon > 149.98 or lat > _nsw_vic_lat(lon):
         return "NSW"
     return "VIC"
+
+
+def near_border(lat, lon, deg=0.14):
+    """True when the state is not the same all round the point (within `deg` degrees, about 15 km): the label's state is worth checking by lookup."""
+    s = state(lat, lon)
+    if s is None:
+        return False
+    return any(state(lat + a * deg, lon + b * deg) != s for a in (-1, 0, 1) for b in (-1, 0, 1) if a or b)

@@ -634,18 +634,32 @@ class TeslaCam:
                 out.append(dict(stamp=st, t=t, src="sentry", ref=e["id"], cams=cams, tcam=TL.tcam(cams)))
         return out
 
-    @staticmethod
-    def _short_where(store, stamp):
-        """The short place of a minute for the label on the video: the suburb the car wrote into its clip and the state of where it was ("Main Beach, QLD"); the suburb alone when no position was read."""
-        import au_state
-        sub = CC.where_parts(stamp)[1]
+    def _short_where(self, store, stamp):
+        """The short place of a minute for the label on the video ("Main Beach, QLD"): the suburb the clip carries, else the suburb of the nearest clip that has one (a garage), else a lookup of its
+        GPS position (short_place.py); the state comes from the position. With no position read, the suburb alone."""
+        import short_place
+        sp = self.__dict__.get("_sp")
+        if sp is None:
+            sp = self.__dict__["_sp"] = short_place.ShortPlace(self.dir)
+        ver = CC.version()
+        if self.__dict__.get("_sp_ver") != ver:
+            self.__dict__["_sp_ver"] = ver
+            items = []
+            for st, (_street, sub) in CC.where_all().items():
+                try:
+                    sm = store.summary(st)
+                except Exception:
+                    sm = None
+                p0 = sm.get("p0") if isinstance(sm, dict) else None
+                if sub and p0 and p0[0] is not None:
+                    items.append((p0[0], p0[1], sub))
+            sp.feed(items)
         try:
             sm = store.summary(stamp)
-            p = (sm or {}).get("p0") if isinstance(sm, dict) else None
+            p = sm.get("p0") if isinstance(sm, dict) else None
         except Exception:
             p = None
-        st = au_state.state(p[0], p[1]) if p and p[0] is not None else None
-        return ", ".join(x for x in (sub, st) if x)
+        return sp.label(CC.where_parts(stamp)[1], p[0] if p else None, p[1] if p else None)
 
     def _finish(self, role, teslacam, pick, budget, events=None, lo=None, extra=None):
         import time
