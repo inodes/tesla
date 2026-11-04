@@ -34,7 +34,8 @@ OPTS = dict(step_s=1.0,        # a still every this many seconds
             refine_step_s=0.2, # the second look at a sign: a still this often ...
             refine_pad_s=2.0,  # ... from this long before the first still it was seen in until this long after the last
             refine_conf=85.0,  # a sign read this surely, in more than one still, with one number, is left as it is
-            crop_px=320)       # the longest side of the picture kept of each sign: big enough to read the number from again once the video is gone
+            crop_px=320,       # the longest side of the picture kept of each sign: big enough to read the number from again once the video is gone
+            frame_w=2896)      # the width of a front-camera picture, for a reading that did not keep it (x and r are in its pixels)
 _LOCK = threading.RLock()
 _DAYFILE = re.compile(r"^\d{4}-\d\d-\d\d\.json$")      # a day's file: not the copy iCloud makes when two Macs save at once ("2026-09-16 2.json"), whose old minutes would count as never read
 
@@ -167,10 +168,14 @@ class Review:
                 for d in rows:
                     g = next((o for o in reversed(groups) if o["text"] == d["text"] and o["side"] == d["side"] and d["s"] - o["s1"] <= OPTS["merge_s"]), None)
                     if g is None:
-                        g = dict(text=d["text"], side=d["side"], kind=d.get("kind", ""), s0=d["s"], s1=d["s"], n=0, conf=-1, f="", _tm={})
+                        g = dict(text=d["text"], side=d["side"], kind=d.get("kind", ""), s0=d["s"], s1=d["s"], n=0, conf=-1, f="", _tm={}, _fx=[], _rf=[])
                         groups.append(g)
                     g["n"] += 1
                     g["s1"] = d["s"]
+                    if d.get("x") is not None and d.get("r"):
+                        w = float(d.get("w") or OPTS["frame_w"])
+                        g["_fx"].append(d["x"] / w)
+                        g["_rf"].append(d["r"] / w)
                     if d.get("tm"):
                         g["_tm"][tuple(d["tm"])] = g["_tm"].get(tuple(d["tm"]), 0) + max(1, d.get("tc", 0))
                     sc = d["c"] + 1.5 * min(d.get("r", 0), 120)          # the picture shown is the biggest (closest to the sign) of those read surely: the most pixels to read it from
@@ -180,6 +185,9 @@ class Review:
                     g.pop("_sc", None)
                     tm = g.pop("_tm")
                     g["times"] = list(max(tm, key=lambda k: tm[k])) if tm else []      # a school zone's hours ("08:00-09:30"), as most of its stills agree
+                    fx, rf = g.pop("_fx"), g.pop("_rf")                                  # where it stood in the picture (fractions of its width: across, and its radius): how far off the car's road it was
+                    g["fx"] = round(sorted(fx)[len(fx) // 2], 4) if fx else None
+                    g["rf"] = round(sorted(rf)[len(rf) // 2], 5) if rf else None
                 if groups:
                     out[st] = groups
         return out
@@ -302,11 +310,13 @@ def scan_clip(path, stamp, v, base):
             if im is None:
                 return []
             out = []
+            fw = im.shape[1]
             for side, roi in (("L", SF.ROI_LEFT), ("R", SF.ROI_RIGHT)):
-                for c in SF.find_signs(im, roi=roi):
+                for c in SF.find_signs(im, roi=roi):           # every sign that could be read, not only the best of the side: which one is for our road is decided afterwards (sign trust)
                     if c.get("ok") and c["conf"] >= OPTS["min_conf"] and c["text"]:
-                        out.append(dict(s=s, text=c["text"], c=round(c["conf"]), x=c["x"], y=c["y"], r=c["r"], side=side, crop=c["crop"]))
-                        break               # the best reading per side and still
+                        if any(o["side"] == side and o["text"] == c["text"] and abs(o["x"] - c["x"]) <= max(o["r"], c["r"]) for o in out):
+                            continue         # the same sign found twice
+                        out.append(dict(s=s, text=c["text"], c=round(c["conf"]), x=c["x"], y=c["y"], r=c["r"], w=fw, side=side, crop=c["crop"]))
             for c in SC.find_school(im):    # a school zone board, and the hours on its plate when they could be read
                 out.append(dict(s=s, text=c["text"], kind="school", c=c["conf"], x=c["x"], y=c["y"], r=c["r"], side=c["side"], tm=c["times"], tc=c["tconf"], crop=c["crop"]))
             return out

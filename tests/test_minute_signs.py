@@ -37,6 +37,19 @@ class MinuteSignsTest(unittest.TestCase):
         self.assertEqual((g["f"], g["conf"]), ("near.jpg", 85))                       # not the far one, and not a big blurred one
         self.assertNotIn("_sc", g)
 
+    def test_a_sign_carries_where_it_stood_in_the_picture(self):
+        d = tempfile.mkdtemp()
+        os.makedirs(os.path.join(d, "drive_review"))
+        rows = [dict(s=45.0, text="60", c=92, x=987, y=746, r=16, side="L", f="a.jpg"), dict(s=46.0, text="60", c=91, x=820, y=712, r=19, side="L", f="b.jpg"),
+                dict(s=47.0, text="60", c=79, x=534, y=624, r=29, side="L", f="c.jpg"), dict(s=10.0, text="100", c=80, side="R", f="d.jpg")]
+        with open(os.path.join(d, "drive_review", "2026-10-26.json"), "w") as f:
+            json.dump({ST: dict(n=14, d=rows)}, f)
+        hundred, sixty = AR.Review(d).minute_signs([ST])[ST]
+        self.assertEqual((sixty["text"], sixty["fx"], sixty["rf"]), ("60", round(820 / 2896.0, 4), round(19 / 2896.0, 5)))      # the middle reading; the frame is 2896 wide unless the reading says
+        self.assertEqual((hundred["fx"], hundred["rf"]), (None, None))                                                           # an old reading with no position: unknown, not zero
+        self.assertNotIn("_fx", sixty)
+
+
     def test_a_school_zone_carries_the_hours_most_of_its_stills_agree_on(self):
         d = tempfile.mkdtemp()
         os.makedirs(os.path.join(d, "drive_review"))

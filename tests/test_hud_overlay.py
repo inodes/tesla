@@ -139,5 +139,54 @@ class HudTest(unittest.TestCase):
             self.assertIn(sel, css)
 
 
+# the ramp's 60 beside the motorway (Sun 11 Oct 2026, 12:42:43): seen well off to the left, and read surely, while the car held 99 km/h
+RAMP = '{"text":"60","conf":91,"fx":0.283,"rf":0.0066}'
+ROAD = '{"text":"60","conf":91,"fx":0.35,"rf":0.0121}'              # a 60 that stands near the car's line (4.7 m)
+HOLD = "k=>99"                                                        # the car holds its speed
+SLOW = "k=>k<0?99:Math.max(55,99-k*6)"                                # the car slows to 55 over the next seconds
+
+
+@unittest.skipUnless(shutil.which("node"), "node is not installed")
+class TrustTest(unittest.TestCase):
+    def test_distance_off_the_cars_line_comes_from_where_and_how_big(self):
+        self.assertAlmostEqual(run("hudLat(%s)" % ROAD), 4.65, 1)
+        self.assertAlmostEqual(run("hudLat(%s)" % RAMP), 12.3, 1)
+        self.assertIsNone(run('hudLat({"text":"60"})'))                         # an old reading with no position
+
+    def test_a_sign_far_off_the_road_is_downrated_not_ignored(self):
+        r = run("hudTrust(%s,null,[])" % RAMP)
+        self.assertGreater(r["t"], 0.25)
+        self.assertLess(r["t"], 0.5)
+        self.assertEqual(run("hudTrust(%s,null,[]).why" % RAMP), "")             # on position alone it is still held
+
+    def test_a_ramp_sign_the_car_did_not_slow_for_is_set_aside_and_says_why(self):
+        r = run("hudTrust(%s,%s,[])" % (RAMP, HOLD))
+        self.assertLess(r["t"], 0.3)
+        self.assertEqual(r["why"], "spd")
+
+    def test_a_sign_on_the_road_the_car_ignored_is_still_held_so_the_speeding_shows(self):
+        r = run("hudTrust(%s,%s,[])" % (ROAD, HOLD))
+        self.assertGreaterEqual(r["t"], 0.3)
+
+    def test_a_sign_the_car_slowed_for_is_trusted_in_full(self):
+        self.assertAlmostEqual(run("hudTrust(%s,%s,[]).t" % (ROAD, SLOW)), 1.0)
+
+    def test_a_100_seen_at_the_same_time_overrides_the_sign_off_the_road(self):
+        others = '[{"text":"100","conf":80,"lat":4.7,"dt":0.5}]'
+        alone = run("hudTrust(%s,null,[]).t" % RAMP)
+        with_100 = run("hudTrust(%s,null,%s)" % (RAMP, others))
+        self.assertLess(with_100["t"], alone * 0.5)
+        both = run("hudTrust(%s,%s,%s)" % (RAMP, HOLD, others))
+        self.assertLess(both["t"], 0.1)                                         # extremely low: all three agree
+
+    def test_a_weaker_or_later_sign_does_not_override(self):
+        self.assertEqual(run('hudTrust(%s,null,[{"text":"100","conf":80,"lat":4.7,"dt":20}]).t' % ROAD), 1)         # 20 s away
+        self.assertEqual(run('hudTrust(%s,null,[{"text":"100","conf":40,"lat":30,"dt":1}]).t' % ROAD), 1)           # far weaker
+        self.assertEqual(run('hudTrust(%s,null,[{"text":"60","conf":99,"lat":2,"dt":1}]).t' % RAMP), run("hudTrust(%s,null,[]).t" % RAMP))   # the same number agrees, it does not override
+
+    def test_nothing_known_is_full_trust(self):
+        self.assertEqual(run('hudTrust({"text":"80","conf":-1},null,[]).t'), 1)
+
+
 if __name__ == "__main__":
     unittest.main()
