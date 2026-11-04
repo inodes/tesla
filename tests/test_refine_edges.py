@@ -38,6 +38,23 @@ class RefineEdgesTest(unittest.TestCase):
         items = [dict(kind="drive", t0=T, t1=T + 60), dict(kind="stopped", t0=T + 60, t1=T + 600)]
         self.assertEqual(RC.refine_edges(items, {"m": (0, 50, None)}, {T: "m"}), items)
 
+    def test_a_drive_cannot_end_in_motion_the_parking_movements_in_the_next_minute_are_in_it(self):
+        items = [dict(kind="drive", t0=T, t1=T + 600), dict(kind="stopped", t0=T + 600, t1=T + 1800)]
+        out = RC.refine_edges(items, {}, {T + 540: "a", T + 600: "b"}, lambda st: (14, 0) if st == "b" else None)      # the park's first minute starts with 14 s in gear
+        self.assertEqual([(i["t0"], i["t1"]) for i in out], [(T, T + 614), (T + 614, T + 1800)])
+
+    def test_pulling_away_in_the_last_minute_of_a_park_starts_the_drive_there(self):
+        items = [dict(kind="stopped", t0=T, t1=T + 600), dict(kind="drive", t0=T + 600, t1=T + 1200)]
+        out = RC.refine_edges(items, {}, {T + 540: "p", T + 600: "d"}, lambda st: (0, 18) if st == "p" else None)
+        self.assertEqual([(i["t0"], i["t1"]) for i in out], [(T, T + 582), (T + 582, T + 1200)])
+
+    def test_gear_edges(self):
+        self.assertEqual(RC.gear_edges([1] * 14 + [0] * 46), (14, 0))
+        self.assertEqual(RC.gear_edges([0] * 40 + [2] * 20), (0, 20))
+        self.assertEqual(RC.gear_edges([0] * 60), (0, 0))
+        self.assertEqual(RC.gear_edges([1] * 60), (0, 0))
+        self.assertEqual(RC.gear_edges([]), (0, 0))
+
 
 if __name__ == "__main__":
     unittest.main()
