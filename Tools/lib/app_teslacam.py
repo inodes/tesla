@@ -599,9 +599,20 @@ class TeslaCam:
             sums = [store.summary(m["stamp"]) for m in mins]
             state = "move" if any(x and x["vmax"] >= TL.OPTS["moving_kmh"] for x in sums) else "unknown" if any(x is None for x in sums) else "still"
             return TL.drive_item([(m, state) for m in mins], store), mins
-        out = self._finish(role, teslacam, pick, budget, events=(t0, t1), lo=lo, extra=self._sentry_minutes(role, teslacam, sentry))
+        extra = self._sentry_minutes(role, teslacam, sentry) if sentry else self._events_in(role, teslacam, t0, t1)
+        out = self._finish(role, teslacam, pick, budget, events=(t0, t1), lo=lo, extra=extra)
         if out is None and teslacam:          # the connected drive holds none of it (the video is on a drive that is away): the telemetry read before still shows, with no video
             return self.window(role, None, t0, t1, budget, lo, sentry)
+        return out
+
+    def _events_in(self, role, teslacam, t0, t1):
+        """The minutes the car saved off into Sentry folders that fall inside [t0, t1] (UTC) and that the continuous recording does not hold: one clock with Recent, so a drive or
+        park whose footage the car moved into an event folder still has its map, telemetry and video."""
+        if not teslacam:
+            return []
+        out, seen = [], set()
+        for e in self._sources(role, teslacam)[2]:
+            out += [m for m in self._sentry_minutes(role, teslacam, e["id"]) if m["stamp"] not in seen and not seen.add(m["stamp"]) and m["t"] + 60 > t0 and m["t"] < t1]
         return out
 
     def _sentry_minutes(self, role, teslacam, ev_id):
