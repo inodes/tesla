@@ -118,6 +118,10 @@ class Parked(unittest.TestCase):
         r = DL.merge([tess(1, 0, 600, lat1=-33.9, lon1=151.3), tess(2, 5000, 5600, lat=-33.9, lon=151.3)], [], [cam(5, 700, 1500, kind="stopped"), cam(6, 1600, 3000, kind="stopped")])
         self.assertEqual(len(by(r, "parked")) + len(by(r, "stopped")), 1)
 
+    def test_a_parked_row_of_tessie_carries_the_footage_of_the_stops_inside_it(self):          # 4 Nov: the park at the preschool had footage, but its row had nothing to open
+        r = DL.merge([tess(1, 0, 600, lat1=-33.9, lon1=151.3), tess(2, 5000, 5600, lat=-33.9, lon=151.3)], [], [cam(5, 700, 1500, kind="stopped"), cam(6, 1600, 3000, kind="stopped")])
+        self.assertEqual(by(r, "parked")[0]["cam"], ["c5", "c6"])
+
     def test_idle_energy_and_sentry_are_put_on_the_parked_row(self):
         idle = dict(k="idle", t0=T + 1000, t1=T + 4000, kwh=0.8, sentry=1.0)
         r = DL.merge([tess(1, 0, 600, lat1=-33.9, lon1=151.3), tess(2, 5000, 5600, lat=-33.9, lon=151.3)], [], [], [idle])

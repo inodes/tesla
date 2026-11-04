@@ -99,7 +99,11 @@ def merge(tessie, charges, cam_items, idles=(), slack=SLACK_S, now=None):
     for c in cam_items:
         if c["kind"] == "drive":
             continue
-        if c["kind"] in ("stopped", "parked", "gap") and any(_ov(c["t0"], c["t1"], h["t0"], h["t1"]) >= SHARE * max(1, c["t1"] - c["t0"]) for h in covered):
+        hit = [h for h in covered if _ov(c["t0"], c["t1"], h["t0"], h["t1"]) >= SHARE * max(1, c["t1"] - c["t0"])] if c["kind"] in ("stopped", "parked", "gap") else []
+        if hit:
+            for h in hit:                                               # the footage of a stop Tessie also has is still the footage of that park: its row opens it
+                if h["kind"] in ("parked", "gap") and c["kind"] in ("stopped", "parked") and c["id"] not in (h.get("cam") or []):
+                    h["cam"] = (h.get("cam") or []) + [c["id"]]
             continue                                                    # Tessie says where the car was then: a stop at a charger is the charge, the rest is its parked row
         if c["kind"] in ("stopped", "parked"):
             stops.append(c)
@@ -186,6 +190,8 @@ def join_parks(items, now=None):
                     prev[k] = (prev.get(k) or 0) + x[k]
             if x.get("src") == "tessie" or prev.get("src") == "tessie":
                 prev["src"] = "tessie"
+            if x.get("cam"):
+                prev["cam"] = (prev.get("cam") or []) + [c for c in x["cam"] if c not in (prev.get("cam") or [])]
             continue
         out.append(dict(x))
     # a re-park between two parks at one place (or after one) belongs to the stay
@@ -233,6 +239,8 @@ def join_parks(items, now=None):
             for k in ("n", "recent", "saved", "read"):
                 if x.get(k) is not None:
                     prev[k] = (prev.get(k) or 0) + x[k]
+            if x.get("cam"):
+                prev["cam"] = (prev.get("cam") or []) + [c for c in x["cam"] if c not in (prev.get("cam") or [])]
             continue
         fin.append(x)
     for x in fin:
@@ -344,7 +352,7 @@ def page_rows(act):
     return dict(tess=[x for x in act if x.get("k") == "drive"], chg=[x for x in act if x.get("k") == "charge"])
 
 
-VERSION = 10                                         # bump when merge() or what the list carries changes (or run_cuts, which is worked out when it is built): a list kept from the older code is then built again
+VERSION = 11                                         # bump when merge() or what the list carries changes (or run_cuts, which is worked out when it is built): a list kept from the older code is then built again
 
 
 def signature(paths):
