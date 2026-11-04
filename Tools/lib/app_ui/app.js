@@ -1954,7 +1954,8 @@ function drivelistPoll(cur){clearTimeout(DLPOLL);DLPOLL=setTimeout(async()=>{if(
 async function pageDriveList(){
   loading("dlist");const [dl,pl,chg]=await Promise.all([tcGet("drivelist"),api("places").catch(()=>({saved:[]})),api("chargers").catch(()=>({rows:[]}))]),places=pl.saved||[];
   const act=dl.tess&&dl.chg?null:await api("activity"),tess=dl.tess||act.filter(x=>x.k==="drive"),chgs=dl.chg||act.filter(x=>x.k==="charge");      // the list carries Tessie's drives and charges; one kept by an older version does not
-  const open=v=>v.kind==="charge"?"#/charge/"+encodeURIComponent(v.id):v.kind==="drive"?(v.src==="cam"?"#/teslacam/auto/"+encodeURIComponent(v.id):"#/drive/"+encodeURIComponent(v.id)):v.kind==="sentry"?"#/teslacam/A/sentry-"+encodeURIComponent(v.ev):v.kind==="recording"||v.kind==="stopped"?"#/teslacam/auto/"+encodeURIComponent(v.id):v.kind==="parked"&&v.cam&&v.cam.length?"#/teslacam/auto/"+encodeURIComponent(v.cam[0]):"";      // a park Tessie has, with dashcam footage: its row opens that footage as well
+  const byWin=v=>"#/teslacam/auto/win-"+Math.round(v.t0)+"-"+Math.round(v.t1)+(v.lo!=null?"-"+Math.round(v.lo):"");      // by its own start and end (the footage is found by time, as for a Tessie drive), not by an id the older drive finder may cut differently
+  const open=v=>v.kind==="charge"?"#/charge/"+encodeURIComponent(v.id):v.kind==="drive"?(v.src==="cam"?byWin(v):"#/drive/"+encodeURIComponent(v.id)):v.kind==="sentry"?"#/teslacam/A/sentry-"+encodeURIComponent(v.ev):v.kind==="recording"||v.kind==="stopped"?byWin(v):v.kind==="parked"&&v.cam&&v.cam.length?byWin(v):"";      // a park Tessie has, with dashcam footage: its row opens that footage as well
   main.innerHTML=`<h1>Drives</h1><div class="sub">Source: ${dl.tessie?"Tessie + dashcam":"dashcam"} · 🎬 = dashcam video and route</div>
    <div id="stl" class="sub" style="margin-top:6px" ${dl.stale?"":"hidden"}>Updating with the latest data…</div><div id="tsb" style="margin-top:10px"></div><div id="fsb"></div><div class="bar"><span id="rg"></span><select id="fs"><option value="all">All drives</option><option value="cam">With dashcam footage</option><option value="nocam">Without footage</option></select><input type="search" id="q" placeholder="Search a place…" value="${esc(DLP.q)}"></div><div class="tiles" id="tl"></div><div id="tb"></div>`;
   const draw=()=>{if(TLOFF){TLOFF();TLOFF=null}const q=DLP.q.toLowerCase(),keep=v=>{if(v.kind==="drive"){if(DLP.src==="cam"&&!(v.cam&&v.cam.length))return false;if(DLP.src==="nocam"&&v.cam&&v.cam.length)return false}
@@ -2052,7 +2053,7 @@ const kpChips=r=>{if(!r)return"";if(r.ignored)return `<div class="kst"><i class=
 const kpBig=(ty)=>{const a=Object.values((KPC&&KPC[ty])||{}).map(r=>r.size).filter(x=>x>0).sort((x,y)=>x-y);return a.length>3?Math.max(a[Math.floor(a.length/2)]*2,536870912):1e18};
 const kpTop=(ty,id)=>{const r=kpOf(ty,id),k=ty+"|"+id;return `<em class="evk ${TCSEL.has(k)?"on":""}" data-sel="${esc(k)}" role="checkbox" aria-checked="${TCSEL.has(k)}" title="Select">${TCSEL.has(k)?"✓":""}</em>`+(r&&r.size?`<em class="szb ${r.size>=kpBig(ty)?"big":""}" title="${esc(Object.keys(r.bytes).map(x=>drName(x)+" "+fmtGB(r.bytes[x])).join(" · "))}">${fmtGB(r.size)}</em>`:"")};
 async function pageTeslaCam(role,id){
-  if(role&&id)return /^sentry-/.test(id)?pageTeslaCamSentry(role,id.slice(7)):/^at-/.test(id)?pageTeslaCamAt(+id.slice(3)):pageTeslaCamDrive(role,id);
+  if(role&&id)return /^sentry-/.test(id)?pageTeslaCamSentry(role,id.slice(7)):/^at-/.test(id)?pageTeslaCamAt(+id.slice(3)):/^win-/.test(id)?pageTeslaCamAt(...id.slice(4).split("-").map(Number)):pageTeslaCamDrive(role,id);
   if(TCS.rowDesc===undefined)TCS.rowDesc=cfg("teslacam.rows_newest_first")===true;
   loading("cards");const [dr,act,pl,dlist]=await Promise.all([tcGet("teslacam"),api("activity"),api("places").catch(()=>({saved:[]})),api("drivelist").catch(()=>({items:[]}))]),drives=dr.drives,places=(pl.saved||[]);
   const head='<h1>TeslaCam</h1>';
@@ -2373,10 +2374,11 @@ async function pageTeslaCamSentry(role,ev){
   }catch(err){host.innerHTML=errBox(err.message,"Could not open this Sentry event")}
 }
 // the minutes around one instant (a Saved clip's trigger) when no Tessie drive covers it: map, telemetry and video of whichever connected drive holds them
-async function pageTeslaCamAt(t){
+async function pageTeslaCamAt(t,t1,lo){      // t alone: the moment (a window around it); t and t1: that span of time (a row of the Drives list)
   loading();const pl=await api("places").catch(()=>({saved:[]}));
   main.innerHTML=crumbs("#/teslacam","TeslaCam")+'<div id="tdh"></div>';
-  const fetchSeg=async b=>{const r=await fetch("/api/teslacam/auto/window?t0="+(t-90)+"&t1="+(t+150)+"&budget="+(b==null?20:b));if(!r.ok)throw new Error((await r.json().catch(()=>({}))).error||("HTTP "+r.status));return r.json()};
+  const a=t1?t:t-90,z=t1||t+150;
+  const fetchSeg=async b=>{const r=await fetch("/api/teslacam/auto/window?t0="+a+"&t1="+z+(lo!=null&&!isNaN(lo)?"&lo="+lo:"")+"&budget="+(b==null?20:b));if(!r.ok)throw new Error((await r.json().catch(()=>({}))).error||("HTTP "+r.status));return r.json()};
   try{await teslaDriveBody($("#tdh"),"A",fetchSeg,pl.saved||[],{})}catch(e){const h=$("#tdh");if(h)h.innerHTML=errBox(e.message,"Could not open this moment")}
 }
 async function pageTeslaCamDrive(role,id){
