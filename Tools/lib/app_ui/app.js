@@ -2496,12 +2496,10 @@ async function teslaDriveBody(host,role,fetchSeg,places,opts){
     if(!f&&!t&&!(inc&&R&&R.frm))return "";
     const from=inc&&R&&R.frm?esc(R.frm):f?(inc?`<i title="The video starts partway through this drive: the car was already moving at the first frame. This is where the first clip was, not where the drive began.">${esc(f)}</i>`:esc(f)):"?";
     return from+" → "+(t?esc(t):"?")};
-  // under the title: what Tessie calls this drive when it keeps it as several, and how much of the timeline is Tessie's record alone (no video)
+  // under the title: the drives Tessie keeps this as, when it is several
   const driveNote=x=>{if(x.kind!=="drive"||opts.heading===false)return "";const R=opts.row,L=x.lo!=null?x.lo:0;let h="";
-    const real=(d.minutes||[]).filter(m=>m.cams&&m.cams.length&&!m.syn).sort((p,q)=>p.off-q.off),span=x.span||[0,Math.round(x.t1-x.t0)],lead=real.length?Math.round(real[0].off-span[0]):0;
     if(R&&R.parts&&R.parts.length>1){const nm=[R.frm||"?"].concat((R.stops||[]).map(z=>z.at||"?"),[R.to||"?"]);
-      h+=`<div class="sub" style="margin-top:2px">Tessie keeps this as ${R.parts.length} drives, joined here by a short stop: ${R.parts.map((q,i)=>esc(nm[i])+" → "+esc(nm[i+1])+" ("+lclock(q.t0,L).slice(0,5)+" – "+lclock(q.t1,L).slice(0,5)+")").join(" · ")}</div>`}
-    if(real.length&&lead>=120)h+=`<div class="sub" style="margin-top:2px">${R?"The video begins "+Math.round(lead/60)+" min into the drive; the time before it is Tessie's record only (black on the bar).":"The video begins "+Math.round(lead/60)+" min into the drive."}</div>`;
+      h+=`<div class="sub" style="margin-top:2px">${R.parts.map((q,i)=>esc(nm[i])+" → "+esc(nm[i+1])+" ("+lclock(q.t0,L).slice(0,5)+" – "+lclock(q.t1,L).slice(0,5)+")").join(" · ")}</div>`}
     return h};
   const fill=()=>{if(!live())return;const x=it(),m=Math.max(1,Math.round((x.t1-x.t0)/60)),a=nameAt(places,x.p0),b=nameAt(places,x.p1);
     const T=opts.tessie,sd=selfDrive(S()),src=dataSources(S());
@@ -2537,7 +2535,7 @@ async function teslaDriveBody(host,role,fetchSeg,places,opts){
   const covStrip=ms=>{const el=$("#dcov");if(!el)return;const tot=ms.reduce((a,m)=>a+(m.len||60),0);
     if(ms.length<2){el.innerHTML="";return}
     const gaps=ms.some(m=>m.syn||!(m.cams&&m.cams.length));      // the bar is always there (one block a minute: click one to play it); the note about black parts only where there are some
-    el.innerHTML=`<div class="covbar" title="${gaps?"Black: no video for this time":"One block for each minute of video: click one to play it"}">${ms.map(m=>`<i class="${m.cams&&m.cams.length?"on":"off"}" style="flex:${m.len||60}" data-o="${m.off}" title="${esc(clockHM(m.loc)+(m.cams&&m.cams.length?"":" · no video"))}"></i>`).join("")}</div>${gaps?'<div class="sub" style="margin:2px 0 6px">The black parts of the bar have no video; the map and telemetry still cover them.</div>':""}`;
+    el.innerHTML=`<div class="covbar" title="${gaps?"Black: no video for this time":"One block for each minute of video: click one to play it"}">${ms.map(m=>`<i class="${m.cams&&m.cams.length?"on":"off"}" style="flex:${m.len||60}" data-o="${m.off}" title="${esc(clockHM(m.loc)+(m.cams&&m.cams.length?"":" · no video"))}"></i>`).join("")}</div>`;
     $$("#dcov i",host).forEach(b=>{b.onclick=()=>seekIdx(+b.dataset.o);if(covOn!=null&&+b.dataset.o===covOn)b.classList.add("now")})};
   const cursor=sec=>{const i=Math.max(0,Math.min(S().v.length-1,Math.round(sec)));if(map)map.cursor(i);if(chart)chart.cursor(i)};
   // the block of the bar for the minute that is playing turns yellow
