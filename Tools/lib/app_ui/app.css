@@ -314,3 +314,7 @@ main:has(#spl .stbar,#spl .vbar) #splx{display:none}
 
 /* TeslaCam page: the open clip is a panel under the row of the tile that was clicked (the whole row wide), in the same style as a drive's page */
 #tb #spl{grid-column:1/-1;min-width:0}#tb #spl:not(:empty){border:1px solid var(--line);border-radius:12px;background:var(--card);padding:10px;margin:2px 0 6px}
+
+/* TeslaCam tiles: picking a tile shows its Open button (the page of that drive or park), bottom right */
+.evc .opn{display:none;position:absolute;right:8px;bottom:8px;background:var(--acc);color:#fff;font-weight:600;font-size:13px;padding:5px 12px;border-radius:8px;cursor:pointer;box-shadow:0 1px 4px #0003}
+.evc.on .opn{display:inline-block}
