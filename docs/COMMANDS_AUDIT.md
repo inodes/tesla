@@ -362,3 +362,4 @@ Log (newest first):
 - 2026-11-04: a thumbnail that holds Sentry/Saved clips shows the total size of all of them ("N GB total"); each clip opened from it shows its own size.
 - 2026-11-04: the open clip on the TeslaCam page (video, map, telemetry) sits in a panel right under the row of the tile clicked, not above all the tiles; nothing above it moves.
 - 2026-11-04: Tools/teslacam_exam.py (lib/exam_teslacam.py): TeslaCam cut from the clips alone is marked against Tessie's drives (Tessie is the answer sheet). 20 Oct - 4 Nov: 124 of 143 Tessie drives cut the same way (87%), 6 edges/split, 11 merged (school drop-offs of a moment), 2 missed.
+- 2026-11-04: a Drives row opens by its own start and end (Tessie's, to the second) and is called what the row is (Parked / Drive), not what its edge minutes say; the footage is the minutes of the clips that overlap it (a clip is one minute, never cut).
