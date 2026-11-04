@@ -2467,10 +2467,11 @@ async function teslaDriveBody(host,role,fetchSeg,places,opts){
   RVAPI={cursor:i=>cursor(i),seek:i=>seekIdx(i),series:()=>S(),t0:()=>it().t0,clk:i=>clk(i),focus:f=>{if(chart&&chart.focus)chart.focus(f)},lanes:l=>{if(chart&&chart.lanes)chart.lanes(l);else pendL=l},zoom:(a,b)=>{if(chart&&chart.view)chart.view(a,b)},limit:(a,b)=>{if(chart&&chart.limit)chart.limit(a,b)},map:(a,b,p)=>{if(map&&map.section){map.section(a,b);map.pins(p||[])}else pendM=[a,b,p]},live:()=>live(),saved:()=>{const r=[];d.minutes.filter(m=>m.src==="saved").forEach(m=>{const a=it().t0+m.off,b=a+60,l=r[r.length-1];if(l&&a-l[1]<=2)l[1]=b;else r.push([a,b])});return r}};
   const build=()=>{if(!live())return;fill();const s=S(),idx=pts();
     if(RVOV)RVOV();
-    if(!idx.length){$("#dmapc").hidden=$("#dchc").hidden=true}else{$("#dmapc").hidden=$("#dchc").hidden=false;
-      if(!map)map=driveMap($("#dmap"),s,idx,seekIdx,$("#dleg"));else map.update(s,idx);if(pendM&&map.section){map.section(pendM[0],pendM[1]);map.pins(pendM[2]||[]);pendM=null}
-      if(!chart){chart=telemChart($("#dch"),$("#dtip"),s,seekIdx,clk);if(pendL&&chart.lanes){chart.lanes(pendL);pendL=null}}else chart.update(s);
-      const em=(opts.events||[]).map(e=>({i:Math.round(e.u-it().t0),label:e.label}));chart.events&&chart.events(em);map.events&&map.events(em)}
+    const hasTel=!!(s&&s.v&&s.v.length>1);      // the telemetry bar stays for a park too (nothing moves, but it is the time line: pick a point on it to watch from there)
+    $("#dmapc").hidden=!idx.length;$("#dchc").hidden=!hasTel;
+    if(idx.length){if(!map)map=driveMap($("#dmap"),s,idx,seekIdx,$("#dleg"));else map.update(s,idx);if(pendM&&map.section){map.section(pendM[0],pendM[1]);map.pins(pendM[2]||[]);pendM=null}}
+    if(hasTel){if(!chart){chart=telemChart($("#dch"),$("#dtip"),s,seekIdx,clk);if(pendL&&chart.lanes){chart.lanes(pendL);pendL=null}}else chart.update(s)}
+    {const em=(opts.events||[]).map(e=>({i:Math.round(e.u-it().t0),label:e.label}));chart&&chart.events&&chart.events(em);map&&map.events&&map.events(em)}
     const playable=d.minutes.filter(m=>m.cams&&m.cams.length);
     const allM=cont(),blackDrive=!playable.length&&!d.minutes.length&&allM.length>0;      // a drive Tessie knows, with no footage at all: all black
     if(!player&&(playable.length||blackDrive)){const mm=allM,cams={},meta={},syn={},len={};mm.forEach(m=>{cams[m.stamp]=m.cams||[];meta[m.stamp]=m;if(m.syn){syn[m.stamp]=1;len[m.stamp]=m.len}});covStrip(mm);
