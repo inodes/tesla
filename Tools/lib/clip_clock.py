@@ -18,6 +18,8 @@ of its own takes the nearest learned minute within reuse_hours (the car's clock 
 of the configured zone (daylight saving included). Nothing is changed on a drive and no Tessie record is touched.
 
     utc(stamp)            UTC epoch of a dashcam file name (or an event.json timestamp)        <- use this for every comparison
+                          a clip whose own recording time (in the mp4, read into teslacam_provenance) says its NAME is out by 3 s or more is placed by that
+                          recording time: a name can run ahead of the clip (the car's clock was fast when it named the file), the recording time does not
     local_iso(u)          "YYYY-MM-DDTHH:MM:SS" on the local clock, for display only
     from_local(n, off)    UTC epoch of a naive local clock reading n (a time read as if it were UTC)
     parse_local(text)     UTC epoch of a local ISO text, or of a number sent by the page
@@ -39,6 +41,9 @@ import drive_paths as DP
 _STAMP = "%Y-%m-%d_%H-%M-%S"
 _LOCK = threading.RLock()
 _S = dict(dir=None, runs=[], firsts=[], version=0, sig=None, thread=None, error="", learned_at=None, evidence=0, routes={}, drives=None, ev={}, ev_drives=-1)
+_SK = dict(map={}, sig=None, at=0.0)              # stamp -> UTC of the clip's own recording time, for the clips whose name is out by SKEW_MIN seconds or more
+SKEW_MIN = 3.0
+_FRONT = re.compile(r"(\d{4}-\d\d-\d\d_\d\d-\d\d-\d\d)-front$")
 
 
 def _opt(k, d):
@@ -153,6 +158,8 @@ def _lookup(n):
 
 def known(stamp):
     """True when the car's clock at this dashcam stamp is backed by evidence within reuse_hours (not just assumed to be local)."""
+    if stamp in _SK["map"]:
+        return True
     with _LOCK:
         return _lookup(naive(stamp)) is not None
 
@@ -166,6 +173,9 @@ def car_offset(n):
 
 def utc(stamp):
     """UTC epoch of a dashcam file name or an event.json timestamp (the car's clock)."""
+    own = _SK["map"].get(stamp)
+    if own is not None:
+        return own
     n = naive(stamp)
     return n - car_offset(n)
 
@@ -183,8 +193,69 @@ def maybe_in(stamp, u0, u1):
 
 
 def version():
+    _skews_refresh()
     with _LOCK:
         return _S["version"]
+
+
+# ------------------------------------------------------------------------------- a clip's own recording time beats its name
+def _prov_files(data_dir):
+    d = os.path.join(data_dir, "teslacam_provenance")
+    try:
+        return [os.path.join(d, f) for f in sorted(os.listdir(d)) if f.endswith(".json")]
+    except OSError:
+        return []
+
+
+def _read_skews(data_dir):
+    """{stamp: UTC of the clip's own recording time} for the clips whose name is out from it by SKEW_MIN seconds or more beyond the car's offset
+    (which is a multiple of 15 minutes: the time zone, learned from the file itself: name - created). One entry per front clip in the provenance files."""
+    out = {}
+    for f in _prov_files(data_dir):
+        try:
+            with open(f, encoding="utf-8") as fh:
+                j = json.load(fh)
+        except (OSError, ValueError):
+            continue
+        for k, v in j.items():
+            m = _FRONT.search(k)
+            r = v[0] if isinstance(v, list) and v else v if isinstance(v, dict) else None
+            if not m or not isinstance(r, dict) or r.get("created") is None or r.get("name_stamp") is None:
+                continue
+            raw = float(r["name_stamp"]) - float(r["created"])
+            dev = raw - round(raw / 900.0) * 900.0
+            if abs(dev) >= SKEW_MIN:
+                out[m.group(1)] = float(r["created"])
+    return out
+
+
+def _skews_refresh(force=False):
+    """Reads the clips' own recording times again when the provenance files changed (checked at most every 20 s); the version changes with them."""
+    now = _now()
+    d = _S["dir"]
+    if not d or (not force and now - _SK["at"] < 20.0):
+        return
+    _SK["at"] = now
+    sig = []
+    for f in _prov_files(d):
+        try:
+            st = os.stat(f)
+            sig.append((f, st.st_mtime_ns, st.st_size))
+        except OSError:
+            pass
+    if sig == _SK["sig"] and not force:
+        return
+    new = _read_skews(d)
+    with _LOCK:
+        _SK["sig"] = sig
+        if new != _SK["map"]:
+            _SK["map"] = new
+            _S["version"] += 1
+
+
+def _now():
+    import time
+    return time.time()
 
 
 # -------------------------------------------------------------------------------------------------------------- learning
@@ -200,6 +271,8 @@ def configure(data_dir):
             _set_runs([r for r in j.get("runs", []) if len(r) == 3], bump=False)
         except (OSError, ValueError):
             _set_runs([], bump=False)
+        _SK.update(map={}, sig=None, at=0.0)
+    _skews_refresh(force=True)
 
 
 def _set_runs(runs, bump=True):
