@@ -2266,6 +2266,9 @@ async function pageTeslaCam(role,id){
       const it=cl.item,pk=it.kind==="parked",n=k=>cl.ms.filter(m=>m.ty===k).length,multi=cl.ms.length>1,pill=(k,t)=>n(k)?`<span class="srcb ${k}">${t}${n(k)>1&&k!=="recent"?" ×"+n(k):""}</span>`:"",
         pills=pill("recent","Recent "+(pk?"Parked":"Drive"))+pill("saved","Saved")+pill("sentry","Sentry");
       let h=card(v,it,true).replace(/<span class="srcb [^"]*"[^>]*>[^<]*<\/span>/,pills);
+      if(multi){const tot=cl.ms.reduce((a,m)=>a+((kpOf(m.ty,m.id)||{}).size||0),0);      // the first thumbnail carries the total of its clips; each clip shown after it has its own size
+        if(tot>0){const sz=`<em class="szb ${tot>=kpBig("recent")*cl.ms.length?"big":""}" title="${esc("Total of this "+(pk?"parked spell":"drive")+" and its "+(cl.ms.length-1)+" Sentry/Saved clip"+(cl.ms.length>2?"s":"")+": "+fmtGB(tot))}">${fmtGB(tot)} total</em>`;
+          h=/<em class="szb [^"]*"[^>]*>[^<]*<\/em>/.test(h)?h.replace(/<em class="szb [^"]*"[^>]*>[^<]*<\/em>/,sz):h.replace(/(<em class="evk[^>]*>[^<]*<\/em>)/,"$1"+sz)}}
       if(v.ty!=="recent")h=h.replace(/<b>[^<]*<\/b>/,`<b>${hm(it.start)} – ${hm(it.end)}</b><span>${esc(itTitle(it))}</span>`);
       const kids=cl.ms.filter(m=>m!==v&&!hiddenIn.has(ek(m)));
       if(!kids.length)return h+(v.ty==="recent"?hid(v):"")+cl.ms.filter(m=>m!==v&&m.ty==="recent").map(hid).join("");
