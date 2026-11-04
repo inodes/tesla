@@ -971,9 +971,9 @@ def drivelist(wait=False):
         except Exception:
             pass
         try:
-            cams, holders = TC._ledger_recent(None)
+            cams, holders, dirs = TC.all_minutes()          # Recent minutes and the minutes the car saved off into Saved / Sentry folders: one clock
             store, roots = TC._tl("A"), footage_roots()
-            front = lambda st: next((os.path.join(roots[r], "RecentClips", st + "-front.mp4") for r in sorted(holders.get(st) or ()) if roots.get(r) and "front" in (cams.get(st) or ())), None)
+            front = lambda st: next((os.path.join(roots[r], *dirs.get(st, "RecentClips").split("/"), st + "-front.mp4") for r in sorted(holders.get(st) or ()) if roots.get(r) and "front" in (cams.get(st) or ())), None)
             minute_kind.probe(KINDS, [st for st in cams if store.summary(st) is None], front)          # minutes whose telemetry is not read yet are told by walking their clip, once
             looked = KINDS.all()
             kinds = {}
