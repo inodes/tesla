@@ -2270,11 +2270,11 @@ async function pageTeslaCam(role,id){
         if(tot>0){const sz=`<em class="szb ${tot>=kpBig("recent")*cl.ms.length?"big":""}" title="${esc("Total of this "+(pk?"parked spell":"drive")+" and its "+(cl.ms.length-1)+" Sentry/Saved clip"+(cl.ms.length>2?"s":"")+": "+fmtGB(tot))}">${fmtGB(tot)} total</em>`;
           h=/<em class="szb [^"]*"[^>]*>[^<]*<\/em>/.test(h)?h.replace(/<em class="szb [^"]*"[^>]*>[^<]*<\/em>/,sz):h.replace(/(<em class="evk[^>]*>[^<]*<\/em>)/,"$1"+sz)}}
       if(v.ty!=="recent")h=h.replace(/<b>[^<]*<\/b>/,`<b>${hm(it.start)} – ${hm(it.end)}</b><span>${esc(itTitle(it))}</span>`);
-      const kids=cl.ms.filter(m=>m!==v&&!hiddenIn.has(ek(m)));
-      if(!kids.length)return h+(v.ty==="recent"?hid(v):"")+cl.ms.filter(m=>m!==v&&m.ty==="recent").map(hid).join("");
+      const kids=cl.ms.filter(m=>m!==v&&m.ty!=="recent"&&!hiddenIn.has(ek(m))),more=cl.ms.filter(m=>m!==v&&m.ty==="recent");      // only the Sentry / Saved clips slide out; another Recent run of the same park or drive is part of this one (kept out of sight)
+      if(!kids.length)return h+(v.ty==="recent"?hid(v):"")+more.map(hid).join("");
       h=h.replace('class="evc ','class="evc clu ').replace(/<\/button>$/,`<span class="gchip more" title="Show or hide the clips of this ${pk?"parked spell":"drive"}">${kids.length} more clip${kids.length>1?"s":""} ▾</span></button>`)+(v.ty==="recent"?hid(v):"");
       const cmp=(x,y)=>(x.ts<y.ts?-1:x.ts>y.ts?1:0)*(TCS.rowDesc?-1:1),hs=n("sentry")>0,hv=n("saved")>0;
-      return `<div class="evg${hs?" s":""}${hv?" v":""}${TCGX.has(v.id)?" open":""}" data-g="${esc(v.id)}">${h}${kids.sort(cmp).map(m=>card(m,m.ty==="recent"?it:null).replace('class="evc ','class="evc evkid ')+(m.ty==="recent"?hid(m):"")).join("")}</div>`};
+      return `<div class="evg${hs?" s":""}${hv?" v":""}${TCGX.has(v.id)?" open":""}" data-g="${esc(v.id)}">${h}${kids.sort(cmp).map(m=>card(m,null).replace('class="evc ','class="evc evkid ')).join("")}${more.map(hid).join("")}</div>`};
     // a day's cards in the order of the Drives list: a card that is a drive or park sits at that drive's or park's start
     const ordOf=v=>{const cl=leadOf[v.ty+"|"+v.id];return cl?cl.item.start:v.ts};
     Object.keys(byDay).forEach(d=>{byDay[d].sort((a,b)=>{const x=ordOf(a),y=ordOf(b);return (x<y?-1:x>y?1:0)*(TCS.rowDesc?-1:1)})});
@@ -2288,7 +2288,9 @@ async function pageTeslaCam(role,id){
     // the open clip (video, map, telemetry) sits right under the row of the tile that was clicked, across the whole width: nothing above it moves
     const placeSpl=b=>{const sp=$("#spl"),g=b&&b.closest(".evs");if(!sp||!g)return;const y=b.offsetTop,row=[...g.querySelectorAll(".evc")].filter(c=>c.offsetParent&&c.offsetTop===y);(row[row.length-1]||b).after(sp)};
     if(OPENC){const ob=$(`#tb .evc[data-ty="${OPENC.kind}"][data-id="${OPENC.id}"]`);if(ob)placeSpl(ob)}
-    $$("#tb .evc").forEach(b=>b.onclick=async()=>{const ty=b.dataset.ty,sel=b.dataset.id;foldOthers(b);{const g=b.closest(".evg");if(g&&b.classList.contains("clu")){if(g.classList.contains("open")&&OPENC&&OPENC.kind===ty&&OPENC.id===sel){g.classList.remove("open");TCGX.delete(sel);return}g.classList.add("open");TCGX.add(sel)}}OPENC={kind:ty,id:sel};thin();showClose();$$("#tb .evc").forEach(x=>x.classList.toggle("on",x===b));placeSpl(b);b.scrollIntoView({block:"start",behavior:"smooth"});
+    $$("#tb .evc").forEach(b=>b.onclick=async()=>{const ty=b.dataset.ty,sel=b.dataset.id;foldOthers(b);{const g=b.closest(".evg"),same=OPENC&&OPENC.kind===ty&&OPENC.id===sel;      // the same tile again: its clips fold back under it (the rest of the tiles return to where they were), and once more closes it
+        if(g&&b.classList.contains("clu")){if(g.classList.contains("open")&&same){g.classList.remove("open");TCGX.delete(sel);placeSpl(b);return}if(!same){g.classList.add("open");TCGX.add(sel)}else if(!g.classList.contains("open")){closeOpen();return}else{g.classList.add("open")}}
+        else if(same){closeOpen();return}}OPENC={kind:ty,id:sel};thin();showClose();$$("#tb .evc").forEach(x=>x.classList.toggle("on",x===b));placeSpl(b);b.scrollIntoView({block:"start",behavior:"smooth"});
       const it=data[ty].find(v=>v.id===sel);
       OPENK={kind:ty,id:sel};ostrip();
       if(ty!=="recent"){
