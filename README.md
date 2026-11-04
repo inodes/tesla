@@ -213,7 +213,7 @@ cd path/to/tesla/Tools
 ./tesla_app.py
 ```
 
-That opens a native window if `pywebview` is installed, otherwise your default browser (`http://127.0.0.1:8765`). Useful variants: `./tesla_app.py --browser` (always use the browser), `./tesla_app.py --no-window --port 8800` (server only), `./tesla_app.py --data-dir DIR` (another data folder), `./tesla_app.py --help`.
+That opens a native window if `pywebview` is installed, otherwise it only serves (`http://127.0.0.1:8765`; it never opens a browser by itself). Useful variants: `./tesla_app.py --browser` (no native window, just serve), `./tesla_app.py --no-window --port 8800` (server only), `./tesla_app.py --data-dir DIR` (another data folder), `./tesla_app.py --help`.
 
 Native window: pywebview is now in requirements.txt, so direnv installs it into the repo venv the next time you enter the repo (or run `pip install -r requirements.txt` there). Do not install it globally.
 
