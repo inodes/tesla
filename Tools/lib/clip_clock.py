@@ -177,6 +177,12 @@ def where_parts(stamp):
     return _SK["where"].get(stamp, ("", ""))
 
 
+def where_all():
+    """{stamp: (street, suburb)} of every clip that says where it was (a copy)."""
+    _skews_refresh()
+    return dict(_SK["where"])
+
+
 def where(stamp):
     """What the car itself wrote into the clip named `stamp` about where it was: "Street, Suburb" (either may be missing), or "" when the clip says nothing."""
     _skews_refresh()
