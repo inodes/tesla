@@ -982,7 +982,16 @@ def drivelist(wait=False):
                 c = looked.get(st) if sm is None else "" if not isinstance(sm, dict) else "go" if sm.get("mov") else "pk"
                 if c is not None:
                     kinds[st] = c
-            run_cuts.update(cams, cam, moves, upto, kinds)         # where a Recent recording is cut into its drive and parked sections (the TeslaCam list): the clips first, Tessie only aligns an edge
+            marks = {}
+            for st, c in kinds.items():                      # a stop in Park inside the driving (a drop-off) is read from the gear of the minute's telemetry
+                if c == "go":
+                    try:
+                        ser = store.series(st)
+                        if ser and ser.get("gear"):
+                            marks[st] = run_cuts.stop_marks(ser["gear"])
+                    except Exception:
+                        pass
+            run_cuts.update(cams, cam, moves, upto, kinds, marks)         # where a Recent recording is cut into its drive and parked sections (the TeslaCam list): the clips first, Tessie only aligns an edge
         except Exception:
             pass
         items = app_drivelist.merge(tess, [x for x in act if x["k"] == "charge"], cam, [x for x in act if x["k"] == "idle"])

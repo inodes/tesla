@@ -127,6 +127,32 @@ class SectionsTest(unittest.TestCase):
     def test_the_pause_in_the_middle_is_kept_when_tessie_has_the_drive(self):
         self.assertEqual(self.runs("..DDpDDDD...", self.trip(12, 2, 8)), [(0, "park"), (2, "drive"), (9, "park")])
 
+    def test_a_stop_between_two_drives_of_tessie_is_a_park_not_a_pause(self):                       # 4 Nov: Home -> School -> Preschool -> Soccer, the car awake at each stop
+        two = self.trip(11, 0, 3) + self.trip(11, 7, 10, lead=5)
+        self.assertEqual(self.runs("DDDDpppDDDD", two), [(0, "drive"), (4, "park"), (7, "drive")])
+        self.assertEqual(self.runs("DDDDpppDDDD", self.trip(11, 0, 10)), [(0, "drive")])            # one trip of Tessie's across it: a pause, as the clips said
+        self.assertEqual(self.runs("DDDDpppDDDD", two, CC.utc(stamps(0, 11)[5])), [(0, "drive")])     # Tessie not complete over the stop: the clips' pause rule stands
+
+    def test_a_stop_in_park_between_two_stretches_of_driving_is_two_drives(self):                # 4 Nov: Home -> School (Park for a moment) -> Preschool
+        sts = stamps(0, 8)
+        kinds = classes("DDDDDDDD", sts)
+        marks = {st: (0, 0, None) for st in sts}
+        marks[sts[3]], marks[sts[4]] = (0, 5, None), (4, 0, None)                                    # Park at the end of one clip and the start of the next
+        got = RC.minute_sections(sts, kinds, None, 0, marks)
+        self.assertEqual([got[st] for st in sts], ["drive"] * 4 + ["drive#1"] * 4)
+        marks[sts[3]], marks[sts[4]] = (0, 0, None), (0, 0, None)                                    # no Park there: one drive
+        self.assertEqual(set(RC.minute_sections(sts, kinds, None, 0, marks).values()), {"drive"})
+        marks[sts[5]] = (0, 0, 0.8)                                                                  # a stop inside a clip goes to the nearer join
+        got = RC.minute_sections(sts, kinds, None, 0, marks)
+        self.assertEqual([got[st] for st in sts], ["drive"] * 6 + ["drive#1"] * 2)
+
+    def test_stop_marks_read_the_gear(self):
+        self.assertEqual(RC.stop_marks([1] * 10), (0, 0, None))
+        self.assertEqual(RC.stop_marks([1] * 4 + [0] * 3 + [1] * 3), (0, 0, 0.55))
+        self.assertEqual(RC.stop_marks([0] * 4 + [1] * 6), (4, 0, None))
+        self.assertEqual(RC.stop_marks([1] * 6 + [0] * 4), (0, 4, None))
+        self.assertEqual(RC.stop_marks([0] * 10), (0, 0, None))                                       # parked all minute: no stop between driving
+
     def test_tessie_does_not_make_a_drive_the_clips_did_not_find(self):
         self.assertEqual(self.runs("....pppp....", self.trip(12, 2, 8)), [(0, "park")])
 
