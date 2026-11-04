@@ -370,3 +370,4 @@ Log (newest first):
 - 2026-11-04: the telemetry coverage switch is an icon (whole period / video only) with a tooltip, not wording.
 - 2026-11-04: Video swap: the incoming minute is see-through until it has presented a picture (old minute shows behind; removed on the first presented frame, backstop 4 s), a picture the browser never painted is nudged by a small seek (watchdog and on resume from hidden) - fixes the front camera going blank after a swap.
 - 2026-11-04: TeslaCam tile: the Open button sits on the right just under the picture, level with the first badge (not over the bottom of the card).
+- 2026-11-04: the minute bar over the video (one block per minute, click to play, black where no video) is on every drive/park page with 2+ minutes, not only where a minute is missing; the 'black parts' note only where there are some.
