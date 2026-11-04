@@ -112,10 +112,34 @@ def _cls(v):
     return "go" if v is True else "" if v is False else v
 
 
-def minute_sections(stamps, kinds, moves=None, moves_upto=0):
+def stop_marks(gear):
+    """What a minute's gear says about a stop in Park: (seconds in Park at its start, seconds in Park at its end, where a stop inside it lies as a share 0..1 of the minute or None). One reading
+    a second. A car in Park between two stretches of driving was stopped on purpose (a drop-off, a pick-up): checked against Tessie's drives, 5 of 5 stops that fall across the join of two clips are
+    where Tessie ends one drive and begins the next, and about three in four inside a clip."""
+    g = list(gear or [])
+    n = len(g)
+    if not n:
+        return (0, 0, None)
+    lead = next((i for i, x in enumerate(g) if x != 0), n)
+    trail = next((i for i, x in enumerate(reversed(g)) if x != 0), n)
+    mid, best, i = None, 0, lead
+    while i < n - trail:
+        if g[i] == 0:
+            j = i
+            while j < n and g[j] == 0:
+                j += 1
+            if j - i > best and j < n - trail:
+                best, mid = j - i, (i + j) / 2.0 / n
+            i = j
+        else:
+            i += 1
+    return (lead if lead < n else 0, trail if trail < n else 0, mid)
+
+
+def minute_sections(stamps, kinds, moves=None, moves_upto=0, marks=None):
     """{stamp: "drive" | "park"} for the minutes that have a class in `kinds`, from the clips themselves, in this order:
     1. a minute with the car moving is a drive, and every other minute is parked;
-    2. a spell of Park-at-0-km/h-with-telemetry minutes (never a minute with no telemetry), PAUSE_MIN minutes at most, between two drive minutes is a pause: the drive goes on;
+    2. a spell of standing-still-with-telemetry minutes (never a minute with no telemetry), PAUSE_MIN minutes at most, between two drive minutes is a pause: the drive goes on, unless the other record has a trip ending before the spell and another beginning after it (the car was parked there: two drives);
     3. the six cameras of a minute stay together and a file is never cut: the minute is the unit.
     Then the other record, when it has the drive: a drive found from the clips that a drive of Tessie's overlaps takes its start and end from Tessie's, when that moves either edge by no more than
     SHIFT_MAX minutes (the clips may begin a block early, or end a block late); where it has no drive, or the edges are further apart, the clips stand."""
@@ -132,19 +156,28 @@ def minute_sections(stamps, kinds, moves=None, moves_upto=0):
     for run in runs:
         c = [_cls(kinds[st]) for st in run]
         d = [x == "go" for x in c]
+        ts = [CC.utc(st) for st in run]
+
+        def tessie_parked(i, j):
+            """True when the other record, complete over the spell of minutes i..j-1, ends one trip before it and begins another after it: the car was parked there, not paused (a school drop-off
+            that Tessie lists as two drives). One trip of Tessie's across the spell, or none, or a record that is not complete there, says nothing."""
+            if not mv or moves_upto < ts[j] + 60:
+                return False
+            a = [m for m in mv if m["t0"] < ts[i] and m["t1"] > ts[i - 1] and m["t1"] <= ts[j - 1] + 60]
+            b = [m for m in mv if m["t1"] > ts[j] and m["t0"] <= ts[j] + 60 and m["t0"] >= ts[i]]
+            return bool(a and b and b[0]["t0"] - a[-1]["t1"] >= 30 and a[-1] is not b[0])
         i = 0
         while i < len(c):                                     # a pause between two minutes in gear
             if c[i] == "pk":
                 j = i
                 while j < len(c) and c[j] == "pk":
                     j += 1
-                if 0 < i and j < len(c) and d[i - 1] and d[j] and j - i <= PAUSE_MIN:
+                if 0 < i and j < len(c) and d[i - 1] and d[j] and j - i <= PAUSE_MIN and not tessie_parked(i, j):
                     for q in range(i, j):
                         d[q] = True
                 i = j
             else:
                 i += 1
-        ts = [CC.utc(st) for st in run]
         blocks, i = [], 0
         while i < len(d):
             if d[i]:
@@ -175,12 +208,28 @@ def minute_sections(stamps, kinds, moves=None, moves_upto=0):
                 for q in range(a, b + 1):
                     d[q] = True
                 blocks[bi] = [a, b]
-        for st, x in zip(run, d):
-            out[st] = "drive" if x else "park"
+        cut_before = set()                                    # a stop in Park between two stretches of driving: the drive is two drives (the minute is never cut: it goes with the side it mostly belongs to)
+        for q in range(len(run) - 1):
+            if d[q] and d[q + 1] and marks and run[q] in marks and run[q + 1] in marks:
+                if marks[run[q]][1] + marks[run[q + 1]][0] >= 1:
+                    cut_before.add(q + 1)
+        for q in range(1, len(run) - 1):
+            m = marks.get(run[q]) if marks else None
+            if d[q - 1] and d[q] and d[q + 1] and m and m[2] is not None and kinds.get(run[q]) == "go":
+                cut_before.add(q if m[2] < 0.5 else q + 1)
+        n = 0
+        for q, (st, x) in enumerate(zip(run, d)):
+            if not x:
+                out[st] = "park"
+                n = 0                                         # a park between drives starts the count again
+                continue
+            if q in cut_before:
+                n += 1
+            out[st] = "drive" if n == 0 else "drive#%d" % n
     return out
 
 
-def compute(stamps, items, moves=None, moves_upto=0, kinds=None):
+def compute(stamps, items, moves=None, moves_upto=0, kinds=None, marks=None):
     """{first minute of every section: [kind, lat, lon, cut, last minute, estimated]} for these minutes and the timeline's items.
     moves: the drives some other record (Tessie) has, [dict(t0, t1, p0, p1)], or None when there is none; moves_upto: the time up to which that record is complete.
     kinds: {stamp: "go" | "pk" | ""} what each minute's own clip says (minute_sections): the dashcam comes first. A minute that has a class is a drive or a park by that; the other record
@@ -208,7 +257,7 @@ def compute(stamps, items, moves=None, moves_upto=0, kinds=None):
         p = (it.get("p0") or it.get("p1")) if it else None
         return (p[0], p[1]) if p and p[0] is not None else (None, None)
 
-    own = minute_sections(stamps, kinds or {}, moves, moves_upto) if kinds else {}
+    own = minute_sections(stamps, kinds or {}, moves, moves_upto, marks) if kinds else {}
 
     def move_item(t):
         for m in sorted((m for m in (moves or []) if m.get("t0") and m.get("t1")), key=lambda m: m["t0"]):
@@ -223,7 +272,7 @@ def compute(stamps, items, moves=None, moves_upto=0, kinds=None):
         it = moving(t) or at(t + 30)
         k = None
         if st in own:                                     # the clips say: a drive or a park; the timeline's item and Tessie's drive only give the position
-            k = ("drive", "c") if own[st] == "drive" else ("park", "")
+            k = ("drive", "c" + own[st][5:]) if own[st].startswith("drive") else ("park", "")
             if k[0] == "drive" and not (it and it["kind"] == "drive"):
                 it = move_item(t) or it
             elif k[0] == "park" and it and it["kind"] == "drive":
@@ -319,7 +368,7 @@ def disagreements(kinds, moves, moves_upto, margin_s=150, park_s=45):
     mv = sorted((m for m in (moves or []) if m.get("t0") and m.get("t1")), key=lambda m: m["t0"])
     out = []
     own = minute_sections(list(kinds), kinds)                  # what the clips alone say
-    for st, drive in sorted(((st, own.get(st) == "drive") for st in kinds if st in own), key=lambda kv: CC.utc(kv[0])):
+    for st, drive in sorted(((st, str(own.get(st)).startswith("drive")) for st in kinds if st in own), key=lambda kv: CC.utc(kv[0])):
         t = CC.utc(st)
         if t + 60 > moves_upto:
             continue
@@ -331,10 +380,10 @@ def disagreements(kinds, moves, moves_upto, margin_s=150, park_s=45):
     return out
 
 
-def update(stamps, items, moves=None, moves_upto=0, kinds=None):
+def update(stamps, items, moves=None, moves_upto=0, kinds=None, marks=None):
     """Work the cuts out again; keeps them, and tells the listeners when they changed."""
     global _S, _VER
-    new = compute(stamps, items, moves, moves_upto, kinds)
+    new = compute(stamps, items, moves, moves_upto, kinds, marks)
     with _LOCK:
         if new == _S:
             return False
