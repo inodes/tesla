@@ -74,6 +74,7 @@ import home_ignore  # noqa: E402
 import clips_purged  # noqa: E402
 import teslacam_timeline as TLN  # noqa: E402
 import run_cuts  # noqa: E402
+import minute_kind  # noqa: E402
 import mac_shell  # noqa: E402
 import app_drive_review  # noqa: E402
 import app_footage
@@ -103,6 +104,7 @@ STORE = None
 DRIVELIST = None
 SENTRY = None
 TC = None
+KINDS = None
 DRV = None                  # the manual drive review (lib/app_drive_review.py)
 KEEP = None                 # reads the connected TeslaCam drives in the background (lib/app_keeper.py)
 TODO = None                 # what each connected drive still needs (lib/footage_todo.py)
@@ -969,7 +971,11 @@ def drivelist(wait=False):
         except Exception:
             pass
         try:
-            run_cuts.update(TC._ledger_recent(None)[0], cam, moves, upto)         # where a Recent recording is cut into its drive and parked sections (the TeslaCam list)
+            cams, holders = TC._ledger_recent(None)
+            store, roots = TC._tl("A"), footage_roots()
+            front = lambda st: next((os.path.join(roots[r], "RecentClips", st + "-front.mp4") for r in sorted(holders.get(st) or ()) if roots.get(r) and "front" in (cams.get(st) or ())), None)
+            minute_kind.probe(KINDS, [st for st in cams if store.summary(st) is None], front)          # minutes whose telemetry is not read yet: a drive or a park from the first frames of the clip
+            run_cuts.update(cams, cam, moves, upto, KINDS.all())         # where a Recent recording is cut into its drive and parked sections (the TeslaCam list): the clips first, Tessie only places a park
         except Exception:
             pass
         items = app_drivelist.merge(tess, [x for x in act if x["k"] == "charge"], cam, [x for x in act if x["k"] == "idle"])
@@ -1117,7 +1123,7 @@ def _code_version():
 
 
 def main():
-    global KEPT, STORE, DATA_DIR, SENTRY, TC, DRV, SYNC, TSYNC, CSYNC, CCOST, FSYNC, REACH, SOFT, CARW, BOOK, FG, KEEP, DRIVELIST, TODO, CKEEP, STHIN
+    global KINDS, KEPT, STORE, DATA_DIR, SENTRY, TC, DRV, SYNC, TSYNC, CSYNC, CCOST, FSYNC, REACH, SOFT, CARW, BOOK, FG, KEEP, DRIVELIST, TODO, CKEEP, STHIN
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--data-dir", default=DEFAULT_DATA)
     ap.add_argument("--port", type=int, default=int(app_config.get("window.port")))
@@ -1146,6 +1152,7 @@ def main():
     KEPT = app_kept.Kept(local_cache_dir(), _code_version())
     DRIVELIST = app_drivelist.Cached(os.path.join(local_cache_dir(), "drivelist.json"))
     run_cuts.set_file(os.path.join(local_cache_dir(), "run_cuts.json"))
+    KINDS = minute_kind.Kinds(os.path.join(local_cache_dir(), "minute_kind.json"))
     home_ignore.set_file(os.path.join(local_cache_dir(), "home_ignore.json"))
     clips_purged.set_file(os.path.join(DATA_DIR, "teslacam_purged.json"))
     SENTRY = app_sentry.Sentry(DATA_DIR)

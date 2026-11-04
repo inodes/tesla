@@ -88,6 +88,41 @@ def _movie_duration(f, start, end):
     return None
 
 
+def has_telemetry(path, max_nals=None):
+    """Does this clip carry telemetry anywhere in it? A clip is a whole minute that is never cut: one that holds any SEI NAL unit (speed, gear, GPS ... one per frame) was a drive, even when the
+    drive began part-way through the minute. Hops over the NAL units without reading the pictures and stops at the first SEI: True when one is found, False when there is none in the
+    whole clip (written while parked) or in the first `max_nals` units when that is given, None when the file cannot be read as a movie."""
+    try:
+        with open(path, "rb") as f:
+            size = os.fstat(f.fileno()).st_size
+            for typ, s, e in _boxes(f, 0, size):
+                if typ != "mdat":
+                    continue
+                p, seen = s, 0
+                while p + 5 <= e and (max_nals is None or seen < max_nals):
+                    f.seek(p)
+                    h = f.read(5)
+                    if len(h) < 5:
+                        return None
+                    ln = struct.unpack(">I", h[:4])[0]
+                    if ln < 1 or p + 4 + ln > e:
+                        return None
+                    if h[4] & 0x1F == 6:
+                        nal = h[4:5] + f.read(min(ln - 1, 4096))
+                        if len(nal) > 4 and nal[1] == 5:
+                            i = 3
+                            while i < len(nal) and nal[i] == 0x42:
+                                i += 1
+                            if i < len(nal) - 1 and nal[i] == 0x69:
+                                return True
+                    p += 4 + ln
+                    seen += 1
+                return False
+    except OSError:
+        return None
+    return None
+
+
 def read_series(path):
     """Returns dict: n, dur (s), and parallel lists v (km/h), ap, br (0/1), lat, lon, hd, gear, steer, accel (pedal %), blk (indicator bits: 1 left, 2 right)."""
     S = {k: [] for k in ("v", "ap", "br", "lat", "lon", "hd", "gear", "steer", "accel", "blk")}
