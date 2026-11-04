@@ -9,22 +9,35 @@ Tessie can source from a charging session, ahead of deciding how (or
 whether) to fold Evnex data into charges_master.csv alongside
 Superchargers/Chargefox/Evie/etc.
 
-This script is deliberately READ-ONLY - it never calls any of the
-`evnex` library's control endpoints (stop_charge_point, enable_charger,
-disable_charger, unlock_charger, set_charge_point_override,
-set_charger_load_profile, set_charge_point_schedule). It only queries
-status/history.
+NAME
+    evnex_explore.py - read-only dump of everything the Evnex API shows about the home charger
 
-Credentials come from evnex_common.py (Tessie/config.json or
-EVNEX_CLIENT_USERNAME/EVNEX_CLIENT_PASSWORD env vars) - see that module's
-docstring for why there's no --username/--password CLI flag. Nothing
-this script prints or writes includes your Evnex password.
+SYNOPSIS
+    ./Tools/maintenance/evnex_explore.py [--days N] [--output FILE] [--quiet]
 
-Usage:
-    ./evnex_explore.py                  # dump everything to a JSON file + summary to stdout
-    ./evnex_explore.py --days 30        # wider org-insight window (default 7)
-    ./evnex_explore.py --output PATH    # where to write the full JSON dump
-    ./evnex_explore.py --quiet          # summary only, suppress per-call progress lines
+DESCRIPTION
+    Queries the Evnex account's organisations, charge points, status and session history (never a
+    control call), writes the whole answer as JSON to --output, or by default to
+    Tessie/evnex_explore_<time>.json in the repo folder, and prints a summary. --days sets the
+    insight window (default 7). Credentials come from config.json or the EVNEX_CLIENT_USERNAME and
+    EVNEX_CLIENT_PASSWORD environment variables.
+
+    This script is deliberately READ-ONLY - it never calls any of the
+    `evnex` library's control endpoints (stop_charge_point, enable_charger,
+    disable_charger, unlock_charger, set_charge_point_override,
+    set_charger_load_profile, set_charge_point_schedule). It only queries
+    status/history.
+
+    Credentials come from evnex_common.py (Tessie/config.json or
+    EVNEX_CLIENT_USERNAME/EVNEX_CLIENT_PASSWORD env vars) - see that module's
+    docstring for why there's no --username/--password CLI flag. Nothing
+    this script prints or writes includes your Evnex password.
+
+    Usage:
+        ./evnex_explore.py                  # dump everything to a JSON file + summary to stdout
+        ./evnex_explore.py --days 30        # wider org-insight window (default 7)
+        ./evnex_explore.py --output PATH    # where to write the full JSON dump
+        ./evnex_explore.py --quiet          # summary only, suppress per-call progress lines
 """
 
 import argparse

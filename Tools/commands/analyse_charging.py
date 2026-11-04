@@ -12,6 +12,30 @@ Tessie Charging & Supercharger Reconciliation Engine
 - Charges Master Consolidator (charges_master.csv)
 - Multi-Level Rich Terminal Reporting & Deep-Dive Session Inspector
 - Export Reconciled Reports to CSV / JSON
+
+NAME
+    analyse_charging.py - charge sessions reconciled against invoices and telemetry
+
+SYNOPSIS
+    ./Tools/tesla analyse charges [--superchargers | --third-party | --home]
+                                  [--exclude-superchargers | --exclude-third-party | --exclude-home]
+                                  [--unreconciled] [--month YYYY-MM] [--since DATE] [--until DATE] [--audit]
+    ./Tools/tesla analyse charges --inspect ID_OR_DATE [--correlation]
+    ./Tools/tesla analyse charges --vehicle VEHICLE [--compare-all] [--list-vehicles] [--gvg-top20] [--search-vehicles TERM]
+    ./Tools/tesla analyse charges --consolidate
+    ./Tools/tesla analyse charges --update-master
+    ./Tools/tesla analyse charges --rename-invoices [--rename-format TEMPLATE] [--dry-run] [--yes]
+    ./Tools/tesla analyse charges --export FILE
+    ./Tools/tesla analyse charges --precompute-sources [--since DATE] [--force-refresh]
+    ./Tools/tesla analyse charges --build-curves [--force-curves]
+
+DESCRIPTION
+    Reads the Tessie charge sessions (charges_master.csv and the charge CSVs in the Tessie data
+    folder) and the invoice PDFs and CSV receipts in the invoices folder, matches each paid session
+    to its invoice, and prints the sessions with their place, network, energy and cost. The filters
+    choose which sessions are shown; the action options consolidate charges_master.csv, write
+    invoice costs into it, rename invoice PDFs, export the result to CSV or JSON, or build charge
+    curves. The full list of options is in -h.
 """
 import os as _os, sys as _sys; _sys.path[:0] = [p for p in (_os.path.dirname(_os.path.abspath(__file__)), _os.path.dirname(_os.path.dirname(_os.path.abspath(__file__)))) if p not in _sys.path]      # the commands beside it, and Tools/ (lib, providers)
 

@@ -1,12 +1,24 @@
 #!/usr/bin/env python3
 """Builds the interactive FSD highway map: <data>/drives/analysis/fsd_highway_map.html
 
-Reads the deep-dive telemetry since --since plus the analysis CSVs written by
-analyse_fsd_105.py and analyse_fsd_osm_limits.py (REQ-190 / REQ-191) and bakes them, with the
-OpenStreetMap roads the car was matched to, into one self-contained HTML page
-(Tools/lib/fsd_highway_map_template.html). Works without the OSM files (it then shows the speed
-bands only). Called at the end of analyse_fsd_osm_limits.py; can also be run alone:
-    build_fsd_map.py [--data-dir DIR] [--since YYYY-MM-DD]
+NAME
+    build_fsd_map.py - build the interactive FSD highway map page
+
+SYNOPSIS
+    ./Tools/maintenance/build_fsd_map.py [--data-dir DIR] [--since YYYY-MM-DD]
+
+DESCRIPTION
+    Reads the drive deep-dive telemetry since --since (default 2026-10-01) and the CSV files of
+    analyse_fsd_105.py and analyse_fsd_osm_limits.py, and writes one self-contained page,
+    <data>/drives/analysis/fsd_highway_map.html. Without the OpenStreetMap files the page shows the
+    speed bands only. analyse_fsd_osm_limits.py runs this at its end.
+
+    Reads the deep-dive telemetry since --since plus the analysis CSVs written by
+    analyse_fsd_105.py and analyse_fsd_osm_limits.py (REQ-190 / REQ-191) and bakes them, with the
+    OpenStreetMap roads the car was matched to, into one self-contained HTML page
+    (Tools/lib/fsd_highway_map_template.html). Works without the OSM files (it then shows the speed
+    bands only). Called at the end of analyse_fsd_osm_limits.py; can also be run alone:
+        build_fsd_map.py [--data-dir DIR] [--since YYYY-MM-DD]
 """
 import os as _os, sys as _sys; _sys.path[:0] = [p for p in (_os.path.dirname(_os.path.abspath(__file__)), _os.path.join(_os.path.dirname(_os.path.dirname(_os.path.abspath(__file__))), "commands"), _os.path.dirname(_os.path.dirname(_os.path.abspath(__file__)))) if p not in _sys.path]      # the tools beside it, the commands, and Tools/ (lib, providers)
 if any(a in ("-h", "--help") for a in _sys.argv[1:]):          # its help, and nothing else (the work starts on import)

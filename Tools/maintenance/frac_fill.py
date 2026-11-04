@@ -1,6 +1,20 @@
 #!/usr/bin/env python3
 """frac_fill.py - add onset_frac (the sub-second part cut off onset_local) to existing cache7 event records.
-Usage: frac_fill.py [--data-dir DIR] [--budget S]   (re-run until it says 0 left)"""
+Usage: frac_fill.py [--data-dir DIR] [--budget S]   (re-run until it says 0 left)
+
+NAME
+    frac_fill.py - add the sub-second onset to the flip review's cached event records
+
+SYNOPSIS
+    ./Tools/maintenance/frac_fill.py [--data-dir DIR] [--budget SECONDS]
+
+DESCRIPTION
+    For each flip event record in <data>/drives/analysis/dashcam_flip_review/cache7/ that lacks
+    onset_frac, finds its TeslaCam clip again, works out the fraction of a second cut off
+    onset_local and writes it into the record, printing ok or MISMATCH against the stored time.
+    Stops starting new events after --budget seconds (default 85) and prints how many are left;
+    run it again until 0 are left. A one-off repair.
+"""
 import argparse, csv, json, os, sys, time, datetime
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "commands"))      # dashcam_flip_review lives in Tools/commands/

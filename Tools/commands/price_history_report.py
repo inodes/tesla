@@ -3,52 +3,66 @@
 price_history_report.py - fuel + electricity price history over time
 (HTML + PNG), REQ-156 (2026-09-28).
 
-User: "with fuel prices and electricity prices - is there a way to
-graph these overtime in the usual html/png way you do? ... plotting
-should be defaulting to the major varieties. But we should be able to
-1. Choose the car to plot against as an example 2. Plot that fuel type
-price 3. Plot electricity."
+NAME
+    price_history_report.py - fuel and electricity prices over time
 
-Fuel prices: real NSW FuelCheck daily averages (lib/fuel_common.py's
-fuel_daily_averages table, synced by sync_fuel_history.py) - by
-default the three "major varieties" already treated as this repo's
-own reference trio elsewhere (lib/fuel_common.py's "Ref Fuel Prices"
-line, sync_fuel_history.py's summary line): U91, P98, Diesel. Pass
---vehicle to instead show just ONE comparison vehicle's own fuel type
-(e.g. --vehicle "ranger" for the Ford Ranger's Diesel) - the same
-registry --vehicle already selects from elsewhere in this repo
-(lib.fuel_common.get_comparison_vehicle()).
+SYNOPSIS
+    ./Tools/tesla report prices [--vehicle NAME] [--region all | metro | regional]
+                                [--from YYYY-MM-DD] [--to YYYY-MM-DD] [--out-dir DIR]
 
-Electricity price: the real AGL usage rate in effect on each date,
-resolved through the SAME rate-resolution helper every other cost
-figure in this repo goes through (providers/power's own
-usage_rate_for_window()) rather than a raw usage_rate_per_kwh field
-read - deliberately, because the newest real tariff period
-(2026-09-07 onward - see providers/power/power_agl.py's own
-usage_rate_for_window() docstring, REQ-155) has NO flat usage_rate_per_kwh at all,
-only a genuine peak/off-peak time-of-use split, so a raw field read
-would silently come back empty for it. One representative blended
-rate is computed per tariff period (across a fixed representative
-week - AGL's own time-of-use classification depends only on weekday/
-weekend + hour-of-day, never month/season, so any calendar week gives
-the same blend) and that period's own real effective-date range then
-fills every day within it - a correct step function, not a daily
-recomputation of the same number ~2000+ times over.
+DESCRIPTION
+    Charts the NSW daily average fuel price (U91, P98 and Diesel, or only the fuel of the
+    comparison car given with --vehicle) and the home electricity usage rate in force on each day,
+    from 2020-03-06 to today unless --from and --to are given. Prints each line's range and writes
+    price_history_<from>_to_<to>.html and a PNG (when matplotlib is installed) to
+    <data folder>/price_reports (or --out-dir).
 
-Date range: defaults to 2020-03-06 through today. That's not a round
-"7 years" - it's the exact date AGL's own real, invoice-confirmed rate
-history in agl_tariff_rates.json starts (every earlier period is an
-auto-proposed placeholder with usage_rate_per_kwh: None - see
-AGENTS.local.md); anchoring here means every point on the electricity
-line is real, not a guess, while still comfortably covering "back
-further" on the fuel side per the user's own request. Override with
---from/--to.
+    User: "with fuel prices and electricity prices - is there a way to
+    graph these overtime in the usual html/png way you do? ... plotting
+    should be defaulting to the major varieties. But we should be able to
+    1. Choose the car to plot against as an example 2. Plot that fuel type
+    price 3. Plot electricity."
 
-Usage:
-    ./price_history_report.py
-    ./price_history_report.py --vehicle "ranger"
-    ./price_history_report.py --from 2018-01-01 --to 2025-01-01
-    ./price_history_report.py --out-dir ~/somewhere
+    Fuel prices: real NSW FuelCheck daily averages (lib/fuel_common.py's
+    fuel_daily_averages table, synced by sync_fuel_history.py) - by
+    default the three "major varieties" already treated as this repo's
+    own reference trio elsewhere (lib/fuel_common.py's "Ref Fuel Prices"
+    line, sync_fuel_history.py's summary line): U91, P98, Diesel. Pass
+    --vehicle to instead show just ONE comparison vehicle's own fuel type
+    (e.g. --vehicle "ranger" for the Ford Ranger's Diesel) - the same
+    registry --vehicle already selects from elsewhere in this repo
+    (lib.fuel_common.get_comparison_vehicle()).
+
+    Electricity price: the real AGL usage rate in effect on each date,
+    resolved through the SAME rate-resolution helper every other cost
+    figure in this repo goes through (providers/power's own
+    usage_rate_for_window()) rather than a raw usage_rate_per_kwh field
+    read - deliberately, because the newest real tariff period
+    (2026-09-07 onward - see providers/power/power_agl.py's own
+    usage_rate_for_window() docstring, REQ-155) has NO flat usage_rate_per_kwh at all,
+    only a genuine peak/off-peak time-of-use split, so a raw field read
+    would silently come back empty for it. One representative blended
+    rate is computed per tariff period (across a fixed representative
+    week - AGL's own time-of-use classification depends only on weekday/
+    weekend + hour-of-day, never month/season, so any calendar week gives
+    the same blend) and that period's own real effective-date range then
+    fills every day within it - a correct step function, not a daily
+    recomputation of the same number ~2000+ times over.
+
+    Date range: defaults to 2020-03-06 through today. That's not a round
+    "7 years" - it's the exact date AGL's own real, invoice-confirmed rate
+    history in agl_tariff_rates.json starts (every earlier period is an
+    auto-proposed placeholder with usage_rate_per_kwh: None - see
+    AGENTS.local.md); anchoring here means every point on the electricity
+    line is real, not a guess, while still comfortably covering "back
+    further" on the fuel side per the user's own request. Override with
+    --from/--to.
+
+    Usage:
+        ./price_history_report.py
+        ./price_history_report.py --vehicle "ranger"
+        ./price_history_report.py --from 2018-01-01 --to 2025-01-01
+        ./price_history_report.py --out-dir ~/somewhere
 """
 import os as _os, sys as _sys; _sys.path[:0] = [p for p in (_os.path.dirname(_os.path.abspath(__file__)), _os.path.dirname(_os.path.dirname(_os.path.abspath(__file__)))) if p not in _sys.path]      # the commands beside it, and Tools/ (lib, providers)
 

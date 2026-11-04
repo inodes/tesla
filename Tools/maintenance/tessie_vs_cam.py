@@ -1,13 +1,25 @@
 #!/usr/bin/env python3
 """Why do Tessie and the dashcam disagree at a flip? (REQ-192)
 
-For every flip with dashcam footage, take the Tessie drive points around the flip (one every ~30 s: time, GPS,
-speed, odometer) and find where the dashcam GPS track passes the same spot. That gives, per Tessie point:
-  clock_diff  = Tessie time - clip clock at the same place   (a whole number of hours = timezone; the rest = Tessie lag)
-  speed_diff  = Tessie speed - dashcam speed at that place
-  odo_kmh     = speed from the odometer between two Tessie points (what the car really did on average)
-Writes <data>/drives/analysis/tessie_vs_cam.csv and prints a summary per day.
-Usage: tessie_vs_cam.py [--data-dir DIR] [--teslacam DIR]
+NAME
+    tessie_vs_cam.py - compare Tessie's drive points with the dashcam GPS at each flip
+
+SYNOPSIS
+    ./Tools/maintenance/tessie_vs_cam.py [--data-dir DIR] [--teslacam DIR]
+
+DESCRIPTION
+    For every flip with dashcam footage, matches each Tessie drive point near the flip to where the
+    dashcam GPS track passes the same spot and works out the clock difference, the speed difference
+    and the speed from the odometer. Writes <data>/drives/analysis/tessie_vs_cam.csv and prints a
+    summary per day. A one-off investigation.
+
+    For every flip with dashcam footage, take the Tessie drive points around the flip (one every ~30 s: time, GPS,
+    speed, odometer) and find where the dashcam GPS track passes the same spot. That gives, per Tessie point:
+      clock_diff  = Tessie time - clip clock at the same place   (a whole number of hours = timezone; the rest = Tessie lag)
+      speed_diff  = Tessie speed - dashcam speed at that place
+      odo_kmh     = speed from the odometer between two Tessie points (what the car really did on average)
+    Writes <data>/drives/analysis/tessie_vs_cam.csv and prints a summary per day.
+    Usage: tessie_vs_cam.py [--data-dir DIR] [--teslacam DIR]
 """
 import os as _os, sys as _sys; _sys.path[:0] = [p for p in (_os.path.dirname(_os.path.abspath(__file__)), _os.path.join(_os.path.dirname(_os.path.dirname(_os.path.abspath(__file__))), "commands"), _os.path.dirname(_os.path.dirname(_os.path.abspath(__file__)))) if p not in _sys.path]      # the tools beside it, the commands, and Tools/ (lib, providers)
 import argparse, csv, datetime, glob, json, math, os, statistics, sys

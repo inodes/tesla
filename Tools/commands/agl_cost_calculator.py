@@ -8,26 +8,41 @@ all in one place so the true cost of a charging session (or any other
 load) can eventually be weighed against real, verified AGL pricing
 rather than a guess.
 
-Solar credit tiering (see AGENTS.md REQ-031 - found by reading the FULL
-invoice text, not just the headline "Standard feed-in tariff*" line):
-AGL pools total solar export across the whole rate sub-period and splits
-it into "Standard feed-in tariff*" (up to 10 kWh/day x days-in-period,
-at the period's tier-1 rate) and "Next*" (everything beyond that, at a
-flat $0.04/kWh that hasn't been observed to change). This is a POOLED
-period-total cap, not a per-day cap summed afterward - confirmed because
-every observed tier-1 amount is an exact multiple of 10 x the sub-period's
-day count (300, 310, 250, ...), which would be a remarkable coincidence
-under day-by-day capping.
+NAME
+    agl_cost_calculator.py - rebuild an AGL bill from the usage master and the tariff rates
 
-Demand-charge arrears timing (confirmed against 2 real invoices): the
-invoice for cycle [start, end] bills the demand peak for the calendar
-month immediately before `end`'s month - i.e. the most recently FULLY
-COMPLETED calendar month as of the cycle's end date.
+SYNOPSIS
+    ./Tools/tesla report agl-bill --start YYYY-MM-DD --end YYYY-MM-DD
+    ./Tools/tesla report agl-bill --self-test
+    ./Tools/tesla report agl-bill
 
-Self-test (run this file directly) reconstructs 4 real invoices (Apr,
-May, Jun, Jul 2026 cycles) end-to-end and compares the computed total
-against each bill's actual "Direct Debit amount due" - within a small
-cents-level tolerance for AGL's own per-line rounding.
+DESCRIPTION
+    With --start and --end, works out the bill for that billing cycle (both dates included) from
+    usage/agl_usage_master.csv in the AGL data folder and agl_tariff_rates.json: usage, supply, solar
+    credit and demand charge, then prints each part and the total ex and incl GST. --self-test
+    rebuilds four past bills and compares each total with the amount on the bill; it exits 0 when all
+    are within rounding, 1 otherwise. With no options it prints this help.
+
+    Solar credit tiering (see AGENTS.md REQ-031 - found by reading the FULL
+    invoice text, not just the headline "Standard feed-in tariff*" line):
+    AGL pools total solar export across the whole rate sub-period and splits
+    it into "Standard feed-in tariff*" (up to 10 kWh/day x days-in-period,
+    at the period's tier-1 rate) and "Next*" (everything beyond that, at a
+    flat $0.04/kWh that hasn't been observed to change). This is a POOLED
+    period-total cap, not a per-day cap summed afterward - confirmed because
+    every observed tier-1 amount is an exact multiple of 10 x the sub-period's
+    day count (300, 310, 250, ...), which would be a remarkable coincidence
+    under day-by-day capping.
+
+    Demand-charge arrears timing (confirmed against 2 real invoices): the
+    invoice for cycle [start, end] bills the demand peak for the calendar
+    month immediately before `end`'s month - i.e. the most recently FULLY
+    COMPLETED calendar month as of the cycle's end date.
+
+    Self-test (run this file directly) reconstructs 4 real invoices (Apr,
+    May, Jun, Jul 2026 cycles) end-to-end and compares the computed total
+    against each bill's actual "Direct Debit amount due" - within a small
+    cents-level tolerance for AGL's own per-line rounding.
 """
 import os as _os, sys as _sys; _sys.path[:0] = [p for p in (_os.path.dirname(_os.path.abspath(__file__)), _os.path.dirname(_os.path.dirname(_os.path.abspath(__file__)))) if p not in _sys.path]      # the commands beside it, and Tools/ (lib, providers)
 

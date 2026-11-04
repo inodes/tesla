@@ -7,39 +7,51 @@ Renamed from agl_usage_importer.py - "sync" is the one verb this repo
 now uses for every source-consolidation script, whether the pull is an
 API call (Tessie's, Evnex's) or a manually-dropped-in export (this one).
 
-AGL doesn't offer a usage-history API for residential accounts (unlike
-Tessie/Evnex) - this stays a manual download, dropped into the AGL
-invoices folder (agl_common.resolve_agl_invoices_dir(), currently
-~/iCloud/PDF/AGL) as-is, then this script picks up every
-"*Usage*.csv"/"AGL_Usage_*.csv" file sitting there.
+NAME
+    agl_usage_sync.py - merge AGL half-hourly usage CSV exports into one master CSV
 
-To get a fresh export: visit
-  https://myaccount.agl.com.au/usage?c=<account>&billPeriod=<from>/<to>
-(the account's own usage page) with the date range adjusted to cover
-what you need - a year at a time is the practical granularity - and
-save the CSV into the AGL invoices folder above.
+SYNOPSIS
+    ./Tools/tesla sync agl-usage [--dry-run]
 
-Register semantics (confirmed against real bills - see AGENTS.md
-REQ-031): RegisterCode "...#E1" is grid IMPORT (billed as Usage charges;
-its RateTypeDescription has drifted across exports - "Generalusage",
-"SeasonTimeofUse", plain "Usage" - all mean the same E1 import register,
-never trust the description text, only the register CODE). "...#B1" is
-Solar EXPORT (feeds the solar credit). "...#E2" is Controlled Load (a
-separate circuit/tariff this repo doesn't model a charge for yet - kept
-in the master for completeness).
+DESCRIPTION
+    Reads every AGL usage CSV in the AGL invoices folder and merges its half-hour readings into
+    usage/agl_usage_master.csv in the AGL data folder. A reading already in the master is not
+    added twice. The old master is copied to usage/archive/ before it is replaced, and the number
+    of new rows is printed. --dry-run shows what would change and writes nothing.
 
-Row identity / dedup key: (StartDate, EndDate, RegisterCode) - a
-half-hour interval reading is uniquely identified by its window and
-register; two overlapping exports covering the same period produce
-identical keys and collapse to one row, never a duplicate.
+    AGL doesn't offer a usage-history API for residential accounts (unlike
+    Tessie/Evnex) - this stays a manual download, dropped into the AGL
+    invoices folder (agl_common.resolve_agl_invoices_dir(), currently
+    ~/iCloud/PDF/AGL) as-is, then this script picks up every
+    "*Usage*.csv"/"AGL_Usage_*.csv" file sitting there.
 
-Same 4-point safety net already established for drives/charges
-(BUG-025): back up the master before writing, sanity-check the row
-count and duplicate-key count after writing, and report what changed.
+    To get a fresh export: visit
+      https://myaccount.agl.com.au/usage?c=<account>&billPeriod=<from>/<to>
+    (the account's own usage page) with the date range adjusted to cover
+    what you need - a year at a time is the practical granularity - and
+    save the CSV into the AGL invoices folder above.
 
-Usage:
-    ./agl_usage_sync.py              # consolidate, write the master
-    ./agl_usage_sync.py --dry-run    # show what would happen, write nothing
+    Register semantics (confirmed against real bills - see AGENTS.md
+    REQ-031): RegisterCode "...#E1" is grid IMPORT (billed as Usage charges;
+    its RateTypeDescription has drifted across exports - "Generalusage",
+    "SeasonTimeofUse", plain "Usage" - all mean the same E1 import register,
+    never trust the description text, only the register CODE). "...#B1" is
+    Solar EXPORT (feeds the solar credit). "...#E2" is Controlled Load (a
+    separate circuit/tariff this repo doesn't model a charge for yet - kept
+    in the master for completeness).
+
+    Row identity / dedup key: (StartDate, EndDate, RegisterCode) - a
+    half-hour interval reading is uniquely identified by its window and
+    register; two overlapping exports covering the same period produce
+    identical keys and collapse to one row, never a duplicate.
+
+    Same 4-point safety net already established for drives/charges
+    (BUG-025): back up the master before writing, sanity-check the row
+    count and duplicate-key count after writing, and report what changed.
+
+    Usage:
+        ./agl_usage_sync.py              # consolidate, write the master
+        ./agl_usage_sync.py --dry-run    # show what would happen, write nothing
 """
 import os as _os, sys as _sys; _sys.path[:0] = [p for p in (_os.path.dirname(_os.path.abspath(__file__)), _os.path.dirname(_os.path.dirname(_os.path.abspath(__file__)))) if p not in _sys.path]      # the commands beside it, and Tools/ (lib, providers)
 

@@ -3,62 +3,76 @@
 (capacity vs odometer, range vs odometer), from real battery_health_log.json
 history.
 
-Context: sync_api_tessie.py --battery-health has been pulling the
-vehicle's full real battery_health history for a while now (REQ-045/047),
-and analyse_car_efficiency.py already reads that history
-(load_battery_health_history()) to pick a live usable-capacity figure for
-its speed-vs-range table - but nothing in this repo ever actually CHARTS
-that history. This is the first script that does: a real degradation
-view, not just a single current-vs-original number.
+NAME
+    analyse_battery_health.py - charts of battery capacity and range against odometer
 
-Plots each real reading as a point - deliberately NOT connected by a line
-between consecutive readings, since a raw battery_health reading is noisy
-(BMS estimate variance from ambient temp, SoC at the moment of the poll,
-etc. - visible in the real data as a +/-1kWh wobble from one day to the
-next even while the underlying trend is flat-to-slowly-declining) and a
-connected line would visually overstate every up-tick/down-tick as a real
-swing. A linear trend line (simple least-squares fit vs odometer) is
-drawn instead to show the actual direction without pretending the raw
-noise is signal.
+SYNOPSIS
+    ./Tools/tesla analyse battery [--tessie-dir DIR] [--out-dir DIR]
 
-TWO SEPARATE charts, both vs Odometer (km) on the x-axis (the
-degradation-relevant variable - a battery fades with distance/cycles, not
-calendar time), not one combined dual-axis chart:
-  - Usable capacity (kWh) vs odometer.
-  - Max rated range (km) vs odometer.
-Originally built as one chart with capacity on the left axis and range on
-the right (REQ-052) - the user's own feedback after seeing it (with a
-reference screenshot of a Tesla-style fleet app doing exactly this as two
-separate charts) was that capacity and range are strongly correlated
-TODAY, but that's an artifact of efficiency being roughly constant so far
-- if efficiency itself drifts (seasonal, driving-mix changes, etc.) the
-two would decouple, and a shared/dual axis would then be actively
-misleading about which one is doing what. Two independent single-axis
-charts read correctly regardless of whether that correlation holds.
+DESCRIPTION
+    Reads battery_health_log.json in the Tessie data folder (filled by ./Tools/tesla sync tessie
+    --battery-health) and draws two charts, usable capacity (kWh) and maximum range (km), each
+    against odometer with a trend line. Each chart is written as PNG (when matplotlib is installed)
+    and HTML to <Tessie data folder>/battery/, and the trend is printed. Readings with no odometer
+    are left out and counted. Needs at least two readings.
+    --tessie-dir sets the Tessie data folder; --out-dir sets where the charts go.
 
-Skips any reading with no odometer_km (a handful of live-poll snapshots
-came back without one - see battery_health_log.json) since they can't be
-placed on this x-axis; reported as excluded rather than silently dropped.
-The range chart further skips any reading with no max_range_km of its own
-(rare, but not guaranteed to align with which readings have an odometer).
+    Context: sync_api_tessie.py --battery-health has been pulling the
+    vehicle's full real battery_health history for a while now (REQ-045/047),
+    and analyse_car_efficiency.py already reads that history
+    (load_battery_health_history()) to pick a live usable-capacity figure for
+    its speed-vs-range table - but nothing in this repo ever actually CHARTS
+    that history. This is the first script that does: a real degradation
+    view, not just a single current-vs-original number.
 
-Output goes to <tessie_directory>/battery/ (a dedicated subfolder), not
-the Tessie directory root - matching the charges/deepdive and drives
-output convention elsewhere in this repo.
+    Plots each real reading as a point - deliberately NOT connected by a line
+    between consecutive readings, since a raw battery_health reading is noisy
+    (BMS estimate variance from ambient temp, SoC at the moment of the poll,
+    etc. - visible in the real data as a +/-1kWh wobble from one day to the
+    next even while the underlying trend is flat-to-slowly-declining) and a
+    connected line would visually overstate every up-tick/down-tick as a real
+    swing. A linear trend line (simple least-squares fit vs odometer) is
+    drawn instead to show the actual direction without pretending the raw
+    noise is signal.
 
-The HTML is real SVG (not a <canvas>), with every point getting its own
-generous invisible hit-circle at its exact plotted coordinates - the same
-approach as the one-off battery_health_scatter.html prototype the user
-compared this against. A first attempt kept the canvas rendering and
-patched the hit-test/tooltip-position logic instead; the user tried it
-and found it still less clear than the SVG prototype, so this rewrites
-the HTML output as SVG outright rather than continuing to patch canvas
-hit-testing around the edges.
+    TWO SEPARATE charts, both vs Odometer (km) on the x-axis (the
+    degradation-relevant variable - a battery fades with distance/cycles, not
+    calendar time), not one combined dual-axis chart:
+      - Usable capacity (kWh) vs odometer.
+      - Max rated range (km) vs odometer.
+    Originally built as one chart with capacity on the left axis and range on
+    the right (REQ-052) - the user's own feedback after seeing it (with a
+    reference screenshot of a Tesla-style fleet app doing exactly this as two
+    separate charts) was that capacity and range are strongly correlated
+    TODAY, but that's an artifact of efficiency being roughly constant so far
+    - if efficiency itself drifts (seasonal, driving-mix changes, etc.) the
+    two would decouple, and a shared/dual axis would then be actively
+    misleading about which one is doing what. Two independent single-axis
+    charts read correctly regardless of whether that correlation holds.
 
-Usage:
-    ./analyse_battery_health.py                    # writes to <tessie_directory>/battery/
-    ./analyse_battery_health.py --tessie-dir DIR    # override the Tessie data home
-    ./analyse_battery_health.py --out-dir DIR       # override just the output location
+    Skips any reading with no odometer_km (a handful of live-poll snapshots
+    came back without one - see battery_health_log.json) since they can't be
+    placed on this x-axis; reported as excluded rather than silently dropped.
+    The range chart further skips any reading with no max_range_km of its own
+    (rare, but not guaranteed to align with which readings have an odometer).
+
+    Output goes to <tessie_directory>/battery/ (a dedicated subfolder), not
+    the Tessie directory root - matching the charges/deepdive and drives
+    output convention elsewhere in this repo.
+
+    The HTML is real SVG (not a <canvas>), with every point getting its own
+    generous invisible hit-circle at its exact plotted coordinates - the same
+    approach as the one-off battery_health_scatter.html prototype the user
+    compared this against. A first attempt kept the canvas rendering and
+    patched the hit-test/tooltip-position logic instead; the user tried it
+    and found it still less clear than the SVG prototype, so this rewrites
+    the HTML output as SVG outright rather than continuing to patch canvas
+    hit-testing around the edges.
+
+    Usage:
+        ./analyse_battery_health.py                    # writes to <tessie_directory>/battery/
+        ./analyse_battery_health.py --tessie-dir DIR    # override the Tessie data home
+        ./analyse_battery_health.py --out-dir DIR       # override just the output location
 """
 import os as _os, sys as _sys; _sys.path[:0] = [p for p in (_os.path.dirname(_os.path.abspath(__file__)), _os.path.dirname(_os.path.dirname(_os.path.abspath(__file__)))) if p not in _sys.path]      # the commands beside it, and Tools/ (lib, providers)
 import argparse

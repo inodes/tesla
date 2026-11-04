@@ -6,12 +6,31 @@ Discovers, searches, inspects, and registers non-Tesla public EV chargers
 (Chargefox, Evie Networks, BP Pulse, Exploren, JOLT, NRMA, AmpCharge, etc.)
 into the dedicated registry Tessie/plugshare_chargers.json using PlugShare's native v3 API.
 
-- 🇦🇺 Country & Regional Exploration: Discover public chargers across Australia & states
-- 📍 Nearby / Address Search: Discover chargers near any address, suburb, or GPS coordinates
-- 🔎 Text Search: Search stations by name, network, or keyword
-- ⚡ Deep Hardware & Gross Pricing: Extracts kW power, connector types, stalls, and gross $/kWh tariffs
-- 📊 History Auto-Discovery: Scan charges_master.csv for unregistered charging sessions
-- 💾 Registry Integration: Populates Tessie/plugshare_chargers.json (mirrored schema style)
+NAME
+    find_plugshare_chargers.py - find non-Tesla chargers on PlugShare and keep them in a registry
+
+SYNOPSIS
+    ./Tools/tesla chargers plugshare [--near PLACE | --gps | --coords LAT,LON] [--radius KM]
+                                     [--state ST] [--suburb NAME] [--search TEXT] [--network NAME]
+                                     [--dc | --ac | --all-types] [--min-power KW] [--sort KEY] [--limit N]
+                                     [--list] [--json] [--add-all] [--refresh-prices]
+    ./Tools/tesla chargers plugshare --inspect NAME_OR_ID [--save]
+    ./Tools/tesla chargers plugshare --plugshare ID[,ID...] [--save]
+    ./Tools/tesla chargers plugshare --from-history
+
+DESCRIPTION
+    Searches PlugShare for public non-Tesla chargers near a place, in a state or by name and prints
+    them with power, connectors, stalls and price. --inspect and --plugshare fetch one station's
+    details; --save, --add-all and --refresh-prices write to the registry, which this script keeps
+    at Tessie/plugshare_chargers.json in the repo folder. --from-history lists charging places in
+    charges_master.csv that are not in the registry. --sync does nothing (kept for old commands).
+
+    - 🇦🇺 Country & Regional Exploration: Discover public chargers across Australia & states
+    - 📍 Nearby / Address Search: Discover chargers near any address, suburb, or GPS coordinates
+    - 🔎 Text Search: Search stations by name, network, or keyword
+    - ⚡ Deep Hardware & Gross Pricing: Extracts kW power, connector types, stalls, and gross $/kWh tariffs
+    - 📊 History Auto-Discovery: Scan charges_master.csv for unregistered charging sessions
+    - 💾 Registry Integration: Populates Tessie/plugshare_chargers.json (mirrored schema style)
 """
 import os as _os, sys as _sys; _sys.path[:0] = [p for p in (_os.path.dirname(_os.path.abspath(__file__)), _os.path.dirname(_os.path.dirname(_os.path.abspath(__file__)))) if p not in _sys.path]      # the commands beside it, and Tools/ (lib, providers)
 

@@ -15,55 +15,77 @@ archiving - analyse_drives.py and analyse_charging.py don't
 need to change at all; this tool just runs the exact command you'd type
 yourself. Fetching logic stays out of those two scripts either way.
 
-Consolidation is skipped (with a clear note) when: nothing new was fetched,
---dry-run was passed, --no-consolidate was passed, or this is running
-non-interactively (e.g. cron) without --yes - unattended automation must
-opt in explicitly with --yes rather than silently merging into your master
-files.
+NAME
+    sync_api_tessie.py - fetch Tessie drives, charges and car history through the Developer API
 
-Why JSON *and* CSV, not just CSV:
-  - A local JSON cache (Tessie/api_cache/<type>.json), keyed by the API's
-    own record `id`, is what makes re-running this idempotent and (from the
-    second run on) incremental - only the window since the last successful
-    sync is re-fetched. The CSV export has no `id`/`updated_at` columns at
-    all, so this bookkeeping isn't possible from CSV alone.
-  - The CSV written to the landing directory comes straight from Tessie's
-    own `format=csv` output, not hand-derived from the JSON fields - some
-    of its columns (e.g. Cost Per kWh) are computed server-side from
-    full-precision values before rounding, and re-deriving them from the
-    already-rounded JSON fields was found to disagree slightly during
-    testing. Using Tessie's own CSV formatting avoids that class of issue
-    entirely. See Tessie/TESSIE_API.md.
+SYNOPSIS
+    ./Tools/tesla sync tessie [--drives | --charges] [--since-days N] [--yes | --no-consolidate] [--dry-run]
+                              [--reset-cache] [--token TOKEN] [--vin VIN] [--landing-dir DIR] [--tessie-dir DIR]
+    ./Tools/tesla sync tessie --consolidate [--drives | --charges]
+    ./Tools/tesla sync tessie --backfill-deepdive [--drives | --charges] [--limit N] [--pace SECONDS]
+    ./Tools/tesla sync tessie --battery-health [--battery-health-since-days N]
+    ./Tools/tesla sync tessie [--idles [--idles-since-days N]] [--tire-pressure [--tire-pressure-since-days N]]
+                              [--firmware-alerts [--firmware-alerts-since-days N]] [--car-version]
+                              [--dry-run] [--reset-cache]
 
-No pagination cursor is documented for either endpoint, so a JSON fetch
-that might be truncated by `limit` is split in half and re-fetched
-recursively until every leaf request comes back under its own limit - this
-avoids silently missing records on an account with a lot of history.
+DESCRIPTION
+    Fetches the drives and charges that are new or changed since the last run from the Tessie API,
+    writes them as CSV files in the same layout as a manual Tessie export to the landing folder
+    (Downloads by default), then runs each analyser's --consolidate to merge them into
+    drives_master.csv and charges_master.csv, asking first unless --yes. The other modes fetch
+    deep-dive telemetry, battery health, idles, tyre pressure, firmware alerts or the car's
+    software version into the Tessie data folder. The token and VIN come from config.json or the
+    environment unless given. The full list of options is in -h.
 
-Cache durability: the on-disk sync cache (Tessie/api_cache/<type>.json)
-only advances its "last synced to" watermark once the corresponding data
-is actually safe - either because there was nothing new in this window,
-or because --consolidate has just successfully merged the freshly-written
-CSV into the master file. A landing-directory CSV that gets deleted or
-lost before it's ever consolidated is NOT lost from this tool's point of
-view: because the watermark was never advanced for it, the next sync
-simply re-fetches and re-surfaces that same window again. (An earlier
-version of this script advanced the watermark on fetch success alone,
-which meant a CSV lost before --consolidate was gone for good and
-silently excluded from every future sync - see in
-Tessie/TESSIE_API.md.)
+    Consolidation is skipped (with a clear note) when: nothing new was fetched,
+    --dry-run was passed, --no-consolidate was passed, or this is running
+    non-interactively (e.g. cron) without --yes - unattended automation must
+    opt in explicitly with --yes rather than silently merging into your master
+    files.
 
-Usage:
-    export TESSIE_ACCESS_TOKEN=your_token_here
-    ./sync_api_tessie.py                       # fetch + prompt to consolidate, both types
-    ./sync_api_tessie.py --yes                  # fetch + consolidate without prompting (cron)
-    ./sync_api_tessie.py --no-consolidate        # fetch only, leave CSV(s) for you to merge later
-    ./sync_api_tessie.py --drives                # just drives
-    ./sync_api_tessie.py --since-days 180        # first-run backfill window
-    ./sync_api_tessie.py --dry-run               # fetch and report, write/consolidate nothing
-    ./sync_api_tessie.py --reset-cache --charges  # forget prior sync point, re-backfill
+    Why JSON *and* CSV, not just CSV:
+      - A local JSON cache (Tessie/api_cache/<type>.json), keyed by the API's
+        own record `id`, is what makes re-running this idempotent and (from the
+        second run on) incremental - only the window since the last successful
+        sync is re-fetched. The CSV export has no `id`/`updated_at` columns at
+        all, so this bookkeeping isn't possible from CSV alone.
+      - The CSV written to the landing directory comes straight from Tessie's
+        own `format=csv` output, not hand-derived from the JSON fields - some
+        of its columns (e.g. Cost Per kWh) are computed server-side from
+        full-precision values before rounding, and re-deriving them from the
+        already-rounded JSON fields was found to disagree slightly during
+        testing. Using Tessie's own CSV formatting avoids that class of issue
+        entirely. See Tessie/TESSIE_API.md.
 
-See Tessie/TESSIE_API.md for endpoint/field notes and known limitations.
+    No pagination cursor is documented for either endpoint, so a JSON fetch
+    that might be truncated by `limit` is split in half and re-fetched
+    recursively until every leaf request comes back under its own limit - this
+    avoids silently missing records on an account with a lot of history.
+
+    Cache durability: the on-disk sync cache (Tessie/api_cache/<type>.json)
+    only advances its "last synced to" watermark once the corresponding data
+    is actually safe - either because there was nothing new in this window,
+    or because --consolidate has just successfully merged the freshly-written
+    CSV into the master file. A landing-directory CSV that gets deleted or
+    lost before it's ever consolidated is NOT lost from this tool's point of
+    view: because the watermark was never advanced for it, the next sync
+    simply re-fetches and re-surfaces that same window again. (An earlier
+    version of this script advanced the watermark on fetch success alone,
+    which meant a CSV lost before --consolidate was gone for good and
+    silently excluded from every future sync - see in
+    Tessie/TESSIE_API.md.)
+
+    Usage:
+        export TESSIE_ACCESS_TOKEN=your_token_here
+        ./sync_api_tessie.py                       # fetch + prompt to consolidate, both types
+        ./sync_api_tessie.py --yes                  # fetch + consolidate without prompting (cron)
+        ./sync_api_tessie.py --no-consolidate        # fetch only, leave CSV(s) for you to merge later
+        ./sync_api_tessie.py --drives                # just drives
+        ./sync_api_tessie.py --since-days 180        # first-run backfill window
+        ./sync_api_tessie.py --dry-run               # fetch and report, write/consolidate nothing
+        ./sync_api_tessie.py --reset-cache --charges  # forget prior sync point, re-backfill
+
+    See Tessie/TESSIE_API.md for endpoint/field notes and known limitations.
 """
 import os as _os, sys as _sys; _sys.path[:0] = [p for p in (_os.path.dirname(_os.path.abspath(__file__)), _os.path.dirname(_os.path.dirname(_os.path.abspath(__file__)))) if p not in _sys.path]      # the commands beside it, and Tools/ (lib, providers)
 
