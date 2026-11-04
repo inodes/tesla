@@ -127,17 +127,6 @@ def compute(stamps, items, moves=None, moves_upto=0):
                 return x
         return None
 
-    mv = sorted((m for m in (moves or []) if m.get("t0") and m.get("t1")), key=lambda m: m["t0"])
-
-    def move_at(t):
-        """The drive of the other record (Tessie) the minute starting at t overlaps, as a timeline item: for minutes whose own telemetry has not been read, so the timeline says only
-        "recording". Its id is the id of the timeline's own drive when that overlaps it too (one drive, however much of it is read)."""
-        for m in mv:
-            if m["t0"] < t + 60 and m["t1"] > t:
-                own = next((x for x in its if x["kind"] == "drive" and x["t0"] < m["t1"] and x["t1"] > m["t0"]), None)
-                return dict(kind="drive", id=own["id"] if own else "t%d" % m["t0"], t0=m["t0"], t1=m["t1"], p0=m.get("p0"), p1=m.get("p1"))
-        return None
-
     def where(it, kd):
         p = (it.get("p0") or it.get("p1")) if it else None
         return (p[0], p[1]) if p and p[0] is not None else (None, None)
@@ -147,9 +136,6 @@ def compute(stamps, items, moves=None, moves_upto=0):
     for st in sorted(stamps, key=CC.utc):
         t = CC.utc(st)
         it = moving(t) or at(t + 30)
-        if mv and (it is None or it["kind"] == "recording"):
-            # minutes not read are told by the other record when it is there: a drive of its, or else (it is complete up to the end of the minute) the car was parked
-            it = move_at(t) or (dict(kind="stopped", t0=t, t1=t + 60) if moves_upto >= t + 60 else it)
         k = None
         if it and it["kind"] == "drive":
             k = ("drive", it["id"])

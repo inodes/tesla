@@ -53,37 +53,6 @@ class CutsTest(unittest.TestCase):
         c = RC.compute(self.sts, items)
         self.assertEqual([k for k in sorted(c)], [self.sts[0], self.sts[12]])                         # two minutes between: a hole; the drives are cut as before
 
-    # today's recording, its telemetry not read yet: the timeline says only "recording", but Tessie knows the drives (Drives list: park, drive, park, drive, park)
-    def tessie(self, *spans):
-        return [dict(t0=CC.utc(self.sts[a]), t1=CC.utc(self.sts[b]) + 60, p0=[-30.0 - a / 100, 153.0], p1=[-30.0 - b / 100, 153.1]) for a, b in spans]
-
-    def test_unread_minutes_are_cut_where_tessie_drove(self):
-        items = [item("recording", self.sts[0], self.sts[29])]
-        mv = self.tessie((5, 14), (22, 26))
-        c = RC.compute(self.sts, items, mv, CC.utc(self.sts[29]) + 3600)
-        self.assertEqual([(k, v[0], v[3]) for k, v in sorted(c.items())],
-                         [(self.sts[0], "park", False), (self.sts[5], "drive", True), (self.sts[15], "park", True), (self.sts[22], "drive", True), (self.sts[27], "park", True)])
-
-    def test_the_parks_between_are_where_the_drives_beside_them_ended_and_began(self):
-        items = [item("recording", self.sts[0], self.sts[29])]
-        mv = self.tessie((5, 14), (22, 26))
-        c = RC.compute(self.sts, items, mv, CC.utc(self.sts[29]) + 3600)
-        self.assertEqual(c[self.sts[0]][1:3], [-30.05, 153.0])       # before the first drive: where it began
-        self.assertEqual(c[self.sts[15]][1:3], [-30.14, 153.1])      # between the drives: where the first ended
-        self.assertEqual(c[self.sts[27]][1:3], [-30.26, 153.1])      # after the last: where it ended
-
-    def test_unread_minutes_not_yet_covered_by_tessie_are_not_cut(self):
-        items = [item("recording", self.sts[0], self.sts[29])]
-        c = RC.compute(self.sts, items, self.tessie((5, 14)), CC.utc(self.sts[2]))      # Tessie last gave drives at 08:02: minutes 08:03-08:04 may hold anything
-        self.assertEqual(sorted(c)[:2], [self.sts[0], self.sts[5]])                      # no cut at 08:03 or 08:04
-        self.assertEqual(c[self.sts[5]][0], "drive")
-
-    def test_a_drive_read_in_part_and_known_to_tessie_is_one_drive(self):
-        items = [item("stopped", self.sts[0], self.sts[4]), item("drive", self.sts[5], self.sts[9], p0=[-30.0, 153.0], p1=[-30.1, 153.1]), item("recording", self.sts[10], self.sts[29])]
-        mv = self.tessie((5, 14))
-        c = RC.compute(self.sts, items, mv, CC.utc(self.sts[29]) + 3600)
-        self.assertEqual([(k, v[0], v[3]) for k, v in sorted(c.items())], [(self.sts[0], "park", False), (self.sts[5], "drive", True), (self.sts[15], "park", True)])
-
     def test_a_drive_after_another_drive_is_cut_between_them(self):
         items = [item("drive", self.sts[0], self.sts[9]), item("drive", self.sts[10], self.sts[29])]
         c = RC.compute(self.sts, items)

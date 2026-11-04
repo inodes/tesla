@@ -2215,7 +2215,7 @@ async function pageTeslaCam(role,id){
     all.forEach(v=>(byDay[v.ts.slice(0,10)]=byDay[v.ts.slice(0,10)]||[]).push(v));
     // One drive or parked spell is one card: its Recent minutes and the Saved / Sentry clips cut from the same time are shown together (the Saved folder holds copies of minutes of the drive), with a pill for each source.
     // The drive or park is the one the Drives list already knows (Tessie's drive, or the parked spell); a clip belongs to the one it overlaps most. A clip with none stays a card of its own.
-    const itemsAll=((dlist&&dlist.items)||[]).filter(x=>(x.kind==="drive"||x.kind==="parked"||x.kind==="stopped")&&x.t0!=null&&x.t1!=null).map(x=>x.kind==="stopped"?Object.assign({},x,{kind:"parked"}):x).sort((x,y)=>x.t0-y.t0);      // a "stopped" spell the dashcam saw (Tessie has no park for it yet) is a parked row too
+    const itemsAll=((dlist&&dlist.items)||[]).filter(x=>(x.kind==="drive"||x.kind==="parked")&&x.t0!=null&&x.t1!=null).sort((x,y)=>x.t0-y.t0);
     const spanOf=v=>v.ty==="recent"?[v.t0,v.t1]:(v.t!=null?[v.t,v.t]:[null,null]);
     const itemFor=v=>{const [x,y]=spanOf(v);if(x==null||y==null)return null;let best=null,bo=0;for(const it of itemsAll){if(it.t0>y+60)break;const o=Math.min(y+60,it.t1)-Math.max(x-60,it.t0);if(o>bo){best=it;bo=o}}return best};
     const clusters={},leadOf={},folded=new Set();
