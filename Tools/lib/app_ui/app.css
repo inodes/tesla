@@ -277,10 +277,11 @@ main:has(#spl .stbar,#spl .vbar) #splx{display:none}
 .cc .ccl{font-size:12px}
 .cc .ccc{font-size:11px;color:#888}
 
-/* Saved and Sentry events folded into the Recent run they fall in (TeslaCam page): the run's card carries chips; opening it shows them beside it inside one border */
+/* Saved and Sentry events folded into the Recent run they fall in (TeslaCam page): the run's card carries chips; opening it shows them in the same row, to the right of it */
 .evg{display:contents}.evg .evkid{display:none}
-.evg.open{grid-column:1/-1;display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:10px;border:2px solid var(--line);border-radius:12px;padding:8px}
-.evg.open .evkid{display:flex}.evg.open.s{border-color:#dc2626}.evg.open.v{border-color:#2563eb}.evg.open.s.v{border-color:#dc2626 #2563eb #2563eb #dc2626}
+/* opened: the clips of a drive or park appear right after its card, in the same row (to the right), not in a box of their own above or below */
+.evg.open .evkid{display:flex}.evg.open .evc.clu{border-color:var(--ink)}
+.evg.open .evkid[data-ty=sentry]{border-color:#dc2626}.evg.open .evkid[data-ty=saved]{border-color:#2563eb}.evg.open .evkid[data-ty=recent]{border-style:dashed}
 .evc .gchip{display:inline-block;align-self:flex-start;font-size:10.5px;font-weight:600;padding:1px 7px;border-radius:9px;margin:2px 4px 0 0;cursor:pointer;color:var(--mut)}
 .evc .gchip.sentry{background:rgba(220,38,38,.14);color:#dc2626}.evc .gchip.saved{background:rgba(37,99,235,.14);color:#2563eb}
 
