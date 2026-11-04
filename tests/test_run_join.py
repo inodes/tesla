@@ -78,3 +78,40 @@ class JoinTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class EventMinutesTest(unittest.TestCase):
+    """The car takes the minutes of a Saved / Sentry event out of RecentClips: put back in the clock they close the holes (4 Nov Ren's Soccer)."""
+
+    def test_event_minutes_fill_the_holes_and_say_where_they_are(self):
+        cams = {stamp(m): ["front"] for m in list(range(0, 21)) + list(range(31, 41))}
+        holders = {st: {"A"} for st in cams}
+        evm = {stamp(m, 9): dict(cams=["front", "back"], dir="SentryClips/" + stamp(30, 9), roles={"J"}) for m in range(21, 31)}
+        c2, h2, dirs = AT.with_events(cams, holders, evm)
+        self.assertEqual(len(c2), 41)
+        self.assertEqual(dirs[stamp(25, 9)], "SentryClips/" + stamp(30, 9))
+        self.assertEqual(h2[stamp(25, 9)], {"J"})
+        self.assertNotIn(stamp(5), dirs)                                              # a Recent minute is where it was
+        self.assertEqual(len(cams), 31)                                               # the log itself is not changed
+        runs, cur = [], None
+        for st in sorted(c2):
+            if cur and AT._secs(st) - cur["t1"] <= AT.GAP:
+                cur["stamps"].append(st)
+                cur["t1"] = AT._secs(st)
+            else:
+                cur = dict(t1=AT._secs(st), stamps=[st])
+                runs.append(cur)
+        self.assertEqual(len(runs), 1)
+
+    def test_an_event_with_no_recent_footage_around_it_stays_an_event(self):
+        cams, holders = {stamp(m): ["front"] for m in range(0, 5)}, {stamp(m): {"A"} for m in range(0, 5)}
+        evm = {stamp(m, 9): dict(cams=["front"], dir="SentryClips/e", roles={"A"}) for m in (5, 6)}              # follows the run: part of it
+        evm.update({stamp(m, 9): dict(cams=["front"], dir="SentryClips/f", roles={"A"}) for m in (40, 41)})        # 35 minutes away: alone
+        c2, h2, dirs = AT.with_events(cams, holders, evm)
+        self.assertEqual(sorted(dirs), [stamp(5, 9), stamp(6, 9)])
+        self.assertNotIn(stamp(40, 9), c2)
+
+    def test_a_minute_in_both_stays_a_recent_minute(self):
+        cams, holders = {stamp(3): ["front"]}, {stamp(3): {"A"}}
+        c2, h2, dirs = AT.with_events(cams, holders, {stamp(3): dict(cams=["front"], dir="SavedClips/x", roles={"J"})})
+        self.assertEqual((dirs, h2[stamp(3)]), ({}, {"A"}))

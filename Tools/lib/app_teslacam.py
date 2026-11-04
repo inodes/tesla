@@ -52,6 +52,32 @@ def hole_filled(last_stamp, next_stamp, fill):
     return have >= need - 1
 
 
+def with_events(cams, holders, evm):
+    """The minutes of the footage log plus the minutes the car saved off into Saved and Sentry folders, as one clock: ({stamp: [cameras]}, {stamp: {drives holding it}}, {stamp: folder it is in
+    below the TeslaCam folder, for the minutes that are not in RecentClips}). A minute in RecentClips is as it was; the event folders only add the minutes RecentClips lacks. Nothing is moved:
+    only where each file is kept is known. evm = {stamp: dict(cams, dir, roles)}."""
+    c2, h2, dirs = dict(cams), {k: set(v) for k, v in holders.items()}, {}
+    for st, m in evm.items():
+        if st in c2:
+            continue
+        c2[st] = list(m["cams"])
+        h2[st] = set(m["roles"])
+        dirs[st] = m["dir"]
+    if dirs:                                                    # only minutes that continue a Recent recording are put back: an event with no Recent footage around it stands alone, as an event
+        keep, chain, has = set(), [], False
+        for st in sorted(c2, key=_secs) + [None]:
+            if st is None or (chain and _secs(st) - _secs(chain[-1]) > GAP):
+                if has:
+                    keep.update(chain)
+                chain, has = [], False
+            if st is not None:
+                chain.append(st)
+                has = has or st not in dirs
+        for st in [x for x in dirs if x not in keep]:
+            del dirs[st], c2[st], h2[st]
+    return c2, h2, dirs
+
+
 def join_runs(runs, fill):
     """Runs (each {stamps, t1}, oldest first) with the ones a filled hole separates made one."""
     out = []
@@ -248,6 +274,29 @@ class TeslaCam:
             self._lr = (sig, out)
         return out
 
+    def event_minutes(self):
+        """{stamp: dict(cams, dir, roles)} of every minute in a Saved or Sentry event (kept lists; nothing is read from a drive). The car takes those minutes out of RecentClips when it saves an
+        event, so they are the holes of a continuous recording; the same clock names them, `dir` says where the file is (SentryClips/<event>). roles = the drives that hold the event now."""
+        known = set(TLG.Ledger(self.dir).scans())
+        out = {}
+        for kind, folder in KINDS.items():
+            for e in self._events_kept(kind, known):
+                if PG.has_event(kind, e["id"]):
+                    continue
+                roles = [] if e.get("gone") else list(e.get("roles") or [])
+                for st, cams in (e.get("clips") or {}).items():
+                    cur = out.get(st)
+                    if cur is None:
+                        out[st] = dict(cams=list(cams), dir=folder + "/" + e["id"], roles=set(roles))
+                    else:
+                        cur["roles"] |= set(roles)
+        return out
+
+    def all_minutes(self):
+        """What `_ledger_recent` gives, with the Saved and Sentry minutes put back into the clock (with_events), and where each of those is kept."""
+        cams, holders = self._ledger_recent(None)
+        return with_events(cams, holders, self.event_minutes())
+
     def _events_kept(self, kind, want, roots=None):
         """The Saved or Sentry events of those drives, one entry per event (with `roles` = the drives that list it). A connected drive (in `roots`) is read
         afresh; a drive that is away answers from its kept list. The same event on two drives is one, with the minutes of both."""
@@ -281,7 +330,7 @@ class TeslaCam:
                 # the car moved in a Saved clip's minutes (taken on a drive, even one that ends parked at Home): it is a drive, at no place. Sentry only records parked.
                 e["moved"] = kind == "saved" and any(isinstance(sm, dict) and sm.get("vmax", 0) >= TL.OPTS["moving_kmh"] for sm in (store.summary(st) for st in (e.get("clips") or {})))
             out[kind] = evs
-        cams, holders = self._ledger_recent(None)
+        cams, holders, dirs = self.all_minutes()                      # the minutes the car saved off into Saved and Sentry folders are part of the same recording
         runs, cur = [], None
         for st in sorted(x for x in cams if not PG.has(x)):
             t = _secs(st)
@@ -321,7 +370,9 @@ class TeslaCam:
             minute_play = {x: next((q for q in sorted(holders[x]) if roots.get(q)), None) for x in sts}
             own = (RC.pos(a), RC.pos_est(a)) if RC.pos(a) is not None or RC.kind(a) != "park" else edge_pos(i)
             out["recent"].append(dict(id=a, ts=_ts(a), end=_ts(b), t0=_secs(a), t1=_secs(b) + 60, part=RC.kind(a), pos=own[0], pos_est=own[1], n=len(sts), full=sum(1 for x in sts if len(cams[x]) == 6),
-                                      roles=roles, play=minute_play[a] or next((q for q in minute_play.values() if q), None), playable=sum(1 for q in minute_play.values() if q)))
+                                      roles=roles, play=minute_play[a] or next((q for q in minute_play.values() if q), None), playable=sum(1 for q in minute_play.values() if q),
+                                      dir=dirs.get(a, "RecentClips"), inev=sum(1 for x in sts if x in dirs),
+                                      th=[sts[0], sts[len(sts) // 2], sts[-1]] if len(sts) >= 3 else []))            # minutes whose pictures the card cycles through: start, middle, end
         out["recent"].sort(key=lambda x: x["t0"], reverse=True)
         if gone_home:
             PG.add(gone_home)
@@ -329,7 +380,7 @@ class TeslaCam:
 
     def run_all(self, rid, roots):
         """One Recent run for the player: {clips: {minute: [cameras]}, loc, play: {minute: connected drive or None}, roles: {minute: [drives]}}; None if there is no such run."""
-        cams, holders = self._ledger_recent(None)
+        cams, holders, dirs = self.all_minutes()
         sts = sorted(cams)
         if rid not in cams:
             return None
@@ -347,7 +398,7 @@ class TeslaCam:
         if rid not in run:
             return None
         return dict(clips={x: cams[x] for x in run}, loc=self.loc_of(run), roles={x: sorted(holders[x]) for x in run},
-                    play={x: next((q for q in sorted(holders[x]) if roots.get(q)), None) for x in run})
+                    play={x: next((q for q in sorted(holders[x]) if roots.get(q)), None) for x in run}, dirs={x: dirs[x] for x in run if x in dirs})
 
     def after_all(self, stamp, n, roots, skip=()):
         """Up to `n` minutes of continuous (Recent) recording that follow the minute `stamp`, one after the other with no gap and each playable from a connected drive, minus
