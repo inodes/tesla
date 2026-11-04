@@ -383,3 +383,4 @@ Log (newest first):
 - 2026-11-04: UI text rule: no explanatory sentences where the picture says it (removed 'The black parts of the bar have no video...' and the 'video begins N min into the drive' line; the Tessie parts line is just the drives and their times).
 - 2026-11-04: UI text rule applied across the clip pages: the instruction lines above the player (drive, park, Saved, Sentry, Recent), 'Click one to jump the video…' under the events and signs, and the stills key hint are gone; tooltips stay.
 - 2026-11-04: the place and time label on the front video is the height of the speed pill beside it (top of the place with the top of the pill, bottom of the date with its bottom); its em is its own font size (2.1 x the picture 1 %), so the offsets are written in those units.
+- 2026-11-04: the TeslaCam drive page title is only 'from → to' (the list of Tessie's parts under it is removed).
