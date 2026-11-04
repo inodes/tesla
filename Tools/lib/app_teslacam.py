@@ -30,13 +30,22 @@ _REC = re.compile(r"^(\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2})-(%s)\.mp4$" % "|".joi
 GAP = 75                                    # seconds between two minutes that still belong to one run
 
 
+def _same_park(a, b):
+    """Two parked sections (kind, lat, lon) at one place: a position one of them lacks does not tell them apart; two positions are the same place within `same_place_est_m`."""
+    if a[1] is None or b[1] is None:
+        return True
+    return TL.hav(a[1], a[2], b[1], b[2]) <= TL.OPTS["same_place_est_m"]
+
+
 def hole_filled(last_stamp, next_stamp, fill):
     """True when the hole between two Recent runs is one drive or one park: both ends lie in the same section of the timeline (run_cuts) and the minutes missing between
     them are the minutes of Saved clips (a drive) or Sentry clips (a park) cut from them - the car kept those minutes in another folder, so the footage is one
     recording with a part moved. `fill` = sorted UTC seconds of every Saved and Sentry minute."""
     ta, tb = _secs(last_stamp) + 60, _secs(next_stamp)
     sa, sb = RC.section(last_stamp), RC.section(next_stamp)
-    if not sa or not sb or sa != sb or sa[0] not in ("drive", "park"):
+    if not sa or not sb or sa[0] != sb[0] or sa[0] not in ("drive", "park"):
+        return False
+    if sa != sb and not (sa[0] == "park" and _same_park(sa, sb)):          # two parks at the same place are one park however each position was found (own, or carried from a drive: an estimate)
         return False
     need = (tb - ta) / 60.0
     have = bisect.bisect_left(fill, tb + 30) - bisect.bisect_left(fill, ta - 30)
