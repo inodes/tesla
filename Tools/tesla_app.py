@@ -974,7 +974,7 @@ def drivelist(wait=False):
             cams, holders, dirs = TC.all_minutes()          # Recent minutes and the minutes the car saved off into Saved / Sentry folders: one clock
             store, roots = TC._tl("A"), footage_roots()
             front = lambda st: next((os.path.join(roots[r], *dirs.get(st, "RecentClips").split("/"), st + "-front.mp4") for r in sorted(holders.get(st) or ()) if roots.get(r) and "front" in (cams.get(st) or ())), None)
-            minute_kind.probe(KINDS, [st for st in cams if store.summary(st) is None], front)          # minutes whose telemetry is not read yet are told by walking their clip, once
+            minute_kind.probe_bg(KINDS, [st for st in cams if store.summary(st) is None], front)          # minutes whose telemetry is not read yet are told by walking their clip, once, all of them, in the background (the file it keeps changing rebuilds this list)
             looked = KINDS.all()
             kinds = {}
             for st in cams:                                  # what each minute's own clip says: in gear or moving, Park at 0 km/h with telemetry, or no telemetry
@@ -998,7 +998,7 @@ def drivelist(wait=False):
         return dict(items=items, tessie=bool(tess), **app_drivelist.page_rows(act), missing=app_drivelist.missing(items, time.time(), tried=set(tessie_state().get("tried") or []) | FetchLedger(DATA_DIR).settled("drive_path")))
     d = os.path.join
     watch = [d(DATA_DIR, "drives", "drives_master.csv"), d(DATA_DIR, "charges", "charges_master.csv"), d(DATA_DIR, "drives", "deepdive"), d(DATA_DIR, "tessie_sync_state.json"), d(DATA_DIR, "fetch_ledger.json"), d(DATA_DIR, "clip_clock.json"), d(DATA_DIR, "places.json"), d(DATA_DIR, "teslacam_timeline", "index.json"),
-             d(DATA_DIR, "teslacam_ledger"), d(DATA_DIR, "teslacam_provenance"), d(DATA_DIR, "teslacam_timeline", "index.json")] + [app_sentry.index_path(DATA_DIR, "teslacam_index_%s_%s.json" % (r, k)) for r in DR.read_roles() for k in ("saved", "sentry")]
+             d(DATA_DIR, "teslacam_ledger"), d(DATA_DIR, "teslacam_provenance"), d(DATA_DIR, "teslacam_timeline", "index.json"), KINDS.path] + [app_sentry.index_path(DATA_DIR, "teslacam_index_%s_%s.json" % (r, k)) for r in DR.read_roles() for k in ("saved", "sentry")]
     return DRIVELIST.get(app_drivelist.signature(watch), build, wait)
 
 

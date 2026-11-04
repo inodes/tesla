@@ -73,6 +73,20 @@ class KindsTest(TempDirTest):
         self.assertEqual(looked, ["2026-11-04_09-03-00"])
         self.assertEqual(k2.all(), {"2026-11-04_09-00-00": "go", "2026-11-04_09-01-00": "pk", "2026-11-04_09-02-00": ""})
 
+    def test_all_unread_minutes_are_read_in_the_background_and_kept(self):
+        import time
+        d, p = self.write("drive.mp4", clip([MOVING])), self.write("park.mp4", clip([PARKED]))
+        files = {"2026-11-04_09-00-00": d, "2026-11-04_09-01-00": p, "2026-11-04_09-02-00": None}
+        k = MK.Kinds(os.path.join(self.tmp, "k.json"))
+        self.assertTrue(MK.probe_bg(k, list(files), files.get))
+        for _ in range(100):
+            if not MK._BG["on"]:
+                break
+            time.sleep(0.05)
+        self.assertEqual([k.get(s) for s in files], ["go", "pk", None])
+        self.assertEqual(MK.Kinds(os.path.join(self.tmp, "k.json")).all(), {"2026-11-04_09-00-00": "go", "2026-11-04_09-01-00": "pk"})        # kept: the file changing is what rebuilds the lists
+        self.assertFalse(MK.probe_bg(k, list(files), files.get))                # nothing left that can be read
+
 
 def stamps(first_min, n, hour=9):
     return ["2026-11-04_%02d-%02d-07" % (hour + (first_min + k) // 60, (first_min + k) % 60) for k in range(n)]

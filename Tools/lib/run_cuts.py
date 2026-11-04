@@ -78,8 +78,8 @@ def section(stamp):
         i = bisect.bisect_right(ts, t) - 1
         if i < 0:
             return None
-        s = _S[ks[i]]
-        if len(s) < 5 or s[4] is None or t > s[4]:
+        s = _S.get(ks[i])                                   # (the index may be older than the sections: a test that sets them straight)
+        if s is None or len(s) < 5 or s[4] is None or t > s[4]:
             return None
         return s[0], s[1], s[2]
 

@@ -64,3 +64,38 @@ def probe(kinds, unread, path_of, limit=300, seconds=8.0):
     if n:
         kinds.save()
     return n
+
+
+_BG = {"on": False}
+
+
+def probe_bg(kinds, unread, path_of, workers=4, save_every=24):
+    """Reads every minute of `unread` that has no answer yet, in the background, several at once (newest first), and keeps the answers as it goes (the file changing is what makes the lists rebuild
+    with what has been read). One job at a time; a call while one is running does nothing. Returns True when a job was started."""
+    todo = [x for x in sorted(unread, reverse=True) if kinds.get(x) is None and path_of(x)]
+    if not todo or _BG["on"]:
+        return False
+    _BG["on"] = True
+
+    def one(st):
+        try:
+            return st, DS.telemetry_kind(path_of(st))
+        except Exception:
+            return st, None
+
+    def job():
+        from concurrent.futures import ThreadPoolExecutor
+        try:
+            n = 0
+            with ThreadPoolExecutor(workers) as ex:
+                for st, r in ex.map(one, todo):
+                    if r is not None:
+                        kinds.put(st, r)
+                        n += 1
+                        if n % save_every == 0:
+                            kinds.save()
+            kinds.save()
+        finally:
+            _BG["on"] = False
+    threading.Thread(target=job, daemon=True).start()
+    return True
