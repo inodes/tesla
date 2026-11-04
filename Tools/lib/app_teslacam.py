@@ -670,7 +670,8 @@ class TeslaCam:
         out = dict(item=it, connected=bool(teslacam), minutes=[dict(stamp=m["stamp"], src=m["src"], ref=m["ref"], cams=m["cams"], off=round(m["t"] - it["t0"]), loc=TL.iso(m["t"], lo), at=self._short_where(store, m["stamp"])) for m in mins],
                    series=ser, pending=ser["pending"])
         if mins:
-            out["item"]["start_at"] = CC.where(mins[0]["stamp"])          # what the car wrote about where the first clip was: names the start of a drive whose beginning is not on the footage
+            out["item"]["start_at"] = CC.where(mins[0]["stamp"])          # what the car wrote into its first and last clips about where it was (the footage carries its own GPS and address): the ends of a drive or park by the dashcam alone
+            out["item"]["end_at"] = CC.where(mins[-1]["stamp"])
         if events:
             a, b = events
             ev = []
