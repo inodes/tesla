@@ -1117,10 +1117,11 @@ function clipPlayer(host,o){
   // picture, so the screen never goes blank or flashes between minutes (it looks like one continuous recording).
   const swap=()=>{const m=nx.m;nx=null;clearTimeout(swT);swT=0;const olds=vs,used=[];olds.forEach(x=>{x.onended=null;x.ontimeupdate=null;x.onerror=null});      // the minute that is being left must not fire 'ended' into the next one
     $$("#vids figure[data-c]").forEach(f=>{const nv=m[f.dataset.c],old=f.querySelector("video");
-      if(!nv||!old)return;used.push(nv);f.style.position="relative";nv.style.cssText="position:absolute;top:0;left:0;z-index:1";nv.playbackRate=+rate;f.insertBefore(nv,old.nextSibling);
+      if(!nv||!old)return;used.push(nv);f.style.position="relative";nv.style.cssText="position:absolute;top:0;left:0;z-index:1;background:transparent";nv.playbackRate=+rate;nv._pf=0;f.insertBefore(nv,old.nextSibling);      // until it has shown a picture it is see-through: the old minute stays visible behind it
+      
       const done=()=>{if(nv._ok)return;nv._ok=1;nv.style.cssText="";if(old.parentNode===f)f.removeChild(old);drop(old)};
-      const p=nv.play();if(p&&p.then)p.then(()=>{if(nv.requestVideoFrameCallback)nv.requestVideoFrameCallback(()=>done());else setTimeout(done,120)}).catch(done);
-      setTimeout(done,900)});
+      const p=nv.play();if(p&&p.then)p.then(()=>{if(nv.requestVideoFrameCallback)nv.requestVideoFrameCallback(()=>{nv._pf=1;done()});else{nv._pf=1;setTimeout(done,120)}}).catch(()=>{nv._pf=1;done()});
+      setTimeout(done,4000)});
     olds.forEach(x=>{const f=x.parentNode;if(f&&!m[f.dataset.c])drop(x)});
     if($("#stp"))$("#stp").value=si;
     vs=$$("#vids figure[data-c]").map(f=>m[f.dataset.c]).filter(Boolean);mv=vs.find(v=>v.parentNode.dataset.c==="front")||vs[0];wire();vs.forEach(x=>{x.playbackRate=+rate;x.play().catch(()=>{})})};
@@ -1156,12 +1157,13 @@ function clipPlayer(host,o){
     if(all)$$("#vids figure[data-c]").forEach(f=>f.onclick=()=>{view=f.dataset.c;lsSet("tc.view",view);seek=mv.currentTime;shell()});
     wire()};
   // nothing plays while the page is hidden (a hidden tab still decodes six streams otherwise)
-  const hide=()=>{if(!document.contains(host)){document.removeEventListener("visibilitychange",hide);dropAll();return}if(document.hidden&&mv&&!mv.paused){offp=true;vs.forEach(x=>x.pause())}else if(!document.hidden&&offp){offp=false;vs.forEach(x=>x.play().catch(()=>{}))}};
+  const hide=()=>{if(!document.contains(host)){document.removeEventListener("visibilitychange",hide);dropAll();return}if(document.hidden&&mv&&!mv.paused){offp=true;vs.forEach(x=>x.pause())}else if(!document.hidden&&offp){offp=false;vs.forEach(x=>{try{x.currentTime=x.currentTime+.01}catch(e){}x.play().catch(()=>{})})}};
   document.addEventListener("visibilitychange",hide);
   // Watchdog: a camera that has stopped moving while the others play (the browser gave up its decoder, or the read from the drive stalled) is loaded again at the same
   // second, up to 4 times a minute each; the page is left alone while paused or hidden.
   const dog=setInterval(()=>{if(!document.contains(host)){clearInterval(dog);dropAll();return}
     if(!mv||mv.paused||mv.ended||document.hidden||!vs.length)return;const now=Date.now();
+    vs.forEach(x=>{if(x._pf===0&&x.readyState>=3&&x.currentTime>1.5&&!x._nudged){x._nudged=1;try{x.currentTime=x.currentTime+.01}catch(e){}}});      // a picture the browser never painted after the swap: a small seek makes it paint
     vs.forEach(x=>{const at=x.currentTime,same=x._at!=null&&Math.abs(at-x._at)<.01;x._at=at;x._still=same?(x._still||0)+1:0;
       if(x.ended||x._still<2||!x.getAttribute("src"))return;
       x._rv=(x._rv||[]).filter(t=>now-t<60000);if(x._rv.length>=4)return;x._rv.push(now);x._still=0;
