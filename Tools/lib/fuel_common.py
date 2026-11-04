@@ -21,7 +21,9 @@ import json
 import os
 import re
 import sqlite3
+import subprocess
 import sys
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -40,6 +42,11 @@ except ImportError:
     if SCRIPT_DIR not in sys.path:
         sys.path.insert(0, SCRIPT_DIR)
     from tessie_api_common import load_config, resolve_tessie_data_home
+
+try:
+    from . import app_config
+except ImportError:
+    import app_config  # type: ignore
 
 CKAN_PACKAGE_URL = "https://data.nsw.gov.au/data/api/3/action/package_show?id=fuel-check"
 DEFAULT_USER_AGENT = "Tesla-Data-Toolkit/1.0 (macOS; FuelCheckSync)"
@@ -1266,61 +1273,206 @@ def ingest_month_data(
     return total_rows
 
 
+def _asked_day(date_val: Any) -> Optional[datetime.date]:
+    """The day asked about, or None for a date that cannot be read ("", None, "garbage")."""
+    if isinstance(date_val, datetime.datetime):
+        return date_val.date()
+    if isinstance(date_val, datetime.date):
+        return date_val
+    if date_val is None:
+        return None
+    try:
+        return datetime.date.fromisoformat(str(date_val).strip()[:10])
+    except ValueError:
+        return None
+
+
+def _lookup_price_dated(day: datetime.date, fuel_code: str, region: str, tessie_dir: Optional[str]) -> Optional[Dict[str, Any]]:
+    """The day's average, else the month's, else the newest price held (any later date), else the nearest held day."""
+    date_str = day.isoformat()
+    ym_str = date_str[:7]
+    conn = get_db_connection(tessie_dir)
+    try:
+        cur = conn.cursor()
+        cur.execute("SELECT avg_price_cents FROM fuel_daily_averages WHERE date = ? AND fuel_type = ? AND region = ?",
+                    (date_str, fuel_code, region))
+        row = cur.fetchone()
+        if row and row[0]:
+            return dict(price=row[0] / 100.0, price_date=date_str, basis="day")
+
+        cur.execute("SELECT avg_price_cents FROM fuel_monthly_averages WHERE year_month = ? AND fuel_type = ? AND region = ?",
+                    (ym_str, fuel_code, region))
+        row = cur.fetchone()
+        if row and row[0]:
+            return dict(price=row[0] / 100.0, price_date=ym_str, basis="month")
+
+        cur.execute("SELECT date, avg_price_cents FROM fuel_daily_averages WHERE fuel_type = ? AND region = ? AND avg_price_cents > 0 "
+                    "ORDER BY date DESC LIMIT 1", (fuel_code, region))
+        newest = cur.fetchone()
+        if not newest:
+            return None
+        if date_str > newest[0]:
+            return dict(price=newest[1] / 100.0, price_date=newest[0], basis="nearest")
+
+        cur.execute("SELECT date, avg_price_cents FROM fuel_daily_averages WHERE fuel_type = ? AND region = ? AND avg_price_cents > 0 "
+                    "ORDER BY ABS(julianday(date) - julianday(?)) ASC LIMIT 1", (fuel_code, region, date_str))
+        row = cur.fetchone()
+        if row:
+            return dict(price=row[1] / 100.0, price_date=row[0], basis="nearest")
+        return None
+    finally:
+        conn.close()
+
+
+def fuel_stale_days() -> int:
+    """app.fuel.stale_days: a price further than this from the date asked is out of date (also the chart's longest bridged gap)."""
+    return int(app_config.get("fuel.stale_days", app_config.DEFAULTS["fuel"]["stale_days"]))
+
+
+def price_is_current(asked_date: Any, info: Optional[Dict[str, Any]], today: Optional[datetime.date] = None) -> bool:
+    """True when `info` (from get_fuel_price_dated) is the price for the date asked: its own day, its month's average, or a day
+    within fuel.stale_days of min(date asked, today). A date after today is measured from today."""
+    if not info:
+        return True
+    day = _asked_day(asked_date)
+    if day is None:
+        return True
+    if info["basis"] == "month":
+        return info["price_date"] == day.isoformat()[:7]
+    ref = min(day, today or datetime.date.today())
+    try:
+        price_day = datetime.date.fromisoformat(info["price_date"])
+    except (TypeError, ValueError):
+        return False
+    return abs((ref - price_day).days) <= fuel_stale_days()
+
+
+def fmt_price_basis(asked_date: Any, info: Optional[Dict[str, Any]], today: Optional[datetime.date] = None) -> str:
+    """"" for a current price, else "(price of 2026-05-20)" or "(price of month 2026-05)"."""
+    if price_is_current(asked_date, info, today):
+        return ""
+    if info["basis"] == "month":
+        return f"(price of month {info['price_date']})"
+    return f"(price of {info['price_date']})"
+
+
+# Refreshing out-of-date fuel prices. The fetch is sync_fuel_history.py --sync-all (what the app's fuel sync runs too), in its own
+# process. At most one attempt per run, and not again within app.fuel.refetch_hours (last attempt kept in <data>/fuel/refresh_state.json).
+_REFRESH = {"tried": False}
+REFRESH_ENV = "TESLA_FUEL_REFRESHING"     # set in the sync's own process, so it never starts another refresh
+
+
+def mark_refresh_tried():
+    """This run is a fuel sync (or has already tried one): no refresh from here on."""
+    _REFRESH["tried"] = True
+
+
+def _run_sync_all(tessie_dir: Optional[str]) -> bool:
+    script = os.path.join(TOOLS_DIR, "commands", "sync_fuel_history.py")
+    cmd = [sys.executable, script, "--sync-all"] + (["--tessie-dir", tessie_dir] if tessie_dir else [])
+    env = dict(os.environ, **{REFRESH_ENV: "1"})
+    r = subprocess.run(cmd, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, env=env)
+    return r.returncode == 0 and "❌" not in (r.stdout or "")
+
+
+_FETCH = _run_sync_all
+
+
+def _refresh_state_path(tessie_dir: Optional[str]) -> str:
+    return os.path.join(resolve_fuel_dir(tessie_dir), "refresh_state.json")
+
+
+def refresh_fuel_prices(tessie_dir: Optional[str] = None) -> bool:
+    """Fetch newer FuelCheck prices when allowed. True when the fetch ran and reported no error. Never raises: no network,
+    a failed download or a fuel database not set up by the sync (no synced month) just gives False."""
+    try:
+        if _REFRESH["tried"] or os.environ.get(REFRESH_ENV):
+            return False
+        conn = get_db_connection(tessie_dir)
+        try:
+            synced = conn.execute("SELECT COUNT(*) FROM fuel_sync_log WHERE status = 'synced'").fetchone()[0]
+        finally:
+            conn.close()
+        if not synced:
+            return False
+        state_path = _refresh_state_path(tessie_dir)
+        hours = float(app_config.get("fuel.refetch_hours", app_config.DEFAULTS["fuel"]["refetch_hours"]))
+        try:
+            with open(state_path, "r", encoding="utf-8") as f:
+                last = float((json.load(f) or {}).get("last_attempt_epoch") or 0)
+        except (OSError, ValueError, TypeError, AttributeError):
+            last = 0.0
+        now = time.time()
+        if last and now - last < hours * 3600:
+            return False
+        _REFRESH["tried"] = True
+        tmp = state_path + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump({"last_attempt_epoch": now, "last_attempt": datetime.datetime.now().isoformat(timespec="seconds")}, f)
+        os.replace(tmp, state_path)
+        print("Refreshing fuel prices...", file=sys.stderr, flush=True)
+        ok = bool(_FETCH(tessie_dir))
+        if not ok:
+            print("Fuel price refresh failed.", file=sys.stderr, flush=True)
+        return ok
+    except Exception:
+        return False
+
+
+def get_fuel_price_dated(
+    date_val: Any,
+    fuel_type: str = "U91",
+    region: str = "all",
+    tessie_dir: Optional[str] = None,
+    refresh: bool = True,
+) -> Optional[Dict[str, Any]]:
+    """
+    The average NSW FuelCheck price ($/L) for a date, with the date it is from:
+    dict(price, price_date, basis). basis "day": that day's average; "month": the
+    month's average (price_date YYYY-MM); "nearest": the nearest held day (any date
+    after the newest price held, a future one too, gets the newest price).
+    None for a date that cannot be read, or when nothing is held for this fuel and
+    region (never a typed-in price). An out-of-date price (see price_is_current)
+    first refreshes the prices (refresh_fuel_prices; never for a future date) and is
+    looked up again.
+    """
+    day = _asked_day(date_val)
+    if day is None:
+        return None
+    fuel_code = normalize_fuel_code(fuel_type)
+    info = _lookup_price_dated(day, fuel_code, region, tessie_dir)
+    if info is None or not refresh or price_is_current(day, info) or day > datetime.date.today():
+        return info
+    if refresh_fuel_prices(tessie_dir):
+        info = _lookup_price_dated(day, fuel_code, region, tessie_dir) or info
+    return info
+
+
 def get_fuel_price(
     date_val: Any,
     fuel_type: str = "U91",
     region: str = "all",
     tessie_dir: Optional[str] = None
 ) -> Optional[float]:
-    """
-    Returns the average NSW FuelCheck price in AUD ($/L) for a given date:
-    that day's average, else that month's, else the nearest recorded day.
-    None when the fuel database holds nothing for this fuel and region
-    (never a typed-in price); callers show NO_FUEL_PRICE instead of a cost.
-    The nearest recorded day has no distance limit: a date years outside the
-    synced range gets the first or last price held. A date SQLite cannot read
-    (empty, "None") also gets a price, the first row stored.
-    """
-    fuel_code = normalize_fuel_code(fuel_type)
-    if isinstance(date_val, datetime.date) or isinstance(date_val, datetime.datetime):
-        date_str = date_val.strftime("%Y-%m-%d")
-        ym_str = date_val.strftime("%Y-%m")
-    else:
-        s = str(date_val).strip()[:10]
-        date_str = s
-        ym_str = s[:7]
+    """The price of get_fuel_price_dated() as a float ($/L), or None (callers show NO_FUEL_PRICE)."""
+    info = get_fuel_price_dated(date_val, fuel_type, region, tessie_dir)
+    return info["price"] if info else None
 
-    conn = get_db_connection(tessie_dir)
-    try:
-        cur = conn.cursor()
 
-        cur.execute("""
-        SELECT avg_price_cents FROM fuel_daily_averages
-        WHERE date = ? AND fuel_type = ? AND region = ?
-        """, (date_str, fuel_code, region))
-        row = cur.fetchone()
-        if row and row[0]:
-            return row[0] / 100.0
-
-        cur.execute("""
-        SELECT avg_price_cents FROM fuel_monthly_averages
-        WHERE year_month = ? AND fuel_type = ? AND region = ?
-        """, (ym_str, fuel_code, region))
-        row = cur.fetchone()
-        if row and row[0]:
-            return row[0] / 100.0
-
-        cur.execute("""
-        SELECT avg_price_cents FROM fuel_daily_averages
-        WHERE fuel_type = ? AND region = ?
-        ORDER BY ABS(julianday(date) - julianday(?)) ASC LIMIT 1
-        """, (fuel_code, region, date_str))
-        row = cur.fetchone()
-        if row and row[0]:
-            return row[0] / 100.0
+def fmt_ref_prices(asked_date: Any, infos: List[Tuple[str, Optional[Dict[str, Any]]]]) -> Optional[str]:
+    """"U91: $2.05/L  |  P98: ...", each out-of-date price followed by its date (once at the end when they share it); None when none held."""
+    if all(i is None for _, i in infos):
         return None
-    finally:
-        conn.close()
+    notes = [fmt_price_basis(asked_date, i) for _, i in infos]
+    shared = len({n for n in notes if n}) == 1 and all(n or i is None for n, (_, i) in zip(notes, infos))
+    parts = []
+    for (label, i), n in zip(infos, notes):
+        p = fmt_price_per_l(i["price"] if i else None)
+        parts.append(f"{label}: {p}" + (f" {n}" if n and not shared else ""))
+    out = "  |  ".join(parts)
+    if shared:
+        out += " " + next(n for n in notes if n)
+    return out
 
 
 def compute_drive_urban_highway_split(
@@ -1415,7 +1567,8 @@ def calculate_single_vehicle_running_cost(
     Dynamically weights consumption using urban_pct and highway_pct (derived from drive profile).
     """
     fuel_type = vehicle_spec.get("fuel_type", "U91")
-    price_per_l = get_fuel_price(start_date, fuel_type=fuel_type, tessie_dir=tessie_dir)
+    price_info = get_fuel_price_dated(start_date, fuel_type=fuel_type, tessie_dir=tessie_dir)
+    price_per_l = price_info["price"] if price_info else None
 
     combined_l, urban_l, highway_l = vehicle_l_per_100km(vehicle_spec)
 
@@ -1453,6 +1606,8 @@ def calculate_single_vehicle_running_cost(
         "highway_pct": h_p,
         "split_desc": split_desc,
         "fuel_price_per_l": price_per_l,
+        "fuel_price_info": price_info,
+        "fuel_price_note": fmt_price_basis(start_date, price_info),   # "" for a current price
         "litres_used": litres_used,
         "fuel_cost": fuel_cost,
         "maintenance_cost": distance_km * maint_per_km,
@@ -1553,9 +1708,7 @@ def format_drive_fuel_comparison(
         distance_km, duration_mins=duration_mins, raw_samples=raw_samples
     )
 
-    p_u91 = get_fuel_price(d_str, "U91", tessie_dir=tessie_dir)
-    p_p98 = get_fuel_price(d_str, "P98", tessie_dir=tessie_dir)
-    p_dl = get_fuel_price(d_str, "Diesel", tessie_dir=tessie_dir)
+    ref_infos = [(label, get_fuel_price_dated(d_str, ft, tessie_dir=tessie_dir)) for label, ft in (("U91", "U91"), ("P98", "P98"), ("Diesel", "Diesel"))]
 
     # The EV's own cost: the drive's kWh at what the energy in the battery cost at that moment (lib/battery_cost_basis.py, from the real
     # charges). No price (None) when the drive's time or the charges are not known: never an assumed rate.
@@ -1571,10 +1724,7 @@ def format_drive_fuel_comparison(
     lines = []
     lines.append(f"{indent}\033[1m\033[93m⛽ COMPARATIVE ICE FUEL RUNNING COSTS\033[0m \033[90m(Historical AU Baseline on {d_str} · {split_desc})\033[0m:")
     
-    if p_u91 is None and p_p98 is None and p_dl is None:
-        refs = NO_FUEL_PRICE
-    else:
-        refs = f"U91: {fmt_price_per_l(p_u91)}  |  P98: {fmt_price_per_l(p_p98)}  |  Diesel: {fmt_price_per_l(p_dl)}"
+    refs = fmt_ref_prices(d_str, ref_infos) or NO_FUEL_PRICE
     price_hdr = f"{indent}   \033[90mRef Fuel Prices: {refs}\033[0m"
     if ev_cost is not None and kwh_used is not None:
         price_hdr += f"   \033[36m⚡ EV Energy: {kwh_used:.2f} kWh (~${ev_cost:.2f})\033[0m"
@@ -1633,7 +1783,8 @@ def format_drive_fuel_comparison(
         if fp is None:
             cost_s = f"{litres_s} · \033[1m{fc_s}\033[0m"
         else:
-            cost_s = f"{litres_s} @ {fmt_price_per_l(fp)} = \033[1m{fc_s}\033[0m"
+            note = f" {c['fuel_price_note']}" if c.get("fuel_price_note") else ""
+            cost_s = f"{litres_s} @ {fmt_price_per_l(fp)}{note} = \033[1m{fc_s}\033[0m"
         row = f"{indent}   • {badge}\033[1m{name:<44}\033[0m \033[90m({ft:<6} · {eff_s})\033[0m: {cost_s}{sav_str}"
         lines.append(row)
 

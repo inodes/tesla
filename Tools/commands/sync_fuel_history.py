@@ -58,6 +58,10 @@ try:
         fetch_ckan_resources,
         get_db_connection,
         get_fuel_price,
+        get_fuel_price_dated,
+        fmt_price_basis,
+        fmt_ref_prices,
+        mark_refresh_tried,
         get_sync_status_summary,
         ingest_month_data,
         parse_xlsx_stream,
@@ -78,6 +82,10 @@ except ImportError:
         fetch_ckan_resources,
         get_db_connection,
         get_fuel_price,
+        get_fuel_price_dated,
+        fmt_price_basis,
+        fmt_ref_prices,
+        mark_refresh_tried,
         get_sync_status_summary,
         ingest_month_data,
         parse_xlsx_stream,
@@ -110,9 +118,7 @@ def print_status(tessie_dir: Optional[str] = None):
 
  # Sample current prices
     today_str = datetime.date.today().strftime("%Y-%m-%d")
-    u91_p = get_fuel_price(today_str, "U91", "all", tessie_dir)
-    p98_p = get_fuel_price(today_str, "P98", "all", tessie_dir)
-    dl_p = get_fuel_price(today_str, "DL", "all", tessie_dir)
+    ref_infos = [(label, get_fuel_price_dated(today_str, ft, "all", tessie_dir)) for label, ft in (("U91", "U91"), ("P98", "P98"), ("Diesel", "DL"))]
 
     title = "⛽ NSW FUELCHECK HISTORICAL PRICING STATUS"
     section1 = [
@@ -122,10 +128,7 @@ def print_status(tessie_dir: Optional[str] = None):
         f"🏪 Station Registry:  {summary['station_count']:,} unique service stations indexed",
         f"📅 Historical Range:  {summary['date_range']} ({summary['daily_records']:,} daily averages)",
     ]
-    if u91_p is None and p98_p is None and dl_p is None:
-        refs = f"{NO_FUEL_PRICE} (run --sync-all)"
-    else:
-        refs = f"U91: {fmt_price_per_l(u91_p)}  |  P98: {fmt_price_per_l(p98_p)}  |  Diesel: {fmt_price_per_l(dl_p)}"
+    refs = fmt_ref_prices(today_str, ref_infos) or f"{NO_FUEL_PRICE} (run --sync-all)"
     section2 = [f"📊 Latest Reference Prices:  {refs}"]
 
     all_lines = [title] + section1 + section2
@@ -152,6 +155,7 @@ def sync_resources(
     pace: float = 0.5,
     tessie_dir: Optional[str] = None
 ):
+    mark_refresh_tried()   # this run is the fetch: the status printed after it does not start another
     print("🔍 Discovering monthly datasets on Data.NSW CKAN...")
     try:
         all_resources = fetch_ckan_resources()
@@ -232,8 +236,9 @@ def sync_resources(
 
 
 def query_price(date_str: str, fuel_type: str = "U91", region: str = "all", tessie_dir: Optional[str] = None):
-    price = get_fuel_price(date_str, fuel_type, region, tessie_dir)
-    price_s = f"${price:.3f}/L" if price is not None else f"{NO_FUEL_PRICE} (run --sync-all)"
+    info = get_fuel_price_dated(date_str, fuel_type, region, tessie_dir)
+    note = fmt_price_basis(date_str, info)
+    price_s = (f"${info['price']:.3f}/L" + (f" {note}" if note else "")) if info else f"{NO_FUEL_PRICE} (run --sync-all)"
     print(f"\n⛽ Reference Fuel Price for {date_str} [{fuel_type.upper()}] ({region}): {price_s}")
 
  # Also show multi-vehicle ICE comparison for standard 100km trip
@@ -250,7 +255,8 @@ def query_price(date_str: str, fuel_type: str = "U91", region: str = "all", tess
         if f_price is None:
             print(f"  • {name:<46}: {l_s} {'[' + f_type + ']':<8} · {c_s}")
         else:
-            print(f"  • {name:<46}: {l_s} [{f_type:<4} @ {fmt_price_per_l(f_price)}] = {c_s}")
+            note = f" {v['fuel_price_note']}" if v.get("fuel_price_note") else ""
+            print(f"  • {name:<46}: {l_s} [{f_type:<4} @ {fmt_price_per_l(f_price)}{note}] = {c_s}")
 
 
 def recompute_all(tessie_dir: Optional[str] = None):
