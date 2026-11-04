@@ -1,10 +1,10 @@
-"""minute_kind.py - is a Recent minute a drive or a park, from the clip itself (the dashcam first, no other record).
+"""minute_kind.py - what a Recent minute says about the car, from the clip itself (the dashcam first, no other record).
 
-A clip that carries telemetry was written while driving; one with none was written while parked. A minute whose telemetry has not been read yet (the Metadata step has
-not run) is told by looking at the first frames of its front camera file (dashcam_series.has_telemetry), once; the answer is kept. The six cameras of a minute stay together
-and a file is never cut: the minute is the unit. run_cuts then lets a parked run stay parked, and a drive stay a drive, until the answer changes.
+"go" = telemetry with the car in gear or moving, "pk" = telemetry with the car in Park at 0 km/h (awake and stationary), "" = no telemetry (parked). A minute whose telemetry has not been
+read yet (the Metadata step has not run) is told by walking its front camera file (dashcam_series.telemetry_kind), once; the answer is kept. The six cameras of a minute stay together
+and a file is never cut: the minute is the unit. run_cuts turns the minutes into drives and parks.
 
-    Kinds(path).get(stamp)            -> True (drive), False (parked) or None (not looked at, or the file could not be read)
+    Kinds(path).get(stamp)            -> "go", "pk", "" or None (not looked at, or the file could not be read)
     probe(kinds, unread, path_of, limit, seconds) -> looks at up to `limit` minutes of `unread` (newest first) that path_of(stamp) can give a file for; returns how many it looked at
 """
 import json
@@ -21,7 +21,7 @@ class Kinds:
         self.lock = threading.Lock()
         try:
             with open(path, encoding="utf-8") as f:
-                self.d = {k: bool(v) for k, v in json.load(f).items()}
+                self.d = {k: v for k, v in json.load(f).items() if v in ("go", "pk", "")}
         except (OSError, ValueError):
             self.d = {}
 
@@ -32,9 +32,9 @@ class Kinds:
         with self.lock:
             return dict(self.d)
 
-    def put(self, stamp, drive):
+    def put(self, stamp, kind):
         with self.lock:
-            self.d[stamp] = bool(drive)
+            self.d[stamp] = kind
 
     def save(self):
         with self.lock:
@@ -57,7 +57,7 @@ def probe(kinds, unread, path_of, limit=300, seconds=8.0):
         p = path_of(st)
         if not p:
             continue
-        r = DS.has_telemetry(p)
+        r = DS.telemetry_kind(p)
         if r is not None:
             kinds.put(st, r)
             n += 1

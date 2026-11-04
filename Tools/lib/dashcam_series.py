@@ -88,10 +88,11 @@ def _movie_duration(f, start, end):
     return None
 
 
-def has_telemetry(path, max_nals=None):
-    """Does this clip carry telemetry anywhere in it? A clip is a whole minute that is never cut: one that holds any SEI NAL unit (speed, gear, GPS ... one per frame) was a drive, even when the
-    drive began part-way through the minute. Hops over the NAL units without reading the pictures and stops at the first SEI: True when one is found, False when there is none in the
-    whole clip (written while parked) or in the first `max_nals` units when that is given, None when the file cannot be read as a movie."""
+def telemetry_kind(path, max_nals=None, moving_kmh=1.0):
+    """What a clip says about the car, from its telemetry (one SEI NAL unit per frame): "go" when the car is in gear or moving at any point of the minute, "pk" when there is telemetry but
+    the car stays in Park at 0 km/h throughout (awake and stationary), "" when there is none (written while parked), None when the file cannot be read as a movie. A clip is a whole
+    minute that is never cut, so a drive that begins or ends part-way through it is "go". Hops over the NAL units without reading the pictures and stops at the first frame in gear or moving."""
+    seen_tele = False
     try:
         with open(path, "rb") as f:
             size = os.fstat(f.fileno()).st_size
@@ -114,13 +115,26 @@ def has_telemetry(path, max_nals=None):
                             while i < len(nal) and nal[i] == 0x42:
                                 i += 1
                             if i < len(nal) - 1 and nal[i] == 0x69:
-                                return True
+                                try:
+                                    m = _protobuf(nal[i + 1:-1].replace(b"\x00\x00\x03", b"\x00\x00"))
+                                except Exception:
+                                    m = {}
+                                if m:
+                                    seen_tele = True
+                                    if int(m.get(2, 0)) != 0 or abs(float(m.get(4, 0.0)) * 3.6) > moving_kmh:
+                                        return "go"
                     p += 4 + ln
                     seen += 1
-                return False
+                return "pk" if seen_tele else ""
     except OSError:
         return None
     return None
+
+
+def has_telemetry(path, max_nals=None):
+    """True when the clip carries telemetry anywhere in it (parked or not), False when it has none, None when it cannot be read."""
+    k = telemetry_kind(path, max_nals)
+    return None if k is None else k != ""
 
 
 def read_series(path):

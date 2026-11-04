@@ -974,8 +974,15 @@ def drivelist(wait=False):
             cams, holders = TC._ledger_recent(None)
             store, roots = TC._tl("A"), footage_roots()
             front = lambda st: next((os.path.join(roots[r], "RecentClips", st + "-front.mp4") for r in sorted(holders.get(st) or ()) if roots.get(r) and "front" in (cams.get(st) or ())), None)
-            minute_kind.probe(KINDS, [st for st in cams if store.summary(st) is None], front)          # minutes whose telemetry is not read yet: a drive or a park from the first frames of the clip
-            run_cuts.update(cams, cam, moves, upto, KINDS.all())         # where a Recent recording is cut into its drive and parked sections (the TeslaCam list): the clips first, Tessie only places a park
+            minute_kind.probe(KINDS, [st for st in cams if store.summary(st) is None], front)          # minutes whose telemetry is not read yet are told by walking their clip, once
+            looked = KINDS.all()
+            kinds = {}
+            for st in cams:                                  # what each minute's own clip says: in gear or moving, Park at 0 km/h with telemetry, or no telemetry
+                sm = store.summary(st)
+                c = looked.get(st) if sm is None else "" if not isinstance(sm, dict) else "go" if (sm.get("vmax") or 0) > 1 or sm.get("mov") else "pk"
+                if c is not None:
+                    kinds[st] = c
+            run_cuts.update(cams, cam, moves, upto, kinds)         # where a Recent recording is cut into its drive and parked sections (the TeslaCam list): the clips first, Tessie only aligns an edge
         except Exception:
             pass
         items = app_drivelist.merge(tess, [x for x in act if x["k"] == "charge"], cam, [x for x in act if x["k"] == "idle"])
