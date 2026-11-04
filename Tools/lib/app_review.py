@@ -158,7 +158,7 @@ class Review:
 
     def minute_signs(self, stamps):
         """{clip stamp: [sign]} for the minutes read that held signs; a sign is one reading seen in several stills (same text and side within merge_s):
-        dict(text, side, kind, s0, s1 (seconds into the minute), n, conf, f (the picture of it, /review/<f>))."""
+        dict(text, side, kind, s0, s1 (seconds into the minute), n, conf, f (the picture of it, /review/<f>), times (a school zone plate's 24-hour ranges, else []))."""
         out = {}
         with _LOCK:
             for st in stamps:
@@ -167,15 +167,19 @@ class Review:
                 for d in rows:
                     g = next((o for o in reversed(groups) if o["text"] == d["text"] and o["side"] == d["side"] and d["s"] - o["s1"] <= OPTS["merge_s"]), None)
                     if g is None:
-                        g = dict(text=d["text"], side=d["side"], kind=d.get("kind", ""), s0=d["s"], s1=d["s"], n=0, conf=-1, f="")
+                        g = dict(text=d["text"], side=d["side"], kind=d.get("kind", ""), s0=d["s"], s1=d["s"], n=0, conf=-1, f="", _tm={})
                         groups.append(g)
                     g["n"] += 1
                     g["s1"] = d["s"]
+                    if d.get("tm"):
+                        g["_tm"][tuple(d["tm"])] = g["_tm"].get(tuple(d["tm"]), 0) + max(1, d.get("tc", 0))
                     sc = d["c"] + 1.5 * min(d.get("r", 0), 120)          # the picture shown is the biggest (closest to the sign) of those read surely: the most pixels to read it from
                     if sc > g.get("_sc", -1):
                         g.update(conf=round(d["c"]), f=d.get("f", ""), _sc=sc)
                 for g in groups:
                     g.pop("_sc", None)
+                    tm = g.pop("_tm")
+                    g["times"] = list(max(tm, key=lambda k: tm[k])) if tm else []      # a school zone's hours ("08:00-09:30"), as most of its stills agree
                 if groups:
                     out[st] = groups
         return out

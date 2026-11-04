@@ -1007,7 +1007,17 @@ function lostBox(box,s){
 const hudDoubt=(lim,spd)=>{const a=[],b=[];for(let k=-8;k<=0;k++){const x=spd(k);if(x!=null)a.push(x)}for(let k=2;k<=14;k++){const x=spd(k);if(x!=null)b.push(x)}
   if(a.length<4||b.length<4)return null;const before=a.reduce((p,q)=>p+q,0)/a.length,keep=Math.min(...b);return before>=50&&lim<=before*.75&&keep>=before*.9};
 // doubt(stamp, sign) says whether a sign was one the car did not answer (not held as the limit); the answer is kept on the sign once it can be given
-const hudLimit=(SGV,stamps,si,t,doubt)=>{for(let i=si;i>=0&&i>=si-60;i--){const L=(SGV[stamps[i]]||[]).filter(g=>g.kind!=="school"&&/^\d{2,3}$/.test(String(g.text))&&(i<si||g.s0<=t+.5)&&!hudDoubtOf(doubt,stamps[i],g)).sort((a,b)=>b.s0-a.s0);if(L.length)return +L[0].text}return null};
+const hudLimit=(SGV,stamps,si,t,doubt,skip)=>{for(let i=si;i>=0&&i>=si-60;i--){const L=(SGV[stamps[i]]||[]).filter(g=>g.kind!=="school"&&/^\d{2,3}$/.test(String(g.text))&&(i<si||g.s0<=t+.5)&&!(skip&&skip(g))&&!hudDoubtOf(doubt,stamps[i],g)).sort((a,b)=>b.s0-a.s0);if(L.length)return +L[0].text}return null};
+// A school zone: the latest school plate read in the last 150 s, the limit sign read within 8 s of it (the zone's own limit) and the hours on the plate (g.times, 24-hour "08:00-09:30"). A later limit
+// sign of another number ends the zone. abs(i,g) = the seconds of a reading on one clock; clock = {min: minutes since midnight now}; sdOf(i,g) = is that day a school day there (true / false / null unknown).
+// state: "on" (a school day and inside the hours), "off" (known, and not now), "unknown" (no hours read, or no calendar for that state) -> {state, sp (the zone's limit sign reading), lim} or null (not in a zone)
+const hudSchool=(SGV,stamps,si,t,abs,clock,sdOf)=>{const now=abs(si,{s0:t});let best=null;
+  for(let i=si;i>=0&&i>=si-3;i--)for(const g of SGV[stamps[i]]||[]){if(g.kind!=="school")continue;const a=abs(i,g);if(a>now+.5||now-a>150)continue;if(!best||a>best.a)best={i,g,a}}
+  if(!best)return null;let sp=null;
+  for(let i=Math.max(0,best.i-1);i<=Math.min(stamps.length-1,best.i+1);i++)for(const g of SGV[stamps[i]]||[]){if(g.kind==="school"||!/^\d{2,3}$/.test(String(g.text)))continue;const d=Math.abs(abs(i,g)-best.a);if(d<=8&&(!sp||d<sp.d))sp={g,d}}
+  if(sp)for(let i=best.i;i<=si&&i<stamps.length;i++)for(const g of SGV[stamps[i]]||[]){if(g.kind==="school"||!/^\d{2,3}$/.test(String(g.text))||g===sp.g)continue;const a=abs(i,g);if(a>best.a+8&&a<=now+.5&&g.text!==sp.g.text)return null}
+  const tm=best.g.times||[],mins=x=>{const m=/^(\d\d):(\d\d)-(\d\d):(\d\d)$/.exec(x);return m?[+m[1]*60+ +m[2],+m[3]*60+ +m[4]]:null},hrs=tm.map(mins).filter(Boolean),inH=hrs.some(r=>clock.min>=r[0]&&clock.min<r[1]),sd=sdOf?sdOf(best.i,best.g):null;
+  return{state:!hrs.length||sd==null?"unknown":(sd&&inH?"on":"off"),sp:sp?sp.g:null,lim:sp?+sp.g.text:null}};
 const hudDoubtOf=(doubt,st,g)=>{if(!doubt)return false;if(g._d===undefined){const r=doubt(st,g);if(r===null||r===undefined)return false;g._d=!!r}return g._d};
 // the indicator bits of a second (1 left, 2 right, both = hazards) -> which arrows flash
 const hudBlink=b=>({l:!!(+b&1),r:!!(+b&2)});
@@ -1042,12 +1052,16 @@ function clipPlayer(host,o){
   // the overlay on the front camera: the speed limit sign (top middle), the speed (bottom middle) and the indicators (top corners, flashing while they are on). It is sized in 1 % of the picture's width
   // (its font-size), so it scales with the video; where the video is not on screen (a minute with no video) there is none.
   function hudOn(){return lsGet("tc.hud","1")==="1"}
+  // is that day a school day in the state of the spot (asked once per day and place: /api/schoolday), kept here; undefined until the answer is in
+  const SDAY={},hudSchoolNow=()=>{const st=stamps[si],hms=shownAt(st,mv.currentTime);return hudSchool(SGV,stamps,si,mv.currentTime,(i,g)=>stMs(stamps[i])/1000+g.s0,{min:+hms.slice(0,2)*60+ +hms.slice(3,5)},(i,g)=>{
+    const w=o.where&&o.where(stamps[i],g.s0);if(!w)return null;const day=LOC(stamps[i]).slice(0,10),k=day+"|"+(+w.lat).toFixed(1)+"|"+(+w.lon).toFixed(1);
+    if(!(k in SDAY)){SDAY[k]=undefined;fetch("/api/schoolday?date="+day+"&lat="+w.lat+"&lon="+w.lon).then(r=>r.json()).then(j=>{SDAY[k]=j.school_day==null?null:!!j.school_day;hudUpd()}).catch(()=>{SDAY[k]=null})}return SDAY[k]})};
   const hudUpd=()=>{if(!o.tele||!mv)return;const fig=$('#vids figure[data-c="front"]'),vd=fig&&fig.querySelector("video");if(!vd)return;let h=fig.querySelector(".hud");
     if(!hudOn()){if(h)h.remove();return}
     if(!h){h=document.createElement("div");h.className="hud";h.innerHTML='<div class="hsg" hidden><b></b></div><div class="hsp" hidden><b></b><small>km/h</small></div><svg class="hbk hl" viewBox="0 0 24 24"><path d="M2 12l9-8v5h11v6H11v5z"/></svg><svg class="hbk hr" viewBox="0 0 24 24"><path d="M2 12l9-8v5h11v6H11v5z"/></svg>';fig.appendChild(h)}
     const b=hudBox(vd.clientWidth,vd.clientHeight,vd.videoWidth,vd.videoHeight),st=h.style;st.left=(vd.offsetLeft+b.x)+"px";st.top=(vd.offsetTop+b.y)+"px";st.width=b.w+"px";st.height=b.h+"px";st.fontSize=(b.w/100)+"px";
-    const T=o.tele(stamps[si],mv.currentTime),lim=hudLimit(SGV,stamps,si,mv.currentTime,o.doubt),sg=h.querySelector(".hsg"),sp=h.querySelector(".hsp"),bk=hudBlink(T?T.blk:0);
-    sg.hidden=lim==null;if(lim!=null){const n=sg.firstChild;if(n.textContent!==String(lim)){n.textContent=lim;sg.classList.toggle("d3",lim>=100)}}
+    const T=o.tele(stamps[si],mv.currentTime),sc=hudSchoolNow(),lim=hudLimit(SGV,stamps,si,mv.currentTime,o.doubt,sc&&sc.state==="off"?g=>g===sc.sp:null),sg=h.querySelector(".hsg"),sp=h.querySelector(".hsp"),bk=hudBlink(T?T.blk:0);
+    sg.hidden=lim==null;sg.classList.toggle("sch",lim!=null&&!!sc&&sc.state==="on"&&lim===sc.lim);if(lim!=null){const n=sg.firstChild;if(n.textContent!==String(lim)){n.textContent=lim;sg.classList.toggle("d3",lim>=100)}}
     sp.hidden=!T||T.v==null;if(T&&T.v!=null)sp.firstChild.textContent=Math.round(T.v);
     h.querySelector(".hl").classList.toggle("on",bk.l);h.querySelector(".hr").classList.toggle("on",bk.r)};
   // the signs read in these minutes (speed limits): shown beside the time while the video is at them
@@ -2417,6 +2431,7 @@ async function teslaDriveBody(host,role,fetchSeg,places,opts){
       player=clipPlayer($("#dvid"),{stamps:mm.map(m=>m.stamp),cams,syn,len,still:stillSrc,trig:opts.trig,
         hot:opts.hot,signInfo,doubt:(st,g)=>{const sr=S(),m=meta[st];if(!sr||!m)return null;const t=m.off+g.s0;return hudDoubt(+g.text,k=>{const x=sr.v[Math.round(t+k)];return x==null?null:x})},
         tele:(st,sec)=>{const sr=S(),m=meta[st];if(!sr||!m)return null;const i=m.off+Math.floor(sec);return sr.v[i]==null?null:{v:sr.v[i],blk:sr.blk[i]||0}},
+        where:(st,sec)=>{const sr=S(),m=meta[st];if(!sr||!m||!sr.lat)return null;const i=m.off+Math.floor(sec);return sr.lat[i]!=null&&sr.lon[i]!=null?{lat:sr.lat[i],lon:sr.lon[i]}:null},
         url:(st,c)=>meta[st].src==="saved"?`/footage/${role}/SavedClips/${meta[st].ref}/${st}-${c}.mp4`:meta[st].src==="sentry"?`/footage/${role}/SentryClips/${meta[st].ref}/${st}-${c}.mp4`:`/footage/${role}/RecentClips/${st}-${c}.mp4`,
         loc:Object.fromEntries(mm.map(m=>[m.stamp,m.loc])),onAt:(st,sec)=>cursor(meta[st].off+sec),head:`${it().kind==="drive"?"Click the map or the chart to jump there; the dot and the line follow the video.":"The car was not moving, so there is no map."} Each minute plays on to the next, Recent and Saved alike; where there is no video the cameras are black and the clock runs on.`})}
     else if(!player&&!playable.length&&d.minutes.length){const mm=d.minutes,meta={};mm.forEach(m=>{meta[m.stamp]=m});      // the video is on no connected drive: its stills play in the same place, one picture where the video shows six, with the same map and chart
