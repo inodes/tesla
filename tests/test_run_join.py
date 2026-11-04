@@ -51,6 +51,21 @@ class JoinTest(unittest.TestCase):
             out = AT.join_runs([run(0, 20), run(31, 40), run(41, 50)], fill(21, 30))
         self.assertEqual([len(r["stamps"]) for r in out], [21 + 10 + 10])                              # the second and third follow on by themselves
 
+    def test_parks_at_one_place_join_whatever_their_positions(self):                      # 4 Nov: Ren's Soccer, Sentry events in the middle of one continuous park
+        sec = {stamp(m): ("park", -33.8000, 151.1000) for m in range(0, 21)}
+        sec.update({stamp(m): ("park", -33.8003, 151.1002) for m in range(31, 41)})          # carried / estimated, a few metres off
+        with mock.patch.object(AT.RC, "section", lambda st: sec.get(st)):
+            self.assertEqual(len(AT.join_runs([run(0, 20), run(31, 40)], fill(21, 30))), 1)
+        sec.update({stamp(m): ("park", None, None) for m in range(31, 41)})                  # no position of its own
+        with mock.patch.object(AT.RC, "section", lambda st: sec.get(st)):
+            self.assertEqual(len(AT.join_runs([run(0, 20), run(31, 40)], fill(21, 30))), 1)
+
+    def test_parks_at_two_places_are_not_joined(self):
+        sec = {stamp(m): ("park", -33.8000, 151.1000) for m in range(0, 21)}
+        sec.update({stamp(m): ("park", -33.9000, 151.2000) for m in range(31, 41)})          # 14 km away: a drive between them that was saved
+        with mock.patch.object(AT.RC, "section", lambda st: sec.get(st)):
+            self.assertEqual(len(AT.join_runs([run(0, 20), run(31, 40)], fill(21, 30))), 2)
+
     def test_unknown_section_is_never_joined(self):
         with mock.patch.object(AT.RC, "section", lambda st: None):
             self.assertEqual(len(AT.join_runs([run(0, 5), run(8, 12)], fill(6, 7))), 2)
