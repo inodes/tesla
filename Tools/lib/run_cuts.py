@@ -105,9 +105,11 @@ def pos(stamp):
     return [s[1], s[2]] if s and s[1] is not None else None
 
 
-def compute(stamps, items, moves=None, moves_upto=0):
+def compute(stamps, items, moves=None, moves_upto=0, kinds=None):
     """{first minute of every section: [kind, lat, lon, cut, last minute, estimated]} for these minutes and the timeline's items.
-    moves: the drives some other record (Tessie) has, [dict(t0, t1, p0, p1)], or None when there is none; moves_upto: the time up to which that record is complete."""
+    moves: the drives some other record (Tessie) has, [dict(t0, t1, p0, p1)], or None when there is none; moves_upto: the time up to which that record is complete.
+    kinds: {stamp: True (the clip carries telemetry: a drive) | False (none: parked)} for minutes whose telemetry is not read yet (minute_kind), told from the clip itself. The dashcam comes first:
+    the other record only gives a position to a park and is never what cuts a run."""
     its = sorted((i for i in items if i.get("kind") in ("drive", "stopped", "parked", "recording")), key=lambda i: i["t0"])
     t0s = [i["t0"] for i in its]
 
@@ -136,6 +138,9 @@ def compute(stamps, items, moves=None, moves_upto=0):
     for st in sorted(stamps, key=CC.utc):
         t = CC.utc(st)
         it = moving(t) or at(t + 30)
+        pk = kinds.get(st) if kinds and (it is None or it["kind"] == "recording") else None       # an unread minute: its own file says
+        if pk is not None:
+            it = dict(kind="drive" if pk else "stopped", id="clip", t0=t, t1=t + 60)
         k = None
         if it and it["kind"] == "drive":
             k = ("drive", it["id"])
@@ -145,6 +150,8 @@ def compute(stamps, items, moves=None, moves_upto=0):
             k = ("park", "")                              # minutes nobody read after a drive (parked at Home: they are left alone, so never read) are the car parked, not more of the drive
         new = last is None or t - last > GAP
         cut = False
+        if k is not None and key is not None and k != key and k[0] == "drive" and key[0] == "drive" and "clip" in (k[1], key[1]):
+            k = key if key[1] != "clip" else k                  # a drive known only from its clips and the same drive read in part: one drive
         if not new and k is not None and key is not None and k != key:
             cut = True
         if new or cut:
@@ -220,10 +227,29 @@ def _carry(v, st, n, order, out, ref, moves, moves_upto):
             v[5:] = [True]
 
 
-def update(stamps, items, moves=None, moves_upto=0):
+def disagreements(kinds, moves, moves_upto, margin_s=150, park_s=45):
+    """Where the other record (Tessie) does not confirm what the clips say: [(stamp, "clip drive, no drive of Tessie's" | "clip parked, Tessie drove")] for the minutes Tessie is complete for
+    (up to moves_upto). kinds = {stamp: True drive / False parked}, the clips' own answer for each minute. The car sends telemetry from when it is awake in gear, a little before Tessie's trip
+    starts and after it ends, so a clip drive within `margin_s` of a drive of Tessie's is confirmed; a clip parked is contradicted only when a drive of Tessie's covers `park_s` seconds of it.
+    The cuts are the clips' own; this says when the two disagree, so the logic can be looked at where it is wrong."""
+    mv = sorted((m for m in (moves or []) if m.get("t0") and m.get("t1")), key=lambda m: m["t0"])
+    out = []
+    for st, drive in sorted(kinds.items(), key=lambda kv: CC.utc(kv[0])):
+        t = CC.utc(st)
+        if t + 60 > moves_upto:
+            continue
+        if drive:
+            if not any(m["t0"] - margin_s < t + 60 and m["t1"] + margin_s > t for m in mv):
+                out.append((st, "clip drive, no drive of Tessie's"))
+        elif any(min(m["t1"], t + 60) - max(m["t0"], t) >= park_s for m in mv):
+            out.append((st, "clip parked, Tessie drove"))
+    return out
+
+
+def update(stamps, items, moves=None, moves_upto=0, kinds=None):
     """Work the cuts out again; keeps them, and tells the listeners when they changed."""
     global _S, _VER
-    new = compute(stamps, items, moves, moves_upto)
+    new = compute(stamps, items, moves, moves_upto, kinds)
     with _LOCK:
         if new == _S:
             return False
