@@ -1235,11 +1235,19 @@ def main():
                 pass
             webview.start(menu=menu) if menu else webview.start()
             return 0
-        except ImportError:
-            print("(pywebview not installed: no window. For a native window: pip install pywebview)")
         except Exception as e:
-            print("(window failed: %s; serving without a window)" % e)
-    # never open a browser by ourselves (a restart must not pop a tab): the URL is printed above, the server just keeps running
+            # no window and no browser: say so loudly and quit (a silent sleeping process shows as "Application Not Responding")
+            import traceback
+            msg = "Tesellate could not open its window: %s" % ("pywebview is not installed" if isinstance(e, ImportError) else e)
+            print(msg, flush=True)
+            traceback.print_exc()
+            if sys.platform == "darwin":
+                try:
+                    subprocess.run(["osascript", "-e", 'display alert "Tesellate" message %s' % json.dumps(msg[:300] + "  (details: ~/Library/Logs/tesla_app.log)")], timeout=60)
+                except Exception:
+                    pass
+            return 1
+    # --browser: no window on purpose; never open a browser by ourselves, the URL is printed above
     print("Serving without a window; open %s yourself if you want it in a browser." % url, flush=True)
     try:
         while True:
