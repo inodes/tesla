@@ -20,6 +20,8 @@ the block). A change takes effect the next time the app or script reads it (the 
                                                    clips read at once (CPU work, one process each); days_newest_first / rows_newest_first = the order of the day blocks and of the rows inside a day; place_filters = saved places that get a filter button on the TeslaCam page (an event or a parked recording at that place); ignore_places = saved places where a parked Recent recording or a Sentry event is left alone (no stills, nothing to update; it can only be deleted)
   app.review.refine_step_s / refine_pad_s / refine_conf        the second look at a sign (Read what is missing, "Checking signs"): a still this often, this long around it; a sign read at least this surely in more than one still is not looked at again
   app.fuel.auto_sync_hours                         how often the app looks for a newly published month of FuelCheck prices (0 = never)
+  app.fuel.stale_days / refetch_hours              a fuel price more than stale_days from the date asked (or from today, for a later date) is out of date: the prices are
+                                                   refreshed first (at most once a run, not again within refetch_hours), then the price shows its date
   app.review.end_kmh / end_s   signs are read from end_kmh (not min_kmh) in the last end_s seconds of a drive
   app.review.step_s / min_kmh / min_conf / workers / merge_s   reading speed-limit signs from a drive's video (Review tab); candidate_km / candidate_avg_kmh = the "Review candidates" button on Drives
   app.review.accel_min_pct / speed_min_kmh / speed_tol_kmh / steer_deg
@@ -90,7 +92,7 @@ DEFAULTS = {
                "event_before_s": 12, "event_after_s": 15, "max_event_stills": 40, "hi_px": 1400, "hi_quality": 82, "exit_car_kmh": 90, "exit_gap_kmh": 20, "sign_min_stills": 2, "works_gap_s": 40, "osm_fetch": True, "traffic": True, "traffic_conf": 0.35, "traffic_min_w": 0.015, "traffic_model": "", "traffic_model_url": "https://huggingface.co/unity/inference-engine-yolo/resolve/main/models/yolov8n.onnx", "steer_deg": 15},
     "stills": {"width": 400, "quality": 6, "workers": 3, "thin_width": 240, "thin_quality": 10, "event_width": 1280, "event_quality": 3, "event_side_width": 800, "event_side_quality": 4},
     "event_shots": {"quality": 2},
-    "fuel": {"auto_sync_hours": 12},
+    "fuel": {"auto_sync_hours": 12, "stale_days": 7, "refetch_hours": 6},
     "keeper": {"background": True, "stills": True, "interval_s": 20, "pass_gap_s": 300, "play_wait_s": 30},
     "drives": {"repark_max_km": 0.05, "repark_same_place_km": 0.3, "repark_same_place_m": 50, "repark_max_minutes": 10, "join_gap_s": 120,
                "long_highway_km": 30, "long_highway_fast_kmh": 90, "long_highway_fast_minutes": 10,
