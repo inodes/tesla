@@ -282,6 +282,17 @@ def tcam(cams):
     return next((c for c in TELEM_CAMS if c in cams), None)
 
 
+def overlaps_recent(stamp, t, rt):
+    """True when the clip named `stamp` (UTC `t`) covers footage a Recent minute (sorted UTC starts `rt`, a minute long) already holds.
+    A clip the car closed early (a Sentry or Saved clip of 9 s, say, whose own header says so) that falls in the hole between two Recent minutes is NOT a repeat of either, even
+    though its name is within same_minute_s of one: dropping it leaves a black hole where there is footage. A whole-minute clip, or one of unknown length, is a repeat."""
+    d = CC.duration(stamp)
+    if d is None or d >= 55:
+        return True
+    a, b = t + 1.0, t + d - 1.0
+    return any(r < b and a < r + 60.0 for r in rt if abs(r - t) < 90)
+
+
 def minutes(recent, saved, all_saved=False):
     """Every Recent and Saved minute, oldest first, each once (a Saved minute that is also in Recent is left out unless `all_saved` asks for every distinct stamp)."""
     import bisect
@@ -294,7 +305,7 @@ def minutes(recent, saved, all_saved=False):
             t = secs(st)
             i = bisect.bisect(rt, t)
             near = min([abs(rt[j] - t) for j in (i - 1, i) if 0 <= j < len(rt)] or [1e9])
-            if (all_saved or near > OPTS["same_minute_s"]) and st not in mins:
+            if (all_saved or near > OPTS["same_minute_s"] or not overlaps_recent(st, t, rt)) and st not in mins:
                 mins[st] = dict(stamp=st, t=t, src="saved", ref=ev["id"], cams=cams, tcam=tcam(cams))
     return sorted(mins.values(), key=lambda m: m["t"])
 

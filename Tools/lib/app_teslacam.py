@@ -630,7 +630,7 @@ class TeslaCam:
             t = TL.secs(st)
             i = bisect.bisect(rt, t)
             near = min([abs(rt[j] - t) for j in (i - 1, i) if 0 <= j < len(rt)] or [1e9])
-            if st not in recent and near > TL.OPTS["same_minute_s"]:
+            if st not in recent and (near > TL.OPTS["same_minute_s"] or not TL.overlaps_recent(st, t, rt)):
                 out.append(dict(stamp=st, t=t, src="sentry", ref=e["id"], cams=cams, tcam=TL.tcam(cams)))
         return out
 
