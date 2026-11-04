@@ -986,6 +986,7 @@ def drivelist(wait=False):
         cam = TC.timeline_stored(None)["items"]
         moves = [dict(t0=x["t0"], t1=x["t1"], p0=[x.get("lat"), x.get("lon")], p1=[x.get("lat1"), x.get("lon1")]) for x in tess if x.get("t0") and x.get("t1")] or None       # Tessie's drives, when there are any: where the car went when no clip shows it
         upto = float(tessie_state().get("at") or 0)
+        marks = {}
         try:
             cam = TLN.fill_places(cam, moves, upto)         # the stops the dashcam made while parked have no GPS: the place comes from the drive beside them, Tessie's drives, or the last known place
             cam.sort(key=lambda x: x["t0"], reverse=True)
@@ -1013,6 +1014,12 @@ def drivelist(wait=False):
                     except Exception:
                         pass
             run_cuts.update(cams, cam, moves, upto, kinds, marks)         # where a Recent recording is cut into its drive and parked sections (the TeslaCam list): the clips first, Tessie only aligns an edge
+        except Exception:
+            pass
+        try:                                             # the dashcam's own drives and parks meet at the second Park was engaged, not at the edge of a clip's minute (Tessie's rows are already to the second)
+            if marks:
+                cam = run_cuts.refine_edges(cam, marks, {int(round(CC.utc(st))): st for st in marks})
+                cam.sort(key=lambda x: x["t0"], reverse=True)
         except Exception:
             pass
         items = app_drivelist.merge(tess, [x for x in act if x["k"] == "charge"], cam, [x for x in act if x["k"] == "idle"])

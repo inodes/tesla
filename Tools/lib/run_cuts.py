@@ -136,6 +136,35 @@ def stop_marks(gear):
     return (lead if lead < n else 0, trail if trail < n else 0, mid)
 
 
+def refine_edges(items, marks, stamp_at):
+    """The dashcam's own drives and parks, with the edge between a drive and a park at the second Park was engaged instead of the edge of the clip's minute.
+    items: timeline items (dict(kind, t0, t1)), only those from the dashcam alone (Tessie's drives are already to the second); marks: {stamp: stop_marks(gear)};
+    stamp_at: {UTC second: stamp of the minute that starts then}. A drive that ends inside its last minute (Park for the last N seconds) ends N seconds before the minute does, and the
+    park after it begins there; a drive that starts inside its first minute (Park for the first N seconds) begins N seconds after the minute does, and the park before it ends there.
+    The minute stays in both (a page shows the clips that overlap its times), only the time on the heading, the thumbnail and the timeline's edge moves. Returns new item dicts."""
+    out = sorted((dict(i) for i in items), key=lambda i: i["t0"])
+
+    def mk(t):
+        for d in (0, -1, 1):
+            st = stamp_at.get(int(round(t)) + d)
+            if st is not None and st in marks:
+                return marks[st]
+        return None
+
+    for a, b in zip(out, out[1:]):
+        if abs(a["t1"] - b["t0"]) > 2 or a.get("src") not in (None, "cam") or b.get("src") not in (None, "cam"):
+            continue
+        if a["kind"] == "drive" and b["kind"] != "drive":
+            m = mk(a["t1"] - 60)
+            if m and 0 < m[1] < 60 and a["t1"] - m[1] > a["t0"] + 30:
+                a["t1"] = b["t0"] = a["t1"] - m[1]
+        elif a["kind"] != "drive" and b["kind"] == "drive":
+            m = mk(b["t0"])
+            if m and 0 < m[0] < 60 and b["t0"] + m[0] < b["t1"] - 30:
+                a["t1"] = b["t0"] = b["t0"] + m[0]
+    return out
+
+
 def minute_sections(stamps, kinds, moves=None, moves_upto=0, marks=None):
     """{stamp: "drive" | "park"} for the minutes that have a class in `kinds`, from the clips themselves, in this order:
     1. a minute with the car moving is a drive, and every other minute is parked;

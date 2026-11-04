@@ -2524,8 +2524,10 @@ async function teslaDriveBody(host,role,fetchSeg,places,opts){
   let fit=lsGet("tc.fit","full");
   const FITW='<svg width="18" height="14" viewBox="0 0 18 14" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="M2 2v10M16 2v10M2 7h14M5 4.5 2 7l3 2.5M13 4.5 16 7l-3 2.5"/></svg>',
     FITV='<svg width="18" height="14" viewBox="0 0 18 14" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><rect x="5" y="2" width="8" height="10" rx="1.5"/><path d="M1.5 7h3M13.5 7h3M2.5 5 1.5 7l1 2M15.5 5l1 2-1 2"/></svg>';
-  const applyFit=()=>{if(!chart||!chart.limit)return;const rm=d.minutes.filter(m=>m.cams&&m.cams.length&&!m.syn),full=it().span||null,N=S().v.length-1,
+  const applyFit=()=>{if(!chart||!chart.limit)return;const rm=d.minutes.filter(m=>m.cams&&m.cams.length&&!m.syn),N=S().v.length-1,
       clips=rm.length?[Math.min(...rm.map(m=>m.off)),Math.max(...rm.map(m=>m.off+(m.len||60)))]:null,
+      full=it().span?(clips?[Math.min(it().span[0],clips[0]),Math.max(it().span[1],clips[1])]:it().span):null,      // the bar is aligned with the clips, not with the heading: the minute that holds the start or the end of the row is all in it
+      
       diff=!!clips&&(full?(clips[0]>full[0]+2||clips[1]<full[1]-2):(clips[0]>2||clips[1]<N-2)),b=$("#dfit"),on=diff&&fit==="clips";
     if(b){b.hidden=!diff;b.innerHTML=on?FITV:FITW;b.title=on?"Telemetry: only the time of the video clips (click for the whole period)":"Telemetry: the whole period (click for only the time of the video clips)";b.setAttribute("aria-label",b.title);b.classList.toggle("on",on);b.onclick=()=>{fit=fit==="clips"?"full":"clips";lsSet("tc.fit",fit);applyFit()}}
     const sp=on?clips:full;if(sp)chart.limit(sp[0],sp[1]);else chart.limit(null)};
