@@ -288,7 +288,7 @@ main:has(#spl .stbar,#spl .vbar) #splx{display:none}
 .evc .gchip.more{background:var(--line);color:var(--mut)}
 
 .sp figure.blk{position:relative;overflow:hidden}.sp figure.blk .blkimg{position:absolute;inset:0;width:100%;height:100%;object-fit:contain;border-radius:8px}.sp figure.blk .lostb{padding:4px}.sp figure.blk .lostb span{font-size:11px}.vgrid figure.blk{cursor:zoom-in}
-.covbar{display:flex;height:14px;gap:1px;border-radius:7px;overflow:hidden;margin:2px 0 0}.covbar i{display:block;cursor:pointer;min-width:2px}.covbar i.on{background:var(--acc,#3b6cf6);opacity:.75}.covbar i.off{background:#000}
+.covbar{display:flex;height:14px;gap:1px;border-radius:7px;overflow:hidden;margin:2px 0 0}.covbar i{display:block;cursor:pointer;min-width:2px}.covbar i.on{background:var(--acc,#3b6cf6);opacity:.75}.covbar i.off{background:#000}.covbar i.now,.covbar i.on.now{background:#f5c518;opacity:1}
 
 .clkchg{display:flex;align-items:center;gap:8px;margin:2px 8px;color:var(--mut);font-size:12px}.clkchg:before,.clkchg:after{content:"";flex:1;border-top:1px dashed var(--mut);opacity:.6}.clkchg svg{flex:none}
 .clkc svg{vertical-align:-2px}
@@ -306,6 +306,7 @@ main:has(#spl .stbar,#spl .vbar) #splx{display:none}
 .hud .hsp{position:absolute;bottom:2em;left:50%;transform:translateX(-50%);background:rgba(0,0,0,.55);border-radius:1.2em;padding:.3em 1.4em;display:flex;align-items:baseline;gap:.6em;white-space:nowrap}
 .hud .hsp b{font:700 4.6em/1.1 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;font-variant-numeric:tabular-nums}
 .hud .hsp small{font-size:1.8em;opacity:.85}
+.hud .hin{position:absolute;left:2em;bottom:2em;display:flex;flex-direction:column;gap:.1em;color:#fff;font:500 2.1em/1.25 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;text-shadow:0 0 .25em rgba(0,0,0,.9),0 .05em .2em rgba(0,0,0,.8);opacity:.9;white-space:nowrap}.hud .hin b{font-weight:600}.hud .hin [hidden]{display:none}
 .hud .hbk{position:absolute;top:2em;width:6em;height:6em;fill:#f59e0b;display:none;filter:drop-shadow(0 0 .3em rgba(0,0,0,.7))}
 .hud .hl{left:2em}.hud .hr{right:2em;transform:scaleX(-1)}
 .hud .hbk.on{display:block;animation:hudfl .74s steps(1) infinite}

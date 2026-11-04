@@ -916,6 +916,8 @@ def tessie_filled(d, stamp, t0, t1, lo):
     TLm = app_teslacam.TL
     if d is None:
         d = dict(item=dict(lo=lo if lo is not None else 0), connected=False, minutes=[], pending=0, events=[])
+    if d.get("item") and d["item"].get("t0") is not None:          # the series now begins at Tessie's start, before the first clip: every minute's offset is counted from there
+        d["minutes"] = app_route.rebase_minutes(d.get("minutes"), d["item"]["t0"], ser["t0"])
     d["series"] = ser
     d["item"] = dict(d["item"], t0=ser["t0"], start=TLm.iso(ser["t0"], d["item"].get("lo") or 0))
     return d

@@ -65,6 +65,13 @@ def _tess(pts, times, t):
     return a[1] + (b[1] - a[1]) * f, a[2] + (b[2] - a[2]) * f, a[3] + (b[3] - a[3]) * f
 
 
+def rebase_minutes(minutes, old_t0, new_t0):
+    """The footage minutes with their offsets counted from `new_t0` instead of `old_t0` (UTC seconds): when the series is stretched back to Tessie's start, before the first clip, every
+    minute is that much later from the start. Without it the video blocks sit at the start of the bar and the black ("no video") at its end, the wrong way round."""
+    shift = int(round(old_t0 - new_t0))
+    return [dict(m, off=m["off"] + shift) for m in minutes or []] if shift else list(minutes or [])
+
+
 def fill(series, t0, t1, pts):
     """The dashcam's seconds where it has them. A hole of a few seconds between two of them (the car's clips are a minute and a second apart) is drawn between the
     dashcam's own points. A longer hole, and the ends before and after the footage, are Tessie's route, moved onto the dashcam's at the join so the line is not broken
