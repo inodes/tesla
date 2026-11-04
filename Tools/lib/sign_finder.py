@@ -1,7 +1,7 @@
 """Find round speed-limit signs (red ring, white face, black number) in a dashcam frame and read the number.
 
 find_signs(bgr) -> [dict(x, y, r, text, conf, crop)]   (x, y, r in pixels of the frame given)
-Uses OpenCV for the red-ring search and tesseract (digits only) for the number. A reading is kept only
+Uses OpenCV for the red-ring search and the trained reader (sign_reader) for the number, tesseract (digits only) when its weights are missing. A reading is kept only
 when it is a plausible Australian limit (40..130 in steps of 10), so brake lights, tail lights and
 other red things drop out.
 """
@@ -11,6 +11,8 @@ import os
 
 import cv2
 import numpy as np
+
+import sign_reader
 
 ONE_THREAD = dict(os.environ, OMP_THREAD_LIMIT="1")      # tesseract starts a thread per core by default: with several stills read at once that is slower than one thread each
 LIMITS = {"40", "50", "60", "70", "80", "90", "100", "110", "120", "130"}
@@ -98,11 +100,18 @@ def find_signs(bgr, min_r=12, max_r=140, roi=ROI_LEFT, a_thr=None, ocr=True):
         white = float((g > np.percentile(g, 60)).mean())
         if g.std() < 11:
             continue
-        # digits: dark on light. Otsu, make digits black, scale up, white border
-        gg = cv2.resize(g, (0, 0), fx=max(1.0, 70.0 / g.shape[0]), fy=max(1.0, 70.0 / g.shape[0]), interpolation=cv2.INTER_CUBIC)
-        _, bw_ = cv2.threshold(gg, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
-        bw_ = cv2.copyMakeBorder(bw_, 12, 12, 12, 12, cv2.BORDER_CONSTANT, value=255)
-        text, conf = _ocr(bw_) if ocr else ("", 0.0)
+        if not ocr:
+            text, conf = "", 0.0
+        elif sign_reader.available():
+            text, conf = sign_reader.read(face)              # the trained reader: no process to start, and it tells 60 from 80 and 50 where tesseract does not
+            if not text:                                      # it says "not a speed limit": a tail light, a sticker, a warning sign
+                continue
+        else:
+            # digits: dark on light. Otsu, make digits black, scale up, white border
+            gg = cv2.resize(g, (0, 0), fx=max(1.0, 70.0 / g.shape[0]), fy=max(1.0, 70.0 / g.shape[0]), interpolation=cv2.INTER_CUBIC)
+            _, bw_ = cv2.threshold(gg, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+            bw_ = cv2.copyMakeBorder(bw_, 12, 12, 12, 12, cv2.BORDER_CONSTANT, value=255)
+            text, conf = _ocr(bw_)
         red = float(ach[y:y + bh, x:x + bw][mask[y:y + bh, x:x + bw] > 0].mean()) - base
         pad = int(r * 1.25)
         xa2, xb2, ya2, yb2 = max(0, int(cx - pad)), min(w, int(cx + pad)), max(0, int(cy - pad)), min(h, int(cy + pad))
