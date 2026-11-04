@@ -136,32 +136,57 @@ def stop_marks(gear):
     return (lead if lead < n else 0, trail if trail < n else 0, mid)
 
 
-def refine_edges(items, marks, stamp_at):
-    """The dashcam's own drives and parks, with the edge between a drive and a park at the second Park was engaged instead of the edge of the clip's minute.
+def gear_edges(gear):
+    """(seconds in gear at the start of the minute before Park first engages, seconds in gear at its end after Park last was left): the parking movements and the pulling away.
+    A minute with no Park second, or none in gear, has none of either: (0, 0)."""
+    g = list(gear or [])
+    if 0 not in g:
+        return (0, 0)
+    head = g.index(0)
+    tail = next((i for i, x in enumerate(reversed(g)) if x == 0), 0)
+    return (head, tail)
+
+
+def refine_edges(items, marks, stamp_at, edge_of=None):
+    """The dashcam's own drives and parks, with the edge between a drive and a park at the second Park was engaged (or left) instead of the edge of a clip's minute.
     items: timeline items (dict(kind, t0, t1)), only those from the dashcam alone (Tessie's drives are already to the second); marks: {stamp: stop_marks(gear)};
-    stamp_at: {UTC second: stamp of the minute that starts then}. A drive that ends inside its last minute (Park for the last N seconds) ends N seconds before the minute does, and the
-    park after it begins there; a drive that starts inside its first minute (Park for the first N seconds) begins N seconds after the minute does, and the park before it ends there.
-    The minute stays in both (a page shows the clips that overlap its times), only the time on the heading, the thumbnail and the timeline's edge moves. Returns new item dicts."""
+    stamp_at: {UTC second: stamp of the minute that starts then}; edge_of(stamp) -> gear_edges or None, asked only for the minutes at a join.
+    A drive cannot end in motion: the parking movements come before Park is engaged, and that can be in the next clip's minute (which the clips call a park). So the edge is
+        drive -> park: the second Park was engaged in the drive's last minute, else in the park's first minute (gear before it);
+        park -> drive: the second Park was left in the drive's first minute, else in the park's last minute (gear after it).
+    The minute stays on both sides (a page shows every clip that overlaps its times); only the time on the heading, the thumbnail and the timeline's edge moves.
+    Returns new item dicts."""
     out = sorted((dict(i) for i in items), key=lambda i: i["t0"])
 
-    def mk(t):
+    def st_of(t):
         for d in (0, -1, 1):
             st = stamp_at.get(int(round(t)) + d)
-            if st is not None and st in marks:
-                return marks[st]
+            if st is not None:
+                return st
         return None
+
+    def edge(t):
+        st = st_of(t)
+        return (edge_of(st) if edge_of and st else None) or (0, 0)
 
     for a, b in zip(out, out[1:]):
         if abs(a["t1"] - b["t0"]) > 2 or a.get("src") not in (None, "cam") or b.get("src") not in (None, "cam"):
             continue
+        cut = None
         if a["kind"] == "drive" and b["kind"] != "drive":
-            m = mk(a["t1"] - 60)
-            if m and 0 < m[1] < 60 and a["t1"] - m[1] > a["t0"] + 30:
-                a["t1"] = b["t0"] = a["t1"] - m[1]
+            m = marks.get(st_of(a["t1"] - 60)) or (0, 0, None)
+            if 0 < m[1] < 60:
+                cut = a["t1"] - m[1]
+            elif 0 < edge(b["t0"])[0] < 60:
+                cut = b["t0"] + edge(b["t0"])[0]
         elif a["kind"] != "drive" and b["kind"] == "drive":
-            m = mk(b["t0"])
-            if m and 0 < m[0] < 60 and b["t0"] + m[0] < b["t1"] - 30:
-                a["t1"] = b["t0"] = b["t0"] + m[0]
+            m = marks.get(st_of(b["t0"])) or (0, 0, None)
+            if 0 < m[0] < 60:
+                cut = b["t0"] + m[0]
+            elif 0 < edge(a["t1"] - 60)[1] < 60:
+                cut = a["t1"] - edge(a["t1"] - 60)[1]
+        if cut is not None and a["t0"] + 20 < cut < b["t1"] - 20:
+            a["t1"] = b["t0"] = cut
     return out
 
 

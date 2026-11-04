@@ -1017,8 +1017,14 @@ def drivelist(wait=False):
         except Exception:
             pass
         try:                                             # the dashcam's own drives and parks meet at the second Park was engaged, not at the edge of a clip's minute (Tessie's rows are already to the second)
-            if marks:
-                cam = run_cuts.refine_edges(cam, marks, {int(round(CC.utc(st))): st for st in marks})
+            if marks or cams:
+                def _edges(st):                              # the gear at the two ends of a minute at a join: the parking movements and the pulling away
+                    try:
+                        ser = store.series(st)
+                        return run_cuts.gear_edges(ser["gear"]) if ser and ser.get("gear") else None
+                    except Exception:
+                        return None
+                cam = run_cuts.refine_edges(cam, marks, {int(round(CC.utc(st))): st for st in cams}, _edges)
                 cam.sort(key=lambda x: x["t0"], reverse=True)
         except Exception:
             pass
