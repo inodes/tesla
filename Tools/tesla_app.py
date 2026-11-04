@@ -84,6 +84,8 @@ import stills_thin
 import app_keeper  # noqa: E402
 import app_charges  # noqa: E402
 import clip_clock as CC  # noqa: E402
+import geo_common as GEO  # noqa: E402
+import school_days as SD  # noqa: E402
 import app_sync  # noqa: E402
 import app_software  # noqa: E402
 import car_watch  # noqa: E402
@@ -685,6 +687,13 @@ class H(BaseHTTPRequestHandler):
                                        half=es.seconds(kind, eid, half=True) if es.halves(kind, eid) else {}) if i.get("n") else {})
         if name == "signs":                     # signs?stamps=a,b: the signs read in those minutes {clip stamp: [sign]} (lib/app_review.py minute_signs)
             return self.send_json(TC._rv().minute_signs([s for s in q.get("stamps", [""])[0].split(",") if re.match(r"^\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2}$", s)][:80]))
+        if name == "schoolday":                 # schoolday?date=YYYY-MM-DD&lat=&lon=: is that a school day in the state of that spot? {state, school_day: true / false / null (no calendar for that state or year)}
+            try:
+                dt = q.get("date", [""])[0]
+                st = GEO.state_from_coords(float(q.get("lat", [""])[0]), float(q.get("lon", [""])[0]))[0]
+                return self.send_json(dict(state=st, school_day=SD.school_day(st, dt) if st else None))
+            except (ValueError, TypeError):
+                return self.send_json(dict(state=None, school_day=None))
         if name == "clipstatus":                # clipstatus?stamps=a,b: kept on a drive / deleted / never logged, and whether its stills are kept
             return self.send_json(FG.clip_status([s for s in q.get("stamps", [""])[0].split(",") if re.match(r"^\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2}$", s)][:80]))
         if name == "clipholders":               # clipholders?stamps=a,b: the files of each minute and the drives that hold them, biggest drive first, connected or not

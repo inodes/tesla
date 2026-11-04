@@ -37,6 +37,20 @@ class MinuteSignsTest(unittest.TestCase):
         self.assertEqual((g["f"], g["conf"]), ("near.jpg", 85))                       # not the far one, and not a big blurred one
         self.assertNotIn("_sc", g)
 
+    def test_a_school_zone_carries_the_hours_most_of_its_stills_agree_on(self):
+        d = tempfile.mkdtemp()
+        os.makedirs(os.path.join(d, "drive_review"))
+        rows = [dict(s=31.0, text="School zone", kind="school", c=50, side="L", tm=["08:00-09:30", "14:30-16:00"], tc=90, f="a.jpg"),
+                dict(s=31.4, text="School zone", kind="school", c=50, side="L", tm=["08:00-09:30"], tc=10, f="b.jpg"),
+                dict(s=31.8, text="School zone", kind="school", c=40, side="L", tm=[], tc=0, f="c.jpg"),
+                dict(s=40.0, text="40", c=95, side="R", f="d.jpg")]
+        with open(os.path.join(d, "drive_review", "2026-10-26.json"), "w") as f:
+            json.dump({ST: dict(n=14, d=rows)}, f)
+        z, sp = AR.Review(d).minute_signs([ST])[ST]
+        self.assertEqual(z["times"], ["08:00-09:30", "14:30-16:00"])
+        self.assertEqual(sp["times"], [])                                           # a speed sign has no hours
+        self.assertNotIn("_tm", z)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -85,6 +85,53 @@ class HudTest(unittest.TestCase):
         self.assertEqual(run('hudLimit(%s,["a"],0,30)' % sg), 60)                          # no way to tell: the sign is taken
         self.assertEqual(run('hudLimit(%s,["a"],0,30,(st,g)=>null)' % sg), 60)             # not enough speed read yet
 
+    # school zones: the plate (kind school, hours in g.times), the zone's limit sign read within 8 s of it, and whether it is a school day and inside the hours
+    SZ = ('{"m1":[{"text":"60","kind":"","s0":10},{"text":"School zone","kind":"school","s0":30,"times":["08:00-09:30","14:30-16:00"]},{"text":"40","kind":"","s0":32}],'
+          '"m2":[{"text":"60","kind":"","s0":20}]}')
+    CALL = '(i,g)=>i*60+g.s0'
+
+    def school(self, t, minute, sd, si=0, sz=None):
+        return run('hudSchool(%s,["m1","m2"],%d,%s,%s,{min:%d},()=>%s)' % (sz or self.SZ, si, t, self.CALL, minute, sd))
+
+    def test_in_a_school_zone_on_a_school_day_inside_the_hours_the_state_is_on(self):
+        z = self.school(40, 8 * 60 + 54, "true")
+        self.assertEqual((z["state"], z["lim"]), ("on", 40))
+
+    def test_outside_the_hours_or_on_a_day_off_the_zone_is_off(self):
+        self.assertEqual(self.school(40, 11 * 60, "true")["state"], "off")                  # 11:00: between the two ranges
+        self.assertEqual(self.school(40, 9 * 60 + 30, "true")["state"], "off")              # the range ends at 09:30
+        self.assertEqual(self.school(40, 8 * 60, "true")["state"], "on")                    # and starts at 08:00
+        self.assertEqual(self.school(40, 8 * 60 + 54, "false")["state"], "off")             # a weekend, a holiday or the school holidays
+        self.assertEqual(self.school(40, 15 * 60, "true")["state"], "on")                   # the afternoon range
+
+    def test_unknown_hours_or_an_unknown_calendar_is_not_a_guess(self):
+        self.assertEqual(self.school(40, 8 * 60 + 54, "null")["state"], "unknown")          # no calendar for that state or year
+        self.assertEqual(self.school(40, 8 * 60 + 54, "undefined")["state"], "unknown")     # the answer is not in yet
+        nohrs = self.SZ.replace('"times":["08:00-09:30","14:30-16:00"]', '"times":[]')
+        self.assertEqual(self.school(40, 8 * 60 + 54, "true", sz=nohrs)["state"], "unknown")
+
+    def test_not_in_a_zone_before_the_plate_after_it_ends_or_a_new_limit(self):
+        self.assertIsNone(self.school(20, 8 * 60 + 54, "true"))                              # the plate (30 s) is ahead
+        self.assertIsNone(run('hudSchool(%s,["m1","m2"],1,40,%s,{min:534},()=>true)' % (self.SZ, self.CALL)))   # 60+40 s: a 60 sign (80 s) ended the zone
+        self.assertEqual(self.school(10, 534, "true", si=1)["state"], "on")                    # the 60 of m2 (at 20 s) is not read yet: still in the zone
+
+    def test_a_zone_lasts_150_seconds(self):
+        sz = '{"m1":[{"text":"School zone","kind":"school","s0":30,"times":["08:00-09:30"]},{"text":"40","kind":"","s0":32}],"m2":[]}'
+        self.assertEqual(self.school(0, 534, "true", si=1, sz=sz)["state"], "on")             # 30 s after the plate's minute ended
+        late = '{"m1":[{"text":"School zone","kind":"school","s0":30,"times":["08:00-09:30"]}],"m2":[],"m3":[],"m4":[]}'
+        self.assertIsNone(run('hudSchool(%s,["m1","m2","m3","m4"],3,5,%s,{min:534},()=>true)' % (late, self.CALL)))   # 3 minutes on
+
+    def test_outside_the_hours_the_zones_own_limit_is_skipped(self):
+        st = '["m1","m2"]'
+        self.assertEqual(run('hudLimit(%s,%s,0,35,null,g=>g.text==="40")' % (self.SZ, st)), 60)    # the plate's 40 is not held: the 60 before it
+        self.assertEqual(run('hudLimit(%s,%s,0,35)' % (self.SZ, st)), 40)
+
+    def test_the_sign_stays_hidden_until_one_is_seen(self):
+        with open(APP_CSS, encoding="utf-8") as f:
+            css = f.read()
+        self.assertIn(".hud [hidden]{display:none}", css)                           # the display of the sign would otherwise win over hidden: an empty red ring
+        self.assertIn(".hud .hsg.sch", css)                                          # the yellow ring of an active school zone
+
     def test_style_for_every_part(self):
         with open(APP_CSS, encoding="utf-8") as f:
             css = f.read()
