@@ -105,6 +105,7 @@ class Days(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.mkdtemp()
         self.opts = dict(TL.OPTS)
+        TL.OPTS["park_end_s"] = 10 ** 9          # these tests are about the day cache: the fixture's long park stays in the timeline (tests/test_timeline_end_sessions.py covers the cut)
         self.fx = Fake(os.path.join(self.tmp, "teslacam_timeline"))
         self.path = os.path.join(self.tmp, "cache", "timeline_days.json")
 

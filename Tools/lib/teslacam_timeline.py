@@ -37,6 +37,7 @@ OPTS = dict(moving_kmh=3.0,           # a minute whose top speed is under this i
             join_max_s=300,           # a longer hole than run_gap_s (the car skipped a few seconds) still joins two MOVING minutes whose positions fit: up to this long ...
             join_slack_m=300,         # ... when the two positions are no further apart than this plus the distance the car could have covered in the hole (at 1.5 x its top speed)
             gap_min_s=120,            # a hole shorter than this is not shown
+            park_end_s=21600,         # a park (the stopped minutes after a drive and the hole that follows) with no footage for longer than this ends the session at the drive: a shop or a drop-off is shorter, a night at home or in a hotel is not
             same_place_m=300,         # parked: last and next position this close ...
             same_place_est_m=800,     # ... (this far when one of them is a Sentry event's approximate position)
             blip_kmh=1.0,             # a shift out of Park whose top speed stays under this did not move the car: a blip (nothing), not a drive or even a re-park
@@ -366,9 +367,29 @@ def _build(recent, saved, sentry, store, cache):
         out.append(a)
         if b and b["t0"] - a["t1"] > OPTS["gap_min_s"]:
             out.append(_gap(a, b))
+    out = end_sessions(out)
     for it in out:                                      # shown on the clock of where it was (a drive that began in Queensland reads on Queensland's clock)
         show(it)
     return sorted(out, key=lambda x: x["t0"], reverse=True)
+
+
+def end_sessions(out):
+    """`out` = the items oldest first, holes included. When the car sleeps (no footage) for longer than OPTS["park_end_s"] at one place (a night at home, a hotel), that hole is not
+    part of the TeslaCam timeline, and a session that was ending in it ends at its last drive: the stopped minutes between that drive and the hole go too. What the car recorded
+    while it was awake stays, Sentry events included, up to the point it slept; the Drives list still has the park and no footage is touched.
+    A short park (a shop, a drop-off) is untouched; so is a long stop with a Sentry event next after it (the stopped minutes then lead into that event)."""
+    drop = set()
+    for i, g in enumerate(out):
+        if g["kind"] != "parked" or not str(g["id"]).startswith("g:") or g["t1"] - g["t0"] <= OPTS["park_end_s"]:
+            continue
+        drop.add(i)
+        j = i - 1
+        while j >= 0 and out[j]["kind"] == "stopped":
+            j -= 1
+        nxt = out[i + 1] if i + 1 < len(out) else None
+        if j >= 0 and out[j]["kind"] == "drive" and not (nxt and nxt["kind"] == "sentry"):
+            drop.update(range(j + 1, i))
+    return [x for k, x in enumerate(out) if k not in drop]
 
 
 _CODE = []

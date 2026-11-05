@@ -54,6 +54,14 @@ class WindowPlaceTest(unittest.TestCase):
         o = T.window_place(SimpleNamespace(screens=[SimpleNamespace(x=0, y=0, width=2560, height=1440)]))
         self.assertNotIn("x", o)
 
+    def test_window_move_moves_a_remembered_place_and_survives_a_refusal(self):
+        got = []
+        T.window_move(SimpleNamespace(move=lambda x, y: got.append((x, y))), (100, 50))
+        self.assertEqual(got, [(100, 50)])
+        T.window_move(SimpleNamespace(move=lambda x, y: 1 / 0), (100, 50))
+        T.window_move(SimpleNamespace(move=lambda x, y: got.append("no")), (None, None))
+        self.assertEqual(got, [(100, 50)])
+
 
 if __name__ == "__main__":
     unittest.main()

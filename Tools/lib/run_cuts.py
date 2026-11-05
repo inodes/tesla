@@ -84,6 +84,22 @@ def section(stamp):
         return s[0], s[1], s[2]
 
 
+def drive_edges(first, last):
+    """(lead, trail) for a run of minutes from `first` to `last` that is a parked section: True when a drive's own section runs straight into it (lead: the drive was the section before, no more than a
+    clip's gap away) or straight out of it (trail). The first or last minute of such a park is where the drive ended or began: the parking movements and the pulling away are in it."""
+    with _LOCK:
+        section(first)
+        _v, ts, ks = _IX
+        t0, t1 = CC.utc(first), CC.utc(last)
+        i = bisect.bisect_left(ts, t0) - 1
+        a = _S.get(ks[i]) if i >= 0 else None
+        lead = bool(a and a[0] == "drive" and len(a) >= 5 and a[4] is not None and t0 - a[4] <= GAP + 60)
+        j = bisect.bisect_right(ts, t1)
+        b = _S.get(ks[j]) if j < len(ks) else None
+        trail = bool(b and b[0] == "drive" and ts[j] - t1 <= GAP + 60)
+        return lead, trail
+
+
 def section_last(stamp):
     """UTC time of the last minute of the section this minute lies in; None when it lies in none."""
     with _LOCK:

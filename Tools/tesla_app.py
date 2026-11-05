@@ -558,6 +558,8 @@ class H(BaseHTTPRequestHandler):
                 roots = footage_roots()
                 if body.get("action") == "process":       # read what the clips still lack (metadata, stills, pictures, signs, or only `steps`) from their video on the connected drives
                     return self.send_json(CKEEP.start_process(body.get("items") or [], roots, steps=body.get("steps")))
+                if body.get("action") == "purge_home":    # everything kept of what is parked at Home; nothing that moved
+                    return self.send_json(CKEEP.purge_home(roots, confirmed=body.get("confirm") is True))
                 if body.get("action") == "purge":         # delete chosen kinds (video, metadata, stills, pictures, signs) of the clips; video that is not all kept needs force
                     return self.send_json(CKEEP.purge(body.get("items") or [], body.get("types") or [], roots, confirmed=body.get("confirm") is True, force=body.get("force") is True))
                 return self.send_json(CKEEP.start(body.get("action"), role, body.get("items") or [], roots, confirmed=body.get("confirm") is True))
@@ -1133,6 +1135,15 @@ def window_place(webview):
     return out
 
 
+def window_move(win, at):
+    """Moves the window to its remembered place once it is shown; a place the Mac will not take leaves it where it is."""
+    if at and at[0] is not None and at[1] is not None:
+        try:
+            win.move(int(at[0]), int(at[1]))
+        except Exception:
+            pass
+
+
 def window_keep(**kw):
     """The window was moved or resized: remembered a moment later (a drag sends many of these)."""
     _WGEO.update({k: int(v) for k, v in kw.items() if v is not None})
@@ -1279,7 +1290,10 @@ def main():
         try:
             import webview      # optional: native window
             global WIN
-            WIN = win = webview.create_window("Tesellate", url, min_size=(900, 600), text_select=True, **window_place(webview))
+            place = window_place(webview)
+            at = (place.pop("x", None), place.pop("y", None))          # the window is created in the default place and moved once it is shown: pywebview moves it while it is being built, when the Mac can still say it has no screen ('NoneType has no attribute frame') and the app does not open
+            WIN = win = webview.create_window("Tesellate", url, min_size=(900, 600), text_select=True, **place)
+            win.events.shown += lambda: window_move(win, at)
             win.events.resized += lambda w, h: window_keep(w=w, h=h)
             win.events.moved += lambda x, y: window_keep(x=x, y=y)
             menu = mac_shell.build_menu(win) if sys.platform == "darwin" else None            # the pages in the menu bar

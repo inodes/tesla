@@ -102,7 +102,7 @@ class Todo:
     def _signs_left(self, walked):
         """{role: minutes whose signs were not read yet, or not had the second look}: the minutes with a front clip on that drive, read for telemetry, driven fast enough."""
         rv, store = self.tc._rv(), self.tc._tl("A")
-        done = rv.scanned()
+        done = rv.fresh() if hasattr(rv, "fresh") else rv.scanned()          # a minute read by an older reader is read again
         again = rv.unrefined() if hasattr(rv, "unrefined") else set()
         out = {}
         for r, (files, ok) in walked.items():
