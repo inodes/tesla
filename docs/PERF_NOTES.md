@@ -48,9 +48,9 @@ Baseline: commit `25e635e` with page timings (`0aec053` harness); after: `b4d3f7
 Run the app normally for a day, then read `~/Library/Logs/tesla_perf.log` (trim nothing private: it holds routes, API paths, times and sizes only):
 
 ```
-grep -P '\tstart\t' ~/Library/Logs/tesla_perf.log | tail -12        # since_launch_s at 'setup done' / 'server bound' / 'first request': the login shell and imports
-grep -P '\tpage\t' ~/Library/Logs/tesla_perf.log | tail -30          # ms per page opened; first_ms = window open to first page drawn
-grep -P '\tslow\t' ~/Library/Logs/tesla_perf.log | sort -t= -k3 -rn | head -20   # the slowest /api requests with their size
+awk -F'\t' '$2=="start"' ~/Library/Logs/tesla_perf.log | tail -12     # since_launch_s at 'setup done' / 'server bound' / 'first request'
+awk -F'\t' '$2=="page"' ~/Library/Logs/tesla_perf.log | tail -30      # ms per page opened; first_ms = window open to first page drawn
+awk -F'\t' '$2=="slow"{split($4,a,"=");print a[2]"\t"$3"\t"$5}' ~/Library/Logs/tesla_perf.log | sort -rn | head -20   # the slowest /api requests: seconds, path, bytes
 ```
 
 Good: `server bound` within ~1 s of launch, `first_ms` under ~1,500, no `slow` line for /api/teslacam or /api/clips over 1 s. Also check by eye:
