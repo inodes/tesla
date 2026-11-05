@@ -4,9 +4,10 @@ The task is docs/LOAD_SPEED_TASK.md. Work happens on branch `claude/load-speed` 
 
 ## Handoff
 
-- **Done**: step 1 (`25e635e` fixture + harness + baseline, PR #17; harness page timings in Chromium, next commit); step 3, part 1: MapLibre 4.7.1 served from
-  `Tools/lib/app_ui/vendor/` (`/vendor/<name>`, 1-year immutable cache, 302 to cdnjs only when the copy is missing), both scripts `defer`, MapLibre CSS non-blocking.
-- **Next**: step 3 rest (gzip + ETag for app.js/app.css, parallel `boot()` fetches), step 4 (gzip + ETag/304 for big JSON, lists kept on disk by inputs, smarter `_warm`),
+- **Done** (all on PR #17): step 1 `25e635e` fixture + harness + baseline, `0aec053` harness page timings in Chromium; step 3 `adafa01` MapLibre 4.7.1 served from
+  `Tools/lib/app_ui/vendor/` (`/vendor/<name>`, 1-year immutable cache, 302 to cdnjs only when the copy is missing), both scripts `defer`, MapLibre CSS non-blocking;
+  next commit: ETag/304 + gzip for index.html, app.js, app.css, vendor (`H.send_body` / `H.send_static` in tesla_app.py, gzip kept per ETag, primed at start).
+- **Next**: step 3 rest (parallel `boot()` fetches), step 4 (gzip + ETag/304 for big JSON, lists kept on disk by inputs, smarter `_warm`),
   step 5 (TeslaCam from cache), step 2 (perf_log), step 6, step 7. Order follows the task's Budget section (value first).
 - **Half-done**: nothing.
 - **Leads from the baseline**: a first start answers its first request only after ~10 s although the port is bound at 0.24 s (something holds the request threads at start: look at what `/api/status` waits for, and the drivelist build thread); `/api/teslacam` takes 1.7-11.8 s on every call, also warm (`_ROOTS["t"] = 0` then `TC.drives()` → `DR.discover()`); `/api/clips` 0.75-1.8 s warm; the first `/api/drivelist` after a first start 5.4 s.
@@ -23,6 +24,15 @@ The task is docs/LOAD_SPEED_TASK.md. Work happens on branch `claude/load-speed` 
 | | #/teslacam | 336 → 156 | 359 → 267 |
 | (restart) | #/activity | 396 → 132 | 433 → 261 |
 | | #/places | 372 → 184 | 425 → 302 |
+
+| change | file | bytes on the wire before → after | first load ms before → after | repeat load |
+|---|---|---|---|---|
+| ETag + gzip (primed at start) | /app.js | 464,205 → 159,668 | 1.4 → 1.4 | 200 (0.8 ms) → 304 (1.0 ms) |
+| | /app.css | 39,318 → 9,958 | 0.8 → 0.9 | 200 → 304 |
+| | /vendor/maplibre-gl.js | 803,086 → 211,500 | 1.6 → 0.8 | 200 → 304 |
+| | / | 1,720 → 740 | 11.5 → 14.0 (first request on a new connection either way) | 200 → 304 |
+
+On localhost the time is the same: the gain is bytes, and a reload that does not change a file gets a 304. Without priming, the first gzip of app.js took 23 ms (measured), which is why the files are compressed in the background at start.
 
 In the sandbox cdnjs is refused at once; on a Mac with a slow or no network the old `<head>` waited for cdnjs before the first paint (up to the network timeout offline), so the gain there is larger and is not measured here.
 

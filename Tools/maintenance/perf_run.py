@@ -35,7 +35,7 @@ PAGES = ["/", "/app.js", "/app.css"]
 def fetch(base, path, timeout):
     t = time.time()
     try:
-        with urllib.request.urlopen(base + path, timeout=timeout) as r:
+        with urllib.request.urlopen(urllib.request.Request(base + path, headers={"Accept-Encoding": "gzip"}), timeout=timeout) as r:      # bytes = what goes over the wire
             body = r.read()
             return time.time() - t, len(body), r.status
     except urllib.error.HTTPError as e:

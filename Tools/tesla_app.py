@@ -46,6 +46,8 @@ FILES
     drive_actions.py runs the footage queue       build_mac_app.sh  makes a double-clickable Tesellate.app
 """
 import argparse
+import gzip
+import hashlib
 import io
 import json
 import mimetypes
@@ -340,6 +342,41 @@ def safe_join(root, rel):
     return p if (p == r or p.startswith(r + os.sep)) else None
 
 
+_STATIC = {}                # path -> ((mtime ns, size), bytes, etag): the page's own files
+_GZ = {}                    # etag -> gzipped body (the newest few)
+_GZ_LOCK = threading.Lock()
+
+
+def _gz(raw, etag):
+    """The body gzipped, kept by its ETag so a file or list that did not change is compressed once."""
+    with _GZ_LOCK:
+        hit = _GZ.get(etag)
+    if hit is not None:
+        return hit
+    z = gzip.compress(raw, 6)
+    with _GZ_LOCK:
+        _GZ[etag] = z
+        while len(_GZ) > 32:
+            _GZ.pop(next(iter(_GZ)))
+    return z
+
+
+def _prime_static():
+    """Reads and gzips the page's own files once, right after start, so the window's first load does not wait for the compression (20-30 ms for app.js)."""
+    for name in ("index.html", "app.js", "app.css", os.path.join("vendor", "maplibre-gl.js"), os.path.join("vendor", "maplibre-gl.css")):
+        p = os.path.join(UI, name)
+        try:
+            st = os.stat(p)
+            with open(p, "rb") as f:
+                raw = f.read()
+        except OSError:
+            continue
+        key = (st.st_mtime_ns, st.st_size)
+        _STATIC[p] = (key, raw, '"%x-%x"' % key)
+        if len(raw) >= 1024:
+            _gz(raw, '"%x-%x"' % key)
+
+
 class H(BaseHTTPRequestHandler):
     server_version = "TeslaApp/1"
     protocol_version = "HTTP/1.1"
@@ -358,6 +395,47 @@ class H(BaseHTTPRequestHandler):
         self.end_headers()
         if self.command != "HEAD":
             self.wfile.write(body)
+
+    def send_body(self, raw, ctype, cache="no-cache", etag=None, extra=None):
+        """A 200 that a client may keep: an ETag (the body's own hash unless given), 304 when the client already has it, gzip when it accepts it and
+        the body is worth it. `cache` is the Cache-Control value ('no-cache': kept, but asked again every time)."""
+        etag = etag or '"%s"' % hashlib.blake2b(raw, digest_size=12).hexdigest()
+        head = {"Cache-Control": cache, "ETag": etag, "Vary": "Accept-Encoding"}
+        head.update(extra or {})
+        if etag in [t.strip() for t in (self.headers.get("If-None-Match") or "").split(",")]:
+            self.send_response(304)
+            for k, v in head.items():
+                self.send_header(k, v)
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+            return
+        if len(raw) >= 1024 and "gzip" in (self.headers.get("Accept-Encoding") or ""):
+            raw = _gz(raw, etag)
+            head["Content-Encoding"] = "gzip"
+        self.send_response(200)
+        self.send_header("Content-Type", ctype)
+        self.send_header("Content-Length", str(len(raw)))
+        for k, v in head.items():
+            self.send_header(k, v)
+        self.end_headers()
+        if self.command != "HEAD":
+            self.wfile.write(raw)
+
+    def send_static(self, path, cache="no-cache"):
+        """One of the page's own files (index.html, app.js, app.css, vendor/...), read again only when it changed on disk."""
+        try:
+            st = os.stat(path)
+        except OSError:
+            return self.send_bytes(b"not found", "text/plain", 404)
+        key = (st.st_mtime_ns, st.st_size)
+        hit = _STATIC.get(path)
+        if not hit or hit[0] != key:
+            with open(path, "rb") as f:
+                hit = _STATIC[path] = (key, f.read(), '"%x-%x"' % key)
+        ctype = mimetypes.guess_type(path)[0] or "application/octet-stream"
+        if ctype.startswith("text/") or ctype in ("application/javascript", "text/javascript", "application/json"):
+            ctype += "; charset=utf-8"
+        return self.send_body(hit[1], ctype, cache, hit[2])
 
     def send_json(self, obj, code=200):
         self.send_bytes(json.dumps(obj, separators=(",", ":")).encode(), "application/json; charset=utf-8", code)
@@ -391,7 +469,7 @@ class H(BaseHTTPRequestHandler):
         self.send_header("Content-Type", ctype)
         self.send_header("Accept-Ranges", "bytes")
         self.send_header("Content-Length", str(n))
-        self.send_header("Cache-Control", "public, max-age=31536000, immutable" if cache == "immutable" else "max-age=3600" if cache else "no-store")
+        self.send_header("Cache-Control", "max-age=3600" if cache else "no-store")
         if code == 206:
             self.send_header("Content-Range", "bytes %d-%d/%d" % (start, end, size))
         self.end_headers()
@@ -442,15 +520,15 @@ class H(BaseHTTPRequestHandler):
         path = urllib.parse.unquote(u.path)
         try:
             if path in ("/", "/index.html"):
-                return self.send_file(os.path.join(UI, "index.html"))
+                return self.send_static(os.path.join(UI, "index.html"))
             if path in ("/app.js", "/app.css"):
-                return self.send_file(os.path.join(UI, path[1:]))
+                return self.send_static(os.path.join(UI, path[1:]))
             if path.startswith("/vendor/"):        # MapLibre, kept in lib/app_ui/vendor (pinned 4.7.1); the CDN only when the file is missing
                 name = path[8:]
                 if name in VENDOR:
                     f = os.path.join(UI, "vendor", name)
                     if os.path.isfile(f):
-                        return self.send_file(f, cache="immutable")
+                        return self.send_static(f, "public, max-age=31536000, immutable")
                     self.send_response(302)
                     self.send_header("Location", VENDOR[name])
                     self.send_header("Content-Length", "0")
@@ -1291,6 +1369,7 @@ def main():
         srv = serve(0)      # port taken: any free one
     url = "http://127.0.0.1:%d/" % srv.server_address[1]
     print("Tesla app: %s   (data: %s)" % (url, DATA_DIR), flush=True)
+    threading.Thread(target=_prime_static, daemon=True).start()
     threading.Thread(target=_warm, args=(srv.server_address[1],), daemon=True).start()
     if a.no_window:
         try:
