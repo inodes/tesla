@@ -62,6 +62,16 @@ class WindowPlaceTest(unittest.TestCase):
         T.window_move(SimpleNamespace(move=lambda x, y: got.append("no")), (None, None))
         self.assertEqual(got, [(100, 50)])
 
+    def test_the_title_bar_height_is_taken_from_a_reported_size(self):
+        T._CHROME[0] = None
+        self.addCleanup(lambda: T._CHROME.__setitem__(0, None))
+        frame = SimpleNamespace(size=SimpleNamespace(height=1128))
+        win = SimpleNamespace(native=SimpleNamespace(window=SimpleNamespace(frame=lambda: frame, contentRectForFrameRect_=lambda f: SimpleNamespace(size=SimpleNamespace(height=1100)))))
+        self.assertEqual(T.window_chrome(win), 28)
+        self.assertEqual(T.window_chrome(SimpleNamespace()), 28)          # kept once found
+        T._CHROME[0] = None
+        self.assertEqual(T.window_chrome(SimpleNamespace()), 0)           # not a Mac window: nothing taken off
+
 
 if __name__ == "__main__":
     unittest.main()

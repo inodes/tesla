@@ -55,7 +55,7 @@ class HomeEdgesTest(PurgeTest):
         self.assertFalse(os.path.exists(os.path.join(rd, "%s-front.mp4" % S2)))
         self.assertTrue(os.path.exists(os.path.join(rd, "%s-front.mp4" % S3)))
 
-    def test_a_park_with_no_drive_beside_it_is_deleted_whole(self):
+    def test_a_park_with_no_drive_known_beside_it_still_keeps_its_first_and_last_minute(self):
         RC._S = {S1: ["park", -33.8, 151.1, True, CC.utc(S3)]}
         RC._VER += 1
         k = self.keeper()
@@ -63,7 +63,9 @@ class HomeEdgesTest(PurgeTest):
         k.purge([dict(kind="recent", id=S1)], ["video"], self.roots, confirmed=True)
         self.wait(k)
         rd = os.path.join(self.roots["J"], "RecentClips")
-        self.assertFalse(any(os.path.exists(os.path.join(rd, "%s-front.mp4" % s)) for s in (S1, S2, S3)))
+        self.assertTrue(os.path.exists(os.path.join(rd, "%s-front.mp4" % S1)))
+        self.assertFalse(os.path.exists(os.path.join(rd, "%s-front.mp4" % S2)))
+        self.assertTrue(os.path.exists(os.path.join(rd, "%s-front.mp4" % S3)))
 
     def test_delete_parked_at_home_in_one_go_keeps_the_drive_edges(self):
         k = self.keeper()
@@ -79,7 +81,14 @@ class HomeEdgesTest(PurgeTest):
         self.assertTrue(os.path.exists(os.path.join(rd, "%s-front.mp4" % S3)))
 
     def test_a_minute_in_which_the_car_moved_is_never_deleted_as_parked_at_home(self):
-        RC._S = {S1: ["park", -33.8, 151.1, True, CC.utc(S3)]}
+        S4 = "2026-10-16_15-43-07"
+        f = os.path.join(self.data, "teslacam_ledger", "2026-10-16.json")
+        day = json.load(open(f))
+        day["recent||%s-front" % S4] = dict(size=10, drives=dict(J=dict(LIVE)))
+        json.dump(day, open(f, "w"))
+        rd = os.path.join(self.roots["J"], "RecentClips")
+        open(os.path.join(rd, "%s-front.mp4" % S4), "wb").write(b"x" * 10)
+        RC._S = {S1: ["park", -33.8, 151.1, True, CC.utc(S4)]}
         RC._VER += 1
         k = self.keeper()
         real = k.tc._tl("A").summary
@@ -87,9 +96,8 @@ class HomeEdgesTest(PurgeTest):
         k.status(force=True)
         k.purge_home(self.roots, confirmed=True)
         self.wait(k)
-        rd = os.path.join(self.roots["J"], "RecentClips")
-        self.assertTrue(os.path.exists(os.path.join(rd, "%s-front.mp4" % S2)))
-        self.assertFalse(os.path.exists(os.path.join(rd, "%s-front.mp4" % S1)))
+        gone = [s for s in (S1, S2, S3, S4) if not os.path.exists(os.path.join(rd, "%s-front.mp4" % s))]
+        self.assertEqual(gone, [S3])                      # the first and last minute are the drives', the second moved; only the one still minute between goes
 
 
 if __name__ == "__main__":
