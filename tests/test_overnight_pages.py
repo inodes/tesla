@@ -26,6 +26,11 @@ class OvernightPagesTest(unittest.TestCase):
         self.assertIn('const HOLE=(+cfg("teslacam.park_end_s")||21600)', self.js)
         self.assertIn("if(m.off-c>HOLE&&out.length)c=m.off;", self.js)
 
+    def test_teslacam_cards_are_cut_by_day_like_the_drives_list(self):
+        self.assertIn("no overnight parks: a parked spell that runs past local midnight is one card per day", self.js)
+        self.assertIn('id:x.id+"@"+d,t0,t1', self.js)
+        self.assertIn('end:d===d1?x.end:d+"T24:00:00"', self.js)
+
 
 if __name__ == "__main__":
     unittest.main()

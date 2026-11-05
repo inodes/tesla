@@ -34,6 +34,20 @@ class CutsTest(unittest.TestCase):
         self.assertEqual([(k, v[0], v[3]) for k, v in sorted(c.items())],
                          [(self.sts[0], "park", False), (self.sts[10], "drive", True), (self.sts[20], "park", True)])
 
+    def test_a_park_is_cut_where_the_local_day_changes_but_a_drive_is_not(self):
+        import datetime
+        base = datetime.datetime(2026, 10, 29, 23, 40, 7)
+        sts = [(base + datetime.timedelta(minutes=k)).strftime("%Y-%m-%d_%H-%M-%S") for k in range(40)]
+        days = [CC.local_of(x)[:10] for x in sts]
+        flips = [i for i in range(1, len(sts)) if days[i] != days[i - 1]]
+        self.assertEqual(len(flips), 1, "the test clock has one midnight in these minutes")
+        i = flips[0]
+        park = RC.compute(sts, [item("stopped", sts[0], sts[-1])])
+        self.assertEqual(sorted(park), [sts[0], sts[i]])           # the evening and the morning
+        self.assertTrue(park[sts[i]][3])
+        drive = RC.compute(sts, [item("drive", sts[0], sts[-1], p0=[-33.8, 151.1], p1=[-33.9, 151.2])])
+        self.assertEqual(sorted(drive), [sts[0]])                  # a drive over midnight stays one
+
     def test_a_parked_section_is_where_the_drive_beside_it_began_or_ended(self):
         c = RC.compute(self.sts, self.items)
         self.assertEqual(c[self.sts[0]][1:3], [-33.80, 151.10])    # before the drive: where it began

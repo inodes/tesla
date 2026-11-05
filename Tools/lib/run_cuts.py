@@ -337,6 +337,13 @@ def compute(stamps, items, moves=None, moves_upto=0, kinds=None, marks=None):
 
     out, key, last, sec, secit = {}, None, None, None, None
     ref = {}                                          # first minute of a section -> the timeline item it began in
+    prev, days = None, {}                             # the minute before, and the local day of each minute looked at
+
+    def day(x):
+        d = days.get(x)
+        if d is None:
+            d = days[x] = str(CC.local_of(x))[:10]
+        return d
     for st in sorted(stamps, key=CC.utc):
         t = CC.utc(st)
         it = moving(t) or at(t + 30)
@@ -357,6 +364,8 @@ def compute(stamps, items, moves=None, moves_upto=0, kinds=None, marks=None):
         cut = False
         if not new and k is not None and key is not None and k != key:
             cut = True
+        if not new and not cut and k is not None and key is not None and k[0] == "park" and key[0] == "park" and prev is not None and day(prev) != day(st):
+            cut = True                                    # no overnight parks: a parked recording is cut where the day changes (a night at home is two sections, the evening and the morning)
         if new or cut:
             sec = st
             kd = k[0] if k else ""
@@ -370,6 +379,7 @@ def compute(stamps, items, moves=None, moves_upto=0, kinds=None, marks=None):
             out[sec][0], out[sec][1], out[sec][2] = k[0], la, lo
             ref[sec] = it
         last = t
+        prev = st
         if sec in out:
             out[sec][4:] = [t]                            # the last minute of the section so far
     # a parked spell has no position of its own: it is where the drive before it ended, or where the drive after it began (in the same run)
