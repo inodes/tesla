@@ -125,7 +125,9 @@ class SentryWindow(unittest.TestCase):
         self.assertEqual([(m["stamp"], m["src"], m["ref"]) for m in d["minutes"]], [(st, "sentry", ev) for st in stamps])
         self.assertTrue(any(x is not None for x in d["series"]["lat"]))
         self.assertTrue(AT.TeslaCam._front(root, d["minutes"][0] | dict(tcam="front")).endswith(os.path.join("SentryClips", ev, "%s-front.mp4" % stamps[0])))
-        away = tc.window("A", root, t0 - 30, t0 + 150, 0, None, None)                           # no video of it on this drive (it is on one that is away): the telemetry kept for it shows, with no video
+        elsewhere = os.path.join(tmp, "Other", "TeslaCam")                                      # a drive that holds none of it (the footage is on one that is away)
+        os.makedirs(os.path.join(elsewhere, "RecentClips"))
+        away = tc.window("A", elsewhere, t0 - 30, t0 + 150, 0, None, None)                      # the telemetry kept for it shows, with no video
         self.assertEqual(([m["src"] for m in away["minutes"]], [m["cams"] for m in away["minutes"]]), (["cache", "cache"], [[], []]))
         self.assertIsNone(tc.window("A", root, t0 + 5 * 86400, t0 + 5 * 86400 + 100, 0, None, None))      # nothing recorded at all for that time
 
