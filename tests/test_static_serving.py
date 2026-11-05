@@ -151,6 +151,27 @@ class Json(Served):
         self.assertEqual(r.getheader("Content-Encoding"), "gzip")
         self.assertEqual(json.loads(gzip.decompress(z)), self.state["body"])
 
+    def test_the_teslacam_lists_are_answered_from_what_was_kept(self):
+        self.assertIn("clips", tesla_app.KEPT_LISTS)
+        self.assertIn("teslacam", tesla_app.KEPT_LISTS)
+        tesla_app.KEPT_LISTS["clips"] = lambda: None
+        self.state["stale"] = True
+        r, _ = self.get("/api/clips")
+        self.assertEqual((r.status, r.getheader("X-Stale")), (200, "1"))
+
+    def test_opening_the_teslacam_page_looks_at_the_volumes_again_behind(self):
+        saved = (dict(tesla_app._ROOTS), tesla_app.footage_root)
+        seen = []
+        try:
+            tesla_app._ROOTS["t"] = 99
+            tesla_app.footage_root = lambda r: seen.append((r, tesla_app._ROOTS["t"]))
+            tesla_app.KEPT_LISTS["teslacam"] = lambda: None
+            self.assertEqual(self.get("/api/teslacam")[0].status, 200)
+            self.assertEqual(seen, [("A", 0)])
+        finally:
+            tesla_app._ROOTS.update(saved[0])
+            tesla_app.footage_root = saved[1]
+
     def test_errors_are_not_kept(self):
         r, _ = self.get("/api/nothing-here")
         self.assertEqual(r.status, 404)

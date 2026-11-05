@@ -21,8 +21,10 @@ The task is docs/LOAD_SPEED_TASK.md. Work happens on branch `claude/load-speed` 
   `4bdc113` that; next commit: clip_clock's provenance read per file (`_PF`, keyed by mtime ns + size; `_read_one`): a refresh after one file changed 60 → 2.9 ms.
   `814a8d1` that; next commit: ShortPlace re-fed only when the clips' places (`CC.where_token()`, kept the same object while unchanged) or the count of
   minutes with telemetry change, not on every `CC.version()` change: a label after a clock change 20 ms → 0 ms.
-- **Next**: step 5 rest: /api/clips answered from what was built last and refreshed behind (the page's `tcGet` already shows its
-  remembered copy at once; the server still builds on every call). Then
+  `904232e` that; next commit: /api/teslacam and /api/clips are Kept lists (app_kept.py: last answer from memory or the computer's cache folder at once,
+  refreshed behind at most every 8 s, `X-Stale` while refreshing; `?fresh=1`, which the page sends for a minute after an action, waits for the newest); /api/teslacam
+  still starts a look at the volumes behind; app.js `tcRecheck` asks again while an answer is stale (as `api()` does). Step 5 is done with it.
+- **Next**: step 2 (perf_log + POST /api/perf), step 6 (drive page), step 7 (final table, Mac checklist). Then
   step 5 (TeslaCam from cache), step 2 (perf_log), step 6, step 7. Order follows the task's Budget section (value first).
 - **Half-done**: nothing.
 - **Leads from the baseline**: (fixed: the ~10 s first answer was three drive discoveries per look, run again by the first request) `/api/teslacam` takes 1.7-11.8 s on every call, also warm (`_ROOTS["t"] = 0` then `TC.drives()` → `DR.discover()`); `/api/clips` 0.75-1.8 s warm; the first `/api/drivelist` after a first start 5.4 s.
@@ -84,6 +86,13 @@ The task is docs/LOAD_SPEED_TASK.md. Work happens on branch `claude/load-speed` 
 | change | measure | before → after |
 |---|---|---|
 | ShortPlace fed only when its inputs change | `_short_where` right after a clock-version change (8,673 minutes, 10,707 places) | median 20.1 ms → 0.0 ms |
+
+| change | measure (harness, fixture, keeper running) | baseline → after |
+|---|---|---|
+| /api/teslacam, /api/clips answered from the kept answer, refreshed behind | /api/clips cold / warm, first start | 0.791 / 1.763 s → 0.067 / 0.127 s |
+| | /api/clips cold / warm, restart | 0.746 / 0.842 s → 0.104 / 0.045 s |
+| | /api/teslacam cold / warm, restart | 1.698 / 11.759 s → 0.019 / 0.017 s |
+| | /api/teslacam cold, first start (nothing kept yet: the one look is waited for) | 5.502 s → 2.988 s |
 
 The JSON times are within the noise of the background builds: no time gain or loss shows on localhost; the gain is bytes (5-8x less). Level 1 rather than 6: a 1.5 MB list compresses in 11 ms instead of 34 ms (measured), for 324 KB instead of 242 KB.
 

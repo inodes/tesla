@@ -1678,16 +1678,19 @@ const lazyThumbs=host=>$$("video.vt",host).forEach(v=>{if(VT)VT.observe(v);else 
 // ---------- TeslaCam: the clips on any connected drive, and one continuous timeline built from the files alone
 let TCS={role:null,kind:"clips",q:"",r:{p:"all"},at:{},src:{sentry:1,saved:1,recent:1}},TLOFF=null;
 const SWRSEEN=new Set(),FRESH={};
+// the server answered a TeslaCam list from what it kept and is refreshing it: ask again in a few seconds and redraw if it changed
+const tcRecheck=(p,shown,k=0)=>{if(k>4||p==="drivelist")return;setTimeout(async()=>{let n;try{n=await fetchJ(p)}catch(e){return}const ck="tc/"+p;
+  if(!sameData(n,shown)){if(cache[ck]===shown||cache[ck]===undefined)cache[ck]=n;mkey(ck).then(key=>IDB.set(key,clean(n)));redrawQuietly()}else if(STALEP.has(p))tcRecheck(p,shown,k+1)},4000)};
 const tcGet=async(p,fresh)=>{if(p!=="drivelist"&&p!=="clips"&&p!=="teslacam")return fetchJ(p);       // remembered in memory and in IndexedDB (drawn at once, refreshed behind); fresh=true forces a server check
   const ck="tc/"+p;
   if(FRESH[p]){const v=FRESH[p];delete FRESH[p];return cache[ck]=v}
   const k=await mkey(ck);
-  if(fresh){const n=await fetchJ(p);if(!n.stale)IDB.set(k,clean(n));return cache[ck]=n}
+  if(fresh){const n=await fetchJ(p);if(!n.stale)IDB.set(k,clean(n));if(STALEP.has(p))tcRecheck(p,n);return cache[ck]=n}
   if(cache[ck]&&SWRSEEN.has(p))return cache[ck];
   const old=cache[ck]||await IDB.get(k);SWRSEEN.add(p);
-  if(old===undefined){const n=await fetchJ(p);if(!n.stale)IDB.set(k,clean(n));return cache[ck]=n}
+  if(old===undefined){const n=await fetchJ(p);if(!n.stale)IDB.set(k,clean(n));if(STALEP.has(p))tcRecheck(p,n);return cache[ck]=n}
   cache[ck]=old;
-  fetchJ(p).then(n=>{if(!n.stale)IDB.set(k,clean(n));
+  fetchJ(p).then(n=>{if(!n.stale)IDB.set(k,clean(n));if(STALEP.has(p))tcRecheck(p,n);
     if(!sameData(n,old)){FRESH[p]=n;cache[ck]=n;redrawQuietly()}
     else if(p==="drivelist"&&n.stale){cache[ck]=n;if($("#stl"))$("#stl").hidden=false;drivelistPoll(old)}}).catch(()=>{});
   return old};
