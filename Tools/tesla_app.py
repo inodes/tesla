@@ -773,6 +773,9 @@ class H(BaseHTTPRequestHandler):
 
     def api(self, name, q):
         S = STORE
+        if name == "teslacam":                  # the page opening looks at the volumes again, behind (the first look of a run is waited for)
+            _ROOTS["t"] = 0
+            footage_root("A")
         if name in KEPT_LISTS:                  # answered at once from what was kept, refreshed behind (lib/app_kept.py); ?fresh=1 waits for the newest
             raw, stale = KEPT.get(name, lambda: KEPT_LISTS[name](), q.get("fresh", [""])[0] == "1")
             tag = '"%s%s"' % (hashlib.blake2b(raw, digest_size=12).hexdigest(), "s" if stale else "")       # a stale answer never matches a fresh one (a 304 keeps the old headers)
@@ -845,9 +848,6 @@ class H(BaseHTTPRequestHandler):
             return self.send_json(drive_review_state(q.get("id", [""])[0]))
         if name == "review/scanned":            # every minute whose signs have been read: {UTC epoch s of the minute: signs found}
             return self.send_json(TC.review_scanned())
-        if name == "teslacam":                  # the drives that are connected right now (found by what is on them)
-            _ROOTS["t"] = 0
-            return self.send_json(dict(drives=TC.drives()))
         if name == "drivelist":                 # the Drives list: Tessie's drives and charges as the rows, the dashcam's drives attached (or alone when there is no Tessie)
             return self.send_json(drivelist())
         if name == "stills/thin":               # how many minutes of ordinary driving have stills that could be smaller, what they take, and the job
@@ -859,10 +859,6 @@ class H(BaseHTTPRequestHandler):
             return self.send_json(CKEEP.job())
         if name == "clips/history":             # what the last deletes and moves removed (kept across restarts)
             return self.send_json(dict(jobs=CKEEP.history(30)))
-        if name == "clips":                     # every Recent run, Saved and Sentry event ever logged, whichever drives are connected; each says which drive holds it and whether it can be played
-            if DRIVELIST.has():                 # the cuts between the drive and parked sections of a recording are worked out (kept from the last time): refreshed behind, never waited for
-                drivelist()
-            return self.send_json(TC.clips_all(footage_roots()))
         if name.startswith("clips/shots/"):     # clips/shots/<saved|sentry>/<event folder>: the cameras that have a full-size picture of the moment, and which second of which clip it is
             m = re.match(r"^clips/shots/(saved|sentry)/(\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2})$", name)
             if not m:
@@ -1304,7 +1300,15 @@ KEPT_LISTS = {          # the lists a page asks for first: answered from what wa
     "alerts": lambda: STORE.alerts(),
     "places": lambda: STORE.pl.listing(STORE),
     "chargers": lambda: STORE.pl.charger_listing(STORE),
+    "teslacam": lambda: dict(drives=TC.drives()),                                 # the drives that are connected right now (found by what is on them)
+    "clips": lambda: _clips(),                  # every Recent run, Saved and Sentry event ever logged, whichever drives are connected; each says which drive holds it and whether it can be played
 }
+
+
+def _clips():
+    if DRIVELIST.has():                 # the cuts between the drive and parked sections of a recording are worked out (kept from the last time): refreshed behind, never waited for
+        drivelist()
+    return TC.clips_all(footage_roots())
 
 
 def _code_version():
