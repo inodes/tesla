@@ -41,8 +41,11 @@ class SkewTest(unittest.TestCase):
         for st, (off, extra) in clips.items():
             ns = naive(st)
             rec["recent||%s-front" % st] = [dict(created=ns - off - extra, modified=ns - off - extra + 60, name_stamp=ns, offset=off, skew_s=off + extra)]
-        with open(os.path.join(self.d, "teslacam_provenance", "2026-10-11.json"), "w") as f:
-            json.dump(rec, f)
+        f = os.path.join(self.d, "teslacam_provenance", "2026-10-11.json")
+        with open(f, "w") as fh:
+            json.dump(rec, fh)
+        self.tick = getattr(self, "tick", 0) + 1                                  # every write gets a time of its own: a file system with a coarse clock must not make two writes look the same
+        os.utime(f, ns=(10 ** 9 * 1_700_000_000, 10 ** 9 * (1_700_000_000 + self.tick)))
 
     def test_the_clip_named_44_seconds_late_is_placed_by_its_own_time_and_follows_the_one_before(self):
         a, b, c = "2026-10-11_14-28-50", "2026-10-11_14-30-34", "2026-10-11_14-30-51"

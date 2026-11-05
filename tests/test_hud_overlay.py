@@ -9,6 +9,10 @@ import shutil
 import subprocess
 import unittest
 
+import sys  # noqa: E402
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import node_usable  # noqa: E402
+
 HERE = os.path.dirname(os.path.abspath(__file__))
 APP_JS = os.path.join(HERE, "..", "Tools", "lib", "app_ui", "app.js")
 APP_CSS = os.path.join(HERE, "..", "Tools", "lib", "app_ui", "app.css")
@@ -31,7 +35,7 @@ SGV = ('{"m1":[{"text":"60","kind":"","s0":10,"s1":12},{"text":"80","kind":"","s
        '"m2":[{"text":"40","kind":"school","s0":5,"s1":6},{"text":"100","kind":"","s0":30,"s1":31}],"m3":[]}')
 
 
-@unittest.skipUnless(shutil.which("node"), "node is not installed")
+@unittest.skipUnless(node_usable.usable(), "node is not installed or does not start")
 class HudTest(unittest.TestCase):
     def test_limit_is_the_latest_sign_read_so_far(self):
         st = '["m1","m2","m3"]'
@@ -146,7 +150,7 @@ HOLD = "k=>99"                                                        # the car 
 SLOW = "k=>k<0?99:Math.max(55,99-k*6)"                                # the car slows to 55 over the next seconds
 
 
-@unittest.skipUnless(shutil.which("node"), "node is not installed")
+@unittest.skipUnless(node_usable.usable(), "node is not installed or does not start")
 class TrustTest(unittest.TestCase):
     def test_distance_off_the_cars_line_comes_from_where_and_how_big(self):
         self.assertAlmostEqual(run("hudLat(%s)" % ROAD), 4.65, 1)

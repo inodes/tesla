@@ -12,6 +12,10 @@ import subprocess
 import sys
 import unittest
 
+import sys  # noqa: E402
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import node_usable  # noqa: E402
+
 HERE = os.path.dirname(os.path.abspath(__file__))
 for p in ("tests", "Tools", os.path.join("Tools", "lib")):
     sys.path.insert(0, os.path.join(HERE, "..", p))
@@ -77,7 +81,7 @@ class OneRequest(unittest.TestCase):
         self.assertRegex(build, r"\*\*app_drivelist\.page_rows\(act\)")
         self.assertGreaterEqual(DL.VERSION, 5)                               # a list kept by the older code (without the rows) is built again
 
-    @unittest.skipUnless(shutil.which("node"), "node is not installed")
+    @unittest.skipUnless(node_usable.usable(), "node is not installed or does not start")
     def test_page_line_old_and_new_way_in_node(self):
         """Runs the page's own line in node: with the rows in the list (new way, no /api/activity request) and without them (a list kept by an older
         version: falls back to /api/activity), against the old way's filter."""
