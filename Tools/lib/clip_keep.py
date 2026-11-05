@@ -18,10 +18,12 @@ and then deletes them from the drive they were on, after checking again that it 
     ClipKeep.start_process(items, roots)     reads what is missing for the clips: metadata, then stills, then signs (from the video on a connected drive)
     ClipKeep.job()                           -> the running or last job
 """
+import datetime
 import json
 import os
 import re
 import shutil
+import subprocess
 import threading
 import time
 
@@ -42,6 +44,7 @@ import sign_speed as SS
 
 GAP = 75                      # seconds between two minutes that still belong to one Recent run (as in app_teslacam)
 TTL = 8.0                     # seconds an answer is reused
+_STAMP = re.compile(r"^\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2}$")
 _FILE = re.compile(r"^(\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2})-([a-z_]+)$")
 KINDS = ("recent", "saved", "sentry")
 
@@ -451,6 +454,107 @@ class ClipKeep:
             self._thread = threading.Thread(target=self._run, args=(action, role, files, roots, clips, to), daemon=True)
         self._thread.start()
         return self.job()
+
+    # ---- Recent minutes -> a Saved clip --------------------------------------------------------------------------------
+    SAVE_MAX = 60                                   # minutes at most in one clip made this way
+    SAVE_REASON = "user_interaction_dashcam_icon_tapped"
+
+    def save_minutes(self, stamps, roots, confirmed=False):
+        """Makes a Saved clip of Recent minutes, as the car's dashcam button does: the minutes' files are MOVED (renamed on their own drive, so no copy and no space) into
+        SavedClips/<moment>/ and an event.json is written for it (the car writes one per Saved clip; this one says it was made by the app, `made_by`). All the minutes must be on
+        one connected drive. The footage log is updated at once. Returns dict(ok, event, role, files, folder) or dict(error=...)."""
+        if confirmed is not True:
+            return dict(error="Not confirmed: nothing was moved.")
+        if self._thread and self._thread.is_alive():
+            return dict(error="Something is already being done to the drives.")
+        sts = sorted({x for x in (stamps or []) if isinstance(x, str) and _STAMP.match(x)}, key=CC.utc)
+        if not sts:
+            return dict(error="No minutes are selected.")
+        if len(sts) > self.SAVE_MAX:
+            return dict(error="At most %d minutes can be saved as one clip (%d are selected)." % (self.SAVE_MAX, len(sts)))
+        led = TLG.Ledger(self.dir)
+        want = set(sts)
+        role = None
+        found = {}
+        for r in DR.read_roles():
+            if not roots.get(r):
+                continue
+            got = {}
+            for day in sorted({x[:10] for x in want}):
+                for key, rec in led.day(day).items():
+                    if not key.startswith("recent||"):
+                        continue
+                    m = _FILE.match(key[len("recent||"):])
+                    x = rec["drives"].get(r)
+                    if m and m.group(1) in want and x is not None and not x.get("gone"):
+                        got.setdefault(m.group(1), []).append((key, rec.get("size", 0), m.group(2)))
+            if set(got) == want:
+                role, found = r, got
+                break
+        if role is None:
+            return dict(error="These minutes are not all Recent video on one connected drive (a minute already in a Saved clip or a Sentry event cannot be saved again).")
+        root = roots[role]
+        t = datetime.datetime.strptime(sts[-1], "%Y-%m-%d_%H-%M-%S") + datetime.timedelta(seconds=30)      # the moment of the clip: in the middle of the last minute, as the car's tap is
+        folder = None
+        for k in range(120):
+            ev = (t + datetime.timedelta(seconds=k)).strftime("%Y-%m-%d_%H-%M-%S")
+            if not os.path.exists(os.path.join(root, "SavedClips", ev)):
+                folder = ev
+                break
+        if folder is None:
+            return dict(error="A Saved clip for that moment already exists.")
+        dst = os.path.join(root, "SavedClips", folder)
+        try:
+            os.makedirs(dst)
+        except OSError as e:
+            return dict(error="The Saved clips folder cannot be written: %s" % e)
+        lat = lon = ""
+        try:
+            sm = self.tc._tl("A").summary(sts[0])
+            q = sm.get("p0") if isinstance(sm, dict) else None
+            if q and q[0] is not None:
+                lat, lon = str(round(q[0], 4)), str(round(q[1], 4))
+        except Exception:
+            pass
+        done, touched, errors = [], set(), []
+        for st in sts:
+            for key, size, cam in found[st]:
+                src = TF.front_path(root, dict(src="recent", ev="", stamp=st, cam=cam))
+                to = os.path.join(dst, os.path.basename(src))
+                try:
+                    os.rename(src, to)
+                except OSError as e:
+                    errors.append("%s: %s" % (os.path.basename(src), e))
+                    continue
+                nk = "saved|%s|%s-%s" % (folder, st, cam)
+                touched.add(led.mark(role, key, size, False, flush=False))
+                touched.add(led.mark(role, nk, size, True, flush=False))
+                done.append(to)
+        if not done:
+            try:
+                os.rmdir(dst)
+            except OSError:
+                pass
+            return dict(error="Nothing could be moved: %s" % (errors[0] if errors else "no files"))
+        event = {"timestamp": t.strftime("%Y-%m-%dT%H:%M:%S"), "city": "", "street": "", "est_lat": lat, "est_lon": lon, "reason": self.SAVE_REASON, "camera": "0", "made_by": "Tesellate"}
+        with open(os.path.join(dst, "event.json"), "w", encoding="utf-8") as fh:
+            json.dump(event, fh, indent="\t", ensure_ascii=False)
+        fronts = sorted(d for d in done if d.endswith("-front.mp4"))
+        if fronts and shutil.which("ffmpeg"):          # thumb.png, like the car makes (from the last front clip)
+            try:
+                subprocess.run(["ffmpeg", "-v", "error", "-y", "-ss", "30", "-i", fronts[-1], "-frames:v", "1", "-vf", "scale=480:-2", os.path.join(dst, "thumb.png")],
+                               stdin=subprocess.DEVNULL, check=False, timeout=60)
+            except Exception:
+                pass
+        led.flush({d for d in touched if d})
+        try:
+            with open(os.path.join(self.dir, self.LOG), "a", encoding="utf-8") as fh:
+                fh.write(json.dumps(dict(t=time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), action="save", role=role, event=folder, minutes=len(sts), removed=len(done), errors=errors[:20]), ensure_ascii=False) + "\n")
+        except OSError:
+            pass
+        self._changed()
+        self._settle()
+        return dict(ok=True, event=folder, role=role, files=len(done), minutes=len(sts), folder=dst, errors=errors)
 
     # ---- delete by kind: the video, the metadata, the stills, the event pictures, the signs ----------------------------------
     TYPES = ("video", "metadata", "stills", "pictures", "signs")

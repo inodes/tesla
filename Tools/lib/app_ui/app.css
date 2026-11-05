@@ -324,3 +324,5 @@ main:has(#spl .stbar,#spl .vbar) #splx{display:none}
 .cfn{position:fixed;right:16px;bottom:16px;z-index:9999;background:var(--card);border:1px solid var(--line);border-radius:10px;box-shadow:0 6px 24px #0003;padding:10px 14px;max-width:440px;font-size:13px;color:var(--ink)}.cfn[hidden]{display:none}.cfn progress{display:block;width:100%;margin-top:6px}.cfn .btn{margin-left:10px}
 
 .sgp{position:absolute;left:10px;bottom:10px;z-index:5;background:var(--card);border:1px solid var(--line);border-radius:10px;padding:5px;box-shadow:0 2px 10px rgba(0,0,0,.3);pointer-events:none}.sgp img{display:block;max-width:150px;max-height:150px;border-radius:6px}.sgp[hidden]{display:none}
+
+.covbar i.sel{outline:2px solid var(--acc,#3b6cf6);outline-offset:-2px;opacity:1}.covsel{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin:6px 0 0;font-size:13px}.covsel[hidden]{display:none}.covsel>span{flex:1;min-width:200px}
