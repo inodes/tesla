@@ -2209,7 +2209,7 @@ async function pageTeslaCam(role,id){
   // the bar over the list: what is ticked, what it would free, and deleting its video from a drive (or moving it to the Archive) once everything is kept from it
   const NMD=drMap({A:"Archive",J:"JOWUA",U:"Tesla USB"}),conn=()=>(data&&data.connected)||[];
   const picked=()=>[...TCSEL].map(k=>{const i=k.indexOf("|");return {kind:k.slice(0,i),id:k.slice(i+1)}}).filter(it=>kpOf(it.kind,it.id));
-  const allowed=(r,act)=>picked().filter(it=>{const c=kpOf(it.kind,it.id);return c.bytes[r]>0&&(act==="move"?r!=="A":(c.ready||(r!=="A"&&c.bytes.A>0)))});
+  const allowed=(r,act,to)=>picked().filter(it=>{const c=kpOf(it.kind,it.id);return c.bytes[r]>0&&(act==="move"?r!==(to||"A"):(c.ready||(r!=="A"&&c.bytes.A>0)))});
   const PSTEPS=[
     ["meta","Metadata",c=>Math.max(0,c.meta[1]-c.meta[0]),"Read speed, position and steering from the video"],
     ["stills","Stills",c=>Math.max(0,c.stills[1]-c.stills[0]-(c.wait_n||0)-(c.snap_n||0)),"Take a picture every second of each minute"],
@@ -2270,10 +2270,10 @@ async function pageTeslaCam(role,id){
       const KEEP=[["meta","metadata"],["stills","stills"],["signs","signs"],["pictures","pictures"]];
       const lack=T.has("video")?KEEP.map(([st,ty])=>{if(T.has(ty))return null;const n=sel.filter(it=>{const c=kpOf(it.kind,it.id);return !c.ignored&&c.bytes&&cn.some(r=>c.bytes[r]>0)&&PSTEPS.find(x=>x[0]===st)[2](c)>0}).length;return n?`${n0(n)} clip${n>1?"s have":" has"} no ${ty} yet`:null}).filter(Boolean):[];
       h+=`<span style="flex:1;min-width:260px"><b>Delete from ${n0(sel.length)} clip${sel.length>1?"s":""}</b>${home?` · ${n0(home)} parked at Home`:""} <span class="sub">· cannot be undone</span><span style="display:flex;gap:6px;flex-wrap:wrap;margin-top:6px">${TY.map(([k,l,tip])=>`<button class="chip ${T.has(k)?"on":""}" data-pt="${k}" title="${esc(tip)}">${esc(l)}</button>`).join("")}</span>${lack.length?`<span class="sub" style="display:block;margin-top:4px;color:var(--bad)">${esc(lack.join(" · "))}</span>`:""}</span><button class="btn bad" id="pdo" ${T.size?"":"disabled"}>${T.size===TY.length?"Delete everything":"Delete"}</button><button class="btn" id="kno">Cancel</button>`}
-    else if(pend){const list=allowed(pend.role,pend.action),gb=fmtGB(sizeOn(list,pend.role));
-      const nf=list.reduce((a,it)=>a+((kpOf(it.kind,it.id).files||{})[pend.role]||0),0),na=list.reduce((a,it)=>a+((kpOf(it.kind,it.id).in_archive||{})[pend.role]||0),0),what=n0(list.length)+" clip"+(list.length>1?"s":"")+(nf?" ("+n0(nf)+" video file"+(nf>1?"s":"")+(pend.action==="move"&&na?", "+n0(na)+" already in the Archive":"")+")":"");
+    else if(pend){const to=pend.to||"A",list=allowed(pend.role,pend.action,to),gb=fmtGB(sizeOn(list,pend.role));
+      const nf=list.reduce((a,it)=>a+((kpOf(it.kind,it.id).files||{})[pend.role]||0),0),na=list.reduce((a,it)=>a+((kpOf(it.kind,it.id).in_archive||{})[pend.role]||0),0),what=n0(list.length)+" clip"+(list.length>1?"s":"")+(nf?" ("+n0(nf)+" video file"+(nf>1?"s":"")+(pend.action==="move"&&na&&to==="A"?", "+n0(na)+" already in the Archive":"")+")":"");
       h+=pend.action==="delete"?`<span style="flex:1"><b>Delete the video of ${what} from ${NMD[pend.role]}</b>, freeing ${gb}. Its metadata, stills and signs stay.${list.length<items.filter(it=>kpOf(it.kind,it.id).bytes[pend.role]>0).length?` The others are not all kept yet and are left alone.`:""}</span><button class="btn bad" id="kdo">Delete</button><button class="btn" id="kno">Cancel</button>`
-        :`<span style="flex:1"><b>Move the video of ${what} from ${NMD[pend.role]} to the Archive</b> (${gb}); what is missing is read first; it is copied, checked, and only then removed from ${NMD[pend.role]}.</span><button class="btn pri" id="kdo">Move</button><button class="btn" id="kno">Cancel</button>`}
+        :`<span style="flex:1"><b>Move the video of ${what} from ${NMD[pend.role]} to ${to==="A"?"the Archive":NMD[to]}</b> (${gb}); what is missing is read first; it is copied, checked, and only then removed from ${NMD[pend.role]}.</span><button class="btn pri" id="kdo">Move</button><button class="btn" id="kno">Cancel</button>`}
     else{
       const needN=scope.filter(it=>{const c=kpOf(it.kind,it.id);return !c.ignored&&PSTEPS.some(x=>x[2](c)>0)}).length;      // the same clips the drives' Tasks count (clip_keep.needs_by_drive)
       const one=!items.length&&OPENK?OPENK:null,c1=one&&kpOf(one.kind,one.id),need1=!!c1&&!c1.ignored&&PSTEPS.some(x=>x[2](c1)>0)&&cn.some(r=>c1.bytes[r]>0);      // one tile picked (not ticked): the button says what it does to that one clip
@@ -2285,7 +2285,7 @@ async function pageTeslaCam(role,id){
       if(allHome)h+=`<button class="btn sm bad" data-ka="purge|" title="Deletes the ticked clips parked at Home. Nothing that moved is touched">Delete parked at Home · ${fmtGB(homeSz)}</button>`;
       if(items.length&&!allHome)h+=`<button class="btn sm bad" data-ka="purge|" title="Choose what to delete from the ticked clips: video, metadata, stills, event pictures, signs">Delete…</button>`;
       cn.forEach(r=>{const d=allowed(r,"delete");if(items.length&&d.length)h+=`<button class="btn sm bad" data-ka="delete|${r}">Delete from ${NMD[r]} · ${fmtGB(sizeOn(d,r))}</button>`;
-        const m=allowed(r,"move");if(items.length&&m.length&&r!=="A"&&cn.includes("A"))h+=`<button class="btn sm" data-ka="move|${r}">Move to Archive · ${fmtGB(sizeOn(m,r))}</button>`});
+        cn.forEach(t=>{const m=allowed(r,"move",t);if(items.length&&m.length&&r!==t)h+=`<button class="btn sm" data-ka="move|${r}|${t}">Move to ${t==="A"?"Archive":NMD[t]} · ${fmtGB(sizeOn(m,r))}</button>`})});      // to any other connected drive (the Archive first)
       if(note)h+=`<span class="sub" style="flex:1;${/rror|not /.test(note)?"color:var(--bad)":"color:var(--ok)"}">${esc(note)}</span>`}
     h+="</div>";el.innerHTML=h;
     const on=(id,f)=>{const b=$("#"+id,el);if(b)b.onclick=f};
@@ -2294,9 +2294,9 @@ async function pageTeslaCam(role,id){
     on("kno",()=>{pend=null;selbar()});
     on("kupd",()=>upd());on("phx",async()=>{phase="";try{await fetch("/api/keeper",{method:"POST",body:JSON.stringify({action:"pause"})})}catch(e){}selbar()});
     ostrip()
-    $$("[data-ka]",el).forEach(b=>b.onclick=()=>{const [a,r]=b.dataset.ka.split("|");pend={action:a,role:r};note="";selbar()});
-    on("kdo",async()=>{const p=pend,list=allowed(p.role,p.action);pend=null;stopVideos();phase=p.action==="move"?"Starting the move…":"Deleting…";phasePc=5;selbar();
-      let j;try{j=await (await fetch("/api/clips/act",{method:"POST",body:JSON.stringify({action:p.action,role:p.role,items:list,confirm:true})})).json()}catch(e){j={error:e.message}}
+    $$("[data-ka]",el).forEach(b=>b.onclick=()=>{const [a,r,t]=b.dataset.ka.split("|");pend={action:a,role:r,to:t||"A"};note="";selbar()});
+    on("kdo",async()=>{const p=pend,list=allowed(p.role,p.action,p.to);pend=null;stopVideos();phase=p.action==="move"?"Starting the move…":"Deleting…";phasePc=5;selbar();
+      let j;try{j=await (await fetch("/api/clips/act",{method:"POST",body:JSON.stringify({action:p.action,role:p.role,to:p.to||"A",items:list,confirm:true})})).json()}catch(e){j={error:e.message}}
       phase="";
       if(j.error){note=j.error;selbar();return}
       jobT=j;selbar();poll()});
@@ -2309,7 +2309,7 @@ async function pageTeslaCam(role,id){
   // time left in the step running, worked out from how long the clips done so far took (shown once a few are done, so a slow step does not look stuck)
   const jobLeft=j=>{const el=j.step_t0?Date.now()/1000-j.step_t0:0;if(!(j.step_total>j.step_done)||j.step_done<2||el<30)return "";return " · about "+dur(Math.max(1,Math.round(el/j.step_done*(j.step_total-j.step_done)/60)))+" left"};
   const jobPaint=()=>{const t=$("#jobtx");if(!t||!jobT)return;const j=jobT,pr=j.action==="process"||j.action==="pictures"||!!j.reading,q=pr?(j.step_total?Math.round(100*(j.step_done+(j.step_done<j.step_total?.35:0))/j.step_total):5):(j.bytes?Math.round(100*j.bytes_done/j.bytes):(j.files?Math.round(100*(j.done+.35)/j.files):5));
-    const hd=pr?`<b>${j.reading?"Before moving, reading what is missing · ":""}${esc(j.step||"Starting")}</b>${j.step_total?` · ${n0(j.step_done)} of ${n0(j.step_total)} (${q}%)`:""}${jobLeft(j)}${j.current?` <span class="sub">· ${esc(j.current)}</span>`:""}`:j.action==="purge"?`<b>Deleting ${esc((j.types||[]).join(", "))}</b> · ${n0(j.done)} of ${n0(j.files)} video files · ${fmtGB(j.bytes_done)} of ${fmtGB(j.bytes)} (${q}%)`:`<b>${j.action==="move"?"Moving":"Deleting"} the video ${j.action==="move"?"from "+NMD[j.role]+" to the Archive":"from "+NMD[j.role]}</b> · ${n0(j.done)} of ${n0(j.files)} files · ${fmtGB(j.bytes_done)} of ${fmtGB(j.bytes)} (${q}%)`;
+    const hd=pr?`<b>${j.reading?"Before moving, reading what is missing · ":""}${esc(j.step||"Starting")}</b>${j.step_total?` · ${n0(j.step_done)} of ${n0(j.step_total)} (${q}%)`:""}${jobLeft(j)}${j.current?` <span class="sub">· ${esc(j.current)}</span>`:""}`:j.action==="purge"?`<b>Deleting ${esc((j.types||[]).join(", "))}</b> · ${n0(j.done)} of ${n0(j.files)} video files · ${fmtGB(j.bytes_done)} of ${fmtGB(j.bytes)} (${q}%)`:`<b>${j.action==="move"?"Moving":"Deleting"} the video ${j.action==="move"?"from "+NMD[j.role]+" to "+(!j.to||j.to==="A"?"the Archive":NMD[j.to]):"from "+NMD[j.role]}</b> · ${n0(j.done)} of ${n0(j.files)} files · ${fmtGB(j.bytes_done)} of ${fmtGB(j.bytes)} (${q}%)`;
     if($("#jobhd",t)){$("#jobhd",t).innerHTML=hd;setPbar(t,q);const sb=$("#jobsub",t);if(sb)sb.hidden=!pr;return}
     t.innerHTML=`<div id="jobhd">${hd}</div>${pbar(q)}<div id="jobsub" class="sub" style="margin-top:4px"${pr?"":" hidden"}>Videos cannot play while this reads from the drive.</div>`};
   let polling=false;
