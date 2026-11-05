@@ -4,42 +4,62 @@ The task is docs/LOAD_SPEED_TASK.md. Work happens on branch `claude/load-speed` 
 
 ## Handoff
 
-- **Done** (all on PR #17): step 1 `25e635e` fixture + harness + baseline, `0aec053` harness page timings in Chromium; step 3 `adafa01` MapLibre 4.7.1 served from
-  `Tools/lib/app_ui/vendor/` (`/vendor/<name>`, 1-year immutable cache, 302 to cdnjs only when the copy is missing), both scripts `defer`, MapLibre CSS non-blocking;
-  `78dfbcd` ETag/304 + gzip for index.html, app.js, app.css, vendor (`H.send_body` / `H.send_static` in tesla_app.py, gzip kept per ETag, primed at start);
-  `1b30eed` `boot()` asks for the settings together with the summary / status / keeper and only `route()` waits for them (step 3 complete);
-  step 4: `c96b159` ETag/304 + gzip (level 1) for every 200 JSON answer to a GET (`send_json`, and the Kept lists with the stale flag in the ETag);
-  then minute_kind no longer rewrites its file when the probe learned nothing (it caused an endless Drives-list rebuild loop), and the Drives list is kept on disk
-  with its signature (+ code version) so a restart does not rebuild it (`app_drivelist.Cached`, file format `{kept_sig, list}`; an old plain file is shown stale as before).
-  activity / chargers / places were already answered from the kept copy at once after a restart (app_kept.py) and rebuild fast (under 0.25 s), so they are left as they are.
-  Then (next commit) `footage_root`: one look at the volumes for every role (`_look_roots`, was one `DR.discover()` per role) and a lock so the first request waits for
-  the start-up thread's look instead of repeating it: first start's first answer 9.4-11 s → 1.5 s.
-  `_warm` tried and left as it was (measured: starting it as soon as the window's first request is answered, in a value order and without /api/teslacam, made a
-  second page opened 3 s after the first slower, 664 / 1,284 ms → 1,695 / 2,173 ms on a first start, because the warm-up competes with the page asked for; and
-  /api/teslacam is cheap since the volume-look fix). Step 4 is done (`173ec36`).
-  Step 5, next commit: `clip_clock.utc` kept per stamp (forgotten when the runs, the clips' own times or the settings are replaced): /api/clips warm median 0.235 → 0.203 s.
-  `4bdc113` that; next commit: clip_clock's provenance read per file (`_PF`, keyed by mtime ns + size; `_read_one`): a refresh after one file changed 60 → 2.9 ms.
-  `814a8d1` that; next commit: ShortPlace re-fed only when the clips' places (`CC.where_token()`, kept the same object while unchanged) or the count of
-  minutes with telemetry change, not on every `CC.version()` change: a label after a clock change 20 ms → 0 ms.
-  `904232e` that; next commit: /api/teslacam and /api/clips are Kept lists (app_kept.py: last answer from memory or the computer's cache folder at once,
-  refreshed behind at most every 8 s, `X-Stale` while refreshing; `?fresh=1`, which the page sends for a minute after an action, waits for the newest); /api/teslacam
-  still starts a look at the volumes behind; app.js `tcRecheck` asks again while an answer is stale (as `api()` does). Step 5 is done with it.
-  `5e08d8b` that. Step 2, next commit: `Tools/lib/perf_log.py` → `~/Library/Logs/tesla_perf.log` (rotates to `.1` at 1 MB; `TESLA_PERF_LOG` names another file, empty = off,
-  tests set it empty): `start` lines (setup done, server bound, first request, with seconds since launch from `ps -o etime=`), `slow` lines (an /api request over
-  0.15 s with its bytes), `page` lines from POST /api/perf (app.js `route()`: route start to page drawn, and `first_ms` = performance.now() at the first page).
-  Checked on the fixture: `page route=drives ms=423 first_ms=591`.
-- **Found, not from this work**: running the existing test suite creates `~/Library/Mobile Documents/...` in the home folder (it was there after the first suite
-  run, before any change here); not looked into.
-  `4f95b52` that. Step 6, next commit: the drive page's /api/teslacam/auto/window spent 95% in `_events_in` → `_sentry_minutes`, which sorted the times of
-  every Recent minute again for each Sentry event; worked out once now: window 0.43-3.26 s → 0.07-0.56 s.
-- **Next**: step 7 (final harness run, before/after table, Mac checklist). Then
-  step 5 (TeslaCam from cache), step 2 (perf_log), step 6, step 7. Order follows the task's Budget section (value first).
-- **Half-done**: nothing.
-- **Leads from the baseline**: (fixed: the ~10 s first answer was three drive discoveries per look, run again by the first request) `/api/teslacam` takes 1.7-11.8 s on every call, also warm (`_ROOTS["t"] = 0` then `TC.drives()` → `DR.discover()`); `/api/clips` 0.75-1.8 s warm; the first `/api/drivelist` after a first start 5.4 s.
-- **Sandbox notes**: cdnjs is blocked here; the vendored files are `dist/` of the npm package `maplibre-gl@4.7.1` (the same files cdnjs serves). Playwright's headless shell is missing here; perf_run.py falls back to `/opt/pw-browsers/chromium` (or `PERF_CHROMIUM`).
-- **Pre-existing test failures** (before any change here, also alone): `test_snapshots_for.SnapshotsFor.test_only_drives_over_the_clips_without_snapshots`, `test_timeline_stored.SentryWindow.test_the_minutes_of_a_sentry_event_make_a_window_with_telemetry`. The bar for each commit is: these two and no others.
+- **State**: all seven steps of docs/LOAD_SPEED_TASK.md are done on branch `claude/load-speed` (PR #17 into `merged`). Commits, oldest first:
+  `25e635e` fixture + harness + baseline · `0aec053` page timings in the harness · `adafa01` MapLibre vendored, `<head>` non-blocking · `78dfbcd` ETag/gzip for
+  the page files · `1b30eed` parallel `boot()` · `c96b159` ETag/gzip for /api JSON · `abe5d39` minute_kind rebuild loop · `1f683af` Drives list kept with its
+  signature · `67f6ad4` one volume look for every role · `173ec36` `_warm` measured, left as it was · `4bdc113` `clip_clock.utc` kept per stamp · `814a8d1`
+  provenance read per file · `904232e` ShortPlace fed only on change · `5e08d8b` /api/teslacam and /api/clips from what was kept · `4f95b52` perf_log +
+  POST /api/perf · `b4d3f79` drive window: Recent times once · then this file's final table.
+- **Next leads (not done)**:
+  - `/api/clips/keep`: `ClipKeep.status` waits for its first build after every start (2.6-9.5 s on the fixture; kept in memory only). The TeslaCam page draws the
+    clips first and fills the keep column after, so the list is not held, but the column is. Keeping its last look on disk (as the Drives list now is) is the
+    next step; care: after a delete the page reads /api/clips/keep with a plain fetch (no `fresh=1`), so a kept copy must be dropped by ClipKeep's own changes
+    (`_settle`, `invalidate`).
+  - `_warm`: an earlier start made the second page slower (measured); a warm-up that yields to page requests could still help, not tried.
+  - The "Load failed" after "Reading the drive…" on JOWUA (task doc) was not reproduced on the fixture; with /api/clips and /api/teslacam answered from what was
+    kept and the volume look no longer repeated per role, the long request that likely dropped is gone, but this is not proven: check tesla_perf.log / tesla_app.log.
+- **Sandbox notes**: cdnjs is blocked here; the vendored files are `dist/` of the npm package `maplibre-gl@4.7.1` (the same files cdnjs serves). Playwright's
+  headless shell is missing here; perf_run.py falls back to `/opt/pw-browsers/chromium` (or `PERF_CHROMIUM`). Times vary run to run with what the background
+  keeper is doing (it reads the fake drives at start); compare several runs before trusting a small difference.
+- **Pre-existing test failures** (before any change here, also alone): `test_snapshots_for.SnapshotsFor.test_only_drives_over_the_clips_without_snapshots`,
+  `test_timeline_stored.SentryWindow.test_the_minutes_of_a_sentry_event_make_a_window_with_telemetry`. Every commit kept these two and no others.
+- **Found, not from this work**: running the existing test suite creates `~/Library/Mobile Documents/com~apple~CloudDocs/Tesla/PV` in the home folder (it was there
+  after the first suite run, before any change here); not looked into.
 
-## Measured so far (fixture, Linux sandbox; ms in headless Chromium, new page, empty cache)
+## Before / after (harness, fresh fixture each, Linux sandbox, keeper running)
+
+Baseline: commit `25e635e` with page timings (`0aec053` harness); after: `b4d3f79`. Times vary between runs (see the per-change tables below for repeated measurements).
+
+| | first start | restart |
+|---|---|---|
+| process start → first answer | 10.97 s → 3.09 s (other runs after `67f6ad4`: 1.04, 1.53 s) | 0.62 s → 0.39 s |
+| first paint, #/activity / #/drives / #/places / #/teslacam (ms) | 508 / 376 / 400 / 336 → 192 / 176 / 164 / 204 | 396 / 412 / 372 / – → 212 / 160 / 156 / 220 |
+| page rendered (ms) | 646 / 421 / 502 / 359 → 310 / 300 / 318 / 319 | 433 / 450 / 425 / 349 → 298 / 262 / 266 / 344 |
+| /api/teslacam cold / warm | 9.547 / 2.787 s → 1.366 / 0.004 s | 8.284 / 5.254 s → 0.004 / 0.004 s |
+| /api/clips cold / warm | 2.621 / 2.266 s → 1.515 / 0.045 s | 0.405 / 2.208 s → 0.022 / 0.010 s |
+| /api/clips/keep cold | 0.017 s → 4.885 s (see Next leads: now asked before the background build is done) | 0.014 s → 9.512 s (same) |
+| /api/sentry cold | 0.672 s → 0.021 s | 0.952 s → 0.020 s |
+| bytes on the wire: app.js / drivelist / chargers / activity | 464,205 / 1,579,134 / 2,043,182 / 942,404 → 160,107 / 305,401 / 299,210 / 194,425 | same |
+| drive page /api/teslacam/auto/window (5 drives) | 0.43-3.26 s → 0.07-0.56 s | |
+| server CPU in the 30 s after a restart | 18.0 s → 7.2 s | |
+
+## What to check on the Mac (cannot be measured here)
+
+Run the app normally for a day, then read `~/Library/Logs/tesla_perf.log` (trim nothing private: it holds routes, API paths, times and sizes only):
+
+```
+grep -P '\tstart\t' ~/Library/Logs/tesla_perf.log | tail -12        # since_launch_s at 'setup done' / 'server bound' / 'first request': the login shell and imports
+grep -P '\tpage\t' ~/Library/Logs/tesla_perf.log | tail -30          # ms per page opened; first_ms = window open to first page drawn
+grep -P '\tslow\t' ~/Library/Logs/tesla_perf.log | sort -t= -k3 -rn | head -20   # the slowest /api requests with their size
+```
+
+Good: `server bound` within ~1 s of launch, `first_ms` under ~1,500, no `slow` line for /api/teslacam or /api/clips over 1 s. Also check by eye:
+- the maps (Places map view, a drive's map) still draw, with the network off too (MapLibre is local now; the map tiles still need the network);
+- after a delete or move on the TeslaCam page the list shows the new state (it asks with `fresh=1` for a minute after an action);
+- a drive plugged in shows on the TeslaCam page within a few seconds (the volumes are looked at behind; the page asks again while the answer is stale);
+- what `zsh -lc` (the launcher's login shell) adds: the time between launching Tesellate and `since_launch_s` of `setup done` is not seen by the app.
+
+## Per-change measurements (fixture, Linux sandbox; page times in headless Chromium, new page, empty cache)
 
 | change | route | first paint before → after | rendered before → after |
 |---|---|---|---|
