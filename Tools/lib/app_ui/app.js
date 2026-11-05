@@ -1052,11 +1052,13 @@ const hudBlink=b=>({l:!!(+b&1),r:!!(+b&2)});
 // where the picture is inside its video box (the video keeps its shape, so a tall box has bars above and below it): {x,y,w,h} in the box's pixels
 const hudBox=(bw,bh,vw,vh)=>{const r=vw>0&&vh>0?vw/vh:2896/1876,w=Math.min(bw,bh*r),h=w/r;return{x:(bw-w)/2,y:(bh-h)/2,w,h}};
 // HUD end
+// Pause is the person's choice and outlives the player: once Pause is pressed, a new place on the map, a new blue block, another minute or another clip opens paused, until Play is pressed.
+let TCPAUSE=false;
 function clipPlayer(host,o){
   const stamps=o.stamps;if(!stamps.length){host.innerHTML='<div class="sub">This has no video clips.</div>';return}
   // a clip's name is the car's clock (stMs: only used to place things that are on that same clock, like a Sentry trigger); what is SHOWN is the local clock (o.loc: stamp -> local text)
   const stMs=s=>Date.parse(s.slice(0,10)+"T"+s.slice(11).replace(/-/g,":")),LOC=s=>(o.loc&&o.loc[s])||s.slice(0,10)+"T"+s.slice(11).replace(/-/g,":"),clock=s=>LOC(s).slice(11,19),shownAt=(s,t)=>new Date(Date.parse(LOC(s)+"Z")+t*1000).toISOString().substr(11,8),fmt=t=>Math.floor(t/60)+":"+String(Math.floor(t%60)).padStart(2,"0");
-  let si=0,seek=0,view=lsGet("tc.view","all"),rate=lsGet("tc.rate","1"),vs=[],mv=null,bt=0,bsec=0,bplay=true;      // bt/bsec/bplay: a minute with no video plays as black boxes, by the clock
+  let si=0,seek=0,view=lsGet("tc.view","all"),rate=lsGet("tc.rate","1"),vs=[],mv=null,bt=0,bsec=0,bplay=!TCPAUSE,bstep=null;      // bt/bsec/bplay: a minute with no video plays as black boxes, by the clock
   // a Saved clip opens at the START of its first clip and plays; a Sentry event (o.at="trig") opens at the moment it was detected. Detection jumps to that moment, From Start to the first clip.
   // the camera that detected it is marked only around the moment of detection (a few seconds before to some after), wherever the cameras shown were chosen
   const hotNow=sec=>{if(!o.hot)return false;if(!o.trig)return true;const t=stMs(stamps[si])+sec*1000;return t>=o.trig-5000&&t<=o.trig+10000};
@@ -1071,8 +1073,8 @@ function clipPlayer(host,o){
      ${stamps.length>1?`<select id="stp">${stamps.map((s,i)=>`<option value="${i}" ${i===si?"selected":""}>${clock(s)}${(o.cams[s]||[]).length?"":"  · no video"}${o.trig&&stMs(s)<=o.trig&&o.trig<stMs(s)+60000?"  ◀ happened":""}</option>`).join("")}</select>`:""}</div>
     <div id="vids"></div></div>`;
     $$(".sp [data-c]").forEach(b=>b.onclick=()=>{view=b.dataset.c;lsSet("tc.view",view);seek=mv?mv.currentTime:bt?bsec:0;shell()});
-    $("#vsp").onchange=e=>{rate=e.target.value;lsSet("tc.rate",rate);vs.forEach(v=>v.playbackRate=+rate)};
-    if($("#stp"))$("#stp").onchange=e=>{si=+e.target.value;seek=0;vids()};
+    $("#vsp").onchange=e=>{rate=e.target.value;lsSet("tc.rate",rate);vs.forEach(v=>v.playbackRate=+rate);e.target.blur()};
+    if($("#stp"))$("#stp").onchange=e=>{si=+e.target.value;seek=0;e.target.blur();vids()};
     if($("#vtr"))$("#vtr").onclick=toTrig;
     if($("#vhud"))$("#vhud").onclick=()=>{lsSet("tc.hud",hudOn()?"0":"1");$("#vhud").classList.toggle("on",hudOn());hudUpd()};
     if($("#vfs"))$("#vfs").onclick=toStart;
@@ -1108,8 +1110,9 @@ function clipPlayer(host,o){
   const wire=()=>{if($("#vcl"))$("#vcl").onclick=()=>{const c=$("#splc");if(c)c.click()};const sk=$("#vsk"),pl=$("#vpl"),tm=$("#vtm"),box=$("#vids"),seekAll=t=>vs.forEach(x=>{try{x.currentTime=t}catch(e){}});
     if(!mv)return;
     const cam=mv.parentNode.dataset.c;
-    const ready=()=>{sk.max=mv.duration||60;vs.forEach(x=>x.playbackRate=+rate);if(seek){seekAll(seek);seek=0}};
-    const go=()=>{ready();vs.forEach(x=>x.play().catch(()=>{}))};if(mv.readyState>=1)go();else mv.onloadedmetadata=go;
+    const ready=()=>{sk.max=mv.duration||60;vs.forEach(x=>x.playbackRate=+rate);if(seek||TCPAUSE){seekAll(seek||.01);seek=0}};      // paused: the first picture still shows
+
+    const go=()=>{ready();if(!TCPAUSE)vs.forEach(x=>x.play().catch(()=>{}))};if(mv.readyState>=1)go();else mv.onloadedmetadata=go;
     // the button always shows what pressing it does: Pause while playing, Play while paused (a clip that ended into the next minute counts as playing)
     const lab=()=>{pl.textContent=(mv.paused||mv.ended)&&!(mv.ended&&si<stamps.length-1)?"▶ Play":"❚❚ Pause"};
     ["play","playing","pause","ended","emptied"].forEach(n=>mv.addEventListener(n,lab));lab();
@@ -1122,10 +1125,10 @@ function clipPlayer(host,o){
       if(!nx&&mv.duration&&(mv.duration-mv.currentTime)/Math.max(1,+rate)<(vs.length>2?14:30))prep();
       // within a second of the end, with the next minute's front camera ready, the swap is made ON the clock instead of waiting for 'ended': no gap
       if(nx&&!swT&&nx.i===si+1&&mv.duration){const rem=(mv.duration-mv.currentTime)/Math.max(.25,+rate);if(rem<.8)swT=setTimeout(early,Math.max(0,rem*1000-60))}};      // the next minute is loaded ahead: 8 s before the end with all cameras (twelve decoders at once stall), 25 s with one or two
-    mv.onended=()=>{if(si>=stamps.length-1)return;si++;seek=0;                  // the last frame of this minute stays on screen until the next one is loaded behind it, then they swap
+    mv.onended=()=>{if(TCPAUSE||si>=stamps.length-1)return;si++;seek=0;                  // the last frame of this minute stays on screen until the next one is loaded behind it, then they swap
       if(!(nx&&nx.i===si))prep(si);if(nx&&nx.i===si&&nx.m[cam]){const f=nx.m[cam],t0=Date.now(),go=()=>{if(!document.contains(host))return;if(f.readyState>=3||Date.now()-t0>2500)swap();else setTimeout(go,30)};go()}else vids()};
     mv.onerror=()=>box.insertAdjacentHTML("afterbegin",'<div class="sub">This clip could not be played (missing, or the drive was disconnected).</div>');
-    pl.onclick=()=>{if(mv.paused)vs.forEach(x=>x.play().catch(()=>{}));else vs.forEach(x=>x.pause())};
+    pl.onclick=()=>{if(mv.paused){TCPAUSE=false;vs.forEach(x=>x.play().catch(()=>{}))}else{TCPAUSE=true;vs.forEach(x=>x.pause())}};
     sk.oninput=()=>seekAll(+sk.value)};
   // Loading the next minute ahead doubles the decoders (12 streams of 2896x1876 with all six cameras), which can make cameras stall: with all six it starts only in the last seconds.
   const prep=(i=si+1)=>{if(nx||i>=stamps.length)return;const s2=stamps[i],have=o.cams[s2]||[],m={};
@@ -1147,8 +1150,8 @@ function clipPlayer(host,o){
     if(!f||f.readyState<3||(mv.duration-mv.currentTime)>1.2*Math.max(1,+rate))return;si++;seek=0;swap()};
   // A minute with no video (the dashcam did not record it, the car was asleep, or its video is on no connected drive) is shown as the same black boxes, one for each camera, and
   // runs on by the clock so the minutes after it follow: the time is continuous. The front box shows its still of each second where stills were kept.
-  const stopBlack=()=>{if(bt){clearInterval(bt);bt=0}};
-  const blackMinute=(box,s,all)=>{stopBlack();vs=[];mv=null;const len=(o.len&&o.len[s])||60,cams=all?CORDER:[view];bsec=Math.min(len,Math.max(0,seek));seek=0;
+  const stopBlack=()=>{bstep=null;if(bt){clearInterval(bt);bt=0}};
+  const blackMinute=(box,s,all)=>{stopBlack();vs=[];mv=null;const len=(o.len&&o.len[s])||60,cams=all?CORDER:[view];bplay=!TCPAUSE;bsec=Math.min(len,Math.max(0,seek));seek=0;
     box.className=all?"vgrid":"vone";
     box.innerHTML=`<div class="sub vnote" style="grid-column:1/-1;margin:0 0 4px">${o.syn&&o.syn[s]?"No video was recorded for this time.":"Looking up where this video is…"}</div>`
       +cams.map(c=>`<figure data-c="${c}" class="lost blk" ${all?'title="Click to see this camera large"':""}>${c==="front"?'<img class="blkimg" alt="" hidden>':""}<div class="lostb"><span>No video</span></div><figcaption>${CAMN[c]}</figcaption></figure>`).join("");
@@ -1163,7 +1166,12 @@ function clipPlayer(host,o){
     const paint=()=>{if(!document.contains(host))return;sk.max=len;sk.value=bsec;tm.textContent=fmt(bsec)+" · "+shownAt(s,bsec);if(o.onAt)o.onAt(s,bsec);
       if(img){if(stills){const u=o.still(s,Math.min(59,Math.floor(bsec)));if(img.getAttribute("src")!==u)img.src=u;img.hidden=false}else img.hidden=true}};
     lab();paint();
-    if(pl)pl.onclick=()=>{bplay=!bplay;lab()};if(sk)sk.oninput=()=>{bsec=+sk.value;paint()};
+    if(pl)pl.onclick=()=>{bplay=!bplay;TCPAUSE=!bplay;lab()};if(sk)sk.oninput=()=>{bsec=+sk.value;paint()};
+    // a key step in a minute with no video: a second (times the speed) at a time, into the next or the previous minute at its edges
+    bstep=dt=>{bplay=false;lab();const t=bsec+dt;
+      if(t>len&&si<stamps.length-1){stopBlack();si++;seek=0;if($("#stp"))$("#stp").value=si;vids();return}
+      if(t<0&&si>0){stopBlack();si--;seek=Math.max(0,((o.len&&o.len[stamps[si]])||60)-1);if($("#stp"))$("#stp").value=si;vids();return}
+      bsec=Math.max(0,Math.min(len,t));paint()};
     bt=setInterval(()=>{if(!document.contains(host)){stopBlack();return}if(!bplay)return;bsec+=.25*(+rate);
       if(bsec>=len){if(si<stamps.length-1){stopBlack();si++;seek=0;if($("#stp"))$("#stp").value=si;vids();return}bplay=false;bsec=len;lab()}paint()},250)};
   const vids=()=>{dropAll();stopBlack();
@@ -1196,11 +1204,25 @@ function clipPlayer(host,o){
       here>1?[`Show this minute's ${here} videos in Finder`,()=>cfAct({action:"reveal",urls:cfUrls([st])})]:null,
       [`Copy this minute (${here} video${here>1?"s":""}) to a folder…`,()=>cfAct({action:"copy",urls:cfUrls([st]),name:nm([st])})],
       all.length>1?[`Copy all ${all.length} minutes here (${cfUrls(all).length} videos) to a folder…`,()=>cfAct({action:"copy",urls:cfUrls(all),name:nm(all)})]:null])});
+  // Keys: Space pauses and plays; the arrow keys step back and forward by one picture, or by as many as the speed chosen (2x = two, 0.5x = one); a step pauses. At the edge of a minute the step goes on into the next or the previous one.
+  const FPS=36,kstep=d=>{TCPAUSE=true;const n=Math.max(1,+rate);
+    if(mv){if(mv.readyState<1)return;vs.forEach(x=>x.pause());const dur=mv.duration||60,t=(Math.floor(mv.currentTime*FPS+1e-6)+d*n+.5)/FPS,to=v=>vs.forEach(x=>{try{x.currentTime=v}catch(e){}});
+      if(t>=dur){if(si<stamps.length-1){si++;seek=.5/FPS;if($("#stp"))$("#stp").value=si;vids()}else to(Math.max(0,dur-.5/FPS))}
+      else if(t<0){if(si>0){si--;seek=Math.max(0,((o.len&&o.len[stamps[si]])||60)-1.5/FPS);if($("#stp"))$("#stp").value=si;vids()}else to(0)}
+      else to(t)}
+    else if(bstep)bstep(d*n)};
+  const key=e=>{if(!document.body.contains(host)){removeEventListener("keydown",key);return}
+    if(e.altKey||e.ctrlKey||e.metaKey||e.shiftKey||(e.key!==" "&&e.key!=="ArrowLeft"&&e.key!=="ArrowRight"))return;
+    const t=e.target,tg=(t&&t.tagName)||"";if(/SELECT|TEXTAREA/.test(tg)||(tg==="INPUT"&&t.type!=="range")||(t&&t.isContentEditable)||$(".rpop")||$(".cfm"))return;
+    if(e.key===" "){if(tg==="BUTTON")return;const b=$("#vpl",host);if(b){e.preventDefault();b.click()}return}
+    if(!mv&&!bstep)return;e.preventDefault();kstep(e.key==="ArrowRight"?1:-1)};
+  if(window.__cpk)removeEventListener("keydown",window.__cpk);window.__cpk=key;addEventListener("keydown",key);
+  host.addEventListener("click",e=>{const b=e.target.closest&&e.target.closest("button");if(b&&b.blur)b.blur()});      // a clicked button must not keep the Space key
   shell();
   // the page can move the video to a clock time (clicking the map or the chart)
   return {refresh:()=>vsigns(),seekAt:(st,sec)=>{const i=stamps.indexOf(st);if(i<0)return;                 // a minute and a second in it (the page works these out in UTC)
       if(i===si&&mv&&mv.readyState>0){vs.forEach(x=>{try{x.currentTime=sec}catch(e){}})}
-      else{si=i;seek=Math.max(0,sec);bplay=true;if($("#stp"))$("#stp").value=si;vids()}},
+      else{si=i;seek=Math.max(0,sec);bplay=!TCPAUSE;if($("#stp"))$("#stp").value=si;vids()}},
     seek:ms=>{let i=stamps.findIndex(s=>stMs(s)<=ms&&ms<stMs(s)+61000);if(i<0)i=stamps.findIndex(s=>stMs(s)>ms);if(i<0)return;
     if(i===si&&mv&&mv.readyState>0){vs.forEach(x=>{try{x.currentTime=(ms-stMs(stamps[i]))/1000}catch(e){}})}
     else{si=i;seek=Math.max(0,(ms-stMs(stamps[i]))/1000);if($("#stp"))$("#stp").value=si;vids()}}};

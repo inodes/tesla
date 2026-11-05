@@ -94,7 +94,9 @@ def merge(tessie, charges, cam_items, idles=(), slack=SLACK_S, now=None):
                     g["sentry"] = max(g.get("sentry") or 0, i.get("sentry") or 0)
             between.append(TL.show(g))
     out += between
-    covered = ch + [x for x in between if x["kind"] in ("parked", "gap")]
+    pend = TL.OPTS.get("park_end_s", 21600)
+    night = [x for x in between if x["kind"] == "parked" and x["t1"] - x["t0"] > pend]          # the car slept (a night at home or in a hotel): the footage inside it is its own park, not part of Tessie's
+    covered = ch + [x for x in between if x["kind"] in ("parked", "gap") and x not in night]
     stops = []
     for c in cam_items:
         if c["kind"] == "drive":
@@ -170,6 +172,12 @@ def _fold_move(d, m, end):
     return d
 
 
+def _night_apart(a, b):
+    """True for Tessie's park of a night (longer than app.teslacam.park_end_s) and dashcam footage that is not part of Tessie's record: the footage is a park of its own, not the last hours of the night."""
+    pend = TL.OPTS.get("park_end_s", 21600)
+    return any(p.get("src") == "tessie" and p["t1"] - p["t0"] > pend and q.get("src") != "tessie" for p, q in ((a, b), (b, a)))
+
+
 def join_parks(items, now=None):
     """One park per stay: parks that follow one another at one place are a single park, and a re-park (the car shuffled a few metres) inside a stay does not split it.
     The newest park has no known end (nothing came after it), so it is marked `ongoing` and runs to now. Items come and go newest first."""
@@ -177,7 +185,7 @@ def join_parks(items, now=None):
     out = []
     for x in asc:
         prev = out[-1] if out else None
-        if prev and prev["kind"] in PARKISH and x["kind"] in PARKISH and x["t0"] - prev["t1"] <= JOIN_GAP_S and _at(prev, x):
+        if prev and prev["kind"] in PARKISH and x["kind"] in PARKISH and x["t0"] - prev["t1"] <= JOIN_GAP_S and _at(prev, x) and not _night_apart(prev, x):
             prev["t1"] = max(prev["t1"], x["t1"])
             prev["p1"] = x.get("p1") or prev.get("p1")
             prev["p0"] = prev.get("p0") or x.get("p0")
@@ -232,7 +240,7 @@ def join_parks(items, now=None):
     fin = []
     for x in res:
         prev = fin[-1] if fin else None
-        if prev and prev["kind"] in PARKISH and x["kind"] in PARKISH and x["t0"] - prev["t1"] <= JOIN_GAP_S and _at(prev, x):
+        if prev and prev["kind"] in PARKISH and x["kind"] in PARKISH and x["t0"] - prev["t1"] <= JOIN_GAP_S and _at(prev, x) and not _night_apart(prev, x):
             prev["t1"] = max(prev["t1"], x["t1"])
             prev["p1"] = x.get("p1") or prev.get("p1")
             prev["kind"] = "parked" if "parked" in (prev["kind"], x["kind"]) else "stopped"

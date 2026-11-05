@@ -380,7 +380,7 @@ def end_sessions(out):
     A short park (a shop, a drop-off) is untouched; so is a long stop with a Sentry event next after it (the stopped minutes then lead into that event)."""
     drop = set()
     for i, g in enumerate(out):
-        if g["kind"] != "parked" or not str(g["id"]).startswith("g:") or g["t1"] - g["t0"] <= OPTS["park_end_s"]:
+        if g["kind"] not in ("parked", "gap") or not str(g["id"]).startswith("g:") or g["t1"] - g["t0"] <= OPTS["park_end_s"]:
             continue
         drop.add(i)
         j = i - 1
