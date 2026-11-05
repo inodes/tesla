@@ -24,6 +24,17 @@ GOAL: make the app load faster, without changing what it shows or does. Commit o
 6. Drive page (route #/teslacam/auto/win-...): profile pageTeslaCamAt / teslaDriveBody and the endpoints they call on the fixture; fix the biggest costs.
 7. Re-run perf_run.py, put a before/after table in docs/PERF_NOTES.md, and list what needs checking on the real Mac (read ~/Library/Logs/tesla_perf.log after a normal day's use).
 
+## Budget: work in small batches
+
+The owner's cloud credit is nearly spent (about $8 of $100) and can run out at any moment, after which the work is handed to another session. So:
+
+- Work in the smallest useful pieces: each step above is itself split into several small commits, each one change that can stand alone (one file or one feature, with its test).
+- Push after EVERY commit (`git push origin HEAD`), never keep unpushed work. Open a small pull request for each step, or a few commits at most; never one large PR.
+- Do the cheap, high-gain items first, in this order of value: the harness (step 1) kept small, the MapLibre vendoring and non-blocking <head> (step 3), gzip + ETag (step 4), then the TeslaCam page answering from cache (step 5). Skip nothing, but stop polishing early.
+- Keep docs/PERF_NOTES.md updated after each commit with a "Handoff" section at the top: done so far (commit ids), the measured numbers so far, the next step, anything half-done and where. A different session must be able to continue from that file alone.
+- Do not read large files whole when a search will do (app.js is ~460 KB): grep for the function, read only that part.
+- If a step looks bigger than a few commits, stop, write the Handoff, and push.
+
 ## Rules
 
 - Behaviour must not change. Run the whole unittest suite before each commit (python3 -m unittest discover -s tests); add tests for any new cache or incremental logic, including that a changed input invalidates it.
