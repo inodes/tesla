@@ -8,8 +8,11 @@ The task is docs/LOAD_SPEED_TASK.md. Work happens on branch `claude/load-speed` 
   `Tools/lib/app_ui/vendor/` (`/vendor/<name>`, 1-year immutable cache, 302 to cdnjs only when the copy is missing), both scripts `defer`, MapLibre CSS non-blocking;
   `78dfbcd` ETag/304 + gzip for index.html, app.js, app.css, vendor (`H.send_body` / `H.send_static` in tesla_app.py, gzip kept per ETag, primed at start);
   `1b30eed` `boot()` asks for the settings together with the summary / status / keeper and only `route()` waits for them (step 3 complete);
-  step 4, next commit: ETag/304 + gzip (level 1) for every 200 JSON answer to a GET (`send_json`, and the Kept lists with the stale flag in the ETag).
-- **Next**: step 4 rest (lists kept on disk by inputs so a restart does not rebuild them: `app_drivelist.Cached` keeps the list but not its signature; smarter `_warm`),
+  step 4: `c96b159` ETag/304 + gzip (level 1) for every 200 JSON answer to a GET (`send_json`, and the Kept lists with the stale flag in the ETag);
+  then minute_kind no longer rewrites its file when the probe learned nothing (it caused an endless Drives-list rebuild loop), and the Drives list is kept on disk
+  with its signature (+ code version) so a restart does not rebuild it (`app_drivelist.Cached`, file format `{kept_sig, list}`; an old plain file is shown stale as before).
+  activity / chargers / places were already answered from the kept copy at once after a restart (app_kept.py) and rebuild fast (under 0.25 s), so they are left as they are.
+- **Next**: step 4 rest (smarter `_warm`),
   step 5 (TeslaCam from cache), step 2 (perf_log), step 6, step 7. Order follows the task's Budget section (value first).
 - **Half-done**: nothing.
 - **Leads from the baseline**: a first start answers its first request only after ~10 s although the port is bound at 0.24 s (something holds the request threads at start: look at what `/api/status` waits for, and the drivelist build thread); `/api/teslacam` takes 1.7-11.8 s on every call, also warm (`_ROOTS["t"] = 0` then `TC.drives()` → `DR.discover()`); `/api/clips` 0.75-1.8 s warm; the first `/api/drivelist` after a first start 5.4 s.
@@ -47,6 +50,11 @@ The task is docs/LOAD_SPEED_TASK.md. Work happens on branch `claude/load-speed` 
 | | /api/chargers | 2,043,182 → 299,210 | 29 / 35 / 34 ms |
 | | /api/activity | 942,404 → 194,425 | 35 / 40 / 30 ms |
 | | /api/places | 192,182 → 28,271 | 41 / 37 / 11 ms |
+
+| change | measure | before → after |
+|---|---|---|
+| minute_kind save only when new + Drives list kept with its signature | server CPU in the 30 s after a restart (`--no-background`) | 18.0 s → 7.2 s |
+| | /api/drivelist right after a restart | 0.061 s (stale copy, rebuild behind) → 0.041 s (current copy, no rebuild) |
 
 The JSON times are within the noise of the background builds: no time gain or loss shows on localhost; the gain is bytes (5-8x less). Level 1 rather than 6: a 1.5 MB list compresses in 11 ms instead of 34 ms (measured), for 324 KB instead of 242 KB.
 
