@@ -1250,6 +1250,21 @@ def window_place(webview):
     return out
 
 
+_CHROME = [None]
+
+
+def window_chrome(win):
+    """Height of the title bar: pywebview reports a resize as the whole window's size (title bar included) but opens a window at the size of its content, so a
+    size saved as reported came back that much taller at every start."""
+    if _CHROME[0] is None:
+        try:
+            w = win.native.window
+            _CHROME[0] = int(round(w.frame().size.height - w.contentRectForFrameRect_(w.frame()).size.height))
+        except Exception:
+            return 0
+    return _CHROME[0]
+
+
 def window_move(win, at):
     """Moves the window to its remembered place once it is shown; a place the Mac will not take leaves it where it is."""
     if at and at[0] is not None and at[1] is not None:
@@ -1422,7 +1437,7 @@ def main():
             at = (place.pop("x", None), place.pop("y", None))          # the window is created in the default place and moved once it is shown: pywebview moves it while it is being built, when the Mac can still say it has no screen ('NoneType has no attribute frame') and the app does not open
             WIN = win = webview.create_window("Tesellate", url, min_size=(900, 600), text_select=True, **place)
             win.events.shown += lambda: window_move(win, at)
-            win.events.resized += lambda w, h: window_keep(w=w, h=h)
+            win.events.resized += lambda w, h: window_keep(w=w, h=h - window_chrome(win))
             win.events.moved += lambda x, y: window_keep(x=x, y=y)
             menu = mac_shell.build_menu(win) if sys.platform == "darwin" else None            # the pages in the menu bar
             mac_shell.start(KEEP.status, CKEEP.job)                                            # the job's share on the Dock icon, and a notification when a long job ends

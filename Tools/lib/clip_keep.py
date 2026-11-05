@@ -273,8 +273,7 @@ class ClipKeep:
                 ignored.update(mins)
                 if kind == "recent":                       # the first minute of a park that follows a drive, and the last of one that leads into a drive, hold that drive's parking movements / pulling away: they are the drive's, not Home's
                     first, last = min(mins, key=CC.utc), max(mins, key=CC.utc)
-                    lead, trail = RC.drive_edges(first, last)
-                    edge = ({first} if lead else set()) | ({last} if trail else set())
+                    edge = {first, last}                  # always both: the drive before it (its footage may be a Saved clip the run cuts do not know) and the drive after it can have their last / first seconds in them
                     mv = float((app_config.get("teslacam") or {}).get("moving_kmh", 3.0))
                     edge |= {st for st in mins if isinstance(store.summary(st), dict) and store.summary(st).get("vmax", 0) >= mv}      # a minute in which the car moved is never parked footage
                     if edge:

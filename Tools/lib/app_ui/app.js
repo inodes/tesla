@@ -1791,14 +1791,17 @@ function tlDays(host,items,o){
       else{keep.push(b);a=b}});parks=keep}
   // a charge during a park belongs to that park: one row for the stay (parked, charged, parked again) with its charges counted on the row's button;
   // a charge with no park beside it keeps its own row
+  const PEND=(+cfg("teslacam.park_end_s")||21600);       // no footage for longer than this at one place: the car slept, the session is over
   {const chs=rs.filter(v=>v._c==="charge").sort((a,b)=>a.t0-b.t0),pp=k=>k.p0||k.p1||k._pos,cp=c=>c.p0||c.p1||c._pos,
      hop=(t0,t1)=>rs.some(d=>d._c==="drive"&&d.t0>=t0&&d.t1<=t1),   // a drive between them: the car left, so they are not one stay
      same=(k,c)=>{const a=pp(k),b=cp(c);return !a||!b||a[0]==null||b[0]==null||hav(a[0],a[1],b[0],b[1])<=300};
     chs.forEach(c=>{const at=parks.filter(k=>same(k,c)),before=at.filter(k=>k.t0<=c.t0+60&&k.t1>=c.t0-600&&!hop(k.t1-30,c.t0+30)).sort((a,b)=>b.t1-a.t1)[0],
         after=at.filter(k=>k!==before&&k.t0>=c.t0-60&&k.t0<=c.t1+600&&k.t1>=c.t1-60&&!hop(c.t1-30,k.t0+30)).sort((a,b)=>a.t0-b.t0)[0],host=before||after;
       if(!host)return;
-      host.t0=Math.min(host.t0,c.t0);host.t1=Math.max(host.t1,c.t1);if(c.start<host.start)host.start=c.start;if(c.end>host.end)host.end=c.end;
-      if(before&&after){host.t1=Math.max(host.t1,after.t1);if(after.end>host.end)host.end=after.end;after._in=host.id;parks=parks.filter(k=>k!==after)}
+      // a charge that runs on for hours past the footage (a night on the home charger) is counted on the park but does not stretch it: the evening's park and the morning's are two rows, with no black hours between them
+      if(host.t0-c.t0<=PEND){host.t0=Math.min(host.t0,c.t0);if(c.start<host.start)host.start=c.start}
+      if(c.t1-host.t1<=PEND){host.t1=Math.max(host.t1,c.t1);if(c.end>host.end)host.end=c.end}
+      if(before&&after&&after.t0-host.t1<=PEND){host.t1=Math.max(host.t1,after.t1);if(after.end>host.end)host.end=after.end;after._in=host.id;parks=parks.filter(k=>k!==after)}
       (host._chg=host._chg||[]).push(c);c._in=host.id})}
   // an event belongs to the park its trigger fell in (it can start a few minutes before the park does: the car was still going into Park); the clock text of an item is local, so the trigger is put on the epoch through the item's own offset
   const trigAt=v=>{if(!v.trig)return v.t0;const off=v.t0-Date.parse(v.start+"Z")/1000;return Date.parse(v.trig+"Z")/1000+off};
@@ -2230,7 +2233,6 @@ async function pageTeslaCam(role,id){
     if(phase&&$("#phtx",el)){$("b",$("#phtx",el)).textContent=phase;setPbar($("#phtx",el),phasePc);return}
     const items=picked(),cn=conn(),done=vis.filter(v=>{const c=kpOf(v.ty,v.id);return c&&c.ready&&cn.some(r=>c.bytes[r]>0)});
     const needs=v=>{const c=kpOf(v.ty,v.id);return !!c&&!c.ignored&&PSTEPS.some(x=>x[2](c)>0)&&cn.some(r=>c.bytes[r]>0)},needV=vis.filter(needs),ignV=vis.filter(v=>{const c=kpOf(v.ty,v.id);return c&&c.ignored});       // the clips shown that still lack something (the Need updating button ticks them)
-    const homeAll=Object.keys(KPC||{}).flatMap(k=>Object.keys(KPC[k]).map(id=>({kind:k,id}))).filter(it=>{const c=kpOf(it.kind,it.id);return c&&c.ignored&&cn.some(r=>c.bytes[r]>0)}),homeSz=cn.reduce((a,r)=>a+sizeOn(homeAll,r),0);      // everything parked at Home on the connected drives: moving and drive-edge minutes are not in it
     const dsz=done.reduce((a,v)=>a+Math.max(...cn.map(r=>kpOf(v.ty,v.id).bytes[r]||0)),0);
     const scope=items.length?items:Object.keys(KPC||{}).flatMap(k=>Object.keys(KPC[k]).map(id=>({kind:k,id}))).filter(it=>cn.some(r=>kpOf(it.kind,it.id).bytes[r]>0));
     let h=`<div class="bar selb">`;
@@ -2244,8 +2246,6 @@ async function pageTeslaCam(role,id){
       const KEEP=[["meta","metadata"],["stills","stills"],["signs","signs"],["pictures","pictures"]];
       const lack=T.has("video")?KEEP.map(([st,ty])=>{if(T.has(ty))return null;const n=sel.filter(it=>{const c=kpOf(it.kind,it.id);return !c.ignored&&c.bytes&&cn.some(r=>c.bytes[r]>0)&&PSTEPS.find(x=>x[0]===st)[2](c)>0}).length;return n?`${n0(n)} clip${n>1?"s have":" has"} no ${ty} yet`:null}).filter(Boolean):[];
       h+=`<span style="flex:1;min-width:260px"><b>Delete from ${n0(sel.length)} clip${sel.length>1?"s":""}</b>${home?` · ${n0(home)} parked at Home`:""} <span class="sub">· cannot be undone</span><span style="display:flex;gap:6px;flex-wrap:wrap;margin-top:6px">${TY.map(([k,l,tip])=>`<button class="chip ${T.has(k)?"on":""}" data-pt="${k}" title="${esc(tip)}">${esc(l)}</button>`).join("")}</span>${lack.length?`<span class="sub" style="display:block;margin-top:4px;color:var(--bad)">${esc(lack.join(" · "))}</span>`:""}</span><button class="btn bad" id="pdo" ${T.size?"":"disabled"}>${T.size===TY.length?"Delete everything":"Delete"}</button><button class="btn" id="kno">Cancel</button>`}
-    else if(pend&&pend.action==="purgehome"){
-      h+=`<span style="flex:1"><b>Delete parked at Home · ${n0(homeAll.length)} clip${homeAll.length>1?"s":""} · ${fmtGB(homeSz)}</b> <span class="sub">· cannot be undone</span></span><button class="btn bad" id="phdo">Delete</button><button class="btn" id="kno">Cancel</button>`}
     else if(pend){const list=allowed(pend.role,pend.action),gb=fmtGB(sizeOn(list,pend.role));
       const nf=list.reduce((a,it)=>a+((kpOf(it.kind,it.id).files||{})[pend.role]||0),0),na=list.reduce((a,it)=>a+((kpOf(it.kind,it.id).in_archive||{})[pend.role]||0),0),what=n0(list.length)+" clip"+(list.length>1?"s":"")+(nf?" ("+n0(nf)+" video file"+(nf>1?"s":"")+(pend.action==="move"&&na?", "+n0(na)+" already in the Archive":"")+")":"");
       h+=pend.action==="delete"?`<span style="flex:1"><b>Delete the video of ${what} from ${NMD[pend.role]}</b>, freeing ${gb}. Its metadata, stills and signs stay.${list.length<items.filter(it=>kpOf(it.kind,it.id).bytes[pend.role]>0).length?` The others are not all kept yet and are left alone.`:""}</span><button class="btn bad" id="kdo">Delete</button><button class="btn" id="kno">Cancel</button>`
@@ -2256,9 +2256,10 @@ async function pageTeslaCam(role,id){
       if(one){h+=`<b>1 clip</b><span class="sub">${fmtGB((c1&&c1.size)||0)}</span><button class="btn sm" id="kclr1">Clear</button>${c1?kpChips(c1):""}<button class="btn sm pri" id="kupd1" ${need1?"":"disabled"} title="Reads what is missing from the video of this clip: metadata, stills, signs and pictures">Update clip</button>`}
       else{h+=items.length?`<b>${n0(items.length)} selected</b><span class="sub">${fmtGB(items.reduce((a,it)=>a+(kpOf(it.kind,it.id).size||0),0))}</span><button class="btn sm" id="kclr">Clear</button>`:"";
         h+=`<button class="btn sm pri" id="kupd" ${items.length&&!needN?"disabled":""} title="${items.length?"Reads what is missing from the video of the ticked clips: metadata, stills, signs and pictures":"Looks for new files on the drives, then reads what is missing from the video of every clip: metadata, stills, signs and pictures"}">${(items.length?"Selected":"All")+" - "+(needN?n0(needN)+" update"+(needN>1?"s":"")+" needed":items.length?"no updates needed":"check for updates")}</button>`}
-      h+=`<span class="sub" style="margin-left:6px">Select:</span><button class="btn sm" data-sset="all" ${vis.length?"":"disabled"} title="Ticks every clip shown below (or tick single thumbnails, or a whole day from its heading)">All shown · ${n0(vis.length)}</button><button class="btn sm" data-sset="need" ${needV.length?"":"disabled"} title="Ticks the clips that still lack metadata, stills, signs or pictures">Need updating · ${n0(needV.length)}</button>${ignV.length?`<button class="btn sm" data-sset="ign" title="Ticks the clips parked at Home, which are left alone">Ignored · ${n0(ignV.length)}</button>`:""}<button class="btn sm" data-sset="done" ${done.length?"":"disabled"} title="Ticks every clip whose metadata, stills and signs are all kept, so its video can be moved or deleted (${n0(done.length)} clips, ${fmtGB(dsz)})">Finished · ${n0(done.length)}</button>`;
-      if(homeAll.length)h+=`<button class="btn sm bad" data-ka="purgehome|" title="Deletes the clips parked at Home. Nothing that moved is touched">Delete parked at Home · ${fmtGB(homeSz)}</button>`;
-      if(items.length)h+=`<button class="btn sm bad" data-ka="purge|" title="Choose what to delete from the ticked clips: video, metadata, stills, event pictures, signs">Delete…</button>`;
+      h+=`<span class="sub" style="margin-left:6px">Select:</span><button class="btn sm" data-sset="all" ${vis.length?"":"disabled"} title="Ticks every clip shown below (or tick single thumbnails, or a whole day from its heading)">All shown · ${n0(vis.length)}</button><button class="btn sm" data-sset="need" ${needV.length?"":"disabled"} title="Ticks the clips that still lack metadata, stills, signs or pictures">Need updating · ${n0(needV.length)}</button>${ignV.length?`<button class="btn sm" data-sset="ign" title="Ticks the clips shown that are parked at Home, to look through before deleting">Select parked at Home · ${n0(ignV.length)}</button>`:""}<button class="btn sm" data-sset="done" ${done.length?"":"disabled"} title="Ticks every clip whose metadata, stills and signs are all kept, so its video can be moved or deleted (${n0(done.length)} clips, ${fmtGB(dsz)})">Finished · ${n0(done.length)}</button>`;
+      const allHome=items.length>0&&items.every(it=>{const c=kpOf(it.kind,it.id);return c&&c.ignored}),homeSz=cn.reduce((a,r)=>a+sizeOn(items,r),0);      // a selection of parked-at-Home clips only: moving and drive-edge minutes are not in them
+      if(allHome)h+=`<button class="btn sm bad" data-ka="purge|" title="Deletes the ticked clips parked at Home. Nothing that moved is touched">Delete parked at Home · ${fmtGB(homeSz)}</button>`;
+      if(items.length&&!allHome)h+=`<button class="btn sm bad" data-ka="purge|" title="Choose what to delete from the ticked clips: video, metadata, stills, event pictures, signs">Delete…</button>`;
       cn.forEach(r=>{const d=allowed(r,"delete");if(items.length&&d.length)h+=`<button class="btn sm bad" data-ka="delete|${r}">Delete from ${NMD[r]} · ${fmtGB(sizeOn(d,r))}</button>`;
         const m=allowed(r,"move");if(items.length&&m.length&&r!=="A"&&cn.includes("A"))h+=`<button class="btn sm" data-ka="move|${r}">Move to Archive · ${fmtGB(sizeOn(m,r))}</button>`});
       if(note)h+=`<span class="sub" style="flex:1;${/rror|not /.test(note)?"color:var(--bad)":"color:var(--ok)"}">${esc(note)}</span>`}
@@ -2278,9 +2279,6 @@ async function pageTeslaCam(role,id){
     $$("[data-pt]",el).forEach(b=>b.onclick=()=>{const k=b.dataset.pt;if(pend.types.has(k))pend.types.delete(k);else pend.types.add(k);selbar()});
     on("pdo",async()=>{const p=pend,types=[...p.types];pend=null;stopVideos();phase="Deleting…";phasePc=5;selbar();
       let j;try{j=await (await fetch("/api/clips/act",{method:"POST",body:JSON.stringify({action:"purge",items:items.map(it=>({kind:it.kind,id:it.id})),types,confirm:true,force:true})})).json()}catch(e){j={error:e.message}}
-      phase="";if(j.error){note=j.error;selbar();return}jobT=j;selbar();poll()});
-    on("phdo",async()=>{pend=null;stopVideos();phase="Deleting…";phasePc=5;selbar();
-      let j;try{j=await (await fetch("/api/clips/act",{method:"POST",body:JSON.stringify({action:"purge_home",confirm:true})})).json()}catch(e){j={error:e.message}}
       phase="";if(j.error){note=j.error;selbar();return}jobT=j;selbar();poll()});
     on("jobx",async()=>{try{await fetch("/api/clips/act",{method:"POST",body:JSON.stringify({action:"stop"})})}catch(e){}});
     if(jobT)jobPaint()};
@@ -2523,12 +2521,14 @@ async function teslaDriveBody(host,role,fetchSeg,places,opts){
     if(!f&&!t&&!(inc&&R&&R.frm))return "";
     const from=inc&&R&&R.frm?esc(R.frm):f?(inc?`<i title="The video starts partway through this drive: the car was already moving at the first frame. This is where the first clip was, not where the drive began.">${esc(f)}</i>`:esc(f)):"?";
     return from+" → "+(t?esc(t):"?")};
+  // a parked page names Home (an ignored place) by its name and any other place as the suburb and state the video's label carries ("West Ryde, NSW"), not as a saved park or shop beside the spot
+  const parkedAt=n=>{const home=cfg("teslacam.ignore_places")||["Home"];if(n&&home.includes(n))return n;const m=(d.minutes||[]).find(q=>q.at);return (m&&m.at)||n};
   const fill=()=>{if(!live())return;const x=it(),m=Math.max(1,Math.round((x.t1-x.t0)/60)),a=nameAt(places,x.p0),b=nameAt(places,x.p1);
     const T=opts.tessie,sd=selfDrive(S()),src=dataSources(S());
     $("#dh").textContent=T?driveTitle(T):(x.kind==="drive"?"Drive":x.kind==="stopped"?"Parked":"Recording")+" · "+dayName(x.start.slice(0,10))+" · "+(x.shown?x.shown[0].slice(0,5)+" – "+x.shown[1].slice(0,5):clockHM(x.start)+" – "+clockHM(x.end));
     const e1=T&&(T.t1||T.t0)&&x.lo1!=null?lclock(T.t1||T.t0+T.min*60,x.lo1).slice(0,5):T?addMin(T.hm,T.min):"",zc=x.lo!=null&&x.lo1!=null&&x.lo1!==x.lo?` <span class="sub clkc" title="The clock changed during this drive: ${zlab(x.lo)} to ${zlab(x.lo1)}. The start is on ${zlab(x.lo)}, the end on ${zlab(x.lo1)}.">${clkSvg} ${zlab(x.lo)} → ${zlab(x.lo1)}</span>`:"";
     $("#dsub").innerHTML=(T?dayName(T.day)+" · "+T.hm+" – "+e1+zc+""+(T.pkey1?' · <a href="#/place/'+encodeURIComponent(T.pkey1)+'">where it ended</a>':"")
-      :(x.kind==="stopped"?esc(a||b||""):x.kind==="drive"&&opts.heading!==false&&driveNames(x,a,b)?driveNames(x,a,b):a||b&&opts.heading!==false?esc(a||"?")+" → "+esc(b||"?"):""))+(d.connected===false?" · The drive with these clips is not connected: the map and telemetry are the saved copy, and there is no video.":"");
+      :(x.kind==="stopped"?esc(parkedAt(a||b||"")):x.kind==="drive"&&opts.heading!==false&&driveNames(x,a,b)?driveNames(x,a,b):a||b&&opts.heading!==false?esc(a||"?")+" → "+esc(b||"?"):""))+(d.connected===false?" · The drive with these clips is not connected: the map and telemetry are the saved copy, and there is no video.":"");
     const sdt=sd?tile(Math.round((sd.fsd+sd.aut)*100)+"%","self-driving · FSD "+Math.round(sd.fsd*100)+"%"+(sd.aut>=.005?" · Autosteer/TACC "+Math.round(sd.aut*100)+"%":"")+(sd.cover<.9?" · dashcam covers "+Math.round(sd.cover*100)+"% of the distance":"")):"";
     $("#dtl").innerHTML=tile(dur(T?T.min:m),"time")+(T?tile(n0(T.km,1)+" km","distance")+tile(n0(T.kwh,1)+" kWh","energy used")+tile(T.km?EF(T.whkm||T.kwh*1000/T.km)+" "+EFU():"–","efficiency")+tile(n0(T.b0)+"% → "+n0(T.b1)+"%","battery")+tile(n0(T.avg)+" / "+n0(T.max)+" km/h","average / top speed")+sdt
       :x.kind==="drive"?tile(n0(x.km,1)+" km","distance")+tile(n0(x.vmax)+" km/h","top speed")+sdt:"")+tile(n0(d.minutes.length),`clips · ${x.recent||0} Recent, ${x.saved||0} Saved`);
