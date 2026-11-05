@@ -40,8 +40,12 @@ class EndSessionsTest(unittest.TestCase):
         out = [it("sentry", 0, 60), it("sentry", 600, 660), it("parked", 660, 10 * H, "g:1"), it("drive", 10 * H, 11 * H), it("parked", 11 * H, 13 * H, "g:2"), it("drive", 13 * H, 14 * H)]
         self.assertEqual([x["kind"] for x in TL.end_sessions(out)], ["sentry", "sentry", "drive", "parked", "drive"])
 
-    def test_a_long_gap_that_is_not_parked_is_not_touched(self):
+    def test_a_long_hole_with_no_known_place_is_no_row_in_the_footage_timeline_either(self):
         out = [it("drive", 0, H), it("gap", H, 16 * H, "g:1"), it("drive", 16 * H, 17 * H)]
+        self.assertEqual([x["kind"] for x in TL.end_sessions(out)], ["drive", "drive"])
+
+    def test_a_short_hole_is_kept(self):
+        out = [it("drive", 0, H), it("gap", H, 2 * H, "g:1"), it("drive", 2 * H, 3 * H)]
         self.assertEqual(len(TL.end_sessions(out)), 3)
 
     def test_the_limit_comes_from_the_options(self):
