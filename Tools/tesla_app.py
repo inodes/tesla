@@ -75,6 +75,7 @@ import app_drivelist  # noqa: E402
 import home_ignore  # noqa: E402
 import clips_purged  # noqa: E402
 import teslacam_timeline as TLN  # noqa: E402
+import park_scene  # noqa: E402
 import run_cuts  # noqa: E402
 import minute_kind  # noqa: E402
 import mac_shell  # noqa: E402
@@ -110,6 +111,7 @@ DRIVELIST = None
 SENTRY = None
 TC = None
 KINDS = None
+SCENES = None          # park_scene.Scenes: a small grey copy of each camera's view of the minutes that begin or end a piece of a park (did the car stay where it was?)
 DRV = None                  # the manual drive review (lib/app_drive_review.py)
 KEEP = None                 # reads the connected TeslaCam drives in the background (lib/app_keeper.py)
 TODO = None                 # what each connected drive still needs (lib/footage_todo.py)
@@ -1101,6 +1103,45 @@ def local_cache_dir():
     return os.path.join(base, hashlib.md5(os.path.abspath(DATA_DIR).encode()).hexdigest()[:8])
 
 
+def _join_stays(cam, cams, holders, dirs, roots):
+    """The dashcam's own stops that are pieces of one park (the car woke, slept, woke) become one stop: where the pictures of the cameras agree (the car stayed), else where the places do.
+    The pictures are looked at in the background; until they are in, the places decide."""
+    if SCENES is None:
+        return cam
+    import bisect
+    stamps = sorted(cams, key=CC.utc)
+    ut = [CC.utc(x) for x in stamps]
+    need = set()
+
+    def before(t):                      # the last minute that began before t, within two minutes of it
+        i = bisect.bisect_right(ut, t) - 1
+        return stamps[i] if i >= 0 and t - ut[i] <= 120 else None
+
+    def after(t):                       # the first minute that began at or after t, within two minutes of it
+        i = bisect.bisect_left(ut, t)
+        return stamps[i] if i < len(stamps) and ut[i] - t <= 120 else None
+
+    def path_of(st, c):
+        for r in sorted(holders.get(st) or ()):
+            if roots.get(r) and c in (cams.get(st) or ()):
+                return os.path.join(roots[r], *dirs.get(st, "RecentClips").split("/"), "%s-%s.mp4" % (st, c))
+        return None
+
+    def scene(a, b):
+        sa, sb = before(a["t1"] - 1), after(b["t0"] - 5)
+        if not sa or not sb:
+            return None
+        A, B = SCENES.get(sa), SCENES.get(sb)
+        if A is None or B is None:
+            need.update(x for x, v in ((sa, A), (sb, B)) if v is None)
+            return None
+        return park_scene.same(A, B)
+    out = TLN.join_stays(cam, scene)
+    if need:
+        park_scene.probe_bg(SCENES, need, lambda st: sorted(cams.get(st) or ()), path_of)
+    return out
+
+
 def drivelist(wait=False):
     """The merged Drives list (Tessie's drives and charges with the dashcam's attached), rebuilt only when a file it is built from changed."""
     def build():
@@ -1118,6 +1159,11 @@ def drivelist(wait=False):
         try:
             cams, holders, dirs = TC.all_minutes()          # Recent minutes and the minutes the car saved off into Saved / Sentry folders: one clock
             store, roots = TC._tl("A"), footage_roots()
+            try:                                             # one park the dashcam saw in pieces is one stop, before Tessie is asked anything
+                cam = _join_stays(cam, cams, holders, dirs, roots)
+                cam.sort(key=lambda x: x["t0"], reverse=True)
+            except Exception:
+                pass
             front = lambda st: next((os.path.join(roots[r], *dirs.get(st, "RecentClips").split("/"), st + "-front.mp4") for r in sorted(holders.get(st) or ()) if roots.get(r) and "front" in (cams.get(st) or ())), None)
             minute_kind.probe_bg(KINDS, [st for st in cams if store.summary(st) is None], front)          # minutes whose telemetry is not read yet are told by walking their clip, once, all of them, in the background (the file it keeps changing rebuilds this list)
             looked = KINDS.all()
@@ -1155,7 +1201,7 @@ def drivelist(wait=False):
         return dict(items=items, tessie=bool(tess), **app_drivelist.page_rows(act), missing=app_drivelist.missing(items, time.time(), tried=set(tessie_state().get("tried") or []) | FetchLedger(DATA_DIR).settled("drive_path")))
     d = os.path.join
     watch = [d(DATA_DIR, "drives", "drives_master.csv"), d(DATA_DIR, "charges", "charges_master.csv"), d(DATA_DIR, "drives", "deepdive"), d(DATA_DIR, "tessie_sync_state.json"), d(DATA_DIR, "fetch_ledger.json"), d(DATA_DIR, "clip_clock.json"), d(DATA_DIR, "places.json"), d(DATA_DIR, "teslacam_timeline", "index.json"),
-             d(DATA_DIR, "teslacam_ledger"), d(DATA_DIR, "teslacam_provenance"), d(DATA_DIR, "teslacam_timeline", "index.json"), KINDS.path] + [app_sentry.index_path(DATA_DIR, "teslacam_index_%s_%s.json" % (r, k)) for r in DR.read_roles() for k in ("saved", "sentry")]
+             d(DATA_DIR, "teslacam_ledger"), d(DATA_DIR, "teslacam_provenance"), d(DATA_DIR, "teslacam_timeline", "index.json"), KINDS.path] + ([SCENES.path] if SCENES else []) + [app_sentry.index_path(DATA_DIR, "teslacam_index_%s_%s.json" % (r, k)) for r in DR.read_roles() for k in ("saved", "sentry")]
     return DRIVELIST.get(app_drivelist.signature(watch) + (("code", CODE_VERSION, None),), build, wait)       # kept on this computer with what it was built from: a restart does not build it again
 
 
@@ -1345,7 +1391,7 @@ def _code_version():
 
 
 def main():
-    global KINDS, KEPT, CODE_VERSION, STORE, DATA_DIR, SENTRY, TC, DRV, SYNC, TSYNC, CSYNC, CCOST, FSYNC, REACH, SOFT, CARW, BOOK, FG, KEEP, DRIVELIST, TODO, CKEEP, STHIN
+    global KINDS, SCENES, KEPT, CODE_VERSION, STORE, DATA_DIR, SENTRY, TC, DRV, SYNC, TSYNC, CSYNC, CCOST, FSYNC, REACH, SOFT, CARW, BOOK, FG, KEEP, DRIVELIST, TODO, CKEEP, STHIN
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--data-dir", default=DEFAULT_DATA)
     ap.add_argument("--port", type=int, default=int(app_config.get("window.port")))
@@ -1376,6 +1422,7 @@ def main():
     DRIVELIST = app_drivelist.Cached(os.path.join(local_cache_dir(), "drivelist.json"))
     run_cuts.set_file(os.path.join(local_cache_dir(), "run_cuts.json"))
     KINDS = minute_kind.Kinds(os.path.join(local_cache_dir(), "minute_kind_v2.json"))
+    SCENES = park_scene.Scenes(os.path.join(local_cache_dir(), "park_scenes.json"))
     home_ignore.set_file(os.path.join(local_cache_dir(), "home_ignore.json"))
     clips_purged.set_file(os.path.join(DATA_DIR, "teslacam_purged.json"))
     SENTRY = app_sentry.Sentry(DATA_DIR)
