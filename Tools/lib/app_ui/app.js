@@ -3001,7 +3001,7 @@ async function boot(){
   geoWatch();
   addEventListener("hashchange",route);
   $$("#nav>a").forEach(a=>a.addEventListener("click",()=>{if(a.getAttribute("href")!==location.hash)NAVRESET=true}));
-  try{SET=await (await fetch0("/api/settings")).json()}catch(e){}
+  const setP=fetch0("/api/settings").then(r=>r.json()).catch(()=>null);   // asked together with the summary, the drives' corner and the keeper; only the page waits for it
   const head=async n=>{try{const r=await fetch0("/api/summary"),s=cache.summary=await r.json();$("#veh").textContent=s.vehicle;$("#vsub").textContent=n0(s.odo||s.km)+" km";$("#vsub").title=s.odo?n0(s.km)+" km in logged drives; the rest was driven before logging started or is not in any drive":"";if(r.headers.get("X-Stale")==="1"&&n<6)setTimeout(()=>head(n+1),3000)}catch(e){}};   // the first answer after a start is the last kept one: ask again until it is current
   head(0);
   // the corner: one line a drive, a dot and its name. Green = connected, amber = something is reading it, red = not connected; ⏏ only while connected (and not just ejected)
@@ -3015,7 +3015,9 @@ async function boot(){
   // amber while the Keeper (or a button) is reading a drive: asked often, and only the dots are touched
   const kp=async()=>{try{const k=await (await fetch("/api/keeper")).json();window.KBUSY=k.working?(Object.keys(k.drives||{}).length?Object.keys(k.drives):k.roles||[]):[];
     $$("#status .dot[data-r]").forEach(d=>{if(d.classList.contains("off"))return;const b=KBUSY.includes(d.dataset.r);d.classList.toggle("rd",b);d.classList.toggle("on",!b);d.title=b?"Being read":"Connected"})}catch(e){}};
-  st();setInterval(st,5000);kp();setInterval(kp,4000);route();
+  st();setInterval(st,5000);kp();setInterval(kp,4000);
+  const s0=await setP;if(s0)SET=s0;
+  route();
 }
 addEventListener("keydown",e=>{if((e.metaKey||e.ctrlKey)&&e.key.toLowerCase()==="r"){e.preventDefault();location.reload()}});
 // Cmd-1 to Cmd-9, and Cmd-0, open the pages of the side bar in the order they are listed there
