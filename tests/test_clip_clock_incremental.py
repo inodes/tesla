@@ -39,8 +39,8 @@ class Incremental(unittest.TestCase):
         f = os.path.join(self.p, day + ".json")
         with open(f, "w") as fh:
             json.dump(j, fh)
-        st = os.stat(f)
-        os.utime(f, ns=(st.st_atime_ns, st.st_mtime_ns + len(self.reads) * 1000 + 1))
+        self.tick = getattr(self, "tick", 0) + 1                                  # every write gets a time of its own: a file system with a coarse clock must not make two writes look the same
+        os.utime(f, ns=(10 ** 9 * 1_700_000_000, 10 ** 9 * (1_700_000_000 + self.tick)))
 
     def keys(self):
         return {f: (os.stat(f).st_mtime_ns, os.stat(f).st_size) for f in CC._prov_files(self.d)}
