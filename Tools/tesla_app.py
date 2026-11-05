@@ -682,7 +682,7 @@ class H(BaseHTTPRequestHandler):
                     return self.send_json(CKEEP.purge_home(roots, confirmed=body.get("confirm") is True))
                 if body.get("action") == "purge":         # delete chosen kinds (video, metadata, stills, pictures, signs) of the clips; video that is not all kept needs force
                     return self.send_json(CKEEP.purge(body.get("items") or [], body.get("types") or [], roots, confirmed=body.get("confirm") is True, force=body.get("force") is True))
-                return self.send_json(CKEEP.start(body.get("action"), role, body.get("items") or [], roots, confirmed=body.get("confirm") is True))
+                return self.send_json(CKEEP.start(body.get("action"), role, body.get("items") or [], roots, confirmed=body.get("confirm") is True, to=body.get("to") or "A"))
             if u.path == "/api/stills/thin":       # {action: start|stop, events: normal|shrunk|front}: make the stills of minutes with no event and no sign smaller, or the pictures around events
                 if body.get("action") == "stop":
                     return self.send_json(STHIN.stop())

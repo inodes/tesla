@@ -367,22 +367,26 @@ class ClipKeep:
                         out.setdefault(m.group(1), []).append(m.group(2))
         return out
 
-    def _archive_has(self, led, key, size):
+    def _has(self, led, key, size, role):
+        """True when the drive `role` holds this file, listed and the same size."""
         e = led.day(key.split("|", 2)[2][:10]).get(key)
-        x = e and e["drives"].get("A")
+        x = e and e["drives"].get(role)
         return bool(x and not x.get("gone") and e.get("size") == size)
 
+    def _archive_has(self, led, key, size):
+        return self._has(led, key, size, "A")
+
     # ---- delete / move ------------------------------------------------------------------------------------------
-    def check(self, action, role, items, roots):
-        """(plan, error): plan = [(kind, id, files)] when every clip may be handled, else a sentence saying which may not."""
+    def check(self, action, role, items, roots, to="A"):
+        """(plan, error): plan = [(kind, id, files)] when every clip may be handled, else a sentence saying which may not. A move goes to the drive `to` (the Archive unless another is asked for)."""
         if action not in ("delete", "move"):
             return None, "Unknown action."
         if role not in roots or not roots[role]:
             return None, "That drive is not connected."
         if not writable(role):
             return None, "That drive is not one the app handles."
-        if action == "move" and (role == "A" or not roots.get("A")):
-            return None, "Moving needs the Archive connected, and a clip not already on it."
+        if action == "move" and (role == to or not roots.get(to) or not writable(to)):
+            return None, "Moving needs the Archive connected, and a clip not already on it." if to == "A" else "Moving needs the drive it goes to connected, and a different drive from the one it leaves."
         if not items:
             return None, "Nothing is selected."
         st = self.status(force=True)["clips"]
@@ -403,22 +407,24 @@ class ClipKeep:
         if not plan:
             return None, "There is no video of these on that drive."
         if action == "move":
-            need = sum(sz for _, _, fs in plan for k, sz, _f in fs if not self._archive_has(led, k, sz))
+            need = sum(sz for _, _, fs in plan for k, sz, _f in fs if not self._has(led, k, sz, to))
+            nm = "The Archive" if to == "A" else "The drive it goes to"
             try:
-                free = shutil.disk_usage(roots["A"]).free
+                free = shutil.disk_usage(roots[to]).free
             except OSError:
-                return None, "The Archive cannot be read."
+                return None, "%s cannot be read." % nm
             if need + 2 * 1024 ** 3 > free:
-                return None, "The Archive has %.1f GB free; this needs %.1f GB." % (free / 1024 ** 3, need / 1024 ** 3)
+                return None, "%s has %.1f GB free; this needs %.1f GB." % (nm, free / 1024 ** 3, need / 1024 ** 3)
         return plan, ""
 
-    def start(self, action, role, items, roots, confirmed=False):
+    def start(self, action, role, items, roots, confirmed=False, to="A"):
         """Deleting or moving needs `confirmed` (the page sends it only after its confirm bar was answered): a request without it removes nothing."""
         if action in ("delete", "move") and confirmed is not True:
             return dict(error="Not confirmed: nothing was removed.")
         if self._thread and self._thread.is_alive():
             return dict(error="Something is already being done to the drives.")
-        plan, err = self.check(action, role, items, roots)
+        to = to or "A"
+        plan, err = self.check(action, role, items, roots, to)
         if err:
             return dict(error=err)
         files = [(k, sz, f) for _, _, fs in plan for k, sz, f in fs]
@@ -437,12 +443,12 @@ class ClipKeep:
                     read = (kind_of, paths, [(it["kind"], it["id"]) for it in lack if it["kind"] != "recent"])
         self._stop = False
         self._roots = roots
-        self._job = dict(running=True, action=action, role=role, files=len(files), done=0, bytes=sum(sz for _, sz, _ in files), bytes_done=0, freed=0, errors=[], current="",
+        self._job = dict(running=True, action=action, role=role, to=to, files=len(files), done=0, bytes=sum(sz for _, sz, _ in files), bytes_done=0, freed=0, errors=[], current="",
                          clips=len(plan), t0=time.time(), reading=bool(read), step="", step_done=0, step_total=0, steps=[])
         if read:
-            self._thread = threading.Thread(target=self._read_then_run, args=(read, action, role, files, roots, clips), daemon=True)
+            self._thread = threading.Thread(target=self._read_then_run, args=(read, action, role, files, roots, clips, to), daemon=True)
         else:
-            self._thread = threading.Thread(target=self._run, args=(action, role, files, roots, clips), daemon=True)
+            self._thread = threading.Thread(target=self._run, args=(action, role, files, roots, clips, to), daemon=True)
         self._thread.start()
         return self.job()
 
@@ -541,7 +547,7 @@ class ClipKeep:
             self._changed()
             self._settle()
 
-    def _read_then_run(self, read, action, role, files, roots, clips):
+    def _read_then_run(self, read, action, role, files, roots, clips, to="A"):
         """Reads what is missing (the same steps as `process`), then moves. Anything that could not be read stops the move: nothing has been copied or removed yet."""
         j = self._job
         self._process(*read)
@@ -549,7 +555,7 @@ class ClipKeep:
         j["step"] = ""
         if self._stop or j["errors"]:
             return
-        self._run(action, role, files, roots, clips)
+        self._run(action, role, files, roots, clips, to)
 
     # ---- reading what is missing, for the clips asked for ---------------------------------------------------------
     def _paths(self, led, stamps, roots):
@@ -864,7 +870,7 @@ class ClipKeep:
         self._stop = True
         return self.job()
 
-    def _run(self, action, role, files, roots, clips=()):
+    def _run(self, action, role, files, roots, clips=(), to="A"):
         led = TLG.Ledger(self.dir)
         touched = set()
         j = self._job
@@ -876,8 +882,8 @@ class ClipKeep:
                 src = TF.front_path(roots[role], f)
                 j["current"] = os.path.basename(src)
                 try:
-                    if action == "move" and not self._archive_has(led, key, size):
-                        dst = TF.front_path(roots["A"], f)
+                    if action == "move" and not self._has(led, key, size, to):
+                        dst = TF.front_path(roots[to], f)
                         os.makedirs(os.path.dirname(dst), exist_ok=True)
                         part = dst + ".part"
                         shutil.copyfile(src, part)
@@ -885,9 +891,9 @@ class ClipKeep:
                             os.remove(part)
                             raise OSError("the copy has a different size")
                         os.replace(part, dst)
-                        touched.add(led.mark("A", key, os.path.getsize(dst), True, flush=False))
-                    if action == "move" and not self._archive_has(led, key, size):
-                        raise OSError("the Archive does not hold it")
+                        touched.add(led.mark(to, key, os.path.getsize(dst), True, flush=False))
+                    if action == "move" and not self._has(led, key, size, to):
+                        raise OSError("the Archive does not hold it" if to == "A" else "the drive it goes to does not hold it")
                     os.remove(src)
                     removed.append(os.path.basename(src))
                     j["freed"] += size
@@ -913,7 +919,7 @@ class ClipKeep:
         """One line per delete / move job: when, what, which video files were removed from which drive, how much, and what could not be."""
         try:
             with open(os.path.join(self.dir, self.LOG), "a", encoding="utf-8") as fh:
-                fh.write(json.dumps(dict(t=time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), action=action, role=role, clips=list(clips), removed=len(removed), files=removed[:500],
+                fh.write(json.dumps(dict(t=time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), action=action, role=role, to=j.get("to"), clips=list(clips), removed=len(removed), files=removed[:500],
                                          freed=j.get("freed", 0), errors=j.get("errors", [])[:20], stopped=bool(self._stop)), ensure_ascii=False) + "\n")
         except OSError:
             pass

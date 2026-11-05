@@ -178,6 +178,21 @@ class KeepTest(Base):
         self.assertEqual(os.listdir(os.path.join(self.roots["J"], "SavedClips", "ev1")), [])
         self.assertEqual(k.status(force=True)["clips"]["saved"]["ev1"]["bytes"], {"A": 40})
 
+    def test_a_move_can_go_to_another_connected_drive_than_the_archive(self):
+        dst = os.path.join(self.t, "U", "TeslaCam")                                  # e.g. the LaCie: any connected drive, not only the Archive
+        os.makedirs(dst)
+        roots = dict(self.roots, U=dst)
+        k = self.keep()
+        self.assertIn("different drive", k.start("move", "J", [dict(kind="saved", id="ev1")], roots, confirmed=True, to="J")["error"])
+        out = k.start("move", "J", [dict(kind="saved", id="ev1")], roots, confirmed=True, to="U")
+        self.assertNotIn("error", out)
+        k._thread.join(5)
+        self.assertEqual(sorted(os.listdir(os.path.join(dst, "SavedClips", "ev1"))), sorted(["%s-%s.mp4" % (st, c) for st in (S1, S2) for c in ("front", "back")]))
+        self.assertEqual(os.listdir(os.path.join(self.roots["J"], "SavedClips", "ev1")), [])
+        self.assertFalse(os.path.exists(os.path.join(self.roots["A"], "SavedClips", "ev1", "%s-front.mp4" % S1)))      # not on the Archive
+        self.assertEqual(k.status(force=True)["clips"]["saved"]["ev1"]["bytes"], {"U": 40})
+        self.assertEqual(k.history()[0]["to"], "U")
+
     def test_a_copy_that_the_archive_already_holds_may_be_deleted_from_jowua_at_once(self):
         led = TLG.Ledger(self.data)
         for st in (S1, S2):
