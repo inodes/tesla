@@ -183,6 +183,12 @@ def where_all():
     return dict(_SK["where"])
 
 
+def where_token():
+    """An object that is the same for as long as where_all() would give the same places (compare with `is`)."""
+    _skews_refresh()
+    return _SK["where"]
+
+
 def where(stamp):
     """What the car itself wrote into the clip named `stamp` about where it was: "Street, Suburb" (either may be missing), or "" when the clip says nothing."""
     _skews_refresh()
@@ -321,7 +327,8 @@ def _skews_refresh(force=False):
     with _LOCK:
         _SK["sig"] = sig
         _SK["dur"] = durs
-        _SK["where"] = where
+        if where != _SK["where"]:                       # the same object while the places are the same: what is built from them (short_place) is not built again
+            _SK["where"] = where
         if new != _SK["map"]:
             _SK["map"] = new
             _S["version"] += 1

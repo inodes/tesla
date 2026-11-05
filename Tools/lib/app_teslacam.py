@@ -641,8 +641,9 @@ class TeslaCam:
         sp = self.__dict__.get("_sp")
         if sp is None:
             sp = self.__dict__["_sp"] = short_place.ShortPlace(self.dir)
-        ver = CC.version()
-        if self.__dict__.get("_sp_ver") != ver:
+        ver = (CC.where_token(), len(store.sum or {}))          # what it is fed from: the clips' own places and the minutes whose telemetry is read (not the clock's version)
+        old = self.__dict__.get("_sp_ver")
+        if old is None or old[0] is not ver[0] or old[1] != ver[1]:
             self.__dict__["_sp_ver"] = ver
             items = []
             for st, (_street, sub) in CC.where_all().items():
