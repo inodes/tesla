@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
-"""test_static_serving.py - the page's own files: MapLibre from lib/app_ui/vendor with a long cache (the CDN only when the copy is missing), and nothing
-in index.html's <head> that holds the first paint.
+"""test_static_serving.py - the page's own files: MapLibre from lib/app_ui/vendor with a long cache (the CDN only when the copy is missing), nothing
+in index.html's <head> that holds the first paint, and ETag / 304 / gzip for index.html, app.js, app.css (a changed file is sent again).
 
     python3 -m unittest tests/test_static_serving.py
 """
@@ -62,6 +62,49 @@ class Vendor(Served):
     def test_other_names_are_not_served(self):
         self.assertEqual(self.get("/vendor/../tesla_app.py")[0].status, 404)
         self.assertEqual(self.get("/vendor/other.js")[0].status, 404)
+
+
+class Revalidate(Served):
+    def test_app_files_carry_an_etag_and_a_304_when_unchanged(self):
+        for path in ("/", "/app.js", "/app.css", "/vendor/maplibre-gl.js"):
+            r, body = self.get(path)
+            self.assertEqual(r.status, 200)
+            tag = r.getheader("ETag")
+            self.assertTrue(tag)
+            r2, body2 = self.get(path, {"If-None-Match": tag})
+            self.assertEqual((r2.status, body2), (304, b""))
+
+    def test_app_js_is_asked_again_every_time(self):
+        self.assertEqual(self.get("/app.js")[0].getheader("Cache-Control"), "no-cache")
+
+    def test_gzip_when_accepted_and_the_same_bytes_unzipped(self):
+        import gzip
+        raw = self.get("/app.js")[1]
+        r, z = self.get("/app.js", {"Accept-Encoding": "gzip, deflate"})
+        self.assertEqual(r.getheader("Content-Encoding"), "gzip")
+        self.assertEqual(int(r.getheader("Content-Length")), len(z))
+        self.assertLess(len(z), len(raw) / 2)
+        self.assertEqual(gzip.decompress(z), raw)
+        self.assertIsNone(self.get("/app.js")[0].getheader("Content-Encoding"))
+
+    def test_a_changed_file_gets_a_new_etag_and_its_new_content(self):
+        ui, tmp = tesla_app.UI, tempfile.mkdtemp()
+        try:
+            tesla_app.UI = tmp
+            p = os.path.join(tmp, "app.css")
+            with open(p, "w") as f:
+                f.write("a{}")
+            r, b = self.get("/app.css")
+            tag = r.getheader("ETag")
+            with open(p, "w") as f:
+                f.write("b{color:red}")
+            os.utime(p, ns=(os.stat(p).st_atime_ns, os.stat(p).st_mtime_ns + 10 ** 9))
+            r2, b2 = self.get("/app.css", {"If-None-Match": tag})
+            self.assertEqual((r2.status, b2), (200, b"b{color:red}"))
+            self.assertNotEqual(r2.getheader("ETag"), tag)
+        finally:
+            tesla_app.UI = ui
+            shutil.rmtree(tmp)
 
 
 class Head(unittest.TestCase):
