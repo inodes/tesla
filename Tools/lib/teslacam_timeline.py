@@ -290,7 +290,13 @@ def overlaps_recent(stamp, t, rt):
     if d is None or d >= 55:
         return True
     a, b = t + 1.0, t + d - 1.0
-    return any(r < b and a < r + 60.0 for r in rt if abs(r - t) < 90)
+    import bisect
+    i = bisect.bisect_left(rt, t - 90)
+    while i < len(rt) and rt[i] < t + 90:                  # only the Recent minutes within 90 s: rt is sorted, so not a walk of every minute ever recorded
+        if rt[i] < b and a < rt[i] + 60.0:
+            return True
+        i += 1
+    return False
 
 
 def minutes(recent, saved, all_saved=False):

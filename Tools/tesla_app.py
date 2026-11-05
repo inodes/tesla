@@ -450,11 +450,15 @@ class H(BaseHTTPRequestHandler):
                 return self.solaredge_oauth(path, urllib.parse.parse_qs(u.query))
             if path.startswith("/api/"):
                 t_in = time.time()
+                dog = threading.Timer(20.0, _stack_dump, args=(path,))      # a request still running after 20 s: where every thread is, once, in the log
+                dog.daemon = True
+                dog.start()
                 try:
                     return self.api(path[5:], urllib.parse.parse_qs(u.query))
                 finally:
+                    dog.cancel()
                     if time.time() - t_in > 0.5:                # what is slow shows in the log (~/Library/Logs/tesla_app.log)
-                        print("(slow: %s took %.1f s)" % (path, time.time() - t_in), flush=True)
+                        print("(slow: %s took %.1f s)" % (path, time.time() - t_in), file=sys.stderr, flush=True)
             if path.startswith("/data/"):
                 p = safe_join(DATA_DIR, path[6:])
                 rel = path[6:].split("/")
@@ -1097,6 +1101,13 @@ def _title_bar_on_screen(screens, x, y):
     m = screens[0]
     px, py = m.x + x + 60, m.y + m.height - y - 20
     return any(sc.x <= px < sc.x + sc.width and sc.y <= py < sc.y + sc.height for sc in screens)
+
+
+def _stack_dump(path):
+    """Written to the log (stderr) when a request has run for 20 s: what each thread is doing, to see what a stuck page waits for."""
+    import faulthandler
+    print("(still running after 20 s: %s - threads:)" % path, file=sys.stderr, flush=True)
+    faulthandler.dump_traceback(file=sys.stderr, all_threads=True)
 
 
 def window_place(webview):
