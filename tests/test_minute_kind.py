@@ -87,6 +87,21 @@ class KindsTest(TempDirTest):
         self.assertEqual(MK.Kinds(os.path.join(self.tmp, "k.json")).all(), {"2026-11-04_09-00-00": "go", "2026-11-04_09-01-00": "pk"})        # kept: the file changing is what rebuilds the lists
         self.assertFalse(MK.probe_bg(k, list(files), files.get))                # nothing left that can be read
 
+    def test_minutes_that_cannot_be_read_leave_the_file_alone(self):
+        import time
+        bad = self.write("bad.mp4", b"\0" * 64)
+        k = MK.Kinds(os.path.join(self.tmp, "k2.json"))
+        k.put("2026-11-04_08-00-00", "go")
+        k.save()
+        before = os.stat(k.path).st_mtime_ns
+        time.sleep(0.02)
+        self.assertTrue(MK.probe_bg(k, ["2026-11-04_09-05-00"], lambda st: bad))
+        for _ in range(100):
+            if not MK._BG["on"]:
+                break
+            time.sleep(0.05)
+        self.assertEqual(os.stat(k.path).st_mtime_ns, before)                # unchanged: the lists built from it are not built again
+
 
 def stamps(first_min, n, hour=9):
     return ["2026-11-04_%02d-%02d-07" % (hour + (first_min + k) // 60, (first_min + k) % 60) for k in range(n)]

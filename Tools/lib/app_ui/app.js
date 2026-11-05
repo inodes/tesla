@@ -1678,16 +1678,19 @@ const lazyThumbs=host=>$$("video.vt",host).forEach(v=>{if(VT)VT.observe(v);else 
 // ---------- TeslaCam: the clips on any connected drive, and one continuous timeline built from the files alone
 let TCS={role:null,kind:"clips",q:"",r:{p:"all"},at:{},src:{sentry:1,saved:1,recent:1}},TLOFF=null;
 const SWRSEEN=new Set(),FRESH={};
+// the server answered a TeslaCam list from what it kept and is refreshing it: ask again in a few seconds and redraw if it changed
+const tcRecheck=(p,shown,k=0)=>{if(k>4||p==="drivelist")return;setTimeout(async()=>{let n;try{n=await fetchJ(p)}catch(e){return}const ck="tc/"+p;
+  if(!sameData(n,shown)){if(cache[ck]===shown||cache[ck]===undefined)cache[ck]=n;mkey(ck).then(key=>IDB.set(key,clean(n)));redrawQuietly()}else if(STALEP.has(p))tcRecheck(p,shown,k+1)},4000)};
 const tcGet=async(p,fresh)=>{if(p!=="drivelist"&&p!=="clips"&&p!=="teslacam")return fetchJ(p);       // remembered in memory and in IndexedDB (drawn at once, refreshed behind); fresh=true forces a server check
   const ck="tc/"+p;
   if(FRESH[p]){const v=FRESH[p];delete FRESH[p];return cache[ck]=v}
   const k=await mkey(ck);
-  if(fresh){const n=await fetchJ(p);if(!n.stale)IDB.set(k,clean(n));return cache[ck]=n}
+  if(fresh){const n=await fetchJ(p);if(!n.stale)IDB.set(k,clean(n));if(STALEP.has(p))tcRecheck(p,n);return cache[ck]=n}
   if(cache[ck]&&SWRSEEN.has(p))return cache[ck];
   const old=cache[ck]||await IDB.get(k);SWRSEEN.add(p);
-  if(old===undefined){const n=await fetchJ(p);if(!n.stale)IDB.set(k,clean(n));return cache[ck]=n}
+  if(old===undefined){const n=await fetchJ(p);if(!n.stale)IDB.set(k,clean(n));if(STALEP.has(p))tcRecheck(p,n);return cache[ck]=n}
   cache[ck]=old;
-  fetchJ(p).then(n=>{if(!n.stale)IDB.set(k,clean(n));
+  fetchJ(p).then(n=>{if(!n.stale)IDB.set(k,clean(n));if(STALEP.has(p))tcRecheck(p,n);
     if(!sameData(n,old)){FRESH[p]=n;cache[ck]=n;redrawQuietly()}
     else if(p==="drivelist"&&n.stale){cache[ck]=n;if($("#stl"))$("#stl").hidden=false;drivelistPoll(old)}}).catch(()=>{});
   return old};
@@ -2984,7 +2987,11 @@ async function pageSoftwareOne(v){
   const go=k=>()=>{SWS[k]=v;SWS.tab="compare";swSave();location.hash="#/software"};$("#cmpf").onclick=go("a");$("#cmpt").onclick=go("b")}
 
 const ROUTES={activity:pageActivity,drives:pageDriveList,driveslist:pageDriveList,charges:pageCharges,battery:pageBattery,health:pageHealth,analytics:pageAnalytics,teslacam:pageTeslaCam,queue:pageQueue,flips:pageDriveList,review:pageDriveList,dashcam:pageDriveList,parked:pageParked,idles:pageParked,places:pagePlaces,alerts:pageAlerts,software:pageSoftware};
+let PERF1=true;      // the first page after the window opened: its time since launch goes to the timing log too
+const perfSend=(p,t0)=>{const now=performance.now(),b={route:p,ms:Math.round(now-t0)};if(PERF1){PERF1=false;b.first_ms=Math.round(now)}
+  try{fetch0("/api/perf",{method:"POST",keepalive:true,body:JSON.stringify(b)}).catch(()=>{})}catch(e){}};       // ~/Library/Logs/tesla_perf.log (lib/perf_log.py)
 async function route(){
+  const t0=performance.now();
   if(!QUIET){RGEN++;RLOAD=RGEN}const myGen=RGEN;
   navTrack();hideTip();if(location.hash.indexOf("#/charge/")!==0){try{sessionStorage.removeItem("chargeSet")}catch(e){}}if(TLOFF){TLOFF();TLOFF=null}const h=(location.hash||"#/activity").replace(/^#\//,""),[p,arg,arg2]=h.split("/").map(decodeURIComponent);
   // the side bar item lit is the list a detail page was reached from (a drive opened from Drives lights Drives); a section's own page (Software, Battery, ...) always lights itself, whatever the path that led to it
@@ -2995,13 +3002,13 @@ async function route(){
   try{
     if(p==="drive")await pageDrive(arg,arg2);else if(p==="charge")await pageCharge(arg,arg2);else if(p==="idle"||p==="parked"&&arg)await pageParkedOne(arg);else if(p==="place")await pagePlace(arg);else await (ROUTES[p]||pageActivity)(arg,arg2);
   }catch(e){if(myGen===RGEN)main.innerHTML=errBox(e.stack||e.message,"Something went wrong")}      // a page already left does not show its error over the page opened
-  finally{if(RLOAD===myGen)RLOAD=0}
+  finally{if(RLOAD===myGen)RLOAD=0;if(!QUIET&&myGen===RGEN)perfSend(p,t0)}
 }
 async function boot(){
   geoWatch();
   addEventListener("hashchange",route);
   $$("#nav>a").forEach(a=>a.addEventListener("click",()=>{if(a.getAttribute("href")!==location.hash)NAVRESET=true}));
-  try{SET=await (await fetch0("/api/settings")).json()}catch(e){}
+  const setP=fetch0("/api/settings").then(r=>r.json()).catch(()=>null);   // asked together with the summary, the drives' corner and the keeper; only the page waits for it
   const head=async n=>{try{const r=await fetch0("/api/summary"),s=cache.summary=await r.json();$("#veh").textContent=s.vehicle;$("#vsub").textContent=n0(s.odo||s.km)+" km";$("#vsub").title=s.odo?n0(s.km)+" km in logged drives; the rest was driven before logging started or is not in any drive":"";if(r.headers.get("X-Stale")==="1"&&n<6)setTimeout(()=>head(n+1),3000)}catch(e){}};   // the first answer after a start is the last kept one: ask again until it is current
   head(0);
   // the corner: one line a drive, a dot and its name. Green = connected, amber = something is reading it, red = not connected; ⏏ only while connected (and not just ejected)
@@ -3015,7 +3022,9 @@ async function boot(){
   // amber while the Keeper (or a button) is reading a drive: asked often, and only the dots are touched
   const kp=async()=>{try{const k=await (await fetch("/api/keeper")).json();window.KBUSY=k.working?(Object.keys(k.drives||{}).length?Object.keys(k.drives):k.roles||[]):[];
     $$("#status .dot[data-r]").forEach(d=>{if(d.classList.contains("off"))return;const b=KBUSY.includes(d.dataset.r);d.classList.toggle("rd",b);d.classList.toggle("on",!b);d.title=b?"Being read":"Connected"})}catch(e){}};
-  st();setInterval(st,5000);kp();setInterval(kp,4000);route();
+  st();setInterval(st,5000);kp();setInterval(kp,4000);
+  const s0=await setP;if(s0)SET=s0;
+  route();
 }
 addEventListener("keydown",e=>{if((e.metaKey||e.ctrlKey)&&e.key.toLowerCase()==="r"){e.preventDefault();location.reload()}});
 // Cmd-1 to Cmd-9, and Cmd-0, open the pages of the side bar in the order they are listed there
