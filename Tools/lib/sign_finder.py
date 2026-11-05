@@ -13,6 +13,7 @@ import cv2
 import numpy as np
 
 import sign_reader
+import vehicle_rear
 
 ONE_THREAD = dict(os.environ, OMP_THREAD_LIMIT="1")      # tesseract starts a thread per core by default: with several stills read at once that is slower than one thread each
 LIMITS = {"40", "50", "60", "70", "80", "90", "100", "110", "120", "130"}
@@ -112,6 +113,8 @@ def find_signs(bgr, min_r=12, max_r=140, roi=ROI_LEFT, a_thr=None, ocr=True):
             _, bw_ = cv2.threshold(gg, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
             bw_ = cv2.copyMakeBorder(bw_, 12, 12, 12, 12, cv2.BORDER_CONSTANT, value=255)
             text, conf = _ocr(bw_)
+        if text == "40" and vehicle_rear.on_vehicle(bgr, cx, cy, r):      # the 40 on the back of a school bus ('when lights flash') is not a limit of the road
+            continue
         red = float(ach[y:y + bh, x:x + bw][mask[y:y + bh, x:x + bw] > 0].mean()) - base
         pad = int(r * 1.25)
         xa2, xb2, ya2, yb2 = max(0, int(cx - pad)), min(w, int(cx + pad)), max(0, int(cy - pad)), min(h, int(cy + pad))
