@@ -16,8 +16,11 @@ The task is docs/LOAD_SPEED_TASK.md. Work happens on branch `claude/load-speed` 
   the start-up thread's look instead of repeating it: first start's first answer 9.4-11 s → 1.5 s.
   `_warm` tried and left as it was (measured: starting it as soon as the window's first request is answered, in a value order and without /api/teslacam, made a
   second page opened 3 s after the first slower, 664 / 1,284 ms → 1,695 / 2,173 ms on a first start, because the warm-up competes with the page asked for; and
-  /api/teslacam is cheap since the volume-look fix). Step 4 is done.
-- **Next**:
+  /api/teslacam is cheap since the volume-look fix). Step 4 is done (`173ec36`).
+  Step 5, next commit: `clip_clock.utc` kept per stamp (forgotten when the runs, the clips' own times or the settings are replaced): /api/clips warm median 0.235 → 0.203 s.
+- **Next**: step 5 rest: clip_clock's provenance read incremental per file (`_skews_refresh` / `_read_skews`, keyed by mtime+size); ShortPlace re-fed only when
+  its clip data changed (`app_teslacam._short_where`); /api/clips answered from what was built last and refreshed behind (the page's `tcGet` already shows its
+  remembered copy at once; the server still builds on every call). Then
   step 5 (TeslaCam from cache), step 2 (perf_log), step 6, step 7. Order follows the task's Budget section (value first).
 - **Half-done**: nothing.
 - **Leads from the baseline**: (fixed: the ~10 s first answer was three drive discoveries per look, run again by the first request) `/api/teslacam` takes 1.7-11.8 s on every call, also warm (`_ROOTS["t"] = 0` then `TC.drives()` → `DR.discover()`); `/api/clips` 0.75-1.8 s warm; the first `/api/drivelist` after a first start 5.4 s.
@@ -67,6 +70,10 @@ The task is docs/LOAD_SPEED_TASK.md. Work happens on branch `claude/load-speed` 
 | | restart: process start → first answer | 0.52-0.62 s → 0.30 s |
 | | /api/teslacam cold / warm, first start | 5.50 / 5.97 s → 0.93 / 0.05 s |
 | | /api/teslacam cold / warm, restart | 1.70 / 11.76 s → 0.06 / 0.07 s |
+
+| change | measure | before → after |
+|---|---|---|
+| `clip_clock.utc` kept per stamp | /api/clips warm, 7 calls after 20 s, `--no-background` | 0.215-0.465 s, median 0.235 → 0.155-0.316 s, median 0.203 |
 
 The JSON times are within the noise of the background builds: no time gain or loss shows on localhost; the gain is bytes (5-8x less). Level 1 rather than 6: a 1.5 MB list compresses in 11 ms instead of 34 ms (measured), for 324 KB instead of 242 KB.
 
