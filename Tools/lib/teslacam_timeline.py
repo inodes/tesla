@@ -38,6 +38,7 @@ OPTS = dict(moving_kmh=3.0,           # a minute whose top speed is under this i
             join_slack_m=300,         # ... when the two positions are no further apart than this plus the distance the car could have covered in the hole (at 1.5 x its top speed)
             gap_min_s=120,            # a hole shorter than this is not shown
             park_end_s=21600,         # a park (the stopped minutes after a drive and the hole that follows) with no footage for longer than this ends the session at the drive: a shop or a drop-off is shorter, a night at home or in a hotel is not
+            park_join_s=3600,         # pieces of one park (stopped items with no drive between) this close are one stop, when the car did not move between them
             same_place_m=300,         # parked: last and next position this close ...
             same_place_est_m=800,     # ... (this far when one of them is a Sentry event's approximate position)
             blip_kmh=1.0,             # a shift out of Park whose top speed stays under this did not move the car: a blip (nothing), not a drive or even a re-park
@@ -812,6 +813,63 @@ def _gap(a, b):
         km = round(d / 1000.0, 1)
         kind = "parked" if d <= lim else "gap"
     return dict(id="g:%d" % t0, kind=kind, start=iso(t0), end=iso(t1), t0=t0, t1=t1, km=km, p0=pa, p1=pb)
+
+
+def join_stays(items, same_scene=None):
+    """A park the dashcam recorded in pieces (it woke, slept, woke again: stopped items with only a hole between them, no drive) is ONE stopped item from the first piece to the
+    last, the holes inside it left as holes. The car did not move while it recorded, so it is where the drive before it ended (or the next one began); between the pieces it could
+    have: two pieces are one park when
+      - the hole is no longer than OPTS["park_join_s"] (an hour), and
+      - the pictures agree: same_scene(a, b) -> True (the cameras see the same place), False (they do not: the car moved, or drove where we saw nothing), or None (not looked at yet,
+        or no video to look at); when it is None the places have to agree: the last position of the first piece and the first of the next, else the drive before the park and the one
+        after it (both known, one place).
+    Sentry events between the pieces stay where they are. Returns the items in the order they came."""
+    if len(items) < 2:
+        return items
+    desc = items[0]["t0"] > items[-1]["t0"]
+    asc = sorted(items, key=lambda x: (x["t0"], x["t1"]))
+    ok = lambda p: bool(p) and p[0] is not None
+    drives = [x for x in asc if x["kind"] == "drive"]
+
+    def places_agree(a, b):
+        if ok(a.get("p1")) and ok(b.get("p0")):
+            return hav(a["p1"][0], a["p1"][1], b["p0"][0], b["p0"][1]) <= OPTS["same_place_m"]
+        prev = [d for d in drives if d["t1"] <= a["t0"] + 1 and ok(d.get("p1"))]
+        nxt = [d for d in drives if d["t0"] >= b["t1"] - 1 and ok(d.get("p0"))]
+        return bool(prev and nxt and hav(prev[-1]["p1"][0], prev[-1]["p1"][1], nxt[0]["p0"][0], nxt[0]["p0"][1]) <= OPTS["same_place_m"])
+
+    def joinable(a, b):
+        if b["t0"] - a["t1"] > OPTS["park_join_s"]:
+            return False
+        r = same_scene(a, b) if same_scene else None
+        return places_agree(a, b) if r is None else bool(r)
+
+    out, last, hold = [], None, []
+    for it in asc:
+        if it["kind"] == "sentry":
+            out.append(it)
+            continue
+        if last is not None and not hold and it["kind"] in ("gap", "parked") and str(it["id"]).startswith("g:"):
+            hold.append(it)
+            continue
+        if last is not None and it["kind"] == "stopped" and (hold or it["t0"] - out[last]["t1"] <= OPTS["gap_min_s"]) and joinable(out[last], it):
+            a, m = out[last], dict(out[last])
+            m.update(t1=max(a["t1"], it["t1"]), n=a.get("n", 0) + it.get("n", 0), end=it["end"], lo1=it.get("lo1", a.get("lo1")),
+                     p1=it.get("p1") if ok(it.get("p1")) else a.get("p1"), p0=a.get("p0") if ok(a.get("p0")) else it.get("p0"),
+                     joined=a.get("joined", 1) + it.get("joined", 1))
+            for k in ("recent", "saved", "read"):
+                if k in a or k in it:
+                    m[k] = a.get(k, 0) + it.get(k, 0)
+            out[last] = m
+            hold = []
+            continue
+        out += hold
+        hold = []
+        out.append(it)
+        last = len(out) - 1 if it["kind"] == "stopped" else None
+    out += hold
+    out.sort(key=lambda x: (x["t0"], x["t1"]), reverse=desc)
+    return out
 
 
 def cached_minutes(store, t0, t1):

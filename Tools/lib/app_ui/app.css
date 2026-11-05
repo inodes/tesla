@@ -322,3 +322,5 @@ main:has(#spl .stbar,#spl .vbar) #splx{display:none}
 
 .cfm{position:fixed;z-index:9999;background:var(--card);border:1px solid var(--line);border-radius:8px;box-shadow:0 6px 24px #0003;padding:4px;display:flex;flex-direction:column;min-width:260px}.cfm button{text-align:left;background:none;border:0;padding:7px 10px;border-radius:6px;font:inherit;color:var(--ink);cursor:pointer}.cfm button:hover{background:var(--hover)}
 .cfn{position:fixed;right:16px;bottom:16px;z-index:9999;background:var(--card);border:1px solid var(--line);border-radius:10px;box-shadow:0 6px 24px #0003;padding:10px 14px;max-width:440px;font-size:13px;color:var(--ink)}.cfn[hidden]{display:none}.cfn progress{display:block;width:100%;margin-top:6px}.cfn .btn{margin-left:10px}
+
+.sgp{position:absolute;left:10px;bottom:10px;z-index:5;background:var(--card);border:1px solid var(--line);border-radius:10px;padding:5px;box-shadow:0 2px 10px rgba(0,0,0,.3);pointer-events:none}.sgp img{display:block;max-width:150px;max-height:150px;border-radius:6px}.sgp[hidden]{display:none}
