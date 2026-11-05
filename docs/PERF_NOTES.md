@@ -30,7 +30,9 @@ The task is docs/LOAD_SPEED_TASK.md. Work happens on branch `claude/load-speed` 
   Checked on the fixture: `page route=drives ms=423 first_ms=591`.
 - **Found, not from this work**: running the existing test suite creates `~/Library/Mobile Documents/...` in the home folder (it was there after the first suite
   run, before any change here); not looked into.
-- **Next**: step 6 (drive page), step 7 (final table, Mac checklist). Then
+  `4f95b52` that. Step 6, next commit: the drive page's /api/teslacam/auto/window spent 95% in `_events_in` → `_sentry_minutes`, which sorted the times of
+  every Recent minute again for each Sentry event; worked out once now: window 0.43-3.26 s → 0.07-0.56 s.
+- **Next**: step 7 (final harness run, before/after table, Mac checklist). Then
   step 5 (TeslaCam from cache), step 2 (perf_log), step 6, step 7. Order follows the task's Budget section (value first).
 - **Half-done**: nothing.
 - **Leads from the baseline**: (fixed: the ~10 s first answer was three drive discoveries per look, run again by the first request) `/api/teslacam` takes 1.7-11.8 s on every call, also warm (`_ROOTS["t"] = 0` then `TC.drives()` → `DR.discover()`); `/api/clips` 0.75-1.8 s warm; the first `/api/drivelist` after a first start 5.4 s.
@@ -99,6 +101,11 @@ The task is docs/LOAD_SPEED_TASK.md. Work happens on branch `claude/load-speed` 
 | | /api/clips cold / warm, restart | 0.746 / 0.842 s → 0.104 / 0.045 s |
 | | /api/teslacam cold / warm, restart | 1.698 / 11.759 s → 0.019 / 0.017 s |
 | | /api/teslacam cold, first start (nothing kept yet: the one look is waited for) | 5.502 s → 2.988 s |
+
+| change | measure (5 drives of the fixture, `--no-background`, after 20 s) | before → after |
+|---|---|---|
+| Recent minutes' times worked out once per window, not once per Sentry event | /api/teslacam/auto/window cold | 3.26 / 2.85 / 0.43 / 2.52 / 0.46 s → 0.56 / 0.10 / 0.10 / 0.14 / 0.07 s |
+| | warm | 2.58 / 2.32 / 0.46 / 2.95 / 0.46 s → 0.10 / 0.10 / 0.08 / 0.12 / 0.07 s |
 
 The JSON times are within the noise of the background builds: no time gain or loss shows on localhost; the gain is bytes (5-8x less). Level 1 rather than 6: a 1.5 MB list compresses in 11 ms instead of 34 ms (measured), for 324 KB instead of 242 KB.
 
