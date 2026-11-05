@@ -246,30 +246,58 @@ def _prov_files(data_dir):
         return []
 
 
-def _read_skews(data_dir, durs=None, where=None):
+_PF = {}        # provenance file -> ((mtime ns, size), its skews, its durations, its places): a file not changed is not read again
+
+
+def _read_skews(data_dir, durs=None, where=None, keys=None):
     """{stamp: UTC of the clip's own recording time} for the clips whose name is out from it by SKEW_MIN seconds or more beyond the car's offset
-    (which is a multiple of 15 minutes: the time zone, learned from the file itself: name - created). One entry per front clip in the provenance files."""
+    (which is a multiple of 15 minutes: the time zone, learned from the file itself: name - created). One entry per front clip in the provenance files.
+    keys = {file: (mtime ns, size)} as just looked at: a file whose key is the same as when it was last read is answered from that reading."""
     out = {}
-    for f in _prov_files(data_dir):
-        try:
-            with open(f, encoding="utf-8") as fh:
-                j = json.load(fh)
-        except (OSError, ValueError):
+    files = _prov_files(data_dir)
+    for f in files:
+        key = (keys or {}).get(f)
+        hit = _PF.get(f)
+        if key is None or hit is None or hit[0] != key:
+            hit = _read_one(f, key)
+            if key is not None and hit is not None:
+                _PF[f] = hit
+        if hit is None:
             continue
-        for k, v in j.items():
-            m = _FRONT.search(k)
-            r = v[0] if isinstance(v, list) and v else v if isinstance(v, dict) else None
-            if not m or not isinstance(r, dict) or r.get("created") is None or r.get("name_stamp") is None:
-                continue
-            if where is not None and (r.get("street") or r.get("suburb")) and m.group(1) not in where:
-                where[m.group(1)] = (str(r.get("street") or "").strip(), str(r.get("suburb") or "").strip())
-            if durs is not None and r.get("modified") is not None:
-                durs[m.group(1)] = max(0.0, float(r["modified"]) - float(r["created"]))
-            raw = float(r["name_stamp"]) - float(r["created"])
-            dev = raw - round(raw / 900.0) * 900.0
-            if abs(dev) >= SKEW_MIN:
-                out[m.group(1)] = float(r["created"])
+        out.update(hit[1])
+        if durs is not None:
+            durs.update(hit[2])
+        if where is not None:
+            for st, w in hit[3].items():
+                where.setdefault(st, w)                        # the first file that names a place for the clip, as before
+    now = set(files)
+    for f in [f for f in _PF if f not in now]:
+        _PF.pop(f, None)
     return out
+
+
+def _read_one(f, key):
+    """(key, skews, durations, places) of one provenance file, or None when it cannot be read."""
+    out, durs, where = {}, {}, {}
+    try:
+        with open(f, encoding="utf-8") as fh:
+            j = json.load(fh)
+    except (OSError, ValueError):
+        return None
+    for k, v in j.items():
+        m = _FRONT.search(k)
+        r = v[0] if isinstance(v, list) and v else v if isinstance(v, dict) else None
+        if not m or not isinstance(r, dict) or r.get("created") is None or r.get("name_stamp") is None:
+            continue
+        if (r.get("street") or r.get("suburb")) and m.group(1) not in where:
+            where[m.group(1)] = (str(r.get("street") or "").strip(), str(r.get("suburb") or "").strip())
+        if r.get("modified") is not None:
+            durs[m.group(1)] = max(0.0, float(r["modified"]) - float(r["created"]))
+        raw = float(r["name_stamp"]) - float(r["created"])
+        dev = raw - round(raw / 900.0) * 900.0
+        if abs(dev) >= SKEW_MIN:
+            out[m.group(1)] = float(r["created"])
+    return (key, out, durs, where)
 
 
 def _skews_refresh(force=False):
@@ -289,7 +317,7 @@ def _skews_refresh(force=False):
     if sig == _SK["sig"] and not force:
         return
     durs, where = {}, {}
-    new = _read_skews(d, durs, where)
+    new = _read_skews(d, durs, where, {f: (m, z) for f, m, z in sig})          # only the files that changed are read again
     with _LOCK:
         _SK["sig"] = sig
         _SK["dur"] = durs

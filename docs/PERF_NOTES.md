@@ -18,7 +18,8 @@ The task is docs/LOAD_SPEED_TASK.md. Work happens on branch `claude/load-speed` 
   second page opened 3 s after the first slower, 664 / 1,284 ms → 1,695 / 2,173 ms on a first start, because the warm-up competes with the page asked for; and
   /api/teslacam is cheap since the volume-look fix). Step 4 is done (`173ec36`).
   Step 5, next commit: `clip_clock.utc` kept per stamp (forgotten when the runs, the clips' own times or the settings are replaced): /api/clips warm median 0.235 → 0.203 s.
-- **Next**: step 5 rest: clip_clock's provenance read incremental per file (`_skews_refresh` / `_read_skews`, keyed by mtime+size); ShortPlace re-fed only when
+  `4bdc113` that; next commit: clip_clock's provenance read per file (`_PF`, keyed by mtime ns + size; `_read_one`): a refresh after one file changed 60 → 2.9 ms.
+- **Next**: step 5 rest: ShortPlace re-fed only when
   its clip data changed (`app_teslacam._short_where`); /api/clips answered from what was built last and refreshed behind (the page's `tcGet` already shows its
   remembered copy at once; the server still builds on every call). Then
   step 5 (TeslaCam from cache), step 2 (perf_log), step 6, step 7. Order follows the task's Budget section (value first).
@@ -74,6 +75,10 @@ The task is docs/LOAD_SPEED_TASK.md. Work happens on branch `claude/load-speed` 
 | change | measure | before → after |
 |---|---|---|
 | `clip_clock.utc` kept per stamp | /api/clips warm, 7 calls after 20 s, `--no-background` | 0.215-0.465 s, median 0.235 → 0.155-0.316 s, median 0.203 |
+
+| change | measure | before → after |
+|---|---|---|
+| provenance read per file (only changed files) | `_skews_refresh` after one of 148 files changed (10 runs) | median 60.1 ms → 2.9 ms |
 
 The JSON times are within the noise of the background builds: no time gain or loss shows on localhost; the gain is bytes (5-8x less). Level 1 rather than 6: a 1.5 MB list compresses in 11 ms instead of 34 ms (measured), for 324 KB instead of 242 KB.
 
