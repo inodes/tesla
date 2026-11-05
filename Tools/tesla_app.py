@@ -158,17 +158,30 @@ def _volumes_changed():
     return False
 
 
+_ROOTS_LOCK = threading.Lock()
+
+
+def _look_roots():
+    """{role: TeslaCam folder} of the connected drives, from one look at the volumes (DR.find_root per role looked at every volume once per role)."""
+    found = {}
+    for p, r in DR.discover():
+        found.setdefault(r, p)                              # the first one listed, as find_root gives it
+    return {r: found.get(r) for r in DR.read_roles()}
+
+
 def footage_root(role):
     """TeslaCam folder of the drive with this role (A Archive, J JOWUA, U USB); looked up at most every 20 s."""
-    if _ROOTS["v"] is None:                                 # the first look waits for the answer
-        _ROOTS["v"] = {r: DR.find_root(r) for r in DR.read_roles()}
-        _ROOTS["t"] = time.time()
+    if _ROOTS["v"] is None:                                 # the first look waits for the answer: one look, which a second asker waits for rather than repeats
+        with _ROOTS_LOCK:
+            if _ROOTS["v"] is None:
+                _ROOTS["v"] = _look_roots()
+                _ROOTS["t"] = time.time()
     elif (time.time() - _ROOTS["t"] > 20 or _volumes_changed()) and not _ROOTS.get("busy"):      # a drive plugged in or out changes /Volumes: looked at again at once
         _ROOTS["busy"] = True                               # later looks answer from the last one and refresh it in the background (a slow drive must not hold a request)
 
         def look():
             try:
-                _ROOTS["v"] = {r: DR.find_root(r) for r in DR.read_roles()}
+                _ROOTS["v"] = _look_roots()
             finally:
                 _ROOTS["t"] = time.time()
                 _ROOTS["busy"] = False
@@ -186,7 +199,7 @@ def eject_drive(role, root):
     while time.time() < end and (FG.status().get("running") or TC.scan_status().get("running")):
         time.sleep(0.3)
     res = drive_eject.eject(root)
-    _ROOTS["v"] = {r: DR.find_root(r) for r in DR.read_roles()}        # look again now, not in 20 s
+    _ROOTS["v"] = _look_roots()                                 # look again now, not in 20 s
     _ROOTS["t"] = time.time()
     KEEP.paused = was                                         # as it was: an eject must not start a pass over the other drives
     return res

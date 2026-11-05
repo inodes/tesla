@@ -12,10 +12,12 @@ The task is docs/LOAD_SPEED_TASK.md. Work happens on branch `claude/load-speed` 
   then minute_kind no longer rewrites its file when the probe learned nothing (it caused an endless Drives-list rebuild loop), and the Drives list is kept on disk
   with its signature (+ code version) so a restart does not rebuild it (`app_drivelist.Cached`, file format `{kept_sig, list}`; an old plain file is shown stale as before).
   activity / chargers / places were already answered from the kept copy at once after a restart (app_kept.py) and rebuild fast (under 0.25 s), so they are left as they are.
+  Then (next commit) `footage_root`: one look at the volumes for every role (`_look_roots`, was one `DR.discover()` per role) and a lock so the first request waits for
+  the start-up thread's look instead of repeating it: first start's first answer 9.4-11 s → 1.5 s.
 - **Next**: step 4 rest (smarter `_warm`),
   step 5 (TeslaCam from cache), step 2 (perf_log), step 6, step 7. Order follows the task's Budget section (value first).
 - **Half-done**: nothing.
-- **Leads from the baseline**: a first start answers its first request only after ~10 s although the port is bound at 0.24 s (something holds the request threads at start: look at what `/api/status` waits for, and the drivelist build thread); `/api/teslacam` takes 1.7-11.8 s on every call, also warm (`_ROOTS["t"] = 0` then `TC.drives()` → `DR.discover()`); `/api/clips` 0.75-1.8 s warm; the first `/api/drivelist` after a first start 5.4 s.
+- **Leads from the baseline**: (fixed: the ~10 s first answer was three drive discoveries per look, run again by the first request) `/api/teslacam` takes 1.7-11.8 s on every call, also warm (`_ROOTS["t"] = 0` then `TC.drives()` → `DR.discover()`); `/api/clips` 0.75-1.8 s warm; the first `/api/drivelist` after a first start 5.4 s.
 - **Sandbox notes**: cdnjs is blocked here; the vendored files are `dist/` of the npm package `maplibre-gl@4.7.1` (the same files cdnjs serves). Playwright's headless shell is missing here; perf_run.py falls back to `/opt/pw-browsers/chromium` (or `PERF_CHROMIUM`).
 - **Pre-existing test failures** (before any change here, also alone): `test_snapshots_for.SnapshotsFor.test_only_drives_over_the_clips_without_snapshots`, `test_timeline_stored.SentryWindow.test_the_minutes_of_a_sentry_event_make_a_window_with_telemetry`. The bar for each commit is: these two and no others.
 
@@ -55,6 +57,13 @@ The task is docs/LOAD_SPEED_TASK.md. Work happens on branch `claude/load-speed` 
 |---|---|---|
 | minute_kind save only when new + Drives list kept with its signature | server CPU in the 30 s after a restart (`--no-background`) | 18.0 s → 7.2 s |
 | | /api/drivelist right after a restart | 0.061 s (stale copy, rebuild behind) → 0.041 s (current copy, no rebuild) |
+
+| change | measure | before → after |
+|---|---|---|
+| one volume look for every role, shared by the first askers | first start: process start → first answer | 9.41 / 10.38 / 10.97 s (3 runs) → 1.53 s |
+| | restart: process start → first answer | 0.52-0.62 s → 0.30 s |
+| | /api/teslacam cold / warm, first start | 5.50 / 5.97 s → 0.93 / 0.05 s |
+| | /api/teslacam cold / warm, restart | 1.70 / 11.76 s → 0.06 / 0.07 s |
 
 The JSON times are within the noise of the background builds: no time gain or loss shows on localhost; the gain is bytes (5-8x less). Level 1 rather than 6: a 1.5 MB list compresses in 11 ms instead of 34 ms (measured), for 324 KB instead of 242 KB.
 
