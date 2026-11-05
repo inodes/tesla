@@ -107,6 +107,56 @@ class Revalidate(Served):
             shutil.rmtree(tmp)
 
 
+class Json(Served):
+    """The /api answers: ETag, 304 when unchanged, gzip when accepted; a stale kept list never matches a fresh one."""
+
+    def setUp(self):
+        self.kept, self.lists = tesla_app.KEPT, dict(tesla_app.KEPT_LISTS)
+        self.state = {"stale": False, "body": {"rows": list(range(2000))}}
+        st = self.state
+
+        class K:
+            def get(self, name, build, fresh=False):
+                import json
+                return json.dumps(st["body"]).encode(), st["stale"]
+        tesla_app.KEPT = K()
+        tesla_app.KEPT_LISTS["activity"] = lambda: None
+
+    def tearDown(self):
+        tesla_app.KEPT = self.kept
+        tesla_app.KEPT_LISTS.clear()
+        tesla_app.KEPT_LISTS.update(self.lists)
+
+    def test_unchanged_list_is_a_304_and_a_changed_one_is_sent(self):
+        r, b = self.get("/api/activity")
+        tag = r.getheader("ETag")
+        self.assertEqual(self.get("/api/activity", {"If-None-Match": tag})[0].status, 304)
+        self.state["body"] = {"rows": [1]}
+        r2, b2 = self.get("/api/activity", {"If-None-Match": tag})
+        self.assertEqual((r2.status, b2), (200, b'{"rows": [1]}'))
+
+    def test_stale_and_fresh_never_share_a_tag(self):
+        self.state["stale"] = True
+        r, _ = self.get("/api/activity")
+        self.assertEqual(r.getheader("X-Stale"), "1")
+        self.state["stale"] = False
+        r2, _ = self.get("/api/activity", {"If-None-Match": r.getheader("ETag")})
+        self.assertEqual(r2.status, 200)
+        self.assertIsNone(r2.getheader("X-Stale"))
+
+    def test_gzip_for_a_big_list(self):
+        import gzip
+        import json
+        r, z = self.get("/api/activity", {"Accept-Encoding": "gzip"})
+        self.assertEqual(r.getheader("Content-Encoding"), "gzip")
+        self.assertEqual(json.loads(gzip.decompress(z)), self.state["body"])
+
+    def test_errors_are_not_kept(self):
+        r, _ = self.get("/api/nothing-here")
+        self.assertEqual(r.status, 404)
+        self.assertIsNone(r.getheader("ETag"))
+
+
 class Head(unittest.TestCase):
     def test_nothing_in_head_holds_the_first_paint_but_the_app_css(self):
         with open(os.path.join(HERE, "..", "Tools", "lib", "app_ui", "index.html"), encoding="utf-8") as f:

@@ -347,13 +347,13 @@ _GZ = {}                    # etag -> gzipped body (the newest few)
 _GZ_LOCK = threading.Lock()
 
 
-def _gz(raw, etag):
-    """The body gzipped, kept by its ETag so a file or list that did not change is compressed once."""
+def _gz(raw, etag, level=6):
+    """The body gzipped, kept by its ETag so a file or list that did not change is compressed once. The lists use level 1 (a 1.5 MB list: 11 ms, against 34 ms at 6)."""
     with _GZ_LOCK:
         hit = _GZ.get(etag)
     if hit is not None:
         return hit
-    z = gzip.compress(raw, 6)
+    z = gzip.compress(raw, level)
     with _GZ_LOCK:
         _GZ[etag] = z
         while len(_GZ) > 32:
@@ -396,7 +396,7 @@ class H(BaseHTTPRequestHandler):
         if self.command != "HEAD":
             self.wfile.write(body)
 
-    def send_body(self, raw, ctype, cache="no-cache", etag=None, extra=None):
+    def send_body(self, raw, ctype, cache="no-cache", etag=None, extra=None, level=1):
         """A 200 that a client may keep: an ETag (the body's own hash unless given), 304 when the client already has it, gzip when it accepts it and
         the body is worth it. `cache` is the Cache-Control value ('no-cache': kept, but asked again every time)."""
         etag = etag or '"%s"' % hashlib.blake2b(raw, digest_size=12).hexdigest()
@@ -410,7 +410,7 @@ class H(BaseHTTPRequestHandler):
             self.end_headers()
             return
         if len(raw) >= 1024 and "gzip" in (self.headers.get("Accept-Encoding") or ""):
-            raw = _gz(raw, etag)
+            raw = _gz(raw, etag, level)
             head["Content-Encoding"] = "gzip"
         self.send_response(200)
         self.send_header("Content-Type", ctype)
@@ -435,10 +435,13 @@ class H(BaseHTTPRequestHandler):
         ctype = mimetypes.guess_type(path)[0] or "application/octet-stream"
         if ctype.startswith("text/") or ctype in ("application/javascript", "text/javascript", "application/json"):
             ctype += "; charset=utf-8"
-        return self.send_body(hit[1], ctype, cache, hit[2])
+        return self.send_body(hit[1], ctype, cache, hit[2], level=6)
 
     def send_json(self, obj, code=200):
-        self.send_bytes(json.dumps(obj, separators=(",", ":")).encode(), "application/json; charset=utf-8", code)
+        raw = json.dumps(obj, separators=(",", ":")).encode()
+        if code == 200 and self.command in ("GET", "HEAD"):          # an answer the window may keep: ETag (304 when the same) and gzip; asked again every time
+            return self.send_body(raw, "application/json; charset=utf-8")
+        self.send_bytes(raw, "application/json; charset=utf-8", code)
 
     def send_file(self, path, cache=False):
         try:
@@ -759,7 +762,8 @@ class H(BaseHTTPRequestHandler):
         S = STORE
         if name in KEPT_LISTS:                  # answered at once from what was kept, refreshed behind (lib/app_kept.py); ?fresh=1 waits for the newest
             raw, stale = KEPT.get(name, lambda: KEPT_LISTS[name](), q.get("fresh", [""])[0] == "1")
-            return self.send_bytes(raw, "application/json; charset=utf-8", 200, {"X-Stale": "1"} if stale else None)
+            tag = '"%s%s"' % (hashlib.blake2b(raw, digest_size=12).hexdigest(), "s" if stale else "")       # a stale answer never matches a fresh one (a 304 keeps the old headers)
+            return self.send_body(raw, "application/json; charset=utf-8", "no-cache", tag, {"X-Stale": "1"} if stale else None)
         if name == "status":
             try:
                 known = sorted({d["role"] for d in DR.REG.drives() if d["role"] in DR.read_roles()} | {"A"})      # the registered drives stay in the list while they are away

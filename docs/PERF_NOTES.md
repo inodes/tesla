@@ -7,8 +7,9 @@ The task is docs/LOAD_SPEED_TASK.md. Work happens on branch `claude/load-speed` 
 - **Done** (all on PR #17): step 1 `25e635e` fixture + harness + baseline, `0aec053` harness page timings in Chromium; step 3 `adafa01` MapLibre 4.7.1 served from
   `Tools/lib/app_ui/vendor/` (`/vendor/<name>`, 1-year immutable cache, 302 to cdnjs only when the copy is missing), both scripts `defer`, MapLibre CSS non-blocking;
   `78dfbcd` ETag/304 + gzip for index.html, app.js, app.css, vendor (`H.send_body` / `H.send_static` in tesla_app.py, gzip kept per ETag, primed at start);
-  next commit: `boot()` asks for the settings together with the summary / status / keeper and only `route()` waits for them. Step 3 is complete with it.
-- **Next**: step 4 (gzip + ETag/304 for big JSON, lists kept on disk by inputs, smarter `_warm`),
+  `1b30eed` `boot()` asks for the settings together with the summary / status / keeper and only `route()` waits for them (step 3 complete);
+  step 4, next commit: ETag/304 + gzip (level 1) for every 200 JSON answer to a GET (`send_json`, and the Kept lists with the stale flag in the ETag).
+- **Next**: step 4 rest (lists kept on disk by inputs so a restart does not rebuild them: `app_drivelist.Cached` keeps the list but not its signature; smarter `_warm`),
   step 5 (TeslaCam from cache), step 2 (perf_log), step 6, step 7. Order follows the task's Budget section (value first).
 - **Half-done**: nothing.
 - **Leads from the baseline**: a first start answers its first request only after ~10 s although the port is bound at 0.24 s (something holds the request threads at start: look at what `/api/status` waits for, and the drivelist build thread); `/api/teslacam` takes 1.7-11.8 s on every call, also warm (`_ROOTS["t"] = 0` then `TC.drives()` → `DR.discover()`); `/api/clips` 0.75-1.8 s warm; the first `/api/drivelist` after a first start 5.4 s.
@@ -39,6 +40,15 @@ The task is docs/LOAD_SPEED_TASK.md. Work happens on branch `claude/load-speed` 
 | | #/drives | 361 → 304 |
 | | #/places | 381 → 281 |
 | | #/charges | 361 → 317 |
+
+| change | list | bytes on the wire before → after | server time on localhost (after start-up work settled, median of 7) |
+|---|---|---|---|
+| JSON ETag + gzip level 1 | /api/drivelist | 1,579,134 → 323,745 | no gzip 69 ms, gzip 45 ms, 304 134 ms |
+| | /api/chargers | 2,043,182 → 299,210 | 29 / 35 / 34 ms |
+| | /api/activity | 942,404 → 194,425 | 35 / 40 / 30 ms |
+| | /api/places | 192,182 → 28,271 | 41 / 37 / 11 ms |
+
+The JSON times are within the noise of the background builds: no time gain or loss shows on localhost; the gain is bytes (5-8x less). Level 1 rather than 6: a 1.5 MB list compresses in 11 ms instead of 34 ms (measured), for 324 KB instead of 242 KB.
 
 On localhost the time is the same: the gain is bytes, and a reload that does not change a file gets a 304. Without priming, the first gzip of app.js took 23 ms (measured), which is why the files are compressed in the background at start.
 
