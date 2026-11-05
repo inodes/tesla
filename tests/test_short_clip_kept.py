@@ -26,6 +26,8 @@ def naive(stamp):
 
 class ShortClipTest(unittest.TestCase):
     def setUp(self):
+        saved_s, saved_sk = dict(CC._S), dict(CC._SK)
+        self.addCleanup(lambda: (CC._S.clear(), CC._S.update(saved_s), CC._SK.clear(), CC._SK.update(saved_sk)))          # the learned clock of this test must not reach the tests after it
         self.tmp = tempfile.TemporaryDirectory()
         self.d = self.tmp.name
         os.makedirs(os.path.join(self.d, "teslacam_provenance"))

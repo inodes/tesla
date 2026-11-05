@@ -401,3 +401,4 @@ Log (newest first):
 - 2026-11-05: docs/LOAD_SPEED_TASK.md: the task for the cloud session on load speed (the prompt points at it, so it cannot be cut short).
 - 2026-11-05: the window is created in the default place and moved to its remembered place once shown (window_move): moving it while pywebview builds it could still stop the app with 'NoneType has no attribute frame' after a restart.
 - 2026-11-05: docs/LOAD_SPEED_TASK.md: small batches, a push after every commit, small PRs and a Handoff section in PERF_NOTES.md, as the cloud credit may run out.
+- 2026-11-05: tests: test_short_clip_kept restores the learned clock it sets (it moved the clip clock an hour for test_snapshots_for after it); the Sentry-window test asks a drive that holds none of the event for the away case, as the drive that holds it now always lists its Sentry minutes.
