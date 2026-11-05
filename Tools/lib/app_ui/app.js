@@ -846,7 +846,7 @@ const hav=(a,b,c,d)=>{const r=Math.PI/180,p=Math.sin((c-a)*r/2)**2+Math.cos(a*r)
 const whereLink=r=>r.pkey?`<a href="#/place/${encodeURIComponent(r.pkey)}" onclick="event.stopPropagation()" title="Open this place">${esc(place(r))}</a>`:esc(place(r));
 const sentryOf=(x,evs)=>{const s=x.t0,e=s+(x.min||0)*60;return evs.filter(v=>{const t=v.t;return t>=s-120&&t<=e+120&&(x.lat==null||v.lat==null||hav(x.lat,x.lon,v.lat,v.lon)<5000)})};
 const getSentry=async()=>{try{return await (await fetch("/api/sentry")).json()}catch(e){return{connected:false,events:[]}}};
-const REASON={sentry_aware_object_detection:"Object detected",sentry_locked_handle_pulled:"Handle pulled",sentry_accelerometer:"Bumped",user_interaction_dashcam_icon_tapped:"Saved by tap",user_interaction_dashcam_panel_save:"Saved from the screen",user_interaction_honk:"Horn pressed"};
+const REASON={sentry_aware_object_detection:"Object detected",sentry_locked_handle_pulled:"Handle pulled",sentry_accelerometer:"Bumped",user_interaction_dashcam_icon_tapped:"Saved by tap",user_interaction_dashcam_panel_save:"Saved from the screen",user_interaction_honk:"Horn pressed",user_interaction_dashcam_launcher_action_tapped:"Dashcam action"};
 const reason=r=>REASON[r]||(r||"Sentry event").replace(/^(sentry|user_interaction)_/,"").replace(/_/g," ");
 const CAMN={front:"Front",back:"Back",left_repeater:"Left repeater",right_repeater:"Right repeater",left_pillar:"Left pillar",right_pillar:"Right pillar"};
 const hms=ts=>ts.slice(11,19);
@@ -1699,7 +1699,8 @@ const zlab=o=>({28800:"AWST",34200:"ACST",37800:"ACDT",36000:"AEST",39600:"AEDT"
 const clkDiff=(a,b)=>(b>a?"+":"-")+Math.abs(b-a)/3600+" h";
 const clkSvg='<svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" aria-hidden="true"><circle cx="8" cy="8" r="6.2"/><path d="M8 4.5V8l2.4 1.6"/></svg>';
 // the saved place (or nothing) a position is inside
-function nameAt(places,p){if(!p||p[0]==null)return "";let best="",bd=1e9;for(const x of places||[]){if(x.lat==null)continue;const d=hav(p[0],p[1],x.lat,x.lon);if(d<=Math.max(x.radius||100,60)&&d<bd){bd=d;best=x.name}}return best}
+// the saved place a point is at: of the places whose radius holds it, the smallest (Home, 100 m, beats the park 120 m away whose 150 m also holds the point), then the nearest
+function nameAt(places,p){if(!p||p[0]==null)return "";let best="",br=1e9,bd=1e9;for(const x of places||[]){if(x.lat==null)continue;const d=hav(p[0],p[1],x.lat,x.lon),r=Math.max(x.radius||100,60);if(d<=r&&(r<br||(r===br&&d<bd))){br=r;bd=d;best=x.name}}return best}
 // ---------- the TeslaCam timeline: for each day a map on the left, the day's drives, Sentry events and parked spells (tick boxes) on the right
 // Ticking a row shows it on that day's map: a drive as its route (speed gradient or who was driving), a Sentry event as a red dot, a parked spell as a 🅿️.
 // A drive row still opens the drive when clicked; a Sentry row plays its clips. A drive shorter than the re-park limits (settings app.drives) counts as parked.
@@ -1809,8 +1810,8 @@ function tlDays(host,items,o){
   rs.forEach(v=>{if(v.kind!=="recording"&&v.kind!=="stopped")return;const p=parks.find(k=>k!==v&&k.kind==="parked"&&inPark(v.t0+30,k)&&inPark(v.t1-30,k));if(p){(p._rec=p._rec||[]).push(v);v._in=p.id}});
   parks.forEach(p=>{if(p._sent)p._sent.sort((a,b)=>a.t0-b.t0)});
   const dd=(a,b)=>Math.round((Date.parse(b+"T00:00:00Z")-Date.parse(a+"T00:00:00Z"))/864e5),plus=(d,n)=>new Date(Date.parse(d+"T00:00:00Z")+n*864e5).toISOString().slice(0,10);
-  // an event that crosses midnight is listed on every day it touches (whole, with a note), and is one and the same tick on all of them
-  rs.filter(v=>!v._in).forEach(v=>{v._d0=v.start.slice(0,10);v._d1=v._c==="sentry"||!v.end||v.end<v.start?v._d0:v.end.slice(0,10);for(let n=0;n<=Math.min(dd(v._d0,v._d1),400);n++){const d=plus(v._d0,n);(byDay[d]=byDay[d]||[]).push(v)}});
+  // an event that crosses midnight is listed on every day it touches (whole, with a note), and is one and the same tick on all of them; a park is listed on the day it began, and on a later day only when something happened in it that day (a Sentry event, a recording): the rest of a night at home or in a hotel is not a row
+  rs.filter(v=>!v._in).forEach(v=>{v._d0=v.start.slice(0,10);v._d1=v._c==="sentry"||!v.end||v.end<v.start?v._d0:v.end.slice(0,10);for(let n=0;n<=Math.min(dd(v._d0,v._d1),400);n++){const d=plus(v._d0,n);if(v._c==="parked"&&d!==v._d0&&!(v._sent||[]).some(x=>String(x.trig||x.start).slice(0,10)===d)&&!(v._rec||[]).some(x=>String(x.start).slice(0,10)===d))continue;(byDay[d]=byDay[d]||[]).push(v)}});
   if(TLS.wide===undefined){try{TLS.wide=localStorage.getItem("tlWide")==="1"}catch(e){TLS.wide=false}}if(TLS.dayDesc===undefined)TLS.dayDesc=cfg("teslacam.days_newest_first")!==false;if(TLS.rowDesc===undefined)TLS.rowDesc=cfg("teslacam.rows_newest_first")===true;
   const allDays=Object.keys(byDay).filter(d=>!o.dayOk||o.dayOk(d)).sort().reverse(),role=o.role,places=o.places;
   // one day at a time: a picker (newest day first by default) with arrows to the earlier / later day
@@ -2128,7 +2129,7 @@ async function pageTeslaCam(role,id){
   // the Saved / Sentry events inside a Recent run: Saved clips go with a drive, Sentry events with a parked spell (Sentry only records parked); a run of unknown kind takes both
   const inside=it=>{if(!data||it.t0==null)return[];const pick=it.part==="drive"?["saved"]:it.part==="park"?["sentry"]:["saved","sentry"];
     return [].concat(...pick.map(k=>(data[k]||[]).filter(e=>e.t!=null&&e.t>=it.t0&&e.t<=it.t1).map(e=>Object.assign({ty:k},e)))).sort((a,b)=>a.t-b.t)};
-  const evLabel=e=>(e.ty==="saved"?"Saved":"Sentry")+" "+hms(e.ts).slice(0,5)+(e.reason?" · "+reason(e.reason):"");
+  const evLabel=e=>hms(e.ts).slice(0,5)+(e.reason?" · "+reason(e.reason):"");      // the chip's colour says Saved or Sentry
   const tripOf=v=>{const a=v.t0!=null?v.t0:v.t,b=v.t1!=null?v.t1:(v.t||0)+60;return trips.find(d=>d.t0<b&&d.t1>a)};
   main.innerHTML=head+`<div id="fsb" class="ph" style="--ph:${116+42*Math.max(1,drives.length)}px;margin-bottom:12px"></div><div class="bar ph" id="tsr" style="--ph:34px"></div><div class="bar"><span id="rg" class="ph" style="--ph:34px;min-width:190px"></span><input type="search" id="q" placeholder="Search…" value="${esc(TCS.q)}"></div><div id="selbar" class="ph" style="--ph:61px"></div><div class="tiles ph" id="tl" style="--ph:75px"></div><div id="splx"></div><div id="spl"></div><div id="tb"></div>`;
   let data=null,sel=null,token=0,sentryList=null,vis=[],pend=null,jobT=null,note="",dayList={};
@@ -2226,6 +2227,7 @@ async function pageTeslaCam(role,id){
     if(phase&&$("#phtx",el)){$("b",$("#phtx",el)).textContent=phase;setPbar($("#phtx",el),phasePc);return}
     const items=picked(),cn=conn(),done=vis.filter(v=>{const c=kpOf(v.ty,v.id);return c&&c.ready&&cn.some(r=>c.bytes[r]>0)});
     const needs=v=>{const c=kpOf(v.ty,v.id);return !!c&&!c.ignored&&PSTEPS.some(x=>x[2](c)>0)&&cn.some(r=>c.bytes[r]>0)},needV=vis.filter(needs),ignV=vis.filter(v=>{const c=kpOf(v.ty,v.id);return c&&c.ignored});       // the clips shown that still lack something (the Need updating button ticks them)
+    const homeAll=Object.keys(KPC||{}).flatMap(k=>Object.keys(KPC[k]).map(id=>({kind:k,id}))).filter(it=>{const c=kpOf(it.kind,it.id);return c&&c.ignored&&cn.some(r=>c.bytes[r]>0)}),homeSz=cn.reduce((a,r)=>a+sizeOn(homeAll,r),0);      // everything parked at Home on the connected drives: moving and drive-edge minutes are not in it
     const dsz=done.reduce((a,v)=>a+Math.max(...cn.map(r=>kpOf(v.ty,v.id).bytes[r]||0)),0);
     const scope=items.length?items:Object.keys(KPC||{}).flatMap(k=>Object.keys(KPC[k]).map(id=>({kind:k,id}))).filter(it=>cn.some(r=>kpOf(it.kind,it.id).bytes[r]>0));
     let h=`<div class="bar selb">`;
@@ -2239,6 +2241,8 @@ async function pageTeslaCam(role,id){
       const KEEP=[["meta","metadata"],["stills","stills"],["signs","signs"],["pictures","pictures"]];
       const lack=T.has("video")?KEEP.map(([st,ty])=>{if(T.has(ty))return null;const n=sel.filter(it=>{const c=kpOf(it.kind,it.id);return !c.ignored&&c.bytes&&cn.some(r=>c.bytes[r]>0)&&PSTEPS.find(x=>x[0]===st)[2](c)>0}).length;return n?`${n0(n)} clip${n>1?"s have":" has"} no ${ty} yet`:null}).filter(Boolean):[];
       h+=`<span style="flex:1;min-width:260px"><b>Delete from ${n0(sel.length)} clip${sel.length>1?"s":""}</b>${home?` · ${n0(home)} parked at Home`:""} <span class="sub">· cannot be undone</span><span style="display:flex;gap:6px;flex-wrap:wrap;margin-top:6px">${TY.map(([k,l,tip])=>`<button class="chip ${T.has(k)?"on":""}" data-pt="${k}" title="${esc(tip)}">${esc(l)}</button>`).join("")}</span>${lack.length?`<span class="sub" style="display:block;margin-top:4px;color:var(--bad)">${esc(lack.join(" · "))}</span>`:""}</span><button class="btn bad" id="pdo" ${T.size?"":"disabled"}>${T.size===TY.length?"Delete everything":"Delete"}</button><button class="btn" id="kno">Cancel</button>`}
+    else if(pend&&pend.action==="purgehome"){
+      h+=`<span style="flex:1"><b>Delete parked at Home · ${n0(homeAll.length)} clip${homeAll.length>1?"s":""} · ${fmtGB(homeSz)}</b> <span class="sub">· cannot be undone</span></span><button class="btn bad" id="phdo">Delete</button><button class="btn" id="kno">Cancel</button>`}
     else if(pend){const list=allowed(pend.role,pend.action),gb=fmtGB(sizeOn(list,pend.role));
       const nf=list.reduce((a,it)=>a+((kpOf(it.kind,it.id).files||{})[pend.role]||0),0),na=list.reduce((a,it)=>a+((kpOf(it.kind,it.id).in_archive||{})[pend.role]||0),0),what=n0(list.length)+" clip"+(list.length>1?"s":"")+(nf?" ("+n0(nf)+" video file"+(nf>1?"s":"")+(pend.action==="move"&&na?", "+n0(na)+" already in the Archive":"")+")":"");
       h+=pend.action==="delete"?`<span style="flex:1"><b>Delete the video of ${what} from ${NMD[pend.role]}</b>, freeing ${gb}. Its metadata, stills and signs stay.${list.length<items.filter(it=>kpOf(it.kind,it.id).bytes[pend.role]>0).length?` The others are not all kept yet and are left alone.`:""}</span><button class="btn bad" id="kdo">Delete</button><button class="btn" id="kno">Cancel</button>`
@@ -2250,6 +2254,7 @@ async function pageTeslaCam(role,id){
       else{h+=items.length?`<b>${n0(items.length)} selected</b><span class="sub">${fmtGB(items.reduce((a,it)=>a+(kpOf(it.kind,it.id).size||0),0))}</span><button class="btn sm" id="kclr">Clear</button>`:"";
         h+=`<button class="btn sm pri" id="kupd" ${items.length&&!needN?"disabled":""} title="${items.length?"Reads what is missing from the video of the ticked clips: metadata, stills, signs and pictures":"Looks for new files on the drives, then reads what is missing from the video of every clip: metadata, stills, signs and pictures"}">${(items.length?"Selected":"All")+" - "+(needN?n0(needN)+" update"+(needN>1?"s":"")+" needed":items.length?"no updates needed":"check for updates")}</button>`}
       h+=`<span class="sub" style="margin-left:6px">Select:</span><button class="btn sm" data-sset="all" ${vis.length?"":"disabled"} title="Ticks every clip shown below (or tick single thumbnails, or a whole day from its heading)">All shown · ${n0(vis.length)}</button><button class="btn sm" data-sset="need" ${needV.length?"":"disabled"} title="Ticks the clips that still lack metadata, stills, signs or pictures">Need updating · ${n0(needV.length)}</button>${ignV.length?`<button class="btn sm" data-sset="ign" title="Ticks the clips parked at Home, which are left alone">Ignored · ${n0(ignV.length)}</button>`:""}<button class="btn sm" data-sset="done" ${done.length?"":"disabled"} title="Ticks every clip whose metadata, stills and signs are all kept, so its video can be moved or deleted (${n0(done.length)} clips, ${fmtGB(dsz)})">Finished · ${n0(done.length)}</button>`;
+      if(homeAll.length)h+=`<button class="btn sm bad" data-ka="purgehome|" title="Deletes the clips parked at Home. Nothing that moved is touched">Delete parked at Home · ${fmtGB(homeSz)}</button>`;
       if(items.length)h+=`<button class="btn sm bad" data-ka="purge|" title="Choose what to delete from the ticked clips: video, metadata, stills, event pictures, signs">Delete…</button>`;
       cn.forEach(r=>{const d=allowed(r,"delete");if(items.length&&d.length)h+=`<button class="btn sm bad" data-ka="delete|${r}">Delete from ${NMD[r]} · ${fmtGB(sizeOn(d,r))}</button>`;
         const m=allowed(r,"move");if(items.length&&m.length&&r!=="A"&&cn.includes("A"))h+=`<button class="btn sm" data-ka="move|${r}">Move to Archive · ${fmtGB(sizeOn(m,r))}</button>`});
@@ -2270,6 +2275,9 @@ async function pageTeslaCam(role,id){
     $$("[data-pt]",el).forEach(b=>b.onclick=()=>{const k=b.dataset.pt;if(pend.types.has(k))pend.types.delete(k);else pend.types.add(k);selbar()});
     on("pdo",async()=>{const p=pend,types=[...p.types];pend=null;stopVideos();phase="Deleting…";phasePc=5;selbar();
       let j;try{j=await (await fetch("/api/clips/act",{method:"POST",body:JSON.stringify({action:"purge",items:items.map(it=>({kind:it.kind,id:it.id})),types,confirm:true,force:true})})).json()}catch(e){j={error:e.message}}
+      phase="";if(j.error){note=j.error;selbar();return}jobT=j;selbar();poll()});
+    on("phdo",async()=>{pend=null;stopVideos();phase="Deleting…";phasePc=5;selbar();
+      let j;try{j=await (await fetch("/api/clips/act",{method:"POST",body:JSON.stringify({action:"purge_home",confirm:true})})).json()}catch(e){j={error:e.message}}
       phase="";if(j.error){note=j.error;selbar();return}jobT=j;selbar();poll()});
     on("jobx",async()=>{try{await fetch("/api/clips/act",{method:"POST",body:JSON.stringify({action:"stop"})})}catch(e){}});
     if(jobT)jobPaint()};

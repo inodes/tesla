@@ -727,7 +727,7 @@ class TeslaCam:
                 ser = store.series(m["stamp"])
                 items.append((m["stamp"], self._front(teslacam, m), ser["v"] if ser else None))
             rv.start(items, force=action == "redo")
-        done = rv.scanned()
+        done = rv.fresh() if hasattr(rv, "fresh") else rv.scanned()
         stamps = [m["stamp"] for m in mins]
         # signs are looked for only while the car goes min_kmh or more (end_kmh near a drive's end): a minute that never did is not counted as one to read
         fast = [m for m in front if (lambda st, sm: not isinstance(sm, dict) or SS.wanted(st, sm))(m["stamp"], store.summary(m["stamp"]))]

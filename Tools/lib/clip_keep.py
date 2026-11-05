@@ -221,6 +221,7 @@ class ClipKeep:
         stl = set(stills) | nostill
         rv = self.tc._rv()
         scanned = rv.scanned()
+        fresh = rv.fresh() if hasattr(rv, "fresh") else scanned          # read by today's reader; the others are read again while their footage is held
         unref = getattr(self.tc._rv(), "unrefined", lambda: set())()      # minutes with signs that have not had the second look
         windows = TD.drive_windows(self.dir)
         starts = [w[0] for w in windows]
@@ -267,9 +268,20 @@ class ClipKeep:
             elif kind == "sentry":
                 ev0 = events.get((kind, cid)) or {}
                 ign = IGN.at(ev0.get("lat"), ev0.get("lon"))           # Sentry only records parked
+            edge = set()
             if ign:
                 ignored.update(mins)
+                if kind == "recent":                       # the first minute of a park that follows a drive, and the last of one that leads into a drive, hold that drive's parking movements / pulling away: they are the drive's, not Home's
+                    first, last = min(mins, key=CC.utc), max(mins, key=CC.utc)
+                    lead, trail = RC.drive_edges(first, last)
+                    edge = ({first} if lead else set()) | ({last} if trail else set())
+                    mv = float((app_config.get("teslacam") or {}).get("moving_kmh", 3.0))
+                    edge |= {st for st in mins if isinstance(store.summary(st), dict) and store.summary(st).get("vmax", 0) >= mv}      # a minute in which the car moved is never parked footage
+                    if edge:
+                        self._groups[(kind, cid)] = sorted(set(mins) - edge)      # what is deleted from Home leaves them
             for st, node in mins.items():
+                if st in edge:
+                    continue
                 for r, c in node["files"].items():
                     nfiles[r] = nfiles.get(r, 0) + c
                 for r, c in node["arch"].items():
@@ -294,7 +306,7 @@ class ClipKeep:
                         snap_n += 1
                 if SS.wanted(st, sm) and (vid or st in scanned):
                     sg[1] += 1
-                    sg[0] += st in scanned
+                    sg[0] += st in fresh or (st in scanned and not vid)
                 if st in unref and vid:
                     refine_n += 1
             if ign:                                          # nothing is kept from it and nothing is missing: it can only be deleted
@@ -485,6 +497,19 @@ class ClipKeep:
         self._thread = threading.Thread(target=self._purge, args=(plan, types, vfiles, roots, clips), daemon=True)
         self._thread.start()
         return self.job()
+
+    def home_clips(self):
+        """The clips that are parked at an ignored place (Home), as purge() takes them: [{kind, id}]. Their moving and drive-edge minutes are not in them (see _build)."""
+        st = self.status(force=True)["clips"]
+        return [dict(kind=k, id=c) for k in KINDS for c, rec in (st.get(k) or {}).items() if rec.get("ignored")]
+
+    def purge_home(self, roots, confirmed=False):
+        """Deletes everything kept of what is parked at Home (video, metadata, stills, pictures, signs) in one go. Nothing that moved is touched: a minute of a drive, with its
+        parking and pulling-away minutes, is not part of a Home park. Returns the job or dict(error=...)."""
+        items = self.home_clips()
+        if not items:
+            return dict(error="Nothing is parked at Home.")
+        return self.purge(items, list(self.TYPES), roots, confirmed=confirmed, force=True)
 
     def _purge(self, plan, types, vfiles, roots, clips):
         j = self._job
@@ -749,7 +774,7 @@ class ClipKeep:
                     j["step_done"] = n
             if "signs" in want:
                 rv = self.tc._rv()
-                done = rv.scanned()
+                done = rv.fresh() if hasattr(rv, "fresh") else rv.scanned()
                 items = []
                 for s in sorted(paths):
                     sm = store.summary(s)

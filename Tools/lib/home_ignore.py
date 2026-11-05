@@ -4,7 +4,7 @@ A Recent recording parked at Home, and a Sentry event at Home, are the car sitti
 in, or counting as "needs updating". The saved places named in app.teslacam.ignore_places (default "Home") are those places.
 
     set_places(fn)              fn() -> [dict(name, lat, lon, radius)]: the saved places
-    at(lat, lon)  -> bool       True when the point is at one of the ignored places (the nearest saved place within its radius, as the pages name a place)
+    at(lat, lon)  -> bool       True when the point is at one of the ignored places (the smallest saved place whose radius holds it, as the pages name a place)
     set_stamps(stamps)          the minutes of the Recent sections and Sentry events found to be at such a place (ClipKeep keeps this up to date)
     has(stamp)    -> bool       True for one of those minutes: the planners that make stills leave it out
 """
@@ -37,10 +37,10 @@ def _hav(a, b, c, d):
 
 
 def place_at(lat, lon):
-    """The name of the saved place the point is at ('' when none): the nearest one within its radius."""
+    """The name of the saved place the point is at ('' when none): of the places whose radius holds it, the smallest (the most specific), then the nearest."""
     if lat is None or lon is None:
         return ""
-    best, bd = "", 1e18
+    best, br, bd = "", 1e18, 1e18
     try:
         places = _PLACES() or []
     except Exception:
@@ -50,8 +50,9 @@ def place_at(lat, lon):
             d = _hav(lat, lon, p["lat"], p["lon"])
         except (KeyError, TypeError, ValueError):
             continue
-        if d <= max(p.get("radius") or 100, MIN_RADIUS) and d < bd:
-            best, bd = p.get("name") or "", d
+        r = max(p.get("radius") or 100, MIN_RADIUS)
+        if d <= r and (r < br or (r == br and d < bd)):
+            best, br, bd = p.get("name") or "", r, d
     return best
 
 

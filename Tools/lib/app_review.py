@@ -36,6 +36,7 @@ OPTS = dict(step_s=1.0,        # a still every this many seconds
             refine_conf=85.0,  # a sign read this surely, in more than one still, with one number, is left as it is
             crop_px=320,       # the longest side of the picture kept of each sign: big enough to read the number from again once the video is gone
             frame_w=2896)      # the width of a front-camera picture, for a reading that did not keep it (x and r are in its pixels)
+READER = 2          # which sign reader made a minute's record: 1 (none stored) tesseract, 2 the trained reader with school buses left out; a record of an older reader is read again where the footage is still held
 _LOCK = threading.RLock()
 _DAYFILE = re.compile(r"^\d{4}-\d\d-\d\d\.json$")      # a day's file: not the copy iCloud makes when two Macs save at once ("2026-09-16 2.json"), whose old minutes would count as never read
 
@@ -96,6 +97,24 @@ class Review:
                         out[st] = len(r.get("d", []))
         return out
 
+    def _current(self, rec):
+        return isinstance(rec, dict) and rec.get("rv", 1) >= READER
+
+    def fresh(self):
+        """The minutes read by the sign reader of today: {stamp: n}. A minute in scanned() and not here was read by an older reader and is read again (where the footage is held)."""
+        out = {}
+        try:
+            names = os.listdir(self.base)
+        except OSError:
+            return out
+        with _LOCK:
+            for fn in names:
+                if _DAYFILE.match(fn):
+                    for st, r in self._day(fn[:-5]).items():
+                        if self._current(r):
+                            out[st] = len(r.get("d", []))
+        return out
+
     def unrefined(self):
         """The minutes with signs that have not had the second look yet (refine)."""
         out = set()
@@ -110,6 +129,14 @@ class Review:
                         if not r.get("rf") and any(x.get("kind") != "school" or not x.get("tm") for x in r.get("d", [])):
                             out.add(st)
         return out
+
+    def _drop_crops(self, st):
+        try:
+            for fn in os.listdir(os.path.join(self.base, "crops")):
+                if fn.startswith(st + "_"):
+                    os.remove(os.path.join(self.base, "crops", fn))
+        except OSError:
+            pass
 
     def forget(self, stamps):
         with _LOCK:
@@ -209,7 +236,7 @@ class Review:
         if force:
             self.forget([i[0] for i in items])
         with _LOCK:
-            todo = [i for i in items if self._day(i[0][:10]).get(i[0]) is None]
+            todo = [i for i in items if not self._current(self._day(i[0][:10]).get(i[0]))]
         self.stop_flag = False
         self.st = dict(running=True, done=0, total=len(todo), current="", found=0, error="", t0=time.time())
         self.t = threading.Thread(target=self._run, args=(todo,), daemon=True)
@@ -263,6 +290,8 @@ class Review:
                 self.st["current"] = stamp
                 rec = scan_clip(path, stamp, v, self.base)
                 with _LOCK:
+                    if stamp in self._day(stamp[:10]):          # a record of an older reader: its pictures go with it
+                        self._drop_crops(stamp)
                     self._day(stamp[:10])[stamp] = rec
                     self._save(stamp[:10])
                 self.st["done"] = n + 1
@@ -337,7 +366,7 @@ def scan_clip(path, stamp, v, base):
                 cv2.imwrite(os.path.join(base, "crops", name), crop, [cv2.IMWRITE_JPEG_QUALITY, 90])
                 d["f"] = name
             keep.append(d)
-    return dict(n=len(fr), d=keep)
+    return dict(n=len(fr), d=keep, rv=READER)
 
 
 def _spans(d, pad):

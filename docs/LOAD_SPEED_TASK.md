@@ -1,6 +1,6 @@
 # Task: make Tesellate load faster
 
-You are working on Tesellate, a Mac app (Python server + pywebview window + a single-page UI) that combines Tessie drive/charge data with TeslaCam dashcam footage. Code: Tools/tesla_app.py (server), Tools/lib/*.py (app_*.py services, teslacam_timeline.py, clip_clock.py, sign_finder.py ...), Tools/lib/app_ui/{index.html,app.js,app.css} (UI, app.js is ~460 KB), tests/ (unittest), docs/COMMANDS_AUDIT.md (a dated line per change).
+You are working on Tesellate, a Mac app (Python server + pywebview window + a single-page UI) that combines Tessie drive/charge data with TeslaCam dashcam footage. Code: Tools/tesla_app.py (server), Tools/lib/*.py (app_*.py services, teslacam_timeline.py, clip_clock.py, sign_finder.py ...), lib/app_ui/index.html, app.js and app.css (UI, app.js is ~460 KB; all under Tools/lib/app_ui), tests/ (unittest), docs/COMMANDS_AUDIT.md (a dated line per change).
 
 GOAL: make the app load faster, without changing what it shows or does. Commit on the working branch you are given; do not touch main or any remote beyond what the session itself does.
 
@@ -16,7 +16,7 @@ GOAL: make the app load faster, without changing what it shows or does. Commit o
 
 ## Steps (in this order; each its own commit with a dated line in docs/COMMANDS_AUDIT.md)
 
-1. Measurement first. Write Tools/maintenance/make_perf_fixture.py that generates a realistic synthetic data folder (several months of drives, charges, Tessie CSVs/JSON, teslacam_provenance/ledger/timeline files, and a fake TeslaCam drive tree with tens of thousands of tiny files) and a harness Tools/maintenance/perf_run.py that starts the server against it and times start-up and every /api endpoint cold and warm. Record the baseline in docs/PERF_NOTES.md.
+1. Measurement first. Write make_perf_fixture.py (in the Tools/maintenance folder) that generates a realistic synthetic data folder (several months of drives, charges, Tessie CSVs/JSON, teslacam_provenance/ledger/timeline files, and a fake TeslaCam drive tree with tens of thousands of tiny files) and a harness perf_run.py (same folder) that starts the server against it and times start-up and every /api endpoint cold and warm. Record the baseline in docs/PERF_NOTES.md.
 2. Real-world logging, so the owner can get true numbers: lib/perf_log.py appending to ~/Library/Logs/tesla_perf.log (rotate at 1 MB): start-up marks (time since launch via `ps -o etime= -p <pid>`, setup done, server bound, first request), every /api request over 0.15 s with its bytes, and client timings sent by app.js to a new POST /api/perf (route start to page rendered, and first-page-after-launch time from performance.now()).
 3. Start-up: vendor MapLibre 4.7.1 (JS+CSS from cdnjs) into lib/app_ui/vendor/ and serve it locally with long-cache headers (fall back to the CDN URL only if the local file is missing); nothing in <head> may block the first paint; parallelise boot()'s fetches; serve app.js/app.css with ETag/Cache-Control and gzip.
 4. Server: gzip + ETag/304 for the big JSON endpoints; keep the built lists (drivelist, activity, chargers) on disk keyed by their inputs' mtimes so a restart does not rebuild them; make `_warm` smarter (only what the first page needs first).
