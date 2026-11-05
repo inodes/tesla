@@ -4,11 +4,27 @@ The task is docs/LOAD_SPEED_TASK.md. Work happens on branch `claude/load-speed` 
 
 ## Handoff
 
-- **Done**: step 1, part 1: fixture and harness (`Tools/maintenance/make_perf_fixture.py`, `Tools/maintenance/perf_run.py`), baseline below.
-- **Next**: step 2 (lib/perf_log.py, POST /api/perf), then step 3 (vendor MapLibre 4.7.1, non-blocking `<head>`, parallel `boot()`), step 4 (gzip + ETag), step 5 (TeslaCam from cache).
+- **Done**: step 1 (`25e635e` fixture + harness + baseline, PR #17; harness page timings in Chromium, next commit); step 3, part 1: MapLibre 4.7.1 served from
+  `Tools/lib/app_ui/vendor/` (`/vendor/<name>`, 1-year immutable cache, 302 to cdnjs only when the copy is missing), both scripts `defer`, MapLibre CSS non-blocking.
+- **Next**: step 3 rest (gzip + ETag for app.js/app.css, parallel `boot()` fetches), step 4 (gzip + ETag/304 for big JSON, lists kept on disk by inputs, smarter `_warm`),
+  step 5 (TeslaCam from cache), step 2 (perf_log), step 6, step 7. Order follows the task's Budget section (value first).
 - **Half-done**: nothing.
-- **Leads from the baseline**: a first start answers its first request only after 10.4 s although the port is bound at 0.24 s (something holds the request threads at start: look at what `/api/status` waits for, and the drivelist build thread); `/api/teslacam` takes 1.7-11.8 s on every call, also warm (`_ROOTS["t"] = 0` then `TC.drives()` → `DR.discover()`); `/api/clips` 0.75-1.8 s warm; the first `/api/drivelist` after a first start 5.4 s.
+- **Leads from the baseline**: a first start answers its first request only after ~10 s although the port is bound at 0.24 s (something holds the request threads at start: look at what `/api/status` waits for, and the drivelist build thread); `/api/teslacam` takes 1.7-11.8 s on every call, also warm (`_ROOTS["t"] = 0` then `TC.drives()` → `DR.discover()`); `/api/clips` 0.75-1.8 s warm; the first `/api/drivelist` after a first start 5.4 s.
+- **Sandbox notes**: cdnjs is blocked here; the vendored files are `dist/` of the npm package `maplibre-gl@4.7.1` (the same files cdnjs serves). Playwright's headless shell is missing here; perf_run.py falls back to `/opt/pw-browsers/chromium` (or `PERF_CHROMIUM`).
 - **Pre-existing test failures** (before any change here, also alone): `test_snapshots_for.SnapshotsFor.test_only_drives_over_the_clips_without_snapshots`, `test_timeline_stored.SentryWindow.test_the_minutes_of_a_sentry_event_make_a_window_with_telemetry`. The bar for each commit is: these two and no others.
+
+## Measured so far (fixture, Linux sandbox; ms in headless Chromium, new page, empty cache)
+
+| change | route | first paint before → after | rendered before → after |
+|---|---|---|---|
+| MapLibre local + deferred (first start) | #/activity | 508 → 264 | 646 → 370 |
+| | #/drives | 376 → 256 | 421 → 377 |
+| | #/places | 400 → 204 | 502 → 326 |
+| | #/teslacam | 336 → 156 | 359 → 267 |
+| (restart) | #/activity | 396 → 132 | 433 → 261 |
+| | #/places | 372 → 184 | 425 → 302 |
+
+In the sandbox cdnjs is refused at once; on a Mac with a slow or no network the old `<head>` waited for cdnjs before the first paint (up to the network timeout offline), so the gain there is larger and is not measured here.
 
 ## How to measure
 

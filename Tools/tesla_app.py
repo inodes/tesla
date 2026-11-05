@@ -99,6 +99,7 @@ import drive_roles as DR  # noqa: E402
 import drive_paths as DP  # noqa: E402
 
 UI = os.path.join(HERE, "lib", "app_ui")
+VENDOR = {n: "https://cdnjs.cloudflare.com/ajax/libs/maplibre-gl/4.7.1/" + n for n in ("maplibre-gl.js", "maplibre-gl.css")}      # /vendor/<name>: the local copy, else this
 DEFAULT_DATA = os.path.expanduser(os.environ.get("TESLA_DATA_DIR", "~/Library/Mobile Documents/com~apple~CloudDocs/Tesla"))
 mimetypes.add_type("text/javascript", ".js")
 STORE = None
@@ -390,7 +391,7 @@ class H(BaseHTTPRequestHandler):
         self.send_header("Content-Type", ctype)
         self.send_header("Accept-Ranges", "bytes")
         self.send_header("Content-Length", str(n))
-        self.send_header("Cache-Control", "max-age=3600" if cache else "no-store")
+        self.send_header("Cache-Control", "public, max-age=31536000, immutable" if cache == "immutable" else "max-age=3600" if cache else "no-store")
         if code == 206:
             self.send_header("Content-Range", "bytes %d-%d/%d" % (start, end, size))
         self.end_headers()
@@ -444,6 +445,18 @@ class H(BaseHTTPRequestHandler):
                 return self.send_file(os.path.join(UI, "index.html"))
             if path in ("/app.js", "/app.css"):
                 return self.send_file(os.path.join(UI, path[1:]))
+            if path.startswith("/vendor/"):        # MapLibre, kept in lib/app_ui/vendor (pinned 4.7.1); the CDN only when the file is missing
+                name = path[8:]
+                if name in VENDOR:
+                    f = os.path.join(UI, "vendor", name)
+                    if os.path.isfile(f):
+                        return self.send_file(f, cache="immutable")
+                    self.send_response(302)
+                    self.send_header("Location", VENDOR[name])
+                    self.send_header("Content-Length", "0")
+                    self.end_headers()
+                    return None
+                return self.send_bytes(b"not found", "text/plain", 404)
             if path == "/icon.png":                 # the app icon, also the tab/window icon
                 return self.send_file(os.path.join(UI, "icon", "icon.png"), cache=True)
             if path in ("/solaredge/connect", "/solaredge/callback"):      # SolarEdge V2: the site owner approves the app here (lib/solaredge_v2.py)
