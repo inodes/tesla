@@ -132,7 +132,7 @@ body{-webkit-user-select:text;user-select:text}
 .tmap{position:relative;min-height:0;border-radius:12px;overflow:hidden;border:1px solid var(--line);background:var(--card)}
 .tmempty{position:absolute;inset:auto 12px 12px 12px;z-index:1;text-align:center;font-size:12px;color:var(--mut);background:var(--card);border-radius:8px;padding:6px 10px;pointer-events:none}
 .tl2{display:flex;flex-direction:column;gap:4px;min-width:0;overflow:auto;padding-right:2px}.dpick{display:flex;gap:8px;align-items:center;padding:8px 0}.dpick select{min-width:230px}.dpick small{color:var(--mut)}.chip[disabled]{opacity:.4;cursor:default}
-.tr{display:grid;grid-template-columns:24px 112px 26px minmax(0,1fr) 84px 164px;gap:8px;align-items:center;padding:6px 8px;border:1px solid var(--line);border-radius:10px;background:var(--card)}
+.tr{display:grid;grid-template-columns:24px 112px 26px minmax(0,1fr) 84px 224px;gap:8px;align-items:center;padding:6px 8px;border:1px solid var(--line);border-radius:10px;background:var(--card)}
 .tr.rec{opacity:.75}.tr.sel{border-color:var(--acc);box-shadow:0 0 0 1px var(--acc)}.tr[data-id]{cursor:pointer}
 .tr .ck{display:flex;align-items:center;justify-content:center}.tr .ck input{width:16px;height:16px;cursor:pointer}
 .tr .tb{display:grid;grid-template-columns:128px minmax(0,1fr);gap:8px;align-items:center;text-align:left;color:var(--ink);text-decoration:none;background:none;border:0;padding:0;font:inherit;min-width:0}
@@ -182,8 +182,8 @@ tr.chline{cursor:pointer}tr.chline td{color:var(--bad);font-weight:600;font-size
 .tday.wide{grid-template-columns:minmax(0,1fr);height:auto;grid-template-rows:auto}
 .tday.wide .tl2{overflow:visible}
 .tday.wide .tmap{height:480px;min-height:480px}
-.tday.wide .tr{grid-template-columns:24px 112px 26px minmax(0,1fr) 84px 84px 84px 100px 96px 96px 90px 164px}
-@media(max-width:1100px){.tday.wide .xw{display:none}.tday.wide .tr{grid-template-columns:24px 112px 26px minmax(0,1fr) 84px 164px}}
+.tday.wide .tr{grid-template-columns:24px 112px 26px minmax(0,1fr) 84px 84px 84px 100px 96px 96px 90px 224px}
+@media(max-width:1100px){.tday.wide .xw{display:none}.tday.wide .tr{grid-template-columns:24px 112px 26px minmax(0,1fr) 84px 224px}}
 
 /* a still that has not arrived yet pulses grey instead of showing as a black tile (the picture paints over the colour once it is there) */
 @keyframes rvld{from{background-color:var(--line)}to{background-color:var(--bd,#8884)}}
