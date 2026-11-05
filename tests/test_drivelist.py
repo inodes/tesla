@@ -188,6 +188,40 @@ class Parked(unittest.TestCase):
         self.assertEqual(again.get("z", lambda: dict(items=[8]), wait=True)["items"], [8])
 
 
+    def test_a_kept_list_whose_sources_did_not_change_is_not_built_again_after_a_restart(self):
+        import os
+        import tempfile
+        path = os.path.join(tempfile.mkdtemp(), "drivelist.json")
+        sig = (("version", 1, None), ("/a.csv", 5.0, 10))
+        DL.Cached(path).get(sig, lambda: dict(items=[7]))
+        n = [0]
+
+        def build():
+            n[0] += 1
+            return dict(items=[8])
+        again = DL.Cached(path)
+        got = again.get(sig, build)
+        self.assertEqual((got["items"], got.get("stale"), n[0]), ([7], None, 0))      # current at once, nothing built
+
+    def test_a_changed_source_after_a_restart_rebuilds(self):
+        import os
+        import tempfile
+        path = os.path.join(tempfile.mkdtemp(), "drivelist.json")
+        DL.Cached(path).get((("/a.csv", 5.0, 10),), lambda: dict(items=[7]))
+        again = DL.Cached(path)
+        self.assertEqual(again.get((("/a.csv", 6.0, 10),), lambda: dict(items=[8]), wait=False), dict(items=[7], stale=True))
+        self.assertEqual(again.get((("/a.csv", 6.0, 10),), lambda: dict(items=[8]), wait=True)["items"], [8])
+
+    def test_a_file_kept_by_the_older_version_is_shown_stale(self):
+        import json
+        import os
+        import tempfile
+        path = os.path.join(tempfile.mkdtemp(), "drivelist.json")
+        with open(path, "w") as f:
+            json.dump(dict(items=[3]), f)
+        self.assertEqual(DL.Cached(path).get("a", lambda: dict(items=[4]), wait=False), dict(items=[3], stale=True))
+
+
 class JoinParksTest(unittest.TestCase):
     H = [-33.8700, 151.2100]
 

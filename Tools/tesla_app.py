@@ -1136,7 +1136,7 @@ def drivelist(wait=False):
     d = os.path.join
     watch = [d(DATA_DIR, "drives", "drives_master.csv"), d(DATA_DIR, "charges", "charges_master.csv"), d(DATA_DIR, "drives", "deepdive"), d(DATA_DIR, "tessie_sync_state.json"), d(DATA_DIR, "fetch_ledger.json"), d(DATA_DIR, "clip_clock.json"), d(DATA_DIR, "places.json"), d(DATA_DIR, "teslacam_timeline", "index.json"),
              d(DATA_DIR, "teslacam_ledger"), d(DATA_DIR, "teslacam_provenance"), d(DATA_DIR, "teslacam_timeline", "index.json"), KINDS.path] + [app_sentry.index_path(DATA_DIR, "teslacam_index_%s_%s.json" % (r, k)) for r in DR.read_roles() for k in ("saved", "sentry")]
-    return DRIVELIST.get(app_drivelist.signature(watch), build, wait)
+    return DRIVELIST.get(app_drivelist.signature(watch) + (("code", CODE_VERSION, None),), build, wait)       # kept on this computer with what it was built from: a restart does not build it again
 
 
 def tessie_auto():
@@ -1282,6 +1282,7 @@ def app_exit(restart=False):
 
 
 KEPT = None
+CODE_VERSION = "0"          # _code_version() at start: a list kept by other code is built again
 KEPT_LISTS = {          # the lists a page asks for first: answered from what was kept and refreshed behind (lib/app_kept.py)
     "summary": lambda: STORE.summary(),
     "activity": lambda: STORE.activity(),
@@ -1301,7 +1302,7 @@ def _code_version():
 
 
 def main():
-    global KINDS, KEPT, STORE, DATA_DIR, SENTRY, TC, DRV, SYNC, TSYNC, CSYNC, CCOST, FSYNC, REACH, SOFT, CARW, BOOK, FG, KEEP, DRIVELIST, TODO, CKEEP, STHIN
+    global KINDS, KEPT, CODE_VERSION, STORE, DATA_DIR, SENTRY, TC, DRV, SYNC, TSYNC, CSYNC, CCOST, FSYNC, REACH, SOFT, CARW, BOOK, FG, KEEP, DRIVELIST, TODO, CKEEP, STHIN
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--data-dir", default=DEFAULT_DATA)
     ap.add_argument("--port", type=int, default=int(app_config.get("window.port")))
@@ -1327,7 +1328,8 @@ def main():
     STORE = app_data.Store(DATA_DIR)
     STORE.local = local_cache_dir()
     home_ignore.set_places(lambda: STORE.pl.defs())          # the saved places: where a parked recording is left alone (Home)
-    KEPT = app_kept.Kept(local_cache_dir(), _code_version())
+    CODE_VERSION = _code_version()
+    KEPT = app_kept.Kept(local_cache_dir(), CODE_VERSION)
     DRIVELIST = app_drivelist.Cached(os.path.join(local_cache_dir(), "drivelist.json"))
     run_cuts.set_file(os.path.join(local_cache_dir(), "run_cuts.json"))
     KINDS = minute_kind.Kinds(os.path.join(local_cache_dir(), "minute_kind_v2.json"))

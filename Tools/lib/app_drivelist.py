@@ -291,12 +291,16 @@ class Cached:
             try:
                 import json
                 with open(path, encoding="utf-8") as f:
-                    self._val = json.load(f)
-                self._stale = True                          # from an earlier run: shown until the rebuild replaces it
+                    j = json.load(f)
+                if isinstance(j, dict) and "kept_sig" in j and "list" in j:      # kept with what it was built from: current when those files have not changed since
+                    self._val, self._sig = j["list"], j["kept_sig"]
+                else:
+                    self._val = j                           # kept by an earlier version without its signature
+                self._stale = self._sig is None             # no signature: shown until the rebuild replaces it
             except (OSError, ValueError):
                 self._val = None
 
-    def _save(self, val):
+    def _save(self, val, sig=None):
         if not self._path:
             return
         try:
@@ -305,7 +309,7 @@ class Cached:
             os.makedirs(os.path.dirname(self._path), exist_ok=True)
             tmp = self._path + ".tmp"
             with open(tmp, "w", encoding="utf-8") as f:
-                json.dump(val, f)
+                json.dump(dict(kept_sig=sig, list=val), f)
             os.replace(tmp, self._path)
         except (OSError, TypeError, ValueError):
             pass
@@ -319,7 +323,7 @@ class Cached:
                 val = build()
                 with self._lock:
                     self._val, self._sig, self._stale = val, sig, False
-                self._save(val)
+                self._save(val, sig)
                 return val
         finally:
             with self._lock:
@@ -331,7 +335,9 @@ class Cached:
             return self._val is not None
 
     def get(self, sig, build, wait=False):
-        """A current list. Without wait, a stale one (marked) is returned at once while the rebuild runs; with nothing kept yet, or wait=True, it waits for the build."""
+        """A current list. Without wait, a stale one (marked) is returned at once while the rebuild runs; with nothing kept yet, or wait=True, it waits for the build.
+        `sig` is compared as JSON (lists, not tuples), so a list kept in the file by an earlier run is current when nothing it was built from changed."""
+        sig = _plain(sig)
         with self._lock:
             val = self._val
             if val is not None and not self._stale and sig == self._sig:
@@ -353,6 +359,11 @@ def page_rows(act):
 
 
 VERSION = 12                                         # bump when merge() or what the list carries changes (or run_cuts, which is worked out when it is built): a list kept from the older code is then built again
+
+
+def _plain(sig):
+    import json
+    return json.loads(json.dumps(sig))
 
 
 def signature(paths):
