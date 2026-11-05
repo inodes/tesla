@@ -197,13 +197,26 @@ def car_offset(n):
     return float(o) if o is not None else float(n - from_local(n))
 
 
+_UTC = dict(key=None, m={})     # stamp -> utc(stamp), for as long as what it is worked out from is the same objects (the runs, the clips' own times, the settings)
+
+
 def utc(stamp):
-    """UTC epoch of a dashcam file name or an event.json timestamp (the car's clock)."""
+    """UTC epoch of a dashcam file name or an event.json timestamp (the car's clock). Kept per stamp: a list of the clips asks for every minute, every time."""
     own = _SK["map"].get(stamp)
     if own is not None:
         return own
-    n = naive(stamp)
-    return n - car_offset(n)
+    key = (_S["runs"], _SK["map"], CFG.settings())          # each is replaced (a new object) when it changes
+    k = _UTC["key"]
+    if k is None or any(a is not b for a, b in zip(k, key)):
+        _UTC.update(key=key, m={})
+    m = _UTC["m"]
+    v = m.get(stamp)
+    if v is None:
+        n = naive(stamp)
+        v = n - car_offset(n)
+        if len(m) < 1000000:
+            m[stamp] = v
+    return v
 
 
 def local_of(stamp):
