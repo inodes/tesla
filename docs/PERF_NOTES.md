@@ -14,7 +14,10 @@ The task is docs/LOAD_SPEED_TASK.md. Work happens on branch `claude/load-speed` 
   activity / chargers / places were already answered from the kept copy at once after a restart (app_kept.py) and rebuild fast (under 0.25 s), so they are left as they are.
   Then (next commit) `footage_root`: one look at the volumes for every role (`_look_roots`, was one `DR.discover()` per role) and a lock so the first request waits for
   the start-up thread's look instead of repeating it: first start's first answer 9.4-11 s → 1.5 s.
-- **Next**: step 4 rest (smarter `_warm`),
+  `_warm` tried and left as it was (measured: starting it as soon as the window's first request is answered, in a value order and without /api/teslacam, made a
+  second page opened 3 s after the first slower, 664 / 1,284 ms → 1,695 / 2,173 ms on a first start, because the warm-up competes with the page asked for; and
+  /api/teslacam is cheap since the volume-look fix). Step 4 is done.
+- **Next**:
   step 5 (TeslaCam from cache), step 2 (perf_log), step 6, step 7. Order follows the task's Budget section (value first).
 - **Half-done**: nothing.
 - **Leads from the baseline**: (fixed: the ~10 s first answer was three drive discoveries per look, run again by the first request) `/api/teslacam` takes 1.7-11.8 s on every call, also warm (`_ROOTS["t"] = 0` then `TC.drives()` → `DR.discover()`); `/api/clips` 0.75-1.8 s warm; the first `/api/drivelist` after a first start 5.4 s.
