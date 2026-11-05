@@ -45,17 +45,22 @@ class ClipFilesTest(unittest.TestCase):
         dest = os.path.join(self.tmp.name, "out")
         os.makedirs(dest)
         cp = CF.Copier()
+
+        def wait(job):      # a copy runs in a thread: it must be over before the folder is removed (a slow machine saw the folder still being written to)
+            for _ in range(500):
+                st = cp.status(job)
+                if st["state"] != "running":
+                    return st
+                time.sleep(0.02)
+            return st
         a = cp.start(paths, dest, "TeslaCam 09-28")
-        for _ in range(100):
-            st = cp.status(a["job"])
-            if st["state"] != "running":
-                break
-            time.sleep(0.02)
+        st = wait(a["job"])
         self.assertEqual((st["state"], st["done"], st["n"], st["bytes_done"]), ("done", 4, 4, 4000))
         self.assertEqual(len(os.listdir(os.path.join(dest, "TeslaCam 09-28"))), 4)
         b = cp.start(paths, dest, "TeslaCam 09-28")
         self.assertTrue(b["dest"].endswith("TeslaCam 09-28 (2)"))
         self.assertEqual(cp.dest_of(a["job"]), os.path.join(dest, "TeslaCam 09-28"))
+        self.assertEqual(wait(b["job"])["state"], "done")
 
     def test_copy_of_nothing_or_into_a_missing_folder_says_so(self):
         cp = CF.Copier()
