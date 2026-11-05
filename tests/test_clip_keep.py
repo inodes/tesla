@@ -210,6 +210,48 @@ class KeepTest(Base):
         self.assertIn("Archive", k.start("move", "A", [dict(kind="saved", id="ev1")], self.roots, confirmed=True)["error"])
 
 
+class SaveMinutesTest(Base):
+    """Recent minutes become a Saved clip: files moved on their own drive, an event.json written, the footage log updated."""
+    R = ["2026-10-16_16-00-07", "2026-10-16_16-01-07", "2026-10-16_16-02-07"]
+
+    def setUp(self):
+        super().setUp()
+        self.rdir = os.path.join(self.roots["J"], "RecentClips")
+        os.makedirs(self.rdir)
+        f = os.path.join(self.data, "teslacam_ledger", "2026-10-16.json")
+        day = json.load(open(f))
+        for st in self.R:
+            for cam in ("front", "back"):
+                day["recent||%s-%s" % (st, cam)] = dict(size=7, drives=dict(J=dict(LIVE)))
+                with open(os.path.join(self.rdir, "%s-%s.mp4" % (st, cam)), "wb") as fh:
+                    fh.write(b"y" * 7)
+        json.dump(day, open(f, "w"))
+
+    def test_it_moves_the_minutes_into_a_new_saved_folder_with_an_event_json(self):
+        k = self.keep()
+        self.assertIn("Not confirmed", k.save_minutes(self.R, self.roots)["error"])
+        out = k.save_minutes(self.R[:2], self.roots, confirmed=True)
+        self.assertTrue(out.get("ok"), out)
+        self.assertEqual((out["role"], out["files"], out["minutes"]), ("J", 4, 2))
+        fold = os.path.join(self.roots["J"], "SavedClips", out["event"])
+        self.assertEqual(out["event"], "2026-10-16_16-01-37")                           # the middle of the last minute
+        self.assertEqual(sorted(x for x in os.listdir(fold) if x.endswith(".mp4")), sorted("%s-%s.mp4" % (st, c) for st in self.R[:2] for c in ("front", "back")))
+        ev = json.load(open(os.path.join(fold, "event.json")))
+        self.assertEqual((ev["timestamp"], ev["reason"], ev["camera"], ev["made_by"]), ("2026-10-16T16:01:37", "user_interaction_dashcam_icon_tapped", "0", "Tesellate"))
+        self.assertEqual(sorted(os.listdir(self.rdir)), sorted("%s-%s.mp4" % (self.R[2], c) for c in ("front", "back")))      # the other minute stays Recent
+        day = json.load(open(os.path.join(self.data, "teslacam_ledger", "2026-10-16.json")))
+        self.assertTrue(day["recent||%s-front" % self.R[0]]["drives"]["J"]["gone"])
+        self.assertIsNone(day["saved|%s|%s-front" % (out["event"], self.R[0])]["drives"]["J"]["gone"])
+        self.assertEqual(k.history()[0]["action"], "save")
+
+    def test_minutes_that_are_not_recent_video_on_one_drive_are_refused(self):
+        k = self.keep()
+        self.assertIn("not all Recent video", k.save_minutes([self.R[0], S1], self.roots, confirmed=True)["error"])      # S1 is in a Saved clip already
+        self.assertIn("No minutes", k.save_minutes([], self.roots, confirmed=True)["error"])
+        self.assertIn("No minutes", k.save_minutes(["../x"], self.roots, confirmed=True)["error"])
+        self.assertEqual(len(os.listdir(self.rdir)), 6)
+
+
 class Store2:
     """A telemetry store that can be filled: summary() is None until put()."""
     def __init__(self, vmax=60):

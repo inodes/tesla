@@ -668,6 +668,11 @@ class H(BaseHTTPRequestHandler):
             if u.path == "/api/keeper":            # {action: pause|resume|run}
                 act = body.get("action")
                 return self.send_json(KEEP.pause() if act == "pause" else KEEP.run_now(body.get("stages")) if act == "run" else KEEP.resume())
+            if u.path == "/api/clips/save_minutes":    # {stamps: [minute names], confirm: true}: Recent minutes become a Saved clip (their files moved on their own drive, an event.json written)
+                held = KEEP.stand_down()
+                if held:
+                    return self.send_json(dict(error="%s is reading the drives: stop it first." % held))
+                return self.send_json(CKEEP.save_minutes(body.get("stamps") or [], footage_roots(), confirmed=body.get("confirm") is True))
             if u.path == "/api/clips/act":         # {action: delete|move|process|stop, role, items: [{kind, id}]}: remove the video of clips from a drive (after it is all kept), move it to the Archive, or read what the clips still lack from their video
                 if body.get("action") == "stop":
                     return self.send_json(CKEEP.stop())

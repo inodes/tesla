@@ -2587,13 +2587,30 @@ async function teslaDriveBody(host,role,fetchSeg,places,opts){
   const covStrip=ms=>{const el=$("#dcov");if(!el)return;const tot=ms.reduce((a,m)=>a+(m.len||60),0);
     if(ms.length<2){el.innerHTML="";return}
     const gaps=ms.some(m=>m.syn||!(m.cams&&m.cams.length));      // the bar is always there (one block a minute: click one to play it); the note about black parts only where there are some
-    el.innerHTML=`<div class="covbar" title="${gaps?"Black: no video for this time":"One block for each minute of video: click one to play it"}">${ms.map(m=>`<i class="${m.cams&&m.cams.length?"on":"off"}" style="flex:${m.len||60}" data-o="${m.off}" title="${esc(clockHM(m.loc)+(m.cams&&m.cams.length?"":" · no video"))}"></i>`).join("")}</div>`;
-    $$("#dcov i",host).forEach(b=>{b.onclick=()=>seekIdx(+b.dataset.o);if(covOn!=null&&+b.dataset.o===covOn)b.classList.add("now")})};
+    el.innerHTML=`<div class="covbar" title="${gaps?"Black: no video for this time":"One block for each minute of video: click one to play it"}. Shift-click a second block to select the minutes between, and save them as a Saved clip.">${ms.map(m=>`<i class="${m.cams&&m.cams.length?"on":"off"}" style="flex:${m.len||60}" data-o="${m.off}" title="${esc(clockHM(m.loc)+(m.cams&&m.cams.length?"":" · no video"))}"></i>`).join("")}</div><div class="covsel" id="dcsel" hidden></div>`;
+    // Shift-click a block: the minutes from the one last clicked (or playing) to it are selected; the bar under the strip moves them from Recent into a Saved clip (their files are renamed on their drive, an event.json is written)
+    const inSel=o=>!!covSel&&o>=Math.min(covSel.a,covSel.b)&&o<=Math.max(covSel.a,covSel.b),selMs=()=>ms.filter(m=>!m.syn&&m.cams&&m.cams.length&&inSel(m.off));
+    const selPaint=()=>{$$("#dcov i",host).forEach(b=>b.classList.toggle("sel",inSel(+b.dataset.o)));const bx=$("#dcsel",host),l=selMs();
+      if(!bx)return;if(!l.length){bx.hidden=true;bx.innerHTML="";return}bx.hidden=false;
+      const tx=`<b>${l.length} minute${l.length>1?"s":""}</b> selected · ${esc(clockHM(l[0].loc))} – ${esc(clockHM(l[l.length-1].loc))}`;
+      bx.innerHTML=covAsk?`<span>${tx}. <b>Move them from Recent into a new Saved clip?</b> The video is moved on its drive, not copied.</span><button class="btn sm pri" id="dcgo">Move to Saved</button><button class="btn sm" id="dcno">Cancel</button>`
+        :`<span>${tx}${covNote?` · <span style="color:${/rror|not |cannot|No /.test(covNote)?"var(--bad)":"var(--ok)"}">${esc(covNote)}</span>`:""}</span><button class="btn sm" id="dcsv" title="Makes a Saved clip of these minutes, so the car's rolling buffer cannot overwrite them">Save as a Saved clip</button><button class="btn sm" id="dcx">Clear</button>`;
+      const on=(id,f)=>{const x=$("#"+id,bx);if(x)x.onclick=f};
+      on("dcx",()=>{covSel=null;covNote="";selPaint()});on("dcsv",()=>{covAsk=true;covNote="";selPaint()});on("dcno",()=>{covAsk=false;selPaint()});
+      on("dcgo",async()=>{const st=selMs().map(m=>m.stamp);covAsk=false;covNote="Moving…";selPaint();let j;
+        try{j=await (await fetch("/api/clips/save_minutes",{method:"POST",body:JSON.stringify({stamps:st,confirm:true})})).json()}catch(e){j={error:e.message}}
+        if(j.error){covNote=j.error;selPaint();return}
+        covNote="Saved as "+j.event+" on "+drName(j.role);bust("tc/clips");selPaint();setTimeout(()=>location.reload(),1500)})};
+    $$("#dcov i",host).forEach(b=>{b.onclick=e=>{const o=+b.dataset.o;
+        if(e.shiftKey){covSel={a:covSel?covSel.a:(covAnchor!=null?covAnchor:covOn!=null?covOn:o),b:o};covAsk=false;covNote="";selPaint();return}
+        covAnchor=o;covSel=null;covAsk=false;covNote="";selPaint();seekIdx(o)};
+      if(covOn!=null&&+b.dataset.o===covOn)b.classList.add("now")});
+    selPaint()};
   const cursor=sec=>{const i=Math.max(0,Math.min(S().v.length-1,Math.round(sec)));if(map)map.cursor(i);if(chart)chart.cursor(i)};
   // the block of the bar for the minute that is playing turns yellow
   let SGALL=null;       // every speed sign of the span, once read: {t (second of the span), text, conf, lat (m off the car's line)}
   const sgNear=(t,text)=>(SGALL||[]).filter(e=>e.text!==text&&Math.abs(e.t-t)<=15).map(e=>({text:e.text,conf:e.conf,lat:e.lat,dt:e.t-t}));
-  let covOn=null;const covNow=off=>{if(covOn===off)return;covOn=off;$$("#dcov i",host).forEach(b=>b.classList.toggle("now",+b.dataset.o===off))};
+  let covOn=null,covSel=null,covAnchor=null,covAsk=false,covNote="";const covNow=off=>{if(covOn===off)return;covOn=off;$$("#dcov i",host).forEach(b=>b.classList.toggle("now",+b.dataset.o===off))};
   const events=()=>{if(opts.rvtab||evShown||!d.events||!d.events.length||!live())return;evShown=true;
     $("#dev").innerHTML=`<h2>Saved clips and Sentry events in this drive</h2><div class="evs">${d.events.map(v=>`<button class="evc" data-u="${v.t}">${v.clips?sentryThumb(Object.assign({},v,{role}),v.folder):v.thumb?`<img alt="" decoding="async" loading="lazy" src="/footage/${role}/${v.folder}/${v.id}/thumb.png" onerror="this.style.visibility='hidden'">`:'<div class="noimg"></div>'}<b>${hms(v.ts)}</b><span>${esc(v.folder==="SavedClips"?"Saved":"Sentry")} · ${esc(reason(v.reason))}</span><span>${esc(v.city||"")}</span></button>`).join("")}</div>`;
     lazyThumbs($("#dev"));    $$("#dev .evc").forEach(b=>b.onclick=()=>{const ix=Math.round(+b.dataset.u-it().t0);if(ix<0||ix>=S().v.length){goMoment(+b.dataset.u);return}      // a saved clip keeps minutes from before it was saved: one that was saved after this drive ended is not in this video, its own page is
