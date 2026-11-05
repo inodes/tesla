@@ -400,3 +400,4 @@ Log (newest first):
 - 2026-11-05: TeslaCam event chips read "12:16 · Dashcam action" / "18:25 · Handle pulled": the colour says Saved or Sentry, so the word is gone; user_interaction_dashcam_launcher_action_tapped reads "Dashcam action".
 - 2026-11-05: docs/LOAD_SPEED_TASK.md: the task for the cloud session on load speed (the prompt points at it, so it cannot be cut short).
 - 2026-11-05: the window is created in the default place and moved to its remembered place once shown (window_move): moving it while pywebview builds it could still stop the app with 'NoneType has no attribute frame' after a restart.
+- 2026-11-05: docs/LOAD_SPEED_TASK.md: small batches, a push after every commit, small PRs and a Handoff section in PERF_NOTES.md, as the cloud credit may run out.
