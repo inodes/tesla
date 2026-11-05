@@ -1090,6 +1090,15 @@ def _wgeo_path():
     return os.path.join(local_cache_dir(), "window.json")
 
 
+def _title_bar_on_screen(screens, x, y):
+    """Would a window asked to open at x, y (pywebview's way: x from the main screen's left edge, y down from its top edge) have its title bar on a
+    screen? The window's top-left corner lands at (main.x + x, main.y + main.height - y) in Cocoa's upside-down coordinates; a place that is on no screen
+    makes the Mac give the window no screen at all and pywebview stops with 'NoneType has no attribute frame'."""
+    m = screens[0]
+    px, py = m.x + x + 60, m.y + m.height - y - 20
+    return any(sc.x <= px < sc.x + sc.width and sc.y <= py < sc.y + sc.height for sc in screens)
+
+
 def window_place(webview):
     """Size and place of the window as it was when last moved or resized (kept on this computer); the configured size the first time,
     and the configured size in the default place when the remembered place is on no screen now (a display unplugged)."""
@@ -1108,7 +1117,7 @@ def window_place(webview):
             scr = list(webview.screens or [])
         except Exception:
             scr = []
-        if not scr or any(sc.x - 50 <= x < sc.x + sc.width - 100 and sc.y - 50 <= y < sc.y + sc.height - 100 for sc in scr):
+        if not scr or _title_bar_on_screen(scr, x, y):
             out.update(x=int(x), y=int(y))
     return out
 
@@ -1274,6 +1283,10 @@ def main():
         except Exception as e:
             # no window and no browser: say so loudly and quit (a silent sleeping process shows as "Application Not Responding")
             import traceback
+            try:
+                os.unlink(_wgeo_path())         # a remembered place that opens no window is forgotten: the next start uses the default place
+            except OSError:
+                pass
             msg = "Tesellate could not open its window: %s" % ("pywebview is not installed" if isinstance(e, ImportError) else e)
             print(msg, flush=True)
             traceback.print_exc()

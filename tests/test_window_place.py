@@ -43,6 +43,17 @@ class WindowPlaceTest(unittest.TestCase):
         self.assertEqual(o["width"], 1800)
         self.assertNotIn("x", o)
 
+    def test_a_place_above_every_screen_is_not_used(self):
+        # y is measured down from the top of the main screen: a negative y of this size puts the title bar above all screens (the Mac then gives the window no screen)
+        json.dump(dict(w=1800, h=1100, x=100, y=-400), open(os.path.join(self.d, "window.json"), "w"))
+        o = T.window_place(SimpleNamespace(screens=[SimpleNamespace(x=0, y=0, width=2560, height=1440)]))
+        self.assertNotIn("x", o)
+
+    def test_a_place_below_the_main_screen_is_not_used(self):
+        json.dump(dict(w=1800, h=1100, x=100, y=1500), open(os.path.join(self.d, "window.json"), "w"))
+        o = T.window_place(SimpleNamespace(screens=[SimpleNamespace(x=0, y=0, width=2560, height=1440)]))
+        self.assertNotIn("x", o)
+
 
 if __name__ == "__main__":
     unittest.main()
