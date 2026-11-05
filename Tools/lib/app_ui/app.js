@@ -2987,7 +2987,11 @@ async function pageSoftwareOne(v){
   const go=k=>()=>{SWS[k]=v;SWS.tab="compare";swSave();location.hash="#/software"};$("#cmpf").onclick=go("a");$("#cmpt").onclick=go("b")}
 
 const ROUTES={activity:pageActivity,drives:pageDriveList,driveslist:pageDriveList,charges:pageCharges,battery:pageBattery,health:pageHealth,analytics:pageAnalytics,teslacam:pageTeslaCam,queue:pageQueue,flips:pageDriveList,review:pageDriveList,dashcam:pageDriveList,parked:pageParked,idles:pageParked,places:pagePlaces,alerts:pageAlerts,software:pageSoftware};
+let PERF1=true;      // the first page after the window opened: its time since launch goes to the timing log too
+const perfSend=(p,t0)=>{const now=performance.now(),b={route:p,ms:Math.round(now-t0)};if(PERF1){PERF1=false;b.first_ms=Math.round(now)}
+  try{fetch0("/api/perf",{method:"POST",keepalive:true,body:JSON.stringify(b)}).catch(()=>{})}catch(e){}};       // ~/Library/Logs/tesla_perf.log (lib/perf_log.py)
 async function route(){
+  const t0=performance.now();
   if(!QUIET){RGEN++;RLOAD=RGEN}const myGen=RGEN;
   navTrack();hideTip();if(location.hash.indexOf("#/charge/")!==0){try{sessionStorage.removeItem("chargeSet")}catch(e){}}if(TLOFF){TLOFF();TLOFF=null}const h=(location.hash||"#/activity").replace(/^#\//,""),[p,arg,arg2]=h.split("/").map(decodeURIComponent);
   // the side bar item lit is the list a detail page was reached from (a drive opened from Drives lights Drives); a section's own page (Software, Battery, ...) always lights itself, whatever the path that led to it
@@ -2998,7 +3002,7 @@ async function route(){
   try{
     if(p==="drive")await pageDrive(arg,arg2);else if(p==="charge")await pageCharge(arg,arg2);else if(p==="idle"||p==="parked"&&arg)await pageParkedOne(arg);else if(p==="place")await pagePlace(arg);else await (ROUTES[p]||pageActivity)(arg,arg2);
   }catch(e){if(myGen===RGEN)main.innerHTML=errBox(e.stack||e.message,"Something went wrong")}      // a page already left does not show its error over the page opened
-  finally{if(RLOAD===myGen)RLOAD=0}
+  finally{if(RLOAD===myGen)RLOAD=0;if(!QUIET&&myGen===RGEN)perfSend(p,t0)}
 }
 async function boot(){
   geoWatch();

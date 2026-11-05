@@ -96,6 +96,7 @@ import car_watch  # noqa: E402
 import app_route  # noqa: E402
 import app_kept  # noqa: E402
 import app_reach  # noqa: E402
+import perf_log  # noqa: E402
 from fetch_ledger import FetchLedger  # noqa: E402
 import drive_roles as DR  # noqa: E402
 import drive_paths as DP  # noqa: E402
@@ -159,6 +160,7 @@ def _volumes_changed():
 
 
 _ROOTS_LOCK = threading.Lock()
+_FIRST_REQ = [False]
 
 
 def _look_roots():
@@ -399,6 +401,7 @@ class H(BaseHTTPRequestHandler):
 
     # ---- helpers
     def send_bytes(self, body, ctype, code=200, extra=None):
+        self._nbytes = len(body)
         self.send_response(code)
         self.send_header("Content-Type", ctype)
         self.send_header("Content-Length", str(len(body)))
@@ -425,6 +428,7 @@ class H(BaseHTTPRequestHandler):
         if len(raw) >= 1024 and "gzip" in (self.headers.get("Accept-Encoding") or ""):
             raw = _gz(raw, etag, level)
             head["Content-Encoding"] = "gzip"
+        self._nbytes = len(raw)
         self.send_response(200)
         self.send_header("Content-Type", ctype)
         self.send_header("Content-Length", str(len(raw)))
@@ -564,6 +568,10 @@ class H(BaseHTTPRequestHandler):
                     return self.api(path[5:], urllib.parse.parse_qs(u.query))
                 finally:
                     dog.cancel()
+                    if not _FIRST_REQ[0]:
+                        _FIRST_REQ[0] = True
+                        perf_log.mark("first request", path=path)
+                    perf_log.request(path, time.time() - t_in, getattr(self, "_nbytes", 0))        # ~/Library/Logs/tesla_perf.log: over 0.15 s
                     if time.time() - t_in > 0.5:                # what is slow shows in the log (~/Library/Logs/tesla_app.log)
                         print("(slow: %s took %.1f s)" % (path, time.time() - t_in), file=sys.stderr, flush=True)
             if path.startswith("/data/"):
@@ -633,6 +641,9 @@ class H(BaseHTTPRequestHandler):
             body = json.loads(self.rfile.read(n) or b"{}")
             if u.path in ("/api/app/quit", "/api/app/restart"):      # quit the app, or start it again with the program as it is on disk
                 return self.send_json(app_exit(u.path.endswith("restart")))
+            if u.path == "/api/perf":              # what the page measured: {route, ms, first_ms} (lib/perf_log.py)
+                perf_log.client(body)
+                return self.send_json({"ok": True})
             if u.path == "/api/places/save":
                 with _ACTION_LOCK:
                     return self.send_json(STORE.pl.save(body))
@@ -1386,10 +1397,12 @@ def main():
     FSYNC = app_sync.ChargerSync(CMDS, DATA_DIR, "sync_fuel_history.py", argv=[sys.executable, "sync_fuel_history.py", "--sync-all"])
     threading.Thread(target=tessie_auto, daemon=True).start()
     threading.Thread(target=fuel_auto, daemon=True).start()
+    perf_log.mark("setup done")
     try:
         srv = serve(a.port)
     except OSError:
         srv = serve(0)      # port taken: any free one
+    perf_log.mark("server bound", port=srv.server_address[1])
     url = "http://127.0.0.1:%d/" % srv.server_address[1]
     print("Tesla app: %s   (data: %s)" % (url, DATA_DIR), flush=True)
     threading.Thread(target=_prime_static, daemon=True).start()

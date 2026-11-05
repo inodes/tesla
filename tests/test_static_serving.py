@@ -14,6 +14,7 @@ import threading
 import unittest
 
 HERE = os.path.dirname(os.path.abspath(__file__))
+os.environ.setdefault("TESLA_PERF_LOG", "")         # no timing log from the tests
 for p in ("Tools", os.path.join("Tools", "lib")):
     sys.path.insert(0, os.path.join(HERE, "..", p))
 import tesla_app  # noqa: E402

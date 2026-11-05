@@ -24,7 +24,13 @@ The task is docs/LOAD_SPEED_TASK.md. Work happens on branch `claude/load-speed` 
   `904232e` that; next commit: /api/teslacam and /api/clips are Kept lists (app_kept.py: last answer from memory or the computer's cache folder at once,
   refreshed behind at most every 8 s, `X-Stale` while refreshing; `?fresh=1`, which the page sends for a minute after an action, waits for the newest); /api/teslacam
   still starts a look at the volumes behind; app.js `tcRecheck` asks again while an answer is stale (as `api()` does). Step 5 is done with it.
-- **Next**: step 2 (perf_log + POST /api/perf), step 6 (drive page), step 7 (final table, Mac checklist). Then
+  `5e08d8b` that. Step 2, next commit: `Tools/lib/perf_log.py` → `~/Library/Logs/tesla_perf.log` (rotates to `.1` at 1 MB; `TESLA_PERF_LOG` names another file, empty = off,
+  tests set it empty): `start` lines (setup done, server bound, first request, with seconds since launch from `ps -o etime=`), `slow` lines (an /api request over
+  0.15 s with its bytes), `page` lines from POST /api/perf (app.js `route()`: route start to page drawn, and `first_ms` = performance.now() at the first page).
+  Checked on the fixture: `page route=drives ms=423 first_ms=591`.
+- **Found, not from this work**: running the existing test suite creates `~/Library/Mobile Documents/...` in the home folder (it was there after the first suite
+  run, before any change here); not looked into.
+- **Next**: step 6 (drive page), step 7 (final table, Mac checklist). Then
   step 5 (TeslaCam from cache), step 2 (perf_log), step 6, step 7. Order follows the task's Budget section (value first).
 - **Half-done**: nothing.
 - **Leads from the baseline**: (fixed: the ~10 s first answer was three drive discoveries per look, run again by the first request) `/api/teslacam` takes 1.7-11.8 s on every call, also warm (`_ROOTS["t"] = 0` then `TC.drives()` → `DR.discover()`); `/api/clips` 0.75-1.8 s warm; the first `/api/drivelist` after a first start 5.4 s.
