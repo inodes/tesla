@@ -6,8 +6,9 @@ The task is docs/LOAD_SPEED_TASK.md. Work happens on branch `claude/load-speed` 
 
 - **Done** (all on PR #17): step 1 `25e635e` fixture + harness + baseline, `0aec053` harness page timings in Chromium; step 3 `adafa01` MapLibre 4.7.1 served from
   `Tools/lib/app_ui/vendor/` (`/vendor/<name>`, 1-year immutable cache, 302 to cdnjs only when the copy is missing), both scripts `defer`, MapLibre CSS non-blocking;
-  next commit: ETag/304 + gzip for index.html, app.js, app.css, vendor (`H.send_body` / `H.send_static` in tesla_app.py, gzip kept per ETag, primed at start).
-- **Next**: step 3 rest (parallel `boot()` fetches), step 4 (gzip + ETag/304 for big JSON, lists kept on disk by inputs, smarter `_warm`),
+  `78dfbcd` ETag/304 + gzip for index.html, app.js, app.css, vendor (`H.send_body` / `H.send_static` in tesla_app.py, gzip kept per ETag, primed at start);
+  next commit: `boot()` asks for the settings together with the summary / status / keeper and only `route()` waits for them. Step 3 is complete with it.
+- **Next**: step 4 (gzip + ETag/304 for big JSON, lists kept on disk by inputs, smarter `_warm`),
   step 5 (TeslaCam from cache), step 2 (perf_log), step 6, step 7. Order follows the task's Budget section (value first).
 - **Half-done**: nothing.
 - **Leads from the baseline**: a first start answers its first request only after ~10 s although the port is bound at 0.24 s (something holds the request threads at start: look at what `/api/status` waits for, and the drivelist build thread); `/api/teslacam` takes 1.7-11.8 s on every call, also warm (`_ROOTS["t"] = 0` then `TC.drives()` → `DR.discover()`); `/api/clips` 0.75-1.8 s warm; the first `/api/drivelist` after a first start 5.4 s.
@@ -31,6 +32,13 @@ The task is docs/LOAD_SPEED_TASK.md. Work happens on branch `claude/load-speed` 
 | | /app.css | 39,318 → 9,958 | 0.8 → 0.9 | 200 → 304 |
 | | /vendor/maplibre-gl.js | 803,086 → 211,500 | 1.6 → 0.8 | 200 → 304 |
 | | / | 1,720 → 740 | 11.5 → 14.0 (first request on a new connection either way) | 200 → 304 |
+
+| change | route | rendered ms before → after (median of 5, restart, headless Chromium) |
+|---|---|---|
+| boot(): settings asked in parallel | #/activity | 352 → 322 |
+| | #/drives | 361 → 304 |
+| | #/places | 381 → 281 |
+| | #/charges | 361 → 317 |
 
 On localhost the time is the same: the gain is bytes, and a reload that does not change a file gets a 304. Without priming, the first gzip of app.js took 23 ms (measured), which is why the files are compressed in the background at start.
 
