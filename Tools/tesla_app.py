@@ -46,6 +46,8 @@ FILES
     drive_actions.py runs the footage queue       build_mac_app.sh  makes a double-clickable Tesellate.app
 """
 import argparse
+import gzip
+import hashlib
 import io
 import json
 import mimetypes
@@ -94,11 +96,13 @@ import car_watch  # noqa: E402
 import app_route  # noqa: E402
 import app_kept  # noqa: E402
 import app_reach  # noqa: E402
+import perf_log  # noqa: E402
 from fetch_ledger import FetchLedger  # noqa: E402
 import drive_roles as DR  # noqa: E402
 import drive_paths as DP  # noqa: E402
 
 UI = os.path.join(HERE, "lib", "app_ui")
+VENDOR = {n: "https://cdnjs.cloudflare.com/ajax/libs/maplibre-gl/4.7.1/" + n for n in ("maplibre-gl.js", "maplibre-gl.css")}      # /vendor/<name>: the local copy, else this
 DEFAULT_DATA = os.path.expanduser(os.environ.get("TESLA_DATA_DIR", "~/Library/Mobile Documents/com~apple~CloudDocs/Tesla"))
 mimetypes.add_type("text/javascript", ".js")
 STORE = None
@@ -155,17 +159,31 @@ def _volumes_changed():
     return False
 
 
+_ROOTS_LOCK = threading.Lock()
+_FIRST_REQ = [False]
+
+
+def _look_roots():
+    """{role: TeslaCam folder} of the connected drives, from one look at the volumes (DR.find_root per role looked at every volume once per role)."""
+    found = {}
+    for p, r in DR.discover():
+        found.setdefault(r, p)                              # the first one listed, as find_root gives it
+    return {r: found.get(r) for r in DR.read_roles()}
+
+
 def footage_root(role):
     """TeslaCam folder of the drive with this role (A Archive, J JOWUA, U USB); looked up at most every 20 s."""
-    if _ROOTS["v"] is None:                                 # the first look waits for the answer
-        _ROOTS["v"] = {r: DR.find_root(r) for r in DR.read_roles()}
-        _ROOTS["t"] = time.time()
+    if _ROOTS["v"] is None:                                 # the first look waits for the answer: one look, which a second asker waits for rather than repeats
+        with _ROOTS_LOCK:
+            if _ROOTS["v"] is None:
+                _ROOTS["v"] = _look_roots()
+                _ROOTS["t"] = time.time()
     elif (time.time() - _ROOTS["t"] > 20 or _volumes_changed()) and not _ROOTS.get("busy"):      # a drive plugged in or out changes /Volumes: looked at again at once
         _ROOTS["busy"] = True                               # later looks answer from the last one and refresh it in the background (a slow drive must not hold a request)
 
         def look():
             try:
-                _ROOTS["v"] = {r: DR.find_root(r) for r in DR.read_roles()}
+                _ROOTS["v"] = _look_roots()
             finally:
                 _ROOTS["t"] = time.time()
                 _ROOTS["busy"] = False
@@ -183,7 +201,7 @@ def eject_drive(role, root):
     while time.time() < end and (FG.status().get("running") or TC.scan_status().get("running")):
         time.sleep(0.3)
     res = drive_eject.eject(root)
-    _ROOTS["v"] = {r: DR.find_root(r) for r in DR.read_roles()}        # look again now, not in 20 s
+    _ROOTS["v"] = _look_roots()                                 # look again now, not in 20 s
     _ROOTS["t"] = time.time()
     KEEP.paused = was                                         # as it was: an eject must not start a pass over the other drives
     return res
@@ -339,6 +357,41 @@ def safe_join(root, rel):
     return p if (p == r or p.startswith(r + os.sep)) else None
 
 
+_STATIC = {}                # path -> ((mtime ns, size), bytes, etag): the page's own files
+_GZ = {}                    # etag -> gzipped body (the newest few)
+_GZ_LOCK = threading.Lock()
+
+
+def _gz(raw, etag, level=6):
+    """The body gzipped, kept by its ETag so a file or list that did not change is compressed once. The lists use level 1 (a 1.5 MB list: 11 ms, against 34 ms at 6)."""
+    with _GZ_LOCK:
+        hit = _GZ.get(etag)
+    if hit is not None:
+        return hit
+    z = gzip.compress(raw, level)
+    with _GZ_LOCK:
+        _GZ[etag] = z
+        while len(_GZ) > 32:
+            _GZ.pop(next(iter(_GZ)))
+    return z
+
+
+def _prime_static():
+    """Reads and gzips the page's own files once, right after start, so the window's first load does not wait for the compression (20-30 ms for app.js)."""
+    for name in ("index.html", "app.js", "app.css", os.path.join("vendor", "maplibre-gl.js"), os.path.join("vendor", "maplibre-gl.css")):
+        p = os.path.join(UI, name)
+        try:
+            st = os.stat(p)
+            with open(p, "rb") as f:
+                raw = f.read()
+        except OSError:
+            continue
+        key = (st.st_mtime_ns, st.st_size)
+        _STATIC[p] = (key, raw, '"%x-%x"' % key)
+        if len(raw) >= 1024:
+            _gz(raw, '"%x-%x"' % key)
+
+
 class H(BaseHTTPRequestHandler):
     server_version = "TeslaApp/1"
     protocol_version = "HTTP/1.1"
@@ -348,6 +401,7 @@ class H(BaseHTTPRequestHandler):
 
     # ---- helpers
     def send_bytes(self, body, ctype, code=200, extra=None):
+        self._nbytes = len(body)
         self.send_response(code)
         self.send_header("Content-Type", ctype)
         self.send_header("Content-Length", str(len(body)))
@@ -358,8 +412,53 @@ class H(BaseHTTPRequestHandler):
         if self.command != "HEAD":
             self.wfile.write(body)
 
+    def send_body(self, raw, ctype, cache="no-cache", etag=None, extra=None, level=1):
+        """A 200 that a client may keep: an ETag (the body's own hash unless given), 304 when the client already has it, gzip when it accepts it and
+        the body is worth it. `cache` is the Cache-Control value ('no-cache': kept, but asked again every time)."""
+        etag = etag or '"%s"' % hashlib.blake2b(raw, digest_size=12).hexdigest()
+        head = {"Cache-Control": cache, "ETag": etag, "Vary": "Accept-Encoding"}
+        head.update(extra or {})
+        if etag in [t.strip() for t in (self.headers.get("If-None-Match") or "").split(",")]:
+            self.send_response(304)
+            for k, v in head.items():
+                self.send_header(k, v)
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+            return
+        if len(raw) >= 1024 and "gzip" in (self.headers.get("Accept-Encoding") or ""):
+            raw = _gz(raw, etag, level)
+            head["Content-Encoding"] = "gzip"
+        self._nbytes = len(raw)
+        self.send_response(200)
+        self.send_header("Content-Type", ctype)
+        self.send_header("Content-Length", str(len(raw)))
+        for k, v in head.items():
+            self.send_header(k, v)
+        self.end_headers()
+        if self.command != "HEAD":
+            self.wfile.write(raw)
+
+    def send_static(self, path, cache="no-cache"):
+        """One of the page's own files (index.html, app.js, app.css, vendor/...), read again only when it changed on disk."""
+        try:
+            st = os.stat(path)
+        except OSError:
+            return self.send_bytes(b"not found", "text/plain", 404)
+        key = (st.st_mtime_ns, st.st_size)
+        hit = _STATIC.get(path)
+        if not hit or hit[0] != key:
+            with open(path, "rb") as f:
+                hit = _STATIC[path] = (key, f.read(), '"%x-%x"' % key)
+        ctype = mimetypes.guess_type(path)[0] or "application/octet-stream"
+        if ctype.startswith("text/") or ctype in ("application/javascript", "text/javascript", "application/json"):
+            ctype += "; charset=utf-8"
+        return self.send_body(hit[1], ctype, cache, hit[2], level=6)
+
     def send_json(self, obj, code=200):
-        self.send_bytes(json.dumps(obj, separators=(",", ":")).encode(), "application/json; charset=utf-8", code)
+        raw = json.dumps(obj, separators=(",", ":")).encode()
+        if code == 200 and self.command in ("GET", "HEAD"):          # an answer the window may keep: ETag (304 when the same) and gzip; asked again every time
+            return self.send_body(raw, "application/json; charset=utf-8")
+        self.send_bytes(raw, "application/json; charset=utf-8", code)
 
     def send_file(self, path, cache=False):
         try:
@@ -441,9 +540,21 @@ class H(BaseHTTPRequestHandler):
         path = urllib.parse.unquote(u.path)
         try:
             if path in ("/", "/index.html"):
-                return self.send_file(os.path.join(UI, "index.html"))
+                return self.send_static(os.path.join(UI, "index.html"))
             if path in ("/app.js", "/app.css"):
-                return self.send_file(os.path.join(UI, path[1:]))
+                return self.send_static(os.path.join(UI, path[1:]))
+            if path.startswith("/vendor/"):        # MapLibre, kept in lib/app_ui/vendor (pinned 4.7.1); the CDN only when the file is missing
+                name = path[8:]
+                if name in VENDOR:
+                    f = os.path.join(UI, "vendor", name)
+                    if os.path.isfile(f):
+                        return self.send_static(f, "public, max-age=31536000, immutable")
+                    self.send_response(302)
+                    self.send_header("Location", VENDOR[name])
+                    self.send_header("Content-Length", "0")
+                    self.end_headers()
+                    return None
+                return self.send_bytes(b"not found", "text/plain", 404)
             if path == "/icon.png":                 # the app icon, also the tab/window icon
                 return self.send_file(os.path.join(UI, "icon", "icon.png"), cache=True)
             if path in ("/solaredge/connect", "/solaredge/callback"):      # SolarEdge V2: the site owner approves the app here (lib/solaredge_v2.py)
@@ -457,6 +568,10 @@ class H(BaseHTTPRequestHandler):
                     return self.api(path[5:], urllib.parse.parse_qs(u.query))
                 finally:
                     dog.cancel()
+                    if not _FIRST_REQ[0]:
+                        _FIRST_REQ[0] = True
+                        perf_log.mark("first request", path=path)
+                    perf_log.request(path, time.time() - t_in, getattr(self, "_nbytes", 0))        # ~/Library/Logs/tesla_perf.log: over 0.15 s
                     if time.time() - t_in > 0.5:                # what is slow shows in the log (~/Library/Logs/tesla_app.log)
                         print("(slow: %s took %.1f s)" % (path, time.time() - t_in), file=sys.stderr, flush=True)
             if path.startswith("/data/"):
@@ -526,6 +641,9 @@ class H(BaseHTTPRequestHandler):
             body = json.loads(self.rfile.read(n) or b"{}")
             if u.path in ("/api/app/quit", "/api/app/restart"):      # quit the app, or start it again with the program as it is on disk
                 return self.send_json(app_exit(u.path.endswith("restart")))
+            if u.path == "/api/perf":              # what the page measured: {route, ms, first_ms} (lib/perf_log.py)
+                perf_log.client(body)
+                return self.send_json({"ok": True})
             if u.path == "/api/places/save":
                 with _ACTION_LOCK:
                     return self.send_json(STORE.pl.save(body))
@@ -666,9 +784,13 @@ class H(BaseHTTPRequestHandler):
 
     def api(self, name, q):
         S = STORE
+        if name == "teslacam":                  # the page opening looks at the volumes again, behind (the first look of a run is waited for)
+            _ROOTS["t"] = 0
+            footage_root("A")
         if name in KEPT_LISTS:                  # answered at once from what was kept, refreshed behind (lib/app_kept.py); ?fresh=1 waits for the newest
             raw, stale = KEPT.get(name, lambda: KEPT_LISTS[name](), q.get("fresh", [""])[0] == "1")
-            return self.send_bytes(raw, "application/json; charset=utf-8", 200, {"X-Stale": "1"} if stale else None)
+            tag = '"%s%s"' % (hashlib.blake2b(raw, digest_size=12).hexdigest(), "s" if stale else "")       # a stale answer never matches a fresh one (a 304 keeps the old headers)
+            return self.send_body(raw, "application/json; charset=utf-8", "no-cache", tag, {"X-Stale": "1"} if stale else None)
         if name == "status":
             try:
                 known = sorted({d["role"] for d in DR.REG.drives() if d["role"] in DR.read_roles()} | {"A"})      # the registered drives stay in the list while they are away
@@ -737,9 +859,6 @@ class H(BaseHTTPRequestHandler):
             return self.send_json(drive_review_state(q.get("id", [""])[0]))
         if name == "review/scanned":            # every minute whose signs have been read: {UTC epoch s of the minute: signs found}
             return self.send_json(TC.review_scanned())
-        if name == "teslacam":                  # the drives that are connected right now (found by what is on them)
-            _ROOTS["t"] = 0
-            return self.send_json(dict(drives=TC.drives()))
         if name == "drivelist":                 # the Drives list: Tessie's drives and charges as the rows, the dashcam's drives attached (or alone when there is no Tessie)
             return self.send_json(drivelist())
         if name == "stills/thin":               # how many minutes of ordinary driving have stills that could be smaller, what they take, and the job
@@ -751,10 +870,6 @@ class H(BaseHTTPRequestHandler):
             return self.send_json(CKEEP.job())
         if name == "clips/history":             # what the last deletes and moves removed (kept across restarts)
             return self.send_json(dict(jobs=CKEEP.history(30)))
-        if name == "clips":                     # every Recent run, Saved and Sentry event ever logged, whichever drives are connected; each says which drive holds it and whether it can be played
-            if DRIVELIST.has():                 # the cuts between the drive and parked sections of a recording are worked out (kept from the last time): refreshed behind, never waited for
-                drivelist()
-            return self.send_json(TC.clips_all(footage_roots()))
         if name.startswith("clips/shots/"):     # clips/shots/<saved|sentry>/<event folder>: the cameras that have a full-size picture of the moment, and which second of which clip it is
             m = re.match(r"^clips/shots/(saved|sentry)/(\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2})$", name)
             if not m:
@@ -1041,7 +1156,7 @@ def drivelist(wait=False):
     d = os.path.join
     watch = [d(DATA_DIR, "drives", "drives_master.csv"), d(DATA_DIR, "charges", "charges_master.csv"), d(DATA_DIR, "drives", "deepdive"), d(DATA_DIR, "tessie_sync_state.json"), d(DATA_DIR, "fetch_ledger.json"), d(DATA_DIR, "clip_clock.json"), d(DATA_DIR, "places.json"), d(DATA_DIR, "teslacam_timeline", "index.json"),
              d(DATA_DIR, "teslacam_ledger"), d(DATA_DIR, "teslacam_provenance"), d(DATA_DIR, "teslacam_timeline", "index.json"), KINDS.path] + [app_sentry.index_path(DATA_DIR, "teslacam_index_%s_%s.json" % (r, k)) for r in DR.read_roles() for k in ("saved", "sentry")]
-    return DRIVELIST.get(app_drivelist.signature(watch), build, wait)
+    return DRIVELIST.get(app_drivelist.signature(watch) + (("code", CODE_VERSION, None),), build, wait)       # kept on this computer with what it was built from: a restart does not build it again
 
 
 def tessie_auto():
@@ -1187,6 +1302,7 @@ def app_exit(restart=False):
 
 
 KEPT = None
+CODE_VERSION = "0"          # _code_version() at start: a list kept by other code is built again
 KEPT_LISTS = {          # the lists a page asks for first: answered from what was kept and refreshed behind (lib/app_kept.py)
     "summary": lambda: STORE.summary(),
     "activity": lambda: STORE.activity(),
@@ -1195,7 +1311,15 @@ KEPT_LISTS = {          # the lists a page asks for first: answered from what wa
     "alerts": lambda: STORE.alerts(),
     "places": lambda: STORE.pl.listing(STORE),
     "chargers": lambda: STORE.pl.charger_listing(STORE),
+    "teslacam": lambda: dict(drives=TC.drives()),                                 # the drives that are connected right now (found by what is on them)
+    "clips": lambda: _clips(),                  # every Recent run, Saved and Sentry event ever logged, whichever drives are connected; each says which drive holds it and whether it can be played
 }
+
+
+def _clips():
+    if DRIVELIST.has():                 # the cuts between the drive and parked sections of a recording are worked out (kept from the last time): refreshed behind, never waited for
+        drivelist()
+    return TC.clips_all(footage_roots())
 
 
 def _code_version():
@@ -1206,7 +1330,7 @@ def _code_version():
 
 
 def main():
-    global KINDS, KEPT, STORE, DATA_DIR, SENTRY, TC, DRV, SYNC, TSYNC, CSYNC, CCOST, FSYNC, REACH, SOFT, CARW, BOOK, FG, KEEP, DRIVELIST, TODO, CKEEP, STHIN
+    global KINDS, KEPT, CODE_VERSION, STORE, DATA_DIR, SENTRY, TC, DRV, SYNC, TSYNC, CSYNC, CCOST, FSYNC, REACH, SOFT, CARW, BOOK, FG, KEEP, DRIVELIST, TODO, CKEEP, STHIN
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--data-dir", default=DEFAULT_DATA)
     ap.add_argument("--port", type=int, default=int(app_config.get("window.port")))
@@ -1232,7 +1356,8 @@ def main():
     STORE = app_data.Store(DATA_DIR)
     STORE.local = local_cache_dir()
     home_ignore.set_places(lambda: STORE.pl.defs())          # the saved places: where a parked recording is left alone (Home)
-    KEPT = app_kept.Kept(local_cache_dir(), _code_version())
+    CODE_VERSION = _code_version()
+    KEPT = app_kept.Kept(local_cache_dir(), CODE_VERSION)
     DRIVELIST = app_drivelist.Cached(os.path.join(local_cache_dir(), "drivelist.json"))
     run_cuts.set_file(os.path.join(local_cache_dir(), "run_cuts.json"))
     KINDS = minute_kind.Kinds(os.path.join(local_cache_dir(), "minute_kind_v2.json"))
@@ -1272,12 +1397,15 @@ def main():
     FSYNC = app_sync.ChargerSync(CMDS, DATA_DIR, "sync_fuel_history.py", argv=[sys.executable, "sync_fuel_history.py", "--sync-all"])
     threading.Thread(target=tessie_auto, daemon=True).start()
     threading.Thread(target=fuel_auto, daemon=True).start()
+    perf_log.mark("setup done")
     try:
         srv = serve(a.port)
     except OSError:
         srv = serve(0)      # port taken: any free one
+    perf_log.mark("server bound", port=srv.server_address[1])
     url = "http://127.0.0.1:%d/" % srv.server_address[1]
     print("Tesla app: %s   (data: %s)" % (url, DATA_DIR), flush=True)
+    threading.Thread(target=_prime_static, daemon=True).start()
     threading.Thread(target=_warm, args=(srv.server_address[1],), daemon=True).start()
     if a.no_window:
         try:

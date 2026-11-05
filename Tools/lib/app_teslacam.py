@@ -611,20 +611,24 @@ class TeslaCam:
         if not teslacam:
             return []
         out, seen = [], set()
-        for e in self._sources(role, teslacam)[2]:
-            out += [m for m in self._sentry_minutes(role, teslacam, e["id"]) if m["stamp"] not in seen and not seen.add(m["stamp"]) and m["t"] + 60 > t0 and m["t"] < t1]
+        src = self._sources(role, teslacam)
+        rt = sorted(TL.secs(st) for st in src[0])               # once for every event (it was worked out again for each of them)
+        for e in src[2]:
+            out += [m for m in self._sentry_minutes(role, teslacam, e["id"], src, rt) if m["stamp"] not in seen and not seen.add(m["stamp"]) and m["t"] + 60 > t0 and m["t"] < t1]
         return out
 
-    def _sentry_minutes(self, role, teslacam, ev_id):
-        """The minutes of one Sentry event as footage minutes (src "sentry"), those the continuous recording does not already hold."""
+    def _sentry_minutes(self, role, teslacam, ev_id, src=None, rt=None):
+        """The minutes of one Sentry event as footage minutes (src "sentry"), those the continuous recording does not already hold. src / rt: the drive's
+        sources and the sorted times of its Recent minutes, when the caller already has them."""
         if not (teslacam and ev_id):
             return []
-        recent, _saved, sentry = self._sources(role, teslacam)
+        recent, _saved, sentry = src or self._sources(role, teslacam)
         e = next((x for x in sentry if x["id"] == ev_id), None)
         if not e:
             return []
         import bisect
-        rt = sorted(TL.secs(st) for st in recent)
+        if rt is None:
+            rt = sorted(TL.secs(st) for st in recent)
         out = []
         for st, cams in e["clips"].items():
             t = TL.secs(st)
@@ -641,8 +645,9 @@ class TeslaCam:
         sp = self.__dict__.get("_sp")
         if sp is None:
             sp = self.__dict__["_sp"] = short_place.ShortPlace(self.dir)
-        ver = CC.version()
-        if self.__dict__.get("_sp_ver") != ver:
+        ver = (CC.where_token(), len(store.sum or {}))          # what it is fed from: the clips' own places and the minutes whose telemetry is read (not the clock's version)
+        old = self.__dict__.get("_sp_ver")
+        if old is None or old[0] is not ver[0] or old[1] != ver[1]:
             self.__dict__["_sp_ver"] = ver
             items = []
             for st, (_street, sub) in CC.where_all().items():
