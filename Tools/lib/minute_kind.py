@@ -94,7 +94,8 @@ def probe_bg(kinds, unread, path_of, workers=4, save_every=24):
                         n += 1
                         if n % save_every == 0:
                             kinds.save()
-            kinds.save()
+            if n % save_every:              # nothing new since the last save: the file is left alone (rewriting it rebuilt the Drives list, which probed the same unreadable minutes again, without end)
+                kinds.save()
         finally:
             _BG["on"] = False
     threading.Thread(target=job, daemon=True).start()
