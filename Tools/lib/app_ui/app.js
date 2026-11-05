@@ -2330,7 +2330,12 @@ async function pageTeslaCam(role,id){
     all.forEach(v=>(byDay[v.ts.slice(0,10)]=byDay[v.ts.slice(0,10)]||[]).push(v));
     // One drive or parked spell is one card: its Recent minutes and the Saved / Sentry clips cut from the same time are shown together (the Saved folder holds copies of minutes of the drive), with a pill for each source.
     // The drive or park is the one the Drives list already knows (Tessie's drive, or the parked spell); a clip belongs to the one it overlaps most. A clip with none stays a card of its own.
-    const itemsAll=((dlist&&dlist.items)||[]).filter(x=>(x.kind==="drive"||x.kind==="parked"||x.kind==="stopped")&&x.t0!=null&&x.t1!=null).map(x=>x.kind==="stopped"?Object.assign({},x,{kind:"parked"}):x).sort((x,y)=>x.t0-y.t0);      // a "stopped" spell the dashcam saw (Tessie has no park for it yet) is a parked row too
+    const itemsAll=((dlist&&dlist.items)||[]).filter(x=>(x.kind==="drive"||x.kind==="parked"||x.kind==="stopped")&&x.t0!=null&&x.t1!=null).map(x=>x.kind==="stopped"?Object.assign({},x,{kind:"parked"}):x).flatMap(x=>{      // no overnight parks: a parked spell that runs past local midnight is one card per day (as the Drives list's rows and pages are), each with its own window
+      if(x.kind!=="parked"||!x.start||!x.end||x.end.slice(0,10)<=x.start.slice(0,10))return [x];
+      const d0=x.start.slice(0,10),d1=x.end.slice(0,10),out=[];
+      for(let d=d0,n=0;d<=d1&&n<60;n++,d=new Date(Date.parse(d+"T00:00:00Z")+864e5).toISOString().slice(0,10)){const a=Date.parse(d+"T00:00:00Z")/1000-(x.lo||0),t0=Math.max(x.t0,a),t1=Math.min(x.t1,a+86400);
+        if(t1>t0)out.push(Object.assign({},x,{id:x.id+"@"+d,t0,t1,start:d===d0?x.start:d+"T00:00:00",end:d===d1?x.end:d+"T24:00:00"}))}
+      return out}).sort((x,y)=>x.t0-y.t0);      // a "stopped" spell the dashcam saw (Tessie has no park for it yet) is a parked row too
     const spanOf=v=>v.ty==="recent"?[v.t0,v.t1]:(v.t!=null?[v.t,v.t]:[null,null]);
     // a Recent run that is parked goes with a parked row and one that is driving with a drive; Sentry goes with a park and Saved with a drive
     const kindOf=v=>v.ty==="sentry"||(v.ty==="recent"&&v.part==="park")?"parked":v.ty==="saved"||(v.ty==="recent"&&v.part==="drive")?"drive":null;
