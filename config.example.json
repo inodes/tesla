@@ -133,6 +133,7 @@
       "same_place_m": 300,
       "same_place_est_m": 800,
       "same_minute_s": 30,
+      "repeat_unheld_s": 10,
       "read_workers": 4,
       "days_newest_first": true,
       "rows_newest_first": false

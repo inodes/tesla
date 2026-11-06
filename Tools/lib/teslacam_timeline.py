@@ -43,6 +43,7 @@ OPTS = dict(moving_kmh=3.0,           # a minute whose top speed is under this i
             same_place_est_m=800,     # ... (this far when one of them is a Sentry event's approximate position)
             blip_kmh=1.0,             # a shift out of Park whose top speed stays under this did not move the car: a blip (nothing), not a drive or even a re-park
             short_m=200,              # a drive shorter than this is marked short (a re-park: the car was only moved a little)
+            repeat_unheld_s=10,       # a clip of a whole minute is a repeat of the Recent minutes when no more than this many seconds of it are held by none of them
             same_minute_s=30,         # a Saved minute this close to a Recent one is the same minute
             read_workers=4)           # clips read at once (the reading is CPU work)
 _LOCK = threading.RLock()
@@ -289,10 +290,20 @@ def overlaps_recent(stamp, t, rt):
     A clip the car closed early (a Sentry or Saved clip of 9 s, say, whose own header says so) that falls in the hole between two Recent minutes is NOT a repeat of either, even
     though its name is within same_minute_s of one: dropping it leaves a black hole where there is footage. A whole-minute clip, or one of unknown length, is a repeat."""
     d = CC.duration(stamp)
-    if d is None or d >= 55:
-        return True
-    a, b = t + 1.0, t + d - 1.0
     import bisect
+    if d is None or d >= 55:                               # a whole minute is a repeat only when the Recent minutes hold (nearly) all of it: a Sentry minute that starts in the hole before a Recent run
+        d = 60.0 if d is None else d                       # holds footage no Recent minute has (the moment it was detected, say)
+        a, b = t, t + d
+        held, end = 0.0, a
+        i = bisect.bisect_left(rt, t - 90)
+        while i < len(rt) and rt[i] < b:
+            lo_, hi_ = max(rt[i], end), min(rt[i] + 60.0, b)
+            if hi_ > lo_:
+                held += hi_ - lo_
+                end = hi_
+            i += 1
+        return (b - a) - held <= OPTS["repeat_unheld_s"]
+    a, b = t + 1.0, t + d - 1.0
     i = bisect.bisect_left(rt, t - 90)
     while i < len(rt) and rt[i] < t + 90:                  # only the Recent minutes within 90 s: rt is sorted, so not a walk of every minute ever recorded
         if rt[i] < b and a < rt[i] + 60.0:
