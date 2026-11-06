@@ -77,7 +77,7 @@ class OnePage(unittest.TestCase):
     def test_the_event_page_hands_over_to_the_row_that_holds_it(self):
         i = self.js.index("async function pageTeslaCamSentry(")
         blk = self.js[i:i + 4500]
-        self.assertIn("const h=await rowHashAt(e.t,e.id);if(h){location.replace(", blk)
+        self.assertIn("const h=await rowHashAt(e.t,e.id);if(h){NAVREPL=true;location.replace(", blk)
         self.assertLess(blk.index("rowHashAt(e.t,e.id)"), blk.index("sentryWindow(role,e,15)"))
 
     def test_the_row_address_carries_the_event_and_the_page_picks_it(self):
