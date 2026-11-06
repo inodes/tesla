@@ -1831,7 +1831,11 @@ function tlDays(host,items,o){
   rs.forEach(v=>{if(v._c!=="sentry")return;const p=parks.find(k=>inPark(trigAt(v),k))||parks.find(k=>inPark(v.t0,k));if(p){(p._sent=p._sent||[]).push(v);v._in=p.id}});
   // an event with no park around it (Tessie knows nothing of that time) still gets no line of its own: events a half hour apart or less are listed under one parked row made from them
   {const loose=rs.filter(v=>v._c==="sentry"&&!v._in).sort((a,b)=>a.t0-b.t0);let g=null;
-    loose.forEach(v=>{if(g&&v.t0-g._last<=1800){g._sent.push(v);g._last=Math.max(g._last,v.t1);g.t1=g._last;g.end=v.end>g.end?v.end:g.end;v._in=g.id}
+    // an event just before or after a park at the same place (no drive or charge between) is that park's: it joins the stay, it does not make a second row beside it
+    const hard2=rs.filter(h=>h._c==="drive"||h._c==="charge"),nearPark=v=>{const pv=v._pos||v.p0;return parks.filter(k=>!k._syn&&k._c==="parked").map(k=>{const pk=k.p0||k.p1||k._pos,lo=v.t1<=k.t0?v.t1:k.t1,hi=v.t1<=k.t0?k.t0:v.t0,gap=Math.max(0,hi-lo);
+        return{k,gap,ok:gap<=3600&&(!pv||!pk||pv[0]==null||pk[0]==null||hav(pv[0],pv[1],pk[0],pk[1])<=300)&&!(gap>0&&hard2.some(h=>h.t1>lo&&h.t0<hi))}}).filter(c=>c.ok).sort((x,y)=>x.gap-y.gap)[0]};
+    loose.forEach(v=>{const np=nearPark(v);if(np){const k=np.k;(k._sent=k._sent||[]).push(v);v._in=k.id;if(v.t0<k.t0){k.t0=v.t0;k.start=v.start}if(v.t1>k.t1){k.t1=v.t1;if(v.end>k.end)k.end=v.end}return}
+      if(g&&v.t0-g._last<=1800){g._sent.push(v);g._last=Math.max(g._last,v.t1);g.t1=g._last;g.end=v.end>g.end?v.end:g.end;v._in=g.id}
       else{g={id:"sp:"+v.id,kind:"parked",_c:"parked",_syn:true,src:null,start:v.start,end:v.end,t0:v.t0,t1:v.t1,_last:v.t1,p0:v.p0||null,p1:null,_pos:v._pos||v.p0||null,city:v.city,street:v.street,_sent:[v],lo:v.lo};rs.push(g);parks.push(g);v._in=g.id}});
     parks.sort((a,b)=>a.t0-b.t0)}
   // dashcam minutes that lie inside a park (the car woke for a Sentry event and recorded, nothing moved) are part of that park
