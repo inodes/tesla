@@ -159,6 +159,7 @@ function navTrack(){
 // Previous / Next on a drive, park or clip page: the neighbours in the list the page was opened from (the Drives list or the TeslaCam page), in the order shown there
 function pnBar(extra){const L=(window.NAVLIST&&window.NAVLIST.hs)||[],cur=decodeURIComponent(location.hash||""),i=L.findIndex(h=>{h=decodeURIComponent(h);return cur===h||cur.startsWith(h+"/")}),a=i>0?L[i-1]:null,b=i>=0&&i<L.length-1?L[i+1]:null;
   return a||b||extra?`<div class="bar pn" style="margin:6px 0 10px">${a?`<a class="btn sm" href="${a}">◀ Previous</a>`:""}${b?`<a class="btn sm" href="${b}">Next ▶</a>`:""}${extra||""}</div>`:""}
+document.addEventListener("click",e=>{const a=e.target.closest&&e.target.closest(".pn a[href^='#/']");if(a){NAVREPL=true;setTimeout(()=>{NAVREPL=false},800)}},true);      // Previous / Next likewise: the neighbour takes the place of this page in the way back
 function crumbs(h,label){let p=NAV.length>1?NAV[NAV.length-2]:null;if(p&&NAVREDIR(p.h)&&NAVWIN(location.hash||""))p=NAV.length>2?NAV[NAV.length-3]:null;if(p&&p.h!==(location.hash||"")){h=p.h;label=esc(p.label||navLabel(p.h))}return `<div class="crumb"><a href="${h}">← ${label}</a></div>`}
 
 // ---------- stacked charts on one shared axis (charge pages)
@@ -725,7 +726,7 @@ function chartSub(p,part,cur){
 // forward and back through a set of charges: the charges of one park, or the Charges list as filtered (kept by the page that opened this charge, dropped when the user leaves the charge pages)
 function chargeSet(id,pid){let s=null;try{s=JSON.parse(sessionStorage.getItem("chargeSet")||"null")}catch(e){}if(!s||!s.ids||s.ids.length<2)return null;
   const i=s.ids.findIndex(x=>String(x)===String(id)||String(x)===String(pid));return i<0?null:{ids:s.ids,i,label:s.label}}
-const chargeNavHtml=c=>{if(!c)return "";const go=j=>`onclick="location.hash='#/charge/${encodeURIComponent(c.ids[j])}'"`;
+const chargeNavHtml=c=>{if(!c)return "";const go=j=>`onclick="NAVREPL=true;location.hash='#/charge/${encodeURIComponent(c.ids[j])}'"`;      // an earlier / later charge REPLACES this one in the way back: ← still leads to the Charges list, however many were cycled through
   return `<div class="bar cnav"><button class="chip" ${c.i>0?go(c.i-1):"disabled"} title="Earlier charge">‹</button><span class="sub">Charge ${c.i+1} of ${c.ids.length} · ${esc(c.label)}</span><button class="chip" ${c.i<c.ids.length-1?go(c.i+1):"disabled"} title="Later charge">›</button></div>`};
 // home (Evnex) charges: how much of the car's power was solar and how much was bought from the grid.
 // Same split the cost model uses (lib/pv_history_db.py): in each 15-minute meter reading, the share of the house's use that was met by its own solar (self-consumed / consumption),

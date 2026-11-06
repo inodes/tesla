@@ -61,6 +61,12 @@ class Page(unittest.TestCase):
         self.assertIn('vd.addEventListener("loadedmetadata",hudUpd)', s)
         self.assertIn("figs.find(shown)", s)
 
+    def test_cycling_charges_or_neighbours_does_not_stack_the_way_back(self):
+        """‹ › on a charge and Previous / Next on a drive replace the page in the way back: ← leads to the list however many were cycled through."""
+        s = js()
+        self.assertIn("""onclick="NAVREPL=true;location.hash='#/charge/""", s)
+        self.assertIn("""closest(".pn a[href^='#/']")""", s)
+
 
 if __name__ == "__main__":
     unittest.main()
