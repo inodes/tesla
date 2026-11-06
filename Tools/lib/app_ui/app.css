@@ -213,12 +213,11 @@ tr.chline{cursor:pointer}tr.chline td{color:var(--bad);font-weight:600;font-size
 /* TeslaCam clip pages: the camera on the left and the map on the right on a wide screen (as on Drives), or stacked with both wide; the telemetry under both */
 #tdb.side{display:grid;grid-template-columns:minmax(0,1fr);column-gap:12px}
 #tdb.side>*{grid-column:1/-1}#tdb.side>:empty{display:none}
-#tdb.side>.dvc{grid-row:5;margin-top:12px}#tdb.side>#dmapc{grid-row:6;margin-top:12px}#tdb.side>#dchc{grid-row:7}
-#tdb.side>#drv{grid-row:8}#tdb.side>#dev{grid-row:9}      /* the cards of the events and signs come after the video, map and telemetry: filled in late, they must not push the video down */
+#tdb.side>.dvc{grid-row:5;margin-top:12px}#tdb.side>#dev{grid-row:6}#tdb.side>#drv{grid-row:7}#tdb.side>#dmapc{grid-row:8;margin-top:12px}#tdb.side>#dchc{grid-row:9}      /* one column (a narrow window): the Saved clips and Sentry events come straight under the video (filled in late, they must not push the video down, and must not be three screens down); side by side they sit under the chart */
 .lay{display:inline-flex;gap:6px;align-items:center;margin-right:10px}
 @media (max-width:1099px){.lay{display:none}}
 @media (min-width:1100px){#tdb.side:not(.stack){grid-template-columns:minmax(0,1fr) minmax(0,1fr)}
- #tdb.side:not(.stack)>.dvc{grid-column:1;grid-row:5}#tdb.side:not(.stack)>#dmapc{grid-column:2;grid-row:5}#tdb.side:not(.stack)>#dchc{grid-row:6}
+ #tdb.side:not(.stack)>.dvc{grid-column:1;grid-row:5}#tdb.side:not(.stack)>#dmapc{grid-column:2;grid-row:5}#tdb.side:not(.stack)>#dchc{grid-row:6}#tdb.side:not(.stack)>#drv{grid-row:8}#tdb.side:not(.stack)>#dev{grid-row:9}
  #tdb.side:not(.stack)>#dmapc[hidden]~.dvc{grid-column:1/-1}}
 /* clip cards: tick box, size on the thumbnail (red for the big ones), and what is kept from the video */
 .evc{position:relative}.evc em{font-style:normal}

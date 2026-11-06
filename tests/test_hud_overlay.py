@@ -223,6 +223,32 @@ class SpikeTest(unittest.TestCase):
         self.assertEqual(r["why"], "spk")
         self.assertEqual(run('hudTrust({"text":"110","conf":64},null,[],false).why'), "")
 
+    def test_the_cars_speed_widens_the_search_for_a_spike(self):
+        # 09:22 on 8 Sep: 50, then 100 and 110 three minutes apart (they agree with each other), then 60; the car held about 50
+        a = json.dumps([dict(t=0, text="50"), dict(t=13, text="100"), dict(t=193, text="110"), dict(t=248, text="60")])
+        slow = "k=>52"
+        self.assertTrue(run("hudSpike(13,'100',%s,%s)" % (a, slow)))
+        self.assertTrue(run("hudSpike(193,'110',%s,%s)" % (a, slow)))
+        self.assertFalse(run("hudSpike(13,'100',%s)" % a))                           # without the car's speed only the short stretch applies
+        self.assertFalse(run("hudSpike(13,'100',%s,k=>95)" % a))                     # a car doing 95 agrees with a 100 sign
+        self.assertFalse(run("hudSpike(0,'50',%s,%s)" % (a, slow)))
+        self.assertFalse(run("hudSpike(248,'60',%s,%s)" % (a, slow)))
+
+
+class VoteTest(unittest.TestCase):
+    def test_a_number_read_less_often_loses_to_the_one_read_more(self):
+        # 09:26:43: 80, 70, 80 in the same second: the 70 is a misread of the same 80 sign
+        o80 = [dict(text="80", conf=70, lat=1, dt=0), dict(text="80", conf=70, lat=1, dt=0)]
+        o70 = [dict(text="70", conf=70, lat=1, dt=0), dict(text="80", conf=70, lat=1, dt=0)]
+        self.assertLess(run('hudTrust({"text":"70","conf":70,"fx":.5,"rf":.05},null,%s,false).t' % json.dumps(o80)), .3)
+        self.assertGreaterEqual(run('hudTrust({"text":"80","conf":70,"fx":.5,"rf":.05},null,%s,false).t' % json.dumps(o70)), .3)
+
+    def test_two_signs_together_the_low_confidence_one_is_ignored(self):
+        clear = [dict(text="50", conf=90, lat=1, dt=1)]
+        covered = [dict(text="100", conf=45, lat=1, dt=-1)]
+        self.assertLess(run('hudTrust({"text":"100","conf":45,"fx":.5,"rf":.05},null,%s,false).t' % json.dumps(clear)), .3)
+        self.assertGreaterEqual(run('hudTrust({"text":"50","conf":90,"fx":.5,"rf":.05},null,%s,false).t' % json.dumps(covered)), .3)
+
 
 class ParkedOverlayTest(unittest.TestCase):
     def test_no_speed_or_limit_sign_while_parked(self):

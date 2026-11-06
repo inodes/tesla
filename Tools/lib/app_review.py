@@ -36,6 +36,7 @@ OPTS = dict(step_s=1.0,        # a still every this many seconds
             refine_conf=85.0,  # a sign read this surely, in more than one still, with one number, is left as it is
             crop_px=320,       # the longest side of the picture kept of each sign: big enough to read the number from again once the video is gone
             frame_w=2896)      # the width of a front-camera picture, for a reading that did not keep it (x and r are in its pixels)
+SIGN_CAMS = ("front",)      # the only camera a speed sign is read from: the front picture (its left and right edges are "the left" and "the right"). The repeaters and the back camera are never read for signs; the pillars, if ever, only as a low-priority second look
 READER = 2          # which sign reader made a minute's record: 1 (none stored) tesseract, 2 the trained reader with school buses left out; a record of an older reader is read again where the footage is still held
 _LOCK = threading.RLock()
 _DAYFILE = re.compile(r"^\d{4}-\d\d-\d\d\.json$")      # a day's file: not the copy iCloud makes when two Macs save at once ("2026-09-16 2.json"), whose old minutes would count as never read

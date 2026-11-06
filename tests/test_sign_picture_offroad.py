@@ -58,3 +58,12 @@ class SignPictureTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class SignCamerasTest(unittest.TestCase):
+    def test_speed_signs_are_read_from_the_front_camera_only(self):
+        import re
+        root = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "Tools", "lib")
+        src = open(os.path.join(root, "app_review.py"), encoding="utf-8").read()
+        self.assertIn('SIGN_CAMS = ("front",)', src)
+        self.assertNotRegex(src, r"left_repeater|right_repeater|\bback\b.*\.mp4")

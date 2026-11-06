@@ -146,7 +146,7 @@ function navTrack(){
   L=NAV.length;
   if(L&&NAV[L-1].h===h){}                                                          // a refresh
   else if(L>1&&NAV[L-2].h===h)NAV.pop();                                           // went back
-  else if(L&&(NAVREPL||navPage(NAV[L-1].h)===navPage(h)))NAV[L-1]={h};            // the same page (another tab of it) or a replacement
+  else if(L&&(NAVREPL||navPage(NAV[L-1].h)===navPage(h)||/^#\/teslacam\/[^/]+\/(sentry-|at-)/.test(NAV[L-1].h)&&/^#\/teslacam\/auto\/win-/.test(h)))NAV[L-1]={h};            // the same page (another tab of it) or a replacement
   else NAV.push({h});
   NAVREPL=false;
   if(NAV.length>1&&NAV[NAV.length-1].h===NAV[NAV.length-2].h)NAV.pop();
@@ -1043,13 +1043,20 @@ const hudStrength=(conf,lat)=>hudWLat(lat)*Math.max(.3,(conf>0?conf:60)/100);
 // A limit read far above the signs on both sides of it, where those two agree with each other, is a false reading (a shop's "no under 18" sign, a number on a truck): 60 110 60 and 60 110 70 cannot happen
 // within a short stretch of road, while 40 50 40 60 50 70 80 90 100 is a normal drive. HUD_SPIKE: the lower signs are at least `jump` km/h under it, within `span` seconds before and after it, and within
 // `near` km/h of each other. all = [{t (second), text}] every speed sign of the span in time order -> true / false
-const HUD_SPIKE={jump:30,near:10,span:90};
+const HUD_SPIKE={jump:30,near:10,span:90,slow:.65,far:300,nearFar:20};
 const HUD_GEAR={0:0,2:1,3:2,1:3};      // the car's gear number (0 Park, 1 Drive, 2 Reverse, 3 Neutral) -> its place in P R N D
-const hudSpike=(t,text,all)=>{const x=+text;if(!(x>0)||!all)return false;let p=null,n=null;
-  for(const o of all){const v=+o.text;if(!(v>0)||v>x-HUD_SPIKE.jump)continue;if(o.t<t-.5&&t-o.t<=HUD_SPIKE.span)p=o;else if(o.t>t+.5&&o.t-t<=HUD_SPIKE.span&&!n)n=o}
-  return !!(p&&n&&Math.abs(+p.text-+n.text)<=HUD_SPIKE.near)};
+// The car's own speed is a second witness: a limit read at least `jump` km/h above what the car is doing (it holds under `slow` of the reading, median of the 10 s each side) is looked for over a longer stretch,
+// `far` seconds each side, and its lower neighbours may differ by `nearFar`: 50 100 ... 110 60 with the car at 50 cannot be right, whatever the two high readings say of each other.
+// spd(k) = the car's speed k seconds from the sign (km/h, null where not read); without it only the short stretch applies.
+const hudSpike=(t,text,all,spd)=>{const x=+text;if(!(x>0)||!all)return false;let slow=false;
+  if(spd){const a=[];for(let k=-10;k<=10;k++){const v=spd(k);if(v!=null&&v>0)a.push(v)}if(a.length>=5){a.sort((p,q)=>p-q);const m=a[a.length>>1];slow=m<=x*HUD_SPIKE.slow&&x-m>=HUD_SPIKE.jump}}
+  const span=slow?HUD_SPIKE.far:HUD_SPIKE.span,near=slow?HUD_SPIKE.nearFar:HUD_SPIKE.near;let p=null,n=null;
+  for(const o of all){const v=+o.text;if(!(v>0)||v>x-HUD_SPIKE.jump)continue;if(o.t<t-.5&&t-o.t<=span)p=o;else if(o.t>t+.5&&o.t-t<=span&&!n)n=o}
+  return !!(p&&n&&Math.abs(+p.text-+n.text)<=near)};
 const hudTrust=(g,spd,others,spike)=>{const lat=hudLat(g),wl=hudWLat(lat),ws=spd?hudWSpd(+g.text,spd):1,own=hudStrength(g.conf,lat);let wo=1;
-  for(const o of others||[]){if(!o||!o.text||o.text===g.text||Math.abs(o.dt)>15)continue;const so=hudStrength(o.conf,o.lat);if(so>own)wo=Math.min(wo,Math.max(.05,Math.pow(own/so,2)))}
+  // the same sign is often read several times in a second or two (80 70 80 at 09:26:43): reads of one number within VOTE s of this one stand together, and a number read less often and less surely loses to the one read more
+  const VOTE=4,grp=(txt)=>{let q=0;for(const o of others||[])if(o&&o.text===txt&&Math.abs(o.dt)<=VOTE)q+=hudStrength(o.conf,o.lat);return q},sup=own+grp(g.text);
+  for(const o of others||[]){if(!o||!o.text||o.text===g.text||Math.abs(o.dt)>15)continue;const so=Math.abs(o.dt)<=VOTE?grp(o.text):hudStrength(o.conf,o.lat);if(so>sup)wo=Math.min(wo,Math.abs(o.dt)<=VOTE&&sup<so*.9?.1:Math.max(.05,Math.pow(sup/so,2)))}      // two signs seen together (a tree-covered one beside the clear one): the less sure is set aside outright
   const t=spike?0:wl*ws*wo,m=Math.min(wl,ws,wo);return{t,lat,w:[wl,ws,wo],why:t>=HUD_DOUBT?"":spike?"spk":m===wo?"ovr":m===ws?"spd":"lat"}};
 // doubt(stamp, sign) says whether a sign was one the car did not answer (not held as the limit); the answer is kept on the sign once it can be given
 const hudLimit=(SGV,stamps,si,t,doubt,skip)=>{for(let i=si;i>=0&&i>=si-60;i--){const L=(SGV[stamps[i]]||[]).filter(g=>g.kind!=="school"&&/^\d{2,3}$/.test(String(g.text))&&(i<si||g.s0<=t+.5)&&!(skip&&skip(g))&&!hudDoubtOf(doubt,stamps[i],g)).sort((a,b)=>b.s0-a.s0);if(L.length)return +L[0].text}return null};
@@ -1639,7 +1646,7 @@ function healthInto(host,b){          // the health charts, drawn under the Batt
   if(a1)$("#s1").textContent=a1;if(a2)$("#s2").textContent=a2;
 }
 
-async function pageHealth(){location.replace("#/battery")}      // the health charts moved onto the Battery page; an old link lands there
+async function pageHealth(){NAVREPL=true;location.replace("#/battery")}      // the health charts moved onto the Battery page; an old link lands there
 // ---------- Battery (Tessie's Battery page: where the charge level is now and how it moved, and below it the battery health)
 let BP={r:{p:"30"}};
 async function pageBattery(){
@@ -2533,7 +2540,7 @@ async function pageTeslaCamSentry(role,ev){
       host.innerHTML=`<h1><i class="hal big"></i> ${k.reason?esc(reason(k.reason)):"Event"} · ${dayName(k.ts.slice(0,10))} · ${hms(k.ts).slice(0,5)}</h1><div class="sub">${esc([k.city,k.street].filter(Boolean).join(" · "))}</div><div class="card" style="margin-top:12px" id="dvid"></div>`;
       return stillViewer($("#dvid"),{stamps:Object.keys(k.clips).sort(),roles:k.roles,loc:k.loc,trig:Date.parse(k.cts||k.ts),ev:{kind:(all.sentry||[]).includes(k)?"sentry":"saved",id:k.id},head:""})}
     // one page for a drive or a park: an event opens the page of the row of the Drives list that holds it, with the event picked (never a page of its own beside it)
-    if(e.t>0){const h=await rowHashAt(e.t,e.id);if(h){location.replace(location.pathname+location.search+h);return}}
+    if(e.t>0){const h=await rowHashAt(e.t,e.id);if(h){NAVREPL=true;location.replace(location.pathname+location.search+h);return}}
     // no row holds it (Tessie and the dashcam know nothing round that time): a window round the event, built the same way
     if(e.t>0){let d=null;try{d=await sentryWindow(role,e,15)}catch(_){}
       if(d&&d.item&&d.item.kind==="drive"){const what=e.reason?reason(e.reason):"Sentry event";
@@ -2562,7 +2569,7 @@ async function rowHashAt(u,ev){
   return ""}
 async function goMoment(u,ev){location.hash=(await rowHashAt(u,ev))||"#/teslacam/auto/at-"+Math.round(u)}
 // a moment (#/teslacam/auto/at-<t>) opens the page of the drive or park that holds it (Tessie's times, to the second, name it: "from → to"); only a moment no row holds gets a window around it
-async function pageTeslaCamMoment(u){const h=await rowHashAt(u);if(h){location.replace(location.pathname+location.search+h);return}return pageTeslaCamAt(u)}
+async function pageTeslaCamMoment(u){const h=await rowHashAt(u);if(h){NAVREPL=true;location.replace(location.pathname+location.search+h);return}return pageTeslaCamAt(u)}
 async function pageTeslaCamAt(t,t1,lo,k,tid,ev){      // t alone: the moment (a window around it); t and t1: that span of time (a row of the Drives list)
   loading();const pl=await api("places").catch(()=>({saved:[]}));
   let row=null;if(tid){try{row=((await api("drivelist")).items||[]).find(v=>v.id===tid)||null}catch(e){}}      // Tessie's row of this drive: its names, its parts, and the ids that let the server fill Tessie's route where the dashcam has none
@@ -2679,7 +2686,7 @@ async function teslaDriveBody(host,role,fetchSeg,places,opts){
   const cursor=sec=>{const i=Math.max(0,Math.min(S().v.length-1,Math.round(sec)));if(map)map.cursor(i);if(chart)chart.cursor(i)};
   // the block of the bar for the minute that is playing turns yellow
   let SGALL=null;       // every speed sign of the span, once read: {t (second of the span), text, conf, lat (m off the car's line)}
-  const sgNear=(t,text)=>(SGALL||[]).filter(e=>e.text!==text&&Math.abs(e.t-t)<=15).map(e=>({text:e.text,conf:e.conf,lat:e.lat,dt:e.t-t}));
+  const sgNear=(t,text,g)=>(SGALL||[]).filter(e=>e.g!==g&&Math.abs(e.t-t)<=15).map(e=>({text:e.text,conf:e.conf,lat:e.lat,dt:e.t-t}));
   // the reasons the car writes into a Saved clip's event.json (nothing else is valid), with the page's own words
   const SAVE_REASONS=[["user_interaction_dashcam_icon_tapped",REASON.user_interaction_dashcam_icon_tapped||"Dashcam icon tapped"],["user_interaction_dashcam_launcher_action_tapped",REASON.user_interaction_dashcam_launcher_action_tapped||"Dashcam launcher tapped"],["user_interaction_honk",REASON.user_interaction_honk||"Horn"],["vehicle_auto_emergency_braking",REASON.vehicle_auto_emergency_braking||"Emergency braking"]];
   let covOn=null,covSel=null,covAnchor=null,covAsk=false,covNote="";const covNow=off=>{if(covOn===off)return;covOn=off;$$("#dcov i",host).forEach(b=>b.classList.toggle("now",+b.dataset.o===off))};
@@ -2717,7 +2724,7 @@ async function teslaDriveBody(host,role,fetchSeg,places,opts){
     const allM=cont(),blackDrive=!playable.length&&!d.minutes.length&&allM.length>0;      // a drive Tessie knows, with no footage at all: all black
     if(!player&&(playable.length||blackDrive)){const mm=allM,cams={},meta={},syn={},len={};mm.forEach(m=>{cams[m.stamp]=m.cams||[];meta[m.stamp]=m;if(m.syn){syn[m.stamp]=1;len[m.stamp]=m.len}});covStrip(mm);
       player=clipPlayer($("#dvid"),{stamps:mm.map(m=>m.stamp),cams,syn,len,still:stillSrc,trig:opts.trig,
-        hot:opts.hot,signInfo,hide:asideSign,doubt:(st,g)=>{const sr=S(),m=meta[st];if(!sr||!m||!SGALL)return null;const t=m.off+g.s0;return hudTrust(g,k=>{const x=sr.v[Math.round(t+k)];return x==null?null:x},sgNear(t,g.text),hudSpike(t,g.text,SGALL)).t<HUD_DOUBT},
+        hot:opts.hot,signInfo,hide:asideSign,doubt:(st,g)=>{const sr=S(),m=meta[st];if(!sr||!m||!SGALL)return null;const t=m.off+g.s0;const sp=k=>{const x=sr.v[Math.round(t+k)];return x==null?null:x};return hudTrust(g,sp,sgNear(t,g.text,g),hudSpike(t,g.text,SGALL,sp)).t<HUD_DOUBT},
         gear:(st,sec)=>{const sr=S(),m=meta[st],g=sr&&sr.gear&&m?sr.gear[m.off+Math.floor(sec)]:null;return g===1||g===2||g===3?g:0},      // the car's gear (1 Drive, 2 Reverse, 3 Neutral); anything else, or none read, is Park
         parked:(st,sec)=>{const x=it(),sr=S(),m=meta[st];if(x&&x.kind==="stopped")return true;if(!sr||!m)return false;const i=m.off+Math.floor(sec),g=sr.gear?sr.gear[i]:null;if(g===0)return true;if(g===1||g===2||g===3)return false;return sr.v[i]==null||sr.v[i]<1},      // a parked page, or the car in Park (or no gear read and not moving): no speed, no limit sign over the video
         tele:(st,sec)=>{const sr=S(),m=meta[st];if(!sr||!m)return null;const i=m.off+Math.floor(sec);return sr.v[i]==null?null:{v:sr.v[i],blk:sr.blk[i]||0}},
@@ -2739,8 +2746,8 @@ async function teslaDriveBody(host,role,fetchSeg,places,opts){
     const SL=L.filter(([m,g])=>g.text&&g.kind!=="school").sort((a,b)=>(a[0].off+a[1].s0)-(b[0].off+b[1].s0)),V=S().v;
     // a sign the car did not answer (read well below the speed it holds, and it holds it: a side road's or an exit's limit seen from the main road) is not a limit the car was under: it is not the "prior" limit
     // of the next sign and it is not speeding
-    SGALL=SL.map(([m,g])=>({t:m.off+g.s0,text:g.text,conf:g.conf,lat:hudLat(g)}));
-    const trOf=(m,g)=>{const t=m.off+g.s0;return hudTrust(g,k=>{const x=V[Math.round(t+k)];return x==null?null:x},sgNear(t,g.text),hudSpike(t,g.text,SGALL))},TR=new Map(SL.map(e=>[e[1],trOf(e[0],e[1])])),DB=new Map(SL.map(e=>[e[1],TR.get(e[1]).t<HUD_DOUBT])),SLK=SL.filter(e=>!DB.get(e[1]));
+    SGALL=SL.map(([m,g])=>({g,t:m.off+g.s0,text:g.text,conf:g.conf,lat:hudLat(g)}));
+    const trOf=(m,g)=>{const t=m.off+g.s0,sp=k=>{const x=V[Math.round(t+k)];return x==null?null:x};return hudTrust(g,sp,sgNear(t,g.text,g),hudSpike(t,g.text,SGALL,sp))},TR=new Map(SL.map(e=>[e[1],trOf(e[0],e[1])])),DB=new Map(SL.map(e=>[e[1],TR.get(e[1]).t<HUD_DOUBT])),SLK=SL.filter(e=>!DB.get(e[1]));
     SL.forEach(([m,g])=>{const t=m.off+g.s0,dbt=DB.get(g);let pr=null;for(let q=SLK.length-1;q>=0;q--){const e=SLK[q];if(e[1]===g)continue;const d=t-(e[0].off+e[1].s0);if(d<0)continue;if(d>1200)break;if(d>3||e[1].text!==g.text){pr=e[1].text;break}}
       let sp=null;for(const dd of [0,1,-1,2,-2]){const x=V[Math.round(t)+dd];if(x!=null){sp=x;break}}
       SGCTX.set(m.stamp+"|"+g.s0+"|"+g.text+"|"+g.side,{sp,pr,dbt,why:TR.get(g).why,off:dbt&&TR.get(g).why==="lat"&&(pr!=null?+pr:sp)!=null&&+g.text>(pr!=null?+pr:sp),over:!dbt&&sp!=null&&sp>(+(pr||g.text)||999)+SPEEDTOL})});
