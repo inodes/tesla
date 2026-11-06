@@ -137,6 +137,10 @@ const setPbar=(r,pct)=>{const b=$(".pbar",r),i=b&&$("i",b);if(!b||!i)return fals
 // h and label are only the fallback, for a page opened directly. A main-menu click starts a new path; saving or deleting a place replaces the page it was done on.
 const NAVK="nav.stack",ROOTS={activity:"Activity",drives:"Drives",driveslist:"Drives",charges:"Charges",parked:"Parked",idles:"Parked",places:"Places",alerts:"Alerts",software:"Software",battery:"Battery",health:"Health",analytics:"Analytics",teslacam:"TeslaCam",queue:"Queue"};
 let NAV=(()=>{try{return JSON.parse(sessionStorage.getItem(NAVK)||"[]")}catch(e){return[]}})(),NAVREPL=false,NAVRESET=false;
+// A Sentry event or a moment opens the page of the drive or park that holds it (the address is replaced): an entry of that kind followed by the page it opened is not a place to go back to
+// (it only leads on to the same page). Entries kept in the tab by an older version are cleaned the same way.
+const NAVREDIR=h=>/^#\/teslacam\/[^/]+\/(sentry-|at-)/.test(String(h)),NAVWIN=h=>/^#\/teslacam\/auto\/win-/.test(String(h));
+NAV=NAV.filter((e,i,a)=>!(e&&NAVREDIR(e.h)&&a[i+1]&&NAVWIN(a[i+1].h)));
 const navSeg=h=>String(h).replace(/^#\//,"").split("/"),navPage=h=>navSeg(h).slice(0,2).join("/");
 const navLabel=h=>ROOTS[navSeg(h)[0]]||({drive:"Drive",charge:"Charge",place:"Place",idle:"Parked"})[navSeg(h)[0]]||"Back";
 function navTrack(){
@@ -155,7 +159,7 @@ function navTrack(){
 // Previous / Next on a drive, park or clip page: the neighbours in the list the page was opened from (the Drives list or the TeslaCam page), in the order shown there
 function pnBar(extra){const L=(window.NAVLIST&&window.NAVLIST.hs)||[],cur=decodeURIComponent(location.hash||""),i=L.findIndex(h=>{h=decodeURIComponent(h);return cur===h||cur.startsWith(h+"/")}),a=i>0?L[i-1]:null,b=i>=0&&i<L.length-1?L[i+1]:null;
   return a||b||extra?`<div class="bar pn" style="margin:6px 0 10px">${a?`<a class="btn sm" href="${a}">◀ Previous</a>`:""}${b?`<a class="btn sm" href="${b}">Next ▶</a>`:""}${extra||""}</div>`:""}
-function crumbs(h,label){const p=NAV.length>1?NAV[NAV.length-2]:null;if(p&&p.h!==(location.hash||"")){h=p.h;label=esc(p.label||navLabel(p.h))}return `<div class="crumb"><a href="${h}">← ${label}</a></div>`}
+function crumbs(h,label){let p=NAV.length>1?NAV[NAV.length-2]:null;if(p&&NAVREDIR(p.h)&&NAVWIN(location.hash||""))p=NAV.length>2?NAV[NAV.length-3]:null;if(p&&p.h!==(location.hash||"")){h=p.h;label=esc(p.label||navLabel(p.h))}return `<div class="crumb"><a href="${h}">← ${label}</a></div>`}
 
 // ---------- stacked charts on one shared axis (charge pages)
 function stack(host,t,panels,xfmt){
@@ -261,10 +265,13 @@ const ARW=d=>`<svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke
 const ORD={_d:null,_r:null,
   get dayDesc(){if(this._d===null){const v=lsGet("ord.days",null);this._d=v==null?cfg("teslacam.days_newest_first")!==false:v==="1"}return this._d},set dayDesc(x){this._d=!!x;lsSet("ord.days",x?"1":"0")},
   get rowDesc(){if(this._r===null){const v=lsGet("ord.rows",null);this._r=v==null?cfg("teslacam.rows_newest_first")===true:v==="1"}return this._r},set rowDesc(x){this._r=!!x;lsSet("ord.rows",x?"1":"0")}};
+// a table that is not grouped by day (Charges) has ONE sort, the date and the time together: newest first or oldest first
+const ordOne=()=>`<span class="rsort"><button class="chip fsort" type="button" data-ord="days" aria-label="Order by date and time" title="Sorted by date and time: ${ORD.dayDesc?"newest first":"oldest first"} (click to change)">${calSvg}${ARW(ORD.dayDesc)}</button></span>`,
+  ordFlat=(a,b)=>(ORD.dayDesc?-1:1)*((a.t0||0)-(b.t0||0));
 const ordBtns=()=>`<span class="rsort"><button class="chip fsort" type="button" data-ord="days" aria-label="Order of the days" title="The order of the days: ${ORD.dayDesc?"newest first":"oldest first"} (click to change)">${calSvg}${ARW(ORD.dayDesc)}</button><button class="chip fsort" type="button" data-ord="rows" aria-label="Order of the times inside a day" title="The order of the times inside a day: ${ORD.rowDesc?"newest first":"oldest first"} (click to change)">${clkSvg}${ARW(ORD.rowDesc)}</button></span>`;
 // rows of a flat table (a day and a "HH:MM"), in that order of days and of times
 const ordCmp=(a,b)=>{if(a.day!==b.day)return (ORD.dayDesc?-1:1)*(a.day<b.day?-1:1);const x=a.hm||"",y=b.hm||"";if(x!==y)return (ORD.rowDesc?-1:1)*(x<y?-1:1);return (ORD.rowDesc?-1:1)*((a.t0||0)-(b.t0||0))};
-function rangeBar(host,key,st,days,onChange){
+function rangeBar(host,key,st,days,onChange,flat){
   const K="rng:"+key,sorted=[...days].sort(),lo=sorted[0],hi=sorted[sorted.length-1],T=()=>ymd(new Date());
   if(!st._r){st._r=1;let k=null;try{k=JSON.parse(localStorage.getItem(K)||"null")}catch(e){}
     if(k&&k.p){st.p=k.p;st.a=k.a;st.b=k.b}else{st.p="today";st.a=st.b=undefined}}
@@ -276,7 +283,7 @@ function rangeBar(host,key,st,days,onChange){
     if(n===1){const o=dir<0?sorted.filter(d=>d<r[0]).pop():sorted.find(d=>d>r[1]);if(!o)return;a=b=o}else{a=shift(r[0],dir*n);b=shift(r[1],dir*n)}
     if(a===b&&a===T()){st.p="today"}else{st.p="custom";st.a=a;st.b=b}
     save();paint();onChange()};
-  const paint=()=>{host.innerHTML='<span class="rnav"><button class="chip" type="button" data-n="-1" aria-label="Earlier" title="Earlier">‹</button><span class="rpk"></span><button class="chip" type="button" data-n="1" aria-label="Later" title="Later">›</button></span>'+ordBtns();
+  const paint=()=>{host.innerHTML='<span class="rnav"><button class="chip" type="button" data-n="-1" aria-label="Earlier" title="Earlier">‹</button><span class="rpk"></span><button class="chip" type="button" data-n="1" aria-label="Later" title="Later">›</button></span>'+(flat?ordOne():ordBtns());
     rangePicker($(".rpk",host),st,days,()=>{save();paint();onChange()});
     $$("[data-n]",host).forEach(b=>{const d=+b.dataset.n;b.disabled=!can(d);b.onclick=()=>step(d)});
     $$("[data-ord]",host).forEach(b=>b.onclick=()=>{if(b.dataset.ord==="days")ORD.dayDesc=!ORD.dayDesc;else ORD.rowDesc=!ORD.rowDesc;paint();onChange()})};
@@ -619,7 +626,7 @@ async function pageCharges(){
     const withInv=rs.filter(x=>x.invoice).length,billed=rs.filter(x=>!x.home&&!/UNBILLED/.test(x.status||"")).length,uns=rs.filter(x=>x.sync==="pending"||x.sync==="partial").length;
     sendCosts($("#csb"),P.filter(x=>x.sync==="pending"||x.sync==="partial").length);$("#tl").innerHTML=tile(n0(rs.length),"charges"+(recs!==rs.length?" ("+recs+" Tessie records)":""))+tile(n0(kwh)+" kWh","battery energy added")+tile(money(cost),"cost")+tile(kwh?money(cost/kwh)+"/kWh":"–","average price")+tile(withInv+" of "+billed,"public charges with an invoice")+tile(uns?uns+" to send":"all sent",uns?"costs not yet in Tessie":"costs are in Tessie");
     const val=(p,k)=>k==="where"?(p.where||"").toLowerCase():k==="invn"?invn(p):p[k];
-    rs.sort((a,b)=>{if(CP.sk==="t0")return ordCmp(a,b);const x=val(a,CP.sk),y=val(b,CP.sk);if(x==null||y==null)return (x==null)-(y==null);return CP.dir*cmpv(x,y)});
+    rs.sort((a,b)=>{if(CP.sk==="t0")return ordFlat(a,b);const x=val(a,CP.sk),y=val(b,CP.sk);if(x==null||y==null)return (x==null)-(y==null);return CP.dir*cmpv(x,y)});
     const row=p=>{const multi=p.parts.length>1,op=CP.open[p.id];
       let h=`<tr class="chr" data-id="${p.id}"><td class="l">${p.day} ${p.hm}${multi?` <span class="pill ptg" data-tg="${p.id}" title="${op?"Hide":"Show"} the ${p.parts.length} Tessie records">${op?"▾":"▸"} ${p.parts.length} parts</span>`:""}</td><td class="l">${whereLink({pkey:p.pkey,place:p.where,addr:p.addr})}</td><td>${kindPill(p.kind)}</td><td>${dur(p.min)}</td><td>${n0(p.b0)}→${n0(p.b1)}%</td><td>${p.peak==null?"–":n0(p.peak)}</td><td>${p.kmh==null?"–":n0(p.kmh)}</td><td>${p.disp==null?"–":n0(p.disp,1)}</td><td>${n0(p.kwh,1)}</td><td>${p.eff==null?"–":n0(p.eff)+"%"}</td><td>${p.rate==null?"–":rate(p.rate)}</td><td>${money(p.cost)}</td><td>${p.invoice?esc(p.invoice.number||"yes"):p.home?'<span class="sub">–</span>':'<span class="pill warn" title="No invoice matched this charge">none</span>'}</td><td>${syncPill(p.sync)}</td></tr>`;
       if(multi&&op)h+=p.parts.map(x=>`<tr class="chs" data-id="${x.id}"><td class="l" style="padding-left:30px">↳ ${x.day} ${x.hm}</td><td class="l sub">part of the charge above</td><td></td><td>${dur(x.min)}</td><td>${n0(x.b0)}→${n0(x.b1)}%</td><td>${x.peak==null?"–":n0(x.peak)}</td><td>${x.kmh==null?"–":n0(x.kmh)}</td><td>${x.disp==null?"–":n0(x.disp,1)}</td><td>${n0(x.kwh,1)}</td><td></td><td>${x.irate==null&&x.trate==null?"–":rate(x.irate!=null?x.irate:x.trate)}</td><td>${money(x.icost!=null?x.icost:x.ocost!=null?x.ocost:x.tcost)}</td><td class="sub">${p.invoice?"same invoice":""}</td><td>${syncPill(x.sync)}</td></tr>`).join("");
@@ -640,7 +647,7 @@ async function pageCharges(){
    <div id="tsb" style="margin:10px 0"></div>
    <div id="csb"></div>
    <div class="bar"><button class="chip" data-tab="charges">Charges</button><button class="chip" data-tab="invoices">Invoices (${B.invoices.length})</button><span id="rg"></span><select id="kd"><option value="all">All types</option><option value="ac">AC / home</option><option value="dc">DC fast</option><option value="supercharger">Supercharger</option></select><select id="iv"><option value="all">Any invoice state</option><option value="with">With an invoice</option><option value="without">Public, no invoice</option><option value="unsynced">Invoice cost not in Tessie</option></select><input type="search" id="q" placeholder="Search a place or invoice…" value="${esc(CP.q)}"></div><div class="tiles" id="tl"></div><div id="tb" style="overflow-x:auto"></div>`;
-  $("#kd").value=CP.kind;$("#iv").value=CP.inv;rangeBar($("#rg"),"charges",CP.r,daysOf(P),show);$("#kd").onchange=e=>{CP.kind=e.target.value;show()};$("#iv").onchange=e=>{CP.inv=e.target.value;show()};$("#q").oninput=e=>{CP.q=e.target.value;show()};
+  $("#kd").value=CP.kind;$("#iv").value=CP.inv;rangeBar($("#rg"),"charges",CP.r,daysOf(P),show,true);$("#kd").onchange=e=>{CP.kind=e.target.value;show()};$("#iv").onchange=e=>{CP.inv=e.target.value;show()};$("#q").oninput=e=>{CP.q=e.target.value;show()};
   $$("[data-tab]").forEach(c=>c.onclick=()=>{CP.tab=c.dataset.tab;show()});show();
   if(B0.status==="building")bookPoll("#/charges",pageCharges,true,B0);
   tessieSync($("#tsb"),{kind:"charges",steps:8,always:true,always_note:"Fetches new charges from Tessie, their charging curves and the invoices. It takes a few minutes.",after:()=>{bust();route()}});
@@ -1086,6 +1093,16 @@ let TCPAUSE=false;
 // the label on the video of an event ("West Ryde, NSW" and "Tue 3 Nov 2026 10:58AM AEDT"): `loc()` is the local clock text of each minute, `lo` the clock's offset from UTC
 function evInfo(loc,at,lo){return (st,sec)=>{const m=loc(),l=m&&m[st],base=l?Date.parse(l+"Z"):0;if(!(base>0))return null;const dt=new Date(base+Math.floor(sec)*1000),h=dt.getUTCHours();
   return{a:at||"",b:DOW[dt.getUTCDay()]+" "+dt.getUTCDate()+" "+MON[dt.getUTCMonth()]+" "+dt.getUTCFullYear()+" "+(h%12||12)+":"+String(dt.getUTCMinutes()).padStart(2,"0")+(h<12?"AM":"PM")+(lo!=null?" "+zlab(lo):"")}}}
+// the tile of a video that could not be played: black, with the reason on it (and the camera's name under it, as for a minute with no video)
+function lostVideo(v){const fig=v.closest("figure[data-c]");if(!fig)return;const n=+fig.dataset.rt||0;
+  let lb=fig.querySelector(".lostb");
+  if(!lb){fig.classList.add("lost","blk");fig.style.aspectRatio="2896/1876";v.hidden=true;lb=document.createElement("div");lb.className="lostb";lb.innerHTML="<span>Looking for this clip…</span>";fig.insertBefore(lb,fig.firstChild);
+    v.addEventListener("loadeddata",()=>{fig.classList.remove("lost","blk");fig.style.aspectRatio="";v.hidden=false;lb.remove();delete fig.dataset.rt},{once:true})}
+  const sp=lb.firstChild,m=/^\/footage\/([^/]+)\/(.+)$/.exec((()=>{try{return decodeURIComponent(new URL(v.currentSrc||v.getAttribute("src")||"",location.href).pathname)}catch(e){return""}})());
+  if(!m){sp.textContent="This clip could not be played.";return}
+  fetch("/api/clips/moving?path="+encodeURIComponent(m[2])).then(r=>r.json()).then(j=>{const to=j&&j.moving;
+    if(to&&n<90){sp.textContent="Being moved to "+(DRX[to]||to)+". It plays from there when the move is done.";setTimeout(()=>{if(document.contains(fig)){fig.dataset.rt=n+1;v.load()}},4000)}
+    else sp.textContent="This clip could not be played (missing, or the drive was disconnected)."}).catch(()=>{sp.textContent="This clip could not be played (missing, or the drive was disconnected)."})}
 function clipPlayer(host,o){
   const stamps=o.stamps;if(!stamps.length){host.innerHTML='<div class="sub">This has no video clips.</div>';return}
   // a clip's name is the car's clock (stMs: only used to place things that are on that same clock, like a Sentry trigger); what is SHOWN is the local clock (o.loc: stamp -> local text)
@@ -1121,7 +1138,12 @@ function clipPlayer(host,o){
   const SDAY={},hudSchoolNow=()=>{const st=stamps[si],hms=shownAt(st,mv.currentTime);return hudSchool(SGV,stamps,si,mv.currentTime,(i,g)=>stMs(stamps[i])/1000+g.s0,{min:+hms.slice(0,2)*60+ +hms.slice(3,5)},(i,g)=>{
     const w=o.where&&o.where(stamps[i],g.s0);if(!w)return null;const day=LOC(stamps[i]).slice(0,10),k=day+"|"+(+w.lat).toFixed(1)+"|"+(+w.lon).toFixed(1);
     if(!(k in SDAY)){SDAY[k]=undefined;fetch("/api/schoolday?date="+day+"&lat="+w.lat+"&lon="+w.lon).then(r=>r.json()).then(j=>{SDAY[k]=j.school_day==null?null:!!j.school_day;hudUpd()}).catch(()=>{SDAY[k]=null})}return SDAY[k]})};
-  const hudUpd=()=>{if(!(o.tele||o.info)||!mv)return;const fig=$('#vids figure[data-c="front"]')||$('#vids figure[data-c]'),vd=fig&&fig.querySelector("video");if(!vd)return;const fr=!!o.tele&&fig.dataset.c==="front";let h=fig.querySelector(".hud");      // the place and the time are on whichever camera is shown; the sign, the speed and the indicators only on the front one
+  const hudUpd=()=>{if(!(o.tele||o.info)||!mv)return;const shown=f=>{const v=f.querySelector("video");return !!v&&v.clientWidth>0&&v.clientHeight>0&&!f.hidden},figs=$$("#vids figure[data-c]"),fig=figs.find(f=>f.dataset.c==="front"&&shown(f))||figs.find(shown)||null,vd=fig&&fig.querySelector("video");
+    figs.forEach(f=>{if(f!==fig){const x=f.querySelector(".hud");if(x)x.remove()}});      // the label goes on a camera that is on screen (a hidden or black tile has no picture to sit on: the label then ended up far from the video)
+    if(!vd)return;
+    if(window.ResizeObserver&&!fig._hro){fig._hro=new ResizeObserver(()=>{if(document.contains(fig))hudUpd()});fig._hro.observe(fig);fig._hro.observe(vd)}      // the label sits on the picture's box: measured again whenever the picture is resized (a zoomed camera, the window, the cards below loading), not only as the video plays
+    if(!vd._hm){vd._hm=1;vd.addEventListener("loadedmetadata",hudUpd);vd.addEventListener("resize",hudUpd)}
+    const fr=!!o.tele&&fig.dataset.c==="front";let h=fig.querySelector(".hud");      // the place and the time are on whichever camera is shown; the sign, the speed and the indicators only on the front one
     if(!hudOn()){if(h)h.remove();return}
     if(!h){h=document.createElement("div");h.className="hud";h.innerHTML='<div class="hsg" hidden><b></b></div><div class="hsp" hidden><b></b><small>km/h</small></div><svg class="hbk hl" viewBox="0 0 24 24"><path d="M2 12l9-8v5h11v6H11v5z"/></svg><svg class="hbk hr" viewBox="0 0 24 24"><path d="M2 12l9-8v5h11v6H11v5z"/></svg><div class="hin" hidden><b></b><span></span></div><div class="hgr" hidden><i>P</i><i>R</i><i>N</i><i>D</i></div><div class="hsr" hidden></div>';fig.appendChild(h)}
     const b=hudBox(vd.clientWidth,vd.clientHeight,vd.videoWidth,vd.videoHeight),st=h.style;st.left=(vd.offsetLeft+b.x)+"px";st.top=(vd.offsetTop+b.y)+"px";st.width=b.w+"px";st.height=b.h+"px";st.fontSize=(b.w/100)+"px";
@@ -1169,7 +1191,9 @@ function clipPlayer(host,o){
     mv.onended=()=>{if(TCPAUSE||si>=stamps.length-1)return;si++;seek=0;                  // the last frame of this minute stays on screen until the next one is loaded behind it, then they swap
       if(!(nx&&nx.i===si))prep(si);if(nx&&nx.i===si&&nx.m[cam]){const f=nx.m[cam],t0=Date.now(),go=()=>{if(!document.contains(host))return;if(f.readyState>=3||Date.now()-t0>2500)swap();else setTimeout(go,30)};go()}else vids()};
     mv.addEventListener("loadeddata",()=>{hudUpd();hotUpd()});
-    mv.onerror=()=>box.insertAdjacentHTML("afterbegin",'<div class="sub">This clip could not be played (missing, or the drive was disconnected).</div>');
+    // A video that cannot be played goes black in its own place and says why on the tile (nothing is added beside the tiles, so nothing moves): being moved to another drive (the page asks the server; it tries
+    // again until the clip is there: the server finds a moved clip on the drive it is now on), or missing / the drive is away.
+    if(!box.dataset.err){box.dataset.err="1";box.addEventListener("error",e=>{if(e.target.tagName==="VIDEO")lostVideo(e.target)},true)}
     pl.onclick=()=>{if(mv.paused){TCPAUSE=false;vs.forEach(x=>x.play().catch(()=>{}))}else{TCPAUSE=true;vs.forEach(x=>x.pause())}};
     sk.oninput=()=>seekAll(+sk.value)};
   // Loading the next minute ahead doubles the decoders (12 streams of 2896x1876 with all six cameras), which can make cameras stall: with all six it starts only in the last seconds.

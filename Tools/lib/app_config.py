@@ -54,7 +54,7 @@ the block). A change takes effect the next time the app or script reads it (the 
   app.drives.charge_window_minutes                 a charge within this long after / before a drive makes it "to charge" / "from charge"
   app.drives.range_days_shown                      how many days of a long date range the Drives list draws at once; "Show more days" adds the next 31
   app.drives.charger_name_m                        a stop, start or parked spell this close (m) to a charge that has just happened (or is happening) and is not at a saved place is named after the charger, exactly as the charge is stored
-  app.drives.tessie_auto_sync_minutes              the app runs the Tessie drives sync by itself (sync_drives_all.sh) when the dashcam saw a drive Tessie has not given yet, at most this often; 0 = only when you press Sync from Tessie
+  app.drives.tessie_auto_sync_minutes              the app runs the Tessie drives and charges syncs by itself (sync_drives_all.sh, sync_charging_all.sh) a minute after it opens and then whenever the last one is older than this, one at a time and only when nothing else is busy; one cut short or failed is tried again after 5 min, doubling; default 60; 0 = only when you press Sync from Tessie
   app.drives.tessie_fresh_minutes                  after a Tessie sync this long ago, with nothing missing, the Drives page has no Sync from Tessie button (it shows when the last sync was)
   app.drives.low_battery_pct                       the "finished at N% or less" filter
   app.places.stay_min_seconds                      a gap between real drives shorter than this is not a parked period
@@ -96,7 +96,7 @@ DEFAULTS = {
     "keeper": {"background": True, "stills": True, "interval_s": 20, "pass_gap_s": 300, "play_wait_s": 30},
     "drives": {"repark_max_km": 0.05, "repark_same_place_km": 0.3, "repark_same_place_m": 50, "repark_max_minutes": 10, "join_gap_s": 120,
                "long_highway_km": 30, "long_highway_fast_kmh": 90, "long_highway_fast_minutes": 10,
-               "charge_window_minutes": 30, "charger_name_m": 300, "range_days_shown": 31, "low_battery_pct": 20, "tessie_auto_sync_minutes": 0, "tessie_fresh_minutes": 60},
+               "charge_window_minutes": 30, "charger_name_m": 300, "range_days_shown": 31, "low_battery_pct": 20, "tessie_auto_sync_minutes": 60, "tessie_fresh_minutes": 60},
     "places": {"stay_min_seconds": 120, "save_radius_min_m": 100, "save_radius_margin_m": 25, "save_radius_cluster_m": 250},
     "reach": {"reserve_pct": 10, "image_px": 800, "shade_km": 8, "gaps_shade_km": 15, "idle_unload_min": 15, "pbf_url": "https://download.geofabrik.de/australia-oceania/australia-latest.osm.pbf"},
     "nearby": {"overpass_endpoints": ["https://overpass.kumi.systems/api/interpreter", "https://overpass.private.coffee/api/interpreter",

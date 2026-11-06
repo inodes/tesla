@@ -8,7 +8,7 @@ The state is worked out from the position (au_state); close to a border (`border
 
     SP = ShortPlace(data_dir, geocode=None)       geocode(lat, lon) -> {"address": {...}} or None (default: places_common.reverse_geocode)
     SP.feed([(lat, lon, suburb), ...])            the clips that know their suburb and position
-    SP.label(suburb, lat, lon)                    -> "Suburb, ST" | "ST" | "Suburb" | ""
+    SP.label(suburb, lat, lon)                    -> "Suburb, ST" | "ST" | "Suburb" | ""   (no position: the state the suburb has in the other clips; "Suburb" alone only when it was never seen with one)
 """
 import json
 import math
@@ -48,11 +48,30 @@ class ShortPlace:
 
     # ------------------------------------------------------------------------------------------------ the clips' own suburbs
     def feed(self, items):
-        grid = {}
+        grid, states = {}, {}
         for lat, lon, sub in items:
             if sub and lat is not None and lon is not None:
                 grid.setdefault((int(lat // CELL), int(lon // CELL)), []).append((lat, lon, sub))
+                st = au_state.state(lat, lon)
+                if st:
+                    seen = states.setdefault(sub.strip().lower(), {})
+                    seen[st] = seen.get(st, 0) + 1
         self.grid = grid
+        self.sub_state = {k: max(v, key=v.get) for k, v in states.items()}
+
+    def state_of(self, suburb):
+        """The state of a suburb by name, from the clips that know it with a position (the most common one) or from the lookups kept; None when it was never seen with a position."""
+        key = (suburb or "").strip().lower()
+        if not key:
+            return None
+        got = getattr(self, "sub_state", {}).get(key)
+        if got:
+            return got
+        with self.lock:
+            for hit in self.cache.values():
+                if hit and len(hit) > 1 and hit[1] and (hit[0] or "").strip().lower() == key:
+                    return hit[1]
+        return None
 
     def nearest(self, lat, lon):
         """The suburb of the nearest clip that has one, within near_m; None when there is none."""
@@ -121,7 +140,8 @@ class ShortPlace:
         suburb = (suburb or "").strip()
         state = au_state.state(lat, lon) if lat is not None and lon is not None else None
         if lat is None or lon is None:
-            return suburb
+            st = self.state_of(suburb)              # no position read for this minute: the state of the suburb as the other clips know it
+            return ", ".join(x for x in (suburb, st) if x)
         doubt = au_state.near_border(lat, lon, self.border_deg)
         if not suburb:
             suburb = self.nearest(lat, lon) or ""

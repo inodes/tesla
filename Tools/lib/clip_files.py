@@ -16,8 +16,9 @@ MAX_REVEAL = 60
 COPY_EXT = (".mp4",)
 
 
-def resolve(urls, footage_root, safe_join):
-    """[/footage/<role>/<rel>, ...] -> [path] of the files that exist (in order, no repeats); anything else is left out."""
+def resolve(urls, footage_root, safe_join, elsewhere=None):
+    """[/footage/<role>/<rel>, ...] -> [path] of the files that exist (in order, no repeats); anything else is left out. A clip that was moved is still named by the drive it was on:
+    `elsewhere(role, rel)` finds the same file on another connected drive, which is where Show in Finder and Copy must go."""
     out, seen = [], set()
     for u in urls or []:
         u = urllib.parse.unquote(str(u).split("?")[0])
@@ -25,9 +26,11 @@ def resolve(urls, footage_root, safe_join):
             continue
         role, _, rel = u[9:].partition("/")
         root = footage_root(role)
-        if not root or not rel.lower().endswith(COPY_EXT):
+        if not rel.lower().endswith(COPY_EXT):
             continue
-        p = safe_join(root, rel)
+        p = safe_join(root, rel) if root else None
+        if not (p and os.path.isfile(p)) and elsewhere:
+            p = elsewhere(role, rel)
         if p and os.path.isfile(p) and p not in seen:
             seen.add(p)
             out.append(p)

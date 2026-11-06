@@ -43,6 +43,16 @@ class PDFTextExtractor:
 
     @classmethod
     def extract_text(cls, pdf_path: str) -> str:
+        """The text of the PDF, read once: kept on disk by path, size and modified time (invoice_text_cache.json in the data folder), so a sync only reads the PDFs that are new or changed.
+        An empty read is never kept (it is tried again next time)."""
+        try:
+            from lib import pdf_text_cache as PC
+        except ImportError:
+            import pdf_text_cache as PC
+        return PC.text(pdf_path, cls._read_text)
+
+    @classmethod
+    def _read_text(cls, pdf_path: str) -> str:
         """Extract full plain text from PDF with layout reconstruction."""
  # Fast path: if pypdf or pdfplumber is available, try it first
         try:

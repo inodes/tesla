@@ -58,8 +58,20 @@ class LabelTest(unittest.TestCase):
         self.assertEqual(sp.label("Coolangatta", -28.168, 153.54), "Coolangatta, QLD")      # the line says NSW or QLD to a few hundred metres: the lookup decides
         self.assertEqual(len(self.calls), 1)
 
-    def test_no_position_gives_the_suburb_alone(self):
+    def test_no_position_and_a_suburb_never_seen_with_one_gives_the_suburb_alone(self):
         self.assertEqual(self.mk().label("Tingalpa", None, None), "Tingalpa")
+
+    def test_no_position_takes_the_state_the_other_clips_give_that_suburb(self):
+        sp = self.mk()
+        sp.feed([(-33.829, 151.22, "Neutral Bay"), (-33.83, 151.221, "Neutral Bay"), (-27.98, 153.43, "Main Beach")])
+        self.assertEqual(sp.label("Neutral Bay", None, None), "Neutral Bay, NSW")        # a parked minute has no telemetry: the state still shows
+        self.assertEqual(sp.label("neutral bay", None, None), "neutral bay, NSW")
+        self.assertEqual(sp.label("Main Beach", None, None), "Main Beach, QLD")
+
+    def test_no_position_takes_the_state_from_a_lookup_kept_for_that_suburb(self):
+        sp = self.mk()
+        sp.cache["-33.960,151.138"] = ["Kogarah", "NSW"]
+        self.assertEqual(sp.label("Kogarah", None, None), "Kogarah, NSW")
 
 
 if __name__ == "__main__":

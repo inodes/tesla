@@ -241,6 +241,19 @@ def thin_scope(items):
     return set(items), stamps
 
 
+def other_drive_file(role, rel):
+    """The file `rel` (a path under a drive's TeslaCam folder) on another connected drive, or None. A clip that was moved keeps its place in the folder, only the drive changes, so a page that
+    still names the old drive finds it where it is now (the drive it was on first, in Archive, JOWUA, Tesla USB, then any other order)."""
+    for r in DR.read_roles():
+        if r == role:
+            continue
+        rt = footage_root(r)
+        p = safe_join(rt, rel) if rt else None
+        if p and os.path.isfile(p):
+            return p
+    return None
+
+
 def footage_roots():
     """{role: TeslaCam folder} of every connected drive."""
     return {r: footage_root(r) for r in DR.read_roles() if footage_root(r)}
@@ -642,6 +655,8 @@ class H(BaseHTTPRequestHandler):
                 if not root or not rel.lower().endswith(FOOT_EXT):
                     return self.send_bytes(b"drive not connected", "text/plain", 404)
                 p = safe_join(root, rel)
+                if not (p and os.path.isfile(p)):
+                    p = other_drive_file(role, rel)      # the page may still name the drive the clip was on: it has been moved, and plays from where it is now
                 if p and os.path.isfile(p):
                     if KEEP:
                         KEEP.playing_now()          # the background reading steps aside while video plays
@@ -719,7 +734,7 @@ class H(BaseHTTPRequestHandler):
                     return self.send_json(COPIER.status(str(body.get("job", ""))))
                 if act == "open":                  # the folder a finished copy went to
                     return self.send_json(clip_files.open_folder(COPIER.dest_of(str(body.get("job", "")))))
-                paths = clip_files.resolve(body.get("urls"), footage_root, safe_join)
+                paths = clip_files.resolve(body.get("urls"), footage_root, safe_join, other_drive_file)
                 if act == "reveal":
                     return self.send_json(clip_files.reveal(paths))
                 if act == "copy":
@@ -893,6 +908,8 @@ class H(BaseHTTPRequestHandler):
             return self.send_json(STHIN.scope_status(sorted(clips), stamps) if clips else STHIN.status())
         if name == "clips/keep":                # per clip (Recent run, Saved, Sentry): what is kept from its video, and its size on each drive (nothing is read from a drive)
             return self.send_json(CKEEP.status())
+        if name == "clips/moving":              # clips/moving?path=<file under a drive's TeslaCam folder>: the role of the drive it is being moved to, or "" when it is not being moved
+            return self.send_json({"moving": CKEEP.moving(os.path.basename(q.get("path", [""])[0]))})
         if name == "clips/job":                 # the delete / move being done to the drives, or the last one
             return self.send_json(CKEEP.job())
         if name == "clips/history":             # what the last deletes and moves removed (kept across restarts)
@@ -1231,18 +1248,40 @@ def drivelist(wait=False):
 
 
 def tessie_auto():
-    """With app.drives.tessie_auto_sync_minutes above 0 and Tessie set up: when the dashcam saw drives Tessie has not given yet, run the Drives sync, at most that often."""
-    last = 0.0
+    """Keeps the drives and the charges from Tessie up to date by itself (lib/tessie_auto.py): a minute after the app opens, then whenever the last clean sync is older than
+    app.drives.tessie_auto_sync_minutes (default 60; 0 = only when you press Sync), one sync at a time, and only while nothing else is busy with the drives. One that was cut short or
+    failed is tried again after a wait that doubles each time. The dashcam seeing a drive Tessie has not given yet also starts the drives sync, at most that often."""
+    import tessie_auto as TA
+    time.sleep(45)
+    jobs = [dict(kind="charges", sync=lambda: CSYNC, begin=charges_started, state=charges_state), dict(kind="drives", sync=lambda: TSYNC, begin=tessie_started, state=tessie_state)]
+    for j in jobs:
+        j.update(tried=0.0, fails=0, seen=True)
     while True:
-        time.sleep(60)
+        time.sleep(30)
         try:
             gap = float(app_config.get("drives.tessie_auto_sync_minutes") or 0) * 60
-            if gap <= 0 or TSYNC.running() or time.time() - last < gap or not app_sync.tessie_configured():
+            if gap <= 0 or not app_sync.tessie_configured():
                 continue
-            m = drivelist(True).get("missing") or {}
-            if m.get("cam_only") or m.get("no_page"):
-                last = time.time()
-                TSYNC.start()
+            busy = any(x is not None and x.running() for x in (TSYNC, CSYNC, CCOST)) or (CKEEP is not None and CKEEP.job().get("running"))
+            for j in jobs:                                                    # what the last one we started came to
+                if not j["seen"]:
+                    out = TA.outcome(j["sync"]().status(0))
+                    if out != "running":
+                        j["seen"] = True
+                        j["fails"] = 0 if out in ("ok", "stopped") else j["fails"] + 1
+                        j["stopped"] = out == "stopped"
+            if busy:
+                continue
+            now = time.time()
+            for j in jobs:
+                ok_at = (j["state"]() or {}).get("at")
+                m = (drivelist(True).get("missing") or {}) if j["kind"] == "drives" else {}
+                if TA.due(now, ok_at, j["tried"], j["fails"], gap, j.get("stopped", False)) or (j["kind"] == "drives" and (m.get("cam_only") or m.get("no_page")) and now - j["tried"] >= gap):
+                    r = j["sync"]().start()
+                    if r.get("ok") is not False and r.get("running"):
+                        j["tried"], j["seen"] = now, False
+                        j["begin"]()
+                    break                                                     # one at a time: the other goes next time round
         except Exception as e:
             print("(Tessie auto sync: %s)" % e, flush=True)
 

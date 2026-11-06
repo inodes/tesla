@@ -80,6 +80,7 @@ class ClipKeep:
         self._groups = {}
         self._lock = threading.Lock()
         self._job = dict(running=False)
+        self._mv = {}                      # {file name: role it is being moved to} while a Move is working: a clip knows it is on its way
         self._thread = None
         self._stop = False
         self.shots = ES.EventShots(data_dir)
@@ -446,6 +447,7 @@ class ClipKeep:
                     read = (kind_of, paths, [(it["kind"], it["id"]) for it in lack if it["kind"] != "recent"])
         self._stop = False
         self._roots = roots
+        self._mv = {os.path.basename(TF.front_path(roots[role], f)): to for _, _, f in files} if action == "move" else {}
         self._job = dict(running=True, action=action, role=role, to=to, files=len(files), done=0, bytes=sum(sz for _, sz, _ in files), bytes_done=0, freed=0, errors=[], current="",
                          clips=len(plan), t0=time.time(), reading=False, after=bool(read), step="", step_done=0, step_total=0, steps=[])
         if read:
@@ -1021,6 +1023,10 @@ class ClipKeep:
             self._stop = True
             rv.stop()
 
+    def moving(self, name):
+        """The role of the drive the file `name` is being moved to while a Move is working on it, else "": a clip that cannot be played from where the page looked for it says it is on its way."""
+        return self._mv.get(name, "")
+
     def job(self):
         j = dict(self._job)
         j["running"] = bool(self._thread and self._thread.is_alive())
@@ -1059,10 +1065,12 @@ class ClipKeep:
                     if action == "move" and not self._has(led, key, size, to):
                         raise OSError("the Archive does not hold it" if to == "A" else "the drive it goes to does not hold it")
                     os.remove(src)
+                    self._mv.pop(os.path.basename(src), None)
                     removed.append(os.path.basename(src))
                     j["freed"] += size
                     touched.add(led.mark(role, key, size, False, flush=False))
                 except FileNotFoundError:
+                    self._mv.pop(os.path.basename(src), None)
                     touched.add(led.mark(role, key, size, False, flush=False))
                 except OSError as e:
                     j["errors"].append("%s: %s" % (os.path.basename(src), e))
@@ -1071,6 +1079,7 @@ class ClipKeep:
                 if j["done"] % 40 == 0:
                     led.flush({d for d in touched if d})
         finally:
+            self._mv = {}
             led.flush({d for d in touched if d})
             self._log(action, role, clips, removed, j)
             self._changed()

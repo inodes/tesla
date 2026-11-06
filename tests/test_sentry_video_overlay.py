@@ -56,7 +56,7 @@ class Ui(unittest.TestCase):
 
     def test_the_overlay_goes_on_the_camera_shown_and_the_sentry_players_have_it(self):
         self.assertIn("if(!(o.tele||o.info)||!mv)return;", self.js)
-        self.assertIn("||$('#vids figure[data-c]')", self.js)                      # not only the front camera
+        self.assertIn("figs.find(shown)", self.js)                      # not only the front camera
         self.assertIn("const fr=!!o.tele&&fig.dataset.c===\"front\"", self.js)     # the sign, speed and indicators stay on the front one
         self.assertEqual(self.js.count("info:evInfo(()=>"), 2)                      # the event page and the player of a Saved / Sentry event
         self.assertIn("function evInfo(loc,at,lo)", self.js)

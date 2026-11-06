@@ -365,6 +365,20 @@ class ProcessTest(ProcBase):
         self.assertEqual(os.listdir(os.path.join(self.roots["J"], "SavedClips", "ev1")), [])
         self.assertTrue(os.path.exists(os.path.join(self.roots["A"], "SavedClips", "ev1", "%s-front.mp4" % S1)))
 
+    def test_a_clip_on_its_way_says_where_it_is_going(self):
+        seen = []
+        self.k._run_then_read = lambda *a: seen.append(dict(self.k._mv))
+        self.k.start("move", "J", [dict(kind="saved", id="ev1")], self.roots, confirmed=True)
+        self.k._thread.join(5)
+        self.assertEqual(seen[0].get("%s-front.mp4" % S1), "A")
+        self.assertEqual(self.k.moving("%s-front.mp4" % S1), "A")
+        self.assertEqual(self.k.moving("nothing.mp4"), "")
+
+    def test_after_a_move_nothing_is_on_its_way(self):
+        self.k.start("move", "J", [dict(kind="saved", id="ev1")], self.roots, confirmed=True)
+        self.k._thread.join(5)
+        self.assertEqual(self.k.moving("%s-front.mp4" % S1), "")
+
     def test_a_move_is_not_held_up_or_undone_by_what_could_not_be_read(self):
         def bad(store, todo, data_dir=None, stop=None, progress=None, limit=None):
             raise OSError("drive pulled out")

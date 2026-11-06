@@ -6,6 +6,7 @@ grouped here into continuous runs (minutes less than 75 s apart), which is what 
 on a drive, and a drive is only read when the page asks for it (an Archive-only default, see drive_roles.py).
 """
 import bisect
+import json
 import os
 import re
 import threading
@@ -335,7 +336,33 @@ class TeslaCam:
                 for st, cams in (e.get("clips") or {}).items():
                     clips[st] = sorted(set(clips.get(st, [])) | set(cams), key=app_sentry.CAMS.index)
                 by[e["id"]] = dict(got, clips=clips, roles=got["roles"] + [r])
-        return list(by.values())
+        return self._roles_by_video(list(by.values()))
+
+    def _roles_by_video(self, evs):
+        """Where an event is kept is where its VIDEO is, as the ledger notes it (a move writes there at once): a drive that only still has the event's folder (event.json, thumb.png: the move
+        takes the minutes, not those) is not a holder. An event the ledger has no video for keeps the drives that list it."""
+        if not evs:
+            return evs
+        led = TLG.Ledger(self.dir)
+        live, days = {}, {}
+        for e in evs:
+            for st in e.get("clips") or ():
+                days.setdefault(st[:10], set()).add(st)
+        for day, sts in days.items():
+            for k, rec in led.day(day).items():
+                m = re.match(r"^(\d{4}-\d\d-\d\d_\d\d-\d\d-\d\d)-", k.rsplit("|", 1)[-1])
+                if m and m.group(1) in sts:
+                    for r, x in rec["drives"].items():
+                        if not x.get("gone"):
+                            live.setdefault(m.group(1), set()).add(r)
+        out = []
+        for e in evs:
+            held = set().union(*(live.get(st, set()) for st in (e.get("clips") or ())))
+            if held and e.get("roles"):
+                roles = [r for r in e["roles"] if r in held]
+                e = dict(e, roles=roles or e["roles"])
+            out.append(e)
+        return out
 
     def clips_all(self, roots):
         """The Clips list, the same whatever drives are connected: every Recent run, Saved event and Sentry event ever logged. Each carries `roles` (the drives that hold it now,
@@ -657,9 +684,10 @@ class TeslaCam:
         sp = self.__dict__.get("_sp")
         if sp is None:
             sp = self.__dict__["_sp"] = short_place.ShortPlace(self.dir)
-        ver = (CC.where_token(), len(store.sum or {}))          # what it is fed from: the clips' own places and the minutes whose telemetry is read (not the clock's version)
+        evp = self._event_places()
+        ver = (CC.where_token(), len(store.sum or {}), id(evp))          # what it is fed from: the clips' own places, the minutes whose telemetry is read, and the events' own positions
         old = self.__dict__.get("_sp_ver")
-        if old is None or old[0] is not ver[0] or old[1] != ver[1]:
+        if old is None or old[0] is not ver[0] or old[1] != ver[1] or old[2] != ver[2]:
             self.__dict__["_sp_ver"] = ver
             items = []
             for st, (_street, sub) in CC.where_all().items():
@@ -670,13 +698,56 @@ class TeslaCam:
                 p0 = sm.get("p0") if isinstance(sm, dict) else None
                 if sub and p0 and p0[0] is not None:
                     items.append((p0[0], p0[1], sub))
+            items.extend((lat, lon, city) for lat, lon, city in {(v[0], v[1], v[2]) for v in evp.values()} if city)      # Sentry and Saved events carry their own position and suburb
             sp.feed(items)
         try:
             sm = store.summary(stamp)
             p = sm.get("p0") if isinstance(sm, dict) else None
         except Exception:
             p = None
-        return sp.label(CC.where_parts(stamp)[1], p[0] if p else None, p[1] if p else None)
+        sub = CC.where_parts(stamp)[1]
+        ev = evp.get(stamp)
+        if ev:
+            if not (p and p[0] is not None):
+                p = (ev[0], ev[1])                  # a parked minute has no telemetry: the position of the event it belongs to
+            sub = sub or ev[2]
+        return sp.label(sub, p[0] if p else None, p[1] if p else None)
+
+    def _event_places(self):
+        """{clip stamp: (lat, lon, suburb)} from the kept Saved and Sentry event lists of every drive (teslacam_events/*.json): each event carries where the car was. The same dict while the files are the same."""
+        import glob
+        files = sorted(glob.glob(os.path.join(self.dir, "teslacam_events", "*.json")))
+        sig = []
+        for f in files:
+            try:
+                sig.append((f, os.path.getmtime(f)))
+            except OSError:
+                pass
+        memo = self.__dict__.get("_evp")
+        if memo and memo[0] == sig:
+            return memo[1]
+        out = {}
+        for f, _m in sig:
+            try:
+                with open(f, encoding="utf-8") as fh:
+                    d = json.load(fh)
+            except (OSError, ValueError):
+                continue
+            evs = d.get("events") if isinstance(d, dict) and isinstance(d.get("events"), list) else (list(d.values()) if isinstance(d, dict) else d)
+            for e in evs if isinstance(evs, list) else []:
+                if not isinstance(e, dict) or not isinstance(e.get("clips"), (dict, list)):
+                    continue
+                lat, lon, city = e.get("lat"), e.get("lon"), (e.get("city") or "").strip()
+                try:
+                    lat, lon = float(lat), float(lon)
+                except (TypeError, ValueError):
+                    continue
+                if lat == 0 and lon == 0:
+                    continue
+                for st in e["clips"]:
+                    out.setdefault(st, (lat, lon, city))
+        self.__dict__["_evp"] = (sig, out)
+        return out
 
     def _finish(self, role, teslacam, pick, budget, events=None, lo=None, extra=None):
         import time

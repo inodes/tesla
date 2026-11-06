@@ -40,6 +40,14 @@ class ClipFilesTest(unittest.TestCase):
         got = CF.resolve(urls, self.fr, safe_join)
         self.assertEqual([os.path.basename(p) for p in got], ["2026-11-04_09-28-05-front.mp4", "2026-11-04_09-29-05-back.mp4"])
 
+    def test_a_moved_clip_is_found_on_the_drive_it_is_on_now(self):
+        """The page names the drive the clip was on; Show in Finder and Copy go to the file where the move put it."""
+        urls = ["/footage/U/SentryClips/e/2026-11-04_09-28-05-front.mp4"]
+        self.assertEqual(CF.resolve(urls, self.fr, safe_join), [])
+        moved = lambda role, rel: os.path.join(self.root, "RecentClips", "2026-11-04_09-28-05-front.mp4") if role == "U" else None
+        got = CF.resolve(urls, self.fr, safe_join, moved)
+        self.assertEqual([os.path.basename(p) for p in got], ["2026-11-04_09-28-05-front.mp4"])
+
     def test_copy_makes_a_new_folder_with_every_file_and_never_reuses_one(self):
         paths = CF.resolve(["/footage/A/RecentClips/%s-%s.mp4" % (s, c) for s in ("2026-11-04_09-28-05", "2026-11-04_09-29-05") for c in ("front", "back")], self.fr, safe_join)
         dest = os.path.join(self.tmp.name, "out")

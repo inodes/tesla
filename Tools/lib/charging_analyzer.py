@@ -284,6 +284,15 @@ def clean_tokens(s):
 class TeslaInvoiceParser:
     @staticmethod
     def extract_text_from_pdf(pdf_path):
+        """The PDF's text, read once and kept (lib/pdf_text_cache.py): only a new or changed PDF is parsed."""
+        try:
+            from lib import pdf_text_cache as PC
+        except ImportError:
+            import pdf_text_cache as PC
+        return PC.text(pdf_path, TeslaInvoiceParser._read_pdf_text)
+
+    @staticmethod
+    def _read_pdf_text(pdf_path):
         try:
             import pypdf
             reader = pypdf.PdfReader(pdf_path)
