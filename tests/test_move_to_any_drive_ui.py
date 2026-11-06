@@ -18,7 +18,7 @@ class MoveToAnyDriveUiTest(unittest.TestCase):
 
     def test_a_button_per_target_drive(self):
         self.assertIn('data-ka="move|${r}|${t}"', self.js)
-        self.assertIn('Move to ${t==="A"?"Archive":NMD[t]}', self.js)
+        self.assertIn('"to "+(t==="A"?"Archive":NMD[t])', self.js)
         self.assertIn('pend={action:a,role:r,to:t||"A"}', self.js)
 
     def test_the_target_is_sent_and_read(self):

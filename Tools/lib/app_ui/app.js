@@ -2162,7 +2162,7 @@ async function pageTeslaCam(role,id){
   const evLabel=e=>hms(e.ts).slice(0,5)+(e.reason?" · "+reason(e.reason):"");      // the chip's colour says Saved or Sentry
   const tripOf=v=>{const a=v.t0!=null?v.t0:v.t,b=v.t1!=null?v.t1:(v.t||0)+60;return trips.find(d=>d.t0<b&&d.t1>a)};
   main.innerHTML=head+`<div id="fsb" class="ph" style="--ph:${116+42*Math.max(1,drives.length)}px;margin-bottom:12px"></div><div class="bar ph" id="tsr" style="--ph:34px"></div><div class="bar"><span id="rg" class="ph" style="--ph:34px;min-width:190px"></span><input type="search" id="q" placeholder="Search…" value="${esc(TCS.q)}"></div><div id="selbar" class="ph" style="--ph:61px"></div><div class="tiles ph" id="tl" style="--ph:75px"></div><div id="splx"></div><div id="spl"></div><div id="tb"></div>`;
-  let data=null,sel=null,token=0,sentryList=null,vis=[],pend=null,jobT=null,note="",dayList={};
+  let data=null,sel=null,token=0,sentryList=null,vis=[],pend=null,jobT=null,note="",dayList={},MNU=null;
   // the ticks on the thumbnails and on the day headings (with how many of the day are ticked), from what is in TCSEL
   const paintTicks=()=>{$$("#tb [data-sel]").forEach(b=>{const on=TCSEL.has(b.dataset.sel);b.classList.toggle("on",on);b.setAttribute("aria-checked",on);b.textContent=on?"✓":""});
     $$("#tb .day").forEach(h=>{const l=dayList[h.dataset.day]||[],n=l.filter(v=>TCSEL.has(v.ty+"|"+v.id)).length,k=$(".dayk",h),c=$(".dcnt",h);if(!k||!c)return;
@@ -2221,11 +2221,19 @@ async function pageTeslaCam(role,id){
     $("#fclr").onclick=()=>{TCS.f={drives:[],loc:"all",type:"all",ev:"all"};TCS.q="";const q=$("#q");if(q)q.value="";fRefresh()};
     $("#daysort").onclick=()=>{TCS.dayDesc=!TCS.dayDesc;chips();draw()};
     $("#rowsort").onclick=()=>{TCS.rowDesc=!TCS.rowDesc;chips();draw()}};
+  if(window.__mnuc)removeEventListener("click",window.__mnuc);
+  window.__mnuc=e=>{if(MNU&&!e.target.closest(".mnuw")){MNU=null;$$("#selbar .mnu").forEach(m=>m.hidden=true)}};addEventListener("click",window.__mnuc);
   if(window.__fdd)removeEventListener("click",window.__fdd);
   window.__fdd=e=>{const p=$("#fdrp");if(p&&!p.hidden&&!e.target.closest(".fdd"))p.hidden=true};addEventListener("click",window.__fdd);
+  // Runs the car recorded that no drive has told parked from driving yet show as plain "Recent". The app works that out in the background (minute_kind, run_cuts) and the server's list changes when it has; while any
+  // such run is shown the page asks again every few seconds and redraws when the list changed, so a reload is not needed. It stops after 15 asks that found nothing new (a run whose drive is away stays unknown).
+  let kpoll=null,kidle=0;
+  const kindWatch=()=>{clearTimeout(kpoll);if(!data||!(data.recent||[]).some(v=>!v.part)||kidle>=15)return;
+    kpoll=setTimeout(async()=>{if(!document.body.contains($("#tb")))return;let n=null;try{n=await fetchJ("clips")}catch(e){}
+      if(n&&n.recent&&data&&!sameData(n,data)){kidle=0;FRESH.clips=n;await load(true)}else{kidle++;kindWatch()}},8000)};
   const load=async(quiet)=>{const my=++token;if(!quiet&&!QUIET&&!cache["tc/clips"]){data=null;$("#tl").innerHTML="";$("#tb").innerHTML='<div class="empty">Reading the drive…</div>'}
     try{const d=await tcGet("clips");if(my!==token)return;data=d}catch(e){$("#tb").innerHTML=errBox(e.message,"Could not read the list of clips");return}
-    const list=[].concat(data.sentry,data.saved,data.recent);if(!quiet)rangeBar($("#rg"),"teslacam",TCS.r,daysOf((list||[]).map(v=>({day:(v.ts||v.start).slice(0,10)}))),draw);chips();draw();loadKeep(!quiet)};
+    const list=[].concat(data.sentry,data.saved,data.recent);if(!quiet)rangeBar($("#rg"),"teslacam",TCS.r,daysOf((list||[]).map(v=>({day:(v.ts||v.start).slice(0,10)}))),draw);chips();draw();loadKeep(!quiet);kindWatch()};
   // the bar over the list: what is ticked, what it would free, and deleting its video from a drive (or moving it to the Archive) once everything is kept from it
   const NMD=drMap({A:"Archive",J:"JOWUA",U:"Tesla USB"}),conn=()=>(data&&data.connected)||[];
   const picked=()=>[...TCSEL].map(k=>{const i=k.indexOf("|");return {kind:k.slice(0,i),id:k.slice(i+1)}}).filter(it=>kpOf(it.kind,it.id));
@@ -2300,21 +2308,30 @@ async function pageTeslaCam(role,id){
       if(one){h+=`<b>1 clip</b><span class="sub">${fmtGB((c1&&c1.size)||0)}</span><button class="btn sm" id="kclr1">Clear</button>${c1?kpChips(c1):""}<button class="btn sm pri" id="kupd1" ${need1?"":"disabled"} title="Reads what is missing from the video of this clip: metadata, stills, signs and pictures">Update clip</button>`}
       else{h+=items.length?`<b>${n0(items.length)} selected</b><span class="sub">${fmtGB(items.reduce((a,it)=>a+(kpOf(it.kind,it.id).size||0),0))}</span><button class="btn sm" id="kclr">Clear</button>`:"";
         h+=`<button class="btn sm pri" id="kupd" ${items.length&&!needN?"disabled":""} title="${items.length?"Reads what is missing from the video of the ticked clips: metadata, stills, signs and pictures":"Looks for new files on the drives, then reads what is missing from the video of every clip: metadata, stills, signs and pictures"}">${(items.length?"Selected":"All")+" - "+(needN?n0(needN)+" update"+(needN>1?"s":"")+" needed":items.length?"no updates needed":"check for updates")}</button>`}
-      h+=`<span class="sub" style="margin-left:6px">Select:</span><button class="btn sm" data-sset="all" ${vis.length?"":"disabled"} title="Ticks every clip shown below (or tick single thumbnails, or a whole day from its heading)">All shown · ${n0(vis.length)}</button><button class="btn sm" data-sset="need" ${needV.length?"":"disabled"} title="Ticks the clips that still lack metadata, stills, signs or pictures">Need updating · ${n0(needV.length)}</button>${ignV.length?`<button class="btn sm" data-sset="ign" title="Ticks the clips shown that are parked at Home, to look through before deleting">Select parked at Home · ${n0(ignV.length)}</button>`:""}<button class="btn sm" data-sset="done" ${done.length?"":"disabled"} title="Ticks every clip whose metadata, stills and signs are all kept, so its video can be moved or deleted (${n0(done.length)} clips, ${fmtGB(dsz)})">Finished · ${n0(done.length)}</button>`;
+      // Three menus instead of a row of buttons: Select (what to tick), Move (to another drive) and Delete (what and from where); the clip count and Clear sit in front of them
       const allHome=items.length>0&&items.every(it=>{const c=kpOf(it.kind,it.id);return c&&c.ignored}),homeSz=cn.reduce((a,r)=>a+sizeOn(items,r),0);      // a selection of parked-at-Home clips only: moving and drive-edge minutes are not in them
-      if(allHome)h+=`<button class="btn sm bad" data-ka="purge|" title="Deletes the ticked clips parked at Home. Nothing that moved is touched">Delete parked at Home · ${fmtGB(homeSz)}</button>`;
-      if(items.length&&!allHome)h+=`<button class="btn sm bad" data-ka="purge|" title="Choose what to delete from the ticked clips: video, metadata, stills, event pictures, signs">Delete…</button>`;
-      cn.forEach(r=>{const d=allowed(r,"delete");if(items.length&&d.length)h+=`<button class="btn sm bad" data-ka="delete|${r}">Delete from ${NMD[r]} · ${fmtGB(sizeOn(d,r))}</button>`;
-        cn.forEach(t=>{const m=allowed(r,"move",t);if(items.length&&m.length&&r!==t)h+=`<button class="btn sm" data-ka="move|${r}|${t}">Move to ${t==="A"?"Archive":NMD[t]} · ${fmtGB(sizeOn(m,r))}</button>`})});      // to any other connected drive (the Archive first)
+      const mi=(attr,txt,sz,o)=>`<button class="mi ${o&&o.bad?"bad":""}" ${attr} ${o&&o.off?"disabled":""} ${o&&o.tip?`title="${esc(o.tip)}"`:""}><span>${txt}</span>${sz?`<small>${sz}</small>`:""}</button>`,mh=t=>`<div class="mh">${esc(t)}</div>`;
+      const mnu=(id,label,rows,cls)=>`<span class="mnuw"><button class="btn sm ${cls||""}" data-mn="${id}" aria-haspopup="true" aria-expanded="${MNU===id}">${label} ▾</button><div class="mnu" ${MNU===id?"":"hidden"}>${rows}</div></span>`;
+      h+=mnu("sel","Select",
+        mi('data-sset="all"',"All shown",n0(vis.length),{off:!vis.length,tip:"Ticks every clip shown below (or tick single thumbnails, or a whole day from its heading)"})
+        +mi('data-sset="need"',"Need updating",n0(needV.length),{off:!needV.length,tip:"Ticks the clips that still lack metadata, stills, signs or pictures"})
+        +(ignV.length?mi('data-sset="ign"',"Parked at Home",n0(ignV.length),{tip:"Ticks the clips shown that are parked at Home, to look through before deleting"}):"")
+        +mi('data-sset="done"',"Finished",n0(done.length)+" · "+fmtGB(dsz),{off:!done.length,tip:"Ticks every clip whose metadata, stills and signs are all kept, so its video can be moved or deleted"}));
+      if(items.length){
+        const mv=cn.map(r=>{const rows=cn.filter(t=>t!==r).map(t=>{const m=allowed(r,"move",t);return m.length?mi(`data-ka="move|${r}|${t}"`,"to "+(t==="A"?"Archive":NMD[t]),fmtGB(sizeOn(m,r))):""}).join("");return rows?mh("From "+NMD[r])+rows:""}).join("");
+        if(mv)h+=mnu("mv","Move",mv);
+        const dv=cn.map(r=>{const d=allowed(r,"delete");return d.length?mi(`data-ka="delete|${r}"`,"Video from "+NMD[r],fmtGB(sizeOn(d,r)),{bad:1}):""}).join("");
+        h+=mnu("del","Delete",(allHome?mi('data-ka="purge|"',"Parked at Home, everything",fmtGB(homeSz),{bad:1,tip:"Deletes the ticked clips parked at Home. Nothing that moved is touched"}):mi('data-ka="purge|"',"Choose what to delete…","",{bad:1,tip:"Choose what to delete from the ticked clips: video, metadata, stills, event pictures, signs"}))+(dv?mh("Only the video, from one drive")+dv:""),"bad")}
       if(note)h+=`<span class="sub" style="flex:1;${/rror|not /.test(note)?"color:var(--bad)":"color:var(--ok)"}">${esc(note)}</span>`}
     h+="</div>";el.innerHTML=h;
     const on=(id,f)=>{const b=$("#"+id,el);if(b)b.onclick=f};
     on("kclr",()=>{TCSEL.clear();note="";paintTicks();selbar()});on("kclr1",()=>closeOpen());on("kupd1",()=>{if(OPENK)runProc([OPENK])});
-    $$("[data-sset]",el).forEach(b=>b.onclick=()=>{const w=b.dataset.sset,l=w==="all"?vis:w==="need"?needV:w==="ign"?ignV:done;TCSEL.clear();OPENC=null;OPENK=null;$$("#tb .evc.on").forEach(x=>x.classList.remove("on"));l.forEach(v=>TCSEL.add(v.ty+"|"+v.id));note="";pend=null;paintTicks();selbar()});      // a set replaces what was picked or ticked
+    $$("[data-sset]",el).forEach(b=>b.onclick=()=>{MNU=null;const w=b.dataset.sset,l=w==="all"?vis:w==="need"?needV:w==="ign"?ignV:done;TCSEL.clear();OPENC=null;OPENK=null;$$("#tb .evc.on").forEach(x=>x.classList.remove("on"));l.forEach(v=>TCSEL.add(v.ty+"|"+v.id));note="";pend=null;paintTicks();selbar()});      // a set replaces what was picked or ticked
     on("kno",()=>{pend=null;selbar()});
+    $$("[data-mn]",el).forEach(b=>b.onclick=e=>{e.stopPropagation();const id=b.dataset.mn;MNU=MNU===id?null:id;$$(".mnu",el).forEach(m=>m.hidden=true);if(MNU)b.nextElementSibling.hidden=false;$$("[data-mn]",el).forEach(x=>x.setAttribute("aria-expanded",x.dataset.mn===MNU))});
     on("kupd",()=>upd());on("phx",async()=>{phase="";try{await fetch("/api/keeper",{method:"POST",body:JSON.stringify({action:"pause"})})}catch(e){}selbar()});
     ostrip()
-    $$("[data-ka]",el).forEach(b=>b.onclick=()=>{const [a,r,t]=b.dataset.ka.split("|");pend={action:a,role:r,to:t||"A"};note="";selbar()});
+    $$("[data-ka]",el).forEach(b=>b.onclick=()=>{MNU=null;const [a,r,t]=b.dataset.ka.split("|");pend={action:a,role:r,to:t||"A"};note="";selbar()});
     on("kdo",async()=>{const p=pend,list=allowed(p.role,p.action,p.to);pend=null;stopVideos();phase=p.action==="move"?"Starting the move…":"Deleting…";phasePc=5;selbar();
       let j;try{j=await (await fetch("/api/clips/act",{method:"POST",body:JSON.stringify({action:p.action,role:p.role,to:p.to||"A",items:list,confirm:true})})).json()}catch(e){j={error:e.message}}
       phase="";
