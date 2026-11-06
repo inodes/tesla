@@ -1071,6 +1071,11 @@ const hudSchool=(SGV,stamps,si,t,abs,clock,sdOf)=>{const now=abs(si,{s0:t});let 
   const tm=best.g.times||[],mins=x=>{const m=/^(\d\d):(\d\d)-(\d\d):(\d\d)$/.exec(x);return m?[+m[1]*60+ +m[2],+m[3]*60+ +m[4]]:null},hrs=tm.map(mins).filter(Boolean),inH=hrs.some(r=>clock.min>=r[0]&&clock.min<r[1]),sd=sdOf?sdOf(best.i,best.g):null;
   return{state:!hrs.length||sd==null?"unknown":(sd&&inH?"on":"off"),sp:sp?sp.g:null,lim:sp?+sp.g.text:null}};
 const hudDoubtOf=(doubt,st,g)=>{if(!doubt)return false;if(g._d===undefined){const r=doubt(st,g);if(r===null||r===undefined)return false;g._d=!!r}return g._d};
+// The ring that shows where a speed sign was found: signs = the minute's signs ({kind, s0, s1, ob: [[second, across, down, radius, sure], ...], bi}), t = the video's second, ok(sign) says whether it is shown.
+// -> [second, across, down, radius, sure, isBest] of the frame of the sign in view that is nearest t, or null. Between frames the ring stays on the nearest one; it goes 1.5 s after the last.
+const hudRing=(signs,t,ok)=>{let best=null,bd=1e9;for(const g of signs||[]){if(g.kind==="school"||!g.ob||!g.ob.length||t<g.s0-1.5||t>g.s1+1.5||(ok&&!ok(g)))continue;
+    g.ob.forEach((q,i)=>{const d=Math.abs(q[0]-t);if(d<bd){bd=d;best=q.concat([i===g.bi])}})}
+  return best};
 // the indicator bits of a second (1 left, 2 right, both = hazards) -> which arrows flash
 const hudBlink=b=>({l:!!(+b&1),r:!!(+b&2)});
 // where the picture is inside its video box (the video keeps its shape, so a tall box has bars above and below it): {x,y,w,h} in the box's pixels
@@ -1118,7 +1123,7 @@ function clipPlayer(host,o){
     if(!(k in SDAY)){SDAY[k]=undefined;fetch("/api/schoolday?date="+day+"&lat="+w.lat+"&lon="+w.lon).then(r=>r.json()).then(j=>{SDAY[k]=j.school_day==null?null:!!j.school_day;hudUpd()}).catch(()=>{SDAY[k]=null})}return SDAY[k]})};
   const hudUpd=()=>{if(!(o.tele||o.info)||!mv)return;const fig=$('#vids figure[data-c="front"]')||$('#vids figure[data-c]'),vd=fig&&fig.querySelector("video");if(!vd)return;const fr=!!o.tele&&fig.dataset.c==="front";let h=fig.querySelector(".hud");      // the place and the time are on whichever camera is shown; the sign, the speed and the indicators only on the front one
     if(!hudOn()){if(h)h.remove();return}
-    if(!h){h=document.createElement("div");h.className="hud";h.innerHTML='<div class="hsg" hidden><b></b></div><div class="hsp" hidden><b></b><small>km/h</small></div><svg class="hbk hl" viewBox="0 0 24 24"><path d="M2 12l9-8v5h11v6H11v5z"/></svg><svg class="hbk hr" viewBox="0 0 24 24"><path d="M2 12l9-8v5h11v6H11v5z"/></svg><div class="hin" hidden><b></b><span></span></div><div class="hgr" hidden><i>P</i><i>R</i><i>N</i><i>D</i></div>';fig.appendChild(h)}
+    if(!h){h=document.createElement("div");h.className="hud";h.innerHTML='<div class="hsg" hidden><b></b></div><div class="hsp" hidden><b></b><small>km/h</small></div><svg class="hbk hl" viewBox="0 0 24 24"><path d="M2 12l9-8v5h11v6H11v5z"/></svg><svg class="hbk hr" viewBox="0 0 24 24"><path d="M2 12l9-8v5h11v6H11v5z"/></svg><div class="hin" hidden><b></b><span></span></div><div class="hgr" hidden><i>P</i><i>R</i><i>N</i><i>D</i></div><div class="hsr" hidden></div>';fig.appendChild(h)}
     const b=hudBox(vd.clientWidth,vd.clientHeight,vd.videoWidth,vd.videoHeight),st=h.style;st.left=(vd.offsetLeft+b.x)+"px";st.top=(vd.offsetTop+b.y)+"px";st.width=b.w+"px";st.height=b.h+"px";st.fontSize=(b.w/100)+"px";
     h.classList.toggle("nof",!fr);
     const T=fr?o.tele(stamps[si],mv.currentTime):null,sc=fr?hudSchoolNow():null,lim=fr?hudLimit(SGV,stamps,si,mv.currentTime,o.doubt,sc&&sc.state==="off"?g=>g===sc.sp:null):null,sg=h.querySelector(".hsg"),sp=h.querySelector(".hsp"),bk=hudBlink(T?T.blk:0),pk=fr&&!!o.parked&&!!o.parked(stamps[si],mv.currentTime);
@@ -1127,6 +1132,8 @@ function clipPlayer(host,o){
     h.querySelector(".hl").classList.toggle("on",bk.l);h.querySelector(".hr").classList.toggle("on",bk.r);
     const gr=h.querySelector(".hgr"),G=fr&&o.gear?o.gear(stamps[si],mv.currentTime):null;      // bottom right, opposite the place and time: the gear selector, P R N D, the gear the car is in lit
     if(gr){gr.hidden=G==null;if(G!=null){const k=HUD_GEAR[G];if(k!=null&&gr.dataset.k!==String(k)){gr.dataset.k=k;[...gr.children].forEach((e,n)=>e.classList.toggle("on",n===k))}}}
+    // where a speed sign was found: a red ring on the picture round the sign, from the frames it was read in (g.ob: [second, across, down, radius, sure], fractions of the picture); the frame nearest this moment, the sign shown only while it is in view
+    const rg=h.querySelector(".hsr");if(rg){const q=fr?hudRing(SGV[stamps[si]],mv.currentTime,g=>!(o.hide&&o.hide(stamps[si],g))):null;rg.hidden=!q;if(q){rg.style.left=(q[1]*100)+"%";rg.style.top=(q[2]*100)+"%";rg.style.width=rg.style.height=Math.max(3,q[3]*200*1.5)+"em";rg.classList.toggle("best",q[5])}}
     const inf=o.info?o.info(stamps[si],mv.currentTime):null,hi=h.querySelector(".hin");      // bottom left: where, and the local time
     if(hi){hi.hidden=!inf;if(inf){const k=inf.a+"|"+inf.b;if(hi.dataset.k!==k){hi.dataset.k=k;hi.firstChild.textContent=inf.a;hi.firstChild.hidden=!inf.a;hi.lastChild.textContent=inf.b}}}};
   // the signs read in these minutes (speed limits): shown beside the time while the video is at them
@@ -2767,7 +2774,7 @@ async function teslaDriveBody(host,role,fetchSeg,places,opts){
     // what was seen: the picture of each sign beside what the page worked out about it (the speed the car held, how far off the car's line it stood, how sure, why it is set aside)
     const gc=$("#dsgc");if(gc)gc.innerHTML=LV.length?`<div class="evs sgks">${LV.map(([[m,g],j])=>{const c=ctx(m,g),lat=hudLat(g),why=c.dbt?SGWHY[c.why]||"not held":"";
       return `<button class="evc sgk${c.dbt?" faded":""}" data-j="${j}">${g.f?`<img alt="" decoding="async" loading="lazy" src="/review/${esc(g.f)}" onerror="this.replaceWith(Object.assign(document.createElement('div'),{className:'noimg',textContent:'no picture kept'}))">`:'<div class="noimg">no picture kept</div>'}<b>${esc(g.text)}${g.side==="R"?" (right side)":""}</b><span>${at(m,g)}${c.sp!=null?" · car "+n0(c.sp)+" km/h":""}</span>${lat!=null?`<span>${n0(lat,1)} m ${g.fx<.5?"left":"right"} of the car's line</span>`:""}<span>seen ${g.n}× · sure ${n0(g.conf)}%</span>${why?`<span class="mis">${esc(why)}</span>`:""}</button>`}).join("")}</div>`:"";
-    const goSign=j=>{if(j===""||j==null){allPins();return}const [m,g]=L[+j];if(player)player.seekAt(m.stamp,Math.max(0,Math.floor(g.s0)));cursor(m.off+Math.floor(g.s0));if(map&&map.pins)map.pins([{i:Math.round(m.off+g.s0),cat:g.kind==="school"?"school":"speed",text:g.text,side:g.side}])};
+    const goSign=j=>{if(j===""||j==null){allPins();return}const [m,g]=L[+j];const bs=g.bs!=null?g.bs:g.s0;if(player)player.seekAt(m.stamp,Math.max(0,Math.floor(bs)));cursor(m.off+Math.floor(bs));if(map&&map.pins)map.pins([{i:Math.round(m.off+g.s0),cat:g.kind==="school"?"school":"speed",text:g.text,side:g.side}])};
     const sl=$("#dsel",el);sl.onchange=()=>goSign(sl.value);
     $$("#dsgc .sgk").forEach(b=>b.onclick=()=>{goSign(b.dataset.j);if($("#dsel"))$("#dsel").value=b.dataset.j;$$("#dsgc .sgk").forEach(x=>x.classList.toggle("on",x===b));$("#dvid").scrollIntoView({block:"nearest"})});
     const ab=$("#dsas",el);if(ab)ab.onclick=()=>{SASIDE=!SASIDE;lsSet("tc.signaside",SASIDE?"1":"0");sgRedraw()};

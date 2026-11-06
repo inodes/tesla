@@ -142,7 +142,7 @@
       "min_conf": 50.0,
       "workers": 3,
       "merge_s": 12.0,
-      "crop_px": 320,
+      "crop_px": 640,
       "refine_step_s": 0.2,
       "refine_pad_s": 2.0,
       "refine_conf": 85.0,

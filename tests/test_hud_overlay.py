@@ -250,6 +250,25 @@ class VoteTest(unittest.TestCase):
         self.assertGreaterEqual(run('hudTrust({"text":"50","conf":90,"fx":.5,"rf":.05},null,%s,false).t' % json.dumps(covered)), .3)
 
 
+class RingTest(unittest.TestCase):
+    SG = [dict(kind="", s0=10, s1=12, bi=1, ob=[[10, .2, .3, .02, 90], [11, .22, .31, .03, 99], [12, .25, .32, .04, 80]])]
+
+    def ring(self, t, ok="null"):
+        return run("hudRing(%s,%s,%s)" % (json.dumps(self.SG), t, ok))
+
+    def test_the_ring_follows_the_nearest_frame_and_marks_the_best_one(self):
+        self.assertEqual(self.ring(10.2)[:3], [10, .2, .3])
+        self.assertEqual(self.ring(10.2)[5], False)
+        r = self.ring(11.1)
+        self.assertEqual(r[:3], [11, .22, .31])
+        self.assertTrue(r[5])
+
+    def test_the_ring_goes_when_the_sign_is_out_of_view_or_set_aside(self):
+        self.assertIsNone(self.ring(20))
+        self.assertIsNone(self.ring(11, "g=>false"))
+        self.assertIsNotNone(self.ring(13.4))          # 1.5 s after the last frame it is still shown
+
+
 class ParkedOverlayTest(unittest.TestCase):
     def test_no_speed_or_limit_sign_while_parked(self):
         with open(APP_JS, encoding="utf-8") as f:

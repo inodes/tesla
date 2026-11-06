@@ -76,9 +76,11 @@ class Refine(unittest.TestCase):
         out = AR.refine_clip("x.mp4", "S", rec, self.tmp)
         self.assertEqual(out["rf"], 1)
         self.assertEqual({x["text"] for x in out["d"]}, {"60"})
-        self.assertEqual(len(out["d"]), 3)                                           # the clearest three
+        self.assertEqual(len(out["d"]), 3)                                           # the clearest three keep where the sign stood ...
         self.assertFalse(os.path.exists(old))
-        self.assertTrue(all(os.path.exists(os.path.join(self.tmp, "crops", x["f"])) for x in out["d"]))
+        pics = [x for x in out["d"] if x.get("f")]
+        self.assertEqual(len(pics), 1)                                               # ... and only the best of them keeps a picture
+        self.assertTrue(os.path.exists(os.path.join(self.tmp, "crops", pics[0]["f"])))
 
     def test_a_sign_that_is_already_sure_is_marked_done_without_looking(self):
         AR._frames_at = lambda *a: self.fail("the video was read")
