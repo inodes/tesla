@@ -26,7 +26,7 @@ class SignPictureTest(unittest.TestCase):
 
     def test_overridden_signs_are_left_out_unless_asked_for(self):
         i = self.js.index("const asideSign=")
-        self.assertIn('c.why==="ovr"&&!SASIDE', self.js[i:i + 260])      # an overridden sign is set aside by default
+        self.assertIn('c.why==="ovr"||c.why==="spk")&&!SASIDE', self.js[i:i + 260])      # an overridden sign, and a spike, is set aside by default
         self.assertIn('let SASIDE=lsGet("tc.signaside","0")==="1"', self.js)      # and shown only when asked, remembered
         j = self.js.index("const sgRedraw=")
         blk = self.js[j:j + 3200]

@@ -1026,7 +1026,7 @@ function lostBox(box,s){
 // limit, seen from the main road, reads like that. spd(k) = the car's speed k seconds from the sign (km/h, null where not read). -> true / false, or null when too little of the speed is known to say.
 const hudDoubt=(lim,spd)=>{const a=[],b=[];for(let k=-8;k<=0;k++){const x=spd(k);if(x!=null)a.push(x)}for(let k=2;k<=14;k++){const x=spd(k);if(x!=null)b.push(x)}
   if(a.length<4||b.length<4)return null;const before=a.reduce((p,q)=>p+q,0)/a.length,keep=Math.min(...b);return before>=50&&lim<=before*.75&&keep>=before*.9};
-// How far a sign reading is to be trusted as the limit of the road the car is on, 0 to 1: the product of three things, none of which rules a sign out on its own.
+// How far a sign reading is to be trusted as the limit of the road the car is on, 0 to 1: the product of three things, none of which rules a sign out on its own; a sign that is a spike between lower signs (hudSpike) is ruled out at once.
 //  - where it stands: a sign for our road is near the car's line, one for a ramp or a side road is well off it. Its distance from that line in metres comes from where it is in the picture and how big it is
 //    (a sign is 0.75 m across: metres = how far from the middle, in picture widths, x 0.375 m / its radius in picture widths). Up to 5 m is full trust, falling to a quarter at 14 m.
 //  - the car's answer: a sign well below the speed the car holds, which the car then keeps holding, is not one it answered (x0.35); one it slowed for counts in full.
@@ -1040,9 +1040,16 @@ const hudWSpd=(lim,spd)=>{const a=[],b=[];for(let k=-8;k<=0;k++){const x=spd(k);
   if(before<50||lim>before*.75)return 1;return keep>=before*.9?.35:keep<=lim*1.25?1:.7};
 const hudStrength=(conf,lat)=>hudWLat(lat)*Math.max(.3,(conf>0?conf:60)/100);
 // others: [{text, conf, lat, dt}] the other signs read near this one (dt = seconds from it); -> {t, lat (m or null), w:[position, answer, override], why: "" | "lat" | "spd" | "ovr"}
-const hudTrust=(g,spd,others)=>{const lat=hudLat(g),wl=hudWLat(lat),ws=spd?hudWSpd(+g.text,spd):1,own=hudStrength(g.conf,lat);let wo=1;
+// A limit read far above the signs on both sides of it, where those two agree with each other, is a false reading (a shop's "no under 18" sign, a number on a truck): 60 110 60 and 60 110 70 cannot happen
+// within a short stretch of road, while 40 50 40 60 50 70 80 90 100 is a normal drive. HUD_SPIKE: the lower signs are at least `jump` km/h under it, within `span` seconds before and after it, and within
+// `near` km/h of each other. all = [{t (second), text}] every speed sign of the span in time order -> true / false
+const HUD_SPIKE={jump:30,near:10,span:90};
+const hudSpike=(t,text,all)=>{const x=+text;if(!(x>0)||!all)return false;let p=null,n=null;
+  for(const o of all){const v=+o.text;if(!(v>0)||v>x-HUD_SPIKE.jump)continue;if(o.t<t-.5&&t-o.t<=HUD_SPIKE.span)p=o;else if(o.t>t+.5&&o.t-t<=HUD_SPIKE.span&&!n)n=o}
+  return !!(p&&n&&Math.abs(+p.text-+n.text)<=HUD_SPIKE.near)};
+const hudTrust=(g,spd,others,spike)=>{const lat=hudLat(g),wl=hudWLat(lat),ws=spd?hudWSpd(+g.text,spd):1,own=hudStrength(g.conf,lat);let wo=1;
   for(const o of others||[]){if(!o||!o.text||o.text===g.text||Math.abs(o.dt)>15)continue;const so=hudStrength(o.conf,o.lat);if(so>own)wo=Math.min(wo,Math.max(.05,Math.pow(own/so,2)))}
-  const t=wl*ws*wo,m=Math.min(wl,ws,wo);return{t,lat,w:[wl,ws,wo],why:t>=HUD_DOUBT?"":m===wo?"ovr":m===ws?"spd":"lat"}};
+  const t=spike?0:wl*ws*wo,m=Math.min(wl,ws,wo);return{t,lat,w:[wl,ws,wo],why:t>=HUD_DOUBT?"":spike?"spk":m===wo?"ovr":m===ws?"spd":"lat"}};
 // doubt(stamp, sign) says whether a sign was one the car did not answer (not held as the limit); the answer is kept on the sign once it can be given
 const hudLimit=(SGV,stamps,si,t,doubt,skip)=>{for(let i=si;i>=0&&i>=si-60;i--){const L=(SGV[stamps[i]]||[]).filter(g=>g.kind!=="school"&&/^\d{2,3}$/.test(String(g.text))&&(i<si||g.s0<=t+.5)&&!(skip&&skip(g))&&!hudDoubtOf(doubt,stamps[i],g)).sort((a,b)=>b.s0-a.s0);if(L.length)return +L[0].text}return null};
 // A school zone: the latest school plate read in the last 150 s, the limit sign read within 8 s of it (the zone's own limit) and the hours on the plate (g.times, 24-hour "08:00-09:30"). A later limit
@@ -2705,7 +2712,7 @@ async function teslaDriveBody(host,role,fetchSeg,places,opts){
     const allM=cont(),blackDrive=!playable.length&&!d.minutes.length&&allM.length>0;      // a drive Tessie knows, with no footage at all: all black
     if(!player&&(playable.length||blackDrive)){const mm=allM,cams={},meta={},syn={},len={};mm.forEach(m=>{cams[m.stamp]=m.cams||[];meta[m.stamp]=m;if(m.syn){syn[m.stamp]=1;len[m.stamp]=m.len}});covStrip(mm);
       player=clipPlayer($("#dvid"),{stamps:mm.map(m=>m.stamp),cams,syn,len,still:stillSrc,trig:opts.trig,
-        hot:opts.hot,signInfo,hide:asideSign,doubt:(st,g)=>{const sr=S(),m=meta[st];if(!sr||!m||!SGALL)return null;const t=m.off+g.s0;return hudTrust(g,k=>{const x=sr.v[Math.round(t+k)];return x==null?null:x},sgNear(t,g.text)).t<HUD_DOUBT},
+        hot:opts.hot,signInfo,hide:asideSign,doubt:(st,g)=>{const sr=S(),m=meta[st];if(!sr||!m||!SGALL)return null;const t=m.off+g.s0;return hudTrust(g,k=>{const x=sr.v[Math.round(t+k)];return x==null?null:x},sgNear(t,g.text),hudSpike(t,g.text,SGALL)).t<HUD_DOUBT},
         tele:(st,sec)=>{const sr=S(),m=meta[st];if(!sr||!m)return null;const i=m.off+Math.floor(sec);return sr.v[i]==null?null:{v:sr.v[i],blk:sr.blk[i]||0}},
         where:(st,sec)=>{const sr=S(),m=meta[st];if(!sr||!m||!sr.lat)return null;const i=m.off+Math.floor(sec);return sr.lat[i]!=null&&sr.lon[i]!=null?{lat:sr.lat[i],lon:sr.lon[i]}:null},
         url:(st,c)=>meta[st].src==="saved"?`/footage/${role}/SavedClips/${meta[st].ref}/${st}-${c}.mp4`:meta[st].src==="sentry"?`/footage/${role}/SentryClips/${meta[st].ref}/${st}-${c}.mp4`:`/footage/${role}/RecentClips/${st}-${c}.mp4`,
@@ -2726,7 +2733,7 @@ async function teslaDriveBody(host,role,fetchSeg,places,opts){
     // a sign the car did not answer (read well below the speed it holds, and it holds it: a side road's or an exit's limit seen from the main road) is not a limit the car was under: it is not the "prior" limit
     // of the next sign and it is not speeding
     SGALL=SL.map(([m,g])=>({t:m.off+g.s0,text:g.text,conf:g.conf,lat:hudLat(g)}));
-    const trOf=(m,g)=>{const t=m.off+g.s0;return hudTrust(g,k=>{const x=V[Math.round(t+k)];return x==null?null:x},sgNear(t,g.text))},TR=new Map(SL.map(e=>[e[1],trOf(e[0],e[1])])),DB=new Map(SL.map(e=>[e[1],TR.get(e[1]).t<HUD_DOUBT])),SLK=SL.filter(e=>!DB.get(e[1]));
+    const trOf=(m,g)=>{const t=m.off+g.s0;return hudTrust(g,k=>{const x=V[Math.round(t+k)];return x==null?null:x},sgNear(t,g.text),hudSpike(t,g.text,SGALL))},TR=new Map(SL.map(e=>[e[1],trOf(e[0],e[1])])),DB=new Map(SL.map(e=>[e[1],TR.get(e[1]).t<HUD_DOUBT])),SLK=SL.filter(e=>!DB.get(e[1]));
     SL.forEach(([m,g])=>{const t=m.off+g.s0,dbt=DB.get(g);let pr=null;for(let q=SLK.length-1;q>=0;q--){const e=SLK[q];if(e[1]===g)continue;const d=t-(e[0].off+e[1].s0);if(d<0)continue;if(d>1200)break;if(d>3||e[1].text!==g.text){pr=e[1].text;break}}
       let sp=null;for(const dd of [0,1,-1,2,-2]){const x=V[Math.round(t)+dd];if(x!=null){sp=x;break}}
       SGCTX.set(m.stamp+"|"+g.s0+"|"+g.text+"|"+g.side,{sp,pr,dbt,why:TR.get(g).why,off:dbt&&TR.get(g).why==="lat"&&(pr!=null?+pr:sp)!=null&&+g.text>(pr!=null?+pr:sp),over:!dbt&&sp!=null&&sp>(+(pr||g.text)||999)+SPEEDTOL})});
@@ -2735,22 +2742,22 @@ async function teslaDriveBody(host,role,fetchSeg,places,opts){
     if(player&&player.refresh)player.refresh();
     const el=$("#dsgl");if(!list||!el)return;
     const at=(m,g)=>new Date(Date.parse(((m.loc)||m.stamp.slice(0,10)+"T"+m.stamp.slice(11).replace(/-/g,":"))+"Z")+Math.floor(g.s0)*1000).toISOString().substr(11,8);
-    const LV=L.map((x,j)=>[x,j]).filter(([x])=>!asideSign(x[0].stamp,x[1])),HN=L.filter(([m,g])=>(SGCTX.get(m.stamp+"|"+g.s0+"|"+g.text+"|"+g.side)||{}).why==="ovr").length;
-    el.innerHTML=`<div class="sub" style="width:100%;margin-bottom:4px">Signs read in this video:</div><select id="dsel"><option value="">${n0(LV.length)} read</option>${LV.map(([[m,g],j])=>`<option value="${j}">${at(m,g)} - ${esc(g.text)}${((c=>c.dbt?" ("+(SGWHY[c.why]||"not held")+")":"")(SGCTX.get(m.stamp+"|"+g.s0+"|"+g.text+"|"+g.side)||{}))}</option>`).join("")}</select>${HN?`<button class="chip${SASIDE?" on":""}" id="dsas" title="Signs another, surer sign read at the same time overrode: hidden here, on the map and beside the video unless shown">${SASIDE?"Hide":"Show"} ${n0(HN)} overridden</button>`:""}`;
+    const LV=L.map((x,j)=>[x,j]).filter(([x])=>!asideSign(x[0].stamp,x[1])),HN=L.filter(([m,g])=>{const w=(SGCTX.get(m.stamp+"|"+g.s0+"|"+g.text+"|"+g.side)||{}).why;return w==="ovr"||w==="spk"}).length;
+    el.innerHTML=`<div class="sub" style="width:100%;margin-bottom:4px">Signs read in this video:</div><select id="dsel"><option value="">${n0(LV.length)} read</option>${LV.map(([[m,g],j])=>`<option value="${j}">${at(m,g)} - ${esc(g.text)}${((c=>c.dbt?" ("+(SGWHY[c.why]||"not held")+")":"")(SGCTX.get(m.stamp+"|"+g.s0+"|"+g.text+"|"+g.side)||{}))}</option>`).join("")}</select>${HN?`<button class="chip${SASIDE?" on":""}" id="dsas" title="Readings that are false: overridden by a surer sign, or far above the signs either side of them. Hidden here, on the map and beside the video unless shown">${SASIDE?"Hide":"Show"} ${n0(HN)} set aside</button>`:""}`;
     const sl=$("#dsel",el);sl.onchange=()=>{if(sl.value===""){allPins();return}const [m,g]=L[+sl.value];if(player)player.seekAt(m.stamp,Math.max(0,Math.floor(g.s0)));cursor(m.off+Math.floor(g.s0));if(map&&map.pins)map.pins([{i:Math.round(m.off+g.s0),cat:g.kind==="school"?"school":"speed",text:g.text,side:g.side}])};
     const ab=$("#dsas",el);if(ab)ab.onclick=()=>{SASIDE=!SASIDE;lsSet("tc.signaside",SASIDE?"1":"0");sgRedraw()}};
     sgRedraw()};
   const SPEEDTOL=3,SGCTX=new Map();let allPins=()=>{};
   // A sign read OFF our road (a ramp's or a side road's: its trust fell for where it stands) that shows a higher speed than the one in force is ignored: not on the map, not beside the video.
   // A sign that is set aside is left out of the map, the badges beside the video and the list: one read OFF our road that shows a higher speed than the one in force, and (unless the person asks for them) one a
-  // stronger sign read at the same time overrode (why "ovr"). SASIDE: the person asked to see the overridden ones (remembered).
+  // stronger sign read at the same time overrode (why "ovr"), and one read between much lower signs (why "spk"). SASIDE: the person asked to see the overridden ones (remembered).
   let SASIDE=lsGet("tc.signaside","0")==="1";
-  const asideSign=(st,g)=>{const c=SGCTX.get(st+"|"+g.s0+"|"+g.text+"|"+g.side);return !!(c&&(c.off||(c.why==="ovr"&&!SASIDE)))};
+  const asideSign=(st,g)=>{const c=SGCTX.get(st+"|"+g.s0+"|"+g.text+"|"+g.side);return !!(c&&(c.off||((c.why==="ovr"||c.why==="spk")&&!SASIDE)))};
   // the picture of the sign being passed (cut from the full-size frame), bottom left of the map: signs with a picture, not ignored, within 1.5 s of the video's second; [{a, b, f}] by drive second
   let SGPIC=[],sgpF="";
   const signPic=t=>{const el=$("#dsgp");if(!el)return;let best=null,bd=1e9;for(const e of SGPIC){if(t<e.a-1.5||t>e.b+1.5)continue;const d=Math.abs(t-(e.a+e.b)/2);if(d<bd){bd=d;best=e}}
     if(!best){if(sgpF){sgpF="";el.hidden=true}return}if(best.f!==sgpF){sgpF=best.f;el.innerHTML=`<img alt="Speed limit ${esc(best.text)}" src="/review/${encodeURIComponent(best.f)}">`}el.hidden=false};
-  const SGWHY={spd:"car did not slow",lat:"off our road",ovr:"overridden"};
+  const SGWHY={spd:"car did not slow",lat:"off our road",ovr:"overridden",spk:"between lower signs"};
   const signInfo=(st,g)=>{const c=SGCTX.get(st+"|"+g.s0+"|"+g.text+"|"+g.side);if(!c||c.sp==null)return "";return `<span class="sgi${c.over?" over":""}${c.dbt?" dbt":""}">${n0(c.sp)} km/h${c.pr?" · prior "+esc(c.pr):""}${c.over?" · speeding":""}${c.dbt?" · "+(SGWHY[c.why]||"not held"):""}</span>`};
   // map size and telemetry size / hide, remembered
   const setMs=k=>{lsSet("tc.mapsz",k);$$("[data-ms]",host).forEach(b=>b.classList.toggle("on",b.dataset.ms===k));$("#dmap").style.height=(MSZ.find(x=>x[0]===k)||MSZ[2])[2];if(map&&map.resize){map.resize();map.refit(250)}};

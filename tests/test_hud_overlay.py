@@ -194,3 +194,31 @@ class TrustTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+@unittest.skipUnless(node_usable.usable(), "node is not installed or does not start")
+class SpikeTest(unittest.TestCase):
+    def seq(self, texts, gap=25):
+        return json.dumps([dict(t=i * gap, text=str(x)) for i, x in enumerate(texts)])
+
+    def spikes(self, texts, gap=25):
+        a = self.seq(texts, gap)
+        return [run("hudSpike(%d,'%s',%s)" % (i * gap, x, a)) for i, x in enumerate(texts)]
+
+    def test_a_limit_between_two_much_lower_agreeing_signs_is_false(self):
+        self.assertEqual(self.spikes([60, 110, 60, 70]), [False, True, False, False])
+        self.assertEqual(self.spikes([60, 110, 70]), [False, True, False])           # the two sides within 10 km/h of each other
+
+    def test_a_normal_drive_has_no_spike(self):
+        self.assertEqual(self.spikes([40, 50, 40, 60, 50, 70, 80, 90, 100]), [False] * 9)
+        self.assertEqual(self.spikes([60, 80, 100, 110]), [False] * 4)               # a climb, not a spike
+
+    def test_far_apart_signs_are_not_a_spike(self):
+        self.assertEqual(self.spikes([60, 110, 60], gap=120), [False] * 3)           # more than span seconds: a different stretch of road
+        self.assertEqual(self.spikes([40, 110, 80]), [False] * 3)                    # the two sides disagree: no way to say which is right
+
+    def test_a_spike_has_no_trust_and_says_why(self):
+        r = run('hudTrust({"text":"110","conf":64},null,[],true)')
+        self.assertEqual(r["t"], 0)
+        self.assertEqual(r["why"], "spk")
+        self.assertEqual(run('hudTrust({"text":"110","conf":64},null,[],false).why'), "")
