@@ -46,6 +46,11 @@ class TeslaCamFiltersUiTest(unittest.TestCase):
         self.assertIn("(TCS.dayDesc?days.slice(0,60):days.slice(0,60).reverse())", self.js)
         self.assertIn('cfg("teslacam.days_newest_first")!==false', self.js)       # days: newest first unless set otherwise; times: oldest first (rows_newest_first false)
 
+    def test_the_controls_share_one_height(self):
+        with open(os.path.join(HERE, "..", "Tools", "lib", "app_ui", "app.css"), encoding="utf-8") as f:
+            css = f.read()
+        self.assertIn("#tsr select,#tsr .chip{box-sizing:border-box;height:32px", css)
+
 
 if __name__ == "__main__":
     unittest.main()
