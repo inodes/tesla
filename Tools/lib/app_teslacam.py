@@ -102,6 +102,9 @@ def _secs(stamp):
     return CC.utc(stamp)
 
 
+_STAMP_CAM = re.compile(r"^(\d{4}-\d\d-\d\d_\d\d-\d\d-\d\d)-")
+
+
 class TeslaCam:
     def __init__(self, data_dir, sentry=None):
         self.dir = data_dir
@@ -338,23 +341,37 @@ class TeslaCam:
                 by[e["id"]] = dict(got, clips=clips, roles=got["roles"] + [r])
         return self._roles_by_video(list(by.values()))
 
+    def _event_video_roles(self):
+        """{minute stamp: {drives that hold a video file of it now}} for the minutes of Saved and Sentry events, from the ledger. Worked out again only when a day file of the ledger has changed
+        (the lists ask many times a page, and the day files are many)."""
+        led = TLG.Ledger(self.dir)
+        try:
+            sig = tuple(sorted((e.name, e.stat().st_mtime_ns, e.stat().st_size) for e in os.scandir(led.root) if e.name.endswith(".json")))
+        except OSError:
+            sig = None
+        hit = self.__dict__.get("_evr")
+        if sig is not None and hit and hit[0] == sig:
+            return hit[1]
+        live = {}
+        for day in led.days():
+            for k, rec in led.day(day).items():
+                if not (k.startswith("sentry|") or k.startswith("saved|")):
+                    continue
+                m = _STAMP_CAM.match(k.rsplit("|", 1)[-1])
+                if m:
+                    for r, x in rec["drives"].items():
+                        if not x.get("gone"):
+                            live.setdefault(m.group(1), set()).add(r)
+        if sig is not None:
+            self.__dict__["_evr"] = (sig, live)
+        return live
+
     def _roles_by_video(self, evs):
         """Where an event is kept is where its VIDEO is, as the ledger notes it (a move writes there at once): a drive that only still has the event's folder (event.json, thumb.png: the move
         takes the minutes, not those) is not a holder. An event the ledger has no video for keeps the drives that list it."""
         if not evs:
             return evs
-        led = TLG.Ledger(self.dir)
-        live, days = {}, {}
-        for e in evs:
-            for st in e.get("clips") or ():
-                days.setdefault(st[:10], set()).add(st)
-        for day, sts in days.items():
-            for k, rec in led.day(day).items():
-                m = re.match(r"^(\d{4}-\d\d-\d\d_\d\d-\d\d-\d\d)-", k.rsplit("|", 1)[-1])
-                if m and m.group(1) in sts:
-                    for r, x in rec["drives"].items():
-                        if not x.get("gone"):
-                            live.setdefault(m.group(1), set()).add(r)
+        live = self._event_video_roles()
         out = []
         for e in evs:
             held = set().union(*(live.get(st, set()) for st in (e.get("clips") or ())))
