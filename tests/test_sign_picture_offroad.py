@@ -67,3 +67,21 @@ class SignCamerasTest(unittest.TestCase):
         src = open(os.path.join(root, "app_review.py"), encoding="utf-8").read()
         self.assertIn('SIGN_CAMS = ("front",)', src)
         self.assertNotRegex(src, r"left_repeater|right_repeater|\bback\b.*\.mp4")
+
+
+class SignWindowUiTest(unittest.TestCase):
+    def js(self):
+        with open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "Tools", "lib", "app_ui", "app.js"), encoding="utf-8") as f:
+            return f.read()
+
+    def test_the_camera_that_read_a_sign_is_ringed_red(self):
+        js = self.js()
+        self.assertIn("speed sign read here", js)
+        self.assertIn('(!!sgCam&&b.dataset.c===sgCam)', js)            # the camera's button in the bar, as for a Sentry event
+        self.assertIn('||"front"', js)                                  # a reading that does not name its camera was read on the front one
+
+    def test_the_sign_window_hides_and_shows_like_the_telemetry(self):
+        js = self.js()
+        self.assertIn('data-gs="${k}"', js)
+        self.assertIn('lsSet("tc.sgsz",SGSZ)', js)
+        self.assertIn('TSZ.map(([k,t])=>`<button class="chip" data-gs', js)

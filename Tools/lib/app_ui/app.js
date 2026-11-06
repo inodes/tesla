@@ -1089,7 +1089,10 @@ function clipPlayer(host,o){
   // a Saved clip opens at the START of its first clip and plays; a Sentry event (o.at="trig") opens at the moment it was detected. Detection jumps to that moment, From Start to the first clip.
   // the camera that detected it is marked only around the moment of detection (a few seconds before to some after), wherever the cameras shown were chosen
   const hotNow=sec=>{if(!o.hot)return false;if(!o.trig)return true;const t=stMs(stamps[si])+sec*1000;return t>=o.trig-5000&&t<=o.trig+10000};
-  const hotUpd=()=>{$$(".sp .bar .chip[data-c]").forEach(b=>b.classList.toggle("trg",!!o.hot&&b.dataset.c===o.hot));if(!o.hot||!mv)return;const on=hotNow(mv.currentTime);$$("#vids figure[data-c]").forEach(f=>{const h=on&&f.dataset.c===o.hot;if(f.classList.contains("hot")!==h){f.classList.toggle("hot",h);const cp=f.querySelector("figcaption");if(cp)cp.textContent=CAMN[f.dataset.c]+(h?" · detected here":"")}})};
+  // the camera a speed sign is being read on (the one that detected it) is ringed red the same way, while the sign is in view: g.cam, the front camera when the reading does not say
+  let sgCam="";
+  const hotUpd=()=>{$$(".sp .bar .chip[data-c]").forEach(b=>b.classList.toggle("trg",(!!o.hot&&b.dataset.c===o.hot)||(!!sgCam&&b.dataset.c===sgCam)));if(!mv)return;const on=!!o.hot&&hotNow(mv.currentTime);
+    $$("#vids figure[data-c]").forEach(f=>{const e=on&&f.dataset.c===o.hot,g=!!sgCam&&f.dataset.c===sgCam,k=e?"e":g?"s":"";if((f.dataset.h||"")!==k){f.dataset.h=k;f.classList.toggle("hot",!!k);const cp=f.querySelector("figcaption");if(cp)cp.textContent=CAMN[f.dataset.c]+(e?" \u00b7 detected here":g?" \u00b7 speed sign read here":"")}})};
   const trigAt=()=>{si=stamps.reduce((a,s,i)=>stMs(s)<=o.trig?i:a,0);seek=Math.max(0,(o.trig-stMs(stamps[si]))/1000)};
   const toTrig=()=>{trigAt();if($("#stp"))$("#stp").value=si;vids()},toStart=()=>{si=0;seek=0;if($("#stp"))$("#stp").value=si;vids()};
   if(o.at==="trig"&&o.trig)trigAt();
@@ -1128,6 +1131,7 @@ function clipPlayer(host,o){
     if(hi){hi.hidden=!inf;if(inf){const k=inf.a+"|"+inf.b;if(hi.dataset.k!==k){hi.dataset.k=k;hi.firstChild.textContent=inf.a;hi.firstChild.hidden=!inf.a;hi.lastChild.textContent=inf.b}}}};
   // the signs read in these minutes (speed limits): shown beside the time while the video is at them
   let SGV={};const vsigns=()=>{const el=$("#vsg");if(!el||!mv)return;const t=mv.currentTime,L=(SGV[stamps[si]]||[]).filter(g=>t>=g.s0-1.5&&t<=g.s1+1.5&&!(o.hide&&o.hide(stamps[si],g)));
+    {const c=(L.find(g=>g.kind!=="school")||{}).cam||(L.some(g=>g.kind!=="school")?"front":"");if(c!==sgCam){sgCam=c;hotUpd()}}
     const h=L.map(g=>`<i class="bsp" title="${esc("Speed limit "+g.text+(g.conf>0?", "+g.conf+"% sure":""))}">${esc(g.text)}</i>`).join("")+(o.signInfo?L.map(g=>o.signInfo(stamps[si],g)).join(""):"");if(el.innerHTML!==h)el.innerHTML=h};
   Promise.all(Array.from({length:Math.ceil(stamps.length/80)},(_,c)=>fetch("/api/signs?stamps="+stamps.slice(c*80,c*80+80).join(",")).then(r=>r.json()).catch(()=>({})))).then(parts=>{if(document.contains(host)){SGV=Object.assign({},...parts);vsigns()}});
   // The next minute is loaded in the background (last 25 s of this one) and swapped in when this one ends, so there is no wait between minutes.
@@ -2759,20 +2763,23 @@ async function teslaDriveBody(host,role,fetchSeg,places,opts){
     const LV=L.map((x,j)=>[x,j]).filter(([x])=>!asideSign(x[0].stamp,x[1])),HN=L.filter(([m,g])=>{const w=(SGCTX.get(m.stamp+"|"+g.s0+"|"+g.text+"|"+g.side)||{}).why;return w==="ovr"||w==="spk"}).length;
     const MW=Math.max(0,...L.map(([m,g])=>(at(m,g)+" - "+g.text+" ("+SGWHY.spk+")").length))+5;      // as wide as the longest label there could be: it never changes width as signs are shown or hidden
     const ctx=(m,g)=>SGCTX.get(m.stamp+"|"+g.s0+"|"+g.text+"|"+g.side)||{};
-    el.innerHTML=`<div class="sub" style="width:100%;margin-bottom:4px">Signs read in this video:</div><select id="dsel" style="width:${MW}ch;max-width:100%"><option value="">${n0(LV.length)} read</option>${LV.map(([[m,g],j])=>`<option value="${j}">${at(m,g)} - ${esc(g.text)}${(c=>c.dbt?" ("+(SGWHY[c.why]||"not held")+")":"")(ctx(m,g))}</option>`).join("")}</select>${HN?`<button class="chip qsg${SASIDE?" on":""}" id="dsas" aria-pressed="${SASIDE}" aria-label="Questionable signs" title="${SASIDE?"Questionable signs are shown: click to hide them":"Questionable signs are hidden: click to show them"}. These are readings that are false: overridden by a surer sign, or far above the signs either side of them.">${qSign(SASIDE)}</button>`:""}`;
+    el.innerHTML=`<div class="bar" style="width:100%;margin:0 0 4px"><span class="sub">Signs read in this video:</span><span style="margin-left:auto;display:flex;gap:6px;align-items:center">${TSZ.map(([k,t])=>`<button class="chip" data-gs="${k}">${t}</button>`).join("")}</span></div><span id="dsgb" style="display:contents"><select id="dsel" style="width:${MW}ch;max-width:100%"><option value="">${n0(LV.length)} read</option>${LV.map(([[m,g],j])=>`<option value="${j}">${at(m,g)} - ${esc(g.text)}${(c=>c.dbt?" ("+(SGWHY[c.why]||"not held")+")":"")(ctx(m,g))}</option>`).join("")}</select>${HN?`<button class="chip qsg${SASIDE?" on":""}" id="dsas" aria-pressed="${SASIDE}" aria-label="Questionable signs" title="${SASIDE?"Questionable signs are shown: click to hide them":"Questionable signs are hidden: click to show them"}. These are readings that are false: overridden by a surer sign, or far above the signs either side of them.">${qSign(SASIDE)}</button>`:""}</span>`;
     // what was seen: the picture of each sign beside what the page worked out about it (the speed the car held, how far off the car's line it stood, how sure, why it is set aside)
     const gc=$("#dsgc");if(gc)gc.innerHTML=LV.length?`<div class="evs sgks">${LV.map(([[m,g],j])=>{const c=ctx(m,g),lat=hudLat(g),why=c.dbt?SGWHY[c.why]||"not held":"";
       return `<button class="evc sgk${c.dbt?" faded":""}" data-j="${j}">${g.f?`<img alt="" decoding="async" loading="lazy" src="/review/${esc(g.f)}" onerror="this.replaceWith(Object.assign(document.createElement('div'),{className:'noimg',textContent:'no picture kept'}))">`:'<div class="noimg">no picture kept</div>'}<b>${esc(g.text)}${g.side==="R"?" (right side)":""}</b><span>${at(m,g)}${c.sp!=null?" · car "+n0(c.sp)+" km/h":""}</span>${lat!=null?`<span>${n0(lat,1)} m ${g.fx<.5?"left":"right"} of the car's line</span>`:""}<span>seen ${g.n}× · sure ${n0(g.conf)}%</span>${why?`<span class="mis">${esc(why)}</span>`:""}</button>`}).join("")}</div>`:"";
     const goSign=j=>{if(j===""||j==null){allPins();return}const [m,g]=L[+j];if(player)player.seekAt(m.stamp,Math.max(0,Math.floor(g.s0)));cursor(m.off+Math.floor(g.s0));if(map&&map.pins)map.pins([{i:Math.round(m.off+g.s0),cat:g.kind==="school"?"school":"speed",text:g.text,side:g.side}])};
     const sl=$("#dsel",el);sl.onchange=()=>goSign(sl.value);
     $$("#dsgc .sgk").forEach(b=>b.onclick=()=>{goSign(b.dataset.j);if($("#dsel"))$("#dsel").value=b.dataset.j;$$("#dsgc .sgk").forEach(x=>x.classList.toggle("on",x===b));$("#dvid").scrollIntoView({block:"nearest"})});
-    const ab=$("#dsas",el);if(ab)ab.onclick=()=>{SASIDE=!SASIDE;lsSet("tc.signaside",SASIDE?"1":"0");sgRedraw()}};
+    const ab=$("#dsas",el);if(ab)ab.onclick=()=>{SASIDE=!SASIDE;lsSet("tc.signaside",SASIDE?"1":"0");sgRedraw()};
+    // Hide / Normal, as on the telemetry: Hide leaves only the heading, the list and the pictures of the signs go; remembered
+    const setGs=k=>{SGSZ=k==="h"?"h":"n";lsSet("tc.sgsz",SGSZ);$$("[data-gs]",el).forEach(b=>b.classList.toggle("on",b.dataset.gs===SGSZ));const bx=$("#dsgb",el);if(bx)bx.style.display=SGSZ==="h"?"none":"contents";if(gc)gc.style.display=SGSZ==="h"?"none":""};
+    $$("[data-gs]",el).forEach(b=>b.onclick=()=>setGs(b.dataset.gs));setGs(SGSZ)};
     sgRedraw()};
   const SPEEDTOL=3,SGCTX=new Map();let allPins=()=>{};
   // A sign read OFF our road (a ramp's or a side road's: its trust fell for where it stands) that shows a higher speed than the one in force is ignored: not on the map, not beside the video.
   // A sign that is set aside is left out of the map, the badges beside the video and the list: one read OFF our road that shows a higher speed than the one in force, and (unless the person asks for them) one a
   // stronger sign read at the same time overrode (why "ovr"), and one read between much lower signs (why "spk"). SASIDE: the person asked to see the overridden ones (remembered).
-  let SASIDE=lsGet("tc.signaside","0")==="1";
+  let SASIDE=lsGet("tc.signaside","0")==="1";let SGSZ=lsGet("tc.sgsz","n");
   const asideSign=(st,g)=>{const c=SGCTX.get(st+"|"+g.s0+"|"+g.text+"|"+g.side);return !!(c&&(c.off||((c.why==="ovr"||c.why==="spk")&&!SASIDE)))};
   // the picture of the sign being passed (cut from the full-size frame), bottom left of the map: signs with a picture, not ignored, within 1.5 s of the video's second; [{a, b, f}] by drive second
   let SGPIC=[],sgpF="";
