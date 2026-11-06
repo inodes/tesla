@@ -33,6 +33,8 @@ class SignPictureTest(unittest.TestCase):
         self.assertIn("!asideSign(x[0].stamp,x[1])", blk)      # not in the list ...
         self.assertIn("LV.length", blk)                         # ... nor in its count
         self.assertIn('id="dsas"', blk)                         # a button shows the set-aside ones
+        self.assertIn("${qSign(SASIDE)}", blk)                  # a speed sign with a ? in it, crossed through while they are hidden (no words)
+        self.assertNotIn("set aside</button>", blk)
         self.assertNotIn("offRoad", self.js)
 
     def test_picture_overlay(self):

@@ -341,3 +341,4 @@ main:has(#spl .stbar,#spl .vbar) #splx{display:none}
 .hud.nof .hsg,.hud.nof .hsp,.hud.nof .hbk{display:none}
 /* the order of the days (calendar) and of the times in a day (clock) beside the date bar of every list */
 .rsort{display:inline-flex;gap:6px;align-items:center;margin-left:8px}.rsort .fsort{display:inline-flex;align-items:center;gap:5px}
+.qsg{display:inline-flex;align-items:center;gap:5px}.qsg small{font-size:11px}
