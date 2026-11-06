@@ -672,7 +672,7 @@ class H(BaseHTTPRequestHandler):
                 held = KEEP.stand_down()
                 if held:
                     return self.send_json(dict(error="%s is reading the drives: stop it first." % held))
-                return self.send_json(CKEEP.save_minutes(body.get("stamps") or [], footage_roots(), confirmed=body.get("confirm") is True))
+                return self.send_json(CKEEP.save_minutes(body.get("stamps") or [], footage_roots(), confirmed=body.get("confirm") is True, reason=body.get("reason") or None))
             if u.path == "/api/clips/act":         # {action: delete|move|process|stop, role, items: [{kind, id}]}: remove the video of clips from a drive (after it is all kept), move it to the Archive, or read what the clips still lack from their video
                 if body.get("action") == "stop":
                     return self.send_json(CKEEP.stop())

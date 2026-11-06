@@ -458,8 +458,9 @@ class ClipKeep:
     # ---- Recent minutes -> a Saved clip --------------------------------------------------------------------------------
     SAVE_MAX = 60                                   # minutes at most in one clip made this way
     SAVE_REASON = "user_interaction_dashcam_icon_tapped"
+    SAVE_REASONS = ("user_interaction_dashcam_icon_tapped", "user_interaction_dashcam_launcher_action_tapped", "user_interaction_honk", "vehicle_auto_emergency_braking")      # the reasons the car writes into a Saved clip's event.json (the two sentry_* ones are only for Sentry events)
 
-    def save_minutes(self, stamps, roots, confirmed=False):
+    def save_minutes(self, stamps, roots, confirmed=False, reason=None):
         """Makes a Saved clip of Recent minutes, as the car's dashcam button does: the minutes' files are MOVED (renamed on their own drive, so no copy and no space) into
         SavedClips/<moment>/ and an event.json is written for it (the car writes one per Saved clip; this one says it was made by the app, `made_by`). All the minutes must be on
         one connected drive. The footage log is updated at once. Returns dict(ok, event, role, files, folder) or dict(error=...)."""
@@ -467,6 +468,9 @@ class ClipKeep:
             return dict(error="Not confirmed: nothing was moved.")
         if self._thread and self._thread.is_alive():
             return dict(error="Something is already being done to the drives.")
+        reason = reason or self.SAVE_REASON
+        if reason not in self.SAVE_REASONS:
+            return dict(error="That is not a reason the car gives a Saved clip.")
         sts = sorted({x for x in (stamps or []) if isinstance(x, str) and _STAMP.match(x)}, key=CC.utc)
         if not sts:
             return dict(error="No minutes are selected.")
@@ -536,7 +540,7 @@ class ClipKeep:
             except OSError:
                 pass
             return dict(error="Nothing could be moved: %s" % (errors[0] if errors else "no files"))
-        event = {"timestamp": t.strftime("%Y-%m-%dT%H:%M:%S"), "city": "", "street": "", "est_lat": lat, "est_lon": lon, "reason": self.SAVE_REASON, "camera": "0", "made_by": "Tesellate"}
+        event = {"timestamp": t.strftime("%Y-%m-%dT%H:%M:%S"), "city": "", "street": "", "est_lat": lat, "est_lon": lon, "reason": reason, "camera": "0", "made_by": "Tesellate"}
         with open(os.path.join(dst, "event.json"), "w", encoding="utf-8") as fh:
             json.dump(event, fh, indent="\t", ensure_ascii=False)
         fronts = sorted(d for d in done if d.endswith("-front.mp4"))
