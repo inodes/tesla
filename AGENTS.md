@@ -93,7 +93,7 @@
 
 Command naming, structure and the app's task runner follow `docs/COMMANDS_AUDIT.md`; read it before adding, renaming or removing a script, and update its Progress section in the same change.
 
-App UI (Tesellate) rules - functional wording only, progress on anything that waits, controls only when they apply, one fact once, Mac conventions - are in `docs/ui-guidelines.md`; read it before changing a page.
+App UI (Tesellate) rules - functional wording only, progress on anything that waits, controls only when they apply, one fact once, Mac conventions - are in `docs/ui-guidelines.md`; read it before changing a page. Section 11 of it is the guide to a clean, consistent look between windows (shared pieces to reuse, rules to follow, how to add a window).
 
 All terminal tools (such as `Tools/commands/analyse_drives.py` and `Tools/commands/analyse_charging.py`) render rich Unicode box-drawing tables. The following rules are mandatory for all table implementations:
 

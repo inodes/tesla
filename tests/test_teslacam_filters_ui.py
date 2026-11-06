@@ -40,11 +40,19 @@ class TeslaCamFiltersUiTest(unittest.TestCase):
         self.assertIn("if(!vis.some(v=>v.ty+\"|\"+v.id===k))TCSEL.delete(k)", self.js)       # Move / Delete never act on a hidden clip
 
     def test_sort_arrows(self):
-        self.assertIn('id="daysort"', self.js)
-        self.assertIn('id="rowsort"', self.js)
-        self.assertIn("TCS.dayDesc=!TCS.dayDesc", self.js)
-        self.assertIn("(TCS.dayDesc?days.slice(0,60):days.slice(0,60).reverse())", self.js)
+        # one order of the days (a calendar and an arrow) and of the times in a day (a clock and an arrow), beside the date bar of every list: Drives, Charges, Parked, TeslaCam
+        self.assertIn("${calSvg}${ARW(ORD.dayDesc)}", self.js)
+        self.assertIn("${clkSvg}${ARW(ORD.rowDesc)}", self.js)
+        self.assertIn("+ordBtns();", self.js)                                   # drawn by the date bar itself
+        self.assertNotIn('<span class="sub">Sort</span>', self.js)
+        self.assertNotIn('id="daysort"', self.js)                               # no page has a bar of its own for it
+        self.assertNotIn("TCS.dayDesc", self.js)
+        self.assertNotIn("TLS.dayDesc", self.js)
+        self.assertIn("(ORD.dayDesc?days.slice(0,60):days.slice(0,60).reverse())", self.js)
         self.assertIn('cfg("teslacam.days_newest_first")!==false', self.js)       # days: newest first unless set otherwise; times: oldest first (rows_newest_first false)
+        self.assertIn('lsSet("ord.days"', self.js)                              # and remembered
+        for fn in ("const ordered=sk===\"t0\"", "if(CP.sk===\"t0\")return ordCmp(a,b)"):
+            self.assertIn(fn, self.js)                                          # the flat tables (Parked, Charges) follow it by their Date column
 
     def test_the_controls_share_one_height(self):
         with open(os.path.join(HERE, "..", "Tools", "lib", "app_ui", "app.css"), encoding="utf-8") as f:

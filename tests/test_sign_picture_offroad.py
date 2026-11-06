@@ -20,9 +20,20 @@ class SignPictureTest(unittest.TestCase):
     def test_off_road_faster_sign_is_ignored(self):
         self.assertIn('off:dbt&&TR.get(g).why==="lat"', self.js)
         self.assertIn("+g.text>(pr!=null?+pr:sp)", self.js)      # only a higher speed than the one in force
-        self.assertIn("g.text&&!offRoad(m.stamp,g)", self.js)      # off the map
+        self.assertIn("g.text&&!asideSign(m.stamp,g)", self.js)      # off the map
         self.assertIn("!(o.hide&&o.hide(stamps[si],g))", self.js)      # off the badges beside the video
-        self.assertIn("hide:offRoad", self.js)
+        self.assertIn("hide:asideSign", self.js)
+
+    def test_overridden_signs_are_left_out_unless_asked_for(self):
+        i = self.js.index("const asideSign=")
+        self.assertIn('c.why==="ovr"&&!SASIDE', self.js[i:i + 260])      # an overridden sign is set aside by default
+        self.assertIn('let SASIDE=lsGet("tc.signaside","0")==="1"', self.js)      # and shown only when asked, remembered
+        j = self.js.index("const sgRedraw=")
+        blk = self.js[j:j + 3200]
+        self.assertIn("!asideSign(x[0].stamp,x[1])", blk)      # not in the list ...
+        self.assertIn("LV.length", blk)                         # ... nor in its count
+        self.assertIn('id="dsas"', blk)                         # a button shows the set-aside ones
+        self.assertNotIn("offRoad", self.js)
 
     def test_picture_overlay(self):
         self.assertIn('id="dsgp"', self.js)

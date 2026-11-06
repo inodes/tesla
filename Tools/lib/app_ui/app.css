@@ -339,3 +339,5 @@ main:has(#spl .stbar,#spl .vbar) #splx{display:none}
 
 .sp .bar .chip.trg{box-shadow:inset 0 0 0 2px #dc2626}.sp .bar .chip.trg::after{content:"";display:inline-block;width:.5em;height:.5em;border-radius:50%;background:#dc2626;margin-left:.4em;vertical-align:middle}
 .hud.nof .hsg,.hud.nof .hsp,.hud.nof .hbk{display:none}
+/* the order of the days (calendar) and of the times in a day (clock) beside the date bar of every list */
+.rsort{display:inline-flex;gap:6px;align-items:center;margin-left:8px}.rsort .fsort{display:inline-flex;align-items:center;gap:5px}

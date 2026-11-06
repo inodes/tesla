@@ -6,6 +6,8 @@
 > read that first, every session. This file exists only to capture things specific to
 > working here *as Claude in Cowork*, so they aren't rediscovered from scratch each time.
 
+> **App UI:** before changing `Tools/lib/app_ui/` read `docs/ui-guidelines.md`; section 11 ("One look between windows") lists the shared pieces to reuse and the rules that keep every window looking and behaving the same.
+
 ---
 
 ## 1. How this session reaches the repo
