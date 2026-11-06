@@ -341,7 +341,7 @@ main:has(#spl .stbar,#spl .vbar) #splx{display:none}
 .hud.nof .hsg,.hud.nof .hsp,.hud.nof .hbk,.hud.nof .hgr{display:none}
 /* the order of the days (calendar) and of the times in a day (clock) beside the date bar of every list */
 .rsort{display:inline-flex;gap:6px;align-items:center;margin-left:8px}.rsort .fsort{display:inline-flex;align-items:center;gap:5px}
-.qsg{display:inline-flex;align-items:center;gap:5px}.qsg small{font-size:11px}
+.qsg{display:inline-flex;align-items:center}
 .hud .hgr{position:absolute;right:.95em;bottom:.95em;display:flex;gap:.55em;font:700 2.5em/1 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;color:#fff;text-shadow:0 0 .25em rgba(0,0,0,.9),0 .05em .2em rgba(0,0,0,.8)}.hud .hgr i{font-style:normal;opacity:.4;padding:.15em .3em;border-radius:.35em}.hud .hgr i.on{opacity:1;background:rgba(0,0,0,.55);box-shadow:0 0 0 .08em rgba(255,255,255,.85)}
 /* a drive's signs read, as pictures under the video: the sign picture square, whole */
 .evs.sgks{grid-template-columns:repeat(auto-fill,minmax(150px,1fr))}.evc.sgk img,.evc.sgk .noimg{aspect-ratio:1/1;object-fit:contain;background:var(--hover)}.evc.sgk.faded{opacity:.7}

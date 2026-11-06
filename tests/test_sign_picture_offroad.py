@@ -35,6 +35,8 @@ class SignPictureTest(unittest.TestCase):
         self.assertIn('id="dsas"', blk)                         # a button shows the set-aside ones
         self.assertIn("${qSign(SASIDE)}", blk)                  # a speed sign with a ? in it, crossed through while they are hidden (no words)
         self.assertNotIn("set aside</button>", blk)
+        self.assertIn("${qSign(SASIDE)}</button>", blk)                 # no count beside it
+        self.assertIn('stroke="#d62828" stroke-width="2.4"', self.js)    # the bar through it is red, like the ring
         self.assertNotIn("offRoad", self.js)
 
     def test_each_sign_is_shown_as_a_picture_with_what_was_worked_out(self):
