@@ -94,24 +94,13 @@ class OnePage(unittest.TestCase):
         self.assertIn('x.classList.toggle("on",j===k)', self.js)                   # the picked card is marked
 
 
-class HoleBeforeRecent(unittest.TestCase):
-    """The minute of a Sentry event that starts in the hole before a Recent run is not a repeat of it: the moment of detection is in that hole."""
+class NothingDroppedForStartingNear(unittest.TestCase):
+    """The Sentry minute of 6 Nov 2026 11:05:19 (13.5 s long, closed when Recent 11:05:33 began) is kept: no clip is dropped for starting near another."""
 
-    def test_a_whole_minute_that_starts_before_the_recent_run_is_kept(self):
-        import teslacam_timeline as TL
-        old = CC.duration
-        CC.duration = lambda st: 59.0
-        try:
-            rt = [100.0 + 14, 100.0 + 74]                          # Recent minutes from 14 s after the clip began
-            self.assertFalse(TL.overlaps_recent("x", 100.0, rt))   # 14 s of it held by no Recent minute
-            self.assertTrue(TL.overlaps_recent("x", 100.0, [100.0 + 2, 100.0 + 62]))      # the same minute, a few seconds apart
-            self.assertTrue(TL.overlaps_recent("x", 100.0, [100.0, 160.0]))
-        finally:
-            CC.duration = old
-
-    def test_the_setting_is_in_the_config(self):
-        self.assertIn("repeat_unheld_s", src("config.example.json"))
-        self.assertIn("repeat_unheld_s", src("Tools", "lib", "app_config.py"))
+    def test_the_minutes_of_an_event_beside_a_recent_run_are_all_kept(self):
+        me = SimpleNamespace(_sources=lambda role, tc: ({"2026-11-06_11-05-33": ["front"]}, [], [dict(id="ev", clips={"2026-11-06_11-04-18": ["front"], "2026-11-06_11-05-19": ["front"]})]))
+        got = [m["stamp"] for m in AT.TeslaCam._sentry_minutes(me, "A", "tc", "ev")]
+        self.assertEqual(got, ["2026-11-06_11-04-18", "2026-11-06_11-05-19"])
 
 
 class PlaceOnTheLabel(unittest.TestCase):

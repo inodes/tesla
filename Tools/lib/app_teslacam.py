@@ -515,12 +515,10 @@ class TeslaCam:
         first = next(((r, (roots or {})[r]) for r in DR.read_roles() if (roots or {}).get(r)), None)
         return ("A", roots["A"]) if roots and roots.get("A") else first or ("A", None)
 
-    def footage(self, role, teslacam, all_saved=False):
-        """Every Recent and Saved minute on a drive (TL.minutes). With `all_saved`, Saved minutes within 30 s of a Recent clip are kept too so their telemetry is read."""
+    def footage(self, role, teslacam):
+        """Every Recent and Saved minute on a drive (TL.minutes)."""
         c = self._scan(role, teslacam)
         saved, _ok = self.events(role, "saved", teslacam)
-        if all_saved:
-            return TL.minutes(c["clips"] if c else {}, saved, all_saved=True)
         key = (id(c), id(saved), len(saved), CC.version())
         memo = self._foot.get(role)
         if memo and memo[0] == key:
@@ -532,7 +530,7 @@ class TeslaCam:
     def scan_report(self, roots):
         """Footage of the drives in roots {role: TeslaCam folder} against the telemetry kept; also what the reading job is doing."""
         store = self._tl("A")
-        mins = {r: [m for m in self.footage(r, p, all_saved=True) if not (IGN.has(m["stamp"]) or PG.has(m["stamp"]) or (m["src"] in ("saved", "sentry") and PG.has_event(m["src"], m.get("ref"))))] for r, p in roots.items() if p}      # what is parked at Home, or was taken off the log, is left alone
+        mins = {r: [m for m in self.footage(r, p) if not (IGN.has(m["stamp"]) or PG.has(m["stamp"]) or (m["src"] in ("saved", "sentry") and PG.has_event(m["src"], m.get("ref"))))] for r, p in roots.items() if p}      # what is parked at Home, or was taken off the log, is left alone
         rep = TS.plan(store, mins, lambda r, m: self._front(roots[r], m))
         self._scan_todo = rep.pop("todo")
         rep["job"] = self.scan_status()
@@ -586,7 +584,7 @@ class TeslaCam:
             it = next((x for x in items if x["kind"] in ("drive", "stopped", "recording") and x["t0"] <= t_id < x["t1"]), None)
             if not it:
                 return None
-            full = self.footage(role, teslacam, all_saved=True) if teslacam else allm
+            full = self.footage(role, teslacam) if teslacam else allm
             return it, [m for m in full if m["t"] + 60 > it["t0"] and m["t"] < it["t1"]]
         return self._finish(role, teslacam, pick, budget)
 
@@ -633,30 +631,23 @@ class TeslaCam:
             return []
         out, seen = [], set()
         src = self._sources(role, teslacam)
-        rt = sorted(TL.secs(st) for st in src[0])               # once for every event (it was worked out again for each of them)
         for e in src[2]:
-            out += [m for m in self._sentry_minutes(role, teslacam, e["id"], src, rt) if m["stamp"] not in seen and not seen.add(m["stamp"]) and m["t"] + 60 > t0 and m["t"] < t1]
+            out += [m for m in self._sentry_minutes(role, teslacam, e["id"], src) if m["stamp"] not in seen and not seen.add(m["stamp"]) and m["t"] + 60 > t0 and m["t"] < t1]
         return out
 
-    def _sentry_minutes(self, role, teslacam, ev_id, src=None, rt=None):
-        """The minutes of one Sentry event as footage minutes (src "sentry"), those the continuous recording does not already hold. src / rt: the drive's
-        sources and the sorted times of its Recent minutes, when the caller already has them."""
+    def _sentry_minutes(self, role, teslacam, ev_id, src=None):
+        """The minutes of one Sentry event as footage minutes (src "sentry"), every clip that is not also a Recent clip of the same name. src: the drive's
+        sources, when the caller already has them."""
         if not (teslacam and ev_id):
             return []
         recent, _saved, sentry = src or self._sources(role, teslacam)
         e = next((x for x in sentry if x["id"] == ev_id), None)
         if not e:
             return []
-        import bisect
-        if rt is None:
-            rt = sorted(TL.secs(st) for st in recent)
         out = []
         for st, cams in e["clips"].items():
-            t = TL.secs(st)
-            i = bisect.bisect(rt, t)
-            near = min([abs(rt[j] - t) for j in (i - 1, i) if 0 <= j < len(rt)] or [1e9])
-            if st not in recent and (near > TL.OPTS["same_minute_s"] or not TL.overlaps_recent(st, t, rt)):
-                out.append(dict(stamp=st, t=t, src="sentry", ref=e["id"], cams=cams, tcam=TL.tcam(cams)))
+            if st not in recent:                                    # the same name is the same clip; a clip that only starts near a Recent one is another stretch of time
+                out.append(dict(stamp=st, t=TL.secs(st), src="sentry", ref=e["id"], cams=cams, tcam=TL.tcam(cams)))
         return out
 
     def _short_where(self, store, stamp):

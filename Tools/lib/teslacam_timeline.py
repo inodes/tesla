@@ -43,8 +43,6 @@ OPTS = dict(moving_kmh=3.0,           # a minute whose top speed is under this i
             same_place_est_m=800,     # ... (this far when one of them is a Sentry event's approximate position)
             blip_kmh=1.0,             # a shift out of Park whose top speed stays under this did not move the car: a blip (nothing), not a drive or even a re-park
             short_m=200,              # a drive shorter than this is marked short (a re-park: the car was only moved a little)
-            repeat_unheld_s=10,       # a clip of a whole minute is a repeat of the Recent minutes when no more than this many seconds of it are held by none of them
-            same_minute_s=30,         # a Saved minute this close to a Recent one is the same minute
             read_workers=4)           # clips read at once (the reading is CPU work)
 _LOCK = threading.RLock()
 
@@ -285,47 +283,16 @@ def tcam(cams):
     return next((c for c in TELEM_CAMS if c in cams), None)
 
 
-def overlaps_recent(stamp, t, rt):
-    """True when the clip named `stamp` (UTC `t`) covers footage a Recent minute (sorted UTC starts `rt`, a minute long) already holds.
-    A clip the car closed early (a Sentry or Saved clip of 9 s, say, whose own header says so) that falls in the hole between two Recent minutes is NOT a repeat of either, even
-    though its name is within same_minute_s of one: dropping it leaves a black hole where there is footage. A whole-minute clip, or one of unknown length, is a repeat."""
-    d = CC.duration(stamp)
-    import bisect
-    if d is None or d >= 55:                               # a whole minute is a repeat only when the Recent minutes hold (nearly) all of it: a Sentry minute that starts in the hole before a Recent run
-        d = 60.0 if d is None else d                       # holds footage no Recent minute has (the moment it was detected, say)
-        a, b = t, t + d
-        held, end = 0.0, a
-        i = bisect.bisect_left(rt, t - 90)
-        while i < len(rt) and rt[i] < b:
-            lo_, hi_ = max(rt[i], end), min(rt[i] + 60.0, b)
-            if hi_ > lo_:
-                held += hi_ - lo_
-                end = hi_
-            i += 1
-        return (b - a) - held <= OPTS["repeat_unheld_s"]
-    a, b = t + 1.0, t + d - 1.0
-    i = bisect.bisect_left(rt, t - 90)
-    while i < len(rt) and rt[i] < t + 90:                  # only the Recent minutes within 90 s: rt is sorted, so not a walk of every minute ever recorded
-        if rt[i] < b and a < rt[i] + 60.0:
-            return True
-        i += 1
-    return False
-
-
-def minutes(recent, saved, all_saved=False):
-    """Every Recent and Saved minute, oldest first, each once (a Saved minute that is also in Recent is left out unless `all_saved` asks for every distinct stamp)."""
-    import bisect
+def minutes(recent, saved):
+    """Every Recent and Saved minute, oldest first, each once. A clip is the same clip as another only when it has the same name (the same file on two drives): clips are whole recordings that
+    never overlap (the closing time in each header shows it: docs/CLIP_TIMES.md), so one that starts near another is a different stretch of time, however short, and is kept."""
     mins = {}
     for st, cams in recent.items():
         mins[st] = dict(stamp=st, t=secs(st), src="recent", ref="", cams=cams, tcam=tcam(cams))
-    rt = sorted(m["t"] for m in mins.values())
     for ev in saved:
         for st, cams in ev["clips"].items():
-            t = secs(st)
-            i = bisect.bisect(rt, t)
-            near = min([abs(rt[j] - t) for j in (i - 1, i) if 0 <= j < len(rt)] or [1e9])
-            if (all_saved or near > OPTS["same_minute_s"] or not overlaps_recent(st, t, rt)) and st not in mins:
-                mins[st] = dict(stamp=st, t=t, src="saved", ref=ev["id"], cams=cams, tcam=tcam(cams))
+            if st not in mins:
+                mins[st] = dict(stamp=st, t=secs(st), src="saved", ref=ev["id"], cams=cams, tcam=tcam(cams))
     return sorted(mins.values(), key=lambda m: m["t"])
 
 

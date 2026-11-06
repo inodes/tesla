@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
-"""test_events_in_once.py - the Sentry minutes inside a window: the times of the drive's Recent minutes are worked out once for all the events (not once
-per event), and the answer is what asking each event on its own gives.
+"""test_events_in_once.py - the Sentry minutes inside a window: each event minute's time is worked out once, and the answer is what asking each event on its own gives.
 
     python3 -m unittest tests/test_events_in_once.py
 """
@@ -42,6 +41,6 @@ class Once(unittest.TestCase):
         self.assertEqual(got, want)
         self.assertEqual(sorted({m["ref"] for m in got}), ["2026-10-01_09-05-00", "2026-10-01_11-05-00", "2026-10-01_12-05-00"])     # 10:xx is held by Recent
 
-    def test_recent_times_worked_out_once(self):
+    def test_each_event_minute_worked_out_once(self):
         self.tc._events_in("A", "/x", 0, 2e9)
-        self.assertEqual(self.n[0], 30 + 4 * 6)                 # each Recent minute once, each event minute once
+        self.assertEqual(self.n[0], 3 * 6)                      # each minute of the three events Recent does not hold by name, once; no Recent time is needed
