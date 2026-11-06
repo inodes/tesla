@@ -22,9 +22,14 @@ class SaveMinutesUiTest(unittest.TestCase):
         self.assertIn("Move them from Recent into a new Saved clip?", self.js)       # asked before anything is moved
         self.assertIn("confirm:true", self.js)
 
+    def test_the_reason_is_one_of_the_car_s_own(self):
+        for r in ("user_interaction_dashcam_icon_tapped", "user_interaction_dashcam_launcher_action_tapped", "user_interaction_honk", "vehicle_auto_emergency_braking"):
+            self.assertIn('["%s",' % r, self.js)
+        self.assertIn('reason=body.get("reason") or None', self.py)
+
     def test_the_server_route_needs_a_confirmation(self):
         self.assertIn("/api/clips/save_minutes", self.py)
-        self.assertIn('CKEEP.save_minutes(body.get("stamps") or [], footage_roots(), confirmed=body.get("confirm") is True)', self.py)
+        self.assertIn('CKEEP.save_minutes(body.get("stamps") or [], footage_roots(), confirmed=body.get("confirm") is True, reason=body.get("reason") or None)', self.py)
 
 
 if __name__ == "__main__":

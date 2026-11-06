@@ -2593,12 +2593,12 @@ async function teslaDriveBody(host,role,fetchSeg,places,opts){
     const selPaint=()=>{$$("#dcov i",host).forEach(b=>b.classList.toggle("sel",inSel(+b.dataset.o)));const bx=$("#dcsel",host),l=selMs();
       if(!bx)return;if(!l.length){bx.hidden=true;bx.innerHTML="";return}bx.hidden=false;
       const tx=`<b>${l.length} minute${l.length>1?"s":""}</b> selected · ${esc(clockHM(l[0].loc))} – ${esc(clockHM(l[l.length-1].loc))}`;
-      bx.innerHTML=covAsk?`<span>${tx}. <b>Move them from Recent into a new Saved clip?</b> The video is moved on its drive, not copied.</span><button class="btn sm pri" id="dcgo">Move to Saved</button><button class="btn sm" id="dcno">Cancel</button>`
+      bx.innerHTML=covAsk?`<span>${tx}. <b>Move them from Recent into a new Saved clip?</b> The video is moved on its drive, not copied.</span><label class="sub" style="display:flex;gap:6px;align-items:center">Reason <select id="dcrs">${SAVE_REASONS.map(([k,l])=>`<option value="${k}">${esc(l)}</option>`).join("")}</select></label><button class="btn sm pri" id="dcgo">Move to Saved</button><button class="btn sm" id="dcno">Cancel</button>`
         :`<span>${tx}${covNote?` · <span style="color:${/rror|not |cannot|No /.test(covNote)?"var(--bad)":"var(--ok)"}">${esc(covNote)}</span>`:""}</span><button class="btn sm" id="dcsv" title="Makes a Saved clip of these minutes, so the car's rolling buffer cannot overwrite them">Save as a Saved clip</button><button class="btn sm" id="dcx">Clear</button>`;
       const on=(id,f)=>{const x=$("#"+id,bx);if(x)x.onclick=f};
       on("dcx",()=>{covSel=null;covNote="";selPaint()});on("dcsv",()=>{covAsk=true;covNote="";selPaint()});on("dcno",()=>{covAsk=false;selPaint()});
-      on("dcgo",async()=>{const st=selMs().map(m=>m.stamp);covAsk=false;covNote="Moving…";selPaint();let j;
-        try{j=await (await fetch("/api/clips/save_minutes",{method:"POST",body:JSON.stringify({stamps:st,confirm:true})})).json()}catch(e){j={error:e.message}}
+      on("dcgo",async()=>{const st=selMs().map(m=>m.stamp),why=($("#dcrs",bx)||{}).value||"";covAsk=false;covNote="Moving…";selPaint();let j;
+        try{j=await (await fetch("/api/clips/save_minutes",{method:"POST",body:JSON.stringify({stamps:st,confirm:true,reason:why})})).json()}catch(e){j={error:e.message}}
         if(j.error){covNote=j.error;selPaint();return}
         covNote="Saved as "+j.event+" on "+drName(j.role);bust("tc/clips");selPaint();setTimeout(()=>location.reload(),1500)})};
     $$("#dcov i",host).forEach(b=>{b.onclick=e=>{const o=+b.dataset.o;
@@ -2610,6 +2610,8 @@ async function teslaDriveBody(host,role,fetchSeg,places,opts){
   // the block of the bar for the minute that is playing turns yellow
   let SGALL=null;       // every speed sign of the span, once read: {t (second of the span), text, conf, lat (m off the car's line)}
   const sgNear=(t,text)=>(SGALL||[]).filter(e=>e.text!==text&&Math.abs(e.t-t)<=15).map(e=>({text:e.text,conf:e.conf,lat:e.lat,dt:e.t-t}));
+  // the reasons the car writes into a Saved clip's event.json (nothing else is valid), with the page's own words
+  const SAVE_REASONS=[["user_interaction_dashcam_icon_tapped",REASON.user_interaction_dashcam_icon_tapped||"Dashcam icon tapped"],["user_interaction_dashcam_launcher_action_tapped",REASON.user_interaction_dashcam_launcher_action_tapped||"Dashcam launcher tapped"],["user_interaction_honk",REASON.user_interaction_honk||"Horn"],["vehicle_auto_emergency_braking",REASON.vehicle_auto_emergency_braking||"Emergency braking"]];
   let covOn=null,covSel=null,covAnchor=null,covAsk=false,covNote="";const covNow=off=>{if(covOn===off)return;covOn=off;$$("#dcov i",host).forEach(b=>b.classList.toggle("now",+b.dataset.o===off))};
   const events=()=>{if(opts.rvtab||evShown||!d.events||!d.events.length||!live())return;evShown=true;
     $("#dev").innerHTML=`<h2>Saved clips and Sentry events in this drive</h2><div class="evs">${d.events.map(v=>`<button class="evc" data-u="${v.t}">${v.clips?sentryThumb(Object.assign({},v,{role}),v.folder):v.thumb?`<img alt="" decoding="async" loading="lazy" src="/footage/${role}/${v.folder}/${v.id}/thumb.png" onerror="this.style.visibility='hidden'">`:'<div class="noimg"></div>'}<b>${hms(v.ts)}</b><span>${esc(v.folder==="SavedClips"?"Saved":"Sentry")} · ${esc(reason(v.reason))}</span><span>${esc(v.city||"")}</span></button>`).join("")}</div>`;

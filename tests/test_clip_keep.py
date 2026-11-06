@@ -244,6 +244,13 @@ class SaveMinutesTest(Base):
         self.assertIsNone(day["saved|%s|%s-front" % (out["event"], self.R[0])]["drives"]["J"]["gone"])
         self.assertEqual(k.history()[0]["action"], "save")
 
+    def test_only_the_reasons_the_car_gives_a_saved_clip_are_written(self):
+        k = self.keep()
+        self.assertIn("not a reason", k.save_minutes(self.R[:1], self.roots, confirmed=True, reason="Saved by tap")["error"])
+        self.assertIn("not a reason", k.save_minutes(self.R[:1], self.roots, confirmed=True, reason="sentry_aware_object_detection")["error"])      # Sentry's own
+        out = k.save_minutes(self.R[:1], self.roots, confirmed=True, reason="user_interaction_honk")
+        self.assertEqual(json.load(open(os.path.join(out["folder"], "event.json")))["reason"], "user_interaction_honk")
+
     def test_minutes_that_are_not_recent_video_on_one_drive_are_refused(self):
         k = self.keep()
         self.assertIn("not all Recent video", k.save_minutes([self.R[0], S1], self.roots, confirmed=True)["error"])      # S1 is in a Saved clip already
