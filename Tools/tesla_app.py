@@ -254,7 +254,7 @@ def all_sentry():
         root = footage_root(r)
         if not root:
             continue
-        ev, good = SENTRY.events(root) if r == "A" else TC.events(r, "sentry", root)
+        ev, good = TC.events(r, "sentry", root) if r != "A" else (lambda x: (TC.where_events(x[0]) if x[1] else x[0], x[1]))(SENTRY.events(root))
         ok = ok or good
         for e in ev:
             if e["id"] in seen:

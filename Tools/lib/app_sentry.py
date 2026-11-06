@@ -45,14 +45,15 @@ def _shown(e):
         t     UTC epoch seconds of the event (compare and sort with this)
         ts    local clock text, for display
         cts   the car's clock text as written (what the clip names are in, for the player)
-        loc   {clip stamp: local clock text}"""
+        loc   {clip stamp: local clock text}
+        lo    the local clock's offset from UTC in seconds (the zone shown beside a time)"""
     try:
         t = CC.utc(e["ts"])
         lo = CC.place_offset(t, e.get("lat"), e.get("lon"))          # the clock of where it happened
         loc = {k: CC.local_iso(CC.utc(k), lo) for k in e.get("clips", {})}
     except ValueError:
         return dict(e, t=0, cts=e.get("ts", ""), loc={})
-    return dict(e, t=t, cts=e["ts"], ts=CC.local_iso(t, lo), loc=loc)
+    return dict(e, t=t, cts=e["ts"], ts=CC.local_iso(t, lo), loc=loc, lo=lo)
 
 
 class Sentry:

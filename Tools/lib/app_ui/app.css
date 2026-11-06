@@ -335,3 +335,6 @@ main:has(#spl .stbar,#spl .vbar) #splx{display:none}
 
 .mnuw{position:relative;display:inline-block}.mnu{position:absolute;z-index:40;top:100%;left:0;margin-top:4px;min-width:230px;background:var(--card);border:1px solid var(--line);border-radius:10px;padding:6px;box-shadow:0 6px 20px rgba(0,0,0,.18);display:flex;flex-direction:column;gap:2px}.mnu[hidden]{display:none}
 .mnu .mi{display:flex;justify-content:space-between;gap:18px;text-align:left;border:0;background:none;padding:7px 10px;border-radius:6px;cursor:pointer;font:inherit;font-size:13px;color:var(--ink)}.mnu .mi:hover:not(:disabled){background:var(--bg)}.mnu .mi.bad{color:var(--bad)}.mnu .mi:disabled{opacity:.45;cursor:default}.mnu .mi small{color:var(--mut)}.mnu .mh{font-size:11px;text-transform:uppercase;letter-spacing:.05em;color:var(--mut);padding:8px 10px 2px}
+
+.sp .bar .chip.trg{box-shadow:inset 0 0 0 2px #dc2626}.sp .bar .chip.trg::after{content:"";display:inline-block;width:.5em;height:.5em;border-radius:50%;background:#dc2626;margin-left:.4em;vertical-align:middle}
+.hud.nof .hsg,.hud.nof .hsp,.hud.nof .hbk{display:none}

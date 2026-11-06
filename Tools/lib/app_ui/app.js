@@ -380,7 +380,7 @@ async function driveReviewPanel(host,stamp,lo,onResult){
     c.strokeStyle=KCOL[e.kind];c.lineWidth=1.5;c.setLineDash([4,3]);c.beginPath();c.moveTo(X(base(e)),T);c.lineTo(X(base(e)),H-B);c.stroke();c.setLineDash([]);
     c.fillStyle=ink;c.font="11px system-ui";for(let k=0;k<=4;k++){const i=a+(b-a)*k/4,t=RVAPI.clk(Math.round(i)).slice(0,8);c.fillText(t,Math.max(2,Math.min(W-52,X(i)-24)),H-4)}};
   // is the video of this event still on a drive? (the log of the TeslaCam files); the stills stay either way
-  const DRN=drMap({A:"the Archive",J:"JOWUA",U:"the Tesla USB"});
+  const DRN=drMap({});
   const vstat=e=>{if(!e.pics||!e.pics.length)return;const sts=[...new Set(e.pics.map(p=>p[0]))];
     fetch("/api/clipstatus?stamps="+sts.join(",")).then(r=>r.json()).then(m=>{const el=$("#rvst");if(!el||list()[ei]!==e)return;
       const v=sts.map(s=>m[s]||{state:"unknown"}),del=v.filter(x=>x.state==="deleted"),kept=v.filter(x=>x.state==="kept"),on=[...new Set(kept.flatMap(x=>x.on||[]))].map(r=>DRN[r]||r);
@@ -493,7 +493,7 @@ async function pathSources(host,d,lo){
   if(!host)return;
   let j;try{const r=await fetch("/api/pathsources?id="+encodeURIComponent(d.page?d.id:"")+"&t0="+d.t0+"&t1="+(d.t1||d.t0+d.min*60)+"&lo="+lo);if(!r.ok)throw new Error("HTTP "+r.status);j=await r.json()}catch(e){host.innerHTML="";return}
   if(!document.body.contains(host))return;
-  const NM=drMap({A:"Archive",J:"JOWUA",U:"Tesla USB"}),clk=t=>new Date((t+lo)*1000).toISOString().slice(11,19),T=j.tessie,C=j.dashcam,mm=s=>s<90?Math.round(s)+" s":n0(s/60,1)+" min",dur=Math.max(1,j.t1-j.t0);
+  const NM=drMap({}),clk=t=>new Date((t+lo)*1000).toISOString().slice(11,19),T=j.tessie,C=j.dashcam,mm=s=>s<90?Math.round(s)+" s":n0(s/60,1)+" min",dur=Math.max(1,j.t1-j.t0);
   const tp=T.points>0,dc=C.read>0,pct=tp?Math.min(100,Math.round(100*T.covered_s/dur)):0;
   const tline=tp?`<b>Present.</b> ${n0(T.points)} points from ${clk(T.first)} to ${clk(T.last)}, one about every ${T.every_s} s${T.longest_gap_s>180?" (longest gap "+mm(T.longest_gap_s)+")":""}; they follow ${pct}% of the drive.${T.file?` <span class="sub" style="user-select:text">${esc(T.file)}</span>`:""}`
     :T.file?`<b>The file has no points inside this drive.</b> <span class="sub" style="user-select:text">${esc(T.file)}</span>`:`<b>Not fetched.</b> There is no point file for this drive yet: Sync Tessie fetches it.`;
@@ -883,9 +883,9 @@ async function pageParkedOne(id){
   $$(".evc").forEach(b=>b.onclick=()=>pick(+b.dataset.i));pick(0);
 }
 // ---------- clips whose video is not on a connected drive: the kept one-second stills, large, with arrows (the footage log says which drive held the video)
-const drMap=b=>new Proxy(b,{get:(t,k)=>t[k]!==undefined?t[k]:DRX[k]});      // a drive's name looked up when it is used, so a name that arrives after the page was drawn is still found
+const drMap=b=>new Proxy(b,{get:(t,k)=>t[k]!==undefined?t[k]:typeof k==="string"?DRX[k]||k:undefined});      // a drive's name looked up when it is used, so a name that arrives after the page was drawn is still found
 const DRX=(()=>{try{return JSON.parse(localStorage.getItem("drx")||"{}")}catch(e){return{}}})();      // the names of the registered folder drives (a rescue copy kept in a folder), from the status; the last ones are kept here so a drive is named from the first screen
-const DRN={A:"the Archive",J:"JOWUA",U:"the Tesla USB"},drName=r=>DRN[r]||DRX[r]||r;
+const drName=r=>DRX[r]||r;      // a drive is named only by the label it was registered with (config.json teslacam.drives), through the status; no name is written into the page
 // a card's picture: the kept still first (the same for every card, whichever drive is connected); the video's first frame when no still is kept; an empty box when neither
 function stThumb(stamp,sec,vurl){return `<img alt="" decoding="async" loading="lazy" src="/still/${stamp}/${sec}.jpg" data-v="${esc(vurl||"")}" data-t="${sec}" onerror="stFallback(this)">`}
 // a Recent run's picture: its start; while the pointer is over the card it goes on to the middle and the end of the footage, and round again (the pictures are the kept stills: second 2 of the first minute, 30 of the middle one, 45 of the last)
@@ -1054,6 +1054,9 @@ const hudBox=(bw,bh,vw,vh)=>{const r=vw>0&&vh>0?vw/vh:2896/1876,w=Math.min(bw,bh
 // HUD end
 // Pause is the person's choice and outlives the player: once Pause is pressed, a new place on the map, a new blue block, another minute or another clip opens paused, until Play is pressed.
 let TCPAUSE=false;
+// the label on the video of an event ("West Ryde, NSW" and "Tue 3 Nov 2026 10:58AM AEDT"): `loc()` is the local clock text of each minute, `lo` the clock's offset from UTC
+function evInfo(loc,at,lo){return (st,sec)=>{const m=loc(),l=m&&m[st],base=l?Date.parse(l+"Z"):0;if(!(base>0))return null;const dt=new Date(base+Math.floor(sec)*1000),h=dt.getUTCHours();
+  return{a:at||"",b:DOW[dt.getUTCDay()]+" "+dt.getUTCDate()+" "+MON[dt.getUTCMonth()]+" "+dt.getUTCFullYear()+" "+(h%12||12)+":"+String(dt.getUTCMinutes()).padStart(2,"0")+(h<12?"AM":"PM")+(lo!=null?" "+zlab(lo):"")}}}
 function clipPlayer(host,o){
   const stamps=o.stamps;if(!stamps.length){host.innerHTML='<div class="sub">This has no video clips.</div>';return}
   // a clip's name is the car's clock (stMs: only used to place things that are on that same clock, like a Sentry trigger); what is SHOWN is the local clock (o.loc: stamp -> local text)
@@ -1062,13 +1065,13 @@ function clipPlayer(host,o){
   // a Saved clip opens at the START of its first clip and plays; a Sentry event (o.at="trig") opens at the moment it was detected. Detection jumps to that moment, From Start to the first clip.
   // the camera that detected it is marked only around the moment of detection (a few seconds before to some after), wherever the cameras shown were chosen
   const hotNow=sec=>{if(!o.hot)return false;if(!o.trig)return true;const t=stMs(stamps[si])+sec*1000;return t>=o.trig-5000&&t<=o.trig+10000};
-  const hotUpd=()=>{if(!o.hot||!mv)return;const on=hotNow(mv.currentTime);$$("#vids figure[data-c]").forEach(f=>{const h=on&&f.dataset.c===o.hot;if(f.classList.contains("hot")!==h){f.classList.toggle("hot",h);const cp=f.querySelector("figcaption");if(cp)cp.textContent=CAMN[f.dataset.c]+(h?" · detected here":"")}})};
+  const hotUpd=()=>{$$(".sp .bar .chip[data-c]").forEach(b=>b.classList.toggle("trg",!!o.hot&&b.dataset.c===o.hot));if(!o.hot||!mv)return;const on=hotNow(mv.currentTime);$$("#vids figure[data-c]").forEach(f=>{const h=on&&f.dataset.c===o.hot;if(f.classList.contains("hot")!==h){f.classList.toggle("hot",h);const cp=f.querySelector("figcaption");if(cp)cp.textContent=CAMN[f.dataset.c]+(h?" · detected here":"")}})};
   const trigAt=()=>{si=stamps.reduce((a,s,i)=>stMs(s)<=o.trig?i:a,0);seek=Math.max(0,(o.trig-stMs(stamps[si]))/1000)};
   const toTrig=()=>{trigAt();if($("#stp"))$("#stp").value=si;vids()},toStart=()=>{si=0;seek=0;if($("#stp"))$("#stp").value=si;vids()};
   if(o.at==="trig"&&o.trig)trigAt();
-  const shell=()=>{host.innerHTML=`<div class="sp"><div class="bar"><button class="chip ${view==="all"?"on":""}" data-c="all">All six</button>${Object.keys(CAMN).map(c=>`<button class="chip ${view===c?"on":""}" data-c="${c}">${CAMN[c]}</button>`).join("")}</div>
+  const shell=()=>{host.innerHTML=`<div class="sp"><div class="bar"><button class="chip ${view==="all"?"on":""}" data-c="all">All six</button>${Object.keys(CAMN).map(c=>`<button class="chip ${view===c?"on":""}${o.hot===c?" trg":""}" data-c="${c}"${o.hot===c?' title="This camera detected the event"':""}>${CAMN[c]}</button>`).join("")}</div>
     ${o.head?`<div class="sub" style="margin:4px 0 8px">${o.head}</div>`:""}
-    <div class="vbar">${$("#splc")?'<button class="btn" id="vcl" title="Close (Esc)">✕ Close</button>':""}<button class="btn" id="vpl">❚❚ Pause</button>${o.tele?`<button class="chip ${hudOn()?"on":""}" id="vhud" title="The speed limit sign, the speed and the indicators over the front camera">Overlay</button>`:""}${o.trig?'<button class="btn" id="vtr" title="Go to the moment it was detected">↧ Detection</button>':""}${o.trig&&o.at==="trig"?'<button class="btn" id="vfs" title="Go to the start of the first clip">⇤ From Start</button>':""}<input type="range" id="vsk" min="0" max="60" step="0.1" value="0"><span id="vtm">0:00</span><span class="vsg" id="vsg"></span>
+    <div class="vbar">${$("#splc")?'<button class="btn" id="vcl" title="Close (Esc)">✕ Close</button>':""}<button class="btn" id="vpl">❚❚ Pause</button>${o.tele||o.info?`<button class="chip ${hudOn()?"on":""}" id="vhud" title="${o.tele?"The place and time, the speed limit sign, the speed and the indicators over the video":"The place and time over the video"}">Overlay</button>`:""}${o.trig?'<button class="btn" id="vtr" title="Go to the moment it was detected">↧ Detection</button>':""}${o.trig&&o.at==="trig"?'<button class="btn" id="vfs" title="Go to the start of the first clip">⇤ From Start</button>':""}<input type="range" id="vsk" min="0" max="60" step="0.1" value="0"><span id="vtm">0:00</span><span class="vsg" id="vsg"></span>
      <select id="vsp">${["0.5","1","2","4","8","16"].map(r=>`<option value="${r}" ${r===rate?"selected":""}>${r}×</option>`).join("")}</select>
      ${stamps.length>1?`<select id="stp">${stamps.map((s,i)=>`<option value="${i}" ${i===si?"selected":""}>${clock(s)}${(o.cams[s]||[]).length?"":"  · no video"}${o.trig&&stMs(s)<=o.trig&&o.trig<stMs(s)+60000?"  ◀ happened":""}</option>`).join("")}</select>`:""}</div>
     <div id="vids"></div></div>`;
@@ -1086,11 +1089,12 @@ function clipPlayer(host,o){
   const SDAY={},hudSchoolNow=()=>{const st=stamps[si],hms=shownAt(st,mv.currentTime);return hudSchool(SGV,stamps,si,mv.currentTime,(i,g)=>stMs(stamps[i])/1000+g.s0,{min:+hms.slice(0,2)*60+ +hms.slice(3,5)},(i,g)=>{
     const w=o.where&&o.where(stamps[i],g.s0);if(!w)return null;const day=LOC(stamps[i]).slice(0,10),k=day+"|"+(+w.lat).toFixed(1)+"|"+(+w.lon).toFixed(1);
     if(!(k in SDAY)){SDAY[k]=undefined;fetch("/api/schoolday?date="+day+"&lat="+w.lat+"&lon="+w.lon).then(r=>r.json()).then(j=>{SDAY[k]=j.school_day==null?null:!!j.school_day;hudUpd()}).catch(()=>{SDAY[k]=null})}return SDAY[k]})};
-  const hudUpd=()=>{if(!o.tele||!mv)return;const fig=$('#vids figure[data-c="front"]'),vd=fig&&fig.querySelector("video");if(!vd)return;let h=fig.querySelector(".hud");
+  const hudUpd=()=>{if(!(o.tele||o.info)||!mv)return;const fig=$('#vids figure[data-c="front"]')||$('#vids figure[data-c]'),vd=fig&&fig.querySelector("video");if(!vd)return;const fr=!!o.tele&&fig.dataset.c==="front";let h=fig.querySelector(".hud");      // the place and the time are on whichever camera is shown; the sign, the speed and the indicators only on the front one
     if(!hudOn()){if(h)h.remove();return}
     if(!h){h=document.createElement("div");h.className="hud";h.innerHTML='<div class="hsg" hidden><b></b></div><div class="hsp" hidden><b></b><small>km/h</small></div><svg class="hbk hl" viewBox="0 0 24 24"><path d="M2 12l9-8v5h11v6H11v5z"/></svg><svg class="hbk hr" viewBox="0 0 24 24"><path d="M2 12l9-8v5h11v6H11v5z"/></svg><div class="hin" hidden><b></b><span></span></div>';fig.appendChild(h)}
     const b=hudBox(vd.clientWidth,vd.clientHeight,vd.videoWidth,vd.videoHeight),st=h.style;st.left=(vd.offsetLeft+b.x)+"px";st.top=(vd.offsetTop+b.y)+"px";st.width=b.w+"px";st.height=b.h+"px";st.fontSize=(b.w/100)+"px";
-    const T=o.tele(stamps[si],mv.currentTime),sc=hudSchoolNow(),lim=hudLimit(SGV,stamps,si,mv.currentTime,o.doubt,sc&&sc.state==="off"?g=>g===sc.sp:null),sg=h.querySelector(".hsg"),sp=h.querySelector(".hsp"),bk=hudBlink(T?T.blk:0);
+    h.classList.toggle("nof",!fr);
+    const T=fr?o.tele(stamps[si],mv.currentTime):null,sc=fr?hudSchoolNow():null,lim=fr?hudLimit(SGV,stamps,si,mv.currentTime,o.doubt,sc&&sc.state==="off"?g=>g===sc.sp:null):null,sg=h.querySelector(".hsg"),sp=h.querySelector(".hsp"),bk=hudBlink(T?T.blk:0);
     sg.hidden=lim==null;sg.classList.toggle("sch",lim!=null&&!!sc&&sc.state==="on"&&lim===sc.lim);if(lim!=null){const n=sg.firstChild;if(n.textContent!==String(lim)){n.textContent=lim;sg.classList.toggle("d3",lim>=100)}}
     sp.hidden=!T||T.v==null;if(T&&T.v!=null)sp.firstChild.textContent=Math.round(T.v);
     h.querySelector(".hl").classList.toggle("on",bk.l);h.querySelector(".hr").classList.toggle("on",bk.r);
@@ -1127,6 +1131,7 @@ function clipPlayer(host,o){
       if(nx&&!swT&&nx.i===si+1&&mv.duration){const rem=(mv.duration-mv.currentTime)/Math.max(.25,+rate);if(rem<.8)swT=setTimeout(early,Math.max(0,rem*1000-60))}};      // the next minute is loaded ahead: 8 s before the end with all cameras (twelve decoders at once stall), 25 s with one or two
     mv.onended=()=>{if(TCPAUSE||si>=stamps.length-1)return;si++;seek=0;                  // the last frame of this minute stays on screen until the next one is loaded behind it, then they swap
       if(!(nx&&nx.i===si))prep(si);if(nx&&nx.i===si&&nx.m[cam]){const f=nx.m[cam],t0=Date.now(),go=()=>{if(!document.contains(host))return;if(f.readyState>=3||Date.now()-t0>2500)swap();else setTimeout(go,30)};go()}else vids()};
+    mv.addEventListener("loadeddata",()=>{hudUpd();hotUpd()});
     mv.onerror=()=>box.insertAdjacentHTML("afterbegin",'<div class="sub">This clip could not be played (missing, or the drive was disconnected).</div>');
     pl.onclick=()=>{if(mv.paused){TCPAUSE=false;vs.forEach(x=>x.play().catch(()=>{}))}else{TCPAUSE=true;vs.forEach(x=>x.pause())}};
     sk.oninput=()=>seekAll(+sk.value)};
@@ -1220,7 +1225,8 @@ function clipPlayer(host,o){
   host.addEventListener("click",e=>{const b=e.target.closest&&e.target.closest("button");if(b&&b.blur)b.blur()});      // a clicked button must not keep the Space key
   shell();
   // the page can move the video to a clock time (clicking the map or the chart)
-  return {refresh:()=>vsigns(),seekAt:(st,sec)=>{const i=stamps.indexOf(st);if(i<0)return;                 // a minute and a second in it (the page works these out in UTC)
+  return {refresh:()=>vsigns(),setEvent:(cam,trig)=>{o.hot=cam||"";if(trig)o.trig=trig;hotUpd();hudUpd()},      // a Sentry event picked inside a longer video: the camera that detected it is marked from a few seconds before to some after the moment
+    seekAt:(st,sec)=>{const i=stamps.indexOf(st);if(i<0)return;                 // a minute and a second in it (the page works these out in UTC)
       if(i===si&&mv&&mv.readyState>0){vs.forEach(x=>{try{x.currentTime=sec}catch(e){}})}
       else{si=i;seek=Math.max(0,sec);bplay=!TCPAUSE;if($("#stp"))$("#stp").value=si;vids()}},
     seek:ms=>{let i=stamps.findIndex(s=>stMs(s)<=ms&&ms<stMs(s)+61000);if(i<0)i=stamps.findIndex(s=>stMs(s)>ms);if(i<0)return;
@@ -1257,7 +1263,7 @@ async function sentryPlayer(host,ev,role=ev&&ev.role||"A",folder="SentryClips"){
     if(want>0){try{const r=await fetch("/api/clips/after/"+encodeURIComponent(stamps[stamps.length-1])+"?n="+want+"&skip="+encodeURIComponent(stamps.join(",")));const d=r.ok?await r.json():null;
       if(d&&d.clips&&Object.keys(d.clips).length){more=d;stamps=stamps.concat(Object.keys(d.clips).sort());cams=Object.assign({},ev.clips,d.clips);loc=Object.assign({},ev.loc||{},d.loc||{})}}catch(e){}}}
   const extra=more?Object.keys(more.clips).length:0;
-  clipPlayer(host,{stamps,cams,loc,trig,at:folder==="SentryClips"?"trig":"",hot:folder==="SentryClips"?EVCAM[ev.cam]||"":"",url:(s,c)=>more&&more.play[s]?`/footage/${more.play[s]}/RecentClips/${s}-${c}.mp4`:`/footage/${role}/${folder}/${ev.id}/${s}-${c}.mp4`,
+  clipPlayer(host,{stamps,cams,loc,trig,at:folder==="SentryClips"?"trig":"",hot:folder==="SentryClips"?EVCAM[ev.cam]||"":"",info:evInfo(()=>loc,ev.at||ev.city,ev.lo),url:(s,c)=>more&&more.play[s]?`/footage/${more.play[s]}/RecentClips/${s}-${c}.mp4`:`/footage/${role}/${folder}/${ev.id}/${s}-${c}.mp4`,
     head:`${esc(what)} on ${dayName(t.slice(0,10))} at ${hms(t)}${ev.city?" · "+esc(ev.city):""}${ev.street&&folder==="SavedClips"?" · "+esc(ev.street):""}`});
   // the full-size pictures kept of the moment (they stay when the video is deleted)
   const ty=folder==="SavedClips"?"saved":"sentry";let sh=null;
@@ -2080,7 +2086,7 @@ async function ejectDrive(role){stopVideos();try{return await (await fetch("/api
 const FSHTML={},FSKICK={};      // FSKICK: look at the drives' tasks again now (a job that changed the drives has ended)
 function footageSync(host,opts){
   if(!host)return;const table=!!(opts&&opts.table),hk=table?"t":"b";let until=0,was=false,lg=null,msg="",busyEject="",done0=null,note="";
-  const gb=b=>b>=1073741824?(b/1073741824).toFixed(1)+" GB":Math.round(b/1048576)+" MB",NM=drMap({A:"Archive",J:"JOWUA",U:"Tesla USB"});
+  const gb=b=>b>=1073741824?(b/1073741824).toFixed(1)+" GB":Math.round(b/1048576)+" MB",NM=drMap({});
   const STEP=[["log","Update log",["log","events"],"Lists the files on the connected drives, so the footage log and the Saved and Sentry events are up to date"],["telemetry","Read telemetry",["telemetry"],"Reads the speed, position and steering from the video, so drives show on the map"],["stills","Make stills",["stills"],"Takes a picture every second of each clip, kept after the video is deleted"]];
   const left=(t,r)=>{const d=t&&t.drives&&t.drives[r];return d?{log:d.log_new+d.log_gone,lnew:d.log_new,lgone:d.log_gone,telemetry:d.telemetry,stills:d.stills,signs:d.signs||0,snapshots:d.snapshots||0,pictures:d.pictures||0,clips:d.clips}:null};
   const wire=()=>{const g=$("#fsg",host);if(g)g.onclick=()=>go(null);
@@ -2127,7 +2133,7 @@ function footageSync(host,opts){
         rs.forEach(r=>{const td=$(`[data-todo="${r}"]`,host),inf=todoInfo(r);if(!td)return;if(inf.tx!=null&&$(".tbt",td)){$(".tbt",td).textContent=inf.tx;setPbar(td,inf.q)}else if(td.innerHTML!==inf.h)td.innerHTML=inf.h});
         FSHTML[hk]=host.innerHTML;lastBusy=true;setTimeout(paint,1000);return}
       h+=`<table style="margin-top:8px"><thead><tr><th class="l">Drive</th><th>Files</th><th>Size</th><th>Archived</th><th>Deleted</th><th class="l">Last updated</th><th class="l">Tasks</th><th>${run?'<button class="btn sm" id="fsx">Stop</button>':k.paused?'<button class="btn sm pri" id="fsr">Resume</button>':""}</th></tr></thead><tbody>${rs.map(r=>{const d=lg.drives[r],c=lg.scans[r]||{};return `<tr><td class="l"><b>${esc(NM[r]||r)}</b></td><td>${n0(d.listed)}</td><td>${gb(d.listed_bytes)}</td><td>${n0(d.archived)}</td><td>${n0(d.deleted)}</td><td class="l">${esc(localWhen(c.at))}</td><td class="l" data-todo="${r}">${todoInfo(r).h}</td><td>${roots[r]?`<button class="btn sm" data-ej="${r}" ${busyEject?"disabled":""}>${busyEject===r?"Ejecting…":"Eject"}</button>`:""}</td></tr>`}).join("")}</tbody></table>
-        <div class="tiles" style="margin-top:8px">${tile(n0(t.files),"files logged · "+gb(t.bytes))}${tile(n0(t.deleted),"deleted from every drive · "+gb(t.deleted_bytes))}${tile(n0(t.only_secondary),"not on the Archive · "+gb(t.only_secondary_bytes))}${tile(n0(t.purgeable),"copies also on the Archive · "+gb(t.purgeable_bytes))}</div>`}
+        <div class="tiles" style="margin-top:8px">${tile(n0(t.files),"files logged · "+gb(t.bytes))}${tile(n0(t.deleted),"deleted from every drive · "+gb(t.deleted_bytes))}${tile(n0(t.only_secondary),"not on "+NM.A+" · "+gb(t.only_secondary_bytes))}${tile(n0(t.purgeable),"copies also on "+NM.A+" · "+gb(t.purgeable_bytes))}</div>`}
     if(done0&&!run&&!checking&&todo&&!unknown&&Date.now()>done0.t+4000){      // what the buttons just did, said once the job has ended and the numbers are worked out again
       const L={log:["files listed","No new files"],telemetry:["minutes read","No minutes to read"],stills:["clips given stills","No clips to give stills"]};
       note=done0.keys.map(k=>{const b=done0.before[k],a=tot[k];return b<=0?L[k][1]:b>a?n0(b-a)+" "+L[k][0]:"No "+L[k][0]}).join(" · ");done0=null}
@@ -2152,7 +2158,7 @@ const kpChips=r=>{if(!r)return"";if(r.ignored)return `<div class="kst"><i class=
 const kpBig=(ty)=>{const a=Object.values((KPC&&KPC[ty])||{}).map(r=>r.size).filter(x=>x>0).sort((x,y)=>x-y);return a.length>3?Math.max(a[Math.floor(a.length/2)]*2,536870912):1e18};
 const kpTop=(ty,id)=>{const r=kpOf(ty,id),k=ty+"|"+id;return `<em class="evk ${TCSEL.has(k)?"on":""}" data-sel="${esc(k)}" role="checkbox" aria-checked="${TCSEL.has(k)}" title="Select">${TCSEL.has(k)?"✓":""}</em>`+(r&&r.size?`<em class="szb ${r.size>=kpBig(ty)?"big":""}" title="${esc(Object.keys(r.bytes).map(x=>drName(x)+" "+fmtGB(r.bytes[x])).join(" · "))}">${fmtGB(r.size)}</em>`:"")};
 async function pageTeslaCam(role,id){
-  if(role&&id)return /^sentry-/.test(id)?pageTeslaCamSentry(role,id.slice(7)):/^at-/.test(id)?pageTeslaCamMoment(+id.slice(3)):/^win-/.test(id)?pageTeslaCamAt(...(([w,tid])=>(([a,b,l,k])=>[+a,+b,l==="n"?null:+l,k,tid?decodeURIComponent(tid):null])(w.split("-")))(id.slice(4).split("~"))):pageTeslaCamDrive(role,id);
+  if(role&&id)return /^sentry-/.test(id)?pageTeslaCamSentry(role,id.slice(7)):/^at-/.test(id)?pageTeslaCamMoment(+id.slice(3)):/^win-/.test(id)?pageTeslaCamAt(...(([w,tid,ev])=>(([a,b,l,k])=>[+a,+b,l==="n"?null:+l,k,tid?decodeURIComponent(tid):null,ev?decodeURIComponent(ev):null])(w.split("-")))(id.slice(4).split("~"))):pageTeslaCamDrive(role,id);
   if(TCS.rowDesc===undefined)TCS.rowDesc=cfg("teslacam.rows_newest_first")===true;if(TCS.dayDesc===undefined)TCS.dayDesc=cfg("teslacam.days_newest_first")!==false;
   loading("cards");const [dr,act,pl,dlist]=await Promise.all([tcGet("teslacam"),api("activity"),api("places").catch(()=>({saved:[]})),api("drivelist").catch(()=>({items:[]}))]),drives=dr.drives,places=(pl.saved||[]);
   const head='<h1>TeslaCam</h1>';
@@ -2239,7 +2245,7 @@ async function pageTeslaCam(role,id){
     try{const d=await tcGet("clips");if(my!==token)return;data=d}catch(e){$("#tb").innerHTML=errBox(e.message,"Could not read the list of clips");return}
     const list=[].concat(data.sentry,data.saved,data.recent);if(!quiet)rangeBar($("#rg"),"teslacam",TCS.r,daysOf((list||[]).map(v=>({day:(v.ts||v.start).slice(0,10)}))),draw);chips();draw();loadKeep(!quiet);kindWatch()};
   // the bar over the list: what is ticked, what it would free, and deleting its video from a drive (or moving it to the Archive) once everything is kept from it
-  const NMD=drMap({A:"Archive",J:"JOWUA",U:"Tesla USB"}),conn=()=>(data&&data.connected)||[];
+  const NMD=drMap({}),conn=()=>(data&&data.connected)||[];
   const picked=()=>[...TCSEL].map(k=>{const i=k.indexOf("|");return {kind:k.slice(0,i),id:k.slice(i+1)}}).filter(it=>kpOf(it.kind,it.id));
   const allowed=(r,act,to)=>picked().filter(it=>{const c=kpOf(it.kind,it.id);return c.bytes[r]>0&&(act==="move"?r!==(to||"A"):(c.ready||(r!=="A"&&c.bytes.A>0)))});
   const PSTEPS=[
@@ -2303,9 +2309,9 @@ async function pageTeslaCam(role,id){
       const lack=T.has("video")?KEEP.map(([st,ty])=>{if(T.has(ty))return null;const n=sel.filter(it=>{const c=kpOf(it.kind,it.id);return !c.ignored&&c.bytes&&cn.some(r=>c.bytes[r]>0)&&PSTEPS.find(x=>x[0]===st)[2](c)>0}).length;return n?`${n0(n)} clip${n>1?"s have":" has"} no ${ty} yet`:null}).filter(Boolean):[];
       h+=`<span style="flex:1;min-width:260px"><b>Delete from ${n0(sel.length)} clip${sel.length>1?"s":""}</b>${home?` · ${n0(home)} parked at Home`:""} <span class="sub">· cannot be undone</span><span style="display:flex;gap:6px;flex-wrap:wrap;margin-top:6px">${TY.map(([k,l,tip])=>`<button class="chip ${T.has(k)?"on":""}" data-pt="${k}" title="${esc(tip)}">${esc(l)}</button>`).join("")}</span>${lack.length?`<span class="sub" style="display:block;margin-top:4px;color:var(--bad)">${esc(lack.join(" · "))}</span>`:""}</span><button class="btn bad" id="pdo" ${T.size?"":"disabled"}>${T.size===TY.length?"Delete everything":"Delete"}</button><button class="btn" id="kno">Cancel</button>`}
     else if(pend){const to=pend.to||"A",list=allowed(pend.role,pend.action,to),gb=fmtGB(sizeOn(list,pend.role));
-      const nf=list.reduce((a,it)=>a+((kpOf(it.kind,it.id).files||{})[pend.role]||0),0),na=list.reduce((a,it)=>a+((kpOf(it.kind,it.id).in_archive||{})[pend.role]||0),0),what=n0(list.length)+" clip"+(list.length>1?"s":"")+(nf?" ("+n0(nf)+" video file"+(nf>1?"s":"")+(pend.action==="move"&&na&&to==="A"?", "+n0(na)+" already in the Archive":"")+")":"");
+      const nf=list.reduce((a,it)=>a+((kpOf(it.kind,it.id).files||{})[pend.role]||0),0),na=list.reduce((a,it)=>a+((kpOf(it.kind,it.id).in_archive||{})[pend.role]||0),0),what=n0(list.length)+" clip"+(list.length>1?"s":"")+(nf?" ("+n0(nf)+" video file"+(nf>1?"s":"")+(pend.action==="move"&&na&&to==="A"?", "+n0(na)+" already on "+NMD.A:"")+")":"");
       h+=pend.action==="delete"?`<span style="flex:1"><b>Delete the video of ${what} from ${NMD[pend.role]}</b>, freeing ${gb}. Its metadata, stills and signs stay.${list.length<items.filter(it=>kpOf(it.kind,it.id).bytes[pend.role]>0).length?` The others are not all kept yet and are left alone.`:""}</span><button class="btn bad" id="kdo">Delete</button><button class="btn" id="kno">Cancel</button>`
-        :`<span style="flex:1"><b>Move the video of ${what} from ${NMD[pend.role]} to ${to==="A"?"the Archive":NMD[to]}</b> (${gb}); what is missing is read first; it is copied, checked, and only then removed from ${NMD[pend.role]}.</span><button class="btn pri" id="kdo">Move</button><button class="btn" id="kno">Cancel</button>`}
+        :`<span style="flex:1"><b>Move the video of ${what} from ${NMD[pend.role]} to ${NMD[to]}</b> (${gb}); what is missing is read first; it is copied, checked, and only then removed from ${NMD[pend.role]}.</span><button class="btn pri" id="kdo">Move</button><button class="btn" id="kno">Cancel</button>`}
     else{
       const needN=scope.filter(it=>{const c=kpOf(it.kind,it.id);return !c.ignored&&PSTEPS.some(x=>x[2](c)>0)}).length;      // the same clips the drives' Tasks count (clip_keep.needs_by_drive)
       const one=!items.length&&OPENK?OPENK:null,c1=one&&kpOf(one.kind,one.id),need1=!!c1&&!c1.ignored&&PSTEPS.some(x=>x[2](c1)>0)&&cn.some(r=>c1.bytes[r]>0);      // one tile picked (not ticked): the button says what it does to that one clip
@@ -2322,7 +2328,7 @@ async function pageTeslaCam(role,id){
         +(ignV.length?mi('data-sset="ign"',"Parked at Home",n0(ignV.length),{tip:"Ticks the clips shown that are parked at Home, to look through before deleting"}):"")
         +mi('data-sset="done"',"Finished",n0(done.length)+" · "+fmtGB(dsz),{off:!done.length,tip:"Ticks every clip whose metadata, stills and signs are all kept, so its video can be moved or deleted"}));
       if(items.length){
-        const mv=cn.map(r=>{const rows=cn.filter(t=>t!==r).map(t=>{const m=allowed(r,"move",t);return m.length?mi(`data-ka="move|${r}|${t}"`,"to "+(t==="A"?"Archive":NMD[t]),fmtGB(sizeOn(m,r))):""}).join("");return rows?mh("From "+NMD[r])+rows:""}).join("");
+        const mv=cn.map(r=>{const rows=cn.filter(t=>t!==r).map(t=>{const m=allowed(r,"move",t);return m.length?mi(`data-ka="move|${r}|${t}"`,"to "+NMD[t],fmtGB(sizeOn(m,r))):""}).join("");return rows?mh("From "+NMD[r])+rows:""}).join("");
         if(mv)h+=mnu("mv","Move",mv);
         const dv=cn.map(r=>{const d=allowed(r,"delete");return d.length?mi(`data-ka="delete|${r}"`,"Video from "+NMD[r],fmtGB(sizeOn(d,r)),{bad:1}):""}).join("");
         h+=mnu("del","Delete",(allHome?mi('data-ka="purge|"',"Parked at Home, everything",fmtGB(homeSz),{bad:1,tip:"Deletes the ticked clips parked at Home. Nothing that moved is touched"}):mi('data-ka="purge|"',"Choose what to delete…","",{bad:1,tip:"Choose what to delete from the ticked clips: video, metadata, stills, event pictures, signs"}))+(dv?mh("Only the video, from one drive")+dv:""),"bad")}
@@ -2350,7 +2356,7 @@ async function pageTeslaCam(role,id){
   // time left in the step running, worked out from how long the clips done so far took (shown once a few are done, so a slow step does not look stuck)
   const jobLeft=j=>{const el=j.step_t0?Date.now()/1000-j.step_t0:0;if(!(j.step_total>j.step_done)||j.step_done<2||el<30)return "";return " · about "+dur(Math.max(1,Math.round(el/j.step_done*(j.step_total-j.step_done)/60)))+" left"};
   const jobPaint=()=>{const t=$("#jobtx");if(!t||!jobT)return;const j=jobT,pr=j.action==="process"||j.action==="pictures"||!!j.reading,q=pr?(j.step_total?Math.round(100*(j.step_done+(j.step_done<j.step_total?.35:0))/j.step_total):5):(j.bytes?Math.round(100*j.bytes_done/j.bytes):(j.files?Math.round(100*(j.done+.35)/j.files):5));
-    const hd=pr?`<b>${j.reading?"Before moving, reading what is missing · ":""}${esc(j.step||"Starting")}</b>${j.step_total?` · ${n0(j.step_done)} of ${n0(j.step_total)} (${q}%)`:""}${jobLeft(j)}${j.current?` <span class="sub">· ${esc(j.current)}</span>`:""}`:j.action==="purge"?`<b>Deleting ${esc((j.types||[]).join(", "))}</b> · ${n0(j.done)} of ${n0(j.files)} video files · ${fmtGB(j.bytes_done)} of ${fmtGB(j.bytes)} (${q}%)`:`<b>${j.action==="move"?"Moving":"Deleting"} the video ${j.action==="move"?"from "+NMD[j.role]+" to "+(!j.to||j.to==="A"?"the Archive":NMD[j.to]):"from "+NMD[j.role]}</b> · ${n0(j.done)} of ${n0(j.files)} files · ${fmtGB(j.bytes_done)} of ${fmtGB(j.bytes)} (${q}%)`;
+    const hd=pr?`<b>${j.reading?"Before moving, reading what is missing · ":""}${esc(j.step||"Starting")}</b>${j.step_total?` · ${n0(j.step_done)} of ${n0(j.step_total)} (${q}%)`:""}${jobLeft(j)}${j.current?` <span class="sub">· ${esc(j.current)}</span>`:""}`:j.action==="purge"?`<b>Deleting ${esc((j.types||[]).join(", "))}</b> · ${n0(j.done)} of ${n0(j.files)} video files · ${fmtGB(j.bytes_done)} of ${fmtGB(j.bytes)} (${q}%)`:`<b>${j.action==="move"?"Moving":"Deleting"} the video ${j.action==="move"?"from "+NMD[j.role]+" to "+(NMD[!j.to?"A":j.to]):"from "+NMD[j.role]}</b> · ${n0(j.done)} of ${n0(j.files)} files · ${fmtGB(j.bytes_done)} of ${fmtGB(j.bytes)} (${q}%)`;
     if($("#jobhd",t)){$("#jobhd",t).innerHTML=hd;setPbar(t,q);const sb=$("#jobsub",t);if(sb)sb.hidden=!pr;return}
     t.innerHTML=`<div id="jobhd">${hd}</div>${pbar(q)}<div id="jobsub" class="sub" style="margin-top:4px"${pr?"":" hidden"}>Videos cannot play while this reads from the drive.</div>`};
   let polling=false;
@@ -2506,7 +2512,9 @@ async function pageTeslaCamSentry(role,ev){
       if(!k){host.innerHTML=errBox("This event is not in the footage log.","Sentry event not found");return}
       host.innerHTML=`<h1><i class="hal big"></i> ${k.reason?esc(reason(k.reason)):"Event"} · ${dayName(k.ts.slice(0,10))} · ${hms(k.ts).slice(0,5)}</h1><div class="sub">${esc([k.city,k.street].filter(Boolean).join(" · "))}</div><div class="card" style="margin-top:12px" id="dvid"></div>`;
       return stillViewer($("#dvid"),{stamps:Object.keys(k.clips).sort(),roles:k.roles,loc:k.loc,trig:Date.parse(k.cts||k.ts),ev:{kind:(all.sentry||[]).includes(k)?"sentry":"saved",id:k.id},head:""})}
-    // the car was moving (a Sentry clip that started while driving, or one kept by the horn): the same view as a Saved clip, with map, telemetry and the video together
+    // one page for a drive or a park: an event opens the page of the row of the Drives list that holds it, with the event picked (never a page of its own beside it)
+    if(e.t>0){const h=await rowHashAt(e.t,e.id);if(h){location.replace(location.pathname+location.search+h);return}}
+    // no row holds it (Tessie and the dashcam know nothing round that time): a window round the event, built the same way
     if(e.t>0){let d=null;try{d=await sentryWindow(role,e,15)}catch(_){}
       if(d&&d.item&&d.item.kind==="drive"){const what=e.reason?reason(e.reason):"Sentry event";
         host.innerHTML=`<h1><i class="hal big"></i> Sentry · ${esc(what)} · ${dayName(e.ts.slice(0,10))} · ${hms(e.ts).slice(0,5)}</h1><div id="evd"></div>`;
@@ -2522,20 +2530,20 @@ async function pageTeslaCamSentry(role,ev){
       SMAP=m;mapNav(m,()=>m.easeTo({center:pos,zoom:16}),"Back to the car");const el=document.createElement("i");el.className="hal big";new maplibregl.Marker({element:el}).setLngLat(pos).addTo(m);
       const setMs=k=>{lsSet("tc.mapsz.s",k);$$("[data-ms]",host).forEach(b=>b.classList.toggle("on",b.dataset.ms===k));$("#dmap").style.height=(MSZ.find(x=>x[0]===k)||MSZ[1])[2];m.resize();m.easeTo({center:pos,zoom:16,duration:200})};
       $$("[data-ms]",host).forEach(b=>b.onclick=()=>setMs(b.dataset.ms));setMs(lsGet("tc.mapsz.s","m"))}
-    clipPlayer($("#dvid"),{stamps,cams:e.clips,loc:e.loc,trig:Date.parse(e.cts||e.ts),at:"trig",hot:EVCAM[e.cam]||"front",url:(s,c)=>`/footage/${role}/SentryClips/${e.id}/${s}-${c}.mp4`,
+    clipPlayer($("#dvid"),{stamps,cams:e.clips,loc:e.loc,trig:Date.parse(e.cts||e.ts),at:"trig",hot:EVCAM[e.cam]||"front",info:evInfo(()=>e.loc,e.at||e.city,e.lo),url:(s,c)=>`/footage/${role}/SentryClips/${e.id}/${s}-${c}.mp4`,
       head:""})
   }catch(err){host.innerHTML=errBox(err.message,"Could not open this Sentry event")}
 }
 // the minutes around one instant (a Saved clip's trigger) when no Tessie drive covers it: map, telemetry and video of whichever connected drive holds them
 // the page of the drive (or park) of the Drives list that holds a moment; a window around the moment when no row does
-async function rowHashAt(u){
+async function rowHashAt(u,ev){
   try{const dl=await api("drivelist"),L=(dl.items||[]).filter(v=>v.t0!=null&&v.t1!=null&&v.t0<=u&&u<=v.t1&&["drive","parked","stopped","recording"].includes(v.kind)),v=L.find(x=>x.kind==="drive")||L[0];
-    if(v){const park=v.kind!=="drive"&&v.kind!=="recording";return "#/teslacam/auto/win-"+Math.round(v.t0)+"-"+Math.round(v.t1)+"-"+(v.lo!=null?Math.round(v.lo):"n")+"-"+(park?"p":"d")+(v.kind==="drive"&&v.src&&v.src!=="cam"?"~"+encodeURIComponent(v.id):"")}}catch(e){}
+    if(v){const park=v.kind!=="drive"&&v.kind!=="recording";return "#/teslacam/auto/win-"+Math.round(v.t0)+"-"+Math.round(v.t1)+"-"+(v.lo!=null?Math.round(v.lo):"n")+"-"+(park?"p":"d")+(v.kind==="drive"&&v.src&&v.src!=="cam"||ev?"~"+(v.kind==="drive"&&v.src&&v.src!=="cam"?encodeURIComponent(v.id):""):"")+(ev?"~"+encodeURIComponent(ev):"")}}catch(e){}
   return ""}
-async function goMoment(u){location.hash=(await rowHashAt(u))||"#/teslacam/auto/at-"+Math.round(u)}
+async function goMoment(u,ev){location.hash=(await rowHashAt(u,ev))||"#/teslacam/auto/at-"+Math.round(u)}
 // a moment (#/teslacam/auto/at-<t>) opens the page of the drive or park that holds it (Tessie's times, to the second, name it: "from → to"); only a moment no row holds gets a window around it
 async function pageTeslaCamMoment(u){const h=await rowHashAt(u);if(h){location.replace(location.pathname+location.search+h);return}return pageTeslaCamAt(u)}
-async function pageTeslaCamAt(t,t1,lo,k,tid){      // t alone: the moment (a window around it); t and t1: that span of time (a row of the Drives list)
+async function pageTeslaCamAt(t,t1,lo,k,tid,ev){      // t alone: the moment (a window around it); t and t1: that span of time (a row of the Drives list)
   loading();const pl=await api("places").catch(()=>({saved:[]}));
   let row=null;if(tid){try{row=((await api("drivelist")).items||[]).find(v=>v.id===tid)||null}catch(e){}}      // Tessie's row of this drive: its names, its parts, and the ids that let the server fill Tessie's route where the dashcam has none
   main.innerHTML=crumbs("#/teslacam","TeslaCam")+pnBar(tid?`<a class="chip" href="#/drive/${encodeURIComponent(tid)}" title="Tessie's page of this drive">The drive</a><a class="chip" href="#/drive/${encodeURIComponent(tid)}/footage" title="Its map and telemetry as Tessie has them, with the footage">Map and telemetry</a>`:"")+'<div id="tdh"></div>';
@@ -2551,7 +2559,7 @@ async function pageTeslaCamAt(t,t1,lo,k,tid){      // t alone: the moment (a win
       if(t1&&j&&j.item&&(k==="p"||k==="d")&&j.series&&j.series.v){const sr=j.series,need=z-j.item.t0+1,n=sr.v.length;if(n<need)Object.keys(sr).forEach(f=>{const x=sr[f];if(Array.isArray(x)&&x.length===n)while(x.length<need)x.push(null)});j.item.span=[Math.max(0,a-j.item.t0),Math.max(1,z-j.item.t0)]}
     if(t1&&j&&Array.isArray(j.events))j.events=j.events.filter(v=>v.t>=a-30&&v.t<=z+30);      // the Saved clips and Sentry events of THIS row: a Saved clip keeps minutes from before it was saved, so the drive before it is not the drive it happened in
     return j};
-  try{await teslaDriveBody($("#tdh"),"A",fetchSeg,pl.saved||[],{row})}catch(e){const h=$("#tdh");if(h)h.innerHTML=errBox(e.message,"Could not open this moment")}
+  try{await teslaDriveBody($("#tdh"),"A",fetchSeg,pl.saved||[],{row,ev})}catch(e){const h=$("#tdh");if(h)h.innerHTML=errBox(e.message,"Could not open this moment")}
 }
 async function pageTeslaCamDrive(role,id){
   loading();const pl=await api("places").catch(()=>({saved:[]}));
@@ -2655,8 +2663,13 @@ async function teslaDriveBody(host,role,fetchSeg,places,opts){
   let covOn=null,covSel=null,covAnchor=null,covAsk=false,covNote="";const covNow=off=>{if(covOn===off)return;covOn=off;$$("#dcov i",host).forEach(b=>b.classList.toggle("now",+b.dataset.o===off))};
   const events=()=>{if(opts.rvtab||evShown||!d.events||!d.events.length||!live())return;evShown=true;
     $("#dev").innerHTML=`<h2>Saved clips and Sentry events in this drive</h2><div class="evs">${d.events.map(v=>`<button class="evc" data-u="${v.t}">${v.clips?sentryThumb(Object.assign({},v,{role}),v.folder):v.thumb?`<img alt="" decoding="async" loading="lazy" src="/footage/${role}/${v.folder}/${v.id}/thumb.png" onerror="this.style.visibility='hidden'">`:'<div class="noimg"></div>'}<b>${hms(v.ts)}</b><span>${esc(v.folder==="SavedClips"?"Saved":"Sentry")} · ${esc(reason(v.reason))}</span><span>${esc(v.city||"")}</span></button>`).join("")}</div>`;
-    lazyThumbs($("#dev"));    $$("#dev .evc").forEach(b=>b.onclick=()=>{const ix=Math.round(+b.dataset.u-it().t0);if(ix<0||ix>=S().v.length){goMoment(+b.dataset.u);return}      // a saved clip keeps minutes from before it was saved: one that was saved after this drive ended is not in this video, its own page is
-    if(player){seekIdx(ix);$("#dvid").scrollIntoView({block:"nearest"})}})};
+    lazyThumbs($("#dev"));
+    // picking an event (a card, or the page opened on it from a list): the video goes to its moment, the camera that detected it is marked, its card is the picked one
+    const pickEv=(k,auto)=>{const v=d.events[k],ix=Math.round(+v.t-it().t0);if(ix<0||ix>=S().v.length){if(!auto)goMoment(+v.t,v.id);return}      // a saved clip keeps minutes from before it was saved: one that was saved after this drive ended is not in this video, its own page is
+      const sn=v.folder==="SentryClips";if(player&&player.setEvent)player.setEvent(sn?EVCAM[v.cam]||"front":"",sn?Date.parse(v.cts||v.ts):0);
+      $$("#dev .evc").forEach((x,j)=>x.classList.toggle("on",j===k));if(player){seekIdx(ix);$("#dvid").scrollIntoView({block:"nearest"})}};
+    $$("#dev .evc").forEach((b,k)=>b.onclick=()=>pickEv(k));
+    if(opts.ev){const k=d.events.findIndex(v=>v.id===opts.ev);opts.ev=null;if(k>=0)pickEv(k,true)}};
   RVAPI={cursor:i=>cursor(i),seek:i=>seekIdx(i),series:()=>S(),t0:()=>it().t0,clk:i=>clk(i),focus:f=>{if(chart&&chart.focus)chart.focus(f)},lanes:l=>{if(chart&&chart.lanes)chart.lanes(l);else pendL=l},zoom:(a,b)=>{if(chart&&chart.view)chart.view(a,b)},limit:(a,b)=>{if(chart&&chart.limit)chart.limit(a,b)},map:(a,b,p)=>{if(map&&map.section){map.section(a,b);map.pins(p||[])}else pendM=[a,b,p]},live:()=>live(),saved:()=>{const r=[];d.minutes.filter(m=>m.src==="saved").forEach(m=>{const a=it().t0+m.off,b=a+60,l=r[r.length-1];if(l&&a-l[1]<=2)l[1]=b;else r.push([a,b])});return r}};
   // what the telemetry bar covers: the whole period (a drive, or the whole parked time) or only the time of the video clips; where the two are the same the button is hidden
   let fit=lsGet("tc.fit","full");
@@ -3108,11 +3121,11 @@ async function boot(){
   const head=async n=>{try{const r=await fetch0("/api/summary"),s=cache.summary=await r.json();$("#veh").textContent=s.vehicle;$("#vsub").textContent=n0(s.odo||s.km)+" km";$("#vsub").title=s.odo?n0(s.km)+" km in logged drives; the rest was driven before logging started or is not in any drive":"";if(r.headers.get("X-Stale")==="1"&&n<6)setTimeout(()=>head(n+1),3000)}catch(e){}};   // the first answer after a start is the last kept one: ask again until it is current
   head(0);
   // the corner: one line a drive, a dot and its name. Green = connected, amber = something is reading it, red = not connected; ⏏ only while connected (and not just ejected)
-  window.EJD={};window.KBUSY=[];const NM={A:"Archive",J:"JOWUA",U:"Tesla USB"};
+  window.EJD={};window.KBUSY=[];const NM={};
   let stLast="";
   const st=async()=>{try{const s=await (await fetch("/api/status")).json();const sj=JSON.stringify(s)+JSON.stringify(window.EJMSG||null)+JSON.stringify(EJD);if(sj===stLast)return;stLast=sj;if(window.UI0==null)window.UI0=s.ui;
-    window.ROOTS=s.roots;{let ch=false;Object.entries(s.names||{}).forEach(([r,l])=>{if(!"AJU".includes(r)){if(DRX[r]!==l)ch=true;DRX[r]=l;NM[r]=l}});if(ch){try{localStorage.setItem("drx",JSON.stringify(DRX))}catch(e){}if(window.UI0!=null&&typeof redrawQuietly==="function")redrawQuietly()}}const up=r=>s.roots[r]&&!(EJD[r]&&Date.now()-EJD[r]<20000);
-    $("#status").innerHTML=["A","J","U",...Object.keys(DRX)].filter(r=>r==="A"||up(r)||(s.known||[]).includes(r)).map(r=>`<div class="${up(r)?"":"away"}"><span class="dot ${!up(r)?"off":KBUSY.includes(r)?"rd":"on"}" data-r="${r}" title="${!up(r)?"Not connected":KBUSY.includes(r)?"Being read":"Connected"}"></span><span class="dn">${NM[r]}</span>${up(r)?("AJU".includes(r)?`<button class="eject" data-ej="${r}" title="Eject ${NM[r]}" aria-label="Eject ${NM[r]}">⏏</button>`:""):'<span class="gone">not connected</span>'}</div>`).join("");
+    window.ROOTS=s.roots;{let ch=false;Object.entries(s.names||{}).forEach(([r,l])=>{{if(DRX[r]!==l)ch=true;DRX[r]=l;NM[r]=l}});if(ch){try{localStorage.setItem("drx",JSON.stringify(DRX))}catch(e){}if(window.UI0!=null&&typeof redrawQuietly==="function")redrawQuietly()}}const up=r=>s.roots[r]&&!(EJD[r]&&Date.now()-EJD[r]<20000);
+    $("#status").innerHTML=[...new Set(["A",...(s.known||[]),...Object.keys(DRX)])].filter(r=>r==="A"||up(r)||(s.known||[]).includes(r)).map(r=>`<div class="${up(r)?"":"away"}"><span class="dot ${!up(r)?"off":KBUSY.includes(r)?"rd":"on"}" data-r="${r}" title="${!up(r)?"Not connected":KBUSY.includes(r)?"Being read":"Connected"}"></span><span class="dn">${NM[r]}</span>${up(r)?("AJU".includes(r)?`<button class="eject" data-ej="${r}" title="Eject ${NM[r]}" aria-label="Eject ${NM[r]}">⏏</button>`:""):'<span class="gone">not connected</span>'}</div>`).join("");
     $("#upd").innerHTML=((window.EJMSG&&Date.now()<window.EJMSG.until?`<div class="${window.EJMSG.ok?"":"upd"}" style="font-size:12px">${esc(window.EJMSG.text)}</div>`:"")+`${s.stale?'<div class="upd">App updated · <a href="#" onclick="appRestart();return false">Restart</a></div>':""}${s.ui!==window.UI0?'<div class="upd">The page was updated. <a href="#" onclick="location.reload();return false">Reload it</a> to load the new version.</div>':""}`);
     $$("#status [data-ej]").forEach(b=>b.onclick=async()=>{b.disabled=true;const r=await ejectDrive(b.dataset.ej);if(r.ok)EJD[b.dataset.ej]=Date.now();window.EJMSG={text:r.text,ok:r.ok,until:Date.now()+15000};st()})}catch(e){}};
   // amber while the Keeper (or a button) is reading a drive: asked often, and only the dots are touched

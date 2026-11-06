@@ -123,7 +123,28 @@ class TeslaCam:
         if kind not in KINDS:
             return [], False
         ev, ok = self._index(role, kind).events(teslacam)
-        return (ev if ok else []), ok
+        return (self.where_events(ev) if ok else []), ok
+
+    def where_events(self, events):
+        """The events with `at`, the short place of the minute they happened in ("West Ryde, NSW"): what the label on their video says. Kept once found (a place not yet known is looked for again)."""
+        memo = self.__dict__.setdefault("_ev_at", {})
+        out = []
+        for e in events:
+            if "at" in e:
+                out.append(e)
+                continue
+            at = memo.get(e["id"])
+            if at is None and e.get("clips"):
+                try:
+                    sts = sorted(e["clips"])
+                    pick = [k for k in sts if CC.utc(k) <= e.get("t", 0)]
+                    at = self._short_where(self._tl("A"), (pick[-1] if pick else sts[0])) or ""
+                except Exception:
+                    at = ""
+                if at:
+                    memo[e["id"]] = at
+            out.append(dict(e, at=at or ""))
+        return out
 
     def _index(self, role, kind):
         """The kept list of a drive's Saved or Sentry events (teslacam_index_<role>_<kind>.json); it answers from the file when the drive is away."""
