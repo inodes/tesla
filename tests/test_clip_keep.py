@@ -259,6 +259,37 @@ class SaveMinutesTest(Base):
         self.assertEqual(len(os.listdir(self.rdir)), 6)
 
 
+class SweepPurgedTest(SaveMinutesTest):
+    """A drive that was away while its clips were deleted with everything has their video removed when it is connected again."""
+
+    def setUp(self):
+        super().setUp()
+        import clips_purged as PG
+        self.PG = PG
+        PG.set_file(os.path.join(self.t, "purged.json"))
+        self.addCleanup(lambda: PG.set_file(os.path.join(tempfile.mkdtemp(), "none.json")))
+
+    def test_the_video_of_purged_minutes_is_removed_from_the_drive_that_comes_back_and_nothing_else(self):
+        k = self.keep()
+        self.assertEqual(k.sweep_purged(self.roots)["done"], 0)                           # nothing purged: nothing touched
+        self.PG.add(self.R[:2])                                                           # two minutes deleted with everything while JOWUA was away
+        out = k.sweep_purged(dict(self.roots))
+        self.assertEqual(out["done"], 4)
+        self.assertEqual(sorted(os.listdir(self.rdir)), sorted("%s-%s.mp4" % (self.R[2], c) for c in ("front", "back")))      # the third minute stays
+        self.assertEqual(len(os.listdir(os.path.join(self.roots["J"], "SavedClips", "ev1"))), 4)                         # a Saved clip of the same drive is not touched
+        day = json.load(open(os.path.join(self.data, "teslacam_ledger", "2026-10-16.json")))
+        self.assertTrue(day["recent||%s-front" % self.R[0]]["drives"]["J"]["gone"])
+        self.assertIsNone(day["recent||%s-front" % self.R[2]]["drives"]["J"]["gone"])
+        self.assertEqual(k.history()[0]["action"], "sweep")
+        self.assertEqual(k.sweep_purged(self.roots)["done"], 0)                           # once
+
+    def test_a_drive_that_is_not_connected_is_left_alone(self):
+        k = self.keep()
+        self.PG.add(self.R[:1])
+        self.assertEqual(k.sweep_purged({"A": self.roots["A"]})["done"], 0)
+        self.assertEqual(len(os.listdir(self.rdir)), 6)
+
+
 class Store2:
     """A telemetry store that can be filled: summary() is None until put()."""
     def __init__(self, vmax=60):

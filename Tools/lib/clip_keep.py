@@ -455,6 +455,53 @@ class ClipKeep:
         self._thread.start()
         return self.job()
 
+    def sweep_purged(self, roots):
+        """A clip deleted with everything leaves the list at once (clips_purged), but its video is removed only from the drives that were connected then. A drive that was away
+        still holds those files, hidden from every page: when it is connected again they are removed from it, as the delete that was confirmed asked. Only video of the clips in
+        clips_purged is touched (Recent minutes by name, Saved / Sentry folders by event). Returns dict(done=files removed, busy=True when a job was running and nothing was done)."""
+        if self._thread and self._thread.is_alive():
+            return dict(done=0, busy=True)
+        stamps, events = PG.snapshot()
+        if not stamps and not events:
+            return dict(done=0)
+        led = TLG.Ledger(self.dir)
+        roles = [r for r in DR.read_roles() if roots.get(r)]
+        removed, freed, touched, errors = [], 0, set(), []
+        for day in led.days():
+            for key, rec in list(led.day(day).items()):
+                kind, ev, rest = key.split("|", 2)
+                if kind not in KINDS:
+                    continue
+                m = _FILE.match(rest)
+                if not m or not ((kind == "recent" and m.group(1) in stamps) or (kind != "recent" and (kind, ev) in events)):
+                    continue
+                for role in roles:
+                    x = rec["drives"].get(role)
+                    if x is None or x.get("gone"):
+                        continue
+                    src = TF.front_path(roots[role], dict(src=kind, ev=ev, stamp=m.group(1), cam=m.group(2)))
+                    try:
+                        os.remove(src)
+                        removed.append(os.path.basename(src))
+                        freed += rec.get("size", 0)
+                    except FileNotFoundError:
+                        pass
+                    except OSError as e:
+                        errors.append("%s: %s" % (os.path.basename(src), e))
+                        continue
+                    touched.add(led.mark(role, key, rec.get("size", 0), False, flush=False))
+        if touched:
+            led.flush({d for d in touched if d})
+        if removed or errors:
+            try:
+                with open(os.path.join(self.dir, self.LOG), "a", encoding="utf-8") as fh:
+                    fh.write(json.dumps(dict(t=time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), action="sweep", role=",".join(roles), removed=len(removed), files=removed[:500], freed=freed, errors=errors[:20]), ensure_ascii=False) + "\n")
+            except OSError:
+                pass
+            self._changed()
+            self._settle()
+        return dict(done=len(removed), freed=freed, errors=errors)
+
     # ---- Recent minutes -> a Saved clip --------------------------------------------------------------------------------
     SAVE_MAX = 60                                   # minutes at most in one clip made this way
     SAVE_REASON = "user_interaction_dashcam_icon_tapped"

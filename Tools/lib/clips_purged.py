@@ -6,7 +6,7 @@ the list leaves them out.
 
     set_file(path)                 where they are kept (in the data folder, so the Macs share it)
     add(stamps, events)            stamps: [minute], events: [(kind, id)]
-    has(stamp), has_event(kind, id)
+    has(stamp), has_event(kind, id), snapshot()
 """
 import json
 import os
@@ -61,6 +61,12 @@ def has(stamp):
 
 def has_event(kind, eid):
     return (kind, eid) in _E
+
+
+def snapshot():
+    """(minutes, events) taken off the list so far, as copies."""
+    with _LOCK:
+        return set(_S), set(_E)
 
 
 def version():

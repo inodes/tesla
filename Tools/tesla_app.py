@@ -173,6 +173,24 @@ def _look_roots():
     return {r: found.get(r) for r in DR.read_roles()}
 
 
+_SWEPT = set()
+
+
+def _sweep_new_drives(roots):
+    """A drive that appears (or is there at the start) gets the video of clips that were deleted while it was away removed (clip_keep.sweep_purged); one that went away is forgotten, so it is looked at again."""
+    here = {r for r, p in roots.items() if p}
+    _SWEPT.intersection_update(here)
+    fresh = here - _SWEPT
+    if not fresh or CKEEP is None:
+        return
+
+    def go():
+        res = CKEEP.sweep_purged({r: p for r, p in roots.items() if p})
+        if not res.get("busy"):
+            _SWEPT.update(fresh)
+    threading.Thread(target=go, daemon=True).start()
+
+
 def footage_root(role):
     """TeslaCam folder of the drive with this role (A Archive, J JOWUA, U USB); looked up at most every 20 s."""
     if _ROOTS["v"] is None:                                 # the first look waits for the answer: one look, which a second asker waits for rather than repeats
@@ -180,12 +198,14 @@ def footage_root(role):
             if _ROOTS["v"] is None:
                 _ROOTS["v"] = _look_roots()
                 _ROOTS["t"] = time.time()
+                _sweep_new_drives(_ROOTS["v"])
     elif (time.time() - _ROOTS["t"] > 20 or _volumes_changed()) and not _ROOTS.get("busy"):      # a drive plugged in or out changes /Volumes: looked at again at once
         _ROOTS["busy"] = True                               # later looks answer from the last one and refresh it in the background (a slow drive must not hold a request)
 
         def look():
             try:
                 _ROOTS["v"] = _look_roots()
+                _sweep_new_drives(_ROOTS["v"])
             finally:
                 _ROOTS["t"] = time.time()
                 _ROOTS["busy"] = False
