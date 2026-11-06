@@ -2629,8 +2629,10 @@ async function teslaDriveBody(host,role,fetchSeg,places,opts){
     return out};
   const seekIdx=i=>{if(!player)return;const ms=cont();let b=null;for(const m of ms){if(m.off<=i)b=m;else break}if(!b)b=ms[0];if(b)player.seekAt(b.stamp,Math.max(0,Math.min(59,i-b.off)))};
   // the label on the video: the short place ("Main Beach, QLD") and the local time with its zone ("Sun 11 Oct 2026 12:13PM AEST"); the zone is worked out from the minute itself, so it changes where the clock does
+  // a minute with no place of its own (a Sentry minute: no GPS read) carries the place the page names for the park, so the label says what the heading says
+  const parkPlace=()=>{const x=it();return x&&x.kind==="stopped"?parkedAt(nameAt(places,x.p0)||nameAt(places,x.p1)||"")||"":""};
   const placeTime=(m,sec)=>{if(!m||!m.loc)return null;const base=Date.parse(m.loc+"Z");if(!(base>0))return null;const dt=new Date(base+Math.floor(sec)*1000),h=dt.getUTCHours(),lo=Math.round((base/1000-(it().t0+m.off))/900)*900;
-    return{a:m.at||"",b:DOW[dt.getUTCDay()]+" "+dt.getUTCDate()+" "+MON[dt.getUTCMonth()]+" "+dt.getUTCFullYear()+" "+(h%12||12)+":"+String(dt.getUTCMinutes()).padStart(2,"0")+(h<12?"AM":"PM")+" "+zlab(lo)}};
+    return{a:m.at||parkPlace(),b:DOW[dt.getUTCDay()]+" "+dt.getUTCDate()+" "+MON[dt.getUTCMonth()]+" "+dt.getUTCFullYear()+" "+(h%12||12)+":"+String(dt.getUTCMinutes()).padStart(2,"0")+(h<12?"AM":"PM")+" "+zlab(lo)}};
   // a strip of the span: coloured where there is video, black where there is none; click to go there
   const covStrip=ms=>{const el=$("#dcov");if(!el)return;const tot=ms.reduce((a,m)=>a+(m.len||60),0);
     if(ms.length<2){el.innerHTML="";return}
