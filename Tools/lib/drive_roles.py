@@ -20,7 +20,14 @@ import drive_registry as REG
 
 MARKERS = {"A": ("ARCHIVE_2TB", "ARCHIVE"), "J": ("JOWUA_1TB", "JOWUA"), "U": ("TESLA_USB_128GB", "TESLA_USB_256GB", "TESLA_USB")}
 _MARKER_AS = {"A": ("Archive", "archive"), "J": ("JOWUA", "car"), "U": ("TeslaUSB", "car")}
-NAMES = {"A": "Archive", "J": "JOWUA", "U": "Tesla USB", "?": "unknown drive"}      # the labels of the registered drives are added by details()
+def _registered():
+    try:
+        return {e["role"]: e["label"] for e in REG.drives() if e.get("role") and e.get("label")}
+    except Exception:
+        return {}
+
+
+NAMES = dict(_registered(), **{"?": "unknown drive"})      # the labels the drives were registered with (config.json teslacam.drives); details() adds drives registered while the app runs
 PATTERNS = ("/Volumes/*/TeslaCam", os.path.expanduser("~/mnt/*/TeslaCam"))
 drive_root = REG.drive_root
 
