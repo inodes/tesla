@@ -214,6 +214,7 @@ tr.chline{cursor:pointer}tr.chline td{color:var(--bad);font-weight:600;font-size
 #tdb.side{display:grid;grid-template-columns:minmax(0,1fr);column-gap:12px}
 #tdb.side>*{grid-column:1/-1}#tdb.side>:empty{display:none}
 #tdb.side>.dvc{grid-row:5;margin-top:12px}#tdb.side>#dmapc{grid-row:6;margin-top:12px}#tdb.side>#dchc{grid-row:7}
+#tdb.side>#drv{grid-row:8}#tdb.side>#dev{grid-row:9}      /* the cards of the events and signs come after the video, map and telemetry: filled in late, they must not push the video down */
 .lay{display:inline-flex;gap:6px;align-items:center;margin-right:10px}
 @media (max-width:1099px){.lay{display:none}}
 @media (min-width:1100px){#tdb.side:not(.stack){grid-template-columns:minmax(0,1fr) minmax(0,1fr)}

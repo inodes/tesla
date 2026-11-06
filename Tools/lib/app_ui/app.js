@@ -2669,7 +2669,7 @@ async function teslaDriveBody(host,role,fetchSeg,places,opts){
     // picking an event (a card, or the page opened on it from a list): the video goes to its moment, the camera that detected it is marked, its card is the picked one
     const pickEv=(k,auto)=>{const v=d.events[k],ix=Math.round(+v.t-it().t0);if(ix<0||ix>=S().v.length){if(!auto)goMoment(+v.t,v.id);return}      // a saved clip keeps minutes from before it was saved: one that was saved after this drive ended is not in this video, its own page is
       const sn=v.folder==="SentryClips";if(player&&player.setEvent)player.setEvent(sn?EVCAM[v.cam]||"front":"",sn?Date.parse(v.cts||v.ts):0);
-      $$("#dev .evc").forEach((x,j)=>x.classList.toggle("on",j===k));if(player){seekIdx(ix);$("#dvid").scrollIntoView({block:"nearest"})}};
+      $$("#dev .evc").forEach((x,j)=>x.classList.toggle("on",j===k));if(player){seekIdx(ix);if(!auto)$("#dvid").scrollIntoView({block:"nearest"})}};      // opened on the event: the page is already there, no jump
     $$("#dev .evc").forEach((b,k)=>b.onclick=()=>pickEv(k));
     if(opts.ev){const k=d.events.findIndex(v=>v.id===opts.ev);opts.ev=null;if(k>=0)pickEv(k,true)}};
   RVAPI={cursor:i=>cursor(i),seek:i=>seekIdx(i),series:()=>S(),t0:()=>it().t0,clk:i=>clk(i),focus:f=>{if(chart&&chart.focus)chart.focus(f)},lanes:l=>{if(chart&&chart.lanes)chart.lanes(l);else pendL=l},zoom:(a,b)=>{if(chart&&chart.view)chart.view(a,b)},limit:(a,b)=>{if(chart&&chart.limit)chart.limit(a,b)},map:(a,b,p)=>{if(map&&map.section){map.section(a,b);map.pins(p||[])}else pendM=[a,b,p]},live:()=>live(),saved:()=>{const r=[];d.minutes.filter(m=>m.src==="saved").forEach(m=>{const a=it().t0+m.off,b=a+60,l=r[r.length-1];if(l&&a-l[1]<=2)l[1]=b;else r.push([a,b])});return r}};
