@@ -43,7 +43,7 @@ class TeslaCamFiltersUiTest(unittest.TestCase):
         # one order of the days (a calendar and an arrow) and of the times in a day (a clock and an arrow), beside the date bar of every list: Drives, Charges, Parked, TeslaCam
         self.assertIn("${calSvg}${ARW(ORD.dayDesc)}", self.js)
         self.assertIn("${clkSvg}${ARW(ORD.rowDesc)}", self.js)
-        self.assertIn("+ordBtns();", self.js)                                   # drawn by the date bar itself
+        self.assertIn("(flat?ordOne():ordBtns())", self.js)                                   # drawn by the date bar itself
         self.assertNotIn('<span class="sub">Sort</span>', self.js)
         self.assertNotIn('id="daysort"', self.js)                               # no page has a bar of its own for it
         self.assertNotIn("TCS.dayDesc", self.js)

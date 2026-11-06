@@ -2401,7 +2401,8 @@ async function pageTeslaCam(role,id){
         +(ignV.length?mi('data-sset="ign"',"Parked at Home",n0(ignV.length),{tip:"Ticks the clips shown that are parked at Home, to look through before deleting"}):"")
         +mi('data-sset="done"',"Finished",n0(done.length)+" · "+fmtGB(dsz),{off:!done.length,tip:"Ticks every clip whose metadata, stills and signs are all kept, so its video can be moved or deleted"}));
       if(items.length){
-        const mv=cn.map(r=>{const rows=cn.filter(t=>t!==r).map(t=>{const m=allowed(r,"move",t);return m.length?mi(`data-ka="move|${r}|${t}"`,"to "+NMD[t],fmtGB(sizeOn(m,r))):""}).join("");return rows?mh("From "+NMD[r])+rows:""}).join("");
+        const fd=(TCS.f.drives||[]).filter(r=>cn.includes(r)),src=fd.length?cn.filter(r=>fd.includes(r)):cn;      // with a Drives filter on, the moves are FROM the drives being looked at (a clip also kept on other drives is not offered from those)
+        const mv=src.map(r=>{const rows=cn.filter(t=>t!==r).map(t=>{const m=allowed(r,"move",t);return m.length?mi(`data-ka="move|${r}|${t}"`,"to "+NMD[t],n0(m.length)+" clip"+(m.length>1?"s":"")+" · "+fmtGB(sizeOn(m,r))):""}).join("");return rows?mh("From "+NMD[r])+rows:""}).join("");
         if(mv)h+=mnu("mv","Move",mv);
         const dv=cn.map(r=>{const d=allowed(r,"delete");return d.length?mi(`data-ka="delete|${r}"`,"Video from "+NMD[r],fmtGB(sizeOn(d,r)),{bad:1}):""}).join("");
         h+=mnu("del","Delete",(allHome?mi('data-ka="purge|"',"Parked at Home, everything",fmtGB(homeSz),{bad:1,tip:"Deletes the ticked clips parked at Home. Nothing that moved is touched"}):mi('data-ka="purge|"',"Choose what to delete…","",{bad:1,tip:"Choose what to delete from the ticked clips: video, metadata, stills, event pictures, signs"}))+(dv?mh("Only the video, from one drive")+dv:""),"bad")}

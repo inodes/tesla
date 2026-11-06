@@ -25,6 +25,13 @@ class MoveToAnyDriveUiTest(unittest.TestCase):
         self.assertIn('to:p.to||"A"', self.js)
         self.assertIn('to=body.get("to") or "A"', self.py)
 
+    def test_a_drives_filter_limits_the_moves_to_the_drives_looked_at(self):
+        """Filtered to TeslaUSB, the menu says FROM TESLAUSB (not also from the other drives a clip has copies on), with the number of clips."""
+        self.assertIn("fd=(TCS.f.drives||[]).filter(r=>cn.includes(r))", self.js)
+        self.assertIn("src=fd.length?cn.filter(r=>fd.includes(r)):cn", self.js)
+        self.assertIn("const mv=src.map(r=>", self.js)
+        self.assertIn('n0(m.length)+" clip"', self.js)
+
 
 if __name__ == "__main__":
     unittest.main()
