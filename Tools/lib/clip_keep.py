@@ -433,7 +433,7 @@ class ClipKeep:
         files = [(k, sz, f) for _, _, fs in plan for k, sz, f in fs]
         clips = [dict(kind=k, id=c) for k, c, _ in plan]
         read = None
-        if action == "move":                      # a move reads what its clips still lack first, so the Archive's clip is never ahead of what is kept from it
+        if action == "move":                      # a move moves first and then reads what its clips still lack, from where the video now is (the video is kept: only its drive changes)
             st = self.status(force=True)["clips"]
             lack = [c for c in clips if st[c["kind"]][c["id"]].get("todo")]
             if lack:
@@ -447,9 +447,9 @@ class ClipKeep:
         self._stop = False
         self._roots = roots
         self._job = dict(running=True, action=action, role=role, to=to, files=len(files), done=0, bytes=sum(sz for _, sz, _ in files), bytes_done=0, freed=0, errors=[], current="",
-                         clips=len(plan), t0=time.time(), reading=bool(read), step="", step_done=0, step_total=0, steps=[])
+                         clips=len(plan), t0=time.time(), reading=False, after=bool(read), step="", step_done=0, step_total=0, steps=[])
         if read:
-            self._thread = threading.Thread(target=self._read_then_run, args=(read, action, role, files, roots, clips, to), daemon=True)
+            self._thread = threading.Thread(target=self._run_then_read, args=(read, action, role, files, roots, clips, to), daemon=True)
         else:
             self._thread = threading.Thread(target=self._run, args=(action, role, files, roots, clips, to), daemon=True)
         self._thread.start()
@@ -702,15 +702,24 @@ class ClipKeep:
             self._changed()
             self._settle()
 
-    def _read_then_run(self, read, action, role, files, roots, clips, to="A"):
-        """Reads what is missing (the same steps as `process`), then moves. Anything that could not be read stops the move: nothing has been copied or removed yet."""
+    def _run_then_read(self, read, action, role, files, roots, clips, to="A"):
+        """Moves first, then picks up what its clips still lack (the same steps as `process`) from where the video now is. Nothing waits on the reading: a clip that could not be read stays
+        as it was and is read by the next Update; the move itself is never held up or undone by it."""
         j = self._job
-        self._process(*read)
-        j["reading"] = False
-        j["step"] = ""
-        if self._stop or j["errors"]:
-            return
         self._run(action, role, files, roots, clips, to)
+        if self._stop or not read:
+            return
+        kind_of, _before, evs = read
+        try:
+            paths = self._paths(TLG.Ledger(self.dir), set(kind_of), roots)      # from the drive that holds the video now (the one it was moved to)
+            if paths:
+                j["reading"] = True
+                self._process(kind_of, paths, evs)
+        except Exception as e:
+            j["errors"].append("reading after the move: %s" % e)
+        finally:
+            j["reading"] = False
+            j["step"] = ""
 
     # ---- reading what is missing, for the clips asked for ---------------------------------------------------------
     def _paths(self, led, stamps, roots):

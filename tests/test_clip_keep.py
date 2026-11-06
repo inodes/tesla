@@ -338,7 +338,7 @@ class ProcBase(Base):
         self._read, self._make = TS.read, ST.make_many
 
         def read(store, todo, data_dir=None, stop=None, progress=None, limit=None):
-            self.calls.append(("read", [x["stamp"] for x in todo], [os.path.basename(x["path"]) for x in todo]))
+            self.calls.append(("read", [x["stamp"] for x in todo], [os.path.basename(x["path"]) for x in todo], [x["path"] for x in todo]))
             for n, x in enumerate(todo, 1):
                 store.put(x["stamp"])
                 progress(n, x["stamp"])
@@ -353,24 +353,27 @@ class ProcBase(Base):
 
 
 class ProcessTest(ProcBase):
-    def test_a_move_reads_what_is_missing_first_and_then_moves(self):
+    def test_a_move_moves_first_and_then_reads_what_is_left_from_where_the_video_now_is(self):
         out = self.k.start("move", "J", [dict(kind="saved", id="ev1")], self.roots, confirmed=True)
         self.assertNotIn("error", out)
+        self.assertFalse(out["reading"])                                                # not held up by reading: it moves first
         self.k._thread.join(5)
         j = self.k.job()
-        self.assertEqual([c[0] for c in self.calls], ["read", "stills"])               # read first ...
+        self.assertEqual([c[0] for c in self.calls], ["read", "stills"])
+        self.assertTrue(all(p.startswith(self.roots["A"]) for p in self.calls[0][3]))   # read from the Archive, where the video is now: JOWUA no longer has it
         self.assertEqual(j["errors"], [])
-        self.assertEqual(os.listdir(os.path.join(self.roots["J"], "SavedClips", "ev1")), [])      # ... then the video was moved off JOWUA
+        self.assertEqual(os.listdir(os.path.join(self.roots["J"], "SavedClips", "ev1")), [])
         self.assertTrue(os.path.exists(os.path.join(self.roots["A"], "SavedClips", "ev1", "%s-front.mp4" % S1)))
 
-    def test_a_move_does_not_start_when_what_is_missing_could_not_be_read(self):
+    def test_a_move_is_not_held_up_or_undone_by_what_could_not_be_read(self):
         def bad(store, todo, data_dir=None, stop=None, progress=None, limit=None):
             raise OSError("drive pulled out")
         TS.read = bad
         self.k.start("move", "J", [dict(kind="saved", id="ev1")], self.roots, confirmed=True)
         self.k._thread.join(5)
-        self.assertIn("drive pulled out", self.k.job()["errors"][0])
-        self.assertTrue(os.listdir(os.path.join(self.roots["J"], "SavedClips", "ev1")))           # nothing was removed
+        self.assertTrue(any("drive pulled out" in e for e in self.k.job()["errors"]))          # said, and the next Update reads it again
+        self.assertEqual(os.listdir(os.path.join(self.roots["J"], "SavedClips", "ev1")), [])    # but the video was moved
+        self.assertTrue(os.path.exists(os.path.join(self.roots["A"], "SavedClips", "ev1", "%s-front.mp4" % S1)))
 
     def test_it_reads_the_metadata_then_the_stills_then_the_signs_of_the_selected_clip_and_nothing_else(self):
         out = self.k.start_process([dict(kind="saved", id="ev1")], self.roots)
