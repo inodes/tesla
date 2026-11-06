@@ -177,6 +177,10 @@ class Review:
                 g["_tm"][tuple(d["tm"])] = g["_tm"].get(tuple(d["tm"]), 0) + max(1, d.get("tc", 0))
             if sc > g["_sc"]:
                 g.update(conf=d["c"], crop=d.get("f", ""), t=d["t"], _sc=sc)
+                if d.get("x") is not None and d.get("r"):
+                    w_ = float(d.get("w") or OPTS["frame_w"])
+                    h_ = float(d.get("h") or w_ * OPTS["frame_h"] / OPTS["frame_w"])
+                    g["pos"] = [round(d["x"] / w_, 4), round(d["y"] / h_, 4), round(d["r"] / w_, 5), round(h_ / w_, 4)]
         for g in out:
             g["times"] = list(max(g["_tm"], key=lambda k: g["_tm"][k])) if g["_tm"] else []     # the hours most of the stills agree on
             del g["_sc"], g["_tm"]
@@ -206,7 +210,7 @@ class Review:
                         hh = float(d.get("h") or w * OPTS["frame_h"] / OPTS["frame_w"])
                         g["_fx"].append(d["x"] / w)
                         g["_rf"].append(d["r"] / w)
-                        g["ob"].append([d["s"], round(d["x"] / w, 4), round(d["y"] / hh, 4), round(d["r"] / w, 5), round(d["c"]), d.get("f", "")])      # one frame of the sign: second, where it stood (across, down, radius: fractions of the picture's width / height / width), how surely it was read, its picture if kept
+                        g["ob"].append([d["s"], round(d["x"] / w, 4), round(d["y"] / hh, 4), round(d["r"] / w, 5), round(d["c"]), d.get("f", ""), round(hh / w, 4)])      # one frame of the sign: second, where it stood (across, down, radius: fractions of the picture's width / height / width), how surely it was read, its picture if kept
                     if d.get("tm"):
                         g["_tm"][tuple(d["tm"])] = g["_tm"].get(tuple(d["tm"]), 0) + max(1, d.get("tc", 0))
                     sc = d["c"] + 1.5 * min(d.get("r", 0), 120)          # the picture shown is the biggest (closest to the sign) of those read surely: the most pixels to read it from
@@ -221,6 +225,7 @@ class Review:
                         g["bs"] = ob[bi][0]
                         if not g["f"] or ob[bi][5]:
                             g["f"] = ob[bi][5] or g["f"]
+                        g["pos"] = [ob[bi][1], ob[bi][2], ob[bi][3], ob[bi][6]]      # where the sign stands in its picture (across, down, radius, height / width), as fractions: the same whatever size the picture is kept at
                     g["ob"] = [o[:5] for o in ob]
                     tm = g.pop("_tm")
                     g["times"] = list(max(tm, key=lambda k: tm[k])) if tm else []      # a school zone's hours ("08:00-09:30"), as most of its stills agree
@@ -350,6 +355,22 @@ def _save_crop(base, name, crop):
     return True
 
 
+def _save_frame(base, name, src, crop):
+    """Keep the best frame of a sign as the WHOLE picture (full size: the sign's place in it is metadata, as fractions of the picture, so it does not depend on the size kept).
+    src = the still the frame came from (copied as it is). Where it is gone, the crop of the sign is kept instead, under a crop's name. -> the name written, or ""."""
+    if src and os.path.isfile(src):
+        os.makedirs(os.path.join(base, "crops"), exist_ok=True)
+        shutil.copyfile(src, os.path.join(base, "crops", name))
+        return name
+    alt = re.sub(r"_(r?)f(\d+\.jpg)$", r"_\1\2", name)
+    return alt if _save_crop(base, alt, crop) else ""
+
+
+def _is_full(f):
+    """True when a kept picture is a whole frame (named ..._f01.jpg / ..._rf01.jpg), not the crop of a sign."""
+    return bool(re.search(r"_r?f\d+\.jpg$", f or ""))
+
+
 def _best_of_groups(found, gap):
     """The index (into found) of the best frame of every sign seen in a minute: frames of the same number on the same side within `gap` seconds are one sign."""
     groups = []
@@ -393,9 +414,9 @@ def scan_clip(path, stamp, v, base):
                     if c.get("ok") and c["conf"] >= OPTS["min_conf"] and c["text"]:
                         if any(o["side"] == side and o["text"] == c["text"] and abs(o["x"] - c["x"]) <= max(o["r"], c["r"]) for o in out):
                             continue         # the same sign found twice
-                        out.append(dict(s=s, text=c["text"], c=round(c["conf"]), x=c["x"], y=c["y"], r=c["r"], w=fw, h=im.shape[0], side=side, crop=c["crop"]))
+                        out.append(dict(s=s, text=c["text"], c=round(c["conf"]), x=c["x"], y=c["y"], r=c["r"], w=fw, h=im.shape[0], side=side, crop=c["crop"], _src=f))
             for c in SC.find_school(im):    # a school zone board, and the hours on its plate when they could be read
-                out.append(dict(s=s, text=c["text"], kind="school", c=c["conf"], x=c["x"], y=c["y"], r=c["r"], side=c["side"], tm=c["times"], tc=c["tconf"], crop=c["crop"]))
+                out.append(dict(s=s, text=c["text"], kind="school", c=c["conf"], x=c["x"], y=c["y"], r=c["r"], side=c["side"], tm=c["times"], tc=c["tconf"], crop=c["crop"], _src=f))
             return out
         with ThreadPoolExecutor(max(1, int(OPTS["workers"]))) as ex:
             for lst in ex.map(one, fr):
@@ -403,9 +424,12 @@ def scan_clip(path, stamp, v, base):
         keepi = _best_of_groups(found, float(OPTS["merge_s"]))      # a picture of the best frame of each sign; every frame keeps where the sign stood
         keep = []
         for k, d in enumerate(found):
-            crop = d.pop("crop")
-            if k in keepi and _save_crop(base, "%s_%02d.jpg" % (stamp, k), crop):
-                d["f"] = "%s_%02d.jpg" % (stamp, k)
+            crop, src = d.pop("crop"), d.pop("_src", None)
+            if k in keepi:
+                nm = "%s_%02d.jpg" % (stamp, k) if d.get("kind") == "school" else "%s_f%02d.jpg" % (stamp, k)      # a school board keeps its crop (the plate's hours are read from it); a speed sign the whole frame
+                got = nm if d.get("kind") == "school" and _save_crop(base, nm, crop) else (_save_frame(base, nm, src, crop) if d.get("kind") != "school" else "")
+                if got:
+                    d["f"] = got
             keep.append(d)
     return dict(n=len(fr), d=keep, rv=READER)
 
@@ -475,12 +499,18 @@ def refine_clip(path, stamp, rec, base):
                 im = cv2.imread(f)
                 c = _look(im, side) if im is not None else None
                 if c:
-                    new.append(dict(s=round(s, 2), text=c["text"], c=round(c["conf"]), x=c["x"], y=c["y"], r=c["r"], side=side, crop=c["crop"], **(dict(w=im.shape[1], h=im.shape[0]) if hasattr(im, "shape") else {})))
+                    new.append(dict(s=round(s, 2), text=c["text"], c=round(c["conf"]), x=c["x"], y=c["y"], r=c["r"], side=side, crop=c["crop"], _src=f, **(dict(w=im.shape[1], h=im.shape[0]) if hasattr(im, "shape") else {})))
             if not new:
                 continue
             win, _keep, best = _vote([d[i] for i in ix], new)
             drop |= {i for i in ix if d[i]["text"] != win}
-            for x in best:      # every clear frame keeps where the sign stood; the pictures are made once, for the best one (below)
+            for n_, x in enumerate(best):      # every clear frame keeps where the sign stood; the picture (the whole frame) is kept once, for the best of them (the frames are only here while this minute is looked at)
+                crop, src = x.pop("crop"), x.pop("_src", None)
+                if n_ == 0:
+                    got = _save_frame(base, "%s_rf%02d.jpg" % (stamp, k), src, crop)
+                    k += 1
+                    if got:
+                        x["f"] = got
                 add.append(x)
     # school zone signs seen without their hours: the plate is only readable close up, so the video is taken again finely around them
     sz = sorted(x["s"] for x in d if x.get("kind") == "school" and not x.get("tm"))
@@ -515,11 +545,6 @@ def refine_clip(path, stamp, rec, base):
     kept = sorted([x for i, x in enumerate(d) if i not in drop] + add, key=lambda x: x["s"])
     keepi = _best_of_groups(kept, float(OPTS["merge_s"]))
     for i, x in enumerate(kept):
-        if "crop" in x:
-            crop = x.pop("crop")
-            if i in keepi and _save_crop(base, "%s_r%02d.jpg" % (stamp, k), crop):
-                x["f"] = "%s_r%02d.jpg" % (stamp, k)
-                k += 1
         if i not in keepi and x.get("f"):                  # a frame that is not the best of its sign keeps no picture of its own
             try:
                 os.remove(os.path.join(base, "crops", x["f"]))

@@ -351,3 +351,6 @@ main:has(#spl .stbar,#spl .vbar) #splx{display:none}
 .srcr{display:flex;align-items:center;flex-wrap:wrap;gap:4px}.srcr .srcb{align-self:center}.srcr .kst{margin:0 0 0 auto;flex-wrap:nowrap}
 .kc.ic{display:inline-flex;align-items:center;justify-content:center;width:24px;height:20px;padding:0}.kc.ic svg{width:13px;height:13px;fill:none;stroke:currentColor;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round}
 .evc .opn{top:calc(7px + 56.25cqw - 38px);right:14px}
+
+.sgcut{display:block;flex:none;width:100%;aspect-ratio:1;background-repeat:no-repeat;background-color:var(--hover);border-radius:6px;margin-bottom:4px}
+.sgp .sgcut{width:150px;margin:0}

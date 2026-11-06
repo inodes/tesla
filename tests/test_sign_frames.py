@@ -64,5 +64,48 @@ class RecordTest(unittest.TestCase):
         self.assertGreaterEqual(R.OPTS["crop_px"], 640)
 
 
+class WholeFrameTest(unittest.TestCase):
+    def test_the_best_frame_is_kept_whole_and_named_as_a_frame(self):
+        with tempfile.TemporaryDirectory() as d, tempfile.TemporaryDirectory() as t:
+            src = os.path.join(t, "f1.jpg")
+            with open(src, "wb") as fh:
+                fh.write(b"WHOLE-FRAME")
+            name = R._save_frame(d, "S_f00.jpg", src, None)
+            self.assertEqual(name, "S_f00.jpg")
+            with open(os.path.join(d, "crops", name), "rb") as fh:
+                self.assertEqual(fh.read(), b"WHOLE-FRAME")            # copied as it is: no crop, no shrinking
+            self.assertTrue(R._is_full(name))
+            self.assertTrue(R._is_full("S_rf03.jpg"))
+            self.assertFalse(R._is_full("S_00.jpg"))
+            self.assertFalse(R._is_full("S_r01.jpg"))
+
+    def test_without_the_frame_the_crop_is_kept_under_a_crop_name(self):
+        import types
+        written = []
+        fake = types.SimpleNamespace(resize=lambda c, sz, interpolation=None: c, imwrite=lambda p, c, o=None: written.append(p) or True, IMWRITE_JPEG_QUALITY=1)
+
+        class Crop:
+            shape = (50, 50, 3)
+        old = sys.modules.get("cv2")
+        sys.modules["cv2"] = fake
+        try:
+            with tempfile.TemporaryDirectory() as d:
+                self.assertEqual(R._save_frame(d, "S_f00.jpg", "/gone.jpg", Crop()), "S_00.jpg")
+        finally:
+            if old is None:
+                sys.modules.pop("cv2", None)
+            else:
+                sys.modules["cv2"] = old
+
+    def test_the_record_gives_the_signs_place_as_fractions(self):
+        with tempfile.TemporaryDirectory() as d:
+            rv = R.Review(d)
+            st = "2026-09-08_09-21-39"
+            rv._day(st[:10])[st] = dict(n=1, rv=R.READER, d=[obs(10, "50", 90, 30, f=st + "_f00.jpg")])
+            g = rv.minute_signs([st])[st][0]
+            self.assertEqual(g["pos"], [round(1000 / 2896, 4), round(700 / 1876, 4), round(30 / 2896, 5), round(1876 / 2896, 4)])
+            self.assertEqual(g["f"], st + "_f00.jpg")
+
+
 if __name__ == "__main__":
     unittest.main()
