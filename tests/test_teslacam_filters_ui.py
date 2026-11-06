@@ -51,6 +51,12 @@ class TeslaCamFiltersUiTest(unittest.TestCase):
             css = f.read()
         self.assertIn("#tsr select,#tsr .chip{box-sizing:border-box;height:32px", css)
 
+    def test_recent_runs_not_yet_told_apart_refresh_by_themselves(self):
+        self.assertIn("const kindWatch=()=>{", self.js)
+        self.assertIn("(data.recent||[]).some(v=>!v.part)", self.js)      # only while a run has no parked / drive kind
+        self.assertIn("kidle>=15", self.js)                               # and it stops asking when nothing new comes
+        self.assertIn("loadKeep(!quiet);kindWatch()};", self.js)
+
 
 if __name__ == "__main__":
     unittest.main()
