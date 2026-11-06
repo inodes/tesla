@@ -1698,7 +1698,7 @@ const VT=window.IntersectionObserver?new IntersectionObserver(es=>es.forEach(e=>
 const vthumb=(url,t)=>`<video class="vt" muted playsinline preload="metadata" data-src="${esc(url)}" data-t="${t||2}" onerror="this.outerHTML='<div class=\\'noimg\\'></div>'"></video>`;
 const lazyThumbs=host=>$$("video.vt",host).forEach(v=>{if(VT)VT.observe(v);else vtLoad(v)});
 // ---------- TeslaCam: the clips on any connected drive, and one continuous timeline built from the files alone
-let TCS={role:null,kind:"clips",q:"",r:{p:"all"},at:{},src:{sentry:1,saved:1,recent:1}},TLOFF=null;
+let TCS={role:null,kind:"clips",q:"",r:{p:"all"},f:{drives:[],loc:"all",type:"all",ev:"all"}},TLOFF=null;      // f: the filters of the TeslaCam page (kept only while the app runs: a start, or Clear filters, makes them all "all")
 const SWRSEEN=new Set(),FRESH={};
 // the server answered a TeslaCam list from what it kept and is refreshing it: ask again in a few seconds and redraw if it changed
 const tcRecheck=(p,shown,k=0)=>{if(k>4||p==="drivelist")return;setTimeout(async()=>{let n;try{n=await fetchJ(p)}catch(e){return}const ck="tc/"+p;
@@ -2149,7 +2149,7 @@ const kpBig=(ty)=>{const a=Object.values((KPC&&KPC[ty])||{}).map(r=>r.size).filt
 const kpTop=(ty,id)=>{const r=kpOf(ty,id),k=ty+"|"+id;return `<em class="evk ${TCSEL.has(k)?"on":""}" data-sel="${esc(k)}" role="checkbox" aria-checked="${TCSEL.has(k)}" title="Select">${TCSEL.has(k)?"✓":""}</em>`+(r&&r.size?`<em class="szb ${r.size>=kpBig(ty)?"big":""}" title="${esc(Object.keys(r.bytes).map(x=>drName(x)+" "+fmtGB(r.bytes[x])).join(" · "))}">${fmtGB(r.size)}</em>`:"")};
 async function pageTeslaCam(role,id){
   if(role&&id)return /^sentry-/.test(id)?pageTeslaCamSentry(role,id.slice(7)):/^at-/.test(id)?pageTeslaCamMoment(+id.slice(3)):/^win-/.test(id)?pageTeslaCamAt(...(([w,tid])=>(([a,b,l,k])=>[+a,+b,l==="n"?null:+l,k,tid?decodeURIComponent(tid):null])(w.split("-")))(id.slice(4).split("~"))):pageTeslaCamDrive(role,id);
-  if(TCS.rowDesc===undefined)TCS.rowDesc=cfg("teslacam.rows_newest_first")===true;
+  if(TCS.rowDesc===undefined)TCS.rowDesc=cfg("teslacam.rows_newest_first")===true;if(TCS.dayDesc===undefined)TCS.dayDesc=cfg("teslacam.days_newest_first")!==false;
   loading("cards");const [dr,act,pl,dlist]=await Promise.all([tcGet("teslacam"),api("activity"),api("places").catch(()=>({saved:[]})),api("drivelist").catch(()=>({items:[]}))]),drives=dr.drives,places=(pl.saved||[]);
   const head='<h1>TeslaCam</h1>';
   const trips=act.filter(x=>x.k==="drive"&&!x.repark).map(x=>({id:x.id,t0:x.t0,t1:x.t0+x.min*60,ti:driveTitle(x)}));
@@ -2197,12 +2197,32 @@ async function pageTeslaCam(role,id){
     const fb=$("#thfr");if(fb)fb.onclick=()=>confirmCard(`<b>Keep only the main camera of ${n0(ev.extra)} events?</b> (${fmtGB(ev.extra_bytes)} freed). The other cameras and the half-second pictures are deleted and cannot be restored.`,"Delete",{events:"front"});
     const b=$("#thgo");if(b)b.onclick=()=>confirmCard(`<b>Shrink the stills of ${n0(j.minutes)} minutes?</b> (${fmtGB(j.bytes)} now). Each is replaced by a smaller copy and cannot be restored.`,"Shrink",{})};
   thin();
-  const chips=()=>{
-    $("#tsr").innerHTML='<span class="sub" style="margin:0 4px 0 0">Show:</span>'+Object.keys(TCSRC).map(k=>`<button class="chip ${TCS.src[k]?"on":""}" data-s="${k}">${TCSRC[k]}${data&&data[k]?" · "+data[k].length:""}</button>`).join("")+'<span class="sub" style="margin:0 4px 0 12px">Order:</span><button class="chip" id="rowsort" title="The order of the clips inside a day">'+(TCS.rowDesc?"Newest first":"Oldest first")+'</button>'+(atNames().length?'<span class="sub" style="margin:0 4px 0 12px">At:</span>'+atNames().map(n=>`<button class="chip ${TCS.at[n]?"on":""}" data-at="${esc(n)}">${esc(n)}${data?" · "+Object.keys(TCSRC).filter(k=>TCS.src[k]).reduce((a,k)=>a+(data[k]||[]).filter(v=>atOf(Object.assign({ty:k},v))===n).length,0):""}</button>`).join(""):"");
-    $$("#tsr [data-at]").forEach(b=>b.onclick=()=>{TCS.at[b.dataset.at]=TCS.at[b.dataset.at]?0:1;$("#spl").innerHTML="";$("#splx").innerHTML="";chips();draw()});
-    $("#rowsort").onclick=()=>{TCS.rowDesc=!TCS.rowDesc;chips();draw()};
-    $$("#tsr [data-s]").forEach(b=>b.onclick=()=>{const on=Object.keys(TCSRC).filter(k=>TCS.src[k]);if(TCS.src[b.dataset.s]&&on.length<2)return;TCS.src[b.dataset.s]=TCS.src[b.dataset.s]?0:1;$("#spl").innerHTML="";$("#splx").innerHTML="";chips();draw()});
-    };
+  // The filters (Drives, Locations, Type, Events: each "all" until chosen, never kept across a start) and the two sort arrows (days, times). Clear filters puts them all back.
+  const ARW=d=>`<svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${d?'<path d="M6 2v8M2.5 6.5 6 10l3.5-3.5"/>':'<path d="M6 10V2M2.5 5.5 6 2l3.5 3.5"/>'}</svg>`;
+  const homeNames=()=>atNames().length?atNames():["Home"];
+  const kindT=v=>v.ty==="sentry"?"parked":v.ty==="saved"?((v.moved||tripOf(v))?"driving":"parked"):v.part==="park"?"parked":v.part==="drive"?"driving":"";      // what the car was doing ("" = not known: shown under either)
+  const roleList=()=>{const r=new Set(conn());Object.keys(TCSRC).forEach(k=>((data&&data[k])||[]).forEach(v=>(v.roles||[]).forEach(x=>r.add(x))));return [...r].sort((a,b)=>{const x="AJU".indexOf(a),y="AJU".indexOf(b);return (x<0?9:x)-(y<0?9:y)||(a<b?-1:1)})};
+  const fActive=()=>{const f=TCS.f;return !!(f.drives.length||f.loc!=="all"||f.type!=="all"||f.ev!=="all"||TCS.q)};
+  const fPass=v=>{const f=TCS.f;return (!f.drives.length||(v.roles||[]).some(r=>f.drives.includes(r)))&&(f.loc==="all"||(f.loc==="home"?homeNames().includes(atOf(v)):!!atOf(v)))&&(f.type==="all"||!kindT(v)||kindT(v)===f.type)};
+  const fRefresh=()=>{$("#spl").innerHTML="";$("#splx").innerHTML="";chips();draw();[...TCSEL].forEach(k=>{if(!vis.some(v=>v.ty+"|"+v.id===k))TCSEL.delete(k)});paintTicks();selbar()};      // what is hidden is no longer ticked: Move and Delete only ever act on clips in view
+  const chips=()=>{const f=TCS.f,rl=roleList(),all=Object.keys(TCSRC).flatMap(k=>((data&&data[k])||[]).map(v=>Object.assign({ty:k},v))),cn=k=>data&&data[k]?" · "+data[k].length:"";
+    const dl=!f.drives.length?"All":f.drives.length===1?(drName(f.drives[0])):f.drives.length+" drives";
+    const opt=(v,l,cur)=>`<option value="${v}" ${cur===v?"selected":""}>${esc(l)}</option>`;
+    $("#tsr").innerHTML=`<span class="fdd"><span class="fsel"><span class="sub">Drives</span><button class="chip ${f.drives.length?"on":""}" id="fdr" aria-haspopup="true" title="Show only what is on these drives">${esc(dl)} ▾</button></span><div class="fpop" id="fdrp" hidden>${
+        `<label><input type="checkbox" data-r="" ${f.drives.length?"":"checked"}> All drives</label>`+rl.map(r=>`<label><input type="checkbox" data-r="${esc(r)}" ${f.drives.includes(r)?"checked":""}> ${esc(drName(r))}<small> · ${all.filter(v=>(v.roles||[]).includes(r)).length}</small></label>`).join("")}</div></span>`
+      +`<label class="fsel"><span class="sub">Locations</span><select id="floc" class="${f.loc!=="all"?"on":""}">${opt("all","All",f.loc)}${opt("home",homeNames().join(", "),f.loc)}${opt("saved","Saved locations",f.loc)}</select></label>`
+      +`<label class="fsel"><span class="sub">Type</span><select id="ftype" class="${f.type!=="all"?"on":""}">${opt("all","All",f.type)}${opt("driving","Driving",f.type)}${opt("parked","Parked",f.type)}</select></label>`
+      +`<label class="fsel"><span class="sub">Events</span><select id="fev" class="${f.ev!=="all"?"on":""}">${opt("all","All",f.ev)}${opt("saved","Saved"+cn("saved"),f.ev)}${opt("sentry","Sentry"+cn("sentry"),f.ev)}${opt("recent","Recent"+cn("recent"),f.ev)}</select></label>`
+      +`<button class="chip" id="fclr" ${fActive()?"":"hidden"} title="Show everything again: every drive, location, type and event, and no search">Clear filters</button>`
+      +`<span class="fsp"></span><span class="sub">Sort</span><button class="chip fsort" id="daysort" title="The order of the days: ${TCS.dayDesc?"newest first":"oldest first"} (click to change)">Days ${ARW(TCS.dayDesc)}</button><button class="chip fsort" id="rowsort" title="The order of the times inside a day: ${TCS.rowDesc?"newest first":"oldest first"} (click to change)">Times ${ARW(TCS.rowDesc)}</button>`;
+    $("#floc").onchange=e=>{f.loc=e.target.value;fRefresh()};$("#ftype").onchange=e=>{f.type=e.target.value;fRefresh()};$("#fev").onchange=e=>{f.ev=e.target.value;fRefresh()};
+    $("#fdr").onclick=e=>{e.stopPropagation();$("#fdrp").hidden=!$("#fdrp").hidden};
+    $$("#fdrp [data-r]").forEach(c=>c.onchange=()=>{const r=c.dataset.r;if(!r)f.drives=[];else f.drives=c.checked?[...f.drives,r]:f.drives.filter(x=>x!==r);const open=true;fRefresh();$("#fdrp").hidden=!open});
+    $("#fclr").onclick=()=>{TCS.f={drives:[],loc:"all",type:"all",ev:"all"};TCS.q="";const q=$("#q");if(q)q.value="";fRefresh()};
+    $("#daysort").onclick=()=>{TCS.dayDesc=!TCS.dayDesc;chips();draw()};
+    $("#rowsort").onclick=()=>{TCS.rowDesc=!TCS.rowDesc;chips();draw()}};
+  if(window.__fdd)removeEventListener("click",window.__fdd);
+  window.__fdd=e=>{const p=$("#fdrp");if(p&&!p.hidden&&!e.target.closest(".fdd"))p.hidden=true};addEventListener("click",window.__fdd);
   const load=async(quiet)=>{const my=++token;if(!quiet&&!QUIET&&!cache["tc/clips"]){data=null;$("#tl").innerHTML="";$("#tb").innerHTML='<div class="empty">Reading the drive…</div>'}
     try{const d=await tcGet("clips");if(my!==token)return;data=d}catch(e){$("#tb").innerHTML=errBox(e.message,"Could not read the list of clips");return}
     const list=[].concat(data.sentry,data.saved,data.recent);if(!quiet)rangeBar($("#rg"),"teslacam",TCS.r,daysOf((list||[]).map(v=>({day:(v.ts||v.start).slice(0,10)}))),draw);chips();draw();loadKeep(!quiet)};
@@ -2324,9 +2344,8 @@ async function pageTeslaCam(role,id){
     if(remembered&&!KPC){const old=await IDB.get(k);if(old&&!KPC&&document.body.contains($("#tb"))){KPC=old;draw()}}     // what was kept last time is drawn at once; the fresh answer replaces it
     try{const r=await fetch("/api/clips/keep");if(r.ok){const nj=(await r.json()).clips,ch=!same(nj,KPC);KPC=nj;IDB.set(k,nj);if(ch)draw();else selbar();poll()}else{const sb=$("#selbar");if(sb)sb.classList.remove("ph")}}catch(e){const sb=$("#selbar");if(sb)sb.classList.remove("ph")}};
   const draw=()=>{if(!data)return;if(!data.sentry){return}
-    const q=TCS.q.toLowerCase(),srcs=Object.keys(TCSRC).filter(k=>TCS.src[k]);
-    const onAt=atNames().filter(n=>TCS.at[n]);
-    const all=[].concat(...srcs.map(k=>data[k].map(v=>Object.assign({ty:k},v)))).filter(v=>inRange({day:v.ts.slice(0,10)},TCS.r)&&(!onAt.length||onAt.includes(atOf(v)))&&(!q||(v.ty==="recent"?((tripOf(v)||{}).ti||""):(v.city+" "+v.street+" "+reason(v.reason))).toLowerCase().includes(q)||TCSRC[v.ty].toLowerCase().includes(q))).sort((a,b)=>(a.ts<b.ts?-1:a.ts>b.ts?1:0)*(TCS.rowDesc?-1:1)),byDay={};
+    const q=TCS.q.toLowerCase(),srcs=TCS.f.ev==="all"?Object.keys(TCSRC):[TCS.f.ev];
+    const all=[].concat(...srcs.map(k=>data[k].map(v=>Object.assign({ty:k},v)))).filter(v=>inRange({day:v.ts.slice(0,10)},TCS.r)&&fPass(v)&&(!q||(v.ty==="recent"?((tripOf(v)||{}).ti||""):(v.city+" "+v.street+" "+reason(v.reason))).toLowerCase().includes(q)||TCSRC[v.ty].toLowerCase().includes(q))).sort((a,b)=>(a.ts<b.ts?-1:a.ts>b.ts?1:0)*(TCS.rowDesc?-1:1)),byDay={};
     all.forEach(v=>(byDay[v.ts.slice(0,10)]=byDay[v.ts.slice(0,10)]||[]).push(v));
     // One drive or parked spell is one card: its Recent minutes and the Saved / Sentry clips cut from the same time are shown together (the Saved folder holds copies of minutes of the drive), with a pill for each source.
     // The drive or park is the one the Drives list already knows (Tessie's drive, or the parked spell); a clip belongs to the one it overlaps most. A clip with none stays a card of its own.
@@ -2387,7 +2406,7 @@ async function pageTeslaCam(role,id){
     const ordOf=v=>{const cl=leadOf[v.ty+"|"+v.id];return cl?cl.item.start:v.ts};
     Object.keys(byDay).forEach(d=>{byDay[d].sort((a,b)=>{const x=ordOf(a),y=ordOf(b);return (x<y?-1:x>y?1:0)*(TCS.rowDesc?-1:1)})});
     {const sp0=$("#spl");if(sp0&&$("#tb").contains(sp0))$("#tb").before(sp0)}      // the open clip is kept out of the tiles while they are drawn again
-    $("#tb").innerHTML=(days.length?"":'<div class="empty">Nothing here for these dates.</div>')+days.slice(0,60).map(d=>`<div class="day" data-day="${d}"><em class="dayk" role="checkbox" title="Tick every clip of this day"></em>${dayName(d)}<small class="dcnt">${byDay[d].length} clip${byDay[d].length>1?"s":""}</small></div><div class="evs">${byDay[d].filter(v=>!folded.has(v.ty+"|"+v.id)&&!hiddenIn.has(ek(v))).map(unit).join("")}</div>`).join("")+(days.length>60?'<div class="sub">Showing the newest 60 days. Narrow the dates to see older ones.</div>':"");
+    $("#tb").innerHTML=(days.length?"":'<div class="empty">Nothing here for these dates.</div>')+(TCS.dayDesc?days.slice(0,60):days.slice(0,60).reverse()).map(d=>`<div class="day" data-day="${d}"><em class="dayk" role="checkbox" title="Tick every clip of this day"></em>${dayName(d)}<small class="dcnt">${byDay[d].length} clip${byDay[d].length>1?"s":""}</small></div><div class="evs">${byDay[d].filter(v=>!folded.has(v.ty+"|"+v.id)&&!hiddenIn.has(ek(v))).map(unit).join("")}</div>`).join("")+(days.length>60?'<div class="sub">Showing the newest 60 days. Narrow the dates to see older ones.</div>':"");
     vis=all;dayList=byDay;$$("#tb [data-sel]").forEach(b=>b.onclick=e=>{e.stopPropagation();if(OPENC){OPENC=null;OPENK=null;$$("#tb .evc.on").forEach(x=>x.classList.remove("on"))}const k=b.dataset.sel;TCSEL.has(k)?TCSEL.delete(k):TCSEL.add(k);pend=null;paintTicks();selbar()});
     $$("#tb .dayk").forEach(b=>b.onclick=e=>{const l=dayList[b.parentNode.dataset.day]||[],all=l.every(v=>TCSEL.has(v.ty+"|"+v.id));l.forEach(v=>all?TCSEL.delete(v.ty+"|"+v.id):TCSEL.add(v.ty+"|"+v.id));pend=null;paintTicks();selbar()});paintTicks();selbar();
     window.NAVLIST={hs:$$("#tb .evc").filter(b=>!b.classList.contains("evkid")&&b.style.display!=="none"&&$(".opn",b)).map(b=>$(".opn",b).dataset.go)};      // what Previous / Next on the page of one of them walks through
@@ -2407,7 +2426,7 @@ async function pageTeslaCam(role,id){
   const closeOpen=()=>{OPENC=null;OPENK=null;$$("#tb .evc.on").forEach(b=>b.classList.remove("on"));selbar()};
   if(window.__tcEsc)removeEventListener("keydown",window.__tcEsc);
   window.__tcEsc=e=>{if(e.key==="Escape"&&OPENC&&!/^(INPUT|TEXTAREA|SELECT)$/.test((document.activeElement||{}).tagName||""))closeOpen()};addEventListener("keydown",window.__tcEsc);
-  $("#q").oninput=e=>{TCS.q=e.target.value;draw()};chips();load();poll();
+  $("#q").oninput=e=>{TCS.q=e.target.value;draw();const c=$("#fclr");if(c)c.hidden=!fActive()};chips();load();poll();
 }
 
 // ---------- one drive rebuilt from the video: map, telemetry and the stitched footage, moving together

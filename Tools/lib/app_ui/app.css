@@ -326,3 +326,8 @@ main:has(#spl .stbar,#spl .vbar) #splx{display:none}
 .sgp{position:absolute;left:10px;bottom:10px;z-index:5;background:var(--card);border:1px solid var(--line);border-radius:10px;padding:5px;box-shadow:0 2px 10px rgba(0,0,0,.3);pointer-events:none}.sgp img{display:block;max-width:150px;max-height:150px;border-radius:6px}.sgp[hidden]{display:none}
 
 .covbar i.sel{outline:2px solid var(--acc,#3b6cf6);outline-offset:-2px;opacity:1}.covsel{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin:6px 0 0;font-size:13px}.covsel[hidden]{display:none}.covsel>span{flex:1;min-width:200px}
+
+#tsr{display:flex;align-items:flex-end;gap:10px 14px;flex-wrap:wrap}#tsr .fsel{display:flex;flex-direction:column;gap:2px;margin:0}#tsr .fsel .sub{font-size:11px;margin:0}#tsr select.on{border-color:var(--acc);box-shadow:inset 0 0 0 1px var(--acc)}
+#tsr .fdd{position:relative}#tsr .fpop{position:absolute;z-index:30;top:100%;left:0;margin-top:4px;min-width:190px;background:var(--card);border:1px solid var(--line);border-radius:10px;padding:6px;box-shadow:0 6px 20px rgba(0,0,0,.18);display:flex;flex-direction:column}
+#tsr .fpop[hidden],#tsr [hidden]{display:none}#tsr .fpop label{display:flex;gap:8px;align-items:center;padding:5px 8px;border-radius:6px;cursor:pointer}#tsr .fpop label:hover{background:var(--bg)}#tsr .fpop small{color:var(--mut)}
+#tsr .fsp{flex:1}#tsr .fsort{display:inline-flex;align-items:center;gap:5px}
