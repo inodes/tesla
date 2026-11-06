@@ -342,3 +342,4 @@ main:has(#spl .stbar,#spl .vbar) #splx{display:none}
 /* the order of the days (calendar) and of the times in a day (clock) beside the date bar of every list */
 .rsort{display:inline-flex;gap:6px;align-items:center;margin-left:8px}.rsort .fsort{display:inline-flex;align-items:center;gap:5px}
 .qsg{display:inline-flex;align-items:center;gap:5px}.qsg small{font-size:11px}
+.hud .hdv{position:absolute;right:.95em;bottom:.95em;color:#fff;font:500 2.1em/1.1 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;text-shadow:0 0 .25em rgba(0,0,0,.9),0 .05em .2em rgba(0,0,0,.8);opacity:.9;white-space:nowrap}

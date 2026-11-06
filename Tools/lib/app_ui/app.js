@@ -1107,13 +1107,14 @@ function clipPlayer(host,o){
     if(!(k in SDAY)){SDAY[k]=undefined;fetch("/api/schoolday?date="+day+"&lat="+w.lat+"&lon="+w.lon).then(r=>r.json()).then(j=>{SDAY[k]=j.school_day==null?null:!!j.school_day;hudUpd()}).catch(()=>{SDAY[k]=null})}return SDAY[k]})};
   const hudUpd=()=>{if(!(o.tele||o.info)||!mv)return;const fig=$('#vids figure[data-c="front"]')||$('#vids figure[data-c]'),vd=fig&&fig.querySelector("video");if(!vd)return;const fr=!!o.tele&&fig.dataset.c==="front";let h=fig.querySelector(".hud");      // the place and the time are on whichever camera is shown; the sign, the speed and the indicators only on the front one
     if(!hudOn()){if(h)h.remove();return}
-    if(!h){h=document.createElement("div");h.className="hud";h.innerHTML='<div class="hsg" hidden><b></b></div><div class="hsp" hidden><b></b><small>km/h</small></div><svg class="hbk hl" viewBox="0 0 24 24"><path d="M2 12l9-8v5h11v6H11v5z"/></svg><svg class="hbk hr" viewBox="0 0 24 24"><path d="M2 12l9-8v5h11v6H11v5z"/></svg><div class="hin" hidden><b></b><span></span></div>';fig.appendChild(h)}
+    if(!h){h=document.createElement("div");h.className="hud";h.innerHTML='<div class="hsg" hidden><b></b></div><div class="hsp" hidden><b></b><small>km/h</small></div><svg class="hbk hl" viewBox="0 0 24 24"><path d="M2 12l9-8v5h11v6H11v5z"/></svg><svg class="hbk hr" viewBox="0 0 24 24"><path d="M2 12l9-8v5h11v6H11v5z"/></svg><div class="hin" hidden><b></b><span></span></div><div class="hdv" hidden></div>';fig.appendChild(h)}
     const b=hudBox(vd.clientWidth,vd.clientHeight,vd.videoWidth,vd.videoHeight),st=h.style;st.left=(vd.offsetLeft+b.x)+"px";st.top=(vd.offsetTop+b.y)+"px";st.width=b.w+"px";st.height=b.h+"px";st.fontSize=(b.w/100)+"px";
     h.classList.toggle("nof",!fr);
-    const T=fr?o.tele(stamps[si],mv.currentTime):null,sc=fr?hudSchoolNow():null,lim=fr?hudLimit(SGV,stamps,si,mv.currentTime,o.doubt,sc&&sc.state==="off"?g=>g===sc.sp:null):null,sg=h.querySelector(".hsg"),sp=h.querySelector(".hsp"),bk=hudBlink(T?T.blk:0);
-    sg.hidden=lim==null;sg.classList.toggle("sch",lim!=null&&!!sc&&sc.state==="on"&&lim===sc.lim);if(lim!=null){const n=sg.firstChild;if(n.textContent!==String(lim)){n.textContent=lim;sg.classList.toggle("d3",lim>=100)}}
-    sp.hidden=!T||T.v==null;if(T&&T.v!=null)sp.firstChild.textContent=Math.round(T.v);
+    const T=fr?o.tele(stamps[si],mv.currentTime):null,sc=fr?hudSchoolNow():null,lim=fr?hudLimit(SGV,stamps,si,mv.currentTime,o.doubt,sc&&sc.state==="off"?g=>g===sc.sp:null):null,sg=h.querySelector(".hsg"),sp=h.querySelector(".hsp"),bk=hudBlink(T?T.blk:0),pk=fr&&!!o.parked&&!!o.parked(stamps[si],mv.currentTime);
+    sg.hidden=pk||lim==null;sg.classList.toggle("sch",lim!=null&&!!sc&&sc.state==="on"&&lim===sc.lim);if(lim!=null){const n=sg.firstChild;if(n.textContent!==String(lim)){n.textContent=lim;sg.classList.toggle("d3",lim>=100)}}
+    sp.hidden=pk||!T||T.v==null;if(T&&T.v!=null)sp.firstChild.textContent=Math.round(T.v);
     h.querySelector(".hl").classList.toggle("on",bk.l);h.querySelector(".hr").classList.toggle("on",bk.r);
+    const dv=o.drive?o.drive(stamps[si]):"",hd=h.querySelector(".hdv");if(hd){hd.hidden=!dv;if(hd.textContent!==dv)hd.textContent=dv}      // bottom right, opposite the place and time: the drive this video plays from
     const inf=o.info?o.info(stamps[si],mv.currentTime):null,hi=h.querySelector(".hin");      // bottom left: where, and the local time
     if(hi){hi.hidden=!inf;if(inf){const k=inf.a+"|"+inf.b;if(hi.dataset.k!==k){hi.dataset.k=k;hi.firstChild.textContent=inf.a;hi.firstChild.hidden=!inf.a;hi.lastChild.textContent=inf.b}}}};
   // the signs read in these minutes (speed limits): shown beside the time while the video is at them
@@ -2715,6 +2716,8 @@ async function teslaDriveBody(host,role,fetchSeg,places,opts){
     if(!player&&(playable.length||blackDrive)){const mm=allM,cams={},meta={},syn={},len={};mm.forEach(m=>{cams[m.stamp]=m.cams||[];meta[m.stamp]=m;if(m.syn){syn[m.stamp]=1;len[m.stamp]=m.len}});covStrip(mm);
       player=clipPlayer($("#dvid"),{stamps:mm.map(m=>m.stamp),cams,syn,len,still:stillSrc,trig:opts.trig,
         hot:opts.hot,signInfo,hide:asideSign,doubt:(st,g)=>{const sr=S(),m=meta[st];if(!sr||!m||!SGALL)return null;const t=m.off+g.s0;return hudTrust(g,k=>{const x=sr.v[Math.round(t+k)];return x==null?null:x},sgNear(t,g.text),hudSpike(t,g.text,SGALL)).t<HUD_DOUBT},
+        drive:()=>drName(role),
+        parked:(st,sec)=>{const x=it(),sr=S(),m=meta[st];if(x&&x.kind==="stopped")return true;if(!sr||!sr.gear||!m)return false;return sr.gear[m.off+Math.floor(sec)]===0},      // a parked page, or the car in Park at that second: no speed, no limit sign over the video
         tele:(st,sec)=>{const sr=S(),m=meta[st];if(!sr||!m)return null;const i=m.off+Math.floor(sec);return sr.v[i]==null?null:{v:sr.v[i],blk:sr.blk[i]||0}},
         where:(st,sec)=>{const sr=S(),m=meta[st];if(!sr||!m||!sr.lat)return null;const i=m.off+Math.floor(sec);return sr.lat[i]!=null&&sr.lon[i]!=null?{lat:sr.lat[i],lon:sr.lon[i]}:null},
         url:(st,c)=>meta[st].src==="saved"?`/footage/${role}/SavedClips/${meta[st].ref}/${st}-${c}.mp4`:meta[st].src==="sentry"?`/footage/${role}/SentryClips/${meta[st].ref}/${st}-${c}.mp4`:`/footage/${role}/RecentClips/${st}-${c}.mp4`,

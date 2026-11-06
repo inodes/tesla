@@ -222,3 +222,26 @@ class SpikeTest(unittest.TestCase):
         self.assertEqual(r["t"], 0)
         self.assertEqual(r["why"], "spk")
         self.assertEqual(run('hudTrust({"text":"110","conf":64},null,[],false).why'), "")
+
+
+class ParkedOverlayTest(unittest.TestCase):
+    def test_no_speed_or_limit_sign_while_parked(self):
+        with open(APP_JS, encoding="utf-8") as f:
+            js = f.read()
+        self.assertIn('if(x&&x.kind==="stopped")return true', js)                       # a parked page
+        self.assertIn("sr.gear[m.off+Math.floor(sec)]===0", js)                         # or the car in Park at that second
+        self.assertIn("sg.hidden=pk||lim==null;", js)
+        self.assertIn("sp.hidden=pk||!T||T.v==null;", js)
+
+
+class DriveOverlayTest(unittest.TestCase):
+    def test_the_drive_the_video_plays_from_is_bottom_right_by_its_registry_name(self):
+        with open(APP_JS, encoding="utf-8") as f:
+            js = f.read()
+        with open(APP_CSS, encoding="utf-8") as f:
+            css = f.read()
+        self.assertIn("drive:()=>drName(role)", js)                                      # the name comes from the registry, not the code
+        self.assertIn('<div class="hdv" hidden></div>', js)
+        self.assertIn("hd.textContent!==dv", js)
+        self.assertIn(".hud .hdv{position:absolute;right:.95em;bottom:.95em", css)       # opposite the place and time (.hin, bottom left)
+        self.assertNotIn("hud.nof .hdv", css)                                            # on whichever camera the place and time are
