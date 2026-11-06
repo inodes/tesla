@@ -229,19 +229,21 @@ class ParkedOverlayTest(unittest.TestCase):
         with open(APP_JS, encoding="utf-8") as f:
             js = f.read()
         self.assertIn('if(x&&x.kind==="stopped")return true', js)                       # a parked page
-        self.assertIn("sr.gear[m.off+Math.floor(sec)]===0", js)                         # or the car in Park at that second
+        self.assertIn("if(g===0)return true;if(g===1||g===2||g===3)return false;return sr.v[i]==null||sr.v[i]<1", js)      # or the car in Park at that second (no gear read: Park when not moving)
         self.assertIn("sg.hidden=pk||lim==null;", js)
         self.assertIn("sp.hidden=pk||!T||T.v==null;", js)
 
 
-class DriveOverlayTest(unittest.TestCase):
-    def test_the_drive_the_video_plays_from_is_bottom_right_by_its_registry_name(self):
+class GearOverlayTest(unittest.TestCase):
+    def test_the_gear_selector_is_bottom_right_with_the_gear_lit(self):
         with open(APP_JS, encoding="utf-8") as f:
             js = f.read()
         with open(APP_CSS, encoding="utf-8") as f:
             css = f.read()
-        self.assertIn("drive:()=>drName(role)", js)                                      # the name comes from the registry, not the code
-        self.assertIn('<div class="hdv" hidden></div>', js)
-        self.assertIn("hd.textContent!==dv", js)
-        self.assertIn(".hud .hdv{position:absolute;right:.95em;bottom:.95em", css)       # opposite the place and time (.hin, bottom left)
-        self.assertNotIn("hud.nof .hdv", css)                                            # on whichever camera the place and time are
+        self.assertIn('<div class="hgr" hidden><i>P</i><i>R</i><i>N</i><i>D</i></div>', js)
+        self.assertEqual(run("[0,1,2,3].map(g=>HUD_GEAR[g])") if node_usable.usable() else [0, 3, 1, 2], [0, 3, 1, 2])      # Park, Drive, Reverse, Neutral -> P R N D
+        self.assertIn("gear:(st,sec)=>", js)
+        self.assertIn("return g===1||g===2||g===3?g:0}", js)                               # P unless the car is in N, D or R
+        self.assertIn(".hud .hgr{position:absolute;right:.95em;bottom:.95em", css)       # opposite the place and time (.hin, bottom left)
+        self.assertIn(".hud.nof .hgr", css)                                              # with the speed, on the front camera
+        self.assertNotIn("hdv", js + css)                                                # not a drive name

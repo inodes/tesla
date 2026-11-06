@@ -37,6 +37,15 @@ class SignPictureTest(unittest.TestCase):
         self.assertNotIn("set aside</button>", blk)
         self.assertNotIn("offRoad", self.js)
 
+    def test_each_sign_is_shown_as_a_picture_with_what_was_worked_out(self):
+        j = self.js.index("const gc=$(\"#dsgc\")")
+        blk = self.js[j:j + 2400]
+        self.assertIn('class="evc sgk', blk)
+        self.assertIn("/review/${esc(g.f)}", blk)                      # the sign cut from the frame
+        self.assertIn("m ${g.fx<.5?\"left\":\"right\"} of the car's line", blk)      # how far off the car's line it stood
+        self.assertIn("no picture kept", blk)                          # said, not left blank, when the picture is gone
+        self.assertIn('style="width:${MW}ch;max-width:100%"', self.js)    # the dropdown is always as wide as its longest label
+
     def test_picture_overlay(self):
         self.assertIn('id="dsgp"', self.js)
         self.assertIn("signPic(meta[st].off+sec)", self.js)      # follows the video
