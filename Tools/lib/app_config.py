@@ -24,6 +24,7 @@ the block). A change takes effect the next time the app or script reads it (the 
                                                    refreshed first (at most once a run, not again within refetch_hours), then the price shows its date
   app.review.end_kmh / end_s   signs are read from end_kmh (not min_kmh) in the last end_s seconds of a drive
   app.review.step_s / min_kmh / min_conf / workers / merge_s   reading speed-limit signs from a drive's video (Review tab); candidate_km / candidate_avg_kmh = the "Review candidates" button on Drives
+  app.review.ring_cover / ring_redin   a round sign is kept only with a red ring this much of the way round (0-1) and a face no more than this red (0-1); see docs/SIGNS.md
   app.review.accel_min_pct / speed_min_kmh / speed_tol_kmh / steer_deg
                                                    the manual drive review (Review tab): an accelerator at or above accel_min_pct % is "pressed"; every lasting change
                                                    of speed_min_kmh or more with FSD on is a speed-change event (the page filters them, e.g. 100 -> 110; a speed within
@@ -87,7 +88,7 @@ DEFAULTS = {
             "network_colors": {"Tesla": "#e0201b", "Tesla Destination": "#f97316", "Chargefox": "#16a34a", "Evie": "#7c3aed", "EVX": "#eab308", "Exploren": "#db2777",
                               "NRMA": "#2563eb", "AmpCharge": "#84cc16", "Jolt": "#14b8a6", "BP Pulse": "#0891b2", "3rd-Party": "#6b7280", "WA EV Network": "#9333ea"}},
     "teslacam": {"moving_kmh": 3.0, "run_gap_s": 75, "gap_min_s": 120, "same_place_m": 300, "same_place_est_m": 800, "park_end_s": 21600, "park_join_s": 3600, "read_workers": 4, "days_newest_first": True, "rows_newest_first": False, "place_filters": ["Home"], "ignore_places": ["Home"]},
-    "review": {"step_s": 1.0, "min_kmh": 30.0, "end_kmh": 10.0, "end_s": 180, "min_conf": 50.0, "workers": 3, "merge_s": 12.0, "crop_px": 640, "refine_step_s": 0.2, "refine_pad_s": 2.0, "refine_conf": 85.0, "candidate_km": 20, "candidate_avg_kmh": 60,
+    "review": {"step_s": 1.0, "min_kmh": 30.0, "end_kmh": 10.0, "end_s": 180, "min_conf": 50.0, "ring_cover": 0.8, "ring_redin": 0.3, "workers": 3, "merge_s": 12.0, "crop_px": 640, "refine_step_s": 0.2, "refine_pad_s": 2.0, "refine_conf": 85.0, "candidate_km": 20, "candidate_avg_kmh": 60,
                "accel_min_pct": 5, "speed_min_kmh": 5, "speed_tol_kmh": 6,
                "event_before_s": 12, "event_after_s": 15, "max_event_stills": 40, "hi_px": 1400, "hi_quality": 82, "exit_car_kmh": 90, "exit_gap_kmh": 20, "sign_min_stills": 2, "works_gap_s": 40, "osm_fetch": True, "traffic": True, "traffic_conf": 0.35, "traffic_min_w": 0.015, "traffic_model": "", "traffic_model_url": "https://huggingface.co/unity/inference-engine-yolo/resolve/main/models/yolov8n.onnx", "steer_deg": 15},
     "stills": {"width": 400, "quality": 6, "workers": 3, "thin_width": 240, "thin_quality": 10, "event_width": 1280, "event_quality": 3, "event_side_width": 800, "event_side_quality": 4},

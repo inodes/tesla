@@ -348,6 +348,38 @@ def parse_times(text):
     return sorted(out)[:3]
 
 
+# The plate of a NSW school zone reads "8-9:30 / 2:30-4"; the 30 is printed small and raised, and is read as 00 or lost. A reading that is the standard hours with that kind of slip
+# (each start within SNAP_START min, each end within SNAP_END min of the standard slot) is given as the standard hours; anything else is left as read (docs/SIGNS.md).
+STD_SCHOOL_HOURS = ("08:00-09:30", "14:30-16:00")
+SNAP_START, SNAP_END = 30, 30
+
+
+def _mins(hm):
+    return int(hm[:2]) * 60 + int(hm[3:5])
+
+
+def snap_times(times):
+    """Ranges as read -> (ranges, snapped): the standard NSW school zone hours when what was read is those hours with the 30s misread, else what was read."""
+    if not times:
+        return times, False
+    out, ok = [], True
+    for r in times:
+        a, b = r.split("-")
+        hit = None
+        for std in STD_SCHOOL_HOURS:
+            sa, sb = std.split("-")
+            if abs(_mins(a) - _mins(sa)) <= SNAP_START and abs(_mins(b) - _mins(sb)) <= SNAP_END:
+                hit = std
+        if hit is None:
+            ok = False
+            break
+        out.append(hit)
+    if not ok:
+        return times, False
+    out = sorted(set(out))
+    return out, out != sorted(times)
+
+
 def _sz_boards(bgr):
     """[(x, y, w, h)] of fluorescent yellow-green rectangles in the part of the frame that signs hang in."""
     H, W = bgr.shape[:2]
@@ -437,7 +469,8 @@ def find_school(bgr, read_times=True):
             continue
         letters = [c for wd, c in words if re.search(r"[A-Za-z]", wd)]
         times, tconf = read_plate(bgr, (x, y, w, h)) if read_times and w >= 40 else ([], 0)
+        times, tsnap = snap_times(times)
         cx = x + w / 2.0
-        out.append(dict(x=int(cx), y=int(y + h / 2.0), w=w, h=h, r=int(w / 2), conf=round(sum(letters) / max(1, len(letters))), text="School zone", times=times, tconf=tconf,
+        out.append(dict(x=int(cx), y=int(y + h / 2.0), w=w, h=h, r=int(w / 2), conf=round(sum(letters) / max(1, len(letters))), text="School zone", times=times, tconf=tconf, tsnap=tsnap,
                         side="L" if cx < W / 2.0 else "R", crop=bgr[max(0, y - pad):min(H, int(y + 2.6 * h + pad)), max(0, int(x - 0.3 * w)):min(W, int(x + 1.3 * w))]))
     return out

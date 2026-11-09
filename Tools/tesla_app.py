@@ -697,7 +697,11 @@ class H(BaseHTTPRequestHandler):
                     return self.send_json(r)
             if u.path == "/api/chargebook/charger":     # {id, charger: name | null}: which of the place's chargers this charge used
                 with _ACTION_LOCK:
-                    return self.send_json(BOOK.set_charger(str(body.get("id", "")), body.get("charger") or None))
+                    r = BOOK.set_charger(str(body.get("id", "")), body.get("charger") or None)
+                    if r.get("ok") and body.get("all") and body.get("place") and body.get("charger"):      # "use this for every charge here that nothing tells apart": the place's default charger
+                        r = dict(r, **{"default": STORE.pl.set_default_charger(body["place"], body["charger"])})
+                        BOOK.touch()
+                    return self.send_json(r)
             if u.path == "/api/places/delete":
                 with _ACTION_LOCK:
                     if body.get("confirm") is not True:
@@ -1429,16 +1433,20 @@ def app_exit(restart=False):
         time.sleep(0.4)                     # the answer reaches the page first
         bundled = os.environ.get("__CFBundleIdentifier") == "net.inodes.tesellate"
         if restart and bundled:
-            subprocess.Popen(["/bin/sh", "-c", "sleep 1.5; open -b net.inodes.tesellate"], start_new_session=True,
-                             stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            # open the app again only once this process has really gone: `open` while it is still there just brings the old one forward, which then quits and leaves nothing running
+            # (a busy app took longer than the fixed wait to close its window)
+            subprocess.Popen(["/bin/sh", "-c", "i=0; while kill -0 %d 2>/dev/null && [ $i -lt 100 ]; do sleep 0.2; i=$((i+1)); done; sleep 0.7; open -b net.inodes.tesellate" % os.getpid()],
+                             start_new_session=True, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         if restart and not bundled:
             os.execv(sys.executable, [sys.executable] + sys.argv)
         try:
             if WIN is not None:
-                WIN.destroy()
+                w = threading.Thread(target=WIN.destroy, daemon=True)      # closing the window waits on the main thread, which a busy app can be slow to give: not for ever
+                w.start()
+                w.join(2.0)
         except Exception:
             pass
-        time.sleep(0.5)
+        time.sleep(0.3)
         os._exit(0)
     threading.Thread(target=go, daemon=True).start()
     return dict(ok=True)

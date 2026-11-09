@@ -786,11 +786,11 @@ const fixChargerCard=(p,pkey)=>{if(p.home||p.kind==="supercharger"||p.lat==null)
   facts=n=>{const i=n.info||{};return [i.stalls?i.stalls+" stall"+(i.stalls>1?"s":""):"",i.kw?n0(i.kw)+" kW":"",i.connectors,i.access,i.hours,price(i),i.price_text,i.idle_fee?"idle fee "+money(i.idle_fee)+"/min":"",i.score!=null?"PlugShare score "+i.score:"",i.seen?"checked "+i.seen:""].filter(Boolean).map(esc).join(" · ")},
   src=n=>(n.sources||[]).map(x=>FXSRC[x]||x).join(" + "),
   chosen=site?(site.chosen||(site.ambiguous?"":site.chargers[0].name)):"",
-  mine=site?site.chargers.map(c=>`<button class="btn${c.name===chosen?" pri":""}" data-fx="${add({act:"pick",charger:c.name})}">${esc(c.name)} · ${esc(c.network||"")} · ${c.free?"free":c.rate_per_kwh!=null?money(c.rate_per_kwh)+"/kWh":"price not set"}</button>`).join(" "):"",
+  mine=site?site.chargers.map(c=>`<button class="btn${c.name===chosen?" pri":""}" data-fx="${add({act:"pick",charger:c.name})}">${esc(c.name)} · ${esc(c.network||"")} · ${c.free?"free":(c.rate_schedules||[]).length?"price by time":c.rate_per_kwh!=null?money(c.rate_per_kwh)+"/kWh"+(c.gst==="ex"?" + GST":""):"price not set"}</button>`).join(" "):"",
   addBtn=n=>`<button class="btn" data-fx="${add({act:"add",place:saved,charger:{name:n.name,network:n.network,free:listedFree(n)}})}">${saved?"Add and use":"Save a place with"}: ${esc(n.network)} ${esc(n.name)}${listedFree(n)?" (free)":""}</button>`;
   return `<div class="card"><h2 style="margin-top:0">${site?(site.ambiguous?"Which charger did you use?":"Charger used"):"Which charger was this?"}</h2>
-   <div class="sub">${site?`Parked at ${saved?`<a href="#/place/${encodeURIComponent(pkey)}">${esc(saved)}</a>`:"a saved place"}, which has ${site.chargers.length} charger${site.chargers.length>1?"s":""}.${site.ambiguous?" Pick the one you plugged into; until you do, the first is assumed.":""}${p.free?" This one is free, so no invoice is expected.":""}`:`Matched to <b>${esc(p.place)}</b>${p.network?" · "+esc(p.network):""} by position, which is a guess when chargers sit side by side.${saved?"":" Not at a saved place yet."}`}</div>
-   ${site?`<div class="bar">${mine}</div>`:""}
+   <div class="sub">${site?`Parked at ${saved?`<a href="#/place/${encodeURIComponent(pkey)}">${esc(saved)}</a>`:"a saved place"}, which has ${site.chargers.length} charger${site.chargers.length>1?"s":""}.${site.ambiguous?" Nothing tells them apart (no invoice names one, and the speed fits both): pick the one you plugged into, and no price is assumed until you do.":" "+({chosen:"You picked this one.",invoice:"Decided from the invoice.",speed:"Decided from the speed: only this charger can deliver it.",default:"This is the place's usual charger.",only:"The only charger here."}[site.how]||"")}${p.free?" It is free, so no invoice is expected.":""}`:`Matched to <b>${esc(p.place)}</b>${p.network?" · "+esc(p.network):""} by position, which is a guess when chargers sit side by side.${saved?"":" Not at a saved place yet."}`}</div>
+   ${site?`<div class="bar">${mine}</div>${saved&&site.chargers.length>1?'<label class="sub"><input type="checkbox" id="fxall"> Use this one for every charge here that nothing tells apart (otherwise only this charge)</label>':""}`:""}
    ${near.length?`<div class="sub" style="margin-top:8px">${site?"Also listed within 150 m:":"Listed within 150 m (nearest first):"}</div>`:""}
    ${near.map(n=>`<div class="cs-r" style="margin-top:6px"><b>${esc(n.name)}</b> · ${esc(n.network)} · ${n.dist} m <span class="sub">(${esc(src(n))})</span>${(n.info||{}).address?`<div class="sub">${esc(n.info.address)}</div>`:""}<div class="sub">${facts(n)}${(n.info||{}).url?` · <a href="${esc(n.info.url)}" target="_blank" rel="noopener">link</a>`:""}</div><div class="bar" style="margin-top:4px">${addBtn(n)}</div></div>`).join("")}
    <div class="bar">${site?"":`<button class="btn" data-fx="${add({act:"add",place:saved,charger:{name:p.place,network:p.network,free:true}})}">It is free (no invoice)</button>`} <button class="btn" data-fx="${add({act:"add",place:saved,charger:{name:"",network:"",free:false},edit:true})}">Another charger…</button></div>
@@ -802,14 +802,14 @@ document.addEventListener("click",async e=>{const b=e.target.closest&&e.target.c
     try{sessionStorage.setItem("placePrefill",JSON.stringify(o.place?{}:{name:pg.place,lat:pg.lat,lon:pg.lon,radius_m:60,keywords:[],notes:"Saved from the charge on "+pg.day,chargers:o.charger.name||o.charger.network?[o.charger]:[]}))}catch(_){}
     location.hash=o.place?"#/place/"+encodeURIComponent("p:"+o.place):"#/place/@new";return}
   const t=Date.now();say("Saving…");b.disabled=true;
-  try{const r=o.act==="pick"?await post("/api/chargebook/charger",{id:pg.id,charger:o.charger}):await post("/api/places/charger",{place:o.place,charger:o.charger,charge:pg.id});
+  try{const r=o.act==="pick"?await post("/api/chargebook/charger",{id:pg.id,charger:o.charger,all:!!($("#fxall")&&$("#fxall").checked),place:(window.FXK||"").replace(/^p:/,"")}):await post("/api/places/charger",{place:o.place,charger:o.charger,charge:pg.id});
     if(!r.ok){say("Not saved: "+(r.error||"?"));b.disabled=false;return}
     bust();say("Saved. Updating the charges…");await fxWait(t);bust();NAVREPL=true;route()}catch(err){say("Could not reach the app: "+err);b.disabled=false}});
 async function pageCharge(id,pid){
   loading("detail");const [B0,D]=await Promise.all([bookWithRaw(),fetch("/api/chargebook/"+encodeURIComponent(id)+(pid?"?part="+encodeURIComponent(pid):"")).then(r=>r.ok?r.json():null).catch(()=>null)]);
   if(!B0.book){bookWait(B0,"Charge",()=>pageCharge(id,pid));return}
   if(!D||!D.plug){return pageChargeBasic(id)}
-  const p=D.plug;window.FXP=p;const part=D.part&&p.parts.find(x=>x.id===D.part),v=part||p,multi=p.parts.length>1,raw=B0.book.plugs.find(z=>z.id===p.id)||p;
+  const p=D.plug;window.FXP=p;window.FXK=(B0.book.plugs.find(z=>z.id===p.id)||p).pkey||"";const part=D.part&&p.parts.find(x=>x.id===D.part),v=part||p,multi=p.parts.length>1,raw=B0.book.plugs.find(z=>z.id===p.id)||p;
   const where=raw.where||p.place,end=addMin(v.hm,part?part.min:p.span),inv=p.invoice,cur=D.curves&&!D.curves.error?D.curves:null;
   const eff=v.disp&&v.kwh?100*v.kwh/v.disp:null,costv=part?(part.icost!=null?part.icost:part.ocost!=null?part.ocost:part.tcost):p.cost,ratev=part?(part.irate!=null?part.irate:part.ocost!=null?part.orate:part.trate):p.rate,minv=part?part.min:p.min;
   const links=multi?p.parts.map((x,i)=>`<a class="chip ${part&&part.id===x.id?"on":""}" href="#/charge/${p.id}/${x.id}" style="text-decoration:none">Part ${i+1} · ${x.hm}</a>`).join(" "):"";
@@ -1091,11 +1091,21 @@ const hudSpike=(t,text,all,spd)=>{const x=+text;if(!(x>0)||!all)return false;let
   const span=slow?HUD_SPIKE.far:HUD_SPIKE.span,near=slow?HUD_SPIKE.nearFar:HUD_SPIKE.near;let p=null,n=null;
   for(const o of all){const v=+o.text;if(!(v>0)||v>x-HUD_SPIKE.jump)continue;if(o.t<t-.5&&t-o.t<=span)p=o;else if(o.t>t+.5&&o.t-t<=span&&!n)n=o}
   return !!(p&&n&&Math.abs(+p.text-+n.text)<=near)};
-const hudTrust=(g,spd,others,spike)=>{const lat=hudLat(g),wl=hudWLat(lat),ws=spd?hudWSpd(+g.text,spd):1,own=hudStrength(g.conf,lat);let wo=1;
+// A sudden change in the limit is a likely misread and is questioned (docs/SIGNS.md): a reading `jump` km/h or more away from the latest earlier sign (within `span` s) that no other sign of that number
+// confirms within `confirm` s, and that the car's own speed (median of 10 s each side) is not near (`car` x the reading), counts at `mult` of its trust. It is not ruled out (hudSpike does that); it is
+// flagged as questioned (why "jmp" once that puts it under HUD_DOUBT) and so is held back only when it was weak anyway. spd(k) as for hudSpike.
+const HUD_JUMP={jump:40,span:120,confirm:60,same:4,car:.85,mult:.4};
+const hudJump=(t,text,all,spd)=>{const x=+text;if(!(x>0)||!all)return false;let prev=null;
+  for(const o of all){const v=+o.text;if(!(v>0)||o.t>=t-.5||t-o.t>HUD_JUMP.span)continue;if(!prev||o.t>prev.t)prev=o}
+  if(!prev||Math.abs(+prev.text-x)<HUD_JUMP.jump)return false;
+  for(const o of all){const d=Math.abs(o.t-t);if(o.text===text&&d>HUD_JUMP.same&&d<=HUD_JUMP.confirm)return false}
+  if(spd){const a=[];for(let k=-10;k<=10;k++){const v=spd(k);if(v!=null&&v>0)a.push(v)}if(a.length>=5){a.sort((p,q)=>p-q);if(a[a.length>>1]>=x*HUD_JUMP.car)return false}}
+  return true};
+const hudTrust=(g,spd,others,spike,jump)=>{const lat=hudLat(g),wl=hudWLat(lat),ws=spd?hudWSpd(+g.text,spd):1,own=hudStrength(g.conf,lat);let wo=1;
   // the same sign is often read several times in a second or two (80 70 80 at 09:26:43): reads of one number within VOTE s of this one stand together, and a number read less often and less surely loses to the one read more
   const VOTE=4,grp=(txt)=>{let q=0;for(const o of others||[])if(o&&o.text===txt&&Math.abs(o.dt)<=VOTE)q+=hudStrength(o.conf,o.lat);return q},sup=own+grp(g.text);
   for(const o of others||[]){if(!o||!o.text||o.text===g.text||Math.abs(o.dt)>15)continue;const so=Math.abs(o.dt)<=VOTE?grp(o.text):hudStrength(o.conf,o.lat);if(so>sup)wo=Math.min(wo,Math.abs(o.dt)<=VOTE&&sup<so*.9?.1:Math.max(.05,Math.pow(sup/so,2)))}      // two signs seen together (a tree-covered one beside the clear one): the less sure is set aside outright
-  const t=spike?0:wl*ws*wo,m=Math.min(wl,ws,wo);return{t,lat,w:[wl,ws,wo],why:t>=HUD_DOUBT?"":spike?"spk":m===wo?"ovr":m===ws?"spd":"lat"}};
+  const base=wl*ws*wo,t=spike?0:base*(jump?HUD_JUMP.mult:1),m=Math.min(wl,ws,wo);return{t,lat,w:[wl,ws,wo],q:!!jump,why:t>=HUD_DOUBT?"":spike?"spk":(jump&&base>=HUD_DOUBT)?"jmp":m===wo?"ovr":m===ws?"spd":"lat"}};
 // doubt(stamp, sign) says whether a sign was one the car did not answer (not held as the limit); the answer is kept on the sign once it can be given
 const hudLimit=(SGV,stamps,si,t,doubt,skip)=>{for(let i=si;i>=0&&i>=si-60;i--){const L=(SGV[stamps[i]]||[]).filter(g=>g.kind!=="school"&&/^\d{2,3}$/.test(String(g.text))&&(i<si||g.s0<=t+.5)&&!(skip&&skip(g))&&!hudDoubtOf(doubt,stamps[i],g)).sort((a,b)=>b.s0-a.s0);if(L.length)return +L[0].text}return null};
 // A school zone: the latest school plate read in the last 150 s, the limit sign read within 8 s of it (the zone's own limit) and the hours on the plate (g.times, 24-hour "08:00-09:30"). A later limit
@@ -1627,7 +1637,21 @@ function siteCards(p){
     [r.url?`<a href="${esc(r.url)}" target="_blank" rel="noopener">Open on ${esc(r.name)}</a>`:"",r.verified?"verified "+esc(String(r.verified).slice(0,10)):""].filter(Boolean).join(" · "))));
   return `<div class="sitegrid">${out.join("")}</div>`;
 }
-const chRow=c=>`<div class="chrow" style="display:flex;gap:6px;flex-wrap:wrap;margin:6px 0"><input class="c_n" placeholder="Charger name, e.g. Rhodes Waterside" value="${esc(c.name||"")}" style="flex:2;min-width:150px"><input class="c_w" placeholder="Network, e.g. Chargefox" value="${esc(c.network||"")}" style="flex:1;min-width:110px"><select class="c_p"><option value="free"${c.free?" selected":""}>Free: no invoice expected</option><option value="rate"${c.free?"":" selected"}>Per kWh</option></select><input class="c_r" size="6" placeholder="$ per kWh" value="${!c.free&&c.rate_per_kwh!=null?c.rate_per_kwh:""}"><button type="button" class="btn c_x">Remove</button></div>`;
+const scRow=x=>`<div class="schr" style="display:flex;gap:4px;flex-wrap:wrap;margin:4px 0;align-items:center"><input class="s_l" size="9" placeholder="Label, e.g. Peak" value="${esc(x.label||"")}"><input class="s_d" size="9" placeholder="Days: Mon-Fri" value="${esc((x.days||[]).join(" "))}" title="Mon-Fri, Sat Sun, or empty for every day"><input class="s_a" size="5" placeholder="From 09:00" value="${esc(x.start_time||"")}"><input class="s_b" size="5" placeholder="To 21:00" value="${esc(x.end_time||"")}">$<input class="s_r" size="6" placeholder="per kWh" value="${x.rate_per_kwh==null?"":x.rate_per_kwh}"><input class="s_f" type="date" value="${esc(x.valid_from||"")}" title="Valid from (empty: always)"><input class="s_t" type="date" value="${esc(x.valid_to||"")}" title="Valid to (empty: no end)"><button type="button" class="btn s_x">×</button></div>`;
+// one charger of a saved place: name, network, max kW (tells two chargers apart by the speed seen), and its price: free, one price for all times, or a schedule by day, time and dates. Prices are as the charger shows them (GST included) unless said otherwise.
+const chRow=c=>{const sc=c.rate_schedules||[],flat=!sc.length,free=!!c.free,hide=t=>t?' style="display:none"':"";
+  return `<div class="chrow card" style="margin:8px 0" data-def="${c.default?1:0}" data-idle="${c.idle_fee_per_min||""}" data-note="${esc(c.note||"")}">
+   <div style="display:flex;gap:6px;flex-wrap:wrap"><input class="c_n" placeholder="Charger name, e.g. Rhodes Waterside" value="${esc(c.name||"")}" style="flex:2;min-width:150px"><input class="c_w" placeholder="Network, e.g. Chargefox" value="${esc(c.network||"")}" style="flex:1;min-width:110px"><input class="c_k" size="5" placeholder="max kW" value="${c.kw||""}" title="The charger's top power. Two chargers at one place are told apart by the speed seen when it is different."><button type="button" class="btn c_x">Remove charger</button></div>
+   <div style="display:flex;gap:12px;flex-wrap:wrap;align-items:center;margin-top:6px"><label><input type="checkbox" class="c_f" ${free?"checked":""}> Free: no invoice expected</label>
+    <span class="c_pr"${hide(free)}><label><input type="checkbox" class="c_same" ${flat?"checked":""}> Same price at all times</label> <span class="c_one"${hide(!flat)}>$<input class="c_r" size="6" placeholder="per kWh" value="${flat&&c.rate_per_kwh!=null?c.rate_per_kwh:""}"> per kWh</span>
+     <select class="c_g" title="Prices are what the charger charges, GST included, as the Tesla entries have them"><option value="inc"${c.gst==="ex"?"":" selected"}>including GST (as shown at the charger)</option><option value="ex"${c.gst==="ex"?" selected":""}>excluding GST (10% is added)</option></select></span></div>
+   <div class="c_sc"${hide(free||flat)}><div class="sub">Prices by day, time and dates (the first that fits is used; a time outside all of them uses no price). Dates are YYYY-MM-DD, empty for always.</div>${sc.map(scRow).join("")}<button type="button" class="btn c_sa">Add a price</button></div></div>`};
+const chWire=host=>{host.addEventListener("click",e=>{const t=e.target;if(t.classList.contains("c_x"))t.closest(".chrow").remove();else if(t.classList.contains("s_x"))t.closest(".schr").remove();else if(t.classList.contains("c_sa"))t.insertAdjacentHTML("beforebegin",scRow({}))});
+  host.addEventListener("change",e=>{const t=e.target,r=t.closest(".chrow");if(!r)return;const free=$(".c_f",r).checked,same=$(".c_same",r).checked;
+    if(t.classList.contains("c_f")||t.classList.contains("c_same")){$(".c_pr",r).style.display=free?"none":"";$(".c_one",r).style.display=same?"":"none";$(".c_sc",r).style.display=free||same?"none":""}})};
+const chRead=host=>$$(".chrow",host).map(r=>{const free=$(".c_f",r).checked,same=$(".c_same",r).checked;
+  return {name:$(".c_n",r).value,network:$(".c_w",r).value,kw:$(".c_k",r).value,free,gst:$(".c_g",r).value,rate_per_kwh:free||!same?"":$(".c_r",r).value,idle_fee_per_min:r.dataset.idle,note:r.dataset.note,default:r.dataset.def==="1",
+    rate_schedules:free||same?[]:$$(".schr",r).map(x=>({label:$(".s_l",x).value,days:$(".s_d",x).value,start_time:$(".s_a",x).value,end_time:$(".s_b",x).value,rate_per_kwh:$(".s_r",x).value,valid_from:$(".s_f",x).value,valid_to:$(".s_t",x).value}))}});
 async function pagePlace(key){
   loading();
   let p;if(key==="@new"){let pre={};try{pre=JSON.parse(sessionStorage.getItem("placePrefill")||"{}")}catch(e){}p=Object.assign({kind:"spot",key,name:"New place",lat:null,lon:null,radius:150,keywords:[],notes:"",visits:[],nvisits:0},pre,{radius:pre.radius_m||150,name:pre.name||"New place",lat:pre.lat===""||pre.lat==null||isNaN(+pre.lat)?null:+pre.lat,lon:pre.lon===""||pre.lon==null||isNaN(+pre.lon)?null:+pre.lon})}
@@ -1657,10 +1681,10 @@ async function pagePlace(key){
     ${p.home?'<div class="sub w">Home charging is priced from your electricity plan: nothing to set here.</div>':`<div class="w"><b>Chargers here</b> <span class="sub">A place is where you parked. If you charge here, list the chargers it has (a place can have more than one, e.g. Tesla Destination and Chargefox side by side); each charge then records which one you used. Leave empty if there is no charger.</span><div id="chl">${(p.chargers||[]).map(chRow).join("")}</div><button type="button" class="btn" id="chadd">Add a charger</button></div>`}</div>
     <div class="bar"><button class="btn pri" id="sv">${p.kind==="saved"?"Save changes":"Save place"}</button>${p.kind==="saved"?'<button class="btn bad" id="dl">Delete</button>':""}<span class="sub" id="msg"></span></div>
     <div class="sub">Saved places are written to places.json (a dated backup is kept first). The sync scripts use the same file.</div>`;
-    const chWire=()=>$$(".c_x").forEach(b=>b.onclick=()=>b.closest(".chrow").remove());chWire();
-    if($("#chadd"))$("#chadd").onclick=()=>{$("#chl").insertAdjacentHTML("beforeend",chRow({}));chWire()};
+    if($("#chl"))chWire($("#chl"));
+    if($("#chadd"))$("#chadd").onclick=()=>$("#chl").insertAdjacentHTML("beforeend",chRow({}));
     $("#sv").onclick=async()=>{const m=$("#msg");m.textContent="Saving…";const body={old_name:p.kind==="saved"?p.name:"",name:$("#f_name").value,lat:$("#f_lat").value,lon:$("#f_lon").value,radius_m:$("#f_rad").value,keywords:$("#f_kw").value,notes:$("#f_notes").value};
-      if($("#chl"))body.chargers=$$(".chrow").map(r=>({name:$(".c_n",r).value,network:$(".c_w",r).value,free:$(".c_p",r).value==="free",rate_per_kwh:$(".c_r",r).value}));
+      if($("#chl"))body.chargers=chRead($("#chl"));
       try{const j=await (await fetch("/api/places/save",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)})).json();
         if(j.ok){bust();sessionStorage.removeItem("placePrefill");NAVREPL=true;location.hash="#/place/"+encodeURIComponent(j.key);route()}else m.textContent="Not saved: "+j.error}catch(e){m.textContent="Could not reach the app: "+e}};
     if($("#dl"))$("#dl").onclick=async()=>{if(!confirm("Delete the saved place '"+p.name+"'? Past drives keep their addresses."))return;
@@ -2821,7 +2845,7 @@ async function teslaDriveBody(host,role,fetchSeg,places,opts){
     const allM=cont(),blackDrive=!playable.length&&!d.minutes.length&&allM.length>0;      // a drive Tessie knows, with no footage at all: all black
     if(!player&&(playable.length||blackDrive)){const mm=allM,cams={},meta={},syn={},len={};mm.forEach(m=>{cams[m.stamp]=m.cams||[];meta[m.stamp]=m;if(m.syn){syn[m.stamp]=1;len[m.stamp]=m.len}});covStrip(mm);
       player=clipPlayer($("#dvid"),{stamps:mm.map(m=>m.stamp),cams,syn,len,still:stillSrc,trig:opts.trig,
-        hot:opts.hot,signInfo,hide:asideSign,doubt:(st,g)=>{const sr=S(),m=meta[st];if(!sr||!m||!SGALL)return null;const t=m.off+g.s0;const sp=k=>{const x=sr.v[Math.round(t+k)];return x==null?null:x};return hudTrust(g,sp,sgNear(t,g.text,g),hudSpike(t,g.text,SGALL,sp)).t<HUD_DOUBT},
+        hot:opts.hot,signInfo,hide:asideSign,doubt:(st,g)=>{const sr=S(),m=meta[st];if(!sr||!m||!SGALL)return null;const t=m.off+g.s0;const sp=k=>{const x=sr.v[Math.round(t+k)];return x==null?null:x};return hudTrust(g,sp,sgNear(t,g.text,g),hudSpike(t,g.text,SGALL,sp),hudJump(t,g.text,SGALL,sp)).t<HUD_DOUBT},
         gear:(st,sec)=>{const sr=S(),m=meta[st],g=sr&&sr.gear&&m?sr.gear[m.off+Math.floor(sec)]:null;return g===1||g===2||g===3?g:0},      // the car's gear (1 Drive, 2 Reverse, 3 Neutral); anything else, or none read, is Park
         parked:(st,sec)=>{const x=it(),sr=S(),m=meta[st];if(x&&x.kind==="stopped")return true;if(!sr||!m)return false;const i=m.off+Math.floor(sec),g=sr.gear?sr.gear[i]:null;if(g===0)return true;if(g===1||g===2||g===3)return false;return sr.v[i]==null||sr.v[i]<1},      // a parked page, or the car in Park (or no gear read and not moving): no speed, no limit sign over the video
         tele:(st,sec)=>{const sr=S(),m=meta[st];if(!sr||!m)return null;const i=m.off+Math.floor(sec);return sr.v[i]==null?null:{v:sr.v[i],blk:sr.blk[i]||0}},
@@ -2844,7 +2868,7 @@ async function teslaDriveBody(host,role,fetchSeg,places,opts){
     // a sign the car did not answer (read well below the speed it holds, and it holds it: a side road's or an exit's limit seen from the main road) is not a limit the car was under: it is not the "prior" limit
     // of the next sign and it is not speeding
     SGALL=SL.map(([m,g])=>({g,t:m.off+g.s0,text:g.text,conf:g.conf,lat:hudLat(g)}));
-    const trOf=(m,g)=>{const t=m.off+g.s0,sp=k=>{const x=V[Math.round(t+k)];return x==null?null:x};return hudTrust(g,sp,sgNear(t,g.text,g),hudSpike(t,g.text,SGALL,sp))},TR=new Map(SL.map(e=>[e[1],trOf(e[0],e[1])])),DB=new Map(SL.map(e=>[e[1],TR.get(e[1]).t<HUD_DOUBT])),SLK=SL.filter(e=>!DB.get(e[1]));
+    const trOf=(m,g)=>{const t=m.off+g.s0,sp=k=>{const x=V[Math.round(t+k)];return x==null?null:x};return hudTrust(g,sp,sgNear(t,g.text,g),hudSpike(t,g.text,SGALL,sp),hudJump(t,g.text,SGALL,sp))},TR=new Map(SL.map(e=>[e[1],trOf(e[0],e[1])])),DB=new Map(SL.map(e=>[e[1],TR.get(e[1]).t<HUD_DOUBT])),SLK=SL.filter(e=>!DB.get(e[1]));
     SL.forEach(([m,g])=>{const t=m.off+g.s0,dbt=DB.get(g);let pr=null;for(let q=SLK.length-1;q>=0;q--){const e=SLK[q];if(e[1]===g)continue;const d=t-(e[0].off+e[1].s0);if(d<0)continue;if(d>1200)break;if(d>3||e[1].text!==g.text){pr=e[1].text;break}}
       let sp=null;for(const dd of [0,1,-1,2,-2]){const x=V[Math.round(t)+dd];if(x!=null){sp=x;break}}
       SGCTX.set(m.stamp+"|"+g.s0+"|"+g.text+"|"+g.side,{sp,pr,dbt,why:TR.get(g).why,off:dbt&&TR.get(g).why==="lat"&&(pr!=null?+pr:sp)!=null&&+g.text>(pr!=null?+pr:sp),over:!dbt&&sp!=null&&sp>(+(pr||g.text)||999)+SPEEDTOL})});
@@ -2878,7 +2902,7 @@ async function teslaDriveBody(host,role,fetchSeg,places,opts){
   let SGPIC=[],sgpF="";
   const signPic=t=>{const el=$("#dsgp");if(!el)return;let best=null,bd=1e9;for(const e of SGPIC){if(t<e.a-1.5||t>e.b+1.5)continue;const d=Math.abs(t-(e.a+e.b)/2);if(d<bd){bd=d;best=e}}
     if(!best){if(sgpF){sgpF="";el.hidden=true}return}if(best.f!==sgpF){sgpF=best.f;el.innerHTML=sgCut(best.f,best.pos,"Speed limit "+best.text)}el.hidden=false};
-  const SGWHY={spd:"car did not slow",lat:"off our road",ovr:"overridden",spk:"between lower signs"};
+  const SGWHY={spd:"car did not slow",lat:"off our road",ovr:"overridden",spk:"between lower signs",jmp:"sudden jump, not confirmed"};
   const signInfo=(st,g)=>{const c=SGCTX.get(st+"|"+g.s0+"|"+g.text+"|"+g.side);if(!c||c.sp==null)return "";return `<span class="sgi${c.over?" over":""}${c.dbt?" dbt":""}">${n0(c.sp)} km/h${c.pr?" · prior "+esc(c.pr):""}${c.over?" · speeding":""}${c.dbt?" · "+(SGWHY[c.why]||"not held"):""}</span>`};
   // map size and telemetry size / hide, remembered
   const setMs=k=>{lsSet("tc.mapsz",k);$$("[data-ms]",host).forEach(b=>b.classList.toggle("on",b.dataset.ms===k));$("#dmap").style.height=(MSZ.find(x=>x[0]===k)||MSZ[2])[2];if(map&&map.resize){map.resize();map.refit(250)}};

@@ -416,7 +416,7 @@ def scan_clip(path, stamp, v, base):
                             continue         # the same sign found twice
                         out.append(dict(s=s, text=c["text"], c=round(c["conf"]), x=c["x"], y=c["y"], r=c["r"], w=fw, h=im.shape[0], side=side, crop=c["crop"], _src=f))
             for c in SC.find_school(im):    # a school zone board, and the hours on its plate when they could be read
-                out.append(dict(s=s, text=c["text"], kind="school", c=c["conf"], x=c["x"], y=c["y"], r=c["r"], side=c["side"], tm=c["times"], tc=c["tconf"], crop=c["crop"], _src=f))
+                out.append(dict(s=s, text=c["text"], kind="school", c=c["conf"], x=c["x"], y=c["y"], r=c["r"], side=c["side"], tm=c["times"], tc=c["tconf"], **({"tsn": True} if c.get("tsnap") else {}), crop=c["crop"], _src=f))
             return out
         with ThreadPoolExecutor(max(1, int(OPTS["workers"]))) as ex:
             for lst in ex.map(one, fr):
@@ -529,7 +529,7 @@ def refine_clip(path, stamp, rec, base):
                 im = cv2.imread(f)
                 for c in (SC.find_school(im) if im is not None else []):
                     if c["times"]:
-                        got.append(dict(s=round(s_, 2), text=c["text"], kind="school", c=c["conf"], x=c["x"], y=c["y"], r=c["r"], side=c["side"], tm=c["times"], tc=c["tconf"], crop=c["crop"]))
+                        got.append(dict(s=round(s_, 2), text=c["text"], kind="school", c=c["conf"], x=c["x"], y=c["y"], r=c["r"], side=c["side"], tm=c["times"], tc=c["tconf"], **({"tsn": True} if c.get("tsnap") else {}), crop=c["crop"]))
             for x in sorted(got, key=lambda x: -x["tc"])[:2]:
                 crop = x.pop("crop")
                 if _save_crop(base, "%s_z%02d.jpg" % (stamp, kz), crop):

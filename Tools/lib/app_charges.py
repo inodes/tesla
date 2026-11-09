@@ -425,7 +425,7 @@ class ChargeBook:
                 home=("HOME" in (s.get("status") or "")), lat=(s.get("raw_charge") or {}).get("latitude"), lon=(s.get("raw_charge") or {}).get("longitude"),
                 addr=(s.get("raw_charge") or {}).get("location_raw") or "",
                 tcost=_r(tcost), icost=_r(sum(icost)) if icost else None, free=bool(s.get("free_charger")), near=near_chargers(a, ac, s),
-                site=dict(chargers=s.get("place_chargers"), chosen=s.get("charger_chosen"), ambiguous=len(s.get("place_chargers") or []) > 1 and not s.get("charger_chosen")) if s.get("place_chargers") else None,
+                site=dict(chargers=s.get("place_chargers"), chosen=s.get("charger_chosen"), how=s.get("charger_how"), ambiguous=s.get("charger_how") == "ask") if s.get("place_chargers") else None,
                 cost=_r(sum(icost)) if icost else 0.0 if s.get("free_charger") else _r(sum(ocost)) if use_o else _r(tcost),
                 rate=s.get("invoice_rate") if s.get("invoice_rate") is not None else 0.0 if s.get("free_charger") else (sum(ocost) / sum((p["omodel"] or {}).get("kwh") or 0 for p in parts) if use_o and sum((p["omodel"] or {}).get("kwh") or 0 for p in parts) else s.get("tessie_rate")),
                 expected_rate=s.get("expected_rate"), schedule=s.get("expected_schedule_name"), theory=_r(s.get("theoretical_cost")), gst=_r(s.get("theoretical_gst")),

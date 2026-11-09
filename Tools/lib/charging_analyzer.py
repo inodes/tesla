@@ -1234,6 +1234,51 @@ class ChargingAnalyzer:
         out = [c for c in chs if isinstance(c, dict)]
         return sorted(out, key=lambda c: not c.get("default"))
 
+    @staticmethod
+    def pick_charger(chs, chosen, inv, peak_kw):
+        """(charger, how) for a charge at a saved place with chargers. In order: the one picked on the charge page ("chosen"); the one its invoice names ("invoice": the invoice's network or
+        station name); the only one that can deliver the power seen ("speed": a charger lists its max kW); the place's default ("default"); the only charger ("only"); else "ask": two or
+        more chargers and nothing tells them apart, so the charge page asks (the first is returned, but no price is assumed from it)."""
+        if chosen:
+            c = next((x for x in chs if x.get("name") == chosen), None)
+            if c:
+                return c, "chosen"
+        if inv:
+            net = str(inv.get("network") or "").strip().lower()
+            loc = str(inv.get("location_raw") or "").lower()
+            hit = [c for c in chs if (net and net == str(c.get("network") or "").strip().lower()) or (loc and str(c.get("name") or "").strip().lower() in loc)]
+            if len(hit) == 1:
+                return hit[0], "invoice"
+        if len(chs) > 1 and peak_kw:
+            able = [c for c in chs if c.get("kw") is None or peak_kw <= float(c["kw"]) * 1.2]
+            if len(able) == 1:
+                return able[0], "speed"
+        if chs[0].get("default"):
+            return chs[0], "default"
+        if len(chs) == 1:
+            return chs[0], "only"
+        return chs[0], "ask"
+
+    def _charger_price(self, ch, dt):
+        """(rate $/kWh including GST, schedule name) of a saved place's charger at dt, or (None, None) when no price is set. Free is 0. A price schedule (days, times, and the dates it is valid
+        between, like the Tesla entries' rate_schedules) is used where one fits, else the flat price. Rates are what the charger charges, GST included - the standard of the Tesla entries - unless
+        the charger says gst: "ex", when the GST is added."""
+        if ch.get("free"):
+            return 0.0, "Free"
+        mult = _gst_multiplier() if str(ch.get("gst") or "inc").lower() == "ex" else 1.0
+        day, hm, d = dt.strftime("%a"), dt.strftime("%H:%M"), dt.date().isoformat()
+        for sc in ch.get("rate_schedules") or []:
+            if sc.get("rate_per_kwh") is None or (sc.get("valid_from") and d < sc["valid_from"]) or (sc.get("valid_to") and d > sc["valid_to"]):
+                continue
+            if sc.get("days") and day not in sc["days"]:
+                continue
+            a, b = sc.get("start_time") or "00:00", sc.get("end_time") or "24:00"
+            if (a <= hm < b) if a <= b else (hm >= a or hm < b):
+                return round(float(sc["rate_per_kwh"]) * mult, 4), sc.get("label") or "Schedule"
+        if ch.get("rate_per_kwh") is not None:
+            return round(float(ch["rate_per_kwh"]) * mult, 4), "Flat Rate"
+        return None, None
+
     def _charger_choices(self):
         """{charge start epoch (text): charger name}: which of a place's chargers a charge used, chosen on the charge page (charges/charge_chargers.json)."""
         if getattr(self, "_chg_choices", None) is None:
@@ -1510,6 +1555,88 @@ class ChargingAnalyzer:
         already renamed on disk before this fix landed and need a follow-up
         run of the (now-fixed) renamer to put them back.
         """
+        target_obj = registry_obj
+        is_archived = False
+        if not dt:
+            return target_obj, is_archived
+
+        lookup_name = place_name or (registry_obj.get("tesla_metadata", {}).get("name") if registry_obj else None) or (registry_obj.get("name") if registry_obj else None)
+        if not lookup_name:
+            return target_obj, is_archived
+
+        archived_sources = [
+            self.superchargers_archived,
+            self.charging_archived,
+            self.consolidated_archived,
+            self.chargefox_archived,
+            self.evie_archived,
+            self.evx_archived,
+            self.plugshare_archived
+        ]
+        candidates = None
+        for arch_dict in archived_sources:
+            if not arch_dict or not isinstance(arch_dict, dict):
+                continue
+            if lookup_name in arch_dict:
+                candidates = arch_dict[lookup_name]
+                break
+            for k, v in arch_dict.items():
+                if k.lower() == lookup_name.lower() or k.lower() in lookup_name.lower() or lookup_name.lower() in k.lower():
+                    candidates = v
+                    break
+            if candidates:
+                break
+
+        if candidates:
+            if isinstance(candidates, dict):
+                candidates = [candidates]
+            for cand in candidates:
+                v_from_str = cand.get("valid_from")
+                v_to_str = cand.get("valid_to") or cand.get("archived_at")
+                v_from_dt = parse_flexible_date(v_from_str) if v_from_str else None
+                v_to_dt = parse_flexible_date(v_to_str) if v_to_str else None
+                v_from = v_from_dt if v_from_dt is not None else datetime.min
+                v_to = v_to_dt if v_to_dt is not None else datetime.max
+                # B7 (2026-09-30 review): archived valid_to/archived_at are UTC;
+                # convert to local time before comparing with the (local)
+                # charge time - dropping the zone shifted the changeover by
+                # 10-11 hours on a tariff-change day.
+                v_from = _aware_to_local_naive(v_from)
+                v_to = _aware_to_local_naive(v_to)
+                check_dt = _aware_to_local_naive(dt)       # an aware charge time is turned to local time too, never just stripped of its zone
+                if v_from <= check_dt <= v_to:
+                    target_obj = cand
+                    is_archived = True
+                    break
+
+        return target_obj, is_archived
+
+    def get_expected_tariff_rate(self, registry_obj, dt, place_name=None, is_non_tesla=False):
+        """
+        Determines the expected tariff rate ($/kWh), TOU schedule name, theoretical cost,
+        and whether historical archived rates were used for a charging session at datetime dt.
+        """
+        if not dt:
+            return {
+                "rate_per_kwh": None,
+                "schedule_name": None,
+                "theoretical_cost": None,
+                "theoretical_gst": None,
+                "is_archived": False,
+                "timezone": "UTC"
+            }
+
+        ch = (registry_obj or {}).get("charging") if isinstance(registry_obj, dict) else None
+        if isinstance(ch, dict):                         # a saved place's charger: its own price (free, a flat price, or a schedule by day, time and dates)
+            rate, nm = self._charger_price(ch, dt)
+            if rate is not None:
+                return {
+                    "rate_per_kwh": rate,
+                    "schedule_name": nm,
+                    "is_archived": False,
+                    "timezone": resolve_location_timezone(lat=registry_obj.get("lat"), lon=registry_obj.get("lon")),
+                }
+
         target_obj = registry_obj
         is_archived = False
         if not dt:
@@ -3524,13 +3651,20 @@ class ChargingAnalyzer:
             place_chargers, charger_chosen = [], None
             if charge["emoji"] != "🏠" and isinstance(session_registry_obj, dict):
                 place_chargers = self._place_chargers(session_registry_obj)
-            if place_chargers:                          # a saved place with chargers: this charge used the one chosen on its page, else the place's default
+            charger_how = None
+            if place_chargers:                          # a saved place with chargers: which one did this charge use?
                 charger_chosen = self._charger_choices().get(str(charge.get("start_utc_epoch")))
-                pick = next((c for c in place_chargers if c.get("name") == charger_chosen), None) or place_chargers[0]
-                session_registry_obj = dict(session_registry_obj, charging=pick)
-                session_place_name = pick.get("name") or session_place_name
-                session_network = pick.get("network") or session_network
-            free_place = bool(place_chargers and session_registry_obj["charging"].get("free"))
+                tel_peak = (matched_detailed or {}).get("peak_power_kw") if isinstance(matched_detailed, dict) else None
+                avg_kw = (tessie_bat_kwh / (charge["duration_mins"] / 60.0)) if charge.get("duration_mins") else 0.0
+                pick, charger_how = self.pick_charger(place_chargers, charger_chosen, best_inv, max(tel_peak or 0.0, avg_kw))
+                if charger_how == "ask":                # nothing tells them apart: no price is assumed, the charge page asks
+                    session_network = " / ".join(dict.fromkeys(c.get("network") or "AC Public" for c in place_chargers))
+                    status = "WHICH CHARGER ❓"
+                else:
+                    session_registry_obj = dict(session_registry_obj, charging=pick)
+                    session_place_name = pick.get("name") or session_place_name
+                    session_network = pick.get("network") or session_network
+            free_place = bool(place_chargers and charger_how != "ask" and session_registry_obj["charging"].get("free"))
             if free_place:
                 status = "FREE 🆓"          # a charger marked free: no invoice is expected (an invoice that does match still sets its own status below)
 
@@ -3711,6 +3845,7 @@ class ChargingAnalyzer:
                 "free_charger": free_place and not best_inv,
                 "place_chargers": place_chargers,
                 "charger_chosen": charger_chosen,
+                "charger_how": charger_how,
                 "matched_invoice": best_inv,
                 "detailed_telemetry": matched_detailed,
                 "plugin_group_size": len(grp[1]) if grp else 1,

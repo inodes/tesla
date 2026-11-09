@@ -617,9 +617,47 @@ class Places:
         PM.save_places(places, self.f_places)
         return dict(ok=True, key="p:" + name)
 
+    DAYS = ("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")
+
+    @classmethod
+    def parse_days(cls, v):
+        """["Mon", ...] from a list or text such as "Mon-Fri", "Sat Sun", "Mon,Wed" (empty or "daily" = every day, []). None when something is not a day."""
+        if isinstance(v, list):
+            v = " ".join(str(x) for x in v)
+        t = str(v or "").replace(",", " ").replace("–", "-").strip()
+        if not t or t.lower() in ("daily", "every day", "all", "any"):
+            return []
+        out = []
+        for tok in t.split():
+            if "-" in tok:
+                a, _, b = tok.partition("-")
+                a, b = a[:3].title(), b[:3].title()
+                if a not in cls.DAYS or b not in cls.DAYS:
+                    return None
+                i, j = cls.DAYS.index(a), cls.DAYS.index(b)
+                out += [cls.DAYS[(i + k) % 7] for k in range(((j - i) % 7) + 1)]
+            elif tok[:3].title() in cls.DAYS:
+                out.append(tok[:3].title())
+            else:
+                return None
+        return [d for d in cls.DAYS if d in out]
+
     @staticmethod
-    def clean_chargers(raw):
-        """(list, error): the chargers of a saved place, checked. Each has a name (what the charger is called, e.g. Rhodes Waterside), a network, and free or a price per kWh."""
+    def _hm(v, default):
+        t = str(v or "").strip() or default
+        try:
+            h, m = t.split(":")
+            ok = 0 <= int(h) <= 24 and 0 <= int(m) < 60 and (int(h) < 24 or int(m) == 0)
+        except ValueError:
+            return None
+        return "%02d:%02d" % (int(h), int(m)) if ok else None
+
+    @classmethod
+    def clean_chargers(cls, raw):
+        """(list, error): the chargers of a saved place, checked. Each has a name (what the charger is called, e.g. Rhodes Waterside), a network, and a price: free, one price per kWh for all days and
+        times, or a schedule (rate_schedules: label, days, start_time, end_time, rate_per_kwh, valid_from, valid_to - the shape of the Tesla entries, plus the dates). Prices are what the charger charges,
+        GST included (the standard of the Tesla entries); gst "ex" says the figures are before GST. `kw` is the charger's max power: it tells two chargers apart by the speed seen."""
+        import datetime as _dt
         out, seen = [], set()
         for c in raw or []:
             if not isinstance(c, dict) or c.get("remove"):
@@ -630,27 +668,98 @@ class Places:
             if name.lower() in seen:
                 return [], "two chargers here are both called '%s'" % name
             seen.add(name.lower())
-            free = bool(c.get("free"))
-            rate = None
-            if not free and c.get("rate_per_kwh") not in (None, ""):
+
+            def money(v, what):
+                if v in (None, ""):
+                    return None, ""
                 try:
-                    rate = float(c["rate_per_kwh"])
+                    r = float(v)
                 except (TypeError, ValueError):
-                    return [], "the price per kWh of '%s' must be a number" % name
-                if not 0 <= rate <= 5:
-                    return [], "the price per kWh of '%s' must be between 0 and 5 dollars" % name
+                    return None, "%s of '%s' must be a number" % (what, name)
+                return (round(r, 4), "") if 0 <= r <= 5 else (None, "%s of '%s' must be between 0 and 5 dollars" % (what, name))
+            free = bool(c.get("free"))
             e = dict(name=name, network=(c.get("network") or "").strip() or "AC Public", free=free)
-            if rate is not None:
-                e["rate_per_kwh"] = round(rate, 4)
+            if not free:
+                rate, why = money(c.get("rate_per_kwh"), "the price per kWh")
+                if why:
+                    return [], why
+                if rate is not None:
+                    e["rate_per_kwh"] = rate
+                scs = []
+                for sc in c.get("rate_schedules") or []:
+                    if not isinstance(sc, dict) or sc.get("remove"):
+                        continue
+                    r, why = money(sc.get("rate_per_kwh"), "a schedule price")
+                    if why:
+                        return [], why
+                    if r is None:
+                        continue                                    # an empty row
+                    days = cls.parse_days(sc.get("days"))
+                    a, b = cls._hm(sc.get("start_time"), "00:00"), cls._hm(sc.get("end_time"), "24:00")
+                    if days is None or a is None or b is None:
+                        return [], "a schedule of '%s' has days or times that are not valid (days like Mon-Fri, times like 09:00)" % name
+                    one = dict(rate_per_kwh=r, start_time=a, end_time=b)
+                    if days:
+                        one["days"] = days
+                    if str(sc.get("label") or "").strip():
+                        one["label"] = str(sc["label"]).strip()
+                    for k in ("valid_from", "valid_to"):
+                        v = str(sc.get(k) or "").strip()
+                        if v:
+                            try:
+                                _dt.date.fromisoformat(v)
+                            except ValueError:
+                                return [], "a schedule of '%s' has a date that is not valid (use YYYY-MM-DD)" % name
+                            one[k] = v
+                    scs.append(one)
+                if scs:
+                    e["rate_schedules"] = scs
+                if str(c.get("gst") or "inc").lower() == "ex" and (rate is not None or scs):
+                    e["gst"] = "ex"
+                idle, why = money(c.get("idle_fee_per_min"), "the idle fee")
+                if why:
+                    return [], why
+                if idle:
+                    e["idle_fee_per_min"] = idle
+            if c.get("kw") not in (None, ""):
+                try:
+                    kw = float(c["kw"])
+                except (TypeError, ValueError):
+                    return [], "the max power of '%s' must be a number of kW" % name
+                if not 0 < kw <= 500:
+                    return [], "the max power of '%s' must be between 0 and 500 kW" % name
+                e["kw"] = kw
             if c.get("default"):
                 e["default"] = True
             if c.get("note"):
                 e["note"] = str(c["note"]).strip()
             out.append(e)
         if sum(1 for e in out if e.get("default")) > 1:
-            for e in out[1:]:
-                e.pop("default", None)
+            first = True
+            for e in out:
+                if e.get("default"):
+                    if first:
+                        first = False
+                    else:
+                        e.pop("default")
         return out, ""
+
+    def set_default_charger(self, place, name):
+        """The charger charges at this place use when nothing tells them apart (the others lose the mark). name None removes the default."""
+        import places_common as PM
+        places = PM.load_places(self.f_places)
+        entry = places.get(place)
+        chs = [dict(c) for c in (entry or {}).get("chargers") or [] if isinstance(c, dict)]
+        if not chs or (name and not any(c.get("name") == name for c in chs)):
+            return dict(ok=False, error="no such charger")
+        for c in chs:
+            c.pop("default", None)
+            if name and c.get("name") == name:
+                c["default"] = True
+        entry["chargers"] = chs
+        self._backup()
+        PM.save_places(places, self.f_places)
+        return dict(ok=True)
 
     def add_charger(self, place, charger):
         """Adds (or updates, by name) one charger on a saved place, keeping the others; a dated backup first."""

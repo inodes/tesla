@@ -45,6 +45,59 @@ ROI_LEFT = (0.0, 0.55, 0.22, 0.64)      # x0, x1, y0, y1 as fractions of the fra
 ROI_RIGHT = (0.50, 1.0, 0.22, 0.64)     # secondary: signs for exit ramps / the other carriageway (no entry, resume speed)
 
 
+# ---- is it really a speed sign? ---------------------------------------------------------------------------------------------------------------------------------------
+# The reader (sign_reader) is only trained on drawn signs, so on a car bumper, a tree or a roundabout board it still answers with a number, and surely. What a speed
+# limit sign has that those do not is a red RING all the way round, a face inside it that is not itself red (a tail light or a stop sign is). Tunable in
+# config under review.ring_cover / ring_redin (docs/CONFIG.md, docs/SIGNS.md).
+RING_MIN_COVER, RING_MAX_REDIN = 0.80, 0.30
+
+
+def _ring_limits():
+    try:
+        import app_config
+        o = app_config.get("review") or {}
+        return float(o.get("ring_cover", RING_MIN_COVER)), float(o.get("ring_redin", RING_MAX_REDIN))
+    except Exception:
+        return RING_MIN_COVER, RING_MAX_REDIN
+
+
+def ring_check(bgr, cx, cy, r, nang=48):
+    """Evidence that a circle (cx, cy, r) in a frame is a speed limit sign -> dict(cover, white, redin, r, ok).
+    cover: share of directions round the circle with red on the ring (1.0 = all round); white: share of the face that is bright (information only: a dashcam's green cast makes real faces grey); redin: share of the face that is red."""
+    h, w = bgr.shape[:2]
+    pad = int(r * 1.6) + 4
+    xa, ya, xb, yb = max(0, int(cx - pad)), max(0, int(cy - pad)), min(w, int(cx + pad)), min(h, int(cy + pad))
+    roi = bgr[ya:yb, xa:xb]
+    if roi.size == 0:
+        return dict(cover=0.0, white=0.0, redin=1.0, r=int(r), ok=False)
+    lab = cv2.cvtColor(roi, cv2.COLOR_BGR2LAB).astype(np.float32)
+    red = lab[:, :, 1] - float(np.median(lab[:, :, 1]))
+    ccx, ccy = cx - xa, cy - ya
+    t = 2 * np.pi * np.arange(nang) / nang
+    cs, sn = np.cos(t), np.sin(t)
+    best = (-1.0, float(r))
+    for rr in np.linspace(0.8 * r, 1.15 * r, 8):
+        m = np.full(nang, -99.0, np.float32)
+        for q in (0.78, 0.84, 0.90, 0.96):
+            xs = np.rint(ccx + cs * rr * q).astype(int)
+            ys = np.rint(ccy + sn * rr * q).astype(int)
+            ok = (xs >= 0) & (xs < roi.shape[1]) & (ys >= 0) & (ys < roi.shape[0])
+            v = np.full(nang, -99.0, np.float32)
+            v[ok] = red[ys[ok], xs[ok]]
+            m = np.maximum(m, v)
+        sc = float((m >= 9).mean())
+        if sc > best[0]:
+            best = (sc, float(rr))
+    cover, rr = best
+    yy, xx = np.ogrid[:roi.shape[0], :roi.shape[1]]
+    face = (yy - ccy) ** 2 + (xx - ccx) ** 2 <= (0.5 * rr) ** 2
+    fl, fa = lab[:, :, 0][face], red[face]
+    white = float((fl > 150).mean()) if fl.size else 0.0
+    redin = float((fa > 9).mean()) if fa.size else 1.0
+    mc, mr = _ring_limits()
+    return dict(cover=round(cover, 2), white=round(white, 2), redin=round(redin, 2), r=int(rr), ok=bool(cover >= mc and redin <= mr))
+
+
 def find_signs(bgr, min_r=12, max_r=140, roi=ROI_LEFT, a_thr=None, ocr=True):
     h, w = bgr.shape[:2]
     x0, x1, ty, by = int(w * roi[0]), int(w * roi[1]), roi[2], roi[3]
@@ -115,12 +168,15 @@ def find_signs(bgr, min_r=12, max_r=140, roi=ROI_LEFT, a_thr=None, ocr=True):
             text, conf = _ocr(bw_)
         if text == "40" and vehicle_rear.on_vehicle(bgr, cx, cy, r):      # the 40 on the back of a school bus ('when lights flash') is not a limit of the road
             continue
+        rc = ring_check(bgr, cx, cy, r)
+        if not rc["ok"] and ocr:                           # no red ring all the way round a pale face: a bumper, a tree, a roundabout board, a blur (see docs/SIGNS.md)
+            continue
         red = float(ach[y:y + bh, x:x + bw][mask[y:y + bh, x:x + bw] > 0].mean()) - base
         pad = int(r * 1.25)
         xa2, xb2, ya2, yb2 = max(0, int(cx - pad)), min(w, int(cx + pad)), max(0, int(cy - pad)), min(h, int(cy + pad))
         ha = holes.get(oi)
         ringness = 1.0 if (ha and ha[1] >= 0.7 and ha[0] >= 0.2 * np.pi * r * r) else 0.0
-        out.append(dict(x=int(cx), y=int(cy), r=int(r), text=text, conf=conf, white=round(white, 2), ok=text in LIMITS, red=round(red, 1), ringness=ringness,
+        out.append(dict(x=int(cx), y=int(cy), r=int(r), text=text, conf=conf, white=round(white, 2), ok=text in LIMITS, red=round(red, 1), ringness=ringness, ring=rc["cover"],
                         crop=bgr[ya2:yb2, xa2:xb2]))
     out.sort(key=lambda d: (not d["ok"], -d["conf"]))
     return out
