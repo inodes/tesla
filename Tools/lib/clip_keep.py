@@ -427,11 +427,18 @@ class ClipKeep:
     def tidy(self, roots):
         """Removes the shells earlier moves left behind: an event folder (SavedClips / SentryClips) on a connected drive with no minute video in it, whose event is kept with its video on
         another connected drive. Its files go to that drive's folder (nothing there is replaced; a file the same is just removed) and the folder is removed. Shells with no such home are
-        only counted. dict(shells, removed, moved, differs, homeless)."""
-        out = dict(shells=0, removed=0, moved=0, differs=0, homeless=0)
+        only counted. Also removes the ._ and .DS_Store files macOS left beside the video on the drives the app writes to (for about 25 s a call: junk_left says run it again).
+        dict(shells, removed, moved, differs, homeless, junk, junk_left)."""
+        out = dict(shells=0, removed=0, moved=0, differs=0, homeless=0, junk=0, junk_left=False)
+        t0 = time.time()
         for r, root in roots.items():
             if not root or not writable(r):
                 continue
+            for folder in ("RecentClips", "SavedClips", "SentryClips"):         # the ._ and .DS_Store files macOS left beside the video (metadata only, never video)
+                if os.path.isdir(os.path.join(root, folder)):
+                    n, done = CM.sweep_junk(os.path.join(root, folder), seconds=max(1.0, 25.0 - (time.time() - t0)))
+                    out["junk"] += n
+                    out["junk_left"] = out["junk_left"] or not done
             for kind, folder in self.FOLDER.items():
                 try:
                     evs = sorted(os.listdir(os.path.join(root, folder)))
@@ -987,8 +994,8 @@ class ClipKeep:
                 drives = SY.snapshots_for(self.dir, set(paths))
                 self._step("Building drive snapshots", len(drives))
                 if drives and not self._stop:
-                    root = (getattr(self, "_roots", None) or {}).get("A")
-                    front = SN.front_clips(self.tc, root) if root else {}
+                    roots_ = getattr(self, "_roots", None) or {}
+                    front = SN.front_clips(self.tc, roots_.get("A"), roots_)         # every connected drive, not only the Archive: a minute only LaCie holds had its snapshots never built, so "1 clip to update: snapshots 1" never cleared
                     SY.run_snapshots(self.dir, drives, front, stop=lambda: self._stop, progress=lambda n, tot, st: prog(n, st), note=lambda t: None, error=j["errors"].append)
             if "pictures" in want:
                 events = self._events()

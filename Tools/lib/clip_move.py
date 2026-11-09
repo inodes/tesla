@@ -16,6 +16,7 @@ chooses what happens to every such file at once:
 import os
 import re
 import shutil
+import time
 import zlib
 
 MINUTE = re.compile(r"^\d{4}-\d\d-\d\d_\d\d-\d\d-\d\d-[a-z_]+\.mp4$")
@@ -68,23 +69,60 @@ def compare(src, dst, budget=None):
     return out
 
 
+def sidecar(path):
+    """The AppleDouble file macOS keeps beside a file on an exFAT / FAT drive to hold its extended attributes (._name)."""
+    return os.path.join(os.path.dirname(path), "._" + os.path.basename(path))
+
+
+def _drop(path):
+    try:
+        os.remove(path)
+    except OSError:
+        pass
+
+
 def put(src, dst, choice):
-    """Put src at dst. An existing dst is only replaced when the choice is "overwrite"; "delete" keeps it and removes src; anything else (or none) leaves both alone."""
+    """Put src at dst. An existing dst is only replaced when the choice is "overwrite"; "delete" keeps it and removes src; anything else (or none) leaves both alone.
+    Only the data and the modification time are copied, never the extended attributes: copying those (shutil.copy2) makes macOS write a ._name file beside every file it puts on an
+    exFAT drive (thousands of them). The ._ file beside the source goes with the source."""
     if os.path.lexists(dst):
         if choice == "delete":
             os.remove(src)
+            _drop(sidecar(src))
             return "dropped"
         if choice != "overwrite":
             return "skipped"
     os.makedirs(os.path.dirname(dst), exist_ok=True)
+    had = os.path.lexists(sidecar(dst))                  # one that was there before is not ours to remove
     part = dst + ".part"
-    shutil.copy2(src, part)
-    if os.path.getsize(part) != os.path.getsize(src):
+    st = os.stat(src)
+    shutil.copyfile(src, part)
+    os.utime(part, ns=(st.st_atime_ns, st.st_mtime_ns))
+    if os.path.getsize(part) != st.st_size:
         os.remove(part)
+        _drop(sidecar(part))
         raise OSError("the copy has a different size")
     os.replace(part, dst)
+    _drop(sidecar(part))
+    if not had:
+        _drop(sidecar(dst))
     os.remove(src)
+    _drop(sidecar(src))
     return "moved"
+
+
+def sweep_junk(top, seconds=20.0, stop=None):
+    """Removes the ._ files and .DS_Store files under `top` (a drive's SavedClips / SentryClips / RecentClips folder): macOS metadata, never video. Stops after `seconds` (a drive holds tens of
+    thousands and each removal is slow): (removed, finished)."""
+    t0, n = time.time(), 0
+    for dp, _dn, fn in os.walk(top):
+        for f in fn:
+            if junk(f):
+                _drop(os.path.join(dp, f))
+                n += 1
+        if time.time() - t0 > seconds or (stop and stop()):
+            return n, False
+    return n, True
 
 
 def leftovers(folder):

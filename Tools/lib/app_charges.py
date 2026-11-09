@@ -15,6 +15,7 @@ result is cached in <data>/charges/app_chargebook.json and rebuilt in the backgr
     ChargeBook(...).detail(id, part=None)           -> one plug-in with telemetry series and curves
     ChargeBook(...).invoice_file(name)              -> absolute path of an invoice PDF/CSV (only inside the invoice folders)
 """
+import re
 import contextlib
 import charge_paths as CP
 import csv
@@ -77,6 +78,95 @@ def placeholders(plugs):
         p["est"] = dict(min=round(p["kwh"] / kw * 60.0) if kw else None, pct=round(100.0 * p["kwh"] / pack) if pack else None, range=round(p["kwh"] * per) if per else None, n=len(peers))
 
 
+def _site_info(kind, data):
+    """What one registry entry says about its charger, for the charge page's list of nearby chargers: stalls, power, connectors, who may use it, hours, listed price, the
+    PlugShare score and links. Only what the entry holds; a field it lacks is left out. `price` is None when no price is listed (a listed 0 is a free charger, or PlugShare's unlisted default)."""
+    hw, cm, ac_, tf, loc = (data.get(k) or {} for k in ("hardware", "compatibility", "access", "tariffs", "location"))
+    ps, tm = data.get("plugshare_metadata") or {}, data.get("tesla_metadata") or {}
+    out = {}
+    stalls = hw.get("stalls") if hw.get("stalls") is not None else (len(data.get("chargeStations") or []) or None)
+    kw = hw.get("max_power_kw") if hw.get("max_power_kw") is not None else _num(data.get("maxPower"))
+    if stalls:
+        out["stalls"] = stalls
+    if kw:
+        out["kw"] = kw
+    conn = hw.get("connector_breakdown") or hw.get("connector_types") or compat_conn(cm)
+    if conn:
+        out["connectors"] = ", ".join(conn)
+    if cm.get("tesla_only"):
+        out["access"] = "Tesla only"
+    elif cm.get("access"):
+        out["access"] = cm["access"]
+    elif cm.get("open_to_non_tesla"):
+        out["access"] = "Open to all EVs"
+    if ac_.get("hours"):
+        out["hours"] = ac_["hours"]
+    if tf.get("per_kwh_flat") is not None:
+        out["price"] = tf["per_kwh_flat"]
+    elif isinstance(tf.get("per_kwh"), (int, float)):
+        out["price"] = tf["per_kwh"]
+    pr = data.get("priceRange") or {}
+    if pr.get("energyDescription"):
+        out["price_text"] = pr["energyDescription"]
+    if tf.get("idle_fee_per_min"):
+        out["idle_fee"] = tf["idle_fee_per_min"]
+    if ps.get("score") is not None:
+        out["score"] = ps["score"]
+    if ps.get("url"):
+        out["url"] = ps["url"]
+    elif tm.get("findus_url"):
+        out["url"] = tm["findus_url"]
+    if loc.get("address"):
+        out["address"] = loc["address"]
+    if data.get("last_verified"):
+        out["seen"] = str(data["last_verified"])[:10]
+    return out
+
+
+def compat_conn(cm):
+    return cm.get("connector_types") or []
+
+
+def near_chargers(a, ac, s, within=150.0, limit=6):
+    """The charger entries (every registry, and saved places marked as chargers) within `within` metres of a public charge, nearest first: what the charge page offers
+    when the guessed charger is wrong or the place is free. The same charger listed by several registries (PlugShare, Chargefox, Tesla) is one row with each source and what they
+    say. Home, Superchargers and charges without a position get none."""
+    raw = s.get("raw_charge") or {}
+    lat, lon = raw.get("latitude"), raw.get("longitude")
+    if lat is None or lon is None or s.get("emoji") == "🏠" or s.get("is_supercharger"):
+        return []
+    rows, byname = [], {}
+    try:
+        for kind, name, data in a._resolve_location_candidates():
+            if kind == "place":
+                continue                                # a saved place is where the car was parked: its chargers (if any) are the plug's `site`, below
+            elat, elon, _rad = ac.ChargingAnalyzer._candidate_geo(kind, data)
+            if elat is None or elon is None:
+                continue
+            d = ac.haversine_distance_m(lat, lon, elat, elon)
+            if d > within:
+                continue
+            nm, net, _em, _d = a._candidate_result(kind, name, data)
+            nm = str(nm)
+            key = re.sub(r"\s*\([^)]*\)\s*$", "", nm).strip().lower()
+            row = byname.get(key)
+            if row is None:
+                row = byname[key] = dict(name=nm, network=str(net), dist=round(d), sources=[], info={})
+                rows.append(row)
+            row["dist"] = min(row["dist"], round(d))
+            row["sources"].append(kind)
+            if row["network"] in ("3rd-Party", "AC Public", "") and str(net) not in ("3rd-Party", "AC Public", ""):
+                row["network"] = str(net)
+            for k, v in _site_info(kind, data).items():
+                row["info"].setdefault(k, v)
+            if kind == "plugshare":
+                row["info"]["ps_price"] = (_site_info(kind, data) or {}).get("price")
+    except Exception:
+        return []
+    rows.sort(key=lambda x: x["dist"])
+    return rows[:limit]
+
+
 def home_model(ccm, raw, now=None):
     """What the scripts say a Home charge costs (lib.charge_cost_model.home_charge_cost: solar share at the feed-in it replaced, tier 1 then tier 2, grid share at the usage rate, GST on the grid part),
     reduced to what the app shows. -> dict(cost, kwh, rate, solar_kwh, grid_kwh, tier1_kwh, tier2_kwh, tier1_rate, tier2_rate, usage_rate, before_kwh) or None when it is not a priced charge or there
@@ -113,6 +203,7 @@ class ChargeBook:
         self.pool = None
         self.pool_sig = None
         self.curve_memo = {}
+        self.dirty = False                      # a place or a chosen charger changed: the book is out of date whatever the files' times say
 
     # ---- inputs signature -------------------------------------------------------------------------------------------
     def _repo(self):
@@ -121,7 +212,7 @@ class ChargeBook:
     def _inputs(self):
         p = lambda *a: os.path.join(self.data, *a)
         files = [p("charges", "charges_master.csv"), os.path.join(self._repo(), "resources", "api_cache", "charges.json"),
-                 os.path.join(self._repo(), "resources", "api_cache", "tessie_cost_push_ledger.json")]
+                 os.path.join(self._repo(), "resources", "api_cache", "tessie_cost_push_ledger.json"), p("places.json"), p("charges", "charge_chargers.json")]       # places.json: a place marked as a charger (free, or priced) changes the charges there
         sig = []
         for f in files:
             try:
@@ -184,7 +275,7 @@ class ChargeBook:
             if not getattr(self, "sig", None):
                 self.sig = self.book.get("sig") if self.book else None
             sig = self.sig
-            stale = self.book is None or self.book.get("sig") != sig
+            stale = self.book is None or self.book.get("sig") != sig or self.dirty
             running = self.thread is not None and self.thread.is_alive()
             if stale and not running and self.tools and time.time() - getattr(self, "fail_t", 0) > 120:
                 self.err = ""
@@ -206,6 +297,9 @@ class ChargeBook:
 
     def _build_bg(self, sig):
         try:
+            if self.dirty:
+                self.dirty = False
+                sig = self._inputs()
             book = self.build(sig)
             tmp = self.cache_path + ".tmp"
             os.makedirs(os.path.dirname(self.cache_path), exist_ok=True)
@@ -278,6 +372,8 @@ class ChargeBook:
             what = "invoice share"
             if target is None and hm:                                   # a Home charge: what Tessie should hold is the scripts' cost (analyse_charging --sync-tessie-costs sends it)
                 target, what = round(hm["cost"], 2), "our cost"
+            if target is None and s.get("free_charger"):                # a place marked free: Tessie should hold $0.00
+                target, what = 0.0, "the free charge"
             st, why = send_state(target, held, rec, s.get("is_invoice_only_entry"), what)
             tel = s.get("detailed_telemetry") or {}
             dt = s.get("datetime")
@@ -328,8 +424,10 @@ class ChargeBook:
                 kind="supercharger" if s.get("is_supercharger") else "dc" if s.get("is_fast_charger") else "ac",
                 home=("HOME" in (s.get("status") or "")), lat=(s.get("raw_charge") or {}).get("latitude"), lon=(s.get("raw_charge") or {}).get("longitude"),
                 addr=(s.get("raw_charge") or {}).get("location_raw") or "",
-                tcost=_r(tcost), icost=_r(sum(icost)) if icost else None, cost=_r(sum(icost)) if icost else _r(sum(ocost)) if use_o else _r(tcost),
-                rate=s.get("invoice_rate") if s.get("invoice_rate") is not None else (sum(ocost) / sum((p["omodel"] or {}).get("kwh") or 0 for p in parts) if use_o and sum((p["omodel"] or {}).get("kwh") or 0 for p in parts) else s.get("tessie_rate")),
+                tcost=_r(tcost), icost=_r(sum(icost)) if icost else None, free=bool(s.get("free_charger")), near=near_chargers(a, ac, s),
+                site=dict(chargers=s.get("place_chargers"), chosen=s.get("charger_chosen"), ambiguous=len(s.get("place_chargers") or []) > 1 and not s.get("charger_chosen")) if s.get("place_chargers") else None,
+                cost=_r(sum(icost)) if icost else 0.0 if s.get("free_charger") else _r(sum(ocost)) if use_o else _r(tcost),
+                rate=s.get("invoice_rate") if s.get("invoice_rate") is not None else 0.0 if s.get("free_charger") else (sum(ocost) / sum((p["omodel"] or {}).get("kwh") or 0 for p in parts) if use_o and sum((p["omodel"] or {}).get("kwh") or 0 for p in parts) else s.get("tessie_rate")),
                 expected_rate=s.get("expected_rate"), schedule=s.get("expected_schedule_name"), theory=_r(s.get("theoretical_cost")), gst=_r(s.get("theoretical_gst")),
                 sync=sync, invoice_only=bool(s.get("is_invoice_only_entry")), parts=parts,
                 invoice=dict(number=inv.get("invoice_number"), file=inv.get("source_file"), date=str(inv.get("date") or "")[:10], network=inv.get("network"),
@@ -352,6 +450,38 @@ class ChargeBook:
                 dirs.append(d)
         return dict(version=VERSION, sig=sig or self._inputs(), built=int(time.time()), invoice_dirs=dirs, plugs=plugs, invoices=invs,
                     sync_ledger=len(ledger), tolerance_mins=getattr(a, "tolerance_mins", None))
+
+    # ---- which of a saved place's chargers a charge used ----------------------------------------------------------
+    def set_charger(self, cid, name):
+        """Records (name) or forgets (None) which of the saved place's chargers this charge used: charges/charge_chargers.json, keyed by each part's start time. The book is rebuilt behind."""
+        p = self._find(cid)
+        if not p:
+            return dict(ok=False, error="no such charge")
+        f = os.path.join(self.data, "charges", "charge_chargers.json")
+        try:
+            with open(f, encoding="utf-8") as fh:
+                j = json.load(fh)
+            if not isinstance(j, dict):
+                j = {}
+        except (OSError, ValueError):
+            j = {}
+        for x in p["parts"]:
+            if name:
+                j[str(x["id"])] = name
+            else:
+                j.pop(str(x["id"]), None)
+        tmp = f + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as fh:
+            json.dump(j, fh, indent=1, sort_keys=True)
+        os.replace(tmp, f)
+        self.touch()
+        return dict(ok=True)
+
+    def touch(self):
+        """Something the book is made from changed (a place, a chosen charger): forget what was seen of the files so the next request rebuilds."""
+        with self.lock:
+            self.dirty = True
+            self.fail_t = 0
 
     # ---- one plug-in with its telemetry ---------------------------------------------------------------------------------
     def invoice_file(self, name):

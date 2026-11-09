@@ -348,8 +348,8 @@ main:has(#spl .stbar,#spl .vbar) #splx{display:none}
 .evc.sgk .noimg{display:flex;align-items:center;justify-content:center;font-size:11px;color:var(--mut)}
 
 /* a clip card: first row the kinds it is ([Recent Drive] [Saved]) with what is kept as icons at the right, then the time, then where (a place for a park, the route for a drive), then how long; Open sits on the picture */
-.srcr{display:flex;align-items:center;flex-wrap:wrap;gap:4px}.srcr .srcb{align-self:center}.srcr .kst{margin:0 0 0 auto;flex-wrap:nowrap}
-.kc.ic{display:inline-flex;align-items:center;justify-content:center;width:24px;height:20px;padding:0}.kc.ic svg{width:13px;height:13px;fill:none;stroke:currentColor;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round}
+.srcr{display:flex;align-items:center;flex-wrap:wrap;gap:4px;min-height:22px}.srcr .srcb{align-self:center}.evc>.kst{margin:0;flex-wrap:nowrap;align-items:center;min-height:22px;justify-content:flex-start}      /* row 1: what it is; row 2: what is kept, left-aligned, the same height on every tile */
+.kc.ic.go{cursor:pointer}.kc.ic.go:hover{filter:brightness(.92);box-shadow:0 0 0 1px currentColor}.kc.ic{display:inline-flex;align-items:center;justify-content:center;width:24px;height:20px;padding:0}.kc.ic svg{width:13px;height:13px;fill:none;stroke:currentColor;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round}
 .evc .opn{top:calc(7px + 56.25cqw - 38px);right:14px}
 
 .sgcut{display:block;flex:none;width:100%;aspect-ratio:1;background-repeat:no-repeat;background-color:var(--hover);border-radius:6px;margin-bottom:4px}

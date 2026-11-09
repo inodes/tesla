@@ -259,6 +259,20 @@ class KeepTest(Base):
         self.assertEqual(open(os.path.join(self.roots["A"], "SavedClips", "ev1", "event.mp4"), "rb").read(), b"different")
         self.assertEqual(os.listdir(os.path.join(self.roots["J"], "SavedClips", "ev1")), ["event.mp4"])     # only what differs stays
 
+    def test_tidy_removes_the_dot_underscore_files_beside_the_video(self):
+        self._put("A", "%s-front.mp4" % S1, b"x" * 10)
+        for r in ("A", "J"):
+            d = os.path.join(self.roots[r], "SavedClips", "ev1")
+            os.makedirs(d, exist_ok=True)
+            for n in ("._%s-front.mp4" % S1, ".DS_Store"):
+                with open(os.path.join(d, n), "wb") as f:
+                    f.write(b"x")
+        out = self.keep().tidy(self.roots)
+        self.assertEqual(out["junk"], 4)
+        self.assertFalse(out["junk_left"])
+        self.assertTrue(os.path.exists(os.path.join(self.roots["A"], "SavedClips", "ev1", "%s-front.mp4" % S1)))
+        self.assertFalse(any(n.startswith("._") for n in os.listdir(os.path.join(self.roots["A"], "SavedClips", "ev1"))))
+
     def test_a_shell_with_no_copy_of_the_video_elsewhere_is_left(self):
         for n in os.listdir(os.path.join(self.roots["J"], "SavedClips", "ev1")):
             os.remove(os.path.join(self.roots["J"], "SavedClips", "ev1", n))

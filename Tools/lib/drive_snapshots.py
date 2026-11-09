@@ -67,12 +67,23 @@ def _burst(item, kinds, zones, tol):
     return True
 
 
-def front_clips(tc, teslacam):
-    """{clip stamp: front video path} of the Archive (empty when it is not connected)."""
-    if not teslacam:
-        return {}
-    recent, saved, _s = tc._sources("A", teslacam)
-    return {m["stamp"]: tc._front(teslacam, m) for m in TL.minutes(recent, saved) if "front" in m["cams"]}
+def front_clips(tc, teslacam, roots=None):
+    """{clip stamp: front video path} of the connected drives. `teslacam` is the Archive's folder (the first, kept for callers that only know that one); `roots` {role: folder} adds
+    every other connected drive, so a minute held only by LaCie / JOWUA / TeslaUSB gets its snapshots too (a minute held by several is read from the first, in read order)."""
+    import drive_roles as DR
+    roots = dict(roots or {})
+    if teslacam:
+        roots.setdefault("A", teslacam)
+    out = {}
+    for role in DR.read_roles():
+        root = roots.get(role)
+        if not root:
+            continue
+        recent, saved, _s = tc._sources(role, root)
+        for m in TL.minutes(recent, saved):
+            if "front" in m["cams"] and m["stamp"] not in out:
+                out[m["stamp"]] = tc._front(root, m)
+    return out
 
 
 def _still(stills, front, stamp, sec):

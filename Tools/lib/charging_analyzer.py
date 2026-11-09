@@ -1225,6 +1225,29 @@ class ChargingAnalyzer:
                 data.get("lon") or loc.get("lon"),
                 data.get("radius_m") or loc.get("radius_m", 150))
 
+    @staticmethod
+    def _place_chargers(data):
+        """The chargers a saved place lists (places.json `chargers`: name, network, free, rate_per_kwh; the default first), [] for a place that is only a place."""
+        chs = data.get("chargers") if isinstance(data, dict) else None
+        if not isinstance(chs, list):
+            return []
+        out = [c for c in chs if isinstance(c, dict)]
+        return sorted(out, key=lambda c: not c.get("default"))
+
+    def _charger_choices(self):
+        """{charge start epoch (text): charger name}: which of a place's chargers a charge used, chosen on the charge page (charges/charge_chargers.json)."""
+        if getattr(self, "_chg_choices", None) is None:
+            self._chg_choices = {}
+            for d in getattr(self, "charges_dirs", []) or []:
+                try:
+                    with open(os.path.join(d, "charge_chargers.json"), encoding="utf-8") as f:
+                        j = json.load(f)
+                    if isinstance(j, dict):
+                        self._chg_choices.update({str(k): v for k, v in j.items()})
+                except (OSError, ValueError):
+                    pass
+        return self._chg_choices
+
     def _candidate_result(self, kind, name, data, is_supercharger=False, is_fast=False):
         """The (display_name, network, emoji, data) tuple for one matched
         candidate - unchanged from the original per-registry logic, just
@@ -1234,6 +1257,10 @@ class ChargingAnalyzer:
             return (name, "Tesla Supercharger", "🔴", data)
         if kind == "place":
             nickname = data.get("nickname") or name
+            chs = [] if is_supercharger else self._place_chargers(data)      # Tessie says a Supercharger: a saved place's listed chargers do not apply
+            if chs:                                     # a saved place with chargers listed (a plain saved place is not a charger): the one used by default
+                ch = chs[0]
+                return (ch.get("name") or nickname, ch.get("network") or "AC Public", "🔌" if is_fast else "🅿️", data)
             emoji = "🔴" if is_supercharger else ("🔌" if is_fast else "🅿️")
             net = "Tesla Supercharger" if is_supercharger else ("DC Fast" if is_fast else "AC Public")
             return (nickname, net, emoji, data)
@@ -1291,12 +1318,17 @@ class ChargingAnalyzer:
             best_specific, best_specific_dist = None, None
             best_place, best_place_dist = None, None
             best_supercharger, best_supercharger_dist = None, None
+            best_marked, best_marked_dist = None, None
             for kind, name, data in candidates:
                 elat, elon, erad = self._candidate_geo(kind, data)
                 if elat is None or elon is None:
                     continue
                 dist = haversine_distance_m(lat, lon, elat, elon)
                 if dist > erad:
+                    continue
+                if kind == "place" and self._place_chargers(data) and not is_supercharger:
+                    if best_marked_dist is None or dist < best_marked_dist:
+                        best_marked, best_marked_dist = (kind, name, data), dist
                     continue
                 if kind == "place":
                     if best_place_dist is None or dist < best_place_dist:
@@ -1324,7 +1356,9 @@ class ChargingAnalyzer:
  # override when a real supercharger candidate is actually within its
  # own registry radius - never invented, never applied to is_fast
  # (3rd-party DC), which has no equivalent "trust the vehicle" signal.
-            if is_supercharger and best_supercharger:
+            if best_marked:
+                best = best_marked                  # a place the user marked as having a charger: their word beats a registry guess
+            elif is_supercharger and best_supercharger:
                 best = best_supercharger
             else:
                 best = best_specific or best_place
@@ -1545,6 +1579,16 @@ class ChargingAnalyzer:
                 "theoretical_gst": None,
                 "is_archived": False,
                 "timezone": "UTC"
+            }
+
+        ch = (registry_obj or {}).get("charging") if isinstance(registry_obj, dict) else None
+        if isinstance(ch, dict) and (ch.get("free") or ch.get("rate_per_kwh") is not None):         # a saved place marked as a charger: its own price
+            free = bool(ch.get("free"))
+            return {
+                "rate_per_kwh": 0.0 if free else float(ch["rate_per_kwh"]),
+                "schedule_name": "Free" if free else "Flat Rate",
+                "is_archived": False,
+                "timezone": resolve_location_timezone(lat=registry_obj.get("lat"), lon=registry_obj.get("lon")),
             }
 
         target_obj = registry_obj
@@ -3477,6 +3521,18 @@ class ChargingAnalyzer:
             session_network = charge["network"]
             session_emoji = charge["emoji"]
             session_registry_obj = charge["registry_obj"]
+            place_chargers, charger_chosen = [], None
+            if charge["emoji"] != "🏠" and isinstance(session_registry_obj, dict):
+                place_chargers = self._place_chargers(session_registry_obj)
+            if place_chargers:                          # a saved place with chargers: this charge used the one chosen on its page, else the place's default
+                charger_chosen = self._charger_choices().get(str(charge.get("start_utc_epoch")))
+                pick = next((c for c in place_chargers if c.get("name") == charger_chosen), None) or place_chargers[0]
+                session_registry_obj = dict(session_registry_obj, charging=pick)
+                session_place_name = pick.get("name") or session_place_name
+                session_network = pick.get("network") or session_network
+            free_place = bool(place_chargers and session_registry_obj["charging"].get("free"))
+            if free_place:
+                status = "FREE 🆓"          # a charger marked free: no invoice is expected (an invoice that does match still sets its own status below)
 
             if grp and not is_follower and best_inv is not None:
                 group_inv[c_idx] = (best_inv_idx, best_inv)
@@ -3652,6 +3708,9 @@ class ChargingAnalyzer:
                 "is_archived_tariff": is_archived_match,
                 "timezone": tz_used,
                 "status": status,
+                "free_charger": free_place and not best_inv,
+                "place_chargers": place_chargers,
+                "charger_chosen": charger_chosen,
                 "matched_invoice": best_inv,
                 "detailed_telemetry": matched_detailed,
                 "plugin_group_size": len(grp[1]) if grp else 1,

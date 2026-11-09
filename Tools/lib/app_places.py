@@ -87,7 +87,8 @@ class Places:
             for n, v in j.items():
                 if isinstance(v, dict) and v.get("lat") is not None and v.get("lon") is not None:
                     out.append(dict(name=n, lat=float(v["lat"]), lon=float(v["lon"]), radius=float(v.get("radius_m") or 150),
-                                    keywords=v.get("keywords") or [], notes=v.get("notes") or ""))
+                                    keywords=v.get("keywords") or [], notes=v.get("notes") or "",
+                                    chargers=[c for c in (v.get("chargers") or []) if isinstance(c, dict)], home=(v.get("type") == "home")))
             return out
         return _memo("defs", [self.f_places], build)
 
@@ -405,7 +406,7 @@ class Places:
         if key.startswith("p:"):
             p = next((x for x in self.defs() if x["name"] == key[2:]), None)
             if p:
-                info = dict(kind="saved", name=p["name"], lat=p["lat"], lon=p["lon"], radius=p["radius"], keywords=p["keywords"], notes=p["notes"])
+                info = dict(kind="saved", name=p["name"], lat=p["lat"], lon=p["lon"], radius=p["radius"], keywords=p["keywords"], notes=p["notes"], chargers=p.get("chargers"), home=p.get("home"))
         elif key.startswith("s:"):
             s = next((x for x in self.stations() if x["name"] == key[2:]), None)
             if s:
@@ -601,12 +602,76 @@ class Places:
         if isinstance(kw, str):
             kw = [k.strip() for k in kw.replace("\n", ",").split(",") if k.strip()]
         entry.update(lat=round(lat, 5), lon=round(lon, 5), radius_m=radius, keywords=kw if kw is not None else entry.get("keywords", []), notes=(body.get("notes") or "").strip())
+        if "chargers" in body:                  # a saved place is not normally a charger: a list of {name, network, free, rate_per_kwh} marks the chargers it has (empty removes them)
+            chs, why = self.clean_chargers(body.get("chargers"))
+            if why:
+                return dict(ok=False, error=why)
+            if chs:
+                entry["chargers"] = chs
+            else:
+                entry.pop("chargers", None)
         if old and old != name:
             places.pop(old, None)
         places[name] = entry
         self._backup()
         PM.save_places(places, self.f_places)
         return dict(ok=True, key="p:" + name)
+
+    @staticmethod
+    def clean_chargers(raw):
+        """(list, error): the chargers of a saved place, checked. Each has a name (what the charger is called, e.g. Rhodes Waterside), a network, and free or a price per kWh."""
+        out, seen = [], set()
+        for c in raw or []:
+            if not isinstance(c, dict) or c.get("remove"):
+                continue
+            name = (c.get("name") or "").strip()
+            if not name:
+                return [], "every charger needs a name (what it is called, e.g. Rhodes Waterside)"
+            if name.lower() in seen:
+                return [], "two chargers here are both called '%s'" % name
+            seen.add(name.lower())
+            free = bool(c.get("free"))
+            rate = None
+            if not free and c.get("rate_per_kwh") not in (None, ""):
+                try:
+                    rate = float(c["rate_per_kwh"])
+                except (TypeError, ValueError):
+                    return [], "the price per kWh of '%s' must be a number" % name
+                if not 0 <= rate <= 5:
+                    return [], "the price per kWh of '%s' must be between 0 and 5 dollars" % name
+            e = dict(name=name, network=(c.get("network") or "").strip() or "AC Public", free=free)
+            if rate is not None:
+                e["rate_per_kwh"] = round(rate, 4)
+            if c.get("default"):
+                e["default"] = True
+            if c.get("note"):
+                e["note"] = str(c["note"]).strip()
+            out.append(e)
+        if sum(1 for e in out if e.get("default")) > 1:
+            for e in out[1:]:
+                e.pop("default", None)
+        return out, ""
+
+    def add_charger(self, place, charger):
+        """Adds (or updates, by name) one charger on a saved place, keeping the others; a dated backup first."""
+        import places_common as PM
+        places = PM.load_places(self.f_places)
+        entry = places.get(place)
+        if not isinstance(entry, dict):
+            return dict(ok=False, error="no such saved place")
+        cur = [c for c in (entry.get("chargers") or []) if isinstance(c, dict)]
+        nm = (charger.get("name") or "").strip().lower()
+        merged = [dict(charger) if (c.get("name") or "").strip().lower() == nm else c for c in cur]
+        if not any((c.get("name") or "").strip().lower() == nm for c in cur):
+            merged.append(dict(charger))
+        chs, why = self.clean_chargers(merged)
+        if why:
+            return dict(ok=False, error=why)
+        entry["chargers"] = chs
+        places[place] = entry
+        self._backup()
+        PM.save_places(places, self.f_places)
+        return dict(ok=True, key="p:" + place)
 
     def delete(self, name):
         import places_common as PM

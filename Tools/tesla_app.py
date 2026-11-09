@@ -684,6 +684,20 @@ class H(BaseHTTPRequestHandler):
             if u.path == "/api/places/save":
                 with _ACTION_LOCK:
                     return self.send_json(STORE.pl.save(body))
+            if u.path == "/api/places/charger":         # {place, charger: {name, network, free, rate_per_kwh}, charge?: id}: add a charger to a saved place; with `charge`, that charge used it
+                with _ACTION_LOCK:
+                    ch, why = STORE.pl.clean_chargers([body.get("charger") or {}])
+                    if why or not ch:
+                        return self.send_json(dict(ok=False, error=why or "no charger given"))
+                    r = STORE.pl.add_charger(body.get("place", ""), ch[0])
+                    if r.get("ok"):
+                        if body.get("charge"):
+                            r = dict(r, **{"set": BOOK.set_charger(str(body["charge"]), ch[0]["name"])})
+                        BOOK.touch()
+                    return self.send_json(r)
+            if u.path == "/api/chargebook/charger":     # {id, charger: name | null}: which of the place's chargers this charge used
+                with _ACTION_LOCK:
+                    return self.send_json(BOOK.set_charger(str(body.get("id", "")), body.get("charger") or None))
             if u.path == "/api/places/delete":
                 with _ACTION_LOCK:
                     if body.get("confirm") is not True:

@@ -265,6 +265,23 @@ class SnapshotLocalTimeTest(unittest.TestCase):
                                         dict(id="", kind="saved", text="Saved", utc=1768438900)])
         self.assertRegex(ix["made"], r"^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ$")
 
+    def test_front_clips_come_from_every_connected_drive_not_only_the_archive(self):
+        import drive_roles as DR
+        class TC:
+            def _sources(self, role, root):
+                return ({"s1": role}, {}, {})
+            def _front(self, root, m):
+                return "%s/%s" % (root, m["stamp"])
+        calls = []
+        orig = SN.TL.minutes
+        SN.TL.minutes = lambda recent, saved: [dict(stamp="s_" + recent["s1"], cams={"front"})]
+        try:
+            with mock.patch.object(DR, "read_roles", return_value="AJL"):
+                got = SN.front_clips(TC(), None, {"L": "/lacie", "J": "/jowua"})
+        finally:
+            SN.TL.minutes = orig
+        self.assertEqual(got, {"s_J": "/jowua/s_J", "s_L": "/lacie/s_L"})      # LaCie's minute is included (the Archive is not connected)
+
     def test_no_archive_means_no_front_clips(self):
         self.assertEqual(SN.front_clips(object(), None), {})
         self.assertEqual(SN.front_clips(object(), ""), {})
