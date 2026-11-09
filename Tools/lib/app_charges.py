@@ -255,7 +255,7 @@ class ChargeBook:
         try:
             with open(self.cache_path, encoding="utf-8") as f:
                 b = json.load(f)
-            if b.get("version") == VERSION:
+            if isinstance(b, dict) and isinstance(b.get("plugs"), list):       # any kept book is shown at once, whatever version wrote it; a different version only makes it stale (rebuilt behind it)
                 self.book = b
         except (OSError, ValueError):
             pass
@@ -275,7 +275,7 @@ class ChargeBook:
             if not getattr(self, "sig", None):
                 self.sig = self.book.get("sig") if self.book else None
             sig = self.sig
-            stale = self.book is None or self.book.get("sig") != sig or self.dirty
+            stale = self.book is None or self.book.get("sig") != sig or self.dirty or self.book.get("version") != VERSION
             running = self.thread is not None and self.thread.is_alive()
             if stale and not running and self.tools and time.time() - getattr(self, "fail_t", 0) > 120:
                 self.err = ""
