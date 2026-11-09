@@ -708,6 +708,10 @@ class H(BaseHTTPRequestHandler):
                 if held:
                     return self.send_json(dict(error="%s is reading the drives: stop it first." % held))
                 return self.send_json(CKEEP.save_minutes(body.get("stamps") or [], footage_roots(), confirmed=body.get("confirm") is True, reason=body.get("reason") or None))
+            if u.path == "/api/clips/tidy":        # remove the shells earlier moves left behind (event folders with no video whose event is kept, with its video, on another drive)
+                if CKEEP._thread and CKEEP._thread.is_alive():
+                    return self.send_json(dict(error="Something is already being done to the drives."))
+                return self.send_json(CKEEP.tidy({r: footage_root(r) for r in DR.read_roles() if footage_root(r)}))
             if u.path == "/api/clips/act":         # {action: delete|move|process|stop, role, items: [{kind, id}]}: remove the video of clips from a drive (after it is all kept), move it to the Archive, or read what the clips still lack from their video
                 if body.get("action") == "stop":
                     return self.send_json(CKEEP.stop())
@@ -722,7 +726,7 @@ class H(BaseHTTPRequestHandler):
                     return self.send_json(CKEEP.purge_home(roots, confirmed=body.get("confirm") is True))
                 if body.get("action") == "purge":         # delete chosen kinds (video, metadata, stills, pictures, signs) of the clips; video that is not all kept needs force
                     return self.send_json(CKEEP.purge(body.get("items") or [], body.get("types") or [], roots, confirmed=body.get("confirm") is True, force=body.get("force") is True))
-                return self.send_json(CKEEP.start(body.get("action"), role, body.get("items") or [], roots, confirmed=body.get("confirm") is True, to=body.get("to") or "A"))
+                return self.send_json(CKEEP.start(body.get("action"), role, body.get("items") or [], roots, confirmed=body.get("confirm") is True, to=body.get("to") or "A", conflict=body.get("conflict")))
             if u.path == "/api/stills/thin":       # {action: start|stop, events: normal|shrunk|front}: make the stills of minutes with no event and no sign smaller, or the pictures around events
                 if body.get("action") == "stop":
                     return self.send_json(STHIN.stop())

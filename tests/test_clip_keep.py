@@ -146,7 +146,7 @@ class KeepTest(Base):
         k = self.keep(read=[S1, S2], stills=[S1, S2], scanned=[S1, S2])
         k.start("delete", "J", [dict(kind="saved", id="ev1")], self.roots, confirmed=True)
         k._thread.join(5)
-        self.assertEqual(os.listdir(os.path.join(self.roots["J"], "SavedClips", "ev1")), [])
+        self.assertEqual(os.listdir(os.path.join(self.roots["J"], "SavedClips", "ev1")), [])      # a delete removes only the video: the folder stays
         j = k.job()
         self.assertEqual((j["done"], j["freed"], j["errors"]), (4, 40, []))
         self.assertEqual(k.status(force=True)["clips"]["saved"]["ev1"]["bytes"], {})      # the log knows at once
@@ -175,8 +175,97 @@ class KeepTest(Base):
         self.assertNotIn("error", out)
         k._thread.join(5)
         self.assertEqual(sorted(os.listdir(os.path.join(self.roots["A"], "SavedClips", "ev1"))), sorted(["%s-%s.mp4" % (st, c) for st in (S1, S2) for c in ("front", "back")]))
-        self.assertEqual(os.listdir(os.path.join(self.roots["J"], "SavedClips", "ev1")), [])
+        self.assertFalse(os.path.exists(os.path.join(self.roots["J"], "SavedClips", "ev1")))      # the folder moved with its video: no shell is left
         self.assertEqual(k.status(force=True)["clips"]["saved"]["ev1"]["bytes"], {"A": 40})
+
+    def _put(self, role, name, data, ev="ev1"):
+        d = os.path.join(self.roots[role], "SavedClips", ev)
+        os.makedirs(d, exist_ok=True)
+        with open(os.path.join(d, name), "wb") as f:
+            f.write(data)
+        return os.path.join(d, name)
+
+    def _move(self, **kw):
+        k = self.keep()
+        out = k.start("move", "J", [dict(kind="saved", id="ev1")], self.roots, confirmed=True, **kw)
+        if "error" not in out and "needs" not in out:
+            k._thread.join(5)
+        return k, out
+
+    def test_a_move_takes_the_whole_event_folder_and_leaves_no_shell(self):
+        self._put("J", "event.json", b"{}")
+        self._put("J", "thumb.png", b"png")
+        self._put("J", ".DS_Store", b"x")
+        self._put("J", "._junk", b"x")
+        k, out = self._move()
+        self.assertNotIn("error", out)
+        a = os.path.join(self.roots["A"], "SavedClips", "ev1")
+        self.assertTrue({"event.json", "thumb.png"} <= set(os.listdir(a)))
+        self.assertNotIn(".DS_Store", os.listdir(a))
+        self.assertFalse(os.path.exists(os.path.join(self.roots["J"], "SavedClips", "ev1")))
+
+    def test_a_file_already_there_is_never_replaced_unasked(self):
+        mine = self._put("A", "%s-front.mp4" % S1, b"y" * 10)                    # same size, different content
+        k, out = self._move()
+        self.assertEqual(out["needs"], "conflict")
+        cf = out["conflicts"]
+        self.assertEqual((cf["count"], cf["different"], cf["identical"]), (1, 1, 0))
+        self.assertEqual(cf["items"][0]["name"], "%s-front.mp4" % S1)
+        self.assertTrue(cf["items"][0]["checked"])
+        self.assertFalse(cf["items"][0]["identical"])
+        self.assertEqual(open(mine, "rb").read(), b"y" * 10)                       # nothing was touched
+        self.assertTrue(os.path.exists(os.path.join(self.roots["J"], "SavedClips", "ev1", "%s-front.mp4" % S1)))
+
+    def test_identical_files_are_told_from_different_ones(self):
+        self._put("A", "%s-front.mp4" % S1, b"x" * 10)
+        _k, out = self._move()
+        self.assertEqual((out["conflicts"]["identical"], out["conflicts"]["different"]), (1, 0))
+
+    def test_skip_leaves_both_and_moves_the_rest(self):
+        mine = self._put("A", "%s-front.mp4" % S1, b"y" * 10)
+        k, out = self._move(conflict="skip")
+        self.assertEqual(open(mine, "rb").read(), b"y" * 10)
+        self.assertEqual(open(os.path.join(self.roots["J"], "SavedClips", "ev1", "%s-front.mp4" % S1), "rb").read(), b"x" * 10)      # still on JOWUA
+        self.assertEqual(sorted(os.listdir(os.path.join(self.roots["J"], "SavedClips", "ev1"))), ["%s-front.mp4" % S1])               # the others went; the folder stays for what was skipped
+        self.assertEqual(k.job()["skipped"], 1)
+
+    def test_overwrite_replaces_the_one_there(self):
+        mine = self._put("A", "%s-front.mp4" % S1, b"y" * 10)
+        self._move(conflict="overwrite")
+        self.assertEqual(open(mine, "rb").read(), b"x" * 10)
+        self.assertFalse(os.path.exists(os.path.join(self.roots["J"], "SavedClips", "ev1")))
+
+    def test_delete_keeps_the_one_there_and_removes_this_copy(self):
+        mine = self._put("A", "%s-front.mp4" % S1, b"y" * 10)
+        k, _out = self._move(conflict="delete")
+        self.assertEqual(open(mine, "rb").read(), b"y" * 10)
+        self.assertFalse(os.path.exists(os.path.join(self.roots["J"], "SavedClips", "ev1")))
+        self.assertEqual(k.job()["dropped"], 1)
+
+    def test_tidy_removes_the_shells_earlier_moves_left_behind(self):
+        # JOWUA holds only a shell (event.json, thumb.png); the Archive has the event with its video
+        self._put("A", "%s-front.mp4" % S1, b"x" * 10)
+        self._put("A", "event.json", b"{}")
+        for n in os.listdir(os.path.join(self.roots["J"], "SavedClips", "ev1")):
+            os.remove(os.path.join(self.roots["J"], "SavedClips", "ev1", n))
+        self._put("J", "event.json", b"{}")                  # the same as the Archive's: removed
+        self._put("J", "thumb.png", b"png")                  # not on the Archive: moved
+        self._put("J", "event.mp4", b"other")
+        self._put("A", "event.mp4", b"different")            # differs: left, never replaced
+        k = self.keep()
+        out = k.tidy(self.roots)
+        self.assertEqual((out["shells"], out["moved"], out["differs"], out["homeless"]), (1, 1, 1, 0))
+        self.assertTrue(os.path.exists(os.path.join(self.roots["A"], "SavedClips", "ev1", "thumb.png")))
+        self.assertEqual(open(os.path.join(self.roots["A"], "SavedClips", "ev1", "event.mp4"), "rb").read(), b"different")
+        self.assertEqual(os.listdir(os.path.join(self.roots["J"], "SavedClips", "ev1")), ["event.mp4"])     # only what differs stays
+
+    def test_a_shell_with_no_copy_of_the_video_elsewhere_is_left(self):
+        for n in os.listdir(os.path.join(self.roots["J"], "SavedClips", "ev1")):
+            os.remove(os.path.join(self.roots["J"], "SavedClips", "ev1", n))
+        self._put("J", "thumb.png", b"png")
+        out = self.keep().tidy(self.roots)
+        self.assertEqual((out["shells"], out["homeless"], out["removed"]), (2, 2, 0))      # the Archive's empty ev1 folder is a shell too
+        self.assertTrue(os.path.exists(os.path.join(self.roots["J"], "SavedClips", "ev1", "thumb.png")))
 
     def test_a_move_can_go_to_another_connected_drive_than_the_archive(self):
         dst = os.path.join(self.t, "U", "TeslaCam")                                  # e.g. the LaCie: any connected drive, not only the Archive
@@ -188,7 +277,7 @@ class KeepTest(Base):
         self.assertNotIn("error", out)
         k._thread.join(5)
         self.assertEqual(sorted(os.listdir(os.path.join(dst, "SavedClips", "ev1"))), sorted(["%s-%s.mp4" % (st, c) for st in (S1, S2) for c in ("front", "back")]))
-        self.assertEqual(os.listdir(os.path.join(self.roots["J"], "SavedClips", "ev1")), [])
+        self.assertFalse(os.path.exists(os.path.join(self.roots["J"], "SavedClips", "ev1")))      # the folder moved with its video: no shell is left
         self.assertFalse(os.path.exists(os.path.join(self.roots["A"], "SavedClips", "ev1", "%s-front.mp4" % S1)))      # not on the Archive
         self.assertEqual(k.status(force=True)["clips"]["saved"]["ev1"]["bytes"], {"U": 40})
         self.assertEqual(k.history()[0]["to"], "U")
@@ -202,7 +291,7 @@ class KeepTest(Base):
         out = k.start("delete", "J", [dict(kind="saved", id="ev1")], self.roots, confirmed=True)
         self.assertNotIn("error", out)
         k._thread.join(5)
-        self.assertEqual(os.listdir(os.path.join(self.roots["J"], "SavedClips", "ev1")), [])
+        self.assertEqual(os.listdir(os.path.join(self.roots["J"], "SavedClips", "ev1")), [])      # a delete removes only the video: the folder stays
 
     def test_a_drive_that_is_not_connected_or_the_archive_itself_is_refused_for_a_move(self):
         k = self.keep()
@@ -362,7 +451,7 @@ class ProcessTest(ProcBase):
         self.assertEqual([c[0] for c in self.calls], ["read", "stills"])
         self.assertTrue(all(p.startswith(self.roots["A"]) for p in self.calls[0][3]))   # read from the Archive, where the video is now: JOWUA no longer has it
         self.assertEqual(j["errors"], [])
-        self.assertEqual(os.listdir(os.path.join(self.roots["J"], "SavedClips", "ev1")), [])
+        self.assertFalse(os.path.exists(os.path.join(self.roots["J"], "SavedClips", "ev1")))      # the folder moved with its video: no shell is left
         self.assertTrue(os.path.exists(os.path.join(self.roots["A"], "SavedClips", "ev1", "%s-front.mp4" % S1)))
 
     def test_a_clip_on_its_way_says_where_it_is_going(self):
@@ -386,7 +475,7 @@ class ProcessTest(ProcBase):
         self.k.start("move", "J", [dict(kind="saved", id="ev1")], self.roots, confirmed=True)
         self.k._thread.join(5)
         self.assertTrue(any("drive pulled out" in e for e in self.k.job()["errors"]))          # said, and the next Update reads it again
-        self.assertEqual(os.listdir(os.path.join(self.roots["J"], "SavedClips", "ev1")), [])    # but the video was moved
+        self.assertFalse(os.path.exists(os.path.join(self.roots["J"], "SavedClips", "ev1")))      # the folder moved with its video: no shell is left    # but the video was moved
         self.assertTrue(os.path.exists(os.path.join(self.roots["A"], "SavedClips", "ev1", "%s-front.mp4" % S1)))
 
     def test_it_reads_the_metadata_then_the_stills_then_the_signs_of_the_selected_clip_and_nothing_else(self):

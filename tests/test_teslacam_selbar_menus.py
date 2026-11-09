@@ -28,7 +28,7 @@ class SelbarMenusTest(unittest.TestCase):
             self.assertIn(a, self.js)
 
     def test_move_and_delete_only_with_a_selection(self):
-        self.assertIn("if(items.length){\n        const mv=", self.js)
+        self.assertIn("if(items.length){\n        const fd=", self.js)
 
 
 if __name__ == "__main__":

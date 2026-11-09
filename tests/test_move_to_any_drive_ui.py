@@ -32,6 +32,18 @@ class MoveToAnyDriveUiTest(unittest.TestCase):
         self.assertIn("const mv=src.map(r=>", self.js)
         self.assertIn('n0(m.length)+" clip"', self.js)
 
+    def test_files_already_on_the_destination_are_shown_and_asked_about(self):
+        """A move never replaces a file unasked: the server answers needs=conflict with the files compared, the page shows them and sends the choice back."""
+        self.assertIn('j.needs==="conflict"', self.js)
+        self.assertIn('data-cf="skip"', self.js)
+        self.assertIn('data-cf="overwrite"', self.js)
+        self.assertIn('data-cf="delete"', self.js)
+        self.assertIn("conflict:choice||undefined", self.js)
+        self.assertIn('conflict=body.get("conflict")', self.py)
+
+    def test_ticked_clips_the_keep_list_does_not_know_are_not_silently_dropped(self):
+        self.assertIn("const unk=[...TCSEL].length-items.length", self.js)
+
 
 if __name__ == "__main__":
     unittest.main()

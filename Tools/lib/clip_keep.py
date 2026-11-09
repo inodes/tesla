@@ -37,6 +37,7 @@ import event_shots as ES
 import event_stills as EV
 import teslacam_deletable as TD
 import teslacam_files as TF
+import clip_move as CM
 from lib import teslacam_ledger as TLG
 from lib import teslacam_scan as TS
 from lib import teslacam_stills as ST
@@ -421,7 +422,73 @@ class ClipKeep:
                 return None, "%s has %.1f GB free; this needs %.1f GB." % (nm, free / 1024 ** 3, need / 1024 ** 3)
         return plan, ""
 
-    def start(self, action, role, items, roots, confirmed=False, to="A"):
+    FOLDER = {"saved": "SavedClips", "sentry": "SentryClips"}
+
+    def tidy(self, roots):
+        """Removes the shells earlier moves left behind: an event folder (SavedClips / SentryClips) on a connected drive with no minute video in it, whose event is kept with its video on
+        another connected drive. Its files go to that drive's folder (nothing there is replaced; a file the same is just removed) and the folder is removed. Shells with no such home are
+        only counted. dict(shells, removed, moved, differs, homeless)."""
+        out = dict(shells=0, removed=0, moved=0, differs=0, homeless=0)
+        for r, root in roots.items():
+            if not root or not writable(r):
+                continue
+            for kind, folder in self.FOLDER.items():
+                try:
+                    evs = sorted(os.listdir(os.path.join(root, folder)))
+                except OSError:
+                    continue
+                for ev in evs:
+                    d = os.path.join(root, folder, ev)
+                    try:
+                        names = os.listdir(d) if os.path.isdir(d) else None
+                    except OSError:
+                        continue
+                    if names is None or any(CM.MINUTE.match(n) for n in names):
+                        continue
+                    out["shells"] += 1
+                    home = None
+                    for o, orot in roots.items():
+                        od = os.path.join(orot, folder, ev) if orot and o != r else None
+                        try:
+                            if od and os.path.isdir(od) and any(CM.MINUTE.match(n) for n in os.listdir(od)):
+                                home = od
+                                break
+                        except OSError:
+                            pass
+                    if not home:
+                        out["homeless"] += 1
+                        continue
+                    res = CM.tidy_dir(d, home)
+                    out["moved"] += res["moved"]
+                    out["differs"] += res["differs"]
+                    out["removed"] += 1 if res["removed"] else 0
+        return out
+
+    def conflicts(self, plan, role, to, roots):
+        """What a move would meet on the drive it goes to: every file (a minute's video, or event.json / thumb.png / event.mp4 of a Saved or Sentry folder) that is already there, compared by name,
+        size, date and time and a checksum (lib/clip_move.py). None when nothing is in the way."""
+        budget = CM.Budget()
+        found = []
+        for kind, cid, fs in plan:
+            pairs = [(TF.front_path(roots[role], f), TF.front_path(roots[to], f)) for _k, _sz, f in fs]
+            if kind in self.FOLDER:
+                sd, dd = os.path.join(roots[role], self.FOLDER[kind], cid), os.path.join(roots[to], self.FOLDER[kind], cid)
+                pairs += [(os.path.join(sd, n), os.path.join(dd, n)) for n in CM.leftovers(sd)]
+            for src, dst in pairs:
+                if os.path.lexists(dst) and os.path.isfile(src):
+                    try:
+                        c = CM.compare(src, dst, budget)
+                    except OSError:
+                        continue
+                    c.update(kind=kind, id=cid)
+                    found.append(c)
+        if not found:
+            return None
+        same = sum(1 for c in found if c["identical"])
+        found.sort(key=lambda c: (c["identical"], c["kind"], c["id"], c["name"]))
+        return dict(count=len(found), identical=same, different=len(found) - same, bytes=sum(c["src"]["size"] for c in found), items=found[:40])
+
+    def start(self, action, role, items, roots, confirmed=False, to="A", conflict=None):
         """Deleting or moving needs `confirmed` (the page sends it only after its confirm bar was answered): a request without it removes nothing."""
         if action in ("delete", "move") and confirmed is not True:
             return dict(error="Not confirmed: nothing was removed.")
@@ -433,6 +500,11 @@ class ClipKeep:
             return dict(error=err)
         files = [(k, sz, f) for _, _, fs in plan for k, sz, f in fs]
         clips = [dict(kind=k, id=c) for k, c, _ in plan]
+        self._choice = conflict if conflict in CM.CHOICES else None
+        if action == "move":                      # nothing is ever replaced without being asked: files already on the destination are shown and the person chooses
+            cf = self.conflicts(plan, role, to, roots)
+            if cf and not self._choice:
+                return dict(needs="conflict", conflicts=cf, role=role, to=to)
         read = None
         if action == "move":                      # a move moves first and then reads what its clips still lack, from where the video now is (the video is kept: only its drive changes)
             st = self.status(force=True)["clips"]
@@ -1046,29 +1118,32 @@ class ClipKeep:
         j = self._job
         removed = []
         try:
+            choice = getattr(self, "_choice", None)
             for key, size, f in files:
                 if self._stop:
                     break
                 src = TF.front_path(roots[role], f)
                 j["current"] = os.path.basename(src)
                 try:
-                    if action == "move" and not self._has(led, key, size, to):
+                    if action == "move":
                         dst = TF.front_path(roots[to], f)
-                        os.makedirs(os.path.dirname(dst), exist_ok=True)
-                        part = dst + ".part"
-                        shutil.copyfile(src, part)
-                        if os.path.getsize(part) != os.path.getsize(src):
-                            os.remove(part)
-                            raise OSError("the copy has a different size")
-                        os.replace(part, dst)
-                        touched.add(led.mark(to, key, os.path.getsize(dst), True, flush=False))
-                    if action == "move" and not self._has(led, key, size, to):
-                        raise OSError("the Archive does not hold it" if to == "A" else "the drive it goes to does not hold it")
-                    os.remove(src)
-                    self._mv.pop(os.path.basename(src), None)
-                    removed.append(os.path.basename(src))
-                    j["freed"] += size
-                    touched.add(led.mark(role, key, size, False, flush=False))
+                        r = CM.put(src, dst, choice)
+                        if r == "skipped":
+                            j["skipped"] = j.get("skipped", 0) + 1
+                        else:
+                            if r == "dropped":
+                                j["dropped"] = j.get("dropped", 0) + 1
+                            touched.add(led.mark(to, key, os.path.getsize(dst), True, flush=False))
+                            touched.add(led.mark(role, key, size, False, flush=False))
+                            removed.append(os.path.basename(src))
+                            j["freed"] += size
+                        self._mv.pop(os.path.basename(src), None)
+                    else:
+                        os.remove(src)
+                        self._mv.pop(os.path.basename(src), None)
+                        removed.append(os.path.basename(src))
+                        j["freed"] += size
+                        touched.add(led.mark(role, key, size, False, flush=False))
                 except FileNotFoundError:
                     self._mv.pop(os.path.basename(src), None)
                     touched.add(led.mark(role, key, size, False, flush=False))
@@ -1078,6 +1153,16 @@ class ClipKeep:
                 j["bytes_done"] += size
                 if j["done"] % 40 == 0:
                     led.flush({d for d in touched if d})
+            if action == "move" and not self._stop:      # a Saved or Sentry event is a folder: what is left in it goes too, and the folder it leaves is removed (no shell with a thumb.png behind)
+                for c in clips:
+                    if c["kind"] in self.FOLDER:
+                        j["current"] = c["id"]
+                        try:
+                            r = CM.move_event_dir(os.path.join(roots[role], self.FOLDER[c["kind"]], c["id"]), os.path.join(roots[to], self.FOLDER[c["kind"]], c["id"]), choice)
+                            j["skipped"] = j.get("skipped", 0) + r["skipped"]
+                            j["dropped"] = j.get("dropped", 0) + r["dropped"]
+                        except OSError as e:
+                            j["errors"].append("%s: %s" % (c["id"], e))
         finally:
             self._mv = {}
             led.flush({d for d in touched if d})

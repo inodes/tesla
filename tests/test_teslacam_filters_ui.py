@@ -51,8 +51,8 @@ class TeslaCamFiltersUiTest(unittest.TestCase):
         self.assertIn("(ORD.dayDesc?days.slice(0,60):days.slice(0,60).reverse())", self.js)
         self.assertIn('cfg("teslacam.days_newest_first")!==false', self.js)       # days: newest first unless set otherwise; times: oldest first (rows_newest_first false)
         self.assertIn('lsSet("ord.days"', self.js)                              # and remembered
-        for fn in ("const ordered=sk===\"t0\"", "if(CP.sk===\"t0\")return ordCmp(a,b)"):
-            self.assertIn(fn, self.js)                                          # the flat tables (Parked, Charges) follow it by their Date column
+        for fn in ("const ordered=sk===\"t0\"", "if(CP.sk===\"t0\")return ordFlat(a,b)"):
+            self.assertIn(fn, self.js)                                          # the flat tables (Parked, Charges) follow it by their Date column (Charges: one sort for date and time)
 
     def test_the_controls_share_one_height(self):
         with open(os.path.join(HERE, "..", "Tools", "lib", "app_ui", "app.css"), encoding="utf-8") as f:
