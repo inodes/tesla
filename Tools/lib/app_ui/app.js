@@ -654,6 +654,28 @@ async function pageCharges(){
   tessieSync($("#tsb"),{kind:"charges",steps:8,always:true,always_note:"Fetches new charges from Tessie, their charging curves and the invoices. It takes a few minutes.",after:()=>{bust();route()}});
 }
 
+// DESTAIR begin: Tessie reports some readings coarsely (the battery in whole percent, a temperature or an energy figure held for several samples), so a rising value draws as a staircase.
+// destair(t, a) gives the straight line it really was: each run of equal readings is replaced by its centre point (the time its true value passed through), and the readings between
+// centres are joined by straight lines. Over a ramp that keeps the area under the graph the same (each step's missing half is the next step's extra half). It only touches a series that
+// is a staircase (many short runs of repeated values); a long hold (a charger at 0 kW for minutes, a battery sitting at 100 %) keeps its flat part, and a series that is not a staircase
+// is returned as it is. The readings themselves (hover, tables) are never changed. DESTAIR = {runs: fewest runs, eq: share of equal neighbours, long: x the median run is a real hold}.
+const DESTAIR={runs:8,eq:.35,long:3};
+const destair=(t,a)=>{
+  const idx=[];for(let i=0;i<a.length;i++)if(a[i]!=null&&t[i]!=null)idx.push(i);
+  if(idx.length<12)return a;
+  let same=0;for(let k=1;k<idx.length;k++)if(a[idx[k]]===a[idx[k-1]])same++;
+  if(same/(idx.length-1)<DESTAIR.eq)return a;
+  const runs=[];for(let k=0;k<idx.length;){let j=k;while(j+1<idx.length&&a[idx[j+1]]===a[idx[k]])j++;runs.push([k,j]);k=j+1}
+  if(runs.length<DESTAIR.runs)return a;
+  const dur=runs.map(([k,j])=>t[idx[j]]-t[idx[k]]).sort((p,q)=>p-q),med=dur[dur.length>>1]||0,an=[];
+  runs.forEach(([k,j],r)=>{const i0=idx[k],i1=idx[j],ta=k>0?(t[idx[k-1]]+t[i0])/2:t[i0],tb=j<idx.length-1?(t[i1]+t[idx[j+1]])/2:t[i1];
+    if(med>0&&t[i1]-t[i0]>DESTAIR.long*med){an.push([t[i0],a[i0]],[t[i1],a[i1]])}          // a real hold: flat from its first reading to its last
+    else an.push([r===0?t[i0]:r===runs.length-1?t[i1]:(ta+tb)/2,a[i0]])});                   // a step: its centre (the series' two ends stay where the data begins and ends)
+  const out=a.slice();let m=0;
+  for(const i of idx){while(m<an.length-2&&t[i]>an[m+1][0])m++;const [x0,y0]=an[m],[x1,y1]=an[m+1];out[i]=x1<=x0?y0:y0+(y1-y0)*Math.min(1,Math.max(0,(t[i]-x0)/(x1-x0)))}
+  return out};
+let SMS=true;try{SMS=localStorage.getItem("smoothSteps")!=="0"}catch(_){}
+// DESTAIR end
 // time-axis chart. series: [{k,name,unit,col,axis}], axes: {id:{side:"left"|"right",label,col,min,max}}. `sel` = part drawn solid (others dashed); strip = charging-state bar
 function tsChart(host,segs,sel,tz,series,axes,o){
   o=o||{};const all=segs.flatMap(s=>s.t);if(all.length<2){host.innerHTML='<div class="sub">No telemetry file for this charge.</div>';return}
@@ -668,7 +690,7 @@ function tsChart(host,segs,sel,tz,series,axes,o){
   let ri=0;const pos={};used.forEach(a=>{pos[a]=axes[a].side==="right"?W-R+6+48*(ri++):L-6});
   used.forEach((a,ai)=>{const ax=axes[a],r=ax.side==="right",span=ext[a][1]-ext[a][0];for(let g=0;g<=4;g++){const v=ext[a][0]+span*g/4;h+=`<text x="${pos[a]}" y="${Y(a,v)+4}" text-anchor="${r?"start":"end"}" style="fill:${ax.col}">${n0(v,span<12?1:0)}</text>`+(ai===0?`<line class="grid" x1="${L}" x2="${W-R}" y1="${Y(a,v)}" y2="${Y(a,v)}"/>`:"")}
     h+=`<text x="${r?pos[a]:6}" y="${T-8}" text-anchor="${r?"start":"start"}" style="fill:${ax.col};font-weight:600">${esc(ax.label)}</text>`});
-  const path=(s,arr,a)=>{const P=[];s.t.forEach((t,i)=>{if(arr[i]!=null)P.push([X(t),Y(a,arr[i])])});if(!P.length)return"";
+  const path=(s,arr0,a)=>{const arr=SMS?destair(s.t,arr0):arr0,P=[];s.t.forEach((t,i)=>{if(arr[i]!=null)P.push([X(t),Y(a,arr[i])])});if(!P.length)return"";
     if(!o.smooth||P.length<3)return P.map((q,i)=>(i?"L":"M")+q[0].toFixed(1)+","+q[1].toFixed(1)).join("");
     let d="M"+P[0][0].toFixed(1)+","+P[0][1].toFixed(1);for(let i=0;i<P.length-1;i++){const p0=P[i-1]||P[i],p1=P[i],p2=P[i+1],p3=P[i+2]||p2;d+=`C${(p1[0]+(p2[0]-p0[0])/6).toFixed(1)},${(p1[1]+(p2[1]-p0[1])/6).toFixed(1)} ${(p2[0]-(p3[0]-p1[0])/6).toFixed(1)},${(p2[1]-(p3[1]-p1[1])/6).toFixed(1)} ${p2[0].toFixed(1)},${p2[1].toFixed(1)}`}return d};
   const edge=(p,q,k,a)=>{const i=p[k].map((v,j)=>[v,j]).filter(z=>z[0]!=null).pop(),j=q[k].map((v,m)=>[v,m]).find(z=>z[0]!=null);return i&&j?`M${X(p.t[i[1]]).toFixed(1)},${Y(a,i[0]).toFixed(1)}L${X(q.t[j[1]]).toFixed(1)},${Y(a,j[0]).toFixed(1)}`:""};
@@ -676,7 +698,8 @@ function tsChart(host,segs,sel,tz,series,axes,o){
   if(o.strip){const ST={Charging:"#16a34a",Starting:"#84cc16",Complete:"#9aa3b5",NoPower:"#d98a00",Disconnected:"#d4332b",Stopped:"#d98a00"},yy=H-B+4,runs=[];segs.forEach(s=>{let a=0;s.state.forEach((st,i)=>{if(i===s.state.length-1||s.state[i+1]!==st){runs.push([s.t[a],s.t[Math.min(i+1,s.t.length-1)],st]);a=i+1}})});
     h+=runs.map(([a,b,st])=>`<rect x="${X(a)}" y="${yy}" width="${Math.max(1,X(b)-X(a))}" height="7" fill="${ST[st]||"#c7ccd9"}"><title>${esc(st||"?")}</title></rect>`).join("")+`<text x="${L-6}" y="${yy+7}" text-anchor="end" style="font-size:10px">state</text>`}
   for(let i=0;i<=6;i++){const v=t0+(t1-t0)*i/6;h+=`<text x="${X(v)}" y="${H-4}" text-anchor="middle">${hm(v).slice(0,5)}</text>`}
-  host.innerHTML=`<svg viewBox="0 0 ${W} ${H}" style="width:100%;height:auto;display:block">${h}<line class="cl" id="cur" y1="${T}" y2="${H-B}" style="display:none"/></svg><div class="sub" style="margin-top:4px">${ser.map(z=>`<span style="margin-right:16px"><span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:${z.col};margin-right:5px"></span>${esc(z.name)}${axes[z.axis].side==="right"?" (right axis)":""}</span>`).join("")}${o.note?" · "+o.note:""}</div>`;
+  host.innerHTML=`<svg viewBox="0 0 ${W} ${H}" style="width:100%;height:auto;display:block">${h}<line class="cl" id="cur" y1="${T}" y2="${H-B}" style="display:none"/></svg><div class="sub" style="margin-top:4px">${ser.map(z=>`<span style="margin-right:16px"><span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:${z.col};margin-right:5px"></span>${esc(z.name)}${axes[z.axis].side==="right"?" (right axis)":""}</span>`).join("")}${o.note?" · "+o.note:""}<label style="margin-left:16px;white-space:nowrap" title="Tessie reports some readings in coarse steps (the battery in whole percent): this draws the straight line they really were. The readings you hover over are unchanged."><input type="checkbox" class="sms" ${SMS?"checked":""}> Smooth steps</label></div>`;
+  {const cb=host.querySelector(".sms");if(cb)cb.onchange=()=>{SMS=cb.checked;try{localStorage.setItem("smoothSteps",SMS?"1":"0")}catch(_){}tsChart(host,segs,sel,tz,series,axes,o)}}
   const svg=$("svg",host),cur=$("#cur",host),pts=[];segs.forEach(s=>s.t.forEach((t,i)=>pts.push([t,s,i])));
   svg.onmousemove=ev=>{const r=svg.getBoundingClientRect(),x=(ev.clientX-r.left)/r.width*W;if(x<L||x>W-R){svg.onmouseleave();return}
     const tv=t0+(x-L)/(W-L-R)*(t1-t0);let b=1e18,bp=null;pts.forEach(p=>{const d=Math.abs(p[0]-tv);if(d<b){b=d;bp=p}});const [t,s,i]=bp;cur.setAttribute("x1",X(t));cur.setAttribute("x2",X(t));cur.style.display="";
@@ -795,6 +818,7 @@ const fixChargerCard=(p,pkey)=>{if(p.home||p.kind==="supercharger"||p.lat==null)
    ${near.map(n=>`<div class="cs-r" style="margin-top:6px"><b>${esc(n.name)}</b> · ${esc(n.network)} · ${n.dist} m <span class="sub">(${esc(src(n))})</span>${(n.info||{}).address?`<div class="sub">${esc(n.info.address)}</div>`:""}<div class="sub">${facts(n)}${(n.info||{}).url?` · <a href="${esc(n.info.url)}" target="_blank" rel="noopener">link</a>`:""}</div><div class="bar" style="margin-top:4px">${addBtn(n)}</div></div>`).join("")}
    <div class="bar">${site?"":`<button class="btn" data-fx="${add({act:"add",place:saved,charger:{name:p.place,network:p.network,free:true}})}">It is free (no invoice)</button>`} <button class="btn" data-fx="${add({act:"add",place:saved,charger:{name:"",network:"",free:false},edit:true})}">Another charger…</button></div>
    <div id="fxmsg" class="sub"></div></div>`};
+const fxPush=async id=>{for(let i=0;i<90;i++){try{const j=await (await fetch("/api/chargebook")).json(),q=j.push;if(q&&String(q.id)===String(id)&&q.state!=="running")return q}catch(_){}await new Promise(z=>setTimeout(z,1500))}return null};      // the charge's cost going to Tessie (the book's push state): wait for it to finish
 const fxWait=async t=>{for(let i=0;i<60;i++){await new Promise(z=>setTimeout(z,1500));try{const j=await (await fetch("/api/chargebook")).json();if(j.status==="ready"&&j.book&&j.book.built*1000>=t-2000)return true}catch(_){}}return false};
 document.addEventListener("click",async e=>{const b=e.target.closest&&e.target.closest("[data-fx]");if(!b)return;const o=FXC[+b.dataset.fx],pg=window.FXP;if(!o||!pg)return;const m=$("#fxmsg"),say=t=>{if(m)m.textContent=t};
   const post=async(u,body)=>(await fetch(u,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)})).json();
@@ -804,7 +828,11 @@ document.addEventListener("click",async e=>{const b=e.target.closest&&e.target.c
   const t=Date.now();say("Saving…");b.disabled=true;
   try{const r=o.act==="pick"?await post("/api/chargebook/charger",{id:pg.id,charger:o.charger,all:!!($("#fxall")&&$("#fxall").checked),place:(window.FXK||"").replace(/^p:/,"")}):await post("/api/places/charger",{place:o.place,charger:o.charger,charge:pg.id});
     if(!r.ok){say("Not saved: "+(r.error||"?"));b.disabled=false;return}
-    bust();say("Saved. Updating the charges…");await fxWait(t);bust();NAVREPL=true;route()}catch(err){say("Could not reach the app: "+err);b.disabled=false}});
+    bust();const pu=(r.set&&r.set.push)||r.push;let t2=t;
+    if(pu==="started"||pu==="queued"){say("Saved. Sending the cost to Tessie…");const ps=await fxPush(pg.id);if(ps){say(ps.msg);await new Promise(z=>setTimeout(z,1200))}t2=Date.now()}
+    else if(pu==="skipped")say("Saved. The cost cannot be sent to Tessie yet (no Tessie id for this charge).");
+    else say("Saved. Updating the charges…");
+    await fxWait(t2);bust();NAVREPL=true;route()}catch(err){say("Could not reach the app: "+err);b.disabled=false}});
 async function pageCharge(id,pid){
   loading("detail");const [B0,D]=await Promise.all([bookWithRaw(),fetch("/api/chargebook/"+encodeURIComponent(id)+(pid?"?part="+encodeURIComponent(pid):"")).then(r=>r.ok?r.json():null).catch(()=>null)]);
   if(!B0.book){bookWait(B0,"Charge",()=>pageCharge(id,pid));return}

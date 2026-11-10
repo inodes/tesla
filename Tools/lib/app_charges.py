@@ -284,7 +284,7 @@ class ChargeBook:
                 running = True
             if self.book is None:
                 return dict(status="error" if self.err and not running else "building", error=self.err, book=None)
-            return dict(status="building" if running else "ready", error=self.err, book=self.book)
+            return dict(status="building" if running else "ready", error=self.err, book=self.book, push=self.push_state)
 
     def _look(self):
         """Looks at the files the book is made from (seconds) and keeps what it saw; the next request starts a rebuild if they differ from the book."""
@@ -475,7 +475,69 @@ class ChargeBook:
             json.dump(j, fh, indent=1, sort_keys=True)
         os.replace(tmp, f)
         self.touch()
-        return dict(ok=True)
+        r = dict(ok=True)
+        if name:
+            r["push"] = self.push_tessie(p)          # the cost of this charge goes to Tessie by itself: nobody has to run the sync
+        return r
+
+    # ---- Tessie: the cost of one charge, sent as soon as what it cost is known ------------------------------------------
+    push_state = None            # {id, state: running | done | failed | skipped, msg, t}
+    push_apply = True            # off in tests: no call to Tessie
+
+    def push_tessie(self, p):
+        """Starts sending the cost of a charge (all its parts) to Tessie in the background (charging_analyzer.sync_tessie_costs, only these Tessie ids): the same figure, ledger and
+        checks as the command-line sync, so a free charger is sent as $0.00 and a charge whose invoice or tariff is not known is left alone. Progress is in push_state."""
+        ids = [x.get("tessie_id") for x in p.get("parts") or [] if x.get("tessie_id") is not None]
+        if not ids:
+            self.push_state = dict(id=p["id"], state="skipped", msg="Tessie has no id for this charge yet, so its cost cannot be sent.", t=int(time.time()))
+            return "skipped"
+        if not self.push_apply or not self.tools:
+            return "off"
+        with self.lock:
+            if getattr(self, "push_thread", None) and self.push_thread.is_alive():
+                self.push_more = getattr(self, "push_more", []) + [(p["id"], ids)]
+                return "queued"
+            self.push_state = dict(id=p["id"], state="running", msg="Sending the cost to Tessie...", t=int(time.time()))
+            self.push_thread = threading.Thread(target=self._push_run, args=(p["id"], ids), daemon=True)
+            self.push_thread.start()
+        return "started"
+
+    def _push_run(self, cid, ids):
+        todo = [(cid, ids)]
+        while todo:
+            cid, ids = todo.pop(0)
+            self.push_state = dict(id=cid, state="running", msg="Sending the cost to Tessie...", t=int(time.time()))
+            try:
+                ac, _ = self._analyzer()
+                buf = io.StringIO()
+                cwd = os.getcwd()
+                os.chdir(self.tools)
+                try:
+                    with contextlib.redirect_stdout(buf), contextlib.redirect_stderr(buf):
+                        a = ac.ChargingAnalyzer(tessie_dir=self.data)
+                        a.landing_dir = ""
+                        a.auto_ingest_from_landing = lambda: 0
+                        res = a.sync_tessie_costs(apply=True, only_ids=ids)
+                finally:
+                    os.chdir(cwd)
+                rows = [x for x in (res or {}).get("rows", []) if str(x.get("tessie_id")) in {str(i) for i in ids}]
+                if (res or {}).get("pushed"):
+                    r0 = next((x for x in rows if x.get("action") == "PUSH"), rows[0] if rows else {})
+                    st = dict(state="done", msg="Sent to Tessie: $%.2f." % float(r0.get("new_cost") or 0))
+                elif (res or {}).get("already_correct"):
+                    st = dict(state="done", msg="Tessie already holds this cost.")
+                elif (res or {}).get("failed"):
+                    st = dict(state="failed", msg="Tessie did not accept the cost (see the log).")
+                else:
+                    why = next((x.get("action") for x in rows if x.get("action")), "nothing to send")
+                    st = dict(state="skipped", msg="Not sent: %s" % why.replace("SKIP (", "").rstrip(")"))
+            except Exception as e:
+                st = dict(state="failed", msg="Could not send to Tessie: %s: %s" % (type(e).__name__, e))
+            self.push_state = dict(id=cid, t=int(time.time()), **st)
+            self.touch()                      # the sent figure is in the ledger and the master file now: the book is rebuilt to show it
+            with self.lock:
+                todo += getattr(self, "push_more", [])
+                self.push_more = []
 
     def touch(self):
         """Something the book is made from changed (a place, a chosen charger): forget what was seen of the files so the next request rebuilds."""

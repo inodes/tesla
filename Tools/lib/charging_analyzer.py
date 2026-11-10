@@ -6451,7 +6451,7 @@ class ChargingAnalyzer:
         self.load_charges()
         self.reconcile(interactive=False)
 
-    def sync_tessie_costs(self, apply=False, limit=None, only_confident=False):
+    def sync_tessie_costs(self, apply=False, limit=None, only_confident=False, only_ids=None):
         """REQ-148: pushes our real calculated/known cost - the exact
         methodology behind report_all_charges_cost.py's own report (the
         tiered/solar-aware model for Home charges, the matched invoice
@@ -6479,6 +6479,8 @@ class ChargingAnalyzer:
         location_raw/started_at_str, not the resolved display name) -
         so the local file and Tessie's own live figure never drift
         apart after a sync.
+
+        only_ids (Tessie ids) limits the push to those charges.
 
         only_confident=True additionally skips the Home charges with no
         PV data at all for their window (flat-rate-fallback pricing),
@@ -6521,6 +6523,9 @@ class ChargingAnalyzer:
         from collections import Counter as _Counter
         id_counts = _Counter((r["cache_record"] or {}).get("id") for r in results if r["cache_record"])
         plugin_shares = self.plugin_invoice_shares([x["session"] for x in results])
+        if only_ids is not None:               # the app pushes the one charge whose charger was just chosen (the ambiguity and plug-in checks above saw them all)
+            only_ids = {str(i) for i in only_ids}
+            results = [x for x in results if str((x["cache_record"] or {}).get("id")) in only_ids]
         for r in results:
             s = r["session"]
             raw = r["raw_charge"]
@@ -6541,8 +6546,8 @@ class ChargingAnalyzer:
                 action = "SKIP (no cost available)"
                 n_skip_no_cost += 1
             elif (not isinstance(our_cost, (int, float)) or not math.isfinite(our_cost)
-                  or our_cost < 0 or (our_cost == 0 and kwh_added > 0)):
-                # B3: never push a NaN, negative, or $0 cost for a real charge.
+                  or our_cost < 0 or (our_cost == 0 and kwh_added > 0 and not s.get("free_charger"))):
+                # B3: never push a NaN, negative, or $0 cost for a real charge - except where a charger was chosen as free (a saved place's free charger: $0 is the cost).
                 action = f"SKIP (implausible cost {our_cost!r} - check)"
                 n_skip_invalid += 1
             elif only_confident and low_confidence:
