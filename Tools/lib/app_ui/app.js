@@ -659,7 +659,7 @@ async function pageCharges(){
 // centres are joined by straight lines. Over a ramp that keeps the area under the graph the same (each step's missing half is the next step's extra half). It only touches a series that
 // is a staircase (many short runs of repeated values); a long hold (a charger at 0 kW for minutes, a battery sitting at 100 %) keeps its flat part, and a series that is not a staircase
 // is returned as it is. The readings themselves (hover, tables) are never changed. DESTAIR = {runs: fewest runs, eq: share of equal neighbours, long: x the median run is a real hold}.
-const DESTAIR={runs:8,eq:.35,long:3};
+const DESTAIR={runs:6,eq:.2,long:3,sigma:2.0};
 const destair=(t,a)=>{
   const idx=[];for(let i=0;i<a.length;i++)if(a[i]!=null&&t[i]!=null)idx.push(i);
   if(idx.length<12)return a;
@@ -673,6 +673,18 @@ const destair=(t,a)=>{
     else an.push([r===0?t[i0]:r===runs.length-1?t[i1]:(ta+tb)/2,a[i0]])});                   // a step: its centre (the series' two ends stay where the data begins and ends)
   const out=a.slice();let m=0;
   for(const i of idx){while(m<an.length-2&&t[i]>an[m+1][0])m++;const [x0,y0]=an[m],[x1,y1]=an[m+1];out[i]=x1<=x0?y0:y0+(y1-y0)*Math.min(1,Math.max(0,(t[i]-x0)/(x1-x0)))}
+  return out};
+// soften(t, a): the series averaged with a bell-shaped weight over about `sigma` x the usual gap between samples either side (weights renormalised at the ends and across gaps), so a
+// jump of one unit between neighbouring samples becomes a short slope. A symmetric average keeps the area under the graph; a flat stretch stays flat; nulls stay null.
+const soften=(t,a)=>{
+  const idx=[];for(let i=0;i<a.length;i++)if(a[i]!=null&&t[i]!=null)idx.push(i);
+  if(idx.length<5)return a;
+  const dts=[];for(let k=1;k<idx.length;k++)dts.push(t[idx[k]]-t[idx[k-1]]);dts.sort((p,q)=>p-q);
+  const sg=(dts[dts.length>>1]||1)*DESTAIR.sigma,out=a.slice();
+  for(let k=0;k<idx.length;k++){const i=idx[k];let sw=0,sv=0;
+    for(let m=k;m>=0;m--){const d=t[i]-t[idx[m]];if(d>3*sg)break;const w=Math.exp(-.5*d*d/(sg*sg));sw+=w;sv+=w*a[idx[m]]}
+    for(let m=k+1;m<idx.length;m++){const d=t[idx[m]]-t[i];if(d>3*sg)break;const w=Math.exp(-.5*d*d/(sg*sg));sw+=w;sv+=w*a[idx[m]]}
+    out[i]=sv/sw}
   return out};
 let SMS=true;try{SMS=localStorage.getItem("smoothSteps")!=="0"}catch(_){}
 // DESTAIR end
@@ -690,7 +702,7 @@ function tsChart(host,segs,sel,tz,series,axes,o){
   let ri=0;const pos={};used.forEach(a=>{pos[a]=axes[a].side==="right"?W-R+6+48*(ri++):L-6});
   used.forEach((a,ai)=>{const ax=axes[a],r=ax.side==="right",span=ext[a][1]-ext[a][0];for(let g=0;g<=4;g++){const v=ext[a][0]+span*g/4;h+=`<text x="${pos[a]}" y="${Y(a,v)+4}" text-anchor="${r?"start":"end"}" style="fill:${ax.col}">${n0(v,span<12?1:0)}</text>`+(ai===0?`<line class="grid" x1="${L}" x2="${W-R}" y1="${Y(a,v)}" y2="${Y(a,v)}"/>`:"")}
     h+=`<text x="${r?pos[a]:6}" y="${T-8}" text-anchor="${r?"start":"start"}" style="fill:${ax.col};font-weight:600">${esc(ax.label)}</text>`});
-  const path=(s,arr0,a)=>{const arr=SMS?destair(s.t,arr0):arr0,P=[];s.t.forEach((t,i)=>{if(arr[i]!=null)P.push([X(t),Y(a,arr[i])])});if(!P.length)return"";
+  const path=(s,arr0,a)=>{const arr=SMS?soften(s.t,destair(s.t,arr0)):arr0,P=[];s.t.forEach((t,i)=>{if(arr[i]!=null)P.push([X(t),Y(a,arr[i])])});if(!P.length)return"";
     if(!o.smooth||P.length<3)return P.map((q,i)=>(i?"L":"M")+q[0].toFixed(1)+","+q[1].toFixed(1)).join("");
     let d="M"+P[0][0].toFixed(1)+","+P[0][1].toFixed(1);for(let i=0;i<P.length-1;i++){const p0=P[i-1]||P[i],p1=P[i],p2=P[i+1],p3=P[i+2]||p2;d+=`C${(p1[0]+(p2[0]-p0[0])/6).toFixed(1)},${(p1[1]+(p2[1]-p0[1])/6).toFixed(1)} ${(p2[0]-(p3[0]-p1[0])/6).toFixed(1)},${(p2[1]-(p3[1]-p1[1])/6).toFixed(1)} ${p2[0].toFixed(1)},${p2[1].toFixed(1)}`}return d};
   const edge=(p,q,k,a)=>{const i=p[k].map((v,j)=>[v,j]).filter(z=>z[0]!=null).pop(),j=q[k].map((v,m)=>[v,m]).find(z=>z[0]!=null);return i&&j?`M${X(p.t[i[1]]).toFixed(1)},${Y(a,i[0]).toFixed(1)}L${X(q.t[j[1]]).toFixed(1)},${Y(a,j[0]).toFixed(1)}`:""};

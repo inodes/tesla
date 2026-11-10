@@ -77,5 +77,36 @@ class DestairTest(unittest.TestCase):
         self.assertEqual(len(b), len(a))
 
 
+@unittest.skipUnless(node_usable.usable(), "node is not installed or does not start")
+class SoftenTest(unittest.TestCase):
+    def volts(self):
+        t = [i * 3 for i in range(300)]
+        a = [round(380 + i * 0.06 + (1 if i % 7 in (0, 1) else 0)) for i in range(300)]       # whole volts, wobbling by one between neighbours
+        return t, a
+
+    def test_a_one_unit_jump_between_neighbours_becomes_a_slope(self):
+        t, a = self.volts()
+        b = run("soften(%s,%s)" % (json.dumps(t), json.dumps(a)))
+        self.assertLess(max(abs(b[i + 1] - b[i]) for i in range(5, 290)), 0.6 * max(abs(a[i + 1] - a[i]) for i in range(5, 290)))
+        self.assertLess(abs(area(t, b) - area(t, a)) / area(t, a), 0.001)
+
+    def test_a_flat_stretch_stays_flat_and_nulls_stay(self):
+        t = list(range(100))
+        a = [5.0] * 100
+        a[40] = None
+        b = run("soften(%s,%s)" % (json.dumps(t), json.dumps(a)))
+        self.assertIsNone(b[40])
+        self.assertTrue(all(abs(v - 5.0) < 1e-9 for i, v in enumerate(b) if i != 40))
+
+    def test_the_readings_given_are_not_changed(self):
+        t, a = self.volts()
+        keep = list(a)
+        run("soften(%s,%s)" % (json.dumps(t), json.dumps(a)))
+        self.assertEqual(a, keep)
+
+    def test_a_short_series_is_left_alone(self):
+        self.assertEqual(run("soften([0,1,2],[1,2,3])"), [1, 2, 3])
+
+
 if __name__ == "__main__":
     unittest.main()
