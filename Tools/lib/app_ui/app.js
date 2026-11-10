@@ -659,18 +659,22 @@ async function pageCharges(){
 // centres are joined by straight lines. Over a ramp that keeps the area under the graph the same (each step's missing half is the next step's extra half). It only touches a series that
 // is a staircase (many short runs of repeated values); a long hold (a charger at 0 kW for minutes, a battery sitting at 100 %) keeps its flat part, and a series that is not a staircase
 // is returned as it is. The readings themselves (hover, tables) are never changed. DESTAIR = {runs: fewest runs, eq: share of equal neighbours, long: x the median run is a real hold}.
-const DESTAIR={runs:6,eq:.2,long:3,sigma:2.0};
+const DESTAIR={runs:6,mono:4,eq:.2,long:3,sigma:2.0,run:.6,cap:8};
 const destair=(t,a)=>{
   const idx=[];for(let i=0;i<a.length;i++)if(a[i]!=null&&t[i]!=null)idx.push(i);
   if(idx.length<12)return a;
   let same=0;for(let k=1;k<idx.length;k++)if(a[idx[k]]===a[idx[k-1]])same++;
   if(same/(idx.length-1)<DESTAIR.eq)return a;
   const runs=[];for(let k=0;k<idx.length;){let j=k;while(j+1<idx.length&&a[idx[j+1]]===a[idx[k]])j++;runs.push([k,j]);k=j+1}
-  if(runs.length<DESTAIR.runs)return a;
+  let up=true,dn=true;for(let k=1;k<idx.length;k++){if(a[idx[k]]<a[idx[k-1]])up=false;if(a[idx[k]]>a[idx[k-1]])dn=false}
+  if(runs.length<(up||dn?DESTAIR.mono:DESTAIR.runs))return a;           // a series that only ever rises (or falls) needs fewer steps to be told from a hold: the battery in whole percent over a slow charge has four or five
   const dur=runs.map(([k,j])=>t[idx[j]]-t[idx[k]]).sort((p,q)=>p-q),med=dur[dur.length>>1]||0,an=[];
   runs.forEach(([k,j],r)=>{const i0=idx[k],i1=idx[j],ta=k>0?(t[idx[k-1]]+t[i0])/2:t[i0],tb=j<idx.length-1?(t[i1]+t[idx[j+1]])/2:t[i1];
-    if(med>0&&t[i1]-t[i0]>DESTAIR.long*med){an.push([t[i0],a[i0]],[t[i1],a[i1]])}          // a real hold: flat from its first reading to its last
-    else an.push([r===0?t[i0]:r===runs.length-1?t[i1]:(ta+tb)/2,a[i0]])});                   // a step: its centre (the series' two ends stay where the data begins and ends)
+    const pv=r>0?a[idx[runs[r-1][0]]]:null,nx=r<runs.length-1?a[idx[runs[r+1][0]]]:null,peak=pv==null||nx==null||(pv<a[i0]&&nx<a[i0])||(pv>a[i0]&&nx>a[i0]);        // a hold is a peak, a valley or an end; a long run between a lower and a higher reading is a slow climb, not a hold
+    if(peak&&med>0&&t[i1]-t[i0]>DESTAIR.long*med){an.push([t[i0],a[i0]],[t[i1],a[i1]])}          // a real hold: flat from its first reading to its last
+    else if(r===0)an.push([t[i0],a[i0]],[Math.max(t[i0],(ta+tb)/2),a[i0]]);                  // the first run: flat from where the data begins to its centre, then the climb
+    else if(r===runs.length-1)an.push([Math.min(t[i1],(ta+tb)/2),a[i0]],[t[i1],a[i1]]);        // the last: the fall to its centre, then flat to where the data ends
+    else an.push([(ta+tb)/2,a[i0]])});                                                          // a step: its centre
   const out=a.slice();let m=0;
   for(const i of idx){while(m<an.length-2&&t[i]>an[m+1][0])m++;const [x0,y0]=an[m],[x1,y1]=an[m+1];out[i]=x1<=x0?y0:y0+(y1-y0)*Math.min(1,Math.max(0,(t[i]-x0)/(x1-x0)))}
   return out};
@@ -680,10 +684,12 @@ const soften=(t,a)=>{
   const idx=[];for(let i=0;i<a.length;i++)if(a[i]!=null&&t[i]!=null)idx.push(i);
   if(idx.length<5)return a;
   const dts=[];for(let k=1;k<idx.length;k++)dts.push(t[idx[k]]-t[idx[k-1]]);dts.sort((p,q)=>p-q);
-  const sg=(dts[dts.length>>1]||1)*DESTAIR.sigma,out=a.slice();
-  for(let k=0;k<idx.length;k++){const i=idx[k];let sw=0,sv=0;
-    for(let m=k;m>=0;m--){const d=t[i]-t[idx[m]];if(d>3*sg)break;const w=Math.exp(-.5*d*d/(sg*sg));sw+=w;sv+=w*a[idx[m]]}
-    for(let m=k+1;m<idx.length;m++){const d=t[idx[m]]-t[i];if(d>3*sg)break;const w=Math.exp(-.5*d*d/(sg*sg));sw+=w;sv+=w*a[idx[m]]}
+  const md=dts[dts.length>>1]||1,rd=[];for(let k=0;k<idx.length;){let j=k;while(j+1<idx.length&&a[idx[j+1]]===a[idx[k]])j++;if(j>k)rd.push(t[idx[j]]-t[idx[k]]);k=j+1}rd.sort((p,q)=>p-q);
+  const sg=Math.min(DESTAIR.cap*md,Math.max(DESTAIR.sigma*md,DESTAIR.run*(rd[rd.length>>1]||0))),out=a.slice();       // wider where the readings are held longer (up to `cap` gaps)
+  const tf=t[idx[0]],tl=t[idx[idx.length-1]];
+  for(let k=0;k<idx.length;k++){const i=idx[k],hw=Math.min(3*sg,t[i]-tf,tl-t[i]);let sw=0,sv=0;       // the window never reaches past either end of the series, so the first and last readings stay as they are (a charge that begins and ends at 0 kW)
+    for(let m=k;m>=0;m--){const d=t[i]-t[idx[m]];if(d>hw)break;const w=Math.exp(-.5*d*d/(sg*sg));sw+=w;sv+=w*a[idx[m]]}
+    for(let m=k+1;m<idx.length;m++){const d=t[idx[m]]-t[i];if(d>hw)break;const w=Math.exp(-.5*d*d/(sg*sg));sw+=w;sv+=w*a[idx[m]]}
     out[i]=sv/sw}
   return out};
 let SMS=true;try{SMS=localStorage.getItem("smoothSteps")!=="0"}catch(_){}

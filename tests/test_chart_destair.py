@@ -98,6 +98,20 @@ class SoftenTest(unittest.TestCase):
         self.assertIsNone(b[40])
         self.assertTrue(all(abs(v - 5.0) < 1e-9 for i, v in enumerate(b) if i != 40))
 
+    def test_the_ends_of_a_series_stay_put(self):
+        t = [i * 3 for i in range(120)]
+        a = [0.0] + [4.0 if i % 9 else 3.0 for i in range(1, 119)] + [0.0]       # begins and ends at 0 kW
+        b = run("soften(%s,%s)" % (json.dumps(t), json.dumps(a)))
+        self.assertEqual(b[0], 0.0)
+        self.assertEqual(b[-1], 0.0)
+
+    def test_a_slow_climb_in_few_steps_is_a_ramp(self):
+        t = [i * 36 for i in range(145)]                 # a slow home charge: the battery in whole percent, five readings in 95 minutes
+        a = [62] * 20 + [63] * 30 + [64] * 30 + [65] * 35 + [66] * 30
+        b = run("destair(%s,%s)" % (json.dumps(t), json.dumps(a)))
+        self.assertLess(max(abs(b[i + 1] - b[i]) for i in range(144)), 0.1)         # no step left
+        self.assertAlmostEqual(area(t, b), area(t, a), delta=0.01 * area(t, a))
+
     def test_the_readings_given_are_not_changed(self):
         t, a = self.volts()
         keep = list(a)
