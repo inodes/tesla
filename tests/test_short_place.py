@@ -30,6 +30,14 @@ class LabelTest(unittest.TestCase):
         self.assertEqual(sp.label("Main Beach", -27.98, 153.43), "Main Beach, QLD")
         self.assertEqual(self.calls, [])
 
+    def test_the_suburb_whose_boundary_holds_the_position_beats_the_one_the_clip_carries(self):
+        class Subs:
+            def at(self, lat, lon):
+                return "Drummoyne" if lat > -33.86 else None
+        sp = self.mk(suburbs=Subs())
+        self.assertEqual(sp.label("Sydney CBD", -33.8545, 151.1527), "Drummoyne, NSW")        # the car wrote the suburb of a horn press ten minutes later
+        self.assertEqual(sp.label("Sydney CBD", *HOME), "Sydney CBD, NSW")                      # no boundary known for this point: the clip's own suburb stands
+
     def test_a_clip_with_no_suburb_takes_the_nearest_clips_suburb(self):
         sp = self.mk()
         sp.feed([(HOME[0] + 0.001, HOME[1], "Surry Hills"), (HOME[0] + 0.5, HOME[1], "Far Away")])

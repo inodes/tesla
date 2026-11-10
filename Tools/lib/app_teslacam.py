@@ -701,7 +701,11 @@ class TeslaCam:
         import short_place
         sp = self.__dict__.get("_sp")
         if sp is None:
-            sp = self.__dict__["_sp"] = short_place.ShortPlace(self.dir)
+            sub = None
+            if app_config.get("teslacam.suburb_lookup", True):
+                import suburb_lookup
+                sub = self.__dict__.get("_suburbs") or self.__dict__.setdefault("_suburbs", suburb_lookup.Suburbs(os.path.join(self.dir, "suburbs")))
+            sp = self.__dict__["_sp"] = short_place.ShortPlace(self.dir, suburbs=sub)
         evp = self._event_places()
         ver = (CC.where_token(), len(store.sum or {}), id(evp))          # what it is fed from: the clips' own places, the minutes whose telemetry is read, and the events' own positions
         old = self.__dict__.get("_sp_ver")

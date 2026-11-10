@@ -1,6 +1,7 @@
 """short_place.py - the short place of a spot for the label on the video: "Main Beach, QLD".
 
 TeslaCam first: the car writes a suburb into most of its clips and the clips carry GPS, so the label comes from the footage itself.
+    0. the suburb whose boundary holds the position (suburb_lookup.Suburbs, when given: OpenStreetMap's boundaries, kept after the first time, instant) - the position is the truth;
     1. the suburb the clip carries;
     2. else (a garage, a basement: the car wrote none) the suburb of the nearest clip that has one and a position, within `near_m` - offline, instant;
     3. else a lookup of the position (Nominatim, in the background, kept in a file beside the other data): the answer is there on the next ask.
@@ -29,7 +30,8 @@ def _hav(a, b, c, d):
 
 
 class ShortPlace:
-    def __init__(self, data_dir=None, geocode=None, near_m=600.0, border_deg=0.14, background=True):
+    def __init__(self, data_dir=None, geocode=None, near_m=600.0, border_deg=0.14, background=True, suburbs=None):
+        self.suburbs = suburbs                  # suburb_lookup.Suburbs: the suburb whose boundary holds the position, which beats any suburb written into a clip
         self.path = os.path.join(data_dir, "place_lookup_cache.json") if data_dir else None
         self.geocode = geocode
         self.near_m = near_m
@@ -143,6 +145,13 @@ class ShortPlace:
             st = self.state_of(suburb)              # no position read for this minute: the state of the suburb as the other clips know it
             return ", ".join(x for x in (suburb, st) if x)
         doubt = au_state.near_border(lat, lon, self.border_deg)
+        if self.suburbs is not None:
+            try:
+                own = self.suburbs.at(lat, lon)
+            except Exception:
+                own = None
+            if own:
+                suburb = own                    # where the car was, by the map, not the suburb of the event the minute belongs to
         if not suburb:
             suburb = self.nearest(lat, lon) or ""
         if not suburb or doubt:
