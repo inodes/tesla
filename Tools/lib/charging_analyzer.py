@@ -6451,7 +6451,7 @@ class ChargingAnalyzer:
         self.load_charges()
         self.reconcile(interactive=False)
 
-    def sync_tessie_costs(self, apply=False, limit=None, only_confident=False, only_ids=None):
+    def sync_tessie_costs(self, apply=False, limit=None, only_confident=False, only_ids=None, only_epochs=None):
         """REQ-148: pushes our real calculated/known cost - the exact
         methodology behind report_all_charges_cost.py's own report (the
         tiered/solar-aware model for Home charges, the matched invoice
@@ -6523,6 +6523,26 @@ class ChargingAnalyzer:
         from collections import Counter as _Counter
         id_counts = _Counter((r["cache_record"] or {}).get("id") for r in results if r["cache_record"])
         plugin_shares = self.plugin_invoice_shares([x["session"] for x in results])
+        if only_epochs is not None:            # the app pushes the charge whose charger was just chosen, named by when its parts began (UTC epochs)
+            eps = [int(e) for e in only_epochs]
+            results = [x for x in results if any(abs(int(x["session"].get("start_utc_epoch") or 0) - e) <= 120 for e in eps)]
+            if any(not x["cache_record"] for x in results):      # Tessie has every charge, our copy of its list may not hold the latest yet: ask Tessie itself
+                from lib.tessie_api_common import api_get, extract_json_records, DEFAULT_UNIT_PARAMS
+                tok0, vin0 = get_token(None, self.config), get_vin(None, self.config)
+                for x in results:
+                    if x["cache_record"]:
+                        continue
+                    t0 = int(x["session"].get("start_utc_epoch") or 0)
+                    prm = dict(DEFAULT_UNIT_PARAMS)
+                    prm.update({"from": t0 - 3600, "to": t0 + 6 * 3600, "limit": 50})
+                    status, body = api_get("charges", vin0, tok0, params=prm)
+                    if status == 200:
+                        try:
+                            near = [rc for rc in extract_json_records(body) if rc.get("started_at") is not None and abs(int(rc["started_at"]) - t0) <= 300]
+                        except ValueError:
+                            near = []
+                        if near:
+                            x["cache_record"] = min(near, key=lambda rc: abs(int(rc["started_at"]) - t0))
         if only_ids is not None:               # the app pushes the one charge whose charger was just chosen (the ambiguity and plug-in checks above saw them all)
             only_ids = {str(i) for i in only_ids}
             results = [x for x in results if str((x["cache_record"] or {}).get("id")) in only_ids]

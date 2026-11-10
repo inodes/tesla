@@ -485,27 +485,28 @@ class ChargeBook:
     push_apply = True            # off in tests: no call to Tessie
 
     def push_tessie(self, p):
-        """Starts sending the cost of a charge (all its parts) to Tessie in the background (charging_analyzer.sync_tessie_costs, only these Tessie ids): the same figure, ledger and
-        checks as the command-line sync, so a free charger is sent as $0.00 and a charge whose invoice or tariff is not known is left alone. Progress is in push_state."""
-        ids = [x.get("tessie_id") for x in p.get("parts") or [] if x.get("tessie_id") is not None]
-        if not ids:
-            self.push_state = dict(id=p["id"], state="skipped", msg="Tessie has no id for this charge yet, so its cost cannot be sent.", t=int(time.time()))
+        """Starts sending the cost of a charge (all its parts) to Tessie in the background (charging_analyzer.sync_tessie_costs, only these charges, named by when their parts began):
+        the same figure, ledger and checks as the command-line sync, so a free charger is sent as $0.00 and a charge whose invoice or tariff is not known is left alone. Tessie has an id
+        for every charge: when our copy of its list has not caught up with a new charge, the sync asks Tessie for it. Progress is in push_state."""
+        eps = [int(x["id"]) for x in p.get("parts") or [] if str(x.get("id", "")).isdigit()]
+        if not eps:
+            self.push_state = dict(id=p["id"], state="skipped", msg="This charge has no start time to look it up by.", t=int(time.time()))
             return "skipped"
         if not self.push_apply or not self.tools:
             return "off"
         with self.lock:
             if getattr(self, "push_thread", None) and self.push_thread.is_alive():
-                self.push_more = getattr(self, "push_more", []) + [(p["id"], ids)]
+                self.push_more = getattr(self, "push_more", []) + [(p["id"], eps)]
                 return "queued"
             self.push_state = dict(id=p["id"], state="running", msg="Sending the cost to Tessie...", t=int(time.time()))
-            self.push_thread = threading.Thread(target=self._push_run, args=(p["id"], ids), daemon=True)
+            self.push_thread = threading.Thread(target=self._push_run, args=(p["id"], eps), daemon=True)
             self.push_thread.start()
         return "started"
 
-    def _push_run(self, cid, ids):
-        todo = [(cid, ids)]
+    def _push_run(self, cid, eps):
+        todo = [(cid, eps)]
         while todo:
-            cid, ids = todo.pop(0)
+            cid, eps = todo.pop(0)
             self.push_state = dict(id=cid, state="running", msg="Sending the cost to Tessie...", t=int(time.time()))
             try:
                 ac, _ = self._analyzer()
@@ -517,10 +518,10 @@ class ChargeBook:
                         a = ac.ChargingAnalyzer(tessie_dir=self.data)
                         a.landing_dir = ""
                         a.auto_ingest_from_landing = lambda: 0
-                        res = a.sync_tessie_costs(apply=True, only_ids=ids)
+                        res = a.sync_tessie_costs(apply=True, only_epochs=eps)
                 finally:
                     os.chdir(cwd)
-                rows = [x for x in (res or {}).get("rows", []) if str(x.get("tessie_id")) in {str(i) for i in ids}]
+                rows = (res or {}).get("rows", [])
                 if (res or {}).get("pushed"):
                     r0 = next((x for x in rows if x.get("action") == "PUSH"), rows[0] if rows else {})
                     st = dict(state="done", msg="Sent to Tessie: $%.2f." % float(r0.get("new_cost") or 0))
@@ -529,7 +530,7 @@ class ChargeBook:
                 elif (res or {}).get("failed"):
                     st = dict(state="failed", msg="Tessie did not accept the cost (see the log).")
                 else:
-                    why = next((x.get("action") for x in rows if x.get("action")), "nothing to send")
+                    why = next((x.get("action") for x in rows if x.get("action")), "Tessie does not list this charge yet")
                     st = dict(state="skipped", msg="Not sent: %s" % why.replace("SKIP (", "").rstrip(")"))
             except Exception as e:
                 st = dict(state="failed", msg="Could not send to Tessie: %s: %s" % (type(e).__name__, e))

@@ -830,7 +830,7 @@ document.addEventListener("click",async e=>{const b=e.target.closest&&e.target.c
     if(!r.ok){say("Not saved: "+(r.error||"?"));b.disabled=false;return}
     bust();const pu=(r.set&&r.set.push)||r.push;let t2=t;
     if(pu==="started"||pu==="queued"){say("Saved. Sending the cost to Tessie…");const ps=await fxPush(pg.id);if(ps){say(ps.msg);await new Promise(z=>setTimeout(z,1200))}t2=Date.now()}
-    else if(pu==="skipped")say("Saved. The cost cannot be sent to Tessie yet (no Tessie id for this charge).");
+    else if(pu==="skipped")say("Saved. The cost could not be sent to Tessie (this charge has no start time).");
     else say("Saved. Updating the charges…");
     await fxWait(t2);bust();NAVREPL=true;route()}catch(err){say("Could not reach the app: "+err);b.disabled=false}});
 async function pageCharge(id,pid){
