@@ -28,6 +28,7 @@ import teslacam_files as TF
 
 KINDS = {"sentry": "SentryClips", "saved": "SavedClips"}
 _REC = re.compile(r"^(\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2})-(%s)\.mp4$" % "|".join(app_sentry.CAMS))
+EVENT_SUBURB_M = 1500                              # a minute of a Saved / Sentry event takes the event's suburb only within this many metres of the event
 GAP = 75                                    # seconds between two minutes that still belong to one run
 
 
@@ -727,7 +728,9 @@ class TeslaCam:
         if ev:
             if not (p and p[0] is not None):
                 p = (ev[0], ev[1])                  # a parked minute has no telemetry: the position of the event it belongs to
-            sub = sub or ev[2]
+                sub = sub or ev[2]
+            elif TL.hav(p[0], p[1], ev[0], ev[1]) <= EVENT_SUBURB_M:
+                sub = sub or ev[2]                  # the event's suburb names where the event was, not a minute minutes earlier on another road (Drummoyne, not the Sydney CBD of a horn 10 minutes later)
         return sp.label(sub, p[0] if p else None, p[1] if p else None)
 
     def _event_places(self):

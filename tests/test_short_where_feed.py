@@ -69,6 +69,17 @@ class Feed(unittest.TestCase):
         self.tc._short_where(self.store, "2026-10-01_10-00-00")
         self.assertEqual(len(self.feeds), 3)
 
+    def test_a_minute_far_from_its_event_does_not_take_the_events_suburb(self):
+        """A drive minute inside a Saved clip that was kept 10 minutes later in the CBD is where the car was (Drummoyne), not the event's suburb."""
+        st_far, st_near, st_park = "2026-10-01_10-10-00", "2026-10-01_10-11-00", "2026-10-01_10-12-00"
+        self.store.sum[st_far] = dict(p0=[-33.8600, 151.1550])               # about 5 km from the event
+        self.store.sum[st_near] = dict(p0=[-33.8700, 151.2100])               # at the event
+        self.tc.__dict__["_evp"] = (None, {st: (-33.8700, 151.2100, "Sydney CBD") for st in (st_far, st_near, st_park)})
+        self.tc._event_places = lambda: self.tc.__dict__["_evp"][1]
+        self.assertEqual(self.tc._short_where(self.store, st_far), "")
+        self.assertEqual(self.tc._short_where(self.store, st_near), "Sydney CBD")
+        self.assertEqual(self.tc._short_where(self.store, st_park), "Sydney CBD")      # no telemetry of its own: the event's place
+
 
 if __name__ == "__main__":
     unittest.main()
