@@ -207,7 +207,10 @@ def detail(data_dir, version, region, model=None, hw=None):
     f = ix.features_for(region, model, hw, version)
     u = ix.uptake(version, region)
     if u.get("error"):
-        return dict(error=u["error"])
+        v2 = ix.version_of_tag(version)               # a release-note tag that is not a version (widevine-4.10.3050): the version whose page carried it
+        if v2 and v2 != version:
+            return dict(redirect=v2, tag=version)
+        return dict(error="%s is not a version this tool holds, and no held version's notes carry it as a tag." % version)
     nf = notes_chips(ix, region, model, hw)
     u["fsd"] = chips_for(ix, u, nf, hw)
     # Teslascope keeps the upgrade steps for every country together; this region's path is the steps from and to versions it has had itself

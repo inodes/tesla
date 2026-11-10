@@ -506,6 +506,31 @@ class SyntheticTest(unittest.TestCase):
         self.assertEqual(first["repeated"], [])
         shutil.rmtree(d)
 
+    def test_a_note_tag_that_is_not_a_version_leads_to_the_version_that_carried_it(self):
+        # a note tagged "widevine-4.10.3050" sits on the page of a real version; the repeated list links the page, and the tag itself opens that page instead of an error
+        d = self.make({"2026.10.1": [("Minor Fixes", "fixes", "widevine-4.10.3050", ["au"])],
+                       "2026.10.2": [("Minor Fixes", "fixes", "2026.10.2", ["au"])]})
+        ix = I.Index(d, cache_dir=d)
+        o = ix.own_notes("2026.10.2", "au")
+        self.assertEqual([(r["first"], r["first_version"]) for r in o["repeated"]], [("widevine-4.10.3050", "2026.10.1")])
+        self.assertEqual(ix.version_of_tag("widevine-4.10.3050"), "2026.10.1")
+        self.assertIsNone(ix.version_of_tag("nothing-here"))
+        from lib import app_software
+        old = os.environ.get("TESLA_CACHE_DIR")
+        os.environ["TESLA_CACHE_DIR"] = d
+        try:
+            r = app_software.detail(d, "widevine-4.10.3050", "au")
+            e = app_software.detail(d, "nothing-here", "au")
+        finally:
+            if old is None:
+                os.environ.pop("TESLA_CACHE_DIR", None)
+            else:
+                os.environ["TESLA_CACHE_DIR"] = old
+        self.assertEqual(r.get("redirect"), "2026.10.1")
+        self.assertIn("error", e)
+        self.assertNotIn("Run the software sync", e["error"])
+        shutil.rmtree(d)
+
     def test_a_car_the_notes_are_not_for_is_told_so(self):
         d = self.make({"2026.10.1": [("Glow", "it glows", "2026.10.1", ["au"])]})
         ix = I.Index(d, cache_dir=d)

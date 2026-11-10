@@ -434,7 +434,8 @@ class Index:
                              WHERE o.note_key=? AND o.hash=? AND v.k < ? ORDER BY v.k""", (key, h, kx))
             other = self.q("""SELECT 1 FROM occurrences o JOIN versions v ON v.version=o.version WHERE o.note_key=? AND o.hash<>? AND v.k < ? LIMIT 1""", (key, h, kx))
             if same and not key.startswith("security"):
-                rep.append(dict(note_key=key, title=n["title"], first=min(same, key=lambda r: r["tag_k"])["tag"], last=same[-1]["version"]))
+                first_row = min(same, key=lambda r: r["tag_k"])
+                rep.append(dict(note_key=key, title=n["title"], first=first_row["tag"], first_version=first_row["version"], last=same[-1]["version"]))
                 continue
             t = self.q("SELECT description FROM note_text WHERE note_key=? AND hash=?", (key, h))
             it = dict(note_key=key, title=n["title"], tag=n["tag"], hash=h, description=t[0]["description"] if t else "", status="revised" if other and not same else "new",
@@ -587,6 +588,11 @@ class Index:
     @staticmethod
     def _desc(r):
         return {"note_key": r["note_key"], "title": r["title"], "tag": r["tag"], "hash": r["hash"]}
+
+    def version_of_tag(self, tag):
+        """The held version whose page first listed a release-note tag (a tag is not always a version: 'widevine-4.10.3050' is a tag on notes of some other version's page), or None."""
+        r = self.q("SELECT o.version FROM occurrences o JOIN versions v ON v.version=o.version WHERE o.tag=? ORDER BY o.tag_k, v.k LIMIT 1", (tag,))
+        return r[0]["version"] if r else None
 
     def uptake(self, version, region=None):
         """Cars that took the version (Teslascope's count: every car seen on it, not the cars on it today), by country and model, the numbers kept
