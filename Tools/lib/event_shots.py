@@ -78,6 +78,17 @@ class EventShots:
         except OSError:
             return set()
 
+    def size(self, kind, eid):
+        """Bytes the event's full-size pictures take."""
+        d, n = self.folder(kind, eid), 0
+        try:
+            for fn in os.listdir(d):
+                if fn.endswith(".jpg"):
+                    n += os.path.getsize(os.path.join(d, fn))
+        except OSError:
+            pass
+        return n
+
     def tried(self, kind, eid):
         """The cameras whose picture was asked for and could not be cut (no frame came out of the video): not asked for again."""
         try:

@@ -133,6 +133,19 @@ class KeepTest(Base):
         self.assertEqual((r["meta"], r["stills"], r["signs"]), ([1, 1], [1, 1], [1, 1]))
         self.assertTrue(r["ready"])
 
+    def test_a_clip_whose_video_is_gone_still_has_the_size_of_what_was_kept(self):
+        led = os.path.join(self.data, "teslacam_ledger", "2026-10-16.json")
+        day = json.load(open(led))
+        for k in day:
+            day[k]["drives"]["J"]["gone"] = "2026-10-18T00:00:00Z"
+        json.dump(day, open(led, "w"))
+        fg = FakeFG([S1, S2])
+        fg.stills.sizes = lambda: {S1: 300, S2: 200}
+        r = CK.ClipKeep(self.data, FakeTC({S1, S2}, {S1, S2}), fg).status()["clips"]["saved"]["ev1"]
+        self.assertEqual((r["size"], r["kept"]), (0, 500))
+        live = self.keep(read=[S1, S2], stills=[S1, S2], scanned=[S1, S2]).status()["clips"]["saved"]["ev1"]
+        self.assertEqual(live["kept"], 0)
+
     def test_signs_count_only_minutes_that_were_driven_fast_enough(self):
         r = self.keep(read=[S1, S2], stills=[S1, S2], scanned=[S1]).status()["clips"]["saved"]["ev1"]
         self.assertEqual(r["signs"], [1, 2])

@@ -131,6 +131,23 @@ class Stills:
         except OSError:
             pass
 
+    def sizes(self):
+        """{minute stamp: bytes its stills take}: one directory scan per day, not a stat per file."""
+        out = {}
+        try:
+            for d in os.listdir(self.root):
+                p = os.path.join(self.root, d)
+                if os.path.isdir(p):
+                    for e in os.scandir(p):
+                        if e.name.endswith(".zip"):
+                            try:
+                                out[e.name[:-4]] = e.stat().st_size
+                            except OSError:
+                                pass
+        except OSError:
+            pass
+        return out
+
     def stamps(self):
         out = set()
         try:

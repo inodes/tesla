@@ -13,7 +13,7 @@ Everything here is worked out from what is kept on this computer (the footage lo
 so the answer is the same with every drive away. Only start() touches a drive: it deletes the video files of the clips asked for, or copies them to the Archive
 and then deletes them from the drive they were on, after checking again that it is allowed.
 
-    ClipKeep(data_dir, tc, fg).status()      -> dict(clips={"recent"|"saved"|"sentry": {id: dict(n, bytes{role}, files{role}, in_archive{role}, size, meta[done, of], stills[...], signs[...], shots[...], shot_cams, ready, waiting, wait_n, todo [something a press of Read what is missing can still do])}})
+    ClipKeep(data_dir, tc, fg).status()      -> dict(clips={"recent"|"saved"|"sentry": {id: dict(n, bytes{role}, files{role}, in_archive{role}, size, kept, meta[done, of], stills[...], signs[...], shots[...], shot_cams, ready, waiting, wait_n, todo [something a press of Read what is missing can still do])}})
     ClipKeep.start(action, role, items, roots)   action "delete" | "move"; items [{kind, id}]; returns the job status or dict(error=...)
     ClipKeep.start_process(items, roots)     reads what is missing for the clips: metadata, then stills, then signs (from the video on a connected drive)
     ClipKeep.job()                           -> the running or last job
@@ -222,6 +222,7 @@ class ClipKeep:
         events = self._events()
         store = self.tc._tl("A")
         stills = self.fg.stills.stamps()
+        still_b = self.fg.stills.sizes() if hasattr(self.fg.stills, "sizes") else {}      # what the kept pictures take: the size a clip still has when its video is gone
         nostill = {k[6:] for k in getattr(self.fg.stills, "unreadable", dict)() if k.startswith("stamp|")}      # minutes whose video gave no picture when tried: not counted as missing
         stl = set(stills) | nostill
         rv = self.tc._rv()
@@ -328,7 +329,10 @@ class ClipKeep:
                 got = self.evst.info(kind, cid).get("n")
                 hw = self._hi(kind, cid, mins, events.get((kind, cid))) if nbytes and not ign else None
                 hi = [0, 1] if hw else ([1, 1] if got else [0, 0])                  # still wanted: the pictures, or (for an event that has them) its other cameras and half-second pictures
-            out[kind][cid] = dict(n=len(mins), first=min(mins), bytes=nbytes, files=nfiles, in_archive=narch, size=max(nbytes.values()) if nbytes else 0, meta=meta, stills=st_, signs=sg, shots=sh, window=hi, tier=self.evst.info(kind, cid).get("tier", "") if kind != "recent" else "",
+            kept = sum(still_b.get(st, 0) for st in mins if st not in edge)
+            if kind != "recent":
+                kept += self.shots.size(kind, cid) + self.evst.size(kind, cid)
+            out[kind][cid] = dict(n=len(mins), first=min(mins), bytes=nbytes, kept=kept, files=nfiles, in_archive=narch, size=max(nbytes.values()) if nbytes else 0, meta=meta, stills=st_, signs=sg, shots=sh, window=hi, tier=self.evst.info(kind, cid).get("tier", "") if kind != "recent" else "",
                                   shot_cams=sorted(have), ready=all(x[0] >= x[1] for x in (meta, st_, sg, sh, hi)) and refine_n == 0, waiting=waiting, wait_n=wait_n, snap_n=snap_n, refine_n=refine_n,
                                   sign_n=sign_n, todo=any(x[0] < x[1] for x in (meta, sg, sh, hi)) or st_[0] + wait_n < st_[1] or refine_n > 0, ignored=ign)
         IGN.set_stamps(ignored)
