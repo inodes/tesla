@@ -100,7 +100,11 @@ def build_menu(window):
 
     def go(route):
         return lambda: window.evaluate_js("location.hash=%r" % ("#/" + route))
-    return [Menu(t, [MenuAction(it, go(r)) for it, r in items]) for t, items in menu_spec()]
+    def home():
+        import window_place as WP
+        WP.to_main(window)
+    # Window > Bring to Main Screen: the way back for a window that ended up where it cannot be reached (the menu bar is always there)
+    return [Menu(t, [MenuAction(it, go(r)) for it, r in items]) for t, items in menu_spec()] + [Menu("Window", [MenuAction("Bring to Main Screen", home)])]
 
 
 def start(keeper_fn, ckeep_fn, interval=2.0, set_badge_fn=set_badge, notify_fn=notify, clock=time.time):

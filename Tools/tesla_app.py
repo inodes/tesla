@@ -1405,7 +1405,8 @@ def window_chrome(win):
     size saved as reported came back that much taller at every start."""
     if _CHROME[0] is None:
         try:
-            w = win.native.window
+            import window_place as WP
+            w = WP.nswindow(win)                             # pywebview 6: win.native is the Mac's window itself (win.native.window failed, so the title bar was never taken off)
             _CHROME[0] = int(round(w.frame().size.height - w.contentRectForFrameRect_(w.frame()).size.height))
         except Exception:
             return 0
@@ -1421,9 +1422,18 @@ def window_move(win, at):
             pass
 
 
-def window_keep(**kw):
-    """The window was moved or resized: remembered a moment later (a drag sends many of these)."""
+def window_keep(win=None, **kw):
+    """The window was moved or resized: remembered a moment later (a drag sends many of these). On a Mac the frame as the Mac has it is kept too (`f`: x, y, width, height
+    across all screens), which is what the next start puts back (lib/window_place.py); pywebview's own x and y are not used there: they do not survive a second screen."""
     _WGEO.update({k: int(v) for k, v in kw.items() if v is not None})
+    if win is not None and sys.platform == "darwin":
+        try:
+            import window_place as WP
+            f = WP.frame_of(win)
+            if f and WP.reachable(f, WP.screens_now() or [f]):        # a place no screen holds is not worth remembering
+                _WGEO["f"] = [int(round(v)) for v in f]
+        except Exception:
+            pass
     if _WGEO_T[0]:
         _WGEO_T[0].cancel()
 
@@ -1586,11 +1596,16 @@ def main():
             import webview      # optional: native window
             global WIN
             place = window_place(webview)
+            mac = sys.platform == "darwin"
             at = (place.pop("x", None), place.pop("y", None))          # the window is created in the default place and moved once it is shown: pywebview moves it while it is being built, when the Mac can still say it has no screen ('NoneType has no attribute frame') and the app does not open
             WIN = win = webview.create_window("Tesellate", url, min_size=(900, 600), text_select=True, **place)
-            win.events.shown += lambda: window_move(win, at)
-            win.events.resized += lambda w, h: window_keep(w=w, h=h - window_chrome(win))
-            win.events.moved += lambda x, y: window_keep(x=x, y=y)
+            if mac:                                         # put back as the Mac itself measures it, and only where it can be reached (a window left off every screen came back there at every start)
+                import window_place as WP
+                win.events.shown += lambda: (WP.restore(win, _WGEO.get("f")), WP.watch(win))
+            else:
+                win.events.shown += lambda: window_move(win, at)
+            win.events.resized += lambda w, h: window_keep(win, w=w, h=h - window_chrome(win))
+            win.events.moved += lambda x, y: window_keep(win, x=x, y=y)
             menu = mac_shell.build_menu(win) if sys.platform == "darwin" else None            # the pages in the menu bar
             mac_shell.start(KEEP.status, CKEEP.job)                                            # the job's share on the Dock icon, and a notification when a long job ends
             try:                # the Dock shows the app's icon even though python is the running program (needs pyobjc, which pywebview brings on a Mac)
