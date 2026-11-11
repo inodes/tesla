@@ -19,6 +19,7 @@ import subprocess
 
 import clip_clock as CC
 import drive_fuse as DF
+import stat_memo as SM
 import drive_roles as DR
 import teslacam_files as TF
 from lib import teslacam_stills as ST
@@ -31,19 +32,25 @@ def drive_windows(data):
     """[(utc start, utc end, has snapshots)] of every drive folder, sorted."""
     out = []
     base = os.path.join(data, "drives", "deepdive")
-    for day in os.listdir(base) if os.path.isdir(base) else []:
+    for day, isdir in SM.names(base).items():                # the folders are listed, and a summary read, only when they changed (stat_memo): 1,700 drives are otherwise 1,700 files opened for every look
+        if not isdir:
+            continue
         dd = os.path.join(base, day)
-        for name in os.listdir(dd) if os.path.isdir(dd) else []:
-            sj = os.path.join(dd, name, "drive_summary.json")
-            try:
-                with open(sj, encoding="utf-8") as fh:
-                    sm = json.load(fh)
-                a, b = DF.utc(DF._t(sm["start"], "%Y-%m-%d %H:%M:%S")), DF.utc(DF._t(sm["end"], "%Y-%m-%d %H:%M:%S"))
-            except (OSError, ValueError, KeyError, TypeError):
+        for name, isdir2 in SM.names(dd).items():
+            if not isdir2:
                 continue
-            out.append((a, b, os.path.isfile(os.path.join(dd, name, "snapshots", "index.json"))))
+            span = SM.file(os.path.join(dd, name, "drive_summary.json"), _span)
+            if not span:
+                continue
+            out.append((span[0], span[1], SM.exists(os.path.join(dd, name, "snapshots", "index.json"))))
     out.sort()
     return out
+
+
+def _span(path):
+    with open(path, encoding="utf-8") as fh:
+        sm = json.load(fh)
+    return DF.utc(DF._t(sm["start"], "%Y-%m-%d %H:%M:%S")), DF.utc(DF._t(sm["end"], "%Y-%m-%d %H:%M:%S"))
 
 
 SYNC_MARGIN = 900            # a minute this close to the end of a sync may be a drive Tessie had not published yet

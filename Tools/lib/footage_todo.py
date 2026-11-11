@@ -60,6 +60,7 @@ class Todo:
         self._gen = 0                   # counts the times what is on the drives was said to have changed
         self._err_at = 0.0
         self._prog = None
+        self._lookc, self._look_lock = None, threading.Lock()     # the last look at the drives: (drives, when, signature, list again)
 
     def _load(self):
         try:
@@ -144,13 +145,35 @@ class Todo:
                 return True
         return False
 
+    SIG_TTL = 5.0           # the look at the drives and at what is kept (the signature) is taken at most this often, by one asker at a time: the page asks every few seconds from
+                            # several places, and each look stats folders on drives that may be asleep and counts thousands of kept files
+
+    def _look(self, roots):
+        """(signature, a drive must be listed again) for these drives: the last look while it is younger than SIG_TTL, and while another asker is taking one."""
+        key = tuple(sorted(roots.items()))
+        c = self._lookc
+        if c is not None and c[0] == key and time.time() - c[1] < self.SIG_TTL:
+            return c[2], c[3]
+        if not self._look_lock.acquire(blocking=c is None or c[0] != key):
+            return c[2], c[3]                                    # someone is looking right now: the last answer, not a second look beside it
+        try:
+            c = self._lookc
+            if c is not None and c[0] == key and time.time() - c[1] < self.SIG_TTL:
+                return c[2], c[3]
+            sig = self._sig(roots) if roots else None
+            deep = bool(roots) and self._deep(roots)
+            self._lookc = (key, time.time(), sig, deep)
+            return sig, deep
+        finally:
+            self._look_lock.release()
+
     def snapshot(self):
         roots = {r: p for r, p in (self.roots_fn() or {}).items() if p}
-        sig = self._sig(roots) if roots else None
+        sig, deep = self._look(roots)
         cur = self._mem.get("sig")
         working = bool(self._thread and self._thread.is_alive())
         retry = time.time() - self._err_at < 60                  # after a failure (a drive pulled out) wait a minute before looking again
-        deep = bool(roots) and (self._deep(roots) or not self._mem.get("drives"))
+        deep = bool(roots) and (deep or not self._mem.get("drives"))
         # a drive plugged in or changed is looked at now and says so; drives that stay connected and unchanged are only counted again quietly, at most every QUICK_GAP_S
         counts_only = bool(cur) and sig is not None and len(cur) == len(sig) and all(x == y for i, (x, y) in enumerate(zip(cur, sig)) if i not in self._count_idx(roots))
         stale = bool(roots) and sig != cur and not retry and (deep or self._force or not counts_only or time.time() - self._done_t >= self.QUICK_GAP_S)
@@ -173,6 +196,7 @@ class Todo:
         self._gen += 1
         self._force = True                  # counted again now; a drive whose folders changed (clips moved or deleted) is listed again because its folders' times changed
         self._mem = dict(self._mem, sig=None)
+        self._lookc = None                  # and looked at now, not in SIG_TTL seconds
 
     def subtract(self, stage, done_by_role):
         """A job did some of the work (or was stopped part way): take it off what is left for each drive now. The next look at the drives (the signature has changed)
@@ -266,6 +290,7 @@ class Todo:
                         out[r]["signs"] = n
                 self._mem = dict(sig=sig if gen == self._gen else None, drives=out)
                 self._done_t = time.time()         # said to have changed while it was being worked out: looked at again
+                self._lookc = None                 # the next ask looks at the drives afresh
                 self.error = ""
                 self._save()
         except Exception as e:                                  # a drive pulled out in the middle: say so and try again at the next look

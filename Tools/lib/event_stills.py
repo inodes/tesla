@@ -27,9 +27,12 @@ import os
 import tempfile
 import zipfile
 
+import copy
+
 import app_config
 import clip_clock as CC
 import event_shots as ES
+import stat_memo as SM
 import stills_thin as STH
 from lib import teslacam_stills as ST
 
@@ -77,6 +80,11 @@ def _quality():
     return {"high": int(app_config.get("stills.event_quality", 3)), "normal": int(app_config.get("stills.quality", 6)), "shrunk": int(app_config.get("stills.thin_quality", 10)), "side": int(app_config.get("stills.event_side_quality", 4))}
 
 
+def _read_json(path):
+    with open(path, encoding="utf-8") as fh:
+        return json.load(fh)
+
+
 class EventStills:
     def __init__(self, data_dir):
         self.root = os.path.join(data_dir, DIRNAME)
@@ -102,12 +110,9 @@ class EventStills:
         return freed
 
     def info(self, kind, eid):
-        try:
-            with open(os.path.join(self.folder(kind, eid), "info.json"), encoding="utf-8") as fh:
-                j = json.load(fh)
-                return j if isinstance(j, dict) else {}
-        except (OSError, ValueError):
-            return {}
+        """info.json of the event, or {}. Read from the file only when it changed (stat_memo): a look at every event asks this several times for each."""
+        j = SM.file(os.path.join(self.folder(kind, eid), "info.json"), _read_json)
+        return copy.deepcopy(j) if isinstance(j, dict) else {}
 
     def _zip(self, kind, eid, cam=None, half=False):
         cam = cam or self.info(kind, eid).get("cam") or ""
@@ -126,14 +131,7 @@ class EventStills:
 
     def size(self, kind, eid):
         """Bytes the event's pictures take."""
-        d, n = self.folder(kind, eid), 0
-        try:
-            for fn in os.listdir(d):
-                if fn.endswith(".zip"):
-                    n += os.path.getsize(os.path.join(d, fn))
-        except OSError:
-            pass
-        return n
+        return sum(b or 0 for fn, b in SM.listing(self.folder(kind, eid)).items() if fn.endswith(".zip"))      # the folder is listed again only when it changed
 
     def zips(self, kind, eid):
         d = self.folder(kind, eid)

@@ -37,7 +37,7 @@ class Footage:
 
     def log(self):
         self.ledger = TLG.Ledger(self.dir)              # fresh: the files may have changed since (another run)
-        s = self.ledger.summary()
+        s = TLG.Ledger(self.dir, readonly=True).summary()      # counted from the days as they are on disk, each parsed only when its file changed
         s["job"] = self.status()
         return s
 

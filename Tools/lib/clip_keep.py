@@ -42,6 +42,7 @@ from lib import teslacam_ledger as TLG
 from lib import teslacam_scan as TS
 from lib import teslacam_stills as ST
 import sign_speed as SS
+import stat_memo as SM
 
 GAP = 75                      # seconds between two minutes that still belong to one Recent run (as in app_teslacam)
 TTL = 8.0                     # seconds an answer is reused
@@ -63,6 +64,11 @@ def _runs(stamps):
     if cur:
         out.append(cur)
     return out
+
+
+def _read_lines(path):
+    with open(path, encoding="utf-8") as fh:
+        return fh.readlines()
 
 
 def writable(role):
@@ -232,7 +238,7 @@ class ClipKeep:
         windows = TD.drive_windows(self.dir)
         starts = [w[0] for w in windows]
         synced_until = TD.synced_to(self.dir, windows)
-        led = TLG.Ledger(self.dir)
+        led = TLG.Ledger(self.dir, readonly=True)            # only looked at: each day's file is parsed once and kept until it changes
         found = {}                                           # (kind, event) -> {stamp: dict(cams, bytes)}
         for day in led.days():
             for key, rec in led.day(day).items():
@@ -1195,11 +1201,7 @@ class ClipKeep:
 
     def history(self, n=20):
         """The last `n` delete / move jobs, newest first."""
-        try:
-            with open(os.path.join(self.dir, self.LOG), encoding="utf-8") as fh:
-                lines = fh.readlines()[-n:]
-        except OSError:
-            return []
+        lines = (SM.file(os.path.join(self.dir, self.LOG), _read_lines) or [])[-n:]      # read again only when the log grew: the page asks for the last job every second or two
         out = []
         for ln in reversed(lines):
             try:

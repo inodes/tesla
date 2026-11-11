@@ -280,6 +280,9 @@ def all_sentry():
 def code_updated():
     """True when a program file changed after this server started (so a restart is needed to use it): the app's own files, and every module the
     server has actually imported from this folder or lib/ (a library edited under it counts, not only the app_* files)."""
+    if time.time() - _CODE_UPD[0] < 5.0:                    # the page asks every few seconds (/api/status): the hundred program files are looked at once in five
+        return _CODE_UPD[1]
+    _CODE_UPD[0] = time.time()
     newest = 0
     for d, pat in ((HERE, ".py"), (os.path.join(HERE, "lib"), ".py")):
         try:
@@ -295,7 +298,11 @@ def code_updated():
                 newest = max(newest, os.path.getmtime(f))
             except OSError:
                 pass
-    return newest > STARTED + 2
+    _CODE_UPD[1] = newest > STARTED + 2
+    return _CODE_UPD[1]
+
+
+_CODE_UPD = [0.0, False]
 
 
 def ui_stamp():

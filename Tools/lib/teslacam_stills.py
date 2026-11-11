@@ -24,6 +24,7 @@ import tempfile
 import zipfile
 
 import drive_roles as DR
+import stat_memo as SM
 import teslacam_files as TF
 
 DIRNAME = "teslacam_stills"
@@ -131,33 +132,17 @@ class Stills:
         except OSError:
             pass
 
+    def _days(self):
+        """{day folder: {file name: bytes}} of the stills kept. A day's folder is listed again only when it changed (stat_memo), so asking what is kept costs one look at each
+        day folder's time (87 of them), not a listing of 18,000 files."""
+        return {d: SM.listing(os.path.join(self.root, d)) for d, sz in SM.listing(self.root).items() if sz is None}
+
     def sizes(self):
-        """{minute stamp: bytes its stills take}: one directory scan per day, not a stat per file."""
-        out = {}
-        try:
-            for d in os.listdir(self.root):
-                p = os.path.join(self.root, d)
-                if os.path.isdir(p):
-                    for e in os.scandir(p):
-                        if e.name.endswith(".zip"):
-                            try:
-                                out[e.name[:-4]] = e.stat().st_size
-                            except OSError:
-                                pass
-        except OSError:
-            pass
-        return out
+        """{minute stamp: bytes its stills take}."""
+        return {n[:-4]: b or 0 for files in self._days().values() for n, b in files.items() if n.endswith(".zip")}
 
     def stamps(self):
-        out = set()
-        try:
-            for d in os.listdir(self.root):
-                p = os.path.join(self.root, d)
-                if os.path.isdir(p):
-                    out.update(n[:-4] for n in os.listdir(p) if n.endswith(".zip"))
-        except OSError:
-            pass
-        return out
+        return {n[:-4] for files in self._days().values() for n in files if n.endswith(".zip")}
 
     def make(self, stamp, video):
         """Take the stills of one clip; returns how many (0 = nothing written)."""

@@ -21,8 +21,11 @@ import json
 import os
 import subprocess
 
+import copy
+
 import app_config
 import clip_clock as CC
+import stat_memo as SM
 from lib import teslacam_stills as ST
 
 DIRNAME = "teslacam_event_shots"
@@ -65,6 +68,11 @@ def wanted(kind, ev, cams_in_clip):
     return [c for c in cams_for(kind, ev) if c in cams_in_clip]
 
 
+def _read_json(path):
+    with open(path, encoding="utf-8") as fh:
+        return json.load(fh)
+
+
 class EventShots:
     def __init__(self, data_dir):
         self.root = os.path.join(data_dir, DIRNAME)
@@ -73,30 +81,16 @@ class EventShots:
         return os.path.join(self.root, kind, eid)
 
     def have(self, kind, eid):
-        try:
-            return {fn[:-4] for fn in os.listdir(self.folder(kind, eid)) if fn.endswith(".jpg") and fn[:-4] in CAMS}
-        except OSError:
-            return set()
+        return {fn[:-4] for fn in SM.listing(self.folder(kind, eid)) if fn.endswith(".jpg") and fn[:-4] in CAMS}      # the folder is listed again only when it changed (stat_memo)
 
     def size(self, kind, eid):
         """Bytes the event's full-size pictures take."""
-        d, n = self.folder(kind, eid), 0
-        try:
-            for fn in os.listdir(d):
-                if fn.endswith(".jpg"):
-                    n += os.path.getsize(os.path.join(d, fn))
-        except OSError:
-            pass
-        return n
+        return sum(b or 0 for fn, b in SM.listing(self.folder(kind, eid)).items() if fn.endswith(".jpg"))
 
     def tried(self, kind, eid):
         """The cameras whose picture was asked for and could not be cut (no frame came out of the video): not asked for again."""
-        try:
-            with open(os.path.join(self.folder(kind, eid), "tried.json"), encoding="utf-8") as fh:
-                j = json.load(fh)
-                return {c for c in j if c in CAMS} if isinstance(j, list) else set()
-        except (OSError, ValueError):
-            return set()
+        j = SM.file(os.path.join(self.folder(kind, eid), "tried.json"), _read_json)
+        return {c for c in j if c in CAMS} if isinstance(j, list) else set()
 
     def remove(self, kind, eid):
         """Deletes everything kept for the event; returns the bytes freed."""
@@ -116,11 +110,8 @@ class EventShots:
         return freed
 
     def info(self, kind, eid):
-        try:
-            with open(os.path.join(self.folder(kind, eid), "shots.json"), encoding="utf-8") as fh:
-                return json.load(fh)
-        except (OSError, ValueError):
-            return {}
+        j = SM.file(os.path.join(self.folder(kind, eid), "shots.json"), _read_json)
+        return copy.deepcopy(j) if j is not None else {}
 
     def path(self, kind, eid, cam):
         p = os.path.join(self.folder(kind, eid), cam + ".jpg")

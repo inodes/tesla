@@ -20,6 +20,7 @@ import json
 import os
 import time
 
+import stat_memo as SM
 import teslacam_files as TF
 
 DIRNAME = "teslacam_ledger"
@@ -34,10 +35,18 @@ def _day(stamp):
     return stamp[:10]
 
 
+def _read_json(path):
+    with open(path, encoding="utf-8") as f:
+        return json.load(f)
+
+
 class Ledger:
-    def __init__(self, data_dir):
+    def __init__(self, data_dir, readonly=False):
+        """readonly: for looking only. A day's file is then parsed once and shared until it changes (stat_memo), not read again by every look at the log (87 files, a
+        megabyte each): what day() gives must not be changed, and flush() refuses."""
         self.root = os.path.join(data_dir, DIRNAME)
         self._days = {}
+        self.readonly = readonly
 
     # ---- files ---------------------------------------------------------------------------------------------------
     def _path(self, day):
@@ -46,11 +55,15 @@ class Ledger:
     def day(self, day):
         d = self._days.get(day)
         if d is None:
-            try:
-                with open(self._path(day), encoding="utf-8") as f:
-                    d = json.load(f)
-            except (OSError, ValueError):
-                d = {}
+            if self.readonly:
+                d = SM.file(self._path(day), _read_json)
+                d = d if isinstance(d, dict) else {}
+            else:
+                try:
+                    with open(self._path(day), encoding="utf-8") as f:
+                        d = json.load(f)
+                except (OSError, ValueError):
+                    d = {}
             self._days[day] = d
         return d
 
@@ -61,6 +74,8 @@ class Ledger:
             return []
 
     def flush(self, only=None):
+        if self.readonly:
+            raise RuntimeError("a read-only footage log cannot be written")
         os.makedirs(self.root, exist_ok=True)
         for day, d in self._days.items():
             if only is not None and day not in only:

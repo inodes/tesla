@@ -39,11 +39,16 @@ def config_path():
 
 
 def _read():
-    try:
-        with open(config_path(), encoding="utf-8") as fh:
-            return json.load(fh)
-    except (OSError, ValueError):
-        return {}
+    """config.json, parsed again only when the file changed (the page asks which drives are registered every few seconds); the caller gets its own copy."""
+    import copy
+    import stat_memo as SM
+    j = SM.file(config_path(), _load)
+    return copy.deepcopy(j) if isinstance(j, dict) else {}
+
+
+def _load(path):
+    with open(path, encoding="utf-8") as fh:
+        return json.load(fh)
 
 
 def drives():

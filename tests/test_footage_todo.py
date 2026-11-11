@@ -327,5 +327,72 @@ class EjectTest(unittest.TestCase):
         self.assertFalse(DE.eject("/Volumes/A/TeslaCam", platform="linux")["ok"])
 
 
+class LookOnce(TodoTest):
+    """The page asks what the drives still need every few seconds, from several places at once. Each ask used to take the whole look again (the drives' folders, a count of every
+    still kept): 11 Nov 2026, thirteen requests at once were each listing 18,000 stills, and every other page waited behind them."""
+
+    def test_the_look_at_the_drives_is_taken_once_for_many_asks(self):
+        looks = []
+        real = self.todo._sig
+        self.todo._sig = lambda roots: (looks.append(1), real(roots))[1]
+        self.todo.snapshot()
+        self.wait()
+        n = len(looks)
+        for _ in range(20):
+            self.todo.snapshot()
+        self.assertLessEqual(len(looks) - n, 1)                 # the work that just ended asks for one fresh look; the other asks share it
+
+    def test_a_change_said_by_the_app_is_looked_at_now(self):
+        looks = []
+        real = self.todo._sig
+        self.todo._sig = lambda roots: (looks.append(1), real(roots))[1]
+        self.todo.snapshot()
+        self.wait()
+        self.todo.snapshot()
+        n = len(looks)
+        self.todo.forget()                                      # clips were moved or deleted
+        self.todo.snapshot()
+        self.assertEqual(len(looks), n + 1)
+
+    def test_an_ask_while_another_is_looking_gets_the_last_answer_and_does_not_look_beside_it(self):
+        self.todo.snapshot()
+        self.wait()
+        self.todo.snapshot()
+        self.todo._lookc = (self.todo._lookc[0], 0.0) + self.todo._lookc[2:]      # the last look is old
+        gate, looks = threading.Event(), []
+        real = self.todo._sig
+
+        def slow(roots):
+            looks.append(1)
+            gate.wait(5)
+            return real(roots)
+        self.todo._sig = slow
+        t = threading.Thread(target=self.todo.snapshot)
+        t.start()
+        for _ in range(100):
+            if looks:
+                break
+            time.sleep(0.01)
+        t0 = time.time()
+        s = self.todo.snapshot()                                # must not wait for the slow look
+        self.assertLess(time.time() - t0, 1.0)
+        self.assertIn("J", s["drives"])
+        gate.set()
+        t.join(5)
+        self.assertEqual(len(looks), 1)
+
+    def test_a_read_only_footage_log_shares_a_days_file_and_cannot_be_written(self):
+        led = os.path.join(self.data, "teslacam_ledger")
+        os.makedirs(led, exist_ok=True)
+        p = os.path.join(led, "2026-10-11.json")
+        json.dump({"recent||2026-10-11_16-12-14-front": dict(size=10, drives={})}, open(p, "w"))
+        os.utime(p, (time.time() - 10, time.time() - 10))
+        a, b = TLG.Ledger(self.data, readonly=True), TLG.Ledger(self.data, readonly=True)
+        self.assertIs(a.day("2026-10-11"), b.day("2026-10-11"))
+        self.assertIsNot(TLG.Ledger(self.data).day("2026-10-11"), a.day("2026-10-11"))      # one that may be written has its own
+        with self.assertRaises(RuntimeError):
+            a.flush()
+
+
 if __name__ == "__main__":
     unittest.main()
