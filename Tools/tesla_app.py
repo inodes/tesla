@@ -1550,7 +1550,7 @@ def main():
     KEEP = app_keeper.Keeper(DATA_DIR, TC, FG, DRV, SENTRY, footage_roots)
     TODO = footage_todo.Todo(os.path.join(local_cache_dir(), "footage_todo.json"), DATA_DIR, TC, FG, footage_roots, lambda: KEEP._stage is None and not KEEP.busy())
     KEEP.on_progress = TODO.subtract
-    CKEEP = clip_keep.ClipKeep(DATA_DIR, TC, FG)
+    CKEEP = clip_keep.ClipKeep(DATA_DIR, TC, FG, kept_file=os.path.join(local_cache_dir(), "clip_keep.json"))      # the first TeslaCam page after a start is answered from the last run's look (the first build took 50 s on 11 Nov)
     CKEEP.roots_now = footage_roots          # a drive that appears while signs are read: the signs wait (clip_keep._signs_yield)
     run_cuts.on_change(lambda: CKEEP.invalidate())          # what is kept is grouped by the same runs
     CKEEP.on_change = TODO.forget

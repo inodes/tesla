@@ -2341,7 +2341,7 @@ function footageSync(host,opts){
   FSKICK[hk]=()=>{if(document.body.contains(host)){until=Date.now()+60000;paint()}};
   paint();watch()}
 // ---- what is kept from each clip's video (lib/clip_keep.py): tick boxes, a status strip, the size, and deleting / moving the video once it is all kept
-let TCSEL=new Set(),KPC=null,THINHTML="",THKEY="",OPENC=null;      // OPENC: the clip open under the tiles, {kind, id}      // TCSEL: "kind|id" of the clips ticked; KPC: GET /api/clips/keep
+let TCSEL=new Set(),KPC=null,KPSTALE=0,THINHTML="",THKEY="",OPENC=null;      // OPENC: the clip open under the tiles, {kind, id}      // TCSEL: "kind|id" of the clips ticked; KPC: GET /api/clips/keep
 const fmtGB=b=>b>=1073741824?(b/1073741824).toFixed(b>=10737418240?0:1)+" GB":Math.max(1,Math.round(b/1048576))+" MB";
 const kpOf=(ty,id)=>KPC&&KPC[ty]&&KPC[ty][id]||null;
 // what is kept from a clip, as icons in the one bubble style: green = read (all of it), amber = part of it, grey = not yet; none where it does not apply. The numbers are in the tooltip.
@@ -2578,7 +2578,9 @@ async function pageTeslaCam(role,id){
       break}};
   const loadKeep=async(remembered)=>{const k=await mkey("tc/keep");
     if(remembered&&!KPC){const old=await IDB.get(k);if(old&&!KPC&&document.body.contains($("#tb"))){KPC=old;draw()}}     // what was kept last time is drawn at once; the fresh answer replaces it
-    try{const r=await fetch("/api/clips/keep");if(r.ok){const nj=(await r.json()).clips,ch=!same(nj,KPC);KPC=nj;IDB.set(k,nj);if(ch)draw();else selbar();poll()}else{const sb=$("#selbar");if(sb)sb.classList.remove("ph")}}catch(e){const sb=$("#selbar");if(sb)sb.classList.remove("ph")}};
+    try{const r=await fetch("/api/clips/keep");if(r.ok){const jj=await r.json(),nj=jj.clips,ch=!same(nj,KPC);KPC=nj;IDB.set(k,nj);if(ch)draw();else selbar();poll();
+        // stale: the server answered from the last run's look while it builds this run's first; asked again in a moment
+        if(jj.stale){clearTimeout(KPSTALE);KPSTALE=setTimeout(()=>{if(document.body.contains($("#tb"))&&(location.hash||"").startsWith("#/teslacam"))loadKeep()},5000)}}else{const sb=$("#selbar");if(sb)sb.classList.remove("ph")}}catch(e){const sb=$("#selbar");if(sb)sb.classList.remove("ph")}};
   const draw=()=>{if(!data)return;if(!data.sentry){return}
     const q=TCS.q.toLowerCase(),srcs=TCS.f.ev==="all"?Object.keys(TCSRC):[TCS.f.ev];
     const all=[].concat(...srcs.map(k=>data[k].map(v=>Object.assign({ty:k},v)))).filter(v=>inRange({day:v.ts.slice(0,10)},TCS.r)&&fPass(v)&&(!q||(v.ty==="recent"?((tripOf(v)||{}).ti||""):(v.city+" "+v.street+" "+reason(v.reason))).toLowerCase().includes(q)||TCSRC[v.ty].toLowerCase().includes(q))).sort((a,b)=>(a.ts<b.ts?-1:a.ts>b.ts?1:0)*(ORD.rowDesc?-1:1)),byDay={};

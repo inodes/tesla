@@ -146,6 +146,42 @@ class KeepTest(Base):
         live = self.keep(read=[S1, S2], stills=[S1, S2], scanned=[S1, S2]).status()["clips"]["saved"]["ev1"]
         self.assertEqual(live["kept"], 0)
 
+    def test_the_first_page_after_a_start_is_answered_from_the_last_runs_look_while_this_runs_first_is_built(self):
+        """11 Nov 2026: the first /api/clips/keep after a restart waited 52 s for the build (cold folders, everything else starting too)."""
+        import threading
+        kf = os.path.join(self.t, "cache", "clip_keep.json")
+        a = CK.ClipKeep(self.data, FakeTC({S1}, {S1}), FakeFG([S1]), kept_file=kf)
+        first = a.status()
+        self.assertNotIn("stale", first)
+        self.assertTrue(os.path.isfile(kf))
+        b = CK.ClipKeep(self.data, FakeTC({S1}, {S1}), FakeFG([S1]), kept_file=kf)       # the next run of the app
+        gate, real = threading.Event(), b._build
+        b._build = lambda: (gate.wait(5), real())[1]                                      # its first build takes a while
+        t0 = time.time()
+        got = b.status()
+        self.assertLess(time.time() - t0, 1.0)                                            # answered at once
+        self.assertTrue(got.get("stale"))
+        self.assertEqual(json.loads(json.dumps(got["clips"])), json.loads(json.dumps(first["clips"])))
+        self.assertEqual(b._groups[("saved", "ev1")], a._groups[("saved", "ev1")])        # what Move, Delete and Shrink work from is there too
+        gate.set()
+        for _ in range(100):
+            if not b._first:
+                break
+            time.sleep(0.05)
+        self.assertNotIn("stale", b.status())                                             # this run's own look
+
+    def test_a_look_kept_by_the_last_run_is_not_used_after_a_job_or_when_older_code_kept_it(self):
+        kf = os.path.join(self.t, "cache", "clip_keep.json")
+        CK.ClipKeep(self.data, FakeTC(set(), set()), FakeFG([]), kept_file=kf).status()
+        c = CK.ClipKeep(self.data, FakeTC(set(), set()), FakeFG([]), kept_file=kf)
+        c._settle()                                                                       # a job changed the drives before any page asked
+        self.assertNotIn("stale", c.status())
+        j = json.load(open(kf))
+        j["v"] = -1
+        json.dump(j, open(kf, "w"))
+        d = CK.ClipKeep(self.data, FakeTC(set(), set()), FakeFG([]), kept_file=kf)
+        self.assertNotIn("stale", d.status())                                             # built, not read from the file
+
     def test_signs_count_only_minutes_that_were_driven_fast_enough(self):
         r = self.keep(read=[S1, S2], stills=[S1, S2], scanned=[S1]).status()["clips"]["saved"]["ev1"]
         self.assertEqual(r["signs"], [1, 2])

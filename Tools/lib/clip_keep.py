@@ -77,9 +77,12 @@ def writable(role):
 
 
 class ClipKeep:
-    def __init__(self, data_dir, tc, fg):
+    def __init__(self, data_dir, tc, fg, kept_file=None):
         self.dir, self.tc, self.fg = data_dir, tc, fg
         self._cache = None
+        self.kept_file = kept_file      # the last look, kept on this computer: the first page after a start is answered from it at once while the first build runs behind
+        self._first = True              # nothing built yet in this run
+        self._kept_at = 0.0
         self._gen = 0                   # counts the times what is kept changed: a build that began before the last change is not kept
         self._building = False
         self._flight = threading.Lock()
@@ -129,14 +132,44 @@ class ClipKeep:
         nothing built yet, or with force, the caller waits for the build."""
         with self._lock:
             c = self._cache
+            if not force and c is None and self._first and self.kept_file:
+                kept = self._load_kept()                 # the look kept by the last run: old, so it is answered now and built again behind (marked stale: the page asks again)
+                if kept:
+                    self._cache = c = (0, kept)
             if not force and c:
                 if time.time() - c[0] < TTL:
                     return c[1]
                 if not self._building:
                     self._building = True
                     threading.Thread(target=self._refresh, daemon=True).start()
-                return c[1]
+                return dict(c[1], stale=True) if self._first else c[1]
         return self._rebuild()
+
+    KEPT_VER = 1            # raise when what a look holds changes: a look kept by older code is then not used
+
+    def _load_kept(self):
+        try:
+            with open(self.kept_file, encoding="utf-8") as fh:
+                j = json.load(fh)
+            if j.get("v") != self.KEPT_VER or not isinstance(j.get("clips"), dict) or set(j["clips"]) != set(KINDS):
+                return None
+            if not self._groups:
+                self._groups = {(k, c): list(st) for k, c, st in j.get("groups") or []}
+            return dict(clips=j["clips"])
+        except (OSError, ValueError, TypeError, AttributeError):
+            return None
+
+    def _save_kept(self, res):
+        if not self.kept_file or time.time() - self._kept_at < 60:      # a look is built every few seconds while a page is open: kept once a minute
+            return
+        self._kept_at = time.time()
+        try:
+            os.makedirs(os.path.dirname(self.kept_file), exist_ok=True)
+            with open(self.kept_file + ".tmp", "w", encoding="utf-8") as fh:
+                json.dump(dict(v=self.KEPT_VER, clips=res["clips"], groups=[[k, c, st] for (k, c), st in self._groups.items()]), fh, separators=(",", ":"))
+            os.replace(self.kept_file + ".tmp", self.kept_file)
+        except (OSError, TypeError, ValueError):
+            pass
 
     def invalidate(self):
         """What is kept changed (new cuts): the look already built is kept but counts as old, so it is answered at once and built again behind; a build already
@@ -152,6 +185,7 @@ class ClipKeep:
         with self._lock:
             self._gen += 1
             self._cache = None
+            self._first = False                          # the look kept by the last run is from before this job: not used any more
         try:
             self._rebuild()
         except Exception:
@@ -171,6 +205,8 @@ class ClipKeep:
                 with self._lock:
                     if g == self._gen:
                         self._cache = (time.time(), res)
+                        self._first = False
+                        self._save_kept(res)
                         return res
             return res
 
