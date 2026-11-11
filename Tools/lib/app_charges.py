@@ -733,10 +733,44 @@ class ChargeBook:
             if self.tools not in sys.path:
                 sys.path.insert(0, self.tools)
             from lib import charge_curves as cc
-            self.pool = cc.discover_deepdive_sessions(dd)
+            # every charge's file is listed, none is opened: a session reads its samples when a page first needs them (this charge, and the others on the same hardware).
+            # Reading all of them took 20 s after every start and every sync that added a charge. A session already read is kept while its file has not changed.
+            old = {x["path"]: x for x in (self.pool or []) if "points" in x}
+            pool = cc.discover_deepdive_sessions(dd, lazy=True)
+            for i, x in enumerate(pool):
+                o = old.get(x["path"])
+                if o is None:
+                    continue
+                try:
+                    st = os.stat(x["path"])
+                    if o.get("stat") == (st.st_mtime, st.st_size):
+                        pool[i] = o
+                except OSError:
+                    pass
+            self.pool = pool
             self.pool_sig = sig
             self.curve_memo = {}
         return self.pool or []
+
+    @staticmethod
+    def _history(pool, cur, reg, cc):
+        """The other sessions the estimates for `cur` are made from: the same site, and the same charger tier at other sites (what charge_curves.historical_extension and
+        estimate_window_minutes pick). Only these are read from disk; one with no samples (not a telemetry file) is left out, as the full reading did. None for a home charge."""
+        if cur["slug"] == "Evnex_Home":
+            return []
+        _, hw = cc.match_hardware(cur["slug"], reg)
+        tier = hw.get("tier") if hw else None
+        out = []
+        for x in pool:
+            if x["slug"] != cur["slug"]:
+                if not tier or x["slug"] == "Evnex_Home":
+                    continue
+                _, h = cc.match_hardware(x["slug"], reg)
+                if not (h and h.get("tier") == tier):
+                    continue
+            if x["points"]:
+                out.append(x)
+        return out
 
     def curves(self, p, part=None):
         key = (p["id"], part)
@@ -755,10 +789,10 @@ class ChargeBook:
         dd = os.path.join(self.data, "charges", "deepdive")
         files = [(x["id"], (x.get("tel") or {}).get("file")) for x in p["parts"]]
         paths = {}
-        known = {s["path"] for s in pool}
+        known = {s["path"]: s for s in pool}
         for pid, f in files:
             fp = CP.find(dd, f) if f else None
-            if fp and fp in known:
+            if fp and fp in known and known[fp]["points"]:          # this charge's own file is read here
                 paths[pid] = fp
         if not paths:
             return None
@@ -786,7 +820,8 @@ class ChargeBook:
         used = {paths[i] for i in chosen}
         reg = cc.load_charger_registries()
         hw_name, hw = cc.match_hardware(cur["slug"], reg)
-        history_pool = [s for s in pool if s["path"] not in {paths[i] for i in paths}]
+        mine = {paths[i] for i in paths}
+        history_pool = self._history([s for s in pool if s["path"] not in mine], cur, reg, cc)
         hist = cc.historical_extension(history_pool + [cur], cur, reg)
         wr = cc.estimate_window_minutes(history_pool + [cur], cur, reg)
         win = cc.window_line(wr)

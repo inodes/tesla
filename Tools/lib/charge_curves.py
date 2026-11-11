@@ -312,14 +312,37 @@ def match_hardware(slug, registry):
     return None, None
 
 
-def discover_deepdive_sessions(deepdive_dir):
+class LazySession(dict):
+    """A session ({"path", "slug", "points"}) whose samples are read from its file the first time s["points"] is asked for, and kept. The slug comes from the file's name, so the
+    sessions of one site or charger tier can be picked out of thousands without opening the others. `stat` is the file's (mtime, size) when it was read."""
+
+    def __missing__(self, key):
+        if key != "points":
+            raise KeyError(key)
+        try:
+            st = os.stat(self["path"])
+            dict.__setitem__(self, "stat", (st.st_mtime, st.st_size))
+        except OSError:
+            pass
+        pts = parse_telemetry_csv(self["path"]) or []
+        dict.__setitem__(self, "points", pts)
+        return pts
+
+
+def discover_deepdive_sessions(deepdive_dir, lazy=False):
     """All parseable per-sample telemetry sessions in deepdive_dir, each as
     {"path": ..., "slug": ..., "points": [...]}. Evnex home sessions (JSON
     only, no matching CSV) and any CSV that isn't telemetry-shaped are
-    silently skipped."""
+    silently skipped.
+    lazy=True: nothing is opened; every file with a slug is a LazySession that reads its samples when they are first used (a file that turns out not to be telemetry then has
+    no points: the caller leaves those out). The app's charge page uses this: it needs one charge and the few others on the same hardware, not all of them."""
     sessions = []
     for path in CP.glob_files(deepdive_dir, "charge_deepdive_*.csv"):          # day folders and any flat leftovers
         slug = slug_from_deepdive_filename(path)
+        if lazy:
+            if slug:
+                sessions.append(LazySession(path=path, slug=slug))
+            continue
         pts = parse_telemetry_csv(path)
         if slug and pts:
             sessions.append({"path": path, "slug": slug, "points": pts})

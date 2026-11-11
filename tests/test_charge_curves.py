@@ -273,5 +273,73 @@ class ChargePathsTest(unittest.TestCase):
         self.assertEqual(CP.root_of(os.path.join(self.root, "a", "f.csv")), os.path.join(self.root, "a"))
 
 
+class LazyPoolTest(unittest.TestCase):
+    """The app's charge page: one charge and the others on the same hardware are read, not every charge ever made (that took 20 s after each start and each sync)."""
+    HEAD = ("Timestamp (AEDT),Battery Level (%),Charger Power (kW),Pack Voltage (V),Pack Current (A),"
+            "Min Battery Module Temp (°C),Max Battery Module Temp (°C)\n")
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp(prefix="test_lazy_")
+        self.addCleanup(shutil.rmtree, self.tmp, True)
+        self.n = 0
+
+    def csv(self, slug, lo=20, hi=30, telemetry=True):
+        self.n += 1
+        p = os.path.join(self.tmp, "charge_deepdive_2026-11-%02d_1000_%s.csv" % (self.n, slug))
+        with open(p, "w", encoding="utf-8") as f:
+            if telemetry:
+                f.write(self.HEAD + "".join("2026-11-%02d 10:%02d:00,%d,100,360,280,20,30\n" % (self.n, k - lo, k) for k in range(lo, hi + 1)))
+            else:
+                f.write("Started At (AEST),Energy Added (kWh)\n2026-11-01 10:00:00,5\n")
+        return p
+
+    def test_lazy_lists_every_file_and_opens_none_and_gives_the_same_points_when_asked(self):
+        a = self.csv("Tesla_Example_Plaza_NSW")
+        self.csv("Tesla_Example_Plaza_NSW", telemetry=False)
+        self.csv("Evnex_Home")
+        eager = CC.discover_deepdive_sessions(self.tmp)
+        with mock.patch.object(CC, "parse_telemetry_csv", side_effect=AssertionError("a file was opened")):
+            lazy = CC.discover_deepdive_sessions(self.tmp, lazy=True)
+        self.assertEqual(len(lazy), 3)
+        self.assertFalse(any("points" in x for x in lazy))
+        self.assertEqual({x["path"]: x["points"] for x in lazy if x["points"]}, {x["path"]: x["points"] for x in eager})
+        self.assertEqual([x for x in lazy if x["path"] == a][0]["points"][0]["soc"], 20.0)
+
+    def test_only_this_charge_and_the_same_hardware_are_read_and_the_estimates_are_the_same(self):
+        import app_charges
+        cur_p = self.csv("Tesla_Example_Plaza_NSW", 40, 50)
+        for _ in range(3):
+            self.csv("Tesla_Example_Plaza_NSW", 10, 90)                    # same site
+        self.csv("Tesla_Sample_Town_VIC", 10, 90)                           # same tier (V3), another site
+        self.csv("Tesla_Other_Place_QLD", 10, 90)                           # another tier: not needed
+        self.csv("Tesla_Example_Plaza_NSW", telemetry=False)                # same site, not telemetry: read, left out
+        for _ in range(5):
+            self.csv("Evnex_Home", 50, 60)                                  # home: never needed
+        eager = CC.discover_deepdive_sessions(self.tmp)
+        cur_e = [x for x in eager if x["path"] == cur_p][0]
+        want_h = CC.historical_extension(eager, cur_e, REGISTRY)
+        want_w = CC.estimate_window_minutes(eager, cur_e, REGISTRY)
+        lazy = CC.discover_deepdive_sessions(self.tmp, lazy=True)
+        cur = [x for x in lazy if x["path"] == cur_p][0]
+        hist = app_charges.ChargeBook._history([x for x in lazy if x["path"] != cur_p], cur, REGISTRY, CC)
+        self.assertEqual(sorted(os.path.basename(x["path"])[-27:] for x in hist), sorted(os.path.basename(x["path"])[-27:] for x in eager
+                                                                                    if x["path"] != cur_p and x["slug"] in ("Tesla_Example_Plaza_NSW", "Tesla_Sample_Town_VIC")))
+        self.assertEqual(CC.historical_extension(hist + [cur], cur, REGISTRY), want_h)
+        self.assertEqual(CC.estimate_window_minutes(hist + [cur], cur, REGISTRY), want_w)
+        opened = [x["slug"] for x in lazy if "points" in x]
+        self.assertEqual(sorted(set(opened)), ["Tesla_Example_Plaza_NSW", "Tesla_Sample_Town_VIC"])
+        self.assertEqual(len(opened), 6)                                    # 4 good + 1 not telemetry at the site, 1 same tier: 7 files were never opened
+
+    def test_a_home_charge_reads_no_other_session(self):
+        import app_charges
+        cur_p = self.csv("Evnex_Home", 50, 60)
+        self.csv("Evnex_Home", 20, 80)
+        self.csv("Tesla_Example_Plaza_NSW", 10, 90)
+        lazy = CC.discover_deepdive_sessions(self.tmp, lazy=True)
+        cur = [x for x in lazy if x["path"] == cur_p][0]
+        self.assertEqual(app_charges.ChargeBook._history([x for x in lazy if x["path"] != cur_p], cur, REGISTRY, CC), [])
+        self.assertFalse(any("points" in x for x in lazy))
+
+
 if __name__ == "__main__":
     unittest.main()
