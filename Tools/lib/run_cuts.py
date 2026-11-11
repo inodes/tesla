@@ -353,7 +353,11 @@ def compute(stamps, items, moves=None, moves_upto=0, kinds=None, marks=None):
             if k[0] == "drive" and not (it and it["kind"] == "drive"):
                 it = move_item(t) or it
             elif k[0] == "park" and it and it["kind"] == "drive":
-                it = dict(it, kind="stopped")             # not a drive by its clips: the timeline's drive item gives only its place
+                # not a drive by its clips: the timeline's drive item gives only its place, and the place of a park is the END of the drive that arrived in this minute
+                # (or the start of the one that leaves in it), never the other end: a park after Home -> school is at the school, not at Home
+                arrive = abs(it["t1"] - (t + 30)) <= abs(it["t0"] - (t + 30))
+                pp = it.get("p1") if arrive else it.get("p0")
+                it = dict(it, kind="stopped", p0=pp, p1=pp)
         elif it and it["kind"] == "drive":
             k = ("drive", it["id"])
         elif it and it["kind"] in ("stopped", "parked"):
@@ -392,9 +396,9 @@ def compute(stamps, items, moves=None, moves_upto=0, kinds=None, marks=None):
         near_next = n + 1 < len(order) and (out[order[n + 1]][3] or CC.utc(order[n + 1]) - (v[4] + 60) <= ADJ_S)
         pv = ref.get(order[n - 1]) if near_prev else None
         nx = ref.get(order[n + 1]) if near_next else None
-        p = (pv.get("p1") or pv.get("p0")) if pv and pv.get("kind") == "drive" else None
-        if not p and nx and nx.get("kind") == "drive":
-            p = nx.get("p0") or nx.get("p1")
+        p = pv.get("p1") if pv and pv.get("kind") == "drive" else None        # where the drive before it ENDED (its start is somewhere else: no position is better than that one)
+        if not (p and p[0] is not None) and nx and nx.get("kind") == "drive":
+            p = nx.get("p0")                                                    # where the drive after it BEGAN
         if p and p[0] is not None:
             v[1], v[2] = p[0], p[1]
         else:
@@ -419,7 +423,7 @@ def _carry(v, st, n, order, out, ref, moves, moves_upto):
         if q[0] == "park" and q[1] is not None:
             ap = (q[1], q[2])
         elif q[0] == "drive" and r:
-            pp = r.get("p1") or r.get("p0")
+            pp = r.get("p1") if r.get("kind") == "drive" else (r.get("p1") or r.get("p0"))      # a drive ended at its end, never where it began
             if pp and pp[0] is not None:
                 ap = (pp[0], pp[1])
     if moves:

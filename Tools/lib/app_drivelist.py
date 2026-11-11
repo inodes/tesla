@@ -84,15 +84,16 @@ def merge(tessie, charges, cam_items, idles=(), slack=SLACK_S, now=None):
     # between Tessie's own events: parked where the car was the same place before and after, else a hole in the record
     events = sorted([x for x in out if x["kind"] in ("drive", "charge") and x.get("src") != "cam"], key=lambda x: x["t0"])
     between = []
+    moved = [c for c in lone if _real_move(c)]
     for a, b in zip(events, events[1:]):
         if b["t0"] - a["t1"] > TL.OPTS["gap_min_s"]:
-            g = TL._gap(a, b)
-            g["src"] = "tessie"
-            for i in idles:
-                if _ov(i["t0"], i["t1"], g["t0"], g["t1"]) > 0:
-                    g["kwh"] = round((g.get("kwh") or 0) + (i.get("kwh") or 0), 2)
-                    g["sentry"] = max(g.get("sentry") or 0, i.get("sentry") or 0)
-            between.append(TL.show(g))
+            for g in _cut_by_drives(TL._gap(a, b), moved):
+                g["src"] = "tessie"
+                for i in idles:
+                    if _ov(i["t0"], i["t1"], g["t0"], g["t1"]) > 0:
+                        g["kwh"] = round((g.get("kwh") or 0) + (i.get("kwh") or 0), 2)
+                        g["sentry"] = max(g.get("sentry") or 0, i.get("sentry") or 0)
+                between.append(TL.show(g))
     out += between
     pend = TL.OPTS.get("park_end_s", 21600)
     night = [x for x in between if x["kind"] == "parked" and x["t1"] - x["t0"] > pend]          # the car slept (a night at home or in a hotel): the footage inside it is its own park, not part of Tessie's
@@ -115,7 +116,77 @@ def merge(tessie, charges, cam_items, idles=(), slack=SLACK_S, now=None):
             out.append(dict(c))
     for c in _coalesce(stops):
         out.append(TL.show(c))
-    return join_parks(sorted(out, key=lambda x: (-x["t0"], -x["t1"])), now)
+    return mark_partial(join_parks(sorted(out, key=lambda x: (-x["t0"], -x["t1"])), now))
+
+
+def _real_move(c):
+    """A dashcam drive that took the car somewhere: a minute or 300 m, not a shuffle (as missing() counts them)."""
+    return not c.get("short") and ((c["t1"] - c["t0"]) >= 60 or (c.get("km") or 0) >= 0.3)
+
+
+def _cut_by_drives(g, moved):
+    """Tessie's park (or hole) between two of its events, cut where the dashcam saw the car drive inside it. Tessie has not given those drives (yet: its record lags, or it never
+    will), so between its last event and its next one it only knows the car was at one place before and at one after; the dashcam says it was out driving. What is left of the park is
+    the time before the first of those drives (at the place Tessie's event before it ended) and the time after the last (at the place the next one begins); between them the
+    dashcam's own drives and stops are the record. A piece no longer than gap_min_s is dropped. With no dashcam drive inside it the park stands as it is.
+    (11 Nov 2026: charge to 17:29, next charge 09:42 the morning after, both at Home: "parked at Home 17:29 - 09:42", over three drives the dashcam had recorded.)"""
+    ins = sorted((c for c in moved if c["t0"] < g["t1"] and c["t1"] > g["t0"]), key=lambda c: c["t0"])
+    if not ins:
+        return [g]
+    out = []
+    for t0, t1, p, tag in ((g["t0"], ins[0]["t0"], g.get("p0"), "head"), (ins[-1]["t1"], g["t1"], g.get("p1"), "tail")):
+        if t1 - t0 > TL.OPTS["gap_min_s"]:
+            known = bool(p and p[0] is not None)
+            out.append(dict(id="g:%d" % t0, kind="parked" if known else "gap", start=TL.iso(t0), end=TL.iso(t1), t0=t0, t1=t1, km=0 if known else None, p0=p, p1=p, cut=tag))
+    return out
+
+
+PARTIAL_MAX_M = 50000.0         # further than this from where the car was last parked, the footage is of another trip, not a drive whose start is missing
+
+
+def mark_partial(items):
+    """A dashcam drive whose footage begins after the drive did (the dashcam drive was plugged in on the way, or the first minutes were overwritten) starts at a spot the car was never
+    parked at: the park or charge before it was somewhere else. It then carries `head` = dict(p=[lat, lon] of where the car set off from, m=metres from there to the first frame),
+    so the list can name the drive from where it began and say its start was not recorded. The same at the other end is `tail` (the footage stops before the drive did).
+    Only for a drive the dashcam alone has (src "cam"): Tessie's drive brings both of its ends, and replaces this when it arrives. Items are changed in place and returned."""
+    lim = TL.OPTS["same_place_m"]
+    solid = sorted((x for x in items if x["kind"] in ("drive", "charge", "parked", "stopped")), key=lambda x: (x["t0"], x["t1"]))
+    for i, x in enumerate(solid):
+        if x["kind"] != "drive" or x.get("src") != "cam" or not _real_move(x):
+            continue
+        for key, nb, mine, theirs in (("head", solid[i - 1] if i else None, x.get("p0"), "p1"), ("tail", solid[i + 1] if i + 1 < len(solid) else None, x.get("p1"), "p0")):
+            if nb is None or nb["kind"] == "drive" or not mine or mine[0] is None:
+                continue
+            p = nb.get(theirs) or nb.get("p0" if theirs == "p1" else "p1")
+            if not p or p[0] is None:
+                continue
+            d = TL.hav(mine[0], mine[1], p[0], p[1])
+            if lim < d <= PARTIAL_MAX_M:
+                x[key] = dict(p=[p[0], p[1]], m=int(round(d)))
+    return items
+
+
+NAME_DAYS = 45                  # rows this recent get a suburb where nothing else names them (older ones keep what they have: the lookups are not worth it)
+
+
+def name_unnamed(items, label, now):
+    """What only the dashcam saw has no name from Tessie: a drive (src "cam") gets `at0` / `at1` and a stop or park that is not Tessie's gets `at`, the suburb of the position
+    ("Marsfield, NSW") from label(lat, lon) -> text or "" (TeslaCam.suburb_label). The page uses them only where no saved place names the spot. Changed in place and returned."""
+    def at(p):
+        return label(p[0], p[1]) if p and p[0] is not None else ""
+    for x in items:
+        if (x.get("t1") or 0) < now - NAME_DAYS * 86400:
+            continue
+        if x["kind"] == "drive" and x.get("src") == "cam":
+            for k, p in (("at0", x.get("p0")), ("at1", x.get("p1"))):
+                v = at(p)
+                if v:
+                    x[k] = v
+        elif x["kind"] in ("stopped", "parked") and x.get("src") != "tessie":
+            v = at(x.get("p0") or x.get("p1"))
+            if v:
+                x["at"] = v
+    return items
 
 
 def _absorb(rec, out):
@@ -366,7 +437,7 @@ def page_rows(act):
     return dict(tess=[x for x in act if x.get("k") == "drive"], chg=[x for x in act if x.get("k") == "charge"])
 
 
-VERSION = 12                                         # bump when merge() or what the list carries changes (or run_cuts, which is worked out when it is built): a list kept from the older code is then built again
+VERSION = 13                                         # bump when merge() or what the list carries changes (or run_cuts, which is worked out when it is built): a list kept from the older code is then built again
 
 
 def _plain(sig):

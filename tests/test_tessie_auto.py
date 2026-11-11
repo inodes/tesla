@@ -45,5 +45,29 @@ class OutcomeTest(unittest.TestCase):
         self.assertEqual(TA.outcome(dict(running=False, ended=5, rc=-15, lines=["(stopped from the app)"])), "stopped")
 
 
+class DashcamAhead(unittest.TestCase):
+    """11 Nov 2026: the dashcam had three drives Tessie had not given; the drives sync waited behind a seven minute charges sync."""
+
+    def test_the_drives_sync_goes_first_while_the_dashcam_has_drives_tessie_lacks(self):
+        self.assertEqual(TA.order(["charges", "drives"], dict(cam_only=3)), ["drives", "charges"])
+        self.assertEqual(TA.order(["charges", "drives"], dict(cam_only=0, no_page=2)), ["charges", "drives"])
+        self.assertEqual(TA.order(["charges", "drives"], None), ["charges", "drives"])
+
+    def test_dashcam_only_drives_are_asked_for_again_after_ten_minutes_not_an_hour(self):
+        now = 1_000_000.0
+        self.assertTrue(TA.missing_due(dict(cam_only=1), now, 0.0, 3600))                    # never tried: at once
+        self.assertFalse(TA.missing_due(dict(cam_only=1), now, now - 300, 3600))
+        self.assertTrue(TA.missing_due(dict(cam_only=1), now, now - 601, 3600))
+        self.assertFalse(TA.missing_due(dict(no_page=1), now, now - 601, 3600))              # a missing route waits the full gap
+        self.assertTrue(TA.missing_due(dict(no_page=1), now, now - 3601, 3600))
+        self.assertFalse(TA.missing_due(dict(cam_only=1), now, 0.0, 0))                      # auto sync switched off
+        self.assertFalse(TA.missing_due({}, now, 0.0, 3600))
+
+    def test_a_drive_that_just_ended_is_not_written_off_when_the_sync_does_not_bring_it(self):
+        now = 1_000_000.0
+        items = [dict(kind="drive", id="old", t1=now - 4000), dict(kind="drive", id="new", t1=now - 300), dict(kind="parked", id="p", t1=now - 9000)]
+        self.assertEqual(TA.write_off(["old", "new", "t123", "p"], items, now), ["old"])
+
+
 if __name__ == "__main__":
     unittest.main()

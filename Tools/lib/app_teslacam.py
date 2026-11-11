@@ -695,17 +695,35 @@ class TeslaCam:
                 out.append(dict(stamp=st, t=TL.secs(st), src="sentry", ref=e["id"], cams=cams, tcam=TL.tcam(cams)))
         return out
 
+    def suburbs(self):
+        """The suburb lookup (lib/suburb_lookup.py: OpenStreetMap's boundaries, kept in <data>/suburbs), or None when app.teslacam.suburb_lookup is off."""
+        if not app_config.get("teslacam.suburb_lookup", True):
+            return None
+        import suburb_lookup
+        return self.__dict__.get("_suburbs") or self.__dict__.setdefault("_suburbs", suburb_lookup.Suburbs(os.path.join(self.dir, "suburbs")))
+
+    def suburb_label(self, lat, lon):
+        """ "Marsfield, NSW" for a position: the name a list row gets when it is at no saved place and Tessie has no name for it (a drive or a stop the dashcam alone saw).
+        "" when the suburb is not known yet: it is then fetched in the background (one request at a time) and is there the next time the list is built."""
+        if lat is None or lon is None:
+            return ""
+        try:
+            sub = self.suburbs()
+            name = sub.at(lat, lon) if sub is not None else None
+        except Exception:
+            name = None
+        if not name:
+            return ""
+        import au_state
+        return ", ".join(x for x in (name, au_state.state(lat, lon)) if x)
+
     def _short_where(self, store, stamp):
         """The short place of a minute for the label on the video ("Main Beach, QLD"): the suburb the clip carries, else the suburb of the nearest clip that has one (a garage), else a lookup of its
         GPS position (short_place.py); the state comes from the position. With no position read, the suburb alone."""
         import short_place
         sp = self.__dict__.get("_sp")
         if sp is None:
-            sub = None
-            if app_config.get("teslacam.suburb_lookup", True):
-                import suburb_lookup
-                sub = self.__dict__.get("_suburbs") or self.__dict__.setdefault("_suburbs", suburb_lookup.Suburbs(os.path.join(self.dir, "suburbs")))
-            sp = self.__dict__["_sp"] = short_place.ShortPlace(self.dir, suburbs=sub)
+            sp = self.__dict__["_sp"] = short_place.ShortPlace(self.dir, suburbs=self.suburbs())
         evp = self._event_places()
         ver = (CC.where_token(), len(store.sum or {}), id(evp))          # what it is fed from: the clips' own places, the minutes whose telemetry is read, and the events' own positions
         old = self.__dict__.get("_sp_ver")

@@ -53,6 +53,30 @@ class CutsTest(unittest.TestCase):
         self.assertEqual(c[self.sts[0]][1:3], [-33.80, 151.10])    # before the drive: where it began
         self.assertEqual(c[self.sts[20]][1:3], [-33.81, 151.11])   # after it: where it ended
 
+    def test_a_park_whose_first_minute_holds_the_end_of_a_drive_is_where_that_drive_ended_not_where_it_began(self):
+        """11 Nov 2026: Home -> school, parked at the school. The clips say the minute the car arrived in is parked; the timeline's drive still runs into it. The park is at the school
+        (the drive's end). It used to take the drive's START (Home), which made a park anywhere 'parked at Home': ignored, and listed under the Home filter."""
+        home, school = [-33.8000, 151.0000], [-33.7979, 151.1116]
+        sts = self.sts
+        items = [item("drive", sts[0], sts[10], p0=home, p1=school)]                       # the drive item runs one minute into what the clips call parked
+        kinds = {st: ("go" if n < 10 else "pk") for n, st in enumerate(sts[:16])}
+        c = RC.compute(sts[:16], items, kinds=kinds)
+        park = [v for k, v in sorted(c.items()) if v[0] == "park"]
+        self.assertEqual(len(park), 1)
+        self.assertEqual(park[0][1:3], school)
+        # and a park whose last minutes hold the start of the drive that leaves is where that drive began
+        items = [item("drive", sts[5], sts[15], p0=home, p1=school)]
+        kinds = {st: ("pk" if n < 7 else "go") for n, st in enumerate(sts[:16])}
+        c = RC.compute(sts[:16], items, kinds=kinds)
+        park = [v for k, v in sorted(c.items()) if v[0] == "park"]
+        self.assertEqual(park[0][1:3], home)
+
+    def test_a_park_beside_a_drive_whose_end_is_not_known_has_no_position_rather_than_the_drives_start(self):
+        sts = self.sts
+        items = [item("drive", sts[0], sts[9], p0=[-33.80, 151.10], p1=None), item("stopped", sts[10], sts[19])]
+        c = RC.compute(sts[:20], items)
+        self.assertEqual(c[sts[10]][1:3], [None, None])
+
     def test_minutes_not_read_after_a_drive_are_the_car_parked_when_there_are_a_few_of_them(self):
         items = [item("drive", self.sts[0], self.sts[9], p0=[1.0, 2.0], p1=[1.1, 2.1]), item("recording", self.sts[10], self.sts[14]),
                  item("stopped", self.sts[15], self.sts[29])]

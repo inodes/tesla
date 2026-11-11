@@ -1143,7 +1143,9 @@ def charges_started():
 
 def tessie_started():
     """A Tessie sync was started: when it ends cleanly, dashcam-only drives that were missing then and are still missing are what Tessie has no record of, so the page stops offering to fetch them (Tessie's own drives record their path outcome in FetchLedger when asked)."""
-    ids = [i for i in ((drivelist().get("missing") or {}).get("ids") or []) if not str(i).startswith("t")]
+    import tessie_auto as TA
+    dl = drivelist()
+    ids = TA.write_off((dl.get("missing") or {}).get("ids"), dl.get("items"), time.time())      # only drives Tessie has had time to record: a newer one it still lacks is asked for again
 
     def after():
         while TSYNC.running():
@@ -1262,6 +1264,10 @@ def drivelist(wait=False):
         except Exception:
             pass
         items = app_drivelist.merge(tess, [x for x in act if x["k"] == "charge"], cam, [x for x in act if x["k"] == "idle"])
+        try:
+            app_drivelist.name_unnamed(items, TC.suburb_label, time.time())      # what the dashcam alone saw: the suburb where no saved place and no Tessie name says where it was
+        except Exception as e:
+            print("(suburb names: %s)" % e, flush=True)
         return dict(items=items, tessie=bool(tess), **app_drivelist.page_rows(act), missing=app_drivelist.missing(items, time.time(), tried=set(tessie_state().get("tried") or []) | FetchLedger(DATA_DIR).settled("drive_path")))
     d = os.path.join
     watch = [d(DATA_DIR, "drives", "drives_master.csv"), d(DATA_DIR, "charges", "charges_master.csv"), d(DATA_DIR, "drives", "deepdive"), d(DATA_DIR, "tessie_sync_state.json"), d(DATA_DIR, "fetch_ledger.json"), d(DATA_DIR, "clip_clock.json"), d(DATA_DIR, "places.json"), d(DATA_DIR, "teslacam_timeline", "index.json"),
@@ -1272,7 +1278,8 @@ def drivelist(wait=False):
 def tessie_auto():
     """Keeps the drives and the charges from Tessie up to date by itself (lib/tessie_auto.py): a minute after the app opens, then whenever the last clean sync is older than
     app.drives.tessie_auto_sync_minutes (default 60; 0 = only when you press Sync), one sync at a time, and only while nothing else is busy with the drives. One that was cut short or
-    failed is tried again after a wait that doubles each time. The dashcam seeing a drive Tessie has not given yet also starts the drives sync, at most that often."""
+    failed is tried again after a wait that doubles each time. The dashcam seeing a drive Tessie has not given yet starts the drives sync at once, ahead of the charges sync, and again
+    every tessie_auto.CAM_RETRY_S until Tessie has it (a drive is written off as "Tessie has no record of it" only by a sync that began tessie_auto.SETTLE_S or more after it ended)."""
     import tessie_auto as TA
     time.sleep(45)
     jobs = [dict(kind="charges", sync=lambda: CSYNC, begin=charges_started, state=charges_state), dict(kind="drives", sync=lambda: TSYNC, begin=tessie_started, state=tessie_state)]
@@ -1295,10 +1302,11 @@ def tessie_auto():
             if busy:
                 continue
             now = time.time()
-            for j in jobs:
+            miss = drivelist(True).get("missing") or {}
+            # the dashcam has drives Tessie has not given: the drives sync goes first (the charges sync can take minutes) and is tried again soon, not an hour later
+            for j in sorted(jobs, key=lambda j: TA.order([x["kind"] for x in jobs], miss).index(j["kind"])):
                 ok_at = (j["state"]() or {}).get("at")
-                m = (drivelist(True).get("missing") or {}) if j["kind"] == "drives" else {}
-                if TA.due(now, ok_at, j["tried"], j["fails"], gap, j.get("stopped", False)) or (j["kind"] == "drives" and (m.get("cam_only") or m.get("no_page")) and now - j["tried"] >= gap):
+                if TA.due(now, ok_at, j["tried"], j["fails"], gap, j.get("stopped", False)) or (j["kind"] == "drives" and TA.missing_due(miss, now, j["tried"], gap)):
                     r = j["sync"]().start()
                     if r.get("ok") is not False and r.get("running"):
                         j["tried"], j["seen"] = now, False
