@@ -2576,7 +2576,9 @@ async function pageTeslaCam(role,id){
     t.innerHTML=`<div id="jobhd">${hd}</div>${pbar(q)}<div id="jobsub" class="sub" style="margin-top:4px"${pr?"":" hidden"}>Videos cannot play while this reads from the drive.</div>`};
   let polling=false;
   const poll=async()=>{if(polling)return;polling=true;try{await poll1()}finally{polling=false}};
-  const poll1=async()=>{while(document.body.contains($("#selbar"))){let j;try{j=await (await fetch("/api/clips/job")).json()}catch(e){break}
+  // one failed or slow answer must not freeze the bar (it stayed at "10 of 15" for good when a request failed while the app was busy): each ask gives up after 8 s and is asked again, and after
+  // about 5 minutes of no answer the bar is taken down rather than left saying work is going on
+  const poll1=async()=>{let bad=0;while(document.body.contains($("#selbar"))){let j;try{const ac=new AbortController(),tm=setTimeout(()=>ac.abort(),8000);try{j=await (await fetch("/api/clips/job",{signal:ac.signal})).json()}finally{clearTimeout(tm)}bad=0}catch(e){if(++bad>=30){if(jobT){jobT=null;selbar()}break}await new Promise(r=>setTimeout(r,2000));continue}
       if(j.running){const first=!jobT;jobT=j;if(first)selbar();else jobPaint();await new Promise(r=>setTimeout(r,1000));continue}
       if(jobT){jobT=null;const bad=(j.errors||[]).length,pr=j.action==="process"||j.action==="pictures";
         note=pr?((j.steps||[]).some(x=>x.total)?"Read what was missing"+(j.steps||[]).filter(x=>x.total).map(x=>" · "+x.step.toLowerCase()+" "+n0(x.total)).join("")+waitTx(Object.keys(KPC||{}).flatMap(k=>Object.keys(KPC[k]).map(id=>({kind:k,id})))):"Nothing more could be read from the video")+(bad?" · "+j.errors[0]:""):j.action==="purge"?"Deleted "+(j.types||[]).join(", ")+" · freed "+fmtGB((j.freed||0)+(j.data_freed||0)):(j.action==="move"?"Moved ":"Deleted ")+n0((j.done||0)-(j.skipped||0))+" files"+(j.action==="delete"?", freed "+fmtGB(j.freed):"")+(j.skipped?" · skipped "+n0(j.skipped)+" that were already there":"")+(j.dropped?" · deleted "+n0(j.dropped)+" copies from the old drive, keeping the ones already there":"")+(bad?" · "+bad+" could not be handled: "+j.errors[0]:"");
