@@ -382,14 +382,23 @@ class Places:
 
     _END_STATE = re.compile(r",\s*[^,]+,\s*(?:NSW|VIC|QLD|SA|WA|TAS|NT|ACT)\s*$")
 
-    def with_suburb(self, name, lat, lon):
-        """(name, error): a saved place's name ends with its suburb and state ("Flower Power, Croydon Park, NSW"): appended from the position when the name does not already end that way."""
+    def with_suburb(self, name, lat, lon, charger=False):
+        """(name, error): a saved place's name ends with its suburb and state ("Flower Power, Croydon Park, NSW"). A name that already ends that way is kept. A branch named after its suburb says
+        it once: "Anytime Fitness Carlingford" becomes "Anytime Fitness, Carlingford, NSW" (a business only: a place with chargers keeps the name it has, chargers have their own naming; a name
+        that merely holds the suburb, "The Concord Club", is kept whole). "Anzac Park, West Ryde" gets the state only."""
         if self._END_STATE.search(name):
             return name, None
         sub, st = self.suburb_state(lat, lon)
         if not sub:
             return name, "The suburb and state of this spot could not be found: add them to the name, as 'Name, Suburb, NSW'."
-        return ", ".join(x for x in (name, sub, st) if x), None
+        base = name.strip()
+        if base.lower().endswith(", " + sub.lower()):
+            base = base[:-len(sub) - 2].rstrip(", ")
+        elif not charger:
+            m = re.match(r"^(.*\S)\s+" + re.escape(sub) + r"$", base, re.I)
+            if m:
+                base = m.group(1)
+        return ", ".join(x for x in (base, sub, st) if x), None
 
     def spot_keywords(self, S, lat, lon, name="", addr=""):
         """Keywords for a place that is not saved yet, as places_manager.py suggests them: the street of the address (and its abbreviation) plus the
@@ -649,7 +658,7 @@ class Places:
         places = PM.load_places(self.f_places)
         entry = dict(places.get(old) or places.get(name) or {})
         if (name != old or not old) and entry.get("type") != "home":         # a new or renamed place carries its suburb and state; a place saved earlier keeps its name when only something else is edited
-            name, why = self.with_suburb(name, lat, lon)
+            name, why = self.with_suburb(name, lat, lon, charger=bool(body.get("chargers") or entry.get("chargers")))
             if why:
                 return dict(ok=False, error=why)
             ok, why = PM.validate_place_name(name)

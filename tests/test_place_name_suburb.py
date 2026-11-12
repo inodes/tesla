@@ -52,6 +52,32 @@ class NameTest(unittest.TestCase):
         self.assertEqual(pl.save(body("Home", old_name="Home", notes="n"))["key"], "p:Home")
 
 
+class BranchNameTest(unittest.TestCase):
+    def name(self, n, sub, st="NSW", **kw):
+        pl = places(sub=sub, st=st)
+        return pl.with_suburb(n, -33.8, 151.0, **kw)[0]
+
+    def test_a_branch_named_after_its_suburb_says_it_once(self):
+        self.assertEqual(self.name("Anytime Fitness Carlingford", "Carlingford"), "Anytime Fitness, Carlingford, NSW")
+        self.assertEqual(self.name("Tesla Service Parramatta", "Parramatta"), "Tesla Service, Parramatta, NSW")
+        self.assertEqual(self.name("United Swimming Macquarie Park", "Macquarie Park"), "United Swimming, Macquarie Park, NSW")
+        self.assertEqual(self.name("Airbnb Mooloolaba", "Mooloolaba", "QLD"), "Airbnb, Mooloolaba, QLD")
+
+    def test_a_unique_name_that_holds_the_suburb_is_kept_whole(self):
+        self.assertEqual(self.name("The Concord Club", "Concord"), "The Concord Club, Concord, NSW")
+        self.assertEqual(self.name("West Ryde Coles", "West Ryde"), "West Ryde Coles, West Ryde, NSW")
+        self.assertEqual(self.name("Top Ryde Shopping Centre", "Ryde"), "Top Ryde Shopping Centre, Ryde, NSW")
+
+    def test_a_place_with_chargers_keeps_its_name(self):
+        self.assertEqual(self.name("Rhodes Waterside Rhodes", "Rhodes", charger=True), "Rhodes Waterside Rhodes, Rhodes, NSW")
+
+    def test_a_name_with_the_suburb_already_after_a_comma_gets_the_state_only(self):
+        self.assertEqual(self.name("Anzac Park, West Ryde", "West Ryde"), "Anzac Park, West Ryde, NSW")
+
+    def test_a_different_suburb_at_the_end_is_not_stripped(self):
+        self.assertEqual(self.name("Anytime Fitness Newington", "Silverwater"), "Anytime Fitness Newington, Silverwater, NSW")
+
+
 class NotesTest(unittest.TestCase):
     def test_blank_notes_get_name_and_street_like_the_command_line(self):
         pl = places()

@@ -193,7 +193,7 @@ Every command runs through one entry point: `./Tools/tesla` lists them by group 
 # Move and import discovered invoices into canonical provider directories:
 ./Tools/tesla sync invoices --scan ~/Downloads --import
 ```
-👉 *Supports AGL energy statements (`AGL_Statement_<service>_<period start>_to_<period end>.pdf`), EV charging receipts (`YYYYMMDD_HHMM_Network_Inv_Place.pdf`), and generic invoices with zero external dependencies.*
+👉 *Supports AGL energy statements (`AGL_Statement_<service>_<issue date>.pdf`), EV charging receipts (`YYYYMMDD_HHMM_Network_Inv_Place.pdf`), and generic invoices with zero external dependencies.*
 
 ### 8. Deploy Scripts to External Drives
 
