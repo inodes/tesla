@@ -2563,7 +2563,13 @@ async function pageTeslaCam(role,id){
     on("jobx",async()=>{try{await fetch("/api/clips/act",{method:"POST",body:JSON.stringify({action:"stop"})})}catch(e){}});
     if(jobT)jobPaint()};
   // time left in the step running, worked out from how long the clips done so far took (shown once a few are done, so a slow step does not look stuck)
-  const jobLeft=j=>{const el=j.step_t0?Date.now()/1000-j.step_t0:0;if(!(j.step_total>j.step_done)||j.step_done<2||el<30)return "";return " · about "+dur(Math.max(1,Math.round(el/j.step_done*(j.step_total-j.step_done)/60)))+" left"};
+  // the pace is the slower of the whole step so far and the last few items: a step whose first items were quick (drives with nothing to read) must not promise the rest will be
+  const JLS={t:null,pts:[]};
+  const jobLeft=j=>{const now=Date.now()/1000,el=j.step_t0?now-j.step_t0:0;if(JLS.t!==j.step_t0){JLS.t=j.step_t0;JLS.pts=[]}
+    const L=JLS.pts;if(!L.length||L[L.length-1][0]!==j.step_done)L.push([j.step_done,now]);
+    if(!(j.step_total>j.step_done)||j.step_done<2||el<30)return "";
+    let per=el/j.step_done;const q=[...L].reverse().find(p=>p[0]<=j.step_done-3);if(q)per=Math.max(per,(now-q[1])/(j.step_done-q[0]));
+    return " · about "+dur(Math.max(1,Math.round(per*(j.step_total-j.step_done)/60)))+" left"};
   const jobPaint=()=>{const t=$("#jobtx");if(!t||!jobT)return;const j=jobT,pr=j.action==="process"||j.action==="pictures"||!!j.reading,q=pr?(j.step_total?Math.round(100*(j.step_done+(j.step_done<j.step_total?.35:0))/j.step_total):5):(j.bytes?Math.round(100*j.bytes_done/j.bytes):(j.files?Math.round(100*(j.done+.35)/j.files):5));
     const hd=pr?`<b>${j.reading?(j.after?"Moved. Now reading what is left · ":"Reading what is missing · "):""}${esc(j.step||"Starting")}</b>${j.step_total?` · ${n0(j.step_done)} of ${n0(j.step_total)} (${q}%)`:""}${jobLeft(j)}${j.current?` <span class="sub">· ${esc(j.current)}</span>`:""}`:j.action==="purge"?`<b>Deleting ${esc((j.types||[]).join(", "))}</b> · ${n0(j.done)} of ${n0(j.files)} video files · ${fmtGB(j.bytes_done)} of ${fmtGB(j.bytes)} (${q}%)`:`<b>${j.action==="move"?"Moving":"Deleting"} the video ${j.action==="move"?"from "+NMD[j.role]+" to "+(NMD[!j.to?"A":j.to]):"from "+NMD[j.role]}</b> · ${n0(j.done)} of ${n0(j.files)} files · ${fmtGB(j.bytes_done)} of ${fmtGB(j.bytes)} (${q}%)`;
     if($("#jobhd",t)){$("#jobhd",t).innerHTML=hd;setPbar(t,q);const sb=$("#jobsub",t);if(sb)sb.hidden=!pr;return}
