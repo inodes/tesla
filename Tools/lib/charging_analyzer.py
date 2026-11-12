@@ -3495,6 +3495,19 @@ class ChargingAnalyzer:
                     return True
         return False if seen_any else None
 
+    PLUGIN_GROUP_ODO_KM = 0.5      # Home/AC: the car did not move between two records of one plug-in
+
+    def _same_public_kind(self, a, b):
+        """Both public (Super/fast) charges, or both Home/AC with the odometer unchanged between them (a drive in between makes two plug-ins)."""
+        pa = bool(a.get("is_supercharger") or a.get("is_fast_charger"))
+        pb = bool(b.get("is_supercharger") or b.get("is_fast_charger"))
+        if pa != pb:
+            return False
+        if pa:
+            return True
+        oa, ob = a.get("odometer_km") or 0, b.get("odometer_km") or 0
+        return oa > 0 and ob > 0 and abs(ob - oa) <= self.PLUGIN_GROUP_ODO_KM
+
     def _same_plugin_site(self, a, b):
         la, lb = a.get("location_raw"), b.get("location_raw")
         if la and lb and la == lb:
@@ -3512,12 +3525,14 @@ class ChargingAnalyzer:
         plugged in) and starts a new one when charging resumes, but the
         Supercharger network - and Tesla's invoice - treat the whole plug-in
         as ONE session. Returns {charge_index: (leader_index, member_indexes)}
-        for public (fast/Super) charges at one site with a short pause and no
-        "Disconnected" state between them. Home/AC sessions are never grouped."""
+        for charges at one site with a short pause and no "Disconnected" state
+        between them: public (fast/Super) ones, and Home/AC ones too when the car
+        did not move in between (the app shows one plug-in as one charge whatever
+        Tessie recorded; Tessie's own records stay as they are)."""
         order = sorted(
             [i for i, c in enumerate(self.charges)
              if c.get("start_utc_epoch") is not None and c.get("end_utc_epoch") is not None
-             and (c.get("is_supercharger") or c.get("is_fast_charger"))],
+             ],
             key=lambda i: self.charges[i]["start_utc_epoch"])
         groups = {}
         cur = []
@@ -3529,6 +3544,7 @@ class ChargingAnalyzer:
                 joined = False
                 if (-120 <= gap <= self.PLUGIN_GROUP_MAX_GAP_S
                         and bool(prev.get("is_supercharger")) == bool(c.get("is_supercharger"))
+                        and self._same_public_kind(prev, c)
                         and self._same_plugin_site(prev, c)):
                     disc = self._telemetry_disconnected_between(prev, c)
                     joined = (disc is False) or (disc is None and gap <= self.PLUGIN_GROUP_NO_TELEMETRY_GAP_S)

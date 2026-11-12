@@ -28,7 +28,7 @@ import sys
 import threading
 import time
 
-VERSION = 1
+VERSION = 2          # 2: a Home plug-in Tessie split is one charge too (charging_analyzer.build_plugin_groups)
 
 
 def _num(v, d=None):
