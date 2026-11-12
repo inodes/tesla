@@ -75,6 +75,7 @@ class Places:
         self.f_busy = os.path.join(data_dir, "chargers", "tesla_busy_times.json")
         self.f_ignored = os.path.join(data_dir, "ignored_places.json")
         self.f_cache = os.path.join(data_dir, "places_osm_cache.json")
+        self.f_addr = os.path.join(data_dir, "place_address_cache.json")
 
     def deps(self):
         return [self.f_places, self.f_stations]
@@ -380,6 +381,55 @@ class Places:
             memo[ck] = (sub, st or au_state.state(lat, lon) or "")
         return memo[ck]
 
+    def address_of(self, S, lat, lon):
+        """The street address of a point, shown under the map on a place page ("28a Gordon Street, Brighton, QLD 4017"): OpenStreetMap's address for the spot (kept in
+        place_address_cache.json, so it is asked once), else the address Tessie recorded for the stops here. "" when neither has a street."""
+        ck = "%.5f,%.5f" % (lat, lon)
+        cache = _load(self.f_addr) or {}
+        if cache.get(ck):
+            return cache[ck]
+        addr = ""
+        try:
+            import places_common as PM
+            a = (PM.reverse_geocode(lat, lon) or {}).get("address") or {}
+            road = (a.get("road") or a.get("pedestrian") or a.get("footway") or "").strip()
+            if road:
+                st = (a.get("ISO3166-2-lvl4") or "").split("-")[-1] or self._STATES.get(a.get("state") or "", a.get("state") or "")
+                sub = a.get("suburb") or a.get("city_district") or a.get("town") or a.get("village") or a.get("city") or ""
+                street = ((a.get("house_number") or "") + " " + road).strip()
+                tail = " ".join(x for x in (st, a.get("postcode") or "") if x)
+                addr = ", ".join(x for x in (street, sub, tail) if x)
+        except Exception:
+            addr = ""
+        if not addr:
+            tess = collections.Counter()
+            for d in S.drives():
+                if d.get("addr1") and d.get("lat1") is not None and hav(lat, lon, d["lat1"], d["lon1"]) <= 150:
+                    tess[d["addr1"]] += 1
+            for c in S.charges():
+                if c.get("addr") and c.get("lat") is not None and hav(lat, lon, c["lat"], c["lon"]) <= 150:
+                    tess[c["addr"]] += 1
+            addr = next((x for x, _ in tess.most_common() if not x.split(",")[0].strip().replace("/", "").replace("-", "").isdigit()), "")
+        if addr:
+            cache[ck] = addr
+            try:
+                tmp = self.f_addr + ".tmp"
+                with open(tmp, "w", encoding="utf-8") as f:
+                    json.dump(cache, f, ensure_ascii=False, indent=1)
+                os.replace(tmp, self.f_addr)
+            except OSError:
+                pass
+        return addr
+
+    @staticmethod
+    def own_suburb(addr, name):
+        """The address with the suburb and state the place is saved under ("Mum, Bardwell Valley, NSW"), where the map data puts the same street in a neighbouring suburb."""
+        m = re.search(r",\s*([^,]+),\s*(NSW|VIC|QLD|SA|WA|TAS|NT|ACT)\s*$", name or "")
+        a = re.match(r"^(.*?),\s*[^,]+,\s*[A-Z]{2,3}(\s+\d{4})?\s*$", addr or "")
+        if not (m and a):
+            return addr or ""
+        return "%s, %s, %s%s" % (a.group(1), m.group(1).strip(), m.group(2), a.group(2) or "")
+
     _END_STATE = re.compile(r",\s*[^,]+,\s*(?:NSW|VIC|QLD|SA|WA|TAS|NT|ACT)\s*$")
 
     def with_suburb(self, name, lat, lon, charger=False):
@@ -389,6 +439,8 @@ class Places:
         if self._END_STATE.search(name):
             return name, None
         sub, st = self.suburb_state(lat, lon)
+        if sub and re.sub(r",\s*(NSW|VIC|QLD|SA|WA|TAS|NT|ACT)\s*$", "", name).strip().lower() == sub.lower() and name.strip() != sub:
+            return name, None                       # a place named after its suburb says it once: "Sydney Olympic Park, NSW"
         if not sub:
             return name, "The suburb and state of this spot could not be found: add them to the name, as 'Name, Suburb, NSW'."
         base = name.strip()
@@ -461,6 +513,13 @@ class Places:
         if not info:
             return None
         info["key"] = key
+        if info["kind"] in ("saved", "spot") and info.get("lat") is not None:
+            try:
+                info["address"] = self.own_suburb(info.get("addr") or self.address_of(S, info["lat"], info["lon"]), info["name"] if info["kind"] == "saved" else "")
+            except Exception:
+                info["address"] = info.get("addr") or ""
+        elif info.get("addr"):
+            info["address"] = info["addr"]
         if key[:2] in ("s:", "c:", "p:"):
             try:
                 info["site"] = self.site(key)

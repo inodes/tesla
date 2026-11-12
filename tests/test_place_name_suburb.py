@@ -95,3 +95,10 @@ class NotesTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class NamedAfterSuburbTest(unittest.TestCase):
+    def test_a_place_named_after_its_suburb_says_it_once(self):
+        P = app_places.Places.__new__(app_places.Places)
+        P.suburb_state = lambda la, lo: ("Sydney Olympic Park", "NSW")
+        self.assertEqual(P.with_suburb("Sydney Olympic Park, NSW", -33.84, 151.07), ("Sydney Olympic Park, NSW", None))

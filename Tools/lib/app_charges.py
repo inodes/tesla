@@ -28,7 +28,7 @@ import sys
 import threading
 import time
 
-VERSION = 2          # 2: a Home plug-in Tessie split is one charge too (charging_analyzer.build_plugin_groups)
+VERSION = 3          # 3: saved places renamed with suburb and state (older book entries hold the old name); 2: a Home plug-in Tessie split is one charge too (charging_analyzer.build_plugin_groups)
 
 
 def _num(v, d=None):
