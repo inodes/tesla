@@ -14,6 +14,7 @@ import datetime
 import json
 import math
 import os
+import re
 import shutil
 import threading
 import time
@@ -353,22 +354,42 @@ class Places:
                "Northern Territory": "NT", "Australian Capital Territory": "ACT"}
 
     def suburb_state(self, lat, lon):
-        """(suburb, state abbreviation) of a point from Nominatim; ("", "") when it does not answer."""
+        """(suburb, state abbreviation) of a point: the suburb lookup first (lib/suburb_lookup.py: kept boundaries, instant once seen), else Nominatim; the state comes from the
+        position (au_state) when the answer has none. ("", "") when no suburb is found."""
         import places_common as PM
+        import au_state
         ck = (round(lat, 4), round(lon, 4))
         memo = self.__dict__.setdefault("_ss", {})
         if ck not in memo:
+            sub, st = "", ""
             try:
-                a = (PM.reverse_geocode(lat, lon) or {}).get("address") or {}
+                import suburb_lookup
+                S = self.__dict__.get("_sublk") or self.__dict__.setdefault("_sublk", suburb_lookup.Suburbs(os.path.join(self.d, "suburbs")))
+                sub = S.at(lat, lon, wait=True) or ""
             except Exception:
-                a = {}
-            sub = a.get("suburb") or a.get("city_district") or a.get("town") or a.get("village") or a.get("city") or ""
-            st = (a.get("ISO3166-2-lvl4") or "").split("-")[-1] or self._STATES.get(a.get("state") or "", a.get("state") or "")
-            if sub:
-                memo[ck] = (sub, st)
-            else:
+                sub = ""
+            if not sub:
+                try:
+                    a = (PM.reverse_geocode(lat, lon) or {}).get("address") or {}
+                except Exception:
+                    a = {}
+                sub = a.get("suburb") or a.get("city_district") or a.get("town") or a.get("village") or a.get("city") or ""
+                st = (a.get("ISO3166-2-lvl4") or "").split("-")[-1] or self._STATES.get(a.get("state") or "", a.get("state") or "")
+            if not sub:
                 return "", ""
+            memo[ck] = (sub, st or au_state.state(lat, lon) or "")
         return memo[ck]
+
+    _END_STATE = re.compile(r",\s*[^,]+,\s*(?:NSW|VIC|QLD|SA|WA|TAS|NT|ACT)\s*$")
+
+    def with_suburb(self, name, lat, lon):
+        """(name, error): a saved place's name ends with its suburb and state ("Flower Power, Croydon Park, NSW"): appended from the position when the name does not already end that way."""
+        if self._END_STATE.search(name):
+            return name, None
+        sub, st = self.suburb_state(lat, lon)
+        if not sub:
+            return name, "The suburb and state of this spot could not be found: add them to the name, as 'Name, Suburb, NSW'."
+        return ", ".join(x for x in (name, sub, st) if x), None
 
     def spot_keywords(self, S, lat, lon, name="", addr=""):
         """Keywords for a place that is not saved yet, as places_manager.py suggests them: the street of the address (and its abbreviation) plus the
@@ -462,7 +483,38 @@ class Places:
         info["pts"] = sorted(pts)[:300]
         info["visits"] = sorted(visits, key=lambda e: -e["t0"])[:400]
         info["nvisits"] = len(visits)
+        if info["kind"] in ("saved", "spot"):
+            info["chargers_show"] = self.chargers_show(info, visits)
         return info
+
+    def chargers_show(self, info, visits):
+        """Whether the place page offers 'Chargers here' (which charger was used, and its price). Only when a charge was made here AND the charger is not already known:
+        no Supercharger or charger on record at this spot, or two or more of them that the speed of each charge cannot tell apart (a DC and an AC charger side by side:
+        a charge averaging 40 kW is the DC one). Home never."""
+        if info.get("home") or info.get("lat") is None:
+            return False
+        chg = [v for v in visits if v.get("k") == "charge"]
+        if not chg:
+            return False
+        r = max(150, info.get("radius") or 0)
+
+        def kw(x):
+            try:
+                return float(x) if x not in (None, "") else None
+            except (TypeError, ValueError):
+                return None
+        near = [kw(x.get("kw")) for x in list(self.stations()) + list(self.chargers()["rows"])
+                if x.get("lat") is not None and x.get("lon") is not None and hav(info["lat"], info["lon"], x["lat"], x["lon"]) <= r]
+        if not near:
+            return True
+        if len(near) < 2:
+            return False
+        for v in chg:
+            avg = (v.get("kwh") or 0) / ((v.get("min") or 0) / 60.0) if v.get("min") else None
+            able = [k for k in near if k is None or avg is None or avg <= k * 1.2]
+            if len(able) != 1:
+                return True
+        return False
 
     # ---- OpenStreetMap places nearby --------------------------------------------------------------------------------
     def _cache(self):
@@ -595,13 +647,22 @@ class Places:
         if not (-90 <= lat <= 90 and -180 <= lon <= 180) or not (10 <= radius <= 5000):
             return dict(ok=False, error="coordinates or radius out of range (radius 10 to 5000 m)")
         places = PM.load_places(self.f_places)
+        entry = dict(places.get(old) or places.get(name) or {})
+        if (name != old or not old) and entry.get("type") != "home":         # a new or renamed place carries its suburb and state; a place saved earlier keeps its name when only something else is edited
+            name, why = self.with_suburb(name, lat, lon)
+            if why:
+                return dict(ok=False, error=why)
+            ok, why = PM.validate_place_name(name)
+            if not ok:
+                return dict(ok=False, error=why)
         if name != old and name in places:
             return dict(ok=False, error="a place called '%s' already exists" % name)
-        entry = dict(places.get(old) or places.get(name) or {})
         kw = body.get("keywords")
         if isinstance(kw, str):
             kw = [k.strip() for k in kw.replace("\n", ",").split(",") if k.strip()]
-        entry.update(lat=round(lat, 5), lon=round(lon, 5), radius_m=radius, keywords=kw if kw is not None else entry.get("keywords", []), notes=(body.get("notes") or "").strip())
+        kw = kw if kw is not None else entry.get("keywords", [])
+        notes = (body.get("notes") or "").strip() or self.default_notes(name, kw)
+        entry.update(lat=round(lat, 5), lon=round(lon, 5), radius_m=radius, keywords=kw, notes=notes)
         if "chargers" in body:                  # a saved place is not normally a charger: a list of {name, network, free, rate_per_kwh} marks the chargers it has (empty removes them)
             chs, why = self.clean_chargers(body.get("chargers"))
             if why:
@@ -616,6 +677,13 @@ class Places:
         self._backup()
         PM.save_places(places, self.f_places)
         return dict(ok=True, key="p:" + name)
+
+    @classmethod
+    def default_notes(cls, name, keywords):
+        """The note places_manager.py writes for a place: its name and the street it is on ("Aga and Adam (28a Gordon Street)"; the street is the first keyword). Notes are never left empty."""
+        base = cls._END_STATE.sub("", name).strip() or name
+        street = next((k for k in keywords or [] if k and k.strip() and k.strip().lower() != base.lower()), "")
+        return "%s (%s)" % (base, street) if street else base
 
     DAYS = ("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")
 

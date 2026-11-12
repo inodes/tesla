@@ -23,6 +23,7 @@ class OsmKey(unittest.TestCase):
         pm = types.SimpleNamespace(OVERPASS_ERROR="", query_overpass_pois=query)
         with tempfile.TemporaryDirectory() as d:
             pl = app_places.Places(d)
+            pl._sublk = types.SimpleNamespace(at=lambda *a, **k: None)          # no kept suburb boundary: Nominatim answers
             saved = sys.modules.get("places_common")
             sys.modules["places_common"] = pm
             try:
@@ -45,6 +46,7 @@ class SuburbState(unittest.TestCase):
         pm = types.SimpleNamespace(reverse_geocode=lambda la, lo: {"address": {"suburb": "Ermington", "state": "New South Wales", "ISO3166-2-lvl4": "AU-NSW"}})
         with tempfile.TemporaryDirectory() as d:
             pl = app_places.Places(d)
+            pl._sublk = types.SimpleNamespace(at=lambda *a, **k: None)          # no kept suburb boundary: Nominatim answers
             saved = sys.modules.get("places_common")
             sys.modules["places_common"] = pm
             try:
