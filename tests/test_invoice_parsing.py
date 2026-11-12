@@ -144,6 +144,15 @@ class ExtractorTest(unittest.TestCase):
         self.assertEqual(c(" / , "), "Charging")
 
 
+def _scripts_repo_available():
+    try:
+        IC._scripts_agl_parser()
+        return True
+    except RuntimeError:
+        return False
+
+
+@unittest.skipUnless(_scripts_repo_available(), "AGL parsing lives in the scripts repo (config.json scripts_repo / SCRIPTS_REPO)")
 class DetectionOrderTest(unittest.TestCase):
     def setUp(self):
         for p in no_locations_file():

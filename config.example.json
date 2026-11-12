@@ -6,9 +6,10 @@
     "data": "~/Library/Mobile Documents/com~apple~CloudDocs/Tesla",
     "archive": null,
     "invoices": "~/iCloud/PDF/Tesla/Supercharging",
-    "power_invoices": "~/iCloud/PDF/AGL",
+    "power_invoices": "~/iCloud/Finance/Invoices_Receipts/AGL",
     "external_drive": null
   },
+  "scripts_repo": "~/repos/scripts",
   "tessie": {
     "vin": "YOUR_VIN_HERE",
     "access_token": "YOUR_TESSIE_API_TOKEN_HERE"
