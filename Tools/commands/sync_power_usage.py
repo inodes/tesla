@@ -48,7 +48,7 @@ DESCRIPTION
     AGL doesn't offer a usage-history API for residential accounts (unlike
     Tessie/Evnex) - this stays a manual download, dropped into the AGL
     invoices folder (get_power_provider().resolve_invoices_dir(),
-    currently ~/iCloud/PDF/AGL) as-is, then this script picks up every
+    currently ~/iCloud/Finance/Invoices_Receipts/AGL) as-is, then this script picks up every
     file the active provider recognises as its own usage export (AGL:
     "*Usage*.csv"/"AGL_Usage_*.csv").
 

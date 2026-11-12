@@ -28,9 +28,9 @@ def resolve_agl_data_home():
     tariff rates, demand-charge output) - config.json's own
     "agl_directory" if set, falling back to a sibling of the existing
     Tessie/ data folder. Distinct from where the RAW invoices/usage
-    exports live (config.json's "agl_invoices_directory" /
-    ~/iCloud/PDF/AGL - the general household document archive, not
-    Tesla-repo-managed data) - this is where derived/consolidated
+    exports live (config.json's directories.power_invoices /
+    ~/iCloud/Finance/Invoices_Receipts/AGL - the household's central
+    invoice archive, not Tesla-repo-managed data) - this is where derived/consolidated
     output goes, mirroring resolve_tessie_data_home()'s role for Tessie."""
     cfg = load_config()
     cfg_dir = cfg.get("agl_directory")
@@ -40,17 +40,19 @@ def resolve_agl_data_home():
 
 
 def resolve_agl_invoices_dir():
-    """Where the raw AGL invoice PDFs and usage-export CSVs actually
-    live - config.json's "agl_invoices_directory" if set, falling back
-    to the observed real location (~/iCloud/PDF/AGL). Kept separate
-    from resolve_agl_data_home() deliberately - these are the RAW
-    source documents (the household's general PDF archive), not
-    Tesla-repo-managed derived data."""
+    """Where the raw AGL bill PDFs and usage-export CSVs actually live:
+    config.json's directories.power_invoices (the same folder the power
+    provider reads - one source of truth), then the older
+    "agl_invoices_directory", then the central default
+    ~/iCloud/Finance/Invoices_Receipts/AGL. The bills are filed there by
+    the scripts repo (Hazel -> ~/repos/scripts); the usage CSVs sit beside
+    them. Kept separate from resolve_agl_data_home() deliberately - these
+    are the RAW source documents, not Tesla-repo-managed derived data."""
     cfg = load_config()
-    cfg_dir = cfg.get("agl_invoices_directory")
+    cfg_dir = (cfg.get("directories") or {}).get("power_invoices") or cfg.get("agl_invoices_directory")
     if cfg_dir:
         return os.path.abspath(os.path.expanduser(cfg_dir))
-    return os.path.expanduser("~/Library/Mobile Documents/com~apple~CloudDocs/PDF/AGL")
+    return os.path.expanduser("~/Library/Mobile Documents/com~apple~CloudDocs/Finance/Invoices_Receipts/AGL")
 
 
 # -----------------------------------------------------------------------------

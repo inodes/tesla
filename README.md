@@ -181,19 +181,19 @@ Every command runs through one entry point: `./Tools/tesla` lists them by group 
 ### 7. Generic PDF Invoice Ingestion & AGL Extractor
 
 ```bash
-# Preview unstandardized PDFs across default directories (~/Downloads, PDF/AGL):
+# Preview unstandardized PDFs across default directories (~/Downloads, the AGL bills folder):
 ./Tools/tesla sync invoices --scan --dry-run
 
 # Deep-dive inspect any invoice PDF and extract structured metadata:
 ./Tools/tesla sync invoices --inspect ~/Downloads/invoice.pdf
 
-# Rename and standardize AGL statements in-place:
-./Tools/tesla sync invoices --scan "~/Library/Mobile Documents/com~apple~CloudDocs/PDF/AGL" --rename
+# Rename and standardize AGL statements in-place (they are normally filed and named by ~/repos/scripts already):
+./Tools/tesla sync invoices --scan "~/Library/Mobile Documents/com~apple~CloudDocs/Finance/Invoices_Receipts/AGL" --rename
 
 # Move and import discovered invoices into canonical provider directories:
 ./Tools/tesla sync invoices --scan ~/Downloads --import
 ```
-👉 *Supports AGL energy statements (`Statement_electricity_YYYYMMDD.pdf`), EV charging receipts (`YYYYMMDD_HHMM_Network_Inv_Place.pdf`), and generic invoices with zero external dependencies.*
+👉 *Supports AGL energy statements (`AGL_Statement_<service>_<period start>_to_<period end>.pdf`), EV charging receipts (`YYYYMMDD_HHMM_Network_Inv_Place.pdf`), and generic invoices with zero external dependencies.*
 
 ### 8. Deploy Scripts to External Drives
 

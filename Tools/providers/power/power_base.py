@@ -79,8 +79,9 @@ class BasePowerProvider:
         ("directories", "power_invoices") - kept separate from the
         derived data home deliberately, same reasoning as
         resolve_agl_invoices_dir() always had: raw source documents are
-        the household's general PDF archive, not Tesla-repo-managed
-        derived data. Genuinely optional - see resolve_invoices_dir()."""
+        the household's central invoice archive (bills are filed there by
+        the scripts repo), not Tesla-repo-managed derived data.
+        Genuinely optional - see resolve_invoices_dir()."""
         raise NotImplementedError
 
     def default_data_home_name(self):

@@ -187,7 +187,7 @@ tesla/
 │   │   ├── evnex_common.py      # Evnex credential loading + client bootstrap
 │   │   ├── footage_actions.py   # Footage queue from drive pages: copy, flag for delete, save, purge
 │   │   ├── fuel_common.py       # NSW FuelCheck CKAN harvesting, streaming XLSX parser, and price DB
-│   │   ├── invoice_common.py    # Zero-dep Deflate & CMap/Identity-H PDF parser + multi-provider extractors
+│   │   ├── invoice_common.py    # Zero-dep Deflate & CMap/Identity-H PDF parser + extractors; AGL bills are parsed by ~/repos/scripts' agl_parse.py (config scripts_repo), not duplicated here
 │   │   ├── places_common.py     # places.json, geocoding, distances, Overpass look-up (places_manager is its CLI)
 │   │   ├── power_bill.py        # Power bill rebuilt from usage + rates; the real bills it is checked against
 │   │   ├── power_demand.py      # Power rate periods and the demand charge
