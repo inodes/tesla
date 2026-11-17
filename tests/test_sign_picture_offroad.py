@@ -40,7 +40,7 @@ class SignPictureTest(unittest.TestCase):
         self.assertNotIn("offRoad", self.js)
 
     def test_each_sign_is_shown_as_a_picture_with_what_was_worked_out(self):
-        j = self.js.index("const gc=$(\"#dsgc\")")
+        j = self.js.index("if(gc)gc.innerHTML=")      # (the school line and the answer form helpers come before it)
         blk = self.js[j:j + 2400]
         self.assertIn('class="evc sgk', blk)
         self.assertIn("sgCut(g.f,g.pos,", blk)                          # the sign cut from the frame (the whole frame is kept; where it stands is metadata)

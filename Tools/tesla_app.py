@@ -720,6 +720,16 @@ class H(BaseHTTPRequestHandler):
                 else:
                     DRV.start(body.get("id", ""), footage_roots(), {})
                 return self.send_json(drive_review_state(body.get("id", "")))
+            if u.path == "/api/signfeedback":     # {stamp, s0, text, reason: none|speed|school|notschool, speed?} keeps an answer about a sign read from the video; {stamp, s0, text, clear: true} takes it back (lib/sign_feedback.py)
+                st, s0, tx = str(body.get("stamp", "")), body.get("s0"), str(body.get("text", ""))
+                if not re.match(r"^\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2}$", st) or not isinstance(s0, (int, float)) or not tx:
+                    return self.send_json(dict(error="Which sign?"))
+                fb = TC._rv()._fb()
+                if body.get("clear") is True:
+                    fb.clear(st, s0, tx)
+                    return self.send_json(dict(ok=True))
+                a, err = fb.set(st, s0, tx, body.get("reason"), body.get("speed"), body.get("s1"))
+                return self.send_json(dict(error=err) if err else dict(ok=True, answer=a))
             if u.path == "/api/review":
                 role = body.get("role", "A")
                 if body.get("action") == "redo" and body.get("confirm") is not True:         # reading again forgets what was read: ask first
@@ -908,7 +918,7 @@ class H(BaseHTTPRequestHandler):
                                        cams=es.cams(kind, eid), others={c: es.seconds(kind, eid, c) for c in es.cams(kind, eid) if c != i.get("cam")},
                                        half=es.seconds(kind, eid, half=True) if es.halves(kind, eid) else {}) if i.get("n") else {})
         if name == "signs":                     # signs?stamps=a,b: the signs read in those minutes {clip stamp: [sign]} (lib/app_review.py minute_signs)
-            return self.send_json(TC._rv().minute_signs([s for s in q.get("stamps", [""])[0].split(",") if re.match(r"^\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2}$", s)][:80]))
+            return self.send_json(TC._rv().minute_signs([s for s in q.get("stamps", [""])[0].split(",") if re.match(r"^\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2}$", s)][:80], dismissed=q.get("dismissed", [""])[0] == "1"))      # dismissed=1: only the ones answered "not a speed sign" (each can be taken back)
         if name == "schoolday":                 # schoolday?date=YYYY-MM-DD&lat=&lon=: is that a school day in the state of that spot? {state, school_day: true / false / null (no calendar for that state or year)}
             try:
                 dt = q.get("date", [""])[0]

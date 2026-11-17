@@ -4,7 +4,7 @@ school_days.py - Is a date a school day in a state? For the school zone speed si
 
 A school day is a weekday inside a term of that state's calendar (resources/school_terms.json) that is not a public holiday there. Only calendars
 that are in the file are used: an unknown state or year gives None (not True and not False), so the page shows the plain speed sign and never guesses.
-Public holidays are known for NSW only (agl_common); a state with a calendar but no holiday rule counts only the weekday and the term.
+Public holidays: NSW from agl_common, every other state from the "holidays" list in the same file (the statewide ones inside a term); a state with no list counts only the weekday and the term.
 """
 import datetime
 import json
@@ -29,11 +29,11 @@ def terms(path=None):
     return _cache[path]
 
 
-def _holiday(state, d):
+def _holiday(state, d, path=None):
     if state == "NSW":
         import agl_common
         return agl_common.is_nsw_public_holiday(d)
-    return False
+    return d.isoformat() in ((terms(path).get(state) or {}).get("holidays") or [])
 
 
 def school_day(state, d, path=None):
@@ -46,7 +46,7 @@ def school_day(state, d, path=None):
     ranges = ((terms(path).get((state or "").upper()) or {}).get("terms") or {}).get(str(d.year))
     if not ranges:
         return None
-    if d.weekday() >= 5 or _holiday(state.upper(), d):
+    if d.weekday() >= 5 or _holiday(state.upper(), d, path):
         return False
     iso = d.isoformat()
     return any(a <= iso <= b for a, b in ranges)

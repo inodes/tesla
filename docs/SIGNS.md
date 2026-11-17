@@ -33,7 +33,8 @@ A jump that is real (a ramp onto a motorway) is confirmed by the car's speed or 
 
 - The board is a fluorescent yellow-green rectangle reading SCHOOL / ZONE (fuzzy), with at least `SZ_MIN_BLOBS` (3) letter-sized dark shapes; the plate under it carries the hours; the limit is the red-ringed 40 beside it.
 - **Hours snap** (`snap_times`, 2026-11-09): the NSW plate is "8-9:30 / 2:30-4"; the small raised 30 is read as 00 or lost, giving 08:00-09:00 / 14:00-16:00. A reading whose every range starts within `SNAP_START` (30 min) and ends within `SNAP_END` (30 min) of a standard slot (`STD_SCHOOL_HOURS` = 08:00-09:30, 14:30-16:00) is given as the standard hours and the record gets `tsn: true`. Anything else stays as read; an unreadable plate gives no hours (never guessed).
-- School days: `resources/school_terms.json` + NSW public holidays (`school_days.py`); an unknown state or year is "unknown", never a guess. State on the HUD: on (school day, inside hours), off, unknown (no hours or no calendar).
+- School days: `resources/school_terms.json` has the student term dates of **every state and territory for 2026 and 2027** (NSW, VIC, QLD, ACT, SA, WA, TAS, NT; sources in the file), plus each state's statewide public holidays that fall inside a term (`holidays`; NSW uses `agl_common`). The state comes from where the car was (`au_state` via `/api/schoolday?date=&lat=&lon=`). An unknown state or year is "unknown", never a guess. Local show days, pupil-free days and a school's own closures are not listed: add them to the file. State on the HUD: on (school day, inside hours), off, unknown (no hours or no calendar). Add 2028 when the states publish it.
+- On the sign cards of a school zone (the board and the limit within 8 s of it) the page writes the plate's hours (or, when the plate cannot be read, the NSW standard 08:00-09:30 / 14:30-16:00 marked "standard hours assumed"; other states: "hours not readable"), whether that day is a school day where the car was, and whether the hours cover the time of the sign.
 - Known weakness: stored school records from 28-30 Oct 2026 include green blur / grass read as boards (no hours). The current detector rejects most of them; re-reading those minutes clears the rest. A plate-brightness check was tried and removed: it did not separate false boards from real ones and lost real ones.
 - Open: a 40 ring read with no board near it is a normal 40 (not a zone); a board with no readable 40 within 8 s is shown as a zone with the limit unknown.
 
@@ -54,4 +55,16 @@ Training faces go to `<data>/sign_training/real_faces.npz` (g 32x32 grey, t labe
 
 Retrain on any machine with numpy, opencv, pillow, scikit-learn: `python3 Tools/maintenance/train_sign_reader.py --out Tools/lib/sign_reader_model.npz --real <data>/sign_training/real_faces.npz` (real faces are repeated 4x; days with day-index % 4 == 0 are held out and scored).
 
-Pending: a "not a sign" / "this is a 60" button on the sign card that writes `overrides.json`; per-session "re-check from the session page"; tracking one sign across frames in the video overlay (the box flickers between detections); pillar cameras as a second sign source; other sign classes (`claude/other-sign-classes-backlog-2026-11-06.md` in the project).
+## 5. Answers on the sign cards (2026-11-18, `lib/sign_feedback.py`)
+
+On the drive page, "Signs read in this video" can be collapsed from its heading (the Hide / Normal chips as before). Each sign card has a small box in its corner (✕): it opens a reason dropdown.
+
+| Reason | What it does |
+|---|---|
+| Wrong speed (then the real speed) | the card, the map pin, the speeding check and the limit shown use the speed given |
+| Right speed, it is a school zone / not a school zone | sets `zone` on the sign: the card says whether it is a school zone's limit, with hours and school day |
+| Not a speed sign (a red rear light, a bumper…) | the sign leaves the list, the map and the checks; it is kept under "N removed as not speed signs" with Put back |
+
+An answered card shows ✎ and what was answered; Undo my answer (or Put back) removes it. Answers are in `<data>/sign_training/feedback.json` (`stamp|second|number as read` -> reason, speed, seconds the sign spans); the ones that say what the sign really is are also written to `overrides.json`, and `sign_check_drive.py` labels every still of that sign from them ("none" = hard negative, a number = positive), so the next retrain learns from them. The video overlay picks an answer up the next time the drive page is opened.
+
+Pending: per-session "re-check from the session page"; tracking one sign across frames in the video overlay (the box flickers between detections); pillar cameras as a second sign source; other sign classes (`claude/other-sign-classes-backlog-2026-11-06.md` in the project).

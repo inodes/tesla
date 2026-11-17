@@ -18,7 +18,7 @@ DESCRIPTION
     A face is written to the training set (<data>/sign_training/real_faces.npz, the format of train_sign_reader.py --real: g 32 x 32 grey, t text or "none", d day, c 100):
       - a reading that agrees with the map and passes the ring gate: a positive, labelled with its number;
       - a reading that differs from the map by 30 km/h or more and fails the ring gate: a hard negative, labelled "none";
-      - anything in <data>/sign_training/overrides.json ({"<stamp>|<second>|<text>": "60" | "none"}), which is the person's own answer and wins.
+      - the answers given on the sign cards (<data>/sign_training/feedback.json, lib/sign_feedback.py) and anything in <data>/sign_training/overrides.json ({"<stamp>|<second>|<text>": "60" | "none"}), which is the person's own answer and wins.
     Everything else is left out: it is not known which is right.
     The report goes to <data>/drive_review/signcheck/<day>_<from>.csv and the counts are printed. Re-run train_sign_reader.py with
     --real <data>/sign_training/real_faces.npz to retrain (docs/SIGNS.md).
@@ -134,6 +134,12 @@ def main():
         over = json.load(open(over_p))
     except (OSError, ValueError):
         over = {}
+    fbs = {}
+    try:
+        for k, a in (json.load(open(os.path.join(D, "sign_training", "feedback.json"))) or {}).items():
+            fbs.setdefault(k.split("|")[0], []).append(a)
+    except (OSError, ValueError):
+        pass
     rows, faces = [], []
     for stamp, rec in sorted(rv.items()):
         hm = stamp[11:16].replace("-", ":")
@@ -163,6 +169,11 @@ def main():
                         face = cv2.cvtColor(cv2.resize(fc, (32, 32), interpolation=cv2.INTER_AREA), cv2.COLOR_BGR2GRAY)
             key = "%s|%s|%s" % (stamp, x["s"], x["text"])
             label = over.get(key)
+            if label is None:       # the person's answer about the whole sign (sign_feedback.py: s0..s1 are the seconds its stills span), not just its first still
+                for a in fbs.get(stamp, ()):
+                    if a.get("text") == x["text"] and a.get("s0") is not None and a["s0"] <= x["s"] <= (a.get("s1") if a.get("s1") is not None else a["s0"]):
+                        label = "none" if a.get("reason") == "none" else str(a["speed"]) if a.get("reason") == "speed" and a.get("speed") else None
+                        break
             if label is None and ring is not None:
                 if verdict == "agree" and ring["ok"]:
                     label = x["text"]

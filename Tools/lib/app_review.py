@@ -190,7 +190,7 @@ class Review:
             g["conf"] = round(g["conf"])
         return out
 
-    def minute_signs(self, stamps):
+    def minute_signs(self, stamps, dismissed=False):
         """{clip stamp: [sign]} for the minutes read that held signs; a sign is one reading seen in several stills (same text and side within merge_s):
         dict(text, side, kind, s0, s1 (seconds into the minute), n, conf, f (the picture of it, /review/<f>), times (a school zone plate's 24-hour ranges, else []))."""
         out = {}
@@ -232,9 +232,16 @@ class Review:
                     fx, rf = g.pop("_fx"), g.pop("_rf")                                  # where it stood in the picture (fractions of its width: across, and its radius): how far off the car's road it was
                     g["fx"] = round(sorted(fx)[len(fx) // 2], 4) if fx else None
                     g["rf"] = round(sorted(rf)[len(rf) // 2], 5) if rf else None
+                groups = self._fb().apply(st, groups, dismissed)         # the person's answers (sign_feedback.py): corrected, or taken out and listed apart
                 if groups:
                     out[st] = groups
         return out
+
+    def _fb(self):
+        if self.__dict__.get("_feedback") is None:
+            import sign_feedback
+            self._feedback = sign_feedback.Feedback(os.path.dirname(self.base))
+        return self._feedback
 
     # -------------------------------------------------------------------------------------------------------- job
     def status(self):
