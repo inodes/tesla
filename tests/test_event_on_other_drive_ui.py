@@ -13,6 +13,13 @@ class EventDriveTest(unittest.TestCase):
         self.assertIn('up.filter(x=>!"AJU".includes(x))', blk)           # the drives beyond A, J, U that are connected
         self.assertNotIn('["A","J","U"].filter(x=>x!==role)', blk)
 
+    def test_the_banner_does_not_say_not_connected_for_a_connected_drive(self):
+        i = JS.index("async function stillViewer") if "async function stillViewer" in JS else JS.index("function stillViewer")
+        blk = JS[i:i + 6000]
+        self.assertIn('fetch("/api/status")', blk)
+        self.assertIn("which ${on.length>1?\"are\":\"is\"} connected, but the app could not find the video there", blk)
+        self.assertIn("(j.roots||{})[r]", blk)
+
 
 if __name__ == "__main__":
     unittest.main()

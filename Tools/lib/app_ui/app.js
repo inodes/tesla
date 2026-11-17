@@ -1006,6 +1006,9 @@ function stillViewer(host,o){
   const where=o.roles&&o.roles.length?o.roles.map(drName).join(" and "):"";
   const banner=where?`The video of this footage is on ${esc(where)}, and none of ${o.roles.length>1?"these drives is":"that drive is"} connected, so its stills are shown. Reconnect ${o.roles.length>1?"one of them":"it"} to play the full video.`
     :"The video of this footage has been deleted from every drive. Its stills are kept.";
+  // the banner says what is true: a drive that is connected but does not give the video up is not "not connected" (the video was moved, renamed or deleted there, or the app could not find it)
+  if(where)fetch("/api/status").then(r=>r.json()).then(j=>{const on=(o.roles||[]).filter(r=>(j.roots||{})[r]),b=$(".stbanner",host);if(!on.length||!b)return;
+    b.textContent=`The video of this footage is listed on ${on.map(drName).join(" and ")}, which ${on.length>1?"are":"is"} connected, but the app could not find the video there (moved, renamed or deleted?). Its stills are shown.`}).catch(()=>{});
   host.innerHTML=`<div class="sp"><div class="stbanner">${banner}</div>${o.head?`<div class="sub" style="margin:4px 0 8px">${o.head}</div>`:""}<div id="stv"><div class="sub">Looking for the stills…</div></div></div>`;
   const chunks=[];for(let i=0;i<sts.length;i+=80)chunks.push(sts.slice(i,i+80));
   Promise.all(chunks.map(c=>fetch("/api/clipstatus?stamps="+c.join(",")).then(r=>r.json()).catch(()=>({})))).then(parts=>{
