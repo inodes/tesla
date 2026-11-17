@@ -11,6 +11,8 @@
         "refetch_hours": 6,                                 a version still moving is asked about at most this often
         "pace_seconds": 1.0,                                pause between requests to Teslascope
         "my_car": {"model": "modely", "hw": "TeslaAP4"},    Teslascope's car type of your car (Model Y L is "modely"): the page opens on it
+        "fsd_countries": ["us", "ca", ...],                 the countries where FSD (Supervised) is approved (ISO codes). FSD is shown for a region only from cars and notes of these:
+                                                            a car Teslascope reports in any other country (2 cars of Ukraine on 2026.38.5.11) is ignored for FSD
         "car_check_minutes": 30                             how often the app asks Tessie which software the car is on (0 = never; the drives sync asks too)
     }
 """
@@ -31,6 +33,8 @@ DEFAULTS = {
         "lychee": "Model S (Refresh)", "tamarind": "Model X (Refresh)",
     },
     "hardware_labels": {"TeslaAP4": "AI4", "TeslaAP3": "AI3", "ParkerPascal2_5": "HW2.5", "MonoCam": "MonoCam"},
+    # FSD (Supervised) approved or live, as of 11 Nov 2026 (Tesla's list, regulators' announcements); add a country here when it is approved, or set "fsd_countries" in config.json
+    "fsd_countries": ["us", "ca", "mx", "pr", "cn", "au", "nz", "kr", "nl", "lt", "ee", "dk", "be", "si", "cz", "hr", "sk", "lv", "fi"],
     "fsd_ai4_from": 13,
     "fsd_hw_share_pct": 5,
     "settle_days": 14,

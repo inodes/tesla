@@ -58,10 +58,26 @@ def fsd_chip(row, hw=None, labels=None):
     return out
 
 
+def fsd_countries(ix, region):
+    """The countries of the region where FSD (Supervised) is approved (settings "fsd_countries"): only cars and notes of these count for FSD. [] when the region has none."""
+    ok = {str(c).lower() for c in (ix.cfg.get("fsd_countries") or [])}
+    return [c for c in ix.resolve(region) if c in ok]
+
+
+def fsd_cars(ix, fcs):
+    """{version: cars seen on it in the FSD countries `fcs`}."""
+    if not fcs:
+        return {}
+    return {r["version"]: r["n"] for r in ix.q("SELECT version, SUM(installs) n FROM version_countries WHERE country IN (%s) GROUP BY version" % ",".join("?" * len(fcs)), list(fcs))}
+
+
 def notes_chips(ix, region, model=None, hw=None):
     """{version: [chip]}: the FSD the notes first listed on that version name (titles like "FSD (Supervised) v14.3.9 Down Under", "FSD (Supervised) v14.3 Lite") for this
     region and car. Teslascope fills its own FSD field only for some versions (2026.28.5 names v14.3.9 in its notes, the field is empty), so the notes fill the gaps."""
-    sql, args = ix._scope_sql(ix.resolve(region), model, hw)
+    fcs = fsd_countries(ix, region)
+    if not fcs:
+        return {}                                   # no country of the region has FSD: its notes are not about FSD for anyone there
+    sql, args = ix._scope_sql(fcs, model, hw)
     rows = ix.q("SELECT DISTINCT o.version, o.title FROM occurrences o JOIN scope s ON s.version=o.version AND s.fid=o.fid WHERE o.tag=o.version AND " + sql, args)
     out = {}
     for r in rows:
@@ -139,9 +155,11 @@ def chip_fits(c, hw, first=13):
     return True
 
 
-def chips_for(ix, row, nf, hw):
+def chips_for(ix, row, nf, hw, cars=None):
+    """The FSD chips of a version for the region: Teslascope's FSD field counts only when cars of an FSD country of the region are on the version (`cars`: fsd_cars; None =
+    no region asked), the notes' FSD only from the FSD countries (notes_chips)."""
     first = int(ix.cfg.get("fsd_ai4_from") or 13)
-    chips = fsd_chip(row, hw, ix.cfg["hardware_labels"])
+    chips = fsd_chip(row, hw, ix.cfg["hardware_labels"]) if (cars is None or cars.get(row["version"])) else []
     if not chips:
         chips = [c for c in nf.get(row["version"], []) if chip_fits(c, hw, first)]
     return chips
@@ -191,9 +209,10 @@ def overview(data_dir, region="ANZ", model=None, hw=None):
     nope = hidden_versions(ix, model, hw)
     rows = [r for r in ix.versions_for(region, model, hw) if r["version"] not in nope]
     nf = notes_chips(ix, region, model, hw)
+    cars = fsd_cars(ix, fsd_countries(ix, region))
     out = []
     for r in rows:
-        chip = chips_for(ix, r, nf, hw)
+        chip = chips_for(ix, r, nf, hw, cars)
         out.append(dict(version=r["version"], first=r["first_spotted"], installs=r["installs"], region_installs=r["region_installs"], has_notes=bool(r["has_notes"]),
                         via=r["via"], fsd=chip, mine=r["version"] == mine))
     st = SY.status_text(data_dir, FetchLedger(data_dir), time.time())
@@ -212,7 +231,13 @@ def detail(data_dir, version, region, model=None, hw=None):
             return dict(redirect=v2, tag=version)
         return dict(error="%s is not a version this tool holds, and no held version's notes carry it as a tag." % version)
     nf = notes_chips(ix, region, model, hw)
-    u["fsd"] = chips_for(ix, u, nf, hw)
+    fcs = fsd_countries(ix, region)
+    cars = fsd_cars(ix, fcs)
+    u["fsd"] = chips_for(ix, u, nf, hw, cars)
+    u["fsd_cars"] = cars.get(version, 0)
+    if not u["fsd"]:                                # what the version carries for FSD in the world, which this region's cars do not have (the page says so)
+        u["fsd_elsewhere"] = fsd_chip(u, hw, ix.cfg["hardware_labels"])
+    u["fsd_countries"] = fcs
     # Teslascope keeps the upgrade steps for every country together; this region's path is the steps from and to versions it has had itself
     mine = {v["version"] for v in ix.versions_for(region)}
     for k in ("from", "to"):
