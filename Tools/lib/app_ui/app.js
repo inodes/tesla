@@ -1015,19 +1015,20 @@ function stillViewer(host,o){
     const have=Object.assign({},...parts),minutes=sts.filter(x=>have[x]&&have[x].stills);const box=$("#stv",host);if(!box)return;
     if(!minutes.length){box.innerHTML=`<div class="sub">No stills were kept for this footage.${where?` Connect ${esc(where)} and press Sync footage to make them.`:""}</div>`;return}
     const LOC=s=>(o.loc&&o.loc[s])||s.slice(0,10)+"T"+s.slice(11).replace(/-/g,":"),shownAt=(s,t)=>new Date(Date.parse(LOC(s)+"Z")+t*1000).toISOString().substr(11,8);
+    const LEN=s=>Math.max(1,Math.min(60,(have[s]&&have[s].stills_n)||60));      // the pictures a minute has: fewer than 60 when the car stopped recording in it (Sentry stops when the owner unlocks the car)
     const stMs=s=>Date.parse(s.slice(0,10)+"T"+s.slice(11).replace(/-/g,":"));      // the clip's name, read the same way the player reads it (o.trig is on that clock too)
-    const inMin=t=>{const k=minutes.reduce((a,s,i)=>stMs(s)<=t?i:a,0);return [k,Math.max(0,Math.min(59,Math.floor((t-stMs(minutes[k]))/1000)))]};
+    const inMin=t=>{const k=minutes.reduce((a,s,i)=>stMs(s)<=t?i:a,0);return [k,Math.max(0,Math.min(LEN(minutes[k])-1,Math.floor((t-stMs(minutes[k]))/1000)))]};
     let step=+lsGet("tc.ststep","1"),mi=0,sec=0,hi=null,hf=0,camSel=null;      // hf: 1 = half a second after `sec` (near an event); camSel: another camera of the event, or "all"
     if(o.trig)[mi,sec]=inMin(o.trig);      // an event opens at the moment it was detected
     const seq=()=>{const out=[];if(step<1){minutes.forEach((m,i)=>((hi&&hi.half&&hi.half[m])||[]).forEach(t=>{out.push([i,t,0]);out.push([i,t,1])}));if(out.length)return out}
-      const sp=Math.max(1,step);minutes.forEach((m,i)=>{for(let t=0;t<60;t+=sp)out.push([i,t])});return out};let frames=seq();
+      const sp=Math.max(1,step);minutes.forEach((m,i)=>{for(let t=0;t<LEN(m);t+=sp)out.push([i,t])});return out};let frames=seq();
     const pos=()=>{const k=frames.findIndex(f=>f[0]===mi&&(f[1]>sec||(f[1]===sec&&(f[2]||0)>=hf)));return k<0?frames.length-1:k};
     const at=k=>{k=Math.max(0,Math.min(frames.length-1,k));mi=frames[k][0];sec=frames[k][1];hf=frames[k][2]||0;paint()};
     // the bar and the picture frame are built once; stepping only changes the numbers and swaps the picture when the next one is ready, so there is never an empty frame in between
     box.innerHTML=`<div class="stbar">${$("#splc")?'<button class="btn" id="stcl" title="Close (Esc)">✕ Close</button>':""}<button class="btn" id="stp0">◀ Back</button><button class="btn" id="stpl">▶ Play</button><button class="btn" id="stn0">Next ▶</button><input type="range" id="stsk" min="0" max="0" value="0">
       <span id="sttm"></span><select id="stst">${[[1,"every second"],[5,"every 5 seconds"],[10,"every 10 seconds"],[60,"every minute"]].map(([v,l])=>`<option value="${v}" ${v===step?"selected":""}>${l}</option>`).join("")}</select>
       ${o.trig?'<button class="btn" id="stdt">↧ Detection</button>':""}<span class="sub" id="stct"></span></div>
-      <div id="stcams" style="display:flex;gap:6px;flex-wrap:wrap;margin:0 0 8px"></div><div class="sgs" id="stsg" style="margin:0 0 8px"></div><div id="stall" hidden style="display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:6px"></div><div class="stfr"><img class="stimg" alt=""><span class="rvb" id="stbg"></span><span class="stcam" id="stcm" hidden></span><div class="sgbig" id="stsb" hidden></div></div>`;
+      <div class="sub" id="stend" hidden style="margin:0 0 8px"></div><div id="stcams" style="display:flex;gap:6px;flex-wrap:wrap;margin:0 0 8px"></div><div class="sgs" id="stsg" style="margin:0 0 8px"></div><div id="stall" hidden style="display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:6px"></div><div class="stfr"><img class="stimg" alt=""><span class="rvb" id="stbg"></span><span class="stcam" id="stcm" hidden></span><div class="sgbig" id="stsb" hidden></div></div>`;
     if($("#stcl",box))$("#stcl",box).onclick=()=>{const c=$("#splc");if(c)c.click()};const img=$(".stimg",box),fr=$(".stfr",box),ahead=new Map();let want="",ratio=false;
     const pre=u=>{if(ahead.has(u))return ahead.get(u);const im=new Image();im.decoding="async";im.src=u;ahead.set(u,im);if(ahead.size>14)ahead.delete(ahead.keys().next().value);return im};
     const swap=(u,alt)=>{want=u;const im=pre(u),go=()=>{if(want!==u)return;if(!ratio&&im.naturalWidth){fr.style.aspectRatio=im.naturalWidth+" / "+im.naturalHeight;ratio=true}img.src=u;img.alt=alt};
@@ -1044,7 +1045,9 @@ function stillViewer(host,o){
     const signsAt=(m,t)=>(SG[m]||[]).filter(g=>t>=g.s0-1&&t<=g.s1+1);
     const badge=g=>`<i class="bsp" title="${esc("Speed limit "+g.text+(g.conf>0?", "+g.conf+"% sure":"")+" · seen "+g.n+" time(s)")}">${esc(g.text)}</i>`;
     function paint(){const k=pos(),[i,t]=frames[k],m=minutes[i],sk=$("#stsk",box);
-      sk.max=frames.length-1;sk.value=k;$("#sttm",box).textContent=shownAt(m,t)+(hf?" +½s":"");$("#stct",box).textContent=`${n0(k+1)} of ${n0(frames.length)} · arrow keys also step`;$("#stst",box).value=step;
+      sk.max=frames.length-1;sk.value=k;$("#sttm",box).textContent=shownAt(m,t)+(hf?" +½s":"");$("#stct",box).textContent=`${n0(k+1)} of ${n0(frames.length)} · arrow keys also step`;
+      const lm=minutes[minutes.length-1],ends=LEN(lm)<60,en=$("#stend",box);       // the recording stops here: say so, in place of a picture that does not exist (the blue ?)
+      if(en){const last=i===minutes.length-1&&t>=LEN(lm)-Math.max(1,step);en.hidden=!(ends&&last);if(ends&&last)en.textContent=`The recording ends here, at ${shownAt(lm,LEN(lm)-1)}.${o.ev&&o.ev.kind==="sentry"?" A Sentry recording stops when the car is unlocked (Tesla does this to protect the owner's privacy), so this is not an error.":""}`}$("#stst",box).value=step;
       const h=isHi(m,t),cam=CAML[curCam()||(hi&&hi.cam)||"front"]||"Front";
       const al=camSel==="all"&&hi&&hi.cams&&hi.cams.length>1,ag=$("#stall",box);ag.hidden=!al;$(".stfr",box).hidden=al;
       if(al)ag.innerHTML=hi.cams.filter(c=>hasCam(m,t,c)).map(c=>`<figure style="margin:0;position:relative"><img src="${evu(m,t,c,0)}" alt="${esc(CAML[c]||c)} camera" style="width:100%;display:block;border-radius:6px"><figcaption class="stcam">${esc(CAML[c]||c)}</figcaption></figure>`).join("");

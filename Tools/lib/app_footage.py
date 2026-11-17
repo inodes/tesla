@@ -57,6 +57,8 @@ class Footage:
         out = led.status(stamps)
         for st, d in out.items():
             d["stills"] = self.stills.has(st)
+            if d["stills"]:
+                d["stills_n"] = self.stills.count(st)        # a clip the car stopped recording part-way (Sentry, car unlocked) has fewer than 60: the viewer must not step past the last one
         return out
 
     def clip_holders(self, stamps, connected=()):
