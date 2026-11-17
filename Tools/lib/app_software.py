@@ -75,7 +75,8 @@ def fsd_countries(ix, region, kind="any"):
 
 
 def fsd_cars(ix, region):
-    """{version: {any, hw4, lite}}: cars seen on it in the region's FSD countries (any approved one, one with FSD for AI4, one with Lite for AI3)."""
+    """{version: {any, hw4, lite}}: cars seen on it in the region's FSD countries (any approved one, one with FSD for AI4, one with Lite for AI3), the AI4 / AI3 ones no more than
+    the AI4 / AI3 cars the version has."""
     out = {}
     for kind in ("any", "hw4", "lite"):
         fcs = fsd_countries(ix, region, kind)
@@ -83,6 +84,16 @@ def fsd_cars(ix, region):
             continue
         for r in ix.q("SELECT version, SUM(installs) n FROM version_countries WHERE country IN (%s) GROUP BY version" % ",".join("?" * len(fcs)), list(fcs)):
             out.setdefault(r["version"], dict(any=0, hw4=0, lite=0))[kind] = r["n"] or 0
+    # the computer decides too: FSD (v13+) runs only on AI4 and Lite only on AI3, so an AI3 car in Australia that signs up for FSD still gets a non-FSD version. Teslascope gives
+    # cars by country and by computer separately, so the cars that can be on the version are at most the AI4 (or AI3) cars it has seen, whichever countries they are in.
+    hw = {}
+    for r in ix.q("SELECT version, hw, SUM(installs) n FROM version_models GROUP BY version, hw"):
+        hw.setdefault(r["version"], {})[r["hw"]] = r["n"] or 0
+    for v, e in out.items():
+        h = hw.get(v)
+        if h:
+            e["hw4"] = min(e["hw4"], h.get("TeslaAP4", 0))
+            e["lite"] = min(e["lite"], h.get("TeslaAP3", 0))
     return out
 
 

@@ -74,6 +74,20 @@ class FsdCountriesTest(unittest.TestCase):
         js = open(os.path.join(HERE, "..", "Tools", "lib", "app_ui", "app.js"), encoding="utf-8").read()
         self.assertIn("region_installs_ignored", js)
         self.assertIn("get the non-FSD ones", js)
+        self.assertIn("country or on a computer without that FSD", js)
+
+    def test_an_ai3_car_in_an_fsd_country_is_not_on_the_ai4_fsd_version(self):
+        import sqlite3
+        db = sqlite3.connect(":memory:")
+        db.row_factory = sqlite3.Row
+        db.execute("CREATE TABLE version_countries(version TEXT, country TEXT, installs INTEGER)")
+        db.execute("CREATE TABLE version_models(version TEXT, model TEXT, hw TEXT, installs INTEGER)")
+        db.executemany("INSERT INTO version_countries VALUES (?,?,?)", [("v", "au", 100), ("v", "nz", 6)])
+        db.executemany("INSERT INTO version_models VALUES (?,?,?,?)", [("v", "modely", "TeslaAP4", 60), ("v", "model3", "TeslaAP3", 46)])   # 46 AI3 cars in Australia, not on FSD
+        ix = FakeIx({"ANZ": ["au", "nz"]}, S.DEFAULTS["fsd_countries"])
+        ix.q = lambda sql, args=(): [dict(r) for r in db.execute(sql, args)]
+        e = A.fsd_cars(ix, "ANZ")["v"]
+        self.assertEqual((e["any"], e["hw4"], e["lite"]), (106, 60, 0))             # AU / NZ have no Lite; only the 60 AI4 cars can be on the FSD version
 
 
 if __name__ == "__main__":
