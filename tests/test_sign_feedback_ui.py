@@ -29,6 +29,11 @@ class UiTest(unittest.TestCase):
         self.assertIn('sw.hidden=r.value!=="speed"', JS)                  # shown for "Wrong speed" only
         self.assertIn('speed:r.value==="speed"?', JS)                     # and sent for it only
 
+    def test_the_form_floats_and_moves_no_card(self):
+        self.assertIn(".sgfb.sgpop{position:absolute", CSS)              # out of the grid's flow: the cards after it stay where they are
+        self.assertIn(".evs.sgks{position:relative}", CSS)
+        self.assertNotIn('id="sgfb" style="grid-column', JS)               # no longer a full-width grid row
+
     @unittest.skipUnless(shutil.which("node"), "node not installed")
     def test_app_js_parses(self):
         r = subprocess.run(["node", "--check", os.path.join(UI, "app.js")], capture_output=True, text=True)

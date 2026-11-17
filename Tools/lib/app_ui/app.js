@@ -2975,11 +2975,12 @@ async function teslaDriveBody(host,role,fetchSeg,places,opts){
     const fbTag=g=>!g.fb?"":g.fb.r==="speed"?`you set ${g.fb.v} (read ${g.fb.was})`:g.fb.r==="school"?"you: a school zone":"you: not a school zone";
     const REASONS=[["speed","Wrong speed"],["school","Right speed, it is a school zone"],["notschool","Right speed, not a school zone"],["none","Not a speed sign (a red rear light, a bumper…)"]];
     const SPDS=[10,20,30,40,50,60,70,80,90,100,110,130];
+    // asked in a floating box under the card (absolutely placed inside the grid, so no card moves)
     const form=(j)=>{const [m,g]=L[j],cur=g.fb?g.fb.r:"",was=g.fb?g.fb.was:g.text;
-      return `<div class="card sgfb" id="sgfb" style="grid-column:1/-1;margin:0"><div style="display:flex;gap:12px;align-items:center;flex-wrap:wrap"><span style="width:56px">${g.f?sgCut(g.f,g.pos,"Speed limit "+was):""}</span><b>${esc(was)}</b><span class="sub">${at(m,g)}</span>
+      return `<div class="card sgfb sgpop" id="sgfb"><div class="sgfbh"><span class="sgfbt">${g.f?sgCut(g.f,g.pos,"Speed limit "+was):""}</span><b>${esc(was)}</b><span class="sub">${at(m,g)}</span></div>
         <label>What is wrong with it? <select id="fbr"><option value="">Choose a reason…</option>${REASONS.map(([v,t])=>`<option value="${v}"${v===cur?" selected":""}>${t}</option>`).join("")}</select></label>
         <label id="fbsw"${cur==="speed"?"":" hidden"}>It really says <select id="fbs">${SPDS.map(v=>`<option${g.fb&&g.fb.v===v?" selected":""}>${v}</option>`).join("")}</select></label>
-        <button class="btn pri sm" id="fbok"${cur?"":" disabled"}>Save</button><button class="btn sm" id="fbno">Cancel</button>${g.fb?'<button class="btn sm" id="fbund" title="Take my answer back: the sign goes back to what was read">Undo my answer</button>':""}</div></div>`};
+        <div class="sgfbb"><button class="btn pri sm" id="fbok"${cur?"":" disabled"}>Save</button><button class="btn sm" id="fbno">Cancel</button>${g.fb?'<button class="btn sm" id="fbund" title="Take my answer back: the sign goes back to what was read">Undo my answer</button>':""}</div></div>`};
     const post=async b=>{try{await fetch("/api/signfeedback",{method:"POST",body:JSON.stringify(b)})}catch(e){}SGFB=null;SGRERUN()};
     if(gc)gc.innerHTML=(LV.length?`<div class="evs sgks">${LV.map(([[m,g],j])=>{const c=ctx(m,g),lat=hudLat(g),why=c.dbt?SGWHY[c.why]||"not held":"",zn=inZone(j);
       return `<button class="evc sgk${c.dbt?" faded":""}${g.fb?" fixed":""}" data-j="${j}">${g.f?sgCut(g.f,g.pos,"Speed limit "+g.text):'<div class="noimg">no picture kept</div>'}<span class="sgx" role="button" tabindex="0" data-sgx="${j}" title="${g.fb?"You answered about this sign: click to change it":"Not right? Say why"}">${g.fb?"✎":"✕"}</span><b>${esc(g.text)}${g.side==="R"?" (right side)":""}</b><span>${at(m,g)}${c.sp!=null?" · car "+n0(c.sp)+" km/h":""}</span>${lat!=null?`<span>${n0(lat,1)} m ${g.fx<.5?"left":"right"} of the car's line</span>`:""}<span>seen ${g.n}× · sure ${n0(g.conf)}%</span>${zn?`<span class="sgz" data-sd="${j}">${esc(sdLine(j))}</span>`:""}${g.fb?`<span class="sgfbl">${esc(fbTag(g))}</span>`:""}${why?`<span class="mis">${esc(why)}</span>`:""}</button>${SGFB===j?form(j):""}`}).join("")}</div>`:"")
@@ -2991,7 +2992,7 @@ async function teslaDriveBody(host,role,fetchSeg,places,opts){
       r.onchange=()=>{sw.hidden=r.value!=="speed";ok.disabled=!r.value};
       ok.onclick=()=>post({stamp:m.stamp,s0:g.s0,s1:g.s1,text:g.fb?g.fb.was:g.text,reason:r.value,speed:r.value==="speed"?+$("#fbs",gc).value:undefined});
       $("#fbno",gc).onclick=()=>{SGFB=null;sgRedraw()};const u=$("#fbund",gc);if(u)u.onclick=()=>post({stamp:m.stamp,s0:g.s0,text:g.fb.was,clear:true});
-      const f=$("#sgfb",gc);if(f&&f.scrollIntoView)f.scrollIntoView({block:"nearest"})}
+      const f=$("#sgfb",gc),cd=$(`[data-j="${SGFB}"]`,gc);if(f&&cd){const gr=cd.parentNode;f.style.left=Math.max(0,Math.min(cd.offsetLeft,gr.clientWidth-f.offsetWidth))+"px";f.style.top=(cd.offsetTop+cd.offsetHeight-6)+"px";if(f.scrollIntoView)f.scrollIntoView({block:"nearest"})}}
     $$("[data-undo]",gc||document).forEach(b=>b.onclick=()=>{const [m,g]=DIS[+b.dataset.undo];post({stamp:m.stamp,s0:g.s0,text:g.fb.was,clear:true})});
     const dd=$("#sgdis",gc||document);if(dd)dd.ontoggle=()=>{SGDOPEN=dd.open};
     const goSign=j=>{if(j===""||j==null){allPins();return}const [m,g]=L[+j];const bs=g.bs!=null?g.bs:g.s0;if(player)player.seekAt(m.stamp,Math.max(0,Math.floor(bs)));cursor(m.off+Math.floor(bs));if(map&&map.pins)map.pins([{i:Math.round(m.off+g.s0),cat:g.kind==="school"?"school":"speed",text:g.text,side:g.side}])};
