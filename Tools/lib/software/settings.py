@@ -11,8 +11,11 @@
         "refetch_hours": 6,                                 a version still moving is asked about at most this often
         "pace_seconds": 1.0,                                pause between requests to Teslascope
         "my_car": {"model": "modely", "hw": "TeslaAP4"},    Teslascope's car type of your car (Model Y L is "modely"): the page opens on it
-        "fsd_countries": ["us", "ca", ...],                 the countries where FSD (Supervised) is approved (ISO codes). FSD is shown for a region only from cars and notes of these:
-                                                            a car Teslascope reports in any other country (2 cars of Ukraine on 2026.38.5.11) is ignored for FSD
+        "fsd_countries": {"us": {"hw4": true, "hw3": "lite"}, "nl": {"hw4": true, "hw3": false}, ...}
+                                                            the countries where FSD (Supervised) is approved (a tick on notanfsdtracker.com), with what each has: hw4 true = FSD
+                                                            (Supervised) on an AI4 car ("Yes"), hw3 "lite" = FSD v14 Lite on an AI3 car (anything but "No" / "-"), false = none.
+                                                            FSD is shown for a region only from cars and notes of countries that have it for that computer: a car Teslascope
+                                                            puts in any other country (2 cars of Ukraine on 2026.38.5.11) is ignored for FSD. A list of codes means hw4 only.
         "car_check_minutes": 30                             how often the app asks Tessie which software the car is on (0 = never; the drives sync asks too)
     }
 """
@@ -33,8 +36,11 @@ DEFAULTS = {
         "lychee": "Model S (Refresh)", "tamarind": "Model X (Refresh)",
     },
     "hardware_labels": {"TeslaAP4": "AI4", "TeslaAP3": "AI3", "ParkerPascal2_5": "HW2.5", "MonoCam": "MonoCam"},
-    # FSD (Supervised) approved or live, as of 11 Nov 2026 (Tesla's list, regulators' announcements); add a country here when it is approved, or set "fsd_countries" in config.json
-    "fsd_countries": ["us", "ca", "mx", "pr", "cn", "au", "nz", "kr", "nl", "lt", "ee", "dk", "be", "si", "cz", "hr", "sk", "lv", "fi"],
+    # FSD (Supervised) approved, from the ticks of notanfsdtracker.com (11 Nov 2026): hw4 = its HW4 column is "Yes", hw3 = "lite" when its HW3 column is not "No" / "-" (v14 Lite).
+    # Latvia is approved but its HW4 column is "-" (rollout not started), so it has no FSD yet. Add a country here when it gets a tick, or set "fsd_countries" in config.json.
+    "fsd_countries": dict(
+        {c: {"hw4": True, "hw3": False} for c in ("mx", "pr", "cn", "au", "nz", "nl", "lt", "ee", "dk", "be", "si", "cz", "hr", "sk", "fi")},
+        us={"hw4": True, "hw3": "lite"}, ca={"hw4": True, "hw3": "lite"}, kr={"hw4": True, "hw3": "lite"}, lv={"hw4": False, "hw3": False}),
     "fsd_ai4_from": 13,
     "fsd_hw_share_pct": 5,
     "settle_days": 14,

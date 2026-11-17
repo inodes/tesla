@@ -19,25 +19,45 @@ class FakeIx:
 
 
 class FsdCountriesTest(unittest.TestCase):
-    def test_the_default_list_has_no_ukraine_and_the_places_that_have_fsd(self):
+    def test_the_default_table_follows_the_ticks(self):
         d = S.DEFAULTS["fsd_countries"]
+        self.assertEqual(len(d), 19)
         self.assertNotIn("ua", d)
-        for c in ("us", "ca", "au", "nz", "kr", "nl", "fi"):
-            self.assertIn(c, d)
         for c in ("gb", "de", "fr", "se", "no", "ch", "jp"):
             self.assertNotIn(c, d)
+        for c in ("us", "ca", "kr"):                                   # HW3 column "v14 Lite"
+            self.assertEqual(d[c], {"hw4": True, "hw3": "lite"})
+        for c in ("au", "nz", "nl", "fi"):                              # HW3 "No"
+            self.assertEqual(d[c], {"hw4": True, "hw3": False})
+        self.assertEqual(d["lv"], {"hw4": False, "hw3": False})        # approved, HW4 "-": no FSD yet
 
     def test_a_region_keeps_only_its_approved_countries(self):
-        ix = FakeIx({"Europe": ["nl", "ua", "de"], "UK": ["gb", "ie"]}, S.DEFAULTS["fsd_countries"])
-        self.assertEqual(A.fsd_countries(ix, "Europe"), ["nl"])
+        ix = FakeIx({"Europe": ["nl", "ua", "de", "lv"], "UK": ["gb", "ie"], "NA": ["us", "mx"]}, S.DEFAULTS["fsd_countries"])
+        self.assertEqual(A.fsd_countries(ix, "Europe"), ["nl", "lv"])
+        self.assertEqual(A.fsd_countries(ix, "Europe", "hw4"), ["nl"])
         self.assertEqual(A.fsd_countries(ix, "UK"), [])
+        self.assertEqual(A.fsd_countries(ix, "NA", "lite"), ["us"])
 
-    def test_the_field_of_teslascope_counts_only_with_cars_in_an_approved_country(self):
+    def test_a_plain_list_of_codes_means_fsd_on_ai4_only(self):
+        ix = FakeIx({"X": ["nl", "us"]}, ["nl"])
+        self.assertEqual(A.fsd_countries(ix, "X", "hw4"), ["nl"])
+        self.assertEqual(A.fsd_countries(ix, "X", "lite"), [])
+
+    def test_the_field_of_teslascope_counts_only_with_cars_in_a_country_that_has_it(self):
         ix = FakeIx({"Europe": ["nl", "ua"]}, S.DEFAULTS["fsd_countries"])
         row = {"version": "2026.38.5.11", "fsd_hw3": None, "fsd_hw4": "14.3.13"}
-        self.assertEqual(A.chips_for(ix, row, {}, None, {}), [])                          # only Ukraine's 2 cars: not an FSD country
-        self.assertEqual([c["v"] for c in A.chips_for(ix, row, {}, None, {"2026.38.5.11": 3})], ["14.3.13"])
-        self.assertEqual([c["v"] for c in A.chips_for(ix, row, {}, None, None)], ["14.3.13"])   # no region asked: as before
+        self.assertEqual(A.chips_for(ix, row, {}, None, {}), [])                                                    # no car of an FSD country
+        self.assertEqual(A.chips_for(ix, row, {}, None, {"2026.38.5.11": dict(any=2, hw4=0, lite=0)}), [])          # cars only where HW4 has no FSD yet (Latvia)
+        self.assertEqual([c["v"] for c in A.chips_for(ix, row, {}, None, {"2026.38.5.11": dict(any=3, hw4=3, lite=0)})], ["14.3.13"])
+        self.assertEqual([c["v"] for c in A.chips_for(ix, row, {}, None, None)], ["14.3.13"])                       # no region asked: as before
+
+    def test_lite_needs_a_country_with_lite(self):
+        ix = FakeIx({}, S.DEFAULTS["fsd_countries"])
+        row = {"version": "2026.38.5.5", "fsd_hw3": "14.3 Lite", "fsd_hw4": "14.3.12"}
+        au = {"2026.38.5.5": dict(any=100, hw4=100, lite=0)}
+        self.assertEqual([c["kind"] for c in A.chips_for(ix, row, {}, None, au)], ["fsd"])                          # Australia: HW3 "No"
+        us = {"2026.38.5.5": dict(any=100, hw4=100, lite=100)}
+        self.assertEqual(sorted(c["kind"] for c in A.chips_for(ix, row, {}, None, us)), ["fsd", "lite"])
 
 
 if __name__ == "__main__":

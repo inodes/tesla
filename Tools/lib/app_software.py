@@ -58,34 +58,50 @@ def fsd_chip(row, hw=None, labels=None):
     return out
 
 
-def fsd_countries(ix, region):
-    """The countries of the region where FSD (Supervised) is approved (settings "fsd_countries"): only cars and notes of these count for FSD. [] when the region has none."""
-    ok = {str(c).lower() for c in (ix.cfg.get("fsd_countries") or [])}
-    return [c for c in ix.resolve(region) if c in ok]
+def fsd_table(ix):
+    """{country: {hw4: bool, hw3: "lite" | False}} from settings "fsd_countries" (a plain list of codes means FSD on AI4 only)."""
+    v = ix.cfg.get("fsd_countries") or {}
+    if not isinstance(v, dict):
+        v = {c: {"hw4": True, "hw3": False} for c in v}
+    return {str(c).lower(): dict(hw4=bool((x or {}).get("hw4")), hw3=(x or {}).get("hw3") or False) for c, x in v.items()}
 
 
-def fsd_cars(ix, fcs):
-    """{version: cars seen on it in the FSD countries `fcs`}."""
-    if not fcs:
-        return {}
-    return {r["version"]: r["n"] for r in ix.q("SELECT version, SUM(installs) n FROM version_countries WHERE country IN (%s) GROUP BY version" % ",".join("?" * len(fcs)), list(fcs))}
+def fsd_countries(ix, region, kind="any"):
+    """The countries of the region where FSD (Supervised) is approved (settings "fsd_countries"); kind "hw4": those with FSD for AI4 cars, "lite": those with FSD v14 Lite for
+    AI3 cars. Only cars and notes of these count for FSD. [] when the region has none."""
+    t = fsd_table(ix)
+    ok = {"any": lambda e: True, "hw4": lambda e: e["hw4"], "lite": lambda e: bool(e["hw3"])}[kind]
+    return [c for c in ix.resolve(region) if c in t and ok(t[c])]
+
+
+def fsd_cars(ix, region):
+    """{version: {any, hw4, lite}}: cars seen on it in the region's FSD countries (any approved one, one with FSD for AI4, one with Lite for AI3)."""
+    out = {}
+    for kind in ("any", "hw4", "lite"):
+        fcs = fsd_countries(ix, region, kind)
+        if not fcs:
+            continue
+        for r in ix.q("SELECT version, SUM(installs) n FROM version_countries WHERE country IN (%s) GROUP BY version" % ",".join("?" * len(fcs)), list(fcs)):
+            out.setdefault(r["version"], dict(any=0, hw4=0, lite=0))[kind] = r["n"] or 0
+    return out
 
 
 def notes_chips(ix, region, model=None, hw=None):
     """{version: [chip]}: the FSD the notes first listed on that version name (titles like "FSD (Supervised) v14.3.9 Down Under", "FSD (Supervised) v14.3 Lite") for this
     region and car. Teslascope fills its own FSD field only for some versions (2026.28.5 names v14.3.9 in its notes, the field is empty), so the notes fill the gaps."""
-    fcs = fsd_countries(ix, region)
-    if not fcs:
-        return {}                                   # no country of the region has FSD: its notes are not about FSD for anyone there
-    sql, args = ix._scope_sql(fcs, model, hw)
-    rows = ix.q("SELECT DISTINCT o.version, o.title FROM occurrences o JOIN scope s ON s.version=o.version AND s.fid=o.fid WHERE o.tag=o.version AND " + sql, args)
     out = {}
-    for r in rows:
-        k = N.fsd_note(r["title"])
-        if k and k[1]:
-            c = dict(v=k[1], kind=k[0], hw="")
-            if c not in out.setdefault(r["version"], []):
-                out[r["version"]].append(c)
+    for kind, want in (("hw4", "fsd"), ("lite", "lite")):       # a Lite note counts for the countries that have Lite, an FSD note for those that have it on AI4
+        fcs = fsd_countries(ix, region, kind)
+        if not fcs:
+            continue
+        sql, args = ix._scope_sql(fcs, model, hw)
+        rows = ix.q("SELECT DISTINCT o.version, o.title FROM occurrences o JOIN scope s ON s.version=o.version AND s.fid=o.fid WHERE o.tag=o.version AND " + sql, args)
+        for r in rows:
+            k = N.fsd_note(r["title"])
+            if k and k[1] and k[0] == want:
+                c = dict(v=k[1], kind=k[0], hw="")
+                if c not in out.setdefault(r["version"], []):
+                    out[r["version"]].append(c)
     return {v: sorted(cs, key=lambda c: c["kind"]) for v, cs in out.items()}
 
 
@@ -155,11 +171,23 @@ def chip_fits(c, hw, first=13):
     return True
 
 
+def chip_counts(c, cars, first=13):
+    """Cars of the region that can have this chip: FSD Lite needs a country with Lite, FSD from v13 one with FSD for AI4, older FSD any approved country."""
+    if c["kind"] == "lite":
+        return cars.get("lite", 0)
+    if _major(c["v"]) is None or _major(c["v"]) >= first:
+        return cars.get("hw4", 0)
+    return cars.get("any", 0)
+
+
 def chips_for(ix, row, nf, hw, cars=None):
-    """The FSD chips of a version for the region: Teslascope's FSD field counts only when cars of an FSD country of the region are on the version (`cars`: fsd_cars; None =
-    no region asked), the notes' FSD only from the FSD countries (notes_chips)."""
+    """The FSD chips of a version for the region: Teslascope's FSD field counts only when cars of a country that has that FSD are on the version (`cars`: fsd_cars;
+    None = no region asked), the notes' FSD only from the countries that have it (notes_chips)."""
     first = int(ix.cfg.get("fsd_ai4_from") or 13)
-    chips = fsd_chip(row, hw, ix.cfg["hardware_labels"]) if (cars is None or cars.get(row["version"])) else []
+    chips = fsd_chip(row, hw, ix.cfg["hardware_labels"])
+    if cars is not None:
+        have = cars.get(row["version"]) or {}
+        chips = [c for c in chips if chip_counts(c, have, first)]
     if not chips:
         chips = [c for c in nf.get(row["version"], []) if chip_fits(c, hw, first)]
     return chips
@@ -209,7 +237,7 @@ def overview(data_dir, region="ANZ", model=None, hw=None):
     nope = hidden_versions(ix, model, hw)
     rows = [r for r in ix.versions_for(region, model, hw) if r["version"] not in nope]
     nf = notes_chips(ix, region, model, hw)
-    cars = fsd_cars(ix, fsd_countries(ix, region))
+    cars = fsd_cars(ix, region)
     out = []
     for r in rows:
         chip = chips_for(ix, r, nf, hw, cars)
@@ -232,9 +260,9 @@ def detail(data_dir, version, region, model=None, hw=None):
         return dict(error="%s is not a version this tool holds, and no held version's notes carry it as a tag." % version)
     nf = notes_chips(ix, region, model, hw)
     fcs = fsd_countries(ix, region)
-    cars = fsd_cars(ix, fcs)
+    cars = fsd_cars(ix, region)
     u["fsd"] = chips_for(ix, u, nf, hw, cars)
-    u["fsd_cars"] = cars.get(version, 0)
+    u["fsd_cars"] = (cars.get(version) or {}).get("any", 0)
     if not u["fsd"]:                                # what the version carries for FSD in the world, which this region's cars do not have (the page says so)
         u["fsd_elsewhere"] = fsd_chip(u, hw, ix.cfg["hardware_labels"])
     u["fsd_countries"] = fcs
