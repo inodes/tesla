@@ -24,6 +24,11 @@ class UiTest(unittest.TestCase):
         self.assertIn(".evc span.sgx", CSS)
         self.assertIn("e.stopPropagation()", JS[JS.index("data-sgx"):JS.index("data-sgx") + 4000] if "data-sgx" in JS else "")
 
+    def test_the_real_speed_picker_is_only_for_wrong_speed(self):
+        self.assertIn(".sgfb label[hidden]{display:none}", CSS)          # a flex label ignores the hidden attribute without this
+        self.assertIn('sw.hidden=r.value!=="speed"', JS)                  # shown for "Wrong speed" only
+        self.assertIn('speed:r.value==="speed"?', JS)                     # and sent for it only
+
     @unittest.skipUnless(shutil.which("node"), "node not installed")
     def test_app_js_parses(self):
         r = subprocess.run(["node", "--check", os.path.join(UI, "app.js")], capture_output=True, text=True)

@@ -359,4 +359,4 @@ main:has(#spl .stbar,#spl .vbar) #splx{display:none}
 .evc span.sgx{position:absolute;top:6px;right:6px;width:22px;height:22px;display:flex;align-items:center;justify-content:center;border:1px solid var(--line);border-radius:5px;background:var(--card);color:var(--mut);font-size:13px;line-height:1;cursor:pointer;z-index:2;padding:0}
 .evc span.sgx:hover{color:var(--bad);border-color:var(--bad)}
 .evc.sgk.fixed{border-left:4px solid var(--acc,#3b6cf6)}.evc span.sgfbl{color:var(--acc,#3b6cf6);font-weight:600}.evc span.sgz{color:var(--ink)}
-.sgfb label{display:flex;gap:6px;align-items:center}.sgdis summary{cursor:pointer}
+.sgfb label{display:flex;gap:6px;align-items:center}.sgfb label[hidden]{display:none}      /* the real-speed picker is only for "Wrong speed": display:flex above would otherwise show it for every reason */.sgdis summary{cursor:pointer}
