@@ -140,6 +140,13 @@ def fsd_kinds(ix):
     return out
 
 
+def branch_cars(kinds, have):
+    """A version carrying FSD is an FSD branch: only cars of countries that have that FSD can be on it (cars that do not subscribe, and cars of countries without FSD, are given
+    the non-FSD versions, which are other versions). -> the cars of the region that can be, or None when the version is not an FSD branch. `have`: this version's entry of fsd_cars."""
+    ks = [k for k, on in (("hw4", (kinds or {}).get("fsd")), ("lite", (kinds or {}).get("lite")), ("any", (kinds or {}).get("legacy"))) if on]
+    return max(have.get(k, 0) for k in ks) if ks else None
+
+
 def hidden_for(kinds, hw):
     """True when a version with these kinds cannot be installed on that computer: FSD only (no Lite, no older FSD) on AI3, FSD Lite only on AI4."""
     if not kinds:
@@ -238,6 +245,15 @@ def overview(data_dir, region="ANZ", model=None, hw=None):
     rows = [r for r in ix.versions_for(region, model, hw) if r["version"] not in nope]
     nf = notes_chips(ix, region, model, hw)
     cars = fsd_cars(ix, region)
+    fk = fsd_kinds(ix)
+    keep = []
+    for r in rows:                                  # an FSD version has only FSD-country cars on it: those of other countries (2 of Ukraine on 2026.38.5.11) are not counted, and a version with only those is not the region's
+        n = branch_cars(fk.get(r["version"]), cars.get(r["version"]) or {})
+        if n is None:
+            keep.append(r)
+        elif n or r["via"] != "cars":
+            keep.append(dict(r, region_installs=n, region_installs_all=r["region_installs"]))
+    rows = keep
     out = []
     for r in rows:
         chip = chips_for(ix, r, nf, hw, cars)
@@ -263,6 +279,10 @@ def detail(data_dir, version, region, model=None, hw=None):
     cars = fsd_cars(ix, region)
     u["fsd"] = chips_for(ix, u, nf, hw, cars)
     u["fsd_cars"] = (cars.get(version) or {}).get("any", 0)
+    n = branch_cars(fsd_kinds(ix).get(version), cars.get(version) or {})
+    if n is not None and u.get("region_installs") is not None:
+        u["region_installs_ignored"] = max(0, u["region_installs"] - n)       # cars of the region's countries without that FSD: it is an FSD branch, they cannot be on it
+        u["region_installs"] = n
     if not u["fsd"]:                                # what the version carries for FSD in the world, which this region's cars do not have (the page says so)
         u["fsd_elsewhere"] = fsd_chip(u, hw, ix.cfg["hardware_labels"])
     u["fsd_countries"] = fcs

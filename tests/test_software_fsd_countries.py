@@ -59,6 +59,22 @@ class FsdCountriesTest(unittest.TestCase):
         us = {"2026.38.5.5": dict(any=100, hw4=100, lite=100)}
         self.assertEqual(sorted(c["kind"] for c in A.chips_for(ix, row, {}, None, us)), ["fsd", "lite"])
 
+    def test_an_fsd_version_has_only_cars_of_fsd_countries(self):
+        fsd = dict(fsd=True, lite=False, legacy=False)
+        lite = dict(fsd=False, lite=True, legacy=False)
+        none = dict(fsd=False, lite=False, legacy=False)
+        self.assertIsNone(A.branch_cars(none, dict(any=5, hw4=5, lite=5)))               # not an FSD branch: every car counts
+        self.assertIsNone(A.branch_cars(None, {}))
+        self.assertEqual(A.branch_cars(fsd, dict(any=2, hw4=0, lite=0)), 0)              # 2 cars of Ukraine: none can be on it
+        self.assertEqual(A.branch_cars(fsd, dict(any=70, hw4=60, lite=10)), 60)
+        self.assertEqual(A.branch_cars(lite, dict(any=70, hw4=60, lite=10)), 10)
+        self.assertEqual(A.branch_cars(dict(fsd=True, lite=True, legacy=False), dict(any=70, hw4=60, lite=10)), 60)
+
+    def test_the_page_says_which_cars_are_not_counted(self):
+        js = open(os.path.join(HERE, "..", "Tools", "lib", "app_ui", "app.js"), encoding="utf-8").read()
+        self.assertIn("region_installs_ignored", js)
+        self.assertIn("get the non-FSD ones", js)
+
 
 if __name__ == "__main__":
     unittest.main()
