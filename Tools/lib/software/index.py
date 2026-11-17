@@ -27,7 +27,7 @@ from lib.software import settings as S
 from lib.software import teslascope as T
 from lib.software import versions as V
 
-SCHEMA = 3
+SCHEMA = 4      # 4: "Tesla Assisted Driving" (Europe's name for FSD (Supervised)) is the same note key and an FSD note
 ALL = "*"
 
 

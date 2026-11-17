@@ -22,8 +22,14 @@ def _flat(s):
     return " ".join(unicodedata.normalize("NFKC", s or "").replace("’", "'").replace("‘", "'").replace("“", '"').replace("”", '"').split())
 
 
+# In Europe FSD (Supervised) is called "Tesla Assisted Driving" (from 2026.39.100): one and the same thing, so one note key and an FSD note
+_AD = re.compile(r"\btesla assisted driving\b", re.I)
+
+
 def key(title):
-    t = _VER.sub(" ", _flat(title).lower())
+    t = _AD.sub("fsd (supervised)", _flat(title))
+    t = re.sub(r"(\(supervised\)\s*){2,}", "(supervised) ", t, flags=re.I)
+    t = _VER.sub(" ", t.lower())
     t = re.sub(r"[^a-z0-9()&+\s-]", "", t)
     return " ".join(t.split())
 
@@ -35,7 +41,7 @@ def text_hash(description, subtitle=""):
 
 def fsd_version(title, description=""):
     for s in (title or "", ):
-        if re.search(r"\b(fsd|full self-driving)\b", s, re.I):
+        if re.search(r"\b(fsd|full self-driving|tesla assisted driving)\b", s, re.I):
             m = _FSD.search(s)
             if m:
                 return m.group(1)
@@ -47,10 +53,10 @@ _V = re.compile(r"\bv(\d{1,2}(?:\.\d+){0,3})\b", re.I)
 
 def fsd_note(title):
     """What FSD a note's title announces: ("fsd", "14.3.12") for "FSD (Supervised) v14.3.12 Down Under", ("lite", "14.3") for "FSD (Supervised) v14.3 Lite",
-    ("fsd", "") for the bare "FSD (Supervised)". None when the title is not an FSD note, and for the generic "Full Self-Driving (Supervised)" that is listed beside the
+    ("fsd", "") for the bare "FSD (Supervised)" and for Europe's "Tesla Assisted Driving" (the same thing). None when the title is not an FSD note, and for the generic "Full Self-Driving (Supervised)" that is listed beside the
     specific one (it says nothing about which kind)."""
     t = _flat(title)
-    if not re.match(r"fsd\b", t, re.I):
+    if not re.match(r"(fsd|tesla assisted driving)\b", t, re.I):
         return None
     m = _V.search(t)
     ver = m.group(1) if m else ""

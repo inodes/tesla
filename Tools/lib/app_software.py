@@ -131,7 +131,7 @@ def fsd_kinds(ix):
             e["legacy"] = True
         else:
             e["fsd"] = True
-    for r in ix.q("SELECT DISTINCT version, title FROM occurrences WHERE tag=version AND (title LIKE 'FSD%')"):
+    for r in ix.q("SELECT DISTINCT version, title FROM occurrences WHERE tag=version AND (title LIKE 'FSD%' OR title LIKE 'Tesla Assisted Driving%')"):
         k = N.fsd_note(r["title"])
         if not k:
             continue
