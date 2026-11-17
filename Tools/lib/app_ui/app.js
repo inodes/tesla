@@ -3366,12 +3366,14 @@ async function pageSoftware(arg){
     function pickRefresh(){const x=$("#swpick",host);if(!x)return;x.innerHTML=swPick();$("#swgo",x).onclick=goCompare}pickRefresh();
   };
   body()}
+// the countries of the chosen region that have cars on this version ("UA 2"), so a small number under a big region name says where it comes from
+function swRegionCountries(u,d){const rc=new Set((d.region_countries||[]).map(x=>String(x).toLowerCase())),l=(u.countries||[]).filter(c=>rc.has(String(c.country||"").toLowerCase()));return l.length?" ("+l.slice(0,4).map(c=>String(c.country).toUpperCase()+" "+n0(c.installs)).join(", ")+")":""}
 async function pageSoftwareOne(v){
   loading();const d=await fetchJ("software/version?v="+encodeURIComponent(v)+"&"+swQ());
   if(d.redirect){location.replace("#/software/"+encodeURIComponent(d.redirect));return}          // a note tag that is not a version: the version whose page carried it
   if(d.error){main.innerHTML=crumbs("#/software","Software")+`<h1>Software ${esc(v)}</h1>`+errBox(d.error,"Could not read this version");return}
   SWRC=d.region_countries||[];swDefaultCar(d.my_car);const u=d.uptake,o=d.own,hw=(SWS.car.split("|")[1]||""),carLabel=d.car_label||"";
-  main.innerHTML=crumbs("#/software","Software")+`<h1>Software ${esc(v)} ${swFsd(u.fsd,hw)}</h1><div class="sub">First seen ${swDate(u.first_spotted)}. ${esc(SWS.region)}${SWS.car?", "+esc((SWS.car.split("|")[0])):""}.</div>
+  main.innerHTML=crumbs("#/software","Software")+`<h1>Software ${esc(v)} ${swFsd(u.fsd,hw)}</h1><div class="sub">First seen ${swDate(u.first_spotted)}, in any region (${n0(u.installs)} cars so far).${u.region_installs==null?"":` Of those, ${n0(u.region_installs)} ${u.region_installs===1?"is":"are"} in ${esc(SWS.region)}${swRegionCountries(u,d)}.`} <span title="The region and car chosen on the Software page">Showing ${esc(SWS.region)}${SWS.car?" · "+esc(carLabel||SWS.car.split("|")[0]):""}.</span></div>
    <div class="bar"><button class="chip" id="cmpf">Compare from this version</button><button class="chip" id="cmpt">Compare to this version</button></div>
    <div class="tiles">${tile(n0(u.installs),"cars seen on it")}${tile(u.region_installs==null?"–":n0(u.region_installs),"in "+esc(SWS.region))}${tile(n0(u.pending),"waiting for it")}${tile(n0(o.items.length),"new in this version")}</div>
    <div class="card" style="margin-top:12px"><h2 style="margin-top:0">New in this version</h2>${o.scope==="region"?`<div class="sub" style="margin-bottom:6px">The notes of this version are not for ${esc(carLabel||"this car")}.</div>`:""}
