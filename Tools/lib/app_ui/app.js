@@ -2725,7 +2725,10 @@ async function pageTeslaCamSentry(role,ev){
   loading();main.innerHTML=crumbs("#/teslacam","TeslaCam")+pnBar()+'<div id="tdh"></div>';const host=$("#tdh");
   try{
     // the Drives list does not know which drive an event is on: look on the one asked for, then on the others (the kept lists answer when a drive is away)
-    let e=null;for(const r of [role].concat(["A","J","U"].filter(x=>x!==role))){try{const x=await tcGet("teslacam/"+r+"/sentry"),f=(x.events||[]).find(v=>v.id===ev);if(f){e=f;role=r;break}}catch(_){}}
+    // (every connected drive, LaCie and any other registered folder drive too: not only A, J and U, or an event on LaCie was "not on a connected drive")
+    const up=await fetch("/api/status").then(r=>r.json()).then(j=>Object.keys(j.roots||{}).filter(k=>j.roots[k])).catch(()=>[]);
+    const order=["A","J","U"].concat(up.filter(x=>!"AJU".includes(x)).sort());
+    let e=null;for(const r of [role].concat(order.filter(x=>x!==role&&(up.includes(x)||"AJU".includes(x))))){try{const x=await tcGet("teslacam/"+r+"/sentry"),f=(x.events||[]).find(v=>v.id===ev);if(f){e=f;role=r;break}}catch(_){}}
     const pl=await api("places").catch(()=>({saved:[]})),places=pl.saved||[];
     if(!e){      // not on a connected drive: the kept list knows it, and its stills are kept
       const all=await tcGet("clips"),k=(all.sentry||[]).find(v=>v.id===ev)||(all.saved||[]).find(v=>v.id===ev);
