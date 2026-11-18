@@ -98,8 +98,7 @@ Every command runs through one entry point: `./Tools/tesla` lists them by group 
 # specifically, when the two disagree), consolidate any new AGL usage
 # export, and pre-populate the PVOutput/AGL/Evnex energy-source cross-check
 # cache for every home session (so a later --inspect never waits on a live
-# fetch) - see AGENTS.md REQ-033 for what's covered and what's still
-# manual (AGL invoices, Solaredge)
+# fetch). AGL invoices and SolarEdge data stay manual.
 ./Tools/tesla sync charges
 
 # Reconcile Supercharger invoices against Tessie charging sessions
@@ -115,8 +114,8 @@ Every command runs through one entry point: `./Tools/tesla` lists them by group 
 ### 4. Charger Discovery
 ```bash
 # The one command to pull fresh charger data near Home (50km) for all
-# registries this repo tracks - see AGENTS.md REQ-033 for why it's scoped
-# to Home rather than state/nationwide (PlugShare rate-limiting, BUG-008)
+# registries this repo tracks. Scoped to Home rather than state or nationwide
+# because of PlugShare rate limiting.
 ./Tools/tesla sync chargers
 
 # Find all Tesla Superchargers near a place (or nationwide with --state)
@@ -206,7 +205,7 @@ Every command runs through one entry point: `./Tools/tesla` lists them by group 
 
 ### 9. The Tesla App (activity, drives, charges, battery, analytics, dashcam)
 
-A local app (Python only, reads the iCloud `Tesla` folder, nothing is changed by looking) in the style of Tessie. Type each command on its own line; do not paste a trailing `# comment` after a command, because an interactive zsh passes the `#` through as an argument.
+A local app (Python only, reads your Tesla data folder (`directories.data` in `config.json`), nothing is changed by looking) in the style of Tessie. Type each command on its own line; do not paste a trailing `# comment` after a command, because an interactive zsh passes the `#` through as an argument.
 
 ```bash
 cd path/to/tesla/Tools

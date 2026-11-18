@@ -6,7 +6,7 @@ Copy `config.example.json` to `config.json` in the repo root and edit it (an old
 |---|---|
 | `directories.archive` | Optional (null). When unset, archives go to an `archive` folder inside `directories.data` or the JSON folder. |
 | `directories.external_drive` | Null or unset: drives matching `/Volumes/TESLADRIVE*` are found automatically. |
-| `directories.power_invoices` | Optional. The one folder with the power provider's bill PDFs and manual usage CSVs, normally `~/iCloud/Finance/Invoices_Receipts/AGL`. The scripts repo (Hazel) files and names the bills there; the usage CSVs are kept beside them. Unset: that provider finds nothing and is skipped. |
+| `directories.power_invoices` | Optional. The one folder with the power provider's bill PDFs and manual usage CSVs, for example `~/Finance/Invoices_Receipts/AGL`. The scripts repo (Hazel) files and names the bills there; the usage CSVs are kept beside them. Unset: that provider finds nothing and is skipped. |
 | `scripts_repo` | Optional. Where `~/repos/scripts` is (default `~/repos/scripts`). AGL bills are read with that repo's `agl_parse.py`, so there is one copy of the parser. The env var `SCRIPTS_REPO` overrides it. |
 | `evnex.username`, `evnex.password` | Your Evnex app login (email and password), used by the community `evnex` library. Evnex gives API keys only to Enterprise customers. The env vars `EVNEX_CLIENT_USERNAME` and `EVNEX_CLIENT_PASSWORD` can be used instead. |
 | `pv.provider` | Which `Tools/providers/pv/` provider is used. Default `solaredge`. |

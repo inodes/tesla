@@ -145,7 +145,7 @@ provenance and footage-log entries, 324 Saved/Sentry events; TeslaCam drives und
 The harness runs the server with HOME=FIXTURE/home, so its caches and logs go there, not to the real home. The run changes the fixture (kept lists,
 the keeper's logs): make a fresh fixture for numbers that are compared. Linux sandbox, 4 cores, warm file cache; the background keeper runs.
 
-## Baseline (2026-11-05, commit before any change)
+## Baseline (before any change)
 
 First start (computer's cache emptied): bound 0.24 s, first answer 10.38 s. Restart: bound 0.26 s, first answer 0.52 s.
 

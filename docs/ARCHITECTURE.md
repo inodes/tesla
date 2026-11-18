@@ -1,10 +1,10 @@
 # Architecture overhaul - design for discussion
 
-Status: DRAFT for Glenn to mark up. Nothing here is built. Companion to `COMMANDS_AUDIT.md` (which it supersedes where they differ).
+Status: DRAFT for the owner to mark up. Nothing here is built. Companion to `COMMANDS_AUDIT.md` (which it supersedes where they differ).
 
 ## 0. Scope: undo the mess, keep the logic
 
-What exists works: Tessie drives are enriched with the video's per-second readings (`drive_fuse`), charges and footage are consolidated, the reports and pages are right. This work reorganises scripts, commands, files and libraries and removes duplicates. **It does not change what any calculation or enrichment does**, and reference results taken from today's outputs prove that. Anything that changes behaviour is a separate, named feature agreed on its own - for example, drives built from video alone for someone without Tessie (section 3) is new and additive; it must not alter how Glenn's Tessie-plus-video drives come out.
+What exists works: Tessie drives are enriched with the video's per-second readings (`drive_fuse`), charges and footage are consolidated, the reports and pages are right. This work reorganises scripts, commands, files and libraries and removes duplicates. **It does not change what any calculation or enrichment does**, and reference results taken from today's outputs prove that. Anything that changes behaviour is a separate, named feature agreed on its own - for example, drives built from video alone for someone without Tessie (section 3) is new and additive; it must not alter how the owner's Tessie-plus-video drives come out.
 
 
 1. **Tesla files are the core; every third party is optional.** Anyone using this has Tesla video files. Tessie, AGL, Evnex, PVOutput, SolarEdge, ABRP, fuel prices and the charger finders are each an optional addition. Nothing in the core may import a provider.
@@ -31,7 +31,7 @@ Charging and cost have no core source: the video carries no battery or charge da
 
 ## 3. The drive record: a view over whatever sources are present
 
-There are at least one and up to two stored sources of drives: the video telemetry store (per-second readings of what was recorded) and the Tessie master (`drives_master.csv` and the per-drive samples; it is Tessie's own consolidated store, not a master of all sources). Neither is rewritten from the other. A drive as shown is a view over whichever are present. For Glenn that is both; for most people it will be video only.
+There are at least one and up to two stored sources of drives: the video telemetry store (per-second readings of what was recorded) and the Tessie master (`drives_master.csv` and the per-drive samples; it is Tessie's own consolidated store, not a master of all sources). Neither is rewritten from the other. A drive as shown is a view over whichever are present. For the owner that is both; for most people it will be video only.
 
 | Field | From video | From Tessie | Notes |
 |---|---|---|---|
@@ -59,7 +59,7 @@ Two sources describing the same thing rarely describe it the same way. Merging t
 - Tesla Supercharging: the billed energy, price, idle fees and GST.
 Each is stored as an **observation of a charge event**; the view links observations that overlap in time and place into one event. Reports say which source answers which question: cost comes from the biller (Evnex/AGL/Tesla invoice), energy into the battery from the car, and the difference is the loss. An observation with no partner is shown as unmatched, never merged on a guess.
 
-**Today's consolidation is the baseline, not the thing being replaced.** The way drives, charges and footage are consolidated now works, and Glenn confirms it. Section 3a names and protects that behaviour; it does not redesign it. The reference results (section 8) are taken from the current consolidation first, and the new views must reproduce them exactly before anything changes.
+**Today's consolidation is the baseline, not the thing being replaced.** The way drives, charges and footage are consolidated now works, and the owner confirms it. Section 3a names and protects that behaviour; it does not redesign it. The reference results (section 8) are taken from the current consolidation first, and the new views must reproduce them exactly before anything changes.
 
 **Store facts, derive names.** A stored record holds what was measured: times (UTC), GPS, distances, readings. Place names are worked out from GPS and the current places list when shown, by one resolver, so renaming or adding a place corrects every past drive. Today `drive_summary.json` stores the names (`frm`, `to`) with no GPS, resolved once by a second copy of the place lookup in `drive_report.py`, and the app prefers that stored name over its own lookup. The fix is to store start/end GPS and the same-level facts only, and have the app and the drive pages call the one resolver in the places library. The same applies to every other stored name or label (and to `flips`, which is zero in every summary and is being renamed or dropped).
 
@@ -139,11 +139,11 @@ The car's clock is not UTC. Today it is learned by matching video GPS to Tessie 
 
 `core/` (drives, footage, events, places, stills, registry, clock, delete rules), `providers/<name>/`, `services/` (tasks), `app/` (HTTP + UI), `cli/` (wrappers), `data/` (storage). The current `lib/` and the 60,000 lines inside the large scripts are redistributed into these; twins are diffed and removed; one-offs and tests go to `archive/` and `tests/`.
 
-Done 2026-11-02 for the provider packages that already existed: `Tools/providers_chargers`, `Tools/providers_power` and `Tools/providers_pv` are one package, `Tools/providers/`, with `chargers/`, `power/` and `pv/` subpackages (`from providers.chargers import ...`, `from providers.power import get_power_provider`, `from providers.pv import get_pv_provider`). File names inside them are unchanged; no logic changed. Tessie, Evnex, ABRP and fuel are not providers yet (they live in `lib/`).
+Done for the provider packages that already existed: `Tools/providers_chargers`, `Tools/providers_power` and `Tools/providers_pv` are one package, `Tools/providers/`, with `chargers/`, `power/` and `pv/` subpackages (`from providers.chargers import ...`, `from providers.power import get_power_provider`, `from providers.pv import get_pv_provider`). File names inside them are unchanged; no logic changed. Tessie, Evnex, ABRP and fuel are not providers yet (they live in `lib/`).
 
 ## 7. Storage
 
-Follows Glenn's earlier direction: per-day JSON for derived metadata, CSV where Tessie provides CSV. Processing record per day: which steps (telemetry, stills, events, signs, traffic, snapshots) ran at which version; later runs skip them unless forced.
+Follows the owner's earlier direction: per-day JSON for derived metadata, CSV where Tessie provides CSV. Processing record per day: which steps (telemetry, stills, events, signs, traffic, snapshots) ran at which version; later runs skip them unless forced.
 
 ## 8. Safety net
 
@@ -168,7 +168,7 @@ Before any domain is restructured: capture reference results from the real data 
 
 ## 11. Drives domain: what is in the code today and the proposed split
 
-Findings (read-only, 2026-10-20). `Tools/commands/analyse_drives.py` is 6,607 lines and is both a command and the library the rest of the code imports: `DriveAnalyzer` is used by `sync_api_tessie` (backfill and consolidation), `analyse_battery_health`, `analyse_car_efficiency`, `lib/ev_efficiency` and `sync_fuel_history`; `is_home_place` and `haversine_distance_m` by `lib/session_cost`; the footage functions by `drive_actions` (the app's footage queue). It holds three different jobs:
+Findings (read-only). `Tools/commands/analyse_drives.py` is 6,607 lines and is both a command and the library the rest of the code imports: `DriveAnalyzer` is used by `sync_api_tessie` (backfill and consolidation), `analyse_battery_health`, `analyse_car_efficiency`, `lib/ev_efficiency` and `sync_fuel_history`; `is_home_place` and `haversine_distance_m` by `lib/session_cost`; the footage functions by `drive_actions` (the app's footage queue). It holds three different jobs:
 
 | Part | Size | What it is | Proposed home |
 |---|---|---|---|
@@ -181,11 +181,11 @@ There are at least four separate place lookups today (`DriveAnalyzer.resolve_pla
 
 Same pattern elsewhere (to be reviewed the same way): `analyse_charging.py` (7,341 lines, imported by the app's charge book and the cost reports), `places_manager.py` (3,785, imported by the app's places code and the charger finder), `charger_find.py` and `find_tesla_chargers.py` (about 7,000 together), `dashcam_flip_review.py` (612, imported by four scripts).
 
-Done 2026-11-02 for the shared parts (code moved verbatim, no logic change; see docs/COMMANDS_AUDIT.md): `analyse_charging.py`'s ChargingAnalyzer is `lib/charging_analyzer.py`; what the app, the charger finder and other lib modules used from `places_manager.py` is `lib/places_common.py`; the power commands' shared code is `lib/power_demand.py` and `lib/power_bill.py`; `analyse_car_efficiency.py`'s is `lib/car_efficiency.py` and `lib/battery_health.py`; `drive_actions.py`'s footage queue is `lib/footage_actions.py`; `dashcam_flip_review.py`'s and `drive_report.py`'s shared parts are `lib/dashcam_clips.py` and `lib/drive_footage.py`. Nothing in lib/, the providers or the app imports a command now (tests/test_lib_no_commands.py).
+Done for the shared parts (code moved verbatim, no logic change; see docs/COMMANDS_AUDIT.md): `analyse_charging.py`'s ChargingAnalyzer is `lib/charging_analyzer.py`; what the app, the charger finder and other lib modules used from `places_manager.py` is `lib/places_common.py`; the power commands' shared code is `lib/power_demand.py` and `lib/power_bill.py`; `analyse_car_efficiency.py`'s is `lib/car_efficiency.py` and `lib/battery_health.py`; `drive_actions.py`'s footage queue is `lib/footage_actions.py`; `dashcam_flip_review.py`'s and `drive_report.py`'s shared parts are `lib/dashcam_clips.py` and `lib/drive_footage.py`. Nothing in lib/, the providers or the app imports a command now (tests/test_lib_no_commands.py).
 
-## 12. The app: Drives and TeslaCam become one (agreed 2026-10-20)
+## 12. The app: Drives and TeslaCam become one (agreed)
 
-Decided by Glenn. Today the app has two overlapping halves: Drives (only drives Tessie knows) and TeslaCam (a disk picker, its own timeline and its own drive page). A drive can be opened two ways, and a drive only the camera saw never appears under Drives.
+Decided by the owner. Today the app has two overlapping halves: Drives (only drives Tessie knows) and TeslaCam (a disk picker, its own timeline and its own drive page). A drive can be opened two ways, and a drive only the camera saw never appears under Drives.
 
 **One place for drives.** Drives lists every drive from every source. A row says where its data came from (Tessie, dashcam, both) and which drives hold its footage. A drive only the camera knows about is a drive; unread footage is a row that gets read, not a dead end. The Timeline becomes a "By day" view next to the List, with the map and the ticked drives, Sentry events and parked spells as now. There is one drive page (Overview, Footage, Review). The separate TeslaCam drive page goes away.
 

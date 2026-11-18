@@ -1,6 +1,6 @@
-# Drive analysis screen (design, 2026-10-29)
+# Drive analysis screen (design)
 
-Glenn: an analysis screen like the old Dashcam flip review (dashcam_flip_review_template.html: a card per event with the speed chart and a still a second, filters, calls), but for ALL detected events, and on the Drive page itself (reached from both TeslaCam and Drives (new)); not in Analytics or Alerts. It covers any drive that has anything detected (speed signs, school zones, FSD changes, accelerator, speed changes); every drive can be analysed.
+Request: an analysis screen like the old Dashcam flip review (dashcam_flip_review_template.html: a card per event with the speed chart and a still a second, filters, calls), but for ALL detected events, and on the Drive page itself (reached from both TeslaCam and Drives (new)); not in Analytics or Alerts. It covers any drive that has anything detected (speed signs, school zones, FSD changes, accelerator, speed changes); every drive can be analysed.
 
 ## What it shows
 - Tiles: events by kind, signs by category, signs that look wrong.

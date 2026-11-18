@@ -1,40 +1,10 @@
-# PVOutput API — Notes for Future Sessions
+# PVOutput API reference
 
-> Quick-orientation doc so a future session (agent or human) doesn't have to
-> re-research this from scratch. Official reference, always authoritative:
-> **https://pvoutput.org/help/api_specification.html**. That page is
-> disallowed by `robots.txt`, so this session could not fetch it directly —
-> but the user pasted its full real content into the conversation, so
-> everything below (except the small "What still needs verifying" list at
-> the bottom) is now sourced from the actual official spec, not secondary
-> guesswork. An earlier pass of this doc was pieced together from secondary
-> sources (a Python client's own docs, its source code, a PyPI page, and a
-> forum thread) and got the auth header names wrong — see REQ-039 in
-> `AGENTS.md` for the full correction history.
+Notes on the parts of the PVOutput API this repo uses. The official specification is authoritative: <https://pvoutput.org/help/api_specification.html> (its `robots.txt` blocks automated fetching, so read it in a browser). Check it for anything not covered here.
 
-## Why this exists
+PVOutput holds a system's recorded solar generation. This repo reads it for generation figures: with import and export from the power meter, `self_consumed_kwh = generation_kwh - solar_export_kwh` for each half hour. If the account was fed by an inverter upload integration, PVOutput is a relay of that inverter's data, not an independent measurement.
 
-The user has a PVOutput account tracking their home solar system's real
-generation. The goal (see AGENTS.md REQ-027 and the AGL Solar VIP tariff
-work) is a per-session "true opportunity cost of self-consumed solar"
-calculator for home/Evnex EV charging: right now self-consumption can only
-be inferred indirectly (Evnex's own solar % for a charging session, cross-
-checked against whether AGL's smart meter shows simultaneous export).
-PVOutput gives the other half of that picture directly — actual total solar
-generation for the home, independent of what AGL's meter sees (net
-metering means self-consumed solar never touches AGL's meter at all, so
-`generation − AGL export = actual self-consumption`, computed exactly
-instead of inferred).
-
-**Data provenance (user-confirmed, AGENTS.md REQ-040)**: this PVOutput
-account's real generation figures trace back to the home's Solaredge
-inverter's own CT clamps — a Solaredge-to-PVOutput upload integration the
-user set up years ago and never removed. The user can no longer access
-the Solaredge system's own portal/app directly, so PVOutput is now the
-only surviving route to that real generation data — a proxy, but a
-genuine hardware-sourced one, not a synthetic estimate.
-
-## Auth — confirmed
+## Auth
 
 Every request needs both an **API key** and a **System ID** (generate/find
 these in the PVOutput account's own settings page, logged into
@@ -42,13 +12,11 @@ pvoutput.org). Two equivalent auth styles, both officially documented:
 
 - **Headers** (preferred): `X-Pvoutput-Apikey: <API key>`,
   `X-Pvoutput-SystemId: <system id>` on every request.
-  ⚠️ An earlier pass of this doc guessed `X-Pid`/`X-Apikey` from secondary
-  sources — that was **wrong**. The real header names are
-  `X-Pvoutput-Apikey` and `X-Pvoutput-SystemId`.
+  The names are exactly `X-Pvoutput-Apikey` and `X-Pvoutput-SystemId`.
 - **Query parameters** (also officially valid, GET requests only):
   `key=<API key>`, `sid=<system id>`.
 - A **read-only** API key can be generated separately from a full
-  read/write key, for scripts (like this one will be) that should never be
+  read/write key, for scripts (like these) that should never be
   able to call the `add*.jsp`/`postsystem.jsp` write endpoints.
 - Donation-tier accounts (a small annual donation to PVOutput) unlock
   higher rate limits and extended fields — see Rate Limits below.
@@ -57,12 +25,9 @@ pvoutput.org). Two equivalent auth styles, both officially documented:
 `config.json` style — `vin`, `tessie_access_token`,
 `evnex_username`/`evnex_password` all already live there regardless of
 which domain they belong to): stored as `"pvoutput_api_key"` and
-`"pvoutput_system_id"`. Placeholders added to `config.json` and
-`Tessie/config.example.json` in REQ-038; the user populated the real
-values afterwards, and both have now been exercised against the real
-account (see "Confirmed live against the real account" below).
+`"pvoutput_system_id"`. Placeholders are in `config.example.json`.
 
-## Rate limits — confirmed
+## Rate limits
 
 - **Free account**: 60 requests/hour.
 - **Donation account**: 300 requests/hour, plus extended fields (`ext=1`)
@@ -85,7 +50,7 @@ account (see "Confirmed live against the real account" below).
   from a sync script and back off using the returned headers rather than
   guessing at timing.
 
-## Base URL & endpoint list — confirmed
+## Base URL & endpoint list
 
 Base URL: `https://pvoutput.org/service/r2/<endpoint>.jsp`
 
@@ -201,17 +166,15 @@ Peak/Off-Peak/Shoulder/High-Shoulder Tariff, Import Daily Charge, all in
 cents), team memberships, donation count, extended-data (v7–v12) field
 config, and monthly generation estimates (kWh).
 
-**Confirmed real example** (`getsystem.jsp?donations=1` against the
-user's own account): 16 comma-separated fields — system name, size (W),
+**Response layout** (`getsystem.jsp?donations=1`): 16 comma-separated fields — system name, size (W),
 postcode, panel count, panel power (W), panel brand, inverter count,
 inverter power (W), inverter brand, orientation, tilt, shade, install
 date, latitude, longitude, then a final semicolon-separated block
 `"5;;1"` = Status Interval (5 min) `;` Secondary array Status Interval
-(blank — no `array2`) `;` Donations (1 — confirms **donation-tier**,
-matching the 300 req/hour seen in the rate-limit headers below, not the
-free tier's 60).
+(blank — no `array2`) `;` Donations (1 for a donation-tier account, which
+matches the 300 requests/hour in the rate-limit headers).
 
-## Error catalog — confirmed
+## Error catalog
 
 Common errors returned by the service:
 
@@ -231,70 +194,11 @@ Common errors returned by the service:
   account's rate limit was exceeded, or the endpoint/option is
   donation-mode-only and the account isn't donation-tier.
 
-## Fit with existing AGL/solar work
 
-- `agl_usage_master.csv` already has half-hourly `import`/`solar_export`/
-  `controlled_load` rows (AGL's smart meter, REQ-031). `getstatus.jsp?h=1`
-  history, aggregated to the same half-hourly buckets, gives **actual
-  total generation** for the same windows —
-  `self_consumed_kwh = generation_kwh − solar_export_kwh` for any
-  half-hour, computed directly rather than inferred from Evnex's own
-  solar % estimate or a "no simultaneous export" proxy.
-- This directly feeds the still-unbuilt AGL/solar opportunity-cost
-  calculator (REQ-027's scoped-but-not-started 4-part plan: Evnex `.json`
-  loader, AGL billing-cycle helper, per-session cost-split calc, display
-  wiring — see AGENTS.md TODO-013) — PVOutput data replaces the "no
-  simultaneous export" proxy in step 3 with an exact self-consumption
-  figure. The user explicitly sequenced this PVOutput work before the AGL
-  calculator itself (AGENTS.md TODO-016).
-- Timezone note: PVOutput's `d`/`df`/`dt` dates are system-local time per
-  the account's configured timezone in its system settings (see
-  `getsystem.jsp`'s config, and the `"Moon Powered"` error above, which
-  exists specifically to catch a wrong timezone config) — this still needs
-  confirming against the user's own real account before matching against
-  AGL's own AEST/AEDT half-hourly rows the same way AGENTS.md TODO-009
-  already handles for Tessie's own CSV timestamps.
+## Notes
 
-## Confirmed live against the real account (AGENTS.md TODO-016)
-
-Everything above was already sourced from the real, official API
-specification the user pasted directly (see REQ-039) — not secondary
-guesses. The remaining account-specific facts have now been confirmed by
-a real `Tools/test_pvoutput_api.py --show-values` run against the user's
-own account (system `...1754`, 10.5kW / 30 panels):
-
-1. **Account tier: donation-tier, confirmed.** The rate-limit header
-   came back `Limit=300` (not the free tier's 60), and `getsystem.jsp`'s
-   own Donations field read `1` — see the confirmed example above.
-2. **`getstatus.jsp?h=1` field order: confirmed exactly**, reading matches
-   the documented History-shape order field-for-field — e.g. a real
-   23:55 row's Energy Generation (36486 Wh) divided by the system's own
-   10500 W capacity lands exactly on that same row's Energy Efficiency
-   field (3.475 kWh/kW), and Energy Consumption correctly reset to 0 at
-   the first reading (00:00) of the next day.
-3. **Rate-limit header names: confirmed exactly** — `X-Rate-Limit-Remaining`,
-   `X-Rate-Limit-Limit`, `X-Rate-Limit-Reset` all came back as documented.
-   One bug caught in `Tools/pvoutput_common.py` along the way: the first
-   test run showed "no X-Rate-Limit-* headers in response" even though
-   they were actually present — `print_rate_limit()` was doing a
-   case-sensitive dict lookup against a plain `dict()` of the response
-   headers, and HTTP header names are case-insensitive. Fixed with a
-   lower-cased lookup; re-running then showed the real values
-   (`Remaining=297, Limit=300, Reset=1788825600`).
-4. **Rate-limit reset boundary: confirmed UTC**, not system-local — the
-   real `X-Rate-Limit-Reset` value (`1788825600`) decodes to exactly
-   `2026-09-08T00:00:00Z`, a clean UTC midnight.
-5. **System-local timezone for `d`/`df`/`dt` dates: still not fully
-   proven**, though circumstantially consistent with Australia/Sydney —
-   the account's own configured location (per `getsystem.jsp`'s postcode
-   and lat/lon fields, not repeated here - see AGENTS.md's Zero-PII rule)
-   is in Sydney, NSW, and the pulled day's readings show generation
-   dropping to near-zero by the evening hours as expected for that
-   timezone. A firmer check (comparing a reading's exact solar-noon peak time against
-   real local solar noon for that date) hasn't been done yet — low
-   priority unless a future half-hourly match against AGL's AEST/AEDT
-   rows (AGENTS.md TODO-009) shows an off-by-some-hours drift.
-6. **First real registration/test call: done.** `Tools/pvoutput_common.py`
-   + `Tools/test_pvoutput_api.py` now exist, mirroring the
-   `tessie_api_common.py`/`test_tessie_api.py` pattern, and have been run
-   twice successfully against the real account.
+- **Account tier**: the rate-limit header shows the tier (`Limit=60` free, `Limit=300` donation). Donation accounts also return `ext=1` fields.
+- **Rate-limit headers**: `X-Rate-Limit-Remaining`, `X-Rate-Limit-Limit` and `X-Rate-Limit-Reset`. Header names are case-insensitive, so look them up lower-cased. The reset time is a UTC Unix timestamp (a UTC midnight boundary), not system-local.
+- **History order**: the `getstatus.jsp?h=1` field order matches the documented History shape field for field. Energy Consumption resets to 0 at the first reading of each day.
+- **Dates and time zones**: `d`, `df` and `dt` are in the system's own configured time zone (see `getsystem.jsp`; the "Moon Powered" error exists to catch a wrong zone). Before matching against meter rows, confirm the zone and convert both sides to UTC rather than assuming a fixed offset.
+- **Code**: `Tools/lib/pvoutput_common.py` holds the config, auth and HTTP code; the `./Tools/tesla` PV commands use it.

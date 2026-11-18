@@ -6,7 +6,7 @@ This file is the single place for how speed-limit and school-zone signs are foun
 
 1. Red-ring candidates: pixels whose Lab a* is well above the frame's median, contours with a round bounding box (aspect 0.78-1.28), ring-like fill (0.15-0.72), inside not solid red (< 30 % red inside 0.58 r).
 2. The face (0.74 r) is read by `sign_reader.read` (a 32 x 32 MLP, classes 10..130 + none). Its confidence is over-sure on things it was not trained on, so the reading alone is never enough.
-3. **Ring gate** (`sign_finder.ring_check`, added 2026-11-09): the candidate is kept only when
+3. **Ring gate** (`sign_finder.ring_check`): the candidate is kept only when
    - `cover` >= `review.ring_cover` (default **0.80**): the share of 48 directions round the circle (radius searched 0.8-1.15 r, ring sampled at 0.78-0.96 of the radius) that have red (a* >= 9 above the area's median), and
    - `redin` <= `review.ring_redin` (default **0.30**): the share of the face (inside 0.5 r) that is red. A tail light or a stop sign is red inside.
    - `white` (bright share of the face) is reported but is NOT part of the gate: the dashcam's green cast makes real faces grey (L 85-140), and an absolute brightness limit threw real signs away.
@@ -25,14 +25,14 @@ Trust of a reading = lateral position x car-speed answer x override, 0-1; under 
 | spd "car did not slow" | the car holds well below the reading | `hudWSpd` |
 | ovr "overridden" | a stronger different sign was read within 15 s | `hudTrust` |
 | spk "between lower signs" | a high reading between two much lower agreeing signs: ruled out (t = 0) | `HUD_SPIKE` = jump 30, near 10, span 90, slow 0.65, far 300, nearFar 20 |
-| **jmp "sudden jump, not confirmed"** (2026-11-09) | a reading `jump` km/h or more from the latest earlier sign (within `span` s) that no other sign of that number confirms (a different sign: more than `same` s away, within `confirm` s) and the car's median speed (+-10 s) is not within `car` x the reading. Counts at `mult` of its trust and is flagged `q` (questioned). | `HUD_JUMP` = jump 40, span 120, confirm 60, same 4, car 0.85, mult 0.4 |
+| **jmp "sudden jump, not confirmed"** | a reading `jump` km/h or more from the latest earlier sign (within `span` s) that no other sign of that number confirms (a different sign: more than `same` s away, within `confirm` s) and the car's median speed (+-10 s) is not within `car` x the reading. Counts at `mult` of its trust and is flagged `q` (questioned). | `HUD_JUMP` = jump 40, span 120, confirm 60, same 4, car 0.85, mult 0.4 |
 
 A jump that is real (a ramp onto a motorway) is confirmed by the car's speed or by the next 100/110, so it stays. A lone jump that nothing confirms is a likely misread: it shows as questioned and is held back when it was weak anyway.
 
 ## 3. School zones (`lib/sign_classes.find_school`, `lib/school_days.py`, HUD `hudSchool`)
 
 - The board is a fluorescent yellow-green rectangle reading SCHOOL / ZONE (fuzzy), with at least `SZ_MIN_BLOBS` (3) letter-sized dark shapes; the plate under it carries the hours; the limit is the red-ringed 40 beside it.
-- **Hours snap** (`snap_times`, 2026-11-09): the NSW plate is "8-9:30 / 2:30-4"; the small raised 30 is read as 00 or lost, giving 08:00-09:00 / 14:00-16:00. A reading whose every range starts within `SNAP_START` (30 min) and ends within `SNAP_END` (30 min) of a standard slot (`STD_SCHOOL_HOURS` = 08:00-09:30, 14:30-16:00) is given as the standard hours and the record gets `tsn: true`. Anything else stays as read; an unreadable plate gives no hours (never guessed).
+- **Hours snap** (`snap_times`): the NSW plate is "8-9:30 / 2:30-4"; the small raised 30 is read as 00 or lost, giving 08:00-09:00 / 14:00-16:00. A reading whose every range starts within `SNAP_START` (30 min) and ends within `SNAP_END` (30 min) of a standard slot (`STD_SCHOOL_HOURS` = 08:00-09:30, 14:30-16:00) is given as the standard hours and the record gets `tsn: true`. Anything else stays as read; an unreadable plate gives no hours (never guessed).
 - School days: `resources/school_terms.json` has the student term dates of **every state and territory for 2026 and 2027** (NSW, VIC, QLD, ACT, SA, WA, TAS, NT; sources in the file), plus each state's statewide public holidays that fall inside a term (`holidays`; NSW uses `agl_common`). The state comes from where the car was (`au_state` via `/api/schoolday?date=&lat=&lon=`). An unknown state or year is "unknown", never a guess. Local show days, pupil-free days and a school's own closures are not listed: add them to the file. State on the HUD: on (school day, inside hours), off, unknown (no hours or no calendar). Add 2028 when the states publish it.
 - On the sign cards of a school zone (the board and the limit within 8 s of it) the page writes the plate's hours (or, when the plate cannot be read, the NSW standard 08:00-09:30 / 14:30-16:00 marked "standard hours assumed"; other states: "hours not readable"), whether that day is a school day where the car was, and whether the hours cover the time of the sign.
 - Known weakness: stored school records from 28-30 Oct 2026 include green blur / grass read as boards (no hours). The current detector rejects most of them; re-reading those minutes clears the rest. A plate-brightness check was tried and removed: it did not separate false boards from real ones and lost real ones.
@@ -42,7 +42,7 @@ A jump that is real (a ramp onto a motorway) is confirmed by the car's speed or 
 
 Run on the Mac (Overpass is not reachable from the cloud workspace):
 
-    ./Tools/maintenance/sign_check_drive.py --day 2026-11-08 --from 10:56 --to 11:12
+    ./Tools/maintenance/sign_check_drive.py --day <YYYY-MM-DD> --from <HH:MM> --to <HH:MM>
 
 It matches each kept sign picture to where the car was, the nearest OSM way within `--max-m` (25 m) that has a `maxspeed` tag (all road classes; one Overpass query kept in `<data>/roads/maxspeed_<day>.json`), and writes `<data>/drive_review/signcheck/<day>_<from>.csv` (read, map limit, road, car km/h, verdict agree/near/differ/nomap, ring cover). Most suburban streets carry no `maxspeed` in OSM (`nomap` says nothing).
 
@@ -55,7 +55,7 @@ Training faces go to `<data>/sign_training/real_faces.npz` (g 32x32 grey, t labe
 
 Retrain on any machine with numpy, opencv, pillow, scikit-learn: `python3 Tools/maintenance/train_sign_reader.py --out Tools/lib/sign_reader_model.npz --real <data>/sign_training/real_faces.npz` (real faces are repeated 4x; days with day-index % 4 == 0 are held out and scored).
 
-## 5. Answers on the sign cards (2026-11-18, `lib/sign_feedback.py`)
+## 5. Answers on the sign cards (`lib/sign_feedback.py`)
 
 On the drive page, "Signs read in this video" can be collapsed from its heading (the Hide / Normal chips as before). Each sign card has a small box in its corner (✕): it opens a reason dropdown.
 
@@ -67,4 +67,4 @@ On the drive page, "Signs read in this video" can be collapsed from its heading 
 
 An answered card shows ✎ and what was answered; Undo my answer (or Put back) removes it. Answers are in `<data>/sign_training/feedback.json` (`stamp|second|number as read` -> reason, speed, seconds the sign spans); the ones that say what the sign really is are also written to `overrides.json`, and `sign_check_drive.py` labels every still of that sign from them ("none" = hard negative, a number = positive), so the next retrain learns from them. The video overlay picks an answer up the next time the drive page is opened.
 
-Pending: per-session "re-check from the session page"; tracking one sign across frames in the video overlay (the box flickers between detections); pillar cameras as a second sign source; other sign classes (`claude/other-sign-classes-backlog-2026-11-06.md` in the project).
+Pending: per-session "re-check from the session page"; tracking one sign across frames in the video overlay (the box flickers between detections); pillar cameras as a second sign source; other sign classes.
