@@ -15,8 +15,7 @@ We release security and bug fixes for the latest version on the `main` branch.
 The TeslaCam suite interacts directly with filesystem storage devices and shell processes. If you discover a security vulnerability or potential data-safety issue:
 
 1. **Do not open a public issue.**
-2. Please report the vulnerability privately via email to **Glenn Stewart** at:
-   📧 **[github@inodes.net](mailto:github@inodes.net)**
+2. Report the vulnerability privately using GitHub's private vulnerability reporting: open the repository's **Security** tab and choose **Report a vulnerability**.
 3. Please include:
    - A description of the vulnerability and affected command/script.
    - Steps to reproduce the issue or proof-of-concept.
