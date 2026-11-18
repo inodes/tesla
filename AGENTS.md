@@ -1,5 +1,7 @@
 # AGENTS.md — AI Agent Operating Instructions & Task Tracker
 
+> **Cross-project rules** (plan first, commit approval, dry-run, backups, PII, direnv, "verified") live in `~/iCloud/claude/AGENTS.md` - read them too. If you cannot see that file, tell the user. This file holds only what is specific to this repo.
+>
 > **Notice to AI Agents**:
 > This document is the primary instructions and standards reference for this repository - generic, shareable, and safe to commit (no personal specifics).
 > **Every agent working in this repository MUST read this file upon startup, verify its accuracy against the current codebase, and keep it up-to-date after completing work.**
@@ -10,21 +12,12 @@
 
 ## 1. Core Operating Directives
 
-0. **Implementation Plans First — Explicit Permission Required Before Action**:
-   - **CRITICAL DIRECTIVE**: The agent MUST ALWAYS research, formulate, and present a comprehensive implementation plan first before taking any modifying actions.
-   - **NEVER ACT PREMATURELY**: The agent MUST NOT execute source code edits, file creations, file renames (`git mv`), deletions, migrations, or modifying scripts until the user has reviewed the plan and explicitly given permission to proceed.
-   - **Plan First, Act Only When Approved**: When a user asks for a feature, refactor, migration, or cleanup, provide the architectural breakdown, trade-offs, and step-by-step plan for confirmation first.
+0. **Plan first, act only when approved**: see `~/iCloud/claude/AGENTS.md` and `~/iCloud/claude/CLAUDE.md`. Applies to edits, renames (`git mv`), deletions and migrations here too.
 
-1. **Primary Workspace & iCloud Symlink**:
-   - **Primary Workspace**: `$HOME/repos/tesla` (or `~/repos/tesla`, local filesystem clone).
-   - **iCloud Symlink**: `~/Library/Mobile Documents/com~apple~CloudDocs/repos/tesla` is a direct symlink back to `$HOME/repos/tesla`.
-   - **Rationale**: Development must be done locally because (a) Antigravity cannot work directly in iCloud directories and (b) this is a Git repository.
-   - **Rule on Upstream (iCloud) Changes**: If any external changes arrive via iCloud, anything newer or unique MUST be flagged and compared with the local clone, and local is updated only after the agent explains the new additions/changes to the user.
+1. **Primary Workspace**: `$HOME/repos/tesla`, the local GitHub clone. Do not keep a copy of the repo in iCloud.
 
 2. **Git Workflow, Commits & Security Directives**:
-   - **Check with User Prior to Committing**: Prior to executing any git commit, the agent MUST check with the user, describing both:
-     1. The changes made verbally in clear detail.
-     2. The exact proposed commit message(s).
+   - **Commits**: show the user the change and the exact proposed message first (global rule).
    - **Zero-PII Commitment Rule**: NO Personally Identifiable Information (PII) is ever committed (including in documentation, commit messages, or `AGENTS.md` itself):
      - Never include local usernames in documentation or scripts; always use `$USER`, `$HOME`, or `~`.
      - PII includes: Personal addresses, residential coordinates, trip/drive logs, tariff/billing rates tied to a real account, or any CSV files (all Tessie CSVs are classified as PII).
@@ -86,6 +79,17 @@
 
 10. **Australian State and Territory Boundaries Come from the ABS** (added 2026-11-02): which state or territory a point (or an address) is in is decided by the boundaries the Australian Government prescribes, published by the Australian Bureau of Statistics in the Australian Statistical Geography Standard (ASGS Edition 3, July 2021 - June 2026), Digital Boundary Files: <https://www.abs.gov.au/statistics/standards/australian-statistical-geography-standard-asgs/edition-3-july-2021-june-2026/access-and-downloads/digital-boundary-files>.
    Use those boundaries (or data derived from them) for state, territory and time-zone decisions; do not guess a state from a street or place name (a street can be named after another state) or from rough latitude/longitude boxes.
+
+---
+
+## 1a. Lessons that apply here (PlugShare, Tessie, providers, archives)
+
+- **Sandbox egress**: `api.plugshare.com` and `api.tessie.com` return `403 blocked-by-allowlist` from Cowork's VM. `PlugShareClient._get()` swallows non-404 errors and returns `None`, which looks like a real 404. Never treat "not found" or empty from a VM as a broken ID or endpoint; have the user run the command in their own terminal. Generic VM rules: `~/iCloud/claude/reference/mac-bridge.md`.
+- **Real-data tests from the VM**: pass the override path at the mounted alias (for example `consolidate_drives(master_dir=...)`); never call a no-override convenience method (`load_drives()`, `load_charges()`, bare `--consolidate`).
+- **Providers**: require a matching provider/network ID before merging records. Distinct providers can share an address (a Tesla Destination charger next to a third-party one). Keep multi-tier records at co-located sites.
+- **Archive loaders**: archives legitimately hold lists of snapshots. Normalise list-valued entries; never skip them (`load_json_registry()` once emptied historical tariff archives this way).
+- **OSM and supercharge.info**: see `docs/OSM_EDITING.md`. Stall GPS on micro-mapped sites is locked; Tesla's directory GPS is the driveway, not the stalls.
+- **App UI**: before changing `Tools/lib/app_ui/` read `docs/ui-guidelines.md` section 11.
 
 ---
 
@@ -464,11 +468,10 @@ Standing rule (2026-10-21).
 Before completing any prompt or task, every agent must perform the following checklist:
 1. **Codebase Check**: Ensure all modified files run without syntax errors (`python3 -m py_compile <file>`).
 2. **Table Check**: If terminal tables were modified, verify borders with sample piped input or interactive test.
-3. **Sync Check**: Verify symlink from iCloud path points to local `$HOME/repos/tesla/`.
-4. **Docs Update**: If a request was fulfilled or a new bug/TODO was discovered, update the Active Requests / Known Bugs / TODOs sections of `AGENTS.local.md` (not this file - this file stays generic and PII-free).
-5. **Insertion-Boundary Check** (added 2026-09-16, after a real incident): `python3 -m py_compile` proves a file parses, nothing more - it cannot catch a splice that silently deletes the last line (often a `return`) of the function immediately BEFORE or AFTER a new block you inserted. When adding a new top-level function/class between two existing ones, re-read the few lines directly above and below the insertion point in the actual diff, not just the lines you added, to confirm the surrounding code is still intact.
-6. **Git Hygiene Check**: Before considering a session that touched git done, run `git status` and actually read its output (not just its exit code). A crashed or interrupted git command can leave `.git/index.lock` (or another lock file) behind, which silently blocks every future `git add`/`git commit` - yours in a later session, or the next agent's - until someone notices and clears it; git itself will often warn about this on a plain `git status`.
-7. **Tests**: run `python3 -m unittest discover -s tests` from the repo root. With no real config or data (cloud sessions, CI, a fresh clone) use `TESLA_CONFIG=config.example.json TESLA_DATA_DIR=/tmp/nodata python3 -m unittest discover -s tests`. Tests must never read the real config, tariff files or data folder; mock them.
+3. **Docs Update**: If a request was fulfilled or a new bug/TODO was discovered, update the Active Requests / Known Bugs / TODOs sections of `AGENTS.local.md` (not this file - this file stays generic and PII-free).
+4. **Insertion-Boundary Check** (added 2026-09-16, after a real incident): `python3 -m py_compile` proves a file parses, nothing more - it cannot catch a splice that silently deletes the last line (often a `return`) of the function immediately BEFORE or AFTER a new block you inserted. When adding a new top-level function/class between two existing ones, re-read the few lines directly above and below the insertion point in the actual diff, not just the lines you added, to confirm the surrounding code is still intact.
+5. **Git Hygiene Check**: Before considering a session that touched git done, run `git status` and actually read its output (not just its exit code). A crashed or interrupted git command can leave `.git/index.lock` (or another lock file) behind, which silently blocks every future `git add`/`git commit` - yours in a later session, or the next agent's - until someone notices and clears it; git itself will often warn about this on a plain `git status`.
+6. **Tests**: run `python3 -m unittest discover -s tests` from the repo root. With no real config or data (cloud sessions, CI, a fresh clone) use `TESLA_CONFIG=config.example.json TESLA_DATA_DIR=/tmp/nodata python3 -m unittest discover -s tests`. Tests must never read the real config, tariff files or data folder; mock them.
 7. **Reference Sweep Check** (added 2026-09-21, BUG-120): If a file was moved, renamed, or archived this
    session, grep the WHOLE repo for its old name/path before calling the session done, and actually run
    (not just `py_compile`) at least one real entry point that depends on it - see Section 1 item 6.

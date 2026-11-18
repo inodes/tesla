@@ -211,7 +211,7 @@ config key. Run it with `--help` for all flags (`--limit`, `--since-days`,
 
 **Known limitation**: `api.tessie.com` is blocked by this environment's own
 sandbox network allowlist (same class of restriction already documented for
-PlugShare/Overpass in `CLAUDE.md` §1) — from both the cloud container and
+PlugShare/Overpass in `~/iCloud/claude/reference/mac-bridge.md`) — from both the cloud container and
 the device-bridged sandbox VM used by this session. This script has been
 written and `py_compile`-checked but **could not be executed live from
 here**. It needs to be run from the user's own Mac with a real token to
