@@ -14,7 +14,7 @@ Layout, module map and command list: `docs/ARCHITECTURE.md` and `./Tools/tesla` 
 4. **Real data never lives in the working tree**, even when git-ignored. Resolve the path with the domain's `resolve_*_data_home()` helper; never build it from `__file__`. A real file found under the repo is a bug: move it and fix the code that put it there.
 5. **Secrets**: anything that looks like a token or password goes in `.gitignore` and is never printed.
 6. **Shell**: use absolute paths; do not `cd` in tool calls. Commands touching cloud-synced folders or removable drives need the sandbox bypass.
-7. **Never delete files.** Move them to `Tools/archive/` (scripts) or `.bak_archive/` (backups) and say why in that folder's `archive_log.md`. Only the user deletes.
+7. **Never delete files from disk.** Move retired scripts to `Tools/archive/` and backups to `.bak_archive/`, and say why in that folder's `archive_log.md`. Both folders are local and gitignored: git history already keeps old versions, so never commit an archive. Only the user deletes.
 8. **Before moving, renaming or archiving a file**, grep the whole repo for its old name (`grep -rn "<name>" --include=*.py --include=*.sh --include=*.md .`), fix every reference, then run an entry point that reaches the moved code. `py_compile` does not catch broken references.
 9. **"Verified" means you ran it** and can show the output. Otherwise write "implemented, not tested on real data".
 10. **State and territory** come from the ABS ASGS boundaries (Digital Boundary Files), not from street names or lat/lon boxes.
