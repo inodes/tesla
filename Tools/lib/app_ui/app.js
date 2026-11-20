@@ -2580,8 +2580,17 @@ async function pageTeslaCam(role,id){
     if(!(j.step_total>j.step_done)||j.step_done<2||el<30)return "";
     let per=el/j.step_done;const q=[...L].reverse().find(p=>p[0]<=j.step_done-3);if(q)per=Math.max(per,(now-q[1])/(j.step_done-q[0]));
     return " · about "+dur(Math.max(1,Math.round(per*(j.step_total-j.step_done)/60)))+" left"};
+  // speed and time left of a move or delete: the bytes done over the last minute and a half (a drive that slows down shows it), the time left from that speed
+  const JBR={k:"",pts:[]};
+  const jobRate=j=>{if(!(j.bytes>0)||!(j.bytes>j.bytes_done))return "";const now=Date.now()/1000,k=j.action+"|"+j.role+"|"+j.to+"|"+j.bytes,P=JBR.pts;
+    if(JBR.k!==k||(P.length&&j.bytes_done<P[P.length-1][0])){JBR.k=k;P.length=0}
+    if(!P.length||P[P.length-1][0]!==j.bytes_done)P.push([j.bytes_done,now]);
+    while(P.length>2&&now-P[1][1]>90)P.shift();
+    const a=P[0],dt=now-a[1];if(dt<10||j.bytes_done<=a[0])return "";
+    const rate=(j.bytes_done-a[0])/dt,left=(j.bytes-j.bytes_done)/rate;
+    return ` · ${rate>=1e9?(rate/1e9).toFixed(2)+" GB/s":Math.max(1,Math.round(rate/1e6))+" MB/s"} · about ${dur(Math.max(1,Math.round(left/60)))} left`};
   const jobPaint=()=>{const t=$("#jobtx");if(!t||!jobT)return;const j=jobT,pr=j.action==="process"||j.action==="pictures"||!!j.reading,q=pr?(j.step_total?Math.round(100*(j.step_done+(j.step_done<j.step_total?.35:0))/j.step_total):5):(j.bytes?Math.round(100*j.bytes_done/j.bytes):(j.files?Math.round(100*(j.done+.35)/j.files):5));
-    const hd=pr?`<b>${j.reading?(j.after?"Moved. Now reading what is left · ":"Reading what is missing · "):""}${esc(j.step||"Starting")}</b>${j.step_total?` · ${n0(j.step_done)} of ${n0(j.step_total)} (${q}%)`:""}${jobLeft(j)}${j.current?` <span class="sub">· ${esc(j.current)}</span>`:""}`:j.action==="purge"?`<b>Deleting ${esc((j.types||[]).join(", "))}</b> · ${n0(j.done)} of ${n0(j.files)} video files · ${fmtGB(j.bytes_done)} of ${fmtGB(j.bytes)} (${q}%)`:`<b>${j.action==="move"?"Moving":"Deleting"} the video ${j.action==="move"?"from "+NMD[j.role]+" to "+(NMD[!j.to?"A":j.to]):"from "+NMD[j.role]}</b> · ${n0(j.done)} of ${n0(j.files)} files · ${fmtGB(j.bytes_done)} of ${fmtGB(j.bytes)} (${q}%)`;
+    const hd=pr?`<b>${j.reading?(j.after?"Moved. Now reading what is left · ":"Reading what is missing · "):""}${esc(j.step||"Starting")}</b>${j.step_total?` · ${n0(j.step_done)} of ${n0(j.step_total)} (${q}%)`:""}${jobLeft(j)}${j.current?` <span class="sub">· ${esc(j.current)}</span>`:""}`:j.action==="purge"?`<b>Deleting ${esc((j.types||[]).join(", "))}</b> · ${n0(j.done)} of ${n0(j.files)} video files · ${fmtGB(j.bytes_done)} of ${fmtGB(j.bytes)} (${q}%)${jobRate(j)}`:`<b>${j.action==="move"?"Moving":"Deleting"} the video ${j.action==="move"?"from "+NMD[j.role]+" to "+(NMD[!j.to?"A":j.to]):"from "+NMD[j.role]}</b> · ${n0(j.done)} of ${n0(j.files)} files · ${fmtGB(j.bytes_done)} of ${fmtGB(j.bytes)} (${q}%)${jobRate(j)}`;
     if($("#jobhd",t)){$("#jobhd",t).innerHTML=hd;setPbar(t,q);const sb=$("#jobsub",t);if(sb)sb.hidden=!pr;return}
     t.innerHTML=`<div id="jobhd">${hd}</div>${pbar(q)}<div id="jobsub" class="sub" style="margin-top:4px"${pr?"":" hidden"}>Videos were stopped to give this the drive. One you start now is not blocked, but may stutter until it has finished.</div>`};
   let polling=false;
