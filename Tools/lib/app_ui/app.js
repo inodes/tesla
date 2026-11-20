@@ -2490,7 +2490,7 @@ async function pageTeslaCam(role,id){
     const k=b.dataset.kst;runProc([{kind:it.kind,id:it.id}],k==="stills"?["stills","snapshots"]:k==="pics"?["pictures"]:[k])});
   const ostrip=()=>{const el=$("#ostrip");if(!el)return;const c=OPENK&&kpOf(OPENK.kind,OPENK.id);
     if(!c){el.innerHTML="";return}
-    if(jobT){el.innerHTML='<div class="bar selb"><span class="sub">Reading from the drive: videos cannot play until it has finished.</span></div>';return}
+    if(jobT){el.innerHTML='<div class="bar selb"><span class="sub">Reading from the drive. Videos were stopped to give it the drive; one started now may stutter until it has finished.</span></div>';return}
     const wn=c.wait_n||0,onDrv=conn().some(r=>c.bytes[r]>0),need=todoOf(c)&&onDrv,stBtns="";
     el.innerHTML=`<div class="bar selb">${kpChips(c)}${need?`<button class="btn sm pri" id="ostgo">Update this clip</button>`:todoOf(c)?`<span class="sub">${Object.keys(c.bytes||{}).some(r=>c.bytes[r]>0)?"Cannot be read now: its video is on "+Object.keys(c.bytes).filter(r=>c.bytes[r]>0).map(drName).join(", ")+", which is not connected.":"Cannot be read: its video is gone from every drive."}</span>`:""}${wn?`<span class="sub">${n0(wn)} minute${wn>1?"s":""} of stills wait for the drive from Tessie. Nothing to read for those yet.</span>`:""}</div>`;
     const b=$("#ostgo",el);if(b)b.onclick=()=>runProc([OPENK]);
@@ -2580,7 +2580,7 @@ async function pageTeslaCam(role,id){
   const jobPaint=()=>{const t=$("#jobtx");if(!t||!jobT)return;const j=jobT,pr=j.action==="process"||j.action==="pictures"||!!j.reading,q=pr?(j.step_total?Math.round(100*(j.step_done+(j.step_done<j.step_total?.35:0))/j.step_total):5):(j.bytes?Math.round(100*j.bytes_done/j.bytes):(j.files?Math.round(100*(j.done+.35)/j.files):5));
     const hd=pr?`<b>${j.reading?(j.after?"Moved. Now reading what is left · ":"Reading what is missing · "):""}${esc(j.step||"Starting")}</b>${j.step_total?` · ${n0(j.step_done)} of ${n0(j.step_total)} (${q}%)`:""}${jobLeft(j)}${j.current?` <span class="sub">· ${esc(j.current)}</span>`:""}`:j.action==="purge"?`<b>Deleting ${esc((j.types||[]).join(", "))}</b> · ${n0(j.done)} of ${n0(j.files)} video files · ${fmtGB(j.bytes_done)} of ${fmtGB(j.bytes)} (${q}%)`:`<b>${j.action==="move"?"Moving":"Deleting"} the video ${j.action==="move"?"from "+NMD[j.role]+" to "+(NMD[!j.to?"A":j.to]):"from "+NMD[j.role]}</b> · ${n0(j.done)} of ${n0(j.files)} files · ${fmtGB(j.bytes_done)} of ${fmtGB(j.bytes)} (${q}%)`;
     if($("#jobhd",t)){$("#jobhd",t).innerHTML=hd;setPbar(t,q);const sb=$("#jobsub",t);if(sb)sb.hidden=!pr;return}
-    t.innerHTML=`<div id="jobhd">${hd}</div>${pbar(q)}<div id="jobsub" class="sub" style="margin-top:4px"${pr?"":" hidden"}>Videos cannot play while this reads from the drive.</div>`};
+    t.innerHTML=`<div id="jobhd">${hd}</div>${pbar(q)}<div id="jobsub" class="sub" style="margin-top:4px"${pr?"":" hidden"}>Videos were stopped to give this the drive. One you start now is not blocked, but may stutter until it has finished.</div>`};
   let polling=false;
   const poll=async()=>{if(polling)return;polling=true;try{await poll1()}finally{polling=false}};
   // one failed or slow answer must not freeze the bar (it stayed at "10 of 15" for good when a request failed while the app was busy): each ask gives up after 8 s and is asked again, and after
