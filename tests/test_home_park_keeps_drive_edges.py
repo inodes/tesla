@@ -100,5 +100,17 @@ class HomeEdgesTest(PurgeTest):
         self.assertEqual(gone, [S3])                      # the first and last minute are the drives', the second moved; only the one still minute between goes
 
 
+    def test_what_is_left_after_the_delete_is_not_a_home_park_any_more(self):          # 20 Nov: "Delete all Home parks · 40" stayed after the delete: only the drives' own minutes were left
+        k = self.keeper()
+        k.status(force=True)
+        out = k.purge_home(self.roots, confirmed=True)
+        self.assertNotIn("error", out)
+        self.wait(k)
+        left = k.status(force=True)["clips"]["recent"]
+        self.assertTrue(left, "the edge minutes are kept")
+        self.assertTrue(all(r.get("stub") for r in left.values() if r.get("ignored")))
+        self.assertEqual(k.home_clips(), [])
+        self.assertIn("error", k.purge_home(self.roots, confirmed=True))                 # nothing is parked at Home: nothing to delete
+
 if __name__ == "__main__":
     unittest.main()

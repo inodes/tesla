@@ -317,6 +317,7 @@ class ClipKeep:
                 ev0 = events.get((kind, cid)) or {}
                 ign = IGN.at(ev0.get("lat"), ev0.get("lon"))           # Sentry only records parked
             edge = set()
+            stub = False
             if ign:
                 ignored.update(mins)
                 if kind == "recent":                       # the first minute of a park that follows a drive, and the last of one that leads into a drive, hold that drive's parking movements / pulling away: they are the drive's, not Home's
@@ -326,6 +327,7 @@ class ClipKeep:
                     edge |= {st for st in mins if isinstance(store.summary(st), dict) and store.summary(st).get("vmax", 0) >= mv}      # a minute in which the car moved is never parked footage
                     if edge:
                         self._groups[(kind, cid)] = sorted(set(mins) - edge)      # what is deleted from Home leaves them
+                    stub = not (set(mins) - edge)          # nothing but the drives' own minutes is left of this park (after Delete from Home): it is no Home park any more, there is nothing to delete from it
             for st, node in mins.items():
                 if st in edge:
                     continue
@@ -376,7 +378,7 @@ class ClipKeep:
                 kept += self.shots.size(kind, cid) + self.evst.size(kind, cid)
             out[kind][cid] = dict(n=len(mins), first=min(mins), bytes=nbytes, kept=kept, files=nfiles, in_archive=narch, size=max(nbytes.values()) if nbytes else 0, meta=meta, stills=st_, signs=sg, shots=sh, window=hi, tier=self.evst.info(kind, cid).get("tier", "") if kind != "recent" else "",
                                   shot_cams=sorted(have), ready=all(x[0] >= x[1] for x in (meta, st_, sg, sh, hi)) and refine_n == 0, waiting=waiting, wait_n=wait_n, snap_n=snap_n, refine_n=refine_n,
-                                  sign_n=sign_n, todo=any(x[0] < x[1] for x in (meta, sg, sh, hi)) or st_[0] + wait_n < st_[1] or refine_n > 0, ignored=ign)
+                                  sign_n=sign_n, todo=any(x[0] < x[1] for x in (meta, sg, sh, hi)) or st_[0] + wait_n < st_[1] or refine_n > 0, ignored=ign, stub=stub)
         IGN.set_stamps(ignored)
         if husks:                                            # what is left of a clip deleted piece by piece: its record goes too (the footage log keeps its lines)
             PG.add([st for k, _c, mins in husks if k == "recent" for st in mins], [(k, c) for k, c, _m in husks if k != "recent"])
@@ -788,7 +790,7 @@ class ClipKeep:
     def home_clips(self):
         """The clips that are parked at an ignored place (Home), as purge() takes them: [{kind, id}]. Their moving and drive-edge minutes are not in them (see _build)."""
         st = self.status(force=True)["clips"]
-        return [dict(kind=k, id=c) for k in KINDS for c, rec in (st.get(k) or {}).items() if rec.get("ignored")]
+        return [dict(kind=k, id=c) for k in KINDS for c, rec in (st.get(k) or {}).items() if rec.get("ignored") and not rec.get("stub")]
 
     def purge_home(self, roots, confirmed=False):
         """Deletes everything kept of what is parked at Home (video, metadata, stills, pictures, signs) in one go. Nothing that moved is touched: a minute of a drive, with its

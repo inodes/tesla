@@ -2498,7 +2498,7 @@ async function pageTeslaCam(role,id){
   const selbar=()=>{const el=$("#selbar");if(!el)return;if(thinScope().map(x=>x.kind+"|"+x.id).join(",")!==THKEY)thin();if(!KPC){el.innerHTML="";return}
     if(phase&&$("#phtx",el)){$("b",$("#phtx",el)).textContent=phase;setPbar($("#phtx",el),phasePc);return}
     const items=picked(),cn=conn(),done=vis.filter(v=>{const c=kpOf(v.ty,v.id);return c&&c.ready&&cn.some(r=>c.bytes[r]>0)});
-    const needs=v=>{const c=kpOf(v.ty,v.id);return !!c&&!c.ignored&&PSTEPS.some(x=>x[2](c)>0)&&cn.some(r=>c.bytes[r]>0)},needV=vis.filter(needs),ignV=vis.filter(v=>{const c=kpOf(v.ty,v.id);return c&&c.ignored});       // the clips shown that still lack something (the Need updating button ticks them)
+    const needs=v=>{const c=kpOf(v.ty,v.id);return !!c&&!c.ignored&&PSTEPS.some(x=>x[2](c)>0)&&cn.some(r=>c.bytes[r]>0)},needV=vis.filter(needs),ignV=vis.filter(v=>{const c=kpOf(v.ty,v.id);return c&&c.ignored&&!c.stub});       // the clips shown that still lack something (the Need updating button ticks them)
     const dsz=done.reduce((a,v)=>a+Math.max(...cn.map(r=>kpOf(v.ty,v.id).bytes[r]||0)),0);
     const scope=items.length?items:Object.keys(KPC||{}).flatMap(k=>Object.keys(KPC[k]).map(id=>({kind:k,id}))).filter(it=>cn.some(r=>kpOf(it.kind,it.id).bytes[r]>0));
     let h=`<div class="bar selb">`;
@@ -2537,8 +2537,8 @@ async function pageTeslaCam(role,id){
         +mi('data-sset="need"',"Need updating",n0(needV.length),{off:!needV.length,tip:"Ticks the clips that still lack metadata, stills, signs or pictures"})
         +(ignV.length?mi('data-sset="ign"',"Parked at Home",n0(ignV.length),{tip:"Ticks the clips shown that are parked at Home, to look through before deleting"}):"")
         +mi('data-sset="done"',"Finished",n0(done.length)+" · "+fmtGB(dsz),{off:!done.length,tip:"Ticks every clip whose metadata, stills and signs are all kept, so its video can be moved or deleted"}));
-      const homeEvery=Object.keys(KPC||{}).flatMap(k=>Object.keys(KPC[k]).filter(id=>KPC[k][id].ignored).map(id=>k+"|"+id));      // every clip parked at Home, shown or not (the Select menu only ticks the ones shown)
-      if(homeEvery.length&&!(allHome&&items.length===homeEvery.length))h+=`<button class="btn sm bad" id="hdelall" title="Ticks every clip parked at Home (also those not shown now or hidden by a filter) and asks what to delete. Nothing that moved is touched">Delete all Home parks · ${n0(homeEvery.length)}</button>`;
+      const homeEvery=Object.keys(KPC||{}).flatMap(k=>Object.keys(KPC[k]).filter(id=>KPC[k][id].ignored&&!KPC[k][id].stub).map(id=>k+"|"+id));      // every clip parked at Home, shown or not (the Select menu only ticks the ones shown)
+      if(homeEvery.length)h+=`<button class="btn sm bad" id="hdelall" title="Ticks every clip parked at Home (also those not shown now or hidden by a filter) and asks what to delete. Nothing that moved is touched">Delete all Home parks · ${n0(homeEvery.length)}</button>`;
       if(items.length){
         const fd=(TCS.f.drives||[]).filter(r=>cn.includes(r)),src=fd.length?cn.filter(r=>fd.includes(r)):cn;      // with a Drives filter on, the moves are FROM the drives being looked at (a clip also kept on other drives is not offered from those)
         const mv=src.map(r=>{const rows=cn.filter(t=>t!==r).map(t=>{const m=allowed(r,"move",t);return m.length?mi(`data-ka="move|${r}|${t}"`,"to "+NMD[t],n0(m.length)+" clip"+(m.length>1?"s":"")+" · "+fmtGB(sizeOn(m,r))):""}).join("");return rows?mh("From "+NMD[r])+rows:""}).join("");
@@ -2549,7 +2549,7 @@ async function pageTeslaCam(role,id){
     h+="</div>";el.innerHTML=h;
     const on=(id,f)=>{const b=$("#"+id,el);if(b)b.onclick=f};
     on("kclr",()=>{TCSEL.clear();note="";paintTicks();selbar()});
-    on("hdelall",()=>{TCSEL.clear();OPENC=null;OPENK=null;Object.keys(KPC||{}).forEach(k=>Object.keys(KPC[k]).forEach(id=>{if(KPC[k][id].ignored)TCSEL.add(k+"|"+id)}));note="";pend={action:"purge"};paintTicks();selbar()});on("kclr1",()=>closeOpen());on("kupd1",()=>{if(OPENK)runProc([OPENK])});
+    on("hdelall",()=>{TCSEL.clear();OPENC=null;OPENK=null;Object.keys(KPC||{}).forEach(k=>Object.keys(KPC[k]).forEach(id=>{if(KPC[k][id].ignored&&!KPC[k][id].stub)TCSEL.add(k+"|"+id)}));note="";pend={action:"purge"};paintTicks();selbar()});on("kclr1",()=>closeOpen());on("kupd1",()=>{if(OPENK)runProc([OPENK])});
     $$("[data-sset]",el).forEach(b=>b.onclick=()=>{MNU=null;const w=b.dataset.sset,l=w==="all"?vis:w==="need"?needV:w==="ign"?ignV:done;TCSEL.clear();OPENC=null;OPENK=null;$$("#tb .evc.on").forEach(x=>x.classList.remove("on"));l.forEach(v=>TCSEL.add(v.ty+"|"+v.id));note="";pend=null;paintTicks();selbar()});      // a set replaces what was picked or ticked
     on("kno",()=>{pend=null;selbar()});
     $$("[data-mn]",el).forEach(b=>b.onclick=e=>{e.stopPropagation();const id=b.dataset.mn;MNU=MNU===id?null:id;$$(".mnu",el).forEach(m=>m.hidden=true);if(MNU)b.nextElementSibling.hidden=false;$$("[data-mn]",el).forEach(x=>x.setAttribute("aria-expanded",x.dataset.mn===MNU))});
@@ -2601,7 +2601,7 @@ async function pageTeslaCam(role,id){
         if(jj.stale){clearTimeout(KPSTALE);KPSTALE=setTimeout(()=>{if(document.body.contains($("#tb"))&&(location.hash||"").startsWith("#/teslacam"))loadKeep()},5000)}}else{const sb=$("#selbar");if(sb)sb.classList.remove("ph")}}catch(e){const sb=$("#selbar");if(sb)sb.classList.remove("ph")}};
   const draw=()=>{if(!data)return;if(!data.sentry){return}
     const q=TCS.q.toLowerCase(),srcs=TCS.f.ev==="all"?Object.keys(TCSRC):[TCS.f.ev];
-    const all=[].concat(...srcs.map(k=>data[k].map(v=>Object.assign({ty:k},v)))).filter(v=>inRange({day:v.ts.slice(0,10)},TCS.r)&&fPass(v)&&(!q||(v.ty==="recent"?((tripOf(v)||{}).ti||""):(v.city+" "+v.street+" "+reason(v.reason))).toLowerCase().includes(q)||TCSRC[v.ty].toLowerCase().includes(q))).sort((a,b)=>(a.ts<b.ts?-1:a.ts>b.ts?1:0)*(ORD.rowDesc?-1:1)),byDay={};
+    const all=[].concat(...srcs.map(k=>data[k].map(v=>Object.assign({ty:k},v)))).filter(v=>!(kpOf(v.ty,v.id)||{}).stub&&inRange({day:v.ts.slice(0,10)},TCS.r)&&fPass(v)&&(!q||(v.ty==="recent"?((tripOf(v)||{}).ti||""):(v.city+" "+v.street+" "+reason(v.reason))).toLowerCase().includes(q)||TCSRC[v.ty].toLowerCase().includes(q))).sort((a,b)=>(a.ts<b.ts?-1:a.ts>b.ts?1:0)*(ORD.rowDesc?-1:1)),byDay={};
     all.forEach(v=>(byDay[v.ts.slice(0,10)]=byDay[v.ts.slice(0,10)]||[]).push(v));
     // One drive or parked spell is one card: its Recent minutes and the Saved / Sentry clips cut from the same time are shown together (the Saved folder holds copies of minutes of the drive), with a pill for each source.
     // The drive or park is the one the Drives list already knows (Tessie's drive, or the parked spell); a clip belongs to the one it overlaps most. A clip with none stays a card of its own.
