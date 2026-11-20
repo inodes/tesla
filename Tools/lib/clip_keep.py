@@ -1203,6 +1203,7 @@ class ClipKeep:
                         r = CM.put(src, dst, choice)
                         if r == "skipped":
                             j["skipped"] = j.get("skipped", 0) + 1
+                            j["skipped_bytes"] = j.get("skipped_bytes", 0) + size          # left where they are: not copied, so not part of the speed
                         else:
                             if r == "dropped":
                                 j["dropped"] = j.get("dropped", 0) + 1
