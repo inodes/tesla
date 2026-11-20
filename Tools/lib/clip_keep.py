@@ -952,6 +952,19 @@ class ClipKeep:
                 out.append((kind, ev, [w for w in win if w[0] in got], got))
         return out
 
+    @staticmethod
+    def _role_of(paths, roots):
+        """The drive (role) a video path lies on, "?" when none of `roots` holds it."""
+        for p in paths:
+            for r, root in (roots or {}).items():
+                if root and str(p).startswith(str(root).rstrip("/") + "/"):
+                    return r
+        return "?"
+
+    def pictures_roles(self):
+        """[role] for each picture the running (or last) pictures job saves, in the order it saves them."""
+        return list(getattr(self, "_plan_roles", []))
+
     def pictures_start(self, roots):
         """Saves those pictures in the background. True when a job was started (False: nothing to save, or something else is being done to the drives)."""
         if self._thread and self._thread.is_alive():
@@ -961,6 +974,7 @@ class ClipKeep:
         if not plan and not wplan:
             return False
         total = sum(len(x[4]) for x in plan) + len(wplan)
+        self._plan_roles = [self._role_of(list(x[4].values()), roots) for x in plan] + [self._role_of(list(x[3].values()), roots) for x in wplan]      # the drive each saved picture is read from
         self._stop = False
         self._job = dict(running=True, action="pictures", step="Saving event pictures", step_done=0, step_total=total, steps=[dict(step="Saving event pictures", total=total)], files=0, done=0,
                          bytes=0, bytes_done=0, freed=0, errors=[], current="", clips=len(plan) + len(wplan), t0=time.time())

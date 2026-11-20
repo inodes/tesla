@@ -56,6 +56,8 @@ class Keeper:
         self._cur = None                # what the running pass is for
         self._done_at = 0.0
         self._roles = []
+        self._changed = None            # the drives that changed since the last pass (None: all of them): the events are read from those only
+        self._ev_done = 0
         self.on_progress = None         # f(stage, {role: done}) when a job ends or is stopped: what is left to do is then shown at once, and worked out afresh after
         self._plan = []                 # the drive each item of the running job belongs to, in the order the job takes them (what each drive's progress is counted from)
         self._thread = None
@@ -191,6 +193,8 @@ class Keeper:
             new_drive = {r for r, _m in sig} - {r for r, _m in (self._sig or ())}          # a drive plugged in since the last pass: read now, not after the gap
             if sig == self._sig or (not new_drive and time.time() - self._done_at < float(app_config.get("keeper.pass_gap_s", 300))):
                 return
+            before = dict(self._sig or ())
+            self._changed = None if (not self._sig or self._once or self._only) else sorted(r for r, m in sig if before.get(r) != m)      # a button or the first pass reads every drive
             self._cur, self._stage, self.error = sig, 0, ""
         while self._stage < len(STAGES):
             if self._run_stage(STAGES[self._stage], roots):
@@ -210,12 +214,16 @@ class Keeper:
             self._plan = sorted(need, key=lambda r: "AJU?".index(r) if r in "AJU?" else 9)       # the order Footage._run_log takes them
             return bool(need) and bool(self.fg.start("log", need).get("running"))
         if stage == "events":
-            for r, p in roots.items():
+            mine = {r: p for r, p in roots.items() if self._changed is None or r in self._changed}      # only the drives that changed are listed again
+            self._plan, self._ev_done = sorted(mine, key=lambda r: "AJU?".index(r) if r in "AJU?" else 9), 0
+            for r in self._plan:
+                p = mine[r]
                 for kind in ("sentry", "saved"):
                     if r == "A" and kind == "sentry" and self.sentry is not None:
                         self.sentry.events(p)
                     else:
                         self.tc.events(r, kind, p)
+                self._ev_done += 1
             return False
         if stage == "telemetry":
             if self.tc.scan_todo(roots) <= 0:
@@ -232,7 +240,10 @@ class Keeper:
             if not (app_config.get("keeper.stills", True) or self._once) or self.pictures is None:      # ffmpeg again: the same switch as the stills
                 return False
             self._plan = []
-            return bool(self.pictures.pictures_start(roots))
+            started = bool(self.pictures.pictures_start(roots))
+            if started:
+                self._plan = list(getattr(self.pictures, "pictures_roles", lambda: [])())      # the drive of each picture to save, so the page can say which one it is reading
+            return started
         return False
 
     def _scans(self):
@@ -250,9 +261,16 @@ class Keeper:
             st = STAGES[self._stage]
             job = self._job_of(st)
             s.update(stage=st, done=job.get("done", 0), total=job.get("total", 0))
-            where = " and ".join(__import__("drive_roles").NAMES.get(r, r) for r in self._roles) or "the connected drives"
+            names = __import__("drive_roles").NAMES
+            by = self._by_drive(st, s["done"])
+            todo = [r for r in by if by[r]["done"] < by[r]["total"]]           # the drives this stage still has work on, the one being read first
+            if todo:
+                s["drive"] = todo[0]
+                where = names.get(todo[0], todo[0]) + ("" if len(todo) == 1 else " (then %s)" % " and ".join(names.get(r, r) for r in todo[1:]))
+            else:
+                where = " and ".join(names.get(r, r) for r in (self._changed or self._roles)) or "the connected drives"
             s["text"] = "%s %s" % (LABEL[st], where)
-            s["drives"] = self._by_drive(st, s["done"])
+            s["drives"] = by
         return s
 
     def _job_of(self, st):
@@ -260,6 +278,8 @@ class Keeper:
             return self.tc.scan_status()
         if st in ("log", "stills"):
             return self.fg.status()
+        if st == "events":
+            return dict(done=self._ev_done, total=len(self._plan))
         if st == "pictures" and self.pictures:
             j = self.pictures.job()
             return dict(done=j.get("step_done", 0), total=j.get("step_total", 0))
