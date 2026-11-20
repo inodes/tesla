@@ -43,6 +43,8 @@ def hole_filled(last_stamp, next_stamp, fill):
     """True when the hole between two Recent runs is one drive or one park: both ends lie in the same section of the timeline (run_cuts) and the minutes missing between
     them are the minutes of Saved clips (a drive) or Sentry clips (a park) cut from them - the car kept those minutes in another folder, so the footage is one
     recording with a part moved. `fill` = sorted UTC seconds of every Saved and Sentry minute."""
+    if RC.home_hole(last_stamp, next_stamp):                # a park at Home with a pause in the recording: one park
+        return True
     ta, tb = _secs(last_stamp) + 60, _secs(next_stamp)
     sa, sb = RC.section(last_stamp), RC.section(next_stamp)
     if not sa or not sb or sa[0] != sb[0] or sa[0] not in ("drive", "park"):

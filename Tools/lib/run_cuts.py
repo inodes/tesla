@@ -84,6 +84,19 @@ def section(stamp):
         return s[0], s[1], s[2]
 
 
+HOME_JOIN_S = 3600          # seconds: two recordings of one park at an ignored place (Home) this close are one row (the car stops recording between: a Sentry pause, a cable)
+
+
+def home_hole(last_stamp, next_stamp):
+    """True when the hole between two recordings lies inside one parked section at an ignored place (Home) and is no longer than HOME_JOIN_S: no drive between them, so the
+    two are one park (the drive list shows it as one stay), not two."""
+    import home_ignore as IGN
+    sa, sb = section(last_stamp), section(next_stamp)
+    if not sa or sa != sb or sa[0] != "park" or sa[1] is None:
+        return False
+    return 0 <= CC.utc(next_stamp) - (CC.utc(last_stamp) + 60) <= HOME_JOIN_S and bool(IGN.at(sa[1], sa[2]))
+
+
 def drive_edges(first, last):
     """(lead, trail) for a run of minutes from `first` to `last` that is a parked section: True when a drive's own section runs straight into it (lead: the drive was the section before, no more than a
     clip's gap away) or straight out of it (trail). The first or last minute of such a park is where the drive ended or began: the parking movements and the pulling away are in it."""

@@ -24,8 +24,6 @@ EXCEPTIONS = {
     "Tools/providers_chargers": "old folder name, named as moved to Tools/providers/chargers",
     "Tools/providers_power": "old folder name, named as moved to Tools/providers/power",
     "Tools/providers_pv": "old folder name, named as moved to Tools/providers/pv",
-    "Tools/tessie_timezone.py": "docs/COMMANDS_AUDIT.md's 2026-10-19 snapshot, which says where it went",
-    "Tools/lib/tessie_timezone.py": "docs/COMMANDS_AUDIT.md's 2026-10-19 snapshot, which says where it went",
 }
 
 PATH_RE = re.compile(r"(?<![\w/.~-])(?:\./)?(Tools/[\w.*/<>{}-]*[\w*>}/])")

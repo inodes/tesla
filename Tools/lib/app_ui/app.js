@@ -2537,6 +2537,8 @@ async function pageTeslaCam(role,id){
         +mi('data-sset="need"',"Need updating",n0(needV.length),{off:!needV.length,tip:"Ticks the clips that still lack metadata, stills, signs or pictures"})
         +(ignV.length?mi('data-sset="ign"',"Parked at Home",n0(ignV.length),{tip:"Ticks the clips shown that are parked at Home, to look through before deleting"}):"")
         +mi('data-sset="done"',"Finished",n0(done.length)+" · "+fmtGB(dsz),{off:!done.length,tip:"Ticks every clip whose metadata, stills and signs are all kept, so its video can be moved or deleted"}));
+      const homeEvery=Object.keys(KPC||{}).flatMap(k=>Object.keys(KPC[k]).filter(id=>KPC[k][id].ignored).map(id=>k+"|"+id));      // every clip parked at Home, shown or not (the Select menu only ticks the ones shown)
+      if(homeEvery.length&&!(allHome&&items.length===homeEvery.length))h+=`<button class="btn sm bad" id="hdelall" title="Ticks every clip parked at Home (also those not shown now or hidden by a filter) and asks what to delete. Nothing that moved is touched">Delete all Home parks · ${n0(homeEvery.length)}</button>`;
       if(items.length){
         const fd=(TCS.f.drives||[]).filter(r=>cn.includes(r)),src=fd.length?cn.filter(r=>fd.includes(r)):cn;      // with a Drives filter on, the moves are FROM the drives being looked at (a clip also kept on other drives is not offered from those)
         const mv=src.map(r=>{const rows=cn.filter(t=>t!==r).map(t=>{const m=allowed(r,"move",t);return m.length?mi(`data-ka="move|${r}|${t}"`,"to "+NMD[t],n0(m.length)+" clip"+(m.length>1?"s":"")+" · "+fmtGB(sizeOn(m,r))):""}).join("");return rows?mh("From "+NMD[r])+rows:""}).join("");
@@ -2546,7 +2548,8 @@ async function pageTeslaCam(role,id){
       if(note)h+=`<span class="sub" style="flex:1;${/rror|not /.test(note)?"color:var(--bad)":"color:var(--ok)"}">${esc(note)}</span>`}
     h+="</div>";el.innerHTML=h;
     const on=(id,f)=>{const b=$("#"+id,el);if(b)b.onclick=f};
-    on("kclr",()=>{TCSEL.clear();note="";paintTicks();selbar()});on("kclr1",()=>closeOpen());on("kupd1",()=>{if(OPENK)runProc([OPENK])});
+    on("kclr",()=>{TCSEL.clear();note="";paintTicks();selbar()});
+    on("hdelall",()=>{TCSEL.clear();OPENC=null;OPENK=null;Object.keys(KPC||{}).forEach(k=>Object.keys(KPC[k]).forEach(id=>{if(KPC[k][id].ignored)TCSEL.add(k+"|"+id)}));note="";pend={action:"purge"};paintTicks();selbar()});on("kclr1",()=>closeOpen());on("kupd1",()=>{if(OPENK)runProc([OPENK])});
     $$("[data-sset]",el).forEach(b=>b.onclick=()=>{MNU=null;const w=b.dataset.sset,l=w==="all"?vis:w==="need"?needV:w==="ign"?ignV:done;TCSEL.clear();OPENC=null;OPENK=null;$$("#tb .evc.on").forEach(x=>x.classList.remove("on"));l.forEach(v=>TCSEL.add(v.ty+"|"+v.id));note="";pend=null;paintTicks();selbar()});      // a set replaces what was picked or ticked
     on("kno",()=>{pend=null;selbar()});
     $$("[data-mn]",el).forEach(b=>b.onclick=e=>{e.stopPropagation();const id=b.dataset.mn;MNU=MNU===id?null:id;$$(".mnu",el).forEach(m=>m.hidden=true);if(MNU)b.nextElementSibling.hidden=false;$$("[data-mn]",el).forEach(x=>x.setAttribute("aria-expanded",x.dataset.mn===MNU))});

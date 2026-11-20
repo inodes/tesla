@@ -75,6 +75,34 @@ class JoinTest(unittest.TestCase):
         with mock.patch.object(AT.RC, "section", lambda st: DRIVE):
             self.assertEqual(len(AT.join_runs([a, b], [])), 1)
 
+    def test_home_park_with_a_pause_in_recording_is_one_run(self):           # 20 Nov: 08:15 and 08:30-08:31 are one park at Home with the car not recording between them
+        import home_ignore as IGN
+        home = ("park", -33.8065, 151.0796)
+        with mock.patch.object(AT.RC, "section", lambda st: home), mock.patch.object(IGN, "at", lambda la, lo: True):
+            out = AT.join_runs([run(0, 0), run(15, 16)], [])                   # 14 minutes with no recording, nothing to fill them
+            self.assertEqual([len(r["stamps"]) for r in out], [3])
+            self.assertEqual(len(AT.join_runs([run(0, 0), run(15, 16)], fill(1, 3))), 1)
+            self.assertEqual(len(AT.join_runs([run(0, 0), run(75, 76)], [])), 2)       # more than an hour apart: two
+
+    def test_park_elsewhere_with_a_pause_stays_two_runs(self):
+        import home_ignore as IGN
+        with mock.patch.object(AT.RC, "section", lambda st: PARK), mock.patch.object(IGN, "at", lambda la, lo: False):
+            self.assertEqual(len(AT.join_runs([run(0, 0), run(15, 16)], [])), 2)
+
+    def test_home_park_split_by_a_drive_is_not_joined(self):
+        import home_ignore as IGN
+        sec = {stamp(0): ("park", -33.8065, 151.0796), stamp(15): ("drive", -33.8, 151.1)}
+        with mock.patch.object(AT.RC, "section", lambda st: sec.get(st)), mock.patch.object(IGN, "at", lambda la, lo: True):
+            self.assertEqual(len(AT.join_runs([run(0, 0), run(15, 15)], [])), 2)
+
+    def test_keeper_runs_join_the_same_home_park(self):
+        import clip_keep as CK
+        import home_ignore as IGN
+        home = ("park", -33.8065, 151.0796)
+        sts = [stamp(0), stamp(15), stamp(16), stamp(90)]
+        with mock.patch.object(CK.RC, "section", lambda st: home), mock.patch.object(IGN, "at", lambda la, lo: True), mock.patch.object(CK.RC, "is_cut", lambda st: False):
+            self.assertEqual([len(r) for r in CK._runs(sts)], [3, 1])
+
 
 if __name__ == "__main__":
     unittest.main()

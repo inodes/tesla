@@ -56,7 +56,7 @@ def _runs(stamps):
     out, cur, last = [], [], None
     for st in sorted(stamps, key=CC.utc):
         t = CC.utc(st)
-        if cur and (t - last > GAP or RC.is_cut(st)):
+        if cur and (t - last > GAP or RC.is_cut(st)) and not (not RC.is_cut(st) and RC.home_hole(cur[-1], st)):
             out.append(cur)
             cur = []
         cur.append(st)
