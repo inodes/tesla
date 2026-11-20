@@ -1057,7 +1057,7 @@ function stillViewer(host,o){
       const sa=signsAt(m,t);$("#stbg",box).innerHTML=sa.map(badge).join("")+(o.signInfo?sa.map(g=>o.signInfo(m,g)).join(""):"");
       // the picture is a small still: the sign itself is shown beside it as it was cut from the full-size frame (the best one read), as large as the screen allows
       const sb=$("#stsb",box),big=sa.filter(g=>g.f);sb.hidden=!big.length;
-      const hh=big.map(g=>`<figure><img src="/review/${encodeURIComponent(g.f)}" alt="Speed limit ${esc(g.text)}"><figcaption>${esc(g.text)}${g.conf>0?" · "+g.conf+"% sure":""}</figcaption></figure>`).join("");if(sb.innerHTML!==hh)sb.innerHTML=hh;
+      const hh=big.map(g=>`<figure>${sgCut(g.f,g.pos,"Speed limit "+g.text)}<figcaption>${esc(g.text)}${g.conf>0?" · "+g.conf+"% sure":""}</figcaption></figure>`).join("");if(sb.innerHTML!==hh)sb.innerHTML=hh;
       if(o.onAt)o.onAt(m,t);
       [1,2,3,-1].forEach(d=>{const f=frames[k+d];if(f)pre(srcOf(minutes[f[0]],f[1],f[2]))})}
     const signList=()=>{const el=$("#stsg",box);if(!el)return;const L=[];minutes.forEach((m,i)=>(SG[m]||[]).forEach(g=>L.push([i,g])));
