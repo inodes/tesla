@@ -941,7 +941,8 @@ const sentryOf=(x,evs)=>{const s=x.t0,e=s+(x.min||0)*60;return evs.filter(v=>{co
 const getSentry=async()=>{try{return await (await fetch("/api/sentry")).json()}catch(e){return{connected:false,events:[]}}};
 const REASON={sentry_aware_object_detection:"Object detected",sentry_locked_handle_pulled:"Handle pulled",sentry_accelerometer:"Bumped",user_interaction_dashcam_icon_tapped:"Saved by tap",user_interaction_dashcam_panel_save:"Saved from the screen",user_interaction_honk:"Horn pressed",user_interaction_dashcam_launcher_action_tapped:"Dashcam action"};
 const reason=r=>REASON[r]||(r||"Sentry event").replace(/^(sentry|user_interaction)_/,"").replace(/_/g," ");
-const CAMN={front:"Front",back:"Back",left_repeater:"Left repeater",right_repeater:"Right repeater",left_pillar:"Left pillar",right_pillar:"Right pillar"};
+const CAMN={front:"Front",back:"Back",left_pillar:"Left pillar",left_repeater:"Left repeater",right_repeater:"Right repeater",right_pillar:"Right pillar"};      // the order the cameras are listed in, everywhere
+const camSort=l=>[...l].sort((a,b)=>{const i=Object.keys(CAMN).indexOf(a),j=Object.keys(CAMN).indexOf(b);return (i<0?9:i)-(j<0?9:j)});
 const hms=ts=>ts.slice(11,19);
 let IP={r:{p:"all"},q:"",min:5,sen:"all",tab:"periods"};
 async function pageParked(){
@@ -1034,12 +1035,12 @@ function stillViewer(host,o){
     const swap=(u,alt)=>{want=u;const im=pre(u),go=()=>{if(want!==u)return;if(!ratio&&im.naturalWidth){fr.style.aspectRatio=im.naturalWidth+" / "+im.naturalHeight;ratio=true}img.src=u;img.alt=alt};
       if(im.complete)go();else{im.onload=go;im.onerror=go}}      // the old picture stays on screen until the new one has arrived
     // the pictures around an event (higher resolution, the camera that saw it) where they were kept, the ordinary front stills elsewhere; the signs read in each minute
-    let SG={},SELG=null;const CAML={front:"Front",back:"Back",left_repeater:"Left repeater",right_repeater:"Right repeater",left_pillar:"Left pillar",right_pillar:"Right pillar"};
+    let SG={},SELG=null;const CAML=CAMN;
     const evu=(m,t,c,h)=>`/evstill/${o.ev.kind}/${encodeURIComponent(o.ev.id)}/${m}/${c&&c!==hi.cam?c+"/":""}${t}${h?"h":""}.jpg`;
     const hasCam=(m,t,c)=>!!(hi&&hi.secs&&(!c||c===hi.cam?hi.secs[m]&&hi.secs[m].includes(t):hi.others&&hi.others[c]&&hi.others[c][m]&&hi.others[c][m].includes(t)));
     const curCam=()=>camSel&&camSel!=="all"?camSel:null,isHi=(m,t)=>hasCam(m,t,curCam());
     const srcOf=(m,t,h)=>{const c=curCam();return isHi(m,t)?evu(m,t,c,h&&(!c||c===hi.cam)&&hi.half&&hi.half[m]&&hi.half[m].includes(t)):stillSrc(m,t)};
-    const camBar=()=>{const el=$("#stcams",box);if(!el)return;const cs=(hi&&hi.cams)||[];if(cs.length<2){el.innerHTML="";return}
+    const camBar=()=>{const el=$("#stcams",box);if(!el)return;const cs=camSort((hi&&hi.cams)||[]);if(cs.length<2){el.innerHTML="";return}
       el.innerHTML=cs.map(c=>`<button class="btn sm${(camSel||hi.cam)===c?" pri":""}" data-c="${c}">${CAML[c]||c}</button>`).join("")+`<button class="btn sm${camSel==="all"?" pri":""}" data-c="all">${cs.length===6?"All six":"All"}</button>`;
       $$("[data-c]",el).forEach(b=>b.onclick=()=>{stop();camSel=b.dataset.c===hi.cam?null:b.dataset.c;camBar();paint()})};
     const signsAt=(m,t)=>(SG[m]||[]).filter(g=>t>=g.s0-1&&t<=g.s1+1);
@@ -1050,7 +1051,7 @@ function stillViewer(host,o){
       if(en){const last=i===minutes.length-1&&t>=LEN(lm)-Math.max(1,step);en.hidden=!(ends&&last);if(ends&&last)en.textContent=`The recording ends here, at ${shownAt(lm,LEN(lm)-1)}.${o.ev&&o.ev.kind==="sentry"?" A Sentry recording stops when the car is unlocked (Tesla does this to protect the owner's privacy), so this is not an error.":""}`}$("#stst",box).value=step;
       const h=isHi(m,t),cam=CAML[curCam()||(hi&&hi.cam)||"front"]||"Front";
       const al=camSel==="all"&&hi&&hi.cams&&hi.cams.length>1,ag=$("#stall",box);ag.hidden=!al;$(".stfr",box).hidden=al;
-      if(al)ag.innerHTML=hi.cams.filter(c=>hasCam(m,t,c)).map(c=>`<figure style="margin:0;position:relative"><img src="${evu(m,t,c,0)}" alt="${esc(CAML[c]||c)} camera" style="width:100%;display:block;border-radius:6px"><figcaption class="stcam">${esc(CAML[c]||c)}</figcaption></figure>`).join("");
+      if(al)ag.innerHTML=camSort(hi.cams).filter(c=>hasCam(m,t,c)).map(c=>`<figure style="margin:0;position:relative"><img src="${evu(m,t,c,0)}" alt="${esc(CAML[c]||c)} camera" style="width:100%;display:block;border-radius:6px"><figcaption class="stcam">${esc(CAML[c]||c)}</figcaption></figure>`).join("");
       else swap(srcOf(m,t,hf),(h?cam:"Front")+" camera at "+shownAt(m,t));
       const cm=$("#stcm",box);cm.hidden=!h;if(h)cm.textContent=cam+" camera"+(hi.tier==="high"?" · full detail":"");
       const sa=signsAt(m,t);$("#stbg",box).innerHTML=sa.map(badge).join("")+(o.signInfo?sa.map(g=>o.signInfo(m,g)).join(""):"");
@@ -1423,7 +1424,7 @@ async function sentryPlayer(host,ev,role=ev&&ev.role||"A",folder="SentryClips"){
   const ty=folder==="SavedClips"?"saved":"sentry";let sh=null;
   try{const r=await fetch("/api/clips/shots/"+ty+"/"+encodeURIComponent(ev.id));sh=r.ok?await r.json():null}catch(e){}
   if(sh&&sh.cams&&sh.cams.length){const d=document.createElement("div");d.className="shots";
-    d.innerHTML=sh.cams.map(c=>`<a href="/eventshot/${ty}/${esc(ev.id)}/${c}.jpg" target="_blank"><img alt="" decoding="async" loading="lazy" src="/eventshot/${ty}/${esc(ev.id)}/${c}.jpg"><span>${esc(CAMN[c]||c)}</span></a>`).join("");host.appendChild(d)}
+    d.innerHTML=camSort(sh.cams).map(c=>`<a href="/eventshot/${ty}/${esc(ev.id)}/${c}.jpg" target="_blank"><img alt="" decoding="async" loading="lazy" src="/eventshot/${ty}/${esc(ev.id)}/${c}.jpg"><span>${esc(CAMN[c]||c)}</span></a>`).join("");host.appendChild(d)}
 }
 
 // ---------- Places (the places manager) and the page for one place
