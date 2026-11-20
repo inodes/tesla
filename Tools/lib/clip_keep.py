@@ -524,12 +524,14 @@ class ClipKeep:
         size, date and time and a checksum (lib/clip_move.py). None when nothing is in the way."""
         budget = CM.Budget()
         found = []
+        total = 0                                 # the files the move is about (those that exist on the source), so the prompt can say how many of them are in the way
         for kind, cid, fs in plan:
             pairs = [(TF.front_path(roots[role], f), TF.front_path(roots[to], f)) for _k, _sz, f in fs]
             if kind in self.FOLDER:
                 sd, dd = os.path.join(roots[role], self.FOLDER[kind], cid), os.path.join(roots[to], self.FOLDER[kind], cid)
                 pairs += [(os.path.join(sd, n), os.path.join(dd, n)) for n in CM.leftovers(sd)]
             for src, dst in pairs:
+                total += os.path.isfile(src)
                 if os.path.lexists(dst) and os.path.isfile(src):
                     try:
                         c = CM.compare(src, dst, budget)
@@ -541,7 +543,9 @@ class ClipKeep:
             return None
         same = sum(1 for c in found if c["identical"])
         found.sort(key=lambda c: (c["identical"], c["kind"], c["id"], c["name"]))
-        return dict(count=len(found), identical=same, different=len(found) - same, bytes=sum(c["src"]["size"] for c in found), items=found[:40])
+        days = sorted({m.group(0) for c in found for m in [re.match(r"\d{4}-\d\d-\d\d", c["name"]) or re.match(r"\d{4}-\d\d-\d\d", c["id"])] if m})      # the days of the files in the way (from their names)
+        return dict(count=len(found), identical=same, different=len(found) - same, bytes=sum(c["src"]["size"] for c in found), items=found[:40],
+                    total=total, clips=len({(c["kind"], c["id"]) for c in found}), all_clips=len(plan), first=days[0] if days else "", last=days[-1] if days else "")
 
     def start(self, action, role, items, roots, confirmed=False, to="A", conflict=None):
         """Deleting or moving needs `confirmed` (the page sends it only after its confirm bar was answered): a request without it removes nothing."""

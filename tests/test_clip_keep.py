@@ -265,6 +265,19 @@ class KeepTest(Base):
         self.assertEqual(open(mine, "rb").read(), b"y" * 10)                       # nothing was touched
         self.assertTrue(os.path.exists(os.path.join(self.roots["J"], "SavedClips", "ev1", "%s-front.mp4" % S1)))
 
+    def test_the_conflict_says_how_many_of_the_files_are_in_the_way_and_from_when(self):          # 20 Nov: "3,138 files are already on LaCie" read as if all the selection was there
+        self._put("A", "%s-front.mp4" % S1, b"x" * 10)
+        _k, out = self._move()
+        cf = out["conflicts"]
+        self.assertEqual((cf["count"], cf["total"], cf["clips"], cf["all_clips"]), (1, 4, 1, 1))
+        self.assertEqual((cf["first"], cf["last"]), (S1[:10], S1[:10]))
+
+    def test_the_prompt_names_the_rest_and_the_days(self):
+        js = open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "Tools", "lib", "app_ui", "app.js"), encoding="utf-8").read()
+        self.assertIn('${n0(c.count)}${c.total?" of "+n0(c.total):""} file', js)
+        self.assertIn("not on ${esc(NMD[pend.to])} yet", js)
+        self.assertIn("<b>Skip these</b> moves them", js)
+
     def test_identical_files_are_told_from_different_ones(self):
         self._put("A", "%s-front.mp4" % S1, b"x" * 10)
         _k, out = self._move()
