@@ -8,7 +8,12 @@ with open(os.path.join(HERE, "..", "Tools", "lib", "app_ui", "app.js"), encoding
 
 class JobSpeedTest(unittest.TestCase):
     def test_shown_on_move_delete_and_purge(self):
-        self.assertEqual(JS.count("(${q}%)${jobRate(j)}`"), 2)
+        self.assertEqual(JS.count("(${q}%)${jobRate(j)}"), 2)                 # the purge line and the move / delete line
+
+    def test_the_header_counts_only_what_is_copied(self):
+        self.assertIn("${n0(dn)} of ${n0(fl)} files · ${fmtGB(bd)} of ${fmtGB(bt)} (${q}%)", JS)
+        self.assertIn("j.files-(j.skip_files||0)", JS)
+        self.assertIn("j.bytes_done-(j.skipped_bytes||0)", JS)
 
     @unittest.skipUnless(shutil.which("node"), "node is not installed")
     def test_rate_and_time_left(self):

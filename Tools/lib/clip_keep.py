@@ -544,7 +544,8 @@ class ClipKeep:
         same = sum(1 for c in found if c["identical"])
         found.sort(key=lambda c: (c["identical"], c["kind"], c["id"], c["name"]))
         days = sorted({m.group(0) for c in found for m in [re.match(r"\d{4}-\d\d-\d\d", c["name"]) or re.match(r"\d{4}-\d\d-\d\d", c["id"])] if m})      # the days of the files in the way (from their names)
-        return dict(count=len(found), identical=same, different=len(found) - same, bytes=sum(c["src"]["size"] for c in found), items=found[:40],
+        mins = [c for c in found if CM.MINUTE.match(c["name"])]            # the minutes' video: the files a move counts (event.json and thumbnails go with their folder)
+        return dict(minute_files=len(mins), minute_bytes=sum(c["src"]["size"] for c in mins), count=len(found), identical=same, different=len(found) - same, bytes=sum(c["src"]["size"] for c in found), items=found[:40],
                     total=total, clips=len({(c["kind"], c["id"]) for c in found}), all_clips=len(plan), first=days[0] if days else "", last=days[-1] if days else "")
 
     def start(self, action, role, items, roots, confirmed=False, to="A", conflict=None):
@@ -560,6 +561,7 @@ class ClipKeep:
         files = [(k, sz, f) for _, _, fs in plan for k, sz, f in fs]
         clips = [dict(kind=k, id=c) for k, c, _ in plan]
         self._choice = conflict if conflict in CM.CHOICES else None
+        cf = None
         if action == "move":                      # nothing is ever replaced without being asked: files already on the destination are shown and the person chooses
             cf = self.conflicts(plan, role, to, roots)
             if cf and not self._choice:
@@ -581,6 +583,8 @@ class ClipKeep:
         self._mv = {os.path.basename(TF.front_path(roots[role], f)): to for _, _, f in files} if action == "move" else {}
         self._job = dict(running=True, action=action, role=role, to=to, files=len(files), done=0, bytes=sum(sz for _, sz, _ in files), bytes_done=0, freed=0, errors=[], current="",
                          clips=len(plan), t0=time.time(), reading=False, after=bool(read), step="", step_done=0, step_total=0, steps=[])
+        if cf and self._choice == "skip":         # the files left where they are are not part of what is copied: the bar counts only the others
+            self._job.update(skip_files=cf["minute_files"], skip_bytes=cf["minute_bytes"])
         if read:
             self._thread = threading.Thread(target=self._run_then_read, args=(read, action, role, files, roots, clips, to), daemon=True)
         else:
@@ -1203,6 +1207,7 @@ class ClipKeep:
                         r = CM.put(src, dst, choice)
                         if r == "skipped":
                             j["skipped"] = j.get("skipped", 0) + 1
+                            j["skipped_min"] = j.get("skipped_min", 0) + 1
                             j["skipped_bytes"] = j.get("skipped_bytes", 0) + size          # left where they are: not copied, so not part of the speed
                         else:
                             if r == "dropped":

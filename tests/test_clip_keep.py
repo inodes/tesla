@@ -283,6 +283,19 @@ class KeepTest(Base):
         _k, out = self._move()
         self.assertEqual((out["conflicts"]["identical"], out["conflicts"]["different"]), (1, 0))
 
+    def test_a_skipping_move_counts_only_the_files_it_copies(self):          # 20 Nov: 101 GB skipped in an instant showed as "4 GB/s"
+        self._put("A", "%s-front.mp4" % S1, b"x" * 10)
+        k, _out = self._move(conflict="skip")
+        j = k._job
+        self.assertEqual((j["skip_files"], j["skip_bytes"]), (1, 10))
+        self.assertEqual((j["skipped_min"], j["skipped_bytes"]), (1, 10))
+        self.assertEqual(j["files"] - j["skip_files"], 3)                         # the three that are copied
+        self.assertEqual(j["done"] - j["skipped_min"], 3)
+
+    def test_without_skip_nothing_is_left_out_of_the_count(self):
+        k, _out = self._move()
+        self.assertEqual(k._job.get("skip_files", 0), 0)
+
     def test_skip_leaves_both_and_moves_the_rest(self):
         mine = self._put("A", "%s-front.mp4" % S1, b"y" * 10)
         k, out = self._move(conflict="skip")
