@@ -103,6 +103,14 @@ class JoinTest(unittest.TestCase):
         with mock.patch.object(CK.RC, "section", lambda st: home), mock.patch.object(IGN, "at", lambda la, lo: True), mock.patch.object(CK.RC, "is_cut", lambda st: False):
             self.assertEqual([len(r) for r in CK._runs(sts)], [3, 1])
 
+    def test_keeper_runs_are_the_rows_of_the_list(self):                    # 20 Nov: a row of 146 minutes held several kept clips, a tick moved only the first
+        import clip_keep as CK
+        with mock.patch.object(AT.RC, "section", lambda st: PARK), mock.patch.object(AT.RC, "is_cut", lambda st: False):
+            sts = [stamp(m) for m in list(range(0, 21)) + list(range(31, 41))]
+            self.assertEqual([len(r) for r in CK._runs(sts, [])], [21, 10])                          # nothing fills the hole: two
+            self.assertEqual([len(r) for r in CK._runs(sts, fill(21, 30))], [31])                    # Saved / Sentry minutes fill it: one, as the list has it
+            self.assertEqual(CK._runs(sts, fill(21, 30))[0][0], stamp(0))                            # named by its first minute, as the row is
+
 
 if __name__ == "__main__":
     unittest.main()

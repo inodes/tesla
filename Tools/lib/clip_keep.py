@@ -51,19 +51,21 @@ _FILE = re.compile(r"^(\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2})-([a-z_]+)$")
 KINDS = ("recent", "saved", "sentry")
 
 
-def _runs(stamps):
-    """The stamps (sorted by time) cut into runs: a gap of more than GAP seconds starts a new one."""
-    out, cur, last = [], [], None
+def _runs(stamps, fill=()):
+    """The stamps (sorted by time) cut into runs the way the TeslaCam list cuts them (app_teslacam): a gap of more than GAP seconds or a cut of the timeline starts a new one, and two runs
+    a hole apart that Saved / Sentry minutes fill (`fill`, sorted UTC seconds) or that lie in one park at Home are one. A row of the list and a clip kept here are the same run, so
+    ticking the row ticks all of it."""
+    import app_teslacam as AT
+    out, cur = [], None
     for st in sorted(stamps, key=CC.utc):
         t = CC.utc(st)
-        if cur and (t - last > GAP or RC.is_cut(st)) and not (not RC.is_cut(st) and RC.home_hole(cur[-1], st)):
+        if cur and t - cur["t1"] <= GAP and not RC.is_cut(st):
+            cur["stamps"].append(st)
+            cur["t1"] = t
+        else:
+            cur = dict(stamps=[st], t1=t)
             out.append(cur)
-            cur = []
-        cur.append(st)
-        last = t
-    if cur:
-        out.append(cur)
-    return out
+    return [r["stamps"] for r in AT.join_runs(out, list(fill))]
 
 
 def _read_lines(path):
@@ -292,12 +294,22 @@ class ClipKeep:
                         if r != "A" and a_has:
                             node["arch"][r] = node["arch"].get(r, 0) + 1
         groups, out = {}, {k: {} for k in KINDS}
+        recent = {}
         for (kind, ev), mins in found.items():
             if kind == "recent":
-                for run in _runs(mins):
-                    groups[("recent", run[0])] = {st: mins[st] for st in run}
+                recent.update(mins)
             else:
                 groups[(kind, ev)] = mins
+        if recent:                                           # the runs of the list: the minutes the car saved off into Saved and Sentry folders are part of the same recording
+            fill = sorted(CC.utc(st) for (kind, _e), mins in found.items() if kind != "recent" for st in mins)
+            every = set(recent)
+            for (kind, _e), mins in found.items():
+                if kind != "recent":
+                    every.update(mins)
+            for run in _runs(every, fill):
+                own = {st: recent[st] for st in run if st in recent}
+                if own:
+                    groups[("recent", run[0])] = own
         self._groups = {k: sorted(v) for k, v in groups.items()}
         ignored = set()                                      # the minutes of what is parked at an ignored place (Home): left alone
         husks = []                                           # clips with nothing left: no video on any drive, nothing kept
