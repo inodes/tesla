@@ -147,7 +147,7 @@ class ClipKeep:
                 return dict(c[1], stale=True) if self._first else c[1]
         return self._rebuild()
 
-    KEPT_VER = 1            # raise when what a look holds changes: a look kept by older code is then not used
+    KEPT_VER = 2            # raise when what a look holds changes: a look kept by older code is then not used
 
     def _load_kept(self):
         try:
