@@ -956,6 +956,12 @@ class H(BaseHTTPRequestHandler):
         if name == "debug/booksig":             # the charge book's inputs now against what its book was built from: why it is rebuilt
             now, have = BOOK._inputs(), ((BOOK.book or {}).get("sig") or "")
             return self.send_json(dict(now=now.split("|"), book=have.split("|"), same=now == have, version=(BOOK.book or {}).get("version"), dirty=getattr(BOOK, "dirty", None)))
+        if name == "debug/software":            # the Software answers kept, by their key's parts (short hashes): why one is worked out again
+            import hashlib as _h
+            hx = lambda v: _h.sha1(repr(v).encode()).hexdigest()[:8]      # noqa: E731
+            with app_software._ANS_LOCK:
+                keys = list(app_software._ANS)
+            return self.send_json(dict(n=len(keys), keys=[dict(name=k[0], args=k[2], sig=hx(k[3]), car=hx(k[4]), cfg=hx(k[5])) for k in keys], warm=getattr(app_software, "WARM", None)))
         if name == "debug/stat":                # how long a look at a file takes in the data folder here (the event pictures' info.json files): stat, open, listing
             return self.send_json(debug_stat())
         if name == "drivelist":                 # the Drives list: Tessie's drives and charges as the rows, the dashcam's drives attached (or alone when there is no Tessie)
@@ -1380,8 +1386,9 @@ def _warm(port):
         mc = app_software.S.load().get("my_car") or {}
         for fn in (app_software.overview, app_software.timeline):
             fn(DATA_DIR, "ANZ", mc.get("model") or None, mc.get("hw") or None)
-    except Exception:
-        pass
+        app_software.WARM = "done %s" % time.strftime("%H:%M:%S")
+    except Exception as e:
+        app_software.WARM = "failed: %s: %s" % (type(e).__name__, e)
 
 
 WIN = None                  # the app's window (pywebview), when it has one

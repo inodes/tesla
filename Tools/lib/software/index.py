@@ -88,11 +88,9 @@ class Index:
 
     # ------------------------------------------------------------------ build
     def _files(self):
+        from lib.software import sync as SY
         d = T.paths(self.data)[1]
-        try:
-            return sorted(os.path.join(d, f) for f in os.listdir(d) if f.endswith(".json"))
-        except OSError:
-            return []
+        return sorted(os.path.join(d, n + ".json") for n in SY.held_names(d))          # listed again only when the folder changed; in the order it always had
 
     def _signature(self, files):
         n, newest, size = len(files), 0, 0

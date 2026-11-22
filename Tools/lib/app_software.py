@@ -273,10 +273,7 @@ def choices(ix):
 def held(data_dir):
     """-> how many versions are held, the newest and oldest, when the last one was fetched."""
     d = T.paths(data_dir)[1]
-    try:
-        names = [f[:-5] for f in os.listdir(d) if f.endswith(".json")]
-    except OSError:
-        names = []
+    names = SY.held_names(d)
     return dict(n=len(names), newest=max(names, key=SY.V.key) if names else None, oldest=min(names, key=SY.V.key) if names else None)
 
 

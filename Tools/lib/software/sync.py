@@ -47,12 +47,29 @@ from lib.software import versions as V  # noqa: E402
 DEFAULT_DATA = os.path.expanduser(os.environ.get("TESLA_DATA_DIR", "~/Library/Mobile Documents/com~apple~CloudDocs/Tesla"))
 
 
-def _held(data_dir):
-    d = T.paths(data_dir)[1]
+_NAMES = {}             # folder -> (its time, the versions held there)
+
+
+def held_names(d):
+    """The versions held in folder d (their .json files), sorted by name. Listed again only when the folder's time changed (a file added or removed): listing the
+    1,000 files of the iCloud folder took 0.1-0.7 s on the Mac, and the Software page did it three times per answer."""
     try:
-        return {f[:-5] for f in os.listdir(d) if f.endswith(".json")}
+        m = os.stat(d).st_mtime_ns
     except OSError:
-        return set()
+        return []
+    hit = _NAMES.get(d)
+    if hit and hit[0] == m and time.time() - m / 1e9 > 2:
+        return hit[1]
+    try:
+        names = sorted(f[:-5] for f in os.listdir(d) if f.endswith(".json"))
+    except OSError:
+        return []
+    _NAMES[d] = (m, names)
+    return names
+
+
+def _held(data_dir):
+    return set(held_names(T.paths(data_dir)[1]))
 
 
 def read_list(data_dir):
