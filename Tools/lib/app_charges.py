@@ -22,7 +22,9 @@ import csv
 import datetime
 import glob
 import io
+import hashlib
 import json
+import math
 import os
 import sys
 import threading
@@ -212,8 +214,8 @@ class ChargeBook:
     def _inputs(self):
         p = lambda *a: os.path.join(self.data, *a)
         files = [p("charges", "charges_master.csv"), os.path.join(self._repo(), "resources", "api_cache", "charges.json"),
-                 os.path.join(self._repo(), "resources", "api_cache", "tessie_cost_push_ledger.json"), p("places.json"), p("charges", "charge_chargers.json")]       # places.json: a place marked as a charger (free, or priced) changes the charges there
-        sig = []
+                 os.path.join(self._repo(), "resources", "api_cache", "tessie_cost_push_ledger.json"), p("charges", "charge_chargers.json")]
+        sig = [self._places_sig()]
         for f in files:
             try:
                 st = os.stat(f)
@@ -234,6 +236,38 @@ class ChargeBook:
             except OSError:
                 sig.append("inv:-")
         return "|".join(sig)
+
+    def _places_sig(self):
+        """What of places.json the book depends on: the places with a charger (free or priced) or Home, and the places where a charge of the book was (its name).
+        Saving any other place (a café, a friend's house) used to rebuild the whole book, reading every invoice, with the app slow behind it for minutes."""
+        f = os.path.join(self.data, "places.json")
+        try:
+            st = os.stat(f)
+        except OSError:
+            return "places:-"
+        plugs = (self.book or {}).get("plugs") or []
+        key = (st.st_size, st.st_mtime_ns, len(plugs))
+        if getattr(self, "_psig", (None, None))[0] == key:
+            return self._psig[1]
+        try:
+            with open(f, encoding="utf-8") as fh:
+                places = json.load(fh)
+        except (OSError, ValueError):
+            return "places:-"
+        pts = [(float(x["lat"]), float(x["lon"])) for x in plugs if x.get("lat") is not None and x.get("lon") is not None]
+
+        def near(e):
+            try:
+                la, lo, r = float(e["lat"]), float(e["lon"]), float(e.get("radius_m") or 150) + 300
+            except (KeyError, TypeError, ValueError):
+                return False
+            k = math.cos(math.radians(la))
+            return any(((a - la) * 111320) ** 2 + ((b - lo) * 111320 * k) ** 2 <= r * r for a, b in pts)
+        keep = [[n, e.get("lat"), e.get("lon"), e.get("radius_m"), e.get("charger"), e.get("chargers"), e.get("type")]
+                for n, e in sorted((places or {}).items()) if isinstance(e, dict) and (e.get("chargers") or e.get("charger") or e.get("type") == "home" or near(e))]
+        out = "places:" + hashlib.sha1(json.dumps(keep, sort_keys=True, default=str).encode()).hexdigest()[:12]
+        self._psig = (key, out)
+        return out
 
     def _invoice_dirs_cfg(self):
         try:
