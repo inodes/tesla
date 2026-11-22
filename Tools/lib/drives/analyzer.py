@@ -6,6 +6,7 @@ import lib.drive_points as _dpts
 import lib.fetch_ledger as _FL
 from lib.timezones import legacy_get as _legacy_get
 import csv
+import io
 from datetime import datetime
 from collections import defaultdict
 from lib.fuel_common import format_drive_fuel_comparison
@@ -632,12 +633,21 @@ class DriveAnalyzer:
                             pass
 
  # Write to all master files
+        buf = io.StringIO(newline="")
+        writer = csv.DictWriter(buf, fieldnames=fieldnames, extrasaction="ignore", restval="")
+        writer.writeheader()
+        writer.writerows(raw_rows)
+        text = buf.getvalue()
         for mf in master_files:
             try:
+                try:                    # the same text as the file: left alone. Each sync rewrote it unchanged, and everything built from it (the app's
+                    with open(mf, encoding="utf-8", newline="") as f:      # drive list, activity, alerts, analytics) was built again after every sync
+                        if f.read() == text:
+                            continue
+                except OSError:
+                    pass
                 with open(mf, "w", encoding="utf-8", newline="") as f:
-                    writer = csv.DictWriter(f, fieldnames=fieldnames, extrasaction="ignore", restval="")
-                    writer.writeheader()
-                    writer.writerows(raw_rows)
+                    f.write(text)
             except Exception as e:
                 if verbose:
                     print(f"Error writing master file {mf}: {e}")
