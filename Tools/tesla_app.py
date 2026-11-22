@@ -949,6 +949,9 @@ class H(BaseHTTPRequestHandler):
             return self.send_json(debug_threads())
         if name == "debug/profile":             # one build profiled (?what=keeper): where its time goes, as Python's profiler counts it
             return self.send_json(debug_profile(q.get("what", ["keeper"])[0], int(q.get("n", ["40"])[0])))
+        if name == "debug/booksig":             # the charge book's inputs now against what its book was built from: why it is rebuilt
+            now, have = BOOK._inputs(), ((BOOK.book or {}).get("sig") or "")
+            return self.send_json(dict(now=now.split("|"), book=have.split("|"), same=now == have, version=(BOOK.book or {}).get("version"), dirty=getattr(BOOK, "dirty", None)))
         if name == "debug/stat":                # how long a look at a file takes in the data folder here (the event pictures' info.json files): stat, open, listing
             return self.send_json(debug_stat())
         if name == "drivelist":                 # the Drives list: Tessie's drives and charges as the rows, the dashcam's drives attached (or alone when there is no Tessie)
@@ -1548,6 +1551,12 @@ def debug_profile(what, n=40):
     fn = {"keeper": lambda: CKEEP._build(), "drivelist": lambda: drivelist(True), "activity": lambda: STORE.activity(), "clips": lambda: _clips()}.get(what)
     if what.startswith("seg:"):
         fn = seg
+    elif what.startswith("place:"):              # place:<key>: a place page's answer
+        fn = lambda: STORE.pl.detail(STORE, what.split(":", 1)[1])      # noqa: E731
+    elif what.startswith("software"):            # software[:region]: the Software page's first answer worked out afresh (not the kept one)
+        mc = app_software.S.load().get("my_car") or {}
+        reg = what.split(":", 1)[1] if ":" in what else "ANZ"
+        fn = lambda: app_software._overview.__wrapped__(DATA_DIR, reg, mc.get("model") or None, mc.get("hw") or None)      # noqa: E731
     if fn is None:
         return dict(error="what: keeper, drivelist, activity or clips")
     pr = cProfile.Profile()

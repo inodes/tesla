@@ -1525,10 +1525,18 @@ class ChargingAnalyzer:
         if not self._invoice_location_map_dirty or not self.invoice_location_map_path:
             return
         try:
+            text = json.dumps(self.invoice_location_map, indent=2, sort_keys=True)
+            try:
+                with open(self.invoice_location_map_path, encoding="utf-8") as f:
+                    if f.read() == text:                # the same as the file: not written (each write changed the invoice folder, so the app's
+                        self._invoice_location_map_dirty = False      # charge book saw new invoices and was built again, and both Macs wrote it: iCloud copies)
+                        return
+            except OSError:
+                pass
             os.makedirs(os.path.dirname(self.invoice_location_map_path), exist_ok=True)
             tmp = self.invoice_location_map_path + ".tmp"
             with open(tmp, "w", encoding="utf-8") as f:
-                json.dump(self.invoice_location_map, f, indent=2, sort_keys=True)
+                f.write(text)
             os.replace(tmp, self.invoice_location_map_path)
             self._invoice_location_map_dirty = False
         except Exception:

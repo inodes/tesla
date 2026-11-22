@@ -229,10 +229,10 @@ class ChargeBook:
             sig.append("dd:%d:%d" % (len(days), int(max([st.st_mtime] + [os.path.getmtime(os.path.join(dd, n)) for n in sorted(days)[-40:]]))))
         except (OSError, AttributeError):
             sig.append("dd:-")
-        for d in self._invoice_dirs_cfg():
+        for d in self._invoice_dirs_cfg():          # the invoices themselves: the folder's own time changed with every build (it writes invoice_locations.json there)
             try:
-                names = os.listdir(d)
-                sig.append("inv:%d:%d" % (len(names), int(os.stat(d).st_mtime)))
+                pdfs = [os.stat(os.path.join(d, n)) for n in os.listdir(d) if n.lower().endswith(".pdf")]
+                sig.append("inv:%d:%d:%d" % (len(pdfs), int(max([st.st_mtime for st in pdfs] or [0])), sum(st.st_size for st in pdfs)))
             except OSError:
                 sig.append("inv:-")
         return "|".join(sig)

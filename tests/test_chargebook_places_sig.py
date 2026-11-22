@@ -45,3 +45,21 @@ class PlacesSigTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class InvoiceSigTest(unittest.TestCase):
+    """The book is built again for a new or changed invoice, not because a build rewrote invoice_locations.json beside them (it looped: every build changed the folder)."""
+    def test_only_the_pdfs_count(self):
+        d, inv = tempfile.mkdtemp(), tempfile.mkdtemp()
+        b = AC.ChargeBook(os.path.join(HERE, "..", "Tools"), d)
+        b.book = {"plugs": [], "invoice_dirs": [inv]}
+        open(os.path.join(inv, "a.pdf"), "wb").write(b"%PDF a")
+        before = b._inputs()
+        time.sleep(0.01)
+        with open(os.path.join(inv, "invoice_locations.json"), "w") as f:
+            f.write("{}")
+        t = time.time() + 5
+        os.utime(inv, (t, t))
+        self.assertEqual(b._inputs(), before)
+        open(os.path.join(inv, "b.pdf"), "wb").write(b"%PDF b")
+        self.assertNotEqual(b._inputs(), before)
