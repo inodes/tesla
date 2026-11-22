@@ -27,7 +27,7 @@ from lib.software import settings as S
 from lib.software import teslascope as T
 from lib.software import versions as V
 
-SCHEMA = 5      # 5: an FSD note is known by its version ("fsd v14.3.12"): each FSD version is its own note; 4: "Tesla Assisted Driving" (Europe's name for FSD (Supervised)) is the same note key and an FSD note
+SCHEMA = 6      # 6: an FSD note is keyed by its full version ("fsd v14.3.12"; 5 held its major version only); 5: an FSD note is known by its version ("fsd v14.3.12"): each FSD version is its own note; 4: "Tesla Assisted Driving" (Europe's name for FSD (Supervised)) is the same note key and an FSD note
 ALL = "*"
 ALL_REGIONS = "All regions"          # the region choice that holds every country
 
