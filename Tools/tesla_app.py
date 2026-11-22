@@ -1366,7 +1366,8 @@ def _warm(port):
     request after a start builds the lists; later ones answer from memory). Only what is kept here: nothing is read from a drive."""
     import urllib.request
     time.sleep(8)                   # the window's first page goes first; what it asks for is answered from what was kept
-    for path in ("summary", "activity", "drivelist", "places", "alerts", "chargers", "battery", "analytics", "teslacam", "clips", "clips/keep"):      # the charge book is looked at only when the Charges page asks for it
+    for path in ("summary", "activity", "drivelist", "places", "alerts", "chargers", "battery", "analytics", "teslacam", "clips", "clips/keep",
+                 "place?key=p%3AHome"):          # a place page: its first one read the charger sites' files (1 s); then they are kept      # the charge book is looked at only when the Charges page asks for it
         try:
             urllib.request.urlopen("http://127.0.0.1:%d/api/%s" % (port, path), timeout=300).read()
         except Exception:

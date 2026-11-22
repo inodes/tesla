@@ -297,14 +297,16 @@ class Index:
                         EXISTS(SELECT 1 FROM scope s WHERE s.version=v.version AND s.country IN (%s)) AS has_notes
                  FROM versions v ORDER BY v.k DESC""" % (ph, ph)
         rows = self.q(sql, cs + cs)
+        cars = None
+        if model or hw:                         # the cars of that model / computer per version, in one query (one per version took 0.5 s for 340 versions)
+            cars = {r["version"]: r["n"] for r in self.q("SELECT version, COALESCE(SUM(installs),0) n FROM version_models WHERE (?='' OR model=?) AND (?='' OR hw=?) GROUP BY version",
+                                                          (model or "", model or "", hw or "", hw or ""))}
         out = []
         for r in rows:
             if not (r["region_installs"] or r["has_notes"]):
                 continue
-            if model or hw:
-                n = self.q("SELECT COALESCE(SUM(installs),0) n FROM version_models WHERE version=? AND (?='' OR model=?) AND (?='' OR hw=?)",
-                           (r["version"], model or "", model or "", hw or "", hw or ""))[0]["n"]
-                if not n:
+            if cars is not None:
+                if not cars.get(r["version"]):
                     continue
             r["via"] = "cars and notes" if r["region_installs"] and r["has_notes"] else ("cars" if r["region_installs"] else "notes")
             out.append(r)
