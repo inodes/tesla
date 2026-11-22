@@ -338,10 +338,12 @@ class ChargeBook:
         the requests. The child writes the book to a file; nothing else is shared."""
         import subprocess
         import tempfile
+        import shutil
         fd, out = tempfile.mkstemp(prefix="chargebook_", suffix=".json")
         os.close(fd)
+        bg = ["taskpolicy", "-b"] if shutil.which("taskpolicy") else []          # macOS: a background process (its disk and processor use come after the app's)
         try:
-            r = subprocess.run([sys.executable, os.path.abspath(__file__), "--build", self.tools, self.data, sig or "", out], cwd=self.tools,
+            r = subprocess.run(bg + [sys.executable, os.path.abspath(__file__), "--build", self.tools, self.data, sig or "", out], cwd=self.tools,
                                stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, timeout=self.BUILD_TIMEOUT_S)
             if r.returncode != 0:
                 raise RuntimeError(((r.stderr or b"").decode("utf-8", "replace").strip().splitlines() or ["the book build failed"])[-1])
@@ -915,6 +917,10 @@ def _main(argv):
         sys.stderr.write("usage: app_charges.py --build TOOLS DATA SIG OUT\n")
         return 2
     tools, data, sig, out = argv[1:]
+    try:
+        os.nice(15)                         # behind the app's own work on an old Mac with few cores
+    except (OSError, AttributeError):
+        pass
     for d in (tools, os.path.join(tools, "lib")):
         if d not in sys.path:
             sys.path.insert(0, d)

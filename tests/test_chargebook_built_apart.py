@@ -34,7 +34,8 @@ class BuiltApartTest(unittest.TestCase):
         subprocess.run = fake
         self.b._build_bg("sig-1")
         self.assertEqual(self.b.book["plugs"], [{"id": "1"}])
-        self.assertEqual(seen[0][:3], [sys.executable, os.path.abspath(AC.__file__), "--build"])
+        cmd = seen[0][2:] if seen[0][:2] == ["taskpolicy", "-b"] else seen[0]
+        self.assertEqual(cmd[:3], [sys.executable, os.path.abspath(AC.__file__), "--build"])
         with open(self.b.cache_path) as f:
             self.assertEqual(json.load(f)["sig"], "sig-1")
         self.assertFalse(os.path.exists(seen[0][-1]))            # the hand-over file is removed

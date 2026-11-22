@@ -1368,6 +1368,12 @@ def _warm(port):
             urllib.request.urlopen("http://127.0.0.1:%d/api/%s" % (port, path), timeout=300).read()
         except Exception:
             pass
+    try:                            # the Software page as it opens (ANZ, the car of the settings): its first answer took 2-20 s on this Mac, then it is kept
+        mc = app_software.S.load().get("my_car") or {}
+        for fn in (app_software.overview, app_software.timeline):
+            fn(DATA_DIR, "ANZ", mc.get("model") or None, mc.get("hw") or None)
+    except Exception:
+        pass
 
 
 WIN = None                  # the app's window (pywebview), when it has one

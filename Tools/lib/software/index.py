@@ -75,6 +75,7 @@ CREATE INDEX vc_c ON version_countries(country);
 
 class Index:
     _CHECKED = {}                    # index file -> when its held files were last compared with it (so a page that asks five times in a second stats the files once)
+    _SEEN = {}                       # index file -> (signature, countries_seen()): the same answer for every request until the held files change
     SIG = {}                         # index file -> the signature of the held files it was last found to hold (app_software keeps its answers while this is unchanged)
 
     def __init__(self, data_dir, cache_dir=None, settings=None, recheck_s=0):
@@ -228,7 +229,14 @@ class Index:
         """Every country code the held answers name (cars or notes), with the cars seen there: -> [{country, installs}], most cars first. Kept for the life of this
         Index (one request): the regions, resolve() and the FSD countries all ask for it, 8 times per overview."""
         if getattr(self, "_seen", None) is None:
-            self._seen = self._countries_seen()
+            key = (self.path, Index.SIG.get(self.path))         # kept across requests while the index holds the same files
+            hit = Index._SEEN.get(key[0])
+            if hit is not None and key[1] is not None and hit[0] == key[1]:
+                self._seen = hit[1]
+            else:
+                self._seen = self._countries_seen()
+                if key[1] is not None:
+                    Index._SEEN[key[0]] = (key[1], self._seen)
         return self._seen
 
     def _countries_seen(self):
