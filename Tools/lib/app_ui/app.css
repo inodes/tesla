@@ -361,5 +361,5 @@ main:has(#spl .stbar,#spl .vbar) #splx{display:none}
 .evc.sgk.fixed{border-left:4px solid var(--acc,#3b6cf6)}.evc span.sgfbl{color:var(--acc,#3b6cf6);font-weight:600}.evc span.sgz{color:var(--ink)}
 .evs.sgks{position:relative}.sgfb.sgpop{position:absolute;z-index:30;width:min(340px,100%);margin:0;padding:12px;display:flex;flex-direction:column;gap:10px;box-shadow:0 10px 28px rgba(0,0,0,.22)}.sgfbh{display:flex;gap:10px;align-items:center}.sgfbt{width:44px;flex:none}.sgfbb{display:flex;gap:8px;flex-wrap:wrap}.sgfb label{display:flex;gap:6px;align-items:center;flex-wrap:wrap}.sgfb label select{flex:1;min-width:0}.sgfb label[hidden]{display:none}      /* the real-speed picker is only for "Wrong speed": display:flex above would otherwise show it for every reason */.sgdis summary{cursor:pointer}
 
-.rvst{margin-bottom:10px}.rvsh{display:flex;gap:12px;align-items:flex-start;justify-content:space-between}.rvsw{overflow-x:auto;margin-top:6px}
-.rvsp{border-collapse:collapse;font-size:13px}.rvsp td{padding:3px 14px 3px 0;vertical-align:top;white-space:nowrap}.rvsp a{color:inherit;text-decoration:none}.rvsp a:hover{text-decoration:underline}
+.rvst .rvr{cursor:pointer}.rvst .stchev{display:inline-block;width:1em;color:var(--mut);transition:transform .15s}.rvst .rvr.open .stchev{transform:rotate(90deg)}
+.rvst .rvx>td{padding:0 0 10px 1.4em;background:var(--hover)}.rvsp{width:100%;font-size:13px}.rvsp th{font-weight:500;color:var(--mut)}.rvsp td,.rvsp th{padding:4px 12px 4px 0}

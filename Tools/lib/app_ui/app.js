@@ -1584,13 +1584,18 @@ function placesMap(host,rows,tab){
 }
 const AU_STATES={"new south wales":"NSW","victoria":"VIC","queensland":"QLD","south australia":"SA","western australia":"WA","tasmania":"TAS","australian capital territory":"ACT","northern territory":"NT"};
 function stateCode(q){q=q.trim();if(!q)return null;const l=q.toLowerCase();return AU_STATES[l]||(Object.values(AU_STATES).includes(q.toUpperCase())?q.toUpperCase():null)}
-// a stop to review (Places.review_stops): the parks on the Drives list that show "Save" at one spot, each with the drive that came and the drive that left
+// a stop to review (Places.review_stops): one row per spot in the app's usual table; a click opens its parks underneath (when, how long, the drive that came and the
+// drive that left, each opening that drive), and closes them again
 const hmOf=s=>(s||"").slice(11,16);
-const stopDrive=(d,lbl)=>d?`<a href="#/drive/${encodeURIComponent(d.id)}"><span class="sub">${lbl}</span> ${hmOf(d.start)} ${esc(d.frm||"?")} → ${esc(d.to||"?")}${d.km!=null?` <span class="sub">${n0(d.km,1)} km</span>`:""}</a>`:`<span class="sub">${lbl} –</span>`;
-function stopCard(r){const nm=r.addr||((+r.lat).toFixed(4)+", "+(+r.lon).toFixed(4)),n=(r.parks||[]).length;
-  return `<div class="card rvst"><div class="rvsh"><div style="min-width:0"><b>${esc(nm)}</b><div class="sub">Visited ${r.visits===1?"once":r.visits+" times"}${r.days&&r.days!==r.visits?" on "+r.days+" days":""} · last ${dmy(r.last)} · ${mapLinks(r.lat,r.lon,nm,1)}</div></div>
-    <button class="btn sm pri" data-save="${esc(JSON.stringify({name:r.addr||"",lat:+(+r.lat).toFixed(6),lon:+(+r.lon).toFixed(6),radius_m:150}))}" title="Save this spot as a place">Save</button></div>
-    <div class="rvsw"><table class="rvsp"><tbody>${(r.parks||[]).map(k=>`<tr><td>${dayName(k.start.slice(0,10))} ${hmOf(k.start)}–${k.ongoing?"now":hmOf(k.end)} <span class="sub">${dur(k.min)}</span></td><td>${stopDrive(k.before,"Before")}</td><td>${stopDrive(k.after,"After")}</td></tr>`).join("")}</tbody></table></div></div>`}
+const stopDrive=(d,end)=>d?`<a href="#/drive/${encodeURIComponent(d.id)}">${esc((end?d.to:d.frm)||"?")}</a> <span class="sub">${hmOf(end?d.end||d.start:d.start)}${d.km!=null?" · "+n0(d.km,1)+" km":""}</span>`:'<span class="sub">–</span>';
+function stopsTable(host,rows){
+  const nm=r=>r.addr||((+r.lat).toFixed(4)+", "+(+r.lon).toFixed(4)),times=n=>n===1?"once":n+" times";
+  host.innerHTML=rows.length?`<table class="rvst"><thead><tr><th class="l">Place</th><th>Visited</th><th>Last</th><th class="l">Open in</th><th></th></tr></thead><tbody>${rows.map((r,i)=>`<tr class="rvr" data-i="${i}"><td class="l"><span class="stchev">▸</span> ${esc(nm(r))}</td><td>${times(r.visits)}${r.days&&r.days!==r.visits?` <span class="sub">${r.days===1?"one day":r.days+" days"}</span>`:""}</td><td>${dmy(r.last)}</td><td class="l">${mapLinks(r.lat,r.lon,nm(r),1)}</td>
+      <td><button class="btn sm" data-save="${esc(JSON.stringify({name:r.addr||"",lat:+(+r.lat).toFixed(6),lon:+(+r.lon).toFixed(6),radius_m:150}))}" title="Save this spot as a place">Save</button></td></tr>
+      <tr class="rvx" data-x="${i}" hidden><td colspan="5"><table class="rvsp"><thead><tr><th class="l">When</th><th>Stayed</th><th class="l">Came from</th><th class="l">Left for</th></tr></thead><tbody>${(r.parks||[]).map(k=>`<tr><td class="l">${dayName(k.start.slice(0,10))} ${hmOf(k.start)}–${k.ongoing?"now":hmOf(k.end)}</td><td>${dur(k.min)}</td><td class="l">${stopDrive(k.before,false)}</td><td class="l">${stopDrive(k.after,true)}</td></tr>`).join("")}</tbody></table></td></tr>`).join("")}</tbody></table>`
+    :'<div class="empty">No stops to review: every park on the Drives list is at a saved place.</div>';
+  $$(".rvr",host).forEach(tr=>tr.onclick=ev=>{if(ev.target.closest("a,button"))return;const x=$(`[data-x="${tr.dataset.i}"]`,host);x.hidden=!x.hidden;tr.classList.toggle("open",!x.hidden)});
+  $$("[data-save]",host).forEach(b=>b.onclick=e=>{e.stopPropagation();try{sessionStorage.setItem("placePrefill",b.dataset.save)}catch(_){}location.hash="#/place/"+encodeURIComponent("@new")})}
 async function pagePlaces(){
   loading("plc");const L=await api("places");let C=null;const need=async()=>{if(!C)C=await api("chargers")};if(PL.tab==="chargers")await need();
   const draw=()=>{const q=PL.q.toLowerCase(),host=$("#tb"),qs=stateCode(q);let rows,cols;     // a search that is just a state ("Victoria", "vic") means that state, not streets named after it
@@ -1602,9 +1607,7 @@ async function pagePlaces(){
     else if(PL.tab==="chargers"){rows=C.rows.filter(p=>(PL.net==="all"||p.network===PL.net)&&(PL.soon||!SOON.test(p.name||""))&&(PL.state==="all"||p.state===PL.state)&&(!PL.visited||p.charges)&&(!q||(qs?p.state===qs:(p.name+" "+p.addr+" "+p.network+" "+p.suburb).toLowerCase().includes(q))));
       cols=[{k:"name",t:"Charger",l:1},{k:"network",t:"Network",l:1},{k:"addr",t:"Address",l:1,f:r=>esc(r.addr||r.suburb||"")},{k:"state",t:"State"},{k:"stalls",t:"Stalls",f:r=>r.stalls==null?"–":n0(r.stalls)},{k:"kw",t:"Max kW",f:r=>r.kw?n0(r.kw):"–"},{k:"tier",t:"Type",l:1,f:r=>esc((r.tier||"").replace(/_/g," "))},{k:"conn",t:"Connectors",l:1},{k:"charges",t:"Charges"},{k:"kwh",t:"kWh",f:r=>r.charges?n0(r.kwh,1):"–"},{k:"last",t:"Last charge",f:r=>r.last||"–"}]}
     else{rows=L.found.filter(p=>(p.visits||0)>=PL.freq&&(!q||[p.addr,...(p.parks||[]).map(k=>[k.before&&k.before.frm,k.after&&k.after.to].join(" "))].join(" ").toLowerCase().includes(q)));
-      if(PL.view!=="map"){host.innerHTML=rows.length?rows.map(stopCard).join(""):'<div class="empty">No stops to review: every park on the Drives list is at a saved place.</div>';
-        $$("[data-save]",host).forEach(b=>b.onclick=e=>{e.stopPropagation();try{sessionStorage.setItem("placePrefill",b.dataset.save)}catch(_){}location.hash="#/place/"+encodeURIComponent("@new")});
-        $("#cnt").textContent=rows.length+" shown";return}
+      if(PL.view!=="map"){stopsTable(host,rows);$("#cnt").textContent=rows.length+" shown";return}
       cols=[{k:"addr",t:"Address of a place you return to, not saved yet",l:1,f:r=>esc(r.addr||(r.lat.toFixed(4)+", "+r.lon.toFixed(4)))},{k:"lat",t:"Lat, Lon",l:1,f:r=>`${(+r.lat).toFixed(5)}, ${(+r.lon).toFixed(5)}`},{k:"map",t:"Open in",l:1,f:r=>mapLinks(r.lat,r.lon,r.addr,1)},{k:"visits",t:"Visits"},{k:"last",t:"Last"}]}
     if(PL.view==="map"){placesMap(host,rows,PL.tab);return}
     table(host,cols,rows,r=>{sessionStorage.removeItem("placePrefill");location.hash="#/place/"+encodeURIComponent(r.key)},PL.tab==="found"?"visits":PL.tab==="sc"||PL.tab==="chargers"?"charges":"last");
