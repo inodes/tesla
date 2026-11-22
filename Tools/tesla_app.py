@@ -1568,6 +1568,9 @@ def debug_profile(what, n=40):
         fn = seg
     elif what.startswith("place:"):              # place:<key>: a place page's answer
         fn = lambda: STORE.pl.detail(STORE, what.split(":", 1)[1])      # noqa: E731
+    elif what.startswith("swversion:"):          # swversion:<version>: a Software version page worked out afresh
+        mc = app_software.S.load().get("my_car") or {}
+        fn = lambda: app_software.detail.__wrapped__(DATA_DIR, what.split(":", 1)[1], "ANZ", mc.get("model") or None, mc.get("hw") or None)      # noqa: E731
     elif what.startswith("software"):            # software[:region]: the Software page's first answer worked out afresh (not the kept one)
         mc = app_software.S.load().get("my_car") or {}
         reg = what.split(":", 1)[1] if ":" in what else "ANZ"

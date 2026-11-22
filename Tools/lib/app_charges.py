@@ -715,6 +715,7 @@ class ChargeBook:
 
     pv_fetch = True            # off in tests: no call to SolarEdge
     PV_RETRY_S = 900
+    PV_WAIT_S = 1.5
 
     def _pv_provider(self):
         from providers.pv import get_pv_provider
@@ -768,11 +769,17 @@ class ChargeBook:
             return None
         tzn = p.get("tz") or "Australia/Sydney"
         z = ZoneInfo(tzn)
-        try:
-            self._refresh_pv(db, datetime.datetime.fromtimestamp(int(p["t0"]) - 1800, z).date(),
-                             datetime.datetime.fromtimestamp(int(p.get("t1") or p["t0"]) + 1800, z).date())
-        except Exception:
-            pass
+        d0 = datetime.datetime.fromtimestamp(int(p["t0"]) - 1800, z).date()
+        d1 = datetime.datetime.fromtimestamp(int(p.get("t1") or p["t0"]) + 1800, z).date()
+
+        def fetch():
+            try:
+                self._refresh_pv(db, d0, d1)
+            except Exception:
+                pass
+        t = threading.Thread(target=fetch, daemon=True)          # SolarEdge can take seconds: waited for PV_WAIT_S, then the page shows what is held and the
+        t.start()                                                # fetch finishes behind it (the next look has it)
+        t.join(self.PV_WAIT_S)
         try:
             # reading only: no schema work (get_pv_db_connection() would do that)
             con = sqlite3.connect("file:" + db + "?mode=ro", uri=True, timeout=3)
