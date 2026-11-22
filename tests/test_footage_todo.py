@@ -381,6 +381,39 @@ class LookOnce(TodoTest):
         t.join(5)
         self.assertEqual(len(looks), 1)
 
+    def test_after_a_change_askers_do_not_queue_behind_a_slow_look(self):
+        self.todo.snapshot()
+        self.wait()
+        self.todo.snapshot()
+        gate, looks = threading.Event(), []
+        real = self.todo._sig
+
+        def slow(roots):
+            looks.append(1)
+            gate.wait(10)
+            return real(roots)
+        self.todo._sig = slow
+        self.todo.LOOK_WAIT_S = 0.2
+        self.todo.forget()                                      # a job moved clips: the last look no longer counts
+        took, out = [], []
+
+        def ask():
+            t0 = time.time()
+            out.append(self.todo.snapshot())
+            took.append(time.time() - t0)
+        ts = [threading.Thread(target=ask) for _ in range(6)]   # the page asks from several places at once
+        for t in ts:
+            t.start()
+        for t in ts:
+            t.join(5)
+        self.assertEqual(len(took), 6)
+        self.assertLess(max(took), 1.0)                         # each waits at most LOOK_WAIT_S, not for the look (it used to wait 20-45 s in a queue)
+        self.assertTrue(all(o["checking"] and "J" in o["drives"] for o in out))
+        self.assertEqual(len(looks), 1)                         # one look for all of them
+        gate.set()
+        self.todo._lookt.join(5)
+        self.assertTrue(self.todo._look(self.todo.roots_fn())[2])
+
     def test_a_read_only_footage_log_shares_a_days_file_and_cannot_be_written(self):
         led = os.path.join(self.data, "teslacam_ledger")
         os.makedirs(led, exist_ok=True)

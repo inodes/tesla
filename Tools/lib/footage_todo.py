@@ -60,7 +60,8 @@ class Todo:
         self._gen = 0                   # counts the times what is on the drives was said to have changed
         self._err_at = 0.0
         self._prog = None
-        self._lookc, self._look_lock = None, threading.Lock()     # the last look at the drives: (drives, when, signature, list again)
+        self._lookc, self._look_lock = None, threading.Lock()     # the last look at the drives: (drives, when, signature, list again, look generation)
+        self._lookgen, self._lookt = 0, None                       # a look from an older generation is from before the drives were said to change; the look running behind
 
     def _load(self):
         try:
@@ -148,28 +149,53 @@ class Todo:
     SIG_TTL = 5.0           # the look at the drives and at what is kept (the signature) is taken at most this often, by one asker at a time: the page asks every few seconds from
                             # several places, and each look stats folders on drives that may be asleep and counts thousands of kept files
 
+    LOOK_WAIT_S = 2.0       # how long an asker waits for a look at drives that have no answer yet (just plugged in, or after a job); then it is told "checking"
+
     def _look(self, roots):
-        """(signature, a drive must be listed again) for these drives: the last look while it is younger than SIG_TTL, and while another asker is taking one."""
+        """(signature, a drive must be listed again, known) for these drives. The look is taken behind, by one thread: an asker gets the last answer at once and the
+        look runs for the next one. Only when there is no answer for these drives yet (other drives, or the drives were said to have changed) does it wait, for at
+        most LOOK_WAIT_S; then known is False. Askers used to wait in a queue for the look, 20-45 s each when drives were slow (the page asks several times a second)."""
         key = tuple(sorted(roots.items()))
+        with self._look_lock:
+            c, gen = self._lookc, self._lookgen
+            ok = c is not None and c[0] == key and c[4] == gen
+            if ok and time.time() - c[1] < self.SIG_TTL:
+                return c[2], c[3], True
+            t = self._lookt
+            if t is None or not t.is_alive():
+                t = self._lookt = threading.Thread(target=self._look_behind, args=(roots, key, gen), daemon=True)
+                t.start()
+        if ok:
+            return c[2], c[3], True                              # old but of these drives: answered now, looked at again behind
+        t.join(self.LOOK_WAIT_S)
         c = self._lookc
-        if c is not None and c[0] == key and time.time() - c[1] < self.SIG_TTL:
-            return c[2], c[3]
-        if not self._look_lock.acquire(blocking=c is None or c[0] != key):
-            return c[2], c[3]                                    # someone is looking right now: the last answer, not a second look beside it
+        if c is not None and c[0] == key and c[4] == self._lookgen:
+            return c[2], c[3], True
+        return None, False, False
+
+    def _look_behind(self, roots, key, gen):
         try:
-            c = self._lookc
-            if c is not None and c[0] == key and time.time() - c[1] < self.SIG_TTL:
-                return c[2], c[3]
             sig = self._sig(roots) if roots else None
             deep = bool(roots) and self._deep(roots)
-            self._lookc = (key, time.time(), sig, deep)
-            return sig, deep
-        finally:
-            self._look_lock.release()
+        except Exception as e:                                  # a drive pulled out while it was looked at: said, and looked at again at the next ask
+            self.error = "%s: %s" % (type(e).__name__, e)
+            return
+        with self._look_lock:
+            if gen == self._lookgen:
+                self._lookc = (key, time.time(), sig, deep, gen)
+
+    def _relook(self):
+        """The drives changed: the last look no longer counts (the next ask waits a little for a new one, and is told "checking" meanwhile)."""
+        with self._look_lock:
+            self._lookgen += 1
 
     def snapshot(self):
         roots = {r: p for r, p in (self.roots_fn() or {}).items() if p}
-        sig, deep = self._look(roots)
+        sig, deep, known = self._look(roots)
+        if not known:                                            # no look at these drives yet (it is being taken): what was counted before, nothing started
+            drives = {r: (dict((self._mem.get("drives") or {}).get(r)) if (self._mem.get("drives") or {}).get(r) else None) for r in roots}
+            working = bool(self._thread and self._thread.is_alive())
+            return dict(checking=bool(roots), progress=dict(self._prog) if working and self._deep_now and self._prog else None, drives=drives, error=self.error)
         cur = self._mem.get("sig")
         working = bool(self._thread and self._thread.is_alive())
         retry = time.time() - self._err_at < 60                  # after a failure (a drive pulled out) wait a minute before looking again
@@ -196,7 +222,7 @@ class Todo:
         self._gen += 1
         self._force = True                  # counted again now; a drive whose folders changed (clips moved or deleted) is listed again because its folders' times changed
         self._mem = dict(self._mem, sig=None)
-        self._lookc = None                  # and looked at now, not in SIG_TTL seconds
+        self._relook()                      # and looked at now, not in SIG_TTL seconds
 
     def subtract(self, stage, done_by_role):
         """A job did some of the work (or was stopped part way): take it off what is left for each drive now. The next look at the drives (the signature has changed)
@@ -290,7 +316,7 @@ class Todo:
                         out[r]["signs"] = n
                 self._mem = dict(sig=sig if gen == self._gen else None, drives=out)
                 self._done_t = time.time()         # said to have changed while it was being worked out: looked at again
-                self._lookc = None                 # the next ask looks at the drives afresh
+                self._relook()                     # the next ask looks at the drives afresh
                 self.error = ""
                 self._save()
         except Exception as e:                                  # a drive pulled out in the middle: say so and try again at the next look

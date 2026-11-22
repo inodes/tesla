@@ -27,6 +27,7 @@ import plistlib
 import re
 import shutil
 import subprocess
+import time
 
 FUNCTIONS = ("car", "archive", "copy")
 SUBDIRS = ("RecentClips", "SavedClips", "SentryClips")
@@ -104,9 +105,30 @@ def _mount_point(path):
     return p
 
 
+VID_TTL_S = 60.0
+_VID = {}           # mount point -> (device number, when read, UUID)
+
+
 def volume_id(path):
-    """The volume's UUID, or None when the system cannot say (a network share, a sandbox)."""
+    """The volume's UUID, or None when the system cannot say (a network share, a sandbox). Asking `diskutil` takes a fraction of a second and the drive list asks it
+    for every drive and, through mount_of, for every volume, on each look: the answer is kept per mount point while the volume mounted there is the same one (its
+    device number) and for at most VID_TTL_S."""
     mp = _mount_point(drive_root(path))
+    try:
+        dev = os.stat(mp).st_dev
+    except OSError:
+        _VID.pop(mp, None)
+        return None
+    hit = _VID.get(mp)
+    if hit and hit[0] == dev and time.time() - hit[1] < VID_TTL_S:
+        return hit[2]
+    v = _read_volume_id(mp)
+    if v:
+        _VID[mp] = (dev, time.time(), v)            # an answer of None (diskutil busy) is not kept: asked again next time
+    return v
+
+
+def _read_volume_id(mp):
     try:
         if shutil.which("diskutil"):
             out = subprocess.run(["diskutil", "info", "-plist", mp], capture_output=True, timeout=20, stdin=subprocess.DEVNULL).stdout
