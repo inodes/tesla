@@ -947,6 +947,10 @@ class H(BaseHTTPRequestHandler):
             return self.send_json(TC.review_scanned())
         if name == "debug/threads":             # what every thread is doing right now (the app's own frames, innermost first): to see from the page what holds a slow request
             return self.send_json(debug_threads())
+        if name == "debug/profile":             # one build profiled (?what=keeper): where its time goes, as Python's profiler counts it
+            return self.send_json(debug_profile(q.get("what", ["keeper"])[0], int(q.get("n", ["40"])[0])))
+        if name == "debug/stat":                # how long a look at a file takes in the data folder here (the event pictures' info.json files): stat, open, listing
+            return self.send_json(debug_stat())
         if name == "drivelist":                 # the Drives list: Tessie's drives and charges as the rows, the dashcam's drives attached (or alone when there is no Tessie)
             return self.send_json(drivelist())
         if name == "stills/thin":               # how many minutes of ordinary driving have stills that could be smaller, what they take, and the job
@@ -1522,6 +1526,53 @@ def debug_threads():
                         frames=["%s:%s:%d" % (os.path.basename(f.filename), f.name, f.lineno) for f in own[:8]]))
     out.sort(key=lambda x: (not x["frames"], x["name"]))
     return dict(at=time.time(), threads=out)
+
+
+def debug_profile(what, n=40):
+    """{seconds, top}: one build of `what` (keeper: the kept clips' look, clip_keep.ClipKeep._build; drivelist; activity) run under cProfile here, its busiest
+    functions by own time and by total time."""
+    import cProfile
+    import io
+    import pstats
+    fn = {"keeper": lambda: CKEEP._build(), "drivelist": lambda: drivelist(True), "activity": lambda: STORE.activity(), "clips": lambda: _clips()}.get(what)
+    if fn is None:
+        return dict(error="what: keeper, drivelist, activity or clips")
+    pr = cProfile.Profile()
+    t = time.time()
+    pr.enable()
+    try:
+        fn()
+    finally:
+        pr.disable()
+    out = {}
+    for key in ("tottime", "cumulative"):
+        buf = io.StringIO()
+        pstats.Stats(pr, stream=buf).sort_stats(key).print_stats(n)
+        out[key] = [ln.rstrip() for ln in buf.getvalue().splitlines() if ln.strip()][-n:]
+    return dict(seconds=round(time.time() - t, 2), **out)
+
+
+def debug_stat():
+    """Times os.stat, a read and a folder listing over the kept event pictures (<data>/teslacam_event_stills/<kind>/<event>/): what a look at every event costs."""
+    root = os.path.join(DATA_DIR, "teslacam_event_stills")
+    paths = []
+    for kind in ("saved", "sentry"):
+        try:
+            paths += [os.path.join(root, kind, e) for e in sorted(os.listdir(os.path.join(root, kind)))]
+        except OSError:
+            pass
+    paths = paths[:300]
+    out = dict(events=len(paths))
+    for what, fn in (("stat_info", lambda d: os.stat(os.path.join(d, "info.json"))), ("stat_folder", os.stat), ("listdir", os.listdir),
+                     ("read_info", lambda d: open(os.path.join(d, "info.json"), "rb").read())):
+        t = time.time()
+        for d in paths:
+            try:
+                fn(d)
+            except OSError:
+                pass
+        out[what + "_ms_each"] = round((time.time() - t) * 1000 / max(1, len(paths)), 3)
+    return out
 
 
 def _places():

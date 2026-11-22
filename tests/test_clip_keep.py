@@ -79,6 +79,23 @@ class Base(unittest.TestCase):
     def keep(self, read=(), stills=(), scanned=()):
         return CK.ClipKeep(self.data, FakeTC(set(read), set(scanned)), FakeFG(stills))
 
+    def test_a_look_that_comes_out_the_same_is_reused_longer(self):
+        k = self.keep()
+        k._build = lambda: {"clips": {"saved": {}}}                       # nothing changes
+        for want in (CK.TTL, CK.TTL * 2, CK.TTL * 4):
+            k._rebuild()
+            self.assertEqual(k._ttl, min(want, CK.TTL_MAX))
+        for _ in range(10):
+            k._rebuild()
+        self.assertEqual(k._ttl, CK.TTL_MAX)
+        k._build = lambda: {"clips": {"saved": {"ev1": {}}}}               # something changed: looked at often again
+        k._rebuild()
+        self.assertEqual(k._ttl, CK.TTL)
+        k._build = lambda: {"clips": {"saved": {"ev1": {}}}}
+        k._rebuild()
+        k.invalidate()                                                     # new cuts: back to the short wait
+        self.assertEqual(k._ttl, CK.TTL)
+
     def test_signs_wait_when_a_drive_appears(self):
         k = self.keep()
         k._roots = {"J": self.roots["J"]}

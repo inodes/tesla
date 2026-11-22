@@ -46,6 +46,7 @@ import stat_memo as SM
 
 GAP = 75                      # seconds between two minutes that still belong to one Recent run (as in app_teslacam)
 TTL = 8.0                     # seconds an answer is reused
+TTL_MAX = 60.0                # each look that comes out the same doubles how long it is reused, up to this; a different one, a job or new cuts go back to TTL
 _STAMP = re.compile(r"^\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2}$")
 _FILE = re.compile(r"^(\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2})-([a-z_]+)$")
 KINDS = ("recent", "saved", "sentry")
@@ -82,6 +83,7 @@ class ClipKeep:
     def __init__(self, data_dir, tc, fg, kept_file=None):
         self.dir, self.tc, self.fg = data_dir, tc, fg
         self._cache = None
+        self._ttl = TTL                                  # how long the last look is reused (doubles while looks come out the same)
         self.kept_file = kept_file      # the last look, kept on this computer: the first page after a start is answered from it at once while the first build runs behind
         self._first = True              # nothing built yet in this run
         self._kept_at = 0.0
@@ -139,7 +141,7 @@ class ClipKeep:
                 if kept:
                     self._cache = c = (0, kept)
             if not force and c:
-                if time.time() - c[0] < TTL:
+                if time.time() - c[0] < self._ttl:
                     return c[1]
                 if not self._building:
                     self._building = True
@@ -178,6 +180,7 @@ class ClipKeep:
         under way is not kept (it may have read the old state)."""
         with self._lock:
             self._gen += 1
+            self._ttl = TTL
             if self._cache:
                 self._cache = (0, self._cache[1])
 
@@ -186,6 +189,7 @@ class ClipKeep:
         at once and no request has to start its own build."""
         with self._lock:
             self._gen += 1
+            self._ttl = TTL
             self._cache = None
             self._first = False                          # the look kept by the last run is from before this job: not used any more
         try:
@@ -206,6 +210,8 @@ class ClipKeep:
                 res = self._build()
                 with self._lock:
                     if g == self._gen:
+                        prev = self._cache[1] if self._cache else None
+                        self._ttl = min(self._ttl * 2, TTL_MAX) if prev is not None and prev == res else TTL      # nothing changed: looked at less often while that lasts
                         self._cache = (time.time(), res)
                         self._first = False
                         self._save_kept(res)
@@ -254,9 +260,9 @@ class ClipKeep:
 
     def _hi(self, kind, cid, mins, ev):
         """(camera, [(clip stamp, first second, last second)]) of the pictures wanted around an event whose video is on a drive; None when it needs none."""
-        if not ev or kind == "recent" or self.evst.info(kind, cid).get("tried"):
+        if not ev or kind == "recent" or self.evst.peek(kind, cid).get("tried"):
             return None
-        if self.evst.info(kind, cid).get("n") and not self.evst.wants_more(kind, cid):
+        if self.evst.peek(kind, cid).get("n") and not self.evst.wants_more(kind, cid):
             return None
         cam = EV.camera(kind, ev)
         win = EV.window(ev, {s: n["cams"] for s, n in mins.items()}, cam)
@@ -315,7 +321,7 @@ class ClipKeep:
         husks = []                                           # clips with nothing left: no video on any drive, nothing kept
         for (kind, cid), mins in groups.items():
             if not any(node["bytes"] for node in mins.values()) and not any(st in stills or st in scanned or store.summary(st) is not None for st in mins) \
-                    and not (kind != "recent" and (self.shots.have(kind, cid) or self.evst.info(kind, cid).get("n"))):
+                    and not (kind != "recent" and (self.shots.have(kind, cid) or self.evst.peek(kind, cid).get("n"))):
                 husks.append((kind, cid, mins))
                 continue
             meta, st_, sg, sh = [0, 0], [0, 0], [0, 0], [0, 0]
@@ -373,7 +379,7 @@ class ClipKeep:
             if ign:                                          # nothing is kept from it and nothing is missing: it can only be deleted
                 meta, st_, sg, waiting, wait_n, snap_n, refine_n = [0, 0], [0, 0], [0, 0], "", 0, 0, 0
             read = [st for st in mins if scanned.get(st)]
-            sign_n = len(rv.signs(read)) if read else 0                          # the signs read in the clip (one sign seen in several stills is one)
+            sign_n = (rv.sign_count(read) if hasattr(rv, "sign_count") else len(rv.signs(read))) if read else 0     # the signs read in the clip (one sign seen in several stills is one)
             have = self.shots.have(kind, cid) if kind != "recent" else set()
             w = self._wanted(kind, cid, mins, events.get((kind, cid))) if nbytes and not ign else None
             if w:
@@ -382,13 +388,13 @@ class ClipKeep:
                 sh = [len(have), len(have)]
             hi = [0, 0]                                                          # the pictures around the event: one set, made or not
             if kind != "recent":
-                got = self.evst.info(kind, cid).get("n")
+                got = self.evst.peek(kind, cid).get("n")
                 hw = self._hi(kind, cid, mins, events.get((kind, cid))) if nbytes and not ign else None
                 hi = [0, 1] if hw else ([1, 1] if got else [0, 0])                  # still wanted: the pictures, or (for an event that has them) its other cameras and half-second pictures
             kept = sum(still_b.get(st, 0) for st in mins if st not in edge)
             if kind != "recent":
                 kept += self.shots.size(kind, cid) + self.evst.size(kind, cid)
-            out[kind][cid] = dict(n=len(mins), first=min(mins), bytes=nbytes, kept=kept, files=nfiles, in_archive=narch, size=max(nbytes.values()) if nbytes else 0, meta=meta, stills=st_, signs=sg, shots=sh, window=hi, tier=self.evst.info(kind, cid).get("tier", "") if kind != "recent" else "",
+            out[kind][cid] = dict(n=len(mins), first=min(mins), bytes=nbytes, kept=kept, files=nfiles, in_archive=narch, size=max(nbytes.values()) if nbytes else 0, meta=meta, stills=st_, signs=sg, shots=sh, window=hi, tier=self.evst.peek(kind, cid).get("tier", "") if kind != "recent" else "",
                                   shot_cams=sorted(have), ready=all(x[0] >= x[1] for x in (meta, st_, sg, sh, hi)) and refine_n == 0, waiting=waiting, wait_n=wait_n, snap_n=snap_n, refine_n=refine_n,
                                   sign_n=sign_n, todo=any(x[0] < x[1] for x in (meta, sg, sh, hi)) or st_[0] + wait_n < st_[1] or refine_n > 0, ignored=ign, stub=stub)
         IGN.set_stamps(ignored)

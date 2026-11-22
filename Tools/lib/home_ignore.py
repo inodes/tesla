@@ -18,6 +18,7 @@ _PLACES = lambda: []            # noqa: E731
 _STAMPS = frozenset()
 _PATH = None
 MIN_RADIUS = 60                 # metres: as the pages name a place (nameAt in app.js)
+_AT = dict(places=None, m={})   # (lat, lon) to 5 places -> place_at, for the saved places object it was worked out from (a look at the kept clips asks 800 times)
 
 
 def set_places(fn):
@@ -40,11 +41,17 @@ def place_at(lat, lon):
     """The name of the saved place the point is at ('' when none): of the places whose radius holds it, the smallest (the most specific), then the nearest."""
     if lat is None or lon is None:
         return ""
-    best, br, bd = "", 1e18, 1e18
     try:
         places = _PLACES() or []
     except Exception:
         places = []
+    if _AT["places"] is not places:                 # the saved places are the same object until places.json changes (Places.defs): answers kept until then
+        _AT.update(places=places, m={})
+    k = (round(lat, 5), round(lon, 5))
+    hit = _AT["m"].get(k)
+    if hit is not None:
+        return hit
+    best, br, bd = "", 1e18, 1e18
     for p in places:
         try:
             d = _hav(lat, lon, p["lat"], p["lon"])
@@ -53,6 +60,8 @@ def place_at(lat, lon):
         r = max(p.get("radius") or 100, MIN_RADIUS)
         if d <= r and (r < br or (r == br and d < bd)):
             best, br, bd = p.get("name") or "", r, d
+    if len(_AT["m"]) < 100000:
+        _AT["m"][k] = best
     return best
 
 

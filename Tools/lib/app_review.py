@@ -155,6 +155,24 @@ class Review:
             for d in days:
                 self._save(d)
 
+    def sign_count(self, stamps):
+        """How many signs signs() would give for these minutes (the same grouping: one text on one side seen again within merge_s is one sign), without making
+        them: the look at the kept clips counts the signs of every clip, and making each (its picture, its local times) was 1.8 s of that look."""
+        raw = []
+        with _LOCK:
+            for st in stamps:
+                r = self._day(st[:10]).get(st)
+                for d in (r or {}).get("d", []):
+                    raw.append((secs(st) + d["s"], d["text"], d["side"]))
+        raw.sort(key=lambda x: x[0])
+        last, n, gap = {}, 0, OPTS["merge_s"]
+        for t, text, side in raw:
+            t1 = last.get((text, side))
+            if t1 is None or t - t1 > gap:
+                n += 1
+            last[(text, side)] = t
+        return n
+
     def signs(self, stamps, lo=None):
         """The signs seen in these minutes, one entry per sign (the same number seen in several stills within merge_s is one sign)."""
         raw = []

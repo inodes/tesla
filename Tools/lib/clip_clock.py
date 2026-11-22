@@ -203,7 +203,7 @@ def car_offset(n):
     return float(o) if o is not None else float(n - from_local(n))
 
 
-_UTC = dict(key=None, m={})     # stamp -> utc(stamp), for as long as what it is worked out from is the same objects (the runs, the clips' own times, the settings)
+_UTC = dict(runs=object(), skm=None, cfg=None, m={})     # stamp -> utc(stamp), for as long as what it is worked out from is the same objects (the runs, the clips' own times, the settings)
 
 
 def utc(stamp):
@@ -211,10 +211,9 @@ def utc(stamp):
     own = _SK["map"].get(stamp)
     if own is not None:
         return own
-    key = (_S["runs"], _SK["map"], CFG.settings())          # each is replaced (a new object) when it changes
-    k = _UTC["key"]
-    if k is None or any(a is not b for a, b in zip(k, key)):
-        _UTC.update(key=key, m={})
+    runs, skm, cfg = _S["runs"], _SK["map"], CFG.settings()       # each is replaced (a new object) when it changes
+    if _UTC["runs"] is not runs or _UTC["skm"] is not skm or _UTC["cfg"] is not cfg:       # three identity checks: asked 170,000 times per look at the kept clips
+        _UTC.update(runs=runs, skm=skm, cfg=cfg, m={})
     m = _UTC["m"]
     v = m.get(stamp)
     if v is None:

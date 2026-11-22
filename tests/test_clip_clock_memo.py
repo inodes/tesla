@@ -53,13 +53,13 @@ class Memo(unittest.TestCase):
 
     def test_changed_settings_forget_the_kept_answers(self):
         CC.utc(ST)
-        key = CC._UTC["key"]
+        key = CC._UTC["cfg"]
         real = CC.CFG.settings
         try:
             other = dict(real())
             CC.CFG.settings = lambda: other
             CC.utc(ST)
-            self.assertIsNot(CC._UTC["key"][2], key[2])
+            self.assertIsNot(CC._UTC["cfg"], key)
         finally:
             CC.CFG.settings = real
 

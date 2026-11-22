@@ -114,6 +114,11 @@ class EventStills:
         j = SM.file(os.path.join(self.folder(kind, eid), "info.json"), _read_json)
         return copy.deepcopy(j) if isinstance(j, dict) else {}
 
+    def peek(self, kind, eid):
+        """info.json of the event as kept, NOT a copy: for reading only (the look at the kept clips reads it 3,500 times; a copy each time was half a second)."""
+        j = SM.file(os.path.join(self.folder(kind, eid), "info.json"), _read_json)
+        return j if isinstance(j, dict) else {}
+
     def _zip(self, kind, eid, cam=None, half=False):
         cam = cam or self.info(kind, eid).get("cam") or ""
         return os.path.join(self.folder(kind, eid), cam + (".h" if half else "") + ".zip") if cam else ""
@@ -162,7 +167,7 @@ class EventStills:
 
     def wants_more(self, kind, eid):
         """True when the event's pictures could still get the other cameras and the half-second pictures (a "high" event that was not reduced to the front camera)."""
-        i = self.info(kind, eid)
+        i = self.peek(kind, eid)
         return bool(i.get("n")) and (i.get("tier") or "high") == "high" and not i.get("reduced") and not (i.get("more") or i.get("more_tried"))
 
     def make(self, kind, ev, win, paths, stop=None):
