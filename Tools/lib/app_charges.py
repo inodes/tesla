@@ -329,12 +329,36 @@ class ChargeBook:
         with self.lock:
             self.sig = sig
 
+    separate = False            # the app sets True: the book is built by a process of its own (_build_apart)
+    BUILD_TIMEOUT_S = 1800
+
+    def _build_apart(self, sig):
+        """The book built by a separate Python process (this file run with --build): reading every invoice PDF and deep-dive CSV is minutes of Python, and in the
+        app's own process it held every page and poll behind it (the interpreter runs one thread at a time), and it changed the process's folder (os.chdir) under
+        the requests. The child writes the book to a file; nothing else is shared."""
+        import subprocess
+        import tempfile
+        fd, out = tempfile.mkstemp(prefix="chargebook_", suffix=".json")
+        os.close(fd)
+        try:
+            r = subprocess.run([sys.executable, os.path.abspath(__file__), "--build", self.tools, self.data, sig or "", out], cwd=self.tools,
+                               stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, timeout=self.BUILD_TIMEOUT_S)
+            if r.returncode != 0:
+                raise RuntimeError(((r.stderr or b"").decode("utf-8", "replace").strip().splitlines() or ["the book build failed"])[-1])
+            with open(out, encoding="utf-8") as f:
+                return json.load(f)
+        finally:
+            try:
+                os.remove(out)
+            except OSError:
+                pass
+
     def _build_bg(self, sig):
         try:
             if self.dirty:
                 self.dirty = False
                 sig = self._inputs()
-            book = self.build(sig)
+            book = self._build_apart(sig) if self.separate else self.build(sig)
             tmp = self.cache_path + ".tmp"
             os.makedirs(os.path.dirname(self.cache_path), exist_ok=True)
             with open(tmp, "w", encoding="utf-8") as f:
@@ -689,7 +713,8 @@ class ChargeBook:
         from lib.pv_history_db import _collapse_missing
         con = sqlite3.connect("file:" + db + "?mode=ro", uri=True, timeout=3)
         try:
-            have = {r[0][:10] for r in con.execute("SELECT timestamp FROM pv_intraday")}
+            have = {r[0] for r in con.execute("SELECT DISTINCT substr(timestamp, 1, 10) FROM pv_intraday WHERE timestamp >= ? AND timestamp < ?",
+                                                (d0.isoformat(), (d1 + datetime.timedelta(days=1)).isoformat()))}      # only the charge's days (the key): not all 243,000 rows
         finally:
             con.close()
         if not _collapse_missing(d0, d1, have, datetime.date.today()):
@@ -882,3 +907,22 @@ class ChargeBook:
         peak = max((q["power_kw"] for q in pw), default=None)
         return dict(curve=curve, profile=prof, caption=cc._history_caption(hist), window=win, winfo=winfo, hardware=hw_name, tier=(hw or {}).get("tier"), cap=(hw or {}).get("max_power_kw"),
                     stalls=(hw or {}).get("stalls"), peak=peak, slug=cur["slug"], home=cur["slug"] == "Evnex_Home")
+
+
+def _main(argv):
+    """--build TOOLS DATA SIG OUT: build the charge book and write it to OUT (ChargeBook._build_apart runs this)."""
+    if len(argv) != 5 or argv[0] != "--build":
+        sys.stderr.write("usage: app_charges.py --build TOOLS DATA SIG OUT\n")
+        return 2
+    tools, data, sig, out = argv[1:]
+    for d in (tools, os.path.join(tools, "lib")):
+        if d not in sys.path:
+            sys.path.insert(0, d)
+    book = ChargeBook(tools, data).build(sig or None)
+    with open(out, "w", encoding="utf-8") as f:
+        json.dump(book, f)
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(_main(sys.argv[1:]))

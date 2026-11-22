@@ -1606,6 +1606,7 @@ def main():
     if not a.no_background:
         KEEP.start()
     BOOK = app_charges.ChargeBook(os.path.dirname(os.path.abspath(__file__)), DATA_DIR)
+    BOOK.separate = True                # built by a process of its own: never holds the pages behind it
     SYNC = app_sync.ChargerSync(CMDS, DATA_DIR)
     REACH = app_reach.ReachService(os.path.dirname(os.path.abspath(__file__)), DATA_DIR)
     TSYNC = app_sync.ChargerSync(CMDS, DATA_DIR, "sync_drives_all.sh")

@@ -82,13 +82,17 @@ def daily_days_present(conn):
     return {r["day"] for r in conn.execute("SELECT day FROM pv_daily")}
 
 
-def intraday_days_present(conn):
+def intraday_days_present(conn, start=None, end=None):
     """Distinct calendar days that have AT LEAST ONE intraday row
     cached - used by sync_intraday_range() to decide what's missing at
     day granularity (a day is either fully synced or not attempted;
     this repo doesn't chase individual missing 15-minute slots within
     an otherwise-synced day, since a real gap there is a genuine
-    provider-side absence, same as any other field)."""
+    provider-side absence, same as any other field). With start/end (dates), only the days in that range are looked at (the timestamp is the key: instant,
+    where the whole table - 243,000 rows - took a second or more while the app was busy, once per home charge of the charge book)."""
+    if start is not None and end is not None:
+        lo, hi = str(start)[:10], (end + timedelta(days=1)).isoformat() if hasattr(end, "isoformat") else str(end)[:10] + "~"
+        return {r[0] for r in conn.execute("SELECT DISTINCT substr(timestamp, 1, 10) FROM pv_intraday WHERE timestamp >= ? AND timestamp < ?", (lo, hi))}
     return {r[0] for r in conn.execute("SELECT DISTINCT substr(timestamp, 1, 10) FROM pv_intraday")}
 
 
@@ -176,7 +180,7 @@ def sync_daily_range(conn, start, end, provider, api_key, account_id, log=print)
 def sync_intraday_range(conn, start, end, provider, api_key, account_id, log=print):
     """Same shape as sync_daily_range() but at day-presence granularity
     for the intraday table (see intraday_days_present())."""
-    present = intraday_days_present(conn)
+    present = intraday_days_present(conn, start, end)
     today = date.today()
     missing = _collapse_missing(start, end, present, today)
     if not missing:
