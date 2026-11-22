@@ -34,3 +34,24 @@ class HeldNames(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class IndexSignature(unittest.TestCase):
+    """The index's signature is the held files' number and folder time: a file written as teslascope writes them (beside, renamed in) changes it."""
+    def test_changes_when_a_file_is_replaced_not_otherwise(self):
+        from lib.software import index as I
+        d = tempfile.mkdtemp()
+        ix = I.Index.__new__(I.Index)
+        ix.data = d
+        files = []
+        for v in ("2026.38.5.5", "2026.44.1"):
+            p = os.path.join(d, v + ".json")
+            open(p, "w").write("{}")
+            files.append(p)
+        old = time.time() - 30
+        os.utime(d, (old, old))
+        a = ix._signature(files)
+        self.assertEqual(ix._signature(files), a)
+        open(files[0] + ".tmp", "w").write('{"x": 1}')
+        os.replace(files[0] + ".tmp", files[0])
+        self.assertNotEqual(ix._signature(files), a)

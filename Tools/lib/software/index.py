@@ -20,6 +20,7 @@ Scope: a note names the countries and the car types it is for; none named means 
 import json
 import os
 import sqlite3
+import threading
 import time
 
 from lib.software import notes as N
@@ -76,6 +77,7 @@ CREATE INDEX vc_c ON version_countries(country);
 class Index:
     _CHECKED = {}                    # index file -> when its held files were last compared with it (so a page that asks five times in a second stats the files once)
     _SEEN = {}                       # index file -> (signature, countries_seen()): the same answer for every request until the held files change
+    _SHARED_LOCK = threading.Lock()
     SIG = {}                         # index file -> the signature of the held files it was last found to hold (app_software keeps its answers while this is unchanged)
 
     def __init__(self, data_dir, cache_dir=None, settings=None, recheck_s=0):
@@ -93,17 +95,37 @@ class Index:
         return sorted(os.path.join(d, n + ".json") for n in SY.held_names(d))          # listed again only when the folder changed; in the order it always had
 
     def _signature(self, files):
-        n, newest, size = len(files), 0, 0
-        for f in files:
-            st = os.stat(f)
-            newest, size = max(newest, st.st_mtime_ns), size + st.st_size
-        return "%d|%d|%d|%d" % (SCHEMA, n, newest, size)
+        """What the held files are: their number and their folder's time. Teslascope's answers are written beside and renamed in (teslascope.save), so any new or
+        changed one changes the folder's time; looking at each of the 1,000 files instead took 5 s on the Mac (they are in iCloud), every 10 s of use."""
+        d = os.path.dirname(files[0]) if files else T.paths(self.data)[1]
+        try:
+            dm = os.stat(d).st_mtime_ns
+        except OSError:
+            dm = 0
+        return "%d|%d|d%d" % (SCHEMA, len(files), dm)
+
+    _SHARED = {}                     # index file -> (its inode and time, a connection, its lock): one connection for every request (opening one per request
+                                     # started sqlite's page cache empty each time: a version page's 275 queries read the file afresh)
 
     def con(self):
         if self._con is None:
             self.ensure()
-            self._con = sqlite3.connect(self.path)
-            self._con.row_factory = sqlite3.Row
+            try:
+                st = os.stat(self.path)
+                key = (st.st_ino, st.st_mtime_ns)
+            except OSError:
+                key = None
+            with Index._SHARED_LOCK:
+                hit = Index._SHARED.get(self.path)
+                if hit is None or hit[0] != key:              # the index was built again (a new file): a new connection
+                    c = sqlite3.connect(self.path, check_same_thread=False)
+                    c.row_factory = sqlite3.Row
+                    try:
+                        c.execute("PRAGMA mmap_size=67108864")          # the 12 MB index read through the page cache, not copied in
+                    except sqlite3.Error:
+                        pass
+                    hit = Index._SHARED[self.path] = (key, c, threading.Lock())
+            self._con, self._lk = hit[1], hit[2]
         return self._con
 
     def ensure(self):
@@ -150,9 +172,9 @@ class Index:
         c.commit()
         c.close()
         os.replace(tmp, self.path)
-        if self._con is not None:
-            self._con.close()
-            self._con = None
+        self._con = None                                      # the shared connection reads the old file: the next ask opens one on the new (another request may
+        with Index._SHARED_LOCK:                              # still be using the old one, so it is not closed here)
+            Index._SHARED.pop(self.path, None)
 
     def _add_version(self, c, r, text_seen, pages):
         v = r["version"]
@@ -221,7 +243,9 @@ class Index:
 
     # ------------------------------------------------------------------ helpers
     def q(self, sql, args=()):
-        return [dict(r) for r in self.con().execute(sql, args).fetchall()]
+        c = self.con()
+        with self._lk:                                        # the connection is shared between the requests' threads: one query at a time
+            return [dict(r) for r in c.execute(sql, args).fetchall()]
 
     def countries_seen(self):
         """Every country code the held answers name (cars or notes), with the cars seen there: -> [{country, installs}], most cars first. Kept for the life of this
