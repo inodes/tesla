@@ -53,3 +53,26 @@ class BuiltApartTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class PvRetryTest(unittest.TestCase):
+    """A charge of today: its solar readings are fetched once in PV_RETRY_S, not at every look at its page."""
+    def test_fetched_once_in_a_while(self):
+        import datetime
+        import sqlite3
+        d = tempfile.mkdtemp()
+        db = os.path.join(d, "pv_history.db")
+        c = sqlite3.connect(db)
+        c.execute("CREATE TABLE pv_intraday (timestamp TEXT PRIMARY KEY, production_kwh REAL)")
+        c.commit()
+        c.close()
+        b = AC.ChargeBook(os.path.join(HERE, "..", "Tools"), d)
+        asked = []
+        b._pv_provider = lambda: asked.append(1)                 # None: nothing fetched, but asked
+        today = datetime.date.today()
+        b._refresh_pv(db, today, today)
+        b._refresh_pv(db, today, today)
+        self.assertEqual(len(asked), 1)
+        b._pv_tried[(today, today)] = 0                          # the wait is over
+        b._refresh_pv(db, today, today)
+        self.assertEqual(len(asked), 2)

@@ -45,6 +45,26 @@ class AnswersKeptTest(unittest.TestCase):
         self.ask(self.d, "ANZ")
         self.assertEqual(len(self.calls), 3)
 
+    def test_the_car_watch_moving_last_seen_keeps_the_answers(self):
+        import json
+        import time
+        from lib import car_versions
+        p = car_versions._path(self.d)
+
+        def save(last, current="2026.38.5.5"):
+            with open(p, "w") as f:
+                json.dump({"current": current, "versions": [{"version": "2026.38.5.5", "first_seen": "2026-11-01", "last_seen": last}]}, f)
+            t = time.time() + len(self.calls) + 1
+            os.utime(p, (t, t))
+        save("2026-11-22T10:00:00Z")
+        self.ask(self.d, "ANZ")
+        save("2026-11-22T10:05:00Z")                                   # a look by the car watch
+        self.ask(self.d, "ANZ")
+        self.assertEqual(len(self.calls), 1)
+        save("2026-11-22T10:10:00Z", current="2026.44.1")              # the car took a new version
+        self.ask(self.d, "ANZ")
+        self.assertEqual(len(self.calls), 2)
+
 
 if __name__ == "__main__":
     unittest.main()

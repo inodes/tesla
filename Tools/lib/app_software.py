@@ -31,6 +31,26 @@ _LOCK = threading.Lock()          # one index build at a time; the questions the
 _ANS, _ANS_LOCK, ANS_MAX = {}, threading.Lock(), 200
 
 
+_CARK = {}
+
+
+def _car_key(data_dir):
+    """What of the car's own versions (car_versions.json) the answers depend on: all of it but the "last seen" times. The car watch rewrites the file at every
+    look (20 s after a start, then every few minutes) only to move those, and the file's time in the key had every answer worked out again each time."""
+    p = car_versions._path(data_dir)
+    try:
+        st = os.stat(p)
+    except OSError:
+        return None
+    hit = _CARK.get(p)
+    if hit and hit[0] == (st.st_size, st.st_mtime_ns):
+        return hit[1]
+    d = car_versions.load(data_dir)
+    k = repr(dict(d, versions=[{a: b for a, b in v.items() if a != "last_seen"} for v in d.get("versions") or []]))
+    _CARK[p] = ((st.st_size, st.st_mtime_ns), k)
+    return k
+
+
 def _remembered(name):
     """The answer of a question kept while what it is worked out from is unchanged: the held Teslascope files (the index's signature), the car's own versions
     and the settings. The page asks the same few questions again and again; worked out each time they took 0.2 s on an idle Mac and 10-20 s while another
@@ -38,11 +58,7 @@ def _remembered(name):
     def wrap(fn):
         def go(data_dir, *args):
             ix = _index(data_dir)
-            try:
-                car_t = os.stat(car_versions._path(data_dir)).st_mtime_ns
-            except OSError:
-                car_t = 0
-            key = (name, data_dir, args, I.Index.SIG.get(ix.path), car_t, repr(sorted(ix.cfg.items(), key=lambda kv: kv[0])))
+            key = (name, data_dir, args, I.Index.SIG.get(ix.path), _car_key(data_dir), repr(sorted(ix.cfg.items(), key=lambda kv: kv[0])))
             with _ANS_LOCK:
                 hit = _ANS.get(key)
             if hit is not None:

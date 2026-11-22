@@ -714,6 +714,7 @@ class ChargeBook:
         return dict(plug=p, part=part, segments=segs, curves=self.curves(p, part), sources=self.sources(p, segs))
 
     pv_fetch = True            # off in tests: no call to SolarEdge
+    PV_RETRY_S = 900
 
     def _pv_provider(self):
         from providers.pv import get_pv_provider
@@ -740,6 +741,10 @@ class ChargeBook:
             con.close()
         if not _collapse_missing(d0, d1, have, datetime.date.today()):
             return
+        tried = self.__dict__.setdefault("_pv_tried", {})
+        if time.time() - tried.get((d0, d1), 0) < self.PV_RETRY_S:          # today is always "missing" (it is not over): fetched once in PV_RETRY_S, not at every look
+            return                                                             # at a charge of today (SolarEdge took seconds each time: a charge page 19 s)
+        tried[(d0, d1)] = time.time()
         pv = self._pv_provider()
         if not pv:
             return
