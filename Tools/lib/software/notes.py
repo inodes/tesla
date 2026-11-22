@@ -1,13 +1,13 @@
 """notes.py - what a release note is called (its key) and what it says (its hash).
 
-    key("FSD (Supervised) v14.3.12 Down Under")  -> "fsd (supervised) down under"   the same note whatever FSD version it names
+    key("FSD (Supervised) v14.3.12 Down Under")  -> "fsd v14.3.12"   FSD is known by its version whatever a region calls it; each version is its own note
     text_hash(description, subtitle)             -> 16 hex characters of the text with spacing and bullets normalised
     fsd_version(title, description)              -> "14.3.12" when the note names one, else None
     fsd_note(title)                              -> ("fsd", "14.3.12") / ("lite", "14.3") / ("fsd", "") for an FSD note, None for any other
     diff(old, new)                               -> [{op: same|add|del, text}]: what the new text added and what it dropped, word by word
 
 The key says WHICH note it is; the hash says WHAT IT SAYS. Same key and same hash in a later release = the note is listed again.
-Same key, different hash = the note was revised (FSD 14.3.5 -> 14.3.12; Speed Profiles gaining Mad Max). A different key is a different note.
+Same key, different hash = the note was revised (Speed Profiles gaining Mad Max). A different key is a different note: FSD v14.3.12 is not FSD v14.3.5 revised.
 """
 import difflib
 import hashlib
@@ -26,12 +26,21 @@ def _flat(s):
 _AD = re.compile(r"\btesla assisted driving\b", re.I)
 
 
-def key(title):
+def key(title, version=True):
+    """Which note this is. An FSD note is known by its FSD version whatever a region calls it: "FSD (Supervised) v14.3.12 Down Under", "FSD (Supervised) v14.3.12" and
+    Europe's "Tesla Assisted Driving v14.3.12" are all "fsd v14.3.12" (FSD v14.3.12 Lite: "fsd v14.3.12 lite"); every FSD version is its own note, never a rewrite of
+    the one before. version=False is the key to search with: every FSD note is then "fsd", so a search for FSD finds all of them."""
+    fn = fsd_note(title)
+    if fn and fn[1]:
+        return ("fsd v%s%s" % (fn[1], " lite" if fn[0] == "lite" else "")) if version else "fsd"
     t = _AD.sub("fsd (supervised)", _flat(title))
     t = re.sub(r"(\(supervised\)\s*){2,}", "(supervised) ", t, flags=re.I)
     t = _VER.sub(" ", t.lower())
     t = re.sub(r"[^a-z0-9()&+\s-]", "", t)
-    return " ".join(t.split())
+    t = " ".join(t.split())
+    if not version and fn:
+        return "fsd"
+    return t
 
 
 def text_hash(description, subtitle=""):

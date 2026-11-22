@@ -95,7 +95,13 @@ class VersionTest(unittest.TestCase):
 
 class NoteTest(unittest.TestCase):
     def test_a_note_is_the_same_note_whatever_fsd_version_it_names(self):
-        self.assertEqual(N.key("FSD (Supervised) v14.3.12 Down Under"), N.key("FSD (Supervised) v14.3.5 Down Under"))
+        self.assertNotEqual(N.key("FSD (Supervised) v14.3.12 Down Under"), N.key("FSD (Supervised) v14.3.5 Down Under"))    # every FSD version is its own note
+        self.assertEqual(N.key("FSD (Supervised) v14.3.12 Down Under"), "fsd v14.3.12")                                 # known as FSD whatever a region calls it
+        self.assertEqual(N.key("FSD (Supervised) v14.3.12"), N.key("FSD (Supervised) v14.3.12 Down Under"))
+        self.assertEqual(N.key("Tesla Assisted Driving v14.3.12"), "fsd v14.3.12")
+        self.assertEqual(N.key("FSD (Supervised) v14.3 Lite"), "fsd v14.3 lite")
+        self.assertNotEqual(N.key("FSD (Supervised) v15.0.1"), N.key("FSD (Supervised) v14.3.13"))
+        self.assertEqual(N.key("FSD (Supervised) v15.0.1", version=False), N.key("FSD (Supervised)", version=False))      # a search for FSD finds every version
         self.assertNotEqual(N.key("FSD (Supervised) v14.3.12 Down Under"), N.key("Full Self-Driving (Supervised) Down Under"))
         self.assertEqual(N.fsd_version("FSD (Supervised) v14.3.12 Down Under"), "14.3.12")
         self.assertIsNone(N.fsd_version("Speed Profiles"))
@@ -309,6 +315,16 @@ class IndexTest(unittest.TestCase):
         self.assertNotIn("Other", [r["name"] for r in self.ix.regions()])        # the defaults name them all (Japan is Asia Pacific)
         self.assertIn("jp", [r for r in self.ix.regions() if r["name"] == "Asia Pacific"][0]["countries"])
 
+    def test_all_regions_is_a_choice_holding_every_country(self):
+        names = [r["name"] for r in self.ix.regions()]
+        self.assertEqual(names[-1], "All regions")                              # last: the default (first) region stays what it was
+        allr = self.ix.resolve("All regions")
+        self.assertLessEqual({x["country"] for x in self.ix.countries_seen()}, set(allr))        # the settings' groups name countries the data has not seen too
+        mine = {v["version"] for v in self.ix.versions_for("All regions")}
+        for r in self.ix.regions():
+            self.assertLessEqual({v["version"] for v in self.ix.versions_for(r["name"])}, mine)       # every region's versions are among all of them
+        self.assertEqual(self.ix.uptake("2026.38.5.5", "All regions")["region_installs"], self.ix.uptake("2026.38.5.5")["installs"])
+
     def test_a_country_no_group_holds_is_kept_in_other(self):
         cfg = S.load({})
         cfg["regions"] = {"ANZ": ["au", "nz"]}
@@ -352,12 +368,12 @@ class IndexTest(unittest.TestCase):
         self.assertEqual(rows[0]["countries"], ["au"])
         self.assertEqual(self.ix.first_available("welcome animation", "nz"), [])
 
-    def test_fsd_down_under_goes_through_each_version_in_order(self):
+    def test_a_search_for_fsd_finds_each_version_as_its_own_note(self):
         rows = self.ix.first_available("fsd (supervised) down under", "au")
-        self.assertEqual([r["fsd" if "fsd" in r else "title"] for r in rows],
-                         ["FSD (Supervised) v14.3.3 Down Under", "FSD (Supervised) v14.3.5 Down Under", "FSD (Supervised) v14.3.9 Down Under", "FSD (Supervised) v14.3.12 Down Under"])
-        self.assertEqual([r["first_tag"] for r in rows], ["2026.16.6", "2026.20.10", "2026.28.5", "2026.38.5.5"])
-        self.assertEqual([r["change"] for r in rows], ["new", "revised", "revised", "revised"])
+        self.assertEqual(sorted((r["first_tag"], r["title"]) for r in rows),
+                         [("2026.16.6", "FSD (Supervised) v14.3.3 Down Under"), ("2026.20.10", "FSD (Supervised) v14.3.5 Down Under"),
+                          ("2026.28.5", "FSD (Supervised) v14.3.9 Down Under"), ("2026.38.5.5", "FSD (Supervised) v14.3.12 Down Under")])
+        self.assertEqual({r["change"] for r in rows}, {"new"})                # a new FSD version is new: nothing of the one before it is struck through
 
     def test_a_note_listed_again_with_the_same_text_is_not_a_new_introduction(self):
         rows = self.ix.first_available("arrival options", "au")
@@ -377,11 +393,8 @@ class IndexTest(unittest.TestCase):
         c = self.ix.compare("2026.20.10", "2026.38.5.5", "ANZ")
         self.assertEqual(c["between"], ["2026.26.6.1", "2026.28.5", "2026.32.7", "2026.38.3.1", "2026.38.5.1"])
         self.assertEqual(c["between_region"], ["2026.26.6.1", "2026.28.5", "2026.32.7", "2026.38.3.1"])        # the versions Australia has had (not the North America build)
-        self.assertEqual(self.titles(c["listed_new"]), {"Set Arrival Energy", "Halloween Mode", "Wheel Selection", "Apple Music"})
-        self.assertEqual(self.titles(c["listed_revised"]), {"Speed Profiles", "FSD (Supervised) v14.3.12 Down Under"})
-        fsd = next(x for x in c["listed_revised"] if x["title"].startswith("FSD"))
-        self.assertEqual(fsd["was_title"], "FSD (Supervised) v14.3.5 Down Under")
-        self.assertEqual([x["title"] for x in fsd["via"]], ["FSD (Supervised) v14.3.9 Down Under"])
+        self.assertEqual(self.titles(c["listed_new"]), {"Set Arrival Energy", "Halloween Mode", "Wheel Selection", "Apple Music", "FSD (Supervised) v14.3.12 Down Under"})
+        self.assertEqual(self.titles(c["listed_revised"]), {"Speed Profiles"})          # FSD v14.3.12 is a new note, not v14.3.5 rewritten
         self.assertTrue({"Arrival Options", "Brake Confirm", "UI Improvements"} <= self.titles(c["listed_again"]))
         skipped = {x["title"]: x for x in c["skipped"]}
         wa = skipped["Welcome Animation"]

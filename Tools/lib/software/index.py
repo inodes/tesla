@@ -27,8 +27,9 @@ from lib.software import settings as S
 from lib.software import teslascope as T
 from lib.software import versions as V
 
-SCHEMA = 4      # 4: "Tesla Assisted Driving" (Europe's name for FSD (Supervised)) is the same note key and an FSD note
+SCHEMA = 5      # 5: an FSD note is known by its version ("fsd v14.3.12"): each FSD version is its own note; 4: "Tesla Assisted Driving" (Europe's name for FSD (Supervised)) is the same note key and an FSD note
 ALL = "*"
+ALL_REGIONS = "All regions"          # the region choice that holds every country
 
 
 def default_cache():
@@ -221,7 +222,13 @@ class Index:
         return [dict(r) for r in self.con().execute(sql, args).fetchall()]
 
     def countries_seen(self):
-        """Every country code the held answers name (cars or notes), with the cars seen there: -> [{country, installs}], most cars first."""
+        """Every country code the held answers name (cars or notes), with the cars seen there: -> [{country, installs}], most cars first. Kept for the life of this
+        Index (one request): the regions, resolve() and the FSD countries all ask for it, 8 times per overview."""
+        if getattr(self, "_seen", None) is None:
+            self._seen = self._countries_seen()
+        return self._seen
+
+    def _countries_seen(self):
         rows = self.q("SELECT country, SUM(installs) AS installs FROM version_countries GROUP BY country")
         have = {r["country"]: r["installs"] for r in rows}
         for r in self.q("SELECT DISTINCT country FROM scope"):
@@ -235,6 +242,7 @@ class Index:
         rest = [x["country"] for x in self.countries_seen() if x["country"] not in placed]
         if rest:
             groups["Other"] = sorted(rest)
+        groups[ALL_REGIONS] = sorted({c for cs in groups.values() for c in cs})        # every country there is: the whole world as one choice
         return groups
 
     def regions(self):
@@ -292,7 +300,7 @@ class Index:
         return out
 
     def search_notes(self, text, limit=40):
-        t = "%" + N.key(text) + "%" if N.key(text) else "%" + (text or "").lower() + "%"
+        t = "%" + N.key(text, version=False) + "%" if N.key(text, version=False) else "%" + (text or "").lower() + "%"
         return self.q("""SELECT note_key, MIN(title) AS title, COUNT(DISTINCT hash) AS texts, MIN(tag_k) AS first_k
                          FROM occurrences WHERE note_key LIKE ? OR LOWER(title) LIKE ? GROUP BY note_key ORDER BY MIN(tag_k) DESC LIMIT ?""",
                       (t, "%" + (text or "").lower() + "%", limit))
@@ -533,10 +541,14 @@ class Index:
         mine = {v["version"] for v in self.versions_for(cs, model, hw)} | {a, b}            # this region's own versions: its path is not the world's
         reaches = lambda v: reach.setdefault(v, self._path(v, b, only=mine))
         skipped, others = [], []
+        fsd_kind = lambda k: ("lite" if k.endswith(" lite") else "fsd") if k.startswith("fsd v") else None      # each FSD version is its own note (notes.key)
+        b_fsd = {fsd_kind(k) for k in b_by} - {None}
         for key, lst in by_key.items():
             tk, h, g = max(lst, key=lambda x: x[0])                       # the newest text of the note in the range
             if (key, h) in b_pairs or (key, h) in a_pairs:
                 continue
+            if fsd_kind(key) in b_fsd:
+                continue                                                  # an FSD version on the way: the one b lists replaces it
             if key in b_by and b_by[key]["tag_k"] >= tk:
                 continue                                                  # b's page lists a newer text of this note: that supersedes it
             if key in a_by and a_by[key]["tag_k"] >= tk:
