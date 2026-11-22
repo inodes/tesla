@@ -34,6 +34,32 @@ class KeptTest(unittest.TestCase):
         self.assertTrue(os.path.isfile(os.path.join(d, "api_activity_200.5.json")))
         self.assertFalse(os.path.exists(os.path.join(d, "api_activity_100.5.json")))      # the earlier version's copy is gone once this one has its own
 
+    def test_after_an_edit_a_list_built_since_is_not_built_again(self):
+        k = AK.Kept(tempfile.mkdtemp(), "1")
+        built = []
+        k.get("places", lambda: (built.append(1), ["a"])[1])
+        edit = time.time()
+        time.sleep(0.01)
+        k.get("places", lambda: (built.append(1), ["b"])[1], fresh=edit)      # built after the edit
+        for _ in range(5):                                                    # the page asks again and again for a minute after the edit
+            self.assertEqual(k.get("places", lambda: (built.append(1), ["c"])[1], fresh=edit), (b'["b"]', False))
+        self.assertEqual(len(built), 2)
+
+    def test_a_slow_build_after_an_edit_gives_the_old_list_marked_stale(self):
+        k = AK.Kept(tempfile.mkdtemp(), "1")
+        k.FRESH_WAIT_S = 0.2
+        k.get("activity", lambda: ["old"])
+        edit = time.time() + 0.001
+
+        def slow():
+            time.sleep(0.6)
+            return ["new"]
+        t0 = time.time()
+        self.assertEqual(k.get("activity", slow, fresh=edit), (b'["old"]', True))     # not waited for: the page asks again
+        self.assertLess(time.time() - t0, 0.5)
+        time.sleep(0.7)
+        self.assertEqual(k.get("activity", slow, fresh=edit), (b'["new"]', False))
+
     def test_nothing_kept_builds_it(self):
         raw, stale = AK.Kept(tempfile.mkdtemp(), "1").get("x", lambda: [1])
         self.assertEqual((raw, stale), (b"[1]", False))

@@ -869,7 +869,12 @@ class H(BaseHTTPRequestHandler):
             _ROOTS["t"] = 0
             footage_root("A")
         if name in KEPT_LISTS:                  # answered at once from what was kept, refreshed behind (lib/app_kept.py); ?fresh=1 waits for the newest
-            raw, stale = KEPT.get(name, lambda: KEPT_LISTS[name](), q.get("fresh", [""])[0] == "1")
+            fr = q.get("fresh", [""])[0]
+            try:
+                fr = True if fr == "1" else (float(fr) if fr else False)        # the time of the edit the answer must be newer than (epoch s), from the page
+            except ValueError:
+                fr = False
+            raw, stale = KEPT.get(name, lambda: KEPT_LISTS[name](), fr)
             tag = '"%s%s"' % (hashlib.blake2b(raw, digest_size=12).hexdigest(), "s" if stale else "")       # a stale answer never matches a fresh one (a 304 keeps the old headers)
             return self.send_body(raw, "application/json; charset=utf-8", "no-cache", tag, {"X-Stale": "1"} if stale else None)
         if name == "status":
@@ -1495,11 +1500,22 @@ KEPT_LISTS = {          # the lists a page asks for first: answered from what wa
     "battery": lambda: dict(readings=STORE.battery(), spec=STORE.spec()),
     "analytics": lambda: STORE.analytics(),
     "alerts": lambda: STORE.alerts(),
-    "places": lambda: STORE.pl.listing(STORE),
+    "places": lambda: _places(),
     "chargers": lambda: STORE.pl.charger_listing(STORE),
     "teslacam": lambda: dict(drives=TC.drives()),                                 # the drives that are connected right now (found by what is on them)
     "clips": lambda: _clips(),                  # every Recent run, Saved and Sentry event ever logged, whichever drives are connected; each says which drive holds it and whether it can be played
 }
+
+
+def _places():
+    """The Places lists; its "Stops to review" are the parked rows of the Drives list that show "Save" (Places.review_stops)."""
+    out = dict(STORE.pl.listing(STORE))
+    try:
+        dl = drivelist()
+        out["found"] = STORE.pl.review_stops(dl.get("items") or [], dl.get("chg") or [])
+    except Exception:
+        out["found"] = []
+    return out
 
 
 def _clips():

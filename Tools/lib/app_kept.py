@@ -3,9 +3,11 @@
 Building the Activity, Places, Chargers, Alerts... lists means reading and merging thousands of small files; that is seconds, and it was paid by the page that
 asked first after every start. Here the last answer is kept in memory and in a folder on this computer (not in the data folder, which iCloud shares between the
 Macs), so a page gets it in milliseconds, also right after the app starts. A refresh runs in the background (at most one per list, at most every `gap` seconds);
-the answer is marked stale while it runs and the page asks again a few seconds later. A page that must see the newest (after a sync or an edit) asks with fresh=1 and waits.
+the answer is marked stale while it runs and the page asks again a few seconds later. A page that must see the newest (after a sync or an edit) asks with fresh=<the
+time of the edit>: an answer built since then is given at once; otherwise one is built, waited for at most FRESH_WAIT_S, and the old answer is given (stale) if it
+takes longer. It used to rebuild on every ask for a minute after any edit, each page waiting for it (seconds to go back to Drives after saving a place).
 
-    Kept(folder, version).get(name, build, fresh=False) -> (json bytes, stale)
+    Kept(folder, version).get(name, build, fresh=False) -> (json bytes, stale)       fresh: False, True (now) or the time (epoch s) the answer must be newer than
 """
 import glob
 import json
@@ -48,6 +50,29 @@ class Kept:
                 pass
         return raw
 
+    def _fresh(self, name, build, since, lk, ent):
+        """An answer newer than `since`: built now (one build at a time), waited for at most FRESH_WAIT_S; else the old one, stale (the page asks again)."""
+        done = threading.Event()
+
+        def run():
+            try:
+                with lk:
+                    with self.lock:
+                        e2 = self.mem.get(name)
+                    if e2 is None or e2[1] < since:
+                        self._make(name, build)
+            except Exception:
+                pass
+            finally:
+                done.set()
+        threading.Thread(target=run, daemon=True).start()
+        done.wait(self.FRESH_WAIT_S)
+        with self.lock:
+            e3 = self.mem.get(name) or ent
+            if e3[1] >= since:
+                return e3[0], False
+            return e3[0], True
+
     def _refresh(self, name, build):
         try:
             self._make(name, build)
@@ -56,10 +81,18 @@ class Kept:
                 if name in self.mem:
                     self.mem[name][1], self.mem[name][2] = time.time(), False
 
+    FRESH_WAIT_S = 3.0
+
     def get(self, name, build, fresh=False):
+        since = None if fresh is False or fresh is None else (time.time() if fresh is True else float(fresh))
+        fresh = since is not None
         with self.lock:
             ent = self.mem.get(name)
             lk = self.locks.setdefault(name, threading.Lock())
+            if ent is not None and fresh and ent[1] >= since:
+                return ent[0], bool(ent[2])                                   # built since the edit: nothing to wait for
+        if ent is not None and fresh:
+            return self._fresh(name, build, since, lk, ent)
         if ent is None and not fresh:
             try:
                 path = self._path(name)

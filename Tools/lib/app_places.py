@@ -289,7 +289,7 @@ class Places:
                             last=CC.local_iso(last)[:10] if last else "", t_last=last)
             saved = [dict(key="p:" + p["name"], name=p["name"], lat=p["lat"], lon=p["lon"], radius=p["radius"], notes=p["notes"], **stat("p:" + p["name"])) for p in self.defs()]
             sc = [dict(key="s:" + s["name"], name=s["name"], lat=s["lat"], lon=s["lon"], addr=s["addr"], stalls=s["stalls"], kw=s["kw"], tier=s["tier"], hours=s["hours"], **stat("s:" + s["name"])) for s in self.stations()]
-            return dict(saved=saved, superchargers=sc, found=self.discover(S, ev), charger_count=len(self.chargers()["rows"]))
+            return dict(saved=saved, superchargers=sc, found=[], charger_count=len(self.chargers()["rows"]))
         return _memo("listing", self.deps() + [os.path.join(S.d, "drives", "drives_master.csv"), os.path.join(S.d, "charges", "charges_master.csv"), os.path.join(S.d, "charges", "app_chargebook.json"), os.path.join(S.d, "idles", "idles_master.csv"), self.f_ignored], build)
 
     def charger_listing(self, S):
@@ -327,32 +327,64 @@ class Places:
             return dict(rows=rows, networks=sorted(nets.items(), key=lambda x: -x[1]), updated=C["updated"], sources=C["sources"])
         return _memo("charger_listing", self.deps() + [os.path.join(S.d, "charges", "charges_master.csv"), os.path.join(S.d, "charges", "app_chargebook.json"), self.f_places], build)
 
-    REVIEW_MIN_DAYS = 1         # a spot stopped at on this many different days is listed
     REVIEW_MAX = 150
+    REVIEW_CELL = 0.002         # degrees (~200 m): the parks in one cell are one spot
 
-    def discover(self, S, ev=None):
-        """Stops that are not a saved place, not a charger and not ignored (the "Stops to review" list): every one, the most visited days first, then the latest.
-        It used to list only spots stopped at on 3 days or more; once most of those were saved the list was empty while 130 spots were not named."""
+    def review_stops(self, items, chg=()):
+        """The "Stops to review" list, made from the Drives list's own rows (tesla_app.drivelist: items, chg): every parked row that shows "Save" there (not inside a
+        saved place, its radius but at least 60 m as the page has it; no charge during the stay), less the ignored spots. One entry per spot, the most visited
+        (visits: its parks; days: the days they were on) first, then the latest, each with its parks (newest first) and the drive before and after each park. It used to be worked out from Tessie's drives and parked
+        periods on its own, so it listed stops the Drives list does not show (and, needing 3 days at a spot, was empty once those were saved)."""
+        import bisect
+        defs = self.defs()
         ign = _load(self.f_ignored) or []
         ign = [(e.get("center_lat"), e.get("center_lon"), e.get("radius_m") or 100) for e in ign if isinstance(e, dict) and e.get("center_lat") is not None]
-        chg = [(c["lat"], c["lon"]) for c in S.charges() if c.get("lat") is not None and c.get("lon") is not None]
+        f = lambda x: float(x) if x not in (None, "") else None
+        drives = sorted((x for x in items if x.get("kind") == "drive" and x.get("t0") is not None), key=lambda x: f(x["t0"]))
+        d_t0 = [f(x["t0"]) for x in drives]
+        d_t1 = sorted((f(x.get("t1")) or f(x["t0"]), n) for n, x in enumerate(drives))
+        d_t1k = [a for a, _n in d_t1]
+        cs = [(f(c.get("t0")), f(c.get("t1")) or f(c.get("t0")) + 60 * (f(c.get("min")) or 0), c.get("lat"), c.get("lon")) for c in chg if c.get("t0") is not None]
+
+        def drv(x):
+            return dict(id=x.get("id"), frm=x.get("frm") or "", to=x.get("to") or "", start=x.get("start") or "", end=x.get("end") or "", km=f(x.get("km")))
+
+        def near(pt, la, lo):
+            return bool(pt) and pt[0] is not None and pt[1] is not None and hav(la, lo, float(pt[0]), float(pt[1])) <= 300
         cells = collections.defaultdict(list)
-        pts = [(d["lat1"], d["lon1"], d["day"], d["t1"], d.get("addr1") or "") for d in S.drives() if d.get("lat1") is not None and not d.get("repark") and not d.get("pkey1", "").startswith(("p:", "s:"))]
-        pts += [(i["lat"], i["lon"], i["day"], i["t0"], i.get("addr") or "") for i in S.idles() if i.get("lat") is not None and not (i.get("pkey") or "").startswith(("p:", "s:"))]
-        for lat, lon, day, t, addr in pts:
-            cells[(round(lat / 0.002), round(lon / 0.002))].append((lat, lon, day, t, addr))
+        for v in items:
+            if v.get("kind") != "parked":
+                continue
+            pt = v.get("p0") or v.get("p1")
+            if not pt or pt[0] is None or pt[1] is None:
+                continue
+            la, lo = float(pt[0]), float(pt[1])
+            if any(hav(la, lo, d["lat"], d["lon"]) <= max(d.get("radius") or 100, 60) for d in defs):
+                continue                                                # "Saved" on the Drives list
+            t0, t1 = f(v.get("t0")), f(v.get("t1")) or f(v.get("t0"))
+            if t0 is None:
+                continue
+            if any(a <= t1 + 300 and b >= t0 - 300 and (c_la is None or hav(la, lo, c_la, c_lo) <= 300) for a, b, c_la, c_lo in cs):
+                continue                                                # charged while parked: the page shows the charge, not "Save"
+            if any(hav(la, lo, a, b) <= r for a, b, r in ign):
+                continue
+            k = bisect.bisect_right(d_t1k, t0 + 120) - 1                 # the last drive that ended by the time the park began
+            before = drives[d_t1[k][1]] if k >= 0 else None
+            n = bisect.bisect_left(d_t0, t1 - 120)                       # the first drive that began once it ended
+            after = drives[n] if n < len(drives) else None
+            names = ([before.get("to")] if before and near(before.get("p1"), la, lo) else []) + ([after.get("frm")] if after and near(after.get("p0"), la, lo) else [])
+            cells[(round(la / self.REVIEW_CELL), round(lo / self.REVIEW_CELL))].append(dict(
+                id=v.get("id"), lat=la, lon=lo, start=v.get("start") or "", end=v.get("end") or "", t0=t0, t1=t1, min=round((t1 - t0) / 60) if t1 else None,
+                ongoing=bool(v.get("ongoing")), before=drv(before) if before else None, after=drv(after) if after else None, names=[n for n in names if n]))
         out = []
         for g in cells.values():
-            days = {x[2] for x in g}
-            if len(days) < self.REVIEW_MIN_DAYS:
-                continue
-            la, lo = sum(x[0] for x in g) / len(g), sum(x[1] for x in g) / len(g)
-            if any(hav(la, lo, a, b) < 200 for a, b in chg) or any(hav(la, lo, a, b) <= r for a, b, r in ign):
-                continue
-            addr = collections.Counter(x[4] for x in g if x[4]).most_common(1)
-            out.append(dict(key=spot_key(la, lo), lat=la, lon=lo, visits=len(days), last=max(x[2] for x in g), addr=addr[0][0] if addr else ""))
+            g.sort(key=lambda x: x["t0"], reverse=True)
+            la, lo = sum(x["lat"] for x in g) / len(g), sum(x["lon"] for x in g) / len(g)
+            names = collections.Counter(n for x in g for n in x.pop("names"))           # what the drives that ended or began right here call it
+            out.append(dict(key=spot_key(la, lo), lat=la, lon=lo, visits=len(g), days=len({x["start"][:10] for x in g}), parks=g, last=g[0]["start"][:10],
+                            addr=names.most_common(1)[0][0] if names else ""))
         out.sort(key=lambda x: x["last"], reverse=True)
-        out.sort(key=lambda x: -x["visits"])                        # most days first; within the same, the latest first (sorts are stable)
+        out.sort(key=lambda x: -x["visits"])                            # most visited first; within the same, the latest first (sorts are stable)
         return out[:self.REVIEW_MAX]
 
     # ---- one place -----------------------------------------------------------------------------------------------
@@ -360,7 +392,8 @@ class Places:
                "Northern Territory": "NT", "Australian Capital Territory": "ACT"}
 
     def suburb_state(self, lat, lon):
-        """(suburb, state abbreviation) of a point: the suburb lookup first (lib/suburb_lookup.py: kept boundaries, instant once seen), else Nominatim; the state comes from the
+        """(suburb, state abbreviation) of a point: the suburb lookup first (lib/suburb_lookup.py: kept boundaries, instant once seen; one not kept yet is fetched in the
+        background, never waited for), else Nominatim (6 s at most); the state comes from the
         position (au_state) when the answer has none. ("", "") when no suburb is found."""
         import places_common as PM
         import au_state
@@ -371,7 +404,7 @@ class Places:
             try:
                 import suburb_lookup
                 S = self.__dict__.get("_sublk") or self.__dict__.setdefault("_sublk", suburb_lookup.Suburbs(os.path.join(self.d, "suburbs")))
-                sub = S.at(lat, lon, wait=True) or ""
+                sub = S.at(lat, lon) or ""       # a kept boundary, else fetched behind for next time: Overpass took up to 50 s per server (85 s to open a spot)
             except Exception:
                 sub = ""
             if not sub:
