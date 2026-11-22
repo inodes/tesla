@@ -213,9 +213,9 @@ class ChargeBook:
 
     def _inputs(self):
         p = lambda *a: os.path.join(self.data, *a)
-        files = [p("charges", "charges_master.csv"), os.path.join(self._repo(), "resources", "api_cache", "charges.json"),
+        files = [p("charges", "charges_master.csv"),
                  os.path.join(self._repo(), "resources", "api_cache", "tessie_cost_push_ledger.json"), p("charges", "charge_chargers.json")]
-        sig = [self._places_sig()]
+        sig = [self._places_sig(), self._records_sig(os.path.join(self._repo(), "resources", "api_cache", "charges.json"))]
         for f in files:
             try:
                 st = os.stat(f)
@@ -236,6 +236,25 @@ class ChargeBook:
             except OSError:
                 sig.append("inv:-")
         return "|".join(sig)
+
+    def _records_sig(self, path):
+        """What of the Tessie charges cache the book depends on: its records. Every Tessie sync rewrites the file with a new "last synced" time in its _meta even
+        when no charge is new, and its time in the signature had the whole book built again after each sync (every few minutes, 4.5 minutes of reading each)."""
+        try:
+            st = os.stat(path)
+        except OSError:
+            return "charges.json:-"
+        key = (st.st_size, st.st_mtime_ns)
+        if getattr(self, "_rsig", (None, None))[0] == key:
+            return self._rsig[1]
+        try:
+            with open(path, encoding="utf-8") as fh:
+                recs = (json.load(fh) or {}).get("records")
+            out = "charges.json:" + hashlib.sha1(json.dumps(recs, sort_keys=True, default=str).encode()).hexdigest()[:12]
+        except (OSError, ValueError, AttributeError):
+            out = "charges.json:%d:%d" % (st.st_size, int(st.st_mtime))
+        self._rsig = (key, out)
+        return out
 
     def _places_sig(self):
         """What of places.json the book depends on: the places with a charger (free or priced) or Home, and the places where a charge of the book was (its name).

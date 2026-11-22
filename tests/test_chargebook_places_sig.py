@@ -63,3 +63,23 @@ class InvoiceSigTest(unittest.TestCase):
         self.assertEqual(b._inputs(), before)
         open(os.path.join(inv, "b.pdf"), "wb").write(b"%PDF b")
         self.assertNotEqual(b._inputs(), before)
+
+
+class RecordsSigTest(unittest.TestCase):
+    """A Tessie sync that rewrites the charges cache with only a new "last synced" time does not rebuild the book; a new charge does."""
+    def test_only_the_records_count(self):
+        d = tempfile.mkdtemp()
+        b = AC.ChargeBook(os.path.join(HERE, "..", "Tools"), d)
+        f = os.path.join(d, "charges.json")
+
+        def save(meta, recs):
+            with open(f, "w") as fh:
+                json.dump({"_meta": meta, "records": recs}, fh)
+            t = time.time() + len(recs) + len(json.dumps(meta))
+            os.utime(f, (t, t))
+        save({"last_synced_to": 1}, {"1": {"kwh": 5}})
+        before = b._records_sig(f)
+        save({"last_synced_to": 2, "last_synced_at_wallclock": "2026-11-22T15:00:00"}, {"1": {"kwh": 5}})
+        self.assertEqual(b._records_sig(f), before)
+        save({"last_synced_to": 3}, {"1": {"kwh": 5}, "2": {"kwh": 7}})
+        self.assertNotEqual(b._records_sig(f), before)
