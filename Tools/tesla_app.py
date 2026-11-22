@@ -945,6 +945,8 @@ class H(BaseHTTPRequestHandler):
             return self.send_json(drive_review_state(q.get("id", [""])[0]))
         if name == "review/scanned":            # every minute whose signs have been read: {UTC epoch s of the minute: signs found}
             return self.send_json(TC.review_scanned())
+        if name == "debug/threads":             # what every thread is doing right now (the app's own frames, innermost first): to see from the page what holds a slow request
+            return self.send_json(debug_threads())
         if name == "drivelist":                 # the Drives list: Tessie's drives and charges as the rows, the dashcam's drives attached (or alone when there is no Tessie)
             return self.send_json(drivelist())
         if name == "stills/thin":               # how many minutes of ordinary driving have stills that could be smaller, what they take, and the job
@@ -1507,6 +1509,21 @@ KEPT_LISTS = {          # the lists a page asks for first: answered from what wa
 }
 
 
+def debug_threads():
+    """[{name, frames}] of the threads running in the app now, each with its innermost frames (the app's own code marked), busiest first: the threads that are in the
+    app's code, then the waiting ones."""
+    import traceback
+    names = {t.ident: t.name for t in threading.enumerate()}
+    out = []
+    for ident, fr in sys._current_frames().items():
+        st = traceback.extract_stack(fr)[::-1]
+        own = [f for f in st if os.sep + "Tools" + os.sep in f.filename]
+        out.append(dict(name=names.get(ident, str(ident)), top="%s:%s:%d" % (os.path.basename(st[0].filename), st[0].name, st[0].lineno) if st else "",
+                        frames=["%s:%s:%d" % (os.path.basename(f.filename), f.name, f.lineno) for f in own[:8]]))
+    out.sort(key=lambda x: (not x["frames"], x["name"]))
+    return dict(at=time.time(), threads=out)
+
+
 def _places():
     """The Places lists; its "Stops to review" are the parked rows of the Drives list that show "Save" (Places.review_stops)."""
     out = dict(STORE.pl.listing(STORE))
@@ -1533,6 +1550,7 @@ def _code_version():
 
 def main():
     global KINDS, SCENES, KEPT, CODE_VERSION, STORE, DATA_DIR, SENTRY, TC, DRV, SYNC, TSYNC, CSYNC, CCOST, FSYNC, REACH, SOFT, CARW, BOOK, FG, KEEP, DRIVELIST, TODO, CKEEP, STHIN
+    sys.setswitchinterval(0.001)        # a request waits at most 1 ms (not 5) for the interpreter while a background job computes: sqlite hands back to Python once per row, so a 1,000-row answer waited seconds
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--data-dir", default=DEFAULT_DATA)
     ap.add_argument("--port", type=int, default=int(app_config.get("window.port")))

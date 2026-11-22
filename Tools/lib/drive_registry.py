@@ -76,23 +76,44 @@ def drive_root(path):
     return os.path.dirname(path) if os.path.basename(path) == "TeslaCam" else path
 
 
+_SOK = {}           # TeslaCam folder -> (its clip folders' times, answer)
+
+
 def structure_ok(teslacam):
-    """A TeslaCam folder shaped like the car's: one of the three clip folders, and any clip found has the car's file name."""
-    if not os.path.isdir(teslacam) or not any(os.path.isdir(os.path.join(teslacam, s)) for s in SUBDIRS):
-        return False
+    """A TeslaCam folder shaped like the car's: one of the three clip folders, and any clip found has the car's file name. It looks only as far as the first clip
+    (a RecentClips folder on a big drive holds tens of thousands: listing it whole took seconds on every look at the drives, with the app waiting behind it), and
+    the answer is kept while the clip folders' times are unchanged."""
     try:
-        for sub in SUBDIRS:
-            p = os.path.join(teslacam, sub)
-            if not os.path.isdir(p):
-                continue
-            for n in os.listdir(p)[:50]:
-                q = os.path.join(p, n)
-                if os.path.isdir(q):                          # SavedClips/<event>/ and RecentClips (flat, on the car) both hold the clips
-                    for m in os.listdir(q)[:20]:
-                        if m.endswith(".mp4"):
-                            return bool(_CLIP.match(m))
-                elif n.endswith(".mp4"):
-                    return bool(_CLIP.match(n))
+        subs = [(sub, os.stat(os.path.join(teslacam, sub)).st_mtime_ns) for sub in SUBDIRS if os.path.isdir(os.path.join(teslacam, sub))]
+    except OSError:
+        return False
+    if not subs:
+        return False
+    key = tuple(subs)
+    hit = _SOK.get(teslacam)
+    if hit and hit[0] == key:
+        return hit[1]
+    ok = _first_clip_ok(teslacam, [sub for sub, _m in subs])
+    _SOK[teslacam] = (key, ok)
+    return ok
+
+
+def _first_clip_ok(teslacam, subs):
+    try:
+        for sub in subs:
+            with os.scandir(os.path.join(teslacam, sub)) as it:
+                for n, e in enumerate(it):
+                    if n >= 50:
+                        break
+                    if e.is_dir():                                # SavedClips/<event>/ and RecentClips (flat, on the car) both hold the clips
+                        with os.scandir(e.path) as it2:
+                            for k, m in enumerate(it2):
+                                if k >= 20:
+                                    break
+                                if m.name.endswith(".mp4"):
+                                    return bool(_CLIP.match(m.name))
+                    elif e.name.endswith(".mp4"):
+                        return bool(_CLIP.match(e.name))
     except OSError:
         return False
     return True                                               # a drive with the folders and no clips yet

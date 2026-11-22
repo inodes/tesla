@@ -28,6 +28,37 @@ from lib.software import teslascope as T
 _LOCK = threading.Lock()          # one index build at a time; the questions themselves only read
 
 
+_ANS, _ANS_LOCK, ANS_MAX = {}, threading.Lock(), 200
+
+
+def _remembered(name):
+    """The answer of a question kept while what it is worked out from is unchanged: the held Teslascope files (the index's signature), the car's own versions
+    and the settings. The page asks the same few questions again and again; worked out each time they took 0.2 s on an idle Mac and 10-20 s while another
+    thread was busy (each of ~1,000 rows waits for the interpreter: the charge book reading invoices, say)."""
+    def wrap(fn):
+        def go(data_dir, *args):
+            ix = _index(data_dir)
+            try:
+                car_t = os.stat(car_versions._path(data_dir)).st_mtime_ns
+            except OSError:
+                car_t = 0
+            key = (name, data_dir, args, I.Index.SIG.get(ix.path), car_t, repr(sorted(ix.cfg.items(), key=lambda kv: kv[0])))
+            with _ANS_LOCK:
+                hit = _ANS.get(key)
+            if hit is not None:
+                return hit
+            res = fn(data_dir, *args)
+            with _ANS_LOCK:
+                if len(_ANS) >= ANS_MAX:
+                    _ANS.clear()
+                _ANS[key] = res
+            return res
+        go.__wrapped__ = fn
+        go.__doc__ = fn.__doc__
+        return go
+    return wrap
+
+
 def _index(data_dir):
     with _LOCK:
         ix = I.Index(data_dir, recheck_s=10)
@@ -249,6 +280,16 @@ def car_journey(ix, data_dir):
 def overview(data_dir, region="ANZ", model=None, hw=None):
     if not held(data_dir)["n"]:
         return dict(empty=True, held=held(data_dir))
+    res = _overview(data_dir, region, model, hw)
+    if res.get("empty"):
+        return res
+    return dict(res, left=SY.status_text(data_dir, FetchLedger(data_dir), time.time())[1])      # what is left to fetch changes while a sync runs: never kept
+
+
+@_remembered("overview")
+def _overview(data_dir, region="ANZ", model=None, hw=None):
+    if not held(data_dir)["n"]:
+        return dict(empty=True, held=held(data_dir))
     ix = _index(data_dir)
     car = car_versions.load(data_dir)
     mine = car.get("current")
@@ -276,6 +317,7 @@ def overview(data_dir, region="ANZ", model=None, hw=None):
                 all_versions=ix.held(), journey=car_journey(ix, data_dir), car_changes=car.get("changes") or [], car_updates=car.get("updates") or [], staged=car.get("staged"))
 
 
+@_remembered("detail")
 def detail(data_dir, version, region, model=None, hw=None):
     ix = _index(data_dir)
     f = ix.features_for(region, model, hw, version)
@@ -306,6 +348,7 @@ def detail(data_dir, version, region, model=None, hw=None):
     return dict(version=version, features=f["features"], own=ix.own_notes(version, region, model, hw), car_label=ix.label(model, hw) if model else "", uptake=u, region_countries=ix.resolve(region), my_car=choices(ix)["my_car"])
 
 
+@_remembered("timeline")
 def timeline(data_dir, region, model=None, hw=None):
     """What the timeline chart draws besides the versions list: the last day each version still got installs, and the upgrade steps between the versions this
     region + car has had (cars seen going from one to the other). The days are Teslascope's for all regions together; the region decides which versions and steps
@@ -330,11 +373,13 @@ def timeline(data_dir, region, model=None, hw=None):
     return dict(last=last, edges=edges, journey=journey, extra=extra)
 
 
+@_remembered("first")
 def first(data_dir, text, region):
     ix = _index(data_dir)
     return dict(found=ix.search_notes(text), rows=ix.first_available(text, region) if text else [])
 
 
+@_remembered("compare")
 def compare(data_dir, a, b, region, model=None, hw=None):
     ix = _index(data_dir)
     r = ix.compare(a, b, region, model, hw)

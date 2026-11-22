@@ -75,6 +75,7 @@ CREATE INDEX vc_c ON version_countries(country);
 
 class Index:
     _CHECKED = {}                    # index file -> when its held files were last compared with it (so a page that asks five times in a second stats the files once)
+    SIG = {}                         # index file -> the signature of the held files it was last found to hold (app_software keeps its answers while this is unchanged)
 
     def __init__(self, data_dir, cache_dir=None, settings=None, recheck_s=0):
         self.recheck_s = recheck_s
@@ -117,11 +118,13 @@ class Index:
             c.close()
             if have and have[0] == sig:
                 Index._CHECKED[self.path] = time.time()
+                Index.SIG[self.path] = sig
                 return
         except sqlite3.Error:
             pass
         self.build(files, sig)
         Index._CHECKED[self.path] = time.time()
+        Index.SIG[self.path] = sig
 
     def build(self, files=None, sig=None):
         files = self._files() if files is None else files
