@@ -1534,7 +1534,14 @@ def debug_profile(what, n=40):
     import cProfile
     import io
     import pstats
+    def seg():                                  # seg:<id>: a drive's footage segment, as the drive page asks for it first (budget 0)
+        sid = what.split(":", 1)[1]
+        t = app_teslacam.TL.secs(sid)
+        role, root = TC.pick_role(footage_roots(), t - 60, t + 60)
+        return TC.segment(role, root, sid, 0.0)
     fn = {"keeper": lambda: CKEEP._build(), "drivelist": lambda: drivelist(True), "activity": lambda: STORE.activity(), "clips": lambda: _clips()}.get(what)
+    if what.startswith("seg:"):
+        fn = seg
     if fn is None:
         return dict(error="what: keeper, drivelist, activity or clips")
     pr = cProfile.Profile()

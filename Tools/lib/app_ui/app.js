@@ -2824,12 +2824,13 @@ async function pageTeslaCamAt(t,t1,lo,k,tid,ev){      // t alone: the moment (a 
   try{await teslaDriveBody($("#tdh"),"A",fetchSeg,pl.saved||[],Object.assign({part},{row,ev}))}catch(e){const h=$("#tdh");if(h)h.innerHTML=errBox(e.message,"Could not open this moment")}
 }
 async function pageTeslaCamDrive(role,id){
-  loading();const pl=await api("places").catch(()=>({saved:[]}));
+  let first=null;loading();const pl=await api("places").catch(()=>({saved:[]}));
   main.innerHTML=(role==="auto"?crumbs("#/drives","Drives"):crumbs("#/teslacam","TeslaCam"))+pnBar()+'<div id="tdh"></div>';
   if(role==="auto"){                // opened from the Drives list: the server says which connected drive holds it
-    try{const r=await fetch("/api/teslacam/auto/seg/"+encodeURIComponent(id)+"?budget=0"),j=await r.json().catch(()=>({}));if(!r.ok)throw new Error(j.error||("HTTP "+r.status));role=j.role||"A"}
+    try{const r=await fetch("/api/teslacam/auto/seg/"+encodeURIComponent(id)+"?budget=0"),j=await r.json().catch(()=>({}));if(!r.ok)throw new Error(j.error||("HTTP "+r.status));role=j.role||"A";first=j}
     catch(e){$("#tdh").innerHTML=errBox(e.message,"Could not open this drive");return}}
-  const fetchSeg=async b=>{const r=await fetch("/api/teslacam/"+role+"/seg/"+encodeURIComponent(id)+(b!=null?"?budget="+b:""));if(!r.ok)throw new Error((await r.json().catch(()=>({}))).error||("HTTP "+r.status));return r.json()};
+  // the answer the "auto" ask already gave is the first one (the same segment at budget 0): asking again for it took another 0.5-0.7 s
+  const fetchSeg=async b=>{if(first&&b===0){const j=first;first=null;return j}first=null;const r=await fetch("/api/teslacam/"+role+"/seg/"+encodeURIComponent(id)+(b!=null?"?budget="+b:""));if(!r.ok)throw new Error((await r.json().catch(()=>({}))).error||("HTTP "+r.status));return r.json()};
   try{await teslaDriveBody($("#tdh"),role,fetchSeg,pl.saved||[],{})}catch(e){const h=$("#tdh");if(h)h.innerHTML=errBox(e.message,"Could not rebuild this drive")}
 }
 // The map, telemetry chart and stitched six-camera video of one drive, moving together. `fetchSeg(budget)` returns the server's segment / window answer;

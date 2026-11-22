@@ -620,6 +620,8 @@ class TeslaCam:
         sub = "RecentClips" if m["src"] == "recent" else os.path.join("SentryClips" if m["src"] == "sentry" else "SavedClips", m["ref"])
         return os.path.join(teslacam, sub, "%s-%s.mp4" % (m["stamp"], m.get("tcam") or "front"))
 
+    SEG_AROUND_S = 12 * 3600
+
     def segment(self, role, teslacam, sid, budget=20.0):
         """One drive of the timeline with its telemetry; reads the minutes not read yet (up to `budget` seconds, the page asks again while `pending`)."""
         if not teslacam or sid[:2] != "20":
@@ -627,8 +629,17 @@ class TeslaCam:
         t_id = TL.secs(sid)
 
         def pick(store, allm, saved, sentry):
-            items = TL.build({m["stamp"]: m["cams"] for m in allm if m["src"] == "recent"}, saved, [], store)
-            it = next((x for x in items if x["kind"] in ("drive", "stopped", "recording") and x["t0"] <= t_id < x["t1"]), None)
+            def find(lo, hi):
+                rec = {m["stamp"]: m["cams"] for m in allm if m["src"] == "recent" and lo <= m["t"] <= hi}
+                sv = [e for e in saved if any(lo <= TL.secs(st) <= hi for st in e["clips"])] if lo > -1e18 else saved
+                items = TL.build(rec, sv, [], store)
+                return next((x for x in items if x["kind"] in ("drive", "stopped", "recording") and x["t0"] <= t_id < x["t1"]), None)
+            # the recordings within SEG_AROUND_S of the moment are enough to find the drive it is in (the whole drive's 265 drives took 1.5 s); a drive that
+            # reaches within an hour of that window's edge may go on beyond it, and is found again from everything (the same answer either way)
+            w = self.SEG_AROUND_S
+            it = find(t_id - w, t_id + w)
+            if it is None or it["t0"] <= t_id - w + 3600 or it["t1"] >= t_id + w - 3600:
+                it = find(-1e19, 1e19)
             if not it:
                 return None
             full = self.footage(role, teslacam) if teslacam else allm
