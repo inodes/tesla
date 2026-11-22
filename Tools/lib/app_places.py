@@ -327,8 +327,12 @@ class Places:
             return dict(rows=rows, networks=sorted(nets.items(), key=lambda x: -x[1]), updated=C["updated"], sources=C["sources"])
         return _memo("charger_listing", self.deps() + [os.path.join(S.d, "charges", "charges_master.csv"), os.path.join(S.d, "charges", "app_chargebook.json"), self.f_places], build)
 
+    REVIEW_MIN_DAYS = 1         # a spot stopped at on this many different days is listed
+    REVIEW_MAX = 150
+
     def discover(self, S, ev=None):
-        """Stops you return to that are not a saved place and not a charger (the places-manager 'review drives' list)."""
+        """Stops that are not a saved place, not a charger and not ignored (the "Stops to review" list): every one, the most visited days first, then the latest.
+        It used to list only spots stopped at on 3 days or more; once most of those were saved the list was empty while 130 spots were not named."""
         ign = _load(self.f_ignored) or []
         ign = [(e.get("center_lat"), e.get("center_lon"), e.get("radius_m") or 100) for e in ign if isinstance(e, dict) and e.get("center_lat") is not None]
         chg = [(c["lat"], c["lon"]) for c in S.charges() if c.get("lat") is not None and c.get("lon") is not None]
@@ -340,15 +344,16 @@ class Places:
         out = []
         for g in cells.values():
             days = {x[2] for x in g}
-            if len(days) < 3:
+            if len(days) < self.REVIEW_MIN_DAYS:
                 continue
             la, lo = sum(x[0] for x in g) / len(g), sum(x[1] for x in g) / len(g)
             if any(hav(la, lo, a, b) < 200 for a, b in chg) or any(hav(la, lo, a, b) <= r for a, b, r in ign):
                 continue
             addr = collections.Counter(x[4] for x in g if x[4]).most_common(1)
             out.append(dict(key=spot_key(la, lo), lat=la, lon=lo, visits=len(days), last=max(x[2] for x in g), addr=addr[0][0] if addr else ""))
-        out.sort(key=lambda x: -x["visits"])
-        return out[:60]
+        out.sort(key=lambda x: x["last"], reverse=True)
+        out.sort(key=lambda x: -x["visits"])                        # most days first; within the same, the latest first (sorts are stable)
+        return out[:self.REVIEW_MAX]
 
     # ---- one place -----------------------------------------------------------------------------------------------
     _STATES = {"New South Wales": "NSW", "Victoria": "VIC", "Queensland": "QLD", "South Australia": "SA", "Western Australia": "WA", "Tasmania": "TAS",
