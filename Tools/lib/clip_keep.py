@@ -41,6 +41,7 @@ import clip_move as CM
 from lib import teslacam_ledger as TLG
 from lib import teslacam_scan as TS
 from lib import teslacam_stills as ST
+import page_first as PF
 import sign_speed as SS
 import stat_memo as SM
 
@@ -285,6 +286,7 @@ class ClipKeep:
         led = TLG.Ledger(self.dir, readonly=True)            # only looked at: each day's file is parsed once and kept until it changes
         found = {}                                           # (kind, event) -> {stamp: dict(cams, bytes)}
         for day in led.days():
+            PF.give_way()                                    # a page's request is answered first (lib/page_first.py)
             for key, rec in led.day(day).items():
                 kind, ev, rest = key.split("|", 2)
                 m = _FILE.match(rest)
@@ -320,6 +322,7 @@ class ClipKeep:
         ignored = set()                                      # the minutes of what is parked at an ignored place (Home): left alone
         husks = []                                           # clips with nothing left: no video on any drive, nothing kept
         for (kind, cid), mins in groups.items():
+            PF.give_way()
             if not any(node["bytes"] for node in mins.values()) and not any(st in stills or st in scanned or store.summary(st) is not None for st in mins) \
                     and not (kind != "recent" and (self.shots.have(kind, cid) or self.evst.peek(kind, cid).get("n"))):
                 husks.append((kind, cid, mins))

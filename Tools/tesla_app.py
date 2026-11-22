@@ -93,6 +93,7 @@ import geo_common as GEO  # noqa: E402
 import school_days as SD  # noqa: E402
 import app_sync  # noqa: E402
 import app_software  # noqa: E402
+import page_first  # noqa: E402
 import car_watch  # noqa: E402
 import app_route  # noqa: E402
 import app_kept  # noqa: E402
@@ -607,7 +608,10 @@ class H(BaseHTTPRequestHandler):
                 dog.daemon = True
                 dog.start()
                 try:
-                    return self.api(path[5:], urllib.parse.parse_qs(u.query))
+                    if path.startswith("/api/debug/") or path[5:] in _POLLS:      # looking at the app, and the polls every page makes, do not hold its background work
+                        return self.api(path[5:], urllib.parse.parse_qs(u.query))
+                    with page_first.serving():                     # background builds give way while this is answered (lib/page_first.py)
+                        return self.api(path[5:], urllib.parse.parse_qs(u.query))
                 finally:
                     dog.cancel()
                     if not _FIRST_REQ[0]:
@@ -1521,6 +1525,9 @@ KEPT_LISTS = {          # the lists a page asks for first: answered from what wa
     "teslacam": lambda: dict(drives=TC.drives()),                                 # the drives that are connected right now (found by what is on them)
     "clips": lambda: _clips(),                  # every Recent run, Saved and Sentry event ever logged, whichever drives are connected; each says which drive holds it and whether it can be played
 }
+
+
+_POLLS = {"status", "clips/job", "keeper", "footage/todo", "footage/log", "tessie-sync", "software/sync", "clips/history"}        # asked every few seconds by every page
 
 
 def debug_threads():
