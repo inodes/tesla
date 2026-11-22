@@ -312,6 +312,13 @@ def _skews_refresh(force=False):
     if not d or (not force and now - _SK["at"] < 20.0):
         return
     _SK["at"] = now
+    try:                                                  # the files are written beside and renamed in (teslacam_provenance_store), so the folder's time changes with any of them:
+        dm = os.stat(os.path.join(d, "teslacam_provenance")).st_mtime_ns          # unchanged (and settled when last looked), the 320 files are not looked at one by one (0.5 s)
+    except OSError:
+        dm = None
+    if not force and dm is not None and _SK.get("dirm") == dm and now - dm / 1e9 > 2.0 and _SK["sig"]:
+        return
+    _SK["dirm"] = dm
     sig = []
     for f in _prov_files(d):
         try:
