@@ -348,6 +348,21 @@ def compute(stamps, items, moves=None, moves_upto=0, kinds=None, marks=None):
                 return dict(kind="drive", id="t%d" % m["t0"], t0=m["t0"], t1=m["t1"], p0=m.get("p0"), p1=m.get("p1"))
         return None
 
+    mvs = sorted((m for m in (moves or []) if m.get("t0") and m.get("t1")), key=lambda m: m["t0"])
+
+    def tessie_minute(t):
+        """What the other record (Tessie) says of a minute inside an unread stretch (kind "recording"), when it is complete past it: ("drive", its drive) when one covers the minute, else ("park", where
+        the last drive before it ended). It only gives a PLACE to a minute the clips call parked (never a drive, never a cut: see compute). One position carried over a whole unread stretch is wrong the
+        moment the car drove inside it (a stretch holding Tesla Service -> Home still said Tesla Service for the park after it, and Home for the park at the service centre). None when the record is
+        not complete there or has no drive before the minute."""
+        if not mvs or moves_upto < t + 60:
+            return None
+        mi = move_item(t)
+        if mi:
+            return ("drive", mi)
+        ended = [m for m in mvs if m["t1"] <= t and m.get("p1") and m["p1"][0] is not None]
+        return ("park", max(ended, key=lambda m: m["t1"])["p1"]) if ended else None
+
     out, key, last, sec, secit = {}, None, None, None, None
     ref = {}                                          # first minute of a section -> the timeline item it began in
     prev, days = None, {}                             # the minute before, and the local day of each minute looked at
@@ -361,6 +376,7 @@ def compute(stamps, items, moves=None, moves_upto=0, kinds=None, marks=None):
         t = CC.utc(st)
         it = moving(t) or at(t + 30)
         k = None
+        tm = tessie_minute(t) if it and it["kind"] == "recording" else None
         if st in own:                                     # the clips say: a drive or a park; the timeline's item and Tessie's drive only give the position
             k = ("drive", "c" + own[st][5:]) if own[st].startswith("drive") else ("park", "")
             if k[0] == "drive" and not (it and it["kind"] == "drive"):
@@ -377,6 +393,8 @@ def compute(stamps, items, moves=None, moves_upto=0, kinds=None, marks=None):
             k = ("park", "")
         elif it and it["kind"] == "recording" and key is not None and key[0] == "drive" and it["t1"] - it["t0"] >= MIN_UNREAD:
             k = ("park", "")                              # minutes nobody read after a drive (parked at Home: they are left alone, so never read) are the car parked, not more of the drive
+        if tm and tm[0] == "park" and k is not None and k[0] == "park" and it and it["kind"] == "recording":
+            it = dict(it, kind="stopped", p0=list(tm[1]), p1=list(tm[1]), pest=False)        # a parked minute in an unread stretch: where Tessie's last drive before it ended (the stretch's own place is where it began)
         new = last is None or t - last > GAP
         cut = False
         if not new and k is not None and key is not None and k != key:

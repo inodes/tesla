@@ -73,35 +73,31 @@ def find(root, name):
 
 
 def list_files(root):
-    """[(name, path)] of every charge_deepdive_* file under root (day layout and flat), each name once (the day layout wins), sorted by name."""
-    found = {}
-    try:
-        names = os.listdir(root)
-    except OSError:
-        return []
-    for nm in names:
-        p = os.path.join(root, nm)
-        if nm.startswith(PREFIX) and os.path.isfile(p):
-            found[nm] = p
-    for nm in names:
-        d = os.path.join(root, nm)
-        if not (DAY_RE.match(nm) and os.path.isdir(d)):
-            continue
+    """[(name, path)] of every charge_deepdive_* file under root (day layout and flat), each name once (the day layout wins), sorted by name. The folders are
+    read with scandir, whose entries say file or folder themselves: a stat of each of the ~3,200 entries took 16 s in the iCloud data folder on the Mac."""
+    def scan(d):
         try:
-            subs = os.listdir(d)
+            with os.scandir(d) as it:
+                return [(e.name, e.path, e.is_file(), e.is_dir()) for e in it]
         except OSError:
+            return None
+
+    found = {}
+    top = scan(root)
+    if top is None:
+        return []
+    for nm, p, is_file, _d in top:
+        if nm.startswith(PREFIX) and is_file:
+            found[nm] = p
+    for nm, d, _f, is_dir in top:
+        if not (is_dir and DAY_RE.match(nm)):
             continue
-        for sn in subs:
-            sd = os.path.join(d, sn)
-            if not os.path.isdir(sd):
+        for sn, sd, _f2, sub_dir in scan(d) or []:
+            if not sub_dir:
                 continue
-            try:
-                files = os.listdir(sd)
-            except OSError:
-                continue
-            for fn in files:
-                if fn.startswith(PREFIX) and os.path.isfile(os.path.join(sd, fn)):
-                    found[fn] = os.path.join(sd, fn)
+            for fn, fp, f_file, _d3 in scan(sd) or []:
+                if f_file and fn.startswith(PREFIX):
+                    found[fn] = fp
     return sorted(found.items())
 
 

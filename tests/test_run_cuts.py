@@ -170,6 +170,27 @@ class CutsTest(unittest.TestCase):
         self.assertEqual(RC.section(self.sts[25])[:1], ("park",))
         self.assertIsNone(RC.section(stamps(200, 1)[0]))                      # a minute after the last section: no section known
 
+    def test_unread_minutes_follow_tessies_drives_not_one_carried_place(self):
+        """A stretch of unread footage (kind "recording") holding a drive: the park after the drive is where Tessie's drive ended, not where the stretch began."""
+        A, B = [-33.8065, 151.0796], [-33.8163, 151.0221]
+        items = [item("recording", self.sts[0], self.sts[29], p0=A, p1=A)]              # the stretch carries one place, A, for all of it
+        move = dict(t0=CC.utc(self.sts[10]), t1=CC.utc(self.sts[19]) + 60, p0=A, p1=B)
+        kinds = {st: ("go" if 10 <= i < 20 else "pk") for i, st in enumerate(self.sts)}
+        c = RC.compute(self.sts, items, [move], CC.utc(self.sts[29]) + 600, kinds=kinds)
+        late = c[max(k for k in c if CC.utc(k) <= CC.utc(self.sts[25]))]
+        self.assertEqual(late[0], "park")
+        self.assertEqual(late[1:3], B)
+        mid = c[max(k for k in c if CC.utc(k) <= CC.utc(self.sts[15]))]
+        self.assertEqual(mid[0], "drive")
+
+    def test_unread_minutes_keep_the_carried_place_when_tessie_is_not_complete_there(self):
+        A, B = [-33.8065, 151.0796], [-33.8163, 151.0221]
+        items = [item("recording", self.sts[0], self.sts[29], p0=A, p1=A)]
+        move = dict(t0=CC.utc(self.sts[10]), t1=CC.utc(self.sts[19]) + 60, p0=A, p1=B)
+        kinds = {st: ("go" if 10 <= i < 20 else "pk") for i, st in enumerate(self.sts)}
+        c = RC.compute(self.sts, items, [move], CC.utc(self.sts[5]), kinds=kinds)        # Tessie has synced only up to 08:05
+        self.assertTrue(all(v[1:3] != B for v in c.values()))
+
 
 if __name__ == "__main__":
     unittest.main()
