@@ -28,6 +28,18 @@ class AtomicTest(unittest.TestCase):
         self.assertEqual(int(os.path.getmtime(self.dst)), 1700000000)
         self.assertEqual(self.left(), [os.path.basename(self.dst)])
 
+    def test_a_source_that_is_not_there_is_said_even_when_the_destination_has_the_name(self):
+        os.makedirs(os.path.dirname(self.dst))
+        with open(self.dst, "wb") as f:
+            f.write(b"already moved earlier")
+        os.remove(self.src)
+        for choice in (None, "delete", "overwrite"):
+            with self.assertRaises(FileNotFoundError):
+                CM.copy_in(self.src, self.dst, choice)               # was: "skipped", so the footage log kept saying the old drive had it
+        with self.assertRaises(FileNotFoundError):
+            CM.put(self.src, self.dst, None)
+        self.assertEqual(open(self.dst, "rb").read(), b"already moved earlier")      # the copy that is there is untouched
+
     def test_stopped_in_the_middle_of_a_copy_leaves_the_video_where_it_was(self):
         calls = []
 

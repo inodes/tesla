@@ -174,6 +174,8 @@ def copy_in(src, dst, choice, stop=None):
     """The first half of a move, for a move that checks in the background: the video is copied to dst (beside the name as .part, written to the drive, size checked, one rename) and is NOT
     removed from src. Returns ("copied", crc) with the checksum of what was read, ("skipped", None) or ("dropped", None) as put() does. finish() follows, later: until then the video is on
     both drives, whole on each, and a cut-off at any moment leaves it so (the next move sees two identical files and removes the old one)."""
+    if not os.path.exists(src):
+        raise FileNotFoundError(src)                    # nothing to move: said first, not hidden behind "already there" (the footage log then learns the drive no longer has it)
     if os.path.lexists(dst):
         if choice == "delete":
             os.remove(src)
