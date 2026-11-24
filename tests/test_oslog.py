@@ -25,10 +25,10 @@ class OsLogTest(unittest.TestCase):
             f("a line \x00 with a nul and unicode: café")
         self.assertIs(oslog.get("perf"), lg)
 
-    def test_the_header_is_passed_by_address_and_the_call_is_first_made_by_a_child(self):
+    def test_the_call_names_a_system_image_that_holds_the_format_and_is_first_made_by_a_child(self):
         src = open(os.path.join(HERE, "..", "Tools", "lib", "oslog.py"), encoding="utf-8").read()
-        self.assertIn("ctypes.addressof(ctypes.c_char.in_dll(", src)          # c_void_p.in_dll reads the header's first bytes as the pointer: it killed the app on 24 Nov
-        self.assertNotIn("c_void_p.in_dll", src.replace("# in_dll of a c_void_p", ""))
+        self.assertNotIn("c_void_p.in_dll", src)                                  # that read the header's first bytes as the pointer: it killed the app on 24 Nov
+        self.assertIn("_find_format(", src)                                       # a format string outside every image logs as "<compose failure>"
         self.assertIn("_ctypes_safe()", src)                                      # the app never makes the raw call before a child process has
 
     def test_a_ctypes_child_that_fails_means_no_ctypes_backend(self):

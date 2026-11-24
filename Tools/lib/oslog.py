@@ -33,24 +33,60 @@ _LOCK = threading.Lock()
 _FMT = b"%{public}s"
 
 
+def _find_format(libsys):
+    """(header address, address of "%{public}s") inside a system library's __TEXT. The log decodes a message by reading its format string out of the image the call names (by that
+    image's UUID and the string's offset in it): a format string in Python's memory is not in any image and shows as "<compose failure>". A system library holds this exact string, so
+    the call names that library and that address. (None, None) when no loaded image holds it."""
+    import struct
+    libsys._dyld_image_count.restype = ctypes.c_uint32
+    libsys._dyld_get_image_header.restype = ctypes.c_void_p
+    libsys._dyld_get_image_header.argtypes = [ctypes.c_uint32]
+    libsys._dyld_get_image_name.restype = ctypes.c_char_p
+    libsys._dyld_get_image_name.argtypes = [ctypes.c_uint32]
+    for i in range(libsys._dyld_image_count()):
+        name = libsys._dyld_get_image_name(i) or b""
+        if not (name.startswith(b"/usr/lib/") or name.startswith(b"/System/")):
+            continue
+        hdr = libsys._dyld_get_image_header(i)
+        if not hdr:
+            continue
+        magic, _cpu, _sub, _ft, ncmds, _sz, _fl, _res = struct.unpack("<IiiIIIII", ctypes.string_at(hdr, 32))
+        if magic != 0xFEEDFACF:
+            continue
+        off = 32
+        for _ in range(ncmds):
+            cmd, size = struct.unpack("<II", ctypes.string_at(hdr + off, 8))
+            if cmd == 0x19:                                           # LC_SEGMENT_64
+                segname, _vmaddr, vmsize = struct.unpack("<16sQQ", ctypes.string_at(hdr + off + 8, 32))
+                if segname.rstrip(b"\0") == b"__TEXT":
+                    at = ctypes.string_at(hdr, vmsize).find(_FMT + b"\0")
+                    if at >= 0:
+                        return hdr, hdr + at
+                    break
+            off += size
+    return None, None
+
+
 def _setup_ctypes():
-    """The os_log functions through ctypes: (libc, dso). `dso` is the ADDRESS of the program's Mach-O header (the image the call says the message comes from)."""
+    """The os_log functions through ctypes: (libc, dso, format address). `dso` is the ADDRESS of the Mach-O header of the image holding the format string."""
     libc = ctypes.CDLL(ctypes.util.find_library("System") or "/usr/lib/libSystem.B.dylib")
     libc.os_log_create.restype = ctypes.c_void_p
     libc.os_log_create.argtypes = [ctypes.c_char_p, ctypes.c_char_p]
     libc._os_log_impl.restype = None
-    libc._os_log_impl.argtypes = [ctypes.c_void_p, ctypes.c_void_p, ctypes.c_uint8, ctypes.c_char_p, ctypes.c_char_p, ctypes.c_uint32]
-    # in_dll of a c_void_p READS the 8 bytes at the symbol (the header's magic) as the pointer: that crashed the app on 24 Nov. The address of the symbol is what is wanted.
-    dso = ctypes.addressof(ctypes.c_char.in_dll(ctypes.CDLL(None), "_mh_execute_header"))
-    return libc, dso
+    libc._os_log_impl.argtypes = [ctypes.c_void_p, ctypes.c_void_p, ctypes.c_uint8, ctypes.c_void_p, ctypes.c_char_p, ctypes.c_uint32]
+    dso, fmt = _find_format(libc)
+    if not dso:
+        raise OSError("no image holds the format string")
+    return libc, (dso, fmt)
 
 
 def _emit(libc, dso, h, level, text):
+    """One message at `level`. `dso` is (header address, format address), as _setup_ctypes gave."""
     data = text.encode("utf-8", "replace")
     s = ctypes.create_string_buffer(data)
     buf = bytearray(b"\x02\x01\x22\x08") + ctypes.addressof(s).to_bytes(8, "little")        # summary: has a non-scalar; 1 argument: public string, 8 bytes: its address
     raw = (ctypes.c_char * len(buf)).from_buffer(buf)
-    libc._os_log_impl(ctypes.c_void_p(dso), h, level, _FMT, ctypes.cast(raw, ctypes.c_char_p), len(buf))
+    libc._os_log_impl(ctypes.c_void_p(dso[0]), h, level, ctypes.c_void_p(dso[1]), ctypes.cast(raw, ctypes.c_char_p), len(buf))
 
 
 def _child():
@@ -183,6 +219,24 @@ def test_line(token=None):
             found = True
             break
     return dict(backend=backend(), token=token, found=found, seconds=round(time.time() - t0, 1), output=out[-1500:])
+
+
+def show(last="10m", category=None, text=None, limit=20000):
+    """The app's own lines from the unified log (`log show`), for the debug page: last = "30s" / "10m" / "2h", category (perf, stall, health, fault, start), text = a word the line must hold.
+    The arguments are checked, never passed through a shell."""
+    import re
+    if not re.fullmatch(r"\d{1,3}[smhd]", last or ""):
+        last = "10m"
+    pred = 'subsystem == "%s"' % SUBSYSTEM
+    if category and re.fullmatch(r"[a-z]{1,12}", category):
+        pred += ' AND category == "%s"' % category
+    if text and re.fullmatch(r"[\w .=/:_-]{1,60}", text):
+        pred += ' AND eventMessage CONTAINS "%s"' % text
+    try:
+        out = subprocess.run(["/usr/bin/log", "show", "--last", last, "--info", "--debug", "--style", "compact", "--predicate", pred], capture_output=True, text=True, timeout=40).stdout
+    except (OSError, subprocess.SubprocessError) as e:
+        return "log show failed: %s" % e
+    return out[-limit:]
 
 
 # ---- what the app logs for itself ----

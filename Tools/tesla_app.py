@@ -950,6 +950,8 @@ class H(BaseHTTPRequestHandler):
             return self.send_json(drive_review_state(q.get("id", [""])[0]))
         if name == "review/scanned":            # every minute whose signs have been read: {UTC epoch s of the minute: signs found}
             return self.send_json(TC.review_scanned())
+        if name == "debug/log":                 # the app's own lines in the unified log: debug/log?last=30m&category=stall&text=late_s (all optional)
+            return self.send_bytes(oslog.show(q.get("last", ["10m"])[0], q.get("category", [None])[0], q.get("text", [None])[0]).encode("utf-8", "replace"), "text/plain; charset=utf-8")
         if name == "debug/oslog":               # writes one line to the unified log and reads it back with `log show`: proof that the log arrives (and which backend wrote it)
             return self.send_json(oslog.test_line())
         if name == "debug/sample":              # debug/sample?secs=15: which code the threads spend their time in over that long (for a burst a single look misses)
