@@ -53,6 +53,9 @@ class Base(unittest.TestCase):
     def setUp(self):
         self.t = tempfile.mkdtemp()
         self.data = os.path.join(self.t, "data")
+        import clips_purged as _PG
+        _PG.set_file(os.path.join(self.t, "none_purged.json"))                # what an earlier test deleted with everything (kept in memory by the module) is not this test's
+        self.addCleanup(lambda: _PG.set_file(None))
         self.roots = {r: os.path.join(self.t, r, "TeslaCam") for r in "AJ"}
         for r, root in self.roots.items():
             os.makedirs(os.path.join(root, "SavedClips", "ev1"))
@@ -212,6 +215,7 @@ class KeepTest(Base):
         k = self.keep(read=[S1, S2], stills=[S1, S2], scanned=[S1, S2])
         k.start("delete", "J", [dict(kind="saved", id="ev1")], self.roots, confirmed=True)
         k._thread.join(5)
+        k.wait_checked()
         self.assertEqual(os.listdir(os.path.join(self.roots["J"], "SavedClips", "ev1")), [])      # a delete removes only the video: the folder stays
         j = k.job()
         self.assertEqual((j["done"], j["freed"], j["errors"]), (4, 40, []))
@@ -228,6 +232,7 @@ class KeepTest(Base):
         self.assertEqual(k.job(), dict(running=False))                              # nothing done yet, nothing logged
         k.start("delete", "J", [dict(kind="saved", id="ev1")], self.roots, confirmed=True)
         k._thread.join(5)
+        k.wait_checked()
         h = k.history()
         self.assertEqual((h[0]["action"], h[0]["role"], h[0]["removed"], h[0]["freed"], h[0]["errors"]), ("delete", "J", 4, 40, []))
         self.assertEqual(sorted(h[0]["files"])[0], "%s-back.mp4" % S1)
@@ -240,6 +245,7 @@ class KeepTest(Base):
         out = k.start("move", "J", [dict(kind="saved", id="ev1")], self.roots, confirmed=True)                # nothing kept yet: a move is still allowed, nothing is lost
         self.assertNotIn("error", out)
         k._thread.join(5)
+        k.wait_checked()
         self.assertEqual(sorted(os.listdir(os.path.join(self.roots["A"], "SavedClips", "ev1"))), sorted(["%s-%s.mp4" % (st, c) for st in (S1, S2) for c in ("front", "back")]))
         self.assertFalse(os.path.exists(os.path.join(self.roots["J"], "SavedClips", "ev1")))      # the folder moved with its video: no shell is left
         self.assertEqual(k.status(force=True)["clips"]["saved"]["ev1"]["bytes"], {"A": 40})
@@ -248,20 +254,22 @@ class KeepTest(Base):
         """Stop in the middle: each file is on the old drive only or on the new one only, no half copy anywhere, the footage log says the same, and a later move finishes the job."""
         import clip_move as CM
         k = self.keep()
-        real = CM.put
+        real = CM.copy_in
         n = []
 
-        def put(src, dst, choice, stop=None, verify=None):
-            if n:                                                    # the second file: Stop pressed while it is copied
+        def copy_in(src, dst, choice, stop=None):
+            if n:                                                    # the second file: Stop pressed twice (a hard stop) while it is copied
                 k._stop = True
+                k._hard = True
             n.append(src)
-            return real(src, dst, choice, stop, verify)
-        CM.put = put
+            return real(src, dst, choice, stop)
+        CM.copy_in = copy_in
         try:
             k.start("move", "J", [dict(kind="saved", id="ev1")], self.roots, confirmed=True)
             k._thread.join(5)
+            k.wait_checked()
         finally:
-            CM.put = real
+            CM.copy_in = real
         j = k.job()
         self.assertTrue(j["stopped"])
         on_j = {f for f in os.listdir(os.path.join(self.roots["J"], "SavedClips", "ev1"))}
@@ -281,6 +289,50 @@ class KeepTest(Base):
         k2.start("move", "J", [dict(kind="saved", id="ev1")], self.roots, confirmed=True)
         k2._thread.join(5)
         self.assertEqual(len(os.listdir(os.path.join(self.roots["A"], "SavedClips", "ev1"))), 4)
+
+    def test_a_soft_stop_finishes_the_card_it_is_on_and_a_card_is_never_split(self):
+        """One Stop: the card (a thumbnail with all its clips) being moved is finished, so it is whole on one drive; the next card is not started."""
+        import clip_move as CM
+        k = self.keep()
+        real = CM.copy_in
+        n = []
+
+        def copy_in(src, dst, choice, stop=None):
+            if not n:
+                k._stop = True                                       # pressed while the first file is copied
+            n.append(src)
+            return real(src, dst, choice, stop)
+        CM.copy_in = copy_in
+        try:
+            k.start("move", "J", [dict(kind="saved", id="ev1")], self.roots, confirmed=True)
+            k._thread.join(5)
+            k.wait_checked()
+        finally:
+            CM.copy_in = real
+        names = {"%s-%s.mp4" % (st, c) for st in (S1, S2) for c in ("front", "back")}
+        on_a = set(os.listdir(os.path.join(self.roots["A"], "SavedClips", "ev1")))
+        self.assertEqual(on_a, names)                                   # the whole card went
+        self.assertFalse(os.path.exists(os.path.join(self.roots["J"], "SavedClips", "ev1")))
+
+    def test_a_copy_that_does_not_read_back_the_same_is_removed_and_the_original_stays(self):
+        import clip_move as CM
+        k = self.keep()
+        real = CM.finish
+
+        def finish(src, dst, crc, pause=None):
+            return real(src, dst, "not-the-checksum", pause)             # the read-back disagrees
+        CM.finish = finish
+        try:
+            k.start("move", "J", [dict(kind="saved", id="ev1")], self.roots, confirmed=True)
+            k._thread.join(5)
+            k.wait_checked()
+        finally:
+            CM.finish = real
+        j = k.job()
+        self.assertTrue(j["errors"])
+        self.assertEqual(len(os.listdir(os.path.join(self.roots["J"], "SavedClips", "ev1"))), 4)      # every original is still there
+        a = os.path.join(self.roots["A"], "SavedClips", "ev1")
+        self.assertEqual(os.listdir(a) if os.path.isdir(a) else [], [])        # no bad copy is left
 
     def test_a_job_cut_off_by_a_crash_is_put_right_from_what_is_on_the_drives(self):
         k = self.keep()
@@ -323,6 +375,7 @@ class KeepTest(Base):
         out = k.start("move", "J", [dict(kind="saved", id="ev1")], self.roots, confirmed=True, **kw)
         if "error" not in out and "needs" not in out:
             k._thread.join(5)
+            k.wait_checked()
         return k, out
 
     def test_a_move_takes_the_whole_event_folder_and_leaves_no_shell(self):
@@ -451,6 +504,7 @@ class KeepTest(Base):
         out = k.start("move", "J", [dict(kind="saved", id="ev1")], roots, confirmed=True, to="U")
         self.assertNotIn("error", out)
         k._thread.join(5)
+        k.wait_checked()
         self.assertEqual(sorted(os.listdir(os.path.join(dst, "SavedClips", "ev1"))), sorted(["%s-%s.mp4" % (st, c) for st in (S1, S2) for c in ("front", "back")]))
         self.assertFalse(os.path.exists(os.path.join(self.roots["J"], "SavedClips", "ev1")))      # the folder moved with its video: no shell is left
         self.assertFalse(os.path.exists(os.path.join(self.roots["A"], "SavedClips", "ev1", "%s-front.mp4" % S1)))      # not on the Archive
@@ -466,6 +520,7 @@ class KeepTest(Base):
         out = k.start("delete", "J", [dict(kind="saved", id="ev1")], self.roots, confirmed=True)
         self.assertNotIn("error", out)
         k._thread.join(5)
+        k.wait_checked()
         self.assertEqual(os.listdir(os.path.join(self.roots["J"], "SavedClips", "ev1")), [])      # a delete removes only the video: the folder stays
 
     def test_a_drive_that_is_not_connected_or_the_archive_itself_is_refused_for_a_move(self):
@@ -622,6 +677,7 @@ class ProcessTest(ProcBase):
         self.assertNotIn("error", out)
         self.assertFalse(out["reading"])                                                # not held up by reading: it moves first
         self.k._thread.join(5)
+        self.k.wait_checked()
         j = self.k.job()
         self.assertEqual([c[0] for c in self.calls], ["read", "stills"])
         self.assertTrue(all(p.startswith(self.roots["A"]) for p in self.calls[0][3]))   # read from the Archive, where the video is now: JOWUA no longer has it
@@ -634,6 +690,7 @@ class ProcessTest(ProcBase):
         self.k._run_then_read = lambda *a: seen.append(dict(self.k._mv))
         self.k.start("move", "J", [dict(kind="saved", id="ev1")], self.roots, confirmed=True)
         self.k._thread.join(5)
+        self.k.wait_checked()
         self.assertEqual(seen[0].get("%s-front.mp4" % S1), "A")
         self.assertEqual(self.k.moving("%s-front.mp4" % S1), "A")
         self.assertEqual(self.k.moving("nothing.mp4"), "")
@@ -641,6 +698,7 @@ class ProcessTest(ProcBase):
     def test_after_a_move_nothing_is_on_its_way(self):
         self.k.start("move", "J", [dict(kind="saved", id="ev1")], self.roots, confirmed=True)
         self.k._thread.join(5)
+        self.k.wait_checked()
         self.assertEqual(self.k.moving("%s-front.mp4" % S1), "")
 
     def test_a_move_is_not_held_up_or_undone_by_what_could_not_be_read(self):
@@ -649,6 +707,7 @@ class ProcessTest(ProcBase):
         TS.read = bad
         self.k.start("move", "J", [dict(kind="saved", id="ev1")], self.roots, confirmed=True)
         self.k._thread.join(5)
+        self.k.wait_checked()
         self.assertTrue(any("drive pulled out" in e for e in self.k.job()["errors"]))          # said, and the next Update reads it again
         self.assertFalse(os.path.exists(os.path.join(self.roots["J"], "SavedClips", "ev1")))      # the folder moved with its video: no shell is left    # but the video was moved
         self.assertTrue(os.path.exists(os.path.join(self.roots["A"], "SavedClips", "ev1", "%s-front.mp4" % S1)))
@@ -657,6 +716,7 @@ class ProcessTest(ProcBase):
         out = self.k.start_process([dict(kind="saved", id="ev1")], self.roots)
         self.assertNotIn("error", out)
         self.k._thread.join(5)
+        self.k.wait_checked()
         j = self.k.job()
         self.assertEqual([x["step"] for x in j["steps"]], ["Reading metadata", "Making stills", "Building drive snapshots", "Saving event pictures", "Reading signs"])
         self.assertEqual([c[0] for c in self.calls], ["read", "stills"])
@@ -672,6 +732,7 @@ class ProcessTest(ProcBase):
         self.rv.done[S1] = 0
         self.k.start_process([dict(kind="saved", id="ev1")], self.roots)
         self.k._thread.join(5)
+        self.k.wait_checked()
         self.assertEqual(self.calls[0][1], [S2])
         self.assertEqual(self.calls[1][1], [S2])
         self.assertEqual([i[0] for i in self.rv.started], [S2])
@@ -681,6 +742,7 @@ class ProcessTest(ProcBase):
         out = self.k.start_process([dict(kind="saved", id="ev1")], self.roots, steps=["stills"])
         self.assertNotIn("error", out)
         self.k._thread.join(5)
+        self.k.wait_checked()
         self.assertEqual([x["step"] for x in self.k.job()["steps"]], ["Making stills"])
         self.assertEqual([c[0] for c in self.calls], ["stills"])
         self.assertIsNone(self.rv.started)
@@ -698,6 +760,7 @@ class ProcessTest(ProcBase):
         TS.read = bad
         self.k.start_process([dict(kind="saved", id="ev1")], self.roots)
         self.k._thread.join(5)
+        self.k.wait_checked()
         self.assertFalse(self.k.job()["running"])
         self.assertIn("drive gone", self.k.job()["errors"][0])
 
@@ -749,6 +812,7 @@ class EventShotsTest(ProcBase):
         self.assertEqual(len(k.pictures_plan(self.roots)), 1)
         self.assertTrue(k.pictures_start(self.roots))
         k._thread.join(5)
+        k.wait_checked()
         j = k.job()
         self.assertEqual((j["action"], j["step_done"], j["step_total"], j["errors"]), ("pictures", 3, 3, []))                  # two cameras of the moment and the seconds around it
         self.assertEqual(k.shots.have("saved", "ev1"), {"front", "back"})
@@ -766,6 +830,7 @@ class EventShotsTest(ProcBase):
         self.assertIn("not all kept", k.start("delete", "J", [dict(kind="saved", id="ev1")], self.roots, confirmed=True)["error"])
         k.start_process([dict(kind="saved", id="ev1")], self.roots)
         k._thread.join(5)
+        k.wait_checked()
         self.assertEqual(k.job()["errors"], [])
         self.assertEqual(sorted(k.shots.have("saved", "ev1")), ["back", "front"])
         self.assertEqual(self.ffmpeg[0][self.ffmpeg[0].index("-ss") + 1], "30")
@@ -780,6 +845,7 @@ class EventShotsTest(ProcBase):
         self.assertEqual((r["shots"], r["window"], r["ready"]), ([0, 0], [0, 1], False))
         self.k.start_process([dict(kind="saved", id="ev1")], self.roots)
         self.k._thread.join(5)
+        self.k.wait_checked()
         r = self.k.status(force=True)["clips"]["saved"]["ev1"]
         self.assertEqual((r["window"], r["ready"], r["tier"]), ([1, 1], True, "high"))
 
@@ -788,9 +854,11 @@ class EventShotsTest(ProcBase):
         self.kept()
         self.k.start_process([dict(kind="saved", id="ev1")], self.roots)
         self.k._thread.join(5)
+        self.k.wait_checked()
         n = len(self.ffmpeg)
         self.k.start_process([dict(kind="saved", id="ev1")], self.roots)
         self.k._thread.join(5)
+        self.k.wait_checked()
         self.assertEqual(len(self.ffmpeg), n)
 
 

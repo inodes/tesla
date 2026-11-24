@@ -24,7 +24,7 @@ def resolve_root(item, overrides):
     role = item.get("role")
     if role in overrides:
         return overrides[role]
-    return DR.find_root(role) if role in ("A", "J", "U") else None
+    return DR.find_root(role) if role in DR.read_roles() else None
 
 
 def files_of(root, item):

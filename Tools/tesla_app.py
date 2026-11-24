@@ -815,7 +815,7 @@ class H(BaseHTTPRequestHandler):
                 return self.send_json(dict(ok=False, error="Unknown action."))
             if u.path == "/api/eject":             # {role}: stop reading the drive, then eject it
                 role = body.get("role")
-                root = footage_root(role) if role in ("A", "J", "U") else None
+                root = footage_root(role) if role in DR.read_roles() else None
                 if not root:
                     return self.send_json(dict(ok=False, text="That drive is not connected."))
                 return self.send_json(eject_drive(role, root))

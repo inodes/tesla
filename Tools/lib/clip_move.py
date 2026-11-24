@@ -106,7 +106,7 @@ def _copy(src, part, stop=None):
     return "%08x" % (c & 0xFFFFFFFF)
 
 
-def _crc_from_drive(path):
+def _crc_from_drive(path, pause=None):
     """The checksum of a file read back from the drive (macOS: not from the cache that just took the write), else from the file as the system gives it."""
     fd = os.open(path, os.O_RDONLY)
     try:
@@ -117,6 +117,8 @@ def _crc_from_drive(path):
             pass
         c = 0
         while True:
+            if pause:
+                pause()                                    # a page's request is answered first
             b = os.read(fd, 4 * 1024 ** 2)
             if not b:
                 break
@@ -164,6 +166,50 @@ def put(src, dst, choice, stop=None, verify=None):
     os.remove(src)
     _drop(sidecar(src))
     return "moved"
+
+
+def copy_in(src, dst, choice, stop=None):
+    """The first half of a move, for a move that checks in the background: the video is copied to dst (beside the name as .part, written to the drive, size checked, one rename) and is NOT
+    removed from src. Returns ("copied", crc) with the checksum of what was read, ("skipped", None) or ("dropped", None) as put() does. finish() follows, later: until then the video is on
+    both drives, whole on each, and a cut-off at any moment leaves it so (the next move sees two identical files and removes the old one)."""
+    if os.path.lexists(dst):
+        if choice == "delete":
+            os.remove(src)
+            _drop(sidecar(src))
+            return "dropped", None
+        if choice != "overwrite":
+            return "skipped", None
+    os.makedirs(os.path.dirname(dst), exist_ok=True)
+    had = os.path.lexists(sidecar(dst))
+    part = dst + ".part"
+    st = os.stat(src)
+    try:
+        crc = _copy(src, part, stop)
+        os.utime(part, ns=(st.st_atime_ns, st.st_mtime_ns))
+        if os.path.getsize(part) != st.st_size:
+            raise OSError("the copy has a different size: the video was left where it was")
+    except BaseException:
+        _drop(part)
+        _drop(sidecar(part))
+        raise
+    os.replace(part, dst)
+    _drop(sidecar(part))
+    if not had:
+        _drop(sidecar(dst))
+    return "copied", crc
+
+
+def finish(src, dst, crc, pause=None):
+    """The second half: the copy at dst is read back from the drive and its checksum compared with the one taken as it was copied. Equal: src is removed, True. Different: the bad copy is
+    removed, src stays, OSError. src already gone: False (nothing to do)."""
+    if not os.path.lexists(src):
+        return False
+    if _crc_from_drive(dst, pause) != crc:
+        _drop(dst)
+        raise OSError("the copy read back from the drive differs from the video: the video was left on the old drive")
+    os.remove(src)
+    _drop(sidecar(src))
+    return True
 
 
 def sweep_parts(folder):

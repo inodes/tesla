@@ -18,6 +18,7 @@ and then deletes them from the drive they were on, after checking again that it 
     ClipKeep.start_process(items, roots)     reads what is missing for the clips: metadata, then stills, then signs (from the video on a connected drive)
     ClipKeep.job()                           -> the running or last job
 """
+import collections
 import datetime
 import json
 import os
@@ -42,6 +43,7 @@ from lib import teslacam_ledger as TLG
 from lib import teslacam_scan as TS
 from lib import teslacam_stills as ST
 import page_first as PF
+import oslog
 import sign_speed as SS
 import stat_memo as SM
 
@@ -96,8 +98,17 @@ class ClipKeep:
         self._lock = threading.Lock()
         self._job = dict(running=False)
         self._mv = {}                      # {file name: role it is being moved to} while a Move is working: a clip knows it is on its way
+        self._vq = collections.deque()     # copies made by a move, waiting to be read back (the old file is removed once its copy has been checked)
+        self._vlock = threading.Lock()
+        self._vthread = None
+        self._vpend = {}                   # job (its start time) -> copies still to check
+        self._vstats = {}                  # job -> dict(confirmed, freed, errors)
+        self._vafter = {}                  # job -> what is done once all its copies are checked: the event folders they leave are emptied and removed
+        self._led_lock = threading.Lock()  # the footage log is read, changed and written back by one thread at a time
         self._thread = None
         self._stop = False
+        self._hard = False                 # a second Stop: do not even finish the card in hand
+        self._unit_of = {}                 # file key -> the thumbnail its clip belongs to, for the job under way
         self.shots = ES.EventShots(data_dir)
         self.evst = EV.EventStills(data_dir)
 
@@ -579,7 +590,14 @@ class ClipKeep:
         plan, err = self.check(action, role, items, roots, to)
         if err:
             return dict(error=err)
-        files = [(k, sz, f) for _, _, fs in plan for k, sz, f in fs]
+        unit = {(it.get("kind"), it.get("id")): str(it.get("unit") or "%s|%s" % (it.get("kind"), it.get("id"))) for it in items}      # the thumbnail each clip belongs to (the page says which)
+        order = {}
+        for kind, cid, _fs in plan:
+            order.setdefault(unit.get((kind, cid)) or "%s|%s" % (kind, cid), len(order))
+        tagged = [(order[unit.get((kind, cid)) or "%s|%s" % (kind, cid)], (k, sz, f), unit.get((kind, cid)) or "%s|%s" % (kind, cid)) for kind, cid, fs in plan for k, sz, f in fs]
+        tagged.sort(key=lambda x: x[0])                                                   # one card after the other: a card's files are together in the job
+        files = [x[1] for x in tagged]
+        self._unit_of = {x[1][0]: x[2] for x in tagged}
         clips = [dict(kind=k, id=c) for k, c, _ in plan]
         self._choice = conflict if conflict in CM.CHOICES else None
         cf = None
@@ -602,6 +620,7 @@ class ClipKeep:
                 if paths and not self.tc._rv().status().get("running"):
                     read = (kind_of, paths, [(it["kind"], it["id"]) for it in lack if it["kind"] != "recent"])
         self._stop = False
+        self._hard = False
         self._roots = roots
         self._mv = {os.path.basename(TF.front_path(roots[role], f)): to for _, _, f in files} if action == "move" else {}
         self._job = dict(running=True, action=action, role=role, to=to, files=len(files), done=0, bytes=sum(sz for _, sz, _ in files), bytes_done=0, freed=0, errors=[], current="",
@@ -1202,6 +1221,16 @@ class ClipKeep:
     def job(self):
         j = dict(self._job)
         j["running"] = bool(self._thread and self._thread.is_alive())
+        t0 = j.get("t0")
+        with self._vlock:
+            pend, vs = self._vpend.get(t0, 0), dict(self._vstats.get(t0) or {})
+        if vs:                                                  # the copies checked since (in the background, after the copying): their old files are removed
+            j["confirmed"] = j.get("confirmed", 0) + vs.get("confirmed", 0)
+            j["freed"] = j.get("freed", 0) + vs.get("freed", 0)
+            j["errors"] = list(j.get("errors", [])) + list(vs.get("errors", []))
+        if pend:
+            j["verifying"] = pend
+            j["running"] = True
         if "action" not in j:                                  # nothing done since the app started: say what the last job removed
             h = self.history(1)
             if h:
@@ -1209,14 +1238,30 @@ class ClipKeep:
         return j
 
     def stop(self):
+        """A move or delete stops after the card (thumbnail) it is working on, so no card is left split between two drives; a second Stop stops at once (the file being copied is
+        removed again, the video stays where it was)."""
+        if self._stop:
+            self._hard = True
         self._stop = True
+        self._job["stopping"] = True
         return self.job()
 
     FLUSH_S = 3.0                 # the footage log is written at most this long after a file was moved or removed (a day's file is big: not once a file)
     JOURNAL = "clip_move_job.json"
 
+    def _apply_marks(self, marks):
+        """Writes what happened to files into the footage log: [(role, key, size, present)], read afresh, changed and written back while no other thread does the same."""
+        if not marks:
+            return
+        with self._led_lock:
+            led = TLG.Ledger(self.dir)
+            touched = set()
+            for role, key, size, present in marks:
+                touched.add(led.mark(role, key, size, present, flush=False))
+            led.flush({d for d in touched if d})
+
     def _journal(self, action, role, to, files):
-        """Written before the first file is touched and removed when the job has ended: a job that was cut off (the app quit, a crash, the drive pulled) leaves it, and recover() puts the
+        """Written before the first file is touched and removed when the copying has ended: a job that was cut off (the app quit, a crash, the drive pulled) leaves it, and recover() puts the
         footage log right from what is on the drives."""
         try:
             os.makedirs(self.dir, exist_ok=True)
@@ -1251,21 +1296,20 @@ class ClipKeep:
         drives = [role] + ([to] if action == "move" and to else [])
         if not all(roots.get(r) for r in drives):
             return None
-        led = TLG.Ledger(self.dir)
-        touched, parts, seen = set(), 0, set()
+        marks, parts, seen = [], 0, set()
         for key, size, f in files:
             for r in drives:
                 p = TF.front_path(roots[r], f)
                 try:
                     here = os.path.isfile(p)
-                    touched.add(led.mark(r, key, os.path.getsize(p) if here else size, here, flush=False))
+                    marks.append((r, key, os.path.getsize(p) if here else size, here))
                 except OSError:
                     continue
                 d = os.path.dirname(p)
                 if r == to and d not in seen:
                     seen.add(d)
                     parts += CM.sweep_parts(d)
-        led.flush({d for d in touched if d})
+        self._apply_marks(marks)
         try:
             with open(os.path.join(self.dir, self.LOG), "a", encoding="utf-8") as fh:
                 fh.write(json.dumps(dict(t=time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), action=action, role=role, to=to, clips=[], removed=0, files=[], freed=0, errors=[], stopped=True,
@@ -1276,9 +1320,90 @@ class ClipKeep:
         self._changed()
         return dict(files=len(files), parts=parts)
 
+    # ---- checking the copies a move made: in the background, after the copying, behind every page's request ------------
+    def _queue_check(self, item):
+        t0 = item["t0"]
+        with self._vlock:
+            self._vq.append(item)
+            self._vpend[t0] = self._vpend.get(t0, 0) + 1
+            if self._vthread is None:
+                self._vthread = threading.Thread(target=self._check_loop, name="clip-check", daemon=True)
+                self._vthread.start()
+
+    def wait_checked(self, timeout=30.0):
+        """Waits until the copies a move made have all been read back (tests, and a quit that wants the old drive tidy). True when nothing is left to check."""
+        end = time.time() + timeout
+        while time.time() < end:
+            with self._vlock:
+                if not self._vq and self._vthread is None:
+                    return True
+            time.sleep(0.02)
+        return False
+
+    def _check_loop(self):
+        """Reads each copy back from the drive, a request of a page first, and compares it with the video. Equal: the old file is removed and the footage log says so. Different: the bad copy is
+        removed and the video stays on the old drive. The old file is never removed before its copy has been checked, so the video is whole on at least one drive at every moment."""
+        marks, last = [], time.time()
+        while True:
+            with self._vlock:
+                item = self._vq.popleft() if self._vq else None
+                if item is None:
+                    self._vthread = None
+            if item is None:
+                self._apply_marks(marks)
+                self._changed()
+                return
+            t0 = item["t0"]
+            err, ok, unknown = None, False, False
+            try:
+                ok = CM.finish(item["src"], item["dst"], item["crc"], pause=lambda: PF.give_way(0.3))
+                if not ok:
+                    err = None
+            except OSError as e:
+                err = "%s: %s" % (os.path.basename(item["src"]), e)
+            except Exception as e:                                                      # not expected: both copies are left as they are, the job says so and goes on (the checker never dies holding the job open)
+                err, unknown = "%s: %s" % (os.path.basename(item["src"]), e), True
+                oslog.get("move").error("check of %s failed: %s" % (item["src"], e))
+            if err and unknown:
+                pass
+            elif err:
+                marks.append((item["to"], item["key"], item["size"], False))               # the copy that did not match was removed
+            else:
+                marks.append((item["role"], item["key"], item["size"], False))               # the old file is gone
+            with self._vlock:
+                st = self._vstats.setdefault(t0, dict(confirmed=0, freed=0, errors=[]))
+                if err:
+                    st["errors"].append(err)
+                else:
+                    st["confirmed"] += 1
+                    st["freed"] += item["size"] if ok else 0
+                self._vpend[t0] = max(0, self._vpend.get(t0, 1) - 1)
+                after = self._vafter.pop(t0, None) if not self._vpend[t0] else None
+            if after:
+                self._apply_marks(marks)
+                marks, last = [], time.time()
+                try:
+                    self._event_dirs(*after, j=self._job if self._job.get("t0") == t0 else {"errors": []})
+                except Exception as e:
+                    oslog.get("move").error("event folders after a move: %s" % e)
+            if time.time() - last >= self.FLUSH_S:
+                self._apply_marks(marks)
+                marks, last = [], time.time()
+
+    def _event_dirs(self, role, to, clips, roots, choice, j):
+        """A Saved or Sentry event is a folder: what is left in it after its minutes went (event.json, thumb.png, event.mp4) goes to the same folder on the other drive, and the folder it
+        leaves is removed (no shell with a thumb.png behind). A folder that still holds a minute is left alone."""
+        for c in clips:
+            if c["kind"] in self.FOLDER:
+                try:
+                    r = CM.move_event_dir(os.path.join(roots[role], self.FOLDER[c["kind"]], c["id"]), os.path.join(roots[to], self.FOLDER[c["kind"]], c["id"]), choice)
+                    j["skipped"] = j.get("skipped", 0) + r["skipped"]
+                    j["dropped"] = j.get("dropped", 0) + r["dropped"]
+                except OSError as e:
+                    j["errors"].append("%s: %s" % (c["id"], e))
+
     def _run(self, action, role, files, roots, clips=(), to="A"):
-        led = TLG.Ledger(self.dir)
-        touched = set()
+        marks = []
         j = self._job
         removed = []
         flushed = time.time()
@@ -1286,28 +1411,35 @@ class ClipKeep:
         self._journal(action, role, to if action == "move" else None, files)
         try:
             choice = getattr(self, "_choice", None)
+            unit_of, cur = getattr(self, "_unit_of", {}), None
             for key, size, f in files:
-                if self._stop:
+                u = unit_of.get(key)
+                if self._hard or (self._stop and (cur is None or u != cur)):      # Stop: the card in hand is finished first (a second Stop does not wait)
                     break
+                cur = u
                 src = TF.front_path(roots[role], f)
                 j["current"] = os.path.basename(src)
                 try:
                     if action == "move":
                         dst = TF.front_path(roots[to], f)
-                        r = CM.put(src, dst, choice, stop=lambda: self._stop)
+                        r, crc = CM.copy_in(src, dst, choice, stop=lambda: self._hard)
                         if r == "skipped":
                             j["skipped"] = j.get("skipped", 0) + 1
                             j["skipped_min"] = j.get("skipped_min", 0) + 1
                             j["skipped_bytes"] = j.get("skipped_bytes", 0) + size          # left where they are: not copied, so not part of the speed
-                        else:
-                            if r == "dropped":
-                                j["dropped"] = j.get("dropped", 0) + 1
-                            touched.add(led.mark(to, key, os.path.getsize(dst), True, flush=False))      # the footage log says so as the file is confirmed, not at the end
-                            touched.add(led.mark(role, key, size, False, flush=False))
+                        elif r == "dropped":                                                 # the same video was already there: only the old copy went
+                            j["dropped"] = j.get("dropped", 0) + 1
+                            marks.append((role, key, size, False))
                             removed.append(os.path.basename(src))
                             j["freed"] += size
                             j["confirmed"] += 1
                             j["last_confirmed"] = os.path.basename(src)
+                        else:                                                                # copied: on both drives now, the old one goes when its copy has been read back
+                            marks.append((to, key, os.path.getsize(dst), True))
+                            removed.append(os.path.basename(src))
+                            j["copied"] = j.get("copied", 0) + 1
+                            j["last_copied"] = os.path.basename(src)
+                            self._queue_check(dict(src=src, dst=dst, crc=crc, key=key, size=size, role=role, to=to, t0=j.get("t0")))
                         self._mv.pop(os.path.basename(src), None)
                     else:
                         os.remove(src)
@@ -1316,33 +1448,34 @@ class ClipKeep:
                         j["freed"] += size
                         j["confirmed"] += 1
                         j["last_confirmed"] = os.path.basename(src)
-                        touched.add(led.mark(role, key, size, False, flush=False))
+                        marks.append((role, key, size, False))
                 except CM.Cancelled:
                     break                                           # stopped inside a copy: the half copy is gone, the video is where it was
                 except FileNotFoundError:
                     self._mv.pop(os.path.basename(src), None)
-                    touched.add(led.mark(role, key, size, False, flush=False))
+                    marks.append((role, key, size, False))
                 except OSError as e:
                     j["errors"].append("%s: %s" % (os.path.basename(src), e))
                 j["done"] += 1
                 j["bytes_done"] += size
                 if time.time() - flushed >= self.FLUSH_S:
-                    led.flush({d for d in touched if d})
-                    flushed = time.time()
-            if action == "move" and not self._stop:      # a Saved or Sentry event is a folder: what is left in it goes too, and the folder it leaves is removed (no shell with a thumb.png behind)
-                for c in clips:
-                    if c["kind"] in self.FOLDER:
-                        j["current"] = c["id"]
-                        try:
-                            r = CM.move_event_dir(os.path.join(roots[role], self.FOLDER[c["kind"]], c["id"]), os.path.join(roots[to], self.FOLDER[c["kind"]], c["id"]), choice)
-                            j["skipped"] = j.get("skipped", 0) + r["skipped"]
-                            j["dropped"] = j.get("dropped", 0) + r["dropped"]
-                        except OSError as e:
-                            j["errors"].append("%s: %s" % (c["id"], e))
+                    self._apply_marks(marks)
+                    marks, flushed = [], time.time()
+            if action == "move" and not self._hard:      # a Saved or Sentry event is a folder: once its copies are checked (the old minutes are gone then) what is left in it goes too
+                t0 = j.get("t0")
+                with self._vlock:
+                    if self._vpend.get(t0, 0):
+                        self._vafter[t0] = (role, to, list(clips), roots, choice)
+                        later = True
+                    else:
+                        later = False
+                if not later:
+                    self._event_dirs(role, to, clips, roots, choice, j)
         finally:
             self._mv = {}
             j["stopped"] = bool(self._stop)
-            led.flush({d for d in touched if d})
+            j["copy_done"] = True
+            self._apply_marks(marks)
             self._log(action, role, clips, removed, j)
             self._journal_done()                                    # only after the footage log says what was done
             self._changed()
