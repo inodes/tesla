@@ -98,8 +98,13 @@ class Sentry:
                 for n in new:
                     r = self._read(os.path.join(root, n), n)
                     if r:
+                        try:
+                            r["mt"] = os.stat(os.path.join(root, n)).st_mtime_ns
+                        except OSError:
+                            pass
                         idx[n] = r
                 changed = bool(new)
+                changed = self._refresh(root, names, idx) or changed
                 if names:                           # a drive that listed nothing may be a glitch: nothing is marked from an empty listing
                     here, now = set(names), time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
                     for n, e in idx.items():
@@ -123,6 +128,42 @@ class Sentry:
             out = sorted(shown, key=lambda e: e["t"], reverse=True)
             self.memo = ((teslacam, dm), time.time(), out, connected)
             return out, connected
+
+    PER_PASS = 40                               # folders read again per answer (the first look after this change covers every kept entry, a few at a time)
+    REREAD_S = 120.0                            # how often the event folders already in the index are looked at again (a stat each)
+
+    def _refresh(self, root, names, idx):
+        """An event folder is read once, when it first appears - but a folder being filled (a move in progress, a copy cut short) is not finished then.
+        An entry carries `mt`, the folder's modified time when it was read: a folder whose time has changed since (files added or removed) is read again,
+        so the list never keeps the shape a half-moved event once had. A kept entry without `mt` (written before this) is read again once.
+        Looked at most every REREAD_S seconds, so a list of hundreds of events costs one stat each now and then, not on every page load."""
+        now = time.time()
+        if now - getattr(self, "_rv", 0) < self.REREAD_S:
+            return False
+        self._rv = now
+        changed = False
+        try:
+            with os.scandir(root) as it:
+                mts = {d.name: d.stat().st_mtime_ns for d in it if d.name in idx and d.is_dir()}
+        except OSError:
+            return False
+        left = self.PER_PASS
+        for n in reversed(names):                   # the newest first: they are the ones a move or a copy has just touched
+            e = idx.get(n)
+            mt = mts.get(n)
+            if e is None or mt is None or e.get("mt") == mt:
+                continue
+            if left <= 0:
+                self._rv = now - self.REREAD_S + 5  # more to look at: the next answer carries on, a few seconds on
+                break
+            left -= 1
+            r = self._read(os.path.join(root, n), n)
+            if not r or not r.get("clips"):          # a glitch or an emptied folder: what was learnt stays
+                continue
+            r["mt"] = mt
+            idx[n] = dict(e, **r)
+            changed = True
+        return changed
 
     def _read(self, path, name):
         try:

@@ -95,6 +95,29 @@ class Kept(unittest.TestCase):
         self.assertTrue(os.path.isfile(p))
         self.assertFalse(os.path.exists(os.path.join(d, "teslacam_index_A_saved.json")))
 
+    def test_a_folder_read_half_filled_is_read_again_when_it_is_completed(self):
+        """A move that was cut off leaves an event folder with only some minutes. The index must not keep that shape: once the rest arrives (and event.json, thumbnail), it is read again."""
+        e = "2026-10-18_11-18-14"
+        d = os.path.join(self.drive, "SentryClips", e)
+        os.makedirs(d)
+        open(os.path.join(d, "2026-10-18_11-08-00-front.mp4"), "wb").close()
+        self.s.REREAD_S = 0
+        first = {x["id"]: x for x in self.s.events(self.drive)[0]}[e]
+        self.assertEqual(sorted(first["clips"]), ["2026-10-18_11-08-00"])
+        self.assertEqual(first["city"], "")
+        for st in ("2026-10-18_11-09-01", "2026-10-18_11-10-01"):
+            open(os.path.join(d, st + "-front.mp4"), "wb").close()
+        with open(os.path.join(d, "event.json"), "w") as f:
+            json.dump(dict(timestamp="2026-10-18T11:17:17", city="Mosman"), f)
+        open(os.path.join(d, "thumb.png"), "wb").close()
+        os.utime(d, ns=(1, os.stat(d).st_mtime_ns + 10 ** 9))                        # a coarse-clock filesystem might not show the change
+        self.s.memo = None
+        now = {x["id"]: x for x in self.s.events(self.drive)[0]}[e]
+        self.assertEqual(sorted(now["clips"]), ["2026-10-18_11-08-00", "2026-10-18_11-09-01", "2026-10-18_11-10-01"])
+        self.assertEqual(now["city"], "Mosman")
+        self.assertTrue(now["thumb"])
+        self.assertIn("mt", self.kept()[e])
+
 
 if __name__ == "__main__":
     unittest.main()

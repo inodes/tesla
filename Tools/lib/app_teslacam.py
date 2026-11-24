@@ -426,6 +426,7 @@ class TeslaCam:
             if "p1" in ends and "p0" in ends:
                 return ends["p1"], TL.hav(ends["p1"][0], ends["p1"][1], ends["p0"][0], ends["p0"][1]) > TL.OPTS["same_place_m"]
             return (ends.get("p1") or ends.get("p0")), True
+        dud = self._dud_stamps()
         for i, r in enumerate(runs):
             sts = r["stamps"]
             a, b = sts[0], sts[-1]
@@ -437,10 +438,11 @@ class TeslaCam:
                     continue
             minute_play = {x: next((q for q in sorted(holders[x]) if roots.get(q)), None) for x in sts}
             own = (RC.pos(a), RC.pos_est(a)) if RC.pos(a) is not None or RC.kind(a) != "park" else edge_pos(i)
-            out["recent"].append(dict(id=a, ts=_ts(a), end=_ts(b), t0=_secs(a), t1=_secs(b) + 60, part=RC.kind(a), pos=own[0], pos_est=own[1], n=len(sts), full=sum(1 for x in sts if len(cams[x]) == 6),
+            cover = next((x for x in sts if x not in dud), a)               # the picture of the card: the first minute whose video gave a picture (a first clip cut short has none)
+            out["recent"].append(dict(id=a, cv=cover, dud=all(x in dud for x in sts), ts=_ts(a), end=_ts(b), t0=_secs(a), t1=_secs(b) + 60, part=RC.kind(a), pos=own[0], pos_est=own[1], n=len(sts), full=sum(1 for x in sts if len(cams[x]) == 6),
                                       roles=roles, play=minute_play[a] or next((q for q in minute_play.values() if q), None), playable=sum(1 for q in minute_play.values() if q),
                                       dir=dirs.get(a, "RecentClips"), inev=sum(1 for x in sts if x in dirs),
-                                      th=[sts[0], sts[len(sts) // 2], sts[-1]] if len(sts) >= 3 else []))            # minutes whose pictures the card cycles through: start, middle, end
+                                      th=[cover, sts[len(sts) // 2], sts[-1]] if len(sts) >= 3 else []))            # minutes whose pictures the card cycles through: start, middle, end
         out["recent"].sort(key=lambda x: x["t0"], reverse=True)
         if gone_home:
             PG.add(gone_home)
@@ -707,6 +709,25 @@ class TeslaCam:
             if st not in recent:                                    # the same name is the same clip; a clip that only starts near a Recent one is another stretch of time
                 out.append(dict(stamp=st, t=TL.secs(st), src="sentry", ref=e["id"], cams=cams, tcam=TL.tcam(cams)))
         return out
+
+    def _dud_stamps(self):
+        """The minutes whose video gave no picture when stills were tried (teslacam_stills/unreadable.json, "stamp|<stamp>"): a first clip a drive cut short, say. Read again only when the file changes."""
+        f = os.path.join(self.dir, "teslacam_stills", "unreadable.json")
+        try:
+            mt = os.path.getmtime(f)
+        except OSError:
+            return set()
+        memo = self.__dict__.get("_dud")
+        if memo and memo[0] == mt:
+            return memo[1]
+        try:
+            with open(f, encoding="utf-8") as fh:
+                j = json.load(fh)
+        except (OSError, ValueError):
+            return set()
+        got = {k[6:] for k in j if isinstance(k, str) and k.startswith("stamp|")} if isinstance(j, dict) else set()
+        self._dud = (mt, got)
+        return got
 
     def suburbs(self):
         """The suburb lookup (lib/suburb_lookup.py: OpenStreetMap's boundaries, kept in <data>/suburbs), or None when app.teslacam.suburb_lookup is off."""
