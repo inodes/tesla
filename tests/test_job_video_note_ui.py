@@ -11,7 +11,9 @@ class JobNoteTest(unittest.TestCase):
         self.assertNotIn("Videos cannot play while this reads", JS)
         self.assertNotIn("videos cannot play until it has finished", JS)
         self.assertNotIn("Videos were stopped to give", JS)           # the old wording read as a fault
-        self.assertEqual(JS.count("You can still play one, but it may stutter"), 2)      # the bar over a clip and the note under the job
+        self.assertNotIn("has been paused so this can finish faster", JS)      # "this" named nothing
+        self.assertEqual(JS.count("A video you start now may stutter until"), 2)      # the bar over a clip and the note under the job
+        self.assertEqual(JS.count("Any playing video was stopped because"), 2)
 
 
 if __name__ == "__main__":
