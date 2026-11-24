@@ -49,7 +49,8 @@ class KeptTest(unittest.TestCase):
         k = AK.Kept(tempfile.mkdtemp(), "1")
         k.FRESH_WAIT_S = 0.2
         k.get("activity", lambda: ["old"])
-        edit = time.time() + 0.001
+        edit = time.time()
+        time.sleep(0.01)                                                      # the build below begins after the edit
 
         def slow():
             time.sleep(0.6)
@@ -64,6 +65,23 @@ class KeptTest(unittest.TestCase):
         raw, stale = AK.Kept(tempfile.mkdtemp(), "1").get("x", lambda: [1])
         self.assertEqual((raw, stale), (b"[1]", False))
 
+
+    def test_an_answer_is_as_new_as_its_build_began(self):
+        """A build that began before an edit and ended after it is not 'built since the edit'; nan and inf ask for nothing fresh."""
+        k = AK.Kept(tempfile.mkdtemp(), "300.5")
+        edit = []
+
+        def build():
+            edit.append(time.time())
+            time.sleep(0.05)
+            return ["x"]
+        k.get("places", build, fresh=True)
+        t_edit = edit[0] + 0.02                                  # made while that build was running
+        self.assertLess(k.mem["places"][1], t_edit)
+        for bad in (float("nan"), float("inf")):
+            n = len(edit)
+            k.get("places", build, fresh=bad)
+            self.assertEqual(len(edit), n)
 
 if __name__ == "__main__":
     unittest.main()

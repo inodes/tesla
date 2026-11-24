@@ -57,5 +57,26 @@ class PageFirst(unittest.TestCase):
         t.join(2)
 
 
+    def test_two_requests_do_not_hold_each_other_back(self):
+        """A request thread (building something another request also waits for) never gives way to the other request."""
+        go, done = threading.Event(), threading.Event()
+
+        def other():
+            with PF.serving():
+                go.set()
+                done.wait(3)
+        t = threading.Thread(target=other)
+        t.start()
+        go.wait(2)
+        try:
+            with PF.serving():
+                PF._LAST[0] = 0
+                t0 = time.monotonic()
+                PF.give_way(max_wait=2.0)
+                self.assertLess(time.monotonic() - t0, 0.1)
+        finally:
+            done.set()
+            t.join(2)
+
 if __name__ == "__main__":
     unittest.main()

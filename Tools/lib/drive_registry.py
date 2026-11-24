@@ -94,6 +94,8 @@ def structure_ok(teslacam):
     if hit and hit[0] == key:
         return hit[1]
     ok = _first_clip_ok(teslacam, [sub for sub, _m in subs])
+    if ok is None:                                        # the folder could not be read just now: not kept (an idle drive's folder times would never change it back)
+        return False
     _SOK[teslacam] = (key, ok)
     return ok
 
@@ -115,7 +117,7 @@ def _first_clip_ok(teslacam, subs):
                     elif e.name.endswith(".mp4"):
                         return bool(_CLIP.match(e.name))
     except OSError:
-        return False
+        return None
     return True                                               # a drive with the folders and no clips yet
 
 

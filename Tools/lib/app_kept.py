@@ -28,11 +28,12 @@ class Kept:
         return os.path.join(self.dir, "api_%s_%s.json" % (name, self.version))
 
     def _make(self, name, build):
+        began = time.time()                             # the answer is as new as when its build began: an edit made during the build is not in it
         raw = json.dumps(build(), separators=(",", ":")).encode()
         with self.lock:
             ent = self.mem.get(name)
             changed = ent is None or ent[0] != raw
-            self.mem[name] = [raw, time.time(), False]
+            self.mem[name] = [raw, began, False]
         if changed:
             try:
                 os.makedirs(self.dir, exist_ok=True)
@@ -85,6 +86,8 @@ class Kept:
 
     def get(self, name, build, fresh=False):
         since = None if fresh is False or fresh is None else (time.time() if fresh is True else float(fresh))
+        if since is not None and (since != since or since in (float("inf"), float("-inf"))):      # nan or inf from a query: no time at all
+            since = None
         fresh = since is not None
         with self.lock:
             ent = self.mem.get(name)

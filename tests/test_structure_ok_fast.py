@@ -43,5 +43,14 @@ class StructureOkTest(unittest.TestCase):
         self.assertFalse(REG.structure_ok(os.path.join(bad, "missing")))
 
 
+    def test_a_folder_that_could_not_be_read_is_not_remembered_as_wrong(self):
+        real = REG._first_clip_ok
+        REG._first_clip_ok = lambda tc, subs: None            # one failed read (a drive waking up)
+        try:
+            self.assertFalse(REG.structure_ok(self.tc))
+        finally:
+            REG._first_clip_ok = real
+        self.assertTrue(REG.structure_ok(self.tc))            # the folders are unchanged, and the answer was not kept
+
 if __name__ == "__main__":
     unittest.main()

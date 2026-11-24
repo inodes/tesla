@@ -38,6 +38,8 @@ def busy():
 
 def give_way(max_wait=2.0, step=0.005):
     """Sleeps while another thread answers a request, up to max_wait seconds. Checked at most every 2 ms (a loop may call it for each item)."""
+    if threading.get_ident() in _SERVING:                  # a request never yields to another request: two that wait on the same build would each hold it back for the other
+        return
     now = time.monotonic()
     if now - _LAST[0] < 0.002:
         return
