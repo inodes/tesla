@@ -136,6 +136,8 @@ def put(src, dst, choice, stop=None, verify=None):
     replaced by the next copy of that file or removed by sweep_parts.
     Only the data and the modification time are copied, never the extended attributes: copying those (shutil.copy2) makes macOS write a ._name file beside every file it puts on an
     exFAT drive (thousands of them). The ._ file beside the source goes with the source."""
+    if not os.path.lexists(src):
+        raise FileNotFoundError(src)                    # nothing to move: said first, not hidden behind "already there" (the footage log then learns the drive no longer has it)
     if os.path.lexists(dst):
         if choice == "delete":
             os.remove(src)

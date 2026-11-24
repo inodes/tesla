@@ -567,8 +567,8 @@ class ClipKeep:
                 if os.path.lexists(dst) and os.path.isfile(src):
                     try:
                         c = CM.compare(src, dst, budget)
-                    except OSError:
-                        continue
+                    except OSError as e:                 # a file that cannot be read is not "nothing in the way": the person is asked, never skipped in silence
+                        c = dict(name=os.path.basename(src), src=dict(size=0), dst=dict(size=0), same_time=False, checked=False, identical=False, unreadable=str(e))
                     c.update(kind=kind, id=cid)
                     found.append(c)
         if not found:
@@ -1424,6 +1424,9 @@ class ClipKeep:
                         dst = TF.front_path(roots[to], f)
                         r, crc = CM.copy_in(src, dst, choice, stop=lambda: self._hard)
                         if r == "skipped":
+                            if "skip_sample" not in j:                                       # what a skip looked like (the first one), for the log and the page: why was it not moved
+                                j["skip_sample"] = dict(src=src, dst=dst, src_size=os.path.getsize(src) if os.path.exists(src) else None, dst_size=os.path.getsize(dst) if os.path.exists(dst) else None, choice=choice)
+                                oslog.get("move").info("skipped %s" % j["skip_sample"])
                             j["skipped"] = j.get("skipped", 0) + 1
                             j["skipped_min"] = j.get("skipped_min", 0) + 1
                             j["skipped_bytes"] = j.get("skipped_bytes", 0) + size          # left where they are: not copied, so not part of the speed
