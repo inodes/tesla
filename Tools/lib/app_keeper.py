@@ -187,8 +187,13 @@ class Keeper:
             if self._running_ours():
                 return
             self._started = False
-            self._report(STAGES[self._stage])
-            self._stage += 1
+            st = self._stage                # Stop or play, on another thread, clears the stage at any moment: work from this copy
+            if st is None or st >= len(STAGES):
+                return
+            self._report(STAGES[st])
+            if self._stage != st:           # cleared (or moved) while reporting: that pass is over, the next tick starts afresh
+                return
+            self._stage = st + 1
         elif self.busy() or self.page_job():
             return
         if self._stage is None:

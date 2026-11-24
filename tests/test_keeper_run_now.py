@@ -112,6 +112,18 @@ class RunNow(unittest.TestCase):
         self.assertTrue(AK.app_config.get("keeper.background"))
         self.assertTrue(AK.app_config.get("keeper.stills"))
 
+    def test_a_stop_that_clears_the_stage_while_the_pass_reports_does_not_break_it(self):
+        self.k.enabled = lambda: True
+        self.k._stage, self.k._started, self.k._sig = 0, True, (("J", 1),)
+        self.k._running_ours = lambda: False
+
+        def stop_pressed(stage):                          # Stop, on another thread, clears the stage mid-report
+            self.k._stage, self.k._started = None, False
+        self.k._report = stop_pressed
+        self.k.tick()                                     # was: TypeError, unsupported operand type(s) for +=: 'NoneType' and 'int'
+        self.assertIsNone(self.k._stage)
+        self.assertEqual(self.k.error, "")
+
     def test_off_does_nothing(self):
         self.passes()
         self.assertEqual(self.fg.calls, [])
