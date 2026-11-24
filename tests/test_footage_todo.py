@@ -307,14 +307,15 @@ class EjectTest(unittest.TestCase):
     def test_a_busy_drive_names_what_holds_it(self):
         run, calls = self.fake(1, out="COMMAND PID\nPreview 1\nPython 2\nPreview 3\n", err="Volume failed to eject: dissented by PID 55")
         import drive_registry as REG
-        real = REG._mount_point
+        real, gone = REG._mount_point, DE._gone
         REG._mount_point = lambda p: "/Volumes/JOWUA"
+        DE._gone = lambda mp: False                       # still there after every try
         try:
-            r = DE.eject("/Volumes/JOWUA/TeslaCam", platform="darwin", run=run, which=lambda x: "/usr/bin/" + x)
+            r = DE.eject("/Volumes/JOWUA/TeslaCam", platform="darwin", run=run, which=lambda x: "/usr/bin/" + x, sleep=lambda s: None)
         finally:
-            REG._mount_point = real
+            REG._mount_point, DE._gone = real, gone
         self.assertFalse(r["ok"])
-        self.assertIn("Open in: Preview, Python", r["text"])
+        self.assertIn("Held open by: Preview, Python", r["text"])
 
     def test_only_volumes_are_touched_and_only_on_a_mac(self):
         import drive_registry as REG
