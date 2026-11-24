@@ -54,6 +54,14 @@ def _write(kind, **kw):
     if not p:
         return
     line = "%s\t%s\t%s\n" % (time.strftime("%Y-%m-%d %H:%M:%S"), kind, "\t".join("%s=%s" % (k, str(v).replace("\t", " ").replace("\n", " ")) for k, v in kw.items()))
+    if "TESLA_PERF_LOG" not in os.environ:                  # the unified log as well (Console.app, `log show`): category "perf" (pages and requests) or "start" (start-up steps)
+        try:
+            import oslog
+            lg = oslog.get("start" if kind == "start" else "perf")
+            msg = kind + " " + oslog.fields(**kw)
+            lg.error(msg) if kind == "slow" and float(kw.get("s") or 0) >= 2.0 else lg.info(msg)
+        except Exception:
+            pass
     with _LOCK:
         try:
             os.makedirs(os.path.dirname(p) or ".", exist_ok=True)

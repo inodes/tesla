@@ -99,6 +99,7 @@ import app_route  # noqa: E402
 import app_kept  # noqa: E402
 import app_reach  # noqa: E402
 import perf_log  # noqa: E402
+import oslog  # noqa: E402
 from fetch_ledger import FetchLedger  # noqa: E402
 import drive_roles as DR  # noqa: E402
 import drive_paths as DP  # noqa: E402
@@ -949,6 +950,10 @@ class H(BaseHTTPRequestHandler):
             return self.send_json(drive_review_state(q.get("id", [""])[0]))
         if name == "review/scanned":            # every minute whose signs have been read: {UTC epoch s of the minute: signs found}
             return self.send_json(TC.review_scanned())
+        if name == "debug/oslog":               # writes one line to the unified log and reads it back with `log show`: proof that the log arrives (and which backend wrote it)
+            return self.send_json(oslog.test_line())
+        if name == "debug/sample":              # debug/sample?secs=15: which code the threads spend their time in over that long (for a burst a single look misses)
+            return self.send_json(debug_sample(float(q.get("secs", ["15"])[0])))
         if name == "debug/threads":             # what every thread is doing right now (the app's own frames, innermost first): to see from the page what holds a slow request
             return self.send_json(debug_threads())
         if name == "debug/profile":             # one build profiled (?what=keeper): where its time goes, as Python's profiler counts it
@@ -1413,6 +1418,7 @@ def _stack_dump(path):
     """Written to the log (stderr) when a request has run for 20 s: what each thread is doing, to see what a stuck page waits for."""
     import faulthandler
     print("(still running after 20 s: %s - threads:)" % path, file=sys.stderr, flush=True)
+    oslog.get("stall").error("request still running after 20 s " + oslog.fields(path=path) + " | " + " || ".join(oslog._busy_stacks(threading.get_ident(), 6)))
     faulthandler.dump_traceback(file=sys.stderr, all_threads=True)
 
 
@@ -1550,6 +1556,36 @@ def debug_threads():
                         frames=["%s:%s:%d" % (os.path.basename(f.filename), f.name, f.lineno) for f in own[:8]]))
     out.sort(key=lambda x: (not x["frames"], x["name"]))
     return dict(at=time.time(), threads=out)
+
+
+_IDLE_TOP = {"sleep", "wait", "acquire", "select", "accept", "recv", "recv_into", "poll", "_wait_for_tstate_lock", "get", "_worker", "serve_forever", "_handle_request_noblock", "readinto", "read"}
+
+
+def debug_sample(secs=15.0, every=0.01, n=30):
+    """Where the Python threads spend their time over `secs`: a sample of every thread's stack each `every` seconds (this thread and threads waiting in sleep / a lock / a socket are not
+    counted), the app's own innermost frame with the two callers above it, most often first. cProfile sees only the thread that runs it; this sees all of them, during a burst.
+    [(count, thread, "innermost < caller < caller")], and the number of samples."""
+    import collections
+    import traceback
+    me = threading.get_ident()
+    names = {t.ident: t.name for t in threading.enumerate()}
+    seen = collections.Counter()
+    end, samples = time.time() + max(1.0, min(60.0, secs)), 0
+    while time.time() < end:
+        samples += 1
+        for ident, fr in sys._current_frames().items():
+            if ident == me:
+                continue
+            st = traceback.extract_stack(fr)[::-1]
+            if not st or st[0].name in _IDLE_TOP:
+                continue
+            own = [f for f in st if os.sep + "Tools" + os.sep in f.filename]
+            if not own:
+                continue
+            nm = names.get(ident) or str(ident)
+            seen[(nm.split(" ")[-1].strip("()") if "(" in nm else nm.split("-")[0], " < ".join("%s:%s:%s" % (os.path.basename(f.filename), f.name, f.lineno) for f in own[:3]))] += 1
+        time.sleep(every)
+    return dict(samples=samples, top=[[c, k[0], k[1]] for k, c in seen.most_common(n)])
 
 
 def debug_profile(what, n=40):
@@ -1712,6 +1748,8 @@ def main():
     FSYNC = app_sync.ChargerSync(CMDS, DATA_DIR, "sync_fuel_history.py", argv=[sys.executable, "sync_fuel_history.py", "--sync-all"])
     threading.Thread(target=tessie_auto, daemon=True).start()
     threading.Thread(target=fuel_auto, daemon=True).start()
+    oslog.install()                 # unhandled exceptions as faults in the unified log; a stall of the whole app (the interpreter held a second or more) is logged with what held it
+    oslog.watchdog(status=lambda: dict(keeper=KEEP.status().get("stage") or "idle", job=bool((CKEEP.job() or {}).get("running"))))
     perf_log.mark("setup done")
     try:
         srv = serve(a.port)
