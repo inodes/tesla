@@ -43,6 +43,27 @@ _LEGACY_TESSIE_CONFIG_PATH = os.path.join(REPO_ROOT, "Tessie", "config.json")
 API_BASE = "https://api.tessie.com"
 
 
+_DEFAULT_DATA = "~/Library/Mobile Documents/com~apple~CloudDocs/Tesla"
+
+
+def _data_folder_config():
+    """<data folder>/config.json when it exists: the full config lives with the data (the Macs share it), and the repo's own config.json only has to say where the data folder is
+    (directories.data), or nothing at all when it is the default iCloud Tesla folder. The data folder is TESLA_DATA_DIR, else directories.data of the repo's config.json, else the default."""
+    data = os.environ.get("TESLA_DATA_DIR")
+    if not data:
+        for p in (ROOT_CONFIG_PATH, _LEGACY_TESSIE_CONFIG_PATH):
+            try:
+                with open(p, "r", encoding="utf-8") as f:
+                    j = json.load(f) or {}
+                data = ((j.get("directories") or {}).get("data")) or j.get("tessie_directory")
+            except (OSError, ValueError, AttributeError):
+                data = None
+            if data:
+                break
+    cand = os.path.join(os.path.abspath(os.path.expanduser(data or _DEFAULT_DATA)), "config.json")
+    return cand if os.path.isfile(cand) else None
+
+
 def resolve_config_path():
     """The real config.json to read: the new root location if it exists,
     else the pre-TODO-034 Tessie/ location (so an old checkout/backup that
@@ -51,6 +72,9 @@ def resolve_config_path():
     retired one). TESLA_CONFIG names another file instead (tests, CI and cloud sessions use config.example.json, never the real one)."""
     if os.environ.get("TESLA_CONFIG"):
         return os.path.abspath(os.path.expanduser(os.environ["TESLA_CONFIG"]))
+    shared = _data_folder_config()
+    if shared:
+        return shared
     if os.path.isfile(ROOT_CONFIG_PATH):
         return ROOT_CONFIG_PATH
     if os.path.isfile(_LEGACY_TESSIE_CONFIG_PATH):

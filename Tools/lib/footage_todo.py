@@ -321,6 +321,9 @@ class Todo:
                 self._save()
         except Exception as e:                                  # a drive pulled out in the middle: say so and try again at the next look
             self.error = "%s: %s" % (type(e).__name__, e)
+            import traceback
+            import oslog
+            oslog.get("keeper").error("look failed: %s" % traceback.format_exc().replace("\n", " | "))
             self._err_at = time.time()
             self._mem = dict(self._mem, sig=None)
         finally:

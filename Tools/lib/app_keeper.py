@@ -107,6 +107,9 @@ class Keeper:
                 self.tick()
             except Exception as e:      # never let the background work end: say what went wrong and go on with the next pass
                 self.error = "%s: %s" % (type(e).__name__, e)
+                import traceback
+                import oslog
+                oslog.get("keeper").error("pass failed: %s" % traceback.format_exc().replace("\n", " | "))      # where it happened, for the log (the page shows only the message)
                 self._stage, self._started, self._sig = None, False, self._cur
             time.sleep(5 if self._once else max(5, float(app_config.get("keeper.interval_s", 20))))
 
