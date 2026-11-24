@@ -9,7 +9,8 @@ chooses what happens to every such file at once:
     delete      the destination's file is kept and the copy on the drive it leaves is removed
 
     compare(src, dst, budget)        dict(name, src={size, mtime, crc?}, dst={...}, same_time, identical, checked)
-    put(src, dst, choice)            "moved" | "skipped" | "dropped"; the copy is made beside the name (.part), checked by size, then put in place
+    put(src, dst, choice, stop)      "moved" | "skipped" | "dropped"; one file is moved whole or not at all (see put)
+    sweep_parts(folder)              removes the .part copies an interrupted move left beside the names
     leftovers(dir)                   the names in an event folder that are not minute videos (event.json, thumb.png, event.mp4, ...)
     move_event_dir(src, dst, choice) moves what is left in a folder whose minutes have all gone, removes the folder; dict(moved, skipped, dropped, removed)
 """
@@ -81,8 +82,56 @@ def _drop(path):
         pass
 
 
-def put(src, dst, choice):
-    """Put src at dst. An existing dst is only replaced when the choice is "overwrite"; "delete" keeps it and removes src; anything else (or none) leaves both alone.
+class Cancelled(OSError):
+    """The move was stopped while a file was being copied: the half copy is gone and the file is still where it was."""
+
+
+VERIFY = True                          # the copy is read back from the destination and its checksum compared with the video's before the video is removed
+
+
+def _copy(src, part, stop=None):
+    """Copies src to part in chunks, returns the checksum of what was read, and has the copy written to the drive (fsync) before it returns."""
+    c = 0
+    with open(src, "rb") as a, open(part, "wb") as b:
+        while True:
+            if stop and stop():
+                raise Cancelled("stopped")
+            buf = a.read(4 * 1024 ** 2)
+            if not buf:
+                break
+            c = zlib.crc32(buf, c)
+            b.write(buf)
+        b.flush()
+        os.fsync(b.fileno())
+    return "%08x" % (c & 0xFFFFFFFF)
+
+
+def _crc_from_drive(path):
+    """The checksum of a file read back from the drive (macOS: not from the cache that just took the write), else from the file as the system gives it."""
+    fd = os.open(path, os.O_RDONLY)
+    try:
+        try:
+            import fcntl
+            fcntl.fcntl(fd, getattr(fcntl, "F_NOCACHE", 48), 1)
+        except (ImportError, OSError):
+            pass
+        c = 0
+        while True:
+            b = os.read(fd, 4 * 1024 ** 2)
+            if not b:
+                break
+            c = zlib.crc32(b, c)
+        return "%08x" % (c & 0xFFFFFFFF)
+    finally:
+        os.close(fd)
+
+
+def put(src, dst, choice, stop=None, verify=None):
+    """Put src at dst, whole or not at all. An existing dst is only replaced when the choice is "overwrite"; "delete" keeps it and removes src; anything else (or none) leaves both alone.
+    The video is copied beside the name (dst.part), written to the drive, read back and checked against the original by size and checksum, put in place with one rename, and only
+    then is the original removed. So whatever stops the move (a Stop, the drive pulled, a crash) leaves either the video on the old drive alone, or on both (the rename done, the
+    original not yet removed: the next move sees two identical files and just removes the old one), and never a half file under the video's name; a .part left behind is
+    replaced by the next copy of that file or removed by sweep_parts.
     Only the data and the modification time are copied, never the extended attributes: copying those (shutil.copy2) makes macOS write a ._name file beside every file it puts on an
     exFAT drive (thousands of them). The ._ file beside the source goes with the source."""
     if os.path.lexists(dst):
@@ -96,12 +145,18 @@ def put(src, dst, choice):
     had = os.path.lexists(sidecar(dst))                  # one that was there before is not ours to remove
     part = dst + ".part"
     st = os.stat(src)
-    shutil.copyfile(src, part)
-    os.utime(part, ns=(st.st_atime_ns, st.st_mtime_ns))
-    if os.path.getsize(part) != st.st_size:
-        os.remove(part)
+    try:
+        crc = _copy(src, part, stop)
+        os.utime(part, ns=(st.st_atime_ns, st.st_mtime_ns))
+        if os.path.getsize(part) != st.st_size:
+            raise OSError("the copy has a different size: the video was left where it was")
+        if VERIFY if verify is None else verify:
+            if _crc_from_drive(part) != crc:
+                raise OSError("the copy read back from the drive differs from the video: the video was left where it was")
+    except BaseException:
+        _drop(part)
         _drop(sidecar(part))
-        raise OSError("the copy has a different size")
+        raise
     os.replace(part, dst)
     _drop(sidecar(part))
     if not had:
@@ -109,6 +164,17 @@ def put(src, dst, choice):
     os.remove(src)
     _drop(sidecar(src))
     return "moved"
+
+
+def sweep_parts(folder):
+    """Removes the .part copies under `folder` (what an interrupted move left): never a video, only half of one. Returns how many."""
+    n = 0
+    for dp, _dn, fn in os.walk(folder):
+        for f in fn:
+            if f.endswith(".mp4.part") or f.endswith(".part") and not junk(f):
+                _drop(os.path.join(dp, f))
+                n += 1
+    return n
 
 
 def sweep_junk(top, seconds=20.0, stop=None):

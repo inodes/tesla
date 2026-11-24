@@ -188,6 +188,12 @@ def _sweep_new_drives(roots):
         return
 
     def go():
+        try:
+            rec = CKEEP.recover({r: p for r, p in roots.items() if p})        # a move or delete that was cut off: the footage log is put right from what is on the drives
+            if rec:
+                oslog.get("move").notice("recovered a cut-off job " + oslog.fields(**rec))
+        except Exception as e:
+            oslog.get("move").error("recover failed: %s" % e)
         res = CKEEP.sweep_purged({r: p for r, p in roots.items() if p})
         if not res.get("busy"):
             _SWEPT.update(fresh)

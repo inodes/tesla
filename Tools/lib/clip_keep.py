@@ -566,7 +566,7 @@ class ClipKeep:
         found.sort(key=lambda c: (c["identical"], c["kind"], c["id"], c["name"]))
         days = sorted({m.group(0) for c in found for m in [re.match(r"\d{4}-\d\d-\d\d", c["name"]) or re.match(r"\d{4}-\d\d-\d\d", c["id"])] if m})      # the days of the files in the way (from their names)
         mins = [c for c in found if CM.MINUTE.match(c["name"])]            # the minutes' video: the files a move counts (event.json and thumbnails go with their folder)
-        return dict(minute_files=len(mins), minute_bytes=sum(c["src"]["size"] for c in mins), count=len(found), identical=same, different=len(found) - same, bytes=sum(c["src"]["size"] for c in found), items=found[:40],
+        return dict(minute_files=len(mins), minute_bytes=sum(c["src"]["size"] for c in mins), count=len(found), identical=same, different=len(found) - same, identical_checked=sum(1 for c in found if c["identical"] and c["checked"]), bytes=sum(c["src"]["size"] for c in found), items=found[:40],
                     total=total, clips=len({(c["kind"], c["id"]) for c in found}), all_clips=len(plan), first=days[0] if days else "", last=days[-1] if days else "")
 
     def start(self, action, role, items, roots, confirmed=False, to="A", conflict=None):
@@ -585,6 +585,8 @@ class ClipKeep:
         cf = None
         if action == "move":                      # nothing is ever replaced without being asked: files already on the destination are shown and the person chooses
             cf = self.conflicts(plan, role, to, roots)
+            if cf and not self._choice and not cf.get("different") and cf.get("identical_checked") == cf.get("identical"):      # every file in the way is the same video as the one on the destination, checksums equal (a move that was cut off before the old one was removed): only the old copy goes
+                self._choice = "delete"
             if cf and not self._choice:
                 return dict(needs="conflict", conflicts=cf, role=role, to=to)
         read = None
@@ -1210,11 +1212,78 @@ class ClipKeep:
         self._stop = True
         return self.job()
 
+    FLUSH_S = 3.0                 # the footage log is written at most this long after a file was moved or removed (a day's file is big: not once a file)
+    JOURNAL = "clip_move_job.json"
+
+    def _journal(self, action, role, to, files):
+        """Written before the first file is touched and removed when the job has ended: a job that was cut off (the app quit, a crash, the drive pulled) leaves it, and recover() puts the
+        footage log right from what is on the drives."""
+        try:
+            os.makedirs(self.dir, exist_ok=True)
+            tmp = os.path.join(self.dir, self.JOURNAL + ".tmp")
+            with open(tmp, "w", encoding="utf-8") as fh:
+                json.dump(dict(t=time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), action=action, role=role, to=to, files=[[k, sz, f] for k, sz, f in files]), fh, separators=(",", ":"))
+            os.replace(tmp, os.path.join(self.dir, self.JOURNAL))
+        except (OSError, TypeError, ValueError):
+            pass
+
+    def _journal_done(self):
+        try:
+            os.remove(os.path.join(self.dir, self.JOURNAL))
+        except OSError:
+            pass
+
+    def recover(self, roots):
+        """After a job that did not finish: for each file it was about to handle, the footage log is made to say what is really on the drives, and the half copies (.part) beside the
+        destination are removed. A file is either on the old drive, on the new one, or (the copy in place, the old one not yet removed) on both: the next move sees two identical files
+        and removes the old one. Waits while a drive the job used is away. Returns dict(files, parts) or None when there was nothing to put right."""
+        if self._thread and self._thread.is_alive():
+            return None
+        path = os.path.join(self.dir, self.JOURNAL)
+        try:
+            with open(path, encoding="utf-8") as fh:
+                jr = json.load(fh)
+            action, role, to, files = jr["action"], jr["role"], jr.get("to"), jr["files"]
+        except (OSError, ValueError, KeyError):
+            if os.path.exists(path):
+                self._journal_done()
+            return None
+        drives = [role] + ([to] if action == "move" and to else [])
+        if not all(roots.get(r) for r in drives):
+            return None
+        led = TLG.Ledger(self.dir)
+        touched, parts, seen = set(), 0, set()
+        for key, size, f in files:
+            for r in drives:
+                p = TF.front_path(roots[r], f)
+                try:
+                    here = os.path.isfile(p)
+                    touched.add(led.mark(r, key, os.path.getsize(p) if here else size, here, flush=False))
+                except OSError:
+                    continue
+                d = os.path.dirname(p)
+                if r == to and d not in seen:
+                    seen.add(d)
+                    parts += CM.sweep_parts(d)
+        led.flush({d for d in touched if d})
+        try:
+            with open(os.path.join(self.dir, self.LOG), "a", encoding="utf-8") as fh:
+                fh.write(json.dumps(dict(t=time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), action=action, role=role, to=to, clips=[], removed=0, files=[], freed=0, errors=[], stopped=True,
+                                         interrupted=True, started=jr.get("t"), checked=len(files), parts=parts), ensure_ascii=False) + "\n")
+        except OSError:
+            pass
+        self._journal_done()
+        self._changed()
+        return dict(files=len(files), parts=parts)
+
     def _run(self, action, role, files, roots, clips=(), to="A"):
         led = TLG.Ledger(self.dir)
         touched = set()
         j = self._job
         removed = []
+        flushed = time.time()
+        j.setdefault("confirmed", 0)
+        self._journal(action, role, to if action == "move" else None, files)
         try:
             choice = getattr(self, "_choice", None)
             for key, size, f in files:
@@ -1225,7 +1294,7 @@ class ClipKeep:
                 try:
                     if action == "move":
                         dst = TF.front_path(roots[to], f)
-                        r = CM.put(src, dst, choice)
+                        r = CM.put(src, dst, choice, stop=lambda: self._stop)
                         if r == "skipped":
                             j["skipped"] = j.get("skipped", 0) + 1
                             j["skipped_min"] = j.get("skipped_min", 0) + 1
@@ -1233,17 +1302,23 @@ class ClipKeep:
                         else:
                             if r == "dropped":
                                 j["dropped"] = j.get("dropped", 0) + 1
-                            touched.add(led.mark(to, key, os.path.getsize(dst), True, flush=False))
+                            touched.add(led.mark(to, key, os.path.getsize(dst), True, flush=False))      # the footage log says so as the file is confirmed, not at the end
                             touched.add(led.mark(role, key, size, False, flush=False))
                             removed.append(os.path.basename(src))
                             j["freed"] += size
+                            j["confirmed"] += 1
+                            j["last_confirmed"] = os.path.basename(src)
                         self._mv.pop(os.path.basename(src), None)
                     else:
                         os.remove(src)
                         self._mv.pop(os.path.basename(src), None)
                         removed.append(os.path.basename(src))
                         j["freed"] += size
+                        j["confirmed"] += 1
+                        j["last_confirmed"] = os.path.basename(src)
                         touched.add(led.mark(role, key, size, False, flush=False))
+                except CM.Cancelled:
+                    break                                           # stopped inside a copy: the half copy is gone, the video is where it was
                 except FileNotFoundError:
                     self._mv.pop(os.path.basename(src), None)
                     touched.add(led.mark(role, key, size, False, flush=False))
@@ -1251,8 +1326,9 @@ class ClipKeep:
                     j["errors"].append("%s: %s" % (os.path.basename(src), e))
                 j["done"] += 1
                 j["bytes_done"] += size
-                if j["done"] % 40 == 0:
+                if time.time() - flushed >= self.FLUSH_S:
                     led.flush({d for d in touched if d})
+                    flushed = time.time()
             if action == "move" and not self._stop:      # a Saved or Sentry event is a folder: what is left in it goes too, and the folder it leaves is removed (no shell with a thumb.png behind)
                 for c in clips:
                     if c["kind"] in self.FOLDER:
@@ -1265,8 +1341,10 @@ class ClipKeep:
                             j["errors"].append("%s: %s" % (c["id"], e))
         finally:
             self._mv = {}
+            j["stopped"] = bool(self._stop)
             led.flush({d for d in touched if d})
             self._log(action, role, clips, removed, j)
+            self._journal_done()                                    # only after the footage log says what was done
             self._changed()
             self._settle()
 

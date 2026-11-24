@@ -11,7 +11,7 @@ class JobSpeedTest(unittest.TestCase):
         self.assertEqual(JS.count("(${q}%)${jobRate(j)}"), 2)                 # the purge line and the move / delete line
 
     def test_the_header_counts_only_what_is_copied(self):
-        self.assertIn("${n0(dn)} of ${n0(fl)} files · ${fmtGB(bd)} of ${fmtGB(bt)} (${q}%)", JS)
+        self.assertIn('${n0(j.confirmed||0)} of ${n0(fl)} files ${j.action==="move"?"moved and checked":"deleted"} · ${fmtGB(bd)} of ${fmtGB(bt)} (${q}%)', JS)
         self.assertIn("j.files-(j.skip_files||0)", JS)
         self.assertIn("j.bytes_done-(j.skipped_bytes||0)", JS)
 

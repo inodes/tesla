@@ -244,6 +244,73 @@ class KeepTest(Base):
         self.assertFalse(os.path.exists(os.path.join(self.roots["J"], "SavedClips", "ev1")))      # the folder moved with its video: no shell is left
         self.assertEqual(k.status(force=True)["clips"]["saved"]["ev1"]["bytes"], {"A": 40})
 
+    def test_a_stopped_move_leaves_every_file_whole_on_one_drive_and_the_log_agrees(self):
+        """Stop in the middle: each file is on the old drive only or on the new one only, no half copy anywhere, the footage log says the same, and a later move finishes the job."""
+        import clip_move as CM
+        k = self.keep()
+        real = CM.put
+        n = []
+
+        def put(src, dst, choice, stop=None, verify=None):
+            if n:                                                    # the second file: Stop pressed while it is copied
+                k._stop = True
+            n.append(src)
+            return real(src, dst, choice, stop, verify)
+        CM.put = put
+        try:
+            k.start("move", "J", [dict(kind="saved", id="ev1")], self.roots, confirmed=True)
+            k._thread.join(5)
+        finally:
+            CM.put = real
+        j = k.job()
+        self.assertTrue(j["stopped"])
+        on_j = {f for f in os.listdir(os.path.join(self.roots["J"], "SavedClips", "ev1"))}
+        on_a = {f for f in os.listdir(os.path.join(self.roots["A"], "SavedClips", "ev1"))} if os.path.isdir(os.path.join(self.roots["A"], "SavedClips", "ev1")) else set()
+        names = {"%s-%s.mp4" % (st, c) for st in (S1, S2) for c in ("front", "back")}
+        self.assertEqual(on_j | on_a, names)
+        self.assertEqual(on_j & on_a, set())
+        self.assertFalse([f for f in on_j | on_a if f.endswith(".part")])
+        self.assertEqual(j["confirmed"], len(on_a))                    # what the bar counted as moved and checked is what is on the new drive
+        led = TLG.Ledger(self.data)
+        for f in on_a:
+            e = led.day("2026-10-16")["saved|ev1|" + f[:-4]]["drives"]
+            self.assertIsNone(e["A"]["gone"])
+            self.assertTrue(e["J"]["gone"])
+        self.assertFalse(os.path.exists(os.path.join(self.data, k.JOURNAL)))      # the job ended: nothing to recover
+        k2 = self.keep()                                                # a new move picks up what is left
+        k2.start("move", "J", [dict(kind="saved", id="ev1")], self.roots, confirmed=True)
+        k2._thread.join(5)
+        self.assertEqual(len(os.listdir(os.path.join(self.roots["A"], "SavedClips", "ev1"))), 4)
+
+    def test_a_job_cut_off_by_a_crash_is_put_right_from_what_is_on_the_drives(self):
+        k = self.keep()
+        files = [("saved|ev1|%s-%s" % (S1, "front"), 10, dict(src="saved", ev="ev1", stamp=S1, cam="front"))]
+        k._journal("move", "J", "A", files)                              # what a job writes first
+        a = os.path.join(self.roots["A"], "SavedClips", "ev1")
+        os.makedirs(a, exist_ok=True)
+        os.replace(os.path.join(self.roots["J"], "SavedClips", "ev1", "%s-front.mp4" % S1), os.path.join(a, "%s-front.mp4" % S1))      # the file moved, the log not told
+        open(os.path.join(a, "%s-back.mp4.part" % S1), "wb").write(b"half")
+        self.assertIsNone(k.recover({"J": self.roots["J"]}))            # a drive it used is away: kept for later
+        self.assertTrue(os.path.exists(os.path.join(self.data, k.JOURNAL)))
+        out = k.recover(self.roots)
+        self.assertEqual(out, dict(files=1, parts=1))
+        e = TLG.Ledger(self.data).day("2026-10-16")["saved|ev1|%s-front" % S1]["drives"]
+        self.assertTrue(e["J"]["gone"])
+        self.assertIsNone(e["A"]["gone"])
+        self.assertFalse(os.path.exists(os.path.join(a, "%s-back.mp4.part" % S1)))
+        self.assertFalse(os.path.exists(os.path.join(self.data, k.JOURNAL)))
+        self.assertTrue(k.history(1)[0]["interrupted"])
+
+    def test_the_same_video_already_on_the_destination_is_not_a_question(self):
+        """A move cut off after the copy was in place but before the old one was removed: the next move removes the old copy without asking."""
+        for st in (S1, S2):
+            for cam in ("front", "back"):
+                self._put("A", "%s-%s.mp4" % (st, cam), b"x" * 10)
+                os.utime(os.path.join(self.roots["A"], "SavedClips", "ev1", "%s-%s.mp4" % (st, cam)), (os.path.getatime(os.path.join(self.roots["J"], "SavedClips", "ev1", "%s-%s.mp4" % (st, cam))), os.path.getmtime(os.path.join(self.roots["J"], "SavedClips", "ev1", "%s-%s.mp4" % (st, cam)))))
+        k, out = self._move()
+        self.assertNotIn("needs", out)
+        self.assertFalse(os.path.exists(os.path.join(self.roots["J"], "SavedClips", "ev1")))
+
     def _put(self, role, name, data, ev="ev1"):
         d = os.path.join(self.roots[role], "SavedClips", ev)
         os.makedirs(d, exist_ok=True)
@@ -283,7 +350,7 @@ class KeepTest(Base):
         self.assertTrue(os.path.exists(os.path.join(self.roots["J"], "SavedClips", "ev1", "%s-front.mp4" % S1)))
 
     def test_the_conflict_says_how_many_of_the_files_are_in_the_way_and_from_when(self):          # 20 Nov: "3,138 files are already on LaCie" read as if all the selection was there
-        self._put("A", "%s-front.mp4" % S1, b"x" * 10)
+        self._put("A", "%s-front.mp4" % S1, b"z" * 10)
         _k, out = self._move()
         cf = out["conflicts"]
         self.assertEqual((cf["count"], cf["total"], cf["clips"], cf["all_clips"]), (1, 4, 1, 1))
@@ -297,8 +364,10 @@ class KeepTest(Base):
 
     def test_identical_files_are_told_from_different_ones(self):
         self._put("A", "%s-front.mp4" % S1, b"x" * 10)
-        _k, out = self._move()
-        self.assertEqual((out["conflicts"]["identical"], out["conflicts"]["different"]), (1, 0))
+        k = self.keep()
+        plan, _err = k.check("move", "J", [dict(kind="saved", id="ev1")], self.roots, "A")
+        cf = k.conflicts(plan, "J", "A", self.roots)
+        self.assertEqual((cf["identical"], cf["different"], cf["identical_checked"]), (1, 0, 1))
 
     def test_a_skipping_move_counts_only_the_files_it_copies(self):          # 20 Nov: 101 GB skipped in an instant showed as "4 GB/s"
         self._put("A", "%s-front.mp4" % S1, b"x" * 10)
