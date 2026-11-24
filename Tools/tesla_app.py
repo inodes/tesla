@@ -100,6 +100,7 @@ import app_kept  # noqa: E402
 import app_reach  # noqa: E402
 import perf_log  # noqa: E402
 import oslog  # noqa: E402
+import local_guard  # noqa: E402
 from fetch_ledger import FetchLedger  # noqa: E402
 import drive_roles as DR  # noqa: E402
 import drive_paths as DP  # noqa: E402
@@ -579,7 +580,22 @@ class H(BaseHTTPRequestHandler):
         warn = "<p>Approved site %s, configured site is %s.</p>" % (html.escape(site), html.escape(mine)) if site and mine and site != mine else ""
         return page("SolarEdge connected", "<p>Site %s.</p>%s<p><a href='/#/charges'>Back to the app</a></p>" % (html.escape(site or mine), warn))
 
+    def _guarded(self, method):
+        """True after answering 403: the request does not come from the app's own page (lib/local_guard.py)."""
+        why = local_guard.refused(self.headers, method, self.server.server_address[1])
+        if not why:
+            return False
+        self.close_connection = True                 # its body was not read: the connection cannot carry another request
+        oslog.get("request").error("refused " + oslog.fields(method=method, path=self.path[:120], why=why))
+        try:
+            self.send_json({"error": "refused: " + why}, 403)
+        except Exception:
+            pass
+        return True
+
     def do_GET(self):
+        if self._guarded("GET"):
+            return
         u = urllib.parse.urlparse(self.path)
         path = urllib.parse.unquote(u.path)
         try:
@@ -684,6 +700,8 @@ class H(BaseHTTPRequestHandler):
                 pass
 
     def do_POST(self):
+        if self._guarded("POST"):
+            return
         u = urllib.parse.urlparse(self.path)
         try:
             n = int(self.headers.get("Content-Length") or 0)
