@@ -407,8 +407,10 @@ def safe_join(root, rel):
     """`rel` under `root` as a real path, or None when it leaves `root` (.., a link that points out, an absolute rel). Every file the server hands out comes through here."""
     r = os.path.realpath(root)
     p = os.path.realpath(os.path.join(r, rel))
-    if p == r or p.startswith(r + os.sep):
+    if p.startswith(r + os.sep):
         return p
+    if p == r:
+        return r
     return None
 
 
