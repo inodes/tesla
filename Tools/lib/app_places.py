@@ -271,6 +271,16 @@ class Places:
             ev.append(dict(k="stay", id="stay%d" % t0, t0=t0, day=lt[:10], hm=lt[11:16], min=round((nxt - t0) / 60.0, 1), key=key, reparks=len(reps), kwh=0))
         for d in drv:
             ev.append(dict(k="repark" if d.get("repark") else "drive", id=d["id"], t0=d["t1"], day=d["day"], hm=d["hm"], min=d["min"], km=d["km"], key=d.get("pkey1") or "", frm=d.get("frm"), in_stay=bool(stay_of.get(d["id"]))))
+            # Tessie's drives with a stop of a moment between them are one drive (drives.join_gap_s), so a short call at a saved place (a pick-up, petrol) is a stop
+            # inside the joined drive, not the end of one: it is an arrival at that place
+            for st in d.get("stops") or []:
+                if st.get("lat") is None or st.get("lon") is None:
+                    continue
+                key = self.label(st["lat"], st["lon"])[1]
+                if key[:2] != "p:":
+                    continue
+                lt = CC.local_iso(st["t"])
+                ev.append(dict(k="drive", id=d["id"], t0=st["t"], day=lt[:10], hm=lt[11:16], min=round((st.get("secs") or 0) / 60.0, 1), km=0, key=key, frm=d.get("frm"), in_stay=False, stop=True))
         return ev
 
     def listing(self, S):
@@ -574,6 +584,10 @@ class Places:
             for d in S.drives():
                 if d.get("lat1") is not None and not d.get("repark") and hav(info["lat"], info["lon"], d["lat1"], d["lon1"]) <= 150:
                     visits.append(dict(k="drive", id=d["id"], t0=d["t1"], day=d["day"], hm=d["hm"], min=d["min"], km=d["km"], frm=d.get("frm")))
+                for st in d.get("stops") or []:          # a short stop inside a joined drive
+                    if st.get("lat") is not None and hav(info["lat"], info["lon"], st["lat"], st["lon"]) <= 150:
+                        lt = CC.local_iso(st["t"])
+                        visits.append(dict(k="drive", id=d["id"], t0=st["t"], day=lt[:10], hm=lt[11:16], min=round((st.get("secs") or 0) / 60.0, 1), km=0, frm=d.get("frm")))
         else:
             visits = [e for e in self._events(S) if e["key"] == key]
         # where the car itself recorded stops near here (drive ends, parked periods, charges): used to size the radius of a place saved from an
