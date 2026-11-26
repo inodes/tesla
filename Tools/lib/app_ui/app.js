@@ -839,14 +839,14 @@ const fixChargerCard=(p,pkey)=>{if(p.home||p.kind==="supercharger"||p.lat==null)
    <div id="fxmsg" class="sub"></div></div>`};
 const fxPush=async id=>{for(let i=0;i<90;i++){try{const j=await (await fetch("/api/chargebook")).json(),q=j.push;if(q&&String(q.id)===String(id)&&q.state!=="running")return q}catch(_){}await new Promise(z=>setTimeout(z,1500))}return null};      // the charge's cost going to Tessie (the book's push state): wait for it to finish
 const fxWait=async t=>{for(let i=0;i<60;i++){await new Promise(z=>setTimeout(z,1500));try{const j=await (await fetch("/api/chargebook")).json();if(j.status==="ready"&&j.book&&j.book.built*1000>=t-2000)return true}catch(_){}}return false};
-document.addEventListener("click",async e=>{const b=e.target.closest&&e.target.closest("[data-fx]");if(!b)return;const o=FXC[+b.dataset.fx],pg=window.FXP;if(!o||!pg)return;const m=$("#fxmsg"),say=t=>{if(m)m.textContent=t};
+document.addEventListener("click",async e=>{const b=e.target.closest&&e.target.closest("[data-fx]");if(!b)return;const o=FXC[+b.dataset.fx],pg=window.FXP;if(!o||!pg)return;const m=$("#fxmsg"),say=(t,bad)=>{if(m){m.textContent=t;m.style.color=bad?"var(--bad)":""}};
   const post=async(u,body)=>(await fetch(u,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)})).json();
   if(o.act==="add"&&(!o.place||o.edit)){          // no saved place here yet (or a charger to type in): the Places form, with this charger filled in
     try{sessionStorage.setItem("placePrefill",JSON.stringify(o.place?{}:{name:pg.place,lat:pg.lat,lon:pg.lon,radius_m:60,keywords:[],notes:"Saved from the charge on "+pg.day,chargers:o.charger.name||o.charger.network?[o.charger]:[]}))}catch(_){}
     location.hash=o.place?"#/place/"+encodeURIComponent("p:"+o.place):"#/place/@new";return}
   const t=Date.now();say("Saving…");b.disabled=true;
   try{const r=o.act==="pick"?await post("/api/chargebook/charger",{id:pg.id,charger:o.charger,all:!!($("#fxall")&&$("#fxall").checked),place:(window.FXK||"").replace(/^p:/,"")}):await post("/api/places/charger",{place:o.place,charger:o.charger,charge:pg.id});
-    if(!r.ok){say("Not saved: "+(r.error||"?"));b.disabled=false;return}
+    if(!r.ok){say("Not saved: "+(r.error||"?"),1);b.disabled=false;return}
     bust();const pu=(r.set&&r.set.push)||r.push;let t2=t;
     if(pu==="started"||pu==="queued"){say("Saved. Sending the cost to Tessie…");const ps=await fxPush(pg.id);if(ps){say(ps.msg);await new Promise(z=>setTimeout(z,1200))}t2=Date.now()}
     else if(pu==="skipped")say("Saved. The cost could not be sent to Tessie (this charge has no start time).");
@@ -1773,10 +1773,10 @@ async function pagePlace(key){
     <div class="sub">Saved places are written to places.json (a dated backup is kept first). The sync scripts use the same file.</div>`;
     if($("#chl"))chWire($("#chl"));
     if($("#chadd"))$("#chadd").onclick=()=>$("#chl").insertAdjacentHTML("beforeend",chRow({}));
-    $("#sv").onclick=async()=>{const m=$("#msg");m.textContent="Saving…";const body={old_name:p.kind==="saved"?p.name:"",name:$("#f_name").value,lat:$("#f_lat").value,lon:$("#f_lon").value,radius_m:$("#f_rad").value,keywords:$("#f_kw").value,notes:$("#f_notes").value};
+    $("#sv").onclick=async()=>{const m=$("#msg"),bad=t=>{m.style.color="var(--bad)";m.textContent=t};m.style.color="";m.textContent="Saving…";const body={old_name:p.kind==="saved"?p.name:"",name:$("#f_name").value,lat:$("#f_lat").value,lon:$("#f_lon").value,radius_m:$("#f_rad").value,keywords:$("#f_kw").value,notes:$("#f_notes").value};
       if($("#chl"))body.chargers=chRead($("#chl"));
       try{const j=await (await fetch("/api/places/save",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)})).json();
-        if(j.ok){bust();sessionStorage.removeItem("placePrefill");NAVREPL=true;location.hash="#/place/"+encodeURIComponent(j.key);route()}else m.textContent="Not saved: "+j.error}catch(e){m.textContent="Could not reach the app: "+e}};
+        if(j.ok){bust();sessionStorage.removeItem("placePrefill");NAVREPL=true;location.hash="#/place/"+encodeURIComponent(j.key);route()}else bad("Not saved: "+j.error)}catch(e){bad("Could not reach the app: "+e)}};
     if($("#dl"))$("#dl").onclick=async()=>{if(!confirm("Delete the saved place '"+p.name+"'? Past drives keep their addresses."))return;
       const j=await (await fetch("/api/places/delete",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({name:p.name,confirm:true})})).json();
       if(j.ok){bust();NAVREPL=true;location.hash="#/places"}else $("#msg").textContent="Not deleted: "+j.error}}

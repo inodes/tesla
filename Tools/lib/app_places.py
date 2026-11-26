@@ -480,7 +480,7 @@ class Places:
         if sub and re.sub(r",\s*(NSW|VIC|QLD|SA|WA|TAS|NT|ACT)\s*$", "", name).strip().lower() == sub.lower() and name.strip() != sub:
             return name, None                       # a place named after its suburb says it once: "Sydney Olympic Park, NSW"
         if not sub:
-            return name, "The suburb and state of this spot could not be found: add them to the name, as 'Name, Suburb, NSW'."
+            return name, "The suburb and state of this spot could not be found (yet): press Save again in a minute, or add them to the name, as 'Name, Suburb, NSW'."
         base = name.strip()
         if base.lower().endswith(", " + sub.lower()):
             base = base[:-len(sub) - 2].rstrip(", ")
