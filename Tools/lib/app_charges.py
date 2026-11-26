@@ -7,7 +7,8 @@ invoice, a plug-in that Tessie split into several records shown ONCE with the re
 expected tariff, the telemetry summary and the charging curves.
 
 The numbers come from lib/charging_analyzer.ChargingAnalyzer itself (same matching, same plug-in grouping), run
-quietly and read-only; nothing in the data folder or in Tessie is changed. The reconcile takes ~20 s, so the
+quietly and read-only; nothing in Tessie is changed, and the only thing written to the files is the name of an invoice PDF that still has the name it was downloaded with
+(<date_time>_<network>_<invoice_num>_<place>.pdf, see rename_unnamed; each rename is logged in <data>/invoice_rename_log.jsonl). The reconcile takes ~20 s, so the
 result is cached in <data>/charges/app_chargebook.json and rebuilt in the background when its inputs change
 (charges_master.csv, deepdive telemetry, invoice files, Tessie caches); until then the previous book is served.
 
@@ -30,7 +31,10 @@ import sys
 import threading
 import time
 
-VERSION = 3          # 3: saved places renamed with suburb and state (older book entries hold the old name); 2: a Home plug-in Tessie split is one charge too (charging_analyzer.build_plugin_groups)
+INVOICE_NAMED = re.compile(r"^\d{8}_\d{4}_[A-Za-z][A-Za-z0-9]*_")          # an invoice PDF that has its name: 20261026_2251_Tesla_2010P0005205224_Leichhardt_NSW.pdf
+
+
+VERSION = 4          # 4: an invoice that still has its download name is renamed, and a cost mismatch Tessie has since corrected is MATCHED; 3: saved places renamed with suburb and state (older book entries hold the old name); 2: a Home plug-in Tessie split is one charge too (charging_analyzer.build_plugin_groups)
 
 
 def _num(v, d=None):
@@ -374,12 +378,48 @@ class ChargeBook:
             except OSError:
                 pass
 
+    def rename_unnamed(self, book):
+        """Gives the invoice PDFs that still have the name they were downloaded with (tesla_invoice<id>.pdf) their name, from the plan the build made (book["renames"]):
+        only a file that is not named yet, only inside its own folder, never over a file that is there. The new names are put into the book, each rename is added to
+        <data>/invoice_rename_log.jsonl. -> [{dir, old, new}] of what was renamed."""
+        done = []
+        for r in book.pop("renames", None) or []:
+            d, old, new = r.get("dir") or "", r.get("old") or "", r.get("new") or ""
+            if not d or os.path.basename(old) != old or os.path.basename(new) != new or INVOICE_NAMED.match(old) or not new.lower().endswith(".pdf"):
+                continue
+            src, dst = os.path.join(d, old), os.path.join(d, new)
+            if not os.path.isfile(src) or os.path.lexists(dst):
+                continue
+            try:
+                os.rename(src, dst)
+            except OSError:
+                continue
+            done.append(dict(dir=d, old=old, new=new))
+        if not done:
+            return done
+        names = {x["old"]: x["new"] for x in done}
+        for p in book.get("plugs") or []:
+            inv = p.get("invoice")
+            if inv and inv.get("file") in names:
+                inv["file"] = names[inv["file"]]
+        for i in book.get("invoices") or []:
+            if i.get("file") in names:
+                i["file"] = names[i["file"]]
+        try:
+            with open(os.path.join(self.data, "invoice_rename_log.jsonl"), "a", encoding="utf-8") as f:
+                for x in done:
+                    f.write(json.dumps(dict(t=datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds"), **x)) + "\n")
+        except OSError:
+            pass
+        return done
+
     def _build_bg(self, sig):
         try:
             if self.dirty:
                 self.dirty = False
                 sig = self._inputs()
             book = self._build_apart(sig) if self.separate else self.build(sig)
+            self.rename_unnamed(book)
             tmp = self.cache_path + ".tmp"
             os.makedirs(os.path.dirname(self.cache_path), exist_ok=True)
             with open(tmp, "w", encoding="utf-8") as f:
@@ -431,6 +471,11 @@ class ChargeBook:
                         groups[id(s)] = [s] + a.plugin_followers(s, S)
                 members_of = {id(m) for g in groups.values() for m in g[1:]}
                 records, by_epoch = ccm.load_raw_tessie_cache(a.repo_root)
+                try:                    # the invoices that still have the name they were downloaded with, and the name each should have: the app renames them (rename_unnamed)
+                    renames = [dict(dir=os.path.dirname(x["old_path"]), old=x["old_name"], new=x["new_name"])
+                               for x in a.invoice_rename_plan() if not x["already_named"] and not INVOICE_NAMED.match(x["old_name"])]
+                except Exception:
+                    renames = []
         finally:
             os.chdir(cwd)
         ledger = {}
@@ -512,6 +557,8 @@ class ChargeBook:
                 invoice=dict(number=inv.get("invoice_number"), file=inv.get("source_file"), date=str(inv.get("date") or "")[:10], network=inv.get("network"),
                              location=inv.get("location_raw"), kwh=_num(inv.get("energy_kwh")), rate=_num(inv.get("unit_rate")), gross_rate=_num(inv.get("gross_rate")),
                              total=_num(inv.get("total_cost")), gst=_num(inv.get("gst")), vin=inv.get("vin")) if inv else None)
+            if "COST MISMATCH" in plug["status"] and plug["sync"] == "synced" and plug["icost"] is not None:
+                plug["status"] = "MATCHED ✅"           # Tessie's first figure differed from the invoice; it now holds the invoice's, so nothing is left to warn about
             plug["rate"] = _r(plug["rate"], 3)
             plugs.append(plug)
         plugs.sort(key=lambda p: -p["t0"])
@@ -528,7 +575,7 @@ class ChargeBook:
             if d not in dirs:
                 dirs.append(d)
         return dict(version=VERSION, sig=sig or self._inputs(), built=int(time.time()), invoice_dirs=dirs, plugs=plugs, invoices=invs,
-                    sync_ledger=len(ledger), tolerance_mins=getattr(a, "tolerance_mins", None))
+                    sync_ledger=len(ledger), tolerance_mins=getattr(a, "tolerance_mins", None), renames=renames)
 
     # ---- which of a saved place's chargers a charge used ----------------------------------------------------------
     def set_charger(self, cid, name):

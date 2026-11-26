@@ -6759,13 +6759,9 @@ class ChargingAnalyzer:
         print(f"{C_GREEN}Successfully exported {len(sessions)} reconciled records to:{C_RESET} {filepath}")
 
 
-    def rename_invoices(self, format_pattern=None, dry_run=False, auto_confirm=False):
-        if not self._loaded:
-            self.load_charges()
-            self.load_invoices()
-            self.reconcile()
-
-
+    def invoice_rename_plan(self, format_pattern=None):
+        """[{old_path, old_name, new_path, new_name, invoice_number, date_str, network, location, cost, already_named}] for every invoice PDF in the invoice folders:
+        the name <date_time>_<network>_<invoice_num>_<place>.pdf each should have (the charges and invoices must be loaded and reconciled). Changes nothing."""
  # Discover all PDF files in self.invoice_dirs with path deduplication
         pdf_files = []
         seen_pdf_paths = set()
@@ -6784,8 +6780,7 @@ class ChargingAnalyzer:
                     pdf_files.append(full_p)
 
         if not pdf_files:
-            print(f"{C_YELLOW}No PDF invoice files found in configured directories.{C_RESET}\n")
-            return
+            return []
 
         rename_plan = []
         for fpath in pdf_files:
@@ -6941,6 +6936,18 @@ class ChargingAnalyzer:
                 "cost": inv_cost,
                 "already_named": already_named
             })
+        return rename_plan
+
+    def rename_invoices(self, format_pattern=None, dry_run=False, auto_confirm=False):
+        if not self._loaded:
+            self.load_charges()
+            self.load_invoices()
+            self.reconcile()
+
+        rename_plan = self.invoice_rename_plan(format_pattern)
+        if not rename_plan:
+            print(f"{C_YELLOW}No PDF invoice files found in configured directories.{C_RESET}\n")
+            return
 
         to_rename_count = sum(1 for item in rename_plan if not item["already_named"])
         if to_rename_count == 0:
