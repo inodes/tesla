@@ -192,7 +192,11 @@ def main():
                 else:
                     print(f"{C_YELLOW}⚠ Token valid and cached, but ABRP returned no vehicle or user profile (the reply is not printed: it can hold tokens).{C_RESET}")
         else:
-            print(f"{C_RED}❌ Code exchange failed: {_OAUTH_ERRORS.get(token_data.get('error'), 'no token returned')}{C_RESET}")
+            why = "no token returned"
+            for code, text in _OAUTH_ERRORS.items():        # compared, never copied: the printed text is always one of ours
+                if token_data.get("error") == code:
+                    why = text
+            print(f"{C_RED}❌ Code exchange failed: {why}{C_RESET}")
         return
 
     # Default / --auth-url flow
