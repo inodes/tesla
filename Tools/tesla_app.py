@@ -71,6 +71,7 @@ import config_backup  # noqa: E402
 import app_data  # noqa: E402
 import app_sentry  # noqa: E402
 import app_teslacam  # noqa: E402
+import app_timeline  # noqa: E402
 import app_drivelist  # noqa: E402
 import home_ignore  # noqa: E402
 import clips_purged  # noqa: E402
@@ -995,6 +996,8 @@ class H(BaseHTTPRequestHandler):
             return self.send_json(dict(n=len(keys), keys=[dict(name=k[0], args=k[2], sig=hx(k[3]), car=hx(k[4]), cfg=hx(k[5])) for k in keys], warm=getattr(app_software, "WARM", None)))
         if name == "debug/stat":                # how long a look at a file takes in the data folder here (the event pictures' info.json files): stat, open, listing
             return self.send_json(debug_stat())
+        if name == "timeline":                  # the footage timeline: Recent / Sentry / Saved of each volume and of all together, with the gaps in Recent (from the footage log; no drive is read)
+            return self.send_json(app_timeline.build(DATA_DIR))
         if name == "drivelist":                 # the Drives list: Tessie's drives and charges as the rows, the dashcam's drives attached (or alone when there is no Tessie)
             return self.send_json(drivelist())
         if name == "stills/thin":               # how many minutes of ordinary driving have stills that could be smaller, what they take, and the job

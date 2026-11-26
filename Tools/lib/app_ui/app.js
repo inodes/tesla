@@ -136,7 +136,7 @@ const pbar=pct=>`<div class="pbar${pct==null?" ind":""}"><i${pct==null?"":` styl
 const setPbar=(r,pct)=>{const b=$(".pbar",r),i=b&&$("i",b);if(!b||!i)return false;b.classList.toggle("ind",pct==null);i.style.width=pct==null?"":Math.max(4,Math.min(100,Math.round(pct)))+"%";return true};
 // Back links: the crumb at the top of a page goes back to the page the user came from (the path is kept per tab in sessionStorage), not to a fixed parent.
 // h and label are only the fallback, for a page opened directly. A main-menu click starts a new path; saving or deleting a place replaces the page it was done on.
-const NAVK="nav.stack",ROOTS={activity:"Activity",drives:"Drives",driveslist:"Drives",charges:"Charges",parked:"Parked",idles:"Parked",places:"Places",alerts:"Alerts",software:"Software",battery:"Battery",health:"Health",analytics:"Analytics",teslacam:"TeslaCam",queue:"Queue"};
+const NAVK="nav.stack",ROOTS={activity:"Activity",drives:"Drives",driveslist:"Drives",charges:"Charges",parked:"Parked",idles:"Parked",places:"Places",alerts:"Alerts",software:"Software",battery:"Battery",health:"Health",analytics:"Analytics",teslacam:"TeslaCam",timeline:"Timeline",queue:"Queue"};
 let NAV=(()=>{try{return JSON.parse(sessionStorage.getItem(NAVK)||"[]")}catch(e){return[]}})(),NAVREPL=false,NAVRESET=false;
 // A Sentry event or a moment opens the page of the drive or park that holds it (the address is replaced): an entry of that kind followed by the page it opened is not a place to go back to
 // (it only leads on to the same page). Entries kept in the tab by an older version are cleaned the same way.
@@ -3433,7 +3433,110 @@ async function pageSoftwareOne(v){
     <div class="card"><h2 style="margin-top:0">Installs per day</h2><table class="kv"><tbody>${u.daily.slice(0,14).map(c=>`<tr><td class="l">${esc(dayName(c.day))}</td><td>${n0(c.installs)}</td></tr>`).join("")||'<tr><td class="l sub">Not known.</td></tr>'}</tbody></table></div></div>`;
   const go=k=>()=>{SWS[k]=v;SWS.tab="compare";swSave();location.hash="#/software"};$("#cmpf").onclick=go("a");$("#cmpt").onclick=go("b")}
 
-const ROUTES={activity:pageActivity,drives:pageDriveList,driveslist:pageDriveList,charges:pageCharges,battery:pageBattery,health:pageHealth,analytics:pageAnalytics,teslacam:pageTeslaCam,queue:pageQueue,flips:pageDriveList,review:pageDriveList,dashcam:pageDriveList,parked:pageParked,idles:pageParked,places:pagePlaces,alerts:pageAlerts,software:pageSoftware};
+// ---------- Timeline: Recent, Sentry and Saved of each volume on one time line that zooms, the gaps in Recent, and all volumes together. Made from the footage log (no drive is read);
+// times are the car's clock, as the file names give them. A click goes to that day in TeslaCam.
+const TMK=["recent","sentry","saved"],TMKN={recent:"Recent",sentry:"Sentry",saved:"Saved"},TMPAL=["#8b5cf6","#f59e0b","#14b8a6","#ec4899","#0ea5e9","#84cc16","#f43f5e","#a855f7"],tmCol=r=>TMPAL[(String(r).charCodeAt(0)||0)%TMPAL.length];      // a volume keeps its colour by its own letter; no name or colour is written against a drive
+let TMS={gap:300,list:"all",v0:null,v1:null,data:null,hover:null};      // gap: the smallest gap shown (s); list: whose gaps the list shows; v0, v1: the time shown; hover: the pointer {x, y}
+const tmP=n=>String(n).padStart(2,"0"),tmU=t=>new Date(t*1000);
+const tmT=t=>{const d=tmU(t);return tmP(d.getUTCHours())+":"+tmP(d.getUTCMinutes())};
+const tmD=t=>{const d=tmU(t);return d.getUTCDate()+" "+MON[d.getUTCMonth()]};
+const tmDT=t=>tmD(t)+" "+tmT(t),tmDay=t=>tmU(t).toISOString().slice(0,10);
+const tmLen=s=>s>=172800?Math.round(s/86400)+" days":s>=3600?Math.floor(s/3600)+" h "+Math.round(s%3600/60)+" min":Math.max(1,Math.round(s/60))+" min";
+const tmGo=day=>{TCS.r={p:"custom",a:day,b:day,_r:1};try{localStorage.setItem("rng:teslacam",JSON.stringify({p:"custom",a:day,b:day}))}catch(e){}location.hash="#/teslacam"};      // the TeslaCam page takes its range from what is kept, unless the range is marked as set (_r)
+const tmIx=r=>{const i="AUJL".indexOf(r);return i<0?9:i};
+const tmFirst=(sp,t)=>{let lo=0,hi=sp.length;while(lo<hi){const m=(lo+hi)>>1;if(sp[m][1]<=t)lo=m+1;else hi=m}return lo};      // the first span that ends after t
+const tmFit=()=>{const T=TMS.data,pad=Math.max(3600,(T.t1-T.t0)*.01);TMS.v0=T.t0-pad;TMS.v1=T.t1+pad};
+const tmLast=s=>{const T=TMS.data;TMS.v1=T.t1+600;TMS.v0=Math.max(T.t0-600,TMS.v1-s)};
+const tmGapKind=(g,solo)=>solo?(g.ss>=.5?"ss":"none"):g.by&&g.by.length?"else":g.ss>=.5?"ss":"none";      // else: the video is on another volume; ss: Sentry / Saved covers it; none: nobody has it
+const tmGapNote=(g,solo)=>{const k=tmGapKind(g,solo);return k==="else"?"also on "+g.by.map(drName).join(", "):k==="ss"?"Sentry / Saved covers "+Math.round(g.ss*100)+"%":"no video of any kind"+(g.ss>0?" ("+Math.round(g.ss*100)+"% Sentry / Saved)":"")};
+const tmCov=(sp,v0,v1,nb)=>{const out=new Float64Array(nb),bd=(v1-v0)/nb;for(let i=tmFirst(sp,v0);i<sp.length&&sp[i][0]<v1;i++){let s=Math.max(sp[i][0],v0),e=Math.min(sp[i][1],v1),b=Math.floor((s-v0)/bd);for(;b<nb&&v0+b*bd<e;b++){const a=Math.max(s,v0+b*bd),z=Math.min(e,v0+(b+1)*bd);if(z>a)out[b]+=(z-a)/bd}}return out};
+function tmRows(){const T=TMS.data;return [{id:"all",name:"All volumes",d:T.all,solo:true}].concat(Object.keys(T.roles).sort((a,b)=>tmIx(a)-tmIx(b)).map(r=>({id:r,name:drName(r),d:T.roles[r],solo:false})))}
+const TMG={top:8,lh:84,ax:24,lane:9,blk:46,lb:132,rt:14};
+function tmGeom(W){const rows=tmRows();return {rows,W,H:TMG.top+TMG.lh+TMG.ax+rows.length*TMG.blk+6,pw:W-TMG.lb-TMG.rt,y0:TMG.top+TMG.lh+TMG.ax}}
+function tmDraw(){
+  const cv=$("#tmc");if(!cv||!TMS.data)return;const T=TMS.data,W=Math.max(480,cv.parentElement.clientWidth-16),G=tmGeom(W),dpr=window.devicePixelRatio||1;
+  cv.width=W*dpr;cv.height=G.H*dpr;cv.style.width=W+"px";cv.style.height=G.H+"px";
+  const g=cv.getContext("2d");g.scale(dpr,dpr);const cs=getComputedStyle(document.documentElement),c=n=>cs.getPropertyValue(n).trim();
+  const KC={recent:c("--drive"),sentry:"#e0201b",saved:c("--charge")},ink=c("--ink"),mut=c("--mut"),line=c("--line"),bad=c("--bad"),warn="#f59e0b";
+  const v0=TMS.v0,v1=TMS.v1,x=t=>TMG.lb+(t-v0)/(v1-v0)*G.pw,L=TMG.lb,R=L+G.pw;
+  g.font="11px -apple-system,BlinkMacSystemFont,system-ui,sans-serif";g.textBaseline="middle";
+  // axis and the vertical lines through everything
+  const steps=[60,300,900,1800,3600,10800,21600,43200,86400,172800,604800,2592000,7776000],span=v1-v0,step=steps.find(s=>span/s<=G.pw/84)||steps[steps.length-1],ay=TMG.top+TMG.lh+TMG.ax/2;
+  g.strokeStyle=line;g.fillStyle=mut;g.lineWidth=1;g.textAlign="left";
+  const ticks=[];if(step>=2592000){const d0=tmU(v0);for(let y=d0.getUTCFullYear(),m=d0.getUTCMonth();;m+=step>=7776000?3:1){const t=Date.UTC(y,m,1)/1000;if(t>=v1)break;if(t>=v0)ticks.push(t)}}else for(let t=Math.ceil(v0/step)*step;t<v1;t+=step)ticks.push(t);
+  ticks.forEach(t=>{const px=Math.round(x(t))+.5;g.beginPath();g.moveTo(px,TMG.top);g.lineTo(px,G.H-6);g.stroke();
+    const midnight=t%86400===0;g.fillStyle=step>=86400||midnight?ink:mut;g.fillText(step>=2592000?MON[tmU(t).getUTCMonth()]+" "+tmU(t).getUTCFullYear():step>=86400?tmD(t):midnight?tmD(t):tmT(t),px+4,ay)});
+  // the line: how much of the time shown has Recent video (each volume, and all together)
+  const nb=Math.max(20,Math.floor(G.pw/4)),ly=TMG.top,lh=TMG.lh-6;
+  g.textAlign="right";g.fillStyle=mut;[0,50,100].forEach(p=>{const y=ly+lh*(1-p/100);g.fillText(p+"%",L-8,y);g.strokeStyle=line;g.beginPath();g.moveTo(L,Math.round(y)+.5);g.lineTo(R,Math.round(y)+.5);g.stroke()});
+  g.textAlign="left";g.fillText("Recent video",8,ly+8);g.fillText("share of the time",8,ly+22);
+  const series=G.rows.slice(1).map(r=>({col:tmCol(r.id),w:1.4,cov:tmCov(r.d.recent,v0,v1,nb)})).concat([{col:ink,w:2.4,cov:tmCov(T.all.recent,v0,v1,nb)}]);
+  series.forEach(s=>{g.strokeStyle=s.col;g.lineWidth=s.w;g.beginPath();s.cov.forEach((f,b)=>{const px=L+(b+.5)/nb*G.pw,py=ly+lh*(1-Math.min(1,f));b?g.lineTo(px,py):g.moveTo(px,py)});g.stroke()});
+  // each block: three lanes, the gaps of Recent drawn over its lane
+  G.rows.forEach((r,i)=>{const by=G.y0+i*TMG.blk;
+    g.textAlign="left";g.fillStyle=ink;g.font="600 12px -apple-system,BlinkMacSystemFont,system-ui,sans-serif";g.fillText(r.name,8,by+TMG.blk/2-8);g.font="10px -apple-system,BlinkMacSystemFont,system-ui,sans-serif";g.fillStyle=mut;
+    g.fillText(r.id==="all"?"every volume":(window.ROOTS&&window.ROOTS[r.id]?"connected":"not connected"),8,by+TMG.blk/2+6);
+    TMK.forEach((k,j)=>{const y=by+4+j*(TMG.lane+1);g.fillStyle=mut;g.textAlign="right";g.font="8px system-ui,sans-serif";g.fillText(TMKN[k],L-6,y+TMG.lane/2);
+      g.fillStyle=KC[k];const sp=r.d[k]||[];for(let q=tmFirst(sp,v0);q<sp.length&&sp[q][0]<v1;q++){const a=Math.max(L,x(sp[q][0])),b=Math.min(R,x(sp[q][1]));g.fillRect(a,y,Math.max(1,b-a),TMG.lane)}});
+    const gy=by+4;(r.d.gaps||[]).forEach(gp=>{if(gp.e-gp.s<TMS.gap||gp.e<v0||gp.s>v1)return;const k=tmGapKind(gp,r.solo),a=Math.max(L,x(gp.s)),b=Math.min(R,x(gp.e));
+      const longGap=gp.e-gp.s>2*86400;g.globalAlpha=longGap?.2:.55;g.fillStyle=k==="else"?warn:k==="ss"?mut:bad;g.fillRect(a,gy,Math.max(2,b-a),TMG.lane);g.globalAlpha=1});
+    g.strokeStyle=line;g.beginPath();g.moveTo(8,by+TMG.blk-1.5);g.lineTo(R,by+TMG.blk-1.5);g.stroke()});
+  // the pointer
+  const h=TMS.hover;if(h&&h.x>=L&&h.x<=R){g.strokeStyle=ink;g.globalAlpha=.5;g.beginPath();g.moveTo(Math.round(h.x)+.5,TMG.top);g.lineTo(Math.round(h.x)+.5,G.H-6);g.stroke();g.globalAlpha=1}
+}
+function tmTip(e){
+  const cv=$("#tmc"),tip=$("#tmtip");if(!cv||!tip)return;const rc=cv.getBoundingClientRect(),px=e.clientX-rc.left,py=e.clientY-rc.top,G=tmGeom(Math.max(480,cv.parentElement.clientWidth-16));
+  TMS.hover={x:px,y:py};const inside=px>=TMG.lb&&px<=TMG.lb+G.pw&&py>=0&&py<=G.H;
+  if(!inside){tip.hidden=true;tmDraw();return}
+  const t=TMS.v0+(px-TMG.lb)/G.pw*(TMS.v1-TMS.v0),sec=Math.max(60,(TMS.v1-TMS.v0)/G.pw*3);let h="<b>"+tmDT(t)+"</b>";
+  if(py>=G.y0){const i=Math.floor((py-G.y0)/TMG.blk),r=G.rows[i];if(r){const j=Math.floor((py-G.y0-i*TMG.blk-4)/(TMG.lane+1)),k=TMK[Math.max(0,Math.min(2,j))];
+    const hit=(r.d[k]||[]).find(s=>s[0]-sec<=t&&t<=s[1]+sec),gap=(r.d.gaps||[]).find(g=>g.s<=t&&t<=g.e&&g.e-g.s>=TMS.gap);
+    h+="<br>"+esc(r.name)+" · "+TMKN[k]+": "+(hit?tmDT(hit[0])+" – "+tmT(hit[1])+" ("+tmLen(hit[1]-hit[0])+")":"none here");
+    if(gap)h+="<br>Gap in Recent: "+tmDT(gap.s)+" – "+tmDT(gap.e)+" ("+tmLen(gap.e-gap.s)+")<br>"+esc(tmGapNote(gap,r.solo))}}
+  else if(py<=TMG.top+TMG.lh){const n=Math.max(20,Math.floor(G.pw/4)),b=Math.min(n-1,Math.floor((px-TMG.lb)/G.pw*n));
+    G.rows.forEach(r=>{const f=tmCov(r.d.recent,TMS.v0,TMS.v1,n)[b];h+="<br>"+esc(r.name)+": "+Math.round(f*100)+"%"})}
+  h+="<br><span style='color:var(--mut)'>Click: open this day</span>";tip.innerHTML=h;tip.hidden=false;
+  const cw=cv.parentElement.clientWidth,tw=tip.offsetWidth;tip.style.left=Math.min(cw-tw-4,Math.max(4,px+14))+"px";tip.style.top=Math.max(4,Math.min(G.H-tip.offsetHeight-4,py+12))+"px";tmDraw()}
+function tmZoom(f,cx){const T=TMS.data,lo=T.t0-86400*3,hi=T.t1+86400*3,c=cx==null?(TMS.v0+TMS.v1)/2:cx;let a=c-(c-TMS.v0)*f,b=c+(TMS.v1-c)*f;if(b-a<120){const m=(a+b)/2;a=m-60;b=m+60}if(b-a>hi-lo){a=lo;b=hi}TMS.v0=a;TMS.v1=b;tmDraw()}
+function tmPan(d){const T=TMS.data,w=TMS.v1-TMS.v0;let a=TMS.v0+d,b=TMS.v1+d;if(a<T.t0-86400*3-w*.5){a=T.t0-86400*3-w*.5;b=a+w}if(b>T.t1+86400*3+w*.5){b=T.t1+86400*3+w*.5;a=b-w}TMS.v0=a;TMS.v1=b}
+function tmTable(){
+  const T=TMS.data,rows=tmRows(),min=m=>m>=120?Math.floor(m/60)+" h "+m%60+" min":m+" min",G=r=>(r.d.gaps||[]).filter(g=>g.e-g.s>=TMS.gap),span=r=>{const a=TMK.map(k=>(r.d[k]||[])[0]).filter(Boolean).map(s=>s[0]),b=TMK.map(k=>(r.d[k]||[]).slice(-1)[0]).filter(Boolean).map(s=>s[1]);return a.length?tmD(Math.min(...a))+" – "+tmD(Math.max(...b)):"–"};
+  const body=rows.map(r=>{const m=r.d.minutes||{recent:Math.round((r.d.recent||[]).reduce((s,x)=>s+x[1]-x[0],0)/60),sentry:Math.round((r.d.sentry||[]).reduce((s,x)=>s+x[1]-x[0],0)/60),saved:Math.round((r.d.saved||[]).reduce((s,x)=>s+x[1]-x[0],0)/60)},gs=G(r),el=r.solo?0:gs.filter(g=>tmGapKind(g,false)==="else").length,ss=gs.filter(g=>tmGapKind(g,r.solo)==="ss").length;
+    return `<tr><td class="l"><b>${esc(r.name)}</b></td><td>${min(m.recent)}</td><td>${min(m.sentry)}</td><td>${min(m.saved)}</td><td class="l">${span(r)}</td><td>${gs.length}</td><td>${r.solo?"–":el}</td><td>${ss}</td></tr>`}).join("");
+  return `<table><thead><tr><th class="l">Volume</th><th>Recent</th><th>Sentry</th><th>Saved</th><th class="l">From – to</th><th title="Breaks in Recent of at least the length chosen above">Gaps</th><th title="Gaps whose video is on another volume">on another</th><th title="Gaps that Sentry or Saved video covers at least half of">Sentry / Saved</th></tr></thead><tbody>${body}</tbody></table>`}
+function tmList(){
+  const T=TMS.data,rows=tmRows(),cur=rows.find(r=>r.id===TMS.list)||rows[0],gs=(cur.d.gaps||[]).filter(g=>g.e-g.s>=TMS.gap).slice().reverse(),shown=gs.slice(0,150);
+  const chips=rows.map(r=>`<button class="chip nw ${r.id===cur.id?"on":""}" data-tml="${esc(r.id)}">${esc(r.name)}</button>`).join("");
+  const body=shown.map(g=>{const k=tmGapKind(g,cur.solo);return `<tr data-day="${tmDay(g.s)}" title="Open ${tmDay(g.s)} in TeslaCam"><td class="l">${tmD(g.s)} ${tmT(g.s)} – ${g.e-g.s>43200?tmDT(g.e):tmT(g.e)}</td><td>${tmLen(g.e-g.s)}</td><td class="l"><span class="pill ${k==="none"?"sc":k==="else"?"dc":""}">${esc(tmGapNote(g,cur.solo))}</span></td></tr>`}).join("");
+  return `<h2>Gaps in Recent · ${esc(cur.name)}</h2><div class="bar">${chips}</div>${gs.length?`<table><thead><tr><th class="l">When (car clock)</th><th>Length</th><th class="l">What is known</th></tr></thead><tbody>${body}</tbody></table>${gs.length>shown.length?`<div class="sub" style="margin-top:6px">The newest ${shown.length} of ${gs.length}. A longer minimum above shows fewer.</div>`:""}`:`<div class="empty">No gaps of this length.</div>`}`}
+function tmRender(){const x=$("#tmx");if(!x)return;x.innerHTML=tmTable()+tmList();
+  $$("[data-tml]",x).forEach(b=>b.onclick=()=>{TMS.list=b.dataset.tml;tmRender()});$$("tr[data-day]",x).forEach(r=>r.onclick=()=>tmGo(r.dataset.day));tmDraw()}
+async function pageTimeline(){
+  loading();let T;try{T=await fetchJ("timeline")}catch(e){main.innerHTML=errBox(e.message,"The timeline could not be read");return}
+  TMS.data=T;
+  if(!T.t0){main.innerHTML='<h1>Timeline</h1><div class="empty">The footage log is empty: read a drive from the TeslaCam page first.</div>';return}
+  if(TMS.v0==null||TMS.v1==null){if(T.t1-T.t0>45*86400)tmLast(30*86400);else tmFit()}
+  const leg=[["All volumes","var(--ink)"]].concat(Object.keys(T.roles).sort((a,b)=>tmIx(a)-tmIx(b)).map(r=>[drName(r),tmCol(r)])).map(([n,c])=>`<span class="tml"><i style="background:${c}"></i>${esc(n)}</span>`).join("");
+  const key=[["Recent","var(--drive)"],["Sentry","#e0201b"],["Saved","var(--charge)"]].map(([n,c])=>`<span class="tml"><i style="background:${c}"></i>${n}</span>`).join("")+
+    [["Gap, video on another volume","#f59e0b"],["Gap nobody has (faint: over 2 days)","var(--bad)"],["Gap Sentry / Saved covers","var(--mut)"]].map(([n,c])=>`<span class="tml"><i style="background:${c};opacity:.6"></i>${n}</span>`).join("");
+  main.innerHTML=`<h1>Timeline</h1><div class="sub">The video each volume holds, by the car's clock, from the footage log. Scroll to zoom, drag to move, click to open that day. A volume that is not connected shows what it held when it was last read.</div>
+    <div class="bar" id="tmbar"><button class="chip" data-z="day">Last day</button><button class="chip" data-z="week">Last week</button><button class="chip" data-z="month">Last month</button><button class="chip" data-z="all">All</button>
+      <button class="chip" data-z="in" title="Zoom in">＋</button><button class="chip" data-z="out" title="Zoom out">－</button><button class="chip" data-z="left" title="Earlier">◀</button><button class="chip" data-z="right" title="Later">▶</button>
+      <span class="grow"></span><label class="sub">Show gaps of at least <select id="tmg">${[[60,"1 minute"],[300,"5 minutes"],[1800,"30 minutes"],[7200,"2 hours"],[43200,"12 hours"]].map(([s,n])=>`<option value="${s}" ${s===TMS.gap?"selected":""}>${n}</option>`).join("")}</select></label></div>
+    <div class="card" id="tmcard" style="padding:8px;position:relative"><canvas id="tmc" style="display:block;cursor:crosshair"></canvas><div id="tmtip" class="tmtip" hidden></div></div>
+    <div class="bar tmkey">${key}<span style="width:14px"></span>Line:${leg}</div><div id="tmx"></div>`;
+  const cv=$("#tmc");let drag=null;
+  cv.addEventListener("wheel",e=>{e.preventDefault();const rc=cv.getBoundingClientRect(),G=tmGeom(Math.max(480,cv.parentElement.clientWidth-16)),px=e.clientX-rc.left;if(px<TMG.lb)return;const t=TMS.v0+(px-TMG.lb)/G.pw*(TMS.v1-TMS.v0);tmZoom(Math.exp(Math.max(-300,Math.min(300,e.deltaY))*.0022),t);tmTip(e)},{passive:false});
+  cv.addEventListener("mousedown",e=>{drag={x:e.clientX,v0:TMS.v0,v1:TMS.v1,moved:false}});
+  const up=e=>{if(!drag)return;const d=drag;drag=null;cv.style.cursor="crosshair";if(!d.moved){const rc=cv.getBoundingClientRect(),G=tmGeom(Math.max(480,cv.parentElement.clientWidth-16)),px=e.clientX-rc.left;if(px>=TMG.lb&&px<=TMG.lb+G.pw){const t=TMS.v0+(px-TMG.lb)/G.pw*(TMS.v1-TMS.v0);tmGo(tmDay(t))}}};
+  const mv=e=>{if(drag){const G=tmGeom(Math.max(480,cv.parentElement.clientWidth-16)),dx=e.clientX-drag.x;if(Math.abs(dx)>3){drag.moved=true;cv.style.cursor="grabbing"}if(drag.moved){TMS.v0=drag.v0;TMS.v1=drag.v1;tmPan(-dx/G.pw*(drag.v1-drag.v0));$("#tmtip").hidden=true;tmDraw();return}}tmTip(e)};
+  cv.addEventListener("mousemove",mv);window.addEventListener("mouseup",up);cv.addEventListener("mouseleave",()=>{TMS.hover=null;$("#tmtip").hidden=true;tmDraw()});
+  const rs=()=>tmDraw();window.addEventListener("resize",rs);TLOFF=()=>{window.removeEventListener("resize",rs);window.removeEventListener("mouseup",up)};
+  $$("#tmbar [data-z]").forEach(b=>b.onclick=()=>{const z=b.dataset.z,w=TMS.v1-TMS.v0;if(z==="day")tmLast(86400);else if(z==="week")tmLast(7*86400);else if(z==="month")tmLast(30*86400);else if(z==="all")tmFit();else if(z==="in")tmZoom(.5);else if(z==="out")tmZoom(2);else if(z==="left"){tmPan(-w*.5)}else tmPan(w*.5);tmDraw()});
+  $("#tmg").onchange=e=>{TMS.gap=+e.target.value;tmRender()};
+  tmRender();
+}
+const ROUTES={activity:pageActivity,drives:pageDriveList,driveslist:pageDriveList,charges:pageCharges,battery:pageBattery,health:pageHealth,analytics:pageAnalytics,teslacam:pageTeslaCam,timeline:pageTimeline,queue:pageQueue,flips:pageDriveList,review:pageDriveList,dashcam:pageDriveList,parked:pageParked,idles:pageParked,places:pagePlaces,alerts:pageAlerts,software:pageSoftware};
 let PERF1=true;      // the first page after the window opened: its time since launch goes to the timing log too
 const perfSend=(p,t0)=>{const now=performance.now(),b={route:p,ms:Math.round(now-t0)};if(PERF1){PERF1=false;b.first_ms=Math.round(now)}
   try{fetch0("/api/perf",{method:"POST",keepalive:true,body:JSON.stringify(b)}).catch(()=>{})}catch(e){}};       // ~/Library/Logs/tesla_perf.log (lib/perf_log.py)

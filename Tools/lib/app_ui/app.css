@@ -363,3 +363,7 @@ main:has(#spl .stbar,#spl .vbar) #splx{display:none}
 
 .rvst .rvr{cursor:pointer}.rvst .stchev{display:inline-block;width:1em;color:var(--mut);transition:transform .15s}.rvst .rvr.open .stchev{transform:rotate(90deg)}
 .rvst .rvx>td{padding:0 0 10px 1.4em;background:var(--hover)}.rvsp{width:100%;font-size:13px}.rvsp th{font-weight:500;color:var(--mut)}.rvsp td,.rvsp th{padding:4px 12px 4px 0}
+
+/* Timeline page */
+.tmtip{position:absolute;pointer-events:none;background:var(--card);color:var(--ink);border:1px solid var(--line);border-radius:8px;padding:6px 9px;font-size:12px;line-height:1.5;box-shadow:0 4px 14px rgba(20,23,31,.18);white-space:nowrap;z-index:5}
+.tmkey{font-size:12px;color:var(--mut);gap:6px 14px;margin:8px 0 0}.tml{display:inline-flex;align-items:center;gap:5px}.tml i{display:inline-block;width:10px;height:10px;border-radius:2px}

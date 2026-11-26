@@ -16,7 +16,7 @@ import threading
 import time
 
 PAGES = [("Activity", "activity"), ("Drives", "drives"), ("Charges", "charges"), ("Places", "places"), ("Alerts", "alerts"),
-         ("Software", "software"), ("Battery", "battery"), ("Analytics", "analytics"), ("TeslaCam", "teslacam"), ("Queue", "queue")]
+         ("Software", "software"), ("Battery", "battery"), ("Analytics", "analytics"), ("TeslaCam", "teslacam"), ("Timeline", "timeline"), ("Queue", "queue")]
 NOTIFY_MIN_S = 60                       # a job shorter than this ends without a notification
 
 
