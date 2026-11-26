@@ -68,7 +68,7 @@ def _entries(path, mt, stat):
     """The clips of one folder: names, or [name, size, mtime] with `stat`; None when it cannot be read. From the kept listing while the folder's modification time is the one it was made at."""
     key = ("s|" if stat else "") + path
     hit = _CACHE.get(key)
-    if hit and hit[0] == mt:
+    if hit and hit[0] == mt and _still_there(path, hit[1]):
         return hit[1]
     out = []
     try:
@@ -90,6 +90,21 @@ def _entries(path, mt, stat):
         _CACHE[key] = (mt, out)
         _DIRTY[0] = True
     return out
+
+
+def _still_there(path, items):
+    """False when a few of the kept names of a folder are no longer in it. A drive that is exFAT does not always change a folder's modification time when files are deleted from
+    it, so the time alone said a folder was as listed while most of its clips were gone (a footage log that kept 8,609 files of a drive that held 262). Looks at the newest names
+    and a few spread over the rest: a handful of stats, and a mass delete is always seen."""
+    n = len(items)
+    if not n:
+        return True
+    picks = {n - 1, 0} if n < 200 else {n - 1, 0, n // 7, 2 * n // 7, 3 * n // 7, 4 * n // 7, 5 * n // 7, 6 * n // 7}
+    for i in picks:
+        name = items[i] if isinstance(items[i], str) else items[i][0]
+        if not os.path.lexists(os.path.join(path, name)):
+            return False
+    return True
 
 
 def clip_names(path, mt=None):
