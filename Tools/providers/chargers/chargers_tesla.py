@@ -414,6 +414,7 @@ class TeslaProvider(BaseChargerProvider):
                     effective_date_utc=effective_date,
                     metadata={
                         "access_hours": info.get("access", {}).get("hours", "24/7") if isinstance(info.get("access"), dict) else "24/7",
+                        "access_description": info.get("access", {}).get("description", "") if isinstance(info.get("access"), dict) else "",
                         "hardware_tier": hw_tier,
                         "open_to_non_tesla": comp.get("open_to_non_tesla", False),
                         "tesla_only": comp.get("tesla_only", not comp.get("open_to_non_tesla", False)),
@@ -1111,7 +1112,9 @@ class TeslaChargerExplorer:
 
  # Non-Tesla Compatibility
         notice = str(fmt_data.get("additionalNotice") or "")
-        open_to_non_tesla_flag = bool(charger_payload.get("openToNonTeslas")) if charger_payload else None
+        # the flag is in the intercepted charger-details reply, and the page carries the same block as formattedData.chargerDetails (a Destination charger's page has no reply)
+        flag_src = charger_payload or (fmt_data.get("chargerDetails") if isinstance(fmt_data.get("chargerDetails"), dict) else None)
+        open_to_non_tesla_flag = bool(flag_src.get("openToNonTeslas")) if flag_src else None
 
  # General Location / Center Name
         common_name = (
@@ -1135,6 +1138,11 @@ class TeslaChargerExplorer:
             hours_str = "Available 24/7"
         elif isinstance(raw_hours, str) and raw_hours.strip():
             hours_str = raw_hours.strip()
+
+ # Tesla's own words on who may use the site and how ("Available for customers & guests 24/7. Self Park"): kept as the access description
+        acc_tx = fmt_data.get("chargerAccessTypeAndInstructions")
+        acc_tx = acc_tx if isinstance(acc_tx, dict) else {}
+        access_text = ". ".join(str(x).strip().rstrip(".") for x in (acc_tx.get("restrictions"), acc_tx.get("access_instructions")) if x and str(x).strip())
 
  # Pricebooks & TOU Rate Schedules
         pricebooks = charger_payload.get("effectivePricebooks", []) if charger_payload else []
@@ -1367,7 +1375,8 @@ class TeslaChargerExplorer:
                 "connector_types": ["Type 2"] if is_dc else (["CCS2"] if open_to_non_tesla else ["CCS2 (Tesla Only)"])
             },
             "access": {
-                "hours": hours_str
+                "hours": hours_str,
+                "description": access_text
             },
             "tariffs": {
                 "currency": "AUD" if country_code == "AU" else "USD",
