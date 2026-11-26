@@ -89,6 +89,7 @@ from lib.osm_templates_common import (
     derive_tesla_ref,
 )
 from lib.places_common import query_overpass_pois
+from lib.url_host import on_host
 from providers.chargers.chargers_base import haversine_km
 
 C_GREEN = "\033[92m"
@@ -2270,7 +2271,7 @@ def _audit_tesla_station(
             status = f"{C_GREEN}✔ PASS{C_RESET}"
         elif tag == "parking:fee" and str(curr).lower() in ("no", "yes", "interval", "limited"):
             status = f"{C_GREEN}✔ PASS{C_RESET}"
-        elif tag == "website" and ("tesla.com" in str(curr).lower() and ("findus" in str(curr).lower() or "supercharger" in str(curr).lower())):
+        elif tag == "website" and (on_host(str(curr), "tesla.com") and ("findus" in str(curr).lower() or "supercharger" in str(curr).lower())):
             status = f"{C_GREEN}✔ PASS{C_RESET}"
         elif tag == "ref:tesla" and (str(curr).lower().replace("_", "") == str(req_val).lower().replace("_", "") or str(curr).lower() in (str(req_val).lower(), str(req_val).lower().replace("supercharger", ""))):
             status = f"{C_GREEN}✔ PASS{C_RESET}"
@@ -2423,7 +2424,7 @@ def _audit_tesla_station(
             merged_tags["name"] = e_tags["name"]
         if e_tags.get("parking:fee"):
             merged_tags["parking:fee"] = e_tags["parking:fee"]
-        if e_tags.get("website") and "tesla.com" in e_tags.get("website"):
+        if e_tags.get("website") and on_host(e_tags.get("website"), "tesla.com"):
             merged_tags["website"] = e_tags["website"]
 
         cs_source = "official Tesla website; supercharge.info; ground survey"
@@ -2982,7 +2983,7 @@ def _source_and_audit_supercharge(
             status = f"{C_GREEN}✔ PASS{C_RESET}"
         elif tag == "parking:fee" and str(curr).lower() in ("no", "yes", "interval", "limited"):
             status = f"{C_GREEN}✔ PASS{C_RESET}"
-        elif tag == "website" and ("tesla.com" in str(curr).lower() and ("findus" in str(curr).lower() or "supercharger" in str(curr).lower())):
+        elif tag == "website" and (on_host(str(curr), "tesla.com") and ("findus" in str(curr).lower() or "supercharger" in str(curr).lower())):
             status = f"{C_GREEN}✔ PASS{C_RESET}"
         elif tag == "ref:tesla" and (str(curr).lower().replace("_", "") == str(req_val).lower().replace("_", "") or str(curr).lower() in (str(req_val).lower(), str(req_val).lower().replace("supercharger", ""))):
             status = f"{C_GREEN}✔ PASS{C_RESET}"
@@ -3101,7 +3102,7 @@ def _source_and_audit_supercharge(
             merged_tags["name"] = e_tags["name"]
         if e_tags.get("parking:fee"):
             merged_tags["parking:fee"] = e_tags["parking:fee"]
-        if e_tags.get("website") and "tesla.com" in e_tags.get("website"):
+        if e_tags.get("website") and on_host(e_tags.get("website"), "tesla.com"):
             merged_tags["website"] = e_tags["website"]
 
         if action_chosen == "1":

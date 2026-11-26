@@ -181,14 +181,30 @@ class Json(Served):
 
 class Head(unittest.TestCase):
     def test_nothing_in_head_holds_the_first_paint_but_the_app_css(self):
+        from html.parser import HTMLParser
+
+        class Tags(HTMLParser):                 # the tags of the head as a parser reads them (a pattern for tags misses odd spellings)
+            def __init__(self):
+                super().__init__()
+                self.scripts, self.sheets = [], []
+
+            def handle_starttag(self, tag, attrs):
+                a = dict(attrs)
+                if tag == "script":
+                    self.scripts.append(a)
+                elif tag == "link" and "stylesheet" in (a.get("rel") or "").split():
+                    self.sheets.append(a)
+
         with open(os.path.join(HERE, "..", "Tools", "lib", "app_ui", "index.html"), encoding="utf-8") as f:
             head = f.read().split("</head>")[0]
         self.assertNotIn("cdnjs", head)
-        for tag in re.findall(r"<script[^>]*>", head):
-            self.assertRegex(tag, r"\b(defer|async)\b")
-        blocking = [t for t in re.findall(r"<link[^>]*rel=\"stylesheet\"[^>]*>", head) if "media=\"print\"" not in t]
+        t = Tags()
+        t.feed(head)
+        for a in t.scripts:
+            self.assertTrue("defer" in a or "async" in a, a)
+        blocking = [a for a in t.sheets if a.get("media") != "print"]
         self.assertEqual(len(blocking), 1)
-        self.assertIn("/app.css", blocking[0])
+        self.assertIn("/app.css", blocking[0].get("href", ""))
 
     def test_maplibre_runs_before_the_app(self):
         with open(os.path.join(HERE, "..", "Tools", "lib", "app_ui", "index.html"), encoding="utf-8") as f:

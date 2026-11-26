@@ -968,19 +968,20 @@ class UnifiedStationRecord:
         if self.url and self.url not in seen_urls:
             label = "Web Link"
             icon = "🔗"
-            if "tesla.com" in self.url:
+            from lib.url_host import on_host
+            if on_host(self.url, "tesla.com"):
                 label = "Tesla Find Us"
                 icon = "⚡"
-            elif "chargefox.com" in self.url:
+            elif on_host(self.url, "chargefox.com"):
                 label = "Chargefox App"
                 icon = "🦊"
-            elif "evie" in self.url:
+            elif on_host(self.url, "evie.com.au", "evienetworks.com.au"):
                 label = "Evie Networks"
                 icon = "🔌"
-            elif "bppulse" in self.url or "bp.com" in self.url:
+            elif on_host(self.url, "bppulse.com", "bp.com"):
                 label = "bp pulse Storefinder"
                 icon = "🟢"
-            elif "plugshare.com" in self.url:
+            elif on_host(self.url, "plugshare.com"):
                 label = "PlugShare"
                 icon = "🔌"
             elif "evx" in self.url:

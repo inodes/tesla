@@ -359,7 +359,7 @@ class TeslaInvoiceExtractor(BaseInvoiceExtractor):
     def detect(self, text: str, pdf_path: str) -> bool:
         t_low = text.lower()
         fname = os.path.basename(pdf_path)
-        if "tesla motors australia" in t_low or "supercharging" in t_low or "www.tesla.com" in t_low:
+        if "tesla motors australia" in t_low or "supercharging" in t_low or re.search(r"\bwww\.tesla\.com\b", t_low):
             return True
         if re.search(r"2010P\d{10}", text) or re.search(r"TSLA-[A-Za-z0-9\-]+", text):
             return True

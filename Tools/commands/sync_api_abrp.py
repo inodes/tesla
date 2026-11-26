@@ -106,7 +106,7 @@ def main():
 
     print(f"\n⚡ {C_BOLD}ABRP / Iternio API Configuration:{C_RESET}")
     print(f"  • Client ID: {C_CYAN}{client_id or 'Auto-resolved'}{C_RESET}")
-    print(f"  • API Key:   {C_CYAN}{api_key[:8] + '...' if api_key else 'Not Configured'}{C_RESET}")
+    print(f"  • API Key:   {C_CYAN}{'*' * 8 + api_key[-3:] if api_key else 'Not Configured'}{C_RESET}")
     print(f"  • Local Spec:{C_GREEN} {abrp_cfg.get('vehicle_name')} ({abrp_cfg.get('usable_kwh')} kWh usable){C_RESET}")
     print()
 
@@ -181,7 +181,7 @@ def main():
                 else:
                     print(f"{C_YELLOW}⚠ Token valid, but query returned: {raw}{C_RESET}")
         else:
-            print(f"{C_RED}❌ Code exchange failed: {token_data.get('error') or token_data}{C_RESET}")
+            print(f"{C_RED}❌ Code exchange failed: {token_data.get('error_description') or token_data.get('error') or 'no token returned'}{C_RESET}")
         return
 
     # Default / --auth-url flow

@@ -404,9 +404,17 @@ COPIER = clip_files.Copier()
 
 
 def safe_join(root, rel):
-    p = os.path.realpath(os.path.join(root, rel))
+    """`rel` under `root` as a real path, or None when it leaves `root` (.., a link that points out, an absolute rel). Every file the server hands out comes through here."""
     r = os.path.realpath(root)
-    return p if (p == r or p.startswith(r + os.sep)) else None
+    p = os.path.realpath(os.path.join(r, rel))
+    if p == r or p.startswith(r + os.sep):
+        return p
+    return None
+
+
+def _hv(v):
+    """A header name or value with no line break in it, so nothing a request holds can end a header and start another (response splitting)."""
+    return str(v).replace("\r", "").replace("\n", "")
 
 
 _STATIC = {}                # path -> ((mtime ns, size), bytes, etag): the page's own files
@@ -455,11 +463,11 @@ class H(BaseHTTPRequestHandler):
     def send_bytes(self, body, ctype, code=200, extra=None):
         self._nbytes = len(body)
         self.send_response(code)
-        self.send_header("Content-Type", ctype)
+        self.send_header("Content-Type", _hv(ctype))
         self.send_header("Content-Length", str(len(body)))
         self.send_header("Cache-Control", "no-store")
         for k, v in (extra or {}).items():
-            self.send_header(k, v)
+            self.send_header(_hv(k), _hv(v))
         self.end_headers()
         if self.command != "HEAD":
             self.wfile.write(body)
@@ -473,7 +481,7 @@ class H(BaseHTTPRequestHandler):
         if etag in [t.strip() for t in (self.headers.get("If-None-Match") or "").split(",")]:
             self.send_response(304)
             for k, v in head.items():
-                self.send_header(k, v)
+                self.send_header(_hv(k), _hv(v))
             self.send_header("Content-Length", "0")
             self.end_headers()
             return
@@ -482,10 +490,10 @@ class H(BaseHTTPRequestHandler):
             head["Content-Encoding"] = "gzip"
         self._nbytes = len(raw)
         self.send_response(200)
-        self.send_header("Content-Type", ctype)
+        self.send_header("Content-Type", _hv(ctype))
         self.send_header("Content-Length", str(len(raw)))
         for k, v in head.items():
-            self.send_header(k, v)
+            self.send_header(_hv(k), _hv(v))
         self.end_headers()
         if self.command != "HEAD":
             self.wfile.write(raw)
@@ -538,7 +546,7 @@ class H(BaseHTTPRequestHandler):
                 code = 206
         n = end - start + 1
         self.send_response(code)
-        self.send_header("Content-Type", ctype)
+        self.send_header("Content-Type", _hv(ctype))
         self.send_header("Accept-Ranges", "bytes")
         self.send_header("Content-Length", str(n))
         self.send_header("Cache-Control", "max-age=3600" if cache else "no-store")
@@ -573,7 +581,7 @@ class H(BaseHTTPRequestHandler):
             except SE2.V2Error as e:
                 return page("SolarEdge", "<p>%s</p>" % html.escape(e.detail))
             self.send_response(302)
-            self.send_header("Location", url)
+            self.send_header("Location", _hv(url))
             self.end_headers()
             return None
         code, site = (q.get("code") or [""])[0], (q.get("site_id") or [""])[0]
@@ -613,8 +621,8 @@ class H(BaseHTTPRequestHandler):
             if path.startswith("/vendor/"):        # MapLibre, kept in lib/app_ui/vendor (pinned 4.7.1); the CDN only when the file is missing
                 name = path[8:]
                 if name in VENDOR:
-                    f = os.path.join(UI, "vendor", name)
-                    if os.path.isfile(f):
+                    f = safe_join(os.path.join(UI, "vendor"), name)
+                    if f and os.path.isfile(f):
                         return self.send_static(f, "public, max-age=31536000, immutable")
                     self.send_response(302)
                     self.send_header("Location", VENDOR[name])
