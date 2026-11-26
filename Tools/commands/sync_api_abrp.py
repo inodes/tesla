@@ -190,7 +190,7 @@ def main():
                 if user_info and not user_info.get("error"):
                     _display_user_profile(user_info)
                 else:
-                    print(f"{C_YELLOW}⚠ Token valid, but query returned: {raw}{C_RESET}")
+                    print(f"{C_YELLOW}⚠ Token valid and cached, but ABRP returned no vehicle or user profile (the reply is not printed: it can hold tokens).{C_RESET}")
         else:
             print(f"{C_RED}❌ Code exchange failed: {_OAUTH_ERRORS.get(token_data.get('error'), 'no token returned')}{C_RESET}")
         return
