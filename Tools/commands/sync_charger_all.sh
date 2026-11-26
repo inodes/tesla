@@ -40,12 +40,15 @@ cd "$(dirname "$0")"
 
 if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
     cat << 'EOF'
-Usage: ./sync_charger_all.sh [-h|--help]
+Usage: ./sync_charger_all.sh [--only NETWORK] [-h|--help]
 
 The one command for the CHARGERS domain (charging hardware/station
 registries - see AGENTS.md REQ-033 for the charger/charging/charges split).
-Takes no arguments; running it executes every step below in order against
-your real data. Run the two scripts directly with a wider --state/--country
+With no argument it executes every step below in order against your real
+data. --only NETWORK runs just that network's step, then the export (step 12):
+NETWORK is one of tesla-sc, tesla-dc, chargefox, evx, evie, bppulse, plugshare,
+ampcharge, exploren, jolt, nrma. The app's Sync chargers card uses this when a
+network is picked in its dropdown. Run the two scripts directly with a wider --state/--country
 scope yourself if you want a broader sweep than "near Home, 50km".
 
 Steps run, in order:
@@ -69,51 +72,83 @@ EOF
     exit 0
 fi
 
-echo "==> Tesla Superchargers"
-# Tesla goes through charger_find.py --sync-tesla like every other network
-# (REQ-095 tracks moving the scraper it calls out of archive/ into
-# providers/chargers/chargers_tesla.py, so nothing needs archive/ at all).
-./charger_find.py --sync-tesla --sc
+ONLY=""
+if [[ "${1:-}" == "--only" ]]; then
+    ONLY="${2:-}"
+    case "$ONLY" in
+        tesla-sc|tesla-dc|chargefox|evx|evie|bppulse|plugshare|ampcharge|exploren|jolt|nrma) ;;
+        *) echo "sync_charger_all.sh: --only needs one of tesla-sc tesla-dc chargefox evx evie bppulse plugshare ampcharge exploren jolt nrma (got '$ONLY')" >&2; exit 2 ;;
+    esac
+fi
+want() { [[ -z "$ONLY" || "$ONLY" == "$1" ]]; }     # no --only: every step
 
-echo
-echo "==> Tesla Destination Chargers"
-./charger_find.py --sync-tesla --dc
+if want tesla-sc; then
+    echo "==> Tesla Superchargers"
+    # Tesla goes through charger_find.py --sync-tesla like every other network
+    # (REQ-095 tracks moving the scraper it calls out of archive/ into
+    # providers/chargers/chargers_tesla.py, so nothing needs archive/ at all).
+    ./charger_find.py --sync-tesla --sc
+fi
 
-echo
-echo "==> Chargefox network (Australia)"
-./charger_find.py --sync-chargefox
+if want tesla-dc; then
+    echo
+    echo "==> Tesla Destination Chargers"
+    ./charger_find.py --sync-tesla --dc
+fi
 
-echo
-echo "==> EVX Kerbside Polechargers (Australia)"
-./charger_find.py --sync-evx
+if want chargefox; then
+    echo
+    echo "==> Chargefox network (Australia)"
+    ./charger_find.py --sync-chargefox
+fi
 
-echo
-echo "==> Evie Networks (Australia)"
-./charger_find.py --sync-evie
+if want evx; then
+    echo
+    echo "==> EVX Kerbside Polechargers (Australia)"
+    ./charger_find.py --sync-evx
+fi
 
-echo
-echo "==> bp pulse DC Fast Chargers (Australia)"
-./charger_find.py --sync-bppulse
+if want evie; then
+    echo
+    echo "==> Evie Networks (Australia)"
+    ./charger_find.py --sync-evie
+fi
 
-echo
-echo "==> PlugShare 3rd-party chargers (near Home, 50km)"
-./charger_find.py --sync-plugshare --near Home --radius 50 --add-all
+if want bppulse; then
+    echo
+    echo "==> bp pulse DC Fast Chargers (Australia)"
+    ./charger_find.py --sync-bppulse
+fi
 
-echo
-echo "==> Ampol AmpCharge & Ampol Foodary (Australia)"
-./charger_find.py --sync-ampcharge
+if want plugshare; then
+    echo
+    echo "==> PlugShare 3rd-party chargers (near Home, 50km)"
+    ./charger_find.py --sync-plugshare --near Home --radius 50 --add-all
+fi
 
-echo
-echo "==> Exploren AC/DC network (Australia)"
-./charger_find.py --sync-exploren
+if want ampcharge; then
+    echo
+    echo "==> Ampol AmpCharge & Ampol Foodary (Australia)"
+    ./charger_find.py --sync-ampcharge
+fi
 
-echo
-echo "==> Jolt DC Fast network (Australia)"
-./charger_find.py --sync-jolt
+if want exploren; then
+    echo
+    echo "==> Exploren AC/DC network (Australia)"
+    ./charger_find.py --sync-exploren
+fi
 
-echo
-echo "==> NRMA EV Charging network (Australia)"
-./charger_find.py --sync-nrma
+if want jolt; then
+    echo
+    echo "==> Jolt DC Fast network (Australia)"
+    ./charger_find.py --sync-jolt
+fi
+
+if want nrma; then
+    echo
+    echo "==> NRMA EV Charging network (Australia)"
+    ./charger_find.py --sync-nrma
+fi
 
 echo
 echo "==> Multi-View Consolidated Registry Export"

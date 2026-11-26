@@ -846,8 +846,13 @@ class H(BaseHTTPRequestHandler):
                 return self.send_json(REACH.at(body))
             if u.path == "/api/reach/build":
                 return self.send_json(REACH.start_build())
-            if u.path == "/api/chargers/sync":
-                return self.send_json(SYNC.start())
+            if u.path == "/api/chargers/sync":      # {network?}: one network picked in the Chargers tab's dropdown, or every network
+                net = (body or {}).get("network") if isinstance(body, dict) else None
+                if net is None or net == "all":
+                    return self.send_json(SYNC.start())
+                if net in app_sync.NOT_NETWORKS:
+                    return self.send_json(dict(ok=False, error="%s is where you have charged, not a charger network: there is nothing to update." % (net or "This")))
+                return self.send_json(SYNC.start(("--only", app_sync.charger_net_key(net))))
             if u.path == "/api/chargers/sync/stop":
                 return self.send_json(SYNC.stop())
             if u.path == "/api/tessie/sync":
