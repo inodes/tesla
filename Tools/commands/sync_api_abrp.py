@@ -89,17 +89,6 @@ C_DIM = "\033[2m"
 C_RESET = "\033[0m"
 
 
-# what ABRP's token endpoint may say when the code exchange fails (a fixed text each: the reply itself holds tokens and is never printed)
-_OAUTH_ERRORS = {
-    "invalid_grant": "invalid_grant (the code is wrong, used or expired)",
-    "invalid_client": "invalid_client (client id or API key not accepted)",
-    "invalid_request": "invalid_request (the exchange was malformed)",
-    "unauthorized_client": "unauthorized_client",
-    "unsupported_grant_type": "unsupported_grant_type",
-    "invalid_scope": "invalid_scope",
-}
-
-
 def main():
     parser = argparse.ArgumentParser(description="ABRP / Iternio API Connectivity & Vehicle Inspector")
     parser.add_argument("--auth-url", action="store_true", help="Generate ABRP OAuth login URL")
@@ -117,7 +106,7 @@ def main():
 
     print(f"\n⚡ {C_BOLD}ABRP / Iternio API Configuration:{C_RESET}")
     print(f"  • Client ID: {C_CYAN}{client_id or 'Auto-resolved'}{C_RESET}")
-    print(f"  • API Key:   {C_CYAN}{'Configured' if api_key else 'Not Configured'}{C_RESET}")
+    print(f"  • API Key:   {C_CYAN}{('•' * 8 + ' redacted, ' + str(len(api_key)) + ' characters') if api_key else 'Not Configured'}{C_RESET}")
     print(f"  • Local Spec:{C_GREEN} {abrp_cfg.get('vehicle_name')} ({abrp_cfg.get('usable_kwh')} kWh usable){C_RESET}")
     print()
 
@@ -192,10 +181,16 @@ def main():
                 else:
                     print(f"{C_YELLOW}⚠ Token valid and cached, but ABRP returned no vehicle or user profile (the reply is not printed: it can hold tokens).{C_RESET}")
         else:
+            err = token_data.get("error")                    # the reply holds tokens: it is compared, never printed
             why = "no token returned"
-            for code, text in _OAUTH_ERRORS.items():        # compared, never copied: the printed text is always one of ours
-                if token_data.get("error") == code:
-                    why = text
+            if err == "invalid_grant":
+                why = "the code is wrong, used or expired"
+            elif err == "invalid_client":
+                why = "the client id or API key was not accepted"
+            elif err == "invalid_request":
+                why = "the exchange was malformed"
+            elif err:
+                why = "ABRP refused the exchange"
             print(f"{C_RED}❌ Code exchange failed: {why}{C_RESET}")
         return
 
