@@ -6,7 +6,7 @@ How commands are organised and how the app calls the work. The history of indivi
 
 - Every command-line script is in `Tools/commands/` and is run through one entry point, `./Tools/tesla`. Run it with no arguments to list the commands by group (sync, analyse, report, build, teslacam, chargers, places); `./Tools/tesla <group> <command> -h` shows a command's own help. An old script name still works: `./Tools/tesla sync_api_tessie.py --drives`.
 - A new command goes in `Tools/commands/` and in the GROUPS table in `Tools/tesla`.
-- Shared code is in `Tools/lib/`, pluggable adapters in `Tools/providers/`, tests in `tests/`. One-off fixes, migrations and finished investigations are in `Tools/maintenance/`; retired scripts are in `Tools/archive/` with the reason in its `archive_log.md`.
+- Shared code is in `Tools/lib/`, pluggable adapters in `Tools/providers/`, tests in `tests/`. One-off fixes, migrations and finished investigations are in `Tools/maintenance/`; retired scripts are kept in an `archive` folder under `Tools` that is local only (not in git), with the reason in its `archive_log.md`.
 - `Tools/` itself holds only `tesla`, `tesla_app.py`, `build_mac_app.sh`, `restart_app.command`, `fix_exec_bits.sh` and these folders.
 
 ## Rules for changes
