@@ -31,7 +31,7 @@ def clean(line):
 CHARGER_NETS = {"Tesla": "tesla-sc", "Tesla Supercharger": "tesla-sc", "Tesla Destination": "tesla-dc", "Chargefox": "chargefox", "EVX": "evx",
                 "Evie": "evie", "Evie Networks": "evie", "BP Pulse": "bppulse", "3rd-Party": "plugshare", "AmpCharge": "ampcharge",
                 "Exploren": "exploren", "Jolt": "jolt", "NRMA": "nrma"}
-NOT_NETWORKS = ("", "AC / home", "DC fast")
+NOT_NETWORKS = ("", "AC / home", "DC fast", "AC Public", "Evnex")
 
 
 def charger_net_key(name):

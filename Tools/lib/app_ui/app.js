@@ -1660,7 +1660,7 @@ const SYNCNET={"Tesla":["Tesla Superchargers","tesla.com's list: only sites that
   "Tesla Destination":["Tesla Destination chargers","tesla.com's list: only sites that are new, renamed or moved are fetched"],"Chargefox":["Chargefox","the Chargefox network, Australia"],"EVX":["EVX","the EVX Kerbside Polechargers, Australia"],
   "Evie":["Evie","Evie Networks, Australia"],"Evie Networks":["Evie","Evie Networks, Australia"],"BP Pulse":["bp pulse","bp pulse DC fast chargers, Australia"],"3rd-Party":["PlugShare","PlugShare listings within 50 km of Home, which carry many small networks"],
   "AmpCharge":["AmpCharge","Ampol AmpCharge and Foodary, Australia"],"Exploren":["Exploren","the Exploren AC and DC network, Australia"],"Jolt":["Jolt","the Jolt DC fast network, Australia"],"NRMA":["NRMA","the NRMA EV charging network, Australia"]};
-const SYNCNOT=["","AC / home","DC fast"];       // places you charged at that are not a charger network
+const SYNCNOT=["","AC / home","DC fast","AC Public","Evnex"];       // places you charged at that are not a charger network
 function syncAbout(net){
   if(!net||net==="all")return {steps:12,head:"Updates every charger network. Takes several minutes.",tip:"Tesla Superchargers and Destination chargers, Chargefox, EVX, Evie, bp pulse, PlugShare (50 km around Home), AmpCharge, Exploren, Jolt and NRMA. Existing entries are kept; new ones are added."};
   if(SYNCNOT.includes(net))return {no:1,head:"\u201c"+(net||"Other")+"\u201d is where you have charged, not a charger network: there is nothing to update.",tip:""};
