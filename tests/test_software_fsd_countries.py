@@ -59,6 +59,15 @@ class FsdCountriesTest(unittest.TestCase):
         us = {"2026.38.5.5": dict(any=100, hw4=100, lite=100)}
         self.assertEqual(sorted(c["kind"] for c in A.chips_for(ix, row, {}, None, us)), ["fsd", "lite"])
 
+    def test_the_ai3_v12_chip_needs_a_country_where_ai3_has_fsd(self):
+        row = {"version": "2026.8.3", "fsd_hw3": "12.6.4", "fsd_hw4": None}
+        ix = FakeIx({}, S.DEFAULTS["fsd_countries"])
+        anz = {"2026.8.3": dict(any=5, hw4=3, lite=0)}                       # 5 cars of Australia and New Zealand are on the build, none of them AI3 with FSD
+        self.assertEqual(A.chips_for(ix, row, {}, None, anz), [])
+        na = {"2026.8.3": dict(any=50, hw4=20, lite=30)}
+        self.assertEqual([(c["v"], c["hw"]) for c in A.chips_for(ix, row, {}, None, na)], [("12.6.4", "AI3")])
+        self.assertEqual([c["v"] for c in A.chips_for(ix, row, {}, None, None)], ["12.6.4"])     # no region asked: Teslascope's field as it is
+
     def test_an_fsd_version_has_only_cars_of_fsd_countries(self):
         fsd = dict(fsd=True, lite=False, legacy=False)
         lite = dict(fsd=False, lite=True, legacy=False)

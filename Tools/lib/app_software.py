@@ -236,12 +236,16 @@ def chip_fits(c, hw, first=13):
     return True
 
 
-def chip_counts(c, cars, first=13):
-    """Cars of the region that can have this chip: FSD Lite needs a country with Lite, FSD from v13 one with FSD for AI4, older FSD any approved country."""
+def chip_counts(c, cars, first=13, ai3=None):
+    """Cars of the region that can have this chip: FSD Lite needs a country with Lite, FSD from v13 one with FSD for AI4, older FSD (v12) on an AI3 chip one where AI3 has
+    FSD at all (a country with Lite; Australia has none, so 2026.8.3 does not show Teslascope's AI3 v12.6.4 for ANZ), older FSD on another chip any approved country.
+    `ai3`: the label of the AI3 computer on a chip (settings hardware_labels)."""
     if c["kind"] == "lite":
         return cars.get("lite", 0)
     if _major(c["v"]) is None or _major(c["v"]) >= first:
         return cars.get("hw4", 0)
+    if ai3 and c.get("hw") == ai3:
+        return cars.get("lite", 0)
     return cars.get("any", 0)
 
 
@@ -252,7 +256,8 @@ def chips_for(ix, row, nf, hw, cars=None):
     chips = fsd_chip(row, hw, ix.cfg["hardware_labels"])
     if cars is not None:
         have = cars.get(row["version"]) or {}
-        chips = [c for c in chips if chip_counts(c, have, first)]
+        ai3 = ix.cfg["hardware_labels"].get("TeslaAP3", "TeslaAP3")
+        chips = [c for c in chips if chip_counts(c, have, first, ai3)]
     if not chips:
         chips = [c for c in nf.get(row["version"], []) if chip_fits(c, hw, first)]
     return chips
