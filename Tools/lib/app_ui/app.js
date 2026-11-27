@@ -136,7 +136,7 @@ const pbar=pct=>`<div class="pbar${pct==null?" ind":""}"><i${pct==null?"":` styl
 const setPbar=(r,pct)=>{const b=$(".pbar",r),i=b&&$("i",b);if(!b||!i)return false;b.classList.toggle("ind",pct==null);i.style.width=pct==null?"":Math.max(4,Math.min(100,Math.round(pct)))+"%";return true};
 // Back links: the crumb at the top of a page goes back to the page the user came from (the path is kept per tab in sessionStorage), not to a fixed parent.
 // h and label are only the fallback, for a page opened directly. A main-menu click starts a new path; saving or deleting a place replaces the page it was done on.
-const NAVK="nav.stack",ROOTS={activity:"Activity",drives:"Drives",driveslist:"Drives",charges:"Charges",parked:"Parked",idles:"Parked",places:"Places",alerts:"Alerts",software:"Software",battery:"Battery",health:"Health",analytics:"Analytics",teslacam:"TeslaCam",timeline:"Timeline",queue:"Queue"};
+const NAVK="nav.stack",ROOTS={activity:"Activity",drives:"Drives",driveslist:"Drives",charges:"Charges",parked:"Parked",idles:"Parked",places:"Places",chargers:"Chargers",alerts:"Alerts",software:"Software",battery:"Battery",health:"Health",analytics:"Analytics",teslacam:"TeslaCam",timeline:"Timeline",queue:"Queue"};
 let NAV=(()=>{try{return JSON.parse(sessionStorage.getItem(NAVK)||"[]")}catch(e){return[]}})(),NAVREPL=false,NAVRESET=false;
 // A Sentry event or a moment opens the page of the drive or park that holds it (the address is replaced): an entry of that kind followed by the page it opened is not a place to go back to
 // (it only leads on to the same page). Entries kept in the tab by an older version are cleaned the same way.
@@ -1606,7 +1606,10 @@ function stopsTable(host,rows){
     :'<div class="empty">No stops to review: every park on the Drives list is at a saved place.</div>';
   $$(".rvr",host).forEach(tr=>tr.onclick=ev=>{if(ev.target.closest("a,button"))return;const x=$(`[data-x="${tr.dataset.i}"]`,host);x.hidden=!x.hidden;tr.classList.toggle("open",!x.hidden)});
   $$("[data-save]",host).forEach(b=>b.onclick=e=>{e.stopPropagation();try{sessionStorage.setItem("placePrefill",b.dataset.save)}catch(_){}location.hash="#/place/"+encodeURIComponent("@new")})}
-async function pagePlaces(){
+// Places (saved places, stops to review) and Chargers (Superchargers, every network) are two pages made by this one function: a section's own tabs, its own controls
+const PLSEC={places:[["saved","Saved places"],["found","Stops to review"]],chargers:[["sc","Superchargers"],["chargers","All chargers"]]};
+async function pagePlaces(sec){
+  sec=sec||"places";const TABS=PLSEC[sec].map(x=>x[0]);PL.mem=PL.mem||{};if(!TABS.includes(PL.tab))PL.tab=PL.mem[sec]&&TABS.includes(PL.mem[sec])?PL.mem[sec]:TABS[0];
   loading("plc");let L=await api("places");let C=null;const need=async()=>{if(!C)C=await api("chargers")};if(PL.tab==="chargers")await need();
   const draw=()=>{const q=PL.q.toLowerCase(),host=$("#tb"),qs=stateCode(q);let rows,cols;     // a search that is just a state ("Victoria", "vic") means that state, not streets named after it
     const stat=[{k:"charges",t:"Charges"},{k:"idles",t:"Parked"},{k:"drives",t:"Arrivals"}];
@@ -1622,22 +1625,22 @@ async function pagePlaces(){
     if(PL.view==="map"){placesMap(host,rows,PL.tab);return}
     table(host,cols,rows,r=>{sessionStorage.removeItem("placePrefill");location.hash="#/place/"+encodeURIComponent(r.key)},PL.tab==="found"?"visits":PL.tab==="sc"||PL.tab==="chargers"?"charges":"last");
     $("#cnt").textContent=rows.length+" shown"};
-  main.innerHTML=`<h1>Places</h1><div class="sub" id="pli">Saved places, Superchargers and stops to review.</div>
-   <div class="tiles" id="pltl">${tile(L.saved.length,"saved places")}${tile(L.superchargers.filter(s=>s.charges).length+" of "+L.superchargers.length,"Superchargers used")}${tile(L.found.length,"stops to review")}</div>
-   <div class="bar"><button class="chip" data-t="saved">Saved places</button><button class="chip" data-t="sc">Superchargers</button><button class="chip" data-t="chargers">Chargers</button><button class="chip" data-t="found">Stops to review</button><span class="vw"><button class="chip" data-v="list">List</button><button class="chip" data-v="map">Map</button></span>
-   <select id="cn"></select><select id="cs"></select><select id="vf" title="Visit frequency: how many separate times you parked there"><option value="1">Visited: any</option><option value="2">Visited 2+ times</option><option value="3">Visited 3+ times</option><option value="5">Visited 5+ times</option></select><label class="sub" id="vl"><input type="checkbox" id="vis"> used only</label><label class="sub" id="sl"><input type="checkbox" id="soon"> show coming soon</label><button class="btn" id="sy">Refresh</button><input type="search" id="q" placeholder="Search…" value="${esc(PL.q)}"><button class="btn pri" id="add">+ New place</button><span class="sub" id="cnt"></span></div><div id="sp"></div><div id="tb"></div>`;
+  main.innerHTML=`<h1>${sec==="chargers"?"Chargers":"Places"}</h1>
+   <div class="tiles" id="pltl">${sec==="chargers"?tile(L.superchargers.filter(s=>s.charges).length+" of "+L.superchargers.length,"Superchargers used")+tile(L.charger_count,"chargers listed"):tile(L.saved.length,"saved places")+tile(L.found.length,"stops to review")}</div>
+   <div class="bar">${PLSEC[sec].map(([k,t])=>`<button class="chip" data-t="${k}">${t}</button>`).join("")}<span class="vw"><button class="chip" data-v="list">List</button><button class="chip" data-v="map">Map</button></span>
+   <select id="cn"></select><select id="cs"></select><select id="vf" title="Visit frequency: how many separate times you parked there"><option value="1">Visited: any</option><option value="2">Visited 2+ times</option><option value="3">Visited 3+ times</option><option value="5">Visited 5+ times</option></select><label class="sub" id="vl"><input type="checkbox" id="vis"> used only</label><label class="sub" id="sl"><input type="checkbox" id="soon"> show coming soon</label><button class="btn" id="sy">Refresh</button><input type="search" id="q" placeholder="Search…" value="${esc(PL.q)}">${sec==="places"?'<button class="btn pri" id="add">+ New place</button>':""}<span class="sub" id="cnt"></span></div><div id="sp"></div><div id="tb"></div>`;
   const shown=()=>PL.tab==="sc"?"Tesla":PL.net;                      // the network the list is showing; the Superchargers tab is Tesla's
   const syLabel=()=>{const n=shown(),no=n!=="all"&&SYNCNOT.includes(n),b=$("#sy");b.textContent=no?"Refresh":n==="all"?"Refresh all networks":"Refresh "+(SYNCNET[n]?SYNCNET[n][0]:n);b.disabled=no;b.title=no?syncAbout(n).head:syncAbout(n).tip};
-  const tabs=()=>{$("#pli").style.display=$("#pltl").style.display=PL.view==="map"?"none":"";$$("[data-t]").forEach(c=>c.classList.toggle("on",c.dataset.t===PL.tab));const ch=PL.tab==="chargers";$("#vl").style.display=$("#sl").style.display=PL.tab==="sc"||ch?"":"none";$("#vf").style.display=PL.tab==="found"?"":"none";$$("[data-v]").forEach(c=>c.classList.toggle("on",c.dataset.v===PL.view));$("#cn").style.display=$("#cs").style.display=ch?"":"none";$("#sy").style.display=ch||PL.tab==="sc"?"":"none";syLabel();$("#vis").checked=PL.visited;
+  const tabs=()=>{$("#pltl").style.display=PL.view==="map"?"none":"";$$("[data-t]").forEach(c=>c.classList.toggle("on",c.dataset.t===PL.tab));const ch=PL.tab==="chargers";$("#vl").style.display=$("#sl").style.display=PL.tab==="sc"||ch?"":"none";$("#vf").style.display=PL.tab==="found"?"":"none";$$("[data-v]").forEach(c=>c.classList.toggle("on",c.dataset.v===PL.view));$("#cn").style.display=$("#cs").style.display=ch?"":"none";$("#sy").style.display=ch||PL.tab==="sc"?"":"none";syLabel();$("#vis").checked=PL.visited;
     if(ch&&C){$("#cn").innerHTML='<option value="all">All networks</option>'+C.networks.map(([n,c])=>`<option value="${esc(n)}">${esc(n||"Other")} (${n0(c)})</option>`).join("");$("#cn").value=PL.net;
       const st=[...new Set(C.rows.map(r=>r.state).filter(Boolean))].sort();$("#cs").innerHTML='<option value="all">All states</option>'+st.map(x=>`<option>${esc(x)}</option>`).join("");$("#cs").value=PL.state}};
-  $$("[data-t]").forEach(c=>c.onclick=async()=>{PL.tab=c.dataset.t;if(PL.tab==="chargers")await need();tabs();draw()});
+  $$("[data-t]").forEach(c=>c.onclick=async()=>{PL.tab=PL.mem[sec]=c.dataset.t;if(PL.tab==="chargers")await need();tabs();draw()});
   $$("[data-v]").forEach(c=>c.onclick=()=>{PL.view=c.dataset.v;tabs();draw()});
   $("#vf").value=String(PL.freq);$("#vf").onchange=e=>{PL.freq=+e.target.value;try{localStorage.setItem("plFreq",PL.freq)}catch(_){}draw()};
   $("#cn").onchange=e=>{PL.net=e.target.value;syLabel();draw();const h=$("#sp");if(h&&h._about)h._about()};$("#cs").onchange=e=>{PL.state=e.target.value;draw()};
   $("#sy").onclick=()=>{const h=$("#sp");if(h.firstChild){if(h._run)h._run();return}      // one click: the panel opens and the run for the network shown starts
     syncPanel(h,async()=>{cache.chargers=null;cache.places=null;L=await api("places");if(C||PL.tab==="chargers")C=await api("chargers");tabs();draw()},shown,true)};$("#vis").onchange=e=>{PL.visited=e.target.checked;draw()};$("#soon").checked=PL.soon;$("#soon").onchange=e=>{PL.soon=e.target.checked;draw()};$("#q").oninput=e=>{PL.q=e.target.value;draw()};
-  $("#add").onclick=()=>{sessionStorage.setItem("placePrefill",JSON.stringify({name:"",lat:"",lon:"",radius_m:150}));location.hash="#/place/"+encodeURIComponent("@new")};tabs();draw();
+  if(sec==="places")$("#add").onclick=()=>{sessionStorage.setItem("placePrefill",JSON.stringify({name:"",lat:"",lon:"",radius_m:150}));location.hash="#/place/"+encodeURIComponent("@new")};tabs();draw();
 }
 // ---------- a job run from the app, shown as its steps (one row each: done / running / failed, and the short result the step printed); the raw output only under Details
 // JobSteps(host) -> {feed(lines), reset(), paint(running, rc)}; a script marks a step with a line "==> Name" (sync_*_all.sh)
@@ -3559,7 +3562,7 @@ async function pageTimeline(){
   $("#tmg").onchange=e=>{TMS.gap=+e.target.value;tmRender()};
   tmRender();
 }
-const ROUTES={activity:pageActivity,drives:pageDriveList,driveslist:pageDriveList,charges:pageCharges,battery:pageBattery,health:pageHealth,analytics:pageAnalytics,teslacam:pageTeslaCam,timeline:pageTimeline,queue:pageQueue,flips:pageDriveList,review:pageDriveList,dashcam:pageDriveList,parked:pageParked,idles:pageParked,places:pagePlaces,alerts:pageAlerts,software:pageSoftware};
+const ROUTES={activity:pageActivity,drives:pageDriveList,driveslist:pageDriveList,charges:pageCharges,battery:pageBattery,health:pageHealth,analytics:pageAnalytics,teslacam:pageTeslaCam,timeline:pageTimeline,queue:pageQueue,flips:pageDriveList,review:pageDriveList,dashcam:pageDriveList,parked:pageParked,idles:pageParked,places:()=>pagePlaces("places"),chargers:()=>pagePlaces("chargers"),alerts:pageAlerts,software:pageSoftware};
 let PERF1=true;      // the first page after the window opened: its time since launch goes to the timing log too
 const perfSend=(p,t0)=>{const now=performance.now(),b={route:p,ms:Math.round(now-t0)};if(PERF1){PERF1=false;b.first_ms=Math.round(now)}
   try{fetch0("/api/perf",{method:"POST",keepalive:true,body:JSON.stringify(b)}).catch(()=>{})}catch(e){}};       // ~/Library/Logs/tesla_perf.log (lib/perf_log.py)
@@ -3568,7 +3571,7 @@ async function route(){
   if(!QUIET){RGEN++;RLOAD=RGEN}const myGen=RGEN;
   navTrack();hideTip();if(location.hash.indexOf("#/charge/")!==0){try{sessionStorage.removeItem("chargeSet")}catch(e){}}if(TLOFF){TLOFF();TLOFF=null}const h=(location.hash||"#/activity").replace(/^#\//,""),[p,arg,arg2]=h.split("/").map(decodeURIComponent);
   // the side bar item lit is the list a detail page was reached from (a drive opened from Drives lights Drives); a section's own page (Software, Battery, ...) always lights itself, whatever the path that led to it
-  const own=({drive:"drives",driveslist:"drives",charge:"charges",idle:"parked",idles:"parked",dashcam:"drives",flips:"drives",review:"drives",place:"places"})[p]||p,from=NAV.length?(NAV[0].h||"").replace(/^#\//,"").split("/")[0]:"",lit=own!==p&&ROOTS[from]&&ROOTS[from]!==ROOTS[own]&&NAV.length>1?(({idles:"parked"})[from]||from):own;
+  const own=({drive:"drives",driveslist:"drives",charge:"charges",idle:"parked",idles:"parked",dashcam:"drives",flips:"drives",review:"drives",place:/^[sc]:/.test(arg||"")?"chargers":"places"})[p]||p,from=NAV.length?(NAV[0].h||"").replace(/^#\//,"").split("/")[0]:"",lit=own!==p&&ROOTS[from]&&ROOTS[from]!==ROOTS[own]&&NAV.length>1?(({idles:"parked"})[from]||from):own;
   $$("#nav>a").forEach(a=>a.classList.toggle("on",a.dataset.p===lit));
   badge();if(!QUIET)main.scrollTop=0;
   if(!QUIET)await snapLoad();
