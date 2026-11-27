@@ -44,3 +44,10 @@ class ChargersPage(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class MapLabels(unittest.TestCase):
+    def test_tesla_chargers_are_prefixed_on_the_all_chargers_map_like_other_networks(self):
+        js = open(os.path.join(HERE, "..", "Tools", "lib", "app_ui", "app.js"), encoding="utf-8").read()
+        self.assertIn('"Tesla":"Tesla Supercharger","Tesla Destination":"Tesla Destination Charger"', js)
+        self.assertIn("name:mapName(r),lat:+r.lat", js)

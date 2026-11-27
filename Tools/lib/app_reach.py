@@ -253,10 +253,13 @@ class ReachService:
 
     # ---- a spot
     def at(self, b):
-        """The roads around a spot (see the module text). -> dict(lat, lon, near=[{key, cost}], other={key, cost}, between=cost, left=charge left or None, unit) / dict(error)"""
+        """The roads around a spot (see the module text): pts are all the chargers shown, reach_pts (optional) the ones the range was worked out from. -> dict(lat, lon, near=[{key, cost}], other={key, cost}, between=cost, left=charge left or None, unit) / dict(error)"""
         if not self.meta():
             return dict(error="needs_graph")
-        pts = [(float(p[0]), float(p[1]), str(p[2]) if len(p) > 2 else "") for p in (b.get("pts") or []) if len(p) >= 2 and p[0] is not None and p[1] is not None]
+        def points(raw):
+            return [(float(p[0]), float(p[1]), str(p[2]) if len(p) > 2 else "") for p in (raw or []) if len(p) >= 2 and p[0] is not None and p[1] is not None]
+        pts = points(b.get("pts"))                      # every charger on the map: the nearest one and the one the other way are found among these
+        rpts = points(b.get("reach_pts")) or pts        # the chargers the shaded range was worked out from (the ones picked on the map, else all): what "charge left here" is read from
         if not pts or b.get("lat") is None or b.get("lon") is None:
             return dict(empty=True)
         basis = "kwh" if b.get("basis") == "kwh" else "km"
@@ -283,7 +286,7 @@ class ReachService:
         frac = min(1.0, max(0.0, float(b.get("frac", 1.0))))
         reserve = min(0.9, max(0.0, float(b.get("reserve", app_config.get("reach.reserve_pct") / 100.0))))
         way = 0.5 if b.get("round_trip") else 1.0
-        key = hashlib.sha1(json.dumps(["reach", basis, round(frac, 3), round(reserve, 3), way, [(round(p[0], 5), round(p[1], 5)) for p in pts]]).encode()).hexdigest()
+        key = hashlib.sha1(json.dumps(["reach", basis, round(frac, 3), round(reserve, 3), way, [(round(p[0], 5), round(p[1], 5)) for p in rpts]]).encode()).hexdigest()
         hit = self.cache.get(key)
         if hit is not None:
             nd, _m = g.snap(float(b["lat"]), float(b["lon"]))

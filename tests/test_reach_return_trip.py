@@ -79,3 +79,48 @@ class Wording(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class AtSpot(unittest.TestCase):
+    """The popup on the range map: the nearest charger is found among every charger shown, the charge left from the ones picked."""
+
+    def setUp(self):
+        s = AR.ReachService(tempfile.mkdtemp(), tempfile.mkdtemp())
+        s.meta = lambda: {"built": True}
+        s.car = lambda: {"km": 400.0, "kwh": 70.0}
+        self.seen = []
+
+        class G:
+            fit = object()
+
+            def prepare(g, pts, basis):
+                self.seen.append([p for p in pts])
+                return {"n": len(pts)}
+
+            def at(g, lat, lon, prep, basis, limit=None):
+                return dict(lat=lat, lon=lon, found=[(0, 0.3, 0)], back=None)
+
+            def snap(g, lat, lon):
+                return 0, 0.0
+        s._graph = lambda: G()
+        self.s = s
+
+    def test_the_nearest_is_searched_among_all_chargers_when_some_are_picked(self):
+        r = self.s.at(dict(pts=[[-34.18, 142.16, "nrma"], [-34.2, 142.14, "sc"]], reach_pts=[[-34.2, 142.14, "sc"]], lat=-34.18, lon=142.16, basis="km"))
+        self.assertEqual(len(self.seen[0]), 2)
+        self.assertEqual(r["near"][0]["key"], "nrma")
+
+    def test_charge_left_is_read_from_the_picked_chargers_range(self):
+        import numpy as np
+        sc = [(-34.2, 142.14)]
+        both = [(-34.18, 142.16), (-34.2, 142.14)]
+        import hashlib
+        import json
+
+        def key(pts):
+            return hashlib.sha1(json.dumps(["reach", "km", 0.9, 0.2, 1.0, [(round(a, 5), round(b, 5)) for a, b in pts]]).encode()).hexdigest()
+        self.s.cache[key(sc)] = {"val": np.array([123.0])}
+        self.s.cache[key(both)] = {"val": np.array([999.0])}
+        body = dict(pts=[[-34.18, 142.16, "nrma"], [-34.2, 142.14, "sc"]], lat=-34.18, lon=142.16, basis="km", frac=0.9, reserve=0.2)
+        self.assertEqual(self.s.at(dict(body, reach_pts=[[-34.2, 142.14, "sc"]]))["left"], 123.0)
+        self.assertEqual(self.s.at(body)["left"], 999.0)

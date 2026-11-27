@@ -1478,10 +1478,10 @@ function rgList(){const el=$("#rgl");if(!el)return;const L=RG.on&&RG.cannot?RG.s
 async function rgAt(e){
   const m=rgMap();if(!RG.on||!RG.st||!RG.st.built||!m)return;
   if(m.getLayer("pl")&&m.queryRenderedFeatures(e.point,{layers:["pl"]}).length)return;
-  const F=PLM.feats?PLM.feats():[],keys=RG.sel.size?[...RG.sel]:F.map(f=>f.properties.key),pts=keys.filter(k=>RG.pts[k]).map(k=>[RG.pts[k][0],RG.pts[k][1],k]);
+  const F=PLM.feats?PLM.feats():[],pt=k=>[RG.pts[k][0],RG.pts[k][1],k],pts=F.map(f=>f.properties.key).filter(k=>RG.pts[k]).map(pt),reach_pts=RG.sel.size?[...RG.sel].filter(k=>RG.pts[k]).map(pt):undefined;      // the nearest charger is the nearest of all shown; the range left is from the ones picked
   if(!pts.length)return;
   const pop=new maplibregl.Popup({offset:6,maxWidth:"320px"}).setLngLat(e.lngLat).setHTML('<div style="font:13px system-ui;color:#111">Calculating…</div>').addTo(m);
-  let r;try{r=await (await fetch("/api/reach/at",{method:"POST",body:JSON.stringify({pts,lat:e.lngLat.lat,lon:e.lngLat.lng,basis:RG.basis,frac:RG.frac/100,reserve:(RG.reserve==null?RG.st.reserve:RG.reserve)/100,round_trip:RG.ret})})).json()}catch(x){r={error:String(x)}}
+  let r;try{r=await (await fetch("/api/reach/at",{method:"POST",body:JSON.stringify({pts,reach_pts,lat:e.lngLat.lat,lon:e.lngLat.lng,basis:RG.basis,frac:RG.frac/100,reserve:(RG.reserve==null?RG.st.reserve:RG.reserve)/100,round_trip:RG.ret})})).json()}catch(x){r={error:String(x)}}
   const nm=k=>esc(RG.names[k]||k),u=esc(r.unit||RG.unit),row=(t,k,c)=>`<div style="margin:2px 0"><span style="color:#555">${t}</span> <b>${nm(k)}</b> · ${n0(c)} ${u}</div>`;
   pop.setHTML(`<div style="font:13px system-ui;color:#111">${r.error?esc(r.error==="needs_graph"?"":r.error):!(r.near||[]).length?"No "+rgThing()+" within reach of the roads here.":row("Nearest "+rgThing(),r.near[0].key,r.near[0].cost)+(r.other?row("The other way",r.other.key,r.other.cost)+`<div style="margin:2px 0;color:#555">Between them ${n0(r.between)} ${u}</div>`:"")+(r.left!=null?`<div style="margin:2px 0;color:#555">Charge left here ${n0(r.left)} ${u}</div>`:"")}</div>`)}
 function rgNote(){const e=$("#rgs");if(e)e.innerHTML=RG.note}
@@ -1557,10 +1557,12 @@ function chargerCard(S,o){
 function placesMap(host,rows,tab){
   const COL={saved:"#3b6cf6",sc:"#e0201b",chargers:"#16a34a",found:"#f59e0b"}[tab]||"#3b6cf6",byNet=tab==="chargers"||tab==="sc",ALIAS={"Tesla Supercharger":"Tesla","Evie Networks":"Evie"};
   const netName=r=>{const n=r.network||(tab==="sc"?"Tesla":"Other");return ALIAS[n]||n};
+  const TESLA_PRE={"Tesla":"Tesla Supercharger","Tesla Destination":"Tesla Destination Charger"};       // on the all-chargers map the other networks' names start with the network (Evie …, NRMA …); Tesla's are named by place only
+  const mapName=r=>{const n=r.name||r.addr||"Unnamed stop",pre=tab==="chargers"&&TESLA_PRE[r.network];return pre&&!/^tesla\b/i.test(n)?pre+" "+n:n};
   const netCol=n=>{const c=cfg("map.network_colors")||{};if(c[n])return c[n];let h=0;for(const ch of n)h=(h*31+ch.charCodeAt(0))%360;return `hsl(${h},62%,42%)`};
   const used=r=>tab==="found"?true:tab==="saved"?(r.charges||r.idles||r.drives)>0:r.charges>0;
   const hidden=(PLM&&PLM.tab===tab&&PLM.hidden)||new Set();
-  const feats=()=>rows.filter(r=>r.lat!=null&&r.lon!=null&&+r.lon<cfg("map.places_max_lon")&&!(byNet&&hidden.has(netName(r)))).map(r=>({type:"Feature",geometry:{type:"Point",coordinates:[+r.lon,+r.lat]},properties:{u:used(r)?1:0,key:r.key,ch:r.charges||0,kwh:r.kwh||0,cost:r.cost||0,name:r.name||r.addr||"Unnamed stop",lat:+r.lat,lon:+r.lon,c:byNet?netCol(netName(r)):COL,
+  const feats=()=>rows.filter(r=>r.lat!=null&&r.lon!=null&&+r.lon<cfg("map.places_max_lon")&&!(byNet&&hidden.has(netName(r)))).map(r=>({type:"Feature",geometry:{type:"Point",coordinates:[+r.lon,+r.lat]},properties:{u:used(r)?1:0,key:r.key,ch:r.charges||0,kwh:r.kwh||0,cost:r.cost||0,name:mapName(r),lat:+r.lat,lon:+r.lon,c:byNet?netCol(netName(r)):COL,
     det:[r.stalls?r.stalls+" stalls":"",r.kw?n0(r.kw)+" kW"+(r.tier?" "+(SPEED[r.tier]||r.tier):""):"",r.conn||"",r.hours||""].filter(Boolean).join(" · "),sub:[r.network||(tab==="sc"?"Supercharger":tab==="saved"?"Saved place":tab==="found"?"Stop to review":""),r.addr||"",r.charges?r.charges+" charge"+(r.charges>1?"s":"")+" · "+n0(r.kwh,1)+" kWh":(tab==="found"?"visited "+(r.visits===1?"once":r.visits+" times"):"")].filter(Boolean).join(" · ")}})).sort((x,y)=>x.properties.u-y.properties.u);
   const legend=()=>{if(!byNet)return;const cnt={};rows.forEach(r=>{if(r.lat!=null&&+r.lon<cfg("map.places_max_lon"))cnt[netName(r)]=(cnt[netName(r)]||0)+1});
     $("#nl").innerHTML=Object.entries(cnt).sort((a,b)=>b[1]-a[1]).map(([n,c])=>`<button class="chip nw${hidden.has(n)?" off":""}" data-nw="${esc(n)}" title="Show / hide ${esc(n)}"><i style="display:inline-block;width:10px;height:10px;border-radius:50%;background:${netCol(n)};margin-right:6px"></i>${esc(n)} <b>${n0(c)}</b></button>`).join("");
