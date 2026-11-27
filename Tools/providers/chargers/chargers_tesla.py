@@ -12,7 +12,9 @@ import json
 import math
 import random
 import re
+import queue
 import shutil
+import threading
 import time
 import unicodedata
 import urllib.request
@@ -791,6 +793,17 @@ class TeslaChargerExplorer:
         self.legacy_destination_chargers_path = os.path.join(tessie_home, "charging.json")
         self.last_change_summary: list = []
 
+    _tl = threading.local()                     # the last HTTP status is per thread: parallel fetches each read the one their own page got
+    _reg_lock = threading.RLock()               # one writer at a time for the registry files and last_change_summary
+
+    @property
+    def last_http_status(self):
+        return getattr(self._tl, "status", None)
+
+    @last_http_status.setter
+    def last_http_status(self, value):
+        self._tl.status = value
+
     def fetch_station_list(self, country: str = "Australia", charger_type: str = "superchargers") -> list:
         """
         Fetches the complete catalog of charging stations for a country.
@@ -944,6 +957,33 @@ class TeslaChargerExplorer:
         print(f"{C_GREEN}✔ Discovered {len(stations)} {type_label} in {country_slug.replace('+', ' ')}.{C_RESET}\n")
         return stations
 
+    @staticmethod
+    def _has_details(captured: dict) -> tuple:
+        return (any("get-charger-details" in k for k in captured), any("get-location-details" in k for k in captured))
+
+    def _wait_for_details(self, page, captured: dict, timeout_s: float, none_s: float = 20.0, other_s: float = 3.0, only_loc_s: float = 10.0, settle_ms: int = 300):
+        """Returns as soon as the page has fetched its charger data (the page keeps loading ads and trackers long after, which waiting for
+        a quiet network used to sit through). The charger details call is the one that matters (stalls, power, tier, hours, prices; without
+        it a record falls back to the page's cached, often lower, figures), so it is waited for up to none_s, then the location call for
+        other_s more. A page that only ever makes the location call is read after only_loc_s."""
+        t0 = time.time()
+        first_c = first_l = None
+        while time.time() - t0 < timeout_s:
+            has_c, has_l = self._has_details(captured)
+            now = time.time()
+            if has_c:
+                first_c = first_c or now
+                if has_l or now - first_c >= other_s:
+                    break
+            elif has_l:
+                first_l = first_l or now
+                if now - first_l >= only_loc_s:
+                    break
+            if now - t0 >= none_s:
+                break
+            page.wait_for_timeout(100)
+        page.wait_for_timeout(settle_ms)
+
     def _scrape_page_payload(self, page, target_url: str, timeout_ms: int = 35000, max_retries: int = 3, base_retry_delay: float = 2.0) -> tuple:
         """
         Navigates page to target_url and captures XHR/Fetch API responses + SSR __NEXT_DATA__.
@@ -964,10 +1004,10 @@ class TeslaChargerExplorer:
             try:
                 err_msg = None
                 try:
-                    nav_response = page.goto(target_url, wait_until="networkidle", timeout=timeout_ms)
+                    nav_response = page.goto(target_url, wait_until="domcontentloaded", timeout=timeout_ms)
                     if nav_response is not None:
                         self.last_http_status = nav_response.status
-                    page.wait_for_timeout(600)
+                    self._wait_for_details(page, captured_api_data, timeout_ms / 1000.0)
                 except Exception as e:
                     err_msg = str(e)
 
@@ -1916,8 +1956,8 @@ class TeslaChargerExplorer:
             best = d if best is None else min(best, d)
         return best is not None and best > moved_m
 
-    def scrape_all_stations(self, stations: list, force: bool = False, pacing_delay: float = 1.5, timeout_sec: int = 35, max_retries: int = 3, subset_filter: str = None):
-        """Batch scrapes and updates stations with periodic context recycling, backoffs, retries, and granular change reporting."""
+    def scrape_all_stations(self, stations: list, force: bool = False, pacing_delay: float = 1.5, timeout_sec: int = 35, max_retries: int = 3, subset_filter: str = None, workers: int = 1):
+        """Batch scrapes and updates stations with periodic context recycling, backoffs, retries, and granular change reporting. workers browsers fetch at once (each with its own pacing); the registry is written one site at a time."""
         try:
             from playwright.sync_api import sync_playwright
         except ImportError:
@@ -1956,7 +1996,8 @@ class TeslaChargerExplorer:
         filter_label = f" ({subset_filter.upper()} ONLY)" if subset_filter else ""
         print(f"\n{C_BOLD}{'='*80}{C_RESET}")
         print(f"  ⚡ {C_CYAN}{C_BOLD}STARTING BATCH SCRAPER FOR {total} STATIONS{filter_label}{C_RESET}")
-        print(f"  {C_DIM}Pacing: {pacing_delay:.1f}s (+jitter) | Timeout: {timeout_sec}s | Max Retries: {max_retries} | Context Recycling: Every 15 stations{C_RESET}")
+        workers = max(1, min(int(workers or 1), total, 8))
+        print(f"  {C_DIM}Pacing: {pacing_delay:.1f}s (+jitter) | Timeout: {timeout_sec}s | Max Retries: {max_retries} | Browsers at once: {workers} | Context Recycling: Every 15 stations{C_RESET}")
         print(f"{C_BOLD}{'='*80}{C_RESET}\n")
 
         stats = {
@@ -1966,101 +2007,148 @@ class TeslaChargerExplorer:
             "ERROR": 0
         }
         failed_stations = []
-        consecutive_failures = 0
         t0 = time.time()
 
         batch_changelog = {}
 
-        with sync_playwright() as p:
-            browser = p.webkit.launch(headless=self.headless)
+        lock = threading.Lock()                 # prints, counters and the registry (update_registry) one thread at a time
+        todo = queue.Queue()
+        for st in target_stations:
+            todo.put(st)
+        started = [0]
+        stop = threading.Event()
+        refused = [0]                           # sites in a row (across the browsers) that tesla.com answered with HTTP 403
+        REFUSED_LIMIT = 3
 
-            def create_fresh_session():
-                ctx = browser.new_context(
-                    viewport={"width": 1280, "height": 800},
-                    locale="en-AU",
-                    timezone_id="Australia/Sydney",
-                    user_agent="Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4 Safari/605.1.15"
-                )
-                pg = ctx.new_page()
-                return ctx, pg
+        def work(wid):
+            try:
+                with sync_playwright() as p:
+                    browser = p.webkit.launch(headless=self.headless)
 
-            context, page = create_fresh_session()
+                    def create_fresh_session():
+                        ctx = browser.new_context(
+                            viewport={"width": 1280, "height": 800},
+                            locale="en-AU",
+                            timezone_id="Australia/Sydney",
+                            user_agent="Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4 Safari/605.1.15"
+                        )
+                        return ctx, ctx.new_page()
 
-            for idx, st in enumerate(target_stations, 1):
- # Periodic context recycling every 15 stations: releases memory and resets connection pools
-                if idx > 1 and (idx - 1) % 15 == 0:
-                    try:
-                        page.close()
-                        context.close()
-                    except Exception:
-                        pass
-                    context, page = create_fresh_session()
+                    def close_session(ctx, pg):
+                        try:
+                            pg.close()
+                            ctx.close()
+                        except Exception:
+                            pass
 
-                st_title = st.get("title", "")
-                st_type = st.get("type", "supercharger")
-                st_url = st.get("url", "")
-                
-                status = self.get_station_status(st, sc_reg=sc_reg, dc_reg=dc_reg)
-                status_color = C_GREEN if status == "UP_TO_DATE" else (C_BLUE if status == "STALE" else C_ORANGE)
-                status_tag = f"[{status_color}{status}{C_RESET}]"
-
-                print(f"[{idx:3d}/{total:3d}] ⚡ Scraping {st_title} {status_tag}...")
-
-                try:
-                    captured_api_data, next_data_payload = self._scrape_page_payload(
-                        page, st_url, timeout_ms=timeout_sec * 1000, max_retries=max_retries
-                    )
-                    station_key, record = self._parse_scraped_data(st_url, captured_api_data, next_data_payload, charger_type=st_type, list_title=st_title)
-                    if record:
-                        res_status = self.update_registry(station_key, record)
-                        stats[res_status] = stats.get(res_status, 0) + 1
-                        if self.last_change_summary:
-                            batch_changelog[station_key] = list(self.last_change_summary)
-                        if st_type == "supercharger":
-                            sc_reg[station_key] = record
-                        else:
-                            dc_reg[station_key] = record
-                        consecutive_failures = 0
-                    else:
-                        print(f"  {C_RED}❌ Failed parsing record for {st_title} (no charger data after {max_retries} tries, last HTTP status {getattr(self, 'last_http_status', '?')}){C_RESET}")
-                        failed_stations.append(st_title)
-                        stats["ERROR"] = stats.get("ERROR", 0) + 1
-                        consecutive_failures += 1
-                except Exception as e:
-                    print(f"  {C_RED}❌ Error scraping {st_title}: {e}{C_RESET}")
-                    failed_stations.append(st_title)
-                    stats["ERROR"] = stats.get("ERROR", 0) + 1
-                    consecutive_failures += 1
- # Self-heal crashed context immediately
-                    try:
-                        page.close()
-                        context.close()
-                    except Exception:
-                        pass
-                    context, page = create_fresh_session()
-
- # Circuit breaker cooldown if 3 consecutive failures occur
-                if consecutive_failures >= 3:
-                    print(f"\n  {C_YELLOW}⚠ 3 consecutive failures encountered. Re-spawning session and cooling down 10s...{C_RESET}\n")
-                    try:
-                        page.close()
-                        context.close()
-                    except Exception:
-                        pass
-                    time.sleep(10)
+                    if wid:
+                        time.sleep(wid * 0.7)           # the browsers do not all ask at the same moment
                     context, page = create_fresh_session()
                     consecutive_failures = 0
+                    mine = 0
+                    while not stop.is_set():
+                        try:
+                            st = todo.get_nowait()
+                        except queue.Empty:
+                            break
+                        mine += 1
+ # Periodic context recycling every 15 stations: releases memory and resets connection pools
+                        if mine > 1 and (mine - 1) % 15 == 0:
+                            close_session(context, page)
+                            context, page = create_fresh_session()
+
+                        st_title = st.get("title", "")
+                        st_type = st.get("type", "supercharger")
+                        st_url = st.get("url", "")
+
+                        with lock:
+                            started[0] += 1
+                            idx = started[0]
+                            status = self.get_station_status(st, sc_reg=sc_reg, dc_reg=dc_reg)
+                            status_color = C_GREEN if status == "UP_TO_DATE" else (C_BLUE if status == "STALE" else C_ORANGE)
+                            print(f"[{idx:3d}/{total:3d}] ⚡ Scraping {st_title} [{status_color}{status}{C_RESET}]...", flush=True)
+
+                        try:
+                            captured_api_data, next_data_payload = self._scrape_page_payload(
+                                page, st_url, timeout_ms=timeout_sec * 1000, max_retries=max_retries
+                            )
+                            with lock:
+                                had_details = self._has_details(captured_api_data)[0]
+                                known = self.get_station_record(st, sc_reg=sc_reg, dc_reg=dc_reg)[1]
+                                station_key, record = self._parse_scraped_data(st_url, captured_api_data, next_data_payload, charger_type=st_type, list_title=st_title)
+                                if record and known and not had_details:      # only the page's cached figures came back (lower power, no hours or prices): the entry we have is better
+                                    print(f"  {C_RED}❌ No charger details for {st_title}; kept the entry we have{C_RESET}", flush=True)
+                                    failed_stations.append(st_title)
+                                    stats["ERROR"] = stats.get("ERROR", 0) + 1
+                                    record = None
+                                elif record:
+                                    res_status = self.update_registry(station_key, record)
+                                    stats[res_status] = stats.get(res_status, 0) + 1
+                                    if self.last_change_summary:
+                                        batch_changelog[station_key] = list(self.last_change_summary)
+                                    if st_type == "supercharger":
+                                        sc_reg[station_key] = record
+                                    else:
+                                        dc_reg[station_key] = record
+                                else:
+                                    print(f"  {C_RED}❌ Failed parsing record for {st_title} (no charger data after {max_retries} tries, last HTTP status {getattr(self, 'last_http_status', '?')}){C_RESET}", flush=True)
+                                    failed_stations.append(st_title)
+                                    stats["ERROR"] = stats.get("ERROR", 0) + 1
+                                refused[0] = 0 if record else (refused[0] + 1 if getattr(self, "last_http_status", None) == 403 else 0)
+                                if refused[0] >= REFUSED_LIMIT and not stop.is_set():
+                                    stop.set()
+                                    print(f"\n  {C_RED}❌ tesla.com is refusing requests (HTTP 403) for {REFUSED_LIMIT} sites in a row; stopped so it does not block this connection for longer. Wait a while (often an hour) and refresh again; fetch with fewer browsers at once (chargers.tesla_workers) if it happens again.{C_RESET}\n", flush=True)
+                            consecutive_failures = 0 if record else consecutive_failures + 1
+                        except Exception as e:
+                            with lock:
+                                print(f"  {C_RED}❌ Error scraping {st_title}: {e}{C_RESET}", flush=True)
+                                failed_stations.append(st_title)
+                                stats["ERROR"] = stats.get("ERROR", 0) + 1
+                            consecutive_failures += 1
+ # Self-heal crashed context immediately
+                            close_session(context, page)
+                            context, page = create_fresh_session()
+
+ # Circuit breaker cooldown if 3 consecutive failures occur
+                        if consecutive_failures >= 3:
+                            with lock:
+                                print(f"\n  {C_YELLOW}⚠ 3 consecutive failures encountered. Re-spawning session and cooling down 10s...{C_RESET}\n", flush=True)
+                            close_session(context, page)
+                            time.sleep(10)
+                            context, page = create_fresh_session()
+                            consecutive_failures = 0
 
  # Adaptive pacing delay between requests with randomized jitter
-                if idx < total and pacing_delay > 0:
-                    time.sleep(pacing_delay + random.uniform(0.3, 1.2))
+                        if pacing_delay > 0 and not todo.empty():
+                            time.sleep(pacing_delay + random.uniform(0.3, 1.2))
 
+                    close_session(context, page)
+                    browser.close()
+            except Exception as e:
+                with lock:
+                    print(f"  {C_RED}❌ Browser {wid + 1} stopped: {e}{C_RESET}", flush=True)
+
+        if workers == 1:
+            work(0)
+        else:
+            threads = [threading.Thread(target=work, args=(i,), daemon=True) for i in range(workers)]
+            for t in threads:
+                t.start()
             try:
-                page.close()
-                context.close()
-            except Exception:
-                pass
-            browser.close()
+                while any(t.is_alive() for t in threads):
+                    for t in threads:
+                        t.join(0.5)
+            except KeyboardInterrupt:
+                stop.set()
+                raise
+        # sites no browser got to (every browser stopped, or tesla.com refused): counted as not fetched
+        while True:
+            try:
+                st = todo.get_nowait()
+            except queue.Empty:
+                break
+            failed_stations.append(st.get("title", ""))
+            stats["ERROR"] = stats.get("ERROR", 0) + 1
 
         elapsed = time.time() - t0
         processed_ok = stats.get("CREATED", 0) + stats.get("ARCHIVED", 0) + stats.get("VERIFIED", 0) + stats.get("UPDATED", 0)

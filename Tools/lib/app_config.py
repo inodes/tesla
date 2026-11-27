@@ -59,6 +59,7 @@ the block). A change takes effect the next time the app or script reads it (the 
   app.drives.tessie_fresh_minutes                  after a Tessie sync this long ago, with nothing missing, the Drives page has no Sync from Tessie button (it shows when the last sync was)
   app.drives.low_battery_pct                       the "finished at N% or less" filter
   app.chargers.tesla_recheck_days                  Refresh on a Tesla tab: besides new, renamed and moved sites, every site not fetched in this many days is fetched again to see what changed inside it (stalls, power, hours, prices); 0 = every site
+  app.chargers.tesla_workers                       Tesla fetches (Refresh and ./Tools/tesla chargers find --sync-tesla): browsers fetching sites at once; 1 fetches one site at a time
   app.places.stay_min_seconds                      a gap between real drives shorter than this is not a parked period
   app.places.save_radius_*                         radius suggested when saving an OpenStreetMap place: at least min_m, else far enough to reach every stop the car
                                                    recorded within cluster_m of the stop, plus margin_m
@@ -99,7 +100,7 @@ DEFAULTS = {
     "drives": {"repark_max_km": 0.05, "repark_same_place_km": 0.3, "repark_same_place_m": 50, "repark_max_minutes": 10, "join_gap_s": 120,
                "long_highway_km": 30, "long_highway_fast_kmh": 90, "long_highway_fast_minutes": 10,
                "charge_window_minutes": 30, "charger_name_m": 300, "range_days_shown": 31, "low_battery_pct": 20, "tessie_auto_sync_minutes": 60, "tessie_fresh_minutes": 60},
-    "chargers": {"tesla_recheck_days": 1},
+    "chargers": {"tesla_recheck_days": 1, "tesla_workers": 2},
     "places": {"stay_min_seconds": 120, "save_radius_min_m": 100, "save_radius_margin_m": 25, "save_radius_cluster_m": 250},
     "reach": {"reserve_pct": 10, "image_px": 800, "shade_km": 8, "gaps_shade_km": 15, "idle_unload_min": 15, "pbf_url": "https://download.geofabrik.de/australia-oceania/australia-latest.osm.pbf"},
     "nearby": {"overpass_endpoints": ["https://overpass.kumi.systems/api/interpreter", "https://overpass.private.coffee/api/interpreter",

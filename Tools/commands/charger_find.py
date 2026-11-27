@@ -2321,6 +2321,17 @@ def display_nearby_facilities(station: UnifiedStationRecord, radius_m: int = 500
         print(f"  {C_GRAY}... and {len(pois) - total_shown} more facilities within {radius_m}m.{C_RESET}\n")
 
 
+def tesla_workers(args) -> int:
+    """Browsers fetching Tesla sites at once: --workers, else the one setting the app uses too (chargers.tesla_workers in config.json)."""
+    if getattr(args, "workers", None) is not None:
+        return max(1, args.workers)
+    from lib import app_config
+    try:
+        return max(1, int(app_config.get("chargers.tesla_workers", 2)))
+    except (TypeError, ValueError):
+        return 2
+
+
 def main():
  # AGENTS.local.md , 2026-09-15: user - "The usage / man here is
  # terrible!!!" - followed by a request to structure --help the way a real
@@ -2546,6 +2557,7 @@ DESCRIPTION
     g_tuning = parser.add_argument_group("Network Request Tuning")
     g_tuning.add_argument("--delay", type=float, default=0.5, help="Pacing delay in seconds between requests (default: 0.5)")
     g_tuning.add_argument("--timeout", type=int, default=35, help="Network timeout in seconds per page load (default: 35)")
+    g_tuning.add_argument("--workers", type=int, default=None, metavar="N", help="Tesla: browsers fetching sites at once (default: the setting chargers.tesla_workers in config.json, 2; the app's setting too; 1 = one at a time)")
     g_tuning.add_argument("--retries", type=int, default=3, help="Max retry attempts per station (default: 3)")
 
     g_live = parser.add_argument_group("Live Browsing & Inspection")
@@ -2649,7 +2661,7 @@ DESCRIPTION
                 if ref_lat is not None and ref_lon is not None:
                     from providers.chargers.chargers_base import haversine_km
                     t_stations = [s for s in t_stations if s.get("_lat") is not None and s.get("_lon") is not None and haversine_km(ref_lat, ref_lon, s["_lat"], s["_lon"]) <= radius]
-                explorer.scrape_all_stations(t_stations, subset_filter="new", pacing_delay=args.delay, timeout_sec=args.timeout, max_retries=args.retries)
+                explorer.scrape_all_stations(t_stations, subset_filter="new", pacing_delay=args.delay, timeout_sec=args.timeout, max_retries=args.retries, workers=tesla_workers(args))
             sync_results.append(("Tesla", True))
         except Exception as e:
             print(f"  {C_YELLOW}⚠️ Tesla sync encountered error: {e}{C_RESET}")
@@ -2853,7 +2865,8 @@ DESCRIPTION
                     pacing_delay=args.delay,
                     timeout_sec=args.timeout,
                     max_retries=args.retries,
-                    subset_filter=subset_filter
+                    subset_filter=subset_filter,
+                    workers=tesla_workers(args)
                 ) or {}
                 if res:
                     print(f"{C_GREEN}✔ {type_label}: {res['checked']} sites fetched, {res['changed']} changed, {res['created']} new, {res['failed']} failed.{C_RESET}")

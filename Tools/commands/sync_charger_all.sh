@@ -55,6 +55,8 @@ last N days (chargers.tesla_recheck_days in config.json, default 1, the app's se
 environment variable CHARGER_RECHECK_DAYS overrides it for one run; 0 = every site): tesla.com's list holds
 only names and positions, so a change inside a site (stalls, power, hours, prices) is only found
 by fetching its page again. An empty list from tesla.com ends the step with an error.
+Several sites are fetched at once (chargers.tesla_workers in config.json, default 2, the app's setting
+too; 1 = one at a time).
 
 Steps run, in order:
   1. Tesla Superchargers      (charger_find.py --sync-tesla --sc --recheck-days N)
