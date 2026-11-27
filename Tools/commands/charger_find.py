@@ -2385,6 +2385,7 @@ DESCRIPTION
     ./Tools/charger_find.py --sync-tesla --sc          # compare tesla.com's list, fetch only new/renamed/moved
     ./Tools/charger_find.py --sync-tesla --sc --stale  # re-check only entries not verified for 90+ days
     ./Tools/charger_find.py --sync-tesla --all         # re-fetch every listed station
+    ./Tools/charger_find.py --sync-tesla --sc --recheck-days 1   # new, renamed and moved sites, plus any not fetched in the last day
 
  # Refresh unlisted pricing or discover chargers from past charging history:
     ./Tools/charger_find.py --refresh-prices
@@ -2499,6 +2500,7 @@ DESCRIPTION
 
     g_sync = parser.add_argument_group("Synchronization")
     g_sync.add_argument("--sync-all", action="store_true", help="End-to-end sync across all providers (Tesla, Chargefox, EVX, Evie, bp pulse, PlugShare, AmpCharge, Exploren, Jolt, NRMA, Master Catalog)")
+    g_sync.add_argument("--recheck-days", type=float, default=None, metavar="N", help="With --sync-tesla: also fetch again every listed site not fetched in the last N days (0: every site), which is how a change inside a site is found")
     g_sync.add_argument("--sync-tesla", action="store_true", help="Compare tesla.com's station list with the registry and fetch only the new, renamed or moved ones (--stale, --unpriced, --all widen it)")
     g_sync.add_argument("--sync-chargefox", action="store_true", help="Download and cache all Chargefox & NRMA stations across Australia")
     g_sync.add_argument("--sync-evx", action="store_true", help="Download and cache all EVX Kerbside Polechargers across Australia")
@@ -2803,14 +2805,19 @@ DESCRIPTION
             print(f"{C_CYAN}🌐 Synchronizing Tesla {type_label}...{C_RESET}")
             stations = explorer.fetch_station_list(country=args.country or "Australia", charger_type=c_type)
             # The list is compared with the registry first (no page fetched). Only what differs is scraped, unless a flag asks for more.
-            plan = explorer.plan_sync(stations)
+            if not stations:                      # tesla.com gave no list (blocked, offline, page changed): nothing was compared, so this is not a finished sync
+                print(f"{C_RED}❌ tesla.com's {type_label} list came back empty: nothing was checked.{C_RESET}")
+                sys.exit(1)
+            plan = explorer.plan_sync(stations, recheck_days=args.recheck_days)
             print(f"  {len(stations)} listed: {len(plan['same']) + len(plan['stale'])} match the registry, {len(plan['new'])} new, "
                   f"{len(plan['renamed'])} renamed, {len(plan['moved'])} moved, {len(plan['gone'])} no longer listed")
             for k in plan["gone"]:
                 print(f"  {C_YELLOW}no longer listed on tesla.com (kept): {k}{C_RESET}")
             if plan["stale"]:
                 print(f"  {C_DIM}{len(plan['stale'])} not re-checked for 90+ days (--stale to re-check){C_RESET}")
-            changed = {x["url"] for x in plan["new"] + plan["renamed"] + plan["moved"]}
+            changed = {x["url"] for x in plan["new"] + plan["renamed"] + plan["moved"] + plan["recheck"]}
+            if args.recheck_days is not None:
+                print(f"  {len(plan['recheck'])} not re-fetched in the last {args.recheck_days:g} day{'' if args.recheck_days == 1 else 's'}: fetched again to see what changed (stalls, power, hours, prices)")
             by_flag = bool(args.unpriced or args.new or args.renamed or args.stale or args.all)
             if args.near:
                 ref_lat, ref_lon, ref_label = resolve_reference_coords(args.near)
@@ -2837,13 +2844,15 @@ DESCRIPTION
             if not stations:
                 print(f"  {C_GREEN}Nothing to fetch.{C_RESET}")
             else:
-                explorer.scrape_all_stations(
+                res = explorer.scrape_all_stations(
                     stations,
                     pacing_delay=args.delay,
                     timeout_sec=args.timeout,
                     max_retries=args.retries,
                     subset_filter=subset_filter
-                )
+                ) or {}
+                if res:
+                    print(f"{C_GREEN}✔ {type_label}: {res['checked']} sites fetched, {res['changed']} changed, {res['created']} new, {res['failed']} failed.{C_RESET}")
 
         # charging_stations.json (what the app and the other tools read) is rebuilt whenever a Tesla registry file is newer than it.
         try:

@@ -1858,13 +1858,24 @@ class TeslaChargerExplorer:
         except Exception:
             return "STALE"
 
-    def plan_sync(self, stations: list, moved_m: float = 150.0) -> dict:
+    @staticmethod
+    def _age_days(entry: dict):
+        """Days since this registry entry was last verified (None when it never was)."""
+        ver = (entry or {}).get("last_verified") or (entry or {}).get("last_updated") or (entry or {}).get("first_seen")
+        try:
+            return (datetime.now(timezone.utc) - datetime.fromisoformat(ver.replace("Z", "+00:00"))).total_seconds() / 86400.0
+        except Exception:
+            return None
+
+    def plan_sync(self, stations: list, moved_m: float = 150.0, recheck_days: float = None) -> dict:
         """Compare the tesla.com list with the registry (no page is fetched) and sort every station into one bucket:
         new (not in the registry), renamed (title changed), moved (coordinates > moved_m metres from the registry's), stale (not
         re-verified for 90+ days), same. gone = registry keys the list no longer carries (reported, never deleted).
+        recheck (recheck_days given): the same / stale ones whose last verification is older than that many days (0: all of them). The list
+        carries only names and coordinates, so a change inside a site (stalls, power, hours, prices) is only seen by fetching its page again.
         Only a list covering the whole country may be used for gone."""
         sc_reg, dc_reg = self.load_active_registries()
-        plan = {"new": [], "renamed": [], "moved": [], "stale": [], "same": [], "gone": []}
+        plan = {"new": [], "renamed": [], "moved": [], "stale": [], "same": [], "gone": [], "recheck": []}
         seen = set()
         for st in stations:
             key, entry, ctype = self.get_station_record(st, sc_reg=sc_reg, dc_reg=dc_reg)
@@ -1877,10 +1888,12 @@ class TeslaChargerExplorer:
                 plan["renamed"].append(st)
             elif entry and self._station_moved(st, entry, moved_m):
                 plan["moved"].append(st)
-            elif status == "STALE":
-                plan["stale"].append(st)
             else:
-                plan["same"].append(st)
+                plan["stale" if status == "STALE" else "same"].append(st)
+                if recheck_days is not None:
+                    age = self._age_days(entry)
+                    if age is None or age >= recheck_days:
+                        plan["recheck"].append(st)
         types = {("supercharger" if "/supercharger/" in (x.get("url") or "") else "destination_charger") for x in stations}
         for ctype, reg in (("supercharger", sc_reg), ("destination_charger", dc_reg)):
             if ctype in types:
@@ -2072,7 +2085,7 @@ class TeslaChargerExplorer:
 
         print(f"{C_BOLD}{'='*80}{C_RESET}\n")
 
-        return
+        return dict(checked=total, changed=len(batch_changelog), failed=stats.get("ERROR", 0), created=stats.get("CREATED", 0))
 
     def _detect_record_changes(self, existing: dict, new: dict) -> bool:
         """Detects whether hardware, accessibility, or pricing/tariffs differ between existing and new records."""

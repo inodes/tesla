@@ -50,6 +50,16 @@ class ScriptTest(unittest.TestCase):
         self.assertNotIn("--dc", run(d, "--only", "tesla-sc").stdout)
         self.assertIn("RAN --sync-tesla --dc", run(d, "--only", "tesla-dc").stdout)
 
+    def test_tesla_steps_recheck_sites_not_fetched_lately(self):
+        d = stubbed()
+        self.assertIn("RAN --sync-tesla --sc --recheck-days 1", run(d, "--only", "tesla-sc").stdout)
+        self.assertIn("RAN --sync-tesla --dc --recheck-days 1", run(d, "--only", "tesla-dc").stdout)
+        r = subprocess.run(["bash", os.path.join(d, "sync_charger_all.sh"), "--only", "tesla-sc"], cwd=d, capture_output=True, text=True, timeout=60, env=dict(os.environ, CHARGER_RECHECK_DAYS="0"))
+        self.assertIn("--recheck-days 0", r.stdout)
+
+    def test_the_app_passes_the_configured_days(self):
+        self.assertEqual(app_sync.app_config.get("chargers.tesla_recheck_days"), 1)
+
     def test_an_unknown_network_is_refused(self):
         r = run(stubbed(), "--only", "bogus")
         self.assertEqual(r.returncode, 2)
@@ -88,6 +98,22 @@ class MappingTest(unittest.TestCase):
 
 
 class StartTest(unittest.TestCase):
+    def test_the_bar_follows_the_site_count_of_the_fetching_step(self):
+        with open(os.path.join(TOOLS, "lib", "app_ui", "app.js"), encoding="utf-8") as f:
+            js = f.read()
+        self.assertIn("/^\\[\\s*(\\d+)\\/\\s*(\\d+)\\]/", js)         # the provider's "[ 12/165] Scraping ..." lines
+        self.assertIn('" · site "+site[0]+" of "+site[1]', js)
+
+    def test_the_refresh_button_is_on_both_tabs_and_named_for_the_network_shown(self):
+        with open(os.path.join(TOOLS, "lib", "app_ui", "app.js"), encoding="utf-8") as f:
+            js = f.read()
+        self.assertIn('id="sy">Refresh</button>', js)
+        self.assertIn('$("#sy").style.display=ch||PL.tab==="sc"?"":"none"', js)       # Chargers and Superchargers tabs
+        self.assertIn('PL.tab==="sc"?"Tesla":PL.net', js)                             # the Superchargers tab is Tesla's step
+        self.assertIn('"Refresh all networks"', js)
+        self.assertIn("syncPanel(h,", js)
+        self.assertIn(",shown,true)", js)                                              # opens and starts the run in one click
+
     def test_start_passes_the_scope_to_the_script_and_reports_it(self):
         d = tempfile.mkdtemp()
         with open(os.path.join(d, "s.sh"), "w") as f:

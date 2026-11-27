@@ -1604,7 +1604,7 @@ function stopsTable(host,rows){
   $$(".rvr",host).forEach(tr=>tr.onclick=ev=>{if(ev.target.closest("a,button"))return;const x=$(`[data-x="${tr.dataset.i}"]`,host);x.hidden=!x.hidden;tr.classList.toggle("open",!x.hidden)});
   $$("[data-save]",host).forEach(b=>b.onclick=e=>{e.stopPropagation();try{sessionStorage.setItem("placePrefill",b.dataset.save)}catch(_){}location.hash="#/place/"+encodeURIComponent("@new")})}
 async function pagePlaces(){
-  loading("plc");const L=await api("places");let C=null;const need=async()=>{if(!C)C=await api("chargers")};if(PL.tab==="chargers")await need();
+  loading("plc");let L=await api("places");let C=null;const need=async()=>{if(!C)C=await api("chargers")};if(PL.tab==="chargers")await need();
   const draw=()=>{const q=PL.q.toLowerCase(),host=$("#tb"),qs=stateCode(q);let rows,cols;     // a search that is just a state ("Victoria", "vic") means that state, not streets named after it
     const stat=[{k:"charges",t:"Charges"},{k:"idles",t:"Parked"},{k:"drives",t:"Arrivals"}];
     if(PL.tab==="saved"){rows=L.saved.filter(p=>!q||(p.name+" "+p.notes).toLowerCase().includes(q));
@@ -1622,15 +1622,18 @@ async function pagePlaces(){
   main.innerHTML=`<h1>Places</h1><div class="sub" id="pli">Saved places, Superchargers and stops to review.</div>
    <div class="tiles" id="pltl">${tile(L.saved.length,"saved places")}${tile(L.superchargers.filter(s=>s.charges).length+" of "+L.superchargers.length,"Superchargers used")}${tile(L.found.length,"stops to review")}</div>
    <div class="bar"><button class="chip" data-t="saved">Saved places</button><button class="chip" data-t="sc">Superchargers</button><button class="chip" data-t="chargers">Chargers</button><button class="chip" data-t="found">Stops to review</button><span class="vw"><button class="chip" data-v="list">List</button><button class="chip" data-v="map">Map</button></span>
-   <select id="cn"></select><select id="cs"></select><select id="vf" title="Visit frequency: how many separate times you parked there"><option value="1">Visited: any</option><option value="2">Visited 2+ times</option><option value="3">Visited 3+ times</option><option value="5">Visited 5+ times</option></select><label class="sub" id="vl"><input type="checkbox" id="vis"> used only</label><label class="sub" id="sl"><input type="checkbox" id="soon"> show coming soon</label><button class="btn" id="sy">Sync chargers…</button><input type="search" id="q" placeholder="Search…" value="${esc(PL.q)}"><button class="btn pri" id="add">+ New place</button><span class="sub" id="cnt"></span></div><div id="sp"></div><div id="tb"></div>`;
-  const tabs=()=>{$("#pli").style.display=$("#pltl").style.display=PL.view==="map"?"none":"";$$("[data-t]").forEach(c=>c.classList.toggle("on",c.dataset.t===PL.tab));const ch=PL.tab==="chargers";$("#vl").style.display=$("#sl").style.display=PL.tab==="sc"||ch?"":"none";$("#vf").style.display=PL.tab==="found"?"":"none";$$("[data-v]").forEach(c=>c.classList.toggle("on",c.dataset.v===PL.view));$("#cn").style.display=$("#cs").style.display=$("#sy").style.display=ch?"":"none";$("#vis").checked=PL.visited;
+   <select id="cn"></select><select id="cs"></select><select id="vf" title="Visit frequency: how many separate times you parked there"><option value="1">Visited: any</option><option value="2">Visited 2+ times</option><option value="3">Visited 3+ times</option><option value="5">Visited 5+ times</option></select><label class="sub" id="vl"><input type="checkbox" id="vis"> used only</label><label class="sub" id="sl"><input type="checkbox" id="soon"> show coming soon</label><button class="btn" id="sy">Refresh</button><input type="search" id="q" placeholder="Search…" value="${esc(PL.q)}"><button class="btn pri" id="add">+ New place</button><span class="sub" id="cnt"></span></div><div id="sp"></div><div id="tb"></div>`;
+  const shown=()=>PL.tab==="sc"?"Tesla":PL.net;                      // the network the list is showing; the Superchargers tab is Tesla's
+  const syLabel=()=>{const n=shown(),no=n!=="all"&&SYNCNOT.includes(n),b=$("#sy");b.textContent=no?"Refresh":n==="all"?"Refresh all networks":"Refresh "+(SYNCNET[n]?SYNCNET[n][0]:n);b.disabled=no;b.title=no?syncAbout(n).head:syncAbout(n).tip};
+  const tabs=()=>{$("#pli").style.display=$("#pltl").style.display=PL.view==="map"?"none":"";$$("[data-t]").forEach(c=>c.classList.toggle("on",c.dataset.t===PL.tab));const ch=PL.tab==="chargers";$("#vl").style.display=$("#sl").style.display=PL.tab==="sc"||ch?"":"none";$("#vf").style.display=PL.tab==="found"?"":"none";$$("[data-v]").forEach(c=>c.classList.toggle("on",c.dataset.v===PL.view));$("#cn").style.display=$("#cs").style.display=ch?"":"none";$("#sy").style.display=ch||PL.tab==="sc"?"":"none";syLabel();$("#vis").checked=PL.visited;
     if(ch&&C){$("#cn").innerHTML='<option value="all">All networks</option>'+C.networks.map(([n,c])=>`<option value="${esc(n)}">${esc(n||"Other")} (${n0(c)})</option>`).join("");$("#cn").value=PL.net;
       const st=[...new Set(C.rows.map(r=>r.state).filter(Boolean))].sort();$("#cs").innerHTML='<option value="all">All states</option>'+st.map(x=>`<option>${esc(x)}</option>`).join("");$("#cs").value=PL.state}};
   $$("[data-t]").forEach(c=>c.onclick=async()=>{PL.tab=c.dataset.t;if(PL.tab==="chargers")await need();tabs();draw()});
   $$("[data-v]").forEach(c=>c.onclick=()=>{PL.view=c.dataset.v;tabs();draw()});
   $("#vf").value=String(PL.freq);$("#vf").onchange=e=>{PL.freq=+e.target.value;try{localStorage.setItem("plFreq",PL.freq)}catch(_){}draw()};
-  $("#cn").onchange=e=>{PL.net=e.target.value;draw();const h=$("#sp");if(h&&h._about)h._about()};$("#cs").onchange=e=>{PL.state=e.target.value;draw()};
-  $("#sy").onclick=()=>syncPanel($("#sp"),async()=>{cache.chargers=null;cache.places=null;C=await api("chargers");tabs();draw()},()=>PL.net);$("#vis").onchange=e=>{PL.visited=e.target.checked;draw()};$("#soon").checked=PL.soon;$("#soon").onchange=e=>{PL.soon=e.target.checked;draw()};$("#q").oninput=e=>{PL.q=e.target.value;draw()};
+  $("#cn").onchange=e=>{PL.net=e.target.value;syLabel();draw();const h=$("#sp");if(h&&h._about)h._about()};$("#cs").onchange=e=>{PL.state=e.target.value;draw()};
+  $("#sy").onclick=()=>{const h=$("#sp");if(h.firstChild){if(h._run)h._run();return}      // one click: the panel opens and the run for the network shown starts
+    syncPanel(h,async()=>{cache.chargers=null;cache.places=null;L=await api("places");if(C||PL.tab==="chargers")C=await api("chargers");tabs();draw()},shown,true)};$("#vis").onchange=e=>{PL.visited=e.target.checked;draw()};$("#soon").checked=PL.soon;$("#soon").onchange=e=>{PL.soon=e.target.checked;draw()};$("#q").oninput=e=>{PL.q=e.target.value;draw()};
   $("#add").onclick=()=>{sessionStorage.setItem("placePrefill",JSON.stringify({name:"",lat:"",lon:"",radius_m:150}));location.hash="#/place/"+encodeURIComponent("@new")};tabs();draw();
 }
 // ---------- a job run from the app, shown as its steps (one row each: done / running / failed, and the short result the step printed); the raw output only under Details
@@ -1656,8 +1659,8 @@ function JobSteps(host){
 }
 // ---------- the charger registry update, run from the app
 // what the card says for the network picked in the Chargers tab (the server maps the same names to a step: app_sync.CHARGER_NETS)
-const SYNCNET={"Tesla":["Tesla Superchargers","tesla.com's list: only sites that are new, renamed or moved are fetched"],"Tesla Supercharger":["Tesla Superchargers","tesla.com's list: only sites that are new, renamed or moved are fetched"],
-  "Tesla Destination":["Tesla Destination chargers","tesla.com's list: only sites that are new, renamed or moved are fetched"],"Chargefox":["Chargefox","the Chargefox network, Australia"],"EVX":["EVX","the EVX Kerbside Polechargers, Australia"],
+const SYNCNET={"Tesla":["Tesla Superchargers","tesla.com's list, then each site not fetched today is fetched again and its changes (stalls, power, hours, prices) are listed"],"Tesla Supercharger":["Tesla Superchargers","tesla.com's list, then each site not fetched today is fetched again and its changes (stalls, power, hours, prices) are listed"],
+  "Tesla Destination":["Tesla Destination chargers","tesla.com's list, then each site not fetched today is fetched again and its changes (stalls, power, hours, prices) are listed"],"Chargefox":["Chargefox","the Chargefox network, Australia"],"EVX":["EVX","the EVX Kerbside Polechargers, Australia"],
   "Evie":["Evie","Evie Networks, Australia"],"Evie Networks":["Evie","Evie Networks, Australia"],"BP Pulse":["bp pulse","bp pulse DC fast chargers, Australia"],"3rd-Party":["PlugShare","PlugShare listings within 50 km of Home, which carry many small networks"],
   "AmpCharge":["AmpCharge","Ampol AmpCharge and Foodary, Australia"],"Exploren":["Exploren","the Exploren AC and DC network, Australia"],"Jolt":["Jolt","the Jolt DC fast network, Australia"],"NRMA":["NRMA","the NRMA EV charging network, Australia"]};
 const SYNCNOT=["","AC / home","DC fast","AC Public","Evnex"];       // places you charged at that are not a charger network
@@ -1667,20 +1670,20 @@ function syncAbout(net){
   const a=SYNCNET[net]||[net+" (listed on PlugShare)","PlugShare listings within 50 km of Home, where "+net+" chargers come from"];
   return {steps:2,head:"Updates "+a[0]+" only: "+a[1]+".",tip:"Existing entries are kept; new ones are added. Pick All networks to update every network."};
 }
-function syncPanel(host,done,getNet){
+function syncPanel(host,done,getNet,auto){
   if(host.firstChild){host.innerHTML="";if(SYNCPOLL){clearInterval(SYNCPOLL);SYNCPOLL=null}return}
   host.innerHTML=`<div class="card"><h2 style="margin-top:0">Sync chargers</h2><div class="sub" id="sd"></div>
-    <div class="bar"><button class="btn pri" id="sr">Run now</button><button class="btn bad" id="ss" disabled>Stop</button><span class="sub" id="sm"></span></div><div id="spb" hidden>${pbar(null)}</div><div id="sjob"></div></div>`;
-  const pb=$("#spb"),job=JobSteps($("#sjob"));let since=0,was=false,STEPS=12;
+    <div class="bar"><button class="btn pri" id="sr">Run now</button><button class="btn bad" id="ss" disabled>Stop</button><button class="btn" id="sx">Close</button><span class="sub" id="sm"></span></div><div id="spb" hidden>${pbar(null)}</div><div id="sjob"></div></div>`;
+  const pb=$("#spb"),job=JobSteps($("#sjob"));let since=0,was=false,STEPS=12,site=null,siteStep=0;       // site: the [n/total] count of the sites a step is fetching
   const net=()=>getNet?getNet():"all";
   const about=()=>{const a=syncAbout(net()),d=$("#sd");if(!d)return;d.textContent=a.head;d.title=a.tip;$("#sr").disabled=!!a.no||!$("#ss").disabled};      // Run waits while a run is on (Stop is enabled then)
   host._about=about;about();
   const poll=async()=>{let j;try{j=await (await fetch("/api/chargers-sync?since="+since)).json()}catch(e){$("#sm").textContent="Could not reach the app.";return}
     if(!document.body.contains(pb)){clearInterval(SYNCPOLL);SYNCPOLL=null;return}
-    if(j.lines&&j.lines.length)job.feed(j.lines);
-    since=j.n;STEPS=j.args&&j.args.length?2:12;$("#sr").disabled=j.running||!!syncAbout(net()).no;$("#ss").disabled=!j.running;const step=job.count();
-    if(pb){pb.hidden=!j.running;if(j.running)setPbar(pb,step?Math.min(100,Math.round(100*(Math.min(step,STEPS)-.6)/STEPS)):null)}
-    $("#sm").textContent=j.running?(step?"Step "+Math.min(step,STEPS)+" of "+STEPS:"Starting…"):j.started?(j.rc===0?"Done.":"Stopped (exit "+j.rc+")."):"";
+    if(j.lines&&j.lines.length){let cs=job.count();j.lines.forEach(x=>{if(x.startsWith("==> ")&&!/^==> Done/i.test(x)){site=null;cs++}const m=/^\[\s*(\d+)\/\s*(\d+)\]/.exec(x);if(m){site=[+m[1],+m[2]];siteStep=cs}});job.feed(j.lines)}
+    since=j.n;STEPS=j.args&&j.args.length?2:12;$("#sr").disabled=j.running||!!syncAbout(net()).no;$("#ss").disabled=!j.running;$("#sx").disabled=j.running;const step=job.count();
+    if(pb){pb.hidden=!j.running;if(j.running){const f=site&&siteStep===step?site[0]/site[1]:.4;setPbar(pb,step?Math.min(100,Math.round(100*(Math.min(step,STEPS)-1+f)/STEPS)):null)}}
+    $("#sm").textContent=j.running?(step?"Step "+Math.min(step,STEPS)+" of "+STEPS+(site&&siteStep===step?" · site "+site[0]+" of "+site[1]:""):"Starting…"):j.started?(j.rc===0?"Done.":"Stopped (exit "+j.rc+")."):"";
     job.paint(j.running,j.rc);
     if(j.running)was=true;
     if(!j.running&&was){was=false;clearInterval(SYNCPOLL);SYNCPOLL=null;done()}
@@ -1689,7 +1692,9 @@ function syncPanel(host,done,getNet){
   $("#sr").onclick=async()=>{job.reset();since=0;was=true;
     const n=net(),j=await (await fetch("/api/chargers/sync",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(n&&n!=="all"?{network:n}:{})})).json();if(j.ok===false){$("#sm").textContent=j.error;return}go()};
   $("#ss").onclick=async()=>{await fetch("/api/chargers/sync/stop",{method:"POST"});go()};
-  poll();fetch("/api/chargers-sync?since=0").then(r=>r.json()).then(j=>{if(j.running)go()}).catch(()=>{});
+  $("#sx").onclick=()=>{host.innerHTML="";host._about=host._run=null;if(SYNCPOLL){clearInterval(SYNCPOLL);SYNCPOLL=null}};
+  host._run=()=>{if(!$("#sr").disabled)$("#sr").click()};
+  poll();fetch("/api/chargers-sync?since=0").then(r=>r.json()).then(j=>{if(j.running)go();else if(auto)host._run()}).catch(()=>{});
 }
 const OSMG={};
 // the site page of a Supercharger / charger: everything the charger registry holds, grouped (place, access, hardware, pricing, busy times, surroundings, sources)
