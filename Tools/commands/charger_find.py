@@ -2321,6 +2321,20 @@ def display_nearby_facilities(station: UnifiedStationRecord, radius_m: int = 500
         print(f"  {C_GRAY}... and {len(pois) - total_shown} more facilities within {radius_m}m.{C_RESET}\n")
 
 
+def tesla_site_matches(explorer, stations: list, name: str) -> list:
+    """The listed Tesla sites called name: by their tesla.com name, their registry name, their id (the end of the page address) or the whole address."""
+    sc_reg, dc_reg = explorer.load_active_registries()
+    want = (name or "").strip().lower()
+    hit = []
+    for st in stations:
+        key = explorer.get_station_record(st, sc_reg=sc_reg, dc_reg=dc_reg)[0] or ""
+        names = {str(st.get(f) or "").lower() for f in ("title", "live_title", "slug")} | {key.lower()}
+        url = str(st.get("url") or "").lower().rstrip("/")
+        if want and (want in names or url.endswith("/" + want) or url == want.rstrip("/")):
+            hit.append(st)
+    return hit
+
+
 def tesla_workers(args) -> int:
     """Browsers fetching Tesla sites at once: --workers, else the one setting the app uses too (chargers.tesla_workers in config.json)."""
     if getattr(args, "workers", None) is not None:
@@ -2513,6 +2527,7 @@ DESCRIPTION
     g_sync = parser.add_argument_group("Synchronization")
     g_sync.add_argument("--sync-all", action="store_true", help="End-to-end sync across all providers (Tesla, Chargefox, EVX, Evie, bp pulse, PlugShare, AmpCharge, Exploren, Jolt, NRMA, Master Catalog)")
     g_sync.add_argument("--recheck-days", type=float, nargs="?", const=-1.0, default=None, metavar="N", help="With --sync-tesla: also fetch again every listed site not fetched in the last N days (0: every site), which is how a change inside a site is found; without N, the setting chargers.tesla_recheck_days in config.json (the app's setting too)")
+    g_sync.add_argument("--site", metavar="NAME", help="With --sync-tesla: fetch only this one site (its name on tesla.com, its registry name or its id), whatever its age, and list what changed")
     g_sync.add_argument("--sync-tesla", action="store_true", help="Compare tesla.com's station list with the registry and fetch only the new, renamed or moved ones (--stale, --unpriced, --all widen it)")
     g_sync.add_argument("--sync-chargefox", action="store_true", help="Download and cache all Chargefox & NRMA stations across Australia")
     g_sync.add_argument("--sync-evx", action="store_true", help="Download and cache all EVX Kerbside Polechargers across Australia")
@@ -2813,6 +2828,7 @@ DESCRIPTION
         if not charger_types:
             charger_types = ["superchargers", "chargers"]
         
+        site_missing = []
         for c_type in charger_types:
             type_label = "Superchargers" if c_type == "superchargers" else "Destination Chargers"
             print(f"{C_CYAN}🌐 Synchronizing Tesla {type_label}...{C_RESET}")
@@ -2821,6 +2837,17 @@ DESCRIPTION
             if not stations:                      # tesla.com gave no list (blocked, offline, page changed): nothing was compared, so this is not a finished sync
                 print(f"{C_RED}❌ tesla.com's {type_label} list came back empty: nothing was checked.{C_RESET}")
                 sys.exit(1)
+            if args.site:                         # one site: found by name or id in the list, fetched now, nothing else compared
+                hit = tesla_site_matches(explorer, stations, args.site)
+                if not hit:
+                    print(f"  {C_YELLOW}'{args.site}' is not in tesla.com's {type_label} list.{C_RESET}")
+                    site_missing.append(type_label)
+                    continue
+                print(f"  {len(hit)} site matches '{args.site}': {', '.join(h.get('title', '') for h in hit)}")
+                res = explorer.scrape_all_stations(hit, pacing_delay=args.delay, timeout_sec=args.timeout, max_retries=args.retries, workers=1) or {}
+                if res:
+                    print(f"{C_GREEN}✔ {type_label}: {res['checked']} site fetched, {res['changed']} changed, {res['created']} new, {res['failed']} failed.{C_RESET}")
+                continue
             if args.recheck_days is not None and args.recheck_days < 0:       # --recheck-days with no number: the one setting the app uses too
                 from lib import app_config
                 args.recheck_days = float(app_config.get("chargers.tesla_recheck_days", 1))
@@ -2870,6 +2897,10 @@ DESCRIPTION
                 ) or {}
                 if res:
                     print(f"{C_GREEN}✔ {type_label}: {res['checked']} sites fetched, {res['changed']} changed, {res['created']} new, {res['failed']} failed.{C_RESET}")
+
+        if args.site and len(site_missing) == len(charger_types):
+            print(f"{C_RED}❌ '{args.site}' is not a site on tesla.com's list: nothing was fetched.{C_RESET}")
+            sys.exit(1)
 
         # charging_stations.json (what the app and the other tools read) is rebuilt whenever a Tesla registry file is newer than it.
         try:

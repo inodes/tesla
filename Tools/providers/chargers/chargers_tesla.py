@@ -984,7 +984,7 @@ class TeslaChargerExplorer:
             page.wait_for_timeout(100)
         page.wait_for_timeout(settle_ms)
 
-    def _scrape_page_payload(self, page, target_url: str, timeout_ms: int = 35000, max_retries: int = 3, base_retry_delay: float = 2.0) -> tuple:
+    def _scrape_page_payload(self, page, target_url: str, timeout_ms: int = 35000, max_retries: int = 3, base_retry_delay: float = 2.0, need_details: bool = False) -> tuple:
         """
         Navigates page to target_url and captures XHR/Fetch API responses + SSR __NEXT_DATA__.
         Includes exponential backoff with jitter on timeouts or transient network errors.
@@ -1039,9 +1039,14 @@ class TeslaChargerExplorer:
 
  # Only a page that carries charger data counts. _page_text is captured from any page (blocked, error, empty shell), so it must not stop the retries.
                 props = ((next_data_payload or {}).get("props") or {}).get("pageProps") or {}
-                if any("get-charger-details" in k or "get-location-details" in k for k in captured_api_data) or props.get("formattedData") or props.get("locationData"):
+                if need_details:                  # a site we already have: only its charger details are good enough (the page's cached figures are lower and have no hours or prices)
+                    if self._has_details(captured_api_data)[0]:
+                        return captured_api_data, next_data_payload
+                    err_msg = err_msg or ("HTTP %s, no charger details on the page" % getattr(self, "last_http_status", "?"))
+                elif any("get-charger-details" in k or "get-location-details" in k for k in captured_api_data) or props.get("formattedData") or props.get("locationData"):
                     return captured_api_data, next_data_payload
-                err_msg = err_msg or ("HTTP %s, no charger data on the page" % getattr(self, "last_http_status", "?"))
+                else:
+                    err_msg = err_msg or ("HTTP %s, no charger data on the page" % getattr(self, "last_http_status", "?"))
             finally:
                 try:
                     page.remove_listener("response", handle_response)
@@ -2017,7 +2022,7 @@ class TeslaChargerExplorer:
             todo.put(st)
         started = [0]
         stop = threading.Event()
-        refused = [0]                           # sites in a row (across the browsers) that tesla.com answered with HTTP 403
+        refused = [0]                           # sites in a row (across the browsers) that tesla.com answered with HTTP 403 or without charger details
         REFUSED_LIMIT = 3
 
         def work(wid):
@@ -2069,8 +2074,10 @@ class TeslaChargerExplorer:
                             print(f"[{idx:3d}/{total:3d}] ⚡ Scraping {st_title} [{status_color}{status}{C_RESET}]...", flush=True)
 
                         try:
+                            with lock:
+                                known_site = bool(self.get_station_record(st, sc_reg=sc_reg, dc_reg=dc_reg)[1])
                             captured_api_data, next_data_payload = self._scrape_page_payload(
-                                page, st_url, timeout_ms=timeout_sec * 1000, max_retries=max_retries
+                                page, st_url, timeout_ms=timeout_sec * 1000, max_retries=max_retries, need_details=known_site
                             )
                             with lock:
                                 had_details = self._has_details(captured_api_data)[0]
@@ -2094,10 +2101,10 @@ class TeslaChargerExplorer:
                                     print(f"  {C_RED}❌ Failed parsing record for {st_title} (no charger data after {max_retries} tries, last HTTP status {getattr(self, 'last_http_status', '?')}){C_RESET}", flush=True)
                                     failed_stations.append(st_title)
                                     stats["ERROR"] = stats.get("ERROR", 0) + 1
-                                refused[0] = 0 if record else (refused[0] + 1 if getattr(self, "last_http_status", None) == 403 else 0)
+                                refused[0] = 0 if record else (refused[0] + 1 if (getattr(self, "last_http_status", None) == 403 or not had_details) else 0)
                                 if refused[0] >= REFUSED_LIMIT and not stop.is_set():
                                     stop.set()
-                                    print(f"\n  {C_RED}❌ tesla.com is refusing requests (HTTP 403) for {REFUSED_LIMIT} sites in a row; stopped so it does not block this connection for longer. Wait a while (often an hour) and refresh again; fetch with fewer browsers at once (chargers.tesla_workers) if it happens again.{C_RESET}\n", flush=True)
+                                    print(f"\n  {C_RED}❌ tesla.com is not giving charger details (HTTP {getattr(self, 'last_http_status', '?')}) for {REFUSED_LIMIT} sites in a row; stopped so it does not block this connection for longer. Wait a while (often an hour) and refresh again; fetch with fewer browsers at once (chargers.tesla_workers) if it happens again.{C_RESET}\n", flush=True)
                             consecutive_failures = 0 if record else consecutive_failures + 1
                         except Exception as e:
                             with lock:

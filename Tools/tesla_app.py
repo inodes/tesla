@@ -848,6 +848,9 @@ class H(BaseHTTPRequestHandler):
                 return self.send_json(REACH.start_build())
             if u.path == "/api/chargers/sync":      # {network?}: one network picked in the Chargers tab's dropdown, or every network
                 net = (body or {}).get("network") if isinstance(body, dict) else None
+                site = ((body or {}).get("site") or "").strip() if isinstance(body, dict) else ""
+                if site:                            # {site}: one Tesla site, by name or id
+                    return self.send_json(SYNC.start(("--site", site)))
                 if net is None or net == "all":
                     return self.send_json(SYNC.start())
                 if net in app_sync.NOT_NETWORKS:

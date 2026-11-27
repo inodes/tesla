@@ -40,7 +40,7 @@ cd "$(dirname "$0")"
 
 if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
     cat << 'EOF'
-Usage: ./sync_charger_all.sh [--only NETWORK] [-h|--help]
+Usage: ./sync_charger_all.sh [--only NETWORK | --site TESLA_SITE] [-h|--help]
 
 The one command for the CHARGERS domain (charging hardware/station
 registries - see AGENTS.md REQ-033 for the charger/charging/charges split).
@@ -55,6 +55,7 @@ last N days (chargers.tesla_recheck_days in config.json, default 1, the app's se
 environment variable CHARGER_RECHECK_DAYS overrides it for one run; 0 = every site): tesla.com's list holds
 only names and positions, so a change inside a site (stalls, power, hours, prices) is only found
 by fetching its page again. An empty list from tesla.com ends the step with an error.
+--site NAME fetches just that Tesla site (its tesla.com name, registry name or id) whatever its age, then the export.
 Several sites are fetched at once (chargers.tesla_workers in config.json, default 2, the app's setting
 too; 1 = one at a time).
 
@@ -80,6 +81,12 @@ EOF
 fi
 
 ONLY=""
+SITE=""
+if [[ "${1:-}" == "--site" ]]; then       # one Tesla site (name or id): fetched now, then the export
+    SITE="${2:-}"
+    [[ -n "$SITE" ]] || { echo "sync_charger_all.sh: --site needs a Tesla site name or id" >&2; exit 2; }
+    ONLY="site"
+fi
 if [[ "${1:-}" == "--only" ]]; then
     ONLY="${2:-}"
     case "$ONLY" in
@@ -90,6 +97,11 @@ fi
 RECHECK=(--recheck-days)                # Tesla: sites not fetched in the last N days are fetched again, to see what changed inside them; N is chargers.tesla_recheck_days in config.json (the app's setting too)
 [[ -n "${CHARGER_RECHECK_DAYS:-}" ]] && RECHECK+=("$CHARGER_RECHECK_DAYS")
 want() { [[ -z "$ONLY" || "$ONLY" == "$1" ]]; }     # no --only: every step
+
+if [[ -n "$SITE" ]]; then
+    echo "==> Tesla site: $SITE"
+    ./charger_find.py --sync-tesla --site "$SITE" || exit $?
+fi
 
 if want tesla-sc; then
     echo "==> Tesla Superchargers"
