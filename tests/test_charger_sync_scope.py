@@ -52,13 +52,19 @@ class ScriptTest(unittest.TestCase):
 
     def test_tesla_steps_recheck_sites_not_fetched_lately(self):
         d = stubbed()
-        self.assertIn("RAN --sync-tesla --sc --recheck-days 1", run(d, "--only", "tesla-sc").stdout)
-        self.assertIn("RAN --sync-tesla --dc --recheck-days 1", run(d, "--only", "tesla-dc").stdout)
+        self.assertIn("RAN --sync-tesla --sc --recheck-days\n", run(d, "--only", "tesla-sc").stdout + "\n")     # no number: charger_find.py reads config.json, as the app does
+        self.assertIn("RAN --sync-tesla --dc --recheck-days\n", run(d, "--only", "tesla-dc").stdout + "\n")
         r = subprocess.run(["bash", os.path.join(d, "sync_charger_all.sh"), "--only", "tesla-sc"], cwd=d, capture_output=True, text=True, timeout=60, env=dict(os.environ, CHARGER_RECHECK_DAYS="0"))
         self.assertIn("--recheck-days 0", r.stdout)
 
-    def test_the_app_passes_the_configured_days(self):
-        self.assertEqual(app_sync.app_config.get("chargers.tesla_recheck_days"), 1)
+    def test_the_app_and_the_command_line_read_the_same_setting(self):
+        sys.path.insert(0, TOOLS)
+        from lib import app_config
+        self.assertEqual(app_config.get("chargers.tesla_recheck_days"), 1)
+        with open(os.path.join(TOOLS, "commands", "charger_find.py"), encoding="utf-8") as f:
+            src = f.read()
+        self.assertIn('app_config.get("chargers.tesla_recheck_days", 1)', src)
+        self.assertNotIn("CHARGER_RECHECK_DAYS", open(os.path.join(TOOLS, "lib", "app_sync.py"), encoding="utf-8").read())      # the app sets nothing of its own
 
     def test_an_unknown_network_is_refused(self):
         r = run(stubbed(), "--only", "bogus")

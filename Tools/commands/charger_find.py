@@ -2386,6 +2386,7 @@ DESCRIPTION
     ./Tools/charger_find.py --sync-tesla --sc --stale  # re-check only entries not verified for 90+ days
     ./Tools/charger_find.py --sync-tesla --all         # re-fetch every listed station
     ./Tools/charger_find.py --sync-tesla --sc --recheck-days 1   # new, renamed and moved sites, plus any not fetched in the last day
+    ./Tools/charger_find.py --sync-tesla --sc --recheck-days     # the same, with the days from config.json (chargers.tesla_recheck_days)
 
  # Refresh unlisted pricing or discover chargers from past charging history:
     ./Tools/charger_find.py --refresh-prices
@@ -2500,7 +2501,7 @@ DESCRIPTION
 
     g_sync = parser.add_argument_group("Synchronization")
     g_sync.add_argument("--sync-all", action="store_true", help="End-to-end sync across all providers (Tesla, Chargefox, EVX, Evie, bp pulse, PlugShare, AmpCharge, Exploren, Jolt, NRMA, Master Catalog)")
-    g_sync.add_argument("--recheck-days", type=float, default=None, metavar="N", help="With --sync-tesla: also fetch again every listed site not fetched in the last N days (0: every site), which is how a change inside a site is found")
+    g_sync.add_argument("--recheck-days", type=float, nargs="?", const=-1.0, default=None, metavar="N", help="With --sync-tesla: also fetch again every listed site not fetched in the last N days (0: every site), which is how a change inside a site is found; without N, the setting chargers.tesla_recheck_days in config.json (the app's setting too)")
     g_sync.add_argument("--sync-tesla", action="store_true", help="Compare tesla.com's station list with the registry and fetch only the new, renamed or moved ones (--stale, --unpriced, --all widen it)")
     g_sync.add_argument("--sync-chargefox", action="store_true", help="Download and cache all Chargefox & NRMA stations across Australia")
     g_sync.add_argument("--sync-evx", action="store_true", help="Download and cache all EVX Kerbside Polechargers across Australia")
@@ -2808,6 +2809,9 @@ DESCRIPTION
             if not stations:                      # tesla.com gave no list (blocked, offline, page changed): nothing was compared, so this is not a finished sync
                 print(f"{C_RED}❌ tesla.com's {type_label} list came back empty: nothing was checked.{C_RESET}")
                 sys.exit(1)
+            if args.recheck_days is not None and args.recheck_days < 0:       # --recheck-days with no number: the one setting the app uses too
+                from lib import app_config
+                args.recheck_days = float(app_config.get("chargers.tesla_recheck_days", 1))
             plan = explorer.plan_sync(stations, recheck_days=args.recheck_days)
             print(f"  {len(stations)} listed: {len(plan['same']) + len(plan['stale'])} match the registry, {len(plan['new'])} new, "
                   f"{len(plan['renamed'])} renamed, {len(plan['moved'])} moved, {len(plan['gone'])} no longer listed")

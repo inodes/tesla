@@ -51,7 +51,8 @@ ampcharge, exploren, jolt, nrma. The app's Sync chargers card uses this when a
 network is picked in its dropdown. Run the two scripts directly with a wider --state/--country
 scope yourself if you want a broader sweep than "near Home, 50km".
 Tesla steps fetch the sites that are new, renamed or moved, and every site not fetched in the
-last N days (environment CHARGER_RECHECK_DAYS, default 1; 0 = every site): tesla.com's list holds
+last N days (chargers.tesla_recheck_days in config.json, default 1, the app's setting too; the
+environment variable CHARGER_RECHECK_DAYS overrides it for one run; 0 = every site): tesla.com's list holds
 only names and positions, so a change inside a site (stalls, power, hours, prices) is only found
 by fetching its page again. An empty list from tesla.com ends the step with an error.
 
@@ -84,7 +85,8 @@ if [[ "${1:-}" == "--only" ]]; then
         *) echo "sync_charger_all.sh: --only needs one of tesla-sc tesla-dc chargefox evx evie bppulse plugshare ampcharge exploren jolt nrma (got '$ONLY')" >&2; exit 2 ;;
     esac
 fi
-RECHECK="${CHARGER_RECHECK_DAYS:-1}"    # Tesla: sites not fetched in this many days are fetched again, to see what changed inside them (the app passes app.chargers.tesla_recheck_days)
+RECHECK=(--recheck-days)                # Tesla: sites not fetched in the last N days are fetched again, to see what changed inside them; N is chargers.tesla_recheck_days in config.json (the app's setting too)
+[[ -n "${CHARGER_RECHECK_DAYS:-}" ]] && RECHECK+=("$CHARGER_RECHECK_DAYS")
 want() { [[ -z "$ONLY" || "$ONLY" == "$1" ]]; }     # no --only: every step
 
 if want tesla-sc; then
@@ -92,13 +94,13 @@ if want tesla-sc; then
     # Tesla goes through charger_find.py --sync-tesla like every other network
     # (REQ-095 tracks moving the scraper it calls out of archive/ into
     # providers/chargers/chargers_tesla.py, so nothing needs archive/ at all).
-    ./charger_find.py --sync-tesla --sc --recheck-days "$RECHECK"
+    ./charger_find.py --sync-tesla --sc "${RECHECK[@]}"
 fi
 
 if want tesla-dc; then
     echo
     echo "==> Tesla Destination Chargers"
-    ./charger_find.py --sync-tesla --dc --recheck-days "$RECHECK"
+    ./charger_find.py --sync-tesla --dc "${RECHECK[@]}"
 fi
 
 if want chargefox; then
