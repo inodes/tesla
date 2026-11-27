@@ -7,7 +7,7 @@
 R.at(body)                  what is around a spot: the nearest chargers on the roads and how far, the next one the other way, the charge left there
 
 body: pts [[lat, lon, key], ...] the chargers picked, mode "reach" (where the car can get to from them) or "gaps" (how far each road is from the nearest of them),
-frac the charge at the chargers (0..1), reserve the share of the battery to keep (0..1), basis "km" or "kwh", bbox [south, west, north, east] and size (pixels) of the picture.
+frac the charge at the chargers (0..1), reserve the share of the battery to keep (0..1), round_trip (true: half of what can be used, so the car can come back), basis "km" or "kwh", bbox [south, west, north, east] and size (pixels) of the picture.
 at: pts as above, lat, lon of the spot, basis; mode, frac and reserve as for compute (the charge left is given when that picture has been made).
 The picture is a PNG as a data URL with the box it covers. The search itself is lib/osm_roads_graph.py (one search for all the chargers, whichever way the ranges overlap);
 it takes about a second for the whole country. A finished search is kept, so moving or zooming the map only redraws it.
@@ -215,6 +215,7 @@ class ReachService:
         basis = "kwh" if b.get("basis") == "kwh" else "km"
         frac = min(1.0, max(0.0, float(b.get("frac", 1.0))))
         reserve = min(0.9, max(0.0, float(b.get("reserve", app_config.get("reach.reserve_pct") / 100.0))))
+        way = 0.5 if b.get("round_trip") else 1.0          # a return trip: only half of what can be used is for the way out
         bbox = [float(x) for x in (b.get("bbox") or [-45, 110, -9, 155])]
         size = min(1400, max(100, int(b.get("size") or app_config.get("reach.image_px"))))
         if not pts:
@@ -223,21 +224,21 @@ class ReachService:
         if self._unknown(c, basis):
             return dict(error=self._unknown(c, basis))
         full = c["kwh"] if basis == "kwh" else c["km"]
-        key = hashlib.sha1(json.dumps([mode, basis, round(frac, 3), round(reserve, 3), [(round(p[0], 5), round(p[1], 5)) for p in pts]]).encode()).hexdigest()
+        key = hashlib.sha1(json.dumps([mode, basis, round(frac, 3), round(reserve, 3), way, [(round(p[0], 5), round(p[1], 5)) for p in pts]]).encode()).hexdigest()
         g = self._graph()
         if basis == "kwh" and g.fit is None:
             return dict(error=self.NO_FIT)
         hit = self.cache.get(key)
         if hit is None:
             if mode == "reach":
-                charge = max(frac - reserve, 0.0) * full
+                charge = max(frac - reserve, 0.0) * full * way
                 if charge <= 0:
                     return dict(error="The charge is not above the reserve.")
                 r = g.reach([(p[0], p[1], charge) for p in pts], basis)
                 hit = dict(val=r["left"], vmax=r["full"], outline=[pts[i][2] for i in r["outline"] if i < len(pts) and pts[i][2]], full=full)
             else:
                 d, who = g.nearest([(p[0], p[1]) for p in pts], basis, want_who=True)
-                safe = max(frac - reserve, 0.05) * full
+                safe = max(frac - reserve, 0.05) * full * way
                 st = [dict(a=pts[a][2], b=pts[b][2], cost=round(c, 1), lat=round(float(g.lat[nd]), 5), lon=round(float(g.lon[nd]), 5)) for a, b, c, nd in g.stretches(d, who, basis)[:12]]
                 hit = dict(val=np.where(np.isfinite(d), d, -1.0), vmax=1.5 * safe, outline=[], full=full, safe=safe, stretches=st)
             if len(self.cache) >= 4:
@@ -281,7 +282,8 @@ class ReachService:
         left = None
         frac = min(1.0, max(0.0, float(b.get("frac", 1.0))))
         reserve = min(0.9, max(0.0, float(b.get("reserve", app_config.get("reach.reserve_pct") / 100.0))))
-        key = hashlib.sha1(json.dumps(["reach", basis, round(frac, 3), round(reserve, 3), [(round(p[0], 5), round(p[1], 5)) for p in pts]]).encode()).hexdigest()
+        way = 0.5 if b.get("round_trip") else 1.0
+        key = hashlib.sha1(json.dumps(["reach", basis, round(frac, 3), round(reserve, 3), way, [(round(p[0], 5), round(p[1], 5)) for p in pts]]).encode()).hexdigest()
         hit = self.cache.get(key)
         if hit is not None:
             nd, _m = g.snap(float(b["lat"]), float(b["lon"]))

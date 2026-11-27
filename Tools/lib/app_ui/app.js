@@ -1441,7 +1441,7 @@ let PL={tab:"saved",q:"",visited:false,soon:false,net:"all",state:"all",view:"li
 // A map of the rows of the current Places tab (same filters as the list). Dots are small so they do not hide each other;
 // places you have used are solid, the rest faded. New Zealand is left out for now.
 // ---------- range on the Places map (lib/app_reach.py): pick chargers, see where a car leaving them with some charge can get to by road, or which roads are far from any charger
-const RG={on:false,tab:"",sel:new Set(),out:new Set(),frac:100,reserve:null,basis:"km",can:true,cannot:false,st:null,tok:0,pts:{},names:{},stretches:[],unit:"km",listOpen:false,T:null,note:""};
+const RG={on:false,tab:"",sel:new Set(),out:new Set(),frac:100,reserve:null,basis:"km",can:true,cannot:false,ret:false,st:null,tok:0,pts:{},names:{},stretches:[],unit:"km",listOpen:false,T:null,note:""};
 const rgMap=()=>{try{return PLM&&PLM.m&&PLM.m.getLayer("pl")?PLM.m:null}catch(e){return null}};      // the map is ready once its own layers are in (it is never "loaded" while tiles are still coming)
 function rgHide(ids){const m=rgMap();if(!m)return;(ids||["rg","rgg"]).forEach(i=>{if(m.getLayer(i))m.setLayoutProperty(i,"visibility","none")})}
 function rgShow(r){const m=rgMap();if(!m)return;const c=[[r.bbox[1],r.bbox[2]],[r.bbox[3],r.bbox[2]],[r.bbox[3],r.bbox[0]],[r.bbox[1],r.bbox[0]]],id=r.mode==="gaps"?"rgg":"rg",s=m.getSource(id);
@@ -1460,17 +1460,19 @@ async function rgGo(){
   const b=m.getBounds(),dy=(b.getNorth()-b.getSouth())*.1,dx=(b.getEast()-b.getWest())*.1,bbox=[Math.max(-80,b.getSouth()-dy),Math.max(-180,b.getWest()-dx),Math.min(80,b.getNorth()+dy),Math.min(180,b.getEast()+dx)];
   RG.note="Calculating…";rgNote();const notes=[];
   for(const mode of modes){
-    let r;try{r=await (await fetch("/api/reach",{method:"POST",body:JSON.stringify({pts,mode,frac:RG.frac/100,reserve:(RG.reserve==null?RG.st.reserve:RG.reserve)/100,basis:RG.basis,bbox,size:cfg("reach.image_px")})})).json()}catch(e){r={error:String(e)}}
+    let r;try{r=await (await fetch("/api/reach",{method:"POST",body:JSON.stringify({pts,mode,frac:RG.frac/100,reserve:(RG.reserve==null?RG.st.reserve:RG.reserve)/100,round_trip:RG.ret,basis:RG.basis,bbox,size:cfg("reach.image_px")})})).json()}catch(e){r={error:String(e)}}
     if(tok!==RG.tok)return;
     if(r.error||r.empty){rgHide([mode==="gaps"?"rgg":"rg"]);if(r.error&&r.error!=="needs_graph")notes.push(esc(r.error));continue}
     if(mode==="reach")RG.out=new Set(r.outline||[]);else RG.stretches=r.stretches||[];
     RG.unit=r.unit;rgShow(r);
-    notes.push(mode==="gaps"?`<i class="rgb gaps"></i> further than ${n0(r.safe)} ${r.unit} from a charger`:`<i class="rgb"></i> 0 – ${n0(r.vmax)} ${r.unit} left · ${n0(r.n)} chargers`)}
+    notes.push(mode==="gaps"?`<i class="rgb gaps"></i> further than ${n0(r.safe)} ${r.unit} from a ${rgThing()}`:`<i class="rgb"></i> 0 – ${n0(r.vmax)} ${r.unit} left · ${n0(r.n)} ${rgThing(r.n)}`)}
   rgList();rgSel();RG.note=notes.join(" &nbsp; ");rgNote()}
 function pmFit(){const e=PLM&&PLM.el;if(!e||!e.isConnected)return;const h=Math.max(300,Math.floor(innerHeight-e.getBoundingClientRect().top-14));if(Math.abs(e.offsetHeight-h)>2){e.style.height=h+"px";try{PLM.m.resize()}catch(x){}}}
 addEventListener("resize",()=>pmFit());
+// what the map's points are called: the tab (Superchargers, saved places, stops) or, on the Chargers tab, the network picked there ("Evie charger"); plural when given a count other than 1
+function rgThing(n){const w=PL.tab==="sc"?"Supercharger":PL.tab==="saved"?"saved place":PL.tab==="found"?"stop":PL.net==="all"?"charger":PL.net==="Tesla"||PL.net==="Tesla Supercharger"?"Supercharger":(SYNCNOT.includes(PL.net)?"charger":(PL.net==="3rd-Party"?"3rd-party":PL.net)+" charger");return n==null||n===1?w:w+"s"}
 function rgList(){const el=$("#rgl");if(!el)return;const L=RG.on&&RG.cannot?RG.stretches:[],nm=k=>esc(RG.names[k]||k);
-  el.innerHTML=L.length?`<details class="card rgstr"${RG.listOpen?" open":""}><summary><b>Longest stretches without a charger</b></summary>${L.map((x,i)=>`<div><a href="#" data-sl="${i}">${nm(x.a)} → ${nm(x.b)}</a> <span class="sub">${n0(x.cost)} ${esc(RG.unit)}</span></div>`).join("")}</details>`:"";
+  el.innerHTML=L.length?`<details class="card rgstr"${RG.listOpen?" open":""}><summary><b>Longest stretches without a ${rgThing()}</b></summary>${L.map((x,i)=>`<div><a href="#" data-sl="${i}">${nm(x.a)} → ${nm(x.b)}</a> <span class="sub">${n0(x.cost)} ${esc(RG.unit)}</span></div>`).join("")}</details>`:"";
   const d=$("details",el);if(d)d.ontoggle=()=>{RG.listOpen=d.open};
   $$("[data-sl]",el).forEach(a=>a.onclick=ev=>{ev.preventDefault();const x=L[+a.dataset.sl],m=rgMap();if(m&&x)m.flyTo({center:[x.lon,x.lat],zoom:6.5,duration:600})})}
 async function rgAt(e){
@@ -1479,9 +1481,9 @@ async function rgAt(e){
   const F=PLM.feats?PLM.feats():[],keys=RG.sel.size?[...RG.sel]:F.map(f=>f.properties.key),pts=keys.filter(k=>RG.pts[k]).map(k=>[RG.pts[k][0],RG.pts[k][1],k]);
   if(!pts.length)return;
   const pop=new maplibregl.Popup({offset:6,maxWidth:"320px"}).setLngLat(e.lngLat).setHTML('<div style="font:13px system-ui;color:#111">Calculating…</div>').addTo(m);
-  let r;try{r=await (await fetch("/api/reach/at",{method:"POST",body:JSON.stringify({pts,lat:e.lngLat.lat,lon:e.lngLat.lng,basis:RG.basis,frac:RG.frac/100,reserve:(RG.reserve==null?RG.st.reserve:RG.reserve)/100})})).json()}catch(x){r={error:String(x)}}
+  let r;try{r=await (await fetch("/api/reach/at",{method:"POST",body:JSON.stringify({pts,lat:e.lngLat.lat,lon:e.lngLat.lng,basis:RG.basis,frac:RG.frac/100,reserve:(RG.reserve==null?RG.st.reserve:RG.reserve)/100,round_trip:RG.ret})})).json()}catch(x){r={error:String(x)}}
   const nm=k=>esc(RG.names[k]||k),u=esc(r.unit||RG.unit),row=(t,k,c)=>`<div style="margin:2px 0"><span style="color:#555">${t}</span> <b>${nm(k)}</b> · ${n0(c)} ${u}</div>`;
-  pop.setHTML(`<div style="font:13px system-ui;color:#111">${r.error?esc(r.error==="needs_graph"?"":r.error):!(r.near||[]).length?"No charger within reach of the roads here.":row("Nearest charger",r.near[0].key,r.near[0].cost)+(r.other?row("The other way",r.other.key,r.other.cost)+`<div style="margin:2px 0;color:#555">Between them ${n0(r.between)} ${u}</div>`:"")+(r.left!=null?`<div style="margin:2px 0;color:#555">Charge left here ${n0(r.left)} ${u}</div>`:"")}</div>`)}
+  pop.setHTML(`<div style="font:13px system-ui;color:#111">${r.error?esc(r.error==="needs_graph"?"":r.error):!(r.near||[]).length?"No "+rgThing()+" within reach of the roads here.":row("Nearest "+rgThing(),r.near[0].key,r.near[0].cost)+(r.other?row("The other way",r.other.key,r.other.cost)+`<div style="margin:2px 0;color:#555">Between them ${n0(r.between)} ${u}</div>`:"")+(r.left!=null?`<div style="margin:2px 0;color:#555">Charge left here ${n0(r.left)} ${u}</div>`:"")}</div>`)}
 function rgNote(){const e=$("#rgs");if(e)e.innerHTML=RG.note}
 async function rgStatus(){try{RG.st=await (await fetch("/api/reach")).json()}catch(e){RG.st={built:false,error:String(e)}}rgPanel();if(RG.st.job&&RG.st.job.running)setTimeout(rgStatus,1500);else rgRun()}
 function rgPanel(){
@@ -1493,14 +1495,15 @@ function rgPanel(){
   else h+=`<span class="sub">${RG.sel.size} selected</span><button class="chip" id="rgall">All shown</button><button class="chip" id="rgnone">Clear</button>
     <label class="sub">Charge <input type="number" id="rgf" min="5" max="100" step="5" value="${RG.frac}" style="width:56px"> %</label>
     <label class="sub">Reserve <input type="number" id="rgr" min="0" max="80" step="5" value="${RG.reserve==null?st.reserve:RG.reserve}" style="width:56px"> %</label>
-    <label class="sub"><input type="checkbox" id="rgcan"${RG.can?" checked":""}> Can drive</label><label class="sub"><input type="checkbox" id="rgcnt"${RG.cannot?" checked":""}> Cannot drive</label><span class="sub" id="rgs">${RG.note}</span>`;
+    <label class="sub"><input type="checkbox" id="rgret"${RG.ret?" checked":""}> Include return trip</label>
+    <label class="sub"><input type="checkbox" id="rgcan"${RG.can?" checked":""}> In range</label><label class="sub"><input type="checkbox" id="rgcnt"${RG.cannot?" checked":""}> Out of range</label><span class="sub" id="rgs">${RG.note}</span>`;
   el.innerHTML=h;pmFit();$("#rgon").onclick=()=>{RG.on=false;RG.tok++;rgHide();rgList();const m=rgMap();if(m&&m.getSource("sel"))m.getSource("sel").setData({type:"FeatureCollection",features:[]});rgPanel()};
   const bd=$("#rgbuild");if(bd)bd.onclick=async()=>{await fetch("/api/reach/build",{method:"POST",body:"{}"});RG.st={built:false,job:{running:true,step:"Starting"}};rgPanel();setTimeout(rgStatus,800)};
   if(!st.built)return;
   $("#rgall").onclick=()=>{(PLM.feats?PLM.feats():[]).forEach(f=>RG.sel.add(f.properties.key));RG.out=new Set();rgSel();rgPanel();rgRun()};
   $("#rgnone").onclick=()=>{RG.sel=new Set();RG.out=new Set();rgSel();rgPanel();rgRun()};
   $("#rgf").onchange=e=>{RG.frac=Math.min(100,Math.max(5,+e.target.value||100));rgRun()};$("#rgr").onchange=e=>{RG.reserve=Math.min(80,Math.max(0,+e.target.value||0));rgRun()};
-  $("#rgcan").onchange=e=>{RG.can=e.target.checked;rgRun()};$("#rgcnt").onchange=e=>{RG.cannot=e.target.checked;rgRun()}}
+  $("#rgret").onchange=e=>{RG.ret=e.target.checked;rgRun()};$("#rgcan").onchange=e=>{RG.can=e.target.checked;rgRun()};$("#rgcnt").onchange=e=>{RG.cannot=e.target.checked;rgRun()}}
 // called each time the Places map is drawn: the panel, and (once per map) the box select and the redraw after the map has moved
 function rgInit(){
   if(RG.tab!==PLM.tab){RG.tab=PLM.tab;RG.sel=new Set();RG.out=new Set();rgHide()}
