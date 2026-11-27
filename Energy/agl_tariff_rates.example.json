@@ -1,0 +1,28 @@
+{
+  "_comment": "TEMPLATE ONLY - not real data. Copy this file's SHAPE into your own agl_tariff_rates.json, which lives in the active power provider's data home (get_power_provider().resolve_data_home() - a sibling of the Tessie/ data folder, NEVER inside this repo's Tools/ directory - see AGENTS.md REQ-034). Every real figure is specific to one account's plan and billing history and is treated as PII here, so no real rates are checked in. REQ-070: the top-level 'provider' and 'plan' fields are required - they self-describe which retailer/plan this file is for (e.g. 'AGL' / 'Solar VIP'), checked against config.json's active 'power_provider' (default 'agl') by providers/power/power_base.py's load_rate_periods_from_file() before any rate in the file is trusted, so a rates file left over from a retailer you've since switched away from is a loud, immediate error instead of silently producing wrong bill totals. 'gst' is the GST fraction (0.1 is 10%) applied to every ex-GST rate and charge. 'periods' is sorted by 'effective_from' (YYYY-MM-DD) - each period's rates apply from that date up to (not including) the next period's 'effective_from'; the last period runs to today. Two placeholder periods are shown: add one per price or plan change, oldest first. Rates are ex GST; power_cost_calculator.py applies a final 10% GST multiplier to the whole bill, matching how AGL's own invoices total it. Get your own real rates from your account's AGL invoices (read the FULL invoice text, not just the plan summary - see REQ-031's own hard-won lesson about a missed 'Next*' solar-tier line).",
+  "provider": "AGL",
+  "plan": "Solar VIP",
+  "gst": 0.1,
+  "periods": [
+    {
+      "effective_from": "1970-01-01",
+      "note": "Example placeholder period - the first plan or price you have records for: replace with its rates and the date they took effect.",
+      "usage_rate_per_kwh": 0.0,
+      "supply_charge_per_day": 0.0,
+      "solar_feed_in_tier1_rate_per_kwh": 0.0,
+      "solar_feed_in_tier2_rate_per_kwh": 0.0,
+      "demand_rate_per_kw_day": 0.0,
+      "demand_confirmed": false
+    },
+    {
+      "effective_from": "2000-01-01",
+      "note": "Example placeholder period - a later price or plan change: replace with its rates and the date they took effect.",
+      "usage_rate_per_kwh": 0.0,
+      "supply_charge_per_day": 0.0,
+      "solar_feed_in_tier1_rate_per_kwh": 0.0,
+      "solar_feed_in_tier2_rate_per_kwh": 0.0,
+      "demand_rate_per_kw_day": 0.0,
+      "demand_confirmed": false
+    }
+  ]
+}

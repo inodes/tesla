@@ -19,4 +19,4 @@ The full `config.json` lives in the data folder (`directories.data`, by default 
 | `abrp.max_charge_soc` | Charge-to ceiling % at an en-route stop. Default 80 (charging tapers past it). Flag `--max-soc`. |
 | `abrp.corridor_radius_km` | Largest sideways detour from the route in km. Default 5.0. Flag `--corridor-radius`. |
 
-The old `solar` block (ROI figures) is now `Solar/solar_system.json` under `directories.data`; see `Solar/solar_system.example.json` and `lib/solar_system_config.py`.
+The old `solar` block (ROI figures) is now `Solar/solar_system.json` under `directories.data`; see `Energy/solar_system.example.json` and `lib/solar_system_config.py`.

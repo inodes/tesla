@@ -14,11 +14,19 @@
   "orientation_note": "Compass offset of the house/array from true north - negative = degrees WEST of north, positive = EAST. Optional; only needed for the shading model.",
   "panel_groups": [
     {
-      "name": "example_group",
+      "name": "example_group_1",
       "panel_count": 10,
       "roof_type": "e.g. tiled main roof, skillion patio extension, ground mount, etc.",
       "tilt_deg": 25,
       "azimuth_deg_from_true_north": 0,
+      "source": "How you know this group's geometry (drone photo, install diagram, physical measurement, etc.)"
+    },
+    {
+      "name": "example_group_2",
+      "panel_count": 6,
+      "roof_type": "e.g. a second roof plane facing another way",
+      "tilt_deg": 25,
+      "azimuth_deg_from_true_north": 180,
       "source": "How you know this group's geometry (drone photo, install diagram, physical measurement, etc.)"
     }
   ],

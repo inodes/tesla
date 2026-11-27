@@ -76,7 +76,7 @@ class AGLProvider(BasePowerProvider):
         return "agl_tariff_rates.json"
 
     def tariff_rates_example_path(self):
-        return "AGL/agl_tariff_rates.example.json"
+        return "Energy/agl_tariff_rates.example.json"
 
  # ---- usage-export ingestion --------------------------------------
 

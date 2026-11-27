@@ -58,12 +58,10 @@ dashcam/*.json
 !dashcam/*.example.json
 !dashcam/.*.example.json
 
-# AGL tariff rates - real account-specific plan/billing figures (REQ-034).
-# Lives in the AGL data home (agl_common.resolve_agl_data_home()), never in
-# this repo. AGL/ mirrors the resources/ pattern - only the sanitized template
-# is checked in, same as resources/*.example.json.
-AGL/*.json
-!AGL/agl_tariff_rates.example.json
+# Energy: only the sanitized templates are checked in, same as resources/*.example.json. Real account-specific
+# plan/billing figures (REQ-034) live in the power provider's data home (power_base.resolve_data_home()), never in this repo.
+Energy/*.json
+!Energy/*.example.json
 # Defense-in-depth: a real file must never land in Tools/ either (REQ-034's
 # original incident - it was found sitting there by accident).
 Tools/agl_tariff_rates.json

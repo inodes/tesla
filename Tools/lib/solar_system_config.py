@@ -38,13 +38,13 @@ def load_solar_system_config(data_home=None):
     """The real solar-install dict (install_date, net_upfront_cost_aud,
     panel_groups, west_obstruction, ...) - raises a clear, actionable
     FileNotFoundError if it hasn't been set up yet, rather than a bare
-    KeyError deep inside some caller. See Solar/solar_system.example.
+    KeyError deep inside some caller. See Energy/solar_system.example.
     json in the repo for the full field shape/meaning."""
     path = resolve_solar_system_path(data_home)
     if not os.path.isfile(path):
         raise FileNotFoundError(
             f"{path} not found. This file holds real household install data and is never "
-            f"committed to the repo (see AGENTS.md REQ-034) - copy Solar/solar_system.example."
+            f"committed to the repo (see AGENTS.md REQ-034) - copy Energy/solar_system.example."
             f"json's shape there and fill in your own install_date, net_upfront_cost_aud, "
             f"lifetime_years (see power_roi_report.py) and, optionally, the richer panel_groups/"
             f"west_obstruction geometry fields (see lib/shading_model.py)."
